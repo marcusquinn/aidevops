@@ -79,6 +79,9 @@ release_request() {
 	local verdict=""
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || release_error 'PR number must be a positive integer.' || return 1
 	release_authority "$repo" || return 1
+	local secrets=""
+	secrets=$(gh secret list --repo "$repo" --json name) || release_error "Unable to verify CLOUDRON_RELEASE_PAT in ${repo}." || return 1
+	jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null || release_error "${repo} is missing CLOUDRON_RELEASE_PAT. Configure a fine-grained PAT restricted to this package repository with Contents write access (cloudron-app-publishing-skill.md) before requesting release approval." || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
 	[[ "$(jq -r '.state' <<<"$snapshot")" == open ]] || release_error "PR #${pr} must be open before requesting approval." || return 1
 	sha=$(jq -r '.head.sha' <<<"$snapshot")

@@ -40,6 +40,15 @@ gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
 	case "$command $target" in
+	'secret list')
+		[[ "$*" == 'secret list --repo owner/app --json name' ]] || return 9
+		[[ "$SCENARIO" != secret_error ]] || return 1
+		if [[ "$SCENARIO" == secret_missing ]]; then
+			printf '[{"name":"OTHER_SECRET"}]\n'
+		else
+			printf '[{"name":"CLOUDRON_RELEASE_PAT"}]\n'
+		fi
+		;;
 	'api repos/owner/app')
 		[[ "$SCENARIO" != permission_error ]] || return 1
 		if [[ "$SCENARIO" == no_permission ]]; then
@@ -182,6 +191,8 @@ run_request_error wrong_app_type 'Repository owner/app is not registered as a ma
 run_request_error not_maintained 'Repository owner/app is not registered as a maintained cloudron-package.' '{"slug":"owner/app","app_type":"cloudron-package","maintenance":false}'
 run_request_error permission_error 'Unable to verify admin/maintain permission for owner/app.'
 run_request_error no_permission 'Admin or maintain permission is required for owner/app.'
+run_request_error secret_error 'Unable to verify CLOUDRON_RELEASE_PAT in owner/app.'
+run_request_error secret_missing 'owner/app is missing CLOUDRON_RELEASE_PAT.'
 run_request_error pr_error 'Unable to read PR #7 in owner/app.'
 run_request_error draft 'PR #7 is a draft or its draft status is unavailable. Run: gh pr ready 7 --repo owner/app; then wait for re-triggered checks to pass.'
 run_request_error fork 'PR #7 must be a same-repository PR against main in owner/app.'

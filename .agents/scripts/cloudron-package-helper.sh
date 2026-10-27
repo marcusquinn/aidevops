@@ -416,6 +416,7 @@ scaffold_catalog_workflow() {
 	if [[ -e "$workflow_path" ]]; then
 		if [[ "$migrate" == true ]]; then
 			migrate_catalog_workflow "$workflow_path" "$template_path" || return 1
+			catalog_publication_secret_warning "$target_root"
 			return 0
 		fi
 		log_info "Cloudron catalog caller already present; preserving it"
@@ -428,6 +429,23 @@ scaffold_catalog_workflow() {
 	mkdir -p "${target_root}/.github/workflows"
 	cp "$template_path" "$workflow_path"
 	log_success "Installed Cloudron catalog caller (publication remains opt-in)"
+	catalog_publication_secret_warning "$target_root"
+	return 0
+}
+
+# Inspect names only; scaffolding remains usable before a remote is configured.
+catalog_publication_secret_warning() {
+	local target_root="$1" slug="" secrets="" origin=""
+	if ! origin=$(git -C "$target_root" remote get-url origin 2>/dev/null) || [[ -z "$origin" ]] ||
+		! slug=$(gh repo view --repo "$origin" --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null) || [[ -z "$slug" ]]; then
+		log_warn "Publication blocked until CLOUDRON_RELEASE_PAT is verified: configure the package origin and run gh secret list --repo <owner/repo> --json name" >&2
+		return 0
+	fi
+	if ! secrets=$(gh secret list --repo "$slug" --json name); then
+		log_warn "Publication blocked: unable to verify CLOUDRON_RELEASE_PAT in $slug" >&2
+	elif ! jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null; then
+		log_warn "Publication blocked: $slug is missing CLOUDRON_RELEASE_PAT. Configure a fine-grained PAT restricted to this package repository, with Contents write access, using gh secret set CLOUDRON_RELEASE_PAT --repo $slug. See cloudron-app-publishing-skill.md. Never put the value in logs or chat." >&2
+	fi
 	return 0
 }
 

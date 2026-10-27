@@ -737,6 +737,19 @@ _cloudron_monitor_compatibility_entry() {
 
 # Reuse the existing publication authority, never infer it from registry metadata.
 # A successful dispatch leaves a per-version receipt; failed dispatches may retry.
+_cloudron_monitor_publication_secret() {
+	local entry="$1" slug="" enabled="" secrets=""
+	slug=$(jq -er '.slug | select(test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' <<<"$entry") || return 1
+	enabled=$(gh api "/repos/${slug}/actions/variables" --paginate --jq '.variables[] | select(.name == "CLOUDRON_PUBLICATION_ENABLED") | .value') || return 1
+	[[ "$enabled" == true ]] || return 0
+	secrets=$(gh secret list --repo "$slug" --json name) || _cloudron_monitor_error "Could not verify CLOUDRON_RELEASE_PAT in $slug." || return 1
+	if ! jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null; then
+		printf 'FINDING %s: missing CLOUDRON_RELEASE_PAT; publication blocked. Configure a fine-grained PAT restricted to this package repository with Contents write access; see cloudron-app-publishing-skill.md.\n' "$slug"
+		return 3
+	fi
+	return 0
+}
+
 _cloudron_monitor_reconcile_entry() {
 	local entry="$1" apply="$2" slug="" enabled="" repository="" remote="" sha="" version="" catalog="" runs=""
 	local state_dir="${HOME}/.aidevops/cache/cloudron-catalog-reconcile" receipt=""
@@ -781,10 +794,21 @@ _cloudron_monitor_run() {
 	local failures=0
 	local entry=""
 	local entry_rc=0
+	local secret_rc=0
 	while IFS= read -r entry; do
 		entry_rc=0
+		secret_rc=0
+		_cloudron_monitor_publication_secret "$entry" || secret_rc=$?
+		# One finding per repository per scan, in either mode. Never dispatch a
+		# reconciliation with a missing or unverified publication credential.
+		[[ "$secret_rc" -ne 75 ]] || return 75
+		if [[ "$secret_rc" -ne 0 && "$secret_rc" -ne 3 ]]; then
+			failures=$((failures + 1))
+		fi
 		if [[ "$mode" == "upstream" ]]; then
-			_cloudron_monitor_reconcile_entry "$entry" "$apply" || entry_rc=$?
+			if [[ "$secret_rc" -eq 0 ]]; then
+				_cloudron_monitor_reconcile_entry "$entry" "$apply" || entry_rc=$?
+			fi
 			[[ "$entry_rc" -eq 0 ]] || failures=$((failures + 1))
 			[[ "$entry_rc" -ne 75 ]] || return 75
 			entry_rc=0

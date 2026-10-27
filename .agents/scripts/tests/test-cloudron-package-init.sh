@@ -169,6 +169,77 @@ GITCONFIG
 	return 0
 }
 
+test_catalog_secret_preflight() {
+	local repo_dir="${TEST_ROOT}/secret-preflight" output=""
+	mkdir -p "$repo_dir"
+	git -C "$repo_dir" init --quiet
+	git -C "$repo_dir" remote add origin https://github.com/example/package.git
+	printf '{}\n' >"${repo_dir}/CloudronManifest.json"
+	gh() {
+		local command="$1" target="${2:-}"
+		case "$command $target" in
+		'repo view') printf 'example/package\n' ;;
+		'secret list')
+			[[ "$*" == 'secret list --repo example/package --json name' ]] || return 9
+			[[ "$SECRET_CASE" != error ]] || return 1
+			if [[ "$SECRET_CASE" == present ]]; then
+				printf '[{"name":"CLOUDRON_RELEASE_PAT"}]\n'
+			else
+				printf '[]\n'
+			fi
+			;;
+		'api /repos/example/package/actions/variables') printf '%s\n' "$PUBLICATION_ENABLED" ;;
+		*) return 9 ;;
+		esac
+		return 0
+	}
+	export -f gh
+	export SECRET_CASE=missing PUBLICATION_ENABLED=true
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$repo_dir" 2>&1)
+	assert_equal true "$(grep -Fq 'missing CLOUDRON_RELEASE_PAT' <<<"$output" && printf true || printf false)" "plain scaffold warns about missing PAT"
+	assert_equal true "$(grep -Fq 'Contents write' <<<"$output" && printf true || printf false)" "warning includes restricted PAT setup"
+	rm "${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	export SECRET_CASE=present
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$repo_dir" 2>&1)
+	assert_equal false "$(grep -Fq 'Publication blocked' <<<"$output" && printf true || printf false)" "present PAT permits scaffold without warning"
+	# A minimal supported inline workflow exercises the migration warning too.
+	printf 'on: [pull_request]\njobs:\n  preflight:\n    steps: []\n' >"${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	export SECRET_CASE=missing
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog --migrate "$repo_dir" 2>&1)
+	assert_equal true "$(grep -Fq 'missing CLOUDRON_RELEASE_PAT' <<<"$output" && printf true || printf false)" "migration warns about missing PAT"
+	# Source with help, never scan the host registry or mutate package issues.
+	(
+		set -- help
+		source "${AGENTS_DIR}/scripts/cloudron-package-monitor-helper.sh" >/dev/null
+		local entry='{"slug":"example/package"}' rc=0
+		output=$(_cloudron_monitor_publication_secret "$entry") || rc=$?
+		[[ "$rc" == 3 && "$output" == *'missing CLOUDRON_RELEASE_PAT'* ]] || exit 1
+		SECRET_CASE=present
+		_cloudron_monitor_publication_secret "$entry" || exit 1
+		SECRET_CASE=error
+		if _cloudron_monitor_publication_secret "$entry"; then exit 1; fi
+		PUBLICATION_ENABLED=false
+		_cloudron_monitor_publication_secret "$entry" || exit 1
+		PUBLICATION_ENABLED=true
+		SECRET_CASE=missing
+		REPOS_FILE="${TEST_ROOT}/monitor-repos.json"
+		printf '{"initialized_repos":[{"slug":"example/package","app_type":"cloudron-package"}]}' >"$REPOS_FILE"
+		_cloudron_monitor_upstream_entry() { return 0; }
+		_cloudron_monitor_compatibility_entry() { return 0; }
+		_cloudron_monitor_reconcile_entry() { printf 'RECONCILE\n'; return 0; }
+		output=$(_cloudron_monitor_run upstream true)
+		[[ "$output" == 'FINDING example/package:'* && "$output" != *$'\n'* && "$output" != *RECONCILE* ]] || exit 1
+		output=$(_cloudron_monitor_run compatibility false)
+		[[ "$output" == 'FINDING example/package:'* && "$output" != *$'\n'* ]] || exit 1
+		SECRET_CASE=present
+		output=$(_cloudron_monitor_run upstream true)
+		[[ "$output" == RECONCILE ]] || exit 1
+	) || return 1
+	printf 'PASS monitor secret present, absent, inaccessible and publication disabled\n'
+	unset -f gh
+	return 0
+}
+
 test_cloudron_publishing_command_syntax() {
 	local publishing_skill="${AGENTS_DIR}/tools/deployment/cloudron-app-publishing-skill.md"
 	assert_equal true "$(grep -Fq 'cloudron versions update --version=1.0.0 --state=published' "$publishing_skill" && printf true || printf false)" "publishing guidance uses equals-form options"
@@ -195,6 +266,7 @@ main() {
 	trap cleanup EXIT
 	test_cloudron_workflow_scaffolding
 	test_catalog_migration
+	test_catalog_secret_preflight
 	test_cloudron_registration_metadata
 	test_cloudron_publishing_command_syntax
 	test_documentation_layout_scaffolding
