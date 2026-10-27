@@ -407,7 +407,9 @@ migrate_plan_bucket() {
 	size_json=$(mrc size --json --list-cutoff "$MIGRATE_LIST_CUTOFF" "${M_SRC_REMOTE}:${bucket}" 2>/dev/null) || size_json=""
 	count=$(jq -r '.count // 0' <<<"$size_json" 2>/dev/null) || count=0
 	bytes=$(jq -r '.bytes // 0' <<<"$size_json" 2>/dev/null) || bytes=0
-	versioning=$(mrc backend versioning "${M_SRC_REMOTE}:${bucket}" 2>/dev/null | tr -d '"' | head -n 1) || versioning=""
+	versioning=$(mrc backend versioning "${M_SRC_REMOTE}:${bucket}" 2>/dev/null) || versioning=""
+	versioning="${versioning%%$'\n'*}"
+	versioning="${versioning//\"/}"
 	newest=$(mrc lsf -R --files-only --format t --list-cutoff "$MIGRATE_LIST_CUTOFF" "${M_SRC_REMOTE}:${bucket}" 2>/dev/null | sort | tail -n 1) || newest=""
 	jq -cn --arg review "$MANUAL_REVIEW" --arg bucket "$bucket" --arg region "$(jq -r '.region // "unknown"' <<<"$M_SRC_JSON")" \
 		--arg versioning "${versioning:-unknown}" --arg newest "$newest" \
