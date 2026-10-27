@@ -16,6 +16,11 @@ const RUNTIME_DIR_ENV = 'AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR';
 const VERSION_ENV = 'AIDEVOPS_PLAYWRIGHT_VERSION';
 // Reviewed pin for the framework-owned runtime. Bump deliberately.
 const PINNED_VERSION = '1.63.0';
+// Optional accessibility package installed beside the owned Playwright with
+// `install --with-axe` (GH#35759). Reviewed pin; bump deliberately.
+const AXE_PACKAGE = '@axe-core/playwright';
+const AXE_PINNED_VERSION = '4.14.0';
+const WITH_AXE_FLAG = '--with-axe';
 const INSTALL_COMMAND = 'node ~/.aidevops/agents/scripts/playwright-runtime.mjs install';
 const INSTALL_HINT =
   `Install the framework-owned runtime with \`${INSTALL_COMMAND}\`, ` +
@@ -32,13 +37,17 @@ export function playwrightRuntimeVersion() {
   return process.env[VERSION_ENV]?.trim() || PINNED_VERSION;
 }
 
-function installedRuntimeVersion(runtimeDir) {
+function installedPackageVersion(runtimeDir, packageName) {
   try {
-    const pkg = JSON.parse(readFileSync(join(runtimeDir, 'node_modules', 'playwright', 'package.json'), 'utf8'));
+    const pkg = JSON.parse(readFileSync(join(runtimeDir, 'node_modules', ...packageName.split('/'), 'package.json'), 'utf8'));
     return pkg.version || null;
   } catch {
     return null;
   }
+}
+
+function installedRuntimeVersion(runtimeDir) {
+  return installedPackageVersion(runtimeDir, 'playwright');
 }
 
 function runInherited(command, args, options = {}) {
@@ -47,33 +56,45 @@ function runInherited(command, args, options = {}) {
   return result.status === 0;
 }
 
-export function installPlaywrightRuntime(browsers = ['chromium']) {
+export function installPlaywrightRuntime(browsers = ['chromium'], { withAxe = false } = {}) {
   const runtimeDir = playwrightRuntimeDir();
   const version = playwrightRuntimeVersion();
   mkdirSync(runtimeDir, { recursive: true });
 
-  if (installedRuntimeVersion(runtimeDir) !== version) {
+  // Check each pin separately so an already-current Playwright prefix still
+  // receives axe when it is requested. Both specs go in one exact-save install.
+  const needsPlaywright = installedRuntimeVersion(runtimeDir) !== version;
+  const needsAxe = withAxe && installedPackageVersion(runtimeDir, AXE_PACKAGE) !== AXE_PINNED_VERSION;
+  if (needsPlaywright || needsAxe) {
+    const specs = [`playwright@${version}`];
+    if (withAxe) specs.push(`${AXE_PACKAGE}@${AXE_PINNED_VERSION}`);
     // Windows .cmd shims need a shell on current Node; quote the only free-form argument.
     const isWindows = process.platform === 'win32';
     const installed = runInherited(
       isWindows ? 'npm.cmd' : 'npm',
       [
         'install', '--prefix', isWindows ? `"${runtimeDir}"` : runtimeDir,
-        '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', `playwright@${version}`,
+        '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', ...specs,
       ],
       { shell: isWindows },
     );
     if (!installed || installedRuntimeVersion(runtimeDir) !== version) {
       throw new Error(`Failed to install playwright@${version} into ${runtimeDir}`);
     }
+    if (withAxe && installedPackageVersion(runtimeDir, AXE_PACKAGE) !== AXE_PINNED_VERSION) {
+      throw new Error(`Failed to install ${AXE_PACKAGE}@${AXE_PINNED_VERSION} into ${runtimeDir}`);
+    }
   }
 
   // Use the owned CLI so browser revisions match the resolved package.
   const cli = join(runtimeDir, 'node_modules', 'playwright', 'cli.js');
   if (!runInherited(process.execPath, [cli, 'install', ...browsers])) {
-    throw new Error(`Playwright browser installation failed; retry: ${INSTALL_COMMAND} ${browsers.join(' ')}`);
+    const retryArgs = [...(withAxe ? [WITH_AXE_FLAG] : []), ...browsers].join(' ');
+    throw new Error(`Playwright browser installation failed; retry: ${INSTALL_COMMAND} ${retryArgs}`);
   }
-  return { runtimeDir, version, browsers };
+  const result = { runtimeDir, version, browsers };
+  if (withAxe) result.axeVersion = AXE_PINNED_VERSION;
+  return result;
 }
 
 function findExecutable(candidate) {
@@ -255,13 +276,43 @@ async function ownedChromiumExecutable(runtimeDir) {
   }
 }
 
+// Axe is optional: report whether it imports from the owned prefix, i.e.
+// beside the owned Playwright, without making it part of runtime readiness.
+async function ownedAxeStatus(runtimeDir) {
+  const installedVersion = installedPackageVersion(runtimeDir, AXE_PACKAGE);
+  let importable = false;
+  if (installedVersion) {
+    try {
+      const require = createRequire(pathToFileURL(join(runtimeDir, 'package.json')));
+      await import(pathToFileURL(realpathSync(require.resolve(AXE_PACKAGE))).href);
+      importable = true;
+    } catch {
+      importable = false;
+    }
+  }
+  return {
+    package: AXE_PACKAGE,
+    version: AXE_PINNED_VERSION,
+    installedVersion,
+    importable,
+    ready: importable && installedVersion === AXE_PINNED_VERSION,
+  };
+}
+
 // Setup idempotence: the owned prefix holds the pinned version and its Chromium.
 export async function ownedRuntimeStatus() {
   const runtimeDir = playwrightRuntimeDir();
   const version = playwrightRuntimeVersion();
   const installedVersion = installedRuntimeVersion(runtimeDir);
   const chromiumExecutable = installedVersion === version ? await ownedChromiumExecutable(runtimeDir) : null;
-  return { runtimeDir, version, installedVersion, chromiumExecutable, ready: Boolean(chromiumExecutable) };
+  const axe = await ownedAxeStatus(runtimeDir);
+  return { runtimeDir, version, installedVersion, chromiumExecutable, ready: Boolean(chromiumExecutable), axe };
+}
+
+function parseInstallArgs(args) {
+  const withAxe = args.includes(WITH_AXE_FLAG);
+  const browsers = args.filter((arg) => arg !== WITH_AXE_FLAG);
+  return { withAxe, browsers: browsers.length > 0 ? browsers : ['chromium'] };
 }
 
 function writeLine(value) {
@@ -290,7 +341,10 @@ const COMMANDS = {
     writeLine(status);
     if (!status.ready) process.exitCode = 1;
   },
-  install: async (browsers) => writeLine(installPlaywrightRuntime(browsers.length > 0 ? browsers : ['chromium'])),
+  install: async (args) => {
+    const { browsers, withAxe } = parseInstallArgs(args);
+    writeLine(installPlaywrightRuntime(browsers, { withAxe }));
+  },
 };
 
 async function main() {
