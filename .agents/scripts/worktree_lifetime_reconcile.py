@@ -50,17 +50,19 @@ def finished(launch):
                 receipt.get("reason") in ENDED, valid_timestamp(receipt.get("observed_at"))))
 
 
-def observations(record, source):
+def observations(record, source, snapshot=None):
     """Report cached completions and fresh unfinished-process observations only."""
     if source != "present" or record.get("manager") != owner.MANAGER:
         return {}
+    from worktree_process_snapshot import recorded_status
     return {"recorded_processes": [
         {"status": item["process_completion"]["reason"], "persisted": True}
-        if finished(item) else owner.recorded_process_status(item)
+        if finished(item) else (recorded_status(item, snapshot) if snapshot is not None
+                               else owner.recorded_process_status(item))
         for item in record.get("launches", [])]}
 
 
-def reconcile(record):
+def reconcile(record, snapshot=None):
     owner.require(record.get("manager") == owner.MANAGER, "not an owner-observed lifetime")
     owner.require_admission_observed(record)
     launches = record.get("launches")
@@ -71,8 +73,15 @@ def reconcile(record):
             counts["unknown"] += 1
             continue
         if not finished(launch):
-            observation = owner.recorded_process_status(launch)
+            from worktree_process_snapshot import recorded_status
+            observation = (recorded_status(launch, snapshot) if snapshot is not None
+                           else owner.recorded_process_status(launch))
             status = observation["status"]
+            if snapshot is not None and status in ENDED:
+                # The record is reloaded under the writer transaction and may
+                # contain an admission newer than the census. Recheck negative
+                # evidence before persisting completion for this exact process.
+                status = owner.recorded_process_status(launch)["status"]
             if status in ENDED:
                 launch["process_completion"] = {"schema": 1, "identity": identity(launch),
                                                 "reason": status, "observed_at": time.time()}
@@ -121,6 +130,9 @@ def reconcile_entries(observed):
     result = {"registry": observed["status"], "truncated": observed["truncated"],
               "records": 0, "finished": 0, "active": 0, "unknown": 0, "deferred": 0}
     managed = archive.managed_module()
+    from worktree_process_snapshot import capture, summary
+    snapshot = capture()
+    result["process_snapshot"] = summary(snapshot)
     for entry in observed["entries"]:
         if entry.get("source") != "present" or "recorded_processes" not in entry:
             continue
@@ -128,7 +140,7 @@ def reconcile_entries(observed):
             with archive.transaction() as connection:
                 record = managed.load(connection, entry["path"])
                 managed.verify_identity(record, Path(entry["path"]))
-                counts = reconcile(record)
+                counts = reconcile(record, snapshot)
                 managed.save(connection, record)
             result["records"] += 1
             for key in counts:

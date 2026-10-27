@@ -177,6 +177,24 @@ Do not introduce a second independent lease database. Reuse the registry's
 identity contract and keep process containment separate from SQLite queries.
 Cooperative locks cannot prove that arbitrary external shells are absent.
 
+## Process-first activity observation
+
+`worktree-lifecycle-helper.sh activity [--summary]` reads the existing lifecycle
+database and takes one Linux same-user process census after the registry read.
+It does not read dispatch-ledger, scan CWDs, inspect environments, measure disk
+usage, or count retained systemd unit objects as live workers. Known runtime
+launchers expose only their worker role and explicit worktree directory; raw
+arguments, prompts and credentials are never retained in the census or output.
+
+Positive runtime-directory or dedicated managed-cgroup matches report `active`.
+Only Pulse-enrolled generations with recorded Pulse provenance can report
+`not-observed`; generic owner observations, missing provenance, pending admission
+and unavailable evidence remain `unknown`. These states are observations, not
+permissions to seal, archive or delete. Lifecycle parent reconciliation also uses
+a batch census, then revalidates negative process evidence inside the existing
+writer transaction before recording completion. Completion history is retained;
+descendant proof and the final exclusive archive/removal checks are unchanged.
+
 ## Linux containment feasibility
 
 An isolated local probe on 2026-10-13 verified a working systemd 260.4 user
