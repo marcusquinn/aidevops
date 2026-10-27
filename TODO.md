@@ -1760,7 +1760,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18772 Permission holds: withdraw non-grantable requests, scratch-temp bash/read recovery, batch withdrawal with one confirmation #bug #interactive ref:GH#35676 assignee:marcusquinn logged:2026-10-26 started:2026-10-26 -> [todo/tasks/t18772-brief.md] pr:#35677 completed:2026-10-26
 
-- [ ] t18773 fix: linters-local Python complexity check reports no issues when lizard/pyflakes cannot run #auto-dispatch #bug tier:simple ref:GH#35726 assignee:marcusquinn logged:2026-10-26 started:2026-10-26 -> [todo/tasks/t18773-brief.md]
+- [x] t18773 fix: linters-local Python complexity check reports no issues when lizard/pyflakes cannot run #auto-dispatch #bug tier:simple ref:GH#35726 assignee:marcusquinn logged:2026-10-26 started:2026-10-26 -> [todo/tasks/t18773-brief.md] pr:#35727 completed:2026-10-27
+
+- [ ] t18774 fix: bash32 gate test leaves a deleted cwd; git shim guard crashes on deleted cwd #auto-dispatch #bug tier:simple ref:GH#35730 logged:2026-10-27 -> [todo/tasks/t18774-brief.md]
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
 
