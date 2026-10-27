@@ -56,35 +56,38 @@ function runInherited(command, args, options = {}) {
   return result.status === 0;
 }
 
+// Exact pins for the owned prefix: Playwright always, axe only when requested.
+function runtimePackagePins(version, withAxe) {
+  const pins = [{ name: 'playwright', version }];
+  if (withAxe) pins.push({ name: AXE_PACKAGE, version: AXE_PINNED_VERSION });
+  return pins;
+}
+
+// Check each pin separately so an already-current Playwright prefix still
+// receives axe when it is requested. All specs go in one exact-save install.
+function ensureRuntimePackages(runtimeDir, pins) {
+  const isCurrent = (pin) => installedPackageVersion(runtimeDir, pin.name) === pin.version;
+  if (pins.every(isCurrent)) return;
+  // Windows .cmd shims need a shell on current Node; quote the only free-form argument.
+  const isWindows = process.platform === 'win32';
+  const installed = runInherited(
+    isWindows ? 'npm.cmd' : 'npm',
+    [
+      'install', '--prefix', isWindows ? `"${runtimeDir}"` : runtimeDir,
+      '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact',
+      ...pins.map((pin) => `${pin.name}@${pin.version}`),
+    ],
+    { shell: isWindows },
+  );
+  const missing = pins.find((pin) => !installed || !isCurrent(pin));
+  if (missing) throw new Error(`Failed to install ${missing.name}@${missing.version} into ${runtimeDir}`);
+}
+
 export function installPlaywrightRuntime(browsers = ['chromium'], { withAxe = false } = {}) {
   const runtimeDir = playwrightRuntimeDir();
   const version = playwrightRuntimeVersion();
   mkdirSync(runtimeDir, { recursive: true });
-
-  // Check each pin separately so an already-current Playwright prefix still
-  // receives axe when it is requested. Both specs go in one exact-save install.
-  const needsPlaywright = installedRuntimeVersion(runtimeDir) !== version;
-  const needsAxe = withAxe && installedPackageVersion(runtimeDir, AXE_PACKAGE) !== AXE_PINNED_VERSION;
-  if (needsPlaywright || needsAxe) {
-    const specs = [`playwright@${version}`];
-    if (withAxe) specs.push(`${AXE_PACKAGE}@${AXE_PINNED_VERSION}`);
-    // Windows .cmd shims need a shell on current Node; quote the only free-form argument.
-    const isWindows = process.platform === 'win32';
-    const installed = runInherited(
-      isWindows ? 'npm.cmd' : 'npm',
-      [
-        'install', '--prefix', isWindows ? `"${runtimeDir}"` : runtimeDir,
-        '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', ...specs,
-      ],
-      { shell: isWindows },
-    );
-    if (!installed || installedRuntimeVersion(runtimeDir) !== version) {
-      throw new Error(`Failed to install playwright@${version} into ${runtimeDir}`);
-    }
-    if (withAxe && installedPackageVersion(runtimeDir, AXE_PACKAGE) !== AXE_PINNED_VERSION) {
-      throw new Error(`Failed to install ${AXE_PACKAGE}@${AXE_PINNED_VERSION} into ${runtimeDir}`);
-    }
-  }
+  ensureRuntimePackages(runtimeDir, runtimePackagePins(version, withAxe));
 
   // Use the owned CLI so browser revisions match the resolved package.
   const cli = join(runtimeDir, 'node_modules', 'playwright', 'cli.js');
