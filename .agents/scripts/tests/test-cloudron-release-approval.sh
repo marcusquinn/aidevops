@@ -10,6 +10,7 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export TEST_ROOT
 SCRIPT_DIR="$TEST_ROOT"
+cp "${SOURCE_DIR}/cloudron-release-evidence.py" "$TEST_ROOT/"
 REPOS_FILE="${TEST_ROOT}/repos.json"
 printf '%s\n' '{"initialized_repos":[{"slug":"owner/app","app_type":"cloudron-package"}]}' >"$REPOS_FILE"
 HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -40,6 +41,15 @@ gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
 	case "$command $target" in
+	'secret list')
+		[[ "$*" == 'secret list --repo owner/app --app actions --json name' ]] || return 9
+		[[ "$SCENARIO" != secret_error ]] || return 1
+		if [[ "$SCENARIO" == missing_secret ]]; then
+			printf '[{"name":"SYNC_PAT"}]\n'
+		else
+			printf '[{"name":"CLOUDRON_RELEASE_PAT"}]\n'
+		fi
+		;;
 	'api repos/owner/app')
 		[[ "$SCENARIO" != permission_error ]] || return 1
 		if [[ "$SCENARIO" == no_permission ]]; then
@@ -86,6 +96,12 @@ gh() {
 		jq -cn --arg bucket "$bucket" '[{bucket:$bucket,name:"preflight",link:""},{bucket:"skipping",name:"publish",link:""}]'
 		;;
 	'api repos/owner/app/contents/CloudronManifest.json?'*) printf '{"version":"1.2.3","upstreamVersion":"4.5.6","changelog":"file://CHANGELOG"}\n' ;;
+	'api repos/owner/app/contents/.github/workflows/cloudron-catalog-publish.yml?'*)
+		printf 'jobs:\n  catalog:\n    uses: marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml@%s\n    with:\n      aidevops_ref: %s\n' "$HEAD_SHA" "$HEAD_SHA"
+		if [[ "$SCENARIO" != missing_pass ]]; then
+			printf '    secrets:\n      CLOUDRON_RELEASE_PAT: ${{ secrets.CLOUDRON_RELEASE_PAT }}\n'
+		fi
+		;;
 	'api repos/owner/app/contents/CHANGELOG?'*) printf '[1.2.3]\n* Upgrade upstream\n\n[1.2.2]\n* Old entry\n' ;;
 	'api repos/owner/app/contents/CloudronVersions.json?'*)
 		[[ "$SCENARIO" != catalog_error ]] || return 1
@@ -185,12 +201,20 @@ run_request_error wrong_repo 'PR #7 must be a same-repository PR against main in
 run_request_error wrong_base 'PR #7 must be a same-repository PR against main in owner/app.'
 run_request_error invalid_head 'PR #7 has an invalid head SHA.'
 run_request_error closed 'PR #7 must be open before requesting approval.'
+run_request_error missing_secret 'Missing Actions secret CLOUDRON_RELEASE_PAT in owner/app.'
+run_request_error secret_error 'Unable to list Actions secret names for owner/app; no approval request or merge.'
+export SCENARIO=missing_pass
+if release_request owner/app 7; then exit 1; fi
+printf 'PASS missing caller secret forwarding refuses approval\n'
 
 run_case unsigned 0 false false false
 run_case api_error 1 false false false
 run_case bad_exit 1 false false false
 run_case stale 0 false false false
 run_case changed 0 false true false
+run_case missing_secret 1 false false false
+run_case secret_error 1 false false false
+run_case missing_pass 1 false false false
 run_case approved 0 true true true
 run_case checks_error 1 false false false
 run_case preflight_skipped 1 false false false

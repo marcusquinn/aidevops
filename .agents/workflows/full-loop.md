@@ -344,8 +344,13 @@ The default still requires tag/merge equality. The opt-in requires a direct
 catalog-only child, exactly one appended published entry, unchanged historical
 entries and source manifest settings, and verified image/catalog attestations
 from the same successful invocation of the exact workflow at the merged source.
-It supports the repository's own GHCR namespace and `refs/heads/main`, not
-arbitrary descendants, registries, reusable-workflow signers, or branch layouts.
+It supports the repository's own GHCR namespace and `refs/heads/main`. Managed
+callers additionally accept only `marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml`
+at the full immutable `uses` commit matching `with.aidevops_ref` in the exact-source
+caller. The managed template's mapping/block-scalar YAML subset is supported;
+unsupported or ambiguous caller syntax fails closed. Source, caller, signer digest
+and successful invocation must all match for both attestations. Arbitrary
+descendants, registries, reusable-workflow signers and branch layouts remain rejected.
 Missing or mismatched proof leaves receipts unchanged. Python 3 and a `gh`
 version exposing verified attestation JSON are required. This command verifies
 an existing release; it never creates or republishes artifacts.
