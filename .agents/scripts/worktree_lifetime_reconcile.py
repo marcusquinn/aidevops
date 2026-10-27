@@ -62,6 +62,18 @@ def observations(record, source, snapshot=None):
         for item in record.get("launches", [])]}
 
 
+def completion_status(launch, snapshot):
+    from worktree_process_snapshot import recorded_status
+    observation = (recorded_status(launch, snapshot) if snapshot is not None
+                   else owner.recorded_process_status(launch))
+    status = observation["status"]
+    if snapshot is not None and status in ENDED:
+        # Recheck negative evidence inside the writer transaction: admission
+        # may have changed since this process census was taken.
+        status = owner.recorded_process_status(launch)["status"]
+    return status
+
+
 def reconcile(record, snapshot=None):
     owner.require(record.get("manager") == owner.MANAGER, "not an owner-observed lifetime")
     owner.require_admission_observed(record)
@@ -73,15 +85,7 @@ def reconcile(record, snapshot=None):
             counts["unknown"] += 1
             continue
         if not finished(launch):
-            from worktree_process_snapshot import recorded_status
-            observation = (recorded_status(launch, snapshot) if snapshot is not None
-                           else owner.recorded_process_status(launch))
-            status = observation["status"]
-            if snapshot is not None and status in ENDED:
-                # The record is reloaded under the writer transaction and may
-                # contain an admission newer than the census. Recheck negative
-                # evidence before persisting completion for this exact process.
-                status = owner.recorded_process_status(launch)["status"]
+            status = completion_status(launch, snapshot)
             if status in ENDED:
                 launch["process_completion"] = {"schema": 1, "identity": identity(launch),
                                                 "reason": status, "observed_at": time.time()}

@@ -22,7 +22,7 @@ import time
 import worktree_lifetime_archive as archive
 import worktree_lifetime_launch as launch_contract
 import worktree_lifetime_reconcile as process_reconciliation
-import worktree_process_snapshot as process_snapshot
+import worktree_process_activity as process_activity
 
 
 def registry_path():
@@ -84,17 +84,7 @@ def records(limit, selected_paths=None):
                 result["entries"].append(entry)
     except (OSError, ValueError, sqlite3.Error) as error:
         result.update(status="unavailable", error=type(error).__name__)
-    if result["status"] == "available" and sampled:
-        snapshot = process_snapshot.capture()
-        result["process_snapshot"] = process_snapshot.summary(snapshot)
-        for entry, record in sampled:
-            if entry.get("source") == "present":
-                try:
-                    entry.update(process_reconciliation.observations(record, entry["source"], snapshot))
-                    entry["worker_activity"] = process_snapshot.activity(record, snapshot)
-                except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
-                    entry["worker_activity"] = {"state": "unknown", "reason": "invalid-lifecycle-evidence",
-                                                "error": type(error).__name__, "deletion_authorized": False}
+    process_activity.populate(result, sampled)
     return result
 
 
