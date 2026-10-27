@@ -113,6 +113,16 @@ class EvidenceTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(MODULE.EvidenceError):
                 self.verify()
 
+    def test_actual_managed_template(self):
+        template = Path(__file__).resolve().parents[2] / "templates/workflows/cloudron-catalog-publish-caller.yml"
+        pin = MODULE.managed_caller(template.read_text(), require_secret=True)
+        self.assertRegex(pin, r"^[a-f0-9]{40}$")
+
+    def test_approval_rejects_unmanaged_caller(self):
+        for workflow in (self.workflow, self.managed_workflow().replace(MODULE.MANAGED_WORKFLOW, "other/repo/.github/workflows/build.yml")):
+            with self.subTest(workflow=workflow), self.assertRaises(MODULE.EvidenceError):
+                MODULE.managed_caller(workflow, require_secret=True)
+
     def test_managed_caller_negatives(self):
         workflow = self.managed_workflow()
         mutations = [

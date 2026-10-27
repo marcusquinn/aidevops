@@ -355,6 +355,13 @@ Missing or mismatched proof leaves receipts unchanged. Python 3 and a `gh`
 version exposing verified attestation JSON are required. This command verifies
 an existing release; it never creates or republishes artifacts.
 
+Managed Cloudron release approval requests and pre-merge processing also require
+the repository Actions secret name `CLOUDRON_RELEASE_PAT` and an exact-head managed
+caller explicitly forwarding `${{ secrets.CLOUDRON_RELEASE_PAT }}`. Missing names,
+failed secret-name listing, unsupported callers or missing forwarding stop before
+requesting approval or removing the merge hold. Secret values are never read;
+name presence does not prove token permissions, expiry or branch-policy access.
+
 Earlier feature PRs in the same catalog release use
 `record-included-release FEATURE_PR SOURCE_PR vX.Y.Z OWNER/REPO --workflow cloudron-catalog-publish.yml --event push --generated-cloudron-catalog`.
 It re-runs the same catalog-only verification against the source PR, then requires the

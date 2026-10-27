@@ -24,14 +24,17 @@ UNRESOLVED_FILE_REF_KEYS = frozenset({"changelog", "icon"})
 MANAGED_WORKFLOW = "marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml"
 
 
-def managed_caller(text, require_secret=False):
-    """Read the managed template's mapping/block-scalar subset, never guess YAML.
+def caller_scalar(value):
+    """Accept only plain or simply quoted values from the managed template."""
+    require(not value.startswith(("&", "*", "!", "{", "[")), "unsupported managed caller value")
+    if value.startswith(("'", '"')):
+        require(len(value) >= 2 and value[-1:] == value[:1], "invalid managed caller quoting")
+        return value[1:-1]
+    return value
 
-    Unsupported syntax (aliases, merges, flow mappings, sequences) fails closed
-    for managed callers. Standalone workflows keep their existing signer policy.
-    """
-    if MANAGED_WORKFLOW not in text:
-        return None
+
+def caller_jobs(text):
+    """Read the template's mapping/block-scalar subset, never guess YAML."""
     jobs = re.findall(r"(?m)^jobs:\s*\n((?:[ \t]+[^\n]*\n|\s*\n|#[^\n]*\n)*)", text + "\n")
     require(len(jobs) == 1, "managed caller requires one canonical jobs mapping")
     root = {}
@@ -57,14 +60,22 @@ def managed_caller(text, require_secret=False):
             parent[key] = {}
             stack.append((indent, parent[key]))
         else:
-            require(not value.startswith(("&", "*", "!", "{", "[")), "unsupported managed caller value")
-            if value.startswith(("'", '"')):
-                require(value[-1:] == value[:1], "invalid managed caller quoting")
-                value = value[1:-1]
-            parent[key] = value
+            parent[key] = caller_scalar(value)
             if value in ("|", "|-", "|+", ">", ">-", ">+"):
                 block_indent = indent
-    callers = [job for job in root.values() if isinstance(job, dict)
+    return root
+
+
+def managed_caller(text, require_secret=False):
+    """Bound the reusable signer to an unambiguous exact-source managed caller.
+
+    Unsupported YAML fails closed. Standalone receipt verification keeps its
+    existing signer policy; approval requests require the managed caller.
+    """
+    if MANAGED_WORKFLOW not in text:
+        require(not require_secret, "release approval requires the managed catalog caller template")
+        return None
+    callers = [job for job in caller_jobs(text).values() if isinstance(job, dict)
                and isinstance(job.get("uses"), str) and job["uses"].startswith(MANAGED_WORKFLOW + "@")]
     require(len(callers) == 1, "expected exactly one managed catalog caller")
     caller = callers[0]
