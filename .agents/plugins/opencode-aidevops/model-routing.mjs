@@ -8,6 +8,9 @@
 import { existsSync, readFileSync } from "fs";
 import { floorReasoning, reasoningFloor, normalizeInteractiveDefault, normalizeSpecialistAdvisor } from "./model-routing-variant.mjs";
 import { activeLocalOnlyPolicy, isLocalProvider } from "./local-only-policy.mjs";
+import { providerHasUsableCredentials } from "./provider-credentials.mjs";
+
+export { providerHasUsableCredentials };
 
 export const DEFAULT_ESCALATION_ORDER = ["simple", "standard", "thinking"];
 
@@ -110,26 +113,6 @@ export function routingModelIdentity(model) {
   };
 }
 
-// OpenCode lists every provider named in config as connected. The config hook
-// always adds OpenAI model metadata, so `openai` appears connected with
-// `source: "config"` even when no credential exists, and the child then fails
-// with "OpenAI API key is missing" (GH#35762). Env, auth.json and OAuth loaders
-// set `key` or `options.apiKey`; custom endpoints set `baseURL`, `headers` or
-// `fetch`. Providers without `source` (older servers) keep prior behaviour.
-const CREDENTIAL_OPTION_KEYS = ["apiKey", "baseURL", "headers", "fetch"];
-
-export function providerHasUsableCredentials(provider) {
-  if (provider?.source !== "config") return true;
-  if (typeof provider.key === "string" && provider.key) return true;
-  const options = provider.options && typeof provider.options === "object" ? provider.options : {};
-  return CREDENTIAL_OPTION_KEYS.some((key) => {
-    const value = options[key];
-    if (typeof value === "string") return Boolean(value);
-    if (value && typeof value === "object") return Object.keys(value).length > 0;
-    return Boolean(value);
-  });
-}
-
 // A local-only bound session (GH#34125) never routes to a non-local provider;
 // no local candidate yields "", which callers treat as no route (child
 // routing throws, escalation and browser delegation are skipped). The
@@ -146,8 +129,8 @@ export function selectConnectedRoutingCandidate(routing, tier, providerState, po
     const { providerID, modelID } = routingModelIdentity(candidate);
     if (policy?.bound && !isLocalProvider(policy, providerID)) continue;
     const provider = providers.get(providerID);
-    if (!provider || !connected.has(providerID)) continue;
-    if (!providerHasUsableCredentials(provider)) continue;
+    // Connected is not authenticated: skip credential-less config providers (GH#35762).
+    if (!provider || !connected.has(providerID) || !providerHasUsableCredentials(provider)) continue;
     const models = provider.models && typeof provider.models === "object" ? provider.models : {};
     const registered = Object.entries(models).some(
       ([key, value]) => key === modelID || value?.id === modelID,
