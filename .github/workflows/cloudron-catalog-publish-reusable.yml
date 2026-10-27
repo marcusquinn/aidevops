@@ -347,6 +347,13 @@ jobs:
           set -euo pipefail
           tag="v$VERSION"
           git merge-base --is-ancestor "$tag^{commit}" origin/main
+          # A published, non-draft release needs no repair. Its signer may predate this
+          # caller's current aidevops_ref (or the managed-caller migration), so the
+          # signer-pinned checks below apply only when a release must be created.
+          if [ "$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null || echo missing)" = false ]; then
+            echo "Release $tag already published; no repair needed."
+            exit 0
+          fi
           # New tags retain the attested source across a docs-only rebase.
           # Older tags used their direct parent as the build source.
           test "$(git rev-list --parents -n 1 "$tag" | wc -w)" -eq 2
