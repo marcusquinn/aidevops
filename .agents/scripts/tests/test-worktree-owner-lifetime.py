@@ -707,19 +707,18 @@ class ProcessSnapshotTests(unittest.TestCase):
         import worktree_process_snapshot as census
         snapshot = self.snapshot()
         snapshot["processes"].clear()
-        for key, value in (("boot_id", "invalid"), ("invocation", "invalid"),
-                           ("unit", []), ("cgroup", "relative/aidevops-worker-one.service"),
-                           ("cgroup", "/user/./aidevops-worker-one.service"),
-                           ("cgroup", "//user/aidevops-worker-one.service")):
+        cases = (("launch", "boot_id", "invalid"), ("launch", "invocation", "invalid"),
+                 ("launch", "unit", []), ("launch", "cgroup", "relative/aidevops-worker-one.service"),
+                 ("launch", "cgroup", "/user/./aidevops-worker-one.service"),
+                 ("launch", "cgroup", "//user/aidevops-worker-one.service"),
+                 ("record", "identity", []), ("record", "identity", False),
+                 ("record", "identity", 0), ("record", "identity", ""), ("record", "identity", None))
+        for scope, key, value in cases:
             record = self.managed()
-            record["launches"][0][key] = value
-            with self.subTest(key=key):
+            targets = {"launch": record["launches"][0], "record": record}
+            targets[scope][key] = value
+            with self.subTest(scope=scope, key=key, value=value):
                 self.assertEqual(census.activity(record, snapshot)["state"], "unknown")
-        for value in ([], False, 0, "", None):
-            record = self.managed()
-            record["identity"] = value
-            with self.subTest(identity=value):
-                self.assertEqual(census.activity(record, snapshot)["reason"], "invalid-worktree-identity")
 
     def test_batch_negative_is_revalidated_before_completion_is_persisted(self):
         import worktree_lifetime_reconcile as reconcile
