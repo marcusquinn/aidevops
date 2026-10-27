@@ -42,6 +42,8 @@ class EvidenceTests(unittest.TestCase):
         self.attest_mutation = lambda result, image: None
         self.extra_runs = []
         self.source_files = {}
+        self.workflow = "name: Standalone\njobs:\n  build:\n    runs-on: ubuntu-latest\n"
+        self.pin = None
 
     def api_content(self, path, value):
         data = value.encode() if isinstance(value, str) else json.dumps(value).encode()
@@ -58,14 +60,17 @@ class EvidenceTests(unittest.TestCase):
                 "contents/CloudronVersions.json?ref=" + self.commit: self.api_content(MODULE.CATALOG, self.after),
                 "contents/CloudronManifest.json?ref=" + self.source: self.api_content("CloudronManifest.json", self.manifest),
                 "contents/CHANGELOG?ref=" + self.source: self.api_content("CHANGELOG", "[2.0.12]\n* Fix startup.\n\n[2.0.11]\n* Earlier.\n"),
+                "contents/.github/workflows/publish.yml?ref=" + self.source: self.api_content(".github/workflows/publish.yml", self.workflow),
                 "actions/workflows/publish.yml/runs?event=push&status=success&per_page=100": {"workflow_runs": [self.run, *self.extra_runs]},
             }
             mapping.update({"contents/" + path + "?ref=" + self.source: self.api_content(path, content)
                             for path, content in self.source_files.items()})
             return copy.deepcopy(mapping[endpoint])
         self.assertEqual(args[:2], ("attestation", "verify"))
-        self.assertEqual(args[3:], ("--repo", self.repo, "--signer-workflow", self.repo + "/.github/workflows/publish.yml",
-                                    "--source-ref", "refs/heads/main", "--format", "json"))
+        signer_workflow = MODULE.MANAGED_WORKFLOW if self.pin else self.repo + "/.github/workflows/publish.yml"
+        self.assertEqual(args[3:], ("--repo", self.repo, "--signer-workflow", signer_workflow,
+                                    "--source-ref", "refs/heads/main", "--source-digest", self.source,
+                                    "--signer-digest", self.pin or self.source, "--format", "json"))
         image = args[2].startswith("oci://")
         name = "ghcr.io/" + self.repo if image else MODULE.CATALOG
         digest = "3" * 64 if image else hashlib.sha256(Path(args[2]).read_bytes()).hexdigest()
@@ -73,8 +78,9 @@ class EvidenceTests(unittest.TestCase):
         cert = dict(issuer="https://token.actions.githubusercontent.com",
                     sourceRepositoryURI=self.proof.repository_url, sourceRepositoryDigest=self.source,
                     sourceRepositoryRef=MODULE.SOURCE_REF, buildConfigURI=self.proof.signer,
-                    buildConfigDigest=self.source, buildSignerURI=self.proof.signer,
-                    buildSignerDigest=self.source, buildTrigger="push", runInvocationURI=invocation)
+                     buildConfigDigest=self.source,
+                     buildSignerURI="https://github.com/" + signer_workflow + "@" + (self.pin or MODULE.SOURCE_REF),
+                     buildSignerDigest=self.pin or self.source, buildTrigger="push", runInvocationURI=invocation)
         verified = {"signature": {"certificate": cert}, "statement": {
             "predicateType": "https://slsa.dev/provenance/v1", "subject": [{"name": name, "digest": {"sha256": digest}}],
             "predicate": {"runDetails": {"metadata": {"invocationId": invocation}}}}}
@@ -89,6 +95,58 @@ class EvidenceTests(unittest.TestCase):
     def test_valid_catalog_and_replay(self):
         self.assertTrue(self.verify())
         self.assertTrue(self.verify())
+
+    def managed_workflow(self):
+        self.pin = "a" * 40
+        return ("jobs:\n  catalog:\n    uses: " + MODULE.MANAGED_WORKFLOW + "@" + self.pin
+                + "\n    with:\n      aidevops_ref: " + self.pin
+                + "\n      package_checks: |\n        echo checks\n"
+                + "    secrets:\n      CLOUDRON_RELEASE_PAT: ${{ secrets.CLOUDRON_RELEASE_PAT }}\n")
+
+    def test_managed_signer_and_secret_forwarding(self):
+        self.workflow = self.managed_workflow()
+        self.assertEqual(MODULE.managed_caller(self.workflow, require_secret=True), self.pin)
+        self.assertTrue(self.verify())
+        for field in ("buildSignerURI", "buildSignerDigest", "buildConfigURI", "buildConfigDigest",
+                      "sourceRepositoryURI", "sourceRepositoryDigest", "sourceRepositoryRef", "runInvocationURI"):
+            self.attest_mutation = lambda result, image: result["signature"]["certificate"].update({field: "forged"})
+            with self.subTest(field=field), self.assertRaises(MODULE.EvidenceError):
+                self.verify()
+
+    def test_actual_managed_template(self):
+        template = Path(__file__).resolve().parents[2] / "templates/workflows/cloudron-catalog-publish-caller.yml"
+        pin = MODULE.managed_caller(template.read_text(), require_secret=True)
+        self.assertRegex(pin, r"^[a-f0-9]{40}$")
+
+    def test_approval_rejects_unmanaged_caller(self):
+        for workflow in (self.workflow, self.managed_workflow().replace(MODULE.MANAGED_WORKFLOW, "other/repo/.github/workflows/build.yml")):
+            with self.subTest(workflow=workflow), self.assertRaises(MODULE.EvidenceError):
+                MODULE.managed_caller(workflow, require_secret=True)
+
+    def test_managed_caller_negatives(self):
+        workflow = self.managed_workflow()
+        mutations = [
+            workflow.replace("aidevops_ref: " + self.pin, "aidevops_ref: " + "b" * 40),
+            workflow.replace(self.pin, "main"),
+            workflow.replace("      aidevops_ref:", "      wrong_ref:"),
+            workflow.replace("    with:\n", "    with:\n      aidevops_ref: bad\n"),
+            workflow.replace("    secrets:\n", "    secrets: inherit\n    unused:\n"),
+            workflow.replace("${{ secrets.CLOUDRON_RELEASE_PAT }}", "${{ secrets.SYNC_PAT }}"),
+            workflow.replace("    secrets:\n", "    secrets: &alias\n    unused:\n"),
+            workflow.replace("  catalog:", "  catalog: &alias"),
+            workflow.replace("jobs:", "jobs: {}\nunused:"),
+        ]
+        for changed in mutations:
+            with self.subTest(workflow=changed), self.assertRaises(MODULE.EvidenceError):
+                MODULE.managed_caller(changed, require_secret=True)
+
+    def test_arbitrary_reusable_signer_rejected(self):
+        self.workflow = self.managed_workflow()
+        for signer in ("https://github.com/other/repo/.github/workflows/build.yml@" + self.pin,
+                       "https://github.com/" + MODULE.MANAGED_WORKFLOW + "@refs/heads/main"):
+            self.attest_mutation = lambda result, image: result["signature"]["certificate"].update(buildSignerURI=signer)
+            with self.subTest(signer=signer), self.assertRaises(MODULE.EvidenceError):
+                self.verify()
 
     def test_valid_tagged_image_uses_canonical_attestation_subject(self):
         self.image = "ghcr.io/" + self.repo + ":2.0.12@sha256:" + "3" * 64

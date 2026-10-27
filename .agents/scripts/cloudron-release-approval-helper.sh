@@ -72,6 +72,16 @@ release_verify() {
 	return $?
 }
 
+release_publication_preflight() {
+	local repo="$1" head="$2" secrets="" caller=""
+	# Names only: never retrieve or print credential values.
+	secrets=$(gh secret list --repo "$repo" --app actions --json name) || release_error "Unable to verify CLOUDRON_RELEASE_PAT in ${repo}; no approval request or merge." || return 1
+	jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null || release_error "${repo} is missing CLOUDRON_RELEASE_PAT. Configure a fine-grained PAT restricted to this package repository with Contents write access (cloudron-app-publishing-skill.md) before requesting approval or merging." || return 1
+	caller=$(release_contents "$repo" .github/workflows/cloudron-catalog-publish.yml "$head") || release_error 'Unable to read the exact-head catalog workflow; no approval request or merge.' || return 1
+	printf '%s\n' "$caller" | python3 "${SCRIPT_DIR}/cloudron-release-evidence.py" --check-caller || return 1
+	return 0
+}
+
 release_request() {
 	local repo="$1" pr="$2"
 	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" url="" older="" rc=0
@@ -79,12 +89,10 @@ release_request() {
 	local verdict=""
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || release_error 'PR number must be a positive integer.' || return 1
 	release_authority "$repo" || return 1
-	local secrets=""
-	secrets=$(gh secret list --repo "$repo" --json name) || release_error "Unable to verify CLOUDRON_RELEASE_PAT in ${repo}." || return 1
-	jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null || release_error "${repo} is missing CLOUDRON_RELEASE_PAT. Configure a fine-grained PAT restricted to this package repository with Contents write access (cloudron-app-publishing-skill.md) before requesting release approval." || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
 	[[ "$(jq -r '.state' <<<"$snapshot")" == open ]] || release_error "PR #${pr} must be open before requesting approval." || return 1
 	sha=$(jq -r '.head.sha' <<<"$snapshot")
+	release_publication_preflight "$repo" "$sha" || return 1
 	checks=$(release_checks "$repo" "$pr") || release_error 'PR checks must all pass before requesting approval.' || return 1
 	manifest=$(release_contents "$repo" CloudronManifest.json "$sha") || return 1
 	version=$(jq -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<<"$manifest") || return 1
@@ -205,6 +213,9 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 			fi
 		fi
 		return 0
+	fi
+	if [[ "$(jq -r '.state' <<<"$snapshot")" == open ]]; then
+		release_publication_preflight "$repo" "$head" || return 1
 	fi
 	[[ "$apply" == true ]] || {
 		printf 'Approved release %s v%s (dry run)\n' "$repo" "$version"

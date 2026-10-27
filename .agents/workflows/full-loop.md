@@ -344,11 +344,23 @@ The default still requires tag/merge equality. The opt-in requires a direct
 catalog-only child, exactly one appended published entry, unchanged historical
 entries and source manifest settings, and verified image/catalog attestations
 from the same successful invocation of the exact workflow at the merged source.
-It supports the repository's own GHCR namespace and `refs/heads/main`, not
-arbitrary descendants, registries, reusable-workflow signers, or branch layouts.
+It supports the repository's own GHCR namespace and `refs/heads/main`. Managed
+callers additionally accept only `marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml`
+at the full immutable `uses` commit matching `with.aidevops_ref` in the exact-source
+caller. The managed template's mapping/block-scalar YAML subset is supported;
+unsupported or ambiguous caller syntax fails closed. Source, caller, signer digest
+and successful invocation must all match for both attestations. Arbitrary
+descendants, registries, reusable-workflow signers and branch layouts remain rejected.
 Missing or mismatched proof leaves receipts unchanged. Python 3 and a `gh`
 version exposing verified attestation JSON are required. This command verifies
 an existing release; it never creates or republishes artifacts.
+
+Managed Cloudron release approval requests and pre-merge processing also require
+the repository Actions secret name `CLOUDRON_RELEASE_PAT` and an exact-head managed
+caller explicitly forwarding `${{ secrets.CLOUDRON_RELEASE_PAT }}`. Missing names,
+failed secret-name listing, unsupported callers or missing forwarding stop before
+requesting approval or removing the merge hold. Secret values are never read;
+name presence does not prove token permissions, expiry or branch-policy access.
 
 Earlier feature PRs in the same catalog release use
 `record-included-release FEATURE_PR SOURCE_PR vX.Y.Z OWNER/REPO --workflow cloudron-catalog-publish.yml --event push --generated-cloudron-catalog`.

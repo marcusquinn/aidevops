@@ -10,6 +10,7 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export TEST_ROOT
 SCRIPT_DIR="$TEST_ROOT"
+cp "${SOURCE_DIR}/cloudron-release-evidence.py" "$TEST_ROOT/"
 REPOS_FILE="${TEST_ROOT}/repos.json"
 printf '%s\n' '{"initialized_repos":[{"slug":"owner/app","app_type":"cloudron-package"}]}' >"$REPOS_FILE"
 HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -41,9 +42,9 @@ gh() {
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
 	case "$command $target" in
 	'secret list')
-		[[ "$*" == 'secret list --repo owner/app --json name' ]] || return 9
+		[[ "$*" == 'secret list --repo owner/app --app actions --json name' ]] || return 9
 		[[ "$SCENARIO" != secret_error ]] || return 1
-		if [[ "$SCENARIO" == secret_missing ]]; then
+		if [[ "$SCENARIO" == missing_secret ]]; then
 			printf '[{"name":"OTHER_SECRET"}]\n'
 		else
 			printf '[{"name":"CLOUDRON_RELEASE_PAT"}]\n'
@@ -95,6 +96,12 @@ gh() {
 		jq -cn --arg bucket "$bucket" '[{bucket:$bucket,name:"preflight",link:""},{bucket:"skipping",name:"publish",link:""}]'
 		;;
 	'api repos/owner/app/contents/CloudronManifest.json?'*) printf '{"version":"1.2.3","upstreamVersion":"4.5.6","changelog":"file://CHANGELOG"}\n' ;;
+	'api repos/owner/app/contents/.github/workflows/cloudron-catalog-publish.yml?'*)
+		printf 'jobs:\n  catalog:\n    uses: marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml@%s\n    with:\n      aidevops_ref: %s\n' "$HEAD_SHA" "$HEAD_SHA"
+		if [[ "$SCENARIO" != missing_pass ]]; then
+			printf "    secrets:\n      CLOUDRON_RELEASE_PAT: \${{ secrets.CLOUDRON_RELEASE_PAT }}\n"
+		fi
+		;;
 	'api repos/owner/app/contents/CHANGELOG?'*) printf '[1.2.3]\n* Upgrade upstream\n\n[1.2.2]\n* Old entry\n' ;;
 	'api repos/owner/app/contents/CloudronVersions.json?'*)
 		[[ "$SCENARIO" != catalog_error ]] || return 1
@@ -191,8 +198,8 @@ run_request_error wrong_app_type 'Repository owner/app is not registered as a ma
 run_request_error not_maintained 'Repository owner/app is not registered as a maintained cloudron-package.' '{"slug":"owner/app","app_type":"cloudron-package","maintenance":false}'
 run_request_error permission_error 'Unable to verify admin/maintain permission for owner/app.'
 run_request_error no_permission 'Admin or maintain permission is required for owner/app.'
-run_request_error secret_error 'Unable to verify CLOUDRON_RELEASE_PAT in owner/app.'
-run_request_error secret_missing 'owner/app is missing CLOUDRON_RELEASE_PAT.'
+run_request_error secret_error 'Unable to verify CLOUDRON_RELEASE_PAT in owner/app; no approval request or merge.'
+run_request_error missing_secret 'owner/app is missing CLOUDRON_RELEASE_PAT.'
 run_request_error pr_error 'Unable to read PR #7 in owner/app.'
 run_request_error draft 'PR #7 is a draft or its draft status is unavailable. Run: gh pr ready 7 --repo owner/app; then wait for re-triggered checks to pass.'
 run_request_error fork 'PR #7 must be a same-repository PR against main in owner/app.'
@@ -200,12 +207,18 @@ run_request_error wrong_repo 'PR #7 must be a same-repository PR against main in
 run_request_error wrong_base 'PR #7 must be a same-repository PR against main in owner/app.'
 run_request_error invalid_head 'PR #7 has an invalid head SHA.'
 run_request_error closed 'PR #7 must be open before requesting approval.'
+export SCENARIO=missing_pass
+if release_request owner/app 7; then exit 1; fi
+printf 'PASS missing caller secret forwarding refuses approval\n'
 
 run_case unsigned 0 false false false
 run_case api_error 1 false false false
 run_case bad_exit 1 false false false
 run_case stale 0 false false false
 run_case changed 0 false true false
+run_case missing_secret 1 false false false
+run_case secret_error 1 false false false
+run_case missing_pass 1 false false false
 run_case approved 0 true true true
 run_case checks_error 1 false false false
 run_case preflight_skipped 1 false false false

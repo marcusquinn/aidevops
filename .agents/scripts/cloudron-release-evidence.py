@@ -21,6 +21,79 @@ SOURCE_REF = "refs/heads/main"
 # postInstallMessage) but keeps the binary icon reference unchanged; listings
 # use iconUrl. These keys must therefore match the source manifest verbatim.
 UNRESOLVED_FILE_REF_KEYS = frozenset({"changelog", "icon"})
+MANAGED_WORKFLOW = "marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml"
+
+
+def caller_scalar(value):
+    """Accept only plain or simply quoted values from the managed template."""
+    require(not value.startswith(("&", "*", "!", "{", "[")), "unsupported managed caller value")
+    if value.startswith(("'", '"')):
+        require(len(value) >= 2 and value[-1:] == value[:1], "invalid managed caller quoting")
+        return value[1:-1]
+    return value
+
+
+def caller_mapping_lines(text):
+    """Yield mapping entries, excluding comments and block-scalar contents."""
+    block_indent = None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if block_indent is not None and indent > block_indent:
+            continue
+        block_indent = None
+        match = re.fullmatch(r" +([A-Za-z_][A-Za-z0-9_-]*):(?: +(.*))?", line)
+        require(match is not None, "unsupported managed caller syntax; use the managed template")
+        key, value = match.groups()
+        value = (value or "").split(" #", 1)[0].strip()
+        if value in ("|", "|-", "|+", ">", ">-", ">+"):
+            block_indent = indent
+        yield indent, key, value
+
+
+def caller_jobs(text):
+    """Read the template's mapping/block-scalar subset, never guess YAML."""
+    jobs = re.findall(r"(?m)^jobs:\s*\n((?:[ \t]+[^\n]*\n|\s*\n|#[^\n]*\n)*)", text + "\n")
+    require(len(jobs) == 1, "managed caller requires one canonical jobs mapping")
+    root = {}
+    stack = [(0, root)]
+    for indent, key, value in caller_mapping_lines(jobs[0]):
+        while stack[-1][0] >= indent:
+            stack.pop()
+        require(indent == stack[-1][0] + 2, "invalid managed caller indentation")
+        parent = stack[-1][1]
+        require(key not in parent, "duplicate managed caller key")
+        if not value:
+            parent[key] = {}
+            stack.append((indent, parent[key]))
+        else:
+            parent[key] = caller_scalar(value)
+    return root
+
+
+def managed_caller(text, require_secret=False):
+    """Bound the reusable signer to an unambiguous exact-source managed caller.
+
+    Unsupported YAML fails closed. Standalone receipt verification keeps its
+    existing signer policy; approval requests require the managed caller.
+    """
+    if MANAGED_WORKFLOW not in text:
+        require(not require_secret, "release approval requires the managed catalog caller template")
+        return None
+    callers = [job for job in caller_jobs(text).values() if isinstance(job, dict)
+               and isinstance(job.get("uses"), str) and job["uses"].startswith(MANAGED_WORKFLOW + "@")]
+    require(len(callers) == 1, "expected exactly one managed catalog caller")
+    caller = callers[0]
+    pin = caller["uses"].removeprefix(MANAGED_WORKFLOW + "@")
+    require(re.fullmatch(r"[0-9a-f]{40}", pin) is not None, "managed caller must pin a full commit")
+    require(isinstance(caller.get("with"), dict) and caller["with"].get("aidevops_ref") == pin,
+            "managed caller aidevops_ref must equal its uses pin")
+    if require_secret:
+        require(isinstance(caller.get("secrets"), dict)
+                and caller["secrets"].get("CLOUDRON_RELEASE_PAT") == "${{ secrets.CLOUDRON_RELEASE_PAT }}",
+                "managed caller must explicitly pass CLOUDRON_RELEASE_PAT from secrets.CLOUDRON_RELEASE_PAT")
+    return pin
 
 
 class EvidenceError(Exception):
@@ -164,9 +237,13 @@ class CatalogEvidence:
     def verified_invocations(self, artifact, name, digest, invocations):
         # aidevops:trust-boundary — consume only gh's cryptographically verified
         # results, never the unverified bundle alongside them or a plain checksum.
+        signer_workflow = MANAGED_WORKFLOW if self.managed_pin else self.repo + "/" + self.workflow_path
+        signer_digest = self.managed_pin or self.source
+        signer_uri = "https://github.com/" + signer_workflow + "@" + (self.managed_pin or SOURCE_REF)
         results = gh("attestation", "verify", artifact, "--repo", self.repo,
-                     "--signer-workflow", self.repo + "/" + self.workflow_path,
-                     "--source-ref", SOURCE_REF, "--format", "json")
+                     "--signer-workflow", signer_workflow,
+                     "--source-ref", SOURCE_REF, "--source-digest", self.source,
+                     "--signer-digest", signer_digest, "--format", "json")
         accepted = set()
         for result in results:
             verified = result["verificationResult"]
@@ -180,8 +257,8 @@ class CatalogEvidence:
                 "sourceRepositoryRef": SOURCE_REF,
                 "buildConfigURI": self.signer,
                 "buildConfigDigest": self.source,
-                "buildSignerURI": self.signer,
-                "buildSignerDigest": self.source,
+                "buildSignerURI": signer_uri,
+                "buildSignerDigest": signer_digest,
                 "buildTrigger": self.event,
             }
             bindings = (
@@ -197,6 +274,7 @@ class CatalogEvidence:
         return accepted
 
     def verify(self):
+        self.managed_pin = managed_caller(self.content(self.workflow_path, self.source).decode("utf-8"))
         self.generated_commit()
         release = self.api("releases/tags/" + self.tag)
         require(release["tag_name"] == self.tag and release["draft"] is False
@@ -214,6 +292,13 @@ class CatalogEvidence:
 
 
 def main():
+    if sys.argv[1:] == ["--check-caller"]:
+        try:
+            managed_caller(sys.stdin.read(), require_secret=True)
+        except EvidenceError as error:
+            print("Cloudron caller preflight failed: " + str(error), file=sys.stderr)
+            return 1
+        return 0
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ("repo", "tag", "source", "commit", "workflow", "event"):
         parser.add_argument("--" + option, required=True)
