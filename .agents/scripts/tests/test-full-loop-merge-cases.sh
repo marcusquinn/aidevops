@@ -1021,6 +1021,9 @@ test_shared_merge_read_admission_recovery() {
 			}
 			if [[ "$scenario" == release ]]; then
 				export AIDEVOPS_RELEASE_LANE_COORDINATED_REPO=testorg/testrepo
+				# This case exercises the open-PR release-lane read, not the
+				# preliminary already-merged provenance probe (GH#34839).
+				_merge_handle_already_merged_provenance() { return 2; }
 				_merge_pre_merge_gate_with_admission_retry() { return 0; }
 				release_lane_merge_guard() { [[ "$3" == main && "$4" == base-sha ]] || exit 2; return 1; }
 				out=$(cmd_merge 42 testorg/testrepo 2>&1) || rc=$?
