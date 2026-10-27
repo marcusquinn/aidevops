@@ -19,6 +19,10 @@ from canonical_git_management import (
 
 
 def git_output(real_git_path: str, cwd: str, *args: str) -> str:
+    if not os.path.isdir(cwd):
+        # Deleted/missing cwd: probe from "/" so absolute `git -C <path>` still
+        # resolves; without -C, git finds no repository there (not canonical).
+        cwd = "/"
     try:
         result = subprocess.run(
             [real_git_path, *args],
