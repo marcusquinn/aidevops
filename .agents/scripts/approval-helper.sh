@@ -246,10 +246,31 @@ _approval_classify_batch_failure() {
 	return 0
 }
 
+# Render a reset epoch as local wall-clock time plus the remaining wait, so the
+# operator knows when to retry without converting the epoch by hand.
+# GNU `date -d @N` first: BSD `date -r N` means "reference file" on GNU.
+_approval_format_reset_time() {
+	local reset="$1"
+	local local_time=""
+	local now=""
+	[[ "$reset" =~ ^[0-9]+$ ]] || return 1
+	local_time=$(date -d "@${reset}" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null) ||
+		local_time=$(date -r "$reset" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null) || return 1
+	now=$(date +%s 2>/dev/null) || now=""
+	if [[ "$now" =~ ^[0-9]+$ ]] && ((reset > now)); then
+		printf '%s local time, in about %s min' "$local_time" "$(((reset - now + 59) / 60))"
+	else
+		printf '%s local time, already passed' "$local_time"
+	fi
+	return 0
+}
+
 _approval_report_core_rate_limit() {
 	local reset="$1"
+	local when=""
+	when=$(_approval_format_reset_time "$reset") || when="local time unavailable"
 	_print_error "GitHub core API rate limit is exhausted for the invoking user's credential (reset epoch: ${reset})"
-	_print_info "Wait until reset epoch ${reset} before retrying. Re-authentication or forwarding GH_TOKEN will not help before reset."
+	_print_info "Retry after ${when} (reset epoch ${reset}). Re-authentication or forwarding GH_TOKEN will not help before reset."
 	return 0
 }
 
