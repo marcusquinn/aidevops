@@ -18,6 +18,7 @@ from contextlib import closing
 
 import worktree_lifetime_owner as owner
 import worktree_maintenance_boundary as boundary
+import worktree_maintenance_worker as worker
 
 SCHEMA = "aidevops.worktree-maintenance/v2"
 SCRIPTS = Path(__file__).resolve().parent
@@ -40,6 +41,10 @@ def command(arguments):
     # Internal argv builders only; data stays in separate arguments, never shell text.
     result = subprocess.run(argv, capture_output=True, text=True, timeout=30,  # nosec B603
                             env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
+    if result.returncode and arguments[:2] == ["bash", str(SCRIPTS / "worktree-maintenance-policy.sh")]:
+        reason = result.stdout.strip()
+        if re.fullmatch(r"(?:protected-[a-z-]+|preserve-forensics|archive-policy-unverified|open-pr)", reason):
+            raise ValueError("maintenance:retention-policy:" + reason)
     require(result.returncode == 0, "maintenance:command-failed:" + arguments[0])
     return result.stdout.strip()
 
@@ -62,12 +67,7 @@ def database():
     return path.resolve().as_uri() + "?mode=ro"
 
 
-def legacy_observation(item):
-    if not isinstance(item, dict):
-        return False
-    if (item.get("kind"), item.get("evidence")) != (owner.KIND, "observed"):
-        return False
-    return not any(item.get(field) for field in ("completion_evidence", "unit", "invocation", "quiescence"))
+legacy_observation = worker.legacy_observation
 
 
 def legacy(path):
@@ -109,12 +109,12 @@ def repository(path):
     return {"path": str(path), "slug": slug, "default": default, "tip": tip}
 
 
-def preservation_checks(path):
+def preservation_checks(path, discard_ignored=False):
     for marker in (".aidevops-preserve-forensics", ".preserve-forensics", ".aidevops-security-incident"):
         require(not os.path.lexists(path / marker), "maintenance:preserve-forensics")
     # The current producer captures Git/untracked data, not ignored content.
-    # Do not silently discard ignored secrets or recovery data in this new path.
-    require(not git(path, "ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
+    # Only an explicit worker-plan decision can discard ignored content.
+    require(discard_ignored or not git(path, "ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
             "maintenance:ignored-content-requires-preservation")
 
 
@@ -144,6 +144,49 @@ def candidate(path, repo):
         raise ValueError("maintenance:retention-policy-not-clear") from error
     return {"path": str(path), "head": git(path, "rev-parse", "HEAD"), "branch": branch,
             "record_digest": digest(record), "identity": record["identity"]}
+
+
+def worker_candidate(path, repo, selection):
+    require(path.is_absolute() and str(path) == os.path.realpath(path) and not path.is_symlink(),
+            "maintenance:noncanonical-path")
+    boundary.observe()
+    witness = worker.evidence(path, selection)
+    snapshot = worker.require_unused(path)
+    binding = worker.legacy_binding(database(), path, snapshot)
+    identity = binding["identity"]
+    preservation_checks(path, selection["discard_ignored"])
+    require(identity["common"] == git(repo["path"], "rev-parse", "--path-format=absolute", "--git-common-dir"),
+            "maintenance:repository-mismatch")
+    require(not git(path, "status", "--porcelain", "--untracked-files=all"), "maintenance:dirty-worktree")
+    ahead = int(git(path, "rev-list", "--count", "HEAD", "--not", repo["tip"]))
+    require(ahead == 0 or selection["archive_local_commits"], "maintenance:local-commits-require-archive-policy")
+    branch = git(path, "symbolic-ref", "--short", "HEAD")
+    policy_args = ["bash", str(SCRIPTS / "worktree-maintenance-policy.sh"), str(path), branch, repo["slug"]]
+    if selection["archive_blocked"]:
+        policy_args.append("--archive-blocked")
+    command(policy_args)
+    return {"path": str(path), "head": git(path, "rev-parse", "HEAD"), "branch": branch,
+            "identity": identity, "lifecycle_record_sha256": binding["lifecycle_record_sha256"],
+            "local_commits": ahead, "worker_evidence": witness}
+
+
+def worker_plan(repo_path, path, selection):
+    repo = repository(repo_path.resolve(strict=True))
+    entry = worker_candidate(path, repo, selection)
+    return {"schema": SCHEMA, "machine": machine(), "uid": os.getuid(), "created_at": time.time(),
+            "repository": repo, "worker_policy": selection,
+            "entries": [dict(entry, decision="candidate")]}
+
+
+def create_plan(args):
+    options = (args.worker_path, args.worker_launch_log, args.worker_runtime_log)
+    if any(options) or args.discard_ignored or args.archive_local_commits or args.archive_blocked:
+        require(all(options), "maintenance:worker-path-and-both-native-logs-required")
+        selection = {"policy": worker.POLICY, "launch_log": str(args.worker_launch_log),
+                      "runtime_log": str(args.worker_runtime_log), "discard_ignored": args.discard_ignored,
+                      "archive_local_commits": args.archive_local_commits, "archive_blocked": args.archive_blocked}
+        return worker_plan(args.repo, args.worker_path, selection)
+    return plan(args.repo, args.limit, args.offset)
 
 
 def plan(repo_path, limit=50, offset=0):
@@ -201,7 +244,16 @@ def proof(path, plan_path, confirmation):
     expected = next((entry for entry in value["entries"] if entry["path"] == str(path)
                      and entry["decision"] == "candidate"), None)
     require(expected is not None, "maintenance:path-not-approved")
-    observed = candidate(path, value["repository"])
+    selection = value.get("worker_policy")
+    if selection is not None:
+        require(isinstance(selection, dict) and selection.get("policy") == worker.POLICY
+                and type(selection.get("discard_ignored")) is bool
+                and type(selection.get("archive_local_commits")) is bool
+                and type(selection.get("archive_blocked")) is bool,
+                "maintenance:unsupported-worker-policy")
+        observed = worker_candidate(path, value["repository"], selection)
+    else:
+        observed = candidate(path, value["repository"])
     require(observed == {key: item for key, item in expected.items() if key != "decision"},
             "maintenance:candidate-changed")
     require(boundary.observe() == context, "maintenance:boundary-changed")
@@ -215,6 +267,7 @@ def apply(plan_path, confirmation):
             "maintenance:repository-changed")
     env = dict(os.environ, AIDEVOPS_WORKTREE_MAINTENANCE_PLAN=str(plan_path),
                AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM=confirmation,
+               AIDEVOPS_WORKTREE_MAINTENANCE_KEEP_BRANCH="1" if value.get("worker_policy") is not None else "0",
                AIDEVOPS_WORKTREE_MANAGER="legacy-guards", PYTHONDONTWRITEBYTECODE="1")
     for entry in value["entries"]:
         if entry["decision"] != "candidate":
@@ -223,7 +276,8 @@ def apply(plan_path, confirmation):
         context = proof(path, plan_path, confirmation)
         # No --force: dirty changes and locks acquired after planning still veto.
         # Existing archive-first removal independently verifies restoration of its
-        # Git capture. Candidates with ignored files are refused, not discarded.
+        # Git capture. Ignored content is refused unless the selected worker
+        # policy explicitly classifies it as disposable; forensic vetoes remain.
         # This module never removes files or changes receipts.
         # Fixed repository helper and operation; the approved path is a positional argument.
         result = subprocess.run(  # nosec B603
@@ -242,6 +296,12 @@ def main():
     create.add_argument("--repo", type=Path, required=True)
     create.add_argument("--limit", type=int, default=50)
     create.add_argument("--offset", type=int, default=0)
+    create.add_argument("--worker-path", type=Path)
+    create.add_argument("--worker-launch-log", type=Path)
+    create.add_argument("--worker-runtime-log", type=Path)
+    create.add_argument("--discard-ignored", action="store_true")
+    create.add_argument("--archive-local-commits", action="store_true")
+    create.add_argument("--archive-blocked", action="store_true")
     for action in ("check", "apply", "proof"):
         check = commands.add_parser(action)
         check.add_argument("--plan", type=Path, required=True)
@@ -251,7 +311,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.operation == "plan":
-            value = plan(args.repo, args.limit, args.offset)
+            value = create_plan(args)
             print(json.dumps(value, indent=2))
             print("Confirmation token: " + digest(value), file=sys.stderr)
         elif args.operation == "apply":

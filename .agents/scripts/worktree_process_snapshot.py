@@ -25,9 +25,15 @@ def worker_directory(arguments):
     options = {}
     for index, argument in enumerate(arguments[:-1]):
         if argument in ("--role", "--dir"):
+            if argument in options:
+                raise ValueError("ambiguous runtime worker options")
             options[argument] = arguments[index + 1]
+    if "--role" not in options:
+        raise ValueError("runtime worker role unavailable")
     directory = options.get("--dir", "")
-    if options.get("--role") == "worker" and Path(directory).is_absolute():
+    if options["--role"] == "worker":
+        if not Path(directory).is_absolute():
+            raise ValueError("runtime worker directory unavailable")
         return os.path.normpath(directory)
     return None
 

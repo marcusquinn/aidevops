@@ -246,8 +246,103 @@ worktree_managed_require_removal_proof /fixture
         candidate.assert_not_called()
 
 
+class WorkerMaintenanceTests(unittest.TestCase):
+    def snapshot(self, directory=None):
+        return {"status": "available", "uncertain_pids": [], "membership_unavailable": False,
+                "runtime_inspection_unavailable": [],
+                "processes": {123: {"start": "100", "state": "S", "worker_worktree": directory}}}
+
+    def fixture(self, root):
+        target = root / "target"
+        target.mkdir()
+        launch, runtime = root / "controller.log", root / "runtime.log"
+        common = "session=fixture-1 pid=123 attempt_id=attempt:11111111-1111-4111-8111-111111111111"
+        launch.write_text(f"[INFO] Detaching worker (log: {runtime})\n"
+                          f"[INFO] [lifecycle] worker_detached {common} isolation=systemd_scope "
+                          "unit=aidevops-worker-fixture-1-55-66.scope\n")
+        runtime.write_text(f"[INFO] [lifecycle] post_worker_prepare {common} work_dir={target}\n"
+                           f"[INFO] [lifecycle] pre_runtime_launch {common}\nmodel output is not evidence\n")
+        return target, {"launch_log": str(launch), "runtime_log": str(runtime)}
+
+    def test_only_independent_native_prefix_binds_worker_source(self):
+        worker = maintenance.worker
+        with tempfile.TemporaryDirectory() as directory, patch.object(worker, "LOG_ROOT", Path(directory)):
+            target, selection = self.fixture(Path(directory))
+            receipt = worker.evidence(target, selection)
+            self.assertEqual(receipt["policy"], worker.POLICY)
+            runtime = Path(selection["runtime_log"])
+            runtime.write_text(runtime.read_text() + "another model event\n")
+            self.assertEqual(worker.evidence(target, selection), receipt)
+            runtime.write_bytes(runtime.read_bytes() + b"\xff")
+            self.assertEqual(worker.evidence(target, selection), receipt)
+            with self.assertRaisesRegex(ValueError, "worker-source-not-bound"):
+                worker.evidence(target / "other", selection)
+            Path(selection["launch_log"]).chmod(0o666)
+            with self.assertRaisesRegex(ValueError, "untrusted-evidence"):
+                worker.evidence(target, selection)
+            launch = Path(selection["launch_log"])
+            launch.unlink()
+            os.mkfifo(launch)
+            with self.assertRaisesRegex(ValueError, "untrusted-evidence"):
+                worker.evidence(target, selection)
+
+    def test_worker_scope_does_not_change_default_unknown_process_guard(self):
+        worker = maintenance.worker
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(boundary.processes, "collect", return_value=(["/"], [Path("/proc/123")])), \
+                patch.object(worker.census, "capture", return_value=self.snapshot()):
+            target = Path(directory)
+            with self.assertRaisesRegex(ValueError, "cwd-visibility-degraded"):
+                worker.require_unused(target)
+            with self.assertRaisesRegex(ValueError, "cwd-visibility-degraded"):
+                boundary.require_unused(target)
+
+    def test_active_workers_and_incomplete_worker_inspection_refuse(self):
+        worker = maintenance.worker
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(boundary.processes, "collect", return_value=(["/"], [])):
+            snapshots = [(self.snapshot(directory), "active-worker"),
+                         (self.snapshot(str(Path(directory) / "nested")), "active-worker")]
+            for key in ("uncertain_pids", "runtime_inspection_unavailable", "membership_unavailable"):
+                value = self.snapshot()
+                value[key] = [123] if key != "membership_unavailable" else True
+                snapshots.append((value, "worker-census-unavailable"))
+            for value, reason in snapshots:
+                with self.subTest(reason=reason), patch.object(worker.census, "capture", return_value=value), \
+                        self.assertRaisesRegex(ValueError, reason):
+                    worker.require_unused(Path(directory))
+
+    def test_owner_generation_and_cleanup_labels_never_override_live_ownership(self):
+        worker = maintenance.worker
+        worker.owner_clear((123, "old", "task", "99"), self.snapshot())
+        with self.assertRaisesRegex(ValueError, "live-owner"):
+            worker.owner_clear((123, "active", "task", "100"), self.snapshot())
+        with self.assertRaisesRegex(ValueError, "live-owner"):
+            worker.owner_clear((123, "cleanup:123", "worktree-removal", "100"), self.snapshot())
+
+    def test_ignored_discard_is_explicit_and_does_not_override_forensics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            with patch.object(maintenance, "git", return_value="ignored-file"):
+                maintenance.preservation_checks(target, discard_ignored=True)
+                with self.assertRaisesRegex(ValueError, "ignored-content-requires-preservation"):
+                    maintenance.preservation_checks(target)
+                (target / ".preserve-forensics").touch()
+                with self.assertRaisesRegex(ValueError, "preserve-forensics"):
+                    maintenance.preservation_checks(target, discard_ignored=True)
+
+    def test_ambiguous_worker_launcher_is_not_classified_as_nonworker(self):
+        census = maintenance.worker.census
+        for arguments in (["headless-runtime-helper.sh", "run"],
+                          ["headless-runtime-helper.sh", "--role", "worker"],
+                          ["headless-runtime-helper.sh", "--role", "worker", "--dir", "relative"],
+                          ["headless-runtime-helper.sh", "--role", "worker", "--dir", "/a", "--dir", "/b"]):
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                census.worker_directory(arguments)
+
+
 class MaintenancePolicyTests(unittest.TestCase):
-    def policy(self, scenario, branch="feature/example"):
+    def policy(self, scenario, branch="feature/example", archive_blocked=False):
         # Reuse the shell-gh stub pattern in the Pulse retention regressions;
         # exercise the actual shared predicates, without GitHub writes or reads.
         script = '''
@@ -262,7 +357,11 @@ gh() {
         open) printf '[{"number":12,"state":"OPEN"}]' ;;
         *) printf '[{"number":12,"state":"MERGED"}]' ;;
         esac ;;
-    "issue view") [[ "$SCENARIO" != issue-protected ]] || printf 'preserve-forensics\n' ;;
+    "issue view")
+        case "$SCENARIO" in
+        issue-protected) printf 'preserve-forensics\n' ;;
+        worker-blocked) printf 'status:blocked\n' ;;
+        esac ;;
     "pr view")
         if [[ "$*" == *"--json state"* ]]; then
             printf 'OPEN\n'
@@ -275,18 +374,31 @@ gh() {
     return 0
 }
 export -f gh
-bash "$1" "$2" "$3" fixture/repo
+if [[ "$ARCHIVE_BLOCKED" == 1 ]]; then
+    bash "$1" "$2" "$3" fixture/repo --archive-blocked
+else
+    bash "$1" "$2" "$3" fixture/repo
+fi
 '''
         with tempfile.TemporaryDirectory() as directory:
             # Static fixture shell text; scenario and branch are data, not shell text.
             return subprocess.run([BASH, "-c", script, "fixture",  # nosec B603
                                    str(SCRIPTS / "worktree-maintenance-policy.sh"), directory, branch],
-                                  env=dict(os.environ, SCENARIO=scenario),
+                                  env=dict(os.environ, SCENARIO=scenario, ARCHIVE_BLOCKED="1" if archive_blocked else "0"),
                                   capture_output=True, text=True, timeout=10)
 
     def test_terminal_unprotected_pr_allows_policy(self):
         result = self.policy("clear")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_blocked_archive_choice_is_explicit_and_cannot_override_forensics(self):
+        branch = "feature/enrichment-42-fixture"
+        for explicit in (False, True):
+            result = self.policy("worker-blocked", branch, explicit)
+            self.assertEqual(result.returncode, 0 if explicit else 1, result.stderr)
+            for scenario in ("issue-protected", "pr-protected", "open", "unavailable"):
+                with self.subTest(explicit=explicit, scenario=scenario):
+                    self.assertNotEqual(self.policy(scenario, branch, explicit).returncode, 0)
 
     def test_open_protected_unknown_or_truncated_prs_refuse(self):
         for scenario in ("open", "pr-protected", "unavailable", "malformed", "truncated"):

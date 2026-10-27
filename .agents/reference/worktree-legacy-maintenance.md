@@ -36,6 +36,44 @@ fail-closed handling of unavailable, malformed or truncated GitHub responses.
 Ignored files and forensic markers retain the source: the archive producer does
 not yet capture ignored content, so a clean Git status alone is insufficient.
 
+### Explicit worker archive plans
+
+For a known Pulse worker source, an operator may select one worktree using its
+independent controller launch log and the matching native runtime prefix:
+
+```bash
+aidevops cleanup maintenance plan --repo /absolute/canonical/repository \
+  --worker-path /absolute/linked/worktree \
+  --worker-launch-log /absolute/native/controller.log \
+  --worker-runtime-log /absolute/native/runtime.log
+```
+
+The controller log must be beneath the current user's aidevops log root. Both
+files must be regular, owned by that user, and not writable by others. The native
+session, attempt, scope and prepared worktree must match; model output after
+`pre_runtime_launch` is not evidence. Missing logs, ambiguous worker arguments or
+incomplete process inspection retain the source.
+
+The following choices are separate, explicit archive policies, not defaults:
+
+- `--discard-ignored`: classify ignored content as disposable. It is not saved
+  in the archive. Forensic markers still veto removal.
+- `--archive-local-commits`: allow commits outside the recorded default tip;
+  native archive and restoration verification remain mandatory.
+- `--archive-blocked`: allow archival of an issue marked `status:blocked`.
+  Security, forensics, open-PR and unavailable-retention-policy vetoes remain.
+
+These choices are bound into the reviewed plan digest and rechecked on apply.
+Worker plans preserve the local branch and never enroll, seal or replace legacy
+lifecycle history. They support unchanged observation-only records or absent
+records, not managed generations with unresolved completion contracts. Check and
+apply use the same commands below and never pass `--force` to removal.
+
+**This is not a CWD exemption.** Full CWD visibility remains required. A matching
+active worker in the source or a child directory vetoes removal; absence from a
+worker census does not prove descendant completion. On a host with unresolved
+CWD observations, worker plans still stop with `maintenance:cwd-visibility-degraded`.
+
 ## Process evidence, not process exemptions
 
 The Linux procfs observer is reused directly without a privileged inspector.
