@@ -406,6 +406,9 @@ test_own_merged_terminal_reconciliation() {
 			local output_file="${TEST_ROOT}/own-output.jsonl" api_available=1 rc=0 expected=77
 			local session_key="manual-cli-456-1792929600"
 			_setup_test_git_repo "$work_dir" 1
+			# Guarded cleanup receipts use physical paths, including when macOS
+			# exposes the temporary root through /var -> /private/var.
+			work_dir=$(cd "$work_dir" && pwd -P) || exit 1
 			branch=$(git -C "$work_dir" branch --show-current)
 			head=$(git -C "$work_dir" rev-parse HEAD)
 			_setup_own_merged_evidence "$shape"
