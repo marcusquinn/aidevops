@@ -13,9 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from contextlib import closing
 
-import worktree_lifetime_owner as owner
 import worktree_maintenance_boundary as boundary
 import worktree_maintenance_worker as worker
 from worktree_maintenance_commands import command, executable, git, repository
@@ -43,33 +41,12 @@ def database():
     return path.resolve().as_uri() + "?mode=ro"
 
 
+owner = worker.owner
 legacy_observation = worker.legacy_observation
 
 
 def legacy(path):
-    with closing(sqlite3.connect(database(), uri=True, timeout=3)) as connection:
-        row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path = ?",
-                                 (str(path),)).fetchone()
-        require(row is not None, "maintenance:not-enrolled")
-        record = json.loads(row[0])
-        claim = connection.execute("SELECT owner_pid FROM worktree_owners WHERE worktree_path = ?",
-                                   (str(path),)).fetchone()
-    require(record.get("manager") == owner.MANAGER and record.get("state") == "running",
-            "maintenance:not-legacy-running")
-    launches = record.get("launches")
-    require(isinstance(launches, list) and launches and all(legacy_observation(item) for item in launches),
-        "maintenance:not-legacy-admission")
-    require(not record.get("archive_operation"), "maintenance:existing-archive-operation")
-    require(record.get("identity") == owner.identity(path), "maintenance:identity-changed")
-    if claim:
-        require(type(claim[0]) is int and claim[0] > 0, "maintenance:invalid-owner")
-        try:
-            os.kill(claim[0], 0)
-        except ProcessLookupError:
-            pass
-        else:
-            raise ValueError("maintenance:live-owner")
-    return record
+    return worker.legacy(database(), path)
 
 
 def preservation_checks(path, discard_ignored=False):

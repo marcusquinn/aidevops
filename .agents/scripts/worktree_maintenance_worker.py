@@ -129,6 +129,32 @@ def legacy_observation(item):
                         ("completion_evidence", "unit", "invocation", "quiescence")))
 
 
+def legacy(database, path):
+    with closing(sqlite3.connect(database, uri=True, timeout=3)) as connection:
+        row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path = ?",
+                                 (str(path),)).fetchone()
+        require(row is not None, "maintenance:not-enrolled")
+        record = json.loads(row[0])
+        claim = connection.execute("SELECT owner_pid FROM worktree_owners WHERE worktree_path = ?",
+                                   (str(path),)).fetchone()
+    require(record.get("manager") == owner.MANAGER and record.get("state") == "running",
+            "maintenance:not-legacy-running")
+    launches = record.get("launches")
+    require(isinstance(launches, list) and launches and all(legacy_observation(item) for item in launches),
+        "maintenance:not-legacy-admission")
+    require(not record.get("archive_operation"), "maintenance:existing-archive-operation")
+    require(record.get("identity") == owner.identity(path), "maintenance:identity-changed")
+    if claim:
+        require(type(claim[0]) is int and claim[0] > 0, "maintenance:invalid-owner")
+        try:
+            os.kill(claim[0], 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise ValueError("maintenance:live-owner")
+    return record
+
+
 def legacy_binding(database, path, snapshot):
     """Bind absent/observation-only history without replacing any lifetime."""
     with closing(sqlite3.connect(database, uri=True, timeout=3)) as connection:
