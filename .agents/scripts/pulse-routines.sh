@@ -43,6 +43,10 @@ if ! declare -F _gh_secondary_cooldown_expires_at >/dev/null 2>&1; then
 	# shellcheck source=./shared-gh-secondary-cooldown.sh
 	source "${BASH_SOURCE[0]%/*}/shared-gh-secondary-cooldown.sh" || true
 fi
+# Shared transient-scope launcher (GH#35760). Non-fatal: without it, routines
+# keep the session-detach launcher.
+# shellcheck source=./systemd-scope-launch.sh
+source "${BASH_SOURCE[0]%/*}/systemd-scope-launch.sh" || true
 _PULSE_ROUTINES_LOADED=1
 _ROUTINE_STATUS_SUCCESS="success"
 _ROUTINE_STATUS_FAILURE="failure"
@@ -404,22 +408,13 @@ _routine_finalize_terminal() {
 }
 
 #######################################
-# Return 0 when PID is in the named transient user scope (Linux only).
-#######################################
-_routine_pid_in_scope() {
-	local pid="$1"
-	local scope_name="$2"
-	local cgroup_file="/proc/${pid}/cgroup"
-	[[ -r "$cgroup_file" ]] || return 1
-	grep -Fq "/${scope_name}.scope" "$cgroup_file" 2>/dev/null && return 0
-	return 1
-}
-
-#######################################
 # Launch a detached routine runner outside the pulse unit cgroup (GH#33993 class).
 # setsid/nohup alone stay in aidevops-supervisor-pulse.service's cgroup, so
 # KillMode=control-group SIGTERMs long routines when a short event-refill wake ends.
-# A transient --scope keeps the caller's environment and leaves the pulse cgroup.
+# The backend is chosen BEFORE launching and the runner is launched exactly once:
+# a fast routine exits before cgroup membership can be confirmed, so treating
+# that as a failed launch would rerun it. A launch that really failed is
+# recovered by the dispatched-state and runner-lock retry path.
 # Args: $1=routine_id $2=runner_log $3=kind (script|agent) $4..=runner argv
 #######################################
 _routine_launch_detached() {
@@ -427,38 +422,14 @@ _routine_launch_detached() {
 	local runner_log="$2"
 	local kind="$3"
 	shift 3
-	local runner_pid="" scope_name="" attempts=0
+	local runner_pid="" scope_name="" launch_result=""
 	local monitor_was_enabled=false
 
-	if command -v systemd-run >/dev/null 2>&1; then
+	if declare -F systemd_scope_available >/dev/null 2>&1 && systemd_scope_available; then
 		scope_name="aidevops-routine-$(printf '%s' "$routine_id" | tr -c 'A-Za-z0-9_.-' '-')-$$-${RANDOM:-0}"
-		local -a scope_command=(
-			systemd-run --user --scope --collect --quiet
-			--unit="$scope_name"
-			--description="aidevops routine ${routine_id}"
-			"$@"
-		)
-		if command -v setsid >/dev/null 2>&1; then
-			setsid "${scope_command[@]}" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-		else
-			"${scope_command[@]}" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-		fi
-		runner_pid=$!
-		disown "$runner_pid" 2>/dev/null || true
-		while [[ "$attempts" -lt 25 ]]; do
-			if _routine_pid_in_scope "$runner_pid" "$scope_name"; then
-				echo "[pulse-wrapper] routine ${routine_id}: detached ${kind} runner pid ${runner_pid} isolation=systemd_scope unit=${scope_name}.scope" >>"$LOGFILE"
-				return 0
-			fi
-			kill -0 "$runner_pid" 2>/dev/null || break
-			sleep 0.2
-			attempts=$((attempts + 1))
-		done
-		if kill -0 "$runner_pid" 2>/dev/null; then
-			echo "[pulse-wrapper] routine ${routine_id}: detached ${kind} runner pid ${runner_pid} isolation=systemd_scope_unconfirmed unit=${scope_name}.scope" >>"$LOGFILE"
-			return 0
-		fi
-		echo "[pulse-wrapper] routine ${routine_id}: systemd scope launch failed; falling back to session detach" >>"$LOGFILE"
+		launch_result=$(systemd_scope_launch "$scope_name" "aidevops routine ${routine_id}" "$runner_log" "$@")
+		echo "[pulse-wrapper] routine ${routine_id}: detached ${kind} runner pid ${launch_result%% *} isolation=${launch_result#* } unit=${scope_name}.scope" >>"$LOGFILE"
+		return 0
 	fi
 
 	if command -v setsid >/dev/null 2>&1; then

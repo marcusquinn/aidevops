@@ -27,6 +27,9 @@ source "${BASH_SOURCE[0]%/*}/project-node-runtime.sh"
 # GH#33993: shared systemd user-manager probe for detached worker isolation.
 # shellcheck source=./pulse-dispatch-worker-systemd.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-worker-systemd.sh"
+# Shared transient-scope launcher, also used by detached routines (GH#35760).
+# shellcheck source=./systemd-scope-launch.sh
+source "${BASH_SOURCE[0]%/*}/systemd-scope-launch.sh"
 : "${_HRW_ROLE_WORKER:=worker}"
 _HRW_PR_REPAIR_OWNERSHIP_LINKED_ISSUE="linked-issue"
 
@@ -480,25 +483,12 @@ _cmd_run_prepare_retry() {
 }
 
 #######################################
-# Return 0 when a PID's cgroup is the named transient scope (Linux only).
-# Args: $1 = pid, $2 = scope unit name without the .scope suffix
-#######################################
-_hrw_detach_pid_in_scope() {
-	local pid="$1"
-	local scope_name="$2"
-	local cgroup_file="/proc/${pid}/cgroup"
-	[[ -r "$cgroup_file" ]] || return 1
-	grep -Fq "/${scope_name}.scope" "$cgroup_file" 2>/dev/null && return 0
-	return 1
-}
-
-#######################################
 # Launch a detached worker in its own systemd user scope (GH#33993).
 # A plain background subshell stays in the caller's cgroup, so a pulse unit
 # with KillMode=control-group kills manually dispatched and CI-repair workers
-# when it stops or hits TimeoutStartSec. A scope (unlike a transient service)
-# keeps the caller's exported environment and working directory, and
-# systemd-run execs the worker, so $! is the worker PID itself.
+# when it stops or hits TimeoutStartSec. The shared launcher never starts a
+# second copy: an early exit is reported through the caller's readiness check
+# with systemd-run's error preserved in the worker log.
 # Args: $1 = session key, $2 = log file, $3.. = worker command
 # Output: worker PID
 # Returns: 0 always once launched; isolation evidence is logged
@@ -507,33 +497,16 @@ _hrw_detach_systemd_scope() {
 	local session_key="$1"
 	local log_file="$2"
 	shift 2
-	local scope_name="" worker_pid="" attempts=0
+	local scope_name="" launch_result="" worker_pid="" isolation=""
 	scope_name="aidevops-worker-$(printf '%s' "$session_key" | tr -c 'A-Za-z0-9_.-' '-')-$$-${RANDOM:-0}"
-	local -a scope_command=(
-		systemd-run --user --scope --collect --quiet
-		--unit="$scope_name" --description="aidevops worker ${session_key}"
-		"$@"
-	)
-	if command -v setsid >/dev/null 2>&1; then
-		setsid "${scope_command[@]}" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	launch_result=$(systemd_scope_launch "$scope_name" "aidevops worker ${session_key}" "$log_file" "$@")
+	worker_pid="${launch_result%% *}"
+	isolation="${launch_result#* }"
+	if [[ "$isolation" == "systemd_scope" ]]; then
+		print_info "[lifecycle] worker_detached session=${session_key} pid=${worker_pid} isolation=systemd_scope unit=${scope_name}.scope" >&2
 	else
-		"${scope_command[@]}" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+		print_warning "[lifecycle] worker_detach_unconfirmed session=${session_key} pid=${worker_pid} unit=${scope_name}.scope log=${log_file}" >&2
 	fi
-	worker_pid=$!
-	# Confirm the worker left the caller's cgroup. Never start a second
-	# launcher here: an early exit is reported through the caller's readiness
-	# check with systemd-run's error preserved in the worker log.
-	while [[ "$attempts" -lt 25 ]]; do
-		if _hrw_detach_pid_in_scope "$worker_pid" "$scope_name"; then
-			print_info "[lifecycle] worker_detached session=${session_key} pid=${worker_pid} isolation=systemd_scope unit=${scope_name}.scope" >&2
-			printf '%s\n' "$worker_pid"
-			return 0
-		fi
-		kill -0 "$worker_pid" 2>/dev/null || break
-		sleep 0.2
-		attempts=$((attempts + 1))
-	done
-	print_warning "[lifecycle] worker_detach_unconfirmed session=${session_key} pid=${worker_pid} unit=${scope_name}.scope log=${log_file}" >&2
 	printf '%s\n' "$worker_pid"
 	return 0
 }
