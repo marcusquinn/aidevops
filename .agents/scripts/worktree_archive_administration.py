@@ -46,6 +46,11 @@ def administration_files(admin, directory, linked, allow_merge=False):
     for entry in sorted(directory.iterdir()):
         name = entry.relative_to(admin).as_posix()
         validate_admin_entry(entry, name, allow_merge)
+        if name == "aidevops-permission-pending" and entry.is_file():
+            # Worker permission requests are disposable runtime metadata, not
+            # Git state or permission grants to copy into a restored worktree.
+            # Validate the entry first: symlinks and non-files remain refused.
+            continue
         if name in {"commondir", "gitdir"} and linked and entry.is_file():
             continue
         if entry.is_dir() and admin_directory_allowed(name):
