@@ -171,7 +171,7 @@ release_process_issue() {
 	local repo="$1" issue="$2" apply="$3"
 	local before="" after="" body="" pr="" head="" version="" snapshot="" checks="" release_url="" runs="" run_id="" rc=0
 	local metadata=""
-	local verdict=""
+	local verdict="" run_status="" run_conclusion=""
 	before=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '.state == "open" and any(.labels[]; .name == $label)' <<<"$before" >/dev/null || return 1
 	body=$(jq -r '.body' <<<"$before") || return 1
@@ -232,7 +232,14 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 			printf 'Catalog run not yet visible for %s; retry next routine\n' "$repo"
 			return 0
 		fi
-		AIDEVOPS_GH_READ_TIMEOUT=120 _gh_with_timeout read gh run watch "$run_id" --repo "$repo" --exit-status --interval 10 || return 1
+		# Never block on the run: catalog builds outlast any bounded watch.
+		run_status=$(jq -r --arg id "$run_id" '[.workflow_runs[] | select((.id | tostring) == $id)] | first | .status // empty' <<<"$runs") || return 1
+		run_conclusion=$(jq -r --arg id "$run_id" '[.workflow_runs[] | select((.id | tostring) == $id)] | first | .conclusion // empty' <<<"$runs") || return 1
+		if [[ "$run_status" != completed ]]; then
+			printf 'Catalog run %s still running for %s; verification resumes next routine\n' "$run_id" "$repo"
+			return 0
+		fi
+		[[ "$run_conclusion" == success ]] || return 1
 		release_url=$(release_published "$repo" "$version" "$merge_sha") || return 1
 	fi
 	# Close first: a failed close must not leave an approval-significant evidence

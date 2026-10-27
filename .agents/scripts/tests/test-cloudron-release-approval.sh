@@ -98,7 +98,11 @@ gh() {
 		if [[ "$SCENARIO" == catalog_error ]]; then
 			printf '{"workflow_runs":[]}\n'
 		else
-			jq -cn --arg sha "$HEAD_SHA" '{workflow_runs:[{id:1,head_sha:$sha,status:"completed",conclusion:"success"}]}'
+			jq -cn --arg sha "$HEAD_SHA" --arg scenario "$SCENARIO" '
+				{workflow_runs:[{id:1,head_sha:$sha,status:"completed",conclusion:"success"}]}
+				| if $scenario == "run_in_progress" then .workflow_runs[0] |= (.status = "in_progress" | .conclusion = null)
+				  elif $scenario == "run_failed" then .workflow_runs[0].conclusion = "failure"
+				  else . end'
 		fi
 		;;
 	'issue close') [[ "$SCENARIO" != close_error ]] || return 1 ;;
@@ -199,6 +203,8 @@ grep -q -- '--add-label hold-for-review' "${TEST_ROOT}/calls"
 printf 'PASS failed merge restores hold\n'
 run_case resumed 0 false true true
 run_case catalog_error 0 true false false
+run_case run_in_progress 0 true false false
+run_case run_failed 1 true false false
 run_case close_error 1 true false true
 printf 'PASS close failure posts no approval-invalidating comment\n'
 
