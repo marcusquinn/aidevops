@@ -95,7 +95,9 @@ workflow="$REPO_ROOT/.github/workflows/opencode-pin-canary.yml"
 canary_script="$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh"
 if grep -q 'persist-credentials: false' "$workflow" && grep -q 'record-review:' "$workflow" &&
 	grep -q 'needs: linux-headless-canary' "$workflow" &&
-	grep -q 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' "$workflow"; then
+	# GH#35753: assert a full commit-SHA pin, not one exact SHA, so reviewed
+	# Dependabot action bumps do not break this credential-separation check.
+	grep -Eq 'actions/download-artifact@[0-9a-f]{40}([[:space:]]|$)' "$workflow"; then
 	printf 'PASS: candidate execution is separated from the issue-write token\n'
 else
 	printf 'FAIL: candidate execution can retain or reach repository write credentials\n' >&2
