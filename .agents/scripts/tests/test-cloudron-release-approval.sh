@@ -99,7 +99,7 @@ gh() {
 	'api repos/owner/app/contents/.github/workflows/cloudron-catalog-publish.yml?'*)
 		printf 'jobs:\n  catalog:\n    uses: marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml@%s\n    with:\n      aidevops_ref: %s\n' "$HEAD_SHA" "$HEAD_SHA"
 		if [[ "$SCENARIO" != missing_pass ]]; then
-			printf '    secrets:\n      CLOUDRON_RELEASE_PAT: ${{ secrets.CLOUDRON_RELEASE_PAT }}\n'
+			printf "    secrets:\n      CLOUDRON_RELEASE_PAT: \${{ secrets.CLOUDRON_RELEASE_PAT }}\n"
 		fi
 		;;
 	'api repos/owner/app/contents/CHANGELOG?'*) printf '[1.2.3]\n* Upgrade upstream\n\n[1.2.2]\n* Old entry\n' ;;
