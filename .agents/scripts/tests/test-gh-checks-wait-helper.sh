@@ -446,9 +446,15 @@ cancel_timer_output=$(
 	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
 	apply_cancel_grace pending '[]' 462
 	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	# Same check, null link, different attempt (distinct timestamps): new window.
+	cancel_c1='[{"name":"C","workflow":"CI","bucket":"cancel","link":"","startedAt":"t1","completedAt":"t2"}]'
+	cancel_c2='[{"name":"C","workflow":"CI","bucket":"cancel","link":"","startedAt":"t3","completedAt":"t4"}]'
+	apply_cancel_grace failure "$cancel_c1" 500
+	apply_cancel_grace failure "$cancel_c2" 700
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
 )
 assert_eq "grace follows the cancelled set without extending unchanged cancellations" \
-	$'pending:100\nfailure:100\npending:281\npending:281\nfailure:281\npending:' "$cancel_timer_output"
+	$'pending:100\nfailure:100\npending:281\npending:281\nfailure:281\npending:\npending:700' "$cancel_timer_output"
 
 for invalid_grace in '' 08 180s -1 86401 999999999999999999999999; do
 	set +e

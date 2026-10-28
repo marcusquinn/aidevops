@@ -446,9 +446,9 @@ apply_cancel_grace() {
 	local cancelled_set=""
 	_GCW_GRACED_CLASSIFICATION="$classification"
 	if [[ "$classification" == "failure" ]] && only_cancelled_failures "$checks"; then
-		# Include run links so a different cancelled attempt of the same check
+		# Include run links and timestamps so a different cancelled attempt of the same check
 		# gets its own window; sort to ignore API ordering changes.
-		cancelled_set=$(printf '%s' "$checks" | jq -c '[.[] | select(.bucket == "cancel") | {workflow, name, link}] | sort_by(.workflow, .name, .link)')
+		cancelled_set=$(printf '%s' "$checks" | jq -c '[.[] | select(.bucket == "cancel") | {workflow, name, link, startedAt, completedAt}] | sort_by(.workflow, .name, .link, .startedAt, .completedAt)')
 		if [[ -z "$_GCW_CANCEL_FIRST_EPOCH" || "$cancelled_set" != "${_GCW_CANCEL_SET:-}" ]]; then
 			_GCW_CANCEL_FIRST_EPOCH="$now_epoch"
 		fi
