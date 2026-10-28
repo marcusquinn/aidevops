@@ -56,6 +56,11 @@ setup_test_env() {
 	: >"$STATUS_CALLS_FILE"
 	: >"$ISSUE_EDIT_CALLS_FILE"
 	printf '{"initialized_repos":[{"slug":"owner/repo","maintainer":"maintainer","pulse":true}]}' >"$REPOS_JSON"
+	write_gh_stub
+	return 0
+}
+
+write_gh_stub() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
