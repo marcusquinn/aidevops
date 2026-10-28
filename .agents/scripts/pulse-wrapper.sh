@@ -1424,6 +1424,9 @@ main() {
 	_pulse_setup_dry_run_mode "$@"
 	_pulse_setup_canary_mode "$@"
 
+	# Refresh local process evidence before busy/idle/rate-limit early returns.
+	_pulse_reconcile_worker_lifecycle || true
+
 	# Event refill skips preflight/LLM but keeps the main lock and dispatch gates.
 	_pulse_setup_refill_only_mode "$@"
 	if [[ "${PULSE_REFILL_ONLY:-0}" == "1" ]]; then

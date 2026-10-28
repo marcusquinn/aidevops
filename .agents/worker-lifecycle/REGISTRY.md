@@ -153,9 +153,29 @@ commit leaves neither event nor projection from that attempt. Database lock wait
 are bounded (2 seconds per connection), but startup
 latency is not zero. Initialization retries have a 2-second deadline checked between
 attempts; an in-flight SQLite wait can extend that deadline. No scheduler or persistent
-global environment is installed. Set `AIDEVOPS_LIFECYCLE_DISABLED=1` to disable both
-hooks; preserve the store. This remains bounded, best-effort observation: the journal
+global environment is installed. Set `AIDEVOPS_LIFECYCLE_DISABLED=1` to disable launch
+observation and Pulse reconciliation; preserve the store. This remains bounded, best-effort observation: the journal
 capacity is unchanged and full stores report gaps rather than deleting evidence.
+
+### Periodic reconciliation in Pulse
+
+Normal Pulse invocations call `_pulse_reconcile_worker_lifecycle` from
+`pulse-wrapper-cycle-gates.sh` before refill, busy, idle and rate-limit early exits.
+This local pass is independent of new dispatch work or GitHub availability. It uses
+the same state-path precedence as the launchers and requires an absolute state path.
+Dry-run, canary, private-workload and lifecycle-disabled invocations skip it.
+
+Each pass considers at most 100 unfinished runs, using the registry's 5-second
+cooperative budget and a portable 10-second outer timeout. Existing cursor/version
+checks preserve fair batch rotation and reject stale concurrent observations.
+No store is created by a tick. Missing state is a no-op; invalid state, unavailable
+runtime, capacity exhaustion and timeouts are logged without blocking Pulse or
+replacing evidence. Unknown process observations never imply termination.
+
+After a worker exits, its record becomes `ended` on a subsequent successful pass,
+not through an immediate exit callback. With Pulse stopped there is no periodic
+reconciliation. This adds no daemon or scheduler, never signals workers, and does
+not change legacy ownership or `cleanup_authorized=false`.
 
 ### Atomic attempt contract
 
