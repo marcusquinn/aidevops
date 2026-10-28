@@ -119,6 +119,18 @@ by default on supported Linux/macOS installations, independent of systemd or lau
 The default private state is `~/.aidevops/.agent-workspace/worker-lifecycle`;
 when `AIDEVOPS_WORKSPACE_DIR` is set, its `worker-lifecycle` subdirectory is used.
 `AIDEVOPS_LIFECYCLE_STATE_DIR` optionally overrides the path, not activation.
+For a persistent host-level override, put the desired registry directory on the
+first line of `~/.config/aidevops/lifecycle-state-dir` (a regular file owned by the
+current user, not a symlink). Both worker launchers and scheduled Pulse services
+read this same file at runtime; no plist/systemd environment override or service
+restart is needed. The location deliberately uses the user's home, not
+`XDG_CONFIG_HOME`, which a scheduled service may not inherit. Precedence is the
+explicit `AIDEVOPS_LIFECYCLE_STATE_DIR` environment override, then this host file,
+then the workspace/default path above. For matching reconciliation, use the host
+file rather than a worker-only environment override. The file contains path data,
+never shell code; spaces are preserved and expressions are not evaluated. An empty
+or unreadable existing file reports an observation gap instead of silently using a
+different registry. Remove the file to restore workspace/default resolution.
 The launchers and Pulse expand a literal leading `~/` in either setting using
 the current user's home directory; no shell expression evaluation is performed.
 Agent installation prepares the framework workspace before bundle activation and
