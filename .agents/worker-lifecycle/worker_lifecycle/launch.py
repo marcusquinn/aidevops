@@ -19,10 +19,9 @@ def record(state_dir: Path, worktree: Path) -> str:
     require_ready(adapter)
     run_id = str(uuid4())
     identity = adapter.capture(os.getpid())
-    store.register(str(uuid4()), run_id, identity)
     # A per-attempt hypothetical binding, NOT a physical generation identity.
-    # Register may persist if bind fails; diagnostics must report this gap.
-    store.bind(str(uuid4()), run_id, str(uuid4()), str(worktree.resolve(strict=True)))
+    # Resolve before the transaction; a failed bind must not leave a partial run.
+    store.register_attempt(run_id, identity, str(uuid4()), str(worktree.resolve(strict=True)))
     return run_id
 
 

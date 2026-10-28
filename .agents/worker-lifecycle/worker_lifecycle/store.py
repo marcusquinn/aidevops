@@ -12,7 +12,7 @@ from pathlib import Path
 import sqlite3
 import stat
 import sys
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from .process import ProcessIdentity, ProcessObservation
 
@@ -153,40 +153,58 @@ class LifecycleRegistry:
         return cursor.lastrowid, False
 
     def register(self, event_id: str, run_id: str, identity: ProcessIdentity) -> None:
+        with self.connection(write=True) as connection:
+            self._register(connection, event_id, run_id, identity)
+
+    def _register(self, connection: sqlite3.Connection, event_id: str, run_id: str, identity: ProcessIdentity) -> None:
         identifier(run_id)
         identity.validate()
         payload = {"type": "register", "run_id": run_id, "identity": identity.to_dict()}
-        with self.connection(write=True) as connection:
-            installation = connection.execute("SELECT installation_id FROM metadata").fetchone()[0]
-            if identity.installation_id != installation:
-                raise StoreConflict("foreign-installation")
-            _, duplicate = self._event(connection, event_id, payload)
-            if duplicate:
-                return
-            if connection.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone():
-                raise StoreConflict("run-already-registered")
-            connection.execute("INSERT INTO runs(run_id,identity,state,version) VALUES (?,?,'bound',1)",
-                               (run_id, encode(identity.to_dict())))
+        installation = connection.execute("SELECT installation_id FROM metadata").fetchone()[0]
+        if identity.installation_id != installation:
+            raise StoreConflict("foreign-installation")
+        _, duplicate = self._event(connection, event_id, payload)
+        if duplicate:
+            return
+        if connection.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone():
+            raise StoreConflict("run-already-registered")
+        connection.execute("INSERT INTO runs(run_id,identity,state,version) VALUES (?,?,'bound',1)",
+                           (run_id, encode(identity.to_dict())))
 
     def bind(self, event_id: str, run_id: str, generation_id: str, path: str) -> None:
+        with self.connection(write=True) as connection:
+            self._bind(connection, event_id, run_id, generation_id, path)
+
+    def _bind(self, connection: sqlite3.Connection, event_id: str, run_id: str, generation_id: str, path: str) -> None:
         identifier(run_id)
         identifier(generation_id)
         if not isinstance(path, str) or len(path) > 4096 or not Path(path).is_absolute() or "\0" in path:
             raise ValueError("absolute-generation-path-required")
         payload = {"type": "bind", "run_id": run_id, "generation_id": generation_id, "path": path}
+        _, duplicate = self._event(connection, event_id, payload)
+        if duplicate:
+            return
+        run = connection.execute("SELECT state FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if run is None or run[0] != "bound":
+            raise StoreConflict("run-not-bound")
+        old = connection.execute("SELECT path FROM generations WHERE generation_id=?", (generation_id,)).fetchone()
+        if old is not None and old[0] != path:
+            raise StoreConflict("generation-path-conflict")
+        connection.execute("INSERT OR IGNORE INTO generations VALUES (?,?)", (generation_id, path))
+        connection.execute("INSERT OR IGNORE INTO bindings VALUES (?,?)", (run_id, generation_id))
+        connection.execute("UPDATE runs SET version=version+1 WHERE run_id=?", (run_id,))
+
+    def register_attempt(self, run_id: str, identity: ProcessIdentity, generation_id: str, path: str) -> None:
+        """Commit process evidence and its hypothetical binding together, before exec.
+
+        Retry with the same run ID and payload, including after lost acknowledgement.
+        Deterministic event IDs preserve existing event formats and deduplication.
+        A committed attempt does not prove exec succeeded or the worker is ready.
+        """
+        namespace = UUID(identifier(run_id))
         with self.connection(write=True) as connection:
-            _, duplicate = self._event(connection, event_id, payload)
-            if duplicate:
-                return
-            run = connection.execute("SELECT state FROM runs WHERE run_id=?", (run_id,)).fetchone()
-            if run is None or run[0] != "bound":
-                raise StoreConflict("run-not-bound")
-            old = connection.execute("SELECT path FROM generations WHERE generation_id=?", (generation_id,)).fetchone()
-            if old is not None and old[0] != path:
-                raise StoreConflict("generation-path-conflict")
-            connection.execute("INSERT OR IGNORE INTO generations VALUES (?,?)", (generation_id, path))
-            connection.execute("INSERT OR IGNORE INTO bindings VALUES (?,?)", (run_id, generation_id))
-            connection.execute("UPDATE runs SET version=version+1 WHERE run_id=?", (run_id,))
+            self._register(connection, str(uuid5(namespace, "register")), run_id, identity)
+            self._bind(connection, str(uuid5(namespace, "bind")), run_id, generation_id, path)
 
     def pending(self, limit: int = 100) -> list[dict]:
         if type(limit) is not int or not 1 <= limit <= 1000:  # pylint: disable=unidiomatic-typecheck  # Reject bool

@@ -133,11 +133,48 @@ Interpreter/bootstrap failures before the handler is entered are not fail-open;
 the wrapper does not retry a native command whose execution may have begun.
 
 Handled observation/storage failures print `observation-gap` and still exec the
-native command. Registration and binding are separate transactions: a partial attempt
-can leave a registered run without a binding and must be reported as incomplete
-coverage. Database lock waits are bounded (2 seconds per connection), but startup
+native command. The launcher uses `register_attempt` to commit registration and
+its initial binding together. A binding error, capacity failure or crash before
+commit leaves neither event nor projection from that attempt. Database lock waits
+are bounded (2 seconds per connection), but startup
 latency is not zero. No scheduler or persistent global environment is installed.
 Remove the opt-in variable to disable this experiment; preserve the store.
+
+### Atomic attempt contract
+
+`LifecycleRegistry.register_attempt(run_id, identity, generation_id, path)` uses
+the existing database and schema, not an outbox or another service. It appends the
+existing `register` and `bind` events in one transaction. Their event UUIDs are
+UUIDv5 derived from the run UUID with the fixed names `register` and `bind`.
+They are idempotency keys, not authentication or secrecy. Retrying requires the
+same run ID and unchanged identity, generation ID and path; changed payloads fail.
+Exact replay after commit (including after an ended observation) does not change
+the run version or revive a terminal run. Two event slots are required for a new
+attempt; insufficient capacity rolls back both writes. Existing CLI `register`,
+`bind` and single-envelope ingestion remain separate operations, not atomic pairs.
+
+Resolve the worktree path and capture process identity before acquiring the write
+transaction. A committed attempt is process evidence plus a hypothetical binding,
+not successful exec, application readiness, job completion or no-writers proof.
+
+| Failure point | Result |
+|---------------|--------|
+| Before commit, including after both SQL writes | Transaction rolls back; no partial attempt |
+| After commit, before acknowledgement | Exact replay retains one event pair and binding |
+| After commit, before exec | Attempt remains recorded; native launch is unconfirmed |
+| Native exec fails | Existing diagnostic/exit status reports failure; recorded attempt remains |
+| Registry unavailable | Observe-only launch continues with a coverage-gap diagnostic |
+
+The wrapper allocates a fresh run ID per invocation. It does not persist a retry
+request outside the registry or retry native execution; store-level idempotency
+does not guarantee capture when storage is unavailable. There is no atomic
+transaction spanning SQLite and exec. A future strict admission mode would need
+separate authorization and acceptance tests; this change does not introduce one.
+
+The existing tests include actual owned-process crashes before and after commit,
+concurrent replay, conflicting bindings and full-journal launch continuation.
+Retained validator artifacts/reports certify their recorded source fingerprints;
+they do not automatically certify this subsequent source change.
 
 For a controlled experiment, initialize a dedicated store, enable the variable
 for ONE already-approved ordinary worker invocation, then run the

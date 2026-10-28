@@ -54,6 +54,75 @@ class StoreContract(unittest.TestCase):
             self.store.register(key(), self.run, replace(self.identity, installation_id=key()))
         self.assertEqual(self.store.summary()["events"], 0)
 
+    def test_atomic_attempt_replay_and_conflict_after_ending(self):
+        generation = key()
+        args = (self.run, self.identity, generation, "/hypothetical/worktree")
+        self.store.register_attempt(*args)
+        self.store.observe(key(), self.run, 2, ProcessObservation("ended", "pid-absent"))
+        before = self.store.summary()
+        LifecycleRegistry(self.path).register_attempt(*args)
+        self.assertEqual(self.store.summary(), before)
+        with self.assertRaises(StoreConflict):
+            self.store.register_attempt(self.run, self.identity, generation, "/different")
+        self.assertEqual(self.store.summary(), before)
+        self.assertEqual(before["runs"], {"ended": 1})
+        self.assertEqual(before["bindings"], 1)
+        self.assertFalse(before["cleanup_authorized"])
+
+    def test_atomic_attempt_binding_conflict_rolls_back_registration(self):
+        generation = key()
+        self.store.register_attempt(self.run, self.identity, generation, "/first")
+        before = self.store.summary()
+        with self.assertRaises(StoreConflict):
+            self.store.register_attempt(key(), self.identity, generation, "/second")
+        self.assertEqual(self.store.summary(), before)
+
+    def test_concurrent_attempt_replay_commits_one_pair(self):
+        args = (self.run, self.identity, key(), "/hypothetical/worktree")
+        barrier = threading.Barrier(2)
+
+        def submit():
+            store = LifecycleRegistry(self.path)
+            barrier.wait(timeout=5)
+            store.register_attempt(*args)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(submit) for _ in range(2)]
+            for future in futures:
+                future.result(timeout=10)
+        self.assertEqual(self.store.summary()["events"], 2)
+        self.assertEqual(self.store.summary()["bindings"], 1)
+        self.assertEqual(self.store.summary()["runs"], {"bound": 1})
+
+    def test_attempt_crash_before_and_after_commit(self):
+        generation = key()
+        code = """
+import json,os,sys
+from pathlib import Path
+from worker_lifecycle.store import LifecycleRegistry
+from worker_lifecycle.process import ProcessIdentity
+class CrashBeforeCommit(LifecycleRegistry):
+    def _bind(self, *args):
+        super()._bind(*args)
+        os._exit(71)
+cls = CrashBeforeCommit if sys.argv[4] == 'before' else LifecycleRegistry
+s = cls(Path(sys.argv[1]))
+s.register_attempt(sys.argv[2], ProcessIdentity.from_dict(json.load(sys.stdin)), sys.argv[3], '/hypothetical/worktree')
+os._exit(72)
+"""
+        for phase, exit_code, events in (("before", 71, 0), ("after", 72, 2)):
+            with self.subTest(phase=phase):
+                result = subprocess.run(  # nosec B603 # fixed owned crash probe; identity on stdin
+                    [sys.executable, "-B", "-c", code, str(self.path), self.run, generation, phase],
+                    input=json.dumps(self.identity.to_dict()), text=True, timeout=10)
+                self.assertEqual(result.returncode, exit_code)
+                summary = LifecycleRegistry(self.path).summary()
+                self.assertEqual(summary["events"], events)
+                self.assertEqual(summary["bindings"], events // 2)
+                self.assertEqual(summary["runs"], {} if phase == "before" else {"bound": 1})
+        self.store.register_attempt(self.run, self.identity, generation, "/hypothetical/worktree")
+        self.assertEqual(self.store.summary()["events"], 2)
+
     def test_one_session_multiple_generations(self):
         self.register()
         self.store.bind(key(), self.run, key(), "/hypothetical/worktree-a")

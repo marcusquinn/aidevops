@@ -73,7 +73,9 @@ class LaunchContract(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "native-output\n")
         self.assertIn("observation-gap reason=StoreCapacity", result.stderr)
-        self.assertEqual(store.summary()["events"], 1)
+        self.assertEqual(store.summary()["events"], 0)
+        self.assertEqual(store.summary()["runs"], {})
+        self.assertEqual(store.summary()["bindings"], 0)
 
 
 if __name__ == "__main__":
