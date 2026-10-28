@@ -19,6 +19,10 @@ _GCW_ACTIVE_DEFERRAL=""
 _GCW_API_ERROR_VISIBLE=0
 _GCW_NEXT_INTERVAL=""
 _GCW_EMPTY_REQUIRED_SETTLE_SECONDS="${AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS:-90}"
+# GH#35830: a concurrency-cancelled run (e.g. after `gh pr ready`) is superseded
+# by a newer run that may not be visible yet. Treat cancel-only failures as
+# pending for this grace window before calling them terminal.
+_GCW_CANCEL_GRACE_SECONDS="${AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS:-180}"
 
 usage() {
 	cat <<'EOF'
@@ -425,6 +429,14 @@ classify_state() {
 	return 0
 }
 
+# True when every failing check is a bare cancellation (no real failure).
+only_cancelled_failures() {
+	local checks="$1"
+	printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
+		'[.[] | select(.bucket != $pass and .bucket != $pending and .bucket != $skipping)] | length > 0 and all(.[]; .bucket == "cancel")' >/dev/null
+	return $?
+}
+
 emit_failure_details() {
 	local checks="$1"
 	printf 'FAIL: required checks reached a terminal failure\n'
@@ -551,7 +563,7 @@ wait_for_checks() {
 	local start_epoch="" poll_number=0 valid_state_seen=0
 	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
-	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
+	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy="" cancel_first_epoch=""
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
@@ -587,6 +599,14 @@ wait_for_checks() {
 		fi
 		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
 		IFS=$'\t' read -r classification missing_contexts <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")"
+		if [[ "$classification" == "failure" ]] && only_cancelled_failures "$current"; then
+			[[ -n "$cancel_first_epoch" ]] || cancel_first_epoch="$now_epoch"
+			if [[ $((now_epoch - cancel_first_epoch)) -lt "$_GCW_CANCEL_GRACE_SECONDS" ]]; then
+				classification="pending"
+			fi
+		else
+			cancel_first_epoch=""
+		fi
 		state_summary=$(state_counts "$current" "$missing_contexts")
 		emit_recovered_state "$state_summary"
 		valid_state_seen=1
