@@ -9,7 +9,14 @@
 # GitHub timeline and marker comments, not runner-local counters, own cooldown.
 
 _PL_ADD_LABEL_FLAG="--add-label"
+_PL_REMOVE_LABEL_FLAG="--remove-label"
 _PL_ARRAY_TYPE="array"
+
+_protected_label_comments() {
+	local number="$1" repo="$2"
+	gh api --paginate --slurp "repos/${repo}/issues/${number}/comments?per_page=100" 2>/dev/null || return 1
+	return 0
+}
 
 _protected_label_raw_edit() {
 	local number="$1" repo="$2"
@@ -45,8 +52,39 @@ _protected_label_flap_summary() {
 
 # Return 1 for a held label, including when containment/diagnostics cannot be
 # verified. Never turn missing history into permission to remove a trust gate.
+_protected_label_marker_since() {
+	local comments="$1" marker="$2" repo="$3"
+	local rows="" login="" association="" epoch="" app_write="" permission=""
+	rows=$(printf '%s' "$comments" | jq -r --arg marker "$marker" --arg array_type "$_PL_ARRAY_TYPE" '
+		if type != $array_type or any(.[]; type != $array_type) then error("invalid comments")
+		else add // [] end
+		| [.[] | select((.body // "") | startswith($marker))
+			| {login:(.user.login // "unknown"), association:.author_association,
+				epoch:(.created_at | fromdateiso8601),
+				app_write:(.user.type == "Bot" and .performed_via_github_app.permissions.issues == "write")}]
+		| sort_by(.epoch) | reverse
+		| .[] | [.login, .association, .epoch, .app_write] | @tsv') || return 1
+	while IFS=$'\t' read -r login association epoch app_write; do
+		[[ -n "$epoch" ]] || continue
+		if [[ "$association" == "OWNER" || "$association" == "MEMBER" || "$app_write" == "true" ]]; then
+			printf '%s\n' "$epoch"
+			return 0
+		fi
+		# A legitimate runner may be a collaborator (or be viewed differently by
+		# another token). Check live authority instead of trusting association alone.
+		[[ "$login" =~ ^[A-Za-z0-9_-]+$ ]] || continue
+		permission=$(gh api "repos/${repo}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || return 1
+		case "$permission" in
+		admin | maintain | write) printf '%s\n' "$epoch"; return 0 ;;
+		esac
+	done <<<"$rows"
+	printf '0\n'
+	return 0
+}
+
 _protected_label_check() {
 	local number="$1" repo="$2" label="$3" operation="$4" decision="$5"
+	_PL_CHECK_APPLIED=0
 	local threshold="${PROTECTED_LABEL_FLAP_THRESHOLD:-4}"
 	local window="${PROTECTED_LABEL_FLAP_WINDOW_SECONDS:-21600}"
 	local cooldown="${PROTECTED_LABEL_FLAP_COOLDOWN_SECONDS:-21600}"
@@ -55,37 +93,27 @@ _protected_label_check() {
 		[[ "$value" =~ ^[1-9][0-9]{0,7}$ ]] || return 1
 	done
 	marker="<!-- aidevops:protected-label-flap:${label}:v1 -->"
-	# A failed read may not prevent an add: adding is always containment, never
-	# authority to dispatch. Removals require complete live evidence.
-	timeline=$(gh api --paginate --slurp "repos/${repo}/issues/${number}/timeline?per_page=100" 2>/dev/null) || {
+	# The remote cooldown survives missing timeline reads and runner restarts.
+	comments=$(_protected_label_comments "$number" "$repo") || {
 		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
 		return 1
 	}
-	summary=$(_protected_label_flap_summary "$timeline" "$label" "$window" 0) || {
-		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
-		return 1
-	}
-	comments=$(gh api --paginate --slurp "repos/${repo}/issues/${number}/comments?per_page=100" 2>/dev/null) || {
-		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
-		return 1
-	}
-	# Untrusted comments cannot authorize removals or shorten a cooldown. Ignore
-	# their markers, including forged expiry/incident metadata.
-	since=$(printf '%s' "$comments" | jq -er --arg marker "$marker" --arg array_type "$_PL_ARRAY_TYPE" '
-		if type != $array_type or any(.[]; type != $array_type) then error("invalid comments")
-		else add // [] end
-		| [.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or
-			(.user.type == "Bot" and .performed_via_github_app.permissions.issues == "write"))
-			| select((.body // "") | startswith($marker))
-			| .created_at | fromdateiso8601] | max // 0') || return 1
+	since=$(_protected_label_marker_since "$comments" "$marker" "$repo") || return 1
 	active=$(jq -nr --argjson since "$since" --argjson cooldown "$cooldown" \
 		'if $since > 0 and now < ($since + $cooldown) then 1 else 0 end') || return 1
-	if [[ "$active" -eq 0 && "$since" -gt 0 ]]; then
+	# A failed read may not prevent an add: adding is always containment, never
+	# authority to dispatch. Removals require complete live evidence.
+	if [[ "$active" -eq 0 ]]; then
+		timeline=$(gh api --paginate --slurp "repos/${repo}/issues/${number}/timeline?per_page=100" 2>/dev/null) || {
+			[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
+			return 1
+		}
 		# An expired incident must not retrigger forever on its old events.
-		summary=$(_protected_label_flap_summary "$timeline" "$label" "$window" "$since") || return 1
-	fi
-	if [[ "$active" -eq 0 ]] && [[ "$(printf '%s' "$summary" | jq -r '.count')" -lt "$threshold" ]]; then
-		return 0
+		summary=$(_protected_label_flap_summary "$timeline" "$label" "$window" "$since") || {
+			[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
+			return 1
+		}
+		[[ "$(printf '%s' "$summary" | jq -r '.count')" -ge "$threshold" ]] || return 0
 	fi
 	local live=""
 	live=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || return 1
@@ -95,14 +123,43 @@ _protected_label_check() {
 		# unrelated labels or promote lifecycle state while held.
 		_protected_label_raw_edit "$number" "$repo" "$_PL_ADD_LABEL_FLAG" "$label" || return 1
 	fi
+	_PL_CHECK_APPLIED=1
 	if [[ "$active" -eq 0 ]]; then
-		_protected_label_report "$number" "$repo" "$label" "$marker" "$summary" "$decision" "$cooldown" || return 1
+		# Re-read immediately before publication: a peer may have reported while
+		# we fetched history/restored the label. GitHub comments have no atomic
+		# create-if-absent; this is bounded best-effort cross-host deduplication.
+		comments=$(_protected_label_comments "$number" "$repo") || return 1
+		local latest_since=""
+		latest_since=$(_protected_label_marker_since "$comments" "$marker" "$repo") || return 1
+		[[ "$latest_since" -le "$since" ]] || return 1
+		decision="${decision}; live_association=$(printf '%s' "$live" | jq -r '.author_association // "unknown"')"
+		_protected_label_report "$number" "$repo" "$label" "$marker" "$summary" "$decision" "$cooldown" "$since" || return 1
 	fi
 	return 1
 }
 
 _protected_label_report() {
-	local number="$1" repo="$2" label="$3" marker="$4" summary="$5" decision="$6" cooldown="$7"
+	local number="$1" repo="$2"
+	local state_dir="${PROTECTED_LABEL_FLAP_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/tmp/protected-label-flap}"
+	local lock="${state_dir}/${repo//\//_}-${number}.lock"
+	# Serialize publishers sharing a host; never wait on a busy/orphaned lock.
+	# Cross-host deduplication still uses a fresh live marker read under the lock.
+	(
+		umask 077
+		mkdir -p "$state_dir" || return 1
+		mkdir -m 700 "$lock" 2>/dev/null || return 1
+		trap 'rmdir "$lock" 2>/dev/null || true' EXIT
+		_protected_label_publish "$@"
+	)
+	return $?
+}
+
+_protected_label_publish() {
+	local number="$1" repo="$2" label="$3" marker="$4" summary="$5" decision="$6" cooldown="$7" previous_since="$8"
+	local comments="" since=""
+	comments=$(_protected_label_comments "$number" "$repo") || return 1
+	since=$(_protected_label_marker_since "$comments" "$marker" "$repo") || return 1
+	[[ "$since" -le "$previous_since" ]] || return 0
 	local body="" dir="" version="unknown" actors=""
 	dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
 	if [[ -r "${dir}/../../VERSION" ]]; then
@@ -112,11 +169,11 @@ _protected_label_report() {
 	body="${marker}
 Protected label \`${label}\` is held applied for ${cooldown}s after repeated timeline transitions.
 Timeline actors: ${actors}.
-Detecting runner: ${AIDEVOPS_RUNNER_ID:-${HOSTNAME:-unknown}}; aidevops ${version}; decision: ${decision}.
+Detecting runner: ${AIDEVOPS_PUBLIC_RUNNER_ID:-unknown}; aidevops ${version}; decision: ${decision}.
 GitHub timeline events do not expose historical runner versions or trust decisions; these are unavailable, not inferred from actor identity.
 Investigate token authority, permission caches and version skew before retrying."
 	printf '%s\n' "$body" | "${dir}/gh-write-helper.sh" issue comment "$number" --repo "$repo" --body-file - || return 1
-	"${dir}/gh-audit-log-helper.sh" record --op issue.edit --repo "$repo" --number "$number" \
+	"${dir}/gh-audit-log-helper.sh" record --op issue_edit --repo "$repo" --number "$number" \
 		--caller-script protected-label-guard.sh --caller-function _protected_label_report \
 		--flags-json "$(jq -cn --arg label "$label" '{protected_label_flap:$label}')" >/dev/null || return 1
 	return 0
@@ -129,14 +186,40 @@ protected_label_edit() {
 	shift 3
 	local operation="" label="" previous=""
 	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$number" =~ ^[1-9][0-9]*$ ]] || return 1
-	for label in "$@"; do
+	# This interface accepts only separate, single-label arguments. Reject other
+	# gh flag forms rather than allowing an unguarded protected-label removal.
+	local -a edits=("$@")
+	while [[ $# -gt 0 ]]; do
+		local operation="$1" label="${2:-}"
+		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" || "$operation" == "$_PL_REMOVE_LABEL_FLAG" ]] || return 1
+		[[ -n "$label" && "$label" != *,* && "$label" != --* ]] || return 1
+		shift 2 || return 1
+	done
+	for label in "${edits[@]}"; do
 		operation="$previous"
 		previous="$label"
-		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" || "$operation" == "--remove-label" ]] || continue
+		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" || "$operation" == "$_PL_REMOVE_LABEL_FLAG" ]] || continue
 		case ",${PROTECTED_LABEL_FLAP_LABELS:-needs-maintainer-review}," in
 		*,"$label",*) _protected_label_check "$number" "$repo" "$label" "$operation" "$decision" || return 1 ;;
 		esac
 	done
-	_protected_label_raw_edit "$number" "$repo" "$@" || return 1
+	_protected_label_raw_edit "$number" "$repo" "${edits[@]}" || return 1
+	# A stale remover must repair containment if a peer published a cooldown
+	# between our preflight and write. Do not poll; take one fresh observation.
+	previous=""
+	for label in "${edits[@]}"; do
+		operation="$previous" previous="$label"
+		[[ "$operation" == "$_PL_REMOVE_LABEL_FLAG" ]] || continue
+		case ",${PROTECTED_LABEL_FLAP_LABELS:-needs-maintainer-review}," in
+		*,"$label",*)
+			if ! _protected_label_check "$number" "$repo" "$label" "$operation" "$decision"; then
+				if [[ "$_PL_CHECK_APPLIED" -eq 0 ]]; then
+					_protected_label_raw_edit "$number" "$repo" "$_PL_ADD_LABEL_FLAG" "$label" || true
+				fi
+				return 1
+			fi
+			;;
+		esac
+	done
 	return 0
 }

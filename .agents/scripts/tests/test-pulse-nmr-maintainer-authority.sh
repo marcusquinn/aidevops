@@ -61,6 +61,12 @@ setup_test_env() {
 set -euo pipefail
 if [[ "${1:-}" == "api" ]]; then
 	path="${2:-}"
+	if [[ "$path" == "--paginate" && "${3:-}" == "--slurp" ]]; then
+		case "${4:-}" in
+		*/timeline\?*) [[ "${TIMELINE_API_FAIL:-0}" -eq 0 ]] || exit 1; printf '[%s]\n' "${NMR_TIMELINE_JSON:-[]}"; exit 0 ;;
+		*/comments\?*) [[ "${COMMENTS_API_FAIL:-0}" -eq 0 ]] || exit 1; printf '[%s]\n' "${ISSUE_COMMENTS_JSON:-[]}"; exit 0 ;;
+		esac
+	fi
 	if [[ "$path" == "-i" ]]; then
 		path="${3:-}"
 		if [[ "$path" == */collaborators/runner/permission ]]; then
@@ -699,6 +705,23 @@ test_ever_nmr_history_bypasses_self_approval_for_trusted_author() {
 	return 0
 }
 
+test_flap_cooldown_preserves_lifecycle() {
+	setup_test_env
+	export ISSUE_LABELS_JSON='[{"name":"needs-maintainer-review"}]'
+	ISSUE_COMMENTS_JSON=$(jq -cn '[{author_association:"OWNER",
+		body:"<!-- aidevops:protected-label-flap:needs-maintainer-review:v1 -->",
+		created_at:(now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]')
+	export ISSUE_COMMENTS_JSON
+	run_auto_approve
+	if [[ ! -s "$STATUS_CALLS_FILE" && ! -s "$ISSUE_EDIT_CALLS_FILE" ]]; then
+		print_result "flap cooldown blocks lifecycle promotion as well as NMR removal" 0
+	else
+		print_result "flap cooldown blocks lifecycle promotion as well as NMR removal" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_ever_nmr_history_still_blocks_external_author() {
 	setup_test_env
 	export ISSUE_API_AUTHOR="external-contributor"
@@ -744,6 +767,7 @@ main() {
 	test_decision_packet_is_idempotent_across_pages
 	test_decision_packet_defers_when_comments_unavailable
 	test_ever_nmr_history_bypasses_self_approval_for_trusted_author
+	test_flap_cooldown_preserves_lifecycle
 	test_ever_nmr_history_still_blocks_external_author
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"

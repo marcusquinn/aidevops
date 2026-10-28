@@ -146,7 +146,7 @@ _linked_issue_author_allows_start() {
 	if [[ "$verification" == "NO_APPROVAL" ]]; then
 		#aidevops:trust-boundary -- containment is best-effort; this live gate is authoritative.
 		# shellcheck source=protected-label-guard.sh
-		source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
+		source "${SCRIPT_DIR}/protected-label-guard.sh"
 		protected_label_edit "$issue_num" "$repo" \
 			"containment; association=${author_association}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" \
 			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
