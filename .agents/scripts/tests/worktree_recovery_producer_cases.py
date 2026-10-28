@@ -42,6 +42,7 @@ class ProducerCases:
 
     def test_tracked_permissions_follow_git_model(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)
+        self.work.chmod(0o775)
         tracked = self.work / "mixed.txt"
         original = tracked.read_bytes()
         registration = self.git(self.repo, "worktree", "list", "--porcelain")
@@ -52,6 +53,7 @@ class ProducerCases:
                 self.helper("verify", archive)
                 self.assertEqual(tracked.read_bytes(), original)
                 self.assertEqual(stat.S_IMODE(tracked.stat().st_mode), mode)
+                self.assertEqual(stat.S_IMODE(self.work.stat().st_mode), 0o775)
                 self.assertEqual(self.git(self.repo, "worktree", "list", "--porcelain"), registration)
 
     def test_git_only_capture_contains_commits_and_two_patches_without_verification(self):
