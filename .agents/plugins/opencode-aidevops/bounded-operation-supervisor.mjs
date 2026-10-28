@@ -122,8 +122,8 @@ function ownedTreeDrained(tracker, terminator, terminateSurvivors, exitedCommand
   // The main command is already gone: do not spend its TERM grace waiting on
   // same-group children. Signal individual snapshot identities, not our group,
   // so the supervisor stays alive to drain and report the original command exit.
-  const sameGroup = snapshot.entries.filter((entry) => entry.pgid === process.pid
-    && entry.pid !== process.pid && entry.pid !== snapshot.psPid).map((entry) => entry.pid);
+  const sameGroup = tracker.ownGroupTargets(snapshot)
+    .filter((pid) => pid !== process.pid && pid !== snapshot.psPid);
   if (terminator.terminating) signalEach(sameGroup, "SIGKILL", snapshot.entries);
   if (tracker.ownGroupMembers(snapshot) !== 1) return false;
   if (nested.length === 0) return true;

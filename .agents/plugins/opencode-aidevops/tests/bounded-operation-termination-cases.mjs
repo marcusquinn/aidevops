@@ -5,11 +5,29 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
+import { createProcessTreeTracker } from "../bounded-operation-process-tree.mjs";
 import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, terminal } from "./bounded-operation-fixtures.mjs";
 
 // Registered inside the existing lifecycle suite, using its shared fixture and
 // unchanged node --test entrypoint rather than a new runner.
 export function terminationCases() {
+  test("same-group escalation rejects reused and unattributed process identities", () => {
+    let entries = [
+      { pid: 100, ppid: 1, pgid: 100, started: "root" },
+      { pid: 101, ppid: 100, pgid: 100, started: "owned" },
+      { pid: 900, ppid: 100, pgid: 100, started: "ps" },
+    ];
+    const tracker = createProcessTreeTracker(100, () => ({ entries, psPid: 900 }));
+    assert.deepEqual(tracker.ownGroupTargets(tracker.track()), [101]);
+    entries = [
+      { pid: 100, ppid: 1, pgid: 100, started: "root" },
+      { pid: 101, ppid: 1, pgid: 100, started: "reused" },
+      { pid: 102, ppid: 1, pgid: 100, started: "unattributed" },
+      { pid: 900, ppid: 100, pgid: 100, started: "ps" },
+    ];
+    assert.deepEqual(tracker.ownGroupTargets(tracker.track()), []);
+  });
+
   test("failure, timeout, and scoped cancellation cannot appear as success", async () => {
     const instance = manager();
     const failed = await instance.start({ command: [process.execPath, "-e", "process.exit(7)"], budgetMs: SUCCESS_BUDGET_MS }, owner);
