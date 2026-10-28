@@ -354,11 +354,13 @@ function scrubObservedToolOutput(ctx, log, toolName, output) {
     }
     log("WARN", `[credential-scrub] redacted registered secret value(s) from ${toolName} output`);
   }
-  const rawOutput = output.output;
-  if (rawOutput === undefined) return;
+  const rawOutput = Object.fromEntries(
+    ["output", "title", "metadata"].filter((field) => output[field] !== undefined)
+      .map((field) => [field, output[field]]),
+  );
   const { output: scrubbedOutput, redacted } = scrubToolOutput(rawOutput);
   if (!redacted) return;
-  output.output = scrubbedOutput;
+  for (const field of Object.keys(rawOutput)) output[field] = scrubbedOutput[field];
   log("WARN", `[credential-scrub] redacted credential token(s) from ${toolName} output`);
 }
 

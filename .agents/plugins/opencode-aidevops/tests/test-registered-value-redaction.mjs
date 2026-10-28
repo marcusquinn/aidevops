@@ -110,6 +110,33 @@ describe("registered secret value redaction (GH#32362)", () => {
     assert.equal(output.output, `PASSWORD=${TOKEN}`, "sensitive assignments remain protected");
   });
 
+  test("public-name credential assignments are scrubbed across all persisted fields", async () => {
+    const { root, redactor } = fixture({ credentials: { SYNTHETIC_PROJECT: "aidevops" } });
+    for (const tool of ["read", "bash"]) {
+      const result = await afterHook(redactor, root, {
+        output: "SERVICE_CREDENTIAL=aidevops SERVICE_CREDENTIALS=aidevops",
+        title: "PASSWORD=aidevops",
+        metadata: {
+          description: "SERVICE_CREDENTIAL=aidevops",
+          nested: [{ SERVICE_CREDENTIALS: "aidevops", ordinary: "Built with aidevops" }, 7, null],
+          pair: { name: "SERVICE_CREDENTIAL", value: "aidevops" },
+        },
+      }, tool);
+      assert.equal(result.output, `SERVICE_CREDENTIAL=${TOKEN} SERVICE_CREDENTIALS=${TOKEN}`);
+      assert.equal(result.title, `PASSWORD=${TOKEN}`);
+      assert.deepEqual(result.metadata, {
+        description: `SERVICE_CREDENTIAL=${TOKEN}`,
+        nested: [{ SERVICE_CREDENTIALS: TOKEN, ordinary: "Built with aidevops" }, 7, null],
+        pair: { name: "SERVICE_CREDENTIAL", value: TOKEN },
+      });
+      const titleOnly = await afterHook(redactor, root, { title: "PASSWORD=aidevops" }, tool);
+      assert.deepEqual(titleOnly, { title: `PASSWORD=${TOKEN}` });
+      const metadataOnly = await afterHook(redactor, root, { metadata: { PASSWORD: "aidevops" } }, tool);
+      assert.deepEqual(metadataOnly, { metadata: { PASSWORD: TOKEN } });
+      assert.deepEqual(await afterHook(redactor, root, {}, tool), {});
+    }
+  });
+
   test("process listing redacts a credential-file value inside a provider command line", async () => {
     const secret = marker("Cred");
     const ordinary = marker("Ordinary");

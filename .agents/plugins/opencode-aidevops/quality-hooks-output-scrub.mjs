@@ -87,7 +87,7 @@ function normalizeFieldName(name) {
 }
 
 function isSensitiveFieldName(name) {
-  return /(?:^|_)(?:API_?KEY|PRIVATE_KEY|SECRET_KEY|ACCESS_KEY|ACCESS_KEY_ID|ENCRYPTION_KEY|SIGNING_KEY|TOKEN|SECRET|PASSWORD|PASSWD)$/.test(
+  return /(?:^|_)(?:API_?KEY|PRIVATE_KEY|SECRET_KEY|ACCESS_KEY|ACCESS_KEY_ID|ENCRYPTION_KEY|SIGNING_KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$/.test(
     normalizeFieldName(name),
   );
 }
