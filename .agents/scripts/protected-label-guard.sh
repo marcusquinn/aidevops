@@ -79,7 +79,10 @@ _protected_label_marker_since() {
 		checked="${checked}${login},"
 		permission=$(gh api "repos/${repo}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || return 1
 		case "$permission" in
-		admin | maintain | write) printf '%s\n' "$epoch"; return 0 ;;
+		admin | maintain | write)
+			printf '%s\n' "$epoch"
+			return 0
+			;;
 		esac
 	done <<<"$rows"
 	printf '0\n'
