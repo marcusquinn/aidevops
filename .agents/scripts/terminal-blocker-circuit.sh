@@ -10,6 +10,7 @@ _TERMINAL_BLOCKER_CIRCUIT_LOADED=1
 _TBC_OBSERVATION_MARKER='aidevops:terminal-blocker-observation'
 _TBC_CIRCUIT_MARKER='aidevops:terminal-blocker-circuit'
 _TBC_RETRY_MARKER='terminal-blocker-circuit:retry'
+_TBC_FLEET_MARKER='aidevops:fleet-capability fingerprint='
 _TBC_MISSING_SCOPE='missing_files_scope'
 _TBC_UNKNOWN='unknown'
 _TBC_RUNNER_CAPABILITY='runner_capability_unmet'
@@ -713,6 +714,180 @@ terminal_blocker_backoff_active() {
 	return 0
 }
 
+# GH#35788: the issue's immutable release observations are the durable fleet
+# hold. A local cooldown expiring cannot erase them. Require two *different*
+# authenticated runners on this exact task revision, not two attempts/devices.
+_terminal_blocker_fleet_authorize() {
+	local comments="$1" repo="$2"
+	local login="" permission=""
+	# aidevops:trust-boundary — association alone does not prove a collaborator
+	# can write. Verify actual repository permission before fleet aggregation.
+	while IFS= read -r login; do
+		[[ "$login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || continue
+		permission=$(gh api "repos/${repo}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || continue
+		case "$permission" in
+		admin | maintain | write)
+			comments=$(jq -c --arg login "$login" 'map(if (.author // .user.login // "") == $login then .author_association="MEMBER" else . end)' <<<"$comments") || return 1
+			;;
+		esac
+	done < <(jq -r --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(authoritative_author($authoritative) | not)
+		| select(.body // empty | test("aidevops:terminal-blocker-observation|^<!-- aidevops:fleet-capability"))
+		| (.author // .user.login // "")] | unique[]' <<<"$comments")
+	printf '%s\n' "$comments"
+	return 0
+}
+
+_terminal_blocker_fleet_observations() {
+	local comments="$1" revision="$2" fingerprint="$3"
+	jq -c --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		--arg marker "<!-- $_TBC_OBSERVATION_MARKER revision=${revision} blocker=${fingerprint} -->" "${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(authoritative_author($authoritative))
+		| . as $comment
+		| select((.body // "") | contains($marker))
+		| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
+		| select($release != null and $release.runner == ($comment.author // $comment.user.login // ""))
+		| {runner:$release.runner, at:.created_at, id:.id}]
+		| group_by(.runner) | map(max_by(.at))
+	' <<<"$comments"
+	return $?
+}
+
+# This is a fresh read-only probe, never an install or an approval. A current
+# approved bootstrap policy also qualifies: the normal worktree prepare path
+# will perform its frozen, script-free install before the worker starts.
+_terminal_blocker_fleet_ready() {
+	local path="$1" brief="$2"
+	local helpers="${BASH_SOURCE[0]%/*}" probe="" policy=""
+	[[ -d "$path" ]] || return 1
+	# shellcheck source=runner-capability-helper.sh
+	source "${helpers}/runner-capability-helper.sh"
+	runner_capability_check "$path" "$brief" fresh >/dev/null 2>&1 || return 1
+	probe=$(bash "${helpers}/worktree-js-readiness-helper.sh" probe "$path" --json --no-cache 2>/dev/null) || return 1
+	if jq -e '.state == "ready" or (.state | startswith("not-applicable:"))' <<<"$probe" >/dev/null; then
+		return 0
+	fi
+	policy=$(bash "${helpers}/worktree-js-readiness-helper.sh" status "$path" 2>/dev/null) || return 1
+	[[ "$policy" == JS_DEPENDENCY_POLICY=current$'\n'* ]]
+	return $?
+}
+
+# Resolve a single repository-wide supervisor dashboard, independent of the
+# observing runner. Never create escalation comments on implementation issues.
+_terminal_blocker_fleet_dashboard() {
+	local repo="$1"
+	gh api "repos/${repo}/issues?state=open&labels=supervisor&per_page=100" --paginate --slurp 2>/dev/null |
+		jq -er '[.[][] | select(.pull_request == null)
+		| select(.title | startswith("[Supervisor:"))] | sort_by(.number) | first.number // empty'
+	return $?
+}
+
+# Upsert one safe, structured escalation per repository/fingerprint. Preserve
+# the accumulated issue list across observations. Readiness is task-specific:
+# the legacy fingerprint names a class, not an exact secret/tool requirement.
+_terminal_blocker_fleet_update() {
+	local repo="$1" dashboard="$2" fingerprint="$3" issue="$4" state="$5" existing="$6"
+	local checkpoint="${7:-}" id="" body="" held="" old_body="" ready=""
+	id=$(jq -r '.id // empty' <<<"$existing")
+	old_body=$(jq -r '.body // ""' <<<"$existing")
+	held=$(jq -rn --arg old "$old_body" --arg issue "$issue" '
+		[($old | scan("(?m)^Held issues: ([0-9,]+)$")[] | split(",")[]), $issue]
+		| unique | sort_by(tonumber) | join(",")') || return 1
+	ready=$(jq -rn --arg old "$old_body" --arg key "$checkpoint" --arg state "$state" '
+		[($old | scan("(?m)^Ready checkpoints: ([a-f0-9,]+)$")[] | split(",")[]),
+		 ($key | select($state == "ready" and test("^[a-f0-9]{24}$")))] | unique | join(",")') || return 1
+	body="<!-- ${_TBC_FLEET_MARKER}${fingerprint} -->
+Fleet capability circuit (readiness is checked per task before launch)
+Wake condition: capability:${fingerprint}
+Held issues: ${held}
+Ready checkpoints: ${ready}
+
+Runner owners: inspect the protected blocker dossier for the exact missing prerequisite. For node-modules-missing (tsc), run \`worktree-js-readiness-helper.sh approve <worktree> --track-default-branch\` interactively. A fresh readiness probe or current approved frozen-install policy on a capable runner releases the hold automatically. No brief change is needed. Do not install without approval, bypass hooks, or publish secret values."
+	[[ "$body" != "$old_body" ]] || return 0
+	if [[ "$id" =~ ^[1-9][0-9]*$ ]]; then
+		gh api "repos/${repo}/issues/comments/${id}" --method PATCH --raw-field body="$body" >/dev/null || return 1
+	else
+		gh api "repos/${repo}/issues/${dashboard}/comments" --method POST --raw-field body="$body" >/dev/null || return 1
+	fi
+	return 0
+}
+
+# Reconcile concurrent creators on the next observation (and immediately after
+# creation). Merge both lists before removing duplicate generated comments;
+# never delete ordinary dashboard comments or untrusted marker lookalikes.
+_terminal_blocker_fleet_existing() {
+	local repo="$1" dashboard="$2" fingerprint="$3"
+	local shared="" matches="" existing="" duplicate="" merged=""
+	shared=$(terminal_blocker_fetch_trusted_comments "$dashboard" "$repo") || return 1
+	shared=$(_terminal_blocker_fleet_authorize "$shared" "$repo") || return 1
+	# aidevops:trust-boundary — a copied marker does not authorize edits/deletes.
+	matches=$(jq -c --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		--arg marker "<!-- ${_TBC_FLEET_MARKER}${fingerprint} -->" "${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(authoritative_author($authoritative))
+		| select((.body // "") | startswith($marker))] | sort_by(.id)' <<<"$shared") || return 1
+	existing=$(jq -c 'first // {}' <<<"$matches")
+	if [[ "$(jq 'length' <<<"$matches")" -gt 1 ]]; then
+		merged=$(jq -r 'map(.body) | join("\n")' <<<"$matches")
+		# Feed all structured rows to the normal formatter, preserving union.
+		existing=$(jq -c --arg body "$merged" '.body=$body' <<<"$existing")
+		_terminal_blocker_fleet_update "$repo" "$dashboard" "$fingerprint" \
+			"$(jq -r '[.[].body | scan("(?m)^Held issues: ([0-9,]+)$")[] | split(",")[]] | first' <<<"$matches")" held "$existing" || return 1
+		while IFS= read -r duplicate; do
+			[[ "$duplicate" =~ ^[1-9][0-9]*$ ]] || continue
+			gh api "repos/${repo}/issues/comments/${duplicate}" --method DELETE >/dev/null || return 1
+		done < <(jq -r '.[1:][].id' <<<"$matches")
+		# Return the newly formatted canonical body, not the merged raw rows.
+		shared=$(terminal_blocker_fetch_trusted_comments "$dashboard" "$repo") || return 1
+		existing=$(jq -c --argjson id "$(jq '.id' <<<"$existing")" '[.[] | select(.id == $id)] | first // {}' <<<"$shared")
+	fi
+	printf '%s\n' "$existing"
+	return 0
+}
+
+terminal_blocker_fleet_hold_active() {
+	local comments="$1" brief="$2" repo="$3" issue="$4" path="$5"
+	local fingerprint=""
+	local revision="" observations="" dashboard="" checkpoint="" existing='{}'
+	fingerprint=$(_terminal_blocker_hash "v2:${_TBC_RUNNER_CAPABILITY}") || return 1
+	# Avoid dependency/API work on issues without capability observations.
+	[[ "$comments" == *"blocker=${fingerprint}"* ]] || return 1
+	# The dispatch admission metadata deliberately omits body. Fetch the brief
+	# before hashing; a title-only hash can never match worker observations.
+	if ! jq -e '[.body,.title] | all(type == "string")' <<<"$brief" >/dev/null 2>&1; then
+		brief=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 1
+	fi
+	revision=$(terminal_blocker_task_revision "$brief" "$repo" "$issue" "$path" "$_TBC_RUNNER_CAPABILITY") || return 1
+	comments=$(_terminal_blocker_fleet_authorize "$comments" "$repo") || return 1
+	observations=$(_terminal_blocker_fleet_observations "$comments" "$revision" "$fingerprint") || return 1
+	[[ "$(jq 'length' <<<"$observations")" -ge 2 ]] || return 1
+	checkpoint=$(_terminal_blocker_hash "${revision}:${observations}") || return 1
+	dashboard=$(_terminal_blocker_fleet_dashboard "$repo") || dashboard=""
+	if [[ "$dashboard" =~ ^[1-9][0-9]*$ ]]; then
+		# An unreadable collection is not an empty collection: never POST a
+		# replacement escalation after a failed read.
+		existing=$(_terminal_blocker_fleet_existing "$repo" "$dashboard" "$fingerprint") || {
+			printf 'TERMINAL_BLOCKER_FLEET_HOLD escalation=unreadable wake=capability:%s\n' "$fingerprint"
+			return 0
+		}
+	fi
+	# Every runner probes before *launch*, including a runner that has never
+	# failed this issue. A new capable runner/approved policy therefore wakes
+	# it without spending a worker attempt. Receipts cover only these exact
+	# observations and this revision, never another issue or a later failure.
+	if jq -e --arg key "$checkpoint" '.body // "" | [scan("(?m)^Ready checkpoints: ([a-f0-9,]+)$")[] | split(",")[]] | index($key) != null' <<<"$existing" >/dev/null; then
+		return 1
+	fi
+	if _terminal_blocker_fleet_ready "$path" "$brief"; then
+		[[ -z "$dashboard" ]] || _terminal_blocker_fleet_update "$repo" "$dashboard" "$fingerprint" "$issue" ready "$existing" "$checkpoint" || true
+		[[ -z "$dashboard" ]] || _terminal_blocker_fleet_existing "$repo" "$dashboard" "$fingerprint" >/dev/null || true
+		return 1
+	fi
+	[[ -z "$dashboard" ]] || _terminal_blocker_fleet_update "$repo" "$dashboard" "$fingerprint" "$issue" held "$existing" || true
+	[[ -z "$dashboard" ]] || _terminal_blocker_fleet_existing "$repo" "$dashboard" "$fingerprint" >/dev/null || true
+	printf 'TERMINAL_BLOCKER_FLEET_HOLD task_revision=%s wake=capability:%s\n' "$revision" "$fingerprint"
+	return 0
+}
+
 terminal_blocker_circuit_active() {
 	local comments_json="$1"
 	local issue_json="$2"
@@ -721,6 +896,9 @@ terminal_blocker_circuit_active() {
 	local repo_path="$5"
 	local circuit="" retry="" current_revision="" fingerprint="" reason=""
 	_terminal_blocker_report_ignored_evidence "$comments_json"
+	if terminal_blocker_fleet_hold_active "$comments_json" "$issue_json" "$repo_slug" "$issue_number" "$repo_path"; then
+		return 0
+	fi
 	if terminal_blocker_backoff_active "$comments_json"; then
 		return 0
 	fi

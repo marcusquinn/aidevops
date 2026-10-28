@@ -1096,6 +1096,18 @@ _dispatch_capability_cooldown_path() {
 # Checksum of the runner-local requirement map; "none" when absent.
 _dispatch_capability_config_fingerprint() {
 	local repo_path="$1" config="" crc="" size=""
+	local registry="${AIDEVOPS_REPOS_FILE:-${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}}"
+	local policy_crc="" policy_size="" readiness=""
+	# GH#35788: policy approval and installed tools are wake signals, not a
+	# reason to wait out the old runner-local TTL. Only hashes/states leave here.
+	if [[ -f "$registry" && ! -L "$registry" ]]; then
+		read -r policy_crc policy_size < <(cksum <"$registry" 2>/dev/null) || policy_crc=""
+	fi
+	if [[ -n "$repo_path" && -d "$repo_path" ]]; then
+		readiness=$(bash "${BASH_SOURCE[0]%/*}/worktree-js-readiness-helper.sh" probe "$repo_path" --json 2>/dev/null |
+			jq -r '.state // "unknown"') || readiness="unknown"
+	fi
+	printf '%s-%s-%s:' "$policy_crc" "$policy_size" "$readiness"
 	config="${repo_path%/}/.aidevops.json"
 	if [[ -n "$repo_path" && -f "$config" && ! -L "$config" ]]; then
 		read -r crc size < <(cksum <"$config" 2>/dev/null) || crc=""

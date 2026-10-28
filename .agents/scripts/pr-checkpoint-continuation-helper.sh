@@ -798,6 +798,17 @@ ${approval_step}
 
 See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and blocked release.
 <!-- ops:end -->"
+	# GH#35788: capability releases already support guarded automatic continuation
+	# (GH#34758). Do not send a runner prerequisite failure back to the brief owner.
+	if jq -e --argjson id "$release_id" --arg line "$_PCC_CAPABILITY_RELEASE_LINE" \
+		'any(.[]; .id == $id and ((.body // "") | split("\n") | any(startswith($line))))' <<<"$comments" >/dev/null; then
+		body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- ${key} release=${release_id} -->
+BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} attempt=${attempt:-unknown}
+
+Draft PR #${pr} preserves the exact checkpoint. No brief change or revision-bound approval is needed for this runner capability release. Runner owners should resolve the missing prerequisite in the protected blocker dossier; for node-modules-missing (tsc), run \`worktree-js-readiness-helper.sh approve <worktree> --track-default-branch\` interactively. Pulse can continue this exact head on a capable runner through the guarded capability continuation path. Do not discard the checkpoint or bypass hooks.
+<!-- ops:end -->"
+	fi
 	gh api "repos/${repo}/issues/${issue}/comments" --method POST --raw-field body="$body" >/dev/null || return 1
 	printf 'BLOCKED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s\n' \
 		"$pr" "$repo" "$head" "$release_id"

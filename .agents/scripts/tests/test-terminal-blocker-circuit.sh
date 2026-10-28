@@ -1583,7 +1583,129 @@ _default_budget_progress_checks() {
 	return 0
 }
 
+test_fleet_capability_hold() {
+	local status=0
+	if ! (
+		local brief='{"title":"Check tools","body":"### Files Scope\n- tool.sh"}'
+		local revision="" fingerprint="" comments="" changed="" ready=1 updates=0
+		revision=$(terminal_blocker_task_revision "$brief" owner/repo 42 "$TEST_ROOT" runner_capability_unmet)
+		fingerprint=$(_terminal_blocker_hash 'v2:runner_capability_unmet')
+		comments=$(jq -nc --arg r "$revision" --arg f "$fingerprint" '
+			["alpha","beta"] | to_entries | map({id:(.key+1),author:.value,author_association:"MEMBER",
+			created_at:"2026-10-27T10:00:00Z",body:("CLAIM_RELEASED reason=blocked runner="+.value+" ts=now\n<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->")})')
+		_terminal_blocker_fleet_ready() { return "$ready"; }
+		_terminal_blocker_fleet_dashboard() { printf '99\n'; return 0; }
+		terminal_blocker_fetch_trusted_comments() { printf '[]\n'; return 0; }
+		gh() { return 1; }
+		_terminal_blocker_fleet_update() { updates=$((updates + 1)); return 0; }
+		terminal_blocker_fleet_hold_active "$comments" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		[[ "$updates" -eq 1 ]] || exit 1
+		# Same author twice, spoofed runner field, outsider and old revision do not hold.
+		changed=$(jq -c '.[1].author="alpha" | .[1].body=.[0].body' <<<"$comments")
+		terminal_blocker_fleet_hold_active "$changed" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		changed=$(jq -c '.[1].author="mallory"' <<<"$comments")
+		terminal_blocker_fleet_hold_active "$changed" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		changed=$(jq -c '.[1].author_association="CONTRIBUTOR"' <<<"$comments")
+		terminal_blocker_fleet_hold_active "$changed" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		terminal_blocker_fleet_hold_active "$comments" '{"title":"Changed","body":"new brief"}' owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		ready=0
+		terminal_blocker_fleet_hold_active "$comments" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		[[ "$updates" -eq 2 ]] || exit 1
+		# A receipt wakes only its exact observed checkpoint; a new failure,
+		# even in the same second, must be probed again.
+		local checkpoint="" receipt=""
+		checkpoint=$(_terminal_blocker_hash "${revision}:$(_terminal_blocker_fleet_observations "$comments" "$revision" "$fingerprint")")
+		receipt=$(jq -nc --arg key "$checkpoint" '{id:123,body:("Ready checkpoints: "+$key)}')
+		_terminal_blocker_fleet_existing() { printf '%s\n' "$receipt"; return 0; }
+		ready=1
+		terminal_blocker_fleet_hold_active "$comments" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		changed=$(jq -c '.[1].id=3' <<<"$comments")
+		terminal_blocker_fleet_hold_active "$changed" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		[[ "$updates" -eq 3 ]] || exit 1
+		exit 0
+	); then status=1; fi
+	print_result "fleet hold requires distinct authenticated runners and a current revision; readiness wakes it" "$status"
+	return 0
+}
+
+test_fleet_escalation_upsert() {
+	local status=0
+	if ! (
+		local existing='{}' calls="${TEST_ROOT}/fleet-calls" captured_body="" fingerprint=""
+		local fixture_comments='[]' reconciled=""
+		fingerprint=$(_terminal_blocker_hash 'v2:runner_capability_unmet')
+		gh() {
+			local endpoint="$2" method="$4" payload="${6:-}"
+			printf '%s --method %s\n' "$endpoint" "$method" >>"$calls"
+			captured_body="${payload#body=}"
+			if [[ "$method" == PATCH ]]; then
+				fixture_comments=$(jq -c --arg body "$captured_body" 'map(if .id == 123 then .body=$body else . end)' <<<"$fixture_comments")
+			elif [[ "$method" == DELETE ]]; then
+				fixture_comments=$(jq -c 'map(select(.id != 124))' <<<"$fixture_comments")
+			fi
+			return 0
+		}
+		_terminal_blocker_fleet_update owner/repo 99 "$fingerprint" 42 held "$existing" || exit 1
+		[[ "$captured_body" == *'Held issues: 42'* && "$captured_body" == *'approve <worktree>'* ]] || exit 1
+		existing=$(jq -nc --arg body "$captured_body" '{id:123,body:$body}')
+		_terminal_blocker_fleet_update owner/repo 99 "$fingerprint" 43 held "$existing" || exit 1
+		[[ "$captured_body" == *'Held issues: 42,43'* ]] || exit 1
+		existing=$(jq -nc --arg body "$captured_body" '{id:123,body:$body}')
+		_terminal_blocker_fleet_update owner/repo 99 "$fingerprint" 43 held "$existing" || exit 1
+		[[ "$(wc -l <"$calls" | tr -d ' ')" -eq 2 ]] || exit 1
+		rg -q 'comments/123 --method PATCH' "$calls" || exit 1
+		# Two simultaneous creators converge without losing either issue list
+		# or exact-checkpoint readiness evidence.
+		fixture_comments=$(jq -nc --arg marker "<!-- ${_TBC_FLEET_MARKER}${fingerprint} -->" '
+			[{id:123,author_association:"MEMBER",body:($marker+"\nHeld issues: 42\nReady checkpoints: aaaaaaaaaaaaaaaaaaaaaaaa")},
+			 {id:124,author_association:"MEMBER",body:($marker+"\nHeld issues: 43\nReady checkpoints: bbbbbbbbbbbbbbbbbbbbbbbb")}]')
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$fixture_comments"; return 0; }
+		reconciled=$(_terminal_blocker_fleet_existing owner/repo 99 "$fingerprint") || exit 1
+		[[ "$reconciled" == *'Held issues: 42,43'* && "$reconciled" == *'aaaaaaaaaaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbbbbbbbbbb'* ]] || exit 1
+		rg -q 'comments/124 --method DELETE' "$calls" || exit 1
+		exit 0
+	); then status=1; fi
+	print_result "fleet escalation creates once, edits the held issue list and skips unchanged writes" "$status"
+	return 0
+}
+
+test_capability_checkpoint_attention() {
+	local status=0
+	if ! (
+		# shellcheck source=../pr-checkpoint-continuation-helper.sh
+		source "${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh"
+		local attention_body="" fixture_reason="runner_capability_unmet"
+		_pcc_issue_comments() {
+			jq -nc --arg reason "$fixture_reason" '[{id:10,body:("Terminal blocker: reason="+$reason+" owner=runner-recovery")} ]'
+			return 0
+		}
+		_pr_checkpoint_trusted_logins() { printf '["runner"]\n'; return 0; }
+		_pcc_blocked_release_evidence() { printf '10\tattempt:x\tfalse\t-\n'; return 0; }
+		gh() {
+			local kind="$1" endpoint="${2:-}" payload="${6:-}"
+			if [[ "$kind" == pr ]]; then
+				printf '{"state":"OPEN","isDraft":true,"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","author":{"login":"runner"}}\n'
+			elif [[ "$kind" == api && "$endpoint" == */comments ]]; then
+				attention_body="${payload#body=}"
+			else return 1; fi
+			return 0
+		}
+		_pcc_blocked_attention owner/repo 42 100 >/dev/null || exit 1
+		[[ "$attention_body" == *'No brief change'* && "$attention_body" == *'approve <worktree>'* &&
+			"$attention_body" != *'Next action for the brief owner'* && "$attention_body" != *'approval-template'* ]] || exit 1
+		fixture_reason=files_scope_excluded
+		_pcc_blocked_attention owner/repo 42 100 >/dev/null || exit 1
+		[[ "$attention_body" == *'approval-template'* ]] || exit 1
+		exit 0
+	); then status=1; fi
+	print_result "capability checkpoint attention names runner remediation, not a brief revision" "$status"
+	return 0
+}
+
 main() {
+	test_fleet_capability_hold
+	test_fleet_escalation_upsert
+	test_capability_checkpoint_attention
 	test_bounded_recovery_intake
 	test_target_code_blocker_observation_rearms
 	test_worker_capability_cooldown
