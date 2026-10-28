@@ -408,6 +408,25 @@ assert_contains "unknown bucket is reported" "Unexpected: mystery" "$other_failu
 skipping_detail_count=$(printf '%s\n' "$other_failure_output" | grep -c '^  Optional: skipping$' || true)
 [[ "$skipping_detail_count" -eq 1 ]] && pass "skipped check is omitted from failure details" || fail "skipped check is omitted from failure details" "count ${skipping_detail_count}"
 
+# GH#35830: a concurrency-cancelled check is pending until superseded or grace ends.
+cancel_super_dir="${TMPDIR_TEST}/cancel-superseded"
+write_fixture "$cancel_super_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""}]'
+write_fixture "$cancel_super_dir" 2 '[{"name":"Build","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+cancel_super_output=$(run_fixture_wait "$cancel_super_dir" 2>&1)
+cancel_super_rc=$?
+set -e
+[[ "$cancel_super_rc" -eq 0 ]] && pass "superseded cancel is not terminal" || fail "superseded cancel is not terminal" "got ${cancel_super_rc}"
+assert_contains "superseded cancel ends with pass" "PASS: required checks completed" "$cancel_super_output"
+
+cancel_final_dir="${TMPDIR_TEST}/cancel-final"
+write_fixture "$cancel_final_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""}]'
+set +e
+cancel_final_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=0 run_fixture_wait "$cancel_final_dir" 2>&1)
+cancel_final_rc=$?
+set -e
+[[ "$cancel_final_rc" -eq 1 ]] && pass "unsuperseded cancel is terminal after grace" || fail "unsuperseded cancel is terminal after grace" "got ${cancel_final_rc}"
+
 recovery_dir="${TMPDIR_TEST}/recovery"
 write_fixture "$recovery_dir" 1 'not-json'
 write_fixture "$recovery_dir" 2 '[{"name":"Recovered","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
