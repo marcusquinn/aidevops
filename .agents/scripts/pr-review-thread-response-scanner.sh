@@ -1614,6 +1614,25 @@ _prrts_dispatch_worker() {
 	return 0
 }
 
+_prrts_release_dispatch_gate() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_ref="$3"
+	local dispatch_mode="$4"
+	local current_labels=""
+	# Recheck provenance candidates before any worker reservation or launch. This
+	# also covers a release label added after the repository scan snapshot.
+	if protected_release_pr "$head_ref" release; then
+		current_labels=$(_prrts_gh_call read gh pr view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return "$PRRTS_RC_RETRYABLE_FAILURE"
+		if protected_release_pr "$head_ref" "$current_labels"; then
+			_prrts_log "${dispatch_mode}: ${repo_slug}#${pr_number} skipped — protected release PR"
+			return "$PRRTS_RC_NO_MATCH"
+		fi
+	fi
+	return 0
+}
+
 _prrts_dispatch_guarded() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1634,17 +1653,7 @@ _prrts_dispatch_guarded() {
 	local failure_maintainer_attention="$PRRTS_BOOL_FALSE"
 	local failure_outcome_id=""
 	local dispatch_guard_rc=0
-	local current_labels=""
-	# Recheck provenance candidates before any worker reservation or launch. This
-	# also covers a release label added after the repository scan snapshot.
-	if protected_release_pr "$head_ref" release; then
-		current_labels=$(_prrts_gh_call read gh pr view "$pr_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return "$PRRTS_RC_RETRYABLE_FAILURE"
-		if protected_release_pr "$head_ref" "$current_labels"; then
-			_prrts_log "${dispatch_mode}: ${repo_slug}#${pr_number} skipped — protected release PR"
-			return "$PRRTS_RC_NO_MATCH"
-		fi
-	fi
+	_prrts_release_dispatch_gate "$repo_slug" "$pr_number" "$head_ref" "$dispatch_mode" || return $?
 	_prrts_acquire_dispatch_lock "$repo_slug" "$pr_number" lock_dir || dispatch_guard_rc=$?
 	if [[ "$dispatch_guard_rc" -ne 0 ]]; then
 		return "$dispatch_guard_rc"
