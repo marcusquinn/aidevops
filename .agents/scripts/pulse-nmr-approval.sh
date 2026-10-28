@@ -1939,11 +1939,10 @@ _nmr_edit_issue_labels() {
 	local issue_num="$1"
 	local slug="$2"
 	shift 2
-	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
-		gh_issue_edit_safe "$issue_num" --repo "$slug" "$@" >/dev/null 2>&1
-		return $?
-	fi
-	gh issue edit "$issue_num" --repo "$slug" "$@" >/dev/null 2>&1
+	# shellcheck source=protected-label-guard.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
+	protected_label_edit "$issue_num" "$slug" \
+		"normalization; association=${author_association:-unknown}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" "$@" >/dev/null 2>&1
 	return $?
 }
 

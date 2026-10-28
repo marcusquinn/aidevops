@@ -693,6 +693,14 @@ cmd_record() {
 		fi
 	fi
 
+	# A guard incident is an explicit anomaly even when no label was removed.
+	local flap_label=""
+	flap_label=$(printf '%s' "$_rr_flags_json" | jq -r '.protected_label_flap // empty' 2>/dev/null) || flap_label=""
+	if [[ -n "$flap_label" ]]; then
+		_rd_suspicious_json=$(printf '%s' "$_rd_suspicious_json" | jq -c \
+			--arg signal "protected_label_flap:${flap_label}" '. + [$signal]')
+	fi
+
 	local ts event
 	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
 	event="$(_cmd_record_build_event_json \
@@ -873,6 +881,7 @@ Anomaly signals (appear in suspicious[]):
   title_delta_pct<-50    Title shrunk by more than 50%
   body_delta_pct=-100    Body completely wiped
   protected_label_removed:<label>  A protected label was removed
+  protected_label_flap:<label>     Repeated protected-label transitions held closed
 
 Environment:
   GH_AUDIT_LOG_FILE       Override log file path
