@@ -443,12 +443,14 @@ only_cancelled_failures() {
 # grace window since it was first seen elapses (GH#35830).
 apply_cancel_grace() {
 	local classification="$1" checks="$2" now_epoch="$3"
+	local attempt_checks="${4:-$checks}"
 	local cancelled_set=""
 	_GCW_GRACED_CLASSIFICATION="$classification"
 	if [[ "$classification" == "failure" ]] && only_cancelled_failures "$checks"; then
 		# Include run links and timestamps so a different cancelled attempt of the same check
-		# gets its own window; sort to ignore API ordering changes.
-		cancelled_set=$(printf '%s' "$checks" | jq -c '[.[] | select(.bucket == "cancel") | {workflow, name, link, startedAt, completedAt}] | sort_by(.workflow, .name, .link, .startedAt, .completedAt)')
+		# gets its own window; sort to ignore API ordering changes. Use raw attempt
+		# metadata without changing the canonical transition/heartbeat comparison.
+		cancelled_set=$(printf '%s' "$attempt_checks" | jq -c '[.[] | select(.bucket == "cancel") | {workflow, name, link, startedAt, completedAt}] | sort_by(.workflow, .name, .link, .startedAt, .completedAt)')
 		if [[ -z "$_GCW_CANCEL_FIRST_EPOCH" || "$cancelled_set" != "${_GCW_CANCEL_SET:-}" ]]; then
 			_GCW_CANCEL_FIRST_EPOCH="$now_epoch"
 		fi
@@ -627,7 +629,7 @@ wait_for_checks() {
 		fi
 		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
 		IFS=$'\t' read -r classification missing_contexts <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")"
-		apply_cancel_grace "$classification" "$current" "$now_epoch"
+		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
 		classification="$_GCW_GRACED_CLASSIFICATION"
 		state_summary=$(state_counts "$current" "$missing_contexts")
 		emit_recovered_state "$state_summary"

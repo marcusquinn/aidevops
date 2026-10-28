@@ -419,6 +419,38 @@ set -e
 [[ "$cancel_super_rc" -eq 0 ]] && pass "superseded cancel is not terminal" || fail "superseded cancel is not terminal" "got ${cancel_super_rc}"
 assert_contains "superseded cancel ends with pass" "PASS: required checks completed" "$cancel_super_output"
 
+# Exercise the real fetch -> canonicalize -> grace path with timestamp-only
+# attempt changes. One second per epoch read makes the first window expire
+# exactly when the second cancellation arrives, without wall-clock sleeps.
+cancel_attempt_dir="${TMPDIR_TEST}/cancel-attempts"
+write_fixture "$cancel_attempt_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":"","startedAt":"2026-10-28T12:00:00Z","completedAt":"2026-10-28T12:01:00Z"}]'
+write_fixture "$cancel_attempt_dir" 2 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":"","startedAt":"2026-10-28T12:02:00Z","completedAt":"2026-10-28T12:03:00Z"}]'
+write_fixture "$cancel_attempt_dir" 3 '[{"name":"Build","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+cancel_attempt_output=$(
+	export CANCEL_CLOCK_FILE="${TMPDIR_TEST}/cancel-clock"
+	date() {
+		local format="${1:-}" epoch=100
+		if [[ "$format" == '+%s' ]]; then
+			[[ ! -s "$CANCEL_CLOCK_FILE" ]] || epoch=$(<"$CANCEL_CLOCK_FILE")
+			printf '%s\n' "$((epoch + 1))" >"$CANCEL_CLOCK_FILE"
+			printf '%s\n' "$epoch"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	export -f date
+	AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=1 run_fixture_wait "$cancel_attempt_dir" --timeout 10 --heartbeat 1
+)
+cancel_attempt_rc=$?
+set -e
+assert_eq "timestamp-only cancelled attempt receives a fresh grace window" "0" "$cancel_attempt_rc"
+assert_contains "timestamp-only attempt can reach its passing replacement" "PASS: required checks completed" "$cancel_attempt_output"
+assert_contains "attempt metadata does not postpone unchanged-state heartbeat" "heartbeat: required checks unchanged" "$cancel_attempt_output"
+cancel_attempt_transitions=$(printf '%s\n' "$cancel_attempt_output" | grep '^+' || true)
+assert_eq "attempt timestamps do not emit spurious state transitions" "+ Build: cancel -> pass" "$cancel_attempt_transitions"
+
 cancel_final_dir="${TMPDIR_TEST}/cancel-final"
 write_fixture "$cancel_final_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""}]'
 set +e
