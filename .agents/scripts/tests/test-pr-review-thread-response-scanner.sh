@@ -108,7 +108,7 @@ main_rereview() {
 	return 0
 }
 
-main() {
+main_scan() {
 	test_protected_release_dispatch_is_skipped
 	test_scan_finds_unresolved_bot_thread
 	test_scan_skips_draft_prs
@@ -116,6 +116,11 @@ main() {
 	test_scan_fails_closed_without_graphql_cost
 	test_scan_pr_excludes_human_threads_by_default
 	test_scan_pr_can_include_human_threads_with_opt_in
+	return 0
+}
+
+main() {
+	main_scan
 	test_dispatch_launches_worker_and_writes_state
 	test_dispatch_batches_prompt_and_preserves_full_state
 	test_dispatch_defaults_invalid_batch_limit
