@@ -198,6 +198,12 @@ define_helpers_under_test() {
 	src_worker_briefed+=$'\n'$(awk '
 		/^_worker_briefed_link_kind\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
+	# GH#35752: scoped OpenCode pin-canary brief trust (constants + helpers).
+	src_worker_briefed+=$'\n'$(awk '
+		/^_PM_OPENCODE_CANARY_ALLOWED_FILES=/,/^_PM_OPENCODE_CANARY_MAX_FILES=/ { print }
+		/^_pm_canary_shared_constants_patch_ok\(\) \{/,/^\}$/ { print }
+		/^_is_trusted_opencode_canary_issue_pr\(\) \{/,/^\}$/ { print }
+	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
 		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
 		return 1
