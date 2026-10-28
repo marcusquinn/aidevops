@@ -749,6 +749,12 @@ test_flap_cooldown_preserves_lifecycle() {
 	else
 		print_result "flap cooldown suppresses repeated crypto approval comments and locks" 1
 	fi
+	if grep -q 'Auto-approve deferred.*flap guard held or containment unverified' "$LOGFILE" \
+		&& [[ -z "$_NMR_AUTO_TRANSITION_RESULT" ]]; then
+		print_result "flap deferral is logged without reporting a successful approval" 0
+	else
+		print_result "flap deferral is logged without reporting a successful approval" 1
+	fi
 	teardown_test_env
 	return 0
 }

@@ -2142,7 +2142,10 @@ _nmr_apply_auto_approval_transition() {
 			echo "[pulse-wrapper] Auto-approve deferred for #${issue_num} in ${slug} — live security labels unavailable; NMR unchanged" >>"$LOGFILE"
 			return 0
 		fi
-		_nmr_flap_allows_transition "$issue_num" "$slug" || return 0
+		if ! _nmr_flap_allows_transition "$issue_num" "$slug"; then
+			printf '[pulse-wrapper] Auto-approve deferred for #%s in %s — flap guard held or containment unverified; no approval lock or marker posted\n' "$issue_num" "$slug" >>"$LOGFILE"
+			return 0
+		fi
 		# Lock before posting the trusted marker so untrusted comments cannot race
 		# the maintainer gate. The worker unlocks after dispatch completes.
 		gh issue lock "$issue_num" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || true

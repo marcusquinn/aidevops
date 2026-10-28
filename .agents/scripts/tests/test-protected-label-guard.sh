@@ -172,6 +172,43 @@ wait "$second_pid"
 printf 'PASS: concurrent same-host publishers emit one marker and anomaly\n'
 
 reset_fixture
+timeline_fixture 0
+# A legacy directory left by a crash must not obstruct the kernel lock.
+mkdir -p "$PROTECTED_LABEL_FLAP_STATE_DIR/example_repo-42.lock"
+protected_label_edit 42 example/repo normal --remove-label needs-maintainer-review
+[[ -s "$TEST_ROOT/edits" ]]
+printf 'PASS: orphaned legacy directory does not prevent normal removals\n'
+
+reset_fixture
+(
+	# Hold the same inode from another open description, without depending on
+	# lock age. Even an arbitrarily old live publisher must not be reclaimed.
+	python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)'
+	held --remove-label 2>"$TEST_ROOT/lock-diagnostic"
+	grep -q 'report lock busy or unavailable' "$TEST_ROOT/lock-diagnostic"
+	[[ ! -s "$TEST_ROOT/edits" ]]
+) 9>>"$PROTECTED_LABEL_FLAP_STATE_DIR/example_repo-42.publish-lock"
+protected_label_edit 42 example/repo normal --remove-label needs-maintainer-review
+printf 'PASS: busy publisher blocks removal with a diagnostic until release\n'
+
+reset_fixture
+# Kill the reporting subshell while it owns the descriptor. No cleanup trap
+# can run; the next real removal must still acquire the kernel lock.
+if (
+	_protected_label_publish() {
+		python3 -c 'import os, signal; os.kill(os.getppid(), signal.SIGKILL)'
+		return 1
+	}
+	_protected_label_report 42 example/repo needs-maintainer-review '' '' normal 21600 0
+); then
+	printf 'FAIL: simulated publisher crash unexpectedly succeeded\n' >&2
+	exit 1
+fi
+protected_label_edit 42 example/repo normal --remove-label needs-maintainer-review
+[[ -s "$TEST_ROOT/edits" ]]
+printf 'PASS: killed publisher releases the lock without cleanup\n'
+
+reset_fixture
 timeline_fixture 3
 SIMULATE_PEER_MARKER=1
 held --remove-label
