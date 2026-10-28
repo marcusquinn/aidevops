@@ -478,7 +478,8 @@ _jsr_lock_identity() {
 		tracked=$(git -C "$dir" ls-files -- $JSR_LOCKFILES 2>/dev/null) || return 1
 	fi
 	for name in $JSR_LOCKFILES; do
-		if [[ "$in_git" -eq 1 ]] && ! printf '%s\n' "$tracked" | grep -Fxq -- "$name"; then
+		# Exact line membership without a pipe (no SIGPIPE under pipefail).
+		if [[ "$in_git" -eq 1 && $'\n'"${tracked}"$'\n' != *$'\n'"${name}"$'\n'* ]]; then
 			continue
 		fi
 		if [[ -f "${dir}/${name}" ]]; then
