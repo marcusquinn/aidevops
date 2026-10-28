@@ -92,6 +92,7 @@ test_worker_contract_reason_protocol() {
 		append_worker_headless_contract '/full-loop Fix the scoped helper'
 	) || status=1
 	reason=$(printf '%s\n' "$contract" | rg '^TERMINAL_BLOCKER_REASON=target_code_blocker$') || status=1
+	[[ $(printf '%s\n' "$contract" | rg -c '^TERMINAL_BLOCKER_REASON=source_access_blocked$') == 1 ]] || status=1
 	[[ "$contract" == *'TERMINAL_BLOCKER_REASON=missing_files_scope'* &&
 		"$contract" == *'SAME final assistant text message'* &&
 		"$contract" == *'unknown evidence stays retryable'* ]] || status=1

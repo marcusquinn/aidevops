@@ -1072,6 +1072,16 @@ Name the exact trigger and checked evidence in the protected dossier. This class
 re-arms on a brief or linked dependency change or trusted retry, not unrelated
 default-branch commits. Do not use it for generic provider outages, missing
 permissions, uncertain availability or a trigger that is already satisfied.
+When a required external source keeps refusing access on every approved
+acquisition path (HTTP 403, bot challenge, DNS failure, TLS or origin failure,
+or a removed page), use:
+TERMINAL_BLOCKER_REASON=source_access_blocked
+Name the URLs or hosts, the observed status per approved path, and the reopen
+condition in the protected dossier. This class routes recovery to access-owner
+and re-arms on a brief or linked dependency change or trusted retry, not unrelated
+default-branch commits. Never use it for missing local credentials or runner-local
+account failures (runner_capability_unmet), or permission guards
+(permission_required). Do not bypass access controls or retry denied reads.
 A tool absent from PATH is not yet proof it is uninstalled (GH#34110). First
 check only what the repository declares: `.aidevops.json` `.verify` commands and
 a worktree-local `.venv/bin/<tool>`; never scan host directories or install.
