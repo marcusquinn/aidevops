@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Marcus Quinn
+# Initial strict scope; legacy Python keeps its existing pyflakes/lizard checks.
+# Extend include as other packages are migrated, rather than masking violations.
+required-version = "==0.11.13"
+target-version = "py310"
+include = ["**/*.py"]
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B"]

@@ -411,6 +411,37 @@ test_sandbox_required_policy() {
 	return 0
 }
 
+test_lifecycle_private_workload() {
+	local private_workload=""
+	local state_dir=""
+	local events=""
+	local status=0
+	local canonical_root=""
+	canonical_root=$(cd "$TEST_ROOT" && pwd -P) || return 1
+	for private_workload in 1 0; do
+		state_dir="${canonical_root}/lifecycle-${private_workload}"
+		if ! PYTHONPATH="${SCRIPT_DIR}/../worker-lifecycle" python3 -B -m worker_lifecycle.registry --state-dir "$state_dir" init >/dev/null; then
+			fail "sandbox lifecycle store initialization"
+			return 1
+		fi
+		status=0
+		HOME="$TEST_HOME" AIDEVOPS_PRIVATE_WORKLOAD="$private_workload" \
+			AIDEVOPS_LIFECYCLE_STATE_DIR="$state_dir" AIDEVOPS_LIFECYCLE_WORKTREE="$TEST_ROOT" \
+			"$SANDBOX_HELPER" run true >/dev/null 2>&1 || status=$?
+		events=$(python3 -c 'import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM events").fetchone()[0]); db.close()' "${state_dir}/registry.sqlite3")
+		if [[ "$status" -ne 0 ]]; then
+			fail "sandbox lifecycle private=${private_workload} preserves command success" "status=${status}"
+		elif [[ "$private_workload" == 1 && "$events" == 0 ]]; then
+			pass "sandbox private workload emits no lifecycle events"
+		elif [[ "$private_workload" == 0 && "$events" == 2 ]]; then
+			pass "sandbox non-private workload retains lifecycle observation"
+		else
+			fail "sandbox lifecycle private=${private_workload} store isolation" "events=${events}"
+		fi
+	done
+	return 0
+}
+
 main() {
 	write_fake_network_tools
 	test_network_check_command
@@ -420,6 +451,7 @@ main() {
 	test_network_helper_timeout
 	test_sandbox_enforcement
 	test_sandbox_required_policy
+	test_lifecycle_private_workload
 	printf '\nTests: %d, Failures: %d\n' "$TESTS" "$FAILURES"
 	[[ "$FAILURES" -eq 0 ]] || return 1
 	return 0

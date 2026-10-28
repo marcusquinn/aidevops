@@ -1198,6 +1198,20 @@ _sandbox_run_dispatch() {
 		fi
 	done
 
+	# Original argv has already passed command/secret/egress admission. Keep
+	# the observer INSIDE env clearing, egress containment and seatbelt below.
+	# Do not rewrite policy input to the Python wrapper or widen passthrough.
+	# Private workloads must not emit lifecycle metadata to the observer store.
+	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" != "1" && -n "${AIDEVOPS_LIFECYCLE_STATE_DIR:-}" && -n "${AIDEVOPS_LIFECYCLE_WORKTREE:-}" ]]; then
+		local lifecycle_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py"
+		if [[ -f "$lifecycle_entry" ]] && command -v python3 >/dev/null 2>&1; then
+			d_cmd_args=(python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR"
+				--worktree "$AIDEVOPS_LIFECYCLE_WORKTREE" -- "${d_cmd_args[@]}")
+		else
+			log_sandbox "WARN" "[worker-lifecycle] observation-gap reason=entry-unavailable"
+		fi
+	fi
+
 	local -a d_exec_args=()
 	if [[ -n "$egress_backend_path" ]]; then
 		d_exec_args=("$egress_backend_path" run --policy "$egress_policy_file" --worker-id "$dispatch_worker_id" -- "${d_env_args[@]}" "${d_cmd_args[@]}")
