@@ -738,6 +738,23 @@ _setup_install_pulse_plist_early() {
 	return 0
 }
 
+# GH#35788: surface stale/missing JS dependency install approvals for
+# dispatch-enabled repos so headless workers are not stranded with
+# runner_capability_unmet. Interactive setup offers renewal per repo;
+# non-interactive setup/update only reports (never writes repos.json).
+review_js_dependency_policies() {
+	local helper="${BASH_SOURCE[0]%/*}/.agents/scripts/worktree-js-readiness-helper.sh"
+	[[ -f "$helper" ]] || helper="$HOME/.aidevops/agents/scripts/worktree-js-readiness-helper.sh"
+	[[ -f "$helper" ]] || return 0
+	command -v jq &>/dev/null || return 0
+	if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
+		bash "$helper" review --report-only || print_warning "JS dependency policy review failed (non-fatal)"
+	else
+		bash "$helper" review || print_warning "JS dependency policy review failed (non-fatal)"
+	fi
+	return 0
+}
+
 # Provision knowledge planes for all repos in repos.json where knowledge != "off".
 # Idempotent: already-provisioned directories are not modified.
 # Called from the non-interactive setup path (update) and after interactive init.
@@ -1624,6 +1641,7 @@ _setup_run_non_interactive() {
 		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks
 	fi
 	_time_step "init_settings_json" init_settings_json
+	_time_step "review_js_dependency_policies" review_js_dependency_policies
 
 	local _pid_symlinks=""
 	if _time_step "generate_agent_skills" generate_agent_skills; then
@@ -1812,6 +1830,7 @@ _setup_run_interactive() {
 	confirm_step "Set up routines repo (private repo for recurring operational jobs)" && setup_routines
 	is_feature_enabled safety_hooks 2>/dev/null && confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
 	confirm_step "Initialize settings.json (canonical config file)" && init_settings_json
+	confirm_step "Review JS dependency install approvals for dispatch repos" && review_js_dependency_policies
 	confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
 	confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
 	confirm_step "Create symlinks for imported skills" && create_skill_symlinks

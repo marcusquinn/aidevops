@@ -110,7 +110,11 @@ Default: a durable owner-approved install policy (below), so unchanged projects 
 "js_dependency_policy": {"approved_at": "<UTC ISO-8601>", "lockfile_sha256": "<hex>", "package_manager": "npm|pnpm|yarn|yarn-berry|bun", "node_major": "<major>|none", "scope": "worktree-install"}
 ```
 
-`status <repo-or-worktree>` prints the policy, its staleness (`current`, `stale-lockfile`, `stale-package-manager`, `stale-node-major`, `stale-scope`, `unsupported-package-manager`) and the current identity. `revoke` deletes the field. Without the field, behaviour is unchanged.
+`status <repo-or-worktree>` prints the policy, its staleness (`current`, `stale-lockfile`, `stale-package-manager`, `stale-node-major`, `stale-scope`, `unsupported-package-manager`) and the current identity. `revoke` deletes the field. Without the field, behaviour is unchanged. Only tracked lockfiles count, so an untracked stale lockfile in a canonical checkout no longer blocks `approve`.
+
+`approve <repo> --track-default-branch` adds `"lockfile_source": "default-branch"`: a lockfile byte-identical to the one on `origin/HEAD` (or `origin/main`/`master`) also matches, so lockfile updates merged through the repository's review gates do not strand workers. A branch-modified or unfetched lockfile still reports `stale-lockfile`; package manager, Node major and scope checks are unchanged (GH#35788).
+
+`review [--report-only]` checks every `pulse: true` repo with a tracked lockfile against the lockfile new worktrees receive (remote default branch). Setup runs it: interactive setup offers a default-No renewal (with `--track-default-branch`) per stale repo; non-interactive setup/update only prints counts and the `approve` command. Headless or non-TTY runs never write.
 
 `worktree-helper.sh add` runs `prepare` for every non-aidevops project; for worker worktrees this happens on the controller, before launch. The aidevops repo keeps its built-in Bun bootstrap. `prepare` installs only when all of these hold:
 
