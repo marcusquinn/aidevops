@@ -35,7 +35,8 @@ gh() {
 	case "$args" in
 	*'/timeline?'*) [[ "${READ_FAIL:-0}" -eq 0 ]] || return 1; jq -c '.' "$TEST_ROOT/timeline" ;;
 	*'/comments?'*) jq -cs '.' "$TEST_ROOT/comments" ;;
-	*'/issues/42') jq -c '.' "$TEST_ROOT/live" ;;
+	*'/issues/42') [[ "${LIVE_FAIL:-0}" -eq 0 ]] || return 1; jq -c '.' "$TEST_ROOT/live" ;;
+	*'/collaborators/runner/permission'*) return 1 ;;
 	*) printf 'Unexpected gh invocation: %s\n' "$args" >&2; return 1 ;;
 	esac
 	return 0
@@ -62,6 +63,7 @@ reset_fixture() {
 	: >"$TEST_ROOT/comment-bodies"
 	: >"$GH_AUDIT_LOG_FILE"
 	READ_FAIL=0
+	LIVE_FAIL=0
 	SIMULATE_PEER_MARKER=0
 	return 0
 }
@@ -182,6 +184,7 @@ printf 'PASS: unsupported argument forms cannot bypass the guard\n'
 for setting in PROTECTED_LABEL_FLAP_THRESHOLD PROTECTED_LABEL_FLAP_WINDOW_SECONDS PROTECTED_LABEL_FLAP_COOLDOWN_SECONDS; do
 	reset_fixture
 	timeline_fixture 0
+	printf '%s\n' '{"labels":[]}' >"$TEST_ROOT/live"
 	export "${setting}=invalid"
 	protected_label_edit 42 example/repo containment --add-label needs-maintainer-review 2>"$TEST_ROOT/diagnostic"
 	grep -q "invalid ${setting} value" "$TEST_ROOT/diagnostic"
@@ -193,3 +196,26 @@ for setting in PROTECTED_LABEL_FLAP_THRESHOLD PROTECTED_LABEL_FLAP_WINDOW_SECOND
 	unset "$setting"
 done
 printf 'PASS: each invalid setting names its diagnostic, permits containment and blocks removal\n'
+
+for failure in marker-authority live-issue; do
+	reset_fixture
+	timeline_fixture 5
+	printf '%s\n' '{"labels":[]}' >"$TEST_ROOT/live"
+	if [[ "$failure" == marker-authority ]]; then
+		jq -n '[{body:"<!-- aidevops:protected-label-flap:needs-maintainer-review:v1 -->",
+			user:{login:"runner"}, author_association:"CONTRIBUTOR",
+			created_at:(now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]' >"$TEST_ROOT/comments"
+	else
+		LIVE_FAIL=1
+	fi
+	held --remove-label
+	[[ ! -s "$TEST_ROOT/edits" ]]
+	protected_label_edit 42 example/repo containment --add-label needs-maintainer-review
+	[[ "$(wc -l <"$TEST_ROOT/edits")" -eq 1 ]]
+	jq -e '.labels | any(.[]; .name == "needs-maintainer-review")' "$TEST_ROOT/live" >/dev/null
+	: >"$TEST_ROOT/edits"
+	held --add-label
+	[[ "$(wc -l <"$TEST_ROOT/edits")" -eq 1 ]]
+	if grep -q -- auto-dispatch "$TEST_ROOT/edits"; then exit 1; fi
+done
+printf 'PASS: failed marker authority and live issue reads allow containment only\n'

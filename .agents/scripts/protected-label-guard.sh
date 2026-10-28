@@ -85,6 +85,7 @@ _protected_label_marker_since() {
 _protected_label_check() {
 	local number="$1" repo="$2" label="$3" operation="$4" decision="$5"
 	_PL_CHECK_APPLIED=0
+	_PL_CHECK_CONTAINMENT_ONLY=1
 	local threshold="${PROTECTED_LABEL_FLAP_THRESHOLD:-4}"
 	local window="${PROTECTED_LABEL_FLAP_WINDOW_SECONDS:-21600}"
 	local cooldown="${PROTECTED_LABEL_FLAP_COOLDOWN_SECONDS:-21600}"
@@ -108,9 +109,15 @@ _protected_label_check() {
 		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
 		return 1
 	}
-	since=$(_protected_label_marker_since "$comments" "$marker" "$repo") || return 1
+	since=$(_protected_label_marker_since "$comments" "$marker" "$repo") || {
+		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
+		return 1
+	}
 	active=$(jq -nr --argjson since "$since" --argjson cooldown "$cooldown" \
-		'if $since > 0 and now < ($since + $cooldown) then 1 else 0 end') || return 1
+		'if $since > 0 and now < ($since + $cooldown) then 1 else 0 end') || {
+		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
+		return 1
+	}
 	# A failed read may not prevent an add: adding is always containment, never
 	# authority to dispatch. Removals require complete live evidence.
 	if [[ "$active" -eq 0 ]]; then
@@ -123,10 +130,16 @@ _protected_label_check() {
 			[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
 			return 1
 		}
-		[[ "$(printf '%s' "$summary" | jq -r '.count')" -ge "$threshold" ]] || return 0
+		if [[ "$(printf '%s' "$summary" | jq -r '.count')" -lt "$threshold" ]]; then
+			_PL_CHECK_CONTAINMENT_ONLY=0
+			return 0
+		fi
 	fi
 	local live=""
-	live=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || return 1
+	live=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || {
+		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
+		return 1
+	}
 	if ! printf '%s' "$live" | jq -e --arg label "$label" --arg array_type "$_PL_ARRAY_TYPE" \
 		'.labels | if type != $array_type then error("invalid labels") else any(.[]; .name == $label) end' >/dev/null; then
 		# Restore once if the final observed transition was a removal. Never clear
@@ -210,7 +223,16 @@ protected_label_edit() {
 		previous="$label"
 		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" || "$operation" == "$_PL_REMOVE_LABEL_FLAG" ]] || continue
 		case ",${PROTECTED_LABEL_FLAP_LABELS:-needs-maintainer-review}," in
-		*,"$label",*) _protected_label_check "$number" "$repo" "$label" "$operation" "$decision" || return 1 ;;
+		*,"$label",*)
+			_protected_label_check "$number" "$repo" "$label" "$operation" "$decision" || return 1
+			if [[ "$_PL_CHECK_CONTAINMENT_ONLY" -eq 1 ]]; then
+				# Missing evidence authorizes only the containment add, never a
+				# mixed batch's dispatch or lifecycle changes.
+				_protected_label_raw_edit "$number" "$repo" "$_PL_ADD_LABEL_FLAG" "$label" || return 1
+				[[ "${#edits[@]}" -eq 2 ]] && return 0
+				return 1
+			fi
+			;;
 		esac
 	done
 	_protected_label_raw_edit "$number" "$repo" "${edits[@]}" || return 1
