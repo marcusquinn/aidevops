@@ -53,7 +53,12 @@ _run_contrast_checks() {
 
 		if [[ -f "$contrast_script" ]]; then
 			local contrast_result
-			contrast_result=$(run_playwright_node "$contrast_script" "$full_url" --format json --level "$level" 2>/dev/null) || contrast_result='{"error": "contrast check failed"}'
+			local contrast_exit=0
+			contrast_result=$(run_playwright_node "$contrast_script" "$full_url" --format json --level "$level" 2>/dev/null) || contrast_exit=$?
+			# Exit 1 means findings, not a tool error. Require one complete JSON value.
+			if [[ "$contrast_exit" -gt 1 ]] || ! jq -e -s 'length == 1' >/dev/null 2>&1 <<<"$contrast_result"; then
+				contrast_result=$(jq -cn --argjson exit "$contrast_exit" '{error: "contrast check failed", exit: $exit}')
+			fi
 			contrast_json=$(jq -c \
 				--arg page "$page_path" \
 				--argjson contrast "$contrast_result" \
