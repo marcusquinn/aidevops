@@ -33,15 +33,24 @@ source "$TEST_ROOT/framework/.agents/scripts/protected-label-guard.sh"
 gh() {
 	local args="$*"
 	case "$args" in
-	*'/timeline?'*) [[ "${READ_FAIL:-0}" -eq 0 ]] || return 1; jq -c '.' "$TEST_ROOT/timeline" ;;
+	*'/timeline?'*)
+		[[ "${READ_FAIL:-0}" -eq 0 ]] || return 1
+		jq -c '.' "$TEST_ROOT/timeline"
+		;;
 	*'/comments?'*) jq -cs '.' "$TEST_ROOT/comments" ;;
-	*'/issues/42') [[ "${LIVE_FAIL:-0}" -eq 0 ]] || return 1; jq -c '.' "$TEST_ROOT/live" ;;
+	*'/issues/42')
+		[[ "${LIVE_FAIL:-0}" -eq 0 ]] || return 1
+		jq -c '.' "$TEST_ROOT/live"
+		;;
 	*'/collaborators/runner/permission'*)
 		printf 'lookup\n' >>"$TEST_ROOT/permission-calls"
 		[[ "${PERMISSION_FAIL:-1}" -eq 0 ]] || return 1
 		printf 'read\n'
 		;;
-	*) printf 'Unexpected gh invocation: %s\n' "$args" >&2; return 1 ;;
+	*)
+		printf 'Unexpected gh invocation: %s\n' "$args" >&2
+		return 1
+		;;
 	esac
 	return 0
 }
