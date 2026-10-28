@@ -48,6 +48,13 @@ gh() {
 
 gh_issue_edit_safe() {
 	printf '%s\n' "$*" >>"$TEST_ROOT/edits"
+	if [[ "$*" == *'--remove-label needs-maintainer-review'* && "${SIMULATE_REMOVAL_EVENT:-0}" -eq 1 ]]; then
+		printf '%s\n' '{"labels":[]}' >"$TEST_ROOT/live"
+		jq '.[-1] += [{id:99,event:"unlabeled",label:{name:"needs-maintainer-review"},
+			actor:{login:"runner-1"},created_at:(now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]' \
+			"$TEST_ROOT/timeline" >"$TEST_ROOT/timeline.next"
+		mv "$TEST_ROOT/timeline.next" "$TEST_ROOT/timeline"
+	fi
 	if [[ "$*" == *'--remove-label needs-maintainer-review'* && "${SIMULATE_PEER_MARKER:-0}" -eq 1 ]]; then
 		printf '%s\n' '{"labels":[]}' >"$TEST_ROOT/live"
 		jq -n '[{body:"<!-- aidevops:protected-label-flap:needs-maintainer-review:v1 -->",
@@ -69,6 +76,7 @@ reset_fixture() {
 	READ_FAIL=0
 	LIVE_FAIL=0
 	SIMULATE_PEER_MARKER=0
+	SIMULATE_REMOVAL_EVENT=0
 	PERMISSION_FAIL=1
 	return 0
 }
@@ -214,7 +222,25 @@ SIMULATE_PEER_MARKER=1
 held --remove-label
 [[ "$(wc -l <"$TEST_ROOT/edits")" -eq 2 ]]
 jq -e '.labels | any(.[]; .name == "needs-maintainer-review")' "$TEST_ROOT/live" >/dev/null
+if grep -q -- auto-dispatch "$TEST_ROOT/edits"; then exit 1; fi
 printf 'PASS: stale removal is compensated when a peer publishes a cooldown during the write\n'
+
+reset_fixture
+timeline_fixture 3
+SIMULATE_REMOVAL_EVENT=1
+held --remove-label
+[[ "$(wc -l <"$TEST_ROOT/edits")" -eq 2 ]]
+jq -e '.labels | any(.[]; .name == "needs-maintainer-review")' "$TEST_ROOT/live" >/dev/null
+if grep -q -- auto-dispatch "$TEST_ROOT/edits"; then exit 1; fi
+[[ "$(jq 'length' "$TEST_ROOT/comments")" -eq 1 ]]
+printf 'PASS: threshold-crossing removal restores containment without applying dispatch intent\n'
+
+reset_fixture
+timeline_fixture 0
+protected_label_edit 42 example/repo normal --remove-label needs-maintainer-review --add-label auto-dispatch
+[[ "$(wc -l <"$TEST_ROOT/edits")" -eq 2 ]]
+grep -q -- '--add-label auto-dispatch' "$TEST_ROOT/edits"
+printf 'PASS: successful removal postflight permits the remaining batch edits\n'
 
 reset_fixture
 timeline_fixture 0

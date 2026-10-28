@@ -268,23 +268,29 @@ protected_label_edit() {
 			;;
 		esac
 	done
-	_protected_label_raw_edit "$number" "$repo" "${edits[@]}" || return 1
 	# A stale remover must repair containment if a peer published a cooldown
 	# between our preflight and write. Do not poll; take one fresh observation.
+	# Isolate protected removals so a postflight hold cannot leave this batch's
+	# auto-dispatch or other lifecycle edits applied alongside restored NMR.
+	local -a remaining=()
 	previous=""
 	for label in "${edits[@]}"; do
 		operation="$previous" previous="$label"
-		[[ "$operation" == "$_PL_REMOVE_LABEL_FLAG" ]] || continue
-		case ",${PROTECTED_LABEL_FLAP_LABELS:-needs-maintainer-review}," in
-		*,"$label",*)
+		[[ "$operation" == "$_PL_ADD_LABEL_FLAG" || "$operation" == "$_PL_REMOVE_LABEL_FLAG" ]] || continue
+		if [[ "$operation" == "$_PL_REMOVE_LABEL_FLAG" && ",${PROTECTED_LABEL_FLAP_LABELS:-needs-maintainer-review}," == *",${label},"* ]]; then
+			_protected_label_raw_edit "$number" "$repo" "$operation" "$label" || return 1
 			if ! _protected_label_check "$number" "$repo" "$label" "$operation" "$decision"; then
 				if [[ "$_PL_CHECK_APPLIED" -eq 0 ]]; then
 					_protected_label_raw_edit "$number" "$repo" "$_PL_ADD_LABEL_FLAG" "$label" || true
 				fi
 				return 1
 			fi
-			;;
-		esac
+		else
+			remaining+=("$operation" "$label")
+		fi
 	done
+	if [[ "${#remaining[@]}" -gt 0 ]]; then
+		_protected_label_raw_edit "$number" "$repo" "${remaining[@]}" || return 1
+	fi
 	return 0
 }
