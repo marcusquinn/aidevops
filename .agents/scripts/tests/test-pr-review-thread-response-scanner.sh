@@ -62,6 +62,41 @@ test_scan_pr_bounds_hanging_graphql_read() {
 	return 0
 }
 
+test_release_label_is_rechecked_before_launch() {
+	local label_result="" result=0
+	for label_result in release lookup-failed; do
+		setup_test_env
+		export STUB_PR_VIEW="Release"$'\t'"chore/release-v1.2.3-provenance"$'\t'"${TEST_HEAD_OID_1}"$'\t'"worker-bot"
+		export STUB_REMOTE_HEAD="chore/release-v1.2.3-provenance"
+		printf '%s\n' "$label_result" >"${TEST_ROOT}/label-result"
+		mv "${TEST_ROOT}/bin/gh" "${TEST_ROOT}/bin/gh-original"
+		cat >"${TEST_ROOT}/bin/gh" <<'GH_RELEASE_RACE'
+#!/usr/bin/env bash
+if [[ "$1" == pr && "$2" == view && "$*" == *"--json labels"* ]]; then
+	if [[ ! -f "${TEST_ROOT}/label-checked" ]]; then
+		: >"${TEST_ROOT}/label-checked"
+		exit 0
+	fi
+	: >"${TEST_ROOT}/label-rechecked"
+	[[ "$(<"${TEST_ROOT}/label-result")" == release ]] || exit 1
+	printf 'release\n'
+	exit 0
+fi
+exec "${TEST_ROOT}/bin/gh-original" "$@"
+GH_RELEASE_RACE
+		chmod +x "${TEST_ROOT}/bin/gh"
+		result=0
+		$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || result=$?
+		if [[ "$result" -ne 0 && -f "${TEST_ROOT}/label-rechecked" && ! -s "$HEADLESS_LOG" ]]; then
+			print_result "Prelaunch release-label recheck blocks ${label_result}" 0
+		else
+			print_result "Prelaunch release-label recheck blocks ${label_result}" 1 "rc=${result}"
+		fi
+		teardown_test_env
+	done
+	return 0
+}
+
 test_protected_release_dispatch_is_skipped() {
 	setup_test_env
 	export STUB_PR_LIST="1"$'\t'"Release"$'\t'"false"$'\t'"origin:worker,release"$'\t'"chore/release-v1.2.3-provenance"$'\t'"${TEST_HEAD_OID_1}"$'\t'"worker-bot"
@@ -110,6 +145,7 @@ main_rereview() {
 
 main_scan() {
 	test_protected_release_dispatch_is_skipped
+	test_release_label_is_rechecked_before_launch
 	test_scan_finds_unresolved_bot_thread
 	test_scan_skips_draft_prs
 	test_scan_includes_outdated_unresolved_threads
