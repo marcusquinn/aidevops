@@ -62,6 +62,25 @@ test_scan_pr_bounds_hanging_graphql_read() {
 	return 0
 }
 
+test_protected_release_dispatch_is_skipped() {
+	setup_test_env
+	export STUB_PR_LIST="1"$'\t'"Release"$'\t'"false"$'\t'"origin:worker,release"$'\t'"chore/release-v1.2.3-provenance"$'\t'"${TEST_HEAD_OID_1}"$'\t'"worker-bot"
+	export STUB_PR_VIEW="Release"$'\t'"chore/release-v1.2.3-provenance"$'\t'"${TEST_HEAD_OID_1}"$'\t'"worker-bot"$'\t'"release"
+	local output="" result=0
+	output=$($SCANNER scan owner/repo)
+	$SCANNER dispatch-pr owner/repo "$TEST_ROOT" 1 || result=$?
+	if [[ -z "$output" && "$result" -eq 11 ]] &&
+		grep -q 'scan: owner/repo#1 skipped — protected release PR' "$LOGFILE" &&
+		grep -q 'dispatch-pr: owner/repo#1 skipped — protected release PR' "$LOGFILE"; then
+		print_result "Protected release PR is skipped by scan and dispatch-pr" 0
+	else
+		print_result "Protected release PR is skipped by scan and dispatch-pr" 1 "rc=${result}, output=${output}"
+	fi
+	unset STUB_PR_LIST STUB_PR_VIEW
+	teardown_test_env
+	return 0
+}
+
 main_mutations() {
 	test_reply_and_resolve_use_graphql_mutations
 	test_reply_rejects_impossible_mutation_responses
@@ -90,6 +109,7 @@ main_rereview() {
 }
 
 main() {
+	test_protected_release_dispatch_is_skipped
 	test_scan_finds_unresolved_bot_thread
 	test_scan_skips_draft_prs
 	test_scan_includes_outdated_unresolved_threads

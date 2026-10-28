@@ -125,9 +125,10 @@ if [[ "$1" == "api" && "$2" == repos/*/pulls/* && "$2" != */update-branch ]]; th
 	done
 	if [[ -n "$filter" ]]; then
 		jq -c "$filter" "${TEST_ROOT}/auto_merge_request.txt"
-	else
+	elif [[ "${STUB_IDENTITY_RAW:-0}" == 1 ]]; then
 		cat "${TEST_ROOT}/auto_merge_request.txt"
-		echo
+	else
+		jq -c '.head.ref //= "feature/review" | .labels //= []' "${TEST_ROOT}/auto_merge_request.txt"
 	fi
 	exit 0
 fi
@@ -198,6 +199,13 @@ teardown_test_env() {
 define_helpers_under_test() {
 	local src_stuck src_repo_allow src_existing_green_behind src_green_behind
 	local src_stop_external src_enable_native src_handle_existing src_set_native
+	# shellcheck source=../protected-release-helper.sh
+	source "${SCRIPT_DIR}/../protected-release-helper.sh"
+	local release_function="" release_source=""
+	for release_function in _pmp_is_protected_release_pr _pmp_hold_protected_release_pr; do
+		release_source=$(awk -v name="$release_function" '$0 ~ "^" name "\\(\\) \\{" { active=1 } active { print } active && /^}$/ { exit }' "$PROCESS_SCRIPT")
+		eval "$release_source"
+	done
 	# shellcheck source=/dev/null
 	source "$REST_STATE_SCRIPT"
 	src_stuck=$(awk '
@@ -812,6 +820,58 @@ test_protected_release_pr_uses_exact_merge_owner() {
 	return 0
 }
 
+test_protected_release_native_auto_is_held() {
+	setup_test_env
+	define_helpers_under_test
+	printf '%s' '{"auto_merge":{"enabled_at":"2026-07-14T12:00:00Z"},"head":{"ref":"chore/release-v1.2.3-provenance","sha":"drifted"},"labels":[{"name":"release"}]}' >"${TEST_ROOT}/auto_merge_request.txt"
+	local result=0
+	_set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
+	if [[ "$result" -eq 2 ]] && grep -q -- '--disable-auto' "$GH_LOG" && ! grep -q -- '--auto --squash' "$GH_LOG"; then
+		print_result "Drifted protected release disarms native auto-merge" 0
+	else
+		print_result "Drifted protected release disarms native auto-merge" 1 "rc=${result}"
+	fi
+	: >"$GH_LOG"
+	result=0
+	DRY_RUN=1 _set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
+	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG"; then
+		print_result "Protected release dry-run performs no GitHub writes" 0
+	else
+		print_result "Protected release dry-run performs no GitHub writes" 1
+	fi
+	printf '%s' '{}' >"${TEST_ROOT}/auto_merge_request.txt"
+	: >"$GH_LOG"
+	result=0
+	STUB_IDENTITY_RAW=1 _set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
+	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG"; then
+		print_result "Missing native-auto identity defers without merge fall-through" 0
+	else
+		print_result "Missing native-auto identity defers without merge fall-through" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_protected_release_staged_head_comparison() {
+	setup_test_env
+	# shellcheck source=../protected-release-helper.sh
+	source "${SCRIPT_DIR}/../protected-release-helper.sh"
+	local project_dir="${SCRIPT_DIR}/../../.." signed_head=""
+	git init -q "${TEST_ROOT}/repo"
+	git -C "${TEST_ROOT}/repo" fetch -q --depth=1 "$project_dir" HEAD
+	signed_head=$(git -C "${TEST_ROOT}/repo" rev-parse FETCH_HEAD)
+	git -C "${TEST_ROOT}/repo" update-ref refs/aidevops/release-tags/v1.2.3 "$signed_head"
+	if protected_release_head_matches_staged "${TEST_ROOT}/repo" chore/release-v1.2.3-provenance "$signed_head" &&
+		! protected_release_head_matches_staged "${TEST_ROOT}/repo" chore/release-v1.2.3-provenance drifted &&
+		! protected_release_head_matches_staged "${TEST_ROOT}/repo" chore/release-v9.9.9-provenance "$signed_head"; then
+		print_result "Staged release comparison accepts exact head, rejects drift and missing ref" 0
+	else
+		print_result "Staged release comparison accepts exact head, rejects drift and missing ref" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_case_a_pending_ci_sets_auto_merge
 	test_case_a_missing_head_does_not_set_auto_merge
@@ -831,6 +891,8 @@ main() {
 	test_external_existing_auto_merge_is_disabled
 	test_external_auto_merge_disable_failure_applies_draft_hold
 	test_protected_release_pr_uses_exact_merge_owner
+	test_protected_release_native_auto_is_held
+	test_protected_release_staged_head_comparison
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"

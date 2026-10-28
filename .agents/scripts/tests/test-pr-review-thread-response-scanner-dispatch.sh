@@ -370,6 +370,8 @@ SHARED_CONSTANTS
 		"$(dirname "$bundled_scanner")/worker-attempt-observability.sh"
 	cp "${TEST_SCRIPT_DIR}/../scratch-worktree-helper.sh" \
 		"$(dirname "$bundled_scanner")/scratch-worktree-helper.sh"
+	cp "${TEST_SCRIPT_DIR}/../protected-release-helper.sh" \
+		"$(dirname "$bundled_scanner")/protected-release-helper.sh"
 	cp "${TEST_SCRIPT_DIR}/../pr-review-thread-response-scanner-locks.sh" \
 		"$(dirname "$bundled_scanner")/pr-review-thread-response-scanner-locks.sh"
 	cp "${TEST_SCRIPT_DIR}/../pr-review-thread-response-scanner-worktree.sh" \
