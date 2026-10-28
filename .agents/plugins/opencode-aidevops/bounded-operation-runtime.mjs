@@ -1,21 +1,12 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { boundedInteger, scalar } from "./bounded-operation-values.mjs";
+import { scalar } from "./bounded-operation-values.mjs";
+export { applySupervisorMessage, disposeOperations } from "./bounded-operation-termination.mjs";
 
 const MAX_CAPTURE_BYTES = 1024 * 1024;
 const MAX_PROGRESS_REMAINDER_BYTES = 4096;
 const RECEIPT_SCHEMA = "aidevops.interactive-operation/v1";
-const TERMINATION_DISPOSITIONS = new Map([
-  ["budget", "timed_out"],
-  ["cancel", "cancelled"],
-  ["dispose", "cancelled"],
-  ["session_deleted", "cancelled"],
-  ["signal_sigterm", "failed"],
-  ["signal_sigint", "failed"],
-  ["parent_disconnect", "failed"],
-  ["spawn_error", "failed"],
-]);
 
 export function appendCapture(operation, chunk) {
   const value = Buffer.from(chunk);
@@ -66,49 +57,6 @@ export function trimTerminalOperations(operations, maximum) {
   throw new Error("too many active bounded operations");
 }
 
-// The independent supervisor budget may beat the manager's timeout callback.
-// An exit-0 TERM handler must not turn that timeout or an external stop into success.
-function applyTerminationMessage(operation, message) {
-  operation.terminationCause ||= scalar(message.cause);
-  if (operation.disposition !== "running") return;
-  const disposition = TERMINATION_DISPOSITIONS.get(message.cause);
-  if (!disposition) return;
-  operation.disposition = disposition;
-  operation.state = disposition === "timed_out" ? "timing_out" : "cancelling";
-}
-
-// Applies a supervisor IPC event for this operation and stage. Containment is
-// reported only for the main command (GH#33514).
-export function applySupervisorMessage(operation, stage, message) {
-  if (message?.type !== "aidevops.operation" || message.operationID !== operation.id) return;
-  if (stage !== "main") {
-    if (message.event === "command_started") operation.restorationCommandStarted = true;
-    if (message.event === "termination") {
-      operation.restorationTerminationCause ||= scalar(message.cause);
-      const disposition = TERMINATION_DISPOSITIONS.get(message.cause);
-      if (disposition && operation.restorationDisposition === "running") {
-        operation.restorationDisposition = disposition;
-        operation.restorationState = disposition === "timed_out" ? "timing_out" : "cancelling";
-      }
-    }
-    return;
-  }
-  switch (message.event) {
-    case "termination":
-      applyTerminationMessage(operation, message);
-      break;
-    case "containment":
-      operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
-      operation.attributionComplete = message.attributionComplete === true;
-      operation.postExitDescendantsTerminated = message.postExitDescendantsTerminated === true;
-      break;
-    case "command_started":
-      operation.commandStarted = true;
-      operation.supervisorRuntime = scalar(message.runtime);
-      break;
-  }
-}
-
 // The supervisor reports whether helper-created process groups were tracked
 // (GH#33514). Unverifiable attribution is reported, never upgraded to owned.
 function operationContainment(operation) {
@@ -156,26 +104,43 @@ export function operationReceipt(operation, now) {
   };
 }
 
-export function disposeOperations(operations, kill, clearTimer) {
-  for (const operation of operations.values()) {
-    if (operation.child && !operation.childExited
-      && operation.child.exitCode === null && operation.child.signalCode === null) {
-      operation.terminationCause ||= "dispose";
-      if (operation.disposition === "running") {
-        operation.disposition = "cancelled";
-        operation.state = "cancelling";
+export async function runOperationRestoration(manager, operation) {
+  operation.state = "restoring";
+  operation.restorationState = "running";
+  manager.notifyStatusWaiters(operation);
+  await new Promise((resolve) => {
+    let settled = false;
+    const finish = (state, code = null) => {
+      if (settled) return;
+      settled = true;
+      if (operation.restorationTimer) manager.clearTimer(operation.restorationTimer);
+      operation.restorationChild = null;
+      operation.restorationExit = Number.isInteger(code) ? code : null;
+      operation.restorationState = state;
+      manager.notifyStatusWaiters(operation);
+      resolve();
+    };
+    const child = manager.spawnOwned(operation, operation.restorationCommand, "restoration");
+    operation.restorationChild = child;
+    operation.restorationChildExited = false;
+    child.once("exit", () => { operation.restorationChildExited = true; });
+    operation.restorationTimer = manager.setTimer(() => {
+      operation.restorationTerminationCause ||= "budget";
+      if (operation.restorationDisposition === "running") operation.restorationDisposition = "timed_out";
+      operation.restorationState = "timing_out";
+      manager.notifyStatusWaiters(operation);
+      if (!operation.restorationChildExited && child.exitCode === null && child.signalCode === null) {
+        manager.kill(child, "SIGTERM", operation.restorationTerminationCause);
       }
-      kill(operation.child, "SIGTERM", operation.terminationCause);
-    }
-    if (operation.restorationChild && !operation.restorationChildExited
-      && operation.restorationChild.exitCode === null && operation.restorationChild.signalCode === null) {
-      operation.restorationTerminationCause ||= "dispose";
-      if (operation.restorationDisposition === "running") operation.restorationDisposition = "cancelled";
-      operation.restorationState = "cancelling";
-      kill(operation.restorationChild, "SIGTERM", operation.restorationTerminationCause);
-    }
-    if (operation.budgetTimer) clearTimer(operation.budgetTimer);
-    if (operation.killTimer) clearTimer(operation.killTimer);
-    if (operation.restorationTimer) clearTimer(operation.restorationTimer);
-  }
+    }, operation.restorationBudgetMs);
+    child.once("error", () => finish("failed"));
+    child.once("close", (code, signal) => {
+      operation.restorationSignal = scalar(signal);
+      if (signal || !operation.restorationCommandStarted) operation.restorationTerminationCause ||= "supervisor_exit";
+      const cause = operation.restorationTerminationCause;
+      const disposition = operation.restorationDisposition;
+      const succeeded = (!cause || cause === "post_exit_cleanup") && code === 0 && operation.restorationCommandStarted;
+      finish(disposition !== "running" ? disposition : (succeeded ? "succeeded" : "failed"), code);
+    });
+  });
 }

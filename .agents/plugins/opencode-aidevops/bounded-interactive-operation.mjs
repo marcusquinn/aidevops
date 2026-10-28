@@ -17,6 +17,7 @@ import {
   applySupervisorMessage,
   disposeOperations,
   operationReceipt,
+  runOperationRestoration,
   signalSupervisor,
   trimTerminalOperations,
 } from "./bounded-operation-runtime.mjs";
@@ -231,44 +232,7 @@ export class BoundedInteractiveOperationManager {
   }
 
   async runRestoration(operation) {
-    operation.state = "restoring";
-    operation.restorationState = "running";
-    this.notifyStatusWaiters(operation);
-    await new Promise((resolve) => {
-      let settled = false;
-      const finish = (state, code = null) => {
-        if (settled) return;
-        settled = true;
-        if (operation.restorationTimer) this.clearTimer(operation.restorationTimer);
-        operation.restorationChild = null;
-        operation.restorationExit = Number.isInteger(code) ? code : null;
-        operation.restorationState = state;
-        this.notifyStatusWaiters(operation);
-        resolve();
-      };
-      const child = this.spawnOwned(operation, operation.restorationCommand, "restoration");
-      operation.restorationChild = child;
-      operation.restorationChildExited = false;
-      child.once("exit", () => { operation.restorationChildExited = true; });
-      operation.restorationTimer = this.setTimer(() => {
-        operation.restorationTerminationCause ||= "budget";
-        if (operation.restorationDisposition === "running") operation.restorationDisposition = "timed_out";
-        operation.restorationState = "timing_out";
-        this.notifyStatusWaiters(operation);
-        if (!operation.restorationChildExited && child.exitCode === null && child.signalCode === null) {
-          this.kill(child, "SIGTERM", operation.restorationTerminationCause);
-        }
-      }, operation.restorationBudgetMs);
-      child.once("error", () => finish("failed"));
-      child.once("close", (code, signal) => {
-        operation.restorationSignal = scalar(signal);
-        if (signal || !operation.restorationCommandStarted) operation.restorationTerminationCause ||= "supervisor_exit";
-        const cause = operation.restorationTerminationCause;
-        const disposition = operation.restorationDisposition;
-        const succeeded = (!cause || cause === "post_exit_cleanup") && code === 0 && operation.restorationCommandStarted;
-        finish(disposition !== "running" ? disposition : (succeeded ? "succeeded" : "failed"), code);
-      });
-    });
+    await runOperationRestoration(this, operation);
   }
 
   async finalize(operation) {
