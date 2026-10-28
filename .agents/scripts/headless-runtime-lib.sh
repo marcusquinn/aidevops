@@ -1115,6 +1115,13 @@ interpretation are yours to decide, never this class. Name the exact input and
 where you looked; never guess it. Not for permissions or external events.
 If no class is established, omit the reason line: unknown evidence stays retryable
 with bounded cross-runner backoff, not a permanent hold.
+EOF
+	_worker_headless_contract_recovery_text
+	return 0
+}
+
+_worker_headless_contract_recovery_text() {
+	cat <<'EOF'
 
 Owned integration recovery (GH#31305): for an unresolved adjacent path, explicit
 hard boundary, concurrent owner, missing context or genuine human-only decision,
