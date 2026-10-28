@@ -1034,7 +1034,9 @@ _dlw_precreate_worktree() {
 		_path=$(_dlw_extract_worktree_path_from_output "$_wt_output") || _path=""
 	fi
 	echo "[dispatch_with_dedup] Worktree path resolution for #${issue_number}: source=${_path_source} branch=${_branch} path='${_path:-<empty>}' exists=$([[ -n "$_path" && -d "$_path" ]] && printf '1' || printf '0')" >>"$LOGFILE"
-	if [[ -n "$_path" && -d "$_path" ]]; then
+	# GH#35781: a failed helper may leave a preserved generation behind; never
+	# register or dispatch from it, or its owner row could be replaced.
+	if [[ "$_wt_rc" -eq 0 && -n "$_path" && -d "$_path" ]]; then
 		_DLW_WORKTREE_PATH="$_path"
 		_DLW_WORKTREE_BRANCH="$_branch"
 		if declare -F register_worktree >/dev/null 2>&1; then
