@@ -63,6 +63,15 @@ precision.
 
 ## Lifecycle registry
 
+`worker_lifecycle/storage.py` implements SQLite persistence and transactions through
+`LifecycleRegistry`; `tests/test_storage.py` verifies those contracts.
+`worker_lifecycle/registry.py` provides the CLI and process reconciliation, not a
+second database. Module names do not change the database schema, event keys or
+JSON report fields. Validator check names include their test module/class names,
+so renaming tests changes those names and the registry bundle fingerprint.
+Regenerate reports by running the rebuilt artifact; never rewrite old report
+names or hashes to represent a new run. Diagnostic exception names remain stable.
+
 An explicit private SQLite store, event replay, multi-worktree bindings and bounded
 reconciliation are implemented; see [REGISTRY.md](REGISTRY.md). `LifecycleRegistry`
 uses `registry.sqlite3`, schema 1, in `observe-only` mode. One session may bind

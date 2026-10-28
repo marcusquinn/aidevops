@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from .process import ObservationUnavailable
 from .runtime import adapter_for, require_ready
-from .store import LifecycleRegistry
+from .storage import LifecycleRegistry
 
 
 def record(state_dir: Path, worktree: Path) -> str:

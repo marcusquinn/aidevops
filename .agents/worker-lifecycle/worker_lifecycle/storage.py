@@ -1,4 +1,4 @@
-"""Private lifecycle registry. No actual ownership, Git or filesystem operations.
+"""SQLite storage for the lifecycle registry; no actual ownership or Git operations.
 
 Event ingestion and its projection commit together. Observations are sampled
 outside transactions and applied only against the exact run version sampled.

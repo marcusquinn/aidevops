@@ -21,7 +21,7 @@ class BundleContract(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 build(first)
             with zipfile.ZipFile(first) as archive:
-                self.assertNotIn("worker_lifecycle/store.py", archive.namelist())
+                self.assertNotIn("worker_lifecycle/storage.py", archive.namelist())
             listed = subprocess.run([sys.executable, "-I", "-B", str(first), "--list-checks"],  # nosec B603 # bundle built above
                                     cwd=root, capture_output=True, text=True, timeout=5)
             self.assertEqual(listed.returncode, 0, listed.stderr)
