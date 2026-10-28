@@ -88,9 +88,19 @@ _protected_label_check() {
 	local threshold="${PROTECTED_LABEL_FLAP_THRESHOLD:-4}"
 	local window="${PROTECTED_LABEL_FLAP_WINDOW_SECONDS:-21600}"
 	local cooldown="${PROTECTED_LABEL_FLAP_COOLDOWN_SECONDS:-21600}"
-	local value="" timeline="" comments="" marker="" since=0 active=0 summary=""
-	for value in "$threshold" "$window" "$cooldown"; do
-		[[ "$value" =~ ^[1-9][0-9]{0,7}$ ]] || return 1
+	local value="" setting="" timeline="" comments="" marker="" since=0 active=0 summary=""
+	for setting in PROTECTED_LABEL_FLAP_THRESHOLD PROTECTED_LABEL_FLAP_WINDOW_SECONDS PROTECTED_LABEL_FLAP_COOLDOWN_SECONDS; do
+		case "$setting" in
+		PROTECTED_LABEL_FLAP_THRESHOLD) value="$threshold" ;;
+		PROTECTED_LABEL_FLAP_WINDOW_SECONDS) value="$window" ;;
+		PROTECTED_LABEL_FLAP_COOLDOWN_SECONDS) value="$cooldown" ;;
+		esac
+		if ! [[ "$value" =~ ^[1-9][0-9]{0,7}$ ]]; then
+			printf 'protected-label-guard: invalid %s value %q\n' "$setting" "$value" >&2
+			# Bad configuration must not prevent fail-closed containment.
+			[[ "$operation" == "$_PL_ADD_LABEL_FLAG" ]] && return 0
+			return 1
+		fi
 	done
 	marker="<!-- aidevops:protected-label-flap:${label}:v1 -->"
 	# The remote cooldown survives missing timeline reads and runner restarts.

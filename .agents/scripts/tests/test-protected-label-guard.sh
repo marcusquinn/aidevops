@@ -178,3 +178,18 @@ if protected_label_edit 42 example/repo normal --remove-label=needs-maintainer-r
 if protected_label_edit 42 example/repo normal --remove-label needs-maintainer-review,other; then exit 1; fi
 [[ ! -s "$TEST_ROOT/edits" ]]
 printf 'PASS: unsupported argument forms cannot bypass the guard\n'
+
+for setting in PROTECTED_LABEL_FLAP_THRESHOLD PROTECTED_LABEL_FLAP_WINDOW_SECONDS PROTECTED_LABEL_FLAP_COOLDOWN_SECONDS; do
+	reset_fixture
+	timeline_fixture 0
+	export "${setting}=invalid"
+	protected_label_edit 42 example/repo containment --add-label needs-maintainer-review 2>"$TEST_ROOT/diagnostic"
+	grep -q "invalid ${setting} value" "$TEST_ROOT/diagnostic"
+	jq -e '.labels | any(.[]; .name == "needs-maintainer-review")' "$TEST_ROOT/live" >/dev/null
+	: >"$TEST_ROOT/edits"
+	held --remove-label 2>"$TEST_ROOT/diagnostic"
+	grep -q "invalid ${setting} value" "$TEST_ROOT/diagnostic"
+	[[ ! -s "$TEST_ROOT/edits" ]]
+	unset "$setting"
+done
+printf 'PASS: each invalid setting names its diagnostic, permits containment and blocks removal\n'

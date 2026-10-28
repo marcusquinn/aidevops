@@ -1942,7 +1942,7 @@ _nmr_edit_issue_labels() {
 	# shellcheck source=protected-label-guard.sh
 	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
 	protected_label_edit "$issue_num" "$slug" \
-		"normalization; association=${author_association:-unknown}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" "$@" >/dev/null 2>&1
+		"normalization; association=${author_association:-unknown}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" "$@" >/dev/null
 	return $?
 }
 

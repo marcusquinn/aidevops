@@ -713,12 +713,14 @@ test_ever_nmr_history_bypasses_self_approval_for_trusted_author() {
 test_flap_cooldown_preserves_lifecycle() {
 	setup_test_env
 	export ISSUE_LABELS_JSON='[{"name":"needs-maintainer-review"}]'
+	export NMR_TIMELINE_JSON='[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"maintainer"},"created_at":"2026-07-30T20:00:00Z"}]'
 	ISSUE_COMMENTS_JSON=$(jq -cn '[{author_association:"OWNER",
 		body:"<!-- aidevops:protected-label-flap:needs-maintainer-review:v1 -->",
 		created_at:(now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]')
 	export ISSUE_COMMENTS_JSON
 	run_auto_approve
-	if [[ ! -s "$STATUS_CALLS_FILE" && ! -s "$ISSUE_EDIT_CALLS_FILE" ]]; then
+	if [[ ! -s "$STATUS_CALLS_FILE" && ! -s "$ISSUE_EDIT_CALLS_FILE" ]] \
+		&& grep -q 'Trusted-author NMR normalization FAILED' "$LOGFILE"; then
 		print_result "flap cooldown blocks lifecycle promotion as well as NMR removal" 0
 	else
 		print_result "flap cooldown blocks lifecycle promotion as well as NMR removal" 1

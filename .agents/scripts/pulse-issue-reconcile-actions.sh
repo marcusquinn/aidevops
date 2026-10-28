@@ -1179,7 +1179,7 @@ _action_reconcile_external_issue_gate() {
 	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
 	protected_label_edit "$issue_num" "$slug" \
 		"containment; association=${author_association}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" \
-		"${edit_args[@]}" >/dev/null 2>&1 || edit_rc=$?
+		"${edit_args[@]}" >/dev/null || edit_rc=$?
 	if [[ "$edit_rc" -eq 0 ]]; then
 		_PIR_EXTERNAL_GATE_MUTATED=1
 		echo "[pulse-wrapper] External issue trust reconcile: applied ${_PIR_NMR_LABEL} to #${issue_num} in ${slug}" >>"$LOGFILE"
