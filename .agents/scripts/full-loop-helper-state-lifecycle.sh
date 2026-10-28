@@ -145,13 +145,11 @@ _linked_issue_author_allows_start() {
 	fi
 	if [[ "$verification" == "NO_APPROVAL" ]]; then
 		#aidevops:trust-boundary -- containment is best-effort; this live gate is authoritative.
-		if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
-			gh_issue_edit_safe "$issue_num" --repo "$repo" \
-				--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
-		else
-			gh issue edit "$issue_num" --repo "$repo" \
-				--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
-		fi
+		# shellcheck source=protected-label-guard.sh
+		source "${SCRIPT_DIR}/protected-label-guard.sh"
+		protected_label_edit "$issue_num" "$repo" \
+			"containment; association=${author_association}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" \
+			--add-label "needs-maintainer-review" >/dev/null || true
 	fi
 
 	_FULL_LOOP_LINKED_AUTHOR_GATE_REASON="author_association=${author_association}, external_source=${external_source}, authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}, approval=${verification:-unavailable}"
