@@ -5,7 +5,7 @@
 # GH#35810: the extracted routing library must work without the orchestrator.
 set -euo pipefail
 
-SCRIPTS_DIR="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 unset SCRIPT_DIR _PULSE_DISPATCH_WORKER_LAUNCH_BUNDLE_LOADED
 # shellcheck source=../pulse-dispatch-worker-launch-bundle.sh
 source "${SCRIPTS_DIR}/pulse-dispatch-worker-launch-bundle.sh"
