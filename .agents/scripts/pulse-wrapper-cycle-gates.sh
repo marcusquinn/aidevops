@@ -46,10 +46,10 @@ _pulse_reconcile_worker_lifecycle() {
 		"${PULSE_DRY_RUN:-0}" == "1" || "${PULSE_CANARY_MODE:-0}" == "1" ]]; then
 		return 0
 	fi
-	local state_dir="${AIDEVOPS_LIFECYCLE_STATE_DIR:-${AIDEVOPS_WORKSPACE_DIR:-${HOME}/.aidevops/.agent-workspace}/worker-lifecycle}"
-	case "$state_dir" in
-	\~/*) state_dir="$HOME/${state_dir#\~/}" ;;
-	esac
+	# shellcheck source=worker-lifecycle-state.sh
+	source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
+	local state_dir=""
+	state_dir=$(worker_lifecycle_state_dir)
 	[[ -e "$state_dir" || -L "$state_dir" ]] || return 0
 	local package_dir="${SCRIPT_DIR}/../worker-lifecycle"
 	local reconcile_rc=0

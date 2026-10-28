@@ -119,6 +119,23 @@ by default on supported Linux/macOS installations, independent of systemd or lau
 The default private state is `~/.aidevops/.agent-workspace/worker-lifecycle`;
 when `AIDEVOPS_WORKSPACE_DIR` is set, its `worker-lifecycle` subdirectory is used.
 `AIDEVOPS_LIFECYCLE_STATE_DIR` optionally overrides the path, not activation.
+For a persistent host-level override, put the desired registry directory on the
+first line of `~/.config/aidevops/lifecycle-state-dir` (a regular file owned by the
+current user, not a symlink). Both worker launchers and scheduled Pulse services
+read this same file at runtime; no plist/systemd environment override or service
+restart is needed. The location deliberately uses the user's home, not
+`XDG_CONFIG_HOME`, which a scheduled service may not inherit. Precedence is the
+explicit `AIDEVOPS_LIFECYCLE_STATE_DIR` environment override, then this host file,
+then the workspace/default path above. For matching reconciliation, use the host
+file rather than a worker-only environment override. The file contains path data,
+never shell code; spaces are preserved and expressions are not evaluated. Use an
+absolute path or a literal leading `~/`; relative host-configured paths (including
+option-like values such as `-registry`) report an observation gap and leave native
+worker execution unwrapped. An empty/unreadable file or inaccessible parent
+directory also reports a gap instead of silently selecting a different registry.
+Only a confirmed absent setting permits workspace/default resolution.
+Remove the file to restore workspace/default resolution, after draining the old
+registry as described below.
 The launchers and Pulse expand a literal leading `~/` in either setting using
 the current user's home directory; no shell expression evaluation is performed.
 Agent installation prepares the framework workspace before bundle activation and
@@ -163,6 +180,30 @@ attempts; an in-flight SQLite wait can extend that deadline. No scheduler or per
 global environment is installed. Set `AIDEVOPS_LIFECYCLE_DISABLED=1` to disable launch
 observation and Pulse reconciliation; preserve the store. This remains bounded, best-effort observation: the journal
 capacity is unchanged and full stores report gaps rather than deleting evidence.
+
+### Changing or removing the host setting
+
+Pulse observes one selected registry at a time; changing the path does not migrate
+records or keep reconciling the old store. Before any cutover (including removing
+the setting to return to defaults):
+
+1. Pause new worker dispatch through the existing scheduler controls, keeping the
+   old setting in place. Let existing workers finish normally; do not kill them or
+   disable lifecycle observation to force a drain.
+2. Reconcile the old registry while it is still selected. Allow normal Pulse ticks
+   or invoke the existing CLI from the installed `worker-lifecycle` package:
+   `python3 -E -s -B -m worker_lifecycle.registry --state-dir OLD_ABSOLUTE_PATH reconcile --limit 100`.
+   Each invocation is bounded, so a large registry may require multiple passes.
+3. Inspect the same old registry with
+   `python3 -E -s -B -m worker_lifecycle.registry --state-dir OLD_ABSOLUTE_PATH status`.
+   Do not switch while any runs remain unfinished (including `alive` or `unknown`);
+   investigate unknown identities rather than treating them as ended. Draining
+   records never grants cleanup authority.
+4. With dispatch still paused and the old registry drained, change/remove the
+   host setting. Remove conflicting per-process overrides, confirm the new path
+   has its required canonical parent, then resume dispatch. Verify new launches
+   and Pulse use the same selected registry. Keep the old store intact as evidence;
+   do not copy, merge, delete or repair it as part of this configuration change.
 
 ### Periodic reconciliation in Pulse
 
