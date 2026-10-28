@@ -66,6 +66,7 @@ test_release_label_is_rechecked_before_launch() {
 	local label_result="" result=0
 	for label_result in release lookup-failed; do
 		setup_test_env
+		export TEST_ROOT
 		export STUB_PR_VIEW="Release"$'\t'"chore/release-v1.2.3-provenance"$'\t'"${TEST_HEAD_OID_1}"$'\t'"worker-bot"
 		printf '%s\n' "$label_result" >"${TEST_ROOT}/label-result"
 		mv "${TEST_ROOT}/bin/gh" "${TEST_ROOT}/bin/gh-original"
@@ -89,7 +90,7 @@ GH_RELEASE_RACE
 		if [[ "$result" -ne 0 && -f "${TEST_ROOT}/label-rechecked" && ! -s "$HEADLESS_LOG" ]]; then
 			print_result "Prelaunch release-label recheck blocks ${label_result}" 0
 		else
-			print_result "Prelaunch release-label recheck blocks ${label_result}" 1 "rc=${result}"
+			print_result "Prelaunch release-label recheck blocks ${label_result}" 1 "rc=${result}; log=$(<"$LOGFILE")"
 		fi
 		teardown_test_env
 	done
