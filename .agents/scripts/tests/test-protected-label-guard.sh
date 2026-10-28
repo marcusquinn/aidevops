@@ -44,8 +44,14 @@ gh() {
 		;;
 	*'/collaborators/runner/permission'*)
 		printf 'lookup\n' >>"$TEST_ROOT/permission-calls"
+		if [[ "${PERMISSION_STATUS:-200}" != 200 ]]; then
+			# The body deliberately mentions 404 even for other status codes:
+			# only the response status line may classify a missing collaborator.
+			printf 'HTTP/2.0 %s Mock failure\r\nContent-Type: application/json\r\n\r\n{"message":"Not Found","status":"404"}\n' "$PERMISSION_STATUS"
+			return 1
+		fi
 		[[ "${PERMISSION_FAIL:-1}" -eq 0 ]] || return 1
-		printf 'read\n'
+		printf 'HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n%s\n' "${PERMISSION_VALUE:-read}"
 		;;
 	*)
 		printf 'Unexpected gh invocation: %s\n' "$args" >&2
@@ -87,6 +93,8 @@ reset_fixture() {
 	SIMULATE_PEER_MARKER=0
 	SIMULATE_REMOVAL_EVENT=0
 	PERMISSION_FAIL=1
+	PERMISSION_STATUS=200
+	PERMISSION_VALUE=read
 	return 0
 }
 
@@ -324,3 +332,47 @@ comments=$(jq -cn '[[range(0;10) | {user:{login:"runner"}, author_association:"N
 [[ "$(_protected_label_marker_since "$comments" marker example/repo)" -eq 0 ]]
 [[ "$(wc -l <"$TEST_ROOT/permission-calls")" -eq 1 ]]
 printf 'PASS: repeated untrusted markers use one permission lookup per fresh scan\n'
+
+reset_fixture
+PERMISSION_STATUS=404
+: >"$TEST_ROOT/permission-calls"
+[[ "$(_protected_label_marker_since "$comments" marker example/repo)" -eq 0 ]]
+[[ "$(wc -l <"$TEST_ROOT/permission-calls")" -eq 1 ]]
+printf 'PASS: repeated missing marker authors are non-authoritative with one lookup per scan\n'
+
+comments=$(jq -cn '[[{user:{login:"runner"},author_association:"NONE",body:"marker",
+	created_at:(now | strftime("%Y-%m-%dT%H:%M:%SZ"))},
+	{user:{login:"maintainer"},author_association:"OWNER",body:"marker",
+	created_at:((now - 60) | strftime("%Y-%m-%dT%H:%M:%SZ"))}]]')
+trusted_since=$(printf '%s' "$comments" | jq '.[0][1].created_at | fromdateiso8601')
+[[ "$(_protected_label_marker_since "$comments" marker example/repo)" -eq "$trusted_since" ]]
+printf 'PASS: missing marker author does not hide an older authoritative marker\n'
+
+reset_fixture
+timeline_fixture 0
+PERMISSION_STATUS=404
+printf '%s' "$comments" | jq '.[0][0:1] | map(.body = "<!-- aidevops:protected-label-flap:needs-maintainer-review:v1 -->")' >"$TEST_ROOT/comments"
+protected_label_edit 42 example/repo normal --remove-label needs-maintainer-review
+[[ -s "$TEST_ROOT/edits" && ! -s "$TEST_ROOT/comment-bodies" ]]
+printf 'PASS: a missing non-authoritative marker author does not prevent normal removal\n'
+
+for status in 200 401 403 429 500; do
+	reset_fixture
+	timeline_fixture 0
+	PERMISSION_STATUS="$status"
+	# Status 200 with no response simulates a transport failure. Other failures
+	# include a misleading 404 body, which must not override their status line.
+	printf '%s' "$comments" | jq '.[0] | map(.body = "<!-- aidevops:protected-label-flap:needs-maintainer-review:v1 -->")' >"$TEST_ROOT/comments"
+	if _protected_label_marker_since "$comments" marker example/repo; then exit 1; fi
+	held --remove-label
+	[[ ! -s "$TEST_ROOT/edits" ]]
+done
+printf 'PASS: transport, authentication, authorization, rate-limit and server errors still block removal\n'
+
+reset_fixture
+PERMISSION_FAIL=0
+PERMISSION_VALUE=write
+comments=$(jq -cn '[[{user:{login:"runner"},author_association:"NONE",body:"marker",
+	created_at:(now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]]')
+[[ "$(_protected_label_marker_since "$comments" marker example/repo)" -gt 0 ]]
+printf 'PASS: successful included-header permission lookup still recognizes repository write authority\n'

@@ -55,6 +55,7 @@ _protected_label_flap_summary() {
 _protected_label_marker_since() {
 	local comments="$1" marker="$2" repo="$3"
 	local rows="" login="" association="" epoch="" app_write="" permission="" checked=","
+	local response=""
 	rows=$(printf '%s' "$comments" | jq -r --arg marker "$marker" --arg array_type "$_PL_ARRAY_TYPE" '
 		if type != $array_type or any(.[]; type != $array_type) then error("invalid comments")
 		else add // [] end
@@ -77,7 +78,15 @@ _protected_label_marker_since() {
 		# Association and app authority are still evaluated for every comment.
 		[[ "$checked" == *",${login},"* ]] && continue
 		checked="${checked}${login},"
-		permission=$(gh api "repos/${repo}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || return 1
+		if ! response=$(gh api --include "repos/${repo}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null); then
+			# A missing user/collaborator is not an authoritative marker author.
+			# Inspect only the HTTP status line, never error-body or stderr text.
+			# All other failures leave authority unverifiable and hold removals.
+			[[ "$response" =~ ^HTTP/[0-9.]+[[:space:]]+404[[:space:]] ]] && continue
+			return 1
+		fi
+		# gh --include emits response headers before the --jq filtered value.
+		permission="${response##*$'\n'}"
 		case "$permission" in
 		admin | maintain | write)
 			printf '%s\n' "$epoch"
