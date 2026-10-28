@@ -16,14 +16,14 @@ from uuid import uuid4
 from worker_lifecycle.process import ObservationUnavailable, ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.registry import reconcile
-from worker_lifecycle.store import LifecycleRegistry, StoreConflict
+from worker_lifecycle.storage import LifecycleRegistry, StoreConflict
 
 
 def key():
     return str(uuid4())
 
 
-class StoreContract(unittest.TestCase):
+class StorageContract(unittest.TestCase):
     def setUp(self):
         # tempfile uses TMPDIR when supplied by the project runner.
         self.temp = tempfile.TemporaryDirectory()
@@ -99,7 +99,7 @@ class StoreContract(unittest.TestCase):
         code = """
 import json,os,sys
 from pathlib import Path
-from worker_lifecycle.store import LifecycleRegistry
+from worker_lifecycle.storage import LifecycleRegistry
 from worker_lifecycle.process import ProcessIdentity
 class CrashBeforeCommit(LifecycleRegistry):
     def _bind(self, *args):
@@ -218,7 +218,7 @@ os._exit(72)
 
     def test_process_crash_before_commit_rolls_back(self):
         code = ("import os,sys; from pathlib import Path; "
-                "from worker_lifecycle.store import LifecycleRegistry; "
+                "from worker_lifecycle.storage import LifecycleRegistry; "
                 "s=LifecycleRegistry(Path(sys.argv[1])); "
                 "c=s._connect(); c.execute('BEGIN IMMEDIATE'); "
                 "c.execute(\"INSERT INTO events(event_id,payload) VALUES ('uncommitted','{}')\"); "
@@ -230,7 +230,7 @@ os._exit(72)
     def test_process_crash_after_commit_allows_exact_replay(self):
         event = key()
         code = ("import json,os,sys; from pathlib import Path; "
-                "from worker_lifecycle.store import LifecycleRegistry; "
+                "from worker_lifecycle.storage import LifecycleRegistry; "
                 "from worker_lifecycle.process import ProcessIdentity; "
                 "s=LifecycleRegistry(Path(sys.argv[1])); "
                 "s.register(sys.argv[2],sys.argv[3],ProcessIdentity.from_dict(json.load(sys.stdin))); "

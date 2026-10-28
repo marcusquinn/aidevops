@@ -9,8 +9,8 @@ import zipfile
 SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "macos.py", "validation.py")
 ENTRYPOINT = b"from worker_lifecycle.validation import main\nraise SystemExit(main())\n"
 REGISTRY_SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "macos.py",
-                    "store.py", "events.py", "registry.py", "launch.py", "integration_validation.py")
-REGISTRY_TESTS = ("test_store.py", "test_events.py", "test_launch.py")
+                    "storage.py", "events.py", "registry.py", "launch.py", "integration_validation.py")
+REGISTRY_TESTS = ("test_storage.py", "test_events.py", "test_launch.py")
 
 
 def build(output: Path, suite: str = "process") -> None:

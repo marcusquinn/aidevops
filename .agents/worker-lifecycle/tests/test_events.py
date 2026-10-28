@@ -15,7 +15,7 @@ from worker_lifecycle.integration_validation import ReportResult
 from worker_lifecycle.process import ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.registry import reconcile
-from worker_lifecycle.store import LifecycleRegistry, StoreCapacity
+from worker_lifecycle.storage import LifecycleRegistry, StoreCapacity
 
 
 class EventContract(unittest.TestCase):

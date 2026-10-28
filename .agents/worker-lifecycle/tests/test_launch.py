@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from worker_lifecycle.registry import reconcile
-from worker_lifecycle.store import LifecycleRegistry
+from worker_lifecycle.storage import LifecycleRegistry
 
 
 ENTRY = Path(__file__).resolve().parents[1] / "worker-launch.py"

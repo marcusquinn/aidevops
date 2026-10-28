@@ -7,7 +7,7 @@ same-user callers. No producer-supplied observation can end a run through here.
 import json
 
 from .process import ProcessIdentity
-from .store import MAX_EVENT_BYTES, LifecycleRegistry, identifier
+from .storage import MAX_EVENT_BYTES, LifecycleRegistry, identifier
 
 
 def unique_fields(pairs: list) -> dict:

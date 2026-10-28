@@ -63,6 +63,11 @@ precision.
 
 ## Lifecycle registry
 
+`worker_lifecycle/storage.py` implements SQLite persistence and transactions through
+`LifecycleRegistry`; `tests/test_storage.py` verifies those contracts.
+`worker_lifecycle/registry.py` provides the CLI and process reconciliation, not a
+second database.
+
 An explicit private SQLite store, event replay, multi-worktree bindings and bounded
 reconciliation are implemented; see [REGISTRY.md](REGISTRY.md). `LifecycleRegistry`
 uses `registry.sqlite3`, schema 1, in `observe-only` mode. One session may bind

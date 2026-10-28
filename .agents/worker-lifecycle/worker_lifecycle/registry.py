@@ -13,7 +13,7 @@ from uuid import uuid4
 from .process import ObservationUnavailable, ProcessIdentity
 from .events import ingest
 from .runtime import adapter_for, require_ready
-from .store import MAX_EVENT_BYTES, LifecycleRegistry, StoreCapacity, StoreConflict
+from .storage import MAX_EVENT_BYTES, LifecycleRegistry, StoreCapacity, StoreConflict
 
 
 class ReconciliationResult(TypedDict, total=False):
