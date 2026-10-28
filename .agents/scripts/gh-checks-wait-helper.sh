@@ -22,7 +22,7 @@ _GCW_EMPTY_REQUIRED_SETTLE_SECONDS="${AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS:-9
 # GH#35830: a concurrency-cancelled run (e.g. after `gh pr ready`) is superseded
 # by a newer run that may not be visible yet. Treat cancel-only failures as
 # pending for this grace window before calling them terminal.
-_GCW_CANCEL_GRACE_SECONDS="${AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS:-180}"
+_GCW_CANCEL_GRACE_SECONDS="${AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS-180}"
 _GCW_CANCEL_FIRST_EPOCH=""
 _GCW_GRACED_CLASSIFICATION=""
 
