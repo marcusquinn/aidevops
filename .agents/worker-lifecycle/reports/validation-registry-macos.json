@@ -1,80 +1,80 @@
 {
-  "bundle_sha256": "7d0e97ca383e41b97d4ecbbc17ded633a1e451b600980e99f4d021fac7b0771e",
+  "bundle_sha256": "64bd8f6fa36d9cbc6956bb90179f669d221f6b6aba46642c6d87e7a9e5a50b7a",
   "checks": [
     {
-      "name": "tests.test_store.StoreContract.test_atomic_attempt_binding_conflict_rolls_back_registration",
+      "name": "tests.test_storage.StorageContract.test_atomic_attempt_binding_conflict_rolls_back_registration",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_atomic_attempt_replay_and_conflict_after_ending",
+      "name": "tests.test_storage.StorageContract.test_atomic_attempt_replay_and_conflict_after_ending",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_attempt_crash_before_and_after_commit",
+      "name": "tests.test_storage.StorageContract.test_attempt_crash_before_and_after_commit",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_concurrent_attempt_replay_commits_one_pair",
+      "name": "tests.test_storage.StorageContract.test_concurrent_attempt_replay_commits_one_pair",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_concurrent_duplicate_writers_commit_one_event",
+      "name": "tests.test_storage.StorageContract.test_concurrent_duplicate_writers_commit_one_event",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_conflicting_claims_are_reported_not_enforced",
+      "name": "tests.test_storage.StorageContract.test_conflicting_claims_are_reported_not_enforced",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_duplicate_event_and_payload_conflict",
+      "name": "tests.test_storage.StorageContract.test_duplicate_event_and_payload_conflict",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_foreign_identity_rolls_back",
+      "name": "tests.test_storage.StorageContract.test_foreign_identity_rolls_back",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_init_never_replaces_existing_directory",
+      "name": "tests.test_storage.StorageContract.test_init_never_replaces_existing_directory",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_one_session_multiple_generations",
+      "name": "tests.test_storage.StorageContract.test_one_session_multiple_generations",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_process_crash_after_commit_allows_exact_replay",
+      "name": "tests.test_storage.StorageContract.test_process_crash_after_commit_allows_exact_replay",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_process_crash_before_commit_rolls_back",
+      "name": "tests.test_storage.StorageContract.test_process_crash_before_commit_rolls_back",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_readiness_failure_performs_no_writes",
+      "name": "tests.test_storage.StorageContract.test_readiness_failure_performs_no_writes",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_real_reconciliation_and_reopen",
+      "name": "tests.test_storage.StorageContract.test_real_reconciliation_and_reopen",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_same_process_is_sampled_once_for_multiple_sessions",
+      "name": "tests.test_storage.StorageContract.test_same_process_is_sampled_once_for_multiple_sessions",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_stale_sample_after_binding_rolls_back_event",
+      "name": "tests.test_storage.StorageContract.test_stale_sample_after_binding_rolls_back_event",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_terminal_observation_replay_and_no_resurrection",
+      "name": "tests.test_storage.StorageContract.test_terminal_observation_replay_and_no_resurrection",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_unknown_does_not_end_run_and_rotates_batch",
+      "name": "tests.test_storage.StorageContract.test_unknown_does_not_end_run_and_rotates_batch",
       "status": "passed"
     },
     {
-      "name": "tests.test_store.StoreContract.test_writer_exception_rolls_back",
+      "name": "tests.test_storage.StorageContract.test_writer_exception_rolls_back",
       "status": "passed"
     },
     {
@@ -135,7 +135,7 @@
   "suite": "registry-integration",
   "system": "Darwin",
   "tests_run": 30,
-  "timestamp": "2026-10-28T16:47:14.835032+00:00",
+  "timestamp": "2026-10-28T17:35:58.708744+00:00",
   "untested": [
     "power-loss",
     "disk-full",
