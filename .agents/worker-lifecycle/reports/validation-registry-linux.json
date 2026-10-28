@@ -1,6 +1,22 @@
 {
-  "bundle_sha256": "9e24f0aab27043f07713b44f25c1ad35b88f8e9665ee9fde3e833b71b3fefcfb",
+  "bundle_sha256": "7d0e97ca383e41b97d4ecbbc17ded633a1e451b600980e99f4d021fac7b0771e",
   "checks": [
+    {
+      "name": "tests.test_store.StoreContract.test_atomic_attempt_binding_conflict_rolls_back_registration",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_store.StoreContract.test_atomic_attempt_replay_and_conflict_after_ending",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_store.StoreContract.test_attempt_crash_before_and_after_commit",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_store.StoreContract.test_concurrent_attempt_replay_commits_one_pair",
+      "status": "passed"
+    },
     {
       "name": "tests.test_store.StoreContract.test_concurrent_duplicate_writers_commit_one_event",
       "status": "passed"
@@ -118,8 +134,8 @@
   "status": "passed",
   "suite": "registry-integration",
   "system": "Linux",
-  "tests_run": 26,
-  "timestamp": "2026-10-28T12:55:58.539109+00:00",
+  "tests_run": 30,
+  "timestamp": "2026-10-28T16:44:44.585862+00:00",
   "untested": [
     "power-loss",
     "disk-full",

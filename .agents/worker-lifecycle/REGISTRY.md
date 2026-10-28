@@ -173,8 +173,9 @@ separate authorization and acceptance tests; this change does not introduce one.
 
 The existing tests include actual owned-process crashes before and after commit,
 concurrent replay, conflicting bindings and full-journal launch continuation.
-Retained validator artifacts/reports certify their recorded source fingerprints;
-they do not automatically certify this subsequent source change.
+The current registry artifact passed all 30 included tests on Linux x86-64 and
+macOS Intel; both retained reports identify the same bundle fingerprint. See
+[COMPATIBILITY.md](COMPATIBILITY.md) for environments and remaining limitations.
 
 For a controlled experiment, initialize a dedicated store, enable the variable
 for ONE already-approved ordinary worker invocation, then run the

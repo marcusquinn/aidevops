@@ -1,6 +1,22 @@
 {
-  "bundle_sha256": "a921bd1ad99f518201f80914d5160d08c0a3230b20d811a36137457fe44016cd",
+  "bundle_sha256": "7d0e97ca383e41b97d4ecbbc17ded633a1e451b600980e99f4d021fac7b0771e",
   "checks": [
+    {
+      "name": "tests.test_store.StoreContract.test_atomic_attempt_binding_conflict_rolls_back_registration",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_store.StoreContract.test_atomic_attempt_replay_and_conflict_after_ending",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_store.StoreContract.test_attempt_crash_before_and_after_commit",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_store.StoreContract.test_concurrent_attempt_replay_commits_one_pair",
+      "status": "passed"
+    },
     {
       "name": "tests.test_store.StoreContract.test_concurrent_duplicate_writers_commit_one_event",
       "status": "passed"
@@ -86,6 +102,10 @@
       "status": "passed"
     },
     {
+      "name": "tests.test_events.EventContract.test_subtest_failures_are_reported_without_private_parameters",
+      "status": "passed"
+    },
+    {
       "name": "tests.test_launch.LaunchContract.test_exec_identity_then_natural_exit",
       "status": "passed"
     },
@@ -114,8 +134,8 @@
   "status": "passed",
   "suite": "registry-integration",
   "system": "Darwin",
-  "tests_run": 25,
-  "timestamp": "2026-10-28T12:13:15.245039+00:00",
+  "tests_run": 30,
+  "timestamp": "2026-10-28T16:47:14.835032+00:00",
   "untested": [
     "power-loss",
     "disk-full",
