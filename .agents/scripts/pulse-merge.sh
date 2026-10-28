@@ -54,10 +54,13 @@
 #     _attempt_green_behind_update_branch, _check_required_checks_passing
 #   - pulse-merge-author-checks.sh: _is_collaborator_author,
 #     _is_owner_or_member_author, _check_interactive_pr_gates
-#   Functions kept here (>100 lines — identity-key preservation):
-#   - _check_pr_merge_gates                  (166 lines)
-#   - _handle_post_merge_actions             (107 lines)
-#   - _process_single_ready_pr               (211 lines)
+#   - pulse-merge-issue-closeout.sh: linked-issue and superseded-issue closure,
+#     non-closing parent references, and partial-parent closeout (GH#21426)
+#   Large functions kept here for complexity identity-key preservation:
+#   - _handle_changes_requested_review_gate
+#   - _pm_reconcile_pr_closeout_comments
+#   Orchestration retained here:
+#   - _check_pr_merge_gates, _handle_post_merge_actions, _process_single_ready_pr
 #   Extraction utilities (used by downstream modules):
 #   - _extract_linked_issue
 #   - _extract_merge_summary
