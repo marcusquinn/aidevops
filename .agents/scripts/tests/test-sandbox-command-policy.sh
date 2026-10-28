@@ -442,6 +442,38 @@ test_lifecycle_private_workload() {
 	return 0
 }
 
+test_lifecycle_defaults() {
+	local canonical_home=""
+	canonical_home=$(cd "$TEST_HOME" && pwd -P) || return 1
+	local state_dir="${canonical_home}/.aidevops/.agent-workspace/worker-lifecycle"
+	local status=0
+	local events=""
+	mkdir -p "${canonical_home}/.aidevops/.agent-workspace"
+	env -u AIDEVOPS_LIFECYCLE_STATE_DIR -u AIDEVOPS_LIFECYCLE_DISABLED -u AIDEVOPS_WORKSPACE_DIR \
+		HOME="$canonical_home" AIDEVOPS_PRIVATE_WORKLOAD=0 AIDEVOPS_LIFECYCLE_WORKTREE="$TEST_ROOT" \
+		"$SANDBOX_HELPER" run true >/dev/null 2>&1 || status=$?
+	if [[ "$status" -ne 0 || ! -f "${state_dir}/registry.sqlite3" ]]; then
+		fail "sandbox lifecycle initializes default state without opt-in" "status=${status}"
+		return 1
+	fi
+	events=$(python3 -c 'import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM events").fetchone()[0]); db.close()' "${state_dir}/registry.sqlite3")
+	if [[ "$events" == 2 ]]; then
+		pass "sandbox lifecycle initializes default state without opt-in"
+	else
+		fail "sandbox lifecycle initializes default state without opt-in" "events=${events}"
+	fi
+	env -u AIDEVOPS_LIFECYCLE_STATE_DIR -u AIDEVOPS_WORKSPACE_DIR HOME="$canonical_home" AIDEVOPS_LIFECYCLE_DISABLED=1 \
+		AIDEVOPS_PRIVATE_WORKLOAD=0 AIDEVOPS_LIFECYCLE_WORKTREE="$TEST_ROOT" \
+		"$SANDBOX_HELPER" run true >/dev/null 2>&1 || status=$?
+	events=$(python3 -c 'import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM events").fetchone()[0]); db.close()' "${state_dir}/registry.sqlite3")
+	if [[ "$status" == 0 && "$events" == 2 ]]; then
+		pass "sandbox lifecycle opt-out preserves native command without new events"
+	else
+		fail "sandbox lifecycle opt-out preserves native command without new events" "status=${status} events=${events}"
+	fi
+	return 0
+}
+
 main() {
 	write_fake_network_tools
 	test_network_check_command
@@ -452,6 +484,7 @@ main() {
 	test_sandbox_enforcement
 	test_sandbox_required_policy
 	test_lifecycle_private_workload
+	test_lifecycle_defaults
 	printf '\nTests: %d, Failures: %d\n' "$TESTS" "$FAILURES"
 	[[ "$FAILURES" -eq 0 ]] || return 1
 	return 0

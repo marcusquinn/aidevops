@@ -1202,13 +1202,16 @@ _sandbox_run_dispatch() {
 	# the observer INSIDE env clearing, egress containment and seatbelt below.
 	# Do not rewrite policy input to the Python wrapper or widen passthrough.
 	# Private workloads must not emit lifecycle metadata to the observer store.
-	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" != "1" && -n "${AIDEVOPS_LIFECYCLE_STATE_DIR:-}" && -n "${AIDEVOPS_LIFECYCLE_WORKTREE:-}" ]]; then
+	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" != "1" && "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != "1" && -n "${AIDEVOPS_LIFECYCLE_WORKTREE:-}" ]]; then
 		local lifecycle_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py"
-		if [[ -f "$lifecycle_entry" ]] && command -v python3 >/dev/null 2>&1; then
-			d_cmd_args=(python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR"
+		local lifecycle_state="${AIDEVOPS_LIFECYCLE_STATE_DIR:-${AIDEVOPS_WORKSPACE_DIR:-${HOME}/.aidevops/.agent-workspace}/worker-lifecycle}"
+		local lifecycle_python=""
+		if [[ -f "$lifecycle_entry" ]] && lifecycle_python="$(type -P python3)" &&
+			"$lifecycle_python" -E -s -B "$lifecycle_entry" --help >/dev/null 2>&1; then
+			d_cmd_args=("$lifecycle_python" -E -s -B "$lifecycle_entry" --initialize --state-dir "$lifecycle_state"
 				--worktree "$AIDEVOPS_LIFECYCLE_WORKTREE" -- "${d_cmd_args[@]}")
 		else
-			log_sandbox "WARN" "[worker-lifecycle] observation-gap reason=entry-unavailable"
+			log_sandbox "WARN" "[worker-lifecycle] observation-gap reason=entry-or-runtime-unavailable"
 		fi
 	fi
 

@@ -1,4 +1,4 @@
-"""Worker entry point for opt-in launchers without modifying PYTHONPATH."""
+"""Worker observation entry point without modifying PYTHONPATH."""
 
 from worker_lifecycle.launch import main
 

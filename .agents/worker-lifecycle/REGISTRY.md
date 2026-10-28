@@ -1,10 +1,10 @@
 # Explicit lifecycle registry
 
-This slice is opt-in, observe-only lifecycle tracking, not the production worker launcher or a
-replacement cleanup controller. It never modifies the legacy registry, claims
+This registry provides observe-only lifecycle tracking, not a replacement cleanup
+controller. It never modifies the legacy registry, claims
 worktrees, signals workers or authorizes deletion. `cleanup_authorized` is always
-false. There is no scheduler or hidden default database. A disabled-by-default
-pre-exec experiment is available for ordinary OpenCode worker launches.
+false. Ordinary OpenCode worker launches collect metadata automatically in a local
+private database; there is no additional scheduler or change to cleanup authority.
 
 ## Commands
 
@@ -98,13 +98,13 @@ or disk-full simulations. The latest native evidence is linked in
 [COMPATIBILITY.md](COMPATIBILITY.md). Each report applies only to its recorded
 artifact and environment.
 
-Before automatic collection: implement durable launch-boundary event delivery,
+Before treating collection as complete lifecycle evidence: implement durable launch-boundary event delivery,
 session completion semantics, physical generation capture, host/context binding,
 retention and bounded scheduling. Active authority additionally needs
 the no-writers contract, migration and rollback from DESIGN.md. Do not enable
 cleanup based on this observe-only lifecycle tracking slice.
 
-## Minimal pre-exec experiment
+## Automatic pre-exec observation
 
 `worker-launch.py --state-dir STATE --worktree WORKTREE -- NATIVE_COMMAND ...`
 records its own process identity and a hypothetical binding, then uses `exec` to
@@ -114,9 +114,19 @@ This records an attempted launch, not proof that exec or the AI task succeeded.
 If the native command spawns a separate runtime rather than execing it, that child
 is NOT tracked. No cleanup decision may use the wrapper's completion.
 
-The worker launch path in `headless-runtime-invoke.sh` enables this only when
-`AIDEVOPS_LIFECYCLE_STATE_DIR` explicitly names an initialized private store.
-Without the variable the original command is unchanged. The bare hook comes after
+The OpenCode worker launch path in `headless-runtime-invoke.sh` enables observation
+by default on supported Linux/macOS installations, independent of systemd or launchd.
+The default private state is `~/.aidevops/.agent-workspace/worker-lifecycle`;
+when `AIDEVOPS_WORKSPACE_DIR` is set, its `worker-lifecycle` subdirectory is used.
+`AIDEVOPS_LIFECYCLE_STATE_DIR` optionally overrides the path, not activation.
+The framework workspace parent must already exist and be canonical. Each machine
+uses its own local state: do not share or copy this database between hosts.
+Both hooks pass `--initialize`: after platform readiness, the first launch creates
+the private store. Concurrent initializers briefly wait for the winning initializer's
+commit. Existing state is validated, never replaced, migrated or repaired; interrupted
+initialization produces an observation gap and requires explicit investigation.
+Direct CLI calls without `--initialize` still require an initialized store.
+The bare hook comes after
 the existing sandbox-required guard. For sandbox execution, the launcher supplies
 a worktree hint via `AIDEVOPS_LIFECYCLE_WORKTREE` to `sandbox-exec-helper.sh`;
 it is not added to the child's env
@@ -126,6 +136,10 @@ workloads are excluded. Never disable sandbox policy to exercise observation.
 No producer queue is enabled or shipped; durable delivery is a later boundary.
 
 Both hooks require the worker role and start the observer with `python3 -E -s -B`.
+They resolve the Python executable and check launcher bootstrap with `--help`
+before wrapping the command. An unavailable entry or incompatible interpreter leaves
+the original command intact and reports an observation gap. The same resolved
+executable is used after sandbox environment clearing.
 Python-specific environment variables and user-site customization cannot alter
 observer startup; these flags do not remove variables from the native command's
 environment. The installed interpreter and system packages remain trusted.
@@ -137,8 +151,11 @@ native command. The launcher uses `register_attempt` to commit registration and
 its initial binding together. A binding error, capacity failure or crash before
 commit leaves neither event nor projection from that attempt. Database lock waits
 are bounded (2 seconds per connection), but startup
-latency is not zero. No scheduler or persistent global environment is installed.
-Remove the opt-in variable to disable this experiment; preserve the store.
+latency is not zero. Initialization retries have a 2-second deadline checked between
+attempts; an in-flight SQLite wait can extend that deadline. No scheduler or persistent
+global environment is installed. Set `AIDEVOPS_LIFECYCLE_DISABLED=1` to disable both
+hooks; preserve the store. This remains bounded, best-effort observation: the journal
+capacity is unchanged and full stores report gaps rather than deleting evidence.
 
 ### Atomic attempt contract
 

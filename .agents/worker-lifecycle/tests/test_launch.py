@@ -22,9 +22,44 @@ class LaunchContract(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.state = self.root / "state"
 
-    def command(self, code):
+    def command(self, code, initialize=False):
         return [sys.executable, "-E", "-s", "-B", str(ENTRY), "--state-dir", str(self.state),
-                 "--worktree", str(self.root), "--", sys.executable, "-I", "-B", "-c", code]
+                 "--worktree", str(self.root), *(["--initialize"] if initialize else []),
+                 "--", sys.executable, "-I", "-B", "-c", code]
+
+    def test_concurrent_first_launch_initializes_once(self):
+        children = []
+        try:
+            for _ in range(8):
+                children.append(subprocess.Popen(  # nosec B603 # owned concurrent startup probes
+                    self.command("raise SystemExit(7)", initialize=True),
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+            for child in children:
+                _, stderr = child.communicate(timeout=15)
+                self.assertEqual(child.returncode, 7, stderr)
+                self.assertIn("registered run=", stderr)
+                self.assertNotIn("observation-gap", stderr)
+        finally:
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.communicate(timeout=5)
+        summary = LifecycleRegistry(self.state).summary()
+        self.assertEqual(summary["events"], 16)
+        self.assertEqual(summary["runs"], {"bound": 8})
+        self.assertFalse(summary["cleanup_authorized"])
+
+    def test_initialization_preserves_unknown_existing_state(self):
+        self.state.mkdir(mode=0o700)
+        evidence = self.state / "preserved.txt"
+        evidence.write_text("existing evidence")
+        result = subprocess.run(  # nosec B603 # fixed failure probe
+            self.command("raise SystemExit(9)", initialize=True),
+            capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 9)
+        self.assertIn("observation-gap", result.stderr)
+        self.assertEqual(evidence.read_text(), "existing evidence")
+        self.assertEqual(list(self.state.iterdir()), [evidence])
 
     def test_exec_identity_then_natural_exit(self):
         store = LifecycleRegistry.initialize(self.state)

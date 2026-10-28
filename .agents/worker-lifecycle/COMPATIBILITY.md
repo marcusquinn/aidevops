@@ -12,10 +12,9 @@ every build of that OS or a subsequently rebuilt validator.
 The tested hosts are Linux 6.18.55 x86-64 with Python 3.13.15, and Darwin 21.6.0
 x86-64 with Python 3.14.6. Read each report for its timestamp, exact fingerprint,
 checks and limitations. Different fingerprints are not proof of the same build.
-The retained Linux and macOS registry reports both validate the current registry
-artifact: 30 tests pass on each host, including atomic attempt rollback, concurrent
-replay and owned-process crashes before/after commit. Their matching bundle SHA-256
-is `64bd8f6fa36d9cbc6956bb90179f669d221f6b6aba46642c6d87e7a9e5a50b7a`.
+The retained Linux and macOS registry reports validate the current registry artifact:
+32 tests pass on each host, including concurrent first-launch initialization, preservation of
+unknown existing state, atomic attempt rollback and owned-process crashes.
 The macOS process report remains historical and does not validate the current
 process artifact.
 

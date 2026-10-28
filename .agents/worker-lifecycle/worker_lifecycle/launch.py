@@ -1,4 +1,4 @@
-"""Opt-in pre-exec observation, not a supervisor or durable launch protocol."""
+"""Pre-exec observation, not a supervisor or durable launch protocol."""
 
 import argparse
 import os
@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import sqlite3
 import sys
+import time
 from uuid import uuid4
 
 from .process import ObservationUnavailable
@@ -13,10 +14,33 @@ from .runtime import adapter_for, require_ready
 from .storage import LifecycleRegistry
 
 
-def record(state_dir: Path, worktree: Path) -> str:
-    store = LifecycleRegistry(state_dir)
+def initialize_or_open(state_dir: Path) -> LifecycleRegistry:
+    """Claim a new directory, or wait briefly for another initializer's commit.
+
+    Existing state is only opened and validated, never repaired or replaced.
+    A crashed initializer therefore produces a visible gap, not evidence loss.
+    """
+    try:
+        return LifecycleRegistry.initialize(state_dir)
+    except FileExistsError:
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                store = LifecycleRegistry(state_dir)
+                store.installation_id()
+                return store
+            except (OSError, ValueError, sqlite3.Error):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+
+
+def record(state_dir: Path, worktree: Path, initialize: bool = False) -> str:
+    # Check the platform before creating persistent state. Rebind the adapter
+    # to the stored installation identity after readiness has been established.
+    require_ready(adapter_for(str(uuid4())))
+    store = initialize_or_open(state_dir) if initialize else LifecycleRegistry(state_dir)
     adapter = adapter_for(store.installation_id())
-    require_ready(adapter)
     run_id = str(uuid4())
     identity = adapter.capture(os.getpid())
     # A per-attempt hypothetical binding, NOT a physical generation identity.
@@ -29,6 +53,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", required=True, type=Path)
     parser.add_argument("--worktree", required=True, type=Path)
+    parser.add_argument("--initialize", action="store_true", help="create absent private state; never replace existing state")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command
@@ -37,7 +62,7 @@ def main() -> int:
     if not command:
         parser.error("a native command is required after --")
     try:
-        run_id = record(args.state_dir, args.worktree)
+        run_id = record(args.state_dir, args.worktree, args.initialize)
         print(f"[worker-lifecycle] registered run={run_id} pid={os.getpid()}", file=sys.stderr)
     except (ValueError, OSError, RuntimeError, sqlite3.Error, ObservationUnavailable) as error:
         # Keep paths, command arguments and database contents out of logs.

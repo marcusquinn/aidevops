@@ -252,7 +252,7 @@ _invoke_opencode_prepare_child_command() {
 _invoke_opencode_run_sandboxed() {
 	local passthrough_csv=""
 	# This launcher-only hint is NOT added to the child's environment allowlist.
-	# Protected workloads remain outside this explicit observation experiment.
+	# Protected workloads remain outside lifecycle observation.
 	local AIDEVOPS_LIFECYCLE_WORKTREE=""
 	if [[ "$private_workload" -ne 1 && "$runtime_role" == "worker" ]]; then
 		AIDEVOPS_LIFECYCLE_WORKTREE="${_invoke_work_dir:-}"
@@ -315,17 +315,20 @@ _invoke_opencode_run_bare() {
 	if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
 		print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare timeout (no privilege isolation) (GH#20146 audit)"
 	fi
-	# Opt-in observation only AFTER existing sandbox policy permits bare
+	# Observe only AFTER existing sandbox policy permits bare
 	# execution. Never disable isolation to enable observation. The exec shim
 	# records its own identity, not worker_pid (which belongs to a shell).
 	# An absent worktree must not be interpreted as the current directory.
-	if [[ "$runtime_role" == "worker" && -n "${AIDEVOPS_LIFECYCLE_STATE_DIR:-}" && -n "${_invoke_work_dir:-}" ]]; then
+	if [[ "$runtime_role" == "worker" && "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != "1" && -n "${_invoke_work_dir:-}" ]]; then
 		local lifecycle_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py"
-		if [[ -f "$lifecycle_entry" ]] && command -v python3 >/dev/null 2>&1; then
-			_oc_cmd=(python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR"
+		local lifecycle_state="${AIDEVOPS_LIFECYCLE_STATE_DIR:-${AIDEVOPS_WORKSPACE_DIR:-${HOME}/.aidevops/.agent-workspace}/worker-lifecycle}"
+		local lifecycle_python=""
+		if [[ -f "$lifecycle_entry" ]] && lifecycle_python="$(type -P python3)" &&
+			"$lifecycle_python" -E -s -B "$lifecycle_entry" --help >/dev/null 2>&1; then
+			_oc_cmd=("$lifecycle_python" -E -s -B "$lifecycle_entry" --initialize --state-dir "$lifecycle_state"
 				--worktree "$_invoke_work_dir" -- "${_oc_cmd[@]}")
 		else
-			print_warning "[worker-lifecycle] observation-gap reason=entry-unavailable"
+			print_warning "[worker-lifecycle] observation-gap reason=entry-or-runtime-unavailable"
 		fi
 	fi
 	run_without_opencode_session_env timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
