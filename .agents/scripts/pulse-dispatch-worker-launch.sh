@@ -1017,13 +1017,14 @@ _dlw_precreate_worktree() {
 	# Run from repo_path (pulse cwd is typically /); GH#34233: a resolved seed SHA is the branch base.
 	# GH#35602: the exported stage context lets the helper record precreate.* sub-stages.
 	_pc_t0=$(_ds_now_ns)
+	local _wt_rc=0
 	_wt_output=$(cd "$repo_path" && export "${_DLW_MANAGED_CREATE_ENV[@]}" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
 		AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number" AIDEVOPS_DISPATCH_STAGE_REPO="${repo_slug:-}" \
 		AIDEVOPS_WORKTREE_BASE="${_DLW_SEED_OID:-${AIDEVOPS_WORKTREE_BASE:-}}" \
-		"$_wt_helper" add "$_branch" --issue "$issue_number" 2>&1) || true
+		"$_wt_helper" add "$_branch" --issue "$issue_number" 2>&1) || _wt_rc=$?
 	_ds_record "$issue_number" "${repo_slug:-}" "precreate.helper_add" "$_pc_t0"
 	_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
 	local _path _path_source="porcelain"
@@ -1050,8 +1051,12 @@ _dlw_precreate_worktree() {
 		fi
 		if [[ -n "$_managed_create" ]]; then
 			local _class=""
-			_class=$(_dlw_classify_reuse_candidate "$_DLW_WORKTREE_PATH" "$issue_number" "${repo_slug:-}") || return 1
-			[[ "$_class" == managed\ * ]] || return 1
+			_class=$(_dlw_classify_reuse_candidate "$_DLW_WORKTREE_PATH" "$issue_number" "${repo_slug:-}") || _class="unavailable"
+			if [[ "$_class" != managed\ * ]]; then
+				# GH#35781: name the exact refusal instead of a bare precreation failure.
+				echo "[dispatch_with_dedup] MANAGED_ENROLLMENT_MISSING issue=#${issue_number} helper_rc=${_wt_rc} class=${_class:-other-task} path='${_DLW_WORKTREE_PATH}' helper_reason='$(_dlw_precreate_helper_reason "$_wt_output")'" >>"$LOGFILE"
+				return 1
+			fi
 			_DLW_WORKTREE_GENERATION="${_class#managed }"
 			_DLW_MANAGED_WORKTREE=1
 		fi
@@ -1067,9 +1072,24 @@ _dlw_precreate_worktree() {
 		# a single pulse.log before the root cause was found.
 		# t2981: return 1 so the caller can skip dispatch instead of
 		# falling back to the canonical repo on the default branch.
-		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — dispatch will be skipped this cycle (extracted: '${_path:-<empty>}', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — dispatch will be skipped this cycle (helper_rc=${_wt_rc}, extracted: '${_path:-<empty>}', helper_reason: '$(_dlw_precreate_helper_reason "$_wt_output")', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
 		return 1
 	fi
+	return 0
+}
+
+# GH#35781: decisive diagnostic from worktree-helper.sh add output, single-line
+# and bounded for pulse.log. A managed-lifetime error names the cause, so it
+# wins over the generic lifecycle disposition or Error: line that follows it.
+# Prints "none" when the helper gave no such line.
+_dlw_precreate_helper_reason() {
+	local output="$1"
+	local reason="" pattern=""
+	for pattern in 'managed-worktree:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
+		reason=$(printf '%s\n' "$output" | grep -E "$pattern" | tail -n 1 | tr -d "'\r" | cut -c1-200) || reason=""
+		[[ -z "$reason" ]] || break
+	done
+	printf '%s' "${reason:-none}"
 	return 0
 }
 

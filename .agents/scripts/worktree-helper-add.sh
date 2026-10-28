@@ -1508,6 +1508,26 @@ _cmd_add_verify_created_generation() {
 	return 1
 }
 
+# GH#35781: managed enrollment failed after the generation was created and its
+# exact owner contract verified. Remove only that generation through the same
+# owner-contract compensation; never leave an unenrolled orphan for reuse.
+_cmd_add_rollback_unenrolled_generation() {
+	local branch="$1"
+	local path="$2"
+	local owner_pid owner_session owner_batch task created_at
+	local repository_root=""
+	printf 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=MANAGED_ENROLL_FAILED branch=%s\n' "$branch" >&2
+	IFS='|' read -r owner_pid owner_session owner_batch task created_at <<<"${_ADD_PROVISION_OWNER_CONTRACT:-}"
+	repository_root=$(get_repo_root) || repository_root=""
+	if [[ -z "$repository_root" ]] || ! remove_worktree_if_owner_contract "$path" "$repository_root" "$branch" \
+		"$owner_pid" "$owner_session" "$owner_batch" "$task" "$created_at"; then
+		print_warning "Rollback preserved the unenrolled worktree because its exact ownership contract changed or safe removal failed: $path"
+		return 1
+	fi
+	print_warning "Managed enrollment failed; removed the newly created worktree: $path"
+	return 0
+}
+
 # Restore/bootstrap worktree-local JavaScript dependencies and report readiness.
 # GH#34224: pass the exact owner contract this add just registered so the
 # controller-owned snapshot can run for a runtime-owned (interactive) row.
@@ -1601,13 +1621,26 @@ cmd_add() {
 
 	# Create worktree (existing branch → simple checkout; new branch → base-ref dance).
 	_ds_substage_run precreate.create_worktree _cmd_add_create_worktree "$branch" "$path" "$explicit_base" "$explicit_issue" || return 1
+	# GH#35781: git porcelain, the owner registry and managed enrollment all key
+	# a generation by its physical path. A worktree base reached through a
+	# symlinked parent must use that one canonical form from here on.
+	local canonical_path=""
+	canonical_path=$(cd "$path" 2>/dev/null && pwd -P) || canonical_path=""
+	if [[ -z "$canonical_path" ]]; then
+		print_warning "Created worktree path cannot be resolved to a canonical path: $path"
+		return 1
+	fi
+	path="$canonical_path"
 	# Register ownership before retiring historical cleanup receipts. The
 	# transaction helper verifies the exact row and compensates on failure.
 	_ds_substage_run precreate.verify_generation _cmd_add_verify_created_generation "$branch" "$path" "$explicit_issue" || return 1
 	if [[ "${AIDEVOPS_WORKTREE_MANAGER:-}" == "$_WORKTREE_ADD_CGROUP_MANAGER" ]]; then
 		# Enroll only after native creation succeeds, before any worker launch.
-		WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" _ds_substage_run precreate.managed_enroll \
-			python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" enroll "$path" || return 1
+		if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" _ds_substage_run precreate.managed_enroll \
+			python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" enroll "$path"; then
+			_cmd_add_rollback_unenrolled_generation "$branch" "$path" || true
+			return 1
+		fi
 	fi
 
 	# Restore gitignored dependencies (node_modules) from canonical repo.

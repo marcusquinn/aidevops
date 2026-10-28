@@ -61,6 +61,9 @@ fail() {
 # =============================================================================
 TMP=$(mktemp -d -t t2981.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
+# The managed-lifetime CLI requires canonical paths; macOS temp dirs sit
+# behind the /var -> /private/var symlink (GH#35781).
+TMP=$(cd "$TMP" && pwd -P)
 
 # Sourced launch helpers reclaim Pulse scratch space. Never scan/reclaim the
 # operator's real workspace (or recursively size it) from an offline fixture.
@@ -75,7 +78,7 @@ export WORKTREE_REGISTRY_DB="${TMP}/registry.db"
 python3 -c 'import sqlite3, sys; db = sqlite3.connect(sys.argv[1]); db.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, task_id TEXT, owner_session TEXT)"); db.close()' "$WORKTREE_REGISTRY_DB"
 cp "${SCRIPTS_DIR}/worktree-managed-lifetime.py" "${TMP}/worktree-managed-lifetime.py"
 # The registry CLI imports its sibling lifetime modules from its own directory.
-for _lifetime_module in idle launch proof owner; do
+for _lifetime_module in idle launch proof owner reconcile; do
 	cp "${SCRIPTS_DIR}/worktree_lifetime_${_lifetime_module}.py" "${TMP}/worktree_lifetime_${_lifetime_module}.py"
 done
 
