@@ -94,7 +94,7 @@ reset_fixture() {
 	SIMULATE_REMOVAL_EVENT=0
 	PERMISSION_FAIL=1
 	PERMISSION_STATUS=200
-	PERMISSION_VALUE=read
+	PERMISSION_VALUE="read"
 	return 0
 }
 
@@ -371,7 +371,7 @@ printf 'PASS: transport, authentication, authorization, rate-limit and server er
 
 reset_fixture
 PERMISSION_FAIL=0
-PERMISSION_VALUE=write
+PERMISSION_VALUE="write"
 comments=$(jq -cn '[[{user:{login:"runner"},author_association:"NONE",body:"marker",
 	created_at:(now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]]')
 [[ "$(_protected_label_marker_since "$comments" marker example/repo)" -gt 0 ]]
