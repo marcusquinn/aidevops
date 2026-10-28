@@ -49,10 +49,11 @@ reviews:
     #
     # GH#35782: "*" is treated as a required literal label, not an include-all
     # wildcard (PRs #35778 / #35761). The current schema.v2.json, checked
-    # 2026-10-27, explicitly supports negative-only exclusions when enabled: true;
+    # 2026-10-28, explicitly supports negative-only exclusions when enabled: true;
     # when enabled: false, negative-only labels do not opt PRs into review.
-    # Keep enabled: true above so unlabeled, internal and external PRs are eligible
-    # unless explicitly labeled no-review. Do not add a positive label requirement.
+    # Keep enabled: true above. Unlabeled, internal and external PRs are eligible
+    # only when they pass the existing draft/title exclusions and lack no-review.
+    # Do not add a positive label requirement.
     # GH#18791 / GH#19770 previously observed negative-only skips: schema validity
     # alone is not runtime proof. Verify a real automatic review and a no-review
     # skip after deployment; do not restore the broken "*" workaround.
