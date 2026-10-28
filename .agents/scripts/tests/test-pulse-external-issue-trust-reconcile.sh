@@ -49,6 +49,9 @@ gh() {
 	local command="$1"
 	shift
 	if [[ "$command" == "api" ]]; then
+		case "$*" in
+		*'/timeline?'* | *'/comments?'*) printf '%s\n' '[[]]'; return 0 ;;
+		esac
 		printf '%s\n' "api" >>"$LIVE_FALLBACK_LOG"
 		printf '%s\n' "$LIVE_ISSUE_JSON"
 		return 0

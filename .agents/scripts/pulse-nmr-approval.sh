@@ -1939,11 +1939,10 @@ _nmr_edit_issue_labels() {
 	local issue_num="$1"
 	local slug="$2"
 	shift 2
-	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
-		gh_issue_edit_safe "$issue_num" --repo "$slug" "$@" >/dev/null 2>&1
-		return $?
-	fi
-	gh issue edit "$issue_num" --repo "$slug" "$@" >/dev/null 2>&1
+	# shellcheck source=protected-label-guard.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
+	protected_label_edit "$issue_num" "$slug" \
+		"normalization; association=${author_association:-unknown}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" "$@" >/dev/null
 	return $?
 }
 
@@ -1970,6 +1969,17 @@ _nmr_issue_label_state() {
 		] | @tsv end
 	' 2>/dev/null
 	return $?
+}
+
+# Check containment before any lifecycle change, not just before NMR removal.
+# The final label edit checks again against live evidence.
+_nmr_flap_allows_transition() {
+	local issue_num="$1" slug="$2"
+	# shellcheck source=protected-label-guard.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
+	_protected_label_check "$issue_num" "$slug" "needs-maintainer-review" "--remove-label" \
+		"normalization; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" || return 1
+	return 0
 }
 
 _nmr_set_transition_status() {
@@ -2014,6 +2024,7 @@ _nmr_restore_dispatchable_state() {
 	local current_status=""
 	local manual_suppress=""
 	local terminal_suppress=""
+	_nmr_flap_allows_transition "$issue_num" "$slug" || return 1
 	label_state=$(_nmr_issue_label_state "$issue_num" "$slug") || return 1
 	IFS=$'\t' read -r current_status manual_suppress terminal_suppress <<<"$label_state"
 	[[ "$current_status" == "$NMR_STATUS_NONE" || "$current_status" == status:* ]] || return 1
@@ -2064,6 +2075,7 @@ _nmr_translate_trusted_author_blocked() {
 	local current_status=""
 	local manual_suppress=""
 	local terminal_suppress=""
+	_nmr_flap_allows_transition "$issue_num" "$slug" || return 1
 	label_state=$(_nmr_issue_label_state "$issue_num" "$slug") || return 1
 	IFS=$'\t' read -r current_status manual_suppress terminal_suppress <<<"$label_state"
 	[[ "$current_status" == "$NMR_STATUS_NONE" || "$current_status" == status:* ]] || return 1
@@ -2130,6 +2142,7 @@ _nmr_apply_auto_approval_transition() {
 			echo "[pulse-wrapper] Auto-approve deferred for #${issue_num} in ${slug} — live security labels unavailable; NMR unchanged" >>"$LOGFILE"
 			return 0
 		fi
+		_nmr_flap_allows_transition "$issue_num" "$slug" || return 0
 		# Lock before posting the trusted marker so untrusted comments cannot race
 		# the maintainer gate. The worker unlocks after dispatch completes.
 		gh issue lock "$issue_num" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || true
