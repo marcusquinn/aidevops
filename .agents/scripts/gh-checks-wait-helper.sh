@@ -443,14 +443,22 @@ only_cancelled_failures() {
 # grace window since it was first seen elapses (GH#35830).
 apply_cancel_grace() {
 	local classification="$1" checks="$2" now_epoch="$3"
+	local cancelled_set=""
 	_GCW_GRACED_CLASSIFICATION="$classification"
 	if [[ "$classification" == "failure" ]] && only_cancelled_failures "$checks"; then
-		[[ -n "$_GCW_CANCEL_FIRST_EPOCH" ]] || _GCW_CANCEL_FIRST_EPOCH="$now_epoch"
+		# Include run links so a different cancelled attempt of the same check
+		# gets its own window; sort to ignore API ordering changes.
+		cancelled_set=$(printf '%s' "$checks" | jq -c '[.[] | select(.bucket == "cancel") | {workflow, name, link}] | sort_by(.workflow, .name, .link)')
+		if [[ -z "$_GCW_CANCEL_FIRST_EPOCH" || "$cancelled_set" != "${_GCW_CANCEL_SET:-}" ]]; then
+			_GCW_CANCEL_FIRST_EPOCH="$now_epoch"
+		fi
+		_GCW_CANCEL_SET="$cancelled_set"
 		if [[ $((now_epoch - _GCW_CANCEL_FIRST_EPOCH)) -lt "$_GCW_CANCEL_GRACE_SECONDS" ]]; then
 			_GCW_GRACED_CLASSIFICATION="pending"
 		fi
 	else
 		_GCW_CANCEL_FIRST_EPOCH=""
+		_GCW_CANCEL_SET=""
 	fi
 	return 0
 }
@@ -583,6 +591,7 @@ wait_for_checks() {
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
 	_GCW_CANCEL_FIRST_EPOCH=""
+	_GCW_CANCEL_SET=""
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
@@ -706,6 +715,17 @@ cmd_wait() {
 	fi
 	if [[ "$initial_interval" -gt "$max_interval" ]]; then
 		log_error "initial interval cannot exceed maximum interval"
+		return 1
+	fi
+	# Canonical decimal only: reject octal-looking values and bound the length
+	# before arithmetic to avoid overflow or expression evaluation from config.
+	if [[ ! "$_GCW_CANCEL_GRACE_SECONDS" =~ ^(0|[1-9][0-9]{0,4})$ ]]; then
+		log_error "AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS must be a decimal integer from 0 to 86400 (no leading zeros)"
+		return 1
+	fi
+	_GCW_CANCEL_GRACE_SECONDS=$((10#${_GCW_CANCEL_GRACE_SECONDS}))
+	if [[ "$_GCW_CANCEL_GRACE_SECONDS" -gt 86400 ]]; then
+		log_error "AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS must be a decimal integer from 0 to 86400 (no leading zeros)"
 		return 1
 	fi
 	repo=$(resolve_repo "$repo") || {
