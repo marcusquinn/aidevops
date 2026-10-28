@@ -429,6 +429,43 @@ else
 fi
 
 # =============================================================================
+# Test 2c: rejected managed enrollment must not register ownership (GH#35828)
+# =============================================================================
+# Isolate managed-mode overrides from the detached compatibility fixtures.
+if (
+	_dlw_managed_creation_env() {
+		_DLW_MANAGED_CREATE_MODE="managed"
+		_DLW_MANAGED_CREATE_ENV=()
+		return 0
+	}
+	_dlw_classify_reuse_candidate() {
+		local wt_path="$1"
+		[[ "$wt_path" == "$STUB_WT_SUCCESS_PATH" ]] || return 1
+		[[ "$STUB_MANAGED_CLASS" != "unavailable" ]] || return 1
+		printf '%s\n' "$STUB_MANAGED_CLASS"
+		return 0
+	}
+	for STUB_MANAGED_CLASS in legacy other-task unavailable; do
+		REGISTERED_WORKTREE_ARGS=""
+		_dlw_precreate_worktree "88888" "$FAKE_REPO"
+		rc=$?
+		if [[ "$rc" -ne 1 || -n "$REGISTERED_WORKTREE_ARGS" || "$_DLW_MANAGED_WORKTREE" -ne 0 ]]; then
+			printf 'Rejected class %s: rc=%s registered=%s\n' "$STUB_MANAGED_CLASS" "$rc" "$REGISTERED_WORKTREE_ARGS"
+			exit 1
+		fi
+	done
+	STUB_MANAGED_CLASS="managed generation-35828"
+	REGISTERED_WORKTREE_ARGS=""
+	_dlw_precreate_worktree "88888" "$FAKE_REPO" || exit 1
+	[[ -n "$REGISTERED_WORKTREE_ARGS" && "$_DLW_MANAGED_WORKTREE" -eq 1 &&
+		"$_DLW_WORKTREE_GENERATION" == "generation-35828" ]] || exit 1
+); then
+	pass "managed precreation registers ownership only after accepted enrollment"
+else
+	fail "managed precreation registers ownership only after accepted enrollment"
+fi
+
+# =============================================================================
 # Test 3: _dlw_precreate_worktree marks existing issue worktree reuse
 # =============================================================================
 export STUB_WT_MODE="fail"

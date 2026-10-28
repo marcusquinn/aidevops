@@ -944,6 +944,10 @@ _dlw_precreate_worktree() {
 	if [[ "$_wt_rc" -eq 0 && -n "$_path" && -d "$_path" ]]; then
 		_DLW_WORKTREE_PATH="$_path"
 		_DLW_WORKTREE_BRANCH="$_branch"
+		# Reject missing enrollment before making any ownership write (GH#35828).
+		if [[ -n "$_managed_create" ]]; then
+			_dlw_require_managed_generation "$issue_number" "${repo_slug:-}" "$_wt_rc" "$_wt_output" || return 1
+		fi
 		if declare -F register_worktree >/dev/null 2>&1; then
 			if ! register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
 				--task "$issue_number" \
@@ -955,9 +959,6 @@ _dlw_precreate_worktree() {
 		else
 			echo "[dispatch_with_dedup] Worktree registry helper unavailable for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
 			return 1
-		fi
-		if [[ -n "$_managed_create" ]]; then
-			_dlw_require_managed_generation "$issue_number" "${repo_slug:-}" "$_wt_rc" "$_wt_output" || return 1
 		fi
 		# Restore gitignored deps (node_modules) that git doesn't track
 		_pc_t0=$(_ds_now_ns)
