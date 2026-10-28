@@ -126,6 +126,8 @@ exports its canonical path to subsequent setup steps. It does not create the
 private registry. An explicit custom state path still requires an existing,
 canonical parent. Each machine uses its own local state: do not share or copy
 this database between hosts.
+With lifecycle observation explicitly disabled, workspace preparation failures
+produce a warning without blocking bundle activation.
 Both hooks pass `--initialize`: after platform readiness, the first launch creates
 the private store. Concurrent initializers briefly wait for the winning initializer's
 commit. Existing state is validated, never replaced, migrated or repaired; interrupted

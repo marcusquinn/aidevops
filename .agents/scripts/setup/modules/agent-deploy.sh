@@ -1407,7 +1407,10 @@ _deploy_agents_post_copy() {
 	local source_dir="$3"
 	local plugins_file="$4"
 
-	_prepare_framework_workspace || return 1
+	if ! _prepare_framework_workspace; then
+		[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == "1" ]] || return 1
+		print_warning "Lifecycle observation is disabled; continuing deployment without workspace preparation"
+	fi
 	_set_script_permissions_and_report "$target_dir"
 	_install_agent_runtime_deps "$target_dir" || return 1
 	_install_opencode_plugin_deps "$target_dir" || return 1
