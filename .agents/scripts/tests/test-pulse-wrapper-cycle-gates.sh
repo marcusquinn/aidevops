@@ -527,7 +527,7 @@ test_worker_lifecycle_reconciliation() {
 	local state_dir="${AIDEVOPS_WORKSPACE_DIR}/worker-lifecycle"
 	local flag="" result=""
 	mkdir -p "$AIDEVOPS_WORKSPACE_DIR"
-	TIMEOUT_MODE=pass
+	TIMEOUT_MODE="pass"
 	: >"$TIMEOUT_CALL_FILE"
 	_pulse_reconcile_worker_lifecycle
 	if [[ ! -e "$state_dir" && ! -s "$TIMEOUT_CALL_FILE" ]]; then
@@ -550,14 +550,14 @@ test_worker_lifecycle_reconciliation() {
 		fi
 		printf -v "$flag" '%s' 0
 	done
-	TIMEOUT_MODE=timeout
+	TIMEOUT_MODE="timeout"
 	if _pulse_reconcile_worker_lifecycle && grep -q 'reconcile-gap exit=124' "$WRAPPER_LOGFILE" &&
 		[[ "$(<"$TIMEOUT_CALL_FILE")" == 10 ]]; then
 		pass "lifecycle timeout is bounded and cannot block the cycle"
 	else
 		fail "lifecycle timeout is bounded and cannot block the cycle"
 	fi
-	TIMEOUT_MODE=pass
+	TIMEOUT_MODE="pass"
 	_pulse_reconcile_worker_lifecycle
 	result=$(PYTHONPATH="${SCRIPT_DIR}/../worker-lifecycle" python3 -B -m worker_lifecycle.registry --state-dir "$state_dir" status)
 	if jq -e '.runs == {"ended":1} and .events == 3 and .cleanup_authorized == false' <<<"$result" >/dev/null; then
