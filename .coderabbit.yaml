@@ -87,6 +87,13 @@ reviews:
 
   # Path-specific instructions
   path_instructions:
+    - path: "CHANGELOG.md"
+      instructions: |
+        Version headings use bare [X.Y.Z] brackets by repository convention.
+        Do not flag these headings for missing Markdown reference definitions
+        or require adding reference links, including on release-provenance PRs.
+        Continue reviewing changelog content for other substantive issues.
+
     - path: "providers/*.sh"
       instructions: |
         Provider helper scripts - focus on:
