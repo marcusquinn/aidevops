@@ -1146,6 +1146,104 @@ _is_trusted_issue_author() {
 	return 1
 }
 
+# Files a worker may change when briefed by the scheduled OpenCode pin canary.
+# Keep aligned with the Files Scope + verification tests emitted by
+# .github/workflows/opencode-pin-canary.yml (GH#35752/GH#35753).
+_PM_OPENCODE_CANARY_ALLOWED_FILES=".agents/scripts/opencode-pin-canary.sh
+.agents/configs/opencode-runtime-profiles.json
+.agents/scripts/shared-constants.sh
+.agents/plugins/opencode-aidevops/package.json
+.agents/plugins/opencode-aidevops/package-lock.json
+.agents/scripts/tests/test-opencode-pin-policy.sh
+.agents/scripts/tests/test-opencode-runtime-profile.sh"
+_PM_OPENCODE_CANARY_MAX_FILES=20
+
+#######################################
+# Validate changed shared-constants.sh lines for a canary-briefed PR: only
+# comments, `readonly OPENCODE_*="literal"` assignments and profile-table
+# `vN:key) printf 'literal\n' ;;` rows may be added or removed. Anything else
+# (new functions, sourcing, expansions) fails closed.
+# Args: $1=unified diff patch text
+# Returns: 0=all changed lines are pin metadata, 1=otherwise
+#######################################
+_pm_canary_shared_constants_patch_ok() {
+	local patch="$1"
+	local line="" body=""
+	local re_comment='^[[:space:]]*#'
+	local re_readonly='^readonly OPENCODE_[A-Z0-9_]+="[^"$`\\]*"$'
+	local re_profile_row="^[[:space:]]*v[0-9]+:[A-Za-z]+\\) printf '[^'\$\`\\\\]*\\\\n' ;;\$"
+	[[ -n "$patch" ]] || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		+++* | ---* | @@* | " "* | "") continue ;;
+		"\\ No newline at end of file") continue ;;
+		[+-]*) body="${line:1}" ;;
+		*) return 1 ;;
+		esac
+		[[ -z "${body//[[:space:]]/}" ]] && continue
+		[[ "$body" =~ $re_comment ]] && continue
+		[[ "$body" =~ $re_readonly ]] && continue
+		[[ "$body" =~ $re_profile_row ]] && continue
+		return 1
+	done <<<"$patch"
+	return 0
+}
+
+#######################################
+# Check whether a linked issue is a scheduled OpenCode pin-canary brief and the
+# PR stays inside that brief's file scope (GH#35752/GH#35753).
+#
+#aidevops:trust-boundary — github-actions[bot] issues can only be created by
+# this repository's own workflows (fork tokens are read-only). Trust is bound to
+# the exact canary titles + origin:worker label, and the PR diff must stay
+# within the canary allowlist; shared-constants.sh changes are limited to pin
+# metadata lines. API errors, truncated file lists or missing patches fail closed.
+# All other merge gates (checks, reviews, review-bot, NMR) still apply.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=issue API path
+# Returns: 0=trusted canary brief with in-scope diff, 1=not trusted
+#######################################
+_is_trusted_opencode_canary_issue_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local issue_api="$3"
+	local issue_meta="" login="" user_type="" title="" labels=""
+	local re_title='^(Promote passing OpenCode v[0-9]+ compatibility candidate|OpenCode v[0-9]+ compatibility pin review is due)$'
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$issue_api" ]] || return 1
+	issue_meta=$(gh api "$issue_api" \
+		--jq 'select(.pull_request == null) | [(.user.login // ""), (.user.type // ""), ([.labels[].name] | join(",")), (.title // "")] | @tsv' \
+		2>/dev/null) || return 1
+	IFS=$'\t' read -r login user_type labels title <<<"$issue_meta"
+	[[ "$login" == "github-actions[bot]" && "$user_type" == "Bot" ]] || return 1
+	[[ "$title" =~ $re_title ]] || return 1
+	[[ ",${labels}," == *",origin:worker,"* ]] || return 1
+
+	local files_json="" file_count="" path="" patch=""
+	files_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" 2>/dev/null) || return 1
+	# `arrays` emits nothing for non-array payloads, so the integer check fails closed.
+	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 1
+	[[ "$file_count" =~ ^[0-9]+$ ]] || return 1
+	[[ "$file_count" -gt 0 && "$file_count" -le "$_PM_OPENCODE_CANARY_MAX_FILES" ]] || return 1
+
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || return 1
+		if ! printf '%s\n' "$_PM_OPENCODE_CANARY_ALLOWED_FILES" | grep -Fxq -- "$path"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — canary-briefed PR changes out-of-scope file ${path} (GH#35752)" >>"$LOGFILE"
+			return 1
+		fi
+	done < <(printf '%s' "$files_json" | jq -r '.[] | (if .status == "renamed" then "<renamed>" else .filename end)')
+
+	if printf '%s' "$files_json" | jq -e '.[] | select(.filename == ".agents/scripts/shared-constants.sh")' >/dev/null 2>&1; then
+		patch=$(printf '%s' "$files_json" | jq -r '.[] | select(.filename == ".agents/scripts/shared-constants.sh") | .patch // ""') || return 1
+		if ! _pm_canary_shared_constants_patch_ok "$patch"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — canary-briefed PR changes non-pin lines in shared-constants.sh (GH#35752)" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+	return 0
+}
+
 #######################################
 # Check whether an issue author has maintainer-equivalent repository access.
 #
@@ -1347,6 +1445,8 @@ _attempt_worker_briefed_auto_merge() {
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via authenticated maintainer permission fallback (GH#24958)" >>"$LOGFILE"
 		elif _is_trusted_issue_author "$issue_author_login"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via trusted-issue-author allowlist (t3062)" >>"$LOGFILE"
+		elif _is_trusted_opencode_canary_issue_pr "$pr_number" "$repo_slug" "$_issue_api"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a scheduled OpenCode pin-canary brief and the diff stays in canary scope (GH#35752)" >>"$LOGFILE"
 		elif [[ "$_has_crypto" != "true" ]]; then
 			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)" >>"$LOGFILE"
 			return 1
