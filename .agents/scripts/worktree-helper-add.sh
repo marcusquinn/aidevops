@@ -1528,6 +1528,37 @@ _cmd_add_rollback_unenrolled_generation() {
 	return 0
 }
 
+# Canonicalize, register and (for managed creation) enroll a newly created
+# worktree. Sets _ADD_CANONICAL_PATH on success.
+# GH#35781: git porcelain, the owner registry and managed enrollment all key a
+# generation by its physical path. A worktree base reached through a symlinked
+# parent must use that one canonical form from here on.
+_cmd_add_register_created_generation() {
+	local branch="$1"
+	local path="$2"
+	local explicit_issue="$3"
+	local canonical_path=""
+	_ADD_CANONICAL_PATH=""
+	canonical_path=$(cd "$path" 2>/dev/null && pwd -P) || canonical_path=""
+	if [[ -z "$canonical_path" ]]; then
+		print_warning "Created worktree path cannot be resolved to a canonical path: $path"
+		return 1
+	fi
+	# Register ownership before retiring historical cleanup receipts. The
+	# transaction helper verifies the exact row and compensates on failure.
+	_ds_substage_run precreate.verify_generation _cmd_add_verify_created_generation "$branch" "$canonical_path" "$explicit_issue" || return 1
+	if [[ "${AIDEVOPS_WORKTREE_MANAGER:-}" == "$_WORKTREE_ADD_CGROUP_MANAGER" ]]; then
+		# Enroll only after native creation succeeds, before any worker launch.
+		if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" _ds_substage_run precreate.managed_enroll \
+			python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" enroll "$canonical_path"; then
+			_cmd_add_rollback_unenrolled_generation "$branch" "$canonical_path" || true
+			return 1
+		fi
+	fi
+	_ADD_CANONICAL_PATH="$canonical_path"
+	return 0
+}
+
 # Restore/bootstrap worktree-local JavaScript dependencies and report readiness.
 # GH#34224: pass the exact owner contract this add just registered so the
 # controller-owned snapshot can run for a runtime-owned (interactive) row.
@@ -1621,27 +1652,8 @@ cmd_add() {
 
 	# Create worktree (existing branch → simple checkout; new branch → base-ref dance).
 	_ds_substage_run precreate.create_worktree _cmd_add_create_worktree "$branch" "$path" "$explicit_base" "$explicit_issue" || return 1
-	# GH#35781: git porcelain, the owner registry and managed enrollment all key
-	# a generation by its physical path. A worktree base reached through a
-	# symlinked parent must use that one canonical form from here on.
-	local canonical_path=""
-	canonical_path=$(cd "$path" 2>/dev/null && pwd -P) || canonical_path=""
-	if [[ -z "$canonical_path" ]]; then
-		print_warning "Created worktree path cannot be resolved to a canonical path: $path"
-		return 1
-	fi
-	path="$canonical_path"
-	# Register ownership before retiring historical cleanup receipts. The
-	# transaction helper verifies the exact row and compensates on failure.
-	_ds_substage_run precreate.verify_generation _cmd_add_verify_created_generation "$branch" "$path" "$explicit_issue" || return 1
-	if [[ "${AIDEVOPS_WORKTREE_MANAGER:-}" == "$_WORKTREE_ADD_CGROUP_MANAGER" ]]; then
-		# Enroll only after native creation succeeds, before any worker launch.
-		if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" _ds_substage_run precreate.managed_enroll \
-			python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" enroll "$path"; then
-			_cmd_add_rollback_unenrolled_generation "$branch" "$path" || true
-			return 1
-		fi
-	fi
+	_cmd_add_register_created_generation "$branch" "$path" "$explicit_issue" || return 1
+	path="$_ADD_CANONICAL_PATH"
 
 	# Restore gitignored dependencies (node_modules) from canonical repo.
 	_cmd_add_prepare_worktree_deps "$path"

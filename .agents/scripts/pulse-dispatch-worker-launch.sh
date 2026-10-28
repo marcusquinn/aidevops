@@ -1050,15 +1050,7 @@ _dlw_precreate_worktree() {
 			return 1
 		fi
 		if [[ -n "$_managed_create" ]]; then
-			local _class=""
-			_class=$(_dlw_classify_reuse_candidate "$_DLW_WORKTREE_PATH" "$issue_number" "${repo_slug:-}") || _class="unavailable"
-			if [[ "$_class" != managed\ * ]]; then
-				# GH#35781: name the exact refusal instead of a bare precreation failure.
-				echo "[dispatch_with_dedup] MANAGED_ENROLLMENT_MISSING issue=#${issue_number} helper_rc=${_wt_rc} class=${_class:-other-task} path='${_DLW_WORKTREE_PATH}' helper_reason='$(_dlw_precreate_helper_reason "$_wt_output")'" >>"$LOGFILE"
-				return 1
-			fi
-			_DLW_WORKTREE_GENERATION="${_class#managed }"
-			_DLW_MANAGED_WORKTREE=1
+			_dlw_require_managed_generation "$issue_number" "${repo_slug:-}" "$_wt_rc" "$_wt_output" || return 1
 		fi
 		# Restore gitignored deps (node_modules) that git doesn't track
 		_pc_t0=$(_ds_now_ns)
@@ -1075,6 +1067,25 @@ _dlw_precreate_worktree() {
 		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — dispatch will be skipped this cycle (helper_rc=${_wt_rc}, extracted: '${_path:-<empty>}', helper_reason: '$(_dlw_precreate_helper_reason "$_wt_output")', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
 		return 1
 	fi
+	return 0
+}
+
+# A managed creation must classify as this issue's managed generation before
+# launch. Sets _DLW_WORKTREE_GENERATION and _DLW_MANAGED_WORKTREE on success.
+# GH#35781: name the exact refusal instead of a bare precreation failure.
+_dlw_require_managed_generation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local helper_rc="$3"
+	local helper_output="$4"
+	local class=""
+	class=$(_dlw_classify_reuse_candidate "$_DLW_WORKTREE_PATH" "$issue_number" "$repo_slug") || class="unavailable"
+	if [[ "$class" != managed\ * ]]; then
+		echo "[dispatch_with_dedup] MANAGED_ENROLLMENT_MISSING issue=#${issue_number} helper_rc=${helper_rc} class=${class:-other-task} path='${_DLW_WORKTREE_PATH}' helper_reason='$(_dlw_precreate_helper_reason "$helper_output")'" >>"$LOGFILE"
+		return 1
+	fi
+	_DLW_WORKTREE_GENERATION="${class#managed }"
+	_DLW_MANAGED_WORKTREE=1
 	return 0
 }
 
