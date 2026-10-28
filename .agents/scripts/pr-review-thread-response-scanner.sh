@@ -36,6 +36,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=scratch-worktree-helper.sh
 source "${SCRIPT_DIR}/scratch-worktree-helper.sh"
 
+# shellcheck source=protected-release-helper.sh
+source "${SCRIPT_DIR}/protected-release-helper.sh"
+
 LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pr-review-thread-response-scanner.log}"
 STATE_DIR="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pr-review-thread-response}"
 HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
@@ -676,6 +679,7 @@ cmd_scan_pr() {
 	local pr_number="$2"
 	local title head_ref head_oid author metadata summary rc
 	local thread_count fingerprint preview
+	local labels=""
 	title="PR #${pr_number}"
 	head_ref=""
 	head_oid=""
@@ -692,12 +696,16 @@ cmd_scan_pr() {
 		return 2
 	}
 	metadata=$(_prrts_gh_call read gh pr view "$pr_number" --repo "$repo_slug" \
-		--json title,headRefName,headRefOid,author \
-		--jq '[(.title // "" | gsub("[\t\r\n]"; " ")), (.headRefName // ""), (.headRefOid // ""), (.author.login // "")] | @tsv' \
+		--json title,headRefName,headRefOid,author,labels \
+		--jq '[(.title // "" | gsub("[\t\r\n]"; " ")), (.headRefName // ""), (.headRefOid // ""), (.author.login // ""), ([.labels[]?.name] | join(","))] | @tsv' \
 		2>/dev/null || true)
 	if [[ -n "$metadata" ]]; then
-		IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r title head_ref head_oid author \
+		IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r title head_ref head_oid author labels \
 			<<<"${metadata//$'\t'/$PRRTS_TSV_FIELD_SEPARATOR}"
+	fi
+	if protected_release_pr "$head_ref" "${labels:-}"; then
+		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} skipped — protected release PR"
+		return 0
 	fi
 	summary="$(_prrts_review_thread_summary "$repo_slug" "$pr_number")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
@@ -757,6 +765,10 @@ _prrts_scan_repo_to_files() {
 		fi
 		if _prrts_labels_block_response "$labels"; then
 			_prrts_log "scan: ${repo_slug}#${pr_number} skipped — protected label present (${labels})"
+			continue
+		fi
+		if protected_release_pr "$head_ref" "$labels"; then
+			_prrts_log "scan: ${repo_slug}#${pr_number} skipped — protected release PR"
 			continue
 		fi
 		rc=0
