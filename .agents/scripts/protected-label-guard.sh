@@ -175,14 +175,22 @@ _protected_label_report() {
 	local number="$1" repo="$2"
 	local state_dir="${PROTECTED_LABEL_FLAP_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/tmp/protected-label-flap}"
 	local lock="${state_dir}/${repo//\//_}-${number}.lock"
-	# Serialize publishers sharing a host; never wait on a busy/orphaned lock.
-	# Cross-host deduplication still uses a fresh live marker read under the lock.
+	# Serialize publishers sharing a host. The kernel releases flock on the last
+	# descriptor close, including SIGKILL/crashes; never unlink its stable inode.
+	# Python's fcntl works on macOS as well as Linux without a flock executable.
+	# Use a separate path so legacy orphaned mkdir locks cannot block recovery.
 	(
 		umask 077
 		mkdir -p "$state_dir" || return 1
-		mkdir -m 700 "$lock" 2>/dev/null || return 1
-		trap 'rmdir "$lock" 2>/dev/null || true' EXIT
-		_protected_label_publish "$@"
+		(
+			# The Python child and this subshell share fd 9's open description;
+			# the subshell keeps the lock after Python exits, through publication.
+			if ! python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)'; then
+				printf 'protected-label-guard: report lock busy or unavailable for %s#%s\n' "$repo" "$number" >&2
+				return 1
+			fi
+			_protected_label_publish "$@"
+		) 9>>"${lock%.lock}.publish-lock"
 	)
 	return $?
 }
