@@ -42,7 +42,8 @@ def reconcile(store: LifecycleRegistry, limit: int = 100, budget: float = 5) -> 
             observations[identity] = adapter.observe(identity)
         observation = observations[identity]
         try:
-            store.observe(str(uuid4()), row["run_id"], row["version"], observation)
+            if not store.refresh_unchanged(row["run_id"], row["version"], observation):
+                store.observe(str(uuid4()), row["run_id"], row["version"], observation)
             result["processed"] += 1
         except StoreConflict:
             result["deferred"] += 1

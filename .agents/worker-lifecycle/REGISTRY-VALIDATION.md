@@ -14,7 +14,7 @@ and failure tracebacks go to stderr; stdout and the output file contain JSON.
 Exit 0 means every included test passed; 1 means test failure or skipped coverage;
 2 means the environment or runner was unavailable. No reboot is needed.
 
-The archive contains the actual implementation and 26 existing contract tests,
+The archive contains the actual implementation and its registry contract tests,
 not an independently reimplemented observer. It unpacks into its own temporary
 directory, tests there and removes that directory afterwards. The report is kept.
 `TMPDIR` can select an existing writable local temporary parent. Do not use NFS or
@@ -27,6 +27,7 @@ another shared-host filesystem for native SQLite durability qualification.
 - Owned subprocess crashes before/after commit (NOT machine power loss).
 - Capacity refusal without partial updates, stable event replay after PID exit.
 - Identity across exec, natural process exit and reconciliation.
+- Unchanged-observation journal suppression, fair batch rotation and stale-version rejection.
 - Original command output/exit status when the registry is missing or full.
 - Isolated observer startup without removing the native command's Python environment.
 

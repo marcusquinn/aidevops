@@ -521,6 +521,7 @@ test_worker_lifecycle_reconciliation() {
 	local SCRIPT_DIR="${SOURCE_SCRIPT%/*}"
 	local canonical_tmp=""
 	canonical_tmp=$(cd "$TMP" && pwd -P) || return 1
+	local HOME="$canonical_tmp"
 	local AIDEVOPS_WORKSPACE_DIR="${canonical_tmp}/lifecycle-workspace"
 	local AIDEVOPS_LIFECYCLE_STATE_DIR=""
 	local AIDEVOPS_LIFECYCLE_DISABLED=0 AIDEVOPS_PRIVATE_WORKLOAD=0 PULSE_DRY_RUN=0 PULSE_CANARY_MODE=0
@@ -540,6 +541,8 @@ test_worker_lifecycle_reconciliation() {
 		fail "lifecycle native attempt fixture"
 		return 1
 	fi
+	local home_marker="~"
+	AIDEVOPS_WORKSPACE_DIR="${home_marker}/lifecycle-workspace"
 	for flag in AIDEVOPS_LIFECYCLE_DISABLED AIDEVOPS_PRIVATE_WORKLOAD PULSE_DRY_RUN PULSE_CANARY_MODE; do
 		printf -v "$flag" '%s' 1
 		_pulse_reconcile_worker_lifecycle
@@ -565,9 +568,11 @@ test_worker_lifecycle_reconciliation() {
 	else
 		fail "lifecycle cycle hook marks the exited native worker ended" "$result"
 	fi
+	AIDEVOPS_LIFECYCLE_STATE_DIR="${home_marker}/lifecycle-workspace/worker-lifecycle"
+	: >"$TIMEOUT_CALL_FILE"
 	_pulse_reconcile_worker_lifecycle
 	result=$(PYTHONPATH="${SCRIPT_DIR}/../worker-lifecycle" python3 -B -m worker_lifecycle.registry --state-dir "$state_dir" status)
-	if jq -e '.events == 3' <<<"$result" >/dev/null; then
+	if [[ "$(<"$TIMEOUT_CALL_FILE")" == 10 ]] && jq -e '.events == 3' <<<"$result" >/dev/null; then
 		pass "lifecycle repeated ticks do not duplicate terminal observations"
 	else
 		fail "lifecycle repeated ticks do not duplicate terminal observations" "$result"

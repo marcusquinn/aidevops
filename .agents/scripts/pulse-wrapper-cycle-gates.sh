@@ -47,6 +47,9 @@ _pulse_reconcile_worker_lifecycle() {
 		return 0
 	fi
 	local state_dir="${AIDEVOPS_LIFECYCLE_STATE_DIR:-${AIDEVOPS_WORKSPACE_DIR:-${HOME}/.aidevops/.agent-workspace}/worker-lifecycle}"
+	case "$state_dir" in
+	\~/*) state_dir="$HOME/${state_dir#\~/}" ;;
+	esac
 	[[ -e "$state_dir" || -L "$state_dir" ]] || return 0
 	local package_dir="${SCRIPT_DIR}/../worker-lifecycle"
 	local reconcile_rc=0

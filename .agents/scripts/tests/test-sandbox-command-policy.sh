@@ -471,6 +471,23 @@ test_lifecycle_defaults() {
 	else
 		fail "sandbox lifecycle opt-out preserves native command without new events" "status=${status} events=${events}"
 	fi
+	local home_marker="~"
+	local setting="" expected_events=2
+	for setting in AIDEVOPS_WORKSPACE_DIR AIDEVOPS_LIFECYCLE_STATE_DIR; do
+		local configured_path="${home_marker}/.aidevops/.agent-workspace"
+		[[ "$setting" != AIDEVOPS_LIFECYCLE_STATE_DIR ]] || configured_path+="/worker-lifecycle"
+		status=0
+		env -u AIDEVOPS_LIFECYCLE_STATE_DIR -u AIDEVOPS_WORKSPACE_DIR -u AIDEVOPS_LIFECYCLE_DISABLED \
+			HOME="$canonical_home" AIDEVOPS_PRIVATE_WORKLOAD=0 AIDEVOPS_LIFECYCLE_WORKTREE="$TEST_ROOT" \
+			"${setting}=${configured_path}" "$SANDBOX_HELPER" run true >/dev/null 2>&1 || status=$?
+		expected_events=$((expected_events + 2))
+		events=$(python3 -c 'import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM events").fetchone()[0]); db.close()' "${state_dir}/registry.sqlite3")
+		if [[ "$status" == 0 && "$events" == "$expected_events" ]]; then
+			pass "sandbox expands literal home prefix in ${setting}"
+		else
+			fail "sandbox expands literal home prefix in ${setting}" "status=${status} events=${events}"
+		fi
+	done
 	return 0
 }
 

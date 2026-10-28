@@ -183,6 +183,53 @@ os._exit(72)
         self.assertEqual(reopened.summary()["runs"], {"bound": 1})
         self.assertEqual(reopened.summary()["events"], 2)
 
+    def test_repeated_alive_preserves_terminal_capacity_and_stale_guard(self):
+        with self.store.connection(write=True) as connection:
+            connection.execute("UPDATE metadata SET max_events=3")
+        self.register()
+        reconcile(self.store)
+        stale = self.store.pending()[0]
+        for _ in range(20):
+            self.assertEqual(reconcile(self.store)["processed"], 1)
+        self.assertEqual(self.store.summary()["events"], 2)
+        terminal = ProcessObservation("ended", "pid-absent")
+        with self.assertRaises(StoreConflict):
+            self.store.observe(key(), self.run, stale["version"], terminal)
+        self.assertEqual(self.store.summary()["events"], 2)
+        fresh = self.store.pending()[0]
+        self.assertFalse(self.store.refresh_unchanged(self.run, fresh["version"], terminal))
+        self.store.observe(key(), self.run, fresh["version"], terminal)
+        self.assertEqual(self.store.summary()["events"], 3)
+        self.assertEqual(self.store.summary()["runs"], {"ended": 1})
+
+    def test_unchanged_batches_rotate_without_journal_growth(self):
+        runs = {self.run, key(), key()}
+        for run in runs:
+            self.store.register(key(), run, self.identity)
+        reconcile(self.store)
+        for _ in range(4):
+            visited = []
+            for _ in range(3):
+                visited.append(self.store.pending(1)[0]["run_id"])
+                reconcile(self.store, limit=1)
+            self.assertEqual(set(visited), runs)
+        self.assertEqual(self.store.summary()["events"], 6)
+
+    def test_unchanged_unknown_preserves_evidence_and_version_checks(self):
+        self.register()
+        unknown = ProcessObservation("unknown", "permission-denied")
+        self.store.observe(key(), self.run, 1, unknown)
+        sampled = self.store.pending()[0]
+        self.assertTrue(self.store.refresh_unchanged(self.run, sampled["version"], unknown))
+        with self.assertRaises(StoreConflict):
+            self.store.refresh_unchanged(self.run, sampled["version"], unknown)
+        fresh = self.store.pending()[0]
+        changed = ProcessObservation("unknown", "scope-unavailable")
+        self.assertFalse(self.store.refresh_unchanged(self.run, fresh["version"], changed))
+        self.store.observe(key(), self.run, fresh["version"], changed)
+        self.assertEqual(self.store.summary()["events"], 3)
+        self.assertEqual(self.store.summary()["runs"], {"bound": 1})
+
     def test_writer_exception_rolls_back(self):
         with self.assertRaises(RuntimeError):
             with self.store.connection(write=True) as connection:

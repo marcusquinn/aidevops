@@ -213,6 +213,27 @@ class LifecycleRegistry:
             return [dict(row) for row in connection.execute(
                 "SELECT run_id,identity,version FROM runs WHERE state='bound' ORDER BY checked_sequence,run_id LIMIT ?", (limit,))]
 
+    @staticmethod
+    def _next_check(connection: sqlite3.Connection) -> int:
+        # Scheduling order is independent of journal growth. Otherwise an
+        # unchanged batch would keep the same cursor and starve later runs.
+        return int(connection.execute("SELECT COALESCE(MAX(checked_sequence),0)+1 FROM runs WHERE state='bound'").fetchone()[0])
+
+    def refresh_unchanged(self, run_id: str, version: int, result: ProcessObservation) -> bool:
+        """Refresh only concurrency/rotation metadata; retain existing evidence."""
+        identifier(run_id)
+        if type(version) is not int or version < 1:  # pylint: disable=unidiomatic-typecheck
+            raise ValueError("invalid-run-version")
+        with self.connection(write=True) as connection:
+            row = connection.execute("SELECT state,version,observation FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None or row["state"] != "bound" or row["version"] != version:
+                raise StoreConflict("stale-observation")
+            if result.status not in {"alive", "unknown"} or row["observation"] != encode(result.to_dict()):
+                return False
+            connection.execute("UPDATE runs SET version=version+1, checked_sequence=? WHERE run_id=?",
+                               (self._next_check(connection), run_id))
+            return True
+
     def observe(self, event_id: str, run_id: str, version: int, result: ProcessObservation) -> None:
         identifier(run_id)
         if type(version) is not int or version < 1:  # pylint: disable=unidiomatic-typecheck  # Reject bool
@@ -221,13 +242,13 @@ class LifecycleRegistry:
             raise ValueError("invalid-observation")
         payload = {"type": "observe", "run_id": run_id, "version": version, "result": result.to_dict()}
         with self.connection(write=True) as connection:
-            sequence, duplicate = self._event(connection, event_id, payload)
+            _, duplicate = self._event(connection, event_id, payload)
             if duplicate:
                 return
             state = "ended" if result.status == "ended" else "bound"
             cursor = connection.execute(
                 "UPDATE runs SET state=?, version=version+1, checked_sequence=?, observation=? WHERE run_id=? AND version=? AND state='bound'",
-                (state, sequence, encode(result.to_dict()), run_id, version))
+                (state, self._next_check(connection), encode(result.to_dict()), run_id, version))
             if cursor.rowcount != 1:
                 raise StoreConflict("stale-observation")
 

@@ -65,7 +65,7 @@ an additional session protocol: process survival alone cannot settle it.
 - Observations occur outside writer transactions. A conditional version update
   rejects samples made stale by another state change. Terminal runs cannot revive.
 - Each bounded pass checks readiness before processing rows, samples each distinct
-  process identity once, and rotates unfinished runs by last recorded event sequence.
+  process identity once, and rotates unfinished runs by a scheduling cursor.
 - Events have a UTC `recorded_at` timestamp generated at insertion, not a claim
   about when the producer performed the action. Sequence orders events; wall-clock
   changes are never used as evidence of process death.
@@ -75,9 +75,9 @@ an additional session protocol: process survival alone cannot settle it.
   observation cannot partially change a run. Status reports capacity and last event.
   This bounds logical journal growth, not a byte-exact disk quota or filesystem WAL
   behavior under a stalled reader. SQLite disk errors remain explicit failures.
-- Failed passes are reported, not silently retried forever. A full journal pauses
-  registry ingestion/reconciliation only, not the old worker system. Scheduling,
-  backoff and an evidence-preserving retention policy remain deployment prerequisites.
+- Failed passes are reported. A full journal prevents new events, but unchanged
+  observations can still refresh scheduling metadata. Worker execution continues;
+  an evidence-preserving retention policy is needed for indefinite operation.
 
 `LifecycleRegistry` stores state in `registry.sqlite3` with schema 1 and mode
 `observe-only`. Other schemas are rejected without mutation; only disposable test
@@ -119,6 +119,8 @@ by default on supported Linux/macOS installations, independent of systemd or lau
 The default private state is `~/.aidevops/.agent-workspace/worker-lifecycle`;
 when `AIDEVOPS_WORKSPACE_DIR` is set, its `worker-lifecycle` subdirectory is used.
 `AIDEVOPS_LIFECYCLE_STATE_DIR` optionally overrides the path, not activation.
+The launchers and Pulse expand a literal leading `~/` in either setting using
+the current user's home directory; no shell expression evaluation is performed.
 The framework workspace parent must already exist and be canonical. Each machine
 uses its own local state: do not share or copy this database between hosts.
 Both hooks pass `--initialize`: after platform readiness, the first launch creates
@@ -168,6 +170,11 @@ Dry-run, canary, private-workload and lifecycle-disabled invocations skip it.
 Each pass considers at most 100 unfinished runs, using the registry's 5-second
 cooperative budget and a portable 10-second outer timeout. Existing cursor/version
 checks preserve fair batch rotation and reject stale concurrent observations.
+Unchanged `alive` or `unknown` results refresh only the optimistic version and
+rotation cursor, without appending journal events or replacing prior evidence.
+The cursor is a scheduling ordinal, independent of journal sequence numbers.
+First observations, changed results/reasons and terminal transitions remain
+journaled. Explicit event ingestion retains its existing replay contract.
 No store is created by a tick. Missing state is a no-op; invalid state, unavailable
 runtime, capacity exhaustion and timeouts are logged without blocking Pulse or
 replacing evidence. Unknown process observations never imply termination.
@@ -210,12 +217,11 @@ separate authorization and acceptance tests; this change does not introduce one.
 
 The existing tests include actual owned-process crashes before and after commit,
 concurrent replay, conflicting bindings and full-journal launch continuation.
-The current registry artifact passed all 30 included tests on Linux x86-64 and
-macOS Intel; both retained reports identify the same bundle fingerprint. See
-[COMPATIBILITY.md](COMPATIBILITY.md) for environments and remaining limitations.
+See [COMPATIBILITY.md](COMPATIBILITY.md) for tested artifact fingerprints,
+environments and remaining limitations.
 
-For a controlled experiment, initialize a dedicated store, enable the variable
-for ONE already-approved ordinary worker invocation, then run the
+For a controlled experiment, initialize a dedicated store and set
+`AIDEVOPS_LIFECYCLE_STATE_DIR` to its path for ONE already-approved ordinary worker invocation, then run the
 explicit `reconcile` and `status` commands above. Do not invent a new worker task
 or bypass its normal admission guards. Check the registration/gap log and compare
 the runtime's PID, exit and output with the ordinary launcher evidence. The shell

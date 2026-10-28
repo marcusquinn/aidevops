@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "787f5cc9357b4ecb6ec323ec3bfee45d1b6113c3f6afcc2203a805b0a789f6d2",
+  "bundle_sha256": "b7ded250273496e8322d7f02b203c6ccafc856d396cfebdf69e5efe3bb452b09",
   "checks": [
     {
       "name": "tests.test_storage.StorageContract.test_atomic_attempt_binding_conflict_rolls_back_registration",
@@ -58,6 +58,10 @@
       "status": "passed"
     },
     {
+      "name": "tests.test_storage.StorageContract.test_repeated_alive_preserves_terminal_capacity_and_stale_guard",
+      "status": "passed"
+    },
+    {
       "name": "tests.test_storage.StorageContract.test_same_process_is_sampled_once_for_multiple_sessions",
       "status": "passed"
     },
@@ -67,6 +71,14 @@
     },
     {
       "name": "tests.test_storage.StorageContract.test_terminal_observation_replay_and_no_resurrection",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_storage.StorageContract.test_unchanged_batches_rotate_without_journal_growth",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_storage.StorageContract.test_unchanged_unknown_preserves_evidence_and_version_checks",
       "status": "passed"
     },
     {
@@ -142,8 +154,8 @@
   "status": "passed",
   "suite": "registry-integration",
   "system": "Linux",
-  "tests_run": 32,
-  "timestamp": "2026-10-28T19:51:54.333769+00:00",
+  "tests_run": 35,
+  "timestamp": "2026-10-28T21:19:17.590548+00:00",
   "untested": [
     "power-loss",
     "disk-full",

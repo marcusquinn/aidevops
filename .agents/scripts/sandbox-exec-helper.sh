@@ -1205,6 +1205,9 @@ _sandbox_run_dispatch() {
 	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" != "1" && "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != "1" && -n "${AIDEVOPS_LIFECYCLE_WORKTREE:-}" ]]; then
 		local lifecycle_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py"
 		local lifecycle_state="${AIDEVOPS_LIFECYCLE_STATE_DIR:-${AIDEVOPS_WORKSPACE_DIR:-${HOME}/.aidevops/.agent-workspace}/worker-lifecycle}"
+		case "$lifecycle_state" in
+		\~/*) lifecycle_state="$HOME/${lifecycle_state#\~/}" ;;
+		esac
 		local lifecycle_python=""
 		if [[ -f "$lifecycle_entry" ]] && lifecycle_python="$(type -P python3)" &&
 			"$lifecycle_python" -E -s -B "$lifecycle_entry" --help >/dev/null 2>&1; then
