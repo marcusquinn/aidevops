@@ -121,8 +121,11 @@ when `AIDEVOPS_WORKSPACE_DIR` is set, its `worker-lifecycle` subdirectory is use
 `AIDEVOPS_LIFECYCLE_STATE_DIR` optionally overrides the path, not activation.
 The launchers and Pulse expand a literal leading `~/` in either setting using
 the current user's home directory; no shell expression evaluation is performed.
-The framework workspace parent must already exist and be canonical. Each machine
-uses its own local state: do not share or copy this database between hosts.
+Agent installation prepares the framework workspace before bundle activation and
+exports its canonical path to subsequent setup steps. It does not create the
+private registry. An explicit custom state path still requires an existing,
+canonical parent. Each machine uses its own local state: do not share or copy
+this database between hosts.
 Both hooks pass `--initialize`: after platform readiness, the first launch creates
 the private store. Concurrent initializers briefly wait for the winning initializer's
 commit. Existing state is validated, never replaced, migrated or repaired; interrupted

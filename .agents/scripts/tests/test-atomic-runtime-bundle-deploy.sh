@@ -193,6 +193,7 @@ test_manifest_value_reads_unterminated_final_line() {
 test_initial_activation_and_manifest() {
 	local target_dir="$HOME/.aidevops/agents"
 	local active_root=""
+	local AIDEVOPS_WORKSPACE_DIR=""
 	mkdir -p "$target_dir/scripts" "$target_dir/custom"
 	printf '1.0.0\n' >"$target_dir/VERSION"
 	printf 'old\n' >"$target_dir/scripts/helper.sh"
@@ -200,6 +201,14 @@ test_initial_activation_and_manifest() {
 
 	write_fake_revision "2.0.0" "new"
 	stage_revision "$target_dir"
+	[[ -d "$HOME/.aidevops/.agent-workspace" ]] || fail "fresh deployment prepares the framework workspace"
+	assert_eq "$(cd "$HOME/.aidevops/.agent-workspace" && pwd -P)" "$AIDEVOPS_WORKSPACE_DIR" \
+		"fresh deployment exposes a canonical workspace before activation"
+	[[ ! -e "$AIDEVOPS_WORKSPACE_DIR/worker-lifecycle" ]] || fail "setup leaves lifecycle initialization to the worker"
+	python3 -E -s -B "$REPO_ROOT/.agents/worker-lifecycle/worker-launch.py" --initialize \
+		--state-dir "$AIDEVOPS_WORKSPACE_DIR/worker-lifecycle" --worktree "$FAKE_REPO" -- "$BASH" -c 'exit 0'
+	[[ -f "$AIDEVOPS_WORKSPACE_DIR/worker-lifecycle/registry.sqlite3" ]] || fail "first worker registers after fresh deployment"
+	pass "first worker registers after fresh deployment without manual parent creation"
 	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR"
 	active_root=$(_runtime_bundle_resolve_root "$target_dir")
 
