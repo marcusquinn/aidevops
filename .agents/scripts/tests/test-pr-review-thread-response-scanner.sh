@@ -1476,6 +1476,8 @@ SHARED_CONSTANTS
 		"$(dirname "$bundled_scanner")/scratch-worktree-helper.sh"
 	cp "${TEST_SCRIPT_DIR}/../pr-review-thread-response-scanner-locks.sh" \
 		"$(dirname "$bundled_scanner")/pr-review-thread-response-scanner-locks.sh"
+	cp "${TEST_SCRIPT_DIR}/../pr-review-thread-response-scanner-worktree.sh" \
+		"$(dirname "$bundled_scanner")/pr-review-thread-response-scanner-worktree.sh"
 	chmod +x "$bundled_scanner"
 	"$bundled_scanner" dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
