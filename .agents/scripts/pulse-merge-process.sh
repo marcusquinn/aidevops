@@ -166,13 +166,20 @@ _pmp_hold_protected_release_pr() {
 	local repo_slug="$2"
 	local head_ref="$3"
 	local head_oid="$4"
-	local repo_path="" hold_reason="protected release PR requires exact-merge reconciliation"
+	local repo_path="" auto_merge="" hold_reason="protected release PR requires exact-merge reconciliation"
 	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
 	if ! protected_release_head_matches_staged "$repo_path" "$head_ref" "$head_oid"; then
 		hold_reason="protected release PR head differs from staged signed commit or staging evidence is unavailable"
 	fi
 	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${hold_reason}" >>"$LOGFILE"
 	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
+	# Do not turn an already-safe release into a draft on every merge pass.
+	# An unavailable read still takes the fail-closed disarm path below.
+	if auto_merge=$(gh pr view "$pr_number" --repo "$repo_slug" --json autoMergeRequest \
+		--jq '.autoMergeRequest == null' 2>/dev/null) &&
+		[[ "$auto_merge" == true ]]; then
+		return 0
+	fi
 	# aidevops:trust-boundary — revoke native auto-merge before deferring so a
 	# previously armed request cannot merge a drifted release between passes.
 	_stop_external_native_auto_merge "$pr_number" "$repo_slug" "$hold_reason" || return 1

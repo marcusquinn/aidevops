@@ -1598,6 +1598,9 @@ _prrts_dispatch_worker() {
 		"AIDEVOPS_ATTEMPT_STATE_ROOT=${STATE_DIR}"
 		"AIDEVOPS_ATTEMPT_STATE_FILE=${attempt_state_file}"
 		"${cmd[@]}")
+	# Recheck after worktree preparation: a release label may have been added
+	# since the initial dispatch gate. Propagate failure to release capacity.
+	_prrts_release_dispatch_gate "$repo_slug" "$pr_number" "$head_ref" dispatch || return $?
 	# Persist the generation immediately before the detached worker becomes
 	# runnable, so immediate terminal callbacks cannot be overwritten.
 	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid" "$outcome_id" "$infrastructure_failure_count"
