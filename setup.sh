@@ -1607,6 +1607,7 @@ _setup_run_noninteractive_migrations() {
 	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	_time_step "cleanup_legacy_dashboard_launchagent" cleanup_legacy_dashboard_launchagent
 	_time_step "cleanup_legacy_agents_md_templates" cleanup_legacy_agents_md_templates
+	_time_step "review_js_dependency_policies" review_js_dependency_policies
 	return 0
 }
 
@@ -1641,7 +1642,6 @@ _setup_run_non_interactive() {
 		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks
 	fi
 	_time_step "init_settings_json" init_settings_json
-	_time_step "review_js_dependency_policies" review_js_dependency_policies
 
 	local _pid_symlinks=""
 	if _time_step "generate_agent_skills" generate_agent_skills; then
@@ -1750,6 +1750,8 @@ _setup_run_interactive_silent_migrations() {
 	_cleanup_legacy_model_config
 	cleanup_legacy_dashboard_launchagent
 	cleanup_legacy_agents_md_templates
+	# Prompts (default No) only when a dispatch repo's JS install approval is stale.
+	review_js_dependency_policies
 	return 0
 }
 
@@ -1830,7 +1832,6 @@ _setup_run_interactive() {
 	confirm_step "Set up routines repo (private repo for recurring operational jobs)" && setup_routines
 	is_feature_enabled safety_hooks 2>/dev/null && confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
 	confirm_step "Initialize settings.json (canonical config file)" && init_settings_json
-	confirm_step "Review JS dependency install approvals for dispatch repos" && review_js_dependency_policies
 	confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
 	confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
 	confirm_step "Create symlinks for imported skills" && create_skill_symlinks
