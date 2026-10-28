@@ -70,15 +70,16 @@ function validCommand(command) {
 
 // Signals nested helper groups before and after the grace period, then the
 // supervisor's own group. Containment is reported before the final SIGKILL.
-function createTerminator(tracker, killGraceMs, reportContainment) {
+function createTerminator(tracker, killGraceMs, reportContainment, reportTermination) {
   const state = { terminating: false };
   const signalNested = (signal) => {
     const snapshot = tracker.track(MARKER_SCAN);
     signalEach(tracker.nestedTargets(snapshot), signal, snapshot?.entries);
   };
-  state.terminate = () => {
+  state.terminate = (cause) => {
     if (state.terminating) return;
     state.terminating = true;
+    reportTermination(cause);
     signalNested("SIGTERM");
     signalOwnGroup("SIGTERM");
     setTimeout(() => {
@@ -105,7 +106,8 @@ function survivorSnapshot(snapshot, exitedCommand) {
 // True once only the supervisor remains in its group and no owned nested-group
 // descendant is alive. Nested descendants keep inherited stdio open, so the
 // operation is not drained while they live; the budget still bounds them, and
-// once termination has begun they are escalated instead of awaiting the grace.
+// once the main command has exited, survivors can be escalated without cutting
+// short its TERM handler. Drain checks must never run while that command lives.
 // A tree that looks drained is confirmed with a marker scan, so an escaped
 // marked descendant is never missed between periodic scans (GH#34324).
 function ownedTreeDrained(tracker, terminator, terminateSurvivors, exitedCommand) {
@@ -130,7 +132,7 @@ export async function runSupervisor() {
   const operationID = String(config.operationID || "");
 
   const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
-  const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 30 * 1000);
+  const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 300 * 1000);
   const result = { finished: false, exit: 1, started: Promise.resolve(), commandIdentity: null };
   const tracker = createProcessTreeTracker(process.pid, undefined, operationID);
   // GH#34047: distinguish "exited 0 with nothing left" from "exited 0, then
@@ -142,20 +144,28 @@ export async function runSupervisor() {
     ...tracker.containment(),
     postExitDescendantsTerminated: exitState.postExitDescendantsTerminated,
   });
-  const terminator = createTerminator(tracker, killGraceMs, reportContainment);
+  let terminationReport = Promise.resolve();
+  const reportTermination = (cause) => {
+    terminationReport = sendMessage({ event: "termination", operationID, cause });
+  };
+  const terminator = createTerminator(tracker, killGraceMs, reportContainment, reportTermination);
   // Only cleanup started by command exit counts; budget and cancellation
   // terminations are already reported through the operation state.
   const terminateSurvivors = () => {
     if (!terminator.terminating) exitState.postExitDescendantsTerminated = true;
-    terminator.terminate();
+    terminator.terminate("post_exit_cleanup");
   };
 
-  process.on("SIGTERM", terminator.terminate);
-  process.on("SIGINT", terminator.terminate);
+  process.on("SIGTERM", () => terminator.terminate("signal_sigterm"));
+  process.on("SIGINT", () => terminator.terminate("signal_sigint"));
+  process.on("disconnect", () => terminator.terminate("parent_disconnect"));
   process.on("message", (message) => {
-    if (message?.action === "terminate") terminator.terminate();
+    if (message?.action !== "terminate") return;
+    const cause = ["budget", "cancel", "dispose", "session_deleted"].includes(message.cause)
+      ? message.cause : "cancel";
+    terminator.terminate(cause);
   });
-  const budgetTimer = setTimeout(terminator.terminate, budgetMs);
+  const budgetTimer = setTimeout(() => terminator.terminate("budget"), budgetMs);
 
   const child = spawn(command[0], command.slice(1), {
     cwd: process.cwd(),
@@ -173,6 +183,7 @@ export async function runSupervisor() {
   child.once("error", () => {
     result.finished = true;
     result.exit = 127;
+    if (!terminator.terminating) reportTermination("spawn_error");
   });
   child.once("exit", (code) => {
     result.finished = true;
@@ -191,7 +202,7 @@ export async function runSupervisor() {
       clearInterval(drainTimer);
       clearInterval(trackTimer);
       clearTimeout(budgetTimer);
-      Promise.all([result.started, reportContainment()]).finally(() => resolve(result.exit));
+      Promise.all([result.started, terminationReport, reportContainment()]).finally(() => resolve(result.exit));
     }, 25);
   });
 }

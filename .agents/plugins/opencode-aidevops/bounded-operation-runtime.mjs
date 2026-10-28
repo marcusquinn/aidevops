@@ -6,6 +6,16 @@ import { boundedInteger, scalar } from "./bounded-operation-values.mjs";
 const MAX_CAPTURE_BYTES = 1024 * 1024;
 const MAX_PROGRESS_REMAINDER_BYTES = 4096;
 const RECEIPT_SCHEMA = "aidevops.interactive-operation/v1";
+const TERMINATION_DISPOSITIONS = new Map([
+  ["budget", "timed_out"],
+  ["cancel", "cancelled"],
+  ["dispose", "cancelled"],
+  ["session_deleted", "cancelled"],
+  ["signal_sigterm", "failed"],
+  ["signal_sigint", "failed"],
+  ["parent_disconnect", "failed"],
+  ["spawn_error", "failed"],
+]);
 
 export function appendCapture(operation, chunk) {
   const value = Buffer.from(chunk);
@@ -37,10 +47,10 @@ export function observeProgress(operation, chunk, now) {
   return observed;
 }
 
-export function signalSupervisor(child) {
+export function signalSupervisor(child, signal, cause) {
   if (!child?.connected || child.exitCode !== null || child.signalCode !== null) return false;
   try {
-    child.send({ action: "terminate" });
+    child.send({ action: "terminate", cause });
     return true;
   } catch {
     return false;
@@ -56,19 +66,38 @@ export function trimTerminalOperations(operations, maximum) {
   throw new Error("too many active bounded operations");
 }
 
+// The independent supervisor budget may beat the manager's timeout callback.
+// An exit-0 TERM handler must not turn that timeout or an external stop into success.
+function applyTerminationMessage(operation, message) {
+  operation.terminationCause ||= scalar(message.cause);
+  if (operation.disposition !== "running") return;
+  const disposition = TERMINATION_DISPOSITIONS.get(message.cause);
+  if (!disposition) return;
+  operation.disposition = disposition;
+  operation.state = disposition === "timed_out" ? "timing_out" : "cancelling";
+}
+
 // Applies a supervisor IPC event for this operation and stage. Containment is
 // reported only for the main command (GH#33514).
 export function applySupervisorMessage(operation, stage, message) {
   if (message?.type !== "aidevops.operation" || message.operationID !== operation.id) return;
-  if (message.event === "containment" && stage === "main") {
-    operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
-    operation.attributionComplete = message.attributionComplete === true;
-    operation.postExitDescendantsTerminated = message.postExitDescendantsTerminated === true;
-  } else if (message.event === "command_started" && stage === "main") {
-    operation.commandStarted = true;
-    operation.supervisorRuntime = scalar(message.runtime);
-  } else if (message.event === "command_started") {
-    operation.restorationCommandStarted = true;
+  if (stage !== "main") {
+    if (message.event === "command_started") operation.restorationCommandStarted = true;
+    return;
+  }
+  switch (message.event) {
+    case "termination":
+      applyTerminationMessage(operation, message);
+      break;
+    case "containment":
+      operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
+      operation.attributionComplete = message.attributionComplete === true;
+      operation.postExitDescendantsTerminated = message.postExitDescendantsTerminated === true;
+      break;
+    case "command_started":
+      operation.commandStarted = true;
+      operation.supervisorRuntime = scalar(message.runtime);
+      break;
   }
 }
 
@@ -103,6 +132,8 @@ export function operationReceipt(operation, now) {
       && (lastProgressAgeMs === null || lastProgressAgeMs >= operation.progressIntervalMs),
     process_exit: operation.processExit,
     process_signal: operation.processSignal || null,
+    termination_cause: operation.terminationCause || null,
+    kill_grace_ms: operation.killGraceMs,
     command_execution: operation.state === "starting" || operation.state === "running"
       ? "pending"
       : (operation.commandStarted ? "observed" : "missing"),
@@ -119,11 +150,16 @@ export function disposeOperations(operations, kill, clearTimer) {
   for (const operation of operations.values()) {
     if (operation.child && !operation.childExited
       && operation.child.exitCode === null && operation.child.signalCode === null) {
-      kill(operation.child, "SIGTERM");
+      operation.terminationCause ||= "dispose";
+      if (operation.disposition === "running") {
+        operation.disposition = "cancelled";
+        operation.state = "cancelling";
+      }
+      kill(operation.child, "SIGTERM", operation.terminationCause);
     }
     if (operation.restorationChild && !operation.restorationChildExited
       && operation.restorationChild.exitCode === null && operation.restorationChild.signalCode === null) {
-      kill(operation.restorationChild, "SIGTERM");
+      kill(operation.restorationChild, "SIGTERM", "dispose");
     }
     if (operation.budgetTimer) clearTimer(operation.budgetTimer);
     if (operation.killTimer) clearTimer(operation.killTimer);
