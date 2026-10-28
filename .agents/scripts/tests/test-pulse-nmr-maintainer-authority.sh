@@ -37,6 +37,8 @@ setup_test_env() {
 	export POSTED_COMMENT="${TEST_ROOT}/posted-comment.txt"
 	export STATUS_CALLS_FILE="${TEST_ROOT}/status-calls.txt"
 	export ISSUE_EDIT_CALLS_FILE="${TEST_ROOT}/issue-edit-calls.txt"
+	export ISSUE_LOCK_CALLS_FILE="${TEST_ROOT}/issue-lock-calls.txt"
+	export PROTECTED_LABEL_FLAP_STATE_DIR="${TEST_ROOT}/flap-state"
 	export AGENTS_DIR="${TEST_ROOT}"
 	export ISSUE_ASSOC="OWNER"
 	export ISSUE_API_AUTHOR="maintainer"
@@ -56,11 +58,22 @@ setup_test_env() {
 	: >"$STATUS_CALLS_FILE"
 	: >"$ISSUE_EDIT_CALLS_FILE"
 	printf '{"initialized_repos":[{"slug":"owner/repo","maintainer":"maintainer","pulse":true}]}' >"$REPOS_JSON"
+	write_gh_stub
+	return 0
+}
+
+write_gh_stub() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "api" ]]; then
 	path="${2:-}"
+	if [[ "$path" == "--paginate" && "${3:-}" == "--slurp" ]]; then
+		case "${4:-}" in
+		*/timeline\?*) [[ "${TIMELINE_API_FAIL:-0}" -eq 0 ]] || exit 1; printf '[%s]\n' "${NMR_TIMELINE_JSON:-[]}"; exit 0 ;;
+		*/comments\?*) [[ "${COMMENTS_API_FAIL:-0}" -eq 0 ]] || exit 1; printf '[%s]\n' "${ISSUE_COMMENTS_JSON:-[]}"; exit 0 ;;
+		esac
+	fi
 	if [[ "$path" == "-i" ]]; then
 		path="${3:-}"
 		if [[ "$path" == */collaborators/runner/permission ]]; then
@@ -112,6 +125,7 @@ if [[ "${1:-}" == "api" ]]; then
 	fi
 fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "lock" ]]; then
+	printf '%s\n' "$*" >>"${ISSUE_LOCK_CALLS_FILE}"
 	exit 0
 fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "edit" ]]; then
@@ -699,6 +713,46 @@ test_ever_nmr_history_bypasses_self_approval_for_trusted_author() {
 	return 0
 }
 
+test_flap_cooldown_preserves_lifecycle() {
+	setup_test_env
+	export ISSUE_LABELS_JSON='[{"name":"needs-maintainer-review"}]'
+	export NMR_TIMELINE_JSON='[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"maintainer"},"created_at":"2026-07-30T20:00:00Z"}]'
+	# Counterfactual through the real caller: identical evidence without a marker
+	# must attempt the lifecycle transition, not merely fail on a later read.
+	run_auto_approve
+	if [[ -s "$STATUS_CALLS_FILE" && -s "$ISSUE_EDIT_CALLS_FILE" ]]; then
+		print_result "without flap cooldown the caller attempts normalization" 0
+	else
+		print_result "without flap cooldown the caller attempts normalization" 1
+	fi
+	export ISSUE_LABELS_JSON='[{"name":"needs-maintainer-review"}]'
+	: >"$STATUS_CALLS_FILE"
+	: >"$ISSUE_EDIT_CALLS_FILE"
+	: >"$LOGFILE"
+	ISSUE_COMMENTS_JSON=$(jq -cn '[{author_association:"OWNER",
+		body:"<!-- aidevops:protected-label-flap:needs-maintainer-review:v1 -->",
+		created_at:(now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]')
+	export ISSUE_COMMENTS_JSON
+	run_auto_approve
+	if [[ ! -s "$STATUS_CALLS_FILE" && ! -s "$ISSUE_EDIT_CALLS_FILE" ]] \
+		&& grep -q 'Trusted-author NMR normalization FAILED' "$LOGFILE"; then
+		print_result "flap cooldown blocks lifecycle promotion as well as NMR removal" 0
+	else
+		print_result "flap cooldown blocks lifecycle promotion as well as NMR removal" 1
+	fi
+	# Exercise the cryptographic transition entry point twice: containment must
+	# precede approval comments and locks, not just the later label operation.
+	_nmr_apply_auto_approval_transition 24479 owner/repo "$NMR_TRANSITION_CRYPTO_APPROVED" verified
+	_nmr_apply_auto_approval_transition 24479 owner/repo "$NMR_TRANSITION_CRYPTO_APPROVED" verified
+	if [[ ! -s "$POSTED_COMMENT" && ! -s "$ISSUE_LOCK_CALLS_FILE" && ! -s "$ISSUE_EDIT_CALLS_FILE" ]]; then
+		print_result "flap cooldown suppresses repeated crypto approval comments and locks" 0
+	else
+		print_result "flap cooldown suppresses repeated crypto approval comments and locks" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_ever_nmr_history_still_blocks_external_author() {
 	setup_test_env
 	export ISSUE_API_AUTHOR="external-contributor"
@@ -744,6 +798,7 @@ main() {
 	test_decision_packet_is_idempotent_across_pages
 	test_decision_packet_defers_when_comments_unavailable
 	test_ever_nmr_history_bypasses_self_approval_for_trusted_author
+	test_flap_cooldown_preserves_lifecycle
 	test_ever_nmr_history_still_blocks_external_author
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"
