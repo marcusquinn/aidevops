@@ -1971,6 +1971,17 @@ _nmr_issue_label_state() {
 	return $?
 }
 
+# Check containment before any lifecycle change, not just before NMR removal.
+# The final label edit checks again against live evidence.
+_nmr_flap_allows_transition() {
+	local issue_num="$1" slug="$2"
+	# shellcheck source=protected-label-guard.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
+	_protected_label_check "$issue_num" "$slug" "needs-maintainer-review" "--remove-label" \
+		"normalization; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" || return 1
+	return 0
+}
+
 _nmr_set_transition_status() {
 	local issue_num="$1"
 	local slug="$2"
@@ -2013,6 +2024,7 @@ _nmr_restore_dispatchable_state() {
 	local current_status=""
 	local manual_suppress=""
 	local terminal_suppress=""
+	_nmr_flap_allows_transition "$issue_num" "$slug" || return 1
 	label_state=$(_nmr_issue_label_state "$issue_num" "$slug") || return 1
 	IFS=$'\t' read -r current_status manual_suppress terminal_suppress <<<"$label_state"
 	[[ "$current_status" == "$NMR_STATUS_NONE" || "$current_status" == status:* ]] || return 1
@@ -2063,6 +2075,7 @@ _nmr_translate_trusted_author_blocked() {
 	local current_status=""
 	local manual_suppress=""
 	local terminal_suppress=""
+	_nmr_flap_allows_transition "$issue_num" "$slug" || return 1
 	label_state=$(_nmr_issue_label_state "$issue_num" "$slug") || return 1
 	IFS=$'\t' read -r current_status manual_suppress terminal_suppress <<<"$label_state"
 	[[ "$current_status" == "$NMR_STATUS_NONE" || "$current_status" == status:* ]] || return 1
