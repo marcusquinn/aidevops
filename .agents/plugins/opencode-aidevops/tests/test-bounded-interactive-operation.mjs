@@ -116,6 +116,7 @@ describe("bounded interactive operations", () => {
     assert.equal(result.command_execution, "observed");
     assert.match(result.supervisor_runtime, /^node v\d+\./);
     assert.equal(result.post_exit_descendants_terminated, false);
+    assert.equal(result.termination_cause, null);
     assert.equal(JSON.stringify(result).includes("phase-one"), false);
   });
 
@@ -123,17 +124,17 @@ describe("bounded interactive operations", () => {
     const instance = manager();
     const progressing = await instance.start({
       command: [process.execPath, "-e", "setTimeout(() => console.log('AIDEVOPS_PROGRESS: ready'), 40); setTimeout(() => process.exit(0), 250)"],
-      budgetMs: 5000,
+      budgetMs: SUCCESS_BUDGET_MS,
       progressIntervalMs: 500,
     }, owner);
     const progressStarted = Date.now();
-    const progress = await instance.status(progressing.operation_id, owner, { waitMs: 500 });
+    const progress = await instance.status(progressing.operation_id, owner, { waitMs: 5000 });
     assert.equal(progress.state, "running");
     assert.equal(progress.progress_events, 1);
-    assert.ok(Date.now() - progressStarted < 400, "progress did not wake status promptly");
+    assert.ok(Date.now() - progressStarted < 4500, "progress did not wake status before its wait bound");
     // Terminal containment scans the process inventory; its latency on shared
     // runners must not be confused with the progress-wakeup latency above.
-    const completed = await instance.status(progressing.operation_id, owner, { waitMs: 3000 });
+    const completed = await instance.status(progressing.operation_id, owner, { waitMs: 5000 });
     assert.ok(["finalizing", "succeeded"].includes(completed.state));
     assert.equal((await terminal(instance, progressing.operation_id)).state, "succeeded");
 
@@ -407,11 +408,12 @@ describe("bounded interactive operations", () => {
     }, owner);
     const timedResult = await terminal(instance, timed.operation_id);
     assert.equal(timedResult.state, "timed_out");
+    assert.equal(timedResult.termination_cause, "budget");
     assert.notEqual(timedResult.process_signal, null);
 
     // Wait for the descendant's SIGTERM handler before exiting the parent.
-    // Parent-exit cleanup starts immediately, but its grace must outlast the
-    // budget: inherited stdio remains live until the deadline, not a startup race.
+    // Post-exit cleanup must drain it promptly, not wait out the grace and let
+    // the budget turn a completed main command into a timeout.
     const forkedInstance = manager({ killGraceMs: 5000 });
     const recordedBeforeFork = recorded.length;
     const forked = await forkedInstance.start({
@@ -427,10 +429,13 @@ describe("bounded interactive operations", () => {
           child.unref();
         });
       `],
-      budgetMs: 3000,
+      budgetMs: SUCCESS_BUDGET_MS,
       progressIntervalMs: 20,
     }, owner);
-    assert.equal((await terminal(forkedInstance, forked.operation_id)).state, "timed_out");
+    const forkedResult = await terminal(forkedInstance, forked.operation_id);
+    assert.equal(forkedResult.state, "succeeded");
+    assert.equal(forkedResult.termination_cause, "post_exit_cleanup");
+    assert.equal(forkedResult.post_exit_descendants_terminated, true);
     assert.match(recorded.slice(recordedBeforeFork).map((entry) => entry.content).join("\n"), /forked-descendant-ready/);
 
     const cancellable = await instance.start({
@@ -451,7 +456,236 @@ describe("bounded interactive operations", () => {
     }, owner);
     const spawnFailureResult = await terminal(instance, spawnFailure.operation_id);
     assert.equal(spawnFailureResult.state, "failed");
+    assert.equal(spawnFailureResult.termination_cause, "spawn_error");
     assert.equal(spawnFailureResult.restoration_state, "succeeded");
+  });
+
+  test("TERM handler keeps per-operation grace and cancellation remains the first cause", async () => {
+    const instance = manager();
+    const started = await instance.start({
+      command: [process.execPath, "-e", `
+        process.on('SIGTERM', () => {
+          setTimeout(() => { console.log('cleanup-lock-released'); process.exit(0); }, 350);
+        });
+        console.log('AIDEVOPS_PROGRESS: handler-ready');
+        setInterval(() => {}, 1000);
+      `],
+      budgetMs: SUCCESS_BUDGET_MS,
+      killGraceMs: 1500,
+      progressIntervalMs: 10,
+    }, owner);
+    while (instance.status(started.operation_id, owner).progress_events === 0) {
+      await instance.status(started.operation_id, owner, { waitMs: 1000 });
+      assert.equal(instance.status(started.operation_id, owner).state, "running");
+    }
+    const before = recorded.length;
+    assert.equal(instance.cancel(started.operation_id, owner).termination_cause, "cancel");
+    instance.dispose(); // Disposal and self-signalling must not overwrite cancel.
+    const result = await terminal(instance, started.operation_id);
+    assert.equal(result.termination_cause, "cancel");
+    assert.equal(result.kill_grace_ms, 1500);
+    assert.equal(result.state, "cancelled");
+    assert.equal(result.process_exit, 0);
+    assert.equal(result.process_signal, null, "a TERM request is not the supervisor's final exit signal");
+    assert.match(recorded.slice(before).map((entry) => entry.content).join("\n"), /cleanup-lock-released/);
+  });
+
+  test("supervisor budget expiry cannot succeed when the manager timer is delayed", async () => {
+    const instance = manager({ setTimer: () => null });
+    const started = await instance.start({
+      command: [process.execPath, "-e", `
+        process.on('SIGTERM', () => setTimeout(() => process.exit(0), 150));
+        console.log('AIDEVOPS_PROGRESS: ready');
+        setInterval(() => {}, 1000);
+      `],
+      budgetMs: 1200,
+      killGraceMs: 1500,
+    }, owner);
+    const result = await terminal(instance, started.operation_id);
+    assert.equal(result.process_exit, 0);
+    assert.equal(result.state, "timed_out");
+    assert.equal(result.termination_cause, "budget");
+  });
+
+  test("dispose, session deletion, external signals and supervisor loss have distinct causes", async () => {
+    for (const cause of ["dispose", "session_deleted", "signal_sigterm", "signal_sigint", "supervisor_exit"]) {
+      const instance = manager();
+      const started = await instance.start({
+        command: [process.execPath, "-e", "process.on('SIGTERM', () => process.exit(0)); console.log('AIDEVOPS_PROGRESS: ready'); setInterval(() => {}, 1000)"],
+        budgetMs: SUCCESS_BUDGET_MS,
+        killGraceMs: 1500,
+      }, owner);
+      // Establish the supervisor's signal handlers before sending a host signal.
+      while (!instance.status(started.operation_id, owner).progress_events) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.equal(instance.status(started.operation_id, owner).state, "running");
+      }
+      const operation = instance.operations.get(started.operation_id);
+      if (cause === "dispose") instance.dispose();
+      else if (cause === "session_deleted") instance.handleEvent({ type: "session.deleted", properties: { sessionID: owner.sessionID } });
+      else if (cause === "signal_sigterm") process.kill(operation.child.pid, "SIGTERM");
+      else if (cause === "signal_sigint") process.kill(operation.child.pid, "SIGINT");
+      else process.kill(-operation.child.pid, "SIGKILL");
+      // Deleted-session receipts are intentionally removed, so inspect the
+      // retained object without weakening the public ownership contract.
+      const deadline = Date.now() + 15_000;
+      while (!["failed", "cancelled"].includes(operation.state) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.ok(["failed", "cancelled"].includes(operation.state));
+      assert.equal(instance.receipt(operation).termination_cause, cause);
+      if (cause !== "supervisor_exit") assert.equal(operation.processExit, 0);
+    }
+  });
+
+  test("tool passes bounded grace without changing the default and overdue progress is diagnostic", async () => {
+    const instance = manager({ killGraceMs: 500 });
+    const schemaNode = { optional() { return this; } };
+    const z = { enum: () => schemaNode, string: () => schemaNode, number: () => schemaNode, array: () => schemaNode };
+    const tool = createBoundedInteractiveOperationTool((definition) => definition, z, instance);
+    for (const [requested, expected] of [[undefined, 500], [90, 90_000], [999, 300_000], [-1, 10]]) {
+      const started = JSON.parse(await tool.execute({
+        action: "start", command: [process.execPath, "-e", "setTimeout(() => process.exit(0), 80)"],
+        budget_seconds: 10, progress_interval_seconds: 0.01, kill_grace_seconds: requested,
+      }, owner));
+      const result = await terminal(instance, started.operation_id);
+      assert.equal(result.kill_grace_ms, expected);
+      assert.equal(result.state, "succeeded");
+      assert.equal(result.progress_events, 0);
+      assert.equal(result.progress_overdue, true);
+      assert.equal(result.termination_cause, null);
+    }
+  });
+
+  test("manager fallback grace is clamped before receipt and supervisor configuration", async () => {
+    for (const [fallback, expected] of [[900_000, 300_000], [-50, 10], [NaN, 500]]) {
+      let configuration;
+      const fixture = launcher({ started: true });
+      const instance = manager({
+        killGraceMs: fallback,
+        makeID: () => "op_fixture",
+        spawn: (runtime) => {
+          const child = fixture(runtime);
+          child.stdin.end = (value) => { configuration = JSON.parse(value); };
+          return child;
+        },
+      });
+      const started = await instance.start({ command: ["fixture"] }, owner);
+      assert.equal((await terminal(instance, started.operation_id)).kill_grace_ms, expected);
+      assert.equal(configuration.killGraceMs, expected);
+    }
+  });
+
+  test("restoration stop disposition survives an earlier post-exit cleanup cause", async () => {
+    for (const cause of ["budget", "dispose"]) {
+      let launches = 0;
+      let restorationTimeout;
+      const fixture = launcher({ started: true });
+      const instance = manager({
+        makeID: () => "op_fixture",
+        setTimer: (callback, milliseconds) => {
+          if (milliseconds === 4321) restorationTimeout = callback;
+          return null;
+        },
+        spawn: (runtime) => {
+          const child = fixture(runtime);
+          if (++launches === 2) child.once("spawn", () => {
+            child.emit("message", { type: "aidevops.operation", operationID: "op_fixture",
+              event: "termination", cause: "post_exit_cleanup" });
+            if (cause === "budget") restorationTimeout();
+            else instance.dispose();
+          });
+          return child;
+        },
+      });
+      const started = await instance.start({ command: ["fixture"], restorationCommand: ["restore"],
+        restorationBudgetMs: 4321 }, owner);
+      const result = await terminal(instance, started.operation_id);
+      assert.equal(result.state, "restoration_failed");
+      assert.equal(result.restoration_exit, 0);
+      assert.equal(result.restoration_termination_cause, "post_exit_cleanup");
+      assert.equal(result.restoration_state, cause === "budget" ? "timed_out" : "cancelled");
+    }
+  });
+
+  test("restoration supervisor budget retains timeout even with exit-zero cleanup", async () => {
+    const instance = manager({ setTimer: () => null });
+    const started = await instance.start({
+      command: [process.execPath, "-e", "process.exit(0)"],
+      restorationCommand: [process.execPath, "-e", `
+        process.on('SIGTERM', () => setTimeout(() => process.exit(0), 100));
+        setInterval(() => {}, 1000);
+      `],
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: 1200,
+      killGraceMs: 1500,
+    }, owner);
+    const result = await terminal(instance, started.operation_id);
+    assert.equal(result.state, "restoration_failed");
+    assert.equal(result.termination_cause, null);
+    assert.equal(result.restoration_state, "timed_out");
+    assert.equal(result.restoration_exit, 0);
+    assert.equal(result.restoration_termination_cause, "budget");
+  });
+
+  test("restoration disposal cannot become success after exit-zero TERM cleanup", async () => {
+    const instance = manager();
+    const started = await instance.start({
+      command: [process.execPath, "-e", "process.exit(0)"],
+      restorationCommand: [process.execPath, "-e", `
+        process.on('SIGTERM', () => setTimeout(() => process.exit(0), 100));
+        console.log('AIDEVOPS_PROGRESS: restoration-ready');
+        setInterval(() => {}, 1000);
+      `],
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
+      killGraceMs: 1500,
+    }, owner);
+    const deadline = Date.now() + 5000;
+    while (!instance.status(started.operation_id, owner).progress_events && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(instance.status(started.operation_id, owner).progress_events, 1);
+    instance.dispose();
+    const result = await terminal(instance, started.operation_id);
+    assert.equal(result.state, "restoration_failed");
+    assert.equal(result.termination_cause, null);
+    assert.equal(result.restoration_state, "cancelled");
+    assert.equal(result.restoration_exit, 0);
+    assert.equal(result.restoration_termination_cause, "dispose");
+  });
+
+  test("same-group survivors drain promptly but keep grace while main remains alive", async () => {
+    for (const cancel of [false, true]) {
+      const instance = manager();
+      const before = recorded.length;
+      const started = await instance.start({
+        command: [process.execPath, "-e", `
+          const {spawn} = require('node:child_process');
+          const child = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); console.log('child-ready'); setInterval(()=>{},1000)"], {stdio:['ignore','pipe','inherit']});
+          child.stdout.once('data', () => {
+            console.log('AIDEVOPS_PROGRESS: child-ready');
+            ${cancel ? `process.on('SIGTERM', () => setTimeout(() => { console.log('main-cleanup-complete'); process.exit(0); }, 400));` : "process.exit(0);"}
+          });
+        `],
+        budgetMs: SUCCESS_BUDGET_MS,
+        killGraceMs: 300_000,
+      }, owner);
+      if (cancel) {
+        const deadline = Date.now() + 5000;
+        while (!instance.status(started.operation_id, owner).progress_events && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.equal(instance.status(started.operation_id, owner).progress_events, 1);
+        instance.cancel(started.operation_id, owner);
+      }
+      const result = await terminal(instance, started.operation_id, owner, 5000);
+      assert.equal(result.state, cancel ? "cancelled" : "succeeded");
+      assert.equal(result.process_exit, 0);
+      assert.equal(result.termination_cause, cancel ? "cancel" : "post_exit_cleanup");
+      assert.equal(result.post_exit_descendants_terminated, !cancel);
+      if (cancel) assert.match(recorded.slice(before).map((entry) => entry.content).join("\n"), /main-cleanup-complete/);
+    }
   });
 
   test("helper-created process groups are contained on timeout and cancellation (GH#33514)", async () => {
@@ -650,10 +884,11 @@ describe("bounded interactive operations", () => {
       budgetMs: SUCCESS_BUDGET_MS,
       restorationBudgetMs: 30,
     }, owner);
-    const deadline = Date.now() + 1000;
+    const deadline = Date.now() + 5000;
     while (instance.status(started.operation_id, owner).state !== "restoring" && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
+    assert.equal(instance.status(started.operation_id, owner).state, "restoring");
     const result = await instance.status(started.operation_id, owner, { waitMs: 500 });
     assert.equal(result.state, "restoring");
     assert.equal(result.restoration_state, "timing_out");

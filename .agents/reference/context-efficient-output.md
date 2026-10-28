@@ -79,10 +79,13 @@ available for progress reports and scoped cancellation.
 The receipt distinguishes running, failed, timed-out, cancelled, and
 restoration-failed states. `AIDEVOPS_PROGRESS: ...` lines count as explicit
 meaningful progress; ordinary output is not a heartbeat substitute and is not
-copied into status receipts. An optional restoration argv runs after every
+copied into status receipts. `progress_overdue` is diagnostic only: missing
+progress does not cancel an operation or shorten its budget. An optional restoration argv runs after every
 terminal command path, and its exit remains independently visible. Raw output
 is represented only by an opaque output ID when terminal evidence storage is
-available.
+available. Restoration receipts retain their own `restoration_termination_cause`
+and `restoration_signal`: a budget stop remains `timed_out`, and a disposal stop
+remains `cancelled`, even when a TERM handler exits zero during cleanup.
 
 After a terminal receipt reports `evidence_state: recorded`, retrieve a bounded
 slice through the same native tool with action `output`, the receipt's
@@ -94,6 +97,21 @@ Cancellation is restricted to the runtime session that started the operation
 and signals only the retained detached process group. The implementation is an
 OpenCode process-lifetime adapter, not a durable scheduler: restarting or
 forcibly terminating OpenCode expires the in-memory operation generation.
+Plugin disposal or reload also terminates active operations; they do not survive
+it. Receipts record the first observed `termination_cause` (for example `budget`,
+`cancel`, `dispose`, `session_deleted`, `signal_sigterm`, `signal_sigint`,
+`parent_disconnect`, `post_exit_cleanup`, `spawn_error`, or `supervisor_exit`).
+`dispose` covers disposal during reload too; it does not identify why the host
+disposed the plugin. `supervisor_exit` is a fallback for an abnormal supervisor
+exit without an earlier cause, not proof of who sent a signal. These diagnostics
+do not establish the cause of historical interruptions, and receipts remain
+in-memory/session-owned; a host crash may prevent final evidence from being saved.
+Start accepts optional `kill_grace_seconds`, clamped to 0.01–300 seconds, for a
+live command's TERM handler to stop remote work and release locks before SIGKILL.
+The default remains 0.5 seconds. `kill_grace_ms` records the effective grace;
+it also applies to restoration. Once the main command exits, owned descendants
+are drained, not kept alive for the rest of the grace period. Budget expiry can
+therefore take up to the grace period longer to finish.
 Commands must remain in the supervisor-owned process group; self-daemonizing or
 new-session (`setsid`) commands are unsupported and belong in a purpose-built
 service or the headless scheduler rather than this interactive adapter.
