@@ -413,7 +413,7 @@ cancel_super_dir="${TMPDIR_TEST}/cancel-superseded"
 write_fixture "$cancel_super_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""}]'
 write_fixture "$cancel_super_dir" 2 '[{"name":"Build","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
 set +e
-cancel_super_output=$(run_fixture_wait "$cancel_super_dir" 2>&1)
+cancel_super_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=180 run_fixture_wait "$cancel_super_dir" 2>&1)
 cancel_super_rc=$?
 set -e
 [[ "$cancel_super_rc" -eq 0 ]] && pass "superseded cancel is not terminal" || fail "superseded cancel is not terminal" "got ${cancel_super_rc}"
@@ -429,6 +429,7 @@ set -e
 
 # Exercise timer transitions deterministically without adding a test clock.
 cancel_timer_output=$(
+	# shellcheck source=../gh-checks-wait-helper.sh
 	source "$HELPER" help >/dev/null
 	_GCW_CANCEL_GRACE_SECONDS=180
 	cancel_a='[{"name":"A","workflow":"CI","bucket":"cancel","link":"run-a"}]'
@@ -449,7 +450,7 @@ cancel_timer_output=$(
 assert_eq "grace follows the cancelled set without extending unchanged cancellations" \
 	$'pending:100\nfailure:100\npending:281\npending:281\nfailure:281\npending:' "$cancel_timer_output"
 
-for invalid_grace in 08 180s -1 86401 999999999999999999999999; do
+for invalid_grace in '' 08 180s -1 86401 999999999999999999999999; do
 	set +e
 	invalid_grace_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS="$invalid_grace" run_fixture_wait "$cancel_final_dir" --timeout 0 2>&1)
 	invalid_grace_rc=$?
