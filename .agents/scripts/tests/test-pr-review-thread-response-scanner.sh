@@ -67,7 +67,6 @@ test_release_label_is_rechecked_before_launch() {
 	for label_result in release lookup-failed; do
 		setup_test_env
 		export STUB_PR_VIEW="Release"$'\t'"chore/release-v1.2.3-provenance"$'\t'"${TEST_HEAD_OID_1}"$'\t'"worker-bot"
-		export STUB_REMOTE_HEAD="chore/release-v1.2.3-provenance"
 		printf '%s\n' "$label_result" >"${TEST_ROOT}/label-result"
 		mv "${TEST_ROOT}/bin/gh" "${TEST_ROOT}/bin/gh-original"
 		cat >"${TEST_ROOT}/bin/gh" <<'GH_RELEASE_RACE'
