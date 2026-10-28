@@ -6,6 +6,16 @@ import { boundedInteger, scalar } from "./bounded-operation-values.mjs";
 const MAX_CAPTURE_BYTES = 1024 * 1024;
 const MAX_PROGRESS_REMAINDER_BYTES = 4096;
 const RECEIPT_SCHEMA = "aidevops.interactive-operation/v1";
+const TERMINATION_DISPOSITIONS = new Map([
+  ["budget", "timed_out"],
+  ["cancel", "cancelled"],
+  ["dispose", "cancelled"],
+  ["session_deleted", "cancelled"],
+  ["signal_sigterm", "failed"],
+  ["signal_sigint", "failed"],
+  ["parent_disconnect", "failed"],
+  ["spawn_error", "failed"],
+]);
 
 export function appendCapture(operation, chunk) {
   const value = Buffer.from(chunk);
@@ -56,32 +66,38 @@ export function trimTerminalOperations(operations, maximum) {
   throw new Error("too many active bounded operations");
 }
 
+// The independent supervisor budget may beat the manager's timeout callback.
+// An exit-0 TERM handler must not turn that timeout or an external stop into success.
+function applyTerminationMessage(operation, message) {
+  operation.terminationCause ||= scalar(message.cause);
+  if (operation.disposition !== "running") return;
+  const disposition = TERMINATION_DISPOSITIONS.get(message.cause);
+  if (!disposition) return;
+  operation.disposition = disposition;
+  operation.state = disposition === "timed_out" ? "timing_out" : "cancelling";
+}
+
 // Applies a supervisor IPC event for this operation and stage. Containment is
 // reported only for the main command (GH#33514).
 export function applySupervisorMessage(operation, stage, message) {
   if (message?.type !== "aidevops.operation" || message.operationID !== operation.id) return;
-  if (message.event === "termination" && stage === "main") {
-    operation.terminationCause ||= scalar(message.cause);
-    // The supervisor budget is independent of the manager event loop. Its
-    // receipt may arrive before the manager's timeout callback; a TERM handler
-    // exiting 0 must not turn that timeout (or an external stop) into success.
-    if (operation.disposition === "running") {
-      if (message.cause === "budget") operation.disposition = "timed_out";
-      else if (["cancel", "dispose", "session_deleted"].includes(message.cause)) operation.disposition = "cancelled";
-      else if (["signal_sigterm", "signal_sigint", "parent_disconnect", "spawn_error"].includes(message.cause)) operation.disposition = "failed";
-      if (operation.disposition !== "running") {
-        operation.state = operation.disposition === "timed_out" ? "timing_out" : "cancelling";
-      }
-    }
-  } else if (message.event === "containment" && stage === "main") {
-    operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
-    operation.attributionComplete = message.attributionComplete === true;
-    operation.postExitDescendantsTerminated = message.postExitDescendantsTerminated === true;
-  } else if (message.event === "command_started" && stage === "main") {
-    operation.commandStarted = true;
-    operation.supervisorRuntime = scalar(message.runtime);
-  } else if (message.event === "command_started") {
-    operation.restorationCommandStarted = true;
+  if (stage !== "main") {
+    if (message.event === "command_started") operation.restorationCommandStarted = true;
+    return;
+  }
+  switch (message.event) {
+    case "termination":
+      applyTerminationMessage(operation, message);
+      break;
+    case "containment":
+      operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
+      operation.attributionComplete = message.attributionComplete === true;
+      operation.postExitDescendantsTerminated = message.postExitDescendantsTerminated === true;
+      break;
+    case "command_started":
+      operation.commandStarted = true;
+      operation.supervisorRuntime = scalar(message.runtime);
+      break;
   }
 }
 
