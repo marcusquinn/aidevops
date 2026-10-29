@@ -44,6 +44,10 @@ class EvidenceTests(unittest.TestCase):
         self.source_files = {}
         self.workflow = "name: Standalone\njobs:\n  build:\n    runs-on: ubuntu-latest\n"
         self.pin = None
+        self.parent = "4" * 40
+        self.comparison = {"status": "ahead", "total_commits": 1, "commits": [{"sha": self.parent}]}
+        self.docs_commit = {"parents": [{"sha": self.source}],
+                            "files": [{"filename": "docs/metrics/activity.svg", "status": "modified"}]}
 
     def api_content(self, path, value):
         data = value.encode() if isinstance(value, str) else json.dumps(value).encode()
@@ -55,6 +59,8 @@ class EvidenceTests(unittest.TestCase):
             endpoint = args[1].removeprefix("repos/" + self.repo + "/")
             mapping = {
                 "commits/" + self.commit: self.commit_data,
+                "commits/" + self.parent + "?per_page=100": self.docs_commit,
+                "compare/" + self.source + "..." + self.parent: self.comparison,
                 "releases/tags/v2.0.12": self.release,
                 "contents/CloudronVersions.json?ref=" + self.source: self.api_content(MODULE.CATALOG, self.before),
                 "contents/CloudronVersions.json?ref=" + self.commit: self.api_content(MODULE.CATALOG, self.after),
@@ -240,6 +246,84 @@ class EvidenceTests(unittest.TestCase):
                 self.commit_data = dict(original, **change)
                 with self.assertRaises(MODULE.EvidenceError):
                     self.verify()
+
+    def rebase_catalog(self):
+        self.commit_data["parents"] = [{"sha": self.parent}]
+        self.commit_data["commit"] = {"message": "Publish catalog\n\nCloudron-Source: " + self.source}
+
+    def test_docs_only_rebase_accepts_publisher_allowlist(self):
+        self.rebase_catalog()
+        self.workflow = self.managed_workflow()
+        for path in ("README.md", "docs/metrics/activity.svg", "metrics/activity.svg",
+                     ".github/metrics/activity.svg", ".github/star-history/activity.svg",
+                     "star-history.svg", "star-history-dark.svg"):
+            self.docs_commit["files"] = [{"filename": path, "status": "modified"}]
+            with self.subTest(path=path):
+                self.assertTrue(self.verify())
+
+    def test_docs_only_rebase_rejects_package_changes_and_rename_origins(self):
+        self.rebase_catalog()
+        for path in (MODULE.CATALOG, "CloudronManifest.json", "Dockerfile", "start.sh",
+                     "README.md.sh", "other/docs/file", "docs-other/file", ".github/workflows/publish.yml"):
+            for renamed in (False, True):
+                self.docs_commit["files"] = [{"filename": "docs/moved" if renamed else path,
+                                             **({"previous_filename": path} if renamed else {})}]
+                with self.subTest(path=path, renamed=renamed), self.assertRaisesRegex(
+                        MODULE.EvidenceError, "outside the docs-only allowlist"):
+                    self.verify()
+
+    def test_docs_only_rebase_requires_single_exact_trailer(self):
+        self.rebase_catalog()
+        trailer = "Cloudron-Source: " + self.source
+        for message in ("Publish catalog", "Publish catalog\n\nCloudron-Source: " + "5" * 40,
+                        "Publish catalog\n\n" + trailer + "\n" + trailer,
+                        "Publish catalog\n\n" + trailer + "\ncloudron-source: " + self.source,
+                        "Publish catalog\n" + trailer, "Publish catalog\n\n" + trailer + "\nNot a trailer"):
+            self.commit_data["commit"]["message"] = message
+            with self.subTest(message=message), self.assertRaisesRegex(MODULE.EvidenceError, "trailer"):
+                self.verify()
+
+    def test_docs_only_rebase_rejects_non_ancestor_and_incomplete_history(self):
+        self.rebase_catalog()
+        original = copy.deepcopy(self.comparison)
+        for change in ({"status": "diverged"}, {"status": "behind"}, {"status": "identical"},
+                       {"total_commits": 2}, {"total_commits": 0, "commits": []},
+                       {"total_commits": 251, "commits": [{"sha": self.parent}] * 251}):
+            self.comparison = dict(original, **change)
+            with self.subTest(change=change), self.assertRaises(MODULE.EvidenceError):
+                self.verify()
+
+    def test_docs_only_rebase_checks_history_not_net_diff(self):
+        self.rebase_catalog()
+        # A clean net comparison must not hide a package edit later reverted.
+        self.comparison["files"] = [{"filename": "docs/metrics/activity.svg"}]
+        self.docs_commit["files"].append({"filename": "Dockerfile", "status": "modified"})
+        with self.assertRaisesRegex(MODULE.EvidenceError, "outside the docs-only allowlist"):
+            self.verify()
+
+    def test_docs_only_rebase_rejects_truncated_files(self):
+        self.rebase_catalog()
+        self.docs_commit["files"] *= 100
+        with self.assertRaisesRegex(MODULE.EvidenceError, "truncated"):
+            self.verify()
+
+    def test_docs_only_rebase_rejects_partial_merge_diff(self):
+        self.rebase_catalog()
+        # First-parent files can be docs-only while another parent differs in code.
+        self.docs_commit["parents"].append({"sha": "5" * 40})
+        with self.assertRaisesRegex(MODULE.EvidenceError, "history must be linear"):
+            self.verify()
+
+    def test_docs_only_rebase_keeps_catalog_and_attestation_boundaries(self):
+        self.rebase_catalog()
+        self.commit_data["files"].append({"filename": "README.md", "status": "modified"})
+        with self.assertRaisesRegex(MODULE.EvidenceError, "modify only the existing catalog"):
+            self.verify()
+        self.commit_data["files"].pop()
+        self.attest_mutation = lambda result, image: result["signature"]["certificate"].update(
+            sourceRepositoryDigest=self.parent)
+        with self.assertRaisesRegex(MODULE.EvidenceError, "expected source/workflow/run"):
+            self.verify()
 
     def test_catalog_cannot_change_history_or_manifest(self):
         mutations = [

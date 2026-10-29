@@ -547,6 +547,7 @@ test_permission_blocker_continuation() {
 		append_worker_headless_contract '/full-loop Resume after source denial'
 	) || status=1
 	[[ "$contract" == *'TERMINAL_BLOCKER_REASON=permission_required'* ]] || status=1
+	[[ "$contract" == *'host-local lock or serialization guard'* ]] || status=1
 	printf '%s\n' '{"type":"text","part":{"text":"BLOCKED: prior protected-source denial has no changed exact-context grant\nTERMINAL_BLOCKER_REASON=permission_required"}}' >"$output"
 	terminal_blocker_capture_output "$output" || status=1
 	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
@@ -1051,6 +1052,81 @@ test_unknown_hold_rearms_on_trusted_retry() {
 		status=1
 	fi
 	print_result "held unknown observation is queued and seeded; trusted retry or repaired brief releases it once" "$status"
+	return 0
+}
+
+# GH#35925: retry-only classes must be seeded on every runner, including old
+# timeout observations whose revision no longer matches the current task.
+test_retry_only_observation_recovery() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local reason="" association="" scenario="" tb_comments="" observation="" raw=""
+		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
+		local revision="" fingerprint="" body="" retry_at="" projected=0 receipts=0 rc=0
+		set_issue_status() {
+			projected=$((projected + 1))
+			return 0
+		}
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			receipts=$((receipts + 1))
+			tb_comments=$(jq -c --arg body "$marker" '. + [{id:30,body:$body,author_association:"MEMBER",created_at:"2026-10-29T04:00:00Z"}]' <<<"$tb_comments")
+			return 0
+		}
+		for reason in permission_required push_policy_timeout network_policy_timeout; do
+			terminal_blocker_rearms_on_revision "$reason" && exit 1
+			terminal_blocker_observation_recoverable "$reason" || exit 1
+			fingerprint=$(_terminal_blocker_hash "v2:${reason}")
+			revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" "$reason") || exit 1
+			# A legacy revision mismatch must not implicitly release retry-only holds.
+			[[ "$reason" == permission_required ]] || revision=cccccccccccccccccccccccc
+			observation=$(jq -nc --arg r "$revision" --arg f "$fingerprint" --arg reason "$reason" \
+				'[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->\nTerminal blocker: reason="+$reason+" owner=runner-recovery"),author:"runner-b",user:{login:"runner-b"},author_association:"MEMBER",created_at:"2026-10-29T02:00:00Z"}]')
+			raw=$(jq -nc --argjson c "$observation" '[$c]')
+			[[ "$(_tbr_seed_reason "$raw" other-runner)" == "$reason" ]] || exit 1
+			for scenario in unchanged brief dependency merge collaborator quoted predating; do
+				tb_comments="$observation" projected=0 receipts=0
+				local changed="$issue"
+				case "$scenario" in
+				brief) changed=$(jq -c '.body="corrected"' <<<"$issue") ;;
+				dependency) TEST_DEPENDENCIES='[{"number":99,"state":"closed"}]' ;;
+				merge) TEST_TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+				collaborator | quoted | predating)
+					association=OWNER body=terminal-blocker-circuit:retry retry_at=2026-10-29T03:00:00Z
+					[[ "$scenario" != collaborator ]] || association=COLLABORATOR
+					[[ "$scenario" != quoted ]] || body='> terminal-blocker-circuit:retry'
+					[[ "$scenario" != predating ]] || retry_at=2026-10-29T01:00:00Z
+					tb_comments=$(jq -c --arg a "$association" --arg body "$body" --arg at "$retry_at" '. + [{id:11,body:$body,author_association:$a,created_at:$at}]' <<<"$tb_comments")
+					;;
+				esac
+				terminal_blocker_observation_hold_active "$tb_comments" "$changed" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+				_tbr_release_circuit_hold owner/repo 42 "$changed" "$tb_comments" && exit 1
+				[[ "$projected" -eq 0 && "$receipts" -eq 0 ]] || exit 1
+				TEST_DEPENDENCIES='[]'
+				TEST_TARGET_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+			done
+			for association in OWNER MEMBER; do
+				projected=0 receipts=0
+				tb_comments=$(jq -c --arg a "$association" '. + [{id:12,body:"terminal-blocker-circuit:retry",author_association:$a,created_at:"2026-10-29T03:00:00Z"}]' <<<"$observation")
+				terminal_blocker_observation_hold_active "$tb_comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+				# Missing/foreign collaborator observation is never release authority.
+				for raw in '[]' "$(jq -c '.[0].author_association="COLLABORATOR"' <<<"$tb_comments")"; do
+					rc=0
+					_tbr_release_circuit_hold owner/repo 42 "$issue" "$raw" || rc=$?
+					[[ "$rc" -eq 1 && "$projected" -eq 0 ]] || exit 1
+				done
+				_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" || exit 1
+				_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" || exit 1
+				[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+			done
+		done
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "permission and policy timeout observations seed across runners and release exactly once only on trusted retry" "$status"
 	return 0
 }
 
@@ -1741,6 +1817,7 @@ main() {
 	test_first_observation_scope_hold_releases_on_revision
 	test_cross_runner_rearm_receipt
 	test_unknown_hold_rearms_on_trusted_retry
+	test_retry_only_observation_recovery
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

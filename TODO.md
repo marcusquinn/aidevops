@@ -111,7 +111,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
-- [ ] t18784 docs: hostinger.md: ImageMagick escalation outcome, CloudLinux changelog check, install dates, maintained OpenSSL 1.1.1w, WPVulnerability hidden = unchecked #documentation ref:GH#35914 logged:2026-10-29 -> [todo/tasks/t18784-brief.md]
+- [x] t18784 docs: hostinger.md: ImageMagick escalation outcome, CloudLinux changelog check, install dates, maintained OpenSSL 1.1.1w, WPVulnerability hidden = unchecked #documentation ref:GH#35914 logged:2026-10-29 -> [todo/tasks/t18784-brief.md] pr:#35916 completed:2026-10-29
 
 - [ ] t18783 OpenCode 2.x migration-readiness checks (V2 parity tracker) #feat #parent-task ref:GH#35902 logged:2026-10-29 -> [todo/tasks/t18783-brief.md]
 

@@ -10,7 +10,7 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export TEST_ROOT
 SCRIPT_DIR="$TEST_ROOT"
-cp "${SOURCE_DIR}/cloudron-release-evidence.py" "$TEST_ROOT/"
+cp "${SOURCE_DIR}/cloudron-release-evidence.py" "${SOURCE_DIR}/cloudron_caller_policy.py" "$TEST_ROOT/"
 REPOS_FILE="${TEST_ROOT}/repos.json"
 printf '%s\n' '{"initialized_repos":[{"slug":"owner/app","app_type":"cloudron-package"}]}' >"$REPOS_FILE"
 HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

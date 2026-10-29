@@ -31,6 +31,9 @@ _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
 # it needs the same wake conditions: a brief/dependency revision (its documented
 # repair path) or a trusted retry. Without them the hold never released.
 _TBC_REVISION_REARM_REASONS=' missing_files_scope files_scope_excluded input_required external_trigger_pending source_access_blocked target_code_blocker unknown '
+# GH#35925: these first-observation holds require scheduling consent, never a
+# revision change. Include legacy timeout observations without changing their hash.
+_TBC_RETRY_ONLY_REARM_REASONS=' permission_required push_policy_timeout network_policy_timeout '
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
 # Legacy/malformed IDs never let a tied retry clear evidence. For selection,
@@ -553,9 +556,23 @@ terminal_blocker_rearms_on_revision() {
 	return $?
 }
 
+# Retry authorizes scheduling only; permission and policy guards still run.
+terminal_blocker_rearms_on_retry_only() {
+	local reason="$1"
+	[[ -n "$reason" && "$_TBC_RETRY_ONLY_REARM_REASONS" == *" ${reason} "* ]]
+	return $?
+}
+
+# Both sets need recovery intake for a held first observation.
+terminal_blocker_observation_recoverable() {
+	local reason="$1"
+	terminal_blocker_rearms_on_revision "$reason" || terminal_blocker_rearms_on_retry_only "$reason"
+	return $?
+}
+
 # GH#34846: a runtime-owned blocked exit projects status:blocked from the first
 # observation, which has no circuit for the recovery owner to re-arm. Report
-# whether the newest trusted observation still holds a revision-re-armed class.
+# whether the newest trusted observation still holds a recoverable class.
 # Returns 0 (prints a summary) while the observed task revision is current and
 # no later OWNER/MEMBER retry exists; 1 when re-armed or not applicable; 2 when
 # the current revision cannot be computed (fail closed: keep the hold).
@@ -575,10 +592,14 @@ terminal_blocker_observation_hold_active() {
 	read -r observed_revision fingerprint <<<"$marker"
 	[[ "$observed_revision" =~ ^[a-f0-9]{24}$ && "$fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 1
 	reason=$(_terminal_blocker_reason "$fingerprint")
-	terminal_blocker_rearms_on_revision "$reason" || return 1
+	terminal_blocker_observation_recoverable "$reason" || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	if _terminal_blocker_retry_after "$retry" "$observation"; then
 		return 1
+	fi
+	if terminal_blocker_rearms_on_retry_only "$reason"; then
+		printf 'TERMINAL_BLOCKER_OBSERVATION_HOLD reason=%s task_revision=%s\n' "$reason" "$observed_revision"
+		return 0
 	fi
 	current_revision=$(terminal_blocker_task_revision "$issue_json" "$repo_slug" "$issue_number" "$repo_path" "$reason") || return 2
 	[[ "$current_revision" == "$observed_revision" ]] || return 1
