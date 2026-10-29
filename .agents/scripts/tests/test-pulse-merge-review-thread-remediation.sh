@@ -6,7 +6,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
-FEEDBACK_SCRIPT="${SCRIPT_DIR}/../pulse-merge-feedback.sh"
+# The trusted body-review classifier moved to the review sub-library; the stale
+# path made every case error out while reporting "Tests run: 0".
+FEEDBACK_SCRIPT="${SCRIPT_DIR}/../pulse-merge-feedback-review.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -63,7 +65,8 @@ SCANNER
 	PULSE_MERGE_BOOL_TRUE="true"
 	_PULSE_MERGE_REMEDIATION_OUTCOME=""
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
-	unset AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST
+	# Remediation-first is the default; cases opt back in or out explicitly.
+	export AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST=0
 	unset SCANNER_ATTENTION_REASON
 	unset DRY_RUN
 	REVIEW_PAGES_JSON='[]'
@@ -382,7 +385,7 @@ test_other_merge_failures_do_not_dispatch_review_thread_remediation() {
 	return 0
 }
 
-test_changes_requested_routes_by_default() {
+test_changes_requested_routes_when_remediation_first_disabled() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
 	local route_log="${TEST_ROOT}/route.log"
@@ -396,12 +399,12 @@ test_changes_requested_routes_by_default() {
 	_pulse_merge_dismiss_coderabbit_nits() { return 1; }
 
 	if _handle_changes_requested_review_gate 77 owner/repo CHANGES_REQUESTED 42 "origin:worker"; then
-		print_result "CHANGES_REQUESTED routes by default" 1 \
-			"Expected gate to skip merge after default routing"
+		print_result "CHANGES_REQUESTED routes when remediation-first is disabled" 1 \
+			"Expected gate to skip merge after legacy routing"
 	elif [[ ! -s "$SCANNER_LOG" ]] && grep -q 'route 77 owner/repo' "$route_log"; then
-		print_result "CHANGES_REQUESTED routes by default" 0
+		print_result "CHANGES_REQUESTED routes when remediation-first is disabled" 0
 	else
-		print_result "CHANGES_REQUESTED routes by default" 1 \
+		print_result "CHANGES_REQUESTED routes when remediation-first is disabled" 1 \
 			"scanner=$(tr '\n' ';' <"$SCANNER_LOG"), route=$(tr '\n' ';' <"$route_log"), log=$(tr '\n' ';' <"$LOGFILE")"
 	fi
 	teardown_test_env
@@ -454,9 +457,9 @@ test_changes_requested_translates_deferred_route_outcome() {
 	return 0
 }
 
-test_changes_requested_opt_in_dispatches_remediation_without_routing() {
+test_changes_requested_dispatches_remediation_by_default() {
 	setup_test_env
-	export AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST=1
+	unset AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST
 	define_helpers_under_test || { teardown_test_env; return 0; }
 	local route_log="${TEST_ROOT}/route.log"
 	: >"$route_log"
@@ -469,15 +472,15 @@ test_changes_requested_opt_in_dispatches_remediation_without_routing() {
 	_pulse_merge_dismiss_coderabbit_nits() { return 1; }
 
 	if _handle_changes_requested_review_gate 77 owner/repo CHANGES_REQUESTED 42 "origin:worker"; then
-		print_result "opt-in CHANGES_REQUESTED remediation keeps PR open before routing" 1 \
+		print_result "default CHANGES_REQUESTED remediation keeps PR open before routing" 1 \
 			"Expected gate to skip merge after queuing remediation"
 	elif grep -q 'include_human=true args=dispatch-pr owner/repo' "$SCANNER_LOG" \
 		&& grep -q ' 77$' "$SCANNER_LOG" \
 		&& [[ ! -s "$route_log" ]] \
 		&& grep -q 'review-thread remediation queued for PR #77 in owner/repo after CHANGES_REQUESTED review gate' "$LOGFILE"; then
-		print_result "opt-in CHANGES_REQUESTED remediation keeps PR open before routing" 0
+		print_result "default CHANGES_REQUESTED remediation keeps PR open before routing" 0
 	else
-		print_result "opt-in CHANGES_REQUESTED remediation keeps PR open before routing" 1 \
+		print_result "default CHANGES_REQUESTED remediation keeps PR open before routing" 1 \
 			"scanner=$(tr '\n' ';' <"$SCANNER_LOG"), route=$(tr '\n' ';' <"$route_log"), log=$(tr '\n' ';' <"$LOGFILE")"
 	fi
 	teardown_test_env
@@ -825,10 +828,10 @@ main() {
 	test_unresolved_conversation_dispatches_targeted_human_thread_remediation
 	test_repo_path_lookup_ignores_slug_case
 	test_other_merge_failures_do_not_dispatch_review_thread_remediation
-	test_changes_requested_routes_by_default
+	test_changes_requested_routes_when_remediation_first_disabled
 	test_changes_requested_translates_maintainer_route_outcome
 	test_changes_requested_translates_deferred_route_outcome
-	test_changes_requested_opt_in_dispatches_remediation_without_routing
+	test_changes_requested_dispatches_remediation_by_default
 	test_changes_requested_routes_when_remediation_unavailable
 	test_changes_requested_active_remediation_preserves_pr_without_routing
 	test_changes_requested_converged_remediation_exposes_repair_only_mode

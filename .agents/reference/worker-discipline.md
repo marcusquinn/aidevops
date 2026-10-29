@@ -234,6 +234,10 @@ AI brief owner:
 2. **Brief defect** (missing/wrong Files Scope, stale verification, impossible
    acceptance): make the minimal issue-body revision under brief-author
    authority. A relevant revision re-arms the circuit; no retry directive needed.
+   A requirement to salvage checkpoint commits or branches that no remote ref
+   holds is impossible acceptance for every other runner: rewrite it as
+   best-effort recovery with the functional spec as source of truth
+   (GH#35871).
 3. **Environment defect** (pinned runtime, dependencies, validator timeouts,
    push transport, a guard blocking its own fix): fix it when in scope, or
    deduplicate/file a worker-ready framework issue and link it with
@@ -242,6 +246,10 @@ AI brief owner:
    (defaults, naming, reversible choices, scope interpretation) and revise the
    brief, which re-arms the circuit. Otherwise name the exact missing input and
    its owner (user, contributor, maintainer or admin) on the issue once.
+   Closing an investigation as not reproduced is delegated: when its only
+   missing input is a recurrence and none was observed for 72h after its
+   diagnostics merged, close it with that evidence and the recurrence signal
+   that should reopen it (GH#35871).
 5. **Permission, secret, spend or trust boundary**: never grant or work around.
    Name the smallest human input on the issue (for example an interactive
    `aidevops setup --scope source-access`) and record `wake: human_decision`.

@@ -294,13 +294,16 @@ Paths:
   `dispatch-pr` with `PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true` for that PR
   and logs `review-thread remediation queued` if a bounded response worker was
   queued.
-- **Opt-in `CHANGES_REQUESTED` remediation-first**: setting
-  `AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST=1` lets eligible worker or
-  worker-takeover PRs try review-thread remediation before the historical
-  close-and-redispatch path. PRs labelled `external-contributor`, `no-takeover`,
-  or already `review-routed-to-issue` stay out of this path.
-- **Fallback review-feedback routing**: if remediation is not enabled or cannot
-  dispatch, `_route_pr_to_fix_worker ... review` routes worker-authored PR review
+- **Default `CHANGES_REQUESTED` remediation-first**: eligible worker or
+  worker-takeover PRs are repaired in place by a review-thread response worker
+  before any close-and-redispatch (default since GH#35871; closing on bot
+  feedback restarted review every generation, so PRs never merged). Set
+  `AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST=0` for the legacy route.
+  PRs labelled `external-contributor`, `no-takeover`, or already
+  `review-routed-to-issue` stay out of this path.
+- **Fallback review-feedback routing**: if remediation is disabled, cannot
+  dispatch, exhausts its bounded repeats, or a trusted human top-level change
+  request remains, `_route_pr_to_fix_worker ... review` routes worker-authored PR review
   feedback to the linked issue. `_dispatch_pr_fix_worker()` appends a `Review
   Feedback` section, sets `source:review-feedback`, closes/labels the stuck PR
   with `review-routed-to-issue`, and leaves the issue available for a fresh
