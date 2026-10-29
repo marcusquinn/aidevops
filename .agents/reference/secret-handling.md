@@ -9,6 +9,25 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `A
 
 ---
 
+## Reusing purpose-scoped tokens
+
+Prefer reusable, purpose-scoped tokens whose resource access and permissions
+can be edited in place (for example, GitHub fine-grained PATs) over one-off
+tokens per repository. Use one token per owner and purpose, select only the
+repositories needing that purpose, and extend that list when adding a repo.
+Keep least privilege by purpose: release and sync tokens stay separate with
+their own minimum permissions; never select all repositories or add unrelated
+permissions for convenience. Store each value once in gopass with
+`aidevops secret set NAME`, then distribute it through
+`aidevops secret NAME -- cmd` without printing it (pipe to `gh secret set` via
+stdin, not a value-bearing argument). Editing access preserves the value;
+regenerating a lost value revokes the old one, so update every repository copy.
+Use distinct local secret names for different owners rather than overwriting
+another owner's stored token; repository secret names remain unchanged.
+Reuse increases the impact of a leak to all selected repositories. Retain
+per-repository tokens when policy requires stronger isolation, or the platform
+cannot scope one token to an explicit repository set.
+
 ## Migrating plaintext credentials safely
 
 `aidevops secret import-credentials` imports **only the active tenant's store**
