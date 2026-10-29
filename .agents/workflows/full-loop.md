@@ -331,8 +331,9 @@ new identity and migrates cleanup plus release receipts while preserving owner,
 lease, worktree, branch, creation time, and irreversible cleanup state.
 
 **Generated Cloudron catalogs:** a repository-owned push/dispatch workflow may
-build at a merged release PR, then create a direct child commit containing only
-the generated `CloudronVersions.json` and tag that child. After independently
+build at a merged release PR, then create a commit containing only
+the generated `CloudronVersions.json` and tag it. Its parent may be the merged
+source or a docs-only descendant carrying the same package source. After independently
 verifying publication, record this explicitly:
 
 ```bash
@@ -340,8 +341,15 @@ full-loop-helper.sh record-published-release PR vX.Y.Z OWNER/REPO \
   --workflow cloudron-catalog-publish.yml --event push --generated-cloudron-catalog
 ```
 
-The default still requires tag/merge equality. The opt-in requires a direct
-catalog-only child, exactly one appended published entry, unchanged historical
+The default still requires tag/merge equality. The opt-in requires a catalog-only
+child of the source or a verified docs-only descendant. The latter requires one
+exact `Cloudron-Source` trailer on the tag commit and changes restricted to
+`README.md`, `docs/*`, `metrics/*`, `.github/metrics/*`, `.github/star-history/*`,
+`star-history.svg`, and `star-history-dark.svg`, matching the managed publisher.
+Every intervening commit is checked (including rename origins); incomplete API
+history (over 250 commits or 99 files per commit) fails closed. Intervening merges
+are rejected because REST commit diffs do not prove changes against every parent.
+It still requires exactly one appended published entry, unchanged historical
 entries and source manifest settings, and verified image/catalog attestations
 from the same successful invocation of the exact workflow at the merged source.
 It supports the repository's own GHCR namespace and `refs/heads/main`. Managed

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Read-only, fail-closed proof for a direct generated Cloudron catalog commit."""
+"""Read-only, fail-closed proof for a generated Cloudron catalog commit."""
 
 import argparse
 import base64
@@ -15,94 +15,15 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cloudron_caller_policy import EvidenceError, MANAGED_WORKFLOW, managed_caller, require  # noqa: E402
+
 CATALOG = "CloudronVersions.json"
 SOURCE_REF = "refs/heads/main"
 # The Cloudron CLI inlines changelog and text references (description,
 # postInstallMessage) but keeps the binary icon reference unchanged; listings
 # use iconUrl. These keys must therefore match the source manifest verbatim.
 UNRESOLVED_FILE_REF_KEYS = frozenset({"changelog", "icon"})
-MANAGED_WORKFLOW = "marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml"
-
-
-def caller_scalar(value):
-    """Accept only plain or simply quoted values from the managed template."""
-    require(not value.startswith(("&", "*", "!", "{", "[")), "unsupported managed caller value")
-    if value.startswith(("'", '"')):
-        require(len(value) >= 2 and value[-1:] == value[:1], "invalid managed caller quoting")
-        return value[1:-1]
-    return value
-
-
-def caller_mapping_lines(text):
-    """Yield mapping entries, excluding comments and block-scalar contents."""
-    block_indent = None
-    for line in text.splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        indent = len(line) - len(line.lstrip(" "))
-        if block_indent is not None and indent > block_indent:
-            continue
-        block_indent = None
-        match = re.fullmatch(r" +([A-Za-z_][A-Za-z0-9_-]*):(?: +(.*))?", line)
-        require(match is not None, "unsupported managed caller syntax; use the managed template")
-        key, value = match.groups()
-        value = (value or "").split(" #", 1)[0].strip()
-        if value in ("|", "|-", "|+", ">", ">-", ">+"):
-            block_indent = indent
-        yield indent, key, value
-
-
-def caller_jobs(text):
-    """Read the template's mapping/block-scalar subset, never guess YAML."""
-    jobs = re.findall(r"(?m)^jobs:\s*\n((?:[ \t]+[^\n]*\n|\s*\n|#[^\n]*\n)*)", text + "\n")
-    require(len(jobs) == 1, "managed caller requires one canonical jobs mapping")
-    root = {}
-    stack = [(0, root)]
-    for indent, key, value in caller_mapping_lines(jobs[0]):
-        while stack[-1][0] >= indent:
-            stack.pop()
-        require(indent == stack[-1][0] + 2, "invalid managed caller indentation")
-        parent = stack[-1][1]
-        require(key not in parent, "duplicate managed caller key")
-        if not value:
-            parent[key] = {}
-            stack.append((indent, parent[key]))
-        else:
-            parent[key] = caller_scalar(value)
-    return root
-
-
-def managed_caller(text, require_secret=False):
-    """Bound the reusable signer to an unambiguous exact-source managed caller.
-
-    Unsupported YAML fails closed. Standalone receipt verification keeps its
-    existing signer policy; approval requests require the managed caller.
-    """
-    if MANAGED_WORKFLOW not in text:
-        require(not require_secret, "release approval requires the managed catalog caller template")
-        return None
-    callers = [job for job in caller_jobs(text).values() if isinstance(job, dict)
-               and isinstance(job.get("uses"), str) and job["uses"].startswith(MANAGED_WORKFLOW + "@")]
-    require(len(callers) == 1, "expected exactly one managed catalog caller")
-    caller = callers[0]
-    pin = caller["uses"].removeprefix(MANAGED_WORKFLOW + "@")
-    require(re.fullmatch(r"[0-9a-f]{40}", pin) is not None, "managed caller must pin a full commit")
-    require(isinstance(caller.get("with"), dict) and caller["with"].get("aidevops_ref") == pin,
-            "managed caller aidevops_ref must equal its uses pin")
-    if require_secret:
-        require(isinstance(caller.get("secrets"), dict)
-                and caller["secrets"].get("CLOUDRON_RELEASE_PAT") == "${{ secrets.CLOUDRON_RELEASE_PAT }}",
-                "managed caller must explicitly pass CLOUDRON_RELEASE_PAT from secrets.CLOUDRON_RELEASE_PAT")
-    return pin
-
-
-class EvidenceError(Exception):
-    """An incomplete or inconsistent publication proof."""
-
-
-def require(condition, message):
-    if not condition:
-        raise EvidenceError(message)
 
 
 def unique_object(pairs):
@@ -174,12 +95,44 @@ class CatalogEvidence:
 
     def generated_commit(self):
         commit = self.api("commits/" + self.commit)
-        require(commit["sha"] == self.commit and len(commit["parents"]) == 1
-                and commit["parents"][0]["sha"] == self.source, "tag must be a direct child of the merged source")
+        require(commit["sha"] == self.commit and len(commit["parents"]) == 1,
+                "tag must have exactly one parent")
+        parent = commit["parents"][0]["sha"]
+        if parent != self.source:
+            self.docs_only_parent(commit, parent)
         files = commit["files"]
         require(len(files) == 1 and files[0]["filename"] == CATALOG
                 and files[0]["status"] == "modified" and "previous_filename" not in files[0],
                 "generated commit must modify only the existing catalog")
+
+    def docs_only_parent(self, commit, parent):
+        # aidevops:trust-boundary — tolerate only the publisher's attested docs-only
+        # rebase; the tag trailer is not a substitute for ancestry or attestations.
+        message = commit.get("commit", {}).get("message", "").strip()
+        trailers = message.rsplit("\n\n", 1)[-1]
+        source_lines = re.findall(r"(?im)^Cloudron-Source:[ \t]*(.*)$", message)
+        require(source_lines == [self.source]
+                and all(re.fullmatch(r"[A-Za-z0-9-]+: [^\n]+", line) for line in trailers.splitlines())
+                and "Cloudron-Source: " + self.source in trailers.splitlines(),
+                "rebased catalog requires one exact Cloudron-Source trailer")
+        comparison = self.api("compare/" + self.source + "..." + parent)
+        require(comparison["status"] == "ahead", "catalog parent must descend from the merged source")
+        commits = comparison["commits"]
+        require(0 < len(commits) == comparison["total_commits"] <= 250,
+                "docs-only comparison must contain complete bounded history")
+        # Match both publisher allowlists exactly. Inspect each commit, not only
+        # the net diff, so reverted package changes cannot masquerade as docs-only.
+        allowed = r"README\.md|docs/.*|metrics/.*|\.github/metrics/.*|\.github/star-history/.*|star-history\.svg|star-history-dark\.svg"
+        for item in commits:
+            intervening = self.api("commits/" + item["sha"] + "?per_page=100")
+            # REST merge diffs cover only the first parent, unlike the publisher's
+            # --diff-merges=separate. Reject merges rather than accept partial proof.
+            require(len(intervening["parents"]) == 1, "docs-only history must be linear")
+            files = intervening["files"]
+            require(len(files) < 100, "docs-only commit file list may be truncated")
+            require(all(re.fullmatch(allowed, file[key]) is not None
+                        for file in files for key in ("filename", "previous_filename") if key in file),
+                    "catalog parent differs from source outside the docs-only allowlist")
 
     def catalog(self):
         before = decode_json(self.content(CATALOG, self.source))

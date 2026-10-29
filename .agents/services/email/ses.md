@@ -20,7 +20,7 @@ tools:
 
 ## Quick Reference
 
-- **Access**: named SSO profile preferred; account-tagged secrets for unattended work. See `services/hosting/aws.md` for provisioning, naming, rotation and compromise.
+- **Access**: named login/SSO profile preferred; account-tagged secrets for unattended work. See `services/hosting/aws.md` for readiness, provisioning, rotation and compromise.
 - **Config**: `configs/ses-config.json.txt` → `configs/ses-config.json`, metadata only; override location with `SES_CONFIG_FILE`. Requires AWS CLI v2 and jq.
 - **Auth**: `profile` or `credential_prefix` per account; explicit `--profile` before the command overrides metadata. Never store AWS key values in JSON.
 - **IAM**: SESv2 CLI commands still use IAM actions with the `ses:` prefix.
@@ -120,6 +120,60 @@ The sender must attach the set with API `ConfigurationSetName` (AWS CLI
 nothing for messages that do not select it. Account-wide `put` with no reasons
 also sends `[]`, so prefer the narrowly selected configuration-set override.
 
+WordPress FluentSMTP's SES mailer sends raw MIME (`SendRawEmail`), so a `wp_mail`
+filter adding `X-SES-CONFIGURATION-SET` to the message headers works. Its mail log
+does not show custom headers: verify SES events, not the log alone. Attach the
+override only when **every recipient**, including CC/BCC, is controlled/internal.
+
+### Prove the configuration-set bypass
+
+With authorization, use a new plus alias of a controlled internal inbox, never a
+customer address. Confirm the alias receives mail and is not already suppressed;
+do not overwrite an existing suppression entry. Keep the regional account-level
+suppression policy enabled and confirm `SuppressionAttributes.SuppressedReasons`
+includes `BOUNCE` before adding the test entry below. If it does not, stop: delivery
+of a `BOUNCE` entry would not prove a bypass. Do not change the account policy just
+for this test. The selected configuration set must already have the
+explicit empty override and a CloudWatch event destination enabled for
+`SEND`, `DELIVERY`, `BOUNCE` and `REJECT`, publishing the
+`ses-configuration-set` dimension.
+
+```bash
+# Examples: use the same authorized profile/region for every command.
+aws sesv2 get-account --profile aidevops-production --region eu-west-2 \
+  --query 'SuppressionAttributes.SuppressedReasons'
+# Continue only if the returned reasons include BOUNCE.
+aws sesv2 put-suppressed-destination --profile aidevops-production --region eu-west-2 \
+  --email-address 'support+ses-test@example.com' --reason BOUNCE
+```
+
+Send one message from a verified identity to that alias through the configuration
+set (API `ConfigurationSetName` or the raw MIME header above). Record the send time
+and MessageId, then check the inbox and CloudWatch **AWS/SES → Delivery**, with
+dimension **`ses-configuration-set=<name>`**, for a datapoint in the send window.
+Allow 1–2 minutes for metrics to appear. Configuration-set metrics aggregate all
+mail using that set: use a quiet test window/dedicated set and correlate with the
+received message or recipient-specific delivery event, not an unrelated datapoint.
+A missing datapoint is not proof of a drop until the event destination/dimensions
+are verified. A MessageId alone is still not delivery proof.
+
+Always remove the test entry after the attempt, including when sending or metric
+verification fails; confirm cleanup with `get-suppressed-destination` returning
+`NotFoundException` (HTTP 404). Other errors do not prove absence.
+
+```bash
+aws sesv2 delete-suppressed-destination --profile aidevops-production --region eu-west-2 \
+  --email-address 'support+ses-test@example.com'
+```
+
+### Periodic own-domain checks
+
+Periodically run `ses-helper.sh suppressed <account> --filter <own-domain>` for
+**each verified domain** in each account/region. Inspect internal support and
+notification inboxes too: a live audit found an own-domain support inbox suppressed
+since 2024. Investigate the original bounce/complaint and verify the inbox before
+removing any real entry; do not bulk-clear the list or weaken customer suppression.
+
 ## IAM Policy
 
 Read-only diagnostics baseline (trim further for the task):
@@ -156,6 +210,12 @@ Grant write actions only when authorized: `ses:DeleteSuppressedDestination`,
 `ses:SendRawEmail` for raw mail). Restrict identity/configuration-set resources
 where supported, sender/recipient conditions and regions to the workload. Account
 and list actions require `Resource: "*"`; do not use this as a blanket write policy.
+
+The controlled bypass proof additionally needs `ses:PutSuppressedDestination` and
+`ses:DeleteSuppressedDestination`; CloudWatch verification needs
+`cloudwatch:GetMetricStatistics` or `cloudwatch:GetMetricData` (and
+`cloudwatch:ListMetrics` for discovery). Event-destination setup is a separate
+authorized configuration change, not an implicit permission grant for the test.
 
 ## Troubleshooting and compliance
 

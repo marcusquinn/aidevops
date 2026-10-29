@@ -454,8 +454,9 @@ Commands:
                                    Verify a GitHub release and record release:published.
                                    Defaults to release-event evidence; repository-owned
                                    push/dispatch workflows require an exact workflow identity.
-                                   --generated-cloudron-catalog verifies a direct catalog-only
-                                   commit with exact-source image and catalog attestations.
+                                   --generated-cloudron-catalog verifies a catalog-only commit,
+                                   allowing attested docs-only rebases, with exact-source
+                                   image and catalog attestations.
   adopt-merged-receipt <PR> [REPO]
                                  Adopt an externally merged exact-head worktree into cleanup.
   finalize-receipt <PR> [REPO]   Finalize a direct-merge cleanup receipt without local state.
