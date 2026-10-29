@@ -72,6 +72,8 @@ const DOCKER_ADVISORY = "Docker test resources need owner labels: use docker-res
 
 // Deliberately advisory, not a shell parser or a command permission boundary.
 function dockerCreationNeedsOwner(words) {
+  // Unresolved shell expansions may supply ownership labels.
+  if (words.some((word) => /[$`]/.test(word))) return false;
   const globalValues = new Set(["--config", "--context", "-c", "--host", "-H", "--log-level", "-l", "--tlscacert", "--tlscert", "--tlskey"]);
   let index = 0;
   while (index < words.length && words[index].startsWith("-")) {
@@ -80,11 +82,13 @@ function dockerCreationNeedsOwner(words) {
   }
   let args = words.slice(index);
   if (args[0] === "container") args = args.slice(1);
-  if (args[0] === "compose") return args.slice(1).includes("up");
+  // up/run/create labels come from external config. Do not consume the session
+  // advisory for indeterminate stacks or execute config discovery from a hook.
+  if (args[0] === "compose") return false;
   if (["network", "volume"].includes(args[0]) && args[1] === "create") args = args.slice(1);
   if (!["run", "create"].includes(args[0])) return false;
   const isRun = args[0] === "run";
-  const booleanOptions = new Set(["--detach", "--interactive", "--tty", "--init", "--privileged", "--read-only", "--publish-all", "--oom-kill-disable", "--sig-proxy", "--use-api-socket", "--help", "--internal", "--attachable", "--ingress", "--ipv6", "--config-only"]);
+  const booleanOptions = new Set(["--detach", "--interactive", "--tty", "--init", "--privileged", "--read-only", "--publish-all", "--oom-kill-disable", "--sig-proxy", "--use-api-socket", "--help", "--internal", "--attachable", "--ingress", "--ipv6", "--config-only", "-q", "--quiet", "--no-healthcheck"]);
   let owner = false;
   let remove = false;
   for (index = 1; index < args.length; index++) {
@@ -102,9 +106,34 @@ function dockerCreationNeedsOwner(words) {
   return !owner && !(isRun && remove);
 }
 
+function dockerShellParts(command) {
+  const parts = [];
+  let part = "";
+  let quote = "";
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    if (char === "\\" && quote !== "'" && index + 1 < command.length) {
+      const following = command[++index];
+      if (following !== "\n") part += char + following;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = "";
+    } else if (char === '"' || char === "'") quote = char;
+    else if (/[;&|\n]/.test(char)) {
+      parts.push(part);
+      part = "";
+      continue;
+    }
+    part += char;
+  }
+  parts.push(part);
+  return parts;
+}
+
 export function needsDockerOwnerAdvisory(command) {
-  return String(command).split(/[;&|\n]/).some((part) => {
-    const match = part.match(/(?:^|\s)docker\s+(.+)/);
+  return dockerShellParts(String(command)).some((part) => {
+    const match = part.match(/(?:^|\s)docker\s+([\s\S]+)/);
     if (!match) return false;
     return dockerCreationNeedsOwner(unquotedTokens(match[1]).map(({ text }) => text));
   });

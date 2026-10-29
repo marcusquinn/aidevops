@@ -272,6 +272,8 @@ def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
 
 def _docker_creation_needs_owner(args):
     """Inspect literal Docker options, never image commands or option values."""
+    if any("$" in word or "`" in word for word in args):
+        return False  # Unresolved shell expansions may supply ownership labels.
     index = 0
     global_values = {"--config", "--context", "-c", "--host", "-H", "--log-level", "-l",
                      "--tlscacert", "--tlscert", "--tlskey"}
@@ -282,7 +284,9 @@ def _docker_creation_needs_owner(args):
     if args[:1] == ["container"]:
         args = args[1:]
     if args[:1] == ["compose"]:
-        return "up" in args[1:]
+        # up/run/create labels come from external config, not literal options.
+        # Indeterminate stacks must not consume the session advisory marker.
+        return False
     if args[:2] in (["network", "create"], ["volume", "create"]):
         args = args[1:]
     if not args or args[0] not in {"run", "create"}:
@@ -294,7 +298,8 @@ def _docker_creation_needs_owner(args):
     boolean_options = {"--detach", "--interactive", "--tty", "--init", "--privileged",
                        "--read-only", "--publish-all", "--oom-kill-disable", "--sig-proxy",
                        "--use-api-socket", "--help", "--internal", "--attachable",
-                       "--ingress", "--ipv6", "--config-only"}
+                       "--ingress", "--ipv6", "--config-only", "-q", "--quiet",
+                       "--no-healthcheck"}
     while index < len(args):
         token = args[index]
         if not token.startswith("-") or token == "--":
@@ -314,11 +319,39 @@ def _docker_creation_needs_owner(args):
     return not owner and not (is_run and remove)
 
 
+def _docker_shell_parts(command):
+    """Split literal shell segments without cutting quoted or escaped separators."""
+    part = []
+    quote = ""
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if char == "\\" and quote != "'" and index + 1 < len(command):
+            following = command[index + 1]
+            if following != "\n":
+                part.extend((char, following))
+            index += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char in ";&|\n":
+            yield "".join(part)
+            part = []
+            index += 1
+            continue
+        part.append(char)
+        index += 1
+    yield "".join(part)
+
+
 def docker_owner_advisory(command: str, session_id: str):
     """Return non-blocking context once per Claude session, never a decision."""
     needs_labels = False
-    for part in re.split(r"[;&|\n]", command):
-        match = re.search(r"(?:^|\s)docker\s+(.+)", part)
+    for part in _docker_shell_parts(command):
+        match = re.search(r"(?:^|\s)docker\s+(.+)", part, re.DOTALL)
         if not match:
             continue
         try:
