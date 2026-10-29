@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { activeLocalOnlyPolicy, assertOperatorConfigStat, localFailureCheck, localProvidersOverrideFile,
   LocalOnlyPolicyError } from "./local-only-policy.mjs";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
@@ -89,6 +89,7 @@ const MUTATION_TOOLS = /(?:write|edit|apply_patch)$/i;
 // roots, permit only literal, single-command file readers; opaque programs,
 // substitutions, pipes and interpreters fail closed rather than hide reads.
 const LITERAL_READERS = new Set(["cat", "head", "tail", "wc", "ls", "stat", "pwd"]);
+const SHELL_INTERPRETERS = new Set(["sh", "bash", "dash", "ash", "zsh", "ksh", "mksh", "fish", "csh", "tcsh"]);
 
 function literalShellWords(command) {
   if (Array.isArray(command)) return command.every((word) => typeof word === "string") ? command : null;
@@ -142,6 +143,9 @@ function assertShellRead(policy, command, cwd, binding, deny) {
     || targets.includes(canonicalPath(file)))) deny("classification_mutation");
   // Opaque shell syntax can hide relative config paths regardless of binding.
   if (!words) deny("unclassifiable_shell_read");
+  // A quoted -c script is literal to the outer parser, not to its interpreter.
+  if (SHELL_INTERPRETERS.has(basename(words[0] || ""))
+    && words.slice(1).some((word) => /^-[^-]*c/.test(word) || word === "--command")) deny("unclassifiable_shell_read");
   if (binding.bound || !policy.roots.length) return;
   // No options: even familiar readers have executable/path-bearing options.
   if (!words?.length || !LITERAL_READERS.has(words[0])

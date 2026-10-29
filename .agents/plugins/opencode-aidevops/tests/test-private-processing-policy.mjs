@@ -124,6 +124,15 @@ test("shell config operands resolve relative and symlink aliases before policy e
           for (const command of [`cat ${name}; true`, `cat config-alias/${name} | wc`]) {
             assert.throws(() => check("bash", { command, workdir: configDir }), /unclassifiable_shell_read/);
           }
+          for (const shell of ["sh", "/bin/bash", "dash", "ash", "zsh", "ksh", "mksh", "fish", "csh", "tcsh"]) {
+            for (const option of ["-c", "-lc"]) {
+              const script = `cat ../.config/aidevops/${name}`;
+              assert.throws(() => check("bash", { command: `${shell} ${option} '${script}'` }), /unclassifiable_shell_read/);
+              assert.throws(() => check("aidevops_bounded_operation", {
+                action: "start", command: [shell, option, script],
+              }), /unclassifiable_shell_read/);
+            }
+          }
           assert.doesNotThrow(() => check("bash", { command: `cat ${name}` }), "same basename outside config remains allowed");
           assert.doesNotThrow(() => check("bash", { command: "cat ../public/plain.txt" }), "ordinary parent traversal remains allowed");
         }
