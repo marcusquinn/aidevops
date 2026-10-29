@@ -1156,6 +1156,7 @@ _evaluate_session_miner_routine() {
 		_routine_log_slot "$routine_id" "$schedule" "" deferred
 		return 0
 	fi
+	_routine_log_slot "$routine_id" "$schedule" "" dispatch
 	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
 	_routine_execute "$routine_id" "Incremental session insight mining" \
 		"scripts/session-miner-pulse.sh --create-issues" "" "$PULSE_DIR" "$schedule" ""
@@ -1186,6 +1187,7 @@ _evaluate_issue_archive_routine() {
 		_routine_log_slot "$routine_id" "$schedule" "" deferred
 		return 0
 	fi
+	_routine_log_slot "$routine_id" "$schedule" "" dispatch
 	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
 	_routine_execute "$routine_id" "Archive issue and PR discussions to orphan branch" \
 		"scripts/issue-archive-helper.sh run" "" "$PULSE_DIR" "$schedule" ""
@@ -1278,6 +1280,7 @@ evaluate_routines() {
 					_routine_log_slot "$_RPL_ID" "$_RPL_REPEAT" "$_RPL_TIMEZONE" deferred
 					continue
 				fi
+				_routine_log_slot "$_RPL_ID" "$_RPL_REPEAT" "$_RPL_TIMEZONE" dispatch
 				echo "[pulse-wrapper] routine ${_RPL_ID} is due (expr=${_RPL_REPEAT}, timezone=${timezone_context}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
 				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path" "$_RPL_REPEAT" "$_RPL_TIMEZONE"
 				routines_dispatched=$((routines_dispatched + 1))
