@@ -152,6 +152,19 @@ export function activeLocalOnlyPolicy() {
 }
 
 /**
+ * Configured local provider IDs whether or not the session is bound, with the
+ * same override and fail-closed rules. Advisory only: unbound sessions use it
+ * to keep a local session's compaction local (GH#35893). It never grants
+ * egress; only a bound policy enforces.
+ * @param {Record<string, string|undefined>} [env]
+ * @param {{ providersFile?: string, overrideFile?: string, readFile?: Function, lstat?: Function }} [options]
+ * @returns {readonly string[]}
+ */
+export function configuredLocalProviders(env = process.env, options = {}) {
+  return Object.freeze(readLocalProviders(env, options).providers);
+}
+
+/**
  * @param {ReturnType<typeof loadLocalOnlyPolicy>} policy
  * @param {string} providerID
  * @returns {boolean}

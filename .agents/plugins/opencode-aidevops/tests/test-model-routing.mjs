@@ -19,7 +19,7 @@ import {
   applyAgentRoutingProfile,
   registerAgentRoutingIntent,
 } from "../config-agent-profiles.mjs";
-import { applyCompactionRouting, capCompactionEffort } from "../compaction-routing.mjs";
+import { applyCompactionRouting, capCompactionEffort, createCompactionResidencyWarning } from "../compaction-routing.mjs";
 
 test("a model serving several tiers resolves by observed variant", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));
@@ -278,6 +278,57 @@ test("compaction effort is clamped down, never raised, and only for the compacti
   const override = { options: { reasoning: { effort: "xhigh" } } };
   capCompactionEffort({ agent: "compaction", model: opus }, override, routing, { env: { AIDEVOPS_COMPACTION_MAX_EFFORT: "medium" } });
   assert.equal(override.options.reasoning.effort, "medium");
+});
+
+test("compaction routing keeps local sessions local (GH#35893)", () => {
+  const routing = { tiers: { simple: {
+    models: ["openai/gpt-6-luna", "ollama/qwen-big"],
+    reasoning: { "openai/gpt-6-luna": "medium" },
+  } } };
+  const provider = () => ({
+    openai: { models: { "gpt-6-luna": { limit: { input: 260000 } } } },
+    ollama: { models: { "qwen-big": { limit: { input: 262144 } } } },
+  });
+  const bound = { bound: true, localProviders: ["ollama"] };
+
+  const boundLocal = { provider: provider() };
+  assert.equal(applyCompactionRouting(boundLocal, routing, { policy: bound }), true);
+  assert.equal(boundLocal.agent.compaction.model, "ollama/qwen-big");
+
+  const boundCloudOnly = { provider: { openai: provider().openai } };
+  const cloudRouting = { tiers: { simple: { models: ["openai/gpt-6-luna"] } } };
+  assert.equal(applyCompactionRouting(boundCloudOnly, cloudRouting, { policy: bound }), false);
+  assert.deepEqual(boundCloudOnly.agent.compaction, {});
+
+  const unbound = { bound: false, localProviders: [] };
+  const localDefault = { model: "ollama/qwen-big", provider: provider() };
+  assert.equal(applyCompactionRouting(localDefault, routing, { policy: unbound, localProviders: ["ollama"] }), true);
+  assert.equal(localDefault.agent.compaction.model, "ollama/qwen-big");
+
+  let reads = 0;
+  const cloudDefault = { model: "anthropic/claude-opus-5-5", provider: provider() };
+  const thunk = () => { reads += 1; return ["ollama"]; };
+  assert.equal(applyCompactionRouting(cloudDefault, routing, { policy: unbound, localProviders: thunk }), true);
+  assert.deepEqual(cloudDefault.agent.compaction, { model: "openai/gpt-6-luna", variant: "medium" });
+  assert.equal(reads, 1);
+
+  const noDefault = { provider: provider() };
+  assert.equal(applyCompactionRouting(noDefault, routing, { policy: unbound, localProviders: () => assert.fail("not read") }), true);
+  assert.equal(noDefault.agent.compaction.model, "openai/gpt-6-luna");
+});
+
+test("compaction residency warning fires once for a local parent on a cloud route (GH#35893)", () => {
+  const logs = [];
+  const warn = createCompactionResidencyWarning({ localProviders: ["ollama"], log: (level, msg) => logs.push(`${level} ${msg}`) });
+  const luna = { agent: "compaction", model: { providerID: "openai", id: "gpt-6-luna" } };
+  assert.equal(warn({ agent: "build-plus", model: luna.model }, "ollama/qwen"), false);
+  assert.equal(warn(luna, "anthropic/claude-opus-5-5"), false);
+  assert.equal(warn({ agent: "compaction", model: { providerID: "ollama", id: "qwen" } }, "ollama/qwen"), false);
+  assert.equal(warn(luna, ""), false);
+  assert.equal(warn(luna, "ollama/qwen"), true);
+  assert.equal(warn(luna, "ollama/qwen"), false);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /^WARN \[compaction\] local provider "ollama" session compacted on non-local provider "openai"/);
 });
 
 test("compaction preserves explicit user model and variant pins", () => {
