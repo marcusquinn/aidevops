@@ -122,6 +122,7 @@ import { startGoogleProxy, ensureGoogleProxyServer } from "./google-proxy.mjs";
 import { startClaudeProxy } from "./claude-proxy.mjs";
 import { isHeadless } from "./proxy-lifecycle.mjs";
 import { pluginHealthProbeRequested, recordPluginHealthStage } from "./plugin-health.mjs";
+import { annotateTurnTimes } from "./turn-time-annotation.mjs";
 
 // Preserve the runtime-native fetch before any plugin factory installs the
 // OpenAI OAuth rotation wrapper. API-key image requests need an isolated route.
@@ -606,6 +607,11 @@ export async function AidevopsPlugin({ directory, client }) {
   // in any step must not block the message.
   const messagesTransformHook = async (input, output) => {
     await compactionInputReplay.inject(input, output);
+    try {
+      await annotateTurnTimes(input, output, { client, isHeadless });
+    } catch (err) {
+      qualityLog("WARN", `[turn-time-annotation] Unexpected error: ${err?.message ?? err}`);
+    }
     // GH#35529: attach receipts to interrupted Task results (fail-open).
     await cancellationReceipt.injectReceipts(input, output);
     await ttsrMessagesTransformHook(input, output);
