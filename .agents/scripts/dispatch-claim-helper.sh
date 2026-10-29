@@ -1698,14 +1698,14 @@ _minimize_finished_attempt_comments() {
 	[[ "$remaining" -gt 0 ]] || return 0
 	response=$("$limiter" "$remaining" gh api graphql \
 		-f owner="${repo_slug%/*}" -f name="${repo_slug#*/}" -F number="$issue_number" \
-		-f query='query($owner: String!, $name: String!, $number: Int!) {
+		-f query="query(\$owner: String!, \$name: String!, \$number: Int!) {
 			rateLimit { remaining }
-			repository(owner: $owner, name: $name) {
-				issue(number: $number) {
+			repository(owner: \$owner, name: \$name) {
+				issue(number: \$number) {
 					comments(last: 100) { nodes { id body isMinimized author { login } } }
 				}
 			}
-		}' 2>/dev/null) || {
+		}" 2>/dev/null) || {
 		printf 'DISPATCH_COMMENT_HYGIENE deferred=query_failed\n' >&2
 		return 0
 	}
@@ -1742,9 +1742,9 @@ _minimize_finished_attempt_comments() {
 			printf 'DISPATCH_COMMENT_HYGIENE deferred=deadline\n' >&2
 			return 0
 		fi
-		if ! "$limiter" "$remaining" gh api graphql -f id="$id" -f query='mutation($id: ID!) {
-			minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId }
-		}' >/dev/null 2>&1; then
+		if ! "$limiter" "$remaining" gh api graphql -f id="$id" -f query="mutation(\$id: ID!) {
+			minimizeComment(input: {subjectId: \$id, classifier: OUTDATED}) { clientMutationId }
+		}" >/dev/null 2>&1; then
 			printf 'DISPATCH_COMMENT_HYGIENE deferred=minimize_failed\n' >&2
 			return 0
 		fi
