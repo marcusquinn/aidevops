@@ -106,7 +106,10 @@ one genuine stall after them still posts attention (GH#35883). A runner whose
 own login released the head for a missing capability skips it without a
 comment until a newer standalone OWNER/MEMBER `terminal-blocker-circuit:retry`;
 a new head re-arms every runner. The successor's worker fence accepts the
-capability release after ownership transfers.
+capability release after ownership transfers. Continuation also links worker
+drafts whose only link is a line-start `For #N` or `Ref #N` (GH#33374), and
+treats `origin:interactive` as provenance: with `auto-dispatch` it holds the
+draft only while a newer trusted interactive session claim owns the issue.
 `repo-verify-pre-push.sh` labels missing Python tools as tooling, not
 source defects. Terminal-only reports create no progress-blocker events;
 `pulse-diagnose-helper.sh issue` shows a separate "Terminal blocker" section and

@@ -191,6 +191,41 @@ else
 	print_result "rejects foreign-authored worker checkpoint" 1
 fi
 
+# GH#35883: auto-dispatch authorizes worker pickup of interactive-provenance
+# issues, so a capability-released worker draft stays continuable on a capable
+# runner, unless a newer trusted interactive claim owns the issue.
+interactive_capability_comments() {
+	local extra="${1:-}"
+	printf '[[{"id":12,"created_at":"2026-08-04T22:40:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"CLAIM_RELEASED reason=blocked runner=worker-bot ts=2026-08-04T22:40:00Z\\n\\nTerminal blocker: reason=runner_capability_unmet owner=runner-recovery task=123 attempt=a1."}%s]]\n' "$extra"
+	return 0
+}
+STUB_PR_JSON="$(valid_pr_json)"
+STUB_ISSUE_JSON="$(jq -nc '{number:123,state:"open",labels:[{name:"status:available"},{name:"auto-dispatch"},{name:"origin:interactive"}],assignees:[]}')"
+STUB_COMMENTS_JSON="$(interactive_capability_comments)"
+PCC_ALLOW_RELEASED=true
+if row=$(_pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot" 2>/dev/null) &&
+	[[ "$row" == *$'\tavailable\tworker-bot\t0\tclosing' ]]; then
+	print_result "accepts capability-released draft on auto-dispatch interactive-provenance issue" 0
+else
+	print_result "accepts capability-released draft on auto-dispatch interactive-provenance issue" 1 "row=${row:-missing}"
+fi
+STUB_COMMENTS_JSON="$(interactive_capability_comments ',{"id":13,"created_at":"2026-08-04T22:50:00Z","author_association":"MEMBER","user":{"login":"maintainer"},"body":"Interactive session claimed this issue"}')"
+if ! _pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot" >/dev/null 2>&1; then
+	print_result "rejects auto-dispatch interactive-provenance draft after a newer interactive claim" 0
+else
+	print_result "rejects auto-dispatch interactive-provenance draft after a newer interactive claim" 1
+fi
+STUB_ISSUE_JSON="$(jq -nc '{number:123,state:"open",labels:[{name:"status:available"},{name:"origin:interactive"}],assignees:[]}')"
+STUB_COMMENTS_JSON="$(interactive_capability_comments)"
+if ! _pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot" >/dev/null 2>&1; then
+	print_result "keeps interactive-provenance hold without auto-dispatch" 0
+else
+	print_result "keeps interactive-provenance hold without auto-dispatch" 1
+fi
+PCC_ALLOW_RELEASED=false
+STUB_ISSUE_JSON="$(valid_issue_json)"
+STUB_COMMENTS_JSON='[]'
+
 # GH#34008: the pulse's own orphan-recovery draft links its issue only through
 # a non-closing `For #N` line. The shared rule accepts exactly that shape.
 TAKEOVER_LABELS='[{"name":"origin:worker-takeover"}]'
@@ -218,7 +253,24 @@ for_reject_case() {
 	fi
 	return 0
 }
-for_reject_case "origin:worker label" 'For #123' '[{"name":"origin:worker"}]' '[]'
+# Worker checkpoint drafts keep `For #N`/`Ref #N` on incomplete work (GH#33374)
+# and has-open-pr already holds the issue for them, so continuation must accept
+# the same exact single-target shape.
+WORKER_LABELS='[{"name":"origin:worker"}]'
+for worker_body in 'For #123' 'Ref #123. Incomplete checkpoint.' 'Notes\nRefs #123' 'For #123. Done part.\nRef #900'; do
+	STUB_PR_JSON="$(valid_pr_json "$worker_body" "$WORKER_LABELS" '[]')"
+	if row=$(_pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot") &&
+		[[ "$row" == *$'\tworker-bot\t0\tfor' ]]; then
+		print_result "accepts origin:worker non-closing checkpoint: ${worker_body}" 0
+	else
+		print_result "accepts origin:worker non-closing checkpoint: ${worker_body}" 1 "row=${row:-missing}"
+	fi
+done
+for_reject_case "worker draft naming two For issues" 'For #123\nFor #456' "$WORKER_LABELS" '[]'
+for_reject_case "worker draft whose For line names another issue" 'For #456\nRef #123' "$WORKER_LABELS" '[]'
+for_reject_case "worker draft with Ref mid-line only" 'Batch for #77. Ref #123 later' "$WORKER_LABELS" '[]'
+for_reject_case "worker draft with interactive label" 'Ref #123' '[{"name":"origin:worker"},{"name":"origin:interactive"}]' '[]'
+for_reject_case "unlabelled draft" 'For #123' '[{"name":"bug"}]' '[]'
 for_reject_case "ready PR" 'For #123' "$TAKEOVER_LABELS" '[]' ready
 for_reject_case "cross-repository head" 'For #123' "$TAKEOVER_LABELS" '[]' cross
 for_reject_case "protected label" 'For #123' '[{"name":"origin:worker-takeover"},{"name":"hold-for-review"}]' '[]'
@@ -376,14 +428,15 @@ if [[ -f "$prompt_file" ]] && \
 else
 	print_result "continuation prompt preserves exact-target ownership contract" 1
 fi
-if ! grep -q 'orphan-recovery checkpoint' "$prompt_file"; then
+if ! grep -q 'non-closing checkpoint linked to issue' "$prompt_file"; then
 	print_result "closing-linked continuation prompt has no For-line rewrite step" 0
 else
 	print_result "closing-linked continuation prompt has no For-line rewrite step" 1
 fi
 PCC_LINK_KIND="for"
 prompt_file=$(_prrts_write_prompt_file "owner/repo" "${TEST_ROOT}/repo" "42" "Continue existing work" "0" "fingerprint" "preview")
-if grep -Fq 'replace that exact line with' "$prompt_file" &&
+if grep -Fq 'non-closing checkpoint linked to issue' "$prompt_file" &&
+	grep -Fq 'replace that exact line with' "$prompt_file" &&
 	grep -Fq "\`Resolves #123\`" "$prompt_file" &&
 	grep -Fq -- '--json closingIssuesReferences' "$prompt_file"; then
 	print_result "For-linked continuation must add a closing link before ready" 0
@@ -661,6 +714,23 @@ if output=$(_pcc_blocked_attention owner/repo 123 42) &&
 	print_result "unpaired never-ready blocked release posts no approval template" 0
 else
 	print_result "unpaired never-ready blocked release posts no approval template" 1 "output=${output:-missing} posts=$(post_count)"
+fi
+
+# GH#35883: production comments are `gh --paginate --slurp` pages. A runner
+# capability release keeps the runner-owner text (GH#35788) on that input and
+# never asks the brief owner for a revision-bound approval.
+STUB_POST_DIR="${TEST_ROOT}/posts-capability"
+mkdir -p "$STUB_POST_DIR"
+STUB_COMMENTS_JSON="$(blocked_comments | jq -c 'map(map(if .id == 21 then
+	.body |= sub("\n<!-- ops:end -->"; "\n\nTerminal blocker: reason=runner_capability_unmet owner=runner-recovery task=123 attempt=a1.\n<!-- ops:end -->")
+	else . end))')"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*release=21 && "$(post_count)" == 1 ]] &&
+	grep -Fq 'No brief change or revision-bound approval is needed' "${STUB_POST_DIR}/post-1" &&
+	! grep -Fq 'approval-template' "${STUB_POST_DIR}/post-1"; then
+	print_result "paginated capability release keeps runner-owner attention text" 0
+else
+	print_result "paginated capability release keeps runner-owner attention text" 1 "output=${output:-missing} posts=$(post_count)"
 fi
 STUB_POST_DIR="${TEST_ROOT}/posts"
 
@@ -1032,6 +1102,21 @@ if ! run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
 	print_result "worker fence still rejects an ordinary blocked release without approval" 0
 else
 	print_result "worker fence still rejects an ordinary blocked release without approval" 1
+fi
+# The same fence on an interactive-provenance issue: auto-dispatch authorizes
+# the capable successor; without it, interactive provenance still holds.
+STUB_COMMENTS_JSON="$(capability_comments)"
+STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-progress"},{"name":"auto-dispatch"},{"name":"origin:interactive"}]' current-runner)"
+if run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence accepts the capable successor on an auto-dispatch interactive-provenance issue" 0
+else
+	print_result "worker fence accepts the capable successor on an auto-dispatch interactive-provenance issue" 1
+fi
+STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-progress"},{"name":"origin:interactive"}]' current-runner)"
+if ! run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence keeps the interactive-provenance hold without auto-dispatch" 0
+else
+	print_result "worker fence keeps the interactive-provenance hold without auto-dispatch" 1
 fi
 
 # Rejections must identify the failed predicate without contaminating TSV stdout

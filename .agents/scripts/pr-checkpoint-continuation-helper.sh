@@ -263,12 +263,14 @@ _prrts_write_prompt_file() {
 	: "$_thread_count" "$_fingerprint" "$_preview"
 	if [[ "$PCC_LINK_KIND" == "for" ]]; then
 		# GH#34008: orphan-recovery drafts link with a non-closing `For #N` line
-		# (GH#32933). Completion must leave a PR whose merge resolves the issue.
+		# (GH#32933); worker checkpoints keep `For #N`/`Ref #N` (GH#33374).
+		# Completion must leave a PR whose merge resolves the issue.
 		closing_link_step="
-   This draft is an orphan-recovery checkpoint linked to issue
-   #${PCC_LINKED_ISSUE} only by a non-closing \`For #${PCC_LINKED_ISSUE}\` line.
-   Before marking it ready, replace that exact line with
-   \`Resolves #${PCC_LINKED_ISSUE}\` in the PR body (read it with
+   This draft is a non-closing checkpoint linked to issue
+   #${PCC_LINKED_ISSUE} only by a body line starting with
+   \`For #${PCC_LINKED_ISSUE}\` or \`Ref #${PCC_LINKED_ISSUE}\`.
+   Before marking it ready, replace that exact line with the same line
+   starting \`Resolves #${PCC_LINKED_ISSUE}\` instead, in the PR body (read it with
    \`gh pr view \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --json body --jq .body\`,
    edit a local file, then apply it with the safe wrapper from
    \`~/.aidevops/agents/scripts/shared-constants.sh\`:
@@ -414,7 +416,8 @@ _pcc_target_row() {
 		[.title // "", .headRefName, .headRefOid, .author.login // ""] | @tsv
 	' <<<"$pr_json" 2>/dev/null || true)
 	[[ -n "$target_row" ]] || return 1
-	# GH#34008: a `For #N` recovery draft must gain a closing link before ready.
+	# GH#34008: a non-closing For/Ref checkpoint draft must gain a closing link
+	# before ready.
 	link_kind="closing"
 	_pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue" || link_kind="for"
 	printf '%s\t%s\t%s\t%s\t%s\n' "$target_row" "$issue_status" "$issue_assignee" "$approval_id" "$link_kind"
@@ -635,10 +638,13 @@ _pcc_blocked_release_evidence() {
 	local comments="$1" runner="$2" key="$3"
 	local trusted_logins="${4:-[]}"
 	jq -er --arg runner "$runner" --arg key "$key" --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
+		# Keep the binding parenthesised: jq 1.8 (#3053) binds an unparenthesised
+		# term after `and` together with its left operand, so $line became a
+		# boolean on jq 1.8 runners and blocked checkpoints never got attention.
 		def blocked_by_runner:
 			unedited and login == $runner and
-			([body_lines | select(is_release)] | first // "") as $line |
-			($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner;
+			(([body_lines | select(is_release)] | first // "") as $line |
+			($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner);
 		def episode_start($c; $rid):
 			[$c[] | select(.id < $rid and any(body_lines; startswith("DISPATCH_CLAIM "))) | .id] | max // -1;
 		def episode_attempt($c; $rid):
@@ -803,8 +809,10 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and b
 <!-- ops:end -->"
 	# GH#35788: capability releases already support guarded automatic continuation
 	# (GH#34758). Do not send a runner prerequisite failure back to the brief owner.
+	# GH#35883: $comments holds `--paginate --slurp` pages; flatten them, or `.id`
+	# errors on a page array and the brief owner gets the approval text instead.
 	if jq -e --argjson id "$release_id" --arg line "$_PCC_CAPABILITY_RELEASE_LINE" \
-		'any(.[]; .id == $id and ((.body // "") | split("\n") | any(startswith($line))))' <<<"$comments" >/dev/null; then
+		'any(flatten[]; .id == $id and ((.body // "") | split("\n") | any(startswith($line))))' <<<"$comments" >/dev/null; then
 		body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} release=${release_id} -->
 BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} attempt=${attempt:-unknown}
