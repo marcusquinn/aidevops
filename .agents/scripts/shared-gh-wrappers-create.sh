@@ -656,6 +656,19 @@ _gh_ci_origin_label_unavailable() {
 	return 0
 }
 
+# GH#35954: settle both wrapper-derived labels before the create argv is built.
+# Clears _GH_CI_STATUS_LABEL_ARGS itself; returns 1 when the caller must drop
+# its derived origin label ($2 empty means the caller supplied its own origin).
+_gh_ci_settle_derived_labels() {
+	local target_repo="$1"
+	local origin_label="$2"
+	_gh_ci_ensure_derived_status_label "$target_repo"
+	if [[ -n "$origin_label" ]] && _gh_ci_origin_label_unavailable "$target_repo" "$origin_label"; then
+		return 1
+	fi
+	return 0
+}
+
 gh_create_issue() {
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
@@ -715,14 +728,7 @@ gh_create_issue() {
 	local issue_output rc auto_assignee="" target_repo=""
 	target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
 	_gh_ci_ensure_requested_reminder_label "$target_repo" "$@" || return 1
-	# GH#35954: settle wrapper-derived labels before building the create argv,
-	# so labels that cannot exist on the target repo never block creation.
-	_gh_ci_ensure_derived_status_label "$target_repo"
-	if [[ ${#_origin_label_args[@]} -gt 0 ]] &&
-		_gh_ci_origin_label_unavailable "$target_repo" "$origin_label"; then
-		_origin_label_args=()
-	fi
-
+	_gh_ci_settle_derived_labels "$target_repo" "$origin_label" || _origin_label_args=()
 	# Build command arrays safely; avoid empty-arg injection (GH#22056).
 	local -a _issue_cmd=(gh issue create "$@")
 	local -a _rest_args=("$@")
