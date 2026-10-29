@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.83] - 2026-10-29
+
+### Added
+
+- add secret-backed AWS access and SES operations (GH#35879) (#35882)
+
+### Fixed
+
+- keep local-provider sessions' compaction local
+- classify and suppress GraphQL commit permission denials (#35888)
+
 ## [3.39.82] - 2026-10-29
 
 ### Changed
