@@ -96,6 +96,34 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(self.verify())
         self.assertTrue(self.verify())
 
+    def set_attestation_invocation(self, result, run_id, attempt):
+        invocation = self.proof.repository_url + f"/actions/runs/{run_id}/attempts/{attempt}"
+        result["signature"]["certificate"]["runInvocationURI"] = invocation
+        result["statement"]["predicate"]["runDetails"]["metadata"]["invocationId"] = invocation
+
+    def test_failed_job_rerun_retains_build_attestation(self):
+        self.run["run_attempt"] = 2
+        self.attest_mutation = lambda result, image: self.set_attestation_invocation(result, 123, 1 if image else 2)
+        for managed in (False, True):
+            if managed:
+                self.workflow = self.managed_workflow()
+            with self.subTest(managed=managed):
+                self.assertTrue(self.verify())
+
+    def test_rerun_rejects_out_of_range_attempts(self):
+        self.run["run_attempt"] = 2
+        for attempt in (0, 3):
+            self.attest_mutation = lambda result, image: self.set_attestation_invocation(result, 123, attempt)
+            with self.subTest(attempt=attempt), self.assertRaises(MODULE.EvidenceError):
+                self.verify()
+
+    def test_rerun_does_not_accept_unsuccessful_run(self):
+        self.extra_runs = [dict(self.run, id=124)]
+        self.run.update(run_attempt=2, conclusion="failure")
+        self.attest_mutation = lambda result, image: self.set_attestation_invocation(result, 123, 1 if image else 2)
+        with self.assertRaises(MODULE.EvidenceError):
+            self.verify()
+
     def managed_workflow(self):
         self.pin = "a" * 40
         return ("jobs:\n  catalog:\n    uses: " + MODULE.MANAGED_WORKFLOW + "@" + self.pin
@@ -282,14 +310,12 @@ class EvidenceTests(unittest.TestCase):
                 self.verify()
 
     def test_different_successful_runs_do_not_combine(self):
+        self.run["run_attempt"] = 2
         self.extra_runs = [dict(self.run, id=124)]
         def different_run(result, image):
-            if image:
-                invocation = self.proof.repository_url + "/actions/runs/124/attempts/1"
-                result["signature"]["certificate"]["runInvocationURI"] = invocation
-                result["statement"]["predicate"]["runDetails"]["metadata"]["invocationId"] = invocation
+            self.set_attestation_invocation(result, 124 if image else 123, 1 if image else 2)
         self.attest_mutation = different_run
-        with self.assertRaises(MODULE.EvidenceError):
+        with self.assertRaisesRegex(MODULE.EvidenceError, "same successful run"):
             self.verify()
 
     def test_duplicate_json_and_api_failure(self):

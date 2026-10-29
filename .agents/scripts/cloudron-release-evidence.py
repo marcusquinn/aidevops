@@ -230,7 +230,9 @@ class CatalogEvidence:
                 run_id, attempt = run["id"], run["run_attempt"]
                 require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0,
                         "invalid workflow invocation identity")
-                accepted.add(self.repository_url + "/actions/runs/" + str(run_id) + "/attempts/" + str(attempt))
+                # Failed-job reruns retain artifacts from earlier successful jobs.
+                accepted.update(self.repository_url + "/actions/runs/" + str(run_id) + "/attempts/" + str(number)
+                                for number in range(1, attempt + 1))
         require(accepted, "no successful exact-source repository-owned workflow")
         return accepted
 
@@ -287,7 +289,11 @@ class CatalogEvidence:
             catalog.write_bytes(data)
             file_runs = self.verified_invocations(str(catalog), CATALOG, hashlib.sha256(data).hexdigest(), invocations)
             image_runs = self.verified_invocations("oci://" + image, image_name, image_digest, invocations)
-            require(file_runs & image_runs, "catalog and image were not attested by the same successful invocation")
+            # aidevops:trust-boundary — only validated invocation URIs may share a
+            # successful run ID; the build and publish attempts can differ.
+            file_run_ids = {uri.rsplit("/attempts/", 1)[0] for uri in file_runs}
+            image_run_ids = {uri.rsplit("/attempts/", 1)[0] for uri in image_runs}
+            require(file_run_ids & image_run_ids, "catalog and image were not attested by the same successful run")
         return True
 
 
