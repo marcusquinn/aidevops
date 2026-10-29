@@ -128,14 +128,15 @@ gh_issue_edit_safe() {
 	return $?
 }
 
-# Extract _carry_forward_pr_diff from pulse-merge.sh and eval into this shell.
+# Extract _carry_forward_pr_diff and its fence helper from
+# pulse-merge-conflict.sh and eval them into this shell.
 define_helper_under_test() {
 	local helper_src
 	helper_src=$(awk '
-		/^_carry_forward_pr_diff\(\) \{/,/^}$/ { print }
+		/^_carry_forward_(diff_fence|pr_diff)\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
-	if [[ -z "$helper_src" ]]; then
-		printf 'ERROR: could not extract _carry_forward_pr_diff from %s\n' "$MERGE_SCRIPT" >&2
+	if [[ "$helper_src" != *"_carry_forward_diff_fence() {"* || "$helper_src" != *"_carry_forward_pr_diff() {"* ]]; then
+		printf 'ERROR: could not extract _carry_forward_pr_diff and _carry_forward_diff_fence from %s\n' "$MERGE_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
