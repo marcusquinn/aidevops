@@ -1670,6 +1670,88 @@ _transition_deny() {
 	return 0
 }
 
+# Best-effort presentation hygiene only: never delete or edit parser evidence.
+# The claim predates attempt allocation, so its exact lease/device/session is
+# the binding; later leases and dispatches must also match the finished attempt.
+# Bound the entire operation to five seconds, with no retries or pagination.
+_minimize_finished_attempt_comments() {
+	local issue_number="$1" repo_slug="$2" runner="$3" lease_token="$4"
+	local device="$5" session="$6" attempt_id="$7"
+	local phase="${8:-terminal}"
+	[[ "$phase" == terminal ]] || return 0
+	local limiter="" deadline=$((SECONDS + 5)) remaining="" response="" ids="" id=""
+	if command -v timeout >/dev/null 2>&1; then
+		limiter="timeout"
+	elif command -v gtimeout >/dev/null 2>&1; then
+		limiter="gtimeout"
+	else
+		printf 'DISPATCH_COMMENT_HYGIENE deferred=timeout_unavailable\n' >&2
+		return 0
+	fi
+	# A REST budget probe avoids spending any GraphQL points when scarce.
+	remaining=$("$limiter" 2 gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || remaining=""
+	if [[ ! "$remaining" =~ ^[0-9]+$ || "$remaining" -lt 100 ]]; then
+		printf 'DISPATCH_COMMENT_HYGIENE deferred=graphql_budget\n' >&2
+		return 0
+	fi
+	remaining=$((deadline - SECONDS))
+	[[ "$remaining" -gt 0 ]] || return 0
+	response=$("$limiter" "$remaining" gh api graphql \
+		-f owner="${repo_slug%/*}" -f name="${repo_slug#*/}" -F number="$issue_number" \
+		-f query="query(\$owner: String!, \$name: String!, \$number: Int!) {
+			rateLimit { remaining }
+			repository(owner: \$owner, name: \$name) {
+				issue(number: \$number) {
+					comments(last: 100) { nodes { id body isMinimized author { login } } }
+				}
+			}
+		}" 2>/dev/null) || {
+		printf 'DISPATCH_COMMENT_HYGIENE deferred=query_failed\n' >&2
+		return 0
+	}
+	ids=$(printf '%s' "$response" | jq -er --arg runner "$runner" --arg token "$lease_token" \
+		--arg device "$device" --arg session "$session" --arg attempt "$attempt_id" '
+		def fields: split("\n") | map(split(" ")[] | select(test("^[a-z_]+="))
+			| capture("^(?<key>[a-z_]+)=(?<value>[^ ]+)$")) | from_entries;
+		def identity:
+			fields | .lease_token == $token and .device == $device and .session == $session;
+		select((.errors // [] | length) == 0 and .data.rateLimit.remaining >= 100)
+		| [.data.repository.issue.comments.nodes[]
+			| select(.author.login == $runner) ] as $comments
+		# Require the terminal marker to be visible in this bounded window.
+		| select(any($comments[]; .body | identity and
+			(test("(^|\n)DISPATCH_LEASE phase=terminal ")) and
+			(fields | .attempt_id == $attempt)))
+		| $comments[] | select(.isMinimized == false)
+		| select(.body | identity)
+		| select(.body | test("(^|\n)(CLAIM_RELEASED|.*TERMINAL_BLOCKER|Terminal blocker)"; "i") | not)
+		| select(.body | test("(^|\n)DISPATCH_CLAIM ") or
+			((fields | .attempt_id == $attempt) and
+			 test("(^|\n)(DISPATCH_LEASE phase=(prelaunch|ready|terminal) |Dispatching worker)")) or
+			# Early prelaunch renewal can precede attempt allocation too.
+			(test("(^|\n)DISPATCH_LEASE phase=prelaunch ") and
+			 (fields | .attempt_id == "unknown")))
+		| .id' 2>/dev/null) || {
+		printf 'DISPATCH_COMMENT_HYGIENE deferred=no_candidates\n' >&2
+		return 0
+	}
+	while IFS= read -r id; do
+		[[ -n "$id" ]] || continue
+		remaining=$((deadline - SECONDS))
+		if [[ "$remaining" -le 0 ]]; then
+			printf 'DISPATCH_COMMENT_HYGIENE deferred=deadline\n' >&2
+			return 0
+		fi
+		if ! "$limiter" "$remaining" gh api graphql -f id="$id" -f query="mutation(\$id: ID!) {
+			minimizeComment(input: {subjectId: \$id, classifier: OUTDATED}) { clientMutationId }
+		}" >/dev/null 2>&1; then
+			printf 'DISPATCH_COMMENT_HYGIENE deferred=minimize_failed\n' >&2
+			return 0
+		fi
+	done <<<"$ids"
+	return 0
+}
+
 cmd_transition() {
 	local phase="${1:-}" issue_number="${2:-}" repo_slug="${3:-}" lease_token="${4:-}" session_key="${5:-}"
 	local ttl="${6:-}"
@@ -1767,6 +1849,8 @@ DISPATCH_LEASE phase=${phase} lease_token=${lease_token} device=$(_resolve_devic
 		_transition_deny mutation_failed
 		return 1
 	fi
+	_minimize_finished_attempt_comments "$issue_number" "$repo_slug" "$current_login" \
+		"$lease_token" "$current_device" "${session_key:-issue-${issue_number}}" "$attempt_id" "$phase" || true
 	return 0
 }
 

@@ -111,6 +111,10 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
+- [ ] t18794 Dispatch: minimize finished-attempt lifecycle comments to cut thread noise while keeping the audit trail #auto-dispatch #feat ref:GH#35993 logged:2026-10-29 -> [todo/tasks/t18794-brief.md]
+
+- [ ] t18793 full-loop: implementation intent in maintainer repos finalises interactive draft PRs after verification #feat #interactive ref:GH#35991 assignee:marcusquinn started:2026-10-29 logged:2026-10-29 -> [todo/tasks/t18793-brief.md]
+
 - [x] t18787 Feedback routes close worker PRs while the worker dispatch lease is still live #bug #priority:high ref:GH#35939 logged:2026-10-29 -> [todo/tasks/t18787-brief.md] pr:#35941 completed:2026-10-29
 
 - [x] t18784 docs: hostinger.md: ImageMagick escalation outcome, CloudLinux changelog check, install dates, maintained OpenSSL 1.1.1w, WPVulnerability hidden = unchecked #documentation ref:GH#35914 logged:2026-10-29 -> [todo/tasks/t18784-brief.md] pr:#35916 completed:2026-10-29
