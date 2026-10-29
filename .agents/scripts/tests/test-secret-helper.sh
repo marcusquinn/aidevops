@@ -895,13 +895,15 @@ test_run_redacts_sed_significant_literal_values() {
 	trap 'teardown' RETURN
 	local fixture='literal|fixture&with\slashes/[].*^$'
 	export AIDEVOPS_TEST_SECRET="$fixture"
-	local output=""
+	local output="" errors=""
 	local exit_code=0
 
 	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
-		'printf "stdout:%s\n" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2; exit 23') || exit_code=$?
+		'printf "stdout:%s\n" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2; exit 23' 2>"$TEST_DIR/stderr") || exit_code=$?
+	errors=$(<"$TEST_DIR/stderr")
 
-	if [[ "$exit_code" -eq 23 && "$output" == $'stdout:[REDACTED]\nstderr:[REDACTED]' && "$output" != *"$fixture"* && "$output" != *"unterminated substitute pattern"* ]]; then
+	if [[ "$exit_code" -eq 23 && "$output" == 'stdout:[REDACTED]' && "$errors" == 'stderr:[REDACTED]' &&
+		"$output$errors" != *"$fixture"* && "$output$errors" != *"unterminated substitute pattern"* ]]; then
 		print_result "run redacts sed-significant literals on both output streams" 0
 	else
 		print_result "run redacts sed-significant literals on both output streams" 1 "Redaction or exit-status assertion failed"
@@ -919,8 +921,11 @@ test_run_skips_short_value_and_masks_long_value() {
 	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
 		'printf "stdout:%s %s\n" "$REDACTION_KEY" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2' 2>"$TEST_DIR/warning")
 	warning=$(<"$TEST_DIR/warning")
-	if [[ "$output" == $'stdout:openai openai\nstderr:openai' &&
-		"$warning" == 'WARN: secret REDACTION_KEY value too short to redact safely; not masked' ]]; then
+	# The names-only warning and the relayed child stderr share fd 2 from two
+	# writers, so assert content and count rather than order.
+	local warn_line='WARN: secret REDACTION_KEY value too short to redact safely; not masked'
+	if [[ "$output" == 'stdout:openai openai' &&
+		("$warning" == "$warn_line"$'\nstderr:openai' || "$warning" == $'stderr:openai\n'"$warn_line") ]]; then
 		print_result "short value passes through with one names-only warning" 0
 	else
 		print_result "short value passes through with one names-only warning" 1 "Short-value output or warning mismatch"
@@ -930,7 +935,7 @@ test_run_skips_short_value_and_masks_long_value() {
 	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
 		'printf "stdout:%s\n" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2' 2>"$TEST_DIR/warning")
 	warning=$(<"$TEST_DIR/warning")
-	if [[ "$output" == $'stdout:[REDACTED]\nstderr:[REDACTED]' && -z "$warning" ]]; then
+	if [[ "$output" == 'stdout:[REDACTED]' && "$warning" == 'stderr:[REDACTED]' ]]; then
 		print_result "24-character value remains masked on stdout and stderr" 0
 	else
 		print_result "24-character value remains masked on stdout and stderr" 1 "Long-value redaction or warning mismatch"

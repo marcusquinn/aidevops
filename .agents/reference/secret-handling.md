@@ -207,7 +207,7 @@ Secret protection is deliberately layered so one missed path does not expose raw
   - UNSAFE: `curl -H "Authorization: Bearer $TOKEN" ...` — `ps` shows full command line; error output may echo headers
   - UNSAFE: `mysql -p"$PASSWORD" dbname` — password visible in process list
   - SAFE: `SECRET=$(gopass show -o name) MY_SECRET="$SECRET" cmd` — subprocess reads via `getenv("MY_SECRET")`; error handlers never print env vars
-  - SAFE: `aidevops secret NAME -- cmd` — injects as env var with automatic output redaction
+  - SAFE: `aidevops secret NAME -- cmd` — injects as env var with automatic output redaction; stdout and stderr stay separate streams (each redacted) and stdin is inherited, so it is a transparent launcher for stdio MCP servers in `mcp.<name>.command` entries (GH#35896)
   - SAFE: `SSH_AUTH_SOCK=... ssh ...` — env-based auth, no secret in argv
   - Subprocess must read value from environment (`getenv()` in C/PHP, `process.env` in Node, `os.environ` in Python, `ENV[]` in Ruby), not from `$1`/`argv`.
   - Last resort (program only accepts args): write secret to `mktemp` file (`chmod 0600`), pass the path, clean up via `trap EXIT`.
