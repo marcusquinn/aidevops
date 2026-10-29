@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.82] - 2026-10-29
+
+### Changed
+
+- Documentation: treat remote-state answers as current-turn queries
+
+### Fixed
+
+- accept attestations across successful run attempts (#35876)
+- retire daily closed-issue CodeRabbit review requests (#35878)
+
 ## [3.39.81] - 2026-10-29
 
 ### Added
