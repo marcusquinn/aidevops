@@ -111,7 +111,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
-- [ ] t18782 OpenCode V2: wire DB activity heartbeat and adapt V2 event shape for idle-gated archive #auto-dispatch #bug ref:GH#35898 logged:2026-10-29 -> [todo/tasks/t18782-brief.md]
+- [x] t18782 OpenCode V2: wire DB activity heartbeat and adapt V2 event shape for idle-gated archive #auto-dispatch #bug ref:GH#35898 logged:2026-10-29 -> [todo/tasks/t18782-brief.md] pr:#35901 completed:2026-10-29
 
 - [ ] t18781 OpenCode sidebar Prompts shows command templates and timeline dialog closes on click #bug ref:GH#35890 logged:2026-10-29 -> [todo/tasks/t18781-brief.md]
 
