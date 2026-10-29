@@ -345,8 +345,8 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-partial-continuation.sh"
 #
 # Security invariant: this helper never marks a PR mergeable and never bypasses
 # collaborator, maintainer, review-bot, or branch-protection gates. A blocking
-# review either remains a skip/repair-route, or the existing maintainer-labeled
-# CodeRabbit-only dismissal path clears stale bot nits before normal gates run.
+# review either remains a skip/repair-route, or trusted-author CodeRabbit-only
+# advisory dismissal clears the aggregate block before normal gates run.
 #
 # Returns 0 if the caller may keep evaluating merge gates.
 # Returns 1 if the PR remains review-blocked. A converged remediation may also
@@ -405,19 +405,8 @@ _handle_changes_requested_review_gate() {
 		return 0
 	fi
 
-	# t2179: coderabbit-nits-ok path.
-	if [[ ",${_cr_pr_labels}," == *",coderabbit-nits-ok,"* ]]; then
-		if _pulse_merge_dismiss_coderabbit_nits "$pr_number" "$repo_slug"; then
-			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — auto-dismissed CodeRabbit-only CHANGES_REQUESTED reviews (coderabbit-nits-ok label) (t2179)" >>"$LOGFILE"
-			if [[ -n "$dismissed_dest_var" && "$dismissed_dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-				printf -v "$dismissed_dest_var" '%s' "1"
-			fi
-			return 0
-		fi
-
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — coderabbit-nits-ok label present but human reviewer also blocking (t2179)" >>"$LOGFILE"
-		return 1
-	fi
+	# A cosmetic override never clears a trusted human change request (t2179).
+	[[ "$_cr_label_list" != *",coderabbit-nits-ok,"* ]] || return 1
 
 	# Optional policy override (GH#26535): by default CHANGES_REQUESTED worker
 	# PRs keep the historical fast-routing behaviour below. Operators who prefer
