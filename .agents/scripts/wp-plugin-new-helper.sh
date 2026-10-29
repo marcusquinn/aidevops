@@ -305,6 +305,7 @@ _quality_plan() {
 	fi
 	printf 'Quality:      register repos.json features: ["code-quality"] for the daily sweep\n'
 	if [[ "$visibility" == private ]]; then
+		printf 'Runners:      enroll private org repo in its selected pool before first PR; require fork PR workflows off\n'
 		printf 'Quality:      defer hosted onboarding until public by default; verify any existing private-plan capacity\n'
 	else
 		printf 'Quality:      Codacy API add + grade badge with CODACY_API_TOKEN; otherwise report missing token\n'

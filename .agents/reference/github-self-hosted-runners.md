@@ -51,7 +51,7 @@ The command discovers one private-only, selected-repository group and one custom
 label common to its registered runners. It refuses ambiguous groups/labels,
 inherited groups, workflow-restricted groups, or fork PR workflows that are not
 explicitly disabled. It never disables fork workflows or changes group policy.
-An org without runner groups retains the GitHub-hosted fallback. For ambiguous
+An org without selected-repository groups retains the GitHub-hosted fallback. For ambiguous
 pools, rerun with `--group <GROUP> --label <POOL_LABEL>`; `--dry-run` performs
 reads only and prints the commands without applying them. An empty ephemeral
 pool must first register a runner so the label can be verified.
