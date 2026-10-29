@@ -101,7 +101,7 @@ release_request() {
 	local repo="$1" pr="$2"
 	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" url="" older="" rc=0
 	local issue="" metadata="" command="" existing_body="" maintainer_prefix='Maintainer command:'
-	local verdict=""
+	local verdict="" publication_body=""
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || release_error 'PR number must be a positive integer.' || return 1
 	release_authority "$repo" || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
@@ -135,7 +135,10 @@ release_request() {
 		[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
 		command="sudo aidevops approve issue ${issue} ${repo}"
 		existing_body=$(jq -r '.body' <<<"$existing") || return 1
-		if [[ "$existing_body" == *"${maintainer_prefix} \`${command}\`"* ]]; then
+		publication_body="${existing_body##*$'\n### Publication boundary\n'}"
+		publication_body="${publication_body%%$'\n### Files Scope\n'*}"
+		if [[ "$existing_body" != *'Request finalization pending.'* &&
+			"$publication_body" == *$'\n\n'"${maintainer_prefix} \`${command}\`"$'\n' ]]; then
 			printf '%s\nAPPROVAL_COMMAND=%s\n' "$url" "$command"
 			return 0
 		fi

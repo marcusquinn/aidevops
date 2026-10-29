@@ -117,7 +117,11 @@ gh() {
 			printf "    secrets:\n      CLOUDRON_RELEASE_PAT: \${{ secrets.CLOUDRON_RELEASE_PAT }}\n"
 		fi
 		;;
-	'api repos/owner/app/contents/CHANGELOG?'*) printf '[1.2.3]\n* Upgrade upstream\n\n[1.2.2]\n* Old entry\n' ;;
+	'api repos/owner/app/contents/CHANGELOG?'*)
+		# A changelog example must never make an unfinished request look finalized.
+		# shellcheck disable=SC2016 # Markdown command backticks are literal.
+		printf '[1.2.3]\n* Upgrade upstream\nMaintainer command: `sudo aidevops approve issue 12 owner/app`\n\n[1.2.2]\n* Old entry\n'
+		;;
 	'api repos/owner/app/contents/CloudronVersions.json?'*)
 		[[ "$SCENARIO" != catalog_error ]] || return 1
 		printf '{"versions":{"1.2.3":{"manifest":{"version":"1.2.3"}}}}\n'
@@ -312,6 +316,8 @@ export SCENARIO=request_unsigned
 [[ "$(release_request owner/app 7)" == "$request_output" ]]
 # shellcheck disable=SC2016 # Markdown command backticks are literal.
 grep -q 'Maintainer command: `sudo aidevops approve issue 12 owner/app`' "${TEST_ROOT}/request"
+if grep -q 'Request finalization pending\.' "${TEST_ROOT}/request"; then exit 1; fi
+grep -q 'issue-edit 12 --repo owner/app --body-file -' "${TEST_ROOT}/calls"
 printf 'PASS interrupted unsigned request recovers; signed body is not rewritten\n'
 
 export SCENARIO=unsigned
