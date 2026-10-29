@@ -115,11 +115,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [ ] t18783 OpenCode 2.x migration-readiness checks (V2 parity tracker) #feat #parent-task ref:GH#35902 logged:2026-10-29 -> [todo/tasks/t18783-brief.md]
 
-- [ ] t18782 OpenCode V2: wire DB activity heartbeat and adapt V2 event shape for idle-gated archive #auto-dispatch #bug ref:GH#35898 logged:2026-10-29 -> [todo/tasks/t18782-brief.md]
+- [x] t18782 OpenCode V2: wire DB activity heartbeat and adapt V2 event shape for idle-gated archive #auto-dispatch #bug ref:GH#35898 pr:#35901 logged:2026-10-29 -> [todo/tasks/t18782-brief.md] completed:2026-10-29
 
 - [x] t18781 OpenCode sidebar Prompts shows command templates and timeline dialog closes on click #bug ref:GH#35890 logged:2026-10-29 -> [todo/tasks/t18781-brief.md] pr:#35891 completed:2026-10-29
 
-- [ ] t18776 fix(release): stop recurring CodeRabbit CHANGELOG reference-definition blocks on release PRs #auto-dispatch #bug tier:simple ref:GH#35811 logged:2026-10-28 -> [todo/tasks/t18776-brief.md]
+- [x] t18776 fix(release): stop recurring CodeRabbit CHANGELOG reference-definition blocks on release PRs #auto-dispatch #bug tier:simple ref:GH#35811 pr:#35837 logged:2026-10-28 -> [todo/tasks/t18776-brief.md] completed:2026-10-29
 
 - [x] t18766 Prepare multi-host Tabby/tmux implementation specification and sanitized prototype #docs #no-auto-dispatch logged:2026-10-23 completed:2026-10-23 verified:2026-10-23 -> [todo/plans/t18766-tabby-tmux-session-management.md]
 
@@ -5364,3 +5364,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18694 Record GenAIPro API review: verified contract, do not route (pooled consumer accounts) #feat #interactive ref:GH#34713 pr:#34714 completed:2026-10-14
 
 - [x] t18702 Remove GenAIPro from media-generation provider guidance #feat #interactive ref:GH#34729 pr:#34730 completed:2026-10-15
+
+- [ ] t18777 docs: recommend reusable purpose-scoped PATs (extend repo access) instead of per-repo tokens for CLOUDRON_RELEASE_PAT and SYNC_PAT #auto-dispatch #documentation ref:GH#35858
