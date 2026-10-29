@@ -18,6 +18,8 @@ merge_sha="${COMPLETION_PR_MERGE_SHA:-1111111111111111111111111111111111111111}"
 release_mode="${COMPLETION_RELEASE_MODE:-valid}"
 if [[ "$*" == *"repos/testorg/app"* ]]; then
 	mode="${COMPLETION_DEPLOYMENT_MODE:-valid}"
+	run_id="${COMPLETION_DEPLOYMENT_RUN_ID:-900}"
+	run_attempt="${COMPLETION_DEPLOYMENT_ATTEMPT:-1}"
 	[[ "$mode" != "api-failure" ]] || exit 70
 	case "$*" in
 	"api repos/testorg/app")
@@ -29,12 +31,14 @@ if [[ "$*" == *"repos/testorg/app"* ]]; then
 		jq -cn --arg mode "$mode" --arg call "$*" '{permission:
 			(if $mode == "untrusted" or ($mode == "untrusted-rerun" and ($call | contains("rerunner"))) then "read" else "write" end)}' ;;
 	*"/actions/workflows/deploy.yml/runs"*)
-		jq -cn --arg mode "$mode" '{workflow_runs:[{id:(if $mode == "stale" then 901 else 900 end),
-			status:"completed",conclusion:"success",run_attempt:1,head_sha:"3333333333333333333333333333333333333333"}]}' ;;
+		jq -cn --arg mode "$mode" --argjson id "$run_id" --argjson attempt "$run_attempt" \
+			'{workflow_runs:[{id:(if $mode == "stale" then 901 else $id end),
+			status:"completed",conclusion:"success",run_attempt:$attempt,head_sha:"3333333333333333333333333333333333333333"}]}' ;;
 	*"/actions/workflows/deploy.yml")
 		printf '%s\n' '{"id":12,"path":".github/workflows/deploy.yml"}' ;;
-	*"/actions/runs/900")
-		jq -cn --arg mode "$mode" '{id:900,workflow_id:(if $mode == "wrong-workflow" then 13 else 12 end),
+	*"/actions/runs/900"|*"/actions/runs/901")
+		jq -cn --arg mode "$mode" --argjson id "$run_id" --argjson attempt "$run_attempt" \
+			'{id:$id,workflow_id:(if $mode == "wrong-workflow" then 13 else 12 end),
 			path:".github/workflows/deploy.yml",repository:{full_name:"testorg/app"},
 			head_repository:{full_name:(if $mode == "fork" then "outside/app" else "testorg/app" end)},
 			event:(if $mode == "pr-event" then "pull_request" else "push" end),
@@ -42,7 +46,7 @@ if [[ "$*" == *"repos/testorg/app"* ]]; then
 			head_sha:(if $mode == "wrong-sha" then "4444444444444444444444444444444444444444" else "3333333333333333333333333333333333333333" end),
 			status:(if $mode == "pending" then "in_progress" else "completed" end),
 			conclusion:(if $mode == "failed" then "failure" else "success" end),
-			run_attempt:(if $mode == "rerun" then 2 else 1 end),
+			run_attempt:(if $mode == "rerun" then 2 else $attempt end),
 			run_started_at:(if $mode == "pre-merge" then "2026-07-10T00:00:00Z" else "2026-07-11T00:01:00Z" end),
 			actor:{login:"deployer"},triggering_actor:{login:"rerunner"}}' ;;
 	*"/compare/"*)
@@ -553,7 +557,41 @@ for invalid_deployment in failed stale untrusted rerun; do
 		exit 1
 	fi
 done
+# A fresh attestation repairs stale evidence without permitting failed repairs,
+# workflow changes, or rollback to an older run/attempt.
+export COMPLETION_DEPLOYMENT_RUN_ID=901
+if bash "$finalize_runner" 80 testorg/app >/dev/null 2>&1; then
+	printf 'FAIL stale receipt finalized before re-attestation\n'
+	exit 1
+fi
+COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
+	80 901 deploy.yml "$deployment_sha" testorg/app >/dev/null
+jq -Rse 'split("\n")[1] | fromjson | .run_id == 901 and .run_attempt == 1' "$deployment_receipt" >/dev/null
+cp "$deployment_receipt" "${ROOT}/deployment-recovered"
+export COMPLETION_DEPLOYMENT_ATTEMPT=2
+if COMPLETION_DEPLOYMENT_MODE=failed COMPLETION_RECORD_COMMAND=cmd_record_deployment \
+	bash "$published_record_runner" 80 901 deploy.yml "$deployment_sha" testorg/app >/dev/null 2>&1; then
+	printf 'FAIL failed rerun repaired receipt\n'
+	exit 1
+fi
+cmp -s "$deployment_receipt" "${ROOT}/deployment-recovered"
+COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
+	80 901 deploy.yml "$deployment_sha" testorg/app >/dev/null
+jq -Rse 'split("\n")[1] | fromjson | .run_id == 901 and .run_attempt == 2' "$deployment_receipt" >/dev/null
+cp "$deployment_receipt" "${ROOT}/deployment-recovered"
+if COMPLETION_DEPLOYMENT_ATTEMPT=1 COMPLETION_RECORD_COMMAND=cmd_record_deployment \
+	bash "$published_record_runner" 80 901 deploy.yml "$deployment_sha" testorg/app >/dev/null 2>&1; then
+	printf 'FAIL receipt rolled back to an older attempt\n'
+	exit 1
+fi
+if COMPLETION_DEPLOYMENT_RUN_ID=900 COMPLETION_RECORD_COMMAND=cmd_record_deployment \
+	bash "$published_record_runner" 80 900 deploy.yml "$deployment_sha" testorg/app >/dev/null 2>&1; then
+	printf 'FAIL receipt rolled back to an older run\n'
+	exit 1
+fi
+cmp -s "$deployment_receipt" "${ROOT}/deployment-recovered"
 bash "$finalize_runner" 80 testorg/app >/dev/null
+unset COMPLETION_DEPLOYMENT_RUN_ID COMPLETION_DEPLOYMENT_ATTEMPT
 jq -e '.release_status == "published" and .executor_completion_state == "COMPLETE"
 	and .resource_cleanup_state == "CLEANUP_DEFERRED" and .owner.pid > 0' "$deployment_cleanup" >/dev/null
 [[ -d "$deployment_worktree" ]]
