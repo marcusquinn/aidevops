@@ -696,6 +696,20 @@ else
 	print_result "B'14: present derived status label is retained after provisioning failure" 1 "line: $last"
 fi
 
+# B'14a: an unreadable inventory is not proof that the derived label is absent.
+reset_recorder
+MOCK_ENSURE_STATUS_RC=1 MOCK_STATUS_SNAPSHOT_RC=1 MOCK_STATUS_SNAPSHOT="" \
+	SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "advisory" --body "body" >/dev/null 2>&1
+create_count=$(grep -c '^issue create ' "$GH_RECORD_FILE" || true)
+last=$(grep '^issue create ' "$GH_RECORD_FILE" | tail -1)
+if [[ "$create_count" -eq 1 && "$last" == *"status:available"* ]]; then
+	print_result "B'14a: unreadable inventory retains derived status label with one create attempt" 0
+else
+	print_result "B'14a: unreadable inventory retains derived status label with one create attempt" 1 \
+		"creates=$create_count line: $last"
+fi
+
 reset_recorder
 _ORIGIN_LABELS_FAILED="o/r"
 MOCK_ENSURE_STATUS_RC=1 MOCK_STATUS_SNAPSHOT="" MOCK_LABEL_NAMES="bug" \
