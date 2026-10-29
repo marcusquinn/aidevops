@@ -76,9 +76,16 @@ _dispatch_mark_benign_blocked_candidate() { return 0; }
 # GH#36000: exercise the real LOGFILE reader before the legacy unit stub below.
 candidate='{"number":34526,"repo_slug":"example/repo","updatedAt":"2026-10-13T00:00:00Z","assignees":[],"labels":["status:available","auto-dispatch"]}'
 cache=$(_dispatch_negative_cache_path 34526 example/repo)
+attention_verdict=$(
+	# Keep the production emitter and stub only the upstream evidence lookup.
+	# shellcheck source=../pr-checkpoint-continuation-helper.sh
+	source "$SCRIPT_DIR/../pr-checkpoint-continuation-helper.sh"
+	_pcc_completed_release_evidence() { printf '456\tcompleted\ttrue\n'; return 0; }
+	_pcc_completed_attention example/repo 34526 123 abc '[]' test-key
+)
 for verdict in \
 	'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #123 in example/repo has no current stall release issue=#34526' \
-	'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #123 in example/repo head=abc release=456 issue=#34526' \
+	"$attention_verdict" \
 	'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #123 in example/repo head=abc — runner bot already released it as runner_capability_unmet (release=456) issue=#34526'; do
 	printf '%s\n' \
 		'DISPATCH_CANDIDATE_ATTEMPT issue=#34526 repo=example/repo' \
