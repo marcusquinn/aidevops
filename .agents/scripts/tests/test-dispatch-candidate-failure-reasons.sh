@@ -73,6 +73,13 @@ source "$SCRIPT_DIR/../pulse-dispatch-lib.sh"
 _dispatch_stats_increment() { return 0; }
 _dispatch_stats_increment_candidate_failed() { return 0; }
 _dispatch_mark_benign_blocked_candidate() { return 0; }
+CHECKPOINT_HEAD=test-head
+_dispatch_checkpoint_pr_head() {
+	local repo="$1" pr="$2"
+	[[ "$repo" == example/repo && "$pr" == 123 && -n "$CHECKPOINT_HEAD" ]] || return 1
+	printf '%s\n' "$CHECKPOINT_HEAD"
+	return 0
+}
 # GH#36000: exercise the real LOGFILE reader before the legacy unit stub below.
 candidate='{"number":34526,"repo_slug":"example/repo","updatedAt":"2026-10-13T00:00:00Z","assignees":[],"labels":["status:available","auto-dispatch"]}'
 cache=$(_dispatch_negative_cache_path 34526 example/repo)
@@ -108,7 +115,7 @@ _dispatch_candidate_recent_lines() {
 	printf '%s\nDISPATCH_BLOCK_REASON reason=%s signal=test\n' "$ATTEMPT_LINES" "$ATTEMPT_REASON"
 	return 0
 }
-# A cooled checkpoint must never require the old expensive PR lookup.
+# A cooled checkpoint must never require the old expensive network PR lookup.
 _dispatch_negative_pr_fingerprint() { return 1; }
 candidate='{"number":34526,"repo_slug":"example/repo","updatedAt":"2026-10-13T00:00:00Z","assignees":[],"labels":["status:available","auto-dispatch"]}'
 ATTEMPT_REASON=dedup_active_claim
@@ -126,30 +133,44 @@ changed=$(jq -c '.labels += ["retry"]' <<<"$candidate")
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$changed]")" != '[]' ]]
 changed=$(jq -c '.labels |= reverse' <<<"$candidate")
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$changed]")" == '[]' ]]
+CHECKPOINT_HEAD=new-head
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
+CHECKPOINT_HEAD=''
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
+CHECKPOINT_HEAD=test-head
 cache=$(_dispatch_negative_cache_path 34526 example/repo)
 fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate")
-printf '%s\t%s\t%s\t-\t%s\t\n' "$(($(date +%s) - 21600))" \
+printf '%s\t%s\t%s\t123\t%s\ttest-head\n' "$(($(date +%s) - 21600))" \
 	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
 # Record age and issue age are independent: quiet eligibility is fixed at write time.
 now=$(date +%s)
 stamp=$((now - 3600))
-printf '%s\t%s\t%s\t-\t%s\t\n' "$stamp" \
+printf '%s\t%s\t%s\t123\t%s\ttest-head\n' "$stamp" \
 	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" == '[]' ]]
 assigned=$(jq -c '.assignees = [{login:"runner"}]' <<<"$candidate")
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$assigned]")" != '[]' ]]
 [[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=0 _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
 [[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=invalid _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" == '[]' ]]
+[[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=08 _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
+[[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=00021600 _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" == '[]' ]]
+for value in invalid 999999999999999999999999999999999999 2147483648; do
+	[[ "$(_dispatch_checkpoint_decimal "$value" 14400)" == 14400 ]]
+done
+[[ "$(_dispatch_checkpoint_decimal 00008 14400)" == 8 ]]
+[[ "$(_dispatch_checkpoint_decimal 0000 14400)" == 0 ]]
+[[ "$(_dispatch_checkpoint_decimal 2147483647 14400)" == 2147483647 ]]
 for age in 14399 14400; do
 	revision=$(jq -nr --argjson epoch "$((stamp - age))" '$epoch | todateiso8601')
 	recent=$(jq -c --arg revision "$revision" '.updatedAt = $revision' <<<"$candidate")
-	printf '%s\t%s\t%s\t-\t%s\t\n' "$stamp" "$revision" worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
+	printf '%s\t%s\t%s\t123\t%s\ttest-head\n' "$stamp" "$revision" worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 	filtered=$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$recent]")
 	if ((age < 14400)); then [[ "$filtered" != '[]' ]]; else [[ "$filtered" == '[]' ]]; fi
+	[[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_AFTER_SECONDS=08 _dispatch_filter_capability_cooled_candidates example/repo '' "[$recent]")" == '[]' ]]
 done
 # The quiet duration cap remains one day even with an oversized setting.
-printf '%s\t%s\t%s\t-\t%s\t\n' "$((now - 86400))" \
+printf '%s\t%s\t%s\t123\t%s\ttest-head\n' "$((now - 86400))" \
 	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 [[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=999999 _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
 rm -f "$cache"

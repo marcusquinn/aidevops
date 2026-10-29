@@ -1055,7 +1055,8 @@ _dispatch_checkpoint_fingerprint() {
 	return $?
 }
 
-# This enumeration pass performs no PR/attention/continuation reads. Only the
+# This enumeration pass performs only local PR snapshot reads, no network or
+# attention/continuation reads. Only the
 # specifically confirmed benign checkpoint reason can bypass ownership checks.
 _dispatch_filter_checkpoint_cooled_candidates() {
 	local repo="$1" candidates="$2" candidate="" issue="" skipped="" filtered=""
@@ -1632,7 +1633,11 @@ _dispatch_record_nonzero_dispatch_result() {
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) blocked:${failure_reason} benign dispatch block" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_blocked_${failure_reason}"
 		if [[ "$failure_reason" == dedup_active_claim ]] && _dispatch_checkpoint_cooldown_eligible "$recent_lines"; then
-			_dispatch_negative_cache_record "$candidate_json" worker_draft_checkpoint_cooldown
+			local checkpoint_pr="" checkpoint_pattern='WORKER_DRAFT_CHECKPOINT: draft PR #([1-9][0-9]*)'
+			if [[ "$recent_lines" =~ $checkpoint_pattern ]]; then
+				checkpoint_pr="${BASH_REMATCH[1]}"
+				_dispatch_negative_cache_record "$candidate_json" worker_draft_checkpoint_cooldown "$checkpoint_pr"
+			fi
 		fi
 		[[ "$failure_reason" != blocked_by_unresolved ]] ||
 			_dispatch_normalize_dependency_blocked_candidate "$issue_number" "$repo_slug" "$recent_lines"

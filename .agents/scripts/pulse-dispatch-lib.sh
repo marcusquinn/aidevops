@@ -243,6 +243,37 @@ _dispatch_maintainer_gate_from_lines() {
 	return 1
 }
 
+# Read only the local complete PR snapshot: cooldown enumeration must not add
+# per-candidate network reads. Missing/stale evidence fails open to dispatch.
+_dispatch_checkpoint_pr_head() {
+	local repo="$1" pr="$2" snapshot=""
+	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+	snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) || return 1
+	jq -er --argjson pr "$pr" '
+		select(.complete == true) |
+		select((now - (.timestamp | fromdateiso8601)) >= 0 and
+			(now - (.timestamp | fromdateiso8601)) < 900) |
+		.items[] | select(.number == $pr) | .headRefOid |
+		select(type == "string" and length > 0)
+	' <<<"$snapshot" 2>/dev/null
+	return $?
+}
+
+# Strip leading zeros before arithmetic, rejecting values beyond a portable
+# signed 32-bit range without ever evaluating the unbounded input in Bash.
+_dispatch_checkpoint_decimal() {
+	local value="$1" fallback="$2"
+	if [[ "$value" =~ ^0*([1-9][0-9]*|0)$ ]]; then
+		value="${BASH_REMATCH[1]}"
+		if [[ "${#value}" -lt 10 ]] || { [[ "${#value}" -eq 10 ]] && [[ "$value" < 2147483648 ]]; }; then
+			printf '%s\n' "$value"
+			return 0
+		fi
+	fi
+	printf '%s\n' "$fallback"
+	return 0
+}
+
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp=""
@@ -270,7 +301,7 @@ _dispatch_negative_cache_record() {
 	fi
 	if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 		[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -gt 0 ]] || return 0
-		pr="-" # Nonempty TSV placeholder: read must not shift the fingerprint.
+		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr") || return 0
 		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") || return 0
 	fi
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
@@ -319,11 +350,13 @@ _dispatch_negative_cache_reason() {
 		[[ "$ttl" -gt 0 && -n "$fingerprint" ]] || return 1
 		current=$(_dispatch_checkpoint_fingerprint "$candidate") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
+		current=$(_dispatch_checkpoint_pr_head "$repo" "$pr") || return 1
+		[[ -n "$owner_path" && "$current" == "$owner_path" ]] || return 1
 		# Only old, unassigned revisions can outlive the base cooldown: recent
 		# claims may still expire, and assigned issues need stale-owner recovery.
-		[[ "$quiet_ttl" =~ ^[0-9]+$ ]] || quiet_ttl=21600
+		quiet_ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
 		((quiet_ttl <= 86400)) || quiet_ttl=86400
-		[[ "$quiet_after" =~ ^[0-9]+$ ]] || quiet_after=14400
+		quiet_after=$(_dispatch_checkpoint_decimal "$quiet_after" 14400)
 		if ((quiet_ttl > ttl)); then
 			revision_epoch=$(jq -er 'select((.assignees // [] | length) == 0) |
 				.updatedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' <<<"$candidate" 2>/dev/null) || revision_epoch=""
