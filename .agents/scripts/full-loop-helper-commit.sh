@@ -84,6 +84,7 @@ _parse_commit_and_pr_args() {
 	local value=""
 	while [[ "$index" -lt "${#args[@]}" ]]; do
 		arg="${args[$index]}"
+		pr_metadata_overrides="${pr_metadata_overrides:-} ${arg#--}"
 		case "$arg" in
 		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason)
 			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
@@ -1179,6 +1180,7 @@ _build_pr_body() {
 	local requested_testing_level="${8:-}"
 	local base_ref="${9:-}"
 	local replacement_note="${10:-}"
+	local decisions="${11:-}"
 	local runtime_risk=""
 	local testing_level=""
 
@@ -1198,7 +1200,11 @@ ${replacement_note}
 
 ${files_changed:-See diff}
 
-## Runtime Testing
+${decisions:+## Decisions
+
+${decisions}
+
+}## Runtime Testing
 
 - **Risk level:** ${runtime_risk}
 - **Verification:** ${testing_level} — ${summary_testing:-no additional evidence supplied}
@@ -1571,6 +1577,99 @@ _create_pr() {
 	return 0
 }
 
+# Inherit omitted evidence before prospective risk validation, not after push.
+# Explicit values remain authoritative; final-diff risk checks still run normally.
+_inherit_pr_runtime_metadata() {
+	local pr_number="$1"
+	local repo="$2"
+	local body="" metadata=""
+	local override_flags=" ${pr_metadata_overrides:-} "
+	local endpoint="repos/${repo}/pulls"
+	endpoint+="/${pr_number}"
+	body=$(_gh_with_timeout read gh api "$endpoint" --jq '.body // empty') || return 1
+	metadata=$(python3 - "$body" <<'PY'
+import json, re, sys
+body = sys.argv[1]
+section = re.search(r'^## Runtime Testing\s*\n(.*?)(?=^## |\Z)', body, re.M | re.S)
+text = section[1] if section else ''
+text = re.split(r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:', text, maxsplit=1, flags=re.M)[0]
+risk = re.search(r'^- \*\*Risk level:\*\* (.+)$', text, re.M)
+verification = re.search(r'^- \*\*Verification:\*\*[ \t]+([\w-]+) —[ \t]*(.*?)(?=^- \*\*|\Z)', text, re.M | re.S)
+print(json.dumps({'risk': risk[1] if risk else '',
+                  'level': verification[1] if verification else '',
+                  'evidence': verification[2].strip() if verification else ''}))
+PY
+	) || return 1
+	[[ "$override_flags" == *" risk-level "* ]] || runtime_risk=$(printf '%s' "$metadata" | jq -r '.risk')
+	[[ "$override_flags" == *" testing-level "* ]] || testing_level=$(printf '%s' "$metadata" | jq -r '.level')
+	[[ "$override_flags" == *" testing "* ]] || summary_testing=$(printf '%s' "$metadata" | jq -r '.evidence')
+	return 0
+}
+
+# Keep curated sections verbatim, refreshing only derived data and explicit
+# overrides. Use the live body as the base so arbitrary prose and footer survive.
+_merge_existing_pr_body() {
+	local current_body="$1"
+	local generated_body="$2"
+	local overrides="${3:-}"
+	python3 - "$current_body" "$generated_body" "$overrides" <<'PY'
+import re, sys
+current, generated, overrides = sys.argv[1], sys.argv[2], set(sys.argv[3].split())
+if not current.strip() or not re.search(r'^## ', generated, re.M):
+    print(generated)
+    sys.exit(0)
+
+def section(body, name):
+    boundary = r'(?=^## |^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:|\Z)'
+    return re.search(r'^## ' + re.escape(name) + r'\n.*?' + boundary, body, re.M | re.S)
+
+def insert_section(body, text):
+    footer = re.search(r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:', body, re.M)
+    position = footer.start() if footer else len(body)
+    return body[:position].rstrip('\n') + '\n\n' + text.rstrip('\n') + '\n\n' + body[position:]
+
+for name, flag in [('Files Changed', None), ('Summary', 'summary'), ('Decisions', 'decisions')]:
+    old, new = section(current, name), section(generated, name)
+    if old and not new and flag in overrides:
+        current = current[:old.start()] + current[old.end():]
+    if new and (not old or flag is None or flag in overrides):
+        if old:
+            current = current[:old.start()] + new[0] + current[old.end():]
+        else:
+            current = insert_section(current, new[0])
+
+old, new = section(current, 'Runtime Testing'), section(generated, 'Runtime Testing')
+if old and new:
+    # The runtime section can also contain the closing reference and signature:
+    # replace only the requested metadata lines, never that trailing content.
+    text = old[0]
+    for label, flags in [('Risk level', {'risk-level'}), ('Verification', {'testing', 'testing-level'})]:
+        pattern = r'^- \*\*' + label + r':\*\* .*?(?=^- \*\*|\Z)'
+        replacement = re.search(pattern, new[0], re.M | re.S)
+        if overrides & flags and replacement:
+            text = re.sub(pattern, lambda _: replacement[0], text, flags=re.M | re.S)
+    current = current[:old.start()] + text + current[old.end():]
+elif new:
+    current = insert_section(current, new[0])
+
+# Sections deliberately exclude the closing reference and signature. Recover
+# each independently so a partial footer is completed without duplicating it.
+reference = r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b[^\n]*'
+if not re.search(reference, current, re.M):
+    closing = re.search(reference, generated, re.M)
+    if closing:
+        signature_start = re.search(r'^<!-- aidevops:', current, re.M)
+        position = signature_start.start() if signature_start else len(current)
+        current = current[:position].rstrip('\n') + '\n\n' + closing[0] + '\n\n' + current[position:]
+if not re.search(r'^<!-- aidevops:sig -->', current, re.M):
+    signature = re.search(r'^(?:<!-- aidevops:origin:[^\n]*\n)?<!-- aidevops:sig -->.*', generated, re.M | re.S)
+    if signature:
+        current = current.rstrip('\n') + '\n\n' + signature[0]
+print(current.rstrip('\n'))
+PY
+	return $?
+}
+
 # Restore generated metadata after partial PR creation recovered an existing PR.
 # A retry may compute title/body details from a newer review-repair head.
 # Arguments: PR number, repository slug, generated title, generated body.
@@ -1592,6 +1691,7 @@ _reconcile_recovered_pr_metadata() {
 		print_error "Could not read recovered PR #${pr_number} body for metadata reconciliation"
 		return 1
 	}
+	generated_body=$(_merge_existing_pr_body "$current_body" "$generated_body" "${pr_metadata_overrides:-}") || return 1
 	if [[ "$current_title" == "$generated_title" && "$current_body" == "$generated_body" ]]; then
 		print_info "Recovered PR #${pr_number} metadata already matches the generated head"
 		return 0
