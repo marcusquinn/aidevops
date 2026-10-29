@@ -98,25 +98,34 @@ Example:
 ## CLI Usage
 
 ```bash
-# Print per-stage p50/p95/p99 from the last 24h of data:
+# Print per-stage p50/p95/p99/max from the last 24h of data:
 dispatch-stage-instrument.sh report
 
 # Custom time window (1h = 3600s):
 dispatch-stage-instrument.sh report 3600
 
-# Rotate log if it exceeds 50k lines:
+# Rotate the log if it exceeds the line cap (the pulse already does this every cycle):
 dispatch-stage-instrument.sh trim
 
 # Wipe the log:
 dispatch-stage-instrument.sh clear
 ```
 
+`report` streams the log through awk and a C-locale sort. It honours the
+window, skips `start` rows and writes no scratch copy, so it finishes in
+seconds on a log of months of data (GH#35935). The pulse calls `_ds_trim_log`
+at cycle finish next to `gh_trim_log`. Each trim removes
+`dispatch-stages.tsv.report.*` / `.trim.*` scratch files older than 60 minutes
+that killed runs left behind. When the log exceeds the cap, it also keeps only
+the newest half.
+
 ## Manual p95 Computation
 
-After 50+ dispatches, compute per-stage percentiles:
+`report` already prints these percentiles. For an ad-hoc all-time cut, skip
+`start` rows, which carry elapsed `0`:
 
 ```bash
-awk -F'\t' '{print $4 "\t" $5}' ~/.aidevops/logs/dispatch-stages.tsv | \
+awk -F'\t' '$6 != "start" && $5 > 0 {print $4 "\t" $5}' ~/.aidevops/logs/dispatch-stages.tsv | \
     sort -k1,1 -k2,2n | \
     awk -F'\t' '
     { stage[$1]=stage[$1] " " $2; count[$1]++ }
@@ -159,7 +168,7 @@ rather than increasing orphan retention to hide slow preparation.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AIDEVOPS_DISPATCH_STAGES_LOG` | `~/.aidevops/logs/dispatch-stages.tsv` | Log file path |
-| `AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES` | `50000` | Trim threshold |
+| `AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES` | `200000` | Trim threshold (about 16 days at ~12.5k records/day) |
 | `AIDEVOPS_DISPATCH_STAGES_DISABLE` | `0` | Set `1` to no-op all recording |
 | `AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_SECONDS` | `300` | Fixed prelaunch preparation deadline |
 | `AIDEVOPS_DISPATCH_PUBLICATION_RESERVE_SECONDS` | `75` | Budget that must remain before lock/fence/assignment |

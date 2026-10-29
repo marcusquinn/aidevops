@@ -26,7 +26,7 @@
 #
 # CLI usage:
 #
-#     dispatch-stage-instrument.sh report [window_s]  # print per-stage p50/p95/p99
+#     dispatch-stage-instrument.sh report [window_s]  # per-stage p50/p95/p99 in the window
 #     dispatch-stage-instrument.sh trim               # rotate if oversize
 #     dispatch-stage-instrument.sh clear               # wipe log
 #
@@ -37,7 +37,8 @@
 # Override env vars:
 #   AIDEVOPS_DISPATCH_STAGES_LOG          — log path (default
 #                                            ~/.aidevops/logs/dispatch-stages.tsv)
-#   AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES — trim threshold (default 50000)
+#   AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES — trim threshold (default 200000);
+#                                            the pulse trims once per cycle
 #   AIDEVOPS_DISPATCH_STAGES_DISABLE=1    — make all calls no-ops
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -52,7 +53,12 @@ _DISPATCH_STAGE_INSTRUMENT_LOADED=1
 
 # --- Configuration --------------------------------------------------------
 DS_LOG="${AIDEVOPS_DISPATCH_STAGES_LOG:-${HOME}/.aidevops/logs/dispatch-stages.tsv}"
-DS_LOG_MAX_LINES="${AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES:-50000}"
+# GH#35935: about 16 days at the observed ~12.5k records/day, so 7-day
+# reports keep their data while the log stays near 20 MB.
+_DS_DEFAULT_LOG_MAX_LINES=200000
+DS_LOG_MAX_LINES="${AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES:-$_DS_DEFAULT_LOG_MAX_LINES}"
+# Report/trim scratch files older than this are leftovers of killed runs.
+_DS_STALE_TEMP_MINUTES=60
 # Plain assignments stay global even when this file is first sourced inside a
 # function (worktree-helper-add.sh via _dlw_restore_worktree_deps); `declare`
 # would create function locals that vanish, and `declare -g` needs Bash 4.2.
@@ -236,54 +242,102 @@ _ds_substage_run() {
 	return "$_ds_ss_rc"
 }
 
+# --- _ds_epoch_to_iso <epoch> ---------------------------------------------
+# Format epoch seconds as the log's ISO-8601 UTC timestamp. GNU date takes
+# -d @N; BSD/macOS date takes -r N.
+# Stdout: YYYY-MM-DDTHH:MM:SSZ
+# Returns: 0 on success, 1 when the epoch cannot be formatted
+_ds_epoch_to_iso() {
+	local epoch="$1"
+	local iso=""
+	[[ "$epoch" =~ ^[0-9]+$ ]] || return 1
+	iso=$(date -u -d "@${epoch}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) ||
+		iso=$(date -u -r "$epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || return 1
+	[[ "$iso" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+	printf '%s' "$iso"
+	return 0
+}
+
 # --- _ds_report [window_secs] ---------------------------------------------
-# Print per-stage p50, p95, p99 from the log. Uses awk for portability.
+# Print per-stage p50, p95, p99 and max for records newer than now - window.
+# GH#35935: stream the log through awk (window filter, start rows skipped) and
+# a C-locale sort, so a months-long log reports in seconds and an interrupted
+# run leaves no copy of the log behind. The ISO-8601 UTC timestamps compare
+# correctly as strings, which avoids date parsing inside awk.
 # Args:
 #   $1 window_secs — only include records newer than now - window (default 86400)
-# Returns: 0 on success, 1 if log missing
+# Returns: 0 on success, 1 if the log or aggregator is missing or input is invalid
 _ds_report() {
 	local window="${1:-86400}"
+	if [[ ! "$window" =~ ^[0-9]+$ ]]; then
+		printf 'Invalid report window (seconds): %s\n' "$window" >&2
+		return 1
+	fi
 	if [[ ! -f "$DS_LOG" ]]; then
 		printf 'No dispatch stages log at %s\n' "$DS_LOG" >&2
 		return 1
 	fi
-	local now cutoff
-	now=$(date +%s)
+	local now cutoff cutoff_iso
+	now=$(date -u +%s)
 	cutoff=$((now - window))
+	[[ "$cutoff" -ge 0 ]] || cutoff=0
+	if ! cutoff_iso=$(_ds_epoch_to_iso "$cutoff"); then
+		printf 'Cannot compute the report window start for epoch %s\n' "$cutoff" >&2
+		return 1
+	fi
 
-	# The awk aggregator lives in a sibling file so the line-based
-	# pre-commit positional-param validator does not flag awk's field
-	# references as bash positional params (same pattern as
-	# gh-api-instrument.sh / gh-api-aggregate.awk).
-	local awk_script report_input line report_rc=0
+	# The awk program lives in a sibling file so the line-based pre-commit
+	# positional-param validator does not flag awk's field references as bash
+	# positional params (same pattern as gh-api-instrument.sh / gh-api-aggregate.awk).
+	local awk_script report_rc=0
 	awk_script="$(dirname "${BASH_SOURCE[0]}")/dispatch-stage-aggregate.awk"
 	if [[ ! -f "$awk_script" ]]; then
 		printf 'Missing awk script: %s\n' "$awk_script" >&2
 		return 1
 	fi
-	report_input=$(mktemp "${DS_LOG}.report.XXXXXX") || return 1
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		[[ "$line" == *$'\tstart\t'* ]] || printf '%s\n' "$line" >>"$report_input"
-	done <"$DS_LOG"
-	awk -F'\t' -v cutoff="$cutoff" -f "$awk_script" "$report_input" || report_rc=$?
-	rm -f "$report_input"
+	LC_ALL=C awk -v mode=filter -v cutoff="$cutoff_iso" -f "$awk_script" "$DS_LOG" |
+		LC_ALL=C sort -t $'\t' -k1,1 -k2,2n |
+		awk -v mode=aggregate -f "$awk_script" || report_rc=$?
 	return "$report_rc"
+}
+
+# --- _ds_cleanup_stale_temp -----------------------------------------------
+# Remove report/trim scratch files left by killed runs. Before GH#35935 every
+# report copied the whole log to ${DS_LOG}.report.*, and a timed-out report
+# left a copy as large as the log.
+_ds_cleanup_stale_temp() {
+	local log_dir="${DS_LOG%/*}"
+	local log_name="${DS_LOG##*/}"
+	[[ "$DS_LOG" == */* && -n "$log_name" && -d "$log_dir" ]] || return 0
+	# Name tests first, so the per-cycle scan does not stat unrelated logs.
+	find "$log_dir" -maxdepth 1 \
+		\( -name "${log_name}.report.*" -o -name "${log_name}.trim.*" \) \
+		-type f -mmin "+${_DS_STALE_TEMP_MINUTES}" -exec rm -f {} + 2>/dev/null || true
+	return 0
 }
 
 # --- _ds_trim_log ---------------------------------------------------------
 # Rotate the log if it exceeds DS_LOG_MAX_LINES, retaining the most recent
-# half. Same pattern as gh_trim_log.
+# half, and remove stale scratch files. The pulse calls this once per cycle
+# next to gh_trim_log (GH#35935); before that nothing bounded the log.
+# Records appended between the tail and the rename are lost, which this
+# fail-open instrumentation accepts.
 _ds_trim_log() {
+	_ds_cleanup_stale_temp
 	[[ -f "$DS_LOG" ]] || return 0
-	local lines
+	local max_lines="$DS_LOG_MAX_LINES"
+	local lines="" keep=0 tmp=""
+	[[ "$max_lines" =~ ^[1-9][0-9]*$ ]] || max_lines="$_DS_DEFAULT_LOG_MAX_LINES"
 	lines=$(wc -l <"$DS_LOG" 2>/dev/null | tr -d ' ')
 	[[ "$lines" =~ ^[0-9]+$ ]] || return 0
-	if [[ "$lines" -gt "$DS_LOG_MAX_LINES" ]]; then
-		local keep=$((DS_LOG_MAX_LINES / 2))
-		local tmp
-		tmp=$(mktemp "${DS_LOG}.XXXXXX") || return 0
-		tail -n "$keep" "$DS_LOG" >"$tmp" 2>/dev/null && mv "$tmp" "$DS_LOG"
+	[[ "$lines" -gt "$max_lines" ]] || return 0
+	keep=$((max_lines / 2))
+	[[ "$keep" -gt 0 ]] || keep=1
+	tmp=$(mktemp "${DS_LOG}.trim.XXXXXX" 2>/dev/null) || return 0
+	if tail -n "$keep" "$DS_LOG" >"$tmp" 2>/dev/null && mv -f "$tmp" "$DS_LOG" 2>/dev/null; then
+		return 0
 	fi
+	rm -f "$tmp" 2>/dev/null || true
 	return 0
 }
 
@@ -312,15 +366,17 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 dispatch-stage-instrument.sh — per-stage dispatch ceremony timing (t3034)
 
 Subcommands:
-  report [window_s]  Print per-stage p50/p95/p99 (default 24h window)
+  report [window_s]  Print per-stage p50/p95/p99/max for the last window_s
+                     seconds (default 86400)
   trim               Rotate log if larger than \$AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES
+                     and remove stale scratch files (the pulse runs this every cycle)
   clear              Remove log
 
 Log file: ${DS_LOG}
 
 Env vars:
   AIDEVOPS_DISPATCH_STAGES_LOG            Override log path
-  AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES  Trim threshold (default 50000)
+  AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES  Trim threshold (default ${_DS_DEFAULT_LOG_MAX_LINES})
   AIDEVOPS_DISPATCH_STAGES_DISABLE=1      No-op all recording
 EOF
 		;;
