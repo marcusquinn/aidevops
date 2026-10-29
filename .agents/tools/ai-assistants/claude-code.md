@@ -61,6 +61,31 @@ The MCP stays disabled globally and starts on demand when this subagent is invok
 - Review sub-agent output before acting on it.
 - Avoid nested sub-agents; they multiply token usage and cost quickly.
 
+## Background agent summaries
+
+Claude Code can make extra model calls to write progress summaries for running
+background agents (`query_source=agent_summary`). These calls cost tokens but
+do not appear in the session transcript, so transcript-based cost accounting
+undercounts them (GH#35929).
+
+| Path | Summary calls |
+|------|---------------|
+| Interactive Claude Code with background agents | Possible without any setting |
+| `claude -p` / Agent SDK | Only when `CLAUDE_CODE_AGENT_PROGRESS_SUMMARIES` is set (opt-in) |
+| OpenCode direct provider | Not applicable: this code does not run |
+
+- **Check exposure**: `claude-code-diagnose.sh agent-summary` reports the CLI
+  version, install owner, opt-in state (environment and
+  `~/.claude/settings.json` `env`) and one of `potentially-affected`,
+  `not-present` or `unverified`. It makes no model call.
+- **Measure spend**: with Claude Code OTel enabled, aggregate
+  `claude_code.api_request` events by `query_source=agent_summary`. Report
+  totals only; do not export prompt content.
+- **No supported opt-out is known.** Leave `CLAUDE_CODE_AGENT_PROGRESS_SUMMARIES`
+  unset; it enables summaries, it does not disable them. Do not use preloads,
+  `BUN_OPTIONS` or timer interception to suppress them. Follow the upstream
+  Claude Code feature request for a supported control instead.
+
 ## Related
 
 - `tools/ai-assistants/overview.md` - AI assistant comparison
