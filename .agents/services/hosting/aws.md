@@ -35,7 +35,8 @@ not a piped installer. Check `aws --version` before choosing this flow.
 Before the browser handoff, an administrator must grant the non-root IAM user or
 role the `SignInLocalDevelopmentAccess` managed policy (directly or, for a user,
 through an IAM group). Console sign-in alone is not sufficient. Root requires no
-additional policy, but use a scoped non-root identity for routine work.
+additional policy, but use a scoped non-root identity for routine work. Do not
+self-grant IAM changes.
 
 Use a named `aidevops-<account>` profile and keep its workload region unchanged.
 Obtain the account or project's sign-in region from the administrator and set
@@ -54,7 +55,8 @@ aws sts get-caller-identity --profile aidevops-production --region eu-west-2
 ```
 
 Stop before STS or service operations if the credential TYPE is not `login`.
-Existing keys in `~/.aws/credentials` can take precedence over the login session;
+Existing keys in `~/.aws/credentials` or environment variables can take precedence
+over the login session;
 have the owner retire conflicting credentials safely or use a fresh named profile,
 then repeat the login and source checks. Do not publish credential-list output.
 Use the workload region, not the sign-in override, for subsequent service commands.
