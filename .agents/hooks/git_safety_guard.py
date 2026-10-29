@@ -24,10 +24,7 @@ Exit behavior:
 
 """
 import json
-import hashlib
 import os
-import re
-import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -270,111 +267,19 @@ def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
     }
 
 
-def _docker_creation_needs_owner(args):
-    """Inspect literal Docker options, never image commands or option values."""
-    if any("$" in word or "`" in word for word in args):
-        return False  # Unresolved shell expansions may supply ownership labels.
-    index = 0
-    global_values = {"--config", "--context", "-c", "--host", "-H", "--log-level", "-l",
-                     "--tlscacert", "--tlscert", "--tlskey"}
-    while index < len(args) and args[index].startswith("-"):
-        option = args[index].split("=", 1)[0]
-        index += 2 if option in global_values and "=" not in args[index] else 1
-    args = args[index:]
-    if args[:1] == ["container"]:
-        args = args[1:]
-    if args[:1] == ["compose"]:
-        # up/run/create labels come from external config, not literal options.
-        # Indeterminate stacks must not consume the session advisory marker.
-        return False
-    if args[:2] in (["network", "create"], ["volume", "create"]):
-        args = args[1:]
-    if not args or args[0] not in {"run", "create"}:
-        return False
-    is_run = args[0] == "run"
-    owner = False
-    remove = False
-    index = 1
-    boolean_options = {"--detach", "--interactive", "--tty", "--init", "--privileged",
-                       "--read-only", "--publish-all", "--oom-kill-disable", "--sig-proxy",
-                       "--use-api-socket", "--help", "--internal", "--attachable",
-                       "--ingress", "--ipv6", "--config-only", "-q", "--quiet",
-                       "--no-healthcheck"}
-    while index < len(args):
-        token = args[index]
-        if not token.startswith("-") or token == "--":
-            break  # Image/name and everything after it are not Docker options.
-        option, equal, value = token.partition("=")
-        if option == "--rm":
-            remove = not equal or value == "true"
-        elif option in {"--label", "-l"}:
-            if not equal:
-                index += 1
-                value = args[index] if index < len(args) else ""
-            if value.startswith("sh.aidevops.owner="):
-                owner = value == "sh.aidevops.owner=1"
-        elif not equal and option not in boolean_options and not re.fullmatch(r"-[ditP]+", option):
-            index += 1  # Skip value-bearing options (e.g. --name, -e, --mount).
-        index += 1
-    return not owner and not (is_run and remove)
-
-
-def _docker_shell_parts(command):
-    """Split literal shell segments without cutting quoted or escaped separators."""
-    part = []
-    quote = ""
-    index = 0
-    while index < len(command):
-        char = command[index]
-        if char == "\\" and quote != "'" and index + 1 < len(command):
-            following = command[index + 1]
-            if following != "\n":
-                part.extend((char, following))
-            index += 2
-            continue
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char in ";&|\n":
-            yield "".join(part)
-            part = []
-            index += 1
-            continue
-        part.append(char)
-        index += 1
-    yield "".join(part)
-
-
 def docker_owner_advisory(command: str, session_id: str):
-    """Return non-blocking context once per Claude session, never a decision."""
-    needs_labels = False
-    for part in _docker_shell_parts(command):
-        match = re.search(r"(?:^|\s)docker\s+(.+)", part, re.DOTALL)
-        if not match:
-            continue
-        try:
-            needs_labels |= _docker_creation_needs_owner(shlex.split(match.group(1)))
-        except ValueError:
-            continue  # Incomplete shell input must never block a command.
-    if not needs_labels or not session_id:
+    """Delegate optional Docker context without affecting safety decisions."""
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_DOCKER_OWNER_ADVISORY_HELPER", "docker_owner_advisory.py"
+    )
+    if not helper:
         return None
-    marker_dir = Path.home() / ".aidevops" / ".agent-workspace" / "tmp" / "docker-advisory"
-    marker = marker_dir / hashlib.sha256(session_id.encode()).hexdigest()
     try:
-        marker_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with marker.open("x"):
-            pass
-    except OSError:
-        # Existing marker or unwritable state must never block the command.
+        _, payload = _run_policy_helper(helper, [command, session_id])
+        return payload or None
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        # Advisory failures must never block commands or override policy.
         return None
-    return {"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "additionalContext": "Docker test resources need owner labels: use "
-        "docker-resource-helper.sh labels / compose-labels; see "
-        "tools/containers/disposable-resources.md. Advisory only; user-owned stacks are unchanged.",
-    }}
 
 
 def main():

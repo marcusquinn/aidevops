@@ -56,7 +56,9 @@ import {
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
 import { assertBrowserTaskTransport } from "./browser-task-transport.mjs";
-import { unquotedTokens } from "./quality-hooks-signature-shell-words.mjs";
+import { adviseDockerCreation, appendDockerAdvisory } from "./docker-owner-advisory.mjs";
+
+export { needsDockerOwnerAdvisory } from "./docker-owner-advisory.mjs";
 
 export { scrubCredentials } from "./quality-hooks-output-scrub.mjs";
 
@@ -65,87 +67,6 @@ export { scanForSecrets } from "./quality-logging.mjs";
 export { checkSecretReadGate, isReadTool } from "./quality-hooks-secret-read.mjs";
 
 const OPERATION_TITLE_MAX_LENGTH = 500;
-
-const dockerAdvisedSessions = new Set();
-const dockerAdvisoryCalls = new Set();
-const DOCKER_ADVISORY = "Docker test resources need owner labels: use docker-resource-helper.sh labels / compose-labels; see tools/containers/disposable-resources.md. Advisory only; user-owned stacks are unchanged.";
-
-// Deliberately advisory, not a shell parser or a command permission boundary.
-function dockerCreationNeedsOwner(words) {
-  // Unresolved shell expansions may supply ownership labels.
-  if (words.some((word) => /[$`]/.test(word))) return false;
-  const globalValues = new Set(["--config", "--context", "-c", "--host", "-H", "--log-level", "-l", "--tlscacert", "--tlscert", "--tlskey"]);
-  let index = 0;
-  while (index < words.length && words[index].startsWith("-")) {
-    const option = words[index].split("=")[0];
-    index += globalValues.has(option) && !words[index].includes("=") ? 2 : 1;
-  }
-  let args = words.slice(index);
-  if (args[0] === "container") args = args.slice(1);
-  // up/run/create labels come from external config. Do not consume the session
-  // advisory for indeterminate stacks or execute config discovery from a hook.
-  if (args[0] === "compose") return false;
-  if (["network", "volume"].includes(args[0]) && args[1] === "create") args = args.slice(1);
-  if (!["run", "create"].includes(args[0])) return false;
-  const isRun = args[0] === "run";
-  const booleanOptions = new Set(["--detach", "--interactive", "--tty", "--init", "--privileged", "--read-only", "--publish-all", "--oom-kill-disable", "--sig-proxy", "--use-api-socket", "--help", "--internal", "--attachable", "--ingress", "--ipv6", "--config-only", "-q", "--quiet", "--no-healthcheck"]);
-  let owner = false;
-  let remove = false;
-  for (index = 1; index < args.length; index++) {
-    const token = args[index];
-    if (!token.startsWith("-") || token === "--") break;
-    const equal = token.indexOf("=");
-    const option = equal === -1 ? token : token.slice(0, equal);
-    let value = equal === -1 ? "" : token.slice(equal + 1);
-    if (option === "--rm") remove = equal === -1 || value === "true";
-    else if (["--label", "-l"].includes(option)) {
-      if (equal === -1) value = args[++index] ?? "";
-      if (value.startsWith("sh.aidevops.owner=")) owner = value === "sh.aidevops.owner=1";
-    } else if (equal === -1 && !booleanOptions.has(option) && !/^-[ditP]+$/.test(option)) index++;
-  }
-  return !owner && !(isRun && remove);
-}
-
-function dockerShellParts(command) {
-  const parts = [];
-  let part = "";
-  let quote = "";
-  for (let index = 0; index < command.length; index++) {
-    const char = command[index];
-    if (char === "\\" && quote !== "'" && index + 1 < command.length) {
-      const following = command[++index];
-      if (following !== "\n") part += char + following;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) quote = "";
-    } else if (char === '"' || char === "'") quote = char;
-    else if (/[;&|\n]/.test(char)) {
-      parts.push(part);
-      part = "";
-      continue;
-    }
-    part += char;
-  }
-  parts.push(part);
-  return parts;
-}
-
-export function needsDockerOwnerAdvisory(command) {
-  return dockerShellParts(String(command)).some((part) => {
-    const match = part.match(/(?:^|\s)docker\s+([\s\S]+)/);
-    if (!match) return false;
-    return dockerCreationNeedsOwner(unquotedTokens(match[1]).map(({ text }) => text));
-  });
-}
-
-function adviseDockerCreation(log, input, command, sessionId) {
-  if (!input.callID || !sessionId || dockerAdvisedSessions.has(sessionId)
-    || !needsDockerOwnerAdvisory(command)) return;
-  dockerAdvisedSessions.add(sessionId);
-  dockerAdvisoryCalls.add(input.callID);
-  log("WARN", DOCKER_ADVISORY);
-}
 
 /**
  * Prepare an untrusted tool title for bounded, single-line telemetry storage.
@@ -501,9 +422,7 @@ async function handleToolAfter(ctx, log, scriptsDir, input, output) {
   }
 
   const intentRecord = consumeIntentRecord(input.callID || "");
-  if (dockerAdvisoryCalls.delete(input.callID)) {
-    output.output = `${output.output || ""}\n\n${DOCKER_ADVISORY}`;
-  }
+  appendDockerAdvisory(input, output);
   // t2184: durationMs is null when the callID wasn't paired (for example,
   // a hook race on plugin reload); recordToolCall emits SQL NULL.
   recordToolCall(input, output, intentRecord?.intent, durationMs, intentRecord?.source);
