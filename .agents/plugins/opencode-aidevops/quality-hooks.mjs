@@ -56,6 +56,7 @@ import {
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
 import { assertBrowserTaskTransport } from "./browser-task-transport.mjs";
+import { unquotedTokens } from "./quality-hooks-signature-shell-words.mjs";
 
 export { scrubCredentials } from "./quality-hooks-output-scrub.mjs";
 
@@ -70,14 +71,42 @@ const dockerAdvisoryCalls = new Set();
 const DOCKER_ADVISORY = "Docker test resources need owner labels: use docker-resource-helper.sh labels / compose-labels; see tools/containers/disposable-resources.md. Advisory only; user-owned stacks are unchanged.";
 
 // Deliberately advisory, not a shell parser or a command permission boundary.
+function dockerCreationNeedsOwner(words) {
+  const globalValues = new Set(["--config", "--context", "-c", "--host", "-H", "--log-level", "-l", "--tlscacert", "--tlscert", "--tlskey"]);
+  let index = 0;
+  while (index < words.length && words[index].startsWith("-")) {
+    const option = words[index].split("=")[0];
+    index += globalValues.has(option) && !words[index].includes("=") ? 2 : 1;
+  }
+  let args = words.slice(index);
+  if (args[0] === "container") args = args.slice(1);
+  if (args[0] === "compose") return args.slice(1).includes("up");
+  if (["network", "volume"].includes(args[0]) && args[1] === "create") args = args.slice(1);
+  if (!["run", "create"].includes(args[0])) return false;
+  const isRun = args[0] === "run";
+  const booleanOptions = new Set(["--detach", "--interactive", "--tty", "--init", "--privileged", "--read-only", "--publish-all", "--oom-kill-disable", "--sig-proxy", "--use-api-socket", "--help", "--internal", "--attachable", "--ingress", "--ipv6", "--config-only"]);
+  let owner = false;
+  let remove = false;
+  for (index = 1; index < args.length; index++) {
+    const token = args[index];
+    if (!token.startsWith("-") || token === "--") break;
+    const equal = token.indexOf("=");
+    const option = equal === -1 ? token : token.slice(0, equal);
+    let value = equal === -1 ? "" : token.slice(equal + 1);
+    if (option === "--rm") remove = equal === -1 || value === "true";
+    else if (["--label", "-l"].includes(option)) {
+      if (equal === -1) value = args[++index] ?? "";
+      if (value.startsWith("sh.aidevops.owner=")) owner = value === "sh.aidevops.owner=1";
+    } else if (equal === -1 && !booleanOptions.has(option) && !/^-[ditP]+$/.test(option)) index++;
+  }
+  return !owner && !(isRun && remove);
+}
+
 export function needsDockerOwnerAdvisory(command) {
   return String(command).split(/[;&|\n]/).some((part) => {
     const match = part.match(/(?:^|\s)docker\s+(.+)/);
-    if (!match || part.includes("sh.aidevops.owner")) return false;
-    const args = match[1];
-    if (/^run\s/.test(args)) return !/(?:^|\s)--rm(?:=true)?(?:\s|$)/.test(args);
-    return /^(?:create|network\s+create|volume\s+create)(?:\s|$)/.test(args)
-      || /^compose\s/.test(args) && /(?:^|\s)up(?:\s|$)/.test(args);
+    if (!match) return false;
+    return dockerCreationNeedsOwner(unquotedTokens(match[1]).map(({ text }) => text));
   });
 }
 

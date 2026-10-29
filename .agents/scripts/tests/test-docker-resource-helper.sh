@@ -57,6 +57,8 @@ sub="${1:-}"
 case "${DOCKER_STUB_MODE:-up}" in
 down) printf 'Cannot connect to the Docker daemon\n' >&2; exit 1 ;;
 hang) sleep 10; exit 1 ;;
+report-hang) [[ "$sub" == info ]] || { sleep 10; exit 1; } ;;
+report-fail) [[ "$sub" != ps ]] || exit 1 ;;
 esac
 
 join_us() {
@@ -434,6 +436,8 @@ test_pulse_pressure() {
 		export PATH="${STUB_BIN}:${PATH}" DOCKER_STUB_STATE="$STATE"
 		export HOME="${TEST_ROOT}/pressure-home" LOGFILE="${TEST_ROOT}/pressure.log"
 		export DOCKER_STUB_RECLAIMABLE=21GB
+		# shellcheck source=../shared-constants.sh
+		source "${AGENTS_SCRIPTS_DIR}/shared-constants.sh"
 		# shellcheck source=../pulse-cleanup.sh
 		source "${AGENTS_SCRIPTS_DIR}/pulse-cleanup.sh"
 		_pulse_report_docker_pressure "$HELPER" 30
@@ -443,6 +447,32 @@ test_pulse_pressure() {
 	grep -q 'unlabelled containers=2 networks=1 volumes=1 stopped_over_72h=1; reclaimable volumes=21GB' "${TEST_ROOT}/pressure.log" || rc=1
 	[[ ! -s "${STATE}/actions.log" ]] || rc=1
 	print_result "pulse reports volume pressure once daily without removing resources" "$rc"
+	return 0
+}
+
+test_pulse_pressure_retry() {
+	local rc=0
+	write_fixture
+	(
+		export PATH="${STUB_BIN}:${PATH}" DOCKER_STUB_STATE="$STATE"
+		export HOME="${TEST_ROOT}/retry-home" LOGFILE="${TEST_ROOT}/retry.log"
+		# shellcheck source=../shared-constants.sh
+		source "${AGENTS_SCRIPTS_DIR}/shared-constants.sh"
+		# shellcheck source=../pulse-cleanup.sh
+		source "${AGENTS_SCRIPTS_DIR}/pulse-cleanup.sh"
+		local mode day claim start
+		day=$(date -u +%F)
+		claim="${HOME}/.aidevops/.agent-workspace/tmp/docker-pressure/${day}"
+		for mode in down report-fail report-hang; do
+			start=$SECONDS
+			DOCKER_STUB_MODE="$mode" _pulse_report_docker_pressure "$HELPER" 1
+			[[ ! -d "$claim" && $((SECONDS - start)) -le 4 ]] || exit 1
+		done
+		DOCKER_STUB_MODE=up _pulse_report_docker_pressure "$HELPER" 0
+		[[ -d "$claim" ]] || exit 1
+		[[ "$(wc -l <"$LOGFILE" | tr -d ' ')" == 3 ]] || exit 1
+	) || rc=1
+	print_result "pulse retries unavailable/incomplete/timed-out reports, bounds first Docker call, and supports zero budget" "$rc"
 	return 0
 }
 
@@ -489,6 +519,7 @@ main() {
 	test_pulse_step
 	test_report
 	test_pulse_pressure
+	test_pulse_pressure_retry
 	test_daemon_unavailable
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

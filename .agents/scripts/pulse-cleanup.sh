@@ -1188,12 +1188,21 @@ cleanup_stale_opencode() {
 # helper exits 0 within a short timeout when Docker is absent or stopped.
 _pulse_report_docker_pressure() {
 	local helper="$1" budget="$2"
-	local state="${HOME}/.aidevops/.agent-workspace/tmp/docker-pressure" report warning day
+	local state="${HOME}/.aidevops/.agent-workspace/tmp/docker-pressure" report warning day rc=0
 	day=$(date -u +%F)
 	# Atomic daily claim, shared by pulse invocations. Only advisory state is written.
 	mkdir -p "$state" 2>/dev/null || return 0
 	mkdir "${state}/${day}" 2>/dev/null || return 0
-	report=$(AIDEVOPS_DOCKER_TTL_HOURS=72 "$helper" report --max-seconds "$budget" 2>/dev/null) || return 0
+	if [[ "$budget" -gt 0 ]]; then
+		report=$(AIDEVOPS_DOCKER_TTL_HOURS=72 timeout_sec "$budget" "$helper" report --max-seconds "$budget" 2>/dev/null) || rc=$?
+	else
+		report=$(AIDEVOPS_DOCKER_TTL_HOURS=72 "$helper" report --max-seconds "$budget" 2>/dev/null) || rc=$?
+	fi
+	if [[ "$rc" -ne 0 || "$report" != *$'\nDocker pressure report complete' ]]; then
+		rmdir "${state}/${day}" 2>/dev/null || true
+		printf '[pulse-wrapper] Docker pressure report unavailable or incomplete (exit=%s, budget=%ss); will retry\n' "$rc" "$budget" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 	warning=$(printf '%s\n' "$report" | awk '
 		/containers: labelled=/ { split($NF, a, "="); containers=a[2] }
 		/networks \(custom\): labelled=/ { split($NF, a, "="); networks=a[2] }

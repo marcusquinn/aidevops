@@ -27,6 +27,7 @@ import json
 import hashlib
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -269,21 +270,61 @@ def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
     }
 
 
+def _docker_creation_needs_owner(args):
+    """Inspect literal Docker options, never image commands or option values."""
+    index = 0
+    global_values = {"--config", "--context", "-c", "--host", "-H", "--log-level", "-l",
+                     "--tlscacert", "--tlscert", "--tlskey"}
+    while index < len(args) and args[index].startswith("-"):
+        option = args[index].split("=", 1)[0]
+        index += 2 if option in global_values and "=" not in args[index] else 1
+    args = args[index:]
+    if args[:1] == ["container"]:
+        args = args[1:]
+    if args[:1] == ["compose"]:
+        return "up" in args[1:]
+    if args[:2] in (["network", "create"], ["volume", "create"]):
+        args = args[1:]
+    if not args or args[0] not in {"run", "create"}:
+        return False
+    is_run = args[0] == "run"
+    owner = False
+    remove = False
+    index = 1
+    boolean_options = {"--detach", "--interactive", "--tty", "--init", "--privileged",
+                       "--read-only", "--publish-all", "--oom-kill-disable", "--sig-proxy",
+                       "--use-api-socket", "--help", "--internal", "--attachable",
+                       "--ingress", "--ipv6", "--config-only"}
+    while index < len(args):
+        token = args[index]
+        if not token.startswith("-") or token == "--":
+            break  # Image/name and everything after it are not Docker options.
+        option, equal, value = token.partition("=")
+        if option == "--rm":
+            remove = not equal or value == "true"
+        elif option in {"--label", "-l"}:
+            if not equal:
+                index += 1
+                value = args[index] if index < len(args) else ""
+            if value.startswith("sh.aidevops.owner="):
+                owner = value == "sh.aidevops.owner=1"
+        elif not equal and option not in boolean_options and not re.fullmatch(r"-[ditP]+", option):
+            index += 1  # Skip value-bearing options (e.g. --name, -e, --mount).
+        index += 1
+    return not owner and not (is_run and remove)
+
+
 def docker_owner_advisory(command: str, session_id: str):
     """Return non-blocking context once per Claude session, never a decision."""
     needs_labels = False
     for part in re.split(r"[;&|\n]", command):
         match = re.search(r"(?:^|\s)docker\s+(.+)", part)
-        if not match or "sh.aidevops.owner" in part:
+        if not match:
             continue
-        args = match.group(1)
-        if re.match(r"run\s", args):
-            needs_labels |= not bool(re.search(r"(?:^|\s)--rm(?:=true)?(?:\s|$)", args))
-        else:
-            needs_labels |= bool(
-                re.match(r"(?:create|network\s+create|volume\s+create)(?:\s|$)", args)
-                or re.match(r"compose\s", args) and re.search(r"(?:^|\s)up(?:\s|$)", args)
-            )
+        try:
+            needs_labels |= _docker_creation_needs_owner(shlex.split(match.group(1)))
+        except ValueError:
+            continue  # Incomplete shell input must never block a command.
     if not needs_labels or not session_id:
         return None
     marker_dir = Path.home() / ".aidevops" / ".agent-workspace" / "tmp" / "docker-advisory"
