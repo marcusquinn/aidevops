@@ -1,6 +1,7 @@
 """Disposable Git integration; intentionally outside the portable OS validator."""
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 from pathlib import Path
 import shutil
@@ -38,6 +39,7 @@ class EnrollmentContract(unittest.TestCase):
             [git, "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
              "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
             check=True, capture_output=True, timeout=15,
+            env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
         )
 
     def test_replay_and_lookup_preserve_generation_without_new_events(self):
@@ -47,6 +49,42 @@ class EnrollmentContract(unittest.TestCase):
         self.assertEqual(self.enrollment.resolve(self.tree), generation)
         self.assertEqual(self.store.summary(), before)
         self.assertEqual(self.git("-C", str(self.tree), "status", "--porcelain").stdout, b"")
+
+    def test_marker_uses_durable_inode_identity(self):
+        self.enrollment.resolve(self.tree, create=True)
+        marker = json.loads(self.marker.read_bytes())
+        self.assertEqual(marker["format"], 2)
+        self.assertEqual(marker["directory"], self.tree.stat().st_ino)
+        self.assertEqual(marker["git_identity"], self.marker.parent.stat().st_ino)
+
+    def test_legacy_remount_recovery_preserves_marker_and_admission(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        marker = json.loads(self.marker.read_bytes())
+        marker.update(format=1, directory=[-1, marker["directory"]],
+                      git_identity=[-2, marker["git_identity"]])
+        self.marker.write_text(json.dumps(marker), encoding="utf-8")
+        saved = self.marker.read_bytes()
+        self.assertEqual(self.enrollment.resolve(self.tree), generation)
+        self.assertEqual(self.enrollment.resolve(self.tree, create=True), generation)
+        self.assertEqual(self.marker.read_bytes(), saved)
+        result = self.launch(self.tree)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        AdmissionRegistry(self.store).close_generation(str(uuid4()), generation)
+        with self.assertRaises(AdmissionClosed):
+            self.enrollment.resolve(self.tree, create=True)
+
+    def test_legacy_recovery_requires_all_other_identity_fields(self):
+        self.enrollment.resolve(self.tree, create=True)
+        marker = json.loads(self.marker.read_bytes())
+        marker.update(format=1, directory=[-1, marker["directory"]],
+                      git_identity=[-2, marker["git_identity"]])
+        for key in ("path", "git_directory", "installation_id", "directory", "git_identity"):
+            with self.subTest(key=key):
+                changed = dict(marker)
+                changed[key] = [-1, 0] if isinstance(marker[key], list) else "mismatch"
+                self.marker.write_text(json.dumps(changed), encoding="utf-8")
+                with self.assertRaises(StoreConflict):
+                    self.enrollment.resolve(self.tree, create=True)
 
     def test_interruption_between_marker_and_transaction_is_recoverable(self):
         with patch.object(AdmissionRegistry, "open_generation", side_effect=OSError("interrupted")):

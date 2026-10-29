@@ -30,8 +30,12 @@ _worktree_enroll_generation() {
 	[[ -n "$state_dir" ]] || return 1
 	python=$(type -P python3) || return 1
 	path=$(cd -- "$path" && pwd -P) || return 1
-	"$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
-		--state-dir "$state_dir" enroll --initialize --path "$path" >/dev/null || return 1
+	local detail=""
+	if ! detail=$("$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
+		--state-dir "$state_dir" enroll --initialize --path "$path"); then
+		printf 'Generation enrollment failed: %s\n' "$detail" >&2
+		return 1
+	fi
 	return 0
 }
 

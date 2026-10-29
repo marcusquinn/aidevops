@@ -45,9 +45,10 @@ def _git_directory(path: Path) -> Path:
     return directory
 
 
-def _fingerprint(path: Path) -> list[int]:
+def _fingerprint(path: Path) -> int:
     info = path.stat(follow_symlinks=False)
-    return [info.st_dev, info.st_ino]
+    # Device numbers can change across mounts; they are only transient evidence.
+    return info.st_ino
 
 
 def _read_marker(path: Path) -> dict:
@@ -103,7 +104,7 @@ class GenerationEnrollment:
             directory = _git_directory(path)
             with DirectoryHandle(directory) as admin:
                 expected = {
-                    "format": 1, "installation_id": self.store.installation_id(),
+                    "format": 2, "installation_id": self.store.installation_id(),
                     "path": str(path), "directory": _fingerprint(path),
                     "git_directory": str(directory), "git_identity": _fingerprint(directory),
                 }
@@ -116,6 +117,16 @@ class GenerationEnrollment:
                     _publish(directory, dict(expected, generation_id=str(uuid4())))
                 value = _read_marker(marker)
                 generation = value.pop("generation_id")
+                if value.get("format") == 1:
+                    # Read-compatible recovery after a remount: retain the original
+                    # marker, but require both inodes and every other identity field.
+                    for key in ("directory", "git_identity"):
+                        identity = value.get(key)
+                        if (not isinstance(identity, list) or len(identity) != 2
+                                or any(type(part) is not int for part in identity)):
+                            raise StoreConflict("invalid-legacy-generation-identity")
+                        value[key] = identity[1]
+                    value["format"] = 2
                 if encode(value) != encode(expected) or not root.matches_path() or not admin.matches_path():
                     raise StoreConflict("generation-directory-mismatch")
                 if create:
