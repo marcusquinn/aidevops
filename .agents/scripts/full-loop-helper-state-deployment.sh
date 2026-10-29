@@ -7,10 +7,11 @@ _full_loop_verify_deployment() {
 	local repo="$1" pr_number="$2" run_id="$3" workflow="$4" source_sha="$5"
 	local repository="" pr="" run="" workflow_json="" latest="" compare=""
 	local branch="" actor="" permission="" merge_sha=""
-	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "${repo,,}" != "marcusquinn/aidevops" &&
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
 		"$pr_number" =~ ^[1-9][0-9]*$ && "$run_id" =~ ^[1-9][0-9]*$ &&
 		"$workflow" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$ &&
 		"$source_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	[[ "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" != "marcusquinn/aidevops" ]] || return 1
 	# aidevops:trust-boundary — require maintainer access, a same-repository push,
 	# and write-authorized original AND rerun actors; never accept PR/fork runs.
 	repository=$(gh api "repos/${repo}" 2>/dev/null) || return 1
@@ -45,7 +46,7 @@ _full_loop_verify_deployment() {
 	# Reject stale runs, including an older success followed by a pending/failing
 	# deployment. Do not filter for success, which would hide newer failed runs.
 	latest=$(gh api -X GET "repos/${repo}/actions/workflows/${workflow}/runs" \
-		-f branch="$branch" -f event=push -f per_page=1 2>/dev/null) || return 1
+		-f branch="$branch" -f per_page=1 2>/dev/null) || return 1
 	jq -e --argjson run "$run" '.workflow_runs[0] |
 		.id == $run.id and .run_attempt == $run.run_attempt and .head_sha == $run.head_sha
 		and .status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null || return 1
@@ -57,19 +58,28 @@ _full_loop_verify_deployment() {
 	jq -cn --arg repo "$repo" --argjson pr "$pr_number" --arg workflow "$workflow" \
 		--arg sha "$source_sha" --arg merge "$merge_sha" --argjson run "$run" '
 		{schema_version:1,evidence_type:"tagless-deployment",repository:$repo,pr_number:$pr,
-		workflow:$workflow,run_id:$run.id,run_attempt:$run.run_attempt,source_sha:$sha,merge_sha:$merge}'
+		workflow:$workflow,run_id:$run.id,run_attempt:$run.run_attempt,source_sha:$sha,merge_sha:$merge}' || return 1
 	return 0
 }
 
 # Versioned receipts remain one-line status files. Deployment receipts retain
 # that first-line ABI, but carry mandatory evidence in the SAME atomic file so
 # losing an optional sidecar cannot downgrade verification to a plain success.
+_full_loop_deployment_receipt_payload() {
+	local path="$1"
+	jq -Rsc 'split("\n") |
+		if length == 2 and .[1] == "" then ""
+		elif length == 3 and .[0] == "published" and .[2] == "" then .[1]
+		else error("Invalid deployment receipt framing") end' "$path" || return 1
+	return 0
+}
+
 _full_loop_verify_deployment_receipt() {
 	local repo="$1" pr_number="$2"
 	local path="" evidence="" verified=""
 	path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
 	[[ -f "$path" ]] || return 0
-	evidence=$(jq -Rsc 'split("\n")[1:] | map(select(length > 0)) | join("\n")' "$path") || return 1
+	evidence=$(_full_loop_deployment_receipt_payload "$path") || return 1
 	[[ "$evidence" != '""' ]] || return 0
 	evidence=$(jq -er 'fromjson | select(.schema_version == 1 and .evidence_type == "tagless-deployment")' <<<"$evidence") || return 1
 	jq -e --arg repo "$repo" --argjson pr "$pr_number" '.repository == $repo and .pr_number == $pr' \
@@ -97,7 +107,10 @@ cmd_record_deployment() {
 	path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || status=1
 	if [[ "$status" -eq 0 && -e "$path" ]]; then
 		# Exact replay only: never replace versioned or other terminal evidence.
-		existing=$(jq -Rsc 'split("\n") | .[1] | fromjson' "$path" 2>/dev/null) || status=1
+		existing=$(_full_loop_deployment_receipt_payload "$path") || status=1
+		if [[ "$status" -eq 0 ]]; then
+			existing=$(jq -er 'fromjson' <<<"$existing") || status=1
+		fi
 		if [[ "$status" -eq 0 ]]; then
 			jq -e --argjson evidence "$evidence" '. == $evidence' <<<"$existing" >/dev/null || status=1
 		fi

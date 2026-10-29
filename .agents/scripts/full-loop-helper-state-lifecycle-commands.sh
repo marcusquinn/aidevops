@@ -1329,6 +1329,15 @@ cmd_migrate_repository_receipt() {
 	}
 	source_release=$(_full_loop_release_receipt_path "$old_repo" "$pr_number") || return 1
 	destination_release=$(_full_loop_release_receipt_path "$new_repo" "$pr_number") || return 1
+	# The legacy rename adapter reconstructs one-line receipts. Refuse typed
+	# deployment receipts rather than losing their remote evidence on migration.
+	local migration_path=""
+	for migration_path in "$source_release" "$destination_release"; do
+		if [[ -f "$migration_path" && $(wc -l <"$migration_path") -gt 1 ]]; then
+			print_error "Migration blocked: typed deployment evidence requires repository-bound re-verification"
+			return 1
+		fi
+	done
 	if [[ -f "$source_release" ]]; then
 		IFS= read -r release_status <"$source_release" || true
 	elif [[ -f "$destination_release" ]]; then
