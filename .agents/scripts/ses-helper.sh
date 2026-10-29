@@ -94,7 +94,7 @@ set_aws_credentials() {
     AWS_USE_SESSION_TOKEN=$(jq -r '.session_token // false' <<<"$config")
     if [[ -z "$AWS_SELECTED_PROFILE" && ! "$AWS_CREDENTIAL_PREFIX" =~ ^AWS_[A-Z0-9_]+$ ]]; then
         print_error "Set profile or an account-tagged credential_prefix (AWS_PRODUCTION) in SES metadata"
-        return 1
+        exit 1
     fi
     return 0
 }
@@ -115,6 +115,7 @@ aws() {
         token_name="${AWS_CREDENTIAL_PREFIX}_SESSION_TOKEN"
         names+=("$token_name")
     fi
+    # shellcheck disable=SC2016 # Values expand only inside the injected child.
     "${SCRIPT_DIR}/secret-helper.sh" "${names[@]}" -- bash -c '
         run_aws() {
         local key_name="$1"
@@ -263,11 +264,11 @@ account_suppression() {
     shift 2
     set_aws_credentials "$account_name"
     case "$operation" in
-        get) aws sesv2 get-account --query SuppressionAttributes --output json ;;
+        get) aws sesv2 get-account --query SuppressionAttributes --output json || return 1 ;;
         put)
             local reasons=""
             reasons=$(suppression_reasons "$@") || return 1
-            aws sesv2 put-account-suppression-attributes --cli-input-json "{\"SuppressedReasons\":$reasons}"
+            aws sesv2 put-account-suppression-attributes --cli-input-json "{\"SuppressedReasons\":$reasons}" || return 1
             ;;
         *) print_error "Usage: account-suppression <account> get|put [BOUNCE COMPLAINT]"; return 1 ;;
     esac
@@ -284,14 +285,14 @@ configuration_set() {
         return 1
     fi
     case "$operation" in
-        list) aws sesv2 list-configuration-sets --output table ;;
-        create) aws sesv2 create-configuration-set --configuration-set-name "$name" ;;
+        list) aws sesv2 list-configuration-sets --output table || return 1 ;;
+        create) aws sesv2 create-configuration-set --configuration-set-name "$name" || return 1 ;;
         suppression)
             shift 3
             local reasons=""
             reasons=$(suppression_reasons "$@") || return 1
             aws sesv2 put-configuration-set-suppression-options --configuration-set-name "$name" \
-                --suppression-options "{\"SuppressedReasons\":$reasons}"
+                --suppression-options "{\"SuppressedReasons\":$reasons}" || return 1
             ;;
         *) print_error "Usage: config-set <account> create|suppression <name> [BOUNCE COMPLAINT]|list"; return 1 ;;
     esac

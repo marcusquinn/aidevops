@@ -1656,6 +1656,7 @@ cmd_help() {
 	echo "  validate                          Check the credential registry file"
 	echo "  dependents NAME [--json]          What uses NAME (+aliases) before rename/rotation"
 	echo "  verify cloudflare [NAME...]       Read-only provider check; caches accounts/zones"
+	echo "  verify aws [ACCESS_KEY_ID_NAME...] Read-only STS check; prints account and ARN only"
 	echo "  drift [--json]                    Offline expiry/overlap/ownership/freshness report"
 	echo "  owner RESOURCE [--json]           Which account/credentials hold a zone or resource"
 	echo "  organise [--json] [--apply-drafts] Plan cleanup; drafts only, never renames/deletes"
