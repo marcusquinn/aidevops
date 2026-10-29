@@ -93,15 +93,14 @@ older schema-1-only code will reject schema 2. Do not reset or downgrade live st
 Event envelope schema 1 is separate and unchanged. Admission requirements and
 current integration limitations are documented in [CLEANUP.md](CLEANUP.md).
 
-Generation enrollment markers use format 2: canonical worktree and Git-directory
-paths, both directory inodes, and the installation UUID. Persistent identity omits
-device numbers, which may change after remounting on macOS. Format-1 markers are
-recovered at read time without rewriting the file: their two-element identities
-must be integer pairs, and their inodes, paths and installation must still match.
-The live Git-directory backlink is checked for both formats. Within each operation,
-`DirectoryHandle` still checks both device and inode to detect replacement races.
-This compatibility path does not reopen closed admission or adopt a different
-directory; changed inodes still require operator investigation, not marker deletion.
+Enrollment marker format 2 persists the worktree and Git-directory inodes, not
+device numbers that can change after a remount. Format-1 markers remain readable
+without rewriting them: resolution ignores only their saved device numbers and
+still requires both inodes, the canonical path, Git-directory backlink and
+installation identity to match. This recovery never reopens closed admission.
+Transient directory handles still verify both device and inode during an operation.
+Older clients do not understand format 2; coordinate client upgrades before new
+enrollment. This compatibility path does not authorize moved or copied trees.
 
 The store is not a trust boundary against malicious same-user code. Installation
 UUIDs must not be cloned onto another host; host binding/migration is not enforced

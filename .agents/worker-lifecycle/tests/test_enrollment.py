@@ -50,41 +50,41 @@ class EnrollmentContract(unittest.TestCase):
         self.assertEqual(self.store.summary(), before)
         self.assertEqual(self.git("-C", str(self.tree), "status", "--porcelain").stdout, b"")
 
-    def test_marker_format_two_uses_inodes_not_device_numbers(self):
+    def test_marker_uses_durable_inode_identity(self):
         self.enrollment.resolve(self.tree, create=True)
-        value = json.loads(self.marker.read_bytes())
-        self.assertEqual(value["format"], 2)
-        self.assertEqual(value["directory"], self.tree.stat().st_ino)
-        self.assertEqual(value["git_identity"], self.marker.parent.stat().st_ino)
+        marker = json.loads(self.marker.read_bytes())
+        self.assertEqual(marker["format"], 2)
+        self.assertEqual(marker["directory"], self.tree.stat().st_ino)
+        self.assertEqual(marker["git_identity"], self.marker.parent.stat().st_ino)
 
-    def legacy_marker(self):
+    def test_legacy_remount_recovery_preserves_marker_and_admission(self):
         generation = self.enrollment.resolve(self.tree, create=True)
-        value = json.loads(self.marker.read_bytes())
-        value.update(format=1, directory=[-1, value["directory"]],
-                     git_identity=[-1, value["git_identity"]])
-        self.marker.write_text(json.dumps(value), encoding="utf-8")
-        return generation, value
-
-    def test_legacy_marker_recovers_changed_device_numbers_without_rewrite(self):
-        generation, _ = self.legacy_marker()
-        before = self.marker.read_bytes()
+        marker = json.loads(self.marker.read_bytes())
+        marker.update(format=1, directory=[-1, marker["directory"]],
+                      git_identity=[-2, marker["git_identity"]])
+        self.marker.write_text(json.dumps(marker), encoding="utf-8")
+        saved = self.marker.read_bytes()
         self.assertEqual(self.enrollment.resolve(self.tree), generation)
         self.assertEqual(self.enrollment.resolve(self.tree, create=True), generation)
-        self.assertEqual(self.marker.read_bytes(), before)
+        self.assertEqual(self.marker.read_bytes(), saved)
+        result = self.launch(self.tree)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        AdmissionRegistry(self.store).close_generation(str(uuid4()), generation)
+        with self.assertRaises(AdmissionClosed):
+            self.enrollment.resolve(self.tree, create=True)
 
-    def test_legacy_recovery_still_requires_matching_identity_and_backlink(self):
-        _, original = self.legacy_marker()
+    def test_legacy_recovery_requires_all_other_identity_fields(self):
+        self.enrollment.resolve(self.tree, create=True)
+        marker = json.loads(self.marker.read_bytes())
+        marker.update(format=1, directory=[-1, marker["directory"]],
+                      git_identity=[-2, marker["git_identity"]])
         for key in ("path", "git_directory", "installation_id", "directory", "git_identity"):
             with self.subTest(key=key):
-                value = original.copy()
-                value[key] = [-1, 0] if key in ("directory", "git_identity") else "mismatch"
-                self.marker.write_text(json.dumps(value), encoding="utf-8")
+                changed = dict(marker)
+                changed[key] = [-1, 0] if isinstance(marker[key], list) else "mismatch"
+                self.marker.write_text(json.dumps(changed), encoding="utf-8")
                 with self.assertRaises(StoreConflict):
                     self.enrollment.resolve(self.tree, create=True)
-        self.marker.write_text(json.dumps(original), encoding="utf-8")
-        (self.marker.parent / "gitdir").write_text("mismatch\n", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            self.enrollment.resolve(self.tree, create=True)
 
     def test_interruption_between_marker_and_transaction_is_recoverable(self):
         with patch.object(AdmissionRegistry, "open_generation", side_effect=OSError("interrupted")):

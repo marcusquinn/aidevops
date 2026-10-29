@@ -46,27 +46,9 @@ def _git_directory(path: Path) -> Path:
 
 
 def _fingerprint(path: Path) -> int:
-    # Device numbers can change across mounts; DirectoryHandle checks them only
-    # within the current operation, not as part of the persistent identity.
-    return path.stat(follow_symlinks=False).st_ino
-
-
-def _normalize_marker(value: dict) -> dict:
-    """Recover format 1 in memory without rewriting concurrent readers' marker.
-
-    Only the obsolete device numbers are ignored. The caller still compares all
-    fields (including both inodes) and validates the live Git-directory backlink.
-    """
-    if value.get("format") == 1:
-        value = value.copy()
-        for key in ("directory", "git_identity"):
-            identity = value.get(key)
-            if (not isinstance(identity, list) or len(identity) != 2
-                    or any(type(part) is not int for part in identity)):
-                raise ValueError("invalid-generation-marker-identity")
-            value[key] = identity[1]
-        value["format"] = 2
-    return value
+    info = path.stat(follow_symlinks=False)
+    # Device numbers can change across mounts; they are only transient evidence.
+    return info.st_ino
 
 
 def _read_marker(path: Path) -> dict:
@@ -133,8 +115,18 @@ class GenerationEnrollment:
                         if reserved and not marker.exists():
                             raise StoreConflict("reserved-path-without-enrollment-marker")
                     _publish(directory, dict(expected, generation_id=str(uuid4())))
-                value = _normalize_marker(_read_marker(marker))
+                value = _read_marker(marker)
                 generation = value.pop("generation_id")
+                if value.get("format") == 1:
+                    # Read-compatible recovery after a remount: retain the original
+                    # marker, but require both inodes and every other identity field.
+                    for key in ("directory", "git_identity"):
+                        identity = value.get(key)
+                        if (not isinstance(identity, list) or len(identity) != 2
+                                or any(type(part) is not int for part in identity)):
+                            raise StoreConflict("invalid-legacy-generation-identity")
+                        value[key] = identity[1]
+                    value["format"] = 2
                 if encode(value) != encode(expected) or not root.matches_path() or not admin.matches_path():
                     raise StoreConflict("generation-directory-mismatch")
                 if create:
