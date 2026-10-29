@@ -140,8 +140,11 @@ function assertShellRead(policy, command, cwd, binding, deny) {
   )) || [];
   if (protectedConfigFiles(policy).some((file) => text.includes(file)
     || targets.includes(canonicalPath(file)))) deny("classification_mutation");
-  // Opaque shell syntax can hide relative config paths regardless of binding.
-  if (!words) deny("unclassifiable_shell_read");
+  // Opaque syntax and interpreter scripts can hide relative config paths
+  // regardless of binding. A quoted -c script is not a literal path operand.
+  const shellInterpreter = /^(?:sh|bash|dash|ash|zsh|ksh|mksh|fish|csh|tcsh)$/.test(words?.[0]?.split(sep).pop());
+  if (!words || (shellInterpreter && words.slice(1).some((word) =>
+    /^-[^-]*c/.test(word) || word === "--command" || word.startsWith("--command=")))) deny("unclassifiable_shell_read");
   if (binding.bound || !policy.roots.length) return;
   // No options: even familiar readers have executable/path-bearing options.
   if (!words?.length || !LITERAL_READERS.has(words[0])

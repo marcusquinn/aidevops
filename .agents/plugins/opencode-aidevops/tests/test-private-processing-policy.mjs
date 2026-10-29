@@ -132,6 +132,26 @@ test("shell config operands resolve relative and symlink aliases before policy e
   }
 });
 
+test("interpreter scripts fail closed before bound-session and empty-roots exemptions", (t) => {
+  const f = fixture(t);
+  for (const bound of [false, true]) {
+    for (const roots of [f.classification.roots, []]) {
+      for (const name of ["local-only-roots.json", "local-ai-providers.conf"]) {
+        const script = `cat ../.config/aidevops/${name}`;
+        for (const [shell, option] of [["sh", "-c"], ["/bin/bash", "-lc"], ["dash", "-ec"], ["fish", "--command"]]) {
+          for (const command of [`${shell} ${option} '${script}'`, [shell, option, script]]) {
+            assert.throws(() => assertPrivateProcessingRead({
+              tool: Array.isArray(command) ? "aidevops_bounded_operation" : "bash",
+              args: { action: "start", command }, repositoryDir: f.publicRoot,
+              classification: { ...f.classification, roots }, binding: { bound }, append: () => true,
+            }), /unclassifiable_shell_read/);
+          }
+        }
+      }
+    }
+  }
+});
+
 test("receipt failure cannot obscure a denial or import ambient metadata", () => {
   let captured;
   recordPrivateBlocker("bad-session", "protected_read", "read", (event) => { captured = event; return true; });
