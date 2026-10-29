@@ -353,7 +353,8 @@ exit 0
     function = re.search(r'(?ms)^cmd_check\(\) \{.*?^}', source).group()
     for status in (0, 1):
         stub = 'has_gopass() { return 1; }\n'
-        stub += 'cmd_get() { printf PRIVATE_VALUE; printf PRIVATE_ERROR >&2; return ' + str(status) + '; }\n'
+        stub += 'resolve_injection_source() { return 1; }\n'
+        stub += 'get_secret_value() { printf PRIVATE_VALUE; printf PRIVATE_ERROR >&2; return ' + str(status) + '; }\n'
         result = subprocess.run(['bash', '-c', stub + function + '\ncmd_check GOOD'], capture_output=True)
         assert result.returncode == status and not result.stdout and not result.stderr, result
     print('PASS secret status suppresses values and errors')

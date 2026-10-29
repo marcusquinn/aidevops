@@ -96,7 +96,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [ ] r047 Knowledge collector freshness — execute due read-only sources and emit content-free health repeat:cron(*/10 * * * *) ~2m run:scripts/knowledge-collector-routine.sh run
 - [ ] r-runtime-audit Runtime health audit — surface operational regressions invisible to the supervisor LLM (counter trends, process leaks, deploy mtime drift, log novelty, stuck pulse state) (t3072) repeat:cron(*/30 * * * *) ~2m run:scripts/runtime-health-audit-helper.sh --apply
 - [x] r-pulse-check Daily pulse/worker utilisation check — aggregate repos.json auto-dispatch queue, active capacity, provider/API budget, and file deduplicated self-improvement issues for high-confidence productivity gaps repeat:daily(@06:20) ~5m run:scripts/pulse-check-helper.sh apply
-- [x] r-php-cve-watch PHP CVE-2026-109618/109619 patch watch — read-only 2-hourly check of owner hosting PHP builds and app packages; private status in the agent workspace; disable once all hosts are patched repeat:cron(0 */2 * * *) timezone:UTC ~3m run:custom/scripts/r-php-cve-watch.sh
+- [ ] r-php-cve-watch PHP CVE-2026-109618/109619 patch watch — read-only 2-hourly check of owner hosting PHP builds and app packages; private status in the agent workspace; disabled 2026-10-29: all hosts patched repeat:cron(0 */2 * * *) timezone:UTC ~3m run:custom/scripts/r-php-cve-watch.sh
 
 ## Ready
 
@@ -111,9 +111,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
+- [ ] t18783 OpenCode 2.x migration-readiness checks (V2 parity tracker) #feat #parent-task ref:GH#35902 logged:2026-10-29 -> [todo/tasks/t18783-brief.md]
+
 - [ ] t18782 OpenCode V2: wire DB activity heartbeat and adapt V2 event shape for idle-gated archive #auto-dispatch #bug ref:GH#35898 logged:2026-10-29 -> [todo/tasks/t18782-brief.md]
 
-- [ ] t18781 OpenCode sidebar Prompts shows command templates and timeline dialog closes on click #bug ref:GH#35890 logged:2026-10-29 -> [todo/tasks/t18781-brief.md]
+- [x] t18781 OpenCode sidebar Prompts shows command templates and timeline dialog closes on click #bug ref:GH#35890 logged:2026-10-29 -> [todo/tasks/t18781-brief.md] pr:#35891 completed:2026-10-29
 
 - [ ] t18776 fix(release): stop recurring CodeRabbit CHANGELOG reference-definition blocks on release PRs #auto-dispatch #bug tier:simple ref:GH#35811 logged:2026-10-28 -> [todo/tasks/t18776-brief.md]
 

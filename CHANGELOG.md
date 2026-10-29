@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.84] - 2026-10-29
+
+### Changed
+
+- Maintenance: mark t18781 complete (pr:#35891 completed:2026-10-29) (#35892)
+
+### Fixed
+
+- wire DB activity heartbeat for idle-gated archive
+- keep secret run stdout/stderr separate so MCP stdio responses are not corrupted
+
 ## [3.39.83] - 2026-10-29
 
 ### Added
