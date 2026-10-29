@@ -285,6 +285,12 @@ gopass. Then set the secret from gopass in **every repository listed on the
 token**: regeneration revokes the old value and invalidates every existing copy.
 Never paste values into chat or logs.
 
+**Verify distribution without reading values:** run
+`gh secret list --repo OWNER/REPO --app actions` for each repository updated and
+confirm `CLOUDRON_RELEASE_PAT` is listed. Presence alone does not prove the
+token's repository access, permissions or branch-policy bypass; review those
+separately. Do not trigger a real publication to test token distribution.
+
 **Repository protection:** before enabling publication, a maintainer should
 deliberately apply these two repository rulesets with `enforcement: active` and
 no bypass actors:
