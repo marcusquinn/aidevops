@@ -611,14 +611,60 @@ _gh_ci_ensure_requested_reminder_label() {
 # definitions, missing label permissions, or a transient read failure must not
 # block creation in repos where the label already exists. When provisioning
 # fails, explain the prerequisite before gh reports any missing label.
+# GH#35954: when provisioning failed AND an exact read confirms the derived
+# label is absent (external repo, no label permission), clear the derived
+# arguments so the caller's issue is still created. An unreadable label state
+# keeps the label (fail as before); caller-supplied labels are never touched.
 _gh_ci_ensure_derived_status_label() {
 	local target_repo="$1"
+	local snapshot=""
 	[[ ${#_GH_CI_STATUS_LABEL_ARGS[@]} -gt 0 ]] || return 0
 	declare -F ensure_status_labels_exist >/dev/null 2>&1 || return 0
 	[[ -n "$target_repo" ]] || target_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
 	[[ -n "$target_repo" ]] || return 0
-	if ! ensure_status_labels_exist "$target_repo" 2>/dev/null; then
-		printf 'gh_create_issue: could not verify or provision canonical status:* labels on %s (label-create permission or API failure); creation fails if derived status:available is absent — create the standard status labels or pass an existing status:* label\n' "$target_repo" >&2
+	ensure_status_labels_exist "$target_repo" 2>/dev/null && return 0
+	if declare -F _status_labels_snapshot >/dev/null 2>&1 &&
+		snapshot=$(_status_labels_snapshot "$target_repo" 2>/dev/null) &&
+		! _status_label_snapshot_definition "$snapshot" "status:available" >/dev/null 2>&1; then
+		_GH_CI_STATUS_LABEL_ARGS=()
+		print_info "[INFO] gh_create_issue: status:available is absent on ${target_repo} and cannot be provisioned; creating without the derived status label"
+		return 0
+	fi
+	printf 'gh_create_issue: could not verify or provision canonical status:* labels on %s (label-create permission or API failure); creation fails if derived status:available is absent — create the standard status labels or pass an existing status:* label\n' "$target_repo" >&2
+	return 0
+}
+
+# GH#35954: succeed (drop the label) only when origin-label provisioning failed
+# for this repo in this process and the label inventory confirms the derived
+# origin label is absent. Unknown inventory state keeps the label.
+_gh_ci_origin_label_unavailable() {
+	local target_repo="$1"
+	local origin_label="$2"
+	local snapshot=""
+	[[ -n "$target_repo" && -n "$origin_label" ]] || return 1
+	case ",${_ORIGIN_LABELS_FAILED}," in
+	*",${target_repo},"*) ;;
+	*) return 1 ;;
+	esac
+	case ",${_ORIGIN_LABELS_ENSURED}," in
+	*",${target_repo},"*) return 1 ;;
+	esac
+	declare -F _gh_managed_label_names_snapshot >/dev/null 2>&1 || return 1
+	snapshot=$(_gh_managed_label_names_snapshot "$target_repo" 2>/dev/null) || return 1
+	_gh_managed_label_snapshot_has "$snapshot" "$origin_label" && return 1
+	print_info "[INFO] gh_create_issue: ${origin_label} is absent on ${target_repo} and cannot be provisioned; creating without the derived origin label"
+	return 0
+}
+
+# GH#35954: settle both wrapper-derived labels before the create argv is built.
+# Clears _GH_CI_STATUS_LABEL_ARGS itself; returns 1 when the caller must drop
+# its derived origin label ($2 empty means the caller supplied its own origin).
+_gh_ci_settle_derived_labels() {
+	local target_repo="$1"
+	local origin_label="$2"
+	_gh_ci_ensure_derived_status_label "$target_repo"
+	if [[ -n "$origin_label" ]] && _gh_ci_origin_label_unavailable "$target_repo" "$origin_label"; then
+		return 1
 	fi
 	return 0
 }
@@ -639,8 +685,8 @@ gh_create_issue() {
 
 	# t3088: inject session origin only when the caller has not supplied one.
 	local -a _origin_label_args=()
+	local origin_label=""
 	if ! _gh_wrapper_args_have_origin_label "$@"; then
-		local origin_label
 		origin_label=$(session_origin_label)
 		_origin_label_args=(--label "$origin_label")
 	fi
@@ -679,6 +725,10 @@ gh_create_issue() {
 		return 1
 	fi
 
+	local issue_output rc auto_assignee="" target_repo=""
+	target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
+	_gh_ci_ensure_requested_reminder_label "$target_repo" "$@" || return 1
+	_gh_ci_settle_derived_labels "$target_repo" "$origin_label" || _origin_label_args=()
 	# Build command arrays safely; avoid empty-arg injection (GH#22056).
 	local -a _issue_cmd=(gh issue create "$@")
 	local -a _rest_args=("$@")
@@ -693,10 +743,6 @@ gh_create_issue() {
 
 	# t2028/t2406/GH#27929: choose an eligible auto-assignee before creation,
 	# but keep durable creation independent from the best-effort assignment.
-	local issue_output rc auto_assignee="" target_repo=""
-	target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
-	_gh_ci_ensure_requested_reminder_label "$target_repo" "$@" || return 1
-	_gh_ci_ensure_derived_status_label "$target_repo"
 	if ! _gh_wrapper_args_have_assignee "$@"; then
 		if [[ "${AIDEVOPS_GH_SKIP_AUTO_ASSIGNMENT:-0}" == 1 ]]; then
 			# GH#30325: pending publication withholds auto-dispatch from the
@@ -1376,7 +1422,10 @@ gh_pr_comment() {
 }
 
 # Internal: extract --repo from args and ensure labels exist (cached per repo).
+# GH#35954: repos where provisioning failed are recorded separately so issue
+# creation can drop a wrapper-derived origin label that is confirmed absent.
 _ORIGIN_LABELS_ENSURED=""
+_ORIGIN_LABELS_FAILED=""
 _ensure_origin_labels_for_args() {
 	local repo=""
 	while [[ $# -gt 0 ]]; do
@@ -1399,6 +1448,8 @@ _ensure_origin_labels_for_args() {
 	esac
 	if ensure_origin_labels_exist "$repo"; then
 		_ORIGIN_LABELS_ENSURED="${_ORIGIN_LABELS_ENSURED:+$_ORIGIN_LABELS_ENSURED,}$repo"
+	else
+		_ORIGIN_LABELS_FAILED="${_ORIGIN_LABELS_FAILED:+$_ORIGIN_LABELS_FAILED,}$repo"
 	fi
 	return 0
 }

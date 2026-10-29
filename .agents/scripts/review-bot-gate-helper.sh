@@ -104,6 +104,7 @@ RBG_CODERABBIT_ADDRESSED_MARKER='<!-- <review_comment_addressed> -->'
 RBG_CODERABBIT_NITS_LABEL="coderabbit-nits-ok"
 RBG_RECONCILE_MODE_NITS="nits"
 RBG_RECONCILE_MODE_SUPERSEDED="superseded"
+RBG_RECONCILE_MODE_ADVISORY="advisory"
 RBG_AUTHOR_CLASS_TRUSTED="trusted"
 RBG_GITHUB_ACTIONS_BOT_ID="41898282"
 RBG_ISSUE_SYNC_PR_BRANCH="aidevops/issue-sync-todo"
@@ -597,7 +598,8 @@ _rbg_pr_reconciliation_snapshot() {
 		head:(.head.sha // ""),
 		state:(.state // ""),
 		association:(.author_association // ""),
-		labels:[.labels[]? | .name // empty]
+		labels:[.labels[]? | .name // empty],
+		labels_valid: ((.labels | type) == "array" and all(.labels[]?; (.name | type) == "string"))
 	}' || return 1
 	return 0
 }
@@ -712,6 +714,10 @@ _rbg_dismiss_coderabbit_reviews() {
 		}
 		if [[ "$mode" == "$RBG_RECONCILE_MODE_NITS" ]]; then
 			message="Auto-dismissed: coderabbit-nits-ok label applied by maintainer (PR #${pr_number})"
+		elif [[ "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]]; then
+			#aidevops:trust-boundary — revalidate authorization on the final pre-write snapshot.
+			_rbg_advisory_author_trusted "$snapshot" || return 1
+			message="Auto-dismissed advisory CodeRabbit review on trusted-author PR #${pr_number}; findings remain available to the post-merge scanner."
 		else
 			message="Auto-dismissed superseded CodeRabbit review ${review_id}: stale head ${stale_sha}; clean exact-head re-review confirmed at ${head_sha}."
 		fi
@@ -719,6 +725,15 @@ _rbg_dismiss_coderabbit_reviews() {
 			-f message="$message" >/dev/null 2>&1 || return 1
 		printf 'dismissed CodeRabbit review %s: stale head %s; current head %s\n' "$review_id" "${stale_sha:-unknown}" "$head_sha" >&2
 	done <<<"$records"
+	return 0
+}
+
+_rbg_advisory_author_trusted() {
+	local snapshot="$1"
+	local association=""
+	association=$(printf '%s\n' "$snapshot" | jq -er '.association | ascii_upcase') || return 1
+	case "$association" in OWNER | MEMBER | COLLABORATOR) ;; *) return 1 ;; esac
+	printf '%s\n' "$snapshot" | jq -e '.labels_valid == true and all(.labels[]; . != "external-contributor")' >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -736,11 +751,11 @@ do_reconcile_coderabbit_reviews() {
 	local review_count=0
 	local post_json=""
 
-	[[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" || "$mode" == "$RBG_RECONCILE_MODE_NITS" ]] || return 2
+	[[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" || "$mode" == "$RBG_RECONCILE_MODE_NITS" \
+		|| "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]] || return 2
 	snapshot=$(_rbg_pr_reconciliation_snapshot "$pr_number" "$repo") || return 1
 	head_sha=$(printf '%s\n' "$snapshot" | jq -r '.head')
 	state=$(printf '%s\n' "$snapshot" | jq -r '.state | ascii_downcase')
-	association=$(printf '%s\n' "$snapshot" | jq -r '.association | ascii_upcase')
 	[[ "$state" == "open" && "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
 	[[ -z "$expected_head" || "$expected_head" == "$head_sha" ]] || return 1
 	if [[ "$mode" == "$RBG_RECONCILE_MODE_NITS" ]]; then
@@ -749,8 +764,12 @@ do_reconcile_coderabbit_reviews() {
 			'any(.labels[]?; . == $label)' >/dev/null 2>&1 || return 1
 	fi
 	if [[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" ]]; then
-		#aidevops:trust-boundary — automatic reconciliation is restricted to trusted PR authors.
+		association=$(printf '%s\n' "$snapshot" | jq -r '.association | ascii_upcase')
 		case "$association" in OWNER | MEMBER | COLLABORATOR) ;; *) return 1 ;; esac
+	fi
+	if [[ "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]]; then
+		#aidevops:trust-boundary — automatic reconciliation is restricted to trusted PR authors.
+		_rbg_advisory_author_trusted "$snapshot" || return 1
 	fi
 
 	reviews_json=$(_rbg_changes_requested_reviews "$pr_number" "$repo") || return 1
@@ -777,7 +796,8 @@ do_reconcile_coderabbit_reviews() {
 	_rbg_dismiss_coderabbit_reviews "$mode" "$pr_number" "$repo" "$head_sha" "$reviews_json" || return 1
 	post_json=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,reviewDecision 2>/dev/null) || return 1
 	printf '%s\n' "$post_json" | jq -e --arg head "$head_sha" '
-		(.headRefOid // "") == $head and ((.reviewDecision // "") | ascii_upcase) != "CHANGES_REQUESTED"
+		(.headRefOid // "") == $head and has("reviewDecision")
+		and (.reviewDecision == null or .reviewDecision == "" or .reviewDecision == "APPROVED" or .reviewDecision == "REVIEW_REQUIRED")
 	' >/dev/null 2>&1 || return 1
 	printf 'RECONCILED_CODERABBIT_REVIEW head=%s reviews=%s mode=%s\n' "$head_sha" "$review_count" "$mode"
 	return 0
@@ -2310,6 +2330,9 @@ main() {
 		;;
 	dismiss-coderabbit-nits)
 		do_reconcile_coderabbit_reviews "$RBG_RECONCILE_MODE_NITS" "$pr_number" "$repo"
+		;;
+	dismiss-advisory-coderabbit)
+		do_reconcile_coderabbit_reviews "$RBG_RECONCILE_MODE_ADVISORY" "$pr_number" "$repo"
 		;;
 	-h | --help | help)
 		usage

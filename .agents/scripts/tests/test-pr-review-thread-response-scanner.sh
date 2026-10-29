@@ -62,6 +62,60 @@ test_scan_pr_bounds_hanging_graphql_read() {
 	return 0
 }
 
+test_release_label_is_rechecked_before_launch() {
+	local label_result="" result=0
+	for label_result in release lookup-failed; do
+		setup_test_env
+		export TEST_ROOT
+		export STUB_PR_VIEW="Release"$'\t'"chore/release-v1.2.3-provenance"$'\t'"${TEST_HEAD_OID_1}"$'\t'"worker-bot"
+		printf '%s\n' "$label_result" >"${TEST_ROOT}/label-result"
+		mv "${TEST_ROOT}/bin/gh" "${TEST_ROOT}/bin/gh-original"
+		cat >"${TEST_ROOT}/bin/gh" <<'GH_RELEASE_RACE'
+#!/usr/bin/env bash
+if [[ "$1" == pr && "$2" == view && "$*" == *"--json labels"* ]]; then
+	if [[ ! -f "${TEST_ROOT}/label-checked" ]]; then
+		: >"${TEST_ROOT}/label-checked"
+		exit 0
+	fi
+	: >"${TEST_ROOT}/label-rechecked"
+	[[ "$(<"${TEST_ROOT}/label-result")" == release ]] || exit 1
+	printf 'release\n'
+	exit 0
+fi
+exec "${TEST_ROOT}/bin/gh-original" "$@"
+GH_RELEASE_RACE
+		chmod +x "${TEST_ROOT}/bin/gh"
+		result=0
+		$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || result=$?
+		if [[ "$result" -ne 0 && -f "${TEST_ROOT}/label-rechecked" && ! -s "$HEADLESS_LOG" ]]; then
+			print_result "Prelaunch release-label recheck blocks ${label_result}" 0
+		else
+			print_result "Prelaunch release-label recheck blocks ${label_result}" 1 "rc=${result}; log=$(<"$LOGFILE")"
+		fi
+		teardown_test_env
+	done
+	return 0
+}
+
+test_protected_release_dispatch_is_skipped() {
+	setup_test_env
+	export STUB_PR_LIST="1"$'\t'"Release"$'\t'"false"$'\t'"origin:worker,release"$'\t'"chore/release-v1.2.3-provenance"$'\t'"${TEST_HEAD_OID_1}"$'\t'"worker-bot"
+	export STUB_PR_VIEW="Release"$'\t'"chore/release-v1.2.3-provenance"$'\t'"${TEST_HEAD_OID_1}"$'\t'"worker-bot"$'\t'"release"
+	local output="" result=0
+	output=$($SCANNER scan owner/repo)
+	$SCANNER dispatch-pr owner/repo "$TEST_ROOT" 1 || result=$?
+	if [[ -z "$output" && "$result" -eq 11 ]] &&
+		grep -q 'scan: owner/repo#1 skipped — protected release PR' "$LOGFILE" &&
+		grep -q 'dispatch-pr: owner/repo#1 skipped — protected release PR' "$LOGFILE"; then
+		print_result "Protected release PR is skipped by scan and dispatch-pr" 0
+	else
+		print_result "Protected release PR is skipped by scan and dispatch-pr" 1 "rc=${result}, output=${output}"
+	fi
+	unset STUB_PR_LIST STUB_PR_VIEW
+	teardown_test_env
+	return 0
+}
+
 main_mutations() {
 	test_reply_and_resolve_use_graphql_mutations
 	test_reply_rejects_impossible_mutation_responses
@@ -89,13 +143,20 @@ main_rereview() {
 	return 0
 }
 
-main() {
+main_scan() {
+	test_protected_release_dispatch_is_skipped
+	test_release_label_is_rechecked_before_launch
 	test_scan_finds_unresolved_bot_thread
 	test_scan_skips_draft_prs
 	test_scan_includes_outdated_unresolved_threads
 	test_scan_fails_closed_without_graphql_cost
 	test_scan_pr_excludes_human_threads_by_default
 	test_scan_pr_can_include_human_threads_with_opt_in
+	return 0
+}
+
+main() {
+	main_scan
 	test_dispatch_launches_worker_and_writes_state
 	test_dispatch_batches_prompt_and_preserves_full_state
 	test_dispatch_defaults_invalid_batch_limit

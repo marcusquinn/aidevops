@@ -104,7 +104,7 @@ define_functions_under_test() {
 		/^_pm_issue_needs_partial_closeout\(\) \{/,/^}$/ { print }
 		/^_pm_unmet_acceptance_criteria\(\) \{/,/^}$/ { print }
 		/^_pm_handle_partial_parent_closeout\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
+	' "$MERGE_SCRIPT" "${SCRIPT_DIR}/../pulse-merge-issue-closeout.sh")
 	if [[ -z "$fn_src" ]]; then
 		printf 'ERROR: could not extract partial closeout helpers from %s\n' "$MERGE_SCRIPT" >&2
 		return 1

@@ -1096,6 +1096,7 @@ Name the missing tool, interpreter and checked declarations in the dossier.
 A runner-local account or credential that this runner lacks or the service
 rejects (for example a staging sign-in returning HTTP 401) is the same class,
 not permission_required; another runner may hold it (GH#34901).
+A host-local lock or serialization guard held on this runner pending its operator's reconciliation is runner_capability_unmet, not permission_required, because another runner may not hold it.
 For an evidenced unresolved permission boundary, including a continued session
 whose prior protected-source denial has no changed exact-context grant, use the
 next class; never for missing tooling or forbidden dependency installation:

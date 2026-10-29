@@ -129,7 +129,7 @@ define_function_under_test() {
 		/^_pm_close_superseded_original_issue\(\) \{/,/^}$/ { print }
 		/^_handle_post_merge_actions\(\) \{/,/^}$/ { print }
 		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
-	' "$MERGE_FILE")
+	' "$MERGE_FILE" "${SCRIPT_DIR_TEST}/../pulse-merge-issue-closeout.sh")
 	if [[ -z "$fn_src" ]]; then
 		printf 'ERROR: could not extract _handle_post_merge_actions from %s\n' "$MERGE_FILE" >&2
 		return 1

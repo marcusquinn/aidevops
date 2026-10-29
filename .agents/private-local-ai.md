@@ -32,8 +32,9 @@ privacy boundary.
 Local-only work needs an enforced boundary, not intent: launch the session with
 `AIDEVOPS_RUNTIME_POLICY=local-only aidevops opencode` so remote model requests
 fail closed before sending. A `VAULT_POLICY_DENIED` stop is the safe outcome;
-report it and never reroute to a remote provider. Details:
-`reference/vault-local-only-binding.md`.
+report it and never reroute to a remote provider. Compaction summaries send
+the whole conversation; unbound sessions keep them local only in the cases in
+"Compaction residency". Details: `reference/vault-local-only-binding.md`.
 
 Operator-classified protected roots are refused before reads in unbound sessions;
 ordinary source-read permission does not authorize transfer to a provider. Bound

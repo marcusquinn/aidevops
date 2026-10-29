@@ -328,7 +328,7 @@ _tbr_seed_reason() {
 		| select(contains("aidevops:terminal-blocker-observation revision="))
 		| capture("Terminal blocker: reason=(?<r>[a-z_]+) ")? | .r] | last // ""
 	' 2>/dev/null) || reason=""
-	terminal_blocker_rearms_on_revision "$reason" || return 1
+	terminal_blocker_observation_recoverable "$reason" || return 1
 	printf '%s\n' "$reason"
 	return 0
 }
@@ -430,6 +430,10 @@ _tbr_circuit_blocks_release() {
 	IFS=' ' read -r revision fingerprint <<<"$parsed"
 	reason=$(_terminal_blocker_reason "$fingerprint")
 	[[ "$reason" != "$_TBC_UNKNOWN" ]] || return 2
+	if terminal_blocker_rearms_on_retry_only "$reason"; then
+		_terminal_blocker_retry_after "$retry" "$circuit" && return 1
+		return 0
+	fi
 	current=$(terminal_blocker_task_revision "$issue_json" "$repo" "$issue" "$repo_path" "$reason") || return 2
 	[[ "$revision" == "$current" ]] || return 1
 	_terminal_blocker_retry_after "$retry" "$circuit" && return 1
@@ -476,7 +480,12 @@ _tbr_release_circuit_hold() {
 		[[ "$fingerprint" == "$(_terminal_blocker_hash "v2:${_TBC_UNKNOWN}")" ]] || return 2
 	fi
 	repo_path=$(_tbr_repo_path "$repo")
-	current_rev=$(terminal_blocker_task_revision "$issue_json" "$repo" "$issue" "$repo_path" "$reason") || return 2
+	# Retry-only holds include legacy timeout hashes: neither a changed brief
+	# nor changed code/dependencies may release those observations implicitly.
+	current_rev="$observed_rev"
+	if ! terminal_blocker_rearms_on_retry_only "$reason"; then
+		current_rev=$(terminal_blocker_task_revision "$issue_json" "$repo" "$issue" "$repo_path" "$reason") || return 2
+	fi
 	retry=$(_terminal_blocker_latest_retry_comment "$comments") || return 2
 	decision=unchanged
 	if _terminal_blocker_retry_after "$retry" "$evidence"; then

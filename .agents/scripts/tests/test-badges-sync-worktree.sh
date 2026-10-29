@@ -214,6 +214,16 @@ FAIL_METRICS=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/resu
 printf 'PASS metrics failure retains recoverable worktree without publishing a PR\n'
 
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
+retained="$(jq -r '.detail | ltrimstr("retained recovery worktree: ")' "$ROOT/result")"
+[[ -d "$retained" ]]
+[[ "$(git -C "$CANONICAL" worktree list --porcelain | grep -c '^worktree ')" == 2 ]]
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS retry reports retained recovery worktree without allocating another\n'
+# Explicit fixture recovery: this metrics failure left no changed files/commit.
+git -C "$CANONICAL" worktree remove "$retained"
+
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
 head="$(jq -r '.[0].headRefName' "$PR_STATE")"
 git -C "$CANONICAL" cat-file -e "$head:docs/metrics/badges/languages.svg"
@@ -234,6 +244,32 @@ caller="$(git -C "$CANONICAL" show "$head:.github/workflows/loc-badge.yml")"
 [[ "$caller" == *'aidevops_ref: main'* ]]
 [[ "$(snapshot)" == "$before" ]]
 printf 'PASS workflow-only publication tolerates missing remote README\n'
+
+# Reject a real push before it reaches the bare remote, just like readiness gates.
+printf '[]\n' >"$PR_STATE"
+cat >"$CANONICAL/.git/hooks/pre-push" <<'HOOK'
+#!/usr/bin/env bash
+printf 'JS_TOOL_READINESS=blocked:snapshot-incomplete-installed-inventory (eslint tsc)\n' >&2
+printf 'JS_TOOL_READINESS_HINT=restore approved worktree-local dependencies\n' >&2
+exit 1
+HOOK
+chmod +x "$CANONICAL/.git/hooks/pre-push"
+adds_before="$(grep -c '^add$' "$CALLS")"
+creates_before="$(grep -c '^create$' "$CALLS")"
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result" && exit 1
+[[ "$(jq -r .outcome "$ROOT/result")" == BLOCKED-READINESS ]]
+[[ "$(jq -r .detail "$ROOT/result")" == *'JS_TOOL_READINESS_HINT=restore approved worktree-local dependencies'* ]]
+[[ "$(git -C "$CANONICAL" worktree list --porcelain | grep -c '^worktree ')" == 2 ]]
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
+retained="$(jq -r '.detail | ltrimstr("retained recovery worktree: ")' "$ROOT/result")"
+[[ -d "$retained" ]]
+[[ "$(git -C "$CANONICAL" log -1 --format=%s --all)" == 'chore: refresh aidevops badges, metrics and workflow' ]]
+[[ "$(git -C "$CANONICAL" worktree list --porcelain | grep -c '^worktree ')" == 2 ]]
+[[ "$(grep -c '^add$' "$CALLS")" == "$((adds_before + 1))" ]]
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS readiness push rejection preserves hint and one retained worktree across retries\n'
 
 # Routine wiring uses the same no-filter selector exercised above.
 # shellcheck source=../routines/core-routines.sh

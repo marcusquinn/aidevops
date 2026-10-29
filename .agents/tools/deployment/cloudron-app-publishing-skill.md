@@ -246,13 +246,50 @@ with an explicit image, which a stateless runner needs even for `versions update
 Publication is disabled until the repository **variable**
 `CLOUDRON_PUBLICATION_ENABLED` equals `true`. Even then, only `push` or
 `workflow_dispatch` runs on `refs/heads/main` may publish (including no
-`pull_request_target` exception). Add the explicitly passed repository **secret**
-`CLOUDRON_RELEASE_PAT`: a fine-grained PAT restricted to this package repository,
-with Contents write access for its catalog commit and tag. Grant only any
-additional access required by the repository's existing branch policy; this
-workflow never changes or bypasses that policy. The normal job token pushes to
-GHCR. Review protection, Actions permissions, package checks and credentials
-before enabling the variable. Do not test publication against a real catalog.
+`pull_request_target` exception). No personal token is needed under the
+protection baseline below: the per-run job token (scoped to this repository,
+expiring with the job) pushes to GHCR and, in the final publish step only,
+pushes the catalog commit and tag. That is narrower than any PAT and needs no
+rotation. The caller still forwards the optional repository **secret**
+`CLOUDRON_RELEASE_PAT`; set it only when rules on `main` block a direct
+job-token push (required pull requests, status checks or deployments, or
+restricted updates). The approval, scaffold and monitor helpers check
+`gh api repos/<owner/repo>/rules/branches/main` and require the secret only in
+that case; classic branch protection is not inspected. This workflow never
+changes or bypasses branch policy. Review protection, Actions permissions and
+package checks before enabling the variable. Do not test publication against a
+real catalog.
+
+**When a publication PAT is needed:** reuse one purpose-scoped fine-grained
+`CLOUDRON_RELEASE_PAT` per owner, separate from `SYNC_PAT`. Select **Only select
+repositories** and include every package repository that needs it (for example,
+the owner's `cloudron-*-app` repositories). Grant repository **Contents:
+read/write** and the automatically included **Metadata: read** only; no workflow
+or user permissions. Store the value once in gopass, not once per repository.
+
+**Add a new package repo:** open GitHub **Settings → Developer settings →
+Fine-grained tokens → CLOUDRON_RELEASE_PAT → Edit** and add the repository to
+the existing token's access list if absent. Editing access leaves the value
+unchanged. Set the repository's Actions secret from gopass without displaying it:
+
+```bash
+aidevops secret CLOUDRON_RELEASE_PAT -- sh -c 'printf %s "$CLOUDRON_RELEASE_PAT" | gh secret set CLOUDRON_RELEASE_PAT --repo OWNER/REPO'
+```
+
+GitHub user accounts have no account-level Actions secrets: set the same value
+in each repository that needs it. **First time / value lost:** create the token
+only if none exists; if its value is lost, **Regenerate** the existing token
+(permissions and repository list are retained). Run
+`aidevops secret set CLOUDRON_RELEASE_PAT` in a terminal to save the value in
+gopass. Then set the secret from gopass in **every repository listed on the
+token**: regeneration revokes the old value and invalidates every existing copy.
+Never paste values into chat or logs.
+
+**Verify distribution without reading values:** run
+`gh secret list --repo OWNER/REPO --app actions` for each repository updated and
+confirm `CLOUDRON_RELEASE_PAT` is listed. Presence alone does not prove the
+token's repository access, permissions or branch-policy bypass; review those
+separately. Do not trigger a real publication to test token distribution.
 
 **Repository protection:** before enabling publication, a maintainer should
 deliberately apply these two repository rulesets with `enforcement: active` and
@@ -283,7 +320,13 @@ Requiring pull requests and required checks is a separate, optional policy, not
 part of this baseline. It blocks these workflows' direct pushes to `main` unless
 the owner is an authorized bypass actor and the pushes authenticate with owner
 PATs (`CLOUDRON_RELEASE_PAT` for catalog publication, `SYNC_PAT` for sync
-workflows). This bypass path is **untested with fine-grained PATs**; do not
+workflows). If you adopt it, one fine-grained PAT covering all affected package
+repositories per owner and purpose is enough: Contents write for publication;
+see `reference/sync-pat-platforms.md` for sync permissions. Keep release and sync
+tokens separate; extend each token's selected repository list rather than
+creating a token per repository.
+This bypass path is
+**untested with fine-grained PATs**; do not
 recommend or enable it without separately verifying the token permissions,
 bypass configuration and affected workflows.
 

@@ -1186,6 +1186,45 @@ cleanup_stale_opencode() {
 # whose worktree is gone and issue/PR closed, or whose TTL expired. Report-only
 # until AIDEVOPS_DOCKER_REAP=1. Unlabelled resources are never removed. The
 # helper exits 0 within a short timeout when Docker is absent or stopped.
+_pulse_report_docker_pressure() {
+	local helper="$1" budget="$2"
+	local state="${HOME}/.aidevops/.agent-workspace/tmp/docker-pressure" report warning day rc=0
+	day=$(date -u +%F)
+	# Atomic daily claim, shared by pulse invocations. Only advisory state is written.
+	mkdir -p "$state" 2>/dev/null || return 0
+	mkdir "${state}/${day}" 2>/dev/null || return 0
+	if [[ "$budget" -gt 0 ]]; then
+		report=$(AIDEVOPS_DOCKER_TTL_HOURS=72 timeout_sec "$budget" "$helper" report --max-seconds "$budget" 2>/dev/null) || rc=$?
+	else
+		report=$(AIDEVOPS_DOCKER_TTL_HOURS=72 "$helper" report --max-seconds "$budget" 2>/dev/null) || rc=$?
+	fi
+	if [[ "$rc" -ne 0 || "$report" != *$'\nDocker pressure report complete' ]]; then
+		rmdir "${state}/${day}" 2>/dev/null || true
+		printf '[pulse-wrapper] Docker pressure report unavailable or incomplete (exit=%s, budget=%ss); will retry\n' "$rc" "$budget" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+	warning=$(printf '%s\n' "$report" | awk '
+		/containers: labelled=/ { split($NF, a, "="); containers=a[2] }
+		/networks \(custom\): labelled=/ { split($NF, a, "="); networks=a[2] }
+		/volumes: labelled=/ { split($NF, a, "="); volumes=a[2] }
+		/^Containers stopped longer than/ { stopped=1 }
+		stopped && /total=.*labelled=.*unlabelled=/ { split($NF, a, "="); old=a[2]; stopped=0 }
+		/Local Volumes.*reclaimable=/ {
+			size=$0; sub(/.*reclaimable=/, "", size); sub(/ .*/, "", size)
+			n=size+0; unit=size; sub(/^[0-9.]+/, "", unit)
+			if (unit=="GB") bytes=n*1000000000
+			else if (unit=="TB") bytes=n*1000000000000
+			else if (unit=="GiB") bytes=n*1073741824
+			else if (unit=="TiB") bytes=n*1099511627776
+		}
+		END {
+			if (old>20 || bytes>20000000000)
+				printf "[pulse-wrapper] Docker pressure: unlabelled containers=%s networks=%s volumes=%s stopped_over_72h=%s; reclaimable volumes=%s; inspect docker-resource-helper.sh report (no unlabelled resources removed)", containers+0, networks+0, volumes+0, old+0, size ? size : "unknown"
+		}')
+	[[ -z "$warning" ]] || printf '%s\n' "$warning" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
 _pulse_reap_docker_resources() {
 	local _helper="${_PULSE_CLEANUP_SCRIPT_DIR}/docker-resource-helper.sh"
 	local _budget="${PULSE_DOCKER_CLEANUP_MAX_SECONDS:-30}"
@@ -1197,5 +1236,6 @@ _pulse_reap_docker_resources() {
 	else
 		"$_helper" reap --max-seconds "$_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || true
 	fi
+	_pulse_report_docker_pressure "$_helper" "$_budget"
 	return 0
 }

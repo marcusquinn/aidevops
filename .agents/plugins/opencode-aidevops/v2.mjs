@@ -27,6 +27,7 @@ import {
   recordObjectiveDecision,
 } from "./observability.mjs";
 import { createObjectiveReceiptTool } from "./objective-receipt-tool.mjs";
+import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { installPluginConsoleRouter } from "./plugin-console.mjs";
 import { recordPluginHealthStage } from "./plugin-health.mjs";
@@ -298,8 +299,10 @@ export function defineAidevopsV2Adapter(setup) {
   return { id: "aidevops", setup };
 }
 
-async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability }) {
+async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat }) {
   await stopEvents?.().catch(() => {});
+  // GH#35898: a disposed instance must not leave a stale idle heartbeat.
+  dbActivityHeartbeat?.remove();
   try {
     boundedOperationManager?.dispose();
   } catch { /* best-effort cleanup */ }
@@ -350,6 +353,7 @@ export async function setupAidevopsV2(ctx) {
   const mcpRuntime = createV2McpRuntime(ctx, WORKSPACE_DIR, { repositoryDir: directory });
   let boundedOperationManager;
   let stopEvents;
+  let dbActivityHeartbeat;
   try {
     await mcpRuntime.initialize();
     const client = createCompatibilityClient(ctx, mcpRuntime.client);
@@ -530,6 +534,10 @@ export async function setupAidevopsV2(ctx) {
     const normalizeCompletion = createV2CompletionNormalizer();
     const providerErrorHandler = createProviderErrorHandler({ client, isHeadless,
       policy: localOnlyPolicy, resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) });
+    // GH#35898: busy/idle heartbeat for the OpenCode DB archive idle gate
+    // (GH#35517). Without it, V2-held DBs fail closed and are never archived.
+    const heartbeat = installDbActivityHeartbeat();
+    dbActivityHeartbeat = heartbeat;
     stopEvents = await startEventLoop(ctx, async (input) => {
       const completed = normalizeCompletion(input.event);
       const observeContext = { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) };
@@ -539,6 +547,7 @@ export async function setupAidevopsV2(ctx) {
         Promise.resolve(boundedOperationManager.handleEvent(input)),
         permissionBroker.handleEvent(input),
         providerErrorHandler(input),
+        Promise.resolve().then(() => heartbeat.handleEvent(input)),
       ]);
     });
     recordPluginHealthStage("factory_initialized", {
@@ -548,10 +557,10 @@ export async function setupAidevopsV2(ctx) {
     });
 
     return async () => {
-      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability });
+      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat });
     };
   } catch (error) {
-    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability });
+    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat });
     throw error;
   }
 }

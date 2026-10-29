@@ -337,6 +337,20 @@ _repo_has_claim() {
 }
 
 # ---------------------------------------------------------------------------
+# A shallow repository cannot prove that an at-or-below-counter task ID was
+# never claimed: the claim commit may sit behind the shallow boundary. CI once
+# made its full clone shallow with depth-limited refetches, so every task ID
+# claimed more than ~100 claims earlier failed as unclaimed (GH#35949).
+# Returns 0 when the current repository is shallow, 1 otherwise.
+# ---------------------------------------------------------------------------
+_repo_history_is_shallow() {
+	local shallow=""
+	shallow=$(git rev-parse --is-shallow-repository 2>/dev/null) || return 1
+	[[ "$shallow" == "true" ]] && return 0
+	return 1
+}
+
+# ---------------------------------------------------------------------------
 # Extract all tNNN references from text.
 # Outputs one per line.
 # ---------------------------------------------------------------------------
@@ -516,6 +530,12 @@ _check_tid() {
 			return 2
 		fi
 		if [[ "$verify_rc" -eq 1 ]]; then
+			# Allow only this unprovable ID; the caller keeps checking the
+			# message's other IDs, and IDs above the counter still block.
+			if _repo_history_is_shallow; then
+				_warn "${tid} — ≤ counter ${counter} with no visible 'chore: claim ${tid}' commit, but history is shallow so the claim may be hidden; allowing. Fetch full history (git fetch --unshallow) to verify."
+				return 0
+			fi
 			CHECK_MESSAGE_VIOLATION="  ${tid} — ≤ counter ${counter}, but no 'chore: claim ${tid}' commit on this branch, in repo history, or linked issue title\n"
 			return 1
 		fi

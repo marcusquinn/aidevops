@@ -408,6 +408,103 @@ assert_contains "unknown bucket is reported" "Unexpected: mystery" "$other_failu
 skipping_detail_count=$(printf '%s\n' "$other_failure_output" | grep -c '^  Optional: skipping$' || true)
 [[ "$skipping_detail_count" -eq 1 ]] && pass "skipped check is omitted from failure details" || fail "skipped check is omitted from failure details" "count ${skipping_detail_count}"
 
+# GH#35830: a concurrency-cancelled check is pending until superseded or grace ends.
+cancel_super_dir="${TMPDIR_TEST}/cancel-superseded"
+write_fixture "$cancel_super_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""}]'
+write_fixture "$cancel_super_dir" 2 '[{"name":"Build","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+cancel_super_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=180 run_fixture_wait "$cancel_super_dir" 2>&1)
+cancel_super_rc=$?
+set -e
+[[ "$cancel_super_rc" -eq 0 ]] && pass "superseded cancel is not terminal" || fail "superseded cancel is not terminal" "got ${cancel_super_rc}"
+assert_contains "superseded cancel ends with pass" "PASS: required checks completed" "$cancel_super_output"
+
+# Exercise the real fetch -> canonicalize -> grace path with timestamp-only
+# attempt changes. One second per epoch read makes the first window expire
+# exactly when the second cancellation arrives, without wall-clock sleeps.
+cancel_attempt_dir="${TMPDIR_TEST}/cancel-attempts"
+write_fixture "$cancel_attempt_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":"","startedAt":"2026-10-28T12:00:00Z","completedAt":"2026-10-28T12:01:00Z"}]'
+write_fixture "$cancel_attempt_dir" 2 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":"","startedAt":"2026-10-28T12:02:00Z","completedAt":"2026-10-28T12:03:00Z"}]'
+write_fixture "$cancel_attempt_dir" 3 '[{"name":"Build","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+cancel_attempt_output=$(
+	export CANCEL_CLOCK_FILE="${TMPDIR_TEST}/cancel-clock"
+	date() {
+		local format="${1:-}" epoch=100
+		if [[ "$format" == '+%s' ]]; then
+			[[ ! -s "$CANCEL_CLOCK_FILE" ]] || epoch=$(<"$CANCEL_CLOCK_FILE")
+			printf '%s\n' "$((epoch + 1))" >"$CANCEL_CLOCK_FILE"
+			printf '%s\n' "$epoch"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	export -f date
+	AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=1 run_fixture_wait "$cancel_attempt_dir" --timeout 10 --heartbeat 1
+)
+cancel_attempt_rc=$?
+set -e
+assert_eq "timestamp-only cancelled attempt receives a fresh grace window" "0" "$cancel_attempt_rc"
+assert_contains "timestamp-only attempt can reach its passing replacement" "PASS: required checks completed" "$cancel_attempt_output"
+assert_contains "attempt metadata does not postpone unchanged-state heartbeat" "heartbeat: required checks unchanged" "$cancel_attempt_output"
+cancel_attempt_transitions=$(printf '%s\n' "$cancel_attempt_output" | grep '^+' || true)
+assert_eq "attempt timestamps do not emit spurious state transitions" "+ Build: cancel -> pass" "$cancel_attempt_transitions"
+
+cancel_final_dir="${TMPDIR_TEST}/cancel-final"
+write_fixture "$cancel_final_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""}]'
+set +e
+cancel_final_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=0 run_fixture_wait "$cancel_final_dir" 2>&1)
+cancel_final_rc=$?
+set -e
+[[ "$cancel_final_rc" -eq 1 ]] && pass "unsuperseded cancel is terminal after grace" || fail "unsuperseded cancel is terminal after grace" "got ${cancel_final_rc}"
+
+# Exercise timer transitions deterministically without adding a test clock.
+cancel_timer_output=$(
+	# shellcheck source=../gh-checks-wait-helper.sh
+	source "$HELPER" help >/dev/null
+	_GCW_CANCEL_GRACE_SECONDS=180
+	cancel_a='[{"name":"A","workflow":"CI","bucket":"cancel","link":"run-a"}]'
+	cancel_b='[{"name":"B","workflow":"CI","bucket":"cancel","link":"run-b"}]'
+	apply_cancel_grace failure "$cancel_a" 100
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_a" 280
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_b" 281
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_b" 400
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_b" 461
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace pending '[]' 462
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	# Same check, null link, different attempt (distinct timestamps): new window.
+	cancel_c1='[{"name":"C","workflow":"CI","bucket":"cancel","link":"","startedAt":"t1","completedAt":"t2"}]'
+	cancel_c2='[{"name":"C","workflow":"CI","bucket":"cancel","link":"","startedAt":"t3","completedAt":"t4"}]'
+	apply_cancel_grace failure "$cancel_c1" 500
+	apply_cancel_grace failure "$cancel_c2" 700
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+)
+assert_eq "grace follows the cancelled set without extending unchanged cancellations" \
+	$'pending:100\nfailure:100\npending:281\npending:281\nfailure:281\npending:\npending:700' "$cancel_timer_output"
+
+for invalid_grace in '' 08 180s -1 86401 999999999999999999999999; do
+	set +e
+	invalid_grace_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS="$invalid_grace" run_fixture_wait "$cancel_final_dir" --timeout 0 2>&1)
+	invalid_grace_rc=$?
+	set -e
+	assert_eq "invalid cancellation grace ${invalid_grace} is rejected" "1" "$invalid_grace_rc"
+	assert_contains "invalid cancellation grace ${invalid_grace} has configuration diagnostic" \
+		"AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS must be a decimal integer" "$invalid_grace_output"
+done
+
+set +e
+cancel_pending_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=86400 run_fixture_wait "$cancel_final_dir" --timeout 0 2>&1)
+cancel_pending_rc=$?
+set -e
+assert_eq "valid grace keeps cancellation pending" "8" "$cancel_pending_rc"
+assert_contains "valid grace times out rather than failing" "TIMEOUT:" "$cancel_pending_output"
+
 recovery_dir="${TMPDIR_TEST}/recovery"
 write_fixture "$recovery_dir" 1 'not-json'
 write_fixture "$recovery_dir" 2 '[{"name":"Recovered","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'

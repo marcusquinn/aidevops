@@ -209,7 +209,13 @@ def names_rollout(body: str, name: str) -> bool:
         try:
             words = shlex.split(line.replace("`", " "))
         except ValueError:
-            continue
+            # Ordinary prose can contain unmatched quotes (for example repo's).
+            # Preserve quoted single-token arguments without executing shell input.
+            words = [
+                word[1:-1] if len(word) >= 2 and word[0] in "\"'" and word[-1] == word[0]
+                else word
+                for word in line.replace("`", " ").split()
+            ]
         for index, word in enumerate(words):
             if pathlib.PurePosixPath(word).name not in (
                 "sync-workflows", "sync-workflows-helper.sh"
@@ -233,7 +239,10 @@ def rollout_failures(name: str, callers: list[str], changed: set[str], body: str
     if not names_rollout(body, name):
         failures.append(
             f"{name}: permission increase requires a named rollout in the PR body: "
-            f"aidevops sync-workflows --apply --workflow {name}"
+            f"aidevops sync-workflows --apply --workflow {name}. "
+            "Put the command on its own line. After editing the PR body, close/reopen "
+            "the PR or push a new commit to re-run the check; rerunning an existing "
+            "run uses the original PR body."
         )
     return failures
 
@@ -250,6 +259,18 @@ def assert_rollout_contract() -> None:
     assert rollout_failures("fixture", [caller], {caller}, command.replace("fixture", "other"))
     assert rollout_failures("fixture", [caller], {caller}, command.replace("--apply", "--json"))
     assert names_rollout("sync-workflows-helper.sh --workflow fixture --apply", "fixture")
+    prose_command = f"each repo's main: {command}"
+    assert names_rollout(prose_command, "fixture")
+    assert not rollout_failures("fixture", [caller], {caller}, prose_command)
+    assert not names_rollout(prose_command.replace("--workflow fixture", "--workflow other"), "fixture")
+    assert not names_rollout(prose_command.replace("--apply", "--json"), "fixture")
+    assert names_rollout('aidevops sync-workflows --apply --workflow "fixture"', "fixture")
+    for quote in ('"', "'"):
+        quoted_prose = prose_command.replace("workflow fixture", f"workflow {quote}fixture{quote}")
+        assert names_rollout(quoted_prose, "fixture")
+        assert not rollout_failures("fixture", [caller], {caller}, quoted_prose)
+        assert not names_rollout(quoted_prose.replace("fixture", "other"), "fixture")
+        assert not names_rollout(quoted_prose.replace("--apply", "--json"), "fixture")
 
 
 def check_permission_rollouts() -> list[str]:

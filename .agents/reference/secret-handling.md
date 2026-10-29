@@ -9,6 +9,25 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `A
 
 ---
 
+## Reusing purpose-scoped tokens
+
+Prefer reusable, purpose-scoped tokens whose resource access and permissions
+can be edited in place (for example, GitHub fine-grained PATs) over one-off
+tokens per repository. Use one token per owner and purpose, select only the
+repositories needing that purpose, and extend that list when adding a repo.
+Keep least privilege by purpose: release and sync tokens stay separate with
+their own minimum permissions; never select all repositories or add unrelated
+permissions for convenience. Store each value once in gopass with
+`aidevops secret set NAME`, then distribute it through
+`aidevops secret NAME -- cmd` without printing it (pipe to `gh secret set` via
+stdin, not a value-bearing argument). Editing access preserves the value;
+regenerating a lost value revokes the old one, so update every repository copy.
+Use distinct local secret names for different owners rather than overwriting
+another owner's stored token; repository secret names remain unchanged.
+Reuse increases the impact of a leak to all selected repositories. Retain
+per-repository tokens when policy requires stronger isolation, or the platform
+cannot scope one token to an explicit repository set.
+
 ## Migrating plaintext credentials safely
 
 `aidevops secret import-credentials` imports **only the active tenant's store**
@@ -207,7 +226,7 @@ Secret protection is deliberately layered so one missed path does not expose raw
   - UNSAFE: `curl -H "Authorization: Bearer $TOKEN" ...` — `ps` shows full command line; error output may echo headers
   - UNSAFE: `mysql -p"$PASSWORD" dbname` — password visible in process list
   - SAFE: `SECRET=$(gopass show -o name) MY_SECRET="$SECRET" cmd` — subprocess reads via `getenv("MY_SECRET")`; error handlers never print env vars
-  - SAFE: `aidevops secret NAME -- cmd` — injects as env var with automatic output redaction
+  - SAFE: `aidevops secret NAME -- cmd` — injects as env var with automatic output redaction; stdout and stderr stay separate streams (each redacted) and stdin is inherited, so it is a transparent launcher for stdio MCP servers in `mcp.<name>.command` entries (GH#35896)
   - SAFE: `SSH_AUTH_SOCK=... ssh ...` — env-based auth, no secret in argv
   - Subprocess must read value from environment (`getenv()` in C/PHP, `process.env` in Node, `os.environ` in Python, `ENV[]` in Ruby), not from `$1`/`argv`.
   - Last resort (program only accepts args): write secret to `mktemp` file (`chmod 0600`), pass the path, clean up via `trap EXIT`.

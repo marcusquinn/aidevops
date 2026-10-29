@@ -15,18 +15,21 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
-CONFIG_FILE="../configs/ses-config.json"
+CONFIG_FILE="${SES_CONFIG_FILE:-${SCRIPT_DIR}/../../configs/ses-config.json}"
+PROFILE_OVERRIDE=""
+AWS_SELECTED_PROFILE=""
+AWS_CREDENTIAL_PREFIX=""
+AWS_SELECTED_REGION=""
+AWS_USE_SESSION_TOKEN=false
 
 # Constants for repeated strings
 readonly ERROR_IDENTITY_REQUIRED="Identity (email or domain) is required"
 
 # Check if AWS CLI is installed
 check_aws_cli() {
-    if ! command -v aws &> /dev/null; then
-        print_error "AWS CLI is not installed. Please install it first:"
-        echo "  macOS: brew install awscli" >&2
-        echo "  Ubuntu: sudo apt-get install awscli" >&2
-        echo "  Or: pip install awscli" >&2
+    # command -v would find this script's aws() injection wrapper, not the CLI.
+    if ! type -P aws &> /dev/null; then
+        print_error "AWS CLI is not installed. Provision AWS CLI v2 through the approved platform setup."
         exit 1
     fi
 
@@ -62,7 +65,7 @@ get_account_config() {
     fi
     
     local account_config
-    account_config=$(jq -r ".accounts.\"$account_name\"" "$CONFIG_FILE")
+    account_config=$(jq -c --arg account "$account_name" '.accounts[$account]' "$CONFIG_FILE")
     if [[ "$account_config" == "null" ]]; then
         print_error "Account '$account_name' not found in configuration"
         list_accounts
@@ -73,21 +76,65 @@ get_account_config() {
     return 0
 }
 
-# Set AWS credentials for account
+# Select metadata only. Credentials are injected into each AWS subprocess.
 set_aws_credentials() {
     local account_name="$1"
     local config
     config=$(get_account_config "$account_name")
     check_aws_cli
     
-    export AWS_ACCESS_KEY_ID=$(echo "$config" | jq -r '.aws_access_key_id')
-    export AWS_SECRET_ACCESS_KEY=$(echo "$config" | jq -r '.aws_secret_access_key')
-    
-    if [[ "$AWS_ACCESS_KEY_ID" == "null" || "$AWS_SECRET_ACCESS_KEY" == "null" ]]; then
-        print_error "Invalid AWS credentials for account '$account_name'"
+    if jq -e 'has("aws_access_key_id") or has("aws_secret_access_key") or has("aws_session_token")' <<<"$config" >/dev/null; then
+        print_warning "Plaintext AWS fields are ignored. Migrate with aidevops secret set, remove them from SES config, then rotate the keys." >&2
+    fi
+    AWS_SELECTED_PROFILE="${PROFILE_OVERRIDE:-$(jq -r '.profile // empty' <<<"$config")}"
+    AWS_SELECTED_REGION=$(jq -r '.region // "us-east-1"' <<<"$config")
+    AWS_CREDENTIAL_PREFIX=$(jq -r '.credential_prefix // empty' <<<"$config")
+    AWS_USE_SESSION_TOKEN=$(jq -r '.session_token // false' <<<"$config")
+    if [[ -z "$AWS_SELECTED_PROFILE" && ! "$AWS_CREDENTIAL_PREFIX" =~ ^AWS_[A-Z0-9_]+$ ]]; then
+        print_error "Set profile or an account-tagged credential_prefix (AWS_PRODUCTION) in SES metadata"
         exit 1
     fi
     return 0
+}
+
+# Shadow only inside this script; never put credential values in argv or config.
+aws() {
+    if [[ -n "$AWS_SELECTED_PROFILE" ]]; then
+        env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_SECURITY_TOKEN \
+            -u AWS_PROFILE -u AWS_DEFAULT_PROFILE AWS_PAGER="" \
+            aws --profile "$AWS_SELECTED_PROFILE" --region "$AWS_SELECTED_REGION" "$@"
+        return $?
+    fi
+    local key_name="${AWS_CREDENTIAL_PREFIX}_ACCESS_KEY_ID"
+    local secret_name="${AWS_CREDENTIAL_PREFIX}_SECRET_ACCESS_KEY"
+    local token_name=""
+    local -a names=("$key_name" "$secret_name")
+    if [[ "$AWS_USE_SESSION_TOKEN" == "true" ]]; then
+        token_name="${AWS_CREDENTIAL_PREFIX}_SESSION_TOKEN"
+        names+=("$token_name")
+    fi
+    # shellcheck disable=SC2016 # Values expand only inside the injected child.
+    "${SCRIPT_DIR}/secret-helper.sh" "${names[@]}" -- bash -c '
+        run_aws() {
+        local key_name="$1"
+        local secret_name="$2"
+        local token_name="$3"
+        local region="$4"
+        shift 4
+        unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+        export AWS_ACCESS_KEY_ID="${!key_name}" AWS_SECRET_ACCESS_KEY="${!secret_name}"
+        [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]] || exit 1
+        if [[ -n "$token_name" ]]; then
+            export AWS_SESSION_TOKEN="${!token_name}"
+            [[ -n "$AWS_SESSION_TOKEN" ]] || exit 1
+        fi
+        export AWS_PAGER="" AWS_EC2_METADATA_DISABLED=true
+        exec aws --region "$region" "$@"
+        return 1
+        }
+        run_aws "$@"
+    ' aws "$key_name" "$secret_name" "$token_name" "$AWS_SELECTED_REGION" "$@"
+    return $?
 }
 
 # List all configured accounts
@@ -176,10 +223,86 @@ get_reputation() {
 # List suppressed destinations (bounces/complaints)
 list_suppressed_destinations() {
     local account_name="$1"
+    local filter_option="${2:-}"
+    local domain="${3:-}"
     set_aws_credentials "$account_name"
 
     print_info "Suppressed destinations (bounces/complaints) for account: $account_name"
-    aws sesv2 list-suppressed-destinations --output table
+    if [[ -n "$filter_option" && ( "$filter_option" != "--filter" || -z "$domain" || "$domain" == *"@"* || "$domain" == *"/"* ) ]]; then
+        print_error "Usage: suppressed <account> [--filter <domain>]"
+        return 1
+    fi
+    # SESv2 does not provide a paginator for this operation in every CLI version.
+    # Follow the service NextToken explicitly; never silently return only page one.
+    local destinations='[]' page="" next_token="" previous_token=""
+    local -a args=()
+    while true; do
+        page=$(aws sesv2 list-suppressed-destinations --no-paginate --page-size 100 --output json ${args[@]+"${args[@]}"}) || return 1
+        destinations=$(jq -c --argjson all "$destinations" '$all + (.SuppressedDestinationSummaries // [])' <<<"$page") || return 1
+        next_token=$(jq -r '.NextToken // empty' <<<"$page") || return 1
+        [[ -z "$next_token" ]] && break
+        if [[ "$next_token" == "$previous_token" ]]; then
+            print_error "SES returned a repeated pagination token; listing incomplete"
+            return 1
+        fi
+        previous_token="$next_token"
+        args=(--next-token "$next_token")
+    done
+    jq --arg domain "$domain" '[.[] | select($domain == "" or ((.EmailAddress | ascii_downcase | split("@") | last) == ($domain | ascii_downcase)))]' <<<"$destinations"
+    return $?
+}
+
+# Build a JSON list rather than CLI shorthand, including an explicit empty list.
+suppression_reasons() {
+    local reason=""
+    for reason in "$@"; do
+        if [[ "$reason" != "BOUNCE" && "$reason" != "COMPLAINT" ]]; then
+            print_error "Suppression reasons must be BOUNCE or COMPLAINT (no reasons means [])" >&2
+            return 1
+        fi
+    done
+    jq -cn --args '$ARGS.positional' "$@"
+    return 0
+}
+
+account_suppression() {
+    local account_name="$1"
+    local operation="${2:-get}"
+    shift 2
+    set_aws_credentials "$account_name"
+    case "$operation" in
+        get) aws sesv2 get-account --query SuppressionAttributes --output json || return 1 ;;
+        put)
+            local reasons=""
+            reasons=$(suppression_reasons "$@") || return 1
+            aws sesv2 put-account-suppression-attributes --cli-input-json "{\"SuppressedReasons\":$reasons}" || return 1
+            ;;
+        *) print_error "Usage: account-suppression <account> get|put [BOUNCE COMPLAINT]"; return 1 ;;
+    esac
+    return 0
+}
+
+configuration_set() {
+    local account_name="$1"
+    local operation="${2:-list}"
+    local name="${3:-}"
+    set_aws_credentials "$account_name"
+    if [[ "$operation" != "list" && -z "$name" ]]; then
+        print_error "Configuration set name is required"
+        return 1
+    fi
+    case "$operation" in
+        list) aws sesv2 list-configuration-sets --output table || return 1 ;;
+        create) aws sesv2 create-configuration-set --configuration-set-name "$name" || return 1 ;;
+        suppression)
+            shift 3
+            local reasons=""
+            reasons=$(suppression_reasons "$@") || return 1
+            aws sesv2 put-configuration-set-suppression-options --configuration-set-name "$name" \
+                --suppression-options "{\"SuppressedReasons\":$reasons}" || return 1
+            ;;
+        *) print_error "Usage: config-set <account> create|suppression <name> [BOUNCE COMPLAINT]|list"; return 1 ;;
+    esac
     return 0
 }
 
@@ -462,7 +585,7 @@ debug_delivery() {
 # Show help
 show_help() {
     echo "Amazon SES Helper Script"
-    echo "Usage: $0 [command] [account] [options]"
+    echo "Usage: $0 [--profile <name>] [command] [account] [options]"
     echo ""
     echo "Commands:"
     echo "  accounts                           - List all configured accounts"
@@ -472,7 +595,9 @@ show_help() {
     echo "  verified-domains [account]         - List verified domains"
     echo "  verify-identity [account] [identity] - Get identity verification status"
     echo "  reputation [account]               - Get account reputation"
-    echo "  suppressed [account]               - List suppressed destinations"
+    echo "  suppressed [account] [--filter domain] - List all pages; optionally filter domain"
+    echo "  account-suppression [account] get|put [BOUNCE COMPLAINT] - Account settings"
+    echo "  config-set [account] create|suppression <name> [BOUNCE COMPLAINT]|list"
     echo "  suppression-details [account] [email] - Get suppression details"
     echo "  remove-suppression [account] [email] - Remove email from suppression list"
     echo "  send-test [account] [from] [to] [subject] [body] - Send test email"
@@ -499,6 +624,14 @@ show_help() {
 
 # Main script logic
 main() {
+    if [[ "${1:-}" == "--profile" ]]; then
+        PROFILE_OVERRIDE="${2:-}"
+        if [[ -z "$PROFILE_OVERRIDE" ]]; then
+            print_error "--profile requires a named AWS profile"
+            return 1
+        fi
+        shift 2
+    fi
     local subcommand="${1:-help}"
     local account_name="${2:-}"
     local identity="${3:-}"
@@ -529,7 +662,15 @@ main() {
             get_reputation "$account_name"
             ;;
         "suppressed")
-            list_suppressed_destinations "$account_name"
+            list_suppressed_destinations "$account_name" "$identity" "$destination"
+            ;;
+        "account-suppression")
+            shift 2
+            account_suppression "$account_name" "${1:-get}" "${@:2}"
+            ;;
+        "config-set")
+            shift 2
+            configuration_set "$account_name" "${@:-list}"
             ;;
         "suppression-details")
             get_suppression_details "$account_name" "$identity"

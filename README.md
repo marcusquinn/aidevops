@@ -25,7 +25,7 @@ token efficiency, and quality control built in.**
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-3.39.80-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.39.85-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 
@@ -405,7 +405,7 @@ the OpenCode agent picker rather than memorising the catalogue.
 | Domain | Examples |
 |---|---|
 | **Development** | Code, architecture, reviews, testing, accessibility, performance, APIs, databases, mobile, extensions |
-| **Infrastructure** | Hosting, Cloudflare, Coolify, Vercel, Cloudron, containers, remote compute, DNS, VPNs, local HTTPS |
+| **Infrastructure** | Hosting, [AWS](.agents/services/hosting/aws.md) (SSO, secret-backed CLI, SES), Google Cloud, Cloudflare, Coolify, Vercel, Cloudron, containers, remote compute, DNS, VPNs, local HTTPS |
 | **Storage and backups** | Backblaze B2, IDrive E2, Wasabi, S3-compatible inventories, Cloudron backup freshness |
 | **Security** | Secrets, dependency risk, prompt injection, source approvals, access reviews, incident response, Vault |
 | **Product** | Validation, roadmaps, UX, analytics, feature flags, experiments, onboarding, monetisation |

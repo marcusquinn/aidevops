@@ -97,6 +97,16 @@ if [[ "\$1" == "api" && "\$2" == *"/labels?per_page=100"* ]]; then
 	exit 0
 fi
 
+# Current status transitions read an exact GraphQL label snapshot (GH#34003).
+# Reuse the REST label fixture above rather than silently returning no data.
+if [[ "\$1" == "api" && "\$2" == "graphql" && "\$*" == *'label0: label(name:'* ]]; then
+	"\$0" api 'repos/owner/repo/labels?per_page=100' | jq -Rn '
+		[inputs | split("\t") | {name: .[0], color: .[1], description: .[2]}]
+		| to_entries | map({key: ("label" + (.key | tostring)), value: .value})
+		| from_entries | {data: {repository: .}}'
+	exit \$?
+fi
+
 # Public-write privacy guard target probe: the fixture repo is public.
 if [[ "\$1" == "api" && "\$2" == "repos/owner/repo" ]]; then
 	printf '%s\n' false
@@ -426,7 +436,17 @@ else
 	print_result "Sweep classifier sees For #N recovery draft and skips reset" 1 "(got: '$for_open_pr')"
 fi
 
-for unsafe_kind in recovery_for_worker recovery_for_ready recovery_for_cross recovery_for_protected recovery_bare recovery_for_other_closing; do
+# A worker's own `For #N` checkpoint draft is the same durable checkpoint that
+# has-open-pr holds the issue for; preserve it for continuation, never reset.
+run_recover 0 "87|recovery_for_worker" 1
+if grep -q "STALE_PR_CONTINUATION: issue #99999 in owner/repo — PR #87" <<<"$output" &&
+	! grep -q "^issue edit" "$GH_CALLS_FILE"; then
+	print_result "worker For #N checkpoint draft requests exact-head continuation without reset" 0
+else
+	print_result "worker For #N checkpoint draft requests exact-head continuation without reset" 1 "(got: '$output')"
+fi
+
+for unsafe_kind in recovery_for_ready recovery_for_cross recovery_for_protected recovery_bare recovery_for_other_closing; do
 	run_recover 0 "86|${unsafe_kind}" 1
 	if ! grep -q "STALE_PR_CONTINUATION" <<<"$output"; then
 		print_result "${unsafe_kind} cannot authorize stale PR continuation" 0

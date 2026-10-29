@@ -577,17 +577,17 @@ assert_not_grep \
 	'run_stage_with_timeout "complexity_scan"' \
 	"$ENGINE"
 
-# Assertions 2-6: each stage uses two separate greps (2a/2b pattern) because the
+# Assertions 3-6: each stage uses two separate greps (3a/3b pattern) because the
 # dispatch engine wires stages with a backslash line-continuation:
-#   _pulse_run_optional_stage_with_timeout "coderabbit_review" "$stage_timeout" run_daily_codebase_review || true
+#   _pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
 # Single-line grep -E cannot span the newline, so split into stage-name + function-name.
 
-assert_grep \
-	"2a: coderabbit_review stage call present" \
-	'_pulse_run_optional_stage_with_timeout "coderabbit_review"' \
+assert_not_grep \
+	"2a: retired coderabbit_review stage must NOT be in dispatch engine (GH#35865)" \
+	'coderabbit_review' \
 	"$ENGINE"
-assert_grep \
-	"2b: coderabbit_review function name present" \
+assert_not_grep \
+	"2b: retired daily review function must NOT be in dispatch engine" \
 	'run_daily_codebase_review' \
 	"$ENGINE"
 

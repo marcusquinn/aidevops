@@ -287,8 +287,11 @@ collect_secret_values() {
 
 # Redact secret values from a stream
 # Reads stdin, replaces any secret value with [REDACTED]
+# Usage: redact_stream [ENV_FILE] [quiet]; "quiet" suppresses the names-only
+# short-value warnings so a second (stderr) relay does not repeat them.
 redact_stream() {
 	local env_file="${1:-}"
+	local warn_mode="${2:-warn}"
 	local values_file
 	local previous_umask
 	previous_umask=$(umask)
@@ -306,7 +309,7 @@ redact_stream() {
 		while IFS='=' read -r -d '' _key value; do
 			if redaction_value_usable "$value"; then
 				printf '%s\0' "$value"
-			elif [[ -n "$value" && ${#value} -lt 8 ]] && ! secret_env_name_emitted "$_key" "${warned_names[@]}"; then
+			elif [[ "$warn_mode" != "quiet" && -n "$value" && ${#value} -lt 8 ]] && ! secret_env_name_emitted "$_key" "${warned_names[@]}"; then
 				warn_short_redaction_value "$_key"
 				warned_names+=("$_key")
 			fi
@@ -1329,6 +1332,103 @@ inventory_add_name() {
 	return 0
 }
 
+# Run a command with the NUL-delimited secret records from ENV_FILE exported,
+# redacting stdout and stderr independently. The streams must stay separate:
+# merging stderr into stdout lets diagnostic lines land inside large stdout
+# writes (pipe writes above PIPE_BUF are not atomic), corrupting line-framed
+# protocols such as MCP stdio JSON-RPC (GH#35896). stdin is inherited.
+# Usage: run_with_redacted_streams ENV_FILE COMMAND [ARGS...]
+run_with_redacted_streams() {
+	local env_file="$1"
+	shift
+
+	# The bounded stderr sink needs Python even with no usable secret values.
+	# Fail before launching the child rather than breaking its stderr pipe.
+	if ! command -v python3 >/dev/null 2>&1; then
+		print_error "$REDACTION_INIT_ERROR" >&2
+		return 1
+	fi
+
+	local fifo_dir=""
+	local previous_umask
+	previous_umask=$(umask)
+	umask 077
+	if ! fifo_dir=$(mktemp -d) || ! mkfifo "$fifo_dir/stderr"; then
+		umask "$previous_umask"
+		[[ -n "$fifo_dir" ]] && rm -rf "$fifo_dir"
+		print_error "$REDACTION_INIT_ERROR" >&2
+		return 1
+	fi
+	umask "$previous_umask"
+	local stderr_fifo="$fifo_dir/stderr"
+
+	# A FIFO (not process substitution) so Bash 3.2 can wait for redaction.
+	# The final sink is best-effort: an unread parent stderr must not stall
+	# the child or stdout (GH#35975). Only already-redacted bytes enter its
+	# bounded queue. A daemon writer can block without blocking the reader;
+	# at EOF allow a short drain, then abandon pending diagnostics. Do not
+	# set O_NONBLOCK on inherited fd 2: that changes the parent descriptor too.
+	redact_stream "$env_file" quiet <"$stderr_fifo" | python3 -c '
+import os
+import queue
+import sys
+import threading
+
+chunks = queue.Queue(maxsize=16)  # At most 1 MiB, plus reader/writer chunks.
+finished = threading.Event()
+
+def write_stderr():
+    while True:
+        try:
+            chunk = chunks.get(timeout=0.05)
+        except queue.Empty:
+            if finished.is_set():
+                return
+            continue
+        try:
+            while chunk:
+                count = os.write(2, chunk)
+                if not count:
+                    return
+                chunk = chunk[count:]
+        except OSError:
+            # Closed or unavailable parent stderr: keep draining input.
+            return
+
+writer = threading.Thread(target=write_stderr, daemon=True)
+writer.start()
+while True:
+    chunk = sys.stdin.buffer.read1(65536)
+    if not chunk:
+        break
+    try:
+        chunks.put_nowait(chunk)
+    except queue.Full:
+        pass  # Drop diagnostics under backpressure, never stdout.
+finished.set()
+writer.join(timeout=0.25)
+' &
+	local stderr_relay_pid=$!
+
+	local exit_code=0
+	(
+		while IFS='=' read -r -d '' key val; do
+			[[ -z "$key" ]] && continue
+			export "$key=$val"
+		done <"$env_file"
+
+		"$@"
+	) 2>"$stderr_fifo" | redact_stream "$env_file" || exit_code=$?
+
+	local relay_code=0
+	wait "$stderr_relay_pid" || relay_code=$?
+	rm -rf "$fifo_dir"
+	if [[ "$exit_code" -eq 0 && "$relay_code" -ne 0 ]]; then
+		exit_code="$relay_code"
+	fi
+	return "$exit_code"
+}
+
 # Run a command with secrets injected and output redacted
 cmd_run() {
 	local -a cmd_args=("$@")
@@ -1350,16 +1450,7 @@ cmd_run() {
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0
-	(
-		# Load secrets into subprocess environment
-		while IFS='=' read -r -d '' key val; do
-			[[ -z "$key" ]] && continue
-			export "$key=$val"
-		done <"$env_file"
-
-		# Execute the command
-		"${cmd_args[@]}"
-	) 2>&1 | redact_stream "$env_file" || exit_code=$?
+	run_with_redacted_streams "$env_file" "${cmd_args[@]}" || exit_code=$?
 
 	# Clean up (also handled by trap on abnormal exit)
 	rm -f "$env_file"
@@ -1420,14 +1511,7 @@ cmd_run_specific() {
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0
-	(
-		while IFS='=' read -r -d '' key val; do
-			[[ -z "$key" ]] && continue
-			export "$key=$val"
-		done <"$env_file"
-
-		"${cmd_args[@]}"
-	) 2>&1 | redact_stream "$env_file" || exit_code=$?
+	run_with_redacted_streams "$env_file" "${cmd_args[@]}" || exit_code=$?
 
 	rm -f "$env_file"
 	trap - EXIT
@@ -1440,8 +1524,13 @@ cmd_run_specific() {
 # redacted); the verifier caches value-free observations in the registry.
 cmd_verify() {
 	local provider="${1:-}"
+	if [[ "$provider" == "aws" ]]; then
+		shift
+		cmd_verify_aws "$@"
+		return $?
+	fi
 	if [[ "$provider" != "cloudflare" ]]; then
-		print_error "Usage: aidevops secret verify cloudflare [NAME...]"
+		print_error "Usage: aidevops secret verify {cloudflare|aws} [NAME...]"
 		return 1
 	fi
 	shift
@@ -1464,6 +1553,27 @@ cmd_verify() {
 	done
 	if [[ "$failures" -gt 0 ]]; then
 		print_warning "$failures of ${#names[@]} $provider credential(s) did not verify as active"
+		return 1
+	fi
+	return 0
+}
+
+# AWS uses paired credentials, not the single-token Cloudflare target model.
+cmd_verify_aws() {
+	local verifier="${SCRIPT_DIR}/credential_inventory_aws.py"
+	local targets="" prefix="" names_output="" name=""
+	local failures=0
+	targets=$(python3 "$verifier" targets "$@") || return 1
+	while IFS= read -r prefix; do
+		local -a names=()
+		names_output=$(python3 "$verifier" names "$prefix") || return 1
+		while IFS= read -r name; do
+			names+=("$name")
+		done <<<"$names_output"
+		cmd_run_specific "${names[@]}" -- python3 "$verifier" verify "$prefix" </dev/null || failures=$((failures + 1))
+	done <<<"$targets"
+	if [[ "$failures" -gt 0 ]]; then
+		print_warning "$failures AWS credential pair(s) did not verify"
 		return 1
 	fi
 	return 0
@@ -1630,6 +1740,7 @@ cmd_help() {
 	echo "  validate                          Check the credential registry file"
 	echo "  dependents NAME [--json]          What uses NAME (+aliases) before rename/rotation"
 	echo "  verify cloudflare [NAME...]       Read-only provider check; caches accounts/zones"
+	echo "  verify aws [ACCESS_KEY_ID_NAME...] Read-only STS check; prints account and ARN only"
 	echo "  drift [--json]                    Offline expiry/overlap/ownership/freshness report"
 	echo "  owner RESOURCE [--json]           Which account/credentials hold a zone or resource"
 	echo "  organise [--json] [--apply-drafts] Plan cleanup; drafts only, never renames/deletes"

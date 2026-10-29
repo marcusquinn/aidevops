@@ -48,11 +48,20 @@ jobs:
         with:
           fetch-depth: 0  # Full history needed for merge-base detection
 
+      # Never pass --depth here. Claim proof for older task IDs lives in
+      # `chore: claim tNNN` commits far behind the counter tip; a depth-limited
+      # fetch into this full clone writes .git/shallow and hides them, so
+      # properly claimed IDs fail as unclaimed (GH#35949). These fetches only
+      # refresh refs that the full-history checkout already contains.
       - name: Fetch comparison and task counter branches
         run: |
-          git fetch origin main --depth=100 2>/dev/null || true
-          git fetch origin develop --depth=100 2>/dev/null || true
-          git fetch origin '+refs/heads/task-id-counter:refs/remotes/origin/task-id-counter' --depth=100 2>/dev/null || true
+          git fetch origin main 2>/dev/null || true
+          git fetch origin develop 2>/dev/null || true
+          git fetch origin '+refs/heads/task-id-counter:refs/remotes/origin/task-id-counter' 2>/dev/null || true
+          if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+            echo "[task-id-guard][WARN] Checkout is shallow; fetching full history for claim proof"
+            git fetch --unshallow origin 2>/dev/null || true
+          fi
 
       - name: Run task-id collision check
         env:

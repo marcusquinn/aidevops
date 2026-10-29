@@ -267,6 +267,63 @@ _pmpc_pr_body_has_closing_ref() {
 }
 
 #######################################
+# Resolve a title target corroborated by a visible For/Ref body reference.
+# Unlike the shared explicit resolver, secondary sections and mid-line refs
+# are eligible here: the title independently identifies the partial's target.
+# Args: $1=PR number, $2=repo slug
+# Stdout: corroborated issue number
+# Returns: 0 when corroborated, 1 when absent or unreadable
+#######################################
+_pmpc_corroborated_target() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_title="" pr_body="" title_target="" target=""
+	pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || return 1
+	[[ "$pr_title" =~ ^(t|GH#)([0-9]+)([^[:alnum:]_]|$) ]] || return 1
+	title_target="${BASH_REMATCH[2]}"
+	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	target=$(printf '%s\n' "$pr_body" | awk -v target="$title_target" '
+		{
+			line = $0
+			# Quoted fences must not open or close an unquoted code block.
+			if (!comment && line ~ /^[[:space:]]*>/) next
+			if (!fence) {
+				visible = ""
+				while (length(line)) {
+					if (comment) {
+						if (!match(line, /-->/)) { line = ""; break }
+						line = substr(line, RSTART + RLENGTH)
+						comment = 0
+					} else if (match(line, /<!--/)) {
+						visible = visible substr(line, 1, RSTART - 1) " "
+						line = substr(line, RSTART + RLENGTH)
+						comment = 1
+					} else { visible = visible line; break }
+				}
+				line = visible
+			}
+			# Markdown fences allow at most three leading spaces, not tabs.
+			if (line ~ /^ ? ? ?(```|~~~)/) {
+				sub(/^[[:space:]]*/, "", line)
+				match(line, /^(`+|~+)/)
+				run = substr(line, 1, RLENGTH)
+				if (!fence) {
+					fence = 1; marker = substr(run, 1, 1); size = length(run)
+				} else if (substr(run, 1, 1) == marker && length(run) >= size &&
+					substr(line, length(run) + 1) ~ /^[[:space:]]*$/) fence = 0
+				next
+			}
+			if (fence || line ~ /^[[:space:]]*>/ || line ~ /^(    |\t)/) next
+			if (tolower(line) ~ ("(^|[^[:alnum:]_])(for|ref)[:[:space:]]+#" target "([^[:alnum:]_]|$)")) found = 1
+		}
+		END { if (found) print target }
+	') || return 1
+	[[ "$target" =~ ^[0-9]+$ ]] || return 1
+	printf '%s' "$target"
+	return 0
+}
+
+#######################################
 # Build the audit comment for a restored continuation.
 # Args: $1=merged PR number, $2=issue number, $3=scope (leaf|parent)
 # Stdout: comment body
@@ -366,8 +423,8 @@ _pmpc_project_available() {
 # Return a worker's merged non-closing partial target to the dispatch queue.
 #
 # Fires only for a confirmed-merged origin:worker / origin:worker-takeover PR
-# that closes no issue in any GitHub reference form and whose single explicit
-# For/Ref issue is open, status:in-review, unprotected, owned only by the
+# that closes no issue in any GitHub reference form and whose explicit or
+# title-corroborated For/Ref issue is open, status:in-review, unprotected, owned only by the
 # finished worker run, and not referenced by another open PR. Leaves regain
 # auto-dispatch; parent-task trackers end without it.
 #
@@ -400,7 +457,10 @@ _pm_restore_partial_continuation() {
 		echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — body closes an issue or is unreadable (GH#34312)" >>"$LOGFILE"
 		return 0
 	fi
-	target=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit 2>/dev/null) || return 0
+	target=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit 2>/dev/null) || target=""
+	if [[ ! "$target" =~ ^[0-9]+$ || ( -n "$expected_target" && "$target" != "$expected_target" ) ]]; then
+		target=$(_pmpc_corroborated_target "$pr_number" "$repo_slug") || return 0
+	fi
 	[[ "$target" =~ ^[0-9]+$ ]] || return 0
 	[[ -z "$expected_target" || "$target" == "$expected_target" ]] || return 0
 	if ! pr_author=$(_pmpc_merged_pr_author "$repo_slug" "$pr_number"); then

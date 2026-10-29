@@ -193,6 +193,7 @@ test_manifest_value_reads_unterminated_final_line() {
 test_initial_activation_and_manifest() {
 	local target_dir="$HOME/.aidevops/agents"
 	local active_root=""
+	local AIDEVOPS_WORKSPACE_DIR=""
 	mkdir -p "$target_dir/scripts" "$target_dir/custom"
 	printf '1.0.0\n' >"$target_dir/VERSION"
 	printf 'old\n' >"$target_dir/scripts/helper.sh"
@@ -200,6 +201,18 @@ test_initial_activation_and_manifest() {
 
 	write_fake_revision "2.0.0" "new"
 	stage_revision "$target_dir"
+	[[ -d "$HOME/.aidevops/.agent-workspace" ]] || fail "fresh deployment prepares the framework workspace"
+	assert_eq "$(cd "$HOME/.aidevops/.agent-workspace" && pwd -P)" "$AIDEVOPS_WORKSPACE_DIR" \
+		"fresh deployment exposes a canonical workspace before activation"
+	[[ ! -e "$AIDEVOPS_WORKSPACE_DIR/worker-lifecycle" ]] || fail "setup leaves lifecycle initialization to the worker"
+	python3 -E -s -B "$REPO_ROOT/.agents/worker-lifecycle/worker-launch.py" --initialize \
+		--state-dir "$AIDEVOPS_WORKSPACE_DIR/worker-lifecycle" --worktree "$FAKE_REPO" -- "$BASH" -c 'exit 0'
+	local registry_status=""
+	registry_status=$(PYTHONPATH="$REPO_ROOT/.agents/worker-lifecycle" python3 -B -m worker_lifecycle.registry \
+		--state-dir "$AIDEVOPS_WORKSPACE_DIR/worker-lifecycle" status)
+	jq -e '.runs == {"bound":1} and .bindings == 1 and .events == 2 and .cleanup_authorized == false' \
+		<<<"$registry_status" >/dev/null || fail "first worker records its run and binding after fresh deployment"
+	pass "first worker registers after fresh deployment without manual parent creation"
 	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR"
 	active_root=$(_runtime_bundle_resolve_root "$target_dir")
 
@@ -215,6 +228,27 @@ test_initial_activation_and_manifest() {
 	assert_eq "$HOME/.aidevops/user-agents/custom" "$(readlink "$active_root/custom")" "custom lives in stable user state, not the bundle"
 	[[ -L "$HOME/.aidevops/previous-runtime-bundle" ]] || fail "previous validated bundle is retained"
 	pass "previous validated bundle is retained"
+	return 0
+}
+
+test_disabled_lifecycle_allows_unavailable_workspace() {
+	local target_dir="$HOME/.aidevops/agents"
+	local active_before=""
+	local AIDEVOPS_WORKSPACE_DIR="$TEST_ROOT/workspace-parent-file/child"
+	local AIDEVOPS_LIFECYCLE_DISABLED=0
+	printf 'not a directory\n' >"$TEST_ROOT/workspace-parent-file"
+	active_before=$(_runtime_bundle_resolve_root "$target_dir")
+	write_fake_revision "2.0.0" "new"
+	if stage_revision "$target_dir"; then
+		fail "enabled lifecycle unexpectedly staged with an unavailable workspace"
+	fi
+	assert_eq "$active_before" "$(_runtime_bundle_resolve_root "$target_dir")" \
+		"enabled lifecycle workspace failure preserves the active bundle"
+	AIDEVOPS_LIFECYCLE_DISABLED=1
+	stage_revision "$target_dir"
+	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	[[ "$(_runtime_bundle_resolve_root "$target_dir")" != "$active_before" ]] || fail "disabled lifecycle blocked activation"
+	pass "disabled lifecycle permits activation despite unavailable workspace"
 	return 0
 }
 
@@ -745,6 +779,7 @@ main() {
 
 	test_manifest_value_reads_unterminated_final_line
 	test_initial_activation_and_manifest
+	test_disabled_lifecycle_allows_unavailable_workspace
 	test_interrupted_staging_preserves_active
 	test_failed_activation_rolls_back
 	test_process_pin_survives_activation

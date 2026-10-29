@@ -10,6 +10,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.85] - 2026-10-29
+
+### Added
+
+- read-only Claude Code agent_summary exposure diagnostic and cost-visibility guidance
+- annotate interactive user turns with receive time (#35889)
+
+### Changed
+
+- Maintenance: mark t18788 complete (pr:#35944 completed:2026-10-29) (#35958)
+- Maintenance: sync ref:GH#35939 to TODO.md (#35940)
+- Maintenance: mark t18784 complete (pr:#35916 completed:2026-10-29) (#35926)
+
+### Fixed
+
+- accept legacy-guards worktree creation in archive restoration proof and recover interrupted verification slots
+- Playwriter Task handoff waits for a new attachment and classifies stale re-attached tabs
+- let partial terminal-blocker scans wake the recovery supervisor
+- route Claude Code version checks and upgrades by install owner
+- create issues on external repos when derived labels cannot be provisioned
+- count capability releases as one stall and let capable runners continue the head
+- portable binding precedence for jq 1.7/1.8 and a blocking gate
+- label Docker test stacks and clean anonymous volumes (#35921)
+- surface non-fork SonarCloud scan failures (GH#35917) (#35919)
+- preserve one recovery worktree across failed retries (#35922)
+- align capability secret check stubs with current helper (#35903)
+
+## [3.39.84] - 2026-10-29
+
+### Changed
+
+- Maintenance: mark t18781 complete (pr:#35891 completed:2026-10-29) (#35892)
+
+### Fixed
+
+- wire DB activity heartbeat for idle-gated archive
+- keep secret run stdout/stderr separate so MCP stdio responses are not corrupted
+
+## [3.39.83] - 2026-10-29
+
+### Added
+
+- add secret-backed AWS access and SES operations (GH#35879) (#35882)
+
+### Fixed
+
+- keep compaction local for bound local-only sessions and sessions with a local default model
+- classify and suppress GraphQL commit permission denials (#35888)
+
+## [3.39.82] - 2026-10-29
+
+### Changed
+
+- Documentation: treat remote-state answers as current-turn queries
+
+### Fixed
+
+- accept attestations across successful run attempts (#35876)
+- retire daily closed-issue CodeRabbit review requests (#35878)
+
+## [3.39.81] - 2026-10-29
+
+### Added
+
+- enable worker lifecycle observation by default
+- add portable worker lifecycle registry (GH#35821) (#35826)
+
+### Changed
+
+- Refactor: split worker-briefed trust chain out of pulse-merge-process.sh (GH#27171) (#35847)
+- Refactor: clarify lifecycle storage module naming
+- Refactor: extract worker launch bundle routing (GH#35810) (#35813)
+
+### Fixed
+
+- suppress already-applied closed-PR salvage candidates
+- post advisory COMMENTED reviews instead of blocking CHANGES_REQUESTED (GH#35860)
+- preserve public framework name without exposing credential assignments (GH#35829) (#35833)
+- preserve contrast findings in browser QA (GH#35823) (#35825)
+- teach workers the source-access blocker class (GH#35819) (#35820)
+- respect bare changelog version headings (GH#35811) (#35815)
+- stop fleet capability redispatch loops (#35806)
+
 ## [3.39.80] - 2026-10-28
 
 ### Fixed

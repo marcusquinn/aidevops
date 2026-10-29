@@ -10,7 +10,7 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export TEST_ROOT
 SCRIPT_DIR="$TEST_ROOT"
-cp "${SOURCE_DIR}/cloudron-release-evidence.py" "$TEST_ROOT/"
+cp "${SOURCE_DIR}/cloudron-release-evidence.py" "${SOURCE_DIR}/cloudron_caller_policy.py" "$TEST_ROOT/"
 REPOS_FILE="${TEST_ROOT}/repos.json"
 printf '%s\n' '{"initialized_repos":[{"slug":"owner/app","app_type":"cloudron-package"}]}' >"$REPOS_FILE"
 HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -21,7 +21,7 @@ cat >"${TEST_ROOT}/approval-helper.sh" <<'STUB'
 [[ "$*" == 'verify issue 12 owner/app --require-authority' ]] || exit 9
 printf 'verify\n' >>"${TEST_ROOT}/calls"
 case "$SCENARIO" in
-unsigned) printf 'NO_APPROVAL\n'; exit 1 ;;
+unsigned | request_unsigned) printf 'NO_APPROVAL\n'; exit 1 ;;
 api_error) printf 'API_ERROR\n'; exit 6 ;;
 bad_exit) printf 'VERIFIED\n'; exit 6 ;;
 stale) printf 'STALE_APPROVAL\n'; exit 2 ;;
@@ -37,10 +37,29 @@ touch "${TEST_ROOT}/merged"
 STUB
 chmod +x "${TEST_ROOT}/approval-helper.sh" "${TEST_ROOT}/full-loop-helper.sh"
 
+request_issues() {
+	if [[ "$SCENARIO" == request_existing || "$SCENARIO" == request_unsigned || "$SCENARIO" == request_signed ]]; then
+		jq -cn --rawfile body "${TEST_ROOT}/request" '[{number:12,html_url:"https://example.invalid/issue/12",body:$body}]'
+	elif [[ "$SCENARIO" == request* ]]; then
+		printf '[]\n'
+	else
+		gh api repos/owner/app/issues/12 | jq -c '[. + {number:12}]'
+	fi
+	return 0
+}
+
 gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
 	case "$command $target" in
+	'api repos/owner/app/rules/branches/main')
+		[[ "$SCENARIO" != rules_error ]] || return 1
+		# Only rules that block a direct job-token push make the PAT required.
+		case "$SCENARIO" in
+		missing_secret | secret_error | pat_present) printf '[{"type":"deletion"},{"type":"pull_request"}]\n' ;;
+		*) printf '[{"type":"non_fast_forward"},{"type":"deletion"}]\n' ;;
+		esac
+		;;
 	'secret list')
 		[[ "$*" == 'secret list --repo owner/app --app actions --json name' ]] || return 9
 		[[ "$SCENARIO" != secret_error ]] || return 1
@@ -59,11 +78,7 @@ gh() {
 		fi
 		;;
 	'api repos/owner/app/issues?'*)
-		if [[ "$SCENARIO" == request ]]; then
-			printf '[]\n'
-		else
-			gh api repos/owner/app/issues/12 | jq -c '[. + {number:12}]'
-		fi
+		request_issues
 		;;
 	'api repos/owner/app/issues/12/comments?'*) printf '[]\n' ;;
 	'api repos/owner/app/issues/12')
@@ -102,7 +117,11 @@ gh() {
 			printf "    secrets:\n      CLOUDRON_RELEASE_PAT: \${{ secrets.CLOUDRON_RELEASE_PAT }}\n"
 		fi
 		;;
-	'api repos/owner/app/contents/CHANGELOG?'*) printf '[1.2.3]\n* Upgrade upstream\n\n[1.2.2]\n* Old entry\n' ;;
+	'api repos/owner/app/contents/CHANGELOG?'*)
+		# A changelog example must never make an unfinished request look finalized.
+		# shellcheck disable=SC2016 # Markdown command backticks are literal.
+		printf '[1.2.3]\n* Upgrade upstream\nMaintainer command: `sudo aidevops approve issue 12 owner/app`\n\n[1.2.2]\n* Old entry\n'
+		;;
 	'api repos/owner/app/contents/CloudronVersions.json?'*)
 		[[ "$SCENARIO" != catalog_error ]] || return 1
 		printf '{"versions":{"1.2.3":{"manifest":{"version":"1.2.3"}}}}\n'
@@ -148,7 +167,21 @@ gh_create_issue() {
 	body=$(</dev/stdin)
 	printf '%s\n' "$body" >"${TEST_ROOT}/request"
 	printf 'create %s\n' "$*" >>"${TEST_ROOT}/calls"
-	printf 'https://example.invalid/issue/12\n'
+	if [[ "$SCENARIO" == request_bad_url ]]; then
+		printf 'https://example.invalid/issue/not-a-number\n'
+	else
+		printf 'https://example.invalid/issue/12\n'
+	fi
+	return 0
+}
+
+gh_issue_edit_safe() {
+	local body=""
+	body=$(</dev/stdin)
+	[[ "$*" == '12 --repo owner/app --body-file -' ]] || return 9
+	printf 'issue-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
+	[[ "$SCENARIO" != request_edit_error ]] || return 1
+	printf '%s\n' "$body" >"${TEST_ROOT}/request"
 	return 0
 }
 
@@ -198,8 +231,9 @@ run_request_error wrong_app_type 'Repository owner/app is not registered as a ma
 run_request_error not_maintained 'Repository owner/app is not registered as a maintained cloudron-package.' '{"slug":"owner/app","app_type":"cloudron-package","maintenance":false}'
 run_request_error permission_error 'Unable to verify admin/maintain permission for owner/app.'
 run_request_error no_permission 'Admin or maintain permission is required for owner/app.'
+run_request_error rules_error 'Unable to read branch rules for main in owner/app; no approval request or merge.'
 run_request_error secret_error 'Unable to verify CLOUDRON_RELEASE_PAT in owner/app; no approval request or merge.'
-run_request_error missing_secret 'owner/app is missing CLOUDRON_RELEASE_PAT.'
+run_request_error missing_secret 'owner/app is missing CLOUDRON_RELEASE_PAT'
 run_request_error pr_error 'Unable to read PR #7 in owner/app.'
 run_request_error draft 'PR #7 is a draft or its draft status is unavailable. Run: gh pr ready 7 --repo owner/app; then wait for re-triggered checks to pass.'
 run_request_error fork 'PR #7 must be a same-repository PR against main in owner/app.'
@@ -218,6 +252,13 @@ run_case stale 0 false false false
 run_case changed 0 false true false
 run_case missing_secret 1 false false false
 run_case secret_error 1 false false false
+run_case rules_error 1 false false false
+run_case pat_present 0 true true true
+# The baseline rules publish with the job token: no secret lookup at all.
+grep -q 'secret list' "${TEST_ROOT}/calls" || exit 1
+run_case approved 0 true true true
+if grep -q 'secret list' "${TEST_ROOT}/calls"; then exit 1; fi
+printf 'PASS baseline rules need no CLOUDRON_RELEASE_PAT\n'
 run_case missing_pass 1 false false false
 run_case approved 0 true true true
 run_case checks_error 1 false false false
@@ -239,13 +280,45 @@ if grep -Eq 'merge$|pr-edit|comment |issue close' "${TEST_ROOT}/calls"; then exi
 printf 'PASS dry run never writes\n'
 export SCENARIO=request
 rm -f "${TEST_ROOT}/merged"
-release_request owner/app 7
+request_output=$(release_request owner/app 7)
+[[ "$request_output" == $'https://example.invalid/issue/12\nAPPROVAL_COMMAND=sudo aidevops approve issue 12 owner/app' ]]
+grep -q 'issue-edit 12 --repo owner/app --body-file -' "${TEST_ROOT}/calls"
+# shellcheck disable=SC2016 # Markdown command backticks are literal.
+grep -q 'Maintainer command: `sudo aidevops approve issue 12 owner/app`' "${TEST_ROOT}/request"
 grep -q -- '--label no-auto-dispatch' "${TEST_ROOT}/calls"
 if grep -q -- '--label auto-dispatch' "${TEST_ROOT}/calls"; then exit 1; fi
 grep -q 'cloudron-release-approval 1.2.3' "${TEST_ROOT}/request"
 grep -q "$HEAD_SHA" "${TEST_ROOT}/request"
 if grep -q 'Old entry' "${TEST_ROOT}/request"; then exit 1; fi
 printf 'PASS request records exact head, changelog and dispatch hold\n'
+
+# An already finalized request is read-only, preserving its signed digest.
+export SCENARIO=request_existing
+: >"${TEST_ROOT}/calls"
+[[ "$(release_request owner/app 7)" == "$request_output" ]]
+if grep -Eq 'create |issue-edit |verify' "${TEST_ROOT}/calls"; then exit 1; fi
+printf 'PASS repeated request returns the ready command without editing\n'
+
+for scenario in request_bad_url request_edit_error; do
+	export SCENARIO="$scenario"
+	rc=0
+	output=$(release_request owner/app 7) || rc=$?
+	[[ "$rc" -eq 1 && -z "$output" ]]
+done
+printf 'PASS invalid URL and failed finalization expose no approval command\n'
+
+# The failed edit above left an unfinished issue. Never rewrite it if signed.
+export SCENARIO=request_signed
+: >"${TEST_ROOT}/calls"
+if release_request owner/app 7; then exit 1; fi
+if grep -q 'issue-edit ' "${TEST_ROOT}/calls"; then exit 1; fi
+export SCENARIO=request_unsigned
+[[ "$(release_request owner/app 7)" == "$request_output" ]]
+# shellcheck disable=SC2016 # Markdown command backticks are literal.
+grep -q 'Maintainer command: `sudo aidevops approve issue 12 owner/app`' "${TEST_ROOT}/request"
+if grep -q 'Request finalization pending\.' "${TEST_ROOT}/request"; then exit 1; fi
+grep -q 'issue-edit 12 --repo owner/app --body-file -' "${TEST_ROOT}/calls"
+printf 'PASS interrupted unsigned request recovers; signed body is not rewritten\n'
 
 export SCENARIO=unsigned
 if release_authorize owner/app 7 "$HEAD_SHA"; then exit 1; fi

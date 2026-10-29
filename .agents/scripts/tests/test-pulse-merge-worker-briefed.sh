@@ -36,7 +36,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
-PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
+WORKER_BRIEFED_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process-worker-briefed.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -172,17 +172,14 @@ teardown_test_env() {
 # merge scripts and eval them into the test shell.
 # _pm_issue_api lives in pulse-merge.sh (module-level helper).
 # _is_trusted_issue_author and _attempt_worker_briefed_auto_merge live in
-# pulse-merge-process.sh (post-split, t3062 adds the trusted-author helper).
+# pulse-merge-process-worker-briefed.sh (split from pulse-merge-process.sh in
+# GH#27171; t3062 adds the trusted-author helper).
 define_helpers_under_test() {
 	local src_worker_briefed src_issue_api src_trusted_author src_issue_authority src_crypto_approval
 	src_issue_api=$(awk '
 		/^_pm_issue_api\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
-	# Post GH#21301 refactor: function moved to pulse-merge-process.sh
-	local extract_from="$MERGE_SCRIPT"
-	if [[ -f "$PROCESS_SCRIPT" ]]; then
-		extract_from="$PROCESS_SCRIPT"
-	fi
+	local extract_from="$WORKER_BRIEFED_SCRIPT"
 	src_trusted_author=$(awk '
 		/^_is_trusted_issue_author\(\) \{/,/^\}$/ { print }
 	' "$extract_from")

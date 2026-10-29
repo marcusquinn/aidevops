@@ -24,7 +24,7 @@ on:
         default: ''
     secrets:
       CLOUDRON_RELEASE_PAT:
-        description: 'Optional until publication is enabled; repository-scoped Contents write credential'
+        description: 'Optional; only for main branch rules that block a direct job-token push (required PRs or checks)'
         required: false
 
 permissions: {}
@@ -221,7 +221,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      # Contents write is for the final catalog push. Run steps that execute
+      # third-party code (the npm CLI) receive no token in their environment.
+      contents: write
       attestations: write
       id-token: write
     steps:
@@ -283,12 +285,15 @@ jobs:
             --source-ref refs/heads/main --source-digest "$SOURCE_SHA" --signer-digest "$AIDEVOPS_REF"
       - name: Commit catalog and push tag atomically
         env:
-          RELEASE_PAT: ${{ secrets.CLOUDRON_RELEASE_PAT }}
+          # The per-run job token is scoped to this repository and expires with
+          # the job. CLOUDRON_RELEASE_PAT is needed only when rules on main block
+          # a direct push by that token (required PRs or checks).
+          PUSH_TOKEN: ${{ secrets.CLOUDRON_RELEASE_PAT || github.token }}
           VERSION: ${{ needs.preflight.outputs.version }}
           SOURCE_SHA: ${{ needs.preflight.outputs.sha }}
         run: |
           set -euo pipefail
-          test -n "$RELEASE_PAT" || { echo '::error::CLOUDRON_RELEASE_PAT is required for the protected-branch push'; exit 1; }
+          test -n "$PUSH_TOKEN"
           git diff --exit-code "$SOURCE_SHA" -- . ':!CloudronVersions.json'
           test -z "$(git ls-files --others --exclude-standard)"
           git add -- CloudronVersions.json
@@ -296,8 +301,8 @@ jobs:
           git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
             commit -m "chore: publish Cloudron package $VERSION [skip ci]" -m "Cloudron-Source: $SOURCE_SHA"
           git tag "v$VERSION"
-          # aidevops:trust-boundary — only this push receives the repository-scoped PAT.
-          auth=$(printf 'x-access-token:%s' "$RELEASE_PAT" | base64 -w0)
+          # aidevops:trust-boundary — only this push step receives a contents-write credential.
+          auth=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"

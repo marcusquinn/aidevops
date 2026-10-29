@@ -117,6 +117,47 @@ class CanonicalCases:
         with self.assertRaisesRegex(ValueError, "archive-changed"):
             proof.check()
 
+    def test_canonical_proof_accepts_legacy_guards_creation_and_recovers_stuck_slot(self):
+        # GH#35957: macOS (and explicit legacy-guards) creation records only a
+        # worktree_creation_backends entry. Run that contract on Linux CI too.
+        self.env["AIDEVOPS_WORKTREE_MANAGER"] = "legacy-guards"
+        archive = self.archive()
+
+        def unsealed(*args):
+            # Pre-fix failure shape: registered copy, no sealed creation receipt.
+            self.helper(*args)
+            (Path(args[3]).parent / ".creation.json").unlink()
+            raise ValueError("creation-interrupted")
+
+        with self.assertRaisesRegex(ValueError, "creation-interrupted"):
+            self.canonical_proof(archive, unsealed)
+        from worktree_archive_restore import RestorationProof
+        from worktree_recovery_migration_state import publish
+        directory = self.root / "proof"
+        record = json.loads((directory / "journal.json").read_text())
+        stuck = record["canonical_restore"]
+        self.assertEqual(stuck["state"], "restoring")
+        stuck_target = directory / stuck["slot"] / "worktree"
+        self.assertTrue(stuck_target.is_dir())
+        # Resume from the journalled record, as the producer/retirement callers do.
+        with patch.dict(os.environ, self.env):
+            proof = RestorationProof(directory, record, self.helper,
+                                     lambda value: publish(directory / "journal.json", value))
+        proof.check()
+        receipt = record["canonical_restore"]
+        self.assertEqual(receipt["state"], "cleaned")
+        self.assertEqual(receipt["registration"]["backend"], "legacy-guards")
+        self.assertEqual(list((self.root / "proof").glob(".restore-*")), [])
+        listed = self.git(self.repo, "worktree", "list", "--porcelain")
+        self.assertNotIn(str(stuck_target).encode(), listed)
+        self.assertNotIn(str(self.root / "proof" / receipt["slot"]).encode(), listed)
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM worktree_creation_backends WHERE path LIKE ?",
+                                                (str(self.root / "proof") + "/%",)).fetchone(), (0,))
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM worktree_owners WHERE worktree_path LIKE ?",
+                                                (str(self.root / "proof") + "/%",)).fetchone(), (0,))
+        self.assertTrue(self.work.exists())
+
     def test_canonical_proof_requires_real_patch_application(self):
         archive = self.archive()
         payload = archive / "staged.patch"

@@ -527,4 +527,72 @@ blocked_output=$(GH_AUDIT_LOG_FILE="$BLOCKED_LOG" GH_ANOMALY_STATE_FILE="${TEST_
 	main issue edit 81 --add-label status:blocked || fail 'non-worker target changed by guard'
 )
 
-printf 'PASS: expected approval and blocked transitions are retained in the log but excluded from alerts\n'
+# GH#35881: exercise the real scan path with read-only timeline/user stubs.
+(
+	# shellcheck source=../gh-audit-anomaly-helper.sh
+	source "$HELPER" help >/dev/null
+	GH_AUDIT_LOG_FILE="${TEST_ROOT}/self-reversal.log"
+	GH_ANOMALY_STATE_FILE="${TEST_ROOT}/self-reversal-state.json"
+	GH_AUDIT_QUIET=false
+	TIMELINE_CALLS="${TEST_ROOT}/timeline-calls"
+	gh() {
+		local command="$1" endpoint="${2:-}"
+		[[ "$command" == api ]] || return 1
+		if [[ "$endpoint" == user ]]; then
+			[[ "$scenario" != user_error ]] || return 1
+			printf 'runner\n'
+			return 0
+		fi
+		[[ "$endpoint" == repos/example/repo/issues/90/timeline\?* ]] || return 1
+		printf '%s\n' "$endpoint" >>"$TIMELINE_CALLS"
+		[[ "$scenario" != api_error ]] || return 1
+		if [[ "$scenario" == truncated || ("$scenario" == paginated && "$endpoint" == *page=1) ]]; then
+			jq -cn '[range(100) | {event:"commented"}]'
+			return 0
+		fi
+		jq -cn --arg scenario "$scenario" '
+			[{event:"labeled",label:{name:"no-auto-dispatch"},actor:{login:"runner"},created_at:"2026-10-25T11:31:15Z"},
+			 {event:"unlabeled",label:{name:"no-auto-dispatch"},actor:{login:"runner"},created_at:"2026-10-25T11:36:28Z"}] |
+			if $scenario == "foreign_add" then .[0].actor.login="other"
+			elif $scenario == "foreign_remove" then .[1].actor.login="other"
+			elif $scenario == "expired" then .[0].created_at="2026-10-24T11:36:27Z"
+			elif $scenario == "boundary" then .[0].created_at="2026-10-24T11:36:28Z"
+			elif $scenario == "intervening" then . + [.[0] | .actor.login="other" | .event="unlabeled" | .created_at="2026-10-25T11:33:00Z"]
+			elif $scenario == "missing" then .[0:1]
+			elif $scenario == "stale" then .[1].created_at="2026-10-25T11:34:00Z"
+			elif $scenario == "future" then .[1].created_at="2026-10-25T11:37:00Z"
+			elif $scenario == "ambiguous" then . + [.[1] | .created_at="2026-10-25T11:36:29Z"]
+			elif $scenario == "readd" then . + [.[0] | .created_at="2026-10-25T11:36:29Z"]
+			elif $scenario == "foreign_readd" then . + [.[0] | .actor.login="other" | .created_at="2026-10-25T11:36:29Z"]
+			elif $scenario == "future_readd" then . + [.[0] | .actor.login="other" | .created_at="2026-10-25T11:37:00Z"]
+			elif $scenario == "malformed" then {error:"not an array"}
+			else . end'
+		return 0
+	}
+	# Any retained anomaly must reach the existing filing path, without a real write.
+	_cmd_scan_file_issue() {
+		printf 'ALERT_FILED\n'
+		return 0
+	}
+	for scenario in valid boundary paginated foreign_add foreign_remove expired intervening missing stale future ambiguous api_error user_error malformed truncated mixed capture multiple readd foreign_readd future_readd; do
+		jq -cn --arg scenario "$scenario" '{ts:"2026-10-25T11:36:30Z",op:"issue_edit",repo:"example/repo",number:90,
+			suspicious:(["protected_label_removed:no-auto-dispatch"] +
+				if $scenario == "mixed" then ["body_delta_pct=-100"]
+				elif $scenario == "capture" then ["state_capture_unavailable:after"]
+				elif $scenario == "multiple" then ["protected_label_removed:hold-for-review"] else [] end)}' >"$GH_AUDIT_LOG_FILE"
+		: >"$TIMELINE_CALLS"
+		output=$(cmd_scan --all 2>&1)
+		case "$scenario" in
+		valid | boundary | paginated | future_readd)
+			[[ "$output" == *self_reversal* && "$output" != *ALERT_FILED* ]] || fail "self-reversal not excluded: $scenario"
+			;;
+		*) [[ "$output" == *ALERT_FILED* && "$output" != *self_reversal* ]] || fail "self-reversal failed open: $scenario" ;;
+		esac
+		jq -e '.last_line == 1' "$GH_ANOMALY_STATE_FILE" >/dev/null || fail "excluded line did not advance cursor"
+		if [[ "$scenario" == truncated ]]; then
+			[[ "$(wc -l <"$TIMELINE_CALLS" | tr -d ' ')" == 5 ]] || fail 'timeline cap not enforced'
+		fi
+	done
+)
+
+printf 'PASS: expected approval, blocked and self-reversal transitions are retained in the log but excluded from alerts\n'

@@ -4,7 +4,7 @@
 # =============================================================================
 # Pulse Simplification — Review Scanners
 # =============================================================================
-# Daily codebase review (CodeRabbit), post-merge review scanner, active-PR
+# Post-merge review scanner, active-PR
 # review-thread response scanner, and auto-decomposer scanner. Extracted from pulse-simplification.sh as part
 # of the file-size-debt split (GH#21306, parent #21146).
 #
@@ -32,102 +32,6 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
     unset _lib_path
 fi
 
-# Check if the daily CodeRabbit codebase review interval has elapsed.
-# Models on _complexity_scan_check_interval which has never regressed (GH#17640).
-# Arguments: $1 - now_epoch (current epoch seconds)
-# Returns: 0 if review is due, 1 if not yet due
-_coderabbit_review_check_interval() {
-	local now_epoch="$1"
-	if [[ ! -f "$CODERABBIT_REVIEW_LAST_RUN" ]]; then
-		return 0
-	fi
-	local last_run
-	last_run=$(cat "$CODERABBIT_REVIEW_LAST_RUN" 2>/dev/null || echo "0")
-	[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
-	local elapsed=$((now_epoch - last_run))
-	if [[ "$elapsed" -lt "$CODERABBIT_REVIEW_INTERVAL" ]]; then
-		local remaining=$(((CODERABBIT_REVIEW_INTERVAL - elapsed) / 3600))
-		echo "[pulse-wrapper] CodeRabbit codebase review not due yet (${remaining}h remaining)" >>"$LOGFILE"
-		return 1
-	fi
-	return 0
-}
-
-#######################################
-# Daily full codebase review via CodeRabbit (GH#17640).
-#
-# Posts "@coderabbitai Please run a full codebase review" on issue #2632
-# once per 24h. Uses a simple timestamp file gate (same pattern as
-# _complexity_scan_check_interval) to avoid duplicate posts.
-#
-# Previous implementations regressed because they checked complex quality
-# gate status instead of a plain time-based interval. This version uses
-# the same pattern as the complexity scan which has never regressed.
-#
-# Actionable findings from the review are routed through
-# quality-feedback-helper.sh to create tracked issues.
-#######################################
-run_daily_codebase_review() {
-	local aidevops_slug="marcusquinn/aidevops"
-
-	# t2145: CodeRabbit review triggers issue-creating scanners — maintainer-only.
-	local _cr_role
-	_cr_role=$(get_repo_role_by_slug "$aidevops_slug")
-	if [[ "$_cr_role" != "maintainer" ]]; then
-		return 0
-	fi
-
-	local now_epoch
-	now_epoch=$(date +%s)
-
-	# Time gate: skip if last review was <24h ago
-	_coderabbit_review_check_interval "$now_epoch" || return 0
-
-	# Permission gate: only collaborators with write+ may trigger reviews
-	local current_user
-	current_user=$(gh api user --jq '.login' 2>/dev/null) || current_user=""
-	if [[ -z "$current_user" ]]; then
-		echo "[pulse-wrapper] CodeRabbit review: skipped — cannot determine current user" >>"$LOGFILE"
-		return 0
-	fi
-	local perm_level
-	# #aidevops:trust-boundary — review-trigger comments require confirmed
-	# collaborator write access; API lookup failures skip with explicit wording.
-	if ! _gh_collaborator_permission_lookup "$aidevops_slug" "$current_user" perm_level; then
-		echo "[pulse-wrapper] CodeRabbit review: skipped — permission check failed for user '$current_user' on $aidevops_slug (HTTP ${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown})" >>"$LOGFILE"
-		return 0
-	fi
-	case "$perm_level" in
-	admin | maintain | write) ;; # allowed
-	*)
-		echo "[pulse-wrapper] CodeRabbit review: skipped — user '$current_user' has '$perm_level' permission on $aidevops_slug (need write+)" >>"$LOGFILE"
-		return 0
-		;;
-	esac
-
-	echo "[pulse-wrapper] Posting daily CodeRabbit full codebase review request on #${CODERABBIT_REVIEW_ISSUE} (GH#17640)..." >>"$LOGFILE"
-
-	# Post the review trigger comment
-	if gh_issue_comment "$CODERABBIT_REVIEW_ISSUE" \
-		--repo "$aidevops_slug" \
-		--body "@coderabbitai Please run a full codebase review" 2>>"$LOGFILE"; then
-		# Update timestamp only on successful post
-		printf '%s\n' "$now_epoch" >"$CODERABBIT_REVIEW_LAST_RUN"
-		echo "[pulse-wrapper] CodeRabbit review: posted successfully, next review in ~24h" >>"$LOGFILE"
-	else
-		echo "[pulse-wrapper] CodeRabbit review: failed to post comment on #${CODERABBIT_REVIEW_ISSUE}" >>"$LOGFILE"
-		return 1
-	fi
-
-	# Route actionable findings through quality-feedback-helper if available
-	local qfh="${SCRIPT_DIR}/quality-feedback-helper.sh"
-	if [[ -x "$qfh" ]]; then
-		echo "[pulse-wrapper] CodeRabbit review: findings will be processed by quality-feedback-helper.sh on next cycle" >>"$LOGFILE"
-	fi
-
-	return 0
-}
-
 #######################################
 # Daily post-merge review scanner (t1993).
 #
@@ -137,7 +41,7 @@ run_daily_codebase_review() {
 # post-merge-review-scanner.sh's issue_exists() guard.
 #
 # Time-gated to run at most once per POST_MERGE_SCANNER_INTERVAL (default 24h).
-# Reference pattern: run_daily_codebase_review.
+# Reference pattern: _complexity_scan_check_interval.
 #######################################
 _post_merge_scanner_scan_repo() {
 	local slug="$1" scanner="$2" scanner_cursor_dir="$3" stage_start_epoch="$4" stage_budget="$5" stage_reserve="$6"

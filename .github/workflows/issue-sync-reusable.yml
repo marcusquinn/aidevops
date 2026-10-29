@@ -222,14 +222,31 @@ jobs:
       # GH#20976: SYNC_PAT can also appear empty if the caller uses
       # `secrets: inherit` against a cross-account reusable workflow.
       - name: Check SYNC_PAT visibility (t2166)
+        id: sync-pat
         if: steps.check-author.outputs.skip != 'true'
         env:
-          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
         run: |
-          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::notice::SYNC_PAT not present — direct TODO.md publication uses GITHUB_TOKEN; GH006 will update one protected-branch PR when Actions PR creation is enabled."
-          else
-            echo "::notice::SYNC_PAT present — direct TODO.md publication uses PAT; GH006 routes through a PR and can retry its API write with that PAT."
+          echo "sync_pat_valid=false" >> "$GITHUB_OUTPUT"
+          if [[ -z "${SYNC_PAT:-}" ]]; then
+            echo "::notice::SYNC_PAT not present — using GITHUB_TOKEN; protected publication still requires a PR."
+            exit 0
+          fi
+          # Feed the header over stdin so the token never enters curl's argv.
+          status=$(printf 'Authorization: Bearer %s\n' "$SYNC_PAT" | curl --silent --output /dev/null --write-out '%{http_code}' \
+            --connect-timeout 10 --max-time 30 \
+            --header @- \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}") || status=000
+          case "$status" in
+            200) echo "sync_pat_valid=true" >> "$GITHUB_OUTPUT"
+                 echo "::notice::SYNC_PAT valid — using PAT; branch protection remains authoritative." ;;
+            401) reason="expired or revoked" ;;
+            403|404) reason="missing repository access (HTTP ${status})" ;;
+            *) reason="validation unavailable (HTTP ${status})" ;;
+          esac
+          # Degrade visibly but return success so read-only hygiene can continue.
+          if [[ "$status" != 200 ]]; then
+            echo "::error title=SYNC_PAT invalid::${reason} — using GITHUB_TOKEN; rotate per reference/sync-pat-platforms.md"
           fi
 
       - name: Checkout
@@ -239,7 +256,7 @@ jobs:
           fetch-depth: 1
           # Prefer SYNC_PAT for direct contents publication. Branch protection
           # remains authoritative; GH006 is handled through a PR.
-          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Checkout aidevops framework scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -377,7 +394,7 @@ jobs:
         if: steps.check-author.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ secrets.SYNC_PAT }}
+          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || '' }}
         run: |
           if git diff --quiet TODO.md 2>/dev/null; then
             echo "No TODO.md changes to publish"
@@ -449,14 +466,31 @@ jobs:
       # GH#20976: SYNC_PAT can also appear empty if the caller uses
       # `secrets: inherit` against a cross-account reusable workflow.
       - name: Check SYNC_PAT visibility (t2166)
+        id: sync-pat
         if: steps.check-issue.outputs.sync == 'true'
         env:
-          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
         run: |
-          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::notice::SYNC_PAT not present — direct TODO.md publication uses GITHUB_TOKEN; GH006 will update one protected-branch PR when Actions PR creation is enabled."
-          else
-            echo "::notice::SYNC_PAT present — direct TODO.md publication uses PAT; GH006 routes through a PR and can retry its API write with that PAT."
+          echo "sync_pat_valid=false" >> "$GITHUB_OUTPUT"
+          if [[ -z "${SYNC_PAT:-}" ]]; then
+            echo "::notice::SYNC_PAT not present — using GITHUB_TOKEN; protected publication still requires a PR."
+            exit 0
+          fi
+          # Feed the header over stdin so the token never enters curl's argv.
+          status=$(printf 'Authorization: Bearer %s\n' "$SYNC_PAT" | curl --silent --output /dev/null --write-out '%{http_code}' \
+            --connect-timeout 10 --max-time 30 \
+            --header @- \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}") || status=000
+          case "$status" in
+            200) echo "sync_pat_valid=true" >> "$GITHUB_OUTPUT"
+                 echo "::notice::SYNC_PAT valid — using PAT; branch protection remains authoritative." ;;
+            401) reason="expired or revoked" ;;
+            403|404) reason="missing repository access (HTTP ${status})" ;;
+            *) reason="validation unavailable (HTTP ${status})" ;;
+          esac
+          # Degrade visibly but return success so read-only hygiene can continue.
+          if [[ "$status" != 200 ]]; then
+            echo "::error title=SYNC_PAT invalid::${reason} — using GITHUB_TOKEN; rotate per reference/sync-pat-platforms.md"
           fi
 
       - name: Checkout
@@ -466,7 +500,7 @@ jobs:
           fetch-depth: 1
           # Prefer SYNC_PAT for direct contents publication; do not bypass
           # protected-branch PR requirements.
-          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Checkout aidevops framework scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -499,7 +533,7 @@ jobs:
         if: steps.check-issue.outputs.sync == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ secrets.SYNC_PAT }}
+          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || '' }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           if git diff --quiet TODO.md 2>/dev/null; then
@@ -739,13 +773,30 @@ jobs:
       # GH#20976: SYNC_PAT can also appear empty if the caller uses
       # `secrets: inherit` against a cross-account reusable workflow.
       - name: Check SYNC_PAT visibility (t2166)
+        id: sync-pat
         env:
-          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
         run: |
-          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::notice::SYNC_PAT not present — direct TODO.md publication uses GITHUB_TOKEN; GH006 will update one protected-branch PR when Actions PR creation is enabled."
-          else
-            echo "::notice::SYNC_PAT present — direct TODO.md publication uses PAT; GH006 routes through a PR and can retry its API write with that PAT."
+          echo "sync_pat_valid=false" >> "$GITHUB_OUTPUT"
+          if [[ -z "${SYNC_PAT:-}" ]]; then
+            echo "::notice::SYNC_PAT not present — using GITHUB_TOKEN; protected publication still requires a PR."
+            exit 0
+          fi
+          # Feed the header over stdin so the token never enters curl's argv.
+          status=$(printf 'Authorization: Bearer %s\n' "$SYNC_PAT" | curl --silent --output /dev/null --write-out '%{http_code}' \
+            --connect-timeout 10 --max-time 30 \
+            --header @- \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}") || status=000
+          case "$status" in
+            200) echo "sync_pat_valid=true" >> "$GITHUB_OUTPUT"
+                 echo "::notice::SYNC_PAT valid — using PAT; branch protection remains authoritative." ;;
+            401) reason="expired or revoked" ;;
+            403|404) reason="missing repository access (HTTP ${status})" ;;
+            *) reason="validation unavailable (HTTP ${status})" ;;
+          esac
+          # Degrade visibly but return success so read-only hygiene can continue.
+          if [[ "$status" != 200 ]]; then
+            echo "::error title=SYNC_PAT invalid::${reason} — using GITHUB_TOKEN; rotate per reference/sync-pat-platforms.md"
           fi
 
       - name: Checkout
@@ -754,7 +805,7 @@ jobs:
           fetch-depth: 1
           # Prefer SYNC_PAT for direct contents publication; protected branch
           # requirements still route through the deterministic PR fallback.
-          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Checkout aidevops framework scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -784,7 +835,7 @@ jobs:
         if: inputs.command == 'pull' || inputs.command == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ secrets.SYNC_PAT }}
+          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || '' }}
           SYNC_COMMAND: ${{ inputs.command }}
         run: |
           if git diff --quiet TODO.md 2>/dev/null; then
@@ -832,13 +883,30 @@ jobs:
       # GH#20976: SYNC_PAT can also appear empty if the caller uses
       # `secrets: inherit` against a cross-account reusable workflow.
       - name: Check SYNC_PAT visibility (t2166)
+        id: sync-pat
         env:
-          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
         run: |
-          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::notice::SYNC_PAT not present — direct TODO.md publication uses GITHUB_TOKEN; GH006 will update one protected-branch PR when Actions PR creation is enabled."
-          else
-            echo "::notice::SYNC_PAT present — direct TODO.md publication uses PAT; GH006 routes through a PR and can retry its API write with that PAT."
+          echo "sync_pat_valid=false" >> "$GITHUB_OUTPUT"
+          if [[ -z "${SYNC_PAT:-}" ]]; then
+            echo "::notice::SYNC_PAT not present — using GITHUB_TOKEN; protected publication still requires a PR."
+            exit 0
+          fi
+          # Feed the header over stdin so the token never enters curl's argv.
+          status=$(printf 'Authorization: Bearer %s\n' "$SYNC_PAT" | curl --silent --output /dev/null --write-out '%{http_code}' \
+            --connect-timeout 10 --max-time 30 \
+            --header @- \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}") || status=000
+          case "$status" in
+            200) echo "sync_pat_valid=true" >> "$GITHUB_OUTPUT"
+                 echo "::notice::SYNC_PAT valid — using PAT; branch protection remains authoritative." ;;
+            401) reason="expired or revoked" ;;
+            403|404) reason="missing repository access (HTTP ${status})" ;;
+            *) reason="validation unavailable (HTTP ${status})" ;;
+          esac
+          # Degrade visibly but return success so read-only hygiene can continue.
+          if [[ "$status" != 200 ]]; then
+            echo "::error title=SYNC_PAT invalid::${reason} — using GITHUB_TOKEN; rotate per reference/sync-pat-platforms.md"
           fi
 
       # t3204: pull the framework scripts up front so the closing-hygiene and
@@ -944,7 +1012,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 1
-          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Restore framework scripts before task resolution
         if: steps.extract.outputs.linked_issues != ''
@@ -1334,12 +1402,9 @@ jobs:
           # Prefer the job-scoped token for PR API writes; when repository
           # settings disable Actions PR creation, retry with SYNC_PAT.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ secrets.SYNC_PAT }}
-          # t2048: expose secret presence as a boolean-ish env var. GitHub
-          # hides secret values from logs, but ${{ secrets.SYNC_PAT != '' }}
-          # evaluates to 'true' or 'false' at workflow-compile time and is
-          # safe to log.
-          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || '' }}
+          # Log the selected credential path, not merely secret presence.
+          SYNC_PAT_VALID: ${{ steps.sync-pat.outputs.sync_pat_valid }}
           GIT_AUTHOR_NAME: GitHub Actions
           GIT_AUTHOR_EMAIL: actions@github.com
           GIT_COMMITTER_NAME: GitHub Actions
@@ -1378,10 +1443,10 @@ jobs:
           # Keep the active credential path visible. The job-scoped token is
           # preferred for PR API writes; SYNC_PAT is a bounded fallback when
           # repository settings disable Actions PR creation.
-          if [[ -n "${SYNC_PAT_PRESENT:-}" ]]; then
+          if [[ "${SYNC_PAT_VALID:-}" == "true" ]]; then
             echo "::notice::Using SYNC_PAT for direct TODO.md publication and as the bounded PR API fallback after GH006."
           else
-            echo "::notice::SYNC_PAT not present — GH006 PR publication requires Actions PR creation to be enabled."
+            echo "::notice::SYNC_PAT absent or invalid — using GITHUB_TOKEN; GH006 PR publication requires Actions PR creation to be enabled."
           fi
 
           # GH#28464: use the same fail-closed completion predicate as direct

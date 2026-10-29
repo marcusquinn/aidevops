@@ -1216,6 +1216,36 @@ _close_conflicting_pr() {
 }
 
 #######################################
+# Print a backtick fence one longer than the longest backtick run in the
+# diff (minimum 3). PR diffs can contain triple backticks (markdown/docs
+# changes); a fixed ``` fence would break rendering and corrupt the worker
+# handoff (t2383 Fix 4).
+# GH#35943: match the backtick with a bracket expression. GNU grep reads
+# '\`' as its start-of-buffer anchor, so the escaped form never matched on
+# Linux runners and every diff kept a 3-backtick fence.
+#
+# Args:
+#   $1 - diff_content
+#######################################
+_carry_forward_diff_fence() {
+	local diff_content="$1"
+	local fence_len=3
+	local longest_run
+	longest_run=$(printf '%s' "$diff_content" | grep -oE '[`]{3,}' | awk '{ if (length > max) max = length } END { print max+0 }') || longest_run=0
+	[[ "$longest_run" =~ ^[0-9]+$ ]] || longest_run=0
+	if [[ "$longest_run" -ge "$fence_len" ]]; then
+		fence_len=$((longest_run + 1))
+	fi
+	local fence=""
+	local _i
+	for (( _i=0; _i<fence_len; _i++ )); do
+		fence="${fence}\`"
+	done
+	printf '%s' "$fence"
+	return 0
+}
+
+#######################################
 # Carry the diff of a closed-CONFLICTING PR forward to its linked issue
 # body so the next dispatched worker can rebase/cherry-pick instead of
 # re-deriving the solution from scratch (t2118).
@@ -1274,30 +1304,20 @@ _carry_forward_pr_diff() {
 
 	# --- Idempotency guard ---
 	# Marker format: <!-- t2118:prior-worker-diff:PR<N> -->
+	# GH#35943: here-string, not `printf | grep -q`. The pulse sources this
+	# file under pipefail; grep -q exits at the marker while printf is still
+	# writing the carried diff, SIGPIPE fails the pipeline and the guard
+	# re-appends the same diff.
 	local marker="<!-- t2118:prior-worker-diff:PR${pr_number} -->"
-	if printf '%s' "$current_body" | grep -qF "$marker"; then
+	if grep -qF -- "$marker" <<<"$current_body"; then
 		echo "[pulse-wrapper] _carry_forward_pr_diff: issue #${linked_issue} already has diff marker for PR #${pr_number} — skipping (t2118)" >>"$LOGFILE"
 		_CFPD_PRESERVED=1
 		return 0
 	fi
 
 	# --- Build the append section ---
-	# t2383 Fix 4: compute dynamic fence length. PR diffs can contain triple
-	# backticks (markdown/docs changes). A fixed ``` fence would break rendering
-	# and corrupt the worker handoff. Scan for the longest backtick run in the
-	# diff and use one more than that.
-	local fence_len=3
-	local longest_run
-	longest_run=$(printf '%s' "$diff_content" | grep -oE '\`{3,}' | awk '{ if (length > max) max = length } END { print max+0 }') || longest_run=0
-	[[ "$longest_run" =~ ^[0-9]+$ ]] || longest_run=0
-	if [[ "$longest_run" -ge "$fence_len" ]]; then
-		fence_len=$((longest_run + 1))
-	fi
-	local fence=""
-	local _i
-	for (( _i=0; _i<fence_len; _i++ )); do
-		fence="${fence}\`"
-	done
+	local fence
+	fence=$(_carry_forward_diff_fence "$diff_content")
 
 	local new_section
 	new_section="${marker}

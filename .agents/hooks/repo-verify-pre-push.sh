@@ -356,6 +356,33 @@ _emit_missing_bun_dev_dependencies() {
 	return 0
 }
 
+# GH#35871: typecheck is the only verify step that needs installed JavaScript
+# dev dependencies. Blocking the push when they are absent stranded committed
+# worker work on one runner, where no other runner could salvage it (GH#35689,
+# GH#35751). When the trusted default branch's CI runs the identical command,
+# the tool's absence is runner capability, not a source defect: CI enforces the
+# check on the PR. Read the remote-tracking ref, never the pushed tree, so a
+# branch cannot opt itself out. Any other typecheck failure still blocks.
+_typecheck_enforced_by_ci() {
+	local cmd="$1"
+	local ref=""
+	[[ -n "$cmd" ]] || return 1
+	for ref in refs/remotes/origin/HEAD refs/remotes/origin/main refs/remotes/origin/master; do
+		git -C "$REPO_ROOT" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null 2>&1 || continue
+		git -C "$REPO_ROOT" grep -q -F -e "run: ${cmd}" "$ref" -- \
+			'.github/workflows/*.yml' '.github/workflows/*.yaml' 2>/dev/null
+		return $?
+	done
+	return 1
+}
+
+_emit_typecheck_deferred_to_ci() {
+	_log WARN "typecheck could not start: JavaScript dev dependencies are not installed on this runner"
+	_log WARN "deferring '${VERIFY_TYPECHECK}' to the default branch CI job that runs it; the PR cannot merge until it passes"
+	_log WARN "to verify locally first: bun install --frozen-lockfile --ignore-scripts && ${VERIFY_TYPECHECK}"
+	return 0
+}
+
 # GH#34094: a declared JavaScript lint command that cannot start (linter binary
 # absent, or a flat-config plugin/package unresolvable) is unavailable tooling,
 # not a demonstrated source defect. Log content is only pattern-matched, never
@@ -602,14 +629,18 @@ main() {
 	# Typecheck never auto-fixes — semantic failures need code changes
 	if [[ -n "$VERIFY_TYPECHECK" ]]; then
 		if ! _run_check 'typecheck' "$VERIFY_TYPECHECK"; then
-			if _typecheck_missing_bun_dev_dependencies "${LAST_FAIL_LOG:-}"; then
+			if _typecheck_missing_bun_dev_dependencies "${LAST_FAIL_LOG:-}" &&
+				_typecheck_enforced_by_ci "$VERIFY_TYPECHECK"; then
+				_emit_typecheck_deferred_to_ci
+			elif _typecheck_missing_bun_dev_dependencies "${LAST_FAIL_LOG:-}"; then
 				_emit_missing_bun_dev_dependencies
+				overall=1
 			elif _check_failed_on_missing_python_tooling 'typecheck' "$VERIFY_TYPECHECK"; then
-				:
+				overall=1
 			else
 				_emit_mentor_fail 'typecheck' '' "$VERIFY_TYPECHECK"
+				overall=1
 			fi
-			overall=1
 		fi
 	fi
 

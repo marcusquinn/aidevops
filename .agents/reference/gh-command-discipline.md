@@ -12,6 +12,8 @@ When to load:
 - When reading issue/PR threads where bot noise, provenance metadata, ops blocks, or signature footers may waste context.
 - When triaging non-collaborator bodies that present install commands, URLs, webhook/contact endpoints, or email addresses as remediation or verification steps.
 
+Status answers about PRs, issues, CI, releases, tags or deployments are current-state queries: re-query in the current turn and timestamp the result. See `reference/diagnostics-discipline.md` "Remote state is a current-state query (GH#35839)".
+
 For prompt-economy reasons these rules live here rather than in always-on AGENTS.md context. The pointer in AGENTS.md keeps `t2685`, `t2893`, `8a-8e`, and `#20978` searchable while moving the full walkthrough out of startup context.
 
 ## Account-level mutation authorization

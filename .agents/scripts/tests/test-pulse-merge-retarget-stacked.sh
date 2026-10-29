@@ -334,9 +334,11 @@ test_retarget_called_before_merge() {
 	fi
 
 	# Retarget must appear before the gh pr merge call.
-	local retarget_pos merge_pos
-	retarget_pos=$(printf '%s\n' "$func_body" | grep -n '_retarget_stacked_children' | head -1 | cut -d: -f1)
-	merge_pos=$(printf '%s\n' "$func_body" | grep -n 'gh pr merge' | head -1 | cut -d: -f1)
+	# grep -m1 on a here-string instead of `printf | grep | head -1`: no
+	# early-exit reader under pipefail, so no SIGPIPE flake (GH#35943).
+	local retarget_pos="" merge_pos=""
+	retarget_pos=$(grep -n -m1 -- '_retarget_stacked_children' <<<"$func_body" | cut -d: -f1) || retarget_pos=""
+	merge_pos=$(grep -n -m1 -- 'gh pr merge' <<<"$func_body" | cut -d: -f1) || merge_pos=""
 
 	if [[ -z "$retarget_pos" || -z "$merge_pos" ]]; then
 		print_result "retarget called before merge in _process_single_ready_pr" 1 \

@@ -241,6 +241,12 @@ _isc_normalize_owned_pr() {
 	' <<<"$metadata" >/dev/null || return 1
 	prs=$(gh pr list --repo "$slug" --head "$branch" --state open \
 		--json number,isCrossRepository,closingIssuesReferences 2>/dev/null) || return 1
+	# PRs that do not close this issue belong to other work, e.g. a stamp
+	# written from another task's worktree (GH#35951). Never edit or block on
+	# them; only PRs that claim this issue continue to the strict checks.
+	prs=$(jq -c --argjson issue "$issue" '
+		[.[] | select(any(.closingIssuesReferences[]?; .number == $issue))]
+	' <<<"$prs") || return 1
 	[[ "$(jq 'length' <<<"$prs")" == 0 ]] && return 0
 	jq -e '([.labels[].name] | index("status:in-review") != null)' \
 		<<<"$metadata" >/dev/null || return 1

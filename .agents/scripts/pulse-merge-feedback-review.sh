@@ -164,6 +164,34 @@ _review_feedback_evidence_fingerprint() {
 # Args: $1=pr_number, $2=repo_slug
 # Returns: 0 when eligible trusted body feedback exists, 1 otherwise.
 #######################################
+# Return active requests separately from fetch/validation failures. An empty
+# body still blocks routing when a trusted human formally requested changes.
+_review_feedback_active_change_requests() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local reviews_pages=""
+	local endpoint=""
+	printf -v endpoint 'repos/%s/pulls/%s/reviews?per_page=100' "$repo_slug" "$pr_number"
+	reviews_pages=$(_pmf_gh_read gh api "$endpoint" --paginate 2>/dev/null) || return 75
+	printf '%s\n' "$reviews_pages" | jq -cse \
+		--arg approved APPROVED --arg requested CHANGES_REQUESTED --arg dismissed DISMISSED \
+		--arg string_type string --arg array_type array --arg number_type number '
+		if length > 0 and all(.[]; type == $array_type) then [.[][]]
+		else error("missing review pages") end
+		| map(select(.state == $approved or .state == $requested or .state == $dismissed))
+		| if any(.[]; (.id | type) != $number_type
+			or (.submitted_at | type) != $string_type or (.submitted_at | length) == 0
+			or (.user.login | type) != $string_type or (.user.login | length) == 0
+			or (.user.type | type) != $string_type or (.user.type | length) == 0
+			or (.author_association | type) != $string_type)
+		then error("malformed state-changing review") else . end
+		| group_by(.user.login | ascii_downcase)
+		| map(max_by([.submitted_at, .id]))
+		| map(select(.state == $requested))
+	' 2>/dev/null || return 75
+	return 0
+}
+
 _review_feedback_has_trusted_body_change_request() {
 	local pr_number="$1"
 	local repo_slug="$2"

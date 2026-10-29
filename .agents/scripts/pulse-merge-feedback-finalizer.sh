@@ -74,6 +74,23 @@ _feedback_route_owner_allows() {
 	return $?
 }
 
+# A live headless worker lease is an owner too. Routing an OPEN PR while its
+# worker still pushes strips the worker's assignee and status, races the close
+# against the worker's next head, and strands both on a maintainer hold
+# (GH#35939, PR #35835). Only exit 1 from the claim helper means "no active
+# claim"; a live lease or unreadable state defers until the terminal lease or
+# expiry (DISPATCH_READY_LEASE_TTL bounds a dead worker's lease).
+_feedback_route_worker_lease_allows() {
+	local linked_issue="$1"
+	local repo_slug="$2"
+	local claim_helper="${BASH_SOURCE[0]%/*}/dispatch-claim-helper.sh"
+	local check_rc=0
+	[[ -x "$claim_helper" ]] || return 1
+	"$claim_helper" check "$linked_issue" "$repo_slug" >/dev/null 2>&1 || check_rc=$?
+	[[ "$check_rc" -eq 1 ]] || return 1
+	return 0
+}
+
 #######################################
 # Decide whether a comment author is a trusted repository writer, independently
 # of the token that read the comment (GH#34605). GitHub only reports OWNER,
@@ -1414,6 +1431,14 @@ _feedback_route_prepare_finalization_snapshot() {
 		return $?
 	}
 	IFS=$'\t' read -r pr_state current_head labels <<<"$snapshot"
+	# Before the head-drift hold, issue transition and close: a live worker's
+	# push must defer the route, not strand the PR on a maintainer hold.
+	if [[ "$pr_state" == "$PULSE_FEEDBACK_ROUTE_OPEN_STATE" ]] \
+		&& ! _feedback_route_worker_lease_allows "$linked_issue" "$repo_slug"; then
+		_feedback_route_defer "$pr_number" "$repo_slug" "$linked_issue" \
+			"linked issue dispatch lease is live or unreadable; ${kind} route waits for its terminal lease or expiry"
+		return $?
+	fi
 	if [[ "$current_head" != "$expected_head" ]]; then
 		_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
 			"${kind} route head drifted from ${expected_head} to ${current_head:-unknown}"
