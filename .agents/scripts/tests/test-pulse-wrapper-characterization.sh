@@ -179,8 +179,6 @@ readonly -a EXPECTED_FUNCTIONS=(
 	"_nmr_applied_by_maintainer"
 	"auto_approve_maintainer_issues"
 	"_complexity_scan_check_interval"
-	"_coderabbit_review_check_interval"
-	"run_daily_codebase_review"
 	"_run_post_merge_review_scanner"
 	"_complexity_scan_tree_hash"
 	"_complexity_scan_tree_changed"

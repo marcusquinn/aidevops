@@ -1486,8 +1486,6 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	local incomplete=0
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="startup"
 	echo "[pulse-wrapper] Async post-dispatch housekeeping: started (timeout=${stage_timeout}s)" >>"$LOGFILE"
-	_pulse_run_resumable_housekeeping_stage "coderabbit_review" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "coderabbit_review" "$stage_timeout" run_daily_codebase_review || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "post_merge_scanner" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "pr_review_thread_response" "$state_file" \
@@ -1998,7 +1996,7 @@ _run_preflight_stages() {
 
 	# GH#20025 Phase B + t2443: Each preflight stage wrapped in
 	# run_stage_with_timeout so overruns are killed without blocking
-	# the entire pulse cycle. Daily scans (complexity, coderabbit,
+	# the entire pulse cycle. Daily scans (complexity,
 	# post-merge, auto-decomposer, dedup, fast-fail prune) were
 	# previously grouped in _preflight_daily_scans() with a shared
 	# budget — t2443 promoted them to independent top-level stages

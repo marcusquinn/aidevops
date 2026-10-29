@@ -39,7 +39,7 @@ print_result() {
 
 _record_stage() {
 	local stage_name="$1"
-	if [[ "$stage_name" == "coderabbit" && "${TEST_STAGE_SLEEP_ONCE:-0}" =~ ^[0-9]+$ && "${TEST_STAGE_SLEEP_ONCE:-0}" -gt 0 ]]; then
+	if [[ "$stage_name" == "post_merge" && "${TEST_STAGE_SLEEP_ONCE:-0}" =~ ^[0-9]+$ && "${TEST_STAGE_SLEEP_ONCE:-0}" -gt 0 ]]; then
 		sleep "$TEST_STAGE_SLEEP_ONCE"
 		TEST_STAGE_SLEEP_ONCE=0
 	fi
@@ -47,7 +47,6 @@ _record_stage() {
 	return 0
 }
 
-run_daily_codebase_review() { _record_stage "coderabbit"; return 0; }
 _run_post_merge_review_scanner() { _record_stage "post_merge"; return 0; }
 _run_pr_review_thread_response_scanner() { _record_stage "pr_review_thread_response"; return 0; }
 _run_auto_decomposer_scanner() { _record_stage "auto_decomposer"; return 0; }
@@ -74,7 +73,6 @@ run_stage_with_timeout() {
 }
 
 install_stage_stubs() {
-	run_daily_codebase_review() { _record_stage "coderabbit"; return 0; }
 	_run_post_merge_review_scanner() { _record_stage "post_merge"; return 0; }
 	_run_pr_review_thread_response_scanner() { _record_stage "pr_review_thread_response"; return 0; }
 	_run_auto_decomposer_scanner() { _record_stage "auto_decomposer"; return 0; }
@@ -169,7 +167,7 @@ test_sync_housekeeping_runs_all_stages() {
 
 	local failures=0 failmsg=""
 	local expected
-	for expected in coderabbit post_merge pr_review_thread_response auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
+	for expected in post_merge pr_review_thread_response auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
 		if ! grep -q "^${expected}$" "$STAGE_LOG" 2>/dev/null; then
 			failures=$((failures + 1))
 			failmsg="${failmsg} | missing ${expected}"
@@ -379,20 +377,20 @@ test_housekeeping_resumes_after_interrupted_run() {
 	now=$(date +%s)
 	mkdir -p "$lockdir"
 	_dead_pid >"${lockdir}/pid"
-	printf 'coderabbit_review=%s\npost_merge_scanner=%s\npr_review_thread_response=%s\n' \
+	printf 'post_merge_scanner=%s\npr_review_thread_response=%s\nauto_decomposer_scanner=%s\n' \
 		"$((now - 60))" "$((now - 30))" "$((now - 4000))" >"$state_file"
 
 	_pulse_run_post_dispatch_housekeeping_stages 7
 
 	local skipped
-	for skipped in coderabbit post_merge; do
+	for skipped in post_merge pr_review_thread_response; do
 		if grep -q "^${skipped}$" "$STAGE_LOG" 2>/dev/null; then
 			failures=$((failures + 1))
 			failmsg="${failmsg} | fresh completed stage ${skipped} re-ran"
 		fi
 	done
 	local expected
-	for expected in pr_review_thread_response auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
+	for expected in auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
 		if ! grep -q "^${expected}$" "$STAGE_LOG" 2>/dev/null; then
 			failures=$((failures + 1))
 			failmsg="${failmsg} | incomplete or stale stage ${expected} skipped"
@@ -402,7 +400,7 @@ test_housekeeping_resumes_after_interrupted_run() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | stale lock not reclaimed"
 	fi
-	if ! grep -q 'resume — skipping coderabbit_review' "$LOGFILE" 2>/dev/null; then
+	if ! grep -q 'resume — skipping post_merge_scanner' "$LOGFILE" 2>/dev/null; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | resume skip log missing"
 	fi
@@ -413,11 +411,11 @@ test_housekeeping_resumes_after_interrupted_run() {
 
 	# Resume disabled: every stage runs despite fresh state.
 	: >"$STAGE_LOG"
-	printf 'coderabbit_review=%s\n' "$now" >"$state_file"
+	printf 'post_merge_scanner=%s\n' "$now" >"$state_file"
 	AIDEVOPS_PULSE_HOUSEKEEPING_RESUME_WINDOW_S=0 _pulse_run_post_dispatch_housekeeping_stages 7
-	if ! grep -q '^coderabbit$' "$STAGE_LOG" 2>/dev/null; then
+	if ! grep -q '^post_merge$' "$STAGE_LOG" 2>/dev/null; then
 		failures=$((failures + 1))
-		failmsg="${failmsg} | disabled resume skipped coderabbit"
+		failmsg="${failmsg} | disabled resume skipped post_merge"
 	fi
 
 	if [[ "$failures" -eq 0 ]]; then
@@ -468,7 +466,7 @@ test_async_housekeeping_logs_termination() {
 	local failures=0 failmsg="" child_pid="" attempts=0
 	_pulse_start_post_dispatch_housekeeping 7
 	child_pid=$(sed -n 's/.*Async post-dispatch housekeeping: launched pid=\([0-9][0-9]*\).*/\1/p' "$LOGFILE" 2>/dev/null | tail -n 1)
-	while [[ "$attempts" -lt 20 ]] && ! grep -q '^optional:coderabbit_review:' "$STAGE_LOG" 2>/dev/null; do
+	while [[ "$attempts" -lt 20 ]] && ! grep -q '^optional:post_merge_scanner:' "$STAGE_LOG" 2>/dev/null; do
 		sleep 0.25
 		attempts=$((attempts + 1))
 	done
@@ -480,7 +478,7 @@ test_async_housekeeping_logs_termination() {
 		sleep 1
 		attempts=$((attempts + 1))
 	done
-	if ! grep -q 'Async post-dispatch housekeeping: terminated by SIGTERM during coderabbit_review' "$LOGFILE" 2>/dev/null; then
+	if ! grep -q 'Async post-dispatch housekeeping: terminated by SIGTERM during post_merge_scanner' "$LOGFILE" 2>/dev/null; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | termination log missing: $(grep -o 'terminated by.*' "$LOGFILE" 2>/dev/null | tr '\n' ' ')"
 	fi
@@ -509,7 +507,7 @@ test_housekeeping_retries_incomplete_stages() {
 		_pulse_run_optional_stage_with_timeout() {
 			local stage_name="$1"
 			shift 2
-			if [[ "$stage_name" == "coderabbit_review" ]]; then
+			if [[ "$stage_name" == "post_merge_scanner" ]]; then
 				case "$mode" in
 				failure) return 1 ;;
 				timeout) return 124 ;;
@@ -521,18 +519,18 @@ test_housekeeping_retries_incomplete_stages() {
 		}
 		_pulse_run_post_dispatch_housekeeping_stages 7
 		[[ -f "$state_file" ]] || failures=$((failures + 1))
-		if grep -q '^coderabbit_review=' "$state_file" 2>/dev/null; then
+		if grep -q '^post_merge_scanner=' "$state_file" 2>/dev/null; then
 			failures=$((failures + 1))
 		fi
-		grep -q '^post_merge_scanner=' "$state_file" || failures=$((failures + 1))
+		grep -q '^pr_review_thread_response=' "$state_file" || failures=$((failures + 1))
 		if grep -q 'housekeeping: complete$' "$LOGFILE"; then
 			failures=$((failures + 1))
 		fi
 		: >"$STAGE_LOG"
 		install_stage_stubs
 		_pulse_run_post_dispatch_housekeeping_stages 7
-		grep -q '^coderabbit$' "$STAGE_LOG" || failures=$((failures + 1))
-		if grep -q '^post_merge$' "$STAGE_LOG"; then
+		grep -q '^post_merge$' "$STAGE_LOG" || failures=$((failures + 1))
+		if grep -q '^pr_review_thread_response$' "$STAGE_LOG"; then
 			failures=$((failures + 1))
 		fi
 		[[ ! -e "$state_file" ]] || failures=$((failures + 1))
