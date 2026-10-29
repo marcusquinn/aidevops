@@ -9,8 +9,9 @@ generate platform-specific PAT-creation URLs and secret-set instructions.
 
 ## What `SYNC_PAT` is
 
-A platform personal access token configured as a **per-repo** secret named
-`SYNC_PAT`. The `issue-sync` reusable workflow uses it to authenticate as the
+A purpose-scoped platform personal access token distributed as a repository
+secret named `SYNC_PAT` (not necessarily a distinct token per repository).
+The `issue-sync` reusable workflow uses it to authenticate as the
 maintainer (instead of the platform's bot identity) when:
 
 - Creating issues from `TODO.md` entries that lack `ref:GH#NNN`
@@ -72,7 +73,9 @@ https://github.com/settings/personal-access-tokens/new
   &description=aidevops%20issue-sync%20PAT%20for%20<OWNER>
   &expiration=90
   &target_name=<OWNER>
-  &permissions=contents:write,issues:write,pull_requests:write,metadata:read
+  &contents=write
+  &issues=write
+  &pull_requests=write
 ```
 
 Where:
@@ -157,7 +160,7 @@ To rotate:
 1. Regenerate the fine-grained token in GitHub settings. Regeneration retains its
    permissions and selected repositories, but **revokes the old value everywhere**.
    Save the replacement in the password manager and update every secret using it.
-   See the reusable-PAT guidance in t18777: inventory all consumers before rotation,
+   See **Setting the secret** above: inventory all consumers before rotation,
    rather than assuming an existing token is unused or creating duplicate tokens.
 2. In a separate terminal, set each affected secret using the interactive prompt
    (never put the value in chat, command arguments, or shell history):

@@ -22,6 +22,11 @@ permissions for convenience. Store each value once in gopass with
 `aidevops secret NAME -- cmd` without printing it (pipe to `gh secret set` via
 stdin, not a value-bearing argument). Editing access preserves the value;
 regenerating a lost value revokes the old one, so update every repository copy.
+Use distinct local secret names for different owners rather than overwriting
+another owner's stored token; repository secret names remain unchanged.
+Reuse increases the impact of a leak to all selected repositories. Retain
+per-repository tokens when policy requires stronger isolation, or the platform
+cannot scope one token to an explicit repository set.
 
 ## Migrating plaintext credentials safely
 
