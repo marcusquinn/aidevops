@@ -157,6 +157,11 @@ export function terminationCases() {
     }
   });
 
+  restorationTerminationCases();
+  sameGroupSurvivorCases();
+}
+
+function restorationTerminationCases() {
   test("restoration stop disposition survives an earlier post-exit cleanup cause", async () => {
     for (const cause of ["budget", "dispose"]) {
       let launches = 0;
@@ -212,7 +217,9 @@ export function terminationCases() {
     assert.equal(result.restoration_exit, 0);
     assert.equal(result.restoration_termination_cause, "dispose");
   });
+}
 
+function sameGroupSurvivorCases() {
   test("same-group survivors drain promptly but keep grace while main remains alive", async () => {
     for (const cancel of [false, true]) {
       const instance = manager();
