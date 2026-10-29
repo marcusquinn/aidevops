@@ -662,6 +662,23 @@ if output=$(_pcc_blocked_attention owner/repo 123 42) &&
 else
 	print_result "unpaired never-ready blocked release posts no approval template" 1 "output=${output:-missing} posts=$(post_count)"
 fi
+
+# GH#35932: production comments are `gh --paginate --slurp` pages. A runner
+# capability release keeps the runner-owner text (GH#35788) on that input and
+# never asks the brief owner for a revision-bound approval.
+STUB_POST_DIR="${TEST_ROOT}/posts-capability"
+mkdir -p "$STUB_POST_DIR"
+STUB_COMMENTS_JSON="$(blocked_comments | jq -c 'map(map(if .id == 21 then
+	.body |= sub("\n<!-- ops:end -->"; "\n\nTerminal blocker: reason=runner_capability_unmet owner=runner-recovery task=123 attempt=a1.\n<!-- ops:end -->")
+	else . end))')"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*release=21 && "$(post_count)" == 1 ]] &&
+	grep -Fq 'No brief change or revision-bound approval is needed' "${STUB_POST_DIR}/post-1" &&
+	! grep -Fq 'approval-template' "${STUB_POST_DIR}/post-1"; then
+	print_result "paginated capability release keeps runner-owner attention text" 0
+else
+	print_result "paginated capability release keeps runner-owner attention text" 1 "output=${output:-missing} posts=$(post_count)"
+fi
 STUB_POST_DIR="${TEST_ROOT}/posts"
 
 # GH#33850: clean/completed releases by another trusted runner must reach an
