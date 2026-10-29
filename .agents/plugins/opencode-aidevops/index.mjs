@@ -66,6 +66,7 @@ import { createSessionContinuationGuard } from "./session-continuation-guard.mjs
 import { createSessionRecoveryMarkerHandler } from "./session-recovery-marker.mjs";
 import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
 import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
+import { stampCommandPrompt } from "./tui-prompts.mjs";
 import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
@@ -766,6 +767,12 @@ export async function AidevopsPlugin({ directory, client }) {
 
     // Shell environment
     "shell.env": shellEnvHook,
+
+    // Record the typed slash command on its template part for the TUI
+    // Prompts sidebar; OpenCode persists only the expanded template.
+    "command.execute.before": async (input, output) => {
+      stampCommandPrompt(input, output);
+    },
 
     // Soft TTSR — rule enforcement
     "experimental.chat.system.transform": systemTransformHook,
