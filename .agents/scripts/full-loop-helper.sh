@@ -449,6 +449,8 @@ Commands:
                                  gh CLI level; if both are given, --admin wins and
                                   --auto is dropped (GH#19310).
   record-no-release <PR> [REPO]  Verify merged evidence and record release:not-requested.
+  record-deployment <PR> <RUN_ID> <WORKFLOW.yml> <DEPLOYED_SHA> [REPO]
+                                  Verify an existing tagless maintained-app deployment.
   record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT] [--generated-cloudron-catalog]
                                   Verify inclusion in a published non-aidevops release.
                                   --generated-cloudron-catalog re-verifies a catalog-only tag commit.
@@ -506,6 +508,7 @@ main() {
 	wait-checks) cmd_wait_checks "$@" ;;
 	merge) cmd_merge "$@" ;;
 	record-no-release) cmd_record_no_release "$@" ;;
+	record-deployment) cmd_record_deployment "$@" ;;
 	record-published-release) cmd_record_published_release "$@" ;;
 	record-included-release) cmd_record_included_release "$@" ;;
 	adopt-merged-receipt) cmd_adopt_merged_receipt "$@" ;;

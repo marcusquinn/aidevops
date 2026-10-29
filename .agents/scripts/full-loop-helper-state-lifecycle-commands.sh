@@ -7,6 +7,9 @@
 [[ -n "${_FULL_LOOP_STATE_COMMANDS_LOADED:-}" ]] && return 0
 _FULL_LOOP_STATE_COMMANDS_LOADED=1
 
+# shellcheck source=./full-loop-helper-state-deployment.sh
+source "${SCRIPT_DIR}/full-loop-helper-state-deployment.sh"
+
 # --- Start/Resume Infrastructure ---
 
 # Initialize option variables with defaults so set -u doesn't crash on
@@ -584,6 +587,7 @@ _full_loop_reconcile_published_release_receipt() {
 	[[ -f "$receipt_path" ]] || return 1
 	IFS= read -r receipt_status <"$receipt_path" || return 1
 	[[ "$receipt_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$receipt_status" == "$_FULL_LOOP_RELEASE_SUPERSEDED" ]] || return 1
+	_full_loop_verify_deployment_receipt "$repo" "$pr_number" || return 1
 	if [[ "$receipt_status" == "$_FULL_LOOP_RELEASE_SUPERSEDED" ]]; then
 		_full_loop_verify_superseded_release_receipt "$repo" "$pr_number" || return 1
 	fi
@@ -670,6 +674,10 @@ cmd_complete() {
 		return 1
 		;;
 	esac
+	_full_loop_verify_deployment_receipt "$repo" "$PR_NUMBER" || {
+		print_error "Cleanup blocked: deployment evidence no longer verifies"
+		return 1
+	}
 	local current_root=""
 	current_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
 	local current_branch=""
@@ -1021,6 +1029,8 @@ cmd_record_published_release() {
 	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || status=1
 	if [[ "$status" -eq 0 && -f "$receipt_path" ]]; then
 		IFS= read -r release_status <"$receipt_path" || status=1
+		# Never erase embedded tagless evidence with a versioned-release receipt.
+		[[ $(wc -l <"$receipt_path") -eq 1 ]] || status=1
 	fi
 	if [[ "$status" -eq 0 ]]; then
 		case "$release_status" in
@@ -1200,6 +1210,7 @@ _full_loop_terminal_release_status() {
 	[[ -f "$receipt_path" ]] || return 1
 	IFS= read -r release_status <"$receipt_path" || return 1
 	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$release_status" == "$_FULL_LOOP_RELEASE_SUPERSEDED" || "$release_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]] || return 1
+	_full_loop_verify_deployment_receipt "$repo" "$pr_number" || return 1
 	if [[ "$release_status" == "$_FULL_LOOP_RELEASE_SUPERSEDED" ]]; then
 		_full_loop_verify_superseded_release_receipt "$repo" "$pr_number" || return 1
 	fi
