@@ -1440,8 +1440,13 @@ cmd_run_specific() {
 # redacted); the verifier caches value-free observations in the registry.
 cmd_verify() {
 	local provider="${1:-}"
+	if [[ "$provider" == "aws" ]]; then
+		shift
+		cmd_verify_aws "$@"
+		return $?
+	fi
 	if [[ "$provider" != "cloudflare" ]]; then
-		print_error "Usage: aidevops secret verify cloudflare [NAME...]"
+		print_error "Usage: aidevops secret verify {cloudflare|aws} [NAME...]"
 		return 1
 	fi
 	shift
@@ -1464,6 +1469,27 @@ cmd_verify() {
 	done
 	if [[ "$failures" -gt 0 ]]; then
 		print_warning "$failures of ${#names[@]} $provider credential(s) did not verify as active"
+		return 1
+	fi
+	return 0
+}
+
+# AWS uses paired credentials, not the single-token Cloudflare target model.
+cmd_verify_aws() {
+	local verifier="${SCRIPT_DIR}/credential_inventory_aws.py"
+	local targets="" prefix="" names_output="" name=""
+	local failures=0
+	targets=$(python3 "$verifier" targets "$@") || return 1
+	while IFS= read -r prefix; do
+		local -a names=()
+		names_output=$(python3 "$verifier" names "$prefix") || return 1
+		while IFS= read -r name; do
+			names+=("$name")
+		done <<<"$names_output"
+		cmd_run_specific "${names[@]}" -- python3 "$verifier" verify "$prefix" </dev/null || failures=$((failures + 1))
+	done <<<"$targets"
+	if [[ "$failures" -gt 0 ]]; then
+		print_warning "$failures AWS credential pair(s) did not verify"
 		return 1
 	fi
 	return 0
