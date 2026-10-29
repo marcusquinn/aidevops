@@ -70,7 +70,10 @@ _pulse_set_rest_core_budget_priority
 [[ "${AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS}" == "reserve" ]]
 [[ "${AIDEVOPS_PULSE_REST_CORE_BUDGET_CLASS}" == "normal" ]]
 _pulse_should_defer_budget_priority_stage "dashboard_freshness_check"
-_pulse_should_defer_budget_priority_stage "evaluate_routines"
+if _pulse_should_defer_budget_priority_stage "evaluate_routines"; then
+	printf 'FAIL: local calendar evaluation deferred by API budget\n' >&2
+	exit 1
+fi
 _pulse_should_defer_budget_priority_stage "pr_review_thread_response"
 export AIDEVOPS_SKIP_PULSE_PREFETCH_BUDGET_GATE=1
 if _pulse_should_defer_budget_priority_stage "preflight_prefetch_and_scope"; then

@@ -1809,9 +1809,9 @@ main() {
 
 	# Routine evaluation (t1925, GH#31855): give due routines a budget decision
 	# before preflight can consume the cycle's REST allowance or hold the Pulse
-	# instance long enough for the next scheduler restart. The stage-level gate
-	# still defers on low/unknown quota, and evaluate_routines retains its
-	# per-work-unit REST hard-floor checks. GH#35349: busy scheduler ticks also
+	# instance long enough for the next scheduler restart. Local evaluation is
+	# unconditional; dispatch retains per-work-unit REST hard-floor checks.
+	# GH#35349: busy scheduler ticks also
 	# evaluate routines (_pulse_run_routines_while_busy); this in-cycle call is
 	# the backstop and shares their routines.lockdir.
 	if [[ -f "$STOP_FLAG" ]]; then
