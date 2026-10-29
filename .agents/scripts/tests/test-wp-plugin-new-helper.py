@@ -84,6 +84,7 @@ case "$*" in
     "repo view "*) exit 1 ;;
     "repo create "*) exit 0 ;;
     *"/compare/"*) printf '%s\\n' identical ;;
+    "api repos/fixture/example-plugin") printf '%s\\n' '{"private":true,"owner":{"type":"User"}}' ;;
     "api repos/"*) printf 'true\\tmain\\n' ;;
     *) exit 44 ;;
 esac
