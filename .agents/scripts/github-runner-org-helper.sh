@@ -332,7 +332,10 @@ cmd_repo_ensure() {
 		local opt="$1" val="${2:-}"
 		case "$opt" in
 		--repo | --group | --label)
-			[[ $# -ge 2 && -n "$val" ]] || return 1
+			if [[ $# -lt 2 || -z "$val" ]]; then
+				_ro_err "repo-ensure: ${opt} needs a value"
+				return 1
+			fi
 			case "$opt" in
 			--repo) repo="$val" ;;
 			--group) group="$val" ;;
@@ -344,7 +347,10 @@ cmd_repo_ensure() {
 		*) _ro_err "repo-ensure: unknown option: $opt"; return 1 ;;
 		esac
 	done
-	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		_ro_err "repo-ensure: --repo must be OWNER/REPO"
+		return 1
+	fi
 	_ro_require_tools gh jq || return 1
 	local org="${repo%%/*}" metadata groups candidates gid runners labels fork
 	metadata=$(_ro_api "read repository" "repos/$repo") || return 1
@@ -391,7 +397,7 @@ cmd_repo_ensure() {
 		_ro_err "repo-ensure: fork PR workflows must be explicitly off before enrollment (no settings changed)"
 		return 1
 	fi
-	local rid variable
+	local rid variable membership
 	rid=$(printf '%s' "$metadata" | jq -er '.id | numbers') || return 1
 	printf 'Runner commands (after verifying private visibility and fork workflows off):\n'
 	printf 'gh api -X PUT %q\n' "$(_ro_gpath "$org" "$gid")/repositories/$rid"
@@ -400,10 +406,17 @@ cmd_repo_ensure() {
 	_ro_api "add repository to runner group" -X PUT "$(_ro_gpath "$org" "$gid")/repositories/$rid" >/dev/null || return 1
 	gh variable set CI_RUNNER --repo "$repo" --body "$label" || return 1
 	# Verify both settings; a partial failure is safe to retry additively.
-	_ro_api "verify group membership" --paginate "$(_ro_gpath "$org" "$gid")/repositories?per_page=100" \
-		--jq '.repositories[].id' | jq -se --argjson id "$rid" 'index($id) != null' >/dev/null || return 1
+	membership=$(_ro_api "verify group membership" --paginate "$(_ro_gpath "$org" "$gid")/repositories?per_page=100" \
+		--jq '.repositories[].id') || return 1
+	if ! printf '%s' "$membership" | jq -se --argjson id "$rid" 'index($id) != null' >/dev/null; then
+		_ro_err "repo-ensure: ${repo} missing from runner group after enrollment; rerun to retry"
+		return 1
+	fi
 	variable=$(_ro_api "verify CI_RUNNER" "repos/$repo/actions/variables/CI_RUNNER" --jq '.value') || return 1
-	[[ "$variable" == "$label" ]] || return 1
+	if [[ "$variable" != "$label" ]]; then
+		_ro_err "repo-ensure: CI_RUNNER readback mismatch; rerun to retry"
+		return 1
+	fi
 	printf 'Runner enrollment verified for %s (CI_RUNNER=%s)\n' "$repo" "$label"
 	return 0
 }
