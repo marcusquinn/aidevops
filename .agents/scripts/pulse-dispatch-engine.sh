@@ -1089,19 +1089,28 @@ _pulse_blocker_recovery_due() {
 	local interval="${PULSE_LLM_RECOVERY_INTERVAL:-10800}"
 	local stamp="${PULSE_DIR}/last_blocker_recovery_check_epoch"
 	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-recovery-helper.sh"
-	local last_check=0 pending=0
+	local last_check=0 pending=0 pending_rc=0 scan_note=""
 	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 1
 	[[ -f "$helper" ]] || return 1
 	[[ -f "$stamp" ]] && read -r last_check <"$stamp"
 	[[ "$last_check" =~ ^[0-9]+$ ]] || last_check=0
 	[[ $((now_epoch - last_check)) -ge "$interval" ]] || return 1
 	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 1
-	pending=$(bash "$helper" pending --count 2>/dev/null) || pending=0
+	# GH#35945: exit 2 is an incomplete scan whose stdout is still the partial
+	# count (helper contract). The bounded seed spans every pulse repo and
+	# rarely finishes in one call, so discarding that count kept this trigger
+	# from ever firing. Any other failure means nothing is known to be pending.
+	pending=$(bash "$helper" pending --count 2>/dev/null) || pending_rc=$?
+	case "$pending_rc" in
+	0) ;;
+	2) scan_note=" (partial scan)" ;;
+	*) pending=0 ;;
+	esac
 	[[ "$pending" =~ ^[0-9]+$ && "$pending" -gt 0 ]] || return 1
 	if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
 		return 1
 	fi
-	echo "[pulse-wrapper] LLM supervisor: ${pending} terminal-blocker recovery entr$([[ "$pending" -eq 1 ]] && printf 'y' || printf 'ies') pending (t18514)" >>"$LOGFILE"
+	echo "[pulse-wrapper] LLM supervisor: ${pending} terminal-blocker recovery entr$([[ "$pending" -eq 1 ]] && printf 'y' || printf 'ies') pending${scan_note} (t18514)" >>"$LOGFILE"
 	_pulse_write_trigger_mode "blocker_recovery" || return 1
 	return 0
 }
