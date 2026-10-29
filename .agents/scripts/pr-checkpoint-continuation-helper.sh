@@ -632,10 +632,12 @@ _pcc_blocked_release_evidence() {
 	local comments="$1" runner="$2" key="$3"
 	local trusted_logins="${4:-[]}"
 	jq -er --arg runner "$runner" --arg key "$key" --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
+		# GH#35920: no `as` binding after `and`; jq 1.8 would bind the whole
+		# conjunction (a boolean) to the variable instead of the release line.
 		def blocked_by_runner:
 			unedited and login == $runner and
-			([body_lines | select(is_release)] | first // "") as $line |
-			($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner;
+			([body_lines | select(is_release)] | first // ""
+				| field("reason") == "blocked" and field("runner") == $runner);
 		def episode_start($c; $rid):
 			[$c[] | select(.id < $rid and any(body_lines; startswith("DISPATCH_CLAIM "))) | .id] | max // -1;
 		def episode_attempt($c; $rid):

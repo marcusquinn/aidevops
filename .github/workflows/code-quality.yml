@@ -1011,6 +1011,26 @@ jobs:
         fi
         echo "Python 3.9 annotations: compatible"
 
+    - name: jq 1.7/1.8 binding precedence (GH#35920)
+      # Blocking, zero baseline: jq 1.8 groups `A and T as $x | B` as
+      # `(A and T) as $x | B`, while jq 1.7 (Ubuntu runners, macOS /usr/bin/jq)
+      # groups it as `A and (T as $x | B)`. Homebrew hosts use jq 1.8, so an
+      # ungrouped binding passes CI tests and misbehaves there. Static text
+      # scan; the version line records which jq this runner's tests used.
+      run: |
+        echo "Runner jq: $(jq --version 2>/dev/null || echo unavailable)"
+        source .agents/scripts/lint-file-discovery.sh
+        lint_jq_files
+        if [ -z "$LINT_JQ_FILES" ]; then
+          echo "No jq-bearing files found"
+          exit 0
+        fi
+        if ! printf '%s\n' "$LINT_JQ_FILES" | python3 .agents/scripts/jq-binding-precedence-check.py -; then
+          echo "::error::jq bindings above are grouped differently by jq 1.7 and 1.8; parenthesize them (see .agents/reference/shell-style-guide.md)"
+          exit 1
+        fi
+        echo "jq binding precedence: unambiguous"
+
   qlty-smells:
     name: Qlty Maintainability Smells
     runs-on: ubuntu-latest
