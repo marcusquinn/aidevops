@@ -1355,9 +1355,52 @@ run_with_redacted_streams() {
 	umask "$previous_umask"
 	local stderr_fifo="$fifo_dir/stderr"
 
-	# A FIFO (not process substitution) so Bash 3.2 can wait for the stderr
-	# relay to drain before cleanup and return.
-	redact_stream "$env_file" quiet <"$stderr_fifo" >&2 &
+	# A FIFO (not process substitution) so Bash 3.2 can wait for redaction.
+	# The final sink is best-effort: an unread parent stderr must not stall
+	# the child or stdout (GH#35975). Only already-redacted bytes enter its
+	# bounded queue. A daemon writer can block without blocking the reader;
+	# at EOF allow a short drain, then abandon pending diagnostics. Do not
+	# set O_NONBLOCK on inherited fd 2: that changes the parent descriptor too.
+	redact_stream "$env_file" quiet <"$stderr_fifo" | python3 -c '
+import os
+import queue
+import sys
+import threading
+
+chunks = queue.Queue(maxsize=16)  # At most 1 MiB, plus reader/writer chunks.
+finished = threading.Event()
+
+def write_stderr():
+    while True:
+        try:
+            chunk = chunks.get(timeout=0.05)
+        except queue.Empty:
+            if finished.is_set():
+                return
+            continue
+        try:
+            while chunk:
+                count = os.write(2, chunk)
+                if not count:
+                    return
+                chunk = chunk[count:]
+        except OSError:
+            # Closed or unavailable parent stderr: keep draining input.
+            return
+
+writer = threading.Thread(target=write_stderr, daemon=True)
+writer.start()
+while True:
+    chunk = sys.stdin.buffer.read1(65536)
+    if not chunk:
+        break
+    try:
+        chunks.put_nowait(chunk)
+    except queue.Full:
+        pass  # Drop diagnostics under backpressure, never stdout.
+finished.set()
+writer.join(timeout=0.25)
+' &
 	local stderr_relay_pid=$!
 
 	local exit_code=0
