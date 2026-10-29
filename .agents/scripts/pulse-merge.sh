@@ -245,14 +245,8 @@ _pulse_merge_maybe_dispatch_preflight_remediation() {
 	return 0
 }
 
-# GH#35871: default on. Closing a worker PR on bot CHANGES_REQUESTED and
-# redispatching for a fresh PR restarted review on every generation, so PRs
-# churned and never merged (GH#35798, GH#35828). GH#35860 made CodeRabbit
-# advisory at the source; this default keeps any other CHANGES_REQUESTED source
-# (another bot, or that setting reverted) repaired in place, keeping the PR, its
-# CI and its review history. Set 0 for legacy close-and-route.
 _pulse_merge_changes_requested_thread_remediation_first_enabled() {
-	[[ "${AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST:-1}" == "1" ]] || return 1
+	[[ "${AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST:-0}" == "1" ]] || return 1
 	return 0
 }
 
@@ -408,9 +402,9 @@ _handle_changes_requested_review_gate() {
 	fi
 
 	local _cr_label_list=",${_cr_pr_labels},"
-	# Remediation-first (GH#26535, default since GH#35871): repair eligible
-	# worker PRs in place; bounded exhaustion, a trusted human top-level change
-	# request, or an unavailable/failed dispatch falls through to routing below.
+	# Optional policy override (GH#26535): by default CHANGES_REQUESTED worker
+	# PRs keep the historical fast-routing behaviour below. Operators who prefer
+	# preserving the PR/review context can opt in to a remediation-first cycle.
 	if _pulse_merge_changes_requested_thread_remediation_first_enabled \
 		&& [[ ( -n "${_OW_LABEL_PAT:-}" && "$_cr_label_list" == *"${_OW_LABEL_PAT:-}"* ) \
 			|| "$_cr_label_list" == *",origin:worker-takeover,"* ]] \
