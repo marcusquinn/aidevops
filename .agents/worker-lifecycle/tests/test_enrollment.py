@@ -1,6 +1,7 @@
 """Disposable Git integration; intentionally outside the portable OS validator."""
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 from pathlib import Path
 import shutil
@@ -38,6 +39,7 @@ class EnrollmentContract(unittest.TestCase):
             [git, "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
              "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
             check=True, capture_output=True, timeout=15,
+            env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
         )
 
     def test_replay_and_lookup_preserve_generation_without_new_events(self):
@@ -47,6 +49,42 @@ class EnrollmentContract(unittest.TestCase):
         self.assertEqual(self.enrollment.resolve(self.tree), generation)
         self.assertEqual(self.store.summary(), before)
         self.assertEqual(self.git("-C", str(self.tree), "status", "--porcelain").stdout, b"")
+
+    def test_marker_format_two_uses_inodes_not_device_numbers(self):
+        self.enrollment.resolve(self.tree, create=True)
+        value = json.loads(self.marker.read_bytes())
+        self.assertEqual(value["format"], 2)
+        self.assertEqual(value["directory"], self.tree.stat().st_ino)
+        self.assertEqual(value["git_identity"], self.marker.parent.stat().st_ino)
+
+    def legacy_marker(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        value = json.loads(self.marker.read_bytes())
+        value.update(format=1, directory=[-1, value["directory"]],
+                     git_identity=[-1, value["git_identity"]])
+        self.marker.write_text(json.dumps(value), encoding="utf-8")
+        return generation, value
+
+    def test_legacy_marker_recovers_changed_device_numbers_without_rewrite(self):
+        generation, _ = self.legacy_marker()
+        before = self.marker.read_bytes()
+        self.assertEqual(self.enrollment.resolve(self.tree), generation)
+        self.assertEqual(self.enrollment.resolve(self.tree, create=True), generation)
+        self.assertEqual(self.marker.read_bytes(), before)
+
+    def test_legacy_recovery_still_requires_matching_identity_and_backlink(self):
+        _, original = self.legacy_marker()
+        for key in ("path", "git_directory", "installation_id", "directory", "git_identity"):
+            with self.subTest(key=key):
+                value = original.copy()
+                value[key] = [-1, 0] if key in ("directory", "git_identity") else "mismatch"
+                self.marker.write_text(json.dumps(value), encoding="utf-8")
+                with self.assertRaises(StoreConflict):
+                    self.enrollment.resolve(self.tree, create=True)
+        self.marker.write_text(json.dumps(original), encoding="utf-8")
+        (self.marker.parent / "gitdir").write_text("mismatch\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.enrollment.resolve(self.tree, create=True)
 
     def test_interruption_between_marker_and_transaction_is_recoverable(self):
         with patch.object(AdmissionRegistry, "open_generation", side_effect=OSError("interrupted")):
@@ -143,6 +181,26 @@ class EnrollmentContract(unittest.TestCase):
         with self.store.connection() as connection:
             bindings = connection.execute("SELECT generation_id FROM bindings").fetchall()
             self.assertEqual([row[0] for row in bindings], [generation])
+
+    def test_creation_hook_reports_enrollment_reason_with_errexit(self):
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("AIDEVOPS_", "GIT_", "WORKTREE_"))}
+        env.update(HOME=str(self.root), AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory))
+        bash = shutil.which("bash")
+        if bash is None:
+            self.fail("Bash is required for creation-hook integration")
+        result = subprocess.run(  # nosec B603 # constant shell program, disposable canonical checkout
+            [bash, "-euo", "pipefail", "-c", 'source "$1/shared-worktree-create.sh"; '
+             'if _worktree_enroll_generation "$2"; then exit 9; fi',
+             "fixture", str(scripts), str(self.repo)],
+            cwd=self.root, env=env, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        detail = json.loads(result.stderr.removeprefix("Generation enrollment failed: "))
+        self.assertEqual(detail["reason"], "ValueError")
+        self.assertEqual(detail["status"], "unavailable")
 
     def test_automatic_launch_cannot_bypass_closed_or_damaged_enrollment(self):
         generation = self.enrollment.resolve(self.tree, create=True)

@@ -45,9 +45,28 @@ def _git_directory(path: Path) -> Path:
     return directory
 
 
-def _fingerprint(path: Path) -> list[int]:
-    info = path.stat(follow_symlinks=False)
-    return [info.st_dev, info.st_ino]
+def _fingerprint(path: Path) -> int:
+    # Device numbers can change across mounts; DirectoryHandle checks them only
+    # within the current operation, not as part of the persistent identity.
+    return path.stat(follow_symlinks=False).st_ino
+
+
+def _normalize_marker(value: dict) -> dict:
+    """Recover format 1 in memory without rewriting concurrent readers' marker.
+
+    Only the obsolete device numbers are ignored. The caller still compares all
+    fields (including both inodes) and validates the live Git-directory backlink.
+    """
+    if value.get("format") == 1:
+        value = value.copy()
+        for key in ("directory", "git_identity"):
+            identity = value.get(key)
+            if (not isinstance(identity, list) or len(identity) != 2
+                    or any(type(part) is not int for part in identity)):
+                raise ValueError("invalid-generation-marker-identity")
+            value[key] = identity[1]
+        value["format"] = 2
+    return value
 
 
 def _read_marker(path: Path) -> dict:
@@ -103,7 +122,7 @@ class GenerationEnrollment:
             directory = _git_directory(path)
             with DirectoryHandle(directory) as admin:
                 expected = {
-                    "format": 1, "installation_id": self.store.installation_id(),
+                    "format": 2, "installation_id": self.store.installation_id(),
                     "path": str(path), "directory": _fingerprint(path),
                     "git_directory": str(directory), "git_identity": _fingerprint(directory),
                 }
@@ -114,7 +133,7 @@ class GenerationEnrollment:
                         if reserved and not marker.exists():
                             raise StoreConflict("reserved-path-without-enrollment-marker")
                     _publish(directory, dict(expected, generation_id=str(uuid4())))
-                value = _read_marker(marker)
+                value = _normalize_marker(_read_marker(marker))
                 generation = value.pop("generation_id")
                 if encode(value) != encode(expected) or not root.matches_path() or not admin.matches_path():
                     raise StoreConflict("generation-directory-mismatch")
