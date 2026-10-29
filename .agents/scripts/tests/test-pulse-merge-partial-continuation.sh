@@ -534,6 +534,7 @@ test_uncorroborated_partial_target_is_noop() {
 	local body="" title=""
 	for body in 'For #777' 'For #5012' 'Ref #501suffix' \
 		$'## Remaining\n> For #501' $'```text\nFor #501\n```' \
+		$'```text\n    ```\nFor #501\n```' \
 		$'~~~~\nFor #501\n~~~\nRef #501\n~~~~' \
 		'<!-- For #501 -->' $'<!-- hidden\nFor #501\n-->' \
 		$'    For #501' $'For #501\nCloses: #777'; do

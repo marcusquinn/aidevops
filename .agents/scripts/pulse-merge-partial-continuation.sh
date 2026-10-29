@@ -302,7 +302,8 @@ _pmpc_corroborated_target() {
 				}
 				line = visible
 			}
-			if (line ~ /^[[:space:]]*(```|~~~)/) {
+			# Markdown fences allow at most three leading spaces, not tabs.
+			if (line ~ /^ ? ? ?(```|~~~)/) {
 				sub(/^[[:space:]]*/, "", line)
 				match(line, /^(`+|~+)/)
 				run = substr(line, 1, RLENGTH)
