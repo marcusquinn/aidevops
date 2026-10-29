@@ -16,6 +16,47 @@ cat >"${ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 merge_sha="${COMPLETION_PR_MERGE_SHA:-1111111111111111111111111111111111111111}"
 release_mode="${COMPLETION_RELEASE_MODE:-valid}"
+if [[ "$*" == *"repos/testorg/app"* ]]; then
+	mode="${COMPLETION_DEPLOYMENT_MODE:-valid}"
+	run_id="${COMPLETION_DEPLOYMENT_RUN_ID:-900}"
+	run_attempt="${COMPLETION_DEPLOYMENT_ATTEMPT:-1}"
+	[[ "$mode" != "api-failure" ]] || exit 70
+	case "$*" in
+	"api repos/testorg/app")
+		jq -cn --arg mode "$mode" '{full_name:"testorg/app",archived:false,permissions:{push:($mode != "external")}}' ;;
+	*"/pulls/"*)
+		jq -cn --arg mode "$mode" '{merged:($mode != "unmerged"),state:"closed",merged_at:"2026-07-11T00:00:00Z",
+			merge_commit_sha:"1111111111111111111111111111111111111111",base:{ref:"develop",repo:{full_name:"testorg/app"}}}' ;;
+	*"/collaborators/"*)
+		jq -cn --arg mode "$mode" --arg call "$*" '{permission:
+			(if $mode == "untrusted" or ($mode == "untrusted-rerun" and ($call | contains("rerunner"))) then "read" else "write" end)}' ;;
+	*"/actions/workflows/deploy.yml/runs"*)
+		jq -cn --arg mode "$mode" --argjson id "$run_id" --argjson attempt "$run_attempt" \
+			'{workflow_runs:[{id:(if $mode == "stale" then 901 else $id end),
+			status:"completed",conclusion:"success",run_attempt:$attempt,head_sha:"3333333333333333333333333333333333333333"}]}' ;;
+	*"/actions/workflows/deploy.yml")
+		printf '%s\n' '{"id":12,"path":".github/workflows/deploy.yml"}' ;;
+	*"/actions/runs/900"|*"/actions/runs/901")
+		jq -cn --arg mode "$mode" --argjson id "$run_id" --argjson attempt "$run_attempt" \
+			'{id:$id,workflow_id:(if $mode == "wrong-workflow" then 13 else 12 end),
+			path:".github/workflows/deploy.yml",repository:{full_name:"testorg/app"},
+			head_repository:{full_name:(if $mode == "fork" then "outside/app" else "testorg/app" end)},
+			event:(if $mode == "pr-event" then "pull_request" else "push" end),
+			head_branch:(if $mode == "wrong-branch" then "other" else "develop" end),
+			head_sha:(if $mode == "wrong-sha" then "4444444444444444444444444444444444444444" else "3333333333333333333333333333333333333333" end),
+			status:(if $mode == "pending" then "in_progress" else "completed" end),
+			conclusion:(if $mode == "failed" then "failure" else "success" end),
+			run_attempt:(if $mode == "rerun" then 2 else $attempt end),
+			run_started_at:(if $mode == "pre-merge" then "2026-07-10T00:00:00Z" else "2026-07-11T00:01:00Z" end),
+			actor:{login:"deployer"},triggering_actor:{login:"rerunner"}}' ;;
+	*"/compare/"*)
+		jq -cn --arg mode "$mode" '{status:(if $mode == "unrelated" then "diverged" else "ahead" end),
+			base_commit:{sha:"1111111111111111111111111111111111111111"},
+			merge_base_commit:{sha:(if $mode == "wrong-ancestor" then "2222222222222222222222222222222222222222" else "1111111111111111111111111111111111111111" end)}}' ;;
+	*) exit 71 ;;
+	esac
+	exit 0
+fi
 if [[ "$*" == *"pr view 71 "* ]]; then
 	merge_sha="2222222222222222222222222222222222222222"
 fi
@@ -440,6 +481,145 @@ if COMPLETION_RECORD_COMMAND=cmd_record_included_release bash "$published_record
 fi
 unset AIDEVOPS_FULL_LOOP_RECEIPT_DIR
 printf 'PASS manual release inclusion verifies source evidence and ancestry, fails closed, and replays without mutation\n'
+
+# Tagless app deployments reuse the existing receipt/cleanup runner, not an app
+# environment or a second test harness. Every remote mutation is unexpected.
+export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir"
+deployment_sha="3333333333333333333333333333333333333333"
+deployment_receipt="${receipt_dir}/testorg_app-80.status"
+deployment_worktree="${ROOT}/deployment-worktree"
+mkdir -p "$deployment_worktree"
+deployment_cleanup=$(full_loop_write_cleanup_deferred testorg/app 80 "$deployment_worktree" \
+	feature/deployment "$$" deployment-session pending FINALIZATION_PENDING)
+cp "$deployment_cleanup" "${ROOT}/deployment-cleanup-before.json"
+for invalid_deployment in api-failure external unmerged untrusted untrusted-rerun stale \
+	wrong-workflow fork pr-event wrong-branch wrong-sha pending failed pre-merge unrelated wrong-ancestor rerun; do
+	if COMPLETION_DEPLOYMENT_MODE="$invalid_deployment" COMPLETION_RECORD_COMMAND=cmd_record_deployment \
+		bash "$published_record_runner" 80 900 deploy.yml "$deployment_sha" testorg/app >/dev/null 2>&1; then
+		printf 'FAIL tagless deployment accepted %s\n' "$invalid_deployment"
+		exit 1
+	fi
+	[[ ! -e "$deployment_receipt" ]]
+	cmp -s "$deployment_cleanup" "${ROOT}/deployment-cleanup-before.json"
+done
+COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
+	80 900 deploy.yml "$deployment_sha" testorg/app >/dev/null
+cp "$deployment_receipt" "${ROOT}/deployment-evidence-before"
+COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
+	80 900 deploy.yml "$deployment_sha" testorg/app >/dev/null
+cmp -s "$deployment_receipt" "${ROOT}/deployment-evidence-before"
+jq -e '.release_status == "published" and .executor_completion_state == "FINALIZATION_PENDING"' "$deployment_cleanup" >/dev/null
+# Repeated shared status persistence must not erase typed evidence.
+COMPLETION_RECORD_COMMAND=_full_loop_write_release_receipt bash "$published_record_runner" \
+	testorg/app 80 published
+cmp -s "$deployment_receipt" "${ROOT}/deployment-evidence-before"
+if bash "$migration_runner" 80 testorg/app testorg/renamed-app >/dev/null 2>&1; then
+	printf 'FAIL legacy migration discarded typed deployment proof\n'
+	exit 1
+fi
+cmp -s "$deployment_receipt" "${ROOT}/deployment-evidence-before"
+[[ ! -e "${receipt_dir}/testorg_renamed-app-80.status" ]]
+deployment_payload=$(jq -Rrs 'split("\n")[1]' "$deployment_receipt")
+cp "$deployment_cleanup" "${ROOT}/deployment-recorded-cleanup"
+for corrupt_framing in wrong-header trailing-data empty-payload missing-newline; do
+	case "$corrupt_framing" in
+	wrong-header) printf 'failed\n%s\n' "$deployment_payload" >"$deployment_receipt" ;;
+	trailing-data) printf 'published\n%s\nunexpected trailing data\n' "$deployment_payload" >"$deployment_receipt" ;;
+	empty-payload) printf 'published\n\n' >"$deployment_receipt" ;;
+	missing-newline) printf 'published\n%s' "$deployment_payload" >"$deployment_receipt" ;;
+	esac
+	if COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
+		80 900 deploy.yml "$deployment_sha" testorg/app >/dev/null 2>&1; then
+		printf 'FAIL recording accepted corrupted deployment framing\n'
+		exit 1
+	fi
+	if bash "$finalize_runner" 80 testorg/app >/dev/null 2>&1; then
+		printf 'FAIL finalization accepted corrupted deployment framing\n'
+		exit 1
+	fi
+	cp "$deployment_receipt" "${ROOT}/corrupted-deployment-before"
+	if COMPLETION_RECORD_COMMAND=_full_loop_write_release_receipt bash "$published_record_runner" \
+		testorg/app 80 published >/dev/null 2>&1; then
+		printf 'FAIL shared status writer erased corrupted deployment proof\n'
+		exit 1
+	fi
+	if bash "$migration_runner" 80 testorg/app testorg/renamed-app >/dev/null 2>&1; then
+		printf 'FAIL migration erased corrupted deployment proof\n'
+		exit 1
+	fi
+	cmp -s "$deployment_receipt" "${ROOT}/corrupted-deployment-before"
+	cmp -s "$deployment_cleanup" "${ROOT}/deployment-recorded-cleanup"
+done
+cp "${ROOT}/deployment-evidence-before" "$deployment_receipt"
+for invalid_deployment in failed stale untrusted rerun; do
+	if COMPLETION_DEPLOYMENT_MODE="$invalid_deployment" bash "$finalize_runner" 80 testorg/app >/dev/null 2>&1; then
+		printf 'FAIL finalization accepted invalidated deployment %s\n' "$invalid_deployment"
+		exit 1
+	fi
+done
+# A fresh attestation repairs stale evidence without permitting failed repairs,
+# workflow changes, or rollback to an older run/attempt.
+export COMPLETION_DEPLOYMENT_RUN_ID=901
+if bash "$finalize_runner" 80 testorg/app >/dev/null 2>&1; then
+	printf 'FAIL stale receipt finalized before re-attestation\n'
+	exit 1
+fi
+COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
+	80 901 deploy.yml "$deployment_sha" testorg/app >/dev/null
+jq -Rse 'split("\n")[1] | fromjson | .run_id == 901 and .run_attempt == 1' "$deployment_receipt" >/dev/null
+cp "$deployment_receipt" "${ROOT}/deployment-recovered"
+export COMPLETION_DEPLOYMENT_ATTEMPT=2
+if COMPLETION_DEPLOYMENT_MODE=failed COMPLETION_RECORD_COMMAND=cmd_record_deployment \
+	bash "$published_record_runner" 80 901 deploy.yml "$deployment_sha" testorg/app >/dev/null 2>&1; then
+	printf 'FAIL failed rerun repaired receipt\n'
+	exit 1
+fi
+cmp -s "$deployment_receipt" "${ROOT}/deployment-recovered"
+COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
+	80 901 deploy.yml "$deployment_sha" testorg/app >/dev/null
+jq -Rse 'split("\n")[1] | fromjson | .run_id == 901 and .run_attempt == 2' "$deployment_receipt" >/dev/null
+cp "$deployment_receipt" "${ROOT}/deployment-recovered"
+if COMPLETION_DEPLOYMENT_ATTEMPT=1 COMPLETION_RECORD_COMMAND=cmd_record_deployment \
+	bash "$published_record_runner" 80 901 deploy.yml "$deployment_sha" testorg/app >/dev/null 2>&1; then
+	printf 'FAIL receipt rolled back to an older attempt\n'
+	exit 1
+fi
+if COMPLETION_DEPLOYMENT_RUN_ID=900 COMPLETION_RECORD_COMMAND=cmd_record_deployment \
+	bash "$published_record_runner" 80 900 deploy.yml "$deployment_sha" testorg/app >/dev/null 2>&1; then
+	printf 'FAIL receipt rolled back to an older run\n'
+	exit 1
+fi
+cmp -s "$deployment_receipt" "${ROOT}/deployment-recovered"
+bash "$finalize_runner" 80 testorg/app >/dev/null
+unset COMPLETION_DEPLOYMENT_RUN_ID COMPLETION_DEPLOYMENT_ATTEMPT
+jq -e '.release_status == "published" and .executor_completion_state == "COMPLETE"
+	and .resource_cleanup_state == "CLEANUP_DEFERRED" and .owner.pid > 0' "$deployment_cleanup" >/dev/null
+[[ -d "$deployment_worktree" ]]
+full_loop_cleanup_owner_alive "$deployment_cleanup"
+if bash "$record_runner" 80 testorg/app >/dev/null 2>&1; then
+	printf 'FAIL deployment overwritten by not-requested\n'
+	exit 1
+fi
+for bad_workflow in ../deploy.yml arbitrary.json; do
+	if COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
+		81 900 "$bad_workflow" "$deployment_sha" testorg/app >/dev/null 2>&1; then
+		printf 'FAIL deployment accepted unsafe workflow\n'
+		exit 1
+	fi
+done
+if COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
+	81 900 deploy.yml "$deployment_sha" marcusquinn/aidevops >/dev/null 2>&1; then
+	printf 'FAIL deployment bypassed canonical versioned release\n'
+	exit 1
+fi
+printf 'published\n{"schema_version":1,"evidence_type":"tagless-deployment","repository":"testorg/app","pr_number":81}\n' \
+	>"${receipt_dir}/testorg_app-81.status"
+if bash "$finalize_runner" 81 testorg/app >/dev/null 2>&1; then
+	printf 'FAIL forged local JSON finalized deployment\n'
+	exit 1
+fi
+unset AIDEVOPS_FULL_LOOP_RECEIPT_DIR
+printf 'PASS tagless deployment validates remote evidence, rejects unsafe/stale proof, replays and finalizes without live-owner cleanup\n'
 
 # Execute the workflow's actual verification shell, without publishing anything.
 # Needs PyYAML: CI installs it and must never skip; locally skip only this section.
