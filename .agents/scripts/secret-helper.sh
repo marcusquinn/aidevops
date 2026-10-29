@@ -287,8 +287,11 @@ collect_secret_values() {
 
 # Redact secret values from a stream
 # Reads stdin, replaces any secret value with [REDACTED]
+# Usage: redact_stream [ENV_FILE] [quiet]; "quiet" suppresses the names-only
+# short-value warnings so a second (stderr) relay does not repeat them.
 redact_stream() {
 	local env_file="${1:-}"
+	local warn_mode="${2:-warn}"
 	local values_file
 	local previous_umask
 	previous_umask=$(umask)
@@ -306,7 +309,7 @@ redact_stream() {
 		while IFS='=' read -r -d '' _key value; do
 			if redaction_value_usable "$value"; then
 				printf '%s\0' "$value"
-			elif [[ -n "$value" && ${#value} -lt 8 ]] && ! secret_env_name_emitted "$_key" "${warned_names[@]}"; then
+			elif [[ "$warn_mode" != "quiet" && -n "$value" && ${#value} -lt 8 ]] && ! secret_env_name_emitted "$_key" "${warned_names[@]}"; then
 				warn_short_redaction_value "$_key"
 				warned_names+=("$_key")
 			fi
@@ -1329,6 +1332,53 @@ inventory_add_name() {
 	return 0
 }
 
+# Run a command with the NUL-delimited secret records from ENV_FILE exported,
+# redacting stdout and stderr independently. The streams must stay separate:
+# merging stderr into stdout lets diagnostic lines land inside large stdout
+# writes (pipe writes above PIPE_BUF are not atomic), corrupting line-framed
+# protocols such as MCP stdio JSON-RPC (GH#35896). stdin is inherited.
+# Usage: run_with_redacted_streams ENV_FILE COMMAND [ARGS...]
+run_with_redacted_streams() {
+	local env_file="$1"
+	shift
+
+	local fifo_dir=""
+	local previous_umask
+	previous_umask=$(umask)
+	umask 077
+	if ! fifo_dir=$(mktemp -d) || ! mkfifo "$fifo_dir/stderr"; then
+		umask "$previous_umask"
+		[[ -n "$fifo_dir" ]] && rm -rf "$fifo_dir"
+		print_error "$REDACTION_INIT_ERROR" >&2
+		return 1
+	fi
+	umask "$previous_umask"
+	local stderr_fifo="$fifo_dir/stderr"
+
+	# A FIFO (not process substitution) so Bash 3.2 can wait for the stderr
+	# relay to drain before cleanup and return.
+	redact_stream "$env_file" quiet <"$stderr_fifo" >&2 &
+	local stderr_relay_pid=$!
+
+	local exit_code=0
+	(
+		while IFS='=' read -r -d '' key val; do
+			[[ -z "$key" ]] && continue
+			export "$key=$val"
+		done <"$env_file"
+
+		"$@"
+	) 2>"$stderr_fifo" | redact_stream "$env_file" || exit_code=$?
+
+	local relay_code=0
+	wait "$stderr_relay_pid" || relay_code=$?
+	rm -rf "$fifo_dir"
+	if [[ "$exit_code" -eq 0 && "$relay_code" -ne 0 ]]; then
+		exit_code="$relay_code"
+	fi
+	return "$exit_code"
+}
+
 # Run a command with secrets injected and output redacted
 cmd_run() {
 	local -a cmd_args=("$@")
@@ -1350,16 +1400,7 @@ cmd_run() {
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0
-	(
-		# Load secrets into subprocess environment
-		while IFS='=' read -r -d '' key val; do
-			[[ -z "$key" ]] && continue
-			export "$key=$val"
-		done <"$env_file"
-
-		# Execute the command
-		"${cmd_args[@]}"
-	) 2>&1 | redact_stream "$env_file" || exit_code=$?
+	run_with_redacted_streams "$env_file" "${cmd_args[@]}" || exit_code=$?
 
 	# Clean up (also handled by trap on abnormal exit)
 	rm -f "$env_file"
@@ -1420,14 +1461,7 @@ cmd_run_specific() {
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0
-	(
-		while IFS='=' read -r -d '' key val; do
-			[[ -z "$key" ]] && continue
-			export "$key=$val"
-		done <"$env_file"
-
-		"${cmd_args[@]}"
-	) 2>&1 | redact_stream "$env_file" || exit_code=$?
+	run_with_redacted_streams "$env_file" "${cmd_args[@]}" || exit_code=$?
 
 	rm -f "$env_file"
 	trap - EXIT

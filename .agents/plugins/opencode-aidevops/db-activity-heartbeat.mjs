@@ -30,12 +30,43 @@ const ACTIVITY_EVENTS = new Set([
   "session.error",
 ]);
 
+// GH#35898: OpenCode 2.x work events (verified against @opencode/schema 2.2.0).
+const V2_ACTIVITY_PREFIXES = [
+  "session.step.",
+  "session.tool.",
+  "session.text.",
+  "session.reasoning.",
+  "session.shell.",
+  "session.compaction.",
+  "session.retry.",
+];
+
+// GH#35898: V1 events carry `properties`; OpenCode 2.x events carry `data`.
+function eventPayload(event) {
+  return event.properties || event.data || {};
+}
+
+function eventSessionID(event) {
+  return sessionIDFrom(event) || String(event.data?.sessionID || "");
+}
+
+function isActivityEvent(type) {
+  return ACTIVITY_EVENTS.has(type) || V2_ACTIVITY_PREFIXES.some((prefix) => type.startsWith(prefix));
+}
+
+const markIdle = (hb, sessionID) => hb.markIdle(sessionID);
+
 // Session lifecycle events: handler returns true when busy state changed,
-// which forces an immediate (unthrottled) write.
+// which forces an immediate (unthrottled) write. The V2 execution events back
+// up `session.status`, which OpenCode 2.x publishes as an ephemeral event.
 const LIFECYCLE_HANDLERS = {
-  "session.status": (hb, sessionID, event) => hb.updateStatus(sessionID, event.properties?.status?.type),
-  "session.idle": (hb, sessionID) => hb.markIdle(sessionID),
+  "session.status": (hb, sessionID, event) => hb.updateStatus(sessionID, eventPayload(event).status?.type),
+  "session.idle": markIdle,
   "session.deleted": (hb, sessionID) => hb.forget(sessionID),
+  "session.execution.started": (hb, sessionID) => hb.updateStatus(sessionID, "busy"),
+  "session.execution.succeeded": markIdle,
+  "session.execution.failed": markIdle,
+  "session.execution.interrupted": markIdle,
 };
 
 export function defaultActivityDir(env = process.env, home = homedir()) {
@@ -140,10 +171,10 @@ class DbActivityHeartbeat {
     const event = input?.event;
     if (!event?.type) return;
     // Any session this process has seen (even via metadata) stays protected.
-    const sessionID = sessionIDFrom(event);
+    const sessionID = eventSessionID(event);
     if (sessionID) this.rememberSession(sessionID);
     const lifecycle = LIFECYCLE_HANDLERS[event.type];
-    if (!lifecycle && !ACTIVITY_EVENTS.has(event.type)) return;
+    if (!lifecycle && !isActivityEvent(event.type)) return;
     if (!lifecycle) {
       this.lastActivityAt = this.now();
       this.writeThrottled();

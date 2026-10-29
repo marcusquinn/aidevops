@@ -88,6 +88,45 @@ test("metadata-only events do not count as activity and unsafe IDs are dropped",
   }
 });
 
+// GH#35898: OpenCode 2.x events carry `data` (verified @opencode/schema 2.2.0).
+function v2Event(type, data = {}) {
+  return { event: { type, data, created: 1 } };
+}
+
+test("V2 session.status tracks busy sessions per session ID", () => {
+  const f = fixture();
+  try {
+    f.heartbeat.write();
+    f.heartbeat.handleEvent(v2Event("session.status", { sessionID: "ses_v2a", status: { type: "busy" } }));
+    f.heartbeat.handleEvent(v2Event("session.status", { sessionID: "ses_v2b", status: { type: "busy" } }));
+    assert.equal(f.read().busy_sessions, 2);
+    f.heartbeat.handleEvent(v2Event("session.status", { sessionID: "ses_v2b", status: { type: "idle" } }));
+    const state = f.read();
+    assert.equal(state.busy_sessions, 1, "one session's idle must not clear another's busy state");
+    assert.deepEqual(state.sessions, ["ses_v2a", "ses_v2b"]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("V2 execution events back up session.status and step events count as activity", () => {
+  const f = fixture();
+  try {
+    f.heartbeat.write();
+    f.heartbeat.handleEvent(v2Event("session.execution.started", { sessionID: "ses_v2c" }));
+    assert.equal(f.read().busy_sessions, 1);
+    f.advance(31_000);
+    f.heartbeat.handleEvent(v2Event("session.step.ended", { sessionID: "ses_v2c", assistantMessageID: "msg_1" }));
+    assert.equal(f.read().last_activity_epoch, 1031);
+    f.heartbeat.handleEvent(v2Event("session.execution.interrupted", { sessionID: "ses_v2c" }));
+    assert.equal(f.read().busy_sessions, 0);
+    f.heartbeat.handleEvent(v2Event("session.deleted", { sessionID: "ses_v2c" }));
+    assert.deepEqual(f.read().sessions, []);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("remove deletes the heartbeat file", () => {
   const f = fixture();
   try {
