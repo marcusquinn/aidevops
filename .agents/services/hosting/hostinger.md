@@ -307,6 +307,14 @@ This bypasses uninstall hooks, preserving saved data rather than asking the plug
 
 ### Database backups without WP-CLI
 
+For fleet core minor releases, use the [core-minor workflow](../../tools/wordpress/wp-cli-reference.md#core-minor-releases-across-ssh-installs).
+It calls `mysqldump` with a temporary 0600 defaults file and stores dumps outside
+the web root before applying a SHA1-verified locale package. Filtered WordPress
+HTTP can make `wp core update --minor` falsely report "latest"; this workflow
+queries the release API outside WordPress and verifies the installed version,
+checksums and home/login probes. It never applies major releases or rolls back
+automatically. Remote Python 3.9+ and database table-lock privileges are required.
+
 `wp db export` also fails with `Cannot do 'Process::run'`. Call `mysqldump` directly with the site's own credentials, passed through the environment so the password never appears in output or the process list:
 
 ```bash
