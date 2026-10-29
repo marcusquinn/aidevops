@@ -535,6 +535,61 @@ jobs:
         bash .agents/scripts/tests/test-pulse-merge-phantom-pending-checks.sh
         echo "Approve collaborator author guard test passed"
 
+    - name: Pulse-merge Regression Suites (GH#35943)
+      timeout-minutes: 20
+      run: |
+        # GH#35943: CI ran only the three pulse-merge suites above, so the rest
+        # drifted behind merged production changes unseen. Run every suite
+        # (globbed, so new suites join automatically) in parallel; any failure
+        # fails this required job.
+        set -euo pipefail
+        log_dir=$(mktemp -d "${RUNNER_TEMP:-/tmp}/pulse-merge-suites.XXXXXX")
+        export LOG_DIR="$log_dir"
+        # *-cases.sh / *-mocks.sh are fixtures sourced by a suite, not suites.
+        git ls-files '.agents/scripts/tests/test-pulse-merge-*.sh' \
+          '.agents/scripts/tests/test-pulse-merge-*.py' |
+          grep -Ev -- '-(cases|mocks)\.sh$' >"${log_dir}/suites.txt"
+        run_suite() {
+          local suite="$1"
+          local name="${suite##*/}"
+          local box="${LOG_DIR}/${name}.d"
+          local runner="bash" rc=0 start="$SECONDS"
+          [[ "$suite" != *.py ]] || runner="python3"
+          # A private HOME/TMPDIR per suite keeps parallel runs from sharing state.
+          mkdir -p "${box}/home" "${box}/tmp"
+          HOME="${box}/home" TMPDIR="${box}/tmp" timeout -k 10 600 \
+            "$runner" "$suite" >"${LOG_DIR}/${name}.log" 2>&1 || rc=$?
+          printf '%s\t%s\n' "$rc" "$((SECONDS - start))" >"${LOG_DIR}/${name}.rc"
+          printf 'rc=%s %ss %s\n' "$rc" "$((SECONDS - start))" "$name"
+          return 0
+        }
+        export -f run_suite
+        xargs -P "$(nproc)" -n 1 bash -c 'run_suite "$1"' _ <"${log_dir}/suites.txt" ||
+          echo "::warning::suite runner exited $?"
+        total=0
+        failed=0
+        while IFS= read -r suite; do
+          name="${suite##*/}"
+          total=$((total + 1))
+          rc="missing"
+          elapsed="?"
+          if [[ -f "${log_dir}/${name}.rc" ]]; then
+            IFS=$'\t' read -r rc elapsed <"${log_dir}/${name}.rc"
+          fi
+          [[ "$rc" != "0" ]] || continue
+          failed=$((failed + 1))
+          echo "::group::FAIL ${name} (rc=${rc}, ${elapsed}s)"
+          cat "${log_dir}/${name}.log" || true
+          echo "::endgroup::"
+          echo "::error title=Pulse-merge suite failed::${name} exited ${rc}"
+        done <"${log_dir}/suites.txt"
+        echo "Pulse-merge suites: ${total} run, ${failed} failed"
+        if [[ "$total" -eq 0 ]]; then
+          echo "::error::No pulse-merge suites found"
+          exit 1
+        fi
+        [[ "$failed" -eq 0 ]]
+
     - name: Bash Expansion Pattern Guard (GH#19966)
       run: |
         # Guard against the ${N:-{}} expansion bug: bash reads "${2:-{}" as the

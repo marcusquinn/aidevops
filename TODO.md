@@ -1760,6 +1760,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18767 Make pulse worker admission RAM-only: remove CPU load, idle and core-count throttles #bug #priority:high ref:GH#35537 pr:#35541 completed:2026-10-23
 
+- [ ] t18788 Pulse-merge regression suites drift unseen: repair harnesses and run them in Framework Validation #bug #interactive ref:GH#35943 assignee:marcusquinn started:2026-10-29 -> [todo/tasks/t18788-brief.md]
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
