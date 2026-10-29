@@ -1342,6 +1342,13 @@ run_with_redacted_streams() {
 	local env_file="$1"
 	shift
 
+	# The bounded stderr sink needs Python even with no usable secret values.
+	# Fail before launching the child rather than breaking its stderr pipe.
+	if ! command -v python3 >/dev/null 2>&1; then
+		print_error "$REDACTION_INIT_ERROR" >&2
+		return 1
+	fi
+
 	local fifo_dir=""
 	local previous_umask
 	previous_umask=$(umask)
