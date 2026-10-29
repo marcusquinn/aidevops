@@ -106,15 +106,26 @@ cmd_record_deployment() {
 	_full_loop_acquire_transition_lock || return 1
 	path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || status=1
 	if [[ "$status" -eq 0 && -e "$path" ]]; then
-		# Exact replay only: never replace versioned or other terminal evidence.
+		# Re-attest only the same deployment identity with a newer verified run
+		# or attempt. Never replace versioned, malformed, or unrelated evidence.
 		existing=$(_full_loop_deployment_receipt_payload "$path") || status=1
 		if [[ "$status" -eq 0 ]]; then
 			existing=$(jq -er 'fromjson' <<<"$existing") || status=1
 		fi
 		if [[ "$status" -eq 0 ]]; then
-			jq -e --argjson evidence "$evidence" '. == $evidence' <<<"$existing" >/dev/null || status=1
+			jq -e --argjson evidence "$evidence" '
+				. == $evidence or (
+					.schema_version == $evidence.schema_version and .evidence_type == $evidence.evidence_type
+					and .repository == $evidence.repository and .pr_number == $evidence.pr_number
+					and .workflow == $evidence.workflow and .merge_sha == $evidence.merge_sha
+					and (.source_sha | type == "string" and test("^[0-9a-f]{40}$"))
+					and ([.run_id, .run_attempt] | all(type == "number" and . >= 1 and floor == .))
+					and ($evidence.run_id > .run_id or
+						($evidence.run_id == .run_id and $evidence.run_attempt > .run_attempt))
+				)' <<<"$existing" >/dev/null || status=1
 		fi
-	elif [[ "$status" -eq 0 ]]; then
+	fi
+	if [[ "$status" -eq 0 && "$existing" != "$evidence" ]]; then
 		mkdir -p "${path%/*}" || status=1
 		if [[ "$status" -eq 0 ]]; then
 			printf 'published\n%s\n' "$evidence" >"${path}.tmp.$$" && mv "${path}.tmp.$$" "$path" || status=1

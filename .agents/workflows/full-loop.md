@@ -346,8 +346,15 @@ The atomic release receipt records `published` plus typed `tagless-deployment`
 evidence (run ID/attempt, workflow, merge and deployed SHA). This means actual
 application publication, **not** a claim that a versioned release exists or that
 publication was not requested. Finalization and local lifecycle completion
-re-verify that remote evidence; identical recording is idempotent and conflicting
-terminal receipts are not overwritten. Existing exact-head and live-owner cleanup
+re-verify that remote evidence; identical recording is idempotent. If a later run
+or rerun invalidates the receipt, observe the currently deployed full SHA again
+and repeat `record-deployment` with the latest successful run and that SHA, then
+retry `complete` or `finalize-receipt`. Under the transition lock, the command
+atomically replaces typed evidence only for the same repository, PR, workflow,
+and merge SHA with a newer run ID or a higher attempt of the same run. Every
+remote check still applies; pending or failed runs cannot repair a receipt.
+Versioned, malformed, and conflicting terminal receipts are not overwritten.
+Existing exact-head and live-owner cleanup
 guards still apply. This adapter is unavailable for the aidevops repository,
 whose signed, versioned release path is unchanged. The legacy repository-rename
 adapter refuses typed deployment receipts rather than discarding their proof;
