@@ -42,7 +42,11 @@ Three rules apply on every platform:
 2. **Fine-grained / scoped to specific repos**, never "all repos" or
    "classic / personal scope". Most platforms now have a fine-grained option;
    use it.
-3. **Save once in gopass at creation time** with `aidevops secret set SYNC_PAT`.
+3. **Save once in gopass at creation time** with
+   `aidevops secret set SYNC_PAT_OWNER_KEY`. Replace `OWNER_KEY` throughout these
+   instructions with a distinct key for the owner using uppercase letters,
+   digits, and underscores (for example, `SYNC_PAT_EXAMPLE_ORG`). Keep the
+   repository secret name `SYNC_PAT` unchanged.
    Most platforms only show the token once. Set each repository secret from
    that stored value. Rotation reminders (90 days default) belong in the
    password manager entry. Local secret-age advisories supplement, but do not
@@ -71,7 +75,7 @@ query-string parameters that pre-fill the form. Substitute placeholders as marke
 https://github.com/settings/personal-access-tokens/new
   ?name=aidevops-sync-<OWNER>
   &description=aidevops%20issue-sync%20PAT%20for%20<OWNER>
-  &expiration=90
+  &expires_in=90
   &target_name=<OWNER>
   &contents=write
   &issues=write
@@ -88,7 +92,7 @@ The operator still has to:
   needing sync under this owner (the URL pre-selects `target_name` but doesn't
   auto-pick repositories from the dropdown)
 - Click Generate
-- Save the token once in gopass with `aidevops secret set SYNC_PAT` in a terminal
+- Save the token once in gopass with `aidevops secret set SYNC_PAT_OWNER_KEY` in a terminal
   **before** closing the page; never paste the value into chat
 
 ### Required scopes
@@ -108,8 +112,9 @@ Do NOT add `actions: read/write` (workflow can't trigger itself), `secrets`
 ### Setting the secret
 
 ```bash
-# Replace OWNER/REPO with the target repository; gh reads the value from stdin:
-aidevops secret SYNC_PAT -- sh -c 'printf %s "$SYNC_PAT" | gh secret set SYNC_PAT --repo OWNER/REPO'
+# Replace OWNER_KEY in both names and OWNER/REPO with the target repository:
+# gh reads the value from stdin; the local name differs from the repo secret.
+aidevops secret SYNC_PAT_OWNER_KEY -- sh -c 'printf %s "$SYNC_PAT_OWNER_KEY" | gh secret set SYNC_PAT --repo OWNER/REPO'
 ```
 
 **Add a repository:** in GitHub **Settings → Developer settings → Fine-grained
@@ -119,7 +124,7 @@ new repository; do not mint another token. GitHub user accounts have no
 account-level Actions secrets, so set the secret per repository from gopass.
 
 **Value lost:** regenerate the existing token (permissions and repository list
-are retained), save the new value with `aidevops secret set SYNC_PAT`, then re-set
+are retained), save the new value with `aidevops secret set SYNC_PAT_OWNER_KEY`, then re-set
 the secret in **every listed repository**. Regeneration revokes the old value,
 invalidating all existing copies. Do not put values in command arguments or logs.
 
