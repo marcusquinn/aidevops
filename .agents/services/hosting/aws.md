@@ -1,5 +1,5 @@
 ---
-description: AWS operations - SSO profiles, least-privilege unattended keys, secret injection and SES
+description: AWS operations - login and SSO profiles, least-privilege unattended keys, secret injection and SES
 mode: subagent
 tools:
   read: true
@@ -15,7 +15,7 @@ tools:
 
 ## Quick Reference
 
-- **Preferred access**: AWS CLI v2 + IAM Identity Center, named profile `aidevops-<account>`; no long-lived key.
+- **Interactive access**: `aws login` (CLI ≥ 2.32) or IAM Identity Center, named profile `aidevops-<account>`; no long-lived key.
 - **Unattended access**: workload roles/short-lived credentials first; least-privilege IAM user keys only when necessary, never root keys.
 - **Secrets**: `AWS_<ACCOUNT>_ACCESS_KEY_ID`, `AWS_<ACCOUNT>_SECRET_ACCESS_KEY`, optionally `AWS_<ACCOUNT>_SESSION_TOKEN`, stored through `aidevops secret set`. Never request values in chat.
 - **Verify**: `aidevops secret verify aws [AWS_<ACCOUNT>_ACCESS_KEY_ID...]` prints only account ID and caller ARN; no identity response is cached.
@@ -25,7 +25,58 @@ tools:
 
 ## Access options (in order of preference)
 
-### 1. IAM Identity Center with a named profile
+### 1. Browser console session with `aws login`
+
+The simplest interactive option is `aws login` with AWS CLI ≥ 2.32. It uses the
+browser console identity to obtain 12-hour credentials, refreshed for up to
+90 days. On macOS, use `brew install awscli` with installation authorization,
+not a piped installer. Check `aws --version` before choosing this flow.
+
+Before the browser handoff, an administrator must grant the non-root IAM user or
+role the `SignInLocalDevelopmentAccess` managed policy (directly or, for a user,
+through an IAM group). Console sign-in alone is not sufficient. Root requires no
+additional policy, but use a scoped non-root identity for routine work. Do not
+self-grant IAM changes.
+
+Use a named `aidevops-<account>` profile and keep its workload region unchanged.
+Obtain the account or project's sign-in region from the administrator and set
+`AWS_SIGN_IN_REGION` accordingly; do not guess it. In AWS's new account experience,
+it may differ from the workload region, and the wrong region can prevent login.
+
+```bash
+# Agent: configure the profile (region is an example, not a migration instruction).
+aws configure set region eu-west-2 --profile aidevops-production
+# Human: complete browser authorization with the intended console identity.
+aws login --profile aidevops-production --region "${AWS_SIGN_IN_REGION:?Set the account sign-in region}"
+# Agent: inspect credential resolution locally; continue only when TYPE is login.
+aws configure list --profile aidevops-production
+# Agent: verify the account and caller ARN before service operations.
+aws sts get-caller-identity --profile aidevops-production --region eu-west-2
+```
+
+Stop before STS or service operations if the credential TYPE is not `login`.
+Existing keys in `~/.aws/credentials` or environment variables can take precedence
+over the login session;
+have the owner retire conflicting credentials safely or use a fresh named profile,
+then repeat the login and source checks. Do not publish credential-list output.
+Use the workload region, not the sign-in override, for subsequent service commands.
+
+On SSH/headless hosts, the human uses `aws login --remote --profile
+aidevops-production --region "$AWS_SIGN_IN_REGION"` for authorization from another
+device, then performs the same source and identity checks. An unattended agent
+must not attempt browser approval itself. Let the CLI protect its credential
+cache; do not copy it into secrets, chat or runtime configuration.
+
+This STS command is the readiness check for login/SSO profiles; `aidevops secret
+verify aws` checks recorded key pairs instead. For **every access option**, inspect
+the returned ARN: if it ends in `:root`, explicitly warn **the session is the root
+user**, and recommend signing in as a scoped IAM user, role or Identity Center
+user for routine work. Until then, limit work to the already authorised scope;
+root access is not permission to expand it. Confirm account and region before
+writes; identity verification does not prove service permissions or authorize
+spending or IAM changes.
+
+### 2. IAM Identity Center with a named profile
 
 An administrator assigns the user to the intended AWS account and a permission
 set scoped to the task. Obtain the access portal/start URL and SSO region from
@@ -46,7 +97,7 @@ profiles. Use the workload's existing region; `us-east-1` is only an example
 default, not an instruction to move resources. Confirm account and region before
 writes; credential access does not authorize new spending or IAM changes.
 
-### 2. Unattended credentials
+### 3. Unattended credentials
 
 Prefer workload roles or OIDC federation. If a long-lived IAM user is necessary,
 name/tag it `aidevops-<account>-<purpose>`, separate production/staging, and grant
@@ -78,6 +129,18 @@ For externally obtained temporary credentials, also store/record the matching
 same-account pair, injects the optional recorded token, and calls only
 `aws sts get-caller-identity` (no additional IAM permission is needed for that
 action). Identity verification does not prove service permissions.
+
+## AWS Agent Toolkit decision
+
+**Not adopted:** do not run `aws configure agent-toolkit` or the
+`aws/agent-toolkit-for-aws` setup wizard. It writes an `aws-mcp` entry directly
+into each detected runtime's MCP configuration, conflicting with
+`generate-runtime-config-mcp.sh` and the `aidevops_mcp` approved registry. It also
+appends AWS rules to project `AGENTS.md`/`CLAUDE.md`; keep AWS guidance here instead.
+Evaluate `aws-mcp` separately as a possible on-demand registry entry, explicitly
+setting `env.AWS_MCP_PROXY_PROFILES` to the intended named profile. This decision
+does not approve installing it or changing runtime configs; evaluate useful skills
+separately through `aidevops skills`.
 
 ## Credential injection
 

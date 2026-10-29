@@ -47,6 +47,32 @@ trap "rm -rf '$TEST_HOME'" EXIT
 # Override HOME for the duration of the test
 export HOME="$TEST_HOME"
 
+# HOME does not isolate the system crontab spool. Shadow crontab before any
+# migration runs so even interrupted tests can only modify this disposable file.
+mkdir -p "$TEST_HOME/bin"
+cat >"$TEST_HOME/bin/crontab" <<'CRONTAB_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+-l)
+	[[ -f "$HOME/crontab" ]] || exit 1
+	cat "$HOME/crontab"
+	;;
+-)
+	cat >"$HOME/crontab"
+	;;
+-r)
+	rm -f "$HOME/crontab"
+	;;
+*)
+	printf 'Unsupported test crontab arguments\n' >&2
+	exit 1
+	;;
+esac
+CRONTAB_STUB
+chmod +x "$TEST_HOME/bin/crontab"
+export PATH="$TEST_HOME/bin:$PATH"
+
 # Create the deployed agents directory structure (simulating pre-migration state)
 AGENTS_DIR="$TEST_HOME/.aidevops/agents"
 SCRIPTS_DIR="$AGENTS_DIR/scripts"
@@ -194,44 +220,29 @@ fi
 section "Test: removes cron entries referencing supervisor-helper.sh"
 # ============================================================================
 
-# Install a fake cron entry (only if crontab is available)
-if command -v crontab &>/dev/null; then
-	# Save current crontab
-	original_crontab=$(crontab -l 2>/dev/null) || original_crontab=""
+# Install fixture entries in the file-backed stub, never the host crontab.
+{
+	echo "# aidevops: test-keep-this"
+	echo "*/5 * * * * echo keep-this # aidevops: test-keep"
+	echo "*/2 * * * * /bin/bash $SCRIPTS_DIR/supervisor-helper.sh pulse >> $TEST_HOME/test.log 2>&1 # aidevops: supervisor-pulse"
+} | crontab -
 
-	# Install test crontab with supervisor-helper.sh entry
-	{
-		echo "# aidevops: test-keep-this"
-		echo "*/5 * * * * echo keep-this # aidevops: test-keep"
-		echo "*/2 * * * * /bin/bash /home/test/.aidevops/agents/scripts/supervisor-helper.sh pulse >> /tmp/test.log 2>&1 # aidevops: supervisor-pulse"
-	} | crontab - 2>/dev/null
+migrate_orphaned_supervisor >/dev/null 2>&1
 
-	migrate_orphaned_supervisor >/dev/null 2>&1
+new_crontab=$(crontab -l)
 
-	new_crontab=$(crontab -l 2>/dev/null) || new_crontab=""
-
-	if echo "$new_crontab" | grep -qF "supervisor-helper.sh"; then
-		fail "Cron entry referencing supervisor-helper.sh should have been removed"
-	else
-		pass "Cron entry referencing supervisor-helper.sh removed"
-	fi
-
-	if echo "$new_crontab" | grep -qF "keep-this"; then
-		pass "Non-supervisor cron entries preserved"
-	else
-		fail "Non-supervisor cron entries should have been preserved"
-	fi
-
-	# Restore original crontab
-	if [[ -n "$original_crontab" ]]; then
-		printf '%s\n' "$original_crontab" | crontab - 2>/dev/null || true
-	else
-		crontab -r 2>/dev/null || true
-	fi
+if [[ "$new_crontab" == *"supervisor-helper.sh"* ]]; then
+	fail "Cron entry referencing supervisor-helper.sh should have been removed"
 else
-	pass "Cron test skipped (crontab not available)"
+	pass "Cron entry referencing supervisor-helper.sh removed"
 fi
 
+expected_crontab=$(printf '%s\n' '# aidevops: test-keep-this' '*/5 * * * * echo keep-this # aidevops: test-keep')
+if [[ "$new_crontab" == "$expected_crontab" ]]; then
+	pass "Non-supervisor cron entries preserved exactly"
+else
+	fail "Non-supervisor cron entries should have been preserved exactly" "$new_crontab"
+fi
 # ============================================================================
 section "Test: cleanup_deprecated_paths works when should_overwrite_user_file is undefined"
 # ============================================================================
