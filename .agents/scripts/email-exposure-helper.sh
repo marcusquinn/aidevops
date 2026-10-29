@@ -99,7 +99,7 @@ browser_url() {
 	# shellcheck source=browser-qa-helper-core.sh
 	source "${SCRIPT_DIR}/browser-qa-helper-core.sh"
 	check_playwright || return 2
-	run_playwright_node - "$url" <<'JS' || return $?
+	run_playwright_node --input-type=module - "$url" <<'JS' || return $?
 const imported = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = imported.chromium ? imported : imported.default;
 const options = { headless: true };
