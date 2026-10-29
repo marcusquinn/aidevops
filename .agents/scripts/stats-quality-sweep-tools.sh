@@ -556,7 +556,14 @@ _coderabbit_coverage_counts() {
 	# Repeated merged qualifiers are ORed by search; use a single range.
 	local search="repo:${repo_slug} is:pr is:merged merged:${since}..${until}"
 	for page in {1..10}; do
-		response=$(gh api graphql -f query="$query" -f search="$search" -f cursor="$cursor" 2>/dev/null) || return 1
+		if ! response=$(gh api graphql -f query="$query" -f search="$search" -f cursor="$cursor" 2>/dev/null); then
+			printf '[stats] CodeRabbit coverage: GraphQL request failed on page %s\n' "$page" >>"${LOGFILE:-/dev/null}"
+			return 1
+		fi
+		if jq -e '(.errors // [] | length) > 0' <<<"$response" >/dev/null 2>&1; then
+			printf '[stats] CodeRabbit coverage: GraphQL response contains errors on page %s\n' "$page" >>"${LOGFILE:-/dev/null}"
+			return 1
+		fi
 		# A missing status means no status, not a failed query. Reviews are
 		# bounded too: an unobserved review must not silently lower coverage.
 		jq -e --arg array_type array --arg number_type number '
@@ -568,24 +575,39 @@ _coderabbit_coverage_counts() {
 			   (.reviews.pageInfo.hasPreviousPage == false) and
 			   (.reviews.nodes | type == $array_type) and
 			   (.headRefOid != null and .headRefOid == .commits.nodes[0].commit.oid)))
-		' <<<"$response" >/dev/null 2>&1 || return 1
+		' <<<"$response" >/dev/null 2>&1 || {
+			printf '[stats] CodeRabbit coverage: invalid or incomplete page data on page %s (search limit, reviews or head commit)\n' "$page" >>"${LOGFILE:-/dev/null}"
+			return 1
+		}
 		total=$(jq -r '.data.search.issueCount' <<<"$response")
-		rows=$(jq -c --argjson previous "$rows" '$previous + .data.search.nodes' <<<"$response") || return 1
+		rows=$(jq -c --argjson previous "$rows" '$previous + .data.search.nodes' <<<"$response") || {
+			printf '[stats] CodeRabbit coverage: failed to accumulate page %s\n' "$page" >>"${LOGFILE:-/dev/null}"
+			return 1
+		}
 		next=$(jq -r '.data.search.pageInfo.hasNextPage' <<<"$response")
 		[[ "$next" == false ]] && break
 		local next_cursor
 		next_cursor=$(jq -r '.data.search.pageInfo.endCursor // empty' <<<"$response")
-		[[ -n "$next_cursor" && "$next_cursor" != "$cursor" ]] || return 1
+		[[ -n "$next_cursor" && "$next_cursor" != "$cursor" ]] || {
+			printf '[stats] CodeRabbit coverage: missing or repeated pagination cursor on page %s\n' "$page" >>"${LOGFILE:-/dev/null}"
+			return 1
+		}
 		cursor="$next_cursor"
 	done
-	[[ "$next" == false ]] || return 1
+	[[ "$next" == false ]] || {
+		printf '[stats] CodeRabbit coverage: pagination exceeded the 10-page search bound\n' >>"${LOGFILE:-/dev/null}"
+		return 1
+	}
 	jq -er --argjson total "$total" '
 		unique_by(.number) | select(length == $total) |
 		[.[] | select(
 			any(.reviews.nodes[]; .author.login == "coderabbitai" or .author.login == "coderabbitai[bot]") or
 			any(.commits.nodes[0].commit.status.contexts[]?; .context == "CodeRabbit"))] |
 		"\($total)|\(length)"
-	' <<<"$rows" || return 1
+	' <<<"$rows" || {
+		printf '[stats] CodeRabbit coverage: unique PR count does not match search total %s, or coverage aggregation failed\n' "$total" >>"${LOGFILE:-/dev/null}"
+		return 1
+	}
 	return 0
 }
 
@@ -681,6 +703,7 @@ _sweep_coderabbit() {
 	local sweep_total_issues="$3"
 
 	# Independent of the quality-delta baseline, including the first sweep.
+	printf '### CodeRabbit\n'
 	_sweep_coderabbit_coverage "$repo_slug"
 
 	local prev_state
@@ -698,7 +721,7 @@ _sweep_coderabbit() {
 	# causing every first run (or run after state loss) to trigger a full review.
 	if [[ "$prev_gate" == "UNKNOWN" ]]; then
 		echo "[stats] CodeRabbit: first run for ${repo_slug} — saved baseline, skipping trigger" >>"$LOGFILE"
-		printf '### CodeRabbit\n\n_First sweep run — baseline saved (%s issues, gate %s). Review trigger will activate on next sweep if quality degrades._\n' \
+		printf '\n_First sweep run — baseline saved (%s issues, gate %s). Review trigger will activate on next sweep if quality degrades._\n' \
 			"$sweep_total_issues" "$sweep_gate_status"
 		return 0
 	fi
@@ -722,10 +745,10 @@ _sweep_coderabbit() {
 		printf -v trigger_reasons '%s, ' "${reasons[@]}"
 		trigger_reasons="${trigger_reasons%, }"
 		echo "[stats] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
-		printf '### CodeRabbit\n\n**Trigger**: %s\n\n@coderabbitai Please run a full codebase review of this repository. Focus on:\n- Security vulnerabilities and credential exposure\n- Shell script quality (error handling, quoting, race conditions)\n- Code duplication and maintainability\n- Documentation accuracy\n' \
+		printf '\n**Trigger**: %s\n\n@coderabbitai Please run a full codebase review of this repository. Focus on:\n- Security vulnerabilities and credential exposure\n- Shell script quality (error handling, quoting, race conditions)\n- Code duplication and maintainability\n- Documentation accuracy\n' \
 			"$trigger_reasons"
 	else
-		printf '### CodeRabbit\n\n_Monitoring: %s issues (delta: %s), gate %s — no active review needed._\n' \
+		printf '\n_Monitoring: %s issues (delta: %s), gate %s — no active review needed._\n' \
 			"$sweep_total_issues" "$issue_delta" "$sweep_gate_status"
 	fi
 
