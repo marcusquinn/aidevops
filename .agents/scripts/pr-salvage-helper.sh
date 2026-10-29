@@ -25,6 +25,8 @@
 #   4. No replacement PR exists (open PR targeting the same issue)
 #   5. No closed recovery issue already documents completed salvage for the PR
 #   6. No trusted (OWNER/MEMBER) closeout comment names a merged replacement PR
+#   7. The PR's whole diff is not already present at one pinned default-branch
+#      commit (e.g. a superseded dependency bump; GH#35799)
 #
 # Author: AI DevOps Framework
 # Version: 1.0.0
@@ -224,6 +226,158 @@ has_merged_replacement_closeout() {
 }
 
 #######################################
+# Resolve the default branch to one pinned commit SHA (GH#35799).
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - default branch name
+# Output: 40-hex SHA, or nothing when it cannot be resolved
+#######################################
+get_default_branch_sha() {
+	local slug="$1"
+	local branch="$2"
+	local sha=""
+	sha=$(gh api "repos/${slug}/commits/${branch}" --jq '.sha' 2>/dev/null) || sha=""
+	if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+		echo "$sha"
+	fi
+	return 0
+}
+
+#######################################
+# Compare one file patch with the pinned file content (GH#35799).
+# Every significant added line must occur at least as often in the pinned
+# file as in the patch, and no significant removed line that the patch does
+# not re-add may remain. Lines shorter than 4 non-space characters (braces,
+# commas) are ignored because they match anywhere.
+# Arguments:
+#   $1 - pinned file content path
+#   $2 - patch path
+# Output: significant added-line count when applied
+# Returns: 0 when the patch is applied, 1 otherwise
+#######################################
+patch_applied_to_content() {
+	local content_file="$1"
+	local patch_file="$2"
+	[[ -s "$content_file" ]] || return 1
+	awk '
+		FNR == NR { have[$0]++; next }
+		{
+			sign = substr($0, 1, 1)
+			if (sign != "+" && sign != "-") next
+			line = substr($0, 2)
+			trimmed = line
+			gsub(/[[:space:]]/, "", trimmed)
+			if (length(trimmed) < 4) next
+			if (sign == "+") { want[line]++; added++ } else { removed[line] = 1 }
+		}
+		END {
+			for (l in want) if (have[l] < want[l]) exit 1
+			for (l in removed) if (!(l in want) && (l in have)) exit 1
+			print added + 0
+		}
+	' "$content_file" "$patch_file" 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
+# Check whether a closed PR's whole diff is already present at one pinned
+# default-branch commit (GH#35799). Evidence is the PR's own file patches
+# against pinned file content; bot or author prose is never trusted. Any API
+# failure, renamed/removed/binary file, missing patch, too many files or
+# zero significant added lines keeps the salvage candidate.
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - closed PR number
+#   $3 - pinned default-branch SHA (empty = unresolved)
+# Output: "true" or "false" to stdout
+#######################################
+pr_diff_already_applied() {
+	local slug="$1"
+	local pr_number="$2"
+	local pinned_sha="$3"
+	local applied="false" files_json="" total_added=""
+
+	if [[ "$pinned_sha" =~ ^[0-9a-f]{40}$ ]]; then
+		files_json=$(fetch_applicable_pr_files "$slug" "$pr_number")
+		if [[ -n "$files_json" ]] &&
+			total_added=$(count_applied_additions "$slug" "$pinned_sha" "$files_json") &&
+			[[ "$total_added" -gt 0 ]]; then
+			applied="true"
+		fi
+	fi
+	echo "$applied"
+	return 0
+}
+
+#######################################
+# Fetch a closed PR's file list when every file is comparable (GH#35799).
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - PR number
+# Output: compact JSON array, or nothing when any file is not comparable
+#######################################
+fetch_applicable_pr_files() {
+	local slug="$1"
+	local pr_number="$2"
+	local max_files="${PR_SALVAGE_MAX_APPLIED_FILES:-20}"
+	local files_json=""
+	[[ "$max_files" =~ ^[1-9][0-9]*$ ]] || max_files=20
+
+	files_json=$(gh api "repos/${slug}/pulls/${pr_number}/files?per_page=100" 2>/dev/null) || files_json=""
+	printf '%s' "$files_json" | jq -c --argjson max "$max_files" '
+		if type == "array" and length > 0 and length <= $max
+			and all(.[]; (.status == "modified" or .status == "added")
+				and ((.filename // "") | type == "string" and length > 0)
+				and ((.patch // "") | type == "string" and length > 0))
+		then . else empty end' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Count significant added lines across files whose patches are all present
+# at the pinned revision (GH#35799). Stops at the first unreadable or
+# unapplied file.
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - pinned default-branch SHA
+#   $3 - compact JSON array from fetch_applicable_pr_files
+# Output: total significant added lines
+# Returns: 0 when every file is applied, 1 otherwise
+#######################################
+count_applied_additions() {
+	local slug="$1"
+	local pinned_sha="$2"
+	local files_json="$3"
+	local work_dir="" total_added=0 index=0 count=0 path="" encoded="" added="" status=0
+
+	work_dir=$(mktemp -d "${TMPDIR:-/tmp}/pr-salvage-applied.XXXXXX") || return 1
+	count=$(printf '%s' "$files_json" | jq 'length')
+	while [[ "$index" -lt "$count" ]]; do
+		path=$(printf '%s' "$files_json" | jq -r --argjson i "$index" '.[$i].filename')
+		printf '%s' "$files_json" | jq -r --argjson i "$index" '.[$i].patch' >"${work_dir}/patch"
+		encoded=$(jq -rn --arg p "$path" '$p | split("/") | map(@uri) | join("/")')
+		if ! gh api -H "Accept: application/vnd.github.raw+json" \
+			"repos/${slug}/contents/${encoded}?ref=${pinned_sha}" >"${work_dir}/content" 2>/dev/null; then
+			status=1
+			break
+		fi
+		if ! added=$(patch_applied_to_content "${work_dir}/content" "${work_dir}/patch") ||
+			[[ ! "$added" =~ ^[0-9]+$ ]]; then
+			status=1
+			break
+		fi
+		total_added=$((total_added + added))
+		index=$((index + 1))
+	done
+	rm -f "${work_dir}/patch" "${work_dir}/content"
+	rmdir "$work_dir" 2>/dev/null || true
+
+	[[ "$status" -eq 0 ]] || return 1
+	echo "$total_added"
+	return 0
+}
+
+#######################################
 # Assess knowledge-loss risk level based on code size and branch existence
 # Arguments:
 #   $1 - branch_exists ("true" or "false")
@@ -388,6 +542,7 @@ build_salvage_entries() {
 	local salvageable="[]"
 	local completed_recovery_issues
 	local pr_json
+	local pinned_sha="" pinned_resolved="false"
 
 	completed_recovery_issues=$(fetch_completed_recovery_issues "$slug")
 	while IFS= read -r pr_json; do
@@ -411,6 +566,16 @@ build_salvage_entries() {
 
 		# GH#33680: skip PRs a trusted closeout preserved via a merged replacement.
 		if [[ "$(has_merged_replacement_closeout "$slug" "$pr_number")" == "true" ]]; then
+			continue
+		fi
+
+		# GH#35799: skip PRs whose whole diff is already on one pinned default-branch commit.
+		if [[ "$pinned_resolved" == "false" ]]; then
+			pinned_sha=$(get_default_branch_sha "$slug" "$(get_default_branch "$slug")")
+			pinned_resolved="true"
+		fi
+		if [[ "$(pr_diff_already_applied "$slug" "$pr_number" "$pinned_sha")" == "true" ]]; then
+			log_info "PR #${pr_number} diff already present at ${pinned_sha:0:12}; not salvageable"
 			continue
 		fi
 

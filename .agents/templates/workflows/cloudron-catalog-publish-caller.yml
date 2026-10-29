@@ -1,7 +1,8 @@
 name: Cloudron Catalog Publication
 
-# Managed opt-in caller. Keep publication disabled until checks, GHCR visibility,
-# branch policy and the explicitly passed repository-scoped PAT are reviewed.
+# Managed opt-in caller. Keep publication disabled until checks, GHCR visibility
+# and branch policy are reviewed. The job token publishes; the optional
+# CLOUDRON_RELEASE_PAT is needed only if main requires PRs or status checks.
 # Add package_checks below for package static checks and pinned-upstream patches.
 on:
   pull_request:

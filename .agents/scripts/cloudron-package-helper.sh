@@ -435,16 +435,22 @@ scaffold_catalog_workflow() {
 
 # Inspect names only; scaffolding remains usable before a remote is configured.
 catalog_publication_secret_warning() {
-	local target_root="$1" slug="" secrets="" origin=""
+	local target_root="$1" slug="" secrets="" origin="" pat_rc=0
 	if ! origin=$(git -C "$target_root" remote get-url origin 2>/dev/null) || [[ -z "$origin" ]] ||
 		! slug=$(gh repo view --repo "$origin" --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null) || [[ -z "$slug" ]]; then
-		log_warn "Publication blocked until CLOUDRON_RELEASE_PAT is verified: configure the package origin and run gh secret list --repo <owner/repo> --json name" >&2
+		log_warn "Publication credentials unverified: configure the package origin, then check main's branch rules (see cloudron-app-publishing-skill.md)" >&2
 		return 0
 	fi
-	if ! secrets=$(gh secret list --repo "$slug" --json name); then
+	# The job token publishes unless rules on main block its direct push.
+	cloudron_publication_pat_required "$slug" || pat_rc=$?
+	if [[ "$pat_rc" -eq 1 ]]; then
+		return 0
+	elif [[ "$pat_rc" -eq 2 ]]; then
+		log_warn "Publication credentials unverified: unable to read branch rules for main in $slug" >&2
+	elif ! secrets=$(gh secret list --repo "$slug" --json name); then
 		log_warn "Publication blocked: unable to verify CLOUDRON_RELEASE_PAT in $slug" >&2
 	elif ! jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null; then
-		log_warn "Publication blocked: $slug is missing CLOUDRON_RELEASE_PAT. Configure a fine-grained PAT restricted to this package repository, with Contents write access, using gh secret set CLOUDRON_RELEASE_PAT --repo $slug. See cloudron-app-publishing-skill.md. Never put the value in logs or chat." >&2
+		log_warn "Publication blocked: $slug is missing CLOUDRON_RELEASE_PAT, which its main branch rules (required PRs or checks) need for the catalog push. Relax those rules, or configure a fine-grained PAT with Contents write access using gh secret set CLOUDRON_RELEASE_PAT --repo $slug. See cloudron-app-publishing-skill.md. Never put the value in logs or chat." >&2
 	fi
 	return 0
 }

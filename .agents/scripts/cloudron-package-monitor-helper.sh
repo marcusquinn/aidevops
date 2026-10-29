@@ -738,13 +738,17 @@ _cloudron_monitor_compatibility_entry() {
 # Reuse the existing publication authority, never infer it from registry metadata.
 # A successful dispatch leaves a per-version receipt; failed dispatches may retry.
 _cloudron_monitor_publication_secret() {
-	local entry="$1" slug="" enabled="" secrets=""
+	local entry="$1" slug="" enabled="" secrets="" pat_rc=0
 	slug=$(jq -er '.slug | select(test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' <<<"$entry") || return 1
 	enabled=$(gh api "/repos/${slug}/actions/variables" --paginate --jq '.variables[] | select(.name == "CLOUDRON_PUBLICATION_ENABLED") | .value') || return 1
 	[[ "$enabled" == true ]] || return 0
+	# The job token publishes unless rules on main block its direct push.
+	cloudron_publication_pat_required "$slug" || pat_rc=$?
+	[[ "$pat_rc" -ne 1 ]] || return 0
+	[[ "$pat_rc" -ne 2 ]] || _cloudron_monitor_error "Could not read branch rules for main in $slug." || return 1
 	secrets=$(gh secret list --repo "$slug" --json name) || _cloudron_monitor_error "Could not verify CLOUDRON_RELEASE_PAT in $slug." || return 1
 	if ! jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null; then
-		printf 'FINDING %s: missing CLOUDRON_RELEASE_PAT; publication blocked. Configure a fine-grained PAT restricted to this package repository with Contents write access; see cloudron-app-publishing-skill.md.\n' "$slug"
+		printf 'FINDING %s: missing CLOUDRON_RELEASE_PAT, which main branch rules (required PRs or checks) need for the catalog push; publication blocked. Relax those rules or configure a fine-grained PAT with Contents write access; see cloudron-app-publishing-skill.md.\n' "$slug"
 		return 3
 	fi
 	return 0
