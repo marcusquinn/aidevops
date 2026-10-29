@@ -46,7 +46,8 @@ class EvidenceTests(unittest.TestCase):
         self.pin = None
         self.parent = "4" * 40
         self.comparison = {"status": "ahead", "total_commits": 1, "commits": [{"sha": self.parent}]}
-        self.docs_commit = {"files": [{"filename": "docs/metrics/activity.svg", "status": "modified"}]}
+        self.docs_commit = {"parents": [{"sha": self.source}],
+                            "files": [{"filename": "docs/metrics/activity.svg", "status": "modified"}]}
 
     def api_content(self, path, value):
         data = value.encode() if isinstance(value, str) else json.dumps(value).encode()
@@ -58,7 +59,7 @@ class EvidenceTests(unittest.TestCase):
             endpoint = args[1].removeprefix("repos/" + self.repo + "/")
             mapping = {
                 "commits/" + self.commit: self.commit_data,
-                "commits/" + self.parent: self.docs_commit,
+                "commits/" + self.parent + "?per_page=100": self.docs_commit,
                 "compare/" + self.source + "..." + self.parent: self.comparison,
                 "releases/tags/v2.0.12": self.release,
                 "contents/CloudronVersions.json?ref=" + self.source: self.api_content(MODULE.CATALOG, self.before),
@@ -302,8 +303,15 @@ class EvidenceTests(unittest.TestCase):
 
     def test_docs_only_rebase_rejects_truncated_files(self):
         self.rebase_catalog()
-        self.docs_commit["files"] *= 300
+        self.docs_commit["files"] *= 100
         with self.assertRaisesRegex(MODULE.EvidenceError, "truncated"):
+            self.verify()
+
+    def test_docs_only_rebase_rejects_partial_merge_diff(self):
+        self.rebase_catalog()
+        # First-parent files can be docs-only while another parent differs in code.
+        self.docs_commit["parents"].append({"sha": "5" * 40})
+        with self.assertRaisesRegex(MODULE.EvidenceError, "history must be linear"):
             self.verify()
 
     def test_docs_only_rebase_keeps_catalog_and_attestation_boundaries(self):

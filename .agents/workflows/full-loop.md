@@ -347,7 +347,8 @@ exact `Cloudron-Source` trailer on the tag commit and changes restricted to
 `README.md`, `docs/*`, `metrics/*`, `.github/metrics/*`, `.github/star-history/*`,
 `star-history.svg`, and `star-history-dark.svg`, matching the managed publisher.
 Every intervening commit is checked (including rename origins); incomplete API
-history (over 250 commits or 299 files per commit) fails closed.
+history (over 250 commits or 99 files per commit) fails closed. Intervening merges
+are rejected because REST commit diffs do not prove changes against every parent.
 It still requires exactly one appended published entry, unchanged historical
 entries and source manifest settings, and verified image/catalog attestations
 from the same successful invocation of the exact workflow at the merged source.

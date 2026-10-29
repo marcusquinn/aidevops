@@ -203,8 +203,12 @@ class CatalogEvidence:
         # the net diff, so reverted package changes cannot masquerade as docs-only.
         allowed = r"README\.md|docs/.*|metrics/.*|\.github/metrics/.*|\.github/star-history/.*|star-history\.svg|star-history-dark\.svg"
         for item in commits:
-            files = self.api("commits/" + item["sha"])["files"]
-            require(len(files) < 300, "docs-only commit file list may be truncated")
+            intervening = self.api("commits/" + item["sha"] + "?per_page=100")
+            # REST merge diffs cover only the first parent, unlike the publisher's
+            # --diff-merges=separate. Reject merges rather than accept partial proof.
+            require(len(intervening["parents"]) == 1, "docs-only history must be linear")
+            files = intervening["files"]
+            require(len(files) < 100, "docs-only commit file list may be truncated")
             require(all(re.fullmatch(allowed, file[key]) is not None
                         for file in files for key in ("filename", "previous_filename") if key in file),
                     "catalog parent differs from source outside the docs-only allowlist")
