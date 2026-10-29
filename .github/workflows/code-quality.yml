@@ -588,7 +588,18 @@ jobs:
           echo "::error::No pulse-merge suites found"
           exit 1
         fi
-        [[ "$failed" -eq 0 ]]
+        # Required suites must be deterministic. An early-exit pipe reader
+        # under pipefail (`printf | grep -q`) gave 209/300 false negatives on
+        # Linux in GH#35943. The repo-wide pipe gate judges only added lines,
+        # so judge every line here: suites joining this glob cannot carry
+        # legacy flakes into a required check.
+        mapfile -t shell_suites < <(grep -E '\.sh$' "${log_dir}/suites.txt")
+        pipe_rc=0
+        bash .agents/scripts/pipe-early-exit-check.sh --scan-files "${shell_suites[@]}" || pipe_rc=$?
+        if [[ "$pipe_rc" -ne 0 ]]; then
+          echo "::error title=Pulse-merge suite pipe safety::early-exit pipe readers under pipefail; see .agents/reference/shell-style-guide.md (Early-Exit Pipe Readers)"
+        fi
+        [[ "$failed" -eq 0 && "$pipe_rc" -eq 0 ]]
 
     - name: Bash Expansion Pattern Guard (GH#19966)
       run: |

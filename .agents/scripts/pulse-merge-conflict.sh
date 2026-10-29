@@ -1286,9 +1286,12 @@ _carry_forward_pr_diff() {
 	# backticks (markdown/docs changes). A fixed ``` fence would break rendering
 	# and corrupt the worker handoff. Scan for the longest backtick run in the
 	# diff and use one more than that.
+	# GH#35943: match the backtick with a bracket expression. GNU grep reads
+	# '\`' as its start-of-buffer anchor, so the escaped form never matched on
+	# Linux runners and every diff kept a 3-backtick fence.
 	local fence_len=3
 	local longest_run
-	longest_run=$(printf '%s' "$diff_content" | grep -oE '\`{3,}' | awk '{ if (length > max) max = length } END { print max+0 }') || longest_run=0
+	longest_run=$(printf '%s' "$diff_content" | grep -oE '[`]{3,}' | awk '{ if (length > max) max = length } END { print max+0 }') || longest_run=0
 	[[ "$longest_run" =~ ^[0-9]+$ ]] || longest_run=0
 	if [[ "$longest_run" -ge "$fence_len" ]]; then
 		fence_len=$((longest_run + 1))

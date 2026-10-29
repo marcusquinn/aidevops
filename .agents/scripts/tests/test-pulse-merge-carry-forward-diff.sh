@@ -158,19 +158,21 @@ test_happy_path_diff_appended() {
 	local edited
 	edited=$(cat "$GH_EDITED_BODY_FILE")
 
-	if ! printf '%s' "$edited" | grep -qF '<!-- t2118:prior-worker-diff:PR42 -->'; then
+	# Here-strings, not `printf | grep -q`: under pipefail the early-exit reader
+	# races the writer into SIGPIPE false negatives on Linux (GH#35943).
+	if ! grep -qF -- '<!-- t2118:prior-worker-diff:PR42 -->' <<<"$edited"; then
 		print_result "happy path: marker present in updated body" 1 \
 			"Marker not found. Body: ${edited}"
 		return 0
 	fi
 
-	if ! printf '%s' "$edited" | grep -qF 'Prior worker attempt (PR #42, closed CONFLICTING)'; then
+	if ! grep -qF -- 'Prior worker attempt (PR #42, closed CONFLICTING)' <<<"$edited"; then
 		print_result "happy path: section heading present" 1 \
 			"Section heading not found. Body: ${edited}"
 		return 0
 	fi
 
-	if ! printf '%s' "$edited" | grep -qF 'added line'; then
+	if ! grep -qF -- 'added line' <<<"$edited"; then
 		print_result "happy path: diff content in body" 1 \
 			"Diff content not found. Body: ${edited}"
 		return 0
@@ -248,7 +250,9 @@ test_size_cap_truncation() {
 	local edited
 	edited=$(cat "$GH_EDITED_BODY_FILE")
 
-	if ! printf '%s' "$edited" | grep -qF '... (truncated, full diff at PR #77)'; then
+	# Here-string: `printf | grep -qF` gave 209/300 SIGPIPE false negatives on
+	# this ~21 KB body under Linux pipefail (GH#35943).
+	if ! grep -qF -- '... (truncated, full diff at PR #77)' <<<"$edited"; then
 		print_result "size cap: truncation note present" 1 \
 			"Truncation note not found. Body length: ${#edited}"
 		return 0
@@ -311,14 +315,14 @@ test_origin_interactive_skip_static() {
 	fi
 
 	# The guard helper must contain the origin:interactive check itself
-	if ! printf '%s' "$guard_src" | grep -q 'origin:interactive'; then
+	if ! grep -q -- 'origin:interactive' <<<"$guard_src"; then
 		print_result "origin:interactive skip: guard contains label check" 1 \
 			"_close_conflicting_pr_check_ownership_guard missing origin:interactive check"
 		return 0
 	fi
 
 	# The not-landed helper must contain the carry-forward call
-	if ! printf '%s' "$not_landed_src" | grep -q '_carry_forward_pr_diff'; then
+	if ! grep -q -- '_carry_forward_pr_diff' <<<"$not_landed_src"; then
 		print_result "origin:interactive skip: not-landed helper contains carry-forward" 1 \
 			"_close_conflicting_pr_comment_not_landed missing _carry_forward_pr_diff call"
 		return 0
@@ -493,12 +497,13 @@ test_dynamic_fence_with_triple_backticks() {
 	edited=$(cat "$GH_EDITED_BODY_FILE")
 
 	# The fence in the output must be longer than the 3-backtick runs in the diff.
-	# So we expect at least ```` (4 backticks) as the fence.
-	if printf '%s' "$edited" | grep -qE '^\`{4,}diff$'; then
+	# So we expect at least ```` (4 backticks) as the fence. Bracketed backticks
+	# keep the pattern portable: GNU grep reads '\`' as an anchor (GH#35943).
+	if grep -qE -- '^[`]{4,}diff$' <<<"$edited"; then
 		print_result "dynamic fence: uses 4+ backtick fence for diff with triple backticks" 0
 	else
 		# Check if the old static fence is still there (regression)
-		if printf '%s' "$edited" | grep -qE '^\`{3}diff$'; then
+		if grep -qE -- '^[`]{3}diff$' <<<"$edited"; then
 			print_result "dynamic fence: uses 4+ backtick fence" 1 \
 				"Still using 3-backtick fence — dynamic fence not applied"
 		else
@@ -525,7 +530,7 @@ test_standard_fence_without_backticks() {
 	edited=$(cat "$GH_EDITED_BODY_FILE")
 
 	# Standard diff without backticks should use exactly 3-backtick fence
-	if printf '%s' "$edited" | grep -qE '^\`{3}diff$'; then
+	if grep -qE -- '^[`]{3}diff$' <<<"$edited"; then
 		print_result "standard fence: 3-backtick fence for plain diff" 0
 	else
 		print_result "standard fence: 3-backtick fence for plain diff" 1 \

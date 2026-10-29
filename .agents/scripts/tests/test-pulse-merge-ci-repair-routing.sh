@@ -1527,8 +1527,9 @@ test_ci_repair_uses_merge_required_contexts() {
 		if [[ "$scenario" == "failure" ]]; then
 			_dispatch_ci_fix_worker "100" "owner/repo" "42"
 			_dispatch_ci_fix_worker "100" "owner/repo" "42"
-			if [[ "$(rg -c 'run --role worker' "$GH_LOG")" == "1" ]] &&
-				! rg -q 'gh pr close' "$GH_LOG"; then
+			# grep, not rg: CI runners do not install ripgrep (GH#35943).
+			if [[ "$(grep -cF -- 'run --role worker' "$GH_LOG")" == "1" ]] &&
+				! grep -qF -- 'gh pr close' "$GH_LOG"; then
 				print_result "merge-required terminal failure has one in-place repair owner" 0
 			else
 				print_result "merge-required terminal failure has one in-place repair owner" 1
