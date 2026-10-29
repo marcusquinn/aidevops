@@ -384,6 +384,11 @@ printf 'gh %s\n' "$*" >>"$MUTATION_TRACE"
 if [[ "$1" == "repo" && "$2" == "view" ]]; then
 	printf 'example/ordering\n'
 fi
+# No open PRs, so the read-only linkage check passes and the helper reaches
+# runtime-evidence validation, the path this case exercises (t18796).
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+	printf '[]\n'
+fi
 exit 0
 EOF
 chmod +x "${MUTATION_BIN}/git" "${MUTATION_BIN}/gh"
@@ -391,10 +396,11 @@ chmod +x "${MUTATION_BIN}/git" "${MUTATION_BIN}/gh"
 mutation_head_before=$(/usr/bin/git -C "$MUTATION_REPO" rev-parse HEAD)
 if (cd "$MUTATION_REPO" && PATH="${MUTATION_BIN}:$PATH" MUTATION_TRACE="$MUTATION_TRACE" \
 	"${SCRIPT_DIR_TEST}/full-loop-helper.sh" commit-and-pr --issue 9 --message "fix: update runtime behavior" \
-	--summary "Adjust helper behavior" --testing "unit tests pass" >/dev/null 2>&1); then
+	--summary "Adjust helper behavior" --testing "unit tests pass" >"${MUTATION_TRACE}.err" 2>&1); then
 	printf 'FAIL commit-and-pr accepted invalid derived runtime evidence\n'
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-elif grep -Eq '^git (add|commit|rebase|reset|push)|^gh (pr|api .*POST)' "$MUTATION_TRACE" ||
+elif grep -Eq '^git (add|commit|rebase|reset|push)|^gh (pr (create|edit|merge|ready|comment|close|review)|api .*POST)' "$MUTATION_TRACE" ||
+	! grep -q 'requires runtime-verified evidence' "${MUTATION_TRACE}.err" ||
 	[[ "$(/usr/bin/git -C "$MUTATION_REPO" rev-parse HEAD)" != "$mutation_head_before" ]] ||
 	/usr/bin/git --git-dir="$MUTATION_REMOTE" show-ref --verify --quiet refs/heads/feature/risk-order; then
 	printf 'FAIL invalid derived evidence allowed local or remote mutations\n'
