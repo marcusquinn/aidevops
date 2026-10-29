@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -56,9 +57,13 @@ def verify(prefix: str) -> int:
         env["AWS" + name[len(prefix):]] = env[name]
     env["AWS_PAGER"] = ""
     env["AWS_EC2_METADATA_DISABLED"] = "true"
+    aws_cli = shutil.which("aws")
+    if aws_cli is None:
+        raise InventoryError("AWS CLI is not installed; AWS CLI v2 is required")
     try:
-        result = subprocess.run(
-            ["aws", "sts", "get-caller-identity", "--output", "json"],
+        # Fixed read-only argv, no shell or user-provided command; keys stay in env.
+        result = subprocess.run(  # nosec B603 -- locally resolved CLI, constant STS arguments
+            [str(Path(aws_cli).resolve()), "sts", "get-caller-identity", "--output", "json"],
             env=env, capture_output=True, text=True, timeout=30, check=False,
         )
     except FileNotFoundError:
