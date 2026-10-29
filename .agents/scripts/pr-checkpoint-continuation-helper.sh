@@ -638,13 +638,10 @@ _pcc_blocked_release_evidence() {
 	local comments="$1" runner="$2" key="$3"
 	local trusted_logins="${4:-[]}"
 	jq -er --arg runner "$runner" --arg key "$key" --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
-		# Keep the binding parenthesised: jq 1.8 (#3053) binds an unparenthesised
-		# term after `and` together with its left operand, so $line became a
-		# boolean on jq 1.8 runners and blocked checkpoints never got attention.
 		def blocked_by_runner:
 			unedited and login == $runner and
-			(([body_lines | select(is_release)] | first // "") as $line |
-			($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner);
+			([body_lines | select(is_release)] | first // "") as $line |
+			($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner;
 		def episode_start($c; $rid):
 			[$c[] | select(.id < $rid and any(body_lines; startswith("DISPATCH_CLAIM "))) | .id] | max // -1;
 		def episode_attempt($c; $rid):
@@ -809,10 +806,8 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and b
 <!-- ops:end -->"
 	# GH#35788: capability releases already support guarded automatic continuation
 	# (GH#34758). Do not send a runner prerequisite failure back to the brief owner.
-	# GH#35883: $comments holds `--paginate --slurp` pages; flatten them, or `.id`
-	# errors on a page array and the brief owner gets the approval text instead.
 	if jq -e --argjson id "$release_id" --arg line "$_PCC_CAPABILITY_RELEASE_LINE" \
-		'any(flatten[]; .id == $id and ((.body // "") | split("\n") | any(startswith($line))))' <<<"$comments" >/dev/null; then
+		'any(.[]; .id == $id and ((.body // "") | split("\n") | any(startswith($line))))' <<<"$comments" >/dev/null; then
 		body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} release=${release_id} -->
 BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} attempt=${attempt:-unknown}
