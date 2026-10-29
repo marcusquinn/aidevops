@@ -56,6 +56,9 @@ import {
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
 import { assertBrowserTaskTransport } from "./browser-task-transport.mjs";
+import { adviseDockerCreation, appendDockerAdvisory } from "./docker-owner-advisory.mjs";
+
+export { needsDockerOwnerAdvisory } from "./docker-owner-advisory.mjs";
 
 export { scrubCredentials } from "./quality-hooks-output-scrub.mjs";
 
@@ -239,6 +242,7 @@ function enforceBashToolSafety(ctx, log, input, output, sessionId) {
     model: signatureModel,
     useProcessModelFallback: false,
   });
+  adviseDockerCreation(log, input, bashArgs.command || "", sessionId);
 }
 
 // GH#33969: bounded-operation starts get the same worker command policy as
@@ -418,6 +422,7 @@ async function handleToolAfter(ctx, log, scriptsDir, input, output) {
   }
 
   const intentRecord = consumeIntentRecord(input.callID || "");
+  appendDockerAdvisory(input, output);
   // t2184: durationMs is null when the callID wasn't paired (for example,
   // a hook race on plugin reload); recordToolCall emits SQL NULL.
   recordToolCall(input, output, intentRecord?.intent, durationMs, intentRecord?.source);

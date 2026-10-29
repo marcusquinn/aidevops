@@ -57,6 +57,8 @@ sub="${1:-}"
 case "${DOCKER_STUB_MODE:-up}" in
 down) printf 'Cannot connect to the Docker daemon\n' >&2; exit 1 ;;
 hang) sleep 10; exit 1 ;;
+report-hang) [[ "$sub" == info ]] || { sleep 10; exit 1; } ;;
+report-fail) [[ "$sub" != ps ]] || exit 1 ;;
 esac
 
 join_us() {
@@ -194,6 +196,7 @@ info) printf '27.0.0\n' ;;
 ps) do_ps "$@" ;;
 rm)
 	[[ "${1:-}" == -f ]] && shift
+	[[ "${1:-}" == -v ]] && shift
 	has_row "${S}/containers" "$1" || { printf 'Error: No such container: %s\n' "$1" >&2; exit 1; }
 	delete_row "${S}/containers" "$1"
 	printf 'rm %s\n' "$1" >>"${S}/actions.log"
@@ -201,7 +204,7 @@ rm)
 inspect) do_inspect "$@" ;;
 network) do_network "$@" ;;
 volume) do_volume "$@" ;;
-system) join_us Images 3 1 1.2GB "600MB (50%)"; join_us "Local Volumes" 4 1 2GB "1.5GB (75%)" ;;
+system) join_us Images 3 1 1.2GB "600MB (50%)"; join_us "Local Volumes" 4 1 2GB "${DOCKER_STUB_RECLAIMABLE:-1.5GB} (75%)" ;;
 *) exit 1 ;;
 esac
 exit 0
@@ -413,12 +416,63 @@ test_pulse_step() {
 		AIDEVOPS_DOCKER_REAP=1 cleanup_stale_opencode || exit 1
 	) || rc=1
 	[[ "$(sed -n 1p "${STATE}/pulse-args.log")" == "reap --max-seconds 30" ]] || rc=1
-	[[ "$(sed -n 2p "${STATE}/pulse-args.log")" == "reap --apply --max-seconds 30" ]] || rc=1
+	[[ "$(sed -n 2p "${STATE}/pulse-args.log")" == "report --max-seconds 30" ]] || rc=1
+	[[ "$(sed -n 3p "${STATE}/pulse-args.log")" == "reap --apply --max-seconds 30" ]] || rc=1
+	[[ "$(wc -l <"${STATE}/pulse-args.log" | tr -d ' ')" == 3 ]] || rc=1
 	has_id containers c1 && rc=1
 	has_id containers c2 || rc=1
+	grep -q '^rm -f -v c1$' "${STATE}/calls.log" || rc=1
+	if grep -q 'Docker pressure:' "${TEST_ROOT}/pulse.log"; then rc=1; fi
 	grep -q 'reap mode=dry-run' "${TEST_ROOT}/pulse.log" || rc=1
 	print_result "pulse step is report-only unless AIDEVOPS_DOCKER_REAP=1 and never touches unlabelled" "$rc" \
 		"$(cat "${STATE}/pulse-args.log" 2>/dev/null)"
+	return 0
+}
+
+test_pulse_pressure() {
+	local rc=0
+	write_fixture
+	(
+		export PATH="${STUB_BIN}:${PATH}" DOCKER_STUB_STATE="$STATE"
+		export HOME="${TEST_ROOT}/pressure-home" LOGFILE="${TEST_ROOT}/pressure.log"
+		export DOCKER_STUB_RECLAIMABLE=21GB
+		# shellcheck source=../shared-constants.sh
+		source "${AGENTS_SCRIPTS_DIR}/shared-constants.sh"
+		# shellcheck source=../pulse-cleanup.sh
+		source "${AGENTS_SCRIPTS_DIR}/pulse-cleanup.sh"
+		_pulse_report_docker_pressure "$HELPER" 30
+		_pulse_report_docker_pressure "$HELPER" 30
+	) || rc=1
+	[[ "$(wc -l <"${TEST_ROOT}/pressure.log" | tr -d ' ')" == 1 ]] || rc=1
+	grep -q 'unlabelled containers=2 networks=1 volumes=1 stopped_over_72h=1; reclaimable volumes=21GB' "${TEST_ROOT}/pressure.log" || rc=1
+	[[ ! -s "${STATE}/actions.log" ]] || rc=1
+	print_result "pulse reports volume pressure once daily without removing resources" "$rc"
+	return 0
+}
+
+test_pulse_pressure_retry() {
+	local rc=0
+	write_fixture
+	(
+		export PATH="${STUB_BIN}:${PATH}" DOCKER_STUB_STATE="$STATE"
+		export HOME="${TEST_ROOT}/retry-home" LOGFILE="${TEST_ROOT}/retry.log"
+		# shellcheck source=../shared-constants.sh
+		source "${AGENTS_SCRIPTS_DIR}/shared-constants.sh"
+		# shellcheck source=../pulse-cleanup.sh
+		source "${AGENTS_SCRIPTS_DIR}/pulse-cleanup.sh"
+		local mode day claim start
+		day=$(date -u +%F)
+		claim="${HOME}/.aidevops/.agent-workspace/tmp/docker-pressure/${day}"
+		for mode in down report-fail report-hang; do
+			start=$SECONDS
+			DOCKER_STUB_MODE="$mode" _pulse_report_docker_pressure "$HELPER" 1
+			[[ ! -d "$claim" && $((SECONDS - start)) -le 4 ]] || exit 1
+		done
+		DOCKER_STUB_MODE=up _pulse_report_docker_pressure "$HELPER" 0
+		[[ -d "$claim" ]] || exit 1
+		[[ "$(wc -l <"$LOGFILE" | tr -d ' ')" == 3 ]] || exit 1
+	) || rc=1
+	print_result "pulse retries unavailable/incomplete/timed-out reports, bounds first Docker call, and supports zero budget" "$rc"
 	return 0
 }
 
@@ -464,6 +518,8 @@ main() {
 	test_worktree_hook
 	test_pulse_step
 	test_report
+	test_pulse_pressure
+	test_pulse_pressure_retry
 	test_daemon_unavailable
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

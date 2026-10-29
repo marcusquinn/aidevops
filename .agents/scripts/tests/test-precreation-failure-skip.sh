@@ -429,6 +429,87 @@ else
 fi
 
 # =============================================================================
+# Test 2c: rejected managed enrollment must not register ownership (GH#35828)
+# =============================================================================
+# Real creation/enrollment and registry in a disposable repository; only the
+# post-enrollment classification is fault-injected. Keep detached stubs outside.
+if (
+	unset -f git register_worktree
+	export HOME="$TMP/managed-home" WORKTREE_REGISTRY_DIR="$TMP/managed-registry"
+	export WORKTREE_REGISTRY_DB="$WORKTREE_REGISTRY_DIR/registry.db"
+	export AIDEVOPS_WORKTREE_BASE_DIR="$TMP/managed-worktrees"
+	export AIDEVOPS_WORKTREE_TRASH_ROOT="$TMP/managed-recovery"
+	export AIDEVOPS_CLEANUP_LOG="$TMP/managed-cleanup.log"
+	export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+	export GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+	mkdir -p "$HOME" "$WORKTREE_REGISTRY_DIR" "$AIDEVOPS_WORKTREE_BASE_DIR"
+	MANAGED_REPO="$TMP/managed-repo"
+	command -p git init -q "$MANAGED_REPO" || exit 1
+	command -p git -C "$MANAGED_REPO" commit -q --allow-empty -m fixture || exit 1
+	_DLW_SEED_OID=$(command -p git -C "$MANAGED_REPO" rev-parse HEAD)
+	unset _SHARED_WORKTREE_REGISTRY_LOADED
+	# shellcheck source=../shared-worktree-registry.sh
+	source "$SCRIPTS_DIR/shared-worktree-registry.sh"
+	_init_registry_db || exit 1
+	SCRIPT_DIR="$SCRIPTS_DIR"
+	repo_slug="owner/repo"
+	sqlite3 "$WORKTREE_REGISTRY_DB" "INSERT INTO worktree_owners (worktree_path, task_id, owner_session) VALUES ('$MANAGED_REPO', 'existing', 'existing');" || exit 1
+	existing_row=$(sqlite3 "$WORKTREE_REGISTRY_DB" 'SELECT * FROM worktree_owners;')
+	_dlw_select_issue_worktree() { return 1; }
+	_dlw_managed_creation_env() {
+		_DLW_MANAGED_CREATE_MODE="managed"
+		_DLW_MANAGED_CREATE_ENV=(AIDEVOPS_WORKTREE_MANAGER=pulse-cgroup-v1
+			"AIDEVOPS_LAUNCH_TASK=$_DLW_LAUNCH_TASK" "AIDEVOPS_LAUNCH_REPO=$repo_slug")
+		return 0
+	}
+	_dlw_classify_reuse_candidate() {
+		local wt_path="$1"
+		local task="$2" repo="$3" generation=""
+		# Prove the real helper registered AND enrolled before injecting refusal.
+		generation=$(python3 "$SCRIPTS_DIR/worktree-managed-lifetime.py" match "$wt_path" "$task" "$repo") || return 1
+		[[ -n "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT owner_session FROM worktree_owners WHERE worktree_path='$wt_path';")" ]] || return 1
+		if [[ "$STUB_MANAGED_CLASS" == replacement ]]; then
+			register_worktree "$wt_path" "$_DLW_WORKTREE_BRANCH" --task other --session replacement --owner-pid "$$" || return 1
+			printf 'other-task\n'
+			return 0
+		fi
+		[[ "$STUB_MANAGED_CLASS" != "unavailable" ]] || return 1
+		if [[ "$STUB_MANAGED_CLASS" == managed ]]; then
+			printf 'managed %s\n' "${generation%% *}"
+		else
+			printf '%s\n' "$STUB_MANAGED_CLASS"
+		fi
+		return 0
+	}
+	managed_issue=358280
+	for STUB_MANAGED_CLASS in legacy other-task unavailable; do
+		managed_issue=$((managed_issue + 1))
+		_dlw_precreate_worktree "$managed_issue" "$MANAGED_REPO"
+		rc=$?
+		rows=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT count(*) FROM worktree_owners WHERE worktree_path='$_DLW_WORKTREE_PATH';")
+		if [[ "$rc" -ne 1 || "$rows" != 0 || "$_DLW_MANAGED_WORKTREE" -ne 0 || ! -d "$_DLW_WORKTREE_PATH" ]]; then
+			printf 'Rejected class %s: rc=%s ownership rows=%s\n' "$STUB_MANAGED_CLASS" "$rc" "$rows"
+			exit 1
+		fi
+	done
+	STUB_MANAGED_CLASS=replacement
+	_dlw_precreate_worktree 358284 "$MANAGED_REPO"
+	[[ "$?" -eq 1 ]] || exit 1
+	[[ "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT task_id || '|' || owner_session FROM worktree_owners WHERE worktree_path='$_DLW_WORKTREE_PATH';")" == 'other|replacement' ]] || exit 1
+	[[ "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT * FROM worktree_owners WHERE worktree_path='$MANAGED_REPO';")" == "$existing_row" ]] || exit 1
+	STUB_MANAGED_CLASS=managed
+	_dlw_precreate_worktree 358285 "$MANAGED_REPO" || exit 1
+	[[ "$_DLW_MANAGED_WORKTREE" -eq 1 && -n "$_DLW_WORKTREE_GENERATION" ]] || exit 1
+	matched_generation=$(python3 "$SCRIPTS_DIR/worktree-managed-lifetime.py" match "$_DLW_WORKTREE_PATH" 358285 "$repo_slug") || exit 1
+	[[ "$_DLW_WORKTREE_GENERATION" == "${matched_generation%% *}" ]] || exit 1
+	[[ "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT task_id || '|' || owner_session FROM worktree_owners WHERE worktree_path='$_DLW_WORKTREE_PATH';")" == '358285|dispatch-precreate-358285' ]] || exit 1
+); then
+	pass "real managed precreation compensates rejected ownership and preserves existing owners"
+else
+	fail "real managed precreation compensates rejected ownership and preserves existing owners"
+fi
+
+# =============================================================================
 # Test 3: _dlw_precreate_worktree marks existing issue worktree reuse
 # =============================================================================
 export STUB_WT_MODE="fail"
