@@ -26,6 +26,28 @@ async function lookupSession(client, sessionID) {
   }
 }
 
+function annotateMessage(message) {
+  const created = message?.info?.time?.created;
+  if (message?.info?.role !== "user" || !Number.isFinite(created) || !Array.isArray(message.parts)) return;
+  // Compaction anchors are host-generated, not interactive user turns.
+  if (message.parts.some((part) => part?.type === "compaction")) return;
+  const first = message.parts[0];
+  if (first?.type === "text" && first.synthetic === true && ANNOTATION_RE.test(first.text ?? "")) return;
+  const date = new Date(created);
+  if (!Number.isFinite(date.getTime())) return;
+  const text = `${PREFIX}${date.toISOString().slice(0, 16)}Z]`;
+  message.parts = [{ type: "text", text, synthetic: true }, ...message.parts];
+}
+
+/** Keep annotation failures from blocking the composed message transform. */
+export async function annotateTurnTimesSafely(input, output, options, qualityLog) {
+  try {
+    await annotateTurnTimes(input, output, options);
+  } catch (err) {
+    qualityLog("WARN", `[turn-time-annotation] Unexpected error: ${err?.message ?? err}`);
+  }
+}
+
 /** Annotate only verified interactive root requests; never change stored history.
  * The transform input is empty on v1, so recover the session from message info.
  * Use message creation time, not wall-clock time, to preserve prompt caching.
@@ -40,16 +62,5 @@ export async function annotateTurnTimes(input, output, { client, isHeadless = ()
   // Missing metadata is not proof of a root session: skip rather than annotate children.
   if (session?.id !== sessionID || session.parentID) return;
 
-  for (const message of messages) {
-    const created = message?.info?.time?.created;
-    if (message?.info?.role !== "user" || !Number.isFinite(created) || !Array.isArray(message.parts)) continue;
-    // Compaction anchors are host-generated, not interactive user turns.
-    if (message.parts.some((part) => part?.type === "compaction")) continue;
-    const first = message.parts[0];
-    if (first?.type === "text" && first.synthetic === true && ANNOTATION_RE.test(first.text ?? "")) continue;
-    const date = new Date(created);
-    if (!Number.isFinite(date.getTime())) continue;
-    const text = `${PREFIX}${date.toISOString().slice(0, 16)}Z]`;
-    message.parts = [{ type: "text", text, synthetic: true }, ...message.parts];
-  }
+  for (const message of messages) annotateMessage(message);
 }

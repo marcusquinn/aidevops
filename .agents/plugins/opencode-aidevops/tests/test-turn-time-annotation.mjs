@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { annotateTurnTimes } from "../turn-time-annotation.mjs";
+import { annotateTurnTimes, annotateTurnTimesSafely } from "../turn-time-annotation.mjs";
 
 const created = Date.parse("2026-10-29T02:37:59.123Z");
 const user = (time = created) => ({ info: { role: "user", sessionID: "root", time: { created: time } }, parts: [{ type: "text", text: "hello" }] });
@@ -71,8 +71,12 @@ test("headless, opt-out, child, and unverified sessions are unchanged", async ()
 
 test("plugin catches annotation failures before continuing later transforms", async () => {
   const output = { messages: [user()] };
-  await assert.rejects(annotateTurnTimes({}, output, { client: { session: { get: async () => { throw new Error("unavailable"); } } } }), /unavailable/);
+  const options = { client: { session: { get: async () => { throw new Error("unavailable"); } } } };
+  await assert.rejects(annotateTurnTimes({}, output, options), /unavailable/);
+  const logs = [];
+  await annotateTurnTimesSafely({}, output, options, (...args) => logs.push(args));
+  assert.deepEqual(logs, [["WARN", "[turn-time-annotation] Unexpected error: unavailable"]]);
   assert.deepEqual(output.messages, [user()]);
   const source = readFileSync(new URL("../index.mjs", import.meta.url), "utf8");
-  assert.match(source, /await compactionInputReplay\.inject\(input, output\);\s+try \{\s+await annotateTurnTimes\(input, output, \{ client, isHeadless \}\);\s+\} catch \(err\) \{\s+qualityLog\("WARN", `\[turn-time-annotation\][^\n]+\n\s+\}/);
+  assert.match(source, /await compactionInputReplay\.inject\(input, output\);\s+await annotateTurnTimesSafely\(input, output, \{ client, isHeadless \}, qualityLog\);/);
 });
