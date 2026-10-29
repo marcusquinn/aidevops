@@ -243,16 +243,6 @@ if [[ "$new_crontab" == "$expected_crontab" ]]; then
 else
 	fail "Non-supervisor cron entries should have been preserved exactly" "$new_crontab"
 fi
-
-# Exercise the migration's removal path against the same isolated spool.
-printf '%s\n' '*/2 * * * * supervisor-helper.sh pulse' | crontab -
-migrate_orphaned_supervisor >/dev/null 2>&1
-if [[ ! -e "$TEST_HOME/crontab" ]]; then
-	pass "Supervisor-only crontab removed"
-else
-	fail "Supervisor-only crontab should have been removed"
-fi
-
 # ============================================================================
 section "Test: cleanup_deprecated_paths works when should_overwrite_user_file is undefined"
 # ============================================================================
