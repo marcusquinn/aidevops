@@ -84,6 +84,7 @@ _parse_commit_and_pr_args() {
 	local value=""
 	while [[ "$index" -lt "${#args[@]}" ]]; do
 		arg="${args[$index]}"
+		pr_metadata_overrides="${pr_metadata_overrides:-} ${arg#--}"
 		case "$arg" in
 		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason)
 			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
@@ -108,27 +109,22 @@ _parse_commit_and_pr_args() {
 			index=$((index + 2))
 			;;
 		--summary)
-			pr_metadata_overrides="${pr_metadata_overrides:-} summary"
 			summary_what="$value"
 			index=$((index + 2))
 			;;
 		--testing)
-			pr_metadata_overrides="${pr_metadata_overrides:-} testing"
 			summary_testing="$value"
 			index=$((index + 2))
 			;;
 		--risk-level)
-			pr_metadata_overrides="${pr_metadata_overrides:-} risk"
 			runtime_risk="$value"
 			index=$((index + 2))
 			;;
 		--testing-level)
-			pr_metadata_overrides="${pr_metadata_overrides:-} testing-level"
 			testing_level="$value"
 			index=$((index + 2))
 			;;
 		--decisions)
-			pr_metadata_overrides="${pr_metadata_overrides:-} decisions"
 			summary_decisions="$value"
 			index=$((index + 2))
 			;;
@@ -1603,7 +1599,7 @@ print(json.dumps({'risk': risk[1] if risk else '',
                   'evidence': verification[2] if verification else ''}))
 PY
 	) || return 1
-	[[ "$override_flags" == *" risk "* ]] || runtime_risk=$(printf '%s' "$metadata" | jq -r '.risk')
+	[[ "$override_flags" == *" risk-level "* ]] || runtime_risk=$(printf '%s' "$metadata" | jq -r '.risk')
 	[[ "$override_flags" == *" testing-level "* ]] || testing_level=$(printf '%s' "$metadata" | jq -r '.level')
 	[[ "$override_flags" == *" testing "* ]] || summary_testing=$(printf '%s' "$metadata" | jq -r '.evidence')
 	return 0
@@ -1639,7 +1635,7 @@ if old and new:
     # The runtime section can also contain the closing reference and signature:
     # replace only the requested metadata lines, never that trailing content.
     text = old[0]
-    for label, flags in [('Risk level', {'risk'}), ('Verification', {'testing', 'testing-level'})]:
+    for label, flags in [('Risk level', {'risk-level'}), ('Verification', {'testing', 'testing-level'})]:
         pattern = r'^- \*\*' + label + r':\*\* .*?$'
         replacement = re.search(pattern, new[0], re.M)
         if overrides & flags and replacement:

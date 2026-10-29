@@ -953,7 +953,7 @@ else
 	fail "explicit summary: replaces only Summary"
 fi
 
-pr_metadata_overrides=" decisions risk testing-level testing"
+pr_metadata_overrides=" decisions risk-level testing-level testing"
 _reconcile_recovered_pr_metadata "999" "owner/repo" "updated title" "$generated_body"
 expected_body="${expected_body/Keep compatibility/New decision}"
 expected_body="${expected_body/Medium/Low}"
