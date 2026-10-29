@@ -182,7 +182,9 @@ _pmp_hold_protected_release_pr() {
 	fi
 	# aidevops:trust-boundary — revoke native auto-merge before deferring so a
 	# previously armed request cannot merge a drifted release between passes.
-	_stop_external_native_auto_merge "$pr_number" "$repo_slug" "$hold_reason" || return 1
+	local stop_rc=0
+	_stop_external_native_auto_merge "$pr_number" "$repo_slug" "$hold_reason" || stop_rc=$?
+	[[ "$stop_rc" -eq 0 || "$stop_rc" -eq 2 ]] || return 1
 	return 0
 }
 

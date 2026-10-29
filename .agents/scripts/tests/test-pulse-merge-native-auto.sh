@@ -838,6 +838,21 @@ test_protected_release_native_auto_is_held() {
 	fi
 	: >"$GH_LOG"
 	result=0
+	FAIL_DISABLE_AUTO=1 _pmp_hold_protected_release_pr 903 owner/repo chore/release-v1.2.3-provenance drifted || result=$?
+	if [[ "$result" -eq 0 ]] && grep -q -- '--undo' "$GH_LOG"; then
+		print_result "Protected release draft fallback is a successful safe hold" 0
+	else
+		print_result "Protected release draft fallback is a successful safe hold" 1 "rc=${result}"
+	fi
+	result=0
+	FAIL_DISABLE_AUTO=1 FAIL_DRAFT_HOLD=1 _pmp_hold_protected_release_pr 903 owner/repo chore/release-v1.2.3-provenance drifted || result=$?
+	if [[ "$result" -eq 1 ]]; then
+		print_result "Protected release fails closed when both hold transports fail" 0
+	else
+		print_result "Protected release fails closed when both hold transports fail" 1 "rc=${result}"
+	fi
+	: >"$GH_LOG"
+	result=0
 	DRY_RUN=1 _set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
 	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG"; then
 		print_result "Protected release dry-run performs no GitHub writes" 0
