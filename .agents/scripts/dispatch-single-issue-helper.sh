@@ -93,6 +93,9 @@ _DSI_PRELAUNCH_PREPARATION_SECONDS=600
 _DSI_LEASE_FIELD="lease_token"
 _DSI_LEASE_ID=""
 _DSI_LEASE_DEVICE=""
+# One canonical attempt per manual dispatch, shared by the prelaunch lease and
+# the worker's ready/terminal leases (GH#36005; mirrors _dlw_begin_prelaunch).
+_DSI_ATTEMPT_ID=""
 _DSI_CLAIM_WON=0
 _DSI_RESUME_MODE=0
 # 1 when the worktree is an enrolled managed generation (GH#35295).
@@ -755,11 +758,12 @@ _dsi_launch_worker() {
 	# Manual dispatch may inherit interactive/non-headless markers. The worker
 	# must carry its own role so the exact wrapper ownership proof is accepted.
 	local -a cmd=(
-		env
+		env -u AIDEVOPS_ATTEMPT_STARTED_AT
 		HEADLESS=1
 		FULL_LOOP_HEADLESS=true
 		AIDEVOPS_SESSION_ORIGIN=worker
 		AIDEVOPS_HEADLESS=true
+		AIDEVOPS_ATTEMPT_ID="$_DSI_ATTEMPT_ID"
 		WORKER_ISSUE_NUMBER="$issue_number"
 		WORKER_GITHUB_LOGIN="$self_login"
 		WORKER_WORKTREE_PATH="$worktree_path"
@@ -1319,6 +1323,16 @@ _dsi_hydration_wait_seconds() {
 }
 
 #######################################
+# Allocate this dispatch's canonical attempt ID once. Never reuse an inherited
+# AIDEVOPS_ATTEMPT_ID: that belongs to the calling session, not this worker.
+# Returns: 0 always
+#######################################
+_dsi_ensure_attempt_id() {
+	[[ -n "$_DSI_ATTEMPT_ID" ]] || _DSI_ATTEMPT_ID=$(aidevops_generate_execution_id "attempt")
+	return 0
+}
+
+#######################################
 # Extend the claim's prelaunch lease to cover manual preparation (worktree,
 # credentials, conversation lock, canary) before the worker renews it and
 # publishes phase=ready. The claim helper never shortens an existing lease.
@@ -1335,7 +1349,8 @@ _dsi_renew_prelaunch_lease() {
 	if ! [[ "$lease_ttl" =~ ^[0-9]+$ ]]; then
 		lease_ttl=$(($(_dsi_ready_timeout_seconds) + _DSI_PRELAUNCH_PREPARATION_SECONDS))
 	fi
-	renew_stderr=$(AIDEVOPS_DEVICE_ID="$_DSI_LEASE_DEVICE" \
+	_dsi_ensure_attempt_id
+	renew_stderr=$(AIDEVOPS_DEVICE_ID="$_DSI_LEASE_DEVICE" AIDEVOPS_ATTEMPT_ID="$_DSI_ATTEMPT_ID" \
 		"$_DSI_CLAIM_HELPER" transition prelaunch "$issue_number" "$repo_slug" \
 		"$_DSI_LEASE_ID" "issue-${issue_number}" "$lease_ttl" 2>&1 >/dev/null) || renew_rc=$?
 	if [[ "$renew_rc" -ne 0 ]]; then
@@ -1829,6 +1844,9 @@ _dsi_launch_and_report() {
 	local prompt worker_log
 	prompt=$(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")
 	worker_log="${_DSI_LOG_DIR}/manual-dispatch-${issue_number}-$(date +%Y%m%d-%H%M%S).log"
+	# GH#36005: the worker argv carries this attempt (and drops any inherited
+	# start marker) because a managed systemd unit does not inherit our env.
+	_dsi_ensure_attempt_id
 	local launch_pid
 	launch_pid=$(_dsi_launch_worker \
 		"$session_key" "$_DSI_WORKTREE_PATH" "$_DSI_ISSUE_TITLE" \

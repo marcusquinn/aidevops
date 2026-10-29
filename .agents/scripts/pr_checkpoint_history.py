@@ -107,11 +107,52 @@ def close_blocked_before_ready(state, comment, f):
     return valid
 
 
+STALE_RESET = "stale_assignment_reset"
+STALE_RESET_BEFORE_READY = "stale_reset_before_ready"
+
+
+def close_stale_reset_before_ready(state, comment, f):
+    """GH#36005: the claim owner's own stale-recovery release closes a never-ready claim.
+
+    #aidevops:trust-boundary — every close_blocked_before_ready guard applies
+    (trusted unedited comment by the claim's runner, nothing else in between,
+    identity fields bound to the claim, every expiry known and elapsed, no ready
+    lease, launch or prior release). Stale-recovery lines always carry the runner
+    device, so the device is mandatory and must equal the claim's device. The
+    episode is an explicit successor the approval must acknowledge; it grants
+    nothing by itself.
+    """
+    if not state.get("device") or f.get("device") != state["device"]:
+        return False
+    if not close_blocked_before_ready(state, comment, f):
+        return False
+    state["outcome"] = STALE_RESET_BEFORE_READY
+    return True
+
+
+def lease_attempt_accepted(state, f):
+    """Bind every lease to one attempt, allowing one rebind at the first ready lease.
+
+    #aidevops:trust-boundary — GH#36005: a manual-dispatch worker launched through
+    a managed unit could not inherit the dispatcher's attempt ID, so its ready
+    lease names a fresh attempt. The rebind is accepted only for the first ready
+    lease, before any launch announcement or release, from the claim's device
+    (lease token and session are checked by the caller). Every later lease,
+    launch and release must match the rebound attempt.
+    """
+    attempt = f.get("attempt_id", "")
+    if not attempt.startswith("attempt:"):
+        return False
+    if attempt == state.get("attempt", attempt):
+        return True
+    return all((f.get("phase") == "ready", not state.get("ready_id"),
+                not state.get("launched"), not state.get("release_id"),
+                bool(state.get("device")), f.get("device") == state.get("device")))
+
+
 def advance_lease(state, comment, line, f):
     if not all((line.startswith("DISPATCH_LEASE "), f.get("lease_token") == state["token"],
-                f.get("session") == state["session"],
-                f.get("attempt_id", "").startswith("attempt:"),
-                f.get("attempt_id") == state.get("attempt", f.get("attempt_id")))):
+                f.get("session") == state["session"], lease_attempt_accepted(state, f))):
         return False
     state["attempt"] = f["attempt_id"]
     if state.get("release_id"):
@@ -134,11 +175,13 @@ def advance_release(state, comment, line, f):
         return acknowledge_unbound_release(state, comment, line, f)
     if f.get("reason") == "blocked" and not state.get("ready_id"):
         return close_blocked_before_ready(state, comment, f)
+    if f.get("reason") == STALE_RESET and not state.get("ready_id"):
+        return close_stale_reset_before_ready(state, comment, f)
     return close_release(state, comment, f)
 
 
 def advance_closed_claim(state, comment, line, f):
-    """Require ready, release and terminal, or an exact never-ready claim-only or blocked release."""
+    """Require ready, release and terminal, or an exact never-ready claim-only, blocked or stale-reset release."""
     if comment["user"]["login"] != state["runner"]:
         return False
     if state.get("unbound_release_ids"):
@@ -160,6 +203,7 @@ def advance_history(state, comment, line, f, seen):
         started = closed_claim(comment, line, f, seen)
         if started is not None:
             started["expiries"] = [f.get("expires_at", "")]
+            started["device"] = f.get("device", "")
         return started
     return state if advance_closed_claim(state, comment, line, f) else None
 
@@ -167,7 +211,7 @@ def advance_history(state, comment, line, f, seen):
 def completed_episode(state):
     if state.get("release_id") and not state.get("ready_id"):
         # Only the never-ready closers record a release without a ready lease.
-        if state.get("outcome") not in {CLAIM_ONLY, BLOCKED_BEFORE_READY}:
+        if state.get("outcome") not in {CLAIM_ONLY, BLOCKED_BEFORE_READY, STALE_RESET_BEFORE_READY}:
             raise ValueError("never-ready historical release has no recognised outcome")
         if not state["claim_id"] < state["release_id"] or any(
                 not state["claim_id"] < diagnostic < state["release_id"]

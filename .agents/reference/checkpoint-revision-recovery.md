@@ -141,6 +141,24 @@ release closes a never-ready claim, the record names the earlier blocked
 checkpoint release and attempt it follows; if none exists it offers no approval
 template and says why, instead of a line `approval-template` would refuse.
 
+### Claims reset as stale before ready, and ready-lease attempt rebinds (GH#36005)
+
+The claim owner's own stale recovery can release a never-ready claim with
+`CLAIM_RELEASED reason=stale_assignment_reset … device=…`. History closes it as
+`outcome: stale_reset_before_ready` under every `blocked_before_ready` guard. The
+line must also carry the claim's device, and the claim must record one.
+
+Manual dispatch through a managed unit could not pass the dispatcher's attempt
+ID to the worker, so the worker's ready lease names a fresh `attempt:` ID.
+History accepts exactly one such rebind, at the first ready lease. It must come
+before any `Dispatching worker` announcement or release, on the claim's lease
+token, session and device. The episode is reported under the rebound attempt, and
+every later lease, launch and release must match it. A second rebind, a rebind
+after launch, a foreign device or a terminal lease naming the prelaunch attempt
+still rejects history. `dispatch-single-issue-helper.sh` now allocates one attempt
+per dispatch and passes it in the worker argv, so new manual dispatches do not
+rotate.
+
 ## Ownership guarantees
 
 The revised path acquires the existing distributed claim/consensus lease before

@@ -261,6 +261,99 @@ class BlockedBeforeReadyTests(unittest.TestCase):
                 approved(data)
 
 
+def successor_claim_fixture(*events):
+    """Attempt A fully closed, then claim B on device devb followed by events."""
+    data = blocked_before_ready_fixture()
+    data["comments"] = data["comments"][:3] + [
+        comment(4, f"DISPATCH_CLAIM nonce=claimb {LT}=claimb runner=worker device=devb "
+                   "session=issue-124 phase=prelaunch expires_at=1", "worker"),
+        comment(4.3, f"DISPATCH_LEASE phase=prelaunch {LT}=claimb device=devb session=issue-124 "
+                     "expires_at=2 attempt_id=attempt:a", "worker"),
+        *events]
+    return data
+
+
+def stale_reset_fixture():
+    """GH#36005: claim B is released by its owner's stale recovery before ready."""
+    return successor_claim_fixture(comment(
+        5, "CLAIM_RELEASED reason=stale_assignment_reset runner=worker ts=2026-09-05T12:00:00Z "
+           "device=devb stale_threshold_s=600", "worker"))
+
+
+def rebind_fixture():
+    """GH#36005: claim B's worker publishes ready under a fresh attempt ID."""
+    lease = f"{LT}=claimb device=devb session=issue-124"
+    return successor_claim_fixture(
+        comment(4.6, f"DISPATCH_LEASE phase=ready {lease} expires_at=3 attempt_id=attempt:b", "worker"),
+        comment(5, "CLAIM_RELEASED reason=blocked runner=worker ts=2026-09-05T12:00:00Z", "worker"),
+        comment(6, f"DISPATCH_LEASE phase=terminal {lease} expires_at=0 attempt_id=attempt:b", "worker"))
+
+
+class StaleResetAndRebindTests(unittest.TestCase):
+    STALE = {"runner": "worker", "claim_id": 4, "release_id": 5,
+             "outcome": "stale_reset_before_ready", "attempt": "attempt:a"}
+    REBOUND = {"runner": "worker", "attempt": "attempt:b", "claim_id": 4,
+               "ready_id": 4.6, "release_id": 5, "terminal_id": 6}
+
+    def test_owner_stale_reset_closes_never_ready_claim(self):
+        result = revision.validate(approved(stale_reset_fixture()))
+        self.assertEqual(result["released_successors"], [self.STALE])
+        changed = approved(stale_reset_fixture())
+        approval = json.loads(changed["comments"][-1]["body"][len(revision.PREFIX):])
+        approval["released_successors"][0]["outcome"] = "blocked_before_ready"
+        changed["comments"][-1]["body"] = revision.PREFIX + json.dumps(approval)
+        with self.assertRaises(ValueError):
+            revision.validate(changed)
+
+    def test_stale_reset_closure_fails_closed(self):
+        lease = f"{LT}=claimb device=devb session=issue-124"
+        mutations = {
+            "wrong_device": lambda d: edit(d, -1, "device=devb", "device=other"),
+            "missing_device": lambda d: edit(d, -1, " device=devb", ""),
+            "claim_without_device": lambda d: edit(d, -3, " device=devb", ""),
+            "live_renewal": lambda d: edit(d, -2, "expires_at=2", "expires_at=9999999999"),
+            "reached_ready": lambda d: d["comments"].insert(-1, comment(
+                4.6, f"DISPATCH_LEASE phase=ready {lease} expires_at=3 attempt_id=attempt:a", "worker")),
+            "launched": lambda d: d["comments"].insert(-1, comment(
+                4.6, f"Dispatching worker\n{lease} attempt_id=attempt:a", "worker")),
+            "wrong_runner": lambda d: edit(d, -1, "runner=worker", "runner=other"),
+            "other_actor": lambda d: d["comments"][-1]["user"].update(login="stranger"),
+            "edited": lambda d: d["comments"][-1].update(updated_at="2026-09-05T12:01:00Z"),
+            "unbound_attempt": lambda d: edit(d, -1, "device=devb", "device=devb attempt_id=attempt:x"),
+        }
+        for case, mutate in mutations.items():
+            data = stale_reset_fixture()
+            mutate(data)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                approved(data)
+
+    def test_first_ready_lease_may_rebind_attempt_once(self):
+        result = revision.validate(approved(rebind_fixture()))
+        self.assertEqual(result["released_successors"], [self.REBOUND])
+
+    def test_attempt_rebind_fails_closed(self):
+        lease = f"{LT}=claimb device=devb session=issue-124"
+        mutations = {
+            "ready_other_device": lambda d: edit(d, -3, "device=devb", "device=other"),
+            "ready_without_device": lambda d: edit(d, -3, " device=devb", ""),
+            "claim_without_device": lambda d: edit(d, -5, " device=devb", ""),
+            "after_launch": lambda d: d["comments"].insert(-3, comment(
+                4.5, f"Dispatching worker\n{lease} attempt_id=attempt:a", "worker")),
+            "second_rebind": lambda d: d["comments"].insert(-2, comment(
+                4.8, f"DISPATCH_LEASE phase=ready {lease} expires_at=3 attempt_id=attempt:c", "worker")),
+            "terminal_names_prelaunch_attempt": lambda d: edit(d, -1, "attempt:b", "attempt:a"),
+            "release_names_prelaunch_attempt": lambda d: edit(
+                d, -2, "runner=worker ", "runner=worker attempt_id=attempt:a "),
+            "prelaunch_rebind": lambda d: edit(d, -3, "phase=ready", "phase=prelaunch"),
+            "unprefixed_ready": lambda d: edit(d, -3, "attempt_id=attempt:b", "attempt_id=b"),
+        }
+        for case, mutate in mutations.items():
+            data = rebind_fixture()
+            mutate(data)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                approved(data)
+
+
 def abort_pages(*extra, claim_author="worker", approval="checkpoint_approval=3 ", expiry=" expires_at=100"):
     claim = comment(4, f"DISPATCH_CLAIM nonce=tok runner=worker {LT}=tok device=dev "
                        f"{approval}session=s1 phase=prelaunch{expiry}", claim_author)
