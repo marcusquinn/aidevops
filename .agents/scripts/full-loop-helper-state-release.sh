@@ -499,8 +499,8 @@ _full_loop_write_release_receipt() {
 	current_status=$(_full_loop_read_release_receipt_status "$receipt_path") || return 1
 	# Typed deployment evidence is part of the terminal receipt, not disposable
 	# metadata. A repeated status write must verify and retain the whole file.
-	if [[ "$current_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" && $(wc -l <"$receipt_path") -gt 1 ]]; then
-		[[ "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	if [[ -f "$receipt_path" ]] && ! cmp -s "$receipt_path" <(printf '%s\n' "$current_status"); then
+		[[ "$current_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" && "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
 		declare -F _full_loop_verify_deployment_receipt >/dev/null 2>&1 || return 1
 		_full_loop_verify_deployment_receipt "$repo" "$pr_number" || return 1
 		return 0

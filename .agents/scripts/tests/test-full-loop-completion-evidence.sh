@@ -517,11 +517,13 @@ cmp -s "$deployment_receipt" "${ROOT}/deployment-evidence-before"
 [[ ! -e "${receipt_dir}/testorg_renamed-app-80.status" ]]
 deployment_payload=$(jq -Rrs 'split("\n")[1]' "$deployment_receipt")
 cp "$deployment_cleanup" "${ROOT}/deployment-recorded-cleanup"
-for corrupt_header in failed published; do
-	printf '%s\n%s\n' "$corrupt_header" "$deployment_payload" >"$deployment_receipt"
-	if [[ "$corrupt_header" == "published" ]]; then
-		printf 'unexpected trailing data\n' >>"$deployment_receipt"
-	fi
+for corrupt_framing in wrong-header trailing-data empty-payload missing-newline; do
+	case "$corrupt_framing" in
+	wrong-header) printf 'failed\n%s\n' "$deployment_payload" >"$deployment_receipt" ;;
+	trailing-data) printf 'published\n%s\nunexpected trailing data\n' "$deployment_payload" >"$deployment_receipt" ;;
+	empty-payload) printf 'published\n\n' >"$deployment_receipt" ;;
+	missing-newline) printf 'published\n%s' "$deployment_payload" >"$deployment_receipt" ;;
+	esac
 	if COMPLETION_RECORD_COMMAND=cmd_record_deployment bash "$published_record_runner" \
 		80 900 deploy.yml "$deployment_sha" testorg/app >/dev/null 2>&1; then
 		printf 'FAIL recording accepted corrupted deployment framing\n'
@@ -531,6 +533,17 @@ for corrupt_header in failed published; do
 		printf 'FAIL finalization accepted corrupted deployment framing\n'
 		exit 1
 	fi
+	cp "$deployment_receipt" "${ROOT}/corrupted-deployment-before"
+	if COMPLETION_RECORD_COMMAND=_full_loop_write_release_receipt bash "$published_record_runner" \
+		testorg/app 80 published >/dev/null 2>&1; then
+		printf 'FAIL shared status writer erased corrupted deployment proof\n'
+		exit 1
+	fi
+	if bash "$migration_runner" 80 testorg/app testorg/renamed-app >/dev/null 2>&1; then
+		printf 'FAIL migration erased corrupted deployment proof\n'
+		exit 1
+	fi
+	cmp -s "$deployment_receipt" "${ROOT}/corrupted-deployment-before"
 	cmp -s "$deployment_cleanup" "${ROOT}/deployment-recorded-cleanup"
 done
 cp "${ROOT}/deployment-evidence-before" "$deployment_receipt"

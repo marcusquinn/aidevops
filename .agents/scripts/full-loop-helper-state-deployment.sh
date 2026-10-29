@@ -69,7 +69,7 @@ _full_loop_deployment_receipt_payload() {
 	local path="$1"
 	jq -Rsc 'split("\n") |
 		if length == 2 and .[1] == "" then ""
-		elif length == 3 and .[0] == "published" and .[2] == "" then .[1]
+		elif length == 3 and .[0] == "published" and (.[1] | length > 0) and .[2] == "" then .[1]
 		else error("Invalid deployment receipt framing") end' "$path" || return 1
 	return 0
 }

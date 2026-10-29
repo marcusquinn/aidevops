@@ -1030,7 +1030,7 @@ cmd_record_published_release() {
 	if [[ "$status" -eq 0 && -f "$receipt_path" ]]; then
 		IFS= read -r release_status <"$receipt_path" || status=1
 		# Never erase embedded tagless evidence with a versioned-release receipt.
-		[[ $(wc -l <"$receipt_path") -eq 1 ]] || status=1
+		cmp -s "$receipt_path" <(printf '%s\n' "$release_status") || status=1
 	fi
 	if [[ "$status" -eq 0 ]]; then
 		case "$release_status" in
@@ -1331,11 +1331,14 @@ cmd_migrate_repository_receipt() {
 	destination_release=$(_full_loop_release_receipt_path "$new_repo" "$pr_number") || return 1
 	# The legacy rename adapter reconstructs one-line receipts. Refuse typed
 	# deployment receipts rather than losing their remote evidence on migration.
-	local migration_path=""
+	local migration_path="" migration_status=""
 	for migration_path in "$source_release" "$destination_release"; do
-		if [[ -f "$migration_path" && $(wc -l <"$migration_path") -gt 1 ]]; then
-			print_error "Migration blocked: typed deployment evidence requires repository-bound re-verification"
-			return 1
+		if [[ -f "$migration_path" ]]; then
+			IFS= read -r migration_status <"$migration_path" || return 1
+			if ! cmp -s "$migration_path" <(printf '%s\n' "$migration_status"); then
+				print_error "Migration blocked: typed deployment evidence requires repository-bound re-verification"
+				return 1
+			fi
 		fi
 	done
 	if [[ -f "$source_release" ]]; then
