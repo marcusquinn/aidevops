@@ -609,8 +609,8 @@ analysis.
 
 1. Verify the bot's premise as above.
 2. Read the Worker Guidance section below, open a worktree, implement.
-3. Open a PR with \`Resolves #<this-issue-number>\` in the body
-   (use THIS issue's number, not the source PR's) so merge auto-closes it.
+3. Open a PR with a \`Resolves\` closing reference in the body using
+   THIS issue's actual number, not the source PR's, so merge auto-closes it.
 4. Follow the normal Lifecycle Gate (brief, tests, review-bot-gate,
    merge, postflight).
 

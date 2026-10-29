@@ -473,9 +473,30 @@ define_ci_drift_helpers() {
 	return 0
 }
 
+# Production dependencies of the extracted review gate since GH#35867.
+define_review_gate_stubs() {
+	# pulse-merge.sh load-time global read by the extracted review gate.
+	_PULSE_MERGE_DIR="${SCRIPT_DIR}/.."
+	# Latest state-changing reviews read by the review gate. Default: one trusted
+	# human change request, so routing cases exercise the trust-gated route.
+	# Bot-only cases override it and expect one advisory dismissal.
+	ACTIVE_CHANGE_REQUESTS_JSON='[{"id":1,"state":"CHANGES_REQUESTED","submitted_at":"2026-08-03T00:00:00Z","user":{"login":"maintainer","type":"User"},"author_association":"OWNER"}]'
+	# Stub the review reader, but fail closed if production renames or removes it.
+	[[ -n "$(extract_function _review_feedback_active_change_requests "$FEEDBACK_REVIEW_SCRIPT")" ]] || return 1
+	_review_feedback_active_change_requests() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; printf '%s\n' "$ACTIVE_CHANGE_REQUESTS_JSON"; return 0; }
+	cat >"${TEST_ROOT}/bin/review-bot-gate-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${TEST_ROOT}/advisory-dismiss.log"
+EOF
+	chmod +x "${TEST_ROOT}/bin/review-bot-gate-helper.sh"
+	AIDEVOPS_REVIEW_BOT_GATE_HELPER="${TEST_ROOT}/bin/review-bot-gate-helper.sh"
+	return 0
+}
+
 define_process_helper() {
 	local fn_src="" process_stage_src="" repair_helper_src="" review_gate_src=""
 	define_ci_drift_helpers
+	define_review_gate_stubs || return 1
 	review_gate_src=$(extract_function _handle_changes_requested_review_gate "$MERGE_SCRIPT")
 	repair_helper_src=$(extract_function _handle_review_blocked_ci_repair "$PROCESS_SCRIPT")
 	process_stage_src=$(extract_process_stage_functions "$MERGE_SCRIPT")
@@ -497,7 +518,6 @@ define_process_helper() {
 	ROUTE_ARGS=""
 	ROUTE_LABELS=""
 	ROUTE_EVIDENCE=""
-	DISMISS_CALLS=0
 	PR_REQUIRED_CHECKS_RC=1
 	REBASE_RETRY_RC=1
 	REBASE_RETRY_CALLS=0
@@ -525,7 +545,6 @@ define_process_helper() {
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2" rebase_policy="${5:-standard}"; [[ -n "$pr_number$repo_slug" ]]; REBASE_RETRY_CALLS=$((REBASE_RETRY_CALLS + 1)); REBASE_RETRY_POLICY="$rebase_policy"; return "$REBASE_RETRY_RC"; }
 	_pm_close_superseded_duplicate_pr_if_issue_solved() { local pr_number="$1" repo_slug="$2" linked_issue="$3" pr_labels="$4"; [[ -n "$pr_number$repo_slug$linked_issue$pr_labels" ]]; DUPLICATE_CLOSE_CALLS=$((DUPLICATE_CLOSE_CALLS + 1)); return "$DUPLICATE_CLOSE_RC"; }
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}" checks_json="${9:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; ROUTE_EVIDENCE="$checks_json"; return 0; }
-	_pulse_merge_dismiss_coderabbit_nits() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; DISMISS_CALLS=$((DISMISS_CALLS + 1)); if [[ "${DISMISS_NITS_RC:-0}" -eq 0 ]]; then return 0; fi; return 1; }
 	_attempt_pr_update_branch() { return 1; }
 	_attempt_existing_auto_merge_behind_update_branch() { return 1; }
 	_attempt_green_behind_update_branch() { return 1; }
@@ -726,6 +745,8 @@ _load_feedback_finalizer() {
 	# Local ownership is covered by test-integration-recovery.sh; this fixture
 	# exercises real remote owner checks against the mock GitHub issue/comments.
 	_interactive_claim_fence_blocks_dispatch() { return 1; }
+	# No live worker dispatch lease on the linked issue (GH#35939).
+	_feedback_route_worker_lease_allows() { return 0; }
 	return 0
 }
 
@@ -1097,16 +1118,21 @@ test_coderabbit_nits_ok_dismissed_once_before_late_gate() {
 	setup_test_env
 	define_process_helper || { print_result "defines process helper for coderabbit review routing" 1 "could not extract _process_single_ready_pr or review gate"; teardown_test_env; return 0; }
 
-	local pr_object rc=0
+	local pr_object rc=0 dismiss_log="${TEST_ROOT}/advisory-dismiss.log" dismiss_calls=0
 	DRY_RUN=0
 	PR_REQUIRED_CHECKS_RC=0
+	# Bot-only change request: the early gate dismisses it once (GH#35867).
+	ACTIVE_CHANGE_REQUESTS_JSON='[{"id":1,"state":"CHANGES_REQUESTED","submitted_at":"2026-06-21T00:00:00Z","user":{"login":"coderabbitai[bot]","type":"Bot"},"author_association":"NONE"}]'
 	printf -v pr_object '%s' '{"number":555,"state":"OPEN","mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#501: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha555","headRefName":"fix/nits","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"},{"name":"coderabbit-nits-ok"}],"isDraft":false}'
 	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
+	if [[ -f "$dismiss_log" ]]; then
+		dismiss_calls=$(grep -c . "$dismiss_log" || true)
+	fi
 
 	if [[ "$rc" -ne 4 ]]; then
 		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "Expected native-auto defer return 4, got ${rc}"
-	elif [[ "$DISMISS_CALLS" -ne 1 ]]; then
-		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "dismiss_calls=${DISMISS_CALLS}"
+	elif [[ "$dismiss_calls" -ne 1 ]] || ! grep -qx 'dismiss-advisory-coderabbit 555 owner/repo' "$dismiss_log"; then
+		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "dismiss_calls=${dismiss_calls}"
 	elif [[ "$GATE_CALLS" -ne 1 || "$GATE_REVIEW_ARG" != "NONE" ]]; then
 		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "gate_calls=${GATE_CALLS}, gate_review=${GATE_REVIEW_ARG}"
 	elif [[ "$ROUTE_CALLS" -ne 0 ]]; then
@@ -1501,8 +1527,9 @@ test_ci_repair_uses_merge_required_contexts() {
 		if [[ "$scenario" == "failure" ]]; then
 			_dispatch_ci_fix_worker "100" "owner/repo" "42"
 			_dispatch_ci_fix_worker "100" "owner/repo" "42"
-			if [[ "$(rg -c 'run --role worker' "$GH_LOG")" == "1" ]] &&
-				! rg -q 'gh pr close' "$GH_LOG"; then
+			# grep, not rg: CI runners do not install ripgrep (GH#35943).
+			if [[ "$(grep -cF -- 'run --role worker' "$GH_LOG")" == "1" ]] &&
+				! grep -qF -- 'gh pr close' "$GH_LOG"; then
 				print_result "merge-required terminal failure has one in-place repair owner" 0
 			else
 				print_result "merge-required terminal failure has one in-place repair owner" 1

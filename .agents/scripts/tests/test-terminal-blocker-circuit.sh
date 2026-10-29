@@ -1752,8 +1752,10 @@ test_capability_checkpoint_attention() {
 		# shellcheck source=../pr-checkpoint-continuation-helper.sh
 		source "${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh"
 		local attention_body="" fixture_reason="runner_capability_unmet"
+		# GH#35932: production `gh api --paginate --slurp` returns an array of
+		# pages; a flat fixture hid a capability check that never matched.
 		_pcc_issue_comments() {
-			jq -nc --arg reason "$fixture_reason" '[{id:10,body:("Terminal blocker: reason="+$reason+" owner=runner-recovery")} ]'
+			jq -nc --arg reason "$fixture_reason" '[[{id:10,body:("Terminal blocker: reason="+$reason+" owner=runner-recovery")}]]'
 			return 0
 		}
 		_pr_checkpoint_trusted_logins() { printf '["runner"]\n'; return 0; }

@@ -234,8 +234,9 @@ _stale_recovery_has_terminal_evidence_since() {
 # Classify every open PR whose authoritative GitHub closing metadata includes
 # this same-repository stale issue. A PR is exact only when that issue is its
 # sole closing identity; all multi-issue linkage remains durable but ambiguous.
-# An orphan-recovery `For #N` draft (_pr_checkpoint_recovery_draft_links_issue)
-# is also exact (GH#34008).
+# A non-closing checkpoint draft (_pr_checkpoint_nonclosing_draft_links_issue:
+# an orphan-recovery `For #N` draft, GH#34008, or a worker `For #N`/`Ref #N`
+# draft) is also exact.
 # Args: $1=issue number, $2=repo slug, $3=open PR list JSON
 # Output: matching "PR number|exact|ambiguous" rows, one per line
 #######################################
@@ -264,7 +265,8 @@ _stale_recovery_linked_pr_rows() {
 				(.repository.owner.login | type) == "string"))
 	' >/dev/null 2>&1 || return 1
 	# GH#34008: an orphan-recovery `For #N` draft has no closing identity by
-	# design; the shared exact rule links it so it is preserved, not reset.
+	# design, nor does a worker For/Ref checkpoint draft; the shared exact rule
+	# links both so the checkpoint is preserved for continuation, not reset.
 	printf '%s' "$open_pr_json" | jq -r --argjson issue "$issue_number" \
 		--arg owner "$repo_owner" --arg name "$repo_name" "${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
 		def matches_target:
@@ -275,7 +277,7 @@ _stale_recovery_linked_pr_rows() {
 		(.closingIssuesReferences | map(select(matches_target))) as $matches |
 		if ($matches | length) > 0 then
 			"\(.number)|\(if ((.closingIssuesReferences | length) == 1 and ($matches | length) == 1) then "exact" else "ambiguous" end)"
-		elif recovery_draft_links($issue) then
+		elif checkpoint_draft_links($issue) then
 			"\(.number)|exact"
 		else empty end
 	' 2>/dev/null || return 1

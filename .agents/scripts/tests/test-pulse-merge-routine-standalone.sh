@@ -147,7 +147,9 @@ fi
 # =============================================================================
 # Pre-fix, sourcing pulse-merge.sh emitted 'unlock_issue_after_worker: command
 # not found' and 'fast_fail_reset: command not found' on every PR processed.
-if printf '%s\n' "$help_stderr" | grep -q 'command not found'; then
+# Here-strings, not `printf | grep -q`: under pipefail the early-exit reader
+# races the writer into SIGPIPE false results on Linux (GH#35943).
+if grep -q -- 'command not found' <<<"$help_stderr"; then
 	fail "2: no 'command not found' errors" \
 		"stderr: $help_stderr"
 else
@@ -159,7 +161,7 @@ fi
 # =============================================================================
 # Pre-fix, line 326 of pulse-merge.sh (_merge_elapsed=$(($(date +%s) -
 # PULSE_START_EPOCH))) failed under `set -u` when PULSE_START_EPOCH was unset.
-if printf '%s\n' "$help_stderr" | grep -q 'unbound variable'; then
+if grep -q -- 'unbound variable' <<<"$help_stderr"; then
 	fail "3: no 'unbound variable' errors" \
 		"stderr: $help_stderr"
 else
@@ -215,7 +217,7 @@ auth_output=$(HOME="$auth_test_home" GH_TOKEN="" GITHUB_TOKEN="" \
 	LC_ALL=C timeout 30 "$ROUTINE_FILE" --repo example/repo 2>&1) || auth_exit=$?
 rm -rf "$auth_test_home"
 
-if [[ "$auth_exit" -ne 0 ]] && printf '%s\n' "$auth_output" | grep -qF 'refusing unauthenticated API access'; then
+if [[ "$auth_exit" -ne 0 ]] && grep -qF -- 'refusing unauthenticated API access' <<<"$auth_output"; then
 	pass "6c: missing gh authentication aborts before API access"
 else
 	fail "6c: missing gh authentication aborts before API access" \
@@ -244,7 +246,7 @@ bounded_output=""
 bounded_exit=0
 bounded_output=$(PULSE_MERGE_BATCH_LIMIT=310 PULSE_MERGE_ROUTINE_BATCH_LIMIT_MAX=50 \
 	"$ROUTINE_FILE" help 2>&1) || bounded_exit=$?
-if [[ "$bounded_exit" -eq 0 ]] && printf '%s\n' "$bounded_output" | grep -qF 'PULSE_MERGE_BATCH_LIMIT=50'; then
+if [[ "$bounded_exit" -eq 0 ]] && grep -qF -- 'PULSE_MERGE_BATCH_LIMIT=50' <<<"$bounded_output"; then
 	pass "6e: standalone bootstrap clamps oversized PR batches"
 else
 	fail "6e: standalone bootstrap clamps oversized PR batches" \

@@ -89,11 +89,19 @@ release_publication_preflight() {
 	return 0
 }
 
+release_request_body() {
+	local repo="$1" pr="$2" sha="$3" version="$4" upstream="$5"
+	local notes="$6" checks="$7" metadata="$8" command="$9"
+	# shellcheck disable=SC2016 # Markdown backticks are literal, not expansions.
+	printf '<!-- aidevops:cloudron-release-approval %s -->\n<!-- aidevops:brief-schema=v2 -->\n## Release approval\n\n```json\n%s\n```\n\nPR number: %s; exact head: `%s`. Package: %s; upstream: %s.\n\n### Changelog\n%s\n\n### Verification\nAll PR checks passed at the recorded head:\n```json\n%s\n```\nPackage tests and preflight-release must be recorded in the PR.\n\n### Publication boundary\nThis is an approval-only issue, not a worker task. Do not auto-dispatch. Signed approval authorizes merging this exact head and its managed catalog workflow only; no deployment or unrelated publication.\n\n%s\n\n### Files Scope\n- `CloudronManifest.json`\n- `CloudronVersions.json`\n' "$version" "$metadata" "$pr" "$sha" "$version" "$upstream" "$notes" "$checks" "$command"
+	return 0
+}
+
 release_request() {
 	local repo="$1" pr="$2"
 	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" url="" older="" rc=0
-	local metadata=""
-	local verdict=""
+	local issue="" metadata="" command="" existing_body="" maintainer_prefix='Maintainer command:'
+	local verdict="" publication_body=""
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || release_error 'PR number must be a positive integer.' || return 1
 	release_authority "$repo" || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
@@ -122,7 +130,26 @@ release_request() {
 			release_error 'Existing version request has a different PR/head: refresh its signed body and obtain re-approval.'
 			return 1
 		fi
-		printf '%s\n' "$existing" | jq -r '.html_url'
+		url=$(jq -r '.html_url' <<<"$existing") || return 1
+		issue="${url##*/}"
+		[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
+		command="sudo aidevops approve issue ${issue} ${repo}"
+		existing_body=$(jq -r '.body' <<<"$existing") || return 1
+		publication_body="${existing_body##*$'\n### Publication boundary\n'}"
+		publication_body="${publication_body%%$'\n### Files Scope\n'*}"
+		if [[ "$existing_body" != *'Request finalization pending.'* &&
+			"$publication_body" == *$'\n\n'"${maintainer_prefix} \`${command}\`"$'\n' ]]; then
+			printf '%s\nAPPROVAL_COMMAND=%s\n' "$url" "$command"
+			return 0
+		fi
+		# Recover interrupted creation or legacy bodies only when unsigned.
+		# Never invalidate a signature by silently rewriting an existing body.
+		rc=0
+		verdict=$(release_verify "$repo" "$issue") || rc=$?
+		[[ "$rc" -ne 0 && "$verdict" == NO_APPROVAL ]] || release_error 'Existing request body needs finalization; signed or unverifiable requests must not be rewritten.' || return 1
+		release_request_body "$repo" "$pr" "$sha" "$version" "$upstream" "$notes" "$checks" "$metadata" "${maintainer_prefix} \`${command}\`" |
+			gh_issue_edit_safe "$issue" --repo "$repo" --body-file - >/dev/null || return 1
+		printf '%s\nAPPROVAL_COMMAND=%s\n' "$url" "$command"
 		return 0
 	fi
 	# A durable hold prevents ordinary merge automation from publishing first.
@@ -133,10 +160,14 @@ release_request() {
 	snapshot=$(release_pr "$repo" "$pr") || return 1
 	[[ "$(jq -r '.head.sha' <<<"$snapshot")" == "$sha" ]] || return 1
 	metadata=$(jq -cn --arg repo "$repo" --argjson pr "$pr" --arg sha "$sha" --arg version "$version" --arg upstream "$upstream" '{schema:1,repository:$repo,pr:$pr,head:$sha,version:$version,upstream:$upstream,owns_hold:true}') || return 1
-	# shellcheck disable=SC2016 # Markdown backticks are literal, not expansions.
-	url=$(printf '<!-- aidevops:cloudron-release-approval %s -->\n<!-- aidevops:brief-schema=v2 -->\n## Release approval\n\n```json\n%s\n```\n\nPR number: %s; exact head: `%s`. Package: %s; upstream: %s.\n\n### Changelog\n%s\n\n### Verification\nAll PR checks passed at the recorded head:\n```json\n%s\n```\nPackage tests and preflight-release must be recorded in the PR.\n\n### Publication boundary\nThis is an approval-only issue, not a worker task. Do not auto-dispatch. Signed approval authorizes merging this exact head and its managed catalog workflow only; no deployment or unrelated publication.\n\nMaintainer command: `sudo aidevops approve issue <this-issue-number> %s`\n\n### Files Scope\n- `CloudronManifest.json`\n- `CloudronVersions.json`\n' "$version" "$metadata" "$pr" "$sha" "$version" "$upstream" "$notes" "$checks" "$repo" |
+	url=$(release_request_body "$repo" "$pr" "$sha" "$version" "$upstream" "$notes" "$checks" "$metadata" 'Request finalization pending. Do not sign until the maintainer command appears.' |
 		gh_create_issue --repo "$repo" --title "Release ${repo##*/} v${version}" --body-file - --label release-approval-required --label no-auto-dispatch) || return 1
-	[[ "$url" == https://* ]] || return 1
+	issue="${url##*/}"
+	[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1
+	command="sudo aidevops approve issue ${issue} ${repo}"
+	# Finalize the digest-bound body before exposing a signable command.
+	release_request_body "$repo" "$pr" "$sha" "$version" "$upstream" "$notes" "$checks" "$metadata" "${maintainer_prefix} \`${command}\`" |
+		gh_issue_edit_safe "$issue" --repo "$repo" --body-file - >/dev/null || return 1
 	# Supersede only unsigned requests. Verification errors never close one.
 	while IFS= read -r older; do
 		[[ -n "$older" ]] || continue
@@ -147,7 +178,7 @@ release_request() {
 			gh issue close "$older" --repo "$repo" --reason 'not planned' || return 1
 		fi
 	done < <(jq -r --arg version "$version" '.[] | . as $issue | (.body | split("\n") | map(fromjson? | select(.schema == 1)) | .[0].version // "") as $old | select(($old | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and (($old | split(".") | map(tonumber)) < ($version | split(".") | map(tonumber)))) | $issue.number' <<<"$issues")
-	printf '%s\n' "$url"
+	printf '%s\nAPPROVAL_COMMAND=%s\n' "$url" "$command"
 	return 0
 }
 

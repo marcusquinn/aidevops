@@ -18,6 +18,16 @@ tools:
 
 # Release Workflow
 
+## Cloudron release approval handoff
+
+For managed Cloudron packages, follow the [signed publication boundary](../tools/deployment/cloudron-app-publishing-skill.md#publication-boundary-signed-managed-releases).
+After `cloudron-release-approval-helper.sh request` succeeds, include both the
+issue URL and the exact command from its `APPROVAL_COMMAND=` output in the
+completion message. Show the command verbatim in a code block, with the real
+issue number and repository, not just an issue link or a placeholder. Do not
+offer a signing command when request finalization fails: approval signatures
+bind the final issue body, which must be saved before signing.
+
 ## Standard-tier release handoff
 
 Routine aidevops release execution defaults to a **standard-tier local child**

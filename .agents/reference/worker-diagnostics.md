@@ -100,7 +100,16 @@ permission boundary (GH#34110). Workers first check repository-declared tools
 hold. A missing static linter that CI also runs (ShellCheck, markdownlint) is a
 CI handoff, not this class (GH#34758). A capability release keeps an open draft
 `status:available`, and `pr-checkpoint-continuation-helper.sh dispatch-stalled`
-continues that exact head once per head before posting attention.
+continues that exact head on another runner. Capability releases describe the
+releasing runner, not the head, so together they count as one original stall;
+one genuine stall after them still posts attention (GH#35883). A runner whose
+own login released the head for a missing capability skips it without a
+comment until a newer standalone OWNER/MEMBER `terminal-blocker-circuit:retry`;
+a new head re-arms every runner. The successor's worker fence accepts the
+capability release after ownership transfers. Continuation also links worker
+drafts whose only link is a line-start `For #N` or `Ref #N` (GH#33374), and
+treats `origin:interactive` as provenance: with `auto-dispatch` it holds the
+draft only while a newer trusted interactive session claim owns the issue.
 `repo-verify-pre-push.sh` labels missing Python tools as tooling, not
 source defects. Terminal-only reports create no progress-blocker events;
 `pulse-diagnose-helper.sh issue` shows a separate "Terminal blocker" section and

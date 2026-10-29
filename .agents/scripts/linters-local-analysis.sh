@@ -18,6 +18,7 @@
 #   - File size (ratchet gate — t2938)
 #   - Python complexity (Lizard + Pyflakes)
 #   - Python 3.9 annotation compatibility (GH#34098)
+#   - jq 1.7/1.8 binding precedence (GH#35920)
 #   - Remote CLI status
 #   - Skill frontmatter validation
 #   - Pulse wrapper canary (GH#18790)
@@ -28,7 +29,8 @@
 # Dependencies:
 #   - shared-constants.sh (print_error, print_info, print_success, print_warning,
 #     safe_grep_count, timeout_sec, _save_cleanup_scope, push_cleanup, _run_cleanups)
-#   - lint-file-discovery.sh (lint_python_files_local, LINT_PY_FILES_LOCAL)
+#   - lint-file-discovery.sh (lint_python_files_local, LINT_PY_FILES_LOCAL,
+#     lint_jq_files, LINT_JQ_FILES, LINT_JQ_FILE_REGEX)
 #   - Constants: MAX_TOTAL_ISSUES, MAX_FUNCTION_LENGTH_WARN, MAX_FUNCTION_LENGTH_BLOCK,
 #     MAX_FUNCTION_LENGTH_VIOLATIONS, MAX_NESTING_DEPTH_WARN, MAX_NESTING_DEPTH_BLOCK,
 #     MAX_NESTING_VIOLATIONS, MAX_FILE_LINES_WARN, MAX_FILE_LINES_BLOCK
@@ -1021,6 +1023,43 @@ check_python_annotation_compat() {
 	fi
 	printf '%s\n' "$output"
 	print_error "Python 3.9 annotations: runtime PEP 604 unions found (see above)"
+	return 1
+}
+
+# =============================================================================
+# jq 1.7/1.8 Binding Precedence (GH#35920) — blocking, zero baseline
+# =============================================================================
+# jq 1.8 groups `A and T as $x | B` as `(A and T) as $x | B`; jq 1.7 groups it
+# as `A and (T as $x | B)`. CI and macOS /usr/bin/jq run 1.7 while Homebrew
+# runners run 1.8, so an ungrouped binding diverges silently. Static text scan.
+# Args: optional newline-separated file list (default: all tracked jq-bearing files)
+check_jq_binding_precedence() {
+	local file_list="${1-__all__}"
+	local checker="${SCRIPT_DIR}/jq-binding-precedence-check.py"
+	local output="" status=0
+	echo -e "${BLUE}Checking jq 1.7/1.8 binding precedence...${NC}"
+
+	if [[ "$file_list" == "__all__" ]]; then
+		lint_jq_files
+		file_list="$LINT_JQ_FILES"
+	fi
+	file_list=$(printf '%s\n' "$file_list" | grep -E "$LINT_JQ_FILE_REGEX" | grep -Ev "$LINT_EXCLUDE_PATTERN" || true)
+	if [[ -z "$file_list" ]]; then
+		print_success "jq binding precedence: no jq-bearing files selected"
+		return 0
+	fi
+	if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "$checker" ]]; then
+		print_warning "jq binding precedence: python3 or checker unavailable; skipped"
+		return 0
+	fi
+
+	output=$(printf '%s\n' "$file_list" | python3 "$checker" - 2>&1) || status=$?
+	if [[ "$status" -eq 0 ]]; then
+		print_success "jq binding precedence: no binding grouped differently by jq 1.7 and 1.8"
+		return 0
+	fi
+	printf '%s\n' "$output"
+	print_error "jq binding precedence: parenthesize the bindings above (reference/shell-style-guide.md)"
 	return 1
 }
 

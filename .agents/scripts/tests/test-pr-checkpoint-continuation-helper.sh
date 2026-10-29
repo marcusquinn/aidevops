@@ -191,6 +191,41 @@ else
 	print_result "rejects foreign-authored worker checkpoint" 1
 fi
 
+# GH#35883: auto-dispatch authorizes worker pickup of interactive-provenance
+# issues, so a capability-released worker draft stays continuable on a capable
+# runner, unless a newer trusted interactive claim owns the issue.
+interactive_capability_comments() {
+	local extra="${1:-}"
+	printf '[[{"id":12,"created_at":"2026-08-04T22:40:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"CLAIM_RELEASED reason=blocked runner=worker-bot ts=2026-08-04T22:40:00Z\\n\\nTerminal blocker: reason=runner_capability_unmet owner=runner-recovery task=123 attempt=a1."}%s]]\n' "$extra"
+	return 0
+}
+STUB_PR_JSON="$(valid_pr_json)"
+STUB_ISSUE_JSON="$(jq -nc '{number:123,state:"open",labels:[{name:"status:available"},{name:"auto-dispatch"},{name:"origin:interactive"}],assignees:[]}')"
+STUB_COMMENTS_JSON="$(interactive_capability_comments)"
+PCC_ALLOW_RELEASED=true
+if row=$(_pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot" 2>/dev/null) &&
+	[[ "$row" == *$'\tavailable\tworker-bot\t0\tclosing' ]]; then
+	print_result "accepts capability-released draft on auto-dispatch interactive-provenance issue" 0
+else
+	print_result "accepts capability-released draft on auto-dispatch interactive-provenance issue" 1 "row=${row:-missing}"
+fi
+STUB_COMMENTS_JSON="$(interactive_capability_comments ',{"id":13,"created_at":"2026-08-04T22:50:00Z","author_association":"MEMBER","user":{"login":"maintainer"},"body":"Interactive session claimed this issue"}')"
+if ! _pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot" >/dev/null 2>&1; then
+	print_result "rejects auto-dispatch interactive-provenance draft after a newer interactive claim" 0
+else
+	print_result "rejects auto-dispatch interactive-provenance draft after a newer interactive claim" 1
+fi
+STUB_ISSUE_JSON="$(jq -nc '{number:123,state:"open",labels:[{name:"status:available"},{name:"origin:interactive"}],assignees:[]}')"
+STUB_COMMENTS_JSON="$(interactive_capability_comments)"
+if ! _pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot" >/dev/null 2>&1; then
+	print_result "keeps interactive-provenance hold without auto-dispatch" 0
+else
+	print_result "keeps interactive-provenance hold without auto-dispatch" 1
+fi
+PCC_ALLOW_RELEASED=false
+STUB_ISSUE_JSON="$(valid_issue_json)"
+STUB_COMMENTS_JSON='[]'
+
 # GH#34008: the pulse's own orphan-recovery draft links its issue only through
 # a non-closing `For #N` line. The shared rule accepts exactly that shape.
 TAKEOVER_LABELS='[{"name":"origin:worker-takeover"}]'
@@ -218,7 +253,24 @@ for_reject_case() {
 	fi
 	return 0
 }
-for_reject_case "origin:worker label" 'For #123' '[{"name":"origin:worker"}]' '[]'
+# Worker checkpoint drafts keep `For #N`/`Ref #N` on incomplete work (GH#33374)
+# and has-open-pr already holds the issue for them, so continuation must accept
+# the same exact single-target shape.
+WORKER_LABELS='[{"name":"origin:worker"}]'
+for worker_body in 'For #123' 'Ref #123. Incomplete checkpoint.' 'Notes\nRefs #123' 'For #123. Done part.\nRef #900'; do
+	STUB_PR_JSON="$(valid_pr_json "$worker_body" "$WORKER_LABELS" '[]')"
+	if row=$(_pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot") &&
+		[[ "$row" == *$'\tworker-bot\t0\tfor' ]]; then
+		print_result "accepts origin:worker non-closing checkpoint: ${worker_body}" 0
+	else
+		print_result "accepts origin:worker non-closing checkpoint: ${worker_body}" 1 "row=${row:-missing}"
+	fi
+done
+for_reject_case "worker draft naming two For issues" 'For #123\nFor #456' "$WORKER_LABELS" '[]'
+for_reject_case "worker draft whose For line names another issue" 'For #456\nRef #123' "$WORKER_LABELS" '[]'
+for_reject_case "worker draft with Ref mid-line only" 'Batch for #77. Ref #123 later' "$WORKER_LABELS" '[]'
+for_reject_case "worker draft with interactive label" 'Ref #123' '[{"name":"origin:worker"},{"name":"origin:interactive"}]' '[]'
+for_reject_case "unlabelled draft" 'For #123' '[{"name":"bug"}]' '[]'
 for_reject_case "ready PR" 'For #123' "$TAKEOVER_LABELS" '[]' ready
 for_reject_case "cross-repository head" 'For #123' "$TAKEOVER_LABELS" '[]' cross
 for_reject_case "protected label" 'For #123' '[{"name":"origin:worker-takeover"},{"name":"hold-for-review"}]' '[]'
@@ -376,14 +428,15 @@ if [[ -f "$prompt_file" ]] && \
 else
 	print_result "continuation prompt preserves exact-target ownership contract" 1
 fi
-if ! grep -q 'orphan-recovery checkpoint' "$prompt_file"; then
+if ! grep -q 'non-closing checkpoint linked to issue' "$prompt_file"; then
 	print_result "closing-linked continuation prompt has no For-line rewrite step" 0
 else
 	print_result "closing-linked continuation prompt has no For-line rewrite step" 1
 fi
 PCC_LINK_KIND="for"
 prompt_file=$(_prrts_write_prompt_file "owner/repo" "${TEST_ROOT}/repo" "42" "Continue existing work" "0" "fingerprint" "preview")
-if grep -Fq 'replace that exact line with' "$prompt_file" &&
+if grep -Fq 'non-closing checkpoint linked to issue' "$prompt_file" &&
+	grep -Fq 'replace that exact line with' "$prompt_file" &&
 	grep -Fq "\`Resolves #123\`" "$prompt_file" &&
 	grep -Fq -- '--json closingIssuesReferences' "$prompt_file"; then
 	print_result "For-linked continuation must add a closing link before ready" 0
@@ -662,6 +715,23 @@ if output=$(_pcc_blocked_attention owner/repo 123 42) &&
 else
 	print_result "unpaired never-ready blocked release posts no approval template" 1 "output=${output:-missing} posts=$(post_count)"
 fi
+
+# GH#35932: production comments are `gh --paginate --slurp` pages. A runner
+# capability release keeps the runner-owner text (GH#35788) on that input and
+# never asks the brief owner for a revision-bound approval.
+STUB_POST_DIR="${TEST_ROOT}/posts-capability"
+mkdir -p "$STUB_POST_DIR"
+STUB_COMMENTS_JSON="$(blocked_comments | jq -c 'map(map(if .id == 21 then
+	.body |= sub("\n<!-- ops:end -->"; "\n\nTerminal blocker: reason=runner_capability_unmet owner=runner-recovery task=123 attempt=a1.\n<!-- ops:end -->")
+	else . end))')"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*release=21 && "$(post_count)" == 1 ]] &&
+	grep -Fq 'No brief change or revision-bound approval is needed' "${STUB_POST_DIR}/post-1" &&
+	! grep -Fq 'approval-template' "${STUB_POST_DIR}/post-1"; then
+	print_result "paginated capability release keeps runner-owner attention text" 0
+else
+	print_result "paginated capability release keeps runner-owner attention text" 1 "output=${output:-missing} posts=$(post_count)"
+fi
 STUB_POST_DIR="${TEST_ROOT}/posts"
 
 # GH#33850: clean/completed releases by another trusted runner must reach an
@@ -910,6 +980,144 @@ for ownership_event in \
 		print_result "ownership-loss recovery respects newer ${ownership_event%% *}" 1
 	fi
 done
+
+# GH#35883: runner_capability_unmet releases describe the releasing runner, not
+# the head. Together they count as one original stall; a runner skips only a
+# head its own login released for a missing capability, until a trusted retry.
+CAPABILITY_HEAD="1111111111111111111111111111111111111111"
+capability_comments() {
+	local extra="${1:-[]}"
+	jq -nc --argjson extra "$extra" '
+		def capability_release($id; $at; $runner): {id:$id, created_at:$at,
+			author_association:"COLLABORATOR", user:{login:$runner},
+			body:("<!-- ops:start -->\nCLAIM_RELEASED reason=blocked runner=" + $runner + " ts=" + $at +
+				"\n\nTerminal blocker: reason=runner_capability_unmet owner=runner-recovery task=123 attempt=abc.\n<!-- ops:end -->")};
+		[[capability_release(50; "2026-09-30T01:30:00Z"; "cap-runner-a"),
+			{id:51, created_at:"2026-09-30T01:40:00Z", author_association:"COLLABORATOR",
+				user:{login:"cap-runner-b"}, body:"DISPATCH_CLAIM nonce=n5 runner=cap-runner-b"},
+			capability_release(52; "2026-09-30T01:50:00Z"; "cap-runner-b")] + $extra]'
+	return 0
+}
+run_capability_sweep() {
+	local login="$1"
+	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+	DISPATCH_ARGS=""
+	STATUS_CALLS=""
+	PCC_ALLOW_RELEASED=false
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 "$login" >"$output_file" || true
+	output="$(<"$output_file")"
+	PCC_ALLOW_RELEASED=false
+	return 0
+}
+# The attention record the old rule posted after two capability releases.
+old_capability_attention="$(jq -nc --arg head "$CAPABILITY_HEAD" '[{id:53, created_at:"2026-09-30T01:55:00Z",
+	author_association:"COLLABORATOR", user:{login:"pulse-runner"},
+	body:("<!-- ops:start -->\n<!-- aidevops:stalled-checkpoint-attention pr=42 head=" + $head +
+		" release=52 -->\nSTALLED_CHECKPOINT_ATTENTION pr=42 head=" + $head +
+		" release_comment=52 reason=blocked stalls=2\n<!-- ops:end -->")}]')"
+STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | with_head_commit)"
+STUB_COMMENTS_JSON="$(capability_comments "$old_capability_attention")"
+posts_before="$(post_count)"
+run_capability_sweep current-runner
+if [[ "$output" == *"assignee=worker-bot release=52 reason=blocked"* &&
+	"$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+	"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 ${CAPABILITY_HEAD} worker-bot"* &&
+	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee current-runner' &&
+	"$(post_count)" -eq "$posts_before" ]]; then
+	print_result "capability releases by other runners count once and a capable runner continues the head" 0
+else
+	print_result "capability releases by other runners count once and a capable runner continues the head" 1 \
+		"output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
+fi
+
+for released_runner in cap-runner-a cap-runner-b; do
+	posts_before="$(post_count)"
+	run_capability_sweep "$released_runner"
+	if [[ "$output" == *"STALLED_CHECKPOINT_CONTINUATION_SKIPPED"*"runner ${released_runner} already released it as runner_capability_unmet"* &&
+		-z "$DISPATCH_ARGS" && -z "$STATUS_CALLS" && "$(post_count)" -eq "$posts_before" ]]; then
+		print_result "${released_runner} skips a head it released for a missing capability without comment or dispatch" 0
+	else
+		print_result "${released_runner} skips a head it released for a missing capability without comment or dispatch" 1 \
+			"output=${output:-missing} args=${DISPATCH_ARGS:-missing}"
+	fi
+done
+
+STUB_COMMENTS_JSON="$(capability_comments '[{"id":54,"created_at":"2026-09-30T02:00:00Z","author_association":"MEMBER","user":{"login":"maintainer"},"body":"Fixture installed.\nterminal-blocker-circuit:retry"}]')"
+run_capability_sweep cap-runner-a
+if [[ "$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee cap-runner-a' ]]; then
+	print_result "a newer trusted retry re-arms a runner after its capability release" 0
+else
+	print_result "a newer trusted retry re-arms a runner after its capability release" 1 "output=${output:-missing}"
+fi
+
+capability_retry_is_ignored() {
+	local name="$1" id="$2" created_at="$3" association="$4" body="$5" retry="" released=""
+	retry="$(jq -nc --argjson id "$id" --arg at "$created_at" --arg association "$association" --arg body "$body" \
+		'[{id:$id, created_at:$at, author_association:$association, user:{login:"maintainer"}, body:$body}]')"
+	if released=$(_pcc_self_capability_release "$(capability_comments "$retry")" "$recovery_head_date" cap-runner-a) &&
+		[[ "$released" == 50 ]]; then
+		print_result "capability skip ignores ${name}" 0
+	else
+		print_result "capability skip ignores ${name}" 1 "released=${released:-none}"
+	fi
+	return 0
+}
+capability_retry_is_ignored "a COLLABORATOR retry" 54 2026-09-30T02:00:00Z COLLABORATOR 'terminal-blocker-circuit:retry'
+capability_retry_is_ignored "an inline retry mention" 54 2026-09-30T02:00:00Z MEMBER 'Post terminal-blocker-circuit:retry once installed.'
+capability_retry_is_ignored "a circuit record" 54 2026-09-30T02:00:00Z MEMBER \
+	$'<!-- aidevops:terminal-blocker-circuit revision=r blocker=b -->\nterminal-blocker-circuit:retry'
+capability_retry_is_ignored "a retry older than the release" 45 2026-09-30T01:25:00Z MEMBER 'terminal-blocker-circuit:retry'
+if ! _pcc_self_capability_release "$(capability_comments)" "2026-09-30T02:30:00Z" cap-runner-a >/dev/null 2>&1; then
+	print_result "a new head re-arms runners whose capability releases predate it" 0
+else
+	print_result "a new head re-arms runners whose capability releases predate it" 1
+fi
+
+STUB_COMMENTS_JSON="$(capability_comments '[{"id":55,"created_at":"2026-09-30T02:10:00Z","author_association":"OWNER","user":{"login":"pulse-runner"},"body":"CLAIM_RELEASED reason=no_activity runner=pulse-runner"}]')"
+posts_before="$(post_count)"
+run_capability_sweep current-runner
+if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_POSTED*"stalls=2"* && -z "$DISPATCH_ARGS" &&
+	"$(post_count)" -eq $((posts_before + 1)) ]]; then
+	print_result "a genuine stall after capability releases still posts one attention record" 0
+else
+	print_result "a genuine stall after capability releases still posts one attention record" 1 "output=${output:-missing}"
+fi
+
+# The successor's worker fence runs after the transfer, while the capability
+# release is still the newest coordination event. An ordinary blocked release
+# still requires the revision-bound approval.
+STUB_PR_JSON="$(valid_pr_json)"
+STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-progress"}]' current-runner)"
+STUB_COMMENTS_JSON="$(capability_comments)"
+PCC_HEAD_REF="worker/issue-123"
+PCC_HEAD_OID="$CAPABILITY_HEAD"
+if run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence accepts the capable successor after a capability release" 0
+else
+	print_result "worker fence accepts the capable successor after a capability release" 1
+fi
+STUB_COMMENTS_JSON="$(capability_comments | jq -c 'map(map(.body |= sub("\n\nTerminal blocker: [^\n]*"; "")))')"
+if ! run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence still rejects an ordinary blocked release without approval" 0
+else
+	print_result "worker fence still rejects an ordinary blocked release without approval" 1
+fi
+# The same fence on an interactive-provenance issue: auto-dispatch authorizes
+# the capable successor; without it, interactive provenance still holds.
+STUB_COMMENTS_JSON="$(capability_comments)"
+STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-progress"},{"name":"auto-dispatch"},{"name":"origin:interactive"}]' current-runner)"
+if run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence accepts the capable successor on an auto-dispatch interactive-provenance issue" 0
+else
+	print_result "worker fence accepts the capable successor on an auto-dispatch interactive-provenance issue" 1
+fi
+STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-progress"},{"name":"origin:interactive"}]' current-runner)"
+if ! run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence keeps the interactive-provenance hold without auto-dispatch" 0
+else
+	print_result "worker fence keeps the interactive-provenance hold without auto-dispatch" 1
+fi
 
 # Rejections must identify the failed predicate without contaminating TSV stdout
 # or leaking implementation text into the Pulse log.
