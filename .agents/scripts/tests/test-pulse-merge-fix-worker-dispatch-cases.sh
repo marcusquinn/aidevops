@@ -208,6 +208,8 @@ define_helpers_under_test() {
 	# leaking the host shell's real status-label wrapper into this isolated test.
 	unset -f set_issue_status 2>/dev/null || true
 	_interactive_claim_fence_blocks_dispatch() { return 1; }
+	# No live worker dispatch lease on the linked issue (GH#35939).
+	_feedback_route_worker_lease_allows() { return 0; }
 	_classify_ci_failures_by_pattern() { return 0; }
 	return 0
 }
