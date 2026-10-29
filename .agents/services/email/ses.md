@@ -130,7 +130,9 @@ override only when **every recipient**, including CC/BCC, is controlled/internal
 With authorization, use a new plus alias of a controlled internal inbox, never a
 customer address. Confirm the alias receives mail and is not already suppressed;
 do not overwrite an existing suppression entry. Keep the regional account-level
-suppression policy enabled. The selected configuration set must already have the
+suppression policy enabled and confirm its `SuppressedReasons` includes `BOUNCE`
+(`aws sesv2 get-account`), or use a test reason that matches the active policy;
+otherwise SES delivers regardless and the test falsely reports a bypass. The selected configuration set must already have the
 explicit empty override and a CloudWatch event destination enabled for
 `SEND`, `DELIVERY`, `BOUNCE` and `REJECT`, publishing the
 `ses-configuration-set` dimension.

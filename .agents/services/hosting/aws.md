@@ -32,16 +32,29 @@ browser console identity to obtain 12-hour credentials, refreshed for up to
 90 days. On macOS, use `brew install awscli` with installation authorization,
 not a piped installer. Check `aws --version` before choosing this flow.
 
-Use the workload's existing region and a named `aidevops-<account>` profile:
+Non-root IAM users, roles and groups need the `SignInLocalDevelopmentAccess`
+managed policy attached before `aws login` works; console sign-in alone is not
+enough. Ask an administrator to grant it; do not self-grant IAM changes.
+
+Use a named `aidevops-<account>` profile. The sign-in region (where the login
+session is created; must be a region AWS supports for sign-in) can differ from the
+workload region, so pass each explicitly. Regions below are examples:
 
 ```bash
 # Agent: configure the profile (region is an example, not a migration instruction).
 aws configure set region eu-west-2 --profile aidevops-production
 # Human: complete browser authorization with the intended console identity.
-aws login --profile aidevops-production
-# Agent: verify the account and caller ARN before service operations.
-aws sts get-caller-identity --profile aidevops-production
+aws login --profile aidevops-production --region us-east-1
+# Agent: confirm the profile resolves to the login session, not shared keys.
+aws configure list --profile aidevops-production
+# Agent: verify the account and caller ARN in the workload region.
+aws sts get-caller-identity --profile aidevops-production --region eu-west-2
 ```
+
+Continue only when `aws configure list` shows credential type `login`. If the
+profile already has keys in `~/.aws/credentials` or environment variables, the CLI
+may resolve those instead, so the STS check would validate the wrong identity:
+resolve the conflict (separate profile) before proceeding.
 
 On SSH/headless hosts, the human uses `aws login --remote --profile
 aidevops-production` for authorization from another device. An unattended agent
