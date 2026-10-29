@@ -210,8 +210,12 @@ def names_rollout(body: str, name: str) -> bool:
             words = shlex.split(line.replace("`", " "))
         except ValueError:
             # Ordinary prose can contain unmatched quotes (for example repo's).
-            # Still recognize an unquoted rollout command without executing it.
-            words = line.replace("`", " ").split()
+            # Preserve quoted single-token arguments without executing shell input.
+            words = [
+                word[1:-1] if len(word) >= 2 and word[0] in "\"'" and word[-1] == word[0]
+                else word
+                for word in line.replace("`", " ").split()
+            ]
         for index, word in enumerate(words):
             if pathlib.PurePosixPath(word).name not in (
                 "sync-workflows", "sync-workflows-helper.sh"
@@ -261,6 +265,12 @@ def assert_rollout_contract() -> None:
     assert not names_rollout(prose_command.replace("--workflow fixture", "--workflow other"), "fixture")
     assert not names_rollout(prose_command.replace("--apply", "--json"), "fixture")
     assert names_rollout('aidevops sync-workflows --apply --workflow "fixture"', "fixture")
+    for quote in ('"', "'"):
+        quoted_prose = prose_command.replace("workflow fixture", f"workflow {quote}fixture{quote}")
+        assert names_rollout(quoted_prose, "fixture")
+        assert not rollout_failures("fixture", [caller], {caller}, quoted_prose)
+        assert not names_rollout(quoted_prose.replace("fixture", "other"), "fixture")
+        assert not names_rollout(quoted_prose.replace("--apply", "--json"), "fixture")
 
 
 def check_permission_rollouts() -> list[str]:
