@@ -49,41 +49,32 @@ SUPPRESS = re.compile(r"#\s*jq-binding-precedence:\s*ignore next\b\s*\S")
 
 # `as` followed by a binding pattern: $name (shell-escaped \$name), [ or {.
 BINDING = re.compile(r"(?<![\w$.@])as\s*(?=\\?\$[A-Za-z_]|\[|\{)")
-WORD_OPERATORS = ("and", "or", "try", "catch")
-# Longest first, so `//=` and `==` are not read as `=` or `/`.
-SYMBOL_OPERATORS = ("//=", "|=", "+=", "-=", "*=", "/=", "%=", "==", "!=", "<=",
-                    ">=", "//", "<", ">", "+", "-", "*", "/", "%", "=")
-# A preceding character that makes the symbol a non-jq token (`:=`, `->`, `<<`).
-SYMBOL_GUARDS = {"=": "=!<>|+-*/%:?^&~", "<": "<>-", ">": "<>-", "-": "<>-"}
+# A double-quoted string, which may run to the end of its line, or a `#` comment
+# that starts a word. Comments are blanked; strings are kept, so a `#` inside a
+# string is not read as a comment.
+STRING_OR_COMMENT = re.compile(r'"(?:\\.|[^"\\\n])*(?:"|\\?$)|(?<![^ \t\n])#[^\n]*',
+                               re.MULTILINE)
+# A jq operator ending at the end of the searched window. The leftmost match is
+# the longest, so `//=` and `==` are not read as `=` or `/`. A one-character
+# symbol after a character that makes it a non-jq token (`:=`, `->`, `<<`) is
+# not an operator.
+OPERATOR_AT_END = re.compile(
+    r"(?:(?<![\w$.@])(?:and|or|try|catch)"
+    r"|//=|\|=|\+=|-=|\*=|/=|%=|==|!=|<=|>=|//|[+*/%]"
+    r"|(?<![<>-])[<>-]|(?<![=!<>|+\-*/%:?^&~])=)\Z")
+LONGEST_OPERATOR = len("catch")
 CLOSERS = {")": "(", "]": "[", "}": "{"}
 OPENERS = "([{"
 SPACE = " \t\r\n"
 TERM_CHAR = re.compile(r"[\w$.@?]")
-WORD_CHAR = re.compile(r"[\w$.@]")
 GLUED_KEYWORD = re.compile(r"(and|or|try|catch)(?=[(\[{\"$.])")
 FIX_HINT = ("jq 1.7 and 1.8 group this binding differently; add parentheses that "
             "make the intended grouping explicit")
 
 
-def _is_comment(line: str, index: int) -> bool:
-    return line[index] == "#" and (index == 0 or line[index - 1] in " \t")
-
-
-def _mask_line(line: str) -> str:
-    """Blank a `#` comment that starts a word outside double quotes."""
-    in_string = False
-    index = 0
-    while index < len(line):
-        char = line[index]
-        if in_string and char == "\\":
-            index += 2
-            continue
-        if char == '"':
-            in_string = not in_string
-        elif not in_string and _is_comment(line, index):
-            return line[:index] + " " * (len(line) - index)
-        index += 1
-    return line
+def _blank_comment(match: re.Match[str]) -> str:
+    piece = match.group()
+    return piece if piece.startswith('"') else " " * len(piece)
 
 
 def _escaped(text: str, index: int) -> bool:
@@ -107,85 +98,60 @@ def _string_start(text: str, index: int) -> int:
     return index
 
 
+def _piece_start(text: str, index: int) -> int:
+    """Return where the bracket group, string or character ending at index
+    starts, or -1 when the group or string never opens."""
+    if text[index] in CLOSERS:
+        return _matching_open(text, index)
+    if _is_quote(text, index):
+        return _string_start(text, index)
+    return index
+
+
 def _matching_open(text: str, index: int) -> int:
     """Return the opening bracket for the closing bracket at index, or -1."""
-    expected: list[str] = []
-    while index >= 0:
-        char = text[index]
-        if _is_quote(text, index):
-            index = _string_start(text, index)
-        elif char in CLOSERS:
-            expected.append(CLOSERS[char])
-        elif char in OPENERS:
-            if expected.pop() != char:
-                return -1
-            if not expected:
-                return index
-        index -= 1
-    return -1
+    opener = CLOSERS[text[index]]
+    index -= 1
+    while index >= 0 and text[index] not in OPENERS:
+        index = _piece_start(text, index) - 1
+    return index if index >= 0 and text[index] == opener else -1
+
+
+def _ends_term_piece(text: str, index: int) -> bool:
+    char = text[index]
+    return char in CLOSERS or _is_quote(text, index) or TERM_CHAR.match(char) is not None
 
 
 def _term_start(text: str, end: int) -> int:
     """Return where the postfix term ending at index end starts, or -1."""
-    start = -1
     index = end
-    while index >= 0:
-        char = text[index]
-        if char in CLOSERS:
-            opened = _matching_open(text, index)
-        elif _is_quote(text, index):
-            opened = _string_start(text, index)
-        elif TERM_CHAR.match(char):
-            opened = index
-        else:
-            break
-        if opened < 0:
-            return -1
-        start = opened
-        index = opened - 1
-    return start
+    while index >= 0 and _ends_term_piece(text, index):
+        index = _piece_start(text, index) - 1
+    # -2: a group or string never opened. end: no term before `as`.
+    return -1 if index in (-2, end) else index + 1
 
 
-def _word_before(text: str, last: int) -> str | None:
-    for operator in WORD_OPERATORS:
-        first = last - len(operator) + 1
-        if first >= 0 and text[first:last + 1] == operator and (
-                first == 0 or not WORD_CHAR.match(text[first - 1])):
-            return operator
-    return None
-
-
-def _symbol_before(text: str, last: int) -> str | None:
-    for operator in SYMBOL_OPERATORS:
-        first = last - len(operator) + 1
-        if first < 0 or text[first:last + 1] != operator:
-            continue
-        if first > 0 and text[first - 1] in SYMBOL_GUARDS.get(operator, ""):
-            return None
-        return operator
-    return None
+def _last_non_space(text: str, index: int) -> int:
+    """Return the last non-whitespace index at or before index, or -1."""
+    while index >= 0 and text[index] in SPACE:
+        index -= 1
+    return index
 
 
 def _operator_before(text: str, start: int) -> str | None:
     """Return the jq operator token that ends just before index start."""
-    last = start - 1
-    while last >= 0 and text[last] in SPACE:
-        last -= 1
-    if last < 0:
-        return None
-    operator = _word_before(text, last) or _symbol_before(text, last)
+    last = _last_non_space(text, start - 1)
+    found = OPERATOR_AT_END.search(text, max(0, last + 1 - LONGEST_OPERATOR), last + 1)
     # `%s as $X` is a printf conversion in shell text, not jq modulo.
-    if operator == "%" and last == start - 1:
+    if found is None or (found.group() == "%" and last == start - 1):
         return None
-    return operator
+    return found.group()
 
 
 def _binding_operator(masked: str, match: re.Match[str]) -> tuple[int, str] | None:
     """Return (term start, operator) when the binding's term follows an operator."""
-    end = match.start() - 1
-    while end >= 0 and masked[end] in SPACE:
-        end -= 1
-    start = _term_start(masked, end) if end >= 0 else -1
+    end = _last_non_space(masked, match.start() - 1)
+    start = _term_start(masked, end)
     if start < 0:
         return None
     glued = GLUED_KEYWORD.match(masked, start, end + 1)
@@ -193,22 +159,23 @@ def _binding_operator(masked: str, match: re.Match[str]) -> tuple[int, str] | No
     return None if operator is None else (start, operator)
 
 
+def _suppressed(lines: list[str], line: int) -> bool:
+    """Return whether the line before 1-based line carries the override."""
+    return line >= 2 and SUPPRESS.search(lines[line - 2]) is not None
+
+
 def scan_text(text: str) -> list[tuple[int, str, str]]:
     """Return (line, operator, snippet) for each ambiguous binding."""
     lines = text.split("\n")
-    masked = "\n".join(_mask_line(line) for line in lines)
+    masked = STRING_OR_COMMENT.sub(_blank_comment, text)
     line_starts = [0] + [newline.end() for newline in re.finditer("\n", masked)]
     findings = []
     for match in BINDING.finditer(masked):
         found = _binding_operator(masked, match)
-        if found is None:
-            continue
-        start, operator = found
         line = bisect.bisect_right(line_starts, match.start())
-        if line >= 2 and SUPPRESS.search(lines[line - 2]):
-            continue
-        snippet = " ".join(text[max(0, start - 30):match.end() + 12].split())
-        findings.append((line, operator, snippet))
+        if found and not _suppressed(lines, line):
+            snippet = " ".join(text[max(0, found[0] - 30):match.end() + 12].split())
+            findings.append((line, found[1], snippet))
     return findings
 
 
