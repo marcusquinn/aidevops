@@ -102,14 +102,14 @@ browser_url() {
 	run_playwright_node - "$url" <<'JS' || return $?
 const imported = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = imported.chromium ? imported : imported.default;
-const target = new URL(process.argv[2]);
-if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) {
-  throw new Error('Expected an HTTP(S) URL without embedded credentials');
-}
 const options = { headless: true };
 if (process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE) options.executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE;
 let browser;
 try {
+  const target = new URL(process.argv[2]);
+  if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) {
+    throw new Error('Expected an HTTP(S) URL without embedded credentials');
+  }
   browser = await chromium.launch(options);
   const page = await browser.newPage();
   const errors = [];
