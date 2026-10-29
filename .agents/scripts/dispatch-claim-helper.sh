@@ -1677,6 +1677,8 @@ _transition_deny() {
 _minimize_finished_attempt_comments() {
 	local issue_number="$1" repo_slug="$2" runner="$3" lease_token="$4"
 	local device="$5" session="$6" attempt_id="$7"
+	local phase="${8:-terminal}"
+	[[ "$phase" == terminal ]] || return 0
 	local limiter="" deadline=$((SECONDS + 5)) remaining="" response="" ids="" id=""
 	if command -v timeout >/dev/null 2>&1; then
 		limiter="timeout"
@@ -1847,11 +1849,8 @@ DISPATCH_LEASE phase=${phase} lease_token=${lease_token} device=$(_resolve_devic
 		_transition_deny mutation_failed
 		return 1
 	fi
-	case "$phase" in terminal)
-		_minimize_finished_attempt_comments "$issue_number" "$repo_slug" "$current_login" \
-			"$lease_token" "$current_device" "${session_key:-issue-${issue_number}}" "$attempt_id" || true
-		;;
-	esac
+	_minimize_finished_attempt_comments "$issue_number" "$repo_slug" "$current_login" \
+		"$lease_token" "$current_device" "${session_key:-issue-${issue_number}}" "$attempt_id" "$phase" || true
 	return 0
 }
 
