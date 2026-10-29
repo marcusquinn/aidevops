@@ -473,17 +473,36 @@ define_ci_drift_helpers() {
 	return 0
 }
 
+# Production dependencies of the extracted review gate since GH#35867.
+define_review_gate_stubs() {
+	# pulse-merge.sh load-time global read by the extracted review gate.
+	_PULSE_MERGE_DIR="${SCRIPT_DIR}/.."
+	# Latest state-changing reviews read by the review gate. Default: one trusted
+	# human change request, so routing cases exercise the trust-gated route.
+	# Bot-only cases override it and expect one advisory dismissal.
+	ACTIVE_CHANGE_REQUESTS_JSON='[{"id":1,"state":"CHANGES_REQUESTED","submitted_at":"2026-08-03T00:00:00Z","user":{"login":"maintainer","type":"User"},"author_association":"OWNER"}]'
+	# Stub the review reader, but fail closed if production renames or removes it.
+	[[ -n "$(extract_function _review_feedback_active_change_requests "$FEEDBACK_REVIEW_SCRIPT")" ]] || return 1
+	_review_feedback_active_change_requests() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; printf '%s\n' "$ACTIVE_CHANGE_REQUESTS_JSON"; return 0; }
+	cat >"${TEST_ROOT}/bin/review-bot-gate-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${TEST_ROOT}/advisory-dismiss.log"
+EOF
+	chmod +x "${TEST_ROOT}/bin/review-bot-gate-helper.sh"
+	AIDEVOPS_REVIEW_BOT_GATE_HELPER="${TEST_ROOT}/bin/review-bot-gate-helper.sh"
+	return 0
+}
+
 define_process_helper() {
 	local fn_src="" process_stage_src="" repair_helper_src="" review_gate_src=""
 	define_ci_drift_helpers
+	define_review_gate_stubs || return 1
 	review_gate_src=$(extract_function _handle_changes_requested_review_gate "$MERGE_SCRIPT")
 	repair_helper_src=$(extract_function _handle_review_blocked_ci_repair "$PROCESS_SCRIPT")
 	process_stage_src=$(extract_process_stage_functions "$MERGE_SCRIPT")
 	fn_src=$(extract_function _process_single_ready_pr "$MERGE_SCRIPT")
 	[[ -n "$review_gate_src" && -n "$repair_helper_src" && -n "$process_stage_src" && -n "$fn_src" ]] || return 1
 
-	# pulse-merge.sh load-time global read by the extracted review gate (GH#35867).
-	_PULSE_MERGE_DIR="${SCRIPT_DIR}/.."
 	_OW_LABEL_PAT=",origin:worker,"
 	PULSE_MERGE_BOOL_TRUE="true"
 	PULSE_REVIEW_EVIDENCE_SCHEMA="aidevops.review-gate-evidence/v1"
@@ -499,10 +518,6 @@ define_process_helper() {
 	ROUTE_ARGS=""
 	ROUTE_LABELS=""
 	ROUTE_EVIDENCE=""
-	# Latest state-changing reviews read by the review gate (GH#35867). Default:
-	# one trusted human change request, so routing cases exercise the trust-gated
-	# route. Bot-only cases override it and expect one advisory dismissal.
-	ACTIVE_CHANGE_REQUESTS_JSON='[{"id":1,"state":"CHANGES_REQUESTED","submitted_at":"2026-08-03T00:00:00Z","user":{"login":"maintainer","type":"User"},"author_association":"OWNER"}]'
 	PR_REQUIRED_CHECKS_RC=1
 	REBASE_RETRY_RC=1
 	REBASE_RETRY_CALLS=0
@@ -530,15 +545,6 @@ define_process_helper() {
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2" rebase_policy="${5:-standard}"; [[ -n "$pr_number$repo_slug" ]]; REBASE_RETRY_CALLS=$((REBASE_RETRY_CALLS + 1)); REBASE_RETRY_POLICY="$rebase_policy"; return "$REBASE_RETRY_RC"; }
 	_pm_close_superseded_duplicate_pr_if_issue_solved() { local pr_number="$1" repo_slug="$2" linked_issue="$3" pr_labels="$4"; [[ -n "$pr_number$repo_slug$linked_issue$pr_labels" ]]; DUPLICATE_CLOSE_CALLS=$((DUPLICATE_CLOSE_CALLS + 1)); return "$DUPLICATE_CLOSE_RC"; }
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}" checks_json="${9:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; ROUTE_EVIDENCE="$checks_json"; return 0; }
-	# Stub the review reader, but fail closed if production renames or removes it.
-	[[ -n "$(extract_function _review_feedback_active_change_requests "$FEEDBACK_REVIEW_SCRIPT")" ]] || return 1
-	_review_feedback_active_change_requests() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; printf '%s\n' "$ACTIVE_CHANGE_REQUESTS_JSON"; return 0; }
-	cat >"${TEST_ROOT}/bin/review-bot-gate-helper.sh" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"${TEST_ROOT}/advisory-dismiss.log"
-EOF
-	chmod +x "${TEST_ROOT}/bin/review-bot-gate-helper.sh"
-	AIDEVOPS_REVIEW_BOT_GATE_HELPER="${TEST_ROOT}/bin/review-bot-gate-helper.sh"
 	_attempt_pr_update_branch() { return 1; }
 	_attempt_existing_auto_merge_behind_update_branch() { return 1; }
 	_attempt_green_behind_update_branch() { return 1; }
