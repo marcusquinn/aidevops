@@ -57,9 +57,12 @@ _PCC_JQ_RELEASE_DEFS='
 	# Edited coordination remains a fence, never affirmative recovery evidence.
 	def unedited: (.updated_at // .created_at) == .created_at;
 	def login: .user.login // .author // "";
+	def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 	def body_lines: (.body // "") | split("\n")[];
 	def field($k): (capture("(^| )" + $k + "=(?<v>[^ ]+)") | .v) // "";
 	def is_release: startswith("CLAIM_RELEASED ");
+	def release_reason: ([body_lines | select(is_release)] | first // "") | field("reason");
+	def blocked_release: release_reason == "blocked";
 	def coordination_line: startswith("DISPATCH_CLAIM ") or
 		startswith("DISPATCH_LEASE ") or is_release or
 		startswith("Dispatching worker") or startswith("Interactive session claimed");
@@ -824,6 +827,10 @@ Draft PR #${pr} preserves the exact checkpoint. No brief change or revision-boun
 # so the poster is not bound to the PR author; trust comes from association.
 # The count of stall releases newer than the head commit bounds retries: the
 # original stall is 1; a continuation that stalled without pushing makes it 2.
+# GH#35883: runner_capability_unmet releases describe the releasing runner, not
+# the head, so together they count as one original stall. Otherwise two
+# incapable runners exhaust the budget and capable runners never try the head
+# (#35598, #35603). The per-runner bound is _pcc_self_capability_release.
 # Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
 #       $3=attention dedup key
 # Output: release_id<TAB>reason<TAB>stalls_since_head<TAB>attention_posted
@@ -834,10 +841,7 @@ _pcc_stall_release_evidence() {
 	local trusted_logins="${4:-[]}"
 	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
 		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
-		def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
-		def release_reason: ([body_lines | select(is_release)] | first // "") | field("reason");
-		def capability_release: release_reason == "blocked" and
-			any(body_lines; startswith($capability));
+		def capability_release: blocked_release and any(body_lines; startswith($capability));
 		def stall_release: (release_reason | (length > 0 and test($pattern))) or capability_release;
 		($head_date | epoch) as $head_epoch
 		| [flatten[] | select(trusted_event)]
@@ -845,9 +849,47 @@ _pcc_stall_release_evidence() {
 		| ([$c[] | select(ownership($c))] | last) as $release
 		| select($release != null and ($release | unedited and stall_release))
 		| [$c[] | select(stall_release and ((.created_at // "") | (try epoch catch 0)) > $head_epoch)] as $stalls
-		| [($release.id | tostring), ($release | release_reason), ($stalls | length | tostring),
+		| ([$stalls[] | select(capability_release | not)] | length) as $genuine
+		| (if any($stalls[]; capability_release) then 1 else 0 end) as $capability_original
+		| [($release.id | tostring), ($release | release_reason), (($genuine + $capability_original) | tostring),
 			(any($c[]; (.body // "") | contains($key)) | tostring)]
 		| @tsv
+	' <<<"$comments"
+	return $?
+}
+
+#######################################
+# GH#35883: per-runner bound for runner_capability_unmet continuations. A
+# runner whose own login released this head for a missing capability skips it,
+# so the next runner can continue the head. Each login gets one try per head.
+# A newer standalone `terminal-blocker-circuit:retry` from OWNER/MEMBER re-arms
+# it once the operator has installed the prerequisite; as in
+# terminal-blocker-circuit.sh, quoted or circuit-record retry text never does.
+# Author identity is GitHub-authenticated, and the result can only withhold
+# this runner's own dispatch, so no association trust is needed for the self
+# evidence.
+# Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
+#       $3=this runner's authenticated login
+# Output: id of this runner's newest capability release for the head
+# Returns: 0 when this runner must skip the head, 1 otherwise
+#######################################
+_pcc_self_capability_release() {
+	local comments="$1" head_date="$2" self="$3"
+	_pcc_login_is_safe "$self" || return 1
+	jq -er --arg head_date "$head_date" --arg self "$self" \
+		--arg capability "$_PCC_CAPABILITY_RELEASE_LINE" --argjson trusted_logins '[]' "${_PCC_JQ_RELEASE_DEFS}"'
+		def numeric_id: (.id | type) == "number";
+		def self_capability_release: login == $self and blocked_release and
+			any(body_lines; startswith($capability));
+		def retry_directive: ((.author_association // "") as $a | $a == "OWNER" or $a == "MEMBER") and
+			((.body // "") | test("(?m)^terminal-blocker-circuit:retry[ \\t]*\\r?$")) and
+			((.body // "") | contains("aidevops:terminal-blocker-circuit") | not);
+		($head_date | epoch) as $head_epoch
+		| [flatten[] | select(type == "object" and numeric_id)] as $c
+		| ([$c[] | select(retry_directive) | .id] | max // 0) as $retry_id
+		| [$c[] | select(self_capability_release and .id > $retry_id and
+			((.created_at // "") | (try epoch catch 0)) > $head_epoch) | .id]
+		| max // empty
 	' <<<"$comments"
 	return $?
 }
@@ -898,7 +940,6 @@ _pcc_expired_claim_evidence() {
 	local trusted_logins="${4:-[]}"
 	[[ "$now_epoch" =~ ^[1-9][0-9]*$ ]] || return 1
 	jq -er --arg head_date "$head_date" --argjson now "$now_epoch" --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
-		def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 		($head_date | epoch) as $head_epoch
 		| [flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
@@ -995,6 +1036,13 @@ _pcc_dispatch_stalled() {
 		printf 'STALLED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s stalls=%s\n' \
 			"$pr" "$repo" "$head" "$release_id" "$stalls"
 		return 0
+	fi
+	local self_release=""
+	if self_release=$(_pcc_self_capability_release "$comments" "$head_date" "$login" 2>/dev/null); then
+		# GH#35883: no comment or dispatch; another runner may continue the head.
+		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s head=%s — runner %s already released it as runner_capability_unmet (release=%s)\n' \
+			"$pr" "$repo" "$head" "$login" "$self_release"
+		return 1
 	fi
 	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=%s reason=%s\n' \
 		"$issue" "$repo" "$pr" "$runner" "$release_id" "$reason"

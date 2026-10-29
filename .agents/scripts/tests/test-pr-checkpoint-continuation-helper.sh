@@ -911,6 +911,129 @@ for ownership_event in \
 	fi
 done
 
+# GH#35883: runner_capability_unmet releases describe the releasing runner, not
+# the head. Together they count as one original stall; a runner skips only a
+# head its own login released for a missing capability, until a trusted retry.
+CAPABILITY_HEAD="1111111111111111111111111111111111111111"
+capability_comments() {
+	local extra="${1:-[]}"
+	jq -nc --argjson extra "$extra" '
+		def capability_release($id; $at; $runner): {id:$id, created_at:$at,
+			author_association:"COLLABORATOR", user:{login:$runner},
+			body:("<!-- ops:start -->\nCLAIM_RELEASED reason=blocked runner=" + $runner + " ts=" + $at +
+				"\n\nTerminal blocker: reason=runner_capability_unmet owner=runner-recovery task=123 attempt=abc.\n<!-- ops:end -->")};
+		[[capability_release(50; "2026-09-30T01:30:00Z"; "cap-runner-a"),
+			{id:51, created_at:"2026-09-30T01:40:00Z", author_association:"COLLABORATOR",
+				user:{login:"cap-runner-b"}, body:"DISPATCH_CLAIM nonce=n5 runner=cap-runner-b"},
+			capability_release(52; "2026-09-30T01:50:00Z"; "cap-runner-b")] + $extra]'
+	return 0
+}
+run_capability_sweep() {
+	local login="$1"
+	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+	DISPATCH_ARGS=""
+	STATUS_CALLS=""
+	PCC_ALLOW_RELEASED=false
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 "$login" >"$output_file" || true
+	output="$(<"$output_file")"
+	PCC_ALLOW_RELEASED=false
+	return 0
+}
+# The attention record the old rule posted after two capability releases.
+old_capability_attention="$(jq -nc --arg head "$CAPABILITY_HEAD" '[{id:53, created_at:"2026-09-30T01:55:00Z",
+	author_association:"COLLABORATOR", user:{login:"pulse-runner"},
+	body:("<!-- ops:start -->\n<!-- aidevops:stalled-checkpoint-attention pr=42 head=" + $head +
+		" release=52 -->\nSTALLED_CHECKPOINT_ATTENTION pr=42 head=" + $head +
+		" release_comment=52 reason=blocked stalls=2\n<!-- ops:end -->")}]')"
+STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | with_head_commit)"
+STUB_COMMENTS_JSON="$(capability_comments "$old_capability_attention")"
+posts_before="$(post_count)"
+run_capability_sweep current-runner
+if [[ "$output" == *"assignee=worker-bot release=52 reason=blocked"* &&
+	"$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+	"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 ${CAPABILITY_HEAD} worker-bot"* &&
+	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee current-runner' &&
+	"$(post_count)" -eq "$posts_before" ]]; then
+	print_result "capability releases by other runners count once and a capable runner continues the head" 0
+else
+	print_result "capability releases by other runners count once and a capable runner continues the head" 1 \
+		"output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
+fi
+
+for released_runner in cap-runner-a cap-runner-b; do
+	posts_before="$(post_count)"
+	run_capability_sweep "$released_runner"
+	if [[ "$output" == *"STALLED_CHECKPOINT_CONTINUATION_SKIPPED"*"runner ${released_runner} already released it as runner_capability_unmet"* &&
+		-z "$DISPATCH_ARGS" && -z "$STATUS_CALLS" && "$(post_count)" -eq "$posts_before" ]]; then
+		print_result "${released_runner} skips a head it released for a missing capability without comment or dispatch" 0
+	else
+		print_result "${released_runner} skips a head it released for a missing capability without comment or dispatch" 1 \
+			"output=${output:-missing} args=${DISPATCH_ARGS:-missing}"
+	fi
+done
+
+STUB_COMMENTS_JSON="$(capability_comments '[{"id":54,"created_at":"2026-09-30T02:00:00Z","author_association":"MEMBER","user":{"login":"maintainer"},"body":"Fixture installed.\nterminal-blocker-circuit:retry"}]')"
+run_capability_sweep cap-runner-a
+if [[ "$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee cap-runner-a' ]]; then
+	print_result "a newer trusted retry re-arms a runner after its capability release" 0
+else
+	print_result "a newer trusted retry re-arms a runner after its capability release" 1 "output=${output:-missing}"
+fi
+
+capability_retry_is_ignored() {
+	local name="$1" id="$2" created_at="$3" association="$4" body="$5" retry="" released=""
+	retry="$(jq -nc --argjson id "$id" --arg at "$created_at" --arg association "$association" --arg body "$body" \
+		'[{id:$id, created_at:$at, author_association:$association, user:{login:"maintainer"}, body:$body}]')"
+	if released=$(_pcc_self_capability_release "$(capability_comments "$retry")" "$recovery_head_date" cap-runner-a) &&
+		[[ "$released" == 50 ]]; then
+		print_result "capability skip ignores ${name}" 0
+	else
+		print_result "capability skip ignores ${name}" 1 "released=${released:-none}"
+	fi
+	return 0
+}
+capability_retry_is_ignored "a COLLABORATOR retry" 54 2026-09-30T02:00:00Z COLLABORATOR 'terminal-blocker-circuit:retry'
+capability_retry_is_ignored "an inline retry mention" 54 2026-09-30T02:00:00Z MEMBER 'Post terminal-blocker-circuit:retry once installed.'
+capability_retry_is_ignored "a circuit record" 54 2026-09-30T02:00:00Z MEMBER \
+	$'<!-- aidevops:terminal-blocker-circuit revision=r blocker=b -->\nterminal-blocker-circuit:retry'
+capability_retry_is_ignored "a retry older than the release" 45 2026-09-30T01:25:00Z MEMBER 'terminal-blocker-circuit:retry'
+if ! _pcc_self_capability_release "$(capability_comments)" "2026-09-30T02:30:00Z" cap-runner-a >/dev/null 2>&1; then
+	print_result "a new head re-arms runners whose capability releases predate it" 0
+else
+	print_result "a new head re-arms runners whose capability releases predate it" 1
+fi
+
+STUB_COMMENTS_JSON="$(capability_comments '[{"id":55,"created_at":"2026-09-30T02:10:00Z","author_association":"OWNER","user":{"login":"pulse-runner"},"body":"CLAIM_RELEASED reason=no_activity runner=pulse-runner"}]')"
+posts_before="$(post_count)"
+run_capability_sweep current-runner
+if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_POSTED*"stalls=2"* && -z "$DISPATCH_ARGS" &&
+	"$(post_count)" -eq $((posts_before + 1)) ]]; then
+	print_result "a genuine stall after capability releases still posts one attention record" 0
+else
+	print_result "a genuine stall after capability releases still posts one attention record" 1 "output=${output:-missing}"
+fi
+
+# The successor's worker fence runs after the transfer, while the capability
+# release is still the newest coordination event. An ordinary blocked release
+# still requires the revision-bound approval.
+STUB_PR_JSON="$(valid_pr_json)"
+STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-progress"}]' current-runner)"
+STUB_COMMENTS_JSON="$(capability_comments)"
+PCC_HEAD_REF="worker/issue-123"
+PCC_HEAD_OID="$CAPABILITY_HEAD"
+if run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence accepts the capable successor after a capability release" 0
+else
+	print_result "worker fence accepts the capable successor after a capability release" 1
+fi
+STUB_COMMENTS_JSON="$(capability_comments | jq -c 'map(map(.body |= sub("\n\nTerminal blocker: [^\n]*"; "")))')"
+if ! run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence still rejects an ordinary blocked release without approval" 0
+else
+	print_result "worker fence still rejects an ordinary blocked release without approval" 1
+fi
+
 # Rejections must identify the failed predicate without contaminating TSV stdout
 # or leaking implementation text into the Pulse log.
 STUB_COMMENTS_JSON='[]'
