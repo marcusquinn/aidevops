@@ -53,8 +53,10 @@ _vault_policy_local_providers_file() {
 	local override_file=""
 	if override_file=$(_vault_policy_providers_override_file); then
 		local override_dir="${override_file%/*}"
+		local config_home="${override_dir%/*}"
 		if [[ -e "$override_file" || -L "$override_file" ]] \
-			|| { [[ -d "$override_dir" ]] && [[ ! -x "$override_dir" ]]; }; then
+			|| { [[ -d "$override_dir" ]] && [[ ! -x "$override_dir" ]]; } \
+			|| { [[ -d "$config_home" ]] && [[ ! -x "$config_home" ]]; }; then
 			_vault_policy_operator_file_trusted "$override_file" || return 1
 			printf '%s' "$override_file"
 			return 0
@@ -76,7 +78,9 @@ _vault_policy_is_local_model() {
 	local matched=1
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		line="${line%%#*}"
-		line="${line//[[:space:]]/}"
+		# Trim only the edges: internal whitespace is an invalid provider ID.
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
 		[[ -n "$line" ]] || continue
 		# Any invalid entry invalidates the whole list: nothing is local.
 		[[ "$line" =~ $VAULT_POLICY_LOCAL_PROVIDER_ID_RE ]] || return 1

@@ -80,6 +80,8 @@ test("binding is frozen and the shared provider list matches the headless helper
   assert.deepEqual([...policy.localProviders], ["local", "ollama", "llama", "llama.cpp", "llamacpp"]);
   assert.deepEqual(parseLocalProviders("# c\n ollama # x\n\nlocal\n"), ["ollama", "local"]);
   assert.deepEqual(parseLocalProviders("ollama\nbad/id\n"), [], "one invalid entry invalidates the list");
+  assert.deepEqual(parseLocalProviders("ollama\nopen ai\n"), [], "internal spaces must not create a provider ID");
+  assert.deepEqual(parseLocalProviders("ollama\nopen\tai\n"), [], "internal tabs invalidate the list");
   assert.deepEqual(parseLocalProviders(`${"x".repeat(65)}\n`), []);
 });
 
@@ -142,6 +144,8 @@ test("present but untrusted override fails closed in both gates; it never falls 
     "group-writable mode": { mode: 0o620 },
     "symlink to a 0600 file": { symlink: true },
     "invalid provider ID": { content: "custom-local\nopenai/gpt\n" },
+    "internal provider space": { content: "custom-local\nopen ai\n" },
+    "internal provider tab": { content: "custom-local\nopen\tai\n" },
     "oversized file": { content: `# ${"x".repeat(65537)}\ncustom-local\n` },
   };
   for (const [name, options] of Object.entries(cases)) {
@@ -153,6 +157,7 @@ test("present but untrusted override fails closed in both gates; it never falls 
     }
     assert.equal(helperAllows(f.env, "custom-local/m"), false, name);
     assert.equal(helperAllows(f.env, "ollama/m"), false, name);
+    assert.equal(helperAllows(f.env, "openai/m"), false, name);
   }
   const absent = overrideFixture(t);
   rmSync(absent.file);
@@ -160,6 +165,25 @@ test("present but untrusted override fails closed in both gates; it never falls 
   assert.equal(helperAllows(absent.env, "ollama/m"), true);
   assert.equal(helperAllows(absent.env, "custom-local/m"), false);
   assert.equal(isLocalProvider(loadLocalOnlyPolicy({ ...absent.env, AIDEVOPS_RUNTIME_POLICY: "" }), "custom-local"), false);
+});
+
+test("inaccessible configuration root fails closed in both gates", {
+  skip: !process.getuid || process.getuid() === 0,
+}, (t) => {
+  const f = overrideFixture(t);
+  const configHome = join(f.home, ".config");
+  chmodSync(configHome, 0o600);
+  try {
+    for (const env of [f.env, { ...f.env, XDG_CONFIG_HOME: configHome }]) {
+      const policy = loadLocalOnlyPolicy(env);
+      assert.equal(policy.localProvidersSource, "operator-invalid");
+      assert.deepEqual([...policy.localProviders], []);
+      assert.equal(helperAllows(env, "custom-local/m"), false);
+      assert.equal(helperAllows(env, "ollama/m"), false, "must not fall back to shared providers");
+    }
+  } finally {
+    chmodSync(configHome, 0o700);
+  }
 });
 
 test("egress gate: V1 and V2 input shapes; unknown provider is non-local; unbound is a no-op", () => {

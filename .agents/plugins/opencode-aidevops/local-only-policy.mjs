@@ -78,7 +78,7 @@ export class LocalOnlyPolicyError extends Error {
 export function parseLocalProviders(text) {
   const providers = String(text || "")
     .split(/\r?\n/)
-    .map((line) => line.replace(/#.*/, "").replace(/\s+/g, ""))
+    .map((line) => line.replace(/#.*/, "").trim())
     .filter(Boolean);
   return providers.every((provider) => LOCAL_PROVIDER_ID_PATTERN.test(provider)) ? providers : [];
 }
