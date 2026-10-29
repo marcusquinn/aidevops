@@ -93,9 +93,10 @@ ses-helper.sh audit production
 ```
 
 Suppression/configuration-set writes change delivery policy. Verify account,
-region, authorization and intended recipients before applying them. CLI listings
-automatically paginate; the domain filter runs after collecting every page, not
-only the first response. No raw SigV4 signing is used; let the AWS CLI encode
+region, authorization and intended recipients before applying them. Suppression
+listings explicitly follow service `NextToken` values; the JSON-array domain
+filter runs after collecting every page, not only the first response. No raw
+SigV4 signing is used; let the AWS CLI encode
 suppression-list email paths.
 
 ## Suppression and silent drops

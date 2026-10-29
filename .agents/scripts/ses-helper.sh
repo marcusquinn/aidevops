@@ -230,18 +230,27 @@ list_suppressed_destinations() {
     set_aws_credentials "$account_name"
 
     print_info "Suppressed destinations (bounces/complaints) for account: $account_name"
-    if [[ -z "$filter_option" ]]; then
-        # AWS CLI automatically follows every NextToken (do not use --no-paginate).
-        aws sesv2 list-suppressed-destinations --output table
-        return $?
-    fi
-    if [[ "$filter_option" != "--filter" || -z "$domain" || "$domain" == *"@"* || "$domain" == *"/"* ]]; then
+    if [[ -n "$filter_option" && ( "$filter_option" != "--filter" || -z "$domain" || "$domain" == *"@"* || "$domain" == *"/"* ) ]]; then
         print_error "Usage: suppressed <account> [--filter <domain>]"
         return 1
     fi
-    local destinations=""
-    destinations=$(aws sesv2 list-suppressed-destinations --output json) || return 1
-    jq --arg domain "$domain" '[.SuppressedDestinationSummaries[]? | select((.EmailAddress | ascii_downcase | split("@") | last) == ($domain | ascii_downcase))]' <<<"$destinations"
+    # SESv2 does not provide a paginator for this operation in every CLI version.
+    # Follow the service NextToken explicitly; never silently return only page one.
+    local destinations='[]' page="" next_token="" previous_token=""
+    local -a args=()
+    while true; do
+        page=$(aws sesv2 list-suppressed-destinations --no-paginate --page-size 100 --output json ${args[@]+"${args[@]}"}) || return 1
+        destinations=$(jq -c --argjson all "$destinations" '$all + (.SuppressedDestinationSummaries // [])' <<<"$page") || return 1
+        next_token=$(jq -r '.NextToken // empty' <<<"$page") || return 1
+        [[ -z "$next_token" ]] && break
+        if [[ "$next_token" == "$previous_token" ]]; then
+            print_error "SES returned a repeated pagination token; listing incomplete"
+            return 1
+        fi
+        previous_token="$next_token"
+        args=(--next-token "$next_token")
+    done
+    jq --arg domain "$domain" '[.[] | select($domain == "" or ((.EmailAddress | ascii_downcase | split("@") | last) == ($domain | ascii_downcase)))]' <<<"$destinations"
     return $?
 }
 
