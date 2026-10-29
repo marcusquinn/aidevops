@@ -525,6 +525,19 @@ _apply_repo() (
 		printf '%s\t%s\topen sync PR: %s\n' "$_slug" "$_STATUS_SKIPPED" "$_existing"
 		return 0
 	fi
+	# A failed transaction may never reach GitHub. Leave its worktree untouched
+	# for recovery instead of generating another identical unpushed commit.
+	local _record _retained="" _worktrees
+	_worktrees=$(git -C "$_canonical" worktree list --porcelain) || return 1
+	while IFS= read -r _record; do
+		case "$_record" in
+		worktree\ *) _retained="${_record#worktree }" ;;
+		branch\ refs/heads/"${_prefix}"-*)
+			printf '%s\t%s\tretained recovery worktree: %s\n' "$_slug" "$_STATUS_SKIPPED" "$_retained"
+			return 0
+			;;
+		esac
+	done <<<"$_worktrees"
 	_default=$(gh api "repos/$_slug" --jq '.default_branch') || return 1
 	[[ -n "$_default" && "$_default" != "null" ]] || return 1
 	_helper=$(_resolve_helper worktree-helper.sh) || return 1
@@ -562,7 +575,22 @@ _publish_worktree() {
 		return 0
 	fi
 	git -C "$_path" commit -q -m "chore: refresh aidevops badges, metrics and workflow" || return 1
-	git -C "$_path" push -u origin "$_branch" >&2 || return 1
+	local _push_output _line _readiness=""
+	if ! _push_output=$(git -C "$_path" push -u origin "$_branch" 2>&1); then
+		printf '%s\n' "$_push_output" >&2
+		while IFS= read -r _line; do
+			case "$_line" in
+			JS_TOOL_READINESS=blocked:* | JS_TOOL_READINESS=preparing:* | JS_TOOL_READINESS_HINT=*)
+				_readiness="${_readiness:+$_readiness; }$_line"
+				;;
+			esac
+		done <<<"$_push_output"
+		if [[ -n "$_readiness" ]]; then
+			printf '%s\tBLOCKED-READINESS\t%s; retained recovery worktree: %s\n' "$_slug" "$_readiness" "$_path"
+		fi
+		return 1
+	fi
+	printf '%s\n' "$_push_output" >&2
 	_open_pr "$_slug" "$_path" "$_branch" "$_default" "README, metrics and refresh workflow"
 	return $?
 }
@@ -642,7 +670,9 @@ _process_rows() {
 			local _apply_result _apply_rc=0
 			_apply_result=$(_apply_repo "$_slug" "$_rpath" "$_branch_name" "$_no_workflow" "$_workflow_only_arg") || _apply_rc=$?
 			if [[ "$_apply_rc" -ne 0 ]]; then
-				_apply_result="${_slug}	${_STATUS_FAILED}	sync failed; any created worktree retained for recovery"
+				if [[ "$_apply_result" != "${_slug}"$'\tBLOCKED-READINESS\t'* ]]; then
+					_apply_result="${_slug}	${_STATUS_FAILED}	sync failed; any created worktree retained for recovery"
+				fi
 				_any_failed=1
 				_COUNT_FAILED=$((_COUNT_FAILED + 1))
 			elif [[ "$_apply_result" == *"${_STATUS_APPLIED}"* ]]; then
