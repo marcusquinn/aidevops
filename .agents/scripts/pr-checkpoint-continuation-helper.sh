@@ -802,8 +802,9 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and b
 <!-- ops:end -->"
 	# GH#35788: capability releases already support guarded automatic continuation
 	# (GH#34758). Do not send a runner prerequisite failure back to the brief owner.
+	# GH#35932: comments are slurped pages; iterate comments, not pages.
 	if jq -e --argjson id "$release_id" --arg line "$_PCC_CAPABILITY_RELEASE_LINE" \
-		'any(.[]; .id == $id and ((.body // "") | split("\n") | any(startswith($line))))' <<<"$comments" >/dev/null; then
+		'any(flatten[]; .id == $id and ((.body // "") | split("\n") | any(startswith($line))))' <<<"$comments" >/dev/null; then
 		body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} release=${release_id} -->
 BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} attempt=${attempt:-unknown}
