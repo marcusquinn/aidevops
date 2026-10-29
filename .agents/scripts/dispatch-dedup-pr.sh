@@ -25,14 +25,74 @@ _ddpr_gh_read() {
 }
 
 _DDPR_LOOKUP_RC_RESPONSE_INVALID=13
+_DDPR_LOOKUP_RC_COMMIT_PERMISSION=77
 _DDPR_LOOKUP_RESULT_UNCERTAIN="PR_LOOKUP_RESULT=uncertain"
 _DDPR_LOOKUP_SCOPE_TASK_ID_TITLE="task_id_title"
+_DDPR_LOOKUP_SCOPE_OPEN_COMMITS="open_commits"
+
+# The cache contains no response bodies, PR metadata, credentials or raw errors.
+# A capability-context revision permits an operator-triggered guarded recheck;
+# it never changes credentials or grants access. Token changes are also detected
+# locally, without an API probe or persisting the token itself.
+_ddpr_commit_denial_cache() {
+	local action="$1"
+	local repo_slug="$2"
+	local cache_dir="${AIDEVOPS_DDPR_PERMISSION_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/work/dispatch-pr-permissions}"
+	local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}" key="" file="" denied_at="" now=""
+	if [[ -z "$token" ]]; then
+		token=$(gh auth token 2>/dev/null) || token=""
+	fi
+	key=$(printf '%s\n' "$repo_slug" "${GH_HOST:-github.com}" "${GH_CONFIG_DIR:-}" \
+		"${AIDEVOPS_DDPR_CAPABILITY_CONTEXT:-}" "$token" | shasum -a 256) || return 1
+	key="${key%% *}"
+	[[ "$key" =~ ^[a-f0-9]{64}$ ]] || return 1
+	file="${cache_dir}/${key}.json"
+	now=$(date +%s) || return 1
+	if [[ "$action" == "check" ]]; then
+		[[ -f "$file" ]] || return 1
+		denied_at=$(jq -er '.denied_at | numbers' "$file" 2>/dev/null) || return 1
+		[[ "$denied_at" =~ ^[0-9]+$ ]] || return 1
+		[[ "$now" -ge "$denied_at" && $((now - denied_at)) -lt 900 ]] || return 1
+		return 0
+	fi
+	[[ "$action" == "record" ]] || return 1
+	(umask 077; mkdir -p "$cache_dir" &&
+		jq -n --argjson at "$now" '{reason:"commit_permission_denied",scope:"open_commits",owner:"human",denied_at:$at,recheck_after:($at+900)}' \
+			>"${file}.tmp.$$" && mv "${file}.tmp.$$" "$file") || return 1
+	return 0
+}
+
+# gh can return nonzero together with partial GraphQL data. Inspect the JSON
+# before dropping failed stdout, including errors on subsequent commit pages.
+_ddpr_commit_read_attempt() {
+	local repo_slug="$1"
+	shift
+	local response="" rc=0
+	response=$(_ddpr_gh_read "$@" 2>/dev/null) || rc=$?
+	if printf '%s' "$response" | jq -e '
+		any(.errors[]?; .type == "FORBIDDEN" and
+			(.path | type == "array") and .path[0] == "repository" and
+			(.path[1] == "pullRequests" or .path[1] == "pullRequest") and
+			any(.path[]; . == "commits"))' >/dev/null 2>&1; then
+		_ddpr_commit_denial_cache record "$repo_slug" || true
+		return "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
+	fi
+	[[ "$rc" -eq 0 ]] || return "$rc"
+	printf '%s' "$response"
+	return 0
+}
 
 _ddpr_bounded_gh_read() {
 	local max_attempts="${AIDEVOPS_DDPR_LOOKUP_ATTEMPTS:-2}"
 	local retry_delay="${AIDEVOPS_DDPR_LOOKUP_RETRY_DELAY:-1}"
 	local attempt=1
 	local rc=1
+	local reader="_ddpr_gh_read"
+	local command_name="${1:-}"
+	if [[ "$command_name" == "_ddpr_commit_read_attempt" ]]; then
+		reader="$command_name"
+		shift
+	fi
 
 	[[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] || max_attempts=2
 	[[ "$max_attempts" -le 2 ]] || max_attempts=2
@@ -40,14 +100,14 @@ _ddpr_bounded_gh_read() {
 	[[ "$retry_delay" -le 5 ]] || retry_delay=1
 
 	while [[ "$attempt" -le "$max_attempts" ]]; do
-		if _ddpr_gh_read "$@"; then
+		if "$reader" "$@"; then
 			return 0
 		else
 			rc=$?
 		fi
 		# Exit 75 is a local budget/cooldown refusal. Retrying it would add
 		# pressure without obtaining new evidence.
-		[[ "$rc" -eq 75 ]] && return "$rc"
+		[[ "$rc" -eq 75 || "$rc" -eq "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION" ]] && return "$rc"
 		if [[ "$attempt" -lt "$max_attempts" && "$retry_delay" -gt 0 ]]; then
 			sleep "$retry_delay"
 		fi
@@ -59,6 +119,7 @@ _ddpr_bounded_gh_read() {
 _ddpr_lookup_failure_reason() {
 	local rc="$1"
 	case "$rc" in
+	"$_DDPR_LOOKUP_RC_COMMIT_PERMISSION") printf 'commit_permission_denied' ;;
 	75) printf 'local_budget_or_cooldown' ;;
 	124) printf 'timeout' ;;
 	"$_DDPR_LOOKUP_RC_RESPONSE_INVALID") printf 'response_validation_failed' ;;
@@ -348,7 +409,7 @@ _ddpr_graphql_open_commit_page() {
 	# shellcheck disable=SC2016
 	response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="dispatch-dedup-open-commit-page-exact-cost" \
-		_ddpr_bounded_gh_read gh api graphql -f owner="$owner" -f name="$repo" \
+		_ddpr_bounded_gh_read _ddpr_commit_read_attempt "$repo_slug" gh api graphql -f owner="$owner" -f name="$repo" \
 		-F number="$pr_number" -f cursor="$cursor" -f query='
 		query($owner: String!, $name: String!, $number: Int!, $cursor: String!) {
 			repository(owner: $owner, name: $name) {
@@ -395,11 +456,14 @@ _ddpr_graphql_open_commits() {
 	local page_count=0 max_pages="${AIDEVOPS_DEDUP_COMMIT_MAX_PAGES:-10}"
 	[[ "$max_pages" =~ ^[1-9][0-9]*$ && "$max_pages" -le 20 ]] || max_pages=10
 	[[ -n "$owner" && -n "$repo" && "$repo_slug" == */* && "$repo" != */* ]] || return 1
+	if _ddpr_commit_denial_cache check "$repo_slug"; then
+		return "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
+	fi
 
 	# shellcheck disable=SC2016
 	response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="dispatch-dedup-open-commits-exact-cost" \
-		_ddpr_bounded_gh_read gh api graphql -f owner="$owner" -f name="$repo" -f query='
+		_ddpr_bounded_gh_read _ddpr_commit_read_attempt "$repo_slug" gh api graphql -f owner="$owner" -f name="$repo" -f query='
 		query($owner: String!, $name: String!) {
 			repository(owner: $owner, name: $name) {
 				pullRequests(
@@ -600,7 +664,7 @@ _has_open_pr_check_open_commits() {
 	local lookup_rc=0
 	open_pr_json=$(_ddpr_graphql_open_commits "$repo_slug") || lookup_rc=$?
 	if [[ "$lookup_rc" -ne 0 ]]; then
-		_ddpr_emit_lookup_uncertain "open_commits" "$issue_number" "$repo_slug" "$lookup_rc"
+		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$lookup_rc"
 		return 0
 	fi
 	open_pr_count=$(printf '%s' "$open_pr_json" | jq 'length' 2>/dev/null) || open_pr_count=0
@@ -962,12 +1026,15 @@ has_open_pr() {
 		return 1
 	fi
 
-	# t3043: parallelise the sub-checks. Previously serial (4x 3-10s =
-	# 12-40s); now concurrent via temp files and background jobs. The common
-	# case is "no PR evidence" where all 4 checks run — parallelising turns
-	# 12-40s into max(3-10s) ≈ 3-10s (4x faster). When evidence IS found
-	# early, the wasted parallel calls don't affect the critical path (the
-	# candidate is blocked regardless).
+	# A repository-wide evidence denial applies to every candidate, not just the
+	# issue that discovered it. Do not repeat any admission scan during cooldown.
+	if _ddpr_commit_denial_cache check "$repo_slug"; then
+		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
+		return 0
+	fi
+
+	# t3043: parallel checks reduce lookup latency; positive evidence still
+	# blocks the candidate regardless of other completed reads.
 	local _pr_tmpdir
 	_pr_tmpdir=$(mktemp -d 2>/dev/null) || _pr_tmpdir="/tmp/pr-dedup-$$"
 	mkdir -p "$_pr_tmpdir" 2>/dev/null || true

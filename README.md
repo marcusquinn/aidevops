@@ -405,7 +405,7 @@ the OpenCode agent picker rather than memorising the catalogue.
 | Domain | Examples |
 |---|---|
 | **Development** | Code, architecture, reviews, testing, accessibility, performance, APIs, databases, mobile, extensions |
-| **Infrastructure** | Hosting, Cloudflare, Coolify, Vercel, Cloudron, containers, remote compute, DNS, VPNs, local HTTPS |
+| **Infrastructure** | Hosting, [AWS](.agents/services/hosting/aws.md) (SSO, secret-backed CLI, SES), Google Cloud, Cloudflare, Coolify, Vercel, Cloudron, containers, remote compute, DNS, VPNs, local HTTPS |
 | **Storage and backups** | Backblaze B2, IDrive E2, Wasabi, S3-compatible inventories, Cloudron backup freshness |
 | **Security** | Secrets, dependency risk, prompt injection, source approvals, access reviews, incident response, Vault |
 | **Product** | Validation, roadmaps, UX, analytics, feature flags, experiments, onboarding, monetisation |

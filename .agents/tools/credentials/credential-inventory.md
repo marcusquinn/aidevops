@@ -23,7 +23,7 @@ tools:
 
 - **Purpose**: answer, without live API calls, which account a credential opens, what it reaches, who it is for, when it expires, and which credential is each provider's default.
 - **File**: `~/.config/aidevops/credential-inventory.json` (600; override with `AIDEVOPS_CREDENTIAL_INVENTORY`). Template: `configs/credential-inventory.json.txt`.
-- **Commands**: `aidevops secret describe|record|account|default|alias|resolve|validate|dependents|drift|owner` (`secret-helper.sh` delegates to `credential_inventory.py`); `aidevops secret verify cloudflare [NAME...]` is the only command that calls a provider, and only when invoked.
+- **Commands**: `aidevops secret describe|record|account|default|alias|resolve|validate|dependents|drift|owner` (`secret-helper.sh` delegates to `credential_inventory.py`); `aidevops secret verify {cloudflare|aws} [NAME...]` calls a provider only when explicitly invoked.
 - **Which account holds a zone or resource?** `aidevops secret owner RESOURCE`; `unknown` means verify first, never guess.
 - **Already inconsistent?** `aidevops secret organise` plans the cleanup; `--apply-drafts` writes only unconfirmed drafts (see "Organise").
 - **Before renaming, rotating or revoking**: run `aidevops secret dependents NAME`; never treat a name as unused unless it reports `complete: true`.
@@ -131,6 +131,16 @@ Lines that build the name dynamically (e.g. `"CLOUDFLARE_${ACCOUNT}_API_TOKEN"`,
 - best-effort Workers scripts, Pages projects and R2 buckets.
 
 A 403 response is cached as `unreadable`, not as absent. The result is cached in `credentials.<NAME>.verification`: `verified_at`, token status and expiry, account names, zones with their status, and resources. Accounts appear only as `sha256:` fingerprints (16 hex digits), never raw IDs; the registry schema rejects anything else.
+
+`aidevops secret verify aws [AWS_<ACCOUNT>_ACCESS_KEY_ID...]` checks recorded AWS
+access-key pairs using AWS CLI `sts get-caller-identity`. Both key names (and any
+recorded `AWS_<ACCOUNT>_SESSION_TOKEN`) must belong to the same provider account.
+Only that tuple is injected; inherited AWS profile/session values are cleared.
+It prints the caller account ID and ARN only, **without caching** either in this
+registry. It does not enumerate resources or feed the Cloudflare drift/owner
+cache. With no names it checks all recorded AWS access-key pairs. See
+`services/hosting/aws.md` for SSO, provisioning, explicit paired aliases and
+rotation; the single-secret provider default is not an AWS credential tuple.
 
 `aidevops secret drift [--json]` runs offline from the registry and that cache. It reports these checks:
 

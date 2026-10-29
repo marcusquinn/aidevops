@@ -5,10 +5,17 @@
 // V2 (v2-plugin/tui.mjs) TUI plugins. Rows open the native `session.timeline`
 // ("Jump to message") dialog; neither runtime exposes a transcript-scroll or
 // message-rendering API to plugins, so navigation stays inside that dialog.
+//
+// Slash commands: OpenCode stores the expanded command template as the user's
+// text part and keeps no durable record of what was typed, so the server plugin
+// stamps that part via `command.execute.before` (stampCommandPrompt) and rows
+// render `/name arguments`. Unstamped legacy turns drop leading HTML comments
+// (command-file SPDX headers) instead of showing them as the prompt.
 
 export const PROMPTS_TIMELINE_COMMAND = "session.timeline";
 const DEFAULT_LIMIT = 8;
 const DEFAULT_WIDTH = 34;
+const LEADING_HTML_COMMENTS = /^\s*(?:<!--[\s\S]*?-->\s*)+/;
 
 function attempt(fn, fallback) {
   try {
@@ -31,12 +38,41 @@ function isPromptPart(part) {
   return part?.type === "text" && !part.synthetic && !part.ignored && typeof part.text === "string";
 }
 
+function withoutLeadingComments(text) {
+  const stripped = text.replace(LEADING_HTML_COMMENTS, "");
+  return stripped.trim() ? stripped : text;
+}
+
+function commandLabel(part) {
+  const command = part?.metadata?.aidevops?.command;
+  if (typeof command?.name !== "string" || !command.name) return "";
+  const args = typeof command.arguments === "string" ? command.arguments : "";
+  return `/${command.name} ${args}`;
+}
+
+function partPromptText(part) {
+  return commandLabel(part) || withoutLeadingComments(part.text);
+}
+
 function promptText(message, partsFor) {
   if (!isUserPrompt(message)) return "";
-  if (typeof partsFor !== "function") return typeof message.text === "string" ? message.text : "";
+  if (typeof partsFor !== "function") return typeof message.text === "string" ? withoutLeadingComments(message.text) : "";
   const parts = attempt(() => partsFor(message.id), []);
   if (!Array.isArray(parts)) return "";
-  return parts.filter(isPromptPart).map((part) => part.text).join(" ");
+  return parts.filter(isPromptPart).map(partPromptText).join(" ");
+}
+
+// `command.execute.before` hook: mutate the template text part in place
+// (OpenCode keeps its own `parts` reference). Model input and the native
+// transcript are unchanged; only part metadata gains the typed command.
+export function stampCommandPrompt(input, output) {
+  const name = typeof input?.command === "string" ? input.command.trim() : "";
+  const part = Array.isArray(output?.parts) ? output.parts.find(isPromptPart) : undefined;
+  if (!name || !part) return false;
+  const metadata = part.metadata && typeof part.metadata === "object" ? part.metadata : {};
+  const command = { name, arguments: typeof input.arguments === "string" ? input.arguments : "" };
+  part.metadata = { ...metadata, aidevops: { ...metadata.aidevops, command } };
+  return true;
 }
 
 function truncate(text, width) {

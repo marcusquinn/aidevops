@@ -338,6 +338,19 @@ exempt, even with a PR identifier in the environment. Unavailable reads, changed
 ownership, draft/unlinked PRs, or additional destructive signals remain
 reportable. Historical audit entries are never rewritten or backfilled.
 
+Protected-label removals also have a narrow timeline-backed `self_reversal`
+exemption (GH#35881). Every signal on the entry must be a protected-label removal.
+For each label, the latest preceding add and the matching removal must both be
+by the scanner's authenticated login, at most 24 hours apart, with no other actor
+labelling or unlabelling it in between. The removal must be unique within the
+minute preceding the post-operation audit timestamp. This conservative match
+keeps delayed or ambiguous records reportable rather than trusting an older cycle.
+The login is read once per scan; timeline reads are capped at five 100-event
+pages. API errors, missing events, malformed or truncated timelines, actor
+mismatches, and additional signals (including body loss or capture failures)
+retain the alert. Each exclusion logs `self_reversal`; the original log stays
+unchanged and the scan cursor still advances. Historical alerts are not rewritten.
+
 Alerts are labelled `monitoring` and `no-auto-dispatch` (GH#34499). The evidence
 is in the producing runner's local `gh-audit.log`, so the review owner is the
 runner that filed the alert (the issue author). Other runners' workers cannot read

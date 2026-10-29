@@ -176,6 +176,72 @@ _ga_format_anomaly_row() {
 	return 0
 }
 
+# Read at most five complete timeline pages. Never classify a truncated timeline.
+_ga_self_reversal_timeline() {
+	local repo="$1" number="$2"
+	local page response pages=""
+	for page in 1 2 3 4 5; do
+		response=$(gh api "repos/${repo}/issues/${number}/timeline?per_page=100&page=${page}" 2>/dev/null) || return 1
+		jq -e 'type == "array"' <<<"$response" >/dev/null 2>&1 || return 1
+		pages+="${response}"$'\n'
+		if [[ "$(jq 'length' <<<"$response")" -lt 100 ]]; then
+			jq -sc 'add' <<<"$pages"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Only suppress an entry when every signal is independently proven benign.
+# Timeline timestamps precede the post-operation audit timestamp; require a
+# unique removal in the preceding minute rather than matching an older cycle.
+_ga_filter_self_reversals() {
+	local login entry repo number timeline
+	local kept=()
+	[[ ${#_sc_anomaly_entries[@]} -gt 0 ]] || return 0
+	login=$(gh api user --jq .login 2>/dev/null) || return 0
+	[[ "$login" =~ ^[A-Za-z0-9-]+(\[bot\])?$ ]] || return 0
+	for entry in "${_sc_anomaly_entries[@]}"; do
+		if ! jq -e '
+			(.suspicious | length > 0 and all(.[]; type == "string" and startswith("protected_label_removed:") and length > 24))
+			and (.repo | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))
+			and (.number | type == "number" and . > 0 and floor == .)
+		' <<<"$entry" >/dev/null 2>&1; then
+			kept+=("$entry")
+			continue
+		fi
+		repo=$(jq -r '.repo' <<<"$entry")
+		number=$(jq -r '.number' <<<"$entry")
+		if ! timeline=$(_ga_self_reversal_timeline "$repo" "$number"); then
+			kept+=("$entry")
+			continue
+		fi
+		# aidevops:trust-boundary — missing, ambiguous, or foreign events retain
+		# the alert. All intervening label events, not just adds, are checked.
+		if jq -e --arg login "$login" --argjson entry "$entry" '
+			($entry.ts | fromdateiso8601) as $ts |
+			. as $timeline |
+			all($entry.suspicious[]; ltrimstr("protected_label_removed:") as $label |
+				[$timeline[] | select(.label.name == $label and (.event == "labeled" or .event == "unlabeled")) |
+					. + {epoch: (.created_at | fromdateiso8601)}] | sort_by(.epoch) as $events |
+				[$events[] | select(.event == "unlabeled" and .epoch <= $ts and .epoch >= ($ts - 60))] as $removals |
+				($removals | length) == 1 and
+				($removals[0] as $removed |
+					[$events[] | select(.event == "labeled" and .epoch <= $ts)] | last as $added |
+					$added != null and $added.actor.login == $login and $removed.actor.login == $login and
+					$added.epoch < $removed.epoch and
+					($removed.epoch - $added.epoch) <= 86400 and
+					all($events[] | select(.epoch >= $added.epoch and .epoch <= $removed.epoch); .actor.login == $login)))
+		' <<<"$timeline" >/dev/null 2>&1; then
+			_ga_info "Excluded protected-label self_reversal"
+		else
+			kept+=("$entry")
+		fi
+	done
+	_sc_anomaly_entries=("${kept[@]}")
+	return 0
+}
+
 # =============================================================================
 # Commands
 # =============================================================================
@@ -249,6 +315,7 @@ _cmd_scan_collect_anomalies() {
 			_sc_anomaly_entries+=("$line")
 		done <"$filtered_file"
 		rm -f "$filtered_file"
+		_ga_filter_self_reversals
 		return 0
 	fi
 

@@ -137,6 +137,10 @@ _append_gh_stub_graphql_tail() {
 	local stub_path="$1"
 	cat >>"$stub_path" <<'EOF'
 	if [[ "$query_text" == *"commits(first: 100, after:"* ]]; then
+		if [[ "${GH_COMMIT_DENIAL_PAGE:-0}" == 1 ]]; then
+			printf '%s\n' '{"errors":[{"type":"FORBIDDEN","message":"private diagnostic must not escape","path":["repository","pullRequest","commits","nodes",0]}]}'
+			exit 1
+		fi
 		page_json="${GH_OPEN_COMMIT_PAGE_JSON:-}"
 		[[ -n "$page_json" ]] || page_json='{"commits":[],"hasNextPage":false,"endCursor":null}'
 		jq -cn --argjson page "$page_json" --argjson cost "$graphql_cost" '
@@ -147,6 +151,10 @@ _append_gh_stub_graphql_tail() {
 		exit 0
 	fi
 	if [[ "$query_text" == *"commits(first: 100)"* ]]; then
+		if [[ "${GH_COMMIT_DENIAL:-0}" == 1 ]]; then
+			printf '%s\n' '{"data":{"repository":{"pullRequests":{"nodes":[{"number":99,"commits":{"nodes":[null]}}]}},"rateLimit":{"cost":1}},"errors":[{"type":"FORBIDDEN","message":"private diagnostic must not escape","path":["repository","pullRequests","nodes",0,"commits","nodes",0]}]}'
+			exit "${GH_COMMIT_DENIAL_RC:-1}"
+		fi
 		jq -cn --argjson nodes "${GH_OPEN_COMMITS_JSON:-[]}" --argjson cost "$graphql_cost" '
 			{
 				data: {
@@ -289,6 +297,7 @@ setup_test_env() {
 	export GH_PR_VIEW_FIXTURE_FILE
 	export GH_GRAPHQL_CALL_LOG
 	export AIDEVOPS_DDPR_LOOKUP_RETRY_DELAY=0
+	export AIDEVOPS_DDPR_PERMISSION_CACHE_DIR="${TEST_ROOT}/permission-cache"
 	export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${TEST_ROOT}/gh-secondary-cooldown.json"
 	export AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE="${TEST_ROOT}/gh-cooldown-events.jsonl"
 	export AIDEVOPS_GH_READ_RAMP_STATE_FILE="${TEST_ROOT}/gh-read-ramp-state.tsv"
@@ -1267,6 +1276,84 @@ test_has_open_pr_requires_canonical_supersedes_marker() {
 	return 0
 }
 
+test_commit_permission_cooldown() {
+	local output="" before="" after="" cache_file="" rc=0
+	set_gh_fixtures ''
+	export GH_COMMIT_DENIAL=1
+	export AIDEVOPS_DDPR_CAPABILITY_CONTEXT="permission-test"
+	printf '' >"$GH_GRAPHQL_CALL_LOG"
+	output=$("$HELPER_SCRIPT" has-open-pr 70001 example/repo) || rc=$?
+	if [[ "$rc" == 0 && "$output" == *"reason=commit_permission_denied"* && "$output" != *"private diagnostic"* ]] &&
+		[[ $(grep -cF '1|dispatch-dedup-open-commits-exact-cost|' "$GH_GRAPHQL_CALL_LOG") -eq 1 ]]; then
+		print_result "nested FORBIDDEN is sanitized and not immediately retried" 0
+	else
+		print_result "nested FORBIDDEN is sanitized and not immediately retried" 1 "$output"
+	fi
+	before=$(wc -l <"$GH_GRAPHQL_CALL_LOG")
+	output=$("$HELPER_SCRIPT" has-open-pr 70002 example/repo) || true
+	after=$(wc -l <"$GH_GRAPHQL_CALL_LOG")
+	if [[ "$before" == "$after" && "$output" == *"reason=commit_permission_denied"* ]]; then
+		print_result "unchanged denial suppresses scans across candidates" 0
+	else
+		print_result "unchanged denial suppresses scans across candidates" 1 "$output"
+	fi
+	unset GH_COMMIT_DENIAL
+	if "$HELPER_SCRIPT" has-open-pr 70002 example/other; then
+		print_result "repository denial does not suppress another repository" 1
+	else
+		print_result "repository denial does not suppress another repository" 0
+	fi
+	export AIDEVOPS_DDPR_CAPABILITY_CONTEXT="permission-success-exit"
+	export GH_COMMIT_DENIAL=1 GH_COMMIT_DENIAL_RC=0
+	rc=0
+	output=$("$HELPER_SCRIPT" has-open-pr 70002 example/repo) || rc=$?
+	if [[ "$rc" == 0 && "$output" == *"reason=commit_permission_denied"* ]]; then
+		print_result "partial FORBIDDEN with zero transport status still blocks" 0
+	else
+		print_result "partial FORBIDDEN with zero transport status still blocks" 1 "$output"
+	fi
+	unset GH_COMMIT_DENIAL GH_COMMIT_DENIAL_RC
+	export AIDEVOPS_DDPR_CAPABILITY_CONTEXT="transport-test" GH_PR_LIST_FAIL=1
+	output=$("$HELPER_SCRIPT" has-open-pr 70002 example/repo) || true
+	if [[ "$output" == *"reason=api_request_failed"* && "$output" != *"commit_permission_denied"* ]]; then
+		print_result "transport failure is not a permission denial" 0
+	else
+		print_result "transport failure is not a permission denial" 1 "$output"
+	fi
+	unset GH_PR_LIST_FAIL
+	if "$HELPER_SCRIPT" has-open-pr 70002 example/repo; then
+		print_result "transient transport recovery needs no capability change" 1
+	else
+		print_result "transient transport recovery needs no capability change" 0
+	fi
+	export AIDEVOPS_DDPR_CAPABILITY_CONTEXT="permission-repaired"
+	if "$HELPER_SCRIPT" has-open-pr 70002 example/repo; then
+		print_result "context change enables guarded read, not automatic clearance" 1
+	else
+		print_result "context change enables guarded read, not automatic clearance" 0
+	fi
+	export AIDEVOPS_DDPR_CAPABILITY_CONTEXT="permission-test"
+	for cache_file in "$AIDEVOPS_DDPR_PERMISSION_CACHE_DIR"/*.json; do
+		jq '.denied_at = 0' "$cache_file" >"${cache_file}.expired"
+		mv "${cache_file}.expired" "$cache_file"
+	done
+	if "$HELPER_SCRIPT" has-open-pr 70002 example/repo; then
+		print_result "expired denial allows complete evidence read" 1
+	else
+		print_result "expired denial allows complete evidence read" 0
+	fi
+	export GH_COMMIT_DENIAL_PAGE=1
+	export GH_OPEN_COMMITS_JSON='[{"number":99,"hasNextPage":true,"endCursor":"next","commits":[]}]'
+	output=$("$HELPER_SCRIPT" has-open-pr 70003 example/repo) || true
+	if [[ "$output" == *"reason=commit_permission_denied"* ]]; then
+		print_result "subsequent commit page denial remains fail-closed" 0
+	else
+		print_result "subsequent commit page denial remains fail-closed" 1 "$output"
+	fi
+	unset GH_COMMIT_DENIAL_PAGE GH_OPEN_COMMITS_JSON AIDEVOPS_DDPR_CAPABILITY_CONTEXT
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1321,6 +1408,7 @@ main() {
 	test_has_open_pr_preserves_bump_wording_in_implementation_body
 	test_has_open_pr_ignores_consolidation_task_historical_reference
 	test_has_open_pr_requires_canonical_supersedes_marker
+	test_commit_permission_cooldown
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

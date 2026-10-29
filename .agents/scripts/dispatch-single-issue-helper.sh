@@ -1481,7 +1481,13 @@ _dsi_write_recovery_checkpoint() {
 	local checkpoint_file="${checkpoint_dir}/${repo_slug//\//-}-${issue_number}.json"
 	local checkpoint_tmp="${checkpoint_file}.tmp.$$"
 	local resume_command=""
+	local recovery_owner="automation"
+	local resume_condition="one authoritative metadata/dedup read returns a definitive clear or blocked result"
 	local -a resume_args=("${_DSI_SCRIPT_DIR}/dispatch-single-issue-helper.sh" dispatch "$issue_number" "$repo_slug")
+	if [[ "$trigger" == *"reason=commit_permission_denied"* ]]; then
+		recovery_owner="human"
+		resume_condition="human-owned permission repair or capability context change; otherwise guarded recheck after the 900-second repository cooldown; commit evidence must remain complete"
+	fi
 
 	[[ -n "$_DSI_ARG_MODEL" ]] && resume_args+=(--model "$_DSI_ARG_MODEL")
 	[[ -n "$_DSI_ARG_AGENT" ]] && resume_args+=(--agent "$_DSI_ARG_AGENT")
@@ -1499,11 +1505,12 @@ _dsi_write_recovery_checkpoint() {
 		--arg trigger "$trigger" \
 		--argjson attempts "$attempts" \
 		--arg resume_command "$resume_command" \
-		--arg resume_condition "one authoritative metadata/dedup read returns a definitive clear or blocked result" \
+		--arg resume_condition "$resume_condition" \
+		--arg recovery_owner "$recovery_owner" \
 		'{status:$status, issue:$issue, repo:$repo, trigger:$trigger, dedup_attempts:$attempts,
 		  completed_checks:["issue metadata loaded","target is an issue","dispatch holds checked","parent-task gate checked","dedup remained fail-closed"],
 		  unsafe_route_not_to_repeat:"bypass dedup or repeat an identical lookup without changed conditions",
-		  resume_command:$resume_command, resume_condition:$resume_condition}' >"$checkpoint_tmp" || return 1
+		  recovery_owner:$recovery_owner, resume_command:$resume_command, resume_condition:$resume_condition}' >"$checkpoint_tmp" || return 1
 	mv "$checkpoint_tmp" "$checkpoint_file"
 	_dsi_warn "Recovery checkpoint: ${checkpoint_file}"
 	printf 'RECOVERY_CHECKPOINT_JSON='
@@ -1564,6 +1571,24 @@ _dsi_validate_dispatch_target() {
 	return 0
 }
 
+# Read only the shared local denial cache before further admission reads. Load
+# the PR library in a subshell so its symbols cannot alter this CLI's state.
+_dsi_guard_cached_commit_denial() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	if (
+		# shellcheck source=./dispatch-dedup-pr.sh
+		# shellcheck disable=SC1091
+		source "${_DSI_SCRIPT_DIR}/dispatch-dedup-pr.sh"
+		_ddpr_commit_denial_cache check "$repo_slug"
+	); then
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
+			'PR_LOOKUP_RESULT=uncertain reason=commit_permission_denied scope=open_commits' 0 || true
+		return 75
+	fi
+	return 0
+}
+
 _dsi_check_runner_capability() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1603,6 +1628,7 @@ cmd_dispatch() {
 
 	# Step 1-2: validate + load + parent-task gate
 	_dsi_validate_dispatch_target "$issue_number" "$repo_slug" || return 1
+	_dsi_guard_cached_commit_denial "$issue_number" "$repo_slug" || return $?
 
 	# Step 3: dedup check (informational under --dry-run, blocking otherwise).
 	# Helper exit codes (per dispatch-dedup-helper.sh::is-assigned):

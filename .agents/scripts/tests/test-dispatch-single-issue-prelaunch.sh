@@ -249,6 +249,46 @@ test_persistent_uncertainty_does_not_retry_and_checkpoints_dryrun() {
 	[[ "$rc" -eq 75 && "$calls" == "1" && "$checkpoint_ok" -eq 0 && "$out" == *"RECOVERY_CHECKPOINT_JSON="* ]] && check=0
 	print_result "persistent uncertain dry-run returns 75 and persists checkpoint" "$check" \
 		"rc=$rc calls=$calls checkpoint_ok=$checkpoint_ok output=$out"
+	local original_resume=""
+	local _DSI_ARG_DRYRUN=1
+	_dsi_write_recovery_checkpoint 123 owner/repo 'reason=api_request_failed' 1 >/dev/null 2>&1
+	original_resume=$(jq -r '.resume_command' "$checkpoint_file")
+	_dsi_write_recovery_checkpoint 123 owner/repo \
+		'PR_LOOKUP_RESULT=uncertain reason=commit_permission_denied scope=open_commits' 1 >/dev/null 2>&1
+	check=1
+	if jq -e --arg resume "$original_resume" '
+		.recovery_owner == "human" and .issue == "123" and .repo == "owner/repo" and
+		.resume_command == $resume and .dedup_attempts == 1 and
+		(.resume_condition | contains("900-second")) and
+		(.trigger | contains("commit_permission_denied")) and
+		(.unsafe_route_not_to_repeat | contains("bypass dedup"))' "$checkpoint_file" >/dev/null; then
+		check=0
+	fi
+	print_result "permission checkpoint retains exact resume and human repair ownership" "$check"
+
+	local -x AIDEVOPS_DDPR_PERMISSION_CACHE_DIR="${test_dir}/denials"
+	local -x AIDEVOPS_DDPR_CAPABILITY_CONTEXT="cached-prelaunch"
+	(
+		source "${_DSI_SCRIPT_DIR}/dispatch-dedup-pr.sh"
+		_ddpr_commit_denial_cache record owner/repo
+	)
+	rc=0
+	out=$(cmd_dispatch 123 owner/repo --dry-run 2>&1) || rc=$?
+	calls=$(<"$count_log")
+	check=1
+	if [[ "$rc" == 75 && "$calls" == 1 ]] && jq -e \
+		'.recovery_owner == "human" and .dedup_attempts == 0 and .issue == "123"' \
+		"$checkpoint_file" >/dev/null; then
+		check=0
+	fi
+	print_result "cached denial blocks admission without another dedup read" "$check" "$out"
+	AIDEVOPS_DDPR_CAPABILITY_CONTEXT="changed-prelaunch"
+	rc=0
+	out=$(cmd_dispatch 123 owner/repo --dry-run 2>&1) || rc=$?
+	calls=$(<"$count_log")
+	check=1
+	[[ "$rc" == 75 && "$calls" == 2 && "$out" == *"jq-failure"* ]] && check=0
+	print_result "changed capability context restores guarded admission reads" "$check" "$out"
 
 	_DSI_DEDUP_HELPER="$original_dedup_helper"
 	unset MOCK_DEDUP_COUNT_LOG

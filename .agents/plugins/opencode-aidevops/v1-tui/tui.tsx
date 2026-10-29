@@ -31,6 +31,8 @@ function PromptsView(props: { api: TuiPluginApi; sessionID: string }) {
       (id: string) => props.api.state.part(id),
     ),
   );
+  // Open on mouse-up: OpenCode's Dialog backdrop closes on mouse-up, so opening
+  // on mouse-down lets the same click's release dismiss the new dialog.
   const timeline = () => openPromptsTimeline(props.api.keymap);
   return (
     <Show when={rows().length > 0}>
@@ -40,12 +42,12 @@ function PromptsView(props: { api: TuiPluginApi; sessionID: string }) {
             <b>{open() ? "▼ Prompts" : "▶ Prompts"}</b>
           </text>
           <Show when={!open()}>
-            <text fg={theme().textMuted} onMouseDown={timeline}> ({rows().length})</text>
+            <text fg={theme().textMuted} onMouseUp={timeline}> ({rows().length})</text>
           </Show>
         </box>
         <Show when={open()}>
           <For each={rows()}>
-            {(row) => <text fg={theme().text} wrapMode="none" onMouseDown={timeline}>{row.text}</text>}
+            {(row) => <text fg={theme().text} wrapMode="none" onMouseUp={timeline}>{row.text}</text>}
           </For>
         </Show>
       </box>
