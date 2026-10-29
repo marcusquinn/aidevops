@@ -87,7 +87,7 @@ PR/issue status, CI runs, releases, tags, deployments and branch heads change be
 - **Query in this turn.** Never repeat an earlier turn's result as current; when citing one, state when it was observed.
 - **Timestamp it.** Run `date -u` first and give observation times in the answer. Label point-in-time results (for example "not merged as of 14:02 UTC").
 - **Tags before releases.** A tag can exist while its release is still a draft. Check `git ls-remote --tags <remote>` (or `git fetch --tags`) as well as `gh release list`.
-- **Deploys need the right run class.** List several runs filtered by `event` (tag push, branch push, `workflow_dispatch`) instead of generalising from `--limit 1`; a manual or skipped run says nothing about a tag-triggered deploy.
+- **Deploys need the right run class.** List several runs with valid event filters (`--event push` covers both branch and tag pushes; query `--event workflow_dispatch` separately), then inspect each run's ref (`headBranch`) or SHA instead of generalising from `--limit 1`; a manual or skipped run says nothing about a tag-triggered deploy.
 - **Newer evidence invalidates the old picture.** An unseen SHA, tag or newer run means re-fetch and re-check before concluding.
 
 Related: `reference/session.md` "Context Compaction Resilience" (revalidate after rollover) and t3222 above.
