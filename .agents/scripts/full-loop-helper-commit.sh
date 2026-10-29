@@ -1592,11 +1592,12 @@ import json, re, sys
 body = sys.argv[1]
 section = re.search(r'^## Runtime Testing\s*\n(.*?)(?=^## |\Z)', body, re.M | re.S)
 text = section[1] if section else ''
+text = re.split(r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:', text, maxsplit=1, flags=re.M)[0]
 risk = re.search(r'^- \*\*Risk level:\*\* (.+)$', text, re.M)
-verification = re.search(r'^- \*\*Verification:\*\* ([\w-]+) — (.+)$', text, re.M)
+verification = re.search(r'^- \*\*Verification:\*\*[ \t]+([\w-]+) —[ \t]*(.*?)(?=^- \*\*|\Z)', text, re.M | re.S)
 print(json.dumps({'risk': risk[1] if risk else '',
                   'level': verification[1] if verification else '',
-                  'evidence': verification[2] if verification else ''}))
+                  'evidence': verification[2].strip() if verification else ''}))
 PY
 	) || return 1
 	[[ "$override_flags" == *" risk-level "* ]] || runtime_risk=$(printf '%s' "$metadata" | jq -r '.risk')
@@ -1619,16 +1620,23 @@ if not current.strip() or not re.search(r'^## ', generated, re.M):
     sys.exit(0)
 
 def section(body, name):
-    boundary = r'(?=^## |^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:|^---$|\Z)'
+    boundary = r'(?=^## |^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:|\Z)'
     return re.search(r'^## ' + re.escape(name) + r'\n.*?' + boundary, body, re.M | re.S)
+
+def insert_section(body, text):
+    footer = re.search(r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:', body, re.M)
+    position = footer.start() if footer else len(body)
+    return body[:position].rstrip('\n') + '\n\n' + text.rstrip('\n') + '\n\n' + body[position:]
 
 for name, flag in [('Files Changed', None), ('Summary', 'summary'), ('Decisions', 'decisions')]:
     old, new = section(current, name), section(generated, name)
+    if old and not new and flag in overrides:
+        current = current[:old.start()] + current[old.end():]
     if new and (not old or flag is None or flag in overrides):
         if old:
             current = current[:old.start()] + new[0] + current[old.end():]
         else:
-            current = new[0] + current
+            current = insert_section(current, new[0])
 
 old, new = section(current, 'Runtime Testing'), section(generated, 'Runtime Testing')
 if old and new:
@@ -1636,13 +1644,27 @@ if old and new:
     # replace only the requested metadata lines, never that trailing content.
     text = old[0]
     for label, flags in [('Risk level', {'risk-level'}), ('Verification', {'testing', 'testing-level'})]:
-        pattern = r'^- \*\*' + label + r':\*\* .*?$'
-        replacement = re.search(pattern, new[0], re.M)
+        pattern = r'^- \*\*' + label + r':\*\* .*?(?=^- \*\*|\Z)'
+        replacement = re.search(pattern, new[0], re.M | re.S)
         if overrides & flags and replacement:
-            text = re.sub(pattern, lambda _: replacement[0], text, flags=re.M)
+            text = re.sub(pattern, lambda _: replacement[0], text, flags=re.M | re.S)
     current = current[:old.start()] + text + current[old.end():]
 elif new:
-    current = new[0] + current
+    current = insert_section(current, new[0])
+
+# Sections deliberately exclude the closing reference and signature. Recover
+# each independently so a partial footer is completed without duplicating it.
+reference = r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b[^\n]*'
+if not re.search(reference, current, re.M):
+    closing = re.search(reference, generated, re.M)
+    if closing:
+        signature_start = re.search(r'^<!-- aidevops:', current, re.M)
+        position = signature_start.start() if signature_start else len(current)
+        current = current[:position].rstrip('\n') + '\n\n' + closing[0] + '\n\n' + current[position:]
+if not re.search(r'^<!-- aidevops:sig -->', current, re.M):
+    signature = re.search(r'^(?:<!-- aidevops:origin:[^\n]*\n)?<!-- aidevops:sig -->.*', generated, re.M | re.S)
+    if signature:
+        current = current.rstrip('\n') + '\n\n' + signature[0]
 print(current.rstrip('\n'))
 PY
 	return $?

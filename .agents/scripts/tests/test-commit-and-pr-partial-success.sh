@@ -972,6 +972,55 @@ else
 	fail "explicit runtime arguments take precedence over inherited evidence"
 fi
 
+# Assigned review regressions: multiline fields, curated separators, empty
+# overrides, and independently missing footer components.
+pr_metadata_overrides=""
+REMOTE_PR_BODY=$'## Runtime Testing\n\n- **Risk level:** Medium\n- **Verification:** runtime-verified — \nfirst command\nsecond command\n\n- **Notes:** not evidence\n\nResolves #42\n\n<!-- aidevops:sig -->\nfooter'
+_inherit_pr_runtime_metadata "999" "owner/repo"
+if [[ "$testing_level" == "runtime-verified" && "$summary_testing" == $'first command\nsecond command' ]]; then
+	pass "multiline evidence: inherits following-line evidence up to next metadata field"
+else
+	fail "multiline evidence: inherits following-line evidence up to next metadata field"
+fi
+REMOTE_PR_BODY=$'## Runtime Testing\n\n- **Risk level:** Medium\n- **Verification:** runtime-verified — first command\nsecond command\n\nResolves #42\n\n<!-- aidevops:sig -->\nfooter'
+_inherit_pr_runtime_metadata "999" "owner/repo"
+if [[ "$summary_testing" == $'first command\nsecond command' ]]; then
+	pass "multiline evidence: excludes closing reference and signature"
+else
+	fail "multiline evidence: excludes closing reference and signature"
+fi
+merged_body=$(_merge_existing_pr_body "$REMOTE_PR_BODY" "$generated_body" "testing")
+if [[ "$merged_body" == *"self-assessed — new evidence"* && "$merged_body" != *"second command"* && "$merged_body" == *"Resolves #42"* ]]; then
+	pass "explicit verification: replaces complete multiline evidence"
+else
+	fail "explicit verification: replaces complete multiline evidence"
+fi
+separator_body="${curated_body/Curated summary/$'Curated summary\n\n---\n\nOld trailing summary'}"
+merged_body=$(_merge_existing_pr_body "$separator_body" "$generated_body" "summary")
+separator_expected="${curated_body/Curated summary/Replacement summary}"
+separator_expected="${separator_expected/old.sh/new.sh}"
+if [[ "$merged_body" == "$separator_expected" ]]; then
+	pass "separator summary: replaces all curated text across Markdown separator"
+else
+	fail "separator summary: replaces all curated text across Markdown separator"
+fi
+without_decisions="${generated_body/$'## Decisions\n\nNew decision\n\n'/}"
+merged_body=$(_merge_existing_pr_body "$curated_body" "$without_decisions" "decisions")
+if [[ "$merged_body" != *"## Decisions"* && "$merged_body" != *"Keep compatibility"* && "$merged_body" == *"existing footer" ]]; then
+	pass "empty Decisions override: removes section without losing footer"
+else
+	fail "empty Decisions override: removes section without losing footer"
+fi
+for footer_body in "stale body" $'stale body\n\nResolves #42' $'stale body\n\n<!-- aidevops:sig -->\nexisting footer'; do
+	merged_body=$(_merge_existing_pr_body "$footer_body" "$generated_body" "")
+	remerged_body=$(_merge_existing_pr_body "$merged_body" "$generated_body" "")
+	if [[ "$merged_body" == "stale body"* && "$merged_body" == *"Resolves #42"* && "$merged_body" == *"<!-- aidevops:sig -->"* && "$merged_body" == "$remerged_body" ]]; then
+		pass "partial footer recovery: closing reference and signature are idempotent"
+	else
+		fail "partial footer recovery: closing reference and signature are idempotent"
+	fi
+done
+
 # =============================================================================
 # Summary
 # =============================================================================
