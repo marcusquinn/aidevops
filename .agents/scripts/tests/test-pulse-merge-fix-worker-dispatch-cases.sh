@@ -1631,12 +1631,13 @@ EOF
 # Exercise the production gate and real shared dismissal command. Keep its gh
 # boundary isolated; route attempts and dismissal writes are observable files.
 test_advisory_review_gate() {
+	local gate_rc=0
 	(
 		reset_mock_state
 		local helper_dir="${SCRIPT_DIR}/.."
 		local _PULSE_MERGE_DIR="$helper_dir"
 		export TEST_GATE_ASSOCIATION=MEMBER TEST_GATE_DRIFT=0 TEST_GATE_FAIL=0
-		export TEST_GATE_LABELS=origin:worker
+		export TEST_GATE_LABELS=origin:worker TEST_GATE_SNAPSHOT=valid TEST_GATE_POST=valid
 		# shellcheck disable=SC1090
 		source <(sed -n '/^_handle_changes_requested_review_gate() {/,/^}/p' "${helper_dir}/pulse-merge.sh")
 		_pmf_gh_read() { "$@"; return $?; }
@@ -1650,23 +1651,28 @@ case "$*" in
 	[[ "$TEST_GATE_FAIL" == 0 ]] || exit 1
 	cat "${TEST_ROOT}/reviews.json" ;;
 *'pr view'*)
-	jq -n --arg head "$TEST_READY_SHA" '{headRefOid:$head,reviewDecision:"APPROVED"}' ;;
+	jq -n --arg head "$TEST_READY_SHA" --arg mode "$TEST_GATE_POST" \
+		'{headRefOid:$head,reviewDecision:"APPROVED"} | if $mode == "missing" then del(.reviewDecision) else . end' ;;
 *pulls/100*)
 	if [[ "$TEST_GATE_DRIFT" == 1 && -f "${TEST_ROOT}/snapshot" ]]; then
 		TEST_READY_SHA=3333333333333333333333333333333333333333
 	fi
+	if [[ "$TEST_GATE_SNAPSHOT" == racing && -f "${TEST_ROOT}/snapshot" ]]; then
+		TEST_GATE_LABELS=external-contributor
+	fi
 	touch "${TEST_ROOT}/snapshot"
-	jq -n --arg head "$TEST_READY_SHA" --arg association "$TEST_GATE_ASSOCIATION" --arg labels "$TEST_GATE_LABELS" \
-		'{head:{sha:$head},state:"open",author_association:$association,labels:($labels|split(",")|map({name:.}))}' ;;
+	jq -n --arg head "$TEST_READY_SHA" --arg association "$TEST_GATE_ASSOCIATION" --arg labels "$TEST_GATE_LABELS" --arg mode "$TEST_GATE_SNAPSHOT" \
+		'{head:{sha:$head},state:"open",author_association:$association,labels:($labels|split(",")|map({name:.}))}
+		| if $mode == "missing" then del(.labels) else . end' ;;
 *) exit 1 ;;
 esac
 GATE_GH
 		export TEST_READY_SHA
 		local scenario="" rc=0 expected=0 dismissed=0
-		for scenario in bot human external unknown unavailable malformed approval comment drift lookalike; do
+		for scenario in bot human external unknown unavailable malformed approval comment drift lookalike labels racing post; do
 			rm -f "${TEST_ROOT}/routed" "${TEST_ROOT}/dismissed" "${TEST_ROOT}/snapshot"
 			TEST_GATE_ASSOCIATION=MEMBER TEST_GATE_DRIFT=0 TEST_GATE_FAIL=0
-			TEST_GATE_LABELS=origin:worker
+			TEST_GATE_LABELS=origin:worker TEST_GATE_SNAPSHOT=valid TEST_GATE_POST=valid
 			jq -n --arg head "$TEST_READY_SHA" '[{id:1,state:"CHANGES_REQUESTED",submitted_at:"2026-10-29T00:00:00Z",commit_id:$head,user:{login:"coderabbitai[bot]",type:"Bot"},author_association:"NONE"}]' >"${TEST_ROOT}/reviews.json"
 			expected=75
 			case "$scenario" in
@@ -1674,7 +1680,7 @@ GATE_GH
 			human|approval|comment)
 				jq --arg state "$( [[ "$scenario" == approval ]] && printf APPROVED || printf COMMENTED )" \
 					'. + [.[0] | .id=2 | .user={login:"maintainer",type:"User"} | .author_association="OWNER"]
-					| if $state != "COMMENTED" then . + [.[1] | .id=3 | .state=$state] else . + [.[1] | .id=3 | .state=$state] end' \
+					| . + [.[1] | .id=3 | .state=$state]' \
 					"${TEST_ROOT}/reviews.json" >"${TEST_ROOT}/updated.json"
 				mv "${TEST_ROOT}/updated.json" "${TEST_ROOT}/reviews.json"
 				[[ "$scenario" == approval ]] && expected=0 || expected=1 ;;
@@ -1683,6 +1689,9 @@ GATE_GH
 			unavailable) TEST_GATE_FAIL=1 ;;
 			malformed) printf '{}\n' >"${TEST_ROOT}/reviews.json" ;;
 			drift) TEST_GATE_DRIFT=1 ;;
+			labels) TEST_GATE_SNAPSHOT=missing ;;
+			racing) TEST_GATE_SNAPSHOT=racing ;;
+			post) TEST_GATE_POST=missing ;;
 			lookalike) jq '.[0].user.type="User"' "${TEST_ROOT}/reviews.json" >"${TEST_ROOT}/updated.json"; mv "${TEST_ROOT}/updated.json" "${TEST_ROOT}/reviews.json" ;;
 			esac
 			rc=0
@@ -1690,14 +1699,15 @@ GATE_GH
 			if [[ "$rc" != "$expected" ]] \
 				|| { [[ "$scenario" != human && "$scenario" != comment ]] && [[ -f "${TEST_ROOT}/routed" ]]; } \
 				|| { [[ "$expected" == 0 ]] && [[ ! -f "${TEST_ROOT}/dismissed" || "$dismissed" != 1 ]]; } \
-				|| { [[ "$expected" != 0 ]] && [[ -f "${TEST_ROOT}/dismissed" ]]; } \
+				|| { [[ "$expected" != 0 && "$scenario" != post ]] && [[ -f "${TEST_ROOT}/dismissed" ]]; } \
 				|| { [[ "$scenario" == human || "$scenario" == comment ]] && [[ ! -f "${TEST_ROOT}/routed" ]]; }; then
 				print_result "advisory review gate: ${scenario}" 1 "expected rc=${expected}, got ${rc}"
 			else
 				print_result "advisory review gate: ${scenario}" 0
 			fi
-		 done
+		done
 		[[ "$TESTS_FAILED" == 0 ]]
-	)
-	return $?
+	) || gate_rc=$?
+	print_result "advisory review gate matrix" "$gate_rc"
+	return 0
 }
