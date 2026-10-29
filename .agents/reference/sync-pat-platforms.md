@@ -42,7 +42,8 @@ Three rules apply on every platform:
    use it.
 3. **Save to password manager at creation time**. Most platforms only show
    the token once. Rotation reminders (90 days default) belong in the
-   password manager entry, not in shell scripts.
+   password manager entry. Local secret-age advisories supplement, but do not
+   replace, the known expiration date.
 
 ## Platform Matrix
 
@@ -117,6 +118,59 @@ gh secret list --repo <SLUG> | grep SYNC_PAT
 ```
 
 The helper never reads the secret value — it only confirms presence.
+
+### Rotation / expired token
+
+A non-empty secret can still be expired or revoked. The checkout symptom is:
+
+```text
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+The process '/usr/bin/git' failed with exit code 128
+```
+
+All four issue-sync jobs validate a configured PAT against the repository API
+before checkout. HTTP 200 selects the PAT; 401 reports expired/revoked, while
+403/404 reports missing repository access. Transport errors and other statuses
+also fall back safely. This is a repository-access probe, not proof of every
+write permission (or Git transport availability).
+
+Invalid tokens emit one `SYNC_PAT invalid` error annotation per job, but the
+probe returns success: **green-with-error-annotation** is intentional when the
+remaining work succeeds. This lets `GITHUB_TOKEN` checkout and read-only closing
+hygiene continue. TODO.md publication still uses the existing protected-branch
+PR path; it can fail if Actions cannot open the PR. No branch protection or token
+permissions are weakened.
+
+To rotate:
+
+1. Regenerate the fine-grained token in GitHub settings. Regeneration retains its
+   permissions and selected repositories, but **revokes the old value everywhere**.
+   Save the replacement in the password manager and update every secret using it.
+   See the reusable-PAT guidance in t18777: inventory all consumers before rotation,
+   rather than assuming an existing token is unused or creating duplicate tokens.
+2. In a separate terminal, set each affected secret using the interactive prompt
+   (never put the value in chat, command arguments, or shell history):
+
+   ```bash
+   gh secret set SYNC_PAT --repo <SLUG>
+   ```
+
+3. Rerun failed jobs and verify the probe, checkout and closing hygiene:
+
+   ```bash
+   gh run rerun <id> --repo <SLUG> --failed
+   ```
+
+   Green runs with degradation annotations have no failed jobs to rerun; rerun
+   the whole run (omit `--failed`) to verify rotation.
+
+Local Phase 7 checks use `gh secret list --json name,updatedAt`, never the secret
+value. A secret updated **76 or more days ago** produces a "may expire" advisory
+(90-day default minus 14 days); this is a heuristic because actual expiry periods
+vary. A latest failed `issue-sync.yml` run with a failed SYNC_PAT-backed checkout
+also produces an advisory, even for a fresh secret or an unprotected repository.
+Unrelated failed steps do not trigger it. API metadata cannot prove token validity;
+the in-workflow probe is authoritative. Existing advisory dismissal still applies.
 
 ### Detection of need
 
@@ -226,8 +280,8 @@ guided URL flow but cannot automate the variable-set step (no CLI exists).
 - Generate GitLab URL with `name=` query param + scope hint
 - Add Gitea + Bitbucket guided walkthroughs (URL + manual instructions)
 - Add `setup-debt-helper.sh verify-secret` GitLab/Gitea/Bitbucket backends
-- Surface PAT expiry advisory: warn 14 days before expiry (requires reading
-  expiry from secret-manifest.json — Phase 2 deliverable)
+- Read actual token expiry from secret-manifest.json when available; the
+  implemented 76-day secret-age advisory is only a 90-day-default heuristic
 
 ## Cross-references
 

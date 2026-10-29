@@ -393,7 +393,7 @@ jobs:
         if: steps.check-author.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ secrets.SYNC_PAT }}
+          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || '' }}
         run: |
           if git diff --quiet TODO.md 2>/dev/null; then
             echo "No TODO.md changes to publish"
@@ -531,7 +531,7 @@ jobs:
         if: steps.check-issue.outputs.sync == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ secrets.SYNC_PAT }}
+          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || '' }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           if git diff --quiet TODO.md 2>/dev/null; then
@@ -832,7 +832,7 @@ jobs:
         if: inputs.command == 'pull' || inputs.command == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ secrets.SYNC_PAT }}
+          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || '' }}
           SYNC_COMMAND: ${{ inputs.command }}
         run: |
           if git diff --quiet TODO.md 2>/dev/null; then
@@ -1398,12 +1398,9 @@ jobs:
           # Prefer the job-scoped token for PR API writes; when repository
           # settings disable Actions PR creation, retry with SYNC_PAT.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ secrets.SYNC_PAT }}
-          # t2048: expose secret presence as a boolean-ish env var. GitHub
-          # hides secret values from logs, but ${{ secrets.SYNC_PAT != '' }}
-          # evaluates to 'true' or 'false' at workflow-compile time and is
-          # safe to log.
-          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          AIDEVOPS_ISSUE_SYNC_PR_TOKEN: ${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || '' }}
+          # Log the selected credential path, not merely secret presence.
+          SYNC_PAT_VALID: ${{ steps.sync-pat.outputs.sync_pat_valid }}
           GIT_AUTHOR_NAME: GitHub Actions
           GIT_AUTHOR_EMAIL: actions@github.com
           GIT_COMMITTER_NAME: GitHub Actions
@@ -1442,10 +1439,10 @@ jobs:
           # Keep the active credential path visible. The job-scoped token is
           # preferred for PR API writes; SYNC_PAT is a bounded fallback when
           # repository settings disable Actions PR creation.
-          if [[ -n "${SYNC_PAT_PRESENT:-}" ]]; then
+          if [[ "${SYNC_PAT_VALID:-}" == "true" ]]; then
             echo "::notice::Using SYNC_PAT for direct TODO.md publication and as the bounded PR API fallback after GH006."
           else
-            echo "::notice::SYNC_PAT not present — GH006 PR publication requires Actions PR creation to be enabled."
+            echo "::notice::SYNC_PAT absent or invalid — using GITHUB_TOKEN; GH006 PR publication requires Actions PR creation to be enabled."
           fi
 
           # GH#28464: use the same fail-closed completion predicate as direct
