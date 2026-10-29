@@ -562,6 +562,32 @@ assert_contains "TODO-only bookkeeping excludes upstream files and TODO edits" "
 planning_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record completion" "diff reviewed")
 assert_contains "planning classification excludes upstream files" "$planning_body" 'For #34465'
 
+# GH#36002: nested markdown under todo/ stays planning; data files under todo/
+# are deliverables, alone or mixed with planning files.
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-markdown "$final_base"
+mkdir -p "${FINAL_REPO}/todo/tasks"
+printf '%s\n' '# t1 brief' >"${FINAL_REPO}/todo/tasks/t1-brief.md"
+/usr/bin/git -C "$FINAL_REPO" add todo
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: nested planning brief"
+markdown_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Add brief" "diff reviewed")
+assert_contains "nested todo markdown is planning-only" "$markdown_body" 'For #34465'
+
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-data "$final_base"
+mkdir -p "${FINAL_REPO}/todo/award-enrichment/log/runner"
+printf '%s\n' '{"status":"found"}' >"${FINAL_REPO}/todo/award-enrichment/log/runner/example.jsonl"
+/usr/bin/git -C "$FINAL_REPO" add todo
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: data deliverable under todo"
+data_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record outcomes" "diff reviewed")
+assert_contains "todo data file is a deliverable" "$data_body" 'Resolves #34465'
+
+mkdir -p "${FINAL_REPO}/todo/award-enrichment/specs"
+printf '%s\n' '{"spec":1}' >"${FINAL_REPO}/todo/award-enrichment/specs/example.json"
+printf '%s\n' '- [ ] t3 Record outcomes' >>"${FINAL_REPO}/TODO.md"
+/usr/bin/git -C "$FINAL_REPO" add .
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: data deliverable with TODO entry"
+mixed_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record outcomes" "diff reviewed")
+assert_contains "todo data with TODO.md is a deliverable" "$mixed_body" 'Resolves #34465'
+
 /usr/bin/git -C "$FINAL_REPO" switch -q feature/final
 printf 'export const payment = charge();\n' >"${FINAL_REPO}/src/billing.js"
 /usr/bin/git -C "$FINAL_REPO" add .

@@ -193,6 +193,9 @@ cmd_commit_and_pr() {
 }
 
 # Only non-empty diffs confined to planning paths qualify.
+# GH#36002: planning artifacts are TODO.md and markdown under todo/. Other
+# files a repository keeps under todo/ (JSON/JSONL worklogs, specs, scripts)
+# are deliverables, so their PRs keep the default closing keyword.
 _diff_is_planning_only() {
 	local base_ref="$1"
 	local paths="" path="" comparison_base=""
@@ -201,7 +204,7 @@ _diff_is_planning_only() {
 	[[ -n "$paths" ]] || return 1
 	while IFS= read -r path; do
 		case "$path" in
-		TODO.md | todo/*) ;;
+		TODO.md | todo/*.md) ;;
 		*) return 1 ;;
 		esac
 	done <<<"$paths"
