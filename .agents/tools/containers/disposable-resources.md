@@ -105,6 +105,13 @@ Container removal uses `docker rm -f -v`, which also removes attached anonymous
 volumes (including those created by an image's `VOLUME`). Named volumes are not
 removed by `-v`; they are removed separately only when labelled and eligible.
 
+The pulse also runs a read-only pressure report at most once per UTC day. It
+writes one health-log line when more than 20 unlabelled containers have been
+stopped for over 72 hours, or unused volumes have more than 20 GB reclaimable.
+The line includes unlabelled container/network/volume counts, the old stopped
+count and reclaimable volume size. Below both thresholds it is silent. This is
+independent of `AIDEVOPS_DOCKER_REAP`; it never deletes unlabelled resources.
+
 ## Environment
 
 | Variable | Default | Effect |

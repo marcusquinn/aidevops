@@ -24,7 +24,9 @@ Exit behavior:
 
 """
 import json
+import hashlib
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -267,6 +269,40 @@ def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
     }
 
 
+def docker_owner_advisory(command: str, session_id: str):
+    """Return non-blocking context once per Claude session, never a decision."""
+    needs_labels = False
+    for part in re.split(r"[;&|\n]", command):
+        match = re.search(r"(?:^|\s)docker\s+(.+)", part)
+        if not match or "sh.aidevops.owner" in part:
+            continue
+        args = match.group(1)
+        if re.match(r"run\s", args):
+            needs_labels |= not bool(re.search(r"(?:^|\s)--rm(?:=true)?(?:\s|$)", args))
+        else:
+            needs_labels |= bool(
+                re.match(r"(?:create|network\s+create|volume\s+create)(?:\s|$)", args)
+                or re.match(r"compose\s", args) and re.search(r"(?:^|\s)up(?:\s|$)", args)
+            )
+    if not needs_labels or not session_id:
+        return None
+    marker_dir = Path.home() / ".aidevops" / ".agent-workspace" / "tmp" / "docker-advisory"
+    marker = marker_dir / hashlib.sha256(session_id.encode()).hexdigest()
+    try:
+        marker_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with marker.open("x"):
+            pass
+    except OSError:
+        # Existing marker or unwritable state must never block the command.
+        return None
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": "Docker test resources need owner labels: use "
+        "docker-resource-helper.sh labels / compose-labels; see "
+        "tools/containers/disposable-resources.md. Advisory only; user-owned stacks are unchanged.",
+    }}
+
+
 def main():
     """Delegate Bash policy and enforce direct-file worktree isolation."""
     try:
@@ -304,6 +340,10 @@ def main():
     deny = _check_command_policy(command)
     if deny:
         print(json.dumps(deny))
+    else:
+        advisory = docker_owner_advisory(command, input_data.get("session_id", ""))
+        if advisory:
+            print(json.dumps(advisory))
     sys.exit(0)
 
 

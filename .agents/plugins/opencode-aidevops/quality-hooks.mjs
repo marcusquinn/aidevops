@@ -65,6 +65,30 @@ export { checkSecretReadGate, isReadTool } from "./quality-hooks-secret-read.mjs
 
 const OPERATION_TITLE_MAX_LENGTH = 500;
 
+const dockerAdvisedSessions = new Set();
+const dockerAdvisoryCalls = new Set();
+const DOCKER_ADVISORY = "Docker test resources need owner labels: use docker-resource-helper.sh labels / compose-labels; see tools/containers/disposable-resources.md. Advisory only; user-owned stacks are unchanged.";
+
+// Deliberately advisory, not a shell parser or a command permission boundary.
+export function needsDockerOwnerAdvisory(command) {
+  return String(command).split(/[;&|\n]/).some((part) => {
+    const match = part.match(/(?:^|\s)docker\s+(.+)/);
+    if (!match || part.includes("sh.aidevops.owner")) return false;
+    const args = match[1];
+    if (/^run\s/.test(args)) return !/(?:^|\s)--rm(?:=true)?(?:\s|$)/.test(args);
+    return /^(?:create|network\s+create|volume\s+create)(?:\s|$)/.test(args)
+      || /^compose\s/.test(args) && /(?:^|\s)up(?:\s|$)/.test(args);
+  });
+}
+
+function adviseDockerCreation(log, input, command, sessionId) {
+  if (!input.callID || !sessionId || dockerAdvisedSessions.has(sessionId)
+    || !needsDockerOwnerAdvisory(command)) return;
+  dockerAdvisedSessions.add(sessionId);
+  dockerAdvisoryCalls.add(input.callID);
+  log("WARN", DOCKER_ADVISORY);
+}
+
 /**
  * Prepare an untrusted tool title for bounded, single-line telemetry storage.
  * @param {string} title
@@ -239,6 +263,7 @@ function enforceBashToolSafety(ctx, log, input, output, sessionId) {
     model: signatureModel,
     useProcessModelFallback: false,
   });
+  adviseDockerCreation(log, input, bashArgs.command || "", sessionId);
 }
 
 // GH#33969: bounded-operation starts get the same worker command policy as
@@ -418,6 +443,9 @@ async function handleToolAfter(ctx, log, scriptsDir, input, output) {
   }
 
   const intentRecord = consumeIntentRecord(input.callID || "");
+  if (dockerAdvisoryCalls.delete(input.callID)) {
+    output.output = `${output.output || ""}\n\n${DOCKER_ADVISORY}`;
+  }
   // t2184: durationMs is null when the callID wasn't paired (for example,
   // a hook race on plugin reload); recordToolCall emits SQL NULL.
   recordToolCall(input, output, intentRecord?.intent, durationMs, intentRecord?.source);
