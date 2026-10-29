@@ -22,7 +22,7 @@ import subprocess  # nosec B404 -- subprocess errors only; execution uses the sh
 import sys
 
 from worktree_archive_snapshot import git, git_snapshot, snapshot
-from worktree_archive_restore import RestorationProof
+from worktree_archive_restore import NOT_ENROLLED, RestorationProof
 from worktree_lifetime_archive import capacity, durable_archive, inode, require
 from worktree_recovery_migrate import archive_command
 from worktree_recovery_migration_scratch import finish_scratch, prepare_restore, verify_restore
@@ -52,6 +52,11 @@ def failure_reason(error):
         final = lines[-1] if lines else ""
         if final.startswith("ValueError: "):
             message = final.removeprefix("ValueError: ")
+        elif re.fullmatch(r"[A-Za-z0-9_.]*NotEnrolled: .*", final):
+            message = NOT_ENROLLED
+        if message == NOT_ENROLLED:
+            # GH#35957: bounded category only; the child's detail stays private.
+            return NOT_ENROLLED
     if message in metadata_errors:
         return ("producer:unsupported-metadata; permissions, ownership, ACLs, extended attributes "
                 "or hard links require separate preservation; source retained; "
