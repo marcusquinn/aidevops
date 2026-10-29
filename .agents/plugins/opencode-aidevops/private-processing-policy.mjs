@@ -145,7 +145,8 @@ function assertShellRead(policy, command, cwd, binding, deny) {
   if (!words) deny("unclassifiable_shell_read");
   // A quoted -c script is literal to the outer parser, not to its interpreter.
   if (SHELL_INTERPRETERS.has(basename(words[0] || ""))
-    && words.slice(1).some((word) => /^-[^-]*c/.test(word) || word === "--command")) deny("unclassifiable_shell_read");
+    && words.slice(1).some((word) => /^-[^-]*c/.test(word)
+      || word === "--command" || word.startsWith("--command="))) deny("unclassifiable_shell_read");
   if (binding.bound || !policy.roots.length) return;
   // No options: even familiar readers have executable/path-bearing options.
   if (!words?.length || !LITERAL_READERS.has(words[0])
