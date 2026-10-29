@@ -72,8 +72,9 @@ STUB
 	fi
 
 	local attempt
-	for attempt in 1 2 3 4 5; do
-		[[ -f "$marker" ]] && break
+	for ((attempt = 0; attempt < 25; attempt++)); do
+		# Redirection creates the marker before printf writes its launch record.
+		[[ -s "$marker" && "$(<"$marker")" == started:* ]] && break
 		sleep 0.2
 	done
 	[[ -f "$marker" ]] || fail "standalone merge routine was not launched"
