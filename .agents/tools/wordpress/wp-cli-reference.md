@@ -247,7 +247,7 @@ fleet operations. It needs local Python 3.9+, SSH key/config authentication, and
 remote Python 3.9+, WP-CLI and `mysqldump`. Use a private JSON inventory (0600):
 
 ```json
-[{"ssh_host":"hosting-alias","wp_path":"/home/account/public_html","backup_dir":"/home/account/backups/core"}]
+[{"ssh_host":"hosting-alias","wp_path":"/srv/www/example","backup_dir":"/srv/private/core"}]
 ```
 
 The SSH alias must already be configured; paths are absolute. The operator must
