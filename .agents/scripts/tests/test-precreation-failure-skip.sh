@@ -475,7 +475,7 @@ if (
 		fi
 		[[ "$STUB_MANAGED_CLASS" != "unavailable" ]] || return 1
 		if [[ "$STUB_MANAGED_CLASS" == managed ]]; then
-			printf 'managed %s\n' "$generation"
+			printf 'managed %s\n' "${generation%% *}"
 		else
 			printf '%s\n' "$STUB_MANAGED_CLASS"
 		fi
@@ -500,6 +500,8 @@ if (
 	STUB_MANAGED_CLASS=managed
 	_dlw_precreate_worktree 358285 "$MANAGED_REPO" || exit 1
 	[[ "$_DLW_MANAGED_WORKTREE" -eq 1 && -n "$_DLW_WORKTREE_GENERATION" ]] || exit 1
+	matched_generation=$(python3 "$SCRIPTS_DIR/worktree-managed-lifetime.py" match "$_DLW_WORKTREE_PATH" 358285 "$repo_slug") || exit 1
+	[[ "$_DLW_WORKTREE_GENERATION" == "${matched_generation%% *}" ]] || exit 1
 	[[ "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT task_id || '|' || owner_session FROM worktree_owners WHERE worktree_path='$_DLW_WORKTREE_PATH';")" == '358285|dispatch-precreate-358285' ]] || exit 1
 ); then
 	pass "real managed precreation compensates rejected ownership and preserves existing owners"
