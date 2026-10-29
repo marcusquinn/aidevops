@@ -490,7 +490,7 @@ _drh_remove() {
 	local kind="$1" id="$2"
 	local err lower
 	case "$kind" in
-	container) err=$(_drh_docker rm -f "$id" 2>&1 >/dev/null) && return 0 ;;
+	container) err=$(_drh_docker rm -f -v "$id" 2>&1 >/dev/null) && return 0 ;;
 	network) err=$(_drh_docker network rm "$id" 2>&1 >/dev/null) && return 0 ;;
 	volume) err=$(_drh_docker volume rm "$id" 2>&1 >/dev/null) && return 0 ;;
 	*) return 1 ;;
