@@ -166,7 +166,8 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.match(config.agent.playwriter.prompt, /enumerate.*context\.pages\(\)/i);
   assert.match(config.agent.playwriter.prompt, /exactly one `about:blank` bootstrap page/i);
   // GH#34549: 0.8.0+ opens no tab and has no `page` global.
-  assert.match(config.agent.playwriter.prompt, /Playwriter 0\.8\.0\+ never opens a tab on its own/);
+  // Markdown line wrapping must not change this guidance contract.
+  assert.match(config.agent.playwriter.prompt, /Playwriter\s+0\.8\.0\+\s+never\s+opens\s+a\s+tab\s+on\s+its\s+own/);
   assert.match(config.agent.playwriter.prompt, /state\.page = await context\.newPage\(\)/);
   assert.match(config.agent.playwriter.prompt, /PLAYWRITER_TELEMETRY=0/);
   assert.match(config.agent.playwriter.prompt, /already approved the exact HTTPS destination/i);
