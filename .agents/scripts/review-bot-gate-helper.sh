@@ -594,13 +594,12 @@ _rbg_pr_reconciliation_snapshot() {
 
 	printf -v pull_endpoint 'repos/%s/pulls/%s' "$repo" "$pr_number"
 	pr_json=$(gh api "$pull_endpoint" 2>/dev/null) || return 1
-	printf '%s\n' "$pr_json" | jq -ce '
-		if (.labels | type) != "array" or any(.labels[]; (.name | type) != "string")
-		then error("missing or malformed PR labels") else . end | {
+	printf '%s\n' "$pr_json" | jq -ce '{
 		head:(.head.sha // ""),
 		state:(.state // ""),
 		association:(.author_association // ""),
-		labels:[.labels[]? | .name // empty]
+		labels:[.labels[]? | .name // empty],
+		labels_valid: ((.labels | type) == "array" and all(.labels[]?; (.name | type) == "string"))
 	}' || return 1
 	return 0
 }
@@ -734,7 +733,7 @@ _rbg_advisory_author_trusted() {
 	local association=""
 	association=$(printf '%s\n' "$snapshot" | jq -er '.association | ascii_upcase') || return 1
 	case "$association" in OWNER | MEMBER | COLLABORATOR) ;; *) return 1 ;; esac
-	printf '%s\n' "$snapshot" | jq -e 'all(.labels[]; . != "external-contributor")' >/dev/null 2>&1 || return 1
+	printf '%s\n' "$snapshot" | jq -e '.labels_valid == true and all(.labels[]; . != "external-contributor")' >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -746,6 +745,7 @@ do_reconcile_coderabbit_reviews() {
 	local snapshot=""
 	local head_sha=""
 	local state=""
+	local association=""
 	local reviews_json=""
 	local fresh_reviews_json=""
 	local review_count=0
@@ -763,7 +763,11 @@ do_reconcile_coderabbit_reviews() {
 		printf '%s\n' "$snapshot" | jq -e --arg label "$RBG_CODERABBIT_NITS_LABEL" \
 			'any(.labels[]?; . == $label)' >/dev/null 2>&1 || return 1
 	fi
-	if [[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" || "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]]; then
+	if [[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" ]]; then
+		association=$(printf '%s\n' "$snapshot" | jq -r '.association | ascii_upcase')
+		case "$association" in OWNER | MEMBER | COLLABORATOR) ;; *) return 1 ;; esac
+	fi
+	if [[ "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]]; then
 		#aidevops:trust-boundary — automatic reconciliation is restricted to trusted PR authors.
 		_rbg_advisory_author_trusted "$snapshot" || return 1
 	fi
