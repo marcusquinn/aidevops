@@ -21,10 +21,11 @@ protected_release_head_matches_staged() {
 	[[ -n "$repo_path" && -n "$head_oid" ]] || return 1
 	tag_name="${tag_name%-provenance}"
 	# aidevops:trust-boundary — read remote evidence, never a stale local ref.
-	remote_ref=$(git -C "$repo_path" ls-remote --exit-code origin "refs/aidevops/release-tags/${tag_name}" 2>/dev/null) || return 1
+	# Keep network waits below the merge-pass budget and never prompt for credentials.
+	remote_ref=$(GIT_TERMINAL_PROMPT=0 timeout_sec 30 git -C "$repo_path" ls-remote --exit-code origin "refs/aidevops/release-tags/${tag_name}" 2>/dev/null) || return 1
 	staged_oid="${remote_ref%%[[:space:]]*}"
 	[[ "$staged_oid" =~ ^[0-9a-f]{40}$ ]] || return 1
-	git -C "$repo_path" fetch --quiet --no-tags --no-write-fetch-head origin "refs/aidevops/release-tags/${tag_name}" 2>/dev/null || return 1
+	GIT_TERMINAL_PROMPT=0 timeout_sec 30 git -C "$repo_path" fetch --quiet --no-tags --no-write-fetch-head origin "refs/aidevops/release-tags/${tag_name}" 2>/dev/null || return 1
 	# The staging commit is an envelope, not the signed release commit. Recover
 	# the raw annotated tag without creating or replacing any public tag ref.
 	tag_object=$(git -C "$repo_path" cat-file blob "${staged_oid}:tag" 2>/dev/null |

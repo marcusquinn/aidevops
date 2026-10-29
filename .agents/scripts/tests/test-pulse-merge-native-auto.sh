@@ -838,6 +838,16 @@ test_protected_release_native_auto_is_held() {
 	fi
 	: >"$GH_LOG"
 	result=0
+	export FAIL_DISABLE_AUTO=1
+	_set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
+	unset FAIL_DISABLE_AUTO
+	if [[ "$result" -eq 2 ]] && grep -q -- 'gh pr ready 903 --repo owner/repo --undo' "$GH_LOG" && ! grep -q -- '--auto --squash' "$GH_LOG"; then
+		print_result "Protected release draft fallback remains a safe deferral" 0
+	else
+		print_result "Protected release draft fallback remains a safe deferral" 1 "rc=${result}"
+	fi
+	: >"$GH_LOG"
+	result=0
 	DRY_RUN=1 _set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
 	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG"; then
 		print_result "Protected release dry-run performs no GitHub writes" 0
@@ -868,6 +878,8 @@ test_protected_release_native_auto_is_held() {
 
 test_protected_release_staged_head_comparison() {
 	setup_test_env
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/../shared-constants.sh"
 	# shellcheck source=../protected-release-helper.sh
 	source "${SCRIPT_DIR}/../protected-release-helper.sh"
 	local project_dir="${SCRIPT_DIR}/../../.." signed_head="" blob="" tree="" envelope=""
