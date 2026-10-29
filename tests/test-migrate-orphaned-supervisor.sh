@@ -224,7 +224,7 @@ section "Test: removes cron entries referencing supervisor-helper.sh"
 {
 	echo "# aidevops: test-keep-this"
 	echo "*/5 * * * * echo keep-this # aidevops: test-keep"
-	echo "*/2 * * * * /bin/bash /home/test/.aidevops/agents/scripts/supervisor-helper.sh pulse >> /tmp/test.log 2>&1 # aidevops: supervisor-pulse"
+	echo "*/2 * * * * /bin/bash $SCRIPTS_DIR/supervisor-helper.sh pulse >> $TEST_HOME/test.log 2>&1 # aidevops: supervisor-pulse"
 } | crontab -
 
 migrate_orphaned_supervisor >/dev/null 2>&1
