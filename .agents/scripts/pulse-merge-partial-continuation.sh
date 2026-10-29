@@ -286,7 +286,7 @@ _pmpc_corroborated_target() {
 		{
 			line = $0
 			# Quoted fences must not open or close an unquoted code block.
-			if (line ~ /^[[:space:]]*>/) next
+			if (!comment && line ~ /^[[:space:]]*>/) next
 			if (!fence) {
 				visible = ""
 				while (length(line)) {

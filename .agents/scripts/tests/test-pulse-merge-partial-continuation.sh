@@ -499,7 +499,8 @@ test_ambiguous_reference_is_noop() {
 test_corroborated_partial_target() {
 	local body="" title=""
 	for title in 't501: partial delivery' 'GH#501: partial delivery'; do
-		for body in $'## Remaining\nFor #501' 'People phase (data only). For #501' 'For #501. For #777.'; do
+		for body in $'## Remaining\nFor #501' 'People phase (data only). For #501' 'For #501. For #777.' \
+			$'<!-- hidden\n> -->\nFor #501'; do
 			reset_case
 			TEST_TARGET=""
 			TEST_PR_TITLE="$title"
