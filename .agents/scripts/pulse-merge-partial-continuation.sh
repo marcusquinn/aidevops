@@ -313,7 +313,7 @@ _pmpc_corroborated_target() {
 					substr(line, length(run) + 1) ~ /^[[:space:]]*$/) fence = 0
 				next
 			}
-			if (fence || line ~ /^[[:space:]]*>/ || line ~ /^([ ]{4}|\t)/) next
+			if (fence || line ~ /^[[:space:]]*>/ || line ~ /^(    |\t)/) next
 			if (tolower(line) ~ ("(^|[^[:alnum:]_])(for|ref)[:[:space:]]+#" target "([^[:alnum:]_]|$)")) found = 1
 		}
 		END { if (found) print target }
