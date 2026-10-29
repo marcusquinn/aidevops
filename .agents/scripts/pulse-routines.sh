@@ -1123,6 +1123,17 @@ _routine_log_slot() {
 	local slot="" now_epoch="" delay=0
 	local threshold="${AIDEVOPS_ROUTINE_LATE_THRESHOLD_SECONDS:-300}"
 	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=300
+	# Strip leading zeros before range checks and decimal arithmetic. Bash uses
+	# signed 64-bit integers; reject overflow before evaluating the input.
+	threshold="${threshold#"${threshold%%[!0]*}"}"
+	threshold="${threshold:-0}"
+	# Compare equal-length digits lexically to avoid overflowing the range check.
+	# shellcheck disable=SC2071
+	if [[ ${#threshold} -gt 19 ]] ||
+		[[ ${#threshold} -eq 19 && "$threshold" > 9223372036854775807 ]]; then
+		threshold=300
+	fi
+	threshold=$((10#$threshold))
 	slot=$(AIDEVOPS_SCHEDULE_TIMEZONE="${timezone:-${AIDEVOPS_SCHEDULE_TIMEZONE:-${TZ:-}}}" \
 		"$ROUTINE_SCHEDULE_HELPER" latest-slot "$expression" 2>/dev/null) || slot=""
 	now_epoch=$(date +%s)

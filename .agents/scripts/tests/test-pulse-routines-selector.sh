@@ -936,6 +936,35 @@ _test_quota_slot_evaluation() {
 	return 0
 }
 
+# Exercise threshold parsing through the slot logger without wall-clock races.
+_test_slot_late_threshold() {
+	local tmpdir="$1"
+	if (
+		LOGFILE="$tmpdir/threshold.log"
+		ROUTINE_SCHEDULE_HELPER=_threshold_slot
+		_threshold_slot() { printf '1000\n'; return 0; }
+		date() { printf '1250\n'; return 0; }
+		local threshold="" expected="" actual=0
+		for threshold in 0300 08 0 000 00000000000000000000008 \
+			9223372036854775807 9223372036854775808 18446744073709551616 invalid; do
+			case "$threshold" in
+			08 | 0 | 000 | 00000000000000000000008) expected=1 ;;
+			*) expected=0 ;;
+			esac
+			: >"$LOGFILE"
+			AIDEVOPS_ROUTINE_LATE_THRESHOLD_SECONDS="$threshold" \
+				_routine_log_slot r-threshold 'daily(@00:00)' '' dispatch || exit 1
+			actual=$(grep -c 'routine_slot_late ' "$LOGFILE")
+			[[ "$actual" == "$expected" ]] || exit 1
+		done
+	); then
+		pass 'GH#35979: late threshold uses decimal and rejects integer overflow'
+	else
+		fail 'GH#35979: late threshold parsing' 'decimal, zero, range or fallback mismatch'
+	fi
+	return 0
+}
+
 main() {
 	local tmpdir
 	tmpdir=$(mktemp -d) || {
@@ -947,6 +976,7 @@ main() {
 
 	_test_selector_cases "$tmpdir"
 	_test_quota_slot_evaluation "$tmpdir"
+	_test_slot_late_threshold "$tmpdir"
 	_test_platform_scheduler_ownership
 	_test_metachar_guard
 	_test_markdown_escaped_cron
