@@ -260,12 +260,14 @@ _dispatch_checkpoint_pr_head() {
 }
 
 # Strip leading zeros before arithmetic, rejecting values beyond a portable
-# signed 32-bit range without ever evaluating the unbounded input in Bash.
+# signed 32-bit range without ever evaluating the unbounded input in Bash:
+# the length guard short-circuits first, so arithmetic sees at most 10 digits,
+# well inside Bash's 64-bit integers.
 _dispatch_checkpoint_decimal() {
 	local value="$1" fallback="$2"
 	if [[ "$value" =~ ^0*([1-9][0-9]*|0)$ ]]; then
 		value="${BASH_REMATCH[1]}"
-		if [[ "${#value}" -lt 10 ]] || { [[ "${#value}" -eq 10 ]] && [[ "$value" < 2147483648 ]]; }; then
+		if [[ "${#value}" -le 10 ]] && [[ "$value" -lt 2147483648 ]]; then
 			printf '%s\n' "$value"
 			return 0
 		fi
