@@ -1065,7 +1065,10 @@ test_retry_only_observation_recovery() {
 		local reason="" association="" scenario="" tb_comments="" observation="" raw=""
 		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
 		local revision="" fingerprint="" body="" retry_at="" projected=0 receipts=0 rc=0
-		set_issue_status() { projected=$((projected + 1)); return 0; }
+		set_issue_status() {
+			projected=$((projected + 1))
+			return 0
+		}
 		_tbr_post_rearm_receipt() {
 			local marker="$3"
 			receipts=$((receipts + 1))
