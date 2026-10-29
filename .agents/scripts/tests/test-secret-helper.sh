@@ -1031,6 +1031,77 @@ PY
 	return 0
 }
 
+test_run_progresses_with_unread_stderr() {
+	setup
+	trap 'teardown' RETURN
+	export AIDEVOPS_TEST_SECRET='unread-stderr-fixture-value'
+	local result=""
+	result=$(
+		HOME="$TEST_DIR/home" HELPER_UNDER_TEST="$HELPER" python3 - <<'PY'
+import os
+import select
+import signal
+import subprocess
+import sys
+
+# Exceed both pipe capacity and the bounded relay queue before stdout is
+# emitted. Never read stderr until the command has exited; communicate()
+# would drain it and hide the original deadlock.
+program = '''
+import os, sys
+value = os.environ["REDACTION_KEY"]
+sys.stderr.write("diagnostic:" + value + "\\n")
+sys.stderr.flush()
+chunk = (value + ":diagnostic\\n").encode() * 2048
+for _ in range(40):
+    sys.stderr.buffer.write(chunk)
+sys.stderr.flush()
+print("READY", flush=True)
+assert sys.stdin.readline() == "continue\\n"
+print("DONE", flush=True)
+sys.exit(23)
+'''
+for mode in ("specific", "run", "passthrough"):
+    env = os.environ.copy()
+    if mode == "passthrough":
+        env["AIDEVOPS_TEST_SECRET"] = "abc"  # No usable redaction values.
+    args = ["run"] if mode == "run" else ["REDACTION_KEY", "--"]
+    process = subprocess.Popen(
+        ["bash", os.environ["HELPER_UNDER_TEST"], *args,
+         sys.executable, "-c", program],
+        env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, start_new_session=True,
+    )
+    try:
+        assert select.select([process.stdout], [], [], 30)[0], mode
+        assert process.stdout.readline() == b"READY\n", mode
+        process.stdin.write(b"continue\n")
+        process.stdin.flush()
+        assert process.wait(timeout=10) == 23, mode
+        assert process.stdout.read() == b"DONE\n", mode
+        errors = process.stderr.read()
+        if mode != "passthrough":
+            assert env["AIDEVOPS_TEST_SECRET"].encode() not in errors, mode
+            assert b"diagnostic:[REDACTED]" in errors, mode
+        else:
+            assert b"diagnostic:abc" in errors, mode
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        for stream in (process.stdin, process.stdout, process.stderr):
+            stream.close()
+print("ok")
+PY
+	) || result="failed"
+	if [[ "$result" == "ok" ]]; then
+		print_result "run preserves stdout, stdin and exit status with unread saturated stderr" 0
+	else
+		print_result "run preserves stdout, stdin and exit status with unread saturated stderr" 1 "Bounded relay assertion failed"
+	fi
+	return 0
+}
+
 test_run_redacts_overlapping_secrets_split_across_writes() {
 	setup
 	trap 'teardown' RETURN
@@ -1253,6 +1324,7 @@ main() {
 	test_run_redacts_sed_significant_literal_values
 	test_run_skips_short_value_and_masks_long_value
 	test_run_streams_safe_output_before_child_exit
+	test_run_progresses_with_unread_stderr
 	test_run_redacts_overlapping_secrets_split_across_writes
 	test_run_fails_closed_when_redactor_cannot_start
 	test_multiline_gopass_injection_preserves_embedded_newlines

@@ -124,6 +124,12 @@ WordPress FluentSMTP's SES mailer sends raw MIME (`SendRawEmail`), so a `wp_mail
 filter adding `X-SES-CONFIGURATION-SET` to the message headers works. Its mail log
 does not show custom headers: verify SES events, not the log alone. Attach the
 override only when **every recipient**, including CC/BCC, is controlled/internal.
+For the test below, make the temporary filter match only the exact controlled test
+alias; leave all other messages unchanged and reject the override if any To/CC/BCC
+recipient is outside that scope. Remove the filter with `remove_filter()` using
+the same callback and priority after the test, including sending or verification
+failures (for example, in a `finally` block). Do not leave a persistent snippet or
+plugin applying the bypass to later mail.
 
 ### Prove the configuration-set bypass
 
