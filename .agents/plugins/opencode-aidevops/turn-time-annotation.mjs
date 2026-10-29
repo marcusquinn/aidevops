@@ -43,6 +43,8 @@ export async function annotateTurnTimes(input, output, { client, isHeadless = ()
   for (const message of messages) {
     const created = message?.info?.time?.created;
     if (message?.info?.role !== "user" || !Number.isFinite(created) || !Array.isArray(message.parts)) continue;
+    // Compaction anchors are host-generated, not interactive user turns.
+    if (message.parts.some((part) => part?.type === "compaction")) continue;
     const first = message.parts[0];
     if (first?.type === "text" && first.synthetic === true && ANNOTATION_RE.test(first.text ?? "")) continue;
     const date = new Date(created);

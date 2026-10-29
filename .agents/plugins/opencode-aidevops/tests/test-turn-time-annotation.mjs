@@ -25,6 +25,16 @@ test("fixed receive times prepend synthetic UTC minute parts and stay byte-ident
   assert.deepEqual(fresh.messages[0], output.messages[0]);
 });
 
+test("host-generated compaction anchors stay unchanged alongside interactive turns", async () => {
+  const anchor = user();
+  anchor.parts.push({ type: "compaction", auto: true });
+  const before = structuredClone(anchor);
+  const output = { messages: [anchor, user()] };
+  await annotateTurnTimes({}, output, { client });
+  assert.deepEqual(anchor, before);
+  assert.equal(output.messages[1].parts[0].text, "[turn received 2026-10-29T02:37Z]");
+});
+
 test("assistant, missing/non-finite/out-of-range dates, and malformed messages stay unchanged", async () => {
   const output = { messages: [null, {}, { ...user(), info: { role: "assistant", time: { created } } }, ...[null, "123", NaN, Infinity, 1e20].map(user), { info: { role: "user" } }] };
   const before = structuredClone(output);
