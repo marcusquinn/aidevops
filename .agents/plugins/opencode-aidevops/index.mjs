@@ -48,7 +48,7 @@ import {
 import { compactingHook } from "./compaction.mjs";
 import { createCompactionAutoContinueGuard } from "./compaction-lifecycle.mjs";
 import { createCompactionInputReplay } from "./compaction-pinned-input.mjs";
-import { capCompactionEffort } from "./compaction-routing.mjs";
+import { capCompactionEffort, createCompactionResidencyWarning } from "./compaction-routing.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
@@ -530,6 +530,8 @@ export async function AidevopsPlugin({ directory, client }) {
   const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
   // GH#35186: replay verbatim user input and images hidden by compaction.
   const compactionInputReplay = createCompactionInputReplay(client, { qualityLog });
+  // GH#35893: flag a local session compacted on a non-local provider.
+  const compactionResidencyWarning = createCompactionResidencyWarning({ log: qualityLog });
   const cancellationReceipt = createSubagentCancellationReceipt(client, {
     qualityLog,
     recordReceipt: recordSubagentCancellationReceipt,
@@ -723,6 +725,8 @@ export async function AidevopsPlugin({ directory, client }) {
       assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
       contextBudget.apply(input);
       const { sessionId, modelId } = sessionModelIdentity(input);
+      // Before remember(): compare against the parent's model, not this request's.
+      compactionResidencyWarning(input, sessionModels.resolve(sessionId));
       sessionModels.remember(sessionId, modelId);
       await subagentEffortHooks.chatParams(input, output);
       const applied = await applyConversationRootVariant(

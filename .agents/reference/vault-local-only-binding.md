@@ -70,6 +70,25 @@ helper reads it on each check. Tool writes, patches and shell commands naming
 the file are refused like the roots list. The loopback endpoint check is
 unchanged for interactive sessions; see the headless gap below.
 
+### Compaction residency (GH#35893)
+
+OpenCode 1.x takes the compaction model only from global agent config
+(`agent.compaction.model`, else the session's own model); no plugin hook can
+choose it per session. The plugin routes unpinned compaction to a fitting
+simple-tier model, so it decides residency at startup:
+
+- **Bound:** only local simple-tier candidates are routed. With none that fits
+  the 240K compaction input, compaction stays on the session's local model.
+- **Unbound, default `model` is a local provider:** the same local-only filter,
+  using the configured local-provider list above.
+- **Unbound, cloud default:** routing is unchanged. A session that later
+  switches to a local model is still compacted by the global route; the plugin
+  logs one content-free `[compaction]` warning naming both provider IDs.
+
+To keep every compaction on a chosen model, pin `agent.compaction.model` in
+`opencode.json`; any pin disables this routing. Use the local-only binding when
+residency is a requirement rather than a preference.
+
 ## Protected reads and local failure visibility (Phase 2)
 
 The operator may classify roots with a mode-600, current-user-owned JSON file at
