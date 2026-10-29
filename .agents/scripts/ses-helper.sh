@@ -27,11 +27,9 @@ readonly ERROR_IDENTITY_REQUIRED="Identity (email or domain) is required"
 
 # Check if AWS CLI is installed
 check_aws_cli() {
-    if ! command -v aws &> /dev/null; then
-        print_error "AWS CLI is not installed. Please install it first:"
-        echo "  macOS: brew install awscli" >&2
-        echo "  Ubuntu: sudo apt-get install awscli" >&2
-        echo "  Or: pip install awscli" >&2
+    # command -v would find this script's aws() injection wrapper, not the CLI.
+    if ! type -P aws &> /dev/null; then
+        print_error "AWS CLI is not installed. Provision AWS CLI v2 through the approved platform setup."
         exit 1
     fi
 
