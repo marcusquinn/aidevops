@@ -231,7 +231,7 @@ migrate_orphaned_supervisor >/dev/null 2>&1
 
 new_crontab=$(crontab -l)
 
-if echo "$new_crontab" | grep -qF "supervisor-helper.sh"; then
+if [[ "$new_crontab" == *"supervisor-helper.sh"* ]]; then
 	fail "Cron entry referencing supervisor-helper.sh should have been removed"
 else
 	pass "Cron entry referencing supervisor-helper.sh removed"
