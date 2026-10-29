@@ -1103,7 +1103,8 @@ _routine_rest_core_allows_next() {
 	elif declare -F pulse_rest_core_priority_allows >/dev/null 2>&1; then
 		pulse_rest_core_priority_allows "$priority" || budget_rc=$?
 	else
-		return 0
+		# Missing quota evidence must not authorize dispatch.
+		return 1
 	fi
 	[[ "$budget_rc" -eq 0 ]] && return 0
 	echo "[pulse-wrapper] evaluate_routines: REST-core reserve reached at ${context}; remaining routine work deferred (GH#29742)" >>"$LOGFILE"

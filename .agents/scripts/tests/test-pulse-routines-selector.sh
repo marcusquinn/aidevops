@@ -441,6 +441,9 @@ SCHEDULE_SCRIPT
 		source "$PULSE_ROUTINES"
 		# shellcheck source=../routines/core-routines.sh
 		source "$CORE_ROUTINES"
+		# This recursion fixture authorizes dispatch explicitly; quota behavior
+		# is exercised independently by _test_quota_slot_evaluation.
+		pulse_rest_core_priority_allows_next() { return 0; }
 		launchctl() {
 			[[ "$*" == 'list sh.aidevops.profile-readme-update' ]]
 			return $?
@@ -901,6 +904,12 @@ _test_quota_slot_evaluation() {
 			printf '%s\n' "$id" >>"$root/dispatches"
 			return 0
 		}
+		# Standalone loading without either quota checker must defer due work.
+		unset -f pulse_rest_core_priority_allows_next pulse_rest_core_priority_allows
+		evaluate_routines --skip-publication || exit 1
+		[[ ! -e "$root/dispatches" ]] || exit 1
+		grep -q 'routine_slot_deferred routine=r-slot-one ' "$LOGFILE" || exit 1
+		grep -q 'routine_slot_deferred routine=r-slot-two ' "$LOGFILE" || exit 1
 		local allow=1
 		pulse_rest_core_priority_allows_next() {
 			local priority="$1"
