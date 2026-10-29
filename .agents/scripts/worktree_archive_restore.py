@@ -58,10 +58,26 @@ def legacy_registration(connection, target):
     if row is None:
         return None
     registered = json.loads(row[0])
-    require(registered.get("schema") == 1 and registered.get("backend") == "legacy-guards"
-            and "manager" not in registered and registered.get("identity", {}).get("path") == str(target)
-            and registered.get("generation"), "restore-proof:invalid-creation-backend")
+    invalid = "restore-proof:invalid-creation-backend"
+    require(registered.get("schema") == 1, invalid)
+    require(registration_table(registered) == LEGACY_TABLE, invalid)
+    require(registered.get("identity", {}).get("path") == str(target), invalid)
+    require(registered.get("generation"), invalid)
     return registered
+
+
+def failure_message(final, default):
+    """Map a restore child's final exception line to its bounded message.
+
+    GH#35957: NotEnrolled becomes one bounded category so the child's detail
+    stays private; a ValueError keeps its policy message.
+    """
+    import re
+    if re.fullmatch(r"[A-Za-z0-9_.]*NotEnrolled: .*", final):
+        return NOT_ENROLLED
+    if final.startswith("ValueError: "):
+        return final.removeprefix("ValueError: ")
+    return default
 
 
 def creation_registration(connection, target):
@@ -313,10 +329,12 @@ class RestorationProof:
         slot = directory / receipt["slot"]
         target = slot / "worktree"
         require(common.is_absolute() and common == common.resolve(strict=True), "restore-proof:unsafe-base")
-        require(slot == slot.resolve(strict=True) and inode(slot) == receipt["slot_inode"]
-                and slot.parent == directory and slot.name.startswith(".restore-")
-                and {entry.name for entry in slot.iterdir()} == {"worktree"}
-                and target.is_dir() and not target.is_symlink(), "restore-proof:slot-changed")
+        changed = "restore-proof:slot-changed"
+        require(slot == slot.resolve(strict=True), changed)
+        require(inode(slot) == receipt["slot_inode"], changed)
+        require(slot.parent == directory and slot.name.startswith(".restore-"), changed)
+        require({entry.name for entry in slot.iterdir()} == {"worktree"}, changed)
+        require(target.is_dir() and not target.is_symlink(), changed)
         unsealed = "restore-proof:unsealed-copy-retained; inspect owned scratch"
         with transaction() as connection:
             owner = connection.execute("SELECT task_id, branch FROM worktree_owners WHERE worktree_path = ?",
