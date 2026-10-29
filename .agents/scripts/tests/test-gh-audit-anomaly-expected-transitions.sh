@@ -562,6 +562,9 @@ blocked_output=$(GH_AUDIT_LOG_FILE="$BLOCKED_LOG" GH_ANOMALY_STATE_FILE="${TEST_
 			elif $scenario == "stale" then .[1].created_at="2026-10-25T11:34:00Z"
 			elif $scenario == "future" then .[1].created_at="2026-10-25T11:37:00Z"
 			elif $scenario == "ambiguous" then . + [.[1] | .created_at="2026-10-25T11:36:29Z"]
+			elif $scenario == "readd" then . + [.[0] | .created_at="2026-10-25T11:36:29Z"]
+			elif $scenario == "foreign_readd" then . + [.[0] | .actor.login="other" | .created_at="2026-10-25T11:36:29Z"]
+			elif $scenario == "future_readd" then . + [.[0] | .actor.login="other" | .created_at="2026-10-25T11:37:00Z"]
 			elif $scenario == "malformed" then {error:"not an array"}
 			else . end'
 		return 0
@@ -571,7 +574,7 @@ blocked_output=$(GH_AUDIT_LOG_FILE="$BLOCKED_LOG" GH_ANOMALY_STATE_FILE="${TEST_
 		printf 'ALERT_FILED\n'
 		return 0
 	}
-	for scenario in valid boundary paginated foreign_add foreign_remove expired intervening missing stale future ambiguous api_error user_error malformed truncated mixed capture multiple; do
+	for scenario in valid boundary paginated foreign_add foreign_remove expired intervening missing stale future ambiguous api_error user_error malformed truncated mixed capture multiple readd foreign_readd future_readd; do
 		jq -cn --arg scenario "$scenario" '{ts:"2026-10-25T11:36:30Z",op:"issue_edit",repo:"example/repo",number:90,
 			suspicious:(["protected_label_removed:no-auto-dispatch"] +
 				if $scenario == "mixed" then ["body_delta_pct=-100"]
@@ -580,7 +583,7 @@ blocked_output=$(GH_AUDIT_LOG_FILE="$BLOCKED_LOG" GH_ANOMALY_STATE_FILE="${TEST_
 		: >"$TIMELINE_CALLS"
 		output=$(cmd_scan --all 2>&1)
 		case "$scenario" in
-		valid | boundary | paginated)
+		valid | boundary | paginated | future_readd)
 			[[ "$output" == *self_reversal* && "$output" != *ALERT_FILED* ]] || fail "self-reversal not excluded: $scenario"
 			;;
 		*) [[ "$output" == *ALERT_FILED* && "$output" != *self_reversal* ]] || fail "self-reversal failed open: $scenario" ;;

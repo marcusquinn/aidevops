@@ -227,8 +227,9 @@ _ga_filter_self_reversals() {
 				[$events[] | select(.event == "unlabeled" and .epoch <= $ts and .epoch >= ($ts - 60))] as $removals |
 				($removals | length) == 1 and
 				($removals[0] as $removed |
-					[$events[] | select(.event == "labeled" and .epoch < $removed.epoch)] | last as $added |
+					[$events[] | select(.event == "labeled" and .epoch <= $ts)] | last as $added |
 					$added != null and $added.actor.login == $login and $removed.actor.login == $login and
+					$added.epoch < $removed.epoch and
 					($removed.epoch - $added.epoch) <= 86400 and
 					all($events[] | select(.epoch >= $added.epoch and .epoch <= $removed.epoch); .actor.login == $login)))
 		' <<<"$timeline" >/dev/null 2>&1; then
