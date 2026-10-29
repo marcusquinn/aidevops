@@ -223,7 +223,7 @@ PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
   --decisions "any notable trade-offs")
 ```
 
-Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. Interactive PR creation defaults to draft; use `/pr-loop` or explicit user finalise/ready consent before converting with `gh pr ready`. On rebase conflict: aborts and returns 1 — resolve and retry.
+Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. Interactive PR creation defaults to draft so work survives interruption or restart. In a repository where the session has maintainer authority, implementation intent (`/full-loop`, "fix", "implement", "work on this now", or an issue-started implementation) is the finalise/ready consent: once verification passes and the remote head equals local `HEAD`, run `gh pr ready` and continue to 4.4 without another prompt. Keep the draft only when the user asked for review-first or draft-only, or the work is incomplete or blocked; external contributions stop at a verified ready PR. On rebase conflict: aborts and returns 1 — resolve and retry.
 
 External contributions use the target's fork/branch, PR template, title, issue-linking, and review conventions from `workflows/pr.md`; do not add aidevops labels, merge summaries, signatures, or issue-closing automation.
 
