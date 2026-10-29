@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Read-only, fail-closed proof for a direct generated Cloudron catalog commit."""
+"""Read-only, fail-closed proof for a generated Cloudron catalog commit."""
 
 import argparse
 import base64
@@ -174,12 +174,40 @@ class CatalogEvidence:
 
     def generated_commit(self):
         commit = self.api("commits/" + self.commit)
-        require(commit["sha"] == self.commit and len(commit["parents"]) == 1
-                and commit["parents"][0]["sha"] == self.source, "tag must be a direct child of the merged source")
+        require(commit["sha"] == self.commit and len(commit["parents"]) == 1,
+                "tag must have exactly one parent")
+        parent = commit["parents"][0]["sha"]
+        if parent != self.source:
+            self.docs_only_parent(commit, parent)
         files = commit["files"]
         require(len(files) == 1 and files[0]["filename"] == CATALOG
                 and files[0]["status"] == "modified" and "previous_filename" not in files[0],
                 "generated commit must modify only the existing catalog")
+
+    def docs_only_parent(self, commit, parent):
+        # aidevops:trust-boundary — tolerate only the publisher's attested docs-only
+        # rebase; the tag trailer is not a substitute for ancestry or attestations.
+        message = commit.get("commit", {}).get("message", "").strip()
+        trailers = message.rsplit("\n\n", 1)[-1]
+        source_lines = re.findall(r"(?im)^Cloudron-Source:[ \t]*(.*)$", message)
+        require(source_lines == [self.source]
+                and all(re.fullmatch(r"[A-Za-z0-9-]+: [^\n]+", line) for line in trailers.splitlines())
+                and "Cloudron-Source: " + self.source in trailers.splitlines(),
+                "rebased catalog requires one exact Cloudron-Source trailer")
+        comparison = self.api("compare/" + self.source + "..." + parent)
+        require(comparison["status"] == "ahead", "catalog parent must descend from the merged source")
+        commits = comparison["commits"]
+        require(0 < len(commits) == comparison["total_commits"] <= 250,
+                "docs-only comparison must contain complete bounded history")
+        # Match both publisher allowlists exactly. Inspect each commit, not only
+        # the net diff, so reverted package changes cannot masquerade as docs-only.
+        allowed = r"README\.md|docs/.*|metrics/.*|\.github/metrics/.*|\.github/star-history/.*|star-history\.svg|star-history-dark\.svg"
+        for item in commits:
+            files = self.api("commits/" + item["sha"])["files"]
+            require(len(files) < 300, "docs-only commit file list may be truncated")
+            require(all(re.fullmatch(allowed, file[key]) is not None
+                        for file in files for key in ("filename", "previous_filename") if key in file),
+                    "catalog parent differs from source outside the docs-only allowlist")
 
     def catalog(self):
         before = decode_json(self.content(CATALOG, self.source))
