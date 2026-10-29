@@ -60,12 +60,15 @@ reviews:
     labels:
       - "!no-review"
 
-  # Request changes for critical issues — this is the setting that controls
-  # whether CodeRabbit submits formal APPROVED/CHANGES_REQUESTED reviews.
-  # Without this, CodeRabbit only posts comments (no formal review).
-  # GH#3932: Confirmed via schema that review_status only controls status
-  # messages in walkthrough comments, NOT formal review submission.
-  request_changes_workflow: true
+  # GH#35860: CodeRabbit is advisory (reference/review-bot-gate.md). Keep this
+  # false so findings arrive as COMMENTED reviews swept into post-merge
+  # follow-up issues. When true, CodeRabbit submits formal CHANGES_REQUESTED
+  # reviews, which set reviewDecision and make the pulse t2093 route close and
+  # redispatch every worker PR it comments on (15 PRs in one day, 2026-10-28).
+  # Review-gate evidence is state-agnostic (bot_has_real_review accepts any
+  # settled exact-head bot review), so the GH#17671 external-contributor gate
+  # keeps its evidence; commit_status below remains the fallback signal.
+  request_changes_workflow: false
 
   # GH#3932: Enable commit status checks so review-bot-gate-helper.sh can
   # detect CodeRabbit activity via status API when formal reviews are missing
