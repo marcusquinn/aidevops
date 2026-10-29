@@ -6,6 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=cloudron-package-release-lib.sh
+source "${SCRIPT_DIR}/cloudron-package-release-lib.sh"
 REPOS_FILE="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 RELEASE_SHA_PATTERN='^[a-f0-9]{40}$'
 RELEASE_APPROVAL_LABEL='release-approval-required'
@@ -73,10 +75,15 @@ release_verify() {
 }
 
 release_publication_preflight() {
-	local repo="$1" head="$2" secrets="" caller=""
-	# Names only: never retrieve or print credential values.
-	secrets=$(gh secret list --repo "$repo" --app actions --json name) || release_error "Unable to verify CLOUDRON_RELEASE_PAT in ${repo}; no approval request or merge." || return 1
-	jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null || release_error "${repo} is missing CLOUDRON_RELEASE_PAT. Configure a fine-grained PAT restricted to this package repository with Contents write access (cloudron-app-publishing-skill.md) before requesting approval or merging." || return 1
+	local repo="$1" head="$2" secrets="" caller="" pat_rc=0
+	# The job token publishes unless rules on main block its direct push.
+	cloudron_publication_pat_required "$repo" || pat_rc=$?
+	[[ "$pat_rc" -ne 2 ]] || release_error "Unable to read branch rules for main in ${repo}; no approval request or merge." || return 1
+	if [[ "$pat_rc" -eq 0 ]]; then
+		# Names only: never retrieve or print credential values.
+		secrets=$(gh secret list --repo "$repo" --app actions --json name) || release_error "Unable to verify CLOUDRON_RELEASE_PAT in ${repo}; no approval request or merge." || return 1
+		jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null || release_error "${repo} is missing CLOUDRON_RELEASE_PAT, which its main branch rules (required PRs or checks) need for the catalog push. Configure a fine-grained PAT with Contents write access (cloudron-app-publishing-skill.md), or relax those rules, before requesting approval or merging." || return 1
+	fi
 	caller=$(release_contents "$repo" .github/workflows/cloudron-catalog-publish.yml "$head") || release_error 'Unable to read the exact-head catalog workflow; no approval request or merge.' || return 1
 	printf '%s\n' "$caller" | python3 "${SCRIPT_DIR}/cloudron-release-evidence.py" --check-caller || return 1
 	return 0

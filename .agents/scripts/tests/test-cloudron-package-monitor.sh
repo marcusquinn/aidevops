@@ -143,6 +143,10 @@ if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/variables ]]; then
     printf '%s' "${MONITOR_PUBLICATION_ENABLED:-false}"
     exit 0
 fi
+if [[ "$*" == 'api repos/exampleorg/example-package/rules/branches/main' ]]; then
+    printf '%s\n' '[{"type":"non_fast_forward"},{"type":"deletion"}]'
+    exit 0
+fi
 if [[ "$*" == 'secret list --repo exampleorg/example-package --json name' ]]; then
     printf '%s\n' '[{"name":"CLOUDRON_RELEASE_PAT"}]'
     exit 0
@@ -1116,7 +1120,7 @@ for scenario in ('unchanged', 'docs', 'source', 'reverted-source', 'renamed-sour
     catalog = '{"versions":{"1.0.0":{}}}\n'
     (worker / 'CloudronVersions.json').write_text(catalog)
     result = subprocess.run(['bash', '-c', script], cwd=worker,
-                            env=dict(env, SOURCE_SHA=source, VERSION='1.0.0', RELEASE_PAT='test-placeholder'),
+                            env=dict(env, SOURCE_SHA=source, VERSION='1.0.0', PUSH_TOKEN='test-placeholder'),
                             text=True, capture_output=True)
     success = scenario in ('unchanged', 'docs')
     assert (result.returncode == 0) == success, (scenario, result.stdout, result.stderr)

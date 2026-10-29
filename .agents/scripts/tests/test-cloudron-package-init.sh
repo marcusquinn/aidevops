@@ -179,6 +179,14 @@ test_catalog_secret_preflight() {
 		local command="$1" target="${2:-}"
 		case "$command $target" in
 		'repo view') printf 'example/package\n' ;;
+		'api repos/example/package/rules/branches/main')
+			[[ "$RULES_CASE" != error ]] || return 1
+			if [[ "$RULES_CASE" == baseline ]]; then
+				printf '[{"type":"non_fast_forward"},{"type":"deletion"}]\n'
+			else
+				printf '[{"type":"required_status_checks"}]\n'
+			fi
+			;;
 		'secret list')
 			[[ "$*" == 'secret list --repo example/package --json name' ]] || return 9
 			[[ "$SECRET_CASE" != error ]] || return 1
@@ -194,7 +202,15 @@ test_catalog_secret_preflight() {
 		return 0
 	}
 	export -f gh
-	export SECRET_CASE=missing PUBLICATION_ENABLED=true
+	export SECRET_CASE=missing PUBLICATION_ENABLED=true RULES_CASE=baseline
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$repo_dir" 2>&1)
+	assert_equal false "$(grep -Fq 'CLOUDRON_RELEASE_PAT' <<<"$output" && printf true || printf false)" "baseline rules publish with the job token, no PAT warning"
+	rm "${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	export RULES_CASE=error
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$repo_dir" 2>&1)
+	assert_equal true "$(grep -Fq 'unable to read branch rules' <<<"$output" && printf true || printf false)" "unreadable rules warn"
+	rm "${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	export RULES_CASE=required
 	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$repo_dir" 2>&1)
 	assert_equal true "$(grep -Fq 'missing CLOUDRON_RELEASE_PAT' <<<"$output" && printf true || printf false)" "plain scaffold warns about missing PAT"
 	assert_equal true "$(grep -Fq 'Contents write' <<<"$output" && printf true || printf false)" "warning includes restricted PAT setup"
@@ -214,6 +230,12 @@ test_catalog_secret_preflight() {
 		local entry='{"slug":"example/package"}' rc=0
 		output=$(_cloudron_monitor_publication_secret "$entry") || rc=$?
 		[[ "$rc" == 3 && "$output" == *'missing CLOUDRON_RELEASE_PAT'* ]] || exit 1
+		RULES_CASE=baseline
+		output=$(_cloudron_monitor_publication_secret "$entry") || exit 1
+		[[ -z "$output" ]] || exit 1
+		RULES_CASE=error
+		if _cloudron_monitor_publication_secret "$entry" 2>/dev/null; then exit 1; fi
+		RULES_CASE=required
 		SECRET_CASE=present
 		_cloudron_monitor_publication_secret "$entry" || exit 1
 		SECRET_CASE=error
@@ -235,7 +257,7 @@ test_catalog_secret_preflight() {
 		output=$(_cloudron_monitor_run upstream true)
 		[[ "$output" == RECONCILE ]] || exit 1
 	) || return 1
-	printf 'PASS monitor secret present, absent, inaccessible and publication disabled\n'
+	printf 'PASS monitor baseline token, rules error, secret present, absent, inaccessible and publication disabled\n'
 	unset -f gh
 	return 0
 }
