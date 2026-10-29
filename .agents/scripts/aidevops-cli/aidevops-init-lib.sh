@@ -1504,14 +1504,15 @@ GITIGNOREEOF
 	fi
 
 	local gitignore_updated=false
-	if grep -qFx ".agents" "$gitignore" 2>/dev/null; then
+	# Legacy cleanup belongs only to .gitignore; local exclude rules are user-owned.
+	if [[ "$gitignore" == "$project_root/.gitignore" ]] && grep -qFx ".agents" "$gitignore" 2>/dev/null; then
 		sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
 			sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
 		sed -i '' '/^# aidevops$/{ N; /^# aidevops\n$/d; }' "$gitignore" 2>/dev/null || true
 		print_info "Removed legacy bare .agents from $ignore_label (now tracked)"
 		gitignore_updated=true
 	fi
-	if grep -qFx ".agent" "$gitignore" 2>/dev/null; then
+	if [[ "$gitignore" == "$project_root/.gitignore" ]] && grep -qFx ".agent" "$gitignore" 2>/dev/null; then
 		sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
 			sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
 		gitignore_updated=true

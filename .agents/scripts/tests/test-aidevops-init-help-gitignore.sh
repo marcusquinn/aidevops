@@ -142,10 +142,16 @@ test_starter_core_gitignore_is_unchanged() {
 			assert_equal 0 "$(git -C "$repo" check-ignore --no-index -q -- "$entry"; printf '%s' "$?")" "$layout effectively ignores $entry"
 		done
 		assert_file_count 0 ".agents" "$exclude" "$layout does not ignore committed project agents"
+		# Existing local rules are user-owned, not legacy .gitignore scaffolding.
+		printf '.agents\n.agent\npersonal/\n' >>"$exclude"
 		before=$(cksum "$exclude")
 		_init_update_gitignore "$repo" true
 		after=$(cksum "$exclude")
 		assert_equal "$before" "$after" "$layout local excludes rerun is byte-stable"
+		for entry in ".agents" ".agent" "personal/"; do
+			assert_file_count 1 "$entry" "$exclude" "$layout preserves existing local $entry rule"
+		done
+		assert_equal 0 "$(git -C "$repo" check-ignore --no-index -q .agents/private.txt; printf '%s' "$?")" "$layout keeps personal agent files ignored"
 		# A core sync can replace .gitignore without removing the local excludes.
 		printf '# Updated starter\nnode_modules/\n' >"$repo/.gitignore"
 		assert_equal 0 "$(git -C "$repo" check-ignore --no-index -q .agents/tmp/run.json; printf '%s' "$?")" "$layout exclusions survive replacing core .gitignore"
