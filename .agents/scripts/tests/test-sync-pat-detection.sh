@@ -689,10 +689,10 @@ for checkout_name in 'Checkout' 'Checkout repo before closing-hygiene validation
 	STUB_RUN_JOBS=$(command jq -n --arg name "$checkout_name" \
 		'{jobs:[{steps:[{name:$name,conclusion:"failure"}]}]}')
 	check_sync_pat "$FAKE_REPO"
-	if [[ -f "$ADVISORY_PATH" ]] && grep -q 'run 12345 failed' "$ADVISORY_PATH"; then
-		pass "Fresh secret with failed $checkout_name warns despite Actions PR creation"
+	if [[ ! -f "$ADVISORY_PATH" ]] && grep -q 'run 12345 failed at checkout; the selected credential is unknown' "$OUTPUT_LOG"; then
+		pass "Failed $checkout_name warns without attributing the selected credential"
 	else
-		fail "Failed $checkout_name did not emit rotation advisory"
+		fail "Failed $checkout_name omitted neutral warning or emitted rotation advisory"
 	fi
 done
 

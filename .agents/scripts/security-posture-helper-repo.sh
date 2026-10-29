@@ -1321,7 +1321,11 @@ _check_sync_pat_health() {
 		if jq -e 'any(.jobs[]?.steps[]?; .conclusion == "failure" and
 			(.name == "Checkout" or .name == "Checkout repo before closing-hygiene validation"))' \
 			<<<"$jobs" >/dev/null 2>&1; then
-			health_reason="${health_reason:+${health_reason} }Latest issue-sync run ${latest_run} failed at a SYNC_PAT-backed checkout; the token may be expired, revoked, or missing repository access."
+			# Step names do not expose whether validation selected SYNC_PAT or
+			# GITHUB_TOKEN. Do not turn a checkout failure into rotation advice.
+			local checkout_reason="Latest issue-sync run ${latest_run} failed at checkout; the selected credential is unknown. Inspect the run logs for authentication, repository access, or network failures."
+			print_warn "$checkout_reason"
+			add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "$checkout_reason"
 		fi
 	fi
 	if [[ -n "$health_reason" ]]; then

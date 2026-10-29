@@ -232,9 +232,10 @@ jobs:
             echo "::notice::SYNC_PAT not present — using GITHUB_TOKEN; protected publication still requires a PR."
             exit 0
           fi
-          status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+          # Feed the header over stdin so the token never enters curl's argv.
+          status=$(printf 'Authorization: Bearer %s\n' "$SYNC_PAT" | curl --silent --output /dev/null --write-out '%{http_code}' \
             --connect-timeout 10 --max-time 30 \
-            --header "Authorization: Bearer ${SYNC_PAT}" \
+            --header @- \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}") || status=000
           case "$status" in
             200) echo "sync_pat_valid=true" >> "$GITHUB_OUTPUT"
@@ -475,9 +476,10 @@ jobs:
             echo "::notice::SYNC_PAT not present — using GITHUB_TOKEN; protected publication still requires a PR."
             exit 0
           fi
-          status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+          # Feed the header over stdin so the token never enters curl's argv.
+          status=$(printf 'Authorization: Bearer %s\n' "$SYNC_PAT" | curl --silent --output /dev/null --write-out '%{http_code}' \
             --connect-timeout 10 --max-time 30 \
-            --header "Authorization: Bearer ${SYNC_PAT}" \
+            --header @- \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}") || status=000
           case "$status" in
             200) echo "sync_pat_valid=true" >> "$GITHUB_OUTPUT"
@@ -780,9 +782,10 @@ jobs:
             echo "::notice::SYNC_PAT not present — using GITHUB_TOKEN; protected publication still requires a PR."
             exit 0
           fi
-          status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+          # Feed the header over stdin so the token never enters curl's argv.
+          status=$(printf 'Authorization: Bearer %s\n' "$SYNC_PAT" | curl --silent --output /dev/null --write-out '%{http_code}' \
             --connect-timeout 10 --max-time 30 \
-            --header "Authorization: Bearer ${SYNC_PAT}" \
+            --header @- \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}") || status=000
           case "$status" in
             200) echo "sync_pat_valid=true" >> "$GITHUB_OUTPUT"
@@ -889,9 +892,10 @@ jobs:
             echo "::notice::SYNC_PAT not present — using GITHUB_TOKEN; protected publication still requires a PR."
             exit 0
           fi
-          status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+          # Feed the header over stdin so the token never enters curl's argv.
+          status=$(printf 'Authorization: Bearer %s\n' "$SYNC_PAT" | curl --silent --output /dev/null --write-out '%{http_code}' \
             --connect-timeout 10 --max-time 30 \
-            --header "Authorization: Bearer ${SYNC_PAT}" \
+            --header @- \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}") || status=000
           case "$status" in
             200) echo "sync_pat_valid=true" >> "$GITHUB_OUTPUT"
