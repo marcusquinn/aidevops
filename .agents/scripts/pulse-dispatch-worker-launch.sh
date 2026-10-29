@@ -923,9 +923,13 @@ _dlw_precreate_worktree() {
 	# GH#35602: the exported stage context lets the helper record precreate.* sub-stages.
 	_pc_t0=$(_ds_now_ns)
 	local _wt_rc=0
+	# Give the helper's first ownership write an attempt-specific identity so
+	# rejection can compensate only this attempt, never a replacement owner.
+	local _helper_session="${_precreate_session}-$$-${RANDOM}"
 	_wt_output=$(cd "$repo_path" && export "${_DLW_MANAGED_CREATE_ENV[@]}" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
+		OPENCODE_PID="$$" OPENCODE_SESSION_ID="$_helper_session" \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
 		AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number" AIDEVOPS_DISPATCH_STAGE_REPO="${repo_slug:-}" \
 		AIDEVOPS_WORKTREE_BASE="${_DLW_SEED_OID:-${AIDEVOPS_WORKTREE_BASE:-}}" \
@@ -944,9 +948,15 @@ _dlw_precreate_worktree() {
 	if [[ "$_wt_rc" -eq 0 && -n "$_path" && -d "$_path" ]]; then
 		_DLW_WORKTREE_PATH="$_path"
 		_DLW_WORKTREE_BRANCH="$_branch"
-		# Reject missing enrollment before making any ownership write (GH#35828).
+		# Reject before dispatcher registration; the real helper has already
+		# registered ownership, so compensate that exact attempt (GH#35828).
 		if [[ -n "$_managed_create" ]]; then
-			_dlw_require_managed_generation "$issue_number" "${repo_slug:-}" "$_wt_rc" "$_wt_output" || return 1
+			if ! _dlw_require_managed_generation "$issue_number" "${repo_slug:-}" "$_wt_rc" "$_wt_output"; then
+				if ! unregister_worktree_if_owner_contract "$_path" "$$" "$_helper_session" "$issue_number"; then
+					echo "[dispatch_with_dedup] Preserving changed or unavailable ownership after managed rejection for #${issue_number}" >>"$LOGFILE"
+				fi
+				return 1
+			fi
 		fi
 		if declare -F register_worktree >/dev/null 2>&1; then
 			if ! register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
