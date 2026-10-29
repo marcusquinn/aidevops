@@ -73,6 +73,30 @@ source "$SCRIPT_DIR/../pulse-dispatch-lib.sh"
 _dispatch_stats_increment() { return 0; }
 _dispatch_stats_increment_candidate_failed() { return 0; }
 _dispatch_mark_benign_blocked_candidate() { return 0; }
+# GH#36000: exercise the real LOGFILE reader before the legacy unit stub below.
+candidate='{"number":34526,"repo_slug":"example/repo","updatedAt":"2026-10-13T00:00:00Z","assignees":[],"labels":["status:available","auto-dispatch"]}'
+cache=$(_dispatch_negative_cache_path 34526 example/repo)
+for verdict in \
+	'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #123 in example/repo has no current stall release issue=#34526' \
+	'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #123 in example/repo head=abc release=456 issue=#34526' \
+	'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #123 in example/repo head=abc — runner bot already released it as runner_capability_unmet (release=456) issue=#34526'; do
+	printf '%s\n' \
+		'DISPATCH_CANDIDATE_ATTEMPT issue=#34526 repo=example/repo' \
+		'WORKER_DRAFT_CHECKPOINT: draft PR #123 for issue #34526 in example/repo is a durable checkpoint' \
+		"$verdict" \
+		'DISPATCH_BLOCK_REASON reason=dedup_active_claim signal=test issue=#34526 repo=example/repo' >"$LOGFILE"
+	[[ "$(_dispatch_candidate_recent_lines 34526 example/repo)" == *"$verdict"* ]]
+	[[ -z "$(_dispatch_candidate_recent_lines 3452 example/repo)" ]]
+	[[ -z "$(_dispatch_candidate_recent_lines 34526 other/repo)" ]]
+	_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+	[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_cooldown ]]
+	rm -f "$cache"
+	printf '%s\n' 'PR_CHECKPOINT_CONTINUATION_BLOCKED: PR #123 in example/repo launch failed rc=1 issue=#34526' >>"$LOGFILE"
+	_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+	_dispatch_cache_confirmed_block "$candidate" 34526 example/repo
+	[[ ! -f "$cache" ]]
+done
+printf 'PASS production checkpoint verdict log attribution and transient launch exclusion\n'
 _dispatch_candidate_recent_lines() {
 	printf '%s\nDISPATCH_BLOCK_REASON reason=%s signal=test\n' "$ATTEMPT_LINES" "$ATTEMPT_REASON"
 	return 0
@@ -97,9 +121,30 @@ changed=$(jq -c '.labels |= reverse' <<<"$candidate")
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$changed]")" == '[]' ]]
 cache=$(_dispatch_negative_cache_path 34526 example/repo)
 fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate")
-printf '%s\t%s\t%s\t-\t%s\t\n' "$(($(date +%s) - _DISPATCH_CHECKPOINT_COOLDOWN_SECONDS))" \
+printf '%s\t%s\t%s\t-\t%s\t\n' "$(($(date +%s) - 21600))" \
 	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
+# Record age and issue age are independent: quiet eligibility is fixed at write time.
+now=$(date +%s)
+stamp=$((now - 3600))
+printf '%s\t%s\t%s\t-\t%s\t\n' "$stamp" \
+	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" == '[]' ]]
+assigned=$(jq -c '.assignees = [{login:"runner"}]' <<<"$candidate")
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$assigned]")" != '[]' ]]
+[[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=0 _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
+[[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=invalid _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" == '[]' ]]
+for age in 14399 14400; do
+	revision=$(jq -nr --argjson epoch "$((stamp - age))" '$epoch | todateiso8601')
+	recent=$(jq -c --arg revision "$revision" '.updatedAt = $revision' <<<"$candidate")
+	printf '%s\t%s\t%s\t-\t%s\t\n' "$stamp" "$revision" worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
+	filtered=$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$recent]")
+	if ((age < 14400)); then [[ "$filtered" != '[]' ]]; else [[ "$filtered" == '[]' ]]; fi
+done
+# The quiet duration cap remains one day even with an oversized setting.
+printf '%s\t%s\t%s\t-\t%s\t\n' "$((now - 86400))" \
+	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
+[[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=999999 _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
 rm -f "$cache"
 # A successful old PR-cache lookup must not mask routed-continuation safety.
 _dispatch_negative_pr_fingerprint() { printf 'test-pr-fingerprint\n'; return 0; }
@@ -109,6 +154,13 @@ for signal in 'checkpoint_routed' 'CONTINUATION_ROUTED'; do
 	_dispatch_cache_confirmed_block "$candidate" 34526 example/repo
 	[[ ! -f "$cache" ]]
 done
+# Transient launch failures may retain the existing PR-fingerprinted block,
+# but must never become a quiet checkpoint cooldown (GH#36000).
+ATTEMPT_LINES='WORKER_DRAFT_CHECKPOINT: draft PR #123 BLOCKED_CHECKPOINT_ATTENTION_EXISTS PR_CHECKPOINT_CONTINUATION_BLOCKED: launch failed rc=1'
+_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+_dispatch_cache_confirmed_block "$candidate" 34526 example/repo
+[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_blocked ]]
+rm -f "$cache"
 ATTEMPT_LINES='WORKER_DRAFT_CHECKPOINT: draft PR #123'
 _dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
 [[ ! -f "$cache" ]]

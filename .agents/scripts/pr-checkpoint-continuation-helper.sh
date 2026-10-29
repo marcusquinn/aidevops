@@ -562,8 +562,8 @@ _pcc_dispatch() {
 	fi
 	if [[ "$dispatch_rc" -ne 0 ]]; then
 		_pcc_restore_transferred_ownership "$repo_slug" "$pr_number" || true
-		printf 'PR_CHECKPOINT_CONTINUATION_BLOCKED: PR #%s in %s launch failed rc=%s\n' \
-			"$pr_number" "$repo_slug" "$dispatch_rc"
+		printf 'PR_CHECKPOINT_CONTINUATION_BLOCKED: PR #%s in %s launch failed rc=%s issue=#%s\n' \
+			"$pr_number" "$repo_slug" "$dispatch_rc" "$linked_issue"
 		return 1
 	fi
 	printf 'PR_CHECKPOINT_CONTINUATION_DISPATCHED: PR #%s in %s at %s for issue #%s\n' \
@@ -713,8 +713,8 @@ _pcc_completed_attention() {
 	evidence=$(_pcc_completed_release_evidence "$comments" "$key" "$trusted_logins") || return 1
 	IFS=$'\t' read -r release_id reason posted <<<"$evidence"
 	if [[ "$posted" == true ]]; then
-		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s\n' \
-			"$pr" "$repo" "$head" "$release_id"
+		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s issue=#%s\n' \
+			"$pr" "$repo" "$head" "$release_id" "$issue"
 		return 0
 	fi
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
@@ -777,8 +777,8 @@ _pcc_blocked_attention() {
 	[[ "$release_id" =~ ^[1-9][0-9]*$ ]] || return 1
 	[[ "$successor" =~ ^([1-9][0-9]*|unpaired|-)$ ]] || return 1
 	if [[ "$posted" == "true" ]]; then
-		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s\n' \
-			"$pr" "$repo" "$head" "$release_id"
+		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s issue=#%s\n' \
+			"$pr" "$repo" "$head" "$release_id" "$issue"
 		return 0
 	fi
 	attempt_arg="${attempt:-attempt:<ORIGINAL_ID>}"
@@ -1028,7 +1028,7 @@ _pcc_dispatch_stalled() {
 		_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
 			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || expired_rc=$?
 		[[ "$expired_rc" -eq 3 ]] || return "$expired_rc"
-		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release\n' "$pr" "$repo"
+		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release issue=#%s\n' "$pr" "$repo" "$issue"
 		return 1
 	}
 	IFS=$'\t' read -r release_id reason stalls posted <<<"$evidence"
@@ -1046,8 +1046,8 @@ _pcc_dispatch_stalled() {
 	local self_release=""
 	if self_release=$(_pcc_self_capability_release "$comments" "$head_date" "$login" 2>/dev/null); then
 		# GH#35883: no comment or dispatch; another runner may continue the head.
-		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s head=%s — runner %s already released it as runner_capability_unmet (release=%s)\n' \
-			"$pr" "$repo" "$head" "$login" "$self_release"
+		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s head=%s — runner %s already released it as runner_capability_unmet (release=%s) issue=#%s\n' \
+			"$pr" "$repo" "$head" "$login" "$self_release" "$issue"
 		return 1
 	fi
 	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=%s reason=%s\n' \

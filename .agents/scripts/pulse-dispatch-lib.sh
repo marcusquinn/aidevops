@@ -289,6 +289,8 @@ _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
 	local expected_reason="${2:-}"
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
+	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
+	local quiet_after="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_AFTER_SECONDS:-14400}" revision_epoch=""
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
@@ -317,6 +319,18 @@ _dispatch_negative_cache_reason() {
 		[[ "$ttl" -gt 0 && -n "$fingerprint" ]] || return 1
 		current=$(_dispatch_checkpoint_fingerprint "$candidate") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
+		# Only old, unassigned revisions can outlive the base cooldown: recent
+		# claims may still expire, and assigned issues need stale-owner recovery.
+		[[ "$quiet_ttl" =~ ^[0-9]+$ ]] || quiet_ttl=21600
+		((quiet_ttl <= 86400)) || quiet_ttl=86400
+		[[ "$quiet_after" =~ ^[0-9]+$ ]] || quiet_after=14400
+		if ((quiet_ttl > ttl)); then
+			revision_epoch=$(jq -er 'select((.assignees // [] | length) == 0) |
+				.updatedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' <<<"$candidate" 2>/dev/null) || revision_epoch=""
+			if [[ "$revision_epoch" =~ ^[0-9]+$ ]] && ((stamp >= revision_epoch && stamp - revision_epoch >= quiet_after)); then
+				ttl="$quiet_ttl"
+			fi
+		fi
 		;;
 	terminal_blocker_circuit)
 		# The circuit hold applies to unowned available issues by design. An

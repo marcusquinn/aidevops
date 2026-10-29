@@ -1043,6 +1043,7 @@ _dispatch_checkpoint_cooldown_eligible() {
 	local lines="$1"
 	[[ "$lines" == *"WORKER_DRAFT_CHECKPOINT:"* &&
 		("$lines" == *"BLOCKED_CHECKPOINT_ATTENTION_EXISTS"* || "$lines" == *"STALLED_CHECKPOINT_CONTINUATION_SKIPPED"*) &&
+		"$lines" != *"launch failed rc="* &&
 		"$lines" != *"checkpoint_routed"* && "$lines" != *"CONTINUATION_ROUTED"* ]] || return 1
 	return 0
 }
