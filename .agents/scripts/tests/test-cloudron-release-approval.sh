@@ -37,6 +37,17 @@ touch "${TEST_ROOT}/merged"
 STUB
 chmod +x "${TEST_ROOT}/approval-helper.sh" "${TEST_ROOT}/full-loop-helper.sh"
 
+request_issues() {
+	if [[ "$SCENARIO" == request_existing || "$SCENARIO" == request_unsigned || "$SCENARIO" == request_signed ]]; then
+		jq -cn --rawfile body "${TEST_ROOT}/request" '[{number:12,html_url:"https://example.invalid/issue/12",body:$body}]'
+	elif [[ "$SCENARIO" == request* ]]; then
+		printf '[]\n'
+	else
+		gh api repos/owner/app/issues/12 | jq -c '[. + {number:12}]'
+	fi
+	return 0
+}
+
 gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
@@ -67,13 +78,7 @@ gh() {
 		fi
 		;;
 	'api repos/owner/app/issues?'*)
-		if [[ "$SCENARIO" == request_existing || "$SCENARIO" == request_unsigned || "$SCENARIO" == request_signed ]]; then
-			jq -cn --rawfile body "${TEST_ROOT}/request" '[{number:12,html_url:"https://example.invalid/issue/12",body:$body}]'
-		elif [[ "$SCENARIO" == request* ]]; then
-			printf '[]\n'
-		else
-			gh api repos/owner/app/issues/12 | jq -c '[. + {number:12}]'
-		fi
+		request_issues
 		;;
 	'api repos/owner/app/issues/12/comments?'*) printf '[]\n' ;;
 	'api repos/owner/app/issues/12')
