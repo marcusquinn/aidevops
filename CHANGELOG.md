@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- keep local-provider sessions' compaction local
+- keep compaction local for bound local-only sessions and sessions with a local default model
 - classify and suppress GraphQL commit permission denials (#35888)
 
 ## [3.39.82] - 2026-10-29
