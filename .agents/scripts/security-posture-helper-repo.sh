@@ -1303,6 +1303,39 @@ _repo_uses_metrics_workflow() {
 	return 1
 }
 
+# Check metadata and the latest issue-sync failure without reading token values.
+_check_sync_pat_health() {
+	local slug="$1"
+	local advisory_file="$2"
+	local secret_check="$3"
+	local health_reason=""
+	if jq -e '(.updatedAt | fromdateiso8601) <= (now - 76 * 86400)' \
+		<<<"$secret_check" >/dev/null 2>&1; then
+		health_reason="SYNC_PAT was last updated at least 76 days ago and may expire soon (90-day default, 14-day warning)."
+	fi
+	local latest_run jobs
+	latest_run=$(gh api "repos/${slug}/actions/workflows/issue-sync.yml/runs?per_page=1" \
+		--jq '.workflow_runs[0] | select(.conclusion == "failure") | .id' 2>/dev/null) || true
+	if [[ "$latest_run" =~ ^[0-9]+$ ]]; then
+		jobs=$(gh api "repos/${slug}/actions/runs/${latest_run}/jobs?per_page=100" 2>/dev/null) || true
+		if jq -e 'any(.jobs[]?.steps[]?; .conclusion == "failure" and
+			(.name == "Checkout" or .name == "Checkout repo before closing-hygiene validation"))' \
+			<<<"$jobs" >/dev/null 2>&1; then
+			health_reason="${health_reason:+${health_reason} }Latest issue-sync run ${latest_run} failed at a SYNC_PAT-backed checkout; the token may be expired, revoked, or missing repository access."
+		fi
+	fi
+	if [[ -n "$health_reason" ]]; then
+		print_warn "SYNC_PAT may expire or need rotation for $slug"
+		add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "$health_reason"
+		_emit_sync_pat_advisory "$slug" "${slug//\//-}" "$advisory_file" "" "$health_reason"
+	else
+		print_pass "SYNC_PAT is set for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "SYNC_PAT set for $slug"
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+	fi
+	return 0
+}
+
 # Check whether a repo requires SYNC_PAT based on workflow + branch protection.
 # Writes result to global SYNC_PAT_NEED_RESULT: "needed:<desc>" | "not_needed".
 # Side effect: prints findings and cleans stale advisories.
@@ -1338,32 +1371,7 @@ _check_sync_pat_need() {
 	secret_check=$(gh secret list --repo "$slug" --json name,updatedAt \
 		-q '.[] | select(.name == "SYNC_PAT")' 2>/dev/null) || true
 	if [[ -n "$secret_check" ]]; then
-		local health_reason=""
-		if jq -e '(.updatedAt | fromdateiso8601) <= (now - 76 * 86400)' \
-			<<<"$secret_check" >/dev/null 2>&1; then
-			health_reason="SYNC_PAT was last updated at least 76 days ago and may expire soon (90-day default, 14-day warning)."
-		fi
-		local latest_run run_id jobs
-		latest_run=$(gh api "repos/${slug}/actions/workflows/issue-sync.yml/runs?per_page=1" \
-			--jq '.workflow_runs[0] | select(.conclusion == "failure") | .id' 2>/dev/null) || true
-		if [[ "$latest_run" =~ ^[0-9]+$ ]]; then
-			run_id="$latest_run"
-			jobs=$(gh api "repos/${slug}/actions/runs/${run_id}/jobs?per_page=100" 2>/dev/null) || true
-			if jq -e 'any(.jobs[]?.steps[]?; .conclusion == "failure" and
-				(.name == "Checkout" or .name == "Checkout repo before closing-hygiene validation"))' \
-				<<<"$jobs" >/dev/null 2>&1; then
-				health_reason="${health_reason:+${health_reason} }Latest issue-sync run ${run_id} failed at a SYNC_PAT-backed checkout; the token may be expired, revoked, or missing repository access."
-			fi
-		fi
-		if [[ -n "$health_reason" ]]; then
-			print_warn "SYNC_PAT may expire or need rotation for $slug"
-			add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "$health_reason"
-			_emit_sync_pat_advisory "$slug" "${slug//\//-}" "$advisory_file" "" "$health_reason"
-		else
-			print_pass "SYNC_PAT is set for $slug"
-			add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "SYNC_PAT set for $slug"
-			[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-		fi
+		_check_sync_pat_health "$slug" "$advisory_file" "$secret_check"
 		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
 		return 0
 	fi
