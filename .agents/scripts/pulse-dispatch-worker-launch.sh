@@ -958,18 +958,7 @@ _dlw_precreate_worktree() {
 				return 1
 			fi
 		fi
-		if declare -F register_worktree >/dev/null 2>&1; then
-			if ! register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
-				--task "$issue_number" \
-				--session "$_precreate_session" \
-				--owner-pid "$$" 2>/dev/null; then
-				echo "[dispatch_with_dedup] Worktree ownership registration failed for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
-				return 1
-			fi
-		else
-			echo "[dispatch_with_dedup] Worktree registry helper unavailable for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
-			return 1
-		fi
+		_dlw_register_precreated_owner "$issue_number" "$_precreate_session" || return 1
 		# Restore gitignored deps (node_modules) that git doesn't track
 		_pc_t0=$(_ds_now_ns)
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
@@ -983,6 +972,22 @@ _dlw_precreate_worktree() {
 		# t2981: return 1 so the caller can skip dispatch instead of
 		# falling back to the canonical repo on the default branch.
 		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — dispatch will be skipped this cycle (helper_rc=${_wt_rc}, extracted: '${_path:-<empty>}', helper_reason: '$(_dlw_precreate_helper_reason "$_wt_output")', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+# Register the transferable dispatcher owner only after enrollment is accepted.
+_dlw_register_precreated_owner() {
+	local issue_number="$1"
+	local precreate_session="$2"
+	if ! declare -F register_worktree >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Worktree registry helper unavailable for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
+		return 1
+	fi
+	if ! register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
+		--task "$issue_number" --session "$precreate_session" --owner-pid "$$" 2>/dev/null; then
+		echo "[dispatch_with_dedup] Worktree ownership registration failed for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
