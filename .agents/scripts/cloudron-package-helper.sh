@@ -450,7 +450,7 @@ catalog_publication_secret_warning() {
 	elif ! secrets=$(gh secret list --repo "$slug" --json name); then
 		log_warn "Publication blocked: unable to verify CLOUDRON_RELEASE_PAT in $slug" >&2
 	elif ! jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null; then
-		log_warn "Publication blocked: $slug is missing CLOUDRON_RELEASE_PAT, which its main branch rules (required PRs or checks) need for the catalog push. Relax those rules, or configure a fine-grained PAT with Contents write access using gh secret set CLOUDRON_RELEASE_PAT --repo $slug. See cloudron-app-publishing-skill.md. Never put the value in logs or chat." >&2
+		log_warn "Publication blocked: $slug is missing CLOUDRON_RELEASE_PAT, which its main branch rules (required PRs or checks) need for the catalog push. Reuse the owner's purpose-scoped fine-grained CLOUDRON_RELEASE_PAT (Contents write and Metadata read only): add this repository to its selected access if needed, then set the repo secret from gopass with aidevops secret CLOUDRON_RELEASE_PAT -- sh -c 'printf %s \"\$CLOUDRON_RELEASE_PAT\" | gh secret set CLOUDRON_RELEASE_PAT --repo $slug'. See cloudron-app-publishing-skill.md for first-time or lost-value setup. Never put values in logs or chat." >&2
 	fi
 	return 0
 }

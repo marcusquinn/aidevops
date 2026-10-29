@@ -82,7 +82,7 @@ release_publication_preflight() {
 	if [[ "$pat_rc" -eq 0 ]]; then
 		# Names only: never retrieve or print credential values.
 		secrets=$(gh secret list --repo "$repo" --app actions --json name) || release_error "Unable to verify CLOUDRON_RELEASE_PAT in ${repo}; no approval request or merge." || return 1
-		jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null || release_error "${repo} is missing CLOUDRON_RELEASE_PAT, which its main branch rules (required PRs or checks) need for the catalog push. Configure a fine-grained PAT with Contents write access (cloudron-app-publishing-skill.md), or relax those rules, before requesting approval or merging." || return 1
+		jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null || release_error "${repo} is missing CLOUDRON_RELEASE_PAT, which its main branch rules (required PRs or checks) need for the catalog push. Reuse the owner's purpose-scoped fine-grained CLOUDRON_RELEASE_PAT (Contents write and Metadata read only): add this repository to its selected access if needed, then set the repo secret from gopass with aidevops secret CLOUDRON_RELEASE_PAT -- sh -c 'printf %s \"\$CLOUDRON_RELEASE_PAT\" | gh secret set CLOUDRON_RELEASE_PAT --repo ${repo}'. See cloudron-app-publishing-skill.md for first-time or lost-value setup. Never put values in logs or chat. Configure before requesting approval or merging." || return 1
 	fi
 	caller=$(release_contents "$repo" .github/workflows/cloudron-catalog-publish.yml "$head") || release_error 'Unable to read the exact-head catalog workflow; no approval request or merge.' || return 1
 	printf '%s\n' "$caller" | python3 "${SCRIPT_DIR}/cloudron-release-evidence.py" --check-caller || return 1
