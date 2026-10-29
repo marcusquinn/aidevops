@@ -464,7 +464,7 @@ _cb_rest_core_unknown_progress_allows() {
 # Apply a REST priority class to one already-observed budget snapshot.
 #
 # Args:
-#   $1 - critical, progress, or deferrable.
+#   $1 - critical, scheduled, progress, or deferrable.
 #   $2 - output from pulse_rest_core_priority_snapshot.
 # Returns: 0 allowed; 1 deferred by threshold; 2 unknown/invalid evidence.
 #######################################
@@ -533,7 +533,7 @@ _cb_rest_core_priority_decision_allows() {
 #######################################
 # Return whether a REST priority class may start new API-heavy work.
 #
-# Args: $1 - critical, progress, or deferrable.
+# Args: $1 - critical, scheduled, progress, or deferrable.
 # Returns: 0 allowed; 1 deferred by threshold; 2 unknown/invalid evidence.
 #######################################
 pulse_rest_core_priority_allows() {

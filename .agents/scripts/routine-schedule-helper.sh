@@ -951,11 +951,12 @@ main() {
 		return $?
 		;;
 	*)
-		printf '%s\n' "Usage: routine-schedule-helper.sh {is-due|next-run|parse|systemd-calendar} <args>" >&2
+		printf '%s\n' "Usage: routine-schedule-helper.sh {is-due|latest-slot|next-run|parse|systemd-calendar} <args>" >&2
 		printf '%s\n' "" >&2
 		printf '%s\n' "Commands:" >&2
 		printf '%s\n' "  is-due <expression> <last-run-epoch>  Check if routine is due (exit 0=due, 1=not due)" >&2
 		printf '%s\n' "  next-run <expression>                 Print next run ISO timestamp" >&2
+		printf '%s\n' "  latest-slot <expression>              Print latest calendar slot epoch" >&2
 		printf '%s\n' "  parse <expression>                    Output normalised fields" >&2
 		printf '%s\n' "  systemd-calendar <expression>         Print systemd OnCalendar value" >&2
 		printf '%s\n' "" >&2

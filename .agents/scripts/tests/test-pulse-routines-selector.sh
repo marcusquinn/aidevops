@@ -871,6 +871,62 @@ LIFECYCLE
 	return 0
 }
 
+# GH#35979: quota deferrals must not suppress later local calendar evaluations.
+_test_quota_slot_evaluation() {
+	local tmpdir="$1"
+	local root="${tmpdir}/quota-slots"
+	mkdir -p "$root/repo"
+	_make_todo "$root/repo" \
+		'- [x] r-slot-one First repeat:daily(@00:00) timezone:Europe/London agent:Build+' \
+		'- [x] r-slot-two Second repeat:daily(@00:00) timezone:Europe/London agent:Build+'
+	if (
+		export LOGFILE="$root/pulse.log"
+		export REPOS_JSON="$root/repos.json"
+		export ROUTINE_SCHEDULE_HELPER="$SCHEDULE_HELPER"
+		export AIDEVOPS_ROUTINE_LATE_THRESHOLD_SECONDS=0
+		# Isolate dispatch from real workers and host routine state, while using
+		# the production evaluator, schedule helper, and dispatch decision path.
+		printf '{"initialized_repos":[{"slug":"local/slots","path":"%s","pulse":true}]}' "$root/repo" >"$REPOS_JSON"
+		_evaluate_session_miner_routine() { return 0; }
+		_evaluate_issue_archive_routine() { return 0; }
+		_routine_retry_blocked() { return 1; }
+		_routine_platform_owned() { return 1; }
+		_routine_last_run_epoch() {
+			printf '1\n'
+			return 0
+		}
+		_routine_mark_dispatched() { return 0; }
+		_routine_dispatch_agent() {
+			local id="$1"
+			printf '%s\n' "$id" >>"$root/dispatches"
+			return 0
+		}
+		local allow=1
+		pulse_rest_core_priority_allows_next() {
+			local priority="$1"
+			[[ "$priority" == scheduled || "$priority" == deferrable ]] || return 2
+			return "$allow"
+		}
+		evaluate_routines || exit 1
+		[[ ! -e "$root/dispatches" ]] || exit 1
+		grep -q 'routine_slot_deferred routine=r-slot-one .*delay_seconds=' "$LOGFILE" || exit 1
+		grep -q 'routine_slot_deferred routine=r-slot-two .*delay_seconds=' "$LOGFILE" || exit 1
+		! grep -q 'outcome=dispatch' "$LOGFILE" || exit 1
+		allow=0
+		evaluate_routines --skip-publication || exit 1
+		[[ "$(wc -l <"$root/dispatches" | tr -d '[:space:]')" == 2 ]] || exit 1
+		[[ "$(grep -c 'routine_slot_late .*outcome=dispatch' "$LOGFILE")" == 2 ]] || exit 1
+		# Independent known timezone boundary (2026-10-29 17:00 London = UTC).
+		[[ "$(AIDEVOPS_SCHEDULE_TIMEZONE=Europe/London AIDEVOPS_SCHEDULE_NOW_EPOCH=1793297940 \
+			"$SCHEDULE_HELPER" latest-slot 'cron(0 7,12,17 * * *)')" == 1793293200 ]] || exit 1
+	); then
+		pass 'GH#35979: exhausted quota evaluates every slot; recovery dispatches with lateness'
+	else
+		fail 'GH#35979: scheduled quota handling' 'calendar evaluation or lateness mismatch'
+	fi
+	return 0
+}
+
 main() {
 	local tmpdir
 	tmpdir=$(mktemp -d) || {
@@ -881,6 +937,7 @@ main() {
 	trap "rm -rf '$tmpdir'" EXIT
 
 	_test_selector_cases "$tmpdir"
+	_test_quota_slot_evaluation "$tmpdir"
 	_test_platform_scheduler_ownership
 	_test_metachar_guard
 	_test_markdown_escaped_cron

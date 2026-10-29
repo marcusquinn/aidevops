@@ -693,6 +693,8 @@ _routine_execute() {
 	local run_script="$3"
 	local agent_name="$4"
 	local repo_path="$5"
+	local schedule="${6:-}"
+	local timezone="${7:-}"
 	local agents_dir="${HOME}/.aidevops/agents"
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	local started_epoch=0
@@ -724,6 +726,7 @@ _routine_execute() {
 			return 1
 		fi
 		_routine_mark_dispatched "$routine_id"
+		[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
 		# Bash 3.2 with nounset treats expansion of an empty array as an unbound
 		# variable. Keep the zero-argument path separate instead of expanding it.
 		if [[ "${#run_parts[@]}" -gt 1 ]]; then
@@ -745,6 +748,7 @@ _routine_execute() {
 			return 1
 		fi
 		echo "[pulse-wrapper] routine ${routine_id}: executing custom script ${custom_script}" >>"$LOGFILE"
+		[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
 		(cd "$repo_path" && "$custom_script") >>"$LOGFILE" 2>&1 || exit_code=$?
 		[[ "$exit_code" -eq 0 ]] || status="$_ROUTINE_STATUS_FAILURE"
 		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch"
@@ -752,6 +756,7 @@ _routine_execute() {
 	fi
 
 	_routine_mark_dispatched "$routine_id"
+	[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
 	_routine_dispatch_agent "$routine_id" "$description" "${agent_name:-Build+}" "${repo_path:-$PULSE_DIR}"
 	return $?
 }
@@ -1117,12 +1122,12 @@ _routine_log_slot() {
 	local slot="" now_epoch="" delay=0
 	local threshold="${AIDEVOPS_ROUTINE_LATE_THRESHOLD_SECONDS:-300}"
 	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=300
-	slot=$(AIDEVOPS_SCHEDULE_TIMEZONE="${timezone:-${AIDEVOPS_SCHEDULE_TIMEZONE:-UTC}}" \
+	slot=$(AIDEVOPS_SCHEDULE_TIMEZONE="${timezone:-${AIDEVOPS_SCHEDULE_TIMEZONE:-${TZ:-}}}" \
 		"$ROUTINE_SCHEDULE_HELPER" latest-slot "$expression" 2>/dev/null) || slot=""
 	now_epoch=$(date +%s)
 	if [[ "$slot" =~ ^[0-9]+$ ]]; then
 		delay=$((now_epoch - slot))
-		if [[ "$delay" -gt "$threshold" ]]; then
+		if [[ "$outcome" == "dispatch" && "$delay" -gt "$threshold" ]]; then
 			echo "[pulse-wrapper] routine_slot_late routine=${routine_id} slot_epoch=${slot} delay_seconds=${delay} outcome=${outcome}" >>"$LOGFILE"
 		fi
 	fi
@@ -1151,10 +1156,9 @@ _evaluate_session_miner_routine() {
 		_routine_log_slot "$routine_id" "$schedule" "" deferred
 		return 0
 	fi
-	_routine_log_slot "$routine_id" "$schedule" "" dispatch
 	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
 	_routine_execute "$routine_id" "Incremental session insight mining" \
-		"scripts/session-miner-pulse.sh --create-issues" "" "$PULSE_DIR"
+		"scripts/session-miner-pulse.sh --create-issues" "" "$PULSE_DIR" "$schedule" ""
 	return $?
 }
 
@@ -1182,10 +1186,9 @@ _evaluate_issue_archive_routine() {
 		_routine_log_slot "$routine_id" "$schedule" "" deferred
 		return 0
 	fi
-	_routine_log_slot "$routine_id" "$schedule" "" dispatch
 	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
 	_routine_execute "$routine_id" "Archive issue and PR discussions to orphan branch" \
-		"scripts/issue-archive-helper.sh run" "" "$PULSE_DIR"
+		"scripts/issue-archive-helper.sh run" "" "$PULSE_DIR" "$schedule" ""
 	return $?
 }
 
@@ -1275,17 +1278,16 @@ evaluate_routines() {
 					_routine_log_slot "$_RPL_ID" "$_RPL_REPEAT" "$_RPL_TIMEZONE" deferred
 					continue
 				fi
-				_routine_log_slot "$_RPL_ID" "$_RPL_REPEAT" "$_RPL_TIMEZONE" dispatch
 				echo "[pulse-wrapper] routine ${_RPL_ID} is due (expr=${_RPL_REPEAT}, timezone=${timezone_context}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
-				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path"
+				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path" "$_RPL_REPEAT" "$_RPL_TIMEZONE"
 				routines_dispatched=$((routines_dispatched + 1))
 			fi
 		done <<<"$routine_section"
 
-	# Routine evaluation only reads TODO.md and runs local scripts/agents;
-	# unlike code-automation dispatch it needs no GitHub remote, so
-	# local_only repos (e.g. a private routines-only repo created via
-	# init-routines-helper.sh --local) must still be evaluated here.
+		# Routine evaluation only reads TODO.md and runs local scripts/agents;
+		# unlike code-automation dispatch it needs no GitHub remote, so
+		# local_only repos (e.g. a private routines-only repo created via
+		# init-routines-helper.sh --local) must still be evaluated here.
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true) | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || true)
 
 	if [[ "$routines_dispatched" -gt 0 ]]; then
