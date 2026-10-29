@@ -132,7 +132,12 @@ function assertShellRead(policy, command, cwd, binding, deny) {
   const words = literalShellWords(command);
   // Resolve literal operands before exemptions: relative and symlink aliases
   // must not bypass the operator-config guard, even in a bound session.
-  const targets = words?.slice(1).map((word) => canonicalPath(resolve(cwd, word))) || [];
+  // Canonicalize each component before processing the next: collapsing a
+  // symlink/.. pair lexically would follow a different parent than the OS.
+  const targets = words?.slice(1).map((word) => word.split(sep).reduce(
+    (parent, component) => canonicalPath(resolve(parent, component)),
+    isAbsolute(word) ? sep : canonicalPath(cwd),
+  )) || [];
   if (protectedConfigFiles(policy).some((file) => text.includes(file)
     || targets.includes(canonicalPath(file)))) deny("classification_mutation");
   // Opaque shell syntax can hide relative config paths regardless of binding.
