@@ -883,6 +883,9 @@ test_protected_release_native_auto_is_held() {
 
 test_protected_release_staged_head_comparison() {
 	setup_test_env
+	# Match the pulse runtime's portable timeout dependency.
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/../shared-constants.sh"
 	# shellcheck source=../protected-release-helper.sh
 	source "${SCRIPT_DIR}/../protected-release-helper.sh"
 	local project_dir="${SCRIPT_DIR}/../../.." signed_head="" blob="" tree="" envelope=""
