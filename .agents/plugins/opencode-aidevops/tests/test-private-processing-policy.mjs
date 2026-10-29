@@ -95,6 +95,33 @@ test("local-provider override (GH#35723) is refused to write, patch and shell to
     join(xdg, "aidevops/local-ai-providers.conf"));
 });
 
+test("shell config operands resolve relative and symlink aliases before policy exemptions", (t) => {
+  const f = fixture(t);
+  const configDir = dirname(f.file);
+  symlinkSync(configDir, join(f.publicRoot, "config-alias"));
+  for (const file of [f.file, f.classification.providersFile]) {
+    const name = file.slice(configDir.length + 1);
+    // Canonical resolution must work both before and after the override exists.
+    for (const exists of [false, true]) {
+      if (exists) writeFileSync(file, "synthetic config", { mode: 0o600 });
+      for (const bound of [false, true]) {
+        for (const roots of [f.classification.roots, []]) {
+          const check = (tool, args) => assertPrivateProcessingRead({ tool, args,
+            classification: { ...f.classification, roots }, binding: { bound },
+            repositoryDir: f.publicRoot, append: () => true });
+          for (const command of [`cat ${name}`, `cat './${name}'`, ["cat", name]]) {
+            const tool = Array.isArray(command) ? "aidevops_bounded_operation" : "bash";
+            assert.throws(() => check(tool, { command, action: "start", workdir: configDir }), /classification_mutation/);
+          }
+          assert.throws(() => check("bash", { command: `cat config-alias/${name}` }), /classification_mutation/);
+          assert.throws(() => check("bash", { command: `cat ../.config/aidevops/${name}` }), /classification_mutation/);
+          assert.doesNotThrow(() => check("bash", { command: `cat ${name}` }), "same basename outside config remains allowed");
+        }
+      }
+    }
+  }
+});
+
 test("receipt failure cannot obscure a denial or import ambient metadata", () => {
   let captured;
   recordPrivateBlocker("bad-session", "protected_read", "read", (event) => { captured = event; return true; });

@@ -129,9 +129,13 @@ function assertClassificationMutation(policy, name, args, cwd, deny) {
 
 function assertShellRead(policy, command, cwd, binding, deny) {
   const text = Array.isArray(command) ? command.join(" ") : String(command || "");
-  if (protectedConfigFiles(policy).some((file) => text.includes(file))) deny("classification_mutation");
-  if (binding.bound || !policy.roots.length) return;
   const words = literalShellWords(command);
+  // Resolve literal operands before exemptions: relative and symlink aliases
+  // must not bypass the operator-config guard, even in a bound session.
+  const targets = words?.slice(1).map((word) => canonicalPath(resolve(cwd, word))) || [];
+  if (protectedConfigFiles(policy).some((file) => text.includes(file)
+    || targets.includes(canonicalPath(file)))) deny("classification_mutation");
+  if (binding.bound || !policy.roots.length) return;
   // No options: even familiar readers have executable/path-bearing options.
   if (!words?.length || !LITERAL_READERS.has(words[0])
     || words.slice(1).some((word) => word.startsWith("-"))) deny("unclassifiable_shell_read");
