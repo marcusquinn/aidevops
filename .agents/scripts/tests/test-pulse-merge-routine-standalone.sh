@@ -753,6 +753,10 @@ source <(awk '
 	capture && /^}/ { exit }
 ' "${WRAPPER_FILE:?}")
 check_session_gate() { return 0; }
+# Supply quota evidence for this scheduler harness: production fails closed
+# when neither REST quota checker is available. Budget decisions are covered
+# by the selector and pulse-budget-priority suites, not by live API calls here.
+pulse_rest_core_priority_allows_next() { return 0; }
 # The stage gate itself is covered by pulse-budget-priority tests; record the
 # stage name so the harness proves the busy pass goes through it.
 _pulse_run_budget_priority_stage_with_timeout() {
