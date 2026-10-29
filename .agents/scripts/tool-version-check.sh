@@ -110,6 +110,23 @@ if [[ "$(aidevops_opencode_install_owner 2>/dev/null || true)" == brew ]]; then
 	_oc_npm_tool_spec=""
 fi
 
+# GH#35942: Claude Code follows the same owner-decides-channel rule. Casks are
+# checked against the cask catalogue; the native installer self-updates.
+_cc_npm_tool_spec="npm|Claude Code CLI|claude|--version|@anthropic-ai/claude-code|npm install -g @anthropic-ai/claude-code@latest"
+_cc_brew_tool_spec=""
+_cc_self_tool_spec=""
+_cc_owner=$(aidevops_claude_code_install_owner 2>/dev/null || true)
+case "$_cc_owner" in
+brew-cask:?*)
+	_cc_brew_tool_spec="brew|Claude Code CLI|claude|--version|cask:${_cc_owner#brew-cask:}|brew upgrade --cask ${_cc_owner#brew-cask:}"
+	_cc_npm_tool_spec=""
+	;;
+native)
+	_cc_self_tool_spec="self|Claude Code CLI|claude|--version|claude-code|claude update"
+	_cc_npm_tool_spec=""
+	;;
+esac
+
 # Platform-aware brew package upgrade command.
 # On macOS (or any system with brew), upgrade installed formulas and install
 # selected formulas supplied by another package manager.
@@ -197,7 +214,6 @@ PLAYWRITER_APPROVED_VERSION=$(_playwriter_approved_version)
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
 
 NPM_TOOLS=(
-	"npm|Claude Code CLI|claude|--version|@anthropic-ai/claude-code|npm install -g @anthropic-ai/claude-code@latest"
 	"npm|Codex CLI|codex|--version|@openai/codex|npm install -g @openai/codex@latest"
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm install -g @verygoodplugins/mcp-local-wp@latest"
 	"npm|Chrome DevTools MCP|chrome-devtools-mcp|--version|chrome-devtools-mcp|npm install -g chrome-devtools-mcp@latest"
@@ -218,7 +234,13 @@ BREW_TOOLS=(
 	"brew|ShellCheck|shellcheck|--version|shellcheck|$(_brew_upgrade_cmd shellcheck)"
 )
 
-# OpenCode is listed first in whichever category owns it.
+# OpenCode, then Claude Code, lead whichever category owns them.
+if [[ -n "$_cc_npm_tool_spec" ]]; then
+	NPM_TOOLS=("$_cc_npm_tool_spec" "${NPM_TOOLS[@]}")
+fi
+if [[ -n "$_cc_brew_tool_spec" ]]; then
+	BREW_TOOLS=("$_cc_brew_tool_spec" "${BREW_TOOLS[@]}")
+fi
 if [[ -n "$_oc_npm_tool_spec" ]]; then
 	NPM_TOOLS=("$_oc_npm_tool_spec" "${NPM_TOOLS[@]}")
 fi
@@ -255,6 +277,9 @@ CUSTOM_TOOLS=(
 	"self|Cursor CLI|agent|--version|cursor-agent|agent update"
 	"self|Droid CLI|droid|--version|droid|curl -fsSL https://app.factory.ai/install.sh | bash"
 )
+if [[ -n "$_cc_self_tool_spec" ]]; then
+	CUSTOM_TOOLS=("$_cc_self_tool_spec" "${CUSTOM_TOOLS[@]}")
+fi
 
 # Counters
 OUTDATED_COUNT=0
@@ -464,7 +489,13 @@ get_brew_latest() {
 	local pkg="$1"
 	local brew_bin=""
 	brew_bin=$(command -v brew 2>/dev/null || true)
-	if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
+	if [[ -n "$brew_bin" && -x "$brew_bin" && "$pkg" == cask:?* ]]; then
+		# GH#35942: casks (cask:<name>) publish .casks[0].version, not formulae.
+		local cask_version=""
+		cask_version=$(timeout_sec "$PKG_QUERY_TIMEOUT" "$brew_bin" info --cask --json=v2 "${pkg#cask:}" 2>/dev/null |
+			jq -r '.casks[0].version // empty' 2>/dev/null) || cask_version=""
+		printf '%s\n' "${cask_version:-unknown}"
+	elif [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
 		local stable=""
 		stable=$(timeout_sec "$PKG_QUERY_TIMEOUT" "$brew_bin" info --json=v2 "$pkg" 2>/dev/null |
 			jq -r '.formulae[0].versions.stable // empty' 2>/dev/null) || stable=""
@@ -625,7 +656,7 @@ _tool_latest_version() {
 		# Playwriter updates target the reviewed pin, not the registry head.
 		if [[ "$pkg" == playwriter ]]; then _playwriter_approved_version; else get_npm_latest "$pkg"; fi ;;
 	brew)
-		if ! command -v brew >/dev/null 2>&1 && [[ "$pkg" == */* ]]; then
+		if ! command -v brew >/dev/null 2>&1 && [[ "$pkg" == */* || "$pkg" == cask:* ]]; then
 			# Tap-qualified formulas (owner/tap/formula) exist only in Homebrew.
 			# apt/dnf/yum cannot upgrade them, and a same-named distro package
 			# can be an unrelated tool (e.g. apt "bd" is not Beads), so report

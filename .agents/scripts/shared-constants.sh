@@ -328,6 +328,35 @@ aidevops_opencode_install_owner() {
 	return $?
 }
 
+# GH#35942: print the owner of the resolved Claude Code CLI so routine tool
+# maintenance checks and upgrades through one channel (GH#34252 pattern):
+# brew-cask:<cask>, native (self-updating installer), npm, or none.
+aidevops_claude_code_install_owner() {
+	local path link dir home_real depth=0
+	path=$(command -v claude 2>/dev/null || true)
+	if [[ "$path" != /* ]]; then
+		printf 'none\n'
+		return 0
+	fi
+	while [[ -L "$path" && "$depth" -lt 16 ]]; do
+		link=$(readlink "$path" 2>/dev/null) || break
+		case "$link" in /*) path="$link" ;; *) path="$(dirname "$path")/$link" ;; esac
+		depth=$((depth + 1))
+	done
+	dir=$(cd "$(dirname "$path")" 2>/dev/null && pwd -P) || dir=$(dirname "$path")
+	path="${dir}/$(basename "$path")"
+	home_real=$(cd "$HOME" 2>/dev/null && pwd -P) || home_real="$HOME"
+	case "$path" in
+	*/Caskroom/claude-code*/*)
+		link="${path#*/Caskroom/}"
+		printf 'brew-cask:%s\n' "${link%%/*}"
+		;;
+	"$home_real"/.local/share/claude/* | "$home_real"/.claude/local/*) printf 'native\n' ;;
+	*) printf 'npm\n' ;;
+	esac
+	return 0
+}
+
 # Print the self-contained repair payload: brew upgrade for a verified
 # Homebrew-owned binary, otherwise bun/npm install of the requested version.
 aidevops_opencode_upgrade_command() {
