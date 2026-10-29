@@ -10,8 +10,9 @@ Late feedback is swept after merge and filed as worker-ready follow-up issues.
 
 CodeRabbit posts `COMMENTED` reviews (`.coderabbit.yaml`
 `request_changes_workflow: false`, GH#35860), so its findings never set
-`reviewDecision=CHANGES_REQUESTED`. Re-enabling formal change requests restores
-the t2093 close-and-redispatch loop for every worker PR CodeRabbit comments on.
+`reviewDecision=CHANGES_REQUESTED`. Any remaining bot change request on a worker
+PR is repaired in place first (remediation-first default, GH#35871); the t2093
+close-and-redispatch route is only the bounded fallback, never the first response.
 
 Gemini Code Assist's retired GitHub review integration is legacy-only. The
 framework still recognizes its historical comments, reviews, and threads, but

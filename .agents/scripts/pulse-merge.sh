@@ -247,9 +247,10 @@ _pulse_merge_maybe_dispatch_preflight_remediation() {
 
 # GH#35871: default on. Closing a worker PR on bot CHANGES_REQUESTED and
 # redispatching for a fresh PR restarted review on every generation, so PRs
-# churned and never merged (GH#35798, GH#35828). Repairing in place keeps the
-# PR, its CI and its review history; CodeRabbit's request_changes_workflow
-# approves once its threads are resolved. Set 0 for legacy close-and-route.
+# churned and never merged (GH#35798, GH#35828). GH#35860 made CodeRabbit
+# advisory at the source; this default keeps any other CHANGES_REQUESTED source
+# (another bot, or that setting reverted) repaired in place, keeping the PR, its
+# CI and its review history. Set 0 for legacy close-and-route.
 _pulse_merge_changes_requested_thread_remediation_first_enabled() {
 	[[ "${AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST:-1}" == "1" ]] || return 1
 	return 0
