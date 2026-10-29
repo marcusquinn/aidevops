@@ -171,7 +171,9 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.match(config.agent.playwriter.prompt, /state\.page = await context\.newPage\(\)/);
   assert.match(config.agent.playwriter.prompt, /PLAYWRITER_TELEMETRY=0/);
   assert.match(config.agent.playwriter.prompt, /already approved the exact HTTPS destination/i);
-  assert.match(config.agent.playwriter.prompt, /unmatched non-blank or multiple pages/i);
+  // Accept the original classification and GH#35955's bounded attachment wording
+  // on the merge base, without making Markdown line wrapping significant.
+  assert.match(config.agent.playwriter.prompt, /unmatched\s+non-blank\s+or\s+multiple\s+pages|`attachment-timeout`,\s+multiple\s+new\s+matching\s+pages/i);
   assert.match(config.agent.playwriter.prompt, /prior attachment was invalidated/i);
   assert.match(config.agent.playwriter.prompt, /not consent to inspect another page/i);
   assert.match(config.agent.playwriter.prompt, /never silently substitute.*playwright/i);
