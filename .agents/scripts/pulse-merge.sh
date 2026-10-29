@@ -387,6 +387,24 @@ _handle_changes_requested_review_gate() {
 		fi
 	fi
 
+	local active_requests=""
+	local _cr_label_list=",${_cr_pr_labels},"
+	local review_helper="${AIDEVOPS_REVIEW_BOT_GATE_HELPER:-${_PULSE_MERGE_DIR}/review-bot-gate-helper.sh}"
+	#aidevops:trust-boundary — aggregate bot decisions never authorize destructive routing.
+	[[ "$_cr_label_list" != *",external-contributor,"* ]] || return 1
+	active_requests=$(_review_feedback_active_change_requests "$pr_number" "$repo_slug") || return 75
+	if ! printf '%s\n' "$active_requests" | jq -e 'any(.[];
+		.user.type == "User" and (.author_association == "OWNER"
+			or .author_association == "MEMBER" or .author_association == "COLLABORATOR"))' >/dev/null; then
+		# Only exact known bot identities may be dismissed. Other untrusted reviews
+		# remain blocked, but must not close the PR or rewrite its linked issue.
+		bash "$review_helper" dismiss-advisory-coderabbit "$pr_number" "$repo_slug" >>"$LOGFILE" 2>&1 || return 75
+		if [[ -n "$dismissed_dest_var" && "$dismissed_dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+			printf -v "$dismissed_dest_var" '%s' "1"
+		fi
+		return 0
+	fi
+
 	# t2179: coderabbit-nits-ok path.
 	if [[ ",${_cr_pr_labels}," == *",coderabbit-nits-ok,"* ]]; then
 		if _pulse_merge_dismiss_coderabbit_nits "$pr_number" "$repo_slug"; then
@@ -401,7 +419,6 @@ _handle_changes_requested_review_gate() {
 		return 1
 	fi
 
-	local _cr_label_list=",${_cr_pr_labels},"
 	# Optional policy override (GH#26535): by default CHANGES_REQUESTED worker
 	# PRs keep the historical fast-routing behaviour below. Operators who prefer
 	# preserving the PR/review context can opt in to a remediation-first cycle.

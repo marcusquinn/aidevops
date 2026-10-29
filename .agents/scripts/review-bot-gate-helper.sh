@@ -104,6 +104,7 @@ RBG_CODERABBIT_ADDRESSED_MARKER='<!-- <review_comment_addressed> -->'
 RBG_CODERABBIT_NITS_LABEL="coderabbit-nits-ok"
 RBG_RECONCILE_MODE_NITS="nits"
 RBG_RECONCILE_MODE_SUPERSEDED="superseded"
+RBG_RECONCILE_MODE_ADVISORY="advisory"
 RBG_AUTHOR_CLASS_TRUSTED="trusted"
 RBG_GITHUB_ACTIONS_BOT_ID="41898282"
 RBG_ISSUE_SYNC_PR_BRANCH="aidevops/issue-sync-todo"
@@ -712,6 +713,8 @@ _rbg_dismiss_coderabbit_reviews() {
 		}
 		if [[ "$mode" == "$RBG_RECONCILE_MODE_NITS" ]]; then
 			message="Auto-dismissed: coderabbit-nits-ok label applied by maintainer (PR #${pr_number})"
+		elif [[ "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]]; then
+			message="Auto-dismissed advisory CodeRabbit review on trusted-author PR #${pr_number}; findings remain available to the post-merge scanner."
 		else
 			message="Auto-dismissed superseded CodeRabbit review ${review_id}: stale head ${stale_sha}; clean exact-head re-review confirmed at ${head_sha}."
 		fi
@@ -736,7 +739,8 @@ do_reconcile_coderabbit_reviews() {
 	local review_count=0
 	local post_json=""
 
-	[[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" || "$mode" == "$RBG_RECONCILE_MODE_NITS" ]] || return 2
+	[[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" || "$mode" == "$RBG_RECONCILE_MODE_NITS" \
+		|| "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]] || return 2
 	snapshot=$(_rbg_pr_reconciliation_snapshot "$pr_number" "$repo") || return 1
 	head_sha=$(printf '%s\n' "$snapshot" | jq -r '.head')
 	state=$(printf '%s\n' "$snapshot" | jq -r '.state | ascii_downcase')
@@ -748,9 +752,10 @@ do_reconcile_coderabbit_reviews() {
 		printf '%s\n' "$snapshot" | jq -e --arg label "$RBG_CODERABBIT_NITS_LABEL" \
 			'any(.labels[]?; . == $label)' >/dev/null 2>&1 || return 1
 	fi
-	if [[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" ]]; then
+	if [[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" || "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]]; then
 		#aidevops:trust-boundary — automatic reconciliation is restricted to trusted PR authors.
 		case "$association" in OWNER | MEMBER | COLLABORATOR) ;; *) return 1 ;; esac
+		printf '%s\n' "$snapshot" | jq -e 'all(.labels[]?; . != "external-contributor")' >/dev/null || return 1
 	fi
 
 	reviews_json=$(_rbg_changes_requested_reviews "$pr_number" "$repo") || return 1
@@ -2310,6 +2315,9 @@ main() {
 		;;
 	dismiss-coderabbit-nits)
 		do_reconcile_coderabbit_reviews "$RBG_RECONCILE_MODE_NITS" "$pr_number" "$repo"
+		;;
+	dismiss-advisory-coderabbit)
+		do_reconcile_coderabbit_reviews "$RBG_RECONCILE_MODE_ADVISORY" "$pr_number" "$repo"
 		;;
 	-h | --help | help)
 		usage
