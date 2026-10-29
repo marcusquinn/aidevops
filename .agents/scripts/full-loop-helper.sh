@@ -94,6 +94,7 @@ source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
 	local runtime_risk="" testing_level=""
+	local pr_metadata_overrides=""
 	local completion_bookkeeping=0 bookkeeping_proof_pr="" bookkeeping_task_id=""
 	local replacement_pr="" replacement_reason=""
 	local -a extra_labels=()
@@ -127,8 +128,6 @@ cmd_commit_and_pr() {
 		"${extra_labels[@]+"${extra_labels[@]}"}" || return 1
 	base_branch=$(_resolve_remote_default_branch origin) || return 1
 	base_ref="origin/${base_branch}"
-	_validate_pending_runtime_metadata "$runtime_risk" "$testing_level" \
-		"$summary_testing" "$summary_what" "$base_ref" || return 1
 	local parent_issue=0
 	_issue_has_parent_task_label "$issue_number" "$repo" && parent_issue=1
 	if [[ "$parent_issue" -eq 0 ]]; then
@@ -136,7 +135,8 @@ cmd_commit_and_pr() {
 		issue_open_pr_guard_check "$issue_number" "$repo" "$branch" \
 			"$replacement_pr" "$replacement_reason" 0 || initial_open_pr_guard_rc=$?
 		case "$initial_open_pr_guard_rc" in
-		0 | 3) ;;
+		0) ;;
+		3) _inherit_pr_runtime_metadata "$ISSUE_OPEN_PR_NUMBER" "$repo" || return 1 ;;
 		1)
 			print_error "Issue #${issue_number} already has open PR #${ISSUE_OPEN_PR_NUMBER}; continue branch '${ISSUE_OPEN_PR_HEAD_REF}' or use an explicit audited replacement"
 			return 1
@@ -147,6 +147,8 @@ cmd_commit_and_pr() {
 			;;
 		esac
 	fi
+	_validate_pending_runtime_metadata "$runtime_risk" "$testing_level" \
+		"$summary_testing" "$summary_what" "$base_ref" || return 1
 
 	_stage_and_commit "$commit_message" || return 1
 	# GH#33253: prove an explicit --replace-pr's ancestry now, before WIP
@@ -247,7 +249,7 @@ _commit_and_pr_prepare_metadata() {
 		replacement_note="This explicitly justified replacement preserves open PR #${replacement_pr}. Rationale: ${replacement_reason}"
 		[[ -n "$replacement_pr_head_sha" ]] && replacement_note="${replacement_note} Verified ancestor before WIP finalization: ${replacement_pr_head_sha}."
 	fi
-	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base" "$replacement_note") || return 1
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base" "$replacement_note" "$summary_decisions") || return 1
 
 	# Parent-task closing keywords are forbidden except for an explicit final phase.
 	local keyword_guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"

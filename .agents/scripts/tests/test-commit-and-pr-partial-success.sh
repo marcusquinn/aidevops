@@ -126,6 +126,12 @@ eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_reconcile_recovered_pr_metadata() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_merge_existing_pr_body() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_inherit_pr_runtime_metadata() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
 # Extract origin reconciliation helpers used by _create_pr
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_verify_pr_origin_label() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
@@ -914,6 +920,57 @@ else
 	fail "post failure: commit-and-pr propagates merge-summary failure"
 fi
 GH_PR_COMMENT_FAIL=0
+
+# GH#35990: exercise the real reconcile write/readback path, not just text matching.
+REMOTE_PR_TITLE="curated title"
+REMOTE_PR_BODY=$'## Summary\n\nCurated summary\n\n## Files Changed\n\nold.sh\n\n## Runtime Testing\n\n- **Risk level:** Medium\n- **Verification:** runtime-verified — exercised real CLI\n\n## Decisions\n\nKeep compatibility\n\nResolves #42\n\n<!-- aidevops:sig -->\nexisting footer'
+curated_body="$REMOTE_PR_BODY"
+generated_body=$'## Summary\n\nReplacement summary\n\n## Files Changed\n\nnew.sh\n\n## Decisions\n\nNew decision\n\n## Runtime Testing\n\n- **Risk level:** Low\n- **Verification:** self-assessed — new evidence\n\nResolves #42\n\n<!-- aidevops:sig -->\nnew footer'
+pr_metadata_overrides=""
+preserve_rc=0
+_reconcile_recovered_pr_metadata "999" "owner/repo" "updated title" "$generated_body" || preserve_rc=$?
+expected_body="${curated_body/old.sh/new.sh}"
+if [[ "$preserve_rc" -eq 0 && "$REMOTE_PR_BODY" == "$expected_body" ]]; then
+	pass "continuation: preserves curated sections and footer while refreshing files"
+else
+	fail "continuation: preserves curated sections and footer while refreshing files"
+fi
+
+runtime_risk="" testing_level="" summary_testing=""
+_inherit_pr_runtime_metadata "999" "owner/repo"
+if [[ "$runtime_risk" == "Medium" && "$testing_level" == "runtime-verified" && "$summary_testing" == "exercised real CLI" ]]; then
+	pass "continuation: inherits omitted runtime metadata before validation"
+else
+	fail "continuation: inherits omitted runtime metadata before validation"
+fi
+
+pr_metadata_overrides=" summary"
+_reconcile_recovered_pr_metadata "999" "owner/repo" "updated title" "$generated_body"
+expected_body="${expected_body/Curated summary/Replacement summary}"
+if [[ "$REMOTE_PR_BODY" == "$expected_body" ]]; then
+	pass "explicit summary: replaces only Summary"
+else
+	fail "explicit summary: replaces only Summary"
+fi
+
+pr_metadata_overrides=" decisions risk testing-level testing"
+_reconcile_recovered_pr_metadata "999" "owner/repo" "updated title" "$generated_body"
+expected_body="${expected_body/Keep compatibility/New decision}"
+expected_body="${expected_body/Medium/Low}"
+expected_body="${expected_body/runtime-verified — exercised real CLI/self-assessed — new evidence}"
+if [[ "$REMOTE_PR_BODY" == "$expected_body" ]]; then
+	pass "explicit metadata: updates decisions and runtime fields without losing footer"
+else
+	fail "explicit metadata: updates decisions and runtime fields without losing footer"
+fi
+
+runtime_risk="high" testing_level="runtime-verified" summary_testing="explicit evidence"
+_inherit_pr_runtime_metadata "999" "owner/repo"
+if [[ "$runtime_risk" == "high" && "$testing_level" == "runtime-verified" && "$summary_testing" == "explicit evidence" ]]; then
+	pass "explicit runtime arguments take precedence over inherited evidence"
+else
+	fail "explicit runtime arguments take precedence over inherited evidence"
+fi
 
 # =============================================================================
 # Summary
