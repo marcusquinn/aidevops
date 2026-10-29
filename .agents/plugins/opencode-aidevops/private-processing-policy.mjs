@@ -135,6 +135,8 @@ function assertShellRead(policy, command, cwd, binding, deny) {
   const targets = words?.slice(1).map((word) => canonicalPath(resolve(cwd, word))) || [];
   if (protectedConfigFiles(policy).some((file) => text.includes(file)
     || targets.includes(canonicalPath(file)))) deny("classification_mutation");
+  // Opaque shell syntax can hide relative config paths regardless of binding.
+  if (!words) deny("unclassifiable_shell_read");
   if (binding.bound || !policy.roots.length) return;
   // No options: even familiar readers have executable/path-bearing options.
   if (!words?.length || !LITERAL_READERS.has(words[0])

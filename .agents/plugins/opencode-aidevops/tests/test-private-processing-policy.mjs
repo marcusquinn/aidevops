@@ -115,6 +115,9 @@ test("shell config operands resolve relative and symlink aliases before policy e
           }
           assert.throws(() => check("bash", { command: `cat config-alias/${name}` }), /classification_mutation/);
           assert.throws(() => check("bash", { command: `cat ../.config/aidevops/${name}` }), /classification_mutation/);
+          for (const command of [`cat ${name}; true`, `cat config-alias/${name} | wc`]) {
+            assert.throws(() => check("bash", { command, workdir: configDir }), /unclassifiable_shell_read/);
+          }
           assert.doesNotThrow(() => check("bash", { command: `cat ${name}` }), "same basename outside config remains allowed");
         }
       }
