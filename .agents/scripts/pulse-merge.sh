@@ -1216,6 +1216,7 @@ _pmp_stage_parse_and_validate() {
 		return 1
 	fi
 	if _pmp_is_protected_release_pr "$pr_head_ref_name" "$pr_labels"; then
+		_pmp_hold_protected_release_pr "$pr_number" "$repo_slug" "$pr_head_ref_name" "$pr_head_ref_oid" || return 1
 		echo "[pulse-wrapper] Merge pass: deferring protected release PR #${pr_number} in ${repo_slug} to provenance-preserving exact-merge reconciliation" >>"$LOGFILE"
 		return 4
 	fi

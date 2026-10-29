@@ -10,7 +10,8 @@
 // provider is not local fails closed before any bytes leave the device.
 // Unbound sessions are unaffected.
 
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 export { LOCAL_ONLY_CURL, isLocalOnlyCurlArgv } from "./local-only-shell-policy.mjs";
@@ -26,6 +27,35 @@ export const LOCAL_PROVIDERS_FILE = resolve(
   "../../configs/local-ai-providers.conf",
 );
 
+// Operator-owned replacement for the shared list (GH#35723). It lives outside
+// the versioned runtime bundle, so `aidevops update` cannot revert it.
+export const LOCAL_PROVIDERS_OVERRIDE_RELATIVE = "aidevops/local-ai-providers.conf";
+
+// One pattern for both parsers (scripts/vault-data-policy-helper.sh mirrors it).
+export const LOCAL_PROVIDER_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+/**
+ * Trusted operator configuration: a regular, non-symlink, current-user-owned
+ * file with mode exactly 0600 and at most 64 KiB. Throws otherwise.
+ * @param {import("node:fs").Stats} stat result of lstat (never stat)
+ */
+export function assertOperatorConfigStat(stat) {
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error();
+  if ((stat.mode & 0o777) !== 0o600 || stat.size > 65536) throw new Error();
+  if (process.getuid && stat.uid !== process.getuid()) throw new Error();
+}
+
+/**
+ * Operator override path, resolved from the launch environment exactly as
+ * private-processing-policy.mjs resolves local-only-roots.json.
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {string}
+ */
+export function localProvidersOverrideFile(env = process.env) {
+  const home = env?.HOME || homedir();
+  return resolve(env?.XDG_CONFIG_HOME || resolve(home, ".config"), LOCAL_PROVIDERS_OVERRIDE_RELATIVE);
+}
+
 const LOCAL_POLICY_TOKENS = new Set(["local-only", "local-llm-only", "local-ai"]);
 // Explicit opt-out vocabulary from reference/vault.md; anything else binds.
 const UNBOUND_POLICY_TOKENS = new Set(["provider-ai", "provider-allowed", "provider-ai-approved"]);
@@ -39,31 +69,48 @@ export class LocalOnlyPolicyError extends Error {
 }
 
 /**
- * Parse the local-provider list. Comments and blank lines are ignored.
+ * Parse the local-provider list. Comments and blank lines are ignored. Any
+ * entry that is not a plain provider ID invalidates the whole list, so
+ * nothing is local and bound sessions fail closed.
  * @param {string} text
  * @returns {string[]}
  */
 export function parseLocalProviders(text) {
-  return String(text || "")
+  const providers = String(text || "")
     .split(/\r?\n/)
-    .map((line) => line.replace(/#.*/, "").replace(/\s+/g, ""))
+    .map((line) => line.replace(/#.*/, "").trim())
     .filter(Boolean);
+  return providers.every((provider) => LOCAL_PROVIDER_ID_PATTERN.test(provider)) ? providers : [];
 }
 
-function readLocalProviders(file, readFile) {
+const ABSENT_CODES = new Set(["ENOENT", "ENOTDIR"]);
+
+// #aidevops:trust-boundary — an operator override, when present, replaces the
+// shared list. Present but insecure or unreadable fails closed (nothing is
+// local) rather than falling back to the shared list.
+function readLocalProviders(env, options) {
+  const readFile = options.readFile || readFileSync;
+  const lstat = options.lstat || lstatSync;
+  const override = options.overrideFile || localProvidersOverrideFile(env);
   try {
-    return parseLocalProviders(readFile(file, "utf8"));
+    assertOperatorConfigStat(lstat(override));
+    return { source: "operator", providers: parseLocalProviders(readFile(override, "utf8")) };
+  } catch (error) {
+    if (!ABSENT_CODES.has(error?.code)) return { source: "operator-invalid", providers: [] };
+  }
+  try {
+    return { source: "shared", providers: parseLocalProviders(readFile(options.providersFile || LOCAL_PROVIDERS_FILE, "utf8")) };
   } catch {
     // Missing/unreadable list: nothing is local, so bound sessions fail closed.
-    return [];
+    return { source: "shared", providers: [] };
   }
 }
 
 /**
  * Build a frozen policy from a launch environment snapshot.
  * @param {Record<string, string|undefined>} env
- * @param {{ providersFile?: string, readFile?: Function }} [options]
- * @returns {Readonly<{ bound: boolean, policy: string, reason: string, localProviders: readonly string[] }>}
+ * @param {{ providersFile?: string, overrideFile?: string, readFile?: Function, lstat?: Function }} [options]
+ * @returns {Readonly<{ bound: boolean, policy: string, reason: string, localProviders: readonly string[], localProvidersSource: string }>}
  */
 export function loadLocalOnlyPolicy(env, options = {}) {
   const raw = String(env?.[RUNTIME_POLICY_ENV] ?? "").trim().toLowerCase();
@@ -76,14 +123,13 @@ export function loadLocalOnlyPolicy(env, options = {}) {
     bound = true;
     reason = "unrecognised-policy-fails-closed";
   }
-  const localProviders = bound
-    ? readLocalProviders(options.providersFile || LOCAL_PROVIDERS_FILE, options.readFile || readFileSync)
-    : [];
+  const { source, providers } = bound ? readLocalProviders(env, options) : { source: "unbound", providers: [] };
   return Object.freeze({
     bound,
     policy: raw,
     reason,
-    localProviders: Object.freeze(localProviders),
+    localProviders: Object.freeze(providers),
+    localProvidersSource: source,
   });
 }
 

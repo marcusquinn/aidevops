@@ -36,6 +36,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=scratch-worktree-helper.sh
 source "${SCRIPT_DIR}/scratch-worktree-helper.sh"
 
+# shellcheck source=protected-release-helper.sh
+source "${SCRIPT_DIR}/protected-release-helper.sh"
+
 LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pr-review-thread-response-scanner.log}"
 STATE_DIR="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pr-review-thread-response}"
 HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
@@ -676,6 +679,7 @@ cmd_scan_pr() {
 	local pr_number="$2"
 	local title head_ref head_oid author metadata summary rc
 	local thread_count fingerprint preview
+	local labels=""
 	title="PR #${pr_number}"
 	head_ref=""
 	head_oid=""
@@ -692,12 +696,17 @@ cmd_scan_pr() {
 		return 2
 	}
 	metadata=$(_prrts_gh_call read gh pr view "$pr_number" --repo "$repo_slug" \
-		--json title,headRefName,headRefOid,author \
-		--jq '[(.title // "" | gsub("[\t\r\n]"; " ")), (.headRefName // ""), (.headRefOid // ""), (.author.login // "")] | @tsv' \
-		2>/dev/null || true)
+		--json title,headRefName,headRefOid,author,labels \
+		--jq '[(.title // "" | gsub("[\t\r\n]"; " ")), (.headRefName // ""), (.headRefOid // ""), (.author.login // ""), ([.labels[]?.name] | join(","))] | @tsv' \
+		2>/dev/null) || return 2
 	if [[ -n "$metadata" ]]; then
-		IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r title head_ref head_oid author \
+		IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r title head_ref head_oid author labels \
 			<<<"${metadata//$'\t'/$PRRTS_TSV_FIELD_SEPARATOR}"
+	fi
+	[[ -n "$head_ref" ]] || return 2
+	if protected_release_pr "$head_ref" "${labels:-}"; then
+		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} skipped — protected release PR"
+		return 0
 	fi
 	summary="$(_prrts_review_thread_summary "$repo_slug" "$pr_number")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
@@ -757,6 +766,10 @@ _prrts_scan_repo_to_files() {
 		fi
 		if _prrts_labels_block_response "$labels"; then
 			_prrts_log "scan: ${repo_slug}#${pr_number} skipped — protected label present (${labels})"
+			continue
+		fi
+		if protected_release_pr "$head_ref" "$labels"; then
+			_prrts_log "scan: ${repo_slug}#${pr_number} skipped — protected release PR"
 			continue
 		fi
 		rc=0
@@ -1585,6 +1598,9 @@ _prrts_dispatch_worker() {
 		"AIDEVOPS_ATTEMPT_STATE_ROOT=${STATE_DIR}"
 		"AIDEVOPS_ATTEMPT_STATE_FILE=${attempt_state_file}"
 		"${cmd[@]}")
+	# Recheck after worktree preparation: a release label may have been added
+	# since the initial dispatch gate. Propagate failure to release capacity.
+	_prrts_release_dispatch_gate "$repo_slug" "$pr_number" "$head_ref" dispatch || return $?
 	# Persist the generation immediately before the detached worker becomes
 	# runnable, so immediate terminal callbacks cannot be overwritten.
 	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid" "$outcome_id" "$infrastructure_failure_count"
@@ -1598,6 +1614,25 @@ _prrts_dispatch_worker() {
 	fi
 	disown "$worker_pid" 2>/dev/null || true
 	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} in ${worker_worktree_path} session_key=${session_key} pid=${worker_pid} detach=${detach_mode} attempt_id=${outcome_id}"
+	return 0
+}
+
+_prrts_release_dispatch_gate() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_ref="$3"
+	local dispatch_mode="$4"
+	local current_labels=""
+	# Recheck provenance candidates before any worker reservation or launch. This
+	# also covers a release label added after the repository scan snapshot.
+	if protected_release_pr "$head_ref" release; then
+		current_labels=$(_prrts_gh_call read gh pr view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return "$PRRTS_RC_RETRYABLE_FAILURE"
+		if protected_release_pr "$head_ref" "$current_labels"; then
+			_prrts_log "${dispatch_mode}: ${repo_slug}#${pr_number} skipped — protected release PR"
+			return "$PRRTS_RC_NO_MATCH"
+		fi
+	fi
 	return 0
 }
 
@@ -1621,6 +1656,7 @@ _prrts_dispatch_guarded() {
 	local failure_maintainer_attention="$PRRTS_BOOL_FALSE"
 	local failure_outcome_id=""
 	local dispatch_guard_rc=0
+	_prrts_release_dispatch_gate "$repo_slug" "$pr_number" "$head_ref" "$dispatch_mode" || return $?
 	_prrts_acquire_dispatch_lock "$repo_slug" "$pr_number" lock_dir || dispatch_guard_rc=$?
 	if [[ "$dispatch_guard_rc" -ne 0 ]]; then
 		return "$dispatch_guard_rc"

@@ -155,8 +155,36 @@ _pmp_is_protected_release_pr() {
 	local head_ref="$1"
 	local labels_csv="$2"
 
-	[[ ",${labels_csv}," == *",release,"* ]] || return 1
-	[[ "$head_ref" =~ ^chore/release-v[0-9]+\.[0-9]+\.[0-9]+-provenance$ ]] || return 1
+	protected_release_pr "$head_ref" "$labels_csv" || return 1
+	return 0
+}
+
+# Protected release PRs always belong to exact-merge reconciliation. Even an
+# exact signed head must never be armed for the generic native squash path.
+_pmp_hold_protected_release_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local head_ref="$3"
+	local head_oid="$4"
+	local repo_path="" auto_merge="" hold_reason="protected release PR requires exact-merge reconciliation"
+	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
+	if ! protected_release_head_matches_staged "$repo_path" "$head_ref" "$head_oid"; then
+		hold_reason="protected release PR head differs from staged signed commit or staging evidence is unavailable"
+	fi
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${hold_reason}" >>"$LOGFILE"
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
+	# Do not turn an already-safe release into a draft on every merge pass.
+	# An unavailable read still takes the fail-closed disarm path below.
+	if auto_merge=$(gh pr view "$pr_number" --repo "$repo_slug" --json autoMergeRequest \
+		--jq '.autoMergeRequest == null' 2>/dev/null) &&
+		[[ "$auto_merge" == true ]]; then
+		return 0
+	fi
+	# aidevops:trust-boundary — revoke native auto-merge before deferring so a
+	# previously armed request cannot merge a drifted release between passes.
+	local stop_rc=0
+	_stop_external_native_auto_merge "$pr_number" "$repo_slug" "$hold_reason" || stop_rc=$?
+	[[ "$stop_rc" -eq 0 || "$stop_rc" -eq 2 ]] || return 1
 	return 0
 }
 
@@ -164,6 +192,8 @@ _pmp_is_protected_release_pr() {
 # direct routine sourcing. pulse-wrapper.sh also sources this before the merge
 # modules, so the include guard in pulse-pr-list-cache.sh keeps this idempotent.
 _PULSE_MERGE_PROCESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./protected-release-helper.sh
+source "${_PULSE_MERGE_PROCESS_DIR}/protected-release-helper.sh"
 if [[ -f "${_PULSE_MERGE_PROCESS_DIR}/pulse-pr-list-cache.sh" ]]; then
 	# shellcheck source=./pulse-pr-list-cache.sh
 	# shellcheck disable=SC1091
@@ -1648,6 +1678,20 @@ _set_native_auto_merge_or_skip() {
 	local require_synchronous_final_gate="${3:-0}"
 	local current_review="${4:-UNKNOWN}"
 	local expected_head_sha="${5:-}"
+	local release_metadata="" release_head="" release_labels=""
+
+	# aidevops:trust-boundary — inspect fresh identity before retaining or enabling
+	# native auto-merge. A failed identity read cannot authorize a generic merge.
+	release_metadata=$(gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 2
+	printf '%s' "$release_metadata" | jq -e '
+		type == "object" and (.head.ref | type == "string" and length > 0)
+		and (.labels | arrays | true)' >/dev/null || return 2
+	release_head=$(printf '%s' "$release_metadata" | jq -r '.head.ref // ""') || return 2
+	release_labels=$(printf '%s' "$release_metadata" | jq -r '[.labels[]?.name] | join(",")') || return 2
+	if _pmp_is_protected_release_pr "$release_head" "$release_labels"; then
+		_pmp_hold_protected_release_pr "$pr_number" "$repo_slug" "$release_head" "$expected_head_sha" || return 3
+		return 2
+	fi
 
 	# Fetch auto_merge metadata + merge state through exact-attribution routes.
 	# Carry forward the review state that passed this cycle's gate; unknown or
