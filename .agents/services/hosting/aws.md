@@ -32,19 +32,36 @@ browser console identity to obtain 12-hour credentials, refreshed for up to
 90 days. On macOS, use `brew install awscli` with installation authorization,
 not a piped installer. Check `aws --version` before choosing this flow.
 
-Use the workload's existing region and a named `aidevops-<account>` profile:
+Before the browser handoff, an administrator must grant the non-root IAM user or
+role the `SignInLocalDevelopmentAccess` managed policy (directly or, for a user,
+through an IAM group). Console sign-in alone is not sufficient. Root requires no
+additional policy, but use a scoped non-root identity for routine work.
+
+Use a named `aidevops-<account>` profile and keep its workload region unchanged.
+Obtain the account or project's sign-in region from the administrator and set
+`AWS_SIGN_IN_REGION` accordingly; do not guess it. In AWS's new account experience,
+it may differ from the workload region, and the wrong region can prevent login.
 
 ```bash
 # Agent: configure the profile (region is an example, not a migration instruction).
 aws configure set region eu-west-2 --profile aidevops-production
 # Human: complete browser authorization with the intended console identity.
-aws login --profile aidevops-production
+aws login --profile aidevops-production --region "${AWS_SIGN_IN_REGION:?Set the account sign-in region}"
+# Agent: inspect credential resolution locally; continue only when TYPE is login.
+aws configure list --profile aidevops-production
 # Agent: verify the account and caller ARN before service operations.
-aws sts get-caller-identity --profile aidevops-production
+aws sts get-caller-identity --profile aidevops-production --region eu-west-2
 ```
 
+Stop before STS or service operations if the credential TYPE is not `login`.
+Existing keys in `~/.aws/credentials` can take precedence over the login session;
+have the owner retire conflicting credentials safely or use a fresh named profile,
+then repeat the login and source checks. Do not publish credential-list output.
+Use the workload region, not the sign-in override, for subsequent service commands.
+
 On SSH/headless hosts, the human uses `aws login --remote --profile
-aidevops-production` for authorization from another device. An unattended agent
+aidevops-production --region "$AWS_SIGN_IN_REGION"` for authorization from another
+device, then performs the same source and identity checks. An unattended agent
 must not attempt browser approval itself. Let the CLI protect its credential
 cache; do not copy it into secrets, chat or runtime configuration.
 

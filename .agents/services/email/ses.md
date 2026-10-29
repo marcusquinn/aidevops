@@ -130,13 +130,19 @@ override only when **every recipient**, including CC/BCC, is controlled/internal
 With authorization, use a new plus alias of a controlled internal inbox, never a
 customer address. Confirm the alias receives mail and is not already suppressed;
 do not overwrite an existing suppression entry. Keep the regional account-level
-suppression policy enabled. The selected configuration set must already have the
+suppression policy enabled and confirm `SuppressionAttributes.SuppressedReasons`
+includes `BOUNCE` before adding the test entry below. If it does not, stop: delivery
+of a `BOUNCE` entry would not prove a bypass. Do not change the account policy just
+for this test. The selected configuration set must already have the
 explicit empty override and a CloudWatch event destination enabled for
 `SEND`, `DELIVERY`, `BOUNCE` and `REJECT`, publishing the
 `ses-configuration-set` dimension.
 
 ```bash
 # Examples: use the same authorized profile/region for every command.
+aws sesv2 get-account --profile aidevops-production --region eu-west-2 \
+  --query 'SuppressionAttributes.SuppressedReasons'
+# Continue only if the returned reasons include BOUNCE.
 aws sesv2 put-suppressed-destination --profile aidevops-production --region eu-west-2 \
   --email-address 'support+ses-test@example.com' --reason BOUNCE
 ```
