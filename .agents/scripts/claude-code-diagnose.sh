@@ -57,10 +57,7 @@ PY
 agent_summary() {
 	local file version owner probe classification reason env_state
 	file=$(resolve_claude_file)
-	owner="unknown"
-	if declare -F aidevops_claude_code_install_owner >/dev/null; then
-		owner=$(aidevops_claude_code_install_owner)
-	fi
+	owner=$(aidevops_claude_code_install_owner)
 	if [[ -z "$file" ]]; then
 		version="not installed"
 		classification="unverified"
