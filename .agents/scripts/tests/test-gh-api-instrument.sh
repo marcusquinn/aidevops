@@ -576,6 +576,9 @@ assert_eq "cumulative used counter appends after existing fields" "4901" "$(awk 
 gh_record_attempt rest metadata-caller logical-meta attempt-invalid 1 0 success 200 1 1 gh-pat rest-core rest-selected 98 'not-a-digest' 'not-an-epoch' "" 'not-a-counter'
 assert_eq "arbitrary auth text cannot enter fingerprint column" ":" "$(awk -F '\t' '$11 == "attempt-invalid" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
 assert_eq "arbitrary text cannot enter used column" "" "$(awk -F '\t' '$11 == "attempt-invalid" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest metadata-caller logical-meta attempt-zero 1 0 success 304 1 0 gh-pat rest-core rest-selected 5000 "$pool_a" 2000000000 "" 0
+assert_eq "zero used is preserved, not treated as missing" "0" "$(awk -F '\t' '$11 == "attempt-zero" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "legacy callers leave used unknown" "" "$(awk -F '\t' '$11 == "a1" {print $22}' "$AIDEVOPS_GH_API_LOG")"
 
 # --- Test 11: command arguments remain private and exit status is preserved --
 gh_clear_log
@@ -672,6 +675,12 @@ _ghqa_write_complete_frames "$native_multi_result" "$native_multi_state" graphql
 assert_eq "native multi-frame REST pages retain separate exact attempts" \
 	"rest:1:success:1,rest:2:success:1,rest:3:success:1" \
 	"$(awk -F '\t' '{ value = value (value ? "," : "") $2 ":" $3 ":" $4 ":" $7 } END { print value }' "$native_multi_result")"
+gh_clear_log
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
+	_ghqa_record_result_file "$native_multi_result" native-multi logical-native-multi 2
+assert_eq "every native page retains its own counter and retry index" \
+	"1:2:500,2:2:501,3:2:502" \
+	"$(awk -F '\t' '{ value = value (value ? "," : "") $12 ":" $13 ":" $22 } END { print value }' "$AIDEVOPS_GH_API_LOG")"
 
 native_single_result="$TMPDIR/native-single.result"
 native_single_state="$TMPDIR/native-single.state"
@@ -705,6 +714,12 @@ _ghqa_write_complete_frames "$native_conditional_result" "$native_conditional_st
 assert_eq "native conditional REST response preserves exact zero cost" \
 	"rest:1:success:0,rest:2:success:1" \
 	"$(awk -F '\t' '{ value = value (value ? "," : "") $2 ":" $3 ":" $4 ":" $7 } END { print value }' "$native_conditional_result")"
+gh_clear_log
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
+	_ghqa_record_result_file "$native_conditional_result" native-conditional logical-conditional 0
+assert_eq "conditional cost stays zero while cumulative used remains available" \
+	"0:500,1:501" \
+	"$(awk -F '\t' '{ value = value (value ? "," : "") $17 ":" $22 } END { print value }' "$AIDEVOPS_GH_API_LOG")"
 
 native_mixed_result="$TMPDIR/native-mixed.result"
 native_mixed_state="$TMPDIR/native-mixed.state"
