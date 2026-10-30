@@ -105,8 +105,8 @@ _pulse_release_post_dispatch_housekeeping_lock() {
 #
 # The in-cycle dependency-graph build, blocked refresh and brief-hold release
 # run late in the deterministic pipeline and are deferred whenever preflight
-# consumes the cycle budget. The cache mtime is their shared success marker:
-# a missing or old cache means none of them has completed recently.
+# consumes the cycle budget. A missing or old cache triggers catch-up; a pending
+# marker keeps downstream recovery eligible even after a graph rebuild.
 # AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=0 disables the catch-up.
 #######################################
 _pulse_blocker_refresh_starved() {
@@ -114,6 +114,9 @@ _pulse_blocker_refresh_starved() {
 	local cache_file="${DEP_GRAPH_CACHE_FILE:-}"
 	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=1800
 	[[ "$max_age" -gt 0 && -n "$cache_file" ]] || return 1
+	# Rebuilding the graph freshens the cache before downstream recovery finishes.
+	# Pending work survives failures and signals independently of that mtime.
+	[[ -f "$(_pulse_post_dispatch_housekeeping_statefile).blocker-refresh-pending" ]] && return 0
 	[[ -f "$cache_file" ]] || return 0
 	local now="" mtime=""
 	now=$(date +%s 2>/dev/null) || return 1
@@ -140,7 +143,11 @@ _pulse_run_blocker_refresh_catchup() {
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
 	_pulse_blocker_refresh_starved || return 0
 	declare -F build_dependency_graph_cache >/dev/null 2>&1 || return 0
-	echo "[pulse-wrapper] Blocker refresh catch-up: dependency graph cache stale or missing — running starved stages (GH#33246)" >>"$LOGFILE"
+	local pending_file=""
+	pending_file="$(_pulse_post_dispatch_housekeeping_statefile).blocker-refresh-pending"
+	# Persist before any cache write; do not start work we cannot resume safely.
+	touch "$pending_file" || return 1
+	echo "[pulse-wrapper] Blocker refresh catch-up: dependency graph cache stale, missing or recovery pending — running starved stages (GH#33246)" >>"$LOGFILE"
 	PULSE_DEP_GRAPH_FORCE_REBUILD=1 _pulse_run_budget_priority_stage_with_timeout "build_dependency_graph_cache" "$stage_timeout" \
 		build_dependency_graph_cache || return 1
 	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "0" ]] || return 1
@@ -154,6 +161,7 @@ _pulse_run_blocker_refresh_catchup() {
 			release_repaired_brief_holds || return 1
 		[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "0" ]] || return 1
 	fi
+	rm -f "$pending_file" || return 1
 	return 0
 }
 
