@@ -123,10 +123,14 @@ function namesProtectedConfig(policy, text) {
   return protectedConfigFiles(policy).some((file) => lower.includes(basename(file).toLowerCase()));
 }
 
-function isInterpreterScript(words) {
-  return SHELL_INTERPRETERS.has(basename(words[0] || ""))
-    && words.slice(1).some((word) => /^-[^-]*c/.test(word)
-      || word === "--command" || word.startsWith("--command="));
+// -c, -lc, -ec ..., --command and --command=...
+const INTERPRETER_SCRIPT_OPTION = /^(?:-[^-]*c|--command(?:=|$))/;
+
+// Unparseable syntax, or a quoted -c script that is literal to the outer
+// parser but not to its interpreter.
+function isOpaqueShell(words) {
+  return !words || (SHELL_INTERPRETERS.has(basename(String(words[0])))
+    && words.slice(1).some((word) => INTERPRETER_SCRIPT_OPTION.test(word)));
 }
 
 function assertClassificationMutation(policy, name, args, cwd, deny) {
@@ -153,16 +157,12 @@ function assertShellRead(policy, command, cwd, binding, deny) {
   )) || [];
   if (protectedConfigFiles(policy).some((file) => text.includes(file)
     || targets.includes(canonicalPath(file)))) deny("classification_mutation");
-  // Opaque shell syntax and quoted -c scripts (literal to the outer parser, not
-  // to their interpreter) can hide relative config aliases. Every session runs
-  // this hook, so outside a classified unbound session deny them only when they
-  // name a protected config file; ordinary pipelines must keep working (GH#36017).
-  const opaque = !words || isInterpreterScript(words);
-  if (binding.bound || !policy.roots.length) {
-    if (opaque && namesProtectedConfig(policy, text)) deny("unclassifiable_shell_read");
-    return;
-  }
-  if (opaque) deny("unclassifiable_shell_read");
+  // Opaque shell can hide relative config aliases. Every session runs this hook,
+  // so outside a classified unbound session deny it only when it names a
+  // protected config file; ordinary pipelines must keep working (GH#36017).
+  const exempt = binding.bound || !policy.roots.length;
+  if (isOpaqueShell(words) && (!exempt || namesProtectedConfig(policy, text))) deny("unclassifiable_shell_read");
+  if (exempt) return;
   // No options: even familiar readers have executable/path-bearing options.
   if (!words?.length || !LITERAL_READERS.has(words[0])
     || words.slice(1).some((word) => word.startsWith("-"))) deny("unclassifiable_shell_read");
