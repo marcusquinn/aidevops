@@ -312,13 +312,16 @@ _gh_find_merged_pr_evidence() {
 
 	# GH#35973: planning PRs ("tNNN: plan: add ...") also carry the task ID in
 	# their title but never implement it; they are not completion evidence.
+	# Title search is fuzzy, so only a title that leads with the exact task ID
+	# (the issue-sync-relationships-backfill.sh ownership rule) counts.
 	if ! results=$(gh pr list --repo "$repo" --state merged --search "$task_id in:title" \
 		--limit 10 --json number,url,title 2>/dev/null); then
 		return 2
 	fi
-	if ! pr_info=$(printf '%s' "$results" | jq -er '
+	if ! pr_info=$(printf '%s' "$results" | jq -er --arg tid "$task_id" '
 		if type != "array" then error("expected PR array")
 		else [.[]
+			| select((.title // "") as $t | $t == $tid or ($t | startswith($tid + ":")) or ($t | startswith($tid + " ")))
 			| select((.title // "") | test("(^|:[[:space:]]*)plan:"; "i") | not)
 			| select((.number | type) == "number" and (.url | type) == "string" and (.url | length) > 0)]
 			| if length == 0 then "" else .[0] | "\(.number)|\(.url)" end
