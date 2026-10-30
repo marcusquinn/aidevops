@@ -472,9 +472,10 @@ unset -f _pm_reconcile_partial_continuations
 		printf 'FAIL: completed later passes were not stamped, or the partial stale pass was\n'
 		exit 1
 	}
-	# Weighted share reaching the sweep deadline: the stale pass leaves 5s per due pass.
+	# Weighted share reaching the sweep deadline: the stale pass leaves 5s per
+	# due pass, and draft-checkpoint leaves partial-continuation its 5s.
 	run_sweep_repo 1045 1045
-	[[ "$STALE_DL" == 1035 && "$PASSES" == "dc:10 pc:9 " ]] || {
+	[[ "$STALE_DL" == 1035 && "$PASSES" == "dc:5 pc:9 " ]] || {
 		printf 'FAIL: weighted stale share left no time for later passes: stale=%s passes=%s\n' "$STALE_DL" "$PASSES"
 		exit 1
 	}
@@ -509,8 +510,10 @@ unset -f _pm_reconcile_partial_continuations
 	}
 	[[ "$(_pulse_stale_blocked_pass_deadline 1003 1045 1000)" == 1005 &&
 		"$(_pulse_stale_blocked_pass_deadline 1030 1045 1000)" == 1030 &&
-		"$(_pulse_stale_blocked_pass_deadline 1005 1003 1000)" == 1003 ]] || {
-		printf 'FAIL: pass deadline is not max(repo share, minimum) capped at the sweep deadline\n'
+		"$(_pulse_stale_blocked_pass_deadline 1005 1003 1000)" == 1003 &&
+		"$(_pulse_stale_blocked_pass_deadline 1045 1045 1035 5)" == 1040 &&
+		"$(_pulse_stale_blocked_pass_deadline 1045 1045 1042 5)" == 1045 ]] || {
+		printf 'FAIL: pass deadline is not max(repo share, minimum) capped at the sweep deadline less later reserves\n'
 		exit 1
 	}
 ) || exit 1

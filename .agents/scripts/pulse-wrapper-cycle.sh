@@ -712,25 +712,41 @@ _pulse_stale_blocked_repo_all_fresh() {
 # Optional passes on the stale-blocked cadence, in run order: "function:stamp kind".
 _PULSE_STALE_BLOCKED_OPTIONAL_PASSES="_pm_reconcile_draft_checkpoint_blocks:draft-checkpoint-unblock-complete _pm_reconcile_partial_continuations:partial-continuation-complete"
 
-# GH#36041: hold back one minimum pass share per due optional pass from the
-# stale pass's repo share, so a weighted repo whose share reaches the sweep
-# deadline still leaves time for them. The stale pass keeps its own minimum.
+# GH#36041: seconds to hold back for the due optional passes that run after the
+# given stamp kind (all of them when the kind is empty): one minimum pass share
+# each, so a pass whose share reaches the sweep deadline leaves time for them.
+# Args: repo interval now_epoch [after_kind]. Prints the reserve in seconds.
+_pulse_stale_blocked_later_reserve() {
+	local repo="$1" interval="$2" now_epoch="$3" after_kind="${4:-}"
+	local min_pass="${PULSE_STALE_BLOCKED_MIN_PASS_SECONDS:-${PULSE_STALE_BLOCKED_MIN_REPO_SECONDS:-5}}"
+	local reserve=0 pass_spec="" counting=false
+	[[ "$min_pass" =~ ^[0-9]+$ ]] || min_pass=5
+	[[ -n "$after_kind" ]] || counting=true
+	for pass_spec in $_PULSE_STALE_BLOCKED_OPTIONAL_PASSES; do
+		if [[ "$counting" == false ]]; then
+			[[ "${pass_spec#*:}" == "$after_kind" ]] && counting=true
+			continue
+		fi
+		declare -F "${pass_spec%%:*}" >/dev/null 2>&1 || continue
+		_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" "${pass_spec#*:}" && continue
+		reserve=$((reserve + min_pass))
+	done
+	printf '%s\n' "$reserve"
+	return 0
+}
+
+# GH#36041: hold back the due optional passes' shares from the stale pass's
+# repo share. The stale pass keeps its own minimum.
 # Args: repo repo_deadline interval now_epoch. Prints the stale-pass deadline.
 _pulse_stale_blocked_stale_deadline() {
 	local repo="$1" repo_deadline="$2" interval="$3" now_epoch="$4"
-	local min_pass="${PULSE_STALE_BLOCKED_MIN_PASS_SECONDS:-${PULSE_STALE_BLOCKED_MIN_REPO_SECONDS:-5}}"
-	local min_repo="${PULSE_STALE_BLOCKED_MIN_REPO_SECONDS:-5}" reserve=0 deadline=0 pass_spec=""
-	[[ "$min_pass" =~ ^[0-9]+$ ]] || min_pass=5
+	local min_repo="${PULSE_STALE_BLOCKED_MIN_REPO_SECONDS:-5}" reserve=0 deadline=0
 	[[ "$min_repo" =~ ^[0-9]+$ ]] || min_repo=5
 	[[ "$repo_deadline" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ ]] || {
 		printf '%s\n' "$repo_deadline"
 		return 0
 	}
-	for pass_spec in $_PULSE_STALE_BLOCKED_OPTIONAL_PASSES; do
-		declare -F "${pass_spec%%:*}" >/dev/null 2>&1 || continue
-		_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" "${pass_spec#*:}" && continue
-		reserve=$((reserve + min_pass))
-	done
+	reserve=$(_pulse_stale_blocked_later_reserve "$repo" "$interval" "$now_epoch")
 	deadline=$((repo_deadline - reserve))
 	[[ "$deadline" -ge $((now_epoch + min_repo)) ]] || deadline=$((now_epoch + min_repo))
 	[[ "$deadline" -le "$repo_deadline" ]] || deadline="$repo_deadline"
@@ -741,16 +757,22 @@ _pulse_stale_blocked_stale_deadline() {
 # GH#36041: the stale sweep stops at the repo deadline, so a later pass given
 # that same deadline found it already expired. It spent its listing reads,
 # returned partial before its first candidate, and never completed on large
-# repos. Each optional pass gets at least its own minimum share, capped at the
-# sweep deadline.
-# Args: repo_deadline sweep_deadline now_epoch. Prints the pass deadline.
+# repos. Each optional pass gets at least its own minimum share; beyond that it
+# leaves the later passes' reserve, and never runs past the sweep deadline.
+# Args: repo_deadline sweep_deadline now_epoch [later_reserve]. Prints the deadline.
 _pulse_stale_blocked_pass_deadline() {
-	local repo_deadline="$1" sweep_deadline="$2" now_epoch="$3" deadline=""
+	local repo_deadline="$1" sweep_deadline="$2" now_epoch="$3" later_reserve="${4:-0}"
 	local min_share="${PULSE_STALE_BLOCKED_MIN_PASS_SECONDS:-${PULSE_STALE_BLOCKED_MIN_REPO_SECONDS:-5}}"
+	local deadline="" floor=0 cap=0
 	[[ "$min_share" =~ ^[0-9]+$ ]] || min_share=5
+	[[ "$later_reserve" =~ ^[0-9]+$ ]] || later_reserve=0
+	floor=$((now_epoch + min_share))
 	deadline="$repo_deadline"
 	[[ "$deadline" =~ ^[0-9]+$ ]] || deadline=0
-	[[ "$deadline" -ge $((now_epoch + min_share)) ]] || deadline=$((now_epoch + min_share))
+	[[ "$deadline" -ge "$floor" ]] || deadline="$floor"
+	cap=$((sweep_deadline - later_reserve))
+	[[ "$cap" -ge "$floor" ]] || cap="$floor"
+	[[ "$deadline" -le "$cap" ]] || deadline="$cap"
 	[[ "$deadline" -le "$sweep_deadline" ]] || deadline="$sweep_deadline"
 	printf '%s\n' "$deadline"
 	return 0
@@ -765,7 +787,7 @@ _pulse_stale_blocked_pass_deadline() {
 #          the pass exit code
 _pulse_stale_blocked_optional_pass() {
 	local pass_fn="$1" kind="$2" repo="$3" repo_deadline="$4" sweep_deadline="$5" interval="$6" now_epoch="$7"
-	local pass_rc=0 pass_now="" pass_deadline=""
+	local pass_rc=0 pass_now="" pass_deadline="" later_reserve=0
 	declare -F "$pass_fn" >/dev/null 2>&1 || return 0
 	_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" "$kind" && return 0
 	[[ "$sweep_deadline" =~ ^[0-9]+$ ]] || sweep_deadline="$repo_deadline"
@@ -775,7 +797,8 @@ _pulse_stale_blocked_optional_pass() {
 		echo "[pulse-wrapper] stale-blocked sweep: ${kind%-complete} pass deferred for ${repo}: sweep deadline reached (GH#36041)" >>"$LOGFILE"
 		return "${DER_SWEEP_PARTIAL:-3}"
 	fi
-	pass_deadline=$(_pulse_stale_blocked_pass_deadline "$repo_deadline" "$sweep_deadline" "$pass_now")
+	later_reserve=$(_pulse_stale_blocked_later_reserve "$repo" "$interval" "$now_epoch" "$kind")
+	pass_deadline=$(_pulse_stale_blocked_pass_deadline "$repo_deadline" "$sweep_deadline" "$pass_now" "$later_reserve")
 	"$pass_fn" "$repo" "$pass_deadline" "$sweep_deadline" 2>>"$LOGFILE" || pass_rc=$?
 	[[ "$pass_rc" -eq 0 ]] && _pulse_stale_blocked_repo_mark_complete "$repo" "$kind"
 	return "$pass_rc"

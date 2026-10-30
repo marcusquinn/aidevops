@@ -120,6 +120,7 @@ setup_test_env() {
 	COMMENT_LOG="${TEST_ROOT}/comments.log"
 	COMMENT_ATTEMPTS="${TEST_ROOT}/comment-attempts.log"
 	API_LOG="${TEST_ROOT}/api.log"
+	CLOCK_FILE="${TEST_ROOT}/clock"
 	return 0
 }
 
@@ -130,6 +131,8 @@ teardown_test_env() {
 
 reset_case() {
 	rm -rf "${HOME}/.aidevops/cache/draft-checkpoint-unblock-cursor"
+	rm -f "$CLOCK_FILE"
+	TEST_ISSUES_ADVANCE=0
 	: >"$LOGFILE"
 	: >"$STATUS_LOG"
 	: >"$COMMENT_LOG"
@@ -167,6 +170,7 @@ gh() {
 	case "${2:-}" in
 	"repos/${SLUG}/issues?state=open&labels=status%3Ablocked"*)
 		[[ "$TEST_ISSUES_RC" -eq 0 ]] || return "$TEST_ISSUES_RC"
+		[[ "$TEST_ISSUES_ADVANCE" -eq 0 ]] || printf '%s\n' "$((TEST_NOW + TEST_ISSUES_ADVANCE))" >"$CLOCK_FILE"
 		printf '%s' "$TEST_ISSUES"
 		;;
 	"repos/${SLUG}/pulls?state=open"*)
@@ -192,7 +196,11 @@ gh() {
 
 date() {
 	if [[ "${1:-}" == "+%s" ]]; then
-		printf '%s\n' "$TEST_NOW"
+		if [[ -s "$CLOCK_FILE" ]]; then
+			cat "$CLOCK_FILE"
+		else
+			printf '%s\n' "$TEST_NOW"
+		fi
 		return 0
 	fi
 	command date "$@"
@@ -479,8 +487,26 @@ test_deadline_and_listing_cost() {
 	run_pass
 	assert_no_write "an expired deadline stops before per-issue reads" 3
 	# GH#36041: a deferral used to be silent, hiding a pass that never ran.
-	assert_logged "a deadline deferral names the next candidate" \
-		"${SLUG} — deadline reached before #501; the rest resume next sweep: visited=0 restored=0"
+	if [[ ! -s "$API_LOG" ]] &&
+		grep -qF "${SLUG} — deadline reached before the blocked-issue listing: visited=0 restored=0" "$LOGFILE"; then
+		pass "an expired hard stop spends no listing read and logs the deferral"
+	else
+		fail "an expired hard stop spends no listing read and logs the deferral" \
+			"api=[$(tr '\n' ' ' <"$API_LOG")] log=[$(tr '\n' ' ' <"$LOGFILE")]"
+	fi
+	reset_case
+	# The hard stop passes during the blocked-issue listing: no PR listing read.
+	# The listing runs in a subshell, so the clock advances through a file.
+	TEST_ISSUES_ADVANCE=10
+	PASS_RC=0
+	_pm_reconcile_draft_checkpoint_blocks "$SLUG" "$((TEST_NOW + 5))" "$((TEST_NOW + 5))" || PASS_RC=$?
+	if [[ "$PASS_RC" -eq 3 && "$(wc -l <"$API_LOG" | tr -d ' ')" == "1" ]] &&
+		grep -qF "${SLUG} — deadline reached before the open PR listing" "$LOGFILE"; then
+		pass "a hard stop reached during the issue listing skips the PR listing"
+	else
+		fail "a hard stop reached during the issue listing skips the PR listing" \
+			"rc=${PASS_RC} api=[$(tr '\n' ' ' <"$API_LOG")] log=[$(tr '\n' ' ' <"$LOGFILE")]"
+	fi
 	reset_case
 	TEST_ISSUES="[]"
 	run_pass

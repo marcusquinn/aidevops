@@ -370,7 +370,7 @@ _pdcu_log_summary() {
 # Costs one REST read when no issue qualifies, two when no draft matches.
 # Candidates rotate from a persisted cursor. The pass deadline stops it after
 # at least one visit; the optional stop epoch (the sweep's hard stop, default
-# the pass deadline) stops it before any visit.
+# the pass deadline) stops it before any read or visit.
 # Args: $1=repo slug, $2=deadline epoch, $3=optional stop epoch
 # Returns: 0 when every candidate was visited, 3 when the deadline stopped
 #          the pass, 1 when a listing was unreadable
@@ -381,11 +381,21 @@ _pm_reconcile_draft_checkpoint_blocks() {
 	local visited=0 restored=0 cursor_file="" ordered=""
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
 	[[ "$stop" =~ ^[0-9]+$ ]] || stop="$deadline"
+	now_epoch=$(date +%s) || return 1
+	if [[ "$now_epoch" -ge "$stop" ]]; then
+		_pdcu_log_summary "$repo_slug" 0 0 "deadline reached before the blocked-issue listing"
+		return 3
+	fi
 	if ! issues=$(_pdcu_blocked_issues "$repo_slug"); then
 		echo "[pulse-wrapper] ${_PDCU_MARKER_KIND}: ${repo_slug} — pass failed: blocked-issue listing unreadable (GH#36028)" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
 	[[ -n "$issues" ]] || return 0
+	now_epoch=$(date +%s) || return 1
+	if [[ "$now_epoch" -ge "$stop" ]]; then
+		_pdcu_log_summary "$repo_slug" 0 0 "deadline reached before the open PR listing"
+		return 3
+	fi
 	if ! refs=$(_pdcu_draft_closing_refs "$repo_slug"); then
 		echo "[pulse-wrapper] ${_PDCU_MARKER_KIND}: ${repo_slug} — pass failed: open PR listing unreadable (GH#36028)" >>"${LOGFILE:-/dev/null}"
 		return 1
