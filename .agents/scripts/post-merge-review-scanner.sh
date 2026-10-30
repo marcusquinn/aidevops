@@ -59,7 +59,8 @@
 #        judgment call the worker cannot make (architecture / policy /
 #        breaking change) → post a decision comment containing analysis,
 #        a recommended path, and the specific question that needs input,
-#        then apply hold-for-review. The human reads a ready-to-
+#        then exit BLOCKED input_required (never a self-applied
+#        hold-for-review, GH#36138). The human reads a ready-to-
 #        approve recommendation, not a blank triage task.
 #
 #   This is the same rule as AGENTS.md "Reasoning responsibility":
@@ -650,8 +651,11 @@ comment** with exactly these fields:
 - **Specific question:** the single decision the human needs to make
   (yes/no or pick-one, not open-ended).
 
-Then apply \`hold-for-review\` and stop. The human wakes up to a
-ready-to-approve recommendation, not a blank task.
+Then exit \`BLOCKED\` as \`input_required\` with
+\`TERMINAL_BLOCKER_INPUT_OWNER=maintainer\` and stop; the answer in this
+issue body re-arms dispatch. Never label this issue or your own PR
+\`hold-for-review\`: nothing lifts it when the answer arrives (GH#36138).
+The human wakes up to a ready-to-approve recommendation, not a blank task.
 
 > **Ambiguity about scope or style is not Outcome C.** Per
 > \`AGENTS.md\` "Reasoning responsibility", the model does the

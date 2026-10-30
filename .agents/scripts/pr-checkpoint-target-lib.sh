@@ -7,6 +7,8 @@
 _PR_CHECKPOINT_TARGET_LIB_LOADED=1
 _PCTL_INTERACTIVE_LABEL="origin:interactive"
 _PCTL_AUTO_DISPATCH_LABEL="auto-dispatch"
+_PCTL_HOLD_LABEL="hold-for-review"
+_PCTL_LABELED_EVENT="labeled"
 
 _PCTL_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_PCTL_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _PCTL_SCRIPT_DIR="."
@@ -119,8 +121,51 @@ _pr_checkpoint_pr_links_issue() {
 	return 0
 }
 
+#aidevops:trust-boundary — GH#36138: a worker that needs brief-owner input may
+# label its own draft hold-for-review. The owner's validated exact-head approval
+# is that input, so it supersedes only a hold the approved runner applied to its
+# own draft before the approval. A hold from any other actor, a reapplication
+# after the approval, a PR-only merge contract (fail-safe on any marker), a
+# feedback-route automation hold or a release approval gate keeps protecting
+# the checkpoint. Unreadable label history fails closed.
+# Args: $1=repo slug, $2=PR JSON, $3=issue JSON, $4=comments JSON (paginated or
+#       flat), $5=validated approval JSON (pr, runner, approval_id)
+# Returns: 0 when the PR hold is superseded, 1 otherwise
+_pr_checkpoint_self_hold_superseded() {
+	local repo_slug="$1" pr_json="$2" issue_json="$3" comments_json="$4" approval="$5"
+	local pr_number="" runner="" approval_id="" approved_at="" pr_events=""
+	jq -e --arg hold "$_PCTL_HOLD_LABEL" '
+		[.labels[]? | (.name? // .) | strings] as $names |
+		($names | index($hold)) != null and ($names | index("release-approval-required")) == null
+	' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	pr_number=$(jq -er '.pr | numbers' <<<"$approval" 2>/dev/null) || return 1
+	runner=$(jq -er '.runner | strings' <<<"$approval" 2>/dev/null) || return 1
+	approval_id=$(jq -er '.approval_id | numbers' <<<"$approval" 2>/dev/null) || return 1
+	[[ "$runner" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || return 1
+	jq -e --arg runner "$runner" '(.author.login // "") == $runner' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	jq -e '(.body // "") | contains("<!-- aidevops:completion-contract:pr-only/v1 -->") | not' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	approved_at=$(jq -er --argjson id "$approval_id" --argjson pr "$pr_number" '
+		[arrays | flatten[] | objects] as $comments |
+		if any($comments[]; (.body // "") | test("feedback-route:automation-hold:[^:]*:PR" + ($pr | tostring) + ":"))
+		then empty
+		else [$comments[] | select(.id == $id) | .created_at | strings] | first // empty end
+	' <<<"$comments_json" 2>/dev/null) || return 1
+	[[ "$approved_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || return 1
+	pr_events=$(gh api "repos/${repo_slug}/issues/${pr_number}/events?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	jq -e --arg hold "$_PCTL_HOLD_LABEL" --arg labeled "$_PCTL_LABELED_EVENT" \
+		--arg runner "$runner" --arg approved_at "$approved_at" '
+		arrays | [flatten[] | objects | select(.event == $labeled and (.label.name // "") == $hold)] as $holds |
+		($holds | length) > 0 and
+		all($holds[]; (.actor.login // "") == $runner and
+			((.created_at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")) and (.created_at < $approved_at))
+	' <<<"$pr_events" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 #aidevops:trust-boundary — only an authenticated exact revision envelope may
-# relax provenance/absent assignment; every protective label remains enforced.
+# relax provenance/absent assignment; every other protective label remains
+# enforced (a runner's own superseded draft hold: GH#36138).
 _pr_checkpoint_revised_target() {
 	local repo_slug="$1" pr_json="$2" issue_json="$3" comments_json="$4"
 	local assignee="$5" lease="${6:-}" session="${7:-}" claiming="${8:-false}"
@@ -153,11 +198,12 @@ _pr_checkpoint_revised_target() {
 		local lifecycle_events="" blocked_snapshot=""
 		blocked_snapshot=$(jq -er '.blocked_issue_updated_at' <<<"$approval") || return 1
 		lifecycle_events=$(gh api "repos/${repo_slug}/issues/${linked_issue}/events?per_page=100" --paginate --slurp) || return 1
-		jq -e --arg snapshot "$blocked_snapshot" --arg prefix "$status_prefix" --arg blocked "$blocked_status" '
+		jq -e --arg snapshot "$blocked_snapshot" --arg prefix "$status_prefix" --arg blocked "$blocked_status" \
+			--arg labeled "$_PCTL_LABELED_EVENT" '
 			arrays | flatten |
-			[.[] | select(.event == "labeled" or .event == "unlabeled") |
+			[.[] | select(.event == $labeled or .event == "unlabeled") |
 				select(.label.name | startswith($prefix))] |
-			any(.event == "labeled" and .label.name == $blocked) and
+			any(.event == $labeled and .label.name == $blocked) and
 			all(.created_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") and . <= $snapshot)
 		' <<<"$lifecycle_events" >/dev/null || return 1
 	fi
@@ -173,11 +219,20 @@ _pr_checkpoint_revised_target() {
 		' <<<"$pr_json") || return 1
 	fi
 	# The exact approval supplies missing provenance only in this local view.
-	# Keep all real labels so protective labels still reject the checkpoint.
-	normalized_pr=$(jq -e "${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
+	# Keep all real labels so protective labels still reject the checkpoint,
+	# except the runner's own pre-approval draft hold it answers (GH#36138).
+	local self_hold_superseded=false
+	if _pr_checkpoint_self_hold_superseded "$repo_slug" "$pr_json" "$issue_json" "$comments_json" "$approval"; then
+		self_hold_superseded=true
+	fi
+	normalized_pr=$(jq -e --argjson drop_hold "$self_hold_superseded" --arg hold "$_PCTL_HOLD_LABEL" \
+		"${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
 		select((.labels | type) == "array") |
+		(if $drop_hold then .labels |= map(select((.name? // .) != $hold)) else . end) |
 		.labels += [{name:worker_origin_label}]
 	' <<<"$normalized_pr") || return 1
+	approval=$(jq -ec --argjson superseded "$self_hold_superseded" \
+		'. + {self_hold_superseded:$superseded}' <<<"$approval") || return 1
 	# The validator requires an approval-time blocked snapshot; the event fence
 	# above rejects later lifecycle changes before this sole-blocked normalization.
 	# Conflicting statuses and every other hold remain visible to the predicate.
@@ -214,11 +269,12 @@ _pr_checkpoint_pr_metadata_is_eligible() {
 
 	printf '%s' "$pr_json" | jq -e --argjson pr "$pr_number" \
 		--arg expected_head_sha "$expected_head_sha" --arg expected_head_ref "$expected_head_ref" \
-		--arg expected_author "$expected_author" --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" '
+		--arg expected_author "$expected_author" --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" \
+		--arg hold_label "$_PCTL_HOLD_LABEL" '
 		def names: [.labels[]? | if type == "string" then . else (.name // empty) end];
 		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
 		def protected: names | any(
-			. == $interactive_label or . == "hold-for-review" or
+			. == $interactive_label or . == $hold_label or
 			. == "no-auto-dispatch" or . == "no-takeover" or
 			. == "needs-maintainer-review" or . == "persistent"
 		);
@@ -331,7 +387,7 @@ _pr_checkpoint_issue_metadata_is_eligible() {
 		--arg expected_assignee "$expected_assignee" \
 		--argjson interactive_checkpoint "$interactive_checkpoint" --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" \
 		--argjson interactive_claimed "$interactive_claimed" --arg auto_dispatch_label "$_PCTL_AUTO_DISPATCH_LABEL" \
-		--argjson allow_released "$allow_released" '
+		--argjson allow_released "$allow_released" --arg hold_label "$_PCTL_HOLD_LABEL" '
 		def names: [.labels[]? | if type == "string" then . else (.name // empty) end];
 		def has_label($name): names | any(. == $name);
 		def lifecycle_statuses: [names[] | select(startswith("status:"))];
@@ -351,7 +407,7 @@ _pr_checkpoint_issue_metadata_is_eligible() {
 			((has_label($auto_dispatch_label) | not) or $interactive_claimed);
 		def protected: interactive_hold as $hold | names | any(
 			. == "needs-maintainer-review" or . == "needs-maintainer-permissions" or
-			. == "no-auto-dispatch" or . == "hold-for-review" or . == "persistent" or
+			. == "no-auto-dispatch" or . == $hold_label or . == "persistent" or
 			(. == $interactive_label and $hold) or
 			. == "parent-task" or . == "research" or
 			. == "research-task" or . == "blocked" or . == "on hold"

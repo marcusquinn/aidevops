@@ -96,7 +96,7 @@ STUB_ISSUE_JSON="$(valid_issue_json)"
 STUB_COMMENTS_JSON='[]'
 export STUB_PR_JSON STUB_ISSUE_JSON STUB_COMMENTS_JSON
 if row=$(_pcc_target_row "owner/repo" "42" "123") && \
-	[[ "$row" == $'Continue existing work\tworker/issue-123\t1111111111111111111111111111111111111111\tworker-bot\tin-review\tworker-bot\t0\tclosing' ]]; then
+	[[ "$row" == $'Continue existing work\tworker/issue-123\t1111111111111111111111111111111111111111\tworker-bot\tin-review\tworker-bot\t0\tclosing\t0' ]]; then
 	print_result "accepts exact open worker draft linked to issue" 0
 else
 	print_result "accepts exact open worker draft linked to issue" 1 "row=${row:-missing}"
@@ -208,7 +208,7 @@ STUB_ISSUE_JSON="$(jq -nc '{number:123,state:"open",labels:[{name:"status:availa
 STUB_COMMENTS_JSON="$(interactive_capability_comments)"
 PCC_ALLOW_RELEASED=true
 if row=$(_pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot" 2>/dev/null) &&
-	[[ "$row" == *$'\tavailable\tworker-bot\t0\tclosing' ]]; then
+	[[ "$row" == *$'\tavailable\tworker-bot\t0\tclosing\t0' ]]; then
 	print_result "accepts capability-released draft on auto-dispatch interactive-provenance issue" 0
 else
 	print_result "accepts capability-released draft on auto-dispatch interactive-provenance issue" 1 "row=${row:-missing}"
@@ -237,7 +237,7 @@ STUB_ISSUE_JSON="$(valid_issue_json)"
 STUB_COMMENTS_JSON='[]'
 STUB_PR_JSON="$(valid_pr_json 'Recovered dirty worktree.\nFor #123' "$TAKEOVER_LABELS" '[]')"
 if row=$(_pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot") &&
-	[[ "$row" == *$'\tworker-bot\t0\tfor' ]]; then
+	[[ "$row" == *$'\tworker-bot\t0\tfor\t0' ]]; then
 	print_result "accepts For #N origin:worker-takeover recovery draft" 0
 else
 	print_result "accepts For #N origin:worker-takeover recovery draft" 1 "row=${row:-missing}"
@@ -264,7 +264,7 @@ WORKER_LABELS='[{"name":"origin:worker"}]'
 for worker_body in 'For #123' 'Ref #123. Incomplete checkpoint.' 'Notes\nRefs #123' 'For #123. Done part.\nRef #900'; do
 	STUB_PR_JSON="$(valid_pr_json "$worker_body" "$WORKER_LABELS" '[]')"
 	if row=$(_pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot") &&
-		[[ "$row" == *$'\tworker-bot\t0\tfor' ]]; then
+		[[ "$row" == *$'\tworker-bot\t0\tfor\t0' ]]; then
 		print_result "accepts origin:worker non-closing checkpoint: ${worker_body}" 0
 	else
 		print_result "accepts origin:worker non-closing checkpoint: ${worker_body}" 1 "row=${row:-missing}"
@@ -390,6 +390,41 @@ else
 		"calls=${STATUS_CALLS:-missing} assignee=${PCC_ISSUE_ASSIGNEE:-missing}"
 fi
 DISPATCH_RESULT=0
+
+# GH#36138: an approval-superseded runner self-hold is removed only after the
+# exact-head continuation actually launched. The approval fence itself is
+# covered by test-pr-checkpoint-revision.py.
+self_hold_lift_case() {
+	local name="$1" lift_rc="$2" lift_flag="$3" expect_edit="$4"
+	local edits_file="${TEST_ROOT}/self-hold-edits" lift_output="" edits=""
+	: >"$edits_file"
+	lift_output=$(
+		_pcc_target_row() {
+			printf 'Continue existing work\tworker/issue-123\t%s\tworker-bot\tin-review\tworker-bot\t77\tclosing\t%s\n' \
+				"1111111111111111111111111111111111111111" "$lift_flag"
+			return 0
+		}
+		_prrts_dispatch_guarded() { return "$lift_rc"; }
+		gh_pr_edit_safe() {
+			printf '%s\n' "$*" >>"$edits_file"
+			return 0
+		}
+		_pcc_dispatch "owner/repo" "${TEST_ROOT}/repo" "42" "123" "worker-bot" 2>/dev/null || true
+	)
+	edits="$(<"$edits_file")"
+	if [[ "$expect_edit" == 1 && "$edits" == '42 --repo owner/repo --remove-label hold-for-review' &&
+		"$lift_output" == *'PR_CHECKPOINT_SELF_HOLD_LIFTED: PR #42 in owner/repo hold-for-review superseded by approval 77'* ]] ||
+		[[ "$expect_edit" == 0 && -z "$edits" && "$lift_output" != *PR_CHECKPOINT_SELF_HOLD_LIFTED* ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "edits=${edits:-none} output=${lift_output:-missing}"
+	fi
+	return 0
+}
+self_hold_lift_case "dispatched continuation lifts the superseded runner self-hold" 0 1 1
+self_hold_lift_case "dispatch without a superseded hold edits no labels" 0 0 0
+self_hold_lift_case "failed launch keeps the superseded hold" 1 1 0
+self_hold_lift_case "deduplicated continuation keeps the hold for its launcher" "$PRRTS_RC_DISPATCH_DEFERRED" 1 0
 
 STUB_PR_JSON="$(valid_pr_json)"
 PCC_LINKED_ISSUE="123"

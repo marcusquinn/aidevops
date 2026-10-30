@@ -399,7 +399,7 @@ _pcc_target_row() {
 	local target_row=""
 	local issue_assignee=""
 	local issue_status=""
-	local approval="" approval_id=0 comments="[]" link_kind="" rejection=""
+	local approval="" approval_id=0 comments="[]" link_kind="" rejection="" self_hold=0
 	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json number,state,title,body,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,closingIssuesReferences 2>/dev/null) || {
 		_pcc_target_rejected pr_metadata_unavailable
@@ -435,6 +435,8 @@ _pcc_target_row() {
 		jq -e --argjson issue "$linked_issue" --argjson pr "$pr_number" --arg runner "$checkpoint_assignee" \
 			'.issue == $issue and .pr == $pr and .runner == $runner' <<<"$approval" >/dev/null || return 1
 		approval_id=$(jq -r '.approval_id' <<<"$approval") || return 1
+		# GH#36138: the approval answered the runner's own draft hold.
+		self_hold=$(jq -r 'if .self_hold_superseded == true then 1 else 0 end' <<<"$approval") || return 1
 	fi
 	issue_assignee=$(printf '%s' "$issue_json" | jq -er \
 		--arg fallback "$expected_assignee" '.assignees[0].login // $fallback | select(type == "string" and length > 0)' 2>/dev/null) || return 1
@@ -451,7 +453,7 @@ _pcc_target_row() {
 	# before ready.
 	link_kind="closing"
 	_pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue" || link_kind="for"
-	printf '%s\t%s\t%s\t%s\t%s\n' "$target_row" "$issue_status" "$issue_assignee" "$approval_id" "$link_kind"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$target_row" "$issue_status" "$issue_assignee" "$approval_id" "$link_kind" "$self_hold"
 	return 0
 }
 
@@ -568,7 +570,8 @@ _pcc_dispatch() {
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 1
 	}
-	IFS=$'\t' read -r title PCC_HEAD_REF PCC_HEAD_OID author issue_status PCC_ISSUE_ASSIGNEE PCC_REVISION_APPROVAL PCC_LINK_KIND <<<"$target_row"
+	local self_hold_superseded=0
+	IFS=$'\t' read -r title PCC_HEAD_REF PCC_HEAD_OID author issue_status PCC_ISSUE_ASSIGNEE PCC_REVISION_APPROVAL PCC_LINK_KIND self_hold_superseded <<<"$target_row"
 	PCC_REVISION_APPROVAL="${PCC_REVISION_APPROVAL:-0}"
 	PCC_LINK_KIND="${PCC_LINK_KIND:-closing}"
 	PCC_LINKED_ISSUE="$linked_issue"
@@ -605,6 +608,36 @@ _pcc_dispatch() {
 	fi
 	printf 'PR_CHECKPOINT_CONTINUATION_DISPATCHED: PR #%s in %s at %s for issue #%s\n' \
 		"$pr_number" "$repo_slug" "$PCC_HEAD_OID" "$linked_issue"
+	if [[ "$self_hold_superseded" == 1 && "$PCC_REVISION_APPROVAL" != 0 ]]; then
+		_pcc_lift_superseded_self_hold "$repo_slug" "$pr_number" "$PCC_REVISION_APPROVAL"
+	fi
+	return 0
+}
+
+#######################################
+# GH#36138: remove the runner's own draft hold-for-review once the exact-head
+# approval that superseded it has launched the continuation, so the finished
+# PR is not refused by every merge transport. Best-effort: the approval fence
+# already treats the superseded hold as answered, so a failed write only leaves
+# a label that a maintainer or the next approved continuation can clear.
+# Args: $1=repo slug, $2=PR number, $3=approval comment id
+#######################################
+_pcc_lift_superseded_self_hold() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local approval_id="$3"
+	local edit_rc=0
+	if declare -F gh_pr_edit_safe >/dev/null 2>&1; then
+		gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --remove-label "$_PCTL_HOLD_LABEL" >/dev/null 2>&1 || edit_rc=$?
+	else
+		gh pr edit "$pr_number" --repo "$repo_slug" --remove-label "$_PCTL_HOLD_LABEL" >/dev/null 2>&1 || edit_rc=$?
+	fi
+	if [[ "$edit_rc" -eq 0 ]]; then
+		printf 'PR_CHECKPOINT_SELF_HOLD_LIFTED: PR #%s in %s hold-for-review superseded by approval %s\n' \
+			"$pr_number" "$repo_slug" "$approval_id"
+		return 0
+	fi
+	_prrts_log "dispatch: could not remove superseded ${_PCTL_HOLD_LABEL} from ${repo_slug}#${pr_number} (approval ${approval_id}, rc=${edit_rc})"
 	return 0
 }
 

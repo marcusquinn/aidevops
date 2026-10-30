@@ -315,6 +315,88 @@ class RevisionTests(unittest.TestCase):
         for case, overrides in invalidations:
             self.assertNotEqual(run({**data, **overrides}), 0, case)
 
+    def test_approval_supersedes_only_the_runners_own_draft_hold(self):
+        """GH#36138: an exact approval answers the hold its runner put on its own draft."""
+        command = ('source "$1/pr-checkpoint-target-lib.sh"; TEST_EVENTS="$6"; TEST_PR_EVENTS="$7"; '
+                   'gh() { case "$*" in '
+                   '"api repos/owner/repo/issues/123/events?per_page=100 --paginate --slurp") '
+                   'printf "%s" "$TEST_EVENTS"; return 0 ;; '
+                   '"api repos/owner/repo/issues/42/events?per_page=100 --paginate --slurp") '
+                   '[[ -n "$TEST_PR_EVENTS" ]] || return 1; printf "%s" "$TEST_PR_EVENTS"; return 0 ;; '
+                   '"api repos/owner/repo/collaborators/maintainer/permission --jq .permission") '
+                   'printf "%s" write; return 0 ;; esac; return 90; }; '
+                   '_pr_checkpoint_revised_target "$2" "$3" "$4" "$5" worker')
+
+        def hold(actor, created_at, event="labeled"):
+            return {"event": event, "label": {"name": "hold-for-review"}, "actor": {"login": actor},
+                    "created_at": created_at}
+
+        def approved(body=None, held=True):
+            data = unlabelled_blocked_fixture()
+            if body is not None:
+                # The approval binds the brief digest, so regenerate it for the new body.
+                data["issue"]["body"] = body
+                data["comments"].pop()
+                line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+                data["comments"].append(comment(3, line, "maintainer", "OWNER"))
+            now = dt.datetime.now(dt.timezone.utc).isoformat()
+            for c in data["comments"]:
+                c["created_at"] = now
+            if held:
+                data["pr"]["labels"].append({"name": "hold-for-review"})
+            data["pr_events"] = [[hold("worker", "2020-01-01T00:00:00Z")]]
+            return data
+
+        def run(candidate):
+            # Fixed Bash source and locally constructed JSON are positional data, never shell source.
+            pr_events = "" if candidate["pr_events"] is None else json.dumps(candidate["pr_events"])
+            result = subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), candidate["repo"],  # nosec B603
+                                     json.dumps(candidate["pr"]), json.dumps(candidate["issue"]),
+                                     json.dumps(candidate["comments"]), json.dumps(candidate["issue_events"]),
+                                     pr_events], capture_output=True, check=False, text=True)
+            return result.returncode, result.stdout
+
+        rc, out = run(approved())
+        self.assertEqual(rc, 0, out)
+        self.assertIs(json.loads(out)["self_hold_superseded"], True)
+        rc, out = run(approved(held=False))
+        self.assertEqual(rc, 0, out)
+        self.assertIs(json.loads(out)["self_hold_superseded"], False)
+        # Unrelated history (an earlier removal, another label) does not matter.
+        unrelated = approved()
+        unrelated["pr_events"][0] += [hold("worker", "2020-01-02T00:00:00Z", "unlabeled"),
+                                       {"event": "labeled", "label": {"name": "bug"},
+                                        "actor": {"login": "other"}, "created_at": "2099-01-01T00:00:00Z"}]
+        self.assertEqual(run(unrelated)[0], 0)
+
+        rejections = {
+            "another actor's hold": [[hold("maintainer", "2020-01-01T00:00:00Z")]],
+            "runner hold plus another actor's hold": [[hold("worker", "2020-01-01T00:00:00Z"),
+                                                       hold("maintainer", "2020-01-02T00:00:00Z")]],
+            "runner hold reapplied after approval": [[hold("worker", "2020-01-01T00:00:00Z"),
+                                                      hold("worker", "2099-01-01T00:00:00Z")]],
+            "hold label without a labeled event": [[]],
+            "unreadable PR events": None,
+        }
+        for case, pr_events in rejections.items():
+            candidate = approved()
+            candidate["pr_events"] = pr_events
+            self.assertNotEqual(run(candidate)[0], 0, case)
+
+        # Each remaining exclusion is otherwise approvable without the hold label.
+        pr_only = "Corrected scope\n<!-- aidevops:completion-contract:pr-only/v1 -->"
+        self.assertEqual(run(approved(body=pr_only, held=False))[0], 0)
+        self.assertNotEqual(run(approved(body=pr_only))[0], 0, "PR-only completion contract")
+        automation = "<!-- feedback-route:automation-hold:review:PR42:SHA" + "1" * 40 + ":REASONx -->"
+        for held, pr_ref, expected_ok in ((False, "PR42", True), (True, "PR42", False), (True, "PR420", True)):
+            candidate = approved(held=held)
+            candidate["comments"].insert(2, comment(2.5, automation.replace("PR42", pr_ref), "worker", "MEMBER"))
+            candidate["comments"][2]["created_at"] = candidate["comments"][1]["created_at"]
+            self.assertEqual(run(candidate)[0] == 0, expected_ok, ("automation hold", held, pr_ref))
+        release_gated = approved()
+        release_gated["pr"]["labels"].append({"name": "release-approval-required"})
+        self.assertNotEqual(run(release_gated)[0], 0, "release approval gate")
+
     def test_claim_handoff_prelaunch_ready_and_rollback(self):
         # (unassigned, fixture builder, needs a generated approval for its history)
         cases = ((False, fixture, False), (True, fixture, False),
