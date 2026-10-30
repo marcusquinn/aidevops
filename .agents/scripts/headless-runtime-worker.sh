@@ -805,7 +805,7 @@ _hrw_already_delivered_terminal_complete() {
 	jq -e '.state == "closed" and .state_reason == "completed"
 		and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")' \
 		<<<"$issue_json" >/dev/null 2>&1 || return 1
-	local candidates="" pr_number="" pr_json=""
+	local candidates="" pr_number="" pr_json="" scoped_rejection=""
 	_HRW_PR_LESS_REJECTION="candidate_discovery_unavailable"
 	candidates=$(gh pr list --repo "$repo_slug" --state merged --search "$issue_number" \
 		--limit 20 --json number --jq '.[].number' 2>/dev/null) || return 1
@@ -821,12 +821,16 @@ _hrw_already_delivered_terminal_complete() {
 				and ((.repository.owner.login + "/" + .repository.name) | ascii_downcase) == ($repo | ascii_downcase))' \
 			<<<"$pr_json" >/dev/null 2>&1 || {
 			_hrw_scoped_delivery_terminal_complete "$work_dir" "$issue_number" "$repo_slug" "$pr_number" "$issue_json" && return 0
+			# Do not lose a concrete receipt/local-work rejection when another
+			# search candidate later becomes unreadable. Retain one bounded reason.
+			[[ -n "$scoped_rejection" ]] || scoped_rejection="$_HRW_PR_LESS_REJECTION"
 			continue
 		}
 		_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
 		print_info "[lifecycle] worker_already_delivered complete session=${session_key} issue=${issue_number} pr=${pr_number}"
 		return 0
 	done <<<"$candidates"
+	[[ -z "$scoped_rejection" ]] || _HRW_PR_LESS_REJECTION="$scoped_rejection"
 	return 1
 }
 
