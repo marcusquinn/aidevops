@@ -146,12 +146,14 @@ def released_successor_history(comments, release_id, approval_id, released_lease
 
     #aidevops:trust-boundary — historical closure needs explicit revision approval;
     elapsed time or a release message alone never grants continuation authority.
+    Diagnostics are optional metadata only and never affect acceptance.
     """
     history, state = [], None
     seen = {released_lease[1]} if released_lease else set()
     for comment, line, f in events(comments, release_id, approval_id, trusted_logins):
         if not trusted(comment, trusted_logins):
-            reason = "edited" if comment.get("updated_at", comment.get("created_at")) != comment.get("created_at") else "untrusted"
+            edited = comment.get("updated_at", comment.get("created_at")) != comment.get("created_at")
+            reason = "edited" if edited else "untrusted"
             rejection_diagnostic(diagnostics, comment, line, state, reason)
             return None
         if closes_released_attempt(released_lease, comment, line, f):
