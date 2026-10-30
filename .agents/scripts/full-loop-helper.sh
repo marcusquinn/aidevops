@@ -230,7 +230,10 @@ _validate_explicit_pr_title() {
 		return 0
 	fi
 	if [[ -n "$issue_number" ]]; then
-		issue_title=$(gh issue view "$issue_number" --repo "$repo" --json title --jq '.title' 2>/dev/null) || issue_title=""
+		if ! issue_title=$(gh issue view "$issue_number" --repo "$repo" --json title --jq '.title' 2>/dev/null); then
+			print_error "Unable to verify issue #${issue_number} title; refusing explicit task title validation." >&2
+			return 1
+		fi
 	fi
 	if [[ "$issue_title" =~ (^|[^a-zA-Z0-9_])t${task_number}([^a-zA-Z0-9_]|$) ]]; then
 		printf '%s\n' "$title"

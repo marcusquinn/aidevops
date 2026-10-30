@@ -164,8 +164,12 @@ print_error() {
 	return 0
 }
 ISSUE_TITLE="Issue-only work"
+ISSUE_LOOKUP_RC=0
 gh() {
 	printf '%s\n' "$ISSUE_TITLE"
+	if [[ "$ISSUE_LOOKUP_RC" -ne 0 ]]; then
+		return 1
+	fi
 	return 0
 }
 TITLE_TODO="${TEST_ROOT}/titles.md"
@@ -211,7 +215,15 @@ check_title "Unproven task fails with no title output" "t999: x" "" 1 0
 check_title "Issue-only t123 is rewritten as GH#123 with one warning" "t123: x" "GH#123: x" 0 1
 check_title "Issue-title longer ID does not prove shorter task" "t456: x" "" 1 0
 ISSUE_TITLE=""
-check_title "Unavailable linked title fails closed" "t456: x" "" 1 0
+check_title "Successful empty title does not prove unrelated task" "t456: x" "" 1 0
+check_title "Successful empty title permits issue-number rewrite" "t123: x" "GH#123: x" 0 1
+ISSUE_LOOKUP_RC=1
+check_title "Failed lookup blocks issue-number rewrite" "t123: x" "" 1 0
+check_title "Failed lookup rejects unrelated task" "t456: x" "" 1 0
+ISSUE_TITLE="Implement t123: partial output from failed lookup"
+check_title "Failed lookup cannot supply task proof" "t123: x" "" 1 0
+TITLE_TODO="${TEST_ROOT}/titles.md"
+check_title "TODO proof does not require issue-title lookup" "t456: x" "t456: x" 0 0
 
 # ============================================================================
 # Summary
