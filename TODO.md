@@ -1788,13 +1788,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18807 fix(terminal-blocker): recovery must fall back to GraphQL instead of stalling while REST core is exhausted #auto-dispatch #bug ref:GH#36063 pr:#36065 completed:2026-10-30
 
-- [ ] t18808 fix(pulse): re-arm aged checkpoint attention for untried runners; take over idle interactive PRs after 12h #bug ref:GH#36077
+- [x] t18808 fix(pulse): re-arm aged checkpoint attention for untried runners; take over idle interactive PRs after 12h #bug ref:GH#36077 pr:#36079 completed:2026-10-30
 
-- [ ] t18809 fix(pulse): link orphan origin:interactive PRs to a tracking issue so 12h handover can route them #auto-dispatch #bug ref:GH#36080
+- [x] t18809 fix(pulse): link orphan origin:interactive PRs to a tracking issue so 12h handover can route them #auto-dispatch #bug ref:GH#36080 pr:#36093 completed:2026-10-30
 
-- [ ] t18810 fix(tests): resolve git and ssh-keygen portably in OpenCode plugin tests #auto-dispatch #bug ref:GH#36081
+- [x] t18810 fix(tests): resolve git and ssh-keygen portably in OpenCode plugin tests #auto-dispatch #bug ref:GH#36081 pr:#36091 completed:2026-10-30
 
-- [ ] t18811 fix(release): pre-edit regression test fails on macOS physical tmp path; widen preflight trigger #bug ref:GH#36087
+- [x] t18811 fix(release): pre-edit regression test fails on macOS physical tmp path; widen preflight trigger #bug ref:GH#36087 pr:#36088 completed:2026-10-30
 
 - [ ] t18812 fix(release): retry network-layer transport failures in release GitHub reads #auto-dispatch #bug ref:GH#36092
 
