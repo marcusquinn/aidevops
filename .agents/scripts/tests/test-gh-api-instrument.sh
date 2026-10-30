@@ -1388,6 +1388,28 @@ PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
 	bash -euo pipefail "$SHIM_FIXTURE/parent-caller.sh"
 assert_eq "interpreter flags preserve framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "parent-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
 
+# Pulse repository auth re-enters the shim through a python3 resolver hop
+# (`github_auth_runtime.py exec-gh <shim> ...`). Attribution must walk past that
+# exact hop to the framework caller instead of falling back to gh_api_rest.
+cat >"$SHIM_FIXTURE/github_auth_runtime.py" <<'EOF_AUTH_HOP'
+import subprocess
+import sys
+
+sys.exit(subprocess.call([sys.argv[2], *sys.argv[3:]]))
+EOF_AUTH_HOP
+cat >"$SHIM_FIXTURE/auth-hop-caller.sh" <<'EOF_AUTH_HOP_CALLER'
+#!/usr/bin/env bash
+python3 "$AUTH_HOP_FIXTURE" exec-gh "$GH_SHIM_FIXTURE" api '/repos/private-owner/private-repo/issues?per_page=100' --paginate >/dev/null
+EOF_AUTH_HOP_CALLER
+chmod +x "$SHIM_FIXTURE/auth-hop-caller.sh"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	GH_SHIM_FIXTURE="$SHIM_FIXTURE/gh" \
+	AUTH_HOP_FIXTURE="$SHIM_FIXTURE/github_auth_runtime.py" \
+	bash "$SHIM_FIXTURE/auth-hop-caller.sh"
+assert_eq "pulse auth resolver hop preserves framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "auth-hop-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+
 # --- Test 16: managed scratch cleanup is owner-aware and exact ---------------
 scratch_fixture="$TMPDIR/managed-scratch"
 mkdir -p "$scratch_fixture"

@@ -106,6 +106,18 @@ SCANNER_PREDISPATCH_HELPER="${SCANNER_PREDISPATCH_HELPER:-${SCRIPT_DIR}/pre-disp
 SCANNER_CREATED_ISSUE_NUMBER=""
 SCANNER_EXISTING_ISSUE_NUMBER=""
 SCANNER_FALSE="false"
+# Per-scan "<source_pr>\t<issue>" index of labelled review-followup issues.
+SCANNER_ISSUE_INDEX=""
+SCANNER_ISSUE_INDEX_READY=0
+SCANNER_COOLDOWN_REASON=""
+# _scan_one_pr status: GitHub cooldown blocked this PR; yield and resume here.
+SCANNER_PR_YIELD_RC=3
+# Pulse sets SCANNER_REST_CORE_GATE=1 so this deferrable scan shares the Pulse
+# REST-core priority budget instead of draining quota needed by dispatch/merge.
+SCANNER_REST_CORE_GATE="${SCANNER_REST_CORE_GATE:-0}"
+SCANNER_REST_CORE_GATE_INTERVAL="${SCANNER_REST_CORE_GATE_INTERVAL:-30}"
+SCANNER_REST_CORE_GATE_HELPER="${SCANNER_REST_CORE_GATE_HELPER:-${SCRIPT_DIR}/pulse-rate-limit-circuit-breaker.sh}"
+SCANNER_REST_CORE_GATE_LAST_EPOCH=0
 
 SCANNER_DAYS="${SCANNER_DAYS:-7}"
 SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-10}"
@@ -212,6 +224,15 @@ write_scan_cursor() {
 		--arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		'{repo: $repo, next_pr: $next_pr, updated_at: $ts}' \
 		>"$cursor_file" 2>/dev/null || true
+	return 0
+}
+
+# Persist the resume point and log a cooperative yield. An empty next_pr keeps
+# the repo incomplete for Pulse while resuming from the start of the PR list.
+scanner_yield_at() {
+	local repo="$1" next_pr="$2" issues_created="$3" reason="${4:-}"
+	write_scan_cursor "$repo" "$next_pr"
+	log_run_event "$repo" "yield" "next_pr=${next_pr:-start} issues_created=${issues_created}${reason:+ reason=${reason}}"
 	return 0
 }
 
@@ -733,13 +754,102 @@ build_pr_followup_body() {
 	return 0
 }
 
+# True when a GitHub cooldown blocks scanner work: the global secondary
+# cooldown, or primary exhaustion of any named resource (core, graphql, search).
+# Sets SCANNER_COOLDOWN_REASON for the yield log.
+scanner_gh_cooldown_active() {
+	local resource=""
+	SCANNER_COOLDOWN_REASON=""
+	if declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 && _gh_secondary_cooldown_active; then
+		SCANNER_COOLDOWN_REASON="secondary"
+		return 0
+	fi
+	declare -F _gh_primary_cooldown_active >/dev/null 2>&1 || return 1
+	for resource in "$@"; do
+		if _gh_primary_cooldown_active "$resource"; then
+			SCANNER_COOLDOWN_REASON="primary-${resource}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# True when the Pulse REST-core priority budget defers further deferrable work.
+# Probes at most once per SCANNER_REST_CORE_GATE_INTERVAL seconds; inactive for
+# manual runs and when the shared budget helper is unavailable.
+scanner_rest_core_budget_defers() {
+	local now_epoch="" gate_rc=0
+	[[ "$SCANNER_REST_CORE_GATE" == "1" ]] || return 1
+	[[ -x "$SCANNER_REST_CORE_GATE_HELPER" ]] || return 1
+	[[ "$SCANNER_REST_CORE_GATE_INTERVAL" =~ ^[0-9]+$ ]] || SCANNER_REST_CORE_GATE_INTERVAL=30
+	now_epoch=$(date +%s)
+	if [[ $((now_epoch - SCANNER_REST_CORE_GATE_LAST_EPOCH)) -lt "$SCANNER_REST_CORE_GATE_INTERVAL" ]]; then
+		return 1
+	fi
+	SCANNER_REST_CORE_GATE_LAST_EPOCH="$now_epoch"
+	"$SCANNER_REST_CORE_GATE_HELPER" rest-core-allows deferrable post_merge_scanner >/dev/null 2>&1 || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] && return 1
+	SCANNER_COOLDOWN_REASON="rest-core-reserve-rc${gate_rc}"
+	return 0
+}
+
+# True when an uncertain per-PR outcome coincides with a GitHub cooldown. The
+# caller then yields so the cursor stays on this PR instead of skipping it
+# until the next scanner interval.
+scanner_should_yield_uncertain() {
+	local pr="$1" what="$2"
+	if scanner_gh_cooldown_active core graphql search; then
+		log "PR #${pr}: ${what} blocked by GitHub ${SCANNER_COOLDOWN_REASON} cooldown — yield and resume here"
+		return 0
+	fi
+	return 1
+}
+
+# Build one per-scan index of labelled review-followup issues with paginated
+# REST-core reads. The previous per-PR `gh issue list --search` spent one search
+# request per merged PR; search allows 30 requests/minute, so scans exhausted it
+# every minute and starved unrelated search consumers. Issues for PRs merged
+# after since_date were updated after it, so the `since` bound is complete.
+build_existing_issue_index() {
+	local repo="$1" since_date="$2" raw="" rc=0 number="" title="" index=""
+	local title_re='Review followup: PR #([0-9]+)([^0-9]|$)'
+	SCANNER_ISSUE_INDEX=""
+	SCANNER_ISSUE_INDEX_READY=0
+	raw=$(gh api "repos/${repo}/issues?labels=${SCANNER_LABEL}&state=all&since=${since_date}&per_page=100" \
+		--paginate --jq '.[] | select(.pull_request == null) | [.number, .title] | @tsv' 2>/dev/null) || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		log "existing-issue index unavailable for ${repo} (rc=${rc}); using per-PR lookup"
+		return 1
+	fi
+	while IFS=$'\t' read -r number title; do
+		[[ -z "$number" && -z "$title" ]] && continue
+		if [[ ! "$number" =~ ^[1-9][0-9]*$ ]]; then
+			log "existing-issue index for ${repo} returned an unexpected row; using per-PR lookup"
+			return 1
+		fi
+		[[ "$title" =~ $title_re ]] || continue
+		index+="${BASH_REMATCH[1]}"$'\t'"${number}"$'\n'
+	done <<<"$raw"
+	SCANNER_ISSUE_INDEX="$index"
+	SCANNER_ISSUE_INDEX_READY=1
+	return 0
+}
+
+# issue_exists <repo> <pr> [fresh|indexed]
+# indexed consults the per-scan index when ready; post-claim rechecks stay fresh
+# because another runner may create an issue after the index was built.
 issue_exists() {
-	local repo="$1" pr="$2" existing_number="" rc=0
+	local repo="$1" pr="$2" lookup_mode="${3:-fresh}" existing_number="" rc=0
 	local title_query="Review followup: PR #${pr} —"
 	SCANNER_EXISTING_ISSUE_NUMBER=""
-	existing_number=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
-		--search "in:title \"${title_query}\"" --state all --limit 100 \
-		--json number --jq '.[0].number // 0') || rc=$?
+	if [[ "$lookup_mode" == "indexed" && "$SCANNER_ISSUE_INDEX_READY" -eq 1 ]]; then
+		existing_number=$(printf '%s' "$SCANNER_ISSUE_INDEX" |
+			awk -F'\t' -v pr="$pr" '$1 == pr { print $2; found = 1; exit } END { if (!found) print 0 }')
+	else
+		existing_number=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
+			--search "in:title \"${title_query}\"" --state all --limit 100 \
+			--json number --jq '.[0].number // 0') || rc=$?
+	fi
 	if [[ "$rc" -ne 0 || ! "$existing_number" =~ ^[0-9]+$ ]]; then
 		log "issue_exists: lookup failed for ${repo} source PR #${pr} (rc=${rc})"
 		return 2
@@ -981,7 +1091,7 @@ _scan_one_pr() {
 	local supersession_rc=0
 	local body=""
 
-	issue_exists "$repo" "$pr" || exists_rc=$?
+	issue_exists "$repo" "$pr" indexed || exists_rc=$?
 	case "$exists_rc" in
 	0)
 		recover_creation_marker "$repo" "$pr" "$dry_run"
@@ -989,6 +1099,7 @@ _scan_one_pr() {
 		return 1
 		;;
 	2)
+		scanner_should_yield_uncertain "$pr" "existing-issue lookup" && return "$SCANNER_PR_YIELD_RC"
 		log "PR #${pr}: existing-issue lookup uncertain, skip this scan cycle"
 		return 1
 		;;
@@ -1000,10 +1111,14 @@ _scan_one_pr() {
 		return 1
 	fi
 	if [[ "$build_rc" -ne 0 || -z "$body" ]]; then
+		scanner_should_yield_uncertain "$pr" "review fetch" && return "$SCANNER_PR_YIELD_RC"
 		log "PR #${pr}: fetch or body error, skip (will retry next scan)"
 		return 1
 	fi
 	precreation_superseded "$repo" "$pr" "$body" || supersession_rc=$?
+	if [[ "$supersession_rc" -eq 20 ]] && scanner_should_yield_uncertain "$pr" "supersession lookup"; then
+		return "$SCANNER_PR_YIELD_RC"
+	fi
 	if [[ "$supersession_rc" -ne 0 ]]; then
 		return 1
 	fi
@@ -1035,6 +1150,7 @@ _scan_one_pr() {
 	if [[ "$exists_rc" -eq 2 ]]; then
 		log "PR #${pr}: post-claim issue recheck uncertain, skip creation"
 		release_creation_claim "$repo" "$pr" "$runner" "post_claim_lookup_uncertain" || true
+		scanner_should_yield_uncertain "$pr" "post-claim issue recheck" && return "$SCANNER_PR_YIELD_RC"
 		return 1
 	fi
 
@@ -1064,17 +1180,32 @@ do_scan() {
 	log_run_event "$repo" "start" "mode=scan dry_run=${dry_run} budget=${SCANNER_BUDGET_SECONDS}s"
 	since_date=$(get_lookback_date "$SCANNER_DAYS")
 	log "Scanning ${repo} since ${since_date} (${SCANNER_DAYS}d)"
-	local pr_numbers
+	local pr_numbers="" list_rc=0 cursor_next_pr=""
+	cursor_next_pr=$(read_scan_cursor_next_pr "$repo")
+	if scanner_gh_cooldown_active core graphql || scanner_rest_core_budget_defers; then
+		# Keep the existing resume point; an empty cursor still marks the repo
+		# incomplete so Pulse retries it instead of recording a finished scan.
+		scanner_yield_at "$repo" "$cursor_next_pr" 0 "$SCANNER_COOLDOWN_REASON"
+		return 0
+	fi
 	pr_numbers=$(gh pr list --state merged --search "merged:>${since_date}" \
-		--repo "$repo" --limit "$SCANNER_PR_LIMIT" --json number --jq '.[].number' || echo "")
+		--repo "$repo" --limit "$SCANNER_PR_LIMIT" --json number --jq '.[].number') || list_rc=$?
+	if [[ "$list_rc" -ne 0 ]] && scanner_gh_cooldown_active core graphql search; then
+		scanner_yield_at "$repo" "$cursor_next_pr" 0 "$SCANNER_COOLDOWN_REASON"
+		return 0
+	fi
 	if [[ -z "$pr_numbers" ]]; then
-		log "No merged PRs found"
+		if [[ "$list_rc" -ne 0 ]]; then
+			log "Merged PR listing failed (rc=${list_rc})"
+		else
+			log "No merged PRs found"
+		fi
 		clear_scan_cursor "$repo"
 		log_run_event "$repo" "finish" "status=complete issues_created=0"
 		return 0
 	fi
-	local issues_created=0 cursor_next_pr="" resume_ready=1
-	cursor_next_pr=$(read_scan_cursor_next_pr "$repo")
+	build_existing_issue_index "$repo" "$since_date" || true
+	local issues_created=0 resume_ready=1 pr_rc=0
 	if [[ -n "$cursor_next_pr" ]]; then
 		if printf '%s\n' "$pr_numbers" | grep -qFx "$cursor_next_pr"; then
 			resume_ready=0
@@ -1094,16 +1225,24 @@ do_scan() {
 			fi
 		fi
 		if scanner_budget_exhausted "$scan_start_epoch"; then
-			write_scan_cursor "$repo" "$pr"
-			log_run_event "$repo" "yield" "next_pr=${pr} issues_created=${issues_created}"
+			scanner_yield_at "$repo" "$pr" "$issues_created"
 			return 0
 		fi
 		if [[ "$issues_created" -ge "$SCANNER_MAX_ISSUES" ]]; then
 			log "Max issues reached (${SCANNER_MAX_ISSUES})"
 			break
 		fi
-		if _scan_one_pr "$repo" "$pr" "$dry_run"; then
+		if scanner_gh_cooldown_active core graphql || scanner_rest_core_budget_defers; then
+			scanner_yield_at "$repo" "$pr" "$issues_created" "$SCANNER_COOLDOWN_REASON"
+			return 0
+		fi
+		pr_rc=0
+		_scan_one_pr "$repo" "$pr" "$dry_run" || pr_rc=$?
+		if [[ "$pr_rc" -eq 0 ]]; then
 			issues_created=$((issues_created + 1))
+		elif [[ "$pr_rc" -eq "$SCANNER_PR_YIELD_RC" ]]; then
+			scanner_yield_at "$repo" "$pr" "$issues_created" "$SCANNER_COOLDOWN_REASON"
+			return 0
 		fi
 	done <<<"$pr_numbers"
 	clear_scan_cursor "$repo"

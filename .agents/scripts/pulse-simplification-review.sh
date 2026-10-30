@@ -74,9 +74,12 @@ _post_merge_scanner_scan_repo() {
 
 	repo_budget=$((remaining_budget - stage_reserve))
 	echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"${LOGFILE:-/dev/null}"
+	# The scan is deferrable maintenance: share the REST-core priority budget so
+	# it yields with a cursor before draining quota needed by dispatch/merge.
 	SCANNER_DAYS="${SCANNER_DAYS:-7}" \
 		SCANNER_BUDGET_SECONDS="$repo_budget" \
 		SCANNER_CURSOR_DIR="$scanner_cursor_dir" \
+		SCANNER_REST_CORE_GATE="${SCANNER_REST_CORE_GATE:-1}" \
 		"$scanner" scan "$slug" >>"${LOGFILE:-/dev/null}" 2>&1 || true
 
 	local safe_slug="" repo_scan_cursor=""
