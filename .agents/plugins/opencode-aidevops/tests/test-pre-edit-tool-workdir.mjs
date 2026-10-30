@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -15,12 +15,85 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(testDir, "../../../scripts");
 
 function git(cwd, args) {
-  return execFileSync("/usr/bin/git", args, {
+  return execFileSync("git", args, {
     cwd,
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
+
+test("caller context preserves its live runtime PID and fences other sessions", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gh36057-pre-edit-owner-"));
+  const repo = join(root, "repo");
+  const linked = join(root, "linked");
+  const runtime = spawn("sleep", ["120"]);
+  const overrides = {
+    WORKTREE_REGISTRY_DIR: join(root, "registry"),
+    WORKTREE_REGISTRY_DB: join(root, "registry", "owners.db"),
+    OPENCODE: "1",
+    OPENCODE_PID: String(runtime.pid),
+    OPENCODE_SESSION_ID: "ses_caller_fixture",
+    AIDEVOPS_OPENCODE_SESSION_ID: "ses_caller_fixture",
+    FULL_LOOP_HEADLESS: "false",
+  };
+  const saved = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, overrides);
+  try {
+    mkdirSync(repo);
+    git(repo, ["init", "--initial-branch=main"]);
+    git(repo, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+      "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "fixture"]);
+    git(repo, ["worktree", "add", "-b", "bugfix/caller-fixture", linked]);
+    const bashResult = execFileSync("bash", [join(scriptsDir, "pre-edit-check.sh")], {
+      cwd: linked, encoding: "utf8", env: process.env,
+    });
+    assert.match(bashResult, /OK.*In linked worktree/);
+    const tool = createTools(scriptsDir, () => "").aidevops_pre_edit_check;
+    const result = await tool.execute({ workdir: linked }, { sessionID: "ses_caller_fixture" });
+    assert.match(result, /Pre-edit check PASSED/);
+    assert.doesNotMatch(result, /transaction unavailable|WORKTREE_OWNERSHIP_CONFLICT/);
+    const owner = () => execFileSync("sqlite3", [overrides.WORKTREE_REGISTRY_DB,
+      "SELECT owner_pid || '|' || owner_session FROM worktree_owners;"], { encoding: "utf8" }).trim();
+    assert.equal(owner(), `${runtime.pid}|ses_caller_fixture`, "tool and Bash must retain the same runtime owner");
+
+    // Tool arguments cannot impersonate the caller; context is authoritative.
+    const rejected = await tool.execute({ workdir: linked, sessionID: "ses_caller_fixture",
+      OPENCODE_PID: String(runtime.pid) }, { sessionID: "ses_other_fixture" });
+    assert.match(rejected, /WORKTREE_OWNERSHIP_CONFLICT=true/);
+    assert.equal(owner(), `${runtime.pid}|ses_caller_fixture`);
+
+    // Multiple sessions can share one OpenCode server process. Equal PID alone
+    // must not let another session rewrite the existing session stamp.
+    const sharedPidResult = (() => {
+      try {
+        return execFileSync("bash", [join(scriptsDir, "pre-edit-check.sh")], {
+          cwd: linked, encoding: "utf8", env: { ...process.env, OPENCODE_SESSION_ID: "ses_other_fixture" },
+        });
+      } catch (error) {
+        return String(error.stdout) + String(error.stderr);
+      }
+    })();
+    assert.match(sharedPidResult, /WORKTREE_OWNERSHIP_CONFLICT=true/);
+    assert.equal(owner(), `${runtime.pid}|ses_caller_fixture`);
+
+    // A transaction error must fail closed without asserting another live owner
+    // or inviting the same session to create a duplicate worktree.
+    execFileSync("sqlite3", [overrides.WORKTREE_REGISTRY_DB,
+      "CREATE TRIGGER reject_write BEFORE UPDATE ON worktree_owners BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"]);
+    const unavailable = await tool.execute({ workdir: linked }, { sessionID: "ses_caller_fixture" });
+    assert.match(unavailable, /WORKTREE_OWNERSHIP_UNAVAILABLE=true/);
+    assert.match(unavailable, /WORKTREE_OWNERSHIP_ERROR_STAGE=write/);
+    assert.doesNotMatch(unavailable, /WORKTREE_OWNERSHIP_CONFLICT=true|fixture failure/);
+    assert.equal(owner(), `${runtime.pid}|ses_caller_fixture`);
+  } finally {
+    runtime.kill();
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("pre-edit tool validates the explicitly targeted Git worktree", async () => {
   const root = mkdtempSync(join(tmpdir(), "t27909-pre-edit-tool-"));
@@ -159,9 +232,9 @@ set -eu
 [[ "\${OPENCODE_SESSION_ID:-}" == "ses_pre_edit_fixture" ]] || exit 9
 [[ "\${OPENCODE_PID:-}" =~ ^[0-9]+$ ]] || exit 10
 linked=${JSON.stringify(linked)}
-if ! /usr/bin/git -C "$PWD" show-ref --verify --quiet refs/heads/bugfix/slow-fixture; then
+if ! git -C "$PWD" show-ref --verify --quiet refs/heads/bugfix/slow-fixture; then
   sleep 10.1
-  /usr/bin/git -C "$PWD" worktree add -q -b bugfix/slow-fixture "$linked"
+  git -C "$PWD" worktree add -q -b bugfix/slow-fixture "$linked"
 fi
 printf 'LOOP_DECISION=worktree_created\\nWORKTREE_PATH=%s\\nNEXT_STEP: cd to the worktree path and continue implementation there.\\n' "$linked"
 `);

@@ -797,6 +797,12 @@ worktree_owner_session="${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
 
 if declare -f claim_worktree_ownership >/dev/null 2>&1; then
 	if ! claim_worktree_ownership "$worktree_path" "$current_branch" --owner-pid "$worktree_owner_pid" --session "$worktree_owner_session"; then
+		if [[ "${WORKTREE_CLAIM_STATUS:-unavailable}" != "conflict" ]]; then
+			echo -e "${RED}BLOCKED${NC}: linked worktree ownership could not be verified"
+			echo "WORKTREE_OWNERSHIP_UNAVAILABLE=true"
+			echo "ACTION_REQUIRED=retry_worktree_ownership_verification"
+			exit 2
+		fi
 		owner_info=$(check_worktree_owner "$worktree_path" 2>/dev/null || true)
 		owner_pid="unknown"
 		owner_session=""

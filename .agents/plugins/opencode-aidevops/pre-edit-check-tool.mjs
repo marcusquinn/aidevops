@@ -208,9 +208,12 @@ function formatPreEditCheckResult(result, timeoutMs) {
     response = `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
   } else {
     const code = result.code ?? 1;
+    const guidance = cmdOutput.includes("WORKTREE_OWNERSHIP_UNAVAILABLE=true")
+      ? "STOP — retry ownership verification in this worktree; do not create another worktree."
+      : (PRE_EDIT_GUIDANCE[code] || "Unknown");
     response = code === 0
       ? `Pre-edit check PASSED (exit 0):\n${cmdOutput}`
-      : `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput}`;
+      : `Pre-edit check exit ${code}: ${guidance}\n${cmdOutput}`;
   }
   return response;
 }
@@ -264,10 +267,23 @@ export function createPreEditCheckTool(tool, z, scriptsDir, timeoutMs = 120000) 
 function runPreEditCheck(script, args, cwd, timeoutMs, context) {
   return new Promise((resolve) => {
     const sessionID = String(context?.sessionID || "");
+    // The plugin may run in a transport process. Keep the runtime identity
+    // delivered by OpenCode's environment when it belongs to this caller,
+    // rather than replacing the same-session Bash owner's PID unconditionally.
+    let ownerPID = String(process.pid);
+    const inheritedPID = process.env.OPENCODE_PID || "";
+    if (sessionID === process.env.OPENCODE_SESSION_ID && /^[1-9][0-9]*$/.test(inheritedPID)) {
+      try {
+        process.kill(Number(inheritedPID), 0);
+        ownerPID = inheritedPID;
+      } catch {
+        // Missing or inaccessible liveness evidence is not an owner override.
+      }
+    }
     const sessionEnv = /^ses_[A-Za-z0-9_-]+$/.test(sessionID)
       ? {
           OPENCODE: "1",
-          OPENCODE_PID: String(process.pid),
+          OPENCODE_PID: ownerPID,
           OPENCODE_SESSION_ID: sessionID,
           AIDEVOPS_OPENCODE_SESSION_ID: sessionID,
         }
