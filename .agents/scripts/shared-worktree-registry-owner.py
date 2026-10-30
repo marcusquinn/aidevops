@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -24,8 +25,13 @@ def release_session(args: list[str]) -> int:
     if not re.fullmatch(r"[1-9][0-9]*", pid) or not re.fullmatch(r"ses_[A-Za-z0-9_-]+", session) or not proof:
         return 1
     try:
-        observed = subprocess.check_output(
-            ["ps", "-p", pid, "-o", "lstart="], text=True, timeout=5,
+        # Resolve once and reuse a shell-free argv containing only a validated PID.
+        ps = shutil.which("ps")
+        if not ps or not Path(ps).is_absolute():
+            return 1
+        command = [ps, "-p", pid, "-o", "lstart="]
+        observed = subprocess.check_output(  # nosec B603 -- absolute ps, fixed flags, digits-only PID, no shell.
+            command, text=True, timeout=5,
             env={**os.environ, "LC_ALL": "C", "TZ": "UTC"}, stderr=subprocess.DEVNULL)
         if " ".join(observed.split()) != proof:
             return 1
@@ -34,8 +40,8 @@ def release_session(args: list[str]) -> int:
             start = owner_lifetime.process_identity(int(pid))
         else:
             # Unlike the plugin's UTC proof, the shell registry uses ambient TZ.
-            registry_start = subprocess.check_output(
-                ["ps", "-p", pid, "-o", "lstart="], text=True, timeout=5,
+            registry_start = subprocess.check_output(  # nosec B603 -- same resolved ps and validated argv, no shell.
+                command, text=True, timeout=5,
                 env={**os.environ, "LC_ALL": "C"}, stderr=subprocess.DEVNULL)
             start = " ".join(registry_start.split())
         if Path(database).is_file():
