@@ -14,7 +14,8 @@ const execFileAsync = promisify(execFile);
 export async function releasePreEditSessionOwnership(input) {
   const event = input?.event;
   if (event?.type !== "session.deleted") return;
-  const session = event.properties?.info?.id || event.properties?.sessionID;
+  const session = event.data?.sessionID
+    || event.properties?.info?.id || event.properties?.sessionID;
   if (!/^ses_[A-Za-z0-9_-]+$/.test(session || "")) return;
   const identity = processStartIdentity(process.pid);
   if (!identity) throw new Error("Session ownership release lacks server generation proof");

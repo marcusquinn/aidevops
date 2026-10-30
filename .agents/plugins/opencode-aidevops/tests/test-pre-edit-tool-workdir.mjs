@@ -98,7 +98,16 @@ test("caller context preserves its live runtime PID and fences other sessions", 
   }
 });
 
-test("deleted session releases only its fallback server generation", async () => {
+for (const [version, sessionEvent] of [
+  ["V1 info", (sessionID) => ({ properties: { info: { id: sessionID } } })],
+  ["V1 sessionID", (sessionID) => ({ properties: { sessionID } })],
+  ["V2 data", (sessionID) => ({ data: { sessionID } })],
+]) {
+  test(`deleted session releases only its fallback server generation (${version})`,
+    () => assertSessionOwnershipRelease(sessionEvent));
+}
+
+async function assertSessionOwnershipRelease(sessionEvent) {
   const root = mkdtempSync(join(tmpdir(), "gh36069-session-release-"));
   const repo = join(root, "repo");
   const linked = join(root, "linked");
@@ -119,24 +128,24 @@ test("deleted session releases only its fallback server generation", async () =>
     claim("ses_first");
     assert.throws(() => claim("ses_next"), "live session must fence the next session");
     await releasePreEditSessionOwnership({ event: {
-      type: "session.idle", properties: { sessionID: "ses_first" },
+      type: "session.idle", ...sessionEvent("ses_first"),
     } });
     assert.equal(sql("SELECT count(*) FROM worktree_owners;"), "1");
     await releasePreEditSessionOwnership({ event: {
-      type: "session.deleted", properties: { info: { id: "ses_other" } },
+      type: "session.deleted", ...sessionEvent("ses_other"),
     } });
     assert.equal(sql("SELECT count(*) FROM worktree_owners;"), "1");
     // Even an equal PID/session must not release a replacement generation.
     sql("UPDATE worktree_owners SET owner_process_start='stale-generation';");
     await releasePreEditSessionOwnership({ event: {
-      type: "session.deleted", properties: { info: { id: "ses_first" } },
+      type: "session.deleted", ...sessionEvent("ses_first"),
     } });
     assert.equal(sql("SELECT count(*) FROM worktree_owners;"), "1");
     claim("ses_first");
     // A row transferred to a different runtime PID must survive server cleanup.
     sql("INSERT INTO worktree_owners SELECT worktree_path || '-other', branch, 1, owner_session, owner_batch, task_id, owner_comm, created_at, owner_process_start, owner_dead_seen_at FROM worktree_owners;");
     await releasePreEditSessionOwnership({ event: {
-      type: "session.deleted", properties: { info: { id: "ses_first" } },
+      type: "session.deleted", ...sessionEvent("ses_first"),
     } });
     assert.equal(sql("SELECT count(*) FROM worktree_owners;"), "1");
     assert.equal(sql("SELECT owner_pid FROM worktree_owners;"), "1");
@@ -147,7 +156,7 @@ test("deleted session releases only its fallback server generation", async () =>
     else process.env.WORKTREE_REGISTRY_DB = saved;
     rmSync(root, { recursive: true, force: true });
   }
-});
+}
 
 test("inherited ownership requires matching generation evidence", async () => {
   const root = mkdtempSync(join(tmpdir(), "gh36068-owner-generation-"));
