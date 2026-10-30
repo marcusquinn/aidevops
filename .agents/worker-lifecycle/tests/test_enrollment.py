@@ -1,10 +1,14 @@
 """Disposable Git integration; intentionally outside the portable OS validator."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout
+import errno
+import io
 import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess  # nosec B404 # owned Git and native processes in disposable fixtures
 import sys
 import tempfile
@@ -14,6 +18,7 @@ from uuid import uuid4
 
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
 from worker_lifecycle.enrollment import GenerationEnrollment, MARKER, _git_directory
+from worker_lifecycle.registry import main
 from worker_lifecycle.storage import LifecycleRegistry, StoreConflict
 
 
@@ -49,6 +54,42 @@ class EnrollmentContract(unittest.TestCase):
         self.assertEqual(self.enrollment.resolve(self.tree), generation)
         self.assertEqual(self.store.summary(), before)
         self.assertEqual(self.git("-C", str(self.tree), "status", "--porcelain").stdout, b"")
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux POSIX access ACL")
+    def test_private_group_write_requires_absent_access_acl(self):
+        directory = self.marker.parent
+        directory.chmod(0o770)
+        with patch("worker_lifecycle.enrollment._user_private_group", return_value=True):
+            self.assertEqual(_git_directory(self.tree), directory)
+            with patch("os.getxattr", side_effect=OSError(errno.EACCES, "denied")):
+                with self.assertRaisesRegex(ValueError, "not-shared-writable"):
+                    _git_directory(self.tree)
+            # Version 2 ACL: owner rwx, another UID rwx, owning group rwx,
+            # mask rwx, other none. The mode alone still looks like 0770.
+            entries = [(1, 7, 0xffffffff), (2, 7, os.getuid() + 1),
+                       (4, 7, 0xffffffff), (16, 7, 0xffffffff), (32, 0, 0xffffffff)]
+            acl = struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in entries)
+            try:
+                os.setxattr(directory, "system.posix_acl_access", acl)
+            except OSError as error:
+                if error.errno == errno.ENOTSUP:
+                    self.skipTest("filesystem does not support POSIX ACLs")
+                raise
+            self.assertEqual(directory.stat().st_mode & 0o777, 0o770)
+            with self.assertRaisesRegex(ValueError, "not-shared-writable"):
+                _git_directory(self.tree)
+
+    def test_enrollment_conflict_cli_includes_detail_without_changing_reason(self):
+        self.enrollment.resolve(self.tree, create=True)
+        self.marker.unlink()
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["registry", "--state-dir", str(self.store.directory),
+                                       "enroll", "--path", str(self.tree)]), redirect_stdout(output):
+            self.assertEqual(main(), 2)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["reason"], "StoreConflict")
+        self.assertEqual(result["detail"], "reserved-path-without-enrollment-marker")
+        self.assertFalse(result["cleanup_authorized"])
 
     def test_git_query_treats_shell_metacharacters_as_path_data(self):
         path = self.root / "tree ; $(false) $HOME"
