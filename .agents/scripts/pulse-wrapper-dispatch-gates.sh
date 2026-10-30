@@ -164,7 +164,7 @@ is_permission_block_rate_acceptable() {
 	local blocker_log="${AIDEVOPS_WORKER_BLOCKER_LOG_FILE:-${HOME}/.aidevops/logs/worker-progress-blockers.jsonl}"
 	local state_file="${blocker_log}.permission-breaker.state"
 	local saved_count=0 saved_latest=0
-	local now result count latest
+	local now="" result="" count=0 latest=0
 	now=$(date +%s)
 	if [[ -f "$state_file" ]]; then
 		read -r saved_count saved_latest <"$state_file" || true
