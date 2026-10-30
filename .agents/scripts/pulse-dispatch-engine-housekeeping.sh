@@ -308,6 +308,8 @@ _pulse_housekeeping_on_signal() {
 # persisted and a following run resumes at the first incomplete stage. The
 # cheap terminal reconciles (preflight_ownership_reconcile) run before the
 # slow GH#33246 blocker-refresh catch-up so they are not starved behind it.
+# Both recovery stages precede optional scans: synchronous housekeeping shares
+# the cycle deadline, which long scans can exhaust before recovery is reached.
 #
 # Args:
 #   $1 - per-stage timeout seconds
@@ -328,6 +330,11 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	local incomplete=0
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="startup"
 	echo "[pulse-wrapper] Async post-dispatch housekeeping: started (timeout=${stage_timeout}s)" >>"$LOGFILE"
+	_pulse_run_resumable_housekeeping_stage "preflight_ownership_reconcile" "$state_file" \
+		run_stage_with_timeout "preflight_ownership_reconcile" "$stage_timeout" \
+		_preflight_ownership_reconcile "$stage_timeout" || incomplete=1
+	_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
+		_pulse_run_blocker_refresh_catchup "$stage_timeout" || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "post_merge_scanner" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "pr_review_thread_response" "$state_file" \
@@ -338,11 +345,6 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 		_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$stage_timeout" run_simplification_dedup_cleanup || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "fast_fail_prune_expired" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$stage_timeout" fast_fail_prune_expired || incomplete=1
-	_pulse_run_resumable_housekeeping_stage "preflight_ownership_reconcile" "$state_file" \
-		run_stage_with_timeout "preflight_ownership_reconcile" "$stage_timeout" \
-		_preflight_ownership_reconcile "$stage_timeout" || incomplete=1
-	_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
-		_pulse_run_blocker_refresh_catchup "$stage_timeout" || incomplete=1
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="finishing"
 	if [[ "$incomplete" -eq 0 ]]; then
 		rm -f "$state_file" 2>/dev/null || true

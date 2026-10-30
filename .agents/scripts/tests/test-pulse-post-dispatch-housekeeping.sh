@@ -330,6 +330,14 @@ test_housekeeping_blocker_refresh_catchup() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | stale cache order: ${got}"
 	fi
+	# Synchronous Linux housekeeping shares the cycle deadline. Optional scans
+	# must not consume that deadline before ownership and stale-cache recovery.
+	local recovery_order=""
+	recovery_order=$(grep -E '^(ownership_reconcile|dep_graph:1|blocked_refresh|brief_hold_release|post_merge)$' "$STAGE_LOG" | tr '\n' ' ')
+	if [[ "$recovery_order" != "ownership_reconcile dep_graph:1 blocked_refresh brief_hold_release post_merge " ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | optional scan precedes recovery: ${recovery_order}"
+	fi
 
 	: >"$STAGE_LOG"
 	touch "$DEP_GRAPH_CACHE_FILE"
