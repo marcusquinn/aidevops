@@ -179,9 +179,10 @@ is_permission_block_rate_acceptable() {
 		--argjson threshold "$max_events" '
 		map({event, reason, ts, repo_slug, issue_number})
 		| map(select(.event == "terminal_blocker_captured" and .reason == "permission_required")
-			| if (.ts | type) != "number" or (.repo_slug | type) != "string"
-				or .repo_slug == "" or (.issue_number | tostring | test("^[1-9][0-9]*$") | not)
-			  then error("invalid metadata") else .issue_number |= tostring end
+			| if (.ts | type) != "number" then error("invalid metadata") else . end
+			| select((.repo_slug | type) == "string" and .repo_slug != ""
+				and (.issue_number | tostring | test("^[1-9][0-9]*$")))
+			| .issue_number |= tostring
 			| select(.ts <= $now and .ts > ($now - 3600 - $window)))
 		| sort_by(.ts)
 		| reduce .[] as $event ({recent: [], count: 0, latest: 0};

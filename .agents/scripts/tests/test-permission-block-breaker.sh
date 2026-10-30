@@ -79,6 +79,26 @@ NOW=103600
 expect 0 'pause expires at one hour'
 
 reset_fixture
+event null
+event 0
+printf '%s\n' '{"event":"terminal_blocker_captured","reason":"permission_required","ts":100000,"issue_number":9,"repo_slug":""}' >>"$BLOCKERS"
+printf '%s\n' '{"event":"terminal_blocker_captured","reason":"permission_required","ts":100000,"issue_number":null,"repo_slug":null}' >>"$BLOCKERS"
+expect 0 'identifier-less events do not count'
+event 1
+event 2
+expect 0 'identifier-less events do not inflate distinct count'
+event 3
+expect 1 'identifier-less events do not mask three valid distinct issues'
+
+reset_fixture
+event 1
+event 2
+event 3
+printf '%s\n' '{"event":"terminal_blocker_captured","reason":"permission_required","ts":"invalid","issue_number":null}' >>"$BLOCKERS"
+expect 0 'invalid timestamp fails open even without identifiers'
+[[ "$(<"$LOGFILE")" == *'missing or malformed log; failing open'* ]]
+
+reset_fixture
 export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="$TEST_ROOT/custom-blockers.jsonl"
 default_blockers="$BLOCKERS"
 BLOCKERS="$AIDEVOPS_WORKER_BLOCKER_LOG_FILE"
