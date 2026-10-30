@@ -76,6 +76,12 @@ a lifecycle transition occurs; omit it for an immediate snapshot. The start
 action returns after the owned process spawns, so the primary session remains
 available for progress reports and scoped cancellation.
 
+`budget_seconds` defaults to 900 seconds and is clamped at start to
+0.01–86,400 seconds (24 hours); `budget_ms` in the receipt is the effective
+limit. There is no separate two-hour or idle timeout in the bounded-operation
+manager or supervisor. This budget is not a guarantee of host uptime or survival
+across plugin/session teardown (see lifecycle limits below).
+
 The receipt distinguishes running, failed, timed-out, cancelled, and
 restoration-failed states. `AIDEVOPS_PROGRESS: ...` lines count as explicit
 meaningful progress; ordinary output is not a heartbeat substitute and is not

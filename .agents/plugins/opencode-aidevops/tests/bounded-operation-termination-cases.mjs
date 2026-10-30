@@ -159,6 +159,40 @@ export function terminationCases() {
 
   restorationTerminationCases();
   sameGroupSurvivorCases();
+  longBudgetCases();
+}
+
+function longBudgetCases() {
+  test("24-hour tool budgets remain running past the reported two-hour point without progress", async () => {
+    for (const requested of [86_400, 172_800]) {
+      let now = 0;
+      const timers = [];
+      const instance = manager({ now: () => now, setTimer: (callback, milliseconds) => {
+        timers.push(milliseconds);
+        return setTimeout(callback, milliseconds);
+      } });
+      const schemaNode = { optional() { return this; } };
+      const z = { enum: () => schemaNode, string: () => schemaNode, number: () => schemaNode, array: () => schemaNode };
+      const tool = createBoundedInteractiveOperationTool((definition) => definition, z, instance);
+      assert.match(tool.description, /86400 seconds/);
+      const started = JSON.parse(await tool.execute({ action: "start", budget_seconds: requested,
+        command: [process.execPath, "-e", "console.log('ordinary output'); setTimeout(()=>process.exit(0),80)"] }, owner));
+      assert.equal(started.budget_ms, 86_400_000);
+      assert.deepEqual(timers, [86_400_000]);
+      // Advance only the existing manager clock: no claim of a real two-hour soak.
+      now = 7_216_000;
+      const status = JSON.parse(await tool.execute({ action: "status", operation_id: started.operation_id }, owner));
+      assert.equal(status.state, "running");
+      assert.equal(status.remaining_ms, 79_184_000);
+      assert.equal(status.progress_events, 0);
+      assert.equal(status.progress_overdue, true);
+      assert.equal(status.termination_cause, null);
+      const result = await terminal(instance, started.operation_id);
+      assert.equal(result.state, "succeeded");
+      assert.equal(result.progress_events, 0);
+      assert.equal(result.termination_cause, null);
+    }
+  });
 }
 
 function restorationTerminationCases() {
