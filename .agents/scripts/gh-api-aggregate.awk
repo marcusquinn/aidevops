@@ -154,7 +154,7 @@ function collect_quota(    series, row) {
 	quota_logged[row] = quota_cost
 }
 
-# Concurrent processes append on completion; sort by response timestamp and,
+# Concurrent processes append on completion; sort by captured sample time and,
 # within a second, decreasing remaining. Ignore counter increases rather than
 # creating negative drain. The first sample is a baseline, not an interval.
 function replay_quota(    i, j, row, prev, series, drop, cost, minute, key, residual) {
@@ -230,6 +230,7 @@ function emit_quota(    series, values, n, i, parts) {
 	replay_quota()
 	print "  \"rest_core_attribution\": {"
 	print "    \"minute_assignment\": \"interval-ending-sample\","
+	print "    \"sample_time_basis\": \"command-completion-under-credential-lock\","
 	print "    \"unattributed_is_upper_bound\": true,"
 	printf "    \"missing_metadata_attempts\": %d,\n", unattributed_missing_metadata_attempts + 0
 	print "    \"series\": ["

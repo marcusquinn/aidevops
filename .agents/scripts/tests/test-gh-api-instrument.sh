@@ -645,6 +645,15 @@ AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
 	_ghqa_record_result_file "$exact_success_result" frame-metadata logical-frame 0
 assert_eq "header reset reaches attempt record with credential digest" "$pool_a:1800000000" \
 	"$(awk -F '\t' 'NR == 1 {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "capture timestamp survives deferred log append" \
+	"$(awk -F '\t' 'NR == 1 {print $12}' "$exact_success_result")" \
+	"$(awk -F '\t' 'NR == 1 {print $1}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest timestamp-caller logical-ts captured-ts 1 0 success 200 1 1 gh-pat rest-core rest-selected 99 "$pool_a" 1800000000 "$fixture_minute"
+assert_eq "explicit captured time is not replaced by append time" "$fixture_minute" \
+	"$(awk -F '\t' '$11 == "captured-ts" {print $1}' "$AIDEVOPS_GH_API_LOG")"
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" _ghqa_record_bootstrap success 1 0 1 99 1800000000
+assert_eq "bootstrap preserves known reset metadata" "$pool_a:1800000000" \
+	"$(awk -F '\t' '$2 == "gh-quota-bootstrap" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
 
 # --- Test 11d: successful native multi-frame REST costs are exact -----------
 native_multi_result="$TMPDIR/native-multi.result"
@@ -925,6 +934,14 @@ assert_eq "concurrent attempt IDs remain unique" "12" "$(cut -f11 "$AIDEVOPS_GH_
 SHIM_FIXTURE="$TMPDIR/shim-fixture"
 NATIVE_FIXTURE="$TMPDIR/native-fixture"
 mkdir -p "$SHIM_FIXTURE" "$NATIVE_FIXTURE"
+# Keep the isolated native-gh PATH usable on systems (including Nix) whose
+# standard tools do not live in /usr/bin or /bin. Never expose the real gh.
+for fixture_tool in bash cat dd dirname basename date awk sed grep tr mktemp mkdir chmod rm rmdir uname jq cut sort wc sleep stat flock python3 shasum sha256sum openssl; do
+	fixture_tool_path=$(command -v "$fixture_tool" || true)
+	if [[ -n "$fixture_tool_path" ]]; then
+		ln -s "$fixture_tool_path" "$NATIVE_FIXTURE/$fixture_tool"
+	fi
+done
 cp "${PARENT_DIR}/gh" "$SHIM_FIXTURE/gh"
 cp "${PARENT_DIR}/gh-native-transport-lib.sh" "$SHIM_FIXTURE/gh-native-transport-lib.sh"
 cp "${PARENT_DIR}/gh-api-guards-lib.sh" "$SHIM_FIXTURE/gh-api-guards-lib.sh"
