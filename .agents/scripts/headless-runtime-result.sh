@@ -245,7 +245,8 @@ _handle_run_result_success_output() {
 			_run_classification_source="$_RUN_RESULT_MODEL_BLOCKED_SIGNAL"
 			_run_classification_pattern="terminal_blocked"
 			if declare -F terminal_blocker_capture_output >/dev/null 2>&1; then
-				terminal_blocker_capture_output "$output_file" || true
+				# Judge the final part with the pattern that classified this exit.
+				terminal_blocker_capture_output "$output_file" false "${_HEADLESS_BLOCKED_LINE_PATTERN:-}" || true
 				local blocker_reason=""
 				blocker_reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
 				_run_result_reconcile_unknown_blocker "$blocker_reason" && return 0
