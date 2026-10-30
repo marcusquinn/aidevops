@@ -340,6 +340,11 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-partial-continuation.sh"
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_DIR}/pulse-draft-checkpoint-unblock.sh"
 
+# GH#36112: supersede conflicting Pulse TODO handoffs instead of routing them.
+# shellcheck source=./pulse-merge-todo-handoff.sh
+# shellcheck disable=SC1091
+source "${_PULSE_MERGE_DIR}/pulse-merge-todo-handoff.sh"
+
 # _release_interactive_claim_on_merge is now provided by shared-claim-lifecycle.sh
 # (sourced at the top of this module, t2429/GH#20067). The backward-compatible
 # underscore-prefixed alias is defined there so all existing call sites
@@ -1249,6 +1254,18 @@ _pmp_stage_handle_conflict() {
 	if [[ "${DRY_RUN:-0}" == "1" ]]; then
 		echo "[pulse-wrapper] DRY-RUN: PR #${pr_number} in ${repo_slug} is CONFLICTING; would evaluate rebase, repair routing, or protected close" >>"$LOGFILE"
 		return 2
+	fi
+	# GH#36112: a generated TODO handoff has no work issue; its Ref lines must
+	# never reach issue routing, holds or the generic close path.
+	local handoff_rc="${_PMTH_PROCEED:-10}"
+	if declare -F _pmth_handle_conflicting_handoff >/dev/null 2>&1; then
+		handoff_rc=0
+		_pmth_handle_conflicting_handoff "$pr_number" "$repo_slug" "${pr_head_ref_name:-}" \
+			"$pr_head_ref_oid" "$pr_labels" || handoff_rc=$?
+	fi
+	if [[ "$handoff_rc" -ne "${_PMTH_PROCEED:-10}" ]]; then
+		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
+		return "$handoff_rc"
 	fi
 	conflict_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
 	if [[ -n "$conflict_linked_issue" ]]; then

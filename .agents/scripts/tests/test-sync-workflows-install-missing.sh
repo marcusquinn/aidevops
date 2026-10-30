@@ -196,7 +196,7 @@ policy_drift=$(HOME="$test_root" PATH="$test_root/bin:$PATH" \
 assert_contains "policy drift is actionable with a current caller" "$policy_drift" '"slug":"fake/admin"'
 assert_contains "policy-only drift includes CONTRIBUTING target" "$policy_drift" 'CONTRIBUTING.md'
 
-real_git="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+real_git="${AIDEVOPS_TEST_GIT_BIN:-$(command -v git)}"
 apply_repo="$test_root/repos/apply"
 apply_bare="$test_root/apply.git"
 mkdir -p "$apply_repo"
@@ -248,7 +248,7 @@ exec "$real_git" "$@"
 EOF
 chmod +x "$test_root/guard-bin/git"
 : >"$test_root/canonical-git-guard.log"
-safe_path="$test_root/guard-bin:$test_root/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+safe_path="$test_root/guard-bin:$test_root/bin:$PATH"
 apply_output=$(HOME="$test_root" PATH="$safe_path" \
 	GH_CALL_LOG="$test_root/gh.log" AIDEVOPS_TEMP_DIR="$test_root/agent-tmp" \
 	AIDEVOPS_WORKTREE_BASE_DIR="$test_root/worktrees" \
@@ -348,6 +348,120 @@ bad_release=$(HOME="$test_root" PATH="$test_root/bin:$PATH" \
 	--repo fake/apply --workflow loc-badge --install-missing 2>&1)
 assert_exit "invalid release SHA fails instead of falling back to main" 1 "$?"
 assert_contains "release lookup failure is explicit" "$bad_release" 'cannot resolve target release SHA'
+
+# Exercise legacy migration through the same real apply/PR path as installs.
+mkdir -p "$apply_repo/.github/workflows"
+cp "$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
+	"$apply_repo/.github/workflows/loc-badge.yml"
+"$real_git" -C "$apply_repo" add .github/workflows/loc-badge.yml
+"$real_git" -C "$apply_repo" commit -q -m 'legacy floating metrics caller'
+"$real_git" -C "$apply_repo" push -q github main
+
+for pin_case in floating tag sha unrelated-main unrelated-tag wrong-repo registry global optout mirror; do
+	case "$pin_case" in
+	floating) pin=main ;;
+	tag | unrelated-main) pin=v3.38.35 ;;
+	sha) pin=1111111111111111111111111111111111111111 ;;
+	*) pin=main ;;
+	esac
+	sed "s/@main/@$pin/; s/aidevops_ref: main/aidevops_ref: $pin/" \
+		"$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
+		>"$apply_repo/.github/workflows/loc-badge.yml"
+	case "$pin_case" in
+	unrelated-main | unrelated-tag)
+		other_pin=main
+		[[ "$pin_case" == unrelated-tag ]] && other_pin=v1.0.0
+		sed '/^jobs:$/a\
+  unrelated:\
+    uses: other/project/.github/workflows/check.yml@'"$other_pin" \
+			"$apply_repo/.github/workflows/loc-badge.yml" >"$test_root/caller.yml"
+		cp "$test_root/caller.yml" "$apply_repo/.github/workflows/loc-badge.yml"
+		;;
+	wrong-repo)
+		sed 's|marcusquinn/aidevops|other/project|g' \
+			"$apply_repo/.github/workflows/loc-badge.yml" >"$test_root/caller.yml"
+		cp "$test_root/caller.yml" "$apply_repo/.github/workflows/loc-badge.yml"
+		;;
+	esac
+	jq --arg mode "$pin_case" '
+		del(.workflow_reusable_ref, .initialized_repos[0].workflow_reusable_ref,
+		    .initialized_repos[0].badges, .initialized_repos[0].mirror_upstream)
+		| if $mode == "registry" then .initialized_repos[0].workflow_reusable_ref = "main"
+		  elif $mode == "global" then .workflow_reusable_ref = "main"
+		  elif $mode == "optout" then .initialized_repos[0].badges = false
+		  elif $mode == "mirror" then .initialized_repos[0].mirror_upstream = "fake/source"
+		  else . end
+	' "$test_root/.config/aidevops/repos.json" >"$test_root/registry.json"
+	cp "$test_root/registry.json" "$test_root/.config/aidevops/repos.json"
+	preview=$(HOME="$test_root" PATH="$test_root/bin:$PATH" \
+		GH_CALL_LOG="$test_root/gh.log" bash "$HELPER" \
+		--repo fake/apply --workflow loc-badge --pin-floating --json 2>&1)
+	assert_exit "floating migration $pin_case preview succeeds" 0 "$?"
+	if [[ "$pin_case" == floating || "$pin_case" == unrelated-tag ]]; then
+		assert_contains "floating caller is actionable" "$preview" '"outcome":"PLANNED"'
+		assert_contains "floating caller targets release SHA and tag" "$preview" \
+			'@0123456789abcdef0123456789abcdef01234567 # v3.39.45'
+	else
+		assert_not_contains "$pin_case caller is not actionable" "$preview" '"outcome":"PLANNED"'
+	fi
+done
+
+jq 'del(.initialized_repos[0].mirror_upstream)' \
+	"$test_root/.config/aidevops/repos.json" >"$test_root/registry.json"
+cp "$test_root/registry.json" "$test_root/.config/aidevops/repos.json"
+# Restore the clean local checkout; remote main still has the legacy caller.
+cp "$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
+	"$apply_repo/.github/workflows/loc-badge.yml"
+migration_output=$(HOME="$test_root" PATH="$safe_path" \
+	GH_CALL_LOG="$test_root/gh.log" AIDEVOPS_TEMP_DIR="$test_root/agent-tmp" \
+	AIDEVOPS_WORKTREE_BASE_DIR="$test_root/worktrees" \
+	AIDEVOPS_TEST_GIT_BIN="$real_git" CANONICAL_GIT_REPO="$apply_repo" \
+	CANONICAL_GIT_GUARD_LOG="$test_root/canonical-git-guard.log" bash "$HELPER" \
+	--apply --repo fake/apply --workflow loc-badge --pin-floating \
+	--branch chore/pin-floating 2>&1)
+assert_exit "floating caller apply succeeds" 0 "$?"
+migrated_caller=$("$real_git" --git-dir="$apply_bare" show \
+	'chore/pin-floating:.github/workflows/loc-badge.yml')
+assert_contains "migration pins executable workflow" "$migrated_caller" \
+	'loc-badge-reusable.yml@0123456789abcdef0123456789abcdef01234567 # v3.39.45'
+assert_contains "migration pins matching helper provenance" "$migrated_caller" \
+	'aidevops_ref: 0123456789abcdef0123456789abcdef01234567 # v3.39.45'
+
+# Check release annotations independently of the apply-mode worktree machinery.
+sed 's/@main/@0123456789abcdef0123456789abcdef01234567 # v3.39.45/; s/aidevops_ref: main/aidevops_ref: 0123456789abcdef0123456789abcdef01234567 # v3.39.45/' \
+	"$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
+	>"$apply_repo/.github/workflows/loc-badge.yml"
+classified=$(HOME="$test_root" bash "$CHECK_HELPER" \
+	--repo fake/apply --workflow loc-badge --json)
+assert_contains "release annotation does not cause caller drift" "$classified" \
+	'"classification":"CURRENT/CALLER"'
+for preview_mode in ordinary force-release; do
+	preview_args=(--repo fake/apply --workflow loc-badge --json)
+	if [[ "$preview_mode" == force-release ]]; then
+		preview_args+=(--force-ref --ref '0123456789abcdef0123456789abcdef01234567 # v3.39.45')
+	fi
+	preview=$(HOME="$test_root" PATH="$test_root/bin:$PATH" \
+		GH_CALL_LOG="$test_root/gh.log" bash "$HELPER" "${preview_args[@]}" 2>&1)
+	assert_exit "$preview_mode repeated preview succeeds" 0 "$?"
+	assert_not_contains "$preview_mode repeated preview has no work" "$preview" '"outcome":"PLANNED"'
+done
+
+# Restore stale floating discovery for the refreshed-branch guard below.
+cp "$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
+	"$apply_repo/.github/workflows/loc-badge.yml"
+# A newer pin on the refreshed branch must win over stale discovery of @main.
+"$real_git" --git-dir="$apply_bare" fetch -q "$apply_bare" \
+	'refs/heads/chore/pin-floating:refs/heads/main'
+stale_output=$(HOME="$test_root" PATH="$safe_path" \
+	GH_CALL_LOG="$test_root/gh.log" AIDEVOPS_TEMP_DIR="$test_root/agent-tmp" \
+	AIDEVOPS_WORKTREE_BASE_DIR="$test_root/worktrees" \
+	AIDEVOPS_TEST_GIT_BIN="$real_git" CANONICAL_GIT_REPO="$apply_repo" \
+	CANONICAL_GIT_GUARD_LOG="$test_root/canonical-git-guard.log" bash "$HELPER" \
+	--apply --repo fake/apply --workflow loc-badge --pin-floating \
+	--branch chore/stale-floating 2>&1)
+assert_exit "stale floating discovery succeeds safely" 0 "$?"
+assert_contains "refreshed SHA pin prevents writes" "$stale_output" \
+	'refreshed caller is not floating; no changes'
 
 if [[ "$FAIL" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$PASS"

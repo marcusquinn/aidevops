@@ -61,6 +61,21 @@ def edit(data, index, old, new):
     data["comments"][index]["body"] = data["comments"][index]["body"].replace(old, new)
 
 
+def assert_rejection(test, data, comment_id, reason="transition_rejected"):
+    with test.assertRaises(ValueError) as caught:
+        approved(data)
+    message = str(caught.exception)
+    test.assertIn("intervening coordination is not fully released; no approval generated", message)
+    test.assertIn(f"comment={comment_id} ", message)
+    test.assertIn(f"reason={reason}", message)
+    test.assertEqual(message.count("rejected comment="), 1)
+    for record in data["comments"]:
+        values = fields(record["body"])
+        for key in (LT, "nonce", "session"):
+            if values.get(key):
+                test.assertNotIn(values[key], message)
+
+
 class ClaimOnlyRecoveryTests(unittest.TestCase):
     def test_unbound_diagnostic_needs_exact_abort_and_explicit_acknowledgement(self):
         data = diagnostic_fixture()
@@ -324,8 +339,9 @@ class StaleResetAndRebindTests(unittest.TestCase):
         for case, mutate in mutations.items():
             data = stale_reset_fixture()
             mutate(data)
-            with self.subTest(case=case), self.assertRaises(ValueError):
-                approved(data)
+            reason = {"edited": "edited", "reached_ready": "open_at_end"}.get(case, "transition_rejected")
+            with self.subTest(case=case):
+                assert_rejection(self, data, 5, reason)
 
     def test_first_ready_lease_may_rebind_attempt_once(self):
         result = revision.validate(approved(rebind_fixture()))
@@ -352,8 +368,10 @@ class StaleResetAndRebindTests(unittest.TestCase):
         for case, mutate in mutations.items():
             data = rebind_fixture()
             mutate(data)
-            with self.subTest(case=case), self.assertRaises(ValueError):
-                approved(data)
+            rejected = {"second_rebind": 4.8, "terminal_names_prelaunch_attempt": 6,
+                        "release_names_prelaunch_attempt": 5}.get(case, 4.6)
+            with self.subTest(case=case):
+                assert_rejection(self, data, rejected)
 
 
 def abort_pages(*extra, claim_author="worker", approval="checkpoint_approval=3 ", expiry=" expires_at=100"):
