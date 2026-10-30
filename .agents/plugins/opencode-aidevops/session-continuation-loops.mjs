@@ -103,6 +103,7 @@ export function detectLoop(window, threshold) {
       period,
       repeats,
       kind: failing ? "failure" : "success",
+      description: failing ? "failing" : "non-progressing",
       tools,
       label: boundedText(tools.join(" -> ")),
       signature: cycle.map((entry) => `${entry.fp}:${entry.failed ? 1 : 0}`).sort().join("|"),

@@ -212,7 +212,7 @@ function signalLoop(state, input, output, call, detected) {
   const failed = toolOutcomeFailed(output);
   const correction = loopCorrection(state, call, detected);
   output.output = `${String(output.output || "").trim()}\n\n${correction}`.trim();
-  const result = { failed, replan: true, count: detected.repeats, loop: { kind: detected.kind, period: detected.period, tools: detected.tools }, correction };
+  const result = { failed, replan: true, count: detected.repeats, loop: { kind: detected.kind, description: detected.description, period: detected.period, tools: detected.tools }, correction };
   if (detected.kind === "success") {
     state.qualityLog?.("WARN", `[session-continuation] non-progressing ${detected.label} cycle steered for session ${sessionHashFor(input)}`);
     return result;

@@ -371,8 +371,7 @@ function scrubObservedToolOutput(ctx, log, toolName, output) {
 function trackObservedToolEffects(ctx, log, toolName, input, output) {
   const continuationResult = ctx.continuationGuard?.afterTool(input, output);
   if (continuationResult?.replan) {
-    const kind = continuationResult.loop?.kind === "success" ? "non-progressing" : "failing";
-    log("WARN", `[session-continuation] repeated ${kind} ${toolName} cycle requires replanning`);
+    log("WARN", `[session-continuation] repeated ${continuationResult.loop.description} ${toolName} cycle requires replanning`);
   }
   if (isBashTool(toolName)) trackBashOperation(ctx, output.title || "", output.output || "");
   if (!isWriteOrEditTool(toolName)) return;
