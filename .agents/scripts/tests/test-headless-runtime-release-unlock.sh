@@ -36,7 +36,8 @@ clear_active_status_on_release() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local runner_name="$3"
-	printf 'CLEAR issue=%s repo=%s runner=%s\n' "$issue_number" "$repo_slug" "$runner_name" >>"$CALL_LOG"
+	local draft_projection="${4:-blocked}"
+	printf 'CLEAR issue=%s repo=%s runner=%s draft=%s\n' "$issue_number" "$repo_slug" "$runner_name" "$draft_projection" >>"$CALL_LOG"
 	return 0
 }
 
@@ -145,7 +146,7 @@ export WORKER_GITHUB_LOGIN="assigned-bot"
 _release_dispatch_claim "issue-12345" "worker_noop" "0" "0"
 
 if grep -q 'CLAIM_RELEASED reason=worker_noop' "$CALL_LOG" &&
-	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot' "$CALL_LOG" &&
+	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot draft=available' "$CALL_LOG" &&
 	grep -q 'runner=assigned-bot' "$CALL_LOG" &&
 	! grep -q 'runner=local-os-user' "$CALL_LOG" &&
 	grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG"; then
@@ -256,13 +257,15 @@ fi
 : >"$CALL_LOG"
 rm -f "${TMP_HOME}/comment-attempts"
 _release_dispatch_claim "issue-12345" "worker_draft_checkpoint" "1" "0"
+# GH#36019: the preserved draft is projected for exact-head continuation, not
+# as blocked partial work that the continuation target fence would reject.
 if grep -q 'CLAIM_RELEASED reason=worker_draft_checkpoint' "$CALL_LOG" && \
-	grep -q 'Draft checkpoint: partial work is blocked' "$CALL_LOG" && \
-	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot' "$CALL_LOG" && \
-	grep -q 'Projected draft checkpoint #12345 as blocked partial work' "$CALL_LOG"; then
-	printf 'PASS draft-checkpoint release projects blocked partial work\n'
+	grep -q 'Draft checkpoint: partial work is preserved on the draft PR' "$CALL_LOG" && \
+	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot draft=available' "$CALL_LOG" && \
+	grep -q 'Projected draft checkpoint #12345 for exact-head continuation' "$CALL_LOG"; then
+	printf 'PASS draft-checkpoint release projects its draft for exact-head continuation\n'
 else
-	printf 'FAIL draft-checkpoint release did not project blocked partial work\n'
+	printf 'FAIL draft-checkpoint release did not project its draft for exact-head continuation\n'
 	sed 's/^/  /' "$CALL_LOG"
 	exit 1
 fi
@@ -274,7 +277,7 @@ rm -f "${TMP_HOME}/comment-attempts"
 _release_dispatch_claim "issue-12345" "worker_merged_partial" "1" "0"
 if grep -q 'CLAIM_RELEASED reason=worker_merged_partial' "$CALL_LOG" && \
 	grep -q 'Partial PR merged; issue stays open for continuation from the brief ledger' "$CALL_LOG" && \
-	! grep -q 'Draft checkpoint: partial work is blocked' "$CALL_LOG" && \
+	! grep -q 'Draft checkpoint: partial work' "$CALL_LOG" && \
 	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot' "$CALL_LOG" && \
 	grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG" && \
 	grep -q 'Released merged partial #12345 for continuation' "$CALL_LOG"; then

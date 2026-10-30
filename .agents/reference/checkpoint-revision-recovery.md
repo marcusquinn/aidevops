@@ -17,25 +17,41 @@ and release. That comment names the release ID, attempt and both exits: approve
 after correcting the brief, or close the draft to restart dispatch (GH#33132).
 It grants nothing, starts no line with an event prefix and never dispatches.
 
-### Clean or completed release with an open draft (GH#33850)
+### Non-blocked releases with an open draft (GH#33850, GH#36019)
 
-The same `blocked-attention` entrypoint also handles a latest trusted
-`CLAIM_RELEASED reason=clean` or `reason=worker_complete` when no newer owner
-exists. These are runtime exit classifications, not evidence that the draft is
-complete or that its work landed elsewhere: `worker_complete` includes a
-fail-open PR-presence result. Releases from another trusted runner are accepted
-when the release runner matches its poster. The released attempt's own closing
-terminal lease is ignored using the shared ownership predicate (GH#33839);
-unrelated terminal leases and successor claims still suppress the record.
+An open worker draft is preserved work, and an exit classification is not
+evidence that it is complete or that its work landed elsewhere. When the newest
+trusted coordination event is a release (the released attempt's own closing
+terminal lease is ignored, GH#33839), Pulse routes the draft by release reason:
 
-Pulse posts one `BLOCKED_CHECKPOINT_ATTENTION` per PR head, even across later
-clean/completed releases. It grants no approval, launches no worker, changes no
-assignment, and never closes a draft based only on an exit reason. The brief owner
-must inspect the exact head against the default branch and any replacement PR:
-recover unique work through the guarded exact-head workflow, mark complete work
-ready for normal review, or close already-landed work with a verified merged
-replacement pointer. Automatic stall retries and blocked revision approvals are
-unchanged. A new draft head re-arms attention.
+- **Continuation-eligible** (`dispatch-stalled`): stall/timeout,
+  `stale_assignment_reset`, `worker_ownership_lost`, the worker's own
+  `worker_draft_checkpoint` handoff, `clean` and `worker_complete`. Pulse
+  launches one exact-head continuation per head. The continuation finishes the
+  missing in-scope work and marks the draft ready, or it records a concrete
+  blocker with `mark-blocked`; already-landed work is `decision already_landed`.
+  It never closes the draft. If that continuation also releases at the same
+  head, Pulse posts one `STALLED_CHECKPOINT_ATTENTION` instead. A new head
+  re-arms one continuation, until a per-PR fuse
+  (`AIDEVOPS_PCC_MAX_PR_RELEASES`, default 6 eligible releases since PR
+  creation) posts one attention record per PR instead; later heads do not
+  re-arm continuation or repeat that record.
+- **Runner capability** (`blocked` with `runner_capability_unmet`): see GH#34758.
+  A capable runner continues the head.
+- **Every other reason except `blocked`** (for example `capability_limit`):
+  `blocked-attention` posts one `BLOCKED_CHECKPOINT_ATTENTION` per PR head.
+  It grants no approval, launches no worker and changes no assignment. Releases
+  from another trusted runner are accepted when the release runner matches its
+  poster.
+
+A head carries at most one attention record: an existing blocked-checkpoint
+record for the head also deduplicates the stall record. The release projection
+leaves an open draft's issue `status:available`, so the continuation target
+fence accepts it, except for the terminal-blocker classes (`blocked`,
+`push_policy_timeout`, `network_policy_timeout`), which project
+`status:blocked` unless the blocker is `runner_capability_unmet`. Existing
+`status:blocked`, brief holds and protected labels are preserved, and
+`WORKER_DRAFT_CHECKPOINT` keeps blocking ordinary redispatch.
 
 ### Approving a corrected blocked checkpoint
 

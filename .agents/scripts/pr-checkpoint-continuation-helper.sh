@@ -37,12 +37,24 @@ PCC_LINK_KIND="closing"
 PCC_ALLOW_RELEASED="false"
 _PCC_ATTENTION_MARKER="aidevops:blocked-checkpoint-attention"
 _PCC_STALL_ATTENTION_MARKER="aidevops:stalled-checkpoint-attention"
-# Stall/timeout, ownership-loss and stale-assignment release reasons (worker-activity-failure-families.jq
-# "watchdog-stall" plus kill-site timeout classes) eligible for one automatic
-# exact-head continuation. Every other reason is excluded, except a `blocked`
-# release whose runtime recovery line names the runner-local capability class
-# (GH#34758): it needs no brief change or approval, only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+# GH#36019: a per-PR fuse record is posted once per PR, not once per head.
+_PCC_STALL_FUSE_MARKER="aidevops:stalled-checkpoint-fuse"
+# Release reasons eligible for one automatic exact-head continuation per head:
+# stall/timeout, ownership-loss and stale-assignment (worker-activity-failure-families.jq
+# "watchdog-stall" plus kill-site timeout classes). GH#36019 adds the worker's
+# own `worker_draft_checkpoint` handoff ("exact-head continuation pending") and
+# `clean`/`worker_complete` exits that left the draft open: exit classifications
+# are not proof the draft is done, so a continuation worker inspects the exact
+# head and finishes, marks ready or records a concrete blocker. Other non-blocked
+# reasons get one attention record (_pcc_completed_attention). A `blocked`
+# release is excluded unless its recovery line names the runner-local
+# capability class (GH#34758): that needs only a capable runner.
+_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+# GH#36019: per-PR fuse across heads. A continuation that pushes a new head and
+# then releases again re-arms the per-head bound; this caps the total number of
+# continuation-eligible releases since the PR was created before attention.
+_PCC_MAX_PR_RELEASES="${AIDEVOPS_PCC_MAX_PR_RELEASES:-6}"
+[[ "$_PCC_MAX_PR_RELEASES" =~ ^[1-9][0-9]*$ ]] || _PCC_MAX_PR_RELEASES=6
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # Shared jq definitions for trusted coordination-event evidence in issue
 # comments (blocked and stall release lookups).
@@ -242,6 +254,30 @@ _prrts_session_key() {
 	return $?
 }
 
+# GH#34008: orphan-recovery drafts link with a non-closing `For #N` line
+# (GH#32933); worker checkpoints keep `For #N`/`Ref #N` (GH#33374).
+# Completion must leave a PR whose merge resolves the issue.
+# Args: $1=PR number shell reference, $2=repo slug shell reference
+# Output: prompt step text (empty unless PCC_LINK_KIND=for)
+_prrts_closing_link_step() {
+	local repair_number_ref="$1"
+	local repo_slug_ref="$2"
+	[[ "$PCC_LINK_KIND" == "for" ]] || return 0
+	printf '%s' "
+   This draft is a non-closing checkpoint linked to issue
+   #${PCC_LINKED_ISSUE} only by a body line starting with
+   \`For #${PCC_LINKED_ISSUE}\` or \`Ref #${PCC_LINKED_ISSUE}\`.
+   Before marking it ready, replace that exact line with the same line
+   starting \`Resolves #${PCC_LINKED_ISSUE}\` instead, in the PR body (read it with
+   \`gh pr view \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --json body --jq .body\`,
+   edit a local file, then apply it with the safe wrapper from
+   \`~/.aidevops/agents/scripts/shared-constants.sh\`:
+   \`gh_pr_edit_safe \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --body-file <file>\`)
+   and confirm \`gh pr view \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --json closingIssuesReferences\`
+   lists #${PCC_LINKED_ISSUE}. Change no other body line."
+	return 0
+}
+
 _prrts_write_prompt_file() {
 	local repo_slug="$1"
 	local worktree_path="$2"
@@ -261,23 +297,7 @@ _prrts_write_prompt_file() {
 	local issue_assignee_ref="\$AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE"
 	local closing_link_step=""
 	: "$_thread_count" "$_fingerprint" "$_preview"
-	if [[ "$PCC_LINK_KIND" == "for" ]]; then
-		# GH#34008: orphan-recovery drafts link with a non-closing `For #N` line
-		# (GH#32933); worker checkpoints keep `For #N`/`Ref #N` (GH#33374).
-		# Completion must leave a PR whose merge resolves the issue.
-		closing_link_step="
-   This draft is a non-closing checkpoint linked to issue
-   #${PCC_LINKED_ISSUE} only by a body line starting with
-   \`For #${PCC_LINKED_ISSUE}\` or \`Ref #${PCC_LINKED_ISSUE}\`.
-   Before marking it ready, replace that exact line with the same line
-   starting \`Resolves #${PCC_LINKED_ISSUE}\` instead, in the PR body (read it with
-   \`gh pr view \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --json body --jq .body\`,
-   edit a local file, then apply it with the safe wrapper from
-   \`~/.aidevops/agents/scripts/shared-constants.sh\`:
-   \`gh_pr_edit_safe \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --body-file <file>\`)
-   and confirm \`gh pr view \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --json closingIssuesReferences\`
-   lists #${PCC_LINKED_ISSUE}. Change no other body line."
-	fi
+	closing_link_step="$(_prrts_closing_link_step "$repair_number_ref" "$repo_slug_ref")"
 
 	_prrts_ensure_dirs
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
@@ -333,10 +353,15 @@ PR title: ${safe_title}
 7. If a real code, decision, maintainer, or infrastructure blocker prevents a
    ready PR, write a concise local details file and run
    \`"${scanner_path}" mark-blocked "${repo_slug_ref}" "${repair_number_ref}" <code|decision|maintainer|infrastructure> <short_reason> <details_file>\` exactly once.
+   This includes a draft whose work already landed on the default branch or in
+   another merged PR (\`decision already_landed\`, naming the merged evidence),
+   and a draft whose remaining acceptance needs a human choice the brief does
+   not make (\`decision\`, naming the exact choice). Never close the draft.
 
 Do not invoke both terminal-state commands. A prose report or successful process
-exit is not a terminal state. End with the changes, verification, pushed head,
-and any remaining blocker.
+exit is not a terminal state: exiting without one leaves the draft for human
+attention once the bounded retries are spent. End with the changes,
+verification, pushed head, and any remaining blocker.
 PROMPT_EOF
 	printf '%s\n' "$prompt_file"
 	return 0
@@ -680,21 +705,26 @@ _pcc_blocked_release_evidence() {
 	return $?
 }
 
-# GH#33850: clean/worker_complete are exit classifications, not proof that a
-# preserved draft landed. Other runners may release while the draft author is
-# offline, so bind trust to association and current ownership, not PR authorship.
+# GH#33850: exit classifications are not proof that a preserved draft landed.
+# Other runners may release while the draft author is offline, so bind trust to
+# association and current ownership, not PR authorship. GH#36019: continuation-
+# eligible reasons (including clean/worker_complete) belong to dispatch-stalled
+# and `blocked` to the approval path; every other reason (for example
+# capability_limit) gets this record instead of a silent hold.
 # Output: release_id<TAB>reason<TAB>already_posted (deduplicated per head).
 _pcc_completed_release_evidence() {
 	local comments="$1" key="$2"
 	local trusted_logins="${3:-[]}"
-	jq -er --arg key "$key" --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
+	jq -er --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
+		--argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
 		[flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(ownership($c))] | last) as $release
 		| select($release != null and ($release | unedited))
 		| ([$release | body_lines | select(is_release)] | first // "") as $line
 		| ($line | field("reason")) as $reason
-		| select($reason == "clean" or $reason == "worker_complete")
+		| select($reason | test("^[a-z][a-z0-9_:.-]*$"))
+		| select(($release | blocked_release | not) and ($reason | test($pattern) | not))
 		| select(($line | field("runner")) == ($release | login))
 		| [($release.id | tostring), $reason,
 			(any($c[]; (.body // "") | contains($key + " release=")) | tostring)]
@@ -837,28 +867,40 @@ Draft PR #${pr} preserves the exact checkpoint. No brief change or revision-boun
 # the head, so together they count as one original stall. Otherwise two
 # incapable runners exhaust the budget and capable runners never try the head
 # (#35598, #35603). The per-runner bound is _pcc_self_capability_release.
+# GH#36019: the same count since PR creation feeds the per-PR fuse, and an
+# existing blocked-checkpoint attention record for the head also counts as
+# posted so one head never collects two attention records.
 # Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
-#       $3=attention dedup key
+#       $3=attention dedup key, $4=trusted logins JSON,
+#       $5=PR creation ISO date (optional; empty disables the per-PR count),
+#       $6=alternate attention dedup key (optional),
+#       $7=per-PR fuse dedup key (optional)
 # Output: release_id<TAB>reason<TAB>stalls_since_head<TAB>attention_posted
+#         <TAB>releases_since_pr_creation<TAB>fuse_attention_posted
 # Returns: 0 when a stall release owns the draft, 1 otherwise
 #######################################
 _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
-	local trusted_logins="${4:-[]}"
+	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}"
 	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
+		--arg pr_created "$pr_created" --arg alt_key "$alt_key" --arg fuse_key "$fuse_key" \
 		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
 		def capability_release: blocked_release and any(body_lines; startswith($capability));
 		def stall_release: (release_reason | (length > 0 and test($pattern))) or capability_release;
+		def count_since($c; $since):
+			[$c[] | select(stall_release and ((.created_at // "") | (try epoch catch 0)) > $since)] as $stalls
+			| ([$stalls[] | select(capability_release | not)] | length) +
+				(if any($stalls[]; capability_release) then 1 else 0 end);
 		($head_date | epoch) as $head_epoch
+		| (if $pr_created == "" then null else ($pr_created | try epoch catch null) end) as $pr_epoch
 		| [flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(ownership($c))] | last) as $release
 		| select($release != null and ($release | unedited and stall_release))
-		| [$c[] | select(stall_release and ((.created_at // "") | (try epoch catch 0)) > $head_epoch)] as $stalls
-		| ([$stalls[] | select(capability_release | not)] | length) as $genuine
-		| (if any($stalls[]; capability_release) then 1 else 0 end) as $capability_original
-		| [($release.id | tostring), ($release | release_reason), (($genuine + $capability_original) | tostring),
-			(any($c[]; (.body // "") | contains($key)) | tostring)]
+		| [($release.id | tostring), ($release | release_reason), (count_since($c; $head_epoch) | tostring),
+			(any($c[]; (.body // "") | contains($key) or ($alt_key != "" and contains($alt_key))) | tostring),
+			(if $pr_epoch == null then "0" else (count_since($c; $pr_epoch) | tostring) end),
+			($fuse_key != "" and any($c[]; (.body // "") | contains($fuse_key)) | tostring)]
 		| @tsv
 	' <<<"$comments"
 	return $?
@@ -908,19 +950,29 @@ _pcc_self_capability_release() {
 #######################################
 _pcc_post_stall_attention() {
 	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" reason="$6" stalls="$7" key="$8"
+	local fuse="${9:-false}"
+	local scope="after draft PR #${pr} reached head \`${head}\`, including one automatic exact-head continuation. Pulse will not continue the same head again"
+	local push_step="2. Push a corrected commit to the PR branch; a new head re-arms one automatic continuation."
+	local fuse_marker="" posted_scope="Posted once per PR head."
+	if [[ "$fuse" == true ]]; then
+		scope="since draft PR #${pr} was opened, reaching the per-PR automatic continuation limit (${_PCC_MAX_PR_RELEASES}) at head \`${head}\`. Pulse will not continue this draft automatically again"
+		push_step="2. Finish or correct the work on the PR branch yourself; a new head does not re-arm automatic continuation once this limit is reached."
+		fuse_marker=$'\n'"<!-- ${_PCC_STALL_FUSE_MARKER} pr=${pr} -->"
+		posted_scope="Posted once per PR."
+	fi
 	local body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-<!-- ${key} release=${release_id} -->
+<!-- ${key} release=${release_id} -->${fuse_marker}
 STALLED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} reason=${reason} stalls=${stalls}
 
-Workers released this issue ${stalls} times (latest reason \`${reason}\`) after draft PR #${pr} reached head \`${head}\`, including one automatic exact-head continuation. Pulse will not continue the same head again, and ordinary redispatch stays held while the draft exists.
+Workers released this issue ${stalls} times (latest reason \`${reason}\`) ${scope}, and ordinary redispatch stays held while the draft exists.
 
 Next action for the brief owner (write access required), one of:
 
 1. Review draft PR #${pr}. If the work is complete, mark it ready for review so the normal merge flow takes over.
-2. Push a corrected commit to the PR branch; a new head re-arms one automatic continuation.
+${push_step}
 3. Close draft PR #${pr} to discard the checkpoint; ordinary dispatch then restarts from the current brief.
 
-See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head.
+See \`reference/checkpoint-revision-recovery.md\`. ${posted_scope}
 <!-- ops:end -->"
 	gh api "repos/${repo}/issues/${issue}/comments" --method POST --raw-field body="$body" >/dev/null || return 1
 	return 0
@@ -999,21 +1051,22 @@ _pcc_dispatch_expired_recovery_draft() {
 _pcc_dispatch_stalled() {
 	local repo="$1" path="$2" issue="$3" pr="$4" login="$5"
 	local runner=""
-	local pr_json="" head="" head_date="" assignees="" comments="" evidence="" key=""
+	local pr_json="" head="" head_date="" pr_created="" assignees="" comments="" evidence="" key=""
 	local trusted_logins=""
-	local release_id="" reason="" stalls="" posted=""
+	local release_id="" reason="" stalls="" posted="" pr_releases="" fuse_posted=""
 	if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ || ! "$issue" =~ ^[1-9][0-9]*$ ||
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
 		return 2
 	fi
 	pr_json=$(gh pr view "$pr" --repo "$repo" \
-		--json state,isDraft,isCrossRepository,headRefOid,author,commits,body,labels,closingIssuesReferences) || return 1
+		--json state,isDraft,isCrossRepository,headRefOid,author,commits,body,labels,closingIssuesReferences,createdAt) || return 1
 	head=$(jq -er 'select(.state == "OPEN" and .isDraft == true) | .headRefOid |
 		select(test("^[0-9a-fA-F]{40,64}$"))' <<<"$pr_json") || return 1
 	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1
 	_pcc_login_is_safe "$runner" || return 1
 	head_date=$(jq -er --arg head "$head" '[.commits[]? | select(.oid == $head) | .committedDate] |
 		last | strings | select(length > 0)' <<<"$pr_json") || return 1
+	pr_created=$(jq -r '.createdAt // "" | strings' <<<"$pr_json") || pr_created=""
 	assignees=$(gh api "repos/${repo}/issues/${issue}" --jq '(.assignees // []) | length') || return 1
 	if [[ "$assignees" != 0 ]]; then
 		# Assigned drafts belong to stale-assignment recovery (Layer 6).
@@ -1023,7 +1076,9 @@ _pcc_dispatch_stalled() {
 	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
 	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
 	key="${_PCC_STALL_ATTENTION_MARKER} pr=${pr} head=${head}"
-	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key" "$trusted_logins") || {
+	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key" "$trusted_logins" \
+		"$pr_created" "${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}" \
+		"${_PCC_STALL_FUSE_MARKER} pr=${pr} -->") || {
 		local expired_rc=0
 		_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
 			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || expired_rc=$?
@@ -1031,14 +1086,23 @@ _pcc_dispatch_stalled() {
 		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release issue=#%s\n' "$pr" "$repo" "$issue"
 		return 1
 	}
-	IFS=$'\t' read -r release_id reason stalls posted <<<"$evidence"
+	IFS=$'\t' read -r release_id reason stalls posted pr_releases fuse_posted <<<"$evidence"
 	[[ "$release_id" =~ ^[1-9][0-9]*$ && "$stalls" =~ ^[0-9]+$ ]] || return 1
-	if [[ "$stalls" -ge 2 ]]; then
+	[[ "$pr_releases" =~ ^[0-9]+$ ]] || pr_releases=0
+	if [[ "$stalls" -ge 2 || "$pr_releases" -ge "$_PCC_MAX_PR_RELEASES" ]]; then
+		# GH#36019: a fuse-only stop reports the per-PR count in the record and
+		# is posted once per PR, so later human-pushed heads add no comments.
+		local fuse=false
+		if [[ "$stalls" -lt 2 ]]; then
+			fuse=true
+			stalls="$pr_releases"
+			[[ "$fuse_posted" != true ]] || posted=true
+		fi
 		if [[ "$posted" == true ]]; then
 			printf 'STALLED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s\n' "$pr" "$repo" "$head"
 			return 0
 		fi
-		_pcc_post_stall_attention "$repo" "$issue" "$pr" "$head" "$release_id" "$reason" "$stalls" "$key" || return 1
+		_pcc_post_stall_attention "$repo" "$issue" "$pr" "$head" "$release_id" "$reason" "$stalls" "$key" "$fuse" || return 1
 		printf 'STALLED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s stalls=%s\n' \
 			"$pr" "$repo" "$head" "$release_id" "$stalls"
 		return 0

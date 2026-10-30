@@ -797,7 +797,7 @@ _release_dispatch_claim() {
 		;;
 	esac
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
-		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is blocked. Next action: verify the exact head and current brief before resuming.\n'
+		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is preserved on the draft PR. Next action: Pulse continues the exact head (bounded per head and per PR).\n'
 	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
 		terminal_blocker_fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
 	elif [[ "$reason" == worker_merged_partial_no_progress ]]; then
@@ -891,12 +891,16 @@ _hrff_project_post_release_state() {
 		return 0
 	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
+		# GH#36019: the draft is preserved work awaiting exact-head continuation
+		# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
+		# draft projected as status:blocked was rejected by that target fence and
+		# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
 		if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
+			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
 				|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
 		fi
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
-		print_info "Projected draft checkpoint #${issue_number} as blocked partial work"
+		print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
 		return 0
 	fi
 	# GH#33545: same projection as a draft checkpoint (clear active status,
@@ -935,10 +939,16 @@ _hrff_project_post_release_state() {
 	# GH#34758: a runner-capability release is runner-local. Its open draft
 	# stays available so a capable runner's exact-head continuation can run,
 	# matching the "Projected state: status:available" recovery text.
-	local draft_projection="blocked"
-	if [[ "$reason" == blocked ]] && declare -F _terminal_blocker_reason >/dev/null 2>&1 &&
-		[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == runner_capability_unmet ]]; then
-		draft_projection="available"
+	# GH#36019: every other non-blocked release (stall, clean, worker_complete,
+	# ...) leaves preserved work that Pulse continues or records attention for;
+	# only the terminal-blocker classes project an open draft as blocked.
+	local draft_projection="available"
+	if [[ "$reason" == blocked || "$reason" == push_policy_timeout || "$reason" == network_policy_timeout ]]; then
+		draft_projection="blocked"
+		if declare -F _terminal_blocker_reason >/dev/null 2>&1 &&
+			[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == runner_capability_unmet ]]; then
+			draft_projection="available"
+		fi
 	fi
 	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
 		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" "$draft_projection" \

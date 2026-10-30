@@ -734,9 +734,11 @@ else
 fi
 STUB_POST_DIR="${TEST_ROOT}/posts"
 
-# GH#33850: clean/completed releases by another trusted runner must reach an
-# attention outcome through the existing Pulse entrypoint, without dispatching.
-for completed_reason in clean worker_complete; do
+# GH#33850: releases by another trusted runner must reach an attention outcome
+# through the existing Pulse entrypoint, without dispatching. GH#36019: that
+# now covers every reason dispatch-stalled cannot continue (clean and
+# worker_complete moved to the bounded exact-head continuation below).
+for completed_reason in capability_limit worker_failed; do
 	STUB_COMMENTS_JSON="$(closing_lease_comments worker-bot closing-lease | jq --arg reason "$completed_reason" '
 		map(map(if .id == 21 then .body = ("CLAIM_RELEASED reason=" + $reason + " runner=pulse-runner") |
 			.user.login = "pulse-runner" else . end))')"
@@ -758,7 +760,7 @@ for completed_reason in clean worker_complete; do
 	fi
 	STUB_COMMENTS_JSON="$(jq --arg body "$completed_body" '. + [[
 		{id:25,author_association:"OWNER",user:{login:"pulse-runner"},body:$body},
-		{id:26,author_association:"OWNER",user:{login:"pulse-runner"},body:"CLAIM_RELEASED reason=clean runner=pulse-runner"}
+		{id:26,author_association:"OWNER",user:{login:"pulse-runner"},body:"CLAIM_RELEASED reason=capability_limit runner=pulse-runner"}
 	]]' <<<"$STUB_COMMENTS_JSON")"
 	if output=$(_pcc_blocked_attention owner/repo 123 42) &&
 		[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == "$((before_posts + 1))" ]]; then
@@ -768,7 +770,7 @@ for completed_reason in clean worker_complete; do
 	fi
 	new_head="2222222222222222222222222222222222222222"
 	if evidence=$(_pcc_completed_release_evidence "$STUB_COMMENTS_JSON" "aidevops:blocked-checkpoint-attention pr=42 head=${new_head}") &&
-		[[ "$evidence" == $'26\tclean\tfalse' ]]; then
+		[[ "$evidence" == $'26\tcapability_limit\tfalse' ]]; then
 		print_result "new head re-arms ${completed_reason} attention" 0
 	else
 		print_result "new head re-arms ${completed_reason} attention" 1
@@ -784,12 +786,13 @@ for completed_reason in clean worker_complete; do
 		fi
 	done
 done
-for invalid_release in untrusted mismatched_runner unsupported_reason; do
+for invalid_release in untrusted mismatched_runner continuable_reason blocked_reason; do
 	invalid_comments="$(blocked_comments | jq --arg invalid "$invalid_release" '
-		map(map(if .id == 21 then .body = "CLAIM_RELEASED reason=clean runner=worker-bot" |
+		map(map(if .id == 21 then .body = "CLAIM_RELEASED reason=capability_limit runner=worker-bot" |
 			if $invalid == "untrusted" then .author_association = "NONE"
 			elif $invalid == "mismatched_runner" then .user.login = "other-runner"
-			else .body = "CLAIM_RELEASED reason=worker_noop runner=worker-bot" end
+			elif $invalid == "continuable_reason" then .body = "CLAIM_RELEASED reason=worker_complete runner=worker-bot"
+			else .body = "CLAIM_RELEASED reason=blocked runner=worker-bot" end
 		else . end))')"
 	if ! _pcc_completed_release_evidence "$invalid_comments" key >/dev/null; then
 		print_result "completed attention rejects ${invalid_release}" 0
@@ -809,7 +812,7 @@ stall_comments() {
 	return 0
 }
 if output=$(_pcc_stall_release_evidence "$(stall_comments stall-lease)" "2026-09-30T00:30:00Z" key) &&
-	[[ "$output" == $'31\tno_activity\t1\tfalse' ]]; then
+	[[ "$output" == $'31\tno_activity\t1\tfalse\t0\tfalse' ]]; then
 	print_result "released attempt's own terminal lease keeps stall release evidence" 0
 else
 	print_result "released attempt's own terminal lease keeps stall release evidence" 1 "output=${output:-missing}"
@@ -914,8 +917,10 @@ PCC_LINK_KIND="closing"
 
 # GH#35363/GH#35715: stale-assignment and ownership-loss releases must resume
 # the PR author's exact checkpoint, with the same one-retry-per-head bound.
+# GH#36019: so must the worker's own draft-checkpoint handoff and clean or
+# completed exits that left the draft open.
 export STUB_POST_DIR="${TEST_ROOT}/posts"
-for release_reason in stale_assignment_reset worker_ownership_lost; do
+for release_reason in stale_assignment_reset worker_ownership_lost worker_draft_checkpoint clean worker_complete; do
 	STUB_COMMENTS_JSON="$(stall_comments stall-lease | jq -c --arg reason "$release_reason" '
 		map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=" + $reason) else . end))')"
 	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
@@ -964,6 +969,79 @@ for release_reason in stale_assignment_reset worker_ownership_lost; do
 	fi
 	PCC_ALLOW_RELEASED=false
 done
+
+# GH#36019: one attention record per head. A blocked-checkpoint attention
+# record already posted for this head suppresses a second stall record.
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+STUB_COMMENTS_JSON="$(stall_comments stall-lease | jq -c 'map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=worker_complete") else . end) + [
+	{id:33,created_at:"2026-09-30T01:40:00Z",author_association:"OWNER",user:{login:"pulse-runner"},
+		body:"<!-- ops:start -->\n<!-- aidevops:blocked-checkpoint-attention pr=42 head=1111111111111111111111111111111111111111 release=31 -->\nBLOCKED_CHECKPOINT_ATTENTION pr=42\n<!-- ops:end -->"},
+	{id:34,created_at:"2026-09-30T02:00:00Z",author_association:"OWNER",user:{login:"pulse-runner"},
+		body:"CLAIM_RELEASED reason=clean runner=pulse-runner"}
+])')"
+DISPATCH_ARGS=""
+posts_before="$(post_count)"
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS* && -z "$DISPATCH_ARGS" &&
+	"$(post_count)" -eq "$posts_before" ]]; then
+	print_result "existing blocked-checkpoint attention for the head suppresses a second record" 0
+else
+	print_result "existing blocked-checkpoint attention for the head suppresses a second record" 1 "output=${output:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+
+# GH#36019: the per-PR fuse stops continuation once enough eligible releases
+# accumulated since PR creation, even when each continuation pushed a new head.
+fuse_comments="$(jq -nc '[[range(0; 6) as $i | {id:(60 + $i),
+	created_at:("2026-09-30T00:0" + ($i | tostring) + ":00Z"), author_association:"OWNER",
+	user:{login:"pulse-runner"}, body:"CLAIM_RELEASED reason=worker_complete runner=pulse-runner"}]]')"
+STUB_COMMENTS_JSON="$fuse_comments"
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | jq -c '. + {createdAt:"2026-09-29T23:00:00Z",
+	commits:[{oid:"1111111111111111111111111111111111111111",committedDate:"2026-09-30T00:04:30Z"}]}')"
+DISPATCH_ARGS=""
+posts_before="$(post_count)"
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+fuse_body=""
+[[ "$(post_count)" -eq $((posts_before + 1)) ]] && fuse_body="$(<"${STUB_POST_DIR}/post-$((posts_before + 1))")"
+if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_POSTED*"stalls=6"* && -z "$DISPATCH_ARGS" &&
+	"$fuse_body" == *"per-PR automatic continuation limit (6)"* &&
+	"$fuse_body" == *"does not re-arm automatic continuation"* ]]; then
+	print_result "per-PR fuse posts attention instead of another continuation" 0
+else
+	print_result "per-PR fuse posts attention instead of another continuation" 1 "output=${output:-missing}"
+fi
+# A later head pushed after the fuse record adds no second fuse comment.
+STUB_COMMENTS_JSON="$(jq -c --arg body "$fuse_body" 'map(. + [{id:70,created_at:"2026-09-30T00:06:00Z",
+	author_association:"OWNER",user:{login:"pulse-runner"},body:$body}])' <<<"$fuse_comments")"
+STUB_PR_JSON="$(jq -c '.headRefOid = "2222222222222222222222222222222222222222" |
+	.commits += [{oid:"2222222222222222222222222222222222222222",committedDate:"2026-09-30T00:10:00Z"}]' <<<"$STUB_PR_JSON")"
+DISPATCH_ARGS=""
+posts_before="$(post_count)"
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ -n "$fuse_body" && "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS*"head=2222"* &&
+	-z "$DISPATCH_ARGS" && "$(post_count)" -eq "$posts_before" ]]; then
+	print_result "per-PR fuse record is not repeated for a later head" 0
+else
+	print_result "per-PR fuse record is not repeated for a later head" 1 "output=${output:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | jq -c '. + {createdAt:"2026-09-29T23:00:00Z",
+	commits:[{oid:"1111111111111111111111111111111111111111",committedDate:"2026-09-30T00:04:30Z"}]}')"
+STUB_COMMENTS_JSON="$(jq -c 'map(.[1:])' <<<"$fuse_comments")"
+DISPATCH_ARGS=""
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* && -n "$DISPATCH_ARGS" ]]; then
+	print_result "below the per-PR fuse a new head still gets one continuation" 0
+else
+	print_result "below the per-PR fuse a new head still gets one continuation" 1 "output=${output:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | with_head_commit)"
 
 ownership_comments="$(stall_comments stall-lease | jq -c '
 	map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=worker_ownership_lost") else . end))')"
