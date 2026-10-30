@@ -1772,7 +1772,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18799 fix(pulse): continue open worker drafts after draft-checkpoint, clean and completed releases #bug #priority:high ref:GH#36019 pr:#36023 completed:2026-10-30
 
-- [ ] t18800 fix(pulse): restore stranded worker drafts blocked by pre-v3.39.89 release projections #bug #priority:high ref:GH#36028
+- [x] t18800 fix(pulse): restore stranded worker drafts blocked by pre-v3.39.89 release projections #bug #priority:high ref:GH#36028 pr:#36031 completed:2026-10-30
 
 - [x] t18801 fix(interactive-session): claim must not silently skip when REST core is exhausted #auto-dispatch #bug #priority:medium ref:GH#36036 pr:#36037 completed:2026-10-30
 
@@ -1780,7 +1780,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18802 fix(pulse): give each stale-sweep pass its own minimum share so draft-checkpoint and partial-continuation passes progress on large repos #bug #priority:high ref:GH#36041 pr:#36047 completed:2026-10-30
 
-- [ ] t18804 perf(gh-api): attribute the ~49% of REST-core quota drain that no logged attempt explains #auto-dispatch #bug #priority:high ref:GH#36048
+- [-] t18804 perf(gh-api): attribute the ~49% of REST-core quota drain that no logged attempt explains #auto-dispatch #bug #priority:high ref:GH#36048 declined:2026-10-30
 
 - [x] t18805 fix(terminal-blocker): never hold status:blocked without recorded evidence #bug ref:GH#36058 pr:#36060 completed:2026-10-30
 
@@ -1798,7 +1798,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18812 fix(release): retry network-layer transport failures in release GitHub reads #auto-dispatch #bug ref:GH#36092 pr:#36097 completed:2026-10-30
 
-- [ ] t18816 fix(pulse): enforce runner dispatch breakers on every launch path (early fill, post-label refill, --command dispatch) #bug #priority:high ref:GH#36122
+- [x] t18816 fix(pulse): enforce runner dispatch breakers on every launch path (early fill, post-label refill, --command dispatch) #bug #priority:high ref:GH#36122 pr:#36127 completed:2026-10-30
 
 ## In Progress
 
@@ -5409,4 +5409,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18777 docs: recommend reusable purpose-scoped PATs (extend repo access) instead of per-repo tokens for CLOUDRON_RELEASE_PAT and SYNC_PAT #auto-dispatch #documentation ref:GH#35858 pr:#35969 completed:2026-10-29
 
-- [ ] t18797 Deflake bounded-operation timeout case: process_signal null under slow spawn #auto-dispatch #bug ref:GH#36015
+- [-] t18797 Deflake bounded-operation timeout case: process_signal null under slow spawn #auto-dispatch #bug ref:GH#36015 declined:2026-10-30
