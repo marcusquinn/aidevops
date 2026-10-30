@@ -100,6 +100,8 @@ _release_provenance_read_json() {
 			cause="HTTP ${BASH_REMATCH[1]}"
 		elif [[ "$error_text" =~ (unexpected\ end\ of\ JSON\ input|invalid\ character) ]]; then
 			cause="JSON decode error"
+		elif [[ "$status" -ne 0 ]] && _release_gh_read_network_failure "$error_text"; then
+			cause="network transport error"
 		elif [[ ! "$response" =~ [^[:space:]] && ( "$status" -eq 0 || -z "$error_text" ) ]]; then
 			cause="empty response"
 		else
