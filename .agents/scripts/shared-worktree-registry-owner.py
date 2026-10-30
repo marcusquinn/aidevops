@@ -56,6 +56,7 @@ def claim(connection: sqlite3.Connection, args: list[str]) -> str:
     path = args[1]
     values = owner_values(args)
     pid, session = values[1:3]
+    process_start = values[6]
     existing = connection.execute(
         """SELECT owner_pid, COALESCE(owner_session, '')
            FROM worktree_owners WHERE worktree_path = ?""", (path,)
@@ -76,8 +77,12 @@ def claim(connection: sqlite3.Connection, args: list[str]) -> str:
         """UPDATE worktree_owners SET branch = ?, owner_pid = ?, owner_session = ?,
            owner_batch = ?, task_id = ?, owner_comm = ?, owner_process_start = ?,
            owner_dead_seen_at = '' WHERE worktree_path = ?
-           AND (owner_pid = ? OR (? AND owner_session = ?))""",
-        (*values, path, pid, args[9] == "1", session),
+           AND ((owner_pid = ? AND (owner_session = '' OR owner_session = ?
+                OR (? <> '' AND COALESCE(owner_process_start, '') <> ''
+                    AND owner_process_start <> ?)))
+                OR (? AND owner_session = ?))""",
+        (*values, path, pid, session, process_start, process_start,
+         args[9] == "1", session),
     )
     connection.execute(
         """INSERT OR IGNORE INTO worktree_owners
@@ -131,7 +136,8 @@ def write_owner(connection, operation, args):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')""", (args[1], *owner_values(args)))
         return True, ""
     if operation == "claim":
-        return True, claim(connection, args)
+        output = claim(connection, args)
+        return output == f"{int(args[3])}|{args[4]}", output
     if operation == "adopt":
         try:
             os.kill(int(args[9]), 0)
@@ -153,6 +159,7 @@ def observe_registered_owner(connection, args, creating):
 
 
 def main(argv: list[str]) -> int:
+    stage = "arguments"
     try:
         operation, *args = argv
         lifecycle_commands = {"release-completed": release_completed, "begin-create": begin_creation_command}
@@ -163,21 +170,30 @@ def main(argv: list[str]) -> int:
         # Closing an uncommitted SQLite connection rolls back every write, including
         # generation rotation; the separately committed pre-creation fence remains.
         with closing(sqlite3.connect(args[0], isolation_level=None)) as connection:
+            stage = "begin"
             connection.execute("BEGIN IMMEDIATE")
             creating = (operation == "register" and os.environ.get("AIDEVOPS_WORKTREE_CREATING") == "1" and
                         os.environ.get("AIDEVOPS_WORKTREE_MANAGER") != "pulse-cgroup-v1")
             if creating:
                 owner_lifetime.prepare_creation(connection, args[1])
+            stage = "admission"
             owner_lifetime.check_admission(connection, args[1])
+            stage = "write"
             matched, output = write_owner(connection, operation, args)
             if matched:
+                stage = "observe"
                 observe_registered_owner(connection, args, creating)
+            stage = "commit"
             connection.execute("COMMIT" if matched else "ROLLBACK")
         if output:
             print(output)
-        return 0 if matched else 1
-    except (sqlite3.Error, ValueError, OSError, KeyError, subprocess.SubprocessError):
+        return 0 if matched else (2 if operation == "claim" else 1)
+    except (sqlite3.Error, ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
         print("Worktree ownership transaction unavailable", file=sys.stderr)
+        # Do not emit exception messages: they may contain private paths or SQL.
+        # Keep transaction failures distinct from a proven different live owner.
+        print(f"WORKTREE_OWNERSHIP_ERROR_STAGE={stage}", file=sys.stderr)
+        print(f"WORKTREE_OWNERSHIP_ERROR_TYPE={type(error).__name__}", file=sys.stderr)
         return 1
 
 

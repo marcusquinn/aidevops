@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.93] - 2026-10-30
+
+### Changed
+
+- never hold status:blocked without recorded evidence
+
+### Fixed
+
+- pause runners after distinct permission blockers (#36046)
+
 ## [3.39.92] - 2026-10-30
 
 ### Changed
