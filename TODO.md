@@ -1798,9 +1798,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18812 fix(release): retry network-layer transport failures in release GitHub reads #auto-dispatch #bug ref:GH#36092 pr:#36097 completed:2026-10-30
 
-- [ ] t18816 fix(pulse): enforce runner dispatch breakers on every launch path (early fill, post-label refill, --command dispatch) #bug #priority:high ref:GH#36122
+- [x] t18816 fix(pulse): enforce runner dispatch breakers on every launch path (early fill, post-label refill, --command dispatch) #bug #priority:high ref:GH#36122 pr:#36127 completed:2026-10-30
 
-- [ ] t18817 fix(terminal-blocker): re-arm must not release holds with unresolved blocked-by dependencies #bug #priority:high ref:GH#36126
+- [x] t18817 fix(terminal-blocker): re-arm must not release holds with unresolved blocked-by dependencies #bug #priority:high ref:GH#36126 pr:#36129 completed:2026-10-30
 
 ## In Progress
 
