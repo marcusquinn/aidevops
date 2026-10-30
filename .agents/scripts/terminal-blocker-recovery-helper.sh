@@ -487,7 +487,7 @@ _tbr_release_circuit_hold() {
 	# the authoritative hold selectors deliberately ignore. Never release it.
 	local observation="" circuit="" evidence="" parsed="" observed_rev="" fingerprint=""
 	local current_rev="" retry="" decision="" receipt="" receipt_key="" repo_path=""
-	local reason="" legacy=false now="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
+	local reason="" legacy=false
 	observation=$(_terminal_blocker_latest_marker "$comments" "$_TBC_OBSERVATION_MARKER revision=") || return 2
 	circuit=$(_terminal_blocker_latest_marker "$comments" "$_TBC_CIRCUIT_MARKER revision=") || return 2
 	evidence=$(jq -nc --argjson observation "${observation:-null}" --argjson circuit "${circuit:-null}" \
@@ -506,18 +506,14 @@ _tbr_release_circuit_hold() {
 	retry=$(_terminal_blocker_latest_retry_comment "$comments") || return 2
 	decision=unchanged
 	if [[ "$legacy" == true ]]; then
-		observed_rev=legacy current_rev=legacy
-		fingerprint=$(_terminal_blocker_hash "v2:${_TBC_UNKNOWN}") || return 2
-		[[ "$now" =~ ^[0-9]+$ ]] || now=$(date -u '+%s')
-		retry=$(jq -c --argjson now "$now" 'select((.created_at | fromdateiso8601) <= $now)' <<<"${retry:-null}" 2>/dev/null) || retry=""
-		if _terminal_blocker_retry_after "$retry" "$evidence"; then
-			decision=trusted_retry
-		else
-			local backoff_rc=0
-			terminal_blocker_backoff_active "$comments" >/dev/null || backoff_rc=$?
-			[[ "$backoff_rc" -lt 2 ]] || return 2
-			[[ "$backoff_rc" -ne 1 ]] || decision=backoff_expired
-		fi
+		# A bare release has no label-event identity. Even authenticated prose
+		# and a later retry cannot prove it owns the current status:blocked hold:
+		# a dependency/maintainer hold may have superseded it. Label timestamps
+		# alone would not prove causality either. Preserve intake until explicit
+		# structured evidence exists; backoff's rc=1 also includes a single
+		# release (no backoff established), not just an expired backoff.
+		printf 'rearm_decision issue=%s observed_rev=legacy current_rev=unknown reason=unbound_legacy_hold action=keep_entry\n' "$issue" >&2
+		return 2
 	else
 		parsed=$(printf '%s' "$evidence" | jq -er '.body | capture("<!-- aidevops:terminal-blocker-(?:observation|circuit) revision=(?<revision>[a-f0-9]{24}) blocker=(?<blocker>[a-f0-9]{24}) -->") | "\(.revision) \(.blocker)"') || return 2
 		IFS=' ' read -r observed_rev fingerprint <<<"$parsed"
@@ -548,7 +544,7 @@ _tbr_release_circuit_hold() {
 	fi
 	printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=%s\n' \
 		"$issue" "$observed_rev" "$current_rev" "$decision" >&2
-	[[ "$decision" == revision_changed || "$decision" == trusted_retry || "$decision" == backoff_expired ]] || return 2
+	[[ "$decision" == revision_changed || "$decision" == trusted_retry ]] || return 2
 	# The key binds the observed event, destination revision and retry event.
 	# A public receipt, not runner-local queue retirement, suppresses replay.
 	# Hash immutable event identity only, not mutable author associations or prose.

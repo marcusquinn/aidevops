@@ -1309,13 +1309,20 @@ test_legacy_bare_hold_recovery() {
 		tbr_enqueue owner/repo 42 unknown || exit 1
 		tbr_main rearm >/dev/null || exit 1
 		[[ -f "$queue_file" && "$projected" -eq 0 && "$receipts" -eq 0 ]] || exit 1
-		# Expiry must be checked without any change to issue.updated_at.
+		# Expiry does not bind historical releases to the current blocked label.
 		TERMINAL_BLOCKER_NOW_EPOCH=1793319300
-		tbr_main rearm >/dev/null || exit 1
-		[[ ! -f "$queue_file" && "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		rc=0
+		tbr_main rearm >/dev/null || rc=$?
+		[[ "$rc" -eq 2 && -f "$queue_file" && "$projected" -eq 0 && "$receipts" -eq 0 ]] || exit 1
 		tb_fixture_comments=$(jq -c --arg body "$saved_receipt" '. + [{body:$body,author_association:"MEMBER"}]' <<<"$tb_fixture_comments")
-		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$tb_fixture_comments" || exit 1
-		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$tb_fixture_comments" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 0 && "$receipts" -eq 0 ]] || exit 1
+		# One release never establishes backoff, and cannot authorize expiry.
+		changed=$(jq -c '.[0:1]' <<<"$tb_fixture_comments")
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
 		tb_fixture_comments=$(jq -c '.[0:2]' <<<"$tb_fixture_comments")
 		TERMINAL_BLOCKER_NOW_EPOCH=1793318401
 		# Quoted, foreign and future retry directives cannot clear active backoff.
@@ -1329,17 +1336,18 @@ test_legacy_bare_hold_recovery() {
 		for label in needs-maintainer-permissions hold-for-review no-auto-dispatch parent-task needs-maintainer-review status:in-review; do
 			_tbr_release_circuit_hold owner/repo 42 "$(jq -c --arg label "$label" '.labels += [{name:$label}]' <<<"$fixture_issue")" "$changed" || exit 1
 		done
-		[[ "$projected" -eq 1 ]] || exit 1
+		[[ "$projected" -eq 0 ]] || exit 1
 		tb_fixture_comments="$changed"
 		tbr_enqueue owner/repo 42 unknown || exit 1
-		tbr_main rearm >/dev/null || exit 1
-		[[ ! -f "$queue_file" && "$projected" -eq 2 && "$receipts" -eq 2 ]] || exit 1
+		rc=0
+		tbr_main rearm >/dev/null || rc=$?
+		[[ "$rc" -eq 2 && -f "$queue_file" && "$projected" -eq 0 && "$receipts" -eq 0 ]] || exit 1
 		# Even an old classified observation remains authoritative: a legacy
 		# fallback may not bypass its retry-only permission boundary.
 		changed=$(jq -c --arg f "$(_terminal_blocker_hash v2:permission_required)" '. + [{id:8,body:("<!-- aidevops:terminal-blocker-observation revision=aaaaaaaaaaaaaaaaaaaaaaaa blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-29T23:58:00Z"}]' <<<"$(jq -c '.[0:2]' <<<"$tb_fixture_comments")")
 		TERMINAL_BLOCKER_NOW_EPOCH=1793319300
 		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" && exit 1
-		[[ "$projected" -eq 2 ]] || exit 1
+		[[ "$projected" -eq 0 ]] || exit 1
 		# No/forged/untrusted/future release evidence cannot release a label.
 		for changed in '[]' \
 			'[{body:"CLAIM_RELEASED reason=blocked runner=other ts=x",user:{login:"runner-one"},author_association:"MEMBER",created_at:"2026-10-30T00:00:00Z"}]' \
@@ -1348,13 +1356,13 @@ test_legacy_bare_hold_recovery() {
 			changed=$(jq -nc "$changed")
 			rc=0
 			_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" || rc=$?
-			[[ "$rc" -eq 1 && "$projected" -eq 2 ]] || exit 1
+			[[ "$rc" -eq 1 && "$projected" -eq 0 ]] || exit 1
 		done
 		exit 0
 	); then
 		status=1
 	fi
-	print_result "legacy bare blocked holds seed and release once on trusted retry or unchanged-snapshot backoff expiry, preserving trust and other holds" "$status"
+	print_result "unbound legacy holds retain label and queue on expiry, single release and trusted retry" "$status"
 	return 0
 }
 
