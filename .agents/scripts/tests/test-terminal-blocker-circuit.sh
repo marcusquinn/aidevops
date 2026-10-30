@@ -597,6 +597,7 @@ test_permission_blocker_continuation() {
 	) || status=1
 	[[ "$contract" == *'TERMINAL_BLOCKER_REASON=permission_required'* ]] || status=1
 	[[ "$contract" == *'host-local lock or serialization guard'* ]] || status=1
+	[[ "$contract" == *'brief precondition measured on this runner'* ]] || status=1
 	printf '%s\n' '{"type":"text","part":{"text":"BLOCKED: prior protected-source denial has no changed exact-context grant\nTERMINAL_BLOCKER_REASON=permission_required"}}' >"$output"
 	terminal_blocker_capture_output "$output" || status=1
 	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"

@@ -198,6 +198,10 @@ the brief and linked dependencies, not default-branch HEAD; a corrected brief,
 dependency change or OWNER/MEMBER standalone retry re-arms it. Verify the event
 before retrying. Permission holds remain independent of brief and code changes;
 unclassified blockers retain bounded backoff rather than a permanent circuit.
+A precondition measured on one runner (local telemetry, logs, data or checkouts)
+is not an external event: brief authors name `runner_capability_unmet` for it,
+and workers use that class even when a brief names another, so the runner that
+meets it continues instead of the issue blocking globally (#35605).
 
 `input_required` (GH#33332) needs a standalone
 `TERMINAL_BLOCKER_INPUT_OWNER=user|contributor|maintainer|admin` line; without

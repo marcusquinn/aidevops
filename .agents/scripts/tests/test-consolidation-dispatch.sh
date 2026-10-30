@@ -518,6 +518,27 @@ test_needs_consolidation_skips_with_child() {
 		print_result "_issue_needs_consolidation skips when child exists" 0
 	fi
 
+	# #35605: a labeled parent with an in-flight child reports it, so the
+	# dispatch scope gate keeps implementation workers off the parent.
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard,needs-consolidation"
+	export GH_ISSUE_VIEW_LABELS
+	if ! _issue_needs_consolidation 123 "owner/repo" &&
+		[[ "${_CONSOLIDATION_CHILD_PENDING:-0}" == 1 ]]; then
+		print_result "in-flight consolidation child is reported to dispatch" 0
+	else
+		print_result "in-flight consolidation child is reported to dispatch" 1 \
+			"pending=${_CONSOLIDATION_CHILD_PENDING:-unset}"
+	fi
+	GH_ISSUE_LIST_CHILD_JSON='[]'
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON='[]'
+	export GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+	_issue_needs_consolidation 123 "owner/repo" || true
+	if [[ "${_CONSOLIDATION_CHILD_PENDING:-0}" == 0 ]]; then
+		print_result "no consolidation child clears the pending report" 0
+	else
+		print_result "no consolidation child clears the pending report" 1
+	fi
+
 	teardown_gh_stub
 	return 0
 }
