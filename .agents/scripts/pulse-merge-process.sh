@@ -920,9 +920,10 @@ _recover_interactive_pr_work_issue() {
 			# shellcheck disable=SC2016 # Markdown code spans, not shell substitution
 			while IFS= read -r existing; do printf -- '- `%s`\n' "$existing"; done <<<"$files"
 			printf '\n### Verification\n\nUse the existing checks and verification documented on the source PR; inspect its exact-head CI and review feedback before repair. Do not bypass approval or security gates.\n'
+			printf '\n### Recovery state\n\nInitially blocked pending verified PR linkage. Pulse owns linkage recovery; after verification, existing feedback routing transitions this issue to available when repair is needed. No independent dispatch before that transition.\n'
 		} >"$body_file"
 		local create_rc=0
-		created=$(gh_create_issue --repo "$repo_slug" --title "$title" --label origin:interactive --label status:available --body-file "$body_file") || create_rc=$?
+		created=$(gh_create_issue --repo "$repo_slug" --title "$title" --label origin:interactive --label status:blocked --body-file "$body_file") || create_rc=$?
 		rm -f "$body_file"
 		[[ "$create_rc" -eq 0 ]] || return 1
 		issue="${created##*/}"

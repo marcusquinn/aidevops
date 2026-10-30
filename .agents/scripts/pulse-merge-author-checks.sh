@@ -339,6 +339,13 @@ _interactive_pr_auto_merge_allowed() {
 		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — stale origin:interactive PR has no active claim; allowing automated merge throughput (GH#23425)" >>"$LOGFILE"
 		return 0
 	fi
+	# CI repair runs after this policy gate. Give orphan PRs a work target here
+	# too, then re-run ordinary issue/claim gates; tracking alone grants nothing.
+	if declare -F _recover_interactive_pr_work_issue >/dev/null 2>&1 \
+		&& _recover_interactive_pr_work_issue "$pr_number" "$repo_slug" >/dev/null \
+		&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
+		return 0
+	fi
 
 	echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:interactive PR requires manual merge by current preference (add allow-auto-merge, set repos.json interactive_pr_auto_merge=true, or set orchestration.interactive_pr_auto_merge=true) (GH#23238)" >>"$LOGFILE"
 	return 1

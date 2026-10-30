@@ -71,6 +71,8 @@ define_functions_under_test() {
 	_PMP_ORIGIN_WORKER_PATTERN=',origin:worker,'
 	_PMP_ORIGIN_TAKEOVER_PATTERN=',origin:worker-takeover,'
 	eval "$fn_src"
+	fn_src=$(awk '/^_interactive_pr_auto_merge_allowed\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge-author-checks.sh")
+	eval "$fn_src"
 	return 0
 }
 
@@ -586,6 +588,7 @@ test_orphan_tracking_recovery() {
 			gh_create_issue() {
 				local body_file="${10}"
 				printf 'create %s\n' "$*" >>"$GH_CALL_LOG"
+				[[ "$*" == *"--label status:blocked"* ]] || return 1
 				[[ "$scenario" != create-failure ]] || return 1
 				grep -q '### Files Scope' "$body_file" || return 1
 				grep -q 'src/existing.sh' "$body_file" || return 1
@@ -622,6 +625,40 @@ test_orphan_tracking_recovery() {
 	return 0
 }
 
+test_orphan_default_policy_integration() {
+	local scenario="" rc=0
+	for scenario in recovered recovery-failed active-claim explicit-manual; do
+		rc=0
+		(
+			: >"$GH_CALL_LOG"
+			unset AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE
+			[[ "$scenario" != explicit-manual ]] || export AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=false
+			_interactive_pr_repo_auto_merge_setting() { return 0; }
+			_interactive_pr_global_auto_merge_setting() { printf 'false'; return 0; }
+			_interactive_pr_bool_enabled() { local value="$1"; [[ "$value" == true ]]; return $?; }
+			_interactive_pr_is_stale() {
+				[[ "$scenario" != active-claim && -s "$GH_CALL_LOG" ]]
+				return $?
+			}
+			_recover_interactive_pr_work_issue() {
+				printf 'recover\n' >>"$GH_CALL_LOG"
+				[[ "$scenario" != recovery-failed ]]
+				return $?
+			}
+			local policy_rc=0
+			_interactive_pr_auto_merge_allowed 123 owner/repo origin:interactive || policy_rc=$?
+			if [[ "$scenario" == recovered ]]; then
+				[[ "$policy_rc" -eq 0 && -s "$GH_CALL_LOG" ]] || exit 1
+			else
+				[[ "$policy_rc" -eq 1 ]] || exit 1
+			fi
+			[[ "$scenario" != explicit-manual || ! -s "$GH_CALL_LOG" ]] || exit 1
+		) || rc=$?
+		if [[ "$rc" -eq 0 ]]; then pass "default interactive policy: ${scenario}"; else fail "default interactive policy: ${scenario}"; fi
+	done
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -652,6 +689,7 @@ main() {
 	test_deferred_finalizer_dispatch_persists_retry_hint
 	test_successful_finalizer_dispatch_retires_retry_hint
 	test_orphan_tracking_recovery
+	test_orphan_default_policy_integration
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?
