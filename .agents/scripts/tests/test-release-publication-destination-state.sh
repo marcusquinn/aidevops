@@ -229,6 +229,9 @@ if [[ " $* " == *" --jq "* ]]; then
 		printf 'tap unavailable\n' >&2
 		exit 1
 		;;
+	homebrew-verify-empty)
+		:
+		;;
 	homebrew-verify-malformed)
 		printf '%%%s\n' '%%'
 		;;
@@ -340,6 +343,8 @@ expect_failure "Homebrew verification rejects persistent transport failure" \
 	"homebrew-verify-transport" "homebrew-verify.sh"
 expect_failure "Homebrew verification rejects malformed content" \
 	"homebrew-verify-malformed" "homebrew-verify.sh"
+expect_failure "Homebrew verification rejects empty content" \
+	"homebrew-verify-empty" "homebrew-verify.sh"
 
 # Exercise the existing read-only step harness, including its sleep stub, so
 # quota recovery and exhaustion cannot silently turn into publication success.

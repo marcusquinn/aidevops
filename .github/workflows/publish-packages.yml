@@ -391,7 +391,7 @@ jobs:
                 grep -qiE 'rate[- ]limit' "$TAP_ERROR_FILE"; }; then
               echo "::warning::Homebrew tap check: rate limit ($ERROR_CLASS), attempt $attempt/3"
               if [[ "$attempt" -lt 3 ]]; then
-                sleep "$((attempt * 15))"
+                sleep 60
                 continue
               fi
               echo "::error::Homebrew tap check rate limit persisted after 3 attempts; retry same-tag release reconcile after reset"
@@ -447,13 +447,17 @@ jobs:
                 RATE_FAILURES=$((RATE_FAILURES + 1))
                 echo "::warning::Homebrew tap verification: rate limit ($ERROR_CLASS), retry $RATE_FAILURES/3, attempt $attempt/12"
                 if [[ "$RATE_FAILURES" -lt 3 && "$attempt" -lt 12 ]]; then
-                  sleep "$((RATE_FAILURES * 15))"
+                  sleep 60
                   continue
                 fi
                 echo "::error::Homebrew tap verification rate limit retry budget exhausted; retry same-tag release reconcile after reset"
               else
                 echo "::error::Unable to verify Homebrew tap publication state: $ERROR_CLASS"
               fi
+              exit 1
+            fi
+            if [[ -z "$TAP_CONTENT" ]]; then
+              echo "::error::Homebrew tap returned empty formula content"
               exit 1
             fi
             if ! base64 --decode <<<"$TAP_CONTENT" > "$CURRENT"; then
