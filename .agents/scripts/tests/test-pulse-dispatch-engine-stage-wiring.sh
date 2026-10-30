@@ -418,6 +418,75 @@ assert_label_maintenance_cycle_budget_contract() {
 	return 0
 }
 
+ownership_deadline_trace() {
+	local mode="$1" requested=600 starved=0 rc=0
+	unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
+	# shellcheck source=../pulse-dispatch-preflight-lib.sh
+	source "$PREFLIGHT_LIB"
+	LOGFILE="/dev/null" PULSE_STAGE_DEADLINE_EPOCH=1384
+	AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=1 AIDEVOPS_PULSE_NORMALIZE_FLOOR_S=60
+	case "$mode" in
+	recovery) starved=1 ;;
+	standalone)
+		unset PULSE_STAGE_DEADLINE_EPOCH
+		starved=1
+		;;
+	async)
+		AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=0
+		starved=1
+		;;
+	invalid) PULSE_STAGE_DEADLINE_EPOCH=invalid ;;
+	expired) PULSE_STAGE_DEADLINE_EPOCH=999 ;;
+	requested) requested=200 ;;
+	esac
+	date() {
+		printf '1000\n'
+		return 0
+	}
+	prefetch_contribution_watch() { return 0; }
+	_log_substage_timing() { return 0; }
+	_pulse_blocker_refresh_starved() {
+		[[ "$starved" -eq 1 ]] && return 0
+		return 1
+	}
+	run_stage_with_timeout() {
+		local stage_name="$1" timeout_seconds="$2"
+		case "$stage_name" in
+		reconcile_issues_single_pass) printf 'r:%s;' "$timeout_seconds" ;;
+		normalize_active_issue_assignments) printf 'n:%s;' "$timeout_seconds" ;;
+		esac
+		# Model each child consuming its complete allocation without sleeps.
+		SECONDS=$((SECONDS + timeout_seconds))
+		return 0
+	}
+	_preflight_ownership_reconcile "$requested" || rc=$?
+	printf 'rc:%s;' "$rc"
+	return 0
+}
+
+assert_ownership_deadline_contract() {
+	local mode actual="" expected=""
+	for mode in clamped recovery standalone async invalid expired requested; do
+		TESTS_RUN=$((TESTS_RUN + 1))
+		case "$mode" in
+		clamped | async) expected="r:316;n:60;rc:0;" ;;
+		recovery) expected="r:124;n:60;rc:0;" ;;
+		standalone | invalid) expected="r:380;n:212;rc:0;" ;;
+		expired) expected="rc:124;" ;;
+		requested) expected="r:132;n:60;rc:0;" ;;
+		esac
+		# Keep case statements outside command substitution for Bash 3.2.
+		actual=$(ownership_deadline_trace "$mode")
+		if [[ "$actual" == "$expected" ]]; then
+			echo "${TEST_GREEN}PASS${TEST_NC}: ownership deadline budget ${mode}"
+		else
+			TESTS_FAILED=$((TESTS_FAILED + 1))
+			echo "${TEST_RED}FAIL${TEST_NC}: ownership deadline budget ${mode} expected=${expected} actual=${actual}"
+		fi
+	done
+	return 0
+}
+
 assert_stage_cycle_budget_contract() {
 	local test_root="" actual="" expected="clamp:1;defer:124;optout:1;unset:1;"
 	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-stage-cycle-XXXXXX") || return 1
@@ -871,6 +940,7 @@ assert_grep \
 	"$WRAPPER"
 assert_prefetch_degraded_contract
 
+assert_ownership_deadline_contract
 assert_stage_cycle_budget_contract
 assert_dispatch_cycle_budget_contract
 assert_interrupted_dispatch_progress_contract

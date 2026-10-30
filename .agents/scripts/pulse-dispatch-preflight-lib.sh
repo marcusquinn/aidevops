@@ -637,6 +637,25 @@ _preflight_post_label_refill() {
 _preflight_ownership_reconcile() {
 	local outer_budget="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 	[[ "$outer_budget" =~ ^[1-9][0-9]*$ ]] || outer_budget=600
+	# The wrapper may clamp the requested timeout to the remaining cycle time.
+	# Its exported deadline, not the original argument, bounds both children.
+	local deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}" now="" deadline_remaining=""
+	if [[ "$deadline" =~ ^[1-9][0-9]*$ ]] && now=$(date +%s 2>/dev/null) && [[ "$now" =~ ^[0-9]+$ ]]; then
+		deadline_remaining=$((deadline - now))
+		if [[ "$deadline_remaining" -le 0 ]]; then
+			echo "[pulse-wrapper] Ownership reconciliation deferred: parent deadline exhausted" >>"$LOGFILE"
+			return 124
+		fi
+		[[ "$outer_budget" -le "$deadline_remaining" ]] || outer_budget="$deadline_remaining"
+	fi
+	# Synchronous recovery shares this cycle's clock. When catch-up is pending,
+	# leave it half the available ownership allocation instead of consuming all
+	# remaining time. Standalone calls and unclamped async runs keep their budget.
+	if [[ -n "$deadline_remaining" && "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" == "1" && "$outer_budget" -ge 30 ]] &&
+		declare -F _pulse_blocker_refresh_starved >/dev/null 2>&1 && _pulse_blocker_refresh_starved; then
+		outer_budget=$((outer_budget / 2))
+		echo "[pulse-wrapper] Ownership reconciliation reserving time for blocker recovery: budget=${outer_budget}s" >>"$LOGFILE"
+	fi
 	local ownership_start=$SECONDS reserve=8 reconcile_budget remaining
 	# Leave room for the outer wrapper's two-second watchdog cadence and cleanup.
 	[[ "$outer_budget" -gt 16 ]] || reserve=2
