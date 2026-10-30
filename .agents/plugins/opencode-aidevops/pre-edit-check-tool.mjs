@@ -208,7 +208,9 @@ function formatPreEditCheckResult(result, timeoutMs) {
     response = `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
   } else {
     const code = result.code ?? 1;
-    const guidance = cmdOutput.includes("WORKTREE_OWNERSHIP_UNAVAILABLE=true")
+    const ownershipUnavailable = code === 2
+      && cmdOutput.split(/\r?\n/).some((line) => line === "WORKTREE_OWNERSHIP_UNAVAILABLE=true");
+    const guidance = ownershipUnavailable
       ? "STOP — retry ownership verification in this worktree; do not create another worktree."
       : (PRE_EDIT_GUIDANCE[code] || "Unknown");
     response = code === 0

@@ -56,6 +56,7 @@ def claim(connection: sqlite3.Connection, args: list[str]) -> str:
     path = args[1]
     values = owner_values(args)
     pid, session = values[1:3]
+    process_start = values[6]
     existing = connection.execute(
         """SELECT owner_pid, COALESCE(owner_session, '')
            FROM worktree_owners WHERE worktree_path = ?""", (path,)
@@ -76,9 +77,12 @@ def claim(connection: sqlite3.Connection, args: list[str]) -> str:
         """UPDATE worktree_owners SET branch = ?, owner_pid = ?, owner_session = ?,
            owner_batch = ?, task_id = ?, owner_comm = ?, owner_process_start = ?,
            owner_dead_seen_at = '' WHERE worktree_path = ?
-           AND ((owner_pid = ? AND (owner_session = '' OR owner_session = ?))
+           AND ((owner_pid = ? AND (owner_session = '' OR owner_session = ?
+                OR (? <> '' AND COALESCE(owner_process_start, '') <> ''
+                    AND owner_process_start <> ?)))
                 OR (? AND owner_session = ?))""",
-        (*values, path, pid, session, args[9] == "1", session),
+        (*values, path, pid, session, process_start, process_start,
+         args[9] == "1", session),
     )
     connection.execute(
         """INSERT OR IGNORE INTO worktree_owners
