@@ -54,6 +54,16 @@ head and green checks. It removes only its release hold and uses the normal
 full-loop merge gates. A changed head requires an updated issue and new signed
 approval. API/verification failures never authorize a merge.
 
+For an interactive continuation authorized for one release, use
+`cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.
+Omit `--apply` to preview the same scope without merging or publishing. `--repo`
+still requires a registered, maintained Cloudron package and admin/maintain
+permission; `--issue` selects only that approval issue number. Issue numbers are
+repository-local, so use both filters for a single release. Unscoped `process`
+(or `process --apply`) retains the routine default: all approval issues in all
+registered maintained Cloudron package repositories. Keep the full repos registry;
+no temporary `AIDEVOPS_REPOS_FILE` override is needed for scoping.
+
 After merge, the existing main catalog workflow owns publication. The routine
 waits boundedly and resumes verification later, then closes with evidence only
 when the catalog version, version tag and non-draft GitHub release all exist.

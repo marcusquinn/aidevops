@@ -278,6 +278,9 @@ export SCENARIO=approved
 release_process false
 if grep -Eq 'merge$|pr-edit|comment |issue close' "${TEST_ROOT}/calls"; then exit 1; fi
 printf 'PASS dry run never writes\n'
+main process --repo owner/app --issue 12
+if grep -Eq 'merge$|pr-edit|comment |issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+printf 'PASS scoped dry run retains approval checks and never writes\n'
 export SCENARIO=request
 rm -f "${TEST_ROOT}/merged"
 request_output=$(release_request owner/app 7)
@@ -349,3 +352,70 @@ source "${SOURCE_DIR}/routines/core-routines.sh"
 get_core_routine_entries | grep -F 'r924|x|Cloudron releases — process signed approvals|repeat:cron(*/30 * * * *)' >/dev/null
 describe_r924 linux | grep -F 'scripts/cloudron-release-approval-helper.sh process --apply' >/dev/null
 printf 'PASS half-hour approval routine registered\n'
+
+# Isolate selection from publication in the existing harness: no network or merge.
+(
+	# Routine helpers above define their own main; restore the CLI under test.
+	# shellcheck source=../cloudron-release-approval-helper.sh
+	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
+	REPOS_FILE="${TEST_ROOT}/repos.json"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/app","app_type":"cloudron-package"},{"slug":"owner/other","app_type":"cloudron-package"},{"slug":"owner/disabled","app_type":"cloudron-package","maintenance":false}]}' >"$REPOS_FILE"
+	gh() {
+		local command="$1" target="${2:-}"
+		printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
+		[[ "$command" == api && ("$target" == repos/owner/app || "$target" == repos/owner/other) ]] || return 9
+		[[ "${SCENARIO:-}" != scope_denied ]] || { printf 'false\n'; return 0; }
+		printf 'true\n'
+		return 0
+	}
+	release_issues() {
+		local repo="$1"
+		printf 'list %s\n' "$repo" >>"${TEST_ROOT}/calls"
+		printf '[{"number":12},{"number":13}]\n'
+		return 0
+	}
+	release_process_issue() {
+		local repo="$1" issue="$2" apply="$3"
+		printf '%s %s %s\n' "$repo" "$issue" "$apply"
+		return 0
+	}
+	assert_scope() {
+		local expected="$1"
+		shift
+		local output=""
+		: >"${TEST_ROOT}/calls"
+		output=$(main process "$@") || return 1
+		[[ "$output" == "$expected" ]] || { printf 'FAIL scope: %s\n' "$output"; return 1; }
+		printf 'PASS scope: process %s\n' "$*"
+		return 0
+	}
+	assert_scope $'owner/app 12 false\nowner/app 13 false\nowner/other 12 false\nowner/other 13 false'
+	assert_scope $'owner/app 12 true\nowner/app 13 true\nowner/other 12 true\nowner/other 13 true' --apply
+	assert_scope $'owner/other 12 false\nowner/other 13 false' --repo owner/other
+	if grep -q 'repos/owner/app\|list owner/app' "${TEST_ROOT}/calls"; then exit 1; fi
+	assert_scope $'owner/app 12 false\nowner/other 12 false' --issue 12
+	assert_scope 'owner/app 12 true' --repo owner/app --issue 12 --apply
+	assert_scope 'owner/other 13 true' --apply --issue 13 --repo owner/other
+	assert_scope '' --repo owner/app --issue 99
+	for args in missing_repo missing_issue invalid_repo invalid_issue zero_issue duplicate_repo duplicate_issue unknown; do
+		: >"${TEST_ROOT}/calls"
+		case "$args" in
+		missing_repo) set -- --apply --repo ;;
+		missing_issue) set -- --apply --issue ;;
+		invalid_repo) set -- --apply --repo invalid ;;
+		invalid_issue) set -- --apply --issue nope ;;
+		zero_issue) set -- --apply --issue 0 ;;
+		duplicate_repo) set -- --repo owner/app --repo owner/other ;;
+		duplicate_issue) set -- --issue 12 --issue 13 ;;
+		unknown) set -- --apply --unknown ;;
+		esac
+		if main process "$@"; then exit 1; fi
+		[[ ! -s "${TEST_ROOT}/calls" ]]
+		printf 'PASS invalid scope rejected before processing: %s\n' "$args"
+	done
+	if main process --repo owner/unregistered --apply; then exit 1; fi
+	if main process --repo owner/disabled --apply; then exit 1; fi
+	export SCENARIO=scope_denied
+	if main process --repo owner/app --issue 12 --apply; then exit 1; fi
+	printf 'PASS scoped processing retains registration, maintenance and authority gates\n'
+)
