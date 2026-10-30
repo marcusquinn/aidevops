@@ -1776,6 +1776,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18801 fix(interactive-session): claim must not silently skip when REST core is exhausted #auto-dispatch #bug #priority:medium ref:GH#36036
 
+- [ ] t18802 fix(pulse): give each stale-sweep pass its own minimum share so draft-checkpoint and partial-continuation passes progress on large repos #bug #priority:high ref:GH#36041
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
