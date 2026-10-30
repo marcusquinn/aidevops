@@ -53,9 +53,10 @@ def _no_extended_access_acl(directory: Path) -> bool:
     try:
         os.getxattr(directory, "system.posix_acl_access")
     except OSError as error:
-        # No ACL, or a filesystem that cannot store POSIX ACLs, is safe. Other
-        # failures (including permission errors) must not bypass inspection.
-        return error.errno in (errno.ENODATA, errno.ENOTSUP)
+        # Only a supported query reporting an absent ACL qualifies. ENOTSUP
+        # can hide another ACL model (e.g. NFSv4), not prove the absence of ACLs.
+        # Fail closed even on ACL-less filesystems rather than guess their model.
+        return error.errno == errno.ENODATA
     return False
 
 

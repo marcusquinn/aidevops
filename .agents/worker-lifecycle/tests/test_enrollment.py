@@ -56,6 +56,20 @@ class EnrollmentContract(unittest.TestCase):
         self.assertEqual(self.git("-C", str(self.tree), "status", "--porcelain").stdout, b"")
 
     @unittest.skipUnless(sys.platform == "linux", "Linux POSIX access ACL")
+    def test_unsupported_posix_acl_query_does_not_prove_no_acl(self):
+        directory = self.marker.parent
+        directory.chmod(0o770)
+        with patch("worker_lifecycle.enrollment._user_private_group", return_value=True):
+            with patch("os.getxattr", side_effect=OSError(errno.ENOTSUP, "unsupported")):
+                with self.assertRaisesRegex(ValueError, "not-shared-writable"):
+                    _git_directory(self.tree)
+                directory.chmod(0o700)
+                self.assertEqual(_git_directory(self.tree), directory)
+            directory.chmod(0o770)
+            with patch("os.getxattr", side_effect=OSError(errno.ENODATA, "absent")):
+                self.assertEqual(_git_directory(self.tree), directory)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux POSIX access ACL")
     def test_private_group_write_requires_absent_access_acl(self):
         directory = self.marker.parent
         directory.chmod(0o770)
