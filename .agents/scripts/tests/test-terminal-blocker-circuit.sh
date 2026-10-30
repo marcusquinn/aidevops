@@ -513,10 +513,16 @@ test_unrecorded_blocked_exit_stays_dispatchable() {
 		printf '%s\n' '{"type":"text","text":"BLOCKED: denied"}' \
 			'{"type":"text","part":{"synthetic":true,"text":"Continue."}}' >"$output"
 		terminal_blocker_capture_output "$output" || exit 1
+		# Claude stream-json reports only through its final result event.
+		printf '%s\n' '{"type":"system","subtype":"init"}' \
+			'{"type":"result","subtype":"success","result":"Stopped.\n**BLOCKED — denied.**"}' >"$output"
+		output_has_blocked_signal "$output" || exit 1
+		terminal_blocker_capture_output "$output" false "$_HEADLESS_BLOCKED_LINE_PATTERN" || exit 1
 		export DISPATCH_REPO_SLUG=owner/repo WORKER_ISSUE_NUMBER=42 AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$TEST_ROOT"
 		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
 		gh_issue_edit_safe() { edits+="$*;"; return 0; }
-		terminal_blocker_fetch_trusted_comments() { printf '[]\n'; return 0; }
+		local persisted_comments="[]"
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$persisted_comments"; return 0; }
 		_hrff_release_repo_state_is_managed() { return 0; }
 		_hrff_resolve_release_runner_login() { printf 'runner-one\n'; return 0; }
 		_unlock_issue_after_dispatch_release() { return 0; }
@@ -526,6 +532,13 @@ test_unrecorded_blocked_exit_stays_dispatchable() {
 		[[ "$posted" == *'CLAIM_RELEASED reason=blocked '*' evidence=unrecorded'* &&
 			"$posted" != *'terminal-blocker-observation'* ]] || exit 1
 		[[ -z "$edits" && "$projection" == available ]] || exit 1
+		# A retry after the receipt persisted keeps the receipt's projection.
+		persisted_comments=$(jq -nc --arg body "$posted" '[
+			{id:1,body:"DISPATCH_CLAIM nonce=a runner=runner-one",author:"runner-one",author_association:"COLLABORATOR",created_at:"2026-10-30T08:00:00Z"},
+			{id:2,body:$body,author:"runner-one",author_association:"COLLABORATOR",created_at:"2026-10-30T08:01:00Z"}]') || exit 1
+		posted="" projection=""
+		_release_dispatch_claim issue-42 blocked || exit 1
+		[[ -z "$posted" && -z "$edits" && "$projection" == available ]] || exit 1
 	); then
 		status=1
 	fi

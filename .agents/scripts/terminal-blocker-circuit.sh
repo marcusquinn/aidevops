@@ -192,7 +192,9 @@ from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(errors="ignore")
 parts = []
+results = []
 text_field = "text"
+result_field = "result"
 for raw_line in raw.splitlines():
     line = raw_line.strip()
     if not line.startswith("{"):
@@ -201,7 +203,15 @@ for raw_line in raw.splitlines():
         event = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         continue
-    if not isinstance(event, dict) or event.get("type") != text_field:
+    if not isinstance(event, dict):
+        continue
+    # Claude CLI stream-json carries the final report in its `result` event,
+    # which the classifier also reads; tool output never appears there.
+    final_report = event.get(result_field)
+    if event.get("type") == result_field and isinstance(final_report, str):
+        results.append(final_report)
+        continue
+    if event.get("type") != text_field:
         continue
     part = event.get("part") if isinstance(event.get("part"), dict) else {}
     # GH#33274: runtime-injected parts are not model output.
@@ -213,7 +223,12 @@ for raw_line in raw.splitlines():
 
 marker = re.compile(r"(^|\n)\s*BLOCKED(?:\s*:|\s*$)", re.IGNORECASE)
 classifier = re.compile(sys.argv[3], re.MULTILINE) if sys.argv[3] else None
-candidate = parts[-1] if parts else (raw if not raw.lstrip().startswith('{') else '')
+if parts:
+    candidate = parts[-1]
+elif results:
+    candidate = results[-1]
+else:
+    candidate = raw if not raw.lstrip().startswith('{') else ''
 blocked = marker.search(candidate) or (classifier is not None and classifier.search(candidate))
 if not blocked and sys.argv[2] != 'true':
     raise SystemExit(1)

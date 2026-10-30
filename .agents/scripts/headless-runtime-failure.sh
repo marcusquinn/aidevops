@@ -796,7 +796,9 @@ _release_dispatch_claim() {
 
 	runner_name=$(_hrff_resolve_release_runner_login)
 	if [[ "$reason" == blocked ]] && _hrff_blocked_release_persisted "$issue_number" "$repo_slug" "$runner_name"; then
-		_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason"
+		local persisted_reason="$reason"
+		[[ "${_HRFF_PERSISTED_RELEASE_UNRECORDED:-0}" -eq 0 ]] || persisted_reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
+		_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$persisted_reason"
 		return $?
 	fi
 	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
@@ -987,6 +989,7 @@ _hrff_project_post_release_state() {
 _hrff_blocked_release_persisted() {
 	local issue_number="$1" repo_slug="$2" runner_name="$3"
 	local comments_json=""
+	_HRFF_PERSISTED_RELEASE_UNRECORDED=0
 	comments_json=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 1
 	comments_json=$(jq -c 'map(select((.body // "")
 		| test("(?m)^CLAIM_RELEASED reason=blocked |^DISPATCH_CLAIM ")))' <<<"$comments_json") || return 1
@@ -994,8 +997,18 @@ _hrff_blocked_release_persisted() {
 	# attempt. Legacy consumers still use the existing circuit retry semantics.
 	jq -e 'any(.[]; (.body // "")
 		| test("(?m)^DISPATCH_CLAIM "))' <<<"$comments_json" >/dev/null 2>&1 || return 1
-	TERMINAL_BLOCKER_SELF_LOGIN="$runner_name" terminal_blocker_has_current_hold "$comments_json"
-	return $?
+	TERMINAL_BLOCKER_SELF_LOGIN="$runner_name" terminal_blocker_has_current_hold "$comments_json" || return 1
+	# The persisted receipt, not this retry, decides the projection: a retry
+	# must not turn an evidence=unrecorded release into status:blocked.
+	if jq -e --arg self "$runner_name" --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		"${_TBC_HOLD_EVIDENCE_JQ}"'
+		map(select(hold_evidence($authoritative; $self)))
+		| sort_by([.created_at // "", .id // 0]) | last | (.body // "")
+		| test("(?m)^CLAIM_RELEASED reason=blocked .* evidence=unrecorded$")
+	' <<<"$comments_json" >/dev/null 2>&1; then
+		_HRFF_PERSISTED_RELEASE_UNRECORDED=1
+	fi
+	return 0
 }
 
 _hrff_project_blocked_exit() {
