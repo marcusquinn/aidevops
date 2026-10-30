@@ -718,9 +718,9 @@ _ghqa_write_complete_frames() {
 		# costs, so the next response can prove or reject continuity.
 		_ghqa_state_update "$state_file" "$resource" "$used" "$reset" 2>/dev/null || true
 		decision="${AIDEVOPS_GH_ROUTE_DECISION:-${pool}-selected}"
-		printf 'attempt\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		printf 'attempt\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"$path" "$page" "$outcome" "$status" "$elapsed" "$quota_cost" \
-			"$pool" "$decision" "$remaining" >>"$result_file"
+			"$pool" "$decision" "$remaining" "$reset" >>"$result_file"
 	done <<<"$parsed"
 	[[ "$invalidate_state" -eq 0 ]] || rm -f -- "$state_file" 2>/dev/null || true
 	return 0
@@ -826,13 +826,14 @@ _ghqa_record_result_file() {
 	local caller="$2"
 	local logical_id="$3"
 	local retry="$4"
-	local kind path page outcome status elapsed quota pool decision budget
+	local kind path page outcome status elapsed quota pool decision budget reset
 	local attempts=0
-	while IFS=$'\t' read -r kind path page outcome status elapsed quota pool decision budget; do
+	while IFS=$'\t' read -r kind path page outcome status elapsed quota pool decision budget reset; do
 		[[ "$kind" == attempt ]] || continue
 		attempts=$((attempts + 1))
 		gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
-			"$status" "$elapsed" "$quota" "${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "$decision" "$budget"
+			"$status" "$elapsed" "$quota" "${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "$decision" "$budget" \
+			"${AIDEVOPS_GH_AUTH_FINGERPRINT:-}" "$reset"
 	done <"$result_file"
 	# An exact capture path that observed malformed debug output writes an opaque
 	# row above. An empty result is valid only when gh made no HTTP request.
@@ -880,6 +881,9 @@ _ghqa_run_transport_attempt() {
 		_GHQA_TRANSPORT_HANDLED=0
 		return 125
 	fi
+	# Dynamically scoped to this invocation, including bootstrap attempts. Never
+	# reuse a parent's fingerprint after auth routing switches credentials.
+	local AIDEVOPS_GH_AUTH_FINGERPRINT="$fingerprint"
 	state_dir="${AIDEVOPS_GH_QUOTA_STATE_DIR:-${HOME}/.aidevops/state/gh-quota-attribution}"
 	temp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	if ! _ghqa_prepare_private_dir "$state_dir" || ! _ghqa_prepare_private_dir "$temp_dir"; then
