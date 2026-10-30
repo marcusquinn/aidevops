@@ -132,6 +132,12 @@ git() {
 			printf 'branch refs/heads/%s\n' "$STUB_PORCELAIN_WORKTREE_BRANCH"
 			return 0
 		fi
+		# GH#36132: reuse selection reads porcelain; render "<path> <sha> [<branch>]".
+		if [[ "${5:-}" == "--porcelain" && -n "${STUB_EXISTING_WORKTREE_LINE:-}" ]]; then
+			local _stub_path="${STUB_EXISTING_WORKTREE_LINE%% *}" _stub_branch="${STUB_EXISTING_WORKTREE_LINE##*[}"
+			printf 'worktree %s\nHEAD abcdef\nbranch refs/heads/%s\n\n' "$_stub_path" "${_stub_branch%]}"
+			return 0
+		fi
 		if [[ -n "${STUB_EXISTING_WORKTREE_LINE:-}" ]]; then
 			printf '%s\n' "$STUB_EXISTING_WORKTREE_LINE"
 		fi

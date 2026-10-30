@@ -81,6 +81,24 @@ parent (`create_worktree` contains the fetch, remote checks and `git worktree ad
 | `precreate.managed_enroll` | Managed-lifetime enroll (systemd backend only) |
 | `precreate.helper_deps` / `precreate.exclusions` / `precreate.preview_routes` | Helper dependency bootstrap, Spotlight/Time Machine exclusions, preview routes |
 
+**Attributing the tail (GH#36132).** Aggregate percentiles of nested stages
+cannot be subtracted exactly, so attribute from raw attempts. Each attempt ID
+ends with the start time in nanoseconds (`<cycle>:<issue>:<stage>:<start_ns>`).
+Helper-side records use the helper's PID as the cycle, so join them to
+`precreate.helper_add` by issue number and a start time inside its window.
+Derived intervals:
+
+- Dispatcher reuse selection: `precreate_worktree` start to `helper_add` start.
+- Helper startup: `helper_add` start to `capacity_check` start.
+- Dispatcher registration: `helper_add` end to `precreate_worktree` end, minus `restore_deps`.
+
+For contention, count overlapping same-repo attempts: an object-store
+bottleneck raises `git_worktree_add`/`base_fetch` with overlap, while host load
+inflates every stage at once. `_ds_substage_run` records a stage whatever its
+exit status, so a recorded `create_worktree` does not prove the creation
+succeeded. Look for the next stage (`verify_generation`) or
+`pre_runtime_failure:*`.
+
 ## TSV Log Format
 
 ```text
