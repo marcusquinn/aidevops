@@ -576,18 +576,20 @@ _tbr_check_entry() {
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
 	fi
+	# shellcheck source=terminal-blocker-circuit.sh
+	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	if [[ "$mode" == rearm ]]; then
 		updated_at=$(printf '%s' "$issue_json" | jq -r '.updated_at // ""')
 		last_updated_at=$(jq -r '.rearm_checked_updated_at // ""' "$file")
 		# Persist the remote snapshot, not wall-clock time: a retry arriving
 		# during this check must still be seen on the next pass. Missing or
-		# unreadable timestamps never suppress verification.
-		if [[ -n "$updated_at" && -n "$last_updated_at" && ! "$updated_at" > "$last_updated_at" ]]; then
+		# unreadable timestamps never suppress verification. Revision-bound
+		# holds must recheck target/dependency changes independent of issue edits.
+		if [[ -n "$updated_at" && -n "$last_updated_at" && ! "$updated_at" > "$last_updated_at" ]] &&
+			! terminal_blocker_rearms_on_revision "$reason"; then
 			return 1
 		fi
 	fi
-	# shellcheck source=terminal-blocker-circuit.sh
-	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	local comments="" brief="" repo_path=""
 	printf 'blocker-recovery: checking stage=entry_comments repo=%s issue=%s\n' "$repo" "$issue" >&2
 	# GH#35355: keep this runner's own comments whatever association GitHub reports.
