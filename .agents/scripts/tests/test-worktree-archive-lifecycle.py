@@ -175,6 +175,32 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
         slot.rmdir()
         self.reject_legacy_scratch(record)
 
+    def test_recover_legacy_scratch_rejects_symlinked_parent_of_missing_slot(self):
+        from worktree_archive_restore import RestorationProof
+        record, slot, target = self.legacy_scratch()
+        shutil.rmtree(slot)
+        alias = self.root / "proof-alias"
+        alias.symlink_to(self.root / "proof", target_is_directory=True)
+        save = Mock()
+        with patch.dict(os.environ, self.env), self.assertRaisesRegex(ValueError, "slot-changed"):
+            RestorationProof.recover_unsealed(alias, record["canonical_restore"], save, record,
+                                              self.repo / ".git")
+        save.assert_not_called()
+        self.assertEqual(record["canonical_restore"]["state"], "restoring")
+        self.assertIn(os.fsencode(target), self.git(self.repo, "worktree", "list", "--porcelain"))
+
+    def test_recover_legacy_scratch_rejects_hidden_index_edits(self):
+        record, _slot, target = self.legacy_scratch()
+        for flag in ("assume-unchanged", "skip-worktree"):
+            with self.subTest(flag=flag):
+                self.git(target, "update-index", "--" + flag, "mixed.txt")
+                (target / "mixed.txt").write_text("must survive\n")
+                self.assertFalse(self.git(target, "status", "--porcelain=v1"))
+                self.reject_legacy_scratch(record)
+                self.assertEqual((target / "mixed.txt").read_text(), "must survive\n")
+                self.git(target, "update-index", "--no-" + flag, "mixed.txt")
+                self.git(target, "checkout", "--", "mixed.txt")
+
     def test_recover_legacy_scratch_rejects_dirty(self):
         record, _slot, target = self.legacy_scratch()
         (target / "mixed.txt").write_text("must survive\n")

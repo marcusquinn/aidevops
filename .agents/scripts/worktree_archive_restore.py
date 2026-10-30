@@ -335,6 +335,7 @@ class RestorationProof:
         require(Path(receipt["slot"]).name == receipt["slot"]
                 and slot.parent == directory and slot.name.startswith(".restore-"), changed)
         unsealed = "restore-proof:unsealed-copy-retained; inspect owned scratch"
+        require(directory == directory.resolve(strict=True), changed)
         if not os.path.lexists(slot):
             with transaction() as connection:
                 require(connection.execute("SELECT 1 FROM worktree_owners WHERE worktree_path = ?",
@@ -361,6 +362,9 @@ class RestorationProof:
             # verify_identity recomputes path/admin/common from Git itself.
             managed_module().verify_identity(registered, target)
             require(registered["identity"]["common"] == str(common), "restore-proof:wrong-base")
+            index_entries = git(target, "ls-files", "-v", "-z").split(b"\0")
+            require(not any(entry[:1] == b"S" or entry[:1].islower()
+                            for entry in index_entries if entry), unsealed)
             require(not git(target, "status", "--porcelain=v1", "--untracked-files=all", "--ignored"),
                     unsealed)
             require(git(target, "for-each-ref", "--contains=HEAD", "--format=%(refname)").strip(), unsealed)
