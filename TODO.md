@@ -1776,9 +1776,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18801 fix(interactive-session): claim must not silently skip when REST core is exhausted #auto-dispatch #bug #priority:medium ref:GH#36036 pr:#36037 completed:2026-10-30
 
-- [ ] t18803 fix(terminal-blocker): queue retry-only first observations so a trusted retry re-arms permission_required holds #bug #priority:high #interactive ref:GH#36044 assignee:marcusquinn started:2026-10-30 logged:2026-10-30 -> [todo/tasks/t18803-brief.md]
+- [x] t18803 fix(terminal-blocker): queue retry-only first observations so a trusted retry re-arms permission_required holds #bug #priority:high #interactive ref:GH#36044 assignee:marcusquinn started:2026-10-30 logged:2026-10-30 -> [todo/tasks/t18803-brief.md] pr:#36045 completed:2026-10-30
 
-- [ ] t18802 fix(pulse): give each stale-sweep pass its own minimum share so draft-checkpoint and partial-continuation passes progress on large repos #bug #priority:high ref:GH#36041
+- [x] t18802 fix(pulse): give each stale-sweep pass its own minimum share so draft-checkpoint and partial-continuation passes progress on large repos #bug #priority:high ref:GH#36041 pr:#36047 completed:2026-10-30
 
 - [ ] t18804 perf(gh-api): attribute the ~49% of REST-core quota drain that no logged attempt explains #auto-dispatch #bug #priority:high ref:GH#36048
 
