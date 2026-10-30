@@ -3,7 +3,9 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Reconstruct fully released historical attempts without granting ownership."""
 
-from pr_checkpoint_events import closes_released_attempt, events, fields, normalized_attempt, trusted
+import re
+
+from pr_checkpoint_events import EVENTS, closes_released_attempt, events, fields, normalized_attempt, trusted
 from pr_checkpoint_never_ready import (CLAIM_ONLY, NEVER_READY_OUTCOMES,
                                        advance_never_ready_release, close_claim_only)
 
@@ -126,7 +128,20 @@ def completed_episode(state):
         "runner", "attempt", "claim_id", "ready_id", "release_id", "terminal_id")}
 
 
-def released_successor_history(comments, release_id, approval_id, released_lease, trusted_logins=()):
+def rejection_diagnostic(diagnostics, comment, line, state, reason):
+    """Report metadata only; never echo arbitrary coordination field values."""
+    if diagnostics is None or diagnostics:
+        return
+    event = next(kind.strip().replace(" ", "_") for kind in EVENTS if line.startswith(kind))
+    actor = comment.get("user", {}).get("login", "")
+    runner = actor if re.fullmatch(r"[A-Za-z0-9-]{1,39}(?:\[bot\])?", actor) else "unknown"
+    claim = state["claim_id"] if state else "none"
+    diagnostics.append(f"rejected comment={comment['id']} event={event} runner={runner} "
+                       f"episode_claim={claim} reason={reason}")
+
+
+def released_successor_history(comments, release_id, approval_id, released_lease, trusted_logins=(),
+                               diagnostics=None):
     """Describe only fully closed, non-overlapping attempts preceding an approval.
 
     #aidevops:trust-boundary — historical closure needs explicit revision approval;
@@ -136,14 +151,20 @@ def released_successor_history(comments, release_id, approval_id, released_lease
     seen = {released_lease[1]} if released_lease else set()
     for comment, line, f in events(comments, release_id, approval_id, trusted_logins):
         if not trusted(comment, trusted_logins):
+            reason = "edited" if comment.get("updated_at", comment.get("created_at")) != comment.get("created_at") else "untrusted"
+            rejection_diagnostic(diagnostics, comment, line, state, reason)
             return None
         if closes_released_attempt(released_lease, comment, line, f):
             continue
+        previous = state
         state = advance_history(state, comment, line, f, seen)
         if state is None:
+            rejection_diagnostic(diagnostics, comment, line, previous, "transition_rejected")
             return None
         episode = completed_episode(state)
         if episode is not None:
             history.append(episode)
             state = None
+    if state is not None:
+        rejection_diagnostic(diagnostics, comment, line, state, "open_at_end")
     return history if state is None else None

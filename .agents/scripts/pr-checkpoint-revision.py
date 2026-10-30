@@ -148,9 +148,12 @@ def template(data):
             f"release closing {approval['attempt']} with its poster's ready lease; dispatch-approved would "
             "reject this approval, so none was generated")
     closing = (release["user"]["login"], released_attempt_token(comments, approval, release, trusted_logins))
-    history = released_successor_history(comments, release["id"], float("inf"), closing, trusted_logins)
+    diagnostics = []
+    history = released_successor_history(comments, release["id"], float("inf"), closing, trusted_logins,
+                                        diagnostics=diagnostics)
     if history is None:
-        raise ValueError("intervening coordination is not fully released; no approval generated")
+        raise ValueError("intervening coordination is not fully released; no approval generated; "
+                         + diagnostics[0])
     if history:
         approval["released_successors"] = history
     return PREFIX + json.dumps(approval)
