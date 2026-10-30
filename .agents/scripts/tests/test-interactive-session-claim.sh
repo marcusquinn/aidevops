@@ -108,12 +108,20 @@ auth)
 			exit $?
 		fi
 		# gh api user --jq '.login'
+		if [[ "$2" == "graphql" && "$*" == *'viewer { login }'* ]]; then
+			if [[ "${STUB_GH_MODE:-online}" == "graphql-only" ]]; then
+				printf '%s\n' "${STUB_VIEWER_LOGIN:-testuser}"
+				exit 0
+			fi
+			printf 'discard-failed-viewer-output\n'
+			exit 1
+		fi
 		if [[ "$2" == "user" ]]; then
 			if [[ "${STUB_GH_MODE:-online}" == "noisy-user-failure" ]]; then
 				printf 'synthetic-noisy-login\n'
 				exit 1
 			fi
-			if [[ "${STUB_GH_MODE:-online}" == "offline" ]]; then
+			if [[ "${STUB_GH_MODE:-online}" == "offline" || "${STUB_GH_MODE:-online}" == "graphql-only" ]]; then
 				exit 1
 			fi
 			printf 'testuser\n'
@@ -622,6 +630,60 @@ else
 fi
 
 export STUB_GH_MODE=online
+
+# GH#36036: exercise the public command with REST identity unavailable, then
+# require a distinguishable failure when neither authenticated identity works.
+fallback_stamp=$(_isc_stamp_path 88890 testuser/repo)
+: >"$STUB_LOG"
+fallback_out=$(STUB_GH_MODE=graphql-only STUB_ISSUE_ASSIGNEES="" \
+	"$HELPER_PATH" claim 88890 testuser/repo --implementing 2>&1)
+fallback_rc=$?
+if [[ "$fallback_rc" -eq 0 && -f "$fallback_stamp" ]] &&
+	jq -e '.user == "testuser"' "$fallback_stamp" >/dev/null &&
+	grep -q 'viewer { login }' "$STUB_LOG" &&
+	grep -q 'issue edit 88890 .*--add-assignee testuser' "$STUB_LOG" &&
+	grep -q 'issue edit 88890 .*--add-label status:claimed' "$STUB_LOG"; then
+	print_result "REST identity failure uses GraphQL viewer to apply implementing claim" 0
+else
+	print_result "REST identity failure uses GraphQL viewer to apply implementing claim" 1 "$fallback_out"
+fi
+
+for identity_mode in offline noisy-user-failure; do
+	: >"$STUB_LOG"
+	unresolved_stamp=$(_isc_stamp_path 88891 testuser/repo)
+	unresolved_out=$(STUB_GH_MODE="$identity_mode" \
+		"$HELPER_PATH" claim 88891 testuser/repo --implementing 2>&1)
+	unresolved_rc=$?
+	if [[ "$unresolved_rc" -eq 75 && ! -f "$unresolved_stamp" &&
+		"$unresolved_out" == *"claim NOT applied for #88891"* &&
+		"$unresolved_out" == *"a worker may pick it up"* &&
+		"$unresolved_out" == *"interactive-session-helper.sh claim 88891 testuser/repo --implementing"* ]] &&
+		! grep -q 'issue edit\|issue comment' "$STUB_LOG"; then
+		print_result "unresolved implementing identity ($identity_mode) returns 75 without writes" 0
+	else
+		print_result "unresolved implementing identity ($identity_mode) returns 75 without writes" 1 "$unresolved_out (rc=$unresolved_rc)"
+	fi
+done
+
+for viewer_login in null 'bad/login' 'two logins' '-leading' 'trailing-'; do
+	invalid_login=$(STUB_GH_MODE=graphql-only STUB_VIEWER_LOGIN="$viewer_login" _isc_current_user)
+	if [[ -z "$invalid_login" ]]; then
+		print_result "malformed GraphQL viewer rejected ($viewer_login)" 0
+	else
+		print_result "malformed GraphQL viewer rejected ($viewer_login)" 1 "$invalid_login"
+	fi
+done
+
+for legacy_command in lockdown unlock; do
+	: >"$STUB_LOG"
+	STUB_GH_MODE=offline "$HELPER_PATH" "$legacy_command" 88892 testuser/repo >/dev/null 2>&1
+	legacy_rc=$?
+	if [[ "$legacy_rc" -eq 0 ]] && ! grep -q 'issue edit\|issue comment' "$STUB_LOG"; then
+		print_result "offline $legacy_command keeps exit 0 without writes" 0
+	else
+		print_result "offline $legacy_command keeps exit 0 without writes" 1 "rc=$legacy_rc"
+	fi
+done
 
 # =============================================================================
 # Test 8 — help subcommand
@@ -1280,7 +1342,7 @@ external_stamp=$(_isc_stamp_path 61001 external/repo)
 rm -f "$external_stamp" >/dev/null 2>&1 || true
 : >"$STUB_LOG"
 external_out=$(STUB_PERMISSION=read STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
-	_isc_cmd_claim 61001 external/repo --worktree /tmp/external-wt 2>&1)
+	_isc_cmd_claim 61001 external/repo --implementing --worktree /tmp/external-wt 2>&1)
 external_rc=$?
 
 if [[ $external_rc -eq 0 ]] &&
@@ -1322,9 +1384,9 @@ deferred_stamp=$(_isc_stamp_path 61003 external/deferred)
 rm -f "$deferred_stamp" >/dev/null 2>&1 || true
 : >"$STUB_LOG"
 deferred_out=$(STUB_PERMISSION_FAIL=75 STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
-	_isc_cmd_claim 61003 external/deferred --worktree /tmp/external-wt 2>&1)
+	_isc_cmd_claim 61003 external/deferred --implementing --worktree /tmp/external-wt 2>&1)
 deferred_rc=$?
-if [[ "$deferred_rc" -eq 0 && ! -f "$deferred_stamp" && "$deferred_out" == *"deferred"* &&
+if [[ "$deferred_rc" -eq 75 && ! -f "$deferred_stamp" && "$deferred_out" == *"deferred"* &&
 	"$deferred_out" != *"not a maintainer-equivalent collaborator"* ]] &&
 	! grep -q 'issue edit 61003\|issue comment 61003' "$STUB_LOG"; then
 	print_result "deferred permission claim reports deferral without lifecycle writes" 0
