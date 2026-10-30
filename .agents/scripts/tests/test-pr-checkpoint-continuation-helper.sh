@@ -393,7 +393,7 @@ DISPATCH_RESULT=0
 
 # GH#36138: an approval-superseded runner self-hold is removed only after the
 # exact-head continuation actually launched. The approval fence itself is
-# covered by test-pr-checkpoint-revision.py.
+# covered by test-pr-checkpoint-self-hold.py.
 self_hold_lift_case() {
 	local name="$1" lift_rc="$2" lift_flag="$3" expect_edit="$4"
 	local edits_file="${TEST_ROOT}/self-hold-edits" lift_output="" edits=""
@@ -1339,6 +1339,12 @@ if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-private-member.py"; then
 	print_result "private-member checkpoint trust preserves permission and edit fences" 0
 else
 	print_result "private-member checkpoint trust preserves permission and edit fences" 1
+fi
+
+if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-self-hold.py"; then
+	print_result "exact approval supersedes only the runner's own pre-approval draft hold" 0
+else
+	print_result "exact approval supersedes only the runner's own pre-approval draft hold" 1
 fi
 
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
