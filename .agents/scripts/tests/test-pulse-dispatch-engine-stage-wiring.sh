@@ -545,6 +545,7 @@ assert_interrupted_dispatch_progress_contract() {
 # Resolve paths relative to this test file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
+HOUSEKEEPING="$SCRIPT_DIR/pulse-dispatch-engine-housekeeping.sh"
 CORE="$SCRIPT_DIR/pulse-dispatch-core.sh"
 DISPATCH_LOCKS="$SCRIPT_DIR/pulse-dispatch-locks.sh"
 DISPATCH_LIB="$SCRIPT_DIR/pulse-dispatch-lib.sh"
@@ -578,63 +579,63 @@ assert_not_grep \
 	"$ENGINE"
 
 # Assertions 3-6: each stage uses two separate greps (3a/3b pattern) because the
-# dispatch engine wires stages with a backslash line-continuation:
+# housekeeping module wires stages with a backslash line-continuation:
 #   _pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
 # Single-line grep -E cannot span the newline, so split into stage-name + function-name.
 
 assert_not_grep \
 	"2a: retired coderabbit_review stage must NOT be in dispatch engine (GH#35865)" \
 	'coderabbit_review' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_not_grep \
 	"2b: retired daily review function must NOT be in dispatch engine" \
 	'run_daily_codebase_review' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"3a: post_merge_scanner stage call present" \
 	'_pulse_run_optional_stage_with_timeout "post_merge_scanner"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"3b: post_merge_scanner function name present" \
 	'_run_post_merge_review_scanner' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"3c: pr_review_thread_response stage call present" \
 	'_pulse_run_optional_stage_with_timeout "pr_review_thread_response"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"3d: pr_review_thread_response function name present" \
 	'_run_pr_review_thread_response_scanner' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"4a: auto_decomposer_scanner stage call present" \
 	'_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"4b: auto_decomposer_scanner function name present" \
 	'_run_auto_decomposer_scanner' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"5a: dedup_cleanup stage call present" \
 	'_pulse_run_optional_stage_with_timeout "dedup_cleanup"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"5b: dedup_cleanup function name present" \
 	'run_simplification_dedup_cleanup' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"6a: fast_fail_prune_expired stage call present" \
 	'_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"6b: fast_fail_prune_expired function name present" \
 	'fast_fail_prune_expired' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 # --- The shared-budget wrapper must NOT exist ---
 
