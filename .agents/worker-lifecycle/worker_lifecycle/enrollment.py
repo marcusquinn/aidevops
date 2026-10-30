@@ -4,6 +4,7 @@ The marker identifies a protocol generation, not all writers or a deletion right
 Copied metadata and inode reuse outside this protocol are not excluded by it.
 """
 
+import errno
 import grp
 import json
 import os
@@ -39,6 +40,22 @@ def _user_private_group(gid: int) -> bool:
     return all(entry.pw_gid != gid or entry.pw_uid == owner.pw_uid for entry in pwd.getpwall())
 
 
+def _has_extended_acl(path: Path) -> bool:
+    """True when a POSIX access ACL with named entries may grant other writers.
+
+    With such an ACL the group mode bits are the ACL mask, so they no longer
+    prove that only the owner can write. Unreadable ACL state fails closed.
+    """
+    try:
+        os.getxattr(path, "system.posix_acl_access")
+    except OSError as error:
+        # ENODATA: no extended ACL. ENOTSUP/missing API: filesystem has no ACLs.
+        return error.errno not in (getattr(errno, "ENODATA", 61), errno.ENOTSUP)
+    except AttributeError:
+        return False
+    return True
+
+
 def _git_directory(path: Path) -> Path:
     if not stat.S_ISREG((path / ".git").lstat().st_mode):
         raise ValueError("linked-worktree-required")
@@ -59,7 +76,8 @@ def _git_directory(path: Path) -> Path:
         raise ValueError("canonical-git-directory-required")
     info = directory.stat()
     if (info.st_uid != os.getuid() or info.st_mode & 0o002
-            or (info.st_mode & 0o020 and not _user_private_group(info.st_gid))):
+            or (info.st_mode & 0o020 and (_has_extended_acl(directory)
+                                          or not _user_private_group(info.st_gid)))):
         raise ValueError("git-directory-must-be-owned-and-not-shared-writable")
     with (directory / "gitdir").open("rb") as stream:
         target = stream.read(4097)
