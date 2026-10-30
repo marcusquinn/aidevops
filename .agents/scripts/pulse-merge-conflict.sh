@@ -269,6 +269,7 @@ _interactive_pr_is_stale() {
 	local precomputed_updated_at="${3:-}"
 	local precomputed_head_ref_oid="${4:-}"
 	local precomputed_head_commit_at="${5:-}"
+	local allow_orphan="${6:-0}"
 	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}"
 	[[ "$mode" == "off" ]] && return 1
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
@@ -352,8 +353,13 @@ _interactive_pr_is_stale() {
 
 	# Gate 2 + 5: resolve linked issue, verify open, check status labels
 	local linked_issue
-	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-	[[ -z "$linked_issue" ]] && return 1
+	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
+	# Only the tracking recovery path may probe age before an issue exists.
+	# Normal handover still requires the issue/claim gates below.
+	if [[ -z "$linked_issue" ]]; then
+		[[ "$allow_orphan" == "1" && "$mode" == "enforce" ]] && return 0
+		return 1
+	fi
 	local issue_meta
 	issue_meta=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
 		--jq '{state, labels: [.labels[].name]}' 2>/dev/null) || return 1
