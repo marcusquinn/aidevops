@@ -38,13 +38,12 @@ def release_session(args: list[str]) -> int:
                 ["ps", "-p", pid, "-o", "lstart="], text=True, timeout=5,
                 env={**os.environ, "LC_ALL": "C"}, stderr=subprocess.DEVNULL)
             start = " ".join(registry_start.split())
-        if not Path(database).is_file():
-            return 0
-        with closing(sqlite3.connect(Path(database).resolve().as_uri() + "?mode=rw", uri=True)) as connection:
-            connection.execute(
-                """DELETE FROM worktree_owners WHERE owner_pid=? AND owner_session=?
-                   AND COALESCE(owner_process_start, '')=?""", (int(pid), session, start))
-            connection.commit()
+        if Path(database).is_file():
+            with closing(sqlite3.connect(Path(database).resolve().as_uri() + "?mode=rw", uri=True)) as connection:
+                connection.execute(
+                    """DELETE FROM worktree_owners WHERE owner_pid=? AND owner_session=?
+                       AND COALESCE(owner_process_start, '')=?""", (int(pid), session, start))
+                connection.commit()
         return 0
     except (sqlite3.Error, ValueError, OSError, subprocess.SubprocessError):
         return 1
