@@ -28,7 +28,7 @@ def release_session(args: list[str]) -> int:
         # Resolve once and reuse a shell-free argv containing only a validated PID.
         ps = shutil.which("ps")
         if not ps or not Path(ps).is_absolute():
-            return 1
+            raise ValueError("absolute process viewer unavailable")
         command = [ps, "-p", pid, "-o", "lstart="]
         observed = subprocess.check_output(  # nosec B603 -- absolute ps, fixed flags, digits-only PID, no shell.
             command, text=True, timeout=5,
