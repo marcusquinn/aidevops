@@ -211,16 +211,86 @@ _enrich_apply_labels() {
 	return 0
 }
 
+# GH#36118: issue-sync owns only the body head — everything before the
+# signature footer. Other writers (worker-persisted Files Scope, brief repair,
+# integration evidence, feedback-route blocks) append after the footer.
+# Print the head without the origin marker or trailing blank lines, so a
+# footer-only difference (framework version, origin) is not a content change.
+_enrich_body_head() {
+	local body="$1"
+	printf '%s\n' "$body" | awk '
+		{ sub(/\r$/, "") }
+		/^<!-- aidevops:sig -->[[:space:]]*$/ { exit }
+		/^<!-- aidevops:origin:[^>]*-->[[:space:]]*$/ { next }
+		{ lines[++n] = $0; if ($0 !~ /^[[:space:]]*$/) last = n }
+		END { for (i = 1; i <= last; i++) print lines[i] }'
+	return 0
+}
+
+# Print what follows the first signature paragraph (the sig marker through the
+# next blank line), with surrounding blank lines trimmed. Empty when unsigned.
+_enrich_body_tail() {
+	local body="$1"
+	printf '%s\n' "$body" | awk '
+		{ sub(/\r$/, "") }
+		state == 0 { if ($0 ~ /^<!-- aidevops:sig -->[[:space:]]*$/) state = 1; next }
+		state == 1 && $0 !~ /^<!-- feedback-route:start:/ { if ($0 ~ /^[[:space:]]*$/) state = 2; next }
+		{ state = 2; lines[++n] = $0; if ($0 !~ /^[[:space:]]*$/) { last = n; if (!first) first = n } }
+		END { if (last) for (i = first; i <= last; i++) print lines[i] }'
+	return 0
+}
+
+# Drop appended sections whose heading the composed head already declares, so
+# a refreshed body never carries two Files Scope sections (scope parsers expect
+# one). Feedback-route blocks and fenced code are carried verbatim.
+_enrich_dedupe_tail() {
+	local head="$1" tail="$2"
+	printf '%s\n' "$tail" | ENRICH_HEAD="$head" awk '
+		function key(s) { sub(/^#+[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return tolower(s) }
+		BEGIN {
+			n = split(ENVIRON["ENRICH_HEAD"], h, "\n")
+			for (i = 1; i <= n; i++) {
+				if (h[i] ~ /^```/) { hf = !hf; continue }
+				if (!hf && h[i] ~ /^#+[[:space:]]/) seen[key(h[i])] = 1
+			}
+		}
+		/^<!-- feedback-route:start:/ { route = 1; drop = 0 }
+		route { print; if ($0 ~ /^<!-- feedback-route:complete:/) route = 0; next }
+		/^```/ { fence = !fence }
+		!fence && /^#+[[:space:]]/ { drop = (key($0) in seen) }
+		!drop { print }'
+	return 0
+}
+
+# Print the composed body followed by the current body's appended tail, minus
+# sections the composed head now owns. Returns 0.
+_enrich_carry_tail() {
+	local current_body="$1" composed_body="$2"
+	local tail=""
+	tail=$(_enrich_body_tail "$current_body")
+	[[ -n "$tail" ]] && tail=$(_enrich_dedupe_tail "$(_enrich_body_head "$composed_body")" "$tail")
+	if [[ -n "${tail//[[:space:]]/}" ]]; then
+		printf '%s\n\n%s\n' "$composed_body" "$tail"
+		return 0
+	fi
+	printf '%s\n' "$composed_body"
+	return 0
+}
+
 # _enrich_update_issue: brief-first authoritative body policy (t2063).
 #
 # Body update decision tree (in priority order):
 #   1. FORCE_ENRICH=true          -> always update body
 #   2. Brief file exists on disk  -> brief is authoritative, update body unless
-#                                    current == composed (no-op skip)
+#                                    the synced head is unchanged (no-op skip)
 #   3. No brief + has sentinel    -> previously framework-synced, update on diff
 #                                    (existing GH#18411 behaviour)
 #   4. No brief + no sentinel     -> genuine external content, preserve body
 #                                    (existing GH#18411 behaviour)
+#
+# GH#36118: "synced head" is the body before the signature footer; footer-only
+# differences never trigger a write, and every write keeps the content other
+# writers appended after the footer (see _enrich_carry_tail).
 #
 # Returns 0 on successful edit, 1 on failure.
 _enrich_update_issue() {
@@ -254,38 +324,35 @@ _enrich_update_issue() {
 	if [[ "$FORCE_ENRICH" == "true" ]]; then
 		print_info "FORCE_ENRICH active — skipping content-preservation gate for #$num ($task_id) (GH#20146 audit)"
 	fi
-	if [[ "$FORCE_ENRICH" != "true" ]]; then
-		if [[ -z "$current_body" ]]; then
-			current_body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""' 2>/dev/null || echo "")
-		fi
+	if [[ -z "$current_body" ]]; then
+		current_body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""' 2>/dev/null || echo "")
+	fi
 
-		# t2063: brief-file presence is the authoritative signal.
-		# Resolve project root from the shared PROJECT_ROOT variable if set
-		# (normal sync path) or from git rev-parse as a fallback.
-		local _project_root="${PROJECT_ROOT:-}"
-		[[ -z "$_project_root" ]] && _project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-		local _brief_file=""
-		[[ -n "$_project_root" ]] && _brief_file="${_project_root}/todo/tasks/${task_id}-brief.md"
+	# t2063: brief-file presence is the authoritative signal. Resolve project
+	# root from PROJECT_ROOT (normal sync path) or git rev-parse as a fallback.
+	local _project_root="${PROJECT_ROOT:-}" _brief_file="" _sync_owned=""
+	[[ -z "$_project_root" ]] && _project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+	[[ -n "$_project_root" ]] && _brief_file="${_project_root}/todo/tasks/${task_id}-brief.md"
+	if [[ -n "$_brief_file" && -f "$_brief_file" ]]; then
+		_sync_owned="brief" # Case 2: brief exists -> authoritative
+	elif [[ "$current_body" == *"Synced from TODO.md by issue-sync-helper.sh"* ]]; then
+		_sync_owned="sentinel" # Case 3: no brief, previously framework-synced
+	fi
 
-		if [[ -n "$_brief_file" && -f "$_brief_file" ]]; then
-			# Case 2: brief exists -> authoritative. Refresh unless no-op.
-			if [[ "$current_body" == "$body" ]]; then
-				print_info "Body unchanged on #$num ($task_id), skipping API call"
-				do_body_update=false
-			else
-				print_info "Refreshing body on #$num ($task_id) — brief file is authoritative (t2063)"
-			fi
-		elif [[ "$current_body" == *"Synced from TODO.md by issue-sync-helper.sh"* ]]; then
-			# Case 3: no brief, has sentinel -> framework-synced, refresh on diff
-			if [[ "$current_body" == "$body" ]]; then
-				print_info "Body unchanged on #$num ($task_id), skipping API call"
-				do_body_update=false
-			fi
-		else
-			# Case 4: no brief, no sentinel -> genuine external content, preserve
-			print_info "Preserving external body on #$num ($task_id) — no brief file, no sentinel (use --force to override)"
-			do_body_update=false
+	# GH#36118: compare only the synced head, and carry sections other writers
+	# appended after the signature footer into every rewrite (FORCE included).
+	if [[ "$FORCE_ENRICH" != "true" && -z "$_sync_owned" ]]; then
+		# Case 4: no brief, no sentinel -> genuine external content, preserve
+		print_info "Preserving external body on #$num ($task_id) — no brief file, no sentinel (use --force to override)"
+		do_body_update=false
+	elif [[ "$FORCE_ENRICH" != "true" && "$(_enrich_body_head "$current_body")" == "$(_enrich_body_head "$body")" ]]; then
+		print_info "Body unchanged on #$num ($task_id), skipping API call"
+		do_body_update=false
+	else
+		if [[ "$_sync_owned" == "brief" ]]; then
+			print_info "Refreshing body on #$num ($task_id) — brief file is authoritative (t2063)"
 		fi
+		body=$(_enrich_carry_tail "$current_body" "$body")
 	fi
 
 	if [[ "$do_body_update" == "true" ]]; then
