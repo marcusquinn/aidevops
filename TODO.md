@@ -1788,6 +1788,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18807 fix(terminal-blocker): recovery must fall back to GraphQL instead of stalling while REST core is exhausted #auto-dispatch #bug ref:GH#36063 pr:#36065 completed:2026-10-30
 
+- [ ] t18808 fix(pulse): re-arm aged checkpoint attention for untried runners; take over idle interactive PRs after 12h #bug ref:GH#36077
+
+- [ ] t18809 fix(pulse): link orphan origin:interactive PRs to a tracking issue so 12h handover can route them #auto-dispatch #bug ref:GH#36080
+
+- [ ] t18810 fix(tests): resolve git and ssh-keygen portably in OpenCode plugin tests #auto-dispatch #bug ref:GH#36081
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25

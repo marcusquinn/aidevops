@@ -323,8 +323,13 @@ release_authorize() {
 }
 
 release_process() {
-	local apply="$1" repo="" issues="" issue="" failures=0 repos=""
-	repos=$(jq -er '[.initialized_repos[] | select(.app_type == "cloudron-package" and .maintenance != false) | .slug] | unique | .[]' "$REPOS_FILE") || return 1
+	local apply="$1" repo_filter="${2:-}" issue_filter="${3:-}"
+	local repo="" issues="" issue="" failures=0 repos=""
+	if [[ -n "$repo_filter" ]]; then
+		repos="$repo_filter"
+	else
+		repos=$(jq -er '[.initialized_repos[] | select(.app_type == "cloudron-package" and .maintenance != false) | .slug] | unique | .[]' "$REPOS_FILE") || return 1
+	fi
 	while IFS= read -r repo; do
 		release_authority "$repo" || {
 			failures=$((failures + 1))
@@ -336,6 +341,7 @@ release_process() {
 		}
 		while IFS= read -r issue; do
 			[[ -n "$issue" ]] || continue
+			[[ -z "$issue_filter" || "$issue" == "$issue_filter" ]] || continue
 			release_process_issue "$repo" "$issue" "$apply" || failures=$((failures + 1))
 		done < <(jq -r '.[].number' <<<"$issues")
 	done <<<"$repos"
@@ -356,13 +362,34 @@ main() {
 		release_request "$arg2" "$arg3" || return 1
 		;;
 	process)
-		[[ $# -eq 1 || ($# -eq 2 && "$arg2" == --apply) ]] || return 1
-		local apply=false
-		[[ "${2:-}" != --apply ]] || apply=true
-		release_process "$apply" || return 1
+		local apply=false repo_filter="" issue_filter=""
+		shift
+		while [[ $# -gt 0 ]]; do
+			local option="$1" value="${2:-}"
+			case "$option" in
+			--apply)
+				apply=true
+				shift
+				;;
+			--repo)
+				[[ $# -ge 2 && -z "$repo_filter" ]] || return 1
+				repo_filter="$value"
+				[[ "$repo_filter" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || release_error 'Repository must be in owner/repo format.' || return 1
+				shift 2
+				;;
+			--issue)
+				[[ $# -ge 2 && -z "$issue_filter" ]] || return 1
+				issue_filter="$value"
+				[[ "$issue_filter" =~ ^[1-9][0-9]*$ ]] || release_error 'Issue number must be a positive integer.' || return 1
+				shift 2
+				;;
+			*) return 1 ;;
+			esac
+		done
+		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | process [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac
