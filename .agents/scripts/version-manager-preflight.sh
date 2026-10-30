@@ -327,13 +327,24 @@ _run_shellcheck_on_changed_files() {
 	return 0
 }
 
-# Run the pre-edit regression test if pre-edit-check.sh or its test was changed.
+# Run the pre-edit regression test if pre-edit-check.sh, its test, or the
+# worktree creation/ownership code it drives was changed. Covering the
+# dependencies surfaces a regression at the release that introduces it rather
+# than at the next unrelated pre-edit change.
 # Arguments: changed_files (newline-separated list) pre_edit_test_script
 _run_pre_edit_regression_test() {
 	local changed_files="$1"
 	local pre_edit_test_script="$2"
+	local trigger="" triggered=0
 
-	if [[ "$changed_files" == *".agents/scripts/pre-edit-check.sh"* ]] || [[ "$changed_files" == *".agents/scripts/tests/test-pre-edit-check.sh"* ]]; then
+	for trigger in pre-edit-check.sh tests/test-pre-edit-check.sh worktree-helper-add.sh \
+		worktree-paths.sh shared-worktree-registry.sh shared-worktree-registry-owner.py; do
+		if [[ "$changed_files" == *".agents/scripts/${trigger}"* ]]; then
+			triggered=1
+			break
+		fi
+	done
+	if [[ "$triggered" -eq 1 ]]; then
 		if [[ ! -x "$pre_edit_test_script" ]]; then
 			print_error "Pre-edit regression test missing or not executable: $pre_edit_test_script"
 			return 1

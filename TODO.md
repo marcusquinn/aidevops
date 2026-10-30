@@ -1794,6 +1794,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18810 fix(tests): resolve git and ssh-keygen portably in OpenCode plugin tests #auto-dispatch #bug ref:GH#36081
 
+- [ ] t18811 fix(release): pre-edit regression test fails on macOS physical tmp path; widen preflight trigger #bug ref:GH#36087
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
