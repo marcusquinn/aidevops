@@ -893,8 +893,14 @@ _guard_not_canonical_checkout() {
 	local common_dir=""
 
 	[[ "${AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL:-0}" == "1" ]] && return 0
-	git_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 0
-	common_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+	if ! git_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-dir); then
+		log_error "Cannot resolve Git directory for $repo_path; refusing to edit TODO.md"
+		return 1
+	fi
+	if ! common_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir); then
+		log_error "Cannot resolve Git common directory for $repo_path; refusing to edit TODO.md"
+		return 1
+	fi
 	if [[ -n "$git_dir" && "$git_dir" == "$common_dir" ]]; then
 		log_error "Refusing to edit TODO.md in a canonical checkout: $repo_path"
 		log_info "Create a linked worktree (worktree-helper.sh add) and rerun with --repo-path <worktree>, then open a PR"
