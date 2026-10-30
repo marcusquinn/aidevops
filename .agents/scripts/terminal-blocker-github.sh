@@ -50,20 +50,53 @@ terminal_blocker_fetch_comments() {
 	return 0
 }
 
-terminal_blocker_search_issues() {
-	local query="$1" response=""
-	if response=$(gh api -X GET search/issues -f q="$query" --jq '.items[].number' 2>/dev/null); then
-		printf '%s\n' "$response"
-		return 0
-	fi
+# GH#36114: search returns 30 items per page by default. Read every page and
+# treat GitHub's incomplete_results flag as a failed read, never as absence.
+# Args: query, jq formatter for one item.
+_terminal_blocker_rest_search() {
+	local query="$1" format="$2"
+	gh api -X GET search/issues --paginate -f q="$query" -f per_page=100 \
+		--jq 'if .incomplete_results then error("incomplete search results") else .items[] | '"$format"' end' \
+		2>/dev/null || return 1
+	return 0
+}
+
+# GraphQL fallback: buffer every page; an error or truncation on any page fails
+# the whole read. Args: query, Issue node fields, jq formatter for one node.
+_terminal_blocker_graphql_search() {
+	local query="$1" fields="$2" format="$3" response=""
 	# shellcheck disable=SC2016
 	response=$(gh api graphql --paginate --slurp \
-		-f query='query($q:String!,$endCursor:String){search(query:$q,type:ISSUE,first:100,after:$endCursor){nodes{... on Issue{number}}pageInfo{hasNextPage endCursor}}}' \
+		-f query='query($q:String!,$endCursor:String){search(query:$q,type:ISSUE,first:100,after:$endCursor){nodes{... on Issue{'"$fields"'}}pageInfo{hasNextPage endCursor}}}' \
 		-f q="$query" 2>/dev/null) || return 1
 	printf '%s' "$response" | jq -er '
 		arrays | select(length > 0) |
 		select(all(.[]; (.errors // [] | length) == 0 and (.data.search.nodes | type) == "array")) |
 		select(.[-1].data.search.pageInfo.hasNextPage == false) |
-		[.[].data.search.nodes[].number] | join("\n")' || return 1
+		[.[].data.search.nodes[] | select(.number != null) | '"$format"'] | join("\n")' || return 1
+	return 0
+}
+
+terminal_blocker_search_issues() {
+	local query="$1" response=""
+	if response=$(_terminal_blocker_rest_search "$query" '.number'); then
+		printf '%s\n' "$response"
+		return 0
+	fi
+	_terminal_blocker_graphql_search "$query" number '.number' || return 1
+	return 0
+}
+
+# Cross-repository form for owner-scoped intake (GH#36114). Prints one
+# "owner/repo<TAB>number<TAB>updated_at" line per issue.
+terminal_blocker_search_issue_refs() {
+	local query="$1" response=""
+	if response=$(_terminal_blocker_rest_search "$query" \
+		'"\(.repository_url | sub("^.*/repos/"; ""))\t\(.number)\t\(.updated_at)"'); then
+		printf '%s\n' "$response"
+		return 0
+	fi
+	_terminal_blocker_graphql_search "$query" 'number updatedAt repository{nameWithOwner}' \
+		'"\(.repository.nameWithOwner)\t\(.number)\t\(.updatedAt)"' || return 1
 	return 0
 }
