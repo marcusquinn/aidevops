@@ -75,8 +75,9 @@ fi
 # --- Test 2: main-cycle breaker gate happens before apply_dispatch_max ---
 # Line numbers of the first gate call and the first non-comment
 # apply_dispatch_max invocation; `|| true` keeps a missing match reportable.
-gate_line=$(grep -n 'pulse_dispatch_breakers_allow "main"' "$WRAPPER" | head -1 | cut -d: -f1 || true)
-fill_floor_line=$(grep -n '^[^#]*apply_dispatch_max' "$WRAPPER" | head -1 | cut -d: -f1 || true)
+# grep -m1 reads the file itself, so no reader closes the pipe early.
+gate_line=$(grep -n -m1 -F 'pulse_dispatch_breakers_allow "main"' "$WRAPPER" | cut -d: -f1 || true)
+fill_floor_line=$(grep -n -m1 '^[^#]*apply_dispatch_max' "$WRAPPER" | cut -d: -f1 || true)
 if [[ -n "$gate_line" ]] && [[ -n "$fill_floor_line" ]] \
 	&& [[ "$gate_line" -lt "$fill_floor_line" ]]; then
 	print_result "breaker gate precedes main-cycle apply_dispatch_max" "PASS"
