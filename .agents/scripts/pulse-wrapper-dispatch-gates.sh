@@ -141,8 +141,8 @@ is_no_work_rate_acceptable() {
 }
 
 # GH#36033: runner-local permission-block storm breaker. Reconstruct qualifying
-# rolling windows from metadata, so the one-hour pause survives process restarts
-# and continues after the triggering events leave the current rolling window.
+# rolling windows from metadata and persist observed trips beside the log, so
+# the one-hour pause survives process restarts and bounded-log rotation.
 # Never inspect detail/dossier fields or mutate issue-level holds.
 # Overrides: AIDEVOPS_PERMISSION_BLOCK_WINDOW_SECS (1800),
 # AIDEVOPS_PERMISSION_BLOCK_WINDOW_MAX (3; 0 disables),
@@ -161,9 +161,18 @@ is_permission_block_rate_acceptable() {
 	if [[ "$max_events" == "0" ]]; then
 		return 0
 	fi
-	local blocker_log="${HOME}/.aidevops/logs/worker-progress-blockers.jsonl"
+	local blocker_log="${AIDEVOPS_WORKER_BLOCKER_LOG_FILE:-${HOME}/.aidevops/logs/worker-progress-blockers.jsonl}"
+	local state_file="${blocker_log}.permission-breaker.state"
+	local saved_count=0 saved_latest=0
 	local now result count latest
 	now=$(date +%s)
+	if [[ -f "$state_file" ]]; then
+		read -r saved_count saved_latest <"$state_file" || true
+		if [[ ! "$saved_count" =~ ^[1-9][0-9]{0,8}$ || ! "$saved_latest" =~ ^[0-9]{1,12}$ ]]; then
+			saved_count=0
+			saved_latest=0
+		fi
+	fi
 	# Suppress parser diagnostics: malformed input may contain protected text.
 	# Project only the event metadata; no dossier paths or detail are accessed.
 	if ! result=$(jq -sr --argjson now "$now" --argjson window "$window_secs" \
@@ -182,11 +191,23 @@ is_permission_block_rate_acceptable() {
 			  then .count = (.recent | length) | .latest = $event.ts else . end)
 		| [.count, .latest] | @tsv
 		' "$blocker_log" 2>/dev/null); then
-		printf '[pulse-wrapper] permission_block breaker: missing or malformed log; failing open\n' >>"$logfile"
-		return 0
+		printf '[pulse-wrapper] permission_block breaker: missing or malformed log; failing open unless persisted pause is active\n' >>"$logfile"
+		result='0 0'
 	fi
 	read -r count latest <<<"$result"
+	# Retain an observed trip even if rotation, deletion or malformed input removes
+	# its evidence. State contains only count and event epoch, never blocker detail.
+	if ((saved_latest <= now && now < saved_latest + 3600 && saved_latest > latest)); then
+		count="$saved_count"
+		latest="$saved_latest"
+	fi
 	if [[ "$count" -ge "$max_events" ]] && ((now < latest + 3600)); then
+		local tmp_state="${state_file}.tmp.$$"
+		if ! (umask 077; printf '%s %s\n' "$count" "$latest" >"$tmp_state") 2>/dev/null ||
+			! mv -f "$tmp_state" "$state_file" 2>/dev/null; then
+			rm -f "$tmp_state" 2>/dev/null || true
+			printf '[pulse-wrapper] permission_block breaker: unable to persist trip state\n' >>"$logfile"
+		fi
 		printf '[pulse-wrapper] permission_block breaker: count=%s max=%s window_secs=%s pause_secs=3600\n' \
 			"$count" "$max_events" "$window_secs" >>"$logfile"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then

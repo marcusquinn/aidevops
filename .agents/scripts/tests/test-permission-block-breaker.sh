@@ -29,12 +29,13 @@ pulse_stats_increment() {
 }
 
 reset_fixture() {
+	rm -f "${BLOCKERS}.permission-breaker.state"
 	: >"$BLOCKERS"
 	: >"$LOGFILE"
 	: >"$STATS"
 	NOW=100000
 	unset AIDEVOPS_PERMISSION_BLOCK_WINDOW_SECS AIDEVOPS_PERMISSION_BLOCK_WINDOW_MAX
-	unset AIDEVOPS_SKIP_PERMISSION_BLOCK_BREAKER
+	unset AIDEVOPS_SKIP_PERMISSION_BLOCK_BREAKER AIDEVOPS_WORKER_BLOCKER_LOG_FILE
 	return 0
 }
 
@@ -76,6 +77,31 @@ NOW=103599
 expect 1 'pause lasts until latest counted event plus one hour'
 NOW=103600
 expect 0 'pause expires at one hour'
+
+reset_fixture
+export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="$TEST_ROOT/custom-blockers.jsonl"
+default_blockers="$BLOCKERS"
+BLOCKERS="$AIDEVOPS_WORKER_BLOCKER_LOG_FILE"
+rm -f "${BLOCKERS}.permission-breaker.state"
+event 1
+event 2
+event 3
+expect 1 'configured blocker log trips while default log is empty'
+# Simulate bounded rotation evicting all triggering events.
+: >"$BLOCKERS"
+event 4 100100 owner/repo unknown
+NOW=103599
+expect 1 'persisted trip survives rotation until full pause expires'
+# A fresh shell must use the persisted trip, not process-local state.
+rc=0
+bash -c 'source "$1"; date() { printf "%s\n" 103599; return 0; }; is_permission_block_rate_acceptable' \
+	_ "$SCRIPTS_DIR/pulse-wrapper-dispatch-gates.sh" || rc=$?
+[[ "$rc" -eq 1 ]]
+NOW=103600
+expect 0 'rotated log does not extend the persisted pause'
+rm "$BLOCKERS" "${BLOCKERS}.permission-breaker.state"
+BLOCKERS="$default_blockers"
+unset AIDEVOPS_WORKER_BLOCKER_LOG_FILE
 
 reset_fixture
 event 1 99000
