@@ -393,7 +393,7 @@ worktree-helper.sh add feature/x  # Fallback
 
 ## Idle Interactive PR Handover (t2189)
 
-When an `origin:interactive` PR sits >4h with a failing required check, a conflict, or an idle review, and the human session has demonstrably ended — no active `status:*` label on the linked issue AND no live claim stamp in `$CLAIM_STAMP_DIR` — the deterministic merge pass:
+When an `origin:interactive` PR sits >12h with a failing required check, a conflict, or an idle review, and the human session has demonstrably ended — no active `status:*` label on the linked issue AND no live claim stamp in `$CLAIM_STAMP_DIR` — the deterministic merge pass:
 
 1. Applies the `origin:worker-takeover` label
 2. Posts a one-time handover comment (`<!-- pulse-interactive-handover -->`)
@@ -406,8 +406,10 @@ When an `origin:interactive` PR sits >4h with a failing required check, a confli
 **Reclaiming an already-handed-over PR:** remove `origin:worker-takeover`, then `interactive-session-helper.sh claim <N> <slug>` on the linked issue.
 
 Env controls:
-- `AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=off|detect|enforce` (default `detect` — logs `would-handover` without acting). Flip to `enforce` after 2-3 pulse cycles of clean `detect` telemetry.
-- `IDLE_INTERACTIVE_HANDOVER_SECONDS` (default 14400 = 4h; t2948 reduced from 86400 = 24h). Set to 86400 to restore the prior 24h behaviour.
+- `AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=off|detect|enforce` (default `enforce`: idle interactive work is taken over, so it never stalls waiting for a session that ended). `detect` only logs `would-handover`; `off` disables handover.
+- `AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS` / `IDLE_INTERACTIVE_HANDOVER_SECONDS` (default 43200 = 12h, the maintainer-chosen takeover window).
+
+Worker draft checkpoints use the same 12h window: a per-head stalled or blocked attention record pauses automatic continuation, and after `AIDEVOPS_PCC_ATTENTION_REARM_SECONDS` (default 43200; `0` keeps the pause permanent) each runner that has not tried that head gets one exact-head continuation. See `reference/checkpoint-revision-recovery.md`.
 
 ## Browser Automation
 

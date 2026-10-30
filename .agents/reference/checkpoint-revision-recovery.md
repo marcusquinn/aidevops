@@ -31,11 +31,16 @@ terminal lease is ignored, GH#33839), Pulse routes the draft by release reason:
   missing in-scope work and marks the draft ready, or it records a concrete
   blocker with `mark-blocked`; already-landed work is `decision already_landed`.
   It never closes the draft. If that continuation also releases at the same
-  head, Pulse posts one `STALLED_CHECKPOINT_ATTENTION` instead. A new head
-  re-arms one continuation, until a per-PR fuse
-  (`AIDEVOPS_PCC_MAX_PR_RELEASES`, default 6 eligible releases since PR
-  creation) posts one attention record per PR instead; later heads do not
-  re-arm continuation or repeat that record.
+  head, Pulse posts one `STALLED_CHECKPOINT_ATTENTION` instead. That record is
+  a pause, not a permanent stop: once the head's newest attention record is
+  older than `AIDEVOPS_PCC_ATTENTION_REARM_SECONDS` (default 43200 = 12h; `0`
+  disables), a runner that authored no claim, lease, launch or release after
+  the head commit logs `STALLED_CHECKPOINT_REARMED` and makes one exact-head
+  continuation. Runners that already tried the head stay paused, so one stall
+  cannot freeze the work for every runner. A new head re-arms one continuation,
+  until a per-PR fuse (`AIDEVOPS_PCC_MAX_PR_RELEASES`, default 6 eligible
+  releases since PR creation) posts one attention record per PR instead; later
+  heads and aged records never re-arm continuation or repeat that record.
 - **Runner capability** (`blocked` with `runner_capability_unmet`): see GH#34758.
   A capable runner continues the head.
 - **Every other reason except `blocked`** (for example `capability_limit`):

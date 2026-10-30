@@ -458,19 +458,23 @@ test_L2_zero_seconds_returns_not_stale() {
 	return 0
 }
 
-test_L3_empty_seconds_uses_default_14400() {
+test_L3_empty_seconds_uses_default_12h() {
 	reset_mock_state
-	# Empty seconds triggers bash's :- default substitution to "14400" (4h), which is valid.
+	# Empty seconds and an unset mode use the defaults: 43200 (12h) and enforce.
 	# The PR is 48h old (reset_mock_state default), so it should return stale (0).
+	local rc=0
 	AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS="" \
-	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
-		_interactive_pr_is_stale "100" "owner/repo"
-	local rc=$?
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE="" \
+		_interactive_pr_is_stale "100" "owner/repo" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
-		print_result "L3: empty seconds falls back to default 14400 (stale)" 1 "Expected 0 (stale), got $rc"
+		print_result "L3: empty seconds and mode fall back to 12h enforce (stale)" 1 "Expected 0 (stale), got $rc"
 		return 0
 	fi
-	print_result "L3: empty seconds falls back to default 14400 (stale)" 0
+	if grep -q "would-handover: PR #100" "$LOGFILE" 2>/dev/null; then
+		print_result "L3: empty seconds and mode fall back to 12h enforce (stale)" 1 "Default mode logged detect-only would-handover"
+		return 0
+	fi
+	print_result "L3: empty seconds and mode fall back to 12h enforce (stale)" 0
 	return 0
 }
 
@@ -526,7 +530,7 @@ main() {
 	test_K_no_takeover_label_blocks_handover
 	test_L_invalid_seconds_returns_not_stale
 	test_L2_zero_seconds_returns_not_stale
-	test_L3_empty_seconds_uses_default_14400
+	test_L3_empty_seconds_uses_default_12h
 	test_L4_negative_seconds_returns_not_stale
 
 	printf '\n=== %d test(s), %d failure(s) ===\n' "$TESTS_RUN" "$TESTS_FAILED"

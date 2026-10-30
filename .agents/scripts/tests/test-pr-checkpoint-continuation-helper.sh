@@ -60,6 +60,10 @@ export PATH="${TEST_ROOT}/bin:${PATH}"
 
 # shellcheck source=../pr-checkpoint-continuation-helper.sh
 source "$HELPER"
+# Fixture comments carry fixed historical dates, so keep the attention re-arm
+# window closed except in the tests that exercise it.
+ATTENTION_REARM_CLOSED=3153600000
+_PCC_ATTENTION_REARM_SECONDS="$ATTENTION_REARM_CLOSED"
 
 valid_pr_json() {
 	local body="${1:-Resolves #123}"
@@ -812,7 +816,7 @@ stall_comments() {
 	return 0
 }
 if output=$(_pcc_stall_release_evidence "$(stall_comments stall-lease)" "2026-09-30T00:30:00Z" key) &&
-	[[ "$output" == $'31\tno_activity\t1\tfalse\t0\tfalse' ]]; then
+	[[ "$output" == $'31\tno_activity\t1\tfalse\t0\tfalse\t0' ]]; then
 	print_result "released attempt's own terminal lease keeps stall release evidence" 0
 else
 	print_result "released attempt's own terminal lease keeps stall release evidence" 1 "output=${output:-missing}"
@@ -991,6 +995,65 @@ else
 fi
 PCC_ALLOW_RELEASED=false
 
+# Attention is a pause, not a permanent stop: once the record is older than the
+# re-arm window, a runner with no coordination event for the head since its
+# commit continues it once. Runners that already tried the head stay paused.
+rearm_comments="$STUB_COMMENTS_JSON"
+_PCC_ATTENTION_REARM_SECONDS=43200
+DISPATCH_ARGS=""
+STATUS_CALLS=""
+posts_before="$(post_count)"
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *"STALLED_CHECKPOINT_REARMED: PR #42 in owner/repo head=${blocked_head} runner=current-runner"* &&
+	"$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+	"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 ${blocked_head} worker-bot"* &&
+	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee current-runner' &&
+	"$(post_count)" -eq "$posts_before" ]]; then
+	print_result "aged head attention re-arms one continuation for an untried runner" 0
+else
+	print_result "aged head attention re-arms one continuation for an untried runner" 1 \
+		"output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+for tried_runner in pulse-runner worker-bot; do
+	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+	STUB_COMMENTS_JSON="$rearm_comments"
+	DISPATCH_ARGS=""
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 "$tried_runner" >"$output_file" || true
+	output="$(<"$output_file")"
+	if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS* && -z "$DISPATCH_ARGS" &&
+		"$(post_count)" -eq "$posts_before" ]]; then
+		print_result "aged attention does not re-arm ${tried_runner}, which already tried the head" 0
+	else
+		print_result "aged attention does not re-arm ${tried_runner}, which already tried the head" 1 "output=${output:-missing}"
+	fi
+	PCC_ALLOW_RELEASED=false
+done
+# A runner whose only claim predates the head commit has not tried this head.
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+STUB_COMMENTS_JSON="$(jq -c 'map(. + [{id:5,created_at:"2026-09-30T00:10:00Z",author_association:"COLLABORATOR",
+	user:{login:"old-runner"},body:"DISPATCH_CLAIM nonce=n0 runner=old-runner"}])' <<<"$rearm_comments")"
+if ! _pcc_runner_tried_head "$STUB_COMMENTS_JSON" "$recovery_head_date" old-runner &&
+	_pcc_runner_tried_head "$STUB_COMMENTS_JSON" "$recovery_head_date" pulse-runner &&
+	_pcc_runner_tried_head 'not-json' "$recovery_head_date" old-runner; then
+	print_result "head participation counts only events after the head commit and fails closed" 0
+else
+	print_result "head participation counts only events after the head commit and fails closed" 1
+fi
+_PCC_ATTENTION_REARM_SECONDS=0
+STUB_COMMENTS_JSON="$rearm_comments"
+DISPATCH_ARGS=""
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS* && -z "$DISPATCH_ARGS" ]]; then
+	print_result "a zero re-arm window keeps head attention as a permanent stop" 0
+else
+	print_result "a zero re-arm window keeps head attention as a permanent stop" 1 "output=${output:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+_PCC_ATTENTION_REARM_SECONDS="$ATTENTION_REARM_CLOSED"
+
 # GH#36019: the per-PR fuse stops continuation once enough eligible releases
 # accumulated since PR creation, even when each continuation pushed a new head.
 fuse_comments="$(jq -nc '[[range(0; 6) as $i | {id:(60 + $i),
@@ -1013,20 +1076,23 @@ if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_POSTED*"stalls=6"* && -z "$DISP
 else
 	print_result "per-PR fuse posts attention instead of another continuation" 1 "output=${output:-missing}"
 fi
-# A later head pushed after the fuse record adds no second fuse comment.
+# A later head pushed after the fuse record adds no second fuse comment, and an
+# aged fuse record never re-arms an untried runner: the fuse is a hard stop.
 STUB_COMMENTS_JSON="$(jq -c --arg body "$fuse_body" 'map(. + [{id:70,created_at:"2026-09-30T00:06:00Z",
 	author_association:"OWNER",user:{login:"pulse-runner"},body:$body}])' <<<"$fuse_comments")"
 STUB_PR_JSON="$(jq -c '.headRefOid = "2222222222222222222222222222222222222222" |
 	.commits += [{oid:"2222222222222222222222222222222222222222",committedDate:"2026-09-30T00:10:00Z"}]' <<<"$STUB_PR_JSON")"
 DISPATCH_ARGS=""
 posts_before="$(post_count)"
+_PCC_ATTENTION_REARM_SECONDS=43200
 _pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+_PCC_ATTENTION_REARM_SECONDS="$ATTENTION_REARM_CLOSED"
 output="$(<"$output_file")"
 if [[ -n "$fuse_body" && "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS*"head=2222"* &&
 	-z "$DISPATCH_ARGS" && "$(post_count)" -eq "$posts_before" ]]; then
-	print_result "per-PR fuse record is not repeated for a later head" 0
+	print_result "per-PR fuse record is not repeated or re-armed for a later head" 0
 else
-	print_result "per-PR fuse record is not repeated for a later head" 1 "output=${output:-missing}"
+	print_result "per-PR fuse record is not repeated or re-armed for a later head" 1 "output=${output:-missing}"
 fi
 PCC_ALLOW_RELEASED=false
 STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | jq -c '. + {createdAt:"2026-09-29T23:00:00Z",
