@@ -1274,6 +1274,27 @@ test_mechanical_rearm_pass() {
 	return 0
 }
 
+legacy_history_rejections() {
+	local tb_fixture_comments="$1" fixture_issue="$2" saved_events="$3"
+	local tb_label_events='' history_rc=0 changed='' rc=0
+	# The caller's GitHub stub uses these dynamically scoped history fixtures.
+	changed=$(jq -c '. + [{id:11,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-30T00:00:01Z"}]' <<<"$tb_fixture_comments")
+	for tb_label_events in '[]' '{}' '[[{"event":"labeled","label":{"name":"status:blocked"}}]]' \
+		"$(jq -c '.[0][0].actor.login = "other"' <<<"$saved_events")" \
+		"$(jq -c '.[0][0].created_at = "2026-10-29T23:58:00Z"' <<<"$saved_events")" \
+		"$(jq -c '.[0] += [.[0][0] | .id = 101 | .created_at = "2026-10-30T00:00:01Z"]' <<<"$saved_events")" \
+		"$(jq -c '. + [[.[0][0] | .id = 101 | .event = "unlabeled"]]' <<<"$saved_events")"; do
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || return 1
+	done
+	tb_label_events="$saved_events"
+	history_rc=1 rc=0
+	_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" || rc=$?
+	[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || return 1
+	return 0
+}
+
 # GH#36061: migrate the actual pre-fix shape, not a synthetic observation.
 test_legacy_bare_hold_recovery() {
 	local status=0
@@ -1286,7 +1307,7 @@ test_legacy_bare_hold_recovery() {
 		local projected=0 receipts=0 saved_receipt='' queue_file="${TBR_ROOT}/queue/owner--repo--42.json"
 		local changed='' label='' rc=0
 		local tb_label_events='[[{"id":100,"event":"labeled","label":{"name":"status:blocked"},"actor":{"login":"runner-one"},"created_at":"2026-10-30T00:00:00Z"}]]'
-		local history_rc=0 saved_events=''
+		local history_rc=0
 		export TERMINAL_BLOCKER_SELF_LOGIN=runner-one TERMINAL_BLOCKER_NOW_EPOCH=1793318401
 		_tbr_run_stage() { shift; "$@"; return $?; }
 		gh() {
@@ -1324,24 +1345,7 @@ test_legacy_bare_hold_recovery() {
 		rc=0
 		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$(jq -c '.[0:1]' <<<"$tb_fixture_comments")" || rc=$?
 		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
-		# Missing, failed, malformed, mismatched and superseded label histories
-		# must preserve the hold, even with expired backoff or a trusted retry.
-		saved_events="$tb_label_events"
-		changed=$(jq -c '. + [{id:11,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-30T00:00:01Z"}]' <<<"$tb_fixture_comments")
-		for tb_label_events in '[]' '{}' '[[{"event":"labeled","label":{"name":"status:blocked"}}]]' \
-			"$(jq -c '.[0][0].actor.login = "other"' <<<"$saved_events")" \
-			"$(jq -c '.[0][0].created_at = "2026-10-29T23:58:00Z"' <<<"$saved_events")" \
-			"$(jq -c '.[0] += [.[0][0] | .id = 101 | .created_at = "2026-10-30T00:00:01Z"]' <<<"$saved_events")" \
-			"$(jq -c '. + [[.[0][0] | .id = 101 | .event = "unlabeled"]]' <<<"$saved_events")"; do
-			rc=0
-			_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" || rc=$?
-			[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
-		done
-		tb_label_events="$saved_events"
-		history_rc=1 rc=0
-		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" || rc=$?
-		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
-		history_rc=0
+		legacy_history_rejections "$tb_fixture_comments" "$fixture_issue" "$tb_label_events" || exit 1
 		tbr_main rearm >/dev/null || exit 1
 		[[ ! -f "$queue_file" && "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
 		tb_fixture_comments=$(jq -c --arg body "$saved_receipt" '. + [{body:$body,author_association:"MEMBER"}]' <<<"$tb_fixture_comments")
