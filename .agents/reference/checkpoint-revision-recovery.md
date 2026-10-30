@@ -53,6 +53,32 @@ fence accepts it, except for the terminal-blocker classes (`blocked`,
 `status:blocked`, brief holds and protected labels are preserved, and
 `WORKER_DRAFT_CHECKPOINT` keeps blocking ordinary redispatch.
 
+### Drafts blocked by pre-v3.39.89 release projections (GH#36028)
+
+Runners before v3.39.89 projected `status:blocked` after a continuable release,
+which the dispatch candidate filter skips, so those drafts were never continued.
+On the stale-blocked cadence (own stamp `draft-checkpoint-unblock-complete`),
+`pulse-draft-checkpoint-unblock.sh` restores `status:available` only when all of
+these hold; any unreadable or ambiguous read leaves the issue unchanged:
+
+- The open issue's only status label is `status:blocked`, it has
+  `auto-dispatch`, and it has no protective label (`hold-for-review`,
+  `no-auto-dispatch`, `needs-maintainer-*`, `persistent`, `parent-task`).
+- Exactly one open `origin:worker` draft closes it.
+- The newest trusted `CLAIM_RELEASED` reason is continuable (`clean`,
+  `worker_complete`, `worker_draft_checkpoint`, stall/timeout,
+  `stale_assignment_reset`), not a terminal blocker or `worker_ownership_lost`,
+  and no claim, dispatch or non-terminal lease follows it.
+- The newest `labeled status:blocked` event is that runner's, within
+  `PULSE_DRAFT_UNBLOCK_WINDOW_BEFORE_SECONDS`/`_AFTER_SECONDS` (60/600) of the
+  release; a later maintainer re-block wins.
+- Assignees are only that runner (released with the transition).
+- No `kind=draft-checkpoint-unblock` marker exists for that release, and fewer
+  than `PULSE_DRAFT_UNBLOCK_MAX_PER_PR` (3) exist for the PR.
+
+The single audit comment names the PR, head and release. Dispatch then routes
+the draft through `dispatch-stalled` as above; the draft is never closed.
+
 ### Approving a corrected blocked checkpoint
 
 1. Read fresh issue/PR metadata and coordination comments. Verify the exact

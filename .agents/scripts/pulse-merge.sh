@@ -335,6 +335,11 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-ci-drift-ledger.sh"
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_DIR}/pulse-merge-partial-continuation.sh"
 
+# GH#36028: restore open worker drafts that older runners projected blocked.
+# shellcheck source=./pulse-draft-checkpoint-unblock.sh
+# shellcheck disable=SC1091
+source "${_PULSE_MERGE_DIR}/pulse-draft-checkpoint-unblock.sh"
+
 # _release_interactive_claim_on_merge is now provided by shared-claim-lifecycle.sh
 # (sourced at the top of this module, t2429/GH#20067). The backward-compatible
 # underscore-prefixed alias is defined there so all existing call sites

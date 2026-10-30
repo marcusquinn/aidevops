@@ -700,10 +700,26 @@ _pulse_stale_blocked_repo_mark_complete() {
 _pulse_stale_blocked_repo_all_fresh() {
 	local repo="$1" interval="$2" now_epoch="$3"
 	_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" || return 1
+	if declare -F _pm_reconcile_draft_checkpoint_blocks >/dev/null 2>&1; then
+		_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" draft-checkpoint-unblock-complete || return 1
+	fi
 	if declare -F _pm_reconcile_partial_continuations >/dev/null 2>&1; then
 		_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" partial-continuation-complete || return 1
 	fi
 	return 0
+}
+
+# Run one optional cadence pass when its function is loaded and its stamp is
+# stale. A clean pass stamps its own kind.
+# Args: function stamp_kind repo repo_deadline interval now_epoch
+# Returns: 0 when skipped or complete, else the pass exit code
+_pulse_stale_blocked_optional_pass() {
+	local pass_fn="$1" kind="$2" repo="$3" repo_deadline="$4" interval="$5" now_epoch="$6" pass_rc=0
+	declare -F "$pass_fn" >/dev/null 2>&1 || return 0
+	_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" "$kind" && return 0
+	"$pass_fn" "$repo" "$repo_deadline" 2>>"$LOGFILE" || pass_rc=$?
+	[[ "$pass_rc" -eq 0 ]] && _pulse_stale_blocked_repo_mark_complete "$repo" "$kind"
+	return "$pass_rc"
 }
 
 # Run the due passes for one repo within its deadline. The stale-blocked sweep
@@ -712,13 +728,14 @@ _pulse_stale_blocked_repo_all_fresh() {
 # and, run first, consumed whole shares (large repos logged visited=0). Each
 # pass keeps its own stamp, so one pass's remaining pages (rc 3) never hide the
 # other's completion; previously every repo with a full in-review page stayed
-# partial forever (fresh_repos=0).
+# partial forever (fresh_repos=0). GH#36028: the draft-checkpoint unblock pass
+# runs second; it costs one REST read when no blocked auto-dispatch issue exists.
 # Args: repo repo_deadline sweep_deadline interval now_epoch
 # Returns: 0 when all passes are complete, DER_SWEEP_PARTIAL when any pass needs
 #          more time, another non-zero code when a pass failed (failure wins)
 _pulse_stale_blocked_sweep_repo() {
 	local repo="$1" repo_deadline="$2" sweep_deadline="$3" interval="$4" now_epoch="$5"
-	local partial_rc="${DER_SWEEP_PARTIAL:-3}" rc=0 pass_rc=0
+	local partial_rc="${DER_SWEEP_PARTIAL:-3}" rc=0 pass_rc=0 pass_spec=""
 	if ! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch"; then
 		_pulse_stale_blocked_run_and_measure "$repo" "$repo_deadline" "$sweep_deadline" || pass_rc=$?
 		if [[ "$pass_rc" -eq 0 ]]; then
@@ -727,16 +744,15 @@ _pulse_stale_blocked_sweep_repo() {
 			rc="$pass_rc"
 		fi
 	fi
-	if declare -F _pm_reconcile_partial_continuations >/dev/null 2>&1 &&
-		! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" partial-continuation-complete; then
+	for pass_spec in _pm_reconcile_draft_checkpoint_blocks:draft-checkpoint-unblock-complete \
+		_pm_reconcile_partial_continuations:partial-continuation-complete; do
 		pass_rc=0
-		_pm_reconcile_partial_continuations "$repo" "$repo_deadline" 2>>"$LOGFILE" || pass_rc=$?
-		if [[ "$pass_rc" -eq 0 ]]; then
-			_pulse_stale_blocked_repo_mark_complete "$repo" partial-continuation-complete
-		elif [[ "$rc" -eq 0 || "$rc" -eq "$partial_rc" ]]; then
+		_pulse_stale_blocked_optional_pass "${pass_spec%%:*}" "${pass_spec#*:}" \
+			"$repo" "$repo_deadline" "$interval" "$now_epoch" || pass_rc=$?
+		if [[ "$pass_rc" -ne 0 ]] && [[ "$rc" -eq 0 || "$rc" -eq "$partial_rc" ]]; then
 			rc="$pass_rc"
 		fi
-	fi
+	done
 	return "$rc"
 }
 
