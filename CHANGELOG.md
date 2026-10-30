@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.96] - 2026-10-30
+
+### Added
+
+- identify rejected checkpoint history events (#36113)
+
+### Changed
+
+- Tests: stub lifetime binder in dispatch capability fixture (GH#36108) (#36115)
+
+### Fixed
+
+- migrate floating metrics callers (GH#36105) (#36106)
+- enrich preserves appended sections and skips footer-only rewrites
+- supersede conflicting TODO handoffs instead of holding them
+- preserve PR-less completion rejection evidence (GH#36100) (#36102)
+
 ## [3.39.95] - 2026-10-30
 
 ### Changed
