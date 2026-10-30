@@ -117,6 +117,8 @@ gh() {
 		once) [[ "$count" != 1 ]] || { printf 'unexpected end of JSON input\n' >&2; return 1; } ;;
 		always) printf 'unexpected end of JSON input\n' >&2; return 1 ;;
 		auth) printf 'gh: Forbidden (HTTP 403)\n' >&2; return 1 ;;
+		network-once) [[ "$count" != 1 ]] || { printf '{partial'; printf '%s\n' "$NETWORK_ERROR" >&2; return 1; } ;;
+		network-always) printf '{partial'; printf '%s\n' "$NETWORK_ERROR" >&2; return 1 ;;
 		missing-native) printf '[aidevops] gh shim: native gh not found\nsecond line must not escape\n' >&2; return 127 ;;
 		esac
 	fi
@@ -149,6 +151,30 @@ RELEASE_SNAPSHOT_MAX_ATTEMPTS=bogus assert_reads always 8 1
 RELEASE_SNAPSHOT_MAX_ATTEMPTS=99 assert_reads always 8 1
 assert_reads auth 1 1
 grep -Fq 'not retryable): gh: Forbidden (HTTP 403)' "$TEST_ROOT/read-err"
+for NETWORK_ERROR in \
+	'error connecting to api.github.com' \
+	'dial tcp: lookup api.github.com: no such host' \
+	'dial tcp: i/o timeout' \
+	'read tcp: connection reset by peer' \
+	'net/http: TLS handshake timeout' \
+	'Get "https://api.github.com": EOF' \
+	'unexpected EOF' \
+	'context deadline exceeded (Client.Timeout exceeded while awaiting headers)' \
+	'dial tcp: connect: connection refused' \
+	'dial tcp: connect: network is unreachable' \
+	'lookup api.github.com: temporary failure in name resolution'; do
+	assert_reads network-once 2 0
+	grep -Fq 'network transport error; retrying' "$TEST_ROOT/read-err"
+done
+RELEASE_SNAPSHOT_MAX_ATTEMPTS=3 assert_reads network-always 3 1
+grep -Fq 'network transport error after 3 attempts' "$TEST_ROOT/read-err"
+for NETWORK_ERROR in 'gh: Unauthorized (HTTP 401)' 'gh: Not Found (HTTP 404)' \
+	'gh: Forbidden (HTTP 403): connection reset by peer' \
+	'tls: failed to verify certificate: x509: certificate has expired' \
+	'unknown failure'; do
+	assert_reads network-always 1 1
+	grep -Fq 'not retryable' "$TEST_ROOT/read-err"
+done
 assert_reads missing-native 1 1
 grep -Fq 'exit 127, attempt 1; not retryable): [aidevops] gh shim: native gh not found' "$TEST_ROOT/read-err"
 [[ "$(wc -l <"$TEST_ROOT/read-err")" -eq 1 ]]

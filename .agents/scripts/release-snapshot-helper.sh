@@ -68,7 +68,7 @@ _release_gh_read_network_failure() {
 		"$normalized" =~ (x509:|certificate|permission\ denied|authentication|not\ logged) ]]; then
 		return 1
 	fi
-	if [[ "$normalized" =~ (connection\ reset\ by\ peer|connection\ refused|connection\ timed\ out|i/o\ timeout|tls\ handshake\ timeout|context\ deadline\ exceeded|client\.timeout\ exceeded|temporary\ failure\ in\ name\ resolution|no\ such\ host|network\ is\ unreachable|unexpected\ eof) ||
+	if [[ "$normalized" =~ (connection\ reset\ by\ peer|connection\ refused|connection\ timed\ out|i/o\ timeout|tls\ handshake\ timeout|context\ deadline\ exceeded|client\.timeout\ exceeded|temporary\ failure\ in\ name\ resolution|no\ such\ host|network\ is\ unreachable|unexpected\ eof|error\ connecting\ to) ||
 		"$normalized" =~ (^|[[:space:]:])eof([[:space:]]|$) ]]; then
 		return 0
 	fi
@@ -76,7 +76,7 @@ _release_gh_read_network_failure() {
 }
 
 # Read-only GitHub read with bounded retry of transport failures only (empty
-# body, HTTP 5xx, truncated/invalid JSON). Auth, 404 and permission failures and
+# body, HTTP 5xx, network errors, truncated/invalid JSON). Auth, 404 and permission failures and
 # wrong response shapes fail on the first attempt. Fail closed after the
 # _release_gh_read_attempts budget.
 # Usage: _release_snapshot_gh_read <purpose> <jq-shape-test> -- gh-args...
