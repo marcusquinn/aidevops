@@ -120,10 +120,14 @@ _isc_stamp_path() {
 _isc_current_user() {
 	local login=""
 	login=$(gh api user --jq '.login' 2>/dev/null) || login=""
-	# Reject JSON null / empty / literal "null"
-	if [[ -z "$login" || "$login" == "null" ]]; then
-		printf ''
-		return 0
+	# REST core and GraphQL have separate quotas. Identity must always come
+	# from the authenticated credential, never from caller/environment input.
+	if [[ "$login" == "null" || ! "$login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+		login=$(gh api graphql -f 'query=query { viewer { login } }' \
+			--jq '.data.viewer.login // empty' 2>/dev/null) || login=""
+	fi
+	if [[ "$login" == "null" || ! "$login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+		login=""
 	fi
 	printf '%s' "$login"
 	return 0
