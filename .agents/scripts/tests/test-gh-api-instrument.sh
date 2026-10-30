@@ -936,7 +936,7 @@ NATIVE_FIXTURE="$TMPDIR/native-fixture"
 mkdir -p "$SHIM_FIXTURE" "$NATIVE_FIXTURE"
 # Keep the isolated native-gh PATH usable on systems (including Nix) whose
 # standard tools do not live in /usr/bin or /bin. Never expose the real gh.
-for fixture_tool in bash cat dd dirname basename date awk sed grep tr mktemp mkdir chmod rm rmdir uname jq cut sort wc sleep stat flock python3 shasum sha256sum openssl; do
+for fixture_tool in bash cat dd dirname basename date awk sed grep tr mktemp mkdir chmod rm rmdir uname jq cut sort wc sleep stat ps flock python3 shasum sha256sum openssl; do
 	fixture_tool_path=$(command -v "$fixture_tool" || true)
 	if [[ -n "$fixture_tool_path" ]]; then
 		ln -s "$fixture_tool_path" "$NATIVE_FIXTURE/$fixture_tool"
@@ -1426,10 +1426,12 @@ kill_bin="$scratch_fixture/kill-bin"
 aggregate_marker="$scratch_fixture/aggregate-killed.marker"
 aggregate_owner_pid_file="$scratch_fixture/aggregate-owner.pid"
 mkdir -p "$kill_bin"
+GH_API_NATIVE_CP=$(command -v cp)
+export GH_API_NATIVE_CP
 cat >"$kill_bin/cp" <<'EOF_KILL_CP'
 #!/usr/bin/env bash
 set -euo pipefail
-/bin/cp "$@"
+"$GH_API_NATIVE_CP" "$@"
 printf 'ready\n' >"$GH_API_KILL_MARKER"
 kill -KILL "$PPID"
 exit 137

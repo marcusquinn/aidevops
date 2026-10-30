@@ -50,6 +50,13 @@
 # auth_reason (optional, from AIDEVOPS_GH_AUTH_REASON) is the Pulse auth route:
 # app | write | local | account | unclassified | unscoped | not-configured |
 # other-host | absolute-url | explicit-auth | verbose. Empty = not routed.
+# Fields 19-21 are auth_consumer, auth_fingerprint (SHA-256 of host + token),
+# and rate-limit reset epoch. Unknown values stay empty; old rows remain valid.
+# rest_core_attribution reports independent (pool, fingerprint, reset) series.
+# Residuals are upper bounds: unknown costs, other tokens sharing a user quota,
+# other machines and filtered-out callers cannot be distinguished from bypasses.
+# Minutes own the interval-ending sample; multi-frame samples use command
+# completion under the credential lock, not exact per-response wall-clock time.
 #
 # Override env vars:
 #   AIDEVOPS_GH_API_LOG          — path to the log file (default
