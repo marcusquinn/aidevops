@@ -936,7 +936,8 @@ tbr_main() {
 	rearm) tbr_pending --rearm-only ;;
 	record) tbr_record "$@" ;;
 	help | --help | -h)
-		sed -n '4,48p' "${BASH_SOURCE[0]}"
+		# Print the whole header block, opening rule through closing rule.
+		sed -n '4,52p' "${BASH_SOURCE[0]}"
 		;;
 	*) return 2 ;;
 	esac
