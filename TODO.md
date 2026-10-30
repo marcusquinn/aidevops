@@ -1774,7 +1774,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18800 fix(pulse): restore stranded worker drafts blocked by pre-v3.39.89 release projections #bug #priority:high ref:GH#36028
 
-- [ ] t18801 fix(interactive-session): claim must not silently skip when REST core is exhausted #auto-dispatch #bug #priority:medium ref:GH#36036
+- [x] t18801 fix(interactive-session): claim must not silently skip when REST core is exhausted #auto-dispatch #bug #priority:medium ref:GH#36036 pr:#36037 completed:2026-10-30
 
 ## In Progress
 
