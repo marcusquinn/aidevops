@@ -225,7 +225,15 @@ runner that opened it queues the issue (`terminal-blocker-recovery-helper.sh`;
 circuits it authored are backfilled every 6h) and its pulse supervisor runs
 when entries are pending (`trigger=blocker_recovery`, at most every
 `PULSE_LLM_RECOVERY_INTERVAL`, default 3h). `pending` re-verifies each entry on
-GitHub and retires closed or re-armed ones. For each entry the supervisor is the
+GitHub and retires closed or re-armed ones. Independently, pulse preflight runs
+the mechanical-only `rearm` pass every `PULSE_BLOCKER_REARM_INTERVAL` (default
+600s). A queued trusted retry or relevant issue revision releases its hold
+within that interval plus one pulse cycle, without an LLM run. This bounded,
+resumable pass emits no LLM work, performs no remote seeding, and skips comment
+reads for issues whose `updated_at` has not advanced since its last complete
+held check. API secondary cooldown or an active GraphQL circuit breaker defers
+the pass until pressure clears; a partial queue resumes on the next interval.
+The 3h LLM recovery cadence is unchanged. For each entry the supervisor is the
 AI brief owner:
 
 1. Read the public observation and the entry's `local_excerpts` (protected
