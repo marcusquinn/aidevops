@@ -480,12 +480,13 @@ _ghqa_record_bootstrap() {
 	local page="$4"
 	local remaining="$5"
 	local reset="${6:-}"
+	local used="${7:-}"
 	local logical_id=""
 	declare -F gh_record_attempt >/dev/null 2>&1 || return 0
 	logical_id=$(gh_new_logical_id 2>/dev/null || true)
 	gh_record_attempt rest gh-quota-bootstrap "$logical_id" "" "$page" 0 "$outcome" \
 		"" "$elapsed_ms" "$quota_cost" "${AIDEVOPS_GH_AUTH_MODE:-gh-pat}" \
-		rest-core quota-state-bootstrap "$remaining" "${AIDEVOPS_GH_AUTH_FINGERPRINT:-}" "$reset"
+		rest-core quota-state-bootstrap "$remaining" "${AIDEVOPS_GH_AUTH_FINGERPRINT:-}" "$reset" "" "$used"
 	return 0
 }
 
@@ -508,7 +509,7 @@ _ghqa_bootstrap_state() {
 			search_used search_remaining search_reset <<<"$output"
 		if _ghqa_state_write_all "$state_file" "$core_used" "$core_reset" \
 			"$graphql_used" "$graphql_reset" "$search_used" "$search_reset"; then
-			_ghqa_record_bootstrap success "$elapsed_ms" 0 1 "$core_remaining" "$core_reset"
+			_ghqa_record_bootstrap success "$elapsed_ms" 0 1 "$core_remaining" "$core_reset" "$core_used"
 			return 0
 		fi
 	fi
@@ -724,9 +725,9 @@ _ghqa_write_complete_frames() {
 		# costs, so the next response can prove or reject continuity.
 		_ghqa_state_update "$state_file" "$resource" "$used" "$reset" 2>/dev/null || true
 		decision="${AIDEVOPS_GH_ROUTE_DECISION:-${pool}-selected}"
-		printf 'attempt\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		printf 'attempt\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"$path" "$page" "$outcome" "$status" "$elapsed" "$quota_cost" \
-			"$pool" "$decision" "$remaining" "$reset" "$sampled_at" >>"$result_file"
+			"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" >>"$result_file"
 	done <<<"$parsed"
 	[[ "$invalidate_state" -eq 0 ]] || rm -f -- "$state_file" 2>/dev/null || true
 	return 0
@@ -832,14 +833,14 @@ _ghqa_record_result_file() {
 	local caller="$2"
 	local logical_id="$3"
 	local retry="$4"
-	local kind path page outcome status elapsed quota pool decision budget reset sampled_at
+	local kind path page outcome status elapsed quota pool decision budget reset sampled_at used
 	local attempts=0
-	while IFS=$'\t' read -r kind path page outcome status elapsed quota pool decision budget reset sampled_at; do
+	while IFS=$'\t' read -r kind path page outcome status elapsed quota pool decision budget reset sampled_at used; do
 		[[ "$kind" == attempt ]] || continue
 		attempts=$((attempts + 1))
 		gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
 			"$status" "$elapsed" "$quota" "${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "$decision" "$budget" \
-			"${AIDEVOPS_GH_AUTH_FINGERPRINT:-}" "$reset" "$sampled_at"
+			"${AIDEVOPS_GH_AUTH_FINGERPRINT:-}" "$reset" "$sampled_at" "$used"
 	done <"$result_file"
 	# An exact capture path that observed malformed debug output writes an opaque
 	# row above. An empty result is valid only when gh made no HTTP request.

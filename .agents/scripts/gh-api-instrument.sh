@@ -52,6 +52,7 @@
 # other-host | absolute-url | explicit-auth | verbose. Empty = not routed.
 # Fields 19-21 are auth_consumer, auth_fingerprint (SHA-256 of host + token),
 # and rate-limit reset epoch. Unknown values stay empty; old rows remain valid.
+# Field 22 is the response's cumulative x-ratelimit-used counter, not call cost.
 # rest_core_attribution reports independent (pool, fingerprint, reset) series.
 # Residuals are upper bounds: unknown costs, other tokens sharing a user quota,
 # other machines and filtered-out callers cannot be distinguished from bypasses.
@@ -592,6 +593,7 @@ _gh_append_v2() {
 	local recorded_at="${1:-}"
 	local auth_fingerprint="${2:-}"
 	local reset_epoch="${3:-}"
+	local quota_used="${4:-}"
 	local ts=""
 	local record=""
 	local auth_reason=""
@@ -625,10 +627,11 @@ _gh_append_v2() {
 	# arbitrary auth text (which might accidentally contain a credential).
 	[[ "$auth_fingerprint" =~ ^[a-f0-9]{64}$ ]] || auth_fingerprint=""
 	reset_epoch=$(_gh_safe_number "$reset_epoch")
-	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+	quota_used=$(_gh_safe_number "$quota_used")
+	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
 		"$ts" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" "$budget_remaining" \
 		"$event_kind" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" "$http_status" "$elapsed_ms" "$quota_cost" \
-		"$auth_reason" "$auth_consumer" "$auth_fingerprint" "$reset_epoch"
+		"$auth_reason" "$auth_consumer" "$auth_fingerprint" "$reset_epoch" "$quota_used"
 	_gh_append_record "$record"
 	return 0
 }
@@ -739,6 +742,7 @@ gh_record_attempt() {
 	local auth_fingerprint="${2-${AIDEVOPS_GH_AUTH_FINGERPRINT:-}}"
 	local reset_epoch="${3:-}"
 	local recorded_at="${4:-}"
+	local quota_used="${5:-}"
 	[[ -n "$logical_id" ]] || logical_id=$(gh_new_logical_id)
 	[[ -n "$attempt_id" ]] || attempt_id=$(gh_new_attempt_id "$logical_id")
 	[[ -n "$page" ]] || page=1
@@ -752,7 +756,7 @@ gh_record_attempt() {
 	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
 	_gh_append_v2 attempt "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" \
 		"$budget_remaining" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" \
-		"$http_status" "$elapsed_ms" "$quota_cost" "$recorded_at" "$auth_fingerprint" "$reset_epoch"
+		"$http_status" "$elapsed_ms" "$quota_cost" "$recorded_at" "$auth_fingerprint" "$reset_epoch" "$quota_used"
 	return 0
 }
 

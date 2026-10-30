@@ -570,10 +570,12 @@ assert_eq "pool B never absorbs pool A drain" "1" "$(jq --arg fp "$pool_b" '.res
 assert_eq "top minute ranks residual, not append order" "9" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .top_unattributed_minutes[0].unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "old v2 metadata exclusion is explicit" "1" "$(jq '.rest_core_attribution.missing_metadata_attempts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "new reset does not create negative drops" "0" "$(jq '.rest_core_attribution.series[] | select(.reset_epoch == 2000003600) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
-gh_record_attempt rest metadata-caller logical-meta attempt-meta 1 0 success 200 1 1 gh-pat rest-core rest-selected 99 "$pool_a" 2000000000
+gh_record_attempt rest metadata-caller logical-meta attempt-meta 1 0 success 200 1 1 gh-pat rest-core rest-selected 99 "$pool_a" 2000000000 "" 4901
 assert_eq "attempt metadata is appended in fields 20 and 21" "$pool_a:2000000000" "$(awk -F '\t' '$11 == "attempt-meta" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
-gh_record_attempt rest metadata-caller logical-meta attempt-invalid 1 0 success 200 1 1 gh-pat rest-core rest-selected 98 'not-a-digest' 'not-an-epoch'
+assert_eq "cumulative used counter appends after existing fields" "4901" "$(awk -F '\t' '$11 == "attempt-meta" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest metadata-caller logical-meta attempt-invalid 1 0 success 200 1 1 gh-pat rest-core rest-selected 98 'not-a-digest' 'not-an-epoch' "" 'not-a-counter'
 assert_eq "arbitrary auth text cannot enter fingerprint column" ":" "$(awk -F '\t' '$11 == "attempt-invalid" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "arbitrary text cannot enter used column" "" "$(awk -F '\t' '$11 == "attempt-invalid" {print $22}' "$AIDEVOPS_GH_API_LOG")"
 
 # --- Test 11: command arguments remain private and exit status is preserved --
 gh_clear_log
@@ -645,15 +647,19 @@ AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
 	_ghqa_record_result_file "$exact_success_result" frame-metadata logical-frame 0
 assert_eq "header reset reaches attempt record with credential digest" "$pool_a:1800000000" \
 	"$(awk -F '\t' 'NR == 1 {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "response used counter survives deferred log append" "10" \
+	"$(awk -F '\t' 'NR == 1 {print $22}' "$AIDEVOPS_GH_API_LOG")"
 assert_eq "capture timestamp survives deferred log append" \
 	"$(awk -F '\t' 'NR == 1 {print $12}' "$exact_success_result")" \
 	"$(awk -F '\t' 'NR == 1 {print $1}' "$AIDEVOPS_GH_API_LOG")"
 gh_record_attempt rest timestamp-caller logical-ts captured-ts 1 0 success 200 1 1 gh-pat rest-core rest-selected 99 "$pool_a" 1800000000 "$fixture_minute"
 assert_eq "explicit captured time is not replaced by append time" "$fixture_minute" \
 	"$(awk -F '\t' '$11 == "captured-ts" {print $1}' "$AIDEVOPS_GH_API_LOG")"
-AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" _ghqa_record_bootstrap success 1 0 1 99 1800000000
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" _ghqa_record_bootstrap success 1 0 1 99 1800000000 4901
 assert_eq "bootstrap preserves known reset metadata" "$pool_a:1800000000" \
 	"$(awk -F '\t' '$2 == "gh-quota-bootstrap" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "bootstrap preserves observed cumulative counter" "4901" \
+	"$(awk -F '\t' '$2 == "gh-quota-bootstrap" {print $22}' "$AIDEVOPS_GH_API_LOG")"
 
 # --- Test 11d: successful native multi-frame REST costs are exact -----------
 native_multi_result="$TMPDIR/native-multi.result"
