@@ -125,15 +125,20 @@ _pdcu_release_evidence() {
 		--arg owner "$_PDCU_OWNER_EVENT_PATTERN" \
 		--arg marker "kind=${_PDCU_MARKER_KIND} pr=${pr_number} " "${_PMPC_COMMENTS_JQ_DEFS}"'
 		[comments[] | select(trusted)
-			| {id: ((.id // 0) | tonumber? // 0), created_at, login: (.user.login // ""), body: (.body // "")}]
+			| {id: ((.id // 0) | tonumber? // 0), created_at, updated_at: (.updated_at // .created_at),
+				login: (.user.login // ""), body: (.body // "")}]
 		| sort_by(.created_at, .id) as $trusted
 		| ([$trusted[] | select(.body | test("(^|\n)CLAIM_RELEASED reason="))] | last) as $release
 		| if $release == null then empty
 		elif any($trusted[]; [.created_at, .id] > [$release.created_at, $release.id]
 			and (.body | test($owner))) then empty
+		# An edited release is not the record the runner wrote.
+		elif $release.updated_at != $release.created_at then empty
 		else
 			($release.body | capture("(^|\n)CLAIM_RELEASED reason=(?<reason>[^ \n]+)(?<rest>[^\n]*)")) as $line
 			| (($line.rest | capture("(^| )runner=(?<r>[A-Za-z0-9._-]+(\\[bot\\])?)") | .r) // $release.login) as $runner
+			# The poster must be the runner it names (GH#33850 attention rule).
+			| select($runner == $release.login)
 			| [($release.id | tostring), $line.reason, $runner,
 				($release.created_at | fromdateiso8601 | tostring),
 				([$trusted[] | select(.body | contains($marker))] | length | tostring),

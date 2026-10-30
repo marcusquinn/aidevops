@@ -304,6 +304,35 @@ test_untrusted_release_stays_blocked() {
 		"CLAIM_RELEASED reason=worker_complete runner=runner1 ts=${RELEASE_TS}")")
 	run_pass
 	assert_no_write "release from a non-collaborator is not evidence"
+	reset_case
+	TEST_COMMENTS=$(pages "$(release_comment | jq -c '.updated_at = "2026-10-29T20:00:00Z"')")
+	run_pass
+	assert_no_write "an edited release is not evidence"
+	reset_case
+	TEST_COMMENTS=$(pages "$(release_comment | jq -c '.user.login = "runner9"')")
+	run_pass
+	assert_no_write "a release whose poster is not the named runner is not evidence"
+	return 0
+}
+
+# Linux caps one argv string at 131072 bytes (MAX_ARG_STRLEN); evidence must be
+# piped, never passed with --arg/--argjson. #35592's timeline was 149244 bytes.
+test_large_timeline_is_read_from_stdin() {
+	local -a events=()
+	local index=0 padding=""
+	padding=$(printf '%*s' 1400 '' | tr ' ' 'x')
+	for ((index = 0; index < 120; index++)); do
+		events+=("$(label_event 2026-10-29T19:00:00Z runner0 "noise-${index}-${padding}")")
+	done
+	reset_case
+	TEST_TIMELINE=$(pages "${events[@]}" "$(label_event 2026-10-29T19:32:10Z runner1 status:blocked)")
+	if [[ "${#TEST_TIMELINE}" -le 131072 ]]; then
+		fail "large timeline fixture exceeds MAX_ARG_STRLEN" "size=${#TEST_TIMELINE}"
+		return 0
+	fi
+	run_pass
+	assert_restored "501 ${SLUG} available --remove-assignee runner1" \
+		"a timeline larger than Linux MAX_ARG_STRLEN (${#TEST_TIMELINE} bytes) is still evaluated"
 	return 0
 }
 
@@ -443,6 +472,62 @@ test_status_and_comment_failures() {
 	return 0
 }
 
+# From PR #36031: keep the reason set aligned with the continuation helper
+# without sourcing its CLI. Ownership loss is excluded here on purpose.
+test_release_pattern_tracks_continuation_helper() {
+	local pcc_pattern=""
+	pcc_pattern=$(awk -F "'" '/^_PCC_STALL_RELEASE_PATTERN=/{print $2}' "${SCRIPT_DIR_TEST}/../pr-checkpoint-continuation-helper.sh")
+	if [[ -n "$pcc_pattern" && "${pcc_pattern/worker_ownership_lost|/}" == "$_PDCU_RELEASE_REASON_PATTERN" ]]; then
+		pass "release reasons match _PCC_STALL_RELEASE_PATTERN minus worker_ownership_lost"
+	else
+		fail "release reasons match _PCC_STALL_RELEASE_PATTERN minus worker_ownership_lost" "pcc=[${pcc_pattern}]"
+	fi
+	return 0
+}
+
+# From PR #36031: exercise the real cadence functions. Runs last because it
+# sources pulse-wrapper-cycle.sh and replaces the pass with a recorder.
+test_cycle_stamp_behavior() {
+	local stamp="" rc=0 now=""
+	# shellcheck source=../pulse-wrapper-cycle.sh
+	source "$CYCLE_FILE"
+	HOME="${TEST_ROOT}/home"
+	mkdir -p "${HOME}/.aidevops/cache"
+	stamp="${HOME}/.aidevops/cache/draft-checkpoint-unblock-complete/owner__repo"
+	_file_mtime_epoch() {
+		local file="$1"
+		if [[ -f "$file" ]]; then date +%s; else printf '0\n'; fi
+		return 0
+	}
+	reconcile_stale_blocked_issues() { return 0; }
+	_pm_reconcile_partial_continuations() { return 0; }
+	_pm_reconcile_draft_checkpoint_blocks() {
+		printf '%s\n' "$*" >>"${TEST_ROOT}/cycle"
+		return "${CYCLE_RC:-0}"
+	}
+	now=$(date +%s)
+	_pulse_stale_blocked_sweep_repo owner/repo "$((now + 60))" "$((now + 60))" 1800 "$now" || rc=$?
+	[[ "$rc" -eq 0 && -f "$stamp" ]] && pass "a complete pass writes its own stamp" ||
+		fail "a complete pass writes its own stamp" "rc=${rc}"
+	_pulse_stale_blocked_sweep_repo owner/repo "$((now + 60))" "$((now + 60))" 1800 "$now" || true
+	[[ "$(wc -l <"${TEST_ROOT}/cycle" | tr -d ' ')" == "1" ]] && pass "a fresh stamp skips the pass" ||
+		fail "a fresh stamp skips the pass"
+	rm -f "$stamp"
+	if _pulse_stale_blocked_repo_all_fresh owner/repo 1800 "$now"; then
+		fail "a missing unblock stamp keeps the repo due"
+	else
+		pass "a missing unblock stamp keeps the repo due"
+	fi
+	for CYCLE_RC in 3 1; do
+		rc=0
+		_pulse_stale_blocked_sweep_repo owner/repo "$((now + 60))" "$((now + 60))" 1800 "$now" || rc=$?
+		[[ "$rc" -eq "$CYCLE_RC" && ! -f "$stamp" ]] && pass "pass rc ${CYCLE_RC} propagates and is not stamped" ||
+			fail "pass rc ${CYCLE_RC} propagates and is not stamped" "rc=${rc}"
+	done
+	unset CYCLE_RC
+	return 0
+}
+
 test_cycle_wiring() {
 	local sweep="" all_fresh=""
 	sweep=$(awk '/^_pulse_stale_blocked_sweep_repo\(\)/,/^}/' "$CYCLE_FILE")
@@ -469,6 +554,7 @@ main() {
 	test_terminal_blocker_release_stays_blocked
 	test_later_owner_event_stays_blocked
 	test_untrusted_release_stays_blocked
+	test_large_timeline_is_read_from_stdin
 	test_label_actor_or_window_mismatch_stays_blocked
 	test_protected_or_ineligible_issue_stays_blocked
 	test_pr_shape_mismatch_stays_blocked
@@ -477,6 +563,8 @@ main() {
 	test_deadline_and_listing_cost
 	test_status_and_comment_failures
 	test_cycle_wiring
+	test_release_pattern_tracks_continuation_helper
+	test_cycle_stamp_behavior
 	printf '\n%d tests, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
 	return 0
