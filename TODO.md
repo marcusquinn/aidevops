@@ -1786,7 +1786,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18806 fix(terminal-blocker): release pre-fix bare blocked holds on trusted retry or expired backoff #auto-dispatch #bug ref:GH#36061
 
-- [ ] t18807 fix(terminal-blocker): recovery must fall back to GraphQL instead of stalling while REST core is exhausted #auto-dispatch #bug ref:GH#36063
+- [x] t18807 fix(terminal-blocker): recovery must fall back to GraphQL instead of stalling while REST core is exhausted #auto-dispatch #bug ref:GH#36063 pr:#36065 completed:2026-10-30
 
 ## In Progress
 
