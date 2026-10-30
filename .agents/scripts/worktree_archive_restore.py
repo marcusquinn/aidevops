@@ -346,7 +346,6 @@ class RestorationProof:
             return
         require(slot == slot.resolve(strict=True), changed)
         require(inode(slot) == receipt["slot_inode"], changed)
-        require(slot.parent == directory and slot.name.startswith(".restore-"), changed)
         require({entry.name for entry in slot.iterdir()} == {"worktree"}, changed)
         require(target.is_dir() and not target.is_symlink(), changed)
         with transaction() as connection:

@@ -99,12 +99,17 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
     def auto_merge_path(self):
         return Path(os.fsdecode(self.git(self.work, "rev-parse", "--absolute-git-dir")).strip()) / "AUTO_MERGE"
 
-    def recover_legacy_scratch(self, scenario):
-        from worktree_archive_restore import RestorationProof
-        from worktree_recovery_migration_state import publish
+    def legacy_scratch(self, owned=False):
+        from worktree_recovery_retirement_transaction import fingerprint
         self.env["AIDEVOPS_WORKTREE_MANAGER"] = "legacy-guards"
         archive = self.archive()
-        archive_before = {p.name: p.read_bytes() for p in archive.iterdir() if p.is_file()}
+        archive_before = fingerprint(archive)
+
+        def unchanged():
+            self.assertEqual(archive_before, fingerprint(archive))
+            self.assertTrue(self.work.is_dir())
+
+        self.addCleanup(unchanged)
 
         def interrupt(*args):
             self.helper(*args)
@@ -119,80 +124,85 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
         slot = directory / previous["slot"]
         target = slot / "worktree"
         with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection, connection:
-            if scenario != "missing-owned":
+            if not owned:
                 connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
-            if scenario == "missing-registered":
-                connection.execute("DELETE FROM worktree_creation_backends WHERE path = ?", (str(target),))
-        if scenario in ("missing", "missing-owned"):
-            self.git(self.repo, "worktree", "remove", target)
-            slot.rmdir()
-        elif scenario == "missing-registered":
-            shutil.rmtree(slot)
-        elif scenario == "dirty":
-            (target / "mixed.txt").write_text("must survive\n")
-        elif scenario == "ignored":
-            (target / "precious.ignored").write_text("must survive\n")
-        elif scenario == "unreachable":
-            (target / "mixed.txt").write_text("unreferenced commit\n")
-            self.git(target, "commit", "-qam", "scratch-only")
-        elif scenario == "foreign":
-            foreign = self.root / "foreign"
-            self.run_command("git", "init", "-q", foreign)
-            common = foreign / ".git"
-            with patch.dict(os.environ, self.env), self.assertRaisesRegex(ValueError, "wrong-base"):
-                RestorationProof.recover_unsealed(directory, previous, lambda _: None, record, common)
-            self.assertTrue(target.is_dir())
-            return
+        return record, slot, target
 
-        saved_states = []
-
+    def resume_legacy_scratch(self, record):
+        from worktree_archive_restore import RestorationProof
+        from worktree_recovery_migration_state import publish
+        previous = record["canonical_restore"]
+        directory = self.root / "proof"
         def save(value):
-            saved_states.append(previous["state"])
+            self.assertEqual(previous["state"], "cleaned")
             publish(directory / "journal.json", value)
 
         with patch.dict(os.environ, self.env):
-            if scenario in ("dirty", "ignored", "unreachable", "missing-registered", "missing-owned"):
-                with self.assertRaisesRegex(ValueError, "unsealed-copy-retained"):
-                    RestorationProof(directory, record, self.helper, save)
-                self.assertEqual(previous["state"], "restoring")
-                self.assertEqual(slot.exists(), not scenario.startswith("missing"))
-            else:
-                proof = RestorationProof(directory, record, self.helper, save)
-                proof.check()
-                self.assertIn("cleaned", saved_states)
-                self.assertNotEqual(record["canonical_restore"]["slot"], previous["slot"])
-                self.assertEqual(record["canonical_restore"]["state"], "cleaned")
-                self.assertFalse(slot.exists())
-        if scenario == "missing":
-            with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
-                self.assertIsNotNone(connection.execute(
-                    "SELECT record FROM worktree_creation_backends WHERE path = ?", (str(target),)).fetchone())
-        self.assertEqual(archive_before, {p.name: p.read_bytes() for p in archive.iterdir() if p.is_file()})
-        self.assertTrue(self.work.is_dir())
+            proof = RestorationProof(directory, record, self.helper, save)
+            proof.check()
+        self.assertNotEqual(record["canonical_restore"]["slot"], previous["slot"])
+        self.assertEqual(record["canonical_restore"]["state"], "cleaned")
+        self.assertFalse((directory / previous["slot"]).exists())
+
+    def reject_legacy_scratch(self, record):
+        with self.assertRaisesRegex(ValueError, "unsealed-copy-retained"):
+            self.resume_legacy_scratch(record)
+        self.assertEqual(record["canonical_restore"]["state"], "restoring")
 
     def test_recover_legacy_scratch_without_owner(self):
-        self.recover_legacy_scratch("ownerless")
+        record, _slot, _target = self.legacy_scratch()
+        self.resume_legacy_scratch(record)
 
     def test_recover_legacy_scratch_already_removed(self):
-        self.recover_legacy_scratch("missing")
+        record, slot, target = self.legacy_scratch()
+        self.git(self.repo, "worktree", "remove", target)
+        slot.rmdir()
+        self.resume_legacy_scratch(record)
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT record FROM worktree_creation_backends WHERE path = ?", (str(target),)).fetchone())
 
     def test_recover_legacy_scratch_rejects_stale_git_registration(self):
-        self.recover_legacy_scratch("missing-registered")
+        record, slot, target = self.legacy_scratch()
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection, connection:
+            connection.execute("DELETE FROM worktree_creation_backends WHERE path = ?", (str(target),))
+        shutil.rmtree(slot)
+        self.reject_legacy_scratch(record)
 
     def test_recover_legacy_scratch_rejects_missing_owned_slot(self):
-        self.recover_legacy_scratch("missing-owned")
+        record, slot, target = self.legacy_scratch(owned=True)
+        self.git(self.repo, "worktree", "remove", target)
+        slot.rmdir()
+        self.reject_legacy_scratch(record)
 
     def test_recover_legacy_scratch_rejects_dirty(self):
-        self.recover_legacy_scratch("dirty")
+        record, _slot, target = self.legacy_scratch()
+        (target / "mixed.txt").write_text("must survive\n")
+        self.reject_legacy_scratch(record)
+        self.assertEqual((target / "mixed.txt").read_text(), "must survive\n")
 
     def test_recover_legacy_scratch_rejects_ignored_files(self):
-        self.recover_legacy_scratch("ignored")
+        record, _slot, target = self.legacy_scratch()
+        (target / "precious.ignored").write_text("must survive\n")
+        self.reject_legacy_scratch(record)
+        self.assertTrue((target / "precious.ignored").is_file())
 
     def test_recover_legacy_scratch_rejects_unreachable_head(self):
-        self.recover_legacy_scratch("unreachable")
+        record, _slot, target = self.legacy_scratch()
+        (target / "mixed.txt").write_text("unreferenced commit\n")
+        self.git(target, "commit", "-qam", "scratch-only")
+        self.reject_legacy_scratch(record)
+        self.assertTrue(target.is_dir())
 
     def test_recover_legacy_scratch_rejects_foreign_common_dir(self):
-        self.recover_legacy_scratch("foreign")
+        from worktree_archive_restore import RestorationProof
+        record, _slot, target = self.legacy_scratch()
+        foreign = self.root / "foreign"
+        self.run_command("git", "init", "-q", foreign)
+        with patch.dict(os.environ, self.env), self.assertRaisesRegex(ValueError, "wrong-base"):
+            RestorationProof.recover_unsealed(self.root / "proof", record["canonical_restore"],
+                                              lambda _: None, record, foreign / ".git")
+        self.assertTrue(target.is_dir())
 
     def start_conflicted_merge(self):
         self.git(self.repo, 'checkout', '-qb', 'other')
