@@ -146,6 +146,8 @@ readonly _DIRTY_ACTION_SKIP="skip"
 
 readonly _DIRTY_LABEL_ORIGIN_WORKER="origin:worker"
 readonly _DIRTY_LABEL_ORIGIN_WORKER_TAKEOVER="origin:worker-takeover"
+# Pulse TODO handoff heads (pulse-todo-publication.sh); see GH#36112.
+readonly _DIRTY_PULSE_TODO_HANDOFF_PREFIX="aidevops/pulse-todo-"
 
 # Comment markers for idempotency when scanning PR comment history.
 readonly _DIRTY_PR_NOTIFY_MARKER="<!-- pulse-dirty-pr-escalate -->"  # string preserved for comment-history dedup continuity
@@ -693,6 +695,13 @@ _dirty_pr_classify() {
 	fi
 	if [[ "$mss" != "DIRTY" ]]; then
 		printf '%s|not-dirty' "$_DIRTY_ACTION_SKIP"
+		return 0
+	fi
+	# GH#36112: a Pulse TODO handoff has no work issue, so its Ref lines must not
+	# drive rebase, conflict routing, close or notify. The merge pass supersedes
+	# trusted conflicting handoffs and the publisher regenerates them.
+	if [[ "$head_ref" == "${_DIRTY_PULSE_TODO_HANDOFF_PREFIX}"* ]]; then
+		printf '%s|pulse-todo-handoff-owned-by-merge-pass' "$_DIRTY_ACTION_SKIP"
 		return 0
 	fi
 
