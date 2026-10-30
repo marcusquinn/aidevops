@@ -257,7 +257,10 @@ _pulse_run_resumable_housekeeping_stage() {
 	local state_file="$2"
 	shift 2
 	local age=""
-	if age=$(_pulse_housekeeping_stage_recently_done "$stage_name" "$state_file"); then
+	# A catch-up checkpoint may represent a no-op while the cache was fresh.
+	# Recheck freshness on resume so later interrupted scans cannot starve it.
+	if age=$(_pulse_housekeeping_stage_recently_done "$stage_name" "$state_file") &&
+		{ [[ "$stage_name" != "blocker_refresh_catchup" ]] || ! _pulse_blocker_refresh_starved; }; then
 		echo "[pulse-wrapper] Async post-dispatch housekeeping: resume — skipping ${stage_name} (completed ${age}s ago by an interrupted run)" >>"$LOGFILE"
 		return 0
 	fi

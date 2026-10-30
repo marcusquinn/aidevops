@@ -548,6 +548,40 @@ test_housekeeping_retries_incomplete_stages() {
 	return 0
 }
 
+# A no-op catch-up checkpoint must not suppress recovery when its cache ages
+# or disappears before an interrupted housekeeping run resumes.
+test_blocker_catchup_checkpoint_rechecks_cache() {
+	local cache_state
+	for cache_state in fresh stale missing; do
+		setup_test_env
+		local failures=0 state_file got="" expected="ownership_reconcile "
+		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/dep-graph-cache.json"
+		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+		state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
+		printf '{}\n' >"$DEP_GRAPH_CACHE_FILE"
+		_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
+			_pulse_run_blocker_refresh_catchup 7
+		grep -q '^blocker_refresh_catchup=' "$state_file" || failures=$((failures + 1))
+		[[ ! -s "$STAGE_LOG" ]] || failures=$((failures + 1))
+		case "$cache_state" in
+		stale) touch -t 202601010000 "$DEP_GRAPH_CACHE_FILE" ;;
+		missing) rm -f "$DEP_GRAPH_CACHE_FILE" ;;
+		esac
+		_pulse_run_post_dispatch_housekeeping_stages 7
+		got=$(_catchup_stages)
+		if [[ "$cache_state" != "fresh" ]]; then
+			expected="${expected}dep_graph:1 blocked_refresh brief_hold_release "
+		elif ! grep -q 'resume — skipping blocker_refresh_catchup' "$LOGFILE"; then
+			failures=$((failures + 1))
+		fi
+		[[ "$got" == "$expected" ]] || failures=$((failures + 1))
+		[[ ! -e "$state_file" ]] || failures=$((failures + 1))
+		print_result "blocker catch-up checkpoint rechecks ${cache_state} cache" "$failures" "$got"
+		teardown_test_env
+	done
+	return 0
+}
+
 test_blocker_catchup_stops_after_failed_prerequisite() {
 	local mode
 	for mode in failure deferred; do
@@ -590,6 +624,7 @@ main() {
 	test_housekeeping_resumes_after_interrupted_run
 	test_housekeeping_signal_killed_stage_not_recorded
 	test_housekeeping_retries_incomplete_stages
+	test_blocker_catchup_checkpoint_rechecks_cache
 	test_blocker_catchup_stops_after_failed_prerequisite
 	test_async_housekeeping_logs_termination
 
