@@ -84,14 +84,17 @@ Dispatch then routes the draft through `dispatch-stalled` as above; the draft is
 never closed. Listings are fully paginated and evidence is piped to jq, so busy
 issues (timelines over Linux's 128 KiB argument limit) are still evaluated.
 
-### Approving a corrected blocked checkpoint
+### Approving a corrected released checkpoint
 
 1. Read fresh issue/PR metadata and coordination comments. Verify the exact
-   original worker attempt has released as `blocked`, no successor owns the
-   objective, and the proposed scope correction preserves the authorised outcome.
-   Check overlapping work. Revise the issue body first, using the managed wrapper.
-2. Generate the exact approval line using the original ready lease's attempt ID
-   and the blocked release comment's numeric ID:
+   attempt has released as `blocked`, `clean` or `worker_complete`, no successor
+   owns the objective, and the proposed scope correction preserves the authorised
+   outcome. A blocked release must belong to the PR author; a clean/completed
+   release may belong to another trusted runner only when its poster and unique
+   prior ready lease authenticate that same runner and attempt. Check overlapping
+   work. Revise the issue body first, using the managed wrapper.
+2. Generate the exact approval line using that ready lease's attempt ID and the
+   supported release comment's numeric ID:
 
    ```bash
    pr-checkpoint-continuation-helper.sh approval-template OWNER/REPO PR ISSUE RELEASE_COMMENT_ID attempt:ORIGINAL_ID
@@ -108,11 +111,16 @@ issues (timelines over Linux's 128 KiB argument limit) are still evaluated.
    pr-checkpoint-continuation-helper.sh dispatch-approved OWNER/REPO REPO_PATH ISSUE AUTHENTICATED_RUNNER
    ```
 
-The approval binds repository, issue, PR, exact head/ref, original runner and
-attempt, release comment and SHA-256 of the complete corrected issue body. It
-expires after 24 hours; changed body/head/actor permissions invalidate it. A
+The approval binds repository, issue, PR, exact head/ref, the original PR author
+(`runner`), released attempt, release comment and SHA-256 of the complete corrected
+issue body. It expires after 24 hours; changed body/head/actor permissions invalidate it. A
 legacy release without a lease token is accepted only when its approved attempt
 has a unique prior authenticated ready lease with no intervening attempt.
+Raw launcher attempt IDs and their `attempt:`-prefixed form identify the same
+attempt; no other identity normalization is permitted. Approval records retain
+the prefixed form. Before claim transfer, the issue must be unassigned or assigned
+to the authenticated releasing runner, not an unrelated current owner. The exact
+PR-author binding remains unchanged when that runner differs from the author.
 
 ### Intervening attempts that have fully released
 
@@ -134,6 +142,12 @@ requires a fresh assessment and approval; expiry alone is never closure evidence
 The template refuses incomplete histories instead of printing an unusable line.
 All current assignment, hold, permission, brief-revision and exact-head checks
 remain in force.
+
+A stale-assignment release after prelaunch is not a completed history when the
+ready/terminal evidence is absent. Do not synthesize missing events, reinterpret
+that release as `claim_only_no_worker`, or change published records to recover it.
+The exact claim-only closure below has its own guards and refuses an existing
+release; unsupported histories remain blocked pending supported reconciliation.
 
 ### Expired claims that never reached ready (GH#35331)
 
