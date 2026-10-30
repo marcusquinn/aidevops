@@ -374,6 +374,28 @@ _isc_validate_claim_request() {
 	return 0
 }
 
+# Resolve a claim principal, distinguishing a transient implementing failure
+# from the legacy/external skip. Only a verified principal is printed.
+_isc_resolve_claim_user() {
+	local issue="$1"
+	local slug="$2"
+	local implementing="$3"
+	local user="" resolve_rc=0
+	user=$(_isc_resolve_manageable_user "claim" "$issue" "$slug" \
+		"gh offline or not authenticated — skipping claim on #$issue ($slug)" \
+		"" \
+		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims") || resolve_rc=$?
+	if [[ "$resolve_rc" -ne 0 ]]; then
+		if [[ "$resolve_rc" -eq 75 && "$implementing" -eq 1 ]]; then
+			_isc_warn "claim NOT applied for #$issue in $slug; a worker may pick it up. Re-run: interactive-session-helper.sh claim $issue $slug --implementing"
+			return 75
+		fi
+		return 1
+	fi
+	printf '%s' "$user"
+	return 0
+}
+
 _isc_cmd_claim() {
 	local issue="" slug="" worktree_path="" implementing=0 defer_comment=0
 	local replacement_pr="" replacement_reason=""
@@ -426,19 +448,10 @@ _isc_cmd_claim() {
 	_isc_validate_claim_request "$issue" "$slug" "$replacement_pr" "$replacement_reason" "$implementing" || return $?
 	_isc_validate_worktree_origin "$slug" "$worktree_path" || return 1
 
-	local user
-	local resolve_rc=0
-	user=$(_isc_resolve_manageable_user "claim" "$issue" "$slug" \
-		"gh offline or not authenticated — skipping claim on #$issue ($slug)" \
-		"" \
-		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims") || resolve_rc=$?
-	if [[ "$resolve_rc" -ne 0 ]]; then
-		if [[ "$resolve_rc" -eq 75 && "$implementing" -eq 1 ]]; then
-			_isc_warn "claim NOT applied for #$issue in $slug; a worker may pick it up. Re-run: interactive-session-helper.sh claim $issue $slug --implementing"
-			return 75
-		fi
-		return 0
-	fi
+	local user="" resolve_rc=0
+	user=$(_isc_resolve_claim_user "$issue" "$slug" "$implementing") || resolve_rc=$?
+	[[ "$resolve_rc" -ne 75 ]] || return 75
+	[[ "$resolve_rc" -eq 0 ]] || return 0
 
 	_isc_claim_closed_issue_guard "$issue" "$slug" && return 0
 
