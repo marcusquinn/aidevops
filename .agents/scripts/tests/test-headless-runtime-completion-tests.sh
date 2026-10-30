@@ -5,6 +5,10 @@
 
 # This file is sourced by test-headless-runtime-helper.sh after the shared test
 # harness and headless runtime helper have been initialized.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	# Keep the documented entry point executable without duplicating the harness.
+	exec bash "$(dirname "$0")/test-headless-runtime-helper.sh" "$@"
+fi
 [[ -n "${_TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_LOADED:-}" ]] && return 0
 _TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_LOADED=1
 
@@ -72,6 +76,150 @@ test_worker_produced_output_manual_issue_no_commits_returns_noop() {
 run_worker_no_output_classification_tests() {
 	test_worker_produced_output_no_commits_returns_noop
 	test_worker_produced_output_manual_issue_no_commits_returns_noop
+	test_pr_less_rejection_evidence
+	return 0
+}
+
+# Synthetic forge evidence shared by the GH#36100 shapes via dynamic scope.
+_pr_less_rejection_fixture_gh() {
+	local request="$*"
+	case "$request" in
+	"api repos/owner/repo/issues/456")
+		[[ "$shape" != issue_api ]] || {
+			printf 'protected API detail\n' >&2
+			return 1
+		}
+		printf '%s\n' '{"state":"closed","state_reason":"completed","author_association":"OWNER","updated_at":"fixture","body":"Already delivered by #42"}'
+		;;
+	"pr list"*)
+		if [[ "$request" == *--head* ]]; then
+			printf '0\n'
+		elif [[ "$shape" == search_api ]]; then
+			return 1
+		elif [[ "$shape" == multiple_candidates ]]; then
+			printf '42\n43\n'
+		elif [[ "$shape" != no_candidate ]]; then printf '42\n'; fi
+		;;
+	"pr view"*)
+		[[ "$shape" != candidate_api ]] || return 1
+		[[ "$request" != 'pr view 43 '* ]] || return 1
+		if [[ "$shape" == valid_closing ]]; then
+			printf '%s\n' '{"state":"MERGED","mergedAt":"fixture","closingIssuesReferences":[{"number":456,"repository":{"name":"repo","owner":{"login":"owner"}}}]}'
+		else
+			printf '%s\n' '{"state":"MERGED","mergedAt":"fixture","closingIssuesReferences":[]}'
+		fi
+		;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+# Keep the case-based fixture outside command substitution for Bash 3.2 parsing.
+_pr_less_rejection_fixture_evidence() {
+	local shape="$1"
+	local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG=owner/repo
+	local AIDEVOPS_ATTEMPT_ID=fixture AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
+	local work_dir="${TEST_ROOT}/rejection-${shape}" output_file="${TEST_ROOT}/rejection-output"
+	local role=worker provider=openai session_key=issue-456 selected_model=openai/fixture
+	local permission_request_file="${TEST_ROOT}/permission" metric_work_dir="$work_dir"
+	local _metric_kill_reason=natural _metric_session_id="" _metric_output_file=""
+	local _metric_excerpt_candidate="${TEST_ROOT}/rejection-excerpt" resource_sampler_pid=""
+	local _run_failure_reason=""
+	local exit_code=0 start_ms=0 end_ms=0 duration_ms=0 rc=0 fixture_head fixture_branch fixture_blob
+	_setup_test_git_repo "$work_dir" 0
+	fixture_head=$(git -C "$work_dir" rev-parse HEAD)
+	fixture_branch=$(git -C "$work_dir" branch --show-current)
+	fixture_blob=$(git -C "$work_dir" rev-parse HEAD:README.md)
+	# Stale diagnostic state must not survive a new successful evaluation.
+	_HRW_PR_LESS_REJECTION=stale_previous_rejection
+	_HRW_PR_LESS_VERIFIED_CONTEXT=""
+	_hrw_own_merged_terminal_complete() { return 1; }
+	_hrw_resolve_default_branch() {
+		printf main
+		return 0
+	}
+	_hrw_reconcile_session_permission_blockers() { return 0; }
+	gh() {
+		_pr_less_rejection_fixture_gh "$@"
+		return $?
+	}
+	# Model verifier output, not acceptance: production runtime still checks
+	# attempt, scope blobs, local context and issue revision independently.
+	bash() {
+		[[ "$shape" != missing_receipt ]] || return 1
+		if [[ "$shape" == invalid_receipt || "$shape" == multiple_candidates ]]; then
+			printf 'unreadable receipt\n'
+			return 0
+		fi
+		jq -cn --arg head "$fixture_head" --arg branch "$fixture_branch" --arg worktree "$work_dir" --arg blob "$fixture_blob" \
+			--arg shape "$shape" '{schema_version:1,kind:"scoped_delivery",verified:true,
+				repository:"owner/repo",issue:456,pr:42,attempt_id:"fixture",attempt_started_at:"1792929600000000000",
+				worktree:$worktree,head:$head,branch:$branch,issue_updated_at:"fixture",files:[{path:"README.md",blob:$blob}]}
+				| if $shape == "stale_receipt" then .attempt_id = "older"
+				elif $shape == "blob_mismatch" then .files[0].blob = ("f" * 40) else . end'
+		return 0
+	}
+	append_runtime_metric() {
+		printf 'metric=%s|%s|%s|%s\n' "$5" "$6" "${18}" "${19}"
+		if [[ -f "${13}" ]]; then
+			grep -F 'classification_source=pr_less_completion_rejected' "${13}"
+		fi
+		return 0
+	}
+	case "$shape" in
+	missing_attempt) AIDEVOPS_ATTEMPT_ID="" ;;
+	dirty) touch "$work_dir/unpublished" ;;
+	ahead)
+		touch "$work_dir/unpublished"
+		git -C "$work_dir" add unpublished
+		git -C "$work_dir" commit -qm unpublished
+		;;
+	esac
+	printf '%s\n' '{"type":"text","text":"Already satisfied by older merged PR #42; tests passed; issue closed."}' >"$output_file"
+	if [[ "$shape" == valid_closing ]]; then
+		shape=no_candidate
+		_run_result_terminal_completion_confirmed && exit 1
+		[[ "$_run_classification_source" == pr_less_completion_rejected ]] || exit 1
+		shape=valid_closing
+		_run_result_terminal_completion_confirmed || exit 1
+		[[ -z "$_run_classification_source" && -z "$_run_classification_pattern" ]] || exit 1
+	fi
+	printf 'process exit 0\n' >"$_metric_excerpt_candidate"
+	_finish_run_attempt_result || rc=$?
+	printf 'rc=%s reason=%s\n' "$rc" "${_HRW_PR_LESS_REJECTION:-}"
+	return 0
+}
+
+# GH#36100: exit 0 and a closed issue citing an older PR are not proof. Exercise
+# candidate discovery separately from receipt validation, through final metrics.
+test_pr_less_rejection_evidence() {
+	local shape expected evidence result
+	for shape in no_candidate issue_api search_api candidate_api missing_attempt missing_receipt invalid_receipt stale_receipt multiple_candidates dirty ahead blob_mismatch valid_scope valid_closing; do
+		case "$shape" in
+		no_candidate) expected=no_merged_pr_candidate ;;
+		issue_api) expected=issue_evidence_unavailable ;;
+		search_api) expected=candidate_discovery_unavailable ;;
+		candidate_api) expected=candidate_evidence_unavailable ;;
+		missing_attempt) expected=scoped_attempt_binding_missing ;;
+		missing_receipt) expected=scoped_receipt_unavailable ;;
+		invalid_receipt | stale_receipt | multiple_candidates) expected=scoped_receipt_invalid ;;
+		dirty) expected=unpublished_worktree_changes ;;
+		ahead) expected=unpublished_local_commits ;;
+		blob_mismatch) expected=scoped_default_blob_mismatch ;;
+		valid_scope | valid_closing) expected=success ;;
+		esac
+		evidence=$(_pr_less_rejection_fixture_evidence "$shape")
+		result=1
+		if [[ "$expected" == success ]]; then
+			[[ "$evidence" == *'metric=success|0|'* && "$evidence" == *'rc=0 reason=' && "$evidence" != *pr_less_completion_rejected* ]] && result=0
+		elif [[ "$evidence" == *"metric=premature_exit|77|pr_less_completion_rejected|${expected}"* &&
+			"$evidence" == *"cause=premature_exit "* && "$evidence" == *"classification_pattern=${expected}"* &&
+			"$evidence" == *"rc=77 reason=${expected}" && "$evidence" != *'protected API detail'* ]]; then
+			result=0
+		fi
+		print_result "PR-less ${shape}: bounded rejection survives exit diagnostics and metrics" "$result" "$evidence"
+	done
+	return 0
 }
 
 test_worker_produced_output_with_commits_returns_pr_exists_failopen() {

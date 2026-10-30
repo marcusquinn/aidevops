@@ -210,6 +210,9 @@ chmod +x "${STUB_BIN}/gh"
 
 # Prepend stub bin to PATH so our `gh` wins.
 export PATH="${STUB_BIN}:${PATH}"
+# Isolate GitHub cooldown state so live runner cooldowns cannot change results.
+export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${TMP_DIR}/cache/gh-secondary-cooldown.json"
+mkdir -p "${TMP_DIR}/cache"
 
 # Sanity check: the stub responds
 if [[ "$(gh repo view --json nameWithOwner -q .nameWithOwner)" != "stub/repo" ]]; then
@@ -822,6 +825,74 @@ rc=0
 PULSE_STAGE_DEADLINE_EPOCH=$((check_epoch + 600)) SCANNER_BUDGET_SECONDS=600 \
 	scanner_budget_exhausted "$check_epoch" || rc=$?
 assert_rc "available safe budget continues normally" 1 "$rc"
+
+echo "Test: primary REST-core cooldown yields at the current PR instead of skipping"
+printf '{"expires_at":%s}\n' "$(($(date +%s) + 600))" >"${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core"
+out=$(SCANNER_CURSOR_DIR="${TMP_DIR}/cursor-cooldown" do_scan "stub/repo" "true" 2>&1)
+assert_contains "cooldown scan logs yield reason" "reason=primary-core" "$out"
+assert_not_contains "cooldown scan does not report completion" "status=complete" "$out"
+assert_not_contains "cooldown scan does not mark lookups uncertain" "lookup uncertain" "$out"
+assert_equals "cooldown yield preserves resume point" "" "$(jq -r '.next_pr' "${TMP_DIR}/cursor-cooldown/stub_repo.cursor")"
+
+echo "Test: uncertain lookup during cooldown returns the yield status"
+rc=0
+(
+	issue_exists() { return 2; }
+	_scan_one_pr "stub/repo" "101" "true"
+) >/dev/null 2>&1 || rc=$?
+assert_rc "uncertain lookup under cooldown yields" "$SCANNER_PR_YIELD_RC" "$rc"
+rm -f "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core"
+rc=0
+(
+	issue_exists() { return 2; }
+	_scan_one_pr "stub/repo" "101" "true"
+) >/dev/null 2>&1 || rc=$?
+assert_rc "uncertain lookup without cooldown still skips" 1 "$rc"
+
+echo "Test: REST-core priority gate defers the scan with a cursor"
+gate_helper="${TMP_DIR}/gate-helper.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$gate_helper"
+chmod +x "$gate_helper"
+out=$(SCANNER_REST_CORE_GATE=1 SCANNER_REST_CORE_GATE_HELPER="$gate_helper" \
+	SCANNER_REST_CORE_GATE_LAST_EPOCH=0 \
+	SCANNER_CURSOR_DIR="${TMP_DIR}/cursor-gate" do_scan "stub/repo" "true" 2>&1)
+assert_contains "REST-core reserve logs yield reason" "reason=rest-core-reserve-rc1" "$out"
+assert_equals "REST-core reserve keeps a resume cursor" "true" "$([[ -f "${TMP_DIR}/cursor-gate/stub_repo.cursor" ]] && printf true || printf false)"
+
+echo "Test: existing-issue index replaces per-PR search lookups"
+cat >"${STUB_BIN}/gh" <<'INDEX_STUB_EOF'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+"api repos/stub/repo/issues?"*)
+	printf '501\tReview followup: PR #101 — first\n502\tReview followup: PR #1010 — other\n503\tunrelated title\n'
+	;;
+"issue list") printf 'search-called\n' >>"${FIX_GRAPHQL_CALLS}.search"; printf '0\n' ;;
+*) printf '[]\n' ;;
+esac
+INDEX_STUB_EOF
+chmod +x "${STUB_BIN}/gh"
+rm -f "${FIX_GRAPHQL_CALLS}.search"
+rc=0
+build_existing_issue_index "stub/repo" "2026-01-01T00:00:00Z" >/dev/null 2>&1 || rc=$?
+assert_rc "index builds from REST rows" 0 "$rc"
+rc=0
+issue_exists "stub/repo" "101" indexed >/dev/null 2>&1 || rc=$?
+assert_rc "indexed lookup finds the source PR" 0 "$rc"
+assert_equals "indexed lookup reports the issue number" "501" "$SCANNER_EXISTING_ISSUE_NUMBER"
+rc=0
+issue_exists "stub/repo" "10" indexed >/dev/null 2>&1 || rc=$?
+assert_equals "PR #10 does not match PR #101 or #1010" "" "$SCANNER_EXISTING_ISSUE_NUMBER"
+assert_equals "indexed lookups make no search request" "false" "$([[ -f "${FIX_GRAPHQL_CALLS}.search" ]] && printf true || printf false)"
+issue_exists "stub/repo" "101" >/dev/null 2>&1 || true
+assert_equals "fresh lookups still use search" "true" "$([[ -f "${FIX_GRAPHQL_CALLS}.search" ]] && printf true || printf false)"
+
+echo "Test: malformed index rows fall back to per-PR lookup"
+printf '#!/usr/bin/env bash\nprintf "{}\\n"\n' >"${STUB_BIN}/gh"
+rc=0
+build_existing_issue_index "stub/repo" "2026-01-01T00:00:00Z" >/dev/null 2>&1 || rc=$?
+assert_rc "malformed index fails closed to per-PR lookup" 1 "$rc"
+assert_equals "malformed index is not marked ready" "0" "$SCANNER_ISSUE_INDEX_READY"
+SCANNER_ISSUE_INDEX=""
 install_ok_gh
 
 # -----------------------------------------------------------------------------

@@ -159,6 +159,11 @@ _run_result_capture_live_blocker() {
 
 # Objective proof complements, rather than broadens, model marker parsing.
 _run_result_terminal_completion_confirmed() {
+	_HRW_PR_LESS_REJECTION=""
+	if [[ "${_run_classification_source:-}" == "pr_less_completion_rejected" ]]; then
+		_run_classification_source=""
+		_run_classification_pattern=""
+	fi
 	if _hrw_own_merged_terminal_complete "$session_key" "${work_dir:-}"; then
 		_run_failure_reason=""
 		_run_classification_source="merged_pr_cleanup_receipt"
@@ -174,6 +179,10 @@ _run_result_terminal_completion_confirmed() {
 			_run_classification_pattern="verified_already_delivered_scope"
 		fi
 		return 0
+	fi
+	if [[ -n "${_HRW_PR_LESS_REJECTION:-}" ]]; then
+		_run_classification_source="pr_less_completion_rejected"
+		_run_classification_pattern="$_HRW_PR_LESS_REJECTION"
 	fi
 	return 1
 }

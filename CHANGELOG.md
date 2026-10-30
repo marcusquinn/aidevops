@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.95] - 2026-10-30
+
+### Changed
+
+- Maintenance: mark t18812 complete (pr:#36097 completed:2026-10-30) (#36101)
+- Maintenance: mark t18809 complete (pr:#36093 completed:2026-10-30) (#36086)
+
+### Fixed
+
+- attribute auth-hop gh calls and make post-merge scanner quota-aware
+- respect effective ownership deadlines
+- retry network-layer GitHub read failures (#36097)
+- honor approved checkpoint eligibility
+- track orphan interactive PRs for handover (GH#36080) (#36093)
+- resolve plugin fixture executables portably (#36091)
+- scope Dependabot intake and report approval-required (#36089)
+- recover transient GitHub merge server errors (#36076)
+
 ## [3.39.94] - 2026-10-30
 
 ### Added

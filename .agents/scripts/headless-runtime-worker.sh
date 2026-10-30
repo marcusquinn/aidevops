@@ -750,6 +750,8 @@ _hrw_pr_less_terminal_complete() {
 	local work_dir="$2"
 	local issue_number="$3"
 	local repo_slug="$4"
+	# Internal constant predicate names only: never retain API output or prose.
+	_HRW_PR_LESS_REJECTION="invalid_context"
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
 	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
 	[[ -d "$work_dir" ]] || return 1
@@ -761,14 +763,21 @@ _hrw_pr_less_terminal_complete() {
 	if [[ -n "$head" && -n "$branch" ]]; then
 		context="${session_key}|${repo_slug}|${issue_number}|${work_dir}|${branch}|${head}|${AIDEVOPS_ATTEMPT_ID:-}|${AIDEVOPS_ATTEMPT_STARTED_AT:-}"
 		if [[ "$context" == "${_HRW_PR_LESS_VERIFIED_CONTEXT:-}" ]]; then
+			_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
 			task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
-			[[ -z "$task_status" ]] && return 0
+			if [[ -z "$task_status" ]]; then
+				_HRW_PR_LESS_REJECTION=""
+				return 0
+			fi
+			_HRW_PR_LESS_REJECTION="unpublished_worktree_changes"
 			return 1
 		fi
 	fi
 	local issue_json=""
 	_HRW_SCOPED_DELIVERY_RECEIPT=""
+	_HRW_PR_LESS_REJECTION="issue_evidence_unavailable"
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="issue_not_closed"
 	jq -e '.state == "closed"' <<<"$issue_json" >/dev/null 2>&1 || return 1
 	if _hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
@@ -777,6 +786,7 @@ _hrw_pr_less_terminal_complete() {
 		if [[ -z "$_HRW_SCOPED_DELIVERY_RECEIPT" ]]; then
 			_HRW_PR_LESS_VERIFIED_CONTEXT="$context"
 		fi
+		_HRW_PR_LESS_REJECTION=""
 		return 0
 	fi
 	return 1
@@ -791,14 +801,18 @@ _hrw_already_delivered_terminal_complete() {
 	local issue_number="$3"
 	local repo_slug="$4"
 	local issue_json="$5"
+	_HRW_PR_LESS_REJECTION="issue_not_trusted_completed"
 	jq -e '.state == "closed" and .state_reason == "completed"
 		and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")' \
 		<<<"$issue_json" >/dev/null 2>&1 || return 1
-	local candidates="" pr_number="" pr_json=""
+	local candidates="" pr_number="" pr_json="" scoped_rejection=""
+	_HRW_PR_LESS_REJECTION="candidate_discovery_unavailable"
 	candidates=$(gh pr list --repo "$repo_slug" --state merged --search "$issue_number" \
 		--limit 20 --json number --jq '.[].number' 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="no_merged_pr_candidate"
 	while IFS= read -r pr_number; do
 		[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || continue
+		_HRW_PR_LESS_REJECTION="candidate_evidence_unavailable"
 		pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
 			--json state,mergedAt,closingIssuesReferences 2>/dev/null) || continue
 		jq -e --argjson issue "$issue_number" --arg repo "$repo_slug" \
@@ -807,12 +821,16 @@ _hrw_already_delivered_terminal_complete() {
 				and ((.repository.owner.login + "/" + .repository.name) | ascii_downcase) == ($repo | ascii_downcase))' \
 			<<<"$pr_json" >/dev/null 2>&1 || {
 			_hrw_scoped_delivery_terminal_complete "$work_dir" "$issue_number" "$repo_slug" "$pr_number" "$issue_json" && return 0
+			# Do not lose a concrete receipt/local-work rejection when another
+			# search candidate later becomes unreadable. Retain one bounded reason.
+			[[ -n "$scoped_rejection" ]] || scoped_rejection="$_HRW_PR_LESS_REJECTION"
 			continue
 		}
 		_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
 		print_info "[lifecycle] worker_already_delivered complete session=${session_key} issue=${issue_number} pr=${pr_number}"
 		return 0
 	done <<<"$candidates"
+	[[ -z "$scoped_rejection" ]] || _HRW_PR_LESS_REJECTION="$scoped_rejection"
 	return 1
 }
 
@@ -822,13 +840,17 @@ _hrw_already_delivered_terminal_complete() {
 _hrw_scoped_delivery_terminal_complete() {
 	local work_dir="$1" issue_number="$2" repo_slug="$3" pr_number="$4" issue_json="$5"
 	local receipt head branch path blob
+	_HRW_PR_LESS_REJECTION="scoped_attempt_binding_missing"
 	[[ -n "${AIDEVOPS_ATTEMPT_ID:-}" && "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]{19}$ ]] || return 1
 	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	_HRW_PR_LESS_REJECTION="scoped_local_context_unavailable"
 	work_dir=$(cd "$work_dir" && pwd -P) || return 1
 	head=$(git -C "$work_dir" rev-parse HEAD) || return 1
 	branch=$(git -C "$work_dir" branch --show-current) || return 1
+	_HRW_PR_LESS_REJECTION="scoped_receipt_unavailable"
 	receipt=$(bash "${SCRIPT_DIR}/verify-issue-close-helper.sh" check-scoped-delivery \
 		"$issue_number" "$pr_number" "$repo_slug" "$work_dir" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="scoped_receipt_invalid"
 	jq -e --arg repo "$repo_slug" --argjson issue "$issue_number" --argjson pr "$pr_number" \
 		--arg attempt "$AIDEVOPS_ATTEMPT_ID" --arg started "$AIDEVOPS_ATTEMPT_STARTED_AT" \
 		--arg worktree "$work_dir" --arg head "$head" --arg branch "$branch" \
@@ -841,6 +863,7 @@ _hrw_scoped_delivery_terminal_complete() {
 	' <<<"$receipt" >/dev/null 2>&1 || return 1
 	# The guard fetched the exact live default tip. A behind checkout must not
 	# hide artifacts subsequently removed or reverted on that integration branch.
+	_HRW_PR_LESS_REJECTION="scoped_default_blob_mismatch"
 	while IFS=$'\t' read -r path blob; do
 		[[ "$(git -C "$work_dir" rev-parse "FETCH_HEAD:${path}" 2>/dev/null)" == "$blob" ]] || return 1
 	done < <(jq -r '.files[] | [.path,.blob] | @tsv' <<<"$receipt")
@@ -855,26 +878,38 @@ _hrw_pr_less_worktree_clean() {
 	local work_dir="$1"
 	local repo_slug="$2"
 	local default_branch="" default_ref="" branch="" remote_tip="" local_head="" pr_count="" task_status=""
+	_HRW_PR_LESS_REJECTION="default_branch_unavailable"
 	default_branch=$(_hrw_resolve_default_branch "$work_dir") || return 1
 	[[ -n "$default_branch" ]] || return 1
+	_HRW_PR_LESS_REJECTION="worktree_branch_invalid"
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
 	[[ -n "$branch" && "$branch" != "$default_branch" ]] || return 1
+	_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
 	task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="unpublished_worktree_changes"
 	[[ -z "$task_status" ]] || return 1
+	_HRW_PR_LESS_REJECTION="local_head_unavailable"
 	local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
 	default_ref="refs/heads/${default_branch}"
+	_HRW_PR_LESS_REJECTION="default_tip_unavailable"
 	remote_tip=$(git -C "$work_dir" ls-remote origin "$default_ref" 2>/dev/null) || return 1
 	remote_tip="${remote_tip%%[[:space:]]*}"
 	[[ "$remote_tip" =~ ^[0-9a-f]{40}$ ]] || return 1
 	# Do not trust a stale origin/default tracking ref; fetch the exact live tip.
 	git -C "$work_dir" fetch -q origin "$default_ref" 2>/dev/null || return 1
+	_HRW_PR_LESS_REJECTION="default_tip_changed"
 	[[ "$(git -C "$work_dir" rev-parse FETCH_HEAD 2>/dev/null)" == "$remote_tip" ]] || return 1
+	_HRW_PR_LESS_REJECTION="unpublished_local_commits"
 	[[ "$(git -C "$work_dir" rev-list --count "${remote_tip}..${local_head}" 2>/dev/null)" == "0" ]] || return 1
 	# A pushed orphan (even if the local branch is clean) must never be waived.
 	local remote_branch=""
+	_HRW_PR_LESS_REJECTION="remote_branch_unavailable"
 	remote_branch=$(git -C "$work_dir" ls-remote origin "refs/heads/${branch}" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="unpublished_remote_branch"
 	[[ -z "$remote_branch" || "${remote_branch%%[[:space:]]*}" == "$local_head" ]] || return 1
+	_HRW_PR_LESS_REJECTION="branch_pr_evidence_unavailable"
 	pr_count=$(gh pr list --repo "$repo_slug" --head "$branch" --state all --json number --jq 'length' 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="branch_has_pr"
 	[[ "$pr_count" == "0" ]] || return 1
 	return 0
 }

@@ -1063,6 +1063,18 @@ _main() {
 		is_graphql_budget_sufficient
 		return $?
 		;;
+	rest-core-allows)
+		# Args: $1=priority, $2=static log context. Lets child helpers that run
+		# long deferrable loops share the Pulse REST-core priority budget.
+		local priority="${1:-}"
+		local context="${2:-cli}"
+		if [[ -z "$priority" ]]; then
+			echo "Usage: pulse-rate-limit-circuit-breaker.sh rest-core-allows <critical|scheduled|progress|deferrable> [context]" >&2
+			return 2
+		fi
+		pulse_rest_core_priority_allows_next "$priority" "$context"
+		return $?
+		;;
 	check-actions-queue)
 		# Args: $1=repo_slug. Prints KEY=VALUE lines.
 		local repo_slug="${1:-}"
@@ -1086,6 +1098,7 @@ _main() {
 		echo ""
 		echo "Usage:"
 		echo "  pulse-rate-limit-circuit-breaker.sh check                          # exit 0=OK, 1=blocked, 2=GraphQL unavailable after REST allows"
+		echo "  pulse-rate-limit-circuit-breaker.sh rest-core-allows PRIORITY [CTX] # exit 0=start, 1=threshold defer, 2=unknown evidence"
 		echo "  pulse-rate-limit-circuit-breaker.sh check-actions-queue OWNER/REPO # KEY=VALUE: queued/in_progress/ratio/saturated"
 		echo "  pulse-rate-limit-circuit-breaker.sh status [--cached]              # human-readable status line"
 		echo ""
