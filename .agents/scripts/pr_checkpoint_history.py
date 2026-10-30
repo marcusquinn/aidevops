@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Reconstruct fully released historical attempts without granting ownership."""
 
-from pr_checkpoint_events import closes_released_attempt, events, fields, trusted
+from pr_checkpoint_events import closes_released_attempt, events, fields, normalized_attempt, trusted
 from pr_checkpoint_never_ready import (CLAIM_ONLY, NEVER_READY_OUTCOMES,
                                        advance_never_ready_release, close_claim_only)
 
@@ -26,13 +26,13 @@ def close_release(state, comment, f):
     valid = all((not state.get("release_id"), bool(f.get("reason")),
                  f.get("runner") == state["runner"],
                  f.get("lease_token", state["token"]) == state["token"],
-                 f.get("attempt_id", state["attempt"]) == state["attempt"]))
+                 normalized_attempt(f.get("attempt_id", state["attempt"])) == state["attempt"]))
     if valid:
         state["release_id"] = comment["id"]
     return valid
 
 
-def lease_attempt_accepted(state, f):
+def lease_attempt_accepted(state, f, attempt):
     """Bind every lease to one attempt, allowing one rebind at the first ready lease.
 
     #aidevops:trust-boundary — GH#36005: a manual-dispatch worker launched through
@@ -40,10 +40,10 @@ def lease_attempt_accepted(state, f):
     lease names a fresh attempt. The rebind is accepted only for the first ready
     lease, before any launch announcement or release, from the claim's device
     (lease token and session are checked by the caller). Every later lease,
-    launch and release must match the rebound attempt.
+    launch and release must match the rebound attempt. `attempt` is already
+    normalized, so a legacy raw ID equals its prefixed form and is not a rebind.
     """
-    attempt = f.get("attempt_id", "")
-    if not attempt.startswith("attempt:"):
+    if not attempt:
         return False
     if attempt == state.get("attempt", attempt):
         return True
@@ -53,10 +53,11 @@ def lease_attempt_accepted(state, f):
 
 
 def advance_lease(state, comment, line, f):
+    attempt = normalized_attempt(f.get("attempt_id"))
     if not all((line.startswith("DISPATCH_LEASE "), f.get("lease_token") == state["token"],
-                f.get("session") == state["session"], lease_attempt_accepted(state, f))):
+                f.get("session") == state["session"], lease_attempt_accepted(state, f, attempt))):
         return False
-    state["attempt"] = f["attempt_id"]
+    state["attempt"] = attempt
     if state.get("release_id"):
         valid = f.get("phase") == "terminal" and f.get("expires_at") == "0"
         if valid:
@@ -89,7 +90,7 @@ def advance_closed_claim(state, comment, line, f):
         state["launched"] = True
         return (not state.get("release_id") and f.get("lease_token") == state["token"]
                 and f.get("session", state["session"]) == state["session"]
-                and f.get("attempt_id", state.get("attempt")) == state.get("attempt"))
+                and normalized_attempt(f.get("attempt_id", state.get("attempt"))) == state.get("attempt"))
     return advance_lease(state, comment, line, f)
 
 

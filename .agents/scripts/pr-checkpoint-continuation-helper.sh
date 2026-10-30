@@ -568,6 +568,12 @@ _pcc_dispatch() {
 	PCC_LINKED_ISSUE="$linked_issue"
 	PCC_ORIGINAL_STATUS="$issue_status"
 	PCC_OWNERSHIP_TRANSFERRED=0
+	if [[ "$PCC_REVISION_APPROVAL" != 0 ]]; then
+		# Exact revision validation preserves the PR author while authenticating
+		# the releasing runner. Transfer only the owner returned by that fence.
+		expected_assignee="$PCC_ISSUE_ASSIGNEE"
+		PCC_EXPECTED_ASSIGNEE="$expected_assignee"
+	fi
 	[[ -n "$PCC_HEAD_REF" && "$PCC_HEAD_OID" =~ ^[0-9a-fA-F]{40,64}$ &&
 		"$PCC_ISSUE_ASSIGNEE" == "$expected_assignee" ]] || return 1
 	now_epoch=$(date +%s)

@@ -8,12 +8,51 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
 
 import worktree_lifetime_owner as owner_lifetime
 import worktree_lifetime_proof as lifetime_proof
+
+
+def release_session(args: list[str]) -> int:
+    """Release only this live server generation's deleted-session ownership."""
+    if len(args) != 4:
+        return 1
+    database, pid, session, proof = args
+    if not re.fullmatch(r"[1-9][0-9]*", pid) or not re.fullmatch(r"ses_[A-Za-z0-9_-]+", session) or not proof:
+        return 1
+    try:
+        # Resolve once and reuse a shell-free argv containing only a validated PID.
+        ps = shutil.which("ps")
+        if not ps or not Path(ps).is_absolute():
+            raise ValueError("absolute process viewer unavailable")
+        command = [ps, "-p", pid, "-o", "lstart="]
+        observed = subprocess.check_output(  # nosec B603 -- absolute ps, fixed flags, digits-only PID, no shell.
+            command, text=True, timeout=5,
+            env={**os.environ, "LC_ALL": "C", "TZ": "UTC"}, stderr=subprocess.DEVNULL)
+        if " ".join(observed.split()) != proof:
+            return 1
+        # The registry uses Linux start ticks, but portable lstart elsewhere.
+        if Path("/proc").is_dir():
+            start = owner_lifetime.process_identity(int(pid))
+        else:
+            # Unlike the plugin's UTC proof, the shell registry uses ambient TZ.
+            registry_start = subprocess.check_output(  # nosec B603 -- same resolved ps and validated argv, no shell.
+                command, text=True, timeout=5,
+                env={**os.environ, "LC_ALL": "C"}, stderr=subprocess.DEVNULL)
+            start = " ".join(registry_start.split())
+        if Path(database).is_file():
+            with closing(sqlite3.connect(Path(database).resolve().as_uri() + "?mode=rw", uri=True)) as connection:
+                connection.execute(
+                    """DELETE FROM worktree_owners WHERE owner_pid=? AND owner_session=?
+                       AND COALESCE(owner_process_start, '')=?""", (int(pid), session, start))
+                connection.commit()
+        return 0
+    except (sqlite3.Error, ValueError, OSError, subprocess.SubprocessError):
+        return 1
 
 
 def release_completed(args: list[str]) -> int:
@@ -162,7 +201,8 @@ def main(argv: list[str]) -> int:
     stage = "arguments"
     try:
         operation, *args = argv
-        lifecycle_commands = {"release-completed": release_completed, "begin-create": begin_creation_command}
+        lifecycle_commands = {"release-completed": release_completed, "release-session": release_session,
+                              "begin-create": begin_creation_command}
         if operation in lifecycle_commands:
             return lifecycle_commands[operation](args)
         expected = {"register": 10, "claim": 10, "transfer": 15, "adopt": 15}[operation]

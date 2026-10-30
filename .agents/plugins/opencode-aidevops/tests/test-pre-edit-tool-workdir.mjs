@@ -10,6 +10,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createTools } from "../tools.mjs";
+import { processStartIdentity } from "../process-start-identity.mjs";
+import { releasePreEditSessionOwnership, runPreEditCheck } from "../pre-edit-check-process.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(testDir, "../../../scripts");
@@ -32,6 +34,7 @@ test("caller context preserves its live runtime PID and fences other sessions", 
     WORKTREE_REGISTRY_DB: join(root, "registry", "owners.db"),
     OPENCODE: "1",
     OPENCODE_PID: String(runtime.pid),
+    OPENCODE_PID_START_IDENTITY: processStartIdentity(runtime.pid),
     OPENCODE_SESSION_ID: "ses_caller_fixture",
     AIDEVOPS_OPENCODE_SESSION_ID: "ses_caller_fixture",
     FULL_LOOP_HEADLESS: "false",
@@ -85,6 +88,97 @@ test("caller context preserves its live runtime PID and fences other sessions", 
     assert.match(unavailable, /WORKTREE_OWNERSHIP_ERROR_STAGE=write/);
     assert.doesNotMatch(unavailable, /WORKTREE_OWNERSHIP_CONFLICT=true|fixture failure/);
     assert.equal(owner(), `${runtime.pid}|ses_caller_fixture`);
+  } finally {
+    runtime.kill();
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const [version, sessionEvent] of [
+  ["V1 info", (sessionID) => ({ properties: { info: { id: sessionID } } })],
+  ["V1 sessionID", (sessionID) => ({ properties: { sessionID } })],
+  ["V2 data", (sessionID) => ({ data: { sessionID } })],
+]) {
+  test(`deleted session releases only its fallback server generation (${version})`,
+    () => assertSessionOwnershipRelease(sessionEvent));
+}
+
+async function assertSessionOwnershipRelease(sessionEvent) {
+  const root = mkdtempSync(join(tmpdir(), "gh36069-session-release-"));
+  const repo = join(root, "repo");
+  const linked = join(root, "linked");
+  const database = join(root, "registry.db");
+  const saved = process.env.WORKTREE_REGISTRY_DB;
+  process.env.WORKTREE_REGISTRY_DB = database;
+  const claim = (session) => execFileSync("bash", ["-c",
+    'source "$1"; claim_worktree_ownership "$2" bugfix/session --owner-pid "$3" --session "$4"',
+    "fixture", join(scriptsDir, "shared-constants.sh"), linked, String(process.pid), session,
+  ], { encoding: "utf8", env: { ...process.env, OPENCODE_SESSION_ID: session } });
+  const sql = (query) => execFileSync("sqlite3", [database, query], { encoding: "utf8" }).trim();
+  try {
+    mkdirSync(repo);
+    git(repo, ["init", "--initial-branch=main"]);
+    git(repo, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+      "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "fixture"]);
+    git(repo, ["worktree", "add", "-b", "bugfix/session", linked]);
+    claim("ses_first");
+    assert.throws(() => claim("ses_next"), "live session must fence the next session");
+    await releasePreEditSessionOwnership({ event: {
+      type: "session.idle", ...sessionEvent("ses_first"),
+    } });
+    assert.equal(sql("SELECT count(*) FROM worktree_owners;"), "1");
+    await releasePreEditSessionOwnership({ event: {
+      type: "session.deleted", ...sessionEvent("ses_other"),
+    } });
+    assert.equal(sql("SELECT count(*) FROM worktree_owners;"), "1");
+    // Even an equal PID/session must not release a replacement generation.
+    sql("UPDATE worktree_owners SET owner_process_start='stale-generation';");
+    await releasePreEditSessionOwnership({ event: {
+      type: "session.deleted", ...sessionEvent("ses_first"),
+    } });
+    assert.equal(sql("SELECT count(*) FROM worktree_owners;"), "1");
+    claim("ses_first");
+    // A row transferred to a different runtime PID must survive server cleanup.
+    sql("INSERT INTO worktree_owners SELECT worktree_path || '-other', branch, 1, owner_session, owner_batch, task_id, owner_comm, created_at, owner_process_start, owner_dead_seen_at FROM worktree_owners;");
+    await releasePreEditSessionOwnership({ event: {
+      type: "session.deleted", ...sessionEvent("ses_first"),
+    } });
+    assert.equal(sql("SELECT count(*) FROM worktree_owners;"), "1");
+    assert.equal(sql("SELECT owner_pid FROM worktree_owners;"), "1");
+    claim("ses_next");
+    assert.equal(sql(`SELECT owner_session FROM worktree_owners WHERE owner_pid=${process.pid};`), "ses_next");
+  } finally {
+    if (saved === undefined) delete process.env.WORKTREE_REGISTRY_DB;
+    else process.env.WORKTREE_REGISTRY_DB = saved;
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("inherited ownership requires matching generation evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gh36068-owner-generation-"));
+  const runtime = spawn("sleep", ["120"]);
+  const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    const script = join(root, "owner.sh");
+    writeFileSync(script, 'printf "%s\\n%s\\n" "$OPENCODE_PID" "$OPENCODE_PID_START_IDENTITY"\n');
+    process.env.OPENCODE_PID = String(runtime.pid);
+    process.env.OPENCODE_SESSION_ID = "ses_generation_fixture";
+    const identity = processStartIdentity(runtime.pid);
+    assert.ok(identity, "fixture process must have generation evidence");
+    for (const proof of [undefined, "", `${identity} stale`, identity]) {
+      if (proof === undefined) delete process.env.OPENCODE_PID_START_IDENTITY;
+      else process.env.OPENCODE_PID_START_IDENTITY = proof;
+      const result = await runPreEditCheck(script, [], root, 5000,
+        { sessionID: "ses_generation_fixture" });
+      assert.equal(result.code, 0);
+      const expected = proof === identity ? runtime.pid : process.pid;
+      assert.equal(result.stdout.trim(), `${expected}\n${processStartIdentity(expected)}`);
+    }
   } finally {
     runtime.kill();
     for (const [key, value] of Object.entries(saved)) {

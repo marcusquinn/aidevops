@@ -345,7 +345,9 @@ class StaleResetAndRebindTests(unittest.TestCase):
             "release_names_prelaunch_attempt": lambda d: edit(
                 d, -2, "runner=worker ", "runner=worker attempt_id=attempt:a "),
             "prelaunch_rebind": lambda d: edit(d, -3, "phase=ready", "phase=prelaunch"),
-            "unprefixed_ready": lambda d: edit(d, -3, "attempt_id=attempt:b", "attempt_id=b"),
+            # Legacy raw IDs normalize to their prefixed form (GH#35316), so the
+            # remaining malformed case is an empty attempt.
+            "empty_ready_attempt": lambda d: edit(d, -3, "attempt_id=attempt:b", "attempt_id=attempt:"),
         }
         for case, mutate in mutations.items():
             data = rebind_fixture()

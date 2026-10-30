@@ -37,6 +37,7 @@ import { createMcpSessionRuntime, getOnDemandMcpAgents } from "./mcp-registry.mj
 import { enforceManagedMcpArtifactPath } from "./mcp-activation-tool.mjs";
 import { normalizeMcpArtifactPaths } from "./mcp-artifact-paths.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
+import { releasePreEditSessionOwnership } from "./pre-edit-check-process.mjs";
 import { createPlaywriterSelectionGuard } from "./playwriter-selection-guard.mjs";
 import { createInstructionReminderCompactor } from "./instruction-reminders.mjs";
 import { createSourceAccessRuntime } from "./source-access-runtime.mjs";
@@ -796,6 +797,7 @@ export async function AidevopsPlugin({ directory, client }) {
         Promise.resolve(cancellationReceipt.handleEvent(input)),
         Promise.resolve(nativeFocusGuard.handleEvent(input)),
         Promise.resolve(boundedOperationManager.handleEvent(input)),
+        releasePreEditSessionOwnership(input).catch((err) => debugEventError("session ownership release", err)),
         Promise.resolve(sourceAccessRuntime.handleEvent(input)),
         permissionBroker.handleEvent(input).catch((err) => debugEventError("permission broker", err)),
         sessionTitleStatusHandler(input).catch((err) => debugEventError("title status handler", err)),
