@@ -119,10 +119,11 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
         slot = directory / previous["slot"]
         target = slot / "worktree"
         with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection, connection:
-            connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
-            if scenario.startswith("missing"):
+            if scenario != "missing-owned":
+                connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
+            if scenario == "missing-registered":
                 connection.execute("DELETE FROM worktree_creation_backends WHERE path = ?", (str(target),))
-        if scenario == "missing":
+        if scenario in ("missing", "missing-owned"):
             self.git(self.repo, "worktree", "remove", target)
             slot.rmdir()
         elif scenario == "missing-registered":
@@ -150,11 +151,11 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
             publish(directory / "journal.json", value)
 
         with patch.dict(os.environ, self.env):
-            if scenario in ("dirty", "ignored", "unreachable", "missing-registered"):
+            if scenario in ("dirty", "ignored", "unreachable", "missing-registered", "missing-owned"):
                 with self.assertRaisesRegex(ValueError, "unsealed-copy-retained"):
                     RestorationProof(directory, record, self.helper, save)
                 self.assertEqual(previous["state"], "restoring")
-                self.assertEqual(slot.exists(), scenario != "missing-registered")
+                self.assertEqual(slot.exists(), not scenario.startswith("missing"))
             else:
                 proof = RestorationProof(directory, record, self.helper, save)
                 proof.check()
@@ -162,6 +163,10 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
                 self.assertNotEqual(record["canonical_restore"]["slot"], previous["slot"])
                 self.assertEqual(record["canonical_restore"]["state"], "cleaned")
                 self.assertFalse(slot.exists())
+        if scenario == "missing":
+            with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+                self.assertIsNotNone(connection.execute(
+                    "SELECT record FROM worktree_creation_backends WHERE path = ?", (str(target),)).fetchone())
         self.assertEqual(archive_before, {p.name: p.read_bytes() for p in archive.iterdir() if p.is_file()})
         self.assertTrue(self.work.is_dir())
 
@@ -173,6 +178,9 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
 
     def test_recover_legacy_scratch_rejects_stale_git_registration(self):
         self.recover_legacy_scratch("missing-registered")
+
+    def test_recover_legacy_scratch_rejects_missing_owned_slot(self):
+        self.recover_legacy_scratch("missing-owned")
 
     def test_recover_legacy_scratch_rejects_dirty(self):
         self.recover_legacy_scratch("dirty")

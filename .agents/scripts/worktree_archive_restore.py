@@ -324,7 +324,8 @@ class RestorationProof:
         that held a registered worktree. Remove it only when the slot inode,
         sole entry, legacy creation identity and Git common dir all match. A
         missing owner is accepted only for clean, ref-reachable scratch. Missing
-        slots require absence of all registry and Git registrations.
+        slots require absence of ownership and Git registration; historical
+        creation records are left untouched because no deletion is needed.
         """
         from worktree_lifetime_archive import inode, managed_module, require, transaction
         slot = directory / receipt["slot"]
@@ -338,10 +339,6 @@ class RestorationProof:
             with transaction() as connection:
                 require(connection.execute("SELECT 1 FROM worktree_owners WHERE worktree_path = ?",
                                            (str(target),)).fetchone() is None, unsealed)
-                for table, (select, _delete) in REGISTRATION_SQL.items():
-                    if connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                                          (table,)).fetchone():
-                        require(connection.execute(select, (str(target),)).fetchone() is None, unsealed)
                 entries = git(common, "worktree", "list", "--porcelain", "-z").split(b"\0")
                 require(b"worktree " + os.fsencode(target) not in entries, unsealed)
                 receipt["state"] = "cleaned"
