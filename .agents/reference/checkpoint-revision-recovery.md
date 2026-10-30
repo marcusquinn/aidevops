@@ -145,6 +145,15 @@ ownership, edited evidence and any new unrelated coordination after approval
 still reject continuation. A fully released attempt that occurs after approval
 requires a fresh assessment and approval; expiry alone is never closure evidence.
 The template refuses incomplete histories instead of printing an unusable line.
+Its existing `intervening coordination is not fully released; no approval generated`
+error now appends one sanitized `rejected comment=... event=... runner=...
+episode_claim=... reason=...` diagnostic. `comment` identifies the first rejected
+coordination record; for `open_at_end`, it identifies the last scanned event.
+`event` is the recognized event name with spaces replaced by underscores, `runner`
+is the comment author's login (or `unknown`), and `episode_claim` identifies the
+open episode's claim (or `none`). Reasons are `edited`, `untrusted`,
+`transition_rejected`, or `open_at_end`. No lease token, nonce, session, or comment
+body is printed. These diagnostics do not change history acceptance.
 All current assignment, hold, permission, brief-revision and exact-head checks
 remain in force.
 

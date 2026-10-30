@@ -127,23 +127,34 @@ def completed_episode(state):
 
 
 def released_successor_history(comments, release_id, approval_id, released_lease, trusted_logins=()):
+    """Preserve the history-or-None contract for existing acceptance callers."""
+    history, _ = explain_released_successor_history(
+        comments, release_id, approval_id, released_lease, trusted_logins)
+    return history
+
+
+def explain_released_successor_history(comments, release_id, approval_id, released_lease, trusted_logins=()):
     """Describe only fully closed, non-overlapping attempts preceding an approval.
 
     #aidevops:trust-boundary — historical closure needs explicit revision approval;
     elapsed time or a release message alone never grants continuation authority.
+    Return (history, rejection context); diagnostics never affect acceptance.
     """
     history, state = [], None
     seen = {released_lease[1]} if released_lease else set()
     for comment, line, f in events(comments, release_id, approval_id, trusted_logins):
         if not trusted(comment, trusted_logins):
-            return None
+            return None, (comment, line, state, "untrusted")
         if closes_released_attempt(released_lease, comment, line, f):
             continue
+        previous = state
         state = advance_history(state, comment, line, f, seen)
         if state is None:
-            return None
+            return None, (comment, line, previous, "transition_rejected")
         episode = completed_episode(state)
         if episode is not None:
             history.append(episode)
             state = None
-    return history if state is None else None
+    if state is not None:
+        return None, (comment, line, state, "open_at_end")
+    return history, None
