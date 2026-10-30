@@ -280,6 +280,13 @@ _pulse_event_refill_dispatch_gate() {
 			return 1
 		fi
 	fi
+	if declare -F is_permission_block_rate_acceptable >/dev/null 2>&1; then
+		local permission_block_rc=0
+		is_permission_block_rate_acceptable || permission_block_rc=$?
+		if [[ "$permission_block_rc" -eq 1 ]]; then
+			return 1
+		fi
+	fi
 	local runner_health_helper="${SCRIPT_DIR:-${_PULSE_EVENT_REFILL_SCRIPT_DIR}}/pulse-runner-health-helper.sh"
 	if [[ -x "$runner_health_helper" ]] && "$runner_health_helper" is-paused >/dev/null 2>&1; then
 		pulse_event_refill_log "action=blocked reason=runner_health trigger=retained"

@@ -1293,6 +1293,8 @@ _pulse_run_deterministic_pipeline() {
 		# stall. Complementary to the per-issue no_work escalation (GH#20639).
 		local _nw_rc=0
 		is_no_work_rate_acceptable || _nw_rc=$?
+		local _pb_rc=0
+		is_permission_block_rate_acceptable || _pb_rc=$?
 		# t2897: per-runner zero-attempt circuit breaker check.
 		# Pauses dispatch ONLY on this runner when N consecutive zero-attempt
 		# worker dispatches signal a stale or broken local install. The
@@ -1307,6 +1309,8 @@ _pulse_run_deterministic_pipeline() {
 		if [[ "$_nw_rc" -eq 1 ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: no_work rate circuit breaker tripped (t2770)" >>"$LOGFILE"
 			_pulse_cycle_state_note_blocker dispatch-no-work-rate pulse-wrapper no-work-rate || true
+		elif [[ "$_pb_rc" -eq 1 ]]; then
+			_pulse_cycle_state_note_blocker dispatch-permission-block-rate pulse-wrapper permission-block-rate || true
 		elif [[ "$_rh_rc" -eq 0 ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: runner-health circuit breaker tripped (t2897)" >>"$LOGFILE"
 			_pulse_cycle_state_note_blocker runner-health pulse-wrapper runner-health || true

@@ -1097,6 +1097,7 @@ A runner-local account or credential that this runner lacks or the service
 rejects (for example a staging sign-in returning HTTP 401) is the same class,
 not permission_required; another runner may hold it (GH#34901).
 A host-local lock or serialization guard held on this runner pending its operator's reconciliation is runner_capability_unmet, not permission_required, because another runner may not hold it.
+A VAULT_POLICY_DENIED with check unclassifiable_shell_read or classification_unavailable inside the worker's own worktree, asking for a local-only relaunch, is runner_capability_unmet; protected_read, classification_mutation, and owner-signed SSH or network grant denials remain permission_required.
 For an evidenced unresolved permission boundary, including a continued session
 whose prior protected-source denial has no changed exact-context grant, use the
 next class; never for missing tooling or forbidden dependency installation:
