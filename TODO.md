@@ -1782,7 +1782,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18804 perf(gh-api): attribute the ~49% of REST-core quota drain that no logged attempt explains #auto-dispatch #bug #priority:high ref:GH#36048
 
-- [ ] t18805 fix(terminal-blocker): never hold status:blocked without recorded evidence #bug ref:GH#36058
+- [x] t18805 fix(terminal-blocker): never hold status:blocked without recorded evidence #bug ref:GH#36058 pr:#36060 completed:2026-10-30
 
 - [ ] t18806 fix(terminal-blocker): release pre-fix bare blocked holds on trusted retry or expired backoff #auto-dispatch #bug ref:GH#36061
 
@@ -5396,3 +5396,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18702 Remove GenAIPro from media-generation provider guidance #feat #interactive ref:GH#34729 pr:#34730 completed:2026-10-15
 
 - [x] t18777 docs: recommend reusable purpose-scoped PATs (extend repo access) instead of per-repo tokens for CLOUDRON_RELEASE_PAT and SYNC_PAT #auto-dispatch #documentation ref:GH#35858 pr:#35969 completed:2026-10-29
+
+- [ ] t18797 Deflake bounded-operation timeout case: process_signal null under slow spawn #auto-dispatch #bug ref:GH#36015
