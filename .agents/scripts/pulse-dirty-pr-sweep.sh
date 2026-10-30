@@ -146,6 +146,8 @@ readonly _DIRTY_ACTION_SKIP="skip"
 
 readonly _DIRTY_LABEL_ORIGIN_WORKER="origin:worker"
 readonly _DIRTY_LABEL_ORIGIN_WORKER_TAKEOVER="origin:worker-takeover"
+# Pulse TODO handoff heads (pulse-todo-publication.sh); see GH#36112.
+readonly _DIRTY_PULSE_TODO_HANDOFF_PREFIX="aidevops/pulse-todo-"
 
 # Comment markers for idempotency when scanning PR comment history.
 readonly _DIRTY_PR_NOTIFY_MARKER="<!-- pulse-dirty-pr-escalate -->"  # string preserved for comment-history dedup continuity
@@ -656,6 +658,25 @@ _dps_closed_by_other_merged_pr_reason() {
 	return 0
 }
 
+# Print why the sweep must not classify a PR, or return 1 to classify it.
+# Args: $1=mergeStateStatus $2=head ref name
+_dps_skip_reason() {
+	local mss="$1"
+	local head_ref="$2"
+	if [[ "$mss" != "DIRTY" ]]; then
+		printf 'not-dirty'
+		return 0
+	fi
+	# GH#36112: a Pulse TODO handoff has no work issue, so its Ref lines must not
+	# drive rebase, conflict routing, close or notify. The merge pass supersedes
+	# trusted conflicting handoffs and the publisher regenerates them.
+	if [[ "$head_ref" == "${_DIRTY_PULSE_TODO_HANDOFF_PREFIX}"* ]]; then
+		printf 'pulse-todo-handoff-owned-by-merge-pass'
+		return 0
+	fi
+	return 1
+}
+
 #
 # Given a PR JSON object (from `gh pr list`), classify the action:
 #   rebase | conflict | close | notify | skip
@@ -678,7 +699,7 @@ _dirty_pr_classify() {
 	local repo_path="$3"
 	local self_login="$4"
 
-	local pr_number mss created updated author head_ref body
+	local pr_number mss created updated author head_ref body skip_reason
 	pr_number=$(printf '%s' "$pr_json" | jq -r '.number // empty')
 	mss=$(printf '%s' "$pr_json" | jq -r '.mergeStateStatus // empty')
 	created=$(printf '%s' "$pr_json" | jq -r '.createdAt // empty')
@@ -691,8 +712,8 @@ _dirty_pr_classify() {
 		printf '%s|invalid-pr-json' "$_DIRTY_ACTION_SKIP"
 		return 0
 	fi
-	if [[ "$mss" != "DIRTY" ]]; then
-		printf '%s|not-dirty' "$_DIRTY_ACTION_SKIP"
+	if skip_reason=$(_dps_skip_reason "$mss" "$head_ref"); then
+		printf '%s|%s' "$_DIRTY_ACTION_SKIP" "$skip_reason"
 		return 0
 	fi
 

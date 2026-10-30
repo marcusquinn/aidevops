@@ -11,11 +11,12 @@ predicates in pr_checkpoint_events.
 import datetime as dt
 import hashlib
 import json
+import re
 import sys
 
-from pr_checkpoint_events import (events, release_for, released_attempt_token,
+from pr_checkpoint_events import (EVENTS, events, release_for, released_attempt_token,
                                   successors_valid, timestamp, trusted)
-from pr_checkpoint_history import released_successor_history
+from pr_checkpoint_history import explain_released_successor_history, released_successor_history
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
 
@@ -125,6 +126,19 @@ def validate(data):
     return candidates[0]
 
 
+def rejection_diagnostic(context):
+    """Format metadata only; never echo arbitrary coordination field values."""
+    comment, line, state, reason = context
+    event = next(kind.strip().replace(" ", "_") for kind in EVENTS if line.startswith(kind))
+    actor = comment.get("user", {}).get("login", "")
+    runner = actor if re.fullmatch(r"[A-Za-z0-9-]{1,39}(?:\[bot\])?", actor) else "unknown"
+    claim = state["claim_id"] if state else "none"
+    if reason == "untrusted" and comment.get("updated_at", comment.get("created_at")) != comment.get("created_at"):
+        reason = "edited"
+    return (f"rejected comment={comment['id']} event={event} runner={runner} "
+            f"episode_claim={claim} reason={reason}")
+
+
 def template(data):
     """Emit an approval line only when dispatch-approved could accept its release.
 
@@ -148,9 +162,11 @@ def template(data):
             f"release closing {approval['attempt']} with its poster's ready lease; dispatch-approved would "
             "reject this approval, so none was generated")
     closing = (release["user"]["login"], released_attempt_token(comments, approval, release, trusted_logins))
-    history = released_successor_history(comments, release["id"], float("inf"), closing, trusted_logins)
+    history, rejection = explain_released_successor_history(
+        comments, release["id"], float("inf"), closing, trusted_logins)
     if history is None:
-        raise ValueError("intervening coordination is not fully released; no approval generated")
+        raise ValueError("intervening coordination is not fully released; no approval generated; "
+                         + rejection_diagnostic(rejection))
     if history:
         approval["released_successors"] = history
     return PREFIX + json.dumps(approval)

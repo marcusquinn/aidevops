@@ -77,6 +77,7 @@ readonly CHECK_HELPER="$SELF_DIR/check-workflows-helper.sh"
 readonly MANAGED_BLOCK_HELPER="$SELF_DIR/managed-markdown-block-helper.py"
 readonly CONTRIBUTING_POLICY_TEMPLATE_NAME="issue-first-pr-contributing.md"
 readonly LINKED_ISSUE_WORKFLOW_NAME="linked-issue-check"
+readonly METRICS_WORKFLOW_NAME="loc-badge"
 
 # Known managed workflows — each entry is workflow_file:template_file.
 # Mirrors _KNOWN_WORKFLOWS in check-workflows-helper.sh.
@@ -434,7 +435,7 @@ Default is --dry-run. Pass --apply to write, commit, push, and open PRs.
 Usage:
   sync-workflows-helper.sh [--apply] [--repo OWNER/REPO] [--workflow NAME]
                            [--install-missing] [--issue NUMBER]
-                           [--force-ref] [--ref REF] [--branch NAME] [--json]
+                           [--force-ref | --pin-floating] [--ref REF] [--branch NAME] [--json]
   sync-workflows-helper.sh --help
 
 Options:
@@ -452,6 +453,9 @@ Options:
                     after an upgrade. Without this, existing pins (@v3.9.0,
                     @<sha>) are preserved.
   --ref REF         Explicit @ref for new installs (default: @main).
+  --pin-floating    Migrate only existing loc-badge @main callers to the latest
+                    release SHA. Requires --workflow loc-badge. Preserves real
+                    pins and registry workflow_reusable_ref overrides.
   --branch NAME     Branch name prefix (default: chore/workflow-sync-YYYYMMDD).
   --json            Emit one JSON object per repo × workflow describing outcome.
   -h, --help        Show this help.
@@ -476,6 +480,15 @@ Examples:
 
   # Bump an existing issue-sync pin after an upgrade (dry-run first):
   sync-workflows-helper.sh --workflow issue-sync --force-ref --ref @v3.38.35
+
+  # Migrate legacy metrics callers, preview first, then repeat with --apply:
+  sync-workflows-helper.sh --workflow loc-badge --pin-floating
+
+  # Post-release maintenance: resolve a release SHA and tag using
+  # workflow_release_ref from workflow-release-ref.sh, then preview the bump:
+  # sync-workflows-helper.sh --workflow loc-badge --force-ref --ref "$release_ref"
+  # Review the plan (including intentional pins), then repeat with --apply.
+  # This explicit operation avoids silently advancing operator-owned pins.
 
 EOF
 	return 0
@@ -680,7 +693,7 @@ _sync_target_ref_for_slug() {
 	local _ref
 	if [[ -n "${_OPT_TARGET_REF:-}" ]]; then
 		_ref="${_OPT_TARGET_REF#@}"
-	elif [[ "$_status" == "NO-WORKFLOW" && "$_workflow_name" == "loc-badge" &&
+	elif [[ ( "$_status" == "NO-WORKFLOW" || "${_OPT_PIN_FLOATING:-0}" -eq 1 ) && "$_workflow_name" == "$METRICS_WORKFLOW_NAME" &&
 		-z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
 		local _repo
 		_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
@@ -689,6 +702,25 @@ _sync_target_ref_for_slug() {
 		_ref=$(_workflow_reusable_ref_for_slug "$_slug") || return 1
 	fi
 	printf '@%s\n' "$_ref"
+	return 0
+}
+
+# Select only unconfigured legacy metrics callers, never intentional pins.
+_is_floating_caller() {
+	local _slug="$1"
+	local _workflow_file="$2"
+	local _repo _pin
+	[[ "$_workflow_file" == */loc-badge.yml ]] || return 1
+	[[ -z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]] || return 1
+	[[ -f "$_workflow_file" ]] || return 1
+	_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
+	# Match the configured reusable workflow, not an unrelated job's first ref.
+	_pin=$(awk -v target="${_repo}/.github/workflows/loc-badge-reusable.yml@" '
+		$1 == "uses:" && index($2, target) == 1 {
+			print substr($2, length(target) + 1)
+		}
+	' "$_workflow_file")
+	[[ "$_pin" == "$_BRANCH_DEFAULT_NAME" ]] || return 1
 	return 0
 }
 
@@ -701,10 +733,16 @@ _needs_ref_bump() {
 	local _slug="$1"
 	local _workflow_file="$2"
 	local _pin _target
+	if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 ]]; then
+		_is_floating_caller "$_slug" "$_workflow_file" || return 1
+		return 0
+	fi
 	[[ "${_OPT_FORCE_REF:-0}" -eq 1 && -f "$_workflow_file" ]] || return 1
 	_pin=$(_extract_ref_pin "$_workflow_file")
 	[[ -n "$_pin" ]] || return 1
 	_target=$(_sync_target_ref_for_slug "$_slug") || return 1
+	# Release annotations are display metadata, not part of the ref token.
+	_target="${_target%%[[:space:]]*}"
 	[[ "$_pin" != "$_target" ]] || return 1
 	return 0
 }
@@ -827,6 +865,13 @@ _installation_skip_reason() {
 		printf 'external-upstream\n'
 		return 0
 	fi
+	if [[ "$_workflow" == "$METRICS_WORKFLOW_NAME" ]] && jq -e --arg slug "$_slug" '
+		.initialized_repos[]? | select(.slug == $slug)
+		| (.badges == false) or ((.mirror_upstream | type) == "string")
+	' "$REPOS_JSON" >/dev/null 2>&1; then
+		printf 'badges-opt-out-or-upstream-mirror\n'
+		return 0
+	fi
 	if ! command -v gh >/dev/null 2>&1; then
 		printf 'inaccessible\n'
 		return 0
@@ -878,7 +923,10 @@ _emit_actionable_row() {
 	local _class="$3"
 	local _workflow="$4"
 	local _skip_reason=""
-	if [[ "${_OPT_INSTALL_MISSING:-0}" -eq 1 ]]; then
+	if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 ]]; then
+		_is_floating_caller "$_slug" "$_path/.github/workflows/${_workflow}.yml" || return 0
+	fi
+	if [[ "${_OPT_INSTALL_MISSING:-0}" -eq 1 || "$_workflow" == "$METRICS_WORKFLOW_NAME" ]]; then
 		if [[ "$_class" == "$_CLASS_LOCAL_ONLY" ]]; then
 			_skip_reason="local-only"
 		else
@@ -1105,7 +1153,10 @@ _resolve_effective_ref() {
 		[[ "$_force_ref" -eq 0 ]]; then
 		local _existing_pin
 		_existing_pin=$(_extract_ref_pin "$_workflow")
-		if [[ -n "$_existing_pin" ]]; then
+		# Floating mode has already verified the configured metrics caller ref.
+		if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 && "$_workflow" == */loc-badge.yml ]]; then
+			_effective_ref="$_target_ref"
+		elif [[ -n "$_existing_pin" ]]; then
 			_effective_ref="$_existing_pin"
 		fi
 	fi
@@ -1427,6 +1478,12 @@ _resolve_refreshed_sync_status() {
 	local _workflow="$4"
 	local _refreshed_status="$5"
 	local _sync_contributing="$6"
+	# Discovery can be stale: preserve a pin installed since initial inspection.
+	if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 ]] && ! _is_floating_caller "$_slug" "$_workflow"; then
+		printf '%s\t%s\t%s\trefreshed caller is not floating; no changes\n' \
+			"$_slug" "$_refreshed_status" "$_STATUS_SKIPPED"
+		return 2
+	fi
 	case "$_refreshed_status" in
 	"$_CLASS_DRIFTED" | "$_CLASS_NEEDS_MIGRATION")
 		printf '%s\n' "$_refreshed_status"
@@ -1591,6 +1648,7 @@ _parse_args() {
 	_OPT_INSTALL_MISSING=0
 	_OPT_ISSUE=""
 	_OPT_FORCE_REF=0
+	_OPT_PIN_FLOATING=0
 	_OPT_TARGET_REF=""
 	_OPT_BRANCH_NAME=""
 	_OPT_JSON=0
@@ -1606,6 +1664,7 @@ _parse_args() {
 			[[ "$_OPT_ISSUE" =~ ^[0-9]+$ ]] || _die "--issue requires a numeric issue number"
 			shift 2 ;;
 		--force-ref) _OPT_FORCE_REF=1; shift ;;
+		--pin-floating) _OPT_PIN_FLOATING=1; shift ;;
 		--ref)
 			_OPT_TARGET_REF="${2:-}"
 			[[ -z "$_OPT_TARGET_REF" ]] && _die "--ref requires an argument"
@@ -1619,6 +1678,11 @@ _parse_args() {
 	done
 	if [[ "$_OPT_INSTALL_MISSING" -eq 1 && -z "$_OPT_FILTER_WORKFLOW" ]]; then
 		_die "--install-missing requires an explicit --workflow filter"
+	fi
+	if [[ "$_OPT_PIN_FLOATING" -eq 1 ]]; then
+		[[ "$_OPT_FILTER_WORKFLOW" == "$METRICS_WORKFLOW_NAME" ]] || _die "--pin-floating requires --workflow loc-badge"
+		[[ "$_OPT_FORCE_REF" -eq 0 && "$_OPT_INSTALL_MISSING" -eq 0 && -z "$_OPT_TARGET_REF" ]] ||
+			_die "--pin-floating cannot be combined with --force-ref, --install-missing or --ref"
 	fi
 	return 0
 }
