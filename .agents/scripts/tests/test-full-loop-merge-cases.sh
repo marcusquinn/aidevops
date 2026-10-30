@@ -168,6 +168,7 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 		echo "Something completely different went wrong" >&2
 		exit 1
 	elif [[ "$mode" == server-* ]]; then
+		touch "${TEST_ROOT}/logs/merge-attempted.txt"
 		case "$mode" in
 		server-503) echo 'HTTP 503: Service Unavailable' >&2 ;;
 		server-504) echo 'HTTP 504: Gateway Timeout' >&2 ;;
@@ -215,10 +216,7 @@ write_gh_stub_pr_issue_views() {
 	fi
 	if [[ "\$*" == *"--json state,isDraft,reviewDecision,headRefOid"* ]]; then
 		_review_decision=""
-		[[ "$mode" == "late-review-block" ]] && _review_decision="CHANGES_REQUESTED"
-		if [[ "$mode" == "server-late-review" ]] && grep -q 'pr merge' "${TEST_ROOT}/logs/gh-calls.txt"; then
-			_review_decision="CHANGES_REQUESTED"
-		fi
+		[[ "$mode" == "late-review-block" || ( "$mode" == "server-late-review" && -f "${TEST_ROOT}/logs/merge-attempted.txt" ) ]] && _review_decision="CHANGES_REQUESTED"
 		printf '{"state":"OPEN","isDraft":false,"reviewDecision":"%s","headRefOid":"abc123headsha"}\n' "\$_review_decision"
 		exit 0
 	fi
