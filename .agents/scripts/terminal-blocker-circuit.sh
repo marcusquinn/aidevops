@@ -177,10 +177,14 @@ _terminal_blocker_input_owner() {
 
 # Capture only final assistant text, not tool output. A missing canonical scope
 # can also be established from the current brief, without interpreting prose.
+# Optional $3 is the anchored line pattern that classified the exit as BLOCKED
+# (headless-runtime-model.sh). Judging the final part with that same pattern
+# stops a classified exit such as "**BLOCKED — ...**" losing its evidence.
 _terminal_blocker_capture_json() {
 	local output_file="$1"
 	local live_blocked="${2:-false}"
-	python3 - "$output_file" "$live_blocked" <<'PY'
+	local blocked_line_pattern="${3:-}"
+	python3 - "$output_file" "$live_blocked" "$blocked_line_pattern" <<'PY'
 import json
 import re
 import sys
@@ -200,13 +204,18 @@ for raw_line in raw.splitlines():
     if not isinstance(event, dict) or event.get("type") != text_field:
         continue
     part = event.get("part") if isinstance(event.get("part"), dict) else {}
+    # GH#33274: runtime-injected parts are not model output.
+    if part.get("synthetic") is True:
+        continue
     text = event.get(text_field) or part.get(text_field) or ""
     if text:
         parts.append(text)
 
 marker = re.compile(r"(^|\n)\s*BLOCKED(?:\s*:|\s*$)", re.IGNORECASE)
+classifier = re.compile(sys.argv[3], re.MULTILINE) if sys.argv[3] else None
 candidate = parts[-1] if parts else (raw if not raw.lstrip().startswith('{') else '')
-if not marker.search(candidate) and sys.argv[2] != 'true':
+blocked = marker.search(candidate) or (classifier is not None and classifier.search(candidate))
+if not blocked and sys.argv[2] != 'true':
     raise SystemExit(1)
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
@@ -252,13 +261,14 @@ PY
 terminal_blocker_capture_output() {
 	local output_file="$1"
 	local live_blocked="${2:-false}"
+	local blocked_line_pattern="${3:-}"
 	local normalized="" fingerprint="" issue_json="" captured=""
 	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=""
 	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=""
 	AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
 	[[ -f "$output_file" ]] || return 1
-	captured=$(_terminal_blocker_capture_json "$output_file" "$live_blocked") || captured=""
+	captured=$(_terminal_blocker_capture_json "$output_file" "$live_blocked" "$blocked_line_pattern") || captured=""
 	[[ -n "$captured" ]] || return 1
 	normalized=$(printf '%s' "$captured" | jq -r '.reason') || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=$(printf '%s' "$captured" | jq -r '.explicit_reason') || return 1

@@ -497,6 +497,42 @@ test_final_dossier_and_structural_precedence() {
 	return 0
 }
 
+# A classified BLOCKED exit must record evidence before any hold; an exit that
+# records none stays dispatchable instead of an ownerless status:blocked.
+test_unrecorded_blocked_exit_stays_dispatchable() {
+	local status=0
+	if ! (
+		local output="${TEST_ROOT}/unrecorded.ndjson" posted="" edits="" projection=""
+		# shellcheck source=../headless-runtime-model.sh
+		source "${SCRIPT_DIR}/headless-runtime-model.sh" >/dev/null 2>&1 || exit 1
+		printf '%s\n' '{"type":"text","text":"**BLOCKED — runtime policy denied the PR helper.**"}' >"$output"
+		output_has_blocked_signal "$output" || exit 1
+		terminal_blocker_capture_output "$output" false "$_HEADLESS_BLOCKED_LINE_PATTERN" || exit 1
+		[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || exit 1
+		# Runtime-injected text is not the final model report.
+		printf '%s\n' '{"type":"text","text":"BLOCKED: denied"}' \
+			'{"type":"text","part":{"synthetic":true,"text":"Continue."}}' >"$output"
+		terminal_blocker_capture_output "$output" || exit 1
+		export DISPATCH_REPO_SLUG=owner/repo WORKER_ISSUE_NUMBER=42 AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$TEST_ROOT"
+		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
+		gh_issue_edit_safe() { edits+="$*;"; return 0; }
+		terminal_blocker_fetch_trusted_comments() { printf '[]\n'; return 0; }
+		_hrff_release_repo_state_is_managed() { return 0; }
+		_hrff_resolve_release_runner_login() { printf 'runner-one\n'; return 0; }
+		_unlock_issue_after_dispatch_release() { return 0; }
+		_hrff_post_claim_released_comment() { posted="$3"; return 0; }
+		clear_active_status_on_release() { projection="$4"; return 0; }
+		_release_dispatch_claim issue-42 blocked || exit 1
+		[[ "$posted" == *'CLAIM_RELEASED reason=blocked '*' evidence=unrecorded'* &&
+			"$posted" != *'terminal-blocker-observation'* ]] || exit 1
+		[[ -z "$edits" && "$projection" == available ]] || exit 1
+	); then
+		status=1
+	fi
+	print_result "classified blocked exits capture evidence; unrecorded ones stay dispatchable" "$status"
+	return 0
+}
+
 test_legacy_blocked_backoff() {
 	local comments="" changed="" result="" status=0
 	# No local metrics, fingerprints or task revision: reproduce legacy releases
@@ -1937,6 +1973,7 @@ main() {
 	test_excluded_scope_revision
 	test_unknown_and_redaction
 	test_final_dossier_and_structural_precedence
+	test_unrecorded_blocked_exit_stays_dispatchable
 	test_release_integration_bounds_comments
 	test_legacy_blocked_backoff
 	test_blocked_backoff_trust

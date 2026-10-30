@@ -1782,6 +1782,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18804 perf(gh-api): attribute the ~49% of REST-core quota drain that no logged attempt explains #auto-dispatch #bug #priority:high ref:GH#36048
 
+- [ ] t18805 fix(terminal-blocker): never hold status:blocked without recorded evidence #bug ref:GH#36058
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25

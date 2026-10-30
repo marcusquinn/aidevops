@@ -63,6 +63,8 @@ readonly _HRFF_RETRY_CLASS_REMEDIATION="meaningful_remediation"
 readonly _HRFF_RETRY_CLASS_UNKNOWN="unknown"
 readonly _HRFF_OPEN_ISSUE_STATE="open"
 readonly _HRFF_SESSION_COUNT_QUERY_PREFIX="SELECT count(*) FROM session WHERE time_created >= "
+# Projection-only reason for a blocked exit that recorded no hold evidence.
+readonly _HRFF_REASON_BLOCKED_UNRECORDED="blocked_unrecorded"
 
 #######################################
 # Count attempt-local OpenCode model activity. Fresh runs are scoped to sessions
@@ -564,6 +566,8 @@ _hrff_prepare_terminal_blocker_release() {
 	_HRFF_TERMINAL_BLOCKER_MODE="normal"
 	_HRFF_TERMINAL_BLOCKER_FRAGMENT=""
 	_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY=""
+	# Empty until this release's observation, or an earlier one, is evidence.
+	_HRFF_TERMINAL_BLOCKER_EVIDENCE=""
 	[[ -n "$repo_path" && "$blocker_fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 0
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{title: (.title // ""), body: (.body // "")}' 2>/dev/null) || return 0
@@ -581,9 +585,11 @@ _hrff_prepare_terminal_blocker_release() {
 		fi
 		_HRFF_TERMINAL_BLOCKER_FRAGMENT=$(terminal_blocker_observation_fragment \
 			"$task_revision" "$blocker_fingerprint" "$mode" "$projected_state") || _HRFF_TERMINAL_BLOCKER_FRAGMENT=""
+		[[ -z "$_HRFF_TERMINAL_BLOCKER_FRAGMENT" ]] || _HRFF_TERMINAL_BLOCKER_EVIDENCE="observation"
 		;;
 	circuit)
 		_HRFF_TERMINAL_BLOCKER_MODE="circuit"
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE="prior_observation"
 		_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY=$(terminal_blocker_circuit_comment \
 			"$machine_readable_part" "$task_revision" "$blocker_fingerprint") || {
 			_HRFF_TERMINAL_BLOCKER_MODE="normal"
@@ -592,6 +598,11 @@ _hrff_prepare_terminal_blocker_release() {
 		;;
 	open)
 		_HRFF_TERMINAL_BLOCKER_MODE="open"
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE="circuit"
+		;;
+	normal)
+		# A repeated unknown dossier for this revision keeps its earlier observation.
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE="prior_observation"
 		;;
 	esac
 	return 0
@@ -799,6 +810,17 @@ _release_dispatch_claim() {
 		terminal_blocker_fragment="${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}"
 		;;
 	esac
+	# A held status:blocked needs evidence that an owner can re-arm: recovery
+	# retires evidence-less entries (GH#35569) and the dependency sweep defers
+	# to that absent owner, so an unrecorded hold never cleared. Unclassified
+	# or unreadable evidence stays retryable; a repeat records it before a hold.
+	local projection_reason="$reason"
+	if [[ "$reason" == blocked && -z "$terminal_blocker_fragment" &&
+		-z "${_HRFF_TERMINAL_BLOCKER_EVIDENCE:-}" ]]; then
+		machine_readable_part+=" evidence=unrecorded"
+		projection_reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
+		print_warning "Blocked exit on #${issue_number} recorded no terminal-blocker evidence; keeping it dispatchable"
+	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
 		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is preserved on the draft PR. Next action: Pulse continues the exact head (bounded per head and per PR).\n'
 	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
@@ -818,8 +840,8 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		return 1
 	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
-	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason" "$session_key" || return 1
-	[[ "$reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$projection_reason" "$session_key" || return 1
+	[[ "$projection_reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
 	return 0
 }
 
