@@ -25,7 +25,10 @@ _pulse_worker_log_prelaunch_failure_reason() {
 	local log_path="$1"
 	local reason=""
 
-	[[ -f "$log_path" ]] || { printf '\n'; return 0; }
+	[[ -f "$log_path" ]] || {
+		printf '\n'
+		return 0
+	}
 
 	reason=$(awk '
 		/\[systemd-launch\] classification=crash_during_startup/ {
