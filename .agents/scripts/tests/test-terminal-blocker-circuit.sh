@@ -1960,7 +1960,96 @@ test_capability_checkpoint_attention() {
 	return 0
 }
 
+test_recovery_graphql_fallback() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local api_mode=rest graphql_reply='' result='' rc=0 valid_comments='' id=''
+		local calls="${TEST_ROOT}/fallback-calls" entry="${TEST_ROOT}/fallback-entry.json"
+		gh() {
+			local kind="$1" endpoint="${2:-}"
+			printf '%s\n' "$*" >>"$calls"
+			[[ "$kind" == api ]] || return 1
+			if [[ "$api_mode" == rest ]]; then
+				[[ "$endpoint" != graphql ]] || return 1
+				printf '[[{"id":7,"user":{"login":"runner"},"author_association":"NONE","body":"hold","created_at":"2026-10-30T01:00:00Z"}]]\n'
+			elif [[ "$api_mode" == failed || "$endpoint" != graphql ]]; then
+				return 1
+			else
+				printf '%s\n' "$graphql_reply"
+			fi
+			return 0
+		}
+		result=$(terminal_blocker_fetch_trusted_comments 42 owner/repo runner) || exit 1
+		[[ "$(jq -r '.[0].id' <<<"$result")" == 7 ]] || exit 1
+		! rg -q graphql "$calls" || exit 1
+		api_mode=graphql
+		# Two pages include same-second IDs, an untrusted comment and this
+		# runner's own NONE comment. REST-shaped trust filtering stays intact.
+		graphql_reply=$(jq -nc '[
+			{data:{repository:{issue:{comments:{nodes:[
+				{fullDatabaseId:"8",author:{login:"owner"},authorAssociation:"OWNER",body:"retry",createdAt:"2026-10-30T01:00:00Z"},
+				{fullDatabaseId:"9",author:{login:"outsider"},authorAssociation:"NONE",body:"spoof",createdAt:"2026-10-30T01:00:00Z"}],
+				pageInfo:{hasNextPage:true,endCursor:"next"}}}}}},
+			{data:{repository:{issue:{comments:{nodes:[
+				{fullDatabaseId:"10",author:{login:"runner"},authorAssociation:"NONE",body:"hold",createdAt:"2026-10-30T01:00:00Z"}],
+				pageInfo:{hasNextPage:false,endCursor:null}}}}}}]')
+		result=$(terminal_blocker_fetch_trusted_comments 42 owner/repo runner) || exit 1
+		[[ "$(jq -c 'map(.id)' <<<"$result")" == '[8,10]' ]] || exit 1
+		[[ "$(jq -r '.[1].created_at' <<<"$result")" == '2026-10-30T01:00:00Z' ]] || exit 1
+		rg -q -- '--paginate --slurp.*endCursor' "$calls" || exit 1
+		rg -q -- 'nodes\{fullDatabaseId ' "$calls" || exit 1
+		valid_comments="$graphql_reply"
+		for id in '"9007199254740991"' 9007199254740991; do
+			graphql_reply=$(printf '%s' "$valid_comments" | jq -c --argjson id "$id" '.[-1].data.repository.issue.comments.nodes[0].fullDatabaseId=$id')
+			result=$(terminal_blocker_fetch_comments owner/repo 42) || exit 1
+			[[ "$(printf '%s' "$result" | jq -r '.[-1].id')" == 9007199254740991 ]] || exit 1
+		done
+		# Invalid IDs on a later page invalidate all evidence, not just that node.
+		for id in null true '{}' '[]' '"bad"' '""' 0 -1 1.5 '"1.5"' '"1e2"' '"9007199254740992"' 9007199254740992 '"90071992547409910"'; do
+			graphql_reply=$(printf '%s' "$valid_comments" | jq -c --argjson id "$id" '.[-1].data.repository.issue.comments.nodes[0].fullDatabaseId=$id')
+			result=$(terminal_blocker_fetch_comments owner/repo 42) && exit 1
+			[[ -z "$result" ]] || exit 1
+		done
+		graphql_reply=$(printf '%s' "$valid_comments" | jq -c 'del(.[-1].data.repository.issue.comments.nodes[0].fullDatabaseId)')
+		result=$(terminal_blocker_fetch_comments owner/repo 42) && exit 1
+		[[ -z "$result" ]] || exit 1
+		graphql_reply="$valid_comments"
+		# Truncated, null and partial-error responses are not empty evidence.
+		graphql_reply=$(jq -c '.[-1].data.repository.issue.comments.pageInfo.hasNextPage=true' <<<"$graphql_reply")
+		terminal_blocker_fetch_comments owner/repo 42 >/dev/null && exit 1
+		graphql_reply='[{"data":{"repository":{"issue":null}}}]'
+		terminal_blocker_fetch_comments owner/repo 42 >/dev/null && exit 1
+		graphql_reply='[{"errors":[{"message":"unavailable"}],"data":{"repository":{"issue":{"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}]'
+		terminal_blocker_fetch_comments owner/repo 42 >/dev/null && exit 1
+		graphql_reply='{"data":{"repository":{"issue":{"number":42,"title":"Brief","body":"scope","state":"OPEN","updatedAt":"now","labels":{"nodes":[{"name":"status:blocked"}],"pageInfo":{"hasNextPage":false}}}}}}'
+		result=$(terminal_blocker_fetch_issue owner/repo 42) || exit 1
+		jq -e '.state == "open" and .updated_at == "now" and .labels[0].name == "status:blocked"' <<<"$result" >/dev/null || exit 1
+		graphql_reply=$(jq -c '.data.repository.issue.labels.pageInfo.hasNextPage=true' <<<"$graphql_reply")
+		terminal_blocker_fetch_issue owner/repo 42 >/dev/null && exit 1
+		graphql_reply='[{"data":{"search":{"nodes":[{"number":42}],"pageInfo":{"hasNextPage":false}}}}]'
+		[[ "$(_tbr_seed_candidates owner/repo)" == 42 ]] || exit 1
+		graphql_reply='[{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}]'
+		[[ -z "$(_tbr_seed_candidates owner/repo)" ]] || exit 1
+		unset WORKER_GITHUB_LOGIN AIDEVOPS_WORKER_GITHUB_LOGIN
+		graphql_reply=runner
+		[[ "$(_tbr_self_login)" == runner ]] || exit 1
+		api_mode=failed
+		_tbr_self_login >/dev/null && exit 1
+		terminal_blocker_fetch_trusted_comments 42 owner/repo runner >/dev/null && exit 1
+		terminal_blocker_search_issues 'repo:owner/repo is:issue' >/dev/null && exit 1
+		printf '{"repo":"owner/repo","issue":42,"reason":"unknown"}\n' >"$entry"
+		_tbr_check_entry "$entry" rearm >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 2 && -f "$entry" ]] || exit 1
+		exit 0
+	); then status=1; fi
+	print_result "recovery falls back to paginated GraphQL without weakening trust or retiring incomplete evidence" "$status"
+	return 0
+}
+
 main() {
+	test_recovery_graphql_fallback
 	test_fleet_capability_hold
 	test_fleet_escalation_upsert
 	test_capability_checkpoint_attention

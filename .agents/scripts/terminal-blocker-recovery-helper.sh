@@ -45,6 +45,9 @@
 _TBR_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_TBR_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _TBR_SCRIPT_DIR="."
 
+# shellcheck source=terminal-blocker-github.sh
+source "${_TBR_SCRIPT_DIR}/terminal-blocker-github.sh"
+
 TBR_ROOT="${AIDEVOPS_BLOCKER_RECOVERY_DIR:-${HOME}/.aidevops/.agent-workspace/terminal-blocker-recovery}"
 TBR_SEED_INTERVAL="${BLOCKER_RECOVERY_SEED_INTERVAL:-21600}"
 TBR_DECISION_TTL="${BLOCKER_RECOVERY_DECISION_TTL:-86400}"
@@ -166,7 +169,9 @@ _tbr_init_dirs() {
 _tbr_self_login() {
 	local login="${WORKER_GITHUB_LOGIN:-${AIDEVOPS_WORKER_GITHUB_LOGIN:-}}"
 	if [[ -z "$login" ]]; then
-		login=$(gh api user --jq '.login' 2>/dev/null) || login=""
+		login=$(gh api user --jq '.login' 2>/dev/null) || {
+			login=$(gh api graphql -f query='{viewer{login}}' --jq 'select((.errors // [] | length) == 0) | .data.viewer.login' 2>/dev/null) || login=""
+		}
 	fi
 	[[ "$login" =~ ^[A-Za-z0-9-]+$ ]] || return 1
 	printf '%s\n' "$login"
@@ -262,7 +267,7 @@ tbr_seed() {
 			[[ "$issue" =~ ^[0-9]+$ ]] || continue
 			_tbr_save_cursor "$cursor_name" "$issue" || return 2
 			printf 'blocker-recovery: checking stage=seed_comments repo=%s issue=%s\n' "$slug" "$issue" >&2
-			comments=$(gh api "repos/${slug}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || {
+			comments=$(terminal_blocker_fetch_comments "$slug" "$issue") || {
 				incomplete=1
 				continue
 			}
@@ -289,8 +294,7 @@ _tbr_seed_candidates() {
 	local query="" result="" numbers=""
 	for query in "\"TERMINAL_BLOCKER_CIRCUIT\" in:comments" \
 		"label:\"status:blocked\" \"Terminal blocker\" in:comments"; do
-		result=$(gh api -X GET search/issues -f q="repo:${slug} is:issue is:open ${query}" \
-			--jq '.items[].number' 2>/dev/null) || return 2
+		result=$(terminal_blocker_search_issues "repo:${slug} is:issue is:open ${query}") || return 2
 		numbers+="${result}"$'\n'
 	done
 	printf '%s' "$numbers" | sort -un
@@ -569,7 +573,7 @@ _tbr_check_entry() {
 	fi
 	local issue_json="" state=""
 	printf 'blocker-recovery: checking stage=entry_issue repo=%s issue=%s\n' "$repo" "$issue" >&2
-	issue_json=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 2
+	issue_json=$(terminal_blocker_fetch_issue "$repo" "$issue") || return 2
 	state=$(printf '%s' "$issue_json" | jq -r '.state // ""')
 	[[ "$state" == open || "$state" == closed ]] || return 2
 	if [[ "$state" != "open" ]]; then
