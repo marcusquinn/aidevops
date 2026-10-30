@@ -1088,8 +1088,9 @@ test_retry_only_observation_recovery() {
 			terminal_blocker_rearms_on_revision "$reason" && exit 1
 			terminal_blocker_observation_recoverable "$reason" || exit 1
 			fingerprint=$(_terminal_blocker_hash "v2:${reason}")
-			# GH#36044: the releasing runner queues its held retry-only
-			# observation, so a trusted retry does not wait for the seed.
+			# GH#36044: the enqueue helper queues a held retry-only observation,
+			# so a trusted retry does not wait for the seed. This checks the
+			# helper directly; the blocked release call site is unchanged.
 			enqueued=0
 			_HRFF_TERMINAL_BLOCKER_FRAGMENT=observed AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$fingerprint" \
 				_hrff_enqueue_observation_recovery 42 owner/repo
@@ -1141,7 +1142,7 @@ test_retry_only_observation_recovery() {
 	); then
 		status=1
 	fi
-	print_result "permission and policy timeout observations queue locally, seed across runners and release exactly once only on trusted retry" "$status"
+	print_result "permission and policy timeout observations queue via the enqueue helper, seed across runners and release exactly once only on trusted retry" "$status"
 	return 0
 }
 
