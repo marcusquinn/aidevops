@@ -35,12 +35,30 @@ def approval_matches(data, approval, comment, now):
                 isinstance(attempt, str) and attempt.startswith("attempt:")))
 
 
+def blocked_lifecycle(issue):
+    return sorted(label["name"] for label in issue.get("labels", [])
+                  if label["name"].startswith("status:")) == ["status:blocked"]
+
+
+def blocked_approval_matches(issue, approval, comment):
+    # Normalization must not erase a lifecycle hold imposed after approval.
+    # Comments (including our own claim) update the issue too. The shell boundary
+    # separately checks lifecycle events against this approval-time snapshot.
+    if not blocked_lifecycle(issue):
+        return True
+    snapshot = approval.get("blocked_issue_updated_at")
+    current = issue.get("updated_at")
+    return bool(snapshot and current and
+                timestamp(snapshot) <= min(timestamp(current), timestamp(comment["created_at"])))
+
+
 def approved_comment(data, comment, now):
     lines = [line for line in comment["body"].splitlines() if line.startswith(PREFIX)]
     if not trusted(comment, data.get("trusted_logins", ())) or len(lines) != 1:
         return None
     approval = json.loads(lines[0][len(PREFIX):])
-    if not approval_matches(data, approval, comment, now):
+    if (not approval_matches(data, approval, comment, now) or
+            not blocked_approval_matches(data["issue"], approval, comment)):
         return None
     return approval
 
@@ -115,6 +133,11 @@ def template(data):
     a trusted approval comment also disables the legacy continuation path.
     """
     approval = {**binding(data), "release_id": data["release_id"], "attempt": data["attempt"]}
+    if blocked_lifecycle(data["issue"]):
+        # This field is emitted only for a blocked approval-time lifecycle.
+        updated = data["issue"]["updated_at"]
+        timestamp(updated)
+        approval["blocked_issue_updated_at"] = updated
     # The approval comment does not exist yet; any later comment id qualifies.
     comments = sorted_comments(data)
     trusted_logins = data.get("trusted_logins", ())

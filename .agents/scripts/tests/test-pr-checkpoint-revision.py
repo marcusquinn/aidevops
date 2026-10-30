@@ -73,6 +73,12 @@ def unlabelled_blocked_fixture():
     data = fixture()
     data["pr"]["labels"] = []
     data["issue"]["labels"][1] = {"name": "status:blocked"}
+    data["issue"]["updated_at"] = "2026-09-05T11:00:00Z"
+    data["issue_events"] = [{"event": "labeled", "label": {"name": "status:blocked"},
+                             "created_at": data["issue"]["updated_at"]}]
+    data["comments"].pop()
+    line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+    data["comments"].append(comment(3, line, "maintainer", "OWNER"))
     return data
 
 
@@ -152,6 +158,28 @@ class RevisionTests(unittest.TestCase):
         for event in EVENTS:
             with self.subTest(event=event), self.assertRaises(ValueError):
                 revision.validate({**data, "comments": data["comments"] + [comment(4, event + "new-owner")]})
+
+    def test_blocked_lifecycle_requires_current_approval_snapshot(self):
+        for unassigned in (False, True):
+            data = unlabelled_blocked_fixture()
+            if unassigned:
+                data["issue"]["assignees"] = []
+            self.assertEqual(revision.validate(data)["approval_id"], 3)
+            approved_at = data["comments"][-1]["created_at"]
+            # The approval comment's own issue update is acceptable.
+            data["issue"]["updated_at"] = approved_at
+            self.assertEqual(revision.validate(data)["approval_id"], 3)
+            mutations = {
+                "missing metadata": lambda d: d["issue"].pop("updated_at"),
+                "not approved blocked": lambda d: d["comments"][-1].update(
+                    body=fixture()["comments"][-1]["body"]),
+            }
+            self.assert_mutations_rejected(mutations, lambda: copy.deepcopy(data), revision.validate)
+        data = fixture()
+        data["issue"]["labels"][1] = {"name": "status:blocked"}
+        data["issue"]["updated_at"] = "2026-09-05T12:01:00Z"
+        with self.assertRaises(ValueError):
+            revision.validate(data)
 
     def test_completed_release_retains_author_binding_and_actual_owner(self):
         for reason in ("clean", "worker_complete"):
@@ -247,16 +275,31 @@ class RevisionTests(unittest.TestCase):
         # Supply current wall time for the shell boundary, avoiding date-dependent fixtures.
         for c in data["comments"]:
             c["created_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-        command = ('source "$1/pr-checkpoint-target-lib.sh"; '
-                   'gh() { [[ "$*" == "api repos/owner/repo/collaborators/maintainer/permission --jq .permission" ]] || return 90; '
+        command = ('source "$1/pr-checkpoint-target-lib.sh"; TEST_EVENTS="$6"; '
+                   'gh() { if [[ "$*" == "api repos/owner/repo/issues/123/events?per_page=100 --paginate --slurp" ]]; then '
+                   'printf "%s" "$TEST_EVENTS"; return 0; fi; '
+                   '[[ "$*" == "api repos/owner/repo/collaborators/maintainer/permission --jq .permission" ]] || return 90; '
                    'printf "%s" "${TEST_PERMISSION:-write}"; }; '
                    '_pr_checkpoint_revised_target "$2" "$3" "$4" "$5" worker')
         def run(candidate):
             # Fixed Bash source and locally constructed JSON are positional data, never shell source.
             return subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), candidate["repo"],  # nosec B603
                                    json.dumps(candidate["pr"]), json.dumps(candidate["issue"]),
-                                   json.dumps(candidate["comments"])], capture_output=True, check=False).returncode
+                                   json.dumps(candidate["comments"]),
+                                   json.dumps(candidate["issue_events"])], capture_output=True, check=False).returncode
         self.assertEqual(run(data), 0)
+        for unassigned in (False, True):
+            changed = copy.deepcopy(data)
+            if unassigned:
+                changed["issue"]["assignees"] = []
+            # A comment/claim update alone must not invalidate the blocked snapshot.
+            changed["issue"]["updated_at"] = "2099-01-01T00:00:00Z"
+            self.assertEqual(run(changed), 0)
+            # Reapply the same sole blocked label after approval: reject even
+            # though the current label set is identical to the approved one.
+            changed["issue_events"].append({"event": "labeled", "label": {"name": "status:blocked"},
+                                            "created_at": changed["issue"]["updated_at"]})
+            self.assertNotEqual(run(changed), 0)
         shared_holds = ("hold-for-review", "needs-maintainer-review", "no-auto-dispatch", "persistent")
         label_cases = itertools.chain(
             itertools.product(("pr", "issue"), shared_holds),
