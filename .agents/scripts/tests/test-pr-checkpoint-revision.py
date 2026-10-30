@@ -256,9 +256,10 @@ class RevisionTests(unittest.TestCase):
                                    json.dumps(candidate["pr"]), json.dumps(candidate["issue"]),
                                    json.dumps(candidate["comments"])], capture_output=True, check=False).returncode
         self.assertEqual(run(data), 0)
-        for surface in ("pr", "issue"):
-            labels = ("hold-for-review", "needs-maintainer-review", "no-auto-dispatch", "persistent")
-            for label in labels + (("no-takeover",) if surface == "pr" else ("needs-maintainer-permissions",)):
+        shared_holds = ("hold-for-review", "needs-maintainer-review", "no-auto-dispatch", "persistent")
+        for surface, labels in (("pr", shared_holds + ("no-takeover",)),
+                                ("issue", shared_holds + ("needs-maintainer-permissions",))):
+            for label in labels:
                 changed = copy.deepcopy(data)
                 changed[surface]["labels"].append({"name": label})
                 self.assertNotEqual(run(changed), 0, (surface, label))
@@ -266,20 +267,17 @@ class RevisionTests(unittest.TestCase):
             changed = copy.deepcopy(data)
             changed["issue"]["labels"].append({"name": label})
             self.assertNotEqual(run(changed), 0)
-        for case in ("missing", "head", "body", "expired", "owner", "successor"):
+        invalidations = (
+            ("missing", lambda d: d["comments"].pop()),
+            ("head", lambda d: d["pr"].update(headRefOid="2" * 40)),
+            ("body", lambda d: d["issue"].update(body=d["issue"]["body"] + " changed")),
+            ("expired", lambda d: d["comments"][-1].update(created_at="2020-01-01T00:00:00Z")),
+            ("owner", lambda d: d["issue"].update(assignees=[{"login": "other"}])),
+            ("successor", lambda d: d["comments"].append(comment(4, "Interactive session claimed", "maintainer"))),
+        )
+        for case, invalidate in invalidations:
             changed = copy.deepcopy(data)
-            if case == "missing":
-                changed["comments"].pop()
-            elif case == "head":
-                changed["pr"]["headRefOid"] = "2" * 40
-            elif case == "body":
-                changed["issue"]["body"] += " changed"
-            elif case == "expired":
-                changed["comments"][-1]["created_at"] = "2020-01-01T00:00:00Z"
-            elif case == "owner":
-                changed["issue"]["assignees"] = [{"login": "other"}]
-            else:
-                changed["comments"].append(comment(4, "Interactive session claimed", "maintainer"))
+            invalidate(changed)
             self.assertNotEqual(run(changed), 0, case)
         for body in ("For #1234", "mentions #123", "For #123 and #124"):
             changed = copy.deepcopy(data)
@@ -289,7 +287,7 @@ class RevisionTests(unittest.TestCase):
     def test_claim_handoff_prelaunch_ready_and_rollback(self):
         # (unassigned, fixture builder, needs a generated approval for its history)
         cases = ((False, fixture, False), (True, fixture, False),
-                  (True, released_successor_fixture, True),
+                 (True, released_successor_fixture, True),
                  (False, completed_release_fixture, True), (True, completed_release_fixture, True),
                  (False, unlabelled_blocked_fixture, False), (True, unlabelled_blocked_fixture, False))
         for unassigned, build, approve in cases:
