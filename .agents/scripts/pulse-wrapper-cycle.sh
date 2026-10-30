@@ -703,6 +703,9 @@ _pulse_stale_blocked_repo_all_fresh() {
 	if declare -F _pm_reconcile_partial_continuations >/dev/null 2>&1; then
 		_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" partial-continuation-complete || return 1
 	fi
+	if declare -F _pm_reconcile_draft_checkpoint_unblocks >/dev/null 2>&1; then
+		_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" draft-checkpoint-unblock-complete || return 1
+	fi
 	return 0
 }
 
@@ -724,6 +727,16 @@ _pulse_stale_blocked_sweep_repo() {
 		if [[ "$pass_rc" -eq 0 ]]; then
 			_pulse_stale_blocked_repo_mark_complete "$repo"
 		else
+			rc="$pass_rc"
+		fi
+	fi
+	if declare -F _pm_reconcile_draft_checkpoint_unblocks >/dev/null 2>&1 &&
+		! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" draft-checkpoint-unblock-complete; then
+		pass_rc=0
+		_pm_reconcile_draft_checkpoint_unblocks "$repo" "$repo_deadline" 2>>"$LOGFILE" || pass_rc=$?
+		if [[ "$pass_rc" -eq 0 ]]; then
+			_pulse_stale_blocked_repo_mark_complete "$repo" draft-checkpoint-unblock-complete
+		elif [[ "$rc" -eq 0 || "$rc" -eq "$partial_rc" ]]; then
 			rc="$pass_rc"
 		fi
 	fi

@@ -53,6 +53,32 @@ fence accepts it, except for the terminal-blocker classes (`blocked`,
 `status:blocked`, brief holds and protected labels are preserved, and
 `WORKER_DRAFT_CHECKPOINT` keeps blocking ordinary redispatch.
 
+### Recovering old blocked release projections (GH#36028)
+
+On the existing 30-minute stale-blocked cadence, Pulse runs the bounded
+`pulse-draft-checkpoint-unblock.sh` pass with an independent completion stamp.
+It reads one page each of blocked issues and open PRs (only the issue page when
+there are no eligible issues). A full PR page fails closed because uniqueness
+cannot be established beyond that page. Only an unprotected issue whose sole
+status is `status:blocked` and which maps to exactly one `origin:worker` draft
+with a closing `#N` reference can be restored.
+
+The newest trusted coordination event must be an unedited continuation-eligible
+release posted by its named runner. `blocked`, `push_policy_timeout`,
+`network_policy_timeout` and `worker_ownership_lost` never qualify. The latest
+blocked-label event must be by that runner within 60 seconds before to 600 seconds
+after the release, and no other assignee may exist. Unreadable evidence, a newer
+claim, protective labels, or another status means no write. This is evidence of
+an old release projection, not authority to clear a deliberate hold.
+
+Pulse uses `set_issue_status` to restore `status:available` and remove only the
+runner assignment, then records `aidevops:ops kind=draft-checkpoint-unblock` with
+the PR and release IDs and logs a `draft-checkpoint-unblock` line. A trusted marker
+deduplicates that release; three markers for a PR stop further recovery. Ordinary
+dispatch then applies the existing exact-head continuation and attention fences.
+Deployment verification checks those logs plus continuation/attention evidence;
+the offline regression suite never changes live issues.
+
 ### Approving a corrected blocked checkpoint
 
 1. Read fresh issue/PR metadata and coordination comments. Verify the exact
