@@ -248,8 +248,11 @@ _pdcu_try_issue() {
 	local -a transition_args=() logins=()
 	[[ "$cap" =~ ^[1-9][0-9]*$ ]] || cap=3
 	issue_num=$(printf '%s' "$issue_json" | jq -r '.number') || return 1
-	comments_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+	if ! comments_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null); then
+		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: comments unreadable"
+		return 1
+	fi
 	if ! evidence=$(_pdcu_release_evidence "$comments_json" "$pr_number"); then
 		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: no current trusted worker release"
 		return 1
@@ -270,8 +273,11 @@ _pdcu_try_issue() {
 		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: already restored for release ${release_id} or per-PR cap ${cap} reached"
 		return 1
 	fi
-	timeline_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+	if ! timeline_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" \
+		--paginate --slurp 2>/dev/null); then
+		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: timeline unreadable"
+		return 1
+	fi
 	if ! _pdcu_block_from_release "$timeline_json" "$runner" "$released_epoch"; then
 		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: status:blocked was not applied by the ${reason} release projection"
 		return 1
@@ -308,9 +314,15 @@ _pm_reconcile_draft_checkpoint_blocks() {
 	local repo_slug="$1" deadline="$2"
 	local issues="" refs="" issue_json="" issue_num="" matches="" pr_number="" head_sha="" now_epoch=""
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
-	issues=$(_pdcu_blocked_issues "$repo_slug") || return 1
+	if ! issues=$(_pdcu_blocked_issues "$repo_slug"); then
+		echo "[pulse-wrapper] ${_PDCU_MARKER_KIND}: ${repo_slug} — pass failed: blocked-issue listing unreadable (GH#36028)" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
 	[[ -n "$issues" ]] || return 0
-	refs=$(_pdcu_draft_closing_refs "$repo_slug") || return 1
+	if ! refs=$(_pdcu_draft_closing_refs "$repo_slug"); then
+		echo "[pulse-wrapper] ${_PDCU_MARKER_KIND}: ${repo_slug} — pass failed: open PR listing unreadable (GH#36028)" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
 	[[ -n "$refs" ]] || return 0
 	while IFS= read -r issue_json; do
 		[[ -n "$issue_json" ]] || continue

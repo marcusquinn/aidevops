@@ -412,23 +412,37 @@ test_idempotent_and_capped() {
 	return 0
 }
 
+assert_logged() {
+	local name="$1" stage="$2"
+	if grep -qF -- "$stage" "$LOGFILE"; then
+		pass "$name"
+	else
+		fail "$name" "log missing [${stage}]"
+	fi
+	return 0
+}
+
 test_unreadable_reads_fail_closed() {
 	reset_case
 	TEST_ISSUES_RC=1
 	run_pass
 	assert_no_write "unreadable blocked-issue listing fails the pass" 1
+	assert_logged "an unreadable issue listing names its stage" "blocked-issue listing unreadable"
 	reset_case
 	TEST_PRS_RC=1
 	run_pass
 	assert_no_write "unreadable PR listing fails the pass" 1
+	assert_logged "an unreadable PR listing names its stage" "open PR listing unreadable"
 	reset_case
 	TEST_COMMENTS_RC=1
 	run_pass
 	assert_no_write "unreadable comments make no write"
+	assert_logged "unreadable comments name their stage" "#501 draft PR #900 in ${SLUG} — kept blocked: comments unreadable"
 	reset_case
 	TEST_TIMELINE_RC=1
 	run_pass
 	assert_no_write "unreadable timeline makes no write"
+	assert_logged "an unreadable timeline names its stage" "kept blocked: timeline unreadable"
 	reset_case
 	TEST_COMMENTS='[[{"id":1,"author_association":"MEMBER","user":{"login":"runner1"}}]]'
 	run_pass
