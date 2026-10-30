@@ -144,6 +144,11 @@ source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-current-state-guardr
 # shellcheck source=./pulse-dispatch-preflight-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved from this module's path
 source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-preflight-lib.sh"
+# GH#36122: runner-local dispatch breakers gate every launch path. Source
+# unconditionally so a missing definition fails loudly instead of open.
+# shellcheck source=./pulse-wrapper-dispatch-gates.sh
+# shellcheck disable=SC1091  # sub-library resolved from this module's path
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-wrapper-dispatch-gates.sh"
 # shellcheck source=./pulse-campaign-shadow.sh
 # shellcheck disable=SC1091  # adapter resolved from this module's path
 if [[ -f "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-campaign-shadow.sh" ]]; then
@@ -1095,6 +1100,12 @@ apply_dispatch_max() {
 		echo "[pulse-wrapper] Dispatch_max skipped: stop flag present" >>"$LOGFILE"
 		return 0
 	fi
+	# GH#36122: every caller (early fill, post-label refill, main cycle, event
+	# refill) honours the runner-local breakers. Callers may name their path in
+	# a dynamically scoped _PULSE_DISPATCH_BREAKER_CONTEXT for the skip line.
+	if ! pulse_dispatch_breakers_allow "${_PULSE_DISPATCH_BREAKER_CONTEXT:-dispatch_max}"; then
+		return 0
+	fi
 
 	_dispatch_begin_benign_blocks_cycle >/dev/null
 
@@ -1468,6 +1479,12 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 		echo "$last_refill_epoch"
 		return 0
 	fi
+	# GH#36122: neither recycle idle workers nor launch while a runner-local
+	# breaker is tripped; advance the refill clock so the interval still applies.
+	if ! pulse_dispatch_breakers_allow "active_refill"; then
+		echo "$now_epoch"
+		return 0
+	fi
 
 	echo "[pulse-wrapper] Active pulse refill: underfilled ${active_workers}/${refill_target} (raw_max=${max_workers}) with runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, idle=${idle_seconds}s, stall=${progress_stall_seconds}s" >>"$LOGFILE"
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
@@ -1676,6 +1693,21 @@ _compute_initial_underfill() {
 }
 
 #######################################
+# Gate the early-exit recycle's deterministic fill. A stop flag, or (GH#36122)
+# a tripped runner-local breaker, ends the recycle: rerunning the supervisor
+# could only reach the same gated dispatch paths.
+# Returns: 0 when the fill may run, 1 when the recycle should stop.
+#######################################
+_early_exit_recycle_fill_allowed() {
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Early-exit recycle: stop flag appeared before deterministic fill" >>"$LOGFILE"
+		return 1
+	fi
+	pulse_dispatch_breakers_allow "early_exit_recycle" || return 1
+	return 0
+}
+
+#######################################
 # Early-exit recycle loop (GH#5627, extracted from main)
 #
 # If the LLM exited quickly (<5 min) and the pool is still underfilled
@@ -1735,10 +1767,7 @@ _run_early_exit_recycle_loop() {
 		if [[ "$post_runnable" -eq 0 && "$post_queued" -eq 0 ]]; then
 			break
 		fi
-		if [[ -f "$STOP_FLAG" ]]; then
-			echo "[pulse-wrapper] Early-exit recycle: stop flag appeared before deterministic fill" >>"$LOGFILE"
-			break
-		fi
+		_early_exit_recycle_fill_allowed || break
 
 		local early_dispatched
 		early_dispatched=$(dispatch_max) || early_dispatched=0

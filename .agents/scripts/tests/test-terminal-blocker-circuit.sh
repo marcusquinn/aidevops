@@ -1213,6 +1213,8 @@ test_mechanical_rearm_pass() {
 		# write stubs; bounded subprocess execution is covered by intake tests.
 		_tbr_run_stage() { shift; "$@"; return $?; }
 		tbr_seed() { exit 1; }
+		# Discovery has its own coverage (test_owner_scoped_discovery).
+		tbr_discover() { return 0; }
 		_tbr_decision_active() { exit 1; }
 		gh() {
 			local args="$*"
@@ -2048,7 +2050,188 @@ test_recovery_graphql_fallback() {
 	return 0
 }
 
+# GH#36114 fixtures. Emulate `gh api --paginate --jq` by applying the caller's
+# production filter to every fixture page (incomplete_results included).
+_discovery_search_pages() {
+	local filter="" prev="" arg="" page=""
+	for arg in "$@"; do
+		[[ "$prev" != --jq ]] || filter="$arg"
+		prev="$arg"
+	done
+	[[ -n "$filter" ]] || return 1
+	for page in "${TB_DISCOVERY_FIXTURE}"/search-page-*.json; do
+		[[ -f "$page" ]] || continue
+		jq -r "$filter" "$page" 2>/dev/null || return 1
+	done
+	return 0
+}
+
+_discovery_gh() {
+	local args="$*" path="${2:-}" file="" key=""
+	printf '%s\n' "$args" >>"${TB_DISCOVERY_FIXTURE}/requests"
+	case "$args" in
+	"api -X GET search/issues --paginate "*)
+		[[ "$args" == *"-f per_page=100"* ]] || return 1
+		_discovery_search_pages "$@"
+		return $?
+		;;
+	"api repos/owner/repo") printf '{"permissions":{"push":true},"default_branch":"main"}\n' ;;
+	"api -X GET repos/owner/repo/commits"*) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+	"api -X GET repos/owner/repo/contents/.aidevops.json"*) printf 'HTTP 404\n' >&2; return 1 ;;
+	"api repos/"*"/comments?per_page=100 --paginate --slurp")
+		[[ "$path" =~ ^repos/([^/]+)/([^/]+)/issues/([0-9]+)/comments ]] || return 1
+		key="${BASH_REMATCH[1]}--${BASH_REMATCH[2]}--${BASH_REMATCH[3]}"
+		file="${TB_DISCOVERY_FIXTURE}/comments-${key}.json"
+		printf '%s\n' "$key" >>"${TB_DISCOVERY_FIXTURE}/comment-reads"
+		[[ ! -f "${file%.json}.slow" ]] || sleep 5
+		[[ -f "$file" ]] || return 1
+		jq -c . "$file"
+		;;
+	"api repos/owner/repo/issues/42") jq -c . "${TB_DISCOVERY_FIXTURE}/issue-42.json" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+# Page fixture; each ref is "owner/repo number updated_at".
+_discovery_page() {
+	local page="$1" incomplete="$2"
+	shift 2
+	printf '%s\n' "$@" | jq -Rn --argjson incomplete "$incomplete" '
+		{incomplete_results: $incomplete, items: [inputs | split(" ") |
+			{repository_url: ("https://ghe.invalid/api/v3/repos/" + .[0]), number: (.[1] | tonumber), updated_at: .[2]}]}' \
+		>"${TB_DISCOVERY_FIXTURE}/search-page-${page}.json"
+	return 0
+}
+
+_discovery_comments() {
+	local key="$1" login="$2" association="$3" body="$4"
+	jq -nc --arg login "$login" --arg association "$association" --arg body "$body" \
+		'[[{id:10,user:{login:$login},author_association:$association,created_at:"2026-10-30T00:00:00Z",body:$body}]]' \
+		>"${TB_DISCOVERY_FIXTURE}/comments-${key}.json"
+	return 0
+}
+
+# Interrupted discovery keeps its cursor and window; the next real CLI pass
+# resumes after the stalled candidate and completes.
+_discovery_timeout_checks() {
+	local observation="$1" rc=0
+	TBR_ROOT="${TEST_ROOT}/discovery-timeout"
+	TBR_REPOS_JSON="${TEST_ROOT}/discovery-repos.json"
+	export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON"
+	export BLOCKER_RECOVERY_BUDGET_SECONDS=6 BLOCKER_RECOVERY_STAGE_SECONDS=2
+	_tbr_init_dirs || return 1
+	rm -f "${TB_DISCOVERY_FIXTURE}"/search-page-*.json
+	_discovery_page 1 false 'owner/repo 50 2026-10-30T01:00:00Z' 'owner/repo 51 2026-10-30T01:00:00Z'
+	_discovery_comments owner--repo--50 other-runner MEMBER "$observation"
+	_discovery_comments owner--repo--51 other-runner MEMBER "$observation"
+	: >"${TB_DISCOVERY_FIXTURE}/comments-owner--repo--50.slow"
+	export -f gh _discovery_gh _discovery_search_pages
+	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" discover 2>/dev/null || rc=$?
+	[[ "$rc" -eq 2 && "$(cut -f2 "${TBR_ROOT}/discovery_cursor")" == 50 ]] || return 1
+	[[ ! -f "${TBR_ROOT}/last_discovery_epoch" && ! -f "${TBR_ROOT}/queue/owner--repo--51.json" ]] || return 1
+	rm -f "${TB_DISCOVERY_FIXTURE}/comments-owner--repo--50.slow"
+	: >"${TB_DISCOVERY_FIXTURE}/comment-reads"
+	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" discover 2>/dev/null || return 1
+	[[ "$(head -1 "${TB_DISCOVERY_FIXTURE}/comment-reads")" == owner--repo--51 ]] || return 1
+	[[ -s "${TBR_ROOT}/last_discovery_epoch" && ! -f "${TBR_ROOT}/discovery_cursor" ]] || return 1
+	[[ -f "${TBR_ROOT}/queue/owner--repo--50.json" && -f "${TBR_ROOT}/queue/owner--repo--51.json" ]] || return 1
+	return 0
+}
+
+test_owner_scoped_discovery() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		TBR_ROOT="${TEST_ROOT}/discovery"
+		TBR_REPOS_JSON="${TEST_ROOT}/discovery-repos.json"
+		export TB_DISCOVERY_FIXTURE="${TEST_ROOT}/discovery-fixture" TERMINAL_BLOCKER_SELF_LOGIN=runner-one
+		mkdir -p "$TB_DISCOVERY_FIXTURE" || exit 1
+		# Load shared runtime functions before installing write stubs.
+		_tbr_start_budget || exit 1
+		_tbr_init_dirs || exit 1
+		jq -nc '{initialized_repos:[{slug:"owner/repo",pulse:true},{slug:"other/repo2",pulse:true},
+			{slug:"owner/local",pulse:true,local_only:true},{slug:"third/quiet",pulse:false}]}' >"$TBR_REPOS_JSON"
+		local issue_json='{"state":"open","title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
+		local revision="" fingerprint="" observation="" rc=0 projected=0 receipts=0
+		revision=$(terminal_blocker_task_revision "$issue_json" owner/repo 42 "$TEST_ROOT" permission_required) || exit 1
+		fingerprint=$(_terminal_blocker_hash v2:permission_required)
+		observation="Terminal blocker: reason=permission_required owner=maintainer
+<!-- ${_TBC_OBSERVATION_MARKER} revision=${revision} blocker=${fingerprint} -->"
+		# Another trusted runner's observation is eligible; an untrusted author's is not.
+		_discovery_comments owner--repo--42 other-runner MEMBER "$observation"
+		_discovery_comments owner--repo--43 outsider NONE "$observation"
+		_discovery_comments other--repo2--7 maintainer OWNER "$observation"
+		_discovery_page 1 false 'owner/repo 42 2026-10-30T01:00:00Z' 'owner/repo 43 2026-10-30T01:00:00Z' \
+			'owner/repo 44 2026-10-30T01:00:00Z'
+		_discovery_page 2 false 'Other/Repo2 7 2026-10-30T01:00:00Z' 'owner/local 9 2026-10-30T01:00:00Z' \
+			'stranger/repo 5 2026-10-30T01:00:00Z'
+		gh() { _discovery_gh "$@"; return $?; }
+		_tbr_policy_enabled() { return 1; }
+		# Every page is read; the REST path no longer stops at the first page.
+		[[ "$(terminal_blocker_search_issues q | wc -l | tr -d ' ')" == 6 ]] || exit 1
+		tbr_enqueue owner/repo 44 permission_required || exit 1
+		: >"${TB_DISCOVERY_FIXTURE}/requests"
+		tbr_discover 2>/dev/null || exit 1
+		# Only another runner observed it: public evidence only (excerpt
+		# gating is covered in test-recovery-policy.sh).
+		[[ "$(jq -r '.reason + " " + .intake' "${TBR_ROOT}/queue/owner--repo--42.json")" == "permission_required remote_observation" ]] || exit 1
+		[[ -f "${TBR_ROOT}/queue/other--repo2--7.json" && ! -f "${TBR_ROOT}/queue/owner--repo--43.json" ]] || exit 1
+		[[ ! -f "${TBR_ROOT}/queue/owner--local--9.json" && ! -f "${TBR_ROOT}/queue/stranger--repo--5.json" ]] || exit 1
+		# Queued and unregistered refs are never read.
+		[[ "$(sort "${TB_DISCOVERY_FIXTURE}/comment-reads" | tr '\n' ' ')" == 'other--repo2--7 owner--repo--42 owner--repo--43 ' ]] || exit 1
+		[[ -s "${TBR_ROOT}/last_discovery_epoch" && ! -f "${TBR_ROOT}/discovery_cursor" ]] || exit 1
+		# One owner-scoped search for both pulse owners, no window on backfill.
+		[[ "$(rg -c 'search/issues' "${TB_DISCOVERY_FIXTURE}/requests")" == 1 ]] || exit 1
+		rg -q -F 'in:comments user:other user:owner -f per_page=100' "${TB_DISCOVERY_FIXTURE}/requests" || exit 1
+		! rg -q -e 'user:third' -e 'updated:' "${TB_DISCOVERY_FIXTURE}/requests" || exit 1
+		# Unchanged evaluated issues are not re-read or re-queued after the queue
+		# retires them; an updated one is evaluated again inside the window.
+		rm -f "${TBR_ROOT}/queue/owner--repo--42.json"
+		: >"${TB_DISCOVERY_FIXTURE}/comment-reads"
+		: >"${TB_DISCOVERY_FIXTURE}/requests"
+		_discovery_page 1 false 'owner/repo 42 2026-10-30T01:00:00Z' 'owner/repo 43 2026-10-30T03:00:00Z' \
+			'owner/repo 44 2026-10-30T01:00:00Z'
+		tbr_discover 2>/dev/null || exit 1
+		[[ "$(<"${TB_DISCOVERY_FIXTURE}/comment-reads")" == owner--repo--43 && ! -f "${TBR_ROOT}/queue/owner--repo--42.json" ]] || exit 1
+		rg -q -F 'in:comments updated:>=' "${TB_DISCOVERY_FIXTURE}/requests" || exit 1
+		# incomplete_results is a failed read: no GraphQL answer means incomplete,
+		# and the window does not advance.
+		printf '1000\n' >"${TBR_ROOT}/last_discovery_epoch"
+		_discovery_page 2 true 'Other/Repo2 7 2026-10-30T01:00:00Z'
+		terminal_blocker_search_issues q >/dev/null && exit 1
+		tbr_discover 2>/dev/null || rc=$?
+		[[ "$rc" -eq 2 && "$(<"${TBR_ROOT}/last_discovery_epoch")" == 1000 ]] || exit 1
+		# rearm: discovery queues a hold no runner had queued, and the queue pass
+		# applies its later trusted retry in the same run.
+		TBR_ROOT="${TEST_ROOT}/discovery-rearm"
+		_tbr_init_dirs || exit 1
+		rm -f "${TB_DISCOVERY_FIXTURE}"/search-page-*.json
+		_discovery_page 1 false 'owner/repo 42 2026-10-30T02:00:00Z'
+		jq -c '.[0] += [{id:11,user:{login:"maintainer"},author_association:"OWNER",created_at:"2026-10-30T01:30:00Z",body:"terminal-blocker-circuit:retry"}]' \
+			"${TB_DISCOVERY_FIXTURE}/comments-owner--repo--42.json" >"${TB_DISCOVERY_FIXTURE}/retry.json" || exit 1
+		mv -f "${TB_DISCOVERY_FIXTURE}/retry.json" "${TB_DISCOVERY_FIXTURE}/comments-owner--repo--42.json" || exit 1
+		jq -c '. + {updated_at:"2026-10-30T02:00:00Z"}' <<<"$issue_json" >"${TB_DISCOVERY_FIXTURE}/issue-42.json" || exit 1
+		_tbr_run_stage() { shift; "$@"; return $?; }
+		tbr_seed() { exit 1; }
+		_tbr_decision_active() { exit 1; }
+		terminal_blocker_fetch_trusted_comments() { jq -c flatten "${TB_DISCOVERY_FIXTURE}/comments-owner--repo--42.json"; return 0; }
+		set_issue_status() { projected=$((projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() { receipts=$((receipts + 1)); return 0; }
+		tbr_main rearm >"${TBR_ROOT}/out" 2>/dev/null || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 && ! -f "${TBR_ROOT}/queue/owner--repo--42.json" ]] || exit 1
+		[[ -s "${TBR_ROOT}/last_discovery_epoch" && -f "${TBR_ROOT}/discovered/owner--repo--42" ]] || exit 1
+		# CLI subprocesses re-source the helper; in-process stubs do not leak.
+		_discovery_timeout_checks "$observation" || exit 1
+		exit 0
+	); then status=1; fi
+	print_result "owner-scoped discovery paginates, queues unqueued trusted holds once, resumes interrupted passes, and lets rearm apply retries" "$status"
+	return 0
+}
+
 main() {
+	test_owner_scoped_discovery
 	test_recovery_graphql_fallback
 	test_fleet_capability_hold
 	test_fleet_escalation_upsert

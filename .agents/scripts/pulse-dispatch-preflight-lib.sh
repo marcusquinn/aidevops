@@ -538,6 +538,8 @@ _preflight_early_dispatch() {
 	local _PULSE_FIRST_DISPATCH_WAVE=1
 	# A partial first-wave census must not populate the full-scan snapshot key.
 	local PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED=0
+	# GH#36122: label this path in apply_dispatch_max's breaker skip line.
+	local _PULSE_DISPATCH_BREAKER_CONTEXT="early"
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping early dispatch_max" >>"$LOGFILE"
 	else
@@ -605,6 +607,8 @@ _preflight_post_label_refill_wall_clock_allows() {
 # ledger, trust, and per-candidate timeout gates across multiple fill passes.
 #######################################
 _preflight_post_label_refill() {
+	# GH#36122: label this path in apply_dispatch_max's breaker skip line.
+	local _PULSE_DISPATCH_BREAKER_CONTEXT="post_label"
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping post-label dispatch_max" >>"$LOGFILE"
 	else

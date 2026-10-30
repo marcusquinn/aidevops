@@ -277,8 +277,9 @@ with independent dependant repoints, session-budget splits after a merged
 partial PR, and specifically pre-authorized brief repairs. Record holds with
 `wake=human_decision`, splits/repoints with `wake=dependency_change`, brief
 repairs with `wake=brief_revision`. Entries with `intake: policy_remote` are
-OWNER/MEMBER circuits opened by another runner; use only public issue/PR
-evidence for them.
+OWNER/MEMBER circuits opened by another runner, and entries with
+`intake: remote_observation` are holds only another runner observed (GH#36114);
+use only public issue/PR evidence for both.
 
 #### Recoverable policy denials (GH#33969)
 

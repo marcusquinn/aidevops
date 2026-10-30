@@ -16,6 +16,11 @@
 # GH#35129: when the repo's pinned recovery policy enables an action, seed
 # also queues OWNER/MEMBER circuits opened by other runners (intake
 # policy_remote, public evidence only, no local excerpts).
+# GH#36114: rearm first runs an incremental owner-scoped discovery of held
+# issues, so trusted retries on holds this runner never queued still apply.
+# Holds carrying only another runner's observation are queued with intake
+# remote_observation: public evidence only, because local excerpts are named
+# by issue number alone and may belong to another repository.
 #
 # Queue records are evidence, never authority. Its only issue write is the
 # re-armed status:blocked → status:available release (GH#33138); it never
@@ -24,10 +29,11 @@
 # "Terminal-blocker recovery".
 #
 # Usage:
-#   terminal-blocker-recovery-helper.sh enqueue <owner/repo> <issue> [reason] [local|policy_remote]
+#   terminal-blocker-recovery-helper.sh enqueue <owner/repo> <issue> [reason] [local|policy_remote|remote_observation]
 #   terminal-blocker-recovery-helper.sh seed [--force]
 #   terminal-blocker-recovery-helper.sh pending [--count]
-#   terminal-blocker-recovery-helper.sh rearm   # queued holds only; no LLM work or seed
+#   terminal-blocker-recovery-helper.sh rearm   # discovery + queued holds; no LLM work or seed
+#   terminal-blocker-recovery-helper.sh discover   # discovery stage only
 #   terminal-blocker-recovery-helper.sh record <owner/repo> <issue>   # JSON on stdin
 #
 # Env:
@@ -37,6 +43,10 @@
 #   BLOCKER_RECOVERY_BUDGET_SECONDS overall pending/seed budget (default 45)
 #   BLOCKER_RECOVERY_STAGE_SECONDS identity/seed budget (default 8); entries use
 #                                 the remaining queue budget, rotating on timeout
+#   BLOCKER_RECOVERY_DISCOVERY_SECONDS discovery cap (default 15, at most half
+#                                 the budget so the queue pass keeps its share)
+#   BLOCKER_RECOVERY_DISCOVERY_OVERLAP seconds re-searched before the last
+#                                 complete discovery, for search-index lag (default 900)
 # Incomplete observations return 2 and a diagnostic on stderr; stdout remains
 # JSONL (or a partial count). Retry resumes after the last attempted entry.
 # =============================================================================
@@ -56,9 +66,14 @@ TBR_EXCERPT_DIR="${AIDEVOPS_WORKER_FAILURE_EXCERPT_DIR:-${HOME}/.aidevops/logs/w
 TBR_CIRCUIT_MARKER="TERMINAL_BLOCKER_CIRCUIT active=true"
 TBR_BUDGET_SECONDS="${BLOCKER_RECOVERY_BUDGET_SECONDS:-45}"
 TBR_STAGE_SECONDS="${BLOCKER_RECOVERY_STAGE_SECONDS:-8}"
+TBR_DISCOVERY_SECONDS="${BLOCKER_RECOVERY_DISCOVERY_SECONDS:-15}"
+TBR_DISCOVERY_OVERLAP="${BLOCKER_RECOVERY_DISCOVERY_OVERLAP:-900}"
+# Evaluated-issue memory older than this is pruned after a complete pass.
+TBR_DISCOVERY_RETENTION_DAYS=30
 
 _tbr_start_budget() {
 	[[ "$TBR_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ && "$TBR_STAGE_SECONDS" =~ ^[1-9][0-9]*$ ]] || return 2
+	[[ "$TBR_DISCOVERY_SECONDS" =~ ^[1-9][0-9]*$ ]] || return 2
 	TBR_DEADLINE="${TBR_DEADLINE:-$((SECONDS + TBR_BUDGET_SECONDS))}"
 	# shellcheck source=shared-constants.sh
 	declare -F timeout_sec >/dev/null || source "${_TBR_SCRIPT_DIR}/shared-constants.sh"
@@ -82,14 +97,23 @@ _tbr_run_stage() {
 	# entire transaction at eight seconds repeatedly loses all partial work.
 	# Keep the overall deadline and saved cursor, but let an entry finish within
 	# the queue's share; discovery still has its separate reserved stage cap.
-	if [[ "$stage" != entry && "$remaining" -gt "$TBR_STAGE_SECONDS" ]]; then
-		remaining="$TBR_STAGE_SECONDS"
+	local cap="$TBR_STAGE_SECONDS"
+	if [[ "$stage" == discovery ]]; then
+		# GH#36114: never more than half the budget, so the queue pass can
+		# apply what discovery finds in the same run.
+		cap="$TBR_DISCOVERY_SECONDS"
+		[[ "$cap" -le $((TBR_BUDGET_SECONDS / 2)) ]] || cap=$((TBR_BUDGET_SECONDS / 2))
+		[[ "$cap" -ge 1 ]] || cap=1
+	fi
+	if [[ "$stage" != entry && "$remaining" -gt "$cap" ]]; then
+		remaining="$cap"
 	fi
 	printf 'blocker-recovery: checking stage=%s\n' "$stage" >&2
 	(
 		export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON"
 		export AIDEVOPS_WORKER_FAILURE_EXCERPT_DIR="$TBR_EXCERPT_DIR"
 		export BLOCKER_RECOVERY_SEED_INTERVAL="$TBR_SEED_INTERVAL" BLOCKER_RECOVERY_DECISION_TTL="$TBR_DECISION_TTL"
+		export BLOCKER_RECOVERY_DISCOVERY_OVERLAP="$TBR_DISCOVERY_OVERLAP"
 		timeout_sec "$remaining" bash "${_TBR_SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" _stage "$action" "$@"
 	) || rc=$?
 	case "$rc" in
@@ -196,11 +220,13 @@ tbr_enqueue() {
 	local reason="${3:-unknown}"
 	# GH#35129: `policy_remote` marks a circuit another runner opened, queued
 	# only under repo-delegated recovery policy; its evidence is public-only.
+	# GH#36114: `remote_observation` marks another runner's held observation;
+	# also public-only, but not tied to repo policy.
 	local intake="${4:-local}"
 	_tbr_valid_ref "$repo" "$issue" || return 1
 	_tbr_registered_repo "$repo" || return $?
 	[[ "$reason" =~ ^[a-z_]+$ ]] || reason="unknown"
-	[[ "$intake" == policy_remote ]] || intake="local"
+	[[ "$intake" == policy_remote || "$intake" == remote_observation ]] || intake="local"
 	_tbr_init_dirs || return 1
 	local file="" tmp=""
 	file="${TBR_ROOT}/queue/$(_tbr_key "$repo" "$issue").json"
@@ -231,11 +257,9 @@ tbr_seed() {
 	if [[ "$force" != "--force" && $((now - last)) -lt "$TBR_SEED_INTERVAL" ]]; then
 		return 0
 	fi
-	local self="" slug="" issue="" comments="" reason="" policy_enabled="" intake="" candidates="" incomplete=0 policy_rc=0
+	local self="" slug="" issue="" policy_enabled="" candidates="" incomplete=0 policy_rc=0
 	local repos="" repo_cursor="" issue_cursor="" cursor_name=""
-	repos=$(jq -r 'if (.initialized_repos | type) != "array" then error("invalid registry") else
-		.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug end' \
-		"$TBR_REPOS_JSON" 2>/dev/null) || return 2
+	repos=$(_tbr_pulse_repos) || return 2
 	[[ ! -f "${TBR_ROOT}/seed_repo_cursor" ]] || read -r repo_cursor <"${TBR_ROOT}/seed_repo_cursor" || true
 	repos=$(_tbr_rotate "$repos" "$repo_cursor") || return 2
 	printf 'blocker-recovery: checking stage=seed_identity\n' >&2
@@ -267,17 +291,7 @@ tbr_seed() {
 			[[ "$issue" =~ ^[0-9]+$ ]] || continue
 			_tbr_save_cursor "$cursor_name" "$issue" || return 2
 			printf 'blocker-recovery: checking stage=seed_comments repo=%s issue=%s\n' "$slug" "$issue" >&2
-			comments=$(terminal_blocker_fetch_comments "$slug" "$issue") || {
-				incomplete=1
-				continue
-			}
-			reason=$(_tbr_seed_reason "$comments" "$self" "$policy_enabled") || continue
-			intake=local
-			if ! _tbr_has_own_circuit "$comments" "$self" && [[ "$policy_enabled" == true ]] &&
-				_tbr_has_foreign_circuit "$comments" "$self"; then
-				intake=policy_remote
-			fi
-			tbr_enqueue "$slug" "$issue" "$reason" "$intake" || incomplete=1
+			_tbr_intake_issue "$slug" "$issue" "$self" "$policy_enabled" || incomplete=1
 		done <<<"$candidates"
 		rm -f "${TBR_ROOT}/${cursor_name}"
 	done <<<"$repos"
@@ -298,6 +312,149 @@ _tbr_seed_candidates() {
 		numbers+="${result}"$'\n'
 	done
 	printf '%s' "$numbers" | sort -un
+	return 0
+}
+
+# Pulse-enabled remote registry slugs: the only repos seed or discovery touch.
+_tbr_pulse_repos() {
+	jq -r 'if (.initialized_repos | type) != "array" then error("invalid registry") else
+		.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug end' \
+		"$TBR_REPOS_JSON" 2>/dev/null || return 2
+	return 0
+}
+
+# Queue one candidate when this runner owns its recovery. Seed and discovery
+# share these trust and eligibility rules. Returns 0 when queued or not
+# eligible, 2 when the evidence could not be read or the entry not written.
+_tbr_intake_issue() {
+	local slug="$1"
+	local issue="$2"
+	local self="$3"
+	local policy_enabled="$4"
+	local comments="" reason="" intake=local
+	comments=$(terminal_blocker_fetch_comments "$slug" "$issue") || return 2
+	reason=$(_tbr_seed_reason "$comments" "$self" "$policy_enabled") || return 0
+	if _tbr_has_own_circuit "$comments" "$self"; then
+		intake=local
+	elif [[ "$policy_enabled" == true ]] && _tbr_has_foreign_circuit "$comments" "$self"; then
+		intake=policy_remote
+	elif ! _tbr_has_own_observation "$comments" "$self"; then
+		intake=remote_observation
+	fi
+	tbr_enqueue "$slug" "$issue" "$reason" "$intake" || return 2
+	return 0
+}
+
+# GH#36114: true when this runner's own login posted a hold observation, so
+# its local excerpts can belong to this issue. Fails closed (no excerpts).
+_tbr_has_own_observation() {
+	local comments="$1"
+	local self="$2"
+	local marker="${_TBC_OBSERVATION_MARKER:-} revision="
+	[[ -n "${_TBC_OBSERVATION_MARKER:-}" ]] || return 1
+	printf '%s' "$comments" | jq -e --arg self "$self" --arg marker "$marker" '
+		[flatten[] | select((.user.login // "") == $self and ((.body // "") | contains($marker)))] | length > 0
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Registry slug for a search hit, matched case-insensitively. Input lines are
+# "owner/repo<TAB>number<TAB>updated_at"; output keeps registry spelling, drops
+# unregistered or malformed refs, and is sorted and unique.
+_tbr_discovery_candidates() {
+	local refs="$1"
+	local repos="$2"
+	printf '%s' "$refs" | jq -Rnr --arg repos "$repos" '
+		($repos | split("\n") | map(select(length > 0) | {key: ascii_downcase, value: .}) | from_entries) as $registry |
+		[inputs | split("\t") | select(length == 3) |
+			{slug: $registry[.[0] | ascii_downcase], issue: .[1], updated: .[2]} |
+			select(.slug != null and (.issue | test("^[1-9][0-9]*$")) and (.updated | length > 0)) |
+			"\(.slug)\t\(.issue)\t\(.updated)"] | unique[]' || return 2
+	return 0
+}
+
+#######################################
+# GH#36114: incremental owner-scoped intake for the mechanical rearm cadence.
+# The per-repo seed needs two searches per pulse repo and rarely completes in
+# its stage cap, so held observations from other runners were never queued
+# and trusted retries on them were never applied. Discovery searches held
+# issues once per group of five owners (updated since the last complete pass,
+# minus an overlap for search-index lag) and queues unqueued ones under the
+# seed's trust and eligibility rules. Each evaluated issue is remembered with
+# its updated_at, so an interrupted pass resumes without repeating reads and
+# an unchanged issue is not re-queued after the queue retires it. Only a
+# complete pass advances the window. Queue entries remain evidence only.
+#######################################
+tbr_discover() {
+	_tbr_init_dirs || return 1
+	mkdir -p "${TBR_ROOT}/discovered" || return 1
+	local stamp="${TBR_ROOT}/last_discovery_epoch" now="" last=0 window="" since=""
+	local repos="" owners="" line="" owner="" group="" refs="" result="" candidates="" cursor=""
+	local issue="" repo="" updated="" seen="" self="" policy_enabled="" policy_rc=0 incomplete=0
+	local key=""
+	local -a owner_list=()
+	[[ "$TBR_DISCOVERY_OVERLAP" =~ ^[0-9]+$ ]] || return 2
+	now=$(date +%s)
+	[[ ! -f "$stamp" ]] || read -r last <"$stamp" || true
+	[[ "$last" =~ ^[0-9]+$ ]] || last=0
+	# No stamp: search without a window so the first complete pass backfills.
+	if [[ "$last" -gt "$TBR_DISCOVERY_OVERLAP" ]]; then
+		since=$(jq -nr --argjson t "$((last - TBR_DISCOVERY_OVERLAP))" '$t | strftime("%Y-%m-%dT%H:%M:%S+00:00")') || return 2
+		window=" updated:>=${since}"
+	fi
+	repos=$(_tbr_pulse_repos) || return 2
+	owners=$(printf '%s\n' "$repos" | sed -n 's|^\([A-Za-z0-9_.-][A-Za-z0-9_.-]*\)/.*$|\1|p' | sort -fu)
+	while IFS= read -r line; do
+		[[ -n "${line// /}" ]] || continue
+		read -ra owner_list <<<"$line"
+		group=""
+		for owner in "${owner_list[@]}"; do
+			group+=" user:${owner}"
+		done
+		printf 'blocker-recovery: checking stage=discovery_search owners=%s\n' "${group# }" >&2
+		# A failed group is incomplete, never absence: keep the window and
+		# still queue what the other groups found.
+		result=$(terminal_blocker_search_issue_refs \
+			"is:issue is:open label:\"status:blocked\" \"Terminal blocker\" in:comments${window}${group}") || {
+			incomplete=1
+			continue
+		}
+		refs+="${result}"$'\n'
+	done < <(printf '%s\n' "$owners" | paste -d' ' - - - - -)
+	candidates=$(_tbr_discovery_candidates "$refs" "$repos") || return 2
+	[[ ! -f "${TBR_ROOT}/discovery_cursor" ]] || read -r cursor <"${TBR_ROOT}/discovery_cursor" || true
+	candidates=$(_tbr_rotate "$candidates" "$cursor") || return 2
+	# shellcheck source=terminal-blocker-circuit.sh
+	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
+	while IFS=$'\t' read -r repo issue updated; do
+		_tbr_valid_ref "$repo" "$issue" || continue
+		key=$(_tbr_key "$repo" "$issue")
+		# Already queued: the queue pass owns it. Unchanged since evaluated: skip.
+		[[ ! -f "${TBR_ROOT}/queue/${key}.json" ]] || continue
+		seen=""
+		[[ ! -f "${TBR_ROOT}/discovered/${key}" ]] || read -r seen <"${TBR_ROOT}/discovered/${key}" || true
+		[[ "$seen" != "$updated" ]] || continue
+		_tbr_save_cursor discovery_cursor "$(printf '%s\t%s\t%s' "$repo" "$issue" "$updated")" || return 2
+		if [[ -z "$self" ]]; then
+			self="${TERMINAL_BLOCKER_SELF_LOGIN:-}"
+			[[ -n "$self" ]] || self=$(_tbr_self_login) || return 1
+		fi
+		policy_enabled=false
+		policy_rc=0
+		_tbr_policy_enabled "$repo" && policy_enabled=true || policy_rc=$?
+		[[ "$policy_rc" -lt 2 ]] || incomplete=1
+		printf 'blocker-recovery: checking stage=discovery_comments repo=%s issue=%s\n' "$repo" "$issue" >&2
+		_tbr_intake_issue "$repo" "$issue" "$self" "$policy_enabled" || {
+			incomplete=1
+			continue
+		}
+		# An unreadable policy may have hidden eligibility; evaluate it again.
+		[[ "$policy_rc" -ge 2 ]] || _tbr_save_cursor "discovered/${key}" "$updated" || return 2
+	done <<<"$candidates"
+	[[ "$incomplete" -eq 0 ]] || return 2
+	rm -f "${TBR_ROOT}/discovery_cursor"
+	find "${TBR_ROOT}/discovered" -type f -mtime +"$TBR_DISCOVERY_RETENTION_DAYS" -delete 2>/dev/null || true
+	_tbr_save_cursor last_discovery_epoch "$now" || return 2
 	return 0
 }
 
@@ -628,9 +785,10 @@ _tbr_check_entry() {
 	fi
 	_tbr_decision_active "$key" && return 1
 	local excerpts="[]"
-	# Another runner's circuit: public issue/PR evidence only. Same-number
-	# excerpts on this runner belong to a different attempt or repository.
-	if [[ "$intake" != policy_remote ]]; then
+	# Another runner's circuit or observation (policy_remote,
+	# remote_observation): public issue/PR evidence only. Same-number excerpts
+	# on this runner belong to a different attempt or repository.
+	if [[ "$intake" == local ]]; then
 		excerpts=$(find "$TBR_EXCERPT_DIR" -maxdepth 1 -type f -name "*-${issue}-*.log" 2>/dev/null | sort | tail -3 |
 			jq -R . | jq -sc .) || excerpts="[]"
 	fi
@@ -663,6 +821,14 @@ tbr_pending() {
 	[[ "$reserve" -le "$TBR_STAGE_SECONDS" ]] || reserve="$TBR_STAGE_SECONDS"
 	TBR_QUEUE_DEADLINE=$((TBR_DEADLINE - reserve))
 	[[ "$mode" != --rearm-only ]] || TBR_QUEUE_DEADLINE="$TBR_DEADLINE"
+	# GH#36114: discover unqueued holds first, so a trusted retry on a hold this
+	# runner never queued is applied by the queue pass below in the same run.
+	# Its own cap leaves the queue at least half the budget.
+	if [[ "$mode" == --rearm-only ]]; then
+		rc=0
+		_tbr_run_stage discovery tbr_discover || rc=$?
+		[[ "$rc" -eq 0 ]] || incomplete=1
+	fi
 	[[ ! -f "${TBR_ROOT}/${cursor_name}" ]] || read -r cursor <"${TBR_ROOT}/${cursor_name}" || true
 	# Resume in sorted order, then wrap. Advance only the scan cursor, never
 	# queue ownership or decisions, even when a stage times out.
@@ -753,7 +919,7 @@ tbr_main() {
 		local stage_action="${1:-}"
 		shift || return 2
 		case "$stage_action" in
-		_tbr_self_login | _tbr_check_entry | tbr_seed) "$stage_action" "$@" ;;
+		_tbr_self_login | _tbr_check_entry | tbr_seed | tbr_discover) "$stage_action" "$@" ;;
 		*) return 2 ;;
 		esac
 		;;
@@ -762,11 +928,16 @@ tbr_main() {
 		_tbr_start_budget || return 2
 		_tbr_run_stage seed tbr_seed "$@"
 		;;
+	discover)
+		_tbr_start_budget || return 2
+		_tbr_run_stage discovery tbr_discover
+		;;
 	pending) tbr_pending "$@" ;;
 	rearm) tbr_pending --rearm-only ;;
 	record) tbr_record "$@" ;;
 	help | --help | -h)
-		sed -n '4,36p' "${BASH_SOURCE[0]}"
+		# Print the whole header block, opening rule through closing rule.
+		sed -n '4,52p' "${BASH_SOURCE[0]}"
 		;;
 	*) return 2 ;;
 	esac
