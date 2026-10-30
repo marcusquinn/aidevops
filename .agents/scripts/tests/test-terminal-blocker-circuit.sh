@@ -1965,7 +1965,7 @@ test_recovery_graphql_fallback() {
 	if ! (
 		# shellcheck source=../terminal-blocker-recovery-helper.sh
 		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
-		local api_mode=rest graphql_reply='' result='' rc=0
+		local api_mode=rest graphql_reply='' result='' rc=0 valid_comments='' id=''
 		local calls="${TEST_ROOT}/fallback-calls" entry="${TEST_ROOT}/fallback-entry.json"
 		gh() {
 			local kind="$1" endpoint="${2:-}"
@@ -1989,16 +1989,33 @@ test_recovery_graphql_fallback() {
 		# runner's own NONE comment. REST-shaped trust filtering stays intact.
 		graphql_reply=$(jq -nc '[
 			{data:{repository:{issue:{comments:{nodes:[
-				{databaseId:8,author:{login:"owner"},authorAssociation:"OWNER",body:"retry",createdAt:"2026-10-30T01:00:00Z"},
-				{databaseId:9,author:{login:"outsider"},authorAssociation:"NONE",body:"spoof",createdAt:"2026-10-30T01:00:00Z"}],
+				{fullDatabaseId:"8",author:{login:"owner"},authorAssociation:"OWNER",body:"retry",createdAt:"2026-10-30T01:00:00Z"},
+				{fullDatabaseId:"9",author:{login:"outsider"},authorAssociation:"NONE",body:"spoof",createdAt:"2026-10-30T01:00:00Z"}],
 				pageInfo:{hasNextPage:true,endCursor:"next"}}}}}},
 			{data:{repository:{issue:{comments:{nodes:[
-				{databaseId:10,author:{login:"runner"},authorAssociation:"NONE",body:"hold",createdAt:"2026-10-30T01:00:00Z"}],
+				{fullDatabaseId:"10",author:{login:"runner"},authorAssociation:"NONE",body:"hold",createdAt:"2026-10-30T01:00:00Z"}],
 				pageInfo:{hasNextPage:false,endCursor:null}}}}}}]')
 		result=$(terminal_blocker_fetch_trusted_comments 42 owner/repo runner) || exit 1
 		[[ "$(jq -c 'map(.id)' <<<"$result")" == '[8,10]' ]] || exit 1
 		[[ "$(jq -r '.[1].created_at' <<<"$result")" == '2026-10-30T01:00:00Z' ]] || exit 1
 		rg -q -- '--paginate --slurp.*endCursor' "$calls" || exit 1
+		rg -q -- 'nodes\{fullDatabaseId ' "$calls" || exit 1
+		valid_comments="$graphql_reply"
+		for id in '"9007199254740991"' 9007199254740991; do
+			graphql_reply=$(printf '%s' "$valid_comments" | jq -c --argjson id "$id" '.[-1].data.repository.issue.comments.nodes[0].fullDatabaseId=$id')
+			result=$(terminal_blocker_fetch_comments owner/repo 42) || exit 1
+			[[ "$(printf '%s' "$result" | jq -r '.[-1].id')" == 9007199254740991 ]] || exit 1
+		done
+		# Invalid IDs on a later page invalidate all evidence, not just that node.
+		for id in null true '{}' '[]' '"bad"' '""' 0 -1 1.5 '"1.5"' '"1e2"' '"9007199254740992"' 9007199254740992 '"90071992547409910"'; do
+			graphql_reply=$(printf '%s' "$valid_comments" | jq -c --argjson id "$id" '.[-1].data.repository.issue.comments.nodes[0].fullDatabaseId=$id')
+			result=$(terminal_blocker_fetch_comments owner/repo 42) && exit 1
+			[[ -z "$result" ]] || exit 1
+		done
+		graphql_reply=$(printf '%s' "$valid_comments" | jq -c 'del(.[-1].data.repository.issue.comments.nodes[0].fullDatabaseId)')
+		result=$(terminal_blocker_fetch_comments owner/repo 42) && exit 1
+		[[ -z "$result" ]] || exit 1
+		graphql_reply="$valid_comments"
 		# Truncated, null and partial-error responses are not empty evidence.
 		graphql_reply=$(jq -c '.[-1].data.repository.issue.comments.pageInfo.hasNextPage=true' <<<"$graphql_reply")
 		terminal_blocker_fetch_comments owner/repo 42 >/dev/null && exit 1

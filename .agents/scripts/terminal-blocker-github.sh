@@ -30,15 +30,22 @@ terminal_blocker_fetch_comments() {
 	# pages: an error on a later page must never look like absent hold evidence.
 	# shellcheck disable=SC2016
 	response=$(gh api graphql --paginate --slurp \
-		-f query='query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){issue(number:$number){comments(first:100,after:$endCursor){nodes{databaseId author{login} authorAssociation body createdAt}pageInfo{hasNextPage endCursor}}}}}' \
+		-f query='query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){issue(number:$number){comments(first:100,after:$endCursor){nodes{fullDatabaseId author{login} authorAssociation body createdAt}pageInfo{hasNextPage endCursor}}}}}' \
 		-F owner="${repo%%/*}" -F name="${repo#*/}" -F number="$issue" 2>/dev/null) || return 1
 	printf '%s' "$response" | jq -ce '
+		# Validate BigInt text before conversion can round an unsafe integer.
+		# Abort the whole read rather than silently dropping ordering evidence.
+		def comment_id:
+			(if type == "string" or type == "number" then tostring else "" end) |
+			if test("^[1-9][0-9]*$") and
+				(length < 16 or (length == 16 and . <= "9007199254740991"))
+			then tonumber else error("invalid comment fullDatabaseId") end;
 		arrays | select(length > 0) |
 		select(all(.[]; (.errors // [] | length) == 0 and
 			(.data.repository.issue.comments.nodes | type) == "array")) |
 		select(.[-1].data.repository.issue.comments.pageInfo.hasNextPage == false) |
 		[.[].data.repository.issue.comments.nodes[] |
-			{id:.databaseId,user:{login:(.author.login // "")},author_association:.authorAssociation,
+			{id:(.fullDatabaseId | comment_id),user:{login:(.author.login // "")},author_association:.authorAssociation,
 			 body,created_at:.createdAt}]' || return 1
 	return 0
 }
