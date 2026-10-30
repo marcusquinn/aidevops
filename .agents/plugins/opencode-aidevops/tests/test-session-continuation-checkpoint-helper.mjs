@@ -242,20 +242,21 @@ fi
   const editReset = loopFixture();
   const test = () => editReset.call("bash", { command: "npm test" }, failOut());
   const sameEdit = () => editReset.call("edit", { filePath: "a.md", oldString: "x", newString: "y" }, okOut());
-  assert.deepEqual(fires([test, test, sameEdit, test, test, test]), [6], "a new edit resets the window");
+  assert.deepEqual(fires([test, test, test, sameEdit, test, test, test]), [3, 7], "a new edit clears the signalled set so the same loop can fire again");
+  assert.equal(editReset.saved.length, 2, "each signalled failing loop saves a recovery checkpoint");
+  const windowReset = loopFixture();
+  const windowTest = () => windowReset.call("bash", { command: "npm test" }, failOut());
+  const windowEdit = () => windowReset.call("edit", { filePath: "a.md", oldString: "x", newString: "y" }, okOut());
+  assert.deepEqual(fires([windowTest, windowEdit, windowTest, windowEdit, windowTest, windowEdit, windowTest]), [7], "progress clears stale window entries");
   const reapply = loopFixture();
   const reapplyTest = () => reapply.call("bash", { command: "npm test" }, failOut());
   const reapplyEdit = () => reapply.call("edit", { filePath: "a.md", oldString: "x", newString: "y" }, okOut());
   assert.deepEqual(fires([reapplyEdit, reapplyTest, reapplyEdit, reapplyTest, reapplyEdit, reapplyTest]), [6], "re-applying the same edit is not progress");
 
   const todoReset = loopFixture();
-  assert.deepEqual(fires([
-    () => todoReset.call("bash", { command: "npm test" }, failOut()),
-    () => todoReset.call("bash", { command: "npm test" }, failOut()),
-    () => todoReset.call("todowrite", { todos: [{ content: "Fix test", status: "in_progress" }] }, okOut()),
-    () => todoReset.call("bash", { command: "npm test" }, failOut()),
-    () => todoReset.call("bash", { command: "npm test" }, failOut()),
-  ]), [], "a todo status change is progress");
+  const todoFail = () => todoReset.call("bash", { command: "npm test" }, failOut());
+  const todoChange = () => todoReset.call("todowrite", { todos: [{ content: "Fix test", status: "in_progress" }] }, okOut());
+  assert.deepEqual(fires([todoFail, todoFail, todoFail, todoChange, todoFail, todoFail, todoFail]), [3, 7], "a todo status change clears the signalled set");
 
   const polling = loopFixture();
   assert.deepEqual(fires(Array.from({ length: 30 }, () => () => polling.call("aidevops_bounded_operation", { action: "status", operation_id: "op-1", wait_seconds: 30 }, okOut("running")))), [], "designed bounded-operation polling is exempt");
