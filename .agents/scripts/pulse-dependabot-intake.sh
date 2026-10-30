@@ -400,7 +400,7 @@ _pulse_dependabot_intake_body() {
 
 	if [[ "$repo_slug" == "marcusquinn/aidevops" ]]; then
 		policy_guidance="If the source PR is safe but only outside the maintained trust policy, update the narrow policy with evidence."
-		reference_guidance='Follow the trusted boundary in `.agents/scripts/trusted-dependabot-lib.sh` and the repair-routing pattern in `.agents/scripts/pulse-merge-process.sh::_route_pr_to_fix_worker`.'
+		reference_guidance="Follow the trusted boundary in \`.agents/scripts/trusted-dependabot-lib.sh\` and the repair-routing pattern in \`.agents/scripts/pulse-merge-process.sh::_route_pr_to_fix_worker\`."
 	fi
 	if [[ "$reason" == "approval-required" ]]; then
 		approval_guidance="The dependency allowlist and security checks passed; only current-head maintainer crypto-approval is missing. Do not change the allowlist to resolve this gate. Valid resolutions: an authorized maintainer runs \`sudo aidevops approve pr ${pr_number} ${repo_slug}\`, or deliver a maintainer-authored replacement PR with the identical diff and close the bot PR as superseded after verifying the replacement merged. Never manufacture approval or weaken the approval gate."
