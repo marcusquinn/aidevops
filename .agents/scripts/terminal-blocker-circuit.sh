@@ -7,6 +7,9 @@
 [[ -n "${_TERMINAL_BLOCKER_CIRCUIT_LOADED:-}" ]] && return 0
 _TERMINAL_BLOCKER_CIRCUIT_LOADED=1
 
+# shellcheck source=terminal-blocker-github.sh
+source "${BASH_SOURCE[0]%/*}/terminal-blocker-github.sh"
+
 _TBC_OBSERVATION_MARKER='aidevops:terminal-blocker-observation'
 _TBC_CIRCUIT_MARKER='aidevops:terminal-blocker-circuit'
 _TBC_RETRY_MARKER='terminal-blocker-circuit:retry'
@@ -433,8 +436,7 @@ terminal_blocker_fetch_trusted_comments() {
 	local self_login="${3:-}"
 	local raw=""
 	[[ "$self_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || self_login=""
-	raw=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+	raw=$(terminal_blocker_fetch_comments "$repo_slug" "$issue_number") || return 1
 	printf '%s' "$raw" | jq -c --arg self "$self_login" '
 		def trusted: . == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
 		[(if type == "array" and ((.[0]? | type) == "array") then .[] else . end)[]
