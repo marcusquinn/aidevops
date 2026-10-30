@@ -660,17 +660,20 @@ _hrff_hold_terminal_blocker_circuit() {
 }
 
 #######################################
-# GH#34846: a held first observation of a revision-re-armed class has no
-# circuit, so queue it for the runner-local recovery owner, which returns the
-# issue to status:available once a relevant revision or trusted retry lands.
+# GH#34846: a held first observation of a re-armable class has no circuit, so
+# queue it for the runner-local recovery owner, which returns the issue to
+# status:available once a relevant revision or trusted retry lands.
+# GH#36044: retry-only classes (GH#35925, e.g. permission_required) are queued
+# too; otherwise only the slow cross-repo seed could find them and a trusted
+# retry stayed unapplied for hours.
 # Call only after the observation release is persisted and projected.
 #######################################
 _hrff_enqueue_observation_recovery() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	[[ -n "${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}" ]] || return 0
-	declare -F terminal_blocker_rearms_on_revision >/dev/null 2>&1 || return 0
-	terminal_blocker_rearms_on_revision "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" || return 0
+	declare -F terminal_blocker_observation_recoverable >/dev/null 2>&1 || return 0
+	terminal_blocker_observation_recoverable "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" || return 0
 	_hrff_blocked_exit_holds || return 0
 	_hrff_enqueue_blocker_recovery "$issue_number" "$repo_slug"
 	return 0

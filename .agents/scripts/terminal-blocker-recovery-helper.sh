@@ -27,6 +27,7 @@
 #   terminal-blocker-recovery-helper.sh enqueue <owner/repo> <issue> [reason] [local|policy_remote]
 #   terminal-blocker-recovery-helper.sh seed [--force]
 #   terminal-blocker-recovery-helper.sh pending [--count]
+#   terminal-blocker-recovery-helper.sh rearm   # queued holds only; no LLM work or seed
 #   terminal-blocker-recovery-helper.sh record <owner/repo> <issue>   # JSON on stdin
 #
 # Env:
@@ -542,6 +543,7 @@ _tbr_release_circuit_hold() {
 #######################################
 _tbr_check_entry() {
 	local file="$1"
+	local mode="${2:-}" updated_at="" last_updated_at=""
 	local repo="" issue="" reason="" opened_at="" key="" intake=""
 	_tbr_entry_registered "$file" || return $?
 	repo=$(jq -r '.repo // ""' "$file" 2>/dev/null) || return 1
@@ -576,6 +578,18 @@ _tbr_check_entry() {
 	fi
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
+	if [[ "$mode" == rearm ]]; then
+		updated_at=$(printf '%s' "$issue_json" | jq -r '.updated_at // ""')
+		last_updated_at=$(jq -r '.rearm_checked_updated_at // ""' "$file")
+		# Persist the remote snapshot, not wall-clock time: a retry arriving
+		# during this check must still be seen on the next pass. Missing or
+		# unreadable timestamps never suppress verification. Revision-bound
+		# holds must recheck target/dependency changes independent of issue edits.
+		if [[ -n "$updated_at" && -n "$last_updated_at" && ! "$updated_at" > "$last_updated_at" ]] &&
+			! terminal_blocker_rearms_on_revision "$reason"; then
+			return 1
+		fi
+	fi
 	local comments="" brief="" repo_path=""
 	printf 'blocker-recovery: checking stage=entry_comments repo=%s issue=%s\n' "$repo" "$issue" >&2
 	# GH#35355: keep this runner's own comments whatever association GitHub reports.
@@ -601,6 +615,13 @@ _tbr_check_entry() {
 	fi
 	# Indeterminate revision: keep the entry for the next pass, report nothing.
 	[[ "$hold_rc" -eq 0 ]] || return 2
+	if [[ "$mode" == rearm ]]; then
+		# Only a complete, still-held observation may skip unchanged comments.
+		# Do not consult owner decisions or collect excerpts for the LLM.
+		jq --arg at "$updated_at" '.rearm_checked_updated_at = $at' "$file" >"${file}.tmp.$$" &&
+			mv -f "${file}.tmp.$$" "$file" || return 2
+		return 1
+	fi
 	_tbr_decision_active "$key" && return 1
 	local excerpts="[]"
 	# Another runner's circuit: public issue/PR evidence only. Same-number
@@ -618,6 +639,11 @@ _tbr_check_entry() {
 
 tbr_pending() {
 	local mode="${1:-}"
+	local cursor_name=pending_cursor entry_mode=""
+	if [[ "$mode" == --rearm-only ]]; then
+		cursor_name=rearm_cursor
+		entry_mode=rearm
+	fi
 	_tbr_init_dirs || return 1
 	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 observed=";"
 	_tbr_start_budget || return 2
@@ -632,7 +658,8 @@ tbr_pending() {
 	reserve=$((TBR_BUDGET_SECONDS / 2))
 	[[ "$reserve" -le "$TBR_STAGE_SECONDS" ]] || reserve="$TBR_STAGE_SECONDS"
 	TBR_QUEUE_DEADLINE=$((TBR_DEADLINE - reserve))
-	[[ ! -f "${TBR_ROOT}/pending_cursor" ]] || read -r cursor <"${TBR_ROOT}/pending_cursor" || true
+	[[ "$mode" != --rearm-only ]] || TBR_QUEUE_DEADLINE="$TBR_DEADLINE"
+	[[ ! -f "${TBR_ROOT}/${cursor_name}" ]] || read -r cursor <"${TBR_ROOT}/${cursor_name}" || true
 	# Resume in sorted order, then wrap. Advance only the scan cursor, never
 	# queue ownership or decisions, even when a stage times out.
 	for pass in 1 2; do
@@ -658,13 +685,13 @@ tbr_pending() {
 				export TERMINAL_BLOCKER_SELF_LOGIN
 			fi
 			self_resolved=1
-			_tbr_save_cursor pending_cursor "${file##*/}" || return 2
+			_tbr_save_cursor "$cursor_name" "${file##*/}" || return 2
 			observed+="${file##*/};"
 			rc=0
 			if [[ "$mode" == "--count" ]]; then
 				_tbr_run_stage entry _tbr_check_entry "$file" >/dev/null || rc=$?
 			else
-				_tbr_run_stage entry _tbr_check_entry "$file" || rc=$?
+				_tbr_run_stage entry _tbr_check_entry "$file" "$entry_mode" || rc=$?
 			fi
 			[[ "$rc" -ne 0 ]] || count=$((count + 1))
 			[[ "$rc" -lt 2 ]] || incomplete=1
@@ -672,9 +699,11 @@ tbr_pending() {
 	done
 	# Existing ownership is observed before potentially slow remote discovery.
 	# Seed has its own stage cap and cannot consume more than the overall budget.
-	rc=0
-	_tbr_run_stage seed tbr_seed || rc=$?
-	[[ "$rc" -eq 0 ]] || incomplete=1
+	if [[ "$mode" != --rearm-only ]]; then
+		rc=0
+		_tbr_run_stage seed tbr_seed || rc=$?
+		[[ "$rc" -eq 0 ]] || incomplete=1
+	fi
 	for file in "${TBR_ROOT}"/queue/*.json; do
 		[[ -f "$file" ]] || continue
 		case "$observed" in *";${file##*/};"*) continue ;; esac
@@ -730,6 +759,7 @@ tbr_main() {
 		_tbr_run_stage seed tbr_seed "$@"
 		;;
 	pending) tbr_pending "$@" ;;
+	rearm) tbr_pending --rearm-only ;;
 	record) tbr_record "$@" ;;
 	help | --help | -h)
 		sed -n '4,36p' "${BASH_SOURCE[0]}"

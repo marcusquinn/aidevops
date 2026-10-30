@@ -1064,7 +1064,7 @@ test_retry_only_observation_recovery() {
 		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
 		local reason="" association="" scenario="" tb_comments="" observation="" raw=""
 		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
-		local revision="" fingerprint="" body="" retry_at="" projected=0 receipts=0 rc=0
+		local revision="" fingerprint="" body="" retry_at="" projected=0 receipts=0 rc=0 enqueued=0
 		set_issue_status() {
 			projected=$((projected + 1))
 			return 0
@@ -1075,10 +1075,26 @@ test_retry_only_observation_recovery() {
 			tb_comments=$(jq -c --arg body "$marker" '. + [{id:30,body:$body,author_association:"MEMBER",created_at:"2026-10-29T04:00:00Z"}]' <<<"$tb_comments")
 			return 0
 		}
+		gh_issue_edit_safe() { return 0; }
+		_hrff_enqueue_blocker_recovery() {
+			enqueued=$((enqueued + 1))
+			return 0
+		}
+		# GH#36044: a runner-capability release is never queued.
+		_HRFF_TERMINAL_BLOCKER_FRAGMENT=observed AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:runner_capability_unmet') \
+			_hrff_enqueue_observation_recovery 42 owner/repo
+		[[ "$enqueued" -eq 0 ]] || exit 1
 		for reason in permission_required push_policy_timeout network_policy_timeout; do
 			terminal_blocker_rearms_on_revision "$reason" && exit 1
 			terminal_blocker_observation_recoverable "$reason" || exit 1
 			fingerprint=$(_terminal_blocker_hash "v2:${reason}")
+			# GH#36044: the enqueue helper queues a held retry-only observation,
+			# so a trusted retry does not wait for the seed. This checks the
+			# helper directly; the blocked release call site is unchanged.
+			enqueued=0
+			_HRFF_TERMINAL_BLOCKER_FRAGMENT=observed AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$fingerprint" \
+				_hrff_enqueue_observation_recovery 42 owner/repo
+			[[ "$enqueued" -eq 1 ]] || exit 1
 			revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" "$reason") || exit 1
 			# A legacy revision mismatch must not implicitly release retry-only holds.
 			[[ "$reason" == permission_required ]] || revision=cccccccccccccccccccccccc
@@ -1126,7 +1142,121 @@ test_retry_only_observation_recovery() {
 	); then
 		status=1
 	fi
-	print_result "permission and policy timeout observations seed across runners and release exactly once only on trusted retry" "$status"
+	print_result "permission and policy timeout observations queue via the enqueue helper, seed across runners and release exactly once only on trusted retry" "$status"
+	return 0
+}
+
+test_mechanical_rearm_pass() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		TBR_ROOT="${TEST_ROOT}/mechanical-rearm"
+		TBR_REPOS_JSON="$REPOS_JSON"
+		# Load shared runtime functions before installing write stubs: the first
+		# budget initialization otherwise replaces set_issue_status.
+		_tbr_start_budget || exit 1
+		local tb_fixture_comments='[]' fixture_at=2026-10-30T01:00:00Z
+		local revision="" fingerprint="" queue_file="" rc=0 projected=0 receipts=0
+		local fixture_issue='{"state":"open","title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
+		export TERMINAL_BLOCKER_SELF_LOGIN=runner-one
+		# Exercise the real queue/mode logic in process with the suite's existing
+		# write stubs; bounded subprocess execution is covered by intake tests.
+		_tbr_run_stage() { shift; "$@"; return $?; }
+		tbr_seed() { exit 1; }
+		_tbr_decision_active() { exit 1; }
+		gh() {
+			local args="$*"
+			[[ "$args" == 'api repos/owner/repo/issues/42' ]] || return 1
+			printf '%s\n' "$fixture_issue" | jq -c --arg at "$fixture_at" '. + {updated_at:$at}'
+			return 0
+		}
+		terminal_blocker_fetch_trusted_comments() {
+			printf 'read\n' >>"${TBR_ROOT}/comment-reads"
+			printf '%s\n' "$tb_fixture_comments"
+			return 0
+		}
+		set_issue_status() { projected=$((projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() { receipts=$((receipts + 1)); return 0; }
+		revision=$(terminal_blocker_task_revision "$fixture_issue" owner/repo 42 "$TEST_ROOT" permission_required) || exit 1
+		fingerprint=$(_terminal_blocker_hash v2:permission_required)
+		tb_fixture_comments=$(jq -nc --arg r "$revision" --arg f "$fingerprint" \
+			'[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-30T00:00:00Z"}]')
+		tbr_enqueue owner/repo 42 permission_required || exit 1
+		queue_file="${TBR_ROOT}/queue/owner--repo--42.json"
+		tbr_main rearm >"${TBR_ROOT}/out" || exit 1
+		[[ -f "$queue_file" && "$projected" -eq 0 && "$receipts" -eq 0 && ! -s "${TBR_ROOT}/out" ]] || exit 1
+		[[ "$(jq -r .rearm_checked_updated_at "$queue_file")" == "$fixture_at" ]] || exit 1
+		tbr_main rearm >"${TBR_ROOT}/out" || exit 1
+		[[ "$(wc -l <"${TBR_ROOT}/comment-reads")" -eq 1 && "$projected" -eq 0 ]] || exit 1
+		# An incomplete fetch must not stamp the newer snapshot or lose intake.
+		fixture_at=2026-10-30T02:00:00Z
+		terminal_blocker_fetch_trusted_comments() { return 1; }
+		tbr_main rearm >"${TBR_ROOT}/out" || rc=$?
+		[[ "$rc" -eq 2 && "$(jq -r .rearm_checked_updated_at "$queue_file")" != "$fixture_at" ]] || exit 1
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_fixture_comments"; return 0; }
+		tb_fixture_comments=$(jq -c '. + [{id:11,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-30T01:30:00Z"}]' <<<"$tb_fixture_comments")
+		tbr_main rearm >"${TBR_ROOT}/out" || exit 1
+		[[ ! -f "$queue_file" && "$projected" -eq 1 && "$receipts" -eq 1 && ! -s "${TBR_ROOT}/out" ]] || exit 1
+		[[ -f "${TBR_ROOT}/rearm_cursor" && ! -f "${TBR_ROOT}/pending_cursor" ]] || exit 1
+		# Target movement must re-arm both first observations and circuits even
+		# when the issue snapshot (including updated_at) has not changed.
+		_tbr_repo_path() { printf '%s\n' "$TEST_ROOT"; return 0; }
+		local marker=""
+		for marker in observation circuit; do
+			projected=0 receipts=0
+			TEST_TARGET_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+			revision=$(terminal_blocker_task_revision "$fixture_issue" owner/repo 42 "$TEST_ROOT" target_code_blocker) || exit 1
+			fingerprint=$(_terminal_blocker_hash v2:target_code_blocker)
+			tb_fixture_comments=$(jq -nc --arg r "$revision" --arg f "$fingerprint" --arg m "$marker" \
+				'[{id:10,body:("<!-- aidevops:terminal-blocker-"+$m+" revision="+$r+" blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-30T00:00:00Z"}]')
+			tbr_enqueue owner/repo 42 target_code_blocker || exit 1
+			tbr_main rearm >"${TBR_ROOT}/out" || exit 1
+			[[ -f "$queue_file" && "$projected" -eq 0 && "$(jq -r .rearm_checked_updated_at "$queue_file")" == "$fixture_at" ]] || exit 1
+			TEST_TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+			tbr_main rearm >"${TBR_ROOT}/out" || exit 1
+			[[ ! -f "$queue_file" && "$projected" -eq 1 && "$receipts" -eq 1 && ! -s "${TBR_ROOT}/out" ]] || exit 1
+		 done
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "mechanical rearm releases trusted retry without LLM work, skips unchanged comments and retries incomplete reads" "$status"
+	return 0
+}
+
+test_mechanical_rearm_scheduler() {
+	local status=0
+	if ! (
+		# shellcheck source=../pulse-dispatch-engine.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
+		local PULSE_DIR="${TEST_ROOT}/rearm-pulse" LOGFILE="${TEST_ROOT}/rearm-pulse.log"
+		local _CIRCUIT_BREAKER_STATE_FILE="${TEST_ROOT}/rearm-circuit" calls=0 cooldown=0
+		local PULSE_BLOCKER_REARM_INTERVAL=600
+		mkdir -p "$PULSE_DIR"
+		bash() { [[ "$*" == "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh rearm" ]] || return 1; calls=$((calls + 1)); return 0; }
+		_gh_secondary_cooldown_active() { [[ "$cooldown" -eq 1 ]] && return 0; return 1; }
+		_pulse_rearm_blocker_holds 1000 || exit 1
+		_pulse_rearm_blocker_holds 1599 || exit 1
+		[[ "$calls" -eq 1 ]] || exit 1
+		cooldown=1
+		_pulse_rearm_blocker_holds 1600 || exit 1
+		[[ "$calls" -eq 1 && "$(<"${PULSE_DIR}/last_blocker_rearm_check_epoch")" == 1000 ]] || exit 1
+		cooldown=0
+		printf 'active\n' >"$_CIRCUIT_BREAKER_STATE_FILE"
+		_pulse_rearm_blocker_holds 1600 || exit 1
+		[[ "$calls" -eq 1 ]] || exit 1
+		rm -f "$_CIRCUIT_BREAKER_STATE_FILE"
+		_pulse_rearm_blocker_holds 1600 || exit 1
+		[[ "$calls" -eq 2 && ! -f "${PULSE_DIR}/last_blocker_recovery_check_epoch" && ! -f "${PULSE_DIR}/llm_trigger_mode" ]] || exit 1
+		PULSE_BLOCKER_REARM_INTERVAL=0
+		_pulse_rearm_blocker_holds 3000 || exit 1
+		[[ "$calls" -eq 2 && "$(declare -f _run_preflight_stages)" == *'_pulse_rearm_blocker_holds'* ]] || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "mechanical rearm cadence is independent of LLM state and respects API cooldown and circuit state" "$status"
 	return 0
 }
 
@@ -1820,6 +1950,8 @@ main() {
 	test_cross_runner_rearm_receipt
 	test_unknown_hold_rearms_on_trusted_retry
 	test_retry_only_observation_recovery
+	test_mechanical_rearm_pass
+	test_mechanical_rearm_scheduler
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

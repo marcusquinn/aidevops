@@ -309,26 +309,100 @@ _pdcu_try_issue() {
 }
 
 #######################################
+# GH#36041: rotation cursor. Kept-blocked candidates (held reason, cap reached)
+# stay listed, so visiting from the top each sweep let them consume every share
+# and starve later candidates. Best effort: an unreadable or unwritable cursor
+# only restarts the rotation at the lowest issue number.
+# Args: $1=repo slug
+# Stdout: cursor file path
+# Returns: 0
+#######################################
+_pdcu_cursor_file() {
+	local repo_slug="$1"
+	printf '%s/.aidevops/cache/%s-cursor/%s\n' "$HOME" "$_PDCU_MARKER_KIND" "${repo_slug//\//__}"
+	return 0
+}
+
+#######################################
+# Order candidate issues ascending after the cursor, then wrap around.
+# Args: $1=issue JSON lines, $2=cursor file
+# Stdout: issue JSON lines in visit order
+# Returns: 0 on success, 1 when the list cannot be ordered
+#######################################
+_pdcu_rotated_issues() {
+	local issues="$1" cursor_file="$2" cursor=0
+	if [[ -r "$cursor_file" ]]; then
+		IFS= read -r cursor 2>/dev/null <"$cursor_file" || cursor=0
+	fi
+	[[ "$cursor" =~ ^[0-9]{1,9}$ ]] || cursor=0
+	printf '%s\n' "$issues" | jq -c -s --argjson cursor "$cursor" \
+		'sort_by(.number) | (map(select(.number > $cursor)) + map(select(.number <= $cursor)))[]' \
+		2>/dev/null || return 1
+	return 0
+}
+
+#######################################
+# Args: $1=cursor file, $2=issue number
+# Returns: 0
+#######################################
+_pdcu_cursor_write() {
+	local cursor_file="$1" issue_num="$2"
+	mkdir -p "${cursor_file%/*}" 2>/dev/null || return 0
+	printf '%s\n' "$issue_num" >"$cursor_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Log the pass outcome when at least one candidate was considered, so a missing
+# recovery is diagnosable without logging the many repos that have none.
+# Args: $1=repo slug, $2=visited, $3=restored, $4=outcome text
+# Returns: 0
+#######################################
+_pdcu_log_summary() {
+	local repo_slug="$1" visited="$2" restored="$3" outcome="$4"
+	[[ "$visited" -gt 0 || "$outcome" != complete ]] || return 0
+	echo "[pulse-wrapper] ${_PDCU_MARKER_KIND}: ${repo_slug} — ${outcome}: visited=${visited} restored=${restored} (GH#36041)" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+#######################################
 # One bounded pass for a repository on the stale-blocked cadence.
 # Costs one REST read when no issue qualifies, two when no draft matches.
-# Args: $1=repo slug, $2=deadline epoch
+# Candidates rotate from a persisted cursor. The pass deadline stops it after
+# at least one visit; the optional stop epoch (the sweep's hard stop, default
+# the pass deadline) stops it before any read or visit.
+# Args: $1=repo slug, $2=deadline epoch, $3=optional stop epoch
 # Returns: 0 when every candidate was visited, 3 when the deadline stopped
 #          the pass, 1 when a listing was unreadable
 #######################################
 _pm_reconcile_draft_checkpoint_blocks() {
-	local repo_slug="$1" deadline="$2"
+	local repo_slug="$1" deadline="$2" stop="${3:-$2}"
 	local issues="" refs="" issue_json="" issue_num="" matches="" pr_number="" head_sha="" now_epoch=""
+	local visited=0 restored=0 cursor_file="" ordered=""
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
+	[[ "$stop" =~ ^[0-9]+$ ]] || stop="$deadline"
+	now_epoch=$(date +%s) || return 1
+	if [[ "$now_epoch" -ge "$stop" ]]; then
+		_pdcu_log_summary "$repo_slug" 0 0 "deadline reached before the blocked-issue listing"
+		return 3
+	fi
 	if ! issues=$(_pdcu_blocked_issues "$repo_slug"); then
 		echo "[pulse-wrapper] ${_PDCU_MARKER_KIND}: ${repo_slug} — pass failed: blocked-issue listing unreadable (GH#36028)" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
 	[[ -n "$issues" ]] || return 0
+	now_epoch=$(date +%s) || return 1
+	if [[ "$now_epoch" -ge "$stop" ]]; then
+		_pdcu_log_summary "$repo_slug" 0 0 "deadline reached before the open PR listing"
+		return 3
+	fi
 	if ! refs=$(_pdcu_draft_closing_refs "$repo_slug"); then
 		echo "[pulse-wrapper] ${_PDCU_MARKER_KIND}: ${repo_slug} — pass failed: open PR listing unreadable (GH#36028)" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
 	[[ -n "$refs" ]] || return 0
+	cursor_file=$(_pdcu_cursor_file "$repo_slug")
+	ordered=$(_pdcu_rotated_issues "$issues" "$cursor_file") || ordered="$issues"
 	while IFS= read -r issue_json; do
 		[[ -n "$issue_json" ]] || continue
 		issue_num=$(printf '%s' "$issue_json" | jq -r '.number') || continue
@@ -337,9 +411,17 @@ _pm_reconcile_draft_checkpoint_blocks() {
 		# Several drafts claiming one issue are ambiguous: leave them alone.
 		[[ "$matches" != *$'\n'* ]] || continue
 		now_epoch=$(date +%s) || return 1
-		[[ "$now_epoch" -lt "$deadline" ]] || return 3
+		if [[ "$now_epoch" -ge "$stop" ]] || { [[ "$visited" -gt 0 ]] && [[ "$now_epoch" -ge "$deadline" ]]; }; then
+			_pdcu_log_summary "$repo_slug" "$visited" "$restored" "deadline reached before #${issue_num}; the rest resume next sweep"
+			return 3
+		fi
 		IFS=$'\t' read -r _ pr_number head_sha <<<"$matches"
-		_pdcu_try_issue "$repo_slug" "$issue_json" "$pr_number" "$head_sha" || true
-	done <<<"$issues"
+		visited=$((visited + 1))
+		if _pdcu_try_issue "$repo_slug" "$issue_json" "$pr_number" "$head_sha"; then
+			restored=$((restored + 1))
+		fi
+		_pdcu_cursor_write "$cursor_file" "$issue_num"
+	done <<<"$ordered"
+	_pdcu_log_summary "$repo_slug" "$visited" "$restored" complete
 	return 0
 }

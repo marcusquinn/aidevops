@@ -112,11 +112,15 @@ release_comment() {
 
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
+	# The pass persists a rotation cursor under $HOME; keep it in the sandbox.
+	export HOME="${TEST_ROOT}/home"
+	mkdir -p "$HOME"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	STATUS_LOG="${TEST_ROOT}/status.log"
 	COMMENT_LOG="${TEST_ROOT}/comments.log"
 	COMMENT_ATTEMPTS="${TEST_ROOT}/comment-attempts.log"
 	API_LOG="${TEST_ROOT}/api.log"
+	CLOCK_FILE="${TEST_ROOT}/clock"
 	return 0
 }
 
@@ -126,6 +130,9 @@ teardown_test_env() {
 }
 
 reset_case() {
+	rm -rf "${HOME}/.aidevops/cache/draft-checkpoint-unblock-cursor"
+	rm -f "$CLOCK_FILE"
+	TEST_ISSUES_ADVANCE=0
 	: >"$LOGFILE"
 	: >"$STATUS_LOG"
 	: >"$COMMENT_LOG"
@@ -163,6 +170,7 @@ gh() {
 	case "${2:-}" in
 	"repos/${SLUG}/issues?state=open&labels=status%3Ablocked"*)
 		[[ "$TEST_ISSUES_RC" -eq 0 ]] || return "$TEST_ISSUES_RC"
+		[[ "$TEST_ISSUES_ADVANCE" -eq 0 ]] || printf '%s\n' "$((TEST_NOW + TEST_ISSUES_ADVANCE))" >"$CLOCK_FILE"
 		printf '%s' "$TEST_ISSUES"
 		;;
 	"repos/${SLUG}/pulls?state=open"*)
@@ -188,7 +196,11 @@ gh() {
 
 date() {
 	if [[ "${1:-}" == "+%s" ]]; then
-		printf '%s\n' "$TEST_NOW"
+		if [[ -s "$CLOCK_FILE" ]]; then
+			cat "$CLOCK_FILE"
+		else
+			printf '%s\n' "$TEST_NOW"
+		fi
 		return 0
 	fi
 	command date "$@"
@@ -474,6 +486,27 @@ test_deadline_and_listing_cost() {
 	TEST_DEADLINE="$TEST_NOW"
 	run_pass
 	assert_no_write "an expired deadline stops before per-issue reads" 3
+	# GH#36041: a deferral used to be silent, hiding a pass that never ran.
+	if [[ ! -s "$API_LOG" ]] &&
+		grep -qF "${SLUG} — deadline reached before the blocked-issue listing: visited=0 restored=0" "$LOGFILE"; then
+		pass "an expired hard stop spends no listing read and logs the deferral"
+	else
+		fail "an expired hard stop spends no listing read and logs the deferral" \
+			"api=[$(tr '\n' ' ' <"$API_LOG")] log=[$(tr '\n' ' ' <"$LOGFILE")]"
+	fi
+	reset_case
+	# The hard stop passes during the blocked-issue listing: no PR listing read.
+	# The listing runs in a subshell, so the clock advances through a file.
+	TEST_ISSUES_ADVANCE=10
+	PASS_RC=0
+	_pm_reconcile_draft_checkpoint_blocks "$SLUG" "$((TEST_NOW + 5))" "$((TEST_NOW + 5))" || PASS_RC=$?
+	if [[ "$PASS_RC" -eq 3 && "$(wc -l <"$API_LOG" | tr -d ' ')" == "1" ]] &&
+		grep -qF "${SLUG} — deadline reached before the open PR listing" "$LOGFILE"; then
+		pass "a hard stop reached during the issue listing skips the PR listing"
+	else
+		fail "a hard stop reached during the issue listing skips the PR listing" \
+			"rc=${PASS_RC} api=[$(tr '\n' ' ' <"$API_LOG")] log=[$(tr '\n' ' ' <"$LOGFILE")]"
+	fi
 	reset_case
 	TEST_ISSUES="[]"
 	run_pass
@@ -482,6 +515,59 @@ test_deadline_and_listing_cost() {
 		pass "no blocked auto-dispatch issue costs one listing read"
 	else
 		fail "no blocked auto-dispatch issue costs one listing read" "rc=${PASS_RC} reads=${reads}"
+	fi
+	if [[ ! -s "$LOGFILE" ]]; then
+		pass "a repo without candidates logs nothing"
+	else
+		fail "a repo without candidates logs nothing" "log=[$(tr '\n' ' ' <"$LOGFILE")]"
+	fi
+	return 0
+}
+
+test_pass_summary_logged() {
+	reset_case
+	run_pass
+	assert_logged "a visited pass logs its summary" "${SLUG} — complete: visited=1 restored=1"
+	reset_case
+	TEST_TIMELINE_RC=1
+	run_pass
+	assert_logged "a kept-blocked candidate counts as visited, not restored" "${SLUG} — complete: visited=1 restored=0"
+	return 0
+}
+
+# GH#36041: kept-blocked candidates stay listed, so visiting from the top every
+# sweep let them consume each share and starve later candidates. The pass
+# rotates from a cursor and always visits one candidate before the sweep stop.
+test_rotation_resumes_after_cursor() {
+	local stop=""
+	reset_case
+	TEST_ISSUES=$(pages \
+		"$(issue_json "auto-dispatch,status:blocked,origin:worker" "runner1" | jq -c '.number = 502')" \
+		"$(issue_json "auto-dispatch,status:blocked,origin:worker" "runner1")")
+	TEST_PRS=$(pages \
+		"$(pr_json 900 true "origin:worker" 'Resolves #501')" \
+		"$(pr_json 901 true "origin:worker" 'Resolves #502')")
+	stop=$((TEST_NOW + 100))
+	PASS_RC=0
+	_pm_reconcile_draft_checkpoint_blocks "$SLUG" "$TEST_NOW" "$stop" || PASS_RC=$?
+	if [[ "$PASS_RC" -eq 3 && -s "$STATUS_LOG" ]] &&
+		grep -qF "deadline reached before #502; the rest resume next sweep: visited=1 restored=1" "$LOGFILE"; then
+		pass "an expired share still visits the lowest candidate before the sweep stop"
+	else
+		fail "an expired share still visits the lowest candidate before the sweep stop" \
+			"rc=${PASS_RC} log=[$(tr '\n' ' ' <"$LOGFILE")]"
+	fi
+	: >"$LOGFILE"
+	: >"$API_LOG"
+	PASS_RC=0
+	_pm_reconcile_draft_checkpoint_blocks "$SLUG" "$TEST_NOW" "$stop" || PASS_RC=$?
+	if [[ "$PASS_RC" -eq 3 ]] && ! grep -q 'issues/501/' "$API_LOG" &&
+		grep -qF "#502 draft PR #901 in ${SLUG} — kept blocked: comments unreadable" "$LOGFILE" &&
+		grep -qF "deadline reached before #501" "$LOGFILE"; then
+		pass "the next sweep resumes after the cursor instead of revisiting the first candidate"
+	else
+		fail "the next sweep resumes after the cursor instead of revisiting the first candidate" \
+			"rc=${PASS_RC} api=[$(tr '\n' ' ' <"$API_LOG")] log=[$(tr '\n' ' ' <"$LOGFILE")]"
 	fi
 	return 0
 }
@@ -561,10 +647,12 @@ test_cycle_stamp_behavior() {
 }
 
 test_cycle_wiring() {
-	local sweep="" all_fresh=""
+	local sweep="" all_fresh="" passes=""
 	sweep=$(awk '/^_pulse_stale_blocked_sweep_repo\(\)/,/^}/' "$CYCLE_FILE")
 	all_fresh=$(awk '/^_pulse_stale_blocked_repo_all_fresh\(\)/,/^}/' "$CYCLE_FILE")
-	if [[ "$sweep" == *"_pm_reconcile_draft_checkpoint_blocks:draft-checkpoint-unblock-complete"* &&
+	passes=$(grep -E '^_PULSE_STALE_BLOCKED_OPTIONAL_PASSES=' "$CYCLE_FILE")
+	if [[ "$passes" == *"_pm_reconcile_draft_checkpoint_blocks:draft-checkpoint-unblock-complete"* &&
+		"$sweep" == *"in \$_PULSE_STALE_BLOCKED_OPTIONAL_PASSES"* &&
 		"$all_fresh" == *"draft-checkpoint-unblock-complete"* ]] &&
 		grep -Eq '^source ".*/pulse-draft-checkpoint-unblock\.sh"$' "${SCRIPT_DIR_TEST}/../pulse-merge.sh"; then
 		pass "the pass is sourced by pulse-merge.sh and scheduled with its own cadence stamp"
@@ -594,6 +682,8 @@ main() {
 	test_idempotent_and_capped
 	test_unreadable_reads_fail_closed
 	test_deadline_and_listing_cost
+	test_pass_summary_logged
+	test_rotation_resumes_after_cursor
 	test_status_and_comment_failures
 	test_cycle_wiring
 	test_release_pattern_tracks_continuation_helper

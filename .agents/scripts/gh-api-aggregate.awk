@@ -135,6 +135,124 @@ function emit_budgets(    pool, values, n, i) {
 	print "  }"
 }
 
+# A credential digest identifies an auth source, not necessarily a unique user
+# quota: multiple tokens may share one upstream pool. Never merge them by guess.
+# Old rows remain readable but cannot prove a pool/reset series.
+function collect_quota(    series, row) {
+	if (pool != "rest-core") return
+	if (length($20) != 64 || $20 !~ /^[a-f0-9]+$/ || $21 !~ /^[1-9][0-9]*$/) {
+		unattributed_missing_metadata_attempts++
+		return
+	}
+	series = pool ":" $20 ":" $21
+	quota_series[series] = 1
+	row = ++quota_rows
+	quota_order[row] = row
+	quota_key[row] = series
+	quota_ts[row] = ts
+	quota_budget[row] = budget
+	quota_logged[row] = quota_cost
+}
+
+# Concurrent processes append on completion; sort by captured sample time and,
+# within a second, decreasing remaining. Ignore counter increases rather than
+# creating negative drain. The first sample is a baseline, not an interval.
+function replay_quota(    i, j, row, prev, series, drop, cost, minute, key, residual) {
+	for (i = 2; i <= quota_rows; i++) {
+		row = quota_order[i]
+		j = i
+		while (j > 1) {
+			prev = quota_order[j - 1]
+			if (quota_ts[prev] < quota_ts[row] || (quota_ts[prev] == quota_ts[row] && quota_budget[prev] + 0 >= quota_budget[row] + 0)) break
+			quota_order[j] = prev
+			j--
+		}
+		quota_order[j] = row
+	}
+	for (i = 1; i <= quota_rows; i++) {
+		row = quota_order[i]
+		series = quota_key[row]
+		cost = quota_logged[row]
+		if (cost ~ /^[0-9]+$/) quota_pending[series] += cost
+		else quota_unknown[series]++
+		if (quota_budget[row] !~ /^[0-9]+$/) continue
+		if (series in quota_previous) {
+			drop = quota_previous[series] - quota_budget[row]
+			if (drop >= 0) {
+				minute = int(quota_ts[row] / 60) * 60
+				key = series SUBSEP minute
+				quota_minutes[key] = 1
+				quota_drops[series] += drop
+				quota_costs[series] += quota_pending[series]
+				quota_minute_drop[key] += drop
+				quota_minute_cost[key] += quota_pending[series]
+			} else quota_increases[series]++
+		}
+		quota_previous[series] = quota_budget[row] + 0
+		quota_pending[series] = 0
+	}
+	for (key in quota_minutes) {
+		residual = quota_minute_drop[key] - quota_minute_cost[key]
+		quota_residual[key] = (residual > 0) ? residual : 0
+		split(key, quota_parts, SUBSEP)
+		quota_unattributed[quota_parts[1]] += quota_residual[key]
+	}
+}
+
+function emit_quota_minutes(series, top,    key, parts, minutes, n, i, j, swap, a, b) {
+	n = 0
+	for (key in quota_minutes) {
+		split(key, parts, SUBSEP)
+		if (parts[1] == series) minutes[++n] = parts[2] + 0
+	}
+	sort_values(minutes, n)
+	if (top) {
+		for (i = 2; i <= n; i++) {
+			for (j = i; j > 1; j--) {
+				a = quota_residual[series SUBSEP minutes[j - 1]]
+				b = quota_residual[series SUBSEP minutes[j]]
+				if (a >= b) break
+				swap = minutes[j]; minutes[j] = minutes[j - 1]; minutes[j - 1] = swap
+			}
+		}
+		if (n > 10) n = 10
+	}
+	printf "["
+	for (i = 1; i <= n; i++) {
+		key = series SUBSEP minutes[i]
+		if (i > 1) printf ", "
+		printf "{\"minute_ts\": %d, \"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d}", minutes[i], quota_minute_drop[key], quota_minute_cost[key], quota_residual[key]
+	}
+	printf "]"
+}
+
+function emit_quota(    series, values, n, i, parts) {
+	replay_quota()
+	print "  \"rest_core_attribution\": {"
+	print "    \"minute_assignment\": \"interval-ending-sample\","
+	print "    \"sample_time_basis\": \"command-completion-under-credential-lock\","
+	print "    \"unattributed_is_upper_bound\": true,"
+	printf "    \"missing_metadata_attempts\": %d,\n", unattributed_missing_metadata_attempts + 0
+	print "    \"series\": ["
+	for (series in quota_series) values[++n] = series
+	sort_values(values, n)
+	for (i = 1; i <= n; i++) {
+		series = values[i]
+		split(series, parts, ":")
+		if (i > 1) print ","
+		printf "      {\"pool\": \"%s\", \"auth_fingerprint\": \"%s\", \"reset_epoch\": %s, ", parts[1], parts[2], parts[3]
+		printf "\"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d, ", quota_drops[series], quota_costs[series], quota_unattributed[series]
+		printf "\"unknown_cost_attempts\": %d, \"counter_increases\": %d, \"minutes\": ", quota_unknown[series], quota_increases[series]
+		emit_quota_minutes(series, 0)
+		printf ", \"top_unattributed_minutes\": "
+		emit_quota_minutes(series, 1)
+		printf "}"
+	}
+	if (n > 0) print ""
+	print "    ]"
+	print "  }"
+}
+
 # Reject records without a numeric timestamp or the legacy prefix.
 $1 !~ /^[0-9]+$/ || NF < 3 {
 	malformed_records++
@@ -272,6 +390,7 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 	if (first_window_attempt_ts == 0 || ts < first_window_attempt_ts) first_window_attempt_ts = ts
 	if (ts > last_window_attempt_ts) last_window_attempt_ts = ts
 	if (attempt_page_unknown) unknown_page_attempts++
+	collect_quota()
 
 	attempted_requests++
 	minute = int(ts / 60)
@@ -403,5 +522,7 @@ END {
 	emit_group("attempts_by_http_status", "http_status")
 	print ","
 	emit_budgets()
+	print ","
+	emit_quota()
 	print "}"
 }

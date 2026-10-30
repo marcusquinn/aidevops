@@ -536,6 +536,45 @@ assert_eq "duplicate attempt ID surfaced" "1" "$(jq -r '._meta.duplicate_attempt
 assert_eq "duplicate makes exactness false" "false" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "malformed row surfaced" "1" "$(jq -r '._meta.malformed_records' "$AIDEVOPS_GH_API_REPORT")"
 
+# --- GH#36048: separate interleaved auth/reset series, not auth-mode labels --
+gh_clear_log
+pool_a=$(printf 'pool-a' | _ghqa_sha256_stdin)
+pool_b=$(printf 'pool-b' | _ghqa_sha256_stdin)
+fixture_now=$(date +%s)
+fixture_minute=$((fixture_now / 60 * 60 - 180))
+quota_fixture() {
+	local offset="$1" id="$2" remaining="$3" cost="$4" fingerprint="$5" reset="$6"
+	_gh_append_v2 attempt pool-fixture rest gh-pat rest-core rest-selected \
+		"$remaining" logical-pool "$id" 1 0 success 200 10 "$cost" \
+		"$((fixture_minute + offset))" "$fingerprint" "$reset"
+	return 0
+}
+quota_fixture 1 a1 100 1 "$pool_a" 2000000000
+quota_fixture 2 b1 4900 1 "$pool_b" 2000000100
+quota_fixture 61 a2 90 1 "$pool_a" 2000000000
+quota_fixture 62 b2 4898 1 "$pool_b" 2000000100
+# Duplicate replay and append-order inversion must not invent quota drain.
+quota_fixture 62 b2 4898 1 "$pool_b" 2000000100
+quota_fixture 122 a4 85 1 "$pool_a" 2000000000
+quota_fixture 121 a3 87 1 "$pool_a" 2000000000
+# A new reset with the same token starts a fresh baseline.
+quota_fixture 123 a5 4999 1 "$pool_a" 2000003600
+quota_fixture 124 a6 4998 1 "$pool_a" 2000003600
+# Old v2 rows still count, but are not merged into an invented unknown pool.
+printf '%s\told-v2\trest\tgh-pat\trest-core\trest-selected\t20\tv2\tattempt\told\told-attempt\t1\t0\tsuccess\t200\t1\t1\n' "$fixture_now" >>"$AIDEVOPS_GH_API_LOG"
+gh_aggregate_calls
+assert_eq "three independent auth/reset series" "3" "$(jq '.rest_core_attribution.series | length' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "pool A observed drop excludes resets and duplicate rows" "15" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .remaining_drop' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "pool A residual subtracts only interval-owned costs" "12" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "pool B never absorbs pool A drain" "1" "$(jq --arg fp "$pool_b" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "top minute ranks residual, not append order" "9" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .top_unattributed_minutes[0].unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "old v2 metadata exclusion is explicit" "1" "$(jq '.rest_core_attribution.missing_metadata_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "new reset does not create negative drops" "0" "$(jq '.rest_core_attribution.series[] | select(.reset_epoch == 2000003600) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
+gh_record_attempt rest metadata-caller logical-meta attempt-meta 1 0 success 200 1 1 gh-pat rest-core rest-selected 99 "$pool_a" 2000000000
+assert_eq "attempt metadata is appended in fields 20 and 21" "$pool_a:2000000000" "$(awk -F '\t' '$11 == "attempt-meta" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest metadata-caller logical-meta attempt-invalid 1 0 success 200 1 1 gh-pat rest-core rest-selected 98 'not-a-digest' 'not-an-epoch'
+assert_eq "arbitrary auth text cannot enter fingerprint column" ":" "$(awk -F '\t' '$11 == "attempt-invalid" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+
 # --- Test 11: command arguments remain private and exit status is preserved --
 gh_clear_log
 gh_run_transport_attempt rest privacy-caller logical-private 1 0 -- true \
@@ -601,6 +640,20 @@ assert_eq "exact successful frame records inferred quota" "1" \
 	"$(awk -F '\t' 'NR == 1 { print $7 }' "$exact_success_result")"
 assert_eq "exact failed frame leaves inferred quota unknown" "x" \
 	"$(awk -F '\t' 'NR == 1 { print $7 }' "$exact_failure_result")"
+gh_clear_log
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
+	_ghqa_record_result_file "$exact_success_result" frame-metadata logical-frame 0
+assert_eq "header reset reaches attempt record with credential digest" "$pool_a:1800000000" \
+	"$(awk -F '\t' 'NR == 1 {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "capture timestamp survives deferred log append" \
+	"$(awk -F '\t' 'NR == 1 {print $12}' "$exact_success_result")" \
+	"$(awk -F '\t' 'NR == 1 {print $1}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest timestamp-caller logical-ts captured-ts 1 0 success 200 1 1 gh-pat rest-core rest-selected 99 "$pool_a" 1800000000 "$fixture_minute"
+assert_eq "explicit captured time is not replaced by append time" "$fixture_minute" \
+	"$(awk -F '\t' '$11 == "captured-ts" {print $1}' "$AIDEVOPS_GH_API_LOG")"
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" _ghqa_record_bootstrap success 1 0 1 99 1800000000
+assert_eq "bootstrap preserves known reset metadata" "$pool_a:1800000000" \
+	"$(awk -F '\t' '$2 == "gh-quota-bootstrap" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
 
 # --- Test 11d: successful native multi-frame REST costs are exact -----------
 native_multi_result="$TMPDIR/native-multi.result"
@@ -881,6 +934,14 @@ assert_eq "concurrent attempt IDs remain unique" "12" "$(cut -f11 "$AIDEVOPS_GH_
 SHIM_FIXTURE="$TMPDIR/shim-fixture"
 NATIVE_FIXTURE="$TMPDIR/native-fixture"
 mkdir -p "$SHIM_FIXTURE" "$NATIVE_FIXTURE"
+# Keep the isolated native-gh PATH usable on systems (including Nix) whose
+# standard tools do not live in /usr/bin or /bin. Never expose the real gh.
+for fixture_tool in bash cat dd dirname basename date awk sed grep tr mktemp mkdir chmod rm rmdir uname jq cut sort wc sleep stat ps flock python3 shasum sha256sum openssl; do
+	fixture_tool_path=$(command -v "$fixture_tool" || true)
+	if [[ -n "$fixture_tool_path" ]]; then
+		ln -s "$fixture_tool_path" "$NATIVE_FIXTURE/$fixture_tool"
+	fi
+done
 cp "${PARENT_DIR}/gh" "$SHIM_FIXTURE/gh"
 cp "${PARENT_DIR}/gh-native-transport-lib.sh" "$SHIM_FIXTURE/gh-native-transport-lib.sh"
 cp "${PARENT_DIR}/gh-api-guards-lib.sh" "$SHIM_FIXTURE/gh-api-guards-lib.sh"
@@ -1365,10 +1426,12 @@ kill_bin="$scratch_fixture/kill-bin"
 aggregate_marker="$scratch_fixture/aggregate-killed.marker"
 aggregate_owner_pid_file="$scratch_fixture/aggregate-owner.pid"
 mkdir -p "$kill_bin"
+GH_API_NATIVE_CP=$(command -v cp)
+export GH_API_NATIVE_CP
 cat >"$kill_bin/cp" <<'EOF_KILL_CP'
 #!/usr/bin/env bash
 set -euo pipefail
-/bin/cp "$@"
+"$GH_API_NATIVE_CP" "$@"
 printf 'ready\n' >"$GH_API_KILL_MARKER"
 kill -KILL "$PPID"
 exit 137

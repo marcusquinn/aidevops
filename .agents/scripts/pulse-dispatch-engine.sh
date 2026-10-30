@@ -941,6 +941,32 @@ _should_run_llm_supervisor() {
 }
 
 #######################################
+# GH#36026: release positively re-armed queued holds independently of LLM
+# scheduling. Use cached API-pressure state only; never probe to bypass a fuse.
+#######################################
+_pulse_rearm_blocker_holds() {
+	local now_epoch="${1:-$(date +%s)}"
+	local interval="${PULSE_BLOCKER_REARM_INTERVAL:-600}"
+	local stamp="${PULSE_DIR}/last_blocker_rearm_check_epoch"
+	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-recovery-helper.sh"
+	local last_check=0 rc=0
+	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 0
+	[[ -f "$helper" ]] || return 0
+	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 0
+	if declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 && _gh_secondary_cooldown_active; then
+		return 0
+	fi
+	last_check=$(_pulse_read_epoch_file "$stamp")
+	[[ $((now_epoch - last_check)) -ge "$interval" ]] || return 0
+	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 1
+	# The helper bounds identity and queue work with the existing recovery
+	# budget and saves an independent cursor on partial passes.
+	bash "$helper" rearm >>"$LOGFILE" 2>&1 || rc=$?
+	[[ "$rc" -eq 0 ]] || printf '[pulse-wrapper] Blocker rearm pass incomplete (rc=%s)\n' "$rc" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # t18514/GH#32754: decide whether pending terminal-blocker recovery entries
 # warrant an LLM supervisor run. Checks at most once per interval so the
 # GitHub-verified count never runs on every pulse cycle.
@@ -1501,6 +1527,9 @@ _run_preflight_stages() {
 	# first implementation wave. Launch still performs all live safety gates.
 	run_stage_with_timeout "preflight_initial_capacity" "$_pflt_timeout" \
 		calculate_max_workers || true
+	# Mechanical release precedes dispatch and never depends on supervisor
+	# eligibility, daily cadence, failure cooldown or degraded prefetch.
+	_pulse_rearm_blocker_holds || true
 	# t3054: dispatch passes do NOT use run_stage_with_timeout. Unlike other
 	# preflight stages (single-step operations), each wraps apply_dispatch_max,
 	# which iterates N candidates that are each

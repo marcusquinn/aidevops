@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.91] - 2026-10-30
+
+### Changed
+
+- queue retry-only first observations so a trusted retry re-arms them
+
 ## [3.39.90] - 2026-10-30
 
 ### Changed

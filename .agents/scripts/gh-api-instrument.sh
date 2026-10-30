@@ -50,6 +50,13 @@
 # auth_reason (optional, from AIDEVOPS_GH_AUTH_REASON) is the Pulse auth route:
 # app | write | local | account | unclassified | unscoped | not-configured |
 # other-host | absolute-url | explicit-auth | verbose. Empty = not routed.
+# Fields 19-21 are auth_consumer, auth_fingerprint (SHA-256 of host + token),
+# and rate-limit reset epoch. Unknown values stay empty; old rows remain valid.
+# rest_core_attribution reports independent (pool, fingerprint, reset) series.
+# Residuals are upper bounds: unknown costs, other tokens sharing a user quota,
+# other machines and filtered-out callers cannot be distinguished from bypasses.
+# Minutes own the interval-ending sample; multi-frame samples use command
+# completion under the credential lock, not exact per-response wall-clock time.
 #
 # Override env vars:
 #   AIDEVOPS_GH_API_LOG          — path to the log file (default
@@ -583,6 +590,8 @@ _gh_append_v2() {
 	local quota_cost="$1"
 	shift
 	local recorded_at="${1:-}"
+	local auth_fingerprint="${2:-}"
+	local reset_epoch="${3:-}"
 	local ts=""
 	local record=""
 	local auth_reason=""
@@ -612,10 +621,14 @@ _gh_append_v2() {
 	auth_reason=$(_gh_safe_text "${AIDEVOPS_GH_AUTH_REASON:-}" "")
 	local auth_consumer=""
 	auth_consumer=$(_gh_safe_text "${AIDEVOPS_GITHUB_AUTH_CONSUMER:-}" "")
-	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+	# Only accept the digest format produced by _ghqa_auth_fingerprint, never
+	# arbitrary auth text (which might accidentally contain a credential).
+	[[ "$auth_fingerprint" =~ ^[a-f0-9]{64}$ ]] || auth_fingerprint=""
+	reset_epoch=$(_gh_safe_number "$reset_epoch")
+	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
 		"$ts" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" "$budget_remaining" \
 		"$event_kind" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" "$http_status" "$elapsed_ms" "$quota_cost" \
-		"$auth_reason" "$auth_consumer"
+		"$auth_reason" "$auth_consumer" "$auth_fingerprint" "$reset_epoch"
 	_gh_append_record "$record"
 	return 0
 }
@@ -723,6 +736,9 @@ gh_record_attempt() {
 	local route_decision="$1"
 	shift
 	local budget_remaining="$1"
+	local auth_fingerprint="${2-${AIDEVOPS_GH_AUTH_FINGERPRINT:-}}"
+	local reset_epoch="${3:-}"
+	local recorded_at="${4:-}"
 	[[ -n "$logical_id" ]] || logical_id=$(gh_new_logical_id)
 	[[ -n "$attempt_id" ]] || attempt_id=$(gh_new_attempt_id "$logical_id")
 	[[ -n "$page" ]] || page=1
@@ -736,7 +752,7 @@ gh_record_attempt() {
 	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
 	_gh_append_v2 attempt "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" \
 		"$budget_remaining" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" \
-		"$http_status" "$elapsed_ms" "$quota_cost"
+		"$http_status" "$elapsed_ms" "$quota_cost" "$recorded_at" "$auth_fingerprint" "$reset_epoch"
 	return 0
 }
 
@@ -803,6 +819,13 @@ gh_run_transport_attempt() {
 			return "$capture_rc"
 		fi
 	fi
+	local auth_fingerprint="" host="" executable="${1:-}"
+	if [[ "${executable##*/}" == gh ]] && declare -F _ghqa_auth_fingerprint >/dev/null 2>&1; then
+		host=$(_ghqa_target_host "${@:2}" 2>/dev/null || true)
+		if [[ -n "$host" ]]; then
+			auth_fingerprint=$(_ghqa_auth_fingerprint "$executable" "$host" 2>/dev/null || true)
+		fi
+	fi
 	start_ms=$(_gh_now_ms) || start_ms=""
 	_GH_TRANSPORT_ERROR_HTTP_STATUS=""
 	local -a transport_command=("$@")
@@ -825,7 +848,7 @@ gh_run_transport_attempt() {
 	gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
 		"${AIDEVOPS_GH_HTTP_STATUS:-${_GH_TRANSPORT_ERROR_HTTP_STATUS:-}}" "$elapsed_ms" "$quota_cost" \
 		"${AIDEVOPS_GH_AUTH_MODE:-}" "${AIDEVOPS_GH_API_POOL:-}" "${AIDEVOPS_GH_ROUTE_DECISION:-}" \
-		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}"
+		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}" "$auth_fingerprint"
 	return "$rc"
 }
 
