@@ -1796,7 +1796,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18811 fix(release): pre-edit regression test fails on macOS physical tmp path; widen preflight trigger #bug ref:GH#36087 pr:#36088 completed:2026-10-30
 
-- [ ] t18812 fix(release): retry network-layer transport failures in release GitHub reads #auto-dispatch #bug ref:GH#36092
+- [x] t18812 fix(release): retry network-layer transport failures in release GitHub reads #auto-dispatch #bug ref:GH#36092 pr:#36097 completed:2026-10-30
 
 ## In Progress
 
