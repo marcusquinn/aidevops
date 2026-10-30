@@ -128,14 +128,19 @@ def run_admitted(state_dir: Path, worktree: Path, run_id: str, generation_id: st
                 raise AdmissionClosed("replay-is-not-execution-authority")
             if not handle.matches_path():
                 raise ValueError("directory-changed-before-exec")
-            return execute(command)
+            return execute(command, admitted=True)
     except (ValueError, OSError, RuntimeError, sqlite3.Error, ObservationUnavailable) as error:
         print(f"[worker-lifecycle] admission-denied reason={type(error).__name__}", file=sys.stderr)
         return 75
 
 
-def execute(command: list[str]) -> int:
+def execute(command: list[str], *, admitted: bool = False) -> int:
     """Replace this process, preserving the existing native command contract."""
+    environment = os.environ.copy()
+    if admitted:
+        # These select this attempt, not a descendant's future admission.
+        environment.pop("AIDEVOPS_LIFECYCLE_RUN_ID", None)
+        environment.pop("AIDEVOPS_LIFECYCLE_GENERATION_ID", None)
     try:
         # Match subprocess restore_signals: CPython ignores these at startup,
         # but exec alone would pass those ignored dispositions to native code.
@@ -149,7 +154,7 @@ def execute(command: list[str]) -> int:
         # The calling launcher admits it before wrapping; no shell is introduced.
         # PATH and the installed runtime remain trusted caller inputs.
         # nosemgrep: python.lang.security.audit.dangerous-os-exec-tainted-env-args.dangerous-os-exec-tainted-env-args
-        os.execvp(command[0], command)  # nosec B606 # intentional trusted launcher argv, no shell
+        os.execvpe(command[0], command, environment)  # noqa: S606  # nosec B606
     except OSError as error:
         print(f"[worker-lifecycle] exec-failed reason={type(error).__name__}", file=sys.stderr)
         return 127 if isinstance(error, FileNotFoundError) else 126

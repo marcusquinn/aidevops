@@ -210,6 +210,43 @@ class EnrollmentContract(unittest.TestCase):
         with self.store.connection() as connection:
             self.assertEqual(connection.execute("SELECT generation_id FROM bindings").fetchone()[0], generation)
 
+    def test_nested_launcher_gets_a_fresh_admission_attempt(self):
+        """A nested launcher admits a new attempt, not its parent's run ID."""
+        generation = self.enrollment.resolve(self.tree, create=True)
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        launcher = scripts / "sandbox-exec-helper.sh"
+        entry = Path(__file__).resolve().parents[1] / "worker-launch.py"
+        run = str(uuid4())
+        env = {
+            name: value for name, value in os.environ.items()
+            if not name.startswith("AIDEVOPS_")
+        }
+        env.update(
+            HOME=str(self.root), XDG_CONFIG_HOME=str(self.root / "config"),
+            AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory),
+            AIDEVOPS_LIFECYCLE_WORKTREE=str(self.tree),
+            AIDEVOPS_LIFECYCLE_GENERATION_ID=generation,
+            AIDEVOPS_LIFECYCLE_RUN_ID=run,
+        )
+        sentinel = self.tree / "executed"
+        # Fixed nested launcher argv and a locally generated UUID, not env input.
+        result = subprocess.run(  # noqa: S603  # nosec B603
+            [sys.executable, "-E", "-s", "-B", str(entry),
+             "--state-dir", str(self.store.directory),
+             "--worktree", str(self.tree), "--generation-id", generation,
+             "--run-id", run, "--",
+             "bash", str(launcher), "run", "touch", str(sentinel)],
+            cwd=self.tree, env=env, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(sentinel.exists())
+        with self.store.connection() as connection:
+            rows = connection.execute(
+                "SELECT run_id,generation_id FROM bindings"
+            ).fetchall()
+        self.assertEqual(len({row[0] for row in rows}), 2)
+        self.assertEqual({row[1] for row in rows}, {generation})
+
     def test_creation_hook_and_automatic_launch_share_generation(self):
         scripts = Path(__file__).resolve().parents[2] / "scripts"
         created = self.root / "created"

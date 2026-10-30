@@ -283,6 +283,12 @@ execution when admission cannot be confirmed. Neither mode provides an atomic
 transaction spanning SQLite and exec. Universal mandatory admission remains a
 separate rollout requiring authorization and acceptance tests.
 
+Before admitted native execution, the launcher consumes
+`AIDEVOPS_LIFECYCLE_RUN_ID` and `AIDEVOPS_LIFECYCLE_GENERATION_ID`: neither is
+inherited by the command. All other environment variables remain unchanged.
+A nested launcher must obtain a fresh admission attempt rather than replay its
+parent's IDs. This does not establish descendant containment or writer coverage.
+
 The existing tests include actual owned-process crashes before and after commit,
 concurrent replay, conflicting bindings and full-journal launch continuation.
 See [COMPATIBILITY.md](COMPATIBILITY.md) for tested artifact fingerprints,
