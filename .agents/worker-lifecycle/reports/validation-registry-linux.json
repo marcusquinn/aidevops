@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "bd629a78c7f286018d4ba3188a2e494812c3664a7eb2a588528e899ee20533fc",
+  "bundle_sha256": "6e3214ec558dc6762d2837e0003e339e2b559bc9a03d705ed46fee7bc044bfa7",
   "checks": [
     {
       "name": "tests.test_storage.StorageContract.test_atomic_attempt_binding_conflict_rolls_back_registration",
@@ -194,6 +194,10 @@
       "status": "passed"
     },
     {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_native_environment_consumes_only_admission_ids",
+      "status": "passed"
+    },
+    {
       "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_native_output_exit_and_process_reconciliation",
       "status": "passed"
     },
@@ -298,8 +302,8 @@
   "status": "passed",
   "suite": "registry-integration",
   "system": "Linux",
-  "tests_run": 71,
-  "timestamp": "2026-10-29T20:42:46.671618+00:00",
+  "tests_run": 72,
+  "timestamp": "2026-10-30T05:08:33.880640+00:00",
   "untested": [
     "power-loss",
     "disk-full",
