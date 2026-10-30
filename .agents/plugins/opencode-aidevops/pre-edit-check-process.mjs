@@ -21,6 +21,7 @@ export function runPreEditCheck(script, args, cwd, timeoutMs, context) {
     // delivered by OpenCode's environment only with matching generation proof.
     // Liveness alone cannot distinguish a runtime from a reused PID.
     let ownerPID = String(process.pid);
+    let ownerIdentity = processStartIdentity(process.pid);
     const inheritedPID = process.env.OPENCODE_PID || "";
     const inheritedIdentity = process.env.OPENCODE_PID_START_IDENTITY || "";
     if (sessionID === process.env.OPENCODE_SESSION_ID
@@ -31,6 +32,7 @@ export function runPreEditCheck(script, args, cwd, timeoutMs, context) {
         // never from tool arguments or a freshly sampled replacement process.
         if (processStartIdentity(Number(inheritedPID)) === inheritedIdentity) {
           ownerPID = inheritedPID;
+          ownerIdentity = inheritedIdentity;
         }
       } catch {
         // Missing or inaccessible process evidence is not an owner override.
@@ -40,7 +42,7 @@ export function runPreEditCheck(script, args, cwd, timeoutMs, context) {
       ? {
           OPENCODE: "1",
           OPENCODE_PID: ownerPID,
-          OPENCODE_PID_START_IDENTITY: processStartIdentity(Number(ownerPID)),
+          OPENCODE_PID_START_IDENTITY: ownerIdentity,
           OPENCODE_SESSION_ID: sessionID,
           AIDEVOPS_OPENCODE_SESSION_ID: sessionID,
         }
