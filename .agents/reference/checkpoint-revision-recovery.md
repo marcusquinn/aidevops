@@ -65,10 +65,11 @@ these hold; any unreadable or ambiguous read leaves the issue unchanged:
   `auto-dispatch`, and it has no protective label (`hold-for-review`,
   `no-auto-dispatch`, `needs-maintainer-*`, `persistent`, `parent-task`).
 - Exactly one open `origin:worker` draft closes it.
-- The newest trusted `CLAIM_RELEASED` reason is continuable (`clean`,
-  `worker_complete`, `worker_draft_checkpoint`, stall/timeout,
-  `stale_assignment_reset`), not a terminal blocker or `worker_ownership_lost`,
-  and no claim, dispatch or non-terminal lease follows it.
+- The newest trusted `CLAIM_RELEASED` is unedited, posted by the runner it
+  names, and its reason is continuable (`clean`, `worker_complete`,
+  `worker_draft_checkpoint`, stall/timeout, `stale_assignment_reset`), not a
+  terminal blocker or `worker_ownership_lost`. No claim, dispatch or
+  non-terminal lease follows it; the attempt's own terminal lease is ignored.
 - The newest `labeled status:blocked` event is that runner's, within
   `PULSE_DRAFT_UNBLOCK_WINDOW_BEFORE_SECONDS`/`_AFTER_SECONDS` (60/600) of the
   release; a later maintainer re-block wins.
@@ -76,8 +77,12 @@ these hold; any unreadable or ambiguous read leaves the issue unchanged:
 - No `kind=draft-checkpoint-unblock` marker exists for that release, and fewer
   than `PULSE_DRAFT_UNBLOCK_MAX_PER_PR` (3) exist for the PR.
 
-The single audit comment names the PR, head and release. Dispatch then routes
-the draft through `dispatch-stalled` as above; the draft is never closed.
+This is evidence of an old release projection, not authority to clear a
+deliberate hold. The single audit comment names the PR, head and release, and
+the Pulse log records one `draft-checkpoint-unblock:` line per decision.
+Dispatch then routes the draft through `dispatch-stalled` as above; the draft is
+never closed. Listings are fully paginated and evidence is piped to jq, so busy
+issues (timelines over Linux's 128 KiB argument limit) are still evaluated.
 
 ### Approving a corrected blocked checkpoint
 
