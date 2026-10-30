@@ -1458,6 +1458,12 @@ _resolve_refreshed_sync_status() {
 	local _workflow="$4"
 	local _refreshed_status="$5"
 	local _sync_contributing="$6"
+	# Discovery can be stale: preserve a pin installed since initial inspection.
+	if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 ]] && ! _is_floating_caller "$_slug" "$_workflow"; then
+		printf '%s\t%s\t%s\trefreshed caller is not floating; no changes\n' \
+			"$_slug" "$_refreshed_status" "$_STATUS_SKIPPED"
+		return 2
+	fi
 	case "$_refreshed_status" in
 	"$_CLASS_DRIFTED" | "$_CLASS_NEEDS_MIGRATION")
 		printf '%s\n' "$_refreshed_status"
@@ -1559,14 +1565,6 @@ _sync_one_repo() {
 		printf '%s\t%s\t%s\tpost-refresh classification returned no row\n' \
 			"$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
-	fi
-
-	# Discovery may have inspected a stale local checkout. Never overwrite a
-	# real pin installed on the default branch since that initial inspection.
-	if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 ]] && ! _is_floating_caller "$_slug" "$_workflow"; then
-		printf '%s\t%s\t%s\trefreshed caller is not floating; no changes\n' \
-			"$_slug" "$_refreshed_status" "$_STATUS_SKIPPED"
-		return 0
 	fi
 
 	local _status_resolution _status_rc
