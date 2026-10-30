@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { spawn } from "child_process";
+import { processStartIdentity } from "./process-start-identity.mjs";
 
 /**
  * Run loop-mode checks in their own process group so a timeout cannot leave a
@@ -17,22 +18,29 @@ export function runPreEditCheck(script, args, cwd, timeoutMs, context) {
   return new Promise((resolve) => {
     const sessionID = String(context?.sessionID || "");
     // The plugin may run in a transport process. Keep the runtime identity
-    // delivered by OpenCode's environment when it belongs to this caller,
-    // rather than replacing the same-session Bash owner's PID unconditionally.
+    // delivered by OpenCode's environment only with matching generation proof.
+    // Liveness alone cannot distinguish a runtime from a reused PID.
     let ownerPID = String(process.pid);
     const inheritedPID = process.env.OPENCODE_PID || "";
-    if (sessionID === process.env.OPENCODE_SESSION_ID && /^[1-9][0-9]*$/.test(inheritedPID)) {
+    const inheritedIdentity = process.env.OPENCODE_PID_START_IDENTITY || "";
+    if (sessionID === process.env.OPENCODE_SESSION_ID
+      && /^[1-9][0-9]*$/.test(inheritedPID) && inheritedIdentity) {
       try {
         process.kill(Number(inheritedPID), 0);
-        ownerPID = inheritedPID;
+        // #aidevops:trust-boundary — proof comes from the runtime environment,
+        // never from tool arguments or a freshly sampled replacement process.
+        if (processStartIdentity(Number(inheritedPID)) === inheritedIdentity) {
+          ownerPID = inheritedPID;
+        }
       } catch {
-        // Missing or inaccessible liveness evidence is not an owner override.
+        // Missing or inaccessible process evidence is not an owner override.
       }
     }
     const sessionEnv = /^ses_[A-Za-z0-9_-]+$/.test(sessionID)
       ? {
           OPENCODE: "1",
           OPENCODE_PID: ownerPID,
+          OPENCODE_PID_START_IDENTITY: processStartIdentity(Number(ownerPID)),
           OPENCODE_SESSION_ID: sessionID,
           AIDEVOPS_OPENCODE_SESSION_ID: sessionID,
         }

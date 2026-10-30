@@ -10,6 +10,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createTools } from "../tools.mjs";
+import { processStartIdentity } from "../process-start-identity.mjs";
+import { runPreEditCheck } from "../pre-edit-check-process.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(testDir, "../../../scripts");
@@ -32,6 +34,7 @@ test("caller context preserves its live runtime PID and fences other sessions", 
     WORKTREE_REGISTRY_DB: join(root, "registry", "owners.db"),
     OPENCODE: "1",
     OPENCODE_PID: String(runtime.pid),
+    OPENCODE_PID_START_IDENTITY: processStartIdentity(runtime.pid),
     OPENCODE_SESSION_ID: "ses_caller_fixture",
     AIDEVOPS_OPENCODE_SESSION_ID: "ses_caller_fixture",
     FULL_LOOP_HEADLESS: "false",
@@ -85,6 +88,37 @@ test("caller context preserves its live runtime PID and fences other sessions", 
     assert.match(unavailable, /WORKTREE_OWNERSHIP_ERROR_STAGE=write/);
     assert.doesNotMatch(unavailable, /WORKTREE_OWNERSHIP_CONFLICT=true|fixture failure/);
     assert.equal(owner(), `${runtime.pid}|ses_caller_fixture`);
+  } finally {
+    runtime.kill();
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("inherited ownership requires matching generation evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gh36068-owner-generation-"));
+  const runtime = spawn("sleep", ["120"]);
+  const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    const script = join(root, "owner.sh");
+    writeFileSync(script, 'printf "%s\\n%s\\n" "$OPENCODE_PID" "$OPENCODE_PID_START_IDENTITY"\n');
+    process.env.OPENCODE_PID = String(runtime.pid);
+    process.env.OPENCODE_SESSION_ID = "ses_generation_fixture";
+    const identity = processStartIdentity(runtime.pid);
+    assert.ok(identity, "fixture process must have generation evidence");
+    for (const proof of [undefined, "", `${identity} stale`, identity]) {
+      if (proof === undefined) delete process.env.OPENCODE_PID_START_IDENTITY;
+      else process.env.OPENCODE_PID_START_IDENTITY = proof;
+      const result = await runPreEditCheck(script, [], root, 5000,
+        { sessionID: "ses_generation_fixture" });
+      assert.equal(result.code, 0);
+      const expected = proof === identity ? runtime.pid : process.pid;
+      assert.equal(result.stdout.trim(), `${expected}\n${processStartIdentity(expected)}`);
+    }
   } finally {
     runtime.kill();
     for (const [key, value] of Object.entries(saved)) {
