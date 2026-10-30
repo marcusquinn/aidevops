@@ -883,9 +883,10 @@ _recover_interactive_pr_work_issue() {
 	local repo_slug="$2"
 	local meta="" author="" title="Track interactive PR #${pr_number}" matches="" issue="" issue_meta=""
 	local marker="<!-- pulse-interactive-tracking:${pr_number} -->"
-	local body_file="" files="" created="" existing=""
+	local body_file="" files="" created="" existing="" live_meta=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
 	[[ "${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}" == "enforce" ]] || return 1
-	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url) || return 1
+	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
 	printf '%s' "$meta" | jq -e '.state == "OPEN" and
 		([.labels[].name] | index("origin:interactive") != null and
 		any(. == "no-takeover" or . == "needs-maintainer-review" or
@@ -927,6 +928,9 @@ _recover_interactive_pr_work_issue() {
 		issue="${created##*/}"
 	fi
 	[[ "$issue" =~ ^[0-9]+$ ]] || return 1
+	# Do not overwrite concurrent body edits, new commits or newly applied holds.
+	live_meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
+	[[ "$(printf '%s' "$meta" | jq -Sc .)" == "$(printf '%s' "$live_meta" | jq -Sc .)" ]] || return 1
 	body_file=$(mktemp) || return 1
 	printf '%s\n\nResolves #%s\n' "$(printf '%s' "$meta" | jq -r '.body // ""')" "$issue" >"$body_file"
 	local edit_rc=0

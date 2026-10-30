@@ -265,6 +265,23 @@ test_D2_updated_at_stale_skips_head_commit_lookup() {
 	return 0
 }
 
+test_orphan_age_probe() {
+	reset_mock_state
+	local rc=0
+	(
+		_extract_linked_issue() { return 0; }
+		AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale 100 owner/repo "" "" "" 1 || exit 1
+		# Ordinary handover cannot skip issue/claim gates; detection never writes.
+		if AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale 100 owner/repo; then exit 1; fi
+		if AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=detect _interactive_pr_is_stale 100 owner/repo "" "" "" 1; then exit 1; fi
+		_extract_linked_issue() { return 1; }
+		if AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale 100 owner/repo "" "" "" 1; then exit 1; fi
+		exit 0
+	) || rc=$?
+	print_result "orphan age probe is explicit, enforce-only and fails closed on metadata errors" "$rc"
+	return 0
+}
+
 test_E_missing_origin_interactive_returns_not_stale() {
 	reset_mock_state
 	printf 'origin:worker,enhancement' >"${TEST_ROOT}/labels.txt"
@@ -520,6 +537,7 @@ main() {
 	test_C_active_status_label_returns_not_stale
 	test_D_idle_no_stamp_no_status_returns_stale
 	test_D2_updated_at_stale_skips_head_commit_lookup
+	test_orphan_age_probe
 	test_E_missing_origin_interactive_returns_not_stale
 	test_F_mode_off_returns_not_stale_unconditionally
 	test_G_mode_detect_logs_and_returns_stale
