@@ -98,13 +98,14 @@ test("registered plugin hook continues to TTSR after an annotation lookup failur
     // interactive transform (both annotation and token advice skip workers).
     delete process.env.AIDEVOPS_HEADLESS;
     const user = ${JSON.stringify(user())};
+    const originalUser = structuredClone(user);
     const output = { messages: [user, {
       info: { role: "assistant", sessionID: "root", tokens: { input: 400000 } },
       parts: [{ type: "text", text: "Done." }],
     }] };
     await hooks["experimental.chat.messages.transform"]({}, output);
     assert.equal(lookups, 1, "annotation must attempt the failing lookup");
-    assert.deepEqual(output.messages[0], user);
+    assert.deepEqual(output.messages[0], originalUser);
     assert.deepEqual(user.parts, [{ type: "text", text: "hello" }]);
     assert.ok(output.messages.some(message => message.parts?.some(part =>
       part.synthetic === true && part.text?.startsWith("[TOKEN COST ADVISORY]"))),
