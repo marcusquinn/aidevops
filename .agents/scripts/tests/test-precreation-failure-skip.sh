@@ -448,7 +448,10 @@ if (
 	export AIDEVOPS_CLEANUP_LOG="$TMP/managed-cleanup.log"
 	export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 	export GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
-	mkdir -p "$HOME" "$WORKTREE_REGISTRY_DIR" "$AIDEVOPS_WORKTREE_BASE_DIR"
+	# GH#36142: enrollment initializes lifecycle state under the temp HOME, so
+	# its parent must exist; never inherit the host's lifecycle state location.
+	unset AIDEVOPS_LIFECYCLE_STATE_DIR AIDEVOPS_WORKSPACE_DIR
+	mkdir -p "$HOME/.aidevops/.agent-workspace" "$WORKTREE_REGISTRY_DIR" "$AIDEVOPS_WORKTREE_BASE_DIR"
 	MANAGED_REPO="$TMP/managed-repo"
 	command -p git init -q "$MANAGED_REPO" || exit 1
 	command -p git -C "$MANAGED_REPO" commit -q --allow-empty -m fixture || exit 1

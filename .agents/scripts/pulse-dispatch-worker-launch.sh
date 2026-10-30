@@ -1019,7 +1019,9 @@ _dlw_require_managed_generation() {
 _dlw_precreate_helper_reason() {
 	local output="$1"
 	local reason="" pattern=""
-	for pattern in 'managed-worktree:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
+	# GH#36142: an enrollment refusal names its own cause, so it outranks the
+	# generic "Worktree retained" disposition that follows it.
+	for pattern in 'managed-worktree:' 'Generation enrollment refused:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
 		reason=$(printf '%s\n' "$output" | grep -E "$pattern" | tail -n 1 | tr -d "'\r" | cut -c1-200) || reason=""
 		[[ -z "$reason" ]] || break
 	done

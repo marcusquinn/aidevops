@@ -122,8 +122,12 @@ def main() -> int:
         return 0
     except (ValueError, OSError, sqlite3.Error, subprocess.SubprocessError, ObservationUnavailable) as error:
         reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
-        print(json.dumps({"mode": "observe-only", "status": "unavailable", "reason": reason,
-                          "cleanup_authorized": False}, sort_keys=True))
+        detail = {"mode": "observe-only", "status": "unavailable", "reason": reason,
+                  "cleanup_authorized": False}
+        # GH#36142: name the enrollment refusal; OSError text may carry paths.
+        if args.operation == "enroll" and type(error) is ValueError:
+            detail["detail"] = str(error)[:200]
+        print(json.dumps(detail, sort_keys=True))
         return 2
 
 
