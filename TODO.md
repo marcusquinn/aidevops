@@ -5414,3 +5414,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18777 docs: recommend reusable purpose-scoped PATs (extend repo access) instead of per-repo tokens for CLOUDRON_RELEASE_PAT and SYNC_PAT #auto-dispatch #documentation ref:GH#35858 pr:#35969 completed:2026-10-29
 
 - [-] t18797 Deflake bounded-operation timeout case: process_signal null under slow spawn #auto-dispatch #bug ref:GH#36015 declined:2026-10-30
+
+- [ ] t18814 fix(sync-workflows): re-pin legacy @main loc-badge callers to release SHA and keep pins current #auto-dispatch #bug ref:GH#36105
