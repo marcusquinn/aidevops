@@ -16,7 +16,7 @@ export function createBoundedInteractiveOperationTool(tool, z, manager) {
       "known detaching launchers such as pulse-wrapper.sh --command dispatch are rejected before spawn. " +
       "Owned descendants are drained when the command exits; post_exit_descendants_terminated=true means exit 0 is not liveness evidence for anything it launched. " +
       "Cancellation is session-owned and restoration evidence remains explicit. " +
-      "budget_seconds defaults to 900 and is clamped to 0.01–86400 seconds (24 hours); budget_ms reports the effective limit. " +
+      "budget_seconds defaults to 900 (also when set to 0); other values are clamped to 0.01–86400 seconds (24 hours); budget_ms reports the effective limit. " +
       "Operations do not survive plugin disposal/reload, session deletion, or host shutdown; this is not a durable scheduler. " +
       "termination_cause reports the first observed stop cause, not the identity of an external signal sender. " +
       "Optional kill_grace_seconds allows up to 300 seconds for TERM cleanup (default 0.5 seconds). " +

@@ -76,7 +76,8 @@ a lifecycle transition occurs; omit it for an immediate snapshot. The start
 action returns after the owned process spawns, so the primary session remains
 available for progress reports and scoped cancellation.
 
-`budget_seconds` defaults to 900 seconds and is clamped at start to
+`budget_seconds` defaults to 900 seconds; explicitly setting it to `0` also
+selects that default. Other values are clamped at start to
 0.01–86,400 seconds (24 hours); `budget_ms` in the receipt is the effective
 limit. There is no separate two-hour or idle timeout in the bounded-operation
 manager or supervisor. This budget is not a guarantee of host uptime or survival
