@@ -111,7 +111,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
-- [ ] t18798 fix(plugin): stop denying all compound shell commands in every session (v3.39.87 regression) #bug #priority:critical ref:GH#36017 assignee:marcusquinn started:2026-10-30 logged:2026-10-30 -> [todo/tasks/t18798-brief.md]
+- [x] t18798 fix(plugin): stop denying all compound shell commands in every session (v3.39.87 regression) #bug #priority:critical ref:GH#36017 assignee:marcusquinn started:2026-10-30 pr:#36018 logged:2026-10-30 -> [todo/tasks/t18798-brief.md] completed:2026-10-30
 
 - [x] t18796 fix(full-loop): treat non-markdown data files under todo/ as deliverables, not planning-only #bug #priority:high ref:GH#36002 assignee:marcusquinn started:2026-10-29 pr:#36003 logged:2026-10-29 -> [todo/tasks/t18796-brief.md] completed:2026-10-29
 
