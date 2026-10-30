@@ -7,6 +7,7 @@ import copy
 import datetime as dt
 import hashlib
 import importlib.util
+import itertools
 import json
 import os
 import pathlib
@@ -256,14 +257,11 @@ class RevisionTests(unittest.TestCase):
                                    json.dumps(candidate["pr"]), json.dumps(candidate["issue"]),
                                    json.dumps(candidate["comments"])], capture_output=True, check=False).returncode
         self.assertEqual(run(data), 0)
-        label_cases = (
-            ("pr", "hold-for-review"), ("issue", "hold-for-review"),
-            ("pr", "needs-maintainer-review"), ("issue", "needs-maintainer-review"),
-            ("pr", "no-auto-dispatch"), ("issue", "no-auto-dispatch"),
-            ("pr", "persistent"), ("issue", "persistent"),
-            ("pr", "no-takeover"), ("issue", "needs-maintainer-permissions"),
-            ("issue", "blocked"), ("issue", "status:available"),
-            ("issue", "status:in-progress"), ("issue", "status:done"),
+        shared_holds = ("hold-for-review", "needs-maintainer-review", "no-auto-dispatch", "persistent")
+        label_cases = itertools.chain(
+            itertools.product(("pr", "issue"), shared_holds),
+            (("pr", "no-takeover"), ("issue", "needs-maintainer-permissions")),
+            itertools.product(("issue",), ("blocked", "status:available", "status:in-progress", "status:done")),
         )
         for surface, label in label_cases:
             changed = copy.deepcopy(data)
