@@ -67,6 +67,14 @@ def completed_release_fixture(reason="worker_complete", actor="recovering-worker
     return data
 
 
+def unlabelled_blocked_fixture():
+    """An exact approved checkpoint has lost provenance and is solely blocked."""
+    data = fixture()
+    data["pr"]["labels"] = []
+    data["issue"]["labels"][1] = {"name": "status:blocked"}
+    return data
+
+
 def insert_renewed_attempt(data):
     """Insert a same-actor ready lease for a different attempt before the release."""
     renewed = copy.deepcopy(data["comments"][0])
@@ -234,7 +242,7 @@ class RevisionTests(unittest.TestCase):
                 revision.validate({**data, key: value})
 
     def test_shell_predicate_preserves_holds_and_linkage(self):
-        data = fixture()
+        data = unlabelled_blocked_fixture()
         # Supply current wall time for the shell boundary, avoiding date-dependent fixtures.
         for c in data["comments"]:
             c["created_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -248,10 +256,31 @@ class RevisionTests(unittest.TestCase):
                                    json.dumps(candidate["pr"]), json.dumps(candidate["issue"]),
                                    json.dumps(candidate["comments"])], capture_output=True, check=False).returncode
         self.assertEqual(run(data), 0)
-        for label in ("hold-for-review", "needs-maintainer-review", "no-auto-dispatch", "persistent", "blocked"):
+        for surface in ("pr", "issue"):
+            labels = ("hold-for-review", "needs-maintainer-review", "no-auto-dispatch", "persistent")
+            for label in labels + (("no-takeover",) if surface == "pr" else ("needs-maintainer-permissions",)):
+                changed = copy.deepcopy(data)
+                changed[surface]["labels"].append({"name": label})
+                self.assertNotEqual(run(changed), 0, (surface, label))
+        for label in ("blocked", "status:available", "status:in-progress", "status:done"):
             changed = copy.deepcopy(data)
             changed["issue"]["labels"].append({"name": label})
             self.assertNotEqual(run(changed), 0)
+        for case in ("missing", "head", "body", "expired", "owner", "successor"):
+            changed = copy.deepcopy(data)
+            if case == "missing":
+                changed["comments"].pop()
+            elif case == "head":
+                changed["pr"]["headRefOid"] = "2" * 40
+            elif case == "body":
+                changed["issue"]["body"] += " changed"
+            elif case == "expired":
+                changed["comments"][-1]["created_at"] = "2020-01-01T00:00:00Z"
+            elif case == "owner":
+                changed["issue"]["assignees"] = [{"login": "other"}]
+            else:
+                changed["comments"].append(comment(4, "Interactive session claimed", "maintainer"))
+            self.assertNotEqual(run(changed), 0, case)
         for body in ("For #1234", "mentions #123", "For #123 and #124"):
             changed = copy.deepcopy(data)
             changed["pr"]["body"] = body
@@ -260,8 +289,9 @@ class RevisionTests(unittest.TestCase):
     def test_claim_handoff_prelaunch_ready_and_rollback(self):
         # (unassigned, fixture builder, needs a generated approval for its history)
         cases = ((False, fixture, False), (True, fixture, False),
-                 (True, released_successor_fixture, True),
-                 (False, completed_release_fixture, True), (True, completed_release_fixture, True))
+                  (True, released_successor_fixture, True),
+                 (False, completed_release_fixture, True), (True, completed_release_fixture, True),
+                 (False, unlabelled_blocked_fixture, False), (True, unlabelled_blocked_fixture, False))
         for unassigned, build, approve in cases:
             with self.subTest(unassigned=unassigned, fixture=build.__name__), tempfile.TemporaryDirectory() as root:
                 data = build()

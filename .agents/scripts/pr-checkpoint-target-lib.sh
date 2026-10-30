@@ -155,8 +155,20 @@ _pr_checkpoint_revised_target() {
 			.closingIssuesReferences = [{number:$issue,repository:{name:$parts[1],owner:{login:$parts[0]}}}]
 		' <<<"$pr_json") || return 1
 	fi
+	# The exact approval supplies missing provenance only in this local view.
+	# Keep all real labels so protective labels still reject the checkpoint.
+	normalized_pr=$(jq -e "${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
+		select((.labels | type) == "array") |
+		.labels += [{name:worker_origin_label}]
+	' <<<"$normalized_pr") || return 1
+	# A sole blocked lifecycle is recoverable only under the same approval;
+	# conflicting statuses and every other hold remain visible to the predicate.
 	normalized_issue=$(jq --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" \
-		'.labels |= map(select(.name != $interactive_label))' <<<"$issue_json") || return 1
+		'.labels |= map(select(.name != $interactive_label)) |
+		if [.labels[].name | select(startswith("status:"))] == ["status:blocked"] then
+			(if (.assignees | length) == 0 then "status:available" else "status:in-review" end) as $status |
+			.labels |= map(if .name == "status:blocked" then .name = $status else . end)
+		else . end' <<<"$issue_json") || return 1
 	_pr_checkpoint_pr_metadata_is_eligible "$normalized_pr" "$repo_slug" "$pr_number" \
 		"$linked_issue" "" "" "$(jq -r '.runner' <<<"$approval")" || return 1
 	# The revision validator above authorizes the original owner or an unassigned
