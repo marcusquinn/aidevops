@@ -1776,6 +1776,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18801 fix(interactive-session): claim must not silently skip when REST core is exhausted #auto-dispatch #bug #priority:medium ref:GH#36036
 
+- [ ] t18803 fix(terminal-blocker): queue retry-only first observations so a trusted retry re-arms permission_required holds #bug #priority:high #interactive ref:GH#36044 assignee:marcusquinn started:2026-10-30 logged:2026-10-30 -> [todo/tasks/t18803-brief.md]
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25

@@ -1064,7 +1064,7 @@ test_retry_only_observation_recovery() {
 		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
 		local reason="" association="" scenario="" tb_comments="" observation="" raw=""
 		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
-		local revision="" fingerprint="" body="" retry_at="" projected=0 receipts=0 rc=0
+		local revision="" fingerprint="" body="" retry_at="" projected=0 receipts=0 rc=0 enqueued=0
 		set_issue_status() {
 			projected=$((projected + 1))
 			return 0
@@ -1075,10 +1075,25 @@ test_retry_only_observation_recovery() {
 			tb_comments=$(jq -c --arg body "$marker" '. + [{id:30,body:$body,author_association:"MEMBER",created_at:"2026-10-29T04:00:00Z"}]' <<<"$tb_comments")
 			return 0
 		}
+		gh_issue_edit_safe() { return 0; }
+		_hrff_enqueue_blocker_recovery() {
+			enqueued=$((enqueued + 1))
+			return 0
+		}
+		# GH#36044: a runner-capability release is never queued.
+		_HRFF_TERMINAL_BLOCKER_FRAGMENT=observed AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:runner_capability_unmet') \
+			_hrff_enqueue_observation_recovery 42 owner/repo
+		[[ "$enqueued" -eq 0 ]] || exit 1
 		for reason in permission_required push_policy_timeout network_policy_timeout; do
 			terminal_blocker_rearms_on_revision "$reason" && exit 1
 			terminal_blocker_observation_recoverable "$reason" || exit 1
 			fingerprint=$(_terminal_blocker_hash "v2:${reason}")
+			# GH#36044: the releasing runner queues its held retry-only
+			# observation, so a trusted retry does not wait for the seed.
+			enqueued=0
+			_HRFF_TERMINAL_BLOCKER_FRAGMENT=observed AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$fingerprint" \
+				_hrff_enqueue_observation_recovery 42 owner/repo
+			[[ "$enqueued" -eq 1 ]] || exit 1
 			revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" "$reason") || exit 1
 			# A legacy revision mismatch must not implicitly release retry-only holds.
 			[[ "$reason" == permission_required ]] || revision=cccccccccccccccccccccccc
@@ -1126,7 +1141,7 @@ test_retry_only_observation_recovery() {
 	); then
 		status=1
 	fi
-	print_result "permission and policy timeout observations seed across runners and release exactly once only on trusted retry" "$status"
+	print_result "permission and policy timeout observations queue locally, seed across runners and release exactly once only on trusted retry" "$status"
 	return 0
 }
 
