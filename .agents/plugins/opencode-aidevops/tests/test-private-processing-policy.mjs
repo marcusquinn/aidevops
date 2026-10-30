@@ -144,7 +144,7 @@ test("shell config operands resolve relative and symlink aliases before policy e
   }
 });
 
-test("interpreter scripts fail closed before bound-session and empty-roots exemptions", (t) => {
+test("interpreter scripts naming operator config fail closed before bound-session and empty-roots exemptions", (t) => {
   const f = fixture(t);
   for (const [bound, roots, name, [shell, option]] of combinations(
     [false, true], [f.classification.roots, []],
@@ -159,6 +159,28 @@ test("interpreter scripts fail closed before bound-session and empty-roots exemp
     assert.throws(() => check("bash", `${shell} ${option} '${script}'`), /unclassifiable_shell_read/);
     assert.throws(() => check("aidevops_bounded_operation", [shell, option, script]), /unclassifiable_shell_read/);
   }
+});
+
+test("GH#36017: ordinary compound commands and scripts pass outside classified unbound sessions", (t) => {
+  const f = fixture(t);
+  for (const [bound, roots] of [[true, f.classification.roots], [true, []], [false, []]]) {
+    const check = (tool, command) => assertPrivateProcessingRead({
+      tool, args: { action: "start", command }, repositoryDir: f.publicRoot,
+      classification: { ...f.classification, roots }, binding: { bound }, append: () => true,
+    });
+    for (const command of ["git status && git log -1 | head -5", "rg foo $DIR", "ls *.md; true",
+      "sh -c 'git status'", "pwd\ngit status"]) {
+      assert.doesNotThrow(() => check("bash", command), command);
+    }
+    assert.doesNotThrow(() => check("aidevops_bounded_operation", ["bash", "-lc", "pnpm test"]));
+    // Differently-cased config names stay denied in opaque text.
+    assert.throws(() => check("bash", "cat LOCAL-ONLY-ROOTS.JSON | wc"), /unclassifiable_shell_read/);
+  }
+  // Classified unbound sessions keep the strict literal-reader path.
+  const strict = (command) => assertPrivateProcessingRead({ tool: "bash", args: { command },
+    repositoryDir: f.publicRoot, classification: f.classification, binding: { bound: false }, append: () => true });
+  assert.throws(() => strict("git status && git log -1 | head -5"), /unclassifiable_shell_read/);
+  assert.throws(() => strict("sh -c 'git status'"), /unclassifiable_shell_read/);
 });
 
 test("receipt failure cannot obscure a denial or import ambient metadata", () => {

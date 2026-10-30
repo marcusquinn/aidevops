@@ -117,6 +117,18 @@ function protectedConfigFiles(policy) {
   return [policy.file, policy.providersFile].filter(Boolean);
 }
 
+// Case-insensitive: default macOS volumes resolve differently-cased names.
+function namesProtectedConfig(policy, text) {
+  const lower = text.toLowerCase();
+  return protectedConfigFiles(policy).some((file) => lower.includes(basename(file).toLowerCase()));
+}
+
+function isInterpreterScript(words) {
+  return SHELL_INTERPRETERS.has(basename(words[0] || ""))
+    && words.slice(1).some((word) => /^-[^-]*c/.test(word)
+      || word === "--command" || word.startsWith("--command="));
+}
+
 function assertClassificationMutation(policy, name, args, cwd, deny) {
   if (!MUTATION_TOOLS.test(name)) return;
   // Freeze classification across this launch, and prohibit tool edits to its
@@ -141,13 +153,16 @@ function assertShellRead(policy, command, cwd, binding, deny) {
   )) || [];
   if (protectedConfigFiles(policy).some((file) => text.includes(file)
     || targets.includes(canonicalPath(file)))) deny("classification_mutation");
-  // Opaque shell syntax can hide relative config paths regardless of binding.
-  if (!words) deny("unclassifiable_shell_read");
-  // A quoted -c script is literal to the outer parser, not to its interpreter.
-  if (SHELL_INTERPRETERS.has(basename(words[0] || ""))
-    && words.slice(1).some((word) => /^-[^-]*c/.test(word)
-      || word === "--command" || word.startsWith("--command="))) deny("unclassifiable_shell_read");
-  if (binding.bound || !policy.roots.length) return;
+  // Opaque shell syntax and quoted -c scripts (literal to the outer parser, not
+  // to their interpreter) can hide relative config aliases. Every session runs
+  // this hook, so outside a classified unbound session deny them only when they
+  // name a protected config file; ordinary pipelines must keep working (GH#36017).
+  const opaque = !words || isInterpreterScript(words);
+  if (binding.bound || !policy.roots.length) {
+    if (opaque && namesProtectedConfig(policy, text)) deny("unclassifiable_shell_read");
+    return;
+  }
+  if (opaque) deny("unclassifiable_shell_read");
   // No options: even familiar readers have executable/path-bearing options.
   if (!words?.length || !LITERAL_READERS.has(words[0])
     || words.slice(1).some((word) => word.startsWith("-"))) deny("unclassifiable_shell_read");
