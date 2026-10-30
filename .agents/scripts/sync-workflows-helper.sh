@@ -709,9 +709,18 @@ _sync_target_ref_for_slug() {
 _is_floating_caller() {
 	local _slug="$1"
 	local _workflow_file="$2"
+	local _repo _pin
 	[[ "$_workflow_file" == */loc-badge.yml ]] || return 1
 	[[ -z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]] || return 1
-	[[ "$(_extract_ref_pin "$_workflow_file")" == "@main" ]] || return 1
+	[[ -f "$_workflow_file" ]] || return 1
+	_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
+	# Match the configured reusable workflow, not an unrelated job's first ref.
+	_pin=$(awk -v target="${_repo}/.github/workflows/loc-badge-reusable.yml@" '
+		$1 == "uses:" && index($2, target) == 1 {
+			print substr($2, length(target) + 1)
+		}
+	' "$_workflow_file")
+	[[ "$_pin" == "$_BRANCH_DEFAULT_NAME" ]] || return 1
 	return 0
 }
 
@@ -732,6 +741,8 @@ _needs_ref_bump() {
 	_pin=$(_extract_ref_pin "$_workflow_file")
 	[[ -n "$_pin" ]] || return 1
 	_target=$(_sync_target_ref_for_slug "$_slug") || return 1
+	# Release annotations are display metadata, not part of the ref token.
+	_target="${_target%%[[:space:]]*}"
 	[[ "$_pin" != "$_target" ]] || return 1
 	return 0
 }
@@ -1142,7 +1153,8 @@ _resolve_effective_ref() {
 		[[ "$_force_ref" -eq 0 ]]; then
 		local _existing_pin
 		_existing_pin=$(_extract_ref_pin "$_workflow")
-		if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 && "$_workflow" == */loc-badge.yml && "$_existing_pin" == "@main" ]]; then
+		# Floating mode has already verified the configured metrics caller ref.
+		if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 && "$_workflow" == */loc-badge.yml ]]; then
 			_effective_ref="$_target_ref"
 		elif [[ -n "$_existing_pin" ]]; then
 			_effective_ref="$_existing_pin"

@@ -357,16 +357,32 @@ cp "$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
 "$real_git" -C "$apply_repo" commit -q -m 'legacy floating metrics caller'
 "$real_git" -C "$apply_repo" push -q github main
 
-for pin_case in floating tag sha registry global optout mirror; do
+for pin_case in floating tag sha unrelated-main unrelated-tag wrong-repo registry global optout mirror; do
 	case "$pin_case" in
 	floating) pin=main ;;
-	tag) pin=v3.38.35 ;;
+	tag | unrelated-main) pin=v3.38.35 ;;
 	sha) pin=1111111111111111111111111111111111111111 ;;
 	*) pin=main ;;
 	esac
 	sed "s/@main/@$pin/; s/aidevops_ref: main/aidevops_ref: $pin/" \
 		"$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
 		>"$apply_repo/.github/workflows/loc-badge.yml"
+	case "$pin_case" in
+	unrelated-main | unrelated-tag)
+		other_pin=main
+		[[ "$pin_case" == unrelated-tag ]] && other_pin=v1.0.0
+		sed '/^jobs:$/a\
+  unrelated:\
+    uses: other/project/.github/workflows/check.yml@'"$other_pin" \
+			"$apply_repo/.github/workflows/loc-badge.yml" >"$test_root/caller.yml"
+		cp "$test_root/caller.yml" "$apply_repo/.github/workflows/loc-badge.yml"
+		;;
+	wrong-repo)
+		sed 's|marcusquinn/aidevops|other/project|g' \
+			"$apply_repo/.github/workflows/loc-badge.yml" >"$test_root/caller.yml"
+		cp "$test_root/caller.yml" "$apply_repo/.github/workflows/loc-badge.yml"
+		;;
+	esac
 	jq --arg mode "$pin_case" '
 		del(.workflow_reusable_ref, .initialized_repos[0].workflow_reusable_ref,
 		    .initialized_repos[0].badges, .initialized_repos[0].mirror_upstream)
@@ -381,7 +397,7 @@ for pin_case in floating tag sha registry global optout mirror; do
 		GH_CALL_LOG="$test_root/gh.log" bash "$HELPER" \
 		--repo fake/apply --workflow loc-badge --pin-floating --json 2>&1)
 	assert_exit "floating migration $pin_case preview succeeds" 0 "$?"
-	if [[ "$pin_case" == floating ]]; then
+	if [[ "$pin_case" == floating || "$pin_case" == unrelated-tag ]]; then
 		assert_contains "floating caller is actionable" "$preview" '"outcome":"PLANNED"'
 		assert_contains "floating caller targets release SHA and tag" "$preview" \
 			'@0123456789abcdef0123456789abcdef01234567 # v3.39.45'
@@ -411,6 +427,28 @@ assert_contains "migration pins executable workflow" "$migrated_caller" \
 assert_contains "migration pins matching helper provenance" "$migrated_caller" \
 	'aidevops_ref: 0123456789abcdef0123456789abcdef01234567 # v3.39.45'
 
+# Check release annotations independently of the apply-mode worktree machinery.
+sed 's/@main/@0123456789abcdef0123456789abcdef01234567 # v3.39.45/; s/aidevops_ref: main/aidevops_ref: 0123456789abcdef0123456789abcdef01234567 # v3.39.45/' \
+	"$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
+	>"$apply_repo/.github/workflows/loc-badge.yml"
+classified=$(HOME="$test_root" bash "$CHECK_HELPER" \
+	--repo fake/apply --workflow loc-badge --json)
+assert_contains "release annotation does not cause caller drift" "$classified" \
+	'"classification":"CURRENT/CALLER"'
+for preview_mode in ordinary force-release; do
+	preview_args=(--repo fake/apply --workflow loc-badge --json)
+	if [[ "$preview_mode" == force-release ]]; then
+		preview_args+=(--force-ref --ref '0123456789abcdef0123456789abcdef01234567 # v3.39.45')
+	fi
+	preview=$(HOME="$test_root" PATH="$test_root/bin:$PATH" \
+		GH_CALL_LOG="$test_root/gh.log" bash "$HELPER" "${preview_args[@]}" 2>&1)
+	assert_exit "$preview_mode repeated preview succeeds" 0 "$?"
+	assert_not_contains "$preview_mode repeated preview has no work" "$preview" '"outcome":"PLANNED"'
+done
+
+# Restore stale floating discovery for the refreshed-branch guard below.
+cp "$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
+	"$apply_repo/.github/workflows/loc-badge.yml"
 # A newer pin on the refreshed branch must win over stale discovery of @main.
 "$real_git" --git-dir="$apply_bare" fetch -q "$apply_bare" \
 	'refs/heads/chore/pin-floating:refs/heads/main'
