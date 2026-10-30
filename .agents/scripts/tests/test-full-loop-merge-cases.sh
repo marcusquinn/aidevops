@@ -789,6 +789,22 @@ test_graphql_rate_limit_rest_fallback() {
 # GH#36074: reconcile unknown outcomes and retry only once with fresh authority.
 test_transient_server_error_recovery() {
 	local mode="" auto="" exit_code=0 rest_calls=0 output="" metadata_rc=0
+	local classifier_rc=0
+	bash -c '
+		source "$1/shared-constants.sh"
+		source "$1/full-loop-helper-merge.sh"
+		for status in 502 503 504; do
+			for message in "HTTP $status: server error" "HTTP/2 $status" "non-200 OK status code: $status Bad Gateway"; do
+				_merge_output_is_transient_server_error "$message" || exit 1
+			done
+			for message in "review required for PR #$status" "review required (https://github.com/testorg/testrepo/pull/$status)" "HTTP ${status}0"; do
+				if _merge_output_is_transient_server_error "$message"; then exit 1; fi
+			done
+		done
+		_merge_output_is_transient_server_error "GraphQL: Something went wrong while executing your query"
+	' _ "${SCRIPT_DIR}/.." || classifier_rc=$?
+	print_result "server error classifier: explicit HTTP statuses, not PR numbers or URLs" "$classifier_rc"
+
 	for mode in server-502 server-503 server-504 server-graphql server-merged server-wrong-merged server-drift server-closed server-read-fail server-malformed server-rest-fail server-late-review; do
 		for auto in 0 1; do
 			rm -f "${TEST_ROOT}/logs/"*.txt

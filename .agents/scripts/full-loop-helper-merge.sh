@@ -298,7 +298,7 @@ _merge_output_is_graphql_rate_limit() {
 _merge_output_is_transient_server_error() {
 	local merge_output="$1"
 
-	if printf '%s' "$merge_output" | grep -qiE '(^|[^0-9])(502|503|504)([^0-9]|$)|Something went wrong while executing your query'; then
+	if printf '%s' "$merge_output" | grep -qiE '(^|[^[:alnum:]_])(HTTP(/[0-9.]+)?[[:space:]]+|status code:[[:space:]]*)(502|503|504)([^0-9]|$)|Something went wrong while executing your query'; then
 		return 0
 	fi
 	return 1
