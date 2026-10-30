@@ -1274,6 +1274,90 @@ test_mechanical_rearm_pass() {
 	return 0
 }
 
+# GH#36061: migrate the actual pre-fix shape, not a synthetic observation.
+test_legacy_bare_hold_recovery() {
+	local status=0
+	if ! (
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		TBR_ROOT="${TEST_ROOT}/legacy-bare-rearm"
+		TBR_REPOS_JSON="$REPOS_JSON"
+		_tbr_start_budget || exit 1
+		local tb_fixture_comments='' fixture_issue='{"state":"open","title":"Fix helper","body":"original","updated_at":"2026-10-30T00:00:00Z","labels":[{"name":"status:blocked"}]}'
+		local projected=0 receipts=0 saved_receipt='' queue_file="${TBR_ROOT}/queue/owner--repo--42.json"
+		local changed='' label='' rc=0
+		export TERMINAL_BLOCKER_SELF_LOGIN=runner-one TERMINAL_BLOCKER_NOW_EPOCH=1793318401
+		_tbr_run_stage() { shift; "$@"; return $?; }
+		gh() { printf '%s\n' "$fixture_issue"; return 0; }
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_fixture_comments"; return 0; }
+		set_issue_status() { projected=$((projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() { saved_receipt="$3"; receipts=$((receipts + 1)); return 0; }
+		tb_fixture_comments=$(jq -nc '[{id:10,body:"CLAIM_RELEASED reason=blocked runner=runner-one ts=2026-10-30T00:00:00Z",user:{login:"runner-one"},author_association:"MEMBER",created_at:"2026-10-30T00:00:00Z"}, {id:9,body:"CLAIM_RELEASED reason=blocked runner=runner-two ts=2026-10-29T23:59:00Z",user:{login:"runner-two"},author_association:"OWNER",created_at:"2026-10-29T23:59:00Z"}]')
+		[[ "$(_tbr_seed_reason "$tb_fixture_comments" runner-three false)" == unknown ]] || exit 1
+		# Evaluation failure is incomplete evidence, never positive expiry.
+		jq() {
+			local args="$*"
+			[[ "$args" != *'def epoch:'* ]] || return 1
+			command jq "$@"
+			return $?
+		}
+		terminal_blocker_backoff_active "$tb_fixture_comments" >/dev/null || rc=$?
+		[[ "$rc" -eq 2 ]] || exit 1
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$tb_fixture_comments" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
+		unset -f jq
+		tbr_enqueue owner/repo 42 unknown || exit 1
+		tbr_main rearm >/dev/null || exit 1
+		[[ -f "$queue_file" && "$projected" -eq 0 && "$receipts" -eq 0 ]] || exit 1
+		# Expiry must be checked without any change to issue.updated_at.
+		TERMINAL_BLOCKER_NOW_EPOCH=1793319300
+		tbr_main rearm >/dev/null || exit 1
+		[[ ! -f "$queue_file" && "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		tb_fixture_comments=$(jq -c --arg body "$saved_receipt" '. + [{body:$body,author_association:"MEMBER"}]' <<<"$tb_fixture_comments")
+		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$tb_fixture_comments" || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		tb_fixture_comments=$(jq -c '.[0:2]' <<<"$tb_fixture_comments")
+		TERMINAL_BLOCKER_NOW_EPOCH=1793318401
+		# Quoted, foreign and future retry directives cannot clear active backoff.
+		for changed in '"NONE"' '"COLLABORATOR"'; do
+			changed=$(jq -c --argjson association "$changed" '. + [{body:"terminal-blocker-circuit:retry",author_association:$association,created_at:"2026-10-30T00:00:01Z"}]' <<<"$tb_fixture_comments")
+			_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" && exit 1
+		done
+		changed=$(jq -c '. + [{body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-31T00:00:00Z"}]' <<<"$tb_fixture_comments")
+		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" && exit 1
+		changed=$(jq -c '. + [{id:11,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-30T00:00:01Z"}]' <<<"$tb_fixture_comments")
+		for label in needs-maintainer-permissions hold-for-review no-auto-dispatch parent-task needs-maintainer-review status:in-review; do
+			_tbr_release_circuit_hold owner/repo 42 "$(jq -c --arg label "$label" '.labels += [{name:$label}]' <<<"$fixture_issue")" "$changed" || exit 1
+		done
+		[[ "$projected" -eq 1 ]] || exit 1
+		tb_fixture_comments="$changed"
+		tbr_enqueue owner/repo 42 unknown || exit 1
+		tbr_main rearm >/dev/null || exit 1
+		[[ ! -f "$queue_file" && "$projected" -eq 2 && "$receipts" -eq 2 ]] || exit 1
+		# Even an old classified observation remains authoritative: a legacy
+		# fallback may not bypass its retry-only permission boundary.
+		changed=$(jq -c --arg f "$(_terminal_blocker_hash v2:permission_required)" '. + [{id:8,body:("<!-- aidevops:terminal-blocker-observation revision=aaaaaaaaaaaaaaaaaaaaaaaa blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-29T23:58:00Z"}]' <<<"$(jq -c '.[0:2]' <<<"$tb_fixture_comments")")
+		TERMINAL_BLOCKER_NOW_EPOCH=1793319300
+		_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" && exit 1
+		[[ "$projected" -eq 2 ]] || exit 1
+		# No/forged/untrusted/future release evidence cannot release a label.
+		for changed in '[]' \
+			'[{body:"CLAIM_RELEASED reason=blocked runner=other ts=x",user:{login:"runner-one"},author_association:"MEMBER",created_at:"2026-10-30T00:00:00Z"}]' \
+			'[{body:"CLAIM_RELEASED reason=blocked runner=other ts=x",user:{login:"other"},author_association:"COLLABORATOR",created_at:"2026-10-30T00:00:00Z"}]' \
+			'[{body:"CLAIM_RELEASED reason=blocked runner=runner-one ts=x",user:{login:"runner-one"},author_association:"MEMBER",created_at:"2026-10-31T00:00:00Z"}]'; do
+			changed=$(jq -nc "$changed")
+			rc=0
+			_tbr_release_circuit_hold owner/repo 42 "$fixture_issue" "$changed" || rc=$?
+			[[ "$rc" -eq 1 && "$projected" -eq 2 ]] || exit 1
+		done
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "legacy bare blocked holds seed and release once on trusted retry or unchanged-snapshot backoff expiry, preserving trust and other holds" "$status"
+	return 0
+}
+
 test_mechanical_rearm_scheduler() {
 	local status=0
 	if ! (
@@ -2090,6 +2174,7 @@ main() {
 	test_unknown_hold_rearms_on_trusted_retry
 	test_retry_only_observation_recovery
 	test_mechanical_rearm_pass
+	test_legacy_bare_hold_recovery
 	test_mechanical_rearm_scheduler
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
