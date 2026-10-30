@@ -178,7 +178,7 @@ for read_target in pr tag-ref tag-object; do
 	assert_read_transport "$read_target" empty-once 2 0 "$read_purpose: empty response; retrying"
 	assert_read_transport "$read_target" empty-always 3 1 "$read_purpose: empty response after 3 attempts"
 	assert_read_transport "$read_target" 5xx-once 2 0 "$read_purpose: HTTP 502; retrying"
-	for NETWORK_ERROR in \
+	for network_error in \
 		'error connecting to api.github.com' \
 		'dial tcp: lookup api.github.com: no such host' \
 		'dial tcp: i/o timeout' \
@@ -190,16 +190,16 @@ for read_target in pr tag-ref tag-object; do
 		'dial tcp: connect: connection refused' \
 		'dial tcp: connect: network is unreachable' \
 		'lookup api.github.com: temporary failure in name resolution'; do
-		export NETWORK_ERROR
+		export NETWORK_ERROR="$network_error"
 		assert_read_transport "$read_target" network-once 2 0 'network transport error; retrying'
 	done
 	assert_read_transport "$read_target" network-always 3 1 'network transport error after 3 attempts'
 	[[ ! -s "${TEST_ROOT}/read-output" ]]
-	for NETWORK_ERROR in 'gh: Unauthorized (HTTP 401)' 'gh: Not Found (HTTP 404)' \
+	for network_error in 'gh: Unauthorized (HTTP 401)' 'gh: Not Found (HTTP 404)' \
 		'gh: Forbidden (HTTP 403): connection reset by peer' \
 		'tls: failed to verify certificate: x509: certificate has expired' \
 		'unknown failure'; do
-		export NETWORK_ERROR
+		export NETWORK_ERROR="$network_error"
 		assert_read_transport "$read_target" network-always 1 1 'not retryable'
 	done
 done
