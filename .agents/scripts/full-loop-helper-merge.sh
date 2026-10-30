@@ -295,6 +295,15 @@ _merge_output_is_graphql_rate_limit() {
 	return $?
 }
 
+_merge_output_is_transient_server_error() {
+	local merge_output="$1"
+
+	if printf '%s' "$merge_output" | grep -qiE '(^|[^0-9])(502|503|504)([^0-9]|$)|Something went wrong while executing your query'; then
+		return 0
+	fi
+	return 1
+}
+
 _merge_output_is_review_policy_block() {
 	local merge_output="$1"
 
@@ -658,8 +667,8 @@ _merge_guard_prospective_todo() (
 # _merge_rest_fallback — squash/merge/rebase a PR via the REST pull merge endpoint.
 #
 # This is a transport fallback only. It is called after review-bot-gate has
-# passed and only when `gh pr merge` failed because its GraphQL path was rate
-# limited. The REST endpoint still enforces branch protection and mergeability;
+# passed and `gh pr merge` hit a GraphQL quota or transient server failure.
+# The REST endpoint still enforces branch protection and mergeability;
 # failures remain failures.
 #
 # Args: pr_number repo merge_method expected_head_sha [squash_subject] [merge_body_file]
@@ -691,7 +700,7 @@ _merge_rest_fallback() {
 	# mutable authority snapshot for the later REST mutation.
 	_merge_revalidate_transport_authority "$pr_number" "$repo" "$expected_head_sha" || return 1
 
-	print_info "GraphQL rate limit blocked gh pr merge; retrying via REST pull merge endpoint with verified head SHA ${expected_head_sha}..."
+	print_info "GitHub transport failure blocked gh pr merge; retrying via REST pull merge endpoint with verified head SHA ${expected_head_sha}..."
 	local rest_args=(-f "sha=${expected_head_sha}" -f "merge_method=${rest_method}")
 	[[ -n "$squash_subject" ]] && rest_args+=(-f "commit_title=${squash_subject}")
 	[[ -n "$merge_body_file" ]] && rest_args+=(-F "commit_message=@${merge_body_file}")
@@ -710,6 +719,30 @@ _merge_rest_fallback() {
 
 	print_error "REST merge fallback failed for PR #${pr_number}"
 	return 1
+}
+
+# A server error after a mutation has an unknown outcome. Reconcile via REST
+# before considering one retry; unreadable or changed state fails closed.
+_merge_recover_transient_server_error() {
+	local pr_number="$1" repo="$2" merge_method="$3" expected_head_sha="$4"
+	local squash_subject="$5" merge_body_file="$6" pr_json=""
+	pr_json=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}") || {
+		print_error "Could not reconcile server-error merge for PR #${pr_number}; refusing retry"
+		return 1
+	}
+	#aidevops:trust-boundary -- a failed transport is not proof the write failed,
+	# and only the previously verified head can be accepted or retried.
+	if jq -e --arg head "$expected_head_sha" '.merged == true and .head.sha == $head' <<<"$pr_json" >/dev/null 2>&1; then
+		print_success "PR #${pr_number} already merged at verified head ${expected_head_sha}; no retry issued"
+		return 0
+	fi
+	if ! jq -e --arg head "$expected_head_sha" '.merged == false and .state == "open" and .head.sha == $head' <<<"$pr_json" >/dev/null 2>&1; then
+		print_error "PR #${pr_number} is not open at the verified head after server error; refusing retry"
+		return 1
+	fi
+	# The fallback revalidates live review and transport authority before writing.
+	_merge_rest_fallback "$pr_number" "$repo" "$merge_method" "$expected_head_sha" "$squash_subject" "$merge_body_file" || return 1
+	return 0
 }
 
 # Final head-SHA read with bounded recovery from local admission deferral only.
@@ -1363,6 +1396,9 @@ ${_merge_retry_out}"
 		if [[ $has_auto -eq 0 ]] && _merge_output_is_graphql_rate_limit "$_merge_out"; then
 			_merge_rest_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" && return 0
 			return 1
+		elif [[ $has_auto -eq 0 ]] && _merge_output_is_transient_server_error "$_merge_out"; then
+			_merge_recover_transient_server_error "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" || return 1
+			return 0
 		elif [[ $has_admin -eq 0 && $has_auto -eq 1 ]]; then
 			local auto_admin_rc=0
 			_merge_try_interactive_admin_auto_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out" "$match_head_sha" "$squash_subject" "$merge_body_file" || auto_admin_rc=$?
