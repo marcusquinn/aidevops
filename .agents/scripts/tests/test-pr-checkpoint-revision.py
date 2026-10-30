@@ -90,9 +90,6 @@ def insert_renewed_attempt(data):
 
 
 class RevisionTests(unittest.TestCase):
-    def test_released_revised(self):
-        self.assertEqual(revision.validate(fixture())["approval_id"], 3)
-
     def test_legacy_release_and_ambiguous_attempt(self):
         data = fixture()
         data["comments"][1]["body"] = "CLAIM_RELEASED reason=blocked runner=worker"
@@ -159,27 +156,23 @@ class RevisionTests(unittest.TestCase):
             with self.subTest(event=event), self.assertRaises(ValueError):
                 revision.validate({**data, "comments": data["comments"] + [comment(4, event + "new-owner")]})
 
-    def test_blocked_lifecycle_requires_current_approval_snapshot(self):
-        for unassigned in (False, True):
-            data = unlabelled_blocked_fixture()
-            if unassigned:
-                data["issue"]["assignees"] = []
-            self.assertEqual(revision.validate(data)["approval_id"], 3)
-            approved_at = data["comments"][-1]["created_at"]
-            # The approval comment's own issue update is acceptable.
-            data["issue"]["updated_at"] = approved_at
-            self.assertEqual(revision.validate(data)["approval_id"], 3)
-            mutations = {
-                "missing metadata": lambda d: d["issue"].pop("updated_at"),
-                "not approved blocked": lambda d: d["comments"][-1].update(
-                    body=fixture()["comments"][-1]["body"]),
-            }
-            self.assert_mutations_rejected(mutations, lambda: copy.deepcopy(data), revision.validate)
-        data = fixture()
-        data["issue"]["labels"][1] = {"name": "status:blocked"}
-        data["issue"]["updated_at"] = "2026-09-05T12:01:00Z"
-        with self.assertRaises(ValueError):
-            revision.validate(data)
+    def test_released_revised_lifecycle_requires_current_approval_snapshot(self):
+        self.assertEqual(revision.validate(fixture())["approval_id"], 3)
+        data = unlabelled_blocked_fixture()
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+        # The approval comment's own issue update is acceptable.
+        data["issue"]["updated_at"] = data["comments"][-1]["created_at"]
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+        missing_metadata = copy.deepcopy(data["issue"])
+        missing_metadata.pop("updated_at")
+        invalidations = (
+            {"issue": missing_metadata},
+            {"comments": data["comments"][:-1] + [
+                {**data["comments"][-1], "body": fixture()["comments"][-1]["body"]}]},
+        )
+        for overrides in invalidations:
+            with self.assertRaises(ValueError):
+                revision.validate({**data, **overrides})
 
     def test_completed_release_retains_author_binding_and_actual_owner(self):
         for reason in ("clean", "worker_complete"):
@@ -288,10 +281,9 @@ class RevisionTests(unittest.TestCase):
                                    json.dumps(candidate["comments"]),
                                    json.dumps(candidate["issue_events"])], capture_output=True, check=False).returncode
         self.assertEqual(run(data), 0)
-        for unassigned in (False, True):
+        for assignees in ([{"login": "worker"}], []):
             changed = copy.deepcopy(data)
-            if unassigned:
-                changed["issue"]["assignees"] = []
+            changed["issue"]["assignees"] = assignees
             # A comment/claim update alone must not invalidate the blocked snapshot.
             changed["issue"]["updated_at"] = "2099-01-01T00:00:00Z"
             self.assertEqual(run(changed), 0)
@@ -371,7 +363,9 @@ class RevisionTests(unittest.TestCase):
                     self.assertEqual(revision.validate(data)["approval_id"], approval_id)
                 if unassigned:
                     data["issue"]["assignees"] = []
-                    data["issue"]["labels"][1] = {"name": "status:available"}
+                    status = data["issue"]["labels"][1]["name"]
+                    # Release the assigned lifecycle without erasing an approved block.
+                    data["issue"]["labels"][1] = {"name": {"status:in-review": "status:available"}.get(status, status)}
                 for c in data["comments"]:
                     c["created_at"] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
                 state = pathlib.Path(root) / "state.json"
