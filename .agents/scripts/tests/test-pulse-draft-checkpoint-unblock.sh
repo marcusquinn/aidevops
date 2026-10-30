@@ -61,6 +61,7 @@ pr_json() {
 	jq -cn --argjson number "$number" --argjson draft "$draft" --arg labels "$labels" --arg body "$body" '{
 		number: $number, draft: $draft, state: "open", body: $body,
 		head: {sha: ("sha" + ($number | tostring))},
+		base: {ref: "main", repo: {default_branch: "main"}},
 		labels: ($labels | split(",") | map(select(length > 0) | {name: .}))
 	}'
 	return 0
@@ -394,6 +395,23 @@ test_pr_shape_mismatch_stays_blocked() {
 	return 0
 }
 
+test_pr_target_branch_guard() {
+	local branch_filter=""
+	for branch_filter in '.base.ref = "feature"' 'del(.base.ref)' \
+		'del(.base.repo.default_branch)' '.base.repo.default_branch = ""'; do
+		reset_case
+		TEST_PRS=$(pages "$(pr_json 900 true "origin:worker" "Closes #501" | jq -c "$branch_filter")")
+		run_pass
+		assert_no_write "non-default or missing target metadata stays blocked: ${branch_filter}"
+	done
+	reset_case
+	TEST_PRS=$(pages "$(pr_json 900 true "origin:worker" "Closes #501" |
+		jq -c '.base.ref = "trunk" | .base.repo.default_branch = "trunk"')")
+	run_pass
+	assert_restored "501 ${SLUG} available --remove-assignee runner1" "a custom repository default branch permits closing references"
+	return 0
+}
+
 test_idempotent_and_capped() {
 	local marker="<!-- aidevops:ops kind=draft-checkpoint-unblock pr=900 release=6506414392 -->"
 	reset_case
@@ -572,6 +590,7 @@ main() {
 	test_label_actor_or_window_mismatch_stays_blocked
 	test_protected_or_ineligible_issue_stays_blocked
 	test_pr_shape_mismatch_stays_blocked
+	test_pr_target_branch_guard
 	test_idempotent_and_capped
 	test_unreadable_reads_fail_closed
 	test_deadline_and_listing_cost

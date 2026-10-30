@@ -102,6 +102,11 @@ _pdcu_draft_closing_refs() {
 		else . end
 		| select(.draft == true and .state == "open")
 		| select(any(.labels[]?; .name == "origin:worker"))
+		# GitHub only interprets closing keywords against the default branch.
+		# Missing branch metadata cannot prove an effective closing reference.
+		| select((.base.repo.default_branch | type) == "string")
+		| select((.base.repo.default_branch | length) > 0)
+		| select(.base.ref == .base.repo.default_branch)
 		| . as $pr
 		| [(.body // "") | ascii_downcase | match($ref; "g") | .captures[] | select(.name == "n") | .string]
 		| unique[]
