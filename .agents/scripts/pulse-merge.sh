@@ -521,7 +521,7 @@ _pm_gate_author_trust() {
 				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — verified Dependabot author ${pr_author} remains external but has current-head maintainer crypto-approval, proceeding" >>"$LOGFILE"
 			else
 				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — verified Dependabot author ${pr_author} remains external and lacks current-head maintainer crypto-approval; entering lifecycle reconciliation" >>"$LOGFILE"
-				_pm_gate_route_ineligible_author "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha"
+				_pm_gate_route_ineligible_author "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "approval-required"
 				return 1
 			fi
 		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$expected_head_sha"; then
@@ -536,9 +536,10 @@ _pm_gate_author_trust() {
 
 _pm_gate_route_ineligible_author() {
 	local pr_number="$1" repo_slug="$2" pr_author="$3" expected_head_sha="$4" intake_rc=0
-	_pulse_route_dependabot_pr_to_worker_issue "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "policy-ineligible" || intake_rc=$?
+	local reason="${5:-policy-ineligible}"
+	_pulse_route_dependabot_pr_to_worker_issue "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "$reason" || intake_rc=$?
 	case "$intake_rc" in
-	0) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — authentic Dependabot PR is outside automatic merge policy; routed to worker intake (GH#30351)" >>"$LOGFILE" ;;
+	0) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — authentic Dependabot PR requires ${reason}; routed to worker intake (GH#30351)" >>"$LOGFILE" ;;
 	3) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — authentic Dependabot PR has an explicit maintainer-review hold; preserving it without worker intake (GH#30389)" >>"$LOGFILE" ;;
 	4)
 		if [[ "${DRY_RUN:-0}" == "1" ]]; then
