@@ -61,6 +61,15 @@ _terminal_blocker_target_revision() {
 	return 0
 }
 
+# GH#36126: the recovery helper loads pulse-dep-graph.sh only when this is
+# undefined. Default to no declared dependency so release cases never reach
+# native GraphQL; TEST_BLOCKED_BY=unresolved holds a re-armed release.
+TEST_BLOCKED_BY=resolved
+is_blocked_by_unresolved() {
+	[[ "$TEST_BLOCKED_BY" == unresolved ]] && return 0
+	return 1
+}
+
 test_normalized_blocker_fingerprint() {
 	local first_output="${TEST_ROOT}/first.ndjson"
 	local second_output="${TEST_ROOT}/second.ndjson"
@@ -1276,6 +1285,73 @@ test_mechanical_rearm_pass() {
 	return 0
 }
 
+# GH#36126: a re-armed hold whose declared blocked-by dependency is still open
+# stays blocked without a receipt and keeps its queue entry, rechecking every
+# pass even when the issue snapshot is unchanged, then releases once the
+# dependency resolves.
+test_rearm_waits_for_blocked_by_dependency() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		TBR_ROOT="${TEST_ROOT}/dependency-rearm"
+		TBR_REPOS_JSON="$REPOS_JSON"
+		# Load shared runtime functions before installing write stubs.
+		_tbr_start_budget || exit 1
+		# Fixture names must not collide with _tbr_check_entry locals (issue,
+		# comments): stubs run under bash dynamic scoping.
+		local dep_fixture_comments='[]' revision="" marker="" queue_file="" rc=0 projected=0 receipts=0 dep_checks=0
+		local dep_fixture_issue='{"state":"open","title":"Publish logos","body":"original","labels":[{"name":"status:blocked"}],"updated_at":"2026-10-30T01:00:00Z"}'
+		export TERMINAL_BLOCKER_SELF_LOGIN=runner-one
+		_tbr_run_stage() { shift; "$@"; return $?; }
+		tbr_seed() { exit 1; }
+		_tbr_decision_active() { exit 1; }
+		gh() {
+			[[ "$*" == 'api repos/owner/repo/issues/42' ]] || return 1
+			printf '%s\n' "$dep_fixture_issue"
+			return 0
+		}
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$dep_fixture_comments"; return 0; }
+		set_issue_status() { projected=$((projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() { receipts=$((receipts + 1)); return 0; }
+		is_blocked_by_unresolved() {
+			local repo_slug="$2"
+			local issue_number="$3"
+			dep_checks=$((dep_checks + 1))
+			[[ "$repo_slug" == owner/repo && "$issue_number" == 42 ]] || exit 1
+			[[ "$TEST_BLOCKED_BY" == unresolved ]] && return 0
+			return 1
+		}
+		revision=$(terminal_blocker_task_revision "$dep_fixture_issue" owner/repo 42 "$TEST_ROOT" permission_required) || exit 1
+		marker="<!-- ${_TBC_OBSERVATION_MARKER} revision=${revision} blocker=$(_terminal_blocker_hash v2:permission_required) -->"
+		dep_fixture_comments=$(jq -nc --arg m "$marker" \
+			'[{id:10,body:$m,author_association:"MEMBER",created_at:"2026-10-30T00:00:00Z"},
+			  {id:11,body:"Maintainer recovery.\n\nterminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-30T00:30:00Z"}]')
+		# The release helper itself reports the dependency hold distinctly.
+		TEST_BLOCKED_BY=unresolved
+		_tbr_release_circuit_hold owner/repo 42 "$dep_fixture_issue" "$dep_fixture_comments" 2>"${TEST_ROOT}/dependency-rearm.err" || rc=$?
+		[[ "$rc" -eq 3 && "$projected" -eq 0 && "$receipts" -eq 0 ]] || exit 1
+		[[ "$(<"${TEST_ROOT}/dependency-rearm.err")" == *'reason=dependency_blocked'* ]] || exit 1
+		tbr_enqueue owner/repo 42 permission_required || exit 1
+		queue_file="${TBR_ROOT}/queue/owner--repo--42.json"
+		# Two complete passes with an unchanged snapshot: held, never stamped.
+		dep_checks=0
+		tbr_main rearm >"${TBR_ROOT}/out" 2>/dev/null || exit 1
+		tbr_main rearm >"${TBR_ROOT}/out" 2>/dev/null || exit 1
+		[[ -f "$queue_file" && "$projected" -eq 0 && "$receipts" -eq 0 && "$dep_checks" -eq 2 && ! -s "${TBR_ROOT}/out" ]] || exit 1
+		[[ -z "$(jq -r '.rearm_checked_updated_at // ""' "$queue_file")" ]] || exit 1
+		# The blocker closes without touching this issue: the next pass releases.
+		TEST_BLOCKED_BY=resolved
+		tbr_main rearm >"${TBR_ROOT}/out" 2>/dev/null || exit 1
+		[[ ! -f "$queue_file" && "$projected" -eq 1 && "$receipts" -eq 1 && ! -s "${TBR_ROOT}/out" ]] || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "re-armed hold with an unresolved blocked-by dependency stays queued without a receipt and releases once it resolves" "$status"
+	return 0
+}
+
 test_mechanical_rearm_scheduler() {
 	local status=0
 	if ! (
@@ -2273,6 +2349,7 @@ main() {
 	test_unknown_hold_rearms_on_trusted_retry
 	test_retry_only_observation_recovery
 	test_mechanical_rearm_pass
+	test_rearm_waits_for_blocked_by_dependency
 	test_mechanical_rearm_scheduler
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"

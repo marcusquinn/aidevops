@@ -602,6 +602,45 @@ _tbr_circuit_blocks_release() {
 	return 0
 }
 
+#######################################
+# GH#36126: a re-armed release must respect dispatch's own blocked-by gate.
+# The dependency normalizer re-blocks an issue with an open blocker within
+# minutes, and a posted rearm receipt would then retire the queue entry for
+# good, so nothing releases it once the blocker closes.
+# Mirrors stale recovery (_stale_recovery_has_unresolved_blocked_by): native
+# relationships first, body markers as fallback, an unavailable native lookup
+# counts as blocked. When the dependency library cannot be loaded, keep the
+# pre-GH#36126 behaviour (fail open) rather than holding every re-arm.
+# Args: repo slug, issue number, issue JSON, observed and current revisions
+# Returns: 0 (and logs the decision) while a declared dependency is open or
+# unknown; 1 otherwise.
+#######################################
+_tbr_dependency_unresolved() {
+	local repo="$1" issue="$2" issue_json="$3" observed_rev="${4:-unknown}" current_rev="${5:-unknown}"
+	local body=""
+	if ! declare -F is_blocked_by_unresolved >/dev/null 2>&1; then
+		# shellcheck source=pulse-dep-graph.sh
+		source "${_TBR_SCRIPT_DIR}/pulse-dep-graph.sh" >/dev/null 2>&1 || true
+	fi
+	declare -F is_blocked_by_unresolved >/dev/null 2>&1 || return 1
+	body=$(printf '%s' "$issue_json" | jq -r '.body // ""' 2>/dev/null) || body=""
+	# The dependency library appends diagnostics to the pulse log, which a
+	# standalone CLI run does not define.
+	local LOGFILE="${LOGFILE:-/dev/null}"
+	is_blocked_by_unresolved "$body" "$repo" "$issue" || return 1
+	printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=dependency_blocked\n' \
+		"$issue" "$observed_rev" "$current_rev" >&2
+	return 0
+}
+
+#######################################
+# Release a re-armed hold: project status:blocked -> status:available and
+# post the public rearm receipt.
+# Args: repo slug, issue number, issue JSON, trusted comments JSON
+# Returns: 0 released, suppressed or not applicable; 1 no authoritative
+# evidence (retire the entry); 2 indeterminate; 3 re-armed but a declared
+# blocked-by dependency is unresolved (GH#36126: keep the entry, write nothing).
+#######################################
 _tbr_release_circuit_hold() {
 	local repo="$1"
 	local issue="$2"
@@ -664,6 +703,8 @@ _tbr_release_circuit_hold() {
 	printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=%s\n' \
 		"$issue" "$observed_rev" "$current_rev" "$decision" >&2
 	[[ "$decision" == revision_changed || "$decision" == trusted_retry ]] || return 2
+	# GH#36126: hold without a receipt while a dependency is open.
+	_tbr_dependency_unresolved "$repo" "$issue" "$issue_json" "$observed_rev" "$current_rev" && return 3
 	# The key binds the observed event, destination revision and retry event.
 	# A public receipt, not runner-local queue retirement, suppresses replay.
 	# Hash immutable event identity only, not mutable author associations or prose.
@@ -770,6 +811,10 @@ _tbr_check_entry() {
 		# Return 1 retires evidence-free intake without releasing any hold.
 		local release_rc=0
 		_tbr_release_circuit_hold "$repo" "$issue" "$issue_json" "$comments" || release_rc=$?
+		# GH#36126: dependency-held. Keep the entry and its decision, and do
+		# not stamp rearm_checked_updated_at: a blocker closing need not touch
+		# this issue's updated_at, so every pass must recheck it.
+		[[ "$release_rc" -ne 3 ]] || return 1
 		[[ "$release_rc" -lt 2 ]] || return 2
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
