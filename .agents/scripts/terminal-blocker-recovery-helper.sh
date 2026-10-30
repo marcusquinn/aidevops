@@ -451,6 +451,30 @@ _tbr_latest_legacy_release() {
 	return $?
 }
 
+# Bare releases lack a durable label-event identifier. Accept only a unique
+# same-second, same-actor blocked-label application, with no later transition.
+# Anything less precise (including unavailable history) needs manual recovery;
+# an old release/retry must never authorize a newer dependency/maintainer hold.
+_tbr_legacy_hold_matches() {
+	local repo="$1" issue="$2" evidence="$3" issue_json="$4"
+	local events=""
+	events=$(gh api "repos/${repo}/issues/${issue}/events?per_page=100" --paginate --slurp 2>/dev/null) || return 2
+	jq -e --argjson evidence "$evidence" --argjson issue "$issue_json" --arg blocked 'status:blocked' --arg array 'array' '
+		if type != $array or any(.[]; type != $array) then error("invalid history") else flatten end
+		| map(select((.event == "labeled" or .event == "unlabeled") and .label.name == $blocked))
+		| if any(.[]; (.id | type) != "number" or (.actor.login | type) != "string" or
+			(try (.created_at | fromdateiso8601) catch null) == null) then error("invalid event") else . end
+		| sort_by(.created_at, .id) as $events
+		| ($events | last) as $current
+		| ($evidence.author // $evidence.user.login) as $runner
+		| any($issue.labels[]; .name == $blocked)
+			and $current.event == "labeled" and $current.actor.login == $runner
+			and $current.created_at == $evidence.created_at
+			and ([$events[] | select(.created_at == $evidence.created_at)] | length == 1)
+	' <<<"$events" >/dev/null 2>&1 || return 2
+	return 0
+}
+
 # Unlike the historical dispatch predicate, indeterminate circuit revisions
 # are not evidence of inactivity at a write boundary.
 _tbr_circuit_blocks_release() {
@@ -510,6 +534,7 @@ _tbr_release_circuit_hold() {
 	retry=$(_terminal_blocker_latest_retry_comment "$comments") || return 2
 	decision=unchanged
 	if [[ "$legacy" == true ]]; then
+		_tbr_legacy_hold_matches "$repo" "$issue" "$evidence" "$issue_json" || return 2
 		observed_rev=legacy current_rev=legacy
 		fingerprint=$(_terminal_blocker_hash "v2:${_TBC_UNKNOWN}") || return 2
 		[[ "$now" =~ ^[0-9]+$ ]] || now=$(date -u '+%s')
@@ -518,7 +543,7 @@ _tbr_release_circuit_hold() {
 			decision=trusted_retry
 		else
 			local backoff_rc=0
-			terminal_blocker_backoff_active "$comments" >/dev/null || backoff_rc=$?
+			terminal_blocker_backoff_active "$comments" true >/dev/null || backoff_rc=$?
 			[[ "$backoff_rc" -lt 2 ]] || return 2
 			[[ "$backoff_rc" -ne 1 ]] || decision=backoff_expired
 		fi

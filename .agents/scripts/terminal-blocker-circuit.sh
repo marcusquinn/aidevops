@@ -721,8 +721,10 @@ terminal_blocker_circuit_comment() {
 # revisions and comment-bloat mode. Expiry or an explicit trusted retry re-arms
 # dispatch; no labels or comments are written by this gate.
 # Return 2 on evaluation failure so write-boundary callers never infer expiry.
+# Optional require_established=true also returns 2 when no backoff was established.
 terminal_blocker_backoff_active() {
 	local comments_json="$1"
+	local require_established="${2:-false}"
 	local now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
 	local evidence="" count=0 last_epoch=0 delay=900 steps=0 self_login=""
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
@@ -748,7 +750,11 @@ terminal_blocker_backoff_active() {
 			| epoch] | [length, (max // 0)] | @tsv
 	' 2>/dev/null) || return 2
 	IFS=$'\t' read -r count last_epoch <<<"$evidence"
-	[[ "$count" =~ ^[0-9]+$ && "$last_epoch" =~ ^[0-9]+$ && "$count" -ge 2 ]] || return 1
+	[[ "$count" =~ ^[0-9]+$ && "$last_epoch" =~ ^[0-9]+$ ]] || return 2
+	if [[ "$count" -lt 2 ]]; then
+		[[ "$require_established" != true ]] || return 2
+		return 1
+	fi
 	# Two failures: 15 minutes; each further failure doubles the delay, capped
 	# at 24 hours. Cap before arithmetic so even very long histories stay safe.
 	steps=$((count - 2))
