@@ -25,6 +25,7 @@
 #   - Assert section membership and proof-log presence.
 
 set -u
+export AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL=1 # disposable fixture repos
 
 # Fixture repositories are disposable; use native Git rather than the runtime
 # canonical-worktree guard shim that protects the actual source checkout.
