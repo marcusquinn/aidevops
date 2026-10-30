@@ -1183,18 +1183,24 @@ test_mechanical_rearm_pass() {
 		tbr_main rearm >"${TBR_ROOT}/out" || exit 1
 		[[ ! -f "$queue_file" && "$projected" -eq 1 && "$receipts" -eq 1 && ! -s "${TBR_ROOT}/out" ]] || exit 1
 		[[ -f "${TBR_ROOT}/rearm_cursor" && ! -f "${TBR_ROOT}/pending_cursor" ]] || exit 1
-		# Target revisions can change without updating the issue timestamp.
+		# Target movement must re-arm both first observations and circuits even
+		# when the issue snapshot (including updated_at) has not changed.
 		_tbr_repo_path() { printf '%s\n' "$TEST_ROOT"; return 0; }
-		revision=$(terminal_blocker_task_revision "$fixture_issue" owner/repo 42 "$TEST_ROOT" target_code_blocker) || exit 1
-		fingerprint=$(_terminal_blocker_hash v2:target_code_blocker)
-		tb_fixture_comments=$(jq -nc --arg r "$revision" --arg f "$fingerprint" \
-			'[{id:20,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-30T00:00:00Z"}]')
-		tbr_enqueue owner/repo 42 target_code_blocker || exit 1
-		tbr_main rearm >"${TBR_ROOT}/out" || exit 1
-		[[ -f "$queue_file" && "$(jq -r .rearm_checked_updated_at "$queue_file")" == "$fixture_at" ]] || exit 1
-		TEST_TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-		tbr_main rearm >"${TBR_ROOT}/out" || exit 1
-		[[ ! -f "$queue_file" && "$projected" -eq 2 && "$receipts" -eq 2 && ! -s "${TBR_ROOT}/out" ]] || exit 1
+		local marker=""
+		for marker in observation circuit; do
+			projected=0 receipts=0
+			TEST_TARGET_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+			revision=$(terminal_blocker_task_revision "$fixture_issue" owner/repo 42 "$TEST_ROOT" target_code_blocker) || exit 1
+			fingerprint=$(_terminal_blocker_hash v2:target_code_blocker)
+			tb_fixture_comments=$(jq -nc --arg r "$revision" --arg f "$fingerprint" --arg m "$marker" \
+				'[{id:10,body:("<!-- aidevops:terminal-blocker-"+$m+" revision="+$r+" blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-30T00:00:00Z"}]')
+			tbr_enqueue owner/repo 42 target_code_blocker || exit 1
+			tbr_main rearm >"${TBR_ROOT}/out" || exit 1
+			[[ -f "$queue_file" && "$projected" -eq 0 && "$(jq -r .rearm_checked_updated_at "$queue_file")" == "$fixture_at" ]] || exit 1
+			TEST_TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+			tbr_main rearm >"${TBR_ROOT}/out" || exit 1
+			[[ ! -f "$queue_file" && "$projected" -eq 1 && "$receipts" -eq 1 && ! -s "${TBR_ROOT}/out" ]] || exit 1
+		 done
 		exit 0
 	); then
 		status=1
