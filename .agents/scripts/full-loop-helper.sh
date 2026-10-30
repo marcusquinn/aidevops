@@ -211,6 +211,42 @@ _diff_is_planning_only() {
 	return 0
 }
 
+# Validate an explicit task prefix before publishing (GH#36016). TODO proof
+# must match both the task and issue; an issue title is an alternative proof.
+_validate_explicit_pr_title() {
+	local issue_number="$1" title="$2" repo="$3" todo_file="${4:-}"
+	if [[ ! "$title" =~ ^t([0-9]+): ]]; then
+		printf '%s\n' "$title"
+		return 0
+	fi
+	local task_number="${BASH_REMATCH[1]}" repo_root="" issue_title=""
+	if [[ -z "$todo_file" ]]; then
+		repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+		[[ -z "$repo_root" ]] || todo_file="${repo_root}/TODO.md"
+	fi
+	if [[ -n "$issue_number" && -f "$todo_file" ]] &&
+		grep -qE "^- \[[ x]\] t${task_number} .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file"; then
+		printf '%s\n' "$title"
+		return 0
+	fi
+	if [[ -n "$issue_number" ]]; then
+		issue_title=$(gh issue view "$issue_number" --repo "$repo" --json title --jq '.title' 2>/dev/null) || issue_title=""
+	fi
+	if [[ "$issue_title" =~ (^|[^a-zA-Z0-9_])t${task_number}([^a-zA-Z0-9_]|$) ]]; then
+		printf '%s\n' "$title"
+		return 0
+	fi
+	local derived_prefix=""
+	derived_prefix=$(_derive_pr_title_prefix "$issue_number" "$todo_file")
+	if [[ "$task_number" == "$issue_number" ]]; then
+		print_warning "Explicit PR title uses issue #${issue_number} as an unclaimed task ID; using '${derived_prefix}:' instead." >&2
+		printf '%s:%s\n' "$derived_prefix" "${title#*:}"
+		return 0
+	fi
+	print_error "Explicit PR title task t${task_number} is not linked to issue #${issue_number}. Use '--title ${derived_prefix}: ...' or establish the task's TODO/issue-title linkage before pushing." >&2
+	return 1
+}
+
 # Derive final-diff metadata after rebase but before any remote mutation.
 # Invalid risk/testing evidence must not leave a pushed orphan branch.
 _commit_and_pr_prepare_metadata() {
@@ -226,9 +262,11 @@ _commit_and_pr_prepare_metadata() {
 	files_changed=$(printf '%s' "$files_changed" | tr '\n' ',' | sed 's/,/, /g')
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base") || return 1
 
-	# Preserve explicit titles; avoid double-prefixing a GH# or tNNN commit title.
+	# Validate explicit titles before push; avoid double-prefixing derived titles.
 	if [[ -z "$pr_title" ]]; then
 		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")"
+	elif [[ "$pr_title" =~ ^t[0-9]+: ]]; then
+		pr_title=$(_validate_explicit_pr_title "$issue_number" "$pr_title" "$repo") || return 1
 	fi
 	# Use the same origin detection as gh_create_pr (GH#21825).
 	origin_label=$(session_origin_label)

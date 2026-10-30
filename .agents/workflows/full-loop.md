@@ -225,6 +225,8 @@ PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
 
 Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. Interactive PR creation defaults to draft so work survives interruption or restart. In a repository where the session has maintainer authority, implementation intent (`/full-loop`, "fix", "implement", "work on this now", or an issue-started implementation) is the finalise/ready consent: once verification passes and the remote head equals local `HEAD`, run `gh pr ready` and continue to 4.4 without another prompt. Keep the draft only when the user asked for review-first or draft-only, or the work is incomplete or blocked; external contributions stop at a verified ready PR. On rebase conflict: aborts and returns 1 — resolve and retry.
 
+Explicit `--title` task prefixes are validated before push against TODO/linked-issue proof; issue-only work uses `GH#NNN`, not an invented `tNNN` task ID.
+
 External contributions use the target's fork/branch, PR template, title, issue-linking, and review conventions from `workflows/pr.md`; do not add aidevops labels, merge summaries, signatures, or issue-closing automation.
 
 **Self-modifying helper fixes:** If this PR edits `full-loop-helper.sh` or its sourced helper libraries, run the committed worktree helper explicitly for merge verification instead of resolving `full-loop-helper.sh` from PATH. Commit first, then use `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"` so the merge path exercises the code that will ship, not the deployed helper copy.
