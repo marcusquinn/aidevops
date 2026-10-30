@@ -1802,7 +1802,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18817 fix(terminal-blocker): re-arm must not release holds with unresolved blocked-by dependencies #bug #priority:high ref:GH#36126 pr:#36129 completed:2026-10-30
 
-- [ ] t18818 fix(pulse): defer parent dispatch while its consolidation child is in flight; runner-local preconditions are runner_capability_unmet #bug ref:GH#36133
+- [x] t18818 fix(pulse): defer parent dispatch while its consolidation child is in flight; runner-local preconditions are runner_capability_unmet #bug ref:GH#36133 pr:#36134 completed:2026-10-30
 
 ## In Progress
 
