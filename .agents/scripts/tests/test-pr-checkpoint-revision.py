@@ -165,14 +165,10 @@ class RevisionTests(unittest.TestCase):
         self.assertEqual(revision.validate(data)["approval_id"], 3)
         missing_metadata = copy.deepcopy(data["issue"])
         missing_metadata.pop("updated_at")
-        invalidations = (
-            {"issue": missing_metadata},
-            {"comments": data["comments"][:-1] + [
-                {**data["comments"][-1], "body": fixture()["comments"][-1]["body"]}]},
-        )
-        for overrides in invalidations:
-            with self.assertRaises(ValueError):
-                revision.validate({**data, **overrides})
+        self.assertRaises(ValueError, revision.validate, {**data, "issue": missing_metadata})
+        without_snapshot = {**data["comments"][-1], "body": fixture()["comments"][-1]["body"]}
+        self.assertRaises(ValueError, revision.validate,
+                          {**data, "comments": data["comments"][:-1] + [without_snapshot]})
 
     def test_completed_release_retains_author_binding_and_actual_owner(self):
         for reason in ("clean", "worker_complete"):
@@ -281,17 +277,18 @@ class RevisionTests(unittest.TestCase):
                                    json.dumps(candidate["comments"]),
                                    json.dumps(candidate["issue_events"])], capture_output=True, check=False).returncode
         self.assertEqual(run(data), 0)
-        for assignees in ([{"login": "worker"}], []):
-            changed = copy.deepcopy(data)
-            changed["issue"]["assignees"] = assignees
-            # A comment/claim update alone must not invalidate the blocked snapshot.
-            changed["issue"]["updated_at"] = "2099-01-01T00:00:00Z"
-            self.assertEqual(run(changed), 0)
-            # Reapply the same sole blocked label after approval: reject even
-            # though the current label set is identical to the approved one.
-            changed["issue_events"].append({"event": "labeled", "label": {"name": "status:blocked"},
-                                            "created_at": changed["issue"]["updated_at"]})
-            self.assertNotEqual(run(changed), 0)
+        changed = copy.deepcopy(data)
+        # A comment/claim update alone must not invalidate the blocked snapshot.
+        changed["issue"]["updated_at"] = "2099-01-01T00:00:00Z"
+        unassigned_issue = {**changed["issue"], "assignees": []}
+        self.assertEqual(run(changed), 0)
+        self.assertEqual(run({**changed, "issue": unassigned_issue}), 0)
+        # Reapply the same sole blocked label after approval: reject both owner
+        # states even though the current label set matches the approved one.
+        changed["issue_events"].append({"event": "labeled", "label": {"name": "status:blocked"},
+                                        "created_at": changed["issue"]["updated_at"]})
+        self.assertNotEqual(run(changed), 0)
+        self.assertNotEqual(run({**changed, "issue": unassigned_issue}), 0)
         shared_holds = ("hold-for-review", "needs-maintainer-review", "no-auto-dispatch", "persistent")
         label_cases = itertools.chain(
             itertools.product(("pr", "issue"), shared_holds),
