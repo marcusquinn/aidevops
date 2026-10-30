@@ -1,8 +1,33 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { spawn } from "child_process";
+import { execFile, spawn } from "child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { processStartIdentity } from "./process-start-identity.mjs";
+
+const execFileAsync = promisify(execFile);
+
+/** Release fallback server ownership only at session deletion, never at idle. */
+export async function releasePreEditSessionOwnership(input) {
+  const event = input?.event;
+  if (event?.type !== "session.deleted") return;
+  const session = event.properties?.info?.id || event.properties?.sessionID;
+  if (!/^ses_[A-Za-z0-9_-]+$/.test(session || "")) return;
+  const identity = processStartIdentity(process.pid);
+  if (!identity) throw new Error("Session ownership release lacks server generation proof");
+  const database = process.env.WORKTREE_REGISTRY_DB || join(
+    process.env.WORKTREE_REGISTRY_DIR || join(homedir(), ".aidevops", ".agent-workspace"),
+    "worktree-registry.db",
+  );
+  // #aidevops:trust-boundary — the owner is this server, not a PID from the event.
+  await execFileAsync("python3", [
+    fileURLToPath(new URL("../../scripts/shared-worktree-registry-owner.py", import.meta.url)),
+    "release-session", database, String(process.pid), session, identity,
+  ], { timeout: 10000 });
+}
 
 /**
  * Run loop-mode checks in their own process group so a timeout cannot leave a
