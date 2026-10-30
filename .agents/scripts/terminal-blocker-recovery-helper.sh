@@ -618,6 +618,10 @@ _tbr_circuit_blocks_release() {
 _tbr_dependency_unresolved() {
 	local repo="$1" issue="$2" issue_json="$3" observed_rev="${4:-unknown}" current_rev="${5:-unknown}"
 	local body=""
+	# Standalone runs do not load pulse-wrapper-config.sh: mirror its cache
+	# defaults so the library's cache reader works under set -u.
+	DEP_GRAPH_CACHE_FILE="${DEP_GRAPH_CACHE_FILE:-${HOME}/.aidevops/.agent-workspace/supervisor/dep-graph-cache.json}"
+	DEP_GRAPH_CACHE_TTL_SECS="${DEP_GRAPH_CACHE_TTL_SECS:-300}"
 	if ! declare -F is_blocked_by_unresolved >/dev/null 2>&1; then
 		# shellcheck source=pulse-dep-graph.sh
 		source "${_TBR_SCRIPT_DIR}/pulse-dep-graph.sh" >/dev/null 2>&1 || true
