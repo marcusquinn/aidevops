@@ -195,6 +195,160 @@ event 3
 rc=0
 _pulse_event_refill_dispatch_gate || rc=$?
 [[ "$rc" -eq 1 ]]
+grep -q 'DISPATCH_BREAKER_SKIP context=event_refill breaker=permission_block' "$LOGFILE"
+grep -q 'action=blocked reason=permission_block_circuit trigger=retained' "$LOGFILE"
+
+# GH#36122: every launch path consults the shared breaker gate. Real
+# apply_dispatch_max, preflight fills, active/early-exit refills and the
+# supervisor command router run; only the launch primitives are recorded.
+# shellcheck source=../pulse-dispatch-engine.sh
+source "$SCRIPTS_DIR/pulse-dispatch-engine.sh"
+# shellcheck source=../pulse-wrapper-commands.sh
+source "$SCRIPTS_DIR/pulse-wrapper-commands.sh"
+STOP_FLAG="$TEST_ROOT/stop.flag"
+LAUNCHES="$TEST_ROOT/launches"
+PULSE_ACTIVE_REFILL_INTERVAL=120
+PULSE_ACTIVE_REFILL_IDLE_MIN=60
+PULSE_ACTIVE_REFILL_STALL_MIN=120
+PULSE_BACKFILL_MAX_ATTEMPTS=1
+PULSE_LAUNCH_GRACE_SECONDS=0
+pulse_stats_increment() {
+	local counter="$1"
+	printf '%s\n' "$counter" >>"$STATS"
+	return 0
+}
+dispatch_max() {
+	printf 'dispatch_max\n' >>"$LAUNCHES"
+	printf '1\n'
+	return 0
+}
+dispatch_with_dedup() {
+	printf 'dispatch_with_dedup\n' >>"$LAUNCHES"
+	return 0
+}
+run_underfill_worker_recycler() {
+	printf 'recycler\n' >>"$LAUNCHES"
+	return 0
+}
+_dispatch_begin_benign_blocks_cycle() { return 0; }
+_dispatch_cleanup_benign_blocks_cycle() { return 0; }
+_adaptive_launch_settle_wait() { return 0; }
+_dispatch_min_worker_floor_refill() { return 0; }
+_dispatch_invalidate_candidate_snapshot() { return 0; }
+_preflight_rest_core_allows_next() { return 1; }
+_preflight_post_label_refill_wall_clock_allows() { return 0; }
+count_active_workers() { printf '0\n'; return 0; }
+get_max_workers_target() { printf '4\n'; return 0; }
+count_runnable_candidates() { printf '3\n'; return 0; }
+count_queued_without_worker() { printf '0\n'; return 0; }
+normalize_count_output() { printf '%s\n' "${1:-0}"; return 0; }
+_dispatch_floor_aware_worker_target() { printf '%s\n' "$1"; return 0; }
+
+launches() {
+	[[ -f "$LAUNCHES" ]] || { printf '0\n'; return 0; }
+	wc -l <"$LAUNCHES" | tr -d ' '
+	return 0
+}
+
+run_command_dispatch() {
+	local rc=0
+	_pulse_wrapper_run_command dispatch 1 owner/repo title issue user /tmp/repo prompt \
+		>"$TEST_ROOT/cmd.out" 2>"$TEST_ROOT/cmd.err" || rc=$?
+	printf '%s\n' "$rc"
+	return 0
+}
+
+expect_skip() {
+	local context="$1" breaker="$2" label="$3"
+	if [[ "$(launches)" != 0 ]] ||
+		! grep -q "DISPATCH_BREAKER_SKIP context=${context} breaker=${breaker}\$" "$LOGFILE"; then
+		printf 'FAIL: %s (launches=%s)\n' "$label" "$(launches)" >&2
+		exit 1
+	fi
+	PASSED=$((PASSED + 1))
+	printf 'PASS: %s\n' "$label"
+	return 0
+}
+
+trip_permission_breaker() {
+	reset_fixture
+	rm -f "$LAUNCHES"
+	event 1
+	event 2
+	event 3
+	return 0
+}
+
+trip_permission_breaker
+_preflight_early_dispatch
+expect_skip early permission_block 'early first-wave fill honours tripped breaker'
+trip_permission_breaker
+_preflight_post_label_refill
+expect_skip post_label permission_block 'post-label refill honours tripped breaker'
+trip_permission_breaker
+apply_dispatch_max
+expect_skip dispatch_max permission_block 'apply_dispatch_max honours tripped breaker for any caller'
+trip_permission_breaker
+rc=0
+pulse_dispatch_breakers_allow main || rc=$?
+[[ "$rc" -eq 1 && "$PULSE_DISPATCH_BREAKER_TRIPPED" == permission_block ]]
+expect_skip main permission_block 'main-cycle pre-check names the tripped breaker'
+trip_permission_breaker
+[[ "$(maybe_refill_underfilled_pool_during_active_pulse 0 200 200 true)" == "$NOW" ]]
+expect_skip active_refill permission_block 'active-pulse refill neither recycles nor launches'
+trip_permission_breaker
+_run_early_exit_recycle_loop 10
+expect_skip early_exit_recycle permission_block 'early-exit recycle stops at tripped breaker'
+trip_permission_breaker
+[[ "$(run_command_dispatch)" == 1 ]]
+grep -q 'outcome=deferred' "$TEST_ROOT/cmd.out"
+grep -q 'runner-local permission_block breaker is tripped' "$TEST_ROOT/cmd.err"
+[[ "$(<"$TEST_ROOT/cmd.err")" != *SENSITIVE_SENTINEL* && "$(<"$LOGFILE")" != *SENSITIVE_SENTINEL* ]]
+expect_skip command permission_block 'supervisor --command dispatch refuses while tripped'
+
+# Untripped and bypassed breakers leave every launch path unchanged.
+reset_fixture
+rm -f "$LAUNCHES"
+apply_dispatch_max
+[[ "$(run_command_dispatch)" == 0 ]]
+[[ "$(<"$LAUNCHES")" == $'dispatch_max\ndispatch_with_dedup' ]]
+if grep -q DISPATCH_BREAKER_SKIP "$LOGFILE"; then
+	printf 'FAIL: untripped breakers logged a skip\n' >&2
+	exit 1
+fi
+PASSED=$((PASSED + 1))
+printf 'PASS: %s\n' 'untripped breakers dispatch unchanged'
+for bypass in AIDEVOPS_SKIP_PERMISSION_BLOCK_BREAKER=1 AIDEVOPS_PERMISSION_BLOCK_WINDOW_MAX=0; do
+	trip_permission_breaker
+	export "${bypass?}"
+	apply_dispatch_max
+	[[ "$(run_command_dispatch)" == 0 ]]
+	[[ "$(launches)" == 2 ]]
+	unset "${bypass%%=*}"
+	PASSED=$((PASSED + 1))
+	printf 'PASS: %s disables the breaker on every path\n' "$bypass"
+done
+
+# The no_work and runner-health breakers use the same gate and bypasses.
+reset_fixture
+rm -f "$LAUNCHES"
+export AIDEVOPS_NO_WORK_WINDOW_MAX=3
+printf '%s\n' 'crash_type=no_work' 'crash_type=no_work' 'crash_type=no_work' >"$LOGFILE"
+[[ "$(run_command_dispatch)" == 1 ]]
+expect_skip command no_work 'no_work breaker blocks supervisor dispatch'
+export AIDEVOPS_SKIP_NO_WORK_BREAKER=1
+apply_dispatch_max
+[[ "$(launches)" == 1 ]]
+unset AIDEVOPS_SKIP_NO_WORK_BREAKER AIDEVOPS_NO_WORK_WINDOW_MAX
+rm -f "$HOME/.aidevops/logs/pulse-no-work-breaker.state"
+PASSED=$((PASSED + 1))
+printf 'PASS: %s\n' 'no_work bypass still disables its breaker'
+reset_fixture
+rm -f "$LAUNCHES"
+bash "$SCRIPTS_DIR/pulse-runner-health-helper.sh" pause --reason 'breaker gate test' >/dev/null 2>&1
+_preflight_early_dispatch
+expect_skip early runner_health 'runner-health breaker blocks the early fill'
+bash "$SCRIPTS_DIR/pulse-runner-health-helper.sh" resume --reason 'breaker gate test' >/dev/null 2>&1
 
 # Run the production reporter against synthetic local stats, without network.
 unset -f date

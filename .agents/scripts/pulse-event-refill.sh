@@ -11,6 +11,10 @@ _PULSE_EVENT_REFILL_LOADED=1
 _pulse_event_refill_source_dir="${BASH_SOURCE[0]%/*}"
 _PULSE_EVENT_REFILL_SCRIPT_DIR=$(cd "$_pulse_event_refill_source_dir" 2>/dev/null && pwd) || _PULSE_EVENT_REFILL_SCRIPT_DIR="$_pulse_event_refill_source_dir"
 unset _pulse_event_refill_source_dir
+# GH#36122: the refill gate requires the shared breaker definitions; source
+# them here so a missing module fails loudly instead of dispatching open.
+# shellcheck source=./pulse-wrapper-dispatch-gates.sh
+source "${_PULSE_EVENT_REFILL_SCRIPT_DIR}/pulse-wrapper-dispatch-gates.sh"
 
 pulse_event_refill_is_enabled() {
 	local enabled_value="${AIDEVOPS_PULSE_EVENT_REFILL_ENABLED:-1}"
@@ -271,29 +275,27 @@ _pulse_event_refill_dispatch_gate() {
 			return 1
 		fi
 	fi
-	if declare -F is_no_work_rate_acceptable >/dev/null 2>&1; then
-		local no_work_rc=0
-		is_no_work_rate_acceptable || no_work_rc=$?
-		if [[ "$no_work_rc" -eq 1 ]]; then
-			pulse_event_refill_log "action=blocked reason=no_work_circuit trigger=retained"
-			pulse_event_refill_counter "pulse_event_refill_blocked_no_work"
-			return 1
-		fi
+	# GH#36122: shared runner-local breaker gate (no_work, permission-block,
+	# runner-health); apply_dispatch_max re-checks it for every other caller.
+	local breakers_rc=0
+	pulse_dispatch_breakers_allow "event_refill" || breakers_rc=$?
+	if [[ "$breakers_rc" -eq 0 ]]; then
+		return 0
 	fi
-	if declare -F is_permission_block_rate_acceptable >/dev/null 2>&1; then
-		local permission_block_rc=0
-		is_permission_block_rate_acceptable || permission_block_rc=$?
-		if [[ "$permission_block_rc" -eq 1 ]]; then
-			return 1
-		fi
-	fi
-	local runner_health_helper="${SCRIPT_DIR:-${_PULSE_EVENT_REFILL_SCRIPT_DIR}}/pulse-runner-health-helper.sh"
-	if [[ -x "$runner_health_helper" ]] && "$runner_health_helper" is-paused >/dev/null 2>&1; then
+	case "$PULSE_DISPATCH_BREAKER_TRIPPED" in
+	no_work)
+		pulse_event_refill_log "action=blocked reason=no_work_circuit trigger=retained"
+		pulse_event_refill_counter "pulse_event_refill_blocked_no_work"
+		;;
+	permission_block)
+		pulse_event_refill_log "action=blocked reason=permission_block_circuit trigger=retained"
+		;;
+	*)
 		pulse_event_refill_log "action=blocked reason=runner_health trigger=retained"
 		pulse_event_refill_counter "pulse_event_refill_blocked_runner_health"
-		return 1
-	fi
-	return 0
+		;;
+	esac
+	return 1
 }
 
 _pulse_event_refill_restore_processing() {

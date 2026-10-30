@@ -8,6 +8,16 @@
 [[ -n "${_PULSE_WRAPPER_DISPATCH_GATES_LOADED:-}" ]] && return 0
 _PULSE_WRAPPER_DISPATCH_GATES_LOADED=1
 
+# Resolve sibling helpers relative to this module, not a caller-owned
+# SCRIPT_DIR (test harnesses reuse that name for their own directory).
+_PULSE_WRAPPER_DISPATCH_GATES_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_PULSE_WRAPPER_DISPATCH_GATES_DIR" == "${BASH_SOURCE[0]}" ]] && _PULSE_WRAPPER_DISPATCH_GATES_DIR="."
+_PULSE_WRAPPER_DISPATCH_GATES_DIR="$(cd "$_PULSE_WRAPPER_DISPATCH_GATES_DIR" && pwd)"
+
+# Name of the breaker that refused the latest pulse_dispatch_breakers_allow
+# call (no_work, permission_block or runner_health); empty when admitted.
+PULSE_DISPATCH_BREAKER_TRIPPED=""
+
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_lib_path="${BASH_SOURCE[0]%/*}"
 	[[ "$_lib_path" == "${BASH_SOURCE[0]}" ]] && _lib_path="."
@@ -217,4 +227,43 @@ is_permission_block_rate_acceptable() {
 		return 1
 	fi
 	return 0
+}
+
+# t2897: runner-local zero-attempt breaker. Exit 0 only when the helper
+# reports a tripped breaker; a missing helper keeps the historical fail-open.
+_pulse_dispatch_runner_health_paused() {
+	local helper="${_PULSE_WRAPPER_DISPATCH_GATES_DIR}/pulse-runner-health-helper.sh"
+	[[ -x "$helper" ]] || return 1
+	"$helper" is-paused >/dev/null 2>&1
+	return $?
+}
+
+# GH#36122: one admission gate for every worker launch path (early fill,
+# post-label refill, main cycle, event refill, active/early-exit refills and
+# `pulse-wrapper.sh --command dispatch`). Runs the existing runner-local
+# breakers in their established order and stops at the first trip; each
+# breaker keeps its own log line, counter, bypass and pause semantics.
+# Callers own path-specific notes and counters via PULSE_DISPATCH_BREAKER_TRIPPED.
+# The skip line is content-free: context and breaker name only.
+# Arguments: $1 - launch-path context label
+# Returns: 0 when dispatch may proceed, 1 when a breaker is tripped.
+pulse_dispatch_breakers_allow() {
+	local context="${1:-unknown}"
+	local logfile="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
+	PULSE_DISPATCH_BREAKER_TRIPPED=""
+	case "$context" in
+	*[!A-Za-z0-9_-]*) context="unknown" ;;
+	esac
+	if ! is_no_work_rate_acceptable; then
+		PULSE_DISPATCH_BREAKER_TRIPPED="no_work"
+	elif ! is_permission_block_rate_acceptable; then
+		PULSE_DISPATCH_BREAKER_TRIPPED="permission_block"
+	elif _pulse_dispatch_runner_health_paused; then
+		PULSE_DISPATCH_BREAKER_TRIPPED="runner_health"
+	else
+		return 0
+	fi
+	printf '[pulse-wrapper] DISPATCH_BREAKER_SKIP context=%s breaker=%s\n' \
+		"$context" "$PULSE_DISPATCH_BREAKER_TRIPPED" >>"$logfile"
+	return 1
 }

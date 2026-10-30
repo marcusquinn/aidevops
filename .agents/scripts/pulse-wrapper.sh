@@ -846,6 +846,7 @@ _pulse_execute_self_check() {
 		build_dependency_graph_cache
 		dependabot_alert_monitor_scan_repos
 		dispatch_max
+		pulse_dispatch_breakers_allow
 		merge_ready_prs_all_repos
 		rotate_pulse_log
 		evaluate_routines
@@ -1287,31 +1288,30 @@ _pulse_run_deterministic_pipeline() {
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping dispatch_max" >>"$LOGFILE"
 	else
+		# GH#36122: runner-local breakers live in pulse-wrapper-dispatch-gates.sh
+		# and are run in order by pulse_dispatch_breakers_allow:
 		# t2770: cross-issue no_work rate circuit breaker check.
 		# Pauses dispatch when many different issues return no_work in a short
 		# window — symptomatic of auth outage, GraphQL exhaustion, or wrapper
 		# stall. Complementary to the per-issue no_work escalation (GH#20639).
-		local _nw_rc=0
-		is_no_work_rate_acceptable || _nw_rc=$?
-		local _pb_rc=0
-		is_permission_block_rate_acceptable || _pb_rc=$?
+		# GH#36033: permission-block storm breaker (one-hour runner pause).
 		# t2897: per-runner zero-attempt circuit breaker check.
 		# Pauses dispatch ONLY on this runner when N consecutive zero-attempt
 		# worker dispatches signal a stale or broken local install. The
 		# breaker auto-trips an `aidevops update`; if VERSION changed, the
 		# t2579 restart hook refreshes code on the next cycle and the
-		# breaker reopens on the first non-zero-attempt outcome.
-		local _rh_rc=1
-		local _rh_helper="${SCRIPT_DIR}/pulse-runner-health-helper.sh"
-		if [[ -x "$_rh_helper" ]]; then
-			"$_rh_helper" is-paused >/dev/null 2>&1 && _rh_rc=0 || _rh_rc=1
-		fi
-		if [[ "$_nw_rc" -eq 1 ]]; then
+		# breaker reopens on the first non-zero-attempt outcome
+		# (pulse-runner-health-helper.sh is-paused).
+		# apply_dispatch_max re-checks the breakers for its other callers; this
+		# pre-check keeps the main cycle's blocker notes and counters.
+		local _breakers_rc=0
+		pulse_dispatch_breakers_allow "main" || _breakers_rc=$?
+		if [[ "$_breakers_rc" -ne 0 && "$PULSE_DISPATCH_BREAKER_TRIPPED" == "no_work" ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: no_work rate circuit breaker tripped (t2770)" >>"$LOGFILE"
 			_pulse_cycle_state_note_blocker dispatch-no-work-rate pulse-wrapper no-work-rate || true
-		elif [[ "$_pb_rc" -eq 1 ]]; then
+		elif [[ "$_breakers_rc" -ne 0 && "$PULSE_DISPATCH_BREAKER_TRIPPED" == "permission_block" ]]; then
 			_pulse_cycle_state_note_blocker dispatch-permission-block-rate pulse-wrapper permission-block-rate || true
-		elif [[ "$_rh_rc" -eq 0 ]]; then
+		elif [[ "$_breakers_rc" -ne 0 ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: runner-health circuit breaker tripped (t2897)" >>"$LOGFILE"
 			_pulse_cycle_state_note_blocker runner-health pulse-wrapper runner-health || true
 			if declare -F pulse_stats_increment >/dev/null 2>&1; then
