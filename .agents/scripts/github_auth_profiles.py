@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import re
 
-from github_app_auth import AuthError, atomic_json, private_read
+from github_app_auth import AuthError, REQUIRED_PULSE_PERMISSIONS, atomic_json, private_read
 from github_auth_config import load_profiles, registry_lock
 from github_auth_migration import profile_destination
 
@@ -35,7 +35,7 @@ def manage_profile(args, config_path):
         # Preserve legacy profiles when creating the canonical file for the first time.
         data = load_profiles(destination if destination.exists() else config_path)
         profile = {"app_id": args.app_id, "private_key_path": str(key),
-                   "permissions": {"metadata": "read", "issues": "read", "pull_requests": "read"}}
+                   "permissions": {name: "read" for name in REQUIRED_PULSE_PERMISSIONS}}
         previous = data["profiles"].get(args.name, {})
         if not isinstance(previous, dict):
             raise AuthError("Invalid existing GitHub auth profile")
