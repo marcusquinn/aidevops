@@ -16,6 +16,15 @@ source "${_GHGT_DIR}/shared-gh-secondary-cooldown.sh"
 _gh_transport_preflight() {
 	local op_class="read"
 	local arg=""
+	# gh also accepts repository flags before the command name.
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		-R | --repo) [[ $# -ge 2 ]] || return 2; shift 2 ;;
+		--repo=* | -R?*) shift ;;
+		*) break ;;
+		esac
+	done
 	# Native watchers make an opaque number of requests after a single preflight.
 	# Refuse them before dispatch, including on a TTY or with the REST governor
 	# disabled. One-shot `--watch=false` reads retain their native semantics.
@@ -27,7 +36,7 @@ _gh_transport_preflight() {
 	pr:checks)
 		for arg in "$@"; do
 			case "$arg" in
-			--watch | --watch=true | --watch=1)
+			--watch | --watch=true | --watch=True | --watch=TRUE | --watch=t | --watch=T | --watch=1)
 				printf 'Opaque gh pr checks --watch is not governed; use gh-checks-wait-helper.sh wait PR --repo OWNER/REPO --all instead\n' >&2
 				return 2
 				;;
