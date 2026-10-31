@@ -68,6 +68,87 @@ class ProducerCases:
                 self.assertEqual(stat.S_IMODE(tracked.stat().st_mode), mode)
                 self.assertEqual(self.git(self.repo, "worktree", "list", "--porcelain"), registration)
 
+    def test_base_import_is_exact_and_independent(self):
+        import worktree_archive_snapshot as snapshot_engine
+        base = self.git(self.repo, 'rev-parse', 'HEAD').decode().strip()
+        expected = self.git(self.repo, 'rev-list', '--objects', '--no-object-names', base)
+        (self.repo / 'future').write_bytes(b'unrelated future object\n')
+        self.git(self.repo, 'add', 'future')
+        self.git(self.repo, 'commit', '-qm', 'unrelated future')
+        future = self.git(self.repo, 'rev-parse', 'HEAD').decode().strip()
+        target = self.root / 'independent-base'
+        target.mkdir()
+        self.git(target, 'init', '-q')
+        manifest = {'base_sha': base, 'source_git_common_dir': str(self.repo / '.git')}
+        with patch.dict(os.environ, self.env, clear=True):
+            snapshot_engine.seed_base(target, manifest)
+        self.assertEqual(self.git(target, 'rev-list', '--objects', '--no-object-names', '--all'), expected)
+        self.assertNotEqual(self.run_command('git', '-C', target, 'cat-file', '-e', future,
+                                            check=False).returncode, 0)
+        self.assertFalse((target / '.git/objects/info/alternates').exists())
+        # Only the owned disposable source is hidden. Checkout/fsck must still
+        # work with no source objects available, not just a mutable reference.
+        (self.repo / '.git/objects').rename(self.repo / '.git/hidden-objects')
+        self.git(target, 'checkout', '-q', '--detach', base)
+        self.git(target, 'fsck', '--full')
+        self.assertEqual((target / 'mixed.txt').read_bytes(), b'base\n')
+
+    def test_base_import_diagnostics_are_allowlisted_through_nested_cli(self):
+        from worktree_archive_git import base_import_failure
+        for raw, detail in ((b'private pack-objects died: malloc failed', 'allocation-failed'),
+                            ('private pack-objects died: No space left on device', 'storage-full'),
+                            (b'private pack-objects died', 'unclassified'),
+                            (None, 'unclassified')):
+            error = subprocess.CalledProcessError(128, ['private'], stderr=raw)
+            message = base_import_failure(error)
+            self.assertIn('exit=128;', message)
+            self.assertIn('/' + detail + ';', message)
+            self.assertNotIn('private', message)
+            for prefix in ('ValueError: ', 'archive-snapshot: ', ''):
+                for encoded in (False, True):
+                    stderr = 'private traceback\n' + prefix + message + '\n'
+                    nested = subprocess.CalledProcessError(1, ['private'],
+                                                          stderr=stderr.encode() if encoded else stderr)
+                    self.assertEqual(producer_engine.failure_reason(nested), message)
+            for suffix in (' private', '\nprivate failure'):
+                nested = subprocess.CalledProcessError(1, ['private'], stderr=message + suffix)
+                self.assertEqual(producer_engine.failure_reason(nested), 'producer:evidence-unavailable')
+
+    def test_local_pack_failure_retains_source_archive_journal_and_scratch(self):
+        result = self.producer('capture', self.work, self.archives, 'test.sh', 'pack-failure')
+        archive = Path(result.stdout.decode().strip())
+        journal = producer_engine.journal_for_archive(archive)
+        manifest = (archive / 'manifest.json').read_bytes()
+        before = self.snapshot(self.work)
+        # Exercise the real nested producer -> archive Bash -> Python -> fetch
+        # path. This disposable PATH shim fails only the local packing server.
+        binary = self.root / 'policy bin'
+        binary.mkdir()
+        shim = binary / 'git'
+        real_git = shutil.which('git')
+        shim.write_text(f'#!{sys.executable}\nimport os, sys\n'
+                        'if "upload-pack" in sys.argv:\n'
+                        '    sys.stderr.write("private source: pack-objects died; malloc failed\\n")\n'
+                        '    sys.exit(128)\n'
+                        f'os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n')
+        shim.chmod(0o700)
+        self.env['PATH'] = str(binary) + os.pathsep + self.env['PATH']
+        failed = self.producer('verify', archive, check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(b'producer:base-import-failed; stage=base-import; exit=128;', failed.stderr)
+        self.assertIn(b'stderr=pack-objects-died/allocation-failed;', failed.stderr)
+        self.assertNotIn(b'private source', failed.stderr)
+        self.assertEqual((archive / 'manifest.json').read_bytes(), manifest)
+        self.assertEqual(self.snapshot(self.work), before)
+        record = json.loads(journal.read_text())
+        self.assertEqual(record['phase'], 'archived')
+        self.assertEqual(record['source_removal_outcome'], 'pending')
+        self.assertEqual(record['canonical_restore']['state'], 'restoring')
+        self.assertTrue((journal.parent / record['canonical_restore']['slot']).is_dir())
+        retained = list(archive.parent.glob('.archive-verify-*'))
+        self.assertEqual(len(retained), 1)
+        self.assertEqual(stat.S_IMODE(retained[0].stat().st_mode), 0o700)
+
     def test_git_only_capture_contains_commits_and_two_patches_without_verification(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)
         (self.work / "committed.txt").write_bytes(b"committed work\n")
