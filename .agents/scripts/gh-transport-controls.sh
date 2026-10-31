@@ -25,10 +25,24 @@ _gh_transport_preflight() {
 		*) break ;;
 		esac
 	done
+	# Repository flags can also separate the command and subcommand. Derive the
+	# dispatch key without changing the argv passed to quota/cooldown checks.
+	local command="${1:-}" subcommand="" repo_value=0
+	for arg in "${@:2}"; do
+		if [[ "$repo_value" -eq 1 ]]; then
+			repo_value=0
+			continue
+		fi
+		case "$arg" in
+		-R | --repo) repo_value=1 ;;
+		--repo=* | -R?*) ;;
+		*) subcommand="$arg"; break ;;
+		esac
+	done
 	# Native watchers make an opaque number of requests after a single preflight.
 	# Refuse them before dispatch, including on a TTY or with the REST governor
 	# disabled. One-shot `--watch=false` reads retain their native semantics.
-	case "${1:-}:${2:-}" in
+	case "${command}:${subcommand}" in
 	run:watch)
 		printf 'Opaque gh run watch is not governed; use one-shot gh api reads with bounded backoff instead\n' >&2
 		return 2
@@ -44,7 +58,7 @@ _gh_transport_preflight() {
 		done
 		;;
 	esac
-	case "${1:-}:${2:-}" in
+	case "${command}:${subcommand}" in
 	*:create | *:edit | *:comment | *:close | *:reopen | *:lock | *:unlock | *:merge | *:review | *:delete | *:ready | *:rerun) op_class="write" ;;
 	esac
 	for arg in "$@"; do

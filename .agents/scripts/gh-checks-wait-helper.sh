@@ -792,7 +792,10 @@ cmd_qlty_skips() {
 # probes. Unknown costs and unobserved CI spend are never invented as coverage.
 cmd_quota_report() {
 	local window="${1:-3600}"
-	validate_positive_integer "$window" || return 2
+	if ! validate_positive_integer "$window"; then
+		log_error "quota-report WINDOW_SECONDS must be a positive integer"
+		return 2
+	fi
 	python3 - "${AIDEVOPS_GH_API_LOG:-${HOME}/.aidevops/logs/gh-api-calls.log}" "$window" <<'PY'
 import json
 import re

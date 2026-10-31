@@ -80,7 +80,8 @@ jobs:
         run: |
           set -euo pipefail
           # Never print credentials, headers, or debug traces. Sampling a shared
-          # user counter includes concurrent consumers, so delta is an upper bound.
+          # user counter yields only an observed delta: concurrent consumers and
+          # inconsistent samples prevent a guaranteed upper bound on PAT spend.
           set +x
           unset GH_DEBUG
           if [[ -z "${GH_TOKEN:-}" ]]; then
@@ -94,7 +95,7 @@ jobs:
           jq -cn --arg login "$login" --argjson before "$before" --argjson after "$after" \
             '{event:"quota-ci-sample",credential:"SYNC_PAT",login:$login,before:$before,after:$after,
               used_delta:(if $before.reset == $after.reset and $after.used >= $before.used then $after.used-$before.used else null end),
-              delta_is_upper_bound:true,known_api_requests:1}'
+              delta_is_upper_bound:false,known_api_requests:1}'
 
   forge-event:
     name: Record ordered forge event
