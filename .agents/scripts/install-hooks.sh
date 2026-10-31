@@ -72,6 +72,50 @@ check_hook_source() {
 	return 0
 }
 
+# Check the future installed hook's helper resolution and actual admission API.
+# A private non-Git probe must not register the installer as a worktree owner.
+check_lifecycle_helper() {
+	local install_dir="$1"
+	if ! python3 -E -s -B - "$install_dir" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+name = "worker-lifecycle-session-helper.py"
+candidates = [os.environ.get("AIDEVOPS_LIFECYCLE_SESSION_HELPER", ""),
+              str(Path(sys.argv[1]) / "scripts" / name),
+              str(Path.home() / ".aidevops" / "agents" / "scripts" / name)]
+helper = next((path for path in candidates if path and Path(path).is_file()), "")
+try:
+    if not helper:
+        raise ValueError("missing helper")
+    with tempfile.TemporaryDirectory(prefix="hook-admission-probe-") as directory:
+        environment = dict(os.environ, AIDEVOPS_LIFECYCLE_DISABLED="1",
+                           AIDEVOPS_LIFECYCLE_STATE_DIR=directory + "/state")
+        result = subprocess.run(
+            [sys.executable, "-E", "-s", "-B", helper, "--cwd", directory,
+             "--path", directory + "/probe", "--runtime-pid", str(os.getpid()),
+             "--session-id", "hook-install-preflight", "--command", "true"],
+            cwd=directory, env=environment, capture_output=True, text=True, timeout=10)
+        payload = json.loads(result.stdout)
+        if (result.returncode != 0 or not isinstance(payload, dict)
+                or payload.get("status") != "not-applicable"
+                or payload.get("cleanup_authorized") is not False):
+            raise ValueError("incompatible admission response")
+except (OSError, ValueError, subprocess.SubprocessError):
+    sys.exit(1)
+PY
+	then
+		printf 'Error: lifecycle admission helper is unavailable or incompatible; hooks were not changed.\n' >&2
+		printf "Run 'aidevops update' or './setup.sh --stage agents', or repair AIDEVOPS_LIFECYCLE_SESSION_HELPER.\n" >&2
+		return 1
+	fi
+	return 0
+}
+
 # run_case - Execute one test case and update global pass/fail counters.
 # Uses _TEST_HOOK_PATH, _TEST_PASS, _TEST_FAIL set by run_test().
 run_case() {
@@ -247,6 +291,7 @@ install_hook() {
 
 	check_python || return 1
 	check_hook_source || return 1
+	check_lifecycle_helper "$install_dir" || return 1
 
 	mkdir -p "${install_dir}/hooks" || return 1
 
