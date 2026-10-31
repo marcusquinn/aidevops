@@ -1818,7 +1818,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18831 fix(checkpoint): publish continuation mark-blocked findings so frozen drafts surface the concrete need #auto-dispatch #bug #framework ref:GH#36227
 
-- [ ] t18832 fix(pulse-merge): skip partial parent closeout for planning publication PRs #bug #framework ref:GH#36230
+- [x] t18832 fix(pulse-merge): skip partial parent closeout for planning publication PRs #bug #framework ref:GH#36230 pr:#36234 completed:2026-10-31
 
 - [ ] t18833 fix(terminal-blocker): re-arm permission_required holds that have no published permission request #auto-dispatch #bug #framework ref:GH#36232
 
