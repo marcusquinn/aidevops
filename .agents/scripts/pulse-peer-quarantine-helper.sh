@@ -882,7 +882,7 @@ cmd_scan_comments() {
 		[[ -z "$body_and_author" ]] && continue
 		body="${body_and_author%|*}"
 		# Extract runner=<peer> from the body.
-		peer=$(printf '%s' "$body" | sed -nE 's/.*runner=([A-Za-z0-9._-]+).*/\1/p' | head -1)
+		peer=$(printf '%s' "$body" | sed -nE 's/.*runner=([A-Za-z0-9._-]+).*/\1/p' | sed -n '1p')
 		[[ -z "$peer" ]] && continue
 		# Skip self-login events — those are recorded by the local breaker.
 		[[ -n "$self_login" && "$peer" == "$self_login" ]] && continue

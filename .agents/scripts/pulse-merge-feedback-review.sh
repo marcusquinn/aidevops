@@ -559,7 +559,7 @@ _append_feedback_to_issue() {
 		return "$fetch_rc"
 	fi
 
-	if printf '%s' "$current_body" | grep -qF "$marker"; then
+	if grep -qF -- "$marker" <<<"$current_body"; then
 		# Keep the "routed feedback marker" phrase stable for operator log
 		# greps and regression tests (GH#20057): the pre-split dispatch
 		# functions all logged a variant of "already has … feedback …".

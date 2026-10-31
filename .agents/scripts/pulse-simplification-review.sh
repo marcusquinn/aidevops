@@ -74,15 +74,27 @@ _post_merge_scanner_scan_repo() {
 
 	repo_budget=$((remaining_budget - stage_reserve))
 	echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"${LOGFILE:-/dev/null}"
+	# The scan is deferrable maintenance: share the REST-core priority budget so
+	# it yields with a cursor before draining quota needed by dispatch/merge.
 	SCANNER_DAYS="${SCANNER_DAYS:-7}" \
 		SCANNER_BUDGET_SECONDS="$repo_budget" \
 		SCANNER_CURSOR_DIR="$scanner_cursor_dir" \
+		SCANNER_REST_CORE_GATE="${SCANNER_REST_CORE_GATE:-1}" \
 		"$scanner" scan "$slug" >>"${LOGFILE:-/dev/null}" 2>&1 || true
 
 	local safe_slug="" repo_scan_cursor=""
 	safe_slug=$(printf '%s' "$slug" | tr '/: ' '___')
 	repo_scan_cursor="${scanner_cursor_dir}/${safe_slug}.cursor"
 	if [[ -f "$repo_scan_cursor" ]]; then
+		# A repository-local listing failure must not pin the traversal here.
+		# Retain its PR cursor for the next scheduled traversal, but continue
+		# other repos now. Global cooldown/budget yields still stop the stage.
+		local cursor_reason=""
+		cursor_reason=$(jq -r '.reason // empty' "$repo_scan_cursor" 2>/dev/null) || cursor_reason=""
+		if [[ "$cursor_reason" == "merged-pr-list-failed" ]]; then
+			echo "[pulse-wrapper] Post-merge scanner: deferred $slug to next scheduled traversal; continuing other repos" >>"${LOGFILE:-/dev/null}"
+			return 0
+		fi
 		echo "[pulse-wrapper] Post-merge scanner: yielded in $slug; cursor preserved for next cycle" >>"${LOGFILE:-/dev/null}"
 		return 2
 	fi

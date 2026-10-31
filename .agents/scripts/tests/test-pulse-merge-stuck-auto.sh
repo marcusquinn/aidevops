@@ -28,6 +28,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 REST_STATE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-rest-state.sh"
+PROTECTED_RELEASE_SCRIPT="${SCRIPT_DIR}/../protected-release-helper.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -76,6 +77,8 @@ setup_test_env() {
 
 	cat >"${TEST_ROOT}/pr_state.json" <<JSONEOF
 {
+  "head": {"ref": "feature/stuck-auto"},
+  "labels": [],
   "autoMergeRequest": {"enabledAt": "${enabled_at_default}", "mergeMethod": "SQUASH"},
   "mergeStateStatus": "BLOCKED",
   "mergeable": "MERGEABLE",
@@ -146,14 +149,18 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract the three helpers from pulse-merge-process.sh and eval them into
-# the test shell. _auto_merge_stuck_seconds is the new t3192 helper;
-# _repo_allows_auto_merge and _set_native_auto_merge_or_skip are the
-# pre-existing t3070 helpers we extend.
+# Extract the native-auto helpers and release identity predicate from
+# pulse-merge-process.sh; load their source-safe production dependencies.
 define_helpers_under_test() {
 	local src_stuck src_repo_allow src_stop_external src_handle_existing src_set_native
+	local src_protected_release
 	# shellcheck source=/dev/null
 	source "$REST_STATE_SCRIPT"
+	# shellcheck source=/dev/null
+	source "$PROTECTED_RELEASE_SCRIPT"
+	src_protected_release=$(awk '
+		/^_pmp_is_protected_release_pr\(\) \{/,/^\}$/ { print }
+	' "$PROCESS_SCRIPT")
 	src_stuck=$(awk '
 		/^_auto_merge_stuck_seconds\(\) \{/,/^\}$/ { print }
 	' "$PROCESS_SCRIPT")
@@ -170,11 +177,14 @@ define_helpers_under_test() {
 		/^_stop_external_native_auto_merge\(\) \{/,/^\}$/ { print }
 	' "$PROCESS_SCRIPT")
 	if [[ -z "$src_stuck" || -z "$src_repo_allow" || -z "$src_stop_external" \
-		|| -z "$src_handle_existing" || -z "$src_set_native" ]] \
-		|| ! declare -F _pmp_rest_pr_merge_state >/dev/null 2>&1; then
+		|| -z "$src_handle_existing" || -z "$src_set_native" || -z "$src_protected_release" ]] \
+		|| ! declare -F _pmp_rest_pr_merge_state >/dev/null 2>&1 \
+		|| ! declare -F protected_release_pr >/dev/null 2>&1; then
 		printf 'ERROR: could not extract helpers from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
+	# shellcheck disable=SC1090
+	eval "$src_protected_release"
 	# shellcheck disable=SC1090
 	eval "$src_stuck"
 	# shellcheck disable=SC1090
@@ -247,6 +257,8 @@ test_case_2_under_threshold_defers() {
 		|| echo '2026-04-30T15:58:00Z')
 	cat >"${TEST_ROOT}/pr_state.json" <<JSONEOF
 {
+  "head": {"ref": "feature/stuck-auto"},
+  "labels": [],
   "autoMergeRequest": {"enabledAt": "${enabled_at_recent}", "mergeMethod": "SQUASH"},
   "mergeStateStatus": "BLOCKED",
   "mergeable": "MERGEABLE",
@@ -328,6 +340,8 @@ test_case_4_changes_requested_defers() {
 		|| echo '2026-04-30T05:00:00Z')
 	cat >"${TEST_ROOT}/pr_state.json" <<JSONEOF
 {
+  "head": {"ref": "feature/stuck-auto"},
+  "labels": [],
   "autoMergeRequest": {"enabledAt": "${enabled_at_old}", "mergeMethod": "SQUASH"},
   "mergeStateStatus": "BLOCKED",
   "mergeable": "MERGEABLE",

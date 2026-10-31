@@ -58,8 +58,25 @@ _release_gh_read_diagnostic() {
 	return 0
 }
 
+# Match known transient network errors from gh's Go HTTP client, never arbitrary
+# nonzero exits. Keep the category static so retry logs cannot leak request URLs.
+_release_gh_read_network_failure() {
+	local error_text="$1"
+	local normalized=""
+	normalized=$(printf '%s' "$error_text" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+	if [[ "$normalized" =~ http[[:space:]]4[0-9][0-9] ||
+		"$normalized" =~ (x509:|certificate|permission\ denied|authentication|not\ logged) ]]; then
+		return 1
+	fi
+	if [[ "$normalized" =~ (connection\ reset\ by\ peer|connection\ refused|connection\ timed\ out|i/o\ timeout|tls\ handshake\ timeout|context\ deadline\ exceeded|client\.timeout\ exceeded|temporary\ failure\ in\ name\ resolution|no\ such\ host|network\ is\ unreachable|unexpected\ eof|error\ connecting\ to) ||
+		"$normalized" =~ (^|[[:space:]:])eof([[:space:]]|$) ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # Read-only GitHub read with bounded retry of transport failures only (empty
-# body, HTTP 5xx, truncated/invalid JSON). Auth, 404 and permission failures and
+# body, HTTP 5xx, network errors, truncated/invalid JSON). Auth, 404 and permission failures and
 # wrong response shapes fail on the first attempt. Fail closed after the
 # _release_gh_read_attempts budget.
 # Usage: _release_snapshot_gh_read <purpose> <jq-shape-test> -- gh-args...
@@ -95,6 +112,8 @@ _release_snapshot_gh_read() {
 			cause="HTTP 5xx"
 		elif [[ "$error_text" =~ (unexpected\ end\ of\ JSON\ input|invalid\ character) ]]; then
 			cause="JSON decode error"
+		elif [[ "$status" -ne 0 ]] && _release_gh_read_network_failure "$error_text"; then
+			cause="network transport error"
 		elif [[ "$status" -eq 0 && -z "$error_text" ]]; then
 			cause="empty response"
 		else

@@ -1468,6 +1468,17 @@ _init_update_gitignore() {
 	# Note: .agents/ itself is NOT ignored — it contains committed project-specific agents.
 	# Only runtime artifacts (loop state, tmp, memory) are ignored.
 	local gitignore="$project_root/.gitignore"
+	local ignore_label=".gitignore"
+	# WP Plugin Starter syncs core files byte-for-byte (outside own blocks).
+	# Keep its managed .gitignore unchanged, including legacy .agents lines.
+	# Git resolves the common info/exclude for linked worktrees as well.
+	if [[ -f "$project_root/scripts/core-files.txt" ]] &&
+		grep -qE '^[[:space:]]*(\./)?\.gitignore[[:space:]]*(#.*)?$' "$project_root/scripts/core-files.txt"; then
+		gitignore=$(git -C "$project_root" rev-parse --git-path info/exclude) || return 1
+		[[ "$gitignore" == /* ]] || gitignore="$project_root/$gitignore"
+		mkdir -p "$(dirname "$gitignore")" || return 1
+		ignore_label="Git info/exclude (Starter-managed .gitignore preserved)"
+	fi
 	if [[ ! -f "$gitignore" ]]; then
 		cat >"$gitignore" <<'GITIGNOREEOF' || return 1
 # aidevops runtime artifacts
@@ -1488,19 +1499,20 @@ GITIGNOREEOF
 		if [[ "$enable_beads" == "true" ]]; then
 			printf '.beads\n' >>"$gitignore" || return 1
 		fi
-		print_success "Created .gitignore with aidevops runtime artifact ignores"
+		print_success "Created $ignore_label with aidevops runtime artifact ignores"
 		return 0
 	fi
 
 	local gitignore_updated=false
-	if grep -qFx ".agents" "$gitignore" 2>/dev/null; then
+	# Legacy cleanup belongs only to .gitignore; local exclude rules are user-owned.
+	if [[ "$gitignore" == "$project_root/.gitignore" ]] && grep -qFx ".agents" "$gitignore" 2>/dev/null; then
 		sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
 			sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
 		sed -i '' '/^# aidevops$/{ N; /^# aidevops\n$/d; }' "$gitignore" 2>/dev/null || true
-		print_info "Removed legacy bare .agents from .gitignore (now tracked)"
+		print_info "Removed legacy bare .agents from $ignore_label (now tracked)"
 		gitignore_updated=true
 	fi
-	if grep -qFx ".agent" "$gitignore" 2>/dev/null; then
+	if [[ "$gitignore" == "$project_root/.gitignore" ]] && grep -qFx ".agent" "$gitignore" 2>/dev/null; then
 		sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
 			sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
 		gitignore_updated=true
@@ -1520,7 +1532,7 @@ GITIGNOREEOF
 		for runtime_entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/" ".agents/commands" ".windsurf/" ".env" ".env.*" "*.pem" "*.key" "*.p12" "*.pfx" "credentials.json"; do
 			grep -qFx "$runtime_entry" "$gitignore" 2>/dev/null || printf '%s\n' "$runtime_entry" >>"$gitignore" || return 1
 		done
-		print_success "Added .agents/ runtime artifact ignores to .gitignore"
+		print_success "Added .agents/ runtime artifact ignores to $ignore_label"
 		gitignore_updated=true
 	fi
 
@@ -1532,10 +1544,10 @@ GITIGNOREEOF
 	if [[ "$enable_beads" == "true" ]] && ! grep -qFx ".beads" "$gitignore" 2>/dev/null; then
 		ensure_trailing_newline "$gitignore"
 		printf '.beads\n' >>"$gitignore" || return 1
-		print_success "Added .beads to .gitignore"
+		print_success "Added .beads to $ignore_label"
 		gitignore_updated=true
 	fi
-	[[ "$gitignore_updated" != "true" ]] || print_info "Updated .gitignore"
+	[[ "$gitignore_updated" != "true" ]] || print_info "Updated $ignore_label"
 	return 0
 }
 

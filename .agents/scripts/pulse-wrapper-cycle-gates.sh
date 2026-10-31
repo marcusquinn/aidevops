@@ -202,6 +202,10 @@ _pulse_efficiency_cycle_finish() {
 	if declare -F gh_trim_log >/dev/null 2>&1; then
 		gh_trim_log 2>/dev/null || true
 	fi
+	# GH#35935: bound dispatch-stages.tsv the same way; nothing else trims it.
+	if declare -F _ds_trim_log >/dev/null 2>&1; then
+		_ds_trim_log 2>/dev/null || true
+	fi
 	_PULSE_EFFICIENCY_CYCLE_STARTED=0
 	unset AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
 	return 0

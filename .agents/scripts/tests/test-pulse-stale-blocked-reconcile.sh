@@ -418,4 +418,103 @@ unset -f _pm_reconcile_partial_continuations
 		exit 1
 	}
 ) || exit 1
+
+# GH#36041 regression: the stale pass stops at its share, and the later passes
+# used to receive that same, already-expired deadline. They listed, returned
+# partial before their first candidate and never completed on large repos
+# (marcusquinn/aidevops logged visited=1 every sweep, with the
+# partial-continuation stamp about 22h old).
+(
+	DC_STAMP_DIR="$HOME/.aidevops/cache/draft-checkpoint-unblock-complete"
+	FAKE_NOW=1000
+	date() {
+		printf '%s\n' "$FAKE_NOW"
+		return 0
+	}
+	_file_mtime_epoch() {
+		printf '0\n'
+		return 0
+	}
+	STALE_END="share"
+	reconcile_stale_blocked_issues() {
+		STALE_DL="$DER_STALE_BLOCKED_DEADLINE_EPOCH"
+		FAKE_NOW="$DER_STALE_BLOCKED_DEADLINE_EPOCH"
+		[[ "$STALE_END" == share ]] || FAKE_NOW="$DER_STALE_BLOCKED_STOP_EPOCH"
+		return 3
+	}
+	_pm_reconcile_draft_checkpoint_blocks() {
+		PASSES="${PASSES}dc:$((${2} - FAKE_NOW)) "
+		FAKE_NOW=$((FAKE_NOW + 1))
+		return 0
+	}
+	_pm_reconcile_partial_continuations() {
+		PASSES="${PASSES}pc:$((${2} - FAKE_NOW)) "
+		return 0
+	}
+	run_sweep_repo() {
+		local repo_deadline="$1" sweep_deadline="$2" later_fresh="${3:-}"
+		rm -rf "$STAMP_DIR" "$PC_STAMP_DIR" "$DC_STAMP_DIR"
+		if [[ -n "$later_fresh" ]]; then
+			mkdir -p "$PC_STAMP_DIR" "$DC_STAMP_DIR"
+			touch "$PC_STAMP_DIR/owner__one" "$DC_STAMP_DIR/owner__one"
+		fi
+		FAKE_NOW=1000 PASSES="" STALE_DL="" SWEEP_RC=0
+		_pulse_stale_blocked_sweep_repo owner/one "$repo_deadline" "$sweep_deadline" 1800 1000 || SWEEP_RC=$?
+		return 0
+	}
+	# Minimum share: the stale pass keeps its 5s; each later pass gets 5s more.
+	run_sweep_repo 1005 1045
+	[[ "$STALE_DL" == 1005 && "$PASSES" == "dc:5 pc:5 " && "$SWEEP_RC" == 3 ]] || {
+		printf 'FAIL: later passes inherited the expired stale share: stale=%s passes=%s rc=%s\n' "$STALE_DL" "$PASSES" "$SWEEP_RC"
+		exit 1
+	}
+	[[ -f "$DC_STAMP_DIR/owner__one" && -f "$PC_STAMP_DIR/owner__one" && ! -f "$STAMP_DIR/owner__one" ]] || {
+		printf 'FAIL: completed later passes were not stamped, or the partial stale pass was\n'
+		exit 1
+	}
+	# Weighted share reaching the sweep deadline: the stale pass leaves 5s per
+	# due pass, and draft-checkpoint leaves partial-continuation its 5s.
+	run_sweep_repo 1045 1045
+	[[ "$STALE_DL" == 1035 && "$PASSES" == "dc:5 pc:9 " ]] || {
+		printf 'FAIL: weighted stale share left no time for later passes: stale=%s passes=%s\n' "$STALE_DL" "$PASSES"
+		exit 1
+	}
+	# Fresh later passes reserve nothing.
+	_file_mtime_epoch() {
+		case "$1" in
+		*/draft-checkpoint-unblock-complete/* | */partial-continuation-complete/*) printf '%s\n' "$FAKE_NOW" ;;
+		*) printf '0\n' ;;
+		esac
+		return 0
+	}
+	run_sweep_repo 1045 1045 fresh
+	[[ "$STALE_DL" == 1045 && -z "$PASSES" ]] || {
+		printf 'FAIL: fresh later passes still reserved stale time: stale=%s passes=%s\n' "$STALE_DL" "$PASSES"
+		exit 1
+	}
+	_file_mtime_epoch() {
+		printf '0\n'
+		return 0
+	}
+	# An exhausted sweep defers later passes with no call (no listing reads).
+	STALE_END="stop"
+	: >"$LOGFILE"
+	run_sweep_repo 1005 1045
+	[[ -z "$PASSES" && "$SWEEP_RC" == 3 && ! -d "$DC_STAMP_DIR" && ! -d "$PC_STAMP_DIR" ]] || {
+		printf 'FAIL: exhausted sweep still ran or stamped later passes: passes=%s rc=%s\n' "$PASSES" "$SWEEP_RC"
+		exit 1
+	}
+	grep -q 'draft-checkpoint-unblock pass deferred for owner/one: sweep deadline reached' "$LOGFILE" || {
+		printf 'FAIL: deferred later pass was not logged\n'
+		exit 1
+	}
+	[[ "$(_pulse_stale_blocked_pass_deadline 1003 1045 1000)" == 1005 &&
+		"$(_pulse_stale_blocked_pass_deadline 1030 1045 1000)" == 1030 &&
+		"$(_pulse_stale_blocked_pass_deadline 1005 1003 1000)" == 1003 &&
+		"$(_pulse_stale_blocked_pass_deadline 1045 1045 1035 5)" == 1040 &&
+		"$(_pulse_stale_blocked_pass_deadline 1045 1045 1042 5)" == 1045 ]] || {
+		printf 'FAIL: pass deadline is not max(repo share, minimum) capped at the sweep deadline less later reserves\n'
+		exit 1
+	}
+) || exit 1
 printf 'PASS: stale blocked reconciliation is cadence bounded and startup-timeout protected\n'

@@ -146,22 +146,22 @@ _start_verbose_lifecycle_watcher() {
 			fi
 
 			if [[ "$_saw_session" -eq 0 ]] &&
-				printf '%s' "$line" | grep -qE '"session(\.|_)created"|session_id|opencode session created' 2>/dev/null; then
+				grep -qE '"session(\.|_)created"|session_id|opencode session created' <<<"$line" 2>/dev/null; then
 				_emit_verbose_checkpoint opencode_session_created "$_emit_meta"
 				_saw_session=1
 			fi
 			if [[ "$_saw_tool" -eq 0 ]] &&
-				printf '%s' "$line" | grep -qE '"step\.start"|"tool_use"|tool=Bash|tool=Edit|tool=Write|tool=Read' 2>/dev/null; then
+				grep -qE '"step\.start"|"tool_use"|tool=Bash|tool=Edit|tool=Write|tool=Read' <<<"$line" 2>/dev/null; then
 				_emit_verbose_checkpoint first_tool_use "$_emit_meta"
 				_saw_tool=1
 			fi
 			if [[ "$_saw_commit" -eq 0 ]] &&
-				printf '%s' "$line" | grep -qE 'git commit|git_commit|wip:.*commit' 2>/dev/null; then
+				grep -qE 'git commit|git_commit|wip:.*commit' <<<"$line" 2>/dev/null; then
 				_emit_verbose_checkpoint first_commit_attempted "$_emit_meta"
 				_saw_commit=1
 			fi
 			if [[ "$_saw_push" -eq 0 ]] &&
-				printf '%s' "$line" | grep -qE 'git push|git_push' 2>/dev/null; then
+				grep -qE 'git push|git_push' <<<"$line" 2>/dev/null; then
 				_emit_verbose_checkpoint first_push_attempted "$_emit_meta"
 				_saw_push=1
 			fi

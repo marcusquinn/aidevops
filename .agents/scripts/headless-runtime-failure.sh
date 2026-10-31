@@ -63,6 +63,8 @@ readonly _HRFF_RETRY_CLASS_REMEDIATION="meaningful_remediation"
 readonly _HRFF_RETRY_CLASS_UNKNOWN="unknown"
 readonly _HRFF_OPEN_ISSUE_STATE="open"
 readonly _HRFF_SESSION_COUNT_QUERY_PREFIX="SELECT count(*) FROM session WHERE time_created >= "
+# Projection-only reason for a blocked exit that recorded no hold evidence.
+readonly _HRFF_REASON_BLOCKED_UNRECORDED="blocked_unrecorded"
 
 #######################################
 # Count attempt-local OpenCode model activity. Fresh runs are scoped to sessions
@@ -357,21 +359,48 @@ _unlock_issue_after_dispatch_release() {
 #######################################
 # Check whether dispatch release may mutate issue state for a repo.
 #
+# A confirmed unmanaged repo is a benign no-op. An indeterminate verdict
+# (GitHub could not answer, e.g. REST deferred under quota pressure) is
+# retried after AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS seconds (default
+# "15 45"); if still unanswered the release is reported unpersisted instead
+# of silently skipped, which stranded claims on live issues (GH#36184).
+#
 # Args:
 #   $1 = issue_number
 #   $2 = repo_slug
+# Globals written:
+#   _HRFF_RELEASE_AUTHORITY_SKIP_RC — status the caller returns when this
+#   returns non-zero: 0 = confirmed unmanaged, 1 = release unpersisted.
+# Returns: 0 when the release may proceed, 1 otherwise.
 #######################################
 _hrff_release_repo_state_is_managed() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local guard_rc=0 delay=""
+	local -a retry_delays=()
 
-	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
-		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
-			print_info "Skipping CLAIM_RELEASED for #${issue_number} in ${repo_slug}: repo state is not managed by this account"
-			return 1
-		fi
-	fi
-	return 0
+	_HRFF_RELEASE_AUTHORITY_SKIP_RC=0
+	declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1 || return 0
+	read -r -a retry_delays <<<"${AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS-15 45}" || true
+	aidevops_can_manage_repo_issue_state "$repo_slug" || guard_rc=$?
+	for delay in ${retry_delays[@]+"${retry_delays[@]}"}; do
+		[[ "$guard_rc" -eq 2 ]] || break
+		[[ "$delay" =~ ^[0-9]+$ ]] || continue
+		print_info "Repo-state authority for #${issue_number} in ${repo_slug} is indeterminate; retrying claim release in ${delay}s"
+		sleep "$delay"
+		guard_rc=0
+		aidevops_can_manage_repo_issue_state "$repo_slug" || guard_rc=$?
+	done
+	case "$guard_rc" in
+	0) return 0 ;;
+	2)
+		_HRFF_RELEASE_AUTHORITY_SKIP_RC=1
+		print_warning "Claim release for #${issue_number} in ${repo_slug} remains unpersisted: repo-state authority could not be determined (GitHub lookup unavailable); retaining issue lifecycle state"
+		return 1
+		;;
+	esac
+	print_info "Skipping CLAIM_RELEASED for #${issue_number} in ${repo_slug}: repo state is not managed by this account"
+	return 1
 }
 
 #######################################
@@ -564,6 +593,8 @@ _hrff_prepare_terminal_blocker_release() {
 	_HRFF_TERMINAL_BLOCKER_MODE="normal"
 	_HRFF_TERMINAL_BLOCKER_FRAGMENT=""
 	_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY=""
+	# Empty until this release's observation, or an earlier one, is evidence.
+	_HRFF_TERMINAL_BLOCKER_EVIDENCE=""
 	[[ -n "$repo_path" && "$blocker_fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 0
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{title: (.title // ""), body: (.body // "")}' 2>/dev/null) || return 0
@@ -581,9 +612,11 @@ _hrff_prepare_terminal_blocker_release() {
 		fi
 		_HRFF_TERMINAL_BLOCKER_FRAGMENT=$(terminal_blocker_observation_fragment \
 			"$task_revision" "$blocker_fingerprint" "$mode" "$projected_state") || _HRFF_TERMINAL_BLOCKER_FRAGMENT=""
+		[[ -z "$_HRFF_TERMINAL_BLOCKER_FRAGMENT" ]] || _HRFF_TERMINAL_BLOCKER_EVIDENCE="observation"
 		;;
 	circuit)
 		_HRFF_TERMINAL_BLOCKER_MODE="circuit"
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE="prior_observation"
 		_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY=$(terminal_blocker_circuit_comment \
 			"$machine_readable_part" "$task_revision" "$blocker_fingerprint") || {
 			_HRFF_TERMINAL_BLOCKER_MODE="normal"
@@ -592,6 +625,11 @@ _hrff_prepare_terminal_blocker_release() {
 		;;
 	open)
 		_HRFF_TERMINAL_BLOCKER_MODE="open"
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE="circuit"
+		;;
+	normal)
+		# A repeated unknown dossier for this revision keeps its earlier observation.
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE="prior_observation"
 		;;
 	esac
 	return 0
@@ -660,17 +698,20 @@ _hrff_hold_terminal_blocker_circuit() {
 }
 
 #######################################
-# GH#34846: a held first observation of a revision-re-armed class has no
-# circuit, so queue it for the runner-local recovery owner, which returns the
-# issue to status:available once a relevant revision or trusted retry lands.
+# GH#34846: a held first observation of a re-armable class has no circuit, so
+# queue it for the runner-local recovery owner, which returns the issue to
+# status:available once a relevant revision or trusted retry lands.
+# GH#36044: retry-only classes (GH#35925, e.g. permission_required) are queued
+# too; otherwise only the slow cross-repo seed could find them and a trusted
+# retry stayed unapplied for hours.
 # Call only after the observation release is persisted and projected.
 #######################################
 _hrff_enqueue_observation_recovery() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	[[ -n "${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}" ]] || return 0
-	declare -F terminal_blocker_rearms_on_revision >/dev/null 2>&1 || return 0
-	terminal_blocker_rearms_on_revision "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" || return 0
+	declare -F terminal_blocker_observation_recoverable >/dev/null 2>&1 || return 0
+	terminal_blocker_observation_recoverable "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" || return 0
 	_hrff_blocked_exit_holds || return 0
 	_hrff_enqueue_blocker_recovery "$issue_number" "$repo_slug"
 	return 0
@@ -768,7 +809,7 @@ _release_dispatch_claim() {
 	if ! _hrff_release_context_is_valid "$issue_number" "$repo_slug"; then
 		return 0
 	fi
-	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return 0
+	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return "${_HRFF_RELEASE_AUTHORITY_SKIP_RC:-0}"
 
 	if [[ "$reason" == "rate_limit_transient" ]]; then
 		if ! _hrff_handle_rate_limit_release_circuit "$issue_number" "$repo_slug"; then
@@ -782,7 +823,9 @@ _release_dispatch_claim() {
 
 	runner_name=$(_hrff_resolve_release_runner_login)
 	if [[ "$reason" == blocked ]] && _hrff_blocked_release_persisted "$issue_number" "$repo_slug" "$runner_name"; then
-		_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason"
+		local persisted_reason="$reason"
+		[[ "${_HRFF_PERSISTED_RELEASE_UNRECORDED:-0}" -eq 0 ]] || persisted_reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
+		_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$persisted_reason"
 		return $?
 	fi
 	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
@@ -796,8 +839,19 @@ _release_dispatch_claim() {
 		terminal_blocker_fragment="${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}"
 		;;
 	esac
+	# A held status:blocked needs evidence that an owner can re-arm: recovery
+	# retires evidence-less entries (GH#35569) and the dependency sweep defers
+	# to that absent owner, so an unrecorded hold never cleared. Unclassified
+	# or unreadable evidence stays retryable; a repeat records it before a hold.
+	local projection_reason="$reason"
+	if [[ "$reason" == blocked && -z "$terminal_blocker_fragment" &&
+		-z "${_HRFF_TERMINAL_BLOCKER_EVIDENCE:-}" ]]; then
+		machine_readable_part+=" evidence=unrecorded"
+		projection_reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
+		print_warning "Blocked exit on #${issue_number} recorded no terminal-blocker evidence; keeping it dispatchable"
+	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
-		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is blocked. Next action: verify the exact head and current brief before resuming.\n'
+		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is preserved on the draft PR. Next action: Pulse continues the exact head (bounded per head and per PR).\n'
 	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
 		terminal_blocker_fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
 	elif [[ "$reason" == worker_merged_partial_no_progress ]]; then
@@ -815,8 +869,8 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		return 1
 	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
-	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason" "$session_key" || return 1
-	[[ "$reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$projection_reason" "$session_key" || return 1
+	[[ "$projection_reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
 	return 0
 }
 
@@ -891,12 +945,16 @@ _hrff_project_post_release_state() {
 		return 0
 	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
+		# GH#36019: the draft is preserved work awaiting exact-head continuation
+		# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
+		# draft projected as status:blocked was rejected by that target fence and
+		# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
 		if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
+			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
 				|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
 		fi
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
-		print_info "Projected draft checkpoint #${issue_number} as blocked partial work"
+		print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
 		return 0
 	fi
 	# GH#33545: same projection as a draft checkpoint (clear active status,
@@ -935,10 +993,16 @@ _hrff_project_post_release_state() {
 	# GH#34758: a runner-capability release is runner-local. Its open draft
 	# stays available so a capable runner's exact-head continuation can run,
 	# matching the "Projected state: status:available" recovery text.
-	local draft_projection="blocked"
-	if [[ "$reason" == blocked ]] && declare -F _terminal_blocker_reason >/dev/null 2>&1 &&
-		[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == runner_capability_unmet ]]; then
-		draft_projection="available"
+	# GH#36019: every other non-blocked release (stall, clean, worker_complete,
+	# ...) leaves preserved work that Pulse continues or records attention for;
+	# only the terminal-blocker classes project an open draft as blocked.
+	local draft_projection="available"
+	if [[ "$reason" == blocked || "$reason" == push_policy_timeout || "$reason" == network_policy_timeout ]]; then
+		draft_projection="blocked"
+		if declare -F _terminal_blocker_reason >/dev/null 2>&1 &&
+			[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == runner_capability_unmet ]]; then
+			draft_projection="available"
+		fi
 	fi
 	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
 		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" "$draft_projection" \
@@ -952,6 +1016,7 @@ _hrff_project_post_release_state() {
 _hrff_blocked_release_persisted() {
 	local issue_number="$1" repo_slug="$2" runner_name="$3"
 	local comments_json=""
+	_HRFF_PERSISTED_RELEASE_UNRECORDED=0
 	comments_json=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 1
 	comments_json=$(jq -c 'map(select((.body // "")
 		| test("(?m)^CLAIM_RELEASED reason=blocked |^DISPATCH_CLAIM ")))' <<<"$comments_json") || return 1
@@ -959,8 +1024,18 @@ _hrff_blocked_release_persisted() {
 	# attempt. Legacy consumers still use the existing circuit retry semantics.
 	jq -e 'any(.[]; (.body // "")
 		| test("(?m)^DISPATCH_CLAIM "))' <<<"$comments_json" >/dev/null 2>&1 || return 1
-	TERMINAL_BLOCKER_SELF_LOGIN="$runner_name" terminal_blocker_has_current_hold "$comments_json"
-	return $?
+	TERMINAL_BLOCKER_SELF_LOGIN="$runner_name" terminal_blocker_has_current_hold "$comments_json" || return 1
+	# The persisted receipt, not this retry, decides the projection: a retry
+	# must not turn an evidence=unrecorded release into status:blocked.
+	if jq -e --arg self "$runner_name" --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		"${_TBC_HOLD_EVIDENCE_JQ}"'
+		map(select(hold_evidence($authoritative; $self)))
+		| sort_by([.created_at // "", .id // 0]) | last | (.body // "")
+		| test("(?m)^CLAIM_RELEASED reason=blocked .* evidence=unrecorded$")
+	' <<<"$comments_json" >/dev/null 2>&1; then
+		_HRFF_PERSISTED_RELEASE_UNRECORDED=1
+	fi
+	return 0
 }
 
 _hrff_project_blocked_exit() {

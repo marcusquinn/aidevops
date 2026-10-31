@@ -335,6 +335,16 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-ci-drift-ledger.sh"
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_DIR}/pulse-merge-partial-continuation.sh"
 
+# GH#36028: restore open worker drafts that older runners projected blocked.
+# shellcheck source=./pulse-draft-checkpoint-unblock.sh
+# shellcheck disable=SC1091
+source "${_PULSE_MERGE_DIR}/pulse-draft-checkpoint-unblock.sh"
+
+# GH#36112: supersede conflicting Pulse TODO handoffs instead of routing them.
+# shellcheck source=./pulse-merge-todo-handoff.sh
+# shellcheck disable=SC1091
+source "${_PULSE_MERGE_DIR}/pulse-merge-todo-handoff.sh"
+
 # _release_interactive_claim_on_merge is now provided by shared-claim-lifecycle.sh
 # (sourced at the top of this module, t2429/GH#20067). The backward-compatible
 # underscore-prefixed alias is defined there so all existing call sites
@@ -516,7 +526,7 @@ _pm_gate_author_trust() {
 				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — verified Dependabot author ${pr_author} remains external but has current-head maintainer crypto-approval, proceeding" >>"$LOGFILE"
 			else
 				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — verified Dependabot author ${pr_author} remains external and lacks current-head maintainer crypto-approval; entering lifecycle reconciliation" >>"$LOGFILE"
-				_pm_gate_route_ineligible_author "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha"
+				_pm_gate_route_ineligible_author "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "approval-required"
 				return 1
 			fi
 		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$expected_head_sha"; then
@@ -531,9 +541,10 @@ _pm_gate_author_trust() {
 
 _pm_gate_route_ineligible_author() {
 	local pr_number="$1" repo_slug="$2" pr_author="$3" expected_head_sha="$4" intake_rc=0
-	_pulse_route_dependabot_pr_to_worker_issue "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "policy-ineligible" || intake_rc=$?
+	local reason="${5:-policy-ineligible}"
+	_pulse_route_dependabot_pr_to_worker_issue "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "$reason" || intake_rc=$?
 	case "$intake_rc" in
-	0) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — authentic Dependabot PR is outside automatic merge policy; routed to worker intake (GH#30351)" >>"$LOGFILE" ;;
+	0) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — authentic Dependabot PR requires ${reason}; routed to worker intake (GH#30351)" >>"$LOGFILE" ;;
 	3) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — authentic Dependabot PR has an explicit maintainer-review hold; preserving it without worker intake (GH#30389)" >>"$LOGFILE" ;;
 	4)
 		if [[ "${DRY_RUN:-0}" == "1" ]]; then
@@ -659,6 +670,20 @@ _check_pr_merge_gates() {
 	_pm_gate_repository_and_issue "$pr_number" "$repo_slug" "$linked_issue" "$expected_head_sha" "$trusted_issue_sync" || return 1
 	_pm_gate_origin_authority "$pr_number" "$repo_slug" "$linked_issue" "$pr_author" \
 		"$trusted_issue_sync" "$author_permission" || return 1
+	# Creation wrappers are not final authority. Check before merge or repair,
+	# but only route feedback after the existing author/issue trust gates pass.
+	local closure_json="" closure_reason=""
+	if ! closure_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" --json body,closingIssuesReferences 2>/dev/null); then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — closing-reference metadata unavailable" >>"$LOGFILE"
+		return 1
+	fi
+	if ! closure_reason=$(_gh_pr_merge_closure_check "$closure_json" "$repo_slug"); then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — ${closure_reason}" >>"$LOGFILE"
+		if ! _gh_pr_repair_merge_closure "$pr_number" "$repo_slug" "$closure_json"; then
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "review" "$pr_labels" || true
+		fi
+		return 1
+	fi
 	if [[ "$review_gate_mode" == "$ci_rebase_only" ]]; then
 		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} passed non-review trust gates for ${review_gate_mode} evaluation; CHANGES_REQUESTED remains blocking" >>"$LOGFILE"
 		return 0
@@ -1243,6 +1268,18 @@ _pmp_stage_handle_conflict() {
 	if [[ "${DRY_RUN:-0}" == "1" ]]; then
 		echo "[pulse-wrapper] DRY-RUN: PR #${pr_number} in ${repo_slug} is CONFLICTING; would evaluate rebase, repair routing, or protected close" >>"$LOGFILE"
 		return 2
+	fi
+	# GH#36112: a generated TODO handoff has no work issue; its Ref lines must
+	# never reach issue routing, holds or the generic close path.
+	local handoff_rc="${_PMTH_PROCEED:-10}"
+	if declare -F _pmth_handle_conflicting_handoff >/dev/null 2>&1; then
+		handoff_rc=0
+		_pmth_handle_conflicting_handoff "$pr_number" "$repo_slug" "${pr_head_ref_name:-}" \
+			"$pr_head_ref_oid" "$pr_labels" || handoff_rc=$?
+	fi
+	if [[ "$handoff_rc" -ne "${_PMTH_PROCEED:-10}" ]]; then
+		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
+		return "$handoff_rc"
 	fi
 	conflict_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
 	if [[ -n "$conflict_linked_issue" ]]; then

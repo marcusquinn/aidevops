@@ -40,15 +40,18 @@ model: simple
 Only `simple`, `standard`, and `thinking` are valid authored tiers. Concrete models and provider reasoning levels are resolved from the active routing table at execution time.
 
 OpenCode's unpinned `agent.compaction` follows the first `simple` candidate
-with at least the managed 240K compaction input budget, so a smaller first
-candidate (Haiku's 168K) is skipped rather than disabling the route. An explicit
-compaction model or variant is preserved; no fitting candidate leaves compaction
-on OpenCode's parent model.
+that has credentials (stored auth, env key or provider options) and at least
+the managed 240K compaction input budget. Without OpenAI credentials, Luna is
+skipped and Haiku 5.5 (1M context) compacts; with no usable candidate,
+compaction stays on OpenCode's parent model. An explicit compaction model or
+variant is preserved.
 
-OpenCode sends the session variant with compaction, so the plugin `chat.params`
-hook clamps compaction effort down (never up) to the routed simple variant, or
-to `high` on the parent model (`AIDEVOPS_COMPACTION_MAX_EFFORT` overrides).
-Opus 5.5 `max` compactions stalled for 165-196s with no output (GH#32934).
+OpenCode builds compaction options from the parent message's variant and
+ignores `agent.compaction.variant`, so the plugin `chat.params` hook applies a
+fixed compaction effort, raising or lowering it via the compaction model's own
+variant catalogue: `settings.compaction_reasoning` (default `high`; `medium`
+to `max`), `AIDEVOPS_COMPACTION_EFFORT` overrides, `AIDEVOPS_COMPACTION_MAX_EFFORT`
+caps. Opus 5.5 `max` compactions stalled for 165-196s with no output (GH#32934).
 
 **Local execution** is a provider/runtime policy, not a workload tier. A local model may be placed in any canonical tier's ordered model list. Privacy policy still fails closed when no approved local runtime is available.
 
@@ -107,7 +110,7 @@ is always denied because secrets must flow through secret tooling, not prompts.
 - **Workers**: Follow configured candidate order within canonical `simple`, `standard`, or `thinking` routes after allowlist filtering and auth checks.
 - **Local switch**: Set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto the default OpenAI fallbacks. If you want OpenAI primary but Anthropic fallback, reorder `custom/configs/model-routing-table.json` and omit the allowlist.
 - **Current default mapping**: The active routing table maps `simple` to OpenAI Luna then Anthropic Haiku 5.5, `standard` to OpenAI Sol then Terra then Z.AI GLM then Anthropic Sonnet 5.5, and `thinking` to OpenAI Sol then Anthropic Opus 5.5. Availability and provider policy decide the exact model at execution time.
-- **Reasoning mapping**: `medium` is the minimum selected variant (including custom-table overrides and headless environment overrides). OpenCode subagent children follow the same floor, even under a `low` parent ceiling (GH#33342). Only explicit native agent pins keep their own variant. Luna, Sol, Terra, Haiku 5.5, Sonnet 5.5 and specialist Astra use `medium`. Thinking-tier Opus 5.5 uses `high`, which is the background ceiling: no shipped route uses xhigh/max for workers. Interactive effort remains the user's choice; Haiku 5.5 has adaptive effort variants (`low` to `max`, API default `medium`), while the older Haiku 4.5 has only budget variants (`high`, `max`), so a custom Haiku 4.5 route should keep `high`. GLM-5.2 has no known variant and retains its provider default; never guess one. The same model can serve two tiers: tier lookup keeps the requested tier (headless) or the tier whose variant matches (OpenCode telemetry) rather than the first tier listing the model.
+- **Reasoning mapping**: `medium` is the minimum selected variant (including custom-table overrides and headless environment overrides). OpenCode subagent children follow the same floor, even under a `low` parent ceiling (GH#33342). Only explicit native agent pins keep their own variant. Simple-tier Luna and Haiku 5.5 use `high` (GH#36169: both cost $0.10/$0.50 per 1M, so the extra reasoning is nearly free); Sol, Terra, Sonnet 5.5 and specialist Astra use `medium`. Thinking-tier Opus 5.5 uses `high`, which is the background ceiling: no shipped route uses xhigh/max for workers. Interactive effort remains the user's choice; Haiku 5.5 has adaptive effort variants (`low` to `max`, API default `medium`), while the older Haiku 4.5 has only budget variants (`high`, `max`), so a custom Haiku 4.5 route should keep `high`. GLM-5.2 has no known variant and retains its provider default; never guess one. The same model can serve two tiers: tier lookup keeps the requested tier (headless) or the tier whose variant matches (OpenCode telemetry) rather than the first tier listing the model.
 - **Haiku 5.5 update (2026-10-07, GH#33278)**: The `simple`-tier Anthropic fallback moved from Haiku 4.5 to `anthropic/claude-haiku-5-5` at `medium`. Anthropic's pricing page lists $0.10 in / $0.50 out / $0.01 cache read for prompts up to 100K tokens and 5x those rates above 100K; cost estimates model only the base tier. It has a 1M window, 128K output and adaptive thinking. models.dev lists it natively, so no catalog bridge entry is needed; a live OpenCode headless run succeeded. Setup migrates provider-prefixed Haiku 4.5 pins once (`migration-haiku-5-5.sh`, same files and backups as the Sonnet 5.5 migration).
 - **Sonnet 5.5 update (2026-09-28, GH#32848)**: Sonnet references moved from Sonnet 4.6 / Sonnet 5 to `anthropic/claude-sonnet-5-5`. It costs the same as Sonnet 5 for input and output ($2/$10); Anthropic's pricing page lists its cache read at $0.10 (0.05x input; corrected 2026-10-07). It is 30%+ faster, and uses fewer tokens per task. A live OpenCode headless run succeeded at the default and `medium` variants. Until models.dev lists it, `anthropic-catalog-bridge.mjs` registers the ID from the Sonnet 5 catalog metadata; the native entry wins once published. Setup migrates provider-prefixed user pins once (`migration-sonnet-5-5.sh`: config.jsonc, settings.json, custom routing table, opencode.json, `*_MODEL(S)` lines in credentials.sh), with backups under `~/.aidevops/config-backups/migrations/`. Claude Code accepts the ID with an unknown-catalog warning and assumes a 200K window until it updates.
 - **Anthropic generation update (2026-09-27)**: Anthropic OAuth is available again. The fallbacks moved from Sonnet 4.6 / Opus 4.6 to Sonnet 5 / Opus 5.5 after live headless smoke tests, including tool calls. OpenAI stays primary; the provider-family A/B in `workflows/optimize-tiers.md` (`--preset openai-anthropic`) supplies evidence before any primary change. Plugin config load drops legacy `(via aidevops)` Anthropic model overrides left by versions before GH#32447, because they masked native tool-call, attachment and cost metadata. OpenCode uses `interactive_default` when configured, otherwise the thinking model, as its default only when no explicit user model exists; existing model/variant pins are preserved.

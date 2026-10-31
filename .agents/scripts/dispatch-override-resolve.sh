@@ -99,7 +99,7 @@ _override_version_below() {
 	fi
 	# sort -V puts smaller semver first
 	local first
-	first=$(printf '%s\n%s\n' "$version" "$floor" | sort -V | head -n1)
+	first=$(printf '%s\n%s\n' "$version" "$floor" | sort -V | sed -n '1p')
 	if [[ "$first" == "$version" ]]; then
 		return 0
 	fi

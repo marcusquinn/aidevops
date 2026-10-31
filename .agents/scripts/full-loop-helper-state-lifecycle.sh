@@ -164,7 +164,7 @@ _linked_issue_trust_blocks_start() {
 	local issue_author_association="$5"
 	_FULL_LOOP_LINKED_TRUST_BLOCKER_REASON=""
 
-	if printf '%s\n' "$labels" | grep -qxF 'needs-maintainer-review'; then
+	if grep -qxF 'needs-maintainer-review' <<<"$labels"; then
 		if ! is_headless && _issue_thread_is_trusted_maintainer_only \
 			"$issue_num" "$repo" "$issue_author_association"; then
 			print_info "Issue #${issue_num} has needs-maintainer-review, but this interactive thread is maintainer-only; continuing without treating NMR as a maintainer hold."
@@ -246,7 +246,7 @@ _check_linked_issue_gate() {
 
 	# Extract first issue number from prompt — look for #NNN or issue/NNN patterns
 	local issue_num
-	issue_num=$(echo "$prompt" | grep -oE '#[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+	issue_num=$(echo "$prompt" | grep -oE '#[0-9]+' | sed -n '1p' | grep -oE '[0-9]+' || true)
 	if [[ -z "$issue_num" ]]; then
 		# No issue number in prompt — skip gate (not all tasks reference issues)
 		return 0
@@ -309,7 +309,7 @@ _check_linked_issue_gate() {
 	if [[ -z "$assignees" ]]; then
 		if ! is_headless; then
 			: # interactive self-claim path handles this below
-		elif echo "$labels" | grep -q 'quality-debt'; then
+		elif grep -q 'quality-debt' <<<"$labels"; then
 			: # exempt
 		else
 			blocked=true
@@ -368,7 +368,7 @@ _auto_claim_interactive() {
 
 	# Extract issue number (same pattern as _check_linked_issue_gate)
 	local issue_num
-	issue_num=$(echo "$prompt" | grep -oE '#[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+	issue_num=$(echo "$prompt" | grep -oE '#[0-9]+' | sed -n '1p' | grep -oE '[0-9]+' || true)
 	if [[ -z "$issue_num" ]]; then
 		return 0
 	fi

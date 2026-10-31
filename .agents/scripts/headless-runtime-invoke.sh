@@ -319,20 +319,17 @@ _invoke_opencode_run_bare() {
 	# execution. Never disable isolation to enable observation. The exec shim
 	# records its own identity, not worker_pid (which belongs to a shell).
 	# An absent worktree must not be interpreted as the current directory.
-	if [[ "$runtime_role" == "worker" && "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != "1" && -n "${_invoke_work_dir:-}" ]]; then
+	if [[ "$runtime_role" == "worker" || -n "${AIDEVOPS_LIFECYCLE_GENERATION_ID:-}" || -n "${AIDEVOPS_LIFECYCLE_RUN_ID:-}" ]]; then
 		local lifecycle_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py"
 		# shellcheck source=worker-lifecycle-state.sh
 		source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
-		local lifecycle_state=""
-		lifecycle_state=$(worker_lifecycle_state_dir)
-		local lifecycle_python=""
-		if [[ -n "$lifecycle_state" && -f "$lifecycle_entry" ]] && lifecycle_python="$(type -P python3)" &&
-			"$lifecycle_python" -E -s -B "$lifecycle_entry" --help >/dev/null 2>&1; then
-			_oc_cmd=("$lifecycle_python" -E -s -B "$lifecycle_entry" --initialize --state-dir "$lifecycle_state"
-				--worktree "$_invoke_work_dir" -- "${_oc_cmd[@]}")
-		else
-			print_warning "[worker-lifecycle] observation-gap reason=entry-or-runtime-unavailable"
+		local lifecycle_status=0
+		worker_lifecycle_prepare_launch "${_invoke_work_dir:-}" "$lifecycle_entry" "$private_workload" || lifecycle_status=$?
+		if [[ "$lifecycle_status" -ne 0 ]]; then
+			printf '%s' "$lifecycle_status" >"$exit_code_file"
+			return "$lifecycle_status"
 		fi
+		_oc_cmd=(${WORKER_LIFECYCLE_PREFIX[@]+"${WORKER_LIFECYCLE_PREFIX[@]}"} "${_oc_cmd[@]}")
 	fi
 	run_without_opencode_session_env timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 	printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"

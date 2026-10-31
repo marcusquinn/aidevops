@@ -45,21 +45,21 @@ _isc_resolve_manageable_user() {
 	if ! _isc_gh_reachable; then
 		_isc_warn "$offline_warning"
 		[[ -n "$offline_detail" ]] && _isc_warn "$offline_detail"
-		return 1
+		return 75
 	fi
 
 	local user
 	user=$(_isc_current_user)
 	if [[ -z "$user" ]]; then
 		_isc_warn "could not resolve gh user login — skipping $action on #$issue"
-		return 1
+		return 75
 	fi
 
 	local permission_rc=0
 	_isc_can_manage_issue_state "$slug" "$user" || permission_rc=$?
 	if [[ "$permission_rc" -eq 75 ]]; then
 		_isc_warn "$action: #$issue in $slug deferred — GitHub permission read admission deferred; retry when capacity returns"
-		return 1
+		return 75
 	fi
 	if [[ "$permission_rc" -ne 0 ]]; then
 		_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
@@ -121,15 +121,17 @@ _isc_claim_closed_issue_guard() {
 #   intends to take the issue itself instead of letting a worker pick it up.
 #
 # Behaviour:
-#   - Offline gh: warn-and-continue (exit 0). A collision with a pulse worker
-#     is harmless — the interactive work naturally becomes its own issue/PR.
+#   - Transient identity/permission failures: warn and exit 75 when
+#     --implementing; otherwise preserve the warn-and-continue exit 0.
+#   - Confirmed external non-maintainers: skip without writes (exit 0).
 #   - Idempotent: a re-call by the sole current assignee refreshes the stamp
 #     without a redundant GitHub edit.
 #   - Ownership failures fail closed: unavailable metadata, a foreign live
 #     interactive owner, or an unverifiable takeover never writes a stamp.
 #
 # Exit: 0 on a verified claim/idempotent skip, 1 on ownership conflict or
-# unverifiable metadata/transition, 2 on invalid arguments.
+# unverifiable metadata/transition, 2 on invalid arguments, 75 on a transient
+# identity/permission failure with --implementing (no stamp written).
 _isc_existing_stamp_worktree() {
 	local issue="$1"
 	local slug="$2"
@@ -372,6 +374,28 @@ _isc_validate_claim_request() {
 	return 0
 }
 
+# Resolve a claim principal, distinguishing a transient implementing failure
+# from the legacy/external skip. Only a verified principal is printed.
+_isc_resolve_claim_user() {
+	local issue="$1"
+	local slug="$2"
+	local implementing="$3"
+	local user="" resolve_rc=0
+	user=$(_isc_resolve_manageable_user "claim" "$issue" "$slug" \
+		"gh offline or not authenticated — skipping claim on #$issue ($slug)" \
+		"" \
+		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims") || resolve_rc=$?
+	if [[ "$resolve_rc" -ne 0 ]]; then
+		if [[ "$resolve_rc" -eq 75 && "$implementing" -eq 1 ]]; then
+			_isc_warn "claim NOT applied for #$issue in $slug; a worker may pick it up. Re-run: interactive-session-helper.sh claim $issue $slug --implementing"
+			return 75
+		fi
+		return 1
+	fi
+	printf '%s' "$user"
+	return 0
+}
+
 _isc_cmd_claim() {
 	local issue="" slug="" worktree_path="" implementing=0 defer_comment=0
 	local replacement_pr="" replacement_reason=""
@@ -424,13 +448,10 @@ _isc_cmd_claim() {
 	_isc_validate_claim_request "$issue" "$slug" "$replacement_pr" "$replacement_reason" "$implementing" || return $?
 	_isc_validate_worktree_origin "$slug" "$worktree_path" || return 1
 
-	local user
-	if ! user=$(_isc_resolve_manageable_user "claim" "$issue" "$slug" \
-		"gh offline or not authenticated — skipping claim on #$issue ($slug)" \
-		"a collision with a worker is harmless; the interactive work will become its own issue/PR" \
-		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims"); then
-		return 0
-	fi
+	local user="" resolve_rc=0
+	user=$(_isc_resolve_claim_user "$issue" "$slug" "$implementing") || resolve_rc=$?
+	[[ "$resolve_rc" -ne 75 ]] || return 75
+	[[ "$resolve_rc" -eq 0 ]] || return 0
 
 	_isc_claim_closed_issue_guard "$issue" "$slug" && return 0
 

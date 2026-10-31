@@ -9,8 +9,9 @@ generate platform-specific PAT-creation URLs and secret-set instructions.
 
 ## What `SYNC_PAT` is
 
-A platform personal access token configured as a **per-repo** secret named
-`SYNC_PAT`. The `issue-sync` reusable workflow uses it to authenticate as the
+A purpose-scoped platform personal access token distributed as a repository
+secret named `SYNC_PAT` (not necessarily a distinct token per repository).
+The `issue-sync` reusable workflow uses it to authenticate as the
 maintainer (instead of the platform's bot identity) when:
 
 - Creating issues from `TODO.md` entries that lack `ref:GH#NNN`
@@ -35,14 +36,21 @@ recovery finds nothing.
 
 Three rules apply on every platform:
 
-1. **Per-repo PAT**, never an org-wide / account-wide token. Blast radius of a
-   leaked token is limited to one repo's contents+issues+PRs.
+1. **One token per owner and purpose**, reusable across explicitly selected
+   repositories where the platform supports it. Keep sync separate from release
+   credentials; extend the existing token's repository list, not its purpose.
 2. **Fine-grained / scoped to specific repos**, never "all repos" or
    "classic / personal scope". Most platforms now have a fine-grained option;
    use it.
-3. **Save to password manager at creation time**. Most platforms only show
-   the token once. Rotation reminders (90 days default) belong in the
-   password manager entry, not in shell scripts.
+3. **Save once in gopass at creation time** with
+   `aidevops secret set SYNC_PAT_OWNER_KEY`. Replace `OWNER_KEY` throughout these
+   instructions with a distinct key for the owner using uppercase letters,
+   digits, and underscores (for example, `SYNC_PAT_EXAMPLE_ORG`). Keep the
+   repository secret name `SYNC_PAT` unchanged.
+   Most platforms only show the token once. Set each repository secret from
+   that stored value. Rotation reminders (90 days default) belong in the
+   password manager entry. Local secret-age advisories supplement, but do not
+   replace, the known expiration date.
 
 ## Platform Matrix
 
@@ -59,30 +67,33 @@ Three rules apply on every platform:
 
 ### PAT creation URL
 
-The fine-grained PAT page accepts query-string parameters that pre-fill the
-form. Substitute placeholders as marked:
+First reuse the owner's existing purpose-scoped `SYNC_PAT`, if present. Only
+when none exists, create one fine-grained PAT for sync. The page accepts
+query-string parameters that pre-fill the form. Substitute placeholders as marked:
 
 ```text
 https://github.com/settings/personal-access-tokens/new
-  ?name=aidevops-sync-<SLUG_SAFE>
-  &description=aidevops%20issue-sync%20PAT%20for%20<SLUG_URLENC>
-  &expiration=90
+  ?name=aidevops-sync-<OWNER>
+  &description=aidevops%20issue-sync%20PAT%20for%20<OWNER>
+  &expires_in=90
   &target_name=<OWNER>
-  &permissions=contents:write,issues:write,pull_requests:write,metadata:read
+  &contents=write
+  &issues=write
+  &pull_requests=write
 ```
 
 Where:
 
-- `<SLUG_SAFE>` — the repo slug with `/` replaced by `-` (e.g., `exampleorg-examplerepo`)
-- `<SLUG_URLENC>` — URL-encoded slug (e.g., `exampleorg%2Fexamplerepo`)
 - `<OWNER>` — the org/user that owns the repo
 
 The operator still has to:
 
-- Set "Repository access → Only select repositories → `<SLUG>`" (the URL
-  pre-selects `target_name` but doesn't auto-pick the repo from the dropdown)
+- Set **Repository access → Only select repositories** to every repository
+  needing sync under this owner (the URL pre-selects `target_name` but doesn't
+  auto-pick repositories from the dropdown)
 - Click Generate
-- Save the token to their password manager **before** closing the page
+- Save the token once in gopass with `aidevops secret set SYNC_PAT_OWNER_KEY` in a terminal
+  **before** closing the page; never paste the value into chat
 
 ### Required scopes
 
@@ -101,12 +112,21 @@ Do NOT add `actions: read/write` (workflow can't trigger itself), `secrets`
 ### Setting the secret
 
 ```bash
-# Interactive prompt (recommended — token never lands in shell history):
-gh secret set SYNC_PAT --repo <SLUG>
-
-# DO NOT do this — leaks via process listing and shell history:
-# gh secret set SYNC_PAT --repo <SLUG> --body "$VALUE"
+# Replace OWNER_KEY in both names and OWNER/REPO with the target repository:
+# gh reads the value from stdin; the local name differs from the repo secret.
+aidevops secret SYNC_PAT_OWNER_KEY -- sh -c 'printf %s "$SYNC_PAT_OWNER_KEY" | gh secret set SYNC_PAT --repo OWNER/REPO'
 ```
+
+**Add a repository:** in GitHub **Settings → Developer settings → Fine-grained
+tokens**, edit the existing sync token and add the repository to **Only select
+repositories** if needed. The value is unchanged. Run the command above for the
+new repository; do not mint another token. GitHub user accounts have no
+account-level Actions secrets, so set the secret per repository from gopass.
+
+**Value lost:** regenerate the existing token (permissions and repository list
+are retained), save the new value with `aidevops secret set SYNC_PAT_OWNER_KEY`, then re-set
+the secret in **every listed repository**. Regeneration revokes the old value,
+invalidating all existing copies. Do not put values in command arguments or logs.
 
 ### Verification
 
@@ -117,6 +137,59 @@ gh secret list --repo <SLUG> | grep SYNC_PAT
 ```
 
 The helper never reads the secret value — it only confirms presence.
+
+### Rotation / expired token
+
+A non-empty secret can still be expired or revoked. The checkout symptom is:
+
+```text
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+The process '/usr/bin/git' failed with exit code 128
+```
+
+All four issue-sync jobs validate a configured PAT against the repository API
+before checkout. HTTP 200 selects the PAT; 401 reports expired/revoked, while
+403/404 reports missing repository access. Transport errors and other statuses
+also fall back safely. This is a repository-access probe, not proof of every
+write permission (or Git transport availability).
+
+Invalid tokens emit one `SYNC_PAT invalid` error annotation per job, but the
+probe returns success: **green-with-error-annotation** is intentional when the
+remaining work succeeds. This lets `GITHUB_TOKEN` checkout and read-only closing
+hygiene continue. TODO.md publication still uses the existing protected-branch
+PR path; it can fail if Actions cannot open the PR. No branch protection or token
+permissions are weakened.
+
+To rotate:
+
+1. Regenerate the fine-grained token in GitHub settings. Regeneration retains its
+   permissions and selected repositories, but **revokes the old value everywhere**.
+   Save the replacement in the password manager and update every secret using it.
+   See **Setting the secret** above: inventory all consumers before rotation,
+   rather than assuming an existing token is unused or creating duplicate tokens.
+2. In a separate terminal, set each affected secret using the interactive prompt
+   (never put the value in chat, command arguments, or shell history):
+
+   ```bash
+   gh secret set SYNC_PAT --repo <SLUG>
+   ```
+
+3. Rerun failed jobs and verify the probe, checkout and closing hygiene:
+
+   ```bash
+   gh run rerun <id> --repo <SLUG> --failed
+   ```
+
+   Green runs with degradation annotations have no failed jobs to rerun; rerun
+   the whole run (omit `--failed`) to verify rotation.
+
+Local Phase 7 checks use `gh secret list --json name,updatedAt`, never the secret
+value. A secret updated **76 or more days ago** produces a "may expire" advisory
+(90-day default minus 14 days); this is a heuristic because actual expiry periods
+vary. A latest failed `issue-sync.yml` run with a failed SYNC_PAT-backed checkout
+also produces an advisory, even for a fresh secret or an unprotected repository.
+Unrelated failed steps do not trigger it. API metadata cannot prove token validity;
+the in-workflow probe is authoritative. Existing advisory dismissal still applies.
 
 ### Detection of need
 
@@ -226,8 +299,8 @@ guided URL flow but cannot automate the variable-set step (no CLI exists).
 - Generate GitLab URL with `name=` query param + scope hint
 - Add Gitea + Bitbucket guided walkthroughs (URL + manual instructions)
 - Add `setup-debt-helper.sh verify-secret` GitLab/Gitea/Bitbucket backends
-- Surface PAT expiry advisory: warn 14 days before expiry (requires reading
-  expiry from secret-manifest.json — Phase 2 deliverable)
+- Read actual token expiry from secret-manifest.json when available; the
+  implemented 76-day secret-age advisory is only a 90-day-default heuristic
 
 ## Cross-references
 

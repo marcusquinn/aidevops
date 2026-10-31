@@ -935,7 +935,7 @@ check_framework_routing() {
 	# Check if we're already in the aidevops repo — no routing needed
 	local remote_url
 	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null || echo "")
-	if printf '%s' "$remote_url" | grep -qE "marcusquinn/aidevops(\.git)?$"; then
+	if grep -qE "marcusquinn/aidevops(\.git)?$" <<<"$remote_url"; then
 		return 0
 	fi
 
@@ -1489,7 +1489,7 @@ _pc_sanitize_keywords() {
 	local w
 	for w in "${kw[@]}"; do
 		printf '%s\t%s\n' "${#w}" "$w"
-	done | sort -k1,1nr | head -n 4 | cut -f2-
+	done | sort -k1,1nr | sed -n '1,4p' | cut -f2-
 	return 0
 }
 
@@ -1852,7 +1852,7 @@ _warn_dispatch_path_auto_dispatch() {
 	local _matched=""
 	local _p
 	for _p in "${_patterns[@]}"; do
-		if printf '%s' "$_combined" | grep -qF "$_p"; then
+		if grep -qF "$_p" <<<"$_combined"; then
 			_matched="$_p"
 			break
 		fi
@@ -2061,7 +2061,7 @@ main() {
 	alloc_output=$(_main_resolve_allocation) || alloc_rc=$?
 
 	# Dry-run paths print directly and return early
-	if echo "$alloc_output" | grep -q "^task_id=tDRY_RUN"; then
+	if grep -q "^task_id=tDRY_RUN" <<<"$alloc_output"; then
 		echo "$alloc_output"
 		[[ -z "$CLAIM_VERIFIED_TARGET" ]] || printf 'target_repo=%s\n' "$CLAIM_VERIFIED_TARGET"
 		return $alloc_rc

@@ -18,6 +18,8 @@ python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state 
 python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state register --event-id EVENT_UUID --run-id RUN_UUID --pid PID
 python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state bind --event-id OTHER_EVENT_UUID --run-id RUN_UUID --generation-id GENERATION_UUID --path /absolute/worktree
 python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state reconcile --limit 100
+python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state enroll --path /absolute/linked-worktree
+python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state resolve-generation --path /absolute/linked-worktree
 ```
 
 Identifiers are canonical UUIDs, allocated once by the caller per logical event,
@@ -76,13 +78,29 @@ an additional session protocol: process survival alone cannot settle it.
   This bounds logical journal growth, not a byte-exact disk quota or filesystem WAL
   behavior under a stalled reader. SQLite disk errors remain explicit failures.
 - Failed passes are reported. A full journal prevents new events, but unchanged
-  observations can still refresh scheduling metadata. Worker execution continues;
-  an evidence-preserving retention policy is needed for indefinite operation.
+  observations can still refresh scheduling metadata. Unmanaged observe-only execution continues;
+  mandatory admitted execution is refused when registration cannot commit.
+  An evidence-preserving retention policy is needed for indefinite operation.
 
-`LifecycleRegistry` stores state in `registry.sqlite3` with schema 1 and mode
-`observe-only`. Other schemas are rejected without mutation; only disposable test
-stores existed during this change. Never reset a real older store to upgrade it:
-an explicit migration is required if one has been created.
+`LifecycleRegistry` stores state in `registry.sqlite3` in `observe-only` mode.
+New stores use schema 2. Observation still accepts schema 1 without upgrading it;
+other versions are rejected. The explicit `upgrade_schema()` API transactionally
+adds the admission table to schema 1 and updates the version, retaining existing
+events, runs and bindings. It never adopts historical bindings as admission proof.
+Repeated upgrades are no-ops. No automatic migration or production upgrade command
+is installed. Back up real state and coordinate clients before a future upgrade:
+older schema-1-only code will reject schema 2. Do not reset or downgrade live state.
+Event envelope schema 1 is separate and unchanged. Admission requirements and
+current integration limitations are documented in [CLEANUP.md](CLEANUP.md).
+
+Generation marker format 2 records the directory inodes alongside canonical paths,
+installation and generation UUIDs. Device numbers may change between mounts and
+are checked only by the live directory handles during each operation. Format-1
+markers are interpreted in memory without rewriting them: valid nonnegative integer
+pairs supply their inode components, while every other identity field and the Git
+backlink must still match. Closed admission stays closed. This is cooperative
+protocol identity, not proof against copied metadata, volume clones or inode reuse.
+Older clients cannot read format 2; coordinate clients before new enrollment.
 
 The store is not a trust boundary against malicious same-user code. Installation
 UUIDs must not be cloned onto another host; host binding/migration is not enforced
@@ -107,7 +125,9 @@ cleanup based on this observe-only lifecycle tracking slice.
 ## Automatic pre-exec observation
 
 `worker-launch.py --state-dir STATE --worktree WORKTREE -- NATIVE_COMMAND ...`
-records its own process identity and a hypothetical binding, then uses `exec` to
+automatically validates and admits a generation registered by the new enrollment
+protocol. Without such enrollment it records a hypothetical binding. Both paths
+capture the launcher's own process identity and then use `exec` to
 replace itself with the native command. PID and start identity survive exec;
 native stdout, exit status and signal handling are not proxied by a supervisor.
 This records an attempted launch, not proof that exec or the AI task succeeded.
@@ -257,9 +277,17 @@ not successful exec, application readiness, job completion or no-writers proof.
 
 The wrapper allocates a fresh run ID per invocation. It does not persist a retry
 request outside the registry or retry native execution; store-level idempotency
-does not guarantee capture when storage is unavailable. There is no atomic
-transaction spanning SQLite and exec. A future strict admission mode would need
-separate authorization and acceptance tests; this change does not introduce one.
+does not guarantee capture when storage is unavailable. An observe-only launch may
+continue with a coverage-gap diagnostic. Explicit admitted launches instead refuse
+execution when admission cannot be confirmed. Neither mode provides an atomic
+transaction spanning SQLite and exec. Universal mandatory admission remains a
+separate rollout requiring authorization and acceptance tests.
+
+Before admitted native execution, the launcher consumes
+`AIDEVOPS_LIFECYCLE_RUN_ID` and `AIDEVOPS_LIFECYCLE_GENERATION_ID`: neither is
+inherited by the command. All other environment variables remain unchanged.
+A nested launcher must obtain a fresh admission attempt rather than replay its
+parent's IDs. This does not establish descendant containment or writer coverage.
 
 The existing tests include actual owned-process crashes before and after commit,
 concurrent replay, conflicting bindings and full-journal launch continuation.

@@ -254,7 +254,7 @@ _large_file_gate_evaluate_target() {
 	# Skip non-simplifiable files (lockfiles, generated data, configs)
 	local basename_fpath
 	basename_fpath=$(basename "$fpath")
-	if printf '%s' "$basename_fpath" | grep -qE "$_LFG_SKIP_PATTERN" 2>/dev/null; then
+	if printf '%s' "$basename_fpath" | grep -E "$_LFG_SKIP_PATTERN" >/dev/null 2>&1; then
 		return 2
 	fi
 

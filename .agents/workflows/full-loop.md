@@ -223,7 +223,9 @@ PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
   --decisions "any notable trade-offs")
 ```
 
-Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. Interactive PR creation defaults to draft; use `/pr-loop` or explicit user finalise/ready consent before converting with `gh pr ready`. On rebase conflict: aborts and returns 1 — resolve and retry.
+Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. Interactive PR creation defaults to draft so work survives interruption or restart. In a repository where the session has maintainer authority, implementation intent (`/full-loop`, "fix", "implement", "work on this now", or an issue-started implementation) is the finalise/ready consent: once verification passes and the remote head equals local `HEAD`, run `gh pr ready` and continue to 4.4 without another prompt. Keep the draft only when the user asked for review-first or draft-only, or the work is incomplete or blocked; external contributions stop at a verified ready PR. On rebase conflict: aborts and returns 1 — resolve and retry.
+
+Explicit `--title` task prefixes are validated before push against TODO/linked-issue proof; issue-only work uses `GH#NNN`, not an invented `tNNN` task ID.
 
 External contributions use the target's fork/branch, PR template, title, issue-linking, and review conventions from `workflows/pr.md`; do not add aidevops labels, merge summaries, signatures, or issue-closing automation.
 
@@ -316,6 +318,50 @@ release-verify.yml`. Inclusion requires the published source receipt, re-verifie
 its exact tag/workflow, and checks feature ancestry before recording linked
 `release:superseded` evidence. This never relaxes the source PR's exact-tag rule.
 See `workflows/release.md` → Manual Release for assets and optional preflight.
+
+**Tagless maintained-application deployments:** when separately authorized
+publication uses the application's existing push-triggered rolling deployment
+instead of version tags, first verify the deployed runtime reports its full source
+SHA. Select the repository-owned workflow that actually deploys that immutable
+source (a build-only/check-only workflow is not deployment evidence), then record
+the existing successful run:
+
+```bash
+full-loop-helper.sh record-deployment PR RUN_ID deploy.yml DEPLOYED_SHA OWNER/REPO
+full-loop-helper.sh finalize-receipt PR OWNER/REPO
+# With persisted local lifecycle state, use complete instead of finalize-receipt.
+```
+
+`DEPLOYED_SHA` must be the immutable SHA observed at the deployed runtime, not a
+healthy HTTP response, branch name, or a guessed commit. This read-only bookkeeping
+command does not authorize or perform deployment. It verifies maintainer access,
+the merged PR and its base branch, the exact workflow/run/repository identity,
+successful completion of a same-repository push, write-authorized original and
+rerun actors, run time after merge, and merge ancestry in that exact deployed SHA.
+The named run must still be the latest workflow invocation on the PR base branch;
+pending, failed, stale, fork, unrelated and unverifiable evidence is rejected.
+There is no extra application environment, tag, GitHub Release, health-URL fetch,
+or arbitrary JSON import. Only this explicitly selected deployment workflow is
+attested; the helper cannot infer deployment semantics from an arbitrary CI job.
+
+The atomic release receipt records `published` plus typed `tagless-deployment`
+evidence (run ID/attempt, workflow, merge and deployed SHA). This means actual
+application publication, **not** a claim that a versioned release exists or that
+publication was not requested. Finalization and local lifecycle completion
+re-verify that remote evidence; identical recording is idempotent. If a later run
+or rerun invalidates the receipt, observe the currently deployed full SHA again
+and repeat `record-deployment` with the latest successful run and that SHA, then
+retry `complete` or `finalize-receipt`. Under the transition lock, the command
+atomically replaces typed evidence only for the same repository, PR, workflow,
+and merge SHA with a newer run ID or a higher attempt of the same run. Every
+remote check still applies; pending or failed runs cannot repair a receipt.
+Versioned, malformed, and conflicting terminal receipts are not overwritten.
+Existing exact-head and live-owner cleanup
+guards still apply. This adapter is unavailable for the aidevops repository,
+whose signed, versioned release path is unchanged. The legacy repository-rename
+adapter refuses typed deployment receipts rather than discarding their proof;
+after a rename, re-verify deployment at the new identity before creating a new
+matching receipt. Do not hand-edit or migrate the old receipt as a plain status.
 
 Loops with local lifecycle state finalize with `full-loop-helper.sh complete`
 after terminal release evidence (`published`, `superseded`, or recorded

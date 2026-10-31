@@ -291,14 +291,23 @@ ${_sig_footer}"
 _merge_output_is_graphql_rate_limit() {
 	local merge_output="$1"
 
-	printf '%s' "$merge_output" | grep -qiE 'GraphQL:.*API rate limit|GraphQL.*rate limit|rateLimitExceeded'
+	grep -qiE 'GraphQL:.*API rate limit|GraphQL.*rate limit|rateLimitExceeded' <<<"$merge_output"
 	return $?
+}
+
+_merge_output_is_transient_server_error() {
+	local merge_output="$1"
+
+	if grep -qiE '(^|[^[:alnum:]_])(HTTP(/[0-9.]+)?[[:space:]]+|status code:[[:space:]]*)(502|503|504)([^0-9]|$)|Something went wrong while executing your query' <<<"$merge_output"; then
+		return 0
+	fi
+	return 1
 }
 
 _merge_output_is_review_policy_block() {
 	local merge_output="$1"
 
-	printf '%s' "$merge_output" | grep -qiE 'At least [0-9]+ approving review|approving review is required|review required|cannot approve your own pull request|can not approve your own pull request|self-approval'
+	grep -qiE 'At least [0-9]+ approving review|approving review is required|review required|cannot approve your own pull request|can not approve your own pull request|self-approval' <<<"$merge_output"
 	return $?
 }
 
@@ -658,8 +667,8 @@ _merge_guard_prospective_todo() (
 # _merge_rest_fallback — squash/merge/rebase a PR via the REST pull merge endpoint.
 #
 # This is a transport fallback only. It is called after review-bot-gate has
-# passed and only when `gh pr merge` failed because its GraphQL path was rate
-# limited. The REST endpoint still enforces branch protection and mergeability;
+# passed and `gh pr merge` hit a GraphQL quota or transient server failure.
+# The REST endpoint still enforces branch protection and mergeability;
 # failures remain failures.
 #
 # Args: pr_number repo merge_method expected_head_sha [squash_subject] [merge_body_file]
@@ -691,7 +700,7 @@ _merge_rest_fallback() {
 	# mutable authority snapshot for the later REST mutation.
 	_merge_revalidate_transport_authority "$pr_number" "$repo" "$expected_head_sha" || return 1
 
-	print_info "GraphQL rate limit blocked gh pr merge; retrying via REST pull merge endpoint with verified head SHA ${expected_head_sha}..."
+	print_info "GitHub transport failure blocked gh pr merge; retrying via REST pull merge endpoint with verified head SHA ${expected_head_sha}..."
 	local rest_args=(-f "sha=${expected_head_sha}" -f "merge_method=${rest_method}")
 	[[ -n "$squash_subject" ]] && rest_args+=(-f "commit_title=${squash_subject}")
 	[[ -n "$merge_body_file" ]] && rest_args+=(-F "commit_message=@${merge_body_file}")
@@ -710,6 +719,30 @@ _merge_rest_fallback() {
 
 	print_error "REST merge fallback failed for PR #${pr_number}"
 	return 1
+}
+
+# A server error after a mutation has an unknown outcome. Reconcile via REST
+# before considering one retry; unreadable or changed state fails closed.
+_merge_recover_transient_server_error() {
+	local pr_number="$1" repo="$2" merge_method="$3" expected_head_sha="$4"
+	local squash_subject="$5" merge_body_file="$6" pr_json=""
+	pr_json=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}") || {
+		print_error "Could not reconcile server-error merge for PR #${pr_number}; refusing retry"
+		return 1
+	}
+	#aidevops:trust-boundary -- a failed transport is not proof the write failed,
+	# and only the previously verified head can be accepted or retried.
+	if jq -e --arg head "$expected_head_sha" '.merged == true and .head.sha == $head' <<<"$pr_json" >/dev/null 2>&1; then
+		print_success "PR #${pr_number} already merged at verified head ${expected_head_sha}; no retry issued"
+		return 0
+	fi
+	if ! jq -e --arg head "$expected_head_sha" '.merged == false and .state == "open" and .head.sha == $head' <<<"$pr_json" >/dev/null 2>&1; then
+		print_error "PR #${pr_number} is not open at the verified head after server error; refusing retry"
+		return 1
+	fi
+	# The fallback revalidates live review and transport authority before writing.
+	_merge_rest_fallback "$pr_number" "$repo" "$merge_method" "$expected_head_sha" "$squash_subject" "$merge_body_file" || return 1
+	return 0
 }
 
 # Final head-SHA read with bounded recovery from local admission deferral only.
@@ -1363,6 +1396,9 @@ ${_merge_retry_out}"
 		if [[ $has_auto -eq 0 ]] && _merge_output_is_graphql_rate_limit "$_merge_out"; then
 			_merge_rest_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" && return 0
 			return 1
+		elif [[ $has_auto -eq 0 ]] && _merge_output_is_transient_server_error "$_merge_out"; then
+			_merge_recover_transient_server_error "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" || return 1
+			return 0
 		elif [[ $has_admin -eq 0 && $has_auto -eq 1 ]]; then
 			local auto_admin_rc=0
 			_merge_try_interactive_admin_auto_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out" "$match_head_sha" "$squash_subject" "$merge_body_file" || auto_admin_rc=$?
@@ -1372,11 +1408,11 @@ ${_merge_retry_out}"
 			return 1
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
-			printf '%s' "$_merge_out" | grep -qE 'At least [0-9]+ approving review'; then
+			grep -qE 'At least [0-9]+ approving review' <<<"$_merge_out"; then
 			_merge_try_review_only_admin_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" "$_merge_out" || return $?
 			return 0
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
-			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected'; then
+			grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected' <<<"$_merge_out"; then
 			_merge_try_review_only_admin_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" "$_merge_out" || return $?
 			return 0
 		else
@@ -1422,7 +1458,7 @@ _merge_unlock_resources() {
 	_linked_issue=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body \
 		--jq '.body' |
 		grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
-		grep -oE '[0-9]+' | head -1) || _linked_issue=""
+		grep -oE '[0-9]+' | sed -n '1p') || _linked_issue=""
 	[[ -n "$_linked_issue" && "$_linked_issue" =~ ^[0-9]+$ ]] || return 0
 
 	local labels=""
@@ -1581,7 +1617,7 @@ _merge_finalize_post_merge() {
 	linked_issue=$(gh pr view "$pr_number" --repo "$repo" --json body \
 		--jq '.body' 2>/dev/null |
 		grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
-		grep -oE '[0-9]+' | head -1) || linked_issue=""
+		grep -oE '[0-9]+' | sed -n '1p') || linked_issue=""
 	if [[ -n "$linked_issue" ]]; then
 		release_interactive_claim_on_merge "$pr_number" "$repo" "$linked_issue" || true
 	fi
@@ -1871,6 +1907,21 @@ _merge_release_lane_check() {
 	return 0
 }
 
+# GH#36174: enforce the creation-time closure invariant for existing PRs too.
+_merge_check_closure_metadata() {
+	local pr_number="$1" repo="$2"
+	local closure_json="" closure_reason=""
+	closure_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body,closingIssuesReferences) || {
+		print_error "Merge blocked for PR #${pr_number}: closing-reference metadata unavailable"
+		return 1
+	}
+	if ! closure_reason=$(_gh_pr_merge_closure_check "$closure_json" "$repo"); then
+		print_error "Merge blocked for PR #${pr_number}: ${closure_reason}"
+		return 1
+	fi
+	return 0
+}
+
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
@@ -1907,6 +1958,8 @@ cmd_merge() {
 	if [[ "$_already_merged_rc" -ne 2 ]]; then
 		return "$_already_merged_rc"
 	fi
+
+	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
 
 	# Gate: enforce review-bot-gate before merge.
 	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {

@@ -697,6 +697,7 @@ _wah_emit_human() {
 	local delivery_json="${15}" repo_label="${16}"
 	local details_json="${17}"
 	local blocker_json="${18}"
+	local pb="${19:-0}"
 
 	local divider="==========================================================="
 
@@ -765,6 +766,7 @@ _wah_emit_human() {
 	printf '  pulse_cycle_skipped_graphql_low:         %d\n' "$gqlow"
 	printf '  dispatch_backoff_skipped:                %d\n' "$db_skip"
 	printf '  pulse_dispatch_no_work_breaker_tripped:  %d\n' "$nwbreaker"
+	printf '  pulse_dispatch_permission_block_breaker_tripped: %d\n' "$pb"
 	printf '\n'
 	printf 'GitHub delivery stages (external truth; scope: %s):\n' "$(if [[ -n "$repo_label" ]]; then printf 'repository'; else printf 'global'; fi)"
 	printf '  PRs opened:                  %s\n' "$pr_opened"
@@ -825,6 +827,7 @@ _wah_emit_json() {
 	local delivery_json="${16}" repo_label="${17}"
 	local details_json="${18}"
 	local blocker_json="${19}"
+	local pb="${20:-0}"
 
 	jq -n \
 		--arg since "$since_label" \
@@ -842,6 +845,7 @@ _wah_emit_json() {
 		--argjson gqlow "$gqlow" \
 		--argjson db_skip "$db_skip" \
 		--argjson nwbreaker "$nwbreaker" \
+		--argjson pb "$pb" \
 		--argjson delivery "$delivery_json" \
 		--argjson details "$details_json" \
 		--argjson blockers "$blocker_json" \
@@ -880,7 +884,8 @@ _wah_emit_json() {
 				pulse_dispatch_circuit_broken: $cb,
 				pulse_cycle_skipped_graphql_low: $gqlow,
 				dispatch_backoff_skipped: $db_skip,
-				pulse_dispatch_no_work_breaker_tripped: $nwbreaker
+				pulse_dispatch_no_work_breaker_tripped: $nwbreaker,
+				pulse_dispatch_permission_block_breaker_tripped: $pb
 			},
 			progress_blockers: ($blockers + {scope: (if $repo == "" then "global" else "repository" end)}),
 			delivery_stages: ($delivery + {scope: (if $repo == "" then "global" else "repository" end)}),
@@ -953,11 +958,12 @@ cmd_summary() {
 	blocker_json=$(_wah_blocker_details_json "$cutoff_epoch" "$now_epoch" "$repo_label" "$live_blocker_sessions_json")
 
 	# Pulse-stats counters.
-	local cb gqlow db_skip nwbreaker
+	local cb gqlow db_skip nwbreaker pb
 	cb=$(_wah_count_stats_counter "pulse_dispatch_circuit_broken" "$cutoff_epoch")
 	gqlow=$(_wah_count_stats_counter "pulse_cycle_skipped_graphql_low" "$cutoff_epoch")
 	db_skip=$(_wah_count_stats_counter "dispatch_backoff_skipped" "$cutoff_epoch")
 	nwbreaker=$(_wah_count_stats_counter "pulse_dispatch_no_work_breaker_tripped" "$cutoff_epoch")
+	pb=$(_wah_count_stats_counter "pulse_dispatch_permission_block_breaker_tripped" "$cutoff_epoch")
 
 	# Delivery-stage counts (optional, network-dependent).
 	local delivery_json
@@ -971,12 +977,12 @@ cmd_summary() {
 		_wah_emit_json "$since_label" "$cutoff_iso" "$cutoff_epoch" \
 			"$total" "$terminal_total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
-			"$delivery_json" "$repo_label" "$details_json" "$blocker_json"
+			"$delivery_json" "$repo_label" "$details_json" "$blocker_json" "$pb"
 	else
 		_wah_emit_human "$since_label" "$cutoff_iso" \
 			"$total" "$terminal_total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
-			"$delivery_json" "$repo_label" "$details_json" "$blocker_json"
+			"$delivery_json" "$repo_label" "$details_json" "$blocker_json" "$pb"
 	fi
 	return 0
 }

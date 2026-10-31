@@ -20,7 +20,8 @@ from .process import ObservationUnavailable
 from .runtime import adapter_for, require_ready
 
 
-TEST_MODULES = ("tests.test_storage", "tests.test_events", "tests.test_launch")
+TEST_MODULES = ("tests.test_storage", "tests.test_events", "tests.test_launch", "tests.test_admission",
+                "tests.test_admitted_launch", "tests.test_directory_handle", "tests.test_cleanup_policy")
 
 
 class ReportResult(unittest.TextTestResult):

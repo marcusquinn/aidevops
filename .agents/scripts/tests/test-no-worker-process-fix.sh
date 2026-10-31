@@ -38,7 +38,7 @@ AGENT_SCRIPT_DIR="${SCRIPT_DIR}/.."
 PULSE_CLEANUP="${AGENT_SCRIPT_DIR}/pulse-cleanup.sh"
 WORKER_LAUNCH="${AGENT_SCRIPT_DIR}/pulse-dispatch-worker-launch.sh"
 HEADLESS_LIB="${AGENT_SCRIPT_DIR}/headless-runtime-lib.sh"
-PULSE_ENGINE="${AGENT_SCRIPT_DIR}/pulse-dispatch-engine.sh"
+PULSE_ENGINE="${AGENT_SCRIPT_DIR}/pulse-dispatch-engine-launch.sh"
 WORKER_LIFECYCLE="${AGENT_SCRIPT_DIR}/worker-lifecycle-common.sh"
 DEDUP_LAYERS="${AGENT_SCRIPT_DIR}/pulse-dispatch-dedup-layers.sh"
 
@@ -594,7 +594,7 @@ test_failure_classification_distinct() {
 	# - "cli_usage_output" — spawned but invoked wrong (config bug)
 	# - "worker_worktree_live_owner" / continuation subreasons — exited during
 	#   the prelaunch ownership guard
-	# These are wired in pulse-dispatch-engine.sh check_worker_launch.
+	# These are wired in pulse-dispatch-engine-launch.sh check_worker_launch.
 	if grep -q '"no_worker_process"' "$PULSE_ENGINE" \
 		&& grep -q '"cli_usage_output"' "$PULSE_ENGINE" \
 		&& grep -q 'worker_worktree_live_owner' "$PULSE_ENGINE" \

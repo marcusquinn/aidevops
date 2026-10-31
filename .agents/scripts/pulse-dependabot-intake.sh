@@ -39,8 +39,10 @@ _pulse_dependabot_intake_scope_lines() {
 		else .files[] | .path
 		end' 2>/dev/null) || return 1
 
-	# shellcheck disable=SC2016 # Literal Markdown scope declaration.
-	printf '%s\n' '- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'
+	if [[ "$repo_slug" == "marcusquinn/aidevops" ]]; then
+		# shellcheck disable=SC2016 # Literal Markdown scope declaration.
+		printf '%s\n' '- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'
+	fi
 	while IFS= read -r path; do
 		case "$path" in
 		"" | /* | ../* | */../* | */.. | *'`'*) return 1 ;;
@@ -392,6 +394,18 @@ _pulse_dependabot_intake_body() {
 	local reason="$4"
 	local marker="$5"
 	local scope_lines="$6"
+	local policy_guidance="Do not edit framework trust policy from this project repository."
+	local reference_guidance="Preserve exact-head bot identity, repository ownership, commit provenance, dependency allowlist, and security checks; route repairs without granting merge authority."
+	local approval_guidance=""
+
+	if [[ "$repo_slug" == "marcusquinn/aidevops" ]]; then
+		policy_guidance="If the source PR is safe but only outside the maintained trust policy, update the narrow policy with evidence."
+		reference_guidance="Follow the trusted boundary in \`.agents/scripts/trusted-dependabot-lib.sh\` and the repair-routing pattern in \`.agents/scripts/pulse-merge-process.sh::_route_pr_to_fix_worker\`."
+	fi
+	if [[ "$reason" == "approval-required" ]]; then
+		approval_guidance="The dependency allowlist and security checks passed; only current-head maintainer crypto-approval is missing. Do not change the allowlist to resolve this gate. Valid resolutions: an authorized maintainer runs \`sudo aidevops approve pr ${pr_number} ${repo_slug}\`, or deliver a maintainer-authored replacement PR with the identical diff and close the bot PR as superseded after verifying the replacement merged. Never manufacture approval or weaken the approval gate."
+		policy_guidance=""
+	fi
 
 	cat <<-EOF
 		## Dependabot PR worker intake
@@ -406,19 +420,18 @@ _pulse_dependabot_intake_body() {
 		### Worker objective
 
 		Inspect the dependency update and terminal checks, reproduce relevant failures, and
-		deliver the smallest safe replacement or repair PR. If the source PR is safe but only
-		outside the maintained trust policy, update the narrow policy with evidence. If the
+		deliver the smallest safe replacement or repair PR. ${policy_guidance} If the
 		update is unsafe or intentionally deferred, apply an explicit maintainer-review hold
 		with rationale. Close or supersede the source PR only after preserving this evidence.
+
+		${approval_guidance}
 
 		### Files Scope
 
 		${scope_lines}
 
-		Start from the source PR diff. The exact observed paths above and the narrow trusted
-		dependency policy are the initial executable boundary. Follow the
-		trusted boundary in \`.agents/scripts/trusted-dependabot-lib.sh\` and the repair-routing
-		pattern in \`.agents/scripts/pulse-merge-process.sh::_route_pr_to_fix_worker\`.
+		Start from the source PR diff. The exact paths above are the initial executable boundary.
+		${reference_guidance}
 
 		### Verification
 
@@ -574,7 +587,7 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 	local scope_lines=""
 
 	case "$reason" in
-	policy-ineligible | terminal-ci-failure | merge-conflict) ;;
+	policy-ineligible | approval-required | terminal-ci-failure | merge-conflict) ;;
 	*) reason="policy-ineligible" ;;
 	esac
 	declare -F _is_authentic_dependabot_pr >/dev/null 2>&1 || return 1

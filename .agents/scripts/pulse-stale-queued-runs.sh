@@ -161,9 +161,25 @@ _sq_scan_repo() {
 	return 0
 }
 
+# Prove the orphaned job's runner no longer holds it (reads ${SQ_WORK}/job.json).
+# GitHub-hosted runners (group 0, "GitHub Actions") are ephemeral and never
+# appear in the repository runners API, which lists self-hosted runners only;
+# a hosted job whose run has concluded cannot still be executing (GH#36177).
+# Self-hosted runners must be listed online and idle.
+_sq_orphan_runner_released() {
+	local repo="$1"
+	local runner="$2"
+	if jq -e '.runner_group_id == 0 and .runner_group_name == "GitHub Actions"' "${SQ_WORK}/job.json" >/dev/null 2>&1; then
+		return 0
+	fi
+	_sq_api GET "repos/${repo}/actions/runners?per_page=100" "${SQ_WORK}/runners.json" || return 1
+	jq -e --arg name "$runner" '[.runners[]? | select(.name == $name and .status == "online" and .busy == false)] | length == 1' "${SQ_WORK}/runners.json" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 # Orphaned jobs: the run is completed but a job (check run) is still in_progress
-# on an idle, online runner. Rerun the run at most once per run ID; never alter
-# check conclusions. Fail closed on every unverifiable read.
+# on a runner that no longer holds it. Rerun the run at most once per run ID;
+# never alter check conclusions. Fail closed on every unverifiable read.
 _sq_orphan_job_run() {
 	local repo="$1"
 	local state="$2"
@@ -179,8 +195,7 @@ _sq_orphan_job_run() {
 	[[ ! -f "${state}/${run_id}.orphan-rerun" ]] || return 1
 	_sq_api GET "repos/${repo}/actions/runs/${run_id}" "${SQ_WORK}/orphan-run.json" || return 1
 	jq -e '.conclusion != null' "${SQ_WORK}/orphan-run.json" >/dev/null 2>&1 || return 1
-	_sq_api GET "repos/${repo}/actions/runners?per_page=100" "${SQ_WORK}/runners.json" || return 1
-	jq -e --arg name "$runner" '[.runners[]? | select(.name == $name and .status == "online" and .busy == false)] | length == 1' "${SQ_WORK}/runners.json" >/dev/null 2>&1 || return 1
+	_sq_orphan_runner_released "$repo" "$runner" || return 1
 	# Persist before the write so a failed or slow rerun is never repeated.
 	printf '%s\n' "$SQ_NOW" >"${state}/${run_id}.orphan-rerun" || return 1
 	if _sq_api POST "repos/${repo}/actions/runs/${run_id}/rerun" "${SQ_WORK}/rerun.json"; then

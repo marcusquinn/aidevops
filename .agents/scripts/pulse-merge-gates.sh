@@ -266,7 +266,7 @@ check_external_contributor_pr() {
 	local label_exit=$?
 
 	local has_label=false
-	if [[ $label_exit -eq 0 ]] && echo "$label_output" | grep -q '^external-contributor$'; then
+	if [[ $label_exit -eq 0 ]] && grep -q -- '^external-contributor$' <<<"$label_output"; then
 		has_label=true
 	fi
 
@@ -276,7 +276,10 @@ check_external_contributor_pr() {
 	local comment_exit=$?
 
 	local has_comment=false
-	if [[ $comment_exit -eq 0 ]] && echo "$comment_output" | grep -qiF 'external contributor'; then
+	# Here-strings, not pipes, for every dedup probe in this file: under the
+	# caller's pipefail an early grep -q exit on a large comment list reported
+	# "not found" and re-posted the same comment (GH#36235).
+	if [[ $comment_exit -eq 0 ]] && grep -qiF -- 'external contributor' <<<"$comment_output"; then
 		has_comment=true
 	fi
 
@@ -638,7 +641,7 @@ check_permission_failure_pr() {
 		return 2
 	fi
 
-	if echo "$perm_comments" | grep -qF 'Permission check failed'; then
+	if grep -qF -- 'Permission check failed' <<<"$perm_comments"; then
 		# Already posted — nothing to do
 		return 0
 	fi
@@ -893,7 +896,7 @@ check_pr_modifies_workflows() {
 		return 2
 	fi
 
-	if echo "$files_output" | grep -qE '^\.github/workflows/'; then
+	if grep -qE -- '^\.github/workflows/' <<<"$files_output"; then
 		echo "[pulse-wrapper] check_pr_modifies_workflows: PR #$pr_number in $repo_slug modifies workflow files" >>"$LOGFILE"
 		return 0
 	fi
@@ -923,12 +926,12 @@ check_gh_workflow_scope() {
 		return 2
 	fi
 
-	if echo "$auth_output" | grep -q "'workflow'"; then
+	if grep -q -- "'workflow'" <<<"$auth_output"; then
 		return 0
 	fi
 
 	# Also check for the scope without quotes (format varies by gh version)
-	if echo "$auth_output" | grep -qiE 'Token scopes:.*workflow'; then
+	if grep -qiE -- 'Token scopes:.*workflow' <<<"$auth_output"; then
 		return 0
 	fi
 
@@ -1000,7 +1003,7 @@ check_workflow_merge_guard() {
 		return 2
 	fi
 
-	if echo "$comments_output" | grep -qF 'workflow scope'; then
+	if grep -qF -- 'workflow scope' <<<"$comments_output"; then
 		# Already commented — still blocked
 		echo "[pulse-wrapper] check_workflow_merge_guard: PR #$pr_number already has workflow scope comment — skipping merge" >>"$LOGFILE"
 		return 1

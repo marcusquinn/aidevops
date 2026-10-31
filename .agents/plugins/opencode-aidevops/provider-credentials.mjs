@@ -15,8 +15,12 @@ function hasValue(value) {
   return Boolean(value);
 }
 
+/** True when provider options carry a key or a custom endpoint/transport. */
+export function optionsHaveCredentials(options) {
+  return CREDENTIAL_OPTION_KEYS.some((key) => hasValue(options?.[key]));
+}
+
 export function providerHasUsableCredentials(provider) {
   if (provider?.source !== "config") return true;
-  const options = provider.options || {};
-  return hasValue(provider.key) || CREDENTIAL_OPTION_KEYS.some((key) => hasValue(options[key]));
+  return hasValue(provider.key) || optionsHaveCredentials(provider.options);
 }

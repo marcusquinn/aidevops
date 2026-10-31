@@ -776,8 +776,12 @@ test_stale_cache_401_retries_admin_merge_once() {
 	fi
 	print_result "successful merge invalidates repository PR-list caches" 0
 
-	if [[ -f "${HOME}/.cache/gh/graphql-401.cache" ]] || \
-		! find "${HOME}/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f | grep -q .; then
+	# Capture, then test: `find | grep -q .` under pipefail can report a
+	# SIGPIPE false negative (GH#35943).
+	local quarantined_401=""
+	quarantined_401=$(find "${HOME}/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f) ||
+		quarantined_401=""
+	if [[ -f "${HOME}/.cache/gh/graphql-401.cache" ]] || [[ -z "$quarantined_401" ]]; then
 		print_result "stale cache 401 quarantines only matching cache file" 1 "cache remediation did not quarantine stale 401 file"
 		teardown_test_env
 		unset GH_STUB_MODE

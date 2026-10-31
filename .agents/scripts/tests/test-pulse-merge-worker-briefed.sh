@@ -913,6 +913,8 @@ test_partial_worker_association_reaches_authority_gate() {
 	_pm_gate_review_mode() { return 0; }
 	_pm_gate_author_trust() { return 0; }
 	_pm_gate_repository_and_issue() { return 0; }
+	# Closure validation has its own merge-contradiction harness.
+	_gh_pr_merge_closure_check() { return 0; }
 	_pm_gate_review_bot() { return "$review_rc"; }
 	_OW_LABEL_PAT=",origin:worker,"
 	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1 APPROVAL_VERIFY_RESULT=""

@@ -132,6 +132,12 @@ git() {
 			printf 'branch refs/heads/%s\n' "$STUB_PORCELAIN_WORKTREE_BRANCH"
 			return 0
 		fi
+		# GH#36132: reuse selection reads porcelain; render "<path> <sha> [<branch>]".
+		if [[ "${5:-}" == "--porcelain" && -n "${STUB_EXISTING_WORKTREE_LINE:-}" ]]; then
+			local _stub_path="${STUB_EXISTING_WORKTREE_LINE%% *}" _stub_branch="${STUB_EXISTING_WORKTREE_LINE##*[}"
+			printf 'worktree %s\nHEAD abcdef\nbranch refs/heads/%s\n\n' "$_stub_path" "${_stub_branch%]}"
+			return 0
+		fi
 		if [[ -n "${STUB_EXISTING_WORKTREE_LINE:-}" ]]; then
 			printf '%s\n' "$STUB_EXISTING_WORKTREE_LINE"
 		fi
@@ -426,6 +432,90 @@ if [[ $rc -eq 0 && "$_DLW_WORKTREE_PATH" == "${TMP}/projects/fake-repo-porcelain
 	pass "precreate resolves non-/Git/ path from git porcelain"
 else
 	fail "precreate resolves non-/Git/ path from git porcelain" "rc=$rc path='$_DLW_WORKTREE_PATH'"
+fi
+
+# =============================================================================
+# Test 2c: rejected managed enrollment must not register ownership (GH#35828)
+# =============================================================================
+# Real creation/enrollment and registry in a disposable repository; only the
+# post-enrollment classification is fault-injected. Keep detached stubs outside.
+if (
+	unset -f git register_worktree
+	export HOME="$TMP/managed-home" WORKTREE_REGISTRY_DIR="$TMP/managed-registry"
+	export WORKTREE_REGISTRY_DB="$WORKTREE_REGISTRY_DIR/registry.db"
+	export AIDEVOPS_WORKTREE_BASE_DIR="$TMP/managed-worktrees"
+	export AIDEVOPS_WORKTREE_TRASH_ROOT="$TMP/managed-recovery"
+	export AIDEVOPS_CLEANUP_LOG="$TMP/managed-cleanup.log"
+	export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+	export GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+	# GH#36142: enrollment initializes lifecycle state under the temp HOME, so
+	# its parent must exist; never inherit the host's lifecycle state location.
+	unset AIDEVOPS_LIFECYCLE_STATE_DIR AIDEVOPS_WORKSPACE_DIR
+	mkdir -p "$HOME/.aidevops/.agent-workspace" "$WORKTREE_REGISTRY_DIR" "$AIDEVOPS_WORKTREE_BASE_DIR"
+	MANAGED_REPO="$TMP/managed-repo"
+	command -p git init -q "$MANAGED_REPO" || exit 1
+	command -p git -C "$MANAGED_REPO" commit -q --allow-empty -m fixture || exit 1
+	_DLW_SEED_OID=$(command -p git -C "$MANAGED_REPO" rev-parse HEAD)
+	unset _SHARED_WORKTREE_REGISTRY_LOADED
+	# shellcheck source=../shared-worktree-registry.sh
+	source "$SCRIPTS_DIR/shared-worktree-registry.sh"
+	_init_registry_db || exit 1
+	SCRIPT_DIR="$SCRIPTS_DIR"
+	repo_slug="owner/repo"
+	sqlite3 "$WORKTREE_REGISTRY_DB" "INSERT INTO worktree_owners (worktree_path, task_id, owner_session) VALUES ('$MANAGED_REPO', 'existing', 'existing');" || exit 1
+	existing_row=$(sqlite3 "$WORKTREE_REGISTRY_DB" 'SELECT * FROM worktree_owners;')
+	_dlw_select_issue_worktree() { return 1; }
+	_dlw_managed_creation_env() {
+		_DLW_MANAGED_CREATE_MODE="managed"
+		_DLW_MANAGED_CREATE_ENV=(AIDEVOPS_WORKTREE_MANAGER=pulse-cgroup-v1
+			"AIDEVOPS_LAUNCH_TASK=$_DLW_LAUNCH_TASK" "AIDEVOPS_LAUNCH_REPO=$repo_slug")
+		return 0
+	}
+	_dlw_classify_reuse_candidate() {
+		local wt_path="$1"
+		local task="$2" repo="$3" generation=""
+		# Prove the real helper registered AND enrolled before injecting refusal.
+		generation=$(python3 "$SCRIPTS_DIR/worktree-managed-lifetime.py" match "$wt_path" "$task" "$repo") || return 1
+		[[ -n "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT owner_session FROM worktree_owners WHERE worktree_path='$wt_path';")" ]] || return 1
+		if [[ "$STUB_MANAGED_CLASS" == replacement ]]; then
+			register_worktree "$wt_path" "$_DLW_WORKTREE_BRANCH" --task other --session replacement --owner-pid "$$" || return 1
+			printf 'other-task\n'
+			return 0
+		fi
+		[[ "$STUB_MANAGED_CLASS" != "unavailable" ]] || return 1
+		if [[ "$STUB_MANAGED_CLASS" == managed ]]; then
+			printf 'managed %s\n' "${generation%% *}"
+		else
+			printf '%s\n' "$STUB_MANAGED_CLASS"
+		fi
+		return 0
+	}
+	managed_issue=358280
+	for STUB_MANAGED_CLASS in legacy other-task unavailable; do
+		managed_issue=$((managed_issue + 1))
+		_dlw_precreate_worktree "$managed_issue" "$MANAGED_REPO"
+		rc=$?
+		rows=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT count(*) FROM worktree_owners WHERE worktree_path='$_DLW_WORKTREE_PATH';")
+		if [[ "$rc" -ne 1 || "$rows" != 0 || "$_DLW_MANAGED_WORKTREE" -ne 0 || ! -d "$_DLW_WORKTREE_PATH" ]]; then
+			printf 'Rejected class %s: rc=%s ownership rows=%s\n' "$STUB_MANAGED_CLASS" "$rc" "$rows"
+			exit 1
+		fi
+	done
+	STUB_MANAGED_CLASS=replacement
+	_dlw_precreate_worktree 358284 "$MANAGED_REPO"
+	[[ "$?" -eq 1 ]] || exit 1
+	[[ "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT task_id || '|' || owner_session FROM worktree_owners WHERE worktree_path='$_DLW_WORKTREE_PATH';")" == 'other|replacement' ]] || exit 1
+	[[ "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT * FROM worktree_owners WHERE worktree_path='$MANAGED_REPO';")" == "$existing_row" ]] || exit 1
+	STUB_MANAGED_CLASS=managed
+	_dlw_precreate_worktree 358285 "$MANAGED_REPO" || exit 1
+	[[ "$_DLW_MANAGED_WORKTREE" -eq 1 && -n "$_DLW_WORKTREE_GENERATION" ]] || exit 1
+	matched_generation=$(python3 "$SCRIPTS_DIR/worktree-managed-lifetime.py" match "$_DLW_WORKTREE_PATH" 358285 "$repo_slug") || exit 1
+	[[ "$_DLW_WORKTREE_GENERATION" == "${matched_generation%% *}" ]] || exit 1
+	[[ "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT task_id || '|' || owner_session FROM worktree_owners WHERE worktree_path='$_DLW_WORKTREE_PATH';")" == '358285|dispatch-precreate-358285' ]] || exit 1
+); then
+	pass "real managed precreation compensates rejected ownership and preserves existing owners"
+else
+	fail "real managed precreation compensates rejected ownership and preserves existing owners"
 fi
 
 # =============================================================================
@@ -937,18 +1027,26 @@ else
 fi
 STUB_LOCK_RC=0
 
-# A repeated-zero-output hold must stop before worktree, ownership, lock, or spawn.
+# GH#36214: the windowed zero-attempt backoff runs before the cross-runner
+# claim, so a held issue posts no DISPATCH_CLAIM/prelaunch lease (each of which
+# used to become fresh orphan evidence) and returns the benign rc 3.
 : >"$ORCHESTRATOR_CALLS_FILE"
 : >"${TMP}/setsid-calls.txt"
+: >"$CLAIM_LOCK_CALLS_FILE"
 STUB_HOLD_RC=0
 hold_rc=0
 _dispatch_launch_worker "77780" "owner/repo" "test-dispatch" "Test Issue" \
 	"testuser" "$FAKE_REPO" "test prompt" "session-key-hold" "" "{}" || hold_rc=$?
 actual_calls=$(tr '\n' ' ' <"$ORCHESTRATOR_CALLS_FILE")
-if [[ "$hold_rc" -eq 2 && "$actual_calls" == "hold " && ! -s "${TMP}/setsid-calls.txt" ]]; then
-	pass "repeated-zero-output hold stops before queued ownership"
+if [[ "$hold_rc" -eq 3 && "$actual_calls" == "hold " && ! -s "${TMP}/setsid-calls.txt" ]]; then
+	pass "zero-attempt backoff stops before queued ownership with benign rc=3"
 else
-	fail "repeated-zero-output hold stops before queued ownership" "rc=$hold_rc calls='$actual_calls'"
+	fail "zero-attempt backoff stops before queued ownership with benign rc=3" "rc=$hold_rc calls='$actual_calls'"
+fi
+if [[ ! -s "$CLAIM_LOCK_CALLS_FILE" ]]; then
+	pass "zero-attempt backoff posts no dispatch claim or prelaunch lease"
+else
+	fail "zero-attempt backoff posts no dispatch claim or prelaunch lease" "claim lock calls: $(cat "$CLAIM_LOCK_CALLS_FILE")"
 fi
 STUB_HOLD_RC=1
 
@@ -1115,7 +1213,7 @@ LEASE_STUB
 		_DLW_WORKTREE_REUSED=0
 		return 0
 	}
-	local scenario="" first_line=""
+	local scenario="" first_line="" hold_line=""
 	for scenario in slow expired renewal-failed; do
 		SECONDS=0 preparation_delay=125 STUB_RENEW_RC=0 lease_rc=0
 		[[ "$scenario" != expired ]] || preparation_delay=301
@@ -1124,8 +1222,10 @@ LEASE_STUB
 		: >"${TMP}/setsid-calls.txt"
 		LOGFILE="${TMP}/prelaunch-lease-${scenario}.log"
 		_dispatch_launch_worker 77782 owner/repo dispatch issue testuser "$FAKE_REPO" prompt issue-77782 "" '{}' || lease_rc=$?
-		IFS= read -r first_line <"$ORCHESTRATOR_CALLS_FILE"
-		[[ "$first_line" == renew\ * ]] || return 1
+		# GH#36214: the zero-attempt backoff precedes the prelaunch lease; the
+		# lease renewal is the first prelaunch-stage action after it.
+		{ IFS= read -r hold_line && IFS= read -r first_line; } <"$ORCHESTRATOR_CALLS_FILE"
+		[[ "$hold_line" == hold && "$first_line" == renew\ * ]] || return 1
 		if [[ "$scenario" == slow ]]; then
 			[[ "$lease_rc" == 0 && -s "${TMP}/setsid-calls.txt" ]] || return 1
 			[[ "$(grep -c '^renew ' "$ORCHESTRATOR_CALLS_FILE")" == 2 ]] || return 1

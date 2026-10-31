@@ -842,7 +842,7 @@ _has_open_pr_check_task_id_title() {
 	local issue_title="$3"
 
 	local task_id
-	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
+	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | sed -n '1p' || true)
 	[[ -z "$task_id" ]] && return 1
 
 	local query pr_json pr_count pr_number
@@ -879,7 +879,7 @@ _has_open_pr_check_task_id_title() {
 	merged_pr_body=$(printf '%s' "$pr_json" | jq -r '.[0].body // empty' 2>/dev/null)
 	local close_pattern_check3=""
 	close_pattern_check3=$(_ddpr_closing_keyword_pattern "$issue_number")
-	if printf '%s' "$merged_pr_body" | grep -iqE "$close_pattern_check3"; then
+	if grep -iqE "$close_pattern_check3" <<<"$merged_pr_body"; then
 		# GH#33071: same reopen-lifecycle rule as Check 2.
 		local blocking_pr=""
 		blocking_pr=$(_ddpr_first_merge_after_reopen "$issue_number" "$repo_slug" \

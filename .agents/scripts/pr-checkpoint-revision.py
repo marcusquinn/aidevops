@@ -11,11 +11,12 @@ predicates in pr_checkpoint_events.
 import datetime as dt
 import hashlib
 import json
+import re
 import sys
 
-from pr_checkpoint_events import (events, release_for, released_attempt_token,
+from pr_checkpoint_events import (EVENTS, events, release_for, released_attempt_token,
                                   successors_valid, timestamp, trusted)
-from pr_checkpoint_history import released_successor_history
+from pr_checkpoint_history import explain_released_successor_history, released_successor_history
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
 
@@ -35,12 +36,30 @@ def approval_matches(data, approval, comment, now):
                 isinstance(attempt, str) and attempt.startswith("attempt:")))
 
 
+def blocked_lifecycle(issue):
+    return sorted(label["name"] for label in issue.get("labels", [])
+                  if label["name"].startswith("status:")) == ["status:blocked"]
+
+
+def blocked_approval_matches(issue, approval, comment):
+    # Normalization must not erase a lifecycle hold imposed after approval.
+    # Comments (including our own claim) update the issue too. The shell boundary
+    # separately checks lifecycle events against this approval-time snapshot.
+    if not blocked_lifecycle(issue):
+        return True
+    snapshot = approval.get("blocked_issue_updated_at")
+    current = issue.get("updated_at")
+    return bool(snapshot and current and
+                timestamp(snapshot) <= min(timestamp(current), timestamp(comment["created_at"])))
+
+
 def approved_comment(data, comment, now):
     lines = [line for line in comment["body"].splitlines() if line.startswith(PREFIX)]
     if not trusted(comment, data.get("trusted_logins", ())) or len(lines) != 1:
         return None
     approval = json.loads(lines[0][len(PREFIX):])
-    if not approval_matches(data, approval, comment, now):
+    if (not approval_matches(data, approval, comment, now) or
+            not blocked_approval_matches(data["issue"], approval, comment)):
         return None
     return approval
 
@@ -65,7 +84,7 @@ def approved_release(data, comments, approval, comment):
     release = release_for(comments, approval, comment, trusted_logins)
     if release is None:
         return None
-    closing = (approval["runner"], released_attempt_token(comments, approval, release, trusted_logins))
+    closing = (release["user"]["login"], released_attempt_token(comments, approval, release, trusted_logins))
     return closing if history_approved(data, comments, approval, comment["id"], closing) else None
 
 
@@ -85,7 +104,7 @@ def candidate(data, comments, comment, now):
     owners = [a["login"] for a in data["issue"].get("assignees", [])]
     allowed_owners = [[data["assignee"]]]
     if not data.get("lease") or data.get("claiming"):
-        allowed_owners = [[], [approval["runner"]]]
+        allowed_owners = [[], [closing[0]]]
     if owners not in allowed_owners:
         return None
     return {**approval, "approval_id": comment["id"], "approval_actor": comment["user"]["login"]}
@@ -107,27 +126,47 @@ def validate(data):
     return candidates[0]
 
 
+def rejection_diagnostic(context):
+    """Format metadata only; never echo arbitrary coordination field values."""
+    comment, line, state, reason = context
+    event = next(kind.strip().replace(" ", "_") for kind in EVENTS if line.startswith(kind))
+    actor = comment.get("user", {}).get("login", "")
+    runner = actor if re.fullmatch(r"[A-Za-z0-9-]{1,39}(?:\[bot\])?", actor) else "unknown"
+    claim = state["claim_id"] if state else "none"
+    if reason == "untrusted" and comment.get("updated_at", comment.get("created_at")) != comment.get("created_at"):
+        reason = "edited"
+    return (f"rejected comment={comment['id']} event={event} runner={runner} "
+            f"episode_claim={claim} reason={reason}")
+
+
 def template(data):
     """Emit an approval line only when dispatch-approved could accept its release.
 
-    GH#33997: an approval naming a non-blocked release (for example
+    GH#33997: an approval naming an unsupported release (for example
     worker_draft_checkpoint or crash_during_execution) can never dispatch, and
     a trusted approval comment also disables the legacy continuation path.
     """
     approval = {**binding(data), "release_id": data["release_id"], "attempt": data["attempt"]}
+    if blocked_lifecycle(data["issue"]):
+        # This field is emitted only for a blocked approval-time lifecycle.
+        updated = data["issue"]["updated_at"]
+        timestamp(updated)
+        approval["blocked_issue_updated_at"] = updated
     # The approval comment does not exist yet; any later comment id qualifies.
     comments = sorted_comments(data)
     trusted_logins = data.get("trusted_logins", ())
     release = release_for(comments, approval, {"id": float("inf")}, trusted_logins)
     if release is None:
         raise ValueError(
-            f"release {approval['release_id']} is not a trusted CLAIM_RELEASED reason=blocked "
-            f"by {approval['runner']} closing {approval['attempt']}; dispatch-approved would "
+            f"release {approval['release_id']} is not a trusted blocked/clean/worker_complete "
+            f"release closing {approval['attempt']} with its poster's ready lease; dispatch-approved would "
             "reject this approval, so none was generated")
-    closing = (approval["runner"], released_attempt_token(comments, approval, release, trusted_logins))
-    history = released_successor_history(comments, release["id"], float("inf"), closing, trusted_logins)
+    closing = (release["user"]["login"], released_attempt_token(comments, approval, release, trusted_logins))
+    history, rejection = explain_released_successor_history(
+        comments, release["id"], float("inf"), closing, trusted_logins)
     if history is None:
-        raise ValueError("intervening coordination is not fully released; no approval generated")
+        raise ValueError("intervening coordination is not fully released; no approval generated; "
+                         + rejection_diagnostic(rejection))
     if history:
         approval["released_successors"] = history
     return PREFIX + json.dumps(approval)

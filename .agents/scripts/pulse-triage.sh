@@ -138,6 +138,10 @@ _issue_needs_consolidation() {
 	# may have stale labels), fall back to a fresh fetch so the helper
 	# remains self-sufficient.
 	local pre_fetched_json="${3:-}"
+	# Set to 1 only when an in-flight consolidation child owns this parent.
+	# The dispatch scope gate defers implementation on it; other callers
+	# (backfill, re-evaluation) keep the existing "no new child" return.
+	_CONSOLIDATION_CHILD_PENDING=0
 
 	local issue_labels
 	if [[ -n "$pre_fetched_json" ]] \
@@ -174,7 +178,10 @@ _issue_needs_consolidation() {
 	# t1982: Skip if an open consolidation-task child already references this
 	# parent. Prevents double-dispatch during the race window between the
 	# child being created and _reevaluate_consolidation_labels re-checking.
+	# The child will supersede this parent, so the pending flag also keeps
+	# an implementation worker off the parent until it does (#35605).
 	if _consolidation_child_exists "$issue_number" "$repo_slug"; then
+		_CONSOLIDATION_CHILD_PENDING=1
 		return 1
 	fi
 	# If already labeled, re-evaluate with the current (tighter) filter.

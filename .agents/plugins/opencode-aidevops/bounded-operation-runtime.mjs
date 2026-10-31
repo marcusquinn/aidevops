@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { boundedInteger, scalar } from "./bounded-operation-values.mjs";
+import { scalar } from "./bounded-operation-values.mjs";
+export { applySupervisorMessage, disposeOperations } from "./bounded-operation-termination.mjs";
 
 const MAX_CAPTURE_BYTES = 1024 * 1024;
 const MAX_PROGRESS_REMAINDER_BYTES = 4096;
@@ -37,10 +38,10 @@ export function observeProgress(operation, chunk, now) {
   return observed;
 }
 
-export function signalSupervisor(child) {
+export function signalSupervisor(child, signal, cause) {
   if (!child?.connected || child.exitCode !== null || child.signalCode !== null) return false;
   try {
-    child.send({ action: "terminate" });
+    child.send({ action: "terminate", cause });
     return true;
   } catch {
     return false;
@@ -54,22 +55,6 @@ export function trimTerminalOperations(operations, maximum) {
     if (operations.size < maximum) return;
   }
   throw new Error("too many active bounded operations");
-}
-
-// Applies a supervisor IPC event for this operation and stage. Containment is
-// reported only for the main command (GH#33514).
-export function applySupervisorMessage(operation, stage, message) {
-  if (message?.type !== "aidevops.operation" || message.operationID !== operation.id) return;
-  if (message.event === "containment" && stage === "main") {
-    operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
-    operation.attributionComplete = message.attributionComplete === true;
-    operation.postExitDescendantsTerminated = message.postExitDescendantsTerminated === true;
-  } else if (message.event === "command_started" && stage === "main") {
-    operation.commandStarted = true;
-    operation.supervisorRuntime = scalar(message.runtime);
-  } else if (message.event === "command_started") {
-    operation.restorationCommandStarted = true;
-  }
 }
 
 // The supervisor reports whether helper-created process groups were tracked
@@ -103,30 +88,59 @@ export function operationReceipt(operation, now) {
       && (lastProgressAgeMs === null || lastProgressAgeMs >= operation.progressIntervalMs),
     process_exit: operation.processExit,
     process_signal: operation.processSignal || null,
+    termination_cause: operation.terminationCause || null,
+    kill_grace_ms: operation.killGraceMs,
     command_execution: operation.state === "starting" || operation.state === "running"
       ? "pending"
       : (operation.commandStarted ? "observed" : "missing"),
     supervisor_runtime: operation.supervisorRuntime || null,
     restoration_state: operation.restorationState,
     restoration_exit: operation.restorationExit,
+    restoration_termination_cause: operation.restorationTerminationCause || null,
+    restoration_signal: operation.restorationSignal || null,
     output_id: operation.outputID || null,
     evidence_state: operation.state === "finalizing" ? "pending" : (operation.outputID ? "recorded" : "unavailable"),
     output_truncated: operation.outputTruncated,
   };
 }
 
-export function disposeOperations(operations, kill, clearTimer) {
-  for (const operation of operations.values()) {
-    if (operation.child && !operation.childExited
-      && operation.child.exitCode === null && operation.child.signalCode === null) {
-      kill(operation.child, "SIGTERM");
-    }
-    if (operation.restorationChild && !operation.restorationChildExited
-      && operation.restorationChild.exitCode === null && operation.restorationChild.signalCode === null) {
-      kill(operation.restorationChild, "SIGTERM");
-    }
-    if (operation.budgetTimer) clearTimer(operation.budgetTimer);
-    if (operation.killTimer) clearTimer(operation.killTimer);
-    if (operation.restorationTimer) clearTimer(operation.restorationTimer);
-  }
+export async function runOperationRestoration(manager, operation) {
+  operation.state = "restoring";
+  operation.restorationState = "running";
+  manager.notifyStatusWaiters(operation);
+  await new Promise((resolve) => {
+    let settled = false;
+    const finish = (state, code = null) => {
+      if (settled) return;
+      settled = true;
+      if (operation.restorationTimer) manager.clearTimer(operation.restorationTimer);
+      operation.restorationChild = null;
+      operation.restorationExit = Number.isInteger(code) ? code : null;
+      operation.restorationState = state;
+      manager.notifyStatusWaiters(operation);
+      resolve();
+    };
+    const child = manager.spawnOwned(operation, operation.restorationCommand, "restoration");
+    operation.restorationChild = child;
+    operation.restorationChildExited = false;
+    child.once("exit", () => { operation.restorationChildExited = true; });
+    operation.restorationTimer = manager.setTimer(() => {
+      operation.restorationTerminationCause ||= "budget";
+      if (operation.restorationDisposition === "running") operation.restorationDisposition = "timed_out";
+      operation.restorationState = "timing_out";
+      manager.notifyStatusWaiters(operation);
+      if (!operation.restorationChildExited && child.exitCode === null && child.signalCode === null) {
+        manager.kill(child, "SIGTERM", operation.restorationTerminationCause);
+      }
+    }, operation.restorationBudgetMs);
+    child.once("error", () => finish("failed"));
+    child.once("close", (code, signal) => {
+      operation.restorationSignal = scalar(signal);
+      if (signal || !operation.restorationCommandStarted) operation.restorationTerminationCause ||= "supervisor_exit";
+      const cause = operation.restorationTerminationCause;
+      const disposition = operation.restorationDisposition;
+      const succeeded = (!cause || cause === "post_exit_cleanup") && code === 0 && operation.restorationCommandStarted;
+      finish(disposition !== "running" ? disposition : (succeeded ? "succeeded" : "failed"), code);
+    });
+  });
 }

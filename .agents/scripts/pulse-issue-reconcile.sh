@@ -312,7 +312,7 @@ _normalize_get_feedback_routed_rows() {
 		else
 			# No feedback label — check body for markers
 			_cand_body=$(gh issue view "$_cand_num" --repo "$slug" --json body --jq '.body' 2>/dev/null) || _cand_body=""
-			if printf '%s' "$_cand_body" | grep -qE '<!-- (ci-feedback|conflict-feedback|review-followup):PR'; then
+			if printf '%s' "$_cand_body" | grep -E '<!-- (ci-feedback|conflict-feedback|review-followup):PR' >/dev/null; then
 				echo "$_cand_num"
 			fi
 		fi
@@ -375,7 +375,7 @@ _normalize_get_stale_feedback_interactive_rows() {
 			printf '%s|%s\n' "$_cand_num" "$_assignees"
 		else
 			_cand_body=$(gh issue view "$_cand_num" --repo "$slug" --json body --jq '.body' 2>/dev/null) || _cand_body=""
-			if printf '%s' "$_cand_body" | grep -qE '<!-- (ci-feedback|conflict-feedback|review-followup):PR'; then
+			if printf '%s' "$_cand_body" | grep -E '<!-- (ci-feedback|conflict-feedback|review-followup):PR' >/dev/null; then
 				printf '%s|%s\n' "$_cand_num" "$_assignees"
 			fi
 		fi
@@ -1178,9 +1178,9 @@ _lia_author_authority() {
 	assoc=$(printf '%s' "$issue_json" | jq -r '.author_association // "NONE"' 2>/dev/null || echo "NONE")
 	author_type=$(printf '%s' "$issue_json" | jq -r '.user.type // ""' 2>/dev/null || echo "")
 	author_login=$(printf '%s' "$issue_json" | jq -r '.user.login // ""' 2>/dev/null || echo "")
-	if printf '%s\n' "$issue_body" | grep -Fqx '<!-- aidevops:origin:interactive -->'; then
+	if printf '%s\n' "$issue_body" | grep -Fx '<!-- aidevops:origin:interactive -->' >/dev/null; then
 		reported_origin="$origin_interactive"
-	elif printf '%s\n' "$issue_body" | grep -Fqx '<!-- aidevops:origin:worker -->'; then
+	elif printf '%s\n' "$issue_body" | grep -Fx '<!-- aidevops:origin:worker -->' >/dev/null; then
 		reported_origin="$origin_worker"
 	fi
 	if [[ "$author_type" == "Bot" ]]; then

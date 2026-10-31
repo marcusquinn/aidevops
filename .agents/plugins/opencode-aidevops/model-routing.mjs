@@ -6,7 +6,13 @@
 // capability failure moves down escalationOrder.
 
 import { existsSync, readFileSync } from "fs";
-import { floorReasoning, reasoningFloor, normalizeInteractiveDefault, normalizeSpecialistAdvisor } from "./model-routing-variant.mjs";
+import {
+  compactionReasoning,
+  floorReasoning,
+  normalizeInteractiveDefault,
+  normalizeSpecialistAdvisor,
+  reasoningFloor,
+} from "./model-routing-variant.mjs";
 import { activeLocalOnlyPolicy, isLocalProvider } from "./local-only-policy.mjs";
 import { providerHasUsableCredentials } from "./provider-credentials.mjs";
 
@@ -48,6 +54,7 @@ export function normalizeModelRouting(value = {}) {
     specialistAdvisor: normalizeSpecialistAdvisor(value.specialist_advisor),
     interactiveDefault: normalizeInteractiveDefault(value.interactive_default),
     minimumReasoning: reasoningFloor(value?.settings?.minimum_reasoning),
+    compactionReasoning: compactionReasoning(value?.settings?.compaction_reasoning),
   };
 }
 
@@ -69,6 +76,9 @@ function mergeTier(baseTier, tierOverride) {
 export function mergeModelRouting(base, override = {}) {
   const merged = normalizeModelRouting();
   merged.minimumReasoning = reasoningFloor(override?.settings?.minimum_reasoning ?? base?.minimumReasoning);
+  merged.compactionReasoning = compactionReasoning(
+    override?.settings?.compaction_reasoning ?? base?.compactionReasoning,
+  );
   merged.interactiveDefault = Object.hasOwn(override, "interactive_default")
     ? normalizeInteractiveDefault(override.interactive_default)
     : base?.interactiveDefault || null;

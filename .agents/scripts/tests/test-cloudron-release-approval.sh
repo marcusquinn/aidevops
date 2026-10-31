@@ -21,7 +21,7 @@ cat >"${TEST_ROOT}/approval-helper.sh" <<'STUB'
 [[ "$*" == 'verify issue 12 owner/app --require-authority' ]] || exit 9
 printf 'verify\n' >>"${TEST_ROOT}/calls"
 case "$SCENARIO" in
-unsigned) printf 'NO_APPROVAL\n'; exit 1 ;;
+unsigned | request_unsigned) printf 'NO_APPROVAL\n'; exit 1 ;;
 api_error) printf 'API_ERROR\n'; exit 6 ;;
 bad_exit) printf 'VERIFIED\n'; exit 6 ;;
 stale) printf 'STALE_APPROVAL\n'; exit 2 ;;
@@ -36,6 +36,17 @@ printf 'merge\n' >>"${TEST_ROOT}/calls"
 touch "${TEST_ROOT}/merged"
 STUB
 chmod +x "${TEST_ROOT}/approval-helper.sh" "${TEST_ROOT}/full-loop-helper.sh"
+
+request_issues() {
+	if [[ "$SCENARIO" == request_existing || "$SCENARIO" == request_unsigned || "$SCENARIO" == request_signed ]]; then
+		jq -cn --rawfile body "${TEST_ROOT}/request" '[{number:12,html_url:"https://example.invalid/issue/12",body:$body}]'
+	elif [[ "$SCENARIO" == request* ]]; then
+		printf '[]\n'
+	else
+		gh api repos/owner/app/issues/12 | jq -c '[. + {number:12}]'
+	fi
+	return 0
+}
 
 gh() {
 	local command="$1" target="${2:-}"
@@ -67,11 +78,7 @@ gh() {
 		fi
 		;;
 	'api repos/owner/app/issues?'*)
-		if [[ "$SCENARIO" == request ]]; then
-			printf '[]\n'
-		else
-			gh api repos/owner/app/issues/12 | jq -c '[. + {number:12}]'
-		fi
+		request_issues
 		;;
 	'api repos/owner/app/issues/12/comments?'*) printf '[]\n' ;;
 	'api repos/owner/app/issues/12')
@@ -110,7 +117,11 @@ gh() {
 			printf "    secrets:\n      CLOUDRON_RELEASE_PAT: \${{ secrets.CLOUDRON_RELEASE_PAT }}\n"
 		fi
 		;;
-	'api repos/owner/app/contents/CHANGELOG?'*) printf '[1.2.3]\n* Upgrade upstream\n\n[1.2.2]\n* Old entry\n' ;;
+	'api repos/owner/app/contents/CHANGELOG?'*)
+		# A changelog example must never make an unfinished request look finalized.
+		# shellcheck disable=SC2016 # Markdown command backticks are literal.
+		printf '[1.2.3]\n* Upgrade upstream\nMaintainer command: `sudo aidevops approve issue 12 owner/app`\n\n[1.2.2]\n* Old entry\n'
+		;;
 	'api repos/owner/app/contents/CloudronVersions.json?'*)
 		[[ "$SCENARIO" != catalog_error ]] || return 1
 		printf '{"versions":{"1.2.3":{"manifest":{"version":"1.2.3"}}}}\n'
@@ -156,7 +167,21 @@ gh_create_issue() {
 	body=$(</dev/stdin)
 	printf '%s\n' "$body" >"${TEST_ROOT}/request"
 	printf 'create %s\n' "$*" >>"${TEST_ROOT}/calls"
-	printf 'https://example.invalid/issue/12\n'
+	if [[ "$SCENARIO" == request_bad_url ]]; then
+		printf 'https://example.invalid/issue/not-a-number\n'
+	else
+		printf 'https://example.invalid/issue/12\n'
+	fi
+	return 0
+}
+
+gh_issue_edit_safe() {
+	local body=""
+	body=$(</dev/stdin)
+	[[ "$*" == '12 --repo owner/app --body-file -' ]] || return 9
+	printf 'issue-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
+	[[ "$SCENARIO" != request_edit_error ]] || return 1
+	printf '%s\n' "$body" >"${TEST_ROOT}/request"
 	return 0
 }
 
@@ -253,15 +278,50 @@ export SCENARIO=approved
 release_process false
 if grep -Eq 'merge$|pr-edit|comment |issue close' "${TEST_ROOT}/calls"; then exit 1; fi
 printf 'PASS dry run never writes\n'
+main process --repo owner/app --issue 12
+if grep -Eq 'merge$|pr-edit|comment |issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+printf 'PASS scoped dry run retains approval checks and never writes\n'
 export SCENARIO=request
 rm -f "${TEST_ROOT}/merged"
-release_request owner/app 7
+request_output=$(release_request owner/app 7)
+[[ "$request_output" == $'https://example.invalid/issue/12\nAPPROVAL_COMMAND=sudo aidevops approve issue 12 owner/app' ]]
+grep -q 'issue-edit 12 --repo owner/app --body-file -' "${TEST_ROOT}/calls"
+# shellcheck disable=SC2016 # Markdown command backticks are literal.
+grep -q 'Maintainer command: `sudo aidevops approve issue 12 owner/app`' "${TEST_ROOT}/request"
 grep -q -- '--label no-auto-dispatch' "${TEST_ROOT}/calls"
 if grep -q -- '--label auto-dispatch' "${TEST_ROOT}/calls"; then exit 1; fi
 grep -q 'cloudron-release-approval 1.2.3' "${TEST_ROOT}/request"
 grep -q "$HEAD_SHA" "${TEST_ROOT}/request"
 if grep -q 'Old entry' "${TEST_ROOT}/request"; then exit 1; fi
 printf 'PASS request records exact head, changelog and dispatch hold\n'
+
+# An already finalized request is read-only, preserving its signed digest.
+export SCENARIO=request_existing
+: >"${TEST_ROOT}/calls"
+[[ "$(release_request owner/app 7)" == "$request_output" ]]
+if grep -Eq 'create |issue-edit |verify' "${TEST_ROOT}/calls"; then exit 1; fi
+printf 'PASS repeated request returns the ready command without editing\n'
+
+for scenario in request_bad_url request_edit_error; do
+	export SCENARIO="$scenario"
+	rc=0
+	output=$(release_request owner/app 7) || rc=$?
+	[[ "$rc" -eq 1 && -z "$output" ]]
+done
+printf 'PASS invalid URL and failed finalization expose no approval command\n'
+
+# The failed edit above left an unfinished issue. Never rewrite it if signed.
+export SCENARIO=request_signed
+: >"${TEST_ROOT}/calls"
+if release_request owner/app 7; then exit 1; fi
+if grep -q 'issue-edit ' "${TEST_ROOT}/calls"; then exit 1; fi
+export SCENARIO=request_unsigned
+[[ "$(release_request owner/app 7)" == "$request_output" ]]
+# shellcheck disable=SC2016 # Markdown command backticks are literal.
+grep -q 'Maintainer command: `sudo aidevops approve issue 12 owner/app`' "${TEST_ROOT}/request"
+if grep -q 'Request finalization pending\.' "${TEST_ROOT}/request"; then exit 1; fi
+grep -q 'issue-edit 12 --repo owner/app --body-file -' "${TEST_ROOT}/calls"
+printf 'PASS interrupted unsigned request recovers; signed body is not rewritten\n'
 
 export SCENARIO=unsigned
 if release_authorize owner/app 7 "$HEAD_SHA"; then exit 1; fi
@@ -292,3 +352,70 @@ source "${SOURCE_DIR}/routines/core-routines.sh"
 get_core_routine_entries | grep -F 'r924|x|Cloudron releases — process signed approvals|repeat:cron(*/30 * * * *)' >/dev/null
 describe_r924 linux | grep -F 'scripts/cloudron-release-approval-helper.sh process --apply' >/dev/null
 printf 'PASS half-hour approval routine registered\n'
+
+# Isolate selection from publication in the existing harness: no network or merge.
+(
+	# Routine helpers above define their own main; restore the CLI under test.
+	# shellcheck source=../cloudron-release-approval-helper.sh
+	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
+	REPOS_FILE="${TEST_ROOT}/repos.json"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/app","app_type":"cloudron-package"},{"slug":"owner/other","app_type":"cloudron-package"},{"slug":"owner/disabled","app_type":"cloudron-package","maintenance":false}]}' >"$REPOS_FILE"
+	gh() {
+		local command="$1" target="${2:-}"
+		printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
+		[[ "$command" == api && ("$target" == repos/owner/app || "$target" == repos/owner/other) ]] || return 9
+		[[ "${SCENARIO:-}" != scope_denied ]] || { printf 'false\n'; return 0; }
+		printf 'true\n'
+		return 0
+	}
+	release_issues() {
+		local repo="$1"
+		printf 'list %s\n' "$repo" >>"${TEST_ROOT}/calls"
+		printf '[{"number":12},{"number":13}]\n'
+		return 0
+	}
+	release_process_issue() {
+		local repo="$1" issue="$2" apply="$3"
+		printf '%s %s %s\n' "$repo" "$issue" "$apply"
+		return 0
+	}
+	assert_scope() {
+		local expected="$1"
+		shift
+		local output=""
+		: >"${TEST_ROOT}/calls"
+		output=$(main process "$@") || return 1
+		[[ "$output" == "$expected" ]] || { printf 'FAIL scope: %s\n' "$output"; return 1; }
+		printf 'PASS scope: process %s\n' "$*"
+		return 0
+	}
+	assert_scope $'owner/app 12 false\nowner/app 13 false\nowner/other 12 false\nowner/other 13 false'
+	assert_scope $'owner/app 12 true\nowner/app 13 true\nowner/other 12 true\nowner/other 13 true' --apply
+	assert_scope $'owner/other 12 false\nowner/other 13 false' --repo owner/other
+	if grep -q 'repos/owner/app\|list owner/app' "${TEST_ROOT}/calls"; then exit 1; fi
+	assert_scope $'owner/app 12 false\nowner/other 12 false' --issue 12
+	assert_scope 'owner/app 12 true' --repo owner/app --issue 12 --apply
+	assert_scope 'owner/other 13 true' --apply --issue 13 --repo owner/other
+	assert_scope '' --repo owner/app --issue 99
+	for args in missing_repo missing_issue invalid_repo invalid_issue zero_issue duplicate_repo duplicate_issue unknown; do
+		: >"${TEST_ROOT}/calls"
+		case "$args" in
+		missing_repo) set -- --apply --repo ;;
+		missing_issue) set -- --apply --issue ;;
+		invalid_repo) set -- --apply --repo invalid ;;
+		invalid_issue) set -- --apply --issue nope ;;
+		zero_issue) set -- --apply --issue 0 ;;
+		duplicate_repo) set -- --repo owner/app --repo owner/other ;;
+		duplicate_issue) set -- --issue 12 --issue 13 ;;
+		unknown) set -- --apply --unknown ;;
+		esac
+		if main process "$@"; then exit 1; fi
+		[[ ! -s "${TEST_ROOT}/calls" ]]
+		printf 'PASS invalid scope rejected before processing: %s\n' "$args"
+	done
+	if main process --repo owner/unregistered --apply; then exit 1; fi
+	if main process --repo owner/disabled --apply; then exit 1; fi
+	export SCENARIO=scope_denied
+	if main process --repo owner/app --issue 12 --apply; then exit 1; fi
+	printf 'PASS scoped processing retains registration, maintenance and authority gates\n'
+)

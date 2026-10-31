@@ -5,6 +5,7 @@
 
 import json
 from pathlib import Path
+import re
 import tempfile
 
 from worktree_archive_administration import administration_files
@@ -12,10 +13,17 @@ from worktree_archive_administration import administration_files
 
 class AdministrationCases:
     def test_permission_pending_marker_is_not_restored(self):
+        self.check_runtime_marker('aidevops-permission-pending')
+
+    def test_generation_marker_is_not_restored(self):
+        self.check_runtime_marker('aidevops-generation.json')
+
+    def check_runtime_marker(self, name):
         from worktree_archive_administration import administration
 
         admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
-        marker = admin / 'aidevops-permission-pending'
+        marker = admin / name
+        escaped_name = re.escape(name)
         marker.write_text('fixture permission request\n')
         self.assertNotIn(marker.name, administration(self.work)['files'])
         (self.work / 'mixed.txt').write_bytes(b'preserved working change\n')
@@ -23,16 +31,21 @@ class AdministrationCases:
         target = self.root / 'permission-marker-restore'
         self.helper('restore', archive, '--target', target)
         restored_admin = Path(self.git(target, 'rev-parse', '--absolute-git-dir').decode().strip())
-        self.assertFalse((restored_admin / marker.name).exists())
+        restored_marker = restored_admin / marker.name
+        if name == 'aidevops-generation.json':
+            self.assertNotEqual(restored_marker.read_text(), marker.read_text())
+            self.assertIsInstance(json.loads(restored_marker.read_text()), dict)
+        else:
+            self.assertFalse(restored_marker.exists())
         self.assertEqual((target / 'mixed.txt').read_bytes(), b'preserved working change\n')
         self.assertEqual(marker.read_text(), 'fixture permission request\n')
         marker.unlink()
         marker.symlink_to(admin / 'HEAD')
-        with self.assertRaisesRegex(ValueError, '^git_admin:symlink:aidevops-permission-pending$'):
+        with self.assertRaisesRegex(ValueError, f'^git_admin:symlink:{escaped_name}$'):
             administration(self.work)
         marker.unlink()
         marker.mkdir()
-        with self.assertRaisesRegex(ValueError, '^git_admin:unknown_entry:aidevops-permission-pending$'):
+        with self.assertRaisesRegex(ValueError, f'^git_admin:unknown_entry:{escaped_name}$'):
             administration(self.work)
 
     def test_git_administration_fetch_head_validation(self):

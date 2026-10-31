@@ -753,7 +753,7 @@ _nmr_application_is_security_sensitive() {
 _nmr_version_sort_key() {
 	local version_raw="$1"
 	local version=""
-	version=$(printf '%s' "$version_raw" | grep -oE '[0-9]+(\.[0-9]+){0,3}' | head -1) || version=""
+	version=$(printf '%s' "$version_raw" | grep -oE '[0-9]+(\.[0-9]+){0,3}' | sed -n '1p') || version=""
 	[[ -n "$version" ]] || { printf '\n'; return 0; }
 
 	local major=0 minor=0 patch=0 build=0
@@ -959,7 +959,7 @@ _nmr_breaker_release_retry_reason() {
 	[[ -n "$breaker_at" ]] || return 1
 	[[ -n "$breaker_body" ]] || return 1
 
-	if printf '%s' "$breaker_body" | grep -q 'dispatch-backoff:rate_limit_nmr'; then
+	if printf '%s' "$breaker_body" | grep 'dispatch-backoff:rate_limit_nmr' >/dev/null; then
 		local now_epoch="" label_epoch="" age_s="" cooldown_s="${AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS:-1800}"
 		now_epoch=$(date +%s 2>/dev/null || true)
 		label_epoch=$(date -u -d "$label_at" '+%s' 2>/dev/null || TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$label_at" '+%s' 2>/dev/null || true)
@@ -974,7 +974,7 @@ _nmr_breaker_release_retry_reason() {
 	fi
 
 	local breaker_version=""
-	breaker_version=$(printf '%s' "$breaker_body" | grep -oE 'aidevops(_version)?[ =]v?[0-9]+(\.[0-9]+){1,3}|aidevops\.sh[^0-9]*v[0-9]+(\.[0-9]+){1,3}|version=[0-9]+(\.[0-9]+){1,3}' | tail -1 | grep -oE '[0-9]+(\.[0-9]+){1,3}' | head -1) || breaker_version=""
+	breaker_version=$(printf '%s' "$breaker_body" | grep -oE 'aidevops(_version)?[ =]v?[0-9]+(\.[0-9]+){1,3}|aidevops\.sh[^0-9]*v[0-9]+(\.[0-9]+){1,3}|version=[0-9]+(\.[0-9]+){1,3}' | tail -1 | grep -oE '[0-9]+(\.[0-9]+){1,3}' | sed -n '1p') || breaker_version=""
 	[[ -n "$breaker_version" ]] || return 1
 
 	local current_version=""
@@ -1901,7 +1901,7 @@ _handle_knowledge_review_promotion() {
 	local source_id
 	source_id=$(printf '%s' "$issue_body" \
 		| grep -oE 'source_id:[a-zA-Z0-9_.-]+' \
-		| head -1 \
+		| sed -n '1p' \
 		| cut -d: -f2 2>/dev/null) || source_id=""
 
 	if [[ -z "$source_id" ]]; then

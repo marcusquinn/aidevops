@@ -31,6 +31,9 @@ import {
   createQualityHooks,
 } from "../quality-hooks.mjs";
 import { FAIL_REASON } from "../quality-hooks-signature.mjs";
+import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
+
+const realGit = resolveTrustedExecutable("git");
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -482,14 +485,14 @@ describe("tryRepairSignature", () => {
     const repo = join(dir, "repo");
     const linked = join(dir, "repo-linked");
     mkdirSync(repo);
-    execFileSync("/usr/bin/git", ["init"], { cwd: repo, stdio: "ignore" });
-    execFileSync("/usr/bin/git", ["config", "user.email", "test@example.invalid"], { cwd: repo });
-    execFileSync("/usr/bin/git", ["config", "user.name", "Test"], { cwd: repo });
-    execFileSync("/usr/bin/git", ["config", "commit.gpgsign", "false"], { cwd: repo });
+    execFileSync(realGit, ["init"], { cwd: repo, stdio: "ignore" });
+    execFileSync(realGit, ["config", "user.email", "test@example.invalid"], { cwd: repo });
+    execFileSync(realGit, ["config", "user.name", "Test"], { cwd: repo });
+    execFileSync(realGit, ["config", "commit.gpgsign", "false"], { cwd: repo });
     writeFileSync(join(repo, "README.md"), "fixture\n");
-    execFileSync("/usr/bin/git", ["add", "README.md"], { cwd: repo, stdio: "ignore" });
-    execFileSync("/usr/bin/git", ["commit", "--no-gpg-sign", "-m", "init"], { cwd: repo, stdio: "ignore" });
-    execFileSync("/usr/bin/git", ["worktree", "add", "-b", "linked-fixture", linked], {
+    execFileSync(realGit, ["add", "README.md"], { cwd: repo, stdio: "ignore" });
+    execFileSync(realGit, ["commit", "--no-gpg-sign", "-m", "init"], { cwd: repo, stdio: "ignore" });
+    execFileSync(realGit, ["worktree", "add", "-b", "linked-fixture", linked], {
       cwd: repo,
       stdio: "ignore",
     });

@@ -693,6 +693,8 @@ _routine_execute() {
 	local run_script="$3"
 	local agent_name="$4"
 	local repo_path="$5"
+	local schedule="${6:-}"
+	local timezone="${7:-}"
 	local agents_dir="${HOME}/.aidevops/agents"
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	local started_epoch=0
@@ -724,6 +726,7 @@ _routine_execute() {
 			return 1
 		fi
 		_routine_mark_dispatched "$routine_id"
+		[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
 		# Bash 3.2 with nounset treats expansion of an empty array as an unbound
 		# variable. Keep the zero-argument path separate instead of expanding it.
 		if [[ "${#run_parts[@]}" -gt 1 ]]; then
@@ -745,6 +748,7 @@ _routine_execute() {
 			return 1
 		fi
 		echo "[pulse-wrapper] routine ${routine_id}: executing custom script ${custom_script}" >>"$LOGFILE"
+		[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
 		(cd "$repo_path" && "$custom_script") >>"$LOGFILE" 2>&1 || exit_code=$?
 		[[ "$exit_code" -eq 0 ]] || status="$_ROUTINE_STATUS_FAILURE"
 		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch"
@@ -752,6 +756,7 @@ _routine_execute() {
 	fi
 
 	_routine_mark_dispatched "$routine_id"
+	[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
 	_routine_dispatch_agent "$routine_id" "$description" "${agent_name:-Build+}" "${repo_path:-$PULSE_DIR}"
 	return $?
 }
@@ -1087,21 +1092,61 @@ _routine_schedule_is_due() {
 }
 
 #######################################
-# Return whether another deferrable routine work unit may start.
+# Return whether another scheduled routine (or deferrable publication) may start.
 #######################################
 _routine_rest_core_allows_next() {
 	local context="$1"
+	local priority="${2:-scheduled}"
 	local budget_rc=0
 	if declare -F pulse_rest_core_priority_allows_next >/dev/null 2>&1; then
-		pulse_rest_core_priority_allows_next deferrable "$context" || budget_rc=$?
+		pulse_rest_core_priority_allows_next "$priority" "$context" || budget_rc=$?
 	elif declare -F pulse_rest_core_priority_allows >/dev/null 2>&1; then
-		pulse_rest_core_priority_allows deferrable || budget_rc=$?
+		pulse_rest_core_priority_allows "$priority" || budget_rc=$?
 	else
-		return 0
+		# Missing quota evidence must not authorize dispatch.
+		return 1
 	fi
 	[[ "$budget_rc" -eq 0 ]] && return 0
 	echo "[pulse-wrapper] evaluate_routines: REST-core reserve reached at ${context}; remaining routine work deferred (GH#29742)" >>"$LOGFILE"
 	return 1
+}
+
+#######################################
+# Emit one slot record per decision, not a false successful-run state update.
+# Deferred slots remain due and are re-evaluated on the next scheduler tick.
+#######################################
+_routine_log_slot() {
+	local routine_id="$1"
+	local expression="$2"
+	local timezone="$3"
+	local outcome="$4"
+	local slot="" now_epoch="" delay=0
+	local threshold="${AIDEVOPS_ROUTINE_LATE_THRESHOLD_SECONDS:-300}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=300
+	# Strip leading zeros before range checks and decimal arithmetic. Bash uses
+	# signed 64-bit integers; reject overflow before evaluating the input.
+	threshold="${threshold#"${threshold%%[!0]*}"}"
+	threshold="${threshold:-0}"
+	# Compare equal-length digits lexically to avoid overflowing the range check.
+	# shellcheck disable=SC2071
+	if [[ ${#threshold} -gt 19 ]] ||
+		[[ ${#threshold} -eq 19 && "$threshold" > 9223372036854775807 ]]; then
+		threshold=300
+	fi
+	threshold=$((10#$threshold))
+	slot=$(AIDEVOPS_SCHEDULE_TIMEZONE="${timezone:-${AIDEVOPS_SCHEDULE_TIMEZONE:-${TZ:-}}}" \
+		"$ROUTINE_SCHEDULE_HELPER" latest-slot "$expression" 2>/dev/null) || slot=""
+	now_epoch=$(date +%s)
+	if [[ "$slot" =~ ^[0-9]+$ ]]; then
+		delay=$((now_epoch - slot))
+		if [[ "$outcome" == "dispatch" && "$delay" -gt "$threshold" ]]; then
+			echo "[pulse-wrapper] routine_slot_late routine=${routine_id} slot_epoch=${slot} delay_seconds=${delay} outcome=${outcome}" >>"$LOGFILE"
+		fi
+	fi
+	if [[ "$outcome" == "deferred" ]]; then
+		echo "[pulse-wrapper] routine_slot_deferred routine=${routine_id} slot_epoch=${slot:-unknown} delay_seconds=${delay} reason=rest_core_budget" >>"$LOGFILE"
+	fi
+	return 0
 }
 
 #######################################
@@ -1120,11 +1165,12 @@ _evaluate_session_miner_routine() {
 		return 0
 	fi
 	if ! _routine_rest_core_allows_next "routine_execute:${routine_id}"; then
+		_routine_log_slot "$routine_id" "$schedule" "" deferred
 		return 0
 	fi
 	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
 	_routine_execute "$routine_id" "Incremental session insight mining" \
-		"scripts/session-miner-pulse.sh --create-issues" "" "$PULSE_DIR"
+		"scripts/session-miner-pulse.sh --create-issues" "" "$PULSE_DIR" "$schedule" ""
 	return $?
 }
 
@@ -1149,11 +1195,12 @@ _evaluate_issue_archive_routine() {
 		return 0
 	fi
 	if ! _routine_rest_core_allows_next "routine_execute:${routine_id}"; then
+		_routine_log_slot "$routine_id" "$schedule" "" deferred
 		return 0
 	fi
 	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
 	_routine_execute "$routine_id" "Archive issue and PR discussions to orphan branch" \
-		"scripts/issue-archive-helper.sh run" "" "$PULSE_DIR"
+		"scripts/issue-archive-helper.sh run" "" "$PULSE_DIR" "$schedule" ""
 	return $?
 }
 
@@ -1170,10 +1217,9 @@ evaluate_routines() {
 	# calendar slots only and leave the publication worker to full cycles.
 	[[ "${1:-}" != "--skip-publication" ]] || run_publication=0
 	if [[ "$run_publication" -eq 1 && -x "$publication_worker" ]]; then
-		if ! _routine_rest_core_allows_next "routine_publication_worker"; then
-			return 0
+		if _routine_rest_core_allows_next "routine_publication_worker" deferrable; then
+			"$publication_worker" run >>"$LOGFILE" 2>&1 || echo "[pulse-wrapper] publication worker pass failed" >>"$LOGFILE"
 		fi
-		"$publication_worker" run >>"$LOGFILE" 2>&1 || echo "[pulse-wrapper] publication worker pass failed" >>"$LOGFILE"
 	fi
 	if [[ ! -x "$ROUTINE_SCHEDULE_HELPER" ]]; then
 		echo "[pulse-wrapper] evaluate_routines: schedule helper not found at ${ROUTINE_SCHEDULE_HELPER} — skipping" >>"$LOGFILE"
@@ -1241,18 +1287,19 @@ evaluate_routines() {
 
 			if _routine_schedule_is_due "$_RPL_REPEAT" "$last_epoch" "$_RPL_TIMEZONE" "$_RPL_ID"; then
 				if ! _routine_rest_core_allows_next "routine_execute:${_RPL_ID}"; then
-					return 0
+					_routine_log_slot "$_RPL_ID" "$_RPL_REPEAT" "$_RPL_TIMEZONE" deferred
+					continue
 				fi
 				echo "[pulse-wrapper] routine ${_RPL_ID} is due (expr=${_RPL_REPEAT}, timezone=${timezone_context}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
-				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path"
+				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path" "$_RPL_REPEAT" "$_RPL_TIMEZONE"
 				routines_dispatched=$((routines_dispatched + 1))
 			fi
 		done <<<"$routine_section"
 
-	# Routine evaluation only reads TODO.md and runs local scripts/agents;
-	# unlike code-automation dispatch it needs no GitHub remote, so
-	# local_only repos (e.g. a private routines-only repo created via
-	# init-routines-helper.sh --local) must still be evaluated here.
+		# Routine evaluation only reads TODO.md and runs local scripts/agents;
+		# unlike code-automation dispatch it needs no GitHub remote, so
+		# local_only repos (e.g. a private routines-only repo created via
+		# init-routines-helper.sh --local) must still be evaluated here.
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true) | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || true)
 
 	if [[ "$routines_dispatched" -gt 0 ]]; then

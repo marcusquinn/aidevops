@@ -18,6 +18,16 @@ tools:
 
 # Release Workflow
 
+## Cloudron release approval handoff
+
+For managed Cloudron packages, follow the [signed publication boundary](../tools/deployment/cloudron-app-publishing-skill.md#publication-boundary-signed-managed-releases).
+After `cloudron-release-approval-helper.sh request` succeeds, include both the
+issue URL and the exact command from its `APPROVAL_COMMAND=` output in the
+completion message. Show the command verbatim in a code block, with the real
+issue number and repository, not just an issue link or a placeholder. Do not
+offer a signing command when request finalization fails: approval signatures
+bind the final issue body, which must be saved before signing.
+
 ## Standard-tier release handoff
 
 Routine aidevops release execution defaults to a **standard-tier local child**
@@ -354,6 +364,26 @@ exact-tag `postflight.yml` run after GitHub, npm, and Homebrew verification.
 gates, publication, and deployment health. It does not rerun source lint/security
 scans already owned by development, CI, and release preflight. See
 `workflows/postflight.md`.
+
+**Metrics caller pins**: on the installation that owns the maintainer repository
+registry, preview a release pin bump after each aidevops release. Resolve the
+published release SHA and tag together; never substitute a floating branch:
+
+```bash
+source ~/.aidevops/agents/scripts/workflow-release-ref.sh
+release_ref=$(workflow_release_ref marcusquinn/aidevops) || exit 1
+~/.aidevops/agents/scripts/sync-workflows-helper.sh --workflow loc-badge --force-ref --ref "$release_ref"
+# Review the dry-run, including intentional pins, then repeat with --apply.
+```
+
+This uses the normal per-repository PR path, not direct default-branch pushes.
+For the initial legacy migration, use `--workflow loc-badge --pin-floating`
+instead: it selects only existing `@main` callers without registry ref overrides,
+preserving tags and SHA pins. Local-only, contributed, opted-out (`badges: false`)
+and upstream mirror repositories are excluded from that migration. Run the
+default-branch floating-ref audit again after the rollout PRs merge. These are
+explicit release-owner operations rather than automatic release fan-out: preview
+intentional pins and registry overrides before any `--force-ref` application.
 
 Verify deployed helpers by absolute path (`~/.aidevops/agents/scripts/<helper>.sh`); the current session's `PATH` stays pinned to its start-time runtime bundle until a new session starts. Never verify a side-effect fix through `PATH`.
 

@@ -486,6 +486,11 @@ If aidevops attributes are missing in a mode where they should work:
   Fields: `ts`; `outcome` (`progressed`/`idle`/`blocked`/`partial`); `blocker` (cycle-state blocker kind or `null`); `wall_s` (since `PULSE_START_EPOCH`, including cache prime and other pre-dispatch stages); `duration_s` (legacy, from the end of pre-dispatch stages, `0` if the cycle ended earlier); `dispatched` (registrations this cycle, including LLM-supervisor launches); `dispatch_budget_skips` (`pulse_dispatch_cycle_budget_skipped` events this cycle); `inflight`; `workers` (`active/max`); `merged`; `closed`; `killed`; `prefetch_errors`.
   Zero-dispatch triage: `jq -c 'select(.dispatched == 0) | {ts, outcome, blocker, dispatch_budget_skips, wall_s}' ~/.aidevops/logs/pulse-cycle-index.jsonl | tail -n 20`.
 - `headless-runtime-metrics.jsonl` and `resource-metrics.jsonl` have a 25 MiB hot-file cap each (`PULSE_METRICS_HOT_MAX_BYTES`). Pulse rotates them by rename, never truncation, into `~/.aidevops/logs/metrics-archive/` (`PULSE_METRICS_ARCHIVE_DIR`), shared with cycle-index archives. Compression failures preserve raw `.jsonl` segments; crash-left staged segments are retried next cycle. Recovery is at least once: interruption after archive publication but before hot swap/staged deletion can duplicate rows. The combined archive cap is 500 MiB (`PULSE_METRICS_COLD_MAX_BYTES`), pruning oldest timestamps first, so retention is not indefinite. Existing readers use only hot files; long-horizon analysis must explicitly read archives, e.g. `gzip -dc ~/.aidevops/logs/metrics-archive/headless-runtime-metrics-*.jsonl.gz | jq -c '{ts, result}'` (also include any raw `.jsonl` fallbacks).
+- `claude-code-diagnose.sh agent-summary` — read-only check of whether the
+  installed Claude Code CLI can spend tokens on background-agent progress
+  summaries (`query_source=agent_summary`), which session transcripts do not
+  show. Guidance: `tools/ai-assistants/claude-code.md` "Background agent
+  summaries".
 - `session-miner` routine — post-hoc mining of successful/failed sessions
   into the shared memory (SQLite FTS5). Different layer: session-miner
   extracts *lessons* across sessions; OTEL captures per-call *traces*

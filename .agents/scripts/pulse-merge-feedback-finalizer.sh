@@ -74,6 +74,23 @@ _feedback_route_owner_allows() {
 	return $?
 }
 
+# A live headless worker lease is an owner too. Routing an OPEN PR while its
+# worker still pushes strips the worker's assignee and status, races the close
+# against the worker's next head, and strands both on a maintainer hold
+# (GH#35939, PR #35835). Only exit 1 from the claim helper means "no active
+# claim"; a live lease or unreadable state defers until the terminal lease or
+# expiry (DISPATCH_READY_LEASE_TTL bounds a dead worker's lease).
+_feedback_route_worker_lease_allows() {
+	local linked_issue="$1"
+	local repo_slug="$2"
+	local claim_helper="${BASH_SOURCE[0]%/*}/dispatch-claim-helper.sh"
+	local check_rc=0
+	[[ -x "$claim_helper" ]] || return 1
+	"$claim_helper" check "$linked_issue" "$repo_slug" >/dev/null 2>&1 || check_rc=$?
+	[[ "$check_rc" -eq 1 ]] || return 1
+	return 0
+}
+
 #######################################
 # Decide whether a comment author is a trusted repository writer, independently
 # of the token that read the comment (GH#34605). GitHub only reports OWNER,
@@ -218,11 +235,18 @@ _feedback_route_body_has_other_head_evidence() {
 	local completion_marker="$5"
 	local start_prefix="${PULSE_FEEDBACK_ROUTE_MARKER_OPEN} feedback-route:start:${kind}:PR${pr_number}:SHA"
 	local completion_prefix="${PULSE_FEEDBACK_ROUTE_MARKER_OPEN} feedback-route:complete:${kind}:PR${pr_number}:SHA"
+	local start_lines=""
+	local completion_lines=""
 
-	if printf '%s' "$issue_body" | grep -F "$start_prefix" | grep -qvF "$start_marker"; then
+	# No early-exit pipe readers: callers run under pipefail, and a grep -q that
+	# exits mid-body turns a match into SIGPIPE 141 (GH#36235). An empty capture
+	# must not reach grep -v, which would match the here-string's empty line.
+	start_lines=$(grep -F -- "$start_prefix" <<<"$issue_body") || start_lines=""
+	if [[ -n "$start_lines" ]] && grep -qvF -- "$start_marker" <<<"$start_lines"; then
 		return 0
 	fi
-	if printf '%s' "$issue_body" | grep -F "$completion_prefix" | grep -qvF "$completion_marker"; then
+	completion_lines=$(grep -F -- "$completion_prefix" <<<"$issue_body") || completion_lines=""
+	if [[ -n "$completion_lines" ]] && grep -qvF -- "$completion_marker" <<<"$completion_lines"; then
 		return 0
 	fi
 	return 1
@@ -557,14 +581,14 @@ _feedback_route_review_generations_complete() {
 		[[ "$marker" == *":EVIDENCE"*" -->" ]] || return 1
 		[[ "$marker" == "$current_start" ]] && continue
 		partner="${marker/feedback-route:start:/feedback-route:complete:}"
-		printf '%s' "$issue_body" | grep -qF "$partner" || return 1
+		grep -qF -- "$partner" <<<"$issue_body" || return 1
 	done < <(printf '%s\n' "$issue_body" | grep -F "$start_prefix" || true)
 
 	while IFS= read -r marker; do
 		[[ -n "$marker" ]] || continue
 		[[ "$marker" == *":EVIDENCE"*" -->" ]] || return 1
 		partner="${marker/feedback-route:complete:/feedback-route:start:}"
-		printf '%s' "$issue_body" | grep -qF "$partner" || return 1
+		grep -qF -- "$partner" <<<"$issue_body" || return 1
 	done < <(printf '%s\n' "$issue_body" | grep -F "$completion_prefix" || true)
 	return 0
 }
@@ -590,7 +614,7 @@ _feedback_route_generations_complete() {
 		head="${head% -->}"
 		[[ "$marker" == "${start_prefix}${head} -->" && "$head" =~ ^[0-9A-Za-z]{7,64}$ ]] || return 1
 		partner="${marker/feedback-route:start:/feedback-route:complete:}"
-		printf '%s' "$issue_body" | grep -qF "$partner" || return 1
+		grep -qF -- "$partner" <<<"$issue_body" || return 1
 	done < <(printf '%s\n' "$issue_body" | grep -F "$start_prefix" || true)
 
 	while IFS= read -r marker; do
@@ -599,7 +623,7 @@ _feedback_route_generations_complete() {
 		head="${head% -->}"
 		[[ "$marker" == "${completion_prefix}${head} -->" && "$head" =~ ^[0-9A-Za-z]{7,64}$ ]] || return 1
 		partner="${marker/feedback-route:complete:/feedback-route:start:}"
-		printf '%s' "$issue_body" | grep -qF "$partner" || return 1
+		grep -qF -- "$partner" <<<"$issue_body" || return 1
 	done < <(printf '%s\n' "$issue_body" | grep -F "$completion_prefix" || true)
 	return 0
 }
@@ -633,8 +657,10 @@ _feedback_route_review_evidence_completed() {
 	local evidence_fingerprint="$3"
 	local completion_prefix="<!-- feedback-route:complete:review:PR${pr_number}:SHA"
 	local evidence_suffix=":EVIDENCE${evidence_fingerprint} -->"
+	local completion_lines=""
 
-	printf '%s\n' "$issue_body" | grep -F "$completion_prefix" | grep -qF "$evidence_suffix"
+	completion_lines=$(grep -F -- "$completion_prefix" <<<"$issue_body") || return 1
+	grep -qF -- "$evidence_suffix" <<<"$completion_lines"
 	return $?
 }
 
@@ -707,7 +733,7 @@ _feedback_route_body_contains() {
 	local marker="$3"
 	local body=""
 	body=$(_feedback_route_issue_body "$linked_issue" "$repo_slug") || return 1
-	printf '%s' "$body" | grep -qF "$marker"
+	grep -qF -- "$marker" <<<"$body"
 	return $?
 }
 
@@ -1070,11 +1096,11 @@ _feedback_route_prepare_start() {
 	local caller="${11}"
 	local legacy_match="${12:-$legacy_marker}"
 
-	if printf '%s' "$issue_body" | grep -qF "$start_marker"; then
+	if grep -qF -- "$start_marker" <<<"$issue_body"; then
 		return 0
 	fi
 	if [[ "${_PULSE_FEEDBACK_ROUTE_SUPERSEDE_PRIOR:-0}" != "1" ]] \
-		&& printf '%s' "$issue_body" | grep -qF "$legacy_match"; then
+		&& grep -qF -- "$legacy_match" <<<"$issue_body"; then
 		_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
 			"legacy ${kind} route marker has no head-bound start evidence"
 		return $?
@@ -1352,8 +1378,8 @@ _feedback_route_existing_evidence_gate() {
 	local pr_state="${12}"
 	local labels="${13}"
 
-	if printf '%s' "$issue_body" | grep -qF "$completion_marker"; then
-		if ! printf '%s' "$issue_body" | grep -qF "$start_marker"; then
+	if grep -qF -- "$completion_marker" <<<"$issue_body"; then
+		if ! grep -qF -- "$start_marker" <<<"$issue_body"; then
 			_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
 				"${kind} completion evidence has no matching start marker"
 			return $?
@@ -1414,6 +1440,14 @@ _feedback_route_prepare_finalization_snapshot() {
 		return $?
 	}
 	IFS=$'\t' read -r pr_state current_head labels <<<"$snapshot"
+	# Before the head-drift hold, issue transition and close: a live worker's
+	# push must defer the route, not strand the PR on a maintainer hold.
+	if [[ "$pr_state" == "$PULSE_FEEDBACK_ROUTE_OPEN_STATE" ]] \
+		&& ! _feedback_route_worker_lease_allows "$linked_issue" "$repo_slug"; then
+		_feedback_route_defer "$pr_number" "$repo_slug" "$linked_issue" \
+			"linked issue dispatch lease is live or unreadable; ${kind} route waits for its terminal lease or expiry"
+		return $?
+	fi
 	if [[ "$current_head" != "$expected_head" ]]; then
 		_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
 			"${kind} route head drifted from ${expected_head} to ${current_head:-unknown}"
@@ -1602,15 +1636,15 @@ _feedback_route_guard_existing_terminal_label() {
 	}
 	start_marker=$(_feedback_route_marker start "$kind" "$pr_number" "$current_head")
 	completion_marker=$(_feedback_route_marker complete "$kind" "$pr_number" "$current_head")
-	if [[ "$pr_state" == "$PULSE_FEEDBACK_ROUTE_OPEN_STATE" ]] && printf '%s' "$issue_body" | grep -qF "$completion_marker"; then
+	if [[ "$pr_state" == "$PULSE_FEEDBACK_ROUTE_OPEN_STATE" ]] && grep -qF -- "$completion_marker" <<<"$issue_body"; then
 		_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
 			"completed same-head ${kind} route was manually reopened"
 		return $?
 	fi
-	if [[ "$pr_state" == "$PULSE_FEEDBACK_ROUTE_OPEN_STATE" ]] && printf '%s' "$issue_body" | grep -qF "$start_marker"; then
+	if [[ "$pr_state" == "$PULSE_FEEDBACK_ROUTE_OPEN_STATE" ]] && grep -qF -- "$start_marker" <<<"$issue_body"; then
 		return 0
 	fi
-	if printf '%s' "$issue_body" | grep -qF "$marker_prefix"; then
+	if grep -qF -- "$marker_prefix" <<<"$issue_body"; then
 		_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
 			"existing ${kind} route evidence belongs to a different PR head"
 		return $?

@@ -535,6 +535,77 @@ jobs:
         bash .agents/scripts/tests/test-pulse-merge-phantom-pending-checks.sh
         echo "Approve collaborator author guard test passed"
 
+    - name: Pulse-merge Regression Suites (GH#35943)
+      timeout-minutes: 20
+      run: |
+        # GH#35943: CI ran only the three pulse-merge suites above, so the rest
+        # drifted behind merged production changes unseen. Run every suite
+        # (globbed, so new suites join automatically) in parallel; any failure
+        # fails this required job.
+        set -euo pipefail
+        log_dir=$(mktemp -d "${RUNNER_TEMP:-/tmp}/pulse-merge-suites.XXXXXX")
+        export LOG_DIR="$log_dir"
+        # *-cases.sh / *-mocks.sh are fixtures sourced by a suite, not suites.
+        git ls-files '.agents/scripts/tests/test-pulse-merge-*.sh' \
+          '.agents/scripts/tests/test-pulse-merge-*.py' |
+          grep -Ev -- '-(cases|mocks)\.sh$' >"${log_dir}/suites.txt"
+        run_suite() {
+          local suite="$1"
+          local name="${suite##*/}"
+          local box="${LOG_DIR}/${name}.d"
+          local runner="bash" rc=0 start="$SECONDS"
+          [[ "$suite" != *.py ]] || runner="python3"
+          # A private HOME/TMPDIR per suite keeps parallel runs from sharing state.
+          mkdir -p "${box}/home" "${box}/tmp"
+          HOME="${box}/home" TMPDIR="${box}/tmp" timeout -k 10 600 \
+            "$runner" "$suite" >"${LOG_DIR}/${name}.log" 2>&1 || rc=$?
+          printf '%s\t%s\n' "$rc" "$((SECONDS - start))" >"${LOG_DIR}/${name}.rc"
+          printf 'rc=%s %ss %s\n' "$rc" "$((SECONDS - start))" "$name"
+          return 0
+        }
+        export -f run_suite
+        xargs -P "$(nproc)" -n 1 bash -c 'run_suite "$1"' _ <"${log_dir}/suites.txt" ||
+          echo "::warning::suite runner exited $?"
+        total=0
+        failed=0
+        while IFS= read -r suite; do
+          name="${suite##*/}"
+          total=$((total + 1))
+          rc="missing"
+          elapsed="?"
+          if [[ -f "${log_dir}/${name}.rc" ]]; then
+            IFS=$'\t' read -r rc elapsed <"${log_dir}/${name}.rc"
+          fi
+          [[ "$rc" != "0" ]] || continue
+          failed=$((failed + 1))
+          echo "::group::FAIL ${name} (rc=${rc}, ${elapsed}s)"
+          cat "${log_dir}/${name}.log" || true
+          echo "::endgroup::"
+          echo "::error title=Pulse-merge suite failed::${name} exited ${rc}"
+        done <"${log_dir}/suites.txt"
+        echo "Pulse-merge suites: ${total} run, ${failed} failed"
+        if [[ "$total" -eq 0 ]]; then
+          echo "::error::No pulse-merge suites found"
+          exit 1
+        fi
+        # Required suites must be deterministic. An early-exit pipe reader
+        # under pipefail (`printf | grep -q`) gave 209/300 false negatives on
+        # Linux in GH#35943. The repo-wide pipe gate judges only added lines,
+        # so judge every line here: suites joining this glob cannot carry
+        # legacy flakes into a required check. GH#36235: the pulse-merge
+        # libraries the suites exercise inherit pulse-wrapper.sh's pipefail,
+        # so judge them too; self-test the checker first so a predicate that
+        # stops matching on this runner's awk cannot pass vacuously.
+        mapfile -t shell_suites < <(grep -E '\.sh$' "${log_dir}/suites.txt")
+        mapfile -t merge_libs < <(git ls-files '.agents/scripts/pulse-merge*.sh')
+        pipe_rc=0
+        bash .agents/scripts/tests/test-pipe-early-exit-check.sh || pipe_rc=$?
+        bash .agents/scripts/pipe-early-exit-check.sh --scan-files "${shell_suites[@]}" "${merge_libs[@]}" || pipe_rc=$?
+        if [[ "$pipe_rc" -ne 0 ]]; then
+          echo "::error title=Pulse-merge suite pipe safety::early-exit pipe readers under pipefail; see .agents/reference/shell-style-guide.md (Early-Exit Pipe Readers)"
+        fi
+        [[ "$failed" -eq 0 && "$pipe_rc" -eq 0 ]]
+
     - name: Bash Expansion Pattern Guard (GH#19966)
       run: |
         # Guard against the ${N:-{}} expansion bug: bash reads "${2:-{}" as the
@@ -1010,6 +1081,26 @@ jobs:
           exit 1
         fi
         echo "Python 3.9 annotations: compatible"
+
+    - name: jq 1.7/1.8 binding precedence (GH#35920)
+      # Blocking, zero baseline: jq 1.8 groups `A and T as $x | B` as
+      # `(A and T) as $x | B`, while jq 1.7 (Ubuntu runners, macOS /usr/bin/jq)
+      # groups it as `A and (T as $x | B)`. Homebrew hosts use jq 1.8, so an
+      # ungrouped binding passes CI tests and misbehaves there. Static text
+      # scan; the version line records which jq this runner's tests used.
+      run: |
+        echo "Runner jq: $(jq --version 2>/dev/null || echo unavailable)"
+        source .agents/scripts/lint-file-discovery.sh
+        lint_jq_files
+        if [ -z "$LINT_JQ_FILES" ]; then
+          echo "No jq-bearing files found"
+          exit 0
+        fi
+        if ! printf '%s\n' "$LINT_JQ_FILES" | python3 .agents/scripts/jq-binding-precedence-check.py -; then
+          echo "::error::jq bindings above are grouped differently by jq 1.7 and 1.8; parenthesize them (see .agents/reference/shell-style-guide.md)"
+          exit 1
+        fi
+        echo "jq binding precedence: unambiguous"
 
   qlty-smells:
     name: Qlty Maintainability Smells

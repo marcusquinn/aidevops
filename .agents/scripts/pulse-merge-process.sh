@@ -874,6 +874,76 @@ _route_pr_has_linked_issue() {
 	return 1
 }
 
+# Recover a tracking issue only for an aged, trusted interactive PR. The issue
+# stays non-dispatchable until its closing link is persisted and the normal
+# handover/claim gates have passed. A deterministic title + marker recovers a
+# successful create followed by a failed PR edit without creating another issue.
+_recover_interactive_pr_work_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local meta="" author="" title="Track interactive PR #${pr_number}" matches="" issue="" issue_meta=""
+	local marker="<!-- pulse-interactive-tracking:${pr_number} -->"
+	local body_file="" files="" created="" existing="" live_meta=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
+	[[ "${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}" == "enforce" ]] || return 1
+	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
+	printf '%s' "$meta" | jq -e '.state == "OPEN" and
+		([.labels[].name] | index("origin:interactive") != null and
+		any(. == "no-takeover" or . == "needs-maintainer-review" or
+		. == "external-contributor" or . == "hold-for-review") == false)' >/dev/null || return 1
+	#aidevops:trust-boundary — labels alone cannot authorize creation or takeover.
+	author=$(printf '%s' "$meta" | jq -r '.author.login // empty')
+	[[ -n "$author" ]] && _is_collaborator_author "$author" "$repo_slug" || return 1
+	_interactive_pr_is_stale "$pr_number" "$repo_slug" "" "" "" 1 || return 1
+	# Never replace a non-closing For/Ref work link with a new tracking issue.
+	existing=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
+	if [[ -n "$existing" ]]; then
+		printf '%s' "$existing"
+		return 0
+	fi
+	matches=$(gh api -X GET search/issues -f q="repo:${repo_slug} is:issue in:title \"${title}\"") || return 1
+	printf '%s' "$matches" | jq -e 'select(.incomplete_results == false) | .items | arrays' >/dev/null || return 1
+	issue=$(printf '%s' "$matches" | jq -r --arg title "$title" '.items[] | select(.title == $title) | .number') || return 1
+	# Ambiguous search results must never choose somebody else's issue.
+	[[ "$issue" != *$'\n'* ]] || return 1
+	if [[ -n "$issue" ]]; then
+		issue_meta=$(gh api "repos/${repo_slug}/issues/${issue}") || return 1
+		printf '%s' "$issue_meta" | jq -e --arg marker "$marker" '.state == "open" and (.body | contains($marker))' >/dev/null || return 1
+		author=$(printf '%s' "$issue_meta" | jq -r '.user.login // empty')
+		_is_collaborator_author "$author" "$repo_slug" || return 1
+	else
+		files=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files" --jq '.[].filename') || return 1
+		[[ -n "$files" ]] || return 1
+		body_file=$(mktemp) || return 1
+		{
+			printf '%s\n\n## Outcome\n\nComplete existing interactive PR %s through its existing CI, review and merge gates. Preserve its commits; repair only evidenced failures.\n\n### Files Scope\n' "$marker" "$(printf '%s' "$meta" | jq -r '.url')"
+			# shellcheck disable=SC2016 # Markdown code spans, not shell substitution
+			while IFS= read -r existing; do printf -- '- `%s`\n' "$existing"; done <<<"$files"
+			printf '\n### Verification\n\nUse the existing checks and verification documented on the source PR; inspect its exact-head CI and review feedback before repair. Do not bypass approval or security gates.\n'
+			printf '\n### Recovery state\n\nInitially blocked pending verified PR linkage. Pulse owns linkage recovery; after verification, existing feedback routing transitions this issue to available when repair is needed. No independent dispatch before that transition.\n'
+		} >"$body_file"
+		local create_rc=0
+		created=$(gh_create_issue --repo "$repo_slug" --title "$title" --label origin:interactive --label status:blocked --body-file "$body_file") || create_rc=$?
+		rm -f "$body_file"
+		[[ "$create_rc" -eq 0 ]] || return 1
+		issue="${created##*/}"
+	fi
+	[[ "$issue" =~ ^[0-9]+$ ]] || return 1
+	# Do not overwrite concurrent body edits, new commits or newly applied holds.
+	live_meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
+	[[ "$(printf '%s' "$meta" | jq -Sc .)" == "$(printf '%s' "$live_meta" | jq -Sc .)" ]] || return 1
+	body_file=$(mktemp) || return 1
+	printf '%s\n\nResolves #%s\n' "$(printf '%s' "$meta" | jq -r '.body // ""')" "$issue" >"$body_file"
+	local edit_rc=0
+	gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || edit_rc=$?
+	rm -f "$body_file"
+	[[ "$edit_rc" -eq 0 ]] || return 1
+	existing=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
+	[[ "$existing" == "$issue" ]] || return 1
+	printf '%s' "$issue"
+	return 0
+}
+
 # Conflict checkpoints intentionally use For/Ref, not closing keywords.
 # Resolve independently of the caller's closing-only target, retaining the
 # existing linked-issue validation and all later routing guards (GH#33763).
@@ -884,6 +954,9 @@ _route_pr_resolve_work_issue() {
 	local kind="$4"
 	if [[ "$kind" == "conflict" ]]; then
 		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
+	fi
+	if [[ -z "$linked_issue" ]]; then
+		linked_issue=$(_recover_interactive_pr_work_issue "$pr_number" "$repo_slug") || return 1
 	fi
 	_route_pr_has_linked_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || return 1
 	printf '%s' "$linked_issue"

@@ -53,6 +53,7 @@ define_functions_under_test() {
 		/^_route_pr_issue_supplies_worker_origin\(\) \{/,/^}$/ { print }
 		/^_route_pr_log_unroutable\(\) \{/,/^}$/ { print }
 		/^_route_pr_has_linked_issue\(\) \{/,/^}$/ { print }
+		/^_recover_interactive_pr_work_issue\(\) \{/,/^}$/ { print }
 		/^_route_pr_resolve_work_issue\(\) \{/,/^}$/ { print }
 		/^_route_pr_issue_labels_for_dispatch\(\) \{/,/^}$/ { print }
 		/^_route_pr_feedback_terminal_guard\(\) \{/,/^}$/ { print }
@@ -69,6 +70,8 @@ define_functions_under_test() {
 	_PMP_ORIGIN_INTERACTIVE_PATTERN=',origin:interactive,'
 	_PMP_ORIGIN_WORKER_PATTERN=',origin:worker,'
 	_PMP_ORIGIN_TAKEOVER_PATTERN=',origin:worker-takeover,'
+	eval "$fn_src"
+	fn_src=$(awk '/^_interactive_pr_auto_merge_allowed\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge-author-checks.sh")
 	eval "$fn_src"
 	return 0
 }
@@ -535,6 +538,127 @@ test_successful_finalizer_dispatch_retires_retry_hint() {
 	return 0
 }
 
+test_orphan_tracking_recovery() {
+	local scenario="" rc=0
+	for scenario in create reuse edit-failure create-failure verify-failure untrusted fresh no-takeover hold-for-review needs-maintainer-review external-contributor off detect dry-run search-failure closed concurrent-edit; do
+		rc=0
+		(
+			install_stubs
+			: >"$GH_CALL_LOG"
+			: >"${TEST_ROOT}/linked-body"
+			export AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce
+			export DRY_RUN=0
+			[[ "$scenario" != dry-run ]] || export DRY_RUN=1
+			[[ "$scenario" != off && "$scenario" != detect ]] || export AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE="$scenario"
+			_extract_pr_work_issue() { return 0; }
+			_extract_linked_issue() {
+				[[ "$scenario" != verify-failure ]] || return 1
+				[[ ! -s "${TEST_ROOT}/linked-body" ]] || printf '456'
+				return 0
+			}
+			_interactive_pr_is_stale() { [[ "$scenario" != fresh ]]; return $?; }
+			gh() {
+				local args="$*" label="origin:interactive" author="maintainer"
+				printf 'gh %s\n' "$args" >>"$GH_CALL_LOG"
+				case "$args" in
+				'pr view '*)
+					[[ "$scenario" != untrusted ]] || author=outsider
+					if [[ "$scenario" == concurrent-edit && "$(grep -c '^gh pr view' "$GH_CALL_LOG")" -gt 1 ]]; then author=changed; fi
+					case "$scenario" in no-takeover | hold-for-review | needs-maintainer-review | external-contributor) label="$scenario" ;; esac
+					jq -n --arg label "$label" --arg author "$author" '{state:"OPEN",author:{login:$author},labels:[{name:"origin:interactive"},{name:$label}],body:"Original body",url:"source-pr"}'
+					;;
+				*search/issues*)
+					[[ "$scenario" != search-failure ]] || return 1
+					if [[ "$scenario" == reuse || "$scenario" == closed ]]; then
+						printf '{"incomplete_results":false,"items":[{"title":"Track interactive PR #123","number":456}]}'
+					else
+						printf '{"incomplete_results":false,"items":[]}'
+					fi
+					;;
+				*issues/456*)
+					local state=open
+					[[ "$scenario" != closed ]] || state=closed
+					jq -n --arg state "$state" '{state:$state,body:"<!-- pulse-interactive-tracking:123 -->",user:{login:"maintainer"}}'
+					;;
+				*pulls/123/files*) printf 'src/existing.sh\n' ;;
+				*) return 1 ;;
+				esac
+				return 0
+			}
+			gh_create_issue() {
+				local body_file="${10}"
+				printf 'create %s\n' "$*" >>"$GH_CALL_LOG"
+				[[ "$*" == *"--label status:blocked"* ]] || return 1
+				[[ "$scenario" != create-failure ]] || return 1
+				grep -q '### Files Scope' "$body_file" || return 1
+				grep -q 'src/existing.sh' "$body_file" || return 1
+				printf '456'
+				return 0
+			}
+			gh_pr_edit_safe() {
+				printf 'edit %s\n' "$*" >>"$GH_CALL_LOG"
+				[[ "$scenario" != edit-failure ]] || return 1
+				local body_file="${5}"
+				cp "$body_file" "${TEST_ROOT}/linked-body"
+				return 0
+			}
+			local result="" result_rc=0
+			result=$(_route_pr_resolve_work_issue 123 owner/repo "" ci) || result_rc=$?
+			case "$scenario" in
+			create | reuse)
+				[[ "$result_rc" -eq 0 && "$result" == 456 ]] || exit 1
+				grep -q 'Original body' "${TEST_ROOT}/linked-body" || exit 1
+				grep -q 'Resolves #456' "${TEST_ROOT}/linked-body" || exit 1
+				[[ "$scenario" != reuse ]] || ! grep -q '^create ' "$GH_CALL_LOG" || exit 1
+				! grep -q 'auto-dispatch' "$GH_CALL_LOG" || exit 1
+				;;
+			*) [[ "$result_rc" -ne 0 && -z "$result" ]] || exit 1 ;;
+			esac
+			case "$scenario" in
+			untrusted | fresh | no-takeover | hold-for-review | needs-maintainer-review | external-contributor | off | detect | dry-run | search-failure | closed)
+				! grep -qE '^(create|edit) ' "$GH_CALL_LOG" || exit 1 ;;
+			concurrent-edit) ! grep -q '^edit ' "$GH_CALL_LOG" || exit 1 ;;
+			esac
+		) || rc=$?
+		if [[ "$rc" -eq 0 ]]; then pass "orphan tracking: ${scenario}"; else fail "orphan tracking: ${scenario}"; fi
+	done
+	return 0
+}
+
+test_orphan_default_policy_integration() {
+	local scenario="" rc=0
+	for scenario in recovered recovery-failed active-claim explicit-manual; do
+		rc=0
+		(
+			: >"$GH_CALL_LOG"
+			unset AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE
+			[[ "$scenario" != explicit-manual ]] || export AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=false
+			_interactive_pr_repo_auto_merge_setting() { return 0; }
+			_interactive_pr_global_auto_merge_setting() { printf 'false'; return 0; }
+			_interactive_pr_bool_enabled() { local value="$1"; [[ "$value" == true ]]; return $?; }
+			_interactive_pr_is_stale() {
+				[[ "$scenario" != active-claim && -s "$GH_CALL_LOG" ]]
+				return $?
+			}
+			_recover_interactive_pr_work_issue() {
+				printf 'recover\n' >>"$GH_CALL_LOG"
+				[[ "$scenario" != recovery-failed ]]
+				return $?
+			}
+			local policy_rc=0
+			_interactive_pr_auto_merge_allowed 123 owner/repo origin:interactive || policy_rc=$?
+			if [[ "$scenario" == recovered ]]; then
+				[[ "$policy_rc" -eq 0 && -s "$GH_CALL_LOG" ]] || exit 1
+			else
+				[[ "$policy_rc" -eq 1 ]] || exit 1
+			fi
+			[[ "$scenario" != explicit-manual || ! -s "$GH_CALL_LOG" ]] || exit 1
+		) || rc=$?
+		if [[ "$rc" -eq 0 ]]; then pass "default interactive policy: ${scenario}"; else fail "default interactive policy: ${scenario}"; fi
+	done
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -564,6 +688,8 @@ main() {
 	test_trusted_worker_terminal_guard_outcome_propagates
 	test_deferred_finalizer_dispatch_persists_retry_hint
 	test_successful_finalizer_dispatch_retires_retry_hint
+	test_orphan_tracking_recovery
+	test_orphan_default_policy_integration
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?

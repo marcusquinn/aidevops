@@ -15,6 +15,30 @@ if ! declare -F _ds_substage_run >/dev/null 2>&1; then
 	}
 fi
 
+# Enroll only the newly created tree. Legacy records are not enrollment input.
+# Schema 1 stays observe-only with an explicit gap until coordinated migration.
+_worktree_enroll_generation() {
+	local path="$1"
+	local helper_dir="${BASH_SOURCE[0]%/*}"
+	local state_dir="" python=""
+	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 || "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 ]]; then
+		return 0
+	fi
+	# shellcheck source=worker-lifecycle-state.sh
+	source "${helper_dir}/worker-lifecycle-state.sh" || return 1
+	state_dir=$(worker_lifecycle_state_dir) || return 1
+	[[ -n "$state_dir" ]] || return 1
+	python=$(type -P python3) || return 1
+	path=$(cd -- "$path" && pwd -P) || return 1
+	local enrollment_result=""
+	if ! enrollment_result=$("$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
+		--state-dir "$state_dir" enroll --initialize --allow-schema-1-observation --path "$path"); then
+		printf 'Generation enrollment refused: %s\n' "$enrollment_result" >&2
+		return 1
+	fi
+	return 0
+}
+
 # Arguments: repository, new path, commit-ish, then native Git add options.
 # Caller-specific base selection, locks and cleanup remain with the caller.
 # A registration failure preserves the tree and returns failure, never success
@@ -58,5 +82,9 @@ worktree_create_registered() {
 		return 1
 	fi
 	_ds_substage_record precreate.registry_register "$stage_t0"
+	if ! _worktree_enroll_generation "$path"; then
+		printf 'Worktree retained: generation enrollment failed: %s\n' "$path" >&2
+		return 1
+	fi
 	return 0
 }

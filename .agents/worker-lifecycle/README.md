@@ -70,14 +70,19 @@ second database.
 
 An explicit private SQLite store, event replay, multi-worktree bindings and bounded
 reconciliation are implemented; see [REGISTRY.md](REGISTRY.md). `LifecycleRegistry`
-uses `registry.sqlite3`, schema 1, in `observe-only` mode. One session may bind
+uses `registry.sqlite3` in `observe-only` mode. New stores use schema 2; observation
+also supports schema 1 without automatically upgrading it. One session may bind
 multiple worktrees; multiple sessions in a
 shared runtime require separate run/session IDs despite sharing a process identity.
 An alive shared process does not by itself establish that every session is active.
-No production scheduler or legacy integration is installed by this directory.
-See [COMPATIBILITY.md](COMPATIBILITY.md) for the latest reports and their tested
-fingerprints. Automatic producer delivery and native
-macOS AI-worker/sandbox launcher verification remain outstanding.
+Ordinary OpenCode worker launch hooks register automatically; Pulse invokes bounded
+reconciliation. These integrations do not establish coverage of every interactive
+session or runtime. Native macOS AI-worker/sandbox launcher verification remains
+outstanding. See [COMPATIBILITY.md](COMPATIBILITY.md) for tested fingerprints.
+
+The launcher-independent, report-only cleanup decision table and preservation
+requirements are documented in [CLEANUP.md](CLEANUP.md). No destructive executor
+or production cleanup-evidence collector is connected to that policy.
 
 For the new native storage/exec checks, copy the standalone
 `worker-lifecycle-registry-validate.pyz`; see [REGISTRY-VALIDATION.md](REGISTRY-VALIDATION.md).

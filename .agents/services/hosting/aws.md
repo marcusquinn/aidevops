@@ -137,9 +137,17 @@ action). Identity verification does not prove service permissions.
 into each detected runtime's MCP configuration, conflicting with
 `generate-runtime-config-mcp.sh` and the `aidevops_mcp` approved registry. It also
 appends AWS rules to project `AGENTS.md`/`CLAUDE.md`; keep AWS guidance here instead.
-Evaluate `aws-mcp` separately as a possible on-demand registry entry, explicitly
-setting `env.AWS_MCP_PROXY_PROFILES` to the intended named profile. This decision
-does not approve installing it or changing runtime configs; evaluate useful skills
+If its setup offers to install the MCP server, decline it.
+
+**`aws-mcp` registry entry: not needed (evaluated 2026-10-31).** A live SES
+and IAM change using only the AWS CLI and a named `aws login` profile covered
+everything: identities, configuration sets, suppression, IAM user and policy
+changes, `iam simulate-principal-policy`, CloudTrail `lookup-events` and
+CloudWatch metrics. The MCP proxy would add a second credential path and an
+auto-downloaded `uvx` package for API calls the CLI already makes. Reconsider
+only for a runtime without shell access, or if AWS documentation search becomes
+a recurring gap that Context7 cannot fill; add it then through the `aidevops_mcp`
+registry, never through the toolkit's installer. Evaluate useful skills
 separately through `aidevops skills`.
 
 ## Credential injection

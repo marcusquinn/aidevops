@@ -77,7 +77,8 @@ _gh_edit_audit_rejection() {
 	local reason="$2"
 	shift 2
 	local context
-	context=$(printf '%q ' "$@" | head -c 500)
+	context=$(printf '%q ' "$@")
+	context=$(printf '%.500s' "$context")
 	local audit_helper
 	audit_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/audit-log-helper.sh"
 	if [[ -x "$audit_helper" ]]; then
@@ -668,11 +669,124 @@ _gh_pr_body_negated_closing_ref() {
 	stripped=$(printf '%s\n' "$body_text" |
 		awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced' |
 		sed -E "s/${backtick}[^${backtick}]*${backtick}//g")
-	match=$(printf '%s\n' "$stripped" | grep -oiE "$pattern" | head -n 1) || true
+	match=$(printf '%s\n' "$stripped" | grep -oiE "$pattern" | sed -n '1p') || true
 	[[ -n "$match" ]] || return 1
 	match="${match#"${match%%[![:space:]]*}"}"
 	printf '%s\n' "$match"
 	return 0
+}
+
+# GH#36174: merge-time defence for creation-wrapper bypasses. This is a
+# read-only check: callers hold the PR and use their existing repair route.
+# Args: $1=PR JSON (body, closingIssuesReferences), $2=repository slug
+# Output: one diagnostic on failure. Returns: 0=safe, 1=contradiction/unavailable
+_gh_pr_merge_closure_check() {
+	local pr_json="$1" repo_slug="$2"
+	local body_text="" stripped="" contradiction=""
+	local backtick=$'\x60'
+	if ! printf '%s' "$pr_json" | jq -e '
+		(.body | type) == "string" and ((.closingIssuesReferences | arrays | length) >= 0)
+		and all(.closingIssuesReferences[]; (.number | type) == "number")
+	' >/dev/null 2>&1; then
+		printf '%s\n' 'closing-reference metadata unavailable'
+		return 1
+	fi
+	body_text=$(printf '%s' "$pr_json" | jq -r '.body') || return 1
+	if _gh_pr_body_negated_closing_ref "$body_text" >/dev/null; then
+		printf '%s\n' 'negated closing reference in PR body (GH#33539)'
+		return 1
+	fi
+	stripped=$(printf '%s\n' "$body_text" |
+		awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced' |
+		sed -E "s/${backtick}[^${backtick}]*${backtick}//g")
+	contradiction=$(printf '%s' "$pr_json" | jq -r --arg body "$stripped" --arg repo "$repo_slug" '
+		[ $body | scan("(?i)(?:^|[^a-z0-9_])(?:For|Ref):?[[:space:]]+(?:([a-z0-9_.-]+/[a-z0-9_.-]+))?#([0-9]+)")
+		  | {repo: (.[0] // $repo), number: (.[1] | tonumber)} ] as $nonclosing
+		| [.closingIssuesReferences[] as $ref
+		   | ($ref.repository | .nameWithOwner //
+		       (if .owner.login and .name then .owner.login + "/" + .name else $repo end)) as $ref_repo
+		   | $nonclosing[]
+		   | select(.number == $ref.number and
+		       (.repo | ascii_downcase) == ($ref_repo | ascii_downcase))
+		   | .number] | unique | map("#" + tostring) | join(", ")
+	') || return 1
+	if [[ -n "$contradiction" ]]; then
+		printf 'For/Ref contradicts native closing references: %s\n' "$contradiction"
+		return 1
+	fi
+	return 0
+}
+
+# Repair body-only contradictions without manufacturing review feedback. Keep
+# code examples and unrelated valid closing references intact. The caller still
+# holds this merge pass, so the next pass reads fresh GitHub closing metadata.
+# Args: $1=PR number, $2=repository slug, $3=PR JSON
+_gh_pr_repair_merge_closure() {
+	local pr_number="$1" repo_slug="$2" pr_json="$3"
+	local body_text="" discovery_body="" offending="" phrases="" repaired="" body_file="" repair_rc=0
+	body_text=$(printf '%s' "$pr_json" | jq -er '.body | strings') || return 1
+	discovery_body="$body_text"
+	while offending=$(_gh_pr_body_negated_closing_ref "$discovery_body"); do
+		# Inline-code stripping can produce a phrase absent from the raw body.
+		# Leave unsupported repairs to the caller rather than looping forever.
+		[[ "$discovery_body" == *"$offending"* ]] || return 1
+		phrases+="${offending}"$'\n'
+		discovery_body="${discovery_body//"$offending"/The issue remains open.}"
+	done
+	command -v python3 >/dev/null 2>&1 || return 1
+	# shellcheck disable=SC2016 # Literal Python regexes contain Markdown backticks, not shell substitutions.
+	repaired=$(printf '%s' "$pr_json" | python3 -c '
+import json, re, sys
+pr = json.load(sys.stdin)
+repo, phrases = sys.argv[1].lower(), sys.argv[2].splitlines()
+repo_field, number_field = "repo", "number"
+body = pr["body"]
+# Use the same fence and inline-code exclusions as GH#33539.
+chunks, fenced = [], False
+for line in body.splitlines(keepends=True):
+    if re.match(r"^\s*(```|~~~)", line):
+        fenced = not fenced
+        chunks.append((False, line))
+    elif fenced:
+        chunks.append((False, line))
+    else:
+        chunks.extend((i % 2 == 0, text) for i, text in enumerate(re.split(r"(`[^`]*`)", line)))
+prose = "".join(text if editable else "\n" for editable, text in chunks)
+ref = r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>[0-9]+)"
+nonclosing = {(m.group(repo_field).lower() if m.group(repo_field) else repo, int(m.group(number_field)))
+              for m in re.finditer(r"\b(?:For|Ref):?\s+" + ref, prose, re.I)}
+native = set()
+for issue in pr["closingIssuesReferences"]:
+    repository = issue.get("repository") or {}
+    slug = repository.get("nameWithOwner")
+    if not slug and repository.get("owner", {}).get("login") and repository.get("name"):
+        slug = repository["owner"]["login"] + "/" + repository["name"]
+    native.add(((slug or repo).lower(), issue[number_field]))
+targets = nonclosing & native
+closing = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+" + ref, re.I)
+def neutralize(match):
+    identity = ((match.group(repo_field) or repo).lower(), int(match.group(number_field)))
+    return "Ref " + (match.group(repo_field) or "") + "#" + match.group(number_field) if identity in targets else match.group(0)
+result = []
+for editable, text in chunks:
+    if editable:
+        for phrase in phrases:
+            text = text.replace(phrase, "leave the issue open")
+        text = closing.sub(neutralize, text)
+    result.append(text)
+sys.stdout.write("".join(result))
+' "$repo_slug" "$phrases") || return 1
+	[[ "$repaired" != "$body_text" ]] || return 1
+	# Validate the proposed body before any write; cross-line or unsupported
+	# references that cannot be repaired safely stay held and use normal routing.
+	local repaired_json=""
+	repaired_json=$(printf '%s' "$pr_json" | jq --arg body "$repaired" '.body = $body | .closingIssuesReferences = []') || return 1
+	_gh_pr_merge_closure_check "$repaired_json" "$repo_slug" >/dev/null || return 1
+	body_file=$(mktemp) || return 1
+	printf '%s\n' "$repaired" >"$body_file"
+	gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null 2>&1 || repair_rc=$?
+	rm -f "$body_file"
+	return "$repair_rc"
 }
 
 #######################################

@@ -87,8 +87,37 @@ teardown_test_env() {
 	return 0
 }
 
+# Dependencies added to the extracted review gate by GH#35867.
+define_review_gate_stubs() {
+	local active_reader_src=""
+	active_reader_src=$(awk '
+		/^_review_feedback_active_change_requests\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
+	' "$FEEDBACK_SCRIPT")
+	# Fail closed if production renames or removes the dependency.
+	[[ -n "$active_reader_src" ]] || return 1
+	# Routing/remediation cases need a trusted human request, independently of
+	# the body-only classifier's REVIEW_PAGES_JSON fixture.
+	ACTIVE_CHANGE_REQUESTS_JSON='[{"id":1,"state":"CHANGES_REQUESTED","submitted_at":"2026-08-03T00:00:00Z","user":{"login":"maintainer","type":"User"},"author_association":"OWNER"}]'
+	_review_feedback_active_change_requests() {
+		local pr_number="$1" repo_slug="$2"
+		[[ -n "$pr_number" && -n "$repo_slug" ]] || return 1
+		printf '%s\n' "$ACTIVE_CHANGE_REQUESTS_JSON"
+		return 0
+	}
+	# Keep _PULSE_MERGE_DIR pointing at the fixture scanner; override only the
+	# advisory helper so no production dismissal can run from this harness.
+	export ADVISORY_DISMISS_LOG="${TEST_ROOT}/advisory-dismiss.log"
+	cat >"${TEST_ROOT}/scripts/review-bot-gate-helper.sh" <<'HELPER'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${ADVISORY_DISMISS_LOG:?}"
+HELPER
+	AIDEVOPS_REVIEW_BOT_GATE_HELPER="${TEST_ROOT}/scripts/review-bot-gate-helper.sh"
+	return 0
+}
+
 define_helpers_under_test() {
 	local src_repo_path="" src_repeat_exhausted="" src_dispatch="" src_maybe_dispatch="" src_preflight_dispatch="" src_enabled="" src_trusted_body_review="" src_changes_gate=""
+	define_review_gate_stubs || return 1
 	src_repo_path=$(awk '
 		/^_pulse_merge_repo_path_for_slug\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$MERGE_SCRIPT")
@@ -725,10 +754,13 @@ test_changes_requested_skips_remediation_for_external_contributor() {
 	}
 	_pulse_merge_dismiss_coderabbit_nits() { return 1; }
 
+	# GH#35867 (#aidevops:trust-boundary in _handle_changes_requested_review_gate):
+	# an external-contributor PR is held without remediation AND without the
+	# destructive close-and-redispatch route; the contributor addresses review.
 	if _handle_changes_requested_review_gate 77 owner/repo CHANGES_REQUESTED 42 "origin:worker,external-contributor"; then
 		print_result "external contributor CHANGES_REQUESTED skips remediation" 1 \
 			"Expected gate to skip merge"
-	elif [[ ! -s "$SCANNER_LOG" ]] && grep -q 'route 77 owner/repo' "$route_log"; then
+	elif [[ ! -s "$SCANNER_LOG" && ! -s "$route_log" ]]; then
 		print_result "external contributor CHANGES_REQUESTED skips remediation" 0
 	else
 		print_result "external contributor CHANGES_REQUESTED skips remediation" 1 \

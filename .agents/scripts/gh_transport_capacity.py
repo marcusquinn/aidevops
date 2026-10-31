@@ -8,7 +8,11 @@ other machines. Server cooldowns remain authoritative for those shared consumers
 """
 
 
-PRIMARY_PACING = "local primary pacing from observed demand and reset"
+PRIMARY_PACING = "local primary pacing: time to reset divided by remaining quota"
+# Short parallel bursts may run ahead of the even schedule by at most this many
+# admissions at full quota. The allowance shrinks with the remaining share, so
+# a scarce window is spaced strictly rather than spent in one burst.
+PACING_BURST = 10
 
 
 def capacity_wait(budget, resource, row, reserved, now):
@@ -32,46 +36,33 @@ def capacity_wait(budget, resource, row, reserved, now):
 
 
 def primary_wait(budget, resource, row, reserved, now):
+    """Space admissions evenly: interval = seconds to reset / usable points.
+
+    A GCRA-style schedule: pacing.retry_at holds the next on-schedule slot.
+    Server-reported remaining already includes spend by ungoverned commands and
+    other hosts on the same credential, so the interval tightens automatically
+    when that spend drains the window. Idle time is not banked beyond the burst
+    allowance; it lowers the interval instead because more points remain.
+    """
     available = row[0] - reserved
-    # Short bursts are not evidence of sustained demand across the whole reset
-    # window. With more than half the observed quota usable, admit reads under
-    # the atomic primary and secondary ceilings instead of pacing that burst.
-    # Clear old pacing too: a saved deadline must not outlive healthy capacity.
-    healthy = available > row[4] / 2
-    if healthy:
-        budget.db.execute("DELETE FROM pacing WHERE scope=? AND resource=?", (budget.scope, resource))
     # Do not turn pacing into a final-point reserve. Atomic admission still
     # prevents overspend and secondary limits still apply above this boundary.
-    if healthy or available == 1:
+    if available <= 1:
         return "", now
+    interval = (row[1] - now) / available
+    limit = row[4] if row[4] and row[4] > 0 else row[0]
+    ahead = max(1, min(PACING_BURST, available, -(-available * PACING_BURST // limit))) - 1
     saved = budget.db.execute(
         "SELECT reset,retry_at,remaining FROM pacing WHERE scope=? AND resource=?",
         (budget.scope, resource),
     ).fetchone()
-    if saved and saved[0] == row[1] and row[0] <= saved[2]:
-        if saved[1] > now:
-            return PRIMARY_PACING, saved[1]
-        # Keep pacing across long waits even after the 60s demand history expires.
-        # The next request consumes one of the available points in this window.
-        next_at = now + (row[1] - now) / available
-        budget.db.execute("UPDATE pacing SET retry_at=?,remaining=? WHERE scope=? AND resource=?",
-                          (next_at, row[0], budget.scope, resource))
-        return "", now
-    budget.db.execute("DELETE FROM pacing WHERE scope=? AND resource=?", (budget.scope, resource))
-    count, oldest, latest = budget.db.execute(
-        "SELECT COUNT(*),MIN(started),MAX(started) FROM admission_history "
-        "WHERE scope=? AND resource=?", (budget.scope, resource),
-    ).fetchone()
-    # Measure demand before pacing; do not impose a low startup/burst allowance.
-    # When demand would exhaust this window, spread the remaining usable points
-    # to reset instead of holding a fixed reserve idle. Every point stays usable.
-    if count > 1 and now - oldest >= 10 and available > 0:
-        seconds_left = row[1] - now
-        demand = (count - 1) / (now - oldest)
-        if demand * seconds_left > available:
-            retry_at = latest + seconds_left / available
-            if retry_at > now:
-                budget.db.execute("INSERT OR REPLACE INTO pacing VALUES(?,?,?,?,?)",
-                                  (budget.scope, resource, row[1], retry_at, row[0]))
-                return PRIMARY_PACING, retry_at
+    # A new window or a higher authoritative balance starts a fresh schedule.
+    slot = max(now, saved[1]) if saved and saved[0] == row[1] and row[0] <= saved[2] else now
+    if slot - ahead * interval > now:
+        # The allowance shrinks as reset nears, so solve t = slot - ahead *
+        # (reset - t) / available instead of returning a deadline that would
+        # itself be deferred again by the smaller interval at t.
+        return PRIMARY_PACING, (slot * available - ahead * row[1]) / (available - ahead)
+    budget.db.execute("INSERT OR REPLACE INTO pacing VALUES(?,?,?,?,?)",
+                      (budget.scope, resource, row[1], slot + interval, row[0]))
     return "", now

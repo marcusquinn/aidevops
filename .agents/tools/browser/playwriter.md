@@ -111,7 +111,17 @@ disconnects, so the operator's click must land inside that window (GH#35516):
 2. Then click the Playwriter icon once on the intended tab. The first attempt
    can log `Target inventory timeout`; the extension reconnects and re-attaches
    the remembered tab on its own, usually within a minute.
-3. Success is `context.pages().length` going from `0` to `1` and staying there.
+3. Success is a **new** page matching the approved destination appearing during
+   the bounded attachment wait (preflight step 3). A page that was already
+   present at the first poll is not the click: it can be a tab the extension
+   re-attached from an earlier session.
+
+**Task delegation (GH#35955).** A Task-delegated `@playwriter` child cannot talk
+to the user, and its relay exists only while the child runs. Before the Task
+call, the parent tells the user: "When the Playwriter relay starts, click the
+Playwriter icon once on the `<intended tab>`; I will wait up to 2 minutes." The
+child's bounded attachment wait covers that click. If a stale tab is reported,
+the parent relays the detach instruction and retries with a new delegation.
 
 A click with no relay opens the extension's "Daemon not running yet" page and
 the tooltip reads "Waiting for MCP WS server...". Do not run the commands that
@@ -160,20 +170,32 @@ still-running relay from the previous version fails this proof; stop it from the
 session or terminal that started it, then reconnect. aidevops never terminates it.
 
 1. Connect Playwriter and enumerate the accessible pages with `context.pages()`.
-   Inspect only the URL and title needed to classify the intended target; do not
-   expose unrelated approved-tab details.
+   Inspect only the URL needed to classify the intended target; do not expose
+   unrelated approved-tab details. Record this first poll as the **baseline**.
+   Baseline non-blank pages that do not match the target are
+   `stale-reattached`: on connect the extension re-attaches tabs approved in an
+   earlier session, so their presence is not current consent. Classify them by
+   URL only; never read, select, navigate or report their URL or title.
 2. Match the intended target by its exact approved HTTPS URL and expected title.
    Confirm that the controlled tab and expected Chrome profile/session are
    visible before authenticated work.
    Store the match in `state.page`; Playwriter 0.8.0+ has no `page` global and
    its helpers (`snapshot`, `getLatestLogs`, `waitForPageLoad`, ...) need an
    explicit `{ page: state.page }`.
-3. Classify a result with no exact match as one of: no controlled pages; exactly
-   one `about:blank` bootstrap page; unmatched non-blank or multiple pages; an
-   extension-not-connected error; or a target lost after MCP reconnection. Do not
-   collapse these states into a generic request to reactivate the extension.
-   Playwriter 0.8.0+ never opens a tab on its own, so no controlled pages is the
-   normal state of a fresh session, not a failure.
+3. With no exact match, run one bounded attachment wait (default 120 s): poll
+   `context.pages()` every few seconds for a page that is **not** in the
+   baseline and matches the exact approved HTTPS destination. Classify only
+   URLs while polling. A variant URL (`www.`, another host, port or path) is not
+   a match; it needs a new parent approval. When the window ends without a
+   match, classify the result as one of: `attachment-timeout` (no new matching
+   page, with any `stale-reattached` count); exactly one `about:blank`
+   bootstrap page; no controlled pages; an extension-not-connected error; or a
+   target lost after MCP reconnection. Do not collapse these states into a
+   generic request to reactivate the extension. Playwriter 0.8.0+ never opens a
+   tab on its own, so no controlled pages is the normal state of a fresh
+   session, not a failure. A `stale-reattached` report tells the user how to
+   detach the old tab: click its Playwriter icon, or remove it from the
+   `playwriter` tab group.
    Upstream's "The Playwriter Chrome extension is not connected" text tells the
    agent to ask the user to click a gray icon; it comes from one relay status
    probe and does not prove the user's tab is off. Before disconnecting, run
@@ -189,9 +211,9 @@ session or terminal that started it, then reconnect. aidevops never terminates i
    Revalidate the resulting URL and expected profile/session before continuing.
    This bounded bootstrap is not consent to inspect another page or navigate to a
    broader origin.
-5. For unmatched non-blank or multiple pages, an unconnected extension, a missing
-   destination approval, or any target/profile ambiguity, fail closed with the
-   classified diagnostic. After reconnection, repeat the preflight and report
+5. For `attachment-timeout`, multiple new matching pages, an unconnected
+   extension, a missing destination approval, or any target/profile ambiguity,
+   fail closed with the classified diagnostic. After reconnection, repeat the preflight and report
    when the prior attachment was invalidated. Do not ask the user to log in.
 6. Never silently substitute isolated-profile Playwright. Explain the storage
    boundary and obtain explicit user consent before any fallback.
@@ -323,6 +345,7 @@ approved-tab, privacy, and mutation boundaries.
   - `extension-rejected`: the relay refused the extension's WebSocket (unknown extension ID or origin); use the Chrome Web Store build.
   - `extension-connected`: the relay sees the extension, so the MCP session lost its attachment. Reconnect and repeat the preflight.
 - **No approved tab**: Click the Playwriter extension on the intended tab and wait for the icon to turn green; this consent requirement is distinct from missing MCP tools.
+- **`stale-reattached` tab at connect**: The extension re-attached a tab approved in an earlier session (relay log `Successfully re-attached tab`). It is never the target and its content is never read. `mcp-diagnose.sh playwriter` reports counts only: stale re-attached versus newly attached tabs since the last extension connect, never tab ids or URLs; it cannot see which tab is focused. Detach the stale tab by clicking its Playwriter icon or removing it from the `playwriter` tab group, then click the intended tab during the attachment wait.
 - **Blank bootstrap only / no pages**: If the sole accessible page is `about:blank`, or no page exists (normal on 0.8.0), use the bounded exact-HTTPS bootstrap above instead of repeatedly requesting extension reactivation.
 - **`page is not defined`**: 0.8.0 removed the global; assign `state.page` from `context.pages()` first.
 - **Relay version mismatch after upgrade**: An older relay still owns port 19988; stop it from the session that started it, then reconnect. If the old version comes back on every connect, the OpenCode session predates the pin change and launches from its older runtime bundle; start a new session.

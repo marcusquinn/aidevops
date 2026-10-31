@@ -51,11 +51,33 @@ every refusal as an opaque `worker_worktree_live_owner` retry.
 Terminal continuation refusals have no runtime metric because the model was
 never invoked. `pulse-diagnose-helper.sh issue <N> --repo <owner/repo>` reports
 their count and reason distribution from pulse logs separately from model
-attempts. Repeated `CLAIM_RELEASED` zero-attempt evidence participates in the
-bounded dispatch-infrastructure hold instead of creating an unbounded claim and
-release comment loop. Once zero-attempt infrastructure evidence reaches the hold
-threshold, comment-bloat clean-room mode cannot bypass that hold; clean-room
-fallback remains available for model/brief zero-output evidence.
+attempts. Repeated zero-attempt evidence feeds a self-healing, windowed
+dispatch backoff (GH#36214) instead of an unbounded claim and release comment
+loop. Evidence is unmatched `DISPATCH_CLAIM` comments, orphan
+`DISPATCH_LEASE phase=prelaunch` comments (one per author and lease token, left
+when a pre-launch abort deletes its claim), and zero-output receipts. Authors
+must be OWNER/MEMBER or have verified repository write access, so peer runners
+that GitHub labels COLLABORATOR count. `dispatch_with_dedup` evaluates the
+backoff before claiming: while evidence inside `ZERO_OUTPUT_HOLD_WINDOW_SECONDS`
+(default 12h) reaches `ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD` (default 4), the
+attempt posts no claim or lease, leaves labels unchanged, and logs
+`DISPATCH_BLOCK_REASON reason=zero_attempt_backoff`. At most one
+`dispatch-infrastructure-failure` notice is posted per window. Dispatch resumes
+when evidence ages out, or sooner after an OWNER/MEMBER
+`<!-- dispatch-infrastructure-reset -->` comment. Comment-bloat clean-room mode
+cannot bypass the backoff; clean-room fallback remains available for model/brief
+zero-output evidence.
+
+A `permission_required` terminal-blocker hold (observation or circuit) with no
+published permission request uses the same window (GH#36232). With no
+`needs-maintainer-permissions` label and no undecided
+`<!-- aidevops-permission-request -->` comment (no later OWNER/MEMBER signed
+grant, withdrawal or retry), the hold stops blocking once its newest event is
+one window old. `terminal-blocker-recovery-helper.sh` then projects
+`status:available` with decision `unevidenced_permission_window`. Its hidden
+rearm receipt binds the event and window index, so it releases at most once per
+window. Re-arming grants nothing: a worker that meets the real guard again must
+run `worker-permission-helper.sh request`, and that request keeps the hold.
 
 ### Dispatch claim comment states
 
@@ -100,7 +122,16 @@ permission boundary (GH#34110). Workers first check repository-declared tools
 hold. A missing static linter that CI also runs (ShellCheck, markdownlint) is a
 CI handoff, not this class (GH#34758). A capability release keeps an open draft
 `status:available`, and `pr-checkpoint-continuation-helper.sh dispatch-stalled`
-continues that exact head once per head before posting attention.
+continues that exact head on another runner. Capability releases describe the
+releasing runner, not the head, so together they count as one original stall;
+one genuine stall after them still posts attention (GH#35883). A runner whose
+own login released the head for a missing capability skips it without a
+comment until a newer standalone OWNER/MEMBER `terminal-blocker-circuit:retry`;
+a new head re-arms every runner. The successor's worker fence accepts the
+capability release after ownership transfers. Continuation also links worker
+drafts whose only link is a line-start `For #N` or `Ref #N` (GH#33374), and
+treats `origin:interactive` as provenance: with `auto-dispatch` it holds the
+draft only while a newer trusted interactive session claim owns the issue.
 `repo-verify-pre-push.sh` labels missing Python tools as tooling, not
 source defects. Terminal-only reports create no progress-blocker events;
 `pulse-diagnose-helper.sh issue` shows a separate "Terminal blocker" section and

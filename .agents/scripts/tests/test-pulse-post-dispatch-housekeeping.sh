@@ -330,6 +330,14 @@ test_housekeeping_blocker_refresh_catchup() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | stale cache order: ${got}"
 	fi
+	# Synchronous Linux housekeeping shares the cycle deadline. Optional scans
+	# must not consume that deadline before ownership and stale-cache recovery.
+	local recovery_order=""
+	recovery_order=$(grep -E '^(ownership_reconcile|dep_graph:1|blocked_refresh|brief_hold_release|post_merge)$' "$STAGE_LOG" | tr '\n' ' ')
+	if [[ "$recovery_order" != "ownership_reconcile dep_graph:1 blocked_refresh brief_hold_release post_merge " ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | optional scan precedes recovery: ${recovery_order}"
+	fi
 
 	: >"$STAGE_LOG"
 	touch "$DEP_GRAPH_CACHE_FILE"
@@ -540,6 +548,89 @@ test_housekeeping_retries_incomplete_stages() {
 	return 0
 }
 
+# A no-op catch-up checkpoint must not suppress recovery when its cache ages
+# or disappears before an interrupted housekeeping run resumes.
+test_blocker_catchup_checkpoint_rechecks_cache() {
+	local cache_state
+	for cache_state in fresh stale missing; do
+		setup_test_env
+		local failures=0 state_file got="" expected="ownership_reconcile "
+		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/dep-graph-cache.json"
+		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+		state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
+		printf '{}\n' >"$DEP_GRAPH_CACHE_FILE"
+		_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
+			_pulse_run_blocker_refresh_catchup 7
+		grep -q '^blocker_refresh_catchup=' "$state_file" || failures=$((failures + 1))
+		[[ ! -s "$STAGE_LOG" ]] || failures=$((failures + 1))
+		case "$cache_state" in
+		stale) touch -t 202601010000 "$DEP_GRAPH_CACHE_FILE" ;;
+		missing) rm -f "$DEP_GRAPH_CACHE_FILE" ;;
+		esac
+		_pulse_run_post_dispatch_housekeeping_stages 7
+		got=$(_catchup_stages)
+		if [[ "$cache_state" != "fresh" ]]; then
+			expected="${expected}dep_graph:1 blocked_refresh brief_hold_release "
+		elif ! grep -q 'resume — skipping blocker_refresh_catchup' "$LOGFILE"; then
+			failures=$((failures + 1))
+		fi
+		[[ "$got" == "$expected" ]] || failures=$((failures + 1))
+		[[ ! -e "$state_file" ]] || failures=$((failures + 1))
+		print_result "blocker catch-up checkpoint rechecks ${cache_state} cache" "$failures" "$got"
+		teardown_test_env
+	done
+	return 0
+}
+
+# Rebuilding writes a fresh cache before recovery completes. Even with an old
+# successful checkpoint, failed/deferred/interrupted downstream work must retry.
+test_blocker_catchup_resumes_pending_recovery() {
+	local failed_stage mode
+	for failed_stage in refresh_blocked_status_from_graph release_repaired_brief_holds; do
+		for mode in failure deferred interrupted; do
+			setup_test_env
+			local failures=0 state_file pending_file got=""
+			local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/dep-graph-cache.json"
+			local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+			state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
+			pending_file="${state_file}.blocker-refresh-pending"
+			_pulse_housekeeping_mark_stage_done "blocker_refresh_catchup" "$state_file"
+			build_dependency_graph_cache() {
+				[[ -f "$pending_file" ]] || return 1
+				printf '{}\n' >"$DEP_GRAPH_CACHE_FILE"
+				return 0
+			}
+			_pulse_run_budget_priority_stage_with_timeout() {
+				local stage_name="$1"
+				shift 2
+				if [[ "$stage_name" == "$failed_stage" ]]; then
+					case "$mode" in
+					failure) return 1 ;;
+					deferred) _PULSE_BUDGET_STAGE_DEFERRED=1; return 0 ;;
+					interrupted) exit 143 ;;
+					esac
+				fi
+				"$@" || return 1
+				return 0
+			}
+			if ( _pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
+				_pulse_run_blocker_refresh_catchup 7 ); then
+				failures=$((failures + 1))
+			fi
+			[[ -f "$DEP_GRAPH_CACHE_FILE" && -f "$pending_file" ]] || failures=$((failures + 1))
+			: >"$STAGE_LOG"
+			install_stage_stubs
+			_pulse_run_post_dispatch_housekeeping_stages 7
+			got=$(_catchup_stages)
+			[[ "$got" == "ownership_reconcile dep_graph:1 blocked_refresh brief_hold_release " ]] || failures=$((failures + 1))
+			[[ ! -e "$pending_file" && ! -e "$state_file" ]] || failures=$((failures + 1))
+			print_result "catch-up retries ${mode} at ${failed_stage} with a fresh cache" "$failures" "$got"
+			teardown_test_env
+		done
+	done
+	return 0
+}
+
 test_blocker_catchup_stops_after_failed_prerequisite() {
 	local mode
 	for mode in failure deferred; do
@@ -582,6 +673,8 @@ main() {
 	test_housekeeping_resumes_after_interrupted_run
 	test_housekeeping_signal_killed_stage_not_recorded
 	test_housekeeping_retries_incomplete_stages
+	test_blocker_catchup_checkpoint_rechecks_cache
+	test_blocker_catchup_resumes_pending_recovery
 	test_blocker_catchup_stops_after_failed_prerequisite
 	test_async_housekeeping_logs_termination
 

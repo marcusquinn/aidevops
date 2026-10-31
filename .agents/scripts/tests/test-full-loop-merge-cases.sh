@@ -167,6 +167,15 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 	elif [[ "$mode" == "other-error" ]]; then
 		echo "Something completely different went wrong" >&2
 		exit 1
+	elif [[ "$mode" == server-* ]]; then
+		touch "${TEST_ROOT}/logs/merge-attempted.txt"
+		case "$mode" in
+		server-503) echo 'HTTP 503: Service Unavailable' >&2 ;;
+		server-504) echo 'HTTP 504: Gateway Timeout' >&2 ;;
+		server-graphql) echo 'GraphQL: Something went wrong while executing your query' >&2 ;;
+		*) echo 'non-200 OK status code: 502 Bad Gateway' >&2 ;;
+		esac
+		exit 1
 	elif [[ "$mode" == "graphql-rate-limit" || "$mode" == "graphql-rate-limit-rest-fail" ]]; then
 		echo "GraphQL: API rate limit already exceeded for user ID 12345. (rateLimitExceeded)" >&2
 		exit 1
@@ -207,7 +216,7 @@ write_gh_stub_pr_issue_views() {
 	fi
 	if [[ "\$*" == *"--json state,isDraft,reviewDecision,headRefOid"* ]]; then
 		_review_decision=""
-		[[ "$mode" == "late-review-block" ]] && _review_decision="CHANGES_REQUESTED"
+		[[ "$mode" == "late-review-block" || ( "$mode" == "server-late-review" && -f "${TEST_ROOT}/logs/merge-attempted.txt" ) ]] && _review_decision="CHANGES_REQUESTED"
 		printf '{"state":"OPEN","isDraft":false,"reviewDecision":"%s","headRefOid":"abc123headsha"}\n' "\$_review_decision"
 		exit 0
 	fi
@@ -329,7 +338,7 @@ if [[ "\$_gh_cmd" == "api" ]]; then
 		exit 0
 	fi
 	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42/merge"* ]]; then
-		if [[ "$mode" == "graphql-rate-limit-rest-fail" ]]; then
+		if [[ "$mode" == "graphql-rate-limit-rest-fail" || "$mode" == "server-rest-fail" ]]; then
 			echo "REST merge failed" >&2
 			exit 1
 		fi
@@ -337,6 +346,18 @@ if [[ "\$_gh_cmd" == "api" ]]; then
 		exit 0
 	fi
 	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42"* ]]; then
+		if [[ "$mode" == server-* && "\$*" != *"--jq"* ]]; then
+			case "$mode" in
+			server-read-fail) echo 'HTTP 503' >&2; exit 1 ;;
+			server-malformed) echo 'not JSON'; exit 0 ;;
+			server-merged) echo '{"merged":true,"state":"closed","head":{"sha":"abc123headsha"}}' ;;
+			server-wrong-merged) echo '{"merged":true,"state":"closed","head":{"sha":"different"}}' ;;
+			server-drift) echo '{"merged":false,"state":"open","head":{"sha":"different"}}' ;;
+			server-closed) echo '{"merged":false,"state":"closed","head":{"sha":"abc123headsha"}}' ;;
+			*) echo '{"merged":false,"state":"open","head":{"sha":"abc123headsha"}}' ;;
+			esac
+			exit 0
+		fi
 		if [[ "$mode" == "head-fetch-failure" ]]; then
 			echo 'transient pull lookup failure' >&2
 			exit 1
@@ -762,6 +783,54 @@ test_graphql_rate_limit_rest_fallback() {
 	fi
 	print_result "GraphQL rate-limit: REST pull merge endpoint called with verified SHA" "$((1 - rest_called))"
 
+	return 0
+}
+
+# GH#36074: reconcile unknown outcomes and retry only once with fresh authority.
+test_transient_server_error_recovery() {
+	local mode="" auto="" exit_code=0 rest_calls=0 output="" metadata_rc=0
+	local classifier_rc=0
+	bash -c '
+		source "$1/shared-constants.sh"
+		source "$1/full-loop-helper-merge.sh"
+		for status in 502 503 504; do
+			for message in "HTTP $status: server error" "HTTP/2 $status" "non-200 OK status code: $status Bad Gateway"; do
+				_merge_output_is_transient_server_error "$message" || exit 1
+			done
+			for message in "review required for PR #$status" "review required (https://github.com/testorg/testrepo/pull/$status)" "HTTP ${status}0"; do
+				if _merge_output_is_transient_server_error "$message"; then exit 1; fi
+			done
+		done
+		_merge_output_is_transient_server_error "GraphQL: Something went wrong while executing your query"
+	' _ "${SCRIPT_DIR}/.." || classifier_rc=$?
+	print_result "server error classifier: explicit HTTP statuses, not PR numbers or URLs" "$classifier_rc"
+
+	for mode in server-502 server-503 server-504 server-graphql server-merged server-wrong-merged server-drift server-closed server-read-fail server-malformed server-rest-fail server-late-review; do
+		for auto in 0 1; do
+			rm -f "${TEST_ROOT}/logs/"*.txt
+			create_gh_stub "$mode"
+			exit_code=0
+			output=$(run_merge_execute "42" "testorg/testrepo" "--squash" "0" "$auto") || exit_code=$?
+			rest_calls=$(grep -c 'api -X PUT repos/testorg/testrepo/pulls/42/merge' "${TEST_ROOT}/logs/gh-api-calls.txt" || true)
+			if [[ "$auto" -eq 0 && "$mode" =~ ^server-(502|503|504|graphql)$ ]]; then
+				print_result "$mode: REST recovery succeeds" "$exit_code" "$output"
+				print_result "$mode: exactly one REST write" "$((rest_calls == 1 ? 0 : 1))"
+				metadata_rc=0
+				grep -q 'sha=abc123headsha.*merge_method=squash.*commit_title=GH#28721: fix: preserve reviewed squash subject' "${TEST_ROOT}/logs/gh-api-calls.txt" || metadata_rc=$?
+				print_result "$mode: retry preserves verified SHA and subject" "$metadata_rc"
+			elif [[ "$auto" -eq 0 && "$mode" == server-merged ]]; then
+				print_result "$mode: remote success reconciled" "$exit_code" "$output"
+				print_result "$mode: no duplicate write" "$rest_calls"
+			else
+				print_result "$mode auto=$auto: fails closed" "$((exit_code == 0 ? 1 : 0))" "$output"
+				if [[ "$auto" -eq 0 && "$mode" == server-rest-fail ]]; then
+					print_result "$mode: failed REST write is not retried" "$((rest_calls == 1 ? 0 : 1))"
+				else
+					print_result "$mode auto=$auto: no REST mutation" "$rest_calls"
+				fi
+			fi
+		done
+	done
 	return 0
 }
 

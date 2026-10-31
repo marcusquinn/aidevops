@@ -94,6 +94,7 @@ source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
 	local runtime_risk="" testing_level=""
+	local pr_metadata_overrides=""
 	local completion_bookkeeping=0 bookkeeping_proof_pr="" bookkeeping_task_id=""
 	local replacement_pr="" replacement_reason=""
 	local -a extra_labels=()
@@ -127,8 +128,6 @@ cmd_commit_and_pr() {
 		"${extra_labels[@]+"${extra_labels[@]}"}" || return 1
 	base_branch=$(_resolve_remote_default_branch origin) || return 1
 	base_ref="origin/${base_branch}"
-	_validate_pending_runtime_metadata "$runtime_risk" "$testing_level" \
-		"$summary_testing" "$summary_what" "$base_ref" || return 1
 	local parent_issue=0
 	_issue_has_parent_task_label "$issue_number" "$repo" && parent_issue=1
 	if [[ "$parent_issue" -eq 0 ]]; then
@@ -136,7 +135,8 @@ cmd_commit_and_pr() {
 		issue_open_pr_guard_check "$issue_number" "$repo" "$branch" \
 			"$replacement_pr" "$replacement_reason" 0 || initial_open_pr_guard_rc=$?
 		case "$initial_open_pr_guard_rc" in
-		0 | 3) ;;
+		0) ;;
+		3) _inherit_pr_runtime_metadata "$ISSUE_OPEN_PR_NUMBER" "$repo" || return 1 ;;
 		1)
 			print_error "Issue #${issue_number} already has open PR #${ISSUE_OPEN_PR_NUMBER}; continue branch '${ISSUE_OPEN_PR_HEAD_REF}' or use an explicit audited replacement"
 			return 1
@@ -147,6 +147,8 @@ cmd_commit_and_pr() {
 			;;
 		esac
 	fi
+	_validate_pending_runtime_metadata "$runtime_risk" "$testing_level" \
+		"$summary_testing" "$summary_what" "$base_ref" || return 1
 
 	_stage_and_commit "$commit_message" || return 1
 	# GH#33253: prove an explicit --replace-pr's ancestry now, before WIP
@@ -191,19 +193,63 @@ cmd_commit_and_pr() {
 }
 
 # Only non-empty diffs confined to planning paths qualify.
+# GH#36002: planning artifacts are TODO.md and markdown under todo/. Other
+# files a repository keeps under todo/ (JSON/JSONL worklogs, specs, scripts)
+# are deliverables, so their PRs keep the default closing keyword.
 _diff_is_planning_only() {
 	local base_ref="$1"
 	local paths="" path="" comparison_base=""
 	comparison_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
-	paths=$(git diff --name-only "$comparison_base" HEAD) || return 1
+	# Classify both sides of renames so a data source cannot disappear behind
+	# a planning-only destination.
+	paths=$(git diff --no-renames --name-only "$comparison_base" HEAD) || return 1
 	[[ -n "$paths" ]] || return 1
 	while IFS= read -r path; do
 		case "$path" in
-		TODO.md | todo/*) ;;
+		TODO.md | todo/*.md) ;;
 		*) return 1 ;;
 		esac
 	done <<<"$paths"
 	return 0
+}
+
+# Validate an explicit task prefix before publishing (GH#36016). TODO proof
+# must match both the task and issue; an issue title is an alternative proof.
+_validate_explicit_pr_title() {
+	local issue_number="$1" title="$2" repo="$3" todo_file="${4:-}"
+	if [[ ! "$title" =~ ^t([0-9]+): ]]; then
+		printf '%s\n' "$title"
+		return 0
+	fi
+	local task_number="${BASH_REMATCH[1]}" repo_root="" issue_title=""
+	if [[ -z "$todo_file" ]]; then
+		repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+		[[ -z "$repo_root" ]] || todo_file="${repo_root}/TODO.md"
+	fi
+	if [[ -n "$issue_number" && -f "$todo_file" ]] &&
+		grep -qE "^- \[[ x]\] t${task_number} .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file"; then
+		printf '%s\n' "$title"
+		return 0
+	fi
+	if [[ -n "$issue_number" ]]; then
+		if ! issue_title=$(gh issue view "$issue_number" --repo "$repo" --json title --jq '.title' 2>/dev/null); then
+			print_error "Unable to verify issue #${issue_number} title; refusing explicit task title validation." >&2
+			return 1
+		fi
+	fi
+	if [[ "$issue_title" =~ (^|[^a-zA-Z0-9_])t${task_number}([^a-zA-Z0-9_]|$) ]]; then
+		printf '%s\n' "$title"
+		return 0
+	fi
+	local derived_prefix=""
+	derived_prefix=$(_derive_pr_title_prefix "$issue_number" "$todo_file")
+	if [[ "$task_number" == "$issue_number" ]]; then
+		print_warning "Explicit PR title uses issue #${issue_number} as an unclaimed task ID; using '${derived_prefix}:' instead." >&2
+		printf '%s:%s\n' "$derived_prefix" "${title#*:}"
+		return 0
+	fi
+	print_error "Explicit PR title task t${task_number} is not linked to issue #${issue_number}. Use '--title ${derived_prefix}: ...' or establish the task's TODO/issue-title linkage before pushing." >&2
+	return 1
 }
 
 # Derive final-diff metadata after rebase but before any remote mutation.
@@ -221,9 +267,11 @@ _commit_and_pr_prepare_metadata() {
 	files_changed=$(printf '%s' "$files_changed" | tr '\n' ',' | sed 's/,/, /g')
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base") || return 1
 
-	# Preserve explicit titles; avoid double-prefixing a GH# or tNNN commit title.
+	# Validate explicit titles before push; avoid double-prefixing derived titles.
 	if [[ -z "$pr_title" ]]; then
 		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")"
+	elif [[ "$pr_title" =~ ^t[0-9]+: ]]; then
+		pr_title=$(_validate_explicit_pr_title "$issue_number" "$pr_title" "$repo") || return 1
 	fi
 	# Use the same origin detection as gh_create_pr (GH#21825).
 	origin_label=$(session_origin_label)
@@ -247,7 +295,7 @@ _commit_and_pr_prepare_metadata() {
 		replacement_note="This explicitly justified replacement preserves open PR #${replacement_pr}. Rationale: ${replacement_reason}"
 		[[ -n "$replacement_pr_head_sha" ]] && replacement_note="${replacement_note} Verified ancestor before WIP finalization: ${replacement_pr_head_sha}."
 	fi
-	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base" "$replacement_note") || return 1
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base" "$replacement_note" "$summary_decisions") || return 1
 
 	# Parent-task closing keywords are forbidden except for an explicit final phase.
 	local keyword_guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"
@@ -447,6 +495,8 @@ Commands:
                                  gh CLI level; if both are given, --admin wins and
                                   --auto is dropped (GH#19310).
   record-no-release <PR> [REPO]  Verify merged evidence and record release:not-requested.
+  record-deployment <PR> <RUN_ID> <WORKFLOW.yml> <DEPLOYED_SHA> [REPO]
+                                  Verify an existing tagless maintained-app deployment.
   record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT] [--generated-cloudron-catalog]
                                   Verify inclusion in a published non-aidevops release.
                                   --generated-cloudron-catalog re-verifies a catalog-only tag commit.
@@ -504,6 +554,7 @@ main() {
 	wait-checks) cmd_wait_checks "$@" ;;
 	merge) cmd_merge "$@" ;;
 	record-no-release) cmd_record_no_release "$@" ;;
+	record-deployment) cmd_record_deployment "$@" ;;
 	record-published-release) cmd_record_published_release "$@" ;;
 	record-included-release) cmd_record_included_release "$@" ;;
 	adopt-merged-receipt) cmd_adopt_merged_receipt "$@" ;;

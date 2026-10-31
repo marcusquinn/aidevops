@@ -104,6 +104,7 @@ define_functions_under_test() {
 	' "$MERGE_CONFLICT_FILE")
 	fn_src="${fn_src}
 $(awk '
+		/^_psh_gh_read\(\) \{/,/^}$/ { print }
 		/^_psh_find_merged_closer_for_closed_issue\(\) \{/,/^}$/ { print }
 	' "$SUPERSESSION_FILE")
 $(awk '

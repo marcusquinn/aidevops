@@ -52,6 +52,10 @@ _HRW_REASON_READY_MISSING_SUMMARY="worker_ready_missing_summary"
 _HRW_REASON_READY_HANDOFF_FAILED="worker_ready_missing_summary_transition_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
 _HRW_REASON_UNVERIFIED_HANDOFF="worker_post_pr_handoff_unverified"
+# GH#36171: exact-head handoff evidence stayed unreadable (transport deferral).
+_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED="worker_post_pr_handoff_verification_deferred"
+_HRW_HANDOFF_CONFIRMED_ON_RETRY=2
+_HRW_HANDOFF_ROUTED=3
 _HRW_REASON_ORIGIN_RECONCILIATION_FAILED="worker_origin_reconciliation_failed"
 _HRW_ORIGIN_WORKER_LABEL="origin:worker"
 _HRW_ORIGIN_STATE_MISSING="missing"
@@ -750,6 +754,8 @@ _hrw_pr_less_terminal_complete() {
 	local work_dir="$2"
 	local issue_number="$3"
 	local repo_slug="$4"
+	# Internal constant predicate names only: never retain API output or prose.
+	_HRW_PR_LESS_REJECTION="invalid_context"
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
 	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
 	[[ -d "$work_dir" ]] || return 1
@@ -761,14 +767,21 @@ _hrw_pr_less_terminal_complete() {
 	if [[ -n "$head" && -n "$branch" ]]; then
 		context="${session_key}|${repo_slug}|${issue_number}|${work_dir}|${branch}|${head}|${AIDEVOPS_ATTEMPT_ID:-}|${AIDEVOPS_ATTEMPT_STARTED_AT:-}"
 		if [[ "$context" == "${_HRW_PR_LESS_VERIFIED_CONTEXT:-}" ]]; then
+			_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
 			task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
-			[[ -z "$task_status" ]] && return 0
+			if [[ -z "$task_status" ]]; then
+				_HRW_PR_LESS_REJECTION=""
+				return 0
+			fi
+			_HRW_PR_LESS_REJECTION="unpublished_worktree_changes"
 			return 1
 		fi
 	fi
 	local issue_json=""
 	_HRW_SCOPED_DELIVERY_RECEIPT=""
+	_HRW_PR_LESS_REJECTION="issue_evidence_unavailable"
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="issue_not_closed"
 	jq -e '.state == "closed"' <<<"$issue_json" >/dev/null 2>&1 || return 1
 	if _hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
@@ -777,6 +790,7 @@ _hrw_pr_less_terminal_complete() {
 		if [[ -z "$_HRW_SCOPED_DELIVERY_RECEIPT" ]]; then
 			_HRW_PR_LESS_VERIFIED_CONTEXT="$context"
 		fi
+		_HRW_PR_LESS_REJECTION=""
 		return 0
 	fi
 	return 1
@@ -791,14 +805,18 @@ _hrw_already_delivered_terminal_complete() {
 	local issue_number="$3"
 	local repo_slug="$4"
 	local issue_json="$5"
+	_HRW_PR_LESS_REJECTION="issue_not_trusted_completed"
 	jq -e '.state == "closed" and .state_reason == "completed"
 		and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")' \
 		<<<"$issue_json" >/dev/null 2>&1 || return 1
-	local candidates="" pr_number="" pr_json=""
+	local candidates="" pr_number="" pr_json="" scoped_rejection=""
+	_HRW_PR_LESS_REJECTION="candidate_discovery_unavailable"
 	candidates=$(gh pr list --repo "$repo_slug" --state merged --search "$issue_number" \
 		--limit 20 --json number --jq '.[].number' 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="no_merged_pr_candidate"
 	while IFS= read -r pr_number; do
 		[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || continue
+		_HRW_PR_LESS_REJECTION="candidate_evidence_unavailable"
 		pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
 			--json state,mergedAt,closingIssuesReferences 2>/dev/null) || continue
 		jq -e --argjson issue "$issue_number" --arg repo "$repo_slug" \
@@ -807,12 +825,16 @@ _hrw_already_delivered_terminal_complete() {
 				and ((.repository.owner.login + "/" + .repository.name) | ascii_downcase) == ($repo | ascii_downcase))' \
 			<<<"$pr_json" >/dev/null 2>&1 || {
 			_hrw_scoped_delivery_terminal_complete "$work_dir" "$issue_number" "$repo_slug" "$pr_number" "$issue_json" && return 0
+			# Do not lose a concrete receipt/local-work rejection when another
+			# search candidate later becomes unreadable. Retain one bounded reason.
+			[[ -n "$scoped_rejection" ]] || scoped_rejection="$_HRW_PR_LESS_REJECTION"
 			continue
 		}
 		_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
 		print_info "[lifecycle] worker_already_delivered complete session=${session_key} issue=${issue_number} pr=${pr_number}"
 		return 0
 	done <<<"$candidates"
+	[[ -z "$scoped_rejection" ]] || _HRW_PR_LESS_REJECTION="$scoped_rejection"
 	return 1
 }
 
@@ -822,13 +844,17 @@ _hrw_already_delivered_terminal_complete() {
 _hrw_scoped_delivery_terminal_complete() {
 	local work_dir="$1" issue_number="$2" repo_slug="$3" pr_number="$4" issue_json="$5"
 	local receipt head branch path blob
+	_HRW_PR_LESS_REJECTION="scoped_attempt_binding_missing"
 	[[ -n "${AIDEVOPS_ATTEMPT_ID:-}" && "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]{19}$ ]] || return 1
 	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	_HRW_PR_LESS_REJECTION="scoped_local_context_unavailable"
 	work_dir=$(cd "$work_dir" && pwd -P) || return 1
 	head=$(git -C "$work_dir" rev-parse HEAD) || return 1
 	branch=$(git -C "$work_dir" branch --show-current) || return 1
+	_HRW_PR_LESS_REJECTION="scoped_receipt_unavailable"
 	receipt=$(bash "${SCRIPT_DIR}/verify-issue-close-helper.sh" check-scoped-delivery \
 		"$issue_number" "$pr_number" "$repo_slug" "$work_dir" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="scoped_receipt_invalid"
 	jq -e --arg repo "$repo_slug" --argjson issue "$issue_number" --argjson pr "$pr_number" \
 		--arg attempt "$AIDEVOPS_ATTEMPT_ID" --arg started "$AIDEVOPS_ATTEMPT_STARTED_AT" \
 		--arg worktree "$work_dir" --arg head "$head" --arg branch "$branch" \
@@ -841,6 +867,7 @@ _hrw_scoped_delivery_terminal_complete() {
 	' <<<"$receipt" >/dev/null 2>&1 || return 1
 	# The guard fetched the exact live default tip. A behind checkout must not
 	# hide artifacts subsequently removed or reverted on that integration branch.
+	_HRW_PR_LESS_REJECTION="scoped_default_blob_mismatch"
 	while IFS=$'\t' read -r path blob; do
 		[[ "$(git -C "$work_dir" rev-parse "FETCH_HEAD:${path}" 2>/dev/null)" == "$blob" ]] || return 1
 	done < <(jq -r '.files[] | [.path,.blob] | @tsv' <<<"$receipt")
@@ -855,26 +882,38 @@ _hrw_pr_less_worktree_clean() {
 	local work_dir="$1"
 	local repo_slug="$2"
 	local default_branch="" default_ref="" branch="" remote_tip="" local_head="" pr_count="" task_status=""
+	_HRW_PR_LESS_REJECTION="default_branch_unavailable"
 	default_branch=$(_hrw_resolve_default_branch "$work_dir") || return 1
 	[[ -n "$default_branch" ]] || return 1
+	_HRW_PR_LESS_REJECTION="worktree_branch_invalid"
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
 	[[ -n "$branch" && "$branch" != "$default_branch" ]] || return 1
+	_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
 	task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="unpublished_worktree_changes"
 	[[ -z "$task_status" ]] || return 1
+	_HRW_PR_LESS_REJECTION="local_head_unavailable"
 	local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
 	default_ref="refs/heads/${default_branch}"
+	_HRW_PR_LESS_REJECTION="default_tip_unavailable"
 	remote_tip=$(git -C "$work_dir" ls-remote origin "$default_ref" 2>/dev/null) || return 1
 	remote_tip="${remote_tip%%[[:space:]]*}"
 	[[ "$remote_tip" =~ ^[0-9a-f]{40}$ ]] || return 1
 	# Do not trust a stale origin/default tracking ref; fetch the exact live tip.
 	git -C "$work_dir" fetch -q origin "$default_ref" 2>/dev/null || return 1
+	_HRW_PR_LESS_REJECTION="default_tip_changed"
 	[[ "$(git -C "$work_dir" rev-parse FETCH_HEAD 2>/dev/null)" == "$remote_tip" ]] || return 1
+	_HRW_PR_LESS_REJECTION="unpublished_local_commits"
 	[[ "$(git -C "$work_dir" rev-list --count "${remote_tip}..${local_head}" 2>/dev/null)" == "0" ]] || return 1
 	# A pushed orphan (even if the local branch is clean) must never be waived.
 	local remote_branch=""
+	_HRW_PR_LESS_REJECTION="remote_branch_unavailable"
 	remote_branch=$(git -C "$work_dir" ls-remote origin "refs/heads/${branch}" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="unpublished_remote_branch"
 	[[ -z "$remote_branch" || "${remote_branch%%[[:space:]]*}" == "$local_head" ]] || return 1
+	_HRW_PR_LESS_REJECTION="branch_pr_evidence_unavailable"
 	pr_count=$(gh pr list --repo "$repo_slug" --head "$branch" --state all --json number --jq 'length' 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="branch_has_pr"
 	[[ "$pr_count" == "0" ]] || return 1
 	return 0
 }
@@ -1458,34 +1497,139 @@ _hrw_preserve_blocked_outcome() {
 # assigned, auto-dispatch removed) so they neither escalate the tier nor return
 # the issue to the dispatch queue while the PR exists (GH#33115).
 #
-# Every other class (including fail-open `pr_exists`) keeps the unverified
-# handoff failure path: release, fast-fail as overwhelmed, failed terminal.
+# GH#36171: a transport deferral is not evidence that no durable PR exists.
+# When the exact-head state was unreadable, re-verify a bounded number of
+# times; a handoff that then confirms continues the normal success path, and
+# one that stays unreadable is deferred with the claim retained.
+#
+# Every other class keeps the unverified handoff failure path: release,
+# fast-fail as overwhelmed, failed terminal.
 #
 # Args: $1=session key, $2=work dir
-# Returns: 0 when a durable checkpoint handler ran, 1 when the run was routed
-#          as an unverified-handoff failure.
+# Env:  AIDEVOPS_POST_PR_HANDOFF_VERIFY_ATTEMPTS (1-5, default 3)
+#       AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS (0-120, default 20)
+# Returns: 0 when a durable checkpoint handler ran or verification was
+#          deferred, 1 when the run was routed as an unverified-handoff
+#          failure, 2 (_HRW_HANDOFF_CONFIRMED_ON_RETRY) when re-verification
+#          confirmed the handoff.
 #######################################
 _hrw_handle_unverified_post_pr_handoff() {
 	local session_key="$1"
 	local work_dir="$2"
 	local output_class=""
+	local attempt=1
+	local max_attempts="${AIDEVOPS_POST_PR_HANDOFF_VERIFY_ATTEMPTS:-3}"
+	local retry_delay="${AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS:-20}"
+	[[ "$max_attempts" =~ ^[1-5]$ ]] || max_attempts=3
+	[[ "$retry_delay" =~ ^[0-9]+$ && "$retry_delay" -le 120 ]] || retry_delay=20
 
-	[[ -n "$work_dir" ]] && output_class=$(_worker_produced_output "$session_key" "$work_dir")
-	case "$output_class" in
-	draft_checkpoint) _hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class" ;;
-	merged_checkpoint) _hrw_preserve_merged_checkpoint_handoff "$session_key" "$work_dir" ;;
-	ready_missing_summary) _hrw_preserve_ready_missing_summary_handoff "$session_key" "$output_class" ;;
-	ready_missing_linkage) _hrw_preserve_ready_missing_linkage_handoff "$session_key" "$output_class" ;;
-	*)
-		print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} — exact-head non-draft PR handoff could not be verified; routing as failure"
-		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
-		_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
-		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_UNVERIFIED_HANDOFF"
-		return 1
-		;;
-	esac
+	while :; do
+		output_class=""
+		[[ -n "$work_dir" ]] && output_class=$(_worker_produced_output "$session_key" "$work_dir")
+		case "$output_class" in
+		draft_checkpoint) _hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class"; break ;;
+		merged_checkpoint) _hrw_preserve_merged_checkpoint_handoff "$session_key" "$work_dir"; break ;;
+		ready_missing_summary) _hrw_preserve_ready_missing_summary_handoff "$session_key" "$output_class"; break ;;
+		ready_missing_linkage) _hrw_preserve_ready_missing_linkage_handoff "$session_key" "$output_class"; break ;;
+		esac
+		if ! _hrw_post_pr_handoff_reverifiable "$output_class"; then
+			print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} output_class=${output_class:-none} handoff_state=${_WORKER_POST_PR_HANDOFF_STATE:-rejected} — exact-head non-draft PR handoff could not be verified; routing as failure"
+			_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+			_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+			return 1
+		fi
+		if [[ "$attempt" -ge "$max_attempts" ]]; then
+			_hrw_defer_unverified_post_pr_handoff "$session_key" "$output_class" "$attempt"
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		print_info "[lifecycle] post_pr_handoff verification indeterminate session=${session_key} output_class=${output_class:-none} handoff_state=${_WORKER_POST_PR_HANDOFF_STATE:-unknown}; re-verifying in ${retry_delay}s (attempt ${attempt}/${max_attempts})"
+		sleep "$retry_delay"
+		if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+			print_info "[lifecycle] post_pr_handoff session=${session_key} confirmed on re-verification attempt ${attempt}/${max_attempts}"
+			return "$_HRW_HANDOFF_CONFIRMED_ON_RETRY"
+		fi
+	done
 	print_info "[lifecycle] unverified post_pr_handoff session=${session_key} routed to exact-head checkpoint state=${output_class}"
 	return 0
+}
+
+#######################################
+# GH#36171: decide whether an unconfirmed POST_PR_HANDOFF may still verify.
+#
+# A local transport deferral (quota cooldown/pacing) makes the exact-head
+# probe return `unknown`, which `_worker_produced_output` fails open to
+# `pr_exists` — the same class it prints for a confirmed ready PR. Retry only
+# when the strict probe could not read GitHub, or when the independent
+# classifier readback saw `pr_exists` while the strict probe reported missing
+# linkage/summary (one of those reads was deferred). Identity/precondition
+# rejections (`rejected`) and consistent definitive states stay final.
+#
+# Args: $1=output class from the latest classifier pass
+# Returns: 0 when bounded re-verification may change the outcome, 1 otherwise
+#######################################
+_hrw_post_pr_handoff_reverifiable() {
+	local output_class="$1"
+	case "${_WORKER_POST_PR_HANDOFF_STATE:-rejected}" in
+	unknown | merged_issue_unreadable) return 0 ;;
+	ready_missing_* | merged_missing_*)
+		[[ "$output_class" == "pr_exists" ]] && return 0
+		;;
+	esac
+	return 1
+}
+
+#######################################
+# GH#36171: record an exact-head handoff whose GitHub state stayed unreadable.
+#
+# Keep the dispatch claim: no CLAIM_RELEASED, fast-fail or tier escalation.
+# The pushed PR (if any) remains the dedup signal; Pulse merge and stale-claim
+# recovery decide on fresh state once GitHub is readable again. The outcome is
+# deferred (retry_infrastructure), never success, so an unverifiable
+# handoff still cannot be counted as completion (GH#33115).
+#
+# Args: $1=session key, $2=last output class, $3=verification attempts made
+#######################################
+_hrw_defer_unverified_post_pr_handoff() {
+	local session_key="$1"
+	local output_class="$2"
+	local attempts="$3"
+	print_warning "[lifecycle] ${_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED} session=${session_key} output_class=${output_class:-none} handoff_state=${_WORKER_POST_PR_HANDOFF_STATE:-unknown} attempts=${attempts} — exact-head PR state stayed unreadable; retaining claim without tier escalation"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
+	_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_CHECKPOINTED"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED"
+	return 0
+}
+
+#######################################
+# Gate a POST_PR_HANDOFF before the verified-handoff success path.
+#
+# Never reuses a verification state recorded by an earlier probe. A handoff
+# confirmed on bounded re-verification (GH#36171) continues exactly like one
+# confirmed by the first probe.
+#
+# Args: $1=session key, $2=work dir
+# Returns: 0 when the verified success path may continue, 1 when the run was
+#          routed as an unverified-handoff failure, _HRW_HANDOFF_ROUTED when a
+#          checkpoint handler or verification deferral already finished it.
+#######################################
+_hrw_post_pr_handoff_gate() {
+	local session_key="$1"
+	local work_dir="$2"
+	local handoff_rc=0
+	_WORKER_POST_PR_HANDOFF_STATE=""
+	if declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 &&
+		_worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+		return 0
+	fi
+	_hrw_handle_unverified_post_pr_handoff "$session_key" "$work_dir" || handoff_rc=$?
+	case "$handoff_rc" in
+	0) return "$_HRW_HANDOFF_ROUTED" ;;
+	"$_HRW_HANDOFF_CONFIRMED_ON_RETRY") return 0 ;;
+	esac
+	return 1
 }
 
 _hrw_finish_success_run() {
@@ -1498,11 +1642,11 @@ _hrw_finish_success_run() {
 		_hrw_preserve_blocked_outcome "$session_key" "$work_dir"
 		return 0
 	fi
-	if [[ "${_run_result_label:-}" == "post_pr_handoff" ]] &&
-		(! declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 ||
-			! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"); then
-		_hrw_handle_unverified_post_pr_handoff "$session_key" "$work_dir" && return 0
-		return 1
+	if [[ "${_run_result_label:-}" == "post_pr_handoff" ]]; then
+		local handoff_gate_rc=0
+		_hrw_post_pr_handoff_gate "$session_key" "$work_dir" || handoff_gate_rc=$?
+		[[ "$handoff_gate_rc" -eq "$_HRW_HANDOFF_ROUTED" ]] && return 0
+		[[ "$handoff_gate_rc" -eq 0 ]] || return 1
 	fi
 
 	# GH#20721 + GH#20819: Classify worker output quality.

@@ -62,6 +62,24 @@ For Compose, paste the generated snippet under each service, network and volume 
 
 `wp-plugin-release-helper.sh` labels its plugin-check network, volume and containers this way. It still removes them on exit through `wprh_pc_cleanup`.
 
+## Scripts in a project repo
+
+Scripts that start disposable containers, networks or volumes should check whether
+`~/.aidevops/agents/scripts/docker-resource-helper.sh` is executable, then read
+`labels` into an array as above and pass it to each creation command. Start with
+an empty array and leave it empty when the helper is absent: the script must work
+unchanged without aidevops. For Compose, apply `compose-labels` to services,
+networks and volumes, not just the project. Preserve the script's own exit cleanup.
+
+Example integration: `wpallstars/wp-plugin-starter-template-for-ai-coding#570`
+(`scripts/test-site.sh`, `scripts/plugin-check.sh`, `scripts/update-test.sh` and
+`scripts/lib/docker-wordpress.sh`).
+
+OpenCode and Claude Code give one advisory per session for unlabelled Docker
+creation commands. `docker run --rm` is exempt. The advisory never blocks a
+command or changes a user-owned stack; use `docker-resource-helper.sh labels`
+or `compose-labels` for disposable test resources.
+
 ## Teardown, reap and report
 
 ```bash
@@ -82,6 +100,17 @@ For Compose, paste the generated snippet under each service, network and volume 
 3. For networks and volumes: no container that is staying is still attached.
 
 Removal goes containers first, then networks, then volumes. "No such object" errors from a parallel run are ignored, so repeated runs converge.
+
+Container removal uses `docker rm -f -v`, which also removes attached anonymous
+volumes (including those created by an image's `VOLUME`). Named volumes are not
+removed by `-v`; they are removed separately only when labelled and eligible.
+
+The pulse also runs a read-only pressure report at most once per UTC day. It
+writes one health-log line when more than 20 unlabelled containers have been
+stopped for over 72 hours, or unused volumes have more than 20 GB reclaimable.
+The line includes unlabelled container/network/volume counts, the old stopped
+count and reclaimable volume size. Below both thresholds it is silent. This is
+independent of `AIDEVOPS_DOCKER_REAP`; it never deletes unlabelled resources.
 
 ## Environment
 

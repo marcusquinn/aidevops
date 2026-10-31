@@ -727,14 +727,14 @@ def extension_status():
 
 
 def read_log_events():
-    """Return (found, ordered events, classified lines) from the current relay log."""
+    """Return (found, ordered events, classified lines, raw tail) from the current relay log."""
     try:
         with open(log_path, 'rb') as stream:
             stream.seek(0, os.SEEK_END)
             stream.seek(max(0, stream.tell() - 262144))
             text = stream.read().decode('utf-8', 'replace')
     except OSError:
-        return False, [], []
+        return False, [], [], ''
     events, lines = [], []
     for line in text.splitlines():
         for name, pattern in EVENTS:
@@ -742,10 +742,24 @@ def read_log_events():
                 events.append(name)
                 lines.append(clean(line))
                 break
-    return True, events, lines
+    return True, events, lines, text
 
 
-log_found, events, event_lines = read_log_events()
+# GH#35955: on connect the extension re-attaches tabs approved in an earlier
+# session ("Successfully re-attached tab"); a click attaches a new tab id.
+# Only counts are reported: tab ids and URLs are never printed.
+REATTACHED_TAB = re.compile(r'Successfully re-attached tab:\s*(\d+)')
+ATTACHED_TAB = re.compile(r'Debugger attached successfully to tab:\s*(\d+)')
+
+
+def attachment_counts(text):
+    """Return (stale re-attached, newly attached) tab counts since the latest extension connect."""
+    start = max((match.end() for match in re.finditer(r'Extension connected \(', text)), default=0)
+    reattached = set(REATTACHED_TAB.findall(text[start:]))
+    return len(reattached), len(set(ATTACHED_TAB.findall(text[start:])) - reattached)
+
+
+log_found, events, event_lines, log_text = read_log_events()
 last_extension_event = next(
     (event for event in reversed(events) if event in ('connected', 'disconnected')), None)
 last_connect = max((i for i, event in enumerate(events) if event == 'connected'), default=-1)
@@ -800,9 +814,18 @@ if log_found:
           f"{counts['token-rejected']} token rejection(s); last extension event: {last_extension_event or 'none'}")
     for line in event_lines[-5:]:
         print(f'     | {line}')
+    stale_tabs, fresh_tabs = attachment_counts(log_text)
+    print(f'   Tab attachments since last extension connect: {stale_tabs} stale-reattached '
+          f'(approved in an earlier session), {fresh_tabs} newly attached; '
+          'focused-tab match: unverified (the extension does not report its focused tab)')
 else:
     print('   Relay log: not found (no relay has run for this user, or PLAYWRITER_LOG_FILE_PATH differs)')
+    stale_tabs = fresh_tabs = 0
 print(f'   Guidance: {GUIDANCE[verdict]}')
+if stale_tabs and not fresh_tabs:
+    print('   Stale re-attach: tabs re-attached at connect are never a current approval. Keep waiting for a new '
+          'click on the intended tab; the user can detach a stale tab by clicking its Playwriter icon or '
+          'removing it from the playwriter tab group.')
 PYEOF
 	return 0
 }

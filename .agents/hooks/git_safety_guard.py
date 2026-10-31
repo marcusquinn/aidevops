@@ -267,6 +267,21 @@ def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
     }
 
 
+def docker_owner_advisory(command: str, session_id: str):
+    """Delegate optional Docker context without affecting safety decisions."""
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_DOCKER_OWNER_ADVISORY_HELPER", "docker_owner_advisory.py"
+    )
+    if not helper:
+        return None
+    try:
+        _, payload = _run_policy_helper(helper, [command, session_id])
+        return payload or None
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        # Advisory failures must never block commands or override policy.
+        return None
+
+
 def main():
     """Delegate Bash policy and enforce direct-file worktree isolation."""
     try:
@@ -304,6 +319,10 @@ def main():
     deny = _check_command_policy(command)
     if deny:
         print(json.dumps(deny))
+    else:
+        advisory = docker_owner_advisory(command, input_data.get("session_id", ""))
+        if advisory:
+            print(json.dumps(advisory))
     sys.exit(0)
 
 

@@ -11,6 +11,7 @@ No response is cached, and no automatic transport retry is performed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import signal
@@ -137,6 +138,14 @@ def _acquire(budget: Budget, resource: str) -> str:
             time.sleep(wait)
 
 
+def _attribution_fingerprint(host: str, credential_value: str) -> str:
+    # Same non-secret digest as gh-quota-attribution-lib.sh _ghqa_auth_fingerprint
+    # (host, unit separator, credential), so log readers can key independent
+    # quota series without seeing a secret. Admission keys keep their own digest.
+    # Only called after run() rejected anonymous/empty identities.
+    return hashlib.sha256(f"{host}\x1f{credential_value}".encode()).hexdigest()
+
+
 def _exit_status(rc: int) -> int:
     return rc if rc >= 0 else 128 - rc
 
@@ -225,11 +234,15 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
             native_args = args if include else [*args, "--include"]
             metadata.write_text('{"attempted":true}', encoding="utf-8")
             rc = execute(executable, native_args, output, environment)
+            # Sample time belongs to the response, not to the later log append.
+            sampled_at = int(time.time())
             phase("native_gh")
             status, headers, body_offset = included_headers(output)
             rc = rc or _copy_response(output, include, silent, status, body_offset)
-            metadata.write_text(json.dumps(_response_metadata(status, headers, authenticated)),
-                                encoding="utf-8")
+            observed = _response_metadata(status, headers, authenticated)
+            observed["auth_fingerprint"] = _attribution_fingerprint(host, environment.get("GH_TOKEN", ""))
+            observed["sampled_at"] = sampled_at
+            metadata.write_text(json.dumps(observed), encoding="utf-8")
             phase("response_framing")
             return _exit_status(rc)
     except Deferred as exc:

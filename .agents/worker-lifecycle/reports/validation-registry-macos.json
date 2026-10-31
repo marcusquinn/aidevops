@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "b7ded250273496e8322d7f02b203c6ccafc856d396cfebdf69e5efe3bb452b09",
+  "bundle_sha256": "e8fc78691628d26c143b982f39e8b2e7fda36cc58e2d87d5df2f15f6546517f2",
   "checks": [
     {
       "name": "tests.test_storage.StorageContract.test_atomic_attempt_binding_conflict_rolls_back_registration",
@@ -140,6 +140,150 @@
     {
       "name": "tests.test_launch.LaunchContract.test_unavailable_registry_preserves_command_and_exit",
       "status": "passed"
+    },
+    {
+      "name": "tests.test_admission.AdmissionContract.test_admission_before_close_is_included",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admission.AdmissionContract.test_capacity_failure_rolls_back_admission_and_registration",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admission.AdmissionContract.test_close_before_admission_refuses_without_partial_event",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admission.AdmissionContract.test_concurrent_replay_only_one_first_admission",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admission.AdmissionContract.test_explicit_upgrade_preserves_observations_without_adopting_them",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admission.AdmissionContract.test_new_generation_cannot_bypass_closed_path",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admission.AdmissionContract.test_racing_close_and_admit_have_only_serial_outcomes",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admission.AdmissionContract.test_replay_after_close_never_grants_second_launch",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_closed_generation_never_executes",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_full_journal_never_executes",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_initialize_flag_cannot_enable_fail_open_fallback",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_missing_registry_never_executes_or_initializes",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_native_output_exit_and_process_reconciliation",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_retry_with_same_run_id_does_not_execute_twice",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_schema_one_requires_explicit_upgrade",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_unknown_generation_never_executes",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_wrong_cwd_never_executes",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_wrong_generation_path_never_executes",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_directory_handle.DirectoryHandleContract.test_contents_can_change_without_directory_identity_changing",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_directory_handle.DirectoryHandleContract.test_different_process_cannot_reuse_observation",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_directory_handle.DirectoryHandleContract.test_missing_directory_invalidates_handle",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_directory_handle.DirectoryHandleContract.test_observed_mismatch_never_resurrects",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_directory_handle.DirectoryHandleContract.test_permission_failure_is_not_a_match",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_directory_handle.DirectoryHandleContract.test_replacement_directory_at_same_path_is_not_original",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_directory_handle.DirectoryHandleContract.test_stable_directory_and_closed_handle",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_directory_handle.DirectoryHandleContract.test_symlink_capture_is_rejected",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_directory_handle.DirectoryHandleContract.test_symlink_to_original_does_not_restore_match",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_all_owners_must_end",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_each_missing_proof_holds_even_with_preserved_results",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_empty_live_or_unknown_owners_hold",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_failed_inventory_cannot_be_archived_then_removed",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_missing_registration_is_not_permission",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_preserved_results_only_produce_a_candidate",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_repeatable_and_never_authorizes_cleanup",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_uncertain_preservation_holds",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_unpublished_results_require_archive",
+      "status": "passed"
     }
   ],
   "cleanup_authorized": false,
@@ -154,8 +298,8 @@
   "status": "passed",
   "suite": "registry-integration",
   "system": "Darwin",
-  "tests_run": 35,
-  "timestamp": "2026-10-28T21:21:45.087985+00:00",
+  "tests_run": 71,
+  "timestamp": "2026-10-29T15:44:42.567228+00:00",
   "untested": [
     "power-loss",
     "disk-full",

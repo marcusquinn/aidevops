@@ -50,10 +50,13 @@ _PULSE_MERGE_CONFLICT_LOADED=1
 : "${_PULSE_MERGE_CONFLICT_UNKNOWN_HEAD_BRANCH:=<branch>}"
 : "${_PULSE_MERGE_CONFLICT_DEFAULT_BASE_BRANCH:=main}"
 
-# t2948: Idle interactive PR handover threshold in seconds (default 4h).
+# Idle interactive PR handover threshold in seconds (default 12h, the
+# maintainer's takeover window; t2948 used 4h). Workers take over idle
+# interactive work by default (mode enforce); `no-takeover`, a live claim stamp
+# or an active issue status still keep it with the human.
 # Override via AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS env var.
 # See _interactive_pr_is_stale / _interactive_pr_trigger_handover.
-: "${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:=${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}}"
+: "${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:=${IDLE_INTERACTIVE_HANDOVER_SECONDS:-43200}}"
 
 #######################################
 # GH#18650 (Fix 4): Post a one-time rebase nudge on an origin:interactive
@@ -245,15 +248,15 @@ Every pulse cycle the deterministic merge pass evaluates open PRs with merge con
 #      in-review, claimed) — an active status means a human is driving it
 #   3. No live claim stamp file in $CLAIM_STAMP_DIR for the linked issue
 #      (session is gone; no interactive-session-helper.sh claim active)
-#   4. PR updatedAt older than AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS (default 14400 = 4h)
+#   4. PR updatedAt older than AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS (default 43200 = 12h)
 #   5. Linked issue is open (don't touch PRs whose issue was already closed)
 #
 # Env controls:
-#   AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE — off | detect | enforce (default: detect)
+#   AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE — off | detect | enforce (default: enforce)
 #     off:     returns 1 unconditionally (feature disabled)
 #     detect:  evaluates signal and logs would-handover decisions; still returns signal
 #     enforce: evaluates signal and returns it; caller acts
-#   AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS — age threshold seconds, default 14400 (4h; t2948)
+#   AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS — age threshold seconds, default 43200 (12h)
 #
 # Args: $1 = pr_number, $2 = repo_slug, $3 = updated_at (optional),
 #       $4 = head_ref_oid (optional), $5 = head_commit_at (optional)
@@ -266,7 +269,8 @@ _interactive_pr_is_stale() {
 	local precomputed_updated_at="${3:-}"
 	local precomputed_head_ref_oid="${4:-}"
 	local precomputed_head_commit_at="${5:-}"
-	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-detect}"
+	local allow_orphan="${6:-0}"
+	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}"
 	[[ "$mode" == "off" ]] && return 1
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
 
@@ -292,7 +296,7 @@ _interactive_pr_is_stale() {
 	fi
 
 	# Gate 4: age threshold (check updatedAt before commit lookup — cheapest filter)
-	local threshold_secs="${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:-${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}}"  # default 4h (t2948; was 24h)
+	local threshold_secs="${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:-${IDLE_INTERACTIVE_HANDOVER_SECONDS:-43200}}"  # default 12h
 	local activity_at="" activity_source="updatedAt" now_epoch=0 updated_epoch=0 pr_age_secs=0
 	# t2383 Fix 2: validate threshold is a positive integer before arithmetic.
 	# A non-numeric value (e.g. "4h", empty, negative) triggers bash
@@ -349,8 +353,13 @@ _interactive_pr_is_stale() {
 
 	# Gate 2 + 5: resolve linked issue, verify open, check status labels
 	local linked_issue
-	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-	[[ -z "$linked_issue" ]] && return 1
+	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
+	# Only the tracking recovery path may probe age before an issue exists.
+	# Normal handover still requires the issue/claim gates below.
+	if [[ -z "$linked_issue" ]]; then
+		[[ "$allow_orphan" == "1" && "$mode" == "enforce" ]] && return 0
+		return 1
+	fi
 	local issue_meta
 	issue_meta=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
 		--jq '{state, labels: [.labels[].name]}' 2>/dev/null) || return 1
@@ -395,7 +404,7 @@ _interactive_pr_is_stale() {
 _interactive_pr_trigger_handover() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-detect}"
+	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}"
 	local takeover_label="origin:worker-takeover"
 	[[ "$mode" == "enforce" ]] || return 1
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
@@ -441,7 +450,7 @@ _interactive_pr_trigger_handover() {
 	# Post one-time handover comment via _gh_idempotent_comment
 	if declare -F _gh_idempotent_comment >/dev/null 2>&1; then
 		local marker="<!-- pulse-interactive-handover -->"
-		local threshold_h=$(( ${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:-${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}} / 3600 ))
+		local threshold_h=$(( ${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:-${IDLE_INTERACTIVE_HANDOVER_SECONDS:-43200}} / 3600 ))
 		local body
 		body="${marker}
 ## Worker takeover — no interactive session activity for ${threshold_h}h
@@ -553,7 +562,7 @@ _verify_pr_overlaps_commit() {
 		if _is_planning_path_for_overlap "$file"; then
 			continue
 		fi
-		if printf '%s\n' "$commit_files" | grep -Fxq -- "$file"; then
+		if grep -Fxq -- "$file" <<<"$commit_files"; then
 			return 0
 		fi
 	done <<<"$pr_files"
@@ -661,10 +670,12 @@ Earlier versions of \`_close_conflicting_pr\` would have auto-closed this PR wit
 #######################################
 _parse_squash_merge_pr() {
 	local subject="$1"
+	local squash_re='\(#([0-9]+)\)$'
 	[[ -n "$subject" ]] || return 0
-	printf '%s' "$subject" |
-		grep -oE '\(#[0-9]+\)$' |
-		grep -oE '[0-9]+' | head -1 || true
+	# Bash regex, not a pipe into head (GH#36235).
+	if [[ "$subject" =~ $squash_re ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+	fi
 	return 0
 }
 
@@ -872,7 +883,7 @@ _close_conflicting_pr_check_ownership_guard() {
 	# GH#18285 + GH#18650 Fix 4: post a one-time rebase nudge so the
 	# maintainer has a visible signal that their CONFLICTING PR needs
 	# manual attention.
-	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:interactive'; then
+	if grep -Fxq -- 'origin:interactive' <<<"$pr_labels"; then
 		echo "[pulse-wrapper] Deterministic merge: skipping auto-close of origin:interactive PR #${pr_number} — maintainer session work is never auto-closed" >>"$LOGFILE"
 		_post_rebase_nudge_on_interactive_conflicting "$pr_number" "$repo_slug"
 		return 0
@@ -880,8 +891,8 @@ _close_conflicting_pr_check_ownership_guard() {
 
 	# Guard 2: origin:worker or origin:worker-takeover — pulse owns these
 	# PRs; close is safe and correct.
-	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:worker' ||
-		printf '%s\n' "$pr_labels" | grep -Fxq 'origin:worker-takeover'; then
+	if grep -Fxq -- 'origin:worker' <<<"$pr_labels" ||
+		grep -Fxq -- 'origin:worker-takeover' <<<"$pr_labels"; then
 		return 1
 	fi
 
@@ -1183,7 +1194,8 @@ _close_conflicting_pr() {
 	# mode" → "t153") so the classifier can search recent commits
 	# with a word-boundary-safe regex.
 	local task_id_from_pr
-	task_id_from_pr=$(printf '%s' "$pr_title" | grep -oE '^(t[0-9]+|GH#[0-9]+)' | head -1) || task_id_from_pr=""
+	task_id_from_pr=$(grep -oE -- '^(t[0-9]+|GH#[0-9]+)' <<<"$pr_title") || task_id_from_pr=""
+	task_id_from_pr="${task_id_from_pr%%$'\n'*}"
 	local linked_issue_for_supersession
 	linked_issue_for_supersession=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue_for_supersession=""
 
@@ -1212,6 +1224,36 @@ _close_conflicting_pr() {
 		_close_conflicting_pr_comment_not_landed \
 			"$pr_number" "$repo_slug" "$pr_title"
 	fi
+	return 0
+}
+
+#######################################
+# Print a backtick fence one longer than the longest backtick run in the
+# diff (minimum 3). PR diffs can contain triple backticks (markdown/docs
+# changes); a fixed ``` fence would break rendering and corrupt the worker
+# handoff (t2383 Fix 4).
+# GH#35943: match the backtick with a bracket expression. GNU grep reads
+# '\`' as its start-of-buffer anchor, so the escaped form never matched on
+# Linux runners and every diff kept a 3-backtick fence.
+#
+# Args:
+#   $1 - diff_content
+#######################################
+_carry_forward_diff_fence() {
+	local diff_content="$1"
+	local fence_len=3
+	local longest_run
+	longest_run=$(printf '%s' "$diff_content" | grep -oE '[`]{3,}' | awk '{ if (length > max) max = length } END { print max+0 }') || longest_run=0
+	[[ "$longest_run" =~ ^[0-9]+$ ]] || longest_run=0
+	if [[ "$longest_run" -ge "$fence_len" ]]; then
+		fence_len=$((longest_run + 1))
+	fi
+	local fence=""
+	local _i
+	for (( _i=0; _i<fence_len; _i++ )); do
+		fence="${fence}\`"
+	done
+	printf '%s' "$fence"
 	return 0
 }
 
@@ -1274,30 +1316,20 @@ _carry_forward_pr_diff() {
 
 	# --- Idempotency guard ---
 	# Marker format: <!-- t2118:prior-worker-diff:PR<N> -->
+	# GH#35943: here-string, not `printf | grep -q`. The pulse sources this
+	# file under pipefail; grep -q exits at the marker while printf is still
+	# writing the carried diff, SIGPIPE fails the pipeline and the guard
+	# re-appends the same diff.
 	local marker="<!-- t2118:prior-worker-diff:PR${pr_number} -->"
-	if printf '%s' "$current_body" | grep -qF "$marker"; then
+	if grep -qF -- "$marker" <<<"$current_body"; then
 		echo "[pulse-wrapper] _carry_forward_pr_diff: issue #${linked_issue} already has diff marker for PR #${pr_number} — skipping (t2118)" >>"$LOGFILE"
 		_CFPD_PRESERVED=1
 		return 0
 	fi
 
 	# --- Build the append section ---
-	# t2383 Fix 4: compute dynamic fence length. PR diffs can contain triple
-	# backticks (markdown/docs changes). A fixed ``` fence would break rendering
-	# and corrupt the worker handoff. Scan for the longest backtick run in the
-	# diff and use one more than that.
-	local fence_len=3
-	local longest_run
-	longest_run=$(printf '%s' "$diff_content" | grep -oE '\`{3,}' | awk '{ if (length > max) max = length } END { print max+0 }') || longest_run=0
-	[[ "$longest_run" =~ ^[0-9]+$ ]] || longest_run=0
-	if [[ "$longest_run" -ge "$fence_len" ]]; then
-		fence_len=$((longest_run + 1))
-	fi
-	local fence=""
-	local _i
-	for (( _i=0; _i<fence_len; _i++ )); do
-		fence="${fence}\`"
-	done
+	local fence
+	fence=$(_carry_forward_diff_fence "$diff_content")
 
 	local new_section
 	new_section="${marker}

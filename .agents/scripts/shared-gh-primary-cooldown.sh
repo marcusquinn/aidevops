@@ -50,6 +50,16 @@ _gh_primary_request_resource() {
 	return 0
 }
 
+# Read-only probe for one resource's primary-exhaustion cooldown, so long
+# loops can yield before attempting work that the transport would refuse.
+_gh_primary_cooldown_active() {
+	local resource="${1:-}"
+	case "$resource" in core | search | code_search | graphql) ;; *) return 1 ;; esac
+	local AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-${resource}"
+	_gh_secondary_cooldown_active
+	return $?
+}
+
 _gh_primary_cooldown_preflight() {
 	local resource=""
 	resource=$(_gh_primary_request_resource "$@") || return 0

@@ -83,14 +83,20 @@ _dlw_classify_reuse_candidate() {
 # candidates; enrolled generations must match the exact task. Never first-match.
 # Sets _DLW_REUSE_PATH, _DLW_REUSE_BRANCH, _DLW_REUSE_GENERATION ("" = legacy)
 # and _DLW_REUSE_REFUSAL. Returns 0 unique, 1 none, 2 refuse (ambiguous/unknown).
+# GH#36132: parse porcelain with shell builtins. Forking awk/sed per listed
+# worktree cost ~2 s per dispatch on a repo with 116 linked worktrees and was
+# the largest dispatcher-side precreate_worktree residual under load.
 _dlw_select_issue_worktree() {
 	local repo_path="$1" issue_number="$2" repo_slug="${3:-}"
 	local line="" wt_path="" wt_branch="" class="" count=0 unknown=0 sealed=0
 	_DLW_REUSE_PATH="" _DLW_REUSE_BRANCH="" _DLW_REUSE_GENERATION="" _DLW_REUSE_REFUSAL=""
 	while IFS= read -r line; do
-		wt_path=$(printf '%s' "$line" | awk '{print $1}') || wt_path=""
-		wt_branch=$(printf '%s' "$line" | awk '{print $3}' | sed 's/^\[//;s/\]$//') || wt_branch=""
-		[[ "$wt_branch" =~ gh-?${issue_number}([^0-9]|$) && -d "$wt_path" ]] || continue
+		case "$line" in
+		"worktree "*) wt_path="${line#worktree }"; continue ;;
+		"branch refs/heads/"*) wt_branch="${line#branch refs/heads/}" ;;
+		*) continue ;;
+		esac
+		[[ "$wt_branch" =~ gh-?${issue_number}([^0-9]|$) && -n "$wt_path" && -d "$wt_path" ]] || continue
 		if ! class=$(_dlw_classify_reuse_candidate "$wt_path" "$issue_number" "$repo_slug"); then
 			unknown=$((unknown + 1))
 			continue
@@ -107,7 +113,7 @@ _dlw_select_issue_worktree() {
 		_DLW_REUSE_BRANCH="$wt_branch"
 		_DLW_REUSE_GENERATION=""
 		[[ "$class" != managed\ * ]] || _DLW_REUSE_GENERATION="${class#managed }"
-	done < <(git -C "$repo_path" worktree list 2>/dev/null)
+	done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
 	if [[ "$unknown" -gt 0 ]]; then
 		_DLW_REUSE_REFUSAL="worktree_reuse_evidence_unavailable"
 	elif [[ "$sealed" -gt 0 ]]; then

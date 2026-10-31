@@ -33,6 +33,7 @@ import { installPluginConsoleRouter } from "./plugin-console.mjs";
 import { recordPluginHealthStage } from "./plugin-health.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
+import { releasePreEditSessionOwnership } from "./pre-edit-check-process.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
 import { createSessionModelStore, createShellEnvHook } from "./shell-env.mjs";
 import {
@@ -545,6 +546,7 @@ export async function setupAidevopsV2(ctx) {
         handleEvent(input, observeContext),
         completed ? handleEvent({ event: completed }, observeContext) : undefined,
         Promise.resolve(boundedOperationManager.handleEvent(input)),
+        releasePreEditSessionOwnership(input).catch(() => qualityLog("WARN", "Session ownership release unavailable")),
         permissionBroker.handleEvent(input),
         providerErrorHandler(input),
         Promise.resolve().then(() => heartbeat.handleEvent(input)),

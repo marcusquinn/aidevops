@@ -688,7 +688,7 @@ _triage_review_shape_failure_reason() {
 		return 0
 	fi
 	if ! printf '%s\n' "$review_text" \
-		| grep -qxF -- "- **Recommendation:** ${expected_recommendation}" 2>/dev/null; then
+		| grep -xF -- "- **Recommendation:** ${expected_recommendation}" >/dev/null 2>&1; then
 		printf '%s\n' 'recommendation-mismatch'
 		return 0
 	fi
@@ -862,7 +862,7 @@ _extract_and_post_triage_review() {
 
 	# NEVER post raw sandbox/infrastructure output. A failed runtime may mix
 	# startup logs, execution metadata, or internal paths into model text.
-	if printf '%s\n' "$review_text" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper|/opt/homebrew/|opencode run ' 2>/dev/null; then
+	if printf '%s\n' "$review_text" | grep -E '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper|/opt/homebrew/|opencode run ' >/dev/null 2>&1; then
 		echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} contained raw sandbox output — suppressed (${#review_text} chars)" >>"$LOGFILE"
 		_log_suppressed_triage_output "$issue_num" "$repo_slug" \
 			"raw-sandbox-output" "$output_chars"

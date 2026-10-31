@@ -67,6 +67,8 @@ if [[ "\${PROVENANCE_READ_TARGET:-}" == "\$target" ]]; then
 	decode-once) [[ "\$count" != 1 ]] || { printf 'unexpected end of JSON input\n' >&2; exit 1; } ;;
 	5xx-always) printf 'gh: Service Unavailable (HTTP 503)\n' >&2; exit 1 ;;
 	auth) printf 'gh: Forbidden (HTTP 403)\n' >&2; exit 1 ;;
+	network-once) [[ "\$count" != 1 ]] || { printf '{partial'; printf '%s\n' "\$NETWORK_ERROR" >&2; exit 1; } ;;
+	network-always) printf '{partial'; printf '%s\n' "\$NETWORK_ERROR" >&2; exit 1 ;;
 	missing-native) printf '[aidevops] gh shim: native gh not found\nsecond line must not escape\n' >&2; exit 127 ;;
 	malformed) printf '{broken\n'; exit 0 ;;
 	multiple) printf '{}\n{}\n'; exit 0 ;;
@@ -176,6 +178,30 @@ for read_target in pr tag-ref tag-object; do
 	assert_read_transport "$read_target" empty-once 2 0 "$read_purpose: empty response; retrying"
 	assert_read_transport "$read_target" empty-always 3 1 "$read_purpose: empty response after 3 attempts"
 	assert_read_transport "$read_target" 5xx-once 2 0 "$read_purpose: HTTP 502; retrying"
+	for network_error in \
+		'error connecting to api.github.com' \
+		'dial tcp: lookup api.github.com: no such host' \
+		'dial tcp: i/o timeout' \
+		'read tcp: connection reset by peer' \
+		'net/http: TLS handshake timeout' \
+		'Get "https://api.github.com": EOF' \
+		'unexpected EOF' \
+		'context deadline exceeded (Client.Timeout exceeded while awaiting headers)' \
+		'dial tcp: connect: connection refused' \
+		'dial tcp: connect: network is unreachable' \
+		'lookup api.github.com: temporary failure in name resolution'; do
+		export NETWORK_ERROR="$network_error"
+		assert_read_transport "$read_target" network-once 2 0 'network transport error; retrying'
+	done
+	assert_read_transport "$read_target" network-always 3 1 'network transport error after 3 attempts'
+	[[ ! -s "${TEST_ROOT}/read-output" ]]
+	for network_error in 'gh: Unauthorized (HTTP 401)' 'gh: Not Found (HTTP 404)' \
+		'gh: Forbidden (HTTP 403): connection reset by peer' \
+		'tls: failed to verify certificate: x509: certificate has expired' \
+		'unknown failure'; do
+		export NETWORK_ERROR="$network_error"
+		assert_read_transport "$read_target" network-always 1 1 'not retryable'
+	done
 done
 assert_read_transport pr decode-once 2 0 'source PR #42 in test/repo: JSON decode error; retrying'
 assert_read_transport pr whitespace-once 2 0 'empty response; retrying'

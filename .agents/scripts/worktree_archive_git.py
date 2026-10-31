@@ -11,7 +11,10 @@ import subprocess
 import tempfile
 
 
-def git(root, *args, data=None):
+DEFAULT_TIMEOUT = 60
+
+
+def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
     for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
@@ -22,7 +25,7 @@ def git(root, *args, data=None):
     return subprocess.run(  # nosec B603 -- resolved Git, fixed subcommands, argv-only paths and object IDs
                           [str(Path(executable).absolute()), "-c", "core.hooksPath=/dev/null", "-C", str(root), *args], input=data, env=environment,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          check=True, timeout=60).stdout
+                          check=True, timeout=timeout).stdout
 
 
 def auto_merge_oid(data):

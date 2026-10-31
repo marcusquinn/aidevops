@@ -153,7 +153,7 @@ _is_trusted_opencode_canary_issue_pr() {
 
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || return 1
-		if ! printf '%s\n' "$_PM_OPENCODE_CANARY_ALLOWED_FILES" | grep -Fxq -- "$path"; then
+		if ! grep -Fxq -- "$path" <<<"$_PM_OPENCODE_CANARY_ALLOWED_FILES"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — canary-briefed PR changes out-of-scope file ${path} (GH#35752)" >>"$LOGFILE"
 			return 1
 		fi

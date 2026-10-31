@@ -31,6 +31,10 @@ import {
 } from "../source-access-approval.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
 import { createSourceAccessRuntime } from "../source-access-runtime.mjs";
+import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
+
+const realGit = resolveTrustedExecutable("git");
+const realSshKeygen = resolveTrustedExecutable("ssh-keygen");
 
 const BASE = {
   tool: "read",
@@ -342,7 +346,7 @@ test("the loaded verifier accepts only the exact signed receipt", () => {
     execFileSync("git", ["-C", repo, "init", "--quiet"]);
     writeFileSync(source, "#!/usr/bin/env bash\nprintf synthetic\\n\n");
     execFileSync("git", ["-C", repo, "add", "secret-helper.rb"]);
-    execFileSync("/usr/bin/ssh-keygen", [
+    execFileSync(realSshKeygen, [
       "-q",
       "-t",
       "ed25519",
@@ -372,7 +376,7 @@ test("the loaded verifier accepts only the exact signed receipt", () => {
     };
     const payloadPath = join(root, "payload.json");
     writeFileSync(payloadPath, canonicalReceiptPayload(payload));
-    execFileSync("/usr/bin/ssh-keygen", [
+    execFileSync(realSshKeygen, [
       "-Y",
       "sign",
       "-f",
@@ -561,13 +565,13 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
   try {
     mkdirSync(canonicalRepo);
     mkdirSync(otherRepo);
-    execFileSync("/usr/bin/git", ["-C", canonicalRepo, "init", "--quiet"]);
+    execFileSync(realGit, ["-C", canonicalRepo, "init", "--quiet"]);
     if (inLinkedWorktree) {
-      execFileSync("/usr/bin/git", [
+      execFileSync(realGit, [
         "-C", canonicalRepo, "-c", "commit.gpgsign=false", "-c", "user.name=Fixture",
         "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fixture",
       ]);
-      execFileSync("/usr/bin/git", ["-C", canonicalRepo, "worktree", "add", "--detach", "--quiet", repo]);
+      execFileSync(realGit, ["-C", canonicalRepo, "worktree", "add", "--detach", "--quiet", repo]);
     }
     execFileSync("git", ["-C", otherRepo, "init", "--quiet"]);
     // GH#32526: tracked .sh/.mjs/.js/.ts/.py/.md files with loose secret names
@@ -586,7 +590,7 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
     const foreignPath = join(otherRepo, "secret-helper.rb");
     writeFileSync(foreignPath, "foreign\n");
     execFileSync("git", ["-C", otherRepo, "add", "secret-helper.rb"]);
-    execFileSync("/usr/bin/ssh-keygen", [
+    execFileSync(realSshKeygen, [
       "-q", "-t", "ed25519", "-N", "", "-C", "source-access@aidevops.sh", "-f", key,
     ]);
 
@@ -653,7 +657,7 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
     };
     const payloadPath = join(root, "manifest-payload.json");
     writeFileSync(payloadPath, canonicalReceiptPayload(payload));
-    execFileSync("/usr/bin/ssh-keygen", [
+    execFileSync(realSshKeygen, [
       "-Y", "sign", "-f", key, "-n", "aidevops-source-access-v1", payloadPath,
     ]);
     let signature = readFileSync(`${payloadPath}.sig`, "utf8");
@@ -756,10 +760,10 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
     }
     if (inLinkedWorktree) {
       const sibling = join(root, "unapproved-sibling");
-      execFileSync("/usr/bin/git", ["-C", canonicalRepo, "worktree", "add", "--detach", "--quiet", sibling]);
+      execFileSync(realGit, ["-C", canonicalRepo, "worktree", "add", "--detach", "--quiet", sibling]);
       const siblingPath = join(sibling, relativePaths[0]);
       writeFileSync(siblingPath, "source-0\n");
-      execFileSync("/usr/bin/git", ["-C", sibling, "add", relativePaths[0]]);
+      execFileSync(realGit, ["-C", sibling, "add", relativePaths[0]]);
       assert.equal(verifySourceAccessReceipt({ ...baseArgs, filePath: siblingPath }), false);
       assert.equal(verifySourceAccessReceipt({
         ...baseArgs,

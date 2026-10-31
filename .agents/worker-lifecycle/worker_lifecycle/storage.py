@@ -18,7 +18,7 @@ from .process import ProcessIdentity, ProcessObservation
 
 
 APPLICATION_ID = 0x574C4353
-SCHEMA = 1
+SCHEMA = 2
 MAX_EVENT_BYTES = 16384
 
 
@@ -70,7 +70,10 @@ class LifecycleRegistry:
         try:
             store._durability(connection)
             connection.execute("BEGIN IMMEDIATE")
+            # SQLite PRAGMAs cannot bind parameters; these are module integer constants, not input.
+            # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
             connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
+            # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
             connection.execute(f"PRAGMA user_version={SCHEMA}")
             connection.execute("CREATE TABLE metadata (installation_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode='observe-only'), max_events INTEGER NOT NULL CHECK(max_events BETWEEN 1 AND 100000))")
             connection.execute("INSERT INTO metadata VALUES (?, 'observe-only', ?)", (str(uuid4()), max_events))
@@ -79,10 +82,24 @@ class LifecycleRegistry:
             connection.execute("CREATE INDEX unfinished ON runs(state, checked_sequence, run_id)")
             connection.execute("CREATE TABLE generations (generation_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
             connection.execute("CREATE TABLE bindings (run_id TEXT NOT NULL REFERENCES runs(run_id), generation_id TEXT NOT NULL REFERENCES generations(generation_id), PRIMARY KEY(run_id,generation_id))")
+            store._create_admissions(connection)
             connection.commit()
         finally:
             connection.close()
         return store
+
+    @staticmethod
+    def _create_admissions(connection: sqlite3.Connection) -> None:
+        connection.execute("CREATE TABLE generation_admissions (generation_id TEXT PRIMARY KEY REFERENCES generations(generation_id), path TEXT UNIQUE NOT NULL, state TEXT NOT NULL CHECK(state IN ('open','closed')))")
+
+    def upgrade_schema(self) -> None:
+        """Explicit transactional upgrade; never adopt historical bindings as owners."""
+        with self.connection(write=True) as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 1:
+                self._create_admissions(connection)
+                # Fixed module integer, not user SQL; SQLite PRAGMAs cannot bind parameters.
+                # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
+                connection.execute(f"PRAGMA user_version={SCHEMA}")
 
     def _connect(self) -> sqlite3.Connection:
         _private(self.directory, directory=True)
@@ -111,7 +128,7 @@ class LifecycleRegistry:
         try:
             if connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
                 raise ValueError("not-a-worker-lifecycle-database")
-            if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA:
+            if connection.execute("PRAGMA user_version").fetchone()[0] not in (1, SCHEMA):
                 raise ValueError("unsupported-store-schema")
             if write:
                 self._durability(connection)

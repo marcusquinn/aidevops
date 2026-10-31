@@ -275,13 +275,13 @@ _compute_parent_nudge_age_hours() {
 	[[ -n "$slug" && "$parent_num" =~ ^[0-9]+$ ]] || return 0
 
 	# t2572: streaming pattern — --paginate + --jq (no --slurp, which `gh api`
-	# rejects). Per-page jq emits matching .created_at values; `head -n1`
+	# rejects). Per-page jq emits matching .created_at values; draining sed
 	# yields the first match across all pages (chronological order = oldest,
 	# which is what the 7-day escalation gate wants).
 	local nudge_created_at
 	nudge_created_at=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
 		--jq '.[] | select(.body | contains("<!-- parent-needs-decomposition -->")) | .created_at' \
-		2>/dev/null | head -n1) || nudge_created_at=""
+		2>/dev/null | sed -n '1p') || nudge_created_at=""
 	[[ -n "$nudge_created_at" ]] || return 0
 
 	# Convert ISO-8601 to epoch. macOS `date` needs -j -f; GNU `date` uses -d.
@@ -441,7 +441,7 @@ _parent_close_contract_incomplete() {
 
 	local expected_children=""
 	expected_children=$(printf '%s\n' "$parent_body" |
-		sed -nE 's/.*<!-- parent-close-contract: expected-children=([0-9]+) -->.*/\1/p' | head -n1)
+		sed -nE 's/.*<!-- parent-close-contract: expected-children=([0-9]+) -->.*/\1/p' | sed -n '1p')
 	if [[ "$expected_children" =~ ^[0-9]+$ ]] && [[ "$known_child_count" -lt "$expected_children" ]]; then
 		_PARENT_CLOSE_CONTRACT_REASON="expected-children:${expected_children}"
 		return 0
@@ -458,7 +458,7 @@ _parent_close_contract_incomplete() {
 		return 0
 	fi
 	if [[ "$native_graph_complete" -eq 0 ]] &&
-		printf '%s\n' "$parent_body" | grep -qE '^[[:space:]]*[-*][[:space:]]+\[[[:space:]]\]'; then
+		printf '%s\n' "$parent_body" | grep -E '^[[:space:]]*[-*][[:space:]]+\[[[:space:]]\]' >/dev/null; then
 		_PARENT_CLOSE_CONTRACT_REASON="unchecked-criteria"
 		return 0
 	fi
@@ -1238,7 +1238,7 @@ _should_rsd() {
 _should_oimp() {
 	local issue_num="$1"
 	local parent_task_nums="$2"
-	if [[ -n "$parent_task_nums" ]] && printf '%s\n' "$parent_task_nums" | grep -qx "$issue_num"; then
+	if [[ -n "$parent_task_nums" ]] && printf '%s\n' "$parent_task_nums" | grep -x "$issue_num" >/dev/null; then
 		return 1
 	fi
 	return 0
@@ -1268,8 +1268,8 @@ _should_lia() {
 	local issue_title="$1"
 	local labels_csv="$2"
 	local issue_body="${3:-}"
-	if ! printf '%s' "$issue_title" | grep -qE '^(t[0-9]+(\.[0-9]+)*|GH#[0-9]+): ' &&
-		! printf '%s\n' "$issue_body" | grep -Eq '^<!-- aidevops:origin:(interactive|worker) -->$'; then
+	if ! printf '%s' "$issue_title" | grep -E '^(t[0-9]+(\.[0-9]+)*|GH#[0-9]+): ' >/dev/null &&
+		! printf '%s\n' "$issue_body" | grep -E '^<!-- aidevops:origin:(interactive|worker) -->$' >/dev/null; then
 		return 1
 	fi
 	# Must have no origin:/tier:/status: labels (unquoted patterns avoid ratchet)
@@ -1560,7 +1560,7 @@ _action_ciw_single() {
 	fi
 
 	local pr_ref="" pr_num="" merged_at=""
-	pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
+	pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | sed -n '1p') || pr_ref=""
 	pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
 	merged_at=""
 
@@ -1644,7 +1644,7 @@ _pir_file_size_debt_current_outcome() {
 	local marker="" cited_file="" threshold="" repo_path="" full_path=""
 	local line_count=0 repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 
-	marker=$(printf '%s\n' "$issue_body" | grep -m 1 '<!-- aidevops:generator=large-file-simplification-gate cited_file=.* threshold=[0-9][0-9]* -->' 2>/dev/null) || marker=""
+	marker=$(printf '%s\n' "$issue_body" | grep '<!-- aidevops:generator=large-file-simplification-gate cited_file=.* threshold=[0-9][0-9]* -->' 2>/dev/null | sed -n '1p') || marker=""
 	[[ -n "$marker" ]] || return 1
 	cited_file="${marker#* cited_file=}"
 	cited_file="${cited_file% threshold=*}"
@@ -1653,7 +1653,7 @@ _pir_file_size_debt_current_outcome() {
 	[[ -n "$cited_file" && "$threshold" =~ ^[0-9]+$ && "$threshold" -gt 0 ]] || return 2
 
 	[[ -f "$repos_json" ]] || return 2
-	repo_path=$(jq -r --arg slug "$slug" '.initialized_repos[] | select(.slug == $slug) | .path // empty' "$repos_json" 2>/dev/null | head -1) || repo_path=""
+	repo_path=$(jq -r --arg slug "$slug" '.initialized_repos[] | select(.slug == $slug) | .path // empty' "$repos_json" 2>/dev/null | sed -n '1p') || repo_path=""
 	[[ -n "$repo_path" && -d "$repo_path" ]] || return 2
 
 	for full_path in "${repo_path}/${cited_file}" "${repo_path}/.agents/${cited_file}" "${repo_path}/.${cited_file}"; do

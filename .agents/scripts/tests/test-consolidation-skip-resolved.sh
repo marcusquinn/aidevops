@@ -595,6 +595,21 @@ test_dispatch_skip_handoff() {
 	else
 		print_result "manual hold still defers" 1 "rc=$rc outcome=${_CONSOLIDATION_DISPATCH_OUTCOME:-unset}"
 	fi
+
+	# #35605: later cycles see "no new child needed" plus the pending report;
+	# implementation dispatch on the parent must still defer.
+	: >"$LOGFILE"
+	_issue_needs_consolidation() {
+		_CONSOLIDATION_CHILD_PENDING=1
+		return 1
+	}
+	rc=0
+	_dispatch_dedup_scope_gates 33060 "owner/repo" "$REPO_ROOT" "$GH_ISSUE_JSON" || rc=$?
+	if [[ "$rc" -eq 1 ]] && grep -q 'consolidation child in flight' "$LOGFILE"; then
+		print_result "in-flight consolidation child defers parent dispatch" 0
+	else
+		print_result "in-flight consolidation child defers parent dispatch" 1 "rc=$rc"
+	fi
 	unset TEST_MANUAL_HOLD TEST_CHILD_EXISTS
 	teardown_stub
 	return 0

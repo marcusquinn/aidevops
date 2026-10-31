@@ -312,7 +312,11 @@ main() {
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
 		initial_claim_args+=(--replace-pr "$replacement_pr" --replacement-reason "$replacement_reason")
 	fi
-	if ! interactive-session-helper.sh "${initial_claim_args[@]}"; then
+	local claim_rc=0
+	interactive-session-helper.sh "${initial_claim_args[@]}" || claim_rc=$?
+	if [[ "$claim_rc" -eq 75 ]]; then
+		printf 'WARNING: claim NOT applied for #%s in %s; a worker may pick it up. Continuing offline; retrying after worktree setup.\n' "$issue" "$repo" >&2
+	elif [[ "$claim_rc" -ne 0 ]]; then
 		printf 'ERROR: initial interactive claim failed for #%s in %s\n' "$issue" "$repo" >&2
 		return 1
 	fi
@@ -331,7 +335,11 @@ main() {
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
 		refresh_claim_args+=(--replace-pr "$replacement_pr" --replacement-reason "$replacement_reason")
 	fi
-	if ! interactive-session-helper.sh "${refresh_claim_args[@]}"; then
+	claim_rc=0
+	interactive-session-helper.sh "${refresh_claim_args[@]}" || claim_rc=$?
+	if [[ "$claim_rc" -eq 75 ]]; then
+		printf 'WARNING: claim NOT applied for #%s in %s; a worker may pick it up. Continuing offline. Re-run: interactive-session-helper.sh claim %s %s --implementing --worktree "%s"\n' "$issue" "$repo" "$issue" "$repo" "$worktree_path" >&2
+	elif [[ "$claim_rc" -ne 0 ]]; then
 		printf 'ERROR: interactive claim refresh failed; recoverable worktree: %s\n' "$worktree_path" >&2
 		return 1
 	fi

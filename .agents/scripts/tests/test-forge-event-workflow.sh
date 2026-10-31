@@ -75,8 +75,12 @@ assert persist["id"] == "coordinator-persist"
 assert "coordinator-keepalive.outputs.due == 'true'" in persist["if"]
 assert "steps.coordinator-persist.outcome == 'success'" in upload["if"]
 push_checkout = next(step for step in jobs["sync-on-push"]["steps"] if step.get("name") == "Checkout")
-assert push_checkout["with"]["token"] == "${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}"
+assert push_checkout["with"]["token"] == "${{ steps.sync-pat.outputs.sync_pat_valid == 'true' && secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}"
 push_warning = next(step for step in jobs["sync-on-push"]["steps"] if step.get("name") == "Check SYNC_PAT visibility (t2166)")
+assert push_warning["id"] == "sync-pat"
+assert push_warning["env"]["SYNC_PAT"] == "${{ secrets.SYNC_PAT }}"
+assert "sync_pat_valid=false" in push_warning["run"]
+assert "sync_pat_valid=true" in push_warning["run"]
 assert "SYNC_PAT not present" in push_warning["run"]
 PY
 

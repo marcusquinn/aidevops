@@ -704,7 +704,7 @@ cmd_revoke() {
 	# Always delete local files regardless of strategy
 	if [[ -f "$token_file" ]]; then
 		# Overwrite before delete (defense in depth)
-		dd if=/dev/urandom bs=64 count=1 2>/dev/null | head -c 64 >"$token_file" 2>/dev/null || true
+		dd if=/dev/urandom bs=64 count=1 >"$token_file" 2>/dev/null || true
 		rm -f "$token_file"
 		log_token "INFO" "Deleted token file: ${token_file}"
 	fi

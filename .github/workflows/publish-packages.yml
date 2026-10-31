@@ -110,7 +110,13 @@ jobs:
       - name: Extract CHANGELOG section
         run: |
           VERSION="${RELEASE_TAG#v}"
-          BODY=$(awk "/^## \[$VERSION\]/,/^## \[/" CHANGELOG.md | sed '$d')
+          BODY=$(awk -v version="$VERSION" '
+            /^## \[[0-9]+\.[0-9]+\.[0-9]+[^]]*\]/ {
+              if (found) exit
+              if ($2 == "[" version "]") found = 1
+            }
+            found { print }
+          ' CHANGELOG.md)
           PREV_TAG=$(git describe --tags --abbrev=0 "$RELEASE_TAG^" 2>/dev/null || true)
           if [[ -n "$PREV_TAG" ]]; then
             EXTRA=$(git log --oneline --max-count=10 --invert-grep \
@@ -371,12 +377,35 @@ jobs:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           CURRENT="$RUNNER_TEMP/aidevops.rb"
+          TAP_ERROR_FILE="$RUNNER_TEMP/tap-state.err"
           TAP_JSON=""
-          if ! TAP_JSON=$(gh api \
-            repos/marcusquinn/homebrew-tap/contents/Formula/aidevops.rb 2>&1); then
-            echo "::error::Unable to determine Homebrew tap publication state"
+          for attempt in {1..3}; do
+            if TAP_JSON=$(gh api \
+              repos/marcusquinn/homebrew-tap/contents/Formula/aidevops.rb 2> "$TAP_ERROR_FILE"); then
+              break
+            fi
+            # Emit only an allowlisted class from the first stderr line, never raw
+            # API text (which can contain credentials, headers or workflow commands).
+            TAP_ERROR=""
+            IFS= read -r TAP_ERROR < "$TAP_ERROR_FILE" || true
+            ERROR_CLASS="API request failed"
+            if [[ "$TAP_ERROR" =~ HTTP\ ([0-9]{3}) ]]; then
+              ERROR_CLASS="HTTP ${BASH_REMATCH[1]}"
+            fi
+            if grep -qiE 'API rate limit exceeded|secondary rate limit' "$TAP_ERROR_FILE" ||
+              { grep -qiE 'HTTP (403|429)' "$TAP_ERROR_FILE" &&
+                grep -qiE 'rate[- ]limit' "$TAP_ERROR_FILE"; }; then
+              echo "::warning::Homebrew tap check: rate limit ($ERROR_CLASS), attempt $attempt/3"
+              if [[ "$attempt" -lt 3 ]]; then
+                sleep 60
+                continue
+              fi
+              echo "::error::Homebrew tap check rate limit persisted after 3 attempts; retry same-tag release reconcile after reset"
+            else
+              echo "::error::Unable to determine Homebrew tap publication state: $ERROR_CLASS"
+            fi
             exit 1
-          fi
+          done
           if ! jq -er '.content' <<<"$TAP_JSON" | base64 --decode > "$CURRENT"; then
             echo "::error::Homebrew tap returned malformed formula content"
             exit 1
@@ -406,13 +435,49 @@ jobs:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           CURRENT="$RUNNER_TEMP/aidevops-verified.rb"
+          TAP_ERROR_FILE="$RUNNER_TEMP/tap-verify.err"
+          RATE_FAILURES=0
           for attempt in {1..12}; do
-            if gh api repos/marcusquinn/homebrew-tap/contents/Formula/aidevops.rb \
-              --jq '.content' | base64 --decode > "$CURRENT" \
-              && cmp -s homebrew/aidevops.rb "$CURRENT"; then
+            if ! TAP_CONTENT=$(gh api repos/marcusquinn/homebrew-tap/contents/Formula/aidevops.rb \
+              --jq '.content' 2> "$TAP_ERROR_FILE"); then
+              # Keep diagnostics bounded and secret-free, as in the state check.
+              TAP_ERROR=""
+              IFS= read -r TAP_ERROR < "$TAP_ERROR_FILE" || true
+              ERROR_CLASS="API request failed"
+              if [[ "$TAP_ERROR" =~ HTTP\ ([0-9]{3}) ]]; then
+                ERROR_CLASS="HTTP ${BASH_REMATCH[1]}"
+              fi
+              if grep -qiE 'API rate limit exceeded|secondary rate limit' "$TAP_ERROR_FILE" ||
+                { grep -qiE 'HTTP (403|429)' "$TAP_ERROR_FILE" &&
+                  grep -qiE 'rate[- ]limit' "$TAP_ERROR_FILE"; }; then
+                RATE_FAILURES=$((RATE_FAILURES + 1))
+                echo "::warning::Homebrew tap verification: rate limit ($ERROR_CLASS), retry $RATE_FAILURES/3, attempt $attempt/12"
+                if [[ "$RATE_FAILURES" -lt 3 && "$attempt" -lt 12 ]]; then
+                  sleep 60
+                  continue
+                fi
+                echo "::error::Homebrew tap verification rate limit retry budget exhausted; retry same-tag release reconcile after reset"
+              else
+                echo "::error::Unable to verify Homebrew tap publication state: $ERROR_CLASS"
+              fi
+              exit 1
+            fi
+            if [[ -z "$TAP_CONTENT" ]]; then
+              echo "::error::Homebrew tap returned empty formula content"
+              exit 1
+            fi
+            if ! base64 --decode <<<"$TAP_CONTENT" > "$CURRENT"; then
+              echo "::error::Homebrew tap returned malformed formula content"
+              exit 1
+            fi
+            if cmp -s homebrew/aidevops.rb "$CURRENT"; then
+              echo "Homebrew tap verified for $RELEASE_TAG (attempt $attempt/12)"
               exit 0
             fi
-            sleep 5
+            echo "::warning::Homebrew tap formula mismatch, attempt $attempt/12"
+            if [[ "$attempt" -lt 12 ]]; then
+              sleep 5
+            fi
           done
           echo "::error::Homebrew tap did not converge to $RELEASE_TAG"
           exit 1

@@ -37,7 +37,8 @@ for (const key of ["FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS", "OPENCODE_HEADLESS
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = join(here, "..", "..", "..", "scripts");
-const realGit = "/usr/bin/git";
+// Resolve before fixtures change PATH, without selecting caller-owned wrappers.
+const realGit = resolveTrustedExecutable("git");
 
 test("trusted JS and Python discovery preserve explicit PATH and symlink/.. components", () => {
   for (const name of ["git", "python3"]) {

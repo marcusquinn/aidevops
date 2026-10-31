@@ -70,7 +70,10 @@ _pulse_set_rest_core_budget_priority
 [[ "${AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS}" == "reserve" ]]
 [[ "${AIDEVOPS_PULSE_REST_CORE_BUDGET_CLASS}" == "normal" ]]
 _pulse_should_defer_budget_priority_stage "dashboard_freshness_check"
-_pulse_should_defer_budget_priority_stage "evaluate_routines"
+if _pulse_should_defer_budget_priority_stage "evaluate_routines"; then
+	printf 'FAIL: local calendar evaluation deferred by API budget\n' >&2
+	exit 1
+fi
 _pulse_should_defer_budget_priority_stage "pr_review_thread_response"
 export AIDEVOPS_SKIP_PULSE_PREFETCH_BUDGET_GATE=1
 if _pulse_should_defer_budget_priority_stage "preflight_prefetch_and_scope"; then
@@ -257,5 +260,23 @@ if _cb_rest_core_priority_decision_allows progress 'emergency 0 5000 500 500 0 9
 	exit 1
 fi
 [[ "$(_cb_rest_core_thresholds 1001 1000)" == '0 500 0' ]]
+
+# Scheduled dispatch uses protected headroom, never the hard floor or unknown
+# quota. Local evaluation must still run with both API pools exhausted.
+_cb_rest_core_priority_decision_allows scheduled 'reserve 126 5000 500 500 100 9999999999'
+for snapshot in 'reserve 125 5000 500 500 100 9999999999' 'emergency 0 5000 500 500 0 9999999999' 'unknown ? ? ? 500 0 ?'; do
+	if _cb_rest_core_priority_decision_allows scheduled "$snapshot"; then
+		printf 'FAIL: scheduled dispatch ignored its quota floor\n' >&2
+		exit 1
+	fi
+done
+export GH_REST_CORE_REMAINING=0
+export GH_GRAPHQL_REMAINING=0
+rm -f "${HOME}/.aidevops/cache/pulse-rest-core.json"
+if _pulse_should_defer_budget_priority_stage evaluate_routines; then
+	printf 'FAIL: exhausted quota suppressed calendar evaluation\n' >&2
+	exit 1
+fi
+_pulse_should_defer_budget_priority_stage dashboard_freshness_check
 
 printf 'PASS pulse-graphql-budget-priority\n'

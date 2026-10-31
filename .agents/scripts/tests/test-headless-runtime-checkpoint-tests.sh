@@ -607,6 +607,86 @@ test_unverified_post_pr_handoff_with_partial_pr_is_checkpointed() {
 	return 0
 }
 
+# GH#36171: a transport deferral leaves exact-head state unreadable. It must
+# neither release the claim nor fast-fail into a tier escalation; after the
+# bounded re-verification it is recorded as deferred, never success.
+test_unreadable_post_pr_handoff_is_deferred_without_escalation() {
+	local result=""
+	local fast_fail_marker="${TEST_ROOT}/unreadable-handoff-fast-fail"
+	rm -f "$fast_fail_marker"
+	result=$(
+		(
+			_run_result_label="post_pr_handoff"
+			AIDEVOPS_POST_PR_HANDOFF_VERIFY_ATTEMPTS=2
+			AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS=0
+			confirm_calls=0
+			_worker_post_pr_handoff_confirmed() {
+				confirm_calls=$((confirm_calls + 1))
+				_WORKER_POST_PR_HANDOFF_STATE="unknown"
+				return 1
+			}
+			_worker_produced_output() { printf 'pr_exists'; return 0; }
+			_report_failure_to_fast_fail() { printf '%s\n' "$*" >"$fast_fail_marker"; return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+
+			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			printf 'rc=%s|calls=%s|terminal=%s|event=%s|status=%s|classification=%s\n' "$?" "$confirm_calls" \
+				"$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+		) 2>&1
+	)
+	if [[ ! -f "$fast_fail_marker" &&
+		"$result" != *"release="* &&
+		"$result" == *"rc=0|calls=2|terminal=deferred|event=worker.deferred|status=checkpointed|classification=worker_post_pr_handoff_verification_deferred"* ]]; then
+		print_result "unreadable POST_PR_HANDOFF is deferred with the claim retained, not escalated" 0
+	else
+		print_result "unreadable POST_PR_HANDOFF is deferred with the claim retained, not escalated" 1 \
+			"result=${result} fast_fail=$([[ -f "$fast_fail_marker" ]] && echo yes || echo no)"
+	fi
+	return 0
+}
+
+# GH#36171: a handoff that confirms on re-verification follows the normal
+# verified success path (worker_complete release, success terminal).
+test_post_pr_handoff_confirmed_on_reverification_completes() {
+	local result=""
+	local fast_fail_marker="${TEST_ROOT}/reverified-handoff-fast-fail"
+	rm -f "$fast_fail_marker"
+	result=$(
+		(
+			_run_result_label="post_pr_handoff"
+			AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS=0
+			confirm_calls=0
+			_worker_post_pr_handoff_confirmed() {
+				confirm_calls=$((confirm_calls + 1))
+				if [[ "$confirm_calls" -ge 2 ]]; then
+					_WORKER_POST_PR_HANDOFF_STATE="ready"
+					return 0
+				fi
+				_WORKER_POST_PR_HANDOFF_STATE="unknown"
+				return 1
+			}
+			_worker_produced_output() { printf 'pr_exists'; return 0; }
+			_hrw_terminal_objective_complete() { return 1; }
+			_report_failure_to_fast_fail() { printf '%s\n' "$*" >"$fast_fail_marker"; return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+
+			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			printf 'rc=%s|calls=%s|terminal=%s\n' "$?" "$confirm_calls" "$_HRW_TERMINAL_OUTCOME"
+		) 2>&1
+	)
+	if [[ ! -f "$fast_fail_marker" &&
+		"$result" == *"release=worker_complete"* &&
+		"$result" == *"rc=0|calls=2|terminal=success"* &&
+		"$result" != *"worker_post_pr_handoff_unverified"* ]]; then
+		print_result "POST_PR_HANDOFF confirmed on re-verification completes normally" 0
+	else
+		print_result "POST_PR_HANDOFF confirmed on re-verification completes normally" 1 \
+			"result=${result} fast_fail=$([[ -f "$fast_fail_marker" ]] && echo yes || echo no)"
+	fi
+	return 0
+}
+
 # GH#34931: merged exact-head delivery is completion only with a closed issue.
 # Exercise the real handoff classifier, including linkage and summary probes.
 test_post_pr_handoff_after_merge_completes_closed_issue() {
@@ -1076,6 +1156,8 @@ test_pr_checkpoint_lifecycle_cases() {
 	test_ready_missing_summary_preserves_in_review_handoff
 	test_ready_missing_linkage_preserves_in_review_handoff
 	test_unverified_post_pr_handoff_with_partial_pr_is_checkpointed
+	test_unreadable_post_pr_handoff_is_deferred_without_escalation
+	test_post_pr_handoff_confirmed_on_reverification_completes
 	test_post_pr_handoff_after_merge_completes_closed_issue
 	test_post_pr_handoff_after_merge_completes_closed_issue manual-cli-99999-1700000000
 	test_failed_ci_ready_pr_is_durable_handoff

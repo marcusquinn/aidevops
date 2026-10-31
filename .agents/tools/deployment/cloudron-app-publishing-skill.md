@@ -54,6 +54,16 @@ head and green checks. It removes only its release hold and uses the normal
 full-loop merge gates. A changed head requires an updated issue and new signed
 approval. API/verification failures never authorize a merge.
 
+For an interactive continuation authorized for one release, use
+`cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.
+Omit `--apply` to preview the same scope without merging or publishing. `--repo`
+still requires a registered, maintained Cloudron package and admin/maintain
+permission; `--issue` selects only that approval issue number. Issue numbers are
+repository-local, so use both filters for a single release. Unscoped `process`
+(or `process --apply`) retains the routine default: all approval issues in all
+registered maintained Cloudron package repositories. Keep the full repos registry;
+no temporary `AIDEVOPS_REPOS_FILE` override is needed for scoping.
+
 After merge, the existing main catalog workflow owns publication. The routine
 waits boundedly and resumes verification later, then closes with evidence only
 when the catalog version, version tag and non-draft GitHub release all exist.
@@ -260,6 +270,37 @@ changes or bypasses branch policy. Review protection, Actions permissions and
 package checks before enabling the variable. Do not test publication against a
 real catalog.
 
+**When a publication PAT is needed:** reuse one purpose-scoped fine-grained
+`CLOUDRON_RELEASE_PAT` per owner, separate from `SYNC_PAT`. Select **Only select
+repositories** and include every package repository that needs it (for example,
+the owner's `cloudron-*-app` repositories). Grant repository **Contents:
+read/write** and the automatically included **Metadata: read** only; no workflow
+or user permissions. Store the value once in gopass, not once per repository.
+
+**Add a new package repo:** open GitHub **Settings → Developer settings →
+Fine-grained tokens → CLOUDRON_RELEASE_PAT → Edit** and add the repository to
+the existing token's access list if absent. Editing access leaves the value
+unchanged. Set the repository's Actions secret from gopass without displaying it:
+
+```bash
+aidevops secret CLOUDRON_RELEASE_PAT -- sh -c 'printf %s "$CLOUDRON_RELEASE_PAT" | gh secret set CLOUDRON_RELEASE_PAT --repo OWNER/REPO'
+```
+
+GitHub user accounts have no account-level Actions secrets: set the same value
+in each repository that needs it. **First time / value lost:** create the token
+only if none exists; if its value is lost, **Regenerate** the existing token
+(permissions and repository list are retained). Run
+`aidevops secret set CLOUDRON_RELEASE_PAT` in a terminal to save the value in
+gopass. Then set the secret from gopass in **every repository listed on the
+token**: regeneration revokes the old value and invalidates every existing copy.
+Never paste values into chat or logs.
+
+**Verify distribution without reading values:** run
+`gh secret list --repo OWNER/REPO --app actions` for each repository updated and
+confirm `CLOUDRON_RELEASE_PAT` is listed. Presence alone does not prove the
+token's repository access, permissions or branch-policy bypass; review those
+separately. Do not trigger a real publication to test token distribution.
+
 **Repository protection:** before enabling publication, a maintainer should
 deliberately apply these two repository rulesets with `enforcement: active` and
 no bypass actors:
@@ -290,8 +331,10 @@ part of this baseline. It blocks these workflows' direct pushes to `main` unless
 the owner is an authorized bypass actor and the pushes authenticate with owner
 PATs (`CLOUDRON_RELEASE_PAT` for catalog publication, `SYNC_PAT` for sync
 workflows). If you adopt it, one fine-grained PAT covering all affected package
-repositories (Contents write) is enough. Per-repository tokens only limit a
-leaked token to one repository, at the cost of multiplying setup and rotation.
+repositories per owner and purpose is enough: Contents write for publication;
+see `reference/sync-pat-platforms.md` for sync permissions. Keep release and sync
+tokens separate; extend each token's selected repository list rather than
+creating a token per repository.
 This bypass path is
 **untested with fine-grained PATs**; do not
 recommend or enable it without separately verifying the token permissions,

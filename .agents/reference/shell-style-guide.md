@@ -163,7 +163,7 @@ The scanner skips any file with that directive.
 
 Under `set -o pipefail`, an early-exit reader (`grep -q`, `grep -m1`, `head`) closes the pipe after its first match. A writer still producing output receives SIGPIPE (exit 141), and `pipefail` reports 141 instead of the reader's 0. The result is a false "no match" that depends on input size and pipe buffer timing (a 256 KB body gave 100/100 false negatives on macOS in #33882).
 
-**Banned** (in scripts that enable `pipefail`):
+**Banned** (in scripts that enable `pipefail`, and in source-guarded libraries, which inherit the caller's `pipefail`):
 
 ```bash
 printf '%s\n' "$body" | grep -qF "$marker"
@@ -182,14 +182,16 @@ out=$(list_things) || return 1              # capture first, then test
 
 ### Enforcement
 
-- CI gate: `.github/workflows/pipe-early-exit-check.yml` (diff-scoped — fails only on lines the PR adds; legacy matches and files without `pipefail` are ignored).
+- CI gate: `.github/workflows/pipe-early-exit-check.yml` (diff-scoped — fails only on lines the PR adds; legacy matches are ignored). Judged files enable `pipefail` or carry the top-level source guard `[[ -n "${_X_LOADED:-}" ]] && return`; a sourced library runs under its caller's options (`pulse-wrapper.sh` sets `pipefail` for every `pulse-merge*.sh` module).
+- Required full scan: the Pulse-merge Regression Suites step in `code-quality.yml` judges every line of the suites and the `pulse-merge*.sh` libraries.
+- When rewriting a pipe, keep the input: `grep -q PATTERN` with neither a file nor `<<<` reads the caller's stdin.
 - Local check: `.agents/scripts/pipe-early-exit-check.sh --scan-files [--diff-base <ref>] <files>`.
 - Remediation snippets: `.agents/scripts/pipe-early-exit-check.sh --fix-hint`.
 - Fixtures that must contain the pattern add `# pipe-early-exit-check:disable` in the first 20 lines.
 
 ### Originating incidents
 
-Issues GH#27981 (worktree branch lookup), GH#30824 (issue-sync first-match pipelines), GH#33882 (brief readiness on large briefs).
+Issues GH#27981 (worktree branch lookup), GH#30824 (issue-sync first-match pipelines), GH#33882 (brief readiness on large briefs), GH#36235 (pulse-merge libraries: 200/200 false negatives on a 228 KB body put completed feedback routes on maintainer hold and misclassified CI infra failures).
 
 ## Stat portability (t3046)
 
@@ -572,6 +574,55 @@ Bash uses dynamic scoping: a variable read by a stub resolves to the innermost `
 ### Originating incident
 
 GH#34846 / PR #34849: `.agents/scripts/tests/test-terminal-blocker-circuit.sh` test `test_first_observation_scope_hold_releases_on_revision` used `comments` for fixture state. `_tbr_check_entry` in `.agents/scripts/terminal-blocker-recovery-helper.sh` declares `local comments=""` before calling the stub, so the stub printed an empty string. The fix renamed the fixture to `tb_fixture_comments`.
+
+## jq 1.7/1.8 portability (GH#35920)
+
+Hosts run different jq versions. Ubuntu runners and macOS `/usr/bin/jq` ship jq 1.7.1, and Homebrew installs jq 1.8.x. A Mac with Homebrew therefore has both, and `PATH` order decides which one runs. aidevops launchd jobs put `/opt/homebrew/bin` first, so a helper can pass CI on jq 1.7.1 and then run on jq 1.8.x in the pulse. Write jq that gives the same result on both versions. When jq output looks wrong, run the program under both binaries (`/usr/bin/jq` and `/opt/homebrew/bin/jq` on macOS) before debugging anything else.
+
+### Banned: a binding after an operator
+
+jq 1.8 changed binding precedence, a breaking change listed in the jq 1.8 NEWS (jqlang/jq #3053 and #3326). jq 1.7 reads `A and T as $x | B` as `A and (T as $x | B)`. jq 1.8 reads it as `(A and T) as $x | B`. The same split applies after `or`, comparisons, arithmetic (including unary `-`), `//`, every assignment operator (`=`, `|=`, `+=`, `//=` and the rest), `try` and `catch`. Start a binding at the beginning of a pipe, after `,`, `;`, `then`, `else` or `def f:`, or inside parentheses that state the grouping you mean.
+
+```bash
+# Banned: jq 1.7 prints true, jq 1.8 prints "boolean"
+jq -n 'true and "x" as $l | $l | type'
+
+# Allowed: the jq 1.7 reading, made explicit
+jq -n 'true and ("x" as $l | $l | type)'
+
+# Allowed: the jq 1.8 reading, made explicit
+jq -n '(true and "x") as $l | $l | type'
+```
+
+Both versions accept the banned form, so nothing fails loudly. The variable silently holds a different value, which can be a boolean where a string was expected, or a whole object where an assignment result was expected.
+
+### Other divergences
+
+Each row was checked under jq 1.7.1 and 1.8.2. The portable form gives the same result on both.
+
+| Construct | jq 1.7.1 | jq 1.8.2 | Portable form |
+|---|---|---|---|
+| Operator in an object value: `{y: .a // 3}` | syntax error | accepted | `{y: (.a // 3)}` |
+| String `index`, `rindex`, `indices` | byte offsets | code-point offsets | do not slice with them; use `split`, `sub` or `capture` |
+| `ltrimstr`, `rtrimstr` on a non-string | returns the input | error | `if type == "string" then ltrimstr("x") else . end` |
+| `tonumber` on `" 12"` or `"12\n"` | `12` | error | `gsub("^\\s+\|\\s+$"; "") \| tonumber`, or trim in shell first |
+| `last(f)` when `f` is empty | `null` | no output | `[f] \| last` |
+| `limit(n; f)` with negative `n` | all of `f` | error | clamp `n` to 0 or more |
+| A jq comment ending in `\` | ends at the newline | continues onto the next line | never end a jq comment with `\` |
+| `--indent 0` | compact | multi-line | `-c` |
+| `trim`, `ltrim`, `rtrim`, `trimstr`, `toboolean`, `skip`, `add/1`, `@urid` | not defined | defined | avoid them while any host runs jq 1.7 |
+
+### Enforcement
+
+- `.agents/scripts/jq-binding-precedence-check.py` rejects a binding after an operator in `.sh`, `.bash`, `.jq`, `.py`, `.yml` and `.yaml` files and in extensionless shell or Python scripts. It is a text scan, not a jq parser.
+- Local: the `jq-binding-precedence` gate in `.agents/scripts/linters-local.sh` runs in full and `--changed` modes with a zero baseline. Run it directly with `git ls-files | python3 .agents/scripts/jq-binding-precedence-check.py -`.
+- CI: the `jq 1.7/1.8 binding precedence (GH#35920)` step in the `Complexity Analysis` job of `.github/workflows/code-quality.yml`.
+- Override: only for text that is not a jq binding, such as prose or another language. Put `# jq-binding-precedence: ignore next -- <reason>` on the line before the reported line. The reason is required because a real jq binding is always fixable with parentheses.
+- The rows in "Other divergences" are guidance, not gates. They need data-flow knowledge that a text scan does not have.
+
+### Originating incident
+
+GH#35920: `_pcc_blocked_release_evidence` in `.agents/scripts/pr-checkpoint-continuation-helper.sh` bound `([body_lines | select(is_release)] | first // "") as $line` after `and`. Under jq 1.8.2, `$line` held the boolean conjunction, and the helper failed with `boolean (true) cannot be matched, as it is not a string`. CI used jq 1.7.1 and stayed green. The fix pipes the release line straight into the comparisons with no binding. Coverage: `tests/test-jq-binding-precedence-check.sh` for the checker, and `tests/test-pr-checkpoint-continuation-helper.sh` under both jq versions for the helper.
 
 ## Watchdog self-write anti-pattern (t3058 / t3071)
 

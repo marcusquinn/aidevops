@@ -9,9 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createTools } from "../tools.mjs";
+import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
+
+const realGit = resolveTrustedExecutable("git");
 
 function git(cwd, args) {
-  return execFileSync("/usr/bin/git", args, {
+  return execFileSync(realGit, args, {
     cwd,
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],

@@ -744,6 +744,7 @@ _dsi_create_worktree() {
 _dsi_prepare_worker_git_auth() { printf 'auth\n' >>"$EVENTS"; return 0; }
 lock_issue_for_worker() { printf 'lock\n' >>"$EVENTS"; return 0; }
 _dsi_launch_and_report() { printf 'launch\n' >>"$EVENTS"; return 0; }
+_dsi_bind_worktree_lifetime() { return 0; }
 unset AIDEVOPS_DISPATCH_BASE_REF AIDEVOPS_WORKTREE_BASE
 "$@"
 '''

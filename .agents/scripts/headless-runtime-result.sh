@@ -159,6 +159,11 @@ _run_result_capture_live_blocker() {
 
 # Objective proof complements, rather than broadens, model marker parsing.
 _run_result_terminal_completion_confirmed() {
+	_HRW_PR_LESS_REJECTION=""
+	if [[ "${_run_classification_source:-}" == "pr_less_completion_rejected" ]]; then
+		_run_classification_source=""
+		_run_classification_pattern=""
+	fi
 	if _hrw_own_merged_terminal_complete "$session_key" "${work_dir:-}"; then
 		_run_failure_reason=""
 		_run_classification_source="merged_pr_cleanup_receipt"
@@ -174,6 +179,10 @@ _run_result_terminal_completion_confirmed() {
 			_run_classification_pattern="verified_already_delivered_scope"
 		fi
 		return 0
+	fi
+	if [[ -n "${_HRW_PR_LESS_REJECTION:-}" ]]; then
+		_run_classification_source="pr_less_completion_rejected"
+		_run_classification_pattern="$_HRW_PR_LESS_REJECTION"
 	fi
 	return 1
 }
@@ -245,7 +254,8 @@ _handle_run_result_success_output() {
 			_run_classification_source="$_RUN_RESULT_MODEL_BLOCKED_SIGNAL"
 			_run_classification_pattern="terminal_blocked"
 			if declare -F terminal_blocker_capture_output >/dev/null 2>&1; then
-				terminal_blocker_capture_output "$output_file" || true
+				# Judge the final part with the pattern that classified this exit.
+				terminal_blocker_capture_output "$output_file" false "${_HEADLESS_BLOCKED_LINE_PATTERN:-}" || true
 				local blocker_reason=""
 				blocker_reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
 				_run_result_reconcile_unknown_blocker "$blocker_reason" && return 0

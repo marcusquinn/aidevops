@@ -69,6 +69,15 @@ printf 'claim cwd=%s marker=%s args=%s\n' "$(pwd -P)" "${AIDEVOPS_INTERACTIVE_IS
 if [[ "${STUB_CLAIM_FAILS:-0}" == "1" && "$1" == "claim" ]]; then
 	exit 1
 fi
+if [[ "${STUB_CLAIM_DEFERRED:-0}" == "1" ]]; then
+	exit 75
+fi
+if [[ "${STUB_CLAIM_DEFERRED:-0}" == "initial" && "$*" == *--defer-comment* ]]; then
+	exit 75
+fi
+if [[ "${STUB_CLAIM_DEFERRED:-0}" == "refresh" && "$*" == *--worktree* ]]; then
+	exit 75
+fi
 exit 0
 STUB
 
@@ -151,6 +160,22 @@ assert_log_line "full-loop cwd=${linked_worktree} marker=1 args=start GH#42 loca
 assert_log_line "claim cwd=${linked_worktree} marker=1 args=claim 43 owner/repo --implementing --defer-comment"
 assert_log_line "claim cwd=${linked_worktree} marker=1 args=claim 43 owner/repo --implementing --worktree ${linked_worktree}"
 assert_log_line "full-loop cwd=${linked_worktree} marker=1 args=start GH#43 queued fix --background"
+
+# Transient claim failures must be visible but must not prevent local startup;
+# after an initial deferral the worktree claim is still attempted a second time.
+for deferred_phase in initial refresh 1; do
+	: >"$call_log"
+	deferred_output=$(
+		cd "$linked_worktree" || exit 1
+		STUB_CLAIM_DEFERRED="$deferred_phase" PRE_EDIT_MODE=linked-current PATH="${stub_dir}:$PATH" \
+			"$helper" --issue 47 --repo owner/repo --task "offline fix" 2>&1
+	) || fail "deferred $deferred_phase claim blocked offline startup"
+	[[ "$deferred_output" == *"claim NOT applied for #47 in owner/repo"* ]] ||
+		fail "deferred $deferred_phase claim was not surfaced"
+	assert_log_line "claim cwd=${linked_worktree} marker=1 args=claim 47 owner/repo --implementing --defer-comment"
+	assert_log_line "claim cwd=${linked_worktree} marker=1 args=claim 47 owner/repo --implementing --worktree ${linked_worktree}"
+	assert_log_line "full-loop cwd=${linked_worktree} marker=1 args=start GH#47 offline fix"
+done
 
 : >"$call_log"
 (

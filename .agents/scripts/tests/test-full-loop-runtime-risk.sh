@@ -384,6 +384,11 @@ printf 'gh %s\n' "$*" >>"$MUTATION_TRACE"
 if [[ "$1" == "repo" && "$2" == "view" ]]; then
 	printf 'example/ordering\n'
 fi
+# No open PRs, so the read-only linkage check passes and the helper reaches
+# runtime-evidence validation, the path this case exercises (t18796).
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+	printf '[]\n'
+fi
 exit 0
 EOF
 chmod +x "${MUTATION_BIN}/git" "${MUTATION_BIN}/gh"
@@ -391,10 +396,11 @@ chmod +x "${MUTATION_BIN}/git" "${MUTATION_BIN}/gh"
 mutation_head_before=$(/usr/bin/git -C "$MUTATION_REPO" rev-parse HEAD)
 if (cd "$MUTATION_REPO" && PATH="${MUTATION_BIN}:$PATH" MUTATION_TRACE="$MUTATION_TRACE" \
 	"${SCRIPT_DIR_TEST}/full-loop-helper.sh" commit-and-pr --issue 9 --message "fix: update runtime behavior" \
-	--summary "Adjust helper behavior" --testing "unit tests pass" >/dev/null 2>&1); then
+	--summary "Adjust helper behavior" --testing "unit tests pass" >"${MUTATION_TRACE}.err" 2>&1); then
 	printf 'FAIL commit-and-pr accepted invalid derived runtime evidence\n'
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-elif grep -Eq '^git (add|commit|rebase|reset|push)|^gh (pr|api .*POST)' "$MUTATION_TRACE" ||
+elif grep -Eq '^git (add|commit|rebase|reset|push)|^gh (pr (create|edit|merge|ready|comment|close|review)|api .*POST)' "$MUTATION_TRACE" ||
+	! grep -q 'requires runtime-verified evidence' "${MUTATION_TRACE}.err" ||
 	[[ "$(/usr/bin/git -C "$MUTATION_REPO" rev-parse HEAD)" != "$mutation_head_before" ]] ||
 	/usr/bin/git --git-dir="$MUTATION_REMOTE" show-ref --verify --quiet refs/heads/feature/risk-order; then
 	printf 'FAIL invalid derived evidence allowed local or remote mutations\n'
@@ -561,6 +567,52 @@ bookkeeping_result=$(cd "$FINAL_REPO" &&
 assert_contains "TODO-only bookkeeping excludes upstream files and TODO edits" "$bookkeeping_result" accepted
 planning_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record completion" "diff reviewed")
 assert_contains "planning classification excludes upstream files" "$planning_body" 'For #34465'
+
+# GH#36002: nested markdown under todo/ stays planning; data files under todo/
+# are deliverables, alone or mixed with planning files.
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-markdown "$final_base"
+mkdir -p "${FINAL_REPO}/todo/tasks"
+printf '%s\n' '# t1 brief' >"${FINAL_REPO}/todo/tasks/t1-brief.md"
+/usr/bin/git -C "$FINAL_REPO" add todo
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: nested planning brief"
+markdown_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Add brief" "diff reviewed")
+assert_contains "nested todo markdown is planning-only" "$markdown_body" 'For #34465'
+
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-data "$final_base"
+mkdir -p "${FINAL_REPO}/todo/award-enrichment/log/runner"
+printf '%s\n' '{"status":"found"}' >"${FINAL_REPO}/todo/award-enrichment/log/runner/example.jsonl"
+/usr/bin/git -C "$FINAL_REPO" add todo
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: data deliverable under todo"
+data_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record outcomes" "diff reviewed")
+assert_contains "todo data file is a deliverable" "$data_body" 'Resolves #34465'
+
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-mixed "$final_base"
+mkdir -p "${FINAL_REPO}/todo/award-enrichment/specs"
+printf '%s\n' '{"spec":1}' >"${FINAL_REPO}/todo/award-enrichment/specs/example.json"
+printf '%s\n' '- [ ] t3 Record outcomes' >>"${FINAL_REPO}/TODO.md"
+/usr/bin/git -C "$FINAL_REPO" add .
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: data deliverable with TODO entry"
+mixed_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record outcomes" "diff reviewed")
+assert_contains "todo data with TODO.md is a deliverable" "$mixed_body" 'Resolves #34465'
+
+# A data-to-markdown rename still removes a deliverable, even though the
+# destination alone would qualify as planning. Seed the data in the base so
+# the branch diff contains only the rename, not the initial data addition.
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-rename-base "$final_base"
+mkdir -p "${FINAL_REPO}/todo/specs"
+printf '%s\n' '{"spec":1}' >"${FINAL_REPO}/todo/specs/example.json"
+/usr/bin/git -C "$FINAL_REPO" add todo
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: base data deliverable"
+rename_base=$(/usr/bin/git -C "$FINAL_REPO" rev-parse HEAD)
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-rename
+/usr/bin/git -C "$FINAL_REPO" mv todo/specs/example.json todo/specs/example.md
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: rename data to markdown"
+renamed_data_is_planning_only() {
+	(cd "$FINAL_REPO" && _diff_is_planning_only "$rename_base") || return 1
+	return 0
+}
+assert_rejected "data-to-markdown rename is not planning-only" \
+	renamed_data_is_planning_only
 
 /usr/bin/git -C "$FINAL_REPO" switch -q feature/final
 printf 'export const payment = charge();\n' >"${FINAL_REPO}/src/billing.js"

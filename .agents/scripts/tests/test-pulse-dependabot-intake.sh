@@ -185,9 +185,30 @@ test_creates_worker_ready_issue() {
 	assert_file_contains "worker issue has canonical Files Scope" "${TEST_ROOT}/created-body" "### Files Scope"
 	# shellcheck disable=SC2016 # Literal Markdown scope declarations.
 	assert_file_contains "worker issue scopes the exact source diff" "${TEST_ROOT}/created-body" '- EDIT: `package.json`'
-	# shellcheck disable=SC2016 # Literal Markdown scope declarations.
-	assert_file_contains "worker issue permits narrow trust-policy repair" "${TEST_ROOT}/created-body" '- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'
+	if grep -qF '.agents/' "${TEST_ROOT}/created-body"; then
+		printf 'FAIL project intake references framework-only paths\n' >&2
+		return 1
+	fi
 	assert_file_contains "worker issue carries idempotency marker" "${TEST_ROOT}/created-body" "aidevops:dependabot-pr-intake repo=owner/repo pr=30038"
+	return 0
+}
+
+test_framework_scope_and_approval_reason() {
+	local scope_lines=""
+	local body=""
+
+	scope_lines=$(_pulse_dependabot_intake_scope_lines "30038" "marcusquinn/aidevops" "head-current")
+	# shellcheck disable=SC2016 # Literal Markdown scope declaration.
+	[[ "$scope_lines" == *'- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'* ]] || return 1
+	body=$(_pulse_dependabot_intake_body "30038" "marcusquinn/aidevops" "head-current" "policy-ineligible" "marker" "$scope_lines")
+	[[ "$body" == *'.agents/scripts/trusted-dependabot-lib.sh'* ]] || return 1
+	[[ "$body" == *'update the narrow policy with evidence'* ]] || return 1
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "approval-required"
+	assert_file_contains "approval-only gate has distinct reason" "${TEST_ROOT}/created-body" '**approval-required**'
+	assert_file_contains "approval-only gate preserves allowlist" "${TEST_ROOT}/created-body" 'Do not change the allowlist'
+	assert_file_contains "approval-only gate names maintainer approval" "${TEST_ROOT}/created-body" 'sudo aidevops approve pr 30038 owner/repo'
+	assert_file_contains "approval-only gate names identical replacement" "${TEST_ROOT}/created-body" 'maintainer-authored replacement PR with the identical diff'
+	assert_file_contains "approval-only gate requires supersession" "${TEST_ROOT}/created-body" 'close the bot PR as superseded after verifying the replacement merged'
 	return 0
 }
 
@@ -799,6 +820,7 @@ main() {
 	# shellcheck source=../pulse-dispatch-dedup-layers.sh
 	source "${SCRIPT_DIR}/../pulse-dispatch-dedup-layers.sh"
 	test_creates_worker_ready_issue
+	test_framework_scope_and_approval_reason
 	test_provisions_missing_dependencies_label
 	printf 'PASS missing dependencies label is provisioned once\n'
 	test_existing_dependencies_label_skips_create

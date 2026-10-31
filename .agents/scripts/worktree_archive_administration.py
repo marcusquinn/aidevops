@@ -21,8 +21,9 @@ ADMIN_FILES = {"HEAD", "index", "AUTO_MERGE", "ORIG_HEAD", "FETCH_HEAD", "COMMIT
 PRIVATE_PREFIXES = ("refs/worktree/", "refs/bisect/", "refs/rewritten/")
 OPERATIONS = {"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG"}
-# Runtime permission requests are not Git state or grants to restore.
-RUNTIME_ADMIN_FILES = frozenset({"aidevops-permission-pending"})
+# Runtime requests and generation identity are not Git state or grants to restore.
+# A restored worktree must enroll a new generation, never inherit the source UUID.
+RUNTIME_ADMIN_FILES = frozenset({"aidevops-permission-pending", "aidevops-generation.json"})
 IGNORED_ADMIN_FILES = {False: RUNTIME_ADMIN_FILES,
                       True: RUNTIME_ADMIN_FILES | {"commondir", "gitdir"}}
 

@@ -184,6 +184,42 @@ _shim_is_transparent_process_wrapper() {
 	return 1
 }
 
+# Pulse repository auth re-enters this shim through
+# `exec python3 github_auth_runtime.py exec-gh <shim> ...`, so the child shim's
+# parent is the resolver (macOS framework builds show `Python`), not the
+# framework script that called gh. Without walking past exactly this hop, ~82%
+# of REST-core attempts were logged under the generic gh_api_rest label.
+_shim_is_auth_runtime_hop() {
+	local -a words=("$@")
+	local index=1
+	local resolver=""
+	local resolver_dir="" shim_dir=""
+	case "${words[0]##*/}" in
+	python | python3 | python3.* | Python) ;;
+	*) return 1 ;;
+	esac
+	while [[ "$index" -lt ${#words[@]} && "${words[index]}" == -* ]]; do
+		index=$((index + 1))
+	done
+	resolver="${words[index]:-}"
+	if [[ "$resolver" != */github_auth_runtime.py && "$resolver" != github_auth_runtime.py ]]; then
+		# ps flattens argv, so read splits resolver paths containing spaces.
+		# Reassemble only the known resolver path, not arbitrary Python args.
+		while [[ "$resolver" != */github_auth_runtime.py ]]; do
+			index=$((index + 1))
+			[[ "$index" -lt ${#words[@]} ]] || return 1
+			resolver+=" ${words[index]}"
+		done
+		# The resolver launches the child through a resolved shim path. Compare
+		# physical directories so a spaced directory symlink is the same hop.
+		resolver_dir=$(cd -- "${resolver%/*}" 2>/dev/null && pwd -P) || return 1
+		shim_dir=$(cd -- "$_SHIM_DIR" 2>/dev/null && pwd -P) || return 1
+		[[ "$resolver_dir" == "$shim_dir" ]] || return 1
+	fi
+	[[ "${words[index + 1]:-}" == exec-gh ]] || return 1
+	return 0
+}
+
 _shim_parent_framework_caller() {
 	local pid="$PPID"
 	local depth=0
@@ -191,7 +227,7 @@ _shim_parent_framework_caller() {
 	local next_pid=""
 	local parent_command=""
 	local -a parent_words=()
-	# Bounded walk: the direct parent plus at most two wrapper levels.
+	# Bounded walk: the direct parent plus at most two wrapper or auth-hop levels.
 	while [[ "$depth" -lt 3 ]]; do
 		[[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]] || return 1
 		line=$(ps -p "$pid" -o ppid=,command= 2>/dev/null) || return 1
@@ -199,7 +235,8 @@ _shim_parent_framework_caller() {
 		[[ -n "$parent_command" ]] || return 1
 		read -r -a parent_words <<<"$parent_command"
 		[[ ${#parent_words[@]} -gt 0 ]] || return 1
-		if _shim_is_transparent_process_wrapper "${parent_words[0]}"; then
+		if _shim_is_transparent_process_wrapper "${parent_words[0]}" ||
+			_shim_is_auth_runtime_hop "${parent_words[@]}"; then
 			pid="$next_pid"
 			depth=$((depth + 1))
 			continue

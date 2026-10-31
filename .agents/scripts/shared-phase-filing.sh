@@ -132,9 +132,9 @@ _find_parent_task_for_child() {
 #######################################
 _phase_marker_for_line() {
 	local line="$1" fallback="${2:-$_PHASE_MARKER_NONE}"
-	if printf '%s' "$line" | grep -qiF '[auto-fire:on-prior-merge]'; then
+	if grep -qiF '[auto-fire:on-prior-merge]' <<<"$line"; then
 		printf '%s' "$_PHASE_MARKER_AUTO_FIRE"
-	elif printf '%s' "$line" | grep -qiF '[requires-decision]'; then
+	elif grep -qiF '[requires-decision]' <<<"$line"; then
 		printf '%s' "$_PHASE_MARKER_REQUIRES_DECISION"
 	else
 		printf '%s' "$fallback"
@@ -155,7 +155,7 @@ _phase_marker_for_line() {
 #######################################
 _parse_phase_line_list_form() {
 	local line="$1"
-	printf '%s' "$line" | grep -qE '^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+[0-9]+' || return 0
+	grep -qE '^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+[0-9]+' <<<"$line" || return 0
 
 	local phase_num description marker child_ref
 	phase_num=$(printf '%s' "$line" | grep -oE '[Pp]hase[[:space:]]+[0-9]+' | grep -oE '[0-9]+')
@@ -196,7 +196,7 @@ _parse_phase_line_list_form() {
 #######################################
 _parse_phase_line_bold_form() {
 	local line="$1" global_auto_fire="${2:-none}"
-	printf '%s' "$line" | grep -qE '^[[:space:]]*([-*+][[:space:]]+)?\*\*[Pp]hase[[:space:]]+[0-9]+' || return 0
+	grep -qE '^[[:space:]]*([-*+][[:space:]]+)?\*\*[Pp]hase[[:space:]]+[0-9]+' <<<"$line" || return 0
 
 	local phase_num description marker child_ref
 	phase_num=$(printf '%s' "$line" | grep -oE '\*\*[Pp]hase[[:space:]]+[0-9]+' | grep -oE '[0-9]+')
@@ -243,7 +243,7 @@ _parse_phase_line_bold_form() {
 #######################################
 _parse_phase_line_numbered_form() {
 	local line="$1"
-	printf '%s' "$line" | grep -qE '^[[:space:]]*[0-9]+\.[[:space:]]+' || return 0
+	grep -qE '^[[:space:]]*[0-9]+\.[[:space:]]+' <<<"$line" || return 0
 
 	local phase_num description marker child_ref
 	phase_num=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*([0-9]+)\..*/\1/')
@@ -291,18 +291,18 @@ _parse_phases_section() {
 
 	# Global opt-in marker: flips narrative bold-form phases to auto-fire.
 	local global_auto_fire="$_PHASE_MARKER_NONE"
-	if printf '%s' "$body" | grep -qF '<!-- phase-auto-fire:on -->'; then
+	if grep -qF '<!-- phase-auto-fire:on -->' <<<"$body"; then
 		global_auto_fire="$_PHASE_MARKER_AUTO_FIRE"
 	fi
 
 	# Extract the ## Phases section: everything between "## Phases" and the
 	# next ## heading (or end of string). Use awk for multi-line extraction.
 	local phases_block
-	phases_block=$(printf '%s' "$body" | awk '
+	phases_block=$(awk '
 		/^## Phases/ { found=1; next }
 		found && /^## / { exit }
 		found { print }
-	')
+	' <<<"$body")
 	[[ -n "$phases_block" ]] || return 0
 
 	# Dispatch each non-empty line to the appropriate per-form parser.
@@ -527,7 +527,7 @@ _find_existing_phase_child_issue() {
 			fi
 		done \
 		| sort -n \
-		| head -1) || issue_num=""
+		| sed -n '1p') || issue_num=""
 	printf '%s' "$issue_num"
 	return 0
 }
@@ -608,7 +608,7 @@ _identify_merged_phase() {
 			title_phase_num=$(printf '%s' "$child_title" \
 				| grep -ioE '[Pp]hase[[:space:]]+[0-9]+' \
 				| grep -oE '[0-9]+' \
-				| head -1)
+				| sed -n '1p')
 			if [[ -n "$title_phase_num" ]]; then
 				merged_phase_num="$title_phase_num"
 				_phase_log "Child #${child_issue}: matched Phase ${merged_phase_num} via title '${child_title}'"

@@ -26,7 +26,19 @@ _gh_transport_preflight() {
 	# the actual cooldown at dispatch; skip only a duplicate ramp reservation.
 	local AIDEVOPS_GH_READ_RAMP_OVERRIDE="${AIDEVOPS_GH_READ_RAMP_OVERRIDE:-0}"
 	[[ "${AIDEVOPS_GH_WRAPPER_PREFLIGHT:-0}" != 1 ]] || AIDEVOPS_GH_READ_RAMP_OVERRIDE=1
-	_gh_search_cooldown_preflight "$@" || return $?
+	_GH_IDENTITY_FALLBACK_ALLOWED=0
+	local preflight_rc=0
+	_gh_search_cooldown_preflight "$@" || preflight_rc=$?
+	if [[ "$preflight_rc" -ne 0 ]]; then
+		# Only a resource-specific core cooldown qualifies, never a global stop.
+		local resource=""
+		resource=$(_gh_primary_request_resource "$@") || resource=""
+		local AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core"
+		if [[ "$preflight_rc" -eq 75 && "$resource" == core ]] && _gh_secondary_cooldown_active; then
+			_GH_IDENTITY_FALLBACK_ALLOWED=1
+		fi
+		return "$preflight_rc"
+	fi
 	_gh_secondary_cooldown_preflight "$op_class"
 	return $?
 }
@@ -106,10 +118,11 @@ print(f"{delay:.6f}" if 0 <= delay <= 5 else "-1")
 
 _gh_transport_emit_local_deferral() {
 	local metadata="$1"
-	jq -r 'select(.attempted == false and .deferred_by == "local_admission") |
+	jq -er 'select(.attempted == false and .deferred_by == "local_admission") |
 		"[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=\(if (.retry_at | type) == "number" then .retry_at else "unknown" end) reason=\((.reason // "unknown") | tojson)"' \
-		"$metadata" >&2
-	return $?
+		"$metadata" >&2 || return $?
+	_GH_IDENTITY_FALLBACK_ALLOWED=1
+	return 0
 }
 
 # _GHGT_HANDLED distinguishes unsupported-before-execution from native exit125.
@@ -125,6 +138,7 @@ _gh_transport_run_rest() {
 	local temp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	local metadata="" error_file="" start_ms="" end_ms="" elapsed="" rc=0
 	local status="" resource="" remaining="" reset="" retry_after="" cost="" attempted="" deferred_by="" pool="" response="" outcome=success
+	local used="" fingerprint="" sampled_at=""
 	mkdir -p "$temp_dir" || return 75
 	metadata=$(mktemp "${temp_dir}/gh-transport-meta.XXXXXX") || return 75
 	error_file=$(mktemp "${temp_dir}/gh-transport-error.XXXXXX") || {
@@ -137,8 +151,8 @@ _gh_transport_run_rest() {
 	python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
 	_shim_timing governor_total
 	# Parse only the bounded governor metadata; reuse it for the final log.
-	IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost < <(jq -r \
-		'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost] |
+	IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at < <(jq -r \
+		'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at] |
 		map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
 	[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 	# The governor has not executed the native request when durable quota state is
@@ -159,8 +173,8 @@ _gh_transport_run_rest() {
 			: >"$error_file"
 			rc=0
 			python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
-			IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost < <(jq -r \
-				'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost] |
+			IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at < <(jq -r \
+				'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at] |
 				map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
 			[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 		fi
@@ -182,10 +196,19 @@ _gh_transport_run_rest() {
 		[[ "$pool" != unknown ]] || pool=rest-core
 		[[ "$rc" -eq 0 ]] || outcome=error
 		elapsed=$((end_ms - start_ms))
+		# Response-owned series metadata (t18804): credential digest, reset epoch,
+		# response sample time and cumulative used. Without these the quota replay
+		# cannot form independent (pool, credential, reset) series.
+		local series_reset=""
+		[[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || fingerprint=""
+		[[ "$reset" =~ ^[1-9][0-9]*$ ]] && series_reset="$reset"
+		[[ "$sampled_at" =~ ^[1-9][0-9]*$ ]] || sampled_at=""
+		[[ "$used" =~ ^[0-9]+$ ]] || used=""
 		AIDEVOPS_GH_NATIVE_EXECUTION_OUTCOME="$outcome" \
 			gh_record_attempt "$path" "$caller" "$AIDEVOPS_GH_LOGICAL_ID" "" \
 			"$(_shim_transport_page "$@")" "$retry" "$outcome" "$status" "$elapsed" "$cost" \
-			"${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "${AIDEVOPS_GH_ROUTE_DECISION:-rest-response-owned}" "$remaining"
+			"${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "${AIDEVOPS_GH_ROUTE_DECISION:-rest-response-owned}" "$remaining" \
+			"$fingerprint" "$series_reset" "$sampled_at" "$used"
 		_shim_timing rest_attempt_log
 		[[ "$status" == x ]] || response="HTTP/1.1 ${status}"$'\n'
 		[[ "$resource" == x ]] || response="${response}x-ratelimit-resource: ${resource}"$'\n'
@@ -202,6 +225,57 @@ _gh_transport_run_rest() {
 	fi
 	rm -f -- "$metadata" "$error_file"
 	_shim_timing rest_metadata_and_log
+	return "$rc"
+}
+
+# Live identity recovery is deliberately limited to the three viewer fields.
+# Accept a conservative selector grammar: dynamic paths and other REST fields
+# must preserve the original failure rather than silently project invented data.
+_gh_transport_identity_viewer() {
+	local executable="$1" caller="$2" selector="$3"
+	local selector_pattern='^\.(login|id|name)([[:space:]]*//[[:space:]]*(empty|null))?[[:space:]]*$'
+	[[ -z "$selector" || "$selector" =~ $selector_pattern ]] || return 1
+	local viewer="" identity="" projected=""
+	gh_record_call graphql "$caller" "" "" identity-graphql-fallback 2>/dev/null || true
+	viewer=$(AIDEVOPS_GH_ROUTE_DECISION=identity-graphql-fallback \
+		_shim_run_transport "$executable" graphql "$caller" 0 api graphql \
+		-f 'query=query{viewer{login databaseId name}}') || return 1
+	# aidevops:trust-boundary — same credential, live read, never cached. Reject
+	# errors, missing fields and malformed logins before exposing identity data.
+	identity=$(jq -ce 'select((.errors // [] | length) == 0) | .data.viewer |
+		select((.login | type) == "string") |
+		select(.login | test("^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?$")) |
+		select((.databaseId | type) == "number") |
+		select(.name == null or (.name | type) == "string") |
+		{login, id: .databaseId, name}' <<<"$viewer") || return 1
+	if [[ -n "$selector" ]]; then
+		projected=$(jq -r "$selector" <<<"$identity") || return 1
+		[[ -z "$projected" ]] || printf '%s\n' "$projected"
+	else
+		printf '%s\n' "$identity"
+	fi
+	return 0
+}
+
+_gh_transport_identity_read() {
+	local executable="$1" caller="$2"
+	shift 2
+	local temp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local capture="" rc=0
+	mkdir -p "$temp_dir" || return 75
+	capture=$(mktemp -d "${temp_dir}/gh-identity.XXXXXX") || return 75
+	_GH_IDENTITY_FALLBACK_ALLOWED=0
+	_shim_run_transport "$executable" rest "$caller" 0 "$@" >"$capture/out" 2>"$capture/err" || rc=$?
+	if [[ "$rc" -eq 75 && "$_GH_IDENTITY_FALLBACK_ALLOWED" -eq 1 ]] &&
+		[[ "$#" -eq 2 || -n "${4:-}" ]] &&
+		_gh_transport_identity_viewer "$executable" "$caller" "${4:-}" >"$capture/viewer" 2>/dev/null; then
+		command cat "$capture/viewer"
+		rc=0
+	else
+		command cat "$capture/out"
+		command cat "$capture/err" >&2
+	fi
+	rm -rf -- "$capture"
 	return "$rc"
 }
 

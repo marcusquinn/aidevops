@@ -37,6 +37,7 @@ import { createMcpSessionRuntime, getOnDemandMcpAgents } from "./mcp-registry.mj
 import { enforceManagedMcpArtifactPath } from "./mcp-activation-tool.mjs";
 import { normalizeMcpArtifactPaths } from "./mcp-artifact-paths.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
+import { releasePreEditSessionOwnership } from "./pre-edit-check-process.mjs";
 import { createPlaywriterSelectionGuard } from "./playwriter-selection-guard.mjs";
 import { createInstructionReminderCompactor } from "./instruction-reminders.mjs";
 import { createSourceAccessRuntime } from "./source-access-runtime.mjs";
@@ -48,7 +49,8 @@ import {
 import { compactingHook } from "./compaction.mjs";
 import { createCompactionAutoContinueGuard } from "./compaction-lifecycle.mjs";
 import { createCompactionInputReplay } from "./compaction-pinned-input.mjs";
-import { capCompactionEffort, createCompactionResidencyWarning } from "./compaction-routing.mjs";
+import { applyCompactionEffort } from "./compaction-effort.mjs";
+import { createCompactionResidencyWarning } from "./compaction-routing.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
@@ -741,8 +743,8 @@ export async function AidevopsPlugin({ directory, client }) {
         tierReasoning,
         },
       );
-      // GH#32934: last, so no earlier hook can restore a max/xhigh summary.
-      capCompactionEffort(input, output, modelRouting, { log: qualityLog });
+      // GH#32934/GH#36169: last, so no earlier hook can change compaction effort.
+      applyCompactionEffort(input, output, modelRouting, { log: qualityLog });
       return applied;
     },
 
@@ -796,6 +798,7 @@ export async function AidevopsPlugin({ directory, client }) {
         Promise.resolve(cancellationReceipt.handleEvent(input)),
         Promise.resolve(nativeFocusGuard.handleEvent(input)),
         Promise.resolve(boundedOperationManager.handleEvent(input)),
+        releasePreEditSessionOwnership(input).catch((err) => debugEventError("session ownership release", err)),
         Promise.resolve(sourceAccessRuntime.handleEvent(input)),
         permissionBroker.handleEvent(input).catch((err) => debugEventError("permission broker", err)),
         sessionTitleStatusHandler(input).catch((err) => debugEventError("title status handler", err)),

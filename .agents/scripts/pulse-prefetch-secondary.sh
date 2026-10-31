@@ -150,7 +150,7 @@ prefetch_ci_failures() {
 	# Guard: verify the helper supports the 'prefetch' command before calling.
 	# If the contract drifts again, this produces a clear compatibility warning
 	# rather than a silent [ERROR] Unknown command in the log.
-	if ! "$miner_script" --help 2>&1 | grep -q 'prefetch'; then
+	if ! "$miner_script" --help 2>&1 | grep 'prefetch' >/dev/null; then
 		echo "[pulse-wrapper] gh-failure-miner-helper.sh does not support 'prefetch' command — skipping CI failure prefetch (compatibility warning)" >>"$LOGFILE"
 		echo ""
 		echo "# CI Failure Patterns: helper command contract mismatch (see pulse.log)"

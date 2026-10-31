@@ -83,7 +83,12 @@ install_helper_with_libs() {
 	cp "${SOURCE_RENDER_LIB}" "${helper_dir}/profile-readme-render-lib.sh"
 	cp "${SOURCE_HELPER%/*}/profile-contribution-chart.py" "${helper_dir}/profile-contribution-chart.py"
 	cp "${SOURCE_HELPER%/*}/profile_contribution_data.py" "${helper_dir}/profile_contribution_data.py"
-	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh shared-worktree-create.sh || return 1
+	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh shared-worktree-create.sh worker-lifecycle-state.sh || return 1
+	# The creation hook loads the registry entry point and its Python package.
+	local lifecycle_dir="${helper_dir%/*}/worker-lifecycle"
+	mkdir -p "$lifecycle_dir" || return 1
+	cp "${SOURCE_HELPER%/*}/../worker-lifecycle/worker-registry.py" "$lifecycle_dir/" || return 1
+	cp -R "${SOURCE_HELPER%/*}/../worker-lifecycle/worker_lifecycle" "$lifecycle_dir/" || return 1
 	cp "${SOURCE_HELPER%/*}/audit-worktree-removal-helper.sh" \
 		"${SOURCE_HELPER%/*}/shared-sqlite-backup.sh" \
 		"${SOURCE_HELPER%/*}/portable-stat.sh" \

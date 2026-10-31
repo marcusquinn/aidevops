@@ -156,9 +156,10 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.budget.db.execute(
             "SELECT remaining,reset FROM quota"
         ).fetchone(), (4999, 4700))
-        # A changed window invalidates saved pacing without waiting for its timer.
+        # A changed window starts a fresh schedule without waiting for its timer.
         self.budget.acquire("core", now=1021.1)
-        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM pacing").fetchone()[0], 0)
+        self.assertEqual(self.budget.db.execute(
+            "SELECT reset,remaining FROM pacing").fetchone(), (4700, 4999))
 
     def test_newer_window_does_not_recover_shared_owner_without_probe(self):
         self.seed(150)
@@ -353,17 +354,18 @@ class AdmissionTests(unittest.TestCase):
             self.budget.acquire("core", now=1181)
 
     def test_expired_live_debt_becomes_coverable_after_executor_dies(self):
+        # High quota keeps this debt-accounting test independent of pacing.
         first = self.budget.acquire("core", now=1000)
         replacement = self.budget.acquire("core", now=1180)
-        self.budget.finish(replacement, "core", headers(), started=1180, now=1181)
+        self.budget.finish(replacement, "core", headers(4999), started=1180, now=1181)
         with patch("gh_transport_recovery.os.kill", side_effect=ProcessLookupError):
             later = self.budget.acquire("core", now=1182)
         self.assertEqual(self.budget.db.execute(
             "SELECT uncertain,started FROM reservation WHERE id=?", (first,),
         ).fetchone(), (1, 1182))
-        self.budget.finish(later, "core", headers(), started=1182, now=1183)
+        self.budget.finish(later, "core", headers(4999), started=1182, now=1183)
         covered = self.budget.acquire("core", now=1184)
-        self.budget.finish(covered, "core", headers(), started=1184, now=1185)
+        self.budget.finish(covered, "core", headers(4999), started=1184, now=1185)
         self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 0)
 
     def test_budget_diagnostics_are_opt_in_and_identity_free(self):
@@ -629,13 +631,13 @@ class AdmissionTests(unittest.TestCase):
             other.close()
 
     def test_other_credential_response_cannot_erase_unknown_spend(self):
-        self.seed()
+        self.seed(4999)
         reservation = self.budget.acquire("core", now=1002)
         self.budget.finish(reservation, "core", {}, started=1002, now=1003)
         other = Budget(self.directory, "owner-one", "different-credential")
         try:
             probe = other.acquire("core", now=1004)
-            other.finish(probe, "core", headers(), started=1004, now=1005)
+            other.finish(probe, "core", headers(4998), started=1004, now=1005)
             self.assertEqual(other.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 1)
         finally:
             other.close()
@@ -648,26 +650,37 @@ class AdmissionTests(unittest.TestCase):
         with self.assertRaises(Deferred):
             self.budget.acquire("core", now=1004)
 
-    def test_healthy_concurrency_is_not_artificially_limited_to_four(self):
-        self.seed(4999)
-        for _ in range(100):
-            self.budget.acquire("core", now=1002)
+    def test_concurrency_ceiling_holds_under_even_pacing(self):
+        self.seed(4999, reset=1500)
+        # About 0.1s per point to reset; 0.12s spacing stays on schedule.
+        for i in range(100):
+            self.budget.acquire("core", now=1002 + i * 0.12)
         with self.assertRaisesRegex(Deferred, "secondary ceiling"):
-            self.budget.acquire("core", now=1002)
+            self.budget.acquire("core", now=1014)
         with self.assertRaisesRegex(Deferred, "secondary ceiling"):
-            self.budget.acquire("search", now=1002)
+            self.budget.acquire("search", now=1014)
 
-    def test_primary_pacing_uses_demand_and_releases_capacity_towards_reset(self):
+    def test_full_quota_allows_bounded_burst_then_even_spacing(self):
+        self.seed(5000, reset=4600)
+        for _ in range(10):
+            self.budget.acquire("core", now=1002)
+        with self.assertRaisesRegex(Deferred, "time to reset divided by remaining") as result:
+            self.budget.acquire("core", now=1002)
+        # Interval = seconds to reset / usable points (3598 / 4990).
+        self.assertAlmostEqual(result.exception.retry_at, 1002 + 3598 / 4990, delta=0.01)
+        self.budget.acquire("core", now=result.exception.retry_at)
+
+    def test_scarce_quota_spaces_each_admission_until_reset(self):
         self.seed(100, reset=2000)
-        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
-            ("owner-one", "core", 1001 + i) for i in range(11)
-        ])
-        with self.assertRaisesRegex(Deferred, "observed demand") as result:
-            self.budget.acquire("core", now=1012)
-        self.assertGreater(result.exception.retry_at, 1012)
+        request = self.budget.acquire("core", now=1002)
+        self.budget.finish(request, "core", headers(99), started=1002, now=1003)
+        with self.assertRaisesRegex(Deferred, "time to reset divided by remaining") as result:
+            self.budget.acquire("core", now=1004)
+        # A scarce window has no burst allowance: 998s / 100 points.
+        self.assertAlmostEqual(result.exception.retry_at, 1002 + 998 / 100, delta=0.01)
         # The same available quota is sufficient when reset is imminent.
         self.budget.db.execute("UPDATE quota SET reset=1013")
-        self.budget.acquire("core", now=1012)
+        self.budget.acquire("core", now=1004)
 
     def test_healthy_demand_does_not_force_sustainable_rate_when_unneeded(self):
         self.seed(4999)
@@ -676,37 +689,31 @@ class AdmissionTests(unittest.TestCase):
         ])
         self.budget.acquire("core", now=1012)
 
-    def test_high_quota_burst_admits_even_with_long_reset_and_saved_pacing(self):
+    def test_saved_slot_survives_reopen_with_long_reset_window(self):
         self.seed(4999, reset=80000)
-        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
-            ("owner-one", "core", 1001 + i) for i in range(11)
-        ])
         self.budget.db.execute("INSERT INTO pacing VALUES(?,?,?,?,?)",
-                               ("owner-one", "core", 80000, 1100, 4999))
+                               ("owner-one", "core", 80000, 1200, 4999))
         other = Budget(self.directory, "owner-one")
         try:
-            other.acquire("core", now=1012)
-            self.assertEqual(other.db.execute("SELECT COUNT(*) FROM pacing").fetchone()[0], 0)
+            # 79k seconds / 4999 points is about 16s; a slot 188s ahead is
+            # beyond the ten-point burst allowance in any process.
+            with self.assertRaisesRegex(Deferred, "time to reset divided by remaining") as result:
+                other.acquire("core", now=1012)
+            retry_at = result.exception.retry_at
+            # The returned time is admissible: slot - 9 * interval at that time.
+            self.assertAlmostEqual(retry_at, 1200 - 9 * (80000 - retry_at) / 4999, delta=1e-6)
+            other.acquire("core", now=retry_at)
         finally:
             other.close()
 
-    def test_high_observed_quota_with_reserved_capacity_still_paces(self):
-        self.seed(2501, reset=80000)
-        self.budget.acquire("core", now=1002)
-        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
-            ("owner-one", "core", 1001 + i) for i in range(11)
-        ])
-        with self.assertRaisesRegex(Deferred, "observed demand"):
-            self.budget.acquire("core", now=1012)
-
     def test_long_pacing_deadline_survives_history_expiry_and_process_reopen(self):
-        self.seed(3)
-        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
-            ("owner-one", "core", 1001 + i) for i in range(11)
-        ])
-        with self.assertRaises(Deferred) as first:
-            self.budget.acquire("core", now=1012)
-        retry_at = first.exception.retry_at
+        self.seed(4)
+        first = self.budget.acquire("core", now=1012)
+        self.budget.finish(first, "core", headers(3), started=1012, now=1013)
+        with self.assertRaises(Deferred) as paced:
+            self.budget.acquire("core", now=1014)
+        retry_at = paced.exception.retry_at
+        self.assertAlmostEqual(retry_at, 1012 + 988 / 4, delta=0.01)
         other = Budget(self.directory, "owner-one")
         try:
             # A recent refresh attempt retains the pacing deadline on reopen.
@@ -735,7 +742,11 @@ class AdmissionTests(unittest.TestCase):
         self.budget.finish(request, "core", headers(5000), started=1061, now=1062)
         self.assertEqual(self.budget.db.execute("SELECT remaining FROM quota").fetchone()[0], 5000)
         self.budget.acquire("core", now=1063)
-        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM pacing").fetchone()[0], 0)
+        # The higher authoritative balance replaced the stale 1900 deadline.
+        reset, slot, remaining = self.budget.db.execute(
+            "SELECT reset,retry_at,remaining FROM pacing").fetchone()
+        self.assertEqual((reset, remaining), (2000, 5000))
+        self.assertLess(slot, 1064)
 
     def test_stale_pacing_refresh_keeps_secondary_and_server_limits(self):
         self.seed(3)

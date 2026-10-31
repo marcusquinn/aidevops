@@ -15,6 +15,13 @@ def timestamp(value):
     return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
+def normalized_attempt(value):
+    """Accept the launcher's raw ID without changing the attempt's identity."""
+    if not isinstance(value, str) or not value or value == "attempt:":
+        return ""
+    return value if value.startswith("attempt:") else "attempt:" + value
+
+
 def fields(line):
     pairs = re.findall(r"(?:^|\s)([a-z_]+)=([^\s]+)", line)
     parsed = dict(pairs)
@@ -45,9 +52,10 @@ def events(comments, start, end, trusted_logins=()):
 def ready_leases(comments, approval, release, trusted_logins=()):
     ready = []
     for comment, line, f in events(comments, -1, release["id"], trusted_logins):
-        if not trusted(comment, trusted_logins) or comment["user"]["login"] != approval["runner"]:
+        if not trusted(comment, trusted_logins) or comment["user"]["login"] != release["user"]["login"]:
             continue
-        if (line.startswith("DISPATCH_LEASE ") and f.get("attempt_id") == approval["attempt"]
+        if (line.startswith("DISPATCH_LEASE ")
+                and normalized_attempt(f.get("attempt_id")) == approval["attempt"]
                 and f.get("phase") == "ready"):
             ready.append((comment["id"], f))
     return ready
@@ -61,30 +69,44 @@ def original_lease(comments, approval, release, released, trusted_logins=()):
     token = next(iter(tokens))
     if released.get("lease_token", token) != token:
         return False
+    if normalized_attempt(released.get("attempt_id", approval["attempt"])) != approval["attempt"]:
+        return False
     between = events(comments, ready[-1][0], release["id"], trusted_logins)
-    return intervening_events_valid(between, approval["runner"], token, trusted_logins)
+    return intervening_events_valid(between, release["user"]["login"], token,
+                                    approval["attempt"], trusted_logins)
 
 
-def intervening_events_valid(between, runner, token, trusted_logins=()):
+def intervening_event_bound(comment, line, f, binding, trusted_logins=()):
+    runner, token, attempt = binding
+    if line.startswith("Dispatching worker"):
+        f = fields(comment["body"])
+    return all((trusted(comment, trusted_logins), comment["user"]["login"] == runner,
+                f.get("lease_token") == token, not line.startswith("DISPATCH_CLAIM "),
+                normalized_attempt(f.get("attempt_id", attempt)) == attempt))
+
+
+def intervening_events_valid(between, runner, token, attempt, trusted_logins=()):
     # Even a legacy release cannot terminate another attempt that intervened
     # after the approved attempt's ready lease.
-    for comment, line, f in between:
-        if line.startswith("Dispatching worker"):
-            f = fields(comment["body"])
-        if (not trusted(comment, trusted_logins) or comment["user"]["login"] != runner
-                or f.get("lease_token") != token or line.startswith("DISPATCH_CLAIM ")):
-            return False
-    return True
+    binding = (runner, token, attempt)
+    return all(intervening_event_bound(comment, line, f, binding, trusted_logins)
+               for comment, line, f in between)
 
 
-def blocked_release_fields(release, runner):
+CHECKPOINT_RELEASE_REASONS = {"blocked", "clean", "worker_complete"}
+
+
+def checkpoint_release_fields(release, checkpoint_author):
     lines = [line for line in release["body"].splitlines() if line.startswith("CLAIM_RELEASED ")]
-    if len(lines) != 1:
-        return None
-    released = fields(lines[0])
-    if released.get("reason") != "blocked" or released.get("runner") != runner:
-        return None
-    return released
+    released = fields(lines[0]) if len(lines) == 1 else {}
+    reason = released.get("reason")
+    poster = release["user"]["login"]
+    #aidevops:trust-boundary — completed exits grant nothing by themselves. The
+    # poster must authenticate their own ready lease, never the PR author's lease;
+    # a blocked release must also be the checkpoint author's own.
+    valid = all((reason in CHECKPOINT_RELEASE_REASONS, released.get("runner") == poster,
+                 reason != "blocked" or poster == checkpoint_author))
+    return released if valid else None
 
 
 def release_for(comments, approval, approval_comment, trusted_logins=()):
@@ -92,9 +114,8 @@ def release_for(comments, approval, approval_comment, trusted_logins=()):
     if len(matches) != 1:
         return None
     release = matches[0]
-    identity_valid = all((trusted(release, trusted_logins), release["user"]["login"] == approval["runner"],
-                          release["id"] < approval_comment["id"]))
-    released = blocked_release_fields(release, approval["runner"])
+    identity_valid = trusted(release, trusted_logins) and release["id"] < approval_comment["id"]
+    released = checkpoint_release_fields(release, approval["runner"])
     if not identity_valid or released is None:
         return None
     return release if original_lease(comments, approval, release, released, trusted_logins) else None

@@ -983,7 +983,7 @@ _consolidation_skip_if_resolved() {
 	labels=$(printf '%s' "$parent_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels=""
 	body=$(printf '%s' "$parent_json" | jq -r '.body // ""' 2>/dev/null) || body=""
 	# Gate 1: dispatch-blocked:committed-to-main label (t2955 cache).
-	if printf ',%s,' "$labels" | grep -qF ",dispatch-blocked:committed-to-main,"; then
+	if printf ',%s,' "$labels" | grep -F ",dispatch-blocked:committed-to-main," >/dev/null; then
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \
 			"parent work already committed to main (t2955 cache label)." \
 			"dispatch-blocked:committed-to-main"
@@ -991,7 +991,7 @@ _consolidation_skip_if_resolved() {
 	fi
 	# Gate 2: completion labels survive accidental reopen/normalization paths and
 	# are sufficient to prevent a solved issue becoming a consolidation task.
-	if printf ',%s,' "$labels" | grep -Eq ',(status:done|solved:[^,]+),'; then
+	if printf ',%s,' "$labels" | grep -E ',(status:done|solved:[^,]+),' >/dev/null; then
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \
 			"parent carries terminal completion evidence." \
 			"terminal completion label"

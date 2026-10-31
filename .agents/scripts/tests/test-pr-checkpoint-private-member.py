@@ -148,7 +148,7 @@ class PrivateMemberTests(unittest.TestCase):
                    'stall) _pcc_stall_release_evidence "$2" 2026-09-05T11:00:00Z key \'["worker"]\' ;; '
                    'expired) _pcc_expired_claim_evidence "$2" 2026-09-05T13:00:00Z 2000000000 \'["worker"]\' ;; esac')
         for mode, body in (("blocked", "CLAIM_RELEASED reason=blocked runner=worker"),
-                           ("completed", "CLAIM_RELEASED reason=clean runner=worker"),
+                           ("completed", "CLAIM_RELEASED reason=capability_limit runner=worker"),
                            ("stall", "CLAIM_RELEASED reason=no_activity runner=worker"),
                            ("expired", "DISPATCH_CLAIM expires_at=1000000000")):
             event = comment(2, body, association="CONTRIBUTOR")

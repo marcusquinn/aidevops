@@ -140,6 +140,7 @@ main_rereview() {
 	test_mark_complete_defers_rereview_until_all_threads_converge
 	test_mark_complete_preserves_incomplete_state_when_rereview_write_fails
 	test_mark_blocked_never_requests_rereview
+	test_mark_blocked_publishes_continuation_finding
 	return 0
 }
 
