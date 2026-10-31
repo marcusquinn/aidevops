@@ -91,10 +91,11 @@ jobs:
           fi
           # This optional sample must not block coordinator maintenance when
           # authentication, quota, or a later sampling request is unavailable.
-          if ! login=$(gh api user --jq .login) ||
-             ! before=$(gh api rate_limit --jq '.resources.core | {used,reset}') ||
-             ! gh api "repos/${GITHUB_REPOSITORY}" --silent ||
-             ! after=$(gh api rate_limit --jq '.resources.core | {used,reset}'); then
+          # Each request is bounded so a stalled response reaches this handler.
+          if ! login=$(timeout 20 gh api user --jq .login) ||
+             ! before=$(timeout 20 gh api rate_limit --jq '.resources.core | {used,reset}') ||
+             ! timeout 20 gh api "repos/${GITHUB_REPOSITORY}" --silent ||
+             ! after=$(timeout 20 gh api rate_limit --jq '.resources.core | {used,reset}'); then
             printf 'quota-audit: SYNC_PAT sample unavailable; API lookup failed\n'
             exit 0
           fi
