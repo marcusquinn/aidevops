@@ -320,11 +320,14 @@ _merge_fast_forward_canonical() {
 	# non-colliding files after the verified fast-forward (GH#34770).
 	status_output=$(git -C "$canonical_dir" status --porcelain --untracked-files=no 2>/dev/null) || return 2
 	[[ -z "$status_output" ]] || return 2
-	canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
-	[[ -n "$canonical_head" ]] || return 2
+	# GH#36289: plain `rev-parse HEAD` echoes the literal "HEAD" on an unborn
+	# branch. An unborn default branch is an ancestor of every tip; the helper
+	# initializes it only when the whole checkout is empty and clean.
+	canonical_head=$(git -C "$canonical_dir" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null || true)
 	# When the merge commit is already local, prove ancestry before mutating.
 	# Otherwise the helper fetches the tip and refuses any non-fast-forward.
-	if git -C "$canonical_dir" cat-file -e "${merge_sha}^{commit}" 2>/dev/null &&
+	if [[ -n "$canonical_head" ]] &&
+		git -C "$canonical_dir" cat-file -e "${merge_sha}^{commit}" 2>/dev/null &&
 		! git -C "$canonical_dir" merge-base --is-ancestor "$canonical_head" "$merge_sha" 2>/dev/null; then
 		return 2
 	fi
@@ -416,12 +419,14 @@ _merge_report_canonical_sync_state() {
 	local fast_forward_candidate=0
 	current_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
 	clean=$(git -C "$canonical_dir" status --porcelain --untracked-files=no 2>/dev/null || true)
-	local_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
-	[[ -n "$remote_head" ]] || remote_head=$(git -C "$canonical_dir" rev-parse "origin/${default_branch}" 2>/dev/null || true)
-	if [[ "$current_branch" == "$default_branch" && -z "$clean" && -n "$local_head" && -n "$remote_head" ]]; then
-		# An unfetched remote tip cannot be proven locally; the audited
-		# fast-forward helper fetches it and refuses any divergence.
-		if ! git -C "$canonical_dir" cat-file -e "${remote_head}^{commit}" 2>/dev/null ||
+	local_head=$(git -C "$canonical_dir" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null || true)
+	[[ -n "$remote_head" ]] || remote_head=$(git -C "$canonical_dir" rev-parse --verify --quiet "origin/${default_branch}^{commit}" 2>/dev/null || true)
+	if [[ "$current_branch" == "$default_branch" && -z "$clean" && -n "$remote_head" ]]; then
+		# An unborn default branch (GH#36289) or an unfetched remote tip cannot
+		# be proven locally; the audited fast-forward helper fetches the tip,
+		# initializes only a fully clean unborn checkout, and refuses divergence.
+		if [[ -z "$local_head" ]] ||
+			! git -C "$canonical_dir" cat-file -e "${remote_head}^{commit}" 2>/dev/null ||
 			git -C "$canonical_dir" merge-base --is-ancestor "$local_head" "$remote_head" 2>/dev/null; then
 			fast_forward_candidate=1
 		fi

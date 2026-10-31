@@ -104,7 +104,9 @@ config stays absent. Explicit restores still use
 `project-config-restore-helper.sh`.
 
 A clean canonical checkout whose resolved default branch is still unborn is a
-supported bootstrap input for `sync-mirror` only. The helper requires symbolic
+supported bootstrap input for `sync-mirror` and `fast-forward-current` (an
+unborn branch is an ancestor of every tip, so full-loop's post-merge
+fast-forward initializes it; GH#36289). The helper requires symbolic
 `HEAD` to name that exact branch, an absent local ref, and a completely empty
 index and worktree. It records `local_state=unborn`, creates the local ref with
 zero-object compare-and-swap semantics, and materializes only the pinned remote

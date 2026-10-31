@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.106] - 2026-10-31
+
+### Changed
+
+- Maintenance: mark t18845 complete (pr:#36293 completed:2026-10-31) (#36297)
+
+### Fixed
+
+- skip partial parent closeout for TODO-projection PRs and closed issues
+- bound local archive base packing (GH#36281)
+- accept Outcome/Status/Result-labelled BLOCKED worker lines (GH#36291) (#36296)
+
 ## [3.39.105] - 2026-10-31
 
 ### Changed
