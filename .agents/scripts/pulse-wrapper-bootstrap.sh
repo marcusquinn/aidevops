@@ -502,7 +502,7 @@ _resolve_linked_pr_for_issue() {
 		# shellcheck disable=SC2016 disable=SC2034
 		pr_num=$(printf '%s' "$pr_list_json" | jq -r --arg n "$issue_num" \
 				'.[] | select(.body | test("(?i)(close[ds]?|fix(es|ed)?|resolve[ds]?)\\s+#" + $n + "\\b")) | .number' \
-				2>/dev/null | head -1) || pr_num=""
+				2>/dev/null | sed -n '1p') || pr_num=""
 	fi
 
 	if [[ "$pr_num" =~ ^[0-9]+$ ]]; then

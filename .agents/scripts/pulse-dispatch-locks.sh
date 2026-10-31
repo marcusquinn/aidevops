@@ -723,7 +723,7 @@ _task_id_in_recent_commits() {
 	# Subtask decimal suffix preserved (GH#19165) — t2053.2 must NOT match parent t2053 commits.
 	local -a subject_patterns=()
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | sed -n '1p' | sed 's/[.]/\\./g') || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
 		subject_patterns+=("$task_id_match")
 	fi
@@ -731,7 +731,7 @@ _task_id_in_recent_commits() {
 	# Pattern 2: GH#NNN from title (e.g., "GH#17574: fix pulse dispatch")
 	# Subject-only: body mentions of other GH# IDs must not match.
 	local gh_id_match
-	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | head -1) || gh_id_match=""
+	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | sed -n '1p') || gh_id_match=""
 	if [[ -n "$gh_id_match" ]]; then
 		subject_patterns+=("$gh_id_match")
 	fi
@@ -849,16 +849,16 @@ _task_id_in_changed_files() {
 
 	# Check for tNNN or tNNN.X completion marker: "- [x] tNNN ..."
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | sed -n '1p' | sed 's/[.]/\\./g') || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
-		if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)"; then
+		if printf '%s' "$todo_content" | grep -E "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)" >/dev/null; then
 			echo "[pulse-wrapper] _task_id_in_changed_files: found completed '${task_id_match}' in TODO.md on origin/main" >>"$LOGFILE"
 			return 0
 		fi
 	fi
 
 	# Check for GH#NNN completion marker: "- [x] ... GH#NNN ..."
-	if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\].*\bGH#${issue_number}\b"; then
+	if printf '%s' "$todo_content" | grep -E "^\s*-\s*\[x\].*\bGH#${issue_number}\b" >/dev/null; then
 		echo "[pulse-wrapper] _task_id_in_changed_files: found completed 'GH#${issue_number}' in TODO.md on origin/main" >>"$LOGFILE"
 		return 0
 	fi

@@ -788,7 +788,7 @@ cleanup_stalled_workers() {
 
 		# Extract issue number and find log file
 		local issue_num
-		issue_num=$(echo "$cmd" | grep -oE 'issue #[0-9]+' | grep -oE '[0-9]+' | head -1)
+		issue_num=$(echo "$cmd" | grep -oE 'issue #[0-9]+' | grep -oE '[0-9]+' | sed -n '1p')
 		[[ -n "$issue_num" ]] || continue
 
 		local log_file="" log_size=""
@@ -825,7 +825,7 @@ cleanup_stalled_workers() {
 
 		# Extract model from the command line for backoff recording
 		local worker_model
-		worker_model=$(echo "$cmd" | grep -oE '\-m [^ ]+' | head -1 | sed 's/-m //')
+		worker_model=$(echo "$cmd" | grep -oE '\-m [^ ]+' | sed -n '1p' | sed 's/-m //')
 
 		# Kill the stalled worker
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0

@@ -187,10 +187,10 @@ is_scheduler_installed() {
 	case "$os_type" in
 	Darwin)
 		# Check for launchd plist (both old and new label formats)
-		if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-supervisor-pulse"; then
+		if launchctl list 2>/dev/null | grep -F "com.aidevops.aidevops-supervisor-pulse" >/dev/null; then
 			return 0
 		fi
-		if launchctl list 2>/dev/null | grep -qF "com.aidevops.supervisor-pulse"; then
+		if launchctl list 2>/dev/null | grep -F "com.aidevops.supervisor-pulse" >/dev/null; then
 			return 0
 		fi
 		return 1
@@ -202,7 +202,7 @@ is_scheduler_installed() {
 			return 0
 		fi
 		# Fall back to cron entry check
-		if crontab -l 2>/dev/null | grep -qF "aidevops-supervisor-pulse"; then
+		if crontab -l 2>/dev/null | grep -F "aidevops-supervisor-pulse" >/dev/null; then
 			return 0
 		fi
 		return 1

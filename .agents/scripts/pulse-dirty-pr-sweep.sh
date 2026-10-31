@@ -404,7 +404,7 @@ _dps_pr_labels() {
 _dps_labels_has() {
 	local labels="$1"
 	local target="$2"
-	printf '%s' "$labels" | grep -qx "$target"
+	printf '%s' "$labels" | grep -x "$target" >/dev/null
 }
 
 # Check whether a PR body contains a recognised issue reference (t2708).
@@ -439,9 +439,9 @@ _dps_extract_linked_issue_from_body() {
 	local body="$1"
 	local match=""
 	[[ -n "$body" ]] || return 1
-	match=$(printf '%s' "$body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?|for|ref)[[:space:]]+#[0-9]+' | head -n 1) || match=""
+	match=$(printf '%s' "$body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?|for|ref)[[:space:]]+#[0-9]+' | sed -n '1p') || match=""
 	[[ -n "$match" ]] || return 1
-	printf '%s' "$match" | grep -oE '[0-9]+' | head -n 1
+	printf '%s' "$match" | grep -oE '[0-9]+' | sed -n '1p'
 	return 0
 }
 
@@ -835,7 +835,7 @@ _dps_post_comment_if_new() {
 	# Check existing comments for marker.
 	local existing
 	existing=$(_dps_pr_comment_bodies_rest "$pr_number" "$repo_slug" 2>/dev/null) || existing=""
-	if printf '%s' "$existing" | grep -qF "$marker"; then
+	if printf '%s' "$existing" | grep -F "$marker" >/dev/null; then
 		_dps_log "PR #$pr_number ($repo_slug): comment marker '$marker' already present — skipping"
 		return 0
 	fi
@@ -1209,7 +1209,7 @@ _dirty_pr_action_close() {
 		local linked_state linked_labels
 		linked_state=$(gh issue view "$linked" --repo "$repo_slug" --json state --jq '.state // empty' 2>/dev/null) || linked_state=""
 		linked_labels=$(gh issue view "$linked" --repo "$repo_slug" --json labels --jq '[.labels[].name] | .[]' 2>/dev/null | tr '[:upper:]' '[:lower:]') || linked_labels=""
-		if [[ "$linked_state" == "OPEN" ]] && printf '%s' "$linked_labels" | grep -qx 'parent-task'; then
+		if [[ "$linked_state" == "OPEN" ]] && printf '%s' "$linked_labels" | grep -x 'parent-task' >/dev/null; then
 		_dps_log "PR #$pr_number ($repo_slug): close skipped — linked issue #$linked is open parent-task"
 		_dirty_pr_action_notify "$pr_number" "$repo_slug" "parent-task-linked"
 			return 0

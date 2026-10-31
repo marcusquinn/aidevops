@@ -311,9 +311,9 @@ _dlw_resolve_tier_and_model() {
 	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
 	_DLW_TRUSTED_ISSUE_PRIORITY=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[]?.name | select(startswith("priority:"))][0] // "" | sub("^priority:"; "")' 2>/dev/null || true)
 	# shellcheck disable=SC2016 # Backticks are literal optional Markdown delimiters.
-	_DLW_TRUSTED_RELEASE_TYPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Release scope:\*\*[[:space:]]*`?(patch|minor|major)`?[[:space:]]*$/\1/ip' | head -1)
+	_DLW_TRUSTED_RELEASE_TYPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Release scope:\*\*[[:space:]]*`?(patch|minor|major)`?[[:space:]]*$/\1/ip' | sed -n '1p')
 	# shellcheck disable=SC2016 # Backticks are literal optional Markdown delimiters.
-	_DLW_TRUSTED_DEPLOY_SCOPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Deployment scope:\*\*[[:space:]]*`?(incremental|full)`?[[:space:]]*$/\1/ip' | head -1)
+	_DLW_TRUSTED_DEPLOY_SCOPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Deployment scope:\*\*[[:space:]]*`?(incremental|full)`?[[:space:]]*$/\1/ip' | sed -n '1p')
 	local explicit_tier_label=0
 	if _dlw_has_explicit_tier_label "$issue_labels_csv"; then
 		explicit_tier_label=1
@@ -1033,7 +1033,7 @@ _dlw_worktree_path_for_branch() {
 	local repo_path="$1"
 	local branch_name="$2"
 	local _path=""
-	_path=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | awk -v branch="refs/heads/${branch_name}" '/^worktree / { path = substr($0, 10) } /^branch / { line_branch = substr($0, 8); if (line_branch == branch) { print path; exit } }') || _path=""
+	_path=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | awk -v branch="refs/heads/${branch_name}" '/^worktree / { path = substr($0, 10) } /^branch / { line_branch = substr($0, 8); if (line_branch == branch && !found) { print path; found=1 } }') || _path=""
 	printf '%s' "$_path"
 	return 0
 }
@@ -1041,7 +1041,7 @@ _dlw_worktree_path_for_branch() {
 _dlw_extract_worktree_path_from_output() {
 	local wt_output="$1"
 	local _path=""
-	_path=$(printf '%s' "$wt_output" | awk '/^Path:[[:space:]]*\// { sub(/^Path:[[:space:]]*/, ""); print; exit } /^[[:space:]]*cd[[:space:]]+\// { sub(/^[[:space:]]*cd[[:space:]]+/, ""); print; exit } /^Created worktree at[[:space:]]*\// { sub(/^Created worktree at[[:space:]]*/, ""); print; exit }') || _path=""
+	_path=$(printf '%s' "$wt_output" | awk '!found && /^Path:[[:space:]]*\// { sub(/^Path:[[:space:]]*/, ""); print; found=1 } !found && /^[[:space:]]*cd[[:space:]]+\// { sub(/^[[:space:]]*cd[[:space:]]+/, ""); print; found=1 } !found && /^Created worktree at[[:space:]]*\// { sub(/^Created worktree at[[:space:]]*/, ""); print; found=1 }') || _path=""
 	printf '%s' "$_path"
 	return 0
 }

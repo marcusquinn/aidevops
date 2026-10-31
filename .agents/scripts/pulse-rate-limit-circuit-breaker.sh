@@ -815,7 +815,7 @@ _compute_threshold_count() {
 	local limit="$2"
 
 	# Validate threshold is a reasonable decimal (0-1 range).
-	if ! printf '%s' "$threshold" | grep -qE '^[0-9]*\.?[0-9]+$'; then
+	if ! printf '%s' "$threshold" | grep -E '^[0-9]*\.?[0-9]+$' >/dev/null; then
 		echo "0"
 		return 0
 	fi
