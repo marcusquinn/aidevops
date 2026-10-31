@@ -619,6 +619,53 @@ class ProcessReconciliationTests(unittest.TestCase):
         launch["owner_pid"] = None
         self.assertFalse(reconcile.finished(launch))
 
+    def test_same_boot_empty_census_seals_and_binds_generation(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        record = self.record()
+        record["identity"] = {"path": "/worktree", "source_inode": "fixture-inode"}
+        now = time.time()
+        sample = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                  "uid": os.getuid(), "references": 0, "uncertain": 0}
+        samples = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
+        with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                patch.object(census, "path_census", side_effect=samples * 2), \
+                patch.object(reconcile.time, "sleep") as pause:
+            lifetime.seal(record)
+            proof.proof(record, "fixture-inode")
+            self.assertEqual(pause.call_count, 2)
+        receipt = record["launches"][0]["observation_quiescence"]
+        self.assertEqual(receipt["group"], "same-boot-proc-census")
+        for change in ({"path": "/other"}, {"source_inode": "new-inode"}):
+            changed = dict(record["identity"], **change)
+            with self.assertRaises(ValueError):
+                reconcile.validate_quiescence(record["launches"][0], changed)
+        for bad in (dict(samples[1], references=1), dict(samples[1], uncertain=1),
+                    dict(samples[1], status="unavailable"),
+                    dict(samples[1], observed_at=samples[0]["observed_at"] + 1)):
+            receipt["samples"] = [samples[0], bad]
+            with self.assertRaises(ValueError):
+                proof.proof(record, "fixture-inode")
+
+    def test_same_boot_busy_or_unknown_census_preserves_worktree(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        for status, references, uncertain in (("available", 1, 0), ("available", 0, 1),
+                                              ("unavailable", 0, 0)):
+            record = self.record()
+            record["identity"] = {"path": "/worktree", "source_inode": "fixture-inode"}
+            sample = {"status": status, "boot_id": record["launches"][0]["boot_id"],
+                      "uid": os.getuid(), "references": references, "uncertain": uncertain,
+                      "observed_at": time.time()}
+            with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                    patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                    patch.object(census, "path_census", return_value=sample), \
+                    self.assertRaisesRegex(ValueError, "active or unavailable"):
+                lifetime.seal(record)
+            self.assertEqual(record["state"], "running")
+            self.assertNotIn("observation_quiescence", record["launches"][0])
+
     def test_seal_checks_every_launch_and_preserves_distinct_receipt_contract(self):
         import worktree_lifetime_reconcile as reconcile
         record = self.record()
@@ -634,6 +681,42 @@ class ProcessReconciliationTests(unittest.TestCase):
 
 
 class ProcessSnapshotTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
+    def test_live_cwd_fd_and_environment_references_are_detected(self):
+        import worktree_process_snapshot as census
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            # These children start outside the target except in the cwd case.
+            scripts = ["import time; time.sleep(30)",
+                       "import os,time; fd=os.open(%r, os.O_RDONLY); time.sleep(30)" % directory,
+                       "import time; time.sleep(30)", "import time; time.sleep(30)"]
+            for index, script in enumerate(scripts):
+                env = dict(os.environ, PWD="/", AIDEVOPS_WORKTREE="/")
+                if index >= 2:
+                    env[("PWD", "AIDEVOPS_WORKTREE")[index - 2]] = directory
+                child = subprocess.Popen([sys.executable, "-c", script],
+                                         cwd=directory if index == 0 else "/", env=env)
+                try:
+                    # Wait boundedly for the fd child to open its target.
+                    deadline = time.monotonic() + 5
+                    while not census.inspect_path_references(Path(f"/proc/{child.pid}"), str(path)):
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(0.01)
+                    sample = census.path_census(str(path))
+                    self.assertGreaterEqual(sample["references"], 1)
+                finally:
+                    child.terminate()
+                    child.wait(timeout=5)
+
+    def test_path_boundaries_deleted_links_and_unreadable_census(self):
+        import worktree_process_snapshot as census
+        self.assertTrue(census.under_worktree("/worktree/file (deleted)", "/worktree"))
+        self.assertFalse(census.under_worktree("/worktree-other/file", "/worktree"))
+        with patch.object(census, "inspect_path_references", side_effect=PermissionError()):
+            sample = census.path_census("/worktree")
+            if sys.platform == "linux":
+                self.assertGreater(sample["uncertain"], 0)
+
     def snapshot(self):
         return {"status": "available", "boot_id": "11111111-1111-1111-1111-111111111111",
                 "processes": {100: {"start": "10", "state": "S", "cgroup": "/user/aidevops-worker-one.service"}},
