@@ -13,6 +13,7 @@ FIXTURE="" ROUTES=0 REVIEWS=0 READ_FAIL=0 LAST_ERROR=""
 
 # Match the existing merge-pass harness: load only the function under test.
 eval "$(awk '/^_check_pr_merge_gates\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/../pulse-merge.sh")"
+eval "$(awk '/^_merge_check_closure_metadata\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/../full-loop-helper-merge.sh")"
 eval "$(awk '/^cmd_merge\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/../full-loop-helper-merge.sh")"
 
 gh_pr_view() {

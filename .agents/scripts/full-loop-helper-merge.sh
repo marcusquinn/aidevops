@@ -1907,6 +1907,21 @@ _merge_release_lane_check() {
 	return 0
 }
 
+# GH#36174: enforce the creation-time closure invariant for existing PRs too.
+_merge_check_closure_metadata() {
+	local pr_number="$1" repo="$2"
+	local closure_json="" closure_reason=""
+	closure_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body,closingIssuesReferences) || {
+		print_error "Merge blocked for PR #${pr_number}: closing-reference metadata unavailable"
+		return 1
+	}
+	if ! closure_reason=$(_gh_pr_merge_closure_check "$closure_json" "$repo"); then
+		print_error "Merge blocked for PR #${pr_number}: ${closure_reason}"
+		return 1
+	fi
+	return 0
+}
+
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
@@ -1944,16 +1959,7 @@ cmd_merge() {
 		return "$_already_merged_rc"
 	fi
 
-	# GH#36174: enforce the creation-time closure invariant for existing PRs too.
-	local closure_json="" closure_reason=""
-	closure_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body,closingIssuesReferences) || {
-		print_error "Merge blocked for PR #${pr_number}: closing-reference metadata unavailable"
-		return 1
-	}
-	if ! closure_reason=$(_gh_pr_merge_closure_check "$closure_json" "$repo"); then
-		print_error "Merge blocked for PR #${pr_number}: ${closure_reason}"
-		return 1
-	fi
+	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
 
 	# Gate: enforce review-bot-gate before merge.
 	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {
