@@ -350,6 +350,46 @@ _preflight_early_dispatch
 expect_skip early runner_health 'runner-health breaker blocks the early fill'
 bash "$SCRIPTS_DIR/pulse-runner-health-helper.sh" resume --reason 'breaker gate test' >/dev/null 2>&1
 
+# Main cycle: execute the real _pulse_run_deterministic_pipeline (extracted from
+# pulse-wrapper.sh, which is not safe to source) with every stage stubbed, so a
+# removed main-path permission check cannot pass while apply_dispatch_max runs.
+# shellcheck disable=SC2016 # awk program, not shell expansion
+PIPELINE_AWK='index($0, "_pulse_run_deterministic_pipeline() {") == 1 { p = 1 } p { print } p && $0 == "}" { exit }'
+PIPELINE_SRC=$(awk "$PIPELINE_AWK" "$SCRIPTS_DIR/pulse-wrapper.sh")
+if [[ -z "$PIPELINE_SRC" ]]; then
+	printf 'FAIL: pipeline function not found\n' >&2
+	exit 1
+fi
+eval "$PIPELINE_SRC"
+PRE_RUN_STAGE_TIMEOUT=1
+REPOS_JSON="$TEST_ROOT/repos.json"
+PULSE_RATE_LIMIT_FLAG="$TEST_ROOT/rate-limit.flag"
+SCRIPT_DIR="$SCRIPTS_DIR"
+NOTES="$TEST_ROOT/notes"
+_pulse_drain_prefetch_counters() { return 0; }
+run_stage_with_timeout() { return 0; }
+_pulse_run_optional_stage_with_timeout() { return 0; }
+_pulse_run_budget_priority_stage_with_timeout() { return 0; }
+_pulse_dispatch_reserved_finalise_seconds() { printf '0\n'; return 0; }
+_pulse_cycle_state_set_blocker() { return 0; }
+_pulse_cycle_state_note_blocker() { printf '%s\n' "$1" >>"$NOTES"; return 0; }
+_pulse_cycle_budget_admits_dispatch() { return 0; }
+_pulse_run_budget_priority_stage() { shift; "$@"; return $?; }
+
+trip_permission_breaker
+rm -f "$NOTES"
+_pulse_run_deterministic_pipeline
+[[ "$(launches)" == 0 ]]
+grep -q '^dispatch-permission-block-rate$' "$NOTES"
+PASSED=$((PASSED + 1))
+printf 'PASS: %s\n' 'main cycle skips apply_dispatch_max while permission breaker is tripped'
+reset_fixture
+rm -f "$LAUNCHES" "$NOTES"
+_pulse_run_deterministic_pipeline
+[[ "$(<"$LAUNCHES")" == dispatch_max ]]
+PASSED=$((PASSED + 1))
+printf 'PASS: %s\n' 'main cycle dispatches when permission breaker is open'
+
 # Run the production reporter against synthetic local stats, without network.
 unset -f date
 now=$(date +%s)
