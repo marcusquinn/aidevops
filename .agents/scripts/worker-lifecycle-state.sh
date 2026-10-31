@@ -19,6 +19,16 @@ _worker_lifecycle_config_parent_accessible() {
 	return 0
 }
 
+# Standalone entry for launchers which cannot source this library themselves.
+# Exec keeps the observed native PID/start identity throughout the producer.
+worker_lifecycle_exec() {
+	local entry="${BASH_SOURCE[0]%/*}/../worker-lifecycle/worker-launch.py"
+	[[ "$#" -gt 0 ]] || return 1
+	worker_lifecycle_prepare_launch "$PWD" "$entry" "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" || return $?
+	exec "${WORKER_LIFECYCLE_PREFIX[@]}" "$@"
+	return 1
+}
+
 worker_lifecycle_state_dir() {
 	local state_dir="${AIDEVOPS_LIFECYCLE_STATE_DIR:-}"
 	local config_file="${HOME}/.config/aidevops/lifecycle-state-dir"
@@ -117,3 +127,7 @@ worker_lifecycle_prepare_launch() {
 	fi
 	return 0
 }
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	worker_lifecycle_exec "$@"
+fi

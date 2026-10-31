@@ -646,6 +646,8 @@ test_renderer_failure_propagates() {
 main() {
 	TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/profile-contributions-test.XXXXXX") || return 1
 	trap teardown EXIT
+	# Each fixture has private registry state; do not inherit a real managed cwd.
+	cd "$TEST_ROOT" || return 1
 
 	run_failure_case "list-failure"
 	run_failure_case "list-failure-valid-output"

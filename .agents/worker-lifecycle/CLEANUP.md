@@ -211,6 +211,12 @@ pre-reserved directories retain their existing creation path but do not acquire
 controlled-creation provenance. Failed construction retains partial results;
 repeating it cannot adopt an existing directory, even an empty one.
 
+Managed producer services enter the same native launcher through
+`worker-lifecycle-state.sh` before executing their command. The service does not
+inherit its parent's runtime, session, generation or attempt IDs. Post-completion
+callbacks run outside that producer identity; legacy service receipts never
+replace the new registry's creation, admission and retirement checks.
+
 Claude creator-context integration is outside this rollout. Standalone/unconnected
 creators and unknown pre-enrollment writers
 therefore still prevent a claim of complete registered-owner coverage.
