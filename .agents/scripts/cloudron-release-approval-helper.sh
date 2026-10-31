@@ -352,10 +352,12 @@ release_upstream_finding() {
 		issue=$(gh api "repos/${repo}/issues/${number}") || return 1
 		#aidevops:trust-boundary — only a trusted author's exact own-line monitor
 		# marker identifies a finding; copied markers on outsider issues never do.
+		# Binding the capture drops marker-less issues: capture emits nothing, so
+		# an array literal would silently shift .state into the fingerprint slot.
 		finding=$(jq -r --arg number "$number" '
 			select(.pull_request == null and ((.author_association // "") | test("^(OWNER|MEMBER)$")))
-			| [((.body // "") | capture("(?m)^<!-- aidevops:cloudron-package-monitor (?<fp>upstream-(v[0-9]+\\.[0-9]+\\.[0-9]+|commit-[a-f0-9]{40})) -->$").fp), .state]
-			| [$number, .[0], .[1]] | @tsv' <<<"$issue") || return 1
+			| ((.body // "") | capture("(?m)^<!-- aidevops:cloudron-package-monitor (?<fp>upstream-(v[0-9]+\\.[0-9]+\\.[0-9]+|commit-[a-f0-9]{40})) -->$").fp) as $fp
+			| [$number, $fp, .state] | @tsv' <<<"$issue") || return 1
 		[[ -n "$finding" ]] || continue
 		[[ -z "$found" ]] || return 2
 		found="$finding"

@@ -448,11 +448,14 @@ printf 'PASS half-hour approval routine registered\n'
 		case "$command $target" in
 		'pr list')
 			[[ "$HELD_SCENARIO" != list_error ]] || return 1
-			jq -cn '[20,21,22] | map({number:., isDraft:false, isCrossRepository:false, headRefOid:("head-" + tostring),
+			# unmarked: PR 21 also links trusted, marker-less issue 37 ahead of finding 31.
+			jq -cn --arg scenario "$HELD_SCENARIO" '[20,21,22] | map({number:., isDraft:false, isCrossRepository:false, headRefOid:("head-" + tostring),
 				labels:[{name:"release-approval-required"},{name:"origin:worker"}], closingIssuesReferences:[{number:(. + 10)}]})
+				| map(if $scenario == "unmarked" and .number == 21 then .closingIssuesReferences |= [{number:37}] + . else . end)
 				+ [{number:25,isDraft:false,isCrossRepository:false,headRefOid:"head-25",labels:[{name:"release-approval-required"}],closingIssuesReferences:[{number:35}]},
 				   {number:26,isDraft:true,isCrossRepository:false,headRefOid:"head-26",labels:[{name:"release-approval-required"},{name:"origin:worker"}],closingIssuesReferences:[{number:36}]}]'
 			;;
+		'api repos/owner/app/issues/37') printf '{"state":"open","author_association":"OWNER","body":"Related tracking issue"}\n' ;;
 		'api repos/owner/app/issues/3'[0-2])
 			number="${target##*/}"
 			[[ "$HELD_SCENARIO" != finding_error || "$number" != 31 ]] || return 1
@@ -614,6 +617,12 @@ printf 'PASS half-hour approval routine registered\n'
 	run_held untrusted true 0
 	no_call 'pr-close 21'
 	printf 'PASS held: an outsider-authored finding marker never authorizes supersession\n'
+
+	run_held unmarked true 0
+	has_call 'pr-close 21'
+	has_call 'gh issue close 31 --repo owner/app --reason not planned'
+	no_call 'gh issue close 37 --repo owner/app --reason not planned'
+	printf 'PASS held: a trusted linked issue without a monitor marker is not a finding\n'
 
 	for scenario in finding_error list_error; do
 		run_held "$scenario" true 1
