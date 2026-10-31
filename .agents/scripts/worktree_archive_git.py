@@ -71,6 +71,38 @@ def nested_base_import_failure(stderr):
     return final if re.fullmatch(pattern, final) else None
 
 
+def producer_failure_reason(error):
+    """Classify direct/nested archive failures at the shared diagnostic boundary."""
+    # Restoration imports Git while initializing; load its CLI classifier only
+    # when handling a completed operation's exception, not at module import time.
+    from worktree_archive_restore import NOT_ENROLLED, failure_message
+    metadata_errors = {
+        "ownership, ACLs or extended attributes require separate preservation",
+        "special permissions or hard links require separate preservation",
+    }
+    message = str(error) if isinstance(error, ValueError) else ""
+    if isinstance(error, subprocess.TimeoutExpired):
+        return ("producer:git-timeout; a local Git operation exceeded its time budget; "
+                "source and archive retained; retry when host load is lower")
+    if isinstance(error, subprocess.CalledProcessError):
+        diagnostic = nested_base_import_failure(error.stderr)
+        if diagnostic:
+            return diagnostic
+    if isinstance(error, subprocess.CalledProcessError) and isinstance(error.stderr, str):
+        lines = error.stderr.rstrip().splitlines()
+        # source_fingerprint's shell caller adds this fixed failure trailer.
+        if lines and lines[-1] == "Error: worktree fingerprint unavailable":
+            lines.pop()
+        message = failure_message(lines[-1] if lines else "", message)
+        if message == NOT_ENROLLED:
+            return NOT_ENROLLED
+    if message in metadata_errors:
+        return ("producer:unsupported-metadata; permissions, ownership, ACLs, extended attributes "
+                "or hard links require separate preservation; source retained; "
+                "retrying will not resolve this policy refusal")
+    return str(error) if isinstance(error, ValueError) else "producer:evidence-unavailable"
+
+
 def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
     for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
