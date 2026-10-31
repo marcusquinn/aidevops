@@ -32,6 +32,7 @@ unset AIDEVOPS_GH_QUOTA_COST
 unset AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
 unset AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE
 unset GH_HOST
+unset AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
