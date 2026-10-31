@@ -12,7 +12,9 @@ MISSING_PROMISOR_BASE = (
     'producer:missing-promisor-object; complete recorded base unavailable locally; '
     'source and archive retained; authorize independent recovery with '
     'AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE and AIDEVOPS_WORKTREE_BASE_RECOVERY_COMMON_DIR '
-    'matching the current repository origin and common directory; prior scratch requires review')
+    'matching the current repository origin and common directory; the origin must allow fetching '
+    'the exact recorded base by object ID (uploadpack.allowReachableSHA1InWant or '
+    'allowAnySHA1InWant) when it is no longer an advertised ref tip; prior scratch requires review')
 
 
 def authorized_base_source(root, common, run_git):

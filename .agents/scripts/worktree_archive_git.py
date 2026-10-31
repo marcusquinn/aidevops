@@ -16,6 +16,7 @@ from worktree_archive_base_source import (
     authorized_base_source as authorized_base_source,
 )
 
+__all__ = ['MISSING_PROMISOR_BASE', 'authorized_base_source']
 
 DEFAULT_TIMEOUT = 60
 RETAINED_VERIFICATION_SCRATCH = ('archive-verify:retained-scratch; prior verification evidence retained; '
