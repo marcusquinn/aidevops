@@ -50,6 +50,7 @@ setup_test_env() {
 	export TEST_PR_BODY=""
 	export TEST_ISSUE_BODY=""
 	export TEST_ISSUE_LABELS=""
+	export TEST_ISSUE_STATE=""
 	export TEST_EXISTING_COMMENTS="[]"
 	: >"$LOGFILE"
 	: >"$GH_CALL_LOG"
@@ -67,7 +68,9 @@ fi
 
 if [[ "$1" == "api" && "$2" == *"/issues/23932"* ]]; then
 	jq -n --arg body "${TEST_ISSUE_BODY:-}" --arg labels "${TEST_ISSUE_LABELS:-}" \
-		'{body:$body,labels:($labels | split(",") | map(select(length > 0) | {name:.}))}'
+		--arg state "${TEST_ISSUE_STATE:-}" \
+		'{body:$body,labels:($labels | split(",") | map(select(length > 0) | {name:.}))}
+		+ (if $state == "" then {} else {state:$state} end)'
 	exit 0
 fi
 
@@ -303,6 +306,65 @@ test_existing_marker_skips_duplicate_comment() {
 	return 0
 }
 
+# GH#36299: TODO-projection PRs carry `Ref #N` linkage only.
+assert_projection_pr_skips_partial_closeout() {
+	local pr_body="$1"
+	local label="$2"
+	: >"$GH_COMMENT_LOG"
+	: >"$GH_CALL_LOG"
+	export TEST_PR_BODY="$pr_body"
+	export TEST_ISSUE_LABELS="parent-task"
+	export TEST_ISSUE_BODY="## Acceptance Criteria
+
+- [ ] One
+- [ ] Two"
+	export TEST_EXISTING_COMMENTS="[]"
+
+	_pm_handle_partial_parent_closeout "23936" "marcusquinn/aidevops" "TODO projection."
+	assert_no_comment "${label}: partial parent closeout skipped"
+	assert_api_issue_fetch_count "0" "${label}: skips issue fetch"
+	return 0
+}
+
+test_todo_projection_prs_skip_partial_closeout() {
+	assert_projection_pr_skips_partial_closeout "<!-- aidevops:issue-sync-todo-pr -->
+## Issue-sync TODO publication
+
+## Linkage
+
+- Ref #23932" "issue-sync TODO PR"
+	assert_projection_pr_skips_partial_closeout "<!-- aidevops:pulse-todo-handoff id=a0f604373b96223324615a243c4a6e231d3a91a6 -->
+## Pulse TODO publication
+
+## Related issues
+
+- Ref #23932" "pulse TODO handoff PR"
+	return 0
+}
+
+test_closed_issue_skips_partial_closeout() {
+	: >"$GH_COMMENT_LOG"
+	: >"$GH_CALL_LOG"
+	export TEST_PR_BODY="For #23932"
+	export TEST_ISSUE_LABELS="parent-task"
+	export TEST_ISSUE_STATE="closed"
+	export TEST_ISSUE_BODY="## Acceptance Criteria
+
+- [ ] One
+- [ ] Two"
+	export TEST_EXISTING_COMMENTS="[]"
+
+	_pm_handle_partial_parent_closeout "23936" "marcusquinn/aidevops" "Leaf fix."
+	assert_no_comment "closed issue: partial parent closeout skipped"
+	export TEST_ISSUE_STATE="open"
+	: >"$GH_COMMENT_LOG"
+	_pm_handle_partial_parent_closeout "23936" "marcusquinn/aidevops" "Leaf fix."
+	assert_comment_contains "PARTIAL_PARENT_CLOSEOUT:PR#23936" \
+		"open issue: partial parent closeout still posted"
+	export TEST_ISSUE_STATE=""
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -318,6 +380,8 @@ main() {
 	test_leaf_reference_without_broad_signal_skips_comment
 	test_planning_publication_skips_partial_closeout
 	test_existing_marker_skips_duplicate_comment
+	test_todo_projection_prs_skip_partial_closeout
+	test_closed_issue_skips_partial_closeout
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

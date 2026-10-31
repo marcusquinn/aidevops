@@ -40,6 +40,7 @@ from worktree_archive_objects import (
 )
 from worktree_archive_auto_merge import restore_auto_merge as restore_auto_merge
 from worktree_archive_git import (
+    base_import_failure, base_upload_pack,
     capture_bundle as capture_bundle, fetch_preservation as fetch_preservation,
 )
 
@@ -86,7 +87,10 @@ def seed_base(root, manifest):
         raise ValueError('git_admin:base_repository_unavailable')
     try:
         git(root, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags',
+            '--no-auto-maintenance', '--upload-pack=' + base_upload_pack(),
             '--no-write-fetch-head', str(common), base, timeout=base_import_timeout())
+    except subprocess.CalledProcessError as error:
+        raise ValueError(base_import_failure(error)) from error
     except subprocess.TimeoutExpired as error:
         raise ValueError('producer:base-import-timeout; local base import exceeded its time budget; '
                          'source and archive retained; retry when host load is lower or raise '

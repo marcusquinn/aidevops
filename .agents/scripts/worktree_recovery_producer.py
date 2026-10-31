@@ -22,7 +22,8 @@ import subprocess  # nosec B404 -- subprocess errors only; execution uses the sh
 import sys
 
 from worktree_archive_snapshot import git, git_snapshot, snapshot
-from worktree_archive_restore import NOT_ENROLLED, RestorationProof, failure_message
+from worktree_archive_git import producer_failure_reason as failure_reason
+from worktree_archive_restore import RestorationProof
 from worktree_lifetime_archive import capacity, durable_archive, inode, require
 from worktree_recovery_migrate import archive_command
 from worktree_recovery_migration_scratch import finish_scratch, prepare_restore, verify_restore
@@ -34,32 +35,6 @@ from worktree_recovery_timing import context as timing_context, operation, phase
 
 
 SCHEMA = "aidevops.worktree-recovery-producer/v1"
-
-
-def failure_reason(error):
-    # Exact messages from worktree_archive_filesystem.supported_metadata.
-    # Inspect only the final exception line, never emit captured CLI diagnostics.
-    metadata_errors = {
-        "ownership, ACLs or extended attributes require separate preservation",
-        "special permissions or hard links require separate preservation",
-    }
-    message = str(error) if isinstance(error, ValueError) else ""
-    if isinstance(error, subprocess.TimeoutExpired):
-        return ("producer:git-timeout; a local Git operation exceeded its time budget; "
-                "source and archive retained; retry when host load is lower")
-    if isinstance(error, subprocess.CalledProcessError) and isinstance(error.stderr, str):
-        lines = error.stderr.rstrip().splitlines()
-        # source_fingerprint's shell caller adds this fixed failure trailer.
-        if lines and lines[-1] == "Error: worktree fingerprint unavailable":
-            lines.pop()
-        message = failure_message(lines[-1] if lines else "", message)
-        if message == NOT_ENROLLED:
-            return NOT_ENROLLED
-    if message in metadata_errors:
-        return ("producer:unsupported-metadata; permissions, ownership, ACLs, extended attributes "
-                "or hard links require separate preservation; source retained; "
-                "retrying will not resolve this policy refusal")
-    return str(error) if isinstance(error, ValueError) else "producer:evidence-unavailable"
 
 
 def journal_for_archive(archive):

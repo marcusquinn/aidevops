@@ -49,9 +49,12 @@ _pm_resolve_superseded_original_issue() {
 #######################################
 # Extract a non-closing parent/umbrella reference from a PR body.
 #
-# Planning publication PRs (shared-todo-commit.sh) reference each announced
-# task with `For #NNN` only so the merge does not close it; they deliver no
-# task scope, so they never produce a partial closeout (GH#36230).
+# TODO-projection PRs reference tasks with `For #NNN` / `Ref #NNN` only for
+# audit linkage; they deliver no task scope, so they never produce a partial
+# closeout: planning publication (shared-todo-commit.sh, GH#36230), issue-sync
+# TODO publication (issue-sync-git-push-helper.sh) and pulse TODO handoff
+# (pulse-todo-publication.sh) (GH#36299). A forged marker only suppresses a
+# comment, so marker-only matching is safe.
 #
 # Args: $1=pr_number, $2=repo_slug
 # Stdout: issue number from the first `For #NNN` / `Ref #NNN` reference
@@ -63,9 +66,11 @@ _pm_extract_partial_parent_reference() {
 	local pr_body="" parent_issue="" refs=""
 
 	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
-	if [[ "$pr_body" == *"<!-- aidevops:planning-publication:v1 "* ]]; then
+	case "$pr_body" in
+	*"<!-- aidevops:planning-publication:v1 "* | *"<!-- aidevops:issue-sync-todo-pr -->"* | *"<!-- aidevops:pulse-todo-handoff id="*)
 		return 0
-	fi
+		;;
+	esac
 	# Capture, then take the first line without an early-exit reader (GH#36235).
 	refs=$(grep -ioE -- '(^|[[:space:]])(for|ref)[[:space:]]+#[0-9]+' <<<"$pr_body") || refs=""
 	parent_issue="${refs%%$'\n'*}"
@@ -138,7 +143,7 @@ _pm_handle_partial_parent_closeout() {
 	local repo_slug="$2"
 	local merge_summary="$3"
 	local linked_issue="${4:-}"
-	local parent_issue="" issue_api="" issue_json="" issue_body="" issue_labels="" dedup_count="" followups="" delivered_body=""
+	local parent_issue="" issue_api="" issue_json="" issue_body="" issue_labels="" issue_state="" dedup_count="" followups="" delivered_body=""
 
 	parent_issue=$(_pm_extract_partial_parent_reference "$pr_number" "$repo_slug") || parent_issue=""
 	[[ -n "$parent_issue" ]] || return 0
@@ -150,10 +155,16 @@ _pm_handle_partial_parent_closeout() {
 		return 0
 	fi
 	local _RS=$'\x1e'
-	IFS="$_RS" read -r -d '' issue_body issue_labels < <(
+	IFS="$_RS" read -r -d '' issue_body issue_labels issue_state < <(
 		printf '%s' "$issue_json" | jq -j --arg rs "$_RS" \
-			'(.body // ""), $rs, ([.labels[]?.name] | join(",")), "\u0000"'
+			'(.body // ""), $rs, ([.labels[]?.name] | join(",")), $rs, (.state // ""), "\u0000"'
 	) || true
+
+	# The comment asserts the parent remains open; a closed issue has no
+	# remaining scope to describe (GH#36299).
+	if [[ "$issue_state" == "closed" ]]; then
+		return 0
+	fi
 
 	if ! _pm_issue_needs_partial_closeout "$issue_body" "$issue_labels"; then
 		return 0

@@ -3,10 +3,14 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Select and validate existing archive dependencies without changing Git state."""
 
+import hashlib
+import os
 from pathlib import Path
 import re
-import tempfile
+import shutil
+import stat
 from worktree_recovery_timing import timed
+from worktree_archive_git import RETAINED_VERIFICATION_SCRATCH
 
 from worktree_archive_administration import (
     auto_merge_oid, fetch_head_roots, git, load_administration,
@@ -89,6 +93,27 @@ def verify_object_graph(archive, scratch, manifest):
         verify_auto_merge(scratch, archive, manifest)
 
 
+def verify_in_scratch(archive, manifest):
+    # The exclusive directory is also the per-archive retry fence. A failure or
+    # cancellation leaves it in place; never reuse or retire prior evidence.
+    archive = archive.resolve(strict=True)
+    key = hashlib.sha256(os.fsencode(archive)).hexdigest()
+    scratch = archive.parent / ('.archive-verify-' + key)
+    try:
+        scratch.mkdir(mode=0o700)
+    except FileExistsError as error:
+        raise ValueError(RETAINED_VERIFICATION_SCRATCH) from error
+    created = scratch.lstat()
+    verify_object_graph(archive, scratch, manifest)
+    observed = scratch.lstat()
+    if (not stat.S_ISDIR(observed.st_mode)
+            or (observed.st_dev, observed.st_ino) != (created.st_dev, created.st_ino)):
+        raise ValueError('archive-verify:scratch-identity-changed; evidence retained')
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise ValueError('archive-verify:safe-cleanup-unavailable; evidence retained')
+    shutil.rmtree(scratch)
+
+
 @timed("git-object-preparation")
 def verify_git_objects(archive, manifest):
     """Verify against the recorded base graph, retaining legacy bundle readers."""
@@ -100,8 +125,7 @@ def verify_git_objects(archive, manifest):
     if manifest.get('self_contained') is True or policy is not None or capture_policy == 'git-only':
         if manifest.get('self_contained') is True and not bundle.is_file():
             raise ValueError('self-contained archive requires a bundle')
-        with tempfile.TemporaryDirectory(prefix='.archive-verify-', dir=archive.parent) as temporary:
-            verify_object_graph(archive, Path(temporary), manifest)
+        verify_in_scratch(archive, manifest)
     elif bundle.exists():
         common = Path(manifest.get('source_git_common_dir', ''))
         root = common if common.is_dir() else archive
