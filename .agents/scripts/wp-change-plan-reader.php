@@ -34,7 +34,7 @@ if ( ! class_exists( 'WPCP_Reader' ) ) {
 			$mismatches = array();
 			self::flush_caches( $target['type'], $target['id'], $target['taxonomy'] );
 			foreach ( $target['items'] as $item ) {
-				$site   = self::read_item( $target['type'], $target['id'], $target['taxonomy'], $item );
+				$site   = self::read_item( $target['id'], $target['taxonomy'], $item );
 				$expect = 'change' === $item['state'] ? $item['stored'] : $item['site'];
 				if ( 'delete' === $item['kind'] ) {
 					$expect = '';
@@ -55,71 +55,85 @@ if ( ! class_exists( 'WPCP_Reader' ) ) {
 		 * Drop caches before a read-back.
 		 *
 		 * @param string $type     Target type.
-		 * @param int    $id       Id.
+		 * @param int    $target_id Post or term id.
 		 * @param string $taxonomy Taxonomy.
 		 */
-		public static function flush_caches( $type, $id, $taxonomy ) {
+		public static function flush_caches( $type, $target_id, $taxonomy ) {
 			if ( 'post' === $type ) {
-				clean_post_cache( $id );
+				clean_post_cache( $target_id );
 			} elseif ( '' !== $taxonomy ) {
-				clean_term_cache( $id, $taxonomy );
+				clean_term_cache( $target_id, $taxonomy );
 			}
 		}
 
 		/**
 		 * The current site value of an item.
 		 *
-		 * @param string $type     Target type.
-		 * @param int    $id       Post or term id.
+		 * @param int    $target_id Post or term id.
 		 * @param string $taxonomy Taxonomy for term targets.
 		 * @param array  $item     Item.
 		 * @return mixed
 		 */
-		public static function read_item( $type, $id, $taxonomy, array $item ) {
+		public static function read_item( $target_id, $taxonomy, array $item ) {
 			$name  = $item['name'];
 			$value = null;
 			switch ( $item['kind'] ) {
 				case 'post':
-					$post  = get_post( $id );
+					$post  = get_post( $target_id );
 					$value = $post ? (string) $post->$name : null;
 					break;
 				case 'meta':
 				case 'acf':
-					$value = WPCP_Values::single( get_post_meta( $id, $name, false ) );
+					$value = WPCP_Values::single( get_post_meta( $target_id, $name, false ) );
 					break;
 				case 'terms':
-					$value = self::post_term_slugs( $id, $name );
+					$value = self::post_term_slugs( $target_id, $name );
 					break;
 				case 'thumbnail':
-					$value = (int) get_post_thumbnail_id( $id );
+					$value = (int) get_post_thumbnail_id( $target_id );
 					break;
 				case 'alt':
 					$value = (string) WPCP_Values::single( get_post_meta( (int) $name, self::ALT_KEY, false ) );
 					break;
-				case 'term':
-					$term  = get_term( $id, $taxonomy );
-					$value = ( $term && ! is_wp_error( $term ) ) ? (string) $term->$name : null;
-					break;
-				case 'term_meta':
-					$value = WPCP_Values::single( get_term_meta( $id, $name, false ) );
-					break;
-				case 'delete':
-					$term  = get_term( $id, $taxonomy );
-					$value = ( $term && ! is_wp_error( $term ) ) ? $term->slug : '';
+				default:
+					$value = self::read_term_item( $target_id, $taxonomy, $item );
 					break;
 			}
 			return $value;
 		}
 
 		/**
+		 * Read term items, retaining their distinct missing-term fallbacks.
+		 *
+		 * @param int    $target_id Term id.
+		 * @param string $taxonomy Taxonomy.
+		 * @param array  $item Item.
+		 * @return mixed
+		 */
+		private static function read_term_item( $target_id, $taxonomy, array $item ) {
+			$name = $item['name'];
+			switch ( $item['kind'] ) {
+				case 'term':
+					$term = get_term( $target_id, $taxonomy );
+					return ( $term && ! is_wp_error( $term ) ) ? (string) $term->$name : null;
+				case 'term_meta':
+					return WPCP_Values::single( get_term_meta( $target_id, $name, false ) );
+				case 'delete':
+					$term = get_term( $target_id, $taxonomy );
+					return ( $term && ! is_wp_error( $term ) ) ? $term->slug : '';
+			}
+			return null;
+		}
+
+		/**
 		 * A post's term slugs in one taxonomy, sorted.
 		 *
-		 * @param int    $id       Post id.
+		 * @param int    $target_id Post id.
 		 * @param string $taxonomy Taxonomy.
 		 * @return array
 		 */
-		public static function post_term_slugs( $id, $taxonomy ) {
-			$slugs = wp_get_object_terms( $id, $taxonomy, array( 'fields' => 'slugs' ) );
+		public static function post_term_slugs( $target_id, $taxonomy ) {
+			$slugs = wp_get_object_terms( $target_id, $taxonomy, array( 'fields' => 'slugs' ) );
 			return is_wp_error( $slugs ) ? array() : WPCP_Values::sorted( $slugs );
 		}
 	}

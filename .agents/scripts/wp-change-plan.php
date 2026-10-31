@@ -1167,7 +1167,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			$revert = array();
 			$left   = 0;
 			foreach ( $record['items'] as $item ) {
-				$site  = WPCP_Reader::read_item( $record['type'], (int) $record['id'], (string) $record['taxonomy'], $item );
+				$site  = WPCP_Reader::read_item( (int) $record['id'], (string) $record['taxonomy'], $item );
 				$label = "{$record['label']} " . WPCP_Values::label( $item );
 				if ( 'terms' === $item['kind'] ) {
 					$this->taxonomies[ $item['name'] ] = true;
@@ -1194,7 +1194,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 		private function restore_read_back( array $record, array $revert ) {
 			$left = 0;
 			foreach ( $revert as $item ) {
-				$site  = WPCP_Reader::read_item( $record['type'], (int) $record['id'], (string) $record['taxonomy'], $item );
+				$site  = WPCP_Reader::read_item( (int) $record['id'], (string) $record['taxonomy'], $item );
 				$label = "{$record['label']} " . WPCP_Values::label( $item );
 				if ( WPCP_Values::same( $site, $item['old'] ) || ( ! empty( $item['absent'] ) && WPCP_Values::same( $site, '' ) ) ) {
 					WP_CLI::line( "$label: restored " . WPCP_Values::show( $item['old'] ) );
