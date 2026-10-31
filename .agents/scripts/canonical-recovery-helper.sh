@@ -1454,8 +1454,9 @@ def run(*args, env=None):
     return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, env=env, timeout=60).stdout.strip()
 
-def git_values(key):
-    result = subprocess.run([git, '-C', repo, "config", "--get-all", key],
+def git_values(key, local_only=False):
+    scope = ["--local"] if local_only else []
+    result = subprocess.run([git, '-C', repo, "config", *scope, "--get-all", key],
                             text=True, capture_output=True)
     if result.returncode not in (0, 1):
         raise ValueError("cannot enumerate origin configuration")
@@ -1466,6 +1467,10 @@ def audit_record(event, message, identity):
                f"new_slug={new_slug}", f"repository_id={identity}"]
     args = [arg for detail in details for arg in ("--detail", detail)]
     run(audit, "log", event, message, *args, env=audit_env)
+
+def resolved_origin_matches(expected):
+    return (run(git, '-C', repo, remote_command, "get-url", origin) == expected
+            and run(git, '-C', repo, remote_command, "get-url", "--push", origin) == expected)
 
 def apply_transfer():
     # Serialize this operation across repos sharing the registry; compare the
@@ -1484,16 +1489,17 @@ def apply_transfer():
         if any(entry is not matches[0] and entry.get(slug_key, '').casefold() == new_slug.casefold()
                for entry in entries):
             raise ValueError("target slug is already registered at another path")
-        urls = git_values("remote.origin.url")
-        if len(urls) != 1 or git_values("remote.origin.pushurl"):
-            raise ValueError("origin requires one URL and no explicit push URL")
+        url_key = "remote.origin.url"
+        push_key = "remote.origin.pushurl"
+        urls = git_values(url_key)
+        if len(urls) != 1 or git_values(push_key) or git_values(url_key, local_only=True) != urls:
+            raise ValueError("origin requires one repository-local URL and no explicit push URL")
         old_url = urls[0]
         pattern = r"(git@github\.com:|(?:https|http|git)://github\.com(?::[0-9]+)?/|ssh://git@github\.com(?::[0-9]+)?/)([^/?#]+/[^/?#]+?)(\.git)?"
         match = re.fullmatch(pattern, old_url)
         if not match or match[2].casefold() != old_slug.casefold():
             raise ValueError("origin URL does not match the registered GitHub slug")
-        if run(git, '-C', repo, remote_command, "get-url", origin) != old_url or run(
-                git, '-C', repo, remote_command, "get-url", "--push", origin) != old_url:
+        if not resolved_origin_matches(old_url):
             raise ValueError("origin URL rewrites require separate recovery")
         #aidevops:trust-boundary
         # Both lookups must resolve to the requested canonical name and the same
@@ -1516,10 +1522,12 @@ def apply_transfer():
                 output.write(payload)
                 output.flush()
                 os.fsync(output.fileno())
-            if config.read_bytes() != before or git_values("remote.origin.url") != urls or git_values("remote.origin.pushurl"):
+            if config.read_bytes() != before or git_values(url_key) != urls or git_values(push_key):
                 raise ValueError("registry or origin changed during verification")
             run(git, '-C', repo, remote_command, "set-url", origin, new_url)
             try:
+                if git_values(url_key) != [new_url] or git_values(push_key) or not resolved_origin_matches(new_url):
+                    raise ValueError("updated origin did not verify")
                 if config.read_bytes() != before:
                     raise ValueError("registry changed before replacement")
                 os.replace(staging, config)
