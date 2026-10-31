@@ -1820,19 +1820,19 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18832 fix(pulse-merge): skip partial parent closeout for planning publication PRs #bug #framework ref:GH#36230 pr:#36234 completed:2026-10-31
 
-- [ ] t18833 fix(terminal-blocker): re-arm permission_required holds that have no published permission request #auto-dispatch #bug #framework ref:GH#36232
+- [x] t18833 fix(terminal-blocker): re-arm permission_required holds that have no published permission request #auto-dispatch #bug #framework ref:GH#36232 pr:#36251 completed:2026-10-31
 
 - [x] t18834 fix(pulse-merge): remove early-exit pipe readers from pulse-merge libraries and judge sourced libraries in the pipe gate #bug #framework ref:GH#36235 pr:#36238 completed:2026-10-31
 
-- [ ] t18835 fix(issue-sync): remove early-exit pipe readers from issue-sync libraries (GH#36235 sweep) #auto-dispatch #bug #framework ref:GH#36239
+- [x] t18835 fix(issue-sync): remove early-exit pipe readers from issue-sync libraries (GH#36235 sweep) #auto-dispatch #bug #framework ref:GH#36239 pr:#36248 completed:2026-10-31
 
-- [ ] t18836 fix(pulse): remove early-exit pipe readers from remaining pulse libraries (GH#36235 sweep) #auto-dispatch #bug #framework ref:GH#36240
+- [x] t18836 fix(pulse): remove early-exit pipe readers from remaining pulse libraries (GH#36235 sweep) #auto-dispatch #bug #framework ref:GH#36240 pr:#36250 completed:2026-10-31
 
-- [ ] t18837 fix(shared): remove early-exit pipe readers from shared, worker, dispatch, full-loop and claim-task-id libraries (GH#36235 sweep) #auto-dispatch #bug #framework ref:GH#36241
+- [x] t18837 fix(shared): remove early-exit pipe readers from shared, worker, dispatch, full-loop and claim-task-id libraries (GH#36235 sweep) #auto-dispatch #bug #framework ref:GH#36241 pr:#36252 completed:2026-10-31
 
 - [x] t18838 test(pulse-merge): drive planning-publication closeout case through _handle_post_merge_actions (ref GH#36234) #auto-dispatch #feat #framework ref:GH#36242 pr:#36245 completed:2026-10-31
 
-- [ ] t18840 fix(signature): CI gh shim signs comments as vunknown because version.sh cannot find VERSION #bug #framework ref:GH#36247
+- [x] t18840 fix(signature): CI gh shim signs comments as vunknown because version.sh cannot find VERSION #bug #framework ref:GH#36247 pr:#36254 completed:2026-10-31
 
 ## In Progress
 
