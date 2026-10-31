@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.100] - 2026-10-31
+
+### Added
+
+- label same-login external REST quota cost (#36196)
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#36202)
+- Maintenance: mark t18822 complete (pr:#36178 completed:2026-10-31) (#36189)
+- Maintenance: sync GitHub issue refs to TODO.md (#36193)
+- Maintenance: mark t18821 complete (pr:#36176 completed:2026-10-31) (#36179)
+
+### Fixed
+
+- pace REST admissions as time-to-reset divided by remaining quota (t18827) (#36201)
+- recover deferred identity reads via GraphQL (#36192) (#36198)
+- skip bundled Chromium on Playwright pin-bump reinstall when AIDEVOPS_PLAYWRIGHT_EXECUTABLE is valid (GH#36190) (#36195)
+- rerun orphaned in_progress jobs on GitHub-hosted runners
+
 ## [3.39.99] - 2026-10-31
 
 ### Changed

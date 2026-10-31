@@ -11,7 +11,7 @@
 //
 // Output: JSON array of contrast issues or Markdown report
 
-import { loadPlaywright } from '../playwright-runtime.mjs';
+import { loadPlaywright, resolvePlaywrightBrowserExecutable } from '../playwright-runtime.mjs';
 
 // ============================================================================
 // CLI Argument Parsing
@@ -265,10 +265,12 @@ async function main() {
   const options = parseArgs();
   let browser;
   try {
-    const { chromium } = await loadPlaywright();
+    const runtime = await loadPlaywright();
     const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-gpu'] };
-    if (process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE) launchOptions.executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE;
-    browser = await chromium.launch(launchOptions);
+    if (process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim()) {
+      launchOptions.executablePath = resolvePlaywrightBrowserExecutable(runtime);
+    }
+    browser = await runtime.chromium.launch(launchOptions);
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
     await page.goto(options.url, { waitUntil: 'load', timeout: options.timeout });

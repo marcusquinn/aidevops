@@ -11,7 +11,7 @@ import fs from 'node:fs/promises';
 import { SCHEMA_VERSION, VIEWPORTS, validateJourney } from './browser-qa-journey-config.mjs';
 import { assertGuardClean, createGuard, guardViolations, installGuard } from './browser-qa-journey-guard.mjs';
 import { resolvePath, runSteps } from './browser-qa-journey-steps.mjs';
-import { loadPlaywright } from './playwright-runtime.mjs';
+import { loadPlaywright, resolvePlaywrightBrowserExecutable } from './playwright-runtime.mjs';
 
 const SIGN_OUT_TIMEOUT_MS = 10000;
 const HARD_FUSE_GRACE_MS = 30000;
@@ -136,7 +136,9 @@ async function runViewport(session, viewport) {
 
 async function launchBrowser() {
   const playwright = await loadPlaywright(process.env.AIDEVOPS_PLAYWRIGHT_MODULE || null);
-  const executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE || undefined;
+  const executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim()
+    ? resolvePlaywrightBrowserExecutable(playwright)
+    : undefined;
   return playwright.chromium.launch({ headless: true, executablePath });
 }
 

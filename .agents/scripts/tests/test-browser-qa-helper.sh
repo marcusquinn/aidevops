@@ -383,6 +383,7 @@ JS
 	node_path=$(command -v node)
 	local runtime_env=(
 		AIDEVOPS_PLAYWRIGHT_MODULE=""
+		AIDEVOPS_PLAYWRIGHT_EXECUTABLE=""
 		AIDEVOPS_PLAYWRIGHT_BROWSER="chromium"
 		AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR="$runtime_dir"
 		FAKE_PLAYWRIGHT_BROWSER="$browser_path"
@@ -403,6 +404,32 @@ JS
 		print_result "runtime resolves setup-owned prefix without npx" 0
 	else
 		print_result "runtime resolves setup-owned prefix without npx" 1 "resolved=${resolved:-none}, runtime_check=${check_ok}, stale_detected=${stale_ok}"
+	fi
+
+	# GH#36181: with bundled Chromium removed, a valid configured executable
+	# satisfies readiness; unset, invalid or stale-pin cases do not.
+	local missing_env=("${runtime_env[@]}" FAKE_PLAYWRIGHT_BROWSER="${tmp_dir}/removed-chromium" AIDEVOPS_PLAYWRIGHT_VERSION="9.9.9")
+	local configured_ok=0 unset_ok=0 invalid_ok=0 configured_stale_ok=0 configured_status=""
+	if configured_status=$(cd "${tmp_dir}/isolated" && env "${missing_env[@]}" AIDEVOPS_PLAYWRIGHT_EXECUTABLE="$browser_path" \
+		node "$PLAYWRIGHT_RUNTIME" runtime-check) &&
+		[[ "$configured_status" == *"\"configuredExecutable\":\"${browser_path}\""* ]]; then
+		configured_ok=1
+	fi
+	if ! (cd "${tmp_dir}/isolated" && env "${missing_env[@]}" node "$PLAYWRIGHT_RUNTIME" runtime-check >/dev/null); then
+		unset_ok=1
+	fi
+	if ! (cd "${tmp_dir}/isolated" && env "${missing_env[@]}" AIDEVOPS_PLAYWRIGHT_EXECUTABLE="${tmp_dir}" \
+		node "$PLAYWRIGHT_RUNTIME" runtime-check >/dev/null); then
+		invalid_ok=1
+	fi
+	if ! (cd "${tmp_dir}/isolated" && env "${missing_env[@]}" AIDEVOPS_PLAYWRIGHT_EXECUTABLE="$browser_path" \
+		AIDEVOPS_PLAYWRIGHT_VERSION="9.9.10" node "$PLAYWRIGHT_RUNTIME" runtime-check >/dev/null); then
+		configured_stale_ok=1
+	fi
+	if [[ "$configured_ok" -eq 1 && "$unset_ok" -eq 1 && "$invalid_ok" -eq 1 && "$configured_stale_ok" -eq 1 ]]; then
+		print_result "runtime-check accepts a valid configured executable" 0
+	else
+		print_result "runtime-check accepts a valid configured executable" 1 "configured=${configured_ok}, unset=${unset_ok}, invalid=${invalid_ok}, stale=${configured_stale_ok}"
 	fi
 
 	rm -rf "$tmp_dir"
