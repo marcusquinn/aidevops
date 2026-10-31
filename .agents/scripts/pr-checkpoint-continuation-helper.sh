@@ -387,7 +387,7 @@ _pcc_issue_metadata_is_eligible() {
 	local comments_json="[]"
 
 	comments_json=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+		--paginate --slurp 2>/dev/null) || return 2
 	_pr_checkpoint_issue_metadata_is_eligible "$issue_json" "$linked_issue" \
 		"$expected_assignee" "$comments_json" "$checkpoint_assignee" "$PCC_ALLOW_RELEASED"
 	return $?
@@ -404,29 +404,36 @@ _pcc_target_row() {
 	local target_row=""
 	local issue_assignee=""
 	local issue_status=""
+	local validation_rc=0
 	local approval="" approval_id=0 comments="[]" link_kind="" rejection="" self_hold=0
 	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json number,state,title,body,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,closingIssuesReferences 2>/dev/null) || {
 		_pcc_target_rejected pr_metadata_unavailable
-		return 1
+		return 2
 	}
 	issue_json=$(gh api "repos/${repo_slug}/issues/${linked_issue}" 2>/dev/null) || {
 		_pcc_target_rejected issue_metadata_unavailable
-		return 1
+		return 2
 	}
 	if ! _pr_checkpoint_pr_metadata_is_eligible "$pr_json" "$repo_slug" "$pr_number" \
 		"$linked_issue" "" "" "$checkpoint_assignee"; then
 		rejection="pr_metadata_ineligible"
-	elif ! _pcc_issue_metadata_is_eligible "$repo_slug" "$issue_json" "$linked_issue" \
+	elif _pcc_issue_metadata_is_eligible "$repo_slug" "$issue_json" "$linked_issue" \
 		"$expected_assignee" "$checkpoint_assignee"; then
+		:
+	else
+		validation_rc=$?
+		[[ "$validation_rc" -ne 2 ]] || return 2
 		rejection="issue_metadata_ineligible"
 	fi
 	if [[ -n "$rejection" ]]; then
 		comments=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" --paginate --slurp) || {
 			_pcc_target_rejected issue_comments_unavailable
-			return 1
+			return 2
 		}
 		approval=$(_pr_checkpoint_revised_target "$repo_slug" "$pr_json" "$issue_json" "$comments" "$expected_assignee") || {
+			validation_rc=$?
+			[[ "$validation_rc" -ne 2 ]] || return 2
 			# Keep stdout exclusively TSV and omit bodies, titles and comments.
 			_pcc_target_rejected "$rejection"
 			printf '%s\n' "$pr_json" "$issue_json" | jq -sc \
@@ -597,7 +604,7 @@ _pcc_dispatch() {
 	}
 	target_row=$(_pcc_target_row "$repo_slug" "$pr_number" "$linked_issue" \
 		"$expected_assignee" "$PCC_CHECKPOINT_ASSIGNEE") || {
-		PCC_TARGET_REJECTED=1
+		PCC_TARGET_REJECTED=$?
 		printf 'PR_CHECKPOINT_CONTINUATION_BLOCKED: PR #%s in %s is not an open, unheld worker draft linked to issue #%s with an exact head\n' \
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 1
