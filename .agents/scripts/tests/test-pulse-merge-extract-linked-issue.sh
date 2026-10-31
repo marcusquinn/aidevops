@@ -305,6 +305,8 @@ test_merge_gate_association_is_not_closure() {
 	local fn_src="" result=0 linked_issue="" gate_issue="" gate_repo="" author_rc=0 review_rc=0
 	fn_src=$(awk '/^_check_pr_merge_gates\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
 	eval "$fn_src"
+	# Closure validation has its own merge-contradiction harness.
+	_gh_pr_merge_closure_check() { return 0; }
 	_interactive_claim_fence_blocks_merge() { return 1; }
 	_pm_gate_review_mode() { return 0; }
 	_pm_gate_author_trust() { return "$author_rc"; }

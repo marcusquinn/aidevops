@@ -670,6 +670,20 @@ _check_pr_merge_gates() {
 	_pm_gate_repository_and_issue "$pr_number" "$repo_slug" "$linked_issue" "$expected_head_sha" "$trusted_issue_sync" || return 1
 	_pm_gate_origin_authority "$pr_number" "$repo_slug" "$linked_issue" "$pr_author" \
 		"$trusted_issue_sync" "$author_permission" || return 1
+	# Creation wrappers are not final authority. Check before merge or repair,
+	# but only route feedback after the existing author/issue trust gates pass.
+	local closure_json="" closure_reason=""
+	if ! closure_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body,closingIssuesReferences 2>/dev/null); then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — closing-reference metadata unavailable" >>"$LOGFILE"
+		return 1
+	fi
+	if ! closure_reason=$(_gh_pr_merge_closure_check "$closure_json" "$repo_slug"); then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — ${closure_reason}" >>"$LOGFILE"
+		if ! _gh_pr_repair_merge_closure "$pr_number" "$repo_slug" "$closure_json"; then
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "review" "$pr_labels" || true
+		fi
+		return 1
+	fi
 	if [[ "$review_gate_mode" == "$ci_rebase_only" ]]; then
 		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} passed non-review trust gates for ${review_gate_mode} evaluation; CHANGES_REQUESTED remains blocking" >>"$LOGFILE"
 		return 0

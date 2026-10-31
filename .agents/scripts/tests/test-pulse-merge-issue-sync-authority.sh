@@ -60,6 +60,8 @@ gate_src=$(awk '
 }
 
 _handle_changes_requested_review_gate() { return 0; }
+# Closure validation has its own merge-contradiction harness.
+_gh_pr_merge_closure_check() { return 0; }
 _pulse_is_trusted_issue_sync_pr() {
 	printf '%s %s %s\n' "$1" "$2" "$3" >>"$TRUST_CALLS"
 	[[ "$FIXTURE_TRUSTED" -eq 1 && "$3" == "head-current" ]]

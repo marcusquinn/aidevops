@@ -944,6 +944,8 @@ test_converged_changes_requested_never_falls_through_to_merge() {
 
 test_ci_rebase_only_gate_stops_before_review_bot_boundary() {
 	setup_test_env
+	# Closure validation has its own merge-contradiction harness.
+	_gh_pr_merge_closure_check() { return 0; }
 	define_process_helper || { print_result "defines repair-only gate helper" 1 "could not extract review gate"; teardown_test_env; return 0; }
 	local gate_src="" gate_rc=0 review_bot_calls=0
 	local old_agents_dir="${AGENTS_DIR:-}"
