@@ -28,10 +28,22 @@ _MANAGED_AUTO_DISPATCH_LABEL_SPECS=(
 	"auto-dispatch" "Eligible for autonomous worker dispatch" "0E8A16"
 )
 
+_MANAGED_NO_AUTO_DISPATCH_LABEL_SPECS=(
+	"no-auto-dispatch" "Opt-out: block all auto-dispatch on this issue" "EDEDED"
+)
+
 _MANAGED_APPROVAL_ISSUE_LABEL_SPECS=(
 	"${_MANAGED_APPROVAL_HOLD_LABEL_SPECS[@]}"
 	"${_MANAGED_AUTO_DISPATCH_LABEL_SPECS[@]}"
-	"no-auto-dispatch" "Opt-out: block all auto-dispatch on this issue" "EDEDED"
+	"${_MANAGED_NO_AUTO_DISPATCH_LABEL_SPECS[@]}"
+)
+
+# GH#36292: signed release requests put a hold on the PR and an approval-only,
+# never-dispatched issue. Managed package repos need not carry system labels.
+_MANAGED_RELEASE_APPROVAL_LABEL_SPECS=(
+	"release-approval-required" "Publication requires signed exact-head release approval" "B60205"
+	"hold-for-review" "Opt-out: block issue auto-dispatch or PR auto-merge for maintainer review" "E4007C"
+	"${_MANAGED_NO_AUTO_DISPATCH_LABEL_SPECS[@]}"
 )
 
 _MANAGED_DEPENDABOT_INTAKE_LABEL_SPECS=(
@@ -125,5 +137,14 @@ managed_labels_ensure_approval_set() {
 
 	managed_labels_ensure_specs "$repo" "$inventory_runner" "$create_runner" \
 		"${approval_specs[@]}"
+	return $?
+}
+
+managed_labels_ensure_release_approval_set() {
+	local repo="$1"
+	local inventory_runner="$2"
+	local create_runner="$3"
+	managed_labels_ensure_specs "$repo" "$inventory_runner" "$create_runner" \
+		"${_MANAGED_RELEASE_APPROVAL_LABEL_SPECS[@]}"
 	return $?
 }

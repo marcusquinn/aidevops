@@ -144,6 +144,15 @@ gh() {
 		fi
 		;;
 	'issue close') [[ "$SCENARIO" != close_error ]] || return 1 ;;
+	'api repos/owner/app/labels?'*)
+		[[ "$SCENARIO" != request_labels_error ]] || return 1
+		# GH#36292: a package repo without aidevops system labels.
+		if [[ "$SCENARIO" == request ]]; then
+			printf 'release-approval-required\nbug\n'
+		else
+			printf 'release-approval-required\nhold-for-review\nno-auto-dispatch\n'
+		fi
+		;;
 	'label create') return 0 ;;
 	# No held worker PRs: approval processing alone (GH#36268 cases run below).
 	'pr list') printf '[]\n' ;;
@@ -295,10 +304,29 @@ grep -q 'issue-edit 12 --repo owner/app --body-file -' "${TEST_ROOT}/calls"
 grep -q 'Maintainer command: `sudo aidevops approve issue 12 owner/app`' "${TEST_ROOT}/request"
 grep -q -- '--label no-auto-dispatch' "${TEST_ROOT}/calls"
 if grep -q -- '--label auto-dispatch' "${TEST_ROOT}/calls"; then exit 1; fi
+# GH#36292: only absent labels are created, before the first PR label write.
+grep -q '^label create hold-for-review --repo owner/app ' "${TEST_ROOT}/calls"
+grep -q '^label create no-auto-dispatch --repo owner/app ' "${TEST_ROOT}/calls"
+if grep -q '^label create release-approval-required ' "${TEST_ROOT}/calls"; then exit 1; fi
+[[ "$(grep -n '^label create no-auto-dispatch ' "${TEST_ROOT}/calls" | cut -d: -f1)" -lt "$(grep -n '^pr-edit ' "${TEST_ROOT}/calls" | cut -d: -f1)" ]]
 grep -q 'cloudron-release-approval 1.2.3' "${TEST_ROOT}/request"
 grep -q "$HEAD_SHA" "${TEST_ROOT}/request"
 if grep -q 'Old entry' "${TEST_ROOT}/request"; then exit 1; fi
 printf 'PASS request records exact head, changelog and dispatch hold\n'
+
+# A converged repo costs one label read and no label writes.
+export SCENARIO=request_converged
+: >"${TEST_ROOT}/calls"
+release_request owner/app 7 >/dev/null
+if grep -q '^label create ' "${TEST_ROOT}/calls"; then exit 1; fi
+# Unknown label state fails closed before any hold or issue write.
+export SCENARIO=request_labels_error
+: >"${TEST_ROOT}/calls"
+rc=0
+output=$(release_request owner/app 7 2>&1) || rc=$?
+[[ "$rc" -eq 1 && "$output" == *'Unable to provision release approval labels in owner/app'* ]]
+if grep -Eq '^(label create |pr-edit |create )' "${TEST_ROOT}/calls"; then exit 1; fi
+printf 'PASS request provisions only missing labels and fails closed on unknown label state\n'
 
 # An already finalized request is read-only, preserving its signed digest.
 export SCENARIO=request_existing
@@ -489,6 +517,7 @@ printf 'PASS half-hour approval routine registered\n'
 	release_request() {
 		local repo="$1" pr="$2"
 		printf 'request %s %s\n' "$repo" "$pr" >>"${TEST_ROOT}/calls"
+		[[ "$HELD_SCENARIO" != request_error ]] || return 1
 		touch "${TEST_ROOT}/requested"
 		return 0
 	}
@@ -584,6 +613,14 @@ printf 'PASS half-hour approval routine registered\n'
 	no_call 'pr-close 21'
 	grep -q 'waits for terminal-green checks' "${TEST_ROOT}/held-out"
 	printf 'PASS held: pending checks wait; only bumps main already bundles are superseded\n'
+
+	# GH#36292: a failed request fails the run without blocking independent work.
+	run_held request_error true 1
+	has_call 'request owner/app 22'
+	has_call 'pr-close 20'
+	no_call 'pr-close 21'
+	no_call 'gh issue close 31 --repo owner/app --reason not planned'
+	printf 'PASS held: a failed request is counted; bumps main bundles are still superseded\n'
 
 	run_held signed true 0
 	no_call 'request owner/app 22'
