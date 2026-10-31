@@ -947,6 +947,10 @@ _recover_interactive_pr_work_issue() {
 # Conflict checkpoints intentionally use For/Ref, not closing keywords.
 # Resolve independently of the caller's closing-only target, retaining the
 # existing linked-issue validation and all later routing guards (GH#33763).
+# Partial worker deliveries also declare their work issue with a standalone
+# For/Ref line. The merge gates already associate that explicit identity, so
+# CI/review repair must use it too or the PR is stranded with failing checks
+# and no route (GH#36260). It is a repair target only, never closure authority.
 _route_pr_resolve_work_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -954,9 +958,12 @@ _route_pr_resolve_work_issue() {
 	local kind="$4"
 	if [[ "$kind" == "conflict" ]]; then
 		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
+	elif [[ -z "$linked_issue" ]]; then
+		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit) || linked_issue=""
 	fi
 	if [[ -z "$linked_issue" ]]; then
-		linked_issue=$(_recover_interactive_pr_work_issue "$pr_number" "$repo_slug") || return 1
+		# Fall through so an unroutable PR always logs why, every cycle.
+		linked_issue=$(_recover_interactive_pr_work_issue "$pr_number" "$repo_slug") || linked_issue=""
 	fi
 	_route_pr_has_linked_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || return 1
 	printf '%s' "$linked_issue"
