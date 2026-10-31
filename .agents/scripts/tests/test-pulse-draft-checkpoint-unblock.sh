@@ -157,6 +157,7 @@ reset_case() {
 		"$(label_event 2026-10-29T19:27:24Z runner1 status:in-progress)" \
 		"$(label_event 2026-10-29T19:32:10Z runner1 status:blocked)")
 	TEST_TIMELINE_RC=0
+	TEST_TIMELINE_ADVANCE=0
 	TEST_STATUS_RC=0
 	TEST_COMMENT_RC=0
 	unset PULSE_DRAFT_UNBLOCK_MAX_PER_PR PULSE_DRAFT_UNBLOCK_WINDOW_AFTER_SECONDS
@@ -187,6 +188,7 @@ gh() {
 		;;
 	"repos/${SLUG}/issues/501/timeline"*)
 		[[ "$TEST_TIMELINE_RC" -eq 0 ]] || return "$TEST_TIMELINE_RC"
+		[[ "$TEST_TIMELINE_ADVANCE" -eq 0 ]] || printf '%s\n' "$((TEST_NOW + TEST_TIMELINE_ADVANCE))" >"$CLOCK_FILE"
 		printf '%s' "$TEST_TIMELINE"
 		;;
 	*) return 1 ;;
@@ -524,6 +526,27 @@ test_deadline_and_listing_cost() {
 	return 0
 }
 
+test_hard_stop_during_last_candidate() {
+	local cursor="" last_issue=""
+	reset_case
+	TEST_TIMELINE_ADVANCE=10
+	TEST_DEADLINE=$((TEST_NOW + 5))
+	run_pass
+	assert_no_write "a hard stop during the final timeline read returns partial without writes" 3
+	cursor=$(_pdcu_cursor_file "$SLUG")
+	if [[ -r "$cursor" ]]; then
+		IFS= read -r last_issue <"$cursor" || last_issue=""
+	fi
+	if [[ "$last_issue" == 501 ]] &&
+		grep -qF "deadline reached before restoring #501; the rest resume next sweep: visited=1 restored=0" "$LOGFILE" &&
+		! grep -qF "— complete:" "$LOGFILE"; then
+		pass "the final-candidate hard stop saves the cursor without reporting completion"
+	else
+		fail "the final-candidate hard stop saves the cursor without reporting completion" "cursor=${last_issue}"
+	fi
+	return 0
+}
+
 test_pass_summary_logged() {
 	reset_case
 	run_pass
@@ -682,6 +705,7 @@ main() {
 	test_idempotent_and_capped
 	test_unreadable_reads_fail_closed
 	test_deadline_and_listing_cost
+	test_hard_stop_during_last_candidate
 	test_pass_summary_logged
 	test_rotation_resumes_after_cursor
 	test_status_and_comment_failures

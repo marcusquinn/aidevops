@@ -245,7 +245,7 @@ _pdcu_log() {
 # The hard stop epoch is rechecked after the slow comment/timeline reads and
 # before any write, so a read that crosses it never restores the candidate.
 # Args: $1=repo slug, $2=issue JSON, $3=PR number, $4=PR head SHA, $5=stop epoch
-# Returns: 0 when restored, 1 when no write was made
+# Returns: 0 when restored, 1 when skipped, 3 when the hard stop prevented a write
 #######################################
 _pdcu_try_issue() {
 	local repo_slug="$1" issue_json="$2" pr_number="$3" head_sha="$4" stop="${5:-0}"
@@ -303,7 +303,7 @@ _pdcu_try_issue() {
 	now_epoch=$(date +%s) || return 1
 	if [[ "$stop" =~ ^[0-9]+$ && "$stop" -gt 0 && "$now_epoch" -ge "$stop" ]]; then
 		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: deadline reached before restoration"
-		return 1
+		return 3
 	fi
 	if ! set_issue_status "$issue_num" "$repo_slug" available \
 		${transition_args[@]+"${transition_args[@]}"} >/dev/null 2>&1; then
@@ -386,7 +386,7 @@ _pdcu_log_summary() {
 _pm_reconcile_draft_checkpoint_blocks() {
 	local repo_slug="$1" deadline="$2" stop="${3:-$2}"
 	local issues="" refs="" issue_json="" issue_num="" matches="" pr_number="" head_sha="" now_epoch=""
-	local visited=0 restored=0 cursor_file="" ordered=""
+	local visited=0 restored=0 cursor_file="" ordered="" try_rc=0
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
 	[[ "$stop" =~ ^[0-9]+$ ]] || stop="$deadline"
 	now_epoch=$(date +%s) || return 1
@@ -425,10 +425,17 @@ _pm_reconcile_draft_checkpoint_blocks() {
 		fi
 		IFS=$'\t' read -r _ pr_number head_sha <<<"$matches"
 		visited=$((visited + 1))
+		try_rc=0
 		if _pdcu_try_issue "$repo_slug" "$issue_json" "$pr_number" "$head_sha" "$stop"; then
 			restored=$((restored + 1))
+		else
+			try_rc=$?
 		fi
 		_pdcu_cursor_write "$cursor_file" "$issue_num"
+		if [[ "$try_rc" -eq 3 ]]; then
+			_pdcu_log_summary "$repo_slug" "$visited" "$restored" "deadline reached before restoring #${issue_num}; the rest resume next sweep"
+			return 3
+		fi
 	done <<<"$ordered"
 	_pdcu_log_summary "$repo_slug" "$visited" "$restored" complete
 	return 0
