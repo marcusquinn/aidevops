@@ -5,6 +5,7 @@
 
 from pathlib import Path
 import re
+import shutil
 import tempfile
 from worktree_recovery_timing import timed
 
@@ -100,8 +101,11 @@ def verify_git_objects(archive, manifest):
     if manifest.get('self_contained') is True or policy is not None or capture_policy == 'git-only':
         if manifest.get('self_contained') is True and not bundle.is_file():
             raise ValueError('self-contained archive requires a bundle')
-        with tempfile.TemporaryDirectory(prefix='.archive-verify-', dir=archive.parent) as temporary:
-            verify_object_graph(archive, Path(temporary), manifest)
+        # Keep interrupted evidence on any failure/cancellation. Only a completed
+        # independent graph verification authorizes deleting this owned scratch.
+        scratch = Path(tempfile.mkdtemp(prefix='.archive-verify-', dir=archive.parent))
+        verify_object_graph(archive, scratch, manifest)
+        shutil.rmtree(scratch)
     elif bundle.exists():
         common = Path(manifest.get('source_git_common_dir', ''))
         root = common if common.is_dir() else archive
