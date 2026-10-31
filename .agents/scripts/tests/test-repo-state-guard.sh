@@ -20,8 +20,15 @@ cat >"${tmp_dir}/bin/gh" <<'STUB'
 set -euo pipefail
 printf '%s\n' "$*" >>"${GH_CALL_LOG}"
 mode=$(cat "${GH_MODE_FILE}")
+# recover-after-retry: only the first identity lookup is unanswered (REST
+# deferred and GraphQL down); every later lookup answers.
+user_calls_file="${GH_MODE_FILE}.user-calls"
+user_calls=$(cat "$user_calls_file" 2>/dev/null || printf '0')
 if [[ "$1" == "api" && "$2" == "user" ]]; then
-  if [[ "$mode" == "rest-down" || "$mode" == "all-down" ]]; then
+  user_calls=$((user_calls + 1))
+  printf '%s\n' "$user_calls" >"$user_calls_file"
+  if [[ "$mode" == "rest-down" || "$mode" == "all-down" ||
+    ( "$mode" == "recover-after-retry" && "$user_calls" -le 1 ) ]]; then
     printf '%s\n' '[gh-transport] deferred: rest core reservation' >&2
     exit 75
   fi
@@ -34,6 +41,11 @@ fi
 if [[ "$1" == "api" && "$2" == "graphql" ]]; then
   case "$mode" in
     all-down) exit 1 ;;
+    recover-after-retry)
+      [[ "$user_calls" -gt 1 ]] || exit 1
+      viewer="tester"; permission="WRITE"
+      ;;
+    triage-plus) viewer="tester"; permission="TRIAGE_PLUS" ;;
     rest-down) viewer="tester"; permission="WRITE" ;;
     viewer-mismatch) viewer="someone-else"; permission="WRITE" ;;
     managed) viewer="tester"; permission="WRITE" ;;
@@ -235,6 +247,12 @@ printf 'external\n' >"$mode_file"
 rc=$(guard_rc_for "other/project")
 check "$([[ "$rc" == 1 ]] && echo 1 || echo 0)" "confirmed READ viewer stays a confirmed block (rc 1)" "rc=${rc}"
 
+# TRIAGE_PLUS is a real RepositoryPermission value below write: a confirmed
+# block, not an indeterminate verdict that would trigger release retries.
+printf 'triage-plus\n' >"$mode_file"
+rc=$(guard_rc_for "other/project")
+check "$([[ "$rc" == 1 ]] && echo 1 || echo 0)" "confirmed TRIAGE_PLUS viewer stays a confirmed block (rc 1)" "rc=${rc}"
+
 printf 'viewer-mismatch\n' >"$mode_file"
 rc=$(guard_rc_for "other/project")
 check "$([[ "$rc" == 2 ]] && echo 1 || echo 0)" "viewerPermission for a different login is not trusted (rc 2)" "rc=${rc}"
@@ -264,6 +282,34 @@ if grep -q 'issues/866/comments' "$call_log"; then
 	check 0 "indeterminate authority posts no release comment"
 else
 	check 1 "indeterminate authority posts no release comment"
+fi
+
+# The retry must recover: first lookup unanswered, the retry answers, and the
+# claim is then released (the stranded-claim incident, GH#36184).
+printf 'recover-after-retry\n' >"$mode_file"
+printf '0\n' >"${mode_file}.user-calls"
+: >"$call_log"
+set +e
+recovered_output=$(AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS="0" bash -c '
+  source "${0}/shared-constants.sh"
+  source "${0}/worker-lifecycle-common.sh"
+  source "${0}/headless-runtime-failure.sh"
+  WORKER_ISSUE_NUMBER=866 DISPATCH_REPO_SLUG=tester/project _release_dispatch_claim issue-866 worker_complete 0 0
+' "$AGENTS_SCRIPTS_DIR" 2>&1)
+recovered_rc=$?
+set -e
+if [[ "$recovered_rc" -eq 0 && "$recovered_output" == *"retrying claim release in 0s"* &&
+	"$recovered_output" == *"Released claim"* &&
+	"$recovered_output" != *"remains unpersisted"* ]]; then
+	check 1 "indeterminate authority that answers on retry releases the claim"
+else
+	check 0 "indeterminate authority that answers on retry releases the claim" "rc=${recovered_rc} output=${recovered_output}"
+fi
+user_lookups=$(grep -c '^api user' "$call_log" || true)
+if grep -q 'issues/866/comments' "$call_log" && [[ "${user_lookups:-0}" -ge 2 ]]; then
+	check 1 "recovered release re-queries authority and posts the release comment"
+else
+	check 0 "recovered release re-queries authority and posts the release comment" "user_lookups=${user_lookups}"
 fi
 
 printf '\nResult: %d passed, %d failed\n' "$pass_count" "$fail_count"

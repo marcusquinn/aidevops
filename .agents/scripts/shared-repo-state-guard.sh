@@ -113,7 +113,9 @@ aidevops_repo_state_current_user() {
 # being checked (case-insensitive, as GitHub logins are).
 #
 # Args: $1 = repo slug, $2 = user login being checked
-# Output: admin|maintain|write|triage|read, or empty when indeterminate.
+# Output: admin|maintain|write|triage_plus|triage|read (every RepositoryPermission
+#         value; anything below write is a confirmed block), or empty when
+#         indeterminate.
 #######################################
 _aidevops_repo_state_viewer_permission() {
 	local slug="$1"
@@ -125,7 +127,7 @@ _aidevops_repo_state_viewer_permission() {
 		return 0
 	fi
 	case "$permission" in
-		ADMIN | MAINTAIN | WRITE | TRIAGE | READ)
+		ADMIN | MAINTAIN | WRITE | TRIAGE_PLUS | TRIAGE | READ)
 			_aidevops_repo_state_lower "$permission"
 			;;
 	esac
@@ -143,7 +145,7 @@ _aidevops_repo_state_viewer_permission() {
 #   $1 = repo slug (owner/repo)
 #   $2 = optional authenticated login override
 # Returns: 0 = state writes allowed; 1 = confirmed not allowed (invalid slug
-#          or a read/triage/none verdict); 2 = indeterminate (the login or
+#          or a read/triage/triage_plus/none verdict); 2 = indeterminate (the login or
 #          permission could not be read through REST or GraphQL).
 #######################################
 aidevops_can_manage_repo_issue_state() {
