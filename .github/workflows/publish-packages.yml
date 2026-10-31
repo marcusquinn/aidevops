@@ -110,7 +110,13 @@ jobs:
       - name: Extract CHANGELOG section
         run: |
           VERSION="${RELEASE_TAG#v}"
-          BODY=$(awk "/^## \[$VERSION\]/,/^## \[/" CHANGELOG.md | sed '$d')
+          BODY=$(awk -v version="$VERSION" '
+            /^## \[/ {
+              if (found) exit
+              if ($2 == "[" version "]") found = 1
+            }
+            found { print }
+          ' CHANGELOG.md)
           PREV_TAG=$(git describe --tags --abbrev=0 "$RELEASE_TAG^" 2>/dev/null || true)
           if [[ -n "$PREV_TAG" ]]; then
             EXTRA=$(git log --oneline --max-count=10 --invert-grep \
