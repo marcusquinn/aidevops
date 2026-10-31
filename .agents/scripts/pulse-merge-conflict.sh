@@ -562,7 +562,7 @@ _verify_pr_overlaps_commit() {
 		if _is_planning_path_for_overlap "$file"; then
 			continue
 		fi
-		if printf '%s\n' "$commit_files" | grep -Fxq -- "$file"; then
+		if grep -Fxq -- "$file" <<<"$commit_files"; then
 			return 0
 		fi
 	done <<<"$pr_files"
@@ -670,10 +670,12 @@ Earlier versions of \`_close_conflicting_pr\` would have auto-closed this PR wit
 #######################################
 _parse_squash_merge_pr() {
 	local subject="$1"
+	local squash_re='\(#([0-9]+)\)$'
 	[[ -n "$subject" ]] || return 0
-	printf '%s' "$subject" |
-		grep -oE '\(#[0-9]+\)$' |
-		grep -oE '[0-9]+' | head -1 || true
+	# Bash regex, not a pipe into head (GH#36235).
+	if [[ "$subject" =~ $squash_re ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+	fi
 	return 0
 }
 
@@ -881,7 +883,7 @@ _close_conflicting_pr_check_ownership_guard() {
 	# GH#18285 + GH#18650 Fix 4: post a one-time rebase nudge so the
 	# maintainer has a visible signal that their CONFLICTING PR needs
 	# manual attention.
-	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:interactive'; then
+	if grep -Fxq -- 'origin:interactive' <<<"$pr_labels"; then
 		echo "[pulse-wrapper] Deterministic merge: skipping auto-close of origin:interactive PR #${pr_number} — maintainer session work is never auto-closed" >>"$LOGFILE"
 		_post_rebase_nudge_on_interactive_conflicting "$pr_number" "$repo_slug"
 		return 0
@@ -889,8 +891,8 @@ _close_conflicting_pr_check_ownership_guard() {
 
 	# Guard 2: origin:worker or origin:worker-takeover — pulse owns these
 	# PRs; close is safe and correct.
-	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:worker' ||
-		printf '%s\n' "$pr_labels" | grep -Fxq 'origin:worker-takeover'; then
+	if grep -Fxq -- 'origin:worker' <<<"$pr_labels" ||
+		grep -Fxq -- 'origin:worker-takeover' <<<"$pr_labels"; then
 		return 1
 	fi
 
@@ -1192,7 +1194,8 @@ _close_conflicting_pr() {
 	# mode" → "t153") so the classifier can search recent commits
 	# with a word-boundary-safe regex.
 	local task_id_from_pr
-	task_id_from_pr=$(printf '%s' "$pr_title" | grep -oE '^(t[0-9]+|GH#[0-9]+)' | head -1) || task_id_from_pr=""
+	task_id_from_pr=$(grep -oE -- '^(t[0-9]+|GH#[0-9]+)' <<<"$pr_title") || task_id_from_pr=""
+	task_id_from_pr="${task_id_from_pr%%$'\n'*}"
 	local linked_issue_for_supersession
 	linked_issue_for_supersession=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue_for_supersession=""
 

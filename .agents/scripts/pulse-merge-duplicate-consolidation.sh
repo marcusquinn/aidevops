@@ -239,7 +239,10 @@ _pmp_consolidate_duplicate_pr_group() {
 		return 0
 	fi
 
-	candidate_line=$(grep "$group_pattern" "$group_file" | sort -t'|' -k3,3nr -k4,4r | head -1) || candidate_line=""
+	# sort drains its input, so only the trailing head was an early-exit
+	# reader; take the first line in-shell instead (GH#36235).
+	candidate_line=$(grep "$group_pattern" "$group_file" | sort -t'|' -k3,3nr -k4,4r) || candidate_line=""
+	candidate_line="${candidate_line%%$'\n'*}"
 	IFS='|' read -r _issue candidate_pr candidate_score _created candidate_is_draft <<<"$candidate_line"
 	[[ "$candidate_pr" =~ ^[0-9]+$ ]] || return 0
 	if ! _pmp_pr_consolidation_candidate_is_healthy "$candidate_score" "$candidate_is_draft"; then

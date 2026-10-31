@@ -592,10 +592,15 @@ jobs:
         # under pipefail (`printf | grep -q`) gave 209/300 false negatives on
         # Linux in GH#35943. The repo-wide pipe gate judges only added lines,
         # so judge every line here: suites joining this glob cannot carry
-        # legacy flakes into a required check.
+        # legacy flakes into a required check. GH#36235: the pulse-merge
+        # libraries the suites exercise inherit pulse-wrapper.sh's pipefail,
+        # so judge them too; self-test the checker first so a predicate that
+        # stops matching on this runner's awk cannot pass vacuously.
         mapfile -t shell_suites < <(grep -E '\.sh$' "${log_dir}/suites.txt")
+        mapfile -t merge_libs < <(git ls-files '.agents/scripts/pulse-merge*.sh')
         pipe_rc=0
-        bash .agents/scripts/pipe-early-exit-check.sh --scan-files "${shell_suites[@]}" || pipe_rc=$?
+        bash .agents/scripts/tests/test-pipe-early-exit-check.sh || pipe_rc=$?
+        bash .agents/scripts/pipe-early-exit-check.sh --scan-files "${shell_suites[@]}" "${merge_libs[@]}" || pipe_rc=$?
         if [[ "$pipe_rc" -ne 0 ]]; then
           echo "::error title=Pulse-merge suite pipe safety::early-exit pipe readers under pipefail; see .agents/reference/shell-style-guide.md (Early-Exit Pipe Readers)"
         fi

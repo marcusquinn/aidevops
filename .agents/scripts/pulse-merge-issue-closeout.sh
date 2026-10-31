@@ -60,13 +60,16 @@ _pm_resolve_superseded_original_issue() {
 _pm_extract_partial_parent_reference() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local pr_body="" parent_issue=""
+	local pr_body="" parent_issue="" refs=""
 
 	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
 	if [[ "$pr_body" == *"<!-- aidevops:planning-publication:v1 "* ]]; then
 		return 0
 	fi
-	parent_issue=$(printf '%s' "$pr_body" | grep -ioE '(^|[[:space:]])(for|ref)[[:space:]]+#[0-9]+' | head -1 | grep -oE '[0-9]+') || parent_issue=""
+	# Capture, then take the first line without an early-exit reader (GH#36235).
+	refs=$(grep -ioE -- '(^|[[:space:]])(for|ref)[[:space:]]+#[0-9]+' <<<"$pr_body") || refs=""
+	parent_issue="${refs%%$'\n'*}"
+	parent_issue="${parent_issue##*#}"
 	printf '%s' "$parent_issue"
 	return 0
 }
@@ -86,7 +89,7 @@ _pm_issue_needs_partial_closeout() {
 		return 0
 	fi
 
-	if printf '%s' "$issue_body" | grep -qiE '\b(parent|umbrella|roadmap|lifecycle|incident|acceptance criteria)\b'; then
+	if grep -qiE -- '\b(parent|umbrella|roadmap|lifecycle|incident|acceptance criteria)\b' <<<"$issue_body"; then
 		return 0
 	fi
 
@@ -110,7 +113,8 @@ _pm_unmet_acceptance_criteria() {
 	local issue_body="$1"
 	local criteria
 
-	criteria=$(printf '%s' "$issue_body" | sed -nE 's/^[[:space:]]*[-*+][[:space:]]*\[[[:space:]]\][[:space:]]*/- /p' | head -20) || criteria=""
+	criteria=$(sed -nE 's/^[[:space:]]*[-*+][[:space:]]*\[[[:space:]]\][[:space:]]*/- /p' <<<"$issue_body") || criteria=""
+	criteria=$(sed -n '1,20p' <<<"$criteria") || criteria=""
 	if [[ -z "$criteria" ]]; then
 		criteria="- Review the parent issue acceptance criteria and file worker-ready child issues for remaining scope."
 	fi

@@ -98,7 +98,10 @@ _ci_check_url_has_infra_failure_log() {
 	failed_log=$(gh run view "$run_id" --repo "$repo_slug" --job "$job_id" --log-failed 2>/dev/null) || failed_log=""
 	[[ -n "$failed_log" ]] || return 1
 
-	if printf '%s\n' "$failed_log" | grep -Eiq '(Process completed with exit code (124|137|143)|timed out after|[[:space:]]Killed[[:space:]]+timeout|timeout --kill-after|The operation was canceled|cancelled due to timeout|API rate limit exceeded for (installation|user)|You have exceeded a secondary rate limit|toomanyrequests:.*(Rate exceeded|pull rate limit|reached your.*rate limit)|Error response from daemon:.*(429|Too Many Requests|Rate exceeded)|(failed to pull image|failed to resolve source metadata|failed to authorize).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable)|(public\.ecr\.aws|docker\.io|ghcr\.io|registry[^[:space:]]*).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable))'; then
+	# Here-string, not a pipe: failed logs are large, and under the caller's
+	# pipefail an early grep -q exit made infra flakes look like code
+	# failures (GH#36235).
+	if grep -Eiq -- '(Process completed with exit code (124|137|143)|timed out after|[[:space:]]Killed[[:space:]]+timeout|timeout --kill-after|The operation was canceled|cancelled due to timeout|API rate limit exceeded for (installation|user)|You have exceeded a secondary rate limit|toomanyrequests:.*(Rate exceeded|pull rate limit|reached your.*rate limit)|Error response from daemon:.*(429|Too Many Requests|Rate exceeded)|(failed to pull image|failed to resolve source metadata|failed to authorize).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable)|(public\.ecr\.aws|docker\.io|ghcr\.io|registry[^[:space:]]*).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable))' <<<"$failed_log"; then
 		return 0
 	fi
 	return 1

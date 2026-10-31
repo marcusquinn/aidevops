@@ -1812,6 +1812,19 @@ _pms_compute_saturation_state() {
 }
 
 #######################################
+# Print the value of KEY from _pms_compute_saturation_state output.
+# Here-string awk lookup: no early-exit pipe reader under the caller's
+# pipefail, and a missing key prints "" with exit 0 (GH#36235).
+# Args: $1=state (KEY=VALUE lines)  $2=key
+#######################################
+_pms_saturation_field() {
+	local state="$1"
+	local key="$2"
+	awk -F= -v key="$key" '$1 == key { print $2; exit }' <<<"$state"
+	return 0
+}
+
+#######################################
 # Classify ONE eligible-stuck PR and dispatch the matching handler.
 # Extracted from pulse_merge_stuck_run_pass (t3211 / GH#21942) to keep
 # the caller under the function-complexity gate.
@@ -1967,11 +1980,11 @@ pulse_merge_stuck_run_pass() {
 	# Compute Actions runner queue saturation ONCE per repo per cycle (t3211).
 	local sat_queued=0 sat_in_progress=0 sat_ratio=0 is_saturated=0 provider_incident=0 saturation_state
 	saturation_state=$(_pms_compute_saturation_state "$repo_slug")
-	sat_queued=$(printf '%s\n' "$saturation_state" | grep -E '^queued=' | head -1 | cut -d= -f2)
-	sat_in_progress=$(printf '%s\n' "$saturation_state" | grep -E '^in_progress=' | head -1 | cut -d= -f2)
-	sat_ratio=$(printf '%s\n' "$saturation_state" | grep -E '^ratio=' | head -1 | cut -d= -f2)
-	is_saturated=$(printf '%s\n' "$saturation_state" | grep -E '^saturated=' | head -1 | cut -d= -f2)
-	provider_incident=$(printf '%s\n' "$saturation_state" | grep -E '^provider_incident=' | head -1 | cut -d= -f2) || provider_incident=0
+	sat_queued=$(_pms_saturation_field "$saturation_state" queued)
+	sat_in_progress=$(_pms_saturation_field "$saturation_state" in_progress)
+	sat_ratio=$(_pms_saturation_field "$saturation_state" ratio)
+	is_saturated=$(_pms_saturation_field "$saturation_state" saturated)
+	provider_incident=$(_pms_saturation_field "$saturation_state" provider_incident)
 	[[ "$sat_queued" =~ ^[0-9]+$ ]] || sat_queued=0
 	[[ "$sat_in_progress" =~ ^[0-9]+$ ]] || sat_in_progress=0
 	[[ "$sat_ratio" =~ ^[0-9]+$ ]] || sat_ratio=0
