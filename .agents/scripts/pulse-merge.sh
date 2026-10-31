@@ -598,8 +598,16 @@ _pm_gate_origin_authority() {
 	local pr_number="$1" repo_slug="$2" linked_issue="$3" pr_author="$4"
 	local trusted_issue_sync="$5" author_permission="$6" info_json="" labels_str="" is_draft="false"
 	info_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft 2>/dev/null) || info_json=""
+	# #aidevops:trust-boundary — holds apply to every origin, including takeover.
+	if ! printf '%s' "$info_json" | jq -e '(.isDraft | type) == "boolean" and (.labels | type) == "array"' >/dev/null 2>&1; then
+		return 1
+	fi
 	labels_str=$(printf '%s' "$info_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels_str=""
 	is_draft=$(printf '%s' "$info_json" | jq -r '.isDraft // false' 2>/dev/null) || is_draft="false"
+	if [[ "$is_draft" == "true" || ",${labels_str}," == *",hold-for-review,"* ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — PR is draft or has hold-for-review" >>"$LOGFILE"
+		return 1
+	fi
 	if [[ "$labels_str" == *"origin:interactive"* ]]; then
 		_check_interactive_pr_gates "$pr_number" "$repo_slug" "$labels_str" "$is_draft" || return 1
 	fi
@@ -608,10 +616,6 @@ _pm_gate_origin_authority() {
 	elif [[ "$trusted_issue_sync" -eq 1 ]]; then
 		# GH#33955: generated-TODO trust replaces only linked-issue authority.
 		# Maintainer opt-outs that the worker path enforces still apply.
-		if [[ "$is_draft" == "true" || ",${labels_str}," == *",hold-for-review,"* ]]; then
-			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — trusted generated TODO PR is draft or has hold-for-review" >>"$LOGFILE"
-			return 1
-		fi
 		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — exact-head Issue Sync trust satisfies worker authority without a linked issue" >>"$LOGFILE"
 	fi
 	return 0
@@ -1464,6 +1468,8 @@ _pmp_stage_pre_merge() {
 
 _pmp_stage_admin_merge() {
 	local original_output="" missing_output="" missing_exit=0
+	# #aidevops:trust-boundary — revalidate at the mutation, not only selection.
+	_pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid" || return 1
 	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin --match-head-commit "$pr_head_ref_oid" 2>&1)
 	_merge_exit=$?
 	if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then

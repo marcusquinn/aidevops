@@ -192,6 +192,9 @@ _pulse_merge_admin_pr_json_graphql() {
 					}
 					isCrossRepository
 					headRefOid
+					state
+					isDraft
+					reviewDecision
 				}
 			}
 			rateLimit { cost }
@@ -202,18 +205,28 @@ _pulse_merge_admin_pr_json_graphql() {
 		| select(((.errors // []) | length) == 0)
 		| select((.data.rateLimit.cost | type) == "number")
 		| select(.data.rateLimit.cost > 0 and (.data.rateLimit.cost | floor) == .data.rateLimit.cost)
+		| "string" as $string_type
 		| .data.repository.pullRequest as $pr
 		| select($pr != null)
-		| select(($pr.author.login | type) == "string")
+		| select(($pr.author.login | type) == $string_type)
 		| select(($pr.isCrossRepository | type) == "boolean")
-		| select(($pr.headRefOid | type) == "string")
+		| select(($pr.headRefOid | type) == $string_type)
+		| select(["OPEN", "CLOSED", "MERGED"] | index($pr.state))
+		| select(($pr.isDraft | type) == "boolean")
+		| select($pr | has("reviewDecision"))
+		| select($pr.reviewDecision == null or
+			($pr.reviewDecision | strings | test("^(APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED)$")))
 		| select(($pr.labels.nodes | type) == "array")
+		| select(all($pr.labels.nodes[]; (.name | type) == $string_type and (.name | length) > 0))
 		| select($pr.labels.pageInfo.hasNextPage == false)
 		| {
 			author: $pr.author,
 			labels: $pr.labels.nodes,
 			isCrossRepository: $pr.isCrossRepository,
-			headRefOid: $pr.headRefOid
+			headRefOid: $pr.headRefOid,
+			state: $pr.state,
+			isDraft: $pr.isDraft,
+			reviewDecision: $pr.reviewDecision
 		}
 	' 2>/dev/null) || return 1
 	printf '%s\n' "$pr_json"
@@ -518,8 +531,16 @@ _pulse_merge_admin_safety_check() {
 		return 1
 	fi
 
-	# #aidevops:trust-boundary — a live NMR label is an explicit hold. Signed
-	# marker presence never overrides it at the final merge call.
+	# #aidevops:trust-boundary — lifecycle, review and holds come from the same
+	# fresh exact-head read; no origin or signed authority overrides them.
+	if ! printf '%s' "$pr_meta_json" | jq -e '.state == "OPEN" and .isDraft == false and .reviewDecision != "CHANGES_REQUESTED"' >/dev/null; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR is not open, is draft or has CHANGES_REQUESTED" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$labels_str" =~ (^|,)hold-for-review(,|$) ]]; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR carries hold-for-review" >>"$LOGFILE"
+		return 1
+	fi
 	if [[ ",${labels_str}," == *",needs-maintainer-review,"* ]]; then
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR carries needs-maintainer-review" >>"$LOGFILE"
 		return 1
