@@ -695,7 +695,7 @@ _preflight_ownership_reconcile() {
 	# Ensure active labels reflect ownership to prevent multi-worker overlap.
 	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
 	if [[ "$remaining" -gt 0 ]]; then
-		run_stage_with_timeout "normalize_active_issue_assignments" "$remaining" normalize_active_issue_assignments || true
+		run_stage_with_timeout "normalize_active_issue_assignments" "$remaining" normalize_active_issue_assignments || return $?
 	else
 		echo "[pulse-wrapper] Assignment normalization deferred: ownership budget exhausted" >>"$LOGFILE"
 		# Keep unfinished ownership work eligible for the next resumable pass.

@@ -457,7 +457,11 @@ ownership_deadline_trace() {
 		local stage_name="$1" timeout_seconds="$2"
 		case "$stage_name" in
 		reconcile_issues_single_pass) printf 'r:%s;' "$timeout_seconds" ;;
-		normalize_active_issue_assignments) printf 'n:%s;' "$timeout_seconds" ;;
+		normalize_active_issue_assignments)
+			printf 'n:%s;' "$timeout_seconds"
+			[[ "$mode" != normalize_deferred ]] || return 124
+			[[ "$mode" != normalize_failed ]] || return 1
+			;;
 		esac
 		# Model each child consuming its complete allocation without sleeps.
 		SECONDS=$((SECONDS + timeout_seconds))
@@ -470,7 +474,7 @@ ownership_deadline_trace() {
 
 assert_ownership_deadline_contract() {
 	local mode actual="" expected=""
-	for mode in clamped recovery standalone async invalid expired requested prefetch_exhausted reconcile_exhausted; do
+	for mode in clamped recovery standalone async invalid expired requested prefetch_exhausted reconcile_exhausted normalize_deferred normalize_failed; do
 		TESTS_RUN=$((TESTS_RUN + 1))
 		case "$mode" in
 		clamped | async) expected="r:316;n:60;rc:0;" ;;
@@ -480,6 +484,8 @@ assert_ownership_deadline_contract() {
 		requested) expected="r:132;n:60;rc:0;" ;;
 		prefetch_exhausted) expected="rc:124;" ;;
 		reconcile_exhausted) expected="r:8;rc:124;" ;;
+		normalize_deferred) expected="r:316;n:60;rc:124;" ;;
+		normalize_failed) expected="r:316;n:60;rc:1;" ;;
 		esac
 		# Keep case statements outside command substitution for Bash 3.2.
 		actual=$(ownership_deadline_trace "$mode")
