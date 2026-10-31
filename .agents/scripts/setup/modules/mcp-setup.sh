@@ -398,10 +398,15 @@ _setup_browser_tools_playwright() {
 	[[ -f "$runtime_script" ]] || runtime_script="$HOME/.aidevops/agents/scripts/playwright-runtime.mjs"
 	local install_command="node ~/.aidevops/agents/scripts/playwright-runtime.mjs install chromium firefox webkit"
 
-	# runtime-check prints its JSON status on stdout even when not ready.
+	# runtime-check prints its JSON status on stdout even when not ready. It
+	# accepts a valid AIDEVOPS_PLAYWRIGHT_EXECUTABLE in place of bundled Chromium
+	# and reports it as configuredExecutable (GH#36181).
 	local runtime_status=""
 	if runtime_status=$(node "$runtime_script" runtime-check 2>/dev/null); then
 		print_success "Framework Playwright runtime already installed"
+		if [[ "$runtime_status" == *'"chromiumExecutable":null'* && "$runtime_status" == *'"configuredExecutable":"'* ]]; then
+			print_info "Using AIDEVOPS_PLAYWRIGHT_EXECUTABLE; bundled Chromium is not required"
+		fi
 		print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated"
 		return 0
 	fi

@@ -4,7 +4,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
@@ -269,11 +269,24 @@ export async function playwrightStatus() {
   };
 }
 
-async function ownedChromiumExecutable(runtimeDir) {
+async function ownedRuntimeBrowser(runtimeDir) {
   const ownedModule = await validateModule(resolveFromAnchor(join(runtimeDir, 'package.json')));
-  if (!ownedModule) return null;
+  if (!ownedModule) return { packageImportable: false, chromiumExecutable: null };
   try {
-    return findExecutable((await loadPlaywright(ownedModule)).chromium.executablePath());
+    const chromiumExecutable = findExecutable((await loadPlaywright(ownedModule)).chromium.executablePath());
+    return { packageImportable: true, chromiumExecutable };
+  } catch {
+    return { packageImportable: true, chromiumExecutable: null };
+  }
+}
+
+// GH#36181: an explicitly configured browser is what every launch path uses, so
+// it satisfies readiness in place of bundled Chromium. Only a regular executable
+// file counts; an invalid path never makes the runtime ready.
+function configuredBrowserExecutable() {
+  const executable = findExecutable(process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim());
+  try {
+    return executable && statSync(executable).isFile() ? executable : null;
   } catch {
     return null;
   }
@@ -302,14 +315,20 @@ async function ownedAxeStatus(runtimeDir) {
   };
 }
 
-// Setup idempotence: the owned prefix holds the pinned version and its Chromium.
+// Setup idempotence: the owned prefix holds the pinned version plus either its
+// Chromium or a valid AIDEVOPS_PLAYWRIGHT_EXECUTABLE browser.
 export async function ownedRuntimeStatus() {
   const runtimeDir = playwrightRuntimeDir();
   const version = playwrightRuntimeVersion();
   const installedVersion = installedRuntimeVersion(runtimeDir);
-  const chromiumExecutable = installedVersion === version ? await ownedChromiumExecutable(runtimeDir) : null;
+  const owned = installedVersion === version
+    ? await ownedRuntimeBrowser(runtimeDir)
+    : { packageImportable: false, chromiumExecutable: null };
+  const { chromiumExecutable } = owned;
+  const configuredExecutable = configuredBrowserExecutable();
+  const ready = Boolean(chromiumExecutable || (owned.packageImportable && configuredExecutable));
   const axe = await ownedAxeStatus(runtimeDir);
-  return { runtimeDir, version, installedVersion, chromiumExecutable, ready: Boolean(chromiumExecutable), axe };
+  return { runtimeDir, version, installedVersion, chromiumExecutable, configuredExecutable, ready, axe };
 }
 
 function parseInstallArgs(args) {
