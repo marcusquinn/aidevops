@@ -692,7 +692,7 @@ class ProcessSnapshotTests(unittest.TestCase):
                        "import time; time.sleep(30)", "import time; time.sleep(30)"]
             for index, script in enumerate(scripts):
                 env = dict(os.environ)
-                env.update({"PWD": "/", "AIDEVOPS_WORKTREE": "/"})
+                env.update({"PWD": os.path.sep, "AIDEVOPS_WORKTREE": os.path.sep})
                 if index >= 2:
                     env[("PWD", "AIDEVOPS_WORKTREE")[index - 2]] = directory
                 child = subprocess.Popen(  # nosec B603 -- current interpreter, fixed fixture code and disposable cwd
