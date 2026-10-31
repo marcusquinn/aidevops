@@ -138,12 +138,11 @@ def _acquire(budget: Budget, resource: str) -> str:
             time.sleep(wait)
 
 
-def _attribution_fingerprint(host: str, credential_value: str) -> str | None:
+def _attribution_fingerprint(host: str, credential_value: str) -> str:
     # Same non-secret digest as gh-quota-attribution-lib.sh _ghqa_auth_fingerprint
     # (host, unit separator, credential), so log readers can key independent
     # quota series without seeing a secret. Admission keys keep their own digest.
-    if not credential_value or credential_value == "anonymous":
-        return None
+    # Only called after run() rejected anonymous/empty identities.
     return hashlib.sha256(f"{host}\x1f{credential_value}".encode()).hexdigest()
 
 
