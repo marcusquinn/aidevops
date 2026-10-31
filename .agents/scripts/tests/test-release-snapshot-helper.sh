@@ -132,13 +132,18 @@ assert_reads() {
 	local want_status="$3"
 	local status=0
 	local count=0
+	local output_file="$TEST_ROOT/read-output"
 	rm -f "$READ_COUNT"
-	READ_FAULT="$fault" release_snapshot_sources test/repo main "$BASE" "$FIRST" >/dev/null 2>"$TEST_ROOT/read-err" || status=$?
+	READ_FAULT="$fault" release_snapshot_sources test/repo main "$BASE" "$FIRST" >"$output_file" 2>"$TEST_ROOT/read-err" || status=$?
 	read -r count <"$READ_COUNT"
 	[[ "$count" == "$want_count" && "$status" == "$want_status" ]] || {
 		printf 'FAIL: fault=%s count=%s status=%s\n' "$fault" "$count" "$status" >&2
 		exit 1
 	}
+	if [[ "$fault" == network-always && -s "$output_file" ]]; then
+		printf 'FAIL: fault=%s emitted stdout\n' "$fault" >&2
+		exit 1
+	fi
 	return 0
 }
 assert_reads once 2 0
