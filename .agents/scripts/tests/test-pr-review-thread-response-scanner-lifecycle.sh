@@ -115,6 +115,37 @@ test_mark_blocked_never_requests_rereview() {
 	return 0
 }
 
+test_mark_blocked_publishes_continuation_finding() {
+	setup_test_env
+	local gh_log="${TEST_ROOT}/continuation-gh.log"
+	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${CONT_GH_LOG}"
+exit 0
+GH_STUB
+	chmod +x "${TEST_ROOT}/bin/gh"
+	export CONT_GH_LOG="$gh_log"
+	local details_file="${TEST_ROOT}/continuation-details.txt"
+	printf 'needs a maintainer choice' >"$details_file"
+	# Ordinary review workers carry no linked issue: nothing is published.
+	$SCANNER mark-blocked owner/repo 1 decision needs_choice "$details_file"
+	local ordinary_posts=0
+	[[ -f "$gh_log" ]] && ordinary_posts=$(grep -c 'issues/77/comments' "$gh_log" || true)
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=77 AIDEVOPS_PR_REPAIR_HEAD_SHA="$TEST_HEAD_OID_1" \
+		$SCANNER mark-blocked owner/repo 1 decision needs_choice "$details_file"
+	if [[ "$ordinary_posts" -eq 0 ]] &&
+		grep -Fq 'repos/owner/repo/issues/77/comments --method POST' "$gh_log" &&
+		grep -Fq 'CONTINUATION_BLOCKER_FINDING' "$gh_log"; then
+		print_result "mark-blocked publishes continuation finding only for continuation workers" 0
+	else
+		print_result "mark-blocked publishes continuation finding only for continuation workers" 1 \
+			"log=$(tr '\n' ';' <"$gh_log" 2>/dev/null || printf '')"
+	fi
+	unset CONT_GH_LOG
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_pr_skips_when_pr_lock_held() {
 	setup_test_env
 	local lock_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.lock"
