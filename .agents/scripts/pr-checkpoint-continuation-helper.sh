@@ -592,6 +592,9 @@ _pcc_dispatch() {
 	PCC_EXPECTED_ASSIGNEE="$expected_assignee"
 	PCC_AUTHENTICATED_LOGIN="$authenticated_login"
 	PCC_TARGET_REJECTED=0
+	# Retry saved audit publication even if target/dispatch gates below keep the
+	# completed blocked continuation held. This does not start another worker.
+	_prrts_retry_continuation_blocker "$repo_slug" "$pr_number" "$linked_issue" || return 1
 	# GH#36186: the checkpoint author is the live PR author, as in
 	# _pcc_dispatch_stalled. expected_assignee stays the claim being replaced:
 	# a draft continued by a different runner leaves them unequal.

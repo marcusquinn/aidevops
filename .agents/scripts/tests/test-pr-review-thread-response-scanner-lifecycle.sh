@@ -121,6 +121,9 @@ test_mark_blocked_publishes_continuation_finding() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${CONT_GH_LOG}"
+if [[ "$*" == *'--method POST'* && "${CONT_POST_FAIL:-false}" == true ]]; then
+	exit 1
+fi
 exit 0
 GH_STUB
 	chmod +x "${TEST_ROOT}/bin/gh"
@@ -140,6 +143,25 @@ GH_STUB
 	else
 		print_result "mark-blocked publishes continuation finding only for continuation workers" 1 \
 			"log=$(tr '\n' ';' <"$gh_log" 2>/dev/null || printf '')"
+	fi
+	local pending_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.blocker-pending.json"
+	export CONT_POST_FAIL=true
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=77 AIDEVOPS_PR_REPAIR_HEAD_SHA="$TEST_HEAD_OID_1" \
+		$SCANNER mark-blocked owner/repo 1 decision publication_retry "$details_file"
+	if [[ -s "$pending_file" ]] &&
+		grep -Fxq 'analysis_complete=true' "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"; then
+		print_result "failed blocker publication persists payload without failing local completion" 0
+	else
+		print_result "failed blocker publication persists payload without failing local completion" 1
+	fi
+	unset CONT_POST_FAIL
+	# A fresh recovery process needs neither the worker environment nor details file.
+	rm -f "$details_file"
+	bash -c 'source "$1"; _prrts_retry_continuation_blocker owner/repo 1 77' _ "$SCANNER"
+	if [[ ! -f "$pending_file" ]] && grep -Fq 'publication_retry' "$gh_log"; then
+		print_result "continuation recovery republishes saved finding and clears pending payload" 0
+	else
+		print_result "continuation recovery republishes saved finding and clears pending payload" 1
 	fi
 	unset CONT_GH_LOG
 	teardown_test_env
