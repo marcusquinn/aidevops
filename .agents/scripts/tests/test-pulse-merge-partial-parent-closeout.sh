@@ -104,6 +104,7 @@ define_functions_under_test() {
 		/^_pm_issue_needs_partial_closeout\(\) \{/,/^}$/ { print }
 		/^_pm_unmet_acceptance_criteria\(\) \{/,/^}$/ { print }
 		/^_pm_handle_partial_parent_closeout\(\) \{/,/^}$/ { print }
+		/^_handle_post_merge_actions\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT" "${SCRIPT_DIR}/../pulse-merge-issue-closeout.sh")
 	if [[ -z "$fn_src" ]]; then
 		printf 'ERROR: could not extract partial closeout helpers from %s\n' "$MERGE_SCRIPT" >&2
@@ -121,6 +122,35 @@ assert_comment_contains() {
 		print_result "$label" 0
 	else
 		print_result "$label" 1 "Expected comment pattern: $pattern"
+	fi
+	return 0
+}
+
+# Production-path stubs for _handle_post_merge_actions callees. Only the PR
+# closeout upsert writes a comment (the normal, non-partial-parent one).
+_pm_build_closing_comment() {
+	printf 'Normal PR closeout\n'
+	return 0
+}
+_pm_upsert_pr_closing_comment() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local comment_body="$3"
+	printf '%s\n' "$comment_body" >>"$GH_COMMENT_LOG"
+	return 0
+}
+_pm_close_primary_linked_issue() { return 0; }
+_pm_close_superseded_original_issue() { return 0; }
+_release_interactive_claim_on_merge() { return 0; }
+_unblock_circuit_breaker_meta_pr() { return 0; }
+auto_file_next_phase() { return 0; }
+
+assert_no_partial_closeout_comment() {
+	local label="$1"
+	if grep -q 'PARTIAL_PARENT_CLOSEOUT' "$GH_COMMENT_LOG" 2>/dev/null; then
+		print_result "$label" 1 "Unexpected partial closeout: $(tr '\n' ' ' <"$GH_COMMENT_LOG")"
+	else
+		print_result "$label" 0
 	fi
 	return 0
 }
@@ -249,8 +279,10 @@ test_planning_publication_skips_partial_closeout() {
 - [ ] Two"
 	export TEST_EXISTING_COMMENTS="[]"
 
-	_pm_handle_partial_parent_closeout "23936" "marcusquinn/aidevops" "Planning only."
-	assert_no_comment "planning publication PR: partial parent closeout skipped"
+	_handle_post_merge_actions "23936" "marcusquinn/aidevops" "" "Planning only." "" "main"
+	assert_comment_contains "Normal PR closeout" \
+		"planning publication PR: normal PR closeout still posted"
+	assert_no_partial_closeout_comment "planning publication PR: partial parent closeout skipped"
 	assert_api_issue_fetch_count "0" \
 		"planning publication PR: skips issue fetch"
 	return 0
