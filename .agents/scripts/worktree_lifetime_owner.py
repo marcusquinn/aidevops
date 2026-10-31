@@ -175,10 +175,10 @@ def observe(pid, session):
     return observation
 
 
-def drain(launch):
+def drain(launch, worktree_identity=None, census_cache=None):
     if launch.get("completion_evidence") is None:
         from worktree_lifetime_reconcile import quiescence
-        launch["observation_quiescence"] = quiescence(launch)
+        launch["observation_quiescence"] = quiescence(launch, worktree_identity, census_cache)
         return
     require(launch.get("completion_evidence") == "systemd-cgroup-v1",
             "owner has no managed descendant-completion contract")

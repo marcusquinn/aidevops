@@ -619,6 +619,121 @@ class ProcessReconciliationTests(unittest.TestCase):
         launch["owner_pid"] = None
         self.assertFalse(reconcile.finished(launch))
 
+    def test_same_boot_empty_census_seals_and_binds_generation(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        record = self.record()
+        record["identity"] = {"path": "/worktree", "source_inode": "fixture-inode"}
+        now = time.time()
+        sample = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                  "uid": os.getuid(), "references": 0, "uncertain": 0}
+        samples = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
+        with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                patch.object(census, "path_census", side_effect=samples) as observe, \
+                patch.object(reconcile.time, "sleep") as pause:
+            lifetime.seal(record)
+            proof.proof(record, "fixture-inode")
+            self.assertEqual(pause.call_count, 1)
+            self.assertEqual(observe.call_count, 2)
+        receipts = [launch["observation_quiescence"] for launch in record["launches"]]
+        self.assertEqual(receipts[0]["samples"], receipts[1]["samples"])
+        self.assertNotEqual(receipts[0]["identity"], receipts[1]["identity"])
+        receipt = record["launches"][0]["observation_quiescence"]
+        self.assertEqual(receipt["group"], "same-boot-proc-census")
+        for change in ({"path": "/other"}, {"source_inode": "new-inode"}):
+            changed = dict(record["identity"], **change)
+            with self.assertRaises(ValueError):
+                reconcile.validate_quiescence(record["launches"][0], changed)
+        for bad in (dict(samples[1], references=1), dict(samples[1], uncertain=1),
+                    dict(samples[1], status="unavailable"),
+                    dict(samples[1], observed_at=samples[0]["observed_at"] + 1)):
+            receipt["samples"] = [samples[0], bad]
+            with self.assertRaises(ValueError):
+                proof.proof(record, "fixture-inode")
+
+    def test_same_boot_idle_quiescence_passes_identity_and_shares_census(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        record = self.record()
+        record["identity"] = {"path": "/worktree", "source_inode": "fixture-inode"}
+        now = time.time()
+        sample = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                  "uid": os.getuid(), "references": 0, "uncertain": 0}
+        samples = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
+        with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                patch.object(census, "path_census", side_effect=samples * 2) as observe, \
+                patch.object(reconcile.time, "sleep") as pause:
+            reconcile.reconcile(record)
+            lifetime.idle_quiescence(record)
+            # One shared pair for the idle loop and a fresh pair for sealing,
+            # not one pair per launch in either loop.
+            self.assertEqual(observe.call_count, 4)
+            self.assertEqual(pause.call_count, 2)
+        self.assertEqual(record["state"], "sealed")
+        for launch in record["launches"]:
+            receipt = launch["observation_quiescence"]
+            self.assertEqual(receipt["worktree_identity"], record["identity"])
+            self.assertEqual(receipt["identity"], reconcile.identity(launch))
+            self.assertEqual(receipt["process_completion"], launch["process_completion"])
+            reconcile.validate_quiescence(launch, record["identity"])
+
+    def test_present_removal_proof_refreshes_receipts_and_rechecks_parents(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        with tempfile.TemporaryDirectory() as directory:
+            record = self.record()
+            record["identity"] = {"path": directory, "source_inode": "fixture-inode"}
+            now = time.time()
+            sample = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                      "uid": os.getuid(), "references": 0, "uncertain": 0}
+            samples = [dict(sample, observed_at=now - 10), dict(sample, observed_at=now - 8)]
+            with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                    patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}) as parent, \
+                    patch.object(census, "path_census", side_effect=samples) as observe, \
+                    patch.object(reconcile.time, "sleep"):
+                lifetime.seal(record)
+                fresh = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
+                observe.side_effect = fresh
+                observe.reset_mock()
+                parent.reset_mock()
+                proof.inspect(record, Path(directory), ["fixture-inode"], None, lambda *_: None)
+                self.assertEqual(observe.call_count, 2)
+                self.assertEqual(parent.call_count, 2)
+                self.assertTrue(all(item["observation_quiescence"]["samples"] == fresh
+                                    for item in record["launches"]))
+                # A later FD/environment reference or incomplete census must
+                # refuse authorization even though the sealed receipt is valid.
+                for change in ({"references": 1}, {"uncertain": 1}, {"status": "unavailable"}):
+                    observe.side_effect = [dict(fresh[0], **change)]
+                    with self.subTest(change=change), self.assertRaisesRegex(ValueError, "active or unavailable"):
+                        proof.inspect(record, Path(directory), ["fixture-inode"], None, lambda *_: None)
+                observe.side_effect = fresh
+                parent.return_value = {"status": "same-process-alive"}
+                with self.assertRaisesRegex(ValueError, "parent no longer finished"):
+                    proof.inspect(record, Path(directory), ["fixture-inode"], None, lambda *_: None)
+                observe.side_effect = AssertionError("absent source must use historical receipts")
+                proof.inspect(record, Path(directory) / "absent", ["fixture-inode"], None, lambda *_: None)
+
+    def test_same_boot_busy_or_unknown_census_preserves_worktree(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        for status, references, uncertain in (("available", 1, 0), ("available", 0, 1),
+                                              ("unavailable", 0, 0)):
+            record = self.record()
+            record["identity"] = {"path": "/worktree", "source_inode": "fixture-inode"}
+            sample = {"status": status, "boot_id": record["launches"][0]["boot_id"],
+                      "uid": os.getuid(), "references": references, "uncertain": uncertain,
+                      "observed_at": time.time()}
+            with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                    patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                    patch.object(census, "path_census", return_value=sample), \
+                    self.assertRaisesRegex(ValueError, "active or unavailable"):
+                lifetime.seal(record)
+            self.assertEqual(record["state"], "running")
+            self.assertNotIn("observation_quiescence", record["launches"][0])
+
     def test_seal_checks_every_launch_and_preserves_distinct_receipt_contract(self):
         import worktree_lifetime_reconcile as reconcile
         record = self.record()
@@ -634,6 +749,94 @@ class ProcessReconciliationTests(unittest.TestCase):
 
 
 class ProcessSnapshotTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
+    def test_live_cwd_fd_and_environment_references_are_detected(self):
+        import worktree_process_snapshot as census
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            # These children start outside the target except in the cwd case.
+            scripts = ["import time; time.sleep(30)",
+                       "import os,time; fd=os.open(%r, os.O_RDONLY); time.sleep(30)" % directory,
+                       "import time; time.sleep(30)", "import time; time.sleep(30)"]
+            for index, script in enumerate(scripts):
+                env = dict(os.environ)
+                env.update({"PWD": os.path.sep, "AIDEVOPS_WORKTREE": os.path.sep})
+                if index >= 2:
+                    env[("PWD", "AIDEVOPS_WORKTREE")[index - 2]] = directory
+                child = subprocess.Popen(  # nosec B603 -- current interpreter, fixed fixture code and disposable cwd
+                    [sys.executable, "-c", script], cwd=directory if index == 0 else "/", env=env)
+                try:
+                    # Wait boundedly for the fd child to open its target.
+                    deadline = time.monotonic() + 5
+                    while not census.inspect_path_references(Path(f"/proc/{child.pid}"), str(path)):
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(0.01)
+                    sample = census.path_census(str(path))
+                    self.assertGreaterEqual(sample["references"], 1)
+                finally:
+                    child.terminate()
+                    child.wait(timeout=5)
+
+    def test_path_boundaries_deleted_links_and_unreadable_census(self):
+        import worktree_process_snapshot as census
+        self.assertTrue(census.under_worktree("/worktree/file (deleted)", "/worktree"))
+        self.assertFalse(census.under_worktree("/worktree-other/file", "/worktree"))
+        with patch.object(census, "inspect_path_references", side_effect=PermissionError()):
+            sample = census.path_census("/worktree")
+            if sys.platform == "linux":
+                self.assertGreater(sample["uncertain"], 0)
+
+    def test_all_threads_are_inspected_and_unknown_threads_preserved(self):
+        import worktree_process_snapshot as census
+        with tempfile.TemporaryDirectory() as directory:
+            process = Path(directory)
+            (process / "task").mkdir()
+            for tid in (100, 101):
+                task = process / "task" / str(tid)
+                task.mkdir()
+                (task / "status").write_text("Uid:\t" + "\t".join([str(os.getuid())] * 4) + "\n")
+            result = {"references": 0, "uncertain": 0}
+            with patch.object(census, "inspect_path_references",
+                              side_effect=lambda task, path: task.name == "101") as inspect:
+                census.collect_path_references(process, "/worktree", result)
+                self.assertEqual(inspect.call_count, 2)
+                self.assertEqual(result["references"], 1)
+            with patch.object(census, "inspect_path_references", side_effect=PermissionError()):
+                census.collect_path_references(process, "/worktree", result)
+                self.assertEqual(result["uncertain"], 2)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
+    def test_non_dumpable_same_uid_child_is_not_silently_skipped(self):
+        import worktree_process_snapshot as census
+        script = ("import ctypes,sys,time; "
+                  "assert ctypes.CDLL(None).prctl(4,0,0,0,0)==0; "
+                  "print('ready',flush=True); time.sleep(30)")
+        with tempfile.TemporaryDirectory() as directory:
+            child = subprocess.Popen(  # nosec B603 -- current interpreter, constant prctl/sleep fixture, no shell
+                [sys.executable, "-c", script], cwd=directory, stdout=subprocess.PIPE, text=True)
+            try:
+                import select
+                self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+                self.assertEqual(child.stdout.readline().strip(), "ready")
+                sample = census.path_census(directory)
+                self.assertTrue(sample["references"] or sample["uncertain"] or
+                                sample["status"] == "unavailable")
+            finally:
+                child.terminate()
+                child.wait(timeout=5)
+                child.stdout.close()
+
+    def test_filtered_or_namespace_mismatched_proc_is_not_negative_evidence(self):
+        import worktree_process_snapshot as census
+        status = "NSpid:\t%s\n" % os.getpid()
+        mount = "1 0 0:1 / /proc rw - proc proc rw,hidepid=2\n"
+        with patch.object(Path, "read_text", side_effect=[status, mount]), \
+                self.assertRaisesRegex(ValueError, "filtered proc"):
+            census.require_proc_visibility()
+        with patch.object(Path, "read_text", return_value=status.rstrip() + " 42\n"), \
+                self.assertRaisesRegex(ValueError, "namespace mismatch"):
+            census.require_proc_visibility()
+
     def snapshot(self):
         return {"status": "available", "boot_id": "11111111-1111-1111-1111-111111111111",
                 "processes": {100: {"start": "10", "state": "S", "cgroup": "/user/aidevops-worker-one.service"}},
