@@ -76,6 +76,31 @@ release_verify() {
 	return $?
 }
 
+# Label inventory/create runners for managed_labels_ensure_release_approval_set.
+release_label_names() {
+	local repo="$1"
+	gh api "repos/${repo}/labels?per_page=100" --paginate --jq '.[].name' || return 1
+	return 0
+}
+
+release_label_create() {
+	local repo="$1" name="$2" description="$3" color="$4"
+	gh label create "$name" --repo "$repo" --description "$description" --color "$color" || return 1
+	return 0
+}
+
+# GH#36292: managed package repos need not carry aidevops system labels, and
+# gh_create_issue never creates caller-supplied labels (GH#34003). Provision
+# every label a request applies before the first write, so a missing label can
+# neither strand a half-applied hold nor fail issue creation. A converged repo
+# costs one label read and no writes.
+release_ensure_labels() {
+	local repo="$1"
+	managed_labels_ensure_release_approval_set "$repo" release_label_names release_label_create ||
+		release_error "Unable to provision release approval labels in ${repo}; no approval request." || return 1
+	return 0
+}
+
 release_publication_preflight() {
 	local repo="$1" head="$2" secrets="" caller="" pat_rc=0
 	# The job token publishes unless rules on main block its direct push.
@@ -157,7 +182,7 @@ release_request() {
 	# A durable hold prevents ordinary merge automation from publishing first.
 	# Retry an interrupted request only when its dedicated PR label is present.
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '(all(.labels[]; .name != "hold-for-review") or any(.labels[]; .name == $label)) and .auto_merge == null' <<<"$snapshot" >/dev/null || release_error 'Resolve existing PR hold/auto-merge before requesting a release.' || return 1
-	gh label create release-approval-required --repo "$repo" --description 'Publication requires signed exact-head release approval' --color B60205 --force || return 1
+	release_ensure_labels "$repo" || return 1
 	gh_pr_edit_safe "$pr" --repo "$repo" --add-label release-approval-required --add-label hold-for-review >/dev/null || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
 	[[ "$(jq -r '.head.sha' <<<"$snapshot")" == "$sha" ]] || return 1
@@ -522,10 +547,12 @@ release_held_target() {
 		requested=true
 	else
 		release_request_held "$repo" "$apply" "$target" >&2 || rc=$?
-		[[ "$rc" -ne 1 ]] || return 1
 		[[ "$rc" -ne 0 ]] || requested=true
 	fi
 	jq -r --arg requested "$requested" '[(.number | tostring), .fingerprint, .finding, $requested] | join("|")' <<<"$target_json" || return 1
+	# GH#36292: a failed request still reports its unrequested target, so the
+	# caller counts the failure yet supersedes PRs main already bundles.
+	[[ "$rc" -ne 1 ]] || return 1
 	return 0
 }
 
@@ -543,7 +570,9 @@ release_reconcile_held() {
 	main_upstream=$(release_contents "$repo" CloudronManifest.json main |
 		jq -er '.upstreamVersion | select(type == "string" and length > 0) | ltrimstr("v")') || return 1
 	entries=$(release_held_findings "$repo" "$held" "$main_upstream") || return 1
-	target_line=$(release_held_target "$repo" "$apply" "$issues" "$entries") || return 1
+	# A failed request is counted, not fatal: request-independent supersession
+	# still runs, while request-dependent supersession waits for a real request.
+	target_line=$(release_held_target "$repo" "$apply" "$issues" "$entries") || failures=$((failures + 1))
 	[[ -z "$target_line" ]] || IFS='|' read -r target target_fp target_finding requested <<<"$target_line"
 	if [[ "$apply" == true && "$requested" == true ]]; then
 		# A request created above must be visible to the signed-approval check.

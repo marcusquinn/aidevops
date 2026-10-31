@@ -1842,6 +1842,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18844 fix(cloudron-release): held worker bump PRs never get an approval request; obsolete bumps stack forever #bug #framework ref:GH#36268 pr:#36269 completed:2026-10-31
 
+- [ ] t18845 fix(cloudron-release): r924 fails creating approval requests in repos without no-auto-dispatch; one failed request blocks unrelated supersession #bug #framework ref:GH#36292 -> [todo/tasks/t18845-brief.md]
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25

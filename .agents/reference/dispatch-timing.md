@@ -35,6 +35,11 @@ pulse-dispatch-worker-launch.sh    — launch sub-stages instrumented
 | `worker_launch_total` | Full `_dispatch_launch_worker` call                 |
 | `ceremony_total`     | End-to-end `dispatch_with_dedup` from metadata fetch to launch |
 
+A stage row records that the stage ran and how long it took, not its verdict.
+For example, `dedup.zero_attempt_backoff` rows appear for every pre-claim
+evaluation. Count actual holds with
+`rg -c "DISPATCH_BLOCK_REASON reason=zero_attempt_backoff" ~/.aidevops/logs/pulse.log`.
+
 Gate order inside `dedup_check` is cheapest-rejection first: capacity, state/label,
 NMR and blocked-by gates, then the read-only `7_layers` dedup (active claims, PR
 evidence, terminal-blocker circuit), then the costly scope gates
