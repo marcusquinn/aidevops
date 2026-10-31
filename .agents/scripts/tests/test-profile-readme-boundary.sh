@@ -84,10 +84,11 @@ install_helper_with_libs() {
 	cp "${SOURCE_HELPER%/*}/profile-contribution-chart.py" "${helper_dir}/profile-contribution-chart.py"
 	cp "${SOURCE_HELPER%/*}/profile_contribution_data.py" "${helper_dir}/profile_contribution_data.py"
 	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh shared-worktree-create.sh worker-lifecycle-state.sh || return 1
-	# The creation hook loads the registry entry point and its Python package.
+	# Creation and managed producers need the registry, launcher and Python package.
 	local lifecycle_dir="${helper_dir%/*}/worker-lifecycle"
 	mkdir -p "$lifecycle_dir" || return 1
-	cp "${SOURCE_HELPER%/*}/../worker-lifecycle/worker-registry.py" "$lifecycle_dir/" || return 1
+	cp "${SOURCE_HELPER%/*}/../worker-lifecycle/worker-registry.py" \
+		"${SOURCE_HELPER%/*}/../worker-lifecycle/worker-launch.py" "$lifecycle_dir/" || return 1
 	cp -R "${SOURCE_HELPER%/*}/../worker-lifecycle/worker_lifecycle" "$lifecycle_dir/" || return 1
 	cp "${SOURCE_HELPER%/*}/audit-worktree-removal-helper.sh" \
 		"${SOURCE_HELPER%/*}/shared-sqlite-backup.sh" \
@@ -1661,6 +1662,11 @@ main() {
 		echo "Helper script not found or not executable: ${SOURCE_HELPER}" >&2
 		return 1
 	fi
+	# Keep managed launches independent of the invoking worktree and registry.
+	SUITE_ROOT=$(mktemp -d) || return 1
+	trap 'rm -rf -- "$SUITE_ROOT"' EXIT
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="$SUITE_ROOT/lifecycle"
+	cd "$SUITE_ROOT" || return 1
 
 	if [[ "$mode" != "--unit-only" ]]; then
 		test_chart_assets_publish_and_chart_only_changes_are_not_skipped
