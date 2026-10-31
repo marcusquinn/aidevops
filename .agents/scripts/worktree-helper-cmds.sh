@@ -161,6 +161,17 @@ _remove_show_guard_error() {
 	return 0
 }
 
+# Preserve a specific post-archive refusal, falling back to the generic notice.
+_remove_show_archive_failure() {
+	local path_to_remove="$1"
+	if [[ -n "${WORKTREE_REMOVAL_GUARD_REASON:-}" ]]; then
+		_remove_show_guard_error "$path_to_remove" "$WORKTREE_REMOVAL_GUARD_REASON"
+	else
+		printf '%b\n' "${YELLOW}Cleanup stopped: the source remains protected and its recoverable archive was retained.${NC}"
+	fi
+	return 0
+}
+
 # Resolve the GitHub repository slug from the candidate worktree's own origin.
 # Args: $1=path_to_remove
 _remove_repo_slug_for_worktree() {
@@ -516,11 +527,7 @@ _remove_cleanup_and_execute() {
 		"${SCRIPT_NAME:-worktree-helper.sh}" "$_WT_REMOVE_MODE_MANUAL" \
 		"$audit_context" "$allow_degraded" "$force_remove"; then
 		[[ "$cleanup_lease_acquired" != "$_WT_BOOL_TRUE" ]] || _clean_release_removal_lease "$path_to_remove" || true
-		if [[ -n "${WORKTREE_REMOVAL_GUARD_REASON:-}" ]]; then
-			_remove_show_guard_error "$path_to_remove" "$WORKTREE_REMOVAL_GUARD_REASON"
-		else
-			printf '%b\n' "${YELLOW}Cleanup stopped: the source remains protected and its recoverable archive was retained.${NC}"
-		fi
+		_remove_show_archive_failure "$path_to_remove"
 		return 1
 	fi
 	if ! prune_missing_worktree_metadata "$repo_context" "$path_to_remove"; then
