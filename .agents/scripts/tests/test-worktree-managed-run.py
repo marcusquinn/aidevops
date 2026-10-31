@@ -26,13 +26,16 @@ SPEC.loader.exec_module(runner)
 
 
 class RunnerControlTests(unittest.TestCase):
-    def test_service_does_not_inherit_parent_lifecycle_identity(self):
+    def test_service_preserves_admission_requirements_not_parent_identity(self):
         keys = ("RUNTIME_PID", "SESSION_ID", "GENERATION_ID", "RUN_ID")
         environment = {"AIDEVOPS_LIFECYCLE_" + key: "parent" for key in keys}
         environment["AIDEVOPS_LIFECYCLE_STATE_DIR"] = "/fixture/state"
         with patch.dict(os.environ, environment, clear=True):
-            self.assertEqual(runner.inherited_environment(),
-                             ["--setenv=AIDEVOPS_LIFECYCLE_STATE_DIR"])
+            self.assertEqual(runner.inherited_environment(), [
+                "--setenv=AIDEVOPS_LIFECYCLE_GENERATION_ID",
+                "--setenv=AIDEVOPS_LIFECYCLE_RUN_ID",
+                "--setenv=AIDEVOPS_LIFECYCLE_STATE_DIR",
+            ])
 
     def test_lifecycle_entry_executes_with_its_own_native_identity(self):
         with tempfile.TemporaryDirectory(prefix="managed-lifecycle-") as directory:
@@ -47,6 +50,11 @@ class RunnerControlTests(unittest.TestCase):
                  "assert os.environ['AIDEVOPS_LIFECYCLE_SESSION_ID'] != 'parent'"],
                 cwd=directory, env=environment, capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr)
+            environment.update(AIDEVOPS_LIFECYCLE_GENERATION_ID="invalid",
+                               AIDEVOPS_LIFECYCLE_RUN_ID="invalid")
+            denied = subprocess.run(result.args, cwd=directory, env=environment,
+                                    capture_output=True, text=True, timeout=15)
+            self.assertEqual(denied.returncode, 75, denied.stderr)
 
     def test_native_enrichment_exec_preserves_managed_admission(self):
         if not runner.backend_available():

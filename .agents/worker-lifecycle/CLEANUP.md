@@ -213,8 +213,9 @@ repeating it cannot adopt an existing directory, even an empty one.
 
 Managed producer services enter the same native launcher through
 `worker-lifecycle-state.sh` before executing their command. The service does not
-inherit its parent's runtime, session, generation or attempt IDs. Post-completion
-callbacks run outside that producer identity; legacy service receipts never
+inherit its parent's runtime or session identity. Explicit generation/attempt
+admission requirements remain mandatory. Post-completion callbacks run outside
+that producer identity; legacy service receipts never
 replace the new registry's creation, admission and retirement checks.
 
 Claude creator-context integration is outside this rollout. Standalone/unconnected
