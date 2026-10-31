@@ -138,10 +138,18 @@ function emit_budgets(    pool, values, n, i) {
 # A credential digest identifies an auth source, not necessarily a unique user
 # quota: multiple tokens may share one upstream pool. Never merge them by guess.
 # Old rows remain readable but cannot prove a pool/reset series.
-function collect_quota(    series, row) {
+function collect_quota(    series, row, minute) {
 	if (pool != "rest-core") return
 	if (length($20) != 64 || $20 !~ /^[a-f0-9]+$/ || $21 !~ /^[1-9][0-9]*$/) {
 		unattributed_missing_metadata_attempts++
+		# Native commands without response headers (for example writes) know
+		# their credential and cost but not the reset series. Keep that cost
+		# visible beside the same credential's residuals; never subtract it.
+		if (length($20) == 64 && $20 ~ /^[a-f0-9]+$/ && quota_cost ~ /^[0-9]+$/) {
+			minute = int(ts / 60) * 60
+			quota_reset_unknown_cost[$20 SUBSEP minute] += quota_cost
+			quota_reset_unknown_total[$20] += quota_cost
+		}
 		return
 	}
 	series = pool ":" $20 ":" $21
@@ -199,7 +207,9 @@ function replay_quota(    i, j, row, prev, series, drop, cost, minute, key, resi
 	}
 }
 
-function emit_quota_minutes(series, top,    key, parts, minutes, n, i, j, swap, a, b) {
+function emit_quota_minutes(series, top,    key, parts, minutes, n, i, j, swap, a, b, fingerprint) {
+	split(series, parts, ":")
+	fingerprint = parts[2]
 	n = 0
 	for (key in quota_minutes) {
 		split(key, parts, SUBSEP)
@@ -221,7 +231,7 @@ function emit_quota_minutes(series, top,    key, parts, minutes, n, i, j, swap, 
 	for (i = 1; i <= n; i++) {
 		key = series SUBSEP minutes[i]
 		if (i > 1) printf ", "
-		printf "{\"minute_ts\": %d, \"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d}", minutes[i], quota_minute_drop[key], quota_minute_cost[key], quota_residual[key]
+		printf "{\"minute_ts\": %d, \"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d, \"same_credential_reset_unknown_cost\": %d}", minutes[i], quota_minute_drop[key], quota_minute_cost[key], quota_residual[key], quota_reset_unknown_cost[fingerprint SUBSEP minutes[i]] + 0
 	}
 	printf "]"
 }
@@ -242,7 +252,9 @@ function emit_quota(    series, values, n, i, parts) {
 		if (i > 1) print ","
 		printf "      {\"pool\": \"%s\", \"auth_fingerprint\": \"%s\", \"reset_epoch\": %s, ", parts[1], parts[2], parts[3]
 		printf "\"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d, ", quota_drops[series], quota_costs[series], quota_unattributed[series]
-		printf "\"unknown_cost_attempts\": %d, \"counter_increases\": %d, \"minutes\": ", quota_unknown[series], quota_increases[series]
+		printf "\"unknown_cost_attempts\": %d, \"counter_increases\": %d, ", quota_unknown[series], quota_increases[series]
+		# Credential-wide, not series-owned: a credential may span several resets.
+		printf "\"same_credential_reset_unknown_cost\": %d, \"minutes\": ", quota_reset_unknown_total[parts[2]] + 0
 		emit_quota_minutes(series, 0)
 		printf ", \"top_unattributed_minutes\": "
 		emit_quota_minutes(series, 1)

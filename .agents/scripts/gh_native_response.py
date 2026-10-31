@@ -121,8 +121,11 @@ def _response_metadata(status: int, headers: dict[str, str], authenticated: bool
         "attempted": True, "status": status or None,
         "resource": resource if known_resource else None, "cost": cost,
     }
+    # "used" is the response's cumulative counter for its reset series, kept for
+    # quota attribution only; it never replaces the per-request cost above.
     for name, header in (("remaining", "x-ratelimit-remaining"),
-                         ("reset", "x-ratelimit-reset"), ("retry_after", "retry-after")):
+                         ("reset", "x-ratelimit-reset"), ("used", "x-ratelimit-used"),
+                         ("retry_after", "retry-after")):
         value = headers.get(header, "")
         result[name] = int(value) if value.isdecimal() else None
     return result

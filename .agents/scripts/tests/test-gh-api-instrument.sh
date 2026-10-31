@@ -562,13 +562,17 @@ quota_fixture 123 a5 4999 1 "$pool_a" 2000003600
 quota_fixture 124 a6 4998 1 "$pool_a" 2000003600
 # Old v2 rows still count, but are not merged into an invented unknown pool.
 printf '%s\told-v2\trest\tgh-pat\trest-core\trest-selected\t20\tv2\tattempt\told\told-attempt\t1\t0\tsuccess\t200\t1\t1\n' "$fixture_now" >>"$AIDEVOPS_GH_API_LOG"
+# A header-less native write knows its credential and cost but not its reset.
+quota_fixture 70 a-write "" 1 "$pool_a" ""
 gh_aggregate_calls
 assert_eq "three independent auth/reset series" "3" "$(jq '.rest_core_attribution.series | length' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "pool A observed drop excludes resets and duplicate rows" "15" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .remaining_drop' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "pool A residual subtracts only interval-owned costs" "12" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "pool B never absorbs pool A drain" "1" "$(jq --arg fp "$pool_b" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "top minute ranks residual, not append order" "9" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .top_unattributed_minutes[0].unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
-assert_eq "old v2 metadata exclusion is explicit" "1" "$(jq '.rest_core_attribution.missing_metadata_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "old v2 and reset-unknown metadata exclusion is explicit" "2" "$(jq '.rest_core_attribution.missing_metadata_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "reset-unknown cost is visible beside the same credential minute" "1" "$(jq --arg fp "$pool_a" --argjson minute "$((fixture_minute + 60))" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .minutes[] | select(.minute_ts == $minute) | .same_credential_reset_unknown_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "reset-unknown cost never reaches another credential" "0" "$(jq --arg fp "$pool_b" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp) | .same_credential_reset_unknown_cost' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "new reset does not create negative drops" "0" "$(jq '.rest_core_attribution.series[] | select(.reset_epoch == 2000003600) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
 gh_record_attempt rest metadata-caller logical-meta attempt-meta 1 0 success 200 1 1 gh-pat rest-core rest-selected 99 "$pool_a" 2000000000 "" 4901
 assert_eq "attempt metadata is appended in fields 20 and 21" "$pool_a:2000000000" "$(awk -F '\t' '$11 == "attempt-meta" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
