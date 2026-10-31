@@ -1168,6 +1168,23 @@ _issue_has_parent_task_label() {
 	return 1
 }
 
+# Return the safe keyword for redispatched review repairs. The issue-body
+# receipt survives worker/session changes; it can only remove closure authority.
+# A verified final delivery uses the existing explicit --allow-parent-close.
+_review_repair_closing_keyword() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_body=""
+	issue_body=$(_gh_with_timeout read gh issue view "$issue_number" --repo "$repo_slug" \
+		--json body --jq '.body // ""') || return 1
+	if [[ "$issue_body" == *"<!-- aidevops:review-repair:non-closing:${issue_number} -->"* ]]; then
+		printf '%s' For
+	else
+		printf '%s' Resolves
+	fi
+	return 0
+}
+
 # Build the PR body string and print it to stdout.
 # Arguments: issue_number, summary_what, summary_testing, files_changed,
 #            sig_footer, closing_keyword (default: Resolves), requested_risk,
@@ -1742,6 +1759,7 @@ _ensure_worker_pr_linkage() {
 	local issue_number="$3"
 	local generated_body="$4"
 	local current_body=""
+	local reference_keyword="Resolves"
 
 	if [[ ! "$pr_number" =~ ^[1-9][0-9]*$ || "$repo" != */* || ! "$issue_number" =~ ^[1-9][0-9]*$ || -z "$generated_body" ]]; then
 		print_error "Cannot validate worker PR linkage: invalid PR, repository, issue, or generated body"
@@ -1752,12 +1770,20 @@ _ensure_worker_pr_linkage() {
 		print_error "Cannot validate worker PR #${pr_number} linkage before review transition"
 		return 1
 	}
+	if printf '%s' "$generated_body" | jq -Rse --arg issue "$issue_number" \
+		'test("(^|\\n)(For|Ref) #" + $issue + "\\b")' >/dev/null 2>&1; then
+		reference_keyword="For"
+	fi
 
 	local closing_issues=""
 	closing_issues=$(printf '%s' "$current_body" |
 		grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' |
 		grep -oE '[0-9]+' | sort -u) || closing_issues=""
 	if [[ "$closing_issues" == "$issue_number" ]]; then
+		if [[ "$reference_keyword" == "For" ]]; then
+			print_error "Worker PR #${pr_number} has a closing reference despite non-closing repair intent"
+			return 1
+		fi
 		return 0
 	fi
 
@@ -1779,7 +1805,7 @@ _ensure_worker_pr_linkage() {
 
 	local repaired_body="$generated_body"
 	if [[ -n "$current_body" ]]; then
-		repaired_body="${current_body}"$'\n\n'"Resolves #${issue_number}"
+		repaired_body="${current_body}"$'\n\n'"${reference_keyword} #${issue_number}"
 	fi
 	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	local repair_body_file=""
@@ -1803,6 +1829,12 @@ _ensure_worker_pr_linkage() {
 		print_error "Could not verify repaired linked issue reference on worker PR #${pr_number}"
 		return 1
 	}
+	if [[ "$reference_keyword" == "For" ]]; then
+		printf '%s' "$current_body" | jq -Rse --arg issue "$issue_number" \
+			'test("(^|\\n)(For|Ref) #" + $issue + "\\b") and
+			(test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + $issue + "\\b"; "i") | not)' >/dev/null 2>&1 || return 1
+		return 0
+	fi
 	closing_issues=$(printf '%s' "$current_body" |
 		grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' |
 		grep -oE '[0-9]+' | sort -u) || closing_issues=""

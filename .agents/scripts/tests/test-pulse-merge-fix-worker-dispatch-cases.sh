@@ -579,6 +579,61 @@ test_dispatch_defers_when_worker_origin_disappears() {
 	return 0
 }
 
+test_dispatch_preserves_nonclosing_replacement_linkage() {
+	reset_mock_state
+	local source_body=""
+	for source_body in 'For #42' 'Ref #42' 'Resolves #42'; do
+		reset_mock_state
+		TEST_SOURCE_PR_BODY=$'## Summary\n\nPartial delivery\n\n'"$source_body" _dispatch_pr_fix_worker "100" "owner/repo" "42"
+		# Exercise the consumer after redispatch using the persisted issue body,
+		# not state inherited from the routing process.
+		if (
+			local helper_src="" keyword="" generated="" expected="Resolves"
+			helper_src=$(awk '
+				/^[[:alnum:]_]+\(\) \{/ {
+					emit = ($0 ~ /^(_review_repair_closing_keyword|_build_pr_body|_ensure_worker_pr_linkage)\(\) \{/)
+				}
+				emit { print }
+			' "${SCRIPT_DIR}/../full-loop-helper-commit.sh")
+			eval "$helper_src"
+			_gh_with_timeout() {
+				if [[ "$*" == *"issue view"* ]]; then
+					cat "${TEST_ROOT}/issue-body.txt"
+				else
+					cat "${TEST_ROOT}/replacement-body.txt"
+				fi
+				return 0
+			}
+			gh_pr_edit_safe() {
+				local body_file="${5:-}"
+				cp "$body_file" "${TEST_ROOT}/replacement-body.txt"
+				return $?
+			}
+			_derive_runtime_risk() { printf '%s' Low; return 0; }
+			_resolve_runtime_testing_level() { printf '%s' runtime-verified; return 0; }
+			print_info() { return 0; }
+			print_error() { return 0; }
+			print_success() { return 0; }
+			[[ "$source_body" == 'Resolves #42' ]] || expected="For"
+			keyword=$(_review_repair_closing_keyword 42 owner/repo) || exit 1
+			[[ "$keyword" == "$expected" ]] || exit 1
+			generated=$(_build_pr_body 42 repair verified script.sh "" "$keyword") || exit 1
+			[[ "$generated" == *"${expected} #42"* ]] || exit 1
+			printf '%s' 'Curated replacement summary' >"${TEST_ROOT}/replacement-body.txt"
+			_ensure_worker_pr_linkage 101 owner/repo 42 "$generated" || exit 1
+			grep -qFx "${expected} #42" "${TEST_ROOT}/replacement-body.txt" || exit 1
+			if [[ "$expected" == For ]]; then
+				! grep -qF 'Resolves #42' "${TEST_ROOT}/replacement-body.txt" || exit 1
+			fi
+		); then
+			print_result "redispatch preserves ${source_body} through body generation and linkage repair" 0
+		else
+			print_result "redispatch preserves ${source_body} through body generation and linkage repair" 1
+		fi
+	done
+	return 0
+}
+
 test_dispatch_appends_to_issue_body_and_closes_pr() {
 	reset_mock_state
 	_dispatch_pr_fix_worker "100" "owner/repo" "42"

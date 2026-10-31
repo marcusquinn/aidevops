@@ -720,6 +720,19 @@ _dispatch_pr_fix_worker() {
 		echo "[pulse-wrapper] _dispatch_pr_fix_worker: PR #${pr_number} in ${repo_slug} has CHANGES_REQUESTED but no substantive review content — leaving PR open without routing (t2093)" >>"$LOGFILE"
 		return 0
 	fi
+	# Persist linkage intent in the same durable issue-body write as the feedback.
+	# Redispatch must not convert a partial delivery into closure authority.
+	local source_body="" nonclosing_rc=0
+	source_body=$(_pmf_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.body // ""') || return "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}"
+	printf '%s' "$source_body" | jq -Rse --arg issue "$linked_issue" \
+		'test("(^|\\n)[ \\t]*(for|ref)[: \\t]+#" + $issue + "([^0-9]|$)"; "i") and
+		(test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + $issue + "\\b"; "i") | not)' \
+		>/dev/null 2>&1 || nonclosing_rc=$?
+	if [[ "$nonclosing_rc" -eq 0 ]]; then
+		feedback_section+=$'\n\n'"<!-- aidevops:review-repair:non-closing:${linked_issue} -->"$'\n'"Preserve For #${linked_issue} on the replacement PR: this repairs partial PR #${pr_number}, not the whole issue. Only an explicitly verified final delivery may override this with --allow-parent-close."
+	elif [[ "$nonclosing_rc" -ne 1 ]]; then
+		return "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}"
+	fi
 
 	local evidence_fingerprint=""
 	evidence_fingerprint=$(_review_feedback_evidence_fingerprint "$reviews_json" "$inline_json") || {

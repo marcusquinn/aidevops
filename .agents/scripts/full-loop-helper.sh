@@ -281,7 +281,10 @@ _commit_and_pr_prepare_metadata() {
 	fi
 	if [[ "$allow_parent_close" -eq 1 ]]; then
 		closing_keyword="Resolves"
-	elif _issue_has_parent_task_label "$issue_number" "$repo"; then
+	elif [[ "$origin_label" == "origin:worker" && "$completion_bookkeeping" -eq 0 ]]; then
+		closing_keyword=$(_review_repair_closing_keyword "$issue_number" "$repo") || return 1
+	fi
+	if [[ "$allow_parent_close" -eq 0 ]] && _issue_has_parent_task_label "$issue_number" "$repo"; then
 		closing_keyword="For"
 		print_info "Issue #${issue_number} has parent-task label — using 'For' keyword (t2242)"
 	fi
@@ -430,7 +433,7 @@ _commit_and_pr_publish() {
 		_apply_pr_only_hold "$pr_number" "$repo" || return 1
 	fi
 	# Recover from partial GraphQL writes before marking either side in review.
-	if [[ "$origin_label" == "origin:worker" && "$closing_keyword" == "Resolves" ]]; then
+	if [[ "$origin_label" == "origin:worker" ]]; then
 		_ensure_worker_pr_linkage "$pr_number" "$repo" "$issue_number" "$pr_body" || return 1
 	fi
 	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions" || return 1

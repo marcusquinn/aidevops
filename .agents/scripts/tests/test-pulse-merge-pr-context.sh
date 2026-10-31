@@ -106,7 +106,8 @@ install_stubs() {
 		fi
 		if [[ "$arg1" == "api" && "$args" == *"repos/owner/repo/issues/456"* ]]; then
 			[[ "${ISSUE_METADATA_FAIL:-0}" == "1" ]] && return 1
-			printf '%s\n' "${ISSUE_LABELS:-origin:worker,status:in-review}"
+			jq -cn --arg labels "${ISSUE_LABELS-origin:worker,status:in-review}" \
+				'{labels: ($labels | split(",") | map(select(length > 0) | {name: .}))}'
 			return 0
 		fi
 		if [[ "$arg1" == "pr" && "$arg2" == "update-branch" ]]; then
