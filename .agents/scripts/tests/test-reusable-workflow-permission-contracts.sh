@@ -250,6 +250,35 @@ def rollout_failures(name: str, callers: list[str], changed: set[str], body: str
 def assert_rollout_contract() -> None:
     caller = ".agents/templates/workflows/fixture-caller.yml"
     command = "`aidevops sync-workflows --apply --workflow fixture`"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        reusable = pathlib.Path(temp_dir) / "fixture-reusable.yml"
+        existing_job = (
+            "jobs:\n  existing:\n    permissions:\n"
+            "      contents: write\n      actions: read\n    steps: []\n"
+        )
+        reusable.write_text(existing_job, encoding="utf-8")
+        before = reusable_permission_union(reusable)
+        for extra_permissions in (
+            "      contents: read\n",
+            "      contents: write\n      actions: read\n",
+        ):
+            reusable.write_text(
+                existing_job + "  added:\n    permissions:\n" + extra_permissions
+                + "    steps: []\n", encoding="utf-8",
+            )
+            after = reusable_permission_union(reusable)
+            assert before == after
+            assert not permission_increased(before, after)
+        for extra_permissions in ("      actions: write\n", "      issues: read\n"):
+            reusable.write_text(
+                existing_job + "  added:\n    permissions:\n" + extra_permissions
+                + "    steps: []\n", encoding="utf-8",
+            )
+            after = reusable_permission_union(reusable)
+            assert permission_increased(before, after)
+            failures = rollout_failures("fixture", [caller], set(), "none")
+            assert len(failures) == 2  # Both caller update and named rollout are required.
+            assert not rollout_failures("fixture", [caller], {caller}, command)
     assert permission_increased({"contents": "read"}, {"contents": "write"})
     assert permission_increased({}, {"actions": "read"})
     assert not permission_increased({"contents": "write"}, {"contents": "read"})
@@ -309,21 +338,8 @@ def check_permission_rollouts() -> list[str]:
             continue  # New workflows have no installed callers to migrate.
         before = reusable_permission_union(path, revision=base)
         after = reusable_permission_union(path, revision=head)
-        increased = permission_increased(before, after)
-        # A job can gain permissions already used by another job, leaving the
-        # overall union unchanged. That still requires an explicit rollout plan.
-        old = load_mapping(path, base)
-        new = load_mapping(path, head)
-        for job_name, job in new["jobs"].items():
-            old_job = old["jobs"].get(job_name, {})
-            old_permissions = explicit_permissions(
-                old_job.get("permissions", old.get("permissions", {})), relative
-            )
-            new_permissions = explicit_permissions(
-                job.get("permissions", new.get("permissions", {})), relative
-            )
-            increased = increased or permission_increased(old_permissions, new_permissions)
-        if not increased:
+        # Installed callers already grant the union, so only union growth needs a rollout.
+        if not permission_increased(before, after):
             continue
         callers = []
         for caller in templates:
