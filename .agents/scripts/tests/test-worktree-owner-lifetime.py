@@ -717,6 +717,34 @@ class ProcessSnapshotTests(unittest.TestCase):
             if sys.platform == "linux":
                 self.assertGreater(sample["uncertain"], 0)
 
+    def test_all_threads_are_inspected_and_unknown_threads_preserved(self):
+        import worktree_process_snapshot as census
+        with tempfile.TemporaryDirectory() as directory:
+            process = Path(directory)
+            (process / "task").mkdir()
+            for tid in (100, 101):
+                (process / "task" / str(tid)).mkdir()
+            result = {"references": 0, "uncertain": 0}
+            with patch.object(census, "inspect_path_references",
+                              side_effect=lambda task, path: task.name == "101") as inspect:
+                census.collect_path_references(process, "/worktree", result)
+                self.assertEqual(inspect.call_count, 2)
+                self.assertEqual(result["references"], 1)
+            with patch.object(census, "inspect_path_references", side_effect=PermissionError()):
+                census.collect_path_references(process, "/worktree", result)
+                self.assertEqual(result["uncertain"], 2)
+
+    def test_filtered_or_namespace_mismatched_proc_is_not_negative_evidence(self):
+        import worktree_process_snapshot as census
+        status = "NSpid:\t%s\n" % os.getpid()
+        mount = "1 0 0:1 / /proc rw - proc proc rw,hidepid=2\n"
+        with patch.object(Path, "read_text", side_effect=[status, mount]), \
+                self.assertRaisesRegex(ValueError, "filtered proc"):
+            census.require_proc_visibility()
+        with patch.object(Path, "read_text", return_value=status.rstrip() + " 42\n"), \
+                self.assertRaisesRegex(ValueError, "namespace mismatch"):
+            census.require_proc_visibility()
+
     def snapshot(self):
         return {"status": "available", "boot_id": "11111111-1111-1111-1111-111111111111",
                 "processes": {100: {"start": "10", "state": "S", "cgroup": "/user/aidevops-worker-one.service"}},

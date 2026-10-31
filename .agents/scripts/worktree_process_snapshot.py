@@ -169,6 +169,35 @@ def inspect_path_references(directory, path):
     return False
 
 
+def require_proc_visibility():
+    """Reject filtered proc mounts and nested views relative to mounted procfs."""
+    namespace_pids = [line.split()[1:] for line in Path("/proc/self/status").read_text().splitlines()
+                      if line.startswith("NSpid:")]
+    owner.require(namespace_pids == [[str(os.getpid())]], "proc PID namespace mismatch")
+    mounts = []
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        fields = line.split()
+        if len(fields) > 6 and fields[4] == "/proc":
+            separator = fields.index("-")
+            owner.require(fields[separator + 1] == "proc", "not a procfs mount")
+            mounts.append(fields[5].split(",") + fields[separator + 3].split(","))
+    owner.require(len(mounts) == 1, "proc mount visibility unavailable")
+    owner.require(not any(option.startswith("hidepid=") and option not in ("hidepid=0", "hidepid=off")
+                          for option in mounts[0]), "filtered proc mount")
+
+
+def collect_path_references(directory, path, result):
+    """Inspect all threads: unshared CWD and descriptor tables can differ."""
+    for task in (directory / "task").iterdir():
+        try:
+            result["references"] += int(inspect_path_references(task, path))
+        except FileNotFoundError:
+            if os.path.lexists(task):
+                result["uncertain"] += 1
+        except (OSError, ValueError, IndexError):
+            result["uncertain"] += 1
+
+
 def path_census(path):
     """Fail closed on any inaccessible same-UID task; expose counts, not paths."""
     result = {"status": "unavailable", "observed_at": time.time(),
@@ -176,6 +205,7 @@ def path_census(path):
     if sys.platform != "linux":
         return result
     try:
+        require_proc_visibility()
         boot = owner.boot_id()
         seen_self = False
         for directory in Path("/proc").iterdir():
@@ -185,7 +215,7 @@ def path_census(path):
                 if directory.stat().st_uid != os.getuid():
                     continue
                 seen_self |= int(directory.name) == os.getpid()
-                result["references"] += int(inspect_path_references(directory, path))
+                collect_path_references(directory, path, result)
             except FileNotFoundError:
                 if os.path.lexists(directory):
                     result["uncertain"] += 1
@@ -193,6 +223,6 @@ def path_census(path):
                 result["uncertain"] += 1
         owner.require(seen_self and owner.boot_id() == boot, "incomplete path census")
         result.update(status="available", boot_id=boot, observed_at=time.time())
-    except (OSError, ValueError):
+    except (OSError, ValueError, IndexError):
         pass
     return result
