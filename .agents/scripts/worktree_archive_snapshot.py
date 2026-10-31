@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from worktree_recovery_timing import timed
 
 from worktree_archive_filesystem import fingerprint, supported_directories
@@ -40,6 +41,7 @@ from worktree_archive_objects import (
 )
 from worktree_archive_auto_merge import restore_auto_merge as restore_auto_merge
 from worktree_archive_git import (
+    MISSING_PROMISOR_BASE, authorized_base_source, base_import_failure, base_upload_pack,
     capture_bundle as capture_bundle, fetch_preservation as fetch_preservation,
 )
 
@@ -84,14 +86,51 @@ def seed_base(root, manifest):
         raise ValueError('git_admin:invalid_base')
     if not common.is_absolute() or not common.is_dir():
         raise ValueError('git_admin:base_repository_unavailable')
+    deadline = time.monotonic() + base_import_timeout()
+
+    def bounded_git(repository, *args):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired('base-import', base_import_timeout())
+        return git(repository, *args, timeout=remaining)
+
     try:
-        git(root, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags',
-            '--no-write-fetch-head', str(common), base, timeout=base_import_timeout())
-    except subprocess.TimeoutExpired as error:
+        admin = bounded_git(root, 'rev-parse', '--absolute-git-dir').strip()
+        receiver = bounded_git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()
+        receiver_path = Path(os.fsdecode(receiver)).resolve()
+        if (Path(os.fsdecode(admin)).resolve() != receiver_path or receiver_path == common.resolve()
+                or os.path.lexists(receiver_path / 'objects/info/alternates')):
+            raise ValueError('git_admin:base_import_requires_independent_scratch')
+        graph = bounded_git(common, 'rev-list', '--objects', '--no-object-names', '--missing=print', base)
+        if any(line.startswith(b'?') for line in graph.splitlines()):
+            # No shared-source lazy fetch, even for sealed partial clones. The
+            # receiver is new operation-owned scratch, never the shared store.
+            try:
+                source, protocol = authorized_base_source(root, common, bounded_git)
+            except (ValueError, subprocess.CalledProcessError):
+                # This function also runs beneath the archive shell's inline
+                # Python CLI: suppress exception chains containing Git argv.
+                raise ValueError(MISSING_PROMISOR_BASE) from None
+            bounded_git(root, '-c', 'protocol.allow=never', '-c', f'protocol.{protocol}.allow=always',
+                        '-c', 'http.followRedirects=false', '-c', f'http.{source}.followRedirects=false',
+                        'fetch', '--quiet', '--no-tags',
+                        '--no-auto-maintenance', '--no-write-fetch-head', '--refetch',
+                        '--upload-pack=' + base_upload_pack(), source, base)
+        else:
+            bounded_git(root, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags',
+                        '--no-auto-maintenance', '--upload-pack=' + base_upload_pack(),
+                        '--no-write-fetch-head', str(common), base)
+        graph = bounded_git(root, 'rev-list', '--objects', '--no-object-names', '--missing=print', base)
+        if any(line.startswith(b'?') for line in graph.splitlines()):
+            raise ValueError(MISSING_PROMISOR_BASE)
+        bounded_git(root, 'fsck', '--full', '--no-reflogs', base)
+        bounded_git(root, 'update-ref', 'refs/archive/base', base)
+    except subprocess.CalledProcessError as error:
+        raise ValueError(base_import_failure(error)) from None
+    except subprocess.TimeoutExpired:
         raise ValueError('producer:base-import-timeout; local base import exceeded its time budget; '
                          'source and archive retained; retry when host load is lower or raise '
-                         'AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT (seconds, max 1800)') from error
-    git(root, 'update-ref', 'refs/archive/base', base)
+                         'AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT (seconds, max 1800)') from None
 
 
 def prepare_incremental_restore(archive, target):
