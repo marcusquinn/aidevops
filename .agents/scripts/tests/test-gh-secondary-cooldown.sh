@@ -553,6 +553,13 @@ test_all_primary_resources_remain_isolated() {
 		code_search) _gh_transport_preflight search code fixture >/dev/null 2>&1 || rc=$? ;;
 		esac
 		[[ "$rc" == 75 ]] || return 1
+		if [[ "$resource" == core ]]; then
+			# GH#36288: REST-backed release reads defer, never "release not found".
+			local err=""
+			rc=0
+			err=$(_gh_transport_preflight release view v1.0.0 --repo owner/repo 2>&1 >/dev/null) || rc=$?
+			[[ "$rc" == 75 && "$err" == *"error_kind=github-api-read-deferred"* && "$err" == *"retry_at="* ]] || return 1
+		fi
 	done
 	printf 'PASS core, GraphQL and code-search primary limits leave other pools and recovery diagnostics usable\n'
 	return 0
