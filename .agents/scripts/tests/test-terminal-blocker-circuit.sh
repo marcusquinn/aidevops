@@ -1041,6 +1041,133 @@ test_cross_runner_rearm_receipt() {
 	return 0
 }
 
+_legacy_recovery_check_gates() {
+	local issue="$1" comments="$2" rc=0
+	# Exercise the real backoff error code independently of evidence selection.
+	(
+		jq() {
+			[[ "$*" != *'--argjson associations'* ]] || return 1
+			command jq "$@"
+			return $?
+		}
+		terminal_blocker_backoff_active "$comments" || rc=$?
+		[[ "$rc" -eq 2 ]] || exit 1
+		rc=0
+		_tbr_release_legacy_hold owner/repo 42 "$issue" "$comments" "$(command jq -c '.[0]' <<<"$comments")" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
+	) || return 1
+	(
+		terminal_blocker_search_issues() {
+			local query="$1"
+			[[ "$query" != *'"CLAIM_RELEASED reason=blocked"'* ]] || printf '42\n'
+			return 0
+		}
+		[[ "$(_tbr_seed_candidates owner/repo | tr -d '[:space:]')" == 42 ]] || exit 1
+	) || return 1
+	return 0
+}
+
+test_legacy_hold_requires_bound_retry() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local issue='{"title":"Legacy hold","body":"updated brief","labels":[{"name":"status:blocked"}]}'
+		local comments='' base='' legacy_events='' label_events='' scenario='' rc=0 projected=0 receipts=0
+		local legacy_receipt=''
+		local TERMINAL_BLOCKER_NOW_EPOCH=1793361600 # 2026-10-30T12:00:00Z
+		local TERMINAL_BLOCKER_SELF_LOGIN=runner-a
+		base=$(jq -nc '[{id:10,body:"<!-- ops:start -->\nCLAIM_RELEASED reason=blocked runner=runner-a ts=2026-10-30T10:00:00Z\n<!-- ops:end -->",user:{login:"runner-a"},author_association:"MEMBER",created_at:"2026-10-30T10:00:00Z"},
+			{id:11,body:"terminal-blocker-circuit:retry",author_association:"MEMBER",created_at:"2026-10-30T11:00:00Z"}]')
+		label_events='[[{"id":100,"event":"labeled","label":{"name":"status:blocked"},"created_at":"2026-10-30T10:00:09Z"}]]'
+		gh() {
+			[[ "$*" == *'/issues/42/events?per_page=100'* && "$legacy_events" != unavailable ]] || return 1
+			printf '%s\n' "$legacy_events"
+			return 0
+		}
+		set_issue_status() { projected=$((projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			receipts=$((receipts + 1))
+			legacy_receipt="$marker"
+			return 0
+		}
+		comments="$base" legacy_events="$label_events"
+		[[ "$(_tbr_seed_reason "$comments" other-runner)" == unknown ]] || exit 1
+		# Real producer prefix, different label actor, nine-second lag: releases once.
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || exit 1
+		comments=$(jq -c --arg body "$legacy_receipt" '. + [{id:30,body:$body,author_association:"MEMBER",created_at:"2026-10-30T11:30:00Z"}]' <<<"$comments")
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		local released="$comments" available='{"labels":[{"name":"status:available"}]}'
+		_tbr_release_circuit_hold owner/repo 42 "$available" "$comments" || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		comments=$(jq -c '.[-1].body |= "> " + .' <<<"$released")
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$available" "$comments" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		# Each immutable identity participates in the receipt hash.
+		for scenario in release label retry; do
+			comments="$released" legacy_events="$label_events"
+			case "$scenario" in
+			release) comments=$(jq -c '.[0].id=12' <<<"$comments") ;;
+			label) legacy_events=$(jq -c '.[0][0].id=101' <<<"$legacy_events") ;;
+			retry) comments=$(jq -c '.[1].id=13' <<<"$comments") ;;
+			esac
+			_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || exit 1
+			[[ "$receipts" -eq "$projected" ]] || exit 1
+			comments=$(jq -c --arg body "$legacy_receipt" '. + [{id:31,body:$body,author_association:"MEMBER",created_at:"2026-10-30T11:31:00Z"}]' <<<"$comments")
+			_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || exit 1
+			[[ "$receipts" -eq "$projected" ]] || exit 1
+		done
+		[[ "$projected" -eq 4 ]] || exit 1
+		for scenario in no_retry active expired untrusted_retry quoted_retry forged_release untrusted_release future_release future_retry old_retry newer_release newer_label same_second missing_event_id missing_release_id missing_retry_id unavailable malformed no_events unlabelled future_label structured permission absent; do
+			comments="$base" legacy_events="$label_events" projected=0 receipts=0 rc=0
+			case "$scenario" in
+			no_retry) comments=$(jq -c '.[0:1]' <<<"$comments") ;;
+			active) comments=$(jq -c '.[0:1] | .[0].created_at="2026-10-30T11:59:00Z" | . + [.[0] | .id=12 | .created_at="2026-10-30T11:59:01Z"]' <<<"$comments") ;;
+			expired) comments=$(jq -c '.[0:1] | . + [.[0] | .id=9 | .created_at="2026-10-29T10:00:00Z"]' <<<"$comments") ;;
+			untrusted_retry) comments=$(jq -c '.[1].author_association="COLLABORATOR"' <<<"$comments") ;;
+			quoted_retry) comments=$(jq -c '.[1].body="> terminal-blocker-circuit:retry"' <<<"$comments") ;;
+			forged_release) comments=$(jq -c '.[0].user.login="imposter"' <<<"$comments") ;;
+			untrusted_release) comments=$(jq -c '.[0].user.login="runner-b" | .[0].author_association="NONE" | .[0].body |= sub("runner-a";"runner-b")' <<<"$comments") ;;
+			future_release) comments=$(jq -c '.[0].created_at="2026-10-31T10:00:00Z"' <<<"$comments") ;;
+			future_retry) comments=$(jq -c '.[1].created_at="2026-10-31T11:00:00Z"' <<<"$comments") ;;
+			old_retry) comments=$(jq -c '.[1].created_at="2026-10-30T09:00:00Z"' <<<"$comments") ;;
+			newer_release) comments=$(jq -c '. + [.[0] | .id=12 | .created_at="2026-10-30T11:30:00Z"]' <<<"$comments") ;;
+			newer_label) legacy_events=$(jq -c '.[0] += [.[0][0] | .id=101 | .created_at="2026-10-30T11:30:00Z"]' <<<"$legacy_events") ;;
+			same_second) comments=$(jq -c '.[1].created_at="2026-10-30T10:00:09Z"' <<<"$comments") ;;
+			missing_event_id) legacy_events=$(jq -c '.[0][0] |= del(.id)' <<<"$legacy_events") ;;
+			missing_release_id) comments=$(jq -c '.[0] |= del(.id)' <<<"$comments") ;;
+			missing_retry_id) comments=$(jq -c '.[1] |= del(.id)' <<<"$comments") ;;
+			unavailable) legacy_events=unavailable ;;
+			malformed) legacy_events='{}' ;;
+			no_events) legacy_events='[[]]' ;;
+			unlabelled) legacy_events=$(jq -c '.[0][0].event="unlabeled"' <<<"$legacy_events") ;;
+			future_label) legacy_events=$(jq -c '.[0][0].created_at="2026-10-31T10:00:00Z"' <<<"$legacy_events") ;;
+			structured) comments=$(jq -c '. + [{id:8,body:"<!-- aidevops:terminal-blocker-observation revision=111111111111111111111111 blocker=222222222222222222222222 -->",author_association:"MEMBER",created_at:"2026-10-29T10:00:00Z"}]' <<<"$comments") ;;
+			permission) comments=$(jq -c --arg f "$(_terminal_blocker_hash v2:permission_required)" '.[0:1] + [{id:8,body:("<!-- aidevops:terminal-blocker-observation revision=111111111111111111111111 blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-29T10:00:00Z"}]' <<<"$comments") ;;
+			absent) comments='[]' ;;
+			esac
+			_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || rc=$?
+			[[ "$rc" -ne 0 && "$projected" -eq 0 && "$receipts" -eq 0 ]] || { printf 'legacy scenario failed: %s\n' "$scenario" >&2; exit 1; }
+		done
+		comments="$base" legacy_events="$label_events"
+		for scenario in hold-for-review needs-maintainer-permissions no-auto-dispatch parent-task needs-maintainer-review status:in-progress; do
+			_tbr_release_circuit_hold owner/repo 42 "$(jq -c --arg hold "$scenario" '.labels += [{name:$hold}]' <<<"$issue")" "$comments" || exit 1
+			[[ "$projected" -eq 0 ]] || exit 1
+		done
+		# The real backoff predicate must distinguish jq failure from expiry;
+		# recovery must fail closed even though the trusted retry is otherwise valid.
+		_legacy_recovery_check_gates "$issue" "$comments" || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "legacy bare holds release only on a trusted retry after the current label event, once" "$status"
+	return 0
+}
+
 # GH#35745: a held unknown first observation (projected status:blocked) gets
 # the wake conditions of the other held classes. It is queued and seeded, holds
 # for an unchanged brief across default-branch movement, and a standalone
@@ -2347,6 +2474,7 @@ main() {
 	test_circuit_hold_projects_blocked_and_releases
 	test_first_observation_scope_hold_releases_on_revision
 	test_cross_runner_rearm_receipt
+	test_legacy_hold_requires_bound_retry
 	test_unknown_hold_rearms_on_trusted_retry
 	test_retry_only_observation_recovery
 	test_mechanical_rearm_pass
