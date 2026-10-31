@@ -232,6 +232,30 @@ test_leaf_reference_without_broad_signal_skips_comment() {
 	return 0
 }
 
+test_planning_publication_skips_partial_closeout() {
+	: >"$GH_COMMENT_LOG"
+	: >"$GH_CALL_LOG"
+	export TEST_PR_BODY="## Planning publication
+
+## Task and issue manifest
+
+<!-- aidevops:planning-publication:v1 id=pub-1 -->
+<!-- aidevops:planning-task:v1 task=t1 issue=23932 -->
+- For #23932"
+	export TEST_ISSUE_LABELS="bug,tier:simple"
+	export TEST_ISSUE_BODY="## Acceptance Criteria
+
+- [ ] One
+- [ ] Two"
+	export TEST_EXISTING_COMMENTS="[]"
+
+	_pm_handle_partial_parent_closeout "23936" "marcusquinn/aidevops" "Planning only."
+	assert_no_comment "planning publication PR: partial parent closeout skipped"
+	assert_api_issue_fetch_count "0" \
+		"planning publication PR: skips issue fetch"
+	return 0
+}
+
 test_existing_marker_skips_duplicate_comment() {
 	: >"$GH_COMMENT_LOG"
 	export TEST_PR_BODY="For #23932"
@@ -260,6 +284,7 @@ main() {
 	test_alternate_checklist_bullets_detect_parent_and_followups
 	test_primary_linked_issue_skips_partial_closeout
 	test_leaf_reference_without_broad_signal_skips_comment
+	test_planning_publication_skips_partial_closeout
 	test_existing_marker_skips_duplicate_comment
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

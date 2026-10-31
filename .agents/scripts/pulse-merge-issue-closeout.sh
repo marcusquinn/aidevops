@@ -49,6 +49,10 @@ _pm_resolve_superseded_original_issue() {
 #######################################
 # Extract a non-closing parent/umbrella reference from a PR body.
 #
+# Planning publication PRs (shared-todo-commit.sh) reference each announced
+# task with `For #NNN` only so the merge does not close it; they deliver no
+# task scope, so they never produce a partial closeout (GH#36230).
+#
 # Args: $1=pr_number, $2=repo_slug
 # Stdout: issue number from the first `For #NNN` / `Ref #NNN` reference
 # Returns: 0 always
@@ -59,6 +63,9 @@ _pm_extract_partial_parent_reference() {
 	local pr_body="" parent_issue=""
 
 	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
+	if [[ "$pr_body" == *"<!-- aidevops:planning-publication:v1 "* ]]; then
+		return 0
+	fi
 	parent_issue=$(printf '%s' "$pr_body" | grep -ioE '(^|[[:space:]])(for|ref)[[:space:]]+#[0-9]+' | head -1 | grep -oE '[0-9]+') || parent_issue=""
 	printf '%s' "$parent_issue"
 	return 0
