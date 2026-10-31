@@ -12,28 +12,32 @@ def require(condition, reason):
         raise ValueError(reason)
 
 
+def owner_proof(record, fresh):
+    require(bool(record["launches"]), "missing owner admission evidence")
+    owner_lifetime.require_admission_observed(record)
+    census_cache = {}
+    for launch in record["launches"]:
+        if launch.get("completion_evidence") is None:
+            from worktree_lifetime_reconcile import validate_quiescence
+            validate_quiescence(launch, record["identity"])
+            if fresh:
+                # Persisted path observations are history, not present-tense
+                # deletion authority. Recheck parents and references now.
+                owner_lifetime.drain(launch, record["identity"], census_cache)
+            continue
+        require(launch.get("kind") == owner_lifetime.KIND and
+                launch.get("completion_evidence") == "systemd-cgroup-v1" and
+                launch.get("quiescence") and not launch.get("admission_cancelled"),
+                "missing owner completion receipt")
+
+
 def proof(record, source_inode, fresh=False):
     require(not record.get("creation_pending"), "replacement creation has no completed admission")
     require(record["state"] == "sealed" and record["identity"]["source_inode"] == source_inode,
             "no matching sealed generation")
     require(record.get("sealed_at", 0) > 0, "missing sealing receipt")
     if record.get("manager") == owner_lifetime.MANAGER:
-        require(bool(record["launches"]), "missing owner admission evidence")
-        owner_lifetime.require_admission_observed(record)
-        census_cache = {}
-        for launch in record["launches"]:
-            if launch.get("completion_evidence") is None:
-                from worktree_lifetime_reconcile import validate_quiescence
-                validate_quiescence(launch, record["identity"])
-                if fresh:
-                    # Persisted path observations are history, not present-tense
-                    # deletion authority. Recheck parents and references now.
-                    owner_lifetime.drain(launch, record["identity"], census_cache)
-                continue
-            require(launch.get("kind") == owner_lifetime.KIND and
-                    launch.get("completion_evidence") == "systemd-cgroup-v1" and
-                    launch.get("quiescence") and not launch.get("admission_cancelled"),
-                    "missing owner completion receipt")
+        owner_proof(record, fresh)
         # Only closed managed invocations reach this point. Validate their durable
         # receipts below, just like Pulse; arbitrary empty cgroups never qualify.
     if not record["launches"]:
