@@ -307,7 +307,8 @@ _tbr_seed_candidates() {
 	local slug="$1"
 	local query="" result="" numbers=""
 	for query in "\"TERMINAL_BLOCKER_CIRCUIT\" in:comments" \
-		"label:\"status:blocked\" \"Terminal blocker\" in:comments"; do
+		"label:\"status:blocked\" \"Terminal blocker\" in:comments" \
+		'label:"status:blocked" "CLAIM_RELEASED reason=blocked" in:comments'; do
 		result=$(terminal_blocker_search_issues "repo:${slug} is:issue is:open ${query}") || return 2
 		numbers+="${result}"$'\n'
 	done
@@ -490,6 +491,10 @@ _tbr_seed_reason() {
 		| select(contains("aidevops:terminal-blocker-observation revision="))
 		| capture("Terminal blocker: reason=(?<r>[a-z_]+) ")? | .r] | last // ""
 	' 2>/dev/null) || reason=""
+	if [[ -z "$reason" && -n "$(_tbr_latest_legacy_release "$comments" "$self")" ]]; then
+		printf 'unknown\n'
+		return 0
+	fi
 	terminal_blocker_observation_recoverable "$reason" || return 1
 	printf '%s\n' "$reason"
 	return 0
@@ -581,6 +586,70 @@ _tbr_post_rearm_receipt() {
 	return 0
 }
 
+# GH#36061: only authenticated bare producer releases qualify. A structured
+# marker anywhere in the history excludes legacy fallback, even if unreadable.
+_tbr_latest_legacy_release() {
+	local comments="$1" self="$2"
+	local now="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
+	[[ "$now" =~ ^[0-9]+$ ]] || now=$(date -u '+%s')
+	jq -c --arg self "$self" --argjson now "$now" \
+		--argjson associations "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		flatten | if any(.[]; (.body // "") | test("aidevops:terminal-blocker-(observation|circuit)"))
+		then empty else
+		[.[] | select(hold_evidence($associations; $self))
+		| select(valid_time) | select((.created_at | fromdateiso8601) <= $now)
+		| . as $event
+		| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
+		| select($release != null and $release.runner == ($event.author // $event.user.login // ""))
+		| select((.body // "") | contains("Terminal blocker: reason=") | not)]
+		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty end
+	' <<<"$comments"
+	return $?
+}
+
+# A later OWNER/MEMBER retry binds a bare release to the current label hold.
+# Backoff expiry and brief changes never authorize legacy label projection.
+_tbr_release_legacy_hold() {
+	local repo="$1" issue="$2" issue_json="$3" comments="$4" evidence="$5"
+	local key="" retry="" events="" label="" receipt="" backoff_rc=0
+	local now="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
+	local blocked='status:blocked' array_type='array' order_jq="$_TBC_ORDER_JQ"
+	[[ "$now" =~ ^[0-9]+$ ]] || now=$(date -u '+%s')
+	terminal_blocker_backoff_active "$comments" >/dev/null || backoff_rc=$?
+	[[ "$backoff_rc" -lt 2 ]] || return 2
+	retry=$(_terminal_blocker_latest_retry_comment "$comments") || return 2
+	[[ -n "$retry" ]] || return 2
+	events=$(gh api "repos/${repo}/issues/${issue}/events?per_page=100" --paginate --slurp 2>/dev/null) || return 2
+	# shellcheck disable=SC2016 # jq variables are supplied via --arg/--argjson
+	local label_filter='
+		if type != $array or any(.[]; type != $array) then error("invalid history") else flatten end
+		| map(select((.event == "labeled" or .event == "unlabeled") and .label.name == $blocked))
+		| if any(.[]; (comment_id == null) or (valid_time | not) or
+			(.created_at | fromdateiso8601) > $now) then error("invalid event") else . end
+		| sort_by(.created_at, .id) | last | select(.event == "labeled")
+	'
+	label=$(jq -ce --argjson now "$now" --arg blocked "$blocked" --arg array "$array_type" "${order_jq}${label_filter}" <<<"$events") || return 2
+	# shellcheck disable=SC2016 # jq variables are supplied via --argjson
+	local key_filter='
+		select(comment_id != null and ($release | comment_id) != null and ($retry | comment_id) != null)
+		| select(($retry.created_at | fromdateiso8601) <= $now)
+		| select($retry.created_at > .created_at and $retry.created_at > $release.created_at)
+		| {release:$release.id, label:.id, retry:$retry.id}
+	'
+	key=$(jq -cer --argjson release "$evidence" --argjson retry "$retry" --argjson now "$now" "${order_jq}${key_filter}" <<<"$label") || return 2
+	key=$(_terminal_blocker_hash "$key") || return 2
+	receipt="<!-- aidevops:terminal-blocker-rearmed key=${key} -->"
+	# Permit receipt replay after projection, but never a new release without
+	# the label still present. Receipt suppression alone grants no release.
+	if ! jq -e --arg blocked "$blocked" 'any(.labels[]; .name == $blocked)' <<<"$issue_json" >/dev/null; then
+		jq -e --arg marker "$receipt" 'any(.[]; (.body // "") | split("\n") | index($marker) != null)' <<<"$comments" >/dev/null || return 2
+	fi
+	_tbr_dependency_unresolved "$repo" "$issue" "$issue_json" legacy legacy && return 3
+	printf 'rearm_decision issue=%s observed_rev=legacy current_rev=legacy reason=trusted_retry\n' "$issue" >&2
+	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" legacy legacy
+	return $?
+}
+
 # Unlike the historical dispatch predicate, indeterminate circuit revisions
 # are not evidence of inactivity at a write boundary.
 _tbr_circuit_blocks_release() {
@@ -670,6 +739,13 @@ _tbr_release_circuit_hold() {
 	evidence=$(jq -nc --argjson observation "${observation:-null}" --argjson circuit "${circuit:-null}" \
 		"${_TBC_ORDER_JQ}"'[ $observation, $circuit ] | map(select(. != null)) |
 		sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty') || return 2
+	if [[ -z "$evidence" ]]; then
+		evidence=$(_tbr_latest_legacy_release "$comments" "$(_terminal_blocker_self_login)") || return 2
+		if [[ -n "$evidence" ]]; then
+			_tbr_release_legacy_hold "$repo" "$issue" "$issue_json" "$comments" "$evidence"
+			return $?
+		fi
+	fi
 	[[ -n "$evidence" ]] || {
 		# GH#35569: retire unverifiable intake, never project availability.
 		# Missing evidence is final for this entry, not a transient API failure.
@@ -718,6 +794,14 @@ _tbr_release_circuit_hold() {
 		 retry: (if $decision == "trusted_retry" then ($retry | {id,created_at}) else null end)}') || return 2
 	receipt_key=$(_terminal_blocker_hash "$receipt_key") || return 2
 	receipt="<!-- aidevops:terminal-blocker-rearmed key=${receipt_key} -->"
+	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" "$observed_rev" "$current_rev"
+	return $?
+}
+
+# Shared idempotent projection for structured and legacy re-arm decisions.
+_tbr_project_rearm() {
+	local repo="$1" issue="$2" issue_json="$3" comments="$4" receipt="$5"
+	local observed_rev="$6" current_rev="$7"
 	# Suppression only: accepting a fetched collaborator receipt grants no release.
 	if printf '%s' "$comments" | jq -e --arg marker "$receipt" 'any(.[]; (.body // "") | split("\n") | index($marker) != null)' >/dev/null; then
 		printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=already_released\n' "$issue" "$observed_rev" "$current_rev" >&2
@@ -735,7 +819,7 @@ _tbr_release_circuit_hold() {
 	fi
 	# Reconcile a failed receipt write after a successful projection without
 	# projecting availability twice on the next pass.
-	if printf '%s' "$labels" | jq -e 'index("status:blocked") != null' >/dev/null; then
+	if printf '%s' "$issue_json" | jq -e --arg blocked status:blocked 'any(.labels[]; .name == $blocked)' >/dev/null; then
 		set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || return 2
 	fi
 	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" || return 2

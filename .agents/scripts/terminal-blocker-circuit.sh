@@ -745,7 +745,7 @@ terminal_blocker_backoff_active() {
 			| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
 			| select($release != null and $release.runner == ($comment.author // $comment.user.login // ""))
 			| epoch] | [length, (max // 0)] | @tsv
-	' 2>/dev/null) || return 1
+	' 2>/dev/null) || return 2
 	IFS=$'\t' read -r count last_epoch <<<"$evidence"
 	[[ "$count" =~ ^[0-9]+$ && "$last_epoch" =~ ^[0-9]+$ && "$count" -ge 2 ]] || return 1
 	# Two failures: 15 minutes; each further failure doubles the delay, capped

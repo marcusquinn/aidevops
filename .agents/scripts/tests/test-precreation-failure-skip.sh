@@ -1027,18 +1027,26 @@ else
 fi
 STUB_LOCK_RC=0
 
-# A repeated-zero-output hold must stop before worktree, ownership, lock, or spawn.
+# GH#36214: the windowed zero-attempt backoff runs before the cross-runner
+# claim, so a held issue posts no DISPATCH_CLAIM/prelaunch lease (each of which
+# used to become fresh orphan evidence) and returns the benign rc 3.
 : >"$ORCHESTRATOR_CALLS_FILE"
 : >"${TMP}/setsid-calls.txt"
+: >"$CLAIM_LOCK_CALLS_FILE"
 STUB_HOLD_RC=0
 hold_rc=0
 _dispatch_launch_worker "77780" "owner/repo" "test-dispatch" "Test Issue" \
 	"testuser" "$FAKE_REPO" "test prompt" "session-key-hold" "" "{}" || hold_rc=$?
 actual_calls=$(tr '\n' ' ' <"$ORCHESTRATOR_CALLS_FILE")
-if [[ "$hold_rc" -eq 2 && "$actual_calls" == "hold " && ! -s "${TMP}/setsid-calls.txt" ]]; then
-	pass "repeated-zero-output hold stops before queued ownership"
+if [[ "$hold_rc" -eq 3 && "$actual_calls" == "hold " && ! -s "${TMP}/setsid-calls.txt" ]]; then
+	pass "zero-attempt backoff stops before queued ownership with benign rc=3"
 else
-	fail "repeated-zero-output hold stops before queued ownership" "rc=$hold_rc calls='$actual_calls'"
+	fail "zero-attempt backoff stops before queued ownership with benign rc=3" "rc=$hold_rc calls='$actual_calls'"
+fi
+if [[ ! -s "$CLAIM_LOCK_CALLS_FILE" ]]; then
+	pass "zero-attempt backoff posts no dispatch claim or prelaunch lease"
+else
+	fail "zero-attempt backoff posts no dispatch claim or prelaunch lease" "claim lock calls: $(cat "$CLAIM_LOCK_CALLS_FILE")"
 fi
 STUB_HOLD_RC=1
 
@@ -1205,7 +1213,7 @@ LEASE_STUB
 		_DLW_WORKTREE_REUSED=0
 		return 0
 	}
-	local scenario="" first_line=""
+	local scenario="" first_line="" hold_line=""
 	for scenario in slow expired renewal-failed; do
 		SECONDS=0 preparation_delay=125 STUB_RENEW_RC=0 lease_rc=0
 		[[ "$scenario" != expired ]] || preparation_delay=301
@@ -1214,8 +1222,10 @@ LEASE_STUB
 		: >"${TMP}/setsid-calls.txt"
 		LOGFILE="${TMP}/prelaunch-lease-${scenario}.log"
 		_dispatch_launch_worker 77782 owner/repo dispatch issue testuser "$FAKE_REPO" prompt issue-77782 "" '{}' || lease_rc=$?
-		IFS= read -r first_line <"$ORCHESTRATOR_CALLS_FILE"
-		[[ "$first_line" == renew\ * ]] || return 1
+		# GH#36214: the zero-attempt backoff precedes the prelaunch lease; the
+		# lease renewal is the first prelaunch-stage action after it.
+		{ IFS= read -r hold_line && IFS= read -r first_line; } <"$ORCHESTRATOR_CALLS_FILE"
+		[[ "$hold_line" == hold && "$first_line" == renew\ * ]] || return 1
 		if [[ "$scenario" == slow ]]; then
 			[[ "$lease_rc" == 0 && -s "${TMP}/setsid-calls.txt" ]] || return 1
 			[[ "$(grep -c '^renew ' "$ORCHESTRATOR_CALLS_FILE")" == 2 ]] || return 1

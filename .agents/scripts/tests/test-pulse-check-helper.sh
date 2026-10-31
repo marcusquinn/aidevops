@@ -152,6 +152,21 @@ if [[ "${PULSE_CHECK_HANDOFF_FAILURE_FIXTURE:-}" == "yes" ]]; then
 JSON
   exit 0
 fi
+if [[ -n "${PULSE_CHECK_PREMATURE_EXIT_FIXTURE:-}" ]]; then
+  jq -n --arg mode "$PULSE_CHECK_PREMATURE_EXIT_FIXTURE" --arg args " $* " '
+    (if ($args | contains(" --since 1h ")) then
+      (if $mode == "recovered" then 0 elif $mode == "below-threshold" then 1 else 4 end)
+    else 12 end) as $count
+    | {window:{since:"24h"}, metrics:{failure_families:[
+      {fingerprint:"ff-v1:premature-exit", family:"premature-exit", count:$count,
+       distinct_sessions:(if $mode == "single-session" then 1 else $count end),
+       confidence:"high", first_ts:1, last_ts:2,
+       launch_failure_cause:"model_stopped_before_completion", kill_reason:"natural",
+       next_action:"resume_session_with_completion_contract", recovery_outcome:"recurring",
+       results:{premature_exit:$count}, examples:[{result:"premature_exit",exit_code:1}]}
+    ] | map(select(.count > 0))}}'
+  exit 0
+fi
 if [[ -n "${PULSE_CHECK_WATCHDOG_FIXTURE:-}" ]]; then
   # Canonical worker-activity family shape: identical result/exit routing,
   # but liveness-backed cap kills have their own cause and fingerprint.
@@ -473,6 +488,26 @@ assert_eq "historical watchdog failures are preserved after recent recovery" "4"
 	"$(printf '%s' "$WATCHDOG_RECOVERED" | jq '.failure_family_remediation[] | select(.family == "watchdog-stall") | .count')"
 assert_eq "recent recovery clears watchdog finding without rewriting history" "0" \
 	"$(printf '%s' "$WATCHDOG_RECOVERED" | jq '[.findings[] | select(.id == "worker-failure-family-watchdog-stall")] | length')"
+assert_eq "recent recovery clears recurrent summary as well as findings" "0" \
+	"$(printf '%s' "$WATCHDOG_RECOVERED" | jq '.summary.recurrent_failure_families')"
+PREMATURE_JSON=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_PREMATURE_EXIT_FIXTURE=recurring" "$HELPER" json 2>&1)
+assert_eq "canonical premature exits remain actionable" "1" \
+	"$(printf '%s' "$PREMATURE_JSON" | jq '[.findings[] | select(.id == "worker-failure-family-premature-exit")] | length')"
+assert_eq "premature-exit recurrence summary matches actionable findings" "1" \
+	"$(printf '%s' "$PREMATURE_JSON" | jq '.summary.recurrent_failure_families')"
+assert_contains "premature exits retain natural termination evidence" "kill_reason=natural" "$PREMATURE_JSON"
+assert_contains "premature exits retain model completion cause" "launch_failure_cause=model_stopped_before_completion" "$PREMATURE_JSON"
+assert_eq "premature exits preserve continuation rather than redispatch routing" "resume_session_with_completion_contract" \
+	"$(printf '%s' "$PREMATURE_JSON" | jq -r '.failure_family_remediation[0].next_action')"
+for premature_mode in recovered below-threshold single-session; do
+	PREMATURE_QUIET=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_PREMATURE_EXIT_FIXTURE=$premature_mode" "$HELPER" json 2>&1)
+	assert_eq "${premature_mode} premature exits do not inflate recurrent summary" "0" \
+		"$(printf '%s' "$PREMATURE_QUIET" | jq '.summary.recurrent_failure_families')"
+	assert_eq "${premature_mode} premature exits trigger no actionable finding" "0" \
+		"$(printf '%s' "$PREMATURE_QUIET" | jq '[.findings[] | select(.id == "worker-failure-family-premature-exit")] | length')"
+	assert_eq "${premature_mode} premature exits preserve historical evidence" "12" \
+		"$(printf '%s' "$PREMATURE_QUIET" | jq '.failure_family_remediation[0].count')"
+done
 assert_eq "json reports canonical reconciliation refusal aggregate" "2" "$(printf '%s' "$JSON_OUT" | jq -r '.current_state.canonical_reconciliation.refusal_count')"
 assert_eq "json reports canonical reconciliation classification" "dirty_or_uncommitted" "$(printf '%s' "$JSON_OUT" | jq -r '.current_state.canonical_reconciliation.classification')"
 assert_eq "benign policy holds do not inflate worker failures" "0" "$(printf '%s' "$JSON_OUT" | jq -r '.summary.worker_terminal_events_in_window')"
