@@ -494,6 +494,23 @@ _has_maintainer_crypto_approval() {
 #       linked-issue development authority and PR-specific merge authority)
 #   1 - REFUSE: external/fork PR without crypto approval
 #######################################
+_pulse_merge_live_state_gate() {
+	local pr_number="$1" repo_slug="$2" pr_meta_json="$3" labels_str="$4"
+	# #aidevops:trust-boundary — lifecycle, review and holds share one fresh read.
+	if ! printf '%s' "$pr_meta_json" | jq -e '.state == "OPEN" and .isDraft == false and .reviewDecision != "CHANGES_REQUESTED"' >/dev/null; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR is not open, is draft or has CHANGES_REQUESTED" >>"$LOGFILE"
+		return 1
+	fi
+	local blocking_label=""
+	for blocking_label in hold-for-review needs-maintainer-review; do
+		if [[ ",${labels_str}," == *",${blocking_label},"* ]]; then
+			echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR carries ${blocking_label}" >>"$LOGFILE"
+			return 1
+		fi
+	done
+	return 0
+}
+
 _pulse_merge_admin_safety_check() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -531,20 +548,7 @@ _pulse_merge_admin_safety_check() {
 		return 1
 	fi
 
-	# #aidevops:trust-boundary — lifecycle, review and holds come from the same
-	# fresh exact-head read; no origin or signed authority overrides them.
-	if ! printf '%s' "$pr_meta_json" | jq -e '.state == "OPEN" and .isDraft == false and .reviewDecision != "CHANGES_REQUESTED"' >/dev/null; then
-		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR is not open, is draft or has CHANGES_REQUESTED" >>"$LOGFILE"
-		return 1
-	fi
-	if [[ "$labels_str" =~ (^|,)hold-for-review(,|$) ]]; then
-		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR carries hold-for-review" >>"$LOGFILE"
-		return 1
-	fi
-	if [[ ",${labels_str}," == *",needs-maintainer-review,"* ]]; then
-		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR carries needs-maintainer-review" >>"$LOGFILE"
-		return 1
-	fi
+	_pulse_merge_live_state_gate "$pr_number" "$repo_slug" "$pr_meta_json" "$labels_str" || return 1
 
 	local treat_as_external=0 trusted_issue_sync=0 authority_rc=0
 	#aidevops:trust-boundary -- classify live collaborator, external, or exact
