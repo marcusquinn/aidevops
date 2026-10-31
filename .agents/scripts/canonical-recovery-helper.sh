@@ -10,6 +10,7 @@ SYNC_MIRROR_CMD="sync-mirror"
 LOCAL_FAST_FORWARD_CMD="fast-forward-local"
 VERIFY_BOOTSTRAP_CMD="verify-bootstrap-registration"
 REPAIR_UPSTREAM_CMD="repair-upstream"
+FOLLOW_TRANSFER_CMD="follow-transfer"
 CLEAR_STALE_REBASE_CMD="clear-stale-rebase"
 CLEAR_ABANDONED_REBASE_CMD="clear-abandoned-rebase"
 AIDEVOPS_UPDATE_REASON="aidevops-update"
@@ -1169,6 +1170,129 @@ fast_forward_local() {
 	return 0
 }
 
+# The native Git entrypoint is restricted to this audited recovery operation.
+# No fetch, ref update, checkout, transfer API write, or layout move occurs here.
+follow_repository_transfer() {
+	local repo="$1"
+	local old_slug="$2"
+	local new_slug="$3"
+	local config_path="${AIDEVOPS_REPOS_CONFIG:-${HOME}/.config/aidevops/repos.json}"
+	python3 - "$repo" "$old_slug" "$new_slug" "$config_path" "$REAL_GIT" "$SCRIPT_DIR" <<'PY'
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+
+repo, old_slug, new_slug, config_name, git, scripts = sys.argv[1:]
+config = Path(config_name).expanduser()
+audit = str(Path(scripts) / "audit-log-helper.sh")
+origin = 'origin'
+remote_command = "remote"
+canonical_name = "full_name"
+slug_key = "slug"
+audit_env = dict(os.environ, AUDIT_QUIET="true",
+                 AUDIT_LOG_FILE=str(Path.home() / ".aidevops/logs/canonical-recovery-audit.jsonl"))
+
+def run(*args, env=None):
+    return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, env=env).stdout.strip()
+
+def git_values(key):
+    result = subprocess.run([git, '-C', repo, "config", "--get-all", key],
+                            text=True, capture_output=True)
+    if result.returncode not in (0, 1):
+        raise ValueError("cannot enumerate origin configuration")
+    return result.stdout.splitlines()
+
+def audit_record(event, message, identity):
+    details = ["operation=follow-transfer", f"repo={repo}", f"old_slug={old_slug}",
+               f"new_slug={new_slug}", f"repository_id={identity}"]
+    args = [arg for detail in details for arg in ("--detail", detail)]
+    run(audit, "log", event, message, *args, env=audit_env)
+
+def apply_transfer():
+    # Serialize this operation across repos sharing the registry; compare the
+    # original bytes too, so unrelated registry changes are never overwritten.
+    if config.is_symlink():
+        raise ValueError("repos.json must not be a symlink")
+    with open(str(config) + ".follow-transfer.lock", "a", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = config.read_bytes()
+        registry = json.loads(before)
+        entries = registry["initialized_repos"]
+        matches = [entry for entry in entries if
+                   Path(entry.get("path", entry.get("repo_path", ''))).expanduser().resolve() == Path(repo)]
+        if len(matches) != 1 or matches[0].get(slug_key, '').casefold() != old_slug.casefold():
+            raise ValueError("canonical registration is missing, ambiguous, or changed")
+        if any(entry is not matches[0] and entry.get(slug_key, '').casefold() == new_slug.casefold()
+               for entry in entries):
+            raise ValueError("target slug is already registered at another path")
+        urls = git_values("remote.origin.url")
+        if len(urls) != 1 or git_values("remote.origin.pushurl"):
+            raise ValueError("origin requires one URL and no explicit push URL")
+        old_url = urls[0]
+        pattern = r"(git@github\.com:|(?:https|http|git)://github\.com(?::[0-9]+)?/|ssh://git@github\.com(?::[0-9]+)?/)([^/?#]+/[^/?#]+?)(\.git)?"
+        match = re.fullmatch(pattern, old_url)
+        if not match or match[2].casefold() != old_slug.casefold():
+            raise ValueError("origin URL does not match the registered GitHub slug")
+        if run(git, '-C', repo, remote_command, "get-url", origin) != old_url or run(
+                git, '-C', repo, remote_command, "get-url", "--push", origin) != old_url:
+            raise ValueError("origin URL rewrites require separate recovery")
+        #aidevops:trust-boundary
+        # Both lookups must resolve to the requested canonical name and the same
+        # immutable ID: an old name reused by another repository fails closed.
+        old = json.loads(run("gh", "api", "--hostname", "github.com", f"repos/{old_slug}"))
+        new = json.loads(run("gh", "api", "--hostname", "github.com", f"repos/{new_slug}"))
+        if (not isinstance(old.get("id"), int) or old["id"] <= 0 or old["id"] != new.get("id")
+                or old.get(canonical_name, '').casefold() != new_slug.casefold()
+                or new.get(canonical_name, '').casefold() != new_slug.casefold()):
+            raise ValueError("GitHub repository IDs or canonical names do not match")
+        new_url = match[1] + new[canonical_name] + (match[3] or "")
+        run(audit, "verify", "--quiet", env=audit_env)
+        audit_record("operation.verify", "Canonical repository transfer authorized", new["id"])
+        matches[0][slug_key] = new[canonical_name]
+        payload = (json.dumps(registry, indent=2, ensure_ascii=False) + "\n").encode()
+        fd, staging = tempfile.mkstemp(prefix=".repos-transfer-", dir=config.parent)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                os.fchmod(output.fileno(), config.stat().st_mode & 0o777)
+                output.write(payload)
+                output.flush()
+                os.fsync(output.fileno())
+            if config.read_bytes() != before or git_values("remote.origin.url") != urls or git_values("remote.origin.pushurl"):
+                raise ValueError("registry or origin changed during verification")
+            run(git, '-C', repo, remote_command, "set-url", origin, new_url)
+            try:
+                if config.read_bytes() != before:
+                    raise ValueError("registry changed before replacement")
+                os.replace(staging, config)
+            except Exception:
+                run(git, '-C', repo, remote_command, "set-url", origin, old_url)
+                raise
+        finally:
+            Path(staging).unlink(missing_ok=True)
+        audit_record("operation.complete", "Canonical repository transfer followed", new["id"])
+        run(audit, "verify", "--quiet", env=audit_env)
+        print(f"FOLLOWED: {old_slug} -> {new['full_name']} (repository ID {new['id']})")
+        print("NEXT: aidevops repos migrate-layout plan --include-registered-paths --source " + shlex.quote(repo))
+
+try:
+    apply_transfer()
+except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError):
+    # Provider errors can contain private URLs or credentials; do not relay stderr.
+    print("BLOCKED: transfer identity, origin, registry, or audit verification failed; inspect local state before retrying", file=sys.stderr)
+    sys.exit(1)
+PY
+	local status="$?"
+	[[ "$status" -eq 0 ]] || return 1
+	return 0
+}
+
 usage() {
 	printf '%s\n' \
 		'Usage:' \
@@ -1181,6 +1305,7 @@ usage() {
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --issue N --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --reason ${AIDEVOPS_UPDATE_REASON} --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
 		"  canonical-recovery-helper.sh ${REPAIR_UPSTREAM_CMD} --repo PATH --issue N --confirm REPAIR_CANONICAL_UPSTREAM" \
+		"  canonical-recovery-helper.sh ${FOLLOW_TRANSFER_CMD} --repo PATH --slug OWNER/REPO --confirm FOLLOW_REPOSITORY_TRANSFER" \
 		"  canonical-recovery-helper.sh ${VERIFY_BOOTSTRAP_CMD} --repo PATH --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY"
 	return 0
 }
@@ -1286,6 +1411,13 @@ restore-default)
 		exit 2
 	}
 	;;
+"$FOLLOW_TRANSFER_CMD")
+	expected_confirmation="FOLLOW_REPOSITORY_TRANSFER"
+	[[ -z "$expected_branch" && "$bootstrap_slug" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ ]] || {
+		usage
+		exit 2
+	}
+	;;
 "$VERIFY_BOOTSTRAP_CMD")
 	expected_confirmation="REGISTER_CANONICAL_REPOSITORY"
 	[[ -z "$expected_branch" && "$bootstrap_slug" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || {
@@ -1298,7 +1430,7 @@ restore-default)
 	exit 2
 	;;
 esac
-if [[ "$cmd" != "$VERIFY_BOOTSTRAP_CMD" && -n "$bootstrap_slug" ]]; then
+if [[ "$cmd" != "$VERIFY_BOOTSTRAP_CMD" && "$cmd" != "$FOLLOW_TRANSFER_CMD" && -n "$bootstrap_slug" ]]; then
 	usage
 	exit 2
 fi
@@ -1318,6 +1450,8 @@ if [[ "$cmd" == "$LOCAL_FAST_FORWARD_CMD" ]]; then
 	audit_reference="task ${task_id}"
 elif [[ "$cmd" == "$VERIFY_BOOTSTRAP_CMD" && -z "$issue_number" && -z "$maintenance_reason" ]]; then
 	audit_reference="bootstrap registration"
+elif [[ "$cmd" == "$FOLLOW_TRANSFER_CMD" && -z "$issue_number" && -z "$maintenance_reason" ]]; then
+	audit_reference="repository transfer"
 elif [[ "$issue_number" =~ ^[0-9]+$ && -z "$maintenance_reason" ]]; then
 	audit_reference="issue ${issue_number}"
 elif [[ -z "$issue_number" && ("$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD") &&
@@ -1402,6 +1536,14 @@ fi
 if [[ "$cmd" == "$VERIFY_BOOTSTRAP_CMD" ]]; then
 	audit_bootstrap_identity "$repo_path" "$expected_slug" "$canonical_remote" || exit 1
 	printf 'VERIFIED: canonical bootstrap identity %s via remote %s\n' "$expected_slug" "$canonical_remote"
+	exit 0
+fi
+if [[ "$cmd" == "$FOLLOW_TRANSFER_CMD" ]]; then
+	[[ "$canonical_remote" == "origin" ]] || {
+		printf 'BLOCKED: transfer following requires the registered GitHub origin\n' >&2
+		exit 1
+	}
+	follow_repository_transfer "$repo_path" "$registered_slug" "$bootstrap_slug" || exit 1
 	exit 0
 fi
 policy_helper="${SCRIPT_DIR}/canonical-write-policy-helper.py"
