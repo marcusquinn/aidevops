@@ -62,7 +62,8 @@ jobs:
           # evaluates to 'true' or 'false' at workflow-compile time and is
           # safe to log.
           SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
-          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          # Git push keeps the checkout credential; any API reads use job quota.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 

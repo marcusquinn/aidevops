@@ -13,7 +13,7 @@
  * Exit codes: 0 done, 1 something skipped, stopped or left, 2 usage, plan or permission error.
  * Backups: ~/backups/wp-change-plan/ (override with WP_CHANGE_PLAN_BACKUP_DIR), mode 600.
  * Plan format, rules and traps: .agents/tools/wordpress/wp-change-plan.md
- * Needs wp-change-plan-values.php and wp-change-plan-term-usage.php in the same directory.
+ * Needs the wp-change-plan-{values,term-usage,writer,reader}.php siblings alongside it.
  *
  * @package aidevops
  */
@@ -26,6 +26,8 @@ if ( ! defined( 'ABSPATH' ) || ! class_exists( 'WP_CLI' ) ) {
 // Siblings; wp-helper-change-plan.sh uploads them with this file for SSH sites.
 require_once __DIR__ . '/wp-change-plan-values.php';
 require_once __DIR__ . '/wp-change-plan-term-usage.php';
+require_once __DIR__ . '/wp-change-plan-writer.php';
+require_once __DIR__ . '/wp-change-plan-reader.php';
 
 if ( ! class_exists( 'WPCP_Plan_Error' ) ) {
 	/**
@@ -66,6 +68,20 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 
 		/** @var array Taxonomies touched by the plan (keys). */
 		private $taxonomies = array();
+
+		/** @var WPCP_Reader Site reads and read-back comparisons. */
+		private $reader;
+
+		/** @var WPCP_Writer Site writes through core APIs. */
+		private $writer;
+
+		/**
+		 * Create the site access collaborators used by apply and restore.
+		 */
+		public function __construct() {
+			$this->reader = new WPCP_Reader();
+			$this->writer = new WPCP_Writer();
+		}
 
 		/**
 		 * Entry point for `wp eval-file`.
@@ -713,7 +729,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			$item['now']    = WPCP_Values::sorted( $item['now'] );
 			$item['new']    = WPCP_Values::sorted( $item['new'] );
 			$item['stored'] = $item['new'];
-			return $this->resolve( $item, $this->post_term_slugs( $post->ID, $taxonomy ) );
+			return $this->resolve( $item, $this->reader->post_term_slugs( $post->ID, $taxonomy ) );
 		}
 
 		/**
@@ -846,7 +862,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				$this->backup['applied'][ $key ]   = $record;
 				$this->save_backup();
 				$errors                            = $this->write_target( $target );
-				list( $record, $mismatches )       = $this->read_back( $target, $record );
+				list( $record, $mismatches )       = $this->reader->read_back( $target, $record );
 				$record['status']                  = ( $errors || $mismatches ) ? 'mismatch' : 'applied';
 				$this->backup['applied'][ $key ]   = $record;
 				$this->save_backup();
@@ -954,295 +970,9 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				return ( true === $result ) ? array() : array( 'wp_delete_term failed' . ( is_wp_error( $result ) ? ': ' . $result->get_error_message() : '' ) );
 			}
 			if ( 'term' === $target['type'] ) {
-				return $this->write_term_items( $target['id'], $target['taxonomy'], $items, 'new' );
+				return $this->writer->write_term_items( $target['id'], $target['taxonomy'], $items, 'new' );
 			}
-			return $this->write_post_items( $target['id'], $items, 'new' );
-		}
-
-		/**
-		 * Write post items: ACF fields, terms, meta, thumbnail, alt, then one wp_update_post().
-		 *
-		 * @param int    $id        Post id.
-		 * @param array  $items     Items.
-		 * @param string $value_key new (apply) or old (restore).
-		 * @param array  $dates     Restored draft dates to resend so WordPress keeps them.
-		 * @return array Errors.
-		 */
-		private function write_post_items( $id, array $items, $value_key, array $dates = array() ) {
-			$errors = array();
-			foreach ( array( 'acf', 'terms', 'meta', 'thumbnail', 'alt' ) as $kind ) {
-				$errors = array_merge( $errors, $this->write_values_of_kind( $id, $items, $kind, $value_key ) );
-			}
-			$fields = array();
-			foreach ( $items as $item ) {
-				if ( 'post' === $item['kind'] ) {
-					$fields[ $item['name'] ] = $item[ $value_key ];
-				}
-			}
-			if ( $fields ) {
-				// Without the dates, wp_update_post() gives a floating draft the current date.
-				$error = $this->update_post( $id, array_merge( $fields, $dates ) );
-				if ( '' !== $error ) {
-					$errors[] = $error;
-				}
-			}
-			return $errors;
-		}
-
-		/**
-		 * Write term items: one wp_update_term(), then term meta.
-		 *
-		 * @param int    $id        Term id.
-		 * @param string $taxonomy  Taxonomy.
-		 * @param array  $items     Items.
-		 * @param string $value_key new or old.
-		 * @return array Errors.
-		 */
-		private function write_term_items( $id, $taxonomy, array $items, $value_key ) {
-			$errors = array();
-			$fields = array();
-			foreach ( $items as $item ) {
-				if ( 'term' === $item['kind'] ) {
-					$fields[ $item['name'] ] = 'parent' === $item['name'] ? (int) $item[ $value_key ] : (string) $item[ $value_key ];
-				}
-			}
-			if ( $fields ) {
-				$result = wp_update_term( $id, $taxonomy, wp_slash( $fields ) );
-				if ( is_wp_error( $result ) ) {
-					$errors[] = 'wp_update_term: ' . $result->get_error_message();
-				}
-			}
-			return array_merge( $errors, $this->write_values_of_kind( $id, $items, 'term_meta', $value_key ) );
-		}
-
-		/**
-		 * Write every item of one kind.
-		 *
-		 * @param int    $id        Post or term id.
-		 * @param array  $items     Items.
-		 * @param string $kind      Item kind to write.
-		 * @param string $value_key new or old.
-		 * @return array Errors.
-		 */
-		private function write_values_of_kind( $id, array $items, $kind, $value_key ) {
-			$errors = array();
-			foreach ( $items as $item ) {
-				$error = $kind === $item['kind'] ? $this->write_value( $id, $item, $value_key ) : '';
-				if ( '' !== $error ) {
-					$errors[] = $error;
-				}
-			}
-			return $errors;
-		}
-
-		/**
-		 * Write one non-row value. Restoring a value that was absent deletes it.
-		 *
-		 * @param int    $id        Post or term id.
-		 * @param array  $item      Item.
-		 * @param string $value_key new or old.
-		 * @return string Error or ''.
-		 */
-		private function write_value( $id, array $item, $value_key ) {
-			$kind  = $item['kind'];
-			$value = $item[ $value_key ];
-			if ( 'terms' === $kind ) {
-				return $this->write_post_terms( $id, $item['name'], (array) $value );
-			}
-			$writers = $this->value_writers( $id, $item['name'] );
-			if ( ! isset( $writers[ $kind ] ) ) {
-				return "unknown item kind $kind";
-			}
-			// A thumbnail of 0 means none; other kinds delete only when restoring an absent value.
-			$delete = 'thumbnail' === $kind ? (int) $value <= 0 : ( 'old' === $value_key && ! empty( $item['absent'] ) );
-			if ( $delete ) {
-				call_user_func( $writers[ $kind ]['delete'] );
-			} else {
-				call_user_func( $writers[ $kind ]['update'], $value );
-			}
-			return '';
-		}
-
-		/**
-		 * Update and delete callbacks for each single-value item kind.
-		 *
-		 * @param int    $id   Post or term id.
-		 * @param string $name Item name (field, meta key or attachment id).
-		 * @return array Kind => ['update' => callable( $value ), 'delete' => callable()].
-		 */
-		private function value_writers( $id, $name ) {
-			$alt_id  = (int) $name;
-			$alt_key = self::ALT_KEY;
-			return array(
-				'acf'       => array(
-					'update' => function ( $value ) use ( $id, $name ) {
-						update_field( $name, wp_slash( $value ), $id );
-					},
-					'delete' => function () use ( $id, $name ) {
-						delete_field( $name, $id );
-					},
-				),
-				'meta'      => array(
-					'update' => function ( $value ) use ( $id, $name ) {
-						update_post_meta( $id, $name, wp_slash( $value ) );
-					},
-					'delete' => function () use ( $id, $name ) {
-						delete_post_meta( $id, $name );
-					},
-				),
-				'term_meta' => array(
-					'update' => function ( $value ) use ( $id, $name ) {
-						update_term_meta( $id, $name, wp_slash( $value ) );
-					},
-					'delete' => function () use ( $id, $name ) {
-						delete_term_meta( $id, $name );
-					},
-				),
-				'thumbnail' => array(
-					'update' => function ( $value ) use ( $id ) {
-						set_post_thumbnail( $id, (int) $value );
-					},
-					'delete' => function () use ( $id ) {
-						delete_post_thumbnail( $id );
-					},
-				),
-				'alt'       => array(
-					'update' => function ( $value ) use ( $alt_id, $alt_key ) {
-						update_post_meta( $alt_id, $alt_key, wp_slash( (string) $value ) );
-					},
-					'delete' => function () use ( $alt_id, $alt_key ) {
-						delete_post_meta( $alt_id, $alt_key );
-					},
-				),
-			);
-		}
-
-		/**
-		 * Replace a post's terms in one taxonomy by slug.
-		 *
-		 * @param int    $id       Post id.
-		 * @param string $taxonomy Taxonomy.
-		 * @param array  $slugs    Term slugs.
-		 * @return string Error or ''.
-		 */
-		private function write_post_terms( $id, $taxonomy, array $slugs ) {
-			$ids = array();
-			foreach ( $slugs as $slug ) {
-				$term = get_term_by( 'slug', $slug, $taxonomy );
-				if ( ! $term ) {
-					return "terms.$taxonomy: term \"$slug\" no longer exists";
-				}
-				$ids[] = (int) $term->term_id;
-			}
-			$result = wp_set_object_terms( $id, $ids, $taxonomy, false );
-			return is_wp_error( $result ) ? "terms.$taxonomy: " . $result->get_error_message() : '';
-		}
-
-		/**
-		 * One wp_update_post() call; an explicit post_date also sets its GMT pair.
-		 *
-		 * @param int   $id     Post id.
-		 * @param array $fields Fields.
-		 * @return string Error or ''.
-		 */
-		private function update_post( $id, array $fields ) {
-			$postarr = array_merge( array( 'ID' => $id ), $fields );
-			if ( isset( $fields['post_date'] ) ) {
-				$postarr['edit_date'] = true;
-				if ( ! isset( $fields['post_date_gmt'] ) ) {
-					$postarr['post_date_gmt'] = get_gmt_from_date( $fields['post_date'] );
-				}
-			}
-			$result = wp_update_post( wp_slash( $postarr ), true );
-			return is_wp_error( $result ) ? 'wp_update_post: ' . $result->get_error_message() : '';
-		}
-
-		/**
-		 * Read back every item of a target after writing.
-		 *
-		 * @param array $target Target.
-		 * @param array $record Applied record.
-		 * @return array [record with read-back values, mismatches].
-		 */
-		private function read_back( array $target, array $record ) {
-			$mismatches = array();
-			$this->flush_caches( $target['type'], $target['id'], $target['taxonomy'] );
-			foreach ( $target['items'] as $item ) {
-				$site   = $this->read_item( $target['type'], $target['id'], $target['taxonomy'], $item );
-				$expect = 'change' === $item['state'] ? $item['stored'] : $item['site'];
-				if ( 'delete' === $item['kind'] ) {
-					$expect = '';
-				}
-				if ( ! WPCP_Values::same( $site, $expect ) ) {
-					$mismatches[] = WPCP_Values::label( $item ) . ': expected ' . WPCP_Values::show( $expect ) . ', site has ' . WPCP_Values::show( $site );
-				}
-				foreach ( $record['items'] as $index => $written ) {
-					if ( $written['kind'] === $item['kind'] && $written['name'] === $item['name'] ) {
-						$record['items'][ $index ]['wrote'] = $site;
-					}
-				}
-			}
-			return array( $record, $mismatches );
-		}
-
-		/**
-		 * Drop caches before a read-back.
-		 *
-		 * @param string $type     Target type.
-		 * @param int    $id       Id.
-		 * @param string $taxonomy Taxonomy.
-		 */
-		private function flush_caches( $type, $id, $taxonomy ) {
-			if ( 'post' === $type ) {
-				clean_post_cache( $id );
-			} elseif ( '' !== $taxonomy ) {
-				clean_term_cache( $id, $taxonomy );
-			}
-		}
-
-		/**
-		 * The current site value of an item.
-		 *
-		 * @param string $type     Target type.
-		 * @param int    $id       Post or term id.
-		 * @param string $taxonomy Taxonomy for term targets.
-		 * @param array  $item     Item.
-		 * @return mixed
-		 */
-		private function read_item( $type, $id, $taxonomy, array $item ) {
-			$name  = $item['name'];
-			$value = null;
-			switch ( $item['kind'] ) {
-				case 'post':
-					$post  = get_post( $id );
-					$value = $post ? (string) $post->$name : null;
-					break;
-				case 'meta':
-				case 'acf':
-					$value = WPCP_Values::single( get_post_meta( $id, $name, false ) );
-					break;
-				case 'terms':
-					$value = $this->post_term_slugs( $id, $name );
-					break;
-				case 'thumbnail':
-					$value = (int) get_post_thumbnail_id( $id );
-					break;
-				case 'alt':
-					$value = (string) WPCP_Values::single( get_post_meta( (int) $name, self::ALT_KEY, false ) );
-					break;
-				case 'term':
-					$term  = get_term( $id, $taxonomy );
-					$value = ( $term && ! is_wp_error( $term ) ) ? (string) $term->$name : null;
-					break;
-				case 'term_meta':
-					$value = WPCP_Values::single( get_term_meta( $id, $name, false ) );
-					break;
-				case 'delete':
-					$term  = get_term( $id, $taxonomy );
-					$value = ( $term && ! is_wp_error( $term ) ) ? $term->slug : '';
-					break;
-			}
-			return $value;
+			return $this->writer->write_post_items( $target['id'], $items, 'new' );
 		}
 
 		// ------------------------------------------------------------------
@@ -1418,7 +1148,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			$type     = $record['type'];
 			$id       = (int) $record['id'];
 			$taxonomy = (string) $record['taxonomy'];
-			$this->flush_caches( $type, $id, $taxonomy );
+			$this->reader->flush_caches( $type, $id, $taxonomy );
 			if ( '' !== $taxonomy ) {
 				$this->taxonomies[ $taxonomy ] = true;
 			}
@@ -1428,16 +1158,16 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				return $left;
 			}
 			if ( 'term' === $type ) {
-				$errors = $this->write_term_items( $id, $taxonomy, $revert, 'old' );
+				$errors = $this->writer->write_term_items( $id, $taxonomy, $revert, 'old' );
 			} else {
 				// $revert keeps post_status so the read-back below still checks it.
 				list( $errors, $writes, $dates ) = $this->restore_post_status( $id, $revert );
-				$errors                          = array_merge( $errors, $this->write_post_items( $id, $writes, 'old', $dates ) );
+				$errors                          = array_merge( $errors, $this->writer->write_post_items( $id, $writes, 'old', $dates ) );
 			}
 			foreach ( $errors as $error ) {
 				WP_CLI::line( "{$record['label']}: $error" );
 			}
-			$this->flush_caches( $type, $id, $taxonomy );
+			$this->reader->flush_caches( $type, $id, $taxonomy );
 			return $left + $this->restore_read_back( $record, $revert );
 		}
 
@@ -1451,7 +1181,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			$revert = array();
 			$left   = 0;
 			foreach ( $record['items'] as $item ) {
-				$site  = $this->read_item( $record['type'], (int) $record['id'], (string) $record['taxonomy'], $item );
+				$site  = $this->reader->read_item( (int) $record['id'], (string) $record['taxonomy'], $item );
 				$label = "{$record['label']} " . WPCP_Values::label( $item );
 				if ( 'terms' === $item['kind'] ) {
 					$this->taxonomies[ $item['name'] ] = true;
@@ -1478,7 +1208,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 		private function restore_read_back( array $record, array $revert ) {
 			$left = 0;
 			foreach ( $revert as $item ) {
-				$site  = $this->read_item( $record['type'], (int) $record['id'], (string) $record['taxonomy'], $item );
+				$site  = $this->reader->read_item( (int) $record['id'], (string) $record['taxonomy'], $item );
 				$label = "{$record['label']} " . WPCP_Values::label( $item );
 				if ( WPCP_Values::same( $site, $item['old'] ) || ( ! empty( $item['absent'] ) && WPCP_Values::same( $site, '' ) ) ) {
 					WP_CLI::line( "$label: restored " . WPCP_Values::show( $item['old'] ) );
@@ -1504,7 +1234,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				}
 				unset( $revert[ $index ] );
 				$dates = $this->draft_dates( $id, $item['old'], $revert );
-				$error = $this->update_post( $id, array_merge( array( 'post_status' => $item['old'] ), $dates ) );
+				$error = $this->writer->update_post( $id, array_merge( array( 'post_status' => $item['old'] ), $dates ) );
 				return array( '' === $error ? array() : array( $error ), $revert, $dates );
 			}
 			return array( array(), $revert, array() );
@@ -1675,21 +1405,6 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			WP_CLI::line( '  - Check the sitemaps for changed slugs, statuses and deleted terms.' );
 		}
 
-		// ------------------------------------------------------------------
-		// Helpers.
-		// ------------------------------------------------------------------
-
-		/**
-		 * A post's term slugs in one taxonomy, sorted.
-		 *
-		 * @param int    $id       Post id.
-		 * @param string $taxonomy Taxonomy.
-		 * @return array
-		 */
-		private function post_term_slugs( $id, $taxonomy ) {
-			$slugs = wp_get_object_terms( $id, $taxonomy, array( 'fields' => 'slugs' ) );
-			return is_wp_error( $slugs ) ? array() : WPCP_Values::sorted( $slugs );
-		}
 	}
 }
 

@@ -55,7 +55,7 @@ Commits: conventional (`feat:` `fix:` `refactor:` `docs:` `chore:` `test:`). Inc
 | Review | `git add . && git commit -m "fix: ..." && git push` → `workflows/code-audit-remote.md` | Address feedback |
 | Merge | `full-loop-helper.sh merge NUMBER OWNER/REPO --squash` | Required lifecycle gate |
 | Release | `.agents/scripts/version-manager.sh release [major\|minor\|patch]` → `workflows/release.md` | Releases only |
-| Postflight | `gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status` → `workflows/postflight.md` | Releases only |
+| Postflight | `gh run view RUN_ID --json status,conclusion` (one-shot; the shim refuses `gh run watch`) → `workflows/postflight.md` | Releases only |
 | Cleanup | `worktree-helper.sh remove {type}/{desc}` / `git push origin --delete {name}` | Remove merged worktree; delete branch if needed |
 
 ## Chore, Refactor, Release, Experiment

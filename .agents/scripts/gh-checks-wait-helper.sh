@@ -30,6 +30,10 @@ usage() {
 	cat <<'EOF'
 Usage:
   gh-checks-wait-helper.sh wait PR_NUMBER [options]
+  gh-checks-wait-helper.sh quota-report [WINDOW_SECONDS]
+      Emit quota-unattributed JSON evidence from response-owned local log samples
+      (default: last 3600 seconds; no network calls). Remainders are upper bounds,
+      not proof of bypass or attributed CI spend. Save stdout in the audit log.
   gh-checks-wait-helper.sh qlty-skips PR_NUMBER [--repo OWNER/REPO]
       Print "name<TAB>link" for each qlty check skipped as out of credits
       under ci-gate-policy rule 14 (nothing when none; exit 2 if unobservable).
@@ -783,11 +787,100 @@ cmd_qlty_skips() {
 	return 0
 }
 
+# Compare cumulative used counters only inside one credential/reset series.
+# Reuse production TSV metadata without extra rate_limit requests or identity
+# probes. Unknown costs and unobserved CI spend are never invented as coverage.
+cmd_quota_report() {
+	local window="${1:-3600}"
+	if ! validate_positive_integer "$window"; then
+		log_error "quota-report WINDOW_SECONDS must be a positive integer"
+		return 2
+	fi
+	python3 - "${AIDEVOPS_GH_API_LOG:-${HOME}/.aidevops/logs/gh-api-calls.log}" "$window" <<'PY'
+import json
+import re
+import sys
+import time
+from collections import defaultdict
+
+end = int(time.time())
+start = end - int(sys.argv[2])
+series = defaultdict(list)
+missing = 0
+try:
+    source = open(sys.argv[1], encoding="utf-8")
+except OSError:
+    print("quota-report: local API log unavailable", file=sys.stderr)
+    raise SystemExit(2)
+with source:
+    for line in source:
+        row = line.rstrip("\n").split("\t")
+        if len(row) < 17 or not row[0].isdigit():
+            continue
+        ts = int(row[0])
+        if not start <= ts <= end or row[4] != "rest-core" or row[8] != "attempt":
+            continue
+        if (len(row) < 22 or not re.fullmatch(r"[a-f0-9]{64}", row[19])
+                or not row[20].isdigit() or int(row[20]) <= 0):
+            missing += 1
+            continue
+        cost = int(row[16]) if row[16].isdigit() else None
+        used = int(row[21]) if row[21].isdigit() else None
+        series[(row[19], int(row[20]))].append((ts, used, cost))
+
+for (fingerprint, reset), rows in sorted(series.items()):
+    # Cumulative counters order responses sampled in the same second. Missing
+    # counters cannot be ordered precisely, so their costs stay unknown.
+    rows.sort(key=lambda row: (row[0], row[1] if row[1] is not None else -1))
+    previous = None
+    used_delta = known = remainder = unknown = regressions = intervals = 0
+    first = last = None
+    for ts, used, cost in rows:
+        if used is None:
+            unknown += 1
+            continue
+        if first is None:
+            first = ts
+        last = ts
+        if previous is not None:
+            delta = used - previous
+            if delta < 0:
+                regressions += 1
+                # Do not count the same consumption twice after a late response.
+                continue
+            else:
+                intervals += 1
+                used_delta += delta
+                if cost is None:
+                    unknown += 1
+                    remainder += delta
+                else:
+                    known += min(cost, delta)
+                    remainder += max(delta - cost, 0)
+        previous = used
+    print(json.dumps(dict(
+        event="quota-unattributed", pool="rest-core", auth_fingerprint=fingerprint,
+        reset_epoch=reset, window_start=start, window_end=end,
+        sample_start=first, sample_end=last, intervals=intervals,
+        used_delta=used_delta, known_local_cost=known, unattributed_cost=remainder,
+        accounted_fraction=(known / used_delta
+                            if used_delta and not (regressions or unknown or missing) else None),
+        unknown_cost_attempts=unknown, counter_regressions=regressions,
+        unattributed_is_upper_bound=True, attributed_ci_cost=None,
+        missing_metadata_attempts=missing), sort_keys=True))
+if not series:
+    print(json.dumps(dict(event="quota-unattributed", status="insufficient-samples",
+                          missing_metadata_attempts=missing)))
+PY
+	return $?
+}
+
 main() {
 	local command="${1:-help}"
 	shift || true
 	case "$command" in
 	wait) cmd_wait "$@" ;;
+	quota-report) cmd_quota_report "$@" ;;
 	qlty-skips) cmd_qlty_skips "$@" ;;
 	help | --help | -h) usage ;;
 	*) log_error "Unknown command: $command"; usage; return 1 ;;

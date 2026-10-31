@@ -55,7 +55,8 @@ gh pr view 123 && full-loop-helper.sh merge 123 owner/repo --squash
 gh release create v1.2.3 --generate-notes [--draft]
 
 # CI Runs
-gh run list && gh run view 123456 && gh run watch
+gh run list && gh run view 123456 --json status,conclusion   # one-shot; the aidevops shim refuses `gh run watch`
+gh-checks-wait-helper.sh wait 123 --repo owner/repo --all    # governed PR check wait (not `gh pr checks --watch`)
 gh run rerun 123456 --failed
 
 # API

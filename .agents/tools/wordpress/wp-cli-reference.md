@@ -223,6 +223,62 @@ wp option get siteurl
 wp option update blogname "My Site"
 ```
 
+### Core minor releases across SSH installs
+
+**False "latest" warning:** WP-CLI 2.12.0 can report success from both
+`wp core update --minor` and `wp core check-update --force-check` while the
+installed version is unchanged when WordPress HTTP is filtered (`pre_http_request`,
+isolation mu-plugins, `WP_HTTP_BLOCK_EXTERNAL`). Mu-plugins still load with
+`--skip-plugins`. Verify the actual version, not the success message.
+
+Fallback: query `https://api.wordpress.org/core/version-check/1.7/?version=<cur>&locale=<loc>`
+outside WordPress (shell HTTP), choose the newest offer on the **same X.Y branch**,
+and only report newer branches. Download
+`https://downloads.wordpress.org/release/[<locale>/]wordpress-<v>.zip`
+(omit the locale directory for en_US), compare its SHA1 with `<url>.sha1`, then
+run `wp core update <zip> --version=<v> --force`. First back up the database
+outside every web root. Finish with `wp core update-db` (`--network` for
+multisite), `wp core verify-checksums --version=<v> --locale=<loc>`, and home/login
+HTTP probes. SHA1 here validates the official HTTPS package, not a separate
+publisher signature. Do not automatically roll back to vulnerable core.
+
+`wp-fleet-helper.sh core-minor` provides this fallback without changing plugin
+fleet operations. It needs local Python 3.9+, SSH key/config authentication, and
+remote Python 3.9+, WP-CLI and `mysqldump`. Use a private JSON inventory (0600):
+
+```json
+[{"ssh_host":"hosting-alias","wp_path":"/srv/www/example","backup_dir":"/srv/private/core"}]
+```
+
+The SSH alias must already be configured; paths are absolute. The operator must
+ensure `backup_dir` is outside **all** web roots, not merely this site's root.
+Use a fresh run directory (0700); inventory, reports and journals are private:
+
+```bash
+wp-fleet-helper.sh core-minor plan --inventory /private/fleet.json --run-dir /private/core-run
+wp-fleet-helper.sh core-minor report --run-dir /private/core-run
+# Review each target, major offer and hold before approving the saved plan.
+wp-fleet-helper.sh core-minor deploy --run-dir /private/core-run --approve
+wp-fleet-helper.sh core-minor report --run-dir /private/core-run
+```
+
+`plan` is read-only on sites and prints a single `core-minor plan: sites=…
+updates=… major-offers=… holds=… rollback=never` summary suitable for a routine
+`run:` command. Deploy checks version/locale/config drift, locks each canonical
+root, validates the locale ZIP, backs up with a temporary 0600 MySQL defaults
+file, then updates and verifies. Dumps use `--single-transaction`, which needs
+only per-database privileges (shared hosting lacks global `RELOAD`, so table-lock
+dumps fail there); non-InnoDB plugin tables are not snapshot-consistent.
+Credentials and raw subprocess stderr are never printed. A backup journal is
+written before core mutation and retained for recovery; no restore is automatic.
+Home/login HTTP 401/403 count as alive for Basic-Auth staging, not proof of a
+working authenticated application. Multisite uses network DB migration; probes
+cover the primary site's home/login, not every subsite. Held sites are skipped
+on resume; investigate the recorded stage and journal, then explicitly add
+`--retry-held` to `deploy --approve` to retry sites with saved plans. Plan failures
+need a fresh run directory. Already-target resumes re-run DB migration only with
+a matching saved backup and passing pre-migration core checksums.
+
 ## User Management
 
 ```bash

@@ -66,6 +66,45 @@ env:
   ISSUE_SYNC_TARGET_BRANCH: ${{ github.event.pull_request.base.ref || (!github.event.deleted && github.ref_type == 'branch' && github.ref_name) || github.event.repository.default_branch }}
 
 jobs:
+  quota-audit:
+    name: Attribute sync PAT quota (manual audit only)
+    if: github.event_name == 'workflow_dispatch' && inputs.command == 'audit'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    # Every API call uses SYNC_PAT and nothing is checked out, so the job
+    # token needs no scopes (and installed callers need no new grant).
+    permissions: {}
+    steps:
+      - name: Record PAT identity and bounded API spend
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+        run: |
+          set -euo pipefail
+          # Never print credentials, headers, or debug traces. Sampling a shared
+          # user counter yields only an observed delta: concurrent consumers and
+          # inconsistent samples prevent a guaranteed upper bound on PAT spend.
+          set +x
+          unset GH_DEBUG
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            printf 'quota-audit: SYNC_PAT absent; no PAT sample available\n'
+            exit 0
+          fi
+          # This optional sample must not block coordinator maintenance when
+          # authentication, quota, or a later sampling request is unavailable.
+          # Bound each request, including a forced-stop grace period, well
+          # inside the five-minute job timeout so failures reach this handler.
+          if ! login=$(timeout --kill-after=5s 20s gh api user --jq .login) ||
+             ! before=$(timeout --kill-after=5s 20s gh api rate_limit --jq '.resources.core | {used,reset}') ||
+             ! timeout --kill-after=5s 20s gh api "repos/${GITHUB_REPOSITORY}" --silent ||
+             ! after=$(timeout --kill-after=5s 20s gh api rate_limit --jq '.resources.core | {used,reset}'); then
+            printf 'quota-audit: SYNC_PAT sample unavailable; API lookup failed\n'
+            exit 0
+          fi
+          jq -cn --arg login "$login" --argjson before "$before" --argjson after "$after" \
+            '{event:"quota-ci-sample",credential:"SYNC_PAT",login:$login,before:$before,after:$after,
+              used_delta:(if $before.reset == $after.reset and $after.used >= $before.used then $after.used-$before.used else null end),
+              delta_is_upper_bound:false,known_api_requests:1}'
+
   forge-event:
     name: Record ordered forge event
     if: github.event_name != 'workflow_dispatch' || inputs.command == 'event' || inputs.command == 'reconcile' || inputs.command == 'audit'

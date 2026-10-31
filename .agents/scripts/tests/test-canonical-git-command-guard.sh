@@ -26,6 +26,7 @@ FAILURES=0
 # The resolver skips aidevops Git shims that may lead the caller's PATH.
 # shellcheck disable=SC2016 # Expanded by the child shell.
 NATIVE_GIT=$(bash -c 'source "$1/runtime-env.sh" && aidevops_resolve_native_git' _ "$SCRIPT_DIR") || exit 1
+NATIVE_BASH=$(type -P bash) || exit 1
 # Keep the selected native Git ahead of env/bash directories, which can also
 # contain a different Git (Apple Git versus Homebrew Git on macOS).
 TEST_SYS_PATH="${NATIVE_GIT%/*}"
@@ -560,14 +561,13 @@ else
 	fail "shim accepts already-expanded literal metacharacter path"
 fi
 
-if python3 - "$SCRIPT_DIR" "$TEST_ROOT" "$NATIVE_GIT" "$OLD_BUNDLE" "$NEW_BUNDLE" <<'PY'; then
+if python3 - "$SCRIPT_DIR" "$TEST_ROOT" "$NATIVE_GIT" "$OLD_BUNDLE" "$NEW_BUNDLE" "$NATIVE_BASH" <<'PY'; then
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-scripts, root, native, old, new = sys.argv[1:]
+scripts, root, native, old, new, native_shell = sys.argv[1:]
 sys.path.insert(0, scripts)
 from native_git import NativeGitUnavailable, is_git_shim, real_git
 from trusted_executable import trusted_executable
@@ -597,9 +597,10 @@ except NativeGitUnavailable:
 else:
     raise AssertionError("all-shim PATH accepted")
 
-# Invoke the existing shell via the standard utility path, not the all-shim PATH.
+# Invoke the captured native shell, not the constrained PATH or shim directory.
+assert Path(native_shell).is_absolute() and Path(native_shell).is_file()
 environment = {**os.environ, "PATH": os.defpath, "AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY": "1"}
-shell = [shutil.which("bash", path=os.defpath), "-uc", 'source "$1/runtime-env.sh"; aidevops_resolve_trusted_tool "$2" "$3"', "_", scripts]
+shell = [native_shell, "-uc", 'source "$1/runtime-env.sh"; aidevops_resolve_trusted_tool "$2" "$3"', "_", scripts]
 # Trusted Git lookup must also work without a Python interpreter on PATH.
 for path in (os.defpath, str(native_dir)):
     for name, search in (("git", os.defpath), ("git", str(native_dir)), ("git", ""), ("../git", os.defpath), (".", os.defpath), ("..", os.defpath)):
