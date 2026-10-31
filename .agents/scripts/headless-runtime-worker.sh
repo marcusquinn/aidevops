@@ -55,6 +55,7 @@ _HRW_REASON_UNVERIFIED_HANDOFF="worker_post_pr_handoff_unverified"
 # GH#36171: exact-head handoff evidence stayed unreadable (transport deferral).
 _HRW_REASON_HANDOFF_VERIFICATION_DEFERRED="worker_post_pr_handoff_verification_deferred"
 _HRW_HANDOFF_CONFIRMED_ON_RETRY=2
+_HRW_HANDOFF_ROUTED=3
 _HRW_REASON_ORIGIN_RECONCILIATION_FAILED="worker_origin_reconciliation_failed"
 _HRW_ORIGIN_WORKER_LABEL="origin:worker"
 _HRW_ORIGIN_STATE_MISSING="missing"
@@ -1602,6 +1603,35 @@ _hrw_defer_unverified_post_pr_handoff() {
 	return 0
 }
 
+#######################################
+# Gate a POST_PR_HANDOFF before the verified-handoff success path.
+#
+# Never reuses a verification state recorded by an earlier probe. A handoff
+# confirmed on bounded re-verification (GH#36171) continues exactly like one
+# confirmed by the first probe.
+#
+# Args: $1=session key, $2=work dir
+# Returns: 0 when the verified success path may continue, 1 when the run was
+#          routed as an unverified-handoff failure, _HRW_HANDOFF_ROUTED when a
+#          checkpoint handler or verification deferral already finished it.
+#######################################
+_hrw_post_pr_handoff_gate() {
+	local session_key="$1"
+	local work_dir="$2"
+	local handoff_rc=0
+	_WORKER_POST_PR_HANDOFF_STATE=""
+	if declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 &&
+		_worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+		return 0
+	fi
+	_hrw_handle_unverified_post_pr_handoff "$session_key" "$work_dir" || handoff_rc=$?
+	case "$handoff_rc" in
+	0) return "$_HRW_HANDOFF_ROUTED" ;;
+	"$_HRW_HANDOFF_CONFIRMED_ON_RETRY") return 0 ;;
+	esac
+	return 1
+}
+
 _hrw_finish_success_run() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -1613,20 +1643,10 @@ _hrw_finish_success_run() {
 		return 0
 	fi
 	if [[ "${_run_result_label:-}" == "post_pr_handoff" ]]; then
-		# Never reuse a verification state recorded by an earlier probe.
-		_WORKER_POST_PR_HANDOFF_STATE=""
-		if ! declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 ||
-			! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
-			local handoff_rc=0
-			_hrw_handle_unverified_post_pr_handoff "$session_key" "$work_dir" || handoff_rc=$?
-			# GH#36171: a handoff confirmed on bounded re-verification continues
-			# the normal verified-handoff success path below.
-			case "$handoff_rc" in
-			0) return 0 ;;
-			"$_HRW_HANDOFF_CONFIRMED_ON_RETRY") ;;
-			*) return 1 ;;
-			esac
-		fi
+		local handoff_gate_rc=0
+		_hrw_post_pr_handoff_gate "$session_key" "$work_dir" || handoff_gate_rc=$?
+		[[ "$handoff_gate_rc" -eq "$_HRW_HANDOFF_ROUTED" ]] && return 0
+		[[ "$handoff_gate_rc" -eq 0 ]] || return 1
 	fi
 
 	# GH#20721 + GH#20819: Classify worker output quality.
