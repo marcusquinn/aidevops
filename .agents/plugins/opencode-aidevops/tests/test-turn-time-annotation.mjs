@@ -2,7 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { annotateTurnTimes, annotateTurnTimesSafely } from "../turn-time-annotation.mjs";
 
@@ -69,7 +72,7 @@ test("headless, opt-out, child, and unverified sessions are unchanged", async ()
   assert.deepEqual(child.messages, [user()]);
 });
 
-test("plugin catches annotation failures before continuing later transforms", async () => {
+test("annotation wrapper logs lookup failures without changing messages", async () => {
   const output = { messages: [user()] };
   const options = { client: { session: { get: async () => { throw new Error("unavailable"); } } } };
   await assert.rejects(annotateTurnTimes({}, output, options), /unavailable/);
@@ -77,6 +80,49 @@ test("plugin catches annotation failures before continuing later transforms", as
   await annotateTurnTimesSafely({}, output, options, (...args) => logs.push(args));
   assert.deepEqual(logs, [["WARN", "[turn-time-annotation] Unexpected error: unavailable"]]);
   assert.deepEqual(output.messages, [user()]);
-  const source = readFileSync(new URL("../index.mjs", import.meta.url), "utf8");
-  assert.match(source, /await compactionInputReplay\.inject\(input, output\);\s+await annotateTurnTimesSafely\(input, output, \{ client, isHeadless \}, qualityLog\);/);
+});
+
+test("registered plugin hook continues to TTSR after an annotation lookup failure", () => {
+  // Isolate plugin startup from operator accounts, configuration and worker flags.
+  const home = mkdtempSync(join(tmpdir(), "aidevops-turn-time-home-"));
+  const script = `
+    import assert from "node:assert/strict";
+    const { AidevopsPlugin } = await import(process.argv[1]);
+    let lookups = 0;
+    const client = { session: { get: async () => {
+      lookups++;
+      throw new Error("unavailable");
+    } } };
+    const hooks = await AidevopsPlugin({ directory: process.env.HOME, client });
+    // Start headless to avoid interactive startup work, then exercise the
+    // interactive transform (both annotation and token advice skip workers).
+    delete process.env.AIDEVOPS_HEADLESS;
+    const user = ${JSON.stringify(user())};
+    const originalUser = structuredClone(user);
+    const output = { messages: [user, {
+      info: { role: "assistant", sessionID: "root", tokens: { input: 400000 } },
+      parts: [{ type: "text", text: "Done." }],
+    }] };
+    await hooks["experimental.chat.messages.transform"]({}, output);
+    assert.equal(lookups, 1, "annotation must attempt the failing lookup");
+    assert.deepEqual(output.messages[0], originalUser);
+    assert.deepEqual(user.parts, [{ type: "text", text: "hello" }]);
+    assert.ok(output.messages.some(message => message.parts?.some(part =>
+      part.synthetic === true && part.text?.startsWith("[TOKEN COST ADVISORY]"))),
+      "the later TTSR transform must still inject its advisory");
+    process.exit(0);
+  `;
+  try {
+    const result = spawnSync(process.execPath, [
+      "--input-type=module", "-e", script, new URL("../index.mjs", import.meta.url).href,
+    ], {
+      encoding: "utf8",
+      timeout: 60000,
+      env: { PATH: process.env.PATH, HOME: home, AIDEVOPS_HEADLESS: "1" },
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

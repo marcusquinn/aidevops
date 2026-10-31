@@ -1829,6 +1829,32 @@ _dlw_nohup_launch() {
 }
 
 #######################################
+# GH#36214: windowed zero-attempt backoff, evaluated once per dispatch attempt
+# before the cross-runner claim. A held issue publishes no DISPATCH_CLAIM or
+# prelaunch lease (each of which used to become fresh orphan evidence), and
+# _dlw_hold_repeated_zero_output logs DISPATCH_BLOCK_REASON
+# reason=zero_attempt_backoff for the benign rc 3 the caller returns.
+# Sets the caller-scoped _dispatch_zero_output_metrics so prompt preparation
+# reuses this snapshot instead of refetching the comment thread.
+# Args: issue number, repo slug
+# Returns: 0 = held, 1 = dispatch may proceed
+#######################################
+_dlw_preclaim_zero_attempt_backoff() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local _ds_t0=""
+	local hold_rc=1
+
+	_ds_t0=$(_ds_now_ns)
+	_dispatch_zero_output_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
+	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug" "$_dispatch_zero_output_metrics"; then
+		hold_rc=0
+	fi
+	_ds_record "$issue_number" "$repo_slug" "zero_attempt_backoff" "$_ds_t0"
+	return "$hold_rc"
+}
+
+#######################################
 # Thin orchestrator for worker launch. Delegates each distinct concern
 # (assignment + labels, log files, model resolution, issue lock, repo pull,
 # worktree pre-creation, nohup launch, post-launch bookkeeping) to dedicated
@@ -1863,6 +1889,15 @@ _dispatch_launch_worker() {
 	# t3034: per-stage timing for launch sub-stages
 	local _ds_t0
 
+	# GH#36214: reuse dispatch_with_dedup's pre-claim backoff snapshot; direct
+	# callers evaluate the backoff here, before the prelaunch lease.
+	local zero_output_comment_metrics="${_dispatch_zero_output_metrics:-}"
+	if [[ -z "$zero_output_comment_metrics" ]]; then
+		local _dispatch_zero_output_metrics=""
+		_dlw_preclaim_zero_attempt_backoff "$issue_number" "$repo_slug" && return 3
+		zero_output_comment_metrics="$_dispatch_zero_output_metrics"
+	fi
+
 	_dlw_timed_log_and_prebootstrap "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path" || return $?
 	local worker_log="$_DLW_WORKER_LOG"
 
@@ -1889,12 +1924,6 @@ _dispatch_launch_worker() {
 	_ds_t0=$(_ds_now_ns)
 	_dlw_begin_prelaunch "$issue_number" "$repo_slug" "$session_key" "$worker_log" || return $?
 	_ds_record "$issue_number" "$repo_slug" "begin_prelaunch" "$_ds_t0"
-
-	local zero_output_comment_metrics=""
-	zero_output_comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
-	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug" "$zero_output_comment_metrics"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "repeated_zero_output_hold" 2 || return $?
-	fi
 
 	# t2981: capture pre-creation return code — skip dispatch on failure
 	# instead of falling back to canonical repo on the default branch.

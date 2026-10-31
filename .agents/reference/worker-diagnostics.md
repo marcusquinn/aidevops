@@ -51,11 +51,22 @@ every refusal as an opaque `worker_worktree_live_owner` retry.
 Terminal continuation refusals have no runtime metric because the model was
 never invoked. `pulse-diagnose-helper.sh issue <N> --repo <owner/repo>` reports
 their count and reason distribution from pulse logs separately from model
-attempts. Repeated `CLAIM_RELEASED` zero-attempt evidence participates in the
-bounded dispatch-infrastructure hold instead of creating an unbounded claim and
-release comment loop. Once zero-attempt infrastructure evidence reaches the hold
-threshold, comment-bloat clean-room mode cannot bypass that hold; clean-room
-fallback remains available for model/brief zero-output evidence.
+attempts. Repeated zero-attempt evidence feeds a self-healing, windowed
+dispatch backoff (GH#36214) instead of an unbounded claim and release comment
+loop. Evidence is unmatched `DISPATCH_CLAIM` comments, orphan
+`DISPATCH_LEASE phase=prelaunch` comments (one per author and lease token, left
+when a pre-launch abort deletes its claim), and zero-output receipts. Authors
+must be OWNER/MEMBER or have verified repository write access, so peer runners
+that GitHub labels COLLABORATOR count. `dispatch_with_dedup` evaluates the
+backoff before claiming: while evidence inside `ZERO_OUTPUT_HOLD_WINDOW_SECONDS`
+(default 12h) reaches `ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD` (default 4), the
+attempt posts no claim or lease, leaves labels unchanged, and logs
+`DISPATCH_BLOCK_REASON reason=zero_attempt_backoff`. At most one
+`dispatch-infrastructure-failure` notice is posted per window. Dispatch resumes
+when evidence ages out, or sooner after an OWNER/MEMBER
+`<!-- dispatch-infrastructure-reset -->` comment. Comment-bloat clean-room mode
+cannot bypass the backoff; clean-room fallback remains available for model/brief
+zero-output evidence.
 
 ### Dispatch claim comment states
 

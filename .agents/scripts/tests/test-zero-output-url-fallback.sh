@@ -46,11 +46,14 @@ gh() {
 		# The real API returns comment pages, not precomputed TSV metrics.
 		local comments=0 ops=0 zero=0 chars=0
 		IFS=$'\t' read -r comments ops zero chars <<<"${GH_COMMENT_METRICS:-$'0\t0\t0\t0'}"
+		# Real comments always carry created_at; recent ones feed the
+		# windowed backoff (GH#36214).
 		jq -nc --argjson comments "$comments" --argjson ops "$ops" --argjson zero "$zero" '
+			(now | floor | todate) as $created |
 			[[range([$comments, $ops, $zero] | max) | . as $index |
 			{body: ((if $index < $ops then "<!-- ops:start --> " else "" end) +
 			(if $index < $zero then "worker_noop_zero_output" else "status" end)),
-			author_association:"OWNER", user:{login:"runner"}}]]'
+			created_at: $created, author_association:"OWNER", user:{login:"runner"}}]]'
 		return 0
 	fi
 	if [[ "$command_name" == "api" && "${GH_COMMENT_ZERO_COUNT:-0}" =~ ^[0-9]+$ ]]; then
@@ -83,12 +86,48 @@ set_issue_status() {
 	return 0
 }
 
+# GH#36214: the windowed backoff posts its notice through the comment wrapper.
+gh_issue_comment() {
+	local issue_number="$1"
+	local body_file=""
+	shift
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--body-file) body_file="${2:-}"; shift 2 ;;
+		*) shift ;;
+		esac
+	done
+	[[ -f "$body_file" ]] || return 1
+	printf 'gh_issue_comment %s %s\n' "$issue_number" "$(tr '\n' ' ' <"$body_file")" >>"${TMP}/gh-calls.log"
+	return 0
+}
+
+# Args: count, reason, crash type, optional last-update epoch (default now)
 write_state() {
 	local count="$1"
 	local reason="${2:-worker_noop_zero_output}"
 	local crash_type="${3:-}"
-	printf '{"owner/repo/123":{"count":%s,"ts":1,"reason":"%s","retry_after":0,"backoff_secs":600,"crash_type":"%s"}}\n' \
-		"$count" "$reason" "$crash_type" >"$FAST_FAIL_STATE_FILE"
+	local state_ts="${4:-$(date +%s)}"
+	printf '{"owner/repo/123":{"count":%s,"ts":%s,"reason":"%s","retry_after":0,"backoff_secs":600,"crash_type":"%s"}}\n' \
+		"$count" "$state_ts" "$reason" "$crash_type" >"$FAST_FAIL_STATE_FILE"
+	return 0
+}
+
+# Windowed backoff contract (GH#36214): hold with one notice, never relabel.
+assert_windowed_hold() {
+	local name="$1"
+	local rc="$2"
+	local calls="$3"
+	if [[ "$rc" -eq 0 ]] \
+		&& [[ "$calls" == *'gh_issue_comment 123 <!-- dispatch-infrastructure-failure -->'* ]] \
+		&& [[ "$calls" == *'Dispatch resumes automatically'* ]] \
+		&& [[ "$calls" != *'set_issue_status 123 owner/repo blocked'* ]] \
+		&& [[ "$calls" != *'--add-label'* ]] \
+		&& [[ "$calls" != *'needs-brief-rewrite'* ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc}; gh_calls=${calls}"
+	fi
 	return 0
 }
 
@@ -187,15 +226,31 @@ GH_COMMENT_METRICS=""
 _dlw_hold_repeated_zero_output 123 owner/repo
 hold_rc=$?
 gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
-if [[ "$hold_rc" -eq 0 ]] \
-	&& printf '%s' "$gh_calls" | grep -q 'set_issue_status 123 owner/repo blocked' \
-	&& printf '%s' "$gh_calls" | grep -q 'dispatch-infrastructure-failure' \
-	&& ! printf '%s' "$gh_calls" | grep -q -- '--add-label needs-maintainer-review' \
-	&& ! printf '%s' "$gh_calls" | grep -q 'needs-brief-rewrite'; then
-	pass "continued zero-output launches apply structural infrastructure block"
+assert_windowed_hold "continued zero-output launches apply the windowed backoff without relabelling" \
+	"$hold_rc" "$gh_calls"
+
+# GH#36214: a local state entry last updated before the window self-heals.
+: >"${TMP}/gh-calls.log"
+write_state 4 worker_noop_zero_output "" 1
+GH_COMMENT_ZERO_COUNT=0
+GH_COMMENT_METRICS=""
+if _dlw_hold_repeated_zero_output 123 owner/repo; then
+	fail "aged local zero-output state keeps holding" "gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log")"
+elif [[ -s "${TMP}/gh-calls.log" ]]; then
+	fail "aged local zero-output state wrote to GitHub" "gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log")"
 else
-	fail "continued zero-output launches apply structural infrastructure block" \
-		"rc=${hold_rc}; gh_calls=${gh_calls}"
+	pass "aged local zero-output state self-heals without GitHub writes"
+fi
+
+# GH#36214: a maintainer reset newer than the local state releases this runner
+# too, not only the comment evidence.
+: >"${TMP}/gh-calls.log"
+write_state 4 worker_noop_zero_output "" "$(($(date +%s) - 60))"
+GH_COMMENT_METRICS=""
+if _dlw_hold_repeated_zero_output 123 owner/repo $'0\t0\t0\t0\t0\t0\t0\t-\t'"$(date +%s)"; then
+	fail "maintainer reset left local zero-output state holding" "gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log")"
+else
+	pass "maintainer reset newer than local zero-output state releases the backoff"
 fi
 
 : >"${TMP}/gh-calls.log"
@@ -205,16 +260,8 @@ GH_COMMENT_METRICS=$'0\t0\t4\t0'
 _dlw_hold_repeated_zero_output 123 owner/repo
 comment_hold_rc=$?
 comment_gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
-if [[ "$comment_hold_rc" -eq 0 ]] \
-	&& printf '%s' "$comment_gh_calls" | grep -q 'set_issue_status 123 owner/repo blocked' \
-	&& printf '%s' "$comment_gh_calls" | grep -q 'dispatch-infrastructure-failure' \
-	&& ! printf '%s' "$comment_gh_calls" | grep -q -- '--add-label needs-maintainer-review' \
-	&& ! printf '%s' "$comment_gh_calls" | grep -q 'needs-brief-rewrite'; then
-	pass "comment evidence triggers infrastructure hold when state count is low"
-else
-	fail "comment evidence triggers infrastructure hold when state count is low" \
-		"rc=${comment_hold_rc}; gh_calls=${comment_gh_calls}"
-fi
+assert_windowed_hold "recent comment evidence triggers the backoff when state count is low" \
+	"$comment_hold_rc" "$comment_gh_calls"
 
 : >"${TMP}/gh-api-calls.log"
 : >"${TMP}/gh-calls.log"
@@ -225,16 +272,10 @@ _dlw_hold_repeated_zero_output 123 owner/repo
 shared_metrics_hold_rc=$?
 shared_metrics_hold_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
 hold_api_calls=$(wc -l <"${TMP}/gh-api-calls.log" | tr -d '[:space:]')
-if [[ "$shared_metrics_hold_rc" -eq 0 ]] \
-	&& printf '%s' "$shared_metrics_hold_calls" | grep -q 'set_issue_status 123 owner/repo blocked' \
-	&& printf '%s' "$shared_metrics_hold_calls" | grep -q 'dispatch-infrastructure-failure' \
-	&& ! printf '%s' "$shared_metrics_hold_calls" | grep -q -- '--add-label needs-maintainer-review' \
-	&& ! printf '%s' "$shared_metrics_hold_calls" | grep -q 'needs-brief-rewrite' \
-	&& [[ "$hold_api_calls" == "1" ]]; then
-	pass "zero-output hold reuses comment bloat metrics for evidence count"
-else
-	fail "zero-output hold reuses comment bloat metrics for evidence count" \
-		"rc=${shared_metrics_hold_rc}; gh_calls=${shared_metrics_hold_calls}; api_calls=${hold_api_calls}"
+assert_windowed_hold "zero-output backoff reuses comment bloat metrics for evidence count" \
+	"$shared_metrics_hold_rc" "$shared_metrics_hold_calls"
+if [[ "$hold_api_calls" != "1" ]]; then
+	fail "zero-output backoff fetched comments more than once" "api_calls=${hold_api_calls}"
 fi
 
 : >"${TMP}/gh-calls.log"
@@ -244,14 +285,8 @@ GH_COMMENT_METRICS=$'275\t260\t87\t81500'
 _dlw_hold_repeated_zero_output 123 owner/repo
 clean_room_hold_rc=$?
 clean_room_gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
-if [[ "$clean_room_hold_rc" -eq 0 ]] \
-	&& printf '%s' "$clean_room_gh_calls" | grep -q 'set_issue_status 123 owner/repo blocked' \
-	&& ! printf '%s' "$clean_room_gh_calls" | grep -q 'needs-brief-rewrite'; then
-	pass "comment-bloated issues retain the repeated zero-output hold"
-else
-	fail "comment-bloated issues retain the repeated zero-output hold" \
-		"rc=${clean_room_hold_rc}; gh_calls=${clean_room_gh_calls}"
-fi
+assert_windowed_hold "comment-bloated issues retain the windowed zero-output backoff" \
+	"$clean_room_hold_rc" "$clean_room_gh_calls"
 
 write_state 4 runtime partial
 GH_COMMENT_ZERO_COUNT=0
@@ -283,7 +318,7 @@ self_count_json=$(jq -nc --arg notice "$hold_notice" '[[
 ]]')
 self_count_metrics=$(_dlw_comment_bloat_metrics_from_json "$self_count_json" 1790640000 120 \
 	"$_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN" "$_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN")
-IFS=$'\t' read -r _sc_comments _sc_ops self_count_zero _sc_chars self_count_attempt <<<"$self_count_metrics"
+IFS=$'\t' read -r _sc_comments _sc_ops self_count_zero _sc_chars self_count_attempt _sc_windowed <<<"$self_count_metrics"
 GH_RAW_COMMENTS="$self_count_json"
 self_comment_count=$(_dlw_zero_output_comment_count 123 owner/repo)
 if [[ "$self_count_zero" == "0" && "$self_count_attempt" == "0" && "$self_comment_count" == "0" ]]; then
@@ -302,10 +337,12 @@ reset_json=$(jq -nc '[[
 ]]')
 reset_metrics=$(_dlw_comment_bloat_metrics_from_json "$reset_json" 1790640000 120 \
 	"$_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN" "$_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN")
-IFS=$'\t' read -r _rs_comments _rs_ops reset_zero _rs_chars _rs_attempt <<<"$reset_metrics"
+IFS=$'\t' read -r _rs_comments _rs_ops reset_zero _rs_chars _rs_attempt _rs_recent _rs_notices _rs_epochs \
+	reset_epoch <<<"$reset_metrics"
+expected_reset_epoch=$(jq -nr '"2026-09-28T23:30:00Z" | fromdateiso8601')
 GH_RAW_COMMENTS="$reset_json"
 reset_comment_count=$(_dlw_zero_output_comment_count 123 owner/repo)
-if [[ "$reset_zero" == "1" && "$reset_comment_count" == "1" ]]; then
+if [[ "$reset_zero" == "1" && "$reset_comment_count" == "1" && "$reset_epoch" == "$expected_reset_epoch" ]]; then
 	pass "authoritative reset marker clears earlier zero-output evidence"
 else
 	fail "authoritative reset marker clears earlier zero-output evidence" \
@@ -316,8 +353,9 @@ fi
 untrusted_reset_json=$(printf '%s' "$reset_json" | jq -c '.[0][2].author_association = "NONE" | .')
 untrusted_metrics=$(_dlw_comment_bloat_metrics_from_json "$untrusted_reset_json" 1790640000 120 \
 	"$_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN" "$_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN")
-IFS=$'\t' read -r _ur_comments _ur_ops untrusted_zero _ur_chars _ur_attempt <<<"$untrusted_metrics"
-if [[ "$untrusted_zero" == "3" ]]; then
+IFS=$'\t' read -r _ur_comments _ur_ops untrusted_zero _ur_chars _ur_attempt _ur_recent _ur_notices _ur_epochs \
+	untrusted_reset_epoch <<<"$untrusted_metrics"
+if [[ "$untrusted_zero" == "3" && "$untrusted_reset_epoch" == "0" ]]; then
 	pass "non-authoritative reset marker is ignored"
 else
 	fail "non-authoritative reset marker is ignored" "metrics=${untrusted_metrics}"

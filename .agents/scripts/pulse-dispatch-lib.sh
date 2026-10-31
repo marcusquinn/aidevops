@@ -280,7 +280,7 @@ _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
-		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
@@ -336,6 +336,7 @@ _dispatch_negative_cache_reason() {
 	# hold is keyed to the owner generation rather than the issue revision.
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
 	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
+		"$reason" != zero_attempt_backoff &&
 		"$reason" != worker_draft_checkpoint_blocked &&
 		"$reason" != worker_draft_checkpoint_cooldown &&
 		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
@@ -372,7 +373,9 @@ _dispatch_negative_cache_reason() {
 		# unchanged updatedAt proves no edit, retry directive or new comment.
 		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
 		;;
-	terminal_blocker_backoff)
+	terminal_blocker_backoff | zero_attempt_backoff)
+		# GH#36214: the zero-attempt backoff is windowed and self-expiring like
+		# the unknown-blocker backoff; a reset comment bumps updatedAt at once.
 		ttl="$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS"
 		;;
 	dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
