@@ -71,8 +71,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.command == 'audit'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
-    permissions:
-      contents: read
+    # Every API call uses SYNC_PAT and nothing is checked out, so the job
+    # token needs no scopes (and installed callers need no new grant).
+    permissions: {}
     steps:
       - name: Record PAT identity and bounded API spend
         env:
