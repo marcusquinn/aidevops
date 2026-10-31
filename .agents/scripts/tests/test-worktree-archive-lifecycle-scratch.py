@@ -127,6 +127,37 @@ class ScratchRecoveryCases:
         self.reject_legacy_scratch(record)
         self.assertTrue((target / "precious.ignored").is_file())
 
+    def spotlight_marked_scratch(self):
+        record, slot, target = self.legacy_scratch()
+        exclude = self.repo / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(exist_ok=True)
+        with exclude.open("a") as handle:
+            handle.write("/.metadata_never_index\n")
+        (target / ".metadata_never_index").touch()
+        self.assertEqual(self.git(target, "status", "--porcelain=v1", "--ignored"),
+                         b"!! .metadata_never_index\n")
+        return record, slot, target
+
+    def test_recover_legacy_scratch_tolerates_framework_spotlight_marker(self):
+        # GH#36279: older backfills marked archive scratch; only that exact
+        # empty marker is tolerated, and the slot is then reclaimed.
+        record, slot, target = self.spotlight_marked_scratch()
+        self.resume_legacy_scratch(record)
+        self.assertFalse(target.exists())
+        self.assertFalse(slot.exists())
+
+    def test_recover_legacy_scratch_rejects_non_empty_spotlight_marker(self):
+        record, _slot, target = self.spotlight_marked_scratch()
+        (target / ".metadata_never_index").write_text("must survive\n")
+        self.reject_legacy_scratch(record)
+        self.assertEqual((target / ".metadata_never_index").read_text(), "must survive\n")
+
+    def test_recover_legacy_scratch_rejects_marker_with_other_ignored_files(self):
+        record, _slot, target = self.spotlight_marked_scratch()
+        (target / "precious.ignored").write_text("must survive\n")
+        self.reject_legacy_scratch(record)
+        self.assertTrue((target / "precious.ignored").is_file())
+
     def test_recover_legacy_scratch_rejects_unreachable_head(self):
         record, _slot, target = self.legacy_scratch()
         (target / "mixed.txt").write_text("unreferenced commit\n")
