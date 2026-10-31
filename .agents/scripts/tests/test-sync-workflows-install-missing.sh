@@ -409,8 +409,16 @@ for pin_case in floating tag sha helper-tag helper-sha helper-missing unrelated-
 	preview=$(HOME="$test_root" PATH="$test_root/bin:$PATH" \
 		GH_CALL_LOG="$test_root/gh.log" bash "$HELPER" \
 		--repo fake/apply --workflow loc-badge --pin-floating --json 2>&1)
-	assert_exit "floating migration $pin_case preview succeeds" 0 "$?"
-	if [[ "$pin_case" == floating || "$pin_case" == unrelated-tag || "$pin_case" == configured-repo ]]; then
+	preview_rc=$?
+	if [[ "$pin_case" == configured-repo ]]; then
+		# Eligible overrides still reach the existing mirror compatibility gate.
+		assert_exit "configured floating caller reaches mirror validation" 1 "$preview_rc"
+		assert_contains "configured repo is selected rather than silently skipped" "$preview" \
+			'configured mirror must be registered and updated'
+		continue
+	fi
+	assert_exit "floating migration $pin_case preview succeeds" 0 "$preview_rc"
+	if [[ "$pin_case" == floating || "$pin_case" == unrelated-tag ]]; then
 		assert_contains "floating caller is actionable" "$preview" '"outcome":"PLANNED"'
 		assert_contains "floating caller targets release SHA and tag" "$preview" \
 			'@0123456789abcdef0123456789abcdef01234567 # v3.39.45'
