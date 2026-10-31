@@ -165,6 +165,46 @@ STUB
 	return 0
 }
 
+test_listing_failure_does_not_starve_later_repos() {
+	local stub_scripts_dir="${TEST_ROOT}/list-failure-scripts"
+	local cursor_dir="${TEST_ROOT}/list-failure-cursor"
+	mkdir -p "$stub_scripts_dir" "$cursor_dir"
+	cat >"${stub_scripts_dir}/post-merge-review-scanner.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'STUB scan %s\n' "${2:-}"
+if [[ "$2" == failed/repo ]]; then
+	printf '{"next_pr":"102","reason":"merged-pr-list-failed"}\n' >"${SCANNER_CURSOR_DIR}/failed_repo.cursor"
+fi
+STUB
+	chmod +x "${stub_scripts_dir}/post-merge-review-scanner.sh"
+	local SCRIPT_DIR="$stub_scripts_dir" LOGFILE="${TEST_ROOT}/list-failure.log"
+	local POST_MERGE_SCANNER_LAST_RUN="${TEST_ROOT}/list-failure.last" POST_MERGE_SCANNER_INTERVAL=0
+	local REPOS_JSON="${TEST_ROOT}/repos.json"
+	local AIDEVOPS_POST_MERGE_SCANNER_CURSOR_DIR="$cursor_dir"
+	local AIDEVOPS_POST_MERGE_SCANNER_STAGE_BUDGET_SECONDS=600
+	local AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS=30
+	_pulse_enabled_repo_slugs() {
+		local repos_json="$1"
+		printf 'failed/repo\nlater/repo\n'
+		return 0
+	}
+	local cycle="" output="" state=""
+	for cycle in 1 2; do
+		_run_post_merge_review_scanner
+		output=$(<"$LOGFILE")
+		assert_contains "cycle $cycle retries failed repo" "STUB scan failed/repo" "$output"
+		assert_contains "cycle $cycle scans later repo" "STUB scan later/repo" "$output"
+		assert_contains "cycle $cycle retains failed repo PR cursor" "102" "$(jq -r '.next_pr' "${cursor_dir}/failed_repo.cursor")"
+		state=""
+		[[ ! -f "${cursor_dir}/repo.cursor" && -f "$POST_MERGE_SCANNER_LAST_RUN" ]] && state="scheduled"
+		assert_contains "cycle $cycle schedules next traversal without pinning repo" "scheduled" "$state"
+		# Clear the log so the second pass cannot pass on the first pass's output.
+		: >"$LOGFILE"
+	done
+	return 0
+}
+
 test_home_unset_does_not_abort
 test_interval_unset_does_not_abort
 test_stale_repo_cursor_resets_to_enabled_repos
@@ -174,6 +214,7 @@ test_deadline_budget reserve-only 1030 600 none 0
 test_deadline_budget expired 999 600 none 0
 test_deadline_budget absent "" 600 570 0
 test_deadline_budget invalid invalid 600 570 0
+test_listing_failure_does_not_starve_later_repos
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -ne 0 ]]; then

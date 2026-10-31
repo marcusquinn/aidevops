@@ -1421,10 +1421,11 @@ assert_eq "interpreter flags preserve framework caller attribution" "2" "$(awk -
 # (`github_auth_runtime.py exec-gh <shim> ...`). Attribution must walk past that
 # exact hop to the framework caller instead of falling back to gh_api_rest.
 cat >"$SHIM_FIXTURE/github_auth_runtime.py" <<'EOF_AUTH_HOP'
+import pathlib
 import subprocess
 import sys
 
-sys.exit(subprocess.call([sys.argv[2], *sys.argv[3:]]))
+sys.exit(subprocess.call([str(pathlib.Path(sys.argv[2]).resolve()), *sys.argv[3:]]))
 EOF_AUTH_HOP
 cat >"$SHIM_FIXTURE/auth-hop-caller.sh" <<'EOF_AUTH_HOP_CALLER'
 #!/usr/bin/env bash
@@ -1438,6 +1439,28 @@ PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
 	AUTH_HOP_FIXTURE="$SHIM_FIXTURE/github_auth_runtime.py" \
 	bash "$SHIM_FIXTURE/auth-hop-caller.sh"
 assert_eq "pulse auth resolver hop preserves framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "auth-hop-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+
+# Keep the caller outside the spaced directory to isolate resolver recognition.
+spaced_shim_fixture="$TMPDIR/shim fixture with spaces"
+cp -R "$SHIM_FIXTURE" "$spaced_shim_fixture"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	GH_SHIM_FIXTURE="$spaced_shim_fixture/gh" \
+	AUTH_HOP_FIXTURE="$spaced_shim_fixture/github_auth_runtime.py" \
+	bash "$SHIM_FIXTURE/auth-hop-caller.sh"
+assert_eq "spaced resolver path preserves framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "auth-hop-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+
+# Match the real auth runtime's resolved child path through a directory alias.
+symlink_shim_fixture="$TMPDIR/symlink shim with spaces"
+ln -s "$SHIM_FIXTURE" "$symlink_shim_fixture"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	GH_SHIM_FIXTURE="$symlink_shim_fixture/gh" \
+	AUTH_HOP_FIXTURE="$symlink_shim_fixture/github_auth_runtime.py" \
+	bash "$SHIM_FIXTURE/auth-hop-caller.sh"
+assert_eq "spaced directory symlink preserves framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "auth-hop-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
 
 # --- Test 16: managed scratch cleanup is owner-aware and exact ---------------
 scratch_fixture="$TMPDIR/managed-scratch"

@@ -39,8 +39,11 @@ gh() {
 		[[ "$API_FAIL" == 0 ]] || return 1
 		if [[ "$*" == *'/comments'* ]]; then
 			printf '%s\n' "$COMMENTS_JSON"
-		elif [[ "$*" == *'/pulls/'* ]]; then
+		elif [[ "$*" == *'/pulls/'* && "$*" == *'--jq'* ]]; then
 			printf '%s\n' "$PR_BODY"
+		elif [[ "$*" == *'/pulls/'* ]]; then
+			# GH#36270: PR metadata reads parse the REST pulls object.
+			jq -nc --arg body "$PR_BODY" '{title:"fixture",body:$body}'
 		elif [[ "$*" == *'--jq'* ]]; then
 			printf '%s' "$ISSUE_JSON" | jq -r '.state | ascii_downcase'
 		else

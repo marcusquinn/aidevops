@@ -591,7 +591,7 @@ test_dispatch_preserves_nonclosing_replacement_linkage() {
 			local helper_src="" keyword="" generated="" expected="Resolves"
 			helper_src=$(awk '
 				/^[[:alnum:]_]+\(\) \{/ {
-					emit = ($0 ~ /^(_review_repair_closing_keyword|_build_pr_body|_ensure_worker_pr_linkage)\(\) \{/)
+					emit = ($0 ~ /^(_review_repair_closing_keyword|_build_pr_body|_read_pr_metadata_json|_ensure_worker_pr_linkage)\(\) \{/)
 				}
 				emit { print }
 			' "${SCRIPT_DIR}/../full-loop-helper-commit.sh")
@@ -600,7 +600,9 @@ test_dispatch_preserves_nonclosing_replacement_linkage() {
 				if [[ "$*" == *"issue view"* ]]; then
 					cat "${TEST_ROOT}/issue-body.txt"
 				else
-					cat "${TEST_ROOT}/replacement-body.txt"
+					# PR metadata reads use the REST pulls object (title + body).
+					jq -n --rawfile body "${TEST_ROOT}/replacement-body.txt" \
+						'{title: "Replacement", body: $body}'
 				fi
 				return 0
 			}
