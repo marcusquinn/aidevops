@@ -190,6 +190,14 @@ def collect_path_references(directory, path, result):
     """Inspect all threads: unshared CWD and descriptor tables can differ."""
     for task in (directory / "task").iterdir():
         try:
+            # Non-dumpable same-UID tasks have root-owned proc directories.
+            # Read credentials, not proc inode ownership; include saved/fs UIDs.
+            rows = [line.split()[1:] for line in (task / "status").read_text().splitlines()
+                    if line.startswith("Uid:")]
+            owner.require(len(rows) == 1 and len(rows[0]) == 4 and
+                          all(value.isdecimal() for value in rows[0]), "task UID unavailable")
+            if str(os.getuid()) not in rows[0]:
+                continue
             result["references"] += int(inspect_path_references(task, path))
         except FileNotFoundError:
             if os.path.lexists(task):
@@ -212,8 +220,6 @@ def path_census(path):
             if not directory.name.isdecimal():
                 continue
             try:
-                if directory.stat().st_uid != os.getuid():
-                    continue
                 seen_self |= int(directory.name) == os.getpid()
                 collect_path_references(directory, path, result)
             except FileNotFoundError:

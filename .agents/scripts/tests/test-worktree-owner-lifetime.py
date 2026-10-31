@@ -723,7 +723,9 @@ class ProcessSnapshotTests(unittest.TestCase):
             process = Path(directory)
             (process / "task").mkdir()
             for tid in (100, 101):
-                (process / "task" / str(tid)).mkdir()
+                task = process / "task" / str(tid)
+                task.mkdir()
+                (task / "status").write_text("Uid:\t" + "\t".join([str(os.getuid())] * 4) + "\n")
             result = {"references": 0, "uncertain": 0}
             with patch.object(census, "inspect_path_references",
                               side_effect=lambda task, path: task.name == "101") as inspect:
@@ -733,6 +735,27 @@ class ProcessSnapshotTests(unittest.TestCase):
             with patch.object(census, "inspect_path_references", side_effect=PermissionError()):
                 census.collect_path_references(process, "/worktree", result)
                 self.assertEqual(result["uncertain"], 2)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
+    def test_non_dumpable_same_uid_child_is_not_silently_skipped(self):
+        import worktree_process_snapshot as census
+        script = ("import ctypes,sys,time; "
+                  "assert ctypes.CDLL(None).prctl(4,0,0,0,0)==0; "
+                  "print('ready',flush=True); time.sleep(30)")
+        with tempfile.TemporaryDirectory() as directory:
+            child = subprocess.Popen([sys.executable, "-c", script], cwd=directory,
+                                     stdout=subprocess.PIPE, text=True)
+            try:
+                import select
+                self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+                self.assertEqual(child.stdout.readline().strip(), "ready")
+                sample = census.path_census(directory)
+                self.assertTrue(sample["references"] or sample["uncertain"] or
+                                sample["status"] == "unavailable")
+            finally:
+                child.terminate()
+                child.wait(timeout=5)
+                child.stdout.close()
 
     def test_filtered_or_namespace_mismatched_proc_is_not_negative_evidence(self):
         import worktree_process_snapshot as census
