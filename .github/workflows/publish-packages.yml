@@ -111,7 +111,7 @@ jobs:
         run: |
           VERSION="${RELEASE_TAG#v}"
           BODY=$(awk -v version="$VERSION" '
-            /^## \[/ {
+            /^## \[[0-9]+\.[0-9]+\.[0-9]+[^]]*\]/ {
               if (found) exit
               if ($2 == "[" version "]") found = 1
             }
