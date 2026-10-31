@@ -398,18 +398,32 @@ _setup_browser_tools_playwright() {
 	[[ -f "$runtime_script" ]] || runtime_script="$HOME/.aidevops/agents/scripts/playwright-runtime.mjs"
 	local install_command="node ~/.aidevops/agents/scripts/playwright-runtime.mjs install chromium firefox webkit"
 
-	if node "$runtime_script" runtime-check >/dev/null 2>&1; then
+	# runtime-check prints its JSON status on stdout even when not ready.
+	local runtime_status=""
+	if runtime_status=$(node "$runtime_script" runtime-check 2>/dev/null); then
 		print_success "Framework Playwright runtime already installed"
 		print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated"
 		return 0
 	fi
 
+	# A valid AIDEVOPS_PLAYWRIGHT_EXECUTABLE replaces bundled Chromium, so a pin
+	# bump must not re-download the build the operator retired (GH#36190).
+	# Array, not a string: this module sets IFS=$'\n\t', which breaks word splitting.
+	local -a install_browsers=(chromium firefox webkit)
+	if [[ "$runtime_status" == *'"configuredExecutable":"'* ]]; then
+		install_browsers=(firefox webkit)
+		print_info "Using AIDEVOPS_PLAYWRIGHT_EXECUTABLE; skipping bundled Chromium download"
+	fi
+	local browser_list
+	browser_list=$(IFS=' '; echo "${install_browsers[*]}")
+	install_command="node ~/.aidevops/agents/scripts/playwright-runtime.mjs install ${browser_list}"
+
 	local install_playwright
-	setup_prompt install_playwright "Install Playwright with browsers (chromium, firefox, webkit)? [Y/n]: " "Y"
+	setup_prompt install_playwright "Install Playwright with browsers (${browser_list})? [Y/n]: " "Y"
 
 	if [[ "$install_playwright" =~ ^[Yy]?$ ]]; then
 		print_info "Installing framework Playwright runtime and browsers..."
-		if node "$runtime_script" install chromium firefox webkit; then
+		if node "$runtime_script" install "${install_browsers[@]}"; then
 			print_success "Playwright runtime and browsers installed"
 		else
 			print_warning "Playwright installation failed"
