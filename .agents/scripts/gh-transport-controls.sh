@@ -25,18 +25,27 @@ _gh_transport_preflight() {
 		*) break ;;
 		esac
 	done
-	# Repository flags can also separate the command and subcommand. Derive the
-	# dispatch key without changing the argv passed to quota/cooldown checks.
-	local command="${1:-}" subcommand="" repo_value=0
-	for arg in "${@:2}"; do
-		if [[ "$repo_value" -eq 1 ]]; then
-			repo_value=0
+	# Cobra permits watcher flags before either command word. Skip flags and
+	# their values when deriving the dispatch key, not just repository flags.
+	# Keep argv intact for the downstream quota/cooldown checks.
+	local command="" subcommand="" flag_value=0
+	for arg in "$@"; do
+		if [[ "$flag_value" -eq 1 ]]; then
+			flag_value=0
 			continue
 		fi
 		case "$arg" in
-		-R | --repo) repo_value=1 ;;
-		--repo=* | -R?*) ;;
-		*) subcommand="$arg"; break ;;
+		-R | --repo | -i | --interval | -q | --jq | --json | -t | --template) flag_value=1 ;;
+		--) break ;;
+		-*) ;;
+		*)
+			if [[ -z "$command" ]]; then
+				command="$arg"
+			else
+				subcommand="$arg"
+				break
+			fi
+			;;
 		esac
 	done
 	# Native watchers make an opaque number of requests after a single preflight.

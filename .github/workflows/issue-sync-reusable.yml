@@ -88,10 +88,15 @@ jobs:
             printf 'quota-audit: SYNC_PAT absent; no PAT sample available\n'
             exit 0
           fi
-          login=$(gh api user --jq .login)
-          before=$(gh api rate_limit --jq '.resources.core | {used,reset}')
-          gh api "repos/${GITHUB_REPOSITORY}" --silent
-          after=$(gh api rate_limit --jq '.resources.core | {used,reset}')
+          # This optional sample must not block coordinator maintenance when
+          # authentication, quota, or a later sampling request is unavailable.
+          if ! login=$(gh api user --jq .login) ||
+             ! before=$(gh api rate_limit --jq '.resources.core | {used,reset}') ||
+             ! gh api "repos/${GITHUB_REPOSITORY}" --silent ||
+             ! after=$(gh api rate_limit --jq '.resources.core | {used,reset}'); then
+            printf 'quota-audit: SYNC_PAT sample unavailable; API lookup failed\n'
+            exit 0
+          fi
           jq -cn --arg login "$login" --argjson before "$before" --argjson after "$after" \
             '{event:"quota-ci-sample",credential:"SYNC_PAT",login:$login,before:$before,after:$after,
               used_delta:(if $before.reset == $after.reset and $after.used >= $before.used then $after.used-$before.used else null end),
