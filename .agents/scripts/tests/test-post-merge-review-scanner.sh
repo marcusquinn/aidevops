@@ -841,6 +841,7 @@ for list_output in "" "101"; do
 	assert_contains "failed listing yields for retry" "reason=merged-pr-list-failed" "$out"
 	assert_not_contains "failed listing does not report completion" "status=complete" "$out"
 	assert_equals "failed listing retains saved next PR" "102" "$(jq -r '.next_pr' "${listing_cursor_dir}/stub_repo.cursor")"
+	assert_equals "failed listing persists repository-local retry reason" "merged-pr-list-failed" "$(jq -r '.reason' "${listing_cursor_dir}/stub_repo.cursor")"
 done
 
 echo "Test: successful empty merged-PR listing clears the cursor"

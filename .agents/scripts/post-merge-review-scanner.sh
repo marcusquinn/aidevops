@@ -218,12 +218,12 @@ scanner_budget_exhausted() {
 }
 
 write_scan_cursor() {
-	local repo="$1" next_pr="$2" cursor_file
+	local repo="$1" next_pr="$2" reason="${3:-}" cursor_file
 	cursor_file=$(scanner_cursor_file "$repo")
 	[[ -n "$cursor_file" ]] || return 0
-	jq -n --arg repo "$repo" --arg next_pr "$next_pr" \
+	jq -n --arg repo "$repo" --arg next_pr "$next_pr" --arg reason "$reason" \
 		--arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		'{repo: $repo, next_pr: $next_pr, updated_at: $ts}' \
+		'{repo: $repo, next_pr: $next_pr, reason: $reason, updated_at: $ts}' \
 		>"$cursor_file" 2>/dev/null || true
 	return 0
 }
@@ -232,7 +232,7 @@ write_scan_cursor() {
 # the repo incomplete for Pulse while resuming from the start of the PR list.
 scanner_yield_at() {
 	local repo="$1" next_pr="$2" issues_created="$3" reason="${4:-}"
-	write_scan_cursor "$repo" "$next_pr"
+	write_scan_cursor "$repo" "$next_pr" "$reason"
 	log_run_event "$repo" "yield" "next_pr=${next_pr:-start} issues_created=${issues_created}${reason:+ reason=${reason}}"
 	return 0
 }
