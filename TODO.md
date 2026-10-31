@@ -1842,7 +1842,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18844 fix(cloudron-release): held worker bump PRs never get an approval request; obsolete bumps stack forever #bug #framework ref:GH#36268 pr:#36269 completed:2026-10-31
 
-- [ ] t18845 fix(cloudron-release): r924 fails creating approval requests in repos without no-auto-dispatch; one failed request blocks unrelated supersession #bug #framework ref:GH#36292 -> [todo/tasks/t18845-brief.md]
+- [x] t18845 fix(cloudron-release): r924 fails creating approval requests in repos without no-auto-dispatch; one failed request blocks unrelated supersession #bug #framework ref:GH#36292 -> [todo/tasks/t18845-brief.md] pr:#36293 completed:2026-10-31
 
 ## In Progress
 
