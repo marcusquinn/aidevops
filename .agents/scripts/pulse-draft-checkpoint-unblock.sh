@@ -242,11 +242,14 @@ _pdcu_log() {
 # Verify the evidence for one stranded issue and restore it.
 # #aidevops:trust-boundary — only OWNER/MEMBER/COLLABORATOR comments count as
 # release evidence, and the label actor must be that trusted release runner.
-# Args: $1=repo slug, $2=issue JSON, $3=PR number, $4=PR head SHA
+# The hard stop epoch is rechecked after the slow comment/timeline reads and
+# before any write, so a read that crosses it never restores the candidate.
+# Args: $1=repo slug, $2=issue JSON, $3=PR number, $4=PR head SHA, $5=stop epoch
 # Returns: 0 when restored, 1 when no write was made
 #######################################
 _pdcu_try_issue() {
-	local repo_slug="$1" issue_json="$2" pr_number="$3" head_sha="$4"
+	local repo_slug="$1" issue_json="$2" pr_number="$3" head_sha="$4" stop="${5:-0}"
+	local now_epoch=""
 	local issue_num="" comments_json="" evidence="" timeline_json="" assignees="" login=""
 	local release_id="" reason="" runner="" released_epoch="" pr_markers="" release_marked=""
 	local cap="${PULSE_DRAFT_UNBLOCK_MAX_PER_PR:-3}"
@@ -296,6 +299,11 @@ _pdcu_try_issue() {
 		for login in "${logins[@]}"; do
 			[[ -n "$login" ]] && transition_args+=(--remove-assignee "$login")
 		done
+	fi
+	now_epoch=$(date +%s) || return 1
+	if [[ "$stop" =~ ^[0-9]+$ && "$stop" -gt 0 && "$now_epoch" -ge "$stop" ]]; then
+		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: deadline reached before restoration"
+		return 1
 	fi
 	if ! set_issue_status "$issue_num" "$repo_slug" available \
 		${transition_args[@]+"${transition_args[@]}"} >/dev/null 2>&1; then
@@ -417,7 +425,7 @@ _pm_reconcile_draft_checkpoint_blocks() {
 		fi
 		IFS=$'\t' read -r _ pr_number head_sha <<<"$matches"
 		visited=$((visited + 1))
-		if _pdcu_try_issue "$repo_slug" "$issue_json" "$pr_number" "$head_sha"; then
+		if _pdcu_try_issue "$repo_slug" "$issue_json" "$pr_number" "$head_sha" "$stop"; then
 			restored=$((restored + 1))
 		fi
 		_pdcu_cursor_write "$cursor_file" "$issue_num"
