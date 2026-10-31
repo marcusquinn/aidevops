@@ -1808,6 +1808,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18822 fix(pulse): rerun orphaned in_progress jobs on GitHub-hosted runners #bug #priority:high ref:GH#36177 pr:#36178 completed:2026-10-31
 
+- [ ] t18827 fix(gh): pace REST admissions as time-to-reset divided by remaining quota #bug ref:GH#36199
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
