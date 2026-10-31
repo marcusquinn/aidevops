@@ -1407,7 +1407,10 @@ _archive_worktree_path_recoverably_under_lock() {
 	local git_state=""
 
 	WORKTREE_RECOVERABLE_ARCHIVE_PATH=""
-	_worktree_capture_git_identity "$wt_path" || return 1
+	if ! _worktree_capture_git_identity "$wt_path"; then
+		_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
+		return 1
+	fi
 	wt_path_real="$_WT_ID_SOURCE_REAL"
 	git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||
 		git_state="$_WT_GIT_STATE_UNREADABLE"
@@ -1420,6 +1423,7 @@ _archive_worktree_path_recoverably_under_lock() {
 	if ! archive_path=$(_worktree_recovery_producer_command 0 capture \
 		"$wt_path_real" "$recovery_root_real" "$caller" "$context" 2>"${capture_err:-/dev/null}"); then
 		_worktree_report_capture_failure "$capture_err" "$recovery_root_real"
+		WORKTREE_REMOVAL_GUARD_REASON="compact-recovery-capture-failed"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
 			"compact-recovery-capture-failed" "$_WTAR_MODE_SKIPPED" \
 			"source_preserved=true operator_review=required"

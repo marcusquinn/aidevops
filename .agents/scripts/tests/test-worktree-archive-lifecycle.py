@@ -153,6 +153,40 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
         record, _slot, _target = self.legacy_scratch()
         self.resume_legacy_scratch(record)
 
+    def unregistered_scratch(self):
+        record, slot, target = self.legacy_scratch()
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection, connection:
+            connection.execute("DELETE FROM worktree_creation_backends WHERE path = ?", (str(target),))
+        return record, slot, target
+
+    def test_recover_unregistered_scratch(self):
+        record, slot, target = self.unregistered_scratch()
+        self.resume_legacy_scratch(record)
+        self.assertNotIn(os.fsencode(target), self.git(self.repo, "worktree", "list", "--porcelain"))
+
+    def test_recover_unregistered_scratch_rejects_dirty_ignored_and_unreachable(self):
+        record, _slot, target = self.unregistered_scratch()
+        (target / "precious.ignored").write_text("must survive\n")
+        self.reject_legacy_scratch(record)
+        self.assertTrue((target / "precious.ignored").is_file())
+
+    def test_recover_unregistered_scratch_rejects_hidden_index_edits(self):
+        record, _slot, target = self.unregistered_scratch()
+        self.git(target, "update-index", "--skip-worktree", "mixed.txt")
+        (target / "mixed.txt").write_text("must survive\n")
+        self.reject_legacy_scratch(record)
+        self.assertEqual((target / "mixed.txt").read_text(), "must survive\n")
+
+    def test_recover_unregistered_scratch_rejects_foreign_common_dir(self):
+        from worktree_archive_restore import RestorationProof
+        record, _slot, target = self.unregistered_scratch()
+        foreign = self.root / "foreign"
+        self.run_command("git", "init", "-q", foreign)
+        with patch.dict(os.environ, self.env), self.assertRaisesRegex(ValueError, "wrong-base"):
+            RestorationProof.recover_unsealed(self.root / "proof", record["canonical_restore"],
+                                              lambda _: None, record, foreign / ".git")
+        self.assertTrue(target.is_dir())
+
     def test_recover_legacy_scratch_already_removed(self):
         record, slot, target = self.legacy_scratch()
         self.git(self.repo, "worktree", "remove", target)

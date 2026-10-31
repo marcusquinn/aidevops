@@ -141,6 +141,14 @@ _remove_show_guard_error() {
 		printf '%s\n' "Reason: git-metadata-unreadable — the guard could not prove the exact worktree registration is readable and unlocked." >&2
 		printf '%s\n' "Recovery: repair Git metadata access and verify the exact worktree block is unlocked before retrying. --force cannot bypass this protection." >&2
 		;;
+	git-worktree-identity-changed)
+		printf '%s\n' "Reason: git-worktree-identity-changed — the worktree path, Git administration or HEAD changed or became unreadable during the archive/removal step." >&2
+		printf '%s\n' "Recovery: the source was preserved; verify 'git worktree list --porcelain' still lists the exact path, then retry. --force cannot bypass this protection." >&2
+		;;
+	compact-recovery-capture-failed)
+		printf '%s\n' "Reason: compact-recovery-capture-failed — the recoverable archive could not be captured or verified; the source was preserved." >&2
+		printf '%s\n' "Recovery: read the capture diagnostic above or ~/.aidevops/logs/cleanup_worktrees.log, resolve it, then retry. --force cannot bypass this protection." >&2
+		;;
 	cwd-visibility-degraded)
 		printf '%s\n' "Reason: cwd-visibility-degraded — targeted recovery could not prove a clean, unowned worktree merged (exact-head merged PR, or local default-branch ancestry for local_only repos)." >&2
 		printf '%s\n' "Recovery: resolve dirty, claim, ownership, open-PR, or merge-proof state and retry. --force cannot bypass live-CWD protection." >&2

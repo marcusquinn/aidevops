@@ -264,6 +264,21 @@ class RestorationProof:
             git(self.common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
 
     @staticmethod
+    def unregistered_admin(target, common, unsealed):
+        """Return the Git admin dir of a registry-less copy after Git proves identity."""
+        from worktree_lifetime_archive import require
+
+        def resolved(*args):
+            return Path(os.fsdecode(git(target, *args)).rstrip("\n")).resolve(strict=True)
+
+        require(resolved("rev-parse", "--show-toplevel") == target.resolve(strict=True), unsealed)
+        require(resolved("rev-parse", "--path-format=absolute", "--git-common-dir") == common,
+                "restore-proof:wrong-base")
+        admin = resolved("rev-parse", "--absolute-git-dir")
+        require(admin.parent == common / "worktrees", unsealed)
+        return admin
+
+    @staticmethod
     def recover_unsealed(directory, receipt, save, record, common):
         """GH#35957: reclaim a registered copy whose creation was never sealed.
 
@@ -306,10 +321,17 @@ class RestorationProof:
                 require(connection.execute(REGISTRATION_SQL[MANAGED_TABLE][0], (str(target),)).fetchone() is None,
                         unsealed)
             registered = legacy_registration(connection, target)
-            require(registered is not None, unsealed)
-            # verify_identity recomputes path/admin/common from Git itself.
-            managed_module().verify_identity(registered, target)
-            require(registered["identity"]["common"] == str(common), "restore-proof:wrong-base")
+            if registered is not None:
+                # verify_identity recomputes path/admin/common from Git itself.
+                managed_module().verify_identity(registered, target)
+                require(registered["identity"]["common"] == str(common), "restore-proof:wrong-base")
+                admin = Path(registered["identity"]["admin"])
+            else:
+                # GH#36205: an interrupted creation can leave a Git-registered
+                # slot with no registry rows at all. Only a no-owner slot is
+                # eligible, and Git itself must prove path/admin/common identity.
+                require(owner is None, unsealed)
+                admin = RestorationProof.unregistered_admin(target, common, unsealed)
             index_entries = git(target, "ls-files", "-v", "-z").split(b"\0")
             require(not any(entry[:1] == b"S" or entry[:1].islower()
                             for entry in index_entries if entry), unsealed)
@@ -320,7 +342,7 @@ class RestorationProof:
             require(b"worktree " + os.fsencode(target) in entries, unsealed)
             repository = Path(os.fsdecode(next(entry[9:] for entry in entries if entry.startswith(b"worktree "))))
             git(repository, "worktree", "remove", "--force", str(target))
-            require(not os.path.lexists(target) and not os.path.lexists(Path(registered["identity"]["admin"])),
+            require(not os.path.lexists(target) and not os.path.lexists(admin),
                     "restore-proof:administration-remains")
             connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
             connection.execute(REGISTRATION_SQL[LEGACY_TABLE][1], (str(target),))
