@@ -25,7 +25,7 @@ PCC_ISSUE_ASSIGNEE=""
 PCC_EXPECTED_ASSIGNEE=""
 PCC_AUTHENTICATED_LOGIN=""
 PCC_CHECKPOINT_ASSIGNEE=""
-# GH#36186: 1 when the last _pcc_dispatch refused the target before launch.
+# GH#36186: 1 = target validation failed; 2 = metadata unavailable.
 PCC_TARGET_REJECTED=0
 PCC_ORIGINAL_STATUS=""
 PCC_OWNERSHIP_TRANSFERRED=0
@@ -66,7 +66,7 @@ _PCC_ATTENTION_REARM_SECONDS="${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}"
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # GH#36186: attention detail when an approved revision can no longer continue.
 # shellcheck disable=SC2016 # Markdown backticks, not command substitution.
-_PCC_APPROVAL_CONSUMED_NOTE='The trusted `CHECKPOINT_CONTINUATION_APPROVED` decision on this issue was used by a continuation that stopped without releasing its claim, so it no longer authorizes this head, the legacy continuation route stays disabled and the re-arm window above does not apply. Automatic continuation resumes only after a new revision approval for the current head (see `reference/checkpoint-revision-recovery.md`).'
+_PCC_APPROVAL_VALIDATION_NOTE='A trusted `CHECKPOINT_CONTINUATION_APPROVED` decision exists, but the current target could not be validated. This does not prove that the approval was consumed: approval validation also requires live metadata and permission checks. Retry when those checks are available before requesting a new revision approval. The legacy continuation route stays disabled while the trusted approval exists; the re-arm window does not bypass revision validation (see `reference/checkpoint-revision-recovery.md`).'
 # Shared jq definitions for trusted coordination-event evidence in issue
 # comments (blocked and stall release lookups).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
@@ -408,11 +408,11 @@ _pcc_target_row() {
 	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json number,state,title,body,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,closingIssuesReferences 2>/dev/null) || {
 		_pcc_target_rejected pr_metadata_unavailable
-		return 1
+		return 2
 	}
 	issue_json=$(gh api "repos/${repo_slug}/issues/${linked_issue}" 2>/dev/null) || {
 		_pcc_target_rejected issue_metadata_unavailable
-		return 1
+		return 2
 	}
 	if ! _pr_checkpoint_pr_metadata_is_eligible "$pr_json" "$repo_slug" "$pr_number" \
 		"$linked_issue" "" "" "$checkpoint_assignee"; then
@@ -424,7 +424,7 @@ _pcc_target_row() {
 	if [[ -n "$rejection" ]]; then
 		comments=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" --paginate --slurp) || {
 			_pcc_target_rejected issue_comments_unavailable
-			return 1
+			return 2
 		}
 		approval=$(_pr_checkpoint_revised_target "$repo_slug" "$pr_json" "$issue_json" "$comments" "$expected_assignee") || {
 			# Keep stdout exclusively TSV and omit bodies, titles and comments.
@@ -597,7 +597,7 @@ _pcc_dispatch() {
 	}
 	target_row=$(_pcc_target_row "$repo_slug" "$pr_number" "$linked_issue" \
 		"$expected_assignee" "$PCC_CHECKPOINT_ASSIGNEE") || {
-		PCC_TARGET_REJECTED=1
+		PCC_TARGET_REJECTED=$?
 		printf 'PR_CHECKPOINT_CONTINUATION_BLOCKED: PR #%s in %s is not an open, unheld worker draft linked to issue #%s with an exact head\n' \
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 1
@@ -1269,10 +1269,9 @@ _pcc_dispatch_stalled() {
 }
 
 #######################################
-# GH#36186: a trusted approval disables the legacy route, and the approved
-# successor's released claim no longer satisfies the revision validator.
-# Only a fresh approval or a new head can continue, so record that once per
-# head instead of failing silently every cycle.
+# GH#36186: a trusted approval disables the legacy route. Record a failed
+# target validation once per head without claiming that approval was consumed:
+# deeper permission/metadata checks can fail transiently as well.
 # Args: repo, issue, pr, head, release_id, reason, stalls, dedup key,
 #       attention_posted (true/false)
 # Returns: 0 attention recorded or already present, 1 post failed
@@ -1285,7 +1284,7 @@ _pcc_approved_revision_attention() {
 		return 0
 	fi
 	_pcc_post_stall_attention "$repo" "$issue" "$pr" "$head" "$release_id" "$reason" "$stalls" "$key" \
-		false "$_PCC_APPROVAL_CONSUMED_NOTE" || return 1
+		false "$_PCC_APPROVAL_VALIDATION_NOTE" || return 1
 	printf 'STALLED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s stalls=%s cause=approved_revision_not_continuable\n' \
 		"$pr" "$repo" "$head" "$release_id" "$stalls"
 	return 0

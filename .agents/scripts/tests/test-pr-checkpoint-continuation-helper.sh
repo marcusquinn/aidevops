@@ -32,10 +32,12 @@ print_result() {
 cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
 if [[ "$1" == "pr" && "$2" == "view" ]]; then
+	[[ "${STUB_METADATA_FAILURE:-}" != pr || "${7:-}" == author ]] || exit 1
 	printf '%s\n' "${STUB_PR_JSON:-}"
 	exit 0
 fi
 if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123" ]]; then
+	[[ "${STUB_METADATA_FAILURE:-}" != issue ]] || exit 1
 	if [[ "${3:-}" == "--jq" ]]; then
 		printf '%s\n' "${STUB_ISSUE_JSON:-}" | jq -r "$4"
 		exit $?
@@ -44,6 +46,7 @@ if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123" ]]; then
 	exit 0
 fi
 if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123/comments?per_page=100" ]]; then
+	[[ "${STUB_METADATA_FAILURE:-}" != comments ]] || exit 1
 	printf '%s\n' "${STUB_COMMENTS_JSON:-[]}"
 	exit 0
 fi
@@ -100,6 +103,29 @@ if row=$(_pcc_target_row "owner/repo" "42" "123") && \
 	print_result "accepts exact open worker draft linked to issue" 0
 else
 	print_result "accepts exact open worker draft linked to issue" 1 "row=${row:-missing}"
+fi
+
+for metadata_failure in pr issue comments; do
+	export STUB_METADATA_FAILURE="$metadata_failure"
+	# Force revision validation (and its comments read) for the comments case.
+	STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:blocked"}]')"
+	target_rc=0
+	_pcc_target_row owner/repo 42 123 worker-bot worker-bot >/dev/null || target_rc=$?
+	dispatch_rc=0
+	_pcc_dispatch owner/repo "$TEST_ROOT/repo" 42 123 worker-bot worker-bot >/dev/null || dispatch_rc=$?
+	if [[ "$target_rc" == 2 && "$dispatch_rc" == 1 && "$PCC_TARGET_REJECTED" == 2 ]]; then
+		print_result "$metadata_failure API failure remains metadata-unavailable through dispatch" 0
+	else
+		print_result "$metadata_failure API failure remains metadata-unavailable through dispatch" 1
+	fi
+done
+unset STUB_METADATA_FAILURE
+STUB_ISSUE_JSON="$(valid_issue_json)"
+if [[ "$_PCC_APPROVAL_VALIDATION_NOTE" == *'does not prove that the approval was consumed'* &&
+	"$_PCC_APPROVAL_VALIDATION_NOTE" == *'Retry when those checks are available'* ]]; then
+	print_result "revision attention does not diagnose consumption from validation failure" 0
+else
+	print_result "revision attention does not diagnose consumption from validation failure" 1
 fi
 
 STUB_PR_JSON="$(valid_pr_json 'Resolves #1234' '' '[{"number":1234,"repository":{"name":"repo","owner":{"login":"owner"}}}]')"
