@@ -126,11 +126,21 @@ class ProducerCases:
         binary.mkdir()
         shim = binary / 'git'
         real_git = shutil.which('git')
+        original_path = self.env['PATH']
         shim.write_text(f'#!{sys.executable}\nimport os, sys\n'
                         'if "upload-pack" in sys.argv:\n'
                         '    sys.stderr.write("private source: pack-objects died; malloc failed\\n")\n'
                         '    sys.exit(128)\n'
-                        f'os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n')
+                        # Keep the real policy shim, but exclude this fixture's
+                        # shim from its native-Git search to prevent recursion.
+                        f'environment = dict(os.environ, PATH={original_path!r})\n'
+                        # runtime-env can export this fixture as native Git;
+                        # discard only that self-reference before delegating.
+                        'for name in ("AIDEVOPS_REAL_GIT_BIN", "AIDEVOPS_REAL_GIT"):\n'
+                        '    if environment.get(name) == os.path.abspath(__file__):\n'
+                        '        environment.pop(name)\n'
+                        f'os.execve({real_git!r}, [{real_git!r}, *sys.argv[1:]], '
+                        'environment)\n')
         shim.chmod(0o700)
         self.env['PATH'] = str(binary) + os.pathsep + self.env['PATH']
         failed = self.producer('verify', archive, check=False)
@@ -148,6 +158,53 @@ class ProducerCases:
         retained = list(archive.parent.glob('.archive-verify-*'))
         self.assertEqual(len(retained), 1)
         self.assertEqual(stat.S_IMODE(retained[0].stat().st_mode), 0o700)
+        evidence = {path: path.read_bytes() for path in retained[0].rglob('*') if path.is_file()}
+        for _attempt in range(2):
+            retried = self.producer('verify', archive, check=False)
+            self.assertNotEqual(retried.returncode, 0)
+            self.assertIn(b'archive-verify:retained-scratch;', retried.stderr)
+            self.assertEqual(list(archive.parent.glob('.archive-verify-*')), retained)
+            self.assertEqual({path: path.read_bytes() for path in retained[0].rglob('*')
+                              if path.is_file()}, evidence)
+            self.assertEqual((archive / 'manifest.json').read_bytes(), manifest)
+            self.assertEqual(self.snapshot(self.work), before)
+            record = json.loads(journal.read_text())
+            self.assertEqual(record['phase'], 'archived')
+            self.assertEqual(record['source_removal_outcome'], 'pending')
+
+    def test_verification_scratch_is_exclusive_and_archive_specific(self):
+        import worktree_archive_objects as objects
+        first, second = self.root / 'first-archive', self.root / 'second-archive'
+        first.mkdir()
+        second.mkdir()
+
+        def interrupted(archive, scratch, manifest):
+            (scratch / 'evidence').write_bytes(b'keep interrupted verification')
+            raise KeyboardInterrupt()
+
+        with patch.object(objects, 'verify_object_graph', side_effect=interrupted) as graph:
+            with self.assertRaises(KeyboardInterrupt):
+                objects.verify_in_scratch(first, {})
+            retained = list(self.root.glob('.archive-verify-*'))
+            with self.assertRaisesRegex(ValueError, 'archive-verify:retained-scratch'):
+                objects.verify_in_scratch(first, {})
+            graph.assert_called_once()
+        with patch.object(objects, 'verify_object_graph') as graph:
+            objects.verify_in_scratch(second, {})
+            objects.verify_in_scratch(second, {})
+            self.assertEqual(graph.call_count, 2)
+        self.assertEqual(list(self.root.glob('.archive-verify-*')), retained)
+        self.assertEqual((retained[0] / 'evidence').read_bytes(), b'keep interrupted verification')
+        # An existing symlink is a refusal, not permission to follow or delete it.
+        saved = retained[0].with_name('saved-verification-evidence')
+        retained[0].rename(saved)
+        retained[0].symlink_to(saved, target_is_directory=True)
+        with patch.object(objects, 'verify_object_graph') as graph:
+            with self.assertRaisesRegex(ValueError, 'archive-verify:retained-scratch'):
+                objects.verify_in_scratch(first, {})
+            graph.assert_not_called()
+        self.assertTrue(retained[0].is_symlink())
+        self.assertEqual((saved / 'evidence').read_bytes(), b'keep interrupted verification')
 
     def test_git_only_capture_contains_commits_and_two_patches_without_verification(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)
