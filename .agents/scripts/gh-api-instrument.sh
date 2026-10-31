@@ -56,6 +56,12 @@
 # rest_core_attribution reports independent (pool, fingerprint, reset) series.
 # Residuals are upper bounds: unknown costs, other tokens sharing a user quota,
 # other machines and filtered-out callers cannot be distinguished from bypasses.
+# same_login_external_cost independently sums max(used_delta - local_attempt_cost,
+# 0) between response-owned used samples in a credential/reset series. It never
+# reduces residuals or unknown costs. Attribution is an upper bound until matching
+# windows on both devices confirm it; compare digest, reset and used counters.
+# other_devices stays unknown: the local dispatch ledger has device IDs but no
+# credential-digest-to-login mapping; reporting must not fetch one via the API.
 # Minutes own the interval-ending sample; multi-frame samples use command
 # completion under the credential lock, not exact per-response wall-clock time.
 #

@@ -546,7 +546,7 @@ quota_fixture() {
 	local offset="$1" id="$2" remaining="$3" cost="$4" fingerprint="$5" reset="$6"
 	_gh_append_v2 attempt pool-fixture rest gh-pat rest-core rest-selected \
 		"$remaining" logical-pool "$id" 1 0 success 200 10 "$cost" \
-		"$((fixture_minute + offset))" "$fingerprint" "$reset"
+		"$((fixture_minute + offset))" "$fingerprint" "$reset" "${7:-}"
 	return 0
 }
 quota_fixture 1 a1 100 1 "$pool_a" 2000000000
@@ -583,6 +583,31 @@ assert_eq "arbitrary text cannot enter used column" "" "$(awk -F '\t' '$11 == "a
 gh_record_attempt rest metadata-caller logical-meta attempt-zero 1 0 success 304 1 0 gh-pat rest-core rest-selected 5000 "$pool_a" 2000000000 "" 0
 assert_eq "zero used is preserved, not treated as missing" "0" "$(awk -F '\t' '$11 == "attempt-zero" {print $22}' "$AIDEVOPS_GH_API_LOG")"
 assert_eq "legacy callers leave used unknown" "" "$(awk -F '\t' '$11 == "a1" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+
+# --- GH#36187: used-counter external costs never change remaining residuals --
+gh_clear_log
+quota_fixture 1 external-base 100 1 "$pool_a" 2000000000 0
+quota_fixture 2 other-base 4900 1 "$pool_b" 2000000100 100
+# A missing used sample still contributes its local attempt cost.
+quota_fixture 60 external-missing 99 1 "$pool_a" 2000000000
+quota_fixture 61 external-next 90 1 "$pool_a" 2000000000 10
+quota_fixture 61 external-next 90 1 "$pool_a" 2000000000 10
+quota_fixture 62 other-next 4898 1 "$pool_b" 2000000100 102
+# Clamp each interval separately, not the aggregate, and ignore counter drops.
+quota_fixture 121 external-clamp 89 5 "$pool_a" 2000000000 11
+quota_fixture 122 external-backwards 88 1 "$pool_a" 2000000000 9
+quota_fixture 123 external-after-drop 87 1 "$pool_a" 2000000000 12
+quota_fixture 124 external-reset 4999 1 "$pool_a" 2000003600 1000
+quota_fixture 125 external-reset-next 4998 1 "$pool_a" 2000003600 1001
+gh_aggregate_calls
+external_series='.rest_core_attribution.series[] | select(.reset_epoch == 2000000000)'
+assert_eq "external used delta excludes baseline, duplicates and local costs" "10" "$(jq "$external_series | .same_login_external_cost" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "external minute costs reconcile to series" "10" "$(jq "$external_series | [.minutes[].same_login_external_cost] | add" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "remaining residual is unchanged by external label" "8" "$(jq "$external_series | .unattributed_cost" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "other credential external cost stays independent" "1" "$(jq '.rest_core_attribution.series[] | select(.reset_epoch == 2000000100) | .same_login_external_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "new reset starts external baseline" "0" "$(jq '.rest_core_attribution.series[] | select(.reset_epoch == 2000003600) | .same_login_external_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "device attribution without login mapping stays unknown" "unknown" "$(jq -r "$external_series | .other_devices" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "external attribution is explicitly an upper bound" "true" "$(jq '.rest_core_attribution.same_login_external_cost_is_upper_bound' "$AIDEVOPS_GH_API_REPORT")"
 
 # --- Test 11: command arguments remain private and exit status is preserved --
 gh_clear_log

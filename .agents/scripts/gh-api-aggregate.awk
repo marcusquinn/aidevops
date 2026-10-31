@@ -160,6 +160,28 @@ function collect_quota(    series, row, minute) {
 	quota_ts[row] = ts
 	quota_budget[row] = budget
 	quota_logged[row] = quota_cost
+	quota_used[row] = $22
+}
+
+# Keep used-counter evidence independent of remaining-based residuals. Missing
+# samples accumulate local costs until the next response-owned used counter.
+# This is an attribution upper bound, not proof of a particular remote device.
+function replay_external(row, series, cost,    delta, external, key) {
+	if (cost ~ /^[0-9]+$/) external_pending[series] += cost
+	if (quota_used[row] !~ /^[0-9]+$/) return
+	if (series in external_previous) {
+		delta = quota_used[row] - external_previous[series]
+		if (delta >= 0) {
+			key = series SUBSEP (int(quota_ts[row] / 60) * 60)
+			quota_minutes[key] = 1
+			external = delta - external_pending[series]
+			if (external < 0) external = 0
+			external_cost[series] += external
+			external_minute_cost[key] += external
+		}
+	}
+	external_previous[series] = quota_used[row] + 0
+	external_pending[series] = 0
 }
 
 # Concurrent processes append on completion; sort by captured sample time and,
@@ -181,6 +203,7 @@ function replay_quota(    i, j, row, prev, series, drop, cost, minute, key, resi
 		row = quota_order[i]
 		series = quota_key[row]
 		cost = quota_logged[row]
+		replay_external(row, series, cost)
 		if (cost ~ /^[0-9]+$/) quota_pending[series] += cost
 		else quota_unknown[series]++
 		if (quota_budget[row] !~ /^[0-9]+$/) continue
@@ -231,7 +254,7 @@ function emit_quota_minutes(series, top,    key, parts, minutes, n, i, j, swap, 
 	for (i = 1; i <= n; i++) {
 		key = series SUBSEP minutes[i]
 		if (i > 1) printf ", "
-		printf "{\"minute_ts\": %d, \"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d, \"same_credential_reset_unknown_cost\": %d}", minutes[i], quota_minute_drop[key], quota_minute_cost[key], quota_residual[key], quota_reset_unknown_cost[fingerprint SUBSEP minutes[i]] + 0
+		printf "{\"minute_ts\": %d, \"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d, \"same_credential_reset_unknown_cost\": %d, \"same_login_external_cost\": %d}", minutes[i], quota_minute_drop[key], quota_minute_cost[key], quota_residual[key], quota_reset_unknown_cost[fingerprint SUBSEP minutes[i]] + 0, external_minute_cost[key]
 	}
 	printf "]"
 }
@@ -242,6 +265,7 @@ function emit_quota(    series, values, n, i, parts) {
 	print "    \"minute_assignment\": \"interval-ending-sample\","
 	print "    \"sample_time_basis\": \"command-completion-under-credential-lock\","
 	print "    \"unattributed_is_upper_bound\": true,"
+	print "    \"same_login_external_cost_is_upper_bound\": true,"
 	printf "    \"missing_metadata_attempts\": %d,\n", unattributed_missing_metadata_attempts + 0
 	print "    \"series\": ["
 	for (series in quota_series) values[++n] = series
@@ -252,6 +276,7 @@ function emit_quota(    series, values, n, i, parts) {
 		if (i > 1) print ","
 		printf "      {\"pool\": \"%s\", \"auth_fingerprint\": \"%s\", \"reset_epoch\": %s, ", parts[1], parts[2], parts[3]
 		printf "\"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d, ", quota_drops[series], quota_costs[series], quota_unattributed[series]
+		printf "\"same_login_external_cost\": %d, \"other_devices\": \"unknown\", ", external_cost[series]
 		printf "\"unknown_cost_attempts\": %d, \"counter_increases\": %d, ", quota_unknown[series], quota_increases[series]
 		# Credential-wide, not series-owned: a credential may span several resets.
 		printf "\"same_credential_reset_unknown_cost\": %d, \"minutes\": ", quota_reset_unknown_total[parts[2]] + 0
