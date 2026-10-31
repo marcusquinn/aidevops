@@ -192,6 +192,7 @@ _shim_is_transparent_process_wrapper() {
 _shim_is_auth_runtime_hop() {
 	local -a words=("$@")
 	local index=1
+	local resolver=""
 	case "${words[0]##*/}" in
 	python | python3 | python3.* | Python) ;;
 	*) return 1 ;;
@@ -199,7 +200,16 @@ _shim_is_auth_runtime_hop() {
 	while [[ "$index" -lt ${#words[@]} && "${words[index]}" == -* ]]; do
 		index=$((index + 1))
 	done
-	[[ "${words[index]:-}" == */github_auth_runtime.py || "${words[index]:-}" == github_auth_runtime.py ]] || return 1
+	resolver="${words[index]:-}"
+	if [[ "$resolver" != */github_auth_runtime.py && "$resolver" != github_auth_runtime.py ]]; then
+		# ps flattens argv, so read splits resolver paths containing spaces.
+		# Reassemble only the known resolver path, not arbitrary Python args.
+		while [[ "$resolver" != "${_SHIM_DIR}/github_auth_runtime.py" ]]; do
+			index=$((index + 1))
+			[[ "$index" -lt ${#words[@]} ]] || return 1
+			resolver+=" ${words[index]}"
+		done
+	fi
 	[[ "${words[index + 1]:-}" == exec-gh ]] || return 1
 	return 0
 }
