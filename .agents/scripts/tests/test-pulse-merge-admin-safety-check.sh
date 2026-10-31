@@ -75,6 +75,7 @@ set_fixture() {
 	local issue_approval_result="$4"
 	local pr_approval_result="${5:-$issue_approval_result}"
 	local pr_author="${6:-}"
+	local pr_state="${7:-OPEN}" is_draft="${8:-false}" review_decision="${9:-null}" head_sha="${10:-head-current}"
 	rm -f "${TEST_ROOT}/issue-sync-trusted"
 	if [[ -z "$pr_author" ]]; then
 		if [[ "$labels_json" == *"external-contributor"* || "$is_cross_repo" == "true" ]]; then
@@ -85,7 +86,7 @@ set_fixture() {
 	fi
 
 	cat >"${TEST_ROOT}/labels.json" <<EOF
-{"author":{"login":"${pr_author}"},"labels": ${labels_json}, "isCrossRepository": ${is_cross_repo}, "headRefOid": "head-current"}
+{"author":{"login":"${pr_author}"},"labels": ${labels_json}, "isCrossRepository": ${is_cross_repo}, "headRefOid": "${head_sha}", "state":"${pr_state}", "isDraft":${is_draft}, "reviewDecision":${review_decision}}
 EOF
 
 	# PR title / body fixtures used by _extract_linked_issue.
@@ -135,7 +136,10 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 				author: .author,
 				labels: {nodes: .labels, pageInfo: {hasNextPage: $has_next_page}},
 				isCrossRepository: .isCrossRepository,
-				headRefOid: .headRefOid
+				headRefOid: .headRefOid,
+				state: .state,
+				isDraft: .isDraft,
+				reviewDecision: .reviewDecision
 			}},
 			rateLimit: {cost: 1}
 		}}
@@ -230,6 +234,7 @@ define_helpers_under_test() {
 		/^_pulse_is_trusted_issue_sync_pr\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_classify_final_authority\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_admin_pr_json_graphql\(\) \{/,/^}$/ { print }
+		/^_pulse_merge_live_state_gate\(\) \{/,/^}$/ { print }
 		/^_external_pr_has_linked_issue\(\) \{/,/^}$/ { print }
 		/^_external_pr_linked_issue_crypto_approved\(\) \{/,/^}$/ { print }
 		/^_external_pr_current_head_crypto_approved\(\) \{/,/^}$/ { print }
@@ -837,6 +842,64 @@ test_partial_worker_extraction_failure_is_logged() {
 	return 0
 }
 
+test_live_merge_state_matrix() {
+	local scenario="" labels="" state="" draft="" review="" head="" result=0
+	for scenario in hold late-hold changes-requested head-drift failed malformed closed merged draft invalid-draft invalid-review invalid-state malformed-label cleared-hold no-review; do
+		labels='[{"name":"origin:worker-takeover"}]'
+		state=OPEN draft=false review='"APPROVED"' head=head-current result=0
+		case "$scenario" in
+		hold | late-hold) labels='[{"name":"origin:worker-takeover"},{"name":"hold-for-review"}]' ;;
+		changes-requested) review='"CHANGES_REQUESTED"' ;;
+		head-drift) head=changed-head ;;
+		closed) state=CLOSED ;;
+		merged) state=MERGED ;;
+		draft) draft=true ;;
+		invalid-draft) draft=null ;;
+		invalid-review) review='"unreadable"' ;;
+		invalid-state) state=unknown ;;
+		malformed-label) labels='[{"name":null}]' ;;
+		no-review) review=null ;;
+		esac
+		if [[ "$scenario" == late-hold ]]; then
+			set_fixture '[{"name":"origin:worker-takeover"}]' false 'Resolves #960' VERIFIED
+			if ! _pulse_merge_final_trust_gate 960 owner/repo head-current; then
+				print_result "late hold initially passes selection evidence" 1
+			fi
+		elif [[ "$scenario" == cleared-hold ]]; then
+			set_fixture '[{"name":"hold-for-review"}]' false 'Resolves #960' VERIFIED
+			if _pulse_merge_final_trust_gate 960 owner/repo head-current; then
+				print_result "uncleared hold initially blocks" 1
+			fi
+		fi
+		set_fixture "$labels" false 'Resolves #960' VERIFIED VERIFIED trusted-contributor "$state" "$draft" "$review" "$head"
+		: >"$GH_LOG"
+		: >"$LOGFILE"
+		case "$scenario" in
+		failed) touch "${TEST_ROOT}/pr-meta-fail" ;;
+		malformed) printf '{not-json' >"${TEST_ROOT}/labels.json" ;;
+		esac
+		# Reuse the real final gate, including any earlier permitted evidence.
+		if _pulse_merge_final_trust_gate 960 owner/repo head-current; then
+			gh pr merge 960 --repo owner/repo --squash --match-head-commit head-current
+		else
+			result=$?
+		fi
+		rm -f "${TEST_ROOT}/pr-meta-fail"
+		if [[ "$scenario" == cleared-hold || "$scenario" == no-review ]]; then
+			if [[ "$result" -eq 0 ]] && grep -q '^gh pr merge ' "$GH_LOG"; then
+				print_result "fresh final state: ${scenario} permits merge" 0
+			else
+				print_result "fresh final state: ${scenario} permits merge" 1
+			fi
+		elif [[ "$result" -eq 1 ]] && ! grep -q '^gh pr merge ' "$GH_LOG"; then
+			print_result "fresh final state: ${scenario} blocks without merge" 0
+		else
+			print_result "fresh final state: ${scenario} blocks without merge" 1
+		fi
+	done
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -872,6 +935,7 @@ main() {
 	test_partial_worker_final_nmr_gate
 	test_partial_worker_external_approval
 	test_partial_worker_extraction_failure_is_logged
+	test_live_merge_state_matrix
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
