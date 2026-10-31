@@ -19,8 +19,8 @@ import {
   applyAgentRoutingProfile,
   registerAgentRoutingIntent,
 } from "../config-agent-profiles.mjs";
+import { applyCompactionEffort } from "../compaction-effort.mjs";
 import {
-  applyCompactionEffort,
   applyCompactionRouting,
   createCompactionCredentialCheck,
   createCompactionResidencyWarning,
