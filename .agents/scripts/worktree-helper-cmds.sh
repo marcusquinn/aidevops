@@ -147,7 +147,7 @@ _remove_show_guard_error() {
 		;;
 	compact-recovery-capture-failed)
 		printf '%s\n' "Reason: compact-recovery-capture-failed — the recoverable archive could not be captured or verified; the source was preserved." >&2
-		printf '%s\n' "Recovery: read the capture diagnostic above or ~/.aidevops/logs/cleanup_worktrees.log, resolve it, then retry. --force cannot bypass this protection." >&2
+		printf '%s\n' "Recovery: read the capture diagnostic above or ${AIDEVOPS_CLEANUP_LOG:-${HOME}/.aidevops/logs/cleanup_worktrees.log}, resolve it, then retry. --force cannot bypass this protection." >&2
 		;;
 	cwd-visibility-degraded)
 		printf '%s\n' "Reason: cwd-visibility-degraded — targeted recovery could not prove a clean, unowned worktree merged (exact-head merged PR, or local default-branch ancestry for local_only repos)." >&2
@@ -516,7 +516,11 @@ _remove_cleanup_and_execute() {
 		"${SCRIPT_NAME:-worktree-helper.sh}" "$_WT_REMOVE_MODE_MANUAL" \
 		"$audit_context" "$allow_degraded" "$force_remove"; then
 		[[ "$cleanup_lease_acquired" != "$_WT_BOOL_TRUE" ]] || _clean_release_removal_lease "$path_to_remove" || true
-		printf '%b\n' "${YELLOW}Cleanup stopped: the source remains protected and its recoverable archive was retained.${NC}"
+		if [[ -n "${WORKTREE_REMOVAL_GUARD_REASON:-}" ]]; then
+			_remove_show_guard_error "$path_to_remove" "$WORKTREE_REMOVAL_GUARD_REASON"
+		else
+			printf '%b\n' "${YELLOW}Cleanup stopped: the source remains protected and its recoverable archive was retained.${NC}"
+		fi
 		return 1
 	fi
 	if ! prune_missing_worktree_metadata "$repo_context" "$path_to_remove"; then
