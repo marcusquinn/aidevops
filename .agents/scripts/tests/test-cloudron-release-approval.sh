@@ -48,6 +48,26 @@ request_issues() {
 	return 0
 }
 
+pull_request_json() {
+	local head="$HEAD_SHA" merged=false state=open
+	[[ "$SCENARIO" != changed ]] || head="$OTHER_SHA"
+	if [[ -f "${TEST_ROOT}/merged" || "$SCENARIO" == resumed ]]; then
+		merged=true
+		state=closed
+	fi
+	[[ "$SCENARIO" != pr_error ]] || return 1
+	jq -cn --arg head "$head" --arg state "$state" --argjson merged "$merged" --arg scenario "$SCENARIO" '
+		{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},state:$state,merged:$merged,merge_commit_sha:$head,draft:false,labels:[],auto_merge:null}
+		| if $scenario == "draft" then .draft = true
+		  elif $scenario == "fork" then .head.repo.full_name = "other/app"
+		  elif $scenario == "wrong_repo" then .base.repo.full_name = "other/app"
+		  elif $scenario == "wrong_base" then .base.ref = "develop"
+		  elif $scenario == "invalid_head" then .head.sha = "invalid"
+		  elif $scenario == "closed" then .state = "closed"
+		  else . end'
+	return 0
+}
+
 gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
@@ -86,24 +106,7 @@ gh() {
 		body=$(jq -cn --arg head "$HEAD_SHA" '{schema:1,repository:"owner/app",pr:7,head:$head,version:"1.2.3",upstream:"4.5.6",owns_hold:true}')
 		jq -cn --arg body "$body" '{state:"open",body:$body,labels:[{name:"release-approval-required"}]}'
 		;;
-	'api repos/owner/app/pulls/7')
-		local head="$HEAD_SHA" merged=false state=open
-		[[ "$SCENARIO" != changed ]] || head="$OTHER_SHA"
-		if [[ -f "${TEST_ROOT}/merged" || "$SCENARIO" == resumed ]]; then
-			merged=true
-			state=closed
-		fi
-		[[ "$SCENARIO" != pr_error ]] || return 1
-		jq -cn --arg head "$head" --arg state "$state" --argjson merged "$merged" --arg scenario "$SCENARIO" '
-			{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},state:$state,merged:$merged,merge_commit_sha:$head,draft:false,labels:[],auto_merge:null}
-			| if $scenario == "draft" then .draft = true
-			  elif $scenario == "fork" then .head.repo.full_name = "other/app"
-			  elif $scenario == "wrong_repo" then .base.repo.full_name = "other/app"
-			  elif $scenario == "wrong_base" then .base.ref = "develop"
-			  elif $scenario == "invalid_head" then .head.sha = "invalid"
-			  elif $scenario == "closed" then .state = "closed"
-			  else . end'
-		;;
+	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
 	'pr checks')
 		[[ "$SCENARIO" != checks_error ]] || return 1
 		local bucket=pass
