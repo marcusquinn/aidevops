@@ -974,13 +974,20 @@ _route_pr_issue_labels_for_dispatch() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local linked_issue="$3"
+	local issue_meta=""
 	local issue_labels=""
 
-	if ! issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
-		--jq '[.labels[].name] | join(",")' 2>/dev/null); then
+	if ! issue_meta=$(gh api "repos/${repo_slug}/issues/${linked_issue}" 2>/dev/null); then
 		echo "[pulse-wrapper] _route_pr_to_fix_worker: linked issue #${linked_issue} metadata unavailable for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
 		return "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}"
 	fi
+	# The issues endpoint also returns pull requests. Never dispatch feedback to
+	# another PR merely because a For/Ref declaration names its number.
+	if ! printf '%s' "$issue_meta" | jq -e 'type == ({} | type) and (has("pull_request") | not)' >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _route_pr_to_fix_worker: target #${linked_issue} for PR #${pr_number} in ${repo_slug} is not a verified issue — refusing destructive routing" >>"$LOGFILE"
+		return 1
+	fi
+	issue_labels=$(printf '%s' "$issue_meta" | jq -er '[.labels[].name] | join(",")') || return "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}"
 	[[ ",${issue_labels}," != *",needs-maintainer-review,"* ]] || return 1
 	printf '%s\n' "$issue_labels"
 	return 0
