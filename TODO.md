@@ -5419,4 +5419,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [-] t18797 Deflake bounded-operation timeout case: process_signal null under slow spawn #auto-dispatch #bug ref:GH#36015 declined:2026-10-30
 
-- [ ] t18814 fix(sync-workflows): re-pin legacy @main loc-badge callers to release SHA and keep pins current #auto-dispatch #bug ref:GH#36105
+- [-] t18814 fix(sync-workflows): re-pin legacy @main loc-badge callers to release SHA and keep pins current #auto-dispatch #bug ref:GH#36105 declined:2026-10-31
