@@ -586,6 +586,7 @@ printf '%s\n' '{"status":"found"}' >"${FINAL_REPO}/todo/award-enrichment/log/run
 data_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record outcomes" "diff reviewed")
 assert_contains "todo data file is a deliverable" "$data_body" 'Resolves #34465'
 
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-mixed "$final_base"
 mkdir -p "${FINAL_REPO}/todo/award-enrichment/specs"
 printf '%s\n' '{"spec":1}' >"${FINAL_REPO}/todo/award-enrichment/specs/example.json"
 printf '%s\n' '- [ ] t3 Record outcomes' >>"${FINAL_REPO}/TODO.md"
@@ -593,6 +594,25 @@ printf '%s\n' '- [ ] t3 Record outcomes' >>"${FINAL_REPO}/TODO.md"
 /usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: data deliverable with TODO entry"
 mixed_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record outcomes" "diff reviewed")
 assert_contains "todo data with TODO.md is a deliverable" "$mixed_body" 'Resolves #34465'
+
+# A data-to-markdown rename still removes a deliverable, even though the
+# destination alone would qualify as planning. Seed the data in the base so
+# the branch diff contains only the rename, not the initial data addition.
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-rename-base "$final_base"
+mkdir -p "${FINAL_REPO}/todo/specs"
+printf '%s\n' '{"spec":1}' >"${FINAL_REPO}/todo/specs/example.json"
+/usr/bin/git -C "$FINAL_REPO" add todo
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: base data deliverable"
+rename_base=$(/usr/bin/git -C "$FINAL_REPO" rev-parse HEAD)
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-rename
+/usr/bin/git -C "$FINAL_REPO" mv todo/specs/example.json todo/specs/example.md
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: rename data to markdown"
+renamed_data_is_planning_only() {
+	(cd "$FINAL_REPO" && _diff_is_planning_only "$rename_base") || return 1
+	return 0
+}
+assert_rejected "data-to-markdown rename is not planning-only" \
+	renamed_data_is_planning_only
 
 /usr/bin/git -C "$FINAL_REPO" switch -q feature/final
 printf 'export const payment = charge();\n' >"${FINAL_REPO}/src/billing.js"

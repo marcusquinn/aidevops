@@ -200,7 +200,9 @@ _diff_is_planning_only() {
 	local base_ref="$1"
 	local paths="" path="" comparison_base=""
 	comparison_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
-	paths=$(git diff --name-only "$comparison_base" HEAD) || return 1
+	# Classify both sides of renames so a data source cannot disappear behind
+	# a planning-only destination.
+	paths=$(git diff --no-renames --name-only "$comparison_base" HEAD) || return 1
 	[[ -n "$paths" ]] || return 1
 	while IFS= read -r path; do
 		case "$path" in
