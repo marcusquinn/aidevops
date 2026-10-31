@@ -261,6 +261,12 @@ define_helpers_under_test() {
 	eval "$src_handle_existing"
 	# shellcheck disable=SC1090
 	eval "$src_set_native"
+	# Final-gate refusal is exercised by test-pulse-merge-pr-context.sh.
+	_pulse_merge_final_trust_gate() {
+		local pr_number="$1" repo_slug="$2" expected_head_sha="$3"
+		printf 'final-gate %s %s %s\n' "$pr_number" "$repo_slug" "$expected_head_sha" >>"$GH_LOG"
+		return 0
+	}
 	_pmp_normalize_mergeable_state_into() {
 		local __target_var="$1"
 		local __value="$2"
@@ -322,7 +328,8 @@ test_case_a_pending_ci_sets_auto_merge() {
 		teardown_test_env
 		return 0
 	fi
-	if ! grep -qE 'gh pr merge 100 --repo owner/repo --auto --squash --match-head-commit case-a-head-sha$' "$GH_LOG"; then
+	if ! grep -qE 'gh pr merge 100 --repo owner/repo --auto --squash --match-head-commit case-a-head-sha$' "$GH_LOG" \
+		|| ! grep -q '^final-gate 100 owner/repo case-a-head-sha$' "$GH_LOG"; then
 		print_result "Case (A): CI pending + repo allows → invokes gh pr merge --auto" 1 \
 			"gh log: $(cat "$GH_LOG")"
 		teardown_test_env

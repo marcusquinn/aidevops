@@ -1518,6 +1518,8 @@ _pmp_stage_ruleset_fallback() {
 			_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
 			return 1
 		fi
+		# Live authority can now require synchronous merging even if selection did not.
+		[[ "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" != "1" ]] || return 1
 		auto_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
 		auto_exit=$?
 	fi
