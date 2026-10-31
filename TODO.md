@@ -1834,7 +1834,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18840 fix(signature): CI gh shim signs comments as vunknown because version.sh cannot find VERSION #bug #framework ref:GH#36247 pr:#36254 completed:2026-10-31
 
-- [ ] t18841 fix(tests): make test-gh-shim.sh hermetic so deployed libs cannot change its result #bug #framework ref:GH#36255
+- [x] t18841 fix(tests): make test-gh-shim.sh hermetic so deployed libs cannot change its result #bug #framework ref:GH#36255 pr:#36256 completed:2026-10-31
 
 ## In Progress
 
@@ -5448,3 +5448,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [-] t18797 Deflake bounded-operation timeout case: process_signal null under slow spawn #auto-dispatch #bug ref:GH#36015 declined:2026-10-30
 
 - [-] t18814 fix(sync-workflows): re-pin legacy @main loc-badge callers to release SHA and keep pins current #auto-dispatch #bug ref:GH#36105 declined:2026-10-31
+
+- [ ] t18829 Attribute and govern REST core spend outside the local transport governor #bug ref:GH#36212
