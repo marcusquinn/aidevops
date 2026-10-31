@@ -359,21 +359,48 @@ _unlock_issue_after_dispatch_release() {
 #######################################
 # Check whether dispatch release may mutate issue state for a repo.
 #
+# A confirmed unmanaged repo is a benign no-op. An indeterminate verdict
+# (GitHub could not answer, e.g. REST deferred under quota pressure) is
+# retried after AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS seconds (default
+# "15 45"); if still unanswered the release is reported unpersisted instead
+# of silently skipped, which stranded claims on live issues (GH#36184).
+#
 # Args:
 #   $1 = issue_number
 #   $2 = repo_slug
+# Globals written:
+#   _HRFF_RELEASE_AUTHORITY_SKIP_RC — status the caller returns when this
+#   returns non-zero: 0 = confirmed unmanaged, 1 = release unpersisted.
+# Returns: 0 when the release may proceed, 1 otherwise.
 #######################################
 _hrff_release_repo_state_is_managed() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local guard_rc=0 delay=""
+	local -a retry_delays=()
 
-	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
-		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
-			print_info "Skipping CLAIM_RELEASED for #${issue_number} in ${repo_slug}: repo state is not managed by this account"
-			return 1
-		fi
-	fi
-	return 0
+	_HRFF_RELEASE_AUTHORITY_SKIP_RC=0
+	declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1 || return 0
+	read -r -a retry_delays <<<"${AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS-15 45}" || true
+	aidevops_can_manage_repo_issue_state "$repo_slug" || guard_rc=$?
+	for delay in ${retry_delays[@]+"${retry_delays[@]}"}; do
+		[[ "$guard_rc" -eq 2 ]] || break
+		[[ "$delay" =~ ^[0-9]+$ ]] || continue
+		print_info "Repo-state authority for #${issue_number} in ${repo_slug} is indeterminate; retrying claim release in ${delay}s"
+		sleep "$delay"
+		guard_rc=0
+		aidevops_can_manage_repo_issue_state "$repo_slug" || guard_rc=$?
+	done
+	case "$guard_rc" in
+	0) return 0 ;;
+	2)
+		_HRFF_RELEASE_AUTHORITY_SKIP_RC=1
+		print_warning "Claim release for #${issue_number} in ${repo_slug} remains unpersisted: repo-state authority could not be determined (GitHub lookup unavailable); retaining issue lifecycle state"
+		return 1
+		;;
+	esac
+	print_info "Skipping CLAIM_RELEASED for #${issue_number} in ${repo_slug}: repo state is not managed by this account"
+	return 1
 }
 
 #######################################
@@ -782,7 +809,7 @@ _release_dispatch_claim() {
 	if ! _hrff_release_context_is_valid "$issue_number" "$repo_slug"; then
 		return 0
 	fi
-	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return 0
+	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return "${_HRFF_RELEASE_AUTHORITY_SKIP_RC:-0}"
 
 	if [[ "$reason" == "rate_limit_transient" ]]; then
 		if ! _hrff_handle_rate_limit_release_circuit "$issue_number" "$repo_slug"; then

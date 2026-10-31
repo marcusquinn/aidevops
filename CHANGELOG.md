@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.101] - 2026-10-31
+
+### Changed
+
+- Maintenance: mark t18827 complete (pr:#36201 completed:2026-10-31) (#36203)
+- Maintenance: sync GitHub issue refs to TODO.md (#36206)
+
+### Fixed
+
+- retry indeterminate repo-state authority instead of silently dropping CLAIM_RELEASED
+- recover abandoned worker-draft claims so stranded drafts are continued (#36197)
+- honour AIDEVOPS_PLAYWRIGHT_EXECUTABLE in playwright runtime-check readiness
+
 ## [3.39.100] - 2026-10-31
 
 ### Added

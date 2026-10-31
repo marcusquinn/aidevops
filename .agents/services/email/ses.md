@@ -217,6 +217,57 @@ Grant write actions only when authorized: `ses:DeleteSuppressedDestination`,
 where supported, sender/recipient conditions and regions to the workload. Account
 and list actions require `Resource: "*"`; do not use this as a blanket write policy.
 
+### Workload send-only policy
+
+Per-site or per-app sending keys (for example WordPress FluentSMTP) should not
+hold `AmazonSESFullAccess`: a leaked key could then change identities,
+suppression and configuration sets for every domain in the account. Scope each
+key to its own domain and every configuration set its mail can use:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SendAsOwnDomain",
+      "Effect": "Allow",
+      "Action": ["ses:SendRawEmail", "ses:SendEmail"],
+      "Resource": [
+        "arn:aws:ses:<region>:<account>:identity/<domain>",
+        "arn:aws:ses:<region>:<account>:identity/*@<domain>",
+        "arn:aws:ses:<region>:<account>:configuration-set/<each-set-used>"
+      ]
+    },
+    {
+      "Sid": "ClientReadChecks",
+      "Effect": "Allow",
+      "Action": ["ses:ListIdentities", "ses:GetSendQuota"],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+- **Default configuration set:** SES authorizes a send against the configuration
+  set it uses. An identity with a default set (`aws sesv2 get-email-identity
+  --email-identity <domain> --query ConfigurationSetName`; consoles often create
+  `my-first-configuration-set`) applies it to every send that names no set, so
+  omitting it fails plain sends with `AccessDenied` while sends that name an
+  allowed set still work. List every identity's default set before scoping.
+- **Client read calls:** FluentSMTP calls `ListIdentities` when a connection is
+  saved or checked and `GetSendQuota` for its stats; other clients differ, so
+  check CloudTrail (`lookup-events --lookup-attributes
+  AttributeKey=Username,AttributeValue=<user>`) for what each key really calls.
+  `SendRawEmail`/`SendEmail` are not in CloudTrail management events.
+- **Verify before and after:** `aws iam simulate-principal-policy` per user (own
+  domain and sets allowed; other domains, regions and sets, identity/suppression
+  writes, SNS and IAM denied), then a real send through each client to
+  `success@simulator.amazonses.com`, once plain and once with the
+  `X-SES-CONFIGURATION-SET` header. The simulator checks one resource at a time,
+  so only the real send proves the default-set case. Run the same send as a
+  baseline first, and roll out to one key before the rest; rollback is
+  re-attaching the previous managed policies.
+
 The controlled bypass proof additionally needs `ses:PutSuppressedDestination` and
 `ses:DeleteSuppressedDestination`; CloudWatch verification needs
 `cloudwatch:GetMetricStatistics` or `cloudwatch:GetMetricData` (and

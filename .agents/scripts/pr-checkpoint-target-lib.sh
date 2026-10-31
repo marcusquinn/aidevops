@@ -152,7 +152,7 @@ _pr_checkpoint_self_hold_superseded() {
 		else [$comments[] | select(.id == $id) | .created_at | strings] | first // empty end
 	' <<<"$comments_json" 2>/dev/null) || return 1
 	[[ "$approved_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || return 1
-	pr_events=$(gh api "repos/${repo_slug}/issues/${pr_number}/events?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	pr_events=$(gh api "repos/${repo_slug}/issues/${pr_number}/events?per_page=100" --paginate --slurp 2>/dev/null) || return 2
 	jq -e --arg hold "$_PCTL_HOLD_LABEL" --arg labeled "$_PCTL_LABELED_EVENT" \
 		--arg runner "$runner" --arg approved_at "$approved_at" '
 		arrays | [flatten[] | objects | select(.event == $labeled and (.label.name // "") == $hold)] as $holds |
@@ -172,7 +172,8 @@ _pr_checkpoint_revised_target() {
 	local approval="" linked_issue="" pr_number="" normalized_issue="" normalized_pr=""
 	local status_prefix="status:" blocked_status="status:blocked"
 	local trusted_logins=""
-	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments_json" "$repo_slug") || return 1
+	# 2 denotes unavailable metadata; callers must not diagnose consumed approval.
+	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments_json" "$repo_slug") || return 2
 	# Keep complete metadata off exec argv (GH#35632), including the potentially
 	# large trusted-author list. Slurp all four documents before emitting input;
 	# malformed or incomplete metadata must never authorize a continuation.
@@ -186,7 +187,7 @@ _pr_checkpoint_revised_target() {
 	local approval_actor="" permission=""
 	approval_actor=$(jq -er '.approval_actor' <<<"$approval") || return 1
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$approval_actor" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-	permission=$(gh api "repos/${repo_slug}/collaborators/${approval_actor}/permission" --jq '.permission') || return 1
+	permission=$(gh api "repos/${repo_slug}/collaborators/${approval_actor}/permission" --jq '.permission') || return 2
 	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
 	linked_issue=$(jq -r '.issue' <<<"$approval") || return 1
 	pr_number=$(jq -r '.pr' <<<"$approval") || return 1
@@ -197,7 +198,7 @@ _pr_checkpoint_revised_target() {
 		# label removal/reapplication cannot revive the approved blocked snapshot.
 		local lifecycle_events="" blocked_snapshot=""
 		blocked_snapshot=$(jq -er '.blocked_issue_updated_at' <<<"$approval") || return 1
-		lifecycle_events=$(gh api "repos/${repo_slug}/issues/${linked_issue}/events?per_page=100" --paginate --slurp) || return 1
+		lifecycle_events=$(gh api "repos/${repo_slug}/issues/${linked_issue}/events?per_page=100" --paginate --slurp) || return 2
 		jq -e --arg snapshot "$blocked_snapshot" --arg prefix "$status_prefix" --arg blocked "$blocked_status" \
 			--arg labeled "$_PCTL_LABELED_EVENT" '
 			arrays | flatten |
@@ -224,6 +225,9 @@ _pr_checkpoint_revised_target() {
 	local self_hold_superseded=false
 	if _pr_checkpoint_self_hold_superseded "$repo_slug" "$pr_json" "$issue_json" "$comments_json" "$approval"; then
 		self_hold_superseded=true
+	else
+		local hold_rc=$?
+		[[ "$hold_rc" -ne 2 ]] || return 2
 	fi
 	normalized_pr=$(jq -e --argjson drop_hold "$self_hold_superseded" --arg hold "$_PCTL_HOLD_LABEL" \
 		"${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'

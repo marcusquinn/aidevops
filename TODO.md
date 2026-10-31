@@ -1810,6 +1810,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18827 fix(gh): pace REST admissions as time-to-reset divided by remaining quota #bug ref:GH#36199 pr:#36201 completed:2026-10-31
 
+- [ ] t18823 fix(release): retry indeterminate repo-state authority instead of silently dropping CLAIM_RELEASED #bug ref:GH#36184
+
+- [ ] t18824 fix(pulse): recover abandoned worker-draft claims so stranded drafts are continued #auto-dispatch #bug ref:GH#36186
+
+- [ ] t18826 fix(gh-shim): answer gh api user from GraphQL viewer when REST core is deferred or in cooldown #auto-dispatch #bug ref:GH#36192
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
