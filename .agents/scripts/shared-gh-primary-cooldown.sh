@@ -7,7 +7,26 @@ _gh_primary_request_resource() {
 	local command_name="${1:-}"
 	[[ "${command_name##*/}" != gh ]] || shift
 	[[ "${GH_HOST:-github.com}" == github.com ]] || return 1
+	# gh accepts repository flags before the command name.
+	while [[ "${1:-}" == -R || "${1:-}" == --repo ]] && [[ "$#" -ge 2 ]]; do
+		shift 2
+	done
+	while [[ "${1:-}" == --repo=* || "${1:-}" == -R?* ]]; do
+		shift
+	done
 	case "${1:-}" in
+	# REST-backed read subcommands that gh executes against core. Without this
+	# they bypass the cooldown and a rate-limited or fallback response surfaces
+	# as a misleading "release not found" (GH#36288).
+	release | run | workflow)
+		case "${2:-}" in
+		view | list | download)
+			printf 'core\n'
+			return 0
+			;;
+		esac
+		return 1
+		;;
 	search)
 		if [[ "${2:-}" == code ]]; then
 			printf 'code_search\n'
@@ -65,8 +84,13 @@ _gh_primary_cooldown_preflight() {
 	resource=$(_gh_primary_request_resource "$@") || return 0
 	local AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-${resource}"
 	if _gh_secondary_cooldown_active; then
+		local retry_at=""
+		retry_at=$(_gh_secondary_cooldown_expires_at)
 		printf '[gh-cooldown] primary-%s active=true retry_at=%s; unrelated API resources remain available\n' \
-			"$resource" "$(_gh_secondary_cooldown_expires_at)" >&2
+			"$resource" "$retry_at" >&2
+		# Deferral, not absence: callers must not report a missing object.
+		printf '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=primary_cooldown retry_at=%s resource=%s\n' \
+			"${retry_at:-unknown}" "$resource" >&2
 		return 75
 	fi
 	return 0
