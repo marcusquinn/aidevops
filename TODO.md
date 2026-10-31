@@ -1806,7 +1806,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18821 fix(worker): transient GitHub read deferral during POST_PR_HANDOFF verification is routed as failure and escalates tier #bug ref:GH#36171 pr:#36176 completed:2026-10-31
 
-- [ ] t18822 fix(pulse): rerun orphaned in_progress jobs on GitHub-hosted runners #bug #priority:high ref:GH#36177
+- [x] t18822 fix(pulse): rerun orphaned in_progress jobs on GitHub-hosted runners #bug #priority:high ref:GH#36177 pr:#36178 completed:2026-10-31
 
 ## In Progress
 
