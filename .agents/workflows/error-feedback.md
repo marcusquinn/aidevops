@@ -24,7 +24,7 @@ gh run list --status failure --limit 1          # identify failure
 gh run view {run_id} --log-failed               # diagnose
 # fix locally, then:
 git add . && git commit -m "fix: CI error description"
-git push origin {branch}
+git push origin {branch} &&
 gh-checks-wait-helper.sh wait {pr_number} --repo {owner}/{repo} --all   # governed wait
 ```
 
