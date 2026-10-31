@@ -3,7 +3,7 @@
 // Extracted from index.mjs (t1914) — MCP registration logic.
 // ---------------------------------------------------------------------------
 
-import { accessSync, constants } from "fs";
+import { accessSync, constants, readFileSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { homedir, platform } from "os";
 import { delimiter, isAbsolute, join, relative, resolve } from "path";
@@ -164,8 +164,27 @@ function findExecutable(name) {
  * the user's everyday browser profile. Bundled Chromium remains the fallback.
  * @returns {string}
  */
+/**
+ * Configured standalone browser: env var, then settings.json
+ * `browser.playwright_executable` so GUI-launched clients that never read
+ * shell rc files still honour it (GH#36278).
+ * @returns {string}
+ */
+function configuredPlaywrightExecutable() {
+  const fromEnv = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim();
+  if (fromEnv) return fromEnv;
+  const settingsPath = process.env.AIDEVOPS_SETTINGS_FILE?.trim()
+    || join(homedir(), ".config", "aidevops", "settings.json");
+  try {
+    const value = JSON.parse(readFileSync(settingsPath, "utf8"))?.browser?.playwright_executable;
+    return typeof value === "string" ? value.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 function preferredPlaywrightExecutable() {
-  const explicit = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim();
+  const explicit = configuredPlaywrightExecutable();
   // Preserve an invalid explicit path so Playwright fails closed instead of
   // silently launching a different browser.
   if (explicit) return findExecutable(explicit) || explicit;

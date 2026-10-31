@@ -91,7 +91,7 @@ export function installPlaywrightRuntime(browsers = ['chromium'], { withAxe = fa
 
   // Use the owned CLI so browser revisions match the resolved package.
   const cli = join(runtimeDir, 'node_modules', 'playwright', 'cli.js');
-  if (!runInherited(process.execPath, [cli, 'install', ...browsers])) {
+  if (browsers.length > 0 && !runInherited(process.execPath, [cli, 'install', ...browsers])) {
     const retryArgs = [...(withAxe ? [WITH_AXE_FLAG] : []), ...browsers].join(' ');
     throw new Error(`Playwright browser installation failed; retry: ${INSTALL_COMMAND} ${retryArgs}`);
   }
@@ -132,8 +132,25 @@ function braveExecutableCandidates() {
   return ['brave-browser', 'brave', '/snap/bin/brave'];
 }
 
+// GH#36278: the browser choice must reach non-interactive processes (launchd,
+// auto-update, pulse, GUI-launched MCP clients) that never read shell rc files.
+// Precedence matches settings-helper.sh: env var, then settings.json
+// `browser.playwright_executable`. Returns the raw configured value or ''.
+export function configuredExecutableSetting() {
+  const fromEnv = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim();
+  if (fromEnv) return fromEnv;
+  const settingsPath = process.env.AIDEVOPS_SETTINGS_FILE?.trim()
+    || join(homedir(), '.config', 'aidevops', 'settings.json');
+  try {
+    const value = JSON.parse(readFileSync(settingsPath, 'utf8'))?.browser?.playwright_executable;
+    return typeof value === 'string' ? value.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
 export function resolvePlaywrightBrowserExecutable(runtime) {
-  const configuredExecutable = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim();
+  const configuredExecutable = configuredExecutableSetting();
   if (configuredExecutable) return findExecutable(configuredExecutable) || configuredExecutable;
 
   if (process.env.AIDEVOPS_PLAYWRIGHT_BROWSER !== 'chromium') {
@@ -284,7 +301,7 @@ async function ownedRuntimeBrowser(runtimeDir) {
 // it satisfies readiness in place of bundled Chromium. Only a regular executable
 // file counts; an invalid path never makes the runtime ready.
 function configuredBrowserExecutable() {
-  const executable = findExecutable(process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim());
+  const executable = findExecutable(configuredExecutableSetting());
   try {
     return executable && statSync(executable).isFile() ? executable : null;
   } catch {
@@ -331,10 +348,14 @@ export async function ownedRuntimeStatus() {
   return { runtimeDir, version, installedVersion, chromiumExecutable, configuredExecutable, ready, axe };
 }
 
+// Named browsers are always installed. With none named, bundled Chromium is the
+// default only when no valid configured browser replaces it (GH#36278), so
+// `install --with-axe` never re-downloads a Chromium the operator retired.
 function parseInstallArgs(args) {
   const withAxe = args.includes(WITH_AXE_FLAG);
   const browsers = args.filter((arg) => arg !== WITH_AXE_FLAG);
-  return { withAxe, browsers: browsers.length > 0 ? browsers : ['chromium'] };
+  if (browsers.length > 0) return { withAxe, browsers };
+  return { withAxe, browsers: configuredBrowserExecutable() ? [] : ['chromium'] };
 }
 
 function writeLine(value) {
@@ -358,6 +379,13 @@ const COMMANDS = {
   status: async () => writeLine(await playwrightStatus()),
   check: async () => writeLine((await usableStatus()).module),
   'browser-executable': async () => writeLine((await usableStatus()).browserExecutable),
+  // Configured browser for launchers: resolved path, or the raw value when it
+  // does not resolve so the launch fails closed instead of using bundled
+  // Chromium. Prints nothing when no browser is configured.
+  'configured-executable': async () => {
+    const configured = configuredExecutableSetting();
+    if (configured) writeLine(findExecutable(configured) || configured);
+  },
   'runtime-check': async () => {
     const status = await ownedRuntimeStatus();
     writeLine(status);

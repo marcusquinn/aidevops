@@ -405,9 +405,9 @@ _setup_browser_tools_playwright() {
 	if runtime_status=$(node "$runtime_script" runtime-check 2>/dev/null); then
 		print_success "Framework Playwright runtime already installed"
 		if [[ "$runtime_status" == *'"chromiumExecutable":null'* && "$runtime_status" == *'"configuredExecutable":"'* ]]; then
-			print_info "Using AIDEVOPS_PLAYWRIGHT_EXECUTABLE; bundled Chromium is not required"
+			print_info "Using configured Playwright browser; bundled Chromium is not required"
 		fi
-		print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated"
+		print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated (configured browser passed at launch)"
 		return 0
 	fi
 
@@ -417,7 +417,7 @@ _setup_browser_tools_playwright() {
 	local -a install_browsers=(chromium firefox webkit)
 	if [[ "$runtime_status" == *'"configuredExecutable":"'* ]]; then
 		install_browsers=(firefox webkit)
-		print_info "Using AIDEVOPS_PLAYWRIGHT_EXECUTABLE; skipping bundled Chromium download"
+		print_info "Using configured Playwright browser; skipping bundled Chromium download"
 	fi
 	local browser_list
 	browser_list=$(IFS=' '; echo "${install_browsers[*]}")
@@ -439,7 +439,7 @@ _setup_browser_tools_playwright() {
 		print_info "Install later with: ${install_command}"
 	fi
 
-	print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated"
+	print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated (configured browser passed at launch)"
 	return 0
 }
 

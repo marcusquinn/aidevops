@@ -126,6 +126,12 @@ another user's details. Saved with `wp-plugin-new-helper.sh save-defaults`.
 | `ui.color_output` | boolean | `true` | -- | Colored terminal output. |
 | `ui.verbose` | boolean | `false` | -- | Verbose/debug output in scripts. |
 
+### browser
+
+| Key | Type | Default | Env Var | Description |
+|-----|------|---------|---------|-------------|
+| `browser.playwright_executable` | string | `""` | `AIDEVOPS_PLAYWRIGHT_EXECUTABLE` | Standalone browser for managed Playwright, Playwright MCP and `playwright-runtime.mjs`; replaces bundled Chromium. Read by non-interactive processes (launchd, auto-update, pulse, GUI-launched MCP clients). |
+
 ## Usage
 
 ```bash
