@@ -1804,7 +1804,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18818 fix(pulse): defer parent dispatch while its consolidation child is in flight; runner-local preconditions are runner_capability_unmet #bug ref:GH#36133 pr:#36134 completed:2026-10-30
 
-- [ ] t18821 fix(worker): transient GitHub read deferral during POST_PR_HANDOFF verification is routed as failure and escalates tier #bug ref:GH#36171
+- [x] t18821 fix(worker): transient GitHub read deferral during POST_PR_HANDOFF verification is routed as failure and escalates tier #bug ref:GH#36171 pr:#36176 completed:2026-10-31
 
 ## In Progress
 
