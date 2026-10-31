@@ -173,7 +173,7 @@ def seal(record: dict) -> None:
         owner_lifetime.require_admission_observed(record)
         process_reconciliation.reconcile(record)
         for launch in record["launches"]:
-            owner_lifetime.drain(launch)
+            owner_lifetime.drain(launch, record["identity"])
         record.update(state="sealed", sealed_at=time.time())
         return
     if record["state"] == "sealed":

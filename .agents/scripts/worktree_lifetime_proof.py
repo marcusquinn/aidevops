@@ -23,7 +23,7 @@ def proof(record, source_inode):
         for launch in record["launches"]:
             if launch.get("completion_evidence") is None:
                 from worktree_lifetime_reconcile import validate_quiescence
-                validate_quiescence(launch)
+                validate_quiescence(launch, record["identity"])
                 continue
             require(launch.get("kind") == owner_lifetime.KIND and
                     launch.get("completion_evidence") == "systemd-cgroup-v1" and
