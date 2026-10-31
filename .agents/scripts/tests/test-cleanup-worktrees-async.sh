@@ -93,8 +93,11 @@ timeout_sec() {
 config_get() {
 	local key="$1"
 	local fallback="$2"
-	[[ "$key" == "storage.worktree_archive_retention_mode" ]] || return 1
-	printf '%s\n' "${MOCK_RETENTION_CONFIG_MODE:-$fallback}"
+	case "$key" in
+	storage.worktree_archive_retention_mode) printf '%s\n' "${MOCK_RETENTION_CONFIG_MODE:-$fallback}" ;;
+	storage.worktree_recovery_root) printf '%s\n' "${MOCK_RECOVERY_CONFIG_ROOT:-$fallback}" ;;
+	*) return 1 ;;
+	esac
 	return 0
 }
 STUB
@@ -135,6 +138,9 @@ STUB
 cleanup_worktrees() {
 	printf 'CLEANUP\n' >>"${lifecycle_file}"
 	printf 'MOCK_RAN\n' >>"${mock_ran_file}"
+	if [[ "\${MOCK_LOG_ARCHIVE_FAILURE:-0}" == "1" ]]; then
+		printf '%s\n' 'worktree-skipped: /example — recoverable-archive-failed — mode=skipped' >>"\$LOGFILE"
+	fi
 	return 0
 }
 STUB
@@ -179,7 +185,9 @@ STUB
 	cat >"${stub_dir}/worktree-recovery-maintenance-helper.sh" <<STUB
 #!/usr/bin/env bash
 printf 'MAINTENANCE_RAN\\n' >>"${maintenance_ran_file}"
+printf '%s\\n' "\${AIDEVOPS_WORKTREE_TRASH_ROOT:-}" >>"${TEST_DIR}/maintenance-root"
 printf '%s\\n' '${maintenance_result}'
+exit "\${MOCK_MAINTENANCE_EXIT:-0}"
 STUB
 	chmod +x "${stub_dir}/worktree-recovery-maintenance-helper.sh"
 	cat >"${stub_dir}/dirty-worktree-backup-helper.sh" <<STUB
@@ -217,6 +225,7 @@ STUB
 		mkdir -p "${TEST_DIR}/repo"
 	fi
 	local helper_path_prefix="${PATH}"
+	local helper_status=0
 	if [[ -n "${MOCK_PRUNABLE_TARGET:-}" ]]; then
 		helper_path_prefix="${stub_dir}:${PATH}"
 	fi
@@ -226,13 +235,14 @@ STUB
 			PATH="$helper_path_prefix" \
 			AIDEVOPS_LOG_DIR="${AIDEVOPS_LOG_DIR:-${TEST_DIR}/custom-logs}" \
 			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
-			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null || true
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null || helper_status=$?
 	else
 		env HOME="$TEST_DIR" \
 			PATH="$helper_path_prefix" \
 			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
-			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null || true
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null || helper_status=$?
 	fi
+	printf '%s\n' "$helper_status" >"${TEST_DIR}/helper-status"
 	return 0
 }
 
@@ -652,11 +662,56 @@ test_archive_outcome_summary_is_logged() {
 
 	MOCK_CLEANUP_EXIT=0 MOCK_REMOVED_COUNT=3 MOCK_ARCHIVED_COUNT=2 \
 		MOCK_ARCHIVE_FAILED_COUNT=1 run_helper_in_isolation || true
-	if grep -q 'outcome=success removed=3 archived=2 archive_failed=1 skip_reasons=none' "$cleanup_log" 2>/dev/null; then
+	if grep -q 'outcome=partial-failure removed=3 archived=2 archive_failed=1 skip_reasons=none' "$cleanup_log" 2>/dev/null &&
+		[[ ! -f "${TEST_DIR}/.aidevops/logs/cleanup_worktrees.last-run" ]] &&
+		grep -qx '1' "${TEST_DIR}/helper-status"; then
 		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 0
 	else
 		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 1 \
 			"structured archive outcome summary missing"
+	fi
+	return 0
+}
+
+test_recovery_failure_and_physical_root() {
+	local cleanup_log="${TEST_DIR}/.aidevops/logs/cleanup_worktrees.log"
+	local physical_root="${TEST_DIR}/physical-recovery"
+	mkdir -p "$physical_root"
+	MOCK_MAINTENANCE_EXIT=1 MOCK_RECOVERY_CONFIG_ROOT="$physical_root" run_helper_in_isolation
+	if grep -qx "$physical_root" "${TEST_DIR}/maintenance-root" &&
+		grep -q 'outcome=partial-failure' "$cleanup_log" &&
+		grep -qx '1' "${TEST_DIR}/helper-status" &&
+		[[ ! -f "${TEST_DIR}/.aidevops/logs/cleanup_worktrees.last-run" && -f "${TEST_DIR}/compact-retention-ran" ]]; then
+		print_result "recovery-maintenance: explicit physical root, failure visible, independent retention continues" 0
+	else
+		print_result "recovery-maintenance: explicit physical root, failure visible, independent retention continues" 1
+	fi
+	teardown
+	setup
+	AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/override" MOCK_RECOVERY_CONFIG_ROOT=/unused run_helper_in_isolation
+	if grep -qx "${TEST_DIR}/override" "${TEST_DIR}/maintenance-root"; then
+		print_result "recovery-maintenance: environment root retains precedence" 0
+	else
+		print_result "recovery-maintenance: environment root retains precedence" 1
+	fi
+	teardown
+	setup
+	MOCK_RECOVERY_CONFIG_ROOT=relative-root run_helper_in_isolation
+	if [[ ! -f "${TEST_DIR}/maintenance-ran" ]] && grep -qx '1' "${TEST_DIR}/helper-status"; then
+		print_result "recovery-maintenance: relative configured root fails closed" 0
+	else
+		print_result "recovery-maintenance: relative configured root fails closed" 1
+	fi
+	return 0
+}
+
+test_logged_archive_failure_is_not_success() {
+	MOCK_LOG_ARCHIVE_FAILURE=1 run_helper_in_isolation
+	if grep -q 'outcome=partial-failure.*archive_failed=1' "${TEST_DIR}/.aidevops/logs/cleanup_worktrees.log" &&
+		grep -qx '1' "${TEST_DIR}/helper-status"; then
+		print_result "archive-summary: subshell failures are recovered from per-pass audit events" 0
+	else
+		print_result "archive-summary: subshell failures are recovered from per-pass audit events" 1
 	fi
 	return 0
 }
@@ -734,7 +789,8 @@ test_compact_retention_defaults_config_and_failure() {
 	teardown
 	setup
 	MOCK_ARCHIVE_RETENTION_EXIT=1 run_helper_in_isolation
-	if [[ -f "${TEST_DIR}/.aidevops/logs/cleanup_worktrees.last-run" ]] &&
+	if [[ ! -f "${TEST_DIR}/.aidevops/logs/cleanup_worktrees.last-run" ]] &&
+		grep -qx '1' "${TEST_DIR}/helper-status" &&
 		grep -q 'compact-retention mode=dry-run rc=1' "${TEST_DIR}/.aidevops/logs/cleanup_worktrees.log"; then
 		print_result "compact-retention: failure is logged without blocking other cleanup" 0
 	else
@@ -881,6 +937,7 @@ main() {
 	local test_case
 	for test_case in test_missing_metadata_prune_runs_after_success \
 		test_missing_metadata_prune_runs_when_cleanup_skipped \
+		test_recovery_failure_and_physical_root test_logged_archive_failure_is_not_success \
 		test_compact_retention_policy test_compact_retention_defaults_config_and_failure \
 		test_lifecycle_only_never_expires_recovery test_capacity_mode_is_scoped_and_locked; do
 		teardown

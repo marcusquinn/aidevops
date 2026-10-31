@@ -213,18 +213,28 @@ _maintain_worktree_recovery() {
 	local helper_path="${SCRIPT_DIR}/worktree-recovery-maintenance-helper.sh"
 	local result=""
 	local result_status=0
+	local recovery_root="${AIDEVOPS_WORKTREE_TRASH_ROOT:-${AIDEVOPS_ORPHAN_TRASH_ROOT:-}}"
 
 	if [[ ! -x "$helper_path" ]]; then
 		echo "[cleanup-worktrees-async] recovery maintenance helper unavailable; skipping" >>"$LOGFILE"
-		return 0
+		return 1
 	fi
-	if result=$("$helper_path" compact 2>>"$LOGFILE"); then
+	# Explicit physical storage selection, never automatic symlink adoption.
+	# The compactor and retirement guards independently validate this root.
+	if [[ -z "$recovery_root" ]] && declare -F config_get >/dev/null 2>&1; then
+		recovery_root=$(config_get "storage.worktree_recovery_root" "") || return 1
+	fi
+	if [[ -n "$recovery_root" && "$recovery_root" != /* ]]; then
+		echo "[cleanup-worktrees-async] recovery maintenance requires an absolute physical root" >>"$LOGFILE"
+		return 1
+	fi
+	if result=$(AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" "$helper_path" compact 2>>"$LOGFILE"); then
 		result_status=0
 	else
 		result_status=$?
 	fi
 	printf '%s\trc=%s\t%s\n' "[cleanup-worktrees-async] recovery-maintenance" "$result_status" "$result" >>"$LOGFILE"
-	return 0
+	return "$result_status"
 }
 
 # Retention is separately opted into: cleanup consent alone does not authorize
@@ -244,16 +254,16 @@ _maintain_compact_archives() {
 	if [[ "$mode" != "dry-run" && "$mode" != "apply" ]] ||
 		[[ ! "$days" =~ ^[1-9][0-9]*$ || ! "$maximum" =~ ^[1-9][0-9]*([KMGTP])?$ ]]; then
 		echo "[cleanup-worktrees-async] compact-retention invalid policy; preserving archives" >>"$LOGFILE"
-		return 0
+		return 1
 	fi
 	if [[ ! -f "$helper" ]] || ! declare -F timeout_sec >/dev/null 2>&1; then
 		echo "[cleanup-worktrees-async] compact-retention helper or bounded runner unavailable; skipping" >>"$LOGFILE"
-		return 0
+		return 1
 	fi
 	timeout_sec 120 bash "$helper" prune --older-than "${days}d" \
 		--max-total-size "$maximum" "--${mode}" >>"$LOGFILE" 2>&1 || rc=$?
 	printf '[cleanup-worktrees-async] compact-retention mode=%s rc=%s\n' "$mode" "$rc" >>"$LOGFILE"
-	return 0
+	return "$rc"
 }
 
 # Print the current repo plus every repos.json repository path, once each.
@@ -428,6 +438,7 @@ main() {
 	local removed_count="0"
 	local archived_count="0"
 	local archive_failed_count="0"
+	local maintenance_rc=0 retention_rc=0 logged_archive_failures=0
 	local log_first_line=0
 	local skip_reasons="none"
 	log_first_line=$(wc -l <"$LOGFILE" | tr -d '[:space:]') || log_first_line=0
@@ -441,11 +452,9 @@ main() {
 		echo "[cleanup-worktrees-async] cleanup_worktrees skipped by safety gate — last-run NOT updated" >>"$LOGFILE"
 	elif [[ "$rc" -eq 0 ]]; then
 		if [[ "$mode" != "--lifecycle-only" ]]; then
-			_maintain_worktree_recovery
-			_maintain_compact_archives
+			_maintain_worktree_recovery || maintenance_rc=$?
+			_maintain_compact_archives || retention_rc=$?
 		fi
-		_update_last_run
-		echo "[cleanup-worktrees-async] Completed successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ'). last-run updated." >>"$LOGFILE"
 	else
 		outcome="failed"
 		echo "[cleanup-worktrees-async] cleanup_worktrees exited with rc=${rc} — last-run NOT updated" >>"$LOGFILE"
@@ -456,10 +465,29 @@ main() {
 	[[ "$removed_count" =~ ^[0-9]+$ ]] || removed_count=0
 	[[ "$archived_count" =~ ^[0-9]+$ ]] || archived_count=0
 	[[ "$archive_failed_count" =~ ^[0-9]+$ ]] || archive_failed_count=0
+	# Per-repository cleanup runs in subshells; their counters cannot propagate.
+	# Recover one failure per archive attempt from this pass's audit events.
+	logged_archive_failures=$(awk -v first_line="$log_first_line" '
+		NR > first_line && /worktree-skipped:.*— recoverable-archive-failed —/ { failures++ }
+		END { print failures + 0 }
+	' "$LOGFILE") || logged_archive_failures=0
+	if [[ "$logged_archive_failures" -gt "$archive_failed_count" ]]; then
+		archive_failed_count="$logged_archive_failures"
+	fi
+	if [[ "$outcome" == "success" ]]; then
+		if [[ "$maintenance_rc" -ne 0 || "$retention_rc" -ne 0 || "$archive_failed_count" -gt 0 ]]; then
+			outcome="partial-failure"
+			rc=1
+			echo "[cleanup-worktrees-async] Partial failure: maintenance_rc=${maintenance_rc} retention_rc=${retention_rc} archive_failed=${archive_failed_count} — last-run NOT updated" >>"$LOGFILE"
+		else
+			_update_last_run
+			echo "[cleanup-worktrees-async] Completed successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ'). last-run updated." >>"$LOGFILE"
+		fi
+	fi
 	skip_reasons=$(_skip_reason_summary "$log_first_line") || skip_reasons="unavailable"
 	printf '%s\n' "[cleanup-worktrees-async] outcome=${outcome} removed=${removed_count} archived=${archived_count} archive_failed=${archive_failed_count} skip_reasons=${skip_reasons}" >>"$LOGFILE"
 
-	return 0
+	return "$rc"
 }
 
 main "$@"
