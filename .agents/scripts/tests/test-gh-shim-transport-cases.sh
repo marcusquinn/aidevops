@@ -100,7 +100,7 @@ printf 'HTTP/2.0 403 Forbidden\r\nX-Ratelimit-Resource: core\r\nX-Ratelimit-Limi
 STUB_TRANSPORT_RC=1 "$SHIM_RUN" api user >/dev/null 2>/dev/null || true
 _reset_log
 _governor_rc=0
-"$SHIM_RUN" api user >/dev/null 2>/dev/null || _governor_rc=$?
+"$SHIM_RUN" api repos/owner/repo >/dev/null 2>/dev/null || _governor_rc=$?
 if [[ "$_governor_rc" -eq 75 && ! -s "$STUB_GH_CALL_LOG" ]]; then
 	_pass "authoritative exhaustion suppresses the next raw request locally"
 else
@@ -224,5 +224,122 @@ if [[ "$(_shim_classify_endpoint search issues)" == search-rest && "$(_shim_clas
 else
 	_fail "native search quota family is misclassified"
 fi
+
+# Isolated native responses let the real shim/governor exercise both pools.
+cp "${TMP}/bin/gh" "${TMP}/bin/gh.identity-saved"
+cat >"${TMP}/bin/gh" <<'IDENTITY_GH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == auth && "${2:-}" == token ]]; then
+	printf '%s\n' 'fixture-token'
+	exit 0
+fi
+printf '%s\n' "$*" >>"$STUB_GH_CALL_LOG"
+if [[ "${2:-}" == graphql ]]; then
+	printf '%s\n' "$STUB_IDENTITY_VIEWER"
+	exit "${STUB_IDENTITY_GRAPHQL_RC:-0}"
+fi
+printf 'HTTP/2.0 %s Fixture\r\nX-Ratelimit-Resource: core\r\nX-Ratelimit-Remaining: 4999\r\n\r\n{"login":"rest-user","id":1,"name":null}\n' "${STUB_IDENTITY_STATUS:-200}"
+exit "${STUB_IDENTITY_REST_RC:-0}"
+IDENTITY_GH
+cp "${TMP}/scripts/gh-transport-governor.py" "${TMP}/scripts/gh-transport-governor.py.saved"
+cat >"${TMP}/scripts/gh-transport-governor.py" <<'IDENTITY_GOVERNOR'
+import json, os, runpy, sys, time
+if os.environ.get("STUB_IDENTITY_DEFER") == "1" and sys.argv[4] != "graphql":
+    with open(sys.argv[1], "w") as stream:
+        json.dump({"attempted": False, "deferred_by": "local_admission",
+                   "retry_at": time.time() + 120}, stream)
+    print("fixture identity deferral", file=sys.stderr)
+    sys.exit(75)
+runpy.run_path(sys.argv[0] + ".saved", run_name="__main__")
+IDENTITY_GOVERNOR
+export STUB_IDENTITY_VIEWER='{"data":{"viewer":{"login":"live-user[bot]","databaseId":42,"name":"Live User"}}}'
+# Do not inherit the deliberately exhausted REST budget from the earlier cases.
+export AIDEVOPS_GH_TRANSPORT_STATE_DIR="${TMP}/governor/identity-state"
+unset STUB_TRANSPORT_RESPONSE_FILE
+rm -f "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core"
+for _identity_mode in admission cooldown; do
+	export STUB_IDENTITY_DEFER=0
+	if [[ "$_identity_mode" == admission ]]; then
+		export STUB_IDENTITY_DEFER=1
+	else
+		printf '{"expires_at":%s}\n' "$_governor_reset" >"${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core"
+	fi
+	for _identity_endpoint in user /user; do
+		for _identity_selector in '.login // empty' .login .id .name; do
+			for _identity_flag in --jq -q; do
+				_reset_log
+				_governor_rc=0
+				_governor_output=$("$SHIM_RUN" api "$_identity_endpoint" "$_identity_flag" "$_identity_selector" 2>/dev/null) || _governor_rc=$?
+				_identity_expected='live-user[bot]'
+				case "$_identity_selector" in .id) _identity_expected=42 ;; .name) _identity_expected='Live User' ;; esac
+				if [[ "$_governor_rc" -eq 0 && "$_governor_output" == "$_identity_expected" && "$(wc -l <"$STUB_GH_CALL_LOG")" -eq 1 ]]; then
+					_pass "identity $_identity_mode $_identity_endpoint $_identity_flag $_identity_selector uses one live GraphQL read"
+				else
+					_fail "identity fallback $_identity_mode $_identity_endpoint $_identity_selector (rc=$_governor_rc output=$_governor_output)"
+				fi
+			done
+		done
+	done
+	_governor_output=$("$SHIM_RUN" api user 2>/dev/null)
+	if [[ "$(jq -r '.login' <<<"$_governor_output")" == 'live-user[bot]' && "$(jq -r '.id' <<<"$_governor_output")" == 42 ]]; then
+		_pass "identity $_identity_mode synthesizes the unfiltered REST identity shape"
+	else
+		_fail "identity $_identity_mode lost synthesized fields"
+	fi
+	for _identity_selector in .email '.login, .email' '.["email"]'; do
+		_reset_log
+		_governor_rc=0
+		"$SHIM_RUN" api user --jq "$_identity_selector" >"${TMP}/governor/identity-out" 2>"${TMP}/governor/identity-error" || _governor_rc=$?
+		if [[ "$_governor_rc" -eq 75 && ! -s "$STUB_GH_CALL_LOG" && ! -s "${TMP}/governor/identity-out" && -s "${TMP}/governor/identity-error" ]]; then
+			_pass "identity $_identity_mode unsupported selector preserves failure and diagnostics"
+		else
+			_fail "identity $_identity_mode unsupported selector was masked"
+		fi
+	done
+	for _identity_bad_viewer in '{"data":{"viewer":{"login":"bad login","databaseId":42}}}' '{"data":{"viewer":null}}' '{"errors":[{"message":"denied"}]}'; do
+		_governor_rc=0
+		STUB_IDENTITY_VIEWER="$_identity_bad_viewer" "$SHIM_RUN" api user --jq .login >/dev/null 2>/dev/null || _governor_rc=$?
+		[[ "$_governor_rc" -eq 75 ]] && _pass "invalid viewer preserves $_identity_mode failure" || _fail "invalid viewer accepted"
+	done
+	_governor_rc=0
+	STUB_IDENTITY_GRAPHQL_RC=1 "$SHIM_RUN" api user -q .login >/dev/null 2>/dev/null || _governor_rc=$?
+	[[ "$_governor_rc" -eq 75 ]] && _pass "GraphQL failure preserves original $_identity_mode status" || _fail "GraphQL failure masked"
+done
+rm -f "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core"
+export STUB_IDENTITY_DEFER=0
+for _identity_status in 200 401 403 404; do
+	_reset_log
+	_governor_rc=0
+	_identity_rc=1
+	[[ "$_identity_status" != 200 ]] || _identity_rc=0
+	STUB_IDENTITY_STATUS="$_identity_status" STUB_IDENTITY_REST_RC="$_identity_rc" \
+		"$SHIM_RUN" api user --jq .login >/dev/null 2>/dev/null || _governor_rc=$?
+	if [[ "$_governor_rc" -eq "$_identity_rc" && "$(wc -l <"$STUB_GH_CALL_LOG")" -eq 1 ]] && ! grep -q graphql "$STUB_GH_CALL_LOG"; then
+		_pass "REST HTTP $_identity_status remains authoritative with one REST attempt"
+	else
+		_fail "REST HTTP $_identity_status incorrectly triggered identity fallback"
+	fi
+done
+_reset_log
+_governor_rc=0
+STUB_IDENTITY_STATUS=401 STUB_IDENTITY_REST_RC=75 "$SHIM_RUN" api user -q .login >/dev/null 2>/dev/null || _governor_rc=$?
+if [[ "$_governor_rc" -eq 75 && "$(wc -l <"$STUB_GH_CALL_LOG")" -eq 1 ]] && ! grep -q graphql "$STUB_GH_CALL_LOG"; then
+	_pass "exit 75 after an HTTP attempt cannot trigger identity fallback"
+else
+	_fail "exit 75 was mistaken for no-attempt evidence"
+fi
+printf '{"expires_at":%s}\n' "$_governor_reset" >"$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
+_reset_log
+_governor_rc=0
+"$SHIM_RUN" api user -q .login >/dev/null 2>/dev/null || _governor_rc=$?
+if [[ "$_governor_rc" -eq 75 && ! -s "$STUB_GH_CALL_LOG" ]]; then
+	_pass "global secondary cooldown still blocks identity reads across both pools"
+else
+	_fail "identity fallback bypassed the global secondary cooldown"
+fi
+rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
+mv "${TMP}/bin/gh.identity-saved" "${TMP}/bin/gh"
+mv "${TMP}/scripts/gh-transport-governor.py.saved" "${TMP}/scripts/gh-transport-governor.py"
+unset STUB_IDENTITY_DEFER STUB_IDENTITY_VIEWER
 
 return 0

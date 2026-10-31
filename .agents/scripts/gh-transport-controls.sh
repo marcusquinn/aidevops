@@ -26,7 +26,19 @@ _gh_transport_preflight() {
 	# the actual cooldown at dispatch; skip only a duplicate ramp reservation.
 	local AIDEVOPS_GH_READ_RAMP_OVERRIDE="${AIDEVOPS_GH_READ_RAMP_OVERRIDE:-0}"
 	[[ "${AIDEVOPS_GH_WRAPPER_PREFLIGHT:-0}" != 1 ]] || AIDEVOPS_GH_READ_RAMP_OVERRIDE=1
-	_gh_search_cooldown_preflight "$@" || return $?
+	_GH_IDENTITY_FALLBACK_ALLOWED=0
+	local preflight_rc=0
+	_gh_search_cooldown_preflight "$@" || preflight_rc=$?
+	if [[ "$preflight_rc" -ne 0 ]]; then
+		# Only a resource-specific core cooldown qualifies, never a global stop.
+		local resource=""
+		resource=$(_gh_primary_request_resource "$@") || resource=""
+		local AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core"
+		if [[ "$preflight_rc" -eq 75 && "$resource" == core ]] && _gh_secondary_cooldown_active; then
+			_GH_IDENTITY_FALLBACK_ALLOWED=1
+		fi
+		return "$preflight_rc"
+	fi
 	_gh_secondary_cooldown_preflight "$op_class"
 	return $?
 }
@@ -176,6 +188,9 @@ _gh_transport_run_rest() {
 		return 125
 	fi
 	_GHGT_HANDLED=1
+	if [[ "$rc" -eq 75 && "$attempted" == false && "$deferred_by" == local_admission ]]; then
+		_GH_IDENTITY_FALLBACK_ALLOWED=1
+	fi
 	if [[ "$attempted" == true ]]; then
 		_shim_timing rest_metadata_parse
 		pool=$(_ghqa_pool_for_resource "$resource")
@@ -212,6 +227,56 @@ _gh_transport_run_rest() {
 	fi
 	rm -f -- "$metadata" "$error_file"
 	_shim_timing rest_metadata_and_log
+	return "$rc"
+}
+
+# Live identity recovery is deliberately limited to the three viewer fields.
+# Accept a conservative selector grammar: dynamic paths and other REST fields
+# must preserve the original failure rather than silently project invented data.
+_gh_transport_identity_viewer() {
+	local executable="$1" caller="$2" selector="$3"
+	local selector_pattern='^\.(login|id|name)([[:space:]]*//[[:space:]]*(empty|null))?[[:space:]]*$'
+	[[ -z "$selector" || "$selector" =~ $selector_pattern ]] || return 1
+	local viewer="" identity="" projected=""
+	gh_record_call graphql "$caller" "" "" identity-graphql-fallback 2>/dev/null || true
+	viewer=$(AIDEVOPS_GH_ROUTE_DECISION=identity-graphql-fallback \
+		_shim_run_transport "$executable" graphql "$caller" 0 api graphql \
+		-f 'query=query{viewer{login databaseId name}}') || return 1
+	# aidevops:trust-boundary — same credential, live read, never cached. Reject
+	# errors, missing fields and malformed logins before exposing identity data.
+	identity=$(jq -ce 'select((.errors // [] | length) == 0) | .data.viewer |
+		select((.login | type) == "string") |
+		select(.login | test("^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?$")) |
+		select((.databaseId | type) == "number") |
+		select(.name == null or (.name | type) == "string") |
+		{login, id: .databaseId, name}' <<<"$viewer") || return 1
+	if [[ -n "$selector" ]]; then
+		projected=$(jq -r "$selector" <<<"$identity") || return 1
+		[[ -z "$projected" ]] || printf '%s\n' "$projected"
+	else
+		printf '%s\n' "$identity"
+	fi
+	return 0
+}
+
+_gh_transport_identity_read() {
+	local executable="$1" caller="$2"
+	shift 2
+	local temp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local capture="" rc=0
+	mkdir -p "$temp_dir" || return 75
+	capture=$(mktemp -d "${temp_dir}/gh-identity.XXXXXX") || return 75
+	_GH_IDENTITY_FALLBACK_ALLOWED=0
+	_shim_run_transport "$executable" rest "$caller" 0 "$@" >"$capture/out" 2>"$capture/err" || rc=$?
+	if [[ "$rc" -eq 75 && "$_GH_IDENTITY_FALLBACK_ALLOWED" -eq 1 ]] &&
+		_gh_transport_identity_viewer "$executable" "$caller" "${4:-}" >"$capture/viewer" 2>/dev/null; then
+		command cat "$capture/viewer"
+		rc=0
+	else
+		command cat "$capture/out"
+		command cat "$capture/err" >&2
+	fi
+	rm -rf -- "$capture"
 	return "$rc"
 }
 
