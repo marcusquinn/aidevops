@@ -740,19 +740,32 @@ _ghqa_write_incomplete_frames() {
 	local command_rc="$4"
 	local parsed="$5"
 	local elapsed_ms="$6"
-	local kind="" frame_index="" ignored="" page="" frame_elapsed=""
+	local line="" kind="" frame_index="" status_count="" status="" resource="" used="" remaining="" reset="" ignored=""
+	local page="" frame_elapsed="" pool="" decision="" sampled_at=""
 	local frame_total=0 rows=0 outcome=success
 	[[ "$command_rc" -eq 0 ]] || outcome=error
 	frame_total=$(printf '%s\n' "$parsed" | awk -F '\t' '$1 == "frame" { count++ } END { print count + 0 }')
-	while IFS=$'\t' read -r kind frame_index ignored; do
+	sampled_at=$(_gh_now_seconds 2>/dev/null || true)
+	pool=$(_gh_default_pool "$original_path")
+	decision="${AIDEVOPS_GH_ROUTE_DECISION:-${pool}-selected}"
+	while IFS= read -r line; do
+		IFS=$'\t' read -r kind frame_index status_count status resource used remaining reset ignored <<<"$line"
 		[[ "$kind" == frame && "$frame_index" =~ ^[1-9][0-9]*$ ]] || continue
 		page=$(_ghqa_frame_page "$original_page" "$frame_index" "$frame_total") || continue
 		# Only aggregate process latency is available for incomplete frames. Own it
 		# on the final frame and use zero for preceding frames so totals stay exact.
 		frame_elapsed=0
-		[[ "$frame_index" -ne "$frame_total" ]] || frame_elapsed="$elapsed_ms"
-		_ghqa_write_fallback_attempt "$result_file" "$original_path" "$page" \
-			"$outcome" "$frame_elapsed" ""
+		[[ "$frame_index" -ne "$frame_total" ]] || frame_elapsed="${elapsed_ms:-x}"
+		if _ghqa_capture_frames_valid "$line" 1 2>/dev/null; then
+			# An individually complete frame keeps its cumulative counter evidence;
+			# quota cost stays unknown because a sibling frame is incomplete.
+			printf 'attempt\t%s\t%s\t%s\t%s\t%s\tx\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+				"$original_path" "$page" "$outcome" "$status" "$frame_elapsed" \
+				"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" >>"$result_file"
+		else
+			_ghqa_write_fallback_attempt "$result_file" "$original_path" "$page" \
+				"$outcome" "$frame_elapsed" ""
+		fi
 		rows=$((rows + 1))
 	done <<<"$parsed"
 	[[ "$rows" -gt 0 ]]
