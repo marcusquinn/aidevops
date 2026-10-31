@@ -25,7 +25,7 @@ gh run view {run_id} --log-failed               # diagnose
 # fix locally, then:
 git add . && git commit -m "fix: CI error description"
 git push origin {branch} &&
-gh-checks-wait-helper.sh wait {pr_number} --repo {owner}/{repo} --all   # governed wait
+  gh-checks-wait-helper.sh wait {pr_number} --repo {owner}/{repo} --all   # governed wait, only after a successful push
 ```
 
 The aidevops `gh` shim refuses `gh run watch` and `gh pr checks --watch`: they spend an unbounded number of ungoverned REST calls. Use the governed waiter or one-shot reads.
