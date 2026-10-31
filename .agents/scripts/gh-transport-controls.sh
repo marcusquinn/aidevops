@@ -125,6 +125,7 @@ _gh_transport_run_rest() {
 	local temp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	local metadata="" error_file="" start_ms="" end_ms="" elapsed="" rc=0
 	local status="" resource="" remaining="" reset="" retry_after="" cost="" attempted="" deferred_by="" pool="" response="" outcome=success
+	local used="" fingerprint="" sampled_at=""
 	mkdir -p "$temp_dir" || return 75
 	metadata=$(mktemp "${temp_dir}/gh-transport-meta.XXXXXX") || return 75
 	error_file=$(mktemp "${temp_dir}/gh-transport-error.XXXXXX") || {
@@ -137,8 +138,8 @@ _gh_transport_run_rest() {
 	python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
 	_shim_timing governor_total
 	# Parse only the bounded governor metadata; reuse it for the final log.
-	IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost < <(jq -r \
-		'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost] |
+	IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at < <(jq -r \
+		'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at] |
 		map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
 	[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 	# The governor has not executed the native request when durable quota state is
@@ -159,8 +160,8 @@ _gh_transport_run_rest() {
 			: >"$error_file"
 			rc=0
 			python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
-			IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost < <(jq -r \
-				'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost] |
+			IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at < <(jq -r \
+				'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at] |
 				map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
 			[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 		fi
@@ -182,10 +183,19 @@ _gh_transport_run_rest() {
 		[[ "$pool" != unknown ]] || pool=rest-core
 		[[ "$rc" -eq 0 ]] || outcome=error
 		elapsed=$((end_ms - start_ms))
+		# Response-owned series metadata (t18804): credential digest, reset epoch,
+		# response sample time and cumulative used. Without these the quota replay
+		# cannot form independent (pool, credential, reset) series.
+		local series_reset=""
+		[[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || fingerprint=""
+		[[ "$reset" =~ ^[1-9][0-9]*$ ]] && series_reset="$reset"
+		[[ "$sampled_at" =~ ^[1-9][0-9]*$ ]] || sampled_at=""
+		[[ "$used" =~ ^[0-9]+$ ]] || used=""
 		AIDEVOPS_GH_NATIVE_EXECUTION_OUTCOME="$outcome" \
 			gh_record_attempt "$path" "$caller" "$AIDEVOPS_GH_LOGICAL_ID" "" \
 			"$(_shim_transport_page "$@")" "$retry" "$outcome" "$status" "$elapsed" "$cost" \
-			"${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "${AIDEVOPS_GH_ROUTE_DECISION:-rest-response-owned}" "$remaining"
+			"${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "${AIDEVOPS_GH_ROUTE_DECISION:-rest-response-owned}" "$remaining" \
+			"$fingerprint" "$series_reset" "$sampled_at" "$used"
 		_shim_timing rest_attempt_log
 		[[ "$status" == x ]] || response="HTTP/1.1 ${status}"$'\n'
 		[[ "$resource" == x ]] || response="${response}x-ratelimit-resource: ${resource}"$'\n'

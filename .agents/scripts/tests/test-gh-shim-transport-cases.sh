@@ -37,13 +37,25 @@ fi
 rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
 
 export STUB_TRANSPORT_RESPONSE_FILE="${TMP}/governor/response"
-printf 'HTTP/2.0 200 OK\r\nX-Ratelimit-Resource: core\r\nX-Ratelimit-Limit: 5000\r\nX-Ratelimit-Remaining: 4999\r\nX-Ratelimit-Reset: %s\r\n\r\n{"fixture":true}\n' "$_governor_reset" >"$STUB_TRANSPORT_RESPONSE_FILE"
+printf 'HTTP/2.0 200 OK\r\nX-Ratelimit-Resource: core\r\nX-Ratelimit-Limit: 5000\r\nX-Ratelimit-Remaining: 4999\r\nX-Ratelimit-Used: 1\r\nX-Ratelimit-Reset: %s\r\n\r\n{"fixture":true}\n' "$_governor_reset" >"$STUB_TRANSPORT_RESPONSE_FILE"
 _reset_log
 _governor_output=$("$SHIM_RUN" api user)
 if [[ "$_governor_output" == '{"fixture":true}' && "$(_read_attempt_quota "$AIDEVOPS_GH_API_LOG")" == 1 && "$(_read_last_attempt_field "$AIDEVOPS_GH_API_LOG" 15)" == 200 ]]; then
 	_pass "REST transport strips only injected headers and records actual response cost/status"
 else
 	_fail "REST transport strips only injected headers and records actual response cost/status"
+fi
+# t18804: the default governor row must carry the quota-series keys that the
+# aggregate replay requires (credential digest, reset epoch, cumulative used).
+_governor_fingerprint=$(_read_last_attempt_field "$AIDEVOPS_GH_API_LOG" 20)
+if [[ "$_governor_fingerprint" =~ ^[a-f0-9]{64}$ &&
+	"$(_read_last_attempt_field "$AIDEVOPS_GH_API_LOG" 21)" == "$_governor_reset" &&
+	"$(_read_last_attempt_field "$AIDEVOPS_GH_API_LOG" 22)" == 1 &&
+	"$(_read_last_attempt_field "$AIDEVOPS_GH_API_LOG" 7)" == 4999 ]]; then
+	_pass "REST transport records credential digest, reset epoch and used counter"
+else
+	_fail "REST transport records credential digest, reset epoch and used counter" \
+		"fields 20-22: ${_governor_fingerprint:-<empty>} $(_read_last_attempt_field "$AIDEVOPS_GH_API_LOG" 21) $(_read_last_attempt_field "$AIDEVOPS_GH_API_LOG" 22)"
 fi
 if [[ "$(wc -l <"$STUB_GH_CALL_LOG" | tr -d ' ')" -eq 1 ]]; then
 	_pass "quota observation does not probe rate_limit or repeat the REST request"
