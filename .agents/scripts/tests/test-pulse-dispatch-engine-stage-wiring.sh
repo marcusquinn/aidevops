@@ -655,9 +655,17 @@ assert_not_grep \
 assert_not_grep \
 	"2a: retired coderabbit_review stage must NOT be in dispatch engine (GH#35865)" \
 	'coderabbit_review' \
+	"$ENGINE"
+assert_not_grep \
+	"2a: retired coderabbit_review stage must NOT be in housekeeping module (GH#35865)" \
+	'coderabbit_review' \
 	"$HOUSEKEEPING"
 assert_not_grep \
 	"2b: retired daily review function must NOT be in dispatch engine" \
+	'run_daily_codebase_review' \
+	"$ENGINE"
+assert_not_grep \
+	"2b: retired daily review function must NOT be in housekeeping module" \
 	'run_daily_codebase_review' \
 	"$HOUSEKEEPING"
 
