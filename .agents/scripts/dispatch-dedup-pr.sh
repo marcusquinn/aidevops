@@ -56,6 +56,11 @@ _ddpr_commit_denial_cache() {
 		return 0
 	fi
 	[[ "$action" == "record" ]] || return 1
+	# One operator-visible alert per denial window: only when no live denial exists.
+	if ! _ddpr_commit_denial_cache check "$repo_slug"; then
+		printf 'PULSE_ALERT: commit_permission_denied for %s; if this repo uses a per-repo Pulse GitHub App, grant it contents: read (verify: github_auth_runtime.py check %s). Dispatch is blocked until fixed.\n' \
+			"$repo_slug" "$repo_slug" >&2
+	fi
 	(umask 077; mkdir -p "$cache_dir" &&
 		jq -n --argjson at "$now" '{reason:"commit_permission_denied",scope:"open_commits",owner:"human",denied_at:$at,recheck_after:($at+900)}' \
 			>"${file}.tmp.$$" && mv "${file}.tmp.$$" "$file") || return 1
