@@ -946,6 +946,15 @@ jobs:
                    "${SHIM_DIR}/gh-signature-helper.sh" \
                    "${SHIM_DIR}/aidevops-git-guard" \
                    2>/dev/null || true
+          # GH#36247: the copied scripts sit outside any checkout, so
+          # lib/version.sh cannot resolve VERSION and every shim-signed footer
+          # read "vunknown". Ship VERSION with the shim (outside the workspace
+          # deletion boundary) and point the explicit override at it.
+          if cp __aidevops/VERSION "${SHIM_DIR}/VERSION" 2>/dev/null; then
+            echo "AIDEVOPS_VERSION_FILE=${SHIM_DIR}/VERSION" >> "$GITHUB_ENV"
+          else
+            echo "::warning::aidevops VERSION missing from the framework checkout; signature footers will report an unknown version"
+          fi
           # The shim is active before later inline issue writes, so persist the
           # same current-repository privacy and write-policy context used by the
           # standalone Issue Sync helpers.
