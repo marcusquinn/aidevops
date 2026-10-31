@@ -21,6 +21,7 @@ lessons improve later work.
 token efficiency, and quality control built in.**
 
 [![GitHub Actions](https://github.com/marcusquinn/aidevops/actions/workflows/code-quality.yml/badge.svg?branch=main)](https://github.com/marcusquinn/aidevops/actions/workflows/code-quality.yml)
+[![GetMerged Scorecard](https://getmerged.abhishekco.de/api/badge/marcusquinn/aidevops)](https://getmerged.abhishekco.de/marcusquinn/aidevops)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=marcusquinn_aidevops&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=marcusquinn_aidevops)
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
