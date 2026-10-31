@@ -660,6 +660,78 @@ test_orphan_default_policy_integration() {
 	return 0
 }
 
+test_final_gate_blocks_merge_transports() {
+	local transport="" rc=0
+	for transport in admin direct native ruleset-auto native-reclassified ruleset-reclassified; do
+		rc=0
+		(
+			install_stubs
+			: >"$GH_CALL_LOG"
+			local fn_src="" pr_number=123 repo_slug=owner/repo pr_head_ref_oid=deadbeef
+			local _merge_exit=1 merge_output='Repository rule violations found' merge_failure_context=""
+			local _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0
+			fn_src=$(awk '
+				/^_pmp_stage_admin_merge\(\) \{/,/^}$/ { print }
+				/^_pmp_stage_ruleset_fallback\(\) \{/,/^}$/ { print }
+			' "${SCRIPT_DIR}/../pulse-merge.sh")
+			eval "$fn_src"
+			fn_src=$(awk '/^_enable_native_auto_merge_for_head\(\) \{/,/^}$/ { print }' "$PROCESS_SCRIPT")
+			eval "$fn_src"
+			_pulse_merge_final_trust_gate() {
+				local number="$1" repo="$2" head="$3"
+				printf 'final-gate %s %s %s\n' "$number" "$repo" "$head" >>"$GH_CALL_LOG"
+				if [[ "$transport" == *-reclassified ]]; then
+					_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=1
+					return 0
+				fi
+				return 1
+			}
+			_pulse_merge_maybe_dispatch_preflight_remediation() { return 0; }
+			_repo_allows_auto_merge() { [[ "$transport" == ruleset-* ]]; return $?; }
+			local result=0
+			case "$transport" in
+			admin) _pmp_stage_admin_merge || result=$? ;;
+			direct | ruleset-*) _pmp_stage_ruleset_fallback || result=$? ;;
+			native*) _enable_native_auto_merge_for_head 123 owner/repo deadbeef 0 || result=$? ;;
+			esac
+			[[ "$result" -eq 1 ]] || exit 1
+			grep -q '^final-gate 123 owner/repo deadbeef$' "$GH_CALL_LOG" || exit 1
+			! grep -q '^gh pr merge ' "$GH_CALL_LOG" || exit 1
+		) || rc=$?
+		if [[ "$rc" -eq 0 ]]; then
+			pass "final gate refusal prevents ${transport} mutation"
+		else
+			fail "final gate refusal prevents ${transport} mutation"
+		fi
+	done
+	return 0
+}
+
+test_selection_holds_for_all_origins() {
+	local origin="" scenario="" rc=0
+	for origin in origin:worker origin:worker-takeover origin:interactive origin:other unlabeled; do
+		for scenario in hold draft cleared malformed; do
+			rc=0
+			(
+				local fn_src="" result=0
+				fn_src=$(awk '/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge.sh")
+				eval "$fn_src"
+				gh_pr_view() {
+					[[ "$scenario" != malformed ]] || { printf '{}'; return 0; }
+					jq -cn --arg origin "$origin" --arg scenario "$scenario" '{isDraft:($scenario == "draft"),labels:([{name:$origin}] + (if $scenario == "hold" then [{name:"hold-for-review"}] else [] end))}'
+					return 0
+				}
+				_check_interactive_pr_gates() { return 0; }
+				_attempt_worker_briefed_auto_merge() { return 0; }
+				_pm_gate_origin_authority 123 owner/repo 456 maintainer 0 write || result=$?
+				if [[ "$scenario" == cleared ]]; then [[ "$result" -eq 0 ]]; else [[ "$result" -eq 1 ]]; fi
+			) || rc=$?
+			if [[ "$rc" -eq 0 ]]; then pass "selection ${origin}: ${scenario}"; else fail "selection ${origin}: ${scenario}"; fi
+		done
+	done
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -691,6 +763,8 @@ main() {
 	test_successful_finalizer_dispatch_retires_retry_hint
 	test_orphan_tracking_recovery
 	test_orphan_default_policy_integration
+	test_final_gate_blocks_merge_transports
+	test_selection_holds_for_all_origins
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?

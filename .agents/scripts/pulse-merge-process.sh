@@ -1521,6 +1521,7 @@ _enable_native_auto_merge_for_head() {
 	fi
 	# #aidevops:trust-boundary — enabling auto-merge can merge immediately.
 	_pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
+	[[ "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" != "1" ]] || return 1
 	auto_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash \
 		--match-head-commit "$expected_head_sha" 2>&1)
 	auto_exit=$?
