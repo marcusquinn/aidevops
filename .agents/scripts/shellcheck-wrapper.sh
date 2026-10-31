@@ -349,7 +349,9 @@ main() {
 	ulimit -v $((RSS_LIMIT_MB * 1024)) 2>/dev/null || true
 
 	# Run shellcheck in background with RSS watchdog
-	"$real_shellcheck" "${filtered_args[@]}" &
+	# Explicitly preserve stdin; non-interactive background jobs otherwise read
+	# /dev/null, silently skipping scripts passed via '-' (including actionlint).
+	"$real_shellcheck" "${filtered_args[@]}" <&0 &
 	local sc_pid=$!
 
 	# Start watchdog in background
