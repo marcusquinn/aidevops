@@ -106,6 +106,37 @@ Non-GitHub, local-only, unsupported, and already-conforming repositories are not
 moved. Case-only and destination-inside-source moves use private same-filesystem
 staging; destination collisions always fail closed.
 
+### Follow a GitHub transfer or rename
+
+After the transfer or rename has completed on GitHub, update a registered,
+clean canonical checkout through the audited recovery helper, not a direct
+`git remote set-url` in the canonical checkout:
+
+```bash
+canonical-recovery-helper.sh follow-transfer --repo /path/to/checkout \
+  --slug NEW_OWNER/NEW_NAME --confirm FOLLOW_REPOSITORY_TRANSFER
+aidevops repos migrate-layout plan --workspace ~/Git --output plan.json \
+  --include-registered-paths --source /path/to/checkout
+```
+
+The helper verifies that the old and new GitHub slugs resolve to the same
+immutable repository ID and requested canonical name. It preserves the origin
+transport scheme and `.git` suffix, updates only the matching `repos.json` slug
+(keeping its path and other metadata), and records authorization and completion
+in `~/.aidevops/logs/canonical-recovery-audit.jsonl`. It refuses unregistered or
+ambiguous identities, conflicting registrations, multiple origin URLs, explicit
+push URLs, and URL rewrites. API or audit verification failures stop the operation.
+If replacing the registry fails, the origin URL is restored. After an interruption
+or completion-audit failure, inspect both origin and registry before retrying;
+the authorization receipt remains available for recovery.
+
+This command does not perform a GitHub transfer, fetch, change branches, or move
+files. Run the printed layout plan separately; `--include-registered-paths` is
+needed because the existing registration has an explicit path. Review and apply
+the content-hashed plan using the migration safety workflow above. Already
+conforming paths produce no move, and existing collision/active-consumer guards
+still apply.
+
 ## Direct-write workspace boundary
 
 Direct file-mutation tools may write across repositories when both identities

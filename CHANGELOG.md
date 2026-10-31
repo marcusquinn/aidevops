@@ -10,6 +10,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.104] - 2026-10-31
+
+### Added
+
+- guarded fleet core minor updates
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#36272)
+- Maintenance: sync ref:GH#36264 to TODO.md (#36265)
+- Maintenance: sync GitHub issue refs to TODO.md (#36266)
+- Maintenance: sync GitHub issue refs to TODO.md (#36259)
+- Maintenance: mark t18840 complete (pr:#36254 completed:2026-10-31) (#36246)
+- Maintenance: sync GitHub issue refs to TODO.md (#36253)
+- Maintenance: sync GitHub issue refs to TODO.md (#36244)
+- Tests: drive planning-publication case through _handle_post_merge_actions (#36245)
+- Maintenance: complete t18832 (pr:#36234)
+- Refactor: refactor archive lifecycle tests into case modules
+- Refactor: split test-terminal-blocker-circuit.sh into focused modules (GH#36233) (#36236)
+- Maintenance: mark t18806 complete (pr:#36221 completed:2026-10-31) (#36222)
+- Maintenance: sync GitHub issue refs to TODO.md (#36226)
+- Tests: exercise registered turn-time failure hook (#35984)
+
+### Fixed
+
+- route CI/review repair for worker PRs that use For/Ref (GH#36260)
+- preserve stdin in watchdog-managed child (#36277)
+- discover fixture interpreters portably (#36274)
+- reconcile held worker bump PRs in the approval routine
+- reject ambiguous PR metadata reads (GH#36270) (#36271)
+- trigger permission rollout only on union growth (#36267)
+- preserve auth-hop attribution and scanner retries (GH#36257) (#36261)
+- keep deferred ownership reconciliation resumable (#36262)
+- make test-gh-shim.sh hermetic so deployed libs cannot change its result
+- sign CI gh shim footers with the real framework version
+- bound local base import timeout and classify Git timeouts (GH#36223) (#36249)
+- drain remaining early-exit pipe readers (GH#36240) (#36250)
+- remove early-exit pipe readers (GH#36241) (#36252)
+- drain early-exit library pipe readers (#36248)
+- re-arm permission_required holds that have no published permission request (#36251)
+- publish continuation mark-blocked findings (#36231)
+- judge sourced libraries in the pipe gate and remove early-exit pipe readers (t18834)
+- skip partial parent closeout for planning publication PRs
+- reclaim unregistered archive-verification slots and surface guard reasons (t18828) (#36207)
+
 ## [3.39.103] - 2026-10-31
 
 ### Fixed
