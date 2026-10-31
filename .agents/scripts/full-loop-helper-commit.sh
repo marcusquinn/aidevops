@@ -1670,6 +1670,23 @@ PY
 	return $?
 }
 
+# Read one authoritative metadata snapshot, distinguishing a null body from a
+# successful transport with no usable output. Do not retry outside transport policy.
+_read_pr_metadata_json() {
+	local repo="$1"
+	local pr_number="$2"
+	local metadata=""
+	metadata=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}") || return 1
+	# Slurping also rejects empty output and multiple JSON documents.
+	printf '%s' "$metadata" | jq -es '
+		length == 1 and (.[0] | type == "object" and
+			has("title") and has("body") and (.title | type) == "string" and
+			((.body | type) == "string" or .body == null))
+	' >/dev/null 2>&1 || return 1
+	printf '%s\n' "$metadata"
+	return 0
+}
+
 # Restore generated metadata after partial PR creation recovered an existing PR.
 # A retry may compute title/body details from a newer review-repair head.
 # Arguments: PR number, repository slug, generated title, generated body.
@@ -1680,17 +1697,14 @@ _reconcile_recovered_pr_metadata() {
 	local generated_body="$4"
 	local current_title=""
 	local current_body=""
-	local pr_endpoint="repos/${repo}/pulls"
-	pr_endpoint+="/${pr_number}"
+	local metadata=""
 
-	current_title=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.title // empty' 2>/dev/null) || {
-		print_error "Could not read recovered PR #${pr_number} title for metadata reconciliation"
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
+		print_error "Could not read recovered PR #${pr_number} title/body for metadata reconciliation"
 		return 1
 	}
-	current_body=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.body // empty' 2>/dev/null) || {
-		print_error "Could not read recovered PR #${pr_number} body for metadata reconciliation"
-		return 1
-	}
+	current_title=$(jq -r '.title' <<<"$metadata") || return 1
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 	generated_body=$(_merge_existing_pr_body "$current_body" "$generated_body" "${pr_metadata_overrides:-}") || return 1
 	if [[ "$current_title" == "$generated_title" && "$current_body" == "$generated_body" ]]; then
 		print_info "Recovered PR #${pr_number} metadata already matches the generated head"
@@ -1715,14 +1729,12 @@ _reconcile_recovered_pr_metadata() {
 	fi
 	rm -f "$body_file"
 
-	current_title=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.title // empty' 2>/dev/null) || {
-		print_error "Could not verify recovered PR #${pr_number} title reconciliation"
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
+		print_error "Could not verify recovered PR #${pr_number} title/body reconciliation"
 		return 1
 	}
-	current_body=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.body // empty' 2>/dev/null) || {
-		print_error "Could not verify recovered PR #${pr_number} body reconciliation"
-		return 1
-	}
+	current_title=$(jq -r '.title' <<<"$metadata") || return 1
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 	if [[ "$current_title" != "$generated_title" || "$current_body" != "$generated_body" ]]; then
 		print_error "Recovered PR #${pr_number} metadata reconciliation did not reach the generated title/body postcondition"
 		return 1
@@ -1742,16 +1754,18 @@ _ensure_worker_pr_linkage() {
 	local issue_number="$3"
 	local generated_body="$4"
 	local current_body=""
+	local metadata=""
 
 	if [[ ! "$pr_number" =~ ^[1-9][0-9]*$ || "$repo" != */* || ! "$issue_number" =~ ^[1-9][0-9]*$ || -z "$generated_body" ]]; then
 		print_error "Cannot validate worker PR linkage: invalid PR, repository, issue, or generated body"
 		return 1
 	fi
 
-	current_body=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}" --jq '.body // empty' 2>/dev/null) || {
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
 		print_error "Cannot validate worker PR #${pr_number} linkage before review transition"
 		return 1
 	}
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 
 	local closing_issues=""
 	closing_issues=$(printf '%s' "$current_body" |
@@ -1799,10 +1813,11 @@ _ensure_worker_pr_linkage() {
 	fi
 	rm -f "$repair_body_file"
 
-	current_body=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}" --jq '.body // empty' 2>/dev/null) || {
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
 		print_error "Could not verify repaired linked issue reference on worker PR #${pr_number}"
 		return 1
 	}
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 	closing_issues=$(printf '%s' "$current_body" |
 		grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' |
 		grep -oE '[0-9]+' | sort -u) || closing_issues=""
