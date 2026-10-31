@@ -699,7 +699,7 @@ _gh_pr_merge_closure_check() {
 		awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced' |
 		sed -E "s/${backtick}[^${backtick}]*${backtick}//g")
 	contradiction=$(printf '%s' "$pr_json" | jq -r --arg body "$stripped" --arg repo "$repo_slug" '
-		[ $body | scan("(?i)(?:^|[^a-z0-9_])(?:For|Ref)[[:space:]]+(?:([a-z0-9_.-]+/[a-z0-9_.-]+))?#([0-9]+)")
+		[ $body | scan("(?i)(?:^|[^a-z0-9_])(?:For|Ref):?[[:space:]]+(?:([a-z0-9_.-]+/[a-z0-9_.-]+))?#([0-9]+)")
 		  | {repo: (.[0] // $repo), number: (.[1] | tonumber)} ] as $nonclosing
 		| [.closingIssuesReferences[] as $ref
 		   | ($ref.repository | .nameWithOwner //
@@ -726,6 +726,9 @@ _gh_pr_repair_merge_closure() {
 	body_text=$(printf '%s' "$pr_json" | jq -er '.body | strings') || return 1
 	discovery_body="$body_text"
 	while offending=$(_gh_pr_body_negated_closing_ref "$discovery_body"); do
+		# Inline-code stripping can produce a phrase absent from the raw body.
+		# Leave unsupported repairs to the caller rather than looping forever.
+		[[ "$discovery_body" == *"$offending"* ]] || return 1
 		phrases+="${offending}"$'\n'
 		discovery_body="${discovery_body//"$offending"/The issue remains open.}"
 	done
@@ -750,7 +753,7 @@ for line in body.splitlines(keepends=True):
 prose = "".join(text if editable else "\n" for editable, text in chunks)
 ref = r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>[0-9]+)"
 nonclosing = {(m.group(repo_field).lower() if m.group(repo_field) else repo, int(m.group(number_field)))
-              for m in re.finditer(r"\b(?:For|Ref)\s+" + ref, prose, re.I)}
+              for m in re.finditer(r"\b(?:For|Ref):?\s+" + ref, prose, re.I)}
 native = set()
 for issue in pr["closingIssuesReferences"]:
     repository = issue.get("repository") or {}

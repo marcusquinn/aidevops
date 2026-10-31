@@ -673,7 +673,7 @@ _check_pr_merge_gates() {
 	# Creation wrappers are not final authority. Check before merge or repair,
 	# but only route feedback after the existing author/issue trust gates pass.
 	local closure_json="" closure_reason=""
-	if ! closure_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body,closingIssuesReferences 2>/dev/null); then
+	if ! closure_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" --json body,closingIssuesReferences 2>/dev/null); then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — closing-reference metadata unavailable" >>"$LOGFILE"
 		return 1
 	fi

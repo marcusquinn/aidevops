@@ -9,13 +9,16 @@ source "${SCRIPT_DIR}/../shared-gh-wrappers-safe-edit.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 LOGFILE="${TEST_ROOT}/pulse.log"
-FIXTURE="" ROUTES=0 REVIEWS=0 READ_FAIL=0
+FIXTURE="" ROUTES=0 REVIEWS=0 READ_FAIL=0 LAST_ERROR=""
 
 # Match the existing merge-pass harness: load only the function under test.
 eval "$(awk '/^_check_pr_merge_gates\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/../pulse-merge.sh")"
 eval "$(awk '/^cmd_merge\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/../full-loop-helper-merge.sh")"
 
 gh_pr_view() {
+	if [[ "$*" == *"body,closingIssuesReferences"* ]]; then
+		[[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == 1 ]] || return 1
+	fi
 	[[ "$READ_FAIL" -eq 0 ]] || return 1
 	printf '%s\n' "$FIXTURE"
 	return 0
@@ -29,7 +32,7 @@ _pm_gate_review_bot() { REVIEWS=$((REVIEWS + 1)); return 0; }
 _route_pr_to_fix_worker() { ROUTES=$((ROUTES + 1)); return 0; }
 # First exercise failed safe writes falling back to the existing repair route.
 gh_pr_edit_safe() { return 1; }
-print_error() { return 0; }
+print_error() { local message="$1"; LAST_ERROR="$message"; return 0; }
 _merge_parse_command_args() {
 	FULL_LOOP_MERGE_PARSED_REPO="test/repo"
 	FULL_LOOP_MERGE_PARSED_METHOD="squash"
@@ -68,6 +71,9 @@ check_case() {
 LOCAL_REFS='[{"number":123,"repository":{"owner":{"login":"test"},"name":"repo"}}]'
 check_case 'partial-delivery negation held and routed' 'For #123. Merge records retry evidence only and must not close #123' "$LOCAL_REFS" 1
 check_case 'For/native contradiction held' $'For #123\nResolves #123' "$LOCAL_REFS" 1
+check_case 'For colon/native contradiction held' $'For: #123\nResolves #123' "$LOCAL_REFS" 1
+check_case 'Ref colon/native contradiction held' $'Ref: #123\nResolves #123' "$LOCAL_REFS" 1
+check_case 'inline code between negation and keyword routed without looping' 'Do not `x` close #123' "$LOCAL_REFS" 1
 check_case 'case-insensitive Ref/native contradiction held' 'rEf #123' "$LOCAL_REFS" 1
 check_case 'qualified same-repo contradiction held' 'For test/repo#123' "$LOCAL_REFS" 1
 check_case 'legitimate leaf closure allowed' 'Resolves #123' "$LOCAL_REFS" 0
@@ -88,7 +94,7 @@ gh_pr_edit_safe() {
 	cp "$body_file" "${TEST_ROOT}/repaired.md" || return 1
 	return 0
 }
-FIXTURE=$(jq -cn --arg body $'For #123\nMust not close #123.\nResolves #123\nResolves #124\n`Resolves #123`\n~~~\nResolves #123\n~~~' --argjson refs "$LOCAL_REFS" '{body:$body,closingIssuesReferences:$refs}')
+FIXTURE=$(jq -cn --arg body $'For: #123\nMust not close #123.\nResolves #123\nResolves #124\n`Resolves #123`\n~~~\nResolves #123\n~~~' --argjson refs "$LOCAL_REFS" '{body:$body,closingIssuesReferences:$refs}')
 before_routes="$ROUTES"
 before_reviews="$REVIEWS"
 if _check_pr_merge_gates 456 test/repo author APPROVED 123 origin:worker head; then
@@ -96,7 +102,7 @@ if _check_pr_merge_gates 456 test/repo author APPROVED 123 origin:worker head; t
 	exit 1
 fi
 [[ "$ROUTES" -eq "$before_routes" && "$REVIEWS" -eq "$before_reviews" ]]
-expected=$'For #123\nMust leave the issue open.\nRef #123\nResolves #124\n`Resolves #123`\n~~~\nResolves #123\n~~~'
+expected=$'For: #123\nMust leave the issue open.\nRef #123\nResolves #124\n`Resolves #123`\n~~~\nResolves #123\n~~~'
 [[ "$(<"${TEST_ROOT}/repaired.md")" == "$expected" ]]
 printf 'PASS safe repair preserves For, unrelated leaf closure, and code without comments or worker routing\n'
 
@@ -108,6 +114,9 @@ if _check_pr_merge_gates 456 test/repo author APPROVED 123 origin:worker head; t
 fi
 [[ "$ROUTES" -eq "$before_routes" ]]
 printf 'PASS unavailable metadata held without destructive repair routing\n'
+cmd_merge 456 test/repo && exit 1
+[[ "$LAST_ERROR" == 'Merge blocked for PR #456: closing-reference metadata unavailable' ]]
+printf 'PASS interactive metadata read failure reports its cause\n'
 if _gh_pr_merge_closure_check '{}' test/repo >/dev/null; then
 	printf 'FAIL malformed metadata must hold\n'
 	exit 1

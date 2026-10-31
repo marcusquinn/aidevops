@@ -1946,7 +1946,10 @@ cmd_merge() {
 
 	# GH#36174: enforce the creation-time closure invariant for existing PRs too.
 	local closure_json="" closure_reason=""
-	closure_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body,closingIssuesReferences) || return 1
+	closure_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body,closingIssuesReferences) || {
+		print_error "Merge blocked for PR #${pr_number}: closing-reference metadata unavailable"
+		return 1
+	}
 	if ! closure_reason=$(_gh_pr_merge_closure_check "$closure_json" "$repo"); then
 		print_error "Merge blocked for PR #${pr_number}: ${closure_reason}"
 		return 1
