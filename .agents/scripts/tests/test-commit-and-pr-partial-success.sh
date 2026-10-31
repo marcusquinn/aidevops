@@ -127,6 +127,9 @@ eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit
 eval "$(sed -n '/^_reconcile_recovered_pr_metadata() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # shellcheck disable=SC2312
+eval "$(sed -n '/^_read_pr_metadata_json() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
+# shellcheck disable=SC2312
 eval "$(sed -n '/^_merge_existing_pr_body() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # shellcheck disable=SC2312
@@ -286,6 +289,10 @@ GH_APPEND_GENERATED_METADATA=0
 # Control variables for direct origin-label readback tests.
 ORIGIN_API_FAIL=0
 ORIGIN_API_LABELS='["origin:worker"]'
+PR_READ_OVERRIDE=0
+PR_READ_OUTPUT=""
+PR_FAIL_READBACK=0
+PR_EDIT_CALLS=0
 
 # Stub: gh — handles the gh api call for MERGE_SUMMARY check, plus pr comment
 gh() {
@@ -293,10 +300,15 @@ gh() {
 	# Handle: gh api repos/.../issues/.../comments --jq '...'
 	if [[ "${1:-}" == "api" ]]; then
 		if [[ "$*" == *"repos/owner/repo/pulls/999"* ]]; then
-			if [[ "$*" == *".title // empty"* ]]; then
+			if [[ "$PR_READ_OVERRIDE" -eq 1 || ( "$PR_FAIL_READBACK" -eq 1 && "$PR_EDIT_CALLS" -gt 0 ) ]]; then
+				printf '%s' "$PR_READ_OUTPUT"
+			elif [[ "$*" == *".title // empty"* ]]; then
 				printf '%s\n' "$REMOTE_PR_TITLE"
-			else
+			elif [[ "$*" == *"--jq"* ]]; then
 				printf '%s\n' "$REMOTE_PR_BODY"
+			else
+				jq -cn --arg title "$REMOTE_PR_TITLE" --arg body "$REMOTE_PR_BODY" \
+					'{title: $title, body: (if $body == "" then null else $body end)}'
 			fi
 			return 0
 		fi
@@ -346,6 +358,7 @@ gh_pr_edit_safe() {
 	local title=""
 	local body_file=""
 	printf 'gh_pr_edit_safe %s\n' "$*" >>"$STUB_LOG"
+	PR_EDIT_CALLS=$((PR_EDIT_CALLS + 1))
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--title)
@@ -922,6 +935,45 @@ fi
 GH_PR_COMMENT_FAIL=0
 
 # GH#35990: exercise the real reconcile write/readback path, not just text matching.
+# GH#36270: an exit-0 read is not authoritative without a validated JSON object.
+for pr_read_output in '' 'not json' '{}' '{"title":"PR"}' '{"body":null}' '{"title":4,"body":""}' '{"title":"PR","body":false}' '[]' '{"title":"PR","body":null} {}'; do
+	REMOTE_PR_TITLE="curated title"
+	REMOTE_PR_BODY="Curated metadata"
+	PR_EDIT_CALLS=0
+	PR_READ_OVERRIDE=1
+	PR_READ_OUTPUT="$pr_read_output"
+	read_rc=0
+	_reconcile_recovered_pr_metadata 999 owner/repo 'new title' 'Generated body' || read_rc=$?
+	if [[ "$read_rc" -eq 1 && "$PR_EDIT_CALLS" -eq 0 && "$REMOTE_PR_BODY" == "Curated metadata" ]]; then
+		pass "untrusted recovery read fails closed: ${pr_read_output:-empty stdout}"
+	else
+		fail "untrusted recovery read fails closed: ${pr_read_output:-empty stdout}" "rc=${read_rc}; edits=${PR_EDIT_CALLS}"
+	fi
+done
+PR_READ_OVERRIDE=0
+for pr_read_output in '' 'not json'; do
+	REMOTE_PR_TITLE="old title"
+	REMOTE_PR_BODY=""
+	PR_EDIT_CALLS=0
+	PR_FAIL_READBACK=1
+	PR_READ_OUTPUT="$pr_read_output"
+	read_rc=0
+	_reconcile_recovered_pr_metadata 999 owner/repo 'new title' 'Generated body' || read_rc=$?
+	if [[ "$read_rc" -eq 1 && "$PR_EDIT_CALLS" -eq 1 ]]; then
+		pass "untrusted recovery readback rejects reconciliation success: ${pr_read_output:-empty stdout}"
+	else
+		fail "untrusted recovery readback rejects reconciliation success" "rc=${read_rc}; edits=${PR_EDIT_CALLS}"
+	fi
+done
+PR_FAIL_READBACK=0
+REMOTE_PR_BODY=""
+_reconcile_recovered_pr_metadata 999 owner/repo 'new title' 'Generated body'
+if [[ "$REMOTE_PR_BODY" == 'Generated body' ]]; then
+	pass "null recovery body accepts generated metadata"
+else
+	fail "null recovery body accepts generated metadata"
+fi
+
 REMOTE_PR_TITLE="curated title"
 REMOTE_PR_BODY=$'## Summary\n\nCurated summary\n\n## Files Changed\n\nold.sh\n\n## Runtime Testing\n\n- **Risk level:** Medium\n- **Verification:** runtime-verified — exercised real CLI\n\n## Decisions\n\nKeep compatibility\n\nResolves #42\n\n<!-- aidevops:sig -->\nexisting footer'
 curated_body="$REMOTE_PR_BODY"
