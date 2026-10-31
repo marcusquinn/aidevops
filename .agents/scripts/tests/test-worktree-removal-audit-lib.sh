@@ -20,7 +20,7 @@ COMMANDS_HELPER="${SCRIPT_DIR}/../worktree-helper-cmds.sh"
 CLEAN_HELPER="${SCRIPT_DIR}/../worktree-clean-lib.sh"
 REGISTRY_HELPER="${SCRIPT_DIR}/../shared-worktree-registry.sh"
 SKILL_PR_HELPER="${SCRIPT_DIR}/../skill-update-pr-lib.sh"
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN=$(python3 -E -s -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_git import real_git; print(real_git(sys.argv[2]))' "${SCRIPT_DIR}/.." "${AIDEVOPS_TEST_GIT_BIN:-}") || exit 1
 
 TESTS_RUN=0
 TESTS_PASSED=0

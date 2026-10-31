@@ -11,18 +11,19 @@ import time
 from uuid import UUID, uuid5
 
 from .enrollment import GenerationEnrollment
-from .retirement import _event, _event_id, _git, _lock, retire_worktree
+from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
 from .storage import LifecycleRegistry, _private, identifier
 
 
-def _repositories(config: Path) -> dict[str, tuple[str, str]]:
-    """Read operator scope without network calls or consulting legacy owners."""
+def _repository_entries(config: Path) -> list:
+    """Read a bounded operator-owned configuration without following links."""
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
     with os.fdopen(os.open(config, flags), "r", encoding="utf-8") as stream:
         info = os.fstat(stream.fileno())
+        if info.st_size > 1048576:
+            raise ValueError("unsafe-repository-config")
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                or info.st_mode & 0o022 or info.st_nlink != 1
-                or info.st_size > 1048576):
+                or info.st_mode & 0o022 or info.st_nlink != 1):
             raise ValueError("unsafe-repository-config")
         configuration = json.load(stream)
     if not isinstance(configuration, dict):
@@ -30,28 +31,41 @@ def _repositories(config: Path) -> dict[str, tuple[str, str]]:
     entries = configuration.get("initialized_repos")
     if not isinstance(entries, list):
         raise ValueError("invalid-repository-config")
+    return entries
+
+
+def _repository_scope(entry: dict) -> "tuple[str, str, str] | None":
+    if (entry.get("maintenance", True) is not True
+            or entry.get("local_only", False) is not False):
+        return None
+    slug, location = entry.get("slug"), entry.get("path")
+    if (not isinstance(slug, str) or not isinstance(location, str)
+            or not re.fullmatch(r"[\w.-]+/[\w.-]+", slug, flags=re.ASCII)):
+        return None
+    try:
+        repo = Path(location).expanduser().resolve(strict=True)
+        if not (repo / ".git").is_dir() or (repo / ".git").is_symlink():
+            return None
+        common = _git("-C", str(repo), "rev-parse", "--path-format=absolute",
+                      "--git-common-dir")
+        # Use an actual branch, not a guessed default or a SHA as a branch name.
+        base = _git("-C", str(repo), "symbolic-ref", "--short", "HEAD")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        # Missing or detached registrations cannot establish repository scope.
+        return None
+    return common, slug, base
+
+
+def _repositories(config: Path) -> dict[str, tuple[str, str]]:
+    """Read operator scope without network calls or consulting legacy owners."""
     result: dict[str, tuple[str, str]] = {}
-    for entry in entries:
+    for entry in _repository_entries(config):
         if not isinstance(entry, dict):
             raise ValueError("invalid-repository-entry")
-        if (entry.get("maintenance", True) is not True
-                or entry.get("local_only", False) is not False):
+        scope = _repository_scope(entry)
+        if scope is None:
             continue
-        slug, location = entry.get("slug"), entry.get("path")
-        if (not isinstance(slug, str) or not isinstance(location, str)
-                or not re.fullmatch(r"[\w.-]+/[\w.-]+", slug, flags=re.ASCII)):
-            continue
-        try:
-            repo = Path(location).expanduser().resolve(strict=True)
-            if not (repo / ".git").is_dir() or (repo / ".git").is_symlink():
-                continue
-            common = _git("-C", str(repo), "rev-parse", "--path-format=absolute",
-                          "--git-common-dir")
-            # Use an actual branch, not a guessed default or a SHA as a branch name.
-            base = _git("-C", str(repo), "symbolic-ref", "--short", "HEAD")
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            # Missing or detached registrations cannot establish repository scope.
-            continue
+        common, slug, base = scope
         if common in result:
             raise ValueError("ambiguous-repository-config")
         result[common] = (slug, base)
@@ -110,7 +124,7 @@ def _candidate(
     slug, base = repositories[common]
     if plan is not None:
         slug, base, root = plan["repo"], plan["base"], Path(plan["output_root"])
-    return retire_worktree(store, path, generation, slug, base, root)
+    return retire_worktree(store, path, generation, ArchiveTarget(slug, base, root))
 
 
 def cleanup_worktree(

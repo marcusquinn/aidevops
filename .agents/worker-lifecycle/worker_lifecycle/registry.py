@@ -136,25 +136,16 @@ def enrollment_result(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     return {"generation_id": generation, "cleanup_authorized": False}
 
 
-def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    if args.operation == "cleanup-worktree":
-        from .cleanup import cleanup_worktree
-
-        return cleanup_worktree(store, args.repos_config, args.output_root, args.path)
-    if args.operation == "cleanup":
-        from .cleanup import cleanup_pass
-
-        return cleanup_pass(
-            store, args.repos_config, args.output_root, args.limit, args.budget_seconds,
-        )
+def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
     if args.operation == "create-worktree":
-        from .creation import create_worktree
+        from .creation import WorktreeSpec, create_worktree
 
         options = args.git_options
         if options[:1] == ["--"]:
             options = options[1:]
         return create_worktree(
-            store, args.repo, args.path, args.ref, options, args.pid, args.session_id,
+            store, WorktreeSpec(args.repo, args.path, args.ref, tuple(options)),
+            args.pid, args.session_id,
         )
     if args.operation == "admit-session":
         from .session import admit_session
@@ -167,12 +158,30 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     if args.operation == "prepare-cleanup":
         return prepare_cleanup(store, args.path)
     if args.operation == "retire-worktree":
-        from .retirement import retire_worktree
+        from .retirement import ArchiveTarget, retire_worktree
 
         return retire_worktree(
-            store, args.path, args.generation_id, args.repo,
-            args.base_branch, args.output_root,
+            store, args.path, args.generation_id,
+            ArchiveTarget(args.repo, args.base_branch, args.output_root),
         )
+    raise ValueError("unsupported-worktree-operation")
+
+
+def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation == "cleanup-worktree":
+        from .cleanup import cleanup_worktree
+
+        return cleanup_worktree(store, args.repos_config, args.output_root, args.path)
+    if args.operation == "cleanup":
+        from .cleanup import cleanup_pass
+
+        return cleanup_pass(
+            store, args.repos_config, args.output_root, args.limit, args.budget_seconds,
+        )
+    if args.operation in {
+        "create-worktree", "admit-session", "preserve-wip", "prepare-cleanup", "retire-worktree",
+    }:
+        return _worktree_operation(store, args)
     if args.operation == "register":
         adapter = adapter_for(store.installation_id())
         require_ready(adapter)

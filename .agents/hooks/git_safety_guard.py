@@ -29,6 +29,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from git_safety_lifecycle import check_session_owner
+
 # Git discovery is owned by native_git.py inside the shared policy helpers,
 # not by this adapter. Keeping an unused binary fallback here hid divergence.
 
@@ -242,35 +244,9 @@ def _check_command_policy(command: str) -> "dict | None":
 def _check_session_owner(
     paths: list, session_id: str, command: str = "",
 ) -> "dict | None":
-    """Register the runtime parent, not this short-lived hook process."""
-    if sys.platform not in {"linux", "darwin"}:
-        return None
-    helper = _resolve_policy_helper(
-        "AIDEVOPS_LIFECYCLE_SESSION_HELPER", "worker-lifecycle-session-helper.py",
+    return check_session_owner(
+        _resolve_policy_helper, _run_policy_helper, paths, session_id, command,
     )
-    if helper:
-        # #aidevops:trust-boundary — the installed hook execs directly under
-        # the runtime. A command-authored PID or session override is not used.
-        arguments = ["--cwd", os.getcwd(), "--runtime-pid", str(os.getppid()),
-                     "--session-id", session_id]
-        for path in paths:
-            arguments.extend(["--path", path])
-        if command:
-            arguments.extend(["--command", command])
-        try:
-            returncode, payload = _run_policy_helper(
-                helper, arguments, isolate_python=True,
-            )
-            if returncode == 0 and payload.get("status") in {
-                "admitted", "excluded-unregistered", "not-applicable",
-            }:
-                return None
-        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
-            pass
-    return {"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "permissionDecision": "deny",
-        "permissionDecisionReason": "BLOCKED: lifecycle owner admission unavailable",
-    }}
 
 
 REDIRECT_EXEMPT_TOOLS = {

@@ -259,6 +259,7 @@ test_installed_hook_probe() {
 	local installed_hook="$test_home/.aidevops/hooks/git_safety_guard.py"
 	mkdir -p "$(dirname "$installed_hook")"
 	cp "$TEST_SCRIPTS_DIR/../hooks/git_safety_guard.py" "$installed_hook"
+	cp "$TEST_SCRIPTS_DIR/../hooks/git_safety_lifecycle.py" "$(dirname "$installed_hook")/git_safety_lifecycle.py"
 	chmod +x "$installed_hook"
 	cat >"$test_tmpdir/harness.sh" <<HARNESS_EOF
 #!/usr/bin/env bash

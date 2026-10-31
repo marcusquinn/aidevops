@@ -238,6 +238,12 @@ function enforceBashToolSafety(ctx, log, input, output, sessionId) {
       ownedListenerRoots: ctx.ownedListenerRoots(sessionId),
     },
   );
+  // Admit the policy-checked command before trusted signature repair adds
+  // multiline content (or writes its body file); neither changes Git targets.
+  admitToolOwner({
+    scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
+    bash: true, bounded: false,
+  });
   const signatureModel = ctx.resolveSessionModel(sessionId);
   checkSignatureFooterGate(bashArgs.command || "", log, ctx.scriptsDir, output, {
     model: signatureModel,
@@ -344,7 +350,7 @@ async function handleToolBefore(ctx, log, input, output) {
   enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceContextForPath });
   admitToolOwner({
     scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
-    bash: isBashTool(input.tool), bounded: isBoundedOperationTool(input.tool),
+    bash: false, bounded: isBoundedOperationTool(input.tool),
   });
 }
 

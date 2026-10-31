@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager, ExitStack
 import ctypes
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
@@ -16,6 +17,14 @@ from .enrollment import GenerationEnrollment
 from .runtime import adapter_for, require_ready
 from .session import admit_session
 from .storage import LifecycleRegistry, StoreConflict
+
+
+@dataclass(frozen=True)
+class WorktreeSpec:
+    repository: Path
+    path: Path
+    ref: str
+    options: tuple[str, ...]
 
 
 def _publish_directory(source: int, destination: int, name: str) -> None:
@@ -35,7 +44,7 @@ def _publish_directory(source: int, destination: int, name: str) -> None:
 
 def _matches_created(path: Path, descriptor: int) -> bool:
     original = os.fstat(descriptor)
-    current = path.stat(follow_symlinks=False)
+    current = path.lstat()
     return (original.st_dev, original.st_ino) == (current.st_dev, current.st_ino)
 
 
@@ -67,8 +76,7 @@ def _created_directory(path: Path) -> Iterator[int]:
 
 
 def create_worktree(
-    store: LifecycleRegistry, repo: Path, path: Path, ref: str,
-    options: list[str], pid: int, session_id: str,
+    store: LifecycleRegistry, spec: WorktreeSpec, pid: int, session_id: str,
 ) -> dict[str, object]:
     """Own fresh directory creation; failures retain partial results for recovery.
 
@@ -76,6 +84,7 @@ def create_worktree(
     runtime owner. It is not a claim about uncooperative external writers, nor
     deletion authority. Existing directories cannot acquire this provenance.
     """
+    repo, path, ref, options = spec.repository, spec.path, spec.ref, spec.options
     if not isinstance(session_id, str) or not 0 < len(session_id) <= 256:
         raise ValueError("invalid-session-identity")
     if not path.is_absolute() or path.parent.resolve(strict=True) != path.parent:
@@ -112,8 +121,9 @@ def create_worktree(
             owner = admit_session(store, path, pid, session_id)
             generation = str(owner["generation_id"])
             if (adapter.capture(pid) != identity
-                    or adapter.observe(identity).status != "alive"
-                    or not _matches_created(path, original)
+                    or adapter.observe(identity).status != "alive"):
+                raise StoreConflict("creator-or-generation-changed")
+            if (not _matches_created(path, original)
                     or not all(handle.matches_path() for handle in
                                (repository, parent, directory))
                     or GenerationEnrollment(store).inspect(path) != generation):

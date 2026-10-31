@@ -176,11 +176,12 @@ class LauncherPathsContract(unittest.TestCase):
                 "--allow-empty", "-m", "fixture"])
         program = (
             "import os,sys; from pathlib import Path; "
-            "from worker_lifecycle.creation import create_worktree; "
+            "from worker_lifecycle.creation import WorktreeSpec, create_worktree; "
             "from worker_lifecycle.storage import LifecycleRegistry; "
             "target=Path(sys.argv[3]); "
             "create_worktree(LifecycleRegistry(Path(sys.argv[1])), "
-            "Path(sys.argv[2]),target,'HEAD',['--detach'],os.getpid(),'fixture'); "
+            "WorktreeSpec(Path(sys.argv[2]),target,'HEAD',('--detach',)),"
+            "os.getpid(),'fixture'); "
             "(target/'payload').write_text('preserve')"
         )
         creator = [sys.executable, "-E", "-s", "-B", "-c", program,

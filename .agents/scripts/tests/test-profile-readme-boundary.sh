@@ -367,7 +367,7 @@ test_update_preserves_manual_sections() {
 
 test_update_recovers_dirty_profile_publication_worktree() {
 	local fixture_mode="${1:-0644}"
-	local test_name="legacy profile recovery preserves canonical untracked files with fixture mode $fixture_mode"
+	local test_name="legacy profile recovery retains source and canonical files with fixture mode $fixture_mode"
 	TEST_DIR=$(mktemp -d)
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
@@ -432,19 +432,21 @@ EOF
 		PROFILE_MARKER_EVIDENCE="$marker_evidence" \
 		PROFILE_RECOVERY_FIXTURE_MODE="$fixture_mode" \
 		bash "$helper_path" update >"$output_file" 2>&1 || update_rc=$?
-	if [[ "$update_rc" -ne 0 ]]; then
-		print_helper_failure "$test_name" "helper update command failed" "$output_file"
+	# The injected helper supplies legacy evidence only. An archive and a sealed
+	# managed run cannot replace registry-authorized retirement of the source.
+	if [[ "$update_rc" -eq 0 ]]; then
+		print_helper_failure "$test_name" "legacy cleanup unexpectedly succeeded" "$output_file"
 		return 0
 	fi
 
-	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "1" ]] ||
+	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "2" ]] ||
 		[[ ! -d "$recovery_root" ]] ||
-		! jq -e '.phase == "archived" and .caller == "profile-readme-helper.sh" and .source_removal_outcome == "removed"' \
+		! jq -e '.phase == "archived" and .caller == "profile-readme-helper.sh" and .source_removal_outcome == "pending"' \
 			"$recovery_root"/.producer-transactions/*/journal.json >/dev/null ||
 		[[ "$(cat "$marker_evidence" 2>/dev/null)" != "verified" ]] ||
 		[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]] ||
 		[[ "$(cat "${fixture_repo}/unrelated-local-work")" != 'unrelated work must survive recovery' ]]; then
-		print_helper_failure "$test_name" "scratch worktree leaked, recovery archive missing, or canonical checkout changed" "$output_file"
+		print_helper_failure "$test_name" "source or archive missing, false removal receipt, or canonical checkout changed" "$output_file"
 		return 0
 	fi
 

@@ -866,6 +866,8 @@ install_hook() {
 	# Find source hook
 	local source_hook
 	source_hook=$(find_source_hook) || return 1
+	local source_lifecycle_adapter
+	source_lifecycle_adapter=$(find_source_hook "git_safety_lifecycle.py") || return 1
 	local source_post_hook
 	source_post_hook=$(find_source_hook "mcp_task_post_hook.py") || return 1
 	local source_credential_scrub_hook
@@ -888,6 +890,7 @@ install_hook() {
 	mkdir -p "$HOOKS_DIR"
 
 	# Copy hook script
+	cp "$source_lifecycle_adapter" "$HOOKS_DIR/git_safety_lifecycle.py"
 	cp "$source_hook" "$HOOK_SCRIPT"
 	chmod +x "$HOOK_SCRIPT"
 	print_success "Installed $HOOK_SCRIPT"

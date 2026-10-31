@@ -92,7 +92,7 @@ def _git_directory(path: Path) -> Path:
 
 def _directory_inode(path: Path) -> int:
     """Persistent protocol evidence; device numbers are operation-local only."""
-    return path.stat(follow_symlinks=False).st_ino
+    return path.lstat().st_ino
 
 
 def _marker_identity(value: dict) -> dict:

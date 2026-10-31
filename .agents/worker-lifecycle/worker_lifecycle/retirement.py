@@ -4,8 +4,11 @@ The original public pathname is never passed to Git removal. Partial deletion
 that cannot be reverified stops with its archive and remaining data retained.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 import fcntl
 import hashlib
 import importlib.util
@@ -27,8 +30,15 @@ from .preservation import (
 from .storage import LifecycleRegistry, StoreConflict, _private
 
 
+@dataclass(frozen=True)
+class ArchiveTarget:
+    repository: str
+    base_branch: str
+    root: Path
+
+
 def _id(path: Path) -> list[int]:
-    info = path.stat(follow_symlinks=False)
+    info = path.lstat()
     return [info.st_dev, info.st_ino]
 
 
@@ -114,9 +124,9 @@ def _preserved(store: LifecycleRegistry, plan: dict, root: Path) -> dict:
 
 
 def _new_plan(
-    store: LifecycleRegistry, path: Path, generation: str, repo: str,
-    base: str, root: Path,
+    store: LifecycleRegistry, path: Path, generation: str, archive: ArchiveTarget,
 ) -> dict:
+    repo, base, root = archive.repository, archive.base_branch, archive.root
     preserved = preserve_wip(store, path, repo, base, root)
     if (preserved["status"] != "wip-archive-verified"
             or preserved["generation_id"] != generation):
@@ -137,6 +147,51 @@ def _new_plan(
     }
     _record(store, generation, "planned", plan)
     return plan
+
+
+def _relocate_source(
+    store: LifecycleRegistry, path: Path, plan: dict, receipt: dict,
+) -> None:
+    with DirectoryHandle(path) as original:
+        prepared = prepare_cleanup(store, path)
+        if (prepared["generation_id"] != plan["generation_id"]
+                or not prepared["creation_verified"]
+                or prepared["status"] != "registered-runs-ended"):
+            raise StoreConflict("source-changed-before-relocation")
+        if (_directory_inode(path) != plan["directory_identity"]
+                or _snapshot(path) != receipt["snapshot"]
+                or not original.matches_path()):
+            raise StoreConflict("source-changed-before-relocation")
+        # No force: Git locks and unsupported moves must stop the operation.
+        target = Path(plan["container"]) / "tree"
+        _git("--git-dir", plan["common"], "worktree", "move", str(path), str(target))
+
+
+def _remove_private(
+    store: LifecycleRegistry, path: Path, plan: dict, receipt: dict,
+) -> None:
+    target, admin = Path(plan["container"]) / "tree", Path(plan["git_directory"])
+    generation = plan["generation_id"]
+    with DirectoryHandle(target) as tree, DirectoryHandle(admin) as metadata:
+        marker = {
+            "format": 2, "installation_id": store.installation_id(),
+            "generation_id": generation, "path": str(path),
+            "directory": plan["directory_identity"],
+            "git_directory": str(admin), "git_identity": plan["git_identity"],
+        }
+        if (_directory_inode(target) != plan["directory_identity"]
+                or _git_directory(target) != admin
+                or _directory_inode(admin) != plan["git_identity"]):
+            raise StoreConflict("private-worktree-changed")
+        if (_read_marker(admin / MARKER) != marker
+                or _snapshot(target) != receipt["snapshot"]
+                or not tree.matches_path() or not metadata.matches_path()):
+            raise StoreConflict("private-worktree-changed")
+        _record(store, generation, "removing", {
+            "type": "retirement-removing", "generation_id": generation,
+        })
+        # One force permits archived dirty/ignored state, never a Git lock.
+        _git("--git-dir", plan["common"], "worktree", "remove", "--force", str(target))
 
 
 def _finish(
@@ -168,40 +223,11 @@ def _finish(
     _private(container, directory=True)
     target = container / "tree"
     admin = Path(plan["git_directory"])
-    common = plan["common"]
     removing = _event(store, _event_id(generation, "removing"))
     if not os.path.lexists(target) and removing is None:
-        with DirectoryHandle(path) as original:
-            prepared = prepare_cleanup(store, path)
-            if (prepared["generation_id"] != generation
-                    or not prepared["creation_verified"]
-                    or prepared["status"] != "registered-runs-ended"
-                    or _directory_inode(path) != plan["directory_identity"]
-                    or _snapshot(path) != receipt["snapshot"]
-                    or not original.matches_path()):
-                raise StoreConflict("source-changed-before-relocation")
-            # No force: Git locks and unsupported moves must stop the operation.
-            _git("--git-dir", common, "worktree", "move", str(path), str(target))
+        _relocate_source(store, path, plan, receipt)
     if os.path.lexists(target):
-        with DirectoryHandle(target) as tree, DirectoryHandle(admin) as metadata:
-            marker = {
-                "format": 2, "installation_id": store.installation_id(),
-                "generation_id": generation, "path": str(path),
-                "directory": plan["directory_identity"],
-                "git_directory": str(admin), "git_identity": plan["git_identity"],
-            }
-            if (_directory_inode(target) != plan["directory_identity"]
-                    or _git_directory(target) != admin
-                    or _directory_inode(admin) != plan["git_identity"]
-                    or _read_marker(admin / MARKER) != marker
-                    or _snapshot(target) != receipt["snapshot"]
-                    or not tree.matches_path() or not metadata.matches_path()):
-                raise StoreConflict("private-worktree-changed")
-            _record(store, generation, "removing", {
-                "type": "retirement-removing", "generation_id": generation,
-            })
-            # One force permits archived dirty/ignored state, never a Git lock.
-            _git("--git-dir", common, "worktree", "remove", "--force", str(target))
+        _remove_private(store, path, plan, receipt)
     elif removing is None or os.path.lexists(admin):
         raise StoreConflict("retirement-outcome-unverified")
     if os.path.lexists(target):
@@ -226,10 +252,10 @@ def _finish(
 
 
 def retire_worktree(
-    store: LifecycleRegistry, path: Path, generation: str, repo: str,
-    base: str, root: Path,
+    store: LifecycleRegistry, path: Path, generation: str, archive: ArchiveTarget,
 ) -> dict[str, object]:
     """Execute only for controlled, quiescent generations with verified archives."""
+    repo, base, root = archive.repository, archive.base_branch, archive.root
     if not path.is_absolute() or path.parent.resolve(strict=True) != path.parent:
         raise ValueError("canonical-source-parent-required")
     if not root.is_absolute() or root.resolve(strict=True) != root:
@@ -257,7 +283,7 @@ def retire_worktree(
             if prepared["status"] != "registered-runs-ended":
                 return prepared
             with DirectoryHandle(path):
-                plan = _new_plan(store, path, generation, repo, base, root)
+                plan = _new_plan(store, path, generation, archive)
         if (plan.get("type") != "retirement-planned"
                 or plan.get("generation_id") != generation
                 or (plan["source"], plan["repo"], plan["base"], plan["output_root"])

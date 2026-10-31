@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from worker_lifecycle import retirement
 from worker_lifecycle.cleanup import cleanup_pass
-from worker_lifecycle.creation import create_worktree
+from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import MARKER, GenerationEnrollment
 from worker_lifecycle.preservation import _helper
 from worker_lifecycle.runtime import adapter_for
@@ -50,11 +50,11 @@ class RetirementContract(unittest.TestCase):
     def create(self):
         program = (
             "import os,sys; from pathlib import Path; "
-            "from worker_lifecycle.creation import create_worktree; "
+            "from worker_lifecycle.creation import WorktreeSpec, create_worktree; "
             "from worker_lifecycle.storage import LifecycleRegistry; "
             "target=Path(sys.argv[3]); "
             "create_worktree(LifecycleRegistry(Path(sys.argv[1])), "
-            "Path(sys.argv[2]), target, 'HEAD', ['--detach'], "
+            "WorktreeSpec(Path(sys.argv[2]), target, 'HEAD', ('--detach',)), "
             "os.getpid(), 'owned-creator'); "
             "(target/'work.txt').write_text('unfinished result'); "
             "(target/'.gitignore').write_text('*.ignored\\n'); "
@@ -72,7 +72,7 @@ class RetirementContract(unittest.TestCase):
             self.generation = GenerationEnrollment(self.store).inspect(self.target)
         return retirement.retire_worktree(
             self.store, self.target, self.generation,
-            "fixture/repository", "main", self.output,
+            retirement.ArchiveTarget("fixture/repository", "main", self.output),
         )
 
     def interrupt_after_move(self):
@@ -198,8 +198,10 @@ class RetirementContract(unittest.TestCase):
         self.assertEqual(self.retire()["status"], "retired")
 
     def test_live_creator_keeps_admission_open(self):
-        create_worktree(self.store, self.repo, self.target, "HEAD", ["--detach"],
-                        os.getpid(), "live-creator")
+        create_worktree(
+            self.store, WorktreeSpec(self.repo, self.target, "HEAD", ("--detach",)),
+            os.getpid(), "live-creator",
+        )
         result = self.retire()
         self.assertNotEqual(result["status"], "retired")
         self.assertEqual(result["admission"], "open")
@@ -230,8 +232,10 @@ class RetirementContract(unittest.TestCase):
     def test_name_reuse_does_not_redirect_old_generation_retry(self):
         self.create()
         result = self.retire()
-        create_worktree(self.store, self.repo, self.target, "HEAD", ["--detach"],
-                        os.getpid(), "replacement-creator")
+        create_worktree(
+            self.store, WorktreeSpec(self.repo, self.target, "HEAD", ("--detach",)),
+            os.getpid(), "replacement-creator",
+        )
         replacement = GenerationEnrollment(self.store).inspect(self.target)
         self.assertNotEqual(replacement, self.generation)
         (self.target / "replacement").write_text("keep")
@@ -366,8 +370,10 @@ class RetirementContract(unittest.TestCase):
             self.assertEqual((result["retired"], result["held"]), (0, 1))
             self.assertTrue(self.target.exists())
         live = self.root / "live"
-        create_worktree(self.store, self.repo, live, "HEAD", ["--detach"],
-                        os.getpid(), "live-cleanup-fixture")
+        create_worktree(
+            self.store, WorktreeSpec(self.repo, live, "HEAD", ("--detach",)),
+            os.getpid(), "live-cleanup-fixture",
+        )
         # Remove the ended fixture through its normal executor first.
         self.retire()
         result = cleanup_pass(self.store, self.cleanup_config(), self.output)

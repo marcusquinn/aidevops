@@ -14,6 +14,15 @@ import tempfile
 DEFAULT_TIMEOUT = 60
 
 
+def base_import_timeout():
+    """Bounded budget for the local base-object import (default 300s, max 1800s)."""
+    try:
+        value = int(os.environ.get('AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT', '300'))
+    except ValueError:
+        value = 300
+    return max(60, min(value, 1800))
+
+
 def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
     for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",

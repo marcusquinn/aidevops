@@ -40,6 +40,7 @@ from worktree_archive_objects import (
 )
 from worktree_archive_auto_merge import restore_auto_merge as restore_auto_merge
 from worktree_archive_git import (
+    base_import_timeout,
     capture_bundle as capture_bundle, fetch_preservation as fetch_preservation,
 )
 
@@ -64,15 +65,6 @@ def capture_administration(root, archive, include_ignored, base=''):
     if roots:
         capture_bundle(root, archive, sorted(roots), base)
     (archive / 'git-admin.json').write_text(json.dumps(state, sort_keys=True) + '\n', encoding='ascii')
-
-
-def base_import_timeout():
-    """Bounded budget for the local base-object import (default 300s, max 1800s)."""
-    try:
-        value = int(os.environ.get('AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT', '300'))
-    except ValueError:
-        value = 300
-    return max(60, min(value, 1800))
 
 
 @timed("base-import")

@@ -7,7 +7,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PULSE_CLEANUP="${SCRIPT_DIR}/../pulse-cleanup.sh"
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN=$(python3 -E -s -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_git import real_git; print(real_git(sys.argv[2]))' "${SCRIPT_DIR}/.." "${AIDEVOPS_TEST_GIT_BIN:-}") || exit 1
 TEST_ROOT=""
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -204,7 +204,7 @@ test_fast_temp_cleanup_guards() {
 	# Legacy selectors may inspect both candidates, but neither a clear snapshot
 	# nor remote reachability can replace registry retirement authority.
 	[[ -f "$snapshot_count_file" ]] && [[ "$(<"$snapshot_count_file")" == "2" ]] || rc=1
-	git -C "$repo_path" worktree list --porcelain | grep -Fq "worktree $old_clean" || rc=1
+	git -C "$repo_path" worktree list --porcelain | grep -F "worktree $old_clean" >/dev/null || rc=1
 	[[ ! -e "$AIDEVOPS_LIFECYCLE_STATE_DIR" ]] || rc=1
 	print_result "fast cleanup preserves unregistered fixtures despite legacy eligibility" "$rc" \
 		"removed=$removed"

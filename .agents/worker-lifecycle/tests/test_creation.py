@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from worker_lifecycle.cleanup_plan import prepare_cleanup
-from worker_lifecycle.creation import create_worktree
+from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.storage import LifecycleRegistry
 
 
@@ -43,10 +43,10 @@ class CreationContract(unittest.TestCase):
     def test_creator_exit_allows_closed_preparation(self):
         program = (
             "import os,sys; from pathlib import Path; "
-            "from worker_lifecycle.creation import create_worktree; "
+            "from worker_lifecycle.creation import WorktreeSpec, create_worktree; "
             "from worker_lifecycle.storage import LifecycleRegistry; "
             "create_worktree(LifecycleRegistry(Path(sys.argv[1])), "
-            "Path(sys.argv[2]), Path(sys.argv[3]), 'HEAD', ['--detach'], "
+            "WorktreeSpec(Path(sys.argv[2]), Path(sys.argv[3]), 'HEAD', ('--detach',)), "
             "os.getpid(), 'owned-creator')"
         )
         subprocess.run(  # nosec B603 # fixed creator program; fixture paths are argv
@@ -66,8 +66,10 @@ class CreationContract(unittest.TestCase):
         self.target.mkdir()
         before = self.target.stat()
         with self.assertRaises(FileExistsError):
-            create_worktree(self.store, self.repo, self.target, "HEAD", ["--detach"],
-                            os.getpid(), "owned-creator")
+            create_worktree(
+                self.store, WorktreeSpec(self.repo, self.target, "HEAD", ("--detach",)),
+                os.getpid(), "owned-creator",
+            )
         self.assertEqual(self.target.stat().st_ino, before.st_ino)
         self.assertEqual(list(self.target.iterdir()), [])
         self.assertEqual(self.store.summary()["events"], 0)

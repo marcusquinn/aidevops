@@ -449,13 +449,13 @@ test_recoverable_archive_does_not_authorize_removal() {
 		and .session_id == "ses_test_recovery" and .source_removal_outcome == "pending"' \
 		"$trash_root"/.producer-transactions/*/journal.json >/dev/null || rc=1
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
-	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || rc=1
+	printf '%s\n' "$metadata" | grep -Fx "worktree $wt_root" >/dev/null || rc=1
 	if AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
 		"$wt_path" "$archive_path" "test.sh" "recoverable-test" \
 		"recovery_path=archive-first" "false" "false"; then
 		rc=1
 	fi
-	"$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fqx "worktree $wt_root" || rc=1
+	"$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fx "worktree $wt_root" >/dev/null || rc=1
 	[[ -d "$wt_path" && -f "$archive_path/manifest.json" ]] || rc=1
 	jq -e '.source_removal_outcome == "pending"' \
 		"$trash_root"/.producer-transactions/*/journal.json >/dev/null || rc=1
@@ -872,7 +872,7 @@ test_manual_cleanup_refusal_preserves_receipt_and_registration() {
 		rc=1
 	fi
 	[[ -d "$wt_path" && ! -e "$trash_destination" && ! -e "$unregister_log" ]] || rc=1
-	"$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fqx "worktree $wt_root" || rc=1
+	"$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fx "worktree $wt_root" >/dev/null || rc=1
 	jq -e '.repository == "example/repo" and .pr_number == 321
 		and .resource_cleanup_state != "CLEANED"' \
 		"$cleanup_receipt" >/dev/null || rc=1
@@ -976,7 +976,7 @@ test_manual_cleanup_rejects_legacy_exact_head_proof() {
 	fi
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
 	[[ -d "$wt_path" && ! -e "$trash_destination" && ! -e "$unregister_log" ]] || rc=1
-	printf '%s\n' "$metadata" | grep -Fqx "branch refs/heads/${branch_name}" || rc=1
+	printf '%s\n' "$metadata" | grep -Fx "branch refs/heads/${branch_name}" >/dev/null || rc=1
 	"$GIT_BIN" -C "$repo_path" show-ref --verify --quiet "refs/heads/${branch_name}" || rc=1
 	print_result "manual_cleanup_rejects_legacy_exact_head_proof" "$rc" \
 		"Expected registry refusal despite legacy merged proof, with source/branch retained"

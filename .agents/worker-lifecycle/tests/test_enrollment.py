@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
 from worker_lifecycle.cleanup_plan import prepare_cleanup
-from worker_lifecycle.creation import create_worktree
+from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import GenerationEnrollment, MARKER, _git_directory
 from worker_lifecycle.registry import main
 from worker_lifecycle.runtime import adapter_for
@@ -415,7 +415,7 @@ class EnrollmentContract(unittest.TestCase):
         target.mkdir()
         before = self.store.summary()
         with self.assertRaises(FileExistsError):
-            create_worktree(self.store, self.repo, target, "HEAD", ["--detach"],
+            create_worktree(self.store, WorktreeSpec(self.repo, target, "HEAD", ("--detach",)),
                             os.getpid(), "creator")
         self.assertEqual(list(target.iterdir()), [])
         self.assertEqual(self.store.summary(), before)
@@ -439,7 +439,7 @@ class EnrollmentContract(unittest.TestCase):
         with patch("worker_lifecycle.creation._publish_directory",
                    side_effect=replace_after_publish):
             with self.assertRaisesRegex(StoreConflict, "creation-directory-changed"):
-                create_worktree(self.store, self.repo, target, "HEAD", ["--detach"],
+                create_worktree(self.store, WorktreeSpec(self.repo, target, "HEAD", ("--detach",)),
                                 os.getpid(), "creator")
         self.assertEqual(list(target.iterdir()), [])
         self.assertTrue(retained.is_dir())
@@ -449,8 +449,8 @@ class EnrollmentContract(unittest.TestCase):
         target = self.root / "failed-creation"
         before = self.store.summary()
         with self.assertRaises(subprocess.CalledProcessError):
-            create_worktree(self.store, self.repo, target, "missing-ref",
-                            ["--detach"], os.getpid(), "creator")
+            create_worktree(self.store, WorktreeSpec(self.repo, target, "missing-ref", ("--detach",)),
+                            os.getpid(), "creator")
         self.assertEqual(self.store.summary(), before)
         self.assertTrue(target.is_dir())
 
