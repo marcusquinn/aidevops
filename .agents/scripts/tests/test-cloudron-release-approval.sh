@@ -48,6 +48,26 @@ request_issues() {
 	return 0
 }
 
+pull_request_json() {
+	local head="$HEAD_SHA" merged=false state=open
+	[[ "$SCENARIO" != changed ]] || head="$OTHER_SHA"
+	if [[ -f "${TEST_ROOT}/merged" || "$SCENARIO" == resumed ]]; then
+		merged=true
+		state=closed
+	fi
+	[[ "$SCENARIO" != pr_error ]] || return 1
+	jq -cn --arg head "$head" --arg state "$state" --argjson merged "$merged" --arg scenario "$SCENARIO" '
+		{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},state:$state,merged:$merged,merge_commit_sha:$head,draft:false,labels:[],auto_merge:null}
+		| if $scenario == "draft" then .draft = true
+		  elif $scenario == "fork" then .head.repo.full_name = "other/app"
+		  elif $scenario == "wrong_repo" then .base.repo.full_name = "other/app"
+		  elif $scenario == "wrong_base" then .base.ref = "develop"
+		  elif $scenario == "invalid_head" then .head.sha = "invalid"
+		  elif $scenario == "closed" then .state = "closed"
+		  else . end'
+	return 0
+}
+
 gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
@@ -86,24 +106,7 @@ gh() {
 		body=$(jq -cn --arg head "$HEAD_SHA" '{schema:1,repository:"owner/app",pr:7,head:$head,version:"1.2.3",upstream:"4.5.6",owns_hold:true}')
 		jq -cn --arg body "$body" '{state:"open",body:$body,labels:[{name:"release-approval-required"}]}'
 		;;
-	'api repos/owner/app/pulls/7')
-		local head="$HEAD_SHA" merged=false state=open
-		[[ "$SCENARIO" != changed ]] || head="$OTHER_SHA"
-		if [[ -f "${TEST_ROOT}/merged" || "$SCENARIO" == resumed ]]; then
-			merged=true
-			state=closed
-		fi
-		[[ "$SCENARIO" != pr_error ]] || return 1
-		jq -cn --arg head "$head" --arg state "$state" --argjson merged "$merged" --arg scenario "$SCENARIO" '
-			{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},state:$state,merged:$merged,merge_commit_sha:$head,draft:false,labels:[],auto_merge:null}
-			| if $scenario == "draft" then .draft = true
-			  elif $scenario == "fork" then .head.repo.full_name = "other/app"
-			  elif $scenario == "wrong_repo" then .base.repo.full_name = "other/app"
-			  elif $scenario == "wrong_base" then .base.ref = "develop"
-			  elif $scenario == "invalid_head" then .head.sha = "invalid"
-			  elif $scenario == "closed" then .state = "closed"
-			  else . end'
-		;;
+	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
 	'pr checks')
 		[[ "$SCENARIO" != checks_error ]] || return 1
 		local bucket=pass
@@ -142,6 +145,8 @@ gh() {
 		;;
 	'issue close') [[ "$SCENARIO" != close_error ]] || return 1 ;;
 	'label create') return 0 ;;
+	# No held worker PRs: approval processing alone (GH#36268 cases run below).
+	'pr list') printf '[]\n' ;;
 	*)
 		printf 'Unexpected gh call: %s\n' "$*" >&2
 		return 9
@@ -379,6 +384,10 @@ printf 'PASS half-hour approval routine registered\n'
 		printf '%s %s %s\n' "$repo" "$issue" "$apply"
 		return 0
 	}
+	# Scope selection only; held-PR reconciliation is exercised separately below.
+	release_reconcile_held() {
+		return 0
+	}
 	assert_scope() {
 		local expected="$1"
 		shift
@@ -418,4 +427,206 @@ printf 'PASS half-hour approval routine registered\n'
 	export SCENARIO=scope_denied
 	if main process --repo owner/app --issue 12 --apply; then exit 1; fi
 	printf 'PASS scoped processing retains registration, maintenance and authority gates\n'
+)
+
+# GH#36268: held worker PRs get their deferred approval request, and older
+# unsigned upstream bumps that main or the requested PR bundles are superseded.
+# Worker PRs 20/21/22 link findings 30/31/32 (v1.0.0/v2.0.0/v3.0.0); main
+# bundles 1.5.0. Human PR 25 and draft PR 26 are never candidates.
+(
+	# shellcheck source=../cloudron-release-approval-helper.sh
+	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
+	held_request_body() {
+		local pr="$1"
+		jq -cn --argjson pr "$pr" --arg head "$HEAD_SHA" \
+			'{schema:1,repository:"owner/app",pr:$pr,head:$head,version:"1.2.3",upstream:"3.0.0",owns_hold:true}'
+		return 0
+	}
+	gh() {
+		local command="$1" target="${2:-}" number="" version="" author=OWNER head=""
+		printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
+		case "$command $target" in
+		'pr list')
+			[[ "$HELD_SCENARIO" != list_error ]] || return 1
+			# unmarked: PR 21 also links trusted, marker-less issue 37 ahead of finding 31.
+			jq -cn --arg scenario "$HELD_SCENARIO" '[20,21,22] | map({number:., isDraft:false, isCrossRepository:false, headRefOid:("head-" + tostring),
+				labels:[{name:"release-approval-required"},{name:"origin:worker"}], closingIssuesReferences:[{number:(. + 10)}]})
+				| map(if $scenario == "unmarked" and .number == 21 then .closingIssuesReferences |= [{number:37}] + . else . end)
+				+ [{number:25,isDraft:false,isCrossRepository:false,headRefOid:"head-25",labels:[{name:"release-approval-required"}],closingIssuesReferences:[{number:35}]},
+				   {number:26,isDraft:true,isCrossRepository:false,headRefOid:"head-26",labels:[{name:"release-approval-required"},{name:"origin:worker"}],closingIssuesReferences:[{number:36}]}]'
+			;;
+		'api repos/owner/app/issues/37') printf '{"state":"open","author_association":"OWNER","body":"Related tracking issue"}\n' ;;
+		'api repos/owner/app/issues/3'[0-2])
+			number="${target##*/}"
+			[[ "$HELD_SCENARIO" != finding_error || "$number" != 31 ]] || return 1
+			case "$number" in 30) version=1.0.0 ;; 31) version=2.0.0 ;; *) version=3.0.0 ;; esac
+			[[ "$HELD_SCENARIO" != untrusted || "$number" != 31 ]] || author=CONTRIBUTOR
+			jq -cn --arg version "$version" --arg author "$author" \
+				'{state:"open",author_association:$author,body:("Finding\n<!-- aidevops:cloudron-package-monitor upstream-v" + $version + " -->\n")}'
+			;;
+		'api repos/owner/app/contents/CloudronManifest.json?ref=main') printf '{"version":"1.2.3","upstreamVersion":"1.5.0"}\n' ;;
+		'api repos/owner/app/pulls/'*)
+			number="${target##*/}"
+			head="head-${number}"
+			[[ "$HELD_SCENARIO" != changed || "$number" != 21 ]] || head=moved
+			jq -cn --arg head "$head" '{state:"open",merged:false,draft:false,author_association:"OWNER",
+				head:{sha:$head,repo:{full_name:"owner/app"}},base:{repo:{full_name:"owner/app"}},
+				labels:[{name:"release-approval-required"},{name:"origin:worker"}]}'
+			;;
+		'issue close') return 0 ;;
+		*)
+			printf 'Unexpected gh call: %s\n' "$*" >&2
+			return 9
+			;;
+		esac
+		return 0
+	}
+	release_checks() {
+		[[ "$HELD_SCENARIO" != pending ]] || return 1
+		printf '[]\n'
+		return 0
+	}
+	release_request() {
+		local repo="$1" pr="$2"
+		printf 'request %s %s\n' "$repo" "$pr" >>"${TEST_ROOT}/calls"
+		touch "${TEST_ROOT}/requested"
+		return 0
+	}
+	release_issues() {
+		local out='[]'
+		if [[ -f "${TEST_ROOT}/requested" || "$HELD_SCENARIO" == signed ]]; then
+			out=$(jq -c --arg body "$(held_request_body 22)" '. + [{number:40,body:$body}]' <<<"$out")
+		fi
+		if [[ "$HELD_SCENARIO" == signed || "$HELD_SCENARIO" == unsigned_request ]]; then
+			out=$(jq -c --arg body "$(held_request_body 21)" '. + [{number:41,body:$body}]' <<<"$out")
+		fi
+		printf '%s\n' "$out"
+		return 0
+	}
+	release_verify() {
+		local repo="$1" issue="$2"
+		if [[ "$HELD_SCENARIO" == signed && "$issue" == 41 ]]; then
+			printf 'VERIFIED\n'
+			return 0
+		fi
+		printf 'NO_APPROVAL\n'
+		return 1
+	}
+	release_comment() {
+		local repo="$1" issue="$2"
+		printf 'comment %s\n' "$issue" >>"${TEST_ROOT}/calls"
+		return 0
+	}
+	gh_pr_close_safe() {
+		printf 'pr-close %s\n' "$1" >>"${TEST_ROOT}/calls"
+		return 0
+	}
+	gh_pr_comment() {
+		cat >/dev/null
+		printf 'pr-comment %s\n' "$1" >>"${TEST_ROOT}/calls"
+		return 0
+	}
+	run_held() {
+		local scenario="$1" apply="$2" expected_rc="$3" rc=0
+		export HELD_SCENARIO="$scenario"
+		rm -f "${TEST_ROOT}/requested"
+		: >"${TEST_ROOT}/calls"
+		release_reconcile_held owner/app "$apply" "$(release_issues owner/app)" >"${TEST_ROOT}/held-out" 2>&1 || rc=$?
+		[[ "$rc" -eq "$expected_rc" ]] || {
+			printf 'FAIL held %s rc=%s\n' "$scenario" "$rc"
+			cat "${TEST_ROOT}/held-out"
+			return 1
+		}
+		return 0
+	}
+	has_call() {
+		grep -qx -- "$1" "${TEST_ROOT}/calls"
+		return $?
+	}
+	no_call() {
+		if grep -qx -- "$1" "${TEST_ROOT}/calls"; then
+			printf 'FAIL held %s: unexpected call %s\n' "$HELD_SCENARIO" "$1"
+			return 1
+		fi
+		return 0
+	}
+	line_of() {
+		grep -nx -- "$1" "${TEST_ROOT}/calls" | cut -d: -f1
+		return 0
+	}
+
+	run_held request true 0
+	has_call 'request owner/app 22'
+	no_call 'request owner/app 25'
+	no_call 'request owner/app 26'
+	# One assertion per line: set -e ignores failures on the left of &&.
+	has_call 'pr-close 20'
+	has_call 'pr-close 21'
+	no_call 'pr-close 22'
+	no_call 'pr-close 25'
+	no_call 'pr-close 26'
+	has_call 'gh issue close 30 --repo owner/app --reason not planned'
+	has_call 'gh issue close 31 --repo owner/app --reason not planned'
+	no_call 'gh issue close 32 --repo owner/app --reason not planned'
+	has_call 'comment 30'
+	has_call 'comment 31'
+	has_call 'pr-comment 21'
+	# Close before comment: an interrupted run never repeats a comment.
+	[[ "$(line_of 'pr-close 21')" -lt "$(line_of 'pr-comment 21')" ]]
+	[[ "$(line_of 'gh issue close 31 --repo owner/app --reason not planned')" -lt "$(line_of 'comment 31')" ]]
+	grep -q 'main already bundles upstream 1.5.0' "${TEST_ROOT}/held-out"
+	grep -q 'PR #22 bundles newer v3.0.0 (finding #32)' "${TEST_ROOT}/held-out"
+	printf 'PASS held: newest worker PR requested; older bumps superseded by main or the request\n'
+
+	run_held pending true 0
+	no_call 'request owner/app 22'
+	has_call 'pr-close 20'
+	no_call 'pr-close 21'
+	grep -q 'waits for terminal-green checks' "${TEST_ROOT}/held-out"
+	printf 'PASS held: pending checks wait; only bumps main already bundles are superseded\n'
+
+	run_held signed true 0
+	no_call 'request owner/app 22'
+	has_call 'pr-close 20'
+	no_call 'pr-close 21'
+	no_call 'gh issue close 41 --repo owner/app --reason not planned'
+	no_call 'gh issue close 31 --repo owner/app --reason not planned'
+	grep -q 'PR #21: retained; approval request #41 is VERIFIED' "${TEST_ROOT}/held-out"
+	printf 'PASS held: a signed approval is never superseded\n'
+
+	run_held unsigned_request true 0
+	has_call 'request owner/app 22'
+	has_call 'pr-close 21'
+	has_call 'gh issue close 41 --repo owner/app --reason not planned'
+	has_call 'comment 41'
+	printf 'PASS held: an older unsigned request closes with its superseded PR\n'
+
+	run_held dry false 0
+	if grep -Eq '^(request |pr-close |pr-comment |comment )|^gh issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+	grep -q 'PR #22: would request release approval (dry run)' "${TEST_ROOT}/held-out"
+	grep -q 'PR #20: would supersede' "${TEST_ROOT}/held-out"
+	grep -q 'PR #21: would supersede' "${TEST_ROOT}/held-out"
+	printf 'PASS held: dry run reports and never writes\n'
+
+	run_held changed true 0
+	has_call 'pr-close 20'
+	no_call 'pr-close 21'
+	no_call 'gh issue close 31 --repo owner/app --reason not planned'
+	printf 'PASS held: a PR that changed after listing is retained\n'
+
+	run_held untrusted true 0
+	no_call 'pr-close 21'
+	printf 'PASS held: an outsider-authored finding marker never authorizes supersession\n'
+
+	run_held unmarked true 0
+	has_call 'pr-close 21'
+	has_call 'gh issue close 31 --repo owner/app --reason not planned'
+	no_call 'gh issue close 37 --repo owner/app --reason not planned'
+	printf 'PASS held: a trusted linked issue without a monitor marker is not a finding\n'
+
+	for scenario in finding_error list_error; do
+		run_held "$scenario" true 1
+		if grep -Eq '^(request |pr-close |pr-comment |comment )|^gh issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+	done
+	printf 'PASS held: API errors fail closed before any write\n'
 )

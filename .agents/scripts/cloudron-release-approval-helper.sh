@@ -11,6 +11,8 @@ source "${SCRIPT_DIR}/cloudron-package-release-lib.sh"
 REPOS_FILE="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 RELEASE_SHA_PATTERN='^[a-f0-9]{40}$'
 RELEASE_APPROVAL_LABEL='release-approval-required'
+RELEASE_WORKER_ORIGIN_LABEL='origin:worker'
+RELEASE_HELD_PR_LIMIT=100
 
 release_error() {
 	local message="$1"
@@ -322,6 +324,248 @@ release_authorize() {
 	return 1
 }
 
+# Held worker PRs: same-repository, non-draft, labelled for release approval.
+# Prints a number-sorted array of {number, head, issues}. Fails closed on a
+# malformed or possibly truncated page.
+release_held_worker_prs() {
+	local repo="$1" prs=""
+	prs=$(gh pr list --repo "$repo" --state open --label "$RELEASE_APPROVAL_LABEL" \
+		--limit "$RELEASE_HELD_PR_LIMIT" \
+		--json number,isDraft,isCrossRepository,headRefOid,labels,closingIssuesReferences) || return 1
+	jq -ec --arg origin "$RELEASE_WORKER_ORIGIN_LABEL" --argjson limit "$RELEASE_HELD_PR_LIMIT" '
+		if type == "array" and length < $limit then
+			[.[] | select(.isDraft == false and .isCrossRepository == false
+				and any(.labels[]; .name == $origin))
+			 | {number, head: .headRefOid, issues: [.closingIssuesReferences[].number]}]
+			| sort_by(.number)
+		else error("invalid held PR page") end' <<<"$prs" || return 1
+	return 0
+}
+
+# Print "<issue>\t<fingerprint>\t<state>" for the PR's single package-monitor
+# upstream finding. Returns 2 when there is none or more than one, 1 on error.
+release_upstream_finding() {
+	local repo="$1" pr_json="$2" number='' issue='' finding='' found=''
+	while IFS= read -r number; do
+		[[ -n "$number" ]] || continue
+		[[ "$number" =~ ^[1-9][0-9]*$ ]] || return 1
+		issue=$(gh api "repos/${repo}/issues/${number}") || return 1
+		#aidevops:trust-boundary — only a trusted author's exact own-line monitor
+		# marker identifies a finding; copied markers on outsider issues never do.
+		# Binding the capture drops marker-less issues: capture emits nothing, so
+		# an array literal would silently shift .state into the fingerprint slot.
+		finding=$(jq -r --arg number "$number" '
+			select(.pull_request == null and ((.author_association // "") | test("^(OWNER|MEMBER)$")))
+			| ((.body // "") | capture("(?m)^<!-- aidevops:cloudron-package-monitor (?<fp>upstream-(v[0-9]+\\.[0-9]+\\.[0-9]+|commit-[a-f0-9]{40})) -->$").fp) as $fp
+			| [$number, $fp, .state] | @tsv' <<<"$issue") || return 1
+		[[ -n "$finding" ]] || continue
+		[[ -z "$found" ]] || return 2
+		found="$finding"
+	done < <(jq -r '.issues[]' <<<"$pr_json")
+	[[ -n "$found" ]] || return 2
+	printf '%s\n' "$found"
+	return 0
+}
+
+# Succeeds when semantic version $1 is strictly newer than $2.
+release_version_newer() {
+	local newer="$1" older="$2"
+	[[ "$newer" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$older" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	jq -en --arg newer "$newer" --arg older "$older" \
+		'($newer | split(".") | map(tonumber)) > ($older | split(".") | map(tonumber))' >/dev/null || return 1
+	return 0
+}
+
+# Succeeds when main's manifest already bundles the finding's upstream.
+release_finding_on_main() {
+	local fingerprint="$1" main_upstream="$2"
+	case "$fingerprint" in
+	upstream-v*)
+		[[ "${fingerprint#upstream-v}" != "$main_upstream" ]] || return 0
+		release_version_newer "$main_upstream" "${fingerprint#upstream-v}" || return 1
+		;;
+	upstream-commit-*)
+		[[ ${#main_upstream} -ge 7 && "${fingerprint#upstream-commit-}" == "$main_upstream"* ]] || return 1
+		;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+# Succeeds when finding $1/$2 (number/fingerprint) subsumes finding $3/$4.
+release_finding_newer() {
+	local new_number="$1" new_fp="$2" old_number="$3" old_fp="$4"
+	case "${new_fp}:${old_fp}" in
+	upstream-v*:upstream-v*)
+		release_version_newer "${new_fp#upstream-v}" "${old_fp#upstream-v}" || return 1
+		;;
+	upstream-commit-*:upstream-commit-*)
+		[[ "$new_fp" != "$old_fp" && "$new_number" -gt "$old_number" ]] || return 1
+		;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+# Print the open approval-request issue numbers whose metadata targets PR $3.
+release_requests_for_pr() {
+	local repo="$1" issues="$2" pr="$3" issue='' metadata='' numbers=''
+	while IFS= read -r issue; do
+		[[ -n "$issue" ]] || continue
+		metadata=$(release_metadata "$(jq -r '.body // ""' <<<"$issue")" "$repo") || continue
+		jq -e --argjson pr "$pr" '.pr == $pr' <<<"$metadata" >/dev/null || continue
+		numbers="${numbers}$(jq -r '.number' <<<"$issue") "
+	done < <(jq -c '.[]' <<<"$issues")
+	printf '%s' "$numbers"
+	return 0
+}
+
+# Annotate held PRs with their upstream finding and whether main bundles it.
+release_held_findings() {
+	local repo="$1" held="$2" main_upstream="$3"
+	local pr_json='' finding='' rc=0 out='[]' number='' fingerprint='' state='' on_main=false
+	while IFS= read -r pr_json; do
+		[[ -n "$pr_json" ]] || continue
+		rc=0
+		finding=$(release_upstream_finding "$repo" "$pr_json") || rc=$?
+		[[ "$rc" -ne 1 ]] || return 1
+		number='' fingerprint='' state='' on_main=false
+		if [[ "$rc" -eq 0 ]]; then
+			IFS=$'\t' read -r number fingerprint state <<<"$finding"
+			if release_finding_on_main "$fingerprint" "$main_upstream"; then
+				on_main=true
+			fi
+		fi
+		out=$(jq -c --argjson pr "$pr_json" --arg number "$number" --arg fp "$fingerprint" \
+			--arg state "$state" --argjson on_main "$on_main" \
+			'. + [$pr + {finding: $number, fingerprint: $fp, finding_state: $state, on_main: $on_main}]' <<<"$out") || return 1
+	done < <(jq -c '.[]' <<<"$held")
+	printf '%s\n' "$out"
+	return 0
+}
+
+# Request approval for a held PR once its checks are terminal-green.
+# Returns 0 when requested (or would be, in a dry run), 3 while waiting.
+release_request_held() {
+	local repo="$1" apply="$2" pr="$3"
+	if ! release_checks "$repo" "$pr" >/dev/null 2>&1; then
+		printf '%s PR #%s: release approval request waits for terminal-green checks\n' "$repo" "$pr"
+		return 3
+	fi
+	if [[ "$apply" != true ]]; then
+		printf '%s PR #%s: would request release approval (dry run)\n' "$repo" "$pr"
+		return 0
+	fi
+	release_request "$repo" "$pr" || return 1
+	return 0
+}
+
+# Close one obsolete held bump with its unsigned requests and finding.
+# Args: repo apply issues pr head finding finding_state reason
+release_supersede_held_pr() {
+	local repo="$1" apply="$2" issues="$3" pr="$4" head="$5" finding="$6" finding_state="$7" reason="$8"
+	local requests='' request='' verdict='' rc=0 snapshot=''
+	requests=$(release_requests_for_pr "$repo" "$issues" "$pr") || return 1
+	for request in $requests; do
+		rc=0
+		verdict=$(release_verify "$repo" "$request") || rc=$?
+		#aidevops:trust-boundary — signed, stale or unverifiable approvals are
+		# maintainer authority; automation never supersedes them.
+		if [[ "$rc" -eq 0 || "$verdict" != NO_APPROVAL ]]; then
+			printf '%s PR #%s: retained; approval request #%s is %s\n' "$repo" "$pr" "$request" "${verdict:-unverifiable}"
+			return 0
+		fi
+	done
+	if [[ "$apply" != true ]]; then
+		printf '%s PR #%s: would supersede (%s) (dry run)\n' "$repo" "$pr" "$reason"
+		return 0
+	fi
+	snapshot=$(gh api "repos/${repo}/pulls/${pr}") || return 1
+	#aidevops:trust-boundary — re-read before closing: only an unchanged,
+	# same-repository, trusted worker PR that is still held may be superseded.
+	if ! jq -e --arg repo "$repo" --arg head "$head" --arg approval "$RELEASE_APPROVAL_LABEL" \
+		--arg origin "$RELEASE_WORKER_ORIGIN_LABEL" --arg open_state open '
+		.state == $open_state and .merged == false and .head.sha == $head
+		and .head.repo.full_name == $repo and .base.repo.full_name == $repo
+		and ((.author_association // "") | test("^(OWNER|MEMBER)$"))
+		and any(.labels[]; .name == $approval) and any(.labels[]; .name == $origin)' <<<"$snapshot" >/dev/null; then
+		printf '%s PR #%s: retained; PR changed before supersession\n' "$repo" "$pr"
+		return 0
+	fi
+	# Close before commenting so an interrupted run never repeats a comment.
+	for request in $requests; do
+		gh issue close "$request" --repo "$repo" --reason 'not planned' >/dev/null || return 1
+		release_comment "$repo" "$request" "Superseded: ${reason}. No release was authorized by this unsigned request." || return 1
+	done
+	if [[ "$finding_state" == open ]]; then
+		gh issue close "$finding" --repo "$repo" --reason 'not planned' >/dev/null || return 1
+		release_comment "$repo" "$finding" "Superseded: ${reason}. Closed with its unsigned bump PR #${pr}; no release was authorized." || return 1
+	fi
+	gh_pr_close_safe "$pr" --repo "$repo" >/dev/null || return 1
+	printf 'Superseded: %s. This unsigned upstream bump is obsolete; no release was authorized. The branch is retained for audit.\n' "$reason" |
+		gh_pr_comment "$pr" --repo "$repo" --body-file - >/dev/null || return 1
+	printf '%s PR #%s: superseded (%s)\n' "$repo" "$pr" "$reason"
+	return 0
+}
+
+# Pick the newest held PR main does not already bundle, and request its approval
+# when none is open. Prints "<pr>|<fingerprint>|<finding>|<requested>"; a
+# non-whitespace delimiter keeps empty fields (non-upstream PRs) in place.
+release_held_target() {
+	local repo="$1" apply="$2" issues="$3" entries="$4"
+	local target_json='' target='' requests='' requested=false rc=0
+	target_json=$(jq -c '[.[] | select(.on_main | not)] | last // empty' <<<"$entries") || return 1
+	[[ -n "$target_json" ]] || return 0
+	target=$(jq -r '.number' <<<"$target_json")
+	requests=$(release_requests_for_pr "$repo" "$issues" "$target") || return 1
+	if [[ -n "$requests" ]]; then
+		requested=true
+	else
+		release_request_held "$repo" "$apply" "$target" >&2 || rc=$?
+		[[ "$rc" -ne 1 ]] || return 1
+		[[ "$rc" -ne 0 ]] || requested=true
+	fi
+	jq -r --arg requested "$requested" '[(.number | tostring), .fingerprint, .finding, $requested] | join("|")' <<<"$target_json" || return 1
+	return 0
+}
+
+# GH#36268: a worker's release handoff cannot request approval while PR checks
+# are pending, and defers to this routine. Request approval for the newest held
+# worker PR once its checks pass, then supersede older unsigned upstream bumps
+# that main or the requested PR already bundles. Signed approvals, human PRs
+# and non-upstream PRs are never superseded.
+release_reconcile_held() {
+	local repo="$1" apply="$2" issues="$3"
+	local held='' main_upstream='' entries='' target_line='' target='' target_fp='' target_finding='' requested=false
+	local number='' head='' finding='' fingerprint='' state='' on_main='' reason='' failures=0
+	held=$(release_held_worker_prs "$repo") || return 1
+	[[ "$(jq 'length' <<<"$held")" -gt 0 ]] || return 0
+	main_upstream=$(release_contents "$repo" CloudronManifest.json main |
+		jq -er '.upstreamVersion | select(type == "string" and length > 0) | ltrimstr("v")') || return 1
+	entries=$(release_held_findings "$repo" "$held" "$main_upstream") || return 1
+	target_line=$(release_held_target "$repo" "$apply" "$issues" "$entries") || return 1
+	[[ -z "$target_line" ]] || IFS='|' read -r target target_fp target_finding requested <<<"$target_line"
+	if [[ "$apply" == true && "$requested" == true ]]; then
+		# A request created above must be visible to the signed-approval check.
+		issues=$(release_issues "$repo") || return 1
+	fi
+	while IFS='|' read -r number head finding fingerprint state on_main; do
+		[[ -n "$number" && "$number" != "$target" && -n "$fingerprint" ]] || continue
+		reason=""
+		if [[ "$on_main" == true ]]; then
+			reason="main already bundles upstream ${main_upstream}"
+		elif [[ "$requested" == true && "$number" -lt "$target" && -n "$target_fp" ]] &&
+			release_finding_newer "$target_finding" "$target_fp" "$finding" "$fingerprint"; then
+			reason="PR #${target} bundles newer ${target_fp#upstream-} (finding #${target_finding})"
+		fi
+		[[ -n "$reason" ]] || continue
+		release_supersede_held_pr "$repo" "$apply" "$issues" "$number" "$head" "$finding" "$state" "$reason" ||
+			failures=$((failures + 1))
+	done < <(jq -r '.[] | [(.number | tostring), .head, .finding, .fingerprint, .finding_state, (.on_main | tostring)] | join("|")' <<<"$entries")
+	[[ "$failures" -eq 0 ]] || return 1
+	return 0
+}
+
 release_process() {
 	local apply="$1" repo_filter="${2:-}" issue_filter="${3:-}"
 	local repo="" issues="" issue="" failures=0 repos=""
@@ -344,6 +588,10 @@ release_process() {
 			[[ -z "$issue_filter" || "$issue" == "$issue_filter" ]] || continue
 			release_process_issue "$repo" "$issue" "$apply" || failures=$((failures + 1))
 		done < <(jq -r '.[].number' <<<"$issues")
+		# A single-issue run targets one approval; held-PR reconciliation is repo-wide.
+		if [[ -z "$issue_filter" ]]; then
+			release_reconcile_held "$repo" "$apply" "$issues" || failures=$((failures + 1))
+		fi
 	done <<<"$repos"
 	[[ "$failures" -eq 0 ]] || return 1
 	return 0
