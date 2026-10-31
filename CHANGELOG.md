@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.105] - 2026-10-31
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#36284)
+
+### Fixed
+
+- provision release approval labels; decouple failed request from supersession
+- defer gh release/run/workflow reads during primary-core cooldown (GH#36288) (#36295)
+
 ## [3.39.104] - 2026-10-31
 
 ### Added

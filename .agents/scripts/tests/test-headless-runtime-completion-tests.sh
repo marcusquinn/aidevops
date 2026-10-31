@@ -510,6 +510,25 @@ test_cmd_run_finish_preserves_terminal_blocked_outcome() {
 	return 0
 }
 
+test_blocked_signal_accepts_labelled_outcome_lines() {
+	local file="${TEST_ROOT}/blocked-labelled.jsonl" result=0 text
+	# shellcheck disable=SC2016 # literal backticks are the fixture
+	for text in 'Outcome: **BLOCKED**. dependency missing' 'Outcome: BLOCKED.' '**Status:** BLOCKED: x' 'Result: `BLOCKED`'; do
+		jq -nc --arg t "$text" '{type:"text",part:{text:$t}}' >"$file"
+		output_has_blocked_signal "$file" || result=1
+	done
+	for text in 'The upstream API was blocked earlier but I fixed it.' 'Outcome: unblocked now' 'Outcome: blocked earlier'; do
+		jq -nc --arg t "$text" '{type:"text",part:{text:$t}}' >"$file"
+		output_has_blocked_signal "$file" && result=1
+	done
+	if [[ "$result" -eq 0 ]]; then
+		print_result "blocked signal accepts labelled Outcome/Status/Result lines only" 0
+	else
+		print_result "blocked signal accepts labelled Outcome/Status/Result lines only" 1 "labelled match mismatch"
+	fi
+	return 0
+}
+
 test_cmd_run_finish_emits_complete_for_real_output() {
 	local work_dir="${TEST_ROOT}/repo-finish-complete"
 	_setup_test_git_repo "$work_dir" 1
