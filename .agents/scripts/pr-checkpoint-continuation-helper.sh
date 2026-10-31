@@ -25,6 +25,8 @@ PCC_ISSUE_ASSIGNEE=""
 PCC_EXPECTED_ASSIGNEE=""
 PCC_AUTHENTICATED_LOGIN=""
 PCC_CHECKPOINT_ASSIGNEE=""
+# GH#36186: 1 when the last _pcc_dispatch refused the target before launch.
+PCC_TARGET_REJECTED=0
 PCC_ORIGINAL_STATUS=""
 PCC_OWNERSHIP_TRANSFERRED=0
 PCC_REVISION_APPROVAL=0
@@ -62,6 +64,9 @@ _PCC_MAX_PR_RELEASES="${AIDEVOPS_PCC_MAX_PR_RELEASES:-6}"
 _PCC_ATTENTION_REARM_SECONDS="${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}"
 [[ "$_PCC_ATTENTION_REARM_SECONDS" =~ ^[0-9]+$ ]] || _PCC_ATTENTION_REARM_SECONDS=43200
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
+# GH#36186: attention detail when an approved revision can no longer continue.
+# shellcheck disable=SC2016 # Markdown backticks, not command substitution.
+_PCC_APPROVAL_CONSUMED_NOTE='The trusted `CHECKPOINT_CONTINUATION_APPROVED` decision on this issue was used by a continuation that stopped without releasing its claim, so it no longer authorizes this head, the legacy continuation route stays disabled and the re-arm window above does not apply. Automatic continuation resumes only after one of the actions below or a new revision approval (see `reference/checkpoint-revision-recovery.md`).'
 # Shared jq definitions for trusted coordination-event evidence in issue
 # comments (blocked and stall release lookups).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
@@ -490,6 +495,22 @@ _pcc_login_is_safe() {
 	return 0
 }
 
+#######################################
+# GH#36186: read the live PR author.login (the checkpoint author).
+# Args: $1=repo slug, $2=PR number
+# Output: author login; returns 1 when unreadable or unsafe
+#######################################
+_pcc_live_checkpoint_author() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local pr_json="" author=""
+	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json author 2>/dev/null) || return 1
+	author=$(jq -er '.author.login | strings | select(length > 0)' <<<"$pr_json" 2>/dev/null) || return 1
+	_pcc_login_is_safe "$author" || return 1
+	printf '%s' "$author"
+	return 0
+}
+
 _pcc_restore_issue_ownership() {
 	local linked_issue="$1"
 	local repo_slug="$2"
@@ -563,9 +584,19 @@ _pcc_dispatch() {
 	fi
 	PCC_EXPECTED_ASSIGNEE="$expected_assignee"
 	PCC_AUTHENTICATED_LOGIN="$authenticated_login"
-	PCC_CHECKPOINT_ASSIGNEE="$expected_assignee"
+	PCC_TARGET_REJECTED=0
+	# GH#36186: the checkpoint author is the live PR author, as in
+	# _pcc_dispatch_stalled. expected_assignee stays the claim being replaced:
+	# a draft continued by a different runner leaves them unequal.
+	PCC_CHECKPOINT_ASSIGNEE=$(_pcc_live_checkpoint_author "$repo_slug" "$pr_number") || {
+		PCC_TARGET_REJECTED=1
+		printf 'PR_CHECKPOINT_CONTINUATION_BLOCKED: PR #%s in %s author is unreadable or unsafe for issue #%s\n' \
+			"$pr_number" "$repo_slug" "$linked_issue"
+		return 1
+	}
 	target_row=$(_pcc_target_row "$repo_slug" "$pr_number" "$linked_issue" \
 		"$expected_assignee" "$PCC_CHECKPOINT_ASSIGNEE") || {
+		PCC_TARGET_REJECTED=1
 		printf 'PR_CHECKPOINT_CONTINUATION_BLOCKED: PR #%s in %s is not an open, unheld worker draft linked to issue #%s with an exact head\n' \
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 1
@@ -1040,7 +1071,7 @@ _pcc_attention_rearm_allowed() {
 #######################################
 _pcc_post_stall_attention() {
 	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" reason="$6" stalls="$7" key="$8"
-	local fuse="${9:-false}"
+	local fuse="${9:-false}" note="${10:-}"
 	local rearm_window="$((_PCC_ATTENTION_REARM_SECONDS / 3600))h"
 	[[ "$_PCC_ATTENTION_REARM_SECONDS" -ge 3600 ]] || rearm_window="${_PCC_ATTENTION_REARM_SECONDS}s"
 	local scope="after draft PR #${pr} reached head \`${head}\`, including one automatic exact-head continuation. Pulse pauses this head"
@@ -1060,7 +1091,9 @@ _pcc_post_stall_attention() {
 STALLED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} reason=${reason} stalls=${stalls}
 
 Workers released this issue ${stalls} times (latest reason \`${reason}\`) ${scope}, and ordinary redispatch stays held while the draft exists.
-
+${note:+
+${note}
+}
 Next action for the brief owner (write access required), one of:
 
 1. Review draft PR #${pr}. If the work is complete, mark it ready for review so the normal merge flow takes over.
@@ -1223,8 +1256,54 @@ _pcc_dispatch_stalled() {
 	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=%s reason=%s\n' \
 		"$issue" "$repo" "$pr" "$runner" "$release_id" "$reason"
 	PCC_ALLOW_RELEASED=true
-	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login"
-	return $?
+	local dispatch_rc=0
+	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login" || dispatch_rc=$?
+	if [[ "$dispatch_rc" -ne 0 && "$PCC_TARGET_REJECTED" == 1 ]] &&
+		_pcc_comments_have_revision_approval "$comments" "$trusted_logins"; then
+		_pcc_approved_revision_attention "$repo" "$issue" "$pr" "$head" "$release_id" \
+			"$reason" "$stalls" "$key" "$posted"
+		return $?
+	fi
+	return "$dispatch_rc"
+}
+
+#######################################
+# GH#36186: a trusted approval disables the legacy route, and the approved
+# successor's released claim no longer satisfies the revision validator.
+# Only a fresh approval or a new head can continue, so record that once per
+# head instead of failing silently every cycle.
+# Args: repo, issue, pr, head, release_id, reason, stalls, dedup key,
+#       attention_posted (true/false)
+# Returns: 0 attention recorded or already present, 1 post failed
+#######################################
+_pcc_approved_revision_attention() {
+	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" reason="$6" stalls="$7" key="$8"
+	local posted="${9:-false}"
+	if [[ "$posted" == true ]]; then
+		printf 'STALLED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s\n' "$pr" "$repo" "$head"
+		return 0
+	fi
+	_pcc_post_stall_attention "$repo" "$issue" "$pr" "$head" "$release_id" "$reason" "$stalls" "$key" \
+		false "$_PCC_APPROVAL_CONSUMED_NOTE" || return 1
+	printf 'STALLED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s stalls=%s cause=approved_revision_not_continuable\n' \
+		"$pr" "$repo" "$head" "$release_id" "$stalls"
+	return 0
+}
+
+#######################################
+# GH#36186: true when a trusted CHECKPOINT_CONTINUATION_APPROVED comment
+# exists (edited or not). Such an approval disables the legacy continuation
+# route (_pr_checkpoint_issue_metadata_is_eligible) for the issue.
+# Args: $1=comments JSON (paginated or flat), $2=trusted logins JSON
+#######################################
+_pcc_comments_have_revision_approval() {
+	local comments="$1"
+	local trusted_logins="${2:-[]}"
+	jq -e --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
+		any(flatten[] | objects | select(trusted);
+			any(body_lines; startswith("CHECKPOINT_CONTINUATION_APPROVED ")))
+	' <<<"$comments" >/dev/null 2>&1 || return 1
+	return 0
 }
 
 main() {
