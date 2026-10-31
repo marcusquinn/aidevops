@@ -652,8 +652,12 @@ _tbr_release_legacy_hold() {
 
 # Unlike the historical dispatch predicate, indeterminate circuit revisions
 # are not evidence of inactivity at a write boundary.
+# Optional $7: trusted comments. Only with them can an unevidenced permission
+# circuit past its backoff window (GH#36232) stop blocking; without them the
+# permission request evidence is unknown, so the circuit keeps holding.
 _tbr_circuit_blocks_release() {
 	local circuit="$1" retry="$2" issue_json="$3" repo="$4" issue="$5" repo_path="$6"
+	local comments="${7:-}"
 	local parsed="" revision="" fingerprint="" current=""
 	local reason=""
 	[[ -n "$circuit" ]] || return 1
@@ -663,6 +667,10 @@ _tbr_circuit_blocks_release() {
 	[[ "$reason" != "$_TBC_UNKNOWN" ]] || return 2
 	if terminal_blocker_rearms_on_retry_only "$reason"; then
 		_terminal_blocker_retry_after "$retry" "$circuit" && return 1
+		if [[ "$reason" == "$_TBC_PERMISSION_REQUIRED" && -n "$comments" ]] &&
+			terminal_blocker_permission_window_expired "$comments" "$issue_json" "$circuit" >/dev/null; then
+			return 1
+		fi
 		return 0
 	fi
 	current=$(terminal_blocker_task_revision "$issue_json" "$repo" "$issue" "$repo_path" "$reason") || return 2
@@ -769,29 +777,40 @@ _tbr_release_circuit_hold() {
 	fi
 	retry=$(_terminal_blocker_latest_retry_comment "$comments") || return 2
 	decision=unchanged
+	local window_index=""
 	if _terminal_blocker_retry_after "$retry" "$evidence"; then
 		decision=trusted_retry
 	elif [[ "$current_rev" != "$observed_rev" ]]; then
 		decision=revision_changed
+	elif [[ "$reason" == "$_TBC_PERMISSION_REQUIRED" ]] &&
+		window_index=$(terminal_blocker_permission_window_expired "$comments" "$issue_json" "$evidence"); then
+		# GH#36232 #aidevops:trust-boundary: no published request to approve.
+		# Schedules one new attempt per window; it grants no permission.
+		decision=unevidenced_permission_window
 	fi
 	# A newer circuit for the current revision wins over an older observation
 	# or retry; unreadable evidence must not fall through into label projection.
 	local active_rc=0
-	_tbr_circuit_blocks_release "$circuit" "$retry" "$issue_json" "$repo" "$issue" "$repo_path" || active_rc=$?
+	_tbr_circuit_blocks_release "$circuit" "$retry" "$issue_json" "$repo" "$issue" "$repo_path" "$comments" || active_rc=$?
 	[[ "$active_rc" -eq 1 ]] || decision=active_circuit
 	[[ "$active_rc" -lt 2 ]] || decision=indeterminate_circuit
 	printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=%s\n' \
 		"$issue" "$observed_rev" "$current_rev" "$decision" >&2
-	[[ "$decision" == revision_changed || "$decision" == trusted_retry ]] || return 2
+	[[ "$decision" == revision_changed || "$decision" == trusted_retry ||
+		"$decision" == unevidenced_permission_window ]] || return 2
 	# GH#36126: hold without a receipt while a dependency is open.
 	_tbr_dependency_unresolved "$repo" "$issue" "$issue_json" "$observed_rev" "$current_rev" && return 3
 	# The key binds the observed event, destination revision and retry event.
 	# A public receipt, not runner-local queue retirement, suppresses replay.
 	# Hash immutable event identity only, not mutable author associations or prose.
+	# GH#36232: a window release also binds its window index, so each window
+	# releases at most once; other decisions keep their historical key shape.
 	receipt_key=$(jq -nc --argjson evidence "$evidence" --argjson retry "${retry:-null}" \
 		--arg observed "$observed_rev" --arg fingerprint "$fingerprint" --arg current "$current_rev" --arg decision "$decision" \
+		--arg window "$window_index" \
 		'{event: ($evidence | {id,created_at}), observed:$observed, fingerprint:$fingerprint, current:$current,
-		 retry: (if $decision == "trusted_retry" then ($retry | {id,created_at}) else null end)}') || return 2
+		 retry: (if $decision == "trusted_retry" then ($retry | {id,created_at}) else null end)}
+		 + (if $decision == "unevidenced_permission_window" then {window: ($window | tonumber)} else {} end)') || return 2
 	receipt_key=$(_terminal_blocker_hash "$receipt_key") || return 2
 	receipt="<!-- aidevops:terminal-blocker-rearmed key=${receipt_key} -->"
 	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" "$observed_rev" "$current_rev"
@@ -823,6 +842,29 @@ _tbr_project_rearm() {
 		set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || return 2
 	fi
 	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" || return 2
+	return 0
+}
+
+# GH#36232: an unevidenced permission hold wakes on its next backoff window
+# boundary, which no issue edit records. Returns 0 once that boundary passed.
+_tbr_rearm_window_due() {
+	local file="$1"
+	local rearm_after="" now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
+	rearm_after=$(jq -r '.rearm_after // ""' "$file" 2>/dev/null) || return 1
+	[[ "$rearm_after" =~ ^[0-9]+$ && "$now_epoch" -ge "$rearm_after" ]]
+	return $?
+}
+
+# Record the checked snapshot and, for an unevidenced permission hold, its
+# next window boundary (removed when no longer applicable).
+_tbr_stamp_rearm_check() {
+	local file="$1" updated_at="$2" comments="$3" brief="$4"
+	local next_window=""
+	next_window=$(terminal_blocker_permission_rearm_after "$comments" "$brief" 2>/dev/null) || next_window=""
+	jq --arg at "$updated_at" --arg after "$next_window" '.rearm_checked_updated_at = $at
+		| if $after == "" then del(.rearm_after) else .rearm_after = ($after | tonumber) end' "$file" >"${file}.tmp.$$" &&
+		mv -f "${file}.tmp.$$" "$file" || return 1
 	return 0
 }
 
@@ -876,7 +918,7 @@ _tbr_check_entry() {
 		# unreadable timestamps never suppress verification. Revision-bound
 		# holds must recheck target/dependency changes independent of issue edits.
 		if [[ -n "$updated_at" && -n "$last_updated_at" && ! "$updated_at" > "$last_updated_at" ]] &&
-			! terminal_blocker_rearms_on_revision "$reason"; then
+			! terminal_blocker_rearms_on_revision "$reason" && ! _tbr_rearm_window_due "$file"; then
 			return 1
 		fi
 	fi
@@ -884,7 +926,8 @@ _tbr_check_entry() {
 	printf 'blocker-recovery: checking stage=entry_comments repo=%s issue=%s\n' "$repo" "$issue" >&2
 	# GH#35355: keep this runner's own comments whatever association GitHub reports.
 	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo" "${TERMINAL_BLOCKER_SELF_LOGIN:-}") || return 2
-	brief=$(printf '%s' "$issue_json" | jq -c '{title: (.title // ""), body: (.body // "")}')
+	# Labels let the permission-request predicate see needs-maintainer-permissions.
+	brief=$(printf '%s' "$issue_json" | jq -c '{title: (.title // ""), body: (.body // ""), labels: (.labels // [])}')
 	repo_path=$(_tbr_repo_path "$repo")
 	local hold_rc=0
 	printf 'blocker-recovery: checking stage=entry_revision repo=%s issue=%s\n' "$repo" "$issue" >&2
@@ -912,8 +955,7 @@ _tbr_check_entry() {
 	if [[ "$mode" == rearm ]]; then
 		# Only a complete, still-held observation may skip unchanged comments.
 		# Do not consult owner decisions or collect excerpts for the LLM.
-		jq --arg at "$updated_at" '.rearm_checked_updated_at = $at' "$file" >"${file}.tmp.$$" &&
-			mv -f "${file}.tmp.$$" "$file" || return 2
+		_tbr_stamp_rearm_check "$file" "$updated_at" "$comments" "$brief" || return 2
 		return 1
 	fi
 	_tbr_decision_active "$key" && return 1

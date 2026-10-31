@@ -92,12 +92,12 @@ pulse_todo_publication_handoff() {
 	permission=$(gh repo view "$repo_slug" --json viewerPermission --jq '.viewerPermission') || return 1
 	case "$permission" in ADMIN | MAINTAIN | WRITE) ;; *) return 1 ;; esac
 	linkage=$(_pulse_todo_handoff_linkage "$workspace") || return 1
-	issue_num=$(printf '%s\n' "$linkage" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | head -1) || return 1
+	issue_num=$(printf '%s\n' "$linkage" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sed -n '1p') || return 1
 	remote_branch=$(git -C "$workspace" ls-remote --heads origin "refs/heads/${branch}") || return 1
 	if [[ -n "$remote_branch" ]]; then
 		git -C "$workspace" fetch -q origin "$branch" || return 1
 		git -C "$workspace" log -1 --format=%B FETCH_HEAD |
-			grep -Fqx "Pulse-TODO-Handoff-ID: ${handoff_id}" || return 1
+			grep -Fx "Pulse-TODO-Handoff-ID: ${handoff_id}" >/dev/null || return 1
 	fi
 	_pulse_todo_sync_exact_default_snapshot "$workspace" "$default_branch" "$base_sha" || return 1
 	AIDEVOPS_PLANNING_PARENT_BRANCH="$default_branch" \

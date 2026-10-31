@@ -81,7 +81,7 @@ _complexity_scan_should_open_md_issue() {
 	# Skip files that are mostly YAML frontmatter (e.g., stub agent definitions).
 	# If >60% of lines are inside the frontmatter block, there's no prose to simplify.
 	local frontmatter_end=0
-	if head -1 "$full_path" 2>/dev/null | grep -q '^---$'; then
+	if head -1 "$full_path" 2>/dev/null | grep '^---$' >/dev/null; then
 		frontmatter_end=$(awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { print NR; exit }' "$full_path" 2>/dev/null)
 		frontmatter_end=${frontmatter_end:-0}
 	fi
@@ -246,7 +246,7 @@ Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.m
 - Content preservation: all code blocks, URLs, task ID references (\`tNNN\`, \`GH#NNN\`), and command examples must be present before and after
 - No broken internal links or references
 - Agent behaviour unchanged (test with a representative query if possible)
-- Qlty smells resolved for the target file: \`~/.qlty/bin/qlty smells --all 2>&1 | grep '${file_path}' | grep -c . | grep -q '^0$'\` (report \`SKIP\` if Qlty is unavailable, not \`FAIL\`)
+- Qlty smells resolved for the target file: \`~/.qlty/bin/qlty smells --all 2>&1 | grep '${file_path}' | grep -c . | grep '^0$' >/dev/null\` (report \`SKIP\` if Qlty is unavailable, not \`FAIL\`)
 - For reference corpora: \`wc -l\` total of chapter files >= original line count minus index overhead
 
 ### Confidence: medium
@@ -495,7 +495,7 @@ _complexity_scan_create_md_issues() {
 	local aidevops_path
 	aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
 		'.initialized_repos[] | select(.slug == $slug) | .path' \
-		"$repos_json" 2>/dev/null | head -n 1)
+		"$repos_json" 2>/dev/null | sed -n '1p')
 
 	# Simplification state file — tracks already-simplified files by git blob hash
 	local state_file=""
@@ -597,7 +597,7 @@ _complexity_scan_sh_create_issue() {
 	local aidevops_path
 	aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
 		'.initialized_repos[] | select(.slug == $slug) | .path' \
-		"$repos_json" 2>/dev/null | head -n 1)
+		"$repos_json" 2>/dev/null | sed -n '1p')
 	local details=""
 	if [[ -n "$aidevops_path" && -f "${aidevops_path}/${file_path}" ]]; then
 		# Use -v to pass the threshold safely — interpolating shell variables into
@@ -605,7 +605,7 @@ _complexity_scan_sh_create_issue() {
 		details=$(awk -v threshold="$COMPLEXITY_FUNC_LINE_THRESHOLD" '
 			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
 			fname && /^\}$/ { lines=NR-start; if(lines+0>threshold+0) printf "%s() %d lines\n", fname, lines; fname="" }
-		' "${aidevops_path}/${file_path}" | head -10)
+		' "${aidevops_path}/${file_path}" | sed -n '1,10p')
 	fi
 
 	local issue_body

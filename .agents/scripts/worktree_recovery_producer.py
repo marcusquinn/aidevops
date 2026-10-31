@@ -44,6 +44,9 @@ def failure_reason(error):
         "special permissions or hard links require separate preservation",
     }
     message = str(error) if isinstance(error, ValueError) else ""
+    if isinstance(error, subprocess.TimeoutExpired):
+        return ("producer:git-timeout; a local Git operation exceeded its time budget; "
+                "source and archive retained; retry when host load is lower")
     if isinstance(error, subprocess.CalledProcessError) and isinstance(error.stderr, str):
         lines = error.stderr.rstrip().splitlines()
         # source_fingerprint's shell caller adds this fixed failure trailer.

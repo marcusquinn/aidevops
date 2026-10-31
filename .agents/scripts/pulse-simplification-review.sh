@@ -86,6 +86,15 @@ _post_merge_scanner_scan_repo() {
 	safe_slug=$(printf '%s' "$slug" | tr '/: ' '___')
 	repo_scan_cursor="${scanner_cursor_dir}/${safe_slug}.cursor"
 	if [[ -f "$repo_scan_cursor" ]]; then
+		# A repository-local listing failure must not pin the traversal here.
+		# Retain its PR cursor for the next scheduled traversal, but continue
+		# other repos now. Global cooldown/budget yields still stop the stage.
+		local cursor_reason=""
+		cursor_reason=$(jq -r '.reason // empty' "$repo_scan_cursor" 2>/dev/null) || cursor_reason=""
+		if [[ "$cursor_reason" == "merged-pr-list-failed" ]]; then
+			echo "[pulse-wrapper] Post-merge scanner: deferred $slug to next scheduled traversal; continuing other repos" >>"${LOGFILE:-/dev/null}"
+			return 0
+		fi
 		echo "[pulse-wrapper] Post-merge scanner: yielded in $slug; cursor preserved for next cycle" >>"${LOGFILE:-/dev/null}"
 		return 2
 	fi

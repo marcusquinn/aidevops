@@ -221,7 +221,8 @@ _compose_classification_prompt() {
 	# Cap body length to keep token cost predictable. The first ~3KB
 	# captures What/Why/How/Files Scope which is what classification needs.
 	local body_truncated
-	body_truncated="$(printf '%s' "$issue_body" | head -c 3000)"
+	# Byte-oriented truncation, while consuming the entire producer stream.
+	body_truncated="$(printf '%s' "$issue_body" | LC_ALL=C awk '{ line=$0; if (NR > 1) line="\n" line; if (remaining > 0) { printf "%s", substr(line, 1, remaining); remaining -= length(line) } }' remaining=3000)"
 
 	cat <<EOF
 You are classifying a software development task to decide whether it modifies the worker dispatch system itself.
@@ -336,7 +337,7 @@ _classify_via_llm() {
 
 	# First non-empty line is the verdict.
 	local first_line
-	first_line=$(printf '%s\n' "$raw" | awk 'NF { print; exit }')
+	first_line=$(printf '%s\n' "$raw" | awk 'NF && !found { print; found=1 }')
 	if [[ -z "$first_line" ]]; then
 		RATIONALE="empty LLM output (model=${model}) — cannot classify"
 		_log_warn "${RATIONALE}"

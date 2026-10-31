@@ -61,7 +61,7 @@ _gh_secondary_cooldown_event_file() {
 
 _gh_secondary_cooldown_detect() {
 	local text="$1"
-	printf '%s' "$text" | grep -Eqi 'secondary rate limit|abuse detection mechanism|You have exceeded a secondary rate limit' || return 1
+	grep -Eqi 'secondary rate limit|abuse detection mechanism|You have exceeded a secondary rate limit' <<<"$text" || return 1
 	return 0
 }
 
@@ -271,23 +271,23 @@ _gh_secondary_cooldown_body_classification() {
 	local response_text="$1"
 	local status="${2:-}"
 	local remaining="${3:-}"
-	if printf '%s' "$response_text" | grep -Eqi 'abuse detection mechanism'; then
+	if grep -Eqi 'abuse detection mechanism' <<<"$response_text"; then
 		printf 'abuse-detection'
 		return 0
 	fi
-	if printf '%s' "$response_text" | grep -Eqi 'secondary rate limit|You have exceeded a secondary rate limit'; then
+	if grep -Eqi 'secondary rate limit|You have exceeded a secondary rate limit' <<<"$response_text"; then
 		printf 'secondary-rate-limit'
 		return 0
 	fi
-	if printf '%s' "$response_text" | grep -Eqi 'GraphQL: API rate limit already exceeded|API rate limit exceeded'; then
+	if grep -Eqi 'GraphQL: API rate limit already exceeded|API rate limit exceeded' <<<"$response_text"; then
 		printf 'primary-rate-limit'
 		return 0
 	fi
-	if printf '%s' "$response_text" | grep -Eqi 'Resource not accessible by integration'; then
+	if grep -Eqi 'Resource not accessible by integration' <<<"$response_text"; then
 		printf 'resource-not-accessible'
 		return 0
 	fi
-	if printf '%s' "$response_text" | grep -Eqi 'requires?.*(permission|scope)|permission.*required|must have.*(admin|write|read)|insufficient.*permission'; then
+	if grep -Eqi 'requires?.*(permission|scope)|permission.*required|must have.*(admin|write|read)|insufficient.*permission' <<<"$response_text"; then
 		printf 'requires-permission'
 		return 0
 	fi
@@ -782,19 +782,19 @@ _gh_secondary_cooldown_write() {
 _gh_secondary_cooldown_header_value() {
 	local response_text="$1"
 	local header_name="$2"
-	printf '%s\n' "$response_text" | awk -v name="$header_name" '
+	awk -v name="$header_name" '
 		BEGIN { target = tolower(name) ":" }
 		{ line = $0; sub(/\r$/, "", line); if (line == "") { exit } lower = tolower(line); if (index(lower, target) == 1) { sub(/^[^:]*:[[:space:]]*/, "", line); sub(/[[:space:]]+$/, "", line); print line; exit } }
-	' 2>/dev/null
+	' <<<"$response_text" 2>/dev/null
 	return 0
 }
 
 _gh_secondary_cooldown_status() {
 	local response_text="$1"
-	printf '%s\n' "$response_text" | awk '
+	awk '
 		{ line = $0; sub(/\r$/, "", line); if (line == "") { exit } }
 		line ~ /^HTTP\// { split(line, parts, /[[:space:]]+/); print parts[2]; exit }
-	' 2>/dev/null || printf ''
+	' <<<"$response_text" 2>/dev/null || printf ''
 	return 0
 }
 

@@ -27,7 +27,10 @@
 # Design:
 # - With --diff-base <ref>, only lines added relative to <ref> are judged, so
 #   legacy matches in touched files never fail a PR.
-# - Only files that enable pipefail (set -o pipefail / set -euo pipefail) are judged.
+# - Judged files: those that enable pipefail (set -o pipefail / set -euo pipefail)
+#   and source-guarded libraries (top-level `[[ -n "${_X_LOADED:-}" ]] && return`).
+#   A sourced library inherits its caller's pipefail, e.g. pulse-wrapper.sh runs
+#   `set -euo pipefail` and sources every pulse-merge*.sh library (GH#36235).
 # - Comment lines are skipped. Here-string forms (grep -q … <<<"$x") have no pipe.
 # - File-level opt-out: `# pipe-early-exit-check:disable` in the first 20 lines.
 
@@ -37,6 +40,9 @@ SCRIPT_NAME=$(basename "$0")
 
 # Awk ERE fragments (kept in variables so the awk program stays readable).
 readonly PIPEFAIL_RE='^[[:space:]]*set[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*(-[a-zA-Z]*o[[:space:]]+pipefail|-o[[:space:]]+pipefail)'
+# Canonical top-level source guard. Bracket expressions instead of backslash
+# escapes: awk -v processes escape sequences in the assigned string.
+readonly LIB_GUARD_RE='^[[][[][[:space:]]+-n[[:space:]]+"[$][{]_[A-Za-z0-9_]+_LOADED(:-)?[}]"[[:space:]]+[]][]][[:space:]]*&&[[:space:]]*return'
 readonly GREP_RE='(^|[^|])[|][[:space:]]*(e|f)?grep[[:space:]]+(-[-a-zA-Z0-9=]+[[:space:]]+)*(-[a-zA-Z]*q[a-zA-Z]*|--quiet|--silent|-m[[:space:]]*1|--max-count[= ]1)([[:space:]]|$)'
 readonly HEAD_RE='(^|[^|])[|][[:space:]]*head([[:space:]]|$|[)])'
 
@@ -53,7 +59,7 @@ die() {
 }
 
 usage() {
-	sed -n '5,32p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '5,35p' "$0" | sed 's/^# \{0,1\}//'
 	return 0
 }
 
@@ -103,10 +109,11 @@ scan_file() {
 
 	local _out
 	_out=$(awk -v file="$_file" -v added=" ${_added} " \
-		-v pf_re="$PIPEFAIL_RE" -v grep_re="$GREP_RE" -v head_re="$HEAD_RE" '
+		-v pf_re="$PIPEFAIL_RE" -v lib_re="$LIB_GUARD_RE" \
+		-v grep_re="$GREP_RE" -v head_re="$HEAD_RE" '
 		{ lines[NR] = $0 }
 		/^[[:space:]]*#/ { next }
-		$0 ~ pf_re { pf = 1 }
+		$0 ~ pf_re || $0 ~ lib_re { pf = 1 }
 		END {
 			if (!pf) exit
 			for (i = 1; i <= NR; i++) {

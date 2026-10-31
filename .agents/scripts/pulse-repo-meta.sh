@@ -56,7 +56,7 @@ get_repo_path_by_slug() {
 	fi
 
 	local repo_path
-	repo_path=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .path // ""' "$REPOS_JSON" 2>/dev/null | head -n 1)
+	repo_path=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .path // ""' "$REPOS_JSON" 2>/dev/null | sed -n '1p')
 	echo "$repo_path"
 	return 0
 }
@@ -111,7 +111,7 @@ get_repo_priority_by_slug() {
 	fi
 
 	local repo_priority
-	repo_priority=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .priority // "tooling"' "$REPOS_JSON" 2>/dev/null | head -n 1)
+	repo_priority=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .priority // "tooling"' "$REPOS_JSON" 2>/dev/null | sed -n '1p')
 	if [[ -z "$repo_priority" ]]; then
 		repo_priority="tooling"
 	fi
@@ -152,14 +152,14 @@ get_repo_role_by_slug() {
 		local explicit_role
 		explicit_role=$(jq -r --arg slug "$repo_slug" \
 			'.initialized_repos[] | select(.slug == $slug) | .role // ""' \
-			"$REPOS_JSON" 2>/dev/null | head -n 1) || explicit_role=""
+			"$REPOS_JSON" 2>/dev/null | sed -n '1p') || explicit_role=""
 		if [[ "$explicit_role" == "$_PULSE_REPO_ROLE_MAINTAINER" || "$explicit_role" == "$_PULSE_REPO_ROLE_CONTRIBUTOR" ]]; then
 			printf '%s\n' "$explicit_role"
 			return 0
 		fi
 		configured_maintainer=$(jq -r --arg slug "$repo_slug" \
 			'.initialized_repos[] | select(.slug == $slug) | .maintainer // ""' \
-			"$REPOS_JSON" 2>/dev/null | head -n 1) || configured_maintainer=""
+			"$REPOS_JSON" 2>/dev/null | sed -n '1p') || configured_maintainer=""
 	fi
 
 	# 2. Auto-detect from configured maintainer or slug owner vs current gh user.

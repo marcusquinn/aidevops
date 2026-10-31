@@ -374,7 +374,7 @@ _complexity_scan_find_repo() {
 	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 		aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
 			'.initialized_repos[] | select(.slug == $slug) | .path' \
-			"$repos_json" 2>/dev/null | head -n 1)
+			"$repos_json" 2>/dev/null | sed -n '1p')
 	fi
 	if [[ -z "$aidevops_path" || "$aidevops_path" == "null" || ! -d "$aidevops_path" ]]; then
 		echo "[pulse-wrapper] Complexity scan: aidevops repo path not found — skipping" >>"$LOGFILE"

@@ -240,16 +240,16 @@ _validate_completion_bookkeeping_request() {
 _completion_bookkeeping_body_has_reference() {
 	local body="$1"
 	local issue_number="$2"
-	printf '%s\n' "$body" | grep -Eiq \
-		"(^|[[:space:]])(for|ref|close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)"
+	grep -Eiq \
+		"(^|[[:space:]])(for|ref|close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)" <<<"$body"
 	return $?
 }
 
 _completion_bookkeeping_body_has_closing_reference() {
 	local body="$1"
 	local issue_number="$2"
-	printf '%s\n' "$body" | grep -Eiq \
-		"(^|[[:space:]])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)"
+	grep -Eiq \
+		"(^|[[:space:]])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)" <<<"$body"
 	return $?
 }
 
@@ -354,10 +354,10 @@ _validate_completion_bookkeeping_todo() {
 		return 1
 	fi
 	completion_line="$issue_mapping_lines"
-	if ! printf '%s\n' "$completion_line" | grep -Eq \
-		"^[[:blank:]]*- \[x\] ${task_pattern}([[:space:]]|$)" ||
-		! printf '%s\n' "$completion_line" | grep -Eq "pr:#${proof_pr}([^0-9]|$)" ||
-		! printf '%s\n' "$completion_line" | grep -Eq 'completed:[0-9]{4}-[0-9]{2}-[0-9]{2}([^0-9]|$)'; then
+	if ! grep -Eq \
+		"^[[:blank:]]*- \[x\] ${task_pattern}([[:space:]]|$)" <<<"$completion_line" ||
+		! grep -Eq "pr:#${proof_pr}([^0-9]|$)" <<<"$completion_line" ||
+		! grep -Eq 'completed:[0-9]{4}-[0-9]{2}-[0-9]{2}([^0-9]|$)' <<<"$completion_line"; then
 		print_error "Completion bookkeeping TODO.md proof must complete ${task_id} with merged PR #${proof_pr}"
 		return 1
 	fi
@@ -380,8 +380,8 @@ _validate_completion_bookkeeping_todo() {
 		+* | -*)
 			patch_payload="${patch_line:1}"
 			[[ "$patch_payload" =~ ^[[:space:]]*$ ]] && continue
-			if ! printf '%s\n' "$patch_payload" | grep -Eq \
-				"^[[:blank:]]*- \[[ x]\] ${task_pattern}([[:space:]]|$)"; then
+			if ! grep -Eq \
+				"^[[:blank:]]*- \[[ x]\] ${task_pattern}([[:space:]]|$)" <<<"$patch_payload"; then
 				print_error "Completion bookkeeping TODO.md diff changes content outside task ${task_id}"
 				return 1
 			fi
@@ -398,8 +398,8 @@ _validate_completion_bookkeeping_pr_body() {
 		print_error "Completion bookkeeping PR body contains a closing keyword for issue #${issue_number}"
 		return 1
 	fi
-	if ! printf '%s\n' "$pr_body" | grep -Eiq \
-		"(^|[[:space:]])(for|ref)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)"; then
+	if ! grep -Eiq \
+		"(^|[[:space:]])(for|ref)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)" <<<"$pr_body"; then
 		print_error "Completion bookkeeping PR body must use For/Ref #${issue_number}"
 		return 1
 	fi
@@ -965,7 +965,7 @@ _classify_remote_branch() {
 		printf 'unknown \n'
 		return 0
 	fi
-	remote_sha=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${branch}" '$2 == ref { print $1; exit }')
+	remote_sha=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${branch}" '!found && $2 == ref { print $1; found=1 }')
 	if [[ -z "$remote_sha" ]]; then
 		printf 'absent \n'
 		return 0
@@ -1160,7 +1160,7 @@ _issue_has_parent_task_label() {
 
 	local hit=""
 	hit=$(printf '%s' "$labels_json" |
-		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | head -n 1 || true)
+		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | sed -n '1p' || true)
 
 	if [[ -n "$hit" ]]; then
 		return 0
@@ -1337,7 +1337,7 @@ _derive_pr_title_prefix() {
 	# boundary after the number so ref:GH#123 doesn't match ref:GH#12345.
 	local task_id=""
 	task_id=$(grep -E "^- \[[ x]\] t[0-9]+ .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null |
-		head -1 |
+		sed -n '1p' |
 		grep -oE '^- \[[ x]\] t[0-9]+' |
 		grep -oE 't[0-9]+$' ||
 		true)
@@ -1670,6 +1670,23 @@ PY
 	return $?
 }
 
+# Read one authoritative metadata snapshot, distinguishing a null body from a
+# successful transport with no usable output. Do not retry outside transport policy.
+_read_pr_metadata_json() {
+	local repo="$1"
+	local pr_number="$2"
+	local metadata=""
+	metadata=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}") || return 1
+	# Slurping also rejects empty output and multiple JSON documents.
+	printf '%s' "$metadata" | jq -es '
+		length == 1 and (.[0] | type == "object" and
+			has("title") and has("body") and (.title | type) == "string" and
+			((.body | type) == "string" or .body == null))
+	' >/dev/null 2>&1 || return 1
+	printf '%s\n' "$metadata"
+	return 0
+}
+
 # Restore generated metadata after partial PR creation recovered an existing PR.
 # A retry may compute title/body details from a newer review-repair head.
 # Arguments: PR number, repository slug, generated title, generated body.
@@ -1680,17 +1697,14 @@ _reconcile_recovered_pr_metadata() {
 	local generated_body="$4"
 	local current_title=""
 	local current_body=""
-	local pr_endpoint="repos/${repo}/pulls"
-	pr_endpoint+="/${pr_number}"
+	local metadata=""
 
-	current_title=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.title // empty' 2>/dev/null) || {
-		print_error "Could not read recovered PR #${pr_number} title for metadata reconciliation"
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
+		print_error "Could not read recovered PR #${pr_number} title/body for metadata reconciliation"
 		return 1
 	}
-	current_body=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.body // empty' 2>/dev/null) || {
-		print_error "Could not read recovered PR #${pr_number} body for metadata reconciliation"
-		return 1
-	}
+	current_title=$(jq -r '.title' <<<"$metadata") || return 1
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 	generated_body=$(_merge_existing_pr_body "$current_body" "$generated_body" "${pr_metadata_overrides:-}") || return 1
 	if [[ "$current_title" == "$generated_title" && "$current_body" == "$generated_body" ]]; then
 		print_info "Recovered PR #${pr_number} metadata already matches the generated head"
@@ -1715,14 +1729,12 @@ _reconcile_recovered_pr_metadata() {
 	fi
 	rm -f "$body_file"
 
-	current_title=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.title // empty' 2>/dev/null) || {
-		print_error "Could not verify recovered PR #${pr_number} title reconciliation"
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
+		print_error "Could not verify recovered PR #${pr_number} title/body reconciliation"
 		return 1
 	}
-	current_body=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.body // empty' 2>/dev/null) || {
-		print_error "Could not verify recovered PR #${pr_number} body reconciliation"
-		return 1
-	}
+	current_title=$(jq -r '.title' <<<"$metadata") || return 1
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 	if [[ "$current_title" != "$generated_title" || "$current_body" != "$generated_body" ]]; then
 		print_error "Recovered PR #${pr_number} metadata reconciliation did not reach the generated title/body postcondition"
 		return 1
@@ -1742,16 +1754,18 @@ _ensure_worker_pr_linkage() {
 	local issue_number="$3"
 	local generated_body="$4"
 	local current_body=""
+	local metadata=""
 
 	if [[ ! "$pr_number" =~ ^[1-9][0-9]*$ || "$repo" != */* || ! "$issue_number" =~ ^[1-9][0-9]*$ || -z "$generated_body" ]]; then
 		print_error "Cannot validate worker PR linkage: invalid PR, repository, issue, or generated body"
 		return 1
 	fi
 
-	current_body=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}" --jq '.body // empty' 2>/dev/null) || {
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
 		print_error "Cannot validate worker PR #${pr_number} linkage before review transition"
 		return 1
 	}
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 
 	local closing_issues=""
 	closing_issues=$(printf '%s' "$current_body" |
@@ -1764,8 +1778,8 @@ _ensure_worker_pr_linkage() {
 	# A qualified close reference targets another repository. Do not add a local
 	# reference to an ambiguous body: pulse must remain fail-closed for cross-repo
 	# or multi-issue relationships.
-	if [[ -n "$closing_issues" ]] || printf '%s' "$current_body" | grep -Eiq \
-		'(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+[^[:space:]]+#[0-9]+'; then
+	if [[ -n "$closing_issues" ]] || grep -Eiq \
+		'(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+[^[:space:]]+#[0-9]+' <<<"$current_body"; then
 		print_error "Worker PR #${pr_number} has ambiguous or cross-repository closing references; refusing linkage repair"
 		return 1
 	fi
@@ -1799,10 +1813,11 @@ _ensure_worker_pr_linkage() {
 	fi
 	rm -f "$repair_body_file"
 
-	current_body=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}" --jq '.body // empty' 2>/dev/null) || {
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
 		print_error "Could not verify repaired linked issue reference on worker PR #${pr_number}"
 		return 1
 	}
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 	closing_issues=$(printf '%s' "$current_body" |
 		grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' |
 		grep -oE '[0-9]+' | sort -u) || closing_issues=""

@@ -255,7 +255,7 @@ _dsi_create_worktree() {
 			# that here is fragile. Read it back from `git worktree list` instead.
 			# Awk inlined to one line to avoid tripping the positional-ratchet (its
 			# single-quote-strip is line-local; multi-line awk scripts get false-positives).
-			_DSI_WORKTREE_PATH=$(git -C "$repo_path" worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} $0 == "branch refs/heads/" b {print p; exit}')
+			_DSI_WORKTREE_PATH=$(git -C "$repo_path" worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} !found && $0 == "branch refs/heads/" b {print p; found=1}')
 			_DSI_WORKTREE_BRANCH="$branch"
 			if [[ -n "$_DSI_WORKTREE_PATH" && -d "$_DSI_WORKTREE_PATH" ]]; then
 				if declare -F register_worktree >/dev/null; then
@@ -475,7 +475,7 @@ _dsi_repo_path_for_slug() {
 		.initialized_repos[]?
 		| select((.slug // "") == $slug and (.local_only // false) == false)
 		| .path
-	' "$repos_file" 2>/dev/null | head -n 1
+	' "$repos_file" 2>/dev/null | sed -n '1p'
 	return 0
 }
 

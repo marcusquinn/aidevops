@@ -837,7 +837,7 @@ _version_below() {
 
 	# sort -V puts smaller semver first. If $version is first, it's below $floor.
 	local first
-	first=$(printf '%s\n%s\n' "$version" "$floor" | sort -V | head -n1)
+	first=$(printf '%s\n%s\n' "$version" "$floor" | sort -V | sed -n '1p')
 	if [[ "$first" == "$version" ]]; then
 		return 0
 	fi

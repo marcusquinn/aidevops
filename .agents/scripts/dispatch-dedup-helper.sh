@@ -461,7 +461,7 @@ _match_candidate_key() {
 	local pattern
 	for pattern in "${match_patterns[@]}"; do
 		local match
-		match=$(printf '%s\n' "$running_keys" | grep "|${pattern}$" | head -1 || true)
+		match=$(printf '%s\n' "$running_keys" | grep "|${pattern}$" | sed -n '1p' || true)
 		if [[ -n "$match" ]]; then
 			local match_pid
 			match_pid=$(printf '%s' "$match" | cut -d'|' -f1)

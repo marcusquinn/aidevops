@@ -222,7 +222,7 @@ Run locally to see current violators:
 git ls-files '*.sh' | while read -r f; do
   d=\$(awk 'BEGIN{d=0;m=0} /^[[:space:]]*#/{next} /[[:space:]]*(if|for|while|until|case)[[:space:]]/{d++;if(d>m)m=d} /[[:space:]]*(fi|done|esac)[[:space:]]*\$||/^[[:space:]]*(fi|done|esac)\$/{if(d>0)d--} END{print m}' \"\$f\")
   [ \"\$d\" -gt 8 ] && echo \"\$d \$f\"
-done | sort -rn | head -20
+done | sort -rn | sed -n '1,20p'
 \`\`\`"
 
 	# Append signature footer

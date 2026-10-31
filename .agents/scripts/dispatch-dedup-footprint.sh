@@ -885,7 +885,7 @@ _footprint_claimed_coordinator_has_evidence() {
 		local ledger_hit=""
 		ledger_hit=$(jq -r --arg key "issue-${issue_number}" \
 			'select(.session_key == $key and (.status == "in-flight" or .status == "launched")) | .session_key' \
-			"$ledger_file" 2>/dev/null | head -1) || ledger_hit=""
+			"$ledger_file" 2>/dev/null | sed -n '1p') || ledger_hit=""
 		[[ -n "$ledger_hit" ]] && return 0
 	fi
 

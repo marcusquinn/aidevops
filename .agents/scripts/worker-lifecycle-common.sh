@@ -1202,16 +1202,14 @@ _escalate_body_has_investigation_context() {
 		'^#{1,6}[[:space:]]+Approach[[:space:]]*:?[[:space:]]*$' \
 		'^#{1,6}[[:space:]]+Acceptance criteria[[:space:]]*:?[[:space:]]*$' \
 		'^#{1,6}[[:space:]]+Verification[[:space:]]*:?[[:space:]]*$'; do
-		printf '%s\n' "$issue_body" | grep -qiE "$heading_pattern" || return 1
+		grep -qiE "$heading_pattern" <<<"$issue_body" || return 1
 	done
 
 	# A bounded investigation still needs a concrete starting surface.
-	printf '%s\n' "$issue_body" |
-		grep -qE '[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)+\.[a-zA-Z0-9]+' || return 1
+	grep -qE '[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)+\.[a-zA-Z0-9]+' <<<"$issue_body" || return 1
 	# Verification must name something executable, not only a prose promise.
 	# shellcheck disable=SC2016 # Backticks are literal Markdown delimiters in the regex.
-	printf '%s\n' "$issue_body" |
-		grep -qE '(^|[[:space:]`])((bash|shellcheck|pytest|python[0-9]*|node|npm|pnpm|yarn|bun|make)[[:space:]]|go[[:space:]]+test([[:space:]]|$)|cargo[[:space:]]+test([[:space:]]|$)|git[[:space:]]+diff([[:space:]]|$)|[.]/|[.][[:alnum:]_/-]+\.sh([[:space:]`]|$))' || return 1
+	grep -qE '(^|[[:space:]`])((bash|shellcheck|pytest|python[0-9]*|node|npm|pnpm|yarn|bun|make)[[:space:]]|go[[:space:]]+test([[:space:]]|$)|cargo[[:space:]]+test([[:space:]]|$)|git[[:space:]]+diff([[:space:]]|$)|[.]/|[.][[:alnum:]_/-]+\.sh([[:space:]`]|$))' <<<"$issue_body" || return 1
 	return 0
 }
 
@@ -1249,7 +1247,7 @@ _escalate_body_quality_gate() {
 	# Check for file path indicators: paths with extensions, EDIT:/NEW: prefixes,
 	# backtick-quoted paths, or "Files to Modify" section headers.
 	# shellcheck disable=SC2016 # pattern is literal regex; no variable expansion intended
-	if echo "$issue_body" | grep -qE '(EDIT:|NEW:|`[a-zA-Z0-9_./-]+\.[a-z]+`|Files to Modify|## How|\.sh:|\.py:|\.ts:|\.js:|\.md:)'; then
+	if grep -qE '(EDIT:|NEW:|`[a-zA-Z0-9_./-]+\.[a-z]+`|Files to Modify|## How|\.sh:|\.py:|\.ts:|\.js:|\.md:)' <<<"$issue_body"; then
 		return 0
 	fi
 

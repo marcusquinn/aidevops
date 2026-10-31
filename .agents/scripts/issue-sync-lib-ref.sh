@@ -100,7 +100,7 @@ fix_gh_ref_in_todo() {
 		log_verbose "$task_id not found outside code fences/comments"
 		return 0
 	}
-	if ! sed -n "${line_num}p" "$todo_file" | grep -qE "ref:GH#${old_number}([[:space:]]|$)"; then
+	if ! sed -n "${line_num}p" "$todo_file" | grep -E "ref:GH#${old_number}([[:space:]]|$)" >/dev/null; then
 		log_verbose "$task_id with ref:GH#$old_number not found on real task line"
 		return 0
 	fi
@@ -130,19 +130,19 @@ add_gh_ref_to_todo() {
 	local target_line
 	target_line=$(sed -n "${line_num}p" "$todo_file")
 	# Check if ref already exists on the real task line.
-	if printf '%s\n' "$target_line" | grep -qE "ref:GH#${issue_number}([[:space:]]|$)"; then
+	if printf '%s\n' "$target_line" | grep -E "ref:GH#${issue_number}([[:space:]]|$)" >/dev/null; then
 		return 0
 	fi
 
 	# Check if any GH ref exists on the real task line (might be different number).
-	if printf '%s\n' "$target_line" | grep -qE 'ref:GH#[0-9]+'; then
+	if printf '%s\n' "$target_line" | grep -E 'ref:GH#[0-9]+' >/dev/null; then
 		log_verbose "$task_id already has a GH ref, skipping"
 		return 0
 	fi
 	local new_line
-	if printf '%s\n' "$target_line" | grep -qE '(^|[[:space:]])ref:none([[:space:]]|$)'; then
+	if printf '%s\n' "$target_line" | grep -E '(^|[[:space:]])ref:none([[:space:]]|$)' >/dev/null; then
 		new_line=$(printf '%s\n' "$target_line" | sed -E "s/(^|[[:space:]])ref:none([[:space:]]|$)/\\1ref:GH#${issue_number}\\2/")
-	elif echo "$target_line" | grep -qE 'logged:'; then
+	elif echo "$target_line" | grep -E 'logged:' >/dev/null; then
 		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ ref:GH#${issue_number}\1/")
 	else
 		new_line="${target_line} ref:GH#${issue_number}"
@@ -197,9 +197,9 @@ add_pr_ref_to_todo() {
 	local target_line
 	target_line=$(sed -n "${line_num}p" "$todo_file")
 	local new_line
-	if echo "$target_line" | grep -qE ' logged:'; then
+	if echo "$target_line" | grep -E ' logged:' >/dev/null; then
 		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ pr:#${pr_number}\1/")
-	elif echo "$target_line" | grep -qE ' completed:'; then
+	elif echo "$target_line" | grep -E ' completed:' >/dev/null; then
 		new_line=$(echo "$target_line" | sed -E "s/( completed:)/ pr:#${pr_number}\1/")
 	else
 		new_line="${target_line} pr:#${pr_number}"
@@ -555,7 +555,7 @@ _extract_tier_from_brief() {
 	selected_line=$(grep -m1 -E '^\*\*Selected tier:\*\*' "$brief_path" 2>/dev/null || true)
 	if [[ -n "$selected_line" ]]; then
 		local tier
-		tier=$(printf '%s' "$selected_line" | grep -oE 'tier:(simple|standard|thinking)' | head -1 || true)
+		tier=$(printf '%s' "$selected_line" | grep -oE 'tier:(simple|standard|thinking)' | sed -n '1p' || true)
 		if [[ -n "$tier" ]]; then
 			printf '%s' "$tier"
 			return 0
@@ -565,7 +565,7 @@ _extract_tier_from_brief() {
 	# FALLBACK: grep-anywhere for briefs that don't follow the template.
 	# Logged as a warning to stderr so we can chase non-conforming briefs.
 	local fallback
-	fallback=$(grep -oE 'tier:(simple|standard|thinking)' "$brief_path" 2>/dev/null | head -1 || true)
+	fallback=$(grep -oE 'tier:(simple|standard|thinking)' "$brief_path" 2>/dev/null | sed -n '1p' || true)
 	if [[ -n "$fallback" ]]; then
 		echo "[WARN] _extract_tier_from_brief: brief at $brief_path missing **Selected tier:** line, falling back to first tier mention ($fallback)" >&2
 		printf '%s' "$fallback"

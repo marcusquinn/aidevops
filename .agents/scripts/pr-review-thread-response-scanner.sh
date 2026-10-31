@@ -1354,6 +1354,92 @@ cmd_mark_blocked() {
 		return 2
 	fi
 	_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_TRUE" "$blocked_by" "$PRRTS_BOOL_TRUE" "$reason" "$details_file"
+	_prrts_publish_continuation_blocker "$repo_slug" "$pr_number" "$blocked_by" "$reason" "$details_file" || true
+	return 0
+}
+
+# GH#36227: a checkpoint-continuation worker's mark-blocked finding was only
+# local state, so the frozen draft showed no concrete need. Publish one
+# sanitized, idempotent comment on the linked issue. Active only for
+# continuation workers (linked issue exported by the dispatcher); ordinary
+# review-thread workers have none. Failures never change the local state result.
+# Args: repo slug, PR number, blocked_by, reason, optional details file
+_prrts_publish_continuation_blocker() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local blocked_by="$3"
+	local reason="$4"
+	local details_file="${5:-}"
+	local issue="${AIDEVOPS_PR_REPAIR_LINKED_ISSUE:-}"
+	local head="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}"
+	local marker="" details="" body="" pending_file="" tmp_file=""
+	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 0
+	_prrts_ensure_dirs
+	pending_file="${STATE_DIR}/$(_prrts_safe_slug "$repo_slug")-${pr_number}.blocker-pending.json"
+	# Never overwrite an unacknowledged finding with a later worker result.
+	if [[ -f "$pending_file" ]]; then
+		_prrts_retry_continuation_blocker "$repo_slug" "$pr_number" "$issue" || return 1
+	fi
+	local current_head=""
+	current_head=$(_prrts_gh_call read gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.head.sha' 2>/dev/null) || current_head=""
+	[[ "$current_head" =~ ^[0-9a-fA-F]{40,64}$ ]] && head="$current_head"
+	[[ "$head" =~ ^[0-9a-fA-F]{40,64}$ ]] || head="$PRRTS_VALUE_UNKNOWN"
+	blocked_by="$(_prrts_normalise_blocked_by "$blocked_by")"
+	reason="$(_prrts_state_value_line "$reason" 240)"
+	if [[ -n "$details_file" && -f "$details_file" ]]; then
+		details="$(_prrts_state_value_line "$(<"$details_file")" 700)"
+	fi
+	marker="aidevops:continuation-blocker pr=${pr_number} head=${head}"
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- ${marker} -->
+CONTINUATION_BLOCKER_FINDING pr=${pr_number} head=${head} blocked_by=${blocked_by}
+
+The checkpoint continuation worker inspected draft PR #${pr_number} and could not make it ready.
+
+- Blocked by: ${blocked_by}
+- Reason: ${reason}
+- Details: ${details:-none recorded}
+
+Next action for the brief owner: resolve the stated need (see \`reference/checkpoint-revision-recovery.md\`), or close draft PR #${pr_number} to discard the checkpoint.
+<!-- ops:end -->"
+	tmp_file=$(mktemp "${pending_file}.XXXXXX") || return 1
+	if ! jq -n --arg issue "$issue" --arg marker "$marker" --arg body "$body" \
+		'{issue: $issue, marker: $marker, body: $body}' >"$tmp_file"; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	mv "$tmp_file" "$pending_file" || return 1
+	_prrts_retry_continuation_blocker "$repo_slug" "$pr_number" "$issue"
+	return $?
+}
+
+# Retry the exact saved payload, including its original head, before recovery
+# gates can deduplicate a completed blocked worker. Never infer a new recipient.
+_prrts_retry_continuation_blocker() {
+	local repo_slug="$1" pr_number="$2" issue="$3"
+	local pending_file=""
+	local marker="" body="" existing=""
+	pending_file="${STATE_DIR}/$(_prrts_safe_slug "$repo_slug")-${pr_number}.blocker-pending.json"
+	[[ -f "$pending_file" ]] || return 0
+	jq -e --arg issue "$issue" '.issue == $issue and (.marker | type == "string") and (.body | type == "string")' \
+		"$pending_file" >/dev/null || return 1
+	marker=$(jq -r '.marker' "$pending_file") || return 1
+	body=$(jq -r '.body' "$pending_file") || return 1
+	if ! existing=$(_prrts_gh_call read gh api "repos/${repo_slug}/issues/${issue}/comments" --paginate \
+		--jq ".[] | select((.body // \"\") | contains(\"${marker} \")) | .id" 2>/dev/null); then
+		_prrts_log "blocker-publish: ${repo_slug}#${issue} duplicate lookup failed; retaining pending finding"
+		return 1
+	fi
+	if [[ -n "$existing" ]]; then
+		rm -f "$pending_file"
+		return 0
+	fi
+	if ! _prrts_gh_call write gh api "repos/${repo_slug}/issues/${issue}/comments" --method POST --raw-field body="$body" >/dev/null 2>&1; then
+		_prrts_log "blocker-publish: ${repo_slug}#${issue} comment post failed for PR #${pr_number}"
+		return 1
+	fi
+	rm -f "$pending_file"
+	_prrts_log "blocker-publish: ${repo_slug}#${issue} posted for PR #${pr_number}"
 	return 0
 }
 

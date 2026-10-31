@@ -485,9 +485,9 @@ _triage_runtime_infra_failure_reason() {
 			printf '%s\n' '[pulse-wrapper] OpenCode error: Model not found (isolated provider authentication unavailable)' >>"$LOGFILE"
 		fi
 		printf '%s\n' 'triage-provider-auth-unsupported'
-	elif printf '%s' "$sample" | grep -qE 'Canary test FAILED|Canary failed.*aborting dispatch' 2>/dev/null; then
+	elif printf '%s' "$sample" | grep -E 'Canary test FAILED|Canary failed.*aborting dispatch' >/dev/null 2>&1; then
 		printf '%s\n' 'canary-unavailable'
-	elif printf '%s' "$sample" | grep -qE 'WORKER_ISSUE_NUMBER unset|WORKER_WORKTREE_PATH unset|worker env contract missing|worker --dir does not match WORKER_WORKTREE_PATH|worker worktree repo mismatch|WORKER_WORKTREE_PATH does not exist|incomplete worker ownership contract|worker ownership unavailable|worker_ownership_lost|runtime ownership fence stopped|worker_prepare_failed|OpenCode version drift|Failed to restore OpenCode|opencode version mismatch|launch cwd is deleted' 2>/dev/null; then
+	elif printf '%s' "$sample" | grep -E 'WORKER_ISSUE_NUMBER unset|WORKER_WORKTREE_PATH unset|worker env contract missing|worker --dir does not match WORKER_WORKTREE_PATH|worker worktree repo mismatch|WORKER_WORKTREE_PATH does not exist|incomplete worker ownership contract|worker ownership unavailable|worker_ownership_lost|runtime ownership fence stopped|worker_prepare_failed|OpenCode version drift|Failed to restore OpenCode|opencode version mismatch|launch cwd is deleted' >/dev/null 2>&1; then
 		printf '%s\n' 'prelaunch-contract-failure'
 	fi
 

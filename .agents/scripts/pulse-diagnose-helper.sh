@@ -631,7 +631,7 @@ ${trusted_issue_text}"
 		completion_marker=$(_diagnose_route_marker "$combined_evidence" complete "$pr_number" "$pr_head" "$kind")
 	fi
 	if [[ -n "$kind" && -n "$pr_head" ]] && printf '%s' "$trusted_issue_text" \
-		| grep -qF "<!-- feedback-route:dispatch-release:${kind}:PR${pr_number}:SHA${pr_head} -->"; then
+		| grep -F "<!-- feedback-route:dispatch-release:${kind}:PR${pr_number}:SHA${pr_head} -->" >/dev/null; then
 		dispatch_release="$_BOOL_TRUE"
 	fi
 	if [[ -n "$terminal_label" || -n "$start_marker" || -n "$completion_marker" ]]; then

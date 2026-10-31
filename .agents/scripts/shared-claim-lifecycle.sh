@@ -101,7 +101,7 @@ release_interactive_claim_on_merge() {
 			--json body --jq '.body // empty' 2>/dev/null) || _pr_body=""
 		linked_issue=$(printf '%s' "$_pr_body" |
 			grep -ioE '\b(close[ds]?|fix(es|ed)?|resolve[ds]?|ref(s|erences?)?|for)\b[[:space:]]+#[0-9]+' |
-			head -1 | grep -oE '[0-9]+')
+			sed -n '1p' | grep -oE '[0-9]+')
 	fi
 	[[ -z "$linked_issue" ]] && return 0
 	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 0
@@ -717,8 +717,8 @@ _read_worker_log_tail_classified() {
 			_WORKER_LOG_TAIL_FILE="$log_file"
 			# Bounded read: last 20 lines, capped at 4KB. Same bounds as
 			# Phase 3 to keep comments readable + limit credential-leak.
-			_WORKER_LOG_TAIL_CONTENT=$(tail -20 "$log_file" 2>/dev/null \
-				| head -c 4096 || true)
+			_WORKER_LOG_TAIL_CONTENT=$(tail -20 "$log_file" 2>/dev/null || true)
+			_WORKER_LOG_TAIL_CONTENT=$(printf '%.4096s' "$_WORKER_LOG_TAIL_CONTENT")
 			# File age = now - mtime. Approximates worker runtime well
 			# enough for the reclassification threshold check (the log is
 			# created at spawn and written-to throughout execution).
@@ -756,11 +756,9 @@ _read_worker_log_tail_classified() {
 	#   - `tool_use|tool-use|"tool":` — OpenCode tool-call frames in JSON
 	#   - `edit|Edit|Write|Bash` — tool names that imply real implementation
 	#   - `git commit|git push` — strongest evidence of implementation
-	if printf '%s' "$_WORKER_LOG_TAIL_CONTENT" \
-		| grep -qE '\[t2814:early_exit\]|[Cc]anary[^[:cntrl:]]*(failed|failure|error|aborted|aborting|returned[[:space:]]+[1-9][0-9]*|exit(_code)?[=:[:space:]]*[1-9][0-9]*)'; then
+	if grep -qE '\[t2814:early_exit\]|[Cc]anary[^[:cntrl:]]*(failed|failure|error|aborted|aborting|returned[[:space:]]+[1-9][0-9]*|exit(_code)?[=:[:space:]]*[1-9][0-9]*)' <<<"$_WORKER_LOG_TAIL_CONTENT"; then
 		_WORKER_LOG_TAIL_CLASS="canary_post_spawn"
-	elif printf '%s' "$_WORKER_LOG_TAIL_CONTENT" \
-		| grep -qE 'tool_use|tool-use|"tool":|"name":\s*"(Edit|Write|Bash|Read)"|git\s+(commit|push)'; then
+	elif grep -qE 'tool_use|tool-use|"tool":|"name":\s*"(Edit|Write|Bash|Read)"|git\s+(commit|push)' <<<"$_WORKER_LOG_TAIL_CONTENT"; then
 		_WORKER_LOG_TAIL_CLASS="real_coding"
 	else
 		# Log has content but no implementation markers → worker stalled

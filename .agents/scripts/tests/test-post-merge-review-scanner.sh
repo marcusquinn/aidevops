@@ -826,6 +826,35 @@ PULSE_STAGE_DEADLINE_EPOCH=$((check_epoch + 600)) SCANNER_BUDGET_SECONDS=600 \
 	scanner_budget_exhausted "$check_epoch" || rc=$?
 assert_rc "available safe budget continues normally" 1 "$rc"
 
+echo "Test: failed merged-PR listings preserve cursors, even with partial output"
+for list_output in "" "101"; do
+	listing_cursor_dir="${TMP_DIR}/cursor-list-failed-${list_output:-empty}"
+	out=$(
+		SCANNER_CURSOR_DIR="$listing_cursor_dir"
+		write_scan_cursor "stub/repo" "102"
+		gh() {
+			printf '%s' "$list_output"
+			return 1
+		}
+		do_scan "stub/repo" "true" 2>&1
+	)
+	assert_contains "failed listing yields for retry" "reason=merged-pr-list-failed" "$out"
+	assert_not_contains "failed listing does not report completion" "status=complete" "$out"
+	assert_equals "failed listing retains saved next PR" "102" "$(jq -r '.next_pr' "${listing_cursor_dir}/stub_repo.cursor")"
+	assert_equals "failed listing persists repository-local retry reason" "merged-pr-list-failed" "$(jq -r '.reason' "${listing_cursor_dir}/stub_repo.cursor")"
+done
+
+echo "Test: successful empty merged-PR listing clears the cursor"
+listing_cursor_dir="${TMP_DIR}/cursor-list-empty"
+out=$(
+	SCANNER_CURSOR_DIR="$listing_cursor_dir"
+	write_scan_cursor "stub/repo" "102"
+	gh() { return 0; }
+	do_scan "stub/repo" "true" 2>&1
+)
+assert_contains "successful empty listing reports completion" "status=complete" "$out"
+assert_equals "successful empty listing removes saved cursor" "false" "$([[ -f "${listing_cursor_dir}/stub_repo.cursor" ]] && printf true || printf false)"
+
 echo "Test: primary REST-core cooldown yields at the current PR instead of skipping"
 printf '{"expires_at":%s}\n' "$(($(date +%s) + 600))" >"${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core"
 out=$(SCANNER_CURSOR_DIR="${TMP_DIR}/cursor-cooldown" do_scan "stub/repo" "true" 2>&1)

@@ -66,6 +66,15 @@ def capture_administration(root, archive, include_ignored, base=''):
     (archive / 'git-admin.json').write_text(json.dumps(state, sort_keys=True) + '\n', encoding='ascii')
 
 
+def base_import_timeout():
+    """Bounded budget for the local base-object import (default 300s, max 1800s)."""
+    try:
+        value = int(os.environ.get('AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT', '300'))
+    except ValueError:
+        value = 300
+    return max(60, min(value, 1800))
+
+
 @timed("base-import")
 def seed_base(root, manifest):
     """Import only the recorded base graph, never unrelated source objects."""
@@ -75,8 +84,13 @@ def seed_base(root, manifest):
         raise ValueError('git_admin:invalid_base')
     if not common.is_absolute() or not common.is_dir():
         raise ValueError('git_admin:base_repository_unavailable')
-    git(root, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags',
-        '--no-write-fetch-head', str(common), base)
+    try:
+        git(root, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags',
+            '--no-write-fetch-head', str(common), base, timeout=base_import_timeout())
+    except subprocess.TimeoutExpired as error:
+        raise ValueError('producer:base-import-timeout; local base import exceeded its time budget; '
+                         'source and archive retained; retry when host load is lower or raise '
+                         'AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT (seconds, max 1800)') from error
     git(root, 'update-ref', 'refs/archive/base', base)
 
 

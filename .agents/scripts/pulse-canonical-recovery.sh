@@ -169,7 +169,7 @@ _pcr_detect_state() {
 		return 0
 	fi
 	# Unmerged file status codes: UU AA DD AU UA DU UD.
-	if git -C "$repo_path" status --porcelain 2>/dev/null | grep -qE '^(UU|AA|DD|AU|UA|DU|UD)'; then
+	if git -C "$repo_path" status --porcelain 2>/dev/null | grep -E '^(UU|AA|DD|AU|UA|DU|UD)' >/dev/null; then
 		printf 'unmerged'
 		return 0
 	fi

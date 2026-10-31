@@ -218,12 +218,12 @@ scanner_budget_exhausted() {
 }
 
 write_scan_cursor() {
-	local repo="$1" next_pr="$2" cursor_file
+	local repo="$1" next_pr="$2" reason="${3:-}" cursor_file
 	cursor_file=$(scanner_cursor_file "$repo")
 	[[ -n "$cursor_file" ]] || return 0
-	jq -n --arg repo "$repo" --arg next_pr "$next_pr" \
+	jq -n --arg repo "$repo" --arg next_pr "$next_pr" --arg reason "$reason" \
 		--arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		'{repo: $repo, next_pr: $next_pr, updated_at: $ts}' \
+		'{repo: $repo, next_pr: $next_pr, reason: $reason, updated_at: $ts}' \
 		>"$cursor_file" 2>/dev/null || true
 	return 0
 }
@@ -232,7 +232,7 @@ write_scan_cursor() {
 # the repo incomplete for Pulse while resuming from the start of the PR list.
 scanner_yield_at() {
 	local repo="$1" next_pr="$2" issues_created="$3" reason="${4:-}"
-	write_scan_cursor "$repo" "$next_pr"
+	write_scan_cursor "$repo" "$next_pr" "$reason"
 	log_run_event "$repo" "yield" "next_pr=${next_pr:-start} issues_created=${issues_created}${reason:+ reason=${reason}}"
 	return 0
 }
@@ -1194,16 +1194,17 @@ do_scan() {
 	fi
 	pr_numbers=$(gh pr list --state merged --search "merged:>${since_date}" \
 		--repo "$repo" --limit "$SCANNER_PR_LIMIT" --json number --jq '.[].number') || list_rc=$?
-	if [[ "$list_rc" -ne 0 ]] && scanner_gh_cooldown_active core graphql search; then
-		scanner_yield_at "$repo" "$cursor_next_pr" 0 "$SCANNER_COOLDOWN_REASON"
+	if [[ "$list_rc" -ne 0 ]]; then
+		local list_failure_reason="merged-pr-list-failed"
+		if scanner_gh_cooldown_active core graphql search; then
+			list_failure_reason="$SCANNER_COOLDOWN_REASON"
+		fi
+		log "Merged PR listing failed (rc=${list_rc}); yielding to retry"
+		scanner_yield_at "$repo" "$cursor_next_pr" 0 "$list_failure_reason"
 		return 0
 	fi
 	if [[ -z "$pr_numbers" ]]; then
-		if [[ "$list_rc" -ne 0 ]]; then
-			log "Merged PR listing failed (rc=${list_rc})"
-		else
-			log "No merged PRs found"
-		fi
+		log "No merged PRs found"
 		clear_scan_cursor "$repo"
 		log_run_event "$repo" "finish" "status=complete issues_created=0"
 		return 0

@@ -526,7 +526,7 @@ cmd_status() {
 	[[ "$phase_is_historical" == true ]] && phase_label="Recorded phase"
 	printf "\n${BOLD}Full Loop Status${NC}\n%s: ${CYAN}%s${NC} | Started: %s | PR: %s | Headless: %s\nPrompt: %s\n\n" \
 		"$phase_label" \
-		"$CURRENT_PHASE" "$STARTED_AT" "${PR_NUMBER:-none}" "$HEADLESS" "$(echo "$SAVED_PROMPT" | head -3)"
+		"$CURRENT_PHASE" "$STARTED_AT" "${PR_NUMBER:-none}" "$HEADLESS" "$(printf '%s\n' "$SAVED_PROMPT" | sed -n '1,3p')"
 	printf 'Executor: %s (%s) | Resource cleanup: %s | Phase status: %s | Attempts: %s | Next: %s\n' \
 		"$observed_status" "$executor_completion_state" "$resource_cleanup_state" "$PHASE_STATUS" "$PHASE_ATTEMPT" "$status_next_action"
 	return 0
@@ -1424,7 +1424,7 @@ cmd_complete_after_cleanup() {
 		print_error "Cannot resolve repository for completion evidence"
 		return 1
 	}
-	if [[ -e "$removed_worktree" ]] || git worktree list --porcelain 2>/dev/null | grep -Fq "worktree ${removed_worktree}"; then
+	if [[ -e "$removed_worktree" ]] || git worktree list --porcelain 2>/dev/null | grep -F "worktree ${removed_worktree}" >/dev/null; then
 		print_error "LIFECYCLE_STATE=CLEANUP_PENDING worktree=${removed_worktree}"
 		return 1
 	fi

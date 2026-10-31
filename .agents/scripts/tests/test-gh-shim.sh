@@ -32,6 +32,7 @@ unset AIDEVOPS_GH_QUOTA_COST
 unset AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
 unset AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE
 unset GH_HOST
+unset AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
@@ -64,6 +65,13 @@ _fail() {
 
 TMP=$(mktemp -d 2>/dev/null || mktemp -d -t gh-shim-test)
 trap 'rm -rf "$TMP"' EXIT
+
+# Hermetic HOME (GH#36255): the shim falls back to
+# ~/.aidevops/agents/scripts/<lib> for any library missing beside it and reads
+# governor/cache state under HOME, so a deployed install changed this suite's
+# result. Only the tree under test may be sourced.
+export HOME="$TMP/home"
+mkdir -p "$HOME"
 
 # Stub real gh — writes its argv (one per line) to $STUB_GH_LOG and
 # exits 0. The shim will exec this when forwarding.
@@ -103,6 +111,14 @@ if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/labels\?per_page=100$ ]]; the
 	if [[ -z "${STUB_MANAGED_LABELS+x}" ]]; then
 		managed_labels=$'origin:worker\norigin:interactive\norigin:worker-takeover\nstatus:in-review\nbug'
 	fi
+	# The explicit REST paginator requests --include and parses the header
+	# block; no Link header means a single page.
+	for arg in "$@"; do
+		if [[ "$arg" == "--include" || "$arg" == "-i" ]]; then
+			printf 'HTTP/2.0 200 OK\r\nX-Ratelimit-Resource: core\r\n\r\n'
+			break
+		fi
+	done
 	printf '%s\n' "$managed_labels"
 	exit 0
 fi
@@ -310,6 +326,7 @@ cp "$REPO_DIR/.agents/scripts/managed-label-provisioning-lib.sh" "$TMP/scripts/m
 cp "$REPO_DIR/.agents/scripts/gh-write-policy-lib.sh" "$TMP/scripts/gh-write-policy-lib.sh"
 cp "$REPO_DIR/.agents/scripts/gh-api-instrument.sh" "$TMP/scripts/gh-api-instrument.sh"
 cp "$REPO_DIR/.agents/scripts/gh-quota-attribution-lib.sh" "$TMP/scripts/gh-quota-attribution-lib.sh"
+cp "$REPO_DIR/.agents/scripts/gh-rest-pagination-lib.sh" "$TMP/scripts/gh-rest-pagination-lib.sh"
 cp "$REPO_DIR/.agents/scripts/gh-quota-debug-filter.py" "$TMP/scripts/gh-quota-debug-filter.py"
 cp "$REPO_DIR/.agents/scripts/gh_quota_debug_response.py" "$TMP/scripts/gh_quota_debug_response.py"
 cp "$REPO_DIR/.agents/scripts/gh_quota_debug_cache.py" "$TMP/scripts/gh_quota_debug_cache.py"

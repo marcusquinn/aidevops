@@ -793,7 +793,7 @@ _dispatch_class_active_count() {
 		marker_epoch=""
 		read -r marker_class marker_epoch <"$marker" 2>/dev/null || true
 		[[ "$marker_epoch" =~ ^[0-9]+$ ]] || marker_epoch=0
-		if printf '%s\n' "$live_issues" | grep -qx "$issue"; then
+		if printf '%s\n' "$live_issues" | grep -x "$issue" >/dev/null; then
 			[[ "$marker_class" == "$class" ]] && count=$((count + 1))
 		elif ((now - marker_epoch < grace)); then
 			[[ "$marker_class" == "$class" ]] && count=$((count + 1))
@@ -885,7 +885,7 @@ _dispatch_check_class_cap() {
 	fi
 
 	local marker="${state_dir}/${issue_number}"
-	if [[ -f "$marker" ]] && _dispatch_class_live_issues "$repo_path" "$worker_procs" | grep -qx "$issue_number"; then
+	if [[ -f "$marker" ]] && _dispatch_class_live_issues "$repo_path" "$worker_procs" | grep -x "$issue_number" >/dev/null; then
 		# A live worker already owns this issue; keep its marker untouched so
 		# a dedup-blocked re-evaluation cannot release the live reservation.
 		:

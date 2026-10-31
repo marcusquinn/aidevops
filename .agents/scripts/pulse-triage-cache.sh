@@ -305,7 +305,7 @@ _gh_idempotent_comment() {
 	fi
 
 	# Check if marker already exists in any comment
-	if printf '%s' "$existing_comments" | grep -qF "$marker"; then
+	if printf '%s' "$existing_comments" | grep -F "$marker" >/dev/null; then
 		echo "[pulse-wrapper] _gh_idempotent_comment: marker already present on #${entity_number} in ${repo_slug} — skipping duplicate" >>"$LOGFILE"
 		return 0
 	fi

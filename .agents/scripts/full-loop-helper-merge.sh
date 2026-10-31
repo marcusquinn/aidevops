@@ -291,14 +291,14 @@ ${_sig_footer}"
 _merge_output_is_graphql_rate_limit() {
 	local merge_output="$1"
 
-	printf '%s' "$merge_output" | grep -qiE 'GraphQL:.*API rate limit|GraphQL.*rate limit|rateLimitExceeded'
+	grep -qiE 'GraphQL:.*API rate limit|GraphQL.*rate limit|rateLimitExceeded' <<<"$merge_output"
 	return $?
 }
 
 _merge_output_is_transient_server_error() {
 	local merge_output="$1"
 
-	if printf '%s' "$merge_output" | grep -qiE '(^|[^[:alnum:]_])(HTTP(/[0-9.]+)?[[:space:]]+|status code:[[:space:]]*)(502|503|504)([^0-9]|$)|Something went wrong while executing your query'; then
+	if grep -qiE '(^|[^[:alnum:]_])(HTTP(/[0-9.]+)?[[:space:]]+|status code:[[:space:]]*)(502|503|504)([^0-9]|$)|Something went wrong while executing your query' <<<"$merge_output"; then
 		return 0
 	fi
 	return 1
@@ -307,7 +307,7 @@ _merge_output_is_transient_server_error() {
 _merge_output_is_review_policy_block() {
 	local merge_output="$1"
 
-	printf '%s' "$merge_output" | grep -qiE 'At least [0-9]+ approving review|approving review is required|review required|cannot approve your own pull request|can not approve your own pull request|self-approval'
+	grep -qiE 'At least [0-9]+ approving review|approving review is required|review required|cannot approve your own pull request|can not approve your own pull request|self-approval' <<<"$merge_output"
 	return $?
 }
 
@@ -1408,11 +1408,11 @@ ${_merge_retry_out}"
 			return 1
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
-			printf '%s' "$_merge_out" | grep -qE 'At least [0-9]+ approving review'; then
+			grep -qE 'At least [0-9]+ approving review' <<<"$_merge_out"; then
 			_merge_try_review_only_admin_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" "$_merge_out" || return $?
 			return 0
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
-			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected'; then
+			grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected' <<<"$_merge_out"; then
 			_merge_try_review_only_admin_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" "$_merge_out" || return $?
 			return 0
 		else
@@ -1458,7 +1458,7 @@ _merge_unlock_resources() {
 	_linked_issue=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body \
 		--jq '.body' |
 		grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
-		grep -oE '[0-9]+' | head -1) || _linked_issue=""
+		grep -oE '[0-9]+' | sed -n '1p') || _linked_issue=""
 	[[ -n "$_linked_issue" && "$_linked_issue" =~ ^[0-9]+$ ]] || return 0
 
 	local labels=""
@@ -1617,7 +1617,7 @@ _merge_finalize_post_merge() {
 	linked_issue=$(gh pr view "$pr_number" --repo "$repo" --json body \
 		--jq '.body' 2>/dev/null |
 		grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
-		grep -oE '[0-9]+' | head -1) || linked_issue=""
+		grep -oE '[0-9]+' | sed -n '1p') || linked_issue=""
 	if [[ -n "$linked_issue" ]]; then
 		release_interactive_claim_on_merge "$pr_number" "$repo" "$linked_issue" || true
 	fi
