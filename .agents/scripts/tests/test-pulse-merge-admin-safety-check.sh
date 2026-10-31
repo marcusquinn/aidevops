@@ -842,6 +842,36 @@ test_partial_worker_extraction_failure_is_logged() {
 	return 0
 }
 
+test_review_repair_admission() {
+	local scenario="" labels="" state="" draft="" head="" result=0
+	for scenario in rejected hold nmr closed draft head-drift external linked-nmr invalid-mode; do
+		labels='[]' state=OPEN draft=false head=head-current result=0
+		case "$scenario" in
+		hold) labels='[{"name":"hold-for-review"}]' ;;
+		nmr) labels='[{"name":"needs-maintainer-review"}]' ;;
+		closed) state=CLOSED ;;
+		draft) draft=true ;;
+		head-drift) head=changed-head ;;
+		external) labels='[{"name":"external-contributor"}]' ;;
+		esac
+		set_fixture "$labels" false 'Resolves #960' NOT_VERIFIED NO_APPROVAL trusted-contributor "$state" "$draft" '"CHANGES_REQUESTED"' "$head"
+		if [[ "$scenario" == linked-nmr ]]; then
+			printf '%s' needs-maintainer-review >"${TEST_ROOT}/linked-labels.txt"
+		fi
+		local mode=review-repair
+		[[ "$scenario" != invalid-mode ]] || mode=unknown
+		_pulse_merge_admin_safety_check 960 owner/repo head-current "$mode" || result=$?
+		if [[ "$scenario" == rejected && "$result" -eq 0 ]]; then
+			print_result "review-repair permits rejected head for update only" 0
+		elif [[ "$scenario" != rejected && "$result" -eq 1 ]]; then
+			print_result "review-repair preserves ${scenario} refusal" 0
+		else
+			print_result "review-repair admission: ${scenario}" 1 "rc=${result}"
+		fi
+	done
+	return 0
+}
+
 test_live_merge_state_matrix() {
 	local scenario="" labels="" state="" draft="" review="" head="" result=0
 	for scenario in hold late-hold changes-requested head-drift failed malformed closed merged draft invalid-draft invalid-review invalid-state malformed-label cleared-hold no-review; do
@@ -935,6 +965,7 @@ main() {
 	test_partial_worker_final_nmr_gate
 	test_partial_worker_external_approval
 	test_partial_worker_extraction_failure_is_logged
+	test_review_repair_admission
 	test_live_merge_state_matrix
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

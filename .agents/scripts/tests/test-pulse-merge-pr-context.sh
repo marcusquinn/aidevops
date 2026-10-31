@@ -140,7 +140,7 @@ install_stubs() {
 	_pulse_merge_queue_finish() { local result="$1"; printf 'retry-finish %s\n' "$result" >>"$GH_CALL_LOG"; return 0; }
 	_check_required_checks_has_terminal_failure() { local repo_slug="$1"; local pr_number="$2"; local expected_head_sha="${3:-}"; printf 'terminal-check %s %s %s\n' "$repo_slug" "$pr_number" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$TERMINAL_CHECK_RC"; }
 	_check_required_checks_have_pending_or_in_progress() { local repo_slug="$1"; local pr_number="$2"; local expected_head_sha="${3:-}"; printf 'pending-check %s %s %s\n' "$repo_slug" "$pr_number" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$PENDING_CHECK_RC"; }
-	_pulse_merge_admin_safety_check() { local pr_number="$1"; local repo_slug="$2"; local expected_head_sha="${3:-}"; printf 'admin-safety %s %s %s\n' "$pr_number" "$repo_slug" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$ADMIN_SAFETY_RC"; }
+	_pulse_merge_admin_safety_check() { local pr_number="$1"; local repo_slug="$2"; local expected_head_sha="${3:-}"; local mode="${4:-merge}"; printf 'admin-safety %s %s %s %s\n' "$pr_number" "$repo_slug" "$expected_head_sha" "$mode" >>"$GH_CALL_LOG"; return "$ADMIN_SAFETY_RC"; }
 	_pmp_update_branch_rest() { local pr_number="$1"; local repo_slug="$2"; local head_oid="$3"; printf 'update-branch %s %s %s\n' "$pr_number" "$repo_slug" "$head_oid" >>"$GH_CALL_LOG"; return "$UPDATE_BRANCH_RC"; }
 	_feedback_route_guard_existing_terminal_label() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; local kind="$4"; printf 'route-guard %s %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" "$kind" >>"$GH_CALL_LOG"; return "$ROUTE_GUARD_RC"; }
 	set_origin_label() { local pr_number="$1"; local repo_slug="$2"; local origin_name="$3"; local mode="${4:-}"; printf 'set-origin %s %s %s %s\n' "$pr_number" "$repo_slug" "$origin_name" "$mode" >>"$GH_CALL_LOG"; return "$SET_ORIGIN_RC"; }
@@ -242,7 +242,7 @@ test_review_repair_rebase_updates_when_strictly_eligible() {
 	if [[ "$rc" -ne 0 ]] || ! grep -q '^update-branch 123 owner/repo deadbeef$' "$GH_CALL_LOG" \
 		|| ! grep -qF 'terminal-check owner/repo 123 deadbeef' "$GH_CALL_LOG" \
 		|| ! grep -qF 'pending-check owner/repo 123 deadbeef' "$GH_CALL_LOG" \
-		|| ! grep -qF 'admin-safety 123 owner/repo deadbeef' "$GH_CALL_LOG"; then
+		|| ! grep -q '^admin-safety 123 owner/repo deadbeef review-repair$' "$GH_CALL_LOG"; then
 		fail "review-repair rebase updates when strictly eligible" "rc=${rc}; calls=$(tr '\n' ';' <"$GH_CALL_LOG")"
 		return 0
 	fi
@@ -710,21 +710,45 @@ test_final_gate_blocks_merge_transports() {
 test_selection_holds_for_all_origins() {
 	local origin="" scenario="" rc=0
 	for origin in origin:worker origin:worker-takeover origin:interactive origin:other unlabeled; do
-		for scenario in hold draft cleared malformed; do
+		for scenario in hold draft cleared malformed hold-auto draft-auto disable-failure hold-failure dry-run; do
 			rc=0
 			(
 				local fn_src="" result=0
+				: >"$GH_CALL_LOG"
+				: >"$LOGFILE"
 				fn_src=$(awk '/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge.sh")
 				eval "$fn_src"
+				fn_src=$(awk '/^_stop_external_native_auto_merge\(\) \{/,/^}$/ { print }' "$PROCESS_SCRIPT")
+				eval "$fn_src"
+				DRY_RUN=0
+				[[ "$scenario" != dry-run ]] || DRY_RUN=1
+				gh() {
+					local args="$*"
+					printf 'gh %s\n' "$args" >>"$GH_CALL_LOG"
+					[[ "$scenario" != hold-failure ]] || return 1
+					[[ "$scenario" != disable-failure || "$args" != *--disable-auto* ]] || return 1
+					return 0
+				}
 				gh_pr_view() {
 					[[ "$scenario" != malformed ]] || { printf '{}'; return 0; }
-					jq -cn --arg origin "$origin" --arg scenario "$scenario" '{isDraft:($scenario == "draft"),labels:([{name:$origin}] + (if $scenario == "hold" then [{name:"hold-for-review"}] else [] end))}'
+					[[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-}" == 1 ]] || return 1
+					jq -cn --arg origin "$origin" --arg scenario "$scenario" '{isDraft:($scenario | startswith("draft")),labels:([{name:$origin}] + (if ($scenario != "cleared" and ($scenario | startswith("draft") | not)) then [{name:"hold-for-review"}] else [] end)),autoMergeRequest:(if (["hold-auto","draft-auto","disable-failure","hold-failure","dry-run"] | index($scenario)) != null then {enabledAt:"2026-01-01T00:00:00Z"} else null end)}'
 					return 0
 				}
 				_check_interactive_pr_gates() { return 0; }
 				_attempt_worker_briefed_auto_merge() { return 0; }
 				_pm_gate_origin_authority 123 owner/repo 456 maintainer 0 write || result=$?
-				if [[ "$scenario" == cleared ]]; then [[ "$result" -eq 0 ]]; else [[ "$result" -eq 1 ]]; fi
+				if [[ "$scenario" == cleared ]]; then [[ "$result" -eq 0 ]] || exit 1; else [[ "$result" -eq 1 ]] || exit 1; fi
+				case "$scenario" in
+				hold-auto | draft-auto | disable-failure | hold-failure)
+					grep -q -- '--disable-auto' "$GH_CALL_LOG" || exit 1 ;;
+				*) [[ ! -s "$GH_CALL_LOG" ]] || exit 1 ;;
+				esac
+				case "$scenario" in
+				disable-failure | hold-failure) grep -q -- '--undo' "$GH_CALL_LOG" || exit 1 ;;
+				*) ! grep -q -- '--undo' "$GH_CALL_LOG" || exit 1 ;;
+				esac
+				[[ "$scenario" != hold-failure ]] || grep -q 'SECURITY HOLD FAILED' "$LOGFILE" || exit 1
 			) || rc=$?
 			if [[ "$rc" -eq 0 ]]; then pass "selection ${origin}: ${scenario}"; else fail "selection ${origin}: ${scenario}"; fi
 		done

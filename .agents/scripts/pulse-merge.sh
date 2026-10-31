@@ -597,7 +597,7 @@ _pm_gate_repository_and_issue() {
 _pm_gate_origin_authority() {
 	local pr_number="$1" repo_slug="$2" linked_issue="$3" pr_author="$4"
 	local trusted_issue_sync="$5" author_permission="$6" info_json="" labels_str="" is_draft="false"
-	info_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft 2>/dev/null) || info_json=""
+	info_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft,autoMergeRequest 2>/dev/null) || info_json=""
 	# #aidevops:trust-boundary — holds apply to every origin, including takeover.
 	if ! printf '%s' "$info_json" | jq -e '(.isDraft | type) == "boolean" and (.labels | type) == "array"' >/dev/null 2>&1; then
 		return 1
@@ -606,6 +606,16 @@ _pm_gate_origin_authority() {
 	is_draft=$(printf '%s' "$info_json" | jq -r '.isDraft // false' 2>/dev/null) || is_draft="false"
 	if [[ "$is_draft" == "true" || ",${labels_str}," == *",hold-for-review,"* ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — PR is draft or has hold-for-review" >>"$LOGFILE"
+		# #aidevops:trust-boundary — selection must revoke an already armed merge.
+		# Do not invoke the draft fallback for PRs without a native request.
+		if [[ "${DRY_RUN:-0}" != "1" ]] && printf '%s' "$info_json" | jq -e '.autoMergeRequest | type == "object"' >/dev/null; then
+			local stop_rc=0
+			_stop_external_native_auto_merge "$pr_number" "$repo_slug" \
+				"PR is draft or has hold-for-review" || stop_rc=$?
+			if [[ "$stop_rc" -ne 0 && "$stop_rc" -ne 2 ]]; then
+				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — native auto-merge hold failed; manual intervention required" >>"$LOGFILE"
+			fi
+		fi
 		return 1
 	fi
 	if [[ "$labels_str" == *"origin:interactive"* ]]; then

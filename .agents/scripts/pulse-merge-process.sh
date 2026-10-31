@@ -629,7 +629,7 @@ _attempt_pr_ci_rebase_retry() {
 		# keeps PR-level needs-maintainer-review authoritative even though the
 		# repair-only gate intentionally stops before merge-only final checks.
 		if ! declare -F _pulse_merge_admin_safety_check >/dev/null 2>&1 \
-			|| ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$_head_oid"; then
+			|| ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$_head_oid" "$_review_repair_policy"; then
 			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: live PR authority failed before strict review-repair rebase; preserving CHANGES_REQUESTED" >>"$LOGFILE"
 			return 1
 		fi

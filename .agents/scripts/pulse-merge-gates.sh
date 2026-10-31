@@ -496,8 +496,11 @@ _has_maintainer_crypto_approval() {
 #######################################
 _pulse_merge_live_state_gate() {
 	local pr_number="$1" repo_slug="$2" pr_meta_json="$3" labels_str="$4"
+	local admission_mode="${5:-merge}"
+	[[ "$admission_mode" == merge || "$admission_mode" == review-repair ]] || return 1
 	# #aidevops:trust-boundary — lifecycle, review and holds share one fresh read.
-	if ! printf '%s' "$pr_meta_json" | jq -e '.state == "OPEN" and .isDraft == false and .reviewDecision != "CHANGES_REQUESTED"' >/dev/null; then
+	# Repair may update a rejected head, but never authorizes its merge.
+	if ! printf '%s' "$pr_meta_json" | jq -e --arg mode "$admission_mode" '.state == "OPEN" and .isDraft == false and ($mode == "review-repair" or .reviewDecision != "CHANGES_REQUESTED")' >/dev/null; then
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR is not open, is draft or has CHANGES_REQUESTED" >>"$LOGFILE"
 		return 1
 	fi
@@ -515,6 +518,7 @@ _pulse_merge_admin_safety_check() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local expected_head_sha="${3:-}"
+	local admission_mode="${4:-merge}"
 
 	# t2863: initialise multi-var locals at declaration time so set -u
 	# is safe even on a partial-failure path through the assignments.
@@ -548,7 +552,7 @@ _pulse_merge_admin_safety_check() {
 		return 1
 	fi
 
-	_pulse_merge_live_state_gate "$pr_number" "$repo_slug" "$pr_meta_json" "$labels_str" || return 1
+	_pulse_merge_live_state_gate "$pr_number" "$repo_slug" "$pr_meta_json" "$labels_str" "$admission_mode" || return 1
 
 	local treat_as_external=0 trusted_issue_sync=0 authority_rc=0
 	#aidevops:trust-boundary -- classify live collaborator, external, or exact
