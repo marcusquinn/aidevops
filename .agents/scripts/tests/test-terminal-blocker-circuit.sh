@@ -1041,6 +1041,32 @@ test_cross_runner_rearm_receipt() {
 	return 0
 }
 
+_legacy_recovery_check_gates() {
+	local issue="$1" comments="$2" rc=0
+	# Exercise the real backoff error code independently of evidence selection.
+	(
+		jq() {
+			[[ "$*" != *'--argjson associations'* ]] || return 1
+			command jq "$@"
+			return $?
+		}
+		terminal_blocker_backoff_active "$comments" || rc=$?
+		[[ "$rc" -eq 2 ]] || exit 1
+		rc=0
+		_tbr_release_legacy_hold owner/repo 42 "$issue" "$comments" "$(command jq -c '.[0]' <<<"$comments")" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
+	) || return 1
+	(
+		terminal_blocker_search_issues() {
+			local query="$1"
+			[[ "$query" != *'"CLAIM_RELEASED reason=blocked"'* ]] || printf '42\n'
+			return 0
+		}
+		[[ "$(_tbr_seed_candidates owner/repo | tr -d '[:space:]')" == 42 ]] || exit 1
+	) || return 1
+	return 0
+}
+
 test_legacy_hold_requires_bound_retry() {
 	local status=0
 	if ! (
@@ -1133,27 +1159,7 @@ test_legacy_hold_requires_bound_retry() {
 		done
 		# The real backoff predicate must distinguish jq failure from expiry;
 		# recovery must fail closed even though the trusted retry is otherwise valid.
-		(
-			jq() {
-				[[ "$*" != *'--argjson associations'* ]] || return 1
-				command jq "$@"
-				return $?
-			}
-			rc=0
-			terminal_blocker_backoff_active "$comments" || rc=$?
-			[[ "$rc" -eq 2 ]] || exit 1
-			rc=0
-			_tbr_release_legacy_hold owner/repo 42 "$issue" "$comments" "$(command jq -c '.[0]' <<<"$comments")" || rc=$?
-			[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
-		) || exit 1
-		(
-			terminal_blocker_search_issues() {
-				local query="$1"
-				[[ "$query" != *'"CLAIM_RELEASED reason=blocked"'* ]] || printf '42\n'
-				return 0
-			}
-			[[ "$(_tbr_seed_candidates owner/repo | tr -d '[:space:]')" == 42 ]] || exit 1
-		) || exit 1
+		_legacy_recovery_check_gates "$issue" "$comments" || exit 1
 		exit 0
 	); then
 		status=1
