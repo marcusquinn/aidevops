@@ -35,13 +35,15 @@ from worktree_archive_canonical_cases import CanonicalCases
 from worktree_archive_administration_cases import AdministrationCases
 from worktree_recovery_report_cases import RecoveryReportCases
 from worktree_archive_metadata_cases import MetadataCases
+from worktree_archive_unregistered_cases import UnregisteredCases
 
 
 class LegacyRecoveryReport(RecoveryReportCases, unittest.TestCase):
     pass
 
 
-class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, ProducerCases, MetadataCases, unittest.TestCase):
+class ArchiveLifecycle(UnregisteredCases, AdministrationCases, CanonicalCases, MergeCases,
+                       ProducerCases, MetadataCases, unittest.TestCase):
     def setUp(self):
         self.addCleanup(os.umask, os.umask(0o022))
         self.temp = tempfile.TemporaryDirectory(prefix="archive-lifecycle-")

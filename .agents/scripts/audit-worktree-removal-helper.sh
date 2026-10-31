@@ -1363,7 +1363,8 @@ _worktree_recovery_resolve_producer_root() {
 	local caller="$3"
 	local resolved=""
 	_worktree_recovery_store_preflight "$wt_path" "$root" "$caller" || return 1
-	_worktree_capture_git_identity "$wt_path" || return 1
+	# Status 2 preserves this refusal category across command substitution.
+	_worktree_capture_git_identity "$wt_path" || return 2
 	resolved=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$root") || return 1
 	case "$resolved" in
 	"$_WT_ID_SOURCE_REAL" | "$_WT_ID_SOURCE_REAL"/* | "$_WT_ID_COMMON_REAL" | "$_WT_ID_COMMON_REAL"/*)
@@ -1407,7 +1408,10 @@ _archive_worktree_path_recoverably_under_lock() {
 	local git_state=""
 
 	WORKTREE_RECOVERABLE_ARCHIVE_PATH=""
-	_worktree_capture_git_identity "$wt_path" || return 1
+	if ! _worktree_capture_git_identity "$wt_path"; then
+		_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
+		return 1
+	fi
 	wt_path_real="$_WT_ID_SOURCE_REAL"
 	git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||
 		git_state="$_WT_GIT_STATE_UNREADABLE"
@@ -1420,6 +1424,7 @@ _archive_worktree_path_recoverably_under_lock() {
 	if ! archive_path=$(_worktree_recovery_producer_command 0 capture \
 		"$wt_path_real" "$recovery_root_real" "$caller" "$context" 2>"${capture_err:-/dev/null}"); then
 		_worktree_report_capture_failure "$capture_err" "$recovery_root_real"
+		WORKTREE_REMOVAL_GUARD_REASON="compact-recovery-capture-failed"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
 			"compact-recovery-capture-failed" "$_WTAR_MODE_SKIPPED" \
 			"source_preserved=true operator_review=required"
@@ -1484,12 +1489,21 @@ archive_worktree_path_recoverably() {
 	local context="${3:-}"
 	local recovery_root=""
 	local recovery_root_real=""
+	local resolver_status=0
 	local archive_status=0
 	local hold_seconds="${AIDEVOPS_WORKTREE_RECOVERY_TEST_HOLD_LOCK_SECONDS:-0}"
 
 	WORKTREE_RECOVERABLE_ARCHIVE_PATH=""
 	recovery_root=$(_worktree_recovery_producer_root) || return 1
-	recovery_root_real=$(_worktree_recovery_resolve_producer_root "$wt_path" "$recovery_root" "$caller") || return 1
+	if recovery_root_real=$(_worktree_recovery_resolve_producer_root "$wt_path" "$recovery_root" "$caller"); then
+		:
+	else
+		resolver_status=$?
+		if [[ "$resolver_status" -eq 2 ]]; then
+			_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
+		fi
+		return 1
+	fi
 	mkdir -p "$recovery_root_real" 2>/dev/null || return 1
 	_worktree_recovery_acquire_producer_lock "$recovery_root_real" || return 1
 	case "$hold_seconds" in

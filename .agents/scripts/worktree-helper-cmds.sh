@@ -141,6 +141,14 @@ _remove_show_guard_error() {
 		printf '%s\n' "Reason: git-metadata-unreadable — the guard could not prove the exact worktree registration is readable and unlocked." >&2
 		printf '%s\n' "Recovery: repair Git metadata access and verify the exact worktree block is unlocked before retrying. --force cannot bypass this protection." >&2
 		;;
+	git-worktree-identity-changed)
+		printf '%s\n' "Reason: git-worktree-identity-changed — the worktree path, Git administration or HEAD changed or became unreadable during the archive/removal step." >&2
+		printf '%s\n' "Recovery: the source was preserved; verify 'git worktree list --porcelain' still lists the exact path, then retry. --force cannot bypass this protection." >&2
+		;;
+	compact-recovery-capture-failed)
+		printf '%s\n' "Reason: compact-recovery-capture-failed — the recoverable archive could not be captured or verified; the source was preserved." >&2
+		printf '%s\n' "Recovery: read the capture diagnostic above or ${AIDEVOPS_CLEANUP_LOG:-${HOME}/.aidevops/logs/cleanup_worktrees.log}, resolve it, then retry. --force cannot bypass this protection." >&2
+		;;
 	cwd-visibility-degraded)
 		printf '%s\n' "Reason: cwd-visibility-degraded — targeted recovery could not prove a clean, unowned worktree merged (exact-head merged PR, or local default-branch ancestry for local_only repos)." >&2
 		printf '%s\n' "Recovery: resolve dirty, claim, ownership, open-PR, or merge-proof state and retry. --force cannot bypass live-CWD protection." >&2
@@ -150,6 +158,17 @@ _remove_show_guard_error() {
 		printf '%s\n' "Recovery: inspect the cleanup audit log, resolve the safety condition, then retry." >&2
 		;;
 	esac
+	return 0
+}
+
+# Preserve a specific post-archive refusal, falling back to the generic notice.
+_remove_show_archive_failure() {
+	local path_to_remove="$1"
+	if [[ -n "${WORKTREE_REMOVAL_GUARD_REASON:-}" ]]; then
+		_remove_show_guard_error "$path_to_remove" "$WORKTREE_REMOVAL_GUARD_REASON"
+	else
+		printf '%b\n' "${YELLOW}Cleanup stopped: the source remains protected and its recoverable archive was retained.${NC}"
+	fi
 	return 0
 }
 
@@ -508,7 +527,7 @@ _remove_cleanup_and_execute() {
 		"${SCRIPT_NAME:-worktree-helper.sh}" "$_WT_REMOVE_MODE_MANUAL" \
 		"$audit_context" "$allow_degraded" "$force_remove"; then
 		[[ "$cleanup_lease_acquired" != "$_WT_BOOL_TRUE" ]] || _clean_release_removal_lease "$path_to_remove" || true
-		printf '%b\n' "${YELLOW}Cleanup stopped: the source remains protected and its recoverable archive was retained.${NC}"
+		_remove_show_archive_failure "$path_to_remove"
 		return 1
 	fi
 	if ! prune_missing_worktree_metadata "$repo_context" "$path_to_remove"; then
