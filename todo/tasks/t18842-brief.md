@@ -63,7 +63,7 @@ caller treats it as "not routable".
   failing required CI, `_route_pr_to_fix_worker ... ci` reaches
   `_dispatch_pr_repair_by_kind` with issue `N`.
 - A PR with neither a closing nor an explicit `For`/`Ref` target logs
-  "has no linked issue for <kind> repair routing" instead of returning
+  `has no linked issue for <kind> repair routing` instead of returning
   silently.
 - Conflict routing still uses repair-mode resolution.
 - After deployment, PR #36213 (or the next non-closing worker PR with failing
