@@ -1522,10 +1522,10 @@ def apply_transfer():
                 raise
         finally:
             Path(staging).unlink(missing_ok=True)
-        audit_record("operation.complete", "Canonical repository transfer followed", new["id"])
+        audit_record("config.change", "Canonical repository transfer followed", new["id"])
         run(audit, "verify", "--quiet", env=audit_env)
         print(f"FOLLOWED: {old_slug} -> {new['full_name']} (repository ID {new['id']})")
-        print("NEXT: aidevops repos migrate-layout plan --include-registered-paths --source " + shlex.quote(repo))
+        print("NEXT: aidevops repos migrate-layout plan --workspace ~/Git --output plan.json --include-registered-paths --source " + shlex.quote(repo))
 
 try:
     apply_transfer()

@@ -115,7 +115,8 @@ clean canonical checkout through the audited recovery helper, not a direct
 ```bash
 canonical-recovery-helper.sh follow-transfer --repo /path/to/checkout \
   --slug NEW_OWNER/NEW_NAME --confirm FOLLOW_REPOSITORY_TRANSFER
-aidevops repos migrate-layout plan --include-registered-paths --source /path/to/checkout
+aidevops repos migrate-layout plan --workspace ~/Git --output plan.json \
+  --include-registered-paths --source /path/to/checkout
 ```
 
 The helper verifies that the old and new GitHub slugs resolve to the same
