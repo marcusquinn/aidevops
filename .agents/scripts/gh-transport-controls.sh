@@ -118,10 +118,11 @@ print(f"{delay:.6f}" if 0 <= delay <= 5 else "-1")
 
 _gh_transport_emit_local_deferral() {
 	local metadata="$1"
-	jq -r 'select(.attempted == false and .deferred_by == "local_admission") |
+	jq -er 'select(.attempted == false and .deferred_by == "local_admission") |
 		"[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=\(if (.retry_at | type) == "number" then .retry_at else "unknown" end) reason=\((.reason // "unknown") | tojson)"' \
-		"$metadata" >&2
-	return $?
+		"$metadata" >&2 || return $?
+	_GH_IDENTITY_FALLBACK_ALLOWED=1
+	return 0
 }
 
 # _GHGT_HANDLED distinguishes unsupported-before-execution from native exit125.
@@ -188,9 +189,6 @@ _gh_transport_run_rest() {
 		return 125
 	fi
 	_GHGT_HANDLED=1
-	if [[ "$rc" -eq 75 && "$attempted" == false && "$deferred_by" == local_admission ]]; then
-		_GH_IDENTITY_FALLBACK_ALLOWED=1
-	fi
 	if [[ "$attempted" == true ]]; then
 		_shim_timing rest_metadata_parse
 		pool=$(_ghqa_pool_for_resource "$resource")
@@ -269,6 +267,7 @@ _gh_transport_identity_read() {
 	_GH_IDENTITY_FALLBACK_ALLOWED=0
 	_shim_run_transport "$executable" rest "$caller" 0 "$@" >"$capture/out" 2>"$capture/err" || rc=$?
 	if [[ "$rc" -eq 75 && "$_GH_IDENTITY_FALLBACK_ALLOWED" -eq 1 ]] &&
+		[[ "$#" -eq 2 || -n "${4:-}" ]] &&
 		_gh_transport_identity_viewer "$executable" "$caller" "${4:-}" >"$capture/viewer" 2>/dev/null; then
 		command cat "$capture/viewer"
 		rc=0

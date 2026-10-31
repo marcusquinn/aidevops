@@ -286,7 +286,7 @@ for _identity_mode in admission cooldown; do
 	else
 		_fail "identity $_identity_mode lost synthesized fields"
 	fi
-	for _identity_selector in .email '.login, .email' '.["email"]'; do
+	for _identity_selector in .email '.login, .email' '.["email"]' ''; do
 		_reset_log
 		_governor_rc=0
 		"$SHIM_RUN" api user --jq "$_identity_selector" >"${TMP}/governor/identity-out" 2>"${TMP}/governor/identity-error" || _governor_rc=$?
