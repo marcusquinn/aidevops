@@ -577,6 +577,11 @@ if [[ "${1:-}" == api && "${2:-}" != graphql && "${2:-}" != graphql/* && "${2:-}
 		_transport_caller=$(_shim_transport_caller_label "${1:-}" "${2:-}")
 		gh_record_call rest "$_transport_caller" 2>/dev/null || true
 		_shim_timing logical_log
+		if [[ "${2:-}" == user || "${2:-}" == /user ]] &&
+			declare -F _gh_transport_identity_read >/dev/null 2>&1; then
+			_gh_transport_identity_read "$REAL_GH" "$_transport_caller" "$@"
+			exit $?
+		fi
 		_shim_run_transport "$REAL_GH" rest "$_transport_caller" 0 "$@"
 		exit $?
 	fi

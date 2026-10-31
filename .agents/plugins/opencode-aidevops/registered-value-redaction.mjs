@@ -23,6 +23,7 @@ import { createHmac } from "node:crypto";
 
 import {
   MIN_VALUE_LENGTH,
+  PUBLIC_VALUE_PATTERN,
   REDACTION_TOKEN,
   RegisteredValueSources,
 } from "./registered-value-sources.mjs";
@@ -48,7 +49,8 @@ function escapeRegExp(value) {
 function isRegisteredWindow(window, registry, scan) {
   const cached = scan.memo.get(window);
   if (cached !== undefined) return cached;
-  if (scan.identifiers.has(window)) {
+  // Ignore stale public-name digests without deleting or weakening other entries.
+  if (PUBLIC_VALUE_PATTERN.test(window) || scan.identifiers.has(window)) {
     scan.memo.set(window, false);
     return false;
   }

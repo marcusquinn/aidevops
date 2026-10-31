@@ -69,9 +69,15 @@ SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit 1
 # ── Stub externals so we can source shared-constants.sh in isolation ──
 
 # Stub gh so it never hits the network
+# Privacy probes must use the stub, not an inherited runner gh transport.
+export PRIVACY_GH_BIN=gh
 gh() {
 	# Record what was called for assertions
 	GH_CALLS+=("$*")
+	if [[ "$*" == "api repos/test/repo --jq .private | tostring" ]]; then
+		printf 'false\n'
+		return 0
+	fi
 	echo "https://github.com/test/repo/issues/999"
 	return 0
 }
@@ -115,6 +121,8 @@ gh() {
 	printf "%s\n" "$*" >>"$calls_file"
 	if [[ "$arg1 $arg2" == "issue view" || "$arg1 $arg2" == "pr view" ]]; then
 		printf "%s\n" "{\"title\":\"Existing\",\"body\":\"Existing\",\"labels\":[]}"
+	elif [[ "$arg1 $arg2" == "api repos/test/repo" ]]; then
+		printf "false\n"
 	fi
 	return 0
 }
@@ -363,7 +371,8 @@ fi
 section "11. GH#33539 — negated closing keywords in PR bodies"
 
 for negated_body in "Do not close #123 from this PR" "Do not resolve #123" "Never fixes #123" \
-	"This PR doesn't fix owner/repo#123." "We won't close: #123 yet"; do
+	"This PR doesn't fix owner/repo#123." "We won't close: #123 yet" \
+	"For #123. Merge records retry evidence only and must not close #123"; do
 	_gh_validate_pr_closing_keywords --repo "test/repo" --body "$negated_body" 2>/dev/null
 	if [[ $? -eq 1 ]]; then
 		pass "rejects negated closing keyword: '${negated_body}'"

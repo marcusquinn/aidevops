@@ -150,11 +150,22 @@ _diag_check_pool() {
 		return 1
 	fi
 	local perms
-	perms=$(_file_perms "$POOL_FILE")
+	local permission_check="Pool file permissions"
+	# Load the owning library explicitly. Use its failure-preserving primitive:
+	# _file_perms substitutes "000" on failure, not an observed file mode.
+	# shellcheck source=./portable-stat.sh
+	source "${SCRIPT_DIR}/portable-stat.sh"
+	# Both GNU and BSD stat accept -L to inspect the file that jq will read.
+	if ! perms=$(_stat_batch '%a' -L "$POOL_FILE" 2>/dev/null) ||
+		[[ ! "$perms" =~ ^[0-7]{1,4}$ ]]; then
+		_diag_print "$permission_check" "FAIL" "Unable to inspect file mode (expected 600)"
+		return 1
+	fi
+	printf -v perms '%03o' "$((8#$perms))"
 	if [[ "$perms" != "600" ]]; then
-		_diag_print "Pool file permissions" "WARN" "$perms (expected 600)"
+		_diag_print "$permission_check" "WARN" "$perms (expected 600)"
 	else
-		_diag_print "Pool file permissions" "PASS" "600"
+		_diag_print "$permission_check" "PASS" "600"
 	fi
 	local count
 	count=$(jq '[.anthropic // [] | length] | add' "$POOL_FILE" 2>/dev/null || echo "0")

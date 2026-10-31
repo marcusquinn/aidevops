@@ -59,7 +59,8 @@ load_config() {
 
 # Get account configuration
 get_account_config() {
-    local account_name="$command"
+    local account_name="$1"
+    load_config
     
     if [[ -z "$account_name" ]]; then
         print_error "$ERROR_ACCOUNT_REQUIRED"
@@ -81,13 +82,13 @@ get_account_config() {
 
 # Make API request
 api_request() {
-    local account_name="$command"
-    local method="$account_name"
-    local endpoint="$target"
-    local data="$options"
+    local account_name="$1"
+    local method="$2"
+    local endpoint="$3"
+    local data="${4:-}"
     
     local config
-    config=$(get_account_config "$account_name")
+    config=$(get_account_config "$account_name") || return 1
     local api_key
     api_key=$(echo "$config" | jq -r '.api_key')
     local api_secret
@@ -129,7 +130,7 @@ list_accounts() {
 
 # List domains
 list_domains() {
-    local account_name="$command"
+    local account_name="$1"
     
     print_info "Listing domains for account: $account_name"
     local response
@@ -144,8 +145,8 @@ list_domains() {
 
 # Check domain availability
 check_domain_availability() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -177,8 +178,8 @@ check_domain_availability() {
 
 # Purchase domain
 purchase_domain() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
     local years="${3:-1}"
     local auto_renew="${4:-false}"
 
@@ -230,7 +231,7 @@ purchase_domain() {
 
 # Bulk domain availability check
 bulk_check_domains() {
-    local account_name="$command"
+    local account_name="$1"
     shift
     local domains=("$@")
 
@@ -253,8 +254,8 @@ bulk_check_domains() {
 
 # Get domain details
 get_domain_details() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
     
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -274,8 +275,8 @@ get_domain_details() {
 
 # List DNS records
 list_dns_records() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
     
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -295,11 +296,11 @@ list_dns_records() {
 
 # Add DNS record
 add_dns_record() {
-    local account_name="$command"
-    local domain="$account_name"
-    local name="$target"
-    local type="$options"
-    local content="$param5"
+    local account_name="$1"
+    local domain="$2"
+    local name="$3"
+    local type="$4"
+    local content="$5"
     local ttl="${6:-3600}"
     
     if [[ -z "$domain" || -z "$name" || -z "$type" || -z "$content" ]]; then
@@ -328,12 +329,12 @@ add_dns_record() {
 
 # Update DNS record
 update_dns_record() {
-    local account_name="$command"
-    local domain="$account_name"
-    local record_id="$target"
-    local name="$options"
-    local type="$param5"
-    local content="$param6"
+    local account_name="$1"
+    local domain="$2"
+    local record_id="$3"
+    local name="$4"
+    local type="$5"
+    local content="$6"
     local ttl="${7:-3600}"
     
     if [[ -z "$domain" || -z "$record_id" || -z "$name" || -z "$type" || -z "$content" ]]; then
@@ -362,9 +363,9 @@ update_dns_record() {
 
 # Delete DNS record
 delete_dns_record() {
-    local account_name="$command"
-    local domain="$account_name"
-    local record_id="$target"
+    local account_name="$1"
+    local domain="$2"
+    local record_id="$3"
 
     if [[ -z "$domain" || -z "$record_id" ]]; then
         print_error "Domain and record ID are required"
@@ -384,8 +385,8 @@ delete_dns_record() {
 
 # Get domain nameservers
 get_nameservers() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -405,8 +406,8 @@ get_nameservers() {
 
 # Update nameservers
 update_nameservers() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
     shift 2
     local nameservers=("$@")
 
@@ -434,8 +435,8 @@ update_nameservers() {
 
 # Check domain availability
 check_availability() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -465,8 +466,8 @@ check_availability() {
 
 # Get domain contacts
 get_domain_contacts() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -486,9 +487,9 @@ get_domain_contacts() {
 
 # Enable/disable domain lock
 toggle_domain_lock() {
-    local account_name="$command"
-    local domain="$account_name"
-    local action="$target"  # "lock" or "unlock"
+    local account_name="$1"
+    local domain="$2"
+    local action="$3"  # "lock" or "unlock"
 
     if [[ -z "$domain" || -z "$action" ]]; then
         print_error "Domain and action (lock/unlock) are required"
@@ -520,8 +521,8 @@ toggle_domain_lock() {
 
 # Get domain transfer status
 get_transfer_status() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -541,8 +542,8 @@ get_transfer_status() {
 
 # Audit domain configuration
 audit_domain() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -571,7 +572,7 @@ audit_domain() {
 
 # Monitor domain expiration
 monitor_expiration() {
-    local account_name="$command"
+    local account_name="$1"
     local days_threshold="${2:-30}"
 
     print_info "Monitoring domain expiration (threshold: $days_threshold days)"
@@ -628,33 +629,23 @@ show_help() {
 
 # Main script logic
 main() {
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    # Assign positional parameters to local variables
-    local domain="$target"
-    local param4="$options"
-    local param5="$param5"
-    local param6="$param6"
-    local param7="$param7"
-    local param8="$param8"
+    local subcommand="${1:-help}"
+    local account_name="${2:-}"
+    local domain="${3:-}"
+    local param4="${4:-}"
+    local param5="${5:-}"
+    local param6="${6:-}"
+    local param7="${7:-}"
+    local param8="${8:-}"
+
+    if [[ "$subcommand" == "help" ]]; then
+        show_help
+        return 0
+    fi
 
     check_dependencies
 
-    case "$command" in
+    case "$subcommand" in
         "accounts")
             list_accounts
             ;;
@@ -681,35 +672,35 @@ main() {
             ;;
         "update-ns")
             shift 3
-            update_nameservers "$param2" "$param3" "$@"
+            update_nameservers "$account_name" "$domain" "$@"
             ;;
         "check-availability")
-            check_domain_availability "$param2" "$param3"
+            check_domain_availability "$account_name" "$domain"
             ;;
         "purchase")
-            purchase_domain "$param2" "$param3" "$param4" "$param5"
+            purchase_domain "$account_name" "$domain" "$param4" "$param5"
             ;;
         "bulk-check")
             shift 2
-            bulk_check_domains "$param2" "$@"
+            bulk_check_domains "$account_name" "$@"
             ;;
         "contacts")
-            get_domain_contacts "$param2" "$param3"
+            get_domain_contacts "$account_name" "$domain"
             ;;
         "lock")
-            toggle_domain_lock "$param2" "$param3" "lock"
+            toggle_domain_lock "$account_name" "$domain" "lock"
             ;;
         "unlock")
-            toggle_domain_lock "$param2" "$param3" "unlock"
+            toggle_domain_lock "$account_name" "$domain" "unlock"
             ;;
         "transfer-status")
-            get_transfer_status "$param2" "$param3"
+            get_transfer_status "$account_name" "$domain"
             ;;
         "audit")
-            audit_domain "$param2" "$param3"
+            audit_domain "$account_name" "$domain"
             ;;
         "monitor-expiration")
-            monitor_expiration "$param2" "$param3"
+            monitor_expiration "$account_name" "$domain"
             ;;
         "help"|*)
             show_help
@@ -719,5 +710,3 @@ main() {
 }
 
 main "$@"
-
-return 0

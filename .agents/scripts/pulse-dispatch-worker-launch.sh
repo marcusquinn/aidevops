@@ -50,6 +50,9 @@ source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-gates.sh"
 # shellcheck source=pulse-dispatch-worker-systemd.sh
 # shellcheck disable=SC1091  # _DLW_SCRIPT_DIR is resolved at runtime.
 source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-systemd.sh"
+# shellcheck source=./pulse-dispatch-worker-launch-bundle.sh
+# shellcheck disable=SC1091  # _DLW_SCRIPT_DIR is resolved at runtime.
+source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-launch-bundle.sh"
 unset _DLW_SCRIPT_DIR
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 if [[ -z "${_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN+x}" ]]; then
@@ -201,8 +204,9 @@ _dlw_live_issue_open_guard() {
 
 _dlw_lock_prelaunch_issue() {
 	local issue_number="$1" repo_slug="$2" started_ns=""
-	# Freeze instructions before ownership publication, only within the budget.
-	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
+	# Freeze instructions before ownership publication, only within the budget
+	# plus the publication reserve (GH#35602): never lock what cannot spawn.
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" publication || return $?
 	started_ns=$(_ds_now_ns)
 	if ! lock_issue_for_worker "$issue_number" "$repo_slug"; then
 		_ds_record "$issue_number" "$repo_slug" "lock_issue" "$started_ns"
@@ -234,7 +238,8 @@ _dlw_publish_queued_ownership() {
 		return $?
 	fi
 	_ds_record "$issue_number" "$repo_slug" "$guard_stage" "$guard_started_ns"
-	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
+	# GH#35602: publish only when the remaining budget still reaches spawn.
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" publication || return $?
 
 	local assignment_started_ns=""
 	assignment_started_ns=$(_ds_now_ns)
@@ -306,9 +311,9 @@ _dlw_resolve_tier_and_model() {
 	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
 	_DLW_TRUSTED_ISSUE_PRIORITY=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[]?.name | select(startswith("priority:"))][0] // "" | sub("^priority:"; "")' 2>/dev/null || true)
 	# shellcheck disable=SC2016 # Backticks are literal optional Markdown delimiters.
-	_DLW_TRUSTED_RELEASE_TYPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Release scope:\*\*[[:space:]]*`?(patch|minor|major)`?[[:space:]]*$/\1/ip' | head -1)
+	_DLW_TRUSTED_RELEASE_TYPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Release scope:\*\*[[:space:]]*`?(patch|minor|major)`?[[:space:]]*$/\1/ip' | sed -n '1p')
 	# shellcheck disable=SC2016 # Backticks are literal optional Markdown delimiters.
-	_DLW_TRUSTED_DEPLOY_SCOPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Deployment scope:\*\*[[:space:]]*`?(incremental|full)`?[[:space:]]*$/\1/ip' | head -1)
+	_DLW_TRUSTED_DEPLOY_SCOPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Deployment scope:\*\*[[:space:]]*`?(incremental|full)`?[[:space:]]*$/\1/ip' | sed -n '1p')
 	local explicit_tier_label=0
 	if _dlw_has_explicit_tier_label "$issue_labels_csv"; then
 		explicit_tier_label=1
@@ -457,104 +462,6 @@ _dlw_bundle_model_tier() {
 	else
 		"$bundle_helper" get model_defaults.implementation "$repo_path" 2>/dev/null || true
 	fi
-	return 0
-}
-
-#######################################
-# Classify a worker request into a bundle workload type. This is separate from
-# agent_routing domains such as seo, content, and infrastructure.
-# The title is authoritative because generated worker prompts contain generic
-# review and verification instructions that must not affect model selection.
-# Only explicit conventional title prefixes select a non-implementation type;
-# incidental workload words in implementation titles remain implementation.
-# Arguments:
-#   $1 - issue_title
-#   $2 - prompt (used only when the title is empty)
-# Stdout: model_defaults key
-#######################################
-_dlw_bundle_workload_type() {
-	local issue_title="$1"
-	local prompt="$2"
-	local text="$issue_title"
-	if [[ -z "$text" ]]; then
-		text="$prompt"
-	fi
-	text=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
-
-	case "$text" in
-	docs:* | docs\(* | documentation:* | documentation\(* | chore\(docs\):*) printf 'documentation\n' ;;
-	architecture:* | architecture\(* | architectural:* | architectural\(*) printf 'architecture\n' ;;
-	review:* | review\(*) printf 'review\n' ;;
-	triage:* | triage\(*) printf 'triage\n' ;;
-	verification:* | verification\(* | verify:* | verify\(*) printf 'verification\n' ;;
-	*) printf 'implementation\n' ;;
-	esac
-	return 0
-}
-
-#######################################
-# Classify a task into a coarse bundle agent_routing domain.
-# Arguments:
-#   $1 - issue_title
-#   $2 - prompt
-# Stdout: routing domain key
-#######################################
-_dlw_bundle_routing_domain() {
-	local issue_title="$1"
-	local prompt="$2"
-	local text
-	text=$(printf '%s %s' "$issue_title" "$prompt" | tr '[:upper:]' '[:lower:]')
-
-	case "$text" in
-	*seo* | *sitemap* | *schema* | *ranking* | *metadata* | *meta\ tag*)
-		printf 'seo\n'
-		return 0
-		;;
-	*content* | *blog* | *newsletter* | *social* | *video* | *copywriting*)
-		printf 'content\n'
-		return 0
-		;;
-	*accessibility* | *a11y* | *wcag*)
-		printf 'accessibility\n'
-		return 0
-		;;
-	*deploy* | *docker* | *terraform* | *infrastructure* | *cloudflare*)
-		printf 'infrastructure\n'
-		return 0
-		;;
-	*document* | *readme* | *docs*)
-		printf 'documentation\n'
-		return 0
-		;;
-	*)
-		printf 'code\n'
-		return 0
-		;;
-	esac
-}
-
-#######################################
-# Resolve preferred worker agent from bundle agent_routing.
-# Arguments:
-#   $1 - repo_path
-#   $2 - issue_title
-#   $3 - prompt
-# Stdout: agent name (empty if unavailable)
-#######################################
-_dlw_bundle_agent_name() {
-	local repo_path="$1"
-	local issue_title="$2"
-	local prompt="$3"
-	local bundle_helper="${_DLW_SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/bundle-helper.sh"
-
-	if [[ -z "$repo_path" || ! -x "$bundle_helper" ]]; then
-		return 0
-	fi
-
-	local domain
-	domain=$(_dlw_bundle_routing_domain "$issue_title" "$prompt")
-	"$bundle_helper" resolve "$repo_path" 2>/dev/null | jq -r --arg domain "$domain" \
-		'.agent_routing[$domain] // .agent_routing.code // empty' 2>/dev/null || true
 	return 0
 }
 
@@ -1004,7 +911,7 @@ _dlw_precreate_worktree() {
 	#   3. Reuse check above on subsequent dispatches for the same issue
 	# Without it, orphaned worktrees are untraceable and accumulate (57
 	# observed on one machine in 24h, 2.2 GB wasted).
-	local _branch _wt_output="" _managed_create=""
+	local _branch _wt_output="" _managed_create="" _pc_t0=""
 	_dlw_managed_creation_env || return 1
 	_managed_create="$_DLW_MANAGED_CREATE_MODE"
 	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
@@ -1013,12 +920,21 @@ _dlw_precreate_worktree() {
 		return 1
 	fi
 	# Run from repo_path (pulse cwd is typically /); GH#34233: a resolved seed SHA is the branch base.
+	# GH#35602: the exported stage context lets the helper record precreate.* sub-stages.
+	_pc_t0=$(_ds_now_ns)
+	local _wt_rc=0
+	# Give the helper's first ownership write an attempt-specific identity so
+	# rejection can compensate only this attempt, never a replacement owner.
+	local _helper_session="${_precreate_session}-$$-${RANDOM}"
 	_wt_output=$(cd "$repo_path" && export "${_DLW_MANAGED_CREATE_ENV[@]}" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
+		OPENCODE_PID="$$" OPENCODE_SESSION_ID="$_helper_session" \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
+		AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number" AIDEVOPS_DISPATCH_STAGE_REPO="${repo_slug:-}" \
 		AIDEVOPS_WORKTREE_BASE="${_DLW_SEED_OID:-${AIDEVOPS_WORKTREE_BASE:-}}" \
-		"$_wt_helper" add "$_branch" --issue "$issue_number" 2>&1) || true
+		"$_wt_helper" add "$_branch" --issue "$issue_number" 2>&1) || _wt_rc=$?
+	_ds_record "$issue_number" "${repo_slug:-}" "precreate.helper_add" "$_pc_t0"
 	_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
 	local _path _path_source="porcelain"
 	_path=$(_dlw_worktree_path_for_branch "$repo_path" "$_branch") || _path=""
@@ -1027,30 +943,26 @@ _dlw_precreate_worktree() {
 		_path=$(_dlw_extract_worktree_path_from_output "$_wt_output") || _path=""
 	fi
 	echo "[dispatch_with_dedup] Worktree path resolution for #${issue_number}: source=${_path_source} branch=${_branch} path='${_path:-<empty>}' exists=$([[ -n "$_path" && -d "$_path" ]] && printf '1' || printf '0')" >>"$LOGFILE"
-	if [[ -n "$_path" && -d "$_path" ]]; then
+	# GH#35781: a failed helper may leave a preserved generation behind; never
+	# register or dispatch from it, or its owner row could be replaced.
+	if [[ "$_wt_rc" -eq 0 && -n "$_path" && -d "$_path" ]]; then
 		_DLW_WORKTREE_PATH="$_path"
 		_DLW_WORKTREE_BRANCH="$_branch"
-		if declare -F register_worktree >/dev/null 2>&1; then
-			if ! register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
-				--task "$issue_number" \
-				--session "$_precreate_session" \
-				--owner-pid "$$" 2>/dev/null; then
-				echo "[dispatch_with_dedup] Worktree ownership registration failed for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
+		# Reject before dispatcher registration; the real helper has already
+		# registered ownership, so compensate that exact attempt (GH#35828).
+		if [[ -n "$_managed_create" ]]; then
+			if ! _dlw_require_managed_generation "$issue_number" "${repo_slug:-}" "$_wt_rc" "$_wt_output"; then
+				if ! unregister_worktree_if_owner_contract "$_path" "$$" "$_helper_session" "$issue_number"; then
+					echo "[dispatch_with_dedup] Preserving changed or unavailable ownership after managed rejection for #${issue_number}" >>"$LOGFILE"
+				fi
 				return 1
 			fi
-		else
-			echo "[dispatch_with_dedup] Worktree registry helper unavailable for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
-			return 1
 		fi
-		if [[ -n "$_managed_create" ]]; then
-			local _class=""
-			_class=$(_dlw_classify_reuse_candidate "$_DLW_WORKTREE_PATH" "$issue_number" "${repo_slug:-}") || return 1
-			[[ "$_class" == managed\ * ]] || return 1
-			_DLW_WORKTREE_GENERATION="${_class#managed }"
-			_DLW_MANAGED_WORKTREE=1
-		fi
+		_dlw_register_precreated_owner "$issue_number" "$_precreate_session" || return 1
 		# Restore gitignored deps (node_modules) that git doesn't track
+		_pc_t0=$(_ds_now_ns)
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
+		_ds_record "$issue_number" "${repo_slug:-}" "precreate.restore_deps" "$_pc_t0"
 		echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
 	else
 		# GH#18671: emit the raw extracted string on failure so future
@@ -1059,9 +971,61 @@ _dlw_precreate_worktree() {
 		# a single pulse.log before the root cause was found.
 		# t2981: return 1 so the caller can skip dispatch instead of
 		# falling back to the canonical repo on the default branch.
-		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — dispatch will be skipped this cycle (extracted: '${_path:-<empty>}', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — dispatch will be skipped this cycle (helper_rc=${_wt_rc}, extracted: '${_path:-<empty>}', helper_reason: '$(_dlw_precreate_helper_reason "$_wt_output")', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
 		return 1
 	fi
+	return 0
+}
+
+# Register the transferable dispatcher owner only after enrollment is accepted.
+_dlw_register_precreated_owner() {
+	local issue_number="$1"
+	local precreate_session="$2"
+	if ! declare -F register_worktree >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Worktree registry helper unavailable for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
+		return 1
+	fi
+	if ! register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
+		--task "$issue_number" --session "$precreate_session" --owner-pid "$$" 2>/dev/null; then
+		echo "[dispatch_with_dedup] Worktree ownership registration failed for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+# A managed creation must classify as this issue's managed generation before
+# launch. Sets _DLW_WORKTREE_GENERATION and _DLW_MANAGED_WORKTREE on success.
+# GH#35781: name the exact refusal instead of a bare precreation failure.
+_dlw_require_managed_generation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local helper_rc="$3"
+	local helper_output="$4"
+	local class=""
+	class=$(_dlw_classify_reuse_candidate "$_DLW_WORKTREE_PATH" "$issue_number" "$repo_slug") || class="unavailable"
+	if [[ "$class" != managed\ * ]]; then
+		echo "[dispatch_with_dedup] MANAGED_ENROLLMENT_MISSING issue=#${issue_number} helper_rc=${helper_rc} class=${class:-other-task} path='${_DLW_WORKTREE_PATH}' helper_reason='$(_dlw_precreate_helper_reason "$helper_output")'" >>"$LOGFILE"
+		return 1
+	fi
+	_DLW_WORKTREE_GENERATION="${class#managed }"
+	_DLW_MANAGED_WORKTREE=1
+	return 0
+}
+
+# GH#35781: decisive diagnostic from worktree-helper.sh add output, single-line
+# and bounded for pulse.log. A managed-lifetime error names the cause, so it
+# wins over the generic lifecycle disposition or Error: line that follows it.
+# Prints "none" when the helper gave no such line.
+_dlw_precreate_helper_reason() {
+	local output="$1"
+	local reason="" pattern=""
+	# GH#36142: an enrollment refusal names its own cause, so it outranks the
+	# generic "Worktree retained" disposition that follows it.
+	for pattern in 'managed-worktree:' 'Generation enrollment refused:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
+		reason=$(printf '%s\n' "$output" | grep -E "$pattern" | tail -n 1 | tr -d "'\r" | cut -c1-200) || reason=""
+		[[ -z "$reason" ]] || break
+	done
+	printf '%s' "${reason:-none}"
 	return 0
 }
 
@@ -1069,7 +1033,7 @@ _dlw_worktree_path_for_branch() {
 	local repo_path="$1"
 	local branch_name="$2"
 	local _path=""
-	_path=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | awk -v branch="refs/heads/${branch_name}" '/^worktree / { path = substr($0, 10) } /^branch / { line_branch = substr($0, 8); if (line_branch == branch) { print path; exit } }') || _path=""
+	_path=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | awk -v branch="refs/heads/${branch_name}" '/^worktree / { path = substr($0, 10) } /^branch / { line_branch = substr($0, 8); if (line_branch == branch && !found) { print path; found=1 } }') || _path=""
 	printf '%s' "$_path"
 	return 0
 }
@@ -1077,7 +1041,7 @@ _dlw_worktree_path_for_branch() {
 _dlw_extract_worktree_path_from_output() {
 	local wt_output="$1"
 	local _path=""
-	_path=$(printf '%s' "$wt_output" | awk '/^Path:[[:space:]]*\// { sub(/^Path:[[:space:]]*/, ""); print; exit } /^[[:space:]]*cd[[:space:]]+\// { sub(/^[[:space:]]*cd[[:space:]]+/, ""); print; exit } /^Created worktree at[[:space:]]*\// { sub(/^Created worktree at[[:space:]]*/, ""); print; exit }') || _path=""
+	_path=$(printf '%s' "$wt_output" | awk '!found && /^Path:[[:space:]]*\// { sub(/^Path:[[:space:]]*/, ""); print; found=1 } !found && /^[[:space:]]*cd[[:space:]]+\// { sub(/^[[:space:]]*cd[[:space:]]+/, ""); print; found=1 } !found && /^Created worktree at[[:space:]]*\// { sub(/^Created worktree at[[:space:]]*/, ""); print; found=1 }') || _path=""
 	printf '%s' "$_path"
 	return 0
 }
@@ -1150,14 +1114,8 @@ _dlw_begin_prelaunch() {
 	return 0
 }
 
-_dlw_prelaunch_budget_available() {
-	local issue_number="$1" repo_slug="$2"
-	if [[ "${prelaunch_deadline:-0}" -gt 0 && "$SECONDS" -ge "$prelaunch_deadline" ]]; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prelaunch_budget_exhausted" 2
-		return $?
-	fi
-	return 0
-}
+# _dlw_prelaunch_budget_available (stage-boundary/publication-reserve check)
+# lives in pulse-dispatch-worker-gates.sh beside _dlw_pre_runtime_failure.
 
 #######################################
 # Extract the allowlisted denial reason emitted by
@@ -1871,6 +1829,32 @@ _dlw_nohup_launch() {
 }
 
 #######################################
+# GH#36214: windowed zero-attempt backoff, evaluated once per dispatch attempt
+# before the cross-runner claim. A held issue publishes no DISPATCH_CLAIM or
+# prelaunch lease (each of which used to become fresh orphan evidence), and
+# _dlw_hold_repeated_zero_output logs DISPATCH_BLOCK_REASON
+# reason=zero_attempt_backoff for the benign rc 3 the caller returns.
+# Sets the caller-scoped _dispatch_zero_output_metrics so prompt preparation
+# reuses this snapshot instead of refetching the comment thread.
+# Args: issue number, repo slug
+# Returns: 0 = held, 1 = dispatch may proceed
+#######################################
+_dlw_preclaim_zero_attempt_backoff() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local _ds_t0=""
+	local hold_rc=1
+
+	_ds_t0=$(_ds_now_ns)
+	_dispatch_zero_output_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
+	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug" "$_dispatch_zero_output_metrics"; then
+		hold_rc=0
+	fi
+	_ds_record "$issue_number" "$repo_slug" "zero_attempt_backoff" "$_ds_t0"
+	return "$hold_rc"
+}
+
+#######################################
 # Thin orchestrator for worker launch. Delegates each distinct concern
 # (assignment + labels, log files, model resolution, issue lock, repo pull,
 # worktree pre-creation, nohup launch, post-launch bookkeeping) to dedicated
@@ -1905,6 +1889,15 @@ _dispatch_launch_worker() {
 	# t3034: per-stage timing for launch sub-stages
 	local _ds_t0
 
+	# GH#36214: reuse dispatch_with_dedup's pre-claim backoff snapshot; direct
+	# callers evaluate the backoff here, before the prelaunch lease.
+	local zero_output_comment_metrics="${_dispatch_zero_output_metrics:-}"
+	if [[ -z "$zero_output_comment_metrics" ]]; then
+		local _dispatch_zero_output_metrics=""
+		_dlw_preclaim_zero_attempt_backoff "$issue_number" "$repo_slug" && return 3
+		zero_output_comment_metrics="$_dispatch_zero_output_metrics"
+	fi
+
 	_dlw_timed_log_and_prebootstrap "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path" || return $?
 	local worker_log="$_DLW_WORKER_LOG"
 
@@ -1932,12 +1925,6 @@ _dispatch_launch_worker() {
 	_dlw_begin_prelaunch "$issue_number" "$repo_slug" "$session_key" "$worker_log" || return $?
 	_ds_record "$issue_number" "$repo_slug" "begin_prelaunch" "$_ds_t0"
 
-	local zero_output_comment_metrics=""
-	zero_output_comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
-	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug" "$zero_output_comment_metrics"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "repeated_zero_output_hold" 2 || return $?
-	fi
-
 	# t2981: capture pre-creation return code — skip dispatch on failure
 	# instead of falling back to canonical repo on the default branch.
 	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
@@ -1962,7 +1949,7 @@ _dispatch_launch_worker() {
 	# published. A lock failure must not create assignment/status notifications.
 	_dlw_lock_prelaunch_issue "$issue_number" "$repo_slug" || return $?
 
-	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" publication || return $?
 	_dlw_publish_queued_ownership "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json" || return $?
 	_dlw_start_codegraph_init "$issue_number" "$worker_worktree_path"
 

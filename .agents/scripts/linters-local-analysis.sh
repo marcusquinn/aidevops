@@ -18,6 +18,7 @@
 #   - File size (ratchet gate — t2938)
 #   - Python complexity (Lizard + Pyflakes)
 #   - Python 3.9 annotation compatibility (GH#34098)
+#   - jq 1.7/1.8 binding precedence (GH#35920)
 #   - Remote CLI status
 #   - Skill frontmatter validation
 #   - Pulse wrapper canary (GH#18790)
@@ -28,7 +29,8 @@
 # Dependencies:
 #   - shared-constants.sh (print_error, print_info, print_success, print_warning,
 #     safe_grep_count, timeout_sec, _save_cleanup_scope, push_cleanup, _run_cleanups)
-#   - lint-file-discovery.sh (lint_python_files_local, LINT_PY_FILES_LOCAL)
+#   - lint-file-discovery.sh (lint_python_files_local, LINT_PY_FILES_LOCAL,
+#     lint_jq_files, LINT_JQ_FILES, LINT_JQ_FILE_REGEX)
 #   - Constants: MAX_TOTAL_ISSUES, MAX_FUNCTION_LENGTH_WARN, MAX_FUNCTION_LENGTH_BLOCK,
 #     MAX_FUNCTION_LENGTH_VIOLATIONS, MAX_NESTING_DEPTH_WARN, MAX_NESTING_DEPTH_BLOCK,
 #     MAX_NESTING_VIOLATIONS, MAX_FILE_LINES_WARN, MAX_FILE_LINES_BLOCK
@@ -865,6 +867,51 @@ check_file_size() {
 # to catch complexity issues before they reach Codacy.
 # Also checks for unused imports (pyflakes) and security patterns (semgrep-lite).
 
+# Run one Python lint tool for check_python_complexity (GH#35726).
+# A tool on PATH that cannot start — for example a pip entry point whose
+# interpreter was removed — prints nothing on stdout, so it must not look like
+# a clean run. Probe with --version first, then treat any exit status above 1
+# (0 = clean, 1 = findings for both lizard and pyflakes) as a failed run.
+# Args: $1 tool name; remaining args are passed to the tool.
+# Sets: _PY_LINT_OUT (tool stdout) and _PY_LINT_STATE (ran|missing|broken).
+_py_lint_run() {
+	local tool="$1"
+	shift
+	_PY_LINT_OUT=""
+	if ! command -v "$tool" &>/dev/null; then
+		_PY_LINT_STATE="missing"
+		return 0
+	fi
+	local rc=126
+	if "$tool" --version &>/dev/null; then
+		rc=0
+		_PY_LINT_OUT=$("$tool" "$@" 2>/dev/null) || rc=$?
+	fi
+	if [[ "$rc" -gt 1 ]]; then
+		_PY_LINT_STATE="broken"
+		_PY_LINT_OUT=""
+	else
+		_PY_LINT_STATE="ran"
+	fi
+	return 0
+}
+
+# Report a Python lint tool that did not run, per _PY_LINT_STATE.
+# Args: $1 tool name, $2 display name, $3 skipped purpose.
+# Appends installed-but-unrunnable tools to _PY_LINT_SKIPPED.
+_py_lint_report_unavailable() {
+	local tool="$1"
+	local label="$2"
+	local purpose="$3"
+	if [[ "$_PY_LINT_STATE" == "broken" ]]; then
+		print_warning "$label at $(command -v "$tool") is installed but failed to run (missing interpreter or package?) — reinstall: pipx install $tool"
+		_PY_LINT_SKIPPED="${_PY_LINT_SKIPPED:+${_PY_LINT_SKIPPED}, }$tool"
+	else
+		print_info "$label not installed (pipx install $tool) — skipping $purpose"
+	fi
+	return 0
+}
+
 check_python_complexity() {
 	echo -e "${BLUE}Checking Python Complexity (Codacy alignment)...${NC}"
 
@@ -879,11 +926,12 @@ check_python_complexity() {
 
 	local violations=0
 	local warnings=0
+	_PY_LINT_SKIPPED=""
 
 	# Check 1: Lizard cyclomatic complexity (same tool Codacy uses)
-	if command -v lizard &>/dev/null; then
-		local lizard_out
-		lizard_out=$(lizard --CCN 8 --warnings_only "${py_files[@]}" 2>/dev/null || true)
+	_py_lint_run lizard --CCN 8 --warnings_only "${py_files[@]}"
+	if [[ "$_PY_LINT_STATE" == "ran" ]]; then
+		local lizard_out="$_PY_LINT_OUT"
 		if [[ -n "$lizard_out" ]]; then
 			local lizard_count
 			lizard_count=$(echo "$lizard_out" | safe_grep_count "warning:")
@@ -900,13 +948,13 @@ check_python_complexity() {
 			fi
 		fi
 	else
-		print_info "Lizard not installed (pipx install lizard) — skipping cyclomatic complexity"
+		_py_lint_report_unavailable lizard Lizard "cyclomatic complexity"
 	fi
 
 	# Check 2: Pyflakes for unused imports (Codacy uses Prospector/pyflakes)
-	if command -v pyflakes &>/dev/null; then
-		local pyflakes_out
-		pyflakes_out=$(pyflakes "${py_files[@]}" 2>/dev/null || true)
+	_py_lint_run pyflakes "${py_files[@]}"
+	if [[ "$_PY_LINT_STATE" == "ran" ]]; then
+		local pyflakes_out="$_PY_LINT_OUT"
 		if [[ -n "$pyflakes_out" ]]; then
 			local pyflakes_count
 			pyflakes_count=$(echo "$pyflakes_out" | safe_grep_count .)
@@ -923,13 +971,15 @@ check_python_complexity() {
 			fi
 		fi
 	else
-		print_info "Pyflakes not installed (pipx install pyflakes) — skipping import checks"
+		_py_lint_report_unavailable pyflakes Pyflakes "import checks"
 	fi
 
 	local total=$((violations + warnings))
 	# Python complexity is advisory for now — Codacy is the hard gate.
 	# This gives early feedback without blocking local development.
-	if [[ "$total" -eq 0 ]]; then
+	if [[ -n "$_PY_LINT_SKIPPED" ]]; then
+		print_warning "Python complexity: not fully checked — ${_PY_LINT_SKIPPED} failed to run ($total issues from the tools that ran)"
+	elif [[ "$total" -eq 0 ]]; then
 		print_success "Python complexity: ${#py_files[@]} files checked, no issues"
 	else
 		print_warning "Python complexity: $total issues ($violations complexity, $warnings pyflakes)"
@@ -973,6 +1023,43 @@ check_python_annotation_compat() {
 	fi
 	printf '%s\n' "$output"
 	print_error "Python 3.9 annotations: runtime PEP 604 unions found (see above)"
+	return 1
+}
+
+# =============================================================================
+# jq 1.7/1.8 Binding Precedence (GH#35920) — blocking, zero baseline
+# =============================================================================
+# jq 1.8 groups `A and T as $x | B` as `(A and T) as $x | B`; jq 1.7 groups it
+# as `A and (T as $x | B)`. CI and macOS /usr/bin/jq run 1.7 while Homebrew
+# runners run 1.8, so an ungrouped binding diverges silently. Static text scan.
+# Args: optional newline-separated file list (default: all tracked jq-bearing files)
+check_jq_binding_precedence() {
+	local file_list="${1-__all__}"
+	local checker="${SCRIPT_DIR}/jq-binding-precedence-check.py"
+	local output="" status=0
+	echo -e "${BLUE}Checking jq 1.7/1.8 binding precedence...${NC}"
+
+	if [[ "$file_list" == "__all__" ]]; then
+		lint_jq_files
+		file_list="$LINT_JQ_FILES"
+	fi
+	file_list=$(printf '%s\n' "$file_list" | grep -E "$LINT_JQ_FILE_REGEX" | grep -Ev "$LINT_EXCLUDE_PATTERN" || true)
+	if [[ -z "$file_list" ]]; then
+		print_success "jq binding precedence: no jq-bearing files selected"
+		return 0
+	fi
+	if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "$checker" ]]; then
+		print_warning "jq binding precedence: python3 or checker unavailable; skipped"
+		return 0
+	fi
+
+	output=$(printf '%s\n' "$file_list" | python3 "$checker" - 2>&1) || status=$?
+	if [[ "$status" -eq 0 ]]; then
+		print_success "jq binding precedence: no binding grouped differently by jq 1.7 and 1.8"
+		return 0
+	fi
+	printf '%s\n' "$output"
+	print_error "jq binding precedence: parenthesize the bindings above (reference/shell-style-guide.md)"
 	return 1
 }
 

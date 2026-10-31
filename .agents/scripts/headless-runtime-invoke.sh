@@ -251,6 +251,13 @@ _invoke_opencode_prepare_child_command() {
 # Execute one sandboxed command while preserving the child's pipeline status.
 _invoke_opencode_run_sandboxed() {
 	local passthrough_csv=""
+	# This launcher-only hint is NOT added to the child's environment allowlist.
+	# Protected workloads remain outside lifecycle observation.
+	local AIDEVOPS_LIFECYCLE_WORKTREE=""
+	if [[ "$private_workload" -ne 1 && "$runtime_role" == "worker" ]]; then
+		AIDEVOPS_LIFECYCLE_WORKTREE="${_invoke_work_dir:-}"
+	fi
+	export AIDEVOPS_LIFECYCLE_WORKTREE
 	if ! prepare_headless_signing_sandbox_env "$runtime_role"; then
 		print_error "Headless signing configuration could not be safely isolated for the sandbox"
 		printf '%s' "87" >"$exit_code_file"
@@ -307,6 +314,22 @@ _invoke_opencode_run_bare() {
 	fi
 	if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
 		print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare timeout (no privilege isolation) (GH#20146 audit)"
+	fi
+	# Observe only AFTER existing sandbox policy permits bare
+	# execution. Never disable isolation to enable observation. The exec shim
+	# records its own identity, not worker_pid (which belongs to a shell).
+	# An absent worktree must not be interpreted as the current directory.
+	if [[ "$runtime_role" == "worker" || -n "${AIDEVOPS_LIFECYCLE_GENERATION_ID:-}" || -n "${AIDEVOPS_LIFECYCLE_RUN_ID:-}" ]]; then
+		local lifecycle_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py"
+		# shellcheck source=worker-lifecycle-state.sh
+		source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
+		local lifecycle_status=0
+		worker_lifecycle_prepare_launch "${_invoke_work_dir:-}" "$lifecycle_entry" "$private_workload" || lifecycle_status=$?
+		if [[ "$lifecycle_status" -ne 0 ]]; then
+			printf '%s' "$lifecycle_status" >"$exit_code_file"
+			return "$lifecycle_status"
+		fi
+		_oc_cmd=(${WORKER_LIFECYCLE_PREFIX[@]+"${WORKER_LIFECYCLE_PREFIX[@]}"} "${_oc_cmd[@]}")
 	fi
 	run_without_opencode_session_env timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 	printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"

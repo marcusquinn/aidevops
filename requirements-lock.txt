@@ -14,6 +14,8 @@ annotated-types==0.7.0
 anyio==4.14.2
 asyncer==0.0.8
 attrs==26.1.0
+boto3==1.43.119
+botocore==1.43.119
 cachetools==7.1.4
 certifi==2026.10.19
 charset-normalizer==3.4.7
@@ -29,6 +31,7 @@ filelock==4.2.1
 frozenlist==1.8.0
 fsspec==2026.6.0
 gepa==0.0.22
+greenlet==3.5.6
 h11==0.16.0
 hf-xet==1.5.1
 httpcore==1.0.9
@@ -38,11 +41,12 @@ idna==3.18
 importlib_metadata==8.9.0
 Jinja2==3.1.6
 jiter==0.15.0
+jmespath==1.1.0
 joblib==1.5.2
 json_repair==0.61.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
-litellm==1.93.2
+litellm==1.100.4
 Mako==1.4.2
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
@@ -59,6 +63,7 @@ propcache==0.5.2
 pyarrow==24.0.0
 pydantic==2.12.4
 pydantic_core==2.41.5
+pydantic-settings==2.16.1
 Pygments==2.20.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
@@ -69,6 +74,7 @@ regex==2026.5.9
 requests==2.33.0
 rich==14.2.0
 rpds-py==2026.5.1
+s3transfer==0.19.3
 shellingham==1.5.4
 six==1.17.0
 sniffio==1.3.1

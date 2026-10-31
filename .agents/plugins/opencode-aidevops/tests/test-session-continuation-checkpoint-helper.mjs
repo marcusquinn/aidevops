@@ -186,6 +186,80 @@ fi
   gitIn(coordRepo, "add", "workflow.md");
   gitIn(coordRepo, "-c", "commit.gpgSign=false", "commit", "-qm", "workflow");
   assert.equal(captureGuard.completeText({ sessionID: "multi" }, { text: closeout }).corrected, false, "committed session edits are captured");
+
+  // GH#35968: repeated-operation cycles of period 1-4, failing or not, are
+  // detected; only progress (a new edit or a todo change) clears the window.
+  const loopFixture = () => {
+    const saved = [];
+    const guard = createSessionContinuationGuard({ repository, checkpointAdapter: { load: () => null, save: (recovery) => saved.push(recovery) } });
+    let callNumber = 0;
+    const call = (tool, args, output, sessionID = "loop") => {
+      callNumber += 1;
+      const callID = `loop-${callNumber}`;
+      guard.beforeTool({ sessionID, tool, callID }, { args });
+      return guard.afterTool({ sessionID, tool, callID }, output);
+    };
+    return { guard, saved, call };
+  };
+  const failOut = () => ({ output: "error: failed", metadata: { exit: 1 } });
+  const okOut = (text = "ok") => ({ output: text, metadata: { status: "completed" } });
+  const fires = (steps) => steps.map((step) => step()).flatMap((result, index) => (result.replan ? [index + 1] : []));
+
+  const identical = loopFixture();
+  assert.deepEqual(fires(Array.from({ length: 6 }, () => () => identical.call("bash", { command: "A" }, failOut()))), [3], "identical failures fire once at the threshold");
+  assert.equal(identical.saved.length, 1);
+  assert.match(identical.saved[0].trigger, /^3 identical bash operations failed/);
+
+  const alternating = loopFixture();
+  const alternatingResults = Array.from({ length: 20 }, (_, index) => alternating.call("bash", { command: index % 2 ? "B" : "A" }, failOut()));
+  assert.deepEqual(alternatingResults.flatMap((result, index) => (result.replan ? [index + 1] : [])), [6], "A/B failures fire once by threshold x period");
+  assert.match(alternatingResults[5].correction, /bash -> bash tool-call cycle repeated 3 times with failures/);
+  assert.equal(alternating.saved.length, 1, "a failing cycle saves one recovery checkpoint");
+  assert.equal(alternating.saved[0].status, "recovering");
+
+  const mixedLoop = loopFixture();
+  assert.deepEqual(fires(Array.from({ length: 8 }, (_, index) => () => (index % 2
+    ? mixedLoop.call("read", { filePath: "notes.md" }, okOut(`read ${index}`))
+    : mixedLoop.call("bash", { command: "npm test" }, failOut())))), [6], "fail/success alternation fires");
+
+  const successLoop = loopFixture();
+  const successFires = fires(Array.from({ length: 14 }, (_, index) => () => successLoop.call("bash", { command: index % 2 ? "git status" : "gh pr checks 1" }, okOut("unchanged"))));
+  assert.deepEqual(successFires, [10], "identical successful A/B cycles fire after threshold+2 repetitions");
+  assert.equal(successLoop.saved.length, 0, "non-progressing successes steer without a recovery checkpoint");
+  assert.equal(successLoop.guard.completeText({ sessionID: "loop" }, { text: "The task is complete." }).corrected, false, "a success-only loop never blocks completion");
+
+  const changingOutputs = loopFixture();
+  assert.deepEqual(fires(Array.from({ length: 20 }, (_, index) => () => changingOutputs.call("bash", { command: "gh pr checks 1" }, okOut(`pending ${index}`)))), [], "polling with changing output is not a loop");
+
+  const progressing = loopFixture();
+  const readThenEdit = [];
+  for (let round = 0; round < 4; round += 1) {
+    for (const file of ["a.md", "b.md", "c.md"]) readThenEdit.push(() => progressing.call("read", { filePath: file }, okOut("same")));
+    readThenEdit.push(() => progressing.call("edit", { filePath: "a.md", oldString: `v${round}`, newString: `v${round + 1}` }, okOut("Edit applied successfully.")));
+  }
+  assert.deepEqual(fires(readThenEdit), [], "distinct reads followed by new edits are progress");
+
+  const editReset = loopFixture();
+  const test = () => editReset.call("bash", { command: "npm test" }, failOut());
+  const sameEdit = () => editReset.call("edit", { filePath: "a.md", oldString: "x", newString: "y" }, okOut());
+  assert.deepEqual(fires([test, test, test, sameEdit, test, test, test]), [3, 7], "a new edit clears the signalled set so the same loop can fire again");
+  assert.equal(editReset.saved.length, 2, "each signalled failing loop saves a recovery checkpoint");
+  const windowReset = loopFixture();
+  const windowTest = () => windowReset.call("bash", { command: "npm test" }, failOut());
+  const windowEdit = () => windowReset.call("edit", { filePath: "a.md", oldString: "x", newString: "y" }, okOut());
+  assert.deepEqual(fires([windowTest, windowEdit, windowTest, windowEdit, windowTest, windowEdit, windowTest]), [7], "progress clears stale window entries");
+  const reapply = loopFixture();
+  const reapplyTest = () => reapply.call("bash", { command: "npm test" }, failOut());
+  const reapplyEdit = () => reapply.call("edit", { filePath: "a.md", oldString: "x", newString: "y" }, okOut());
+  assert.deepEqual(fires([reapplyEdit, reapplyTest, reapplyEdit, reapplyTest, reapplyEdit, reapplyTest]), [6], "re-applying the same edit is not progress");
+
+  const todoReset = loopFixture();
+  const todoFail = () => todoReset.call("bash", { command: "npm test" }, failOut());
+  const todoChange = () => todoReset.call("todowrite", { todos: [{ content: "Fix test", status: "in_progress" }] }, okOut());
+  assert.deepEqual(fires([todoFail, todoFail, todoFail, todoChange, todoFail, todoFail, todoFail]), [3, 7], "a todo status change clears the signalled set");
+
+  const polling = loopFixture();
+  assert.deepEqual(fires(Array.from({ length: 30 }, () => () => polling.call("aidevops_bounded_operation", { action: "status", operation_id: "op-1", wait_seconds: 30 }, okOut("running")))), [], "designed bounded-operation polling is exempt");
 } finally {
   rmSync(fixtureDir, { recursive: true, force: true });
 }

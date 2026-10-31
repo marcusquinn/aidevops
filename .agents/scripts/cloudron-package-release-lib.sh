@@ -21,6 +21,21 @@ _cloudron_release_error() {
 	return 1
 }
 
+# The managed catalog workflow pushes its catalog commit and tag with the
+# per-run job token. CLOUDRON_RELEASE_PAT is needed only when rules on main
+# block a direct push by that token (required PRs, status checks, deployments
+# or restricted updates). Returns 0 = PAT required, 1 = not required,
+# 2 = rules could not be read. Classic branch protection is not inspected.
+cloudron_publication_pat_required() {
+	local slug="$1" rules=""
+	rules=$(gh api "repos/${slug}/rules/branches/main") || return 2
+	jq -e 'type == "array"' <<<"$rules" >/dev/null 2>&1 || return 2
+	if jq -e 'any(.[]; .type == "pull_request" or .type == "required_status_checks" or .type == "required_deployments" or .type == "update")' <<<"$rules" >/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
 cloudron_package_is_semver() {
 	local version="$1"
 	[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]

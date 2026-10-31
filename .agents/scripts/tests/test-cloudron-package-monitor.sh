@@ -108,10 +108,6 @@ if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package/conten
     exit 0
 fi
 source "${0%/*}/gh-source"
-if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
-    printf '%s\n' 'ADMIN'
-    exit 0
-fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
     search=""
     shift 2
@@ -131,7 +127,50 @@ fi
 exit 1
 GH
 	write_fake_issue_wrapper "$bin_dir"
+	write_fake_catalog_commands "$bin_dir"
 	chmod +x "${bin_dir}/gh"
+	return 0
+}
+
+write_fake_catalog_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'CATALOG'
+if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+    printf '%s\n' 'ADMIN'
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/variables ]]; then
+    printf '%s' "${MONITOR_PUBLICATION_ENABLED:-false}"
+    exit 0
+fi
+if [[ "$*" == 'api repos/exampleorg/example-package/rules/branches/main' ]]; then
+    printf '%s\n' '[{"type":"non_fast_forward"},{"type":"deletion"}]'
+    exit 0
+fi
+if [[ "$*" == 'secret list --repo exampleorg/example-package --json name' ]]; then
+    printf '%s\n' '[{"name":"CLOUDRON_RELEASE_PAT"}]'
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/contents/CloudronVersions.json* ]]; then
+    [[ "${MONITOR_CATALOG_STATE:-}" != error ]] || exit 1
+    if [[ "${MONITOR_CATALOG_STATE:-}" == published ]]; then
+        printf '%s\n' '{"versions":{"1.0.0":{}}}'
+    else
+        printf '%s\n' '{"versions":{}}'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/workflows/cloudron-catalog-publish.yml/runs* ]]; then
+    printf '%s\n' "${MONITOR_ACTIVE_RUNS:-0}"
+    exit 0
+fi
+if [[ "${1:-}" == workflow && "${2:-}" == run ]]; then
+    printf 'DISPATCH %s\n' "$*" >>"${MONITOR_TEST_LOG}"
+    [[ "${MONITOR_DISPATCH_FAIL:-false}" != true ]] || exit 1
+    exit 0
+fi
+CATALOG
+	return 0
 }
 
 # Label inventory/create stubs, appended to the gh-source file the gh stub sources.
@@ -152,6 +191,62 @@ LABELS
 	return 0
 }
 
+write_fake_supersede_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'SUPERSEDE'
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues?state=open&per_page=100' ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != list-error ]] || exit 1
+    if [[ -n "${MONITOR_SUPERSEDE:-}" ]]; then
+        printf '%s\n' '[[{"number":90,"body":"<!-- aidevops:cloudron-package-monitor upstream-v1.5.0 -->"}]]'
+    else
+        printf '%s\n' '[[]]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == repos/exampleorg/example-package/issues/90 ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != issue-error ]] || exit 1
+    old_marker='upstream-v1.5.0'
+    [[ "${MONITOR_SUPERSEDE:-}" != newer ]] || old_marker='upstream-v9.0.0'
+    [[ "${MONITOR_SUPERSEDE:-}" != commit ]] || old_marker='upstream-commit-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    jq -nc --arg marker "$old_marker" --arg scenario "${MONITOR_SUPERSEDE:-}" '{
+        state:"open", author_association:(if $scenario == "untrusted" then "CONTRIBUTOR" else "OWNER" end),
+        body:("<!-- aidevops:cloudron-package-monitor " + $marker + " -->"),
+        assignees:(if $scenario == "assigned" then [{login:"worker"}] else [] end),
+        labels:(if $scenario == "claimed" then [{name:"status:claimed"}] elif $scenario == "in-progress" then [{name:"status:in-progress"}] else [] end)}'
+    exit 0
+fi
+if [[ "${1:-}" == pr && "${2:-}" == list ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != pr-error ]] || exit 1
+    if [[ "${MONITOR_SUPERSEDE:-}" == linked ]]; then
+        printf '%s\n' '[{"closingIssuesReferences":[{"number":90}]}]'
+    elif [[ "${MONITOR_SUPERSEDE:-}" == malformed-pr-error ]]; then
+        printf '%s\n' '[{"closingIssuesReferences":["invalid"]}]'
+    else
+        printf '%s\n' '[]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues/90/timeline?per_page=100' ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != timeline-error ]] || exit 1
+    if [[ "${MONITOR_SUPERSEDE:-}" == referenced ]]; then
+        printf '%s\n' '[[{"event":"cross-referenced","source":{"issue":{"pull_request":{},"state":"open"}}}]]'
+    elif [[ "${MONITOR_SUPERSEDE:-}" == malformed-timeline-error ]]; then
+        printf '%s\n' '[[{"event":"cross-referenced","source":{"issue":"invalid"}}]]'
+    elif [[ "${MONITOR_SUPERSEDE:-}" == historical ]]; then
+        printf '%s\n' '[[{"event":"connected"},{"event":"disconnected"},{"event":"cross-referenced","source":{"issue":{"pull_request":{},"state":"closed"}}}]]'
+    else
+        printf '%s\n' '[[]]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == issue && "${2:-}" == close ]]; then
+    printf 'CLOSE %s\n' "$3" >>"${MONITOR_TEST_LOG}"
+    exit 0
+fi
+SUPERSEDE
+	return 0
+}
+
 write_fake_source_commands() {
 	local bin_dir="$1"
 	cat >"${bin_dir}/gh-source" <<'SOURCE'
@@ -165,13 +260,21 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/commits/aaaaaa
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101" ]]; then
     if [[ "${MONITOR_ISSUE_STATE:-}" == claimed ]]; then
-        printf '%s\n' '{"state":"open","assignees":[{"login":"exampleorg"}],"labels":[{"name":"auto-dispatch"},{"name":"status:claimed"}]}'
+        printf '%s\n' '{"state":"open","html_url":"https://github.com/exampleorg/example-package/issues/101","assignees":[{"login":"exampleorg"}],"labels":[{"name":"auto-dispatch"},{"name":"status:claimed"}]}'
     else
-        printf '%s\n' '{"state":"open","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}'
+        printf '%s\n' '{"state":"open","html_url":"https://github.com/exampleorg/example-package/issues/101","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}'
     fi
     exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101/comments?per_page=100" ]]; then
+    if [[ -n "${MONITOR_SUPERSEDE:-}" ]]; then
+        if grep -Fq 'aidevops:cloudron-upstream-retained' "${MONITOR_TEST_LOG}"; then
+            printf '%s\n' '[{"body":"aidevops:cloudron-upstream-retained upstream-v2.0.0","author_association":"OWNER"}]'
+        else
+            printf '%s\n' '[]'
+        fi
+        exit 0
+    fi
     source_marker='<!-- aidevops:cloudron-source-ready desktop-v2.0.0-ghcr.io/exampleorg/upstream:sha-bbbbbbb-sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'
     if [[ -n "${MONITOR_FORGED_MARKER:-}" ]]; then
         printf '[{"body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}},{"body":"%s","author_association":"COLLABORATOR","user":{"login":"other"}}]\n' "${MONITOR_CIRCUIT_BLOCKER}" "$source_marker"
@@ -242,11 +345,13 @@ WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
 body_file=""
+target="$1"
 while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--body-file" ]]; then body_file="$2"; break; fi
     shift
 done
 printf 'CALL_RETRY\n' >>"${MONITOR_TEST_LOG}"
+printf 'COMMENT %s\n' "$target" >>"${MONITOR_TEST_LOG}"
 cat "$body_file" >>"${MONITOR_TEST_LOG}"
 COMMENT
 	cat >"${bin_dir}/docker" <<'DOCKER'
@@ -272,6 +377,7 @@ else
 fi
 DOCKER
 	write_fake_source_commands "$bin_dir"
+	write_fake_supersede_commands "$bin_dir"
 	write_fake_label_commands "$bin_dir"
 	chmod +x "${bin_dir}/gh_create_issue" "${bin_dir}/gh_issue_comment" "${bin_dir}/docker"
 	return 0
@@ -364,6 +470,46 @@ test_monitor_deduplicates_and_preserves_source() {
 	assert_equal 1 "$(grep -c '^- Upgrade base image' "$log_file")" "legacy upgrade creates one actionable finding"
 	grep -Fq 'minBoxVersion' "$log_file" && assert_equal true true "upgrade issue includes platform qualification" || assert_equal true false "upgrade issue includes platform qualification"
 	assert_equal "$docker_before" "$(cksum "${repo_dir}/Dockerfile")" "compatibility monitor does not mutate package source"
+	return 0
+}
+
+test_monitor_supersedes_only_idle_upstream_findings() {
+	local scenario="" case_root="" home_dir="" repo_dir="" bin_dir="" log_file="" rc=0 expected=0
+	for scenario in idle assigned claimed in-progress linked referenced untrusted newer list-error issue-error pr-error timeline-error malformed-pr-error malformed-timeline-error historical commit; do
+		case_root="${TEST_ROOT}/supersede-${scenario}"
+		home_dir="${case_root}/home" repo_dir="${case_root}/package" bin_dir="${case_root}/bin" log_file="${case_root}/issues.log"
+		write_fake_commands "$bin_dir"
+		write_fixture "$home_dir" "$repo_dir"
+		if [[ "$scenario" == commit ]]; then
+			write_fake_commit_source_commands "$bin_dir"
+			jq '.initialized_repos[0].cloudron_package.upstream_source = "commits"' "${home_dir}/.config/aidevops/repos.json" >"${case_root}/config.json"
+			mv "${case_root}/config.json" "${home_dir}/.config/aidevops/repos.json"
+		fi
+		rc=0
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_SUPERSEDE="$scenario" \
+			MONITOR_REMOTE_VERSION=05a1372 MONITOR_UPSTREAM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+			CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" \
+			bash "$HELPER" upstream --apply >/dev/null 2>&1 || rc=$?
+		expected=0
+		[[ "$scenario" != *-error ]] || expected=1
+		assert_equal "$expected" "$rc" "supersede ${scenario}: API failures fail closed"
+		expected=0
+		[[ "$scenario" != idle && "$scenario" != commit && "$scenario" != historical ]] || expected=1
+		assert_equal "$expected" "$(grep -c '^CLOSE 90$' "$log_file" || true)" "supersede ${scenario}: only idle older findings close"
+		if [[ "$expected" == 1 ]]; then
+			grep -Fq 'Superseded by https://github.com/exampleorg/example-package/issues/101' "$log_file" &&
+				assert_equal true true "supersede ${scenario}: signed wrapper comment links replacement" ||
+				assert_equal true false "supersede ${scenario}: signed wrapper comment links replacement"
+		fi
+		case "$scenario" in
+		assigned | claimed | in-progress | linked | referenced)
+			HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_SUPERSEDE="$scenario" \
+				CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" \
+				bash "$HELPER" upstream --apply >/dev/null
+			assert_equal 1 "$(grep -c '^COMMENT 101$' "$log_file" || true)" "supersede ${scenario}: one retained-work note across retries"
+			;;
+		esac
+	done
 	return 0
 }
 
@@ -884,10 +1030,128 @@ test_monitor_ensures_maintenance_label() {
 	return 0
 }
 
+test_monitor_reconciles_catalog_once() {
+	local home_dir="${TEST_ROOT}/catalog-home" repo_dir="${TEST_ROOT}/catalog-package" bin_dir="${TEST_ROOT}/catalog-bin"
+	local log_file="${TEST_ROOT}/catalog.log" output="" rc=0 run=0
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	# Keep upstream detection idle, isolating the publication-recovery path.
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_VERSION=2.0.0 MONITOR_PUBLICATION_ENABLED=true \
+		MONITOR_TEST_LOG="$log_file" bash "$HELPER" upstream)
+	[[ "$output" == *"manifest v1.0.0 is absent"* ]] && assert_equal true true "dry run reports catalog drift" || assert_equal true false "dry run reports catalog drift"
+	[[ ! -f "$log_file" ]] && assert_equal true true "dry run never dispatches" || assert_equal true false "dry run never dispatches"
+	for run in disabled published active error dispatch-error; do
+		rc=0
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_VERSION=2.0.0 MONITOR_TEST_LOG="$log_file" \
+			MONITOR_PUBLICATION_ENABLED="$([[ "$run" != disabled ]] && printf true || printf false)" \
+			MONITOR_CATALOG_STATE="$run" MONITOR_ACTIVE_RUNS="$([[ "$run" == active ]] && printf 1 || printf 0)" \
+			MONITOR_DISPATCH_FAIL="$([[ "$run" == dispatch-error ]] && printf true || printf false)" \
+			bash "$HELPER" upstream --apply >/dev/null 2>&1 || rc=$?
+		case "$run" in
+		error | dispatch-error) assert_equal 1 "$rc" "$run fails closed" ;;
+		*) assert_equal 0 "$rc" "$run does not require dispatch" ;;
+		esac
+	done
+	assert_equal 1 "$(grep -c '^DISPATCH ' "$log_file")" "only failed dispatch was attempted"
+	for run in 1 2; do
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_VERSION=2.0.0 MONITOR_PUBLICATION_ENABLED=true \
+			MONITOR_TEST_LOG="$log_file" bash "$HELPER" upstream --apply >/dev/null
+	done
+	assert_equal 2 "$(grep -c '^DISPATCH ' "$log_file")" "failed dispatch retries, successful dispatch is deduplicated"
+	grep -Fq 'workflow run cloudron-catalog-publish.yml --repo exampleorg/example-package --ref main' "$log_file" &&
+		assert_equal true true "reconciliation uses the enabled main caller" || assert_equal true false "reconciliation uses the enabled main caller"
+	return 0
+}
+
+test_catalog_atomic_push_races() {
+	# Execute the actual workflow shell against disposable local bare remotes.
+	python3 - "$SCRIPT_DIR/../../../.github/workflows/cloudron-catalog-publish-reusable.yml" "$TEST_ROOT" <<'PY'
+import os
+import pathlib
+import subprocess
+import sys
+import textwrap
+
+workflow = pathlib.Path(sys.argv[1]).read_text()
+step = workflow.split('      - name: Commit catalog and push tag atomically\n', 1)[1]
+script = textwrap.dedent(step.split('        run: |\n', 1)[1].split('\n  release:', 1)[0])
+editor = pathlib.Path(sys.argv[2]) / 'tag-editor'
+editor.write_text('#!/usr/bin/env python3\nimport pathlib, sys\npathlib.Path(sys.argv[1]).write_text("Catalog test tag\\n")\n')
+editor.chmod(0o755)
+env = dict(os.environ, GIT_AUTHOR_NAME='Catalog Test', GIT_AUTHOR_EMAIL='test@example.invalid',
+           GIT_COMMITTER_NAME='Catalog Test', GIT_COMMITTER_EMAIL='test@example.invalid', GIT_EDITOR=str(editor))
+
+def git(cwd, *args):
+    result = subprocess.run(['git', *args], cwd=cwd, env=env, text=True, capture_output=True)
+    if result.returncode:
+        raise AssertionError(result.stderr)
+    return result.stdout.strip()
+
+for scenario in ('unchanged', 'docs', 'source', 'reverted-source', 'renamed-source', 'catalog', 'second-race'):
+    root = pathlib.Path(sys.argv[2]) / ('push-' + scenario)
+    root.mkdir()
+    remote, worker, racer = (root / name for name in ('origin.git', 'worker', 'racer'))
+    git(root, 'init', '--bare', '--initial-branch=main', str(remote))
+    git(root, 'clone', str(remote), str(worker))
+    (worker / 'CloudronVersions.json').write_text('{"versions":{}}\n')
+    (worker / 'Dockerfile').write_text('FROM scratch\n')
+    git(worker, 'add', '.')
+    git(worker, 'commit', '-m', 'validated package')
+    source = git(worker, 'rev-parse', 'HEAD')
+    git(worker, 'push', 'origin', 'HEAD:main')
+    git(root, 'clone', str(remote), str(racer))
+    if scenario != 'unchanged':
+        path = 'README.md' if scenario in ('docs', 'second-race') else 'CloudronVersions.json' if scenario == 'catalog' else 'Dockerfile'
+        (racer / path).write_text('concurrent change\n')
+        git(racer, 'add', '.')
+        git(racer, 'commit', '-m', 'concurrent change')
+        if scenario == 'reverted-source':
+            git(racer, 'revert', '--no-edit', 'HEAD')
+        if scenario == 'renamed-source':
+            git(racer, 'mv', 'Dockerfile', 'README.md')
+            git(racer, 'commit', '-m', 'rename source into docs')
+        git(racer, 'push', 'origin', 'HEAD:main')
+    if scenario == 'second-race':
+        # Reject the second push to prove there is no retry loop.
+        hook = remote / 'hooks/pre-receive'
+        hook.write_text('#!/bin/sh\nexit 1\n')
+        hook.chmod(0o755)
+    expected_main = git(racer, 'ls-remote', 'origin', 'refs/heads/main').split()[0]
+    catalog = '{"versions":{"1.0.0":{}}}\n'
+    (worker / 'CloudronVersions.json').write_text(catalog)
+    result = subprocess.run(['bash', '-c', script], cwd=worker,
+                            env=dict(env, SOURCE_SHA=source, VERSION='1.0.0', PUSH_TOKEN='test-placeholder'),
+                            text=True, capture_output=True)
+    success = scenario in ('unchanged', 'docs')
+    assert (result.returncode == 0) == success, (scenario, result.stdout, result.stderr)
+    tag = git(worker, 'ls-remote', 'origin', 'refs/tags/v1.0.0')
+    assert bool(tag) == success, scenario
+    if success:
+        git(racer, 'fetch', 'origin', 'main', '--tags')
+        assert git(racer, 'show', 'v1.0.0:CloudronVersions.json') == catalog.strip()
+        assert git(racer, 'show', '-s', '--format=%(trailers:key=Cloudron-Source,valueonly)', 'v1.0.0^{commit}') == source
+        git(racer, 'merge-base', '--is-ancestor', source, 'v1.0.0')
+        assert git(racer, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'v1.0.0') == 'CloudronVersions.json'
+        release = workflow.split('      - name: Verify existing tag, public image and catalog; repair release only\n', 1)[1]
+        verification = textwrap.dedent(release.split('        run: |\n', 1)[1]).split('image=$(jq', 1)[0]
+        checked = subprocess.run(['bash', '-c', verification + '\ntest "$source_sha" = "$EXPECTED_SOURCE"'],
+                                 cwd=racer, env=dict(env, VERSION='1.0.0', RUNNER_TEMP=str(root), EXPECTED_SOURCE=source),
+                                 text=True, capture_output=True)
+        assert checked.returncode == 0, (scenario, checked.stderr)
+    else:
+        assert git(racer, 'ls-remote', 'origin', 'refs/heads/main').split()[0] == expected_main
+    print('PASS workflow atomic push:', scenario)
+PY
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
+	test_catalog_atomic_push_races
+	test_monitor_reconciles_catalog_once
 	test_monitor_deduplicates_and_preserves_source
+	test_monitor_supersedes_only_idle_upstream_findings
 	test_monitor_scopes_package_tests_when_present
 	test_monitor_uses_remote_manifest_and_fails_closed
 	test_monitor_rejects_invalid_release_timeout

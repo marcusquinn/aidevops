@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.39.67
+# Version: 3.39.103
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -734,6 +734,23 @@ _setup_install_pulse_plist_early() {
 	_early_os="$(uname -s)"
 	if _should_setup_noninteractive_supervisor_pulse; then
 		setup_supervisor_pulse "$_early_os" || print_warning "Early pulse plist install failed (will retry late)"
+	fi
+	return 0
+}
+
+# GH#35788: surface stale/missing JS dependency install approvals for
+# dispatch-enabled repos so headless workers are not stranded with
+# runner_capability_unmet. Interactive setup offers renewal per repo;
+# non-interactive setup/update only reports (never writes repos.json).
+review_js_dependency_policies() {
+	local helper="${BASH_SOURCE[0]%/*}/.agents/scripts/worktree-js-readiness-helper.sh"
+	[[ -f "$helper" ]] || helper="$HOME/.aidevops/agents/scripts/worktree-js-readiness-helper.sh"
+	[[ -f "$helper" ]] || return 0
+	command -v jq &>/dev/null || return 0
+	if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
+		bash "$helper" review --report-only || print_warning "JS dependency policy review failed (non-fatal)"
+	else
+		bash "$helper" review || print_warning "JS dependency policy review failed (non-fatal)"
 	fi
 	return 0
 }
@@ -1590,6 +1607,7 @@ _setup_run_noninteractive_migrations() {
 	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	_time_step "cleanup_legacy_dashboard_launchagent" cleanup_legacy_dashboard_launchagent
 	_time_step "cleanup_legacy_agents_md_templates" cleanup_legacy_agents_md_templates
+	_time_step "review_js_dependency_policies" review_js_dependency_policies
 	return 0
 }
 
@@ -1732,6 +1750,8 @@ _setup_run_interactive_silent_migrations() {
 	_cleanup_legacy_model_config
 	cleanup_legacy_dashboard_launchagent
 	cleanup_legacy_agents_md_templates
+	# Prompts (default No) only when a dispatch repo's JS install approval is stale.
+	review_js_dependency_policies
 	return 0
 }
 

@@ -89,7 +89,7 @@ class MergeCases:
         self.start_conflicted_merge()
         admin = self.auto_merge_path().parent
         for name, content in (('CHERRY_PICK_HEAD', b'0' * 40), ('MERGE_MODE', b'unknown'),
-                              ('MERGE_HEAD', b'ref: refs/heads/other\n'), ('COMMIT_EDITMSG', b'uncommitted draft')):
+                              ('MERGE_HEAD', b'ref: refs/heads/other\n')):
             path = admin / name
             original = path.read_bytes() if path.exists() else None
             path.write_bytes(content)
@@ -109,9 +109,14 @@ class MergeCases:
                                        '--output-root', self.archives, check=False).returncode, 0)
         message.unlink()
         message.write_bytes(original)
+        draft = admin / 'COMMIT_EDITMSG'
+        draft.write_bytes(b'uncommitted editor metadata')
         archive = self.archive()
+        self.helper('verify', archive)
+        self.assertEqual(draft.read_bytes(), b'uncommitted editor metadata')
         from worktree_archive_state import validate_merge
         state = json.loads((archive / 'merge-state-v1.json').read_text())
+        self.assertNotIn('COMMIT_EDITMSG', state['metadata'])
         state['index'][0][0] = b'../escape'.hex()
         with self.assertRaisesRegex(ValueError, 'unsafe_path'):
             validate_merge(state)

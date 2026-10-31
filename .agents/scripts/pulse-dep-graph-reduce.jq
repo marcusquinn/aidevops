@@ -94,8 +94,50 @@ def blocker_text:
     | sub("^[[:space:]]*([-*+][[:space:]]+)?"; "") | blocker_value_line)
   | join("\n");
 
+# Twins of issue-hold-marker-lib.sh: do not reuse dependency visible_text,
+# whose fence/comment ordering and Markdown handling have different semantics.
+def hold_normalized_line:
+  reduce range(0; 8) as $unused (.;
+    sub("^([[:space:]]+|>[[:space:]]*|([-+*]|[0-9]+[.)])[[:space:]]+|\\[[ xX]\\][[:space:]]+|#{1,6}[[:space:]]+|\\*\\*|__|\\*|_)"; ""));
+
+def hold_fence:
+  (try capture("^(?<marker>`{3,}|~{3,})(?<rest>.*)$") catch null) // null;
+
+# Consume comments left to right, retaining text on either side on this line.
+def hold_strip_comments:
+  if .comment then
+    (.line | index("-->")) as $end
+    | if $end == null then .line = ""
+      else .line = .line[$end + 3:] | .comment = false | hold_strip_comments end
+  else
+    (.line | index("<!--")) as $start
+    | if $start == null then .out += .line | .line = ""
+      else .out += .line[:$start] | .line = .line[$start + 4:]
+        | .comment = true | hold_strip_comments end
+  end;
+
+def operational_hold:
+  reduce (split("\n")[]) as $line (
+    {fence: "", comment: false, held: false};
+    ($line | hold_normalized_line | hold_fence) as $candidate
+    | if .held then .
+      elif .fence != "" then
+        if $candidate != null and $candidate.marker[0:1] == .fence[0:1]
+          and ($candidate.marker | length) >= (.fence | length)
+          and ($candidate.rest | test("^[[:space:]]*$")) then .fence = "" else . end
+      else
+        ({line: $line, out: "", comment: .comment} | hold_strip_comments) as $visible
+        | .comment = $visible.comment
+        | ($visible.out | hold_normalized_line) as $normalized
+        | ($normalized | hold_fence) as $opener
+        | if $opener != null then .fence = $opener.marker
+          elif ($normalized | startswith("|") or endswith("|") or ([scan("\\|")] | length) >= 2) then .
+          else .held = ($normalized | test("^(defer[[:space:]]+until|do[-[:space:]]+not[-[:space:]]+dispatch|on[-[:space:]]+hold|hold[[:space:]]+for|paused)([[:space:]:]|$)"; "i")) end
+      end
+  ) | .held;
+
 def defer_marker:
-  test("defer until|do[-[:space:]]not[-[:space:]]dispatch|on[-[:space:]]hold|HUMAN_UNBLOCK_REQUIRED|hold for |paused[[:space:]:]"; "i");
+  contains("HUMAN_UNBLOCK_REQUIRED") or operational_hold;
 
 def issue_number:
   if type == "number" and . >= 0 and floor == . then .

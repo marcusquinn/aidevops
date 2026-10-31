@@ -60,6 +60,8 @@ gate_src=$(awk '
 }
 
 _handle_changes_requested_review_gate() { return 0; }
+# Closure validation has its own merge-contradiction harness.
+_gh_pr_merge_closure_check() { return 0; }
 _pulse_is_trusted_issue_sync_pr() {
 	printf '%s %s %s\n' "$1" "$2" "$3" >>"$TRUST_CALLS"
 	[[ "$FIXTURE_TRUSTED" -eq 1 && "$3" == "head-current" ]]
@@ -222,7 +224,7 @@ FIXTURE_CRYPTO_APPROVED=0
 : >"$LOGFILE"
 result=$(run_gate head-current 'dependabot[bot]')
 if [[ "$result" -eq 1 ]] &&
-	grep -qF "950 owner/repo dependabot[bot] head-current policy-ineligible" "$DEPENDABOT_ROUTE_CALLS" &&
+	grep -qF "950 owner/repo dependabot[bot] head-current approval-required" "$DEPENDABOT_ROUTE_CALLS" &&
 	grep -qF "remains external and lacks current-head maintainer crypto-approval" "$LOGFILE"; then
 	print_result "verified Dependabot without independent authority enters lifecycle reconciliation" 0
 else
@@ -283,7 +285,7 @@ for author in app/dependabot 'dependabot[bot]'; do
 	: >"$LOGFILE"
 	result=$(run_gate head-current "$author")
 	if [[ "$result" -eq 1 && ! -s "$PERMISSION_CALLS" ]] &&
-		grep -qF "950 owner/repo $author head-current policy-ineligible" "$DEPENDABOT_ROUTE_CALLS"; then
+		grep -qF "950 owner/repo $author head-current approval-required" "$DEPENDABOT_ROUTE_CALLS"; then
 		print_result "$author reaches lifecycle routing with real permission helpers" 0
 	else
 		print_result "$author reaches lifecycle routing with real permission helpers" 1

@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Exercise create with real scratch Git worktrees and offline service stubs."""
 
+import json
 import os
 from contextlib import closing
 from pathlib import Path
@@ -84,6 +85,13 @@ case "$*" in
     "repo view "*) exit 1 ;;
     "repo create "*) exit 0 ;;
     *"/compare/"*) printf '%s\\n' identical ;;
+    "api repos/fixture/example-plugin")
+        if [[ "${RUNNER_DENIED:-0}" == 1 ]]; then
+            printf '%s\\n' '{"private":true,"owner":{"type":"Organization"}}'
+        else
+            printf '%s\\n' '{"private":true,"owner":{"type":"User"}}'
+        fi ;;
+    "api --paginate orgs/"*) printf '%s\\n' 'HTTP 403 forbidden' >&2; exit 1 ;;
     "api repos/"*) printf 'true\\tmain\\n' ;;
     *) exit 44 ;;
 esac
@@ -180,6 +188,14 @@ cat > "$FIXTURE_ROOT/published-body"
         self.assertFalse((self.root / "published-args").exists())
         self.assertTrue((self.worktree / "generated-quality.txt").exists())
 
+    def test_runner_permission_failure_stops_before_clone_or_publish(self):
+        self.env["RUNNER_DENIED"] = "1"
+        result = self.create()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("repo-ensure --repo fixture/example-plugin", result.stdout)
+        self.assertFalse((self.root / "published-args").exists())
+        self.assertFalse((self.root / "clone").exists())
+
     def test_local_only_create_is_clean_and_does_not_publish(self):
         result = self.create("--no-github")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -195,6 +211,176 @@ cat > "$FIXTURE_ROOT/published-body"
         self.assertIn("Dry run: nothing changed", result.stdout + result.stderr)
         self.assertFalse((self.root / "clone").exists())
         self.assertFalse(self.worktree.exists())
+
+
+class RunnerEnrollmentTest(unittest.TestCase):
+    """Exercise the production CLI with offline GitHub responses and real jq."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="plugin-runners-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.state = self.root / "state.json"
+        self.log = self.root / "calls.jsonl"
+        self.data = {
+            "metadata": {"id": 42, "private": True, "owner": {"type": "Organization"}},
+            "groups": [{"id": 7, "name": "Private pool", "visibility": "selected",
+                        "allows_public_repositories": False}],
+            "runners": [{"labels": [{"name": "linux", "type": "read-only"},
+                                     {"name": "pool", "type": "custom"}]}],
+            "fork": {"run_workflows_from_fork_pull_requests": False},
+            "members": [10, 11], "variable": "", "fail": "",
+        }
+        self.env = dict(os.environ, PATH=f"{self.root}:{os.environ['PATH']}",
+                        RUNNER_STATE=str(self.state), RUNNER_LOG=str(self.log))
+        PluginCreateTest.write_executable(self.root / "gh", '''#!/usr/bin/env python3
+import json, os, subprocess, sys
+from pathlib import Path
+args = sys.argv[1:]
+state = Path(os.environ["RUNNER_STATE"])
+d = json.loads(state.read_text())
+with open(os.environ["RUNNER_LOG"], "a") as log:
+    log.write(json.dumps(args) + "\\n")
+if args[:2] == ["variable", "set"]:
+    if d["fail"] == "variable": sys.exit(1)
+    d["variable"] = args[args.index("--body") + 1]
+    state.write_text(json.dumps(d))
+    sys.exit(0)
+assert args[0] == "api", args
+endpoint = next(a for a in args if a.startswith(("repos/", "orgs/"))).split("?")[0]
+if endpoint == "repos/fixture/plugin": out = d["metadata"]
+elif endpoint.endswith("/runner-groups"):
+    if d["fail"] == "groups":
+        print("HTTP 403 forbidden", file=sys.stderr)
+        sys.exit(1)
+    out = {"runner_groups": d["groups"]}
+elif endpoint.endswith("/runners"): out = {"runners": d["runners"]}
+elif endpoint.endswith("/fork-pr-workflows-private-repos"): out = d["fork"]
+elif endpoint.endswith("/repositories/42"):
+    assert "PUT" in args, args
+    if d["fail"] == "membership":
+        print("HTTP 403 forbidden", file=sys.stderr)
+        sys.exit(1)
+    if 42 not in d["members"]: d["members"].append(42)
+    state.write_text(json.dumps(d))
+    sys.exit(0)
+elif endpoint.endswith("/repositories"):
+    out = {"repositories": [{"id": i} for i in d["members"]]}
+elif endpoint.endswith("/variables/CI_RUNNER"): out = {"value": d["variable"]}
+else: raise AssertionError(args)
+if "--jq" in args:
+    sys.exit(subprocess.run(["jq", "-r", args[args.index("--jq") + 1]],
+                            input=json.dumps(out), text=True).returncode)
+print(json.dumps(out))
+''')
+
+    def enroll(self, *options, reset=True):
+        if reset:
+            self.state.write_text(json.dumps(self.data))
+        return subprocess.run(  # nosec B603 - fixed local helper and fixture argv
+            [BASH, str(SCRIPTS / "github-runner-org-helper.sh"), "repo-ensure",
+             "--repo", "fixture/plugin", *options],
+            env=self.env, capture_output=True, text=True)
+
+    def writes(self):
+        return [call for call in map(json.loads, self.log.read_text().splitlines())
+                if "PUT" in call or call[:2] == ["variable", "set"]]
+
+    def test_additive_enrollment_and_retry(self):
+        for reset in (True, False):
+            result = self.enroll(reset=reset)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            state = json.loads(self.state.read_text())
+            self.assertEqual(state["members"], [10, 11, 42])
+            self.assertEqual(state["variable"], "pool")
+        self.assertIn("enrollment verified", result.stdout)
+        self.assertTrue(all("PATCH" not in call for call in self.writes()))
+
+    def test_dry_run_is_read_only_and_prints_exact_commands(self):
+        result = self.enroll("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.writes(), [])
+        self.assertIn("gh api -X PUT orgs/fixture/actions/runner-groups/7/repositories/42", result.stdout)
+        self.assertIn("gh variable set CI_RUNNER --repo fixture/plugin --body pool", result.stdout)
+
+    def test_fork_enabled_or_unknown_never_writes(self):
+        for fork in ({"run_workflows_from_fork_pull_requests": True}, {}):
+            self.data["fork"] = fork
+            result = self.enroll()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(self.writes(), [])
+
+    def test_public_and_personal_repos_skip(self):
+        for private, owner in ((False, "Organization"), (True, "User")):
+            self.data["metadata"].update(private=private, owner={"type": owner})
+            result = self.enroll()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("skipped", result.stdout)
+            self.assertEqual(self.writes(), [])
+
+    def test_no_selected_group_keeps_hosted_fallback(self):
+        for groups in ([], [{"id": 1, "visibility": "all"}]):
+            self.data["groups"] = groups
+            result = self.enroll()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("fallback", result.stdout)
+            self.assertEqual(self.writes(), [])
+
+    def test_multiple_groups_require_explicit_selection(self):
+        self.data["groups"].append(dict(self.data["groups"][0], id=8, name="Other"))
+        result = self.enroll()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.writes(), [])
+        result = self.enroll("--group", "Private pool")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unsafe_group_policies_refused(self):
+        for field in ("allows_public_repositories", "inherited", "restricted_to_workflows"):
+            self.data["groups"][0][field] = True
+            result = self.enroll("--group", "Private pool")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(self.writes(), [])
+            self.data["groups"][0][field] = False
+
+    def test_empty_or_ambiguous_labels_refused(self):
+        self.data["runners"][0]["labels"].append({"name": "second", "type": "custom"})
+        result = self.enroll()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.writes(), [])
+        result = self.enroll("--label", "pool")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unregistered_pool_refused_even_with_label(self):
+        self.data["runners"] = []
+        result = self.enroll("--label", "pool")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.writes(), [])
+
+    def test_permission_failure_prints_safe_admin_retry(self):
+        self.data["fail"] = "groups"
+        result = self.enroll()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("repo-ensure --repo fixture/plugin", result.stdout)
+        self.assertIn("admin:org", result.stderr)
+        self.assertEqual(self.writes(), [])
+
+    def test_failed_membership_does_not_set_variable(self):
+        self.data["fail"] = "membership"
+        result = self.enroll()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(self.state.read_text())["variable"], "")
+        self.assertIn("gh api -X PUT", result.stdout)
+
+    def test_failed_variable_can_be_retried_without_losing_members(self):
+        self.data["fail"] = "variable"
+        result = self.enroll()
+        self.assertNotEqual(result.returncode, 0)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state["members"], [10, 11, 42])
+        state["fail"] = ""
+        self.state.write_text(json.dumps(state))
+        result = self.enroll(reset=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

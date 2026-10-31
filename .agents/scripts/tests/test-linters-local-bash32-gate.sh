@@ -33,6 +33,8 @@ setup() {
 }
 
 teardown() {
+	# Leave TEST_ROOT first so the shell is never stranded in a deleted cwd.
+	cd "$TEST_SCRIPTS_DIR" || return 1
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
 	fi

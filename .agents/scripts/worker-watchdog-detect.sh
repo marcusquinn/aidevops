@@ -38,53 +38,31 @@ fi
 #######################################
 # Find all headless worker processes
 #
-# Workers are identified by: processes matching WORKER_PROCESS_PATTERN
-# running with /full-loop in their command line (headless dispatch pattern).
+# Reuse the runner-local logical inventory, including role-marked wrappers
+# whose prompt is not present in argv. A watchdog candidate additionally needs
+# task/worktree attribution and a live same-user runtime in its process tree.
 #
 # Output: one line per worker: "PID|ELAPSED_SECS|COMMAND"
 #######################################
 find_workers() {
-	# Match worker processes with /full-loop (headless workers).
-	#
-	# WORKER_PROCESS_PATTERN is an extended-regex alternation
-	# (e.g. "opencode|claude|Claude" — see shared-constants.sh § "Process
-	# pattern constants"). It MUST be passed to grep -E. The historical
-	# bracket-trick that excluded grep from its own output (`[o]pencode`)
-	# only worked for single-word patterns; with alternation present, the
-	# pattern itself contains words that would match the grep argv. Filter
-	# grep out explicitly via `grep -v -- 'grep -E'` instead.
-	#
-	# Filters layered on the ps stream:
-	#   1. grep -E "$WORKER_PROCESS_PATTERN" — match opencode/claude binaries
-	#   2. grep -v -- 'grep -E'              — skip the grep pipeline itself
-	#   3. grep -F '/full-loop'              — keep only headless dispatch
-	# The in-loop "$line == *worker-watchdog*" guard is a defence-in-depth
-	# skip for the watchdog's own ps line; it does not replace filter #2.
-	local line pid cmd elapsed_seconds
-
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		# Skip watchdog processes
-		[[ "$line" == *"worker-watchdog"* ]] && continue
-
-		# Extract PID (first field) and command (rest of line)
-		pid="${line%%[[:space:]]*}"
-		cmd="${line#*[[:space:]]}"
-		[[ -z "$pid" ]] && continue
+	local workers snapshot effective_uid pid etime cmd elapsed_seconds
+	effective_uid=$(id -u) || return 1
+	[[ "$effective_uid" =~ ^[0-9]+$ ]] || return 1
+	# One snapshot binds identity and ancestry. The canonical parser applies its
+	# stricter watchdog mode before deduplication, so stale preferred wrappers
+	# cannot hide valid runtimes. Never print this snapshot in diagnostics.
+	snapshot=$(ps axwwo uid,pid,ppid,stat,etime,command) || return 1
+	workers=$(awk -v effective_uid="$effective_uid" -v watchdog=1 \
+		-f "${SCRIPT_DIR}/list_active_workers.awk" <<<"$snapshot") || return 1
+	[[ -n "$workers" ]] || return 0
+	while read -r pid etime cmd; do
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
-		[[ -z "$cmd" ]] && continue
-
-		# Get elapsed time
+		[[ -n "$cmd" ]] || continue
+		# Missing/ambiguous repository ownership must never enable a kill.
+		[[ -n "$(extract_repo_slug "$cmd")" ]] || continue
 		elapsed_seconds=$(_get_process_age "$pid")
-
-		# Output: PID|ELAPSED|COMMAND
-		echo "${pid}|${elapsed_seconds}|${cmd}"
-	done < <(ps axwwo pid,command \
-		| grep -E "${WORKER_PROCESS_PATTERN:-opencode}" \
-		| grep -v -- 'grep -E' \
-		| grep -F '/full-loop' \
-		|| true)
-
+		printf '%s|%s|%s\n' "$pid" "$elapsed_seconds" "$cmd"
+	done <<<"$workers"
 	return 0
 }
 
@@ -105,8 +83,10 @@ find_workers() {
 extract_issue_number() {
 	local cmd="$1"
 
-	# Try patterns: "Issue #NNN", "issue #NNN", "#NNN:", "GH#NNN"
-	if [[ "$cmd" =~ [Ii]ssue[[:space:]]+#([0-9]+) ]]; then
+	# Managed identity is authoritative; prompt prose may mention other issues.
+	if [[ "$cmd" =~ --session-key[[:space:]]+issue-([0-9]+)([[:space:]]|$) ]]; then
+		echo "${BASH_REMATCH[1]}"
+	elif [[ "$cmd" =~ [Ii]ssue[[:space:]]+#([0-9]+) ]]; then
 		echo "${BASH_REMATCH[1]}"
 	elif [[ "$cmd" =~ GH#([0-9]+) ]]; then
 		echo "${BASH_REMATCH[1]}"

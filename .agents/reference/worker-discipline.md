@@ -31,7 +31,7 @@ When dispatched against an auto-generated issue body (review-followup, quality-d
 
 - **A. Premise falsified → close the issue** with a `> Premise falsified. <claim>. <code reality>. Not acting.` rationale comment. No PR. The closing comment trains the next session and the noise filter.
 - **B. Premise correct + obvious fix → implement and PR** with normal lifecycle gate (`Resolves #<this-issue>`).
-- **C. Premise correct but genuinely ambiguous** (architecture / policy / breaking change the worker cannot resolve autonomously) → post a decision comment containing: **Premise check** (one line), **Analysis** (2-4 bullets on trade-offs), **Recommended path** (what you would do if the call were yours, with rationale), **Specific question** (yes/no or pick-one — not open-ended). Link every file, line, PR, run or comment cited (GitHub permalinks from `gh browse --no-browser --commit=<sha> <path>:<line>`, URLs from `gh ... --json url`) so the reviewer can decide without searching. Then apply `hold-for-review` and stop. The human wakes up to a decision-ready recommendation, not a blank task. `needs-maintainer-review` is reserved for missing external-author authority.
+- **C. Premise correct but genuinely ambiguous** (architecture / policy / breaking change the worker cannot resolve autonomously) → post a decision comment containing: **Premise check** (one line), **Analysis** (2-4 bullets on trade-offs), **Recommended path** (what you would do if the call were yours, with rationale), **Specific question** (yes/no or pick-one — not open-ended). Link every file, line, PR, run or comment cited (GitHub permalinks from `gh browse --no-browser --commit=<sha> <path>:<line>`, URLs from `gh ... --json url`) so the reviewer can decide without searching. Then exit `BLOCKED` as `input_required` with `TERMINAL_BLOCKER_INPUT_OWNER=maintainer` (see "Terminal-blocker recovery") and stop: supplying the answer in the brief re-arms dispatch automatically. Never label your own issue or draft PR `hold-for-review`; nothing lifts that label when the answer arrives, so the checkpoint stalls (GH#36138). The human wakes up to a decision-ready recommendation, not a blank task. `needs-maintainer-review` is reserved for missing external-author authority.
 
 Outcome A against a merged prerequisite PR (`For`/`Ref` the parent) is not an implementation close: `verify-issue-close-helper.sh check` correctly rejects it for zero file overlap, and fake scope paths must never be added. Verify with `verify-issue-close-helper.sh check-no-code <issue> <pr> <slug> <parent>` (trusted issue author, merged PR, parent linked by For/Ref, no closing keyword), resolve only the triage issue as no-code, and leave the parent open.
 
@@ -198,6 +198,10 @@ the brief and linked dependencies, not default-branch HEAD; a corrected brief,
 dependency change or OWNER/MEMBER standalone retry re-arms it. Verify the event
 before retrying. Permission holds remain independent of brief and code changes;
 unclassified blockers retain bounded backoff rather than a permanent circuit.
+A precondition measured on one runner (local telemetry, logs, data or checkouts)
+is not an external event: brief authors name `runner_capability_unmet` for it,
+and workers use that class even when a brief names another, so the runner that
+meets it continues instead of the issue blocking globally (#35605).
 
 `input_required` (GH#33332) needs a standalone
 `TERMINAL_BLOCKER_INPUT_OWNER=user|contributor|maintainer|admin` line; without
@@ -225,7 +229,15 @@ runner that opened it queues the issue (`terminal-blocker-recovery-helper.sh`;
 circuits it authored are backfilled every 6h) and its pulse supervisor runs
 when entries are pending (`trigger=blocker_recovery`, at most every
 `PULSE_LLM_RECOVERY_INTERVAL`, default 3h). `pending` re-verifies each entry on
-GitHub and retires closed or re-armed ones. For each entry the supervisor is the
+GitHub and retires closed or re-armed ones. Independently, pulse preflight runs
+the mechanical-only `rearm` pass every `PULSE_BLOCKER_REARM_INTERVAL` (default
+600s). A queued trusted retry or relevant issue revision releases its hold
+within that interval plus one pulse cycle, without an LLM run. This bounded,
+resumable pass emits no LLM work, performs no remote seeding, and skips comment
+reads for issues whose `updated_at` has not advanced since its last complete
+held check. API secondary cooldown or an active GraphQL circuit breaker defers
+the pass until pressure clears; a partial queue resumes on the next interval.
+The 3h LLM recovery cadence is unchanged. For each entry the supervisor is the
 AI brief owner:
 
 1. Read the public observation and the entry's `local_excerpts` (protected
@@ -234,6 +246,10 @@ AI brief owner:
 2. **Brief defect** (missing/wrong Files Scope, stale verification, impossible
    acceptance): make the minimal issue-body revision under brief-author
    authority. A relevant revision re-arms the circuit; no retry directive needed.
+   A requirement to salvage checkpoint commits or branches that no remote ref
+   holds is impossible acceptance for every other runner: rewrite it as
+   best-effort recovery with the functional spec as source of truth
+   (GH#35871).
 3. **Environment defect** (pinned runtime, dependencies, validator timeouts,
    push transport, a guard blocking its own fix): fix it when in scope, or
    deduplicate/file a worker-ready framework issue and link it with
@@ -242,6 +258,10 @@ AI brief owner:
    (defaults, naming, reversible choices, scope interpretation) and revise the
    brief, which re-arms the circuit. Otherwise name the exact missing input and
    its owner (user, contributor, maintainer or admin) on the issue once.
+   Closing an investigation as not reproduced is delegated: when its only
+   missing input is a recurrence and none was observed for 72h after its
+   diagnostics merged, close it with that evidence and the recurrence signal
+   that should reopen it (GH#35871).
 5. **Permission, secret, spend or trust boundary**: never grant or work around.
    Name the smallest human input on the issue (for example an interactive
    `aidevops setup --scope source-access`) and record `wake: human_decision`.
@@ -261,8 +281,9 @@ with independent dependant repoints, session-budget splits after a merged
 partial PR, and specifically pre-authorized brief repairs. Record holds with
 `wake=human_decision`, splits/repoints with `wake=dependency_change`, brief
 repairs with `wake=brief_revision`. Entries with `intake: policy_remote` are
-OWNER/MEMBER circuits opened by another runner; use only public issue/PR
-evidence for them.
+OWNER/MEMBER circuits opened by another runner, and entries with
+`intake: remote_observation` are holds only another runner observed (GH#36114);
+use only public issue/PR evidence for both.
 
 #### Recoverable policy denials (GH#33969)
 

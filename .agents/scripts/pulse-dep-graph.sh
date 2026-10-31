@@ -504,7 +504,7 @@ _should_defer_auto_unblock() {
 		' <<<"$comments_json") || recent_bodies=""
 
 	if [[ -n "$recent_bodies" ]]; then
-		if printf '%s' "$recent_bodies" | grep -qE "$_PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS"; then
+		if printf '%s' "$recent_bodies" | grep -E "$_PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS" >/dev/null; then
 			printf 'comment-marker\n'
 			return 0
 		fi

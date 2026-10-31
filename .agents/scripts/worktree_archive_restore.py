@@ -12,7 +12,12 @@ import sys
 import uuid
 
 from worktree_archive_administration import git
+from worktree_archive_registration import (
+    NOT_ENROLLED, REGISTRATION_SQL,
+    creation_registration, registration_table,
+)
 from worktree_archive_snapshot import fetch_preservation
+from worktree_archive_unsealed import UnsealedRecovery
 from worktree_recovery_timing import timed
 
 
@@ -29,14 +34,26 @@ def object_store_files(objects):
             yield path
 
 
+def failure_message(final, default):
+    """Map a restore child's final exception line to its bounded message.
+
+    GH#35957: NotEnrolled becomes one bounded category so the child's detail
+    stays private; a ValueError keeps its policy message.
+    """
+    import re
+    if re.fullmatch(r"[A-Za-z0-9_.]*NotEnrolled: .*", final):
+        return NOT_ENROLLED
+    if final.startswith("ValueError: "):
+        return final.removeprefix("ValueError: ")
+    return default
+
+
 def creation_receipt(target, owner_pid):
     """Seal the creating actor/generation before any archive payload is applied."""
-    from worktree_lifetime_archive import inode, managed_module, require, transaction
+    from worktree_lifetime_archive import inode, require, transaction
     from worktree_recovery_migration_state import sync_directory
     with transaction() as connection:
-        managed = managed_module()
-        registered = managed.load(connection, str(target))
-        managed.verify_identity(registered, target)
+        registered = creation_registration(connection, target)
         owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
                                    (str(target),)).fetchone()
         actor = connection.execute("SELECT owner_pid, task_id, branch FROM worktree_owners WHERE worktree_path = ?",
@@ -80,8 +97,12 @@ def prepare(archive, target, verification=False):
     if bash is None:
         raise ValueError("Bash is unavailable")
     if verification:
-        for name in ("AIDEVOPS_WORKTREE_MANAGER", "AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT"):
-            environment.pop(name, None)
+        # Never bind scratch to a worker's managed run unit. An explicit
+        # legacy-guards contract is kept: it selects the same creation record
+        # that macOS always writes, which creation_registration accepts.
+        if environment.get("AIDEVOPS_WORKTREE_MANAGER") != "legacy-guards":
+            environment.pop("AIDEVOPS_WORKTREE_MANAGER", None)
+        environment.pop("AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT", None)
         environment.update(AIDEVOPS_WORKTREE_CREATE_TASK="archive-verification:" + target.parent.name,
                            AIDEVOPS_WORKTREE_CREATE_OWNER_PID=str(os.getppid()),
                            AIDEVOPS_WORKTREE_CREATE_SESSION="archive-verification:" + target.parent.name)
@@ -105,7 +126,7 @@ def prepare(archive, target, verification=False):
             git(target, "reset", "--hard", manifest["head_sha"])
 
 
-class RestorationProof:
+class RestorationProof(UnsealedRecovery):
     """Process-local proof, never reconstructed from a durable verified boolean.
 
     The caller owns the admission/operation lock for this object's whole lifetime.
@@ -153,6 +174,10 @@ class RestorationProof:
                 old_slot.rmdir()
                 previous["state"] = "cleaned"
                 save(record)
+            elif (previous.get("state") == "restoring"
+                  and not os.path.lexists(old_slot / ".creation.json")):
+                self.recover_unsealed(directory, previous, save, record,
+                                      Path(self.manifest["source_git_common_dir"]))
             else:
                 self.cleanup(directory, previous, save, record)
         import tempfile
@@ -204,11 +229,9 @@ class RestorationProof:
                 pass
             self.objects_digest = fingerprint(self.objects)
             git(common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
-        from worktree_lifetime_archive import managed_module, transaction
+        from worktree_lifetime_archive import transaction
         with transaction() as connection:
-            managed = managed_module()
-            registered = managed.load(connection, str(target))
-            managed.verify_identity(registered, target)
+            registered = creation_registration(connection, target)
             owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
                                        (str(target),)).fetchone()
             require(owner is not None, "restore-proof:owner-missing")
@@ -260,9 +283,9 @@ class RestorationProof:
         registered = receipt["registration"]
         # The same SQLite transaction excludes cooperative ownership replacement
         # across Git removal and registry cleanup. No manifest-supplied deletion path.
+        select_registration, delete_registration = REGISTRATION_SQL[registration_table(registered)]
         with transaction() as connection:
-            row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path = ?",
-                                     (str(target),)).fetchone()
+            row = connection.execute(select_registration, (str(target),)).fetchone()
             current = json.loads(row[0]) if row else None
             owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
                                        (str(target),)).fetchone()
@@ -285,7 +308,7 @@ class RestorationProof:
             require(not os.path.lexists(Path(registered["identity"]["admin"])),
                     "restore-proof:administration-remains")
             connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
-            connection.execute("DELETE FROM worktree_managed_lifetimes WHERE path = ?", (str(target),))
+            connection.execute(delete_registration, (str(target),))
         if os.path.lexists(slot):
             import hashlib
             creation = slot / ".creation.json"

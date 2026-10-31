@@ -166,11 +166,14 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.match(config.agent.playwriter.prompt, /enumerate.*context\.pages\(\)/i);
   assert.match(config.agent.playwriter.prompt, /exactly one `about:blank` bootstrap page/i);
   // GH#34549: 0.8.0+ opens no tab and has no `page` global.
-  assert.match(config.agent.playwriter.prompt, /Playwriter 0\.8\.0\+ never opens a tab on its own/);
+  // Markdown line wrapping must not change this guidance contract.
+  assert.match(config.agent.playwriter.prompt, /Playwriter\s+0\.8\.0\+\s+never\s+opens\s+a\s+tab\s+on\s+its\s+own/);
   assert.match(config.agent.playwriter.prompt, /state\.page = await context\.newPage\(\)/);
   assert.match(config.agent.playwriter.prompt, /PLAYWRITER_TELEMETRY=0/);
   assert.match(config.agent.playwriter.prompt, /already approved the exact HTTPS destination/i);
-  assert.match(config.agent.playwriter.prompt, /unmatched non-blank or multiple pages/i);
+  // Accept the original classification and GH#35955's bounded attachment wording
+  // on the merge base, without making Markdown line wrapping significant.
+  assert.match(config.agent.playwriter.prompt, /unmatched\s+non-blank\s+or\s+multiple\s+pages|`attachment-timeout`,\s+multiple\s+new\s+matching\s+pages/i);
   assert.match(config.agent.playwriter.prompt, /prior attachment was invalidated/i);
   assert.match(config.agent.playwriter.prompt, /not consent to inspect another page/i);
   assert.match(config.agent.playwriter.prompt, /never silently substitute.*playwright/i);
@@ -559,6 +562,26 @@ test("keeps token-only work standalone and supports a separate headed Brave proc
     assert.ok(config.mcp.playwright.command.includes("--executable-path"));
     assert.ok(config.mcp.playwright.command.includes(braveExecutable));
     assert.ok(!config.mcp.playwright.command.includes("test-only-placeholder"));
+    assert.ok(!config.mcp.playwright.command.includes("--init-page"));
+
+    // GH#35617: headed-hidden keeps a headed browser and minimises its windows.
+    process.env.AIDEVOPS_PLAYWRIGHT_HEADED = "hidden";
+    const hiddenConfig = {};
+    registerMcpServers(hiddenConfig, { runtime });
+    const hiddenCommand = hiddenConfig.mcp.playwright.command;
+    assert.ok(!hiddenCommand.includes("--headless"));
+    assert.ok(hiddenCommand.includes("--isolated"));
+    const initPage = hiddenCommand[hiddenCommand.indexOf("--init-page") + 1];
+    assert.match(initPage, /scripts\/playwright-headed-hidden-init\.cjs$/);
+    assert.ok(existsSync(initPage));
+
+    process.env.AIDEVOPS_SESSION_ORIGIN = "worker";
+    const hiddenWorkerConfig = {};
+    registerMcpServers(hiddenWorkerConfig, { runtime });
+    assert.ok(hiddenWorkerConfig.mcp.playwright.command.includes("--headless"));
+    assert.ok(!hiddenWorkerConfig.mcp.playwright.command.includes("--init-page"));
+    process.env.AIDEVOPS_SESSION_ORIGIN = "interactive";
+    process.env.AIDEVOPS_PLAYWRIGHT_HEADED = "1";
 
     const invalidExecutable = join(root, "missing-brave");
     process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE = invalidExecutable;

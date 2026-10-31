@@ -7,6 +7,7 @@ import copy
 import datetime as dt
 import hashlib
 import importlib.util
+import itertools
 import json
 import os
 import pathlib
@@ -54,10 +55,41 @@ def fixture():
             "assignee": "worker", "now": revision.timestamp("2026-09-05T13:00:00Z")}
 
 
-class RevisionTests(unittest.TestCase):
-    def test_released_revised(self):
-        self.assertEqual(revision.validate(fixture())["approval_id"], 3)
+def completed_release_fixture(reason="worker_complete", actor="recovering-worker"):
+    """A completed continuation releases another author's preserved draft."""
+    data = fixture()
+    data["comments"] = data["comments"][:2]
+    ready, release = data["comments"]
+    ready["user"]["login"] = actor
+    ready["body"] = ready["body"].replace("attempt:original", "original")
+    release["user"]["login"] = actor
+    release["body"] = f"CLAIM_RELEASED reason={reason} runner={actor}"
+    data["issue"]["assignees"] = [{"login": actor}]
+    return data
 
+
+def unlabelled_blocked_fixture():
+    """An exact approved checkpoint has lost provenance and is solely blocked."""
+    data = fixture()
+    data["pr"]["labels"] = []
+    data["issue"]["labels"][1] = {"name": "status:blocked"}
+    data["issue"]["updated_at"] = "2026-09-05T11:00:00Z"
+    data["issue_events"] = [{"event": "labeled", "label": {"name": "status:blocked"},
+                             "created_at": data["issue"]["updated_at"]}]
+    data["comments"].pop()
+    line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+    data["comments"].append(comment(3, line, "maintainer", "OWNER"))
+    return data
+
+
+def insert_renewed_attempt(data):
+    """Insert a same-actor ready lease for a different attempt before the release."""
+    renewed = copy.deepcopy(data["comments"][0])
+    renewed.update(id=1.5, body=renewed["body"].replace("original", "other"))
+    data["comments"].insert(1, renewed)
+
+
+class RevisionTests(unittest.TestCase):
     def test_legacy_release_and_ambiguous_attempt(self):
         data = fixture()
         data["comments"][1]["body"] = "CLAIM_RELEASED reason=blocked runner=worker"
@@ -124,6 +156,77 @@ class RevisionTests(unittest.TestCase):
             with self.subTest(event=event), self.assertRaises(ValueError):
                 revision.validate({**data, "comments": data["comments"] + [comment(4, event + "new-owner")]})
 
+    def test_released_revised_lifecycle_requires_current_approval_snapshot(self):
+        self.assertEqual(revision.validate(fixture())["approval_id"], 3)
+        data = unlabelled_blocked_fixture()
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+        # The approval comment's own issue update is acceptable.
+        data["issue"]["updated_at"] = data["comments"][-1]["created_at"]
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+        missing_metadata = copy.deepcopy(data["issue"])
+        missing_metadata.pop("updated_at")
+        self.assertRaises(ValueError, revision.validate, {**data, "issue": missing_metadata})
+        without_snapshot = {**data["comments"][-1], "body": fixture()["comments"][-1]["body"]}
+        self.assertRaises(ValueError, revision.validate,
+                          {**data, "comments": data["comments"][:-1] + [without_snapshot]})
+
+    def test_completed_release_retains_author_binding_and_actual_owner(self):
+        for reason in ("clean", "worker_complete"):
+            with self.subTest(reason=reason):
+                self.assert_completed_release_owner(reason)
+
+    def assert_completed_release_owner(self, reason):
+        data = completed_release_fixture(reason)
+        ready = data["comments"][0]
+        data["comments"].append(comment(3, ready["body"].replace(
+            "phase=ready", "phase=terminal") + " expires_at=0", "recovering-worker"))
+        line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+        data["comments"].append(comment(4, line, "maintainer", "OWNER"))
+        self.assertEqual(revision.validate(data)["runner"], "worker")
+        self.assertEqual(revision.validate(data)["approval_id"], 4)
+        data["issue"]["assignees"] = []
+        self.assertEqual(revision.validate(data)["approval_id"], 4)
+        data["issue"]["assignees"] = [{"login": "unrelated-owner"}]
+        with self.assertRaises(ValueError):
+            revision.validate(data)
+
+    def test_completed_release_rejects_unbound_or_edited_evidence(self):
+        edited = "2026-09-05T12:01:00Z"
+        mutations = {
+            "blocked_other_actor": lambda d: d["comments"][1].update(
+                body="CLAIM_RELEASED reason=blocked runner=recovering-worker"),
+            "poster": lambda d: d["comments"][1]["user"].update(login="stranger"),
+            "ready_actor": lambda d: d["comments"][0]["user"].update(login="stranger"),
+            "ready_attempt": lambda d: d["comments"][0].update(
+                body=d["comments"][0]["body"].replace("original", "other")),
+            "missing_ready": lambda d: d["comments"].pop(0),
+            "edited_release": lambda d: d["comments"][1].update(updated_at=edited),
+            "edited_ready": lambda d: d["comments"][0].update(updated_at=edited),
+            "renewed_attempt": insert_renewed_attempt,
+        }
+        self.assert_mutations_rejected(mutations, completed_release_fixture, lambda d: revision.template(
+            {**d, "release_id": 2, "attempt": "attempt:original"}))
+
+    def assert_mutations_rejected(self, mutations, build, check):
+        for case, mutate in mutations.items():
+            data = build()
+            mutate(data)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                check(data)
+
+    def test_completed_release_approval_still_requires_current_exact_envelope(self):
+        data = completed_release_fixture()
+        line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+        data["comments"].append(comment(3, line, "maintainer", "OWNER"))
+        mutations = {
+            "head": lambda d: d["pr"].update(headRefOid="2" * 40),
+            "body": lambda d: d["issue"].update(body=d["issue"]["body"] + " changed"),
+            "stale": lambda d: d.update(now=d["now"] + 86400),
+            "new_claim": lambda d: d["comments"].append(
+                comment(4, "Interactive session claimed", "maintainer")),
+        }
+        self.assert_mutations_rejected(mutations, lambda: copy.deepcopy(data), revision.validate)
+
     def test_released_attempt_terminal_lease_is_not_a_successor(self):
         # GH#33839: production launchers close the released lease after CLAIM_RELEASED.
         def with_closing(field, author="worker", phase="terminal"):
@@ -157,40 +260,78 @@ class RevisionTests(unittest.TestCase):
                 revision.validate({**data, key: value})
 
     def test_shell_predicate_preserves_holds_and_linkage(self):
-        data = fixture()
+        data = unlabelled_blocked_fixture()
         # Supply current wall time for the shell boundary, avoiding date-dependent fixtures.
         for c in data["comments"]:
             c["created_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-        command = ('source "$1/pr-checkpoint-target-lib.sh"; '
-                   'gh() { [[ "$*" == "api repos/owner/repo/collaborators/maintainer/permission --jq .permission" ]] || return 90; '
+        command = ('source "$1/pr-checkpoint-target-lib.sh"; TEST_EVENTS="$6"; '
+                   'gh() { if [[ "$*" == "api repos/owner/repo/issues/123/events?per_page=100 --paginate --slurp" ]]; then '
+                   'printf "%s" "$TEST_EVENTS"; return 0; fi; '
+                   '[[ "$*" == "api repos/owner/repo/collaborators/maintainer/permission --jq .permission" ]] || return 90; '
                    'printf "%s" "${TEST_PERMISSION:-write}"; }; '
                    '_pr_checkpoint_revised_target "$2" "$3" "$4" "$5" worker')
         def run(candidate):
             # Fixed Bash source and locally constructed JSON are positional data, never shell source.
             return subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), candidate["repo"],  # nosec B603
                                    json.dumps(candidate["pr"]), json.dumps(candidate["issue"]),
-                                   json.dumps(candidate["comments"])], capture_output=True, check=False).returncode
+                                   json.dumps(candidate["comments"]),
+                                   json.dumps(candidate["issue_events"])], capture_output=True, check=False).returncode
         self.assertEqual(run(data), 0)
-        for label in ("hold-for-review", "needs-maintainer-review", "no-auto-dispatch", "persistent", "blocked"):
+        changed = copy.deepcopy(data)
+        # A comment/claim update alone must not invalidate the blocked snapshot.
+        changed["issue"]["updated_at"] = "2099-01-01T00:00:00Z"
+        unassigned_issue = {**changed["issue"], "assignees": []}
+        self.assertEqual(run(changed), 0)
+        self.assertEqual(run({**changed, "issue": unassigned_issue}), 0)
+        # Reapply the same sole blocked label after approval: reject both owner
+        # states even though the current label set matches the approved one.
+        changed["issue_events"].append({"event": "labeled", "label": {"name": "status:blocked"},
+                                        "created_at": changed["issue"]["updated_at"]})
+        self.assertNotEqual(run(changed), 0)
+        self.assertNotEqual(run({**changed, "issue": unassigned_issue}), 0)
+        shared_holds = ("hold-for-review", "needs-maintainer-review", "no-auto-dispatch", "persistent")
+        label_cases = itertools.chain(
+            itertools.product(("pr", "issue"), shared_holds),
+            (("pr", "no-takeover"), ("issue", "needs-maintainer-permissions")),
+            itertools.product(("issue",), ("blocked", "status:available", "status:in-progress", "status:done")),
+        )
+        for surface, label in label_cases:
             changed = copy.deepcopy(data)
-            changed["issue"]["labels"].append({"name": label})
-            self.assertNotEqual(run(changed), 0)
-        for body in ("For #1234", "mentions #123", "For #123 and #124"):
-            changed = copy.deepcopy(data)
-            changed["pr"]["body"] = body
-            self.assertNotEqual(run(changed), 0)
+            changed[surface]["labels"].append({"name": label})
+            self.assertNotEqual(run(changed), 0, (surface, label))
+        invalidations = (
+            ("missing", {"comments": data["comments"][:-1]}),
+            ("head", {"pr": {**data["pr"], "headRefOid": "2" * 40}}),
+            ("body", {"issue": {**data["issue"], "body": data["issue"]["body"] + " changed"}}),
+            ("expired", {"comments": data["comments"][:-1] + [
+                {**data["comments"][-1], "created_at": "2020-01-01T00:00:00Z"}]}),
+            ("owner", {"issue": {**data["issue"], "assignees": [{"login": "other"}]}}),
+            ("successor", {"comments": data["comments"] + [
+                comment(4, "Interactive session claimed", "maintainer")]}),
+            ("prefix collision", {"pr": {**data["pr"], "body": "For #1234"}}),
+            ("bare mention", {"pr": {**data["pr"], "body": "mentions #123"}}),
+            ("ambiguous linkage", {"pr": {**data["pr"], "body": "For #123 and #124"}}),
+        )
+        for case, overrides in invalidations:
+            self.assertNotEqual(run({**data, **overrides}), 0, case)
 
     def test_claim_handoff_prelaunch_ready_and_rollback(self):
-        for unassigned, history in ((False, False), (True, False), (True, True)):
-            with self.subTest(unassigned=unassigned, history=history), tempfile.TemporaryDirectory() as root:
-                data = released_successor_fixture() if history else fixture()
-                if history:
+        # (unassigned, fixture builder, needs a generated approval for its history)
+        cases = ((False, fixture, False), (True, fixture, False),
+                 (True, released_successor_fixture, True),
+                 (False, completed_release_fixture, True), (True, completed_release_fixture, True),
+                 (False, unlabelled_blocked_fixture, False), (True, unlabelled_blocked_fixture, False))
+        for unassigned, build, approve in cases:
+            with self.subTest(unassigned=unassigned, fixture=build.__name__), tempfile.TemporaryDirectory() as root:
+                data = build()
+                if approve:
                     line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
                     data["comments"].append(comment(20, line, "maintainer", "OWNER"))
                 approval_id = data["comments"][-1]["id"]
                 # GH#31305 producer -> coordinator -> existing fenced worker
                 # continuation. The request itself is never checkpoint approval.
                 data["issue"]["title"] = "Preserve checkpoint integration"
+                data["pr"]["title"] = "Preserve checkpoint integration"
                 blocked = copy.deepcopy(data)
                 blocked["issue"]["body"] = "Hard boundary: do not modify src/claim.sh"
                 request = {"schema": 1, "issue": 123, "pr": 42, "reason": "hard_boundary",
@@ -219,7 +360,9 @@ class RevisionTests(unittest.TestCase):
                     self.assertEqual(revision.validate(data)["approval_id"], approval_id)
                 if unassigned:
                     data["issue"]["assignees"] = []
-                    data["issue"]["labels"][1] = {"name": "status:available"}
+                    status = data["issue"]["labels"][1]["name"]
+                    # Release the assigned lifecycle without erasing an approved block.
+                    data["issue"]["labels"][1] = {"name": {"status:in-review": "status:available"}.get(status, status)}
                 for c in data["comments"]:
                     c["created_at"] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
                 state = pathlib.Path(root) / "state.json"
@@ -230,6 +373,9 @@ class RevisionTests(unittest.TestCase):
                 env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
                        "CHECKPOINT_TEST_FILE": str(pathlib.Path(__file__).with_name("checkpoint_github_fixture.py")), "CHECKPOINT_TEST_STATE": str(state),
                        "CHECKPOINT_TEST_APPROVAL": str(approval_id),
+                       # Do not renew this fixture's lease under the invoking
+                       # headless worker's real dispatch session.
+                       "AIDEVOPS_DISPATCH_LEASE_SESSION": "",
                        "AIDEVOPS_TEST_MODE": "1", "AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS": "1",
                        "DISPATCH_CLAIM_WINDOW": "0", "AIDEVOPS_DEVICE_ID": "test-device"}
                 command = r'''
@@ -238,13 +384,11 @@ source "$1/pr-checkpoint-continuation-helper.sh"
 source "$1/headless-runtime-worker.sh"
 source "$1/headless-runtime-worker-prepare.sh"
 set_issue_status() { python3 "$CHECKPOINT_TEST_FILE" --set-issue "$@"; }
-PCC_LINKED_ISSUE=123
-PCC_EXPECTED_ASSIGNEE=worker
-PCC_CHECKPOINT_ASSIGNEE=worker
-PCC_AUTHENTICATED_LOGIN=next-worker
-PCC_REVISION_APPROVAL="$CHECKPOINT_TEST_APPROVAL"
-PCC_HEAD_OID=1111111111111111111111111111111111111111
-PCC_HEAD_REF=worker/123
+# Exercise dispatch metadata parsing without launching a real worker. Claim,
+# lease transitions, exact-target fences and rollback below use the real helpers.
+_prrts_dispatch_guarded() { return 0; }
+_pcc_dispatch owner/repo "$HOME" 42 123 worker next-worker
+[[ "$PCC_CHECKPOINT_ASSIGNEE" == worker && "$PCC_REVISION_APPROVAL" == "$CHECKPOINT_TEST_APPROVAL" ]]
 _pcc_claim_revised_checkpoint owner/repo 42 "$PCC_HEAD_REF" "$PCC_HEAD_OID"
 export WORKER_ISSUE_NUMBER=123 WORKER_REPO_SLUG=owner/repo WORKER_GITHUB_LOGIN=next-worker
 export DISPATCH_REPO_SLUG=owner/repo
@@ -307,6 +451,29 @@ class ReleasedSuccessorTests(unittest.TestCase):
         old["id"] = 20
         with self.assertRaises(ValueError):
             revision.validate({**data, "comments": data["comments"] + [old]})
+
+    def test_raw_attempt_ids_normalize_only_the_prefix(self):
+        data = released_successor_fixture()
+        data["comments"] = [{**c, "body": c["body"].replace("attempt:closed-", "closed-")}
+                            for c in data["comments"]]
+        approved = self.approved(data)
+        history = revision.validate(approved)["released_successors"]
+        self.assertEqual([item["attempt"] for item in history],
+                         ["attempt:closed-4", "attempt:closed-10"])
+        for case, value in {"different": "closed-other", "empty": "", "prefix_only": "attempt:"}.items():
+            changed = copy.deepcopy(data)
+            changed["comments"][-1]["body"] = changed["comments"][-1]["body"].replace(
+                "attempt_id=closed-10", "attempt_id=" + value)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                self.approved(changed)
+
+    def test_stale_prelaunch_release_is_not_completed_history(self):
+        data = released_successor_fixture()
+        data["comments"] = [c for c in data["comments"] if c["id"] not in (12, 14)]
+        data["comments"][-1]["body"] = (
+            "CLAIM_RELEASED reason=stale_assignment_reset runner=other-worker")
+        with self.assertRaises(ValueError):
+            self.approved(data)
 
     def test_open_or_ambiguous_attempts_cannot_generate_approval(self):
         mutations = {

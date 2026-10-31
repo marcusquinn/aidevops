@@ -1363,7 +1363,8 @@ _worktree_recovery_resolve_producer_root() {
 	local caller="$3"
 	local resolved=""
 	_worktree_recovery_store_preflight "$wt_path" "$root" "$caller" || return 1
-	_worktree_capture_git_identity "$wt_path" || return 1
+	# Status 2 preserves this refusal category across command substitution.
+	_worktree_capture_git_identity "$wt_path" || return 2
 	resolved=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$root") || return 1
 	case "$resolved" in
 	"$_WT_ID_SOURCE_REAL" | "$_WT_ID_SOURCE_REAL"/* | "$_WT_ID_COMMON_REAL" | "$_WT_ID_COMMON_REAL"/*)
@@ -1407,7 +1408,10 @@ _archive_worktree_path_recoverably_under_lock() {
 	local git_state=""
 
 	WORKTREE_RECOVERABLE_ARCHIVE_PATH=""
-	_worktree_capture_git_identity "$wt_path" || return 1
+	if ! _worktree_capture_git_identity "$wt_path"; then
+		_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
+		return 1
+	fi
 	wt_path_real="$_WT_ID_SOURCE_REAL"
 	git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||
 		git_state="$_WT_GIT_STATE_UNREADABLE"
@@ -1420,6 +1424,7 @@ _archive_worktree_path_recoverably_under_lock() {
 	if ! archive_path=$(_worktree_recovery_producer_command 0 capture \
 		"$wt_path_real" "$recovery_root_real" "$caller" "$context" 2>"${capture_err:-/dev/null}"); then
 		_worktree_report_capture_failure "$capture_err" "$recovery_root_real"
+		WORKTREE_REMOVAL_GUARD_REASON="compact-recovery-capture-failed"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
 			"compact-recovery-capture-failed" "$_WTAR_MODE_SKIPPED" \
 			"source_preserved=true operator_review=required"
@@ -1484,12 +1489,21 @@ archive_worktree_path_recoverably() {
 	local context="${3:-}"
 	local recovery_root=""
 	local recovery_root_real=""
+	local resolver_status=0
 	local archive_status=0
 	local hold_seconds="${AIDEVOPS_WORKTREE_RECOVERY_TEST_HOLD_LOCK_SECONDS:-0}"
 
 	WORKTREE_RECOVERABLE_ARCHIVE_PATH=""
 	recovery_root=$(_worktree_recovery_producer_root) || return 1
-	recovery_root_real=$(_worktree_recovery_resolve_producer_root "$wt_path" "$recovery_root" "$caller") || return 1
+	if recovery_root_real=$(_worktree_recovery_resolve_producer_root "$wt_path" "$recovery_root" "$caller"); then
+		:
+	else
+		resolver_status=$?
+		if [[ "$resolver_status" -eq 2 ]]; then
+			_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
+		fi
+		return 1
+	fi
 	mkdir -p "$recovery_root_real" 2>/dev/null || return 1
 	_worktree_recovery_acquire_producer_lock "$recovery_root_real" || return 1
 	case "$hold_seconds" in
@@ -1544,13 +1558,37 @@ worktree_managed_lifetime_proof() {
 	return 0
 }
 
+# Separate, present-tense maintenance authorization for legacy observations.
+# Never supplies a managed proof to the degraded-CWD fallback above/below.
+worktree_maintenance_removal_proof() {
+	local wt_path="$1"
+	local helper="${BASH_SOURCE[0]%/*}/worktree-maintenance.py"
+	[[ -n "${AIDEVOPS_WORKTREE_MAINTENANCE_PLAN:-}" &&
+		-n "${AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM:-}" && -f "$helper" ]] || return 1
+	PYTHONDONTWRITEBYTECODE=1 python3 "$helper" proof "$wt_path" \
+		--plan "$AIDEVOPS_WORKTREE_MAINTENANCE_PLAN" \
+		--confirm "$AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM" || return 1
+	return 0
+}
+
+worktree_maintenance_requested() {
+	[[ -n "${AIDEVOPS_WORKTREE_MAINTENANCE_PLAN:-}" ||
+		-n "${AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM:-}" ]] || return 1
+	return 0
+}
+
 worktree_managed_require_removal_proof() {
 	local wt_path="$1"
 	local helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
 	local managed_status=0
+	# Missing or changed enrollment must not turn a planned maintenance removal
+	# into an ordinary unregistered removal after its initial authorization.
+	if worktree_maintenance_requested; then
+		worktree_maintenance_removal_proof "$wt_path" || return 1
+		return 0
+	fi
 	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" status "$wt_path" >/dev/null 2>&1 || managed_status=$?
 	[[ "$managed_status" -ne 3 ]] || return 0
-	# Even a complete negative CWD scan cannot replace managed descendants.
 	worktree_managed_lifetime_proof "$wt_path" || return 1
 	return 0
 }
@@ -1560,6 +1598,11 @@ worktree_managed_prepare_removal() {
 	local branch="$2"
 	local helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
 	local managed_status=0
+	# Never claim, re-enroll or seal after a failed maintenance authorization.
+	if worktree_maintenance_requested; then
+		worktree_maintenance_removal_proof "$wt_path" || return 1
+		return 0
+	fi
 	# Only confirmed absence uses legacy guards; unavailable evidence refuses.
 	[[ -f "$helper" ]] || return 1
 	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" status "$wt_path" >/dev/null 2>&1 || managed_status=$?
@@ -1574,6 +1617,30 @@ worktree_managed_prepare_removal() {
 		return 1
 	fi
 	return 0
+}
+
+_worktree_guard_degraded_cwd() {
+	local wt_path="$1"
+	local wt_path_real="$2"
+	local caller="$3"
+	# Maintenance never enters manual degraded recovery or acquires its lease.
+	if worktree_maintenance_requested; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
+		WORKTREE_REMOVAL_GUARD_REASON="maintenance-cwd-visibility-degraded"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
+			"$WORKTREE_REMOVAL_GUARD_REASON" "$_WTAR_MODE_SKIPPED"
+		return 1
+	fi
+	# Only a sealed, explicitly enrolled Pulse generation can replace the
+	# unknown part of a scan. The caller checks readable positive matches first.
+	if worktree_managed_lifetime_proof "$wt_path_real"; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="managed-lifetime"
+		return 0
+	fi
+	WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
+	WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
+	log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
+	return "$_WT_CWD_CAPTURE_DEGRADED_RC"
 }
 
 worktree_removal_guard() {
@@ -1654,16 +1721,8 @@ worktree_removal_guard() {
 		return 1
 	fi
 	if [[ "$cwd_match_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]]; then
-		# Only a sealed, explicitly enrolled Pulse generation can replace the
-		# unknown part of a scan. Readable positive matches above always veto.
-		if worktree_managed_lifetime_proof "$wt_path_real"; then
-			WORKTREE_REMOVAL_GUARD_VISIBILITY="managed-lifetime"
-			return 0
-		fi
-		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
-		WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
-		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
+		_worktree_guard_degraded_cwd "$wt_path" "$wt_path_real" "$caller" || return $?
+		return 0
 	fi
 	if [[ "$cwd_match_status" -eq "$_WT_CWD_MATCH_UNUSABLE_RC" ]]; then
 		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_UNUSABLE"

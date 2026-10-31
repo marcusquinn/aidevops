@@ -16,7 +16,7 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 const HOME = homedir();
-const FALLBACK_PRICING_VERSION = "2026-10-07.1";
+const FALLBACK_PRICING_VERSION = "2026-10-26.1";
 
 /** Hardcoded fallback — used only when model-pricing.json is unreadable */
 const FALLBACK_PRICING = {
@@ -28,6 +28,7 @@ const FALLBACK_PRICING = {
   "haiku-3":   { input: 0.80,  output: 4.0,   cacheRead: 0.08,   cacheWrite: 1.0   },
   "gpt-6-astra":   { input: 10.0, output: 50.0, cacheRead: 1.0, cacheWrite: 12.50 },
   "gpt-6.1-sol":   { input: 2.0,  output: 10.0, cacheRead: 0.10, cacheWrite: 2.50  },
+  "gpt-6.1-terra": { input: 1.0,  output: 5.0,  cacheRead: 0.05, cacheWrite: 1.25  },
   "gpt-6-sol":     { input: 2.0,  output: 10.0, cacheRead: 0.20, cacheWrite: 2.50  },
   "gpt-6-luna":    { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 },
   "gpt-5.6-sol":   { input: 4.0,  output: 20.0, cacheRead: 0.40, cacheWrite: 5.0   },

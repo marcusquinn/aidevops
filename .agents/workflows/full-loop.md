@@ -223,7 +223,9 @@ PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
   --decisions "any notable trade-offs")
 ```
 
-Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. Interactive PR creation defaults to draft; use `/pr-loop` or explicit user finalise/ready consent before converting with `gh pr ready`. On rebase conflict: aborts and returns 1 — resolve and retry.
+Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. Interactive PR creation defaults to draft so work survives interruption or restart. In a repository where the session has maintainer authority, implementation intent (`/full-loop`, "fix", "implement", "work on this now", or an issue-started implementation) is the finalise/ready consent: once verification passes and the remote head equals local `HEAD`, run `gh pr ready` and continue to 4.4 without another prompt. Keep the draft only when the user asked for review-first or draft-only, or the work is incomplete or blocked; external contributions stop at a verified ready PR. On rebase conflict: aborts and returns 1 — resolve and retry.
+
+Explicit `--title` task prefixes are validated before push against TODO/linked-issue proof; issue-only work uses `GH#NNN`, not an invented `tNNN` task ID.
 
 External contributions use the target's fork/branch, PR template, title, issue-linking, and review conventions from `workflows/pr.md`; do not add aidevops labels, merge summaries, signatures, or issue-closing automation.
 
@@ -317,6 +319,50 @@ its exact tag/workflow, and checks feature ancestry before recording linked
 `release:superseded` evidence. This never relaxes the source PR's exact-tag rule.
 See `workflows/release.md` → Manual Release for assets and optional preflight.
 
+**Tagless maintained-application deployments:** when separately authorized
+publication uses the application's existing push-triggered rolling deployment
+instead of version tags, first verify the deployed runtime reports its full source
+SHA. Select the repository-owned workflow that actually deploys that immutable
+source (a build-only/check-only workflow is not deployment evidence), then record
+the existing successful run:
+
+```bash
+full-loop-helper.sh record-deployment PR RUN_ID deploy.yml DEPLOYED_SHA OWNER/REPO
+full-loop-helper.sh finalize-receipt PR OWNER/REPO
+# With persisted local lifecycle state, use complete instead of finalize-receipt.
+```
+
+`DEPLOYED_SHA` must be the immutable SHA observed at the deployed runtime, not a
+healthy HTTP response, branch name, or a guessed commit. This read-only bookkeeping
+command does not authorize or perform deployment. It verifies maintainer access,
+the merged PR and its base branch, the exact workflow/run/repository identity,
+successful completion of a same-repository push, write-authorized original and
+rerun actors, run time after merge, and merge ancestry in that exact deployed SHA.
+The named run must still be the latest workflow invocation on the PR base branch;
+pending, failed, stale, fork, unrelated and unverifiable evidence is rejected.
+There is no extra application environment, tag, GitHub Release, health-URL fetch,
+or arbitrary JSON import. Only this explicitly selected deployment workflow is
+attested; the helper cannot infer deployment semantics from an arbitrary CI job.
+
+The atomic release receipt records `published` plus typed `tagless-deployment`
+evidence (run ID/attempt, workflow, merge and deployed SHA). This means actual
+application publication, **not** a claim that a versioned release exists or that
+publication was not requested. Finalization and local lifecycle completion
+re-verify that remote evidence; identical recording is idempotent. If a later run
+or rerun invalidates the receipt, observe the currently deployed full SHA again
+and repeat `record-deployment` with the latest successful run and that SHA, then
+retry `complete` or `finalize-receipt`. Under the transition lock, the command
+atomically replaces typed evidence only for the same repository, PR, workflow,
+and merge SHA with a newer run ID or a higher attempt of the same run. Every
+remote check still applies; pending or failed runs cannot repair a receipt.
+Versioned, malformed, and conflicting terminal receipts are not overwritten.
+Existing exact-head and live-owner cleanup
+guards still apply. This adapter is unavailable for the aidevops repository,
+whose signed, versioned release path is unchanged. The legacy repository-rename
+adapter refuses typed deployment receipts rather than discarding their proof;
+after a rename, re-verify deployment at the new identity before creating a new
+matching receipt. Do not hand-edit or migrate the old receipt as a plain status.
+
 Loops with local lifecycle state finalize with `full-loop-helper.sh complete`
 after terminal release evidence (`published`, `superseded`, or recorded
 `not-requested`); while a matching receipt remains `FINALIZATION_PENDING`,
@@ -331,8 +377,9 @@ new identity and migrates cleanup plus release receipts while preserving owner,
 lease, worktree, branch, creation time, and irreversible cleanup state.
 
 **Generated Cloudron catalogs:** a repository-owned push/dispatch workflow may
-build at a merged release PR, then create a direct child commit containing only
-the generated `CloudronVersions.json` and tag that child. After independently
+build at a merged release PR, then create a commit containing only
+the generated `CloudronVersions.json` and tag it. Its parent may be the merged
+source or a docs-only descendant carrying the same package source. After independently
 verifying publication, record this explicitly:
 
 ```bash
@@ -340,15 +387,34 @@ full-loop-helper.sh record-published-release PR vX.Y.Z OWNER/REPO \
   --workflow cloudron-catalog-publish.yml --event push --generated-cloudron-catalog
 ```
 
-The default still requires tag/merge equality. The opt-in requires a direct
-catalog-only child, exactly one appended published entry, unchanged historical
+The default still requires tag/merge equality. The opt-in requires a catalog-only
+child of the source or a verified docs-only descendant. The latter requires one
+exact `Cloudron-Source` trailer on the tag commit and changes restricted to
+`README.md`, `docs/*`, `metrics/*`, `.github/metrics/*`, `.github/star-history/*`,
+`star-history.svg`, and `star-history-dark.svg`, matching the managed publisher.
+Every intervening commit is checked (including rename origins); incomplete API
+history (over 250 commits or 99 files per commit) fails closed. Intervening merges
+are rejected because REST commit diffs do not prove changes against every parent.
+It still requires exactly one appended published entry, unchanged historical
 entries and source manifest settings, and verified image/catalog attestations
 from the same successful invocation of the exact workflow at the merged source.
-It supports the repository's own GHCR namespace and `refs/heads/main`, not
-arbitrary descendants, registries, reusable-workflow signers, or branch layouts.
+It supports the repository's own GHCR namespace and `refs/heads/main`. Managed
+callers additionally accept only `marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml`
+at the full immutable `uses` commit matching `with.aidevops_ref` in the exact-source
+caller. The managed template's mapping/block-scalar YAML subset is supported;
+unsupported or ambiguous caller syntax fails closed. Source, caller, signer digest
+and successful invocation must all match for both attestations. Arbitrary
+descendants, registries, reusable-workflow signers and branch layouts remain rejected.
 Missing or mismatched proof leaves receipts unchanged. Python 3 and a `gh`
 version exposing verified attestation JSON are required. This command verifies
 an existing release; it never creates or republishes artifacts.
+
+Managed Cloudron release approval requests and pre-merge processing also require
+the repository Actions secret name `CLOUDRON_RELEASE_PAT` and an exact-head managed
+caller explicitly forwarding `${{ secrets.CLOUDRON_RELEASE_PAT }}`. Missing names,
+failed secret-name listing, unsupported callers or missing forwarding stop before
+requesting approval or removing the merge hold. Secret values are never read;
+name presence does not prove token permissions, expiry or branch-policy access.
 
 Earlier feature PRs in the same catalog release use
 `record-included-release FEATURE_PR SOURCE_PR vX.Y.Z OWNER/REPO --workflow cloudron-catalog-publish.yml --event push --generated-cloudron-catalog`.

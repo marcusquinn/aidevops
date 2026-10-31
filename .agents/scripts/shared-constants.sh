@@ -207,11 +207,11 @@ readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-10-20"
 readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.19.3"
 readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-10-27"
 readonly OPENCODE_PLUGIN_TESTED_VERSION="1.19.3"
-# GH#32993: V2 promoted 2.1.0 (GH#35179, from 2.0.28) after the scheduled canary passed the isolated
-# Linux-headless baseline (2.0.3) and candidate comparison with an empty native
-# tool diff; @opencode/plugin stays at the tested 2.0.3 package.
-readonly OPENCODE_V2_PINNED_VERSION="2.1.0"
-readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.1.0"
+# GH#35752: V2 promoted 2.2.0 from 2.1.0 after the isolated Linux-headless
+# baseline and candidate probes passed with Code Mode gateway and plugin
+# registration checks and an empty native-tool diff; plugin packages unchanged.
+readonly OPENCODE_V2_PINNED_VERSION="2.2.0"
+readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.2.0"
 
 aidevops_opencode_profile_id() {
 	local requested="${AIDEVOPS_OPENCODE_PROFILE:-}"
@@ -243,9 +243,9 @@ aidevops_opencode_profile_value() {
 		v2:pinReason) printf 'Initial OpenCode V2 compatibility qualification\n' ;;
 		v2:pinPlatform) printf 'Linux\n' ;;
 		v2:pinRuntimeMode) printf 'headless\n' ;;
-		v2:lastCanaryDate) printf '2026-10-20\n' ;;
-		v2:lastCanaryResult) printf 'pass:2.1.0\n' ;;
-		v2:reviewDeadline) printf '2026-10-27\n' ;;
+		v2:lastCanaryDate) printf '2026-10-27\n' ;;
+		v2:lastCanaryResult) printf 'pass:2.2.0\n' ;;
+		v2:reviewDeadline) printf '2026-11-03\n' ;;
 		v1:package) printf 'opencode-ai\n' ;;
 		v1:binary) printf 'opencode\n' ;;
 		v1:pluginEntry) printf 'index.mjs\n' ;;
@@ -328,6 +328,35 @@ aidevops_opencode_install_owner() {
 	return $?
 }
 
+# GH#35942: print the owner of the resolved Claude Code CLI so routine tool
+# maintenance checks and upgrades through one channel (GH#34252 pattern):
+# brew-cask:<cask>, native (self-updating installer), npm, or none.
+aidevops_claude_code_install_owner() {
+	local path link dir home_real depth=0
+	path=$(command -v claude 2>/dev/null || true)
+	if [[ "$path" != /* ]]; then
+		printf 'none\n'
+		return 0
+	fi
+	while [[ -L "$path" && "$depth" -lt 16 ]]; do
+		link=$(readlink "$path" 2>/dev/null) || break
+		case "$link" in /*) path="$link" ;; *) path="$(dirname "$path")/$link" ;; esac
+		depth=$((depth + 1))
+	done
+	dir=$(cd "$(dirname "$path")" 2>/dev/null && pwd -P) || dir=$(dirname "$path")
+	path="${dir}/$(basename "$path")"
+	home_real=$(cd "$HOME" 2>/dev/null && pwd -P) || home_real="$HOME"
+	case "$path" in
+	*/Caskroom/claude-code*/*)
+		link="${path#*/Caskroom/}"
+		printf 'brew-cask:%s\n' "${link%%/*}"
+		;;
+	"$home_real"/.local/share/claude/* | "$home_real"/.claude/local/*) printf 'native\n' ;;
+	*) printf 'npm\n' ;;
+	esac
+	return 0
+}
+
 # Print the self-contained repair payload: brew upgrade for a verified
 # Homebrew-owned binary, otherwise bun/npm install of the requested version.
 aidevops_opencode_upgrade_command() {
@@ -356,7 +385,7 @@ readonly AIDEVOPS_GH_MIN_SLURP_VERSION="2.51.0"
 aidevops_parse_semver() {
 	local input="$1"
 	local parsed=""
-	parsed=$(printf '%s\n' "$input" | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+	parsed=$(printf '%s\n' "$input" | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | sed -n '1p' || true)
 	if [[ -z "$parsed" ]]; then
 		return 1
 	fi
@@ -1795,7 +1824,7 @@ _is_process_alive_and_matches() {
 		local cmd
 		cmd=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
 		[[ -z "$cmd" ]] && return 1
-		printf '%s' "$cmd" | grep -qE "$pattern" || return 1
+		grep -qE "$pattern" <<<"$cmd" || return 1
 	fi
 
 	# Step 3: if a stored hash was provided, verify it matches

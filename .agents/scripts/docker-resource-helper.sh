@@ -490,7 +490,7 @@ _drh_remove() {
 	local kind="$1" id="$2"
 	local err lower
 	case "$kind" in
-	container) err=$(_drh_docker rm -f "$id" 2>&1 >/dev/null) && return 0 ;;
+	container) err=$(_drh_docker rm -f -v "$id" 2>&1 >/dev/null) && return 0 ;;
 	network) err=$(_drh_docker network rm "$id" 2>&1 >/dev/null) && return 0 ;;
 	volume) err=$(_drh_docker volume rm "$id" 2>&1 >/dev/null) && return 0 ;;
 	*) return 1 ;;
@@ -719,18 +719,18 @@ _drh_report_ownership() {
 	local label="label=${DRH_PREFIX}.owner=1" n_all=0 n_owned=0
 	local all owned
 	printf '\nOwnership (only labelled resources are ever removed by aidevops):\n'
-	all=$(_drh_docker ps -a -q --no-trunc) || all=""
-	owned=$(_drh_docker ps -a -q --no-trunc --filter "$label") || owned=""
+	all=$(_drh_docker ps -a -q --no-trunc) || return 1
+	owned=$(_drh_docker ps -a -q --no-trunc --filter "$label") || return 1
 	n_all=$(_drh_count_lines "$all")
 	n_owned=$(_drh_count_lines "$owned")
 	printf '  containers: labelled=%s unlabelled=%s\n' "$n_owned" "$((n_all - n_owned))"
-	all=$(_drh_docker network ls -q --no-trunc --filter type=custom) || all=""
-	owned=$(_drh_docker network ls -q --no-trunc --filter type=custom --filter "$label") || owned=""
+	all=$(_drh_docker network ls -q --no-trunc --filter type=custom) || return 1
+	owned=$(_drh_docker network ls -q --no-trunc --filter type=custom --filter "$label") || return 1
 	n_all=$(_drh_count_lines "$all")
 	n_owned=$(_drh_count_lines "$owned")
 	printf '  networks (custom): labelled=%s unlabelled=%s\n' "$n_owned" "$((n_all - n_owned))"
-	all=$(_drh_docker volume ls -q) || all=""
-	owned=$(_drh_docker volume ls -q --filter "$label") || owned=""
+	all=$(_drh_docker volume ls -q) || return 1
+	owned=$(_drh_docker volume ls -q --filter "$label") || return 1
 	n_all=$(_drh_count_lines "$all")
 	n_owned=$(_drh_count_lines "$owned")
 	printf '  volumes: labelled=%s unlabelled=%s\n' "$n_owned" "$((n_all - n_owned))"
@@ -740,7 +740,7 @@ _drh_report_ownership() {
 _drh_report_networks() {
 	local empty=0 shown=0 checked=0
 	local networks line id name used
-	networks=$(_drh_docker network ls --no-trunc --filter type=custom --format "{{.ID}}${DRH_US}{{.Name}}") || networks=""
+	networks=$(_drh_docker network ls --no-trunc --filter type=custom --format "{{.ID}}${DRH_US}{{.Name}}") || return 1
 	printf '\nCustom networks with no containers (each holds an address-pool subnet):\n'
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
@@ -748,7 +748,7 @@ _drh_report_networks() {
 		id="${line%%"$DRH_US"*}"
 		name="${line#*"$DRH_US"}"
 		checked=$((checked + 1))
-		used=$(_drh_docker ps -a -q --no-trunc --filter "network=${id}") || continue
+		used=$(_drh_docker ps -a -q --no-trunc --filter "network=${id}") || return 1
 		[[ -z "$used" ]] || continue
 		empty=$((empty + 1))
 		if [[ "$shown" -lt 20 ]]; then
@@ -769,12 +769,12 @@ _drh_report_stopped() {
 	inspected=""
 	now=$(date +%s)
 	printf '\nContainers stopped longer than %sh:\n' "$DRH_DEFAULT_TTL"
-	ids=$(_drh_docker ps -a -q --no-trunc --filter status=exited) || ids=""
+	ids=$(_drh_docker ps -a -q --no-trunc --filter status=exited) || return 1
 	if [[ -n "$ids" ]]; then
 		# shellcheck disable=SC2086 # ids are docker container IDs (no spaces)
 		inspected=$(_drh_docker inspect --format \
 			"{{.Id}}${DRH_US}{{.Name}}${DRH_US}{{.State.FinishedAt}}${DRH_US}{{index .Config.Labels \"${DRH_PREFIX}.owner\"}}" \
-			$ids) || inspected=""
+			$ids) || return 1
 	fi
 	while IFS="$DRH_US" read -r cid name finished owner; do
 		[[ -n "$cid" ]] || continue
@@ -817,18 +817,23 @@ cmd_report() {
 		printf '%s\n' "$df" | awk -F"$DRH_US" 'NF >= 5 { printf "  %-14s total=%s active=%s size=%s reclaimable=%s\n", $1, $2, $3, $4, $5 }'
 	else
 		printf '  unavailable (docker system df failed or exceeded %ss; set AIDEVOPS_DOCKER_CMD_TIMEOUT_SECONDS higher)\n' "$DRH_CMD_TIMEOUT"
+		return 1
 	fi
 	printf '  reclaim images: docker image prune   (add -a for all unused images)\n'
 	printf '  reclaim build cache: docker builder prune --filter "until=%sh"\n' "$DRH_DEFAULT_TTL"
-	dangling=$(_drh_docker volume ls -q --filter dangling=true) || dangling=""
+	dangling=$(_drh_docker volume ls -q --filter dangling=true) || return 1
 	printf '\nUnused volumes (no container references them): %s\n' "$(_drh_count_lines "$dangling")"
 	printf '  inspect first: docker volume ls --filter dangling=true\n'
 	printf '  reclaim: docker volume prune   (anonymous only; -a includes named volumes and deletes their data)\n'
-	_drh_report_ownership
-	_drh_report_stopped
-	_drh_report_networks
-	[[ "$DRH_BUDGET_EXHAUSTED" -eq 0 ]] || printf '\n(report budget of %ss exhausted; results are partial)\n' "$DRH_MAX_SECONDS"
+	_drh_report_ownership || return 1
+	_drh_report_stopped || return 1
+	_drh_report_networks || return 1
+	if [[ "$DRH_BUDGET_EXHAUSTED" -ne 0 ]]; then
+		printf '\n(report budget of %ss exhausted; results are partial)\n' "$DRH_MAX_SECONDS"
+		return 1
+	fi
 	printf '\nAddress-pool exhaustion and cleanup guide: tools/containers/disposable-resources.md\n'
+	printf '\nDocker pressure report complete\n'
 	return 0
 }
 

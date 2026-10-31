@@ -2,21 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { activeLocalOnlyPolicy, localFailureCheck, LocalOnlyPolicyError } from "./local-only-policy.mjs";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { activeLocalOnlyPolicy, assertOperatorConfigStat, localFailureCheck, localProvidersOverrideFile,
+  LocalOnlyPolicyError } from "./local-only-policy.mjs";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
-
-function assertOperatorConfigStat(stat) {
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error();
-  if ((stat.mode & 0o777) !== 0o600 || stat.size > 65536) throw new Error();
-  if (process.getuid && stat.uid !== process.getuid()) throw new Error();
-}
 
 // #aidevops:trust-boundary: operator configuration only, snapshotted before
 // tools run. Never infer labels from file contents, arguments or model output.
 export function loadPrivateProcessingPolicy(env = process.env) {
   const home = env.HOME || homedir();
   const file = resolve(env.XDG_CONFIG_HOME || resolve(home, ".config"), "aidevops/local-only-roots.json");
+  // The local-provider override (GH#35723) defines what "local" means for the
+  // next launch, so tool writes to it are refused exactly like the roots list.
+  const providersFile = localProvidersOverrideFile(env);
   let roots = [];
   let invalid = false;
   try {
@@ -29,7 +27,7 @@ export function loadPrivateProcessingPolicy(env = process.env) {
   } catch (error) {
     invalid = error.code !== "ENOENT";
   }
-  return Object.freeze({ file, invalid, roots: Object.freeze([...new Set(roots)]) });
+  return Object.freeze({ file, providersFile, invalid, roots: Object.freeze([...new Set(roots)]) });
 }
 
 function canonicalPath(path) {
@@ -91,6 +89,7 @@ const MUTATION_TOOLS = /(?:write|edit|apply_patch)$/i;
 // roots, permit only literal, single-command file readers; opaque programs,
 // substitutions, pipes and interpreters fail closed rather than hide reads.
 const LITERAL_READERS = new Set(["cat", "head", "tail", "wc", "ls", "stat", "pwd"]);
+const SHELL_INTERPRETERS = new Set(["sh", "bash", "dash", "ash", "zsh", "ksh", "mksh", "fish", "csh", "tcsh"]);
 
 function literalShellWords(command) {
   if (Array.isArray(command)) return command.every((word) => typeof word === "string") ? command : null;
@@ -113,22 +112,57 @@ function toolPath(args, cwd) {
   return [args.filePath, args.file_path, args.path, args.directory].find(Boolean) || cwd;
 }
 
+// Operator files that define classification or what counts as local.
+function protectedConfigFiles(policy) {
+  return [policy.file, policy.providersFile].filter(Boolean);
+}
+
+// Case-insensitive: default macOS volumes resolve differently-cased names.
+function namesProtectedConfig(policy, text) {
+  const lower = text.toLowerCase();
+  return protectedConfigFiles(policy).some((file) => lower.includes(basename(file).toLowerCase()));
+}
+
+// -c, -lc, -ec ..., --command and --command=...
+const INTERPRETER_SCRIPT_OPTION = /^(?:-[^-]*c|--command(?:=|$))/;
+
+// Unparseable syntax, or a quoted -c script that is literal to the outer
+// parser but not to its interpreter.
+function isOpaqueShell(words) {
+  return !words || (SHELL_INTERPRETERS.has(basename(String(words[0])))
+    && words.slice(1).some((word) => INTERPRETER_SCRIPT_OPTION.test(word)));
+}
+
 function assertClassificationMutation(policy, name, args, cwd, deny) {
   if (!MUTATION_TOOLS.test(name)) return;
   // Freeze classification across this launch, and prohibit tool edits to its
   // source. OS ownership is not isolation from code running as the same user.
   const patch = String(args.patchText || args.patch_text || "");
   const mutationPaths = [toolPath(args, cwd), ...[...patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map((match) => match[1])];
-  if (mutationPaths.some((target) =>
-    contains(resolve(cwd, target), policy.file)
-    || contains(canonicalPath(resolve(cwd, target)), canonicalPath(policy.file)))) deny("classification_mutation");
+  if (protectedConfigFiles(policy).some((file) => mutationPaths.some((target) =>
+    contains(resolve(cwd, target), file)
+    || contains(canonicalPath(resolve(cwd, target)), canonicalPath(file))))) deny("classification_mutation");
 }
 
 function assertShellRead(policy, command, cwd, binding, deny) {
   const text = Array.isArray(command) ? command.join(" ") : String(command || "");
-  if (text.includes(policy.file)) deny("classification_mutation");
-  if (binding.bound || !policy.roots.length) return;
   const words = literalShellWords(command);
+  // Resolve literal operands before exemptions: relative and symlink aliases
+  // must not bypass the operator-config guard, even in a bound session.
+  // Canonicalize each component before processing the next: collapsing a
+  // symlink/.. pair lexically would follow a different parent than the OS.
+  const targets = words?.slice(1).map((word) => word.split(sep).reduce(
+    (parent, component) => canonicalPath(resolve(parent, component)),
+    isAbsolute(word) ? sep : canonicalPath(cwd),
+  )) || [];
+  if (protectedConfigFiles(policy).some((file) => text.includes(file)
+    || targets.includes(canonicalPath(file)))) deny("classification_mutation");
+  // Opaque shell can hide relative config aliases. Every session runs this hook,
+  // so outside a classified unbound session deny it only when it names a
+  // protected config file; ordinary pipelines must keep working (GH#36017).
+  const exempt = binding.bound || !policy.roots.length;
+  if (isOpaqueShell(words) && (!exempt || namesProtectedConfig(policy, text))) deny("unclassifiable_shell_read");
+  if (exempt) return;
   // No options: even familiar readers have executable/path-bearing options.
   if (!words?.length || !LITERAL_READERS.has(words[0])
     || words.slice(1).some((word) => word.startsWith("-"))) deny("unclassifiable_shell_read");

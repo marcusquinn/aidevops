@@ -37,8 +37,46 @@ _release_gh_read_backoff() {
 	return 0
 }
 
+# Keep transport diagnostics useful without forwarding multiline output, terminal
+# controls, credential-bearing URLs, tokens or private paths into release logs.
+# Redact before truncating so a token at the boundary cannot leak a prefix.
+_release_gh_read_diagnostic() {
+	local error_text="$1"
+	local first_line="${error_text%%$'\n'*}"
+	local summary=""
+	summary=$(printf '%s' "$first_line" | jq -Rs '
+		gsub("\u001b\\[[0-?]*[ -/]*[@-~]"; "")
+		| gsub("[[:cntrl:]]"; " ")
+		| gsub("(?i)https?://[^[:space:]]+"; "[redacted-url]")
+		| gsub("/(Users|home|private|tmp|var)/[^[:space:]]+"; "[redacted-path]")
+		| gsub("(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)"; "[redacted-token]")
+		| sub("(?i)(authorization|bearer|token|password|secret|api[_-]?key)[[:space:]]*[:= ].*"; "[redacted-credential]")
+		| if length == 0 then "no stderr diagnostic" else . end
+		| if length > 240 then .[:237] + "..." else . end
+	' -r) || summary="diagnostic unavailable"
+	printf '%s' "$summary"
+	return 0
+}
+
+# Match known transient network errors from gh's Go HTTP client, never arbitrary
+# nonzero exits. Keep the category static so retry logs cannot leak request URLs.
+_release_gh_read_network_failure() {
+	local error_text="$1"
+	local normalized=""
+	normalized=$(printf '%s' "$error_text" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+	if [[ "$normalized" =~ http[[:space:]]4[0-9][0-9] ||
+		"$normalized" =~ (x509:|certificate|permission\ denied|authentication|not\ logged) ]]; then
+		return 1
+	fi
+	if [[ "$normalized" =~ (connection\ reset\ by\ peer|connection\ refused|connection\ timed\ out|i/o\ timeout|tls\ handshake\ timeout|context\ deadline\ exceeded|client\.timeout\ exceeded|temporary\ failure\ in\ name\ resolution|no\ such\ host|network\ is\ unreachable|unexpected\ eof|error\ connecting\ to) ||
+		"$normalized" =~ (^|[[:space:]:])eof([[:space:]]|$) ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # Read-only GitHub read with bounded retry of transport failures only (empty
-# body, HTTP 5xx, truncated/invalid JSON). Auth, 404 and permission failures and
+# body, HTTP 5xx, network errors, truncated/invalid JSON). Auth, 404 and permission failures and
 # wrong response shapes fail on the first attempt. Fail closed after the
 # _release_gh_read_attempts budget.
 # Usage: _release_snapshot_gh_read <purpose> <jq-shape-test> -- gh-args...
@@ -74,11 +112,13 @@ _release_snapshot_gh_read() {
 			cause="HTTP 5xx"
 		elif [[ "$error_text" =~ (unexpected\ end\ of\ JSON\ input|invalid\ character) ]]; then
 			cause="JSON decode error"
+		elif [[ "$status" -ne 0 ]] && _release_gh_read_network_failure "$error_text"; then
+			cause="network transport error"
 		elif [[ "$status" -eq 0 && -z "$error_text" ]]; then
 			cause="empty response"
 		else
 			rm -f "$error_file"
-			printf 'release-snapshot: %s: GitHub read failed (exit %s, attempt %s; not retryable)\n' "$purpose" "$status" "$attempt" >&2
+			printf 'release-snapshot: %s: GitHub read failed (exit %s, attempt %s; not retryable): %s\n' "$purpose" "$status" "$attempt" "$(_release_gh_read_diagnostic "$error_text")" >&2
 			return 1
 		fi
 		[[ "$attempt" -ge "$max_attempts" ]] && break

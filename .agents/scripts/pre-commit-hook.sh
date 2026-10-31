@@ -93,6 +93,53 @@ get_modified_shell_files() {
 #   - New task-list entry whose ID already appears elsewhere → fail.
 #   - Two new task-list entries with the same ID in one commit → fail.
 #   - TODO.md doesn't exist in HEAD (first commit) → any duplicate fails.
+#   - Rows inside <!-- ... --> comments (GH#17804 template examples) are
+#     documentation and never count (GH#35755).
+#   - Task IDs compare without leading zeros (t034 == t34), so normalizing a
+#     historical padded duplicate is not a new collision (GH#35755). Routine
+#     IDs stay literal because they are routine state keys.
+
+# Print task/routine IDs from TODO checkbox rows on stdin, one per line.
+# Comment stripping matches issue-sync-pr-task-resolver.sh todo_strip_comments
+# (kept inline because this hook must stay self-contained when sourced).
+_todo_duplicate_check_ids() {
+	awk '
+		{
+			line = $0
+			out = ""
+			while (length(line) > 0) {
+				if (in_comment) {
+					pos = index(line, "-->")
+					if (pos == 0) { line = ""; break }
+					line = substr(line, pos + 3)
+					in_comment = 0
+				} else {
+					pos = index(line, "<!--")
+					if (pos == 0) { out = out line; line = ""; break }
+					out = out substr(line, 1, pos - 1)
+					line = substr(line, pos + 4)
+					in_comment = 1
+				}
+			}
+			if (!match(out, /^[[:space:]]*- \[[ x-]\][[:space:]]+[tr][0-9]+(\.[0-9]+)*/)) next
+			id = substr(out, RSTART, RLENGTH)
+			sub(/^[[:space:]]*- \[[ x-]\][[:space:]]+/, "", id)
+			if (substr(id, 1, 1) == "t") {
+				count = split(substr(id, 2), parts, ".")
+				id = "t"
+				for (i = 1; i <= count; i++) {
+					segment = parts[i]
+					sub(/^0+/, "", segment)
+					if (segment == "") segment = "0"
+					id = id (i > 1 ? "." : "") segment
+				}
+			}
+			print id
+		}
+	' || return 1
+	return 0
+}
+
 validate_duplicate_task_ids() {
 	# Only check if TODO.md is staged
 	if ! staged_diff --name-only | grep -q '^TODO\.md$'; then
@@ -110,10 +157,10 @@ validate_duplicate_task_ids() {
 
 	local staged_dupes head_dupes new_dupes
 	staged_dupes=$(printf '%s\n' "$staged_todo" \
-		| sed -nE 's/^[[:space:]]*- \[[ x-]\][[:space:]]+([tr][0-9]+(\.[0-9]+)*).*/\1/p' \
+		| _todo_duplicate_check_ids \
 		| sort | uniq -d)
 	head_dupes=$(printf '%s\n' "$head_todo" \
-		| sed -nE 's/^[[:space:]]*- \[[ x-]\][[:space:]]+([tr][0-9]+(\.[0-9]+)*).*/\1/p' \
+		| _todo_duplicate_check_ids \
 		| sort | uniq -d)
 
 	# IDs duplicated in staged that were NOT already duplicated in HEAD =

@@ -285,954 +285,17 @@ reset_test_state() {
 # Test cases
 # -----------------------------------------------------------------------------
 
-test_ceremony_applies_default() {
-	reset_test_state
-	_install_mock_set_issue_status success
-	_install_mock_set_origin_label success
-
-	# Issue meta with one prior assignee that ceremony should remove.
-	local issue_meta='{"assignees":[{"login":"prior-author"}]}'
-	local rc=0
-	_dsi_apply_dispatch_ceremony 12345 owner/repo runner-self "$issue_meta" >/dev/null 2>&1 || rc=$?
-
-	local status_logged
-	status_logged=$(cat "$SET_ISSUE_STATUS_LOG")
-
-	# Assert ceremony returned success
-	if [[ "$rc" -ne 0 ]]; then
-		print_result "ceremony returns 0 on success" 1 "got rc=$rc"
-		return 0
-	fi
-	print_result "ceremony returns 0 on success" 0
-
-	# Assert exactly one set_issue_status call recorded.
-	# t2763: the unsafe grep-c-then-fallback idiom stacks two zeros on the
-	# zero-match path. Use the inline guard pattern instead (see counter-stack-check).
-	local call_count
-	call_count=$(grep -c '^set_issue_status' "$SET_ISSUE_STATUS_LOG" 2>/dev/null || true)
-	[[ "$call_count" =~ ^[0-9]+$ ]] || call_count=0
-	if [[ "$call_count" -ne 1 ]]; then
-		print_result "ceremony emits exactly one set_issue_status call" 1 "got $call_count calls"
-		return 0
-	fi
-	print_result "ceremony emits exactly one set_issue_status call" 0
-
-	# Assert status:queued positional
-	local status_check=1
-	[[ "$status_logged" == *"set_issue_status 12345 owner/repo queued"* ]] && status_check=0
-	print_result "ceremony passes status:queued (not in-progress)" "$status_check" \
-		"expected 'set_issue_status 12345 owner/repo queued' in: $status_logged"
-
-	# Origin labels are creation provenance and must not be rewritten by worker
-	# claim ceremony.
-	local origin_call_count
-	origin_call_count=$(grep -c '^set_origin_label' "$SET_ORIGIN_LABEL_LOG" 2>/dev/null || true)
-	[[ "$origin_call_count" =~ ^[0-9]+$ ]] || origin_call_count=0
-	if [[ "$origin_call_count" -ne 0 ]]; then
-		print_result "ceremony preserves origin provenance" 1 "got $origin_call_count set_origin_label calls"
-		return 0
-	fi
-	print_result "ceremony preserves origin provenance" 0
-
-	# Assert origin:worker NOT embedded in set_issue_status flags (t3007 regression guard)
-	local no_bare_add=0 no_bare_rm_int=0 no_bare_rm_take=0
-	[[ "$status_logged" == *"--add-label origin:worker"* ]] && no_bare_add=1
-	[[ "$status_logged" == *"--remove-label origin:interactive"* ]] && no_bare_rm_int=1
-	[[ "$status_logged" == *"--remove-label origin:worker-takeover"* ]] && no_bare_rm_take=1
-	print_result "origin:worker not embedded in set_issue_status" "$no_bare_add" \
-		"bare --add-label origin:worker found in set_issue_status call"
-	print_result "origin:interactive removal not in set_issue_status (t3007)" "$no_bare_rm_int" \
-		"bare --remove-label origin:interactive found"
-	print_result "origin:worker-takeover removal not in set_issue_status (t3007)" "$no_bare_rm_take" \
-		"bare --remove-label origin:worker-takeover found"
-
-	# Assert assignee normalization still in set_issue_status
-	local add_assignee=1 rm_prior=1
-	[[ "$status_logged" == *"--add-assignee runner-self"* ]] && add_assignee=0
-	[[ "$status_logged" == *"--remove-assignee prior-author"* ]] && rm_prior=0
-	print_result "ceremony adds runner-self as assignee" "$add_assignee"
-	print_result "ceremony removes prior assignee" "$rm_prior"
-
-	return 0
-}
-
-test_ceremony_skip_when_self_assigned() {
-	reset_test_state
-	_install_mock_set_issue_status success
-	_install_mock_set_origin_label success
-
-	# When the only existing assignee IS runner-self, no --remove-assignee
-	# should be emitted (don't unassign yourself).
-	local issue_meta='{"assignees":[{"login":"runner-self"}]}'
-	_dsi_apply_dispatch_ceremony 99 owner/repo runner-self "$issue_meta" >/dev/null 2>&1
-
-	local logged
-	logged=$(cat "$SET_ISSUE_STATUS_LOG")
-
-	local no_self_remove=0
-	if [[ "$logged" == *"--remove-assignee runner-self"* ]]; then
-		no_self_remove=1
-	fi
-	print_result "ceremony does not remove runner-self from assignees" "$no_self_remove"
-
-	# But still adds runner-self via --add-assignee (idempotent in gh).
-	local still_adds=1
-	[[ "$logged" == *"--add-assignee runner-self"* ]] && still_adds=0
-	print_result "ceremony still adds runner-self (idempotent re-assert)" "$still_adds"
-
-	return 0
-}
-
-test_ceremony_handles_empty_assignees() {
-	reset_test_state
-	_install_mock_set_issue_status success
-	_install_mock_set_origin_label success
-
-	# Empty assignees array — no --remove-assignee flags should appear.
-	local issue_meta='{"assignees":[]}'
-	local rc=0
-	_dsi_apply_dispatch_ceremony 7 owner/repo runner-self "$issue_meta" >/dev/null 2>&1 || rc=$?
-
-	local logged
-	logged=$(cat "$SET_ISSUE_STATUS_LOG")
-
-	local rc_check=1
-	[[ "$rc" -eq 0 ]] && rc_check=0
-	print_result "ceremony returns 0 with empty assignees" "$rc_check"
-
-	local no_extra_remove=0
-	if [[ "$logged" == *"--remove-assignee"* ]]; then
-		no_extra_remove=1
-	fi
-	print_result "ceremony emits no --remove-assignee for empty assignees" "$no_extra_remove"
-
-	return 0
-}
-
-test_ceremony_handles_empty_self_login() {
-	reset_test_state
-	_install_mock_set_issue_status success
-	_install_mock_set_origin_label success
-
-	local issue_meta='{"assignees":[]}'
-	local rc=0
-	# Empty self_login → ceremony refuses + emits warning, returns 1.
-	# Capture stderr to /dev/null since the warning is operator-facing.
-	_dsi_apply_dispatch_ceremony 1 owner/repo "" "$issue_meta" >/dev/null 2>&1 || rc=$?
-
-	local rc_check=1
-	[[ "$rc" -eq 1 ]] && rc_check=0
-	print_result "ceremony returns 1 when self_login is empty" "$rc_check" \
-		"expected rc=1, got $rc"
-
-	# Assert NO set_issue_status call was made (refuse before the gh edit).
-	local call_count
-	call_count=$(grep -c '^set_issue_status' "$SET_ISSUE_STATUS_LOG" 2>/dev/null || true)
-	[[ "$call_count" =~ ^[0-9]+$ ]] || call_count=0
-	if [[ "$call_count" -ne 0 ]]; then
-		print_result "ceremony skips gh edit when self_login empty" 1 "got $call_count calls"
-		return 0
-	fi
-	print_result "ceremony skips gh edit when self_login empty" 0
-
-	return 0
-}
-
-test_ceremony_handles_set_issue_status_failure() {
-	reset_test_state
-	_install_mock_set_issue_status failure
-	_install_mock_set_origin_label success
-
-	local issue_meta='{"assignees":[]}'
-	local rc=0
-	_dsi_apply_dispatch_ceremony 1 owner/repo runner-self "$issue_meta" >/dev/null 2>&1 || rc=$?
-
-	# When set_issue_status fails (e.g. gh API error), ceremony returns 1 so
-	# the caller can stop before creating a worktree or launching a worker.
-	local rc_check=1
-	[[ "$rc" -eq 1 ]] && rc_check=0
-	print_result "ceremony returns 1 when set_issue_status fails" "$rc_check"
-
-	return 0
-}
-
-test_ceremony_failure_blocks_launch_and_releases_claim() {
-	reset_test_state
-	_install_mock_set_issue_status success
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local release_log="${test_dir}/release.log"
-	local worktree_log="${test_dir}/worktree.log"
-	local launch_log="${test_dir}/launch.log"
-	local rc=0
-
-	(
-		_DSI_ARG_NO_CEREMONY=0
-		_DSI_ISSUE_META_JSON='{"assignees":[]}'
-		_dsi_apply_dispatch_ceremony() { return 1; }
-		_dsi_release_consensus_claim() {
-			printf 'released\n' >"$release_log"
-			return 0
-		}
-		_dsi_create_worktree() {
-			printf 'created\n' >"$worktree_log"
-			return 0
-		}
-		_dsi_launch_and_report() {
-			printf 'launched\n' >"$launch_log"
-			return 0
-		}
-		_dsi_dispatch_after_dedup_clear 1 owner/repo runner-self session-key >/dev/null 2>&1
-	) || rc=$?
-
-	local blocked=1
-	[[ "$rc" -eq 1 && -f "$release_log" && ! -e "$worktree_log" && ! -e "$launch_log" ]] && blocked=0
-	print_result "ceremony failure releases claim before worktree creation or worker launch" "$blocked" \
-		"rc=$rc release=$([[ -f "$release_log" ]] && printf yes || printf no) worktree=$([[ -e "$worktree_log" ]] && printf yes || printf no) launch=$([[ -e "$launch_log" ]] && printf yes || printf no)"
-
-	local reset_logged=""
-	reset_logged=$(<"$SET_ISSUE_STATUS_LOG")
-	local reset_ok=1
-	[[ "$reset_logged" == *"set_issue_status 1 owner/repo available --remove-assignee runner-self"* ]] && reset_ok=0
-	print_result "ceremony failure restores available status and removes dispatcher assignee" "$reset_ok" "$reset_logged"
-
-	rm -rf "$test_dir"
-	return 0
-}
-
-test_conversation_lock_failure_blocks_manual_launch() {
-	reset_test_state
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local launch_log="${test_dir}/launch.log"
-	local rc=0
-
-	(
-		_DSI_ARG_NO_CEREMONY=0
-		_DSI_WORKTREE_PATH="$test_dir"
-		_dsi_apply_prelaunch_ceremony_if_enabled() { return 0; }
-		_dsi_create_worktree() { return 0; }
-		_dsi_guard_no_existing_dispatch() { return 0; }
-		lock_issue_for_worker() { return 1; }
-		_dsi_reset_after_prelaunch_failure() { return 0; }
-		_dsi_launch_and_report() {
-			printf 'launched\n' >"$launch_log"
-			return 0
-		}
-		_dsi_dispatch_after_dedup_clear 1 owner/repo runner-self session-key >/dev/null 2>&1
-	) || rc=$?
-
-	local blocked=1
-	[[ "$rc" -eq 1 && ! -e "$launch_log" ]] && blocked=0
-	print_result "manual dispatch lock failure blocks worker launch" "$blocked" "rc=$rc"
-	rm -rf "$test_dir"
-	return 0
-}
-
-test_no_ceremony_flag_parses_correctly() {
-	reset_test_state
-
-	# Test that the parser correctly sets _DSI_ARG_NO_CEREMONY=1 when
-	# --no-ceremony is in the args, and 0 otherwise.
-	local rc=0
-	_dsi_parse_dispatch_args 12345 owner/repo --no-ceremony >/dev/null 2>&1 || rc=$?
-	local no_cer_flag="$_DSI_ARG_NO_CEREMONY"
-
-	local check1=1
-	[[ "$rc" -eq 0 && "$no_cer_flag" == "1" ]] && check1=0
-	print_result "--no-ceremony sets _DSI_ARG_NO_CEREMONY=1" "$check1" \
-		"rc=$rc no_cer=$no_cer_flag"
-
-	# Reset and verify default is 0
-	rc=0
-	_dsi_parse_dispatch_args 12345 owner/repo >/dev/null 2>&1 || rc=$?
-	no_cer_flag="$_DSI_ARG_NO_CEREMONY"
-
-	local check2=1
-	[[ "$rc" -eq 0 && "$no_cer_flag" == "0" ]] && check2=0
-	print_result "default _DSI_ARG_NO_CEREMONY=0 (ceremony ON)" "$check2" \
-		"rc=$rc no_cer=$no_cer_flag"
-
-	# Composes with --dry-run
-	rc=0
-	_dsi_parse_dispatch_args 12345 owner/repo --dry-run --no-ceremony >/dev/null 2>&1 || rc=$?
-	local dry="$_DSI_ARG_DRYRUN" no_cer="$_DSI_ARG_NO_CEREMONY"
-
-	local check3=1
-	[[ "$rc" -eq 0 && "$dry" == "1" && "$no_cer" == "1" ]] && check3=0
-	print_result "--dry-run and --no-ceremony compose" "$check3" \
-		"rc=$rc dry=$dry no_cer=$no_cer"
-
-	return 0
-}
-
-test_model_override_guidance_is_provider_neutral() {
-	reset_test_state
-
-	local rc=0
-	_dsi_parse_dispatch_args 12345 owner/repo --model compatibility/model-id >/dev/null 2>&1 || rc=$?
-	local override_check=1
-	[[ "$rc" -eq 0 && "$_DSI_ARG_MODEL" == "compatibility/model-id" ]] && override_check=0
-	print_result "advanced --model compatibility override still parses" "$override_check" \
-		"rc=$rc model=$_DSI_ARG_MODEL"
-
-	local help_out
-	help_out=$(_dispatch_usage)
-	local help_check=1
-	if [[ "$help_out" == *"Advanced compatibility override"* &&
-		"$help_out" == *"tier:simple"* &&
-		"$help_out" == *"tier:standard"* &&
-		"$help_out" == *"tier:thinking"* &&
-		"$help_out" != *"anthropic/"* &&
-		"$help_out" != *"openai/"* &&
-		"$help_out" != *"google/"* ]]; then
-		help_check=0
-	fi
-	print_result "dispatch help recommends tiers without a provider pin" "$help_check" "$help_out"
-
-	rc=0
-	local error_out
-	error_out=$(_dsi_parse_dispatch_args 12345 owner/repo --model --dry-run 2>&1) || rc=$?
-	local error_check=1
-	if [[ "$rc" -eq 2 &&
-		"$error_out" == *"tier:simple"* &&
-		"$error_out" == *"tier:standard"* &&
-		"$error_out" == *"tier:thinking"* &&
-		"$error_out" != *"anthropic/"* &&
-		"$error_out" != *"openai/"* &&
-		"$error_out" != *"google/"* ]]; then
-		error_check=0
-	fi
-	print_result "missing --model error recommends tiers without a provider pin" "$error_check" \
-		"rc=$rc output=$error_out"
-
-	return 0
-}
-
-test_load_issue_meta_accepts_lowercase_open() {
-	MOCK_GH_FAIL="0"
-	MOCK_GH_ISSUE_STATE="open"
-
-	local rc=0
-	_dsi_load_issue_meta 123 owner/repo >/dev/null 2>&1 || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 0 && "$_DSI_ISSUE_TITLE" == "Mock issue" ]] && check=0
-	print_result "load issue meta accepts lowercase open" "$check" \
-		"expected rc=0 with title populated, got rc=$rc title=$_DSI_ISSUE_TITLE"
-
-	return 0
-}
-
-test_agent_flag_parses_with_default() {
-	reset_test_state
-
-	local rc=0
-	_dsi_parse_dispatch_args 12345 owner/repo >/dev/null 2>&1 || rc=$?
-	local default_agent="$_DSI_ARG_AGENT"
-	local check1=1
-	[[ "$rc" -eq 0 && "$default_agent" == "Build+" ]] && check1=0
-	print_result "default worker agent is Build+" "$check1" \
-		"rc=$rc agent=$default_agent"
-
-	rc=0
-	_dsi_parse_dispatch_args 12345 owner/repo --agent CustomAgent >/dev/null 2>&1 || rc=$?
-	local custom_agent="$_DSI_ARG_AGENT"
-	local check2=1
-	[[ "$rc" -eq 0 && "$custom_agent" == "CustomAgent" ]] && check2=0
-	print_result "--agent overrides worker agent" "$check2" \
-		"rc=$rc agent=$custom_agent"
-
-	rc=0
-	_dsi_parse_dispatch_args 12345 owner/repo --agent --dry-run >/dev/null 2>&1 || rc=$?
-	local check3=1
-	[[ "$rc" -eq 2 ]] && check3=0
-	print_result "--agent requires a value" "$check3" "rc=$rc"
-
-	return 0
-}
-
-test_load_issue_meta_blocks_lowercase_closed() {
-	MOCK_GH_FAIL="0"
-	MOCK_GH_ISSUE_STATE="closed"
-
-	local rc=0
-	_dsi_load_issue_meta 124 owner/repo >/dev/null 2>&1 || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 1 ]] && check=0
-	print_result "load issue meta blocks lowercase closed" "$check" \
-		"expected rc=1 for closed state, got rc=$rc"
-
-	return 0
-}
-
-test_pr_target_guard_detects_pull_request() {
-	MOCK_GH_FAIL="0"
-	MOCK_GH_TARGET_IS_PR="1"
-
-	local rc=0
-	_dsi_target_is_pull_request 123 owner/repo >/dev/null 2>&1 || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 0 ]] && check=0
-	print_result "PR target guard detects pull_request marker" "$check" \
-		"expected rc=0 for PR-shaped issue, got rc=$rc"
-	return 0
-}
-
-test_pr_target_guard_allows_plain_issue() {
-	MOCK_GH_FAIL="0"
-	MOCK_GH_TARGET_IS_PR="0"
-
-	local rc=0
-	_dsi_target_is_pull_request 123 owner/repo >/dev/null 2>&1 || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 1 ]] && check=0
-	print_result "PR target guard allows plain issue" "$check" \
-		"expected rc=1 for plain issue, got rc=$rc"
-	return 0
-}
-
-test_pr_target_guard_fails_closed_on_api_error() {
-	MOCK_GH_FAIL="0"
-	MOCK_GH_TARGET_IS_PR="api_fail"
-
-	local rc=0
-	_dsi_target_is_pull_request 123 owner/repo >/dev/null 2>&1 || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 2 ]] && check=0
-	print_result "PR target guard reports verification errors" "$check" \
-		"expected rc=2 for API failure, got rc=$rc"
-	return 0
-}
-
-test_interactive_hold_guard_blocks_review_label_without_handoff() {
-	local rc=0
-	_dsi_guard_no_interactive_hold "bug,status:in-review" >/dev/null 2>&1 || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 1 ]] && check=0
-	print_result "interactive hold guard blocks status:in-review without handoff" "$check" "rc=$rc"
-	return 0
-}
-
-test_interactive_hold_guard_blocks_origin_interactive_without_handoff() {
-	local rc=0
-	_dsi_guard_no_interactive_hold "bug,origin:interactive" >/dev/null 2>&1 || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 1 ]] && check=0
-	print_result "interactive hold guard blocks origin:interactive without handoff" "$check" "rc=$rc"
-	return 0
-}
-
-test_interactive_hold_guard_allows_auto_dispatch_handoff() {
-	local rc=0
-	_dsi_guard_no_interactive_hold "bug,origin:interactive,auto-dispatch" >/dev/null 2>&1 || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 0 ]] && check=0
-	print_result "interactive hold guard allows auto-dispatch handoff" "$check" "rc=$rc"
-	return 0
-}
-
-test_interactive_hold_guard_allows_auto_dispatch_review_handoff() {
-	local rc=0
-	_dsi_guard_no_interactive_hold "bug,status:in-review,auto-dispatch" >/dev/null 2>&1 || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 0 ]] && check=0
-	print_result "interactive hold guard allows auto-dispatch review handoff" "$check" "rc=$rc"
-	return 0
-}
-
-test_maintainer_review_guard_blocks_manual_dispatch() {
-	local rc=0
-	local out=""
-	out=$(_dsi_guard_no_maintainer_review_required "bug,needs-maintainer-review" 24354 owner/repo 2>&1) || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 1 && "$out" == *"requires maintainer review"* && "$out" == *"sudo aidevops approve issue 24354 owner/repo"* ]] && check=0
-	print_result "maintainer-review guard blocks manual dispatch" "$check" "rc=$rc output=$out"
-	return 0
-}
-
-test_issue_author_guard_blocks_missing_label_bypass() {
-	local helper_dir="" helper="" original_helper="$_DSI_APPROVAL_HELPER"
-	helper_dir=$(mktemp -d)
-	helper="${helper_dir}/approval-helper.sh"
-	printf '%s\n' '#!/usr/bin/env bash' 'printf "NO_APPROVAL\n"' >"$helper"
-	chmod +x "$helper"
-	_DSI_APPROVAL_HELPER="$helper"
-	_DSI_TARGET_JSON='{"author_association":"CONTRIBUTOR","user":{"login":"reporter","type":"User"}}'
-	local out="" rc=0
-	out=$(_dsi_guard_issue_author_trust 28700 owner/repo 2>&1) || rc=$?
-	local check=1
-	[[ "$rc" -eq 1 && "$out" == *"no verified approval"* ]] && check=0
-	print_result "issue-author guard blocks missing-label bypass" "$check" "rc=$rc output=$out"
-
-	_DSI_TARGET_JSON='{"author_association":"NONE","user":{"login":"github-actions[bot]","type":"Bot"},"labels":[{"name":"external-contributor"}]}'
-	rc=0
-	out=$(_dsi_guard_issue_author_trust 28700 owner/repo 2>&1) || rc=$?
-	check=1
-	[[ "$rc" -eq 1 && "$out" == *"external_source=true"* ]] && check=0
-	print_result "issue-author guard blocks external-origin bot without approval" "$check" "rc=$rc output=$out"
-
-	printf '%s\n' '#!/usr/bin/env bash' 'printf "VERIFIED\n"' >"$helper"
-	rc=0
-	_dsi_guard_issue_author_trust 28700 owner/repo >/dev/null 2>&1 || rc=$?
-	check=1
-	[[ "$rc" -eq 0 ]] && check=0
-	print_result "issue-author guard accepts verified approval" "$check" "rc=$rc"
-
-	_DSI_TARGET_JSON='{"author_association":"OWNER","user":{"login":"owner","type":"User"}}'
-	_DSI_APPROVAL_HELPER="/path/that/does/not/exist"
-	rc=0
-	_dsi_guard_issue_author_trust 28700 owner/repo >/dev/null 2>&1 || rc=$?
-	check=1
-	[[ "$rc" -eq 0 ]] && check=0
-	print_result "issue-author guard accepts owner without approval helper" "$check" "rc=$rc"
-
-	_DSI_APPROVAL_HELPER="$original_helper"
-	_DSI_TARGET_JSON=""
-	rm -rf "$helper_dir"
-	return 0
-}
-
-test_maintainer_permission_guard_blocks_manual_dispatch() {
-	local rc=0
-	local out=""
-	out=$(_dsi_guard_no_maintainer_permission_required "bug,needs-maintainer-permissions" 24354 owner/repo 2>&1) || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 1 && "$out" == *"scoped maintainer permission grant"* && "$out" == *"--request perm-"* ]] && check=0
-	print_result "maintainer-permission guard blocks manual dispatch" "$check" "rc=$rc output=$out"
-
-	rc=0
-	out=$(_dsi_guard_no_maintainer_permission_required "bug,status:blocked" 24354 owner/repo 2>&1) || rc=$?
-	check=1
-	[[ "$rc" -eq 0 && -z "$out" ]] && check=0
-	print_result "generic blocker does not impersonate maintainer-permission hold" "$check" "rc=$rc output=$out"
-	return 0
-}
-
-test_permission_history_guard_requires_current_grant() {
-	local helper_dir helper original_helper out rc=0
-	helper_dir=$(mktemp -d)
-	helper="${helper_dir}/approval-helper.sh"
-	printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "${MOCK_PERMISSION_VERIFICATION:-NO_APPROVAL}"' >"$helper"
-	chmod +x "$helper"
-	original_helper="$_DSI_APPROVAL_HELPER"
-	_DSI_APPROVAL_HELPER="$helper"
-	MOCK_GH_PERMISSION_EVENTS_JSON='[[{"event":"labeled","label":{"name":"needs-maintainer-permissions"}}]]'
-	export MOCK_PERMISSION_VERIFICATION="NO_REQUEST"
-	out=$(_dsi_guard_permission_history_verified 24354 owner/repo 2>&1) || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 0 && -z "$out" ]] && check=0
-	print_result "permission label history without a request does not block manual dispatch" "$check" "rc=$rc output=$out"
-
-	rc=0
-	export MOCK_PERMISSION_VERIFICATION="STALE_APPROVAL"
-	out=$(_dsi_guard_permission_history_verified 24354 owner/repo 2>&1) || rc=$?
-
-	check=1
-	[[ "$rc" -eq 1 && "$out" == *"without a current matching signed grant (STALE_APPROVAL)"* ]] && check=0
-	print_result "permission history guard blocks stale grant" "$check" "rc=$rc output=$out"
-
-	rc=0
-	export MOCK_PERMISSION_VERIFICATION="VERIFIED"
-	out=$(_dsi_guard_permission_history_verified 24354 owner/repo 2>&1) || rc=$?
-	check=1
-	[[ "$rc" -eq 1 && "$out" == *"bound to its original worker session and worktree"* ]] && check=0
-	print_result "permission history guard rejects new worker for bound grant" "$check" "rc=$rc output=$out"
-
-	_DSI_APPROVAL_HELPER="$original_helper"
-	MOCK_GH_PERMISSION_EVENTS_JSON='[[]]'
-	unset MOCK_PERMISSION_VERIFICATION
-	rm -rf "$helper_dir"
-	return 0
-}
-
-test_manual_resume_reuses_dispatch_lifecycle() {
-	local result=0
-	(
-		resume_resolutions=0 resume_change_binding=0
-		_dsi_resolve_permission_resume() {
-			resume_resolutions=$((resume_resolutions + 1))
-			_DSI_WORKTREE_PATH=/tmp/aidevops-recovery
-			_DSI_WORKTREE_BRANCH=feature/preserved
-			_DSI_RESUME_SESSION=manual-cli-123-100
-			_DSI_RESUME_REQUEST=perm-0000000000000000
-			if [[ "$resume_change_binding" == 1 && "$resume_resolutions" -gt 1 ]]; then
-				_DSI_RESUME_REQUEST=perm-1111111111111111
-			fi
-			return 0
-		}
-		_dsi_run_dedup_check() {
-			_DSI_DEDUP_STATE=clear
-			_DSI_DEDUP_RC=1
-			_DSI_DEDUP_RESULT=clear
-			return 0
-		}
-		_dsi_acquire_consensus_claim() {
-			resume_claimed=1
-			return 0
-		}
-		_dsi_run_required_predispatch_validator() { return 0; }
-		# Capability behavior is exercised separately with the real fresh validator.
-		_dsi_check_runner_capability() { return 0; }
-		_dsi_guard_no_existing_dispatch() { return 0; }
-		_dsi_create_worktree() { return 1; }
-		# Hermetic: never read the operator's registry for the fixture path.
-		_dlw_classify_reuse_candidate() {
-			printf 'legacy\n'
-			return 0
-		}
-		_dsi_prepare_worker_git_auth() {
-			resume_auth=1
-			return 0
-		}
-		lock_issue_for_worker() { return 0; }
-		_dsi_launch_and_report() {
-			local session="${4:-}"
-			[[ "$session" == manual-cli-123-100 && "$_DSI_WORKTREE_PATH" == /tmp/aidevops-recovery ]] || return 1
-			[[ "$resume_claimed" == 1 && "$resume_auth" == 1 ]] || return 1
-			return 0
-		}
-		MOCK_GH_LABELS_JSON='[]'
-		MOCK_GH_FAIL=0 MOCK_GH_TARGET_IS_PR=0 MOCK_GH_ISSUE_STATE=OPEN
-		unset AIDEVOPS_DISPATCH_BASE_REF
-		cmd_resume 123 owner/repo || exit 1
-		[[ "$_DSI_RESUME_MODE" == 0 ]] || exit 1
-		resume_change_binding=1 resume_resolutions=0 resume_auth=0
-		if cmd_resume 123 owner/repo; then exit 1; fi
-		[[ "$resume_auth" == 0 ]] || exit 1
-		if cmd_resume 123 owner/repo --no-ceremony; then exit 1; fi
-		MOCK_GH_LABELS_JSON='[{"name":"needs-maintainer-permissions"}]'
-		if cmd_resume 123 owner/repo; then exit 1; fi
-	) || result=1
-	print_result "manual resume reuses session/worktree through claim, ceremony and Git auth; holds remain enforced" "$result"
-	return 0
-}
-
-test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup() {
-	MOCK_GH_FAIL="0"
-	MOCK_GH_TARGET_IS_PR="0"
-	MOCK_GH_ISSUE_STATE="OPEN"
-	MOCK_GH_LABELS_JSON='[{"name":"needs-maintainer-review"}]'
-
-	local original_dedup_helper="$_DSI_DEDUP_HELPER"
-	_DSI_DEDUP_HELPER="/path/that/must/not/be/called"
-	local out="" rc=0
-	out=$(cmd_dispatch 123 owner/repo --dry-run 2>&1) || rc=$?
-
-	local check=1
-	[[ "$rc" -eq 1 && "$out" == *"requires maintainer review"* && "$out" != *"must/not/be/called"* ]] && check=0
-	print_result "dispatch command blocks needs-maintainer-review before dedup" "$check" "rc=$rc output=$out"
-
-	_DSI_DEDUP_HELPER="$original_dedup_helper"
-	MOCK_GH_LABELS_JSON="[]"
-	return 0
-}
-
-test_runner_login_transport_security() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	MOCK_GH_CALL_LOG="${test_dir}/gh-calls"
-	MOCK_GH_REST_LOGIN_MODE="success"
-	MOCK_GH_GRAPHQL_LOGIN_MODE="fail"
-
-	local login="" rc=0 check=1
-	login=$(_dsi_resolve_runner_login) || rc=$?
-	if [[ "$rc" -eq 0 && "$login" == "runner-self" ]] &&
-		! grep -Fq 'api graphql' "$MOCK_GH_CALL_LOG"; then
-		check=0
-	fi
-	print_result "runner identity prefers authenticated REST" "$check" "rc=$rc login=$login"
-
-	: >"$MOCK_GH_CALL_LOG"
-	MOCK_GH_REST_LOGIN_MODE="fail"
-	MOCK_GH_GRAPHQL_LOGIN_MODE="success"
-	login=""
-	rc=0
-	login=$(_dsi_resolve_runner_login) || rc=$?
-	check=1
-	[[ "$rc" -eq 0 && "$login" == "fallback-runner" ]] && check=0
-	print_result "runner identity falls back to authenticated GraphQL" "$check" "rc=$rc login=$login"
-
-	MOCK_GH_REST_LOGIN_MODE="invalid"
-	MOCK_GH_GRAPHQL_LOGIN_MODE="invalid"
-	login=""
-	rc=0
-	login=$(_dsi_resolve_runner_login) || rc=$?
-	check=1
-	[[ "$rc" -eq 1 && -z "$login" ]] && check=0
-	print_result "runner identity rejects malformed transport output" "$check" "rc=$rc login=$login"
-
-	MOCK_GH_REST_LOGIN_MODE="fail"
-	MOCK_GH_GRAPHQL_LOGIN_MODE="fail"
-	login=""
-	rc=0
-	login=$(_dsi_resolve_runner_login) || rc=$?
-	check=1
-	[[ "$rc" -eq 1 && -z "$login" ]] && check=0
-	print_result "runner identity fails closed when both transports fail" "$check" "rc=$rc login=$login"
-
-	MOCK_GH_REST_LOGIN_MODE="success"
-	MOCK_GH_GRAPHQL_LOGIN_MODE="success"
-	MOCK_GH_CALL_LOG=""
-	rm -rf "$test_dir"
-	return 0
-}
-
-test_dedup_receives_prefetched_issue_metadata() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local metadata_log="${test_dir}/metadata.json"
-	local helper="${test_dir}/dedup-helper.sh"
-	{
-		printf '%s\n' '#!/usr/bin/env bash'
-		printf '%s\n' 'printf "%s" "${ISSUE_META_JSON:-}" >"$MOCK_DEDUP_META_LOG"'
-		printf '%s\n' 'exit 1'
-	} >"$helper"
-	chmod +x "$helper"
-
-	local original_dedup_helper="$_DSI_DEDUP_HELPER"
-	_DSI_DEDUP_HELPER="$helper"
-	_DSI_ISSUE_META_JSON='{"number":123,"labels":[],"assignees":[],"state":"OPEN"}'
-	export MOCK_DEDUP_META_LOG="$metadata_log"
-	_dsi_run_dedup_check 123 owner/repo runner-self >/dev/null 2>&1
-
-	local forwarded=""
-	forwarded=$(<"$metadata_log")
-	local check=1
-	[[ "$_DSI_DEDUP_STATE" == "clear" && "$forwarded" == "$_DSI_ISSUE_META_JSON" ]] && check=0
-	print_result "dedup child receives prefetched issue metadata" "$check" "state=$_DSI_DEDUP_STATE metadata=$forwarded"
-
-	_DSI_DEDUP_HELPER="$original_dedup_helper"
-	unset MOCK_DEDUP_META_LOG
-	rm -rf "$test_dir"
-	return 0
-}
-
-test_transient_dedup_retries_are_bounded() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local count_log="${test_dir}/count"
-	local helper="${test_dir}/dedup-helper.sh"
-	{
-		printf '%s\n' '#!/usr/bin/env bash'
-		printf '%s\n' 'count=0'
-		printf '%s\n' '[[ -f "$MOCK_DEDUP_COUNT_LOG" ]] && count=$(<"$MOCK_DEDUP_COUNT_LOG")'
-		printf '%s\n' 'count=$((count + 1))'
-		printf '%s\n' 'printf "%s\n" "$count" >"$MOCK_DEDUP_COUNT_LOG"'
-		printf '%s\n' 'if ((count < 3)); then'
-		printf '%s\n' '  printf "%s\n" "GUARD_UNCERTAIN (reason=gh-api-failure detail=timeout Retry-After:1)"'
-		printf '%s\n' '  exit 0'
-		printf '%s\n' 'fi'
-		printf '%s\n' 'exit 1'
-	} >"$helper"
-	chmod +x "$helper"
-
-	local original_dedup_helper="$_DSI_DEDUP_HELPER"
-	_DSI_DEDUP_HELPER="$helper"
-	_DSI_ISSUE_META_JSON='{"number":123,"labels":[],"assignees":[],"state":"OPEN"}'
-	export MOCK_DEDUP_COUNT_LOG="$count_log"
-	_dsi_run_dedup_check 123 owner/repo runner-self >/dev/null 2>&1
-
-	local attempts=""
-	attempts=$(<"$count_log")
-	local check=1
-	[[ "$_DSI_DEDUP_STATE" == "clear" && "$_DSI_DEDUP_ATTEMPTS" -eq 3 && "$attempts" == "3" ]] && check=0
-	print_result "transient dedup retries stop after two retries" "$check" \
-		"state=$_DSI_DEDUP_STATE attempts=$_DSI_DEDUP_ATTEMPTS calls=$attempts"
-
-	_DSI_DEDUP_HELPER="$original_dedup_helper"
-	unset MOCK_DEDUP_COUNT_LOG
-	rm -rf "$test_dir"
-	return 0
-}
-
-test_persistent_uncertainty_does_not_retry_and_checkpoints_dryrun() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local count_log="${test_dir}/count"
-	local helper="${test_dir}/dedup-helper.sh"
-	{
-		printf '%s\n' '#!/usr/bin/env bash'
-		printf '%s\n' 'count=0'
-		printf '%s\n' '[[ -f "$MOCK_DEDUP_COUNT_LOG" ]] && count=$(<"$MOCK_DEDUP_COUNT_LOG")'
-		printf '%s\n' 'printf "%s\n" "$((count + 1))" >"$MOCK_DEDUP_COUNT_LOG"'
-		printf '%s\n' 'printf "%s\n" "GUARD_UNCERTAIN (reason=jq-failure call=assignees-extract)"'
-		printf '%s\n' 'exit 0'
-	} >"$helper"
-	chmod +x "$helper"
-
-	local original_dedup_helper="$_DSI_DEDUP_HELPER"
-	_DSI_DEDUP_HELPER="$helper"
-	export MOCK_DEDUP_COUNT_LOG="$count_log"
-	local -x AIDEVOPS_DSI_CHECKPOINT_DIR="${test_dir}/checkpoints"
-	MOCK_GH_FAIL="0"
-	MOCK_GH_TARGET_IS_PR="0"
-	MOCK_GH_ISSUE_STATE="OPEN"
-	MOCK_GH_LABELS_JSON="[]"
-
-	local out="" rc=0
-	out=$(cmd_dispatch 123 owner/repo --dry-run 2>&1) || rc=$?
-	local checkpoint_file="${AIDEVOPS_DSI_CHECKPOINT_DIR}/owner-repo-123.json"
-	local checkpoint_ok=1
-	if [[ -f "$checkpoint_file" ]] && jq -e \
-		'.status == "recovering" and .issue == "123" and .repo == "owner/repo" and
-		 .dedup_attempts == 1 and (.resume_command | contains("--dry-run")) and
-		 (.resume_condition | contains("definitive clear or blocked"))' \
-		"$checkpoint_file" >/dev/null; then
-		checkpoint_ok=0
-	fi
-	local calls=""
-	calls=$(<"$count_log")
-	local check=1
-	[[ "$rc" -eq 75 && "$calls" == "1" && "$checkpoint_ok" -eq 0 && "$out" == *"RECOVERY_CHECKPOINT_JSON="* ]] && check=0
-	print_result "persistent uncertain dry-run returns 75 and persists checkpoint" "$check" \
-		"rc=$rc calls=$calls checkpoint_ok=$checkpoint_ok output=$out"
-
-	_DSI_DEDUP_HELPER="$original_dedup_helper"
-	unset MOCK_DEDUP_COUNT_LOG
-	rm -rf "$test_dir"
-	return 0
-}
-
-test_unexpected_dedup_exit_remains_error() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local helper="${test_dir}/dedup-helper.sh"
-	{
-		printf '%s\n' '#!/usr/bin/env bash'
-		printf '%s\n' 'printf "%s\n" "unexpected helper failure"'
-		printf '%s\n' 'exit 2'
-	} >"$helper"
-	chmod +x "$helper"
-
-	local original_dedup_helper="$_DSI_DEDUP_HELPER"
-	_DSI_DEDUP_HELPER="$helper"
-	_DSI_ISSUE_META_JSON='{"number":123,"labels":[],"assignees":[],"state":"OPEN"}'
-	_dsi_run_dedup_check 123 owner/repo runner-self >/dev/null 2>&1
-
-	local check=1
-	[[ "$_DSI_DEDUP_STATE" == "error" && "$_DSI_DEDUP_RC" -eq 2 && "$_DSI_DEDUP_ATTEMPTS" -eq 1 ]] && check=0
-	print_result "unexpected dedup exit remains an error" "$check" \
-		"state=$_DSI_DEDUP_STATE rc=$_DSI_DEDUP_RC attempts=$_DSI_DEDUP_ATTEMPTS"
-
-	_DSI_DEDUP_HELPER="$original_dedup_helper"
-	rm -rf "$test_dir"
-	return 0
-}
-
-test_manual_consensus_claim_outcomes() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local helper="${test_dir}/dedup-helper.sh"
-	cat >"$helper" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "${1:-}" != "claim" ]]; then
-	exit 1
-fi
-case "${MOCK_CLAIM_RESULT:-win}" in
-win) printf '%s\n' 'CLAIM_WON: comment_id=123'; exit 0 ;;
-loss) printf '%s\n' 'CLAIM_LOST: runner=runner-self lost to peer on issue #123 winner_claim_ts=2026-10-17T00:00:00Z winner_age=9s'; exit 1 ;;
-blocked) printf '%s\n' 'CLAIM_BLOCKED: active_assignment issue=#123 repo=owner/repo runner=runner-self signal=PARENT_TASK_BLOCKED'; exit 1 ;;
-hydrate)
-	calls_file="${MOCK_CLAIM_CALLS_FILE:?}"
-	calls=$(($(cat "$calls_file" 2>/dev/null || printf '0') + 1))
-	printf '%s\n' "$calls" >"$calls_file"
-	if [[ "$calls" -eq 1 ]]; then
-		printf '%s\n' 'CLAIM_BLOCKED: active_assignment issue=#123 repo=owner/repo runner=runner-self signal=HYDRATION_WINDOW (issue=123 repo=owner/repo age=29s window=30s — labels may not be synced yet)'
-		exit 1
-	fi
-	printf '%s\n' 'CLAIM_WON: comment_id=123'
-	exit 0
-	;;
-error) printf '%s\n' 'CLAIM_ERROR'; exit 2 ;;
-esac
-exit 2
-EOF
-	chmod +x "$helper"
-	local original_dedup_helper="$_DSI_DEDUP_HELPER"
-	_DSI_DEDUP_HELPER="$helper"
-
-	local rc=0 out="" out_file="${test_dir}/claim.out"
-	MOCK_CLAIM_RESULT=loss _dsi_acquire_consensus_claim 123 owner/repo runner-self >"$out_file" 2>&1 || rc=$?
-	out=$(<"$out_file")
-	local loss_ok=1
-	[[ "$rc" -eq 1 && "$_DSI_CLAIM_WON" -eq 0 && "$out" == *"another runner won"* && "$out" == *"lost to peer"*"winner_claim_ts="* ]] && loss_ok=0
-	print_result "manual dispatch blocks a lost consensus claim and names the winner" "$loss_ok" "rc=$rc won=$_DSI_CLAIM_WON out=$out"
-
-	# GH#34922: a refused (not lost) claim reports the helper's reason.
-	rc=0
-	MOCK_CLAIM_RESULT=blocked _dsi_acquire_consensus_claim 123 owner/repo runner-self >"$out_file" 2>&1 || rc=$?
-	out=$(<"$out_file")
-	local blocked_ok=1
-	[[ "$rc" -eq 1 && "$_DSI_CLAIM_WON" -eq 0 && "$out" != *"another runner won"* && "$out" == *"Reason: CLAIM_BLOCKED: active_assignment"* ]] && blocked_ok=0
-	print_result "manual dispatch reports the concrete claim refusal reason" "$blocked_ok" "rc=$rc out=$out"
-
-	# GH#34922: a fresh issue inside the hydration window waits once and wins.
-	rc=0
-	MOCK_CLAIM_RESULT=hydrate MOCK_CLAIM_CALLS_FILE="${test_dir}/calls" \
-		_dsi_acquire_consensus_claim 123 owner/repo runner-self >"$out_file" 2>&1 || rc=$?
-	out=$(<"$out_file")
-	local hydrate_ok=1
-	[[ "$rc" -eq 0 && "$_DSI_CLAIM_WON" -eq 1 && "$(cat "${test_dir}/calls")" == "2" && "$out" == *"label-hydration window; waiting 2s"* ]] && hydrate_ok=0
-	print_result "manual dispatch waits out the hydration window instead of reporting a lost claim" "$hydrate_ok" "rc=$rc won=$_DSI_CLAIM_WON out=$out"
-
-	rc=0
-	MOCK_CLAIM_RESULT=error _dsi_acquire_consensus_claim 123 owner/repo runner-self >/dev/null 2>&1 || rc=$?
-	local error_ok=1
-	[[ "$rc" -eq 1 && "$_DSI_CLAIM_WON" -eq 0 ]] && error_ok=0
-	print_result "manual dispatch fails closed on consensus claim error" "$error_ok" "rc=$rc won=$_DSI_CLAIM_WON"
-
-	rc=0
-	MOCK_CLAIM_RESULT=win _dsi_acquire_consensus_claim 123 owner/repo runner-self >/dev/null 2>&1 || rc=$?
-	local win_ok=1
-	[[ "$rc" -eq 0 && "$_DSI_CLAIM_WON" -eq 1 ]] && win_ok=0
-	print_result "manual dispatch proceeds only after consensus claim win" "$win_ok" "rc=$rc won=$_DSI_CLAIM_WON"
-
-	_DSI_CLAIM_WON=1
-	_DSI_CLAIM_COMMENT_ID=123
-	_dsi_release_consensus_claim 123 owner/repo runner-self test_failure >/dev/null 2>&1 || true
-	local release_ok=1
-	[[ "$_DSI_CLAIM_WON" -eq 0 && -z "$_DSI_CLAIM_COMMENT_ID" ]] && release_ok=0
-	print_result "manual prelaunch failure clears its claim without retaining local state" "$release_ok"
-
-	_DSI_DEDUP_HELPER="$original_dedup_helper"
-	rm -rf "$test_dir"
-	return 0
-}
-
-test_review_followup_validator_uncertainty_blocks_manual_dispatch() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local validator="${test_dir}/validator.sh"
-	cat >"$validator" <<'EOF'
-#!/usr/bin/env bash
-exit 20
-EOF
-	chmod +x "$validator"
-	local original_validator="$_DSI_VALIDATOR_HELPER"
-	_DSI_VALIDATOR_HELPER="$validator"
-	_DSI_ISSUE_LABELS="review-followup,source:review-scanner"
-	local rc=0
-	_dsi_run_required_predispatch_validator 123 owner/repo >/dev/null 2>&1 || rc=$?
-	local blocked=1
-	[[ "$rc" -eq 1 ]] && blocked=0
-	print_result "manual review-followup dispatch fails closed on validator uncertainty" "$blocked" "rc=$rc"
-	_DSI_VALIDATOR_HELPER="$original_validator"
-	rm -rf "$test_dir"
-	return 0
-}
+# shellcheck source=./test-dispatch-single-issue-ceremony.sh
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/test-dispatch-single-issue-ceremony.sh"
+
+# shellcheck source=./test-dispatch-single-issue-policy.sh
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/test-dispatch-single-issue-policy.sh"
+
+# shellcheck source=./test-dispatch-single-issue-prelaunch.sh
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/test-dispatch-single-issue-prelaunch.sh"
 
 test_launch_worker_forwards_agent() {
 	local failed=1
@@ -1483,319 +546,9 @@ test_origin_identity_drift_prerequisite_and_repair() {
 	return 0
 }
 
-test_create_worktree_uses_target_repo_path() {
-	local failed=1
-	if grep -Fq "repo_path=\$(_dsi_repo_path_for_slug \"\$repo_slug\")" "$HELPER_PATH" &&
-		grep -Fq "cd \"\$repo_path\" && AIDEVOPS_SKIP_AUTO_CLAIM=1" "$HELPER_PATH" &&
-		grep -Fq "git -C \"\$repo_path\" worktree list --porcelain" "$HELPER_PATH"; then
-		failed=0
-	fi
-	print_result "worktree creation uses target repo path" "$failed"
-	return 0
-}
-
-test_create_worktree_registers_dispatch_owner() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	MOCK_REPO_PATH="${test_dir}/repo"
-	MOCK_WORKTREE_PATH="${test_dir}/worktree"
-	MOCK_DATE_UTC="20260515-123456"
-	MOCK_WORKTREE_BRANCH="feature/auto-${MOCK_DATE_UTC}-gh12345"
-	MOCK_GIT_WORKTREE_LIST="1"
-	mkdir -p "$MOCK_REPO_PATH" "$MOCK_WORKTREE_PATH"
-	REGISTER_WORKTREE_LOG="${test_dir}/register-worktree.log"
-	MOCK_WORKTREE_HELPER_LOG="${test_dir}/worktree-helper.log"
-	local repos_file="${test_dir}/repos.json"
-	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","default_branch":"main","pr_base_branch":"develop"}]}' >"$repos_file"
-	local -x AIDEVOPS_REPOS_FILE="$repos_file"
-	export MOCK_WORKTREE_HELPER_LOG
-	: >"$REGISTER_WORKTREE_LOG"
-	: >"$MOCK_WORKTREE_HELPER_LOG"
-
-	local original_worktree_helper="$_DSI_WORKTREE_HELPER"
-	local positional_args_ref='$*'
-	local env_ref='manager=${AIDEVOPS_WORKTREE_MANAGER:-} entry=${AIDEVOPS_LAUNCH_ENTRYPOINT:-} task=${AIDEVOPS_LAUNCH_TASK:-} repo=${AIDEVOPS_LAUNCH_REPO:-}'
-	_DSI_WORKTREE_HELPER="${test_dir}/worktree-helper.sh"
-	{
-		printf '%s\n' '#!/usr/bin/env bash'
-		printf "printf 'worktree-helper %%s %%s\\n' \"%s\" \"%s\" >>%q\n" "$positional_args_ref" "$env_ref" "$MOCK_WORKTREE_HELPER_LOG"
-		printf '%s\n' 'exit 0'
-	} >"$_DSI_WORKTREE_HELPER"
-	chmod +x "$_DSI_WORKTREE_HELPER"
-
-	# Legacy backend chosen before creation: no enrollment request.
-	local rc=0
-	AIDEVOPS_WORKER_BACKEND=detached _dsi_create_worktree 12345 owner/repo >/dev/null 2>&1 || rc=$?
-
-	local registered=""
-	registered=$(<"$REGISTER_WORKTREE_LOG")
-	local helper_call=""
-	helper_call=$(<"$MOCK_WORKTREE_HELPER_LOG")
-	: >"$REGISTER_WORKTREE_LOG"
-	: >"$MOCK_WORKTREE_HELPER_LOG"
-	local passed=1
-	if [[ "$rc" -eq 0 && "$registered" == *"register_worktree ${MOCK_WORKTREE_PATH} ${MOCK_WORKTREE_BRANCH}"* &&
-		"$registered" == *"--task 12345"* && "$registered" == *"--session dispatch-precreate-12345"* &&
-		"$helper_call" == *"--base origin/develop"* && "$helper_call" == *"--issue 12345"* &&
-		"$helper_call" == *"manager= entry=dispatch-single-issue"* && "$_DSI_MANAGED_WORKTREE" == 0 ]]; then
-		passed=0
-	fi
-
-	# GH#35295: on the systemd backend manual dispatch enrolls exactly like
-	# Pulse and binds the created generation; missing enrollment fails closed.
-	local managed_result=0
-	(
-		_dlw_classify_reuse_candidate() {
-			printf '%s\n' "$MOCK_CLASSIFY_RESULT"
-			return 0
-		}
-		export AIDEVOPS_WORKER_BACKEND=systemd
-		MOCK_CLASSIFY_RESULT="managed gen-0123"
-		_dsi_create_worktree 12345 owner/repo >/dev/null 2>&1 || exit 1
-		[[ "$_DSI_MANAGED_WORKTREE" == 1 && "$_DLW_WORKTREE_GENERATION" == gen-0123 ]] || exit 1
-		grep -Fq "manager=pulse-cgroup-v1 entry=dispatch-single-issue task=12345 repo=owner/repo" "$MOCK_WORKTREE_HELPER_LOG" || exit 1
-		MOCK_CLASSIFY_RESULT="legacy"
-		if _dsi_create_worktree 12345 owner/repo >/dev/null 2>&1; then exit 1; fi
-		[[ "$_DSI_MANAGED_WORKTREE" == 0 ]] || exit 1
-		exit 0
-	) || managed_result=1
-	[[ "$managed_result" -eq 0 ]] || passed=1
-	rm -f "$REGISTER_WORKTREE_LOG" "$MOCK_WORKTREE_HELPER_LOG"
-
-	_DSI_WORKTREE_HELPER="$original_worktree_helper"
-	MOCK_GIT_WORKTREE_LIST="0"
-	MOCK_REPO_PATH=""
-	MOCK_WORKTREE_PATH=""
-	MOCK_WORKTREE_BRANCH=""
-	MOCK_DATE_UTC=""
-	REGISTER_WORKTREE_LOG=""
-	unset MOCK_WORKTREE_HELPER_LOG
-	MOCK_WORKTREE_HELPER_LOG=""
-	rm -rf "$test_dir"
-	print_result "worktree creation registers dispatch owner metadata and selects the lifetime backend first" "$passed" "rc=$rc managed=$managed_result registered=$registered helper=$helper_call"
-	return 0
-}
-
-# GH#35295: resume and launch use the shared managed lifetime adapter.
-test_manual_lifetime_binding_and_managed_launch() {
-	local result=0 test_dir=""
-	test_dir=$(mktemp -d)
-	(
-		_DSI_WORKTREE_PATH="${test_dir}/wt"
-		_dlw_classify_reuse_candidate() {
-			printf '%s' "$MOCK_CLASSIFY_RESULT"
-			[[ -n "$MOCK_CLASSIFY_RESULT" ]] && printf '\n'
-			[[ "$MOCK_CLASSIFY_RESULT" != unavailable ]] || return 1
-			return 0
-		}
-		export AIDEVOPS_WORKER_BACKEND=systemd
-		# Resume: managed reuses the exact generation; legacy stays legacy;
-		# sealed, foreign-task and unavailable evidence all refuse.
-		MOCK_CLASSIFY_RESULT="managed gen-1"
-		_dsi_bind_worktree_lifetime 12345 owner/repo resume 2>/dev/null || exit 1
-		[[ "$_DSI_MANAGED_WORKTREE" == 1 && "$_DLW_WORKTREE_GENERATION" == gen-1 ]] || exit 1
-		MOCK_CLASSIFY_RESULT="legacy"
-		_dsi_bind_worktree_lifetime 12345 owner/repo resume >/dev/null 2>&1 || exit 1
-		[[ "$_DSI_MANAGED_WORKTREE" == 0 ]] || exit 1
-		local refused=""
-		for refused in sealed "" unavailable; do
-			MOCK_CLASSIFY_RESULT="$refused"
-			if _dsi_bind_worktree_lifetime 12345 owner/repo resume 2>/dev/null; then exit 1; fi
-		done
-		# An enrolled generation never downgrades to the legacy backend.
-		MOCK_CLASSIFY_RESULT="managed gen-1"
-		if AIDEVOPS_WORKER_BACKEND=detached _dsi_bind_worktree_lifetime 12345 owner/repo resume 2>/dev/null; then exit 1; fi
-
-		# Managed launch: shared reserve/bind launcher, no runtime --detach,
-		# no nohup fallback when admission fails.
-		_DSI_MANAGED_WORKTREE=1
-		_DSI_HEADLESS="${test_dir}/runtime"
-		_DSI_LOG_DIR="${test_dir}/logs"
-		_DSI_GIT_AUTH_TOKEN_FILE=""
-		printf '#!/usr/bin/env bash\nexit 0\n' >"$_DSI_HEADLESS"
-		chmod +x "$_DSI_HEADLESS"
-		_dlw_launch_systemd_worker() {
-			printf '%s\n' "$*" >"${test_dir}/launch-args"
-			printf '%s|%s|%s\n' "${_DLW_MANAGED_WORKTREE:-}" "${_DLW_WORKTREE_PATH:-}" "${_DLW_LAUNCH_ENTRYPOINT:-}" >"${test_dir}/launch-env"
-			[[ "$MOCK_ADMISSION" == ok ]] || return 1
-			printf '4242\n'
-			return 0
-		}
-		nohup() {
-			printf 'nohup\n' >"${test_dir}/nohup-called"
-			return 1
-		}
-		_DLW_LAUNCH_ENTRYPOINT=dispatch-single-issue
-		MOCK_ADMISSION=ok
-		local pid=""
-		pid=$(_dsi_launch_worker manual-cli-12345-1 "${test_dir}/wt" t p standard '' Build+ "${test_dir}/launch.log" 12345 owner/repo me 2>/dev/null) || exit 1
-		[[ "$pid" == 4242 ]] || exit 1
-		grep -Fq -- "--session-key manual-cli-12345-1" "${test_dir}/launch-args" || exit 1
-		! grep -Fq -- "--detach" "${test_dir}/launch-args" || exit 1
-		[[ "$(<"${test_dir}/launch-env")" == "1|${test_dir}/wt|dispatch-single-issue" ]] || exit 1
-		grep -Fq "Dispatched PID: 4242" "${test_dir}/launch.log" || exit 1
-		[[ "$(_dsi_detached_runtime_log "${test_dir}/launch.log")" == "${test_dir}/launch.log" ]] || exit 1
-		MOCK_ADMISSION=failed
-		if _dsi_launch_worker manual-cli-12345-2 "${test_dir}/wt" t p standard '' Build+ "${test_dir}/failed.log" 12345 owner/repo me 2>/dev/null; then exit 1; fi
-		[[ ! -e "${test_dir}/nohup-called" ]] || exit 1
-		exit 0
-	) || result=1
-	rm -rf "$test_dir"
-	print_result "manual resume binds exact managed generations and launches through the shared launcher without fallback" "$result"
-	return 0
-}
-
-test_dispatch_base_ref_prefers_repo_configured_pr_base() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local repos_file="${test_dir}/repos.json"
-	local repo_path="${test_dir}/repo"
-	mkdir -p "$repo_path"
-	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","default_branch":"main","pr_base_branch":"develop"}]}' >"$repos_file"
-
-	local -x AIDEVOPS_REPOS_FILE="$repos_file"
-	unset AIDEVOPS_DISPATCH_BASE_REF AIDEVOPS_WORKTREE_BASE AIDEVOPS_DISPATCH_BASE_BRANCH DISPATCH_REPO_PR_BASE_BRANCH AIDEVOPS_PR_BASE_BRANCH
-
-	local base_ref=""
-	base_ref=$(_dsi_dispatch_base_ref owner/repo "$repo_path")
-	local passed=1
-	[[ "$base_ref" == "origin/develop" ]] && passed=0
-
-	rm -rf "$test_dir"
-	print_result "dispatch base ref uses configured PR base over default branch" "$passed" "base_ref=$base_ref"
-	return 0
-}
-
-test_dispatch_base_ref_prefers_explicit_env_ref() {
-	local test_dir=""
-	test_dir=$(mktemp -d)
-	local repo_path="${test_dir}/repo"
-	mkdir -p "$repo_path"
-	export AIDEVOPS_DISPATCH_BASE_REF="upstream/integration"
-
-	local base_ref=""
-	base_ref=$(_dsi_dispatch_base_ref owner/repo "$repo_path")
-	local base_branch=""
-	base_branch=$(_dsi_branch_from_ref "$base_ref")
-	local passed=1
-	[[ "$base_ref" == "upstream/integration" && "$base_branch" == "upstream/integration" ]] && passed=0
-
-	unset AIDEVOPS_DISPATCH_BASE_REF
-	rm -rf "$test_dir"
-	print_result "dispatch base ref honors explicit env override" "$passed" "base_ref=$base_ref branch=$base_branch"
-	return 0
-}
-
-test_create_worktree_registration_fails_closed() {
-	local failed=1
-	if grep -Fq "register_worktree \"\$_DSI_WORKTREE_PATH\" \"\$_DSI_WORKTREE_BRANCH\"" "$HELPER_PATH" &&
-		grep -Fq "Worktree ownership registration failed; dispatch is unsafe" "$HELPER_PATH" &&
-		! grep -Fq -- "--session \"dispatch-precreate-\${issue_number}\" 2>/dev/null || true" "$HELPER_PATH"; then
-		failed=0
-	fi
-	print_result "worktree registration failure blocks dispatch" "$failed"
-	return 0
-}
-
-test_readiness_timeout_tracks_canary_budget() {
-	local default_timeout="" custom_canary_timeout="" explicit_timeout="" invalid_timeout=""
-	default_timeout=$(
-		unset AIDEVOPS_DSI_READY_TIMEOUT_SECONDS CANARY_TIMEOUT_SECONDS
-		_dsi_ready_timeout_seconds
-	)
-	custom_canary_timeout=$(CANARY_TIMEOUT_SECONDS=42 _dsi_ready_timeout_seconds)
-	explicit_timeout=$(CANARY_TIMEOUT_SECONDS=180 AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_ready_timeout_seconds)
-	invalid_timeout=$(CANARY_TIMEOUT_SECONDS=invalid AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=invalid _dsi_ready_timeout_seconds)
-
-	local passed=1
-	if [[ "$default_timeout" == "240" && "$custom_canary_timeout" == "102" &&
-		"$explicit_timeout" == "0" && "$invalid_timeout" == "240" ]]; then
-		passed=0
-	fi
-	print_result "readiness timeout covers canary budget and preserves overrides" "$passed" \
-		"default=$default_timeout custom=$custom_canary_timeout explicit=$explicit_timeout invalid=$invalid_timeout"
-	return 0
-}
-
-# GH#34556: readiness reads the runtime log path that _detach_worker emits in
-# the launcher log. Creates "<dir>/launcher.log" pointing at "<dir>/runtime log".
-_readiness_fixture_dir() {
-	local dir=""
-	dir=$(mktemp -d) || return 1
-	printf '[INFO] Detaching worker (log: %s)\n' "${dir}/runtime log" >"${dir}/launcher.log"
-	printf '%s\n' "$dir"
-	return 0
-}
-
-test_readiness_accepts_worker_started_marker() {
-	MOCK_LEDGER_RECORD=""
-	local session_key="manual-cli-ready-$$"
-	local dir="" runtime_log=""
-	dir=$(_readiness_fixture_dir)
-	runtime_log=$(_dsi_detached_runtime_log "${dir}/launcher.log")
-	printf '%s\n' "[lifecycle] worker_started session=${session_key}" >"$runtime_log"
-
-	local out="" rc=0
-	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" "${dir}/launcher.log" 2>&1) || rc=$?
-	rm -rf "$dir"
-
-	local passed=1
-	[[ "$rc" -eq 0 && -z "$out" && "$runtime_log" == "${dir}/runtime log" ]] && passed=0
-	print_result "readiness gate accepts worker_started marker at the emitted log path" "$passed" "rc=$rc runtime_log=$runtime_log output=$out"
-	return 0
-}
-
-test_readiness_rejects_live_child_without_ready_signal() {
-	MOCK_LEDGER_RECORD=""
-	local session_key="manual-cli-not-ready-$$"
-	local dir=""
-	dir=$(_readiness_fixture_dir)
-
-	local out="" rc=0 unreported="" unreported_rc=0
-	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" "${dir}/launcher.log" 2>&1) || rc=$?
-	# A launcher that never reported a log path must not be guessed into /tmp.
-	: >"${dir}/launcher.log"
-	unreported=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" "${dir}/launcher.log" 2>&1) || unreported_rc=$?
-	rm -rf "$dir"
-
-	local passed=1
-	[[ "$rc" -eq 1 && "$out" == *"did not reach readiness"* && "$out" == *"Runtime log:  ${dir}/runtime log"* &&
-		"$unreported_rc" -eq 1 && "$unreported" == *"<not reported by launcher>"* && "$unreported" != *"/tmp/worker-"* ]] && passed=0
-	print_result "readiness gate rejects live child without ready signal or reported log" "$passed" "rc=$rc output=$out unreported=$unreported"
-	return 0
-}
-
-test_readiness_rejects_ledger_without_worker_started() {
-	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-ledger'
-	local session_key="manual-cli-ledger-only-$$"
-	local dir=""
-	dir=$(_readiness_fixture_dir)
-
-	local out="" rc=0
-	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" "${dir}/launcher.log" 2>&1) || rc=$?
-	rm -rf "$dir"
-	MOCK_LEDGER_RECORD=""
-
-	local passed=1
-	[[ "$rc" -eq 1 && "$out" == *"did not reach readiness"* ]] && passed=0
-	print_result "readiness gate rejects ledger without worker_started" "$passed" "rc=$rc output=$out"
-	return 0
-}
-
-test_launch_report_waits_before_success_message() {
-	local wait_line="" ok_line=""
-	wait_line=$(grep -n '_dsi_wait_for_worker_readiness' "$HELPER_PATH" | tail -1 | cut -d: -f1)
-	ok_line=$(grep -n '_dsi_ok "Worker launched"' "$HELPER_PATH" | tail -1 | cut -d: -f1)
-
-	local passed=1
-	if [[ -n "$wait_line" && -n "$ok_line" && "$wait_line" -lt "$ok_line" ]]; then
-		passed=0
-	fi
-	print_result "launch report waits for readiness before Worker launched" "$passed" "wait_line=$wait_line ok_line=$ok_line"
-	return 0
-}
-
-
+# shellcheck source=./test-dispatch-single-issue-tracking.sh
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/test-dispatch-single-issue-tracking.sh"
 
 test_live_dispatch_detects_issue_repo() {
 	MOCK_LEDGER_RECORD=""
@@ -1969,6 +722,11 @@ _dsi_run_dedup_check() {
     return 0
 }
 _dsi_guard_no_existing_dispatch() { return 0; }
+# PR-evidence ownership is exercised by its own fixture; keep this one hermetic.
+_dsi_run_pr_evidence_check() {
+    _DSI_PR_EVIDENCE_STATE=clear _DSI_PR_EVIDENCE_RC=1 _DSI_PR_EVIDENCE_RESULT=""
+    return 0
+}
 gh() {
     [[ "$*" == *'repos/owner/repo/issues/123'* ]] || return 1
     [[ "$FETCH_RC" == 0 ]] || return 1
@@ -1986,6 +744,7 @@ _dsi_create_worktree() {
 _dsi_prepare_worker_git_auth() { printf 'auth\n' >>"$EVENTS"; return 0; }
 lock_issue_for_worker() { printf 'lock\n' >>"$EVENTS"; return 0; }
 _dsi_launch_and_report() { printf 'launch\n' >>"$EVENTS"; return 0; }
+_dsi_bind_worktree_lifetime() { return 0; }
 unset AIDEVOPS_DISPATCH_BASE_REF AIDEVOPS_WORKTREE_BASE
 "$@"
 '''
@@ -2076,6 +835,161 @@ PY
 	return 0
 }
 
+# GH#35616: ordinary manual dispatch must honour preserved PR ownership. The
+# fixture helper runs the real shared has_open_pr aggregation and sibling
+# linkage policy from dispatch-dedup-pr.sh; only its GitHub reads are replaced.
+# Claim, ceremony, worktree, auth, lock and launch are spies: no worker runs.
+_write_pr_evidence_fixture_helper() {
+	local helper="$1"
+	cat >"$helper" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FIX_PR_CALLS"
+[[ "${1:-}" == has-open-pr ]] || exit 2
+case "$FIX_PR_MODE" in
+helper_error) printf 'fixture helper crashed\n'; exit 2 ;;
+empty_evidence) exit 0 ;;
+esac
+# shellcheck source=/dev/null
+source "$FIX_SCRIPT_DIR/dispatch-dedup-pr.sh"
+_ddpr_graphql_open_siblings() {
+	local calls=0
+	calls=$(wc -l <"$FIX_PR_CALLS")
+	case "$FIX_PR_MODE" in
+	lookup_fail) return 124 ;;
+	malformed) return 13 ;;
+	late) [[ "$calls" -ge 2 ]] || { printf '[]'; return 0; } ;;
+	esac
+	printf '%s' "$FIX_SIBLINGS"
+	return 0
+}
+_has_open_pr_check_open_commits() { return 1; }
+_has_open_pr_check_open_body_keyword() { return 1; }
+_has_open_pr_check_merged_keywords() { return 1; }
+_has_open_pr_check_task_id_title() { return 1; }
+_has_open_pr_check_superseded_issue_pr() { return 1; }
+has_open_pr "$2" "$3" "${4:-}"
+EOF
+	chmod +x "$helper"
+	return 0
+}
+
+# Args: label mode siblings_json want_rc want_events want_text command...
+_pr_evidence_fixture_case() {
+	local label="$1"
+	local mode="$2"
+	local siblings="$3"
+	local want_rc="$4"
+	local want_events="$5"
+	local want_text="$6"
+	shift 6
+	local out="" rc=0 events=""
+	: >"$EVENTS"
+	: >"$FIX_PR_CALLS"
+	FIX_PR_MODE="$mode"
+	FIX_SIBLINGS="$siblings"
+	out=$("$@" 2>&1) || rc=$?
+	events=$(paste -sd, "$EVENTS")
+	if [[ "$rc" != "$want_rc" || "$events" != "$want_events" || "$out" != *"$want_text"* ]]; then
+		printf 'case=%s rc=%s events=%s output=%s\n' "$label" "$rc" "$events" "$out"
+		return 1
+	fi
+	return 0
+}
+
+# shellcheck disable=SC2317
+test_manual_dispatch_refuses_preserved_pr_ownership() {
+	local result=0 test_dir="" failures=""
+	test_dir=$(mktemp -d)
+	_write_pr_evidence_fixture_helper "${test_dir}/dedup-helper.sh"
+	failures=$(
+		_DSI_DEDUP_HELPER="${test_dir}/dedup-helper.sh"
+		export FIX_PR_CALLS="${test_dir}/pr-calls" FIX_SCRIPT_DIR="$_DSI_SCRIPT_DIR" FIX_PR_MODE="" FIX_SIBLINGS="[]"
+		export AIDEVOPS_DSI_CHECKPOINT_DIR="${test_dir}/checkpoints"
+		EVENTS="${test_dir}/events"
+		unset AIDEVOPS_DISPATCH_BASE_REF
+		_dsi_validate_dispatch_target() {
+			_DSI_ISSUE_LABELS="auto-dispatch,tier:standard"
+			_DSI_ISSUE_TITLE="Fixture issue"
+			_DSI_ISSUE_URL="https://example.invalid/issues/123"
+			_DSI_TIER="standard"
+			_DSI_ISSUE_META_JSON='{}'
+			if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
+				_dsi_resolve_permission_resume || return 1
+			fi
+			return 0
+		}
+		_dsi_resolve_permission_resume() {
+			_DSI_WORKTREE_PATH=/tmp/aidevops-recovery
+			_DSI_WORKTREE_BRANCH=feature/preserved
+			_DSI_RESUME_SESSION=manual-cli-123-100
+			_DSI_RESUME_REQUEST=perm-0000000000000000
+			return 0
+		}
+		_dsi_resolve_runner_login() { printf 'runner-self'; return 0; }
+		_dsi_run_dedup_check() {
+			_DSI_DEDUP_STATE=clear _DSI_DEDUP_RC=1 _DSI_DEDUP_RESULT=clear _DSI_DEDUP_ATTEMPTS=1
+			return 0
+		}
+		_dsi_guard_no_existing_dispatch() { return 0; }
+		_dsi_resolve_model() { _DSI_SELECTED_MODEL=""; return 0; }
+		_dsi_check_runner_capability() { return 0; }
+		_dsi_runner_local_prerequisite() { return 0; }
+		_dsi_dispatch_base_ref() { printf 'origin/main'; return 0; }
+		_dlw_select_worker_backend() { printf 'legacy'; return 0; }
+		_dsi_run_required_predispatch_validator() { return 0; }
+		_dsi_acquire_consensus_claim() { printf 'claim\n' >>"$EVENTS"; return 0; }
+		_dsi_release_consensus_claim() { printf 'release:%s\n' "$4" >>"$EVENTS"; return 0; }
+		_dsi_apply_prelaunch_ceremony_if_enabled() { printf 'ceremony\n' >>"$EVENTS"; return 0; }
+		_dsi_create_worktree() {
+			printf 'worktree\n' >>"$EVENTS"
+			_DSI_WORKTREE_PATH=/tmp/aidevops-fixture
+			return 0
+		}
+		_dsi_set_launch_provenance() { return 0; }
+		_dsi_bind_worktree_lifetime() { return 0; }
+		_dsi_prepare_worker_git_auth() { printf 'auth\n' >>"$EVENTS"; return 0; }
+		_dsi_revoke_worker_git_auth() { return 0; }
+		lock_issue_for_worker() { printf 'lock\n' >>"$EVENTS"; return 0; }
+		_dsi_launch_and_report() { printf 'launch\n' >>"$EVENTS"; return 0; }
+
+		launched="claim,ceremony,worktree,auth,lock,launch"
+		worker='[{"number":901,"isDraft":true,"title":"checkpoint for #123","body":"","labels":[{"name":"origin:worker"}]}]'
+		protected='[{"number":902,"isDraft":true,"title":"GH#123: interactive wip","body":"","labels":[{"name":"origin:worker"},{"name":"hold-for-review"}]}]'
+		seed='[{"number":903,"isDraft":true,"title":"seed for #123","body":"<!-- aidevops:seed-pr issue=123 -->","labels":[{"name":"seed-pr"}]}]'
+		prose='[{"number":904,"isDraft":true,"title":"unrelated cleanup","body":"Context: see #123 discussion","labels":[{"name":"origin:worker"}]}]'
+		dispatch=(cmd_dispatch 123 owner/repo)
+		dryrun=(cmd_dispatch 123 owner/repo --dry-run)
+
+		_pr_evidence_fixture_case "worker draft" fixture "$worker" 1 "" "WORKER_DRAFT_CHECKPOINT: draft PR #901" "${dispatch[@]}"
+		grep -Fxq 'has-open-pr 123 owner/repo Fixture issue' "$FIX_PR_CALLS" || printf 'case=worker draft: shared interface not called with title\n'
+		_pr_evidence_fixture_case "worker draft no-ceremony" fixture "$worker" 1 "" "Pulse checkpoint recovery" "${dispatch[@]}" --no-ceremony
+		_pr_evidence_fixture_case "protected draft" fixture "$protected" 1 "" "Protected drafts" "${dispatch[@]}"
+		_pr_evidence_fixture_case "lookup uncertain" lookup_fail "[]" 75 "" "PR_LOOKUP_RESULT=uncertain reason=timeout" "${dispatch[@]}"
+		[[ -f "${AIDEVOPS_DSI_CHECKPOINT_DIR}/owner-repo-123.json" ]] || printf 'case=lookup uncertain: no recovery checkpoint\n'
+		_pr_evidence_fixture_case "malformed response" malformed "[]" 75 "" "reason=response_validation_failed" "${dispatch[@]}"
+		_pr_evidence_fixture_case "helper failure" helper_error "[]" 1 "" "PR evidence check failed (exit 2)" "${dispatch[@]}"
+		_pr_evidence_fixture_case "evidence without detail" empty_evidence "[]" 1 "" "no detail returned" "${dispatch[@]}"
+		_pr_evidence_fixture_case "late draft after claim" late "$worker" 1 "claim,release:pr_evidence_after_claim" "WORKER_DRAFT_CHECKPOINT" "${dispatch[@]}"
+		[[ "$(wc -l <"$FIX_PR_CALLS")" -eq 2 ]] || printf 'case=late draft: expected exactly one bounded re-read\n'
+		_pr_evidence_fixture_case "no PR evidence" fixture "[]" 0 "$launched" "" "${dispatch[@]}"
+		[[ "$(wc -l <"$FIX_PR_CALLS")" -eq 2 ]] || printf 'case=no PR evidence: expected pre-claim and post-claim reads\n'
+		_pr_evidence_fixture_case "seed draft exception" fixture "$seed" 0 "$launched" "" "${dispatch[@]}"
+		_pr_evidence_fixture_case "bare prose mention" fixture "$prose" 0 "$launched" "" "${dispatch[@]}"
+		_pr_evidence_fixture_case "signed resume keeps its binding" fixture "$worker" 0 "claim,ceremony,auth,lock,launch" "" cmd_resume 123 owner/repo
+		[[ ! -s "$FIX_PR_CALLS" ]] || printf 'case=signed resume: fresh-worker PR guard must not apply\n'
+		_pr_evidence_fixture_case "dry-run worker draft" fixture "$worker" 1 "" "PR evidence:  WOULD BLOCK — WORKER_DRAFT_CHECKPOINT" "${dryrun[@]}"
+		_pr_evidence_fixture_case "dry-run protected draft" fixture "$protected" 1 "" "real dispatch would refuse on PR evidence" "${dryrun[@]}"
+		_pr_evidence_fixture_case "dry-run uncertain" lookup_fail "[]" 75 "" "PR evidence:  UNCERTAIN" "${dryrun[@]}"
+		_pr_evidence_fixture_case "dry-run helper failure" helper_error "[]" 1 "" "PR evidence:  ERROR (exit 2)" "${dryrun[@]}"
+		_pr_evidence_fixture_case "dry-run clear" fixture "[]" 0 "" "Dry-run complete" "${dryrun[@]}"
+		exit 0
+	) || failures="${failures}subshell_failed "
+	[[ -z "$failures" ]] || result=1
+	rm -rf "$test_dir"
+	print_result "manual dispatch refuses preserved worker/protected PR ownership before claims; fails closed on uncertainty" "$result" "$failures"
+	return 0
+}
+
 # IMPORTANT: the helper script we source defines `main()` for its CLI entry.
 # We renamed our runner to `_run_tests` to avoid shadowing the helper's main
 # (which is itself sourced but guarded behind BASH_SOURCE check). Sourcing
@@ -2110,6 +1024,7 @@ _run_tests() {
 	test_maintainer_permission_guard_blocks_manual_dispatch
 	test_permission_history_guard_requires_current_grant
 	test_fresh_runner_capability_before_manual_claim
+	test_manual_dispatch_refuses_preserved_pr_ownership
 	test_manual_resume_reuses_dispatch_lifecycle
 	test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup
 	test_runner_login_transport_security

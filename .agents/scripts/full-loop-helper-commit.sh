@@ -64,6 +64,11 @@ source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-readiness.sh"
 # shellcheck disable=SC1091
 source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-subject.sh"
 
+# Share runtime-owned paths with prospective PR risk classification.
+# shellcheck source=./full-loop-helper-risk.sh
+# shellcheck disable=SC1091
+source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-risk.sh"
+
 # --- Argument Parsing ---
 
 # Parse commit-and-pr arguments into caller-scoped variables.
@@ -79,6 +84,7 @@ _parse_commit_and_pr_args() {
 	local value=""
 	while [[ "$index" -lt "${#args[@]}" ]]; do
 		arg="${args[$index]}"
+		pr_metadata_overrides="${pr_metadata_overrides:-} ${arg#--}"
 		case "$arg" in
 		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason)
 			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
@@ -234,16 +240,16 @@ _validate_completion_bookkeeping_request() {
 _completion_bookkeeping_body_has_reference() {
 	local body="$1"
 	local issue_number="$2"
-	printf '%s\n' "$body" | grep -Eiq \
-		"(^|[[:space:]])(for|ref|close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)"
+	grep -Eiq \
+		"(^|[[:space:]])(for|ref|close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)" <<<"$body"
 	return $?
 }
 
 _completion_bookkeeping_body_has_closing_reference() {
 	local body="$1"
 	local issue_number="$2"
-	printf '%s\n' "$body" | grep -Eiq \
-		"(^|[[:space:]])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)"
+	grep -Eiq \
+		"(^|[[:space:]])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)" <<<"$body"
 	return $?
 }
 
@@ -348,10 +354,10 @@ _validate_completion_bookkeeping_todo() {
 		return 1
 	fi
 	completion_line="$issue_mapping_lines"
-	if ! printf '%s\n' "$completion_line" | grep -Eq \
-		"^[[:blank:]]*- \[x\] ${task_pattern}([[:space:]]|$)" ||
-		! printf '%s\n' "$completion_line" | grep -Eq "pr:#${proof_pr}([^0-9]|$)" ||
-		! printf '%s\n' "$completion_line" | grep -Eq 'completed:[0-9]{4}-[0-9]{2}-[0-9]{2}([^0-9]|$)'; then
+	if ! grep -Eq \
+		"^[[:blank:]]*- \[x\] ${task_pattern}([[:space:]]|$)" <<<"$completion_line" ||
+		! grep -Eq "pr:#${proof_pr}([^0-9]|$)" <<<"$completion_line" ||
+		! grep -Eq 'completed:[0-9]{4}-[0-9]{2}-[0-9]{2}([^0-9]|$)' <<<"$completion_line"; then
 		print_error "Completion bookkeeping TODO.md proof must complete ${task_id} with merged PR #${proof_pr}"
 		return 1
 	fi
@@ -374,8 +380,8 @@ _validate_completion_bookkeeping_todo() {
 		+* | -*)
 			patch_payload="${patch_line:1}"
 			[[ "$patch_payload" =~ ^[[:space:]]*$ ]] && continue
-			if ! printf '%s\n' "$patch_payload" | grep -Eq \
-				"^[[:blank:]]*- \[[ x]\] ${task_pattern}([[:space:]]|$)"; then
+			if ! grep -Eq \
+				"^[[:blank:]]*- \[[ x]\] ${task_pattern}([[:space:]]|$)" <<<"$patch_payload"; then
 				print_error "Completion bookkeeping TODO.md diff changes content outside task ${task_id}"
 				return 1
 			fi
@@ -392,8 +398,8 @@ _validate_completion_bookkeeping_pr_body() {
 		print_error "Completion bookkeeping PR body contains a closing keyword for issue #${issue_number}"
 		return 1
 	fi
-	if ! printf '%s\n' "$pr_body" | grep -Eiq \
-		"(^|[[:space:]])(for|ref)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)"; then
+	if ! grep -Eiq \
+		"(^|[[:space:]])(for|ref)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)" <<<"$pr_body"; then
 		print_error "Completion bookkeeping PR body must use For/Ref #${issue_number}"
 		return 1
 	fi
@@ -531,9 +537,9 @@ _validate_commit_and_pr_inputs() {
 # Refuse pre-staged runtime changes rather than silently altering the index.
 _stage_product_changes() {
 	local path=""
-	local -a runtime_paths=(".agents/loop-state" ".agents/.full-loop-cleanup-deferred")
 	local -a protected_paths=() stage_paths=(":/")
-	for path in "${runtime_paths[@]}"; do
+	# shellcheck disable=SC2154 # initialized by full-loop-helper-risk.sh
+	for path in "${_full_loop_runtime_paths[@]}"; do
 		protected_paths+=(":(top,literal)${path}")
 		# A singleton glob matches the exact dot while preventing Git from
 		# rejecting an ignored literal exclusion as an explicitly added path.
@@ -959,7 +965,7 @@ _classify_remote_branch() {
 		printf 'unknown \n'
 		return 0
 	fi
-	remote_sha=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${branch}" '$2 == ref { print $1; exit }')
+	remote_sha=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${branch}" '!found && $2 == ref { print $1; found=1 }')
 	if [[ -z "$remote_sha" ]]; then
 		printf 'absent \n'
 		return 0
@@ -1154,7 +1160,7 @@ _issue_has_parent_task_label() {
 
 	local hit=""
 	hit=$(printf '%s' "$labels_json" |
-		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | head -n 1 || true)
+		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | sed -n '1p' || true)
 
 	if [[ -n "$hit" ]]; then
 		return 0
@@ -1174,6 +1180,7 @@ _build_pr_body() {
 	local requested_testing_level="${8:-}"
 	local base_ref="${9:-}"
 	local replacement_note="${10:-}"
+	local decisions="${11:-}"
 	local runtime_risk=""
 	local testing_level=""
 
@@ -1193,7 +1200,11 @@ ${replacement_note}
 
 ${files_changed:-See diff}
 
-## Runtime Testing
+${decisions:+## Decisions
+
+${decisions}
+
+}## Runtime Testing
 
 - **Risk level:** ${runtime_risk}
 - **Verification:** ${testing_level} — ${summary_testing:-no additional evidence supplied}
@@ -1326,7 +1337,7 @@ _derive_pr_title_prefix() {
 	# boundary after the number so ref:GH#123 doesn't match ref:GH#12345.
 	local task_id=""
 	task_id=$(grep -E "^- \[[ x]\] t[0-9]+ .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null |
-		head -1 |
+		sed -n '1p' |
 		grep -oE '^- \[[ x]\] t[0-9]+' |
 		grep -oE 't[0-9]+$' ||
 		true)
@@ -1566,6 +1577,116 @@ _create_pr() {
 	return 0
 }
 
+# Inherit omitted evidence before prospective risk validation, not after push.
+# Explicit values remain authoritative; final-diff risk checks still run normally.
+_inherit_pr_runtime_metadata() {
+	local pr_number="$1"
+	local repo="$2"
+	local body="" metadata=""
+	local override_flags=" ${pr_metadata_overrides:-} "
+	local endpoint="repos/${repo}/pulls"
+	endpoint+="/${pr_number}"
+	body=$(_gh_with_timeout read gh api "$endpoint" --jq '.body // empty') || return 1
+	metadata=$(python3 - "$body" <<'PY'
+import json, re, sys
+body = sys.argv[1]
+section = re.search(r'^## Runtime Testing\s*\n(.*?)(?=^## |\Z)', body, re.M | re.S)
+text = section[1] if section else ''
+text = re.split(r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:', text, maxsplit=1, flags=re.M)[0]
+risk = re.search(r'^- \*\*Risk level:\*\* (.+)$', text, re.M)
+verification = re.search(r'^- \*\*Verification:\*\*[ \t]+([\w-]+) —[ \t]*(.*?)(?=^- \*\*|\Z)', text, re.M | re.S)
+print(json.dumps({'risk': risk[1] if risk else '',
+                  'level': verification[1] if verification else '',
+                  'evidence': verification[2].strip() if verification else ''}))
+PY
+	) || return 1
+	[[ "$override_flags" == *" risk-level "* ]] || runtime_risk=$(printf '%s' "$metadata" | jq -r '.risk')
+	[[ "$override_flags" == *" testing-level "* ]] || testing_level=$(printf '%s' "$metadata" | jq -r '.level')
+	[[ "$override_flags" == *" testing "* ]] || summary_testing=$(printf '%s' "$metadata" | jq -r '.evidence')
+	return 0
+}
+
+# Keep curated sections verbatim, refreshing only derived data and explicit
+# overrides. Use the live body as the base so arbitrary prose and footer survive.
+_merge_existing_pr_body() {
+	local current_body="$1"
+	local generated_body="$2"
+	local overrides="${3:-}"
+	python3 - "$current_body" "$generated_body" "$overrides" <<'PY'
+import re, sys
+current, generated, overrides = sys.argv[1], sys.argv[2], set(sys.argv[3].split())
+if not current.strip() or not re.search(r'^## ', generated, re.M):
+    print(generated)
+    sys.exit(0)
+
+def section(body, name):
+    boundary = r'(?=^## |^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:|\Z)'
+    return re.search(r'^## ' + re.escape(name) + r'\n.*?' + boundary, body, re.M | re.S)
+
+def insert_section(body, text):
+    footer = re.search(r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:', body, re.M)
+    position = footer.start() if footer else len(body)
+    return body[:position].rstrip('\n') + '\n\n' + text.rstrip('\n') + '\n\n' + body[position:]
+
+for name, flag in [('Files Changed', None), ('Summary', 'summary'), ('Decisions', 'decisions')]:
+    old, new = section(current, name), section(generated, name)
+    if old and not new and flag in overrides:
+        current = current[:old.start()] + current[old.end():]
+    if new and (not old or flag is None or flag in overrides):
+        if old:
+            current = current[:old.start()] + new[0] + current[old.end():]
+        else:
+            current = insert_section(current, new[0])
+
+old, new = section(current, 'Runtime Testing'), section(generated, 'Runtime Testing')
+if old and new:
+    # The runtime section can also contain the closing reference and signature:
+    # replace only the requested metadata lines, never that trailing content.
+    text = old[0]
+    for label, flags in [('Risk level', {'risk-level'}), ('Verification', {'testing', 'testing-level'})]:
+        pattern = r'^- \*\*' + label + r':\*\* .*?(?=^- \*\*|\Z)'
+        replacement = re.search(pattern, new[0], re.M | re.S)
+        if overrides & flags and replacement:
+            text = re.sub(pattern, lambda _: replacement[0], text, flags=re.M | re.S)
+    current = current[:old.start()] + text + current[old.end():]
+elif new:
+    current = insert_section(current, new[0])
+
+# Sections deliberately exclude the closing reference and signature. Recover
+# each independently so a partial footer is completed without duplicating it.
+reference = r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b[^\n]*'
+if not re.search(reference, current, re.M):
+    closing = re.search(reference, generated, re.M)
+    if closing:
+        signature_start = re.search(r'^<!-- aidevops:', current, re.M)
+        position = signature_start.start() if signature_start else len(current)
+        current = current[:position].rstrip('\n') + '\n\n' + closing[0] + '\n\n' + current[position:]
+if not re.search(r'^<!-- aidevops:sig -->', current, re.M):
+    signature = re.search(r'^(?:<!-- aidevops:origin:[^\n]*\n)?<!-- aidevops:sig -->.*', generated, re.M | re.S)
+    if signature:
+        current = current.rstrip('\n') + '\n\n' + signature[0]
+print(current.rstrip('\n'))
+PY
+	return $?
+}
+
+# Read one authoritative metadata snapshot, distinguishing a null body from a
+# successful transport with no usable output. Do not retry outside transport policy.
+_read_pr_metadata_json() {
+	local repo="$1"
+	local pr_number="$2"
+	local metadata=""
+	metadata=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}") || return 1
+	# Slurping also rejects empty output and multiple JSON documents.
+	printf '%s' "$metadata" | jq -es '
+		length == 1 and (.[0] | type == "object" and
+			has("title") and has("body") and (.title | type) == "string" and
+			((.body | type) == "string" or .body == null))
+	' >/dev/null 2>&1 || return 1
+	printf '%s\n' "$metadata"
+	return 0
+}
+
 # Restore generated metadata after partial PR creation recovered an existing PR.
 # A retry may compute title/body details from a newer review-repair head.
 # Arguments: PR number, repository slug, generated title, generated body.
@@ -1576,17 +1697,15 @@ _reconcile_recovered_pr_metadata() {
 	local generated_body="$4"
 	local current_title=""
 	local current_body=""
-	local pr_endpoint="repos/${repo}/pulls"
-	pr_endpoint+="/${pr_number}"
+	local metadata=""
 
-	current_title=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.title // empty' 2>/dev/null) || {
-		print_error "Could not read recovered PR #${pr_number} title for metadata reconciliation"
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
+		print_error "Could not read recovered PR #${pr_number} title/body for metadata reconciliation"
 		return 1
 	}
-	current_body=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.body // empty' 2>/dev/null) || {
-		print_error "Could not read recovered PR #${pr_number} body for metadata reconciliation"
-		return 1
-	}
+	current_title=$(jq -r '.title' <<<"$metadata") || return 1
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
+	generated_body=$(_merge_existing_pr_body "$current_body" "$generated_body" "${pr_metadata_overrides:-}") || return 1
 	if [[ "$current_title" == "$generated_title" && "$current_body" == "$generated_body" ]]; then
 		print_info "Recovered PR #${pr_number} metadata already matches the generated head"
 		return 0
@@ -1610,14 +1729,12 @@ _reconcile_recovered_pr_metadata() {
 	fi
 	rm -f "$body_file"
 
-	current_title=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.title // empty' 2>/dev/null) || {
-		print_error "Could not verify recovered PR #${pr_number} title reconciliation"
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
+		print_error "Could not verify recovered PR #${pr_number} title/body reconciliation"
 		return 1
 	}
-	current_body=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.body // empty' 2>/dev/null) || {
-		print_error "Could not verify recovered PR #${pr_number} body reconciliation"
-		return 1
-	}
+	current_title=$(jq -r '.title' <<<"$metadata") || return 1
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 	if [[ "$current_title" != "$generated_title" || "$current_body" != "$generated_body" ]]; then
 		print_error "Recovered PR #${pr_number} metadata reconciliation did not reach the generated title/body postcondition"
 		return 1
@@ -1637,16 +1754,18 @@ _ensure_worker_pr_linkage() {
 	local issue_number="$3"
 	local generated_body="$4"
 	local current_body=""
+	local metadata=""
 
 	if [[ ! "$pr_number" =~ ^[1-9][0-9]*$ || "$repo" != */* || ! "$issue_number" =~ ^[1-9][0-9]*$ || -z "$generated_body" ]]; then
 		print_error "Cannot validate worker PR linkage: invalid PR, repository, issue, or generated body"
 		return 1
 	fi
 
-	current_body=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}" --jq '.body // empty' 2>/dev/null) || {
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
 		print_error "Cannot validate worker PR #${pr_number} linkage before review transition"
 		return 1
 	}
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 
 	local closing_issues=""
 	closing_issues=$(printf '%s' "$current_body" |
@@ -1659,8 +1778,8 @@ _ensure_worker_pr_linkage() {
 	# A qualified close reference targets another repository. Do not add a local
 	# reference to an ambiguous body: pulse must remain fail-closed for cross-repo
 	# or multi-issue relationships.
-	if [[ -n "$closing_issues" ]] || printf '%s' "$current_body" | grep -Eiq \
-		'(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+[^[:space:]]+#[0-9]+'; then
+	if [[ -n "$closing_issues" ]] || grep -Eiq \
+		'(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+[^[:space:]]+#[0-9]+' <<<"$current_body"; then
 		print_error "Worker PR #${pr_number} has ambiguous or cross-repository closing references; refusing linkage repair"
 		return 1
 	fi
@@ -1694,10 +1813,11 @@ _ensure_worker_pr_linkage() {
 	fi
 	rm -f "$repair_body_file"
 
-	current_body=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}" --jq '.body // empty' 2>/dev/null) || {
+	metadata=$(_read_pr_metadata_json "$repo" "$pr_number" 2>/dev/null) || {
 		print_error "Could not verify repaired linked issue reference on worker PR #${pr_number}"
 		return 1
 	}
+	current_body=$(jq -r '.body // ""' <<<"$metadata") || return 1
 	closing_issues=$(printf '%s' "$current_body" |
 		grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' |
 		grep -oE '[0-9]+' | sort -u) || closing_issues=""

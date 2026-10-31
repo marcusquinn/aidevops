@@ -68,6 +68,8 @@ reset_case() {
 	TEST_COMMENTS_AFTER_ATTEMPT=""
 	TEST_PR_BODY=$'Partial delivery: published the first edition.\n\nFor #501'
 	TEST_PR_BODY_RC=0
+	TEST_PR_TITLE="Partial delivery"
+	TEST_PR_TITLE_RC=0
 	TEST_OPEN_PRS="[]"
 	TEST_OPEN_PR_PAGES=""
 	TEST_OPEN_PRS_RC=0
@@ -164,6 +166,11 @@ gh_pr_view() {
 	local args="$*"
 	if [[ "$args" == *"--json labels"* ]]; then
 		printf '%s' "$TEST_PR_LABELS"
+		return 0
+	fi
+	if [[ "$args" == *"--json title"* ]]; then
+		[[ "$TEST_PR_TITLE_RC" -eq 0 ]] || return "$TEST_PR_TITLE_RC"
+		printf '%s' "$TEST_PR_TITLE"
 		return 0
 	fi
 	# The module reads the merged PR body with --jq '.body // ""'.
@@ -486,6 +493,71 @@ test_ambiguous_reference_is_noop() {
 	TEST_TARGET=""
 	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
 	assert_no_write "ambiguous/no explicit reference: no write"
+	return 0
+}
+
+test_corroborated_partial_target() {
+	local body="" title=""
+	for title in 't501: partial delivery' 'GH#501: partial delivery'; do
+		for body in $'## Remaining\nFor #501' 'People phase (data only). For #501' 'For #501. For #777.' \
+			$'<!-- hidden\n> -->\nFor #501'; do
+			reset_case
+			TEST_TARGET=""
+			TEST_PR_TITLE="$title"
+			TEST_PR_BODY="$body"
+			_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker" 501
+			assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+				"corroborated ${title}: [${body//$'\n'/ }] restores only title target"
+		done
+	done
+	reset_case
+	TEST_TARGET=777
+	TEST_PR_TITLE='t501: partial delivery'
+	TEST_PR_BODY=$'For #777\n## Remaining\nRef #501'
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker" 501
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"periodic explicit mismatch: corroborated expected target restores"
+	reset_case
+	TEST_TARGET=""
+	TEST_PR_TITLE='t501: partial delivery'
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker" 777
+	assert_no_write "corroborated title does not match periodic target: no write"
+	reset_case
+	TEST_TARGET=""
+	TEST_PR_TITLE='t501: partial delivery'
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"merge-time fallback without expected target restores"
+	return 0
+}
+
+test_uncorroborated_partial_target_is_noop() {
+	local body="" title=""
+	for body in 'For #777' 'For #5012' 'Ref #501suffix' \
+		$'## Remaining\n> For #501' $'```text\nFor #501\n```' \
+		$'```text\n    ```\nFor #501\n```' \
+		$'~~~~\nFor #501\n~~~\nRef #501\n~~~~' \
+		'<!-- For #501 -->' $'<!-- hidden\nFor #501\n-->' \
+		$'    For #501' $'For #501\nCloses: #777'; do
+		reset_case
+		TEST_TARGET=""
+		TEST_PR_TITLE='t501: partial delivery'
+		TEST_PR_BODY="$body"
+		_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+		assert_no_write "uncorroborated or closing [${body//$'\n'/ }]: no write"
+	done
+	for title in 'Other t501: partial' 't501suffix' 'GH#501suffix' ''; do
+		reset_case
+		TEST_TARGET=""
+		TEST_PR_TITLE="$title"
+		_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+		assert_no_write "non-target title [${title}]: no write"
+	done
+	reset_case
+	TEST_TARGET=""
+	TEST_PR_TITLE_RC=1
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+	assert_no_write "unreadable fallback title: no write"
 	return 0
 }
 
@@ -875,6 +947,8 @@ main() {
 	test_closing_target_is_noop
 	test_non_worker_pr_is_noop
 	test_ambiguous_reference_is_noop
+	test_corroborated_partial_target
+	test_uncorroborated_partial_target_is_noop
 	test_unconfirmed_merge_keeps_review
 	test_pr_read_failure_fails_closed
 	test_open_pr_scan_reads_every_page

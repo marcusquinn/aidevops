@@ -410,6 +410,9 @@ source "${SCRIPT_DIR}/pulse-canonical-maintenance.sh"
 # t2350 (GH#19948): DIRTY-PR sweep runs every 30min after the merge pass.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-dirty-pr-sweep.sh"
+# t18771 (GH#35655): redirect-link spam sweep — close/hide + block authors.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/redirect-link-guard-helper.sh"
 # t2865 (GH#20922): canonical-worktree pull conflict auto-recovery.
 # Called from _pulse_refresh_repo on git pull --ff-only failure.
 # shellcheck source=/dev/null
@@ -843,6 +846,7 @@ _pulse_execute_self_check() {
 		build_dependency_graph_cache
 		dependabot_alert_monitor_scan_repos
 		dispatch_max
+		pulse_dispatch_breakers_allow
 		merge_ready_prs_all_repos
 		rotate_pulse_log
 		evaluate_routines
@@ -876,6 +880,7 @@ _pulse_execute_self_check() {
 		_dispatch_conflict_fix_worker
 		run_canonical_maintenance
 		dirty_pr_sweep_all_repos
+		redirect_spam_sweep_all_repos
 		_pulse_refresh_repo
 		pulse_canonical_recover
 		check_dispatch_backoff
@@ -1215,6 +1220,14 @@ _pulse_run_deterministic_pipeline() {
 			_pulse_run_budget_priority_stage_with_timeout "dirty_pr_sweep" "$PRE_RUN_STAGE_TIMEOUT" \
 			dirty_pr_sweep_all_repos || true
 	fi
+	# t18771 (GH#35655): redirect-link spam sweep. Workflows close/hide spam
+	# without comment; only the maintainer token can block authors, so the
+	# pulse completes the ban. Interval-gated (REDIRECT_SPAM_SWEEP_INTERVAL).
+	if [[ ! -f "$STOP_FLAG" ]]; then
+		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_merge_stage_reserve_s" \
+			_pulse_run_budget_priority_stage_with_timeout "redirect_spam_sweep" "$PRE_RUN_STAGE_TIMEOUT" \
+			redirect_spam_sweep_all_repos || true
+	fi
 	# Accumulate health counters written by merge_ready_prs_all_repos (GH#18571, GH#15107).
 	# The function runs in a subshell via run_stage_with_timeout, so variable
 	# updates are lost. Read the temp file it writes and accumulate here.
@@ -1275,27 +1288,30 @@ _pulse_run_deterministic_pipeline() {
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping dispatch_max" >>"$LOGFILE"
 	else
+		# GH#36122: runner-local breakers live in pulse-wrapper-dispatch-gates.sh
+		# and are run in order by pulse_dispatch_breakers_allow:
 		# t2770: cross-issue no_work rate circuit breaker check.
 		# Pauses dispatch when many different issues return no_work in a short
 		# window — symptomatic of auth outage, GraphQL exhaustion, or wrapper
 		# stall. Complementary to the per-issue no_work escalation (GH#20639).
-		local _nw_rc=0
-		is_no_work_rate_acceptable || _nw_rc=$?
+		# GH#36033: permission-block storm breaker (one-hour runner pause).
 		# t2897: per-runner zero-attempt circuit breaker check.
 		# Pauses dispatch ONLY on this runner when N consecutive zero-attempt
 		# worker dispatches signal a stale or broken local install. The
 		# breaker auto-trips an `aidevops update`; if VERSION changed, the
 		# t2579 restart hook refreshes code on the next cycle and the
-		# breaker reopens on the first non-zero-attempt outcome.
-		local _rh_rc=1
-		local _rh_helper="${SCRIPT_DIR}/pulse-runner-health-helper.sh"
-		if [[ -x "$_rh_helper" ]]; then
-			"$_rh_helper" is-paused >/dev/null 2>&1 && _rh_rc=0 || _rh_rc=1
-		fi
-		if [[ "$_nw_rc" -eq 1 ]]; then
+		# breaker reopens on the first non-zero-attempt outcome
+		# (pulse-runner-health-helper.sh is-paused).
+		# apply_dispatch_max re-checks the breakers for its other callers; this
+		# pre-check keeps the main cycle's blocker notes and counters.
+		local _breakers_rc=0
+		pulse_dispatch_breakers_allow "main" || _breakers_rc=$?
+		if [[ "$_breakers_rc" -ne 0 && "$PULSE_DISPATCH_BREAKER_TRIPPED" == "no_work" ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: no_work rate circuit breaker tripped (t2770)" >>"$LOGFILE"
 			_pulse_cycle_state_note_blocker dispatch-no-work-rate pulse-wrapper no-work-rate || true
-		elif [[ "$_rh_rc" -eq 0 ]]; then
+		elif [[ "$_breakers_rc" -ne 0 && "$PULSE_DISPATCH_BREAKER_TRIPPED" == "permission_block" ]]; then
+			_pulse_cycle_state_note_blocker dispatch-permission-block-rate pulse-wrapper permission-block-rate || true
+		elif [[ "$_breakers_rc" -ne 0 ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: runner-health circuit breaker tripped (t2897)" >>"$LOGFILE"
 			_pulse_cycle_state_note_blocker runner-health pulse-wrapper runner-health || true
 			if declare -F pulse_stats_increment >/dev/null 2>&1; then
@@ -1411,6 +1427,9 @@ main() {
 	[[ "$_sc_rc" -ne 2 ]] && return "$_sc_rc"
 	_pulse_setup_dry_run_mode "$@"
 	_pulse_setup_canary_mode "$@"
+
+	# Refresh local process evidence before busy/idle/rate-limit early returns.
+	_pulse_reconcile_worker_lifecycle || true
 
 	# Event refill skips preflight/LLM but keeps the main lock and dispatch gates.
 	_pulse_setup_refill_only_mode "$@"
@@ -1794,9 +1813,9 @@ main() {
 
 	# Routine evaluation (t1925, GH#31855): give due routines a budget decision
 	# before preflight can consume the cycle's REST allowance or hold the Pulse
-	# instance long enough for the next scheduler restart. The stage-level gate
-	# still defers on low/unknown quota, and evaluate_routines retains its
-	# per-work-unit REST hard-floor checks. GH#35349: busy scheduler ticks also
+	# instance long enough for the next scheduler restart. Local evaluation is
+	# unconditional; dispatch retains per-work-unit REST hard-floor checks.
+	# GH#35349: busy scheduler ticks also
 	# evaluate routines (_pulse_run_routines_while_busy); this in-cycle call is
 	# the backstop and shares their routines.lockdir.
 	if [[ -f "$STOP_FLAG" ]]; then

@@ -262,6 +262,7 @@ run_stage_with_timeout() {
 		"$@"
 	) &
 	local stage_pid=$!
+	local last_heartbeat=0
 
 	while kill -0 "$stage_pid" 2>/dev/null; do
 		local now
@@ -291,6 +292,15 @@ run_stage_with_timeout() {
 					"$stage_pid" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
 			fi
 			return 124
+		fi
+		# GH#35695: Refresh only while the owner is actively supervising an
+		# in-deadline stage. Keep the two-second timeout cadence, but bound
+		# health writes to once a minute. Nested/standalone stages fail closed.
+		if [[ "$((now - last_heartbeat))" -ge 60 ]]; then
+			if declare -F _pulse_cycle_state_stage_heartbeat >/dev/null 2>&1; then
+				_pulse_cycle_state_stage_heartbeat || true
+			fi
+			last_heartbeat="$now"
 		fi
 		sleep 2
 	done
@@ -650,6 +660,12 @@ _run_pulse_watchdog() {
 				_force_kill_tree "$opencode_pid" || true
 			fi
 			break
+		fi
+
+		# GH#35710: refresh released-instance supervisor liveness at the 60s cadence.
+		# Stay in the owning shell; never turn heartbeat writes into log progress.
+		if declare -F _pulse_cycle_state_supervisor_heartbeat >/dev/null; then
+			_pulse_cycle_state_supervisor_heartbeat || true
 		fi
 
 		# Process guard: kill children exceeding RSS/runtime limits (t1398)

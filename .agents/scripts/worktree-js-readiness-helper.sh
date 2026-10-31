@@ -26,6 +26,7 @@
 #   worktree-js-readiness-helper.sh record-restore <worktree> <outcome> [reason]
 #   worktree-js-readiness-helper.sh prepare <worktree> [--lock-held]
 #   worktree-js-readiness-helper.sh approve|revoke|status <repo-or-worktree>
+#   worktree-js-readiness-helper.sh review [--report-only]   (setup/update)
 #
 # States:
 #   ready                        every declared JS tool can start
@@ -54,6 +55,7 @@ source "${SCRIPT_DIR}/repo-verify-config-lib.sh"
 : "${AIDEVOPS_JS_POLICY_INSTALL_TIMEOUT_S:=300}"
 readonly JSR_SCHEMA=1
 readonly JSR_POLICY_SCOPE="worktree-install"
+readonly JSR_POLICY_SOURCE_DEFAULT_BRANCH="default-branch"
 # Snapshot refusals about controller authority or worktree structure; a
 # lockfile install must never route around them.
 readonly JSR_NO_INSTALL_SNAPSHOT_REASONS=" controller-not-owner owner-contract-changed foreign-repository not-linked-worktree not-repository-root symlink-component "
@@ -71,6 +73,7 @@ JSR_TOOLS=""
 JSR_CACHED=0
 JSR_PM=""
 JSR_LOCK_SHA=""
+JSR_LOCK_FILE=""
 JSR_POLICY_STATUS=""
 JSR_ARGV=()
 
@@ -82,7 +85,9 @@ Usage:
   worktree-js-readiness-helper.sh entry <worktree> <session-key>
   worktree-js-readiness-helper.sh record-restore <worktree> contention|rejected|provisioned [reason]
   worktree-js-readiness-helper.sh prepare <worktree> [--lock-held]
-  worktree-js-readiness-helper.sh approve|revoke|status <repo-or-worktree>
+  worktree-js-readiness-helper.sh approve <repo-or-worktree> [--track-default-branch]
+  worktree-js-readiness-helper.sh revoke|status <repo-or-worktree>
+  worktree-js-readiness-helper.sh review [--report-only]
 USAGE
 	return 0
 }
@@ -460,10 +465,23 @@ _jsr_probe() {
 # conflicting packageManager field. Sets JSR_PM and JSR_LOCK_SHA.
 _jsr_lock_identity() {
 	local dir="$1"
-	local name="" found="" count=0 declared=""
+	local name="" found="" count=0 declared="" tracked="" in_git=0
 	JSR_PM=""
 	JSR_LOCK_SHA=""
+	JSR_LOCK_FILE=""
+	# GH#35788: linked worktrees only receive tracked files, so an untracked
+	# stale lockfile in a canonical checkout must not make its identity
+	# ambiguous. Outside Git, every lockfile on disk still counts.
+	if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+		in_git=1
+		# shellcheck disable=SC2086 # JSR_LOCKFILES is a fixed word list
+		tracked=$(git -C "$dir" ls-files -- $JSR_LOCKFILES 2>/dev/null) || return 1
+	fi
 	for name in $JSR_LOCKFILES; do
+		# Exact line membership without a pipe (no SIGPIPE under pipefail).
+		if [[ "$in_git" -eq 1 && $'\n'"${tracked}"$'\n' != *$'\n'"${name}"$'\n'* ]]; then
+			continue
+		fi
 		if [[ -f "${dir}/${name}" ]]; then
 			found="$name"
 			count=$((count + 1))
@@ -485,6 +503,7 @@ _jsr_lock_identity() {
 	if [[ "$JSR_PM" == yarn ]] && [[ -f "${dir}/.yarnrc.yml" || "$declared" =~ $berry_re ]]; then
 		JSR_PM="yarn-berry"
 	fi
+	JSR_LOCK_FILE="$found"
 	JSR_LOCK_SHA=$(_jsr_sha256 <"${dir}/${found}")
 	return 0
 }
@@ -621,6 +640,60 @@ _jsr_policy_write() {
 	return "$rc"
 }
 
+# GH#35788: opt-in `lockfile_source: default-branch` policies accept any
+# lockfile byte-identical to the one on the remote default branch (merged via
+# the repository's own review gates) instead of only the approved snapshot.
+# A branch-modified or unfetched lockfile does not match and fails closed.
+# Requires JSR_LOCK_FILE/JSR_LOCK_SHA from _jsr_lock_identity.
+_jsr_default_branch_lock_sha() {
+	local dir="$1"
+	local ref="" candidate=""
+	[[ -n "$JSR_LOCK_FILE" ]] || return 1
+	for candidate in refs/remotes/origin/HEAD refs/remotes/origin/main refs/remotes/origin/master; do
+		if git -C "$dir" rev-parse --verify -q "${candidate}^{commit}" >/dev/null 2>&1; then
+			ref="$candidate"
+			break
+		fi
+	done
+	[[ -n "$ref" ]] || return 1
+	git -C "$dir" show "${ref}:${JSR_LOCK_FILE}" 2>/dev/null | _jsr_sha256
+	return $?
+}
+
+_jsr_lock_matches_default_branch() {
+	local dir="$1"
+	local remote_sha=""
+	[[ -n "$JSR_LOCK_SHA" ]] || return 1
+	remote_sha=$(_jsr_default_branch_lock_sha "$dir") || return 1
+	[[ -n "$remote_sha" && "$remote_sha" == "$JSR_LOCK_SHA" ]]
+	return $?
+}
+
+# Review judges the lockfile new worktrees receive (remote default branch),
+# because a canonical checkout can lag behind it. Sets JSR_POLICY_STATUS.
+_jsr_review_status() {
+	local dir="$1"
+	local policy="$2"
+	local remote_sha=""
+	_jsr_policy_evaluate "$dir" "$policy"
+	case "$JSR_POLICY_STATUS" in
+	current | stale-lockfile) ;;
+	*) return 0 ;;
+	esac
+	remote_sha=$(_jsr_default_branch_lock_sha "$dir") || return 0
+	[[ -n "$remote_sha" ]] || return 0
+	if [[ "$(jq -r '.lockfile_source // empty' <<<"$policy")" != "$JSR_POLICY_SOURCE_DEFAULT_BRANCH" &&
+		"$(jq -r '.lockfile_sha256 // empty' <<<"$policy")" != "$remote_sha" ]]; then
+		JSR_POLICY_STATUS="stale-lockfile"
+	elif [[ "$(jq -r '.node_major // empty | tostring' <<<"$policy")" != "$(_jsr_node_major)" ]]; then
+		# _jsr_policy_evaluate stops at the lockfile check, so re-check Node here.
+		JSR_POLICY_STATUS="stale-node-major"
+	else
+		JSR_POLICY_STATUS="current"
+	fi
+	return 0
+}
+
 # JSR_POLICY_STATUS: none | current | unsupported-package-manager |
 # stale-scope | stale-package-manager | stale-lockfile | stale-node-major
 _jsr_policy_evaluate() {
@@ -634,7 +707,9 @@ _jsr_policy_evaluate() {
 		JSR_POLICY_STATUS="stale-scope"
 	elif [[ "$(jq -r '.package_manager // empty' <<<"$policy")" != "$JSR_PM" ]]; then
 		JSR_POLICY_STATUS="stale-package-manager"
-	elif [[ "$(jq -r '.lockfile_sha256 // empty' <<<"$policy")" != "$JSR_LOCK_SHA" ]]; then
+	elif [[ "$(jq -r '.lockfile_sha256 // empty' <<<"$policy")" != "$JSR_LOCK_SHA" ]] &&
+		! { [[ "$(jq -r '.lockfile_source // empty' <<<"$policy")" == "$JSR_POLICY_SOURCE_DEFAULT_BRANCH" ]] &&
+			_jsr_lock_matches_default_branch "$dir"; }; then
 		JSR_POLICY_STATUS="stale-lockfile"
 	elif [[ "$(jq -r '.node_major // empty | tostring' <<<"$policy")" != "$(_jsr_node_major)" ]]; then
 		JSR_POLICY_STATUS="stale-node-major"
@@ -744,7 +819,7 @@ _jsr_prepare_hint() {
 	command=$(jq -r '.command // empty' "$(_jsr_state_dir "$wt" 2>/dev/null || printf '/nonexistent')/js-prepare.json" 2>/dev/null || true)
 	case "$JSR_STATE" in
 	blocked:policy-stale)
-		printf 'the recorded js_dependency_policy no longer matches this lockfile, package manager or Node major, so nothing was installed; review the change, then re-approve interactively with worktree-js-readiness-helper.sh approve %s' "$wt"
+		printf 'the recorded js_dependency_policy no longer matches this lockfile, package manager or Node major, so nothing was installed; review the change, then re-approve interactively with worktree-js-readiness-helper.sh approve %s (add --track-default-branch to accept future lockfiles merged to the default branch)' "$wt"
 		;;
 	blocked:install-failed | blocked:install-timeout)
 		printf 'the approved install (%s) did not finish; partial node_modules was removed and the next worktree admission retries it' "$command"
@@ -932,17 +1007,27 @@ cmd_approve() {
 		printf 'worktree-js-readiness: approve is an owner decision and is refused in headless/worker sessions\n' >&2
 		return 1
 	fi
+	local source=""
+	case "${2:-}" in
+	"") ;;
+	--track-default-branch) source="$JSR_POLICY_SOURCE_DEFAULT_BRANCH" ;;
+	*)
+		_jsr_usage >&2
+		return 1
+		;;
+	esac
 	target=$(_jsr_policy_target "${1:-}") || return 1
 	dir="${target%%$'\n'*}"
 	canon="${target#*$'\n'}"
 	if ! _jsr_lock_identity "$dir"; then
-		printf 'worktree-js-readiness: approve needs exactly one npm, pnpm, yarn or bun lockfile matching package.json packageManager\n' >&2
+		printf 'worktree-js-readiness: approve needs exactly one tracked npm, pnpm, yarn or bun lockfile matching package.json packageManager\n' >&2
 		return 1
 	fi
 	node_major=$(_jsr_node_major)
 	policy=$(jq -cn --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg sha "$JSR_LOCK_SHA" --arg pm "$JSR_PM" \
-		--arg node "$node_major" --arg scope "$JSR_POLICY_SCOPE" \
-		'{approved_at:$at,lockfile_sha256:$sha,package_manager:$pm,node_major:$node,scope:$scope}')
+		--arg node "$node_major" --arg scope "$JSR_POLICY_SCOPE" --arg source "$source" \
+		'{approved_at:$at,lockfile_sha256:$sha,package_manager:$pm,node_major:$node,scope:$scope}
+		+ (if $source == "" then {} else {lockfile_source:$source} end)')
 	_jsr_policy_write "$canon" "$policy" || rc=$?
 	if [[ "$rc" -eq 2 ]]; then
 		printf 'worktree-js-readiness: repository is not registered in repos.json; run aidevops init in it first\n' >&2
@@ -952,7 +1037,11 @@ cmd_approve() {
 		return 1
 	fi
 	printf 'JS_DEPENDENCY_POLICY=approved (%s, node %s, lockfile sha256 %s)\n' "$JSR_PM" "$node_major" "${JSR_LOCK_SHA:0:12}"
-	printf 'Linked worktrees now get %s into their own node_modules while lockfile, package manager and Node major stay unchanged.\n' "$(_jsr_install_command "$dir")"
+	if [[ -n "$source" ]]; then
+		printf 'Linked worktrees now get %s into their own node_modules while the lockfile matches the remote default branch and package manager and Node major stay unchanged.\n' "$(_jsr_install_command "$dir")"
+	else
+		printf 'Linked worktrees now get %s into their own node_modules while lockfile, package manager and Node major stay unchanged.\n' "$(_jsr_install_command "$dir")"
+	fi
 	return 0
 }
 
@@ -995,6 +1084,65 @@ cmd_status() {
 	return 0
 }
 
+# GH#35788: setup/update review of dispatch-enabled (pulse) repositories.
+# A stale policy (lockfile, package manager, Node major or scope changed since
+# the owner's approval) makes headless workers fail runner_capability_unmet.
+# Interactive TTY sessions are offered a renewal per stale repository (default
+# No); everything else is report-only and never writes repos.json.
+# Args: [--report-only]
+cmd_review() {
+	local report_only=0 repos_file="" path="" canon="" policy="" answer=""
+	local stale=0 renewed=0 unapproved=0
+	[[ "${1:-}" == "--report-only" ]] && report_only=1
+	if _jsr_is_headless || [[ ! -t 0 || ! -t 1 ]]; then
+		report_only=1
+	fi
+	repos_file=$(_jsr_repos_file)
+	[[ -n "$repos_file" && -f "$repos_file" ]] || return 0
+	# Collect paths first so the renewal prompt reads the terminal, not jq output.
+	local -a repo_paths=()
+	while IFS= read -r path; do
+		[[ -n "$path" ]] && repo_paths+=("$path")
+	done < <(jq -r '.initialized_repos[]? | select(.pulse == true) | .path // empty' "$repos_file" 2>/dev/null || true)
+	[[ "${#repo_paths[@]}" -gt 0 ]] || return 0
+	for path in "${repo_paths[@]}"; do
+		# repos.json may store a literal "~/" prefix (see _jsr_tilde_path).
+		[[ "${path:0:2}" != "$(_jsr_tilde_path "${HOME:-/nonexistent}/")" || -z "${HOME:-}" ]] ||
+			path="${HOME}/${path:2}"
+		[[ -d "$path" && -f "${path}/package.json" ]] || continue
+		canon=$(_jsr_canonical_root "$path" 2>/dev/null) || continue
+		_jsr_lock_identity "$canon" || continue
+		policy=$(_jsr_policy_get "$canon")
+		_jsr_review_status "$canon" "$policy"
+		case "$JSR_POLICY_STATUS" in
+		current) continue ;;
+		none)
+			unapproved=$((unapproved + 1))
+			continue
+			;;
+		esac
+		stale=$((stale + 1))
+		printf 'JS_DEPENDENCY_POLICY_REVIEW repo=%s status=%s\n' "$(_jsr_tilde_path "$canon")" "$JSR_POLICY_STATUS"
+		[[ "$report_only" -eq 0 ]] || continue
+		# Renewal tracks the reviewed default branch so later merged lockfile
+		# updates do not strand workers again; one-shot stays via `approve`.
+		printf 'Renew frozen, lifecycle-script-free installs (%s) for %s, accepting lockfiles merged to its default branch? [y/N] ' \
+			"$(_jsr_install_command "$canon")" "$(_jsr_tilde_path "$canon")"
+		answer=""
+		read -r answer || answer=""
+		case "$answer" in
+		y | Y | yes | YES) cmd_approve "$canon" --track-default-branch && renewed=$((renewed + 1)) ;;
+		esac
+	done
+	if [[ "$stale" -gt "$renewed" ]]; then
+		printf 'JS dependency policy: %d dispatch repo(s) need re-approval before workers can install dependencies; review then run: worktree-js-readiness-helper.sh approve <repo> --track-default-branch\n' "$((stale - renewed))"
+	fi
+	if [[ "$unapproved" -gt 0 ]]; then
+		printf 'JS dependency policy: %d dispatch repo(s) with a lockfile have no install approval; workers there cannot install dependencies until you run: worktree-js-readiness-helper.sh approve <repo>\n' "$unapproved"
+	fi
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	[[ $# -gt 0 ]] && shift
@@ -1011,6 +1159,7 @@ main() {
 	approve) cmd_approve "$@" ;;
 	revoke) cmd_revoke "$@" ;;
 	status) cmd_status "$@" ;;
+	review) cmd_review "$@" ;;
 	help | -h | --help) _jsr_usage ;;
 	*)
 		_jsr_usage >&2

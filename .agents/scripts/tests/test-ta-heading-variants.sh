@@ -17,6 +17,7 @@
 #   4. Task completes with ## Finished heading (non-canonical)
 
 set -u
+export AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL=1 # disposable fixture repos
 
 if [[ -t 1 ]]; then
 	TEST_GREEN=$'\033[0;32m'

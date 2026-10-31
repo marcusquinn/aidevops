@@ -23,7 +23,12 @@ mkdir -p "$HOME" "$REPO"
 printf 'seed\n' >"${REPO}/README.md"
 /usr/bin/git -C "$REPO" add README.md
 /usr/bin/git -C "$REPO" commit -q -m seed
-/usr/bin/git -C "$REPO" remote add origin "$REMOTE"
+REPO_URL="ssh://git@github.com:22/Example/Recovery-Fixture.git"
+/usr/bin/git -C "$REPO" config "url.${REMOTE}.insteadOf" "$REPO_URL"
+/usr/bin/git -C "$REPO" remote add origin "$REPO_URL"
+export AIDEVOPS_REPOS_CONFIG="${ROOT}/fixture-repos.json"
+printf '{"initialized_repos":[{"slug":"example/recovery-fixture","path":"%s"},{"slug":"example/stale-fixture","path":"%s"},{"slug":"example/abandoned-fixture","path":"%s"}]}\n' \
+	"$REPO" "${ROOT}/stale-repo" "${ROOT}/abandoned-repo" >"$AIDEVOPS_REPOS_CONFIG"
 /usr/bin/git -C "$REPO" push -q -u origin main
 /usr/bin/git -C "$REMOTE" symbolic-ref HEAD refs/heads/main
 /usr/bin/git -C "$REPO" remote set-head origin main
@@ -328,7 +333,7 @@ fi
 /usr/bin/git -C "$UPDATER" fetch -q origin develop
 /usr/bin/git -C "$UPDATER" switch -q -c develop origin/develop
 export AIDEVOPS_REPOS_CONFIG="${ROOT}/repos.json"
-printf '{"initialized_repos":[{"path":"%s","pr_base_branch":"develop"}]}\n' "$REPO" >"$AIDEVOPS_REPOS_CONFIG"
+printf '{"initialized_repos":[{"slug":"example/recovery-fixture","path":"%s","pr_base_branch":"develop"}]}\n' "$REPO" >"$AIDEVOPS_REPOS_CONFIG"
 printf 'remote develop ahead\n' >>"${UPDATER}/README.md"
 /usr/bin/git -C "$UPDATER" commit -q -am 'remote develop ahead'
 /usr/bin/git -C "$UPDATER" push -q origin develop
@@ -484,7 +489,7 @@ fi
 rm "${REPO}/diverge-untracked.txt"
 /usr/bin/git -C "$UPDATER" switch -q main
 
-unset AIDEVOPS_REPOS_CONFIG
+export AIDEVOPS_REPOS_CONFIG="${ROOT}/fixture-repos.json"
 /usr/bin/git -C "$REPO" switch -q safety/test
 /usr/bin/git -C "$REPO" worktree add -q "$OCCUPIED" main
 printf 'local divergence\n' >>"${OCCUPIED}/README.md"
@@ -519,7 +524,9 @@ mkdir -p "$STALE_REPO"
 printf 'stale seed\n' >"${STALE_REPO}/README.md"
 /usr/bin/git -C "$STALE_REPO" add README.md
 /usr/bin/git -C "$STALE_REPO" commit -q -m seed
-/usr/bin/git -C "$STALE_REPO" remote add origin "$STALE_REMOTE"
+STALE_URL="ssh://git@github.com:22/Example/Stale-Fixture.git"
+/usr/bin/git -C "$STALE_REPO" config "url.${STALE_REMOTE}.insteadOf" "$STALE_URL"
+/usr/bin/git -C "$STALE_REPO" remote add origin "$STALE_URL"
 /usr/bin/git -C "$STALE_REPO" push -q -u origin main
 /usr/bin/git -C "$STALE_REMOTE" symbolic-ref HEAD refs/heads/main
 /usr/bin/git -C "$STALE_REPO" remote set-head origin main
@@ -688,7 +695,9 @@ mkdir -p "$ABANDONED_REPO"
 printf 'abandoned seed\n' >"${ABANDONED_REPO}/README.md"
 /usr/bin/git -C "$ABANDONED_REPO" add README.md
 /usr/bin/git -C "$ABANDONED_REPO" commit -q -m seed
-/usr/bin/git -C "$ABANDONED_REPO" remote add origin "$ABANDONED_REMOTE"
+ABANDONED_URL="ssh://git@github.com:22/Example/Abandoned-Fixture.git"
+/usr/bin/git -C "$ABANDONED_REPO" config "url.${ABANDONED_REMOTE}.insteadOf" "$ABANDONED_URL"
+/usr/bin/git -C "$ABANDONED_REPO" remote add origin "$ABANDONED_URL"
 /usr/bin/git -C "$ABANDONED_REPO" push -q -u origin main
 /usr/bin/git -C "$ABANDONED_REMOTE" symbolic-ref HEAD refs/heads/main
 /usr/bin/git -C "$ABANDONED_REPO" remote set-head origin main

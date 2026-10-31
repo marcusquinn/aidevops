@@ -370,6 +370,10 @@ Storage cleanup (dry-run unless --apply):
   report                Sizes of aidevops-owned stores and their cleaners (default)
   all [--apply]         Preview or clean every store
   <store> [--apply]     One store: ${SC_STORES// /, }
+  maintenance plan --repo PATH
+                        Plan legacy worktrees; no removal or registry writes
+  maintenance check|apply --plan FILE --confirm TOKEN
+                        Explicit offline maintenance; never part of all --apply
 
 Every store is cleaned by its existing owner with that owner's safety gates;
 this command never deletes files itself. The daily r922 Storage hygiene routine
@@ -381,6 +385,10 @@ EOF
 main() {
 	local subcommand="${1:-report}" mode="$SC_DRY_RUN" arg=""
 	[[ $# -gt 0 ]] && shift
+	if [[ "$subcommand" == "maintenance" ]]; then
+		PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/worktree-maintenance.py" "$@" || return 1
+		return 0
+	fi
 	for arg in "$@"; do
 		case "$arg" in
 		--apply) mode="$SC_APPLY" ;;

@@ -25,7 +25,9 @@
 #   - _attempt_pr_ci_rebase_retry         — CI-drift rebase (t2805)
 #   - _route_pr_to_fix_worker             — unified fix-worker dispatch (t2203)
 #   - _retarget_stacked_children          — stacked PR retargeting (t2412)
-#   - _attempt_worker_briefed_auto_merge  — worker-briefed trust chain (t2449)
+#   - pulse-merge-process-worker-briefed.sh — worker-briefed trust chain
+#                                           (_attempt_worker_briefed_auto_merge,
+#                                           t2449; split out GH#27171)
 #   - _attempt_green_behind_update_branch — green+BEHIND branch refresh (GH#26659)
 #   - _check_required_checks_passing      — branch-protection context check (t2922)
 #
@@ -153,8 +155,36 @@ _pmp_is_protected_release_pr() {
 	local head_ref="$1"
 	local labels_csv="$2"
 
-	[[ ",${labels_csv}," == *",release,"* ]] || return 1
-	[[ "$head_ref" =~ ^chore/release-v[0-9]+\.[0-9]+\.[0-9]+-provenance$ ]] || return 1
+	protected_release_pr "$head_ref" "$labels_csv" || return 1
+	return 0
+}
+
+# Protected release PRs always belong to exact-merge reconciliation. Even an
+# exact signed head must never be armed for the generic native squash path.
+_pmp_hold_protected_release_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local head_ref="$3"
+	local head_oid="$4"
+	local repo_path="" auto_merge="" hold_reason="protected release PR requires exact-merge reconciliation"
+	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
+	if ! protected_release_head_matches_staged "$repo_path" "$head_ref" "$head_oid"; then
+		hold_reason="protected release PR head differs from staged signed commit or staging evidence is unavailable"
+	fi
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${hold_reason}" >>"$LOGFILE"
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
+	# Do not turn an already-safe release into a draft on every merge pass.
+	# An unavailable read still takes the fail-closed disarm path below.
+	if auto_merge=$(gh pr view "$pr_number" --repo "$repo_slug" --json autoMergeRequest \
+		--jq '.autoMergeRequest == null' 2>/dev/null) &&
+		[[ "$auto_merge" == true ]]; then
+		return 0
+	fi
+	# aidevops:trust-boundary — revoke native auto-merge before deferring so a
+	# previously armed request cannot merge a drifted release between passes.
+	local stop_rc=0
+	_stop_external_native_auto_merge "$pr_number" "$repo_slug" "$hold_reason" || stop_rc=$?
+	[[ "$stop_rc" -eq 0 || "$stop_rc" -eq 2 ]] || return 1
 	return 0
 }
 
@@ -162,6 +192,8 @@ _pmp_is_protected_release_pr() {
 # direct routine sourcing. pulse-wrapper.sh also sources this before the merge
 # modules, so the include guard in pulse-pr-list-cache.sh keeps this idempotent.
 _PULSE_MERGE_PROCESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./protected-release-helper.sh
+source "${_PULSE_MERGE_PROCESS_DIR}/protected-release-helper.sh"
 if [[ -f "${_PULSE_MERGE_PROCESS_DIR}/pulse-pr-list-cache.sh" ]]; then
 	# shellcheck source=./pulse-pr-list-cache.sh
 	# shellcheck disable=SC1091
@@ -221,6 +253,11 @@ _PULSE_MERGE_PROCESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./pulse-merge-duplicate-consolidation.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_PROCESS_DIR
 source "${_PULSE_MERGE_PROCESS_DIR}/pulse-merge-duplicate-consolidation.sh"
+# Worker-briefed auto-merge trust chain (t2449/t3052/t3062/GH#35752), extracted
+# to keep this orchestrator below the file-size threshold (GH#27171).
+# shellcheck source=./pulse-merge-process-worker-briefed.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_PROCESS_DIR
+source "${_PULSE_MERGE_PROCESS_DIR}/pulse-merge-process-worker-briefed.sh"
 
 #######################################
 # Merge ready PRs for a single repo.
@@ -837,6 +874,76 @@ _route_pr_has_linked_issue() {
 	return 1
 }
 
+# Recover a tracking issue only for an aged, trusted interactive PR. The issue
+# stays non-dispatchable until its closing link is persisted and the normal
+# handover/claim gates have passed. A deterministic title + marker recovers a
+# successful create followed by a failed PR edit without creating another issue.
+_recover_interactive_pr_work_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local meta="" author="" title="Track interactive PR #${pr_number}" matches="" issue="" issue_meta=""
+	local marker="<!-- pulse-interactive-tracking:${pr_number} -->"
+	local body_file="" files="" created="" existing="" live_meta=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
+	[[ "${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}" == "enforce" ]] || return 1
+	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
+	printf '%s' "$meta" | jq -e '.state == "OPEN" and
+		([.labels[].name] | index("origin:interactive") != null and
+		any(. == "no-takeover" or . == "needs-maintainer-review" or
+		. == "external-contributor" or . == "hold-for-review") == false)' >/dev/null || return 1
+	#aidevops:trust-boundary — labels alone cannot authorize creation or takeover.
+	author=$(printf '%s' "$meta" | jq -r '.author.login // empty')
+	[[ -n "$author" ]] && _is_collaborator_author "$author" "$repo_slug" || return 1
+	_interactive_pr_is_stale "$pr_number" "$repo_slug" "" "" "" 1 || return 1
+	# Never replace a non-closing For/Ref work link with a new tracking issue.
+	existing=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
+	if [[ -n "$existing" ]]; then
+		printf '%s' "$existing"
+		return 0
+	fi
+	matches=$(gh api -X GET search/issues -f q="repo:${repo_slug} is:issue in:title \"${title}\"") || return 1
+	printf '%s' "$matches" | jq -e 'select(.incomplete_results == false) | .items | arrays' >/dev/null || return 1
+	issue=$(printf '%s' "$matches" | jq -r --arg title "$title" '.items[] | select(.title == $title) | .number') || return 1
+	# Ambiguous search results must never choose somebody else's issue.
+	[[ "$issue" != *$'\n'* ]] || return 1
+	if [[ -n "$issue" ]]; then
+		issue_meta=$(gh api "repos/${repo_slug}/issues/${issue}") || return 1
+		printf '%s' "$issue_meta" | jq -e --arg marker "$marker" '.state == "open" and (.body | contains($marker))' >/dev/null || return 1
+		author=$(printf '%s' "$issue_meta" | jq -r '.user.login // empty')
+		_is_collaborator_author "$author" "$repo_slug" || return 1
+	else
+		files=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files" --jq '.[].filename') || return 1
+		[[ -n "$files" ]] || return 1
+		body_file=$(mktemp) || return 1
+		{
+			printf '%s\n\n## Outcome\n\nComplete existing interactive PR %s through its existing CI, review and merge gates. Preserve its commits; repair only evidenced failures.\n\n### Files Scope\n' "$marker" "$(printf '%s' "$meta" | jq -r '.url')"
+			# shellcheck disable=SC2016 # Markdown code spans, not shell substitution
+			while IFS= read -r existing; do printf -- '- `%s`\n' "$existing"; done <<<"$files"
+			printf '\n### Verification\n\nUse the existing checks and verification documented on the source PR; inspect its exact-head CI and review feedback before repair. Do not bypass approval or security gates.\n'
+			printf '\n### Recovery state\n\nInitially blocked pending verified PR linkage. Pulse owns linkage recovery; after verification, existing feedback routing transitions this issue to available when repair is needed. No independent dispatch before that transition.\n'
+		} >"$body_file"
+		local create_rc=0
+		created=$(gh_create_issue --repo "$repo_slug" --title "$title" --label origin:interactive --label status:blocked --body-file "$body_file") || create_rc=$?
+		rm -f "$body_file"
+		[[ "$create_rc" -eq 0 ]] || return 1
+		issue="${created##*/}"
+	fi
+	[[ "$issue" =~ ^[0-9]+$ ]] || return 1
+	# Do not overwrite concurrent body edits, new commits or newly applied holds.
+	live_meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
+	[[ "$(printf '%s' "$meta" | jq -Sc .)" == "$(printf '%s' "$live_meta" | jq -Sc .)" ]] || return 1
+	body_file=$(mktemp) || return 1
+	printf '%s\n\nResolves #%s\n' "$(printf '%s' "$meta" | jq -r '.body // ""')" "$issue" >"$body_file"
+	local edit_rc=0
+	gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || edit_rc=$?
+	rm -f "$body_file"
+	[[ "$edit_rc" -eq 0 ]] || return 1
+	existing=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
+	[[ "$existing" == "$issue" ]] || return 1
+	printf '%s' "$issue"
+	return 0
+}
+
 # Conflict checkpoints intentionally use For/Ref, not closing keywords.
 # Resolve independently of the caller's closing-only target, retaining the
 # existing linked-issue validation and all later routing guards (GH#33763).
@@ -847,6 +954,9 @@ _route_pr_resolve_work_issue() {
 	local kind="$4"
 	if [[ "$kind" == "conflict" ]]; then
 		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
+	fi
+	if [[ -z "$linked_issue" ]]; then
+		linked_issue=$(_recover_interactive_pr_work_issue "$pr_number" "$repo_slug") || return 1
 	fi
 	_route_pr_has_linked_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || return 1
 	printf '%s' "$linked_issue"
@@ -1116,250 +1226,6 @@ _retarget_stacked_children() {
 		echo "[pulse-merge] retargeting stacked PR #${child} from '${parent_head_ref}' to '${default_branch}' before deleting parent PR #${parent_pr_number} branch (t2412)" >>"$LOGFILE"
 		gh pr edit "$child" --repo "$repo_slug" --base "$default_branch" 2>&1 | tee -a "$LOGFILE" || true
 	done <<<"$children"
-	return 0
-}
-
-#######################################
-# Check if a GitHub login appears in the trusted-issue-author allowlist (t3062).
-#
-# Peer runners with COLLABORATOR association can be added to the allowlist to
-# bypass the OWNER/MEMBER author_association gate without requiring per-issue
-# cryptographic approval (sudo aidevops approve issue N).
-#
-# Config: AIDEVOPS_TRUSTED_AUTHORS_CONF env var (override) or
-#         <_PULSE_MERGE_DIR>/../configs/trusted-issue-authors.conf (default).
-# Empty/missing config = no trusted authors = returns 1 (not trusted).
-#
-# Args: $1=github_login
-# Returns: 0=login is trusted, 1=not trusted
-#######################################
-_is_trusted_issue_author() {
-	local login="$1"
-	[[ -z "$login" ]] && return 1
-	local _trusted_conf="${AIDEVOPS_TRUSTED_AUTHORS_CONF:-${_PULSE_MERGE_DIR:+${_PULSE_MERGE_DIR}/../configs/trusted-issue-authors.conf}}"
-	[[ -z "$_trusted_conf" || ! -f "$_trusted_conf" ]] && return 1
-	local _tentry
-	while IFS= read -r _tentry || [[ -n "$_tentry" ]]; do
-		[[ -z "$_tentry" || "$_tentry" == "#"* ]] && continue
-		[[ "$_tentry" == "$login" ]] && return 0
-	done < "$_trusted_conf"
-	return 1
-}
-
-#######################################
-# Check whether an issue author has maintainer-equivalent repository access.
-#
-# GitHub can expose maintainer-operated issues/PRs as COLLABORATOR rather than
-# OWNER/MEMBER. For worker-briefed auto-merge, verify that ambiguous metadata
-# through the authenticated collaborator permission endpoint instead of forcing
-# per-issue cryptographic approvals for every maintainer-run aidevops worker.
-#
-# Args: $1=repo_slug, $2=github_login, $3=precomputed_permission(optional)
-# Returns: 0=trusted maintainer-equivalent access, 1=not trusted or API error
-#######################################
-_issue_author_has_maintainer_authority() {
-	local repo_slug="$1"
-	local login="$2"
-	local permission="${3:-}"
-
-	[[ -n "$repo_slug" && -n "$login" ]] || return 1
-
-	if [[ -z "$permission" ]]; then
-		#aidevops:trust-boundary GH#24958: ambiguous GitHub issue
-		# author_association values are not sufficient to auto-merge worker PRs.
-		# Confirm maintainer-equivalent access with authenticated metadata and fail
-		# closed on API errors or permissions below write.
-		permission=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" \
-			--jq '.permission // ""' 2>/dev/null) || return 1
-	fi
-
-	case "$permission" in
-		admin | maintain | write)
-			return 0
-			;;
-	esac
-	return 1
-}
-
-#######################################
-# Verify that a linked issue has a maintainer cryptographic approval (t3052).
-#
-# Marker-string presence is not a trust signal: any user able to comment could
-# paste the marker. This helper delegates to approval-helper.sh, which verifies
-# the SSH signature against the maintainer approval public key.
-#
-# Args: $1=issue_number, $2=repo_slug
-# Returns: 0=verified approval, 1=no verified approval
-#######################################
-_issue_has_verified_crypto_approval() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	[[ -z "$issue_number" || -z "$repo_slug" ]] && return 1
-
-	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
-	[[ ! -f "$approval_helper" ]] && return 1
-
-	local verify_result=""
-	verify_result=$(bash "$approval_helper" verify "$issue_number" "$repo_slug" 2>/dev/null) || verify_result=""
-	[[ "$verify_result" == "VERIFIED" ]]
-	return $?
-}
-
-#######################################
-# Classify how a worker PR links its issue (GH#33999). Prints "closing" for a
-# closing-keyword link (unchanged behaviour). For a For/Ref-only association
-# #aidevops:trust-boundary — the issue must be open and not parent-task; prints
-# "non-closing reference". Never writes a closing keyword.
-# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=issue API path
-# Returns: 0=eligible link kind printed, 1=ineligible or lookup failure
-#######################################
-_worker_briefed_link_kind() {
-	local pr_number="$1"
-	local repo_slug="$2"
-	local linked_issue="$3"
-	local issue_api="$4"
-	local closing_issue="" state_labels="" issue_state="" issue_labels=""
-	closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 1
-	if [[ -n "$closing_issue" ]]; then
-		printf '%s' "closing"
-		return 0
-	fi
-	state_labels=$(gh api "${issue_api}" --jq '[.state // "", ([.labels[].name] | join(","))] | @tsv' 2>/dev/null) || return 1
-	issue_state="${state_labels%%$'\t'*}"
-	issue_labels="${state_labels#*$'\t'}"
-	if [[ "$issue_state" != "open" ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to issue #${linked_issue} which is not open (GH#33999)" >>"$LOGFILE"
-		return 1
-	fi
-	if [[ "$issue_labels" =~ (^|,)parent-task(,|$) ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to parent-task issue #${linked_issue} (GH#33999)" >>"$LOGFILE"
-		return 1
-	fi
-	printf '%s' "non-closing reference"
-	return 0
-}
-
-#######################################
-# Check origin:worker worker-briefed auto-merge gates (t2449).
-#
-# Sibling to _check_interactive_pr_gates — validates that an origin:worker
-# PR is eligible for auto-merge based on the maintainer-briefed trust chain.
-# Called from _check_pr_merge_gates when the PR carries origin:worker.
-#
-# The trust-chain equivalence argument: if the underlying issue was filed by
-# the repo OWNER/MEMBER, the worker faithfully implemented, CI confirms
-# correctness, and no human reviewer objected, the trust chain is equivalent
-# to (or stronger than) an origin:interactive auto-merge.
-#
-# Nine criteria (see GH#20204):
-#   1. PR carries origin:worker label (caller pre-checks)
-#   2. Linked issue authored by OWNER or MEMBER
-#   3. Linked issue has live maintainer-author authority or cryptographic approval
-#   4. All required status checks PASS/SKIPPED (checked by general gates)
-#   5. No CHANGES_REQUESTED from human reviewers (checked by general gates)
-#   6. PR is not a draft
-#   7. No hold-for-review label
-#   8. Passes review-bot-gate (checked by general gates)
-#   9. No origin:worker-takeover label (caller pre-checks)
-#
-# Feature flag: AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE (default: 1=on, 0=off)
-# When OFF, all origin:worker PRs fall back to manual merge only.
-#
-# Args: $1=pr_number, $2=repo_slug, $3=labels_str (comma-separated),
-#       $4=is_draft, $5=linked_issue,
-#       $6=precomputed_pr_author_permission(optional),
-#       $7=precomputed_pr_author_login(optional)
-# Returns: 0=all gates pass (eligible for auto-merge), 1=blocked
-#######################################
-_attempt_worker_briefed_auto_merge() {
-	local pr_number="$1"
-	local repo_slug="$2"
-	local labels_str="$3"
-	local is_draft="$4"
-	local linked_issue="$5"
-	local precomputed_pr_author_permission="${6:-}"
-	local precomputed_pr_author_login="${7:-}"
-
-	# Feature flag — when OFF, all origin:worker PRs fall back to manual merge
-	if [[ "${AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE:-1}" == "0" ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: disabled by AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=0 for PR #${pr_number} in ${repo_slug} (t2449)" >>"$LOGFILE"
-		return 1
-	fi
-
-	# Gate: not a draft
-	if [[ "$is_draft" == "true" ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible (t2449)" >>"$LOGFILE"
-		return 1
-	fi
-
-	# Gate: no hold-for-review opt-out label
-	if [[ ",${labels_str}," == *",hold-for-review,"* ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — hold-for-review label (t2449)" >>"$LOGFILE"
-		return 1
-	fi
-
-	# Gate: must have a linked issue (the "brief" in "maintainer-briefed")
-	if [[ -z "$linked_issue" ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — no linked issue (t2449)" >>"$LOGFILE"
-		return 1
-	fi
-
-	# Reuse the issue API base path for author-association and NMR checks.
-	local _issue_api
-	_issue_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
-	# Fetch author_association and user.login in one API call (t3062 needs login).
-	local _issue_meta
-	_issue_meta=$(gh api "${_issue_api}" \
-		--jq 'select(.pull_request == null) | [.author_association // "", .user.login // ""] | @tsv' 2>/dev/null) || return 1
-	# Explicit body references must resolve to an actual local issue, not a PR
-	# sharing the repository number space or unavailable metadata.
-	[[ -n "${_issue_meta//[[:space:]]/}" ]] || return 1
-	local issue_author_assoc=""
-	local issue_author_login=""
-	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
-
-	# GH#33999: a PR with only a non-closing For/Ref reference may be associated
-	# with an issue that stays open for later phases. #aidevops:trust-boundary —
-	# that association is eligible only for an open, non-parent issue; all trust
-	# gates below still apply unchanged. Closing-keyword links are untouched.
-	local _link_kind=""
-	_link_kind=$(_worker_briefed_link_kind "$pr_number" "$repo_slug" "$linked_issue" "$_issue_api") || return 1
-	local issue_author_permission=""
-	#aidevops:trust-boundary — reuse PR-author permission only for the same non-empty issue-author login.
-	if [[ -n "$precomputed_pr_author_permission" && -n "$precomputed_pr_author_login" && "$precomputed_pr_author_login" == "$issue_author_login" ]]; then
-		issue_author_permission="$precomputed_pr_author_permission"
-	fi
-
-	local _not_true_status="not-verified"
-	local _has_crypto="$_not_true_status"
-	if _issue_has_verified_crypto_approval "$linked_issue" "$repo_slug"; then
-		_has_crypto="true"
-	fi
-
-	# Gate: linked issue authored by OWNER/MEMBER, OR login has authenticated
-	# maintainer-equivalent repo permission (GH#24958), OR login is in the
-	# trusted-issue-author allowlist (t3062), OR cryptographically approved
-	# by maintainer (t3052). The trust chain "maintainer SSH-signed
-	# an approval on the issue" is at least as strong as the OWNER/MEMBER
-	# author check — the maintainer personally vouched with their private key.
-	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
-		if _issue_author_has_maintainer_authority "$repo_slug" "$issue_author_login" "$issue_author_permission"; then
-			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via authenticated maintainer permission fallback (GH#24958)" >>"$LOGFILE"
-		elif _is_trusted_issue_author "$issue_author_login"; then
-			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via trusted-issue-author allowlist (t3062)" >>"$LOGFILE"
-		elif [[ "$_has_crypto" != "true" ]]; then
-			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)" >>"$LOGFILE"
-			return 1
-		else
-			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} but cryptographic approval signature present, proceeding (t3052)" >>"$LOGFILE"
-		fi
-	fi
-
-	# Historical NMR/normalization comments are not current authority signals.
-	# Live issue-author authority above is sufficient; external authors still
-	# require verified cryptographic approval and live NMR remains blocked by the
-	# general merge gates.
-	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, link=${_link_kind}, author_assoc=${issue_author_assoc}, crypto_approved=${_has_crypto}) (t2449/t3052)" >>"$LOGFILE"
 	return 0
 }
 
@@ -1885,6 +1751,20 @@ _set_native_auto_merge_or_skip() {
 	local require_synchronous_final_gate="${3:-0}"
 	local current_review="${4:-UNKNOWN}"
 	local expected_head_sha="${5:-}"
+	local release_metadata="" release_head="" release_labels=""
+
+	# aidevops:trust-boundary — inspect fresh identity before retaining or enabling
+	# native auto-merge. A failed identity read cannot authorize a generic merge.
+	release_metadata=$(gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 2
+	printf '%s' "$release_metadata" | jq -e '
+		type == "object" and (.head.ref | type == "string" and length > 0)
+		and (.labels | arrays | true)' >/dev/null || return 2
+	release_head=$(printf '%s' "$release_metadata" | jq -r '.head.ref // ""') || return 2
+	release_labels=$(printf '%s' "$release_metadata" | jq -r '[.labels[]?.name] | join(",")') || return 2
+	if _pmp_is_protected_release_pr "$release_head" "$release_labels"; then
+		_pmp_hold_protected_release_pr "$pr_number" "$repo_slug" "$release_head" "$expected_head_sha" || return 3
+		return 2
+	fi
 
 	# Fetch auto_merge metadata + merge state through exact-attribution routes.
 	# Carry forward the review state that passed this cycle's gate; unknown or

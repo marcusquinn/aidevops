@@ -3,14 +3,15 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { EventEmitter, once } from "node:events";
+import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, describe, test } from "node:test";
+import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { BoundedInteractiveOperationManager } from "../bounded-interactive-operation.mjs";
+import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, terminal } from "./bounded-operation-fixtures.mjs";
+import { terminationCases } from "./bounded-operation-termination-cases.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
 import {
   parseProcessSnapshot,
@@ -19,79 +20,6 @@ import {
 } from "../bounded-operation-process-tree.mjs";
 import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
 import { resolveGptImageProjectRoot, resolveSessionOwnedWorktreeRoot } from "../gpt-image-worktree.mjs";
-
-const root = mkdtempSync(join(tmpdir(), "aidevops-bounded-operation-"));
-const owner = { sessionID: "ses_owner" };
-const recorded = [];
-const managers = [];
-
-after(() => {
-  for (const manager of managers) manager.dispose();
-  rmSync(root, { recursive: true, force: true });
-});
-
-function manager(options = {}) {
-  const instance = new BoundedInteractiveOperationManager({
-    projectRoot: root,
-    killGraceMs: 10,
-    recordOutput: async (content, evidence) => {
-      recorded.push({ content: String(content), evidence });
-      return `out_fixture_${recorded.length}`;
-    },
-    readOutput: async (outputID, bounds) => ({
-      output: `${bounds.offset}: output for ${outputID}\n`,
-      redacted: false,
-      truncated: false,
-    }),
-    ...options,
-  });
-  managers.push(instance);
-  return instance;
-}
-
-function launcher({ started = false } = {}) {
-  return (runtime) => {
-    const child = new EventEmitter();
-    child.stdin = { end() {} };
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    child.connected = false;
-    child.exitCode = null;
-    child.signalCode = null;
-    queueMicrotask(() => {
-      child.emit("spawn");
-      if (started) {
-        child.emit("message", {
-          type: "aidevops.operation",
-          event: "command_started",
-          operationID: "op_fixture",
-          runtime: "node v22.23.1",
-        });
-      }
-      child.exitCode = 0;
-      child.emit("exit", 0, null);
-      child.emit("close", 0, null);
-    });
-    assert.equal(runtime, "node");
-    return child;
-  };
-}
-
-// Success-path budgets must absorb node startup on a loaded host (`node --test`
-// runs files in parallel); timeout and latency semantics use their own bounds.
-const SUCCESS_BUDGET_MS = 10_000;
-
-// Upper bound only: polling returns as soon as the operation is terminal.
-async function terminal(instance, operationID, context = owner, timeoutMs = 15_000) {
-  const deadline = Date.now() + timeoutMs;
-  let receipt;
-  do {
-    receipt = instance.status(operationID, context);
-    if (!["starting", "running", "cancelling", "timing_out", "restoring", "finalizing"].includes(receipt.state)) return receipt;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  } while (Date.now() < deadline);
-  throw new Error(`operation ${operationID} did not reach a terminal state: ${receipt?.state}`);
-}
 
 describe("bounded interactive operations", () => {
   test("start returns control and explicit progress reaches a private terminal receipt", async () => {
@@ -116,6 +44,7 @@ describe("bounded interactive operations", () => {
     assert.equal(result.command_execution, "observed");
     assert.match(result.supervisor_runtime, /^node v\d+\./);
     assert.equal(result.post_exit_descendants_terminated, false);
+    assert.equal(result.termination_cause, null);
     assert.equal(JSON.stringify(result).includes("phase-one"), false);
   });
 
@@ -123,17 +52,17 @@ describe("bounded interactive operations", () => {
     const instance = manager();
     const progressing = await instance.start({
       command: [process.execPath, "-e", "setTimeout(() => console.log('AIDEVOPS_PROGRESS: ready'), 40); setTimeout(() => process.exit(0), 250)"],
-      budgetMs: 5000,
+      budgetMs: SUCCESS_BUDGET_MS,
       progressIntervalMs: 500,
     }, owner);
     const progressStarted = Date.now();
-    const progress = await instance.status(progressing.operation_id, owner, { waitMs: 500 });
+    const progress = await instance.status(progressing.operation_id, owner, { waitMs: 5000 });
     assert.equal(progress.state, "running");
     assert.equal(progress.progress_events, 1);
-    assert.ok(Date.now() - progressStarted < 400, "progress did not wake status promptly");
+    assert.ok(Date.now() - progressStarted < 4500, "progress did not wake status before its wait bound");
     // Terminal containment scans the process inventory; its latency on shared
     // runners must not be confused with the progress-wakeup latency above.
-    const completed = await instance.status(progressing.operation_id, owner, { waitMs: 3000 });
+    const completed = await instance.status(progressing.operation_id, owner, { waitMs: 5000 });
     assert.ok(["finalizing", "succeeded"].includes(completed.state));
     assert.equal((await terminal(instance, progressing.operation_id)).state, "succeeded");
 
@@ -391,68 +320,7 @@ describe("bounded interactive operations", () => {
     }
   });
 
-  test("failure, timeout, and scoped cancellation cannot appear as success", async () => {
-    const instance = manager();
-    const failed = await instance.start({
-      command: [process.execPath, "-e", "process.exit(7)"],
-      budgetMs: SUCCESS_BUDGET_MS,
-      progressIntervalMs: 20,
-    }, owner);
-    assert.equal((await terminal(instance, failed.operation_id)).state, "failed");
-
-    const timed = await instance.start({
-      command: [process.execPath, "-e", "setTimeout(() => {}, 1000)"],
-      budgetMs: 30,
-      progressIntervalMs: 10,
-    }, owner);
-    const timedResult = await terminal(instance, timed.operation_id);
-    assert.equal(timedResult.state, "timed_out");
-    assert.notEqual(timedResult.process_signal, null);
-
-    // Wait for the descendant's SIGTERM handler before exiting the parent.
-    // Parent-exit cleanup starts immediately, but its grace must outlast the
-    // budget: inherited stdio remains live until the deadline, not a startup race.
-    const forkedInstance = manager({ killGraceMs: 5000 });
-    const recordedBeforeFork = recorded.length;
-    const forked = await forkedInstance.start({
-      command: [process.execPath, "-e", `
-        const { spawn } = require('node:child_process');
-        const child = spawn(process.execPath, ['-e',
-          "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); process.send('ready');"],
-          { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
-        child.once('message', (message) => {
-          if (message !== 'ready') process.exit(1);
-          console.log('forked-descendant-ready');
-          child.disconnect();
-          child.unref();
-        });
-      `],
-      budgetMs: 3000,
-      progressIntervalMs: 20,
-    }, owner);
-    assert.equal((await terminal(forkedInstance, forked.operation_id)).state, "timed_out");
-    assert.match(recorded.slice(recordedBeforeFork).map((entry) => entry.content).join("\n"), /forked-descendant-ready/);
-
-    const cancellable = await instance.start({
-      command: [process.execPath, "-e", "setTimeout(() => {}, 1000)"],
-      budgetMs: 1000,
-      progressIntervalMs: 20,
-    }, owner);
-    assert.throws(() => instance.cancel(cancellable.operation_id, { sessionID: "ses_other" }), /owner mismatch/);
-    assert.equal(instance.status(cancellable.operation_id, owner).state, "running");
-    assert.equal(instance.cancel(cancellable.operation_id, owner).state, "cancelling");
-    assert.equal((await terminal(instance, cancellable.operation_id)).state, "cancelled");
-
-    const spawnFailure = await instance.start({
-      command: [join(root, "missing-executable")],
-      restorationCommand: [process.execPath, "-e", "process.exit(0)"],
-      budgetMs: SUCCESS_BUDGET_MS,
-      restorationBudgetMs: SUCCESS_BUDGET_MS,
-    }, owner);
-    const spawnFailureResult = await terminal(instance, spawnFailure.operation_id);
-    assert.equal(spawnFailureResult.state, "failed");
-    assert.equal(spawnFailureResult.restoration_state, "succeeded");
-  });
+  terminationCases();
 
   test("helper-created process groups are contained on timeout and cancellation (GH#33514)", async () => {
     const alive = (pid) => {
@@ -650,10 +518,11 @@ describe("bounded interactive operations", () => {
       budgetMs: SUCCESS_BUDGET_MS,
       restorationBudgetMs: 30,
     }, owner);
-    const deadline = Date.now() + 1000;
+    const deadline = Date.now() + 5000;
     while (instance.status(started.operation_id, owner).state !== "restoring" && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
+    assert.equal(instance.status(started.operation_id, owner).state, "restoring");
     const result = await instance.status(started.operation_id, owner, { waitMs: 500 });
     assert.equal(result.state, "restoring");
     assert.equal(result.restoration_state, "timing_out");

@@ -115,6 +115,7 @@ _pc_cleanup_resumable() {
 
 _pc_cleanup_resumable_unlocked() {
 	local budget="$1" deadline=0 cursor="" saved="" manifest="" job=""
+	local repo="${2:-}" identity="" started=0 job_started=0 kind="" job_rc=0
 	local repos_json="${HOME}/.config/aidevops/repos.json"
 	local state_dir="${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}"
 	local jobs=() start=0 index=0 offset=0 next=0 api_checked=0 remaining=""
@@ -124,23 +125,36 @@ _pc_cleanup_resumable_unlocked() {
 	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=0
 	assert_git_available || return 1
 	[[ "$budget" =~ ^[0-9]+$ && "$budget" -ge 1 ]] || return 1
-	deadline=$(($(date +%s) + budget))
+	started=$(date +%s) || return 1
+	deadline=$((started + budget))
 	command -v jq >/dev/null 2>&1 || return 1
-	[[ -f "$repos_json" ]] || { cleanup_worktrees; return $?; }
-	jq -e '.initialized_repos | type == "array"' "$repos_json" >/dev/null || return 1
-	# Preserve the existing API-free fixture pass before any quota gate, even
-	# when this invocation resumes halfway through the repository queue.
-	CLEANUP_WORKTREES_REMOVED_COUNT=$(_pc_cleanup_fixture_passes) || CLEANUP_WORKTREES_REMOVED_COUNT=0
-	[[ "$CLEANUP_WORKTREES_REMOVED_COUNT" =~ ^[0-9]+$ ]] || CLEANUP_WORKTREES_REMOVED_COUNT=0
 	mkdir -p "$state_dir" || return 1
-	cursor="${state_dir}/worktree-cleanup-next.json"
+	if [[ -n "$repo" ]]; then
+		# The cursor is an ordering hint, never evidence that removal is safe.
+		# Key aliases/linked contexts to their common repository, not all repos.
+		identity=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir) || return 1
+		identity=$(printf '%s' "$identity" | git hash-object --stdin) || return 1
+		[[ "$identity" =~ ^[0-9a-f]+$ ]] || return 1
+		cursor="${state_dir}/worktree-capacity-${identity}-next.json"
+		manifest=$(_pc_progress_repo_jobs "$repo") || return 1
+		[[ -n "$manifest" ]] || return 1
+	else
+		[[ -f "$repos_json" ]] || { cleanup_worktrees; return $?; }
+		jq -e '.initialized_repos | type == "array"' "$repos_json" >/dev/null || return 1
+		# Preserve the API-free fixture pass only for all-repository cleanup.
+		CLEANUP_WORKTREES_REMOVED_COUNT=$(_pc_cleanup_fixture_passes) || CLEANUP_WORKTREES_REMOVED_COUNT=0
+		[[ "$CLEANUP_WORKTREES_REMOVED_COUNT" =~ ^[0-9]+$ ]] || CLEANUP_WORKTREES_REMOVED_COUNT=0
+		cursor="${state_dir}/worktree-cleanup-next.json"
+		manifest=$(_pc_progress_jobs "$repos_json") || return 1
+		_pc_log_local_only_worktree_skips "$repos_json"
+	fi
 	[[ ! -f "$cursor" ]] || saved=$(<"$cursor")
-	manifest=$(_pc_progress_jobs "$repos_json") || return 1
 	while IFS= read -r job; do
 		[[ "$job" != "$saved" ]] || start="${#jobs[@]}"
 		jobs+=("$job")
 	done <<<"$manifest"
-	_pc_log_local_only_worktree_skips "$repos_json"
+	printf '[pulse-cleanup] inventory jobs=%s elapsed=%ss scope=%s\n' \
+		"${#jobs[@]}" "$(( $(date +%s) - started ))" "${repo:-all}" >>"${LOGFILE:-/dev/null}"
 	for ((offset = 0; offset < ${#jobs[@]}; offset++)); do
 		[[ "$(date +%s)" -lt "$deadline" ]] || break
 		index=$(((start + offset) % ${#jobs[@]}))
@@ -153,11 +167,24 @@ _pc_cleanup_resumable_unlocked() {
 			remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || remaining=""
 			if [[ "$remaining" =~ ^[0-9]+$ && "$remaining" -lt 100 ]]; then
 				CLEANUP_WORKTREES_SKIPPED=1
+				printf '[pulse-cleanup] retained pending API quota: remaining=%s\n' "$remaining" >>"${LOGFILE:-/dev/null}"
 				break
 			fi
 		fi
-		_pc_progress_run_job "${jobs[$index]}" "$repos_json" || return 1
+		kind=$(jq -r '.[0]' <<<"${jobs[$index]}") || return 1
+		job_started=$(date +%s) || return 1
+		printf '[pulse-cleanup] job-start kind=%s slot=%s total=%s remaining=%ss cursor=%s\n' \
+			"$kind" "$index" "${#jobs[@]}" "$((deadline - job_started))" "${cursor##*/}" >>"${LOGFILE:-/dev/null}"
+		job_rc=0
+		_pc_progress_run_job "${jobs[$index]}" "$repos_json" || job_rc=$?
+		printf '[pulse-cleanup] job-end kind=%s elapsed=%ss rc=%s removed=%s\n' \
+			"$kind" "$(( $(date +%s) - job_started ))" "$job_rc" "$CLEANUP_WORKTREES_REMOVED_COUNT" >>"${LOGFILE:-/dev/null}"
+		[[ "$job_rc" -eq 0 ]] || return 1
 	done
 	echo "[pulse-cleanup] resumable progress: attempted=${offset}, removed=${CLEANUP_WORKTREES_REMOVED_COUNT}, budget=${budget}s" >>"${LOGFILE:-/dev/null}"
+	if [[ -n "$repo" ]]; then
+		[[ "$CLEANUP_WORKTREES_SKIPPED" -eq 0 ]] || return 76
+		[[ "$offset" -eq "${#jobs[@]}" ]] || return 124
+	fi
 	return 0
 }

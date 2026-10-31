@@ -189,6 +189,34 @@ count=0
 [[ -f "$COUNT_FILE" ]] && count=$(<"$COUNT_FILE")
 count=$((count + 1))
 printf '%s\n' "$count" >"$COUNT_FILE"
+case "$TEST_MODE" in
+homebrew-*-primary | homebrew-*-secondary | homebrew-*-rate-body | homebrew-*-quota)
+	if [[ "$TEST_MODE" == *-quota || "$count" -lt 2 ]]; then
+		case "$TEST_MODE" in
+		*-secondary) printf 'gh: secondary rate limit (HTTP 403)\n' >&2 ;;
+		*-rate-body) printf 'gh: Forbidden (HTTP 429)\n{"message":"rate-limit reached"}\n' >&2 ;;
+		*) printf 'gh: API rate limit exceeded (HTTP 403)\n' >&2 ;;
+		esac
+		# Neither the token nor injected workflow commands may reach annotations.
+		printf '%s\n' 'Authorization: Bearer test-sensitive-value' '::error::injected-command' >&2
+		exit 1
+	fi
+	if [[ " $* " == *" --jq "* ]]; then
+		cat "$FORMULA_BASE64"
+	else
+		printf '{"content":"%s"}\n' "$(<"$FORMULA_BASE64")"
+	fi
+	exit 0
+	;;
+homebrew-*-auth | homebrew-*-not-found | homebrew-*-forbidden)
+	case "$TEST_MODE" in
+	*-auth) printf 'gh: Bad credentials (HTTP 401)\n' >&2 ;;
+	*-not-found) printf 'gh: Not Found (HTTP 404)\n' >&2 ;;
+	*) printf 'gh: Resource not accessible (HTTP 403)\n' >&2 ;;
+	esac
+	exit 1
+	;;
+esac
 if [[ " $* " == *" --jq "* ]]; then
 	case "$TEST_MODE" in
 	homebrew-verify-eventual)
@@ -200,6 +228,12 @@ if [[ " $* " == *" --jq "* ]]; then
 	homebrew-verify-transport)
 		printf 'tap unavailable\n' >&2
 		exit 1
+		;;
+	homebrew-verify-empty)
+		:
+		;;
+	homebrew-verify-malformed)
+		printf '%%%s\n' '%%'
 		;;
 	*)
 		printf 'unexpected Homebrew verification mode: %s\n' "$TEST_MODE" >&2
@@ -307,6 +341,39 @@ expect_failure "Homebrew verification rejects persistent mismatch" \
 	"homebrew-verify-mismatch" "homebrew-verify.sh"
 expect_failure "Homebrew verification rejects persistent transport failure" \
 	"homebrew-verify-transport" "homebrew-verify.sh"
+expect_failure "Homebrew verification rejects malformed content" \
+	"homebrew-verify-malformed" "homebrew-verify.sh"
+expect_failure "Homebrew verification rejects empty content" \
+	"homebrew-verify-empty" "homebrew-verify.sh"
+
+# Exercise the existing read-only step harness, including its sleep stub, so
+# quota recovery and exhaustion cannot silently turn into publication success.
+for phase in state verify; do
+	for rate in primary secondary rate-body; do
+		expect_success "Homebrew $phase recovers from $rate rate limit" \
+			"homebrew-$phase-$rate" "homebrew-$phase.sh"
+		[[ "$(<"$COUNT_FILE")" == 2 ]]
+	done
+	QUOTA_LOG="$TEST_ROOT/quota-$phase.log"
+	if run_step "homebrew-$phase-quota" "homebrew-$phase.sh" >"$QUOTA_LOG" 2>&1; then
+		printf 'FAIL Homebrew %s quota exhaustion reported success\n' "$phase"
+		exit 1
+	fi
+	[[ "$(<"$COUNT_FILE")" == 3 ]]
+	grep -q '::warning::Homebrew tap .*rate limit (HTTP 403)' "$QUOTA_LOG"
+	grep -q '::error::Homebrew tap .*rate limit' "$QUOTA_LOG"
+	if grep -qE 'test-sensitive-value|Authorization|injected-command' "$QUOTA_LOG"; then
+		printf 'FAIL Homebrew %s leaked raw API diagnostics\n' "$phase"
+		exit 1
+	fi
+	[[ ! -s "$GITHUB_OUTPUT" ]]
+	printf 'PASS Homebrew %s quota exhaustion is bounded and secret-free\n' "$phase"
+	for failure in auth not-found forbidden; do
+		expect_failure "Homebrew $phase $failure fails without retry" \
+			"homebrew-$phase-$failure" "homebrew-$phase.sh"
+		[[ "$(<"$COUNT_FILE")" == 1 ]]
+	done
+done
 
 if grep -qE '^npm publish|^gh .* (--method|-X |PUT|PATCH|POST)' "$COMMAND_LOG"; then
 	printf 'FAIL destination-state tests attempted a package or tap write\n'

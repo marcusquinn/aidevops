@@ -6,6 +6,14 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { addEditedPaths, captureCheck, defaultDirtyEdits } from "./session-continuation-capture.mjs";
 import {
+  detectLoop,
+  emptyLoopState,
+  isDesignedPoll,
+  isProgress,
+  loopEntry,
+  recordLoopEntry,
+} from "./session-continuation-loops.mjs";
+import {
   activeTodos,
   boundedText,
   capMap,
@@ -148,45 +156,74 @@ function afterTool(state, input, output) {
     }
   }
 
-  if (!failed) {
-    state.failures.delete(call.scope);
-    return { failed: false, replan: false };
-  }
+  // GH#35968: designed polling is neither progress nor repetition.
+  if (isDesignedPoll(call.tool, call.args)) return { failed, replan: false };
 
-  const fingerprint = operationFingerprint(call.tool, call.args);
-  const previous = state.failures.get(call.scope);
-  const failure = previous?.fingerprint === fingerprint
-    ? { ...previous, count: previous.count + 1 }
-    : { fingerprint, count: 1, signaled: false, tool: call.tool };
-  state.failures.set(call.scope, failure);
-  capMap(state.failures, state.maxScopes);
+  const loop = state.loops.get(call.scope) || emptyLoopState();
+  state.loops.delete(call.scope);
+  state.loops.set(call.scope, loop);
+  capMap(state.loops, state.maxScopes);
+  const entry = loopEntry(call, output, failed);
+  recordLoopEntry(loop, entry, isProgress(loop, call, entry), state.threshold);
 
-  if (failure.count < state.threshold || failure.signaled) return { failed: true, replan: false, count: failure.count };
-  failure.signaled = true;
-  const sessionHash = createHash("sha256").update(sessionId(input)).digest("hex").slice(0, 12);
-  const recovery = {
+  const detected = detectLoop(loop.window, state.threshold);
+  if (!detected || loop.signaled.has(detected.signature)) return { failed, replan: false };
+  loop.signaled.add(detected.signature);
+  return signalLoop(state, input, output, call, detected);
+}
+
+function failureRecovery(state, input, call, detected) {
+  const sessionHash = sessionHashFor(input);
+  const single = detected.period === 1;
+  const tool = boundedText(call.tool);
+  return {
     status: "recovering",
     unresolved: true,
     session: `sha256:${sessionHash}`,
     objective: "Continue the active session objective without discarding unresolved work.",
     directions: "Preserve active todos and do not rerun an unsafe command under unchanged conditions.",
-    trigger: `${state.threshold} identical ${boundedText(call.tool)} operations failed or aborted under unchanged conditions.`,
+    trigger: single
+      ? `${state.threshold} identical ${tool} operations failed or aborted under unchanged conditions.`
+      : `${state.threshold} repetitions of the ${detected.label} tool-call cycle included failures under unchanged conditions.`,
     completed: "No additional acceptance criterion was verified by the failed operation.",
     remaining: remainingFor(state, call.scope),
-    unsafeRoute: `Repeat the same ${boundedText(call.tool)} operation without changed conditions.`,
+    unsafeRoute: single
+      ? `Repeat the same ${tool} operation without changed conditions.`
+      : `Repeat the ${detected.label} cycle without changed conditions.`,
     nextSafeRoute: "Change the operation arguments or execution conditions, then resume the first unresolved criterion.",
     resumeCondition: "A materially changed operation succeeds and all remaining criteria reach a terminal state.",
     owner: `session:${sessionHash}`,
   };
+}
+
+function loopCorrection(state, call, detected) {
+  if (detected.kind === "success") {
+    return `[AIDevOps recovery guard] The ${detected.label} tool-call cycle repeated ${detected.repeats} times with identical results and no edit or task progress. If you are waiting on external state, use one bounded wait (aidevops_bounded_operation status with wait_seconds, or the owning helper's wait command); otherwise change the approach before calling these tools again.`;
+  }
+  if (detected.period === 1) {
+    return `[AIDevOps recovery guard] ${state.threshold} identical ${boundedText(call.tool)} failures detected. Do not repeat this operation unchanged. Continue by changing its arguments or conditions and preserving the unresolved criteria in the recovery checkpoint.`;
+  }
+  return `[AIDevOps recovery guard] The ${detected.label} tool-call cycle repeated ${state.threshold} times with failures. Do not repeat this cycle unchanged. Continue by changing its arguments or conditions and preserving the unresolved criteria in the recovery checkpoint.`;
+}
+
+// Failing cycles checkpoint recovery; all-success cycles only steer, so a
+// false positive can never block a later legitimate completion claim.
+function signalLoop(state, input, output, call, detected) {
+  const failed = toolOutcomeFailed(output);
+  const correction = loopCorrection(state, call, detected);
+  output.output = `${String(output.output || "").trim()}\n\n${correction}`.trim();
+  const result = { failed, replan: true, count: detected.repeats, loop: { kind: detected.kind, description: detected.description, period: detected.period, tools: detected.tools }, correction };
+  if (detected.kind === "success") {
+    state.qualityLog?.("WARN", `[session-continuation] non-progressing ${detected.label} cycle steered for session ${sessionHashFor(input)}`);
+    return result;
+  }
+  const recovery = failureRecovery(state, input, call, detected);
   state.recoveries.set(call.scope, recovery);
   state.loadedScopes.add(call.scope);
   capMap(state.recoveries, state.maxScopes);
   state.adapter.save?.(recovery);
-
-  const correction = `[AIDevOps recovery guard] ${state.threshold} identical ${boundedText(call.tool)} failures detected. Do not repeat this operation unchanged. Continue by changing its arguments or conditions and preserving the unresolved criteria in the recovery checkpoint.`;
-  output.output = `${String(output.output || "").trim()}\n\n${correction}`.trim();
-  state.qualityLog?.("WARN", `[session-continuation] repeated ${boundedText(call.tool)} failure checkpointed for session ${sessionHash}`);
-  return { failed: true, replan: true, count: failure.count, correction };
+  state.qualityLog?.("WARN", `[session-continuation] repeated ${detected.label} failure cycle checkpointed for session ${sessionHashFor(input)}`);
+  return result;
 }
 
 function sessionHashFor(input) {
@@ -290,7 +327,12 @@ function resolveGuard(state, input, evidence) {
 
 function getState(state, input) {
   const scope = scopeFor(state, input);
-  return { failure: state.failures.get(scope) || null, tasks: state.tasks.get(scope) || [], recovery: loadRecovery(state, scope) };
+  const loop = state.loops.get(scope);
+  return {
+    loop: loop ? { window: loop.window.map(({ tool, failed }) => ({ tool, failed })) } : null,
+    tasks: state.tasks.get(scope) || [],
+    recovery: loadRecovery(state, scope),
+  };
 }
 
 export function createSessionContinuationGuard(options = {}) {
@@ -303,7 +345,7 @@ export function createSessionContinuationGuard(options = {}) {
     qualityLog,
     adapter: options.checkpointAdapter || defaultCheckpointAdapter(options.checkpointHelper, repository, qualityLog),
     calls: new Map(),
-    failures: new Map(),
+    loops: new Map(),
     tasks: new Map(),
     recoveries: new Map(),
     loadedScopes: new Set(),

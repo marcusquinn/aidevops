@@ -616,8 +616,9 @@ _playwriter_extension_diagnosis() {
 	local relay_port="$1"
 	local relay_version="$2"
 	local expected_version="$3"
+	local package_cache="$4"
 
-	python3 - "$relay_port" "$relay_version" "$expected_version" <<'PYEOF' || return 1
+	python3 - "$relay_port" "$relay_version" "$expected_version" "$package_cache" <<'PYEOF' || return 1
 import http.client
 import json
 import os
@@ -629,6 +630,7 @@ import sys
 port = int(sys.argv[1])
 relay_version = sys.argv[2]
 expected_version = sys.argv[3]
+package_cache = sys.argv[4]
 log_path = os.environ.get('PLAYWRITER_LOG_FILE_PATH') or os.path.join(
     os.path.expanduser('~'), '.playwriter', 'relay-server.log')
 
@@ -643,6 +645,8 @@ EVENTS = (
 
 GUIDANCE = {
     'relay-down': 'No relay is listening. The MCP starts one on activation and the guarded relay stops on disconnect; rerun while the Playwriter MCP is connected, and use the relay log summary for the last run.',
+    # GH#35697: a cold npx cache cannot start the relay inside its proof window.
+    'relay-down (pinned package not cached)': f'No relay is listening and npx cannot run playwriter@{expected_version} without downloading it. Warm it once with: PLAYWRITER_TELEMETRY=0 DO_NOT_TRACK=1 npx -y playwriter@{expected_version} --version, then reconnect. Never run the commands the extension page suggests.',
     'relay-unresponsive': f'Port {port} is held by a process that does not answer /version. Identify it with: lsof -nP -iTCP:{port} -sTCP:LISTEN (aidevops never terminates it).',
     'relay-version-mismatch': 'A relay from another Playwriter version owns the port; stop it from the session or terminal that started it, then reconnect.',
     'relay-up-no-extension': 'The relay has no extension attached. If the user reports a green icon, report a browser/relay mismatch (another Chrome profile, a relay replaced after the extension connected, or an extension socket that has not reconnected). Do not ask the user to enable the tab again.',
@@ -723,14 +727,14 @@ def extension_status():
 
 
 def read_log_events():
-    """Return (found, ordered events, classified lines) from the current relay log."""
+    """Return (found, ordered events, classified lines, raw tail) from the current relay log."""
     try:
         with open(log_path, 'rb') as stream:
             stream.seek(0, os.SEEK_END)
             stream.seek(max(0, stream.tell() - 262144))
             text = stream.read().decode('utf-8', 'replace')
     except OSError:
-        return False, [], []
+        return False, [], [], ''
     events, lines = [], []
     for line in text.splitlines():
         for name, pattern in EVENTS:
@@ -738,10 +742,24 @@ def read_log_events():
                 events.append(name)
                 lines.append(clean(line))
                 break
-    return True, events, lines
+    return True, events, lines, text
 
 
-log_found, events, event_lines = read_log_events()
+# GH#35955: on connect the extension re-attaches tabs approved in an earlier
+# session ("Successfully re-attached tab"); a click attaches a new tab id.
+# Only counts are reported: tab ids and URLs are never printed.
+REATTACHED_TAB = re.compile(r'Successfully re-attached tab:\s*(\d+)')
+ATTACHED_TAB = re.compile(r'Debugger attached successfully to tab:\s*(\d+)')
+
+
+def attachment_counts(text):
+    """Return (stale re-attached, newly attached) tab counts since the latest extension connect."""
+    start = max((match.end() for match in re.finditer(r'Extension connected \(', text)), default=0)
+    reattached = set(REATTACHED_TAB.findall(text[start:]))
+    return len(reattached), len(set(ATTACHED_TAB.findall(text[start:])) - reattached)
+
+
+log_found, events, event_lines, log_text = read_log_events()
 last_extension_event = next(
     (event for event in reversed(events) if event in ('connected', 'disconnected')), None)
 last_connect = max((i for i, event in enumerate(events) if event == 'connected'), default=-1)
@@ -751,6 +769,8 @@ source = 'relay /version probe'
 local_extensions = []
 if not relay_version:
     verdict = 'relay-unresponsive' if port_open() else 'relay-down'
+    if verdict == 'relay-down' and package_cache == 'missing':
+        verdict = 'relay-down (pinned package not cached)'
 elif expected_version and relay_version != expected_version:
     verdict = 'relay-version-mismatch'
 else:
@@ -779,7 +799,7 @@ else:
         verdict = 'extension-state-unknown'
 
 print(f'   Relay extension state: {verdict} (source: {source})')
-if verdict != 'relay-down':
+if not verdict.startswith('relay-down'):
     listeners = port_listeners()
     print(f"   Port {port} listener(s): {', '.join(listeners) if listeners else 'not identified (lsof unavailable or no permission)'}")
 if local_extensions:
@@ -794,9 +814,18 @@ if log_found:
           f"{counts['token-rejected']} token rejection(s); last extension event: {last_extension_event or 'none'}")
     for line in event_lines[-5:]:
         print(f'     | {line}')
+    stale_tabs, fresh_tabs = attachment_counts(log_text)
+    print(f'   Tab attachments since last extension connect: {stale_tabs} stale-reattached '
+          f'(approved in an earlier session), {fresh_tabs} newly attached; '
+          'focused-tab match: unverified (the extension does not report its focused tab)')
 else:
     print('   Relay log: not found (no relay has run for this user, or PLAYWRITER_LOG_FILE_PATH differs)')
+    stale_tabs = fresh_tabs = 0
 print(f'   Guidance: {GUIDANCE[verdict]}')
+if stale_tabs and not fresh_tabs:
+    print('   Stale re-attach: tabs re-attached at connect are never a current approval. Keep waiting for a new '
+          'click on the intended tab; the user can detach a stale tab by clicking its Playwriter icon or '
+          'removing it from the playwriter tab group.')
 PYEOF
 	return 0
 }
@@ -833,7 +862,17 @@ fi
 
 if command -v "$CLI_CMD" &>/dev/null; then
 	echo -e "   ${GREEN}✓ Command found: $(which "$CLI_CMD")${NC}"
-	INSTALLED_VERSION=$("$CLI_CMD" --version 2>/dev/null | head -1 || echo 'unknown')
+	# Capture full output first: piping to head -1 can SIGPIPE the CLI (some
+	# print help after the version) and trigger the fallback under pipefail.
+	_version_output=$("$CLI_CMD" --version 2>/dev/null || true)
+	_version_line="${_version_output%%$'\n'*}"
+	if [[ "$_version_line" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+		INSTALLED_VERSION="${BASH_REMATCH[1]}"
+	elif [[ -n "$_version_line" ]]; then
+		INSTALLED_VERSION="$_version_line"
+	else
+		INSTALLED_VERSION="unknown"
+	fi
 	echo "   PATH version: $INSTALLED_VERSION"
 else
 	if [[ "$MCP_NAME" == "$PLAYWRIGHT_MCP_NAME" || "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" ]]; then
@@ -848,6 +887,7 @@ fi
 _configured_version_found=0
 _playwriter_relay_port=19988
 _playwriter_configured_version="unknown"
+_playwriter_runner="npx"
 for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do
 	_diag_rt="${_diag_entry%%"${MCP_CONFIG_SEPARATOR}"*}"
 	CONFIG_FILE="${_diag_entry#*"${MCP_CONFIG_SEPARATOR}"}"
@@ -869,6 +909,7 @@ for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do
 	if [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" && -n "$_configured_relay_port" ]]; then
 		_playwriter_relay_port="$_configured_relay_port"
 		_playwriter_configured_version="$_configured_version"
+		_playwriter_runner="$_configured_executable"
 	fi
 	echo -e "   ${GREEN}✓ Configured command in ${_diag_name}: ${_configured_executable}${NC}"
 	echo "   Configured version: $_configured_version"
@@ -898,7 +939,13 @@ if [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" ]]; then
 	if [[ "$_expected_relay_version" == "unknown" ]]; then
 		_expected_relay_version=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import mcp_config; print(mcp_config.PLAYWRITER_MCP_PACKAGE.split("@", 1)[1])' "${SCRIPT_DIR}/lib" 2>/dev/null) || _expected_relay_version=""
 	fi
-	_playwriter_extension_diagnosis "$_playwriter_relay_port" "$_relay_version" "$_expected_relay_version" ||
+	# GH#35697: reuse the launcher's own cache probe for the configured runner
+	# (cached|missing|unknown; runners other than npx report unknown).
+	_package_cache_state="unknown"
+	if [[ -n "$_expected_relay_version" ]] && command -v node >/dev/null 2>&1; then
+		_package_cache_state=$(node --input-type=module -e 'const [module, runner, version] = process.argv.slice(1); const { pathToFileURL } = await import("node:url"); const { pinnedPackageCached } = await import(pathToFileURL(module).href); const cached = pinnedPackageCached([runner, "playwriter@" + version], { name: "playwriter", version }); console.log(cached === null ? "unknown" : cached ? "cached" : "missing");' "${SCRIPT_DIR}/playwriter-package-cache.mjs" "$_playwriter_runner" "$_expected_relay_version" 2>/dev/null) || _package_cache_state="unknown"
+	fi
+	_playwriter_extension_diagnosis "$_playwriter_relay_port" "$_relay_version" "$_expected_relay_version" "$_package_cache_state" ||
 		echo "   Relay extension state: diagnostic error (python3 failed)"
 fi
 

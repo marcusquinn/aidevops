@@ -602,6 +602,8 @@ _gh_pr_checks_exact_aggregate() {
 				| (if .status == "COMPLETED" then (.conclusion // "") else (.status // "") end) as $state
 				| {
 					_dedup_key: ("check\u0000" + .name + "\u0000" + $workflow + "\u0000" + $event),
+					# IDs retain creation order even when a queued run has no startedAt.
+					_sort_id: (.databaseId // 0),
 					_sort_at: (.startedAt // ""),
 					isRequired: .isRequired,
 					name: .name,
@@ -616,7 +618,7 @@ _gh_pr_checks_exact_aggregate() {
 				}
 			else error("unsupported check context") end
 		)
-		| sort_by(._sort_at) | reverse
+		| sort_by(._sort_id // 0, ._sort_at) | reverse
 		| reduce .[] as $item (
 			{seen: {}, items: []};
 			if .seen[$item._dedup_key] then .
@@ -624,7 +626,7 @@ _gh_pr_checks_exact_aggregate() {
 		)
 		| .items
 		| if $mode == $required_mode then map(select(.isRequired == true)) else . end
-		| map(del(._dedup_key, ._sort_at, .isRequired))
+		| map(del(._dedup_key, ._sort_id, ._sort_at, .isRequired))
 	' "$pages_file" 2>/dev/null
 	return $?
 }
@@ -697,7 +699,7 @@ _gh_pr_checks_exact_query() {
 											isRequired(pullRequestId: $id)
 										}
 										... on CheckRun {
-											name status conclusion startedAt completedAt detailsUrl
+											databaseId name status conclusion startedAt completedAt detailsUrl
 											checkSuite { workflowRun { event workflow { name } } }
 											isRequired(pullRequestId: $id)
 										}

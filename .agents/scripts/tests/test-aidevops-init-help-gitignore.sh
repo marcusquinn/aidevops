@@ -118,6 +118,51 @@ test_existing_gitignore_is_preserved() {
 	return 0
 }
 
+test_starter_core_gitignore_is_unchanged() {
+	local layout repo exclude before after entry
+	for layout in checkout worktree; do
+		repo="$TEST_ROOT/starter-$layout"
+		if [[ "$layout" == "worktree" ]]; then
+			# Reuse local objects without committing fixtures or checking out the repo.
+			git clone --quiet --bare --shared "$REPO_ROOT" "$repo.git"
+			git --git-dir="$repo.git" worktree add --quiet --detach --no-checkout "$repo" HEAD
+		else
+			git init --quiet "$repo"
+		fi
+		mkdir -p "$repo/scripts"
+		printf '# Starter core files\n.gitignore\n' >"$repo/scripts/core-files.txt"
+		printf '# Starter runtime state\n.agents/loop-state/\nnode_modules/\n' >"$repo/.gitignore"
+		before=$(cksum "$repo/.gitignore")
+		_init_update_gitignore "$repo" true
+		assert_equal "$before" "$(cksum "$repo/.gitignore")" "$layout core .gitignore remains byte-identical"
+		exclude=$(git -C "$repo" rev-parse --git-path info/exclude)
+		[[ "$exclude" == /* ]] || exclude="$repo/$exclude"
+		for entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/" ".agents/commands" ".windsurf/" ".aidevops.json" ".env" ".env.*" "*.pem" "*.key" "*.p12" "*.pfx" "credentials.json" ".beads"; do
+			assert_file_count 1 "$entry" "$exclude" "$layout info/exclude contains $entry once"
+			assert_equal 0 "$(git -C "$repo" check-ignore --no-index -q -- "$entry"; printf '%s' "$?")" "$layout effectively ignores $entry"
+		done
+		assert_file_count 0 ".agents" "$exclude" "$layout does not ignore committed project agents"
+		# Existing local rules are user-owned, not legacy .gitignore scaffolding.
+		printf '.agents\n.agent\npersonal/\n' >>"$exclude"
+		before=$(cksum "$exclude")
+		_init_update_gitignore "$repo" true
+		after=$(cksum "$exclude")
+		assert_equal "$before" "$after" "$layout local excludes rerun is byte-stable"
+		for entry in ".agents" ".agent" "personal/"; do
+			assert_file_count 1 "$entry" "$exclude" "$layout preserves existing local $entry rule"
+		done
+		assert_equal 0 "$(git -C "$repo" check-ignore --no-index -q .agents/private.txt; printf '%s' "$?")" "$layout keeps personal agent files ignored"
+		# A core sync can replace .gitignore without removing the local excludes.
+		printf '# Updated starter\nnode_modules/\n' >"$repo/.gitignore"
+		assert_equal 0 "$(git -C "$repo" check-ignore --no-index -q .agents/tmp/run.json; printf '%s' "$?")" "$layout exclusions survive replacing core .gitignore"
+		# A list that does not manage .gitignore must retain ordinary behavior.
+		printf '# .gitignore\nscripts/\n' >"$repo/scripts/core-files.txt"
+		_init_update_gitignore "$repo" false
+		assert_file_count 1 ".agents/tmp/" "$repo/.gitignore" "$layout commented-out core entry does not reroute ignores"
+	done
+	return 0
+}
+
 # GH#33345: every slash command recommended by the init summary must resolve
 # through the documented command contract (scripts/commands, main-agent
 # commands, or workflows fallback); legacy /create-prd and /feature did not.
@@ -159,6 +204,7 @@ main() {
 	test_help_outside_repository
 	test_missing_gitignore_is_created
 	test_existing_gitignore_is_preserved
+	test_starter_core_gitignore_is_unchanged
 	test_summary_recommends_resolvable_commands
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1

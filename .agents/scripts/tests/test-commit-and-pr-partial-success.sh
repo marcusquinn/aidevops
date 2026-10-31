@@ -126,6 +126,15 @@ eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_reconcile_recovered_pr_metadata() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_read_pr_metadata_json() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_merge_existing_pr_body() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_inherit_pr_runtime_metadata() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
 # Extract origin reconciliation helpers used by _create_pr
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_verify_pr_origin_label() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
@@ -280,6 +289,10 @@ GH_APPEND_GENERATED_METADATA=0
 # Control variables for direct origin-label readback tests.
 ORIGIN_API_FAIL=0
 ORIGIN_API_LABELS='["origin:worker"]'
+PR_READ_OVERRIDE=0
+PR_READ_OUTPUT=""
+PR_FAIL_READBACK=0
+PR_EDIT_CALLS=0
 
 # Stub: gh — handles the gh api call for MERGE_SUMMARY check, plus pr comment
 gh() {
@@ -287,10 +300,15 @@ gh() {
 	# Handle: gh api repos/.../issues/.../comments --jq '...'
 	if [[ "${1:-}" == "api" ]]; then
 		if [[ "$*" == *"repos/owner/repo/pulls/999"* ]]; then
-			if [[ "$*" == *".title // empty"* ]]; then
+			if [[ "$PR_READ_OVERRIDE" -eq 1 || ( "$PR_FAIL_READBACK" -eq 1 && "$PR_EDIT_CALLS" -gt 0 ) ]]; then
+				printf '%s' "$PR_READ_OUTPUT"
+			elif [[ "$*" == *".title // empty"* ]]; then
 				printf '%s\n' "$REMOTE_PR_TITLE"
-			else
+			elif [[ "$*" == *"--jq"* ]]; then
 				printf '%s\n' "$REMOTE_PR_BODY"
+			else
+				jq -cn --arg title "$REMOTE_PR_TITLE" --arg body "$REMOTE_PR_BODY" \
+					'{title: $title, body: (if $body == "" then null else $body end)}'
 			fi
 			return 0
 		fi
@@ -340,6 +358,7 @@ gh_pr_edit_safe() {
 	local title=""
 	local body_file=""
 	printf 'gh_pr_edit_safe %s\n' "$*" >>"$STUB_LOG"
+	PR_EDIT_CALLS=$((PR_EDIT_CALLS + 1))
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--title)
@@ -914,6 +933,145 @@ else
 	fail "post failure: commit-and-pr propagates merge-summary failure"
 fi
 GH_PR_COMMENT_FAIL=0
+
+# GH#35990: exercise the real reconcile write/readback path, not just text matching.
+# GH#36270: an exit-0 read is not authoritative without a validated JSON object.
+for pr_read_output in '' 'not json' '{}' '{"title":"PR"}' '{"body":null}' '{"title":4,"body":""}' '{"title":"PR","body":false}' '[]' '{"title":"PR","body":null} {}'; do
+	REMOTE_PR_TITLE="curated title"
+	REMOTE_PR_BODY="Curated metadata"
+	PR_EDIT_CALLS=0
+	PR_READ_OVERRIDE=1
+	PR_READ_OUTPUT="$pr_read_output"
+	read_rc=0
+	_reconcile_recovered_pr_metadata 999 owner/repo 'new title' 'Generated body' || read_rc=$?
+	if [[ "$read_rc" -eq 1 && "$PR_EDIT_CALLS" -eq 0 && "$REMOTE_PR_BODY" == "Curated metadata" ]]; then
+		pass "untrusted recovery read fails closed: ${pr_read_output:-empty stdout}"
+	else
+		fail "untrusted recovery read fails closed: ${pr_read_output:-empty stdout}" "rc=${read_rc}; edits=${PR_EDIT_CALLS}"
+	fi
+done
+PR_READ_OVERRIDE=0
+for pr_read_output in '' 'not json'; do
+	REMOTE_PR_TITLE="old title"
+	REMOTE_PR_BODY=""
+	PR_EDIT_CALLS=0
+	PR_FAIL_READBACK=1
+	PR_READ_OUTPUT="$pr_read_output"
+	read_rc=0
+	_reconcile_recovered_pr_metadata 999 owner/repo 'new title' 'Generated body' || read_rc=$?
+	if [[ "$read_rc" -eq 1 && "$PR_EDIT_CALLS" -eq 1 ]]; then
+		pass "untrusted recovery readback rejects reconciliation success: ${pr_read_output:-empty stdout}"
+	else
+		fail "untrusted recovery readback rejects reconciliation success" "rc=${read_rc}; edits=${PR_EDIT_CALLS}"
+	fi
+done
+PR_FAIL_READBACK=0
+REMOTE_PR_BODY=""
+_reconcile_recovered_pr_metadata 999 owner/repo 'new title' 'Generated body'
+if [[ "$REMOTE_PR_BODY" == 'Generated body' ]]; then
+	pass "null recovery body accepts generated metadata"
+else
+	fail "null recovery body accepts generated metadata"
+fi
+
+REMOTE_PR_TITLE="curated title"
+REMOTE_PR_BODY=$'## Summary\n\nCurated summary\n\n## Files Changed\n\nold.sh\n\n## Runtime Testing\n\n- **Risk level:** Medium\n- **Verification:** runtime-verified — exercised real CLI\n\n## Decisions\n\nKeep compatibility\n\nResolves #42\n\n<!-- aidevops:sig -->\nexisting footer'
+curated_body="$REMOTE_PR_BODY"
+generated_body=$'## Summary\n\nReplacement summary\n\n## Files Changed\n\nnew.sh\n\n## Decisions\n\nNew decision\n\n## Runtime Testing\n\n- **Risk level:** Low\n- **Verification:** self-assessed — new evidence\n\nResolves #42\n\n<!-- aidevops:sig -->\nnew footer'
+pr_metadata_overrides=""
+preserve_rc=0
+_reconcile_recovered_pr_metadata "999" "owner/repo" "updated title" "$generated_body" || preserve_rc=$?
+expected_body="${curated_body/old.sh/new.sh}"
+if [[ "$preserve_rc" -eq 0 && "$REMOTE_PR_BODY" == "$expected_body" ]]; then
+	pass "continuation: preserves curated sections and footer while refreshing files"
+else
+	fail "continuation: preserves curated sections and footer while refreshing files"
+fi
+
+runtime_risk="" testing_level="" summary_testing=""
+_inherit_pr_runtime_metadata "999" "owner/repo"
+if [[ "$runtime_risk" == "Medium" && "$testing_level" == "runtime-verified" && "$summary_testing" == "exercised real CLI" ]]; then
+	pass "continuation: inherits omitted runtime metadata before validation"
+else
+	fail "continuation: inherits omitted runtime metadata before validation"
+fi
+
+pr_metadata_overrides=" summary"
+_reconcile_recovered_pr_metadata "999" "owner/repo" "updated title" "$generated_body"
+expected_body="${expected_body/Curated summary/Replacement summary}"
+if [[ "$REMOTE_PR_BODY" == "$expected_body" ]]; then
+	pass "explicit summary: replaces only Summary"
+else
+	fail "explicit summary: replaces only Summary"
+fi
+
+pr_metadata_overrides=" decisions risk-level testing-level testing"
+_reconcile_recovered_pr_metadata "999" "owner/repo" "updated title" "$generated_body"
+expected_body="${expected_body/Keep compatibility/New decision}"
+expected_body="${expected_body/Medium/Low}"
+expected_body="${expected_body/runtime-verified — exercised real CLI/self-assessed — new evidence}"
+if [[ "$REMOTE_PR_BODY" == "$expected_body" ]]; then
+	pass "explicit metadata: updates decisions and runtime fields without losing footer"
+else
+	fail "explicit metadata: updates decisions and runtime fields without losing footer"
+fi
+
+runtime_risk="high" testing_level="runtime-verified" summary_testing="explicit evidence"
+_inherit_pr_runtime_metadata "999" "owner/repo"
+if [[ "$runtime_risk" == "high" && "$testing_level" == "runtime-verified" && "$summary_testing" == "explicit evidence" ]]; then
+	pass "explicit runtime arguments take precedence over inherited evidence"
+else
+	fail "explicit runtime arguments take precedence over inherited evidence"
+fi
+
+# Assigned review regressions: multiline fields, curated separators, empty
+# overrides, and independently missing footer components.
+pr_metadata_overrides=""
+REMOTE_PR_BODY=$'## Runtime Testing\n\n- **Risk level:** Medium\n- **Verification:** runtime-verified — \nfirst command\nsecond command\n\n- **Notes:** not evidence\n\nResolves #42\n\n<!-- aidevops:sig -->\nfooter'
+_inherit_pr_runtime_metadata "999" "owner/repo"
+if [[ "$testing_level" == "runtime-verified" && "$summary_testing" == $'first command\nsecond command' ]]; then
+	pass "multiline evidence: inherits following-line evidence up to next metadata field"
+else
+	fail "multiline evidence: inherits following-line evidence up to next metadata field"
+fi
+REMOTE_PR_BODY=$'## Runtime Testing\n\n- **Risk level:** Medium\n- **Verification:** runtime-verified — first command\nsecond command\n\nResolves #42\n\n<!-- aidevops:sig -->\nfooter'
+_inherit_pr_runtime_metadata "999" "owner/repo"
+if [[ "$summary_testing" == $'first command\nsecond command' ]]; then
+	pass "multiline evidence: excludes closing reference and signature"
+else
+	fail "multiline evidence: excludes closing reference and signature"
+fi
+merged_body=$(_merge_existing_pr_body "$REMOTE_PR_BODY" "$generated_body" "testing")
+if [[ "$merged_body" == *"self-assessed — new evidence"* && "$merged_body" != *"second command"* && "$merged_body" == *"Resolves #42"* ]]; then
+	pass "explicit verification: replaces complete multiline evidence"
+else
+	fail "explicit verification: replaces complete multiline evidence"
+fi
+separator_body="${curated_body/Curated summary/$'Curated summary\n\n---\n\nOld trailing summary'}"
+merged_body=$(_merge_existing_pr_body "$separator_body" "$generated_body" "summary")
+separator_expected="${curated_body/Curated summary/Replacement summary}"
+separator_expected="${separator_expected/old.sh/new.sh}"
+if [[ "$merged_body" == "$separator_expected" ]]; then
+	pass "separator summary: replaces all curated text across Markdown separator"
+else
+	fail "separator summary: replaces all curated text across Markdown separator"
+fi
+without_decisions="${generated_body/$'## Decisions\n\nNew decision\n\n'/}"
+merged_body=$(_merge_existing_pr_body "$curated_body" "$without_decisions" "decisions")
+if [[ "$merged_body" != *"## Decisions"* && "$merged_body" != *"Keep compatibility"* && "$merged_body" == *"existing footer" ]]; then
+	pass "empty Decisions override: removes section without losing footer"
+else
+	fail "empty Decisions override: removes section without losing footer"
+fi
+for footer_body in "stale body" $'stale body\n\nResolves #42' $'stale body\n\n<!-- aidevops:sig -->\nexisting footer'; do
+	merged_body=$(_merge_existing_pr_body "$footer_body" "$generated_body" "")
+	remerged_body=$(_merge_existing_pr_body "$merged_body" "$generated_body" "")
+	if [[ "$merged_body" == "stale body"* && "$merged_body" == *"Resolves #42"* && "$merged_body" == *"<!-- aidevops:sig -->"* && "$merged_body" == "$remerged_body" ]]; then
+		pass "partial footer recovery: closing reference and signature are idempotent"
+	else
+		fail "partial footer recovery: closing reference and signature are idempotent"
+	fi
+done
 
 # =============================================================================
 # Summary

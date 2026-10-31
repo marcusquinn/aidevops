@@ -38,6 +38,8 @@ target. The baseline blocks destructive calls, key management, partner/group
 administration, durable-secret output, inline secrets, and arbitrary local-file
 access. Do not infer tool names or parameters: inspect the connected schema first.
 
+Bucket migration to or from another S3-compatible account uses `object-storage-helper.sh migrate-plan|migrate-run|migrate-retire-source <src-account> <dst-account>` (rclone >= 1.70, resumable, verified with `rclone check --one-way`; policies and ACLs are not copied). Source retirement is the only delete exception: one bucket per call, `VERIFIED` status, exact `retire:<src>:<dst>:<bucket>` token, and an immediate re-check before purge.
+
 For backup verification, use the bounded helper rather than a broad MCP listing:
 
 ```bash

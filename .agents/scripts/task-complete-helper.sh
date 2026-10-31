@@ -883,9 +883,39 @@ task_issue_number() {
 	return 0
 }
 
+# Refuse before any write when the target is a canonical (non-linked) checkout:
+# the canonical Git guard blocks `git add`/`commit` there, which would leave
+# TODO.md dirty. Set AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL=1 for disposable
+# fixture repositories only.
+_guard_not_canonical_checkout() {
+	local repo_path="$1"
+	local git_dir=""
+	local common_dir=""
+
+	[[ "${AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL:-0}" == "1" ]] && return 0
+	if ! git_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-dir); then
+		log_error "Cannot resolve Git directory for $repo_path; refusing to edit TODO.md"
+		return 1
+	fi
+	if ! common_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir); then
+		log_error "Cannot resolve Git common directory for $repo_path; refusing to edit TODO.md"
+		return 1
+	fi
+	if [[ -n "$git_dir" && "$git_dir" == "$common_dir" ]]; then
+		log_error "Refusing to edit TODO.md in a canonical checkout: $repo_path"
+		log_info "Create a linked worktree (worktree-helper.sh add) and rerun with --repo-path <worktree>, then open a PR"
+		return 1
+	fi
+	return 0
+}
+
 # Main
 main() {
 	if ! parse_args "$@"; then
+		return 1
+	fi
+
+	if ! _guard_not_canonical_checkout "$REPO_PATH"; then
 		return 1
 	fi
 

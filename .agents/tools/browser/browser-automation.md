@@ -15,9 +15,26 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
+## Playwright is not Playwriter
+
+The names differ by a few letters, and models tend to auto-correct one into the other. Treat them as different tools (GH#35617):
+
+| Name | What it is | When |
+|------|------------|------|
+| **Playwright** (`@playwright/mcp`, `playwright`, `playwright-cli`, `@playwright` agent) | Microsoft's browser automation, isolated browser | **Default for all browser work** |
+| **Playwriter** (`playwriter@0.9.0`, `@playwriter` agent) | Third-party extension relay into the user's open tabs | **Only when the user's own words say "Playwriter"** |
+
+Never select, suggest, or delegate to Playwriter because a request says "Playwright", "browser" or "test in the browser", and never "correct" the user's spelling. If unsure which they meant, use Playwright.
+
 ## Decision Tree
 
-Default Playwright automation to a fresh, isolated **headless Brave** browser when installed (bundled Chromium otherwise), including authenticated flows when credentials or an approved session can be provided without using the user's profile. Do not ask for an existing tab just because a page requires login. Use a separate headed browser only when the user must see or assist with the flow (for example, a passkey, MFA, or visual guidance), or when the task itself requires a visible browser. Microsoft's Playwright Extension is an interactive-only exception when an available user explicitly needs selected tabs from their existing browser. Prefer ARIA snapshots over screenshots (50-200 tokens vs ~1K); see `playwright.md` for runtime overrides.
+Default Playwright automation to a fresh, isolated **headless Brave** browser when installed (bundled Chromium otherwise), including authenticated flows when credentials or an approved session can be provided without using the user's profile. Do not ask for an existing tab just because a page requires login. Playwright has three window modes; choose the least visible one that works:
+
+- **headless** (default): no window.
+- **headed-hidden**: a real headed browser with every window minimised, for sites that challenge or render differently in headless mode while the user keeps working. On macOS, focus returns to the previous app when the browser takes it.
+- **headed**: a visible separate window, only when the user must see or assist with the flow (for example, a passkey, MFA, or visual guidance), or when the task itself requires a visible browser.
+
+Selection details, including `AIDEVOPS_PLAYWRIGHT_HEADED`, are in `playwright.md` "Window modes". Microsoft's Playwright Extension is an interactive-only exception when an available user explicitly needs selected tabs from their existing browser. Prefer ARIA snapshots over screenshots (50-200 tokens vs ~1K); see `playwright.md` for runtime overrides.
 
 For repeatable browser operations or web data mining that should learn, optimize,
 persist profile state, or graduate into reusable private workflows, start with
@@ -168,4 +185,4 @@ The same contract applies to Stagehand's adaptive actions; it changes neither ro
 
 <!-- AI-CONTEXT-END -->
 
-Per-tool docs: `playwright.md` · `playwright-cli.md` · `chromium-debug-use.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md` · `stagehand.md`. Legacy explicit-only compatibility: `playwriter.md`. Ethics: respect ToS, rate limit (2-5s delays), no spam, legitimate use only, no personal data without consent.
+Per-tool docs: `playwright.md` · `playwright-cli.md` · `chromium-debug-use.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md` · `stagehand.md`. Legacy explicit-only compatibility: `playwriter.md` (Playwriter, not Playwright; only when the user names it). Ethics: respect ToS, rate limit (2-5s delays), no spam, legitimate use only, no personal data without consent.

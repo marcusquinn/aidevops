@@ -39,7 +39,7 @@ print_result() {
 
 _record_stage() {
 	local stage_name="$1"
-	if [[ "$stage_name" == "coderabbit" && "${TEST_STAGE_SLEEP_ONCE:-0}" =~ ^[0-9]+$ && "${TEST_STAGE_SLEEP_ONCE:-0}" -gt 0 ]]; then
+	if [[ "$stage_name" == "post_merge" && "${TEST_STAGE_SLEEP_ONCE:-0}" =~ ^[0-9]+$ && "${TEST_STAGE_SLEEP_ONCE:-0}" -gt 0 ]]; then
 		sleep "$TEST_STAGE_SLEEP_ONCE"
 		TEST_STAGE_SLEEP_ONCE=0
 	fi
@@ -47,7 +47,6 @@ _record_stage() {
 	return 0
 }
 
-run_daily_codebase_review() { _record_stage "coderabbit"; return 0; }
 _run_post_merge_review_scanner() { _record_stage "post_merge"; return 0; }
 _run_pr_review_thread_response_scanner() { _record_stage "pr_review_thread_response"; return 0; }
 _run_auto_decomposer_scanner() { _record_stage "auto_decomposer"; return 0; }
@@ -74,7 +73,6 @@ run_stage_with_timeout() {
 }
 
 install_stage_stubs() {
-	run_daily_codebase_review() { _record_stage "coderabbit"; return 0; }
 	_run_post_merge_review_scanner() { _record_stage "post_merge"; return 0; }
 	_run_pr_review_thread_response_scanner() { _record_stage "pr_review_thread_response"; return 0; }
 	_run_auto_decomposer_scanner() { _record_stage "auto_decomposer"; return 0; }
@@ -169,7 +167,7 @@ test_sync_housekeeping_runs_all_stages() {
 
 	local failures=0 failmsg=""
 	local expected
-	for expected in coderabbit post_merge pr_review_thread_response auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
+	for expected in post_merge pr_review_thread_response auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
 		if ! grep -q "^${expected}$" "$STAGE_LOG" 2>/dev/null; then
 			failures=$((failures + 1))
 			failmsg="${failmsg} | missing ${expected}"
@@ -332,6 +330,14 @@ test_housekeeping_blocker_refresh_catchup() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | stale cache order: ${got}"
 	fi
+	# Synchronous Linux housekeeping shares the cycle deadline. Optional scans
+	# must not consume that deadline before ownership and stale-cache recovery.
+	local recovery_order=""
+	recovery_order=$(grep -E '^(ownership_reconcile|dep_graph:1|blocked_refresh|brief_hold_release|post_merge)$' "$STAGE_LOG" | tr '\n' ' ')
+	if [[ "$recovery_order" != "ownership_reconcile dep_graph:1 blocked_refresh brief_hold_release post_merge " ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | optional scan precedes recovery: ${recovery_order}"
+	fi
 
 	: >"$STAGE_LOG"
 	touch "$DEP_GRAPH_CACHE_FILE"
@@ -379,20 +385,20 @@ test_housekeeping_resumes_after_interrupted_run() {
 	now=$(date +%s)
 	mkdir -p "$lockdir"
 	_dead_pid >"${lockdir}/pid"
-	printf 'coderabbit_review=%s\npost_merge_scanner=%s\npr_review_thread_response=%s\n' \
+	printf 'post_merge_scanner=%s\npr_review_thread_response=%s\nauto_decomposer_scanner=%s\n' \
 		"$((now - 60))" "$((now - 30))" "$((now - 4000))" >"$state_file"
 
 	_pulse_run_post_dispatch_housekeeping_stages 7
 
 	local skipped
-	for skipped in coderabbit post_merge; do
+	for skipped in post_merge pr_review_thread_response; do
 		if grep -q "^${skipped}$" "$STAGE_LOG" 2>/dev/null; then
 			failures=$((failures + 1))
 			failmsg="${failmsg} | fresh completed stage ${skipped} re-ran"
 		fi
 	done
 	local expected
-	for expected in pr_review_thread_response auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
+	for expected in auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
 		if ! grep -q "^${expected}$" "$STAGE_LOG" 2>/dev/null; then
 			failures=$((failures + 1))
 			failmsg="${failmsg} | incomplete or stale stage ${expected} skipped"
@@ -402,7 +408,7 @@ test_housekeeping_resumes_after_interrupted_run() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | stale lock not reclaimed"
 	fi
-	if ! grep -q 'resume — skipping coderabbit_review' "$LOGFILE" 2>/dev/null; then
+	if ! grep -q 'resume — skipping post_merge_scanner' "$LOGFILE" 2>/dev/null; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | resume skip log missing"
 	fi
@@ -413,11 +419,11 @@ test_housekeeping_resumes_after_interrupted_run() {
 
 	# Resume disabled: every stage runs despite fresh state.
 	: >"$STAGE_LOG"
-	printf 'coderabbit_review=%s\n' "$now" >"$state_file"
+	printf 'post_merge_scanner=%s\n' "$now" >"$state_file"
 	AIDEVOPS_PULSE_HOUSEKEEPING_RESUME_WINDOW_S=0 _pulse_run_post_dispatch_housekeeping_stages 7
-	if ! grep -q '^coderabbit$' "$STAGE_LOG" 2>/dev/null; then
+	if ! grep -q '^post_merge$' "$STAGE_LOG" 2>/dev/null; then
 		failures=$((failures + 1))
-		failmsg="${failmsg} | disabled resume skipped coderabbit"
+		failmsg="${failmsg} | disabled resume skipped post_merge"
 	fi
 
 	if [[ "$failures" -eq 0 ]]; then
@@ -468,7 +474,7 @@ test_async_housekeeping_logs_termination() {
 	local failures=0 failmsg="" child_pid="" attempts=0
 	_pulse_start_post_dispatch_housekeeping 7
 	child_pid=$(sed -n 's/.*Async post-dispatch housekeeping: launched pid=\([0-9][0-9]*\).*/\1/p' "$LOGFILE" 2>/dev/null | tail -n 1)
-	while [[ "$attempts" -lt 20 ]] && ! grep -q '^optional:coderabbit_review:' "$STAGE_LOG" 2>/dev/null; do
+	while [[ "$attempts" -lt 20 ]] && ! grep -q '^optional:post_merge_scanner:' "$STAGE_LOG" 2>/dev/null; do
 		sleep 0.25
 		attempts=$((attempts + 1))
 	done
@@ -480,7 +486,7 @@ test_async_housekeeping_logs_termination() {
 		sleep 1
 		attempts=$((attempts + 1))
 	done
-	if ! grep -q 'Async post-dispatch housekeeping: terminated by SIGTERM during coderabbit_review' "$LOGFILE" 2>/dev/null; then
+	if ! grep -q 'Async post-dispatch housekeeping: terminated by SIGTERM during post_merge_scanner' "$LOGFILE" 2>/dev/null; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | termination log missing: $(grep -o 'terminated by.*' "$LOGFILE" 2>/dev/null | tr '\n' ' ')"
 	fi
@@ -509,7 +515,7 @@ test_housekeeping_retries_incomplete_stages() {
 		_pulse_run_optional_stage_with_timeout() {
 			local stage_name="$1"
 			shift 2
-			if [[ "$stage_name" == "coderabbit_review" ]]; then
+			if [[ "$stage_name" == "post_merge_scanner" ]]; then
 				case "$mode" in
 				failure) return 1 ;;
 				timeout) return 124 ;;
@@ -521,23 +527,106 @@ test_housekeeping_retries_incomplete_stages() {
 		}
 		_pulse_run_post_dispatch_housekeeping_stages 7
 		[[ -f "$state_file" ]] || failures=$((failures + 1))
-		if grep -q '^coderabbit_review=' "$state_file" 2>/dev/null; then
+		if grep -q '^post_merge_scanner=' "$state_file" 2>/dev/null; then
 			failures=$((failures + 1))
 		fi
-		grep -q '^post_merge_scanner=' "$state_file" || failures=$((failures + 1))
+		grep -q '^pr_review_thread_response=' "$state_file" || failures=$((failures + 1))
 		if grep -q 'housekeeping: complete$' "$LOGFILE"; then
 			failures=$((failures + 1))
 		fi
 		: >"$STAGE_LOG"
 		install_stage_stubs
 		_pulse_run_post_dispatch_housekeeping_stages 7
-		grep -q '^coderabbit$' "$STAGE_LOG" || failures=$((failures + 1))
-		if grep -q '^post_merge$' "$STAGE_LOG"; then
+		grep -q '^post_merge$' "$STAGE_LOG" || failures=$((failures + 1))
+		if grep -q '^pr_review_thread_response$' "$STAGE_LOG"; then
 			failures=$((failures + 1))
 		fi
 		[[ ! -e "$state_file" ]] || failures=$((failures + 1))
 		print_result "housekeeping resumes ${mode} without repeating successful stages" "$failures"
 		teardown_test_env
+	done
+	return 0
+}
+
+# A no-op catch-up checkpoint must not suppress recovery when its cache ages
+# or disappears before an interrupted housekeeping run resumes.
+test_blocker_catchup_checkpoint_rechecks_cache() {
+	local cache_state
+	for cache_state in fresh stale missing; do
+		setup_test_env
+		local failures=0 state_file got="" expected="ownership_reconcile "
+		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/dep-graph-cache.json"
+		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+		state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
+		printf '{}\n' >"$DEP_GRAPH_CACHE_FILE"
+		_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
+			_pulse_run_blocker_refresh_catchup 7
+		grep -q '^blocker_refresh_catchup=' "$state_file" || failures=$((failures + 1))
+		[[ ! -s "$STAGE_LOG" ]] || failures=$((failures + 1))
+		case "$cache_state" in
+		stale) touch -t 202601010000 "$DEP_GRAPH_CACHE_FILE" ;;
+		missing) rm -f "$DEP_GRAPH_CACHE_FILE" ;;
+		esac
+		_pulse_run_post_dispatch_housekeeping_stages 7
+		got=$(_catchup_stages)
+		if [[ "$cache_state" != "fresh" ]]; then
+			expected="${expected}dep_graph:1 blocked_refresh brief_hold_release "
+		elif ! grep -q 'resume — skipping blocker_refresh_catchup' "$LOGFILE"; then
+			failures=$((failures + 1))
+		fi
+		[[ "$got" == "$expected" ]] || failures=$((failures + 1))
+		[[ ! -e "$state_file" ]] || failures=$((failures + 1))
+		print_result "blocker catch-up checkpoint rechecks ${cache_state} cache" "$failures" "$got"
+		teardown_test_env
+	done
+	return 0
+}
+
+# Rebuilding writes a fresh cache before recovery completes. Even with an old
+# successful checkpoint, failed/deferred/interrupted downstream work must retry.
+test_blocker_catchup_resumes_pending_recovery() {
+	local failed_stage mode
+	for failed_stage in refresh_blocked_status_from_graph release_repaired_brief_holds; do
+		for mode in failure deferred interrupted; do
+			setup_test_env
+			local failures=0 state_file pending_file got=""
+			local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/dep-graph-cache.json"
+			local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+			state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
+			pending_file="${state_file}.blocker-refresh-pending"
+			_pulse_housekeeping_mark_stage_done "blocker_refresh_catchup" "$state_file"
+			build_dependency_graph_cache() {
+				[[ -f "$pending_file" ]] || return 1
+				printf '{}\n' >"$DEP_GRAPH_CACHE_FILE"
+				return 0
+			}
+			_pulse_run_budget_priority_stage_with_timeout() {
+				local stage_name="$1"
+				shift 2
+				if [[ "$stage_name" == "$failed_stage" ]]; then
+					case "$mode" in
+					failure) return 1 ;;
+					deferred) _PULSE_BUDGET_STAGE_DEFERRED=1; return 0 ;;
+					interrupted) exit 143 ;;
+					esac
+				fi
+				"$@" || return 1
+				return 0
+			}
+			if ( _pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
+				_pulse_run_blocker_refresh_catchup 7 ); then
+				failures=$((failures + 1))
+			fi
+			[[ -f "$DEP_GRAPH_CACHE_FILE" && -f "$pending_file" ]] || failures=$((failures + 1))
+			: >"$STAGE_LOG"
+			install_stage_stubs
+			_pulse_run_post_dispatch_housekeeping_stages 7
+			got=$(_catchup_stages)
+			[[ "$got" == "ownership_reconcile dep_graph:1 blocked_refresh brief_hold_release " ]] || failures=$((failures + 1))
+			[[ ! -e "$pending_file" && ! -e "$state_file" ]] || failures=$((failures + 1))
+			print_result "catch-up retries ${mode} at ${failed_stage} with a fresh cache" "$failures" "$got"
+			teardown_test_env
+		done
 	done
 	return 0
 }
@@ -584,6 +673,8 @@ main() {
 	test_housekeeping_resumes_after_interrupted_run
 	test_housekeeping_signal_killed_stage_not_recorded
 	test_housekeeping_retries_incomplete_stages
+	test_blocker_catchup_checkpoint_rechecks_cache
+	test_blocker_catchup_resumes_pending_recovery
 	test_blocker_catchup_stops_after_failed_prerequisite
 	test_async_housekeeping_logs_termination
 

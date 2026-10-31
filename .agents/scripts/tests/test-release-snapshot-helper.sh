@@ -3,7 +3,8 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 set -euo pipefail
 
-PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# Include the interpreter's system-tool directory on non-FHS hosts (NixOS).
+PATH="${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../release-snapshot-helper.sh
@@ -116,6 +117,9 @@ gh() {
 		once) [[ "$count" != 1 ]] || { printf 'unexpected end of JSON input\n' >&2; return 1; } ;;
 		always) printf 'unexpected end of JSON input\n' >&2; return 1 ;;
 		auth) printf 'gh: Forbidden (HTTP 403)\n' >&2; return 1 ;;
+		network-once) [[ "$count" != 1 ]] || { printf '{partial'; printf '%s\n' "$NETWORK_ERROR" >&2; return 1; } ;;
+		network-always) printf '{partial'; printf '%s\n' "$NETWORK_ERROR" >&2; return 1 ;;
+		missing-native) printf '[aidevops] gh shim: native gh not found\nsecond line must not escape\n' >&2; return 127 ;;
 		esac
 	fi
 	_gh_orig "$@"
@@ -128,13 +132,18 @@ assert_reads() {
 	local want_status="$3"
 	local status=0
 	local count=0
+	local output_file="$TEST_ROOT/read-output"
 	rm -f "$READ_COUNT"
-	READ_FAULT="$fault" release_snapshot_sources test/repo main "$BASE" "$FIRST" >/dev/null 2>"$TEST_ROOT/read-err" || status=$?
+	READ_FAULT="$fault" release_snapshot_sources test/repo main "$BASE" "$FIRST" >"$output_file" 2>"$TEST_ROOT/read-err" || status=$?
 	read -r count <"$READ_COUNT"
 	[[ "$count" == "$want_count" && "$status" == "$want_status" ]] || {
 		printf 'FAIL: fault=%s count=%s status=%s\n' "$fault" "$count" "$status" >&2
 		exit 1
 	}
+	if [[ "$fault" == network-always && -s "$output_file" ]]; then
+		printf 'FAIL: fault=%s emitted stdout\n' "$fault" >&2
+		exit 1
+	fi
 	return 0
 }
 assert_reads once 2 0
@@ -146,6 +155,48 @@ grep -Fq "JSON decode error after 3 attempts" "$TEST_ROOT/read-err"
 RELEASE_SNAPSHOT_MAX_ATTEMPTS=bogus assert_reads always 8 1
 RELEASE_SNAPSHOT_MAX_ATTEMPTS=99 assert_reads always 8 1
 assert_reads auth 1 1
+grep -Fq 'not retryable): gh: Forbidden (HTTP 403)' "$TEST_ROOT/read-err"
+for NETWORK_ERROR in \
+	'error connecting to api.github.com' \
+	'dial tcp: lookup api.github.com: no such host' \
+	'dial tcp: i/o timeout' \
+	'read tcp: connection reset by peer' \
+	'net/http: TLS handshake timeout' \
+	'Get "https://api.github.com": EOF' \
+	'unexpected EOF' \
+	'context deadline exceeded (Client.Timeout exceeded while awaiting headers)' \
+	'dial tcp: connect: connection refused' \
+	'dial tcp: connect: network is unreachable' \
+	'lookup api.github.com: temporary failure in name resolution'; do
+	assert_reads network-once 2 0
+	grep -Fq 'network transport error; retrying' "$TEST_ROOT/read-err"
+done
+RELEASE_SNAPSHOT_MAX_ATTEMPTS=3 assert_reads network-always 3 1
+grep -Fq 'network transport error after 3 attempts' "$TEST_ROOT/read-err"
+for NETWORK_ERROR in 'gh: Unauthorized (HTTP 401)' 'gh: Not Found (HTTP 404)' \
+	'gh: Forbidden (HTTP 403): connection reset by peer' \
+	'tls: failed to verify certificate: x509: certificate has expired' \
+	'unknown failure'; do
+	assert_reads network-always 1 1
+	grep -Fq 'not retryable' "$TEST_ROOT/read-err"
+done
+assert_reads missing-native 1 1
+grep -Fq 'exit 127, attempt 1; not retryable): [aidevops] gh shim: native gh not found' "$TEST_ROOT/read-err"
+[[ "$(wc -l <"$TEST_ROOT/read-err")" -eq 1 ]]
+
+# The shared formatter must strip controls, redact sensitive context and bound
+# even a long first line; no subsequent stderr line is forwarded.
+fixture_token="gh"'p_fixture123'
+# Construct synthetic sensitive-looking values, never real local identifiers.
+printf -v fixture_path '/%s/%s/bin/gh' home fixture-user
+summary=$(_release_gh_read_diagnostic $'\e[31mgh: failure\e[0m\r\t '"$fixture_token $fixture_path"$' https://example.invalid/?secret=value\nsecond line')
+[[ "$summary" == 'gh: failure   [redacted-token] [redacted-path] [redacted-url]' ]]
+[[ "$(_release_gh_read_diagnostic 'gh: Authorization: Bearer fixture-value')" == 'gh: [redacted-credential]' ]]
+[[ "$(_release_gh_read_diagnostic '')" == 'no stderr diagnostic' ]]
+printf -v long_line '%0300d' 0
+summary=$(_release_gh_read_diagnostic "$long_line")
+[[ "${#summary}" -eq 240 && "$summary" == *... ]]
+printf 'PASS: exit 127 exposes only a sanitized, bounded first stderr line without retrying\n'
 unset -f gh
 eval "${_gh_real}"
 printf 'PASS: transient reads retry within the configured budget; auth failures fail immediately\n'

@@ -96,7 +96,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [ ] r047 Knowledge collector freshness — execute due read-only sources and emit content-free health repeat:cron(*/10 * * * *) ~2m run:scripts/knowledge-collector-routine.sh run
 - [ ] r-runtime-audit Runtime health audit — surface operational regressions invisible to the supervisor LLM (counter trends, process leaks, deploy mtime drift, log novelty, stuck pulse state) (t3072) repeat:cron(*/30 * * * *) ~2m run:scripts/runtime-health-audit-helper.sh --apply
 - [x] r-pulse-check Daily pulse/worker utilisation check — aggregate repos.json auto-dispatch queue, active capacity, provider/API budget, and file deduplicated self-improvement issues for high-confidence productivity gaps repeat:daily(@06:20) ~5m run:scripts/pulse-check-helper.sh apply
-- [x] r-php-cve-watch PHP CVE-2026-109618/109619 patch watch — read-only 2-hourly check of owner hosting PHP builds and app packages; private status in the agent workspace; disable once all hosts are patched repeat:cron(0 */2 * * *) timezone:UTC ~3m run:custom/scripts/r-php-cve-watch.sh
+- [ ] r-php-cve-watch PHP CVE-2026-109618/109619 patch watch — read-only 2-hourly check of owner hosting PHP builds and app packages; private status in the agent workspace; disabled 2026-10-29: all hosts patched repeat:cron(0 */2 * * *) timezone:UTC ~3m run:custom/scripts/r-php-cve-watch.sh
 
 ## Ready
 
@@ -110,6 +110,26 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
+
+- [x] t18798 fix(plugin): stop denying all compound shell commands in every session (v3.39.87 regression) #bug #priority:critical ref:GH#36017 assignee:marcusquinn started:2026-10-30 logged:2026-10-30 -> [todo/tasks/t18798-brief.md] pr:#36018 completed:2026-10-30
+
+- [x] t18796 fix(full-loop): treat non-markdown data files under todo/ as deliverables, not planning-only #bug #priority:high ref:GH#36002 assignee:marcusquinn started:2026-10-29 pr:#36003 logged:2026-10-29 -> [todo/tasks/t18796-brief.md] completed:2026-10-29
+
+- [x] t18794 Dispatch: minimize finished-attempt lifecycle comments to cut thread noise while keeping the audit trail #auto-dispatch #feat ref:GH#35993 logged:2026-10-29 -> [todo/tasks/t18794-brief.md] pr:#35995 completed:2026-10-29
+
+- [x] t18793 full-loop: implementation intent in maintainer repos finalises interactive draft PRs after verification #feat #interactive ref:GH#35991 assignee:marcusquinn started:2026-10-29 logged:2026-10-29 -> [todo/tasks/t18793-brief.md] pr:#35992 completed:2026-10-29
+
+- [x] t18787 Feedback routes close worker PRs while the worker dispatch lease is still live #bug #priority:high ref:GH#35939 logged:2026-10-29 -> [todo/tasks/t18787-brief.md] pr:#35941 completed:2026-10-29
+
+- [x] t18784 docs: hostinger.md: ImageMagick escalation outcome, CloudLinux changelog check, install dates, maintained OpenSSL 1.1.1w, WPVulnerability hidden = unchecked #documentation ref:GH#35914 logged:2026-10-29 -> [todo/tasks/t18784-brief.md] pr:#35916 completed:2026-10-29
+
+- [ ] t18783 OpenCode 2.x migration-readiness checks (V2 parity tracker) #feat #parent-task ref:GH#35902 logged:2026-10-29 -> [todo/tasks/t18783-brief.md]
+
+- [x] t18782 OpenCode V2: wire DB activity heartbeat and adapt V2 event shape for idle-gated archive #auto-dispatch #bug ref:GH#35898 pr:#35901 logged:2026-10-29 -> [todo/tasks/t18782-brief.md] completed:2026-10-29
+
+- [x] t18781 OpenCode sidebar Prompts shows command templates and timeline dialog closes on click #bug ref:GH#35890 logged:2026-10-29 -> [todo/tasks/t18781-brief.md] pr:#35891 completed:2026-10-29
+
+- [x] t18776 fix(release): stop recurring CodeRabbit CHANGELOG reference-definition blocks on release PRs #auto-dispatch #bug tier:simple ref:GH#35811 pr:#35815 logged:2026-10-28 -> [todo/tasks/t18776-brief.md] completed:2026-10-29
 
 - [x] t18766 Prepare multi-host Tabby/tmux implementation specification and sanitized prototype #docs #no-auto-dispatch logged:2026-10-23 completed:2026-10-23 verified:2026-10-23 -> [todo/plans/t18766-tabby-tmux-session-management.md]
 
@@ -1748,9 +1768,91 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18767 Make pulse worker admission RAM-only: remove CPU load, idle and core-count throttles #bug #priority:high ref:GH#35537 pr:#35541 completed:2026-10-23
 
+- [x] t18788 Pulse-merge regression suites drift unseen: repair harnesses and run them in Framework Validation #bug #interactive ref:GH#35943 assignee:marcusquinn started:2026-10-29 -> [todo/tasks/t18788-brief.md] pr:#35944 completed:2026-10-29
+
+- [x] t18799 fix(pulse): continue open worker drafts after draft-checkpoint, clean and completed releases #bug #priority:high ref:GH#36019 pr:#36023 completed:2026-10-30
+
+- [x] t18800 fix(pulse): restore stranded worker drafts blocked by pre-v3.39.89 release projections #bug #priority:high ref:GH#36028 pr:#36031 completed:2026-10-30
+
+- [x] t18801 fix(interactive-session): claim must not silently skip when REST core is exhausted #auto-dispatch #bug #priority:medium ref:GH#36036 pr:#36037 completed:2026-10-30
+
+- [x] t18803 fix(terminal-blocker): queue retry-only first observations so a trusted retry re-arms permission_required holds #bug #priority:high #interactive ref:GH#36044 assignee:marcusquinn started:2026-10-30 logged:2026-10-30 -> [todo/tasks/t18803-brief.md] pr:#36045 completed:2026-10-30
+
+- [x] t18802 fix(pulse): give each stale-sweep pass its own minimum share so draft-checkpoint and partial-continuation passes progress on large repos #bug #priority:high ref:GH#36041 pr:#36047 completed:2026-10-30
+
+- [-] t18804 perf(gh-api): attribute the ~49% of REST-core quota drain that no logged attempt explains #auto-dispatch #bug #priority:high ref:GH#36048 declined:2026-10-30
+
+- [x] t18805 fix(terminal-blocker): never hold status:blocked without recorded evidence #bug ref:GH#36058 pr:#36060 completed:2026-10-30
+
+- [x] t18806 fix(terminal-blocker): release pre-fix bare blocked holds on trusted retry or expired backoff #auto-dispatch #bug ref:GH#36061 pr:#36221 completed:2026-10-31
+
+- [x] t18807 fix(terminal-blocker): recovery must fall back to GraphQL instead of stalling while REST core is exhausted #auto-dispatch #bug ref:GH#36063 pr:#36065 completed:2026-10-30
+
+- [x] t18808 fix(pulse): re-arm aged checkpoint attention for untried runners; take over idle interactive PRs after 12h #bug ref:GH#36077 pr:#36079 completed:2026-10-30
+
+- [x] t18809 fix(pulse): link orphan origin:interactive PRs to a tracking issue so 12h handover can route them #auto-dispatch #bug ref:GH#36080 pr:#36093 completed:2026-10-30
+
+- [x] t18810 fix(tests): resolve git and ssh-keygen portably in OpenCode plugin tests #auto-dispatch #bug ref:GH#36081 pr:#36091 completed:2026-10-30
+
+- [x] t18811 fix(release): pre-edit regression test fails on macOS physical tmp path; widen preflight trigger #bug ref:GH#36087 pr:#36088 completed:2026-10-30
+
+- [x] t18812 fix(release): retry network-layer transport failures in release GitHub reads #auto-dispatch #bug ref:GH#36092 pr:#36097 completed:2026-10-30
+
+- [x] t18816 fix(pulse): enforce runner dispatch breakers on every launch path (early fill, post-label refill, --command dispatch) #bug #priority:high ref:GH#36122 pr:#36127 completed:2026-10-30
+
+- [x] t18817 fix(terminal-blocker): re-arm must not release holds with unresolved blocked-by dependencies #bug #priority:high ref:GH#36126 pr:#36129 completed:2026-10-30
+
+- [x] t18818 fix(pulse): defer parent dispatch while its consolidation child is in flight; runner-local preconditions are runner_capability_unmet #bug ref:GH#36133 pr:#36134 completed:2026-10-30
+
+- [x] t18821 fix(worker): transient GitHub read deferral during POST_PR_HANDOFF verification is routed as failure and escalates tier #bug ref:GH#36171 pr:#36176 completed:2026-10-31
+
+- [x] t18822 fix(pulse): rerun orphaned in_progress jobs on GitHub-hosted runners #bug #priority:high ref:GH#36177 pr:#36178 completed:2026-10-31
+
+- [x] t18827 fix(gh): pace REST admissions as time-to-reset divided by remaining quota #bug ref:GH#36199 pr:#36201 completed:2026-10-31
+
+- [x] t18823 fix(release): retry indeterminate repo-state authority instead of silently dropping CLAIM_RELEASED #bug ref:GH#36184 pr:#36191 completed:2026-10-31
+
+- [x] t18824 fix(pulse): recover abandoned worker-draft claims so stranded drafts are continued #auto-dispatch #bug ref:GH#36186 pr:#36197 completed:2026-10-31
+
+- [x] t18826 fix(gh-shim): answer gh api user from GraphQL viewer when REST core is deferred or in cooldown #auto-dispatch #bug ref:GH#36192 pr:#36198 completed:2026-10-31
+
+- [x] t18831 fix(checkpoint): publish continuation mark-blocked findings so frozen drafts surface the concrete need #auto-dispatch #bug #framework ref:GH#36227 pr:#36231 completed:2026-10-31
+
+- [x] t18832 fix(pulse-merge): skip partial parent closeout for planning publication PRs #bug #framework ref:GH#36230 pr:#36234 completed:2026-10-31
+
+- [x] t18833 fix(terminal-blocker): re-arm permission_required holds that have no published permission request #auto-dispatch #bug #framework ref:GH#36232 pr:#36251 completed:2026-10-31
+
+- [x] t18834 fix(pulse-merge): remove early-exit pipe readers from pulse-merge libraries and judge sourced libraries in the pipe gate #bug #framework ref:GH#36235 pr:#36238 completed:2026-10-31
+
+- [x] t18835 fix(issue-sync): remove early-exit pipe readers from issue-sync libraries (GH#36235 sweep) #auto-dispatch #bug #framework ref:GH#36239 pr:#36248 completed:2026-10-31
+
+- [x] t18836 fix(pulse): remove early-exit pipe readers from remaining pulse libraries (GH#36235 sweep) #auto-dispatch #bug #framework ref:GH#36240 pr:#36250 completed:2026-10-31
+
+- [x] t18837 fix(shared): remove early-exit pipe readers from shared, worker, dispatch, full-loop and claim-task-id libraries (GH#36235 sweep) #auto-dispatch #bug #framework ref:GH#36241 pr:#36252 completed:2026-10-31
+
+- [x] t18838 test(pulse-merge): drive planning-publication closeout case through _handle_post_merge_actions (ref GH#36234) #auto-dispatch #feat #framework ref:GH#36242 pr:#36245 completed:2026-10-31
+
+- [x] t18840 fix(signature): CI gh shim signs comments as vunknown because version.sh cannot find VERSION #bug #framework ref:GH#36247 pr:#36254 completed:2026-10-31
+
+- [x] t18841 fix(tests): make test-gh-shim.sh hermetic so deployed libs cannot change its result #bug #framework ref:GH#36255 pr:#36256 completed:2026-10-31
+
+- [ ] t18844 fix(cloudron-release): held worker bump PRs never get an approval request; obsolete bumps stack forever #bug #framework ref:GH#36268
+
 ## In Progress
 
-- [ ] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md]
+- [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
+
+- [x] t18769 Playwright-first browser preference: headed-hidden mode and explicit Playwright/Playwriter disambiguation #feat #interactive ref:GH#35617 assignee:marcusquinn pr:#35618 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18769-brief.md] completed:2026-10-25
+
+- [x] t18770 Guard Playwriter Task/MCP connect behind an explicit user mention (Playwright is the default) #auto-dispatch #feat tier:standard ref:GH#35637 pr:#35639 logged:2026-10-25 -> [todo/tasks/t18770-brief.md] completed:2026-10-25
+
+- [x] t18771 Strict no-redirect-link policy: auto-close spam, block authors, never open redirect links #feat #priority:high #security #interactive ref:GH#35655 assignee:marcusquinn logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18771-brief.md] pr:#35658 completed:2026-10-25
+
+- [x] t18772 Permission holds: withdraw non-grantable requests, scratch-temp bash/read recovery, batch withdrawal with one confirmation #bug #interactive ref:GH#35676 assignee:marcusquinn logged:2026-10-26 started:2026-10-26 -> [todo/tasks/t18772-brief.md] pr:#35677 completed:2026-10-26
+
+- [x] t18773 fix: linters-local Python complexity check reports no issues when lizard/pyflakes cannot run #auto-dispatch #bug tier:simple ref:GH#35726 assignee:marcusquinn logged:2026-10-26 started:2026-10-26 -> [todo/tasks/t18773-brief.md] pr:#35727 completed:2026-10-27
+
+- [x] t18774 fix: bash32 gate test leaves a deleted cwd; git shim guard crashes on deleted cwd #auto-dispatch #bug tier:simple ref:GH#35730 logged:2026-10-27 -> [todo/tasks/t18774-brief.md] pr:#35736 completed:2026-10-27
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
 
@@ -5342,3 +5444,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18694 Record GenAIPro API review: verified contract, do not route (pooled consumer accounts) #feat #interactive ref:GH#34713 pr:#34714 completed:2026-10-14
 
 - [x] t18702 Remove GenAIPro from media-generation provider guidance #feat #interactive ref:GH#34729 pr:#34730 completed:2026-10-15
+
+- [x] t18777 docs: recommend reusable purpose-scoped PATs (extend repo access) instead of per-repo tokens for CLOUDRON_RELEASE_PAT and SYNC_PAT #auto-dispatch #documentation ref:GH#35858 pr:#35969 completed:2026-10-29
+
+- [-] t18797 Deflake bounded-operation timeout case: process_signal null under slow spawn #auto-dispatch #bug ref:GH#36015 declined:2026-10-30
+
+- [-] t18814 fix(sync-workflows): re-pin legacy @main loc-badge callers to release SHA and keep pins current #auto-dispatch #bug ref:GH#36105 declined:2026-10-31
+
+- [ ] t18829 Attribute and govern REST core spend outside the local transport governor #bug ref:GH#36212

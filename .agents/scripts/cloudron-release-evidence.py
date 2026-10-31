@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Read-only, fail-closed proof for a direct generated Cloudron catalog commit."""
+"""Read-only, fail-closed proof for a generated Cloudron catalog commit."""
 
 import argparse
 import base64
@@ -15,21 +15,15 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cloudron_caller_policy import EvidenceError, MANAGED_WORKFLOW, managed_caller, require  # noqa: E402
+
 CATALOG = "CloudronVersions.json"
 SOURCE_REF = "refs/heads/main"
 # The Cloudron CLI inlines changelog and text references (description,
 # postInstallMessage) but keeps the binary icon reference unchanged; listings
 # use iconUrl. These keys must therefore match the source manifest verbatim.
 UNRESOLVED_FILE_REF_KEYS = frozenset({"changelog", "icon"})
-
-
-class EvidenceError(Exception):
-    """An incomplete or inconsistent publication proof."""
-
-
-def require(condition, message):
-    if not condition:
-        raise EvidenceError(message)
 
 
 def unique_object(pairs):
@@ -101,12 +95,44 @@ class CatalogEvidence:
 
     def generated_commit(self):
         commit = self.api("commits/" + self.commit)
-        require(commit["sha"] == self.commit and len(commit["parents"]) == 1
-                and commit["parents"][0]["sha"] == self.source, "tag must be a direct child of the merged source")
+        require(commit["sha"] == self.commit and len(commit["parents"]) == 1,
+                "tag must have exactly one parent")
+        parent = commit["parents"][0]["sha"]
+        if parent != self.source:
+            self.docs_only_parent(commit, parent)
         files = commit["files"]
         require(len(files) == 1 and files[0]["filename"] == CATALOG
                 and files[0]["status"] == "modified" and "previous_filename" not in files[0],
                 "generated commit must modify only the existing catalog")
+
+    def docs_only_parent(self, commit, parent):
+        # aidevops:trust-boundary — tolerate only the publisher's attested docs-only
+        # rebase; the tag trailer is not a substitute for ancestry or attestations.
+        message = commit.get("commit", {}).get("message", "").strip()
+        trailers = message.rsplit("\n\n", 1)[-1]
+        source_lines = re.findall(r"(?im)^Cloudron-Source:[ \t]*(.*)$", message)
+        require(source_lines == [self.source]
+                and all(re.fullmatch(r"[A-Za-z0-9-]+: [^\n]+", line) for line in trailers.splitlines())
+                and "Cloudron-Source: " + self.source in trailers.splitlines(),
+                "rebased catalog requires one exact Cloudron-Source trailer")
+        comparison = self.api("compare/" + self.source + "..." + parent)
+        require(comparison["status"] == "ahead", "catalog parent must descend from the merged source")
+        commits = comparison["commits"]
+        require(0 < len(commits) == comparison["total_commits"] <= 250,
+                "docs-only comparison must contain complete bounded history")
+        # Match both publisher allowlists exactly. Inspect each commit, not only
+        # the net diff, so reverted package changes cannot masquerade as docs-only.
+        allowed = r"README\.md|docs/.*|metrics/.*|\.github/metrics/.*|\.github/star-history/.*|star-history\.svg|star-history-dark\.svg"
+        for item in commits:
+            intervening = self.api("commits/" + item["sha"] + "?per_page=100")
+            # REST merge diffs cover only the first parent, unlike the publisher's
+            # --diff-merges=separate. Reject merges rather than accept partial proof.
+            require(len(intervening["parents"]) == 1, "docs-only history must be linear")
+            files = intervening["files"]
+            require(len(files) < 100, "docs-only commit file list may be truncated")
+            require(all(re.fullmatch(allowed, file[key]) is not None
+                        for file in files for key in ("filename", "previous_filename") if key in file),
+                    "catalog parent differs from source outside the docs-only allowlist")
 
     def catalog(self):
         before = decode_json(self.content(CATALOG, self.source))
@@ -157,16 +183,22 @@ class CatalogEvidence:
                 run_id, attempt = run["id"], run["run_attempt"]
                 require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0,
                         "invalid workflow invocation identity")
-                accepted.add(self.repository_url + "/actions/runs/" + str(run_id) + "/attempts/" + str(attempt))
+                # Failed-job reruns retain artifacts from earlier successful jobs.
+                accepted.update(self.repository_url + "/actions/runs/" + str(run_id) + "/attempts/" + str(number)
+                                for number in range(1, attempt + 1))
         require(accepted, "no successful exact-source repository-owned workflow")
         return accepted
 
     def verified_invocations(self, artifact, name, digest, invocations):
         # aidevops:trust-boundary — consume only gh's cryptographically verified
         # results, never the unverified bundle alongside them or a plain checksum.
+        signer_workflow = MANAGED_WORKFLOW if self.managed_pin else self.repo + "/" + self.workflow_path
+        signer_digest = self.managed_pin or self.source
+        signer_uri = "https://github.com/" + signer_workflow + "@" + (self.managed_pin or SOURCE_REF)
         results = gh("attestation", "verify", artifact, "--repo", self.repo,
-                     "--signer-workflow", self.repo + "/" + self.workflow_path,
-                     "--source-ref", SOURCE_REF, "--format", "json")
+                     "--signer-workflow", signer_workflow,
+                     "--source-ref", SOURCE_REF, "--source-digest", self.source,
+                     "--signer-digest", signer_digest, "--format", "json")
         accepted = set()
         for result in results:
             verified = result["verificationResult"]
@@ -180,8 +212,8 @@ class CatalogEvidence:
                 "sourceRepositoryRef": SOURCE_REF,
                 "buildConfigURI": self.signer,
                 "buildConfigDigest": self.source,
-                "buildSignerURI": self.signer,
-                "buildSignerDigest": self.source,
+                "buildSignerURI": signer_uri,
+                "buildSignerDigest": signer_digest,
                 "buildTrigger": self.event,
             }
             bindings = (
@@ -197,6 +229,7 @@ class CatalogEvidence:
         return accepted
 
     def verify(self):
+        self.managed_pin = managed_caller(self.content(self.workflow_path, self.source).decode("utf-8"))
         self.generated_commit()
         release = self.api("releases/tags/" + self.tag)
         require(release["tag_name"] == self.tag and release["draft"] is False
@@ -209,11 +242,22 @@ class CatalogEvidence:
             catalog.write_bytes(data)
             file_runs = self.verified_invocations(str(catalog), CATALOG, hashlib.sha256(data).hexdigest(), invocations)
             image_runs = self.verified_invocations("oci://" + image, image_name, image_digest, invocations)
-            require(file_runs & image_runs, "catalog and image were not attested by the same successful invocation")
+            # aidevops:trust-boundary — only validated invocation URIs may share a
+            # successful run ID; the build and publish attempts can differ.
+            file_run_ids = {uri.rsplit("/attempts/", 1)[0] for uri in file_runs}
+            image_run_ids = {uri.rsplit("/attempts/", 1)[0] for uri in image_runs}
+            require(file_run_ids & image_run_ids, "catalog and image were not attested by the same successful run")
         return True
 
 
 def main():
+    if sys.argv[1:] == ["--check-caller"]:
+        try:
+            managed_caller(sys.stdin.read(), require_secret=True)
+        except EvidenceError as error:
+            print("Cloudron caller preflight failed: " + str(error), file=sys.stderr)
+            return 1
+        return 0
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ("repo", "tag", "source", "commit", "workflow", "event"):
         parser.add_argument("--" + option, required=True)

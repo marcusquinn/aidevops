@@ -301,7 +301,7 @@ _status_print_scheduler() {
 			# Capture output to avoid SIGPIPE under set -o pipefail
 			local launchctl_out
 			launchctl_out=$(launchctl list 2>/dev/null) || true
-			if echo "$launchctl_out" | grep -q "${LAUNCHD_LABEL}"; then
+			if grep -q "${LAUNCHD_LABEL}" <<<"$launchctl_out"; then
 				echo "  Status: installed and loaded"
 			else
 				echo "  Status: installed but NOT loaded"
@@ -616,7 +616,7 @@ cmd_uninstall() {
 		if command -v crontab >/dev/null 2>&1; then
 			local current_crontab
 			current_crontab=$(crontab -l 2>/dev/null) || true
-			if echo "$current_crontab" | grep -qF "$CRON_MARKER"; then
+			if grep -qF "$CRON_MARKER" <<<"$current_crontab"; then
 				echo "$current_crontab" | grep -vF "$CRON_MARKER" | crontab -
 				echo "Also removed leftover cron entry"
 			fi
@@ -626,7 +626,7 @@ cmd_uninstall() {
 		_require_crontab || return 1
 		local current_crontab
 		current_crontab=$(crontab -l 2>/dev/null) || true
-		if echo "$current_crontab" | grep -qF "$CRON_MARKER"; then
+		if grep -qF "$CRON_MARKER" <<<"$current_crontab"; then
 			echo "$current_crontab" | grep -vF "$CRON_MARKER" | crontab -
 			echo "Uninstalled cron entry for worker-watchdog"
 		else

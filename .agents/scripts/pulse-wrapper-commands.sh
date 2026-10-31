@@ -14,6 +14,13 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
 	unset _lib_path
 fi
+_pulse_wrapper_commands_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_pulse_wrapper_commands_dir" == "${BASH_SOURCE[0]}" ]] && _pulse_wrapper_commands_dir="."
+# GH#36122: `dispatch` requires the shared breaker gate; source it beside this
+# module so a missing definition fails loudly instead of launching open.
+# shellcheck source=./pulse-wrapper-dispatch-gates.sh
+source "${_pulse_wrapper_commands_dir}/pulse-wrapper-dispatch-gates.sh"
+unset _pulse_wrapper_commands_dir
 
 _pulse_wrapper_command_usage() {
 	printf '%s\n' 'usage: pulse-wrapper.sh --command <capacity|list-candidates|dispatch|approve-pr|relabel-needs-info|dispatch-foss|repo-cap|count-debt|create-debt-worktree|sync-todo> [args...]' >&2
@@ -30,6 +37,19 @@ _pulse_wrapper_report_result() {
 	esac
 	printf 'PULSE_COMMAND_RESULT command=%s rc=%s outcome=%s\n' "$command_name" "$rc" "$outcome"
 	return 0
+}
+
+# GH#36122: supervisor-requested launches honour the same runner-local breakers
+# as the deterministic fills. A refusal returns 1 (reported as deferred) and
+# names only the breaker; dispatch_with_dedup stays the plain final command so
+# errexit inside it is preserved.
+_pulse_wrapper_dispatch_admitted() {
+	if ! pulse_dispatch_breakers_allow "command"; then
+		printf 'dispatch deferred: runner-local %s breaker is tripped\n' "$PULSE_DISPATCH_BREAKER_TRIPPED" >&2
+		return 1
+	fi
+	dispatch_with_dedup "$@"
+	return $?
 }
 
 _pulse_wrapper_observe_command() (
@@ -79,7 +99,7 @@ _pulse_wrapper_run_command() {
 			_pulse_wrapper_command_usage
 			return 2
 		}
-		_pulse_wrapper_observe_command dispatch dispatch_with_dedup "$@"
+		_pulse_wrapper_observe_command dispatch _pulse_wrapper_dispatch_admitted "$@"
 		;;
 	approve-pr)
 		[[ "$#" -eq 3 ]] || {

@@ -19,7 +19,7 @@
 #
 # Design choice: this helper does NOT call dispatch_with_dedup directly.
 # Instead, it duplicates the launch logic with a subset of the safety gates
-# (is-assigned + parent-task + state checks). Rationale:
+# (is-assigned + has-open-pr + parent-task + state checks). Rationale:
 #   1. dispatch_with_dedup runs 9+ gates including post-claim infrastructure
 #      (claim comments, large-file gate, predispatch validators). For a
 #      smoke-test those gates are over-the-top and harder to debug.
@@ -34,9 +34,10 @@
 # Exit codes:
 #   0  Worker dispatched (or skipped: already claimed / clear dry-run)
 #   1  Validation failure (issue not found, parent-task, unregistered or
-#      missing canonical repo path — also under --dry-run, etc.)
+#      missing canonical repo path, existing worker/protected draft or other
+#      linked PR evidence — also under --dry-run, etc.)
 #   2  Invalid subcommand or missing required arg
-#   75 Dedup guard is uncertain; recovery checkpoint persisted
+#   75 Dedup or PR-evidence guard is uncertain; recovery checkpoint persisted
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -78,6 +79,9 @@ _DSI_TOKEN_HELPER="${_DSI_SCRIPT_DIR}/worker-token-helper.sh"
 _DSI_ASKPASS_HELPER="${_DSI_SCRIPT_DIR}/github-auth-askpass.sh"
 _DSI_DISPATCH_BASE_BRANCH=""
 _DSI_STATE_RECOVERING="recovering"
+_DSI_STATE_BLOCKED="blocked"
+_DSI_STATE_CLEAR="clear"
+_DSI_STATE_ERROR="error"
 _DSI_UNKNOWN_VALUE="<unknown>"
 _DSI_JSON_TRUE="true"
 _DSI_VERIFIED="VERIFIED"
@@ -89,12 +93,19 @@ _DSI_PRELAUNCH_PREPARATION_SECONDS=600
 _DSI_LEASE_FIELD="lease_token"
 _DSI_LEASE_ID=""
 _DSI_LEASE_DEVICE=""
+# One canonical attempt per manual dispatch, shared by the prelaunch lease and
+# the worker's ready/terminal leases (GH#36005; mirrors _dlw_begin_prelaunch).
+_DSI_ATTEMPT_ID=""
 _DSI_CLAIM_WON=0
 _DSI_RESUME_MODE=0
 # 1 when the worktree is an enrolled managed generation (GH#35295).
 _DSI_MANAGED_WORKTREE=0
 _DSI_RESUME_SESSION=""
 _DSI_RESUME_REQUEST=""
+# Last shared PR-evidence lookup (GH#35616): clear|blocked|recovering|error|skipped.
+_DSI_PR_EVIDENCE_STATE="skipped"
+_DSI_PR_EVIDENCE_RC=0
+_DSI_PR_EVIDENCE_RESULT=""
 
 _dsi_gh_read() {
 	local rc=0
@@ -244,7 +255,7 @@ _dsi_create_worktree() {
 			# that here is fragile. Read it back from `git worktree list` instead.
 			# Awk inlined to one line to avoid tripping the positional-ratchet (its
 			# single-quote-strip is line-local; multi-line awk scripts get false-positives).
-			_DSI_WORKTREE_PATH=$(git -C "$repo_path" worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} $0 == "branch refs/heads/" b {print p; exit}')
+			_DSI_WORKTREE_PATH=$(git -C "$repo_path" worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} !found && $0 == "branch refs/heads/" b {print p; found=1}')
 			_DSI_WORKTREE_BRANCH="$branch"
 			if [[ -n "$_DSI_WORKTREE_PATH" && -d "$_DSI_WORKTREE_PATH" ]]; then
 				if declare -F register_worktree >/dev/null; then
@@ -464,7 +475,7 @@ _dsi_repo_path_for_slug() {
 		.initialized_repos[]?
 		| select((.slug // "") == $slug and (.local_only // false) == false)
 		| .path
-	' "$repos_file" 2>/dev/null | head -n 1
+	' "$repos_file" 2>/dev/null | sed -n '1p'
 	return 0
 }
 
@@ -747,11 +758,12 @@ _dsi_launch_worker() {
 	# Manual dispatch may inherit interactive/non-headless markers. The worker
 	# must carry its own role so the exact wrapper ownership proof is accepted.
 	local -a cmd=(
-		env
+		env -u AIDEVOPS_ATTEMPT_STARTED_AT
 		HEADLESS=1
 		FULL_LOOP_HEADLESS=true
 		AIDEVOPS_SESSION_ORIGIN=worker
 		AIDEVOPS_HEADLESS=true
+		AIDEVOPS_ATTEMPT_ID="$_DSI_ATTEMPT_ID"
 		WORKER_ISSUE_NUMBER="$issue_number"
 		WORKER_GITHUB_LOGIN="$self_login"
 		WORKER_WORKTREE_PATH="$worktree_path"
@@ -932,8 +944,10 @@ _dsi_parse_dispatch_args() {
 # Args:
 #   $1 issue_number, $2 repo_slug, $3 session_key
 #   $4 dedup_state (blocked|clear|recovering|error), $5 dedup_rc, $6 dedup_result
-# Returns: 1 when real dispatch would refuse on an unmet local repo-path
-#   prerequisite (GH#34003), 0 otherwise. Read-only either way.
+# Reads: _DSI_PR_EVIDENCE_STATE/_RC/_RESULT (GH#35616; "skipped" when unchecked)
+# Returns: 1 when real dispatch would refuse on PR evidence (ownership block
+#   or helper failure, GH#35616) or an unmet local repo-path prerequisite
+#   (GH#34003), 0 otherwise. Read-only either way.
 #######################################
 _dsi_print_dryrun() {
 	local issue_number="$1"
@@ -984,8 +998,25 @@ _dsi_print_dryrun() {
 	"$_DSI_STATE_RECOVERING") _dsi_warn "  Dedup:        RECOVERING — dispatch remains unsafe: ${dedup_result}" ;;
 	error) _dsi_err "  Dedup:        ERROR (exit ${dedup_rc}) — would refuse to dispatch: ${dedup_result}" ;;
 	esac
-	if [[ "$dedup_state" == "$_DSI_STATE_RECOVERING" ]]; then
+	local pr_state="${_DSI_PR_EVIDENCE_STATE:-skipped}"
+	case "$pr_state" in
+	clear) _dsi_info "  PR evidence:  clear (no linked PR ownership)" ;;
+	blocked) _dsi_warn "  PR evidence:  WOULD BLOCK — ${_DSI_PR_EVIDENCE_RESULT}" ;;
+	"$_DSI_STATE_RECOVERING") _dsi_warn "  PR evidence:  UNCERTAIN — real dispatch would refuse: ${_DSI_PR_EVIDENCE_RESULT}" ;;
+	error) _dsi_err "  PR evidence:  ERROR (exit ${_DSI_PR_EVIDENCE_RC:-unknown}) — would refuse to dispatch: ${_DSI_PR_EVIDENCE_RESULT}" ;;
+	*)
+		if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
+			_dsi_info "  PR evidence:  not applicable (signed resume continues its preserved binding)"
+		else
+			_dsi_info "  PR evidence:  not checked (dedup is not clear)"
+		fi
+		;;
+	esac
+	if [[ "$dedup_state" == "$_DSI_STATE_RECOVERING" || "$pr_state" == "$_DSI_STATE_RECOVERING" ]]; then
 		_dsi_warn "Dry-run stopped at recoverable safety state (no worker launched)"
+	elif [[ "$pr_state" == "$_DSI_STATE_BLOCKED" || "$pr_state" == "$_DSI_STATE_ERROR" ]]; then
+		_dsi_warn "Dry-run stopped: real dispatch would refuse on PR evidence (no worker launched)"
+		return 1
 	elif [[ -n "$prerequisite" ]]; then
 		_dsi_warn "Dry-run stopped: runner_capability_unmet reason=${prerequisite} (no worker launched)"
 		return 1
@@ -1020,17 +1051,17 @@ _dsi_run_dedup_check() {
 		if [[ "$_DSI_DEDUP_RC" -eq 0 && "$_DSI_DEDUP_RESULT" == GUARD_UNCERTAIN* ]]; then
 			_DSI_DEDUP_STATE="$_DSI_STATE_RECOVERING"
 		elif [[ "$_DSI_DEDUP_RC" -eq 0 ]]; then
-			_DSI_DEDUP_STATE="blocked"
+			_DSI_DEDUP_STATE="$_DSI_STATE_BLOCKED"
 		elif [[ "$_DSI_DEDUP_RC" -eq 1 ]]; then
-			_DSI_DEDUP_STATE="clear"
+			_DSI_DEDUP_STATE="$_DSI_STATE_CLEAR"
 		else
-			_DSI_DEDUP_STATE="error"
+			_DSI_DEDUP_STATE="$_DSI_STATE_ERROR"
 		fi
 
 		# GH#34922: a fresh issue inside the label-hydration window is not owned
 		# by anyone. A real dispatch waits out the remainder once and re-checks
 		# with refreshed metadata, so the operator's first attempt succeeds.
-		if [[ "$_DSI_DEDUP_STATE" == "blocked" && "$hydration_waited" -eq 0 && "${_DSI_ARG_DRYRUN:-0}" -ne 1 ]] &&
+		if [[ "$_DSI_DEDUP_STATE" == "$_DSI_STATE_BLOCKED" && "$hydration_waited" -eq 0 && "${_DSI_ARG_DRYRUN:-0}" -ne 1 ]] &&
 			hydration_wait=$(_dsi_hydration_wait_seconds "$_DSI_DEDUP_RESULT"); then
 			hydration_waited=1
 			_dsi_info "Issue #${issue_number} is inside the label-hydration window; waiting ${hydration_wait}s for creation-time labels"
@@ -1058,6 +1089,159 @@ _dsi_run_dedup_check() {
 		fi
 	done
 	return 0
+}
+
+#######################################
+# GH#35616: shared PR-evidence lookup for ordinary manual dispatch. Reuses the
+# public `dispatch-dedup-helper.sh has-open-pr` interface (Pulse Layer 4), so
+# strict issue linkage, the seed-PR exception and fail-closed uncertainty stay
+# owned by the shared module: worker drafts, protected drafts and other linked
+# PR evidence block a fresh implementation worker; bare prose mentions do not.
+# Sets _DSI_PR_EVIDENCE_STATE (clear|blocked|recovering|error),
+#      _DSI_PR_EVIDENCE_RC and _DSI_PR_EVIDENCE_RESULT. Read-only.
+# Args: $1 issue number, $2 repo slug, $3 issue title (optional)
+#######################################
+_dsi_run_pr_evidence_check() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="${3:-}"
+
+	_DSI_PR_EVIDENCE_RC=0
+	_DSI_PR_EVIDENCE_RESULT=""
+	if [[ ! -x "$_DSI_DEDUP_HELPER" ]]; then
+		_DSI_PR_EVIDENCE_STATE="$_DSI_STATE_ERROR"
+		_DSI_PR_EVIDENCE_RC=127
+		_DSI_PR_EVIDENCE_RESULT="dedup helper is not executable: ${_DSI_DEDUP_HELPER}"
+		return 0
+	fi
+	_DSI_PR_EVIDENCE_RESULT=$("$_DSI_DEDUP_HELPER" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>&1) ||
+		_DSI_PR_EVIDENCE_RC=$?
+	# Uncertainty takes precedence over every exit code: a partial view can
+	# neither prove ownership nor prove its absence.
+	if [[ "$_DSI_PR_EVIDENCE_RESULT" == *"PR_LOOKUP_RESULT=uncertain"* ]]; then
+		_DSI_PR_EVIDENCE_STATE="$_DSI_STATE_RECOVERING"
+	elif [[ "$_DSI_PR_EVIDENCE_RC" -eq 0 ]]; then
+		_DSI_PR_EVIDENCE_STATE="$_DSI_STATE_BLOCKED"
+		[[ -n "$_DSI_PR_EVIDENCE_RESULT" ]] ||
+			_DSI_PR_EVIDENCE_RESULT="PR evidence exists for issue #${issue_number} (no detail returned)"
+	elif [[ "$_DSI_PR_EVIDENCE_RC" -eq 1 ]]; then
+		_DSI_PR_EVIDENCE_STATE="$_DSI_STATE_CLEAR"
+	else
+		_DSI_PR_EVIDENCE_STATE="$_DSI_STATE_ERROR"
+	fi
+	return 0
+}
+
+#######################################
+# Refuse ordinary dispatch unless the last PR-evidence lookup was clear.
+# Args: $1 issue number, $2 repo slug
+# Returns: 0 clear, 1 ownership block or helper failure, 75 lookup uncertain
+#   (recovery checkpoint persisted).
+#######################################
+_dsi_enforce_pr_evidence() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	case "${_DSI_PR_EVIDENCE_STATE:-error}" in
+	clear) return 0 ;;
+	blocked)
+		_dsi_warn "Skipped: existing PR evidence owns issue #${issue_number}; refusing a fresh implementation worker"
+		_dsi_info "  Reason: ${_DSI_PR_EVIDENCE_RESULT}"
+		if [[ "$_DSI_PR_EVIDENCE_RESULT" == WORKER_DRAFT_CHECKPOINT:* ]]; then
+			_dsi_info "  The preserved worker draft is continued or escalated by Pulse checkpoint recovery, never replaced by manual dispatch."
+		elif [[ "$_DSI_PR_EVIDENCE_RESULT" == *"draft PR #"* ]]; then
+			_dsi_info "  Protected drafts (interactive, held or review-gated) stay untouched; resolve that draft first."
+		else
+			_dsi_info "  Finish, close or unlink the existing PR before dispatching a replacement worker."
+		fi
+		return 1
+		;;
+	"$_DSI_STATE_RECOVERING")
+		_dsi_err "PR evidence lookup is uncertain — failing closed, refusing to dispatch"
+		_dsi_info "  Trigger: ${_DSI_PR_EVIDENCE_RESULT}"
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" "$_DSI_PR_EVIDENCE_RESULT" 1 || true
+		return 75
+		;;
+	*)
+		_dsi_err "PR evidence check failed (exit ${_DSI_PR_EVIDENCE_RC:-unknown}) — failing closed, refusing to dispatch"
+		_dsi_info "  Output: ${_DSI_PR_EVIDENCE_RESULT}"
+		_dsi_info "  Diagnose with: $_DSI_DEDUP_HELPER has-open-pr $issue_number $repo_slug"
+		return 1
+		;;
+	esac
+}
+
+#######################################
+# Ordinary dispatch must not replace existing PR ownership. A signed
+# permission resume continues its exact preserved worker binding (session,
+# branch, worktree) rather than launching a fresh worker, so it is exempt.
+# Args: $1 issue number, $2 repo slug
+# Returns: as _dsi_enforce_pr_evidence
+#######################################
+_dsi_guard_pr_evidence() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "$_DSI_RESUME_MODE" -eq 1 ]] && return 0
+	_dsi_run_pr_evidence_check "$issue_number" "$repo_slug" "${_DSI_ISSUE_TITLE:-}"
+	_dsi_enforce_pr_evidence "$issue_number" "$repo_slug"
+	return $?
+}
+
+#######################################
+# One bounded PR-evidence re-read after the consensus claim win catches a PR
+# opened while the claim settled. Refusal releases the claim before any
+# label, assignee, ceremony or worktree effect.
+# Args: $1 issue number, $2 repo slug, $3 current login
+# Returns: as _dsi_enforce_pr_evidence
+#######################################
+_dsi_recheck_pr_evidence_after_claim() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local guard_rc=0
+
+	_dsi_guard_pr_evidence "$issue_number" "$repo_slug" || guard_rc=$?
+	if [[ "$guard_rc" -ne 0 ]]; then
+		_dsi_release_consensus_claim "$issue_number" "$repo_slug" "$self_login" "pr_evidence_after_claim" || true
+		return "$guard_rc"
+	fi
+	return 0
+}
+
+#######################################
+# Dry-run path of cmd_dispatch. With a clear assignment check (and outside a
+# signed resume) it performs the same read-only PR-evidence lookup real
+# dispatch enforces, so ownership blocks and uncertainty are reported exactly.
+# Args: $1 issue, $2 repo, $3 session key, $4 dedup state, $5 dedup rc,
+#   $6 dedup result
+# Returns: 75 on dedup/PR-evidence uncertainty (checkpoint persisted), else
+#   the _dsi_print_dryrun result.
+#######################################
+_dsi_dispatch_dryrun() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local session_key="$3"
+	local dedup_state="$4"
+	local dedup_rc="$5"
+	local dedup_result="$6"
+	local dryrun_rc=0
+
+	_DSI_PR_EVIDENCE_STATE="skipped"
+	_DSI_PR_EVIDENCE_RESULT=""
+	if [[ "$dedup_state" == "$_DSI_STATE_CLEAR" && "$_DSI_RESUME_MODE" -ne 1 ]]; then
+		_dsi_run_pr_evidence_check "$issue_number" "$repo_slug" "${_DSI_ISSUE_TITLE:-}"
+	fi
+	_dsi_print_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_state" "$dedup_rc" "$dedup_result" || dryrun_rc=$?
+	if [[ "$dedup_state" == "$_DSI_STATE_RECOVERING" ]]; then
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" "$dedup_result" "$_DSI_DEDUP_ATTEMPTS" || true
+		return 75
+	fi
+	if [[ "$_DSI_PR_EVIDENCE_STATE" == "$_DSI_STATE_RECOVERING" ]]; then
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" "$_DSI_PR_EVIDENCE_RESULT" 1 || true
+		return 75
+	fi
+	return "$dryrun_rc"
 }
 
 #######################################
@@ -1139,6 +1323,16 @@ _dsi_hydration_wait_seconds() {
 }
 
 #######################################
+# Allocate this dispatch's canonical attempt ID once. Never reuse an inherited
+# AIDEVOPS_ATTEMPT_ID: that belongs to the calling session, not this worker.
+# Returns: 0 always
+#######################################
+_dsi_ensure_attempt_id() {
+	[[ -n "$_DSI_ATTEMPT_ID" ]] || _DSI_ATTEMPT_ID=$(aidevops_generate_execution_id "attempt")
+	return 0
+}
+
+#######################################
 # Extend the claim's prelaunch lease to cover manual preparation (worktree,
 # credentials, conversation lock, canary) before the worker renews it and
 # publishes phase=ready. The claim helper never shortens an existing lease.
@@ -1155,7 +1349,8 @@ _dsi_renew_prelaunch_lease() {
 	if ! [[ "$lease_ttl" =~ ^[0-9]+$ ]]; then
 		lease_ttl=$(($(_dsi_ready_timeout_seconds) + _DSI_PRELAUNCH_PREPARATION_SECONDS))
 	fi
-	renew_stderr=$(AIDEVOPS_DEVICE_ID="$_DSI_LEASE_DEVICE" \
+	_dsi_ensure_attempt_id
+	renew_stderr=$(AIDEVOPS_DEVICE_ID="$_DSI_LEASE_DEVICE" AIDEVOPS_ATTEMPT_ID="$_DSI_ATTEMPT_ID" \
 		"$_DSI_CLAIM_HELPER" transition prelaunch "$issue_number" "$repo_slug" \
 		"$_DSI_LEASE_ID" "issue-${issue_number}" "$lease_ttl" 2>&1 >/dev/null) || renew_rc=$?
 	if [[ "$renew_rc" -ne 0 ]]; then
@@ -1301,7 +1496,13 @@ _dsi_write_recovery_checkpoint() {
 	local checkpoint_file="${checkpoint_dir}/${repo_slug//\//-}-${issue_number}.json"
 	local checkpoint_tmp="${checkpoint_file}.tmp.$$"
 	local resume_command=""
+	local recovery_owner="automation"
+	local resume_condition="one authoritative metadata/dedup read returns a definitive clear or blocked result"
 	local -a resume_args=("${_DSI_SCRIPT_DIR}/dispatch-single-issue-helper.sh" dispatch "$issue_number" "$repo_slug")
+	if [[ "$trigger" == *"reason=commit_permission_denied"* ]]; then
+		recovery_owner="human"
+		resume_condition="human-owned permission repair or capability context change; otherwise guarded recheck after the 900-second repository cooldown; commit evidence must remain complete"
+	fi
 
 	[[ -n "$_DSI_ARG_MODEL" ]] && resume_args+=(--model "$_DSI_ARG_MODEL")
 	[[ -n "$_DSI_ARG_AGENT" ]] && resume_args+=(--agent "$_DSI_ARG_AGENT")
@@ -1319,11 +1520,12 @@ _dsi_write_recovery_checkpoint() {
 		--arg trigger "$trigger" \
 		--argjson attempts "$attempts" \
 		--arg resume_command "$resume_command" \
-		--arg resume_condition "one authoritative metadata/dedup read returns a definitive clear or blocked result" \
+		--arg resume_condition "$resume_condition" \
+		--arg recovery_owner "$recovery_owner" \
 		'{status:$status, issue:$issue, repo:$repo, trigger:$trigger, dedup_attempts:$attempts,
 		  completed_checks:["issue metadata loaded","target is an issue","dispatch holds checked","parent-task gate checked","dedup remained fail-closed"],
 		  unsafe_route_not_to_repeat:"bypass dedup or repeat an identical lookup without changed conditions",
-		  resume_command:$resume_command, resume_condition:$resume_condition}' >"$checkpoint_tmp" || return 1
+		  recovery_owner:$recovery_owner, resume_command:$resume_command, resume_condition:$resume_condition}' >"$checkpoint_tmp" || return 1
 	mv "$checkpoint_tmp" "$checkpoint_file"
 	_dsi_warn "Recovery checkpoint: ${checkpoint_file}"
 	printf 'RECOVERY_CHECKPOINT_JSON='
@@ -1384,6 +1586,24 @@ _dsi_validate_dispatch_target() {
 	return 0
 }
 
+# Read only the shared local denial cache before further admission reads. Load
+# the PR library in a subshell so its symbols cannot alter this CLI's state.
+_dsi_guard_cached_commit_denial() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	if (
+		# shellcheck source=./dispatch-dedup-pr.sh
+		# shellcheck disable=SC1091
+		source "${_DSI_SCRIPT_DIR}/dispatch-dedup-pr.sh"
+		_ddpr_commit_denial_cache check "$repo_slug"
+	); then
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
+			'PR_LOOKUP_RESULT=uncertain reason=commit_permission_denied scope=open_commits' 0 || true
+		return 75
+	fi
+	return 0
+}
+
 _dsi_check_runner_capability() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1423,6 +1643,7 @@ cmd_dispatch() {
 
 	# Step 1-2: validate + load + parent-task gate
 	_dsi_validate_dispatch_target "$issue_number" "$repo_slug" || return 1
+	_dsi_guard_cached_commit_denial "$issue_number" "$repo_slug" || return $?
 
 	# Step 3: dedup check (informational under --dry-run, blocking otherwise).
 	# Helper exit codes (per dispatch-dedup-helper.sh::is-assigned):
@@ -1451,15 +1672,10 @@ cmd_dispatch() {
 	session_key="manual-cli-${issue_number}-$(date +%s)"
 	[[ "$_DSI_RESUME_MODE" -eq 1 ]] && session_key="$_DSI_RESUME_SESSION"
 
-	# Step 6: dry-run short-circuit
+	# Step 6: dry-run short-circuit (read-only; reports PR evidence too)
 	if [[ "$_DSI_ARG_DRYRUN" -eq 1 ]]; then
-		local dryrun_rc=0
-		_dsi_print_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_state" "$dedup_rc" "$dedup_result" || dryrun_rc=$?
-		if [[ "$dedup_state" == "$_DSI_STATE_RECOVERING" ]]; then
-			_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" "$dedup_result" "$_DSI_DEDUP_ATTEMPTS" || true
-			return 75
-		fi
-		return "$dryrun_rc"
+		_dsi_dispatch_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_state" "$dedup_rc" "$dedup_result"
+		return $?
 	fi
 
 	# Real dispatch: honour dedup block + fail-closed on errors
@@ -1483,6 +1699,9 @@ cmd_dispatch() {
 		return 1
 		;;
 	esac
+	# GH#35616: preserved worker/protected drafts and other linked PR evidence
+	# block a fresh worker before any claim, label, ceremony or worktree effect.
+	_dsi_guard_pr_evidence "$issue_number" "$repo_slug" || return $?
 	# aidevops:trust-boundary — normal dispatch and signed checkpoint resume
 	# must enforce current requirements, never the prefetched issue body, before
 	# the first persistent claim (including with --no-ceremony).
@@ -1494,6 +1713,7 @@ cmd_dispatch() {
 		_dsi_release_consensus_claim "$issue_number" "$repo_slug" "$self_login" "predispatch_validator_blocked" || true
 		return 1
 	fi
+	_dsi_recheck_pr_evidence_after_claim "$issue_number" "$repo_slug" "$self_login" || return $?
 
 	_dsi_dispatch_after_dedup_clear "$issue_number" "$repo_slug" "$self_login" "$session_key"
 	return $?
@@ -1624,6 +1844,9 @@ _dsi_launch_and_report() {
 	local prompt worker_log
 	prompt=$(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")
 	worker_log="${_DSI_LOG_DIR}/manual-dispatch-${issue_number}-$(date +%Y%m%d-%H%M%S).log"
+	# GH#36005: the worker argv carries this attempt (and drops any inherited
+	# start marker) because a managed systemd unit does not inherit our env.
+	_dsi_ensure_attempt_id
 	local launch_pid
 	launch_pid=$(_dsi_launch_worker \
 		"$session_key" "$_DSI_WORKTREE_PATH" "$_DSI_ISSUE_TITLE" \
@@ -1760,9 +1983,11 @@ adaptive cadence, and many other concerns this CLI does NOT cover.
 Exit codes:
   0  Success (worker launched, dry-run completed, or skipped: already claimed)
   1  Validation failure (issue not found, parent-task, unregistered or
-     missing canonical repo path, origin identity drift/mismatch — also
-     under --dry-run, etc.)
+     missing canonical repo path, origin identity drift/mismatch, existing
+     worker/protected draft or other linked PR evidence — also under
+     --dry-run, etc.)
   2  Invalid subcommand or missing required arg
+  75 Dedup or PR-evidence lookup is uncertain; recovery checkpoint persisted
 EOF
 	return 0
 }

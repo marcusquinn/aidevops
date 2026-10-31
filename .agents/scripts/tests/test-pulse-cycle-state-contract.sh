@@ -334,6 +334,331 @@ else
 	fail "child executor cannot directly publish inherited terminal health"
 fi
 
+# GH#35695: accelerated timestamps span the real reader's 900-second window.
+# The owner heartbeat changes neither delivery evidence nor typed blockers.
+(
+	_pulse_cycle_state_start
+	_LOCK_OWNED=true
+	_pulse_cycle_state_note_blocker review-gate owner/repo 7
+	_pulse_cycle_state_publish preflight
+	before_liveness=$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")
+	before_log_bytes=$(wc -c <"$LOGFILE")
+	# A full health collection can block deadline enforcement and its log line
+	# would fool byte-delta stall detection. Heartbeats must never invoke it.
+	write_pulse_health_file() { return 1; }
+	for age in 960 900 600 300 60 0; do
+		TEST_HEARTBEAT=$(python3 -c 'import datetime,sys; print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$age")
+		_pulse_cycle_state_now() {
+			printf '%s\n' "$TEST_HEARTBEAT"
+			return 0
+		}
+		_pulse_cycle_state_stage_heartbeat
+		python3 "${SOURCE_DIR}/pulse-current-state.py" \
+			"${HOME}/.aidevops/logs" "$PWD" 900 1 "$SOURCE_DIR" "${TMP_DIR}/review-state" >"$consumer_output"
+		if [[ "$age" == 960 ]]; then
+			jq -e '.cycle_state.availability == "stale"' "$consumer_output" >/dev/null
+		fi
+	done
+	jq -e '.cycle_state.availability == "available" and .cycle_state.outcome == "running" and .cycle_state.phase == "preflight"' "$consumer_output" >/dev/null
+	[[ "$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")" == "$before_liveness" ]]
+	[[ "$(wc -c <"$LOGFILE")" == "$before_log_bytes" ]]
+	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+	# A failed atomic swap preserves the previous record and local heartbeat.
+	previous_local_heartbeat="$_PULSE_CYCLE_HEARTBEAT_AT"
+	mv() { return 1; }
+	_pulse_cycle_state_stage_heartbeat && exit 1
+	unset -f mv
+	[[ "$_PULSE_CYCLE_HEARTBEAT_AT" == "$previous_local_heartbeat" ]]
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+	( _pulse_cycle_state_stage_heartbeat ) && exit 1
+	_LOCK_OWNED=false
+	_pulse_cycle_state_stage_heartbeat && exit 1
+	_LOCK_OWNED=true
+	current_id="$_PULSE_CYCLE_ID"
+	_PULSE_CYCLE_ID=obsolete-cycle
+	_pulse_cycle_state_stage_heartbeat && exit 1
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+	_PULSE_CYCLE_ID="$current_id"
+	jq '.cycle_state.phase = "completed" | .cycle_state.outcome = "interrupted"' \
+		"$PULSE_HEALTH_FILE" >"${TMP_DIR}/completed-health.json"
+	command mv "${TMP_DIR}/completed-health.json" "$PULSE_HEALTH_FILE"
+	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+	_pulse_cycle_state_stage_heartbeat && exit 1
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+)
+pass "owner liveness spans freshness window without progress; child, unlocked and obsolete writes rejected"
+
+# GH#35698: exercise the capture supervisor across a simulated >900-second
+# dispatch drain, not a heartbeat called manually by the test. Accelerate the
+# supervisor and reader wall clocks together without changing production code.
+(
+	# shellcheck source=../pulse-dispatch-lib.sh
+	source "${SOURCE_DIR}/pulse-dispatch-lib.sh"
+	_pulse_cycle_state_start
+	_LOCK_OWNED=true
+	_pulse_cycle_state_publish preflight
+	wave_before=$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")
+	wave_log_bytes=$(wc -c <"$LOGFILE")
+	wave_clock=$(command date +%s)
+	wave_start="$wave_clock"
+	wave_ticks=0
+	wave_done="${TMP_DIR}/wave-done"
+	wave_children="${TMP_DIR}/wave-children"
+	_pulse_cycle_state_now() {
+		python3 -c 'import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$wave_clock"
+		return 0
+	}
+	date() {
+		local format="${1:-}"
+		if [[ "$format" == +%s ]]; then
+			printf '%s\n' "$wave_clock"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	sleep() {
+		wave_ticks=$((wave_ticks + 1))
+		wave_clock=$((wave_clock + 120))
+		python3 -c 'import runpy,sys,time; sys.argv=sys.argv[1:]; clock=float(sys.argv.pop(0)); time.time=lambda:clock; runpy.run_path(sys.argv[0], run_name="__main__")' \
+			"$wave_clock" "${SOURCE_DIR}/pulse-current-state.py" \
+			"${HOME}/.aidevops/logs" "$PWD" 900 1 "$SOURCE_DIR" "${TMP_DIR}/review-state" >"$consumer_output"
+		jq -e '.cycle_state.availability == "available" and .cycle_state.outcome == "running"' "$consumer_output" >/dev/null || exit 1
+		if ((wave_ticks >= 9)); then
+			: >"$wave_done"
+		fi
+		command sleep 0.02
+		return 0
+	}
+	dispatch_wave() {
+		# Even while an owner actively supervises capture, its inherited child
+		# cannot publish health. Simulate the final tracked candidate drain.
+		_pulse_cycle_state_stage_heartbeat && return 1
+		(
+			while [[ ! -f "$wave_done" ]]; do command sleep 0.02; done
+			return 0
+		) &
+		printf '%s\n' "$!" >"$wave_children"
+		_dispatch_max_wait_tracked_pids "$!"
+		printf '2\n'
+		return 0
+	}
+	wave_output=""
+	_dispatch_capture_with_owner_liveness wave_output dispatch_wave
+	[[ "$wave_output" == 2 && "$((wave_clock - wave_start))" -gt 900 ]]
+	[[ -s "$wave_children" ]]
+	[[ "$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")" == "$wave_before" ]]
+	[[ "$(wc -c <"$LOGFILE")" == "$wave_log_bytes" ]]
+	# A surviving executor inheriting a now-dead owner cannot revive its stale
+	# health. Use a real reaped PID, rather than a guessed absent PID.
+	(command true) &
+	dead_owner=$!
+	wait "$dead_owner"
+	_PULSE_CYCLE_OWNER_EXECUTOR_PID="$dead_owner"
+	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/dead-owner-health.json"
+	_dispatch_capture_with_owner_liveness wave_output dispatch_wave
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/dead-owner-health.json"
+)
+pass "dispatch owner supervises long final drain without progress; child and dead-owner revival rejected"
+
+# GH#35704: exercise the real supervisor watchdog in the cycle-owning shell,
+# across an accelerated freshness window, with an actual sandbox child to reap.
+(
+	# shellcheck source=../pulse-watchdog.sh
+	source "${SOURCE_DIR}/pulse-watchdog.sh"
+	# Use the real lock lifecycle, not the parent sandbox's terminal-write stubs.
+	# shellcheck source=../pulse-instance-lock.sh
+	source "${SOURCE_DIR}/pulse-instance-lock.sh"
+	LOCKDIR="${TMP_DIR}/supervisor-instance.lock"
+	_pulse_cycle_state_start
+	acquire_instance_lock
+	_pulse_cycle_state_publish supervising
+	release_instance_lock
+	[[ "$_LOCK_OWNED" == false && ! -d "$LOCKDIR" ]]
+	_PULSE_LLM_LOCKDIR_OWNED="${LOCKDIR}.llm"
+	mkdir "$_PULSE_LLM_LOCKDIR_OWNED"
+	printf '%s\n' "$$" >"${_PULSE_LLM_LOCKDIR_OWNED}/pid"
+	supervisor_before=$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")
+	supervisor_log_bytes=$(wc -c <"$LOGFILE")
+	supervisor_wrapper_bytes=$(wc -c <"$WRAPPER_LOGFILE")
+	supervisor_clock=$(command date +%s)
+	supervisor_start="$supervisor_clock"
+	supervisor_ticks=0
+	supervisor_done="${TMP_DIR}/supervisor-done"
+	STOP_FLAG="${TMP_DIR}/no-stop-flag"
+	PULSE_STALE_THRESHOLD=3600
+	PULSE_PROGRESS_TIMEOUT=1800
+	guard_child_processes() { return 0; }
+	maybe_refill_underfilled_pool_during_active_pulse() {
+		printf '0\n'
+		return 0
+	}
+	write_pulse_health_file() { return 1; }
+	_pulse_cycle_state_now() {
+		python3 -c 'import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$supervisor_clock"
+		return 0
+	}
+	date() {
+		local format="${1:-}"
+		if [[ "$format" == +%s ]]; then
+			printf '%s\n' "$supervisor_clock"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	(
+		while [[ ! -f "$supervisor_done" ]]; do command sleep 0.02; done
+		exit 7
+	) &
+	supervisor_pid=$!
+	trap 'touch "$supervisor_done"; wait "$supervisor_pid" || true' EXIT
+	sleep() {
+		local interval="$1"
+		[[ "$interval" == 60 ]] || exit 1
+		# Every real wait iteration must refresh only heartbeat_at, with no
+		# full health collection or synthetic log bytes to reset stall timers.
+		[[ "$(jq -r '.cycle_state.heartbeat_at' "$PULSE_HEALTH_FILE")" == "$(_pulse_cycle_state_now)" ]] || exit 1
+		[[ "$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")" == "$supervisor_before" ]] || exit 1
+		[[ "$(wc -c <"$LOGFILE")" == "$supervisor_log_bytes" ]] || exit 1
+		[[ "$(wc -c <"$WRAPPER_LOGFILE")" == "$supervisor_wrapper_bytes" ]] || exit 1
+		[[ "$_LOCK_OWNED" == false && ! -d "$LOCKDIR" ]] || exit 1
+		supervisor_ticks=$((supervisor_ticks + 1))
+		supervisor_clock=$((supervisor_clock + interval))
+		if ((supervisor_ticks == 17)); then
+			: >"$supervisor_done"
+			wait "$supervisor_pid" || [[ "$?" == 7 ]]
+		fi
+		return 0
+	}
+	supervisor_rc=0
+	_run_pulse_watchdog "$supervisor_pid" "$supervisor_start" 1800 || supervisor_rc=$?
+	[[ "$supervisor_rc" == 7 && "$supervisor_ticks" == 17 ]]
+	[[ "$((supervisor_clock - supervisor_start))" -gt 900 ]]
+	python3 -c 'import runpy,sys,time; sys.argv=sys.argv[1:]; clock=float(sys.argv.pop(0)); time.time=lambda:clock; runpy.run_path(sys.argv[0], run_name="__main__")' \
+		"$supervisor_clock" "${SOURCE_DIR}/pulse-current-state.py" \
+		"${HOME}/.aidevops/logs" "$PWD" 900 1 "$SOURCE_DIR" "${TMP_DIR}/review-state" >"$consumer_output"
+	jq -e '.cycle_state.availability == "available" and .cycle_state.outcome == "running" and .cycle_state.phase == "supervising"' "$consumer_output" >/dev/null
+	# Failed writes and missing/replaced LLM evidence must remain best-effort.
+	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/supervisor-current.json"
+	( _pulse_cycle_state_supervisor_heartbeat ) && exit 1
+	mv() { return 1; }
+	_pulse_cycle_state_supervisor_heartbeat && exit 1
+	unset -f mv
+	[[ "$_LOCK_OWNED" == false && ! -d "$LOCKDIR" ]]
+	rm "${_PULSE_LLM_LOCKDIR_OWNED}/pid"
+	_pulse_cycle_state_supervisor_heartbeat && exit 1
+	printf 'other-owner\n' >"${_PULSE_LLM_LOCKDIR_OWNED}/pid"
+	_pulse_cycle_state_supervisor_heartbeat && exit 1
+	printf '%s\n' "$$" >"${_PULSE_LLM_LOCKDIR_OWNED}/pid"
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/supervisor-current.json"
+	# A real competing publisher attempts mkdir after the heartbeat's snapshot
+	# is read but before its mv. It must wait, then publish AFTER the heartbeat.
+	publication_ready="${TMP_DIR}/publication-ready"
+	publication_blocked="${TMP_DIR}/publication-blocked"
+	(
+		while [[ ! -f "$publication_ready" ]]; do command sleep 0.01; done
+		if mkdir "$LOCKDIR" 2>/dev/null; then exit 1; fi
+		: >"$publication_blocked"
+		while ! mkdir "$LOCKDIR" 2>/dev/null; do command sleep 0.01; done
+		printf '%s\n' "${BASHPID:-$$}" >"${LOCKDIR}/pid"
+		command jq '.cycle_state.cycle_id = "newer-supervisor-cycle"' "$PULSE_HEALTH_FILE" >"${TMP_DIR}/newer-supervisor.json"
+		command mv "${TMP_DIR}/newer-supervisor.json" "$PULSE_HEALTH_FILE"
+		rm -rf "$LOCKDIR"
+	) &
+	publisher_pid=$!
+	# Exercise the real production contender too: an old supervising process
+	# holding a brand-new publication lease must not be force-reclaimed.
+	_get_process_age() { printf '7200\n'; return 0; }
+	ps() { printf 'bash pulse-wrapper.sh\n'; return 0; }
+	_kill_tree() { : >"${TMP_DIR}/unexpected-reclaim"; return 0; }
+	_force_kill_tree() { : >"${TMP_DIR}/unexpected-reclaim"; return 0; }
+	mv() {
+		_handle_existing_lock && return 1
+		[[ ! -f "${TMP_DIR}/unexpected-reclaim" ]] || return 1
+		: >"$publication_ready"
+		while [[ ! -f "$publication_blocked" ]]; do command sleep 0.01; done
+		command mv "$@"
+		return $?
+	}
+	_pulse_cycle_state_supervisor_heartbeat
+	unset -f mv
+	unset -f ps _get_process_age _kill_tree _force_kill_tree
+	wait "$publisher_pid"
+	# Lease recognition must not disable stale-lock recovery: an expired lease
+	# or a marker without matching LLM ownership uses the existing kill policy.
+	(
+		LOCKDIR="${TMP_DIR}/lease-recovery.lock"
+		_get_process_age() { printf '7200\n'; return 0; }
+		ps() { printf 'bash pulse-wrapper.sh\n'; return 0; }
+		_kill_tree() { : >"${TMP_DIR}/expected-reclaim"; return 0; }
+		_force_kill_tree() { return 0; }
+		sleep() { return 0; }
+		for lease_case in expired foreign; do
+			mkdir "$LOCKDIR" "${LOCKDIR}.llm"
+			printf '%s\n' "$$" >"${LOCKDIR}/pid"
+			printf '%s\n' "$$" >"${LOCKDIR}.llm/pid"
+			if [[ "$lease_case" == expired ]]; then
+				printf '%s\n' "$((supervisor_clock - 2000))" >"${LOCKDIR}/supervisor_heartbeat_epoch"
+			else
+				printf '%s\n' "$supervisor_clock" >"${LOCKDIR}/supervisor_heartbeat_epoch"
+				printf 'foreign-owner\n' >"${LOCKDIR}.llm/pid"
+			fi
+			_handle_existing_lock
+			[[ -f "${TMP_DIR}/expected-reclaim" ]]
+			rm -rf "$LOCKDIR" "${LOCKDIR}.llm"
+			rm "${TMP_DIR}/expected-reclaim"
+		done
+	)
+	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/newer-supervisor-snapshot.json"
+	_pulse_cycle_state_supervisor_heartbeat && exit 1
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/newer-supervisor-snapshot.json"
+	# Neither a terminal record with the same ID nor local finalization revives.
+	command jq --arg id "$_PULSE_CYCLE_ID" '.cycle_state.cycle_id = $id | .cycle_state.phase = "completed" | .cycle_state.outcome = "idle"' \
+		"$PULSE_HEALTH_FILE" >"${TMP_DIR}/completed-supervisor.json"
+	command mv "${TMP_DIR}/completed-supervisor.json" "$PULSE_HEALTH_FILE"
+	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/completed-supervisor-snapshot.json"
+	_pulse_cycle_state_supervisor_heartbeat && exit 1
+	_PULSE_CYCLE_STATE_TERMINAL=1
+	_pulse_cycle_state_supervisor_heartbeat && exit 1
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/completed-supervisor-snapshot.json"
+	# Missing LLM ownership must not turn a failed child into success either.
+	rm "${_PULSE_LLM_LOCKDIR_OWNED}/pid"
+	_PULSE_CYCLE_STATE_TERMINAL=0
+	rm "$supervisor_done"
+	(
+		while [[ ! -f "$supervisor_done" ]]; do command sleep 0.01; done
+		exit 9
+	) &
+	supervisor_pid=$!
+	sleep() {
+		: >"$supervisor_done"
+		wait "$supervisor_pid" || [[ "$?" == 9 ]]
+		return 0
+	}
+	supervisor_rc=0
+	_run_pulse_watchdog "$supervisor_pid" "$supervisor_clock" 1800 || supervisor_rc=$?
+	[[ "$supervisor_rc" == 9 ]]
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/completed-supervisor-snapshot.json"
+	# Even rejected heartbeat writes cannot bypass a stop request in the watchdog.
+	: >"$STOP_FLAG"
+	(command sleep 30) &
+	stopped_pid=$!
+	_kill_tree() {
+		local pid="$1"
+		kill "$pid"
+		wait "$pid" || true
+		return 0
+	}
+	sleep() { return 0; }
+	stopped_rc=0
+	_run_pulse_watchdog "$stopped_pid" "$supervisor_clock" 1800 || stopped_rc=$?
+	[[ "$stopped_rc" == 1 ]]
+)
+pass "released supervisor stays live without progress; concurrent/obsolete writes rejected and child/stop outcomes preserved"
+
+# Restore the parent's current cycle after the independent owner sandbox.
+write_pulse_health_file
 post_label_dispatch_before=$(_pulse_capture_dispatch_total)
 printf '{"session_key":"post-label-test","status":"in-flight","pid":%s,"lease_phase":"prelaunch","dispatched_at":"2026-01-01T00:00:00Z"}\n' \
 	"$$" >"$AIDEVOPS_DISPATCH_LEDGER_FILE"
@@ -345,6 +670,13 @@ assert_health "owner finalization records successful post-label dispatch" '
 	and .cycle_state.outcome == "progressed"
 	and .cycle_state.progress.kinds == ["worker-dispatched"]
 '
+cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-terminal-heartbeat.json"
+_pulse_cycle_state_stage_heartbeat && fail "terminal heartbeat rejected"
+if cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-terminal-heartbeat.json"; then
+	pass "terminal heartbeat cannot revive completed cycle"
+else
+	fail "terminal heartbeat cannot revive completed cycle"
+fi
 
 # Retention uses production functions in the sandbox HOME, never live ledgers.
 # shellcheck source=../portable-stat.sh

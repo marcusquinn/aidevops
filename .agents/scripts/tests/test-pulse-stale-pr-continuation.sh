@@ -260,6 +260,28 @@ pr_rest_json() {
 }
 candidate='{"number":29507,"repo_slug":"owner/repo","updatedAt":"2026-09-29T12:01:00Z","assignees":[],"labels":["status:available"]}'
 cache_file="${HOME}/.aidevops/logs/dispatch-negative-cache/owner--repo--29507"
+# Quiet cooldowns use the real local snapshot head reader, without REST fallback.
+write_pr_snapshot 430 first-head
+_dispatch_negative_cache_record "$candidate" worker_draft_checkpoint_cooldown 29519
+if [[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_cooldown ]]; then
+	print_result "quiet checkpoint cooldown retains an unchanged snapshot head" 0
+else
+	print_result "quiet checkpoint cooldown retains an unchanged snapshot head" 1
+fi
+for snapshot_case in changed missing stale incomplete; do
+	case "$snapshot_case" in
+	changed) write_pr_snapshot 430 new-head ;;
+	missing) write_pr_snapshot 430 first-head 12345 ;;
+	stale) write_pr_snapshot 901 first-head ;;
+	incomplete) write_pr_snapshot 430 first-head 29519 false ;;
+	esac
+	if ! _dispatch_negative_cache_reason "$candidate" >/dev/null && [[ ! -s "$GH_CALLS_FILE" ]]; then
+		print_result "quiet checkpoint wakes for $snapshot_case PR evidence without REST" 0
+	else
+		print_result "quiet checkpoint wakes for $snapshot_case PR evidence without REST" 1
+	fi
+done
+rm -f "$cache_file"
 write_pr_snapshot 430 first-head
 : >"$LOGFILE"
 printf '%s\n' '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #29507 (owner/repo)' >>"$LOGFILE"

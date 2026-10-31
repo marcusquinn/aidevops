@@ -139,6 +139,7 @@ gh issue close \$THIS_ISSUE --repo "${repo_slug}" --reason "completed"
 
 - Read only explicitly omitted source references when the packet size limit prevents inlining them; otherwise do NOT re-read #${parent_num}.
 - **Preserve all substantive content.** Merging is not summarising. If a comment adds a constraint, that constraint must appear in the merged body.
+- **Checkpoint recovery is never an unconditional requirement** (GH#35871). Name a checkpoint commit or branch as binding only after verifying it is reachable from a remote ref (\`gh api repos/${repo_slug}/commits/<sha>\`), recording the full SHA and ref. Otherwise write: "Best-effort recovery: reuse if reachable; the functional spec is the source of truth; re-implement if unrecoverable." Never forbid re-implementing work that exists only as local commits on one runner.
 - **Preserve author attribution** for specific contributions: "per @user1: …".
 - **No PR is required.** This is an operational task. The completion signal is the new issue number + parent closure + self-close.
 - **Contributors to @-mention** on the new issue: ${authors_line}
@@ -982,7 +983,7 @@ _consolidation_skip_if_resolved() {
 	labels=$(printf '%s' "$parent_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels=""
 	body=$(printf '%s' "$parent_json" | jq -r '.body // ""' 2>/dev/null) || body=""
 	# Gate 1: dispatch-blocked:committed-to-main label (t2955 cache).
-	if printf ',%s,' "$labels" | grep -qF ",dispatch-blocked:committed-to-main,"; then
+	if printf ',%s,' "$labels" | grep -F ",dispatch-blocked:committed-to-main," >/dev/null; then
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \
 			"parent work already committed to main (t2955 cache label)." \
 			"dispatch-blocked:committed-to-main"
@@ -990,7 +991,7 @@ _consolidation_skip_if_resolved() {
 	fi
 	# Gate 2: completion labels survive accidental reopen/normalization paths and
 	# are sufficient to prevent a solved issue becoming a consolidation task.
-	if printf ',%s,' "$labels" | grep -Eq ',(status:done|solved:[^,]+),'; then
+	if printf ',%s,' "$labels" | grep -E ',(status:done|solved:[^,]+),' >/dev/null; then
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \
 			"parent carries terminal completion evidence." \
 			"terminal completion label"

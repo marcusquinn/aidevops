@@ -22,7 +22,7 @@ import subprocess  # nosec B404 -- subprocess errors only; execution uses the sh
 import sys
 
 from worktree_archive_snapshot import git, git_snapshot, snapshot
-from worktree_archive_restore import RestorationProof
+from worktree_archive_restore import NOT_ENROLLED, RestorationProof, failure_message
 from worktree_lifetime_archive import capacity, durable_archive, inode, require
 from worktree_recovery_migrate import archive_command
 from worktree_recovery_migration_scratch import finish_scratch, prepare_restore, verify_restore
@@ -44,14 +44,17 @@ def failure_reason(error):
         "special permissions or hard links require separate preservation",
     }
     message = str(error) if isinstance(error, ValueError) else ""
+    if isinstance(error, subprocess.TimeoutExpired):
+        return ("producer:git-timeout; a local Git operation exceeded its time budget; "
+                "source and archive retained; retry when host load is lower")
     if isinstance(error, subprocess.CalledProcessError) and isinstance(error.stderr, str):
         lines = error.stderr.rstrip().splitlines()
         # source_fingerprint's shell caller adds this fixed failure trailer.
         if lines and lines[-1] == "Error: worktree fingerprint unavailable":
             lines.pop()
-        final = lines[-1] if lines else ""
-        if final.startswith("ValueError: "):
-            message = final.removeprefix("ValueError: ")
+        message = failure_message(lines[-1] if lines else "", message)
+        if message == NOT_ENROLLED:
+            return NOT_ENROLLED
     if message in metadata_errors:
         return ("producer:unsupported-metadata; permissions, ownership, ACLs, extended attributes "
                 "or hard links require separate preservation; source retained; "

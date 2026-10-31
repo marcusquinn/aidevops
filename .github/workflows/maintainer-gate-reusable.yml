@@ -730,6 +730,16 @@ jobs:
           # Re-apply the label
           gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "needs-maintainer-review"
 
+          # GH#35655: closed or spam issues keep NMR but get no public notice
+          # (spam closures never receive comments or notification payloads).
+          NOTICE_MODE=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
+            --jq 'if .state == "closed" or any(.labels[]; .name == "spam") then "quiet" else "notify" end' \
+            2>/dev/null || echo "notify")
+          if [[ "$NOTICE_MODE" == "quiet" ]]; then
+            echo "Issue #$ISSUE_NUMBER is closed or spam — label re-applied without notice"
+            exit 0
+          fi
+
           # Post a comment explaining why
           NOTICE_COMMENTS=""
           EXISTING=""
@@ -1314,6 +1324,15 @@ jobs:
 
           # Re-apply the label
           gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-maintainer-review"
+
+          # GH#35655: closed or spam PRs keep NMR but get no public notice.
+          NOTICE_MODE=$(gh api "repos/${REPO}/issues/${PR_NUMBER}" \
+            --jq 'if .state == "closed" or any(.labels[]; .name == "spam") then "quiet" else "notify" end' \
+            2>/dev/null || echo "notify")
+          if [[ "$NOTICE_MODE" == "quiet" ]]; then
+            echo "PR #$PR_NUMBER is closed or spam — label re-applied without notice"
+            exit 0
+          fi
 
           # Post a comment explaining why (only once)
           NOTICE_COMMENTS=""

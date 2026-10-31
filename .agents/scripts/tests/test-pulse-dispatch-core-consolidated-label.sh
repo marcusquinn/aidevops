@@ -256,6 +256,69 @@ test_projection_and_prerank_filter_match_gate() {
 	return 0
 }
 
+# GH#35623: Consolidation rewrites an issue body, not its quoted source files.
+test_consolidation_large_file_exemption() {
+	local test_root="" status=0
+	test_root=$(mktemp -d) || return 1
+	(
+		set +e
+		# shellcheck source=../pulse-dispatch-large-file-gate.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-large-file-gate.sh"
+		LOGFILE="${test_root}/pulse.log"
+		local labels="consolidation-task" gh_calls="" removal_rc=0 rc=0
+		local body='EDIT: .agents/scripts/large.sh'
+		mkdir -p "${test_root}/.agents/scripts"
+		local line=0
+		while [[ "$line" -le 2000 ]]; do
+			printf '# fixture line\n'
+			line=$((line + 1))
+		done >"${test_root}/.agents/scripts/large.sh"
+		_large_file_gate_issue_labels() { printf '%s' "$labels"; return 0; }
+		gh() {
+			gh_calls+="$*;"
+			return "$removal_rc"
+		}
+		# Keep measurement and debt filing local; exercise real orchestration,
+		# extraction and label precheck against the same >2000-line fixture.
+		_large_file_gate_issue_title() { printf 'ordinary fix'; return 0; }
+		_large_file_gate_measure_verified_targets() {
+			local paths="$1" repo_path="$2"
+			[[ "$paths" == ".agents/scripts/large.sh" ]] || return 1
+			[[ $(wc -l <"${repo_path}/${paths}") -gt 2000 ]] || return 1
+			_LFG_FOUND_LARGE=true
+			_LFG_LARGE_FILES="large.sh (2001 lines)"
+			_LFG_LARGE_FILE_PATHS="$paths"
+			return 0
+		}
+		_large_file_gate_apply() { gh_calls+="APPLIED;"; return 0; }
+		_issue_targets_large_files 1 owner/repo "$body" "$test_root" || rc=$?
+		[[ "$rc" -eq 1 && -z "$gh_calls" ]] || exit 1
+		labels="needs-simplification,consolidation-task,auto-dispatch"
+		rc=0
+		_issue_targets_large_files 1 owner/repo "$body" "$test_root" || rc=$?
+		[[ "$rc" -eq 1 && "$gh_calls" == 'issue edit 1 --repo owner/repo --remove-label needs-simplification;' ]] || exit 2
+		grep -q 'auto-cleared.*consolidation-task' "$LOGFILE" || exit 3
+		gh_calls=""
+		removal_rc=1
+		rc=0
+		_issue_targets_large_files 1 owner/repo "$body" "$test_root" true || rc=$?
+		[[ "$rc" -eq 1 && "$gh_calls" != *APPLIED* ]] || exit 4
+		grep -q 'WARN: failed to remove needs-simplification' "$LOGFILE" || exit 5
+		# Similar labels and ordinary implementation work must still be gated.
+		for labels in auto-dispatch needs-consolidation consolidation-task-extra; do
+			gh_calls=""
+			rc=0
+			_issue_targets_large_files 1 owner/repo "$body" "$test_root" || rc=$?
+			[[ "$rc" -eq 0 && "$gh_calls" == 'APPLIED;' ]] || exit 6
+		done
+		exit 0
+	) || status=$?
+	rm -rf "$test_root"
+	print_result "consolidation bypasses large-file gate and clears stale labels; ordinary work stays gated" "$status" \
+		"Assertion ${status} failed in consolidation large-file regression"
+	return 0
+}
+
 main() {
 	if ! define_helper_under_test; then
 		printf 'FATAL: helper extraction failed\n' >&2
@@ -274,6 +337,7 @@ main() {
 	test_empty_or_invalid_meta_returns_nonzero
 	test_string_label_candidates_use_same_predicate
 	test_projection_and_prerank_filter_match_gate
+	test_consolidation_large_file_exemption
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

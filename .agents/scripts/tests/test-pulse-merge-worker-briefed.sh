@@ -36,7 +36,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
-PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
+WORKER_BRIEFED_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process-worker-briefed.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -172,17 +172,14 @@ teardown_test_env() {
 # merge scripts and eval them into the test shell.
 # _pm_issue_api lives in pulse-merge.sh (module-level helper).
 # _is_trusted_issue_author and _attempt_worker_briefed_auto_merge live in
-# pulse-merge-process.sh (post-split, t3062 adds the trusted-author helper).
+# pulse-merge-process-worker-briefed.sh (split from pulse-merge-process.sh in
+# GH#27171; t3062 adds the trusted-author helper).
 define_helpers_under_test() {
 	local src_worker_briefed src_issue_api src_trusted_author src_issue_authority src_crypto_approval
 	src_issue_api=$(awk '
 		/^_pm_issue_api\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
-	# Post GH#21301 refactor: function moved to pulse-merge-process.sh
-	local extract_from="$MERGE_SCRIPT"
-	if [[ -f "$PROCESS_SCRIPT" ]]; then
-		extract_from="$PROCESS_SCRIPT"
-	fi
+	local extract_from="$WORKER_BRIEFED_SCRIPT"
 	src_trusted_author=$(awk '
 		/^_is_trusted_issue_author\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
@@ -197,6 +194,12 @@ define_helpers_under_test() {
 	' "$extract_from")
 	src_worker_briefed+=$'\n'$(awk '
 		/^_worker_briefed_link_kind\(\) \{/,/^\}$/ { print }
+	' "$extract_from")
+	# GH#35752: scoped OpenCode pin-canary brief trust (constants + helpers).
+	src_worker_briefed+=$'\n'$(awk '
+		/^_PM_OPENCODE_CANARY_ALLOWED_FILES=/,/^_PM_OPENCODE_CANARY_MAX_FILES=/ { print }
+		/^_pm_canary_shared_constants_patch_ok\(\) \{/,/^\}$/ { print }
+		/^_is_trusted_opencode_canary_issue_pr\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
 		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
@@ -910,6 +913,8 @@ test_partial_worker_association_reaches_authority_gate() {
 	_pm_gate_review_mode() { return 0; }
 	_pm_gate_author_trust() { return 0; }
 	_pm_gate_repository_and_issue() { return 0; }
+	# Closure validation has its own merge-contradiction harness.
+	_gh_pr_merge_closure_check() { return 0; }
 	_pm_gate_review_bot() { return "$review_rc"; }
 	_OW_LABEL_PAT=",origin:worker,"
 	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1 APPROVAL_VERIFY_RESULT=""

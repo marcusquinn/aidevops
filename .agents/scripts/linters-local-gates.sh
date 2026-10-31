@@ -56,6 +56,7 @@ LINTERS_LOCAL_GATE_FUNCTION_COMPLEXITY=function-complexity
 LINTERS_LOCAL_GATE_NESTING_DEPTH=nesting-depth
 LINTERS_LOCAL_GATE_BASH32=bash32-compat
 LINTERS_LOCAL_GATE_PY39_ANNOTATIONS=python39-annotations
+LINTERS_LOCAL_GATE_JQ_BINDING=jq-binding-precedence
 LINTERS_LOCAL_SKIP_NON_SHELL="non-shell broad repository sweep; use --full"
 
 _record_gate_run() {
@@ -615,6 +616,10 @@ check_targeted_tests() {
 		mapped_test=true
 		bash .agents/scripts/tests/test-lint-shell-portability.sh || exit_code=1
 	fi
+	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/(jq-binding-precedence-check\.py|tests/test-jq-binding-precedence-check\.sh)$'; then
+		mapped_test=true
+		bash .agents/scripts/tests/test-jq-binding-precedence-check.sh || exit_code=1
+	fi
 	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/(full-loop-helper(-state|-commit)?|task-decompose-helper)\.sh$|^\.agents/scripts/tests/test-full-loop-efficient-orchestration\.sh$'; then
 		mapped_test=true
 		bash .agents/scripts/tests/test-full-loop-efficient-orchestration.sh || exit_code=1
@@ -663,6 +668,11 @@ _run_gate_checks_complexity() {
 
 	if ! should_skip_gate "$LINTERS_LOCAL_GATE_PY39_ANNOTATIONS"; then
 		check_python_annotation_compat || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "$LINTERS_LOCAL_GATE_JQ_BINDING"; then
+		check_jq_binding_precedence || exit_code=1
 		echo ""
 	fi
 
@@ -759,6 +769,10 @@ _run_gate_checks_changed() {
 	_record_gate_skipped "python-complexity" "$LINTERS_LOCAL_SKIP_NON_SHELL"
 	_record_gate_run "$LINTERS_LOCAL_GATE_PY39_ANNOTATIONS"
 	check_python_annotation_compat "$(linters_local_changed_files_matching '\.py$')" || exit_code=1
+	echo ""
+
+	_record_gate_run "$LINTERS_LOCAL_GATE_JQ_BINDING"
+	check_jq_binding_precedence "$(linters_local_changed_files_matching "$LINT_JQ_FILE_REGEX")" || exit_code=1
 	echo ""
 
 	_record_gate_run "targeted-tests"

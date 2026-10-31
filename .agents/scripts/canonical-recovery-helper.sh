@@ -753,6 +753,186 @@ PY
 	return $?
 }
 
+PROJECT_CONFIG_PATH=".aidevops.json"
+PROJECT_CONFIG_PAYLOAD="payload"
+PCU_DIR=""
+
+# GH#35659: the supported project-config migration commits an explicit root
+# ignore rule and removes only the index entry. `read-tree -u -m` then deletes
+# the clean local file from every other checkout, and status stays clean, so
+# nothing reports the loss. Returns 0 only for that exact incoming migration.
+project_config_untrack_incoming() {
+	local repo="$1"
+	local old_sha="$2"
+	local new_sha="$3"
+	local ignore_rules=""
+	"$REAL_GIT" -C "$repo" cat-file -e "${old_sha}:${PROJECT_CONFIG_PATH}" 2>/dev/null || return 1
+	! "$REAL_GIT" -C "$repo" cat-file -e "${new_sha}:${PROJECT_CONFIG_PATH}" 2>/dev/null || return 1
+	ignore_rules=$("$REAL_GIT" -C "$repo" cat-file blob "${new_sha}:.gitignore" 2>/dev/null) || return 1
+	# Same explicit-rule contract as project-config-restore-helper.sh; a plain
+	# deletion without the rule is an intentional removal, not a migration.
+	grep -Eq '^/?\.aidevops\.json$' <<<"$ignore_rules" || return 1
+	! grep -Eq '^!/?\.aidevops\.json$' <<<"$ignore_rules" || return 1
+	return 0
+}
+
+# Copy the local project config aside before a worktree update would delete it.
+# Sets PCU_DIR to the private preservation directory, or leaves it empty when no
+# untracking migration is incoming or the file is already absent. Returns 1 for
+# an unsafe file or, when allow_modified is false, local edits that a three-way
+# re-apply could not keep.
+project_config_untrack_preserve() {
+	local repo="$1"
+	local old_sha="$2"
+	local new_sha="$3"
+	local operation_key="$4"
+	local allow_modified="$5"
+	local recovery_root="${AIDEVOPS_CANONICAL_RECOVERY_ROOT:-${HOME}/.aidevops/.agent-workspace/recovery/canonical}"
+	local preserve_parent=""
+	local preserve_dir=""
+	local config_file="${repo}/${PROJECT_CONFIG_PATH}"
+	local committed_blob=""
+	local local_blob=""
+	PCU_DIR=""
+	project_config_untrack_incoming "$repo" "$old_sha" "$new_sha" || return 0
+	if [[ ! -e "$config_file" && ! -L "$config_file" ]]; then
+		return 0
+	fi
+	if [[ -L "$config_file" || ! -f "$config_file" || ! -O "$config_file" ]]; then
+		printf 'BLOCKED: incoming commit untracks %s but the local copy is a symlink, not a regular file, or not owned by the current user; nothing was changed\n' \
+			"$PROJECT_CONFIG_PATH" >&2
+		return 1
+	fi
+	if [[ "$allow_modified" != "$BOOLEAN_TRUE" ]]; then
+		committed_blob=$("$REAL_GIT" -C "$repo" rev-parse --verify "${old_sha}:${PROJECT_CONFIG_PATH}") || return 1
+		local_blob=$("$REAL_GIT" -C "$repo" hash-object --no-filters -- "$config_file") || return 1
+		if [[ "$committed_blob" != "$local_blob" ]]; then
+			printf 'BLOCKED: incoming commit untracks %s but the local copy has edits; nothing was changed. Use sync-mirror on a GitHub-backed repository, or keep the edits and fast-forward after the migration is resolved\n' \
+				"$PROJECT_CONFIG_PATH" >&2
+			return 1
+		fi
+	fi
+	preserve_parent="${recovery_root}/${operation_key}"
+	(umask 077 && mkdir -p "$preserve_parent") || {
+		printf 'BLOCKED: project config preservation directory cannot be created\n' >&2
+		return 1
+	}
+	preserve_dir=$(mktemp -d "${preserve_parent}/project-config-${new_sha:0:12}.XXXXXX") || {
+		printf 'BLOCKED: project config preservation directory cannot be created\n' >&2
+		return 1
+	}
+	chmod 700 "$preserve_dir" || return 1
+	python3 - "$config_file" "$preserve_dir" "$PROJECT_CONFIG_PATH" "$PROJECT_CONFIG_PAYLOAD" <<'PY' || {
+import hashlib
+import os
+import stat
+import sys
+
+source, target_dir, config_name, payload_name = sys.argv[1:5]
+no_follow = getattr(os, "O_NOFOLLOW", 0)
+payload_path = os.path.join(target_dir, payload_name)
+descriptor = os.open(source, os.O_RDONLY | no_follow)
+with os.fdopen(descriptor, "rb") as handle:
+    before = os.fstat(handle.fileno())
+    if not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid():
+        raise SystemExit("unsafe project config")
+    payload = handle.read()
+after = os.lstat(source)
+if (after.st_ino, after.st_size, after.st_mtime_ns) != (before.st_ino, before.st_size, before.st_mtime_ns):
+    raise SystemExit("project config changed during preservation")
+digest = hashlib.sha256(payload).hexdigest()
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | no_follow
+with os.fdopen(os.open(payload_path, flags, 0o600), "wb") as copy:
+    copy.write(payload)
+    copy.flush()
+    os.fsync(copy.fileno())
+with open(payload_path, "rb") as check:
+    if hashlib.sha256(check.read()).hexdigest() != digest:
+        raise SystemExit("project config copy could not be verified")
+with os.fdopen(os.open(os.path.join(target_dir, "manifest.tsv"), flags, 0o600), "w") as manifest:
+    manifest.write(f"path\t{config_name}\nsha256\t{digest}\n")
+    manifest.write(f"mode\t{stat.S_IMODE(before.st_mode):o}\nmtime_ns\t{before.st_mtime_ns}\n")
+PY
+		printf 'BLOCKED: local %s could not be preserved before synchronization; nothing was changed\n' \
+			"$PROJECT_CONFIG_PATH" >&2
+		return 1
+	}
+	PCU_DIR="$preserve_dir"
+	printf 'PROJECT_CONFIG_PRESERVED_DIR=%s\n' "$preserve_dir"
+	return 0
+}
+
+# Reinstate a preserved project config as ignored local state on the verified
+# new tip: exact bytes, mode and mtime, never overwriting or following links.
+# Returns 0 when reinstated or nothing was preserved (empty preserve_dir), 3
+# when left in the preservation directory, 1 on error.
+project_config_reinstate() {
+	local repo="$1"
+	local preserve_dir="$2"
+	local config_file="${repo}/${PROJECT_CONFIG_PATH}"
+	local rc=0
+	local ignored_status=""
+	[[ -n "$preserve_dir" ]] || return 0
+	python3 - "$repo" "$preserve_dir" "$PROJECT_CONFIG_PATH" "$PROJECT_CONFIG_PAYLOAD" <<'PY' || rc=$?
+import hashlib
+import os
+import sys
+import tempfile
+
+repo, preserve_dir, config_name, payload_name = sys.argv[1:5]
+fields = {}
+with open(os.path.join(preserve_dir, "manifest.tsv"), "rb") as manifest:
+    for line in manifest.read().decode().splitlines():
+        key, _, value = line.partition("\t")
+        fields[key] = value
+if fields.get("path") != config_name:
+    raise SystemExit("invalid project config manifest")
+with open(os.path.join(preserve_dir, payload_name), "rb") as handle:
+    payload = handle.read()
+if hashlib.sha256(payload).hexdigest() != fields.get("sha256"):
+    raise SystemExit("preserved project config does not match its manifest")
+target = os.path.join(repo, config_name)
+if os.path.lexists(target):
+    sys.exit(3)
+descriptor, temp_path = tempfile.mkstemp(prefix=config_name + ".reinstate.", dir=repo)
+try:
+    with os.fdopen(descriptor, "wb") as temp:
+        temp.write(payload)
+        temp.flush()
+        os.fchmod(temp.fileno(), int(fields["mode"], 8))
+        os.fsync(temp.fileno())
+    mtime_ns = int(fields["mtime_ns"])
+    os.utime(temp_path, ns=(mtime_ns, mtime_ns))
+    try:
+        # link() is the no-clobber publish step: it fails if anything,
+        # including a symlink, appeared at the destination meanwhile.
+        os.link(temp_path, target)
+    except FileExistsError:
+        sys.exit(3)
+finally:
+    os.unlink(temp_path)
+with open(target, "rb") as check:
+    if hashlib.sha256(check.read()).hexdigest() != fields["sha256"]:
+        raise SystemExit("reinstated project config could not be verified")
+PY
+	if [[ "$rc" -eq 0 ]]; then
+		ignored_status=$("$REAL_GIT" -C "$repo" status --porcelain=v1 --ignored -- "$PROJECT_CONFIG_PATH" 2>/dev/null || true)
+		if [[ "$ignored_status" != "!! ${PROJECT_CONFIG_PATH}" ]]; then
+			cmp -s "$config_file" "${preserve_dir}/${PROJECT_CONFIG_PAYLOAD}" && rm -f "$config_file"
+			rc=3
+		fi
+	fi
+	if [[ "$rc" -eq 0 ]]; then
+		printf 'PROJECT_CONFIG_REINSTATED=%s\n' "$PROJECT_CONFIG_PATH"
+		return 0
+	fi
+	printf 'PROJECT_CONFIG_LEFT_IN_BACKUP=%s\n' "$preserve_dir"
+	printf 'WARNING: local %s was not reinstated after synchronization; its exact bytes remain in %s\n' \
+		"$PROJECT_CONFIG_PATH" "$preserve_dir" >&2
+	[[ "$rc" -eq 3 ]] && return 3
+	return 1
+}
+
 # Three-way re-apply of preserved tracked edits onto the new tip. Prints
 # conflicting paths and returns 1 when the edits cannot be merged cleanly.
 ffl_reapply_edits() {
@@ -905,6 +1085,7 @@ fast_forward_local() {
 	local backup_id=""
 	local backup_dir=""
 	local edits_tree=""
+	local config_preserve_dir=""
 
 	ffl_validate "$repo" "$from_branch" || validate_status=$?
 	if [[ "$validate_status" -eq 2 ]]; then
@@ -922,12 +1103,17 @@ fast_forward_local() {
 	# shellcheck disable=SC2064
 	trap "rmdir '${lock}' 2>/dev/null || true" EXIT
 
+	# GH#35659: three-way re-apply cannot keep edits to an untracked config.
+	project_config_untrack_preserve "$repo" "$old_sha" "$new_sha" "$task_id" false || return 1
+	config_preserve_dir="$PCU_DIR"
+
 	AUDIT_LOG_FILE="$audit_file" "$audit" verify --quiet || { ffl_block "audit chain verification failed"; return 1; }
 	AUDIT_LOG_FILE="$audit_file" AUDIT_QUIET=true "$audit" log operation.verify \
 		"Canonical local fast-forward authorized" \
 		--detail "task=${task_id}" --detail "repo=${repo}" --detail "operation=${LOCAL_FAST_FORWARD_CMD}" \
 		--detail "target=${default_branch}" --detail "from_branch=${from_branch}" \
-		--detail "old_sha=${old_sha}" --detail "new_sha=${new_sha}" >/dev/null ||
+		--detail "old_sha=${old_sha}" --detail "new_sha=${new_sha}" \
+		--detail "project_config_preservation=${config_preserve_dir:-none}" >/dev/null ||
 		{ ffl_block "recovery audit record could not be written"; return 1; }
 
 	ffl_preserve_and_clean "$repo" "$task_id" "$new_sha" || return 1
@@ -964,6 +1150,7 @@ fast_forward_local() {
 	if [[ -n "$backup_id" ]]; then
 		if ! ffl_reapply_edits "$repo" "$old_sha" "$new_sha" "$edits_tree"; then
 			"$REAL_GIT" -C "$repo" read-tree --reset -u "$new_sha" || true
+			project_config_reinstate "$repo" "$config_preserve_dir" || true
 			printf 'FAST_FORWARDED_LOCAL_CANONICAL=true\nNEW_SHA=%s\n' "$new_sha"
 			printf 'BLOCKED: preserved edits conflict with the new tip; they remain in backup %s\n' "$backup_id" >&2
 			return 1
@@ -975,12 +1162,10 @@ fast_forward_local() {
 	fi
 	[[ "$("$REAL_GIT" -C "$repo" rev-parse --verify "${local_ref}^{commit}")" == "$new_sha" ]] ||
 		{ ffl_block "default ref does not match the source tip after fast-forward"; return 1; }
+	project_config_reinstate "$repo" "$config_preserve_dir" || true
 	AUDIT_LOG_FILE="$audit_file" "$audit" verify --quiet || { ffl_block "audit chain verification failed after fast-forward"; return 1; }
-	printf 'FAST_FORWARDED_LOCAL_CANONICAL=true\n'
-	printf 'OLD_SHA=%s\n' "$old_sha"
-	printf 'NEW_SHA=%s\n' "$new_sha"
-	printf 'CANONICAL_BRANCH=%s\n' "$default_branch"
-	printf 'BACKUP_ID=%s\n' "${backup_id:-none}"
+	printf 'FAST_FORWARDED_LOCAL_CANONICAL=true\nOLD_SHA=%s\nNEW_SHA=%s\nCANONICAL_BRANCH=%s\nBACKUP_ID=%s\n' \
+		"$old_sha" "$new_sha" "$default_branch" "${backup_id:-none}"
 	return 0
 }
 
@@ -1500,6 +1685,21 @@ if [[ "$local_state" == "$LOCAL_STATE_BORN" && "$cmd" == "$FAST_FORWARD_CMD" ]] 
 	exit 1
 fi
 
+# GH#35659: preserve the local project config before dirty-state cleanup and
+# the worktree update can delete it under an incoming untracking migration.
+# Local edits are kept too: they are the machine-local state being migrated.
+config_preserve_dir=""
+if [[ "$local_state" == "$LOCAL_STATE_BORN" &&
+	("$cmd" == "$SYNC_MIRROR_CMD" || "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "restore-default") ]]; then
+	config_old_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR") || {
+		printf 'BLOCKED: canonical HEAD cannot be resolved\n' >&2
+		exit 1
+	}
+	project_config_untrack_preserve "$repo_path" "$config_old_sha" "$target_sha" \
+		"${issue_number:-$maintenance_reason}" true || exit 1
+	config_preserve_dir="$PCU_DIR"
+fi
+
 sync_backup_id=""
 sync_backup_dir=""
 sync_tracked_dirty=false
@@ -1629,6 +1829,7 @@ AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log opera
 	--detail "target_sha=${target_sha}" --detail "local_sha=${local_sha:-none}" \
 	--detail "local_state=${local_state}" \
 	--detail "preservation_ref=${preservation_ref:-none}" --detail "backup_id=${sync_backup_id:-none}" \
+	--detail "project_config_preservation=${config_preserve_dir:-none}" \
 	--detail "stale_rebase_fingerprint=${stale_rebase_fingerprint:-none}" \
 	--detail "stale_rebase_preservation=${stale_rebase_preservation_dir:-none}" >/dev/null || {
 	printf 'BLOCKED: recovery audit record could not be written\n' >&2
@@ -2029,6 +2230,9 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 	[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}")" == "$target_sha" ]] || exit 1
 	[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}")" == "$target_sha" ]] || exit 1
 	[[ -z "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]] || exit 1
+	if [[ -n "$config_preserve_dir" ]]; then
+		project_config_reinstate "$repo_path" "$config_preserve_dir" || true
+	fi
 	if [[ "$maintenance_reason" == "$AIDEVOPS_UPDATE_REASON" ]] &&
 		! fetch_aidevops_release_tag "$repo_path" "$canonical_remote"; then
 		printf 'WARNING: exact release tag for the updated VERSION is not available from %s\n' \
@@ -2101,6 +2305,9 @@ fi
 "$REAL_GIT" -C "$repo_path" merge --ff-only "$target_sha"
 [[ "$("$REAL_GIT" -C "$repo_path" rev-parse HEAD)" == "$target_sha" ]] || exit 1
 [[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}")" == "$target_sha" ]] || exit 1
+if [[ -n "$config_preserve_dir" ]]; then
+	project_config_reinstate "$repo_path" "$config_preserve_dir" || true
+fi
 if [[ -n "$preservation_ref" ]]; then
 	printf 'Preserved divergent canonical tip %s at %s\n' "$local_sha" "$preservation_ref"
 fi

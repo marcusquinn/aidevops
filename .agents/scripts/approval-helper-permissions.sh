@@ -35,6 +35,8 @@ readonly _PERMISSION_BLOCKER_STATUS="blocked"
 readonly _PERMISSION_BLOCKER_TRUE="true"
 readonly _PERMISSION_APPROVAL_REJECTED_EVENT="permission_approval_rejected"
 readonly _PERMISSION_GRANT_PERSISTENCE_FAILED_EVENT="permission_grant_persistence_failed"
+readonly _PERMISSION_HOLD_LABEL="needs-maintainer-permissions"
+readonly _PERMISSION_REQUEST_REJECTED_REASON="request_invalid_or_non_grantable"
 
 _run_worker_blocker_logger() {
 	local logger="$1"
@@ -193,7 +195,11 @@ _fetch_latest_permission_request_json() {
 	return 0
 }
 
-_validate_permission_request_json() {
+# GH#35676: identity proves which request a signed decision binds to (schema,
+# target, digest, worker binding). It deliberately says nothing about whether
+# the capabilities are grantable, so a withdrawal (which grants nothing) can
+# release a non-grantable request such as a `task` denial.
+_validate_permission_request_identity() {
 	local request_json="$1"
 	local target_type="$2"
 	local target_number="$3"
@@ -213,7 +219,21 @@ _validate_permission_request_json() {
 		and (.request_sha256 | type == $string_type and test($sha_pattern))
 		and (.worker.worktree_sha256 | type == $string_type and test($sha_pattern))
 		and (.capabilities | type == $array_type and length > 0 and length <= 20)
-		and all(.capabilities[];
+		and all(.capabilities[]; .permission | type == $string_type and length > 0 and length <= 100)
+	' <<<"$request_json" >/dev/null || return 1
+	digest=$(_permission_request_digest "$request_json") || return 1
+	expected_digest=$(jq -r '.request_sha256' <<<"$request_json")
+	[[ "$digest" == "$expected_digest" ]] || return 1
+	[[ "$request_id" == "perm-${digest:0:16}" ]] || return 1
+	return 0
+}
+
+# Grantability: only exact-pattern bash/external_directory scope outside
+# credential locations may ever be signed as a capability grant.
+_permission_request_is_grantable() {
+	local request_json="$1"
+	jq -e --arg array_type "$PERMISSION_JSON_ARRAY_TYPE" --arg string_type "$PERMISSION_JSON_STRING_TYPE" '
+		all(.capabilities[];
 			(.permission as $permission | ["bash", "external_directory"] | index($permission) != null)
 			and (.patterns | type == $array_type and length > 0 and length <= 20)
 			and all(.patterns[]; type == $string_type and length <= 500)
@@ -223,11 +243,18 @@ _validate_permission_request_json() {
 				and (test("^(\\*|\\*\\*|/\\*\\*|~/\\*\\*|\\$WORKTREE/\\*\\*)$") | not)
 			)
 		)
-	' <<<"$request_json" >/dev/null || return 1
-	digest=$(_permission_request_digest "$request_json") || return 1
-	expected_digest=$(jq -r '.request_sha256' <<<"$request_json")
-	[[ "$digest" == "$expected_digest" ]] || return 1
-	[[ "$request_id" == "perm-${digest:0:16}" ]] || return 1
+	' <<<"$request_json" >/dev/null
+	return $?
+}
+
+_validate_permission_request_json() {
+	local request_json="$1"
+	local target_type="$2"
+	local target_number="$3"
+	local slug="$4"
+	local request_id="$5"
+	_validate_permission_request_identity "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || return 1
+	_permission_request_is_grantable "$request_json" || return 1
 	return 0
 }
 
@@ -355,7 +382,7 @@ _apply_permission_approval_state() {
 		issue_json=$(gh_issue_view "$target_number" --repo "$slug" --json labels 2>/dev/null) || return 1
 		labels_csv=$(jq -r '(.labels // []) | map(.name) | join(",")' <<<"$issue_json") || return 1
 		resume_auto=$(jq -r '.context.resume_auto_dispatch == true' <<<"$request_json") || return 1
-		local -a edit_args=(--remove-label "needs-maintainer-permissions")
+		local -a edit_args=(--remove-label "$_PERMISSION_HOLD_LABEL")
 		if [[ ",${labels_csv}," == *",needs-maintainer-permissions,"* ]]; then
 			edit_args+=(--remove-label "status:blocked" --add-label "status:available")
 		elif [[ ",${labels_csv}," != *",status:blocked,"* ]]; then
@@ -366,7 +393,7 @@ _apply_permission_approval_state() {
 		fi
 		gh_issue_edit_safe "$target_number" --repo "$slug" "${edit_args[@]}" >/dev/null || return 1
 	else
-		gh pr edit "$target_number" --repo "$slug" --remove-label "needs-maintainer-permissions" >/dev/null || return 1
+		gh pr edit "$target_number" --repo "$slug" --remove-label "$_PERMISSION_HOLD_LABEL" >/dev/null || return 1
 	fi
 	return 0
 }
@@ -549,7 +576,8 @@ _persist_signed_permission_withdrawal() {
 	_record_permission_blocker_event "permission_request_withdrawn" "resuming" \
 		"permission_request_withdrawn" "false" "$target_number" "$slug" "$request_id" \
 		"$worker_session" "Signed withdrawal persisted; dispatch resumes without a grant"
-	_kick_pulse_after_permission_approval
+	# A batch kicks pulse once after the last withdrawal instead of per target.
+	[[ "${_PERMISSION_BATCH_ACTIVE:-0}" -eq 1 ]] || _kick_pulse_after_permission_approval
 	_print_ok "Permission request ${request_id} withdrawn for ${target_type} #${target_number}; no capability granted"
 	return 0
 }
@@ -587,7 +615,52 @@ _sign_permission_withdrawal() {
 	return $?
 }
 
+_sign_permission_grant() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_id="$4"
+	local request_json="$5"
+	local actual_key="$6"
+	local worker_session="${7:-}"
+	local issued_at expires_at payload sig_file
+	issued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	expires_at=$(_permission_grant_expiry)
+	payload=$(jq -cS --arg schema "$PERMISSION_GRANT_SCHEMA" --arg issued "$issued_at" --arg expires "$expires_at" '
+		{
+			schema: $schema,
+			authority: "worker-permissions",
+			target,
+			request_id,
+			request_sha256,
+			worker,
+			capabilities,
+			issued_at: $issued,
+			expires_at: $expires
+		}
+	' <<<"$request_json") || {
+		_record_permission_grant_failure "grant_payload_build_failed" "$target_number" "$slug" "$request_id" \
+			"$worker_session" "Signed grant payload could not be built"
+		return 1
+	}
+	sig_file=$(mktemp)
+	if ! _sign_approval_payload "$payload" "$actual_key" "$sig_file"; then
+		rm -f "$sig_file"
+		_record_permission_grant_failure "grant_signing_failed" "$target_number" "$slug" "$request_id" \
+			"$worker_session" "Signed grant payload could not be signed"
+		return 1
+	fi
+	_persist_signed_permission_grant "$target_type" "$target_number" "$slug" "$request_id" \
+		"$request_json" "$payload" "$sig_file" "$expires_at" "$worker_session"
+	return $?
+}
+
 cmd_permissions() {
+	if [[ "${1:-}" == "batch" ]]; then
+		shift
+		_cmd_permissions_batch "$@"
+		return $?
+	fi
 	local target_type="${1:-}"
 	local target_number="${2:-}"
 	shift 2 2>/dev/null || true
@@ -621,15 +694,16 @@ cmd_permissions() {
 		return 1
 	}
 	worker_session=$(_permission_request_session "$request_json")
-	_validate_permission_request_json "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || {
-		_record_permission_approval_rejection "request_invalid_or_non_grantable" "$target_number" "$slug" "$request_id" "" \
-			"Permission request was malformed, changed, or contained non-grantable scope"
-		_print_error "Permission request is malformed, changed, or contains a non-grantable sensitive capability"
+	_validate_permission_request_identity "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || {
+		_record_permission_approval_rejection "$_PERMISSION_REQUEST_REJECTED_REASON" "$target_number" "$slug" "$request_id" "" \
+			"Permission request was malformed or changed after posting"
+		_print_error "Permission request is malformed or changed after posting"
 		return 1
 	}
 	if [[ "$withdraw" -eq 1 ]]; then
 		# #aidevops:trust-boundary GH#33330: same root/key/latest-request ceremony
-		# as a grant, but the signed payload carries no capabilities.
+		# as a grant, but the signed payload carries no capabilities. GH#35676:
+		# identity alone suffices, so non-grantable requests can be released.
 		_confirm_permission_withdrawal "$request_json" "$target_type" "$target_number" "$slug" || return 1
 		_permission_request_is_latest "$request_json" "$target_number" "$slug" || {
 			_record_permission_approval_rejection "request_superseded" "$target_number" "$slug" "$request_id" \
@@ -641,6 +715,12 @@ cmd_permissions() {
 			"$request_json" "$actual_key" "$worker_session"
 		return $?
 	fi
+	_permission_request_is_grantable "$request_json" || {
+		_record_permission_approval_rejection "$_PERMISSION_REQUEST_REJECTED_REASON" "$target_number" "$slug" "$request_id" \
+			"$worker_session" "Permission request contained non-grantable scope"
+		_print_error "Permission request contains a non-grantable capability; release the hold with --withdraw instead"
+		return 1
+	}
 	_confirm_permission_approval "$request_json" "$target_type" "$target_number" "$slug" || return 1
 	_permission_request_is_latest "$request_json" "$target_number" "$slug" || {
 		_record_permission_approval_rejection "request_superseded" "$target_number" "$slug" "$request_id" \
@@ -649,36 +729,213 @@ cmd_permissions() {
 		_print_error "A newer permission request appeared while approval was pending; review and approve the latest request instead"
 		return 1
 	}
-	local issued_at expires_at payload sig_file
-	issued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	expires_at=$(_permission_grant_expiry)
-	payload=$(jq -cS --arg schema "$PERMISSION_GRANT_SCHEMA" --arg issued "$issued_at" --arg expires "$expires_at" '
-		{
-			schema: $schema,
-			authority: "worker-permissions",
-			target,
-			request_id,
-			request_sha256,
-			worker,
-			capabilities,
-			issued_at: $issued,
-			expires_at: $expires
-		}
-	' <<<"$request_json") || {
-		_record_permission_grant_failure "grant_payload_build_failed" "$target_number" "$slug" "$request_id" \
-			"$worker_session" "Signed grant payload could not be built"
+	_sign_permission_grant "$target_type" "$target_number" "$slug" "$request_id" \
+		"$request_json" "$actual_key" "$worker_session"
+	return $?
+}
+
+# =============================================================================
+# GH#35676: batch withdrawal. One root/key/auth ceremony and one WITHDRAW
+# confirmation for many stale requests; each request is still preflighted
+# (trusted, intact identity, still latest) and signed individually. Grants are
+# deliberately not batchable: each grant keeps its own APPROVE review.
+# =============================================================================
+
+_permissions_batch_usage() {
+	printf '%s\n' "Usage: sudo aidevops approve permissions batch --withdraw [--all-blocked] [issue|pr:<number>:perm-<id> ...] [owner/repo]"
+	return 0
+}
+
+# Preflight helpers print to stdout only their machine-readable result.
+_permissions_batch_warn() {
+	local msg="$1"
+	_print_warn "$msg" >&2
+	return 0
+}
+
+# Emit issue:<n>:<latest-request-id> for open issues held by the label.
+_permissions_batch_discover_blocked() {
+	local slug="$1"
+	local number request_json request_id request_rc
+	local numbers
+	numbers=$(gh issue list --repo "$slug" --state open --label "$_PERMISSION_HOLD_LABEL" \
+		--limit 200 --json number --jq '.[].number' 2>/dev/null) || {
+		_print_error "Could not list issues labelled needs-maintainer-permissions in ${slug}" >&2
 		return 1
 	}
-	sig_file=$(mktemp)
-	if ! _sign_approval_payload "$payload" "$actual_key" "$sig_file"; then
-		rm -f "$sig_file"
-		_record_permission_grant_failure "grant_signing_failed" "$target_number" "$slug" "$request_id" \
-			"$worker_session" "Signed grant payload could not be signed"
+	for number in $numbers; do
+		request_rc=0
+		request_json=$(_fetch_latest_permission_request_json "$number" "$slug") || request_rc=$?
+		if [[ "$request_rc" -ne 0 ]]; then
+			_permissions_batch_warn "Skipping issue #${number}: no readable trusted permission request (rc=${request_rc})"
+			continue
+		fi
+		request_id=$(jq -r '.request_id // ""' <<<"$request_json" 2>/dev/null || printf '')
+		if [[ ! "$request_id" =~ ^perm-[0-9a-f]{16}$ ]]; then
+			_permissions_batch_warn "Skipping issue #${number}: latest permission request has no valid request id"
+			continue
+		fi
+		printf 'issue:%s:%s\n' "$number" "$request_id"
+	done
+	return 0
+}
+
+# Preflight one target. Prints the compact request JSON on success.
+_permissions_batch_preflight_target() {
+	local target_type="$1"
+	local target_number="$2"
+	local request_id="$3"
+	local slug="$4"
+	local request_json
+	_validate_approval_target_kind "$target_type" "$target_number" "$slug" >/dev/null 2>&1 || {
+		_permissions_batch_warn "Skipping ${target_type} #${target_number}: target kind does not match"
+		return 1
+	}
+	request_json=$(_fetch_permission_request_json "$target_number" "$slug" "$request_id") || {
+		_permissions_batch_warn "Skipping ${target_type} #${target_number}: request ${request_id} not found in trusted comments"
+		return 1
+	}
+	_validate_permission_request_identity "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || {
+		_record_permission_approval_rejection "$_PERMISSION_REQUEST_REJECTED_REASON" "$target_number" "$slug" "$request_id" "" \
+			"Permission request was malformed or changed after posting"
+		_permissions_batch_warn "Skipping ${target_type} #${target_number}: request ${request_id} is malformed or changed"
+		return 1
+	}
+	_permission_request_is_latest "$request_json" "$target_number" "$slug" || {
+		_permissions_batch_warn "Skipping ${target_type} #${target_number}: ${request_id} is not the latest request; review the newer one"
+		return 1
+	}
+	jq -c . <<<"$request_json"
+	return 0
+}
+
+_permissions_batch_summary_row() {
+	local target_type="$1"
+	local target_number="$2"
+	local request_json="$3"
+	jq -r --arg type "$target_type" --arg number "$target_number" '
+		"  - \($type) #\($number)  \(.request_id)  session=\(.worker.session // "?")\n"
+		+ ([.capabilities[] | "      " + .permission + " via " + (.tool // "?") + ": "
+			+ (if ((.patterns // []) | length) == 0 then "(no pattern)" else (.patterns | join(", ")) end)]
+			| join("\n"))
+	' <<<"$request_json"
+	return 0
+}
+
+_confirm_permission_batch_withdrawal() {
+	local slug="$1"
+	local count="$2"
+	local confirmation=""
+	echo ""
+	echo "The ${count} request(s) above will each receive a signed withdrawal in ${slug}."
+	echo "No capability is granted. Each issue becomes dispatchable again without its grant;"
+	echo "a later worker that needs the same capability must raise a new request."
+	echo ""
+	printf 'Type WITHDRAW once to confirm all %s withdrawal(s): ' "$count"
+	read -r confirmation
+	[[ "$confirmation" == "WITHDRAW" ]] || {
+		_print_error "Permission batch withdrawal cancelled"
+		return 1
+	}
+	return 0
+}
+
+_permissions_batch_parse_specs() {
+	local spec="$1"
+	[[ "$spec" =~ ^(issue|pr):([0-9]+):(perm-[0-9a-f]{16})$ ]] || return 1
+	printf '%s %s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+	return 0
+}
+
+_cmd_permissions_batch() {
+	local slug="" withdraw=0 all_blocked=0 spec
+	local -a specs=()
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--withdraw) withdraw=1 ;;
+		--all-blocked) all_blocked=1 ;;
+		issue:* | pr:*) specs+=("$arg") ;;
+		*/*) [[ -z "$slug" ]] || { _print_error "Provide only one owner/repo slug"; return 1; }; slug="$arg" ;;
+		*) _print_error "Unknown permissions batch argument: $arg"; _permissions_batch_usage; return 1 ;;
+		esac
+		shift
+	done
+	[[ "$withdraw" -eq 1 ]] || {
+		_print_error "Batch mode only withdraws requests; grants keep the per-request APPROVE review"
+		_permissions_batch_usage
+		return 1
+	}
+	[[ "${#specs[@]}" -gt 0 || "$all_blocked" -eq 1 ]] || { _permissions_batch_usage; return 1; }
+	for spec in "${specs[@]}"; do
+		_permissions_batch_parse_specs "$spec" >/dev/null || { _print_error "Invalid target: $spec"; _permissions_batch_usage; return 1; }
+	done
+	_require_interactive_root "$(_permissions_batch_usage)" || return 1
+	local actual_key
+	actual_key=$(_approval_private_key_path)
+	_require_approval_key "$actual_key" || return 1
+	_require_gh_auth || return 1
+	slug=$(_resolve_slug_or_fail "$slug" "$(_permissions_batch_usage)") || return 1
+	if [[ "$all_blocked" -eq 1 ]]; then
+		local discovered
+		discovered=$(_permissions_batch_discover_blocked "$slug") || return 1
+		for spec in $discovered; do
+			specs+=("$spec")
+		done
+	fi
+	_execute_permissions_batch_withdrawal "$slug" "$actual_key" "${specs[@]}"
+	return $?
+}
+
+_execute_permissions_batch_withdrawal() {
+	local slug="$1"
+	local actual_key="$2"
+	shift 2
+	local spec parsed target_type target_number request_id request_json seen=" " skipped=0
+	local -a ready_types=() ready_numbers=() ready_ids=() ready_json=()
+	echo ""
+	echo "Preflighting $# permission request(s) in ${slug}:"
+	for spec in "$@"; do
+		parsed=$(_permissions_batch_parse_specs "$spec") || { skipped=$((skipped + 1)); continue; }
+		read -r target_type target_number request_id <<<"$parsed"
+		# Explicit targets may overlap --all-blocked discovery; keep the first.
+		[[ "$seen" != *" ${target_type}:${target_number} "* ]] || continue
+		seen="${seen}${target_type}:${target_number} "
+		request_json=$(_permissions_batch_preflight_target "$target_type" "$target_number" "$request_id" "$slug") || {
+			skipped=$((skipped + 1))
+			continue
+		}
+		_permissions_batch_summary_row "$target_type" "$target_number" "$request_json"
+		ready_types+=("$target_type")
+		ready_numbers+=("$target_number")
+		ready_ids+=("$request_id")
+		ready_json+=("$request_json")
+	done
+	local count="${#ready_ids[@]}"
+	if [[ "$count" -eq 0 ]]; then
+		_print_error "No withdrawable permission requests (${skipped} skipped)"
 		return 1
 	fi
-	_persist_signed_permission_grant "$target_type" "$target_number" "$slug" "$request_id" \
-		"$request_json" "$payload" "$sig_file" "$expires_at" "$worker_session"
-	return $?
+	_confirm_permission_batch_withdrawal "$slug" "$count" || return 1
+	local index succeeded=0 failed=0 worker_session
+	_PERMISSION_BATCH_ACTIVE=1
+	for ((index = 0; index < count; index++)); do
+		worker_session=$(_permission_request_session "${ready_json[$index]}")
+		if _sign_permission_withdrawal "${ready_types[$index]}" "${ready_numbers[$index]}" "$slug" \
+			"${ready_ids[$index]}" "${ready_json[$index]}" "$actual_key" "$worker_session"; then
+			succeeded=$((succeeded + 1))
+		else
+			failed=$((failed + 1))
+		fi
+	done
+	_PERMISSION_BATCH_ACTIVE=0
+	[[ "$succeeded" -eq 0 ]] || _kick_pulse_after_permission_approval
+	if [[ "$failed" -gt 0 || "$skipped" -gt 0 ]]; then
+		_print_error "Batch withdrawal: ${succeeded} withdrawn, ${failed} failed, ${skipped} skipped"
+		return 1
+	fi
+	_print_ok "Batch withdrawal: all ${succeeded} request(s) withdrawn; no capability granted"
+	return 0
 }
 
 # Latest trusted signed decision (grant or withdrawal) for one request. The
@@ -784,12 +1041,20 @@ cmd_verify_permissions() {
 	esac
 	request_id=$(jq -r '.request_id // ""' \
 		<<<"$request_json")
-	_validate_permission_request_json "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || {
+	_validate_permission_request_identity "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || {
 		printf 'MALFORMED_REQUEST\n'
 		return 5
 	}
+	# GH#35676: a non-grantable request can only ever be withdrawn; without a
+	# withdrawal it keeps the historical MALFORMED_REQUEST (blocking) result.
+	local grantable=1
+	_permission_request_is_grantable "$request_json" || grantable=0
 	grant_body=$(_fetch_latest_permission_grant_body "$target_number" "$slug" "$request_id") || { printf 'API_ERROR\n'; return 6; }
-	[[ -n "$grant_body" ]] || { printf 'NO_APPROVAL\n'; return 1; }
+	if [[ -z "$grant_body" ]]; then
+		[[ "$grantable" -eq 1 ]] || { printf 'MALFORMED_REQUEST\n'; return 5; }
+		printf 'NO_APPROVAL\n'
+		return 1
+	fi
 	[[ -f "$APPROVAL_PUB" ]] || { printf 'NO_KEY\n'; return 2; }
 	_verify_comment_signature "$grant_body" "$APPROVAL_PUB" || { printf 'MALFORMED_APPROVAL\n'; return 5; }
 	payload=$(_extract_fenced_block "$grant_body" 1)
@@ -800,6 +1065,9 @@ cmd_verify_permissions() {
 		printf 'WITHDRAWN\n'
 		return 1
 	fi
+	# #aidevops:trust-boundary GH#35676: a signed grant over non-grantable
+	# scope is never honoured, even if one was somehow posted.
+	[[ "$grantable" -eq 1 ]] || { printf 'MALFORMED_REQUEST\n'; return 5; }
 	_validate_permission_grant_payload "$payload" "$request_json" || { printf 'STALE_APPROVAL\n'; return 4; }
 	# aidevops:trust-boundary -- bind resumes to the verified signed payload,
 	# never merely any approval on the issue or an unsigned local marker.

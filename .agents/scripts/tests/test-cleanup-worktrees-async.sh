@@ -169,6 +169,13 @@ STUB
 	# so injecting SCRIPT_DIR via env does not work).
 	cp "$HELPER" "${stub_dir}/cleanup-worktrees-async-helper.sh"
 	chmod +x "${stub_dir}/cleanup-worktrees-async-helper.sh"
+	cat >"${stub_dir}/pulse-cleanup-progress.sh" <<STUB
+_pc_cleanup_resumable_unlocked() {
+	local budget="\$1" repo="\$2"
+	printf '%s %s\\n' "\$budget" "\$repo" >>"${TEST_DIR}/capacity-ran"
+	return 0
+}
+STUB
 	cat >"${stub_dir}/worktree-recovery-maintenance-helper.sh" <<STUB
 #!/usr/bin/env bash
 printf 'MAINTENANCE_RAN\\n' >>"${maintenance_ran_file}"
@@ -768,6 +775,32 @@ PY
 	return 0
 }
 
+test_capacity_mode_is_scoped_and_locked() {
+	local logs="${TEST_DIR}/.aidevops/logs" rc=0
+	git init -q "${TEST_DIR}/repo"
+	mkdir -p "$logs"
+	date +%s >"${logs}/cleanup_worktrees.last-run"
+	AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE=apply run_helper_in_isolation --capacity "${TEST_DIR}/repo" 7
+	if [[ "$(<"${TEST_DIR}/capacity-ran")" == "7 ${TEST_DIR}/repo" &&
+		! -e "${TEST_DIR}/mock-ran" && ! -e "${TEST_DIR}/maintenance-ran" &&
+		! -e "${TEST_DIR}/compact-retention-ran" && ! -e "${TEST_DIR}/registry-reconcile-ran" &&
+		! -e "${TEST_DIR}/dirty-prune-ran" && ! -d "${logs}/cleanup_worktrees.lock" ]]; then
+		print_result "capacity: bypass cadence but not scope, maintenance or lock release" 0
+	else
+		print_result "capacity: bypass cadence but not scope, maintenance or lock release" 1
+	fi
+	mkdir "${logs}/cleanup_worktrees.lock"
+	printf '%s\n' "$$" >"${logs}/cleanup_worktrees.lock/pid"
+	rm -f "${TEST_DIR}/capacity-ran"
+	env HOME="$TEST_DIR" bash "${TEST_DIR}/scripts/cleanup-worktrees-async-helper.sh" --capacity "${TEST_DIR}/repo" 7 || rc=$?
+	if [[ "$rc" == 75 && ! -e "${TEST_DIR}/capacity-ran" ]]; then
+		print_result "capacity: async lock contention returns actionable status without cleanup" 0
+	else
+		print_result "capacity: async lock contention returns actionable status without cleanup" 1
+	fi
+	return 0
+}
+
 main() {
 	echo "Running cleanup-worktrees-async-helper.sh tests"
 	echo "================================================"
@@ -849,7 +882,7 @@ main() {
 	for test_case in test_missing_metadata_prune_runs_after_success \
 		test_missing_metadata_prune_runs_when_cleanup_skipped \
 		test_compact_retention_policy test_compact_retention_defaults_config_and_failure \
-		test_lifecycle_only_never_expires_recovery; do
+		test_lifecycle_only_never_expires_recovery test_capacity_mode_is_scoped_and_locked; do
 		teardown
 		setup
 		"$test_case"

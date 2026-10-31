@@ -538,6 +538,8 @@ _preflight_early_dispatch() {
 	local _PULSE_FIRST_DISPATCH_WAVE=1
 	# A partial first-wave census must not populate the full-scan snapshot key.
 	local PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED=0
+	# GH#36122: label this path in apply_dispatch_max's breaker skip line.
+	local _PULSE_DISPATCH_BREAKER_CONTEXT="early"
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping early dispatch_max" >>"$LOGFILE"
 	else
@@ -605,6 +607,8 @@ _preflight_post_label_refill_wall_clock_allows() {
 # ledger, trust, and per-candidate timeout gates across multiple fill passes.
 #######################################
 _preflight_post_label_refill() {
+	# GH#36122: label this path in apply_dispatch_max's breaker skip line.
+	local _PULSE_DISPATCH_BREAKER_CONTEXT="post_label"
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping post-label dispatch_max" >>"$LOGFILE"
 	else
@@ -637,6 +641,25 @@ _preflight_post_label_refill() {
 _preflight_ownership_reconcile() {
 	local outer_budget="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 	[[ "$outer_budget" =~ ^[1-9][0-9]*$ ]] || outer_budget=600
+	# The wrapper may clamp the requested timeout to the remaining cycle time.
+	# Its exported deadline, not the original argument, bounds both children.
+	local deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}" now="" deadline_remaining=""
+	if [[ "$deadline" =~ ^[1-9][0-9]*$ ]] && now=$(date +%s 2>/dev/null) && [[ "$now" =~ ^[0-9]+$ ]]; then
+		deadline_remaining=$((deadline - now))
+		if [[ "$deadline_remaining" -le 0 ]]; then
+			echo "[pulse-wrapper] Ownership reconciliation deferred: parent deadline exhausted" >>"$LOGFILE"
+			return 124
+		fi
+		[[ "$outer_budget" -le "$deadline_remaining" ]] || outer_budget="$deadline_remaining"
+	fi
+	# Synchronous recovery shares this cycle's clock. When catch-up is pending,
+	# leave it half the available ownership allocation instead of consuming all
+	# remaining time. Standalone calls and unclamped async runs keep their budget.
+	if [[ -n "$deadline_remaining" && "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" == "1" && "$outer_budget" -ge 30 ]] &&
+		declare -F _pulse_blocker_refresh_starved >/dev/null 2>&1 && _pulse_blocker_refresh_starved; then
+		outer_budget=$((outer_budget / 2))
+		echo "[pulse-wrapper] Ownership reconciliation reserving time for blocker recovery: budget=${outer_budget}s" >>"$LOGFILE"
+	fi
 	local ownership_start=$SECONDS reserve=8 reconcile_budget remaining
 	# Leave room for the outer wrapper's two-second watchdog cadence and cleanup.
 	[[ "$outer_budget" -gt 16 ]] || reserve=2
@@ -655,9 +678,16 @@ _preflight_ownership_reconcile() {
 	# fetch loop; now 5N → N iterations per cycle.
 	# Run the shorter, higher-value pass first. The 360s internal budget gets a
 	# watchdog allowance; normalization receives only the time actually left.
+	# GH#35684: normalization is the only recovery for stranded dispatch claims,
+	# so when the budget allows both stages, keep a floor for it.
+	local normalize_floor="${AIDEVOPS_PULSE_NORMALIZE_FLOOR_S:-60}"
+	[[ "$normalize_floor" =~ ^[0-9]+$ ]] || normalize_floor=60
 	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
 	if [[ "$remaining" -gt 0 ]]; then
 		reconcile_budget=$remaining
+		if [[ "$remaining" -gt $((normalize_floor * 2)) ]]; then
+			reconcile_budget=$((remaining - normalize_floor))
+		fi
 		[[ "$reconcile_budget" -le 380 ]] || reconcile_budget=380
 		run_stage_with_timeout "reconcile_issues_single_pass" "$reconcile_budget" reconcile_issues_single_pass || true
 	fi
@@ -665,9 +695,11 @@ _preflight_ownership_reconcile() {
 	# Ensure active labels reflect ownership to prevent multi-worker overlap.
 	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
 	if [[ "$remaining" -gt 0 ]]; then
-		run_stage_with_timeout "normalize_active_issue_assignments" "$remaining" normalize_active_issue_assignments || true
+		run_stage_with_timeout "normalize_active_issue_assignments" "$remaining" normalize_active_issue_assignments || return $?
 	else
 		echo "[pulse-wrapper] Assignment normalization deferred: ownership budget exhausted" >>"$LOGFILE"
+		# Keep unfinished ownership work eligible for the next resumable pass.
+		return 124
 	fi
 
 	return 0

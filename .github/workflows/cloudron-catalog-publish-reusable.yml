@@ -24,18 +24,19 @@ on:
         default: ''
     secrets:
       CLOUDRON_RELEASE_PAT:
-        description: 'Optional until publication is enabled; repository-scoped Contents write credential'
+        description: 'Optional; only for main branch rules that block a direct job-token push (required PRs or checks)'
         required: false
 
 permissions: {}
 
 env:
   AIDEVOPS_REF: ${{ inputs.aidevops_ref }}
+  IMAGE_BUILD_PLATFORM: linux/amd64
 
 jobs:
   preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     permissions:
       contents: read
     outputs:
@@ -139,6 +140,19 @@ jobs:
             echo "publish=$publish"
             echo "reconcile=$reconcile"
           } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        if: github.event_name == 'pull_request'
+      - name: Verify PR image builds without publication credentials
+        if: github.event_name == 'pull_request'
+        env:
+          SOURCE_SHA: ${{ steps.plan.outputs.sha }}
+          IMAGE: ${{ steps.plan.outputs.image }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          # aidevops:trust-boundary — PR builds never log in, push, or receive publication secrets.
+          docker buildx build --platform "$IMAGE_BUILD_PLATFORM" --push=false --tag "$IMAGE:$VERSION" --metadata-file "$RUNNER_TEMP/image.json" .
 
   build:
     needs: preflight
@@ -175,7 +189,7 @@ jobs:
               --signer-workflow marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml \
               --source-ref refs/heads/main --source-digest "$SOURCE_SHA" --signer-digest "$AIDEVOPS_REF"
           else
-            docker buildx build --platform linux/amd64 --push --tag "$IMAGE:$VERSION" --metadata-file "$RUNNER_TEMP/image.json" .
+            docker buildx build --platform "$IMAGE_BUILD_PLATFORM" --push --tag "$IMAGE:$VERSION" --metadata-file "$RUNNER_TEMP/image.json" .
             digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/image.json")
           fi
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
@@ -207,7 +221,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      # Contents write is for the final catalog push. Run steps that execute
+      # third-party code (the npm CLI) receive no token in their environment.
+      contents: write
       attestations: write
       id-token: write
     steps:
@@ -269,25 +285,49 @@ jobs:
             --source-ref refs/heads/main --source-digest "$SOURCE_SHA" --signer-digest "$AIDEVOPS_REF"
       - name: Commit catalog and push tag atomically
         env:
-          RELEASE_PAT: ${{ secrets.CLOUDRON_RELEASE_PAT }}
+          # The per-run job token is scoped to this repository and expires with
+          # the job. CLOUDRON_RELEASE_PAT is needed only when rules on main block
+          # a direct push by that token (required PRs or checks).
+          PUSH_TOKEN: ${{ secrets.CLOUDRON_RELEASE_PAT || github.token }}
           VERSION: ${{ needs.preflight.outputs.version }}
           SOURCE_SHA: ${{ needs.preflight.outputs.sha }}
         run: |
           set -euo pipefail
-          test -n "$RELEASE_PAT" || { echo '::error::CLOUDRON_RELEASE_PAT is required for the protected-branch push'; exit 1; }
+          test -n "$PUSH_TOKEN"
           git diff --exit-code "$SOURCE_SHA" -- . ':!CloudronVersions.json'
           test -z "$(git ls-files --others --exclude-standard)"
           git add -- CloudronVersions.json
           test "$(git diff --cached --name-only)" = CloudronVersions.json
           git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
-            commit -m "chore: publish Cloudron package $VERSION [skip ci]"
+            commit -m "chore: publish Cloudron package $VERSION [skip ci]" -m "Cloudron-Source: $SOURCE_SHA"
           git tag "v$VERSION"
-          # aidevops:trust-boundary — only this push receives the repository-scoped PAT.
-          auth=$(printf 'x-access-token:%s' "$RELEASE_PAT" | base64 -w0)
+          # aidevops:trust-boundary — only this push step receives a contents-write credential.
+          auth=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
-          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+          if ! git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"; then
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+            test "$(git rev-parse origin/main)" != "$SOURCE_SHA"
+            # Inspect every intervening change, including reverted changes and
+            # both sides of renames; a net tree diff is not sufficient.
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                README.md|docs/*|metrics/*|.github/metrics/*|.github/star-history/*|star-history.svg|star-history-dark.svg) ;;
+                *) echo "::error::Main changed a package input; refusing publication retry"; exit 1 ;;
+              esac
+            done < <(git log --format= --name-only -z --no-renames --diff-merges=separate "$SOURCE_SHA..origin/main")
+            catalog_hash=$(git hash-object CloudronVersions.json)
+            git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+              rebase --onto origin/main "$SOURCE_SHA"
+            git merge-base --is-ancestor "$SOURCE_SHA" HEAD
+            test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = CloudronVersions.json
+            test "$(git hash-object CloudronVersions.json)" = "$catalog_hash"
+            # Only the unpushed local tag moves; remote tags are never replaced.
+            git tag -f "v$VERSION"
+            git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+          fi
 
   release:
     needs: [preflight, publish]
@@ -312,9 +352,26 @@ jobs:
           set -euo pipefail
           tag="v$VERSION"
           git merge-base --is-ancestor "$tag^{commit}" origin/main
-          # The catalog-only commit is a direct child of the attested build source.
+          # A published, non-draft release needs no repair. Its signer may predate this
+          # caller's current aidevops_ref (or the managed-caller migration), so the
+          # signer-pinned checks below apply only when a release must be created.
+          if [ "$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null || echo missing)" = false ]; then
+            echo "Release $tag already published; no repair needed."
+            exit 0
+          fi
+          # New tags retain the attested source across a docs-only rebase.
+          # Older tags used their direct parent as the build source.
           test "$(git rev-list --parents -n 1 "$tag" | wc -w)" -eq 2
-          source_sha=$(git rev-parse "$tag^1")
+          source_sha=$(git show -s --format='%(trailers:key=Cloudron-Source,valueonly)' "$tag^{commit}")
+          source_sha=${source_sha:-$(git rev-parse "$tag^1")}
+          [[ "$source_sha" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$source_sha" "$tag^1"
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              README.md|docs/*|metrics/*|.github/metrics/*|.github/star-history/*|star-history.svg|star-history-dark.svg) ;;
+              *) echo '::error::Tag parent differs from attested package source'; exit 1 ;;
+            esac
+          done < <(git log --format= --name-only -z --no-renames --diff-merges=separate "$source_sha..$tag^1")
           test "$(git diff-tree --no-commit-id --name-only -r "$tag")" = CloudronVersions.json
           # Verify the exact catalog committed at the tag, not a later main revision.
           git show "$tag:CloudronVersions.json" > "$RUNNER_TEMP/CloudronVersions.json"

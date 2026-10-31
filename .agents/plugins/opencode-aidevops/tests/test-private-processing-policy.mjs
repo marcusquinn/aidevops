@@ -11,6 +11,11 @@ import { assertPrivateProcessingRead, loadPrivateProcessingPolicy, recordPrivate
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const SENTINEL = "synthetic-private-sentinel-34146";
+function combinations(...dimensions) {
+  return dimensions.reduce((rows, values) => rows.flatMap((row) =>
+    values.map((value) => [...row, value])), [[]]);
+}
+
 function fixture(t) {
   const home = mkdtempSync(join(tmpdir(), "private-policy-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
@@ -73,6 +78,109 @@ test("aliases, ancestors, relative paths, option execution and quote concatenati
   assert.throws(() => check("write", { filePath: "local-only-roots.json", cwd: dirname(f.file) }), /classification_mutation/);
   assert.throws(() => check("apply_patch", { cwd: dirname(f.file), patchText: "*** Begin Patch\n*** Delete File: local-only-roots.json\n*** End Patch" }), /classification_mutation/);
   assert.throws(() => check("read", { path: f.secret, append: () => { throw new Error(SENTINEL); } }), /VAULT_POLICY_DENIED/);
+});
+
+test("local-provider override (GH#35723) is refused to write, patch and shell tools, even when absent", (t) => {
+  const f = fixture(t);
+  const providers = join(dirname(f.file), "local-ai-providers.conf");
+  assert.equal(f.classification.providersFile, providers);
+  for (const bound of [false, true]) {
+    const check = (tool, args) => assertPrivateProcessingRead({ tool, args, classification: f.classification,
+      binding: { bound }, repositoryDir: f.publicRoot, append: () => true });
+    assert.throws(() => check("write", { filePath: providers }), /classification_mutation/);
+    assert.throws(() => check("edit", { filePath: "local-ai-providers.conf", cwd: dirname(providers) }), /classification_mutation/);
+    assert.throws(() => check("apply_patch", { cwd: dirname(providers),
+      patchText: "*** Begin Patch\n*** Add File: local-ai-providers.conf\n+openai\n*** End Patch" }), /classification_mutation/);
+    assert.throws(() => check("bash", { command: `printf openai > '${providers}'` }), /classification_mutation/);
+    assert.throws(() => check("aidevops_bounded_operation", { action: "start", command: ["cp", "x", providers] }), /classification_mutation/);
+    assert.doesNotThrow(() => check("write", { filePath: join(f.publicRoot, "local-ai-providers.conf") }));
+  }
+  const xdg = join(f.home, "xdg");
+  assert.equal(loadPrivateProcessingPolicy({ HOME: f.home, XDG_CONFIG_HOME: xdg }).providersFile,
+    join(xdg, "aidevops/local-ai-providers.conf"));
+});
+
+test("shell config operands resolve relative and symlink aliases before policy exemptions", (t) => {
+  const f = fixture(t);
+  const configDir = dirname(f.file);
+  symlinkSync(configDir, join(f.publicRoot, "config-alias"));
+  // Keep file/existence order so absent overrides are checked before creation.
+  for (const [file, exists, bound, roots] of combinations(
+    [f.file, f.classification.providersFile], [false, true],
+    [false, true], [f.classification.roots, []],
+  )) {
+    const name = file.slice(configDir.length + 1);
+    // Canonical resolution must work both before and after the override exists.
+    if (exists) writeFileSync(file, "synthetic config", { mode: 0o600 });
+    const check = (tool, args) => assertPrivateProcessingRead({ tool, args,
+      classification: { ...f.classification, roots }, binding: { bound },
+      repositoryDir: f.publicRoot, append: () => true });
+    for (const command of [`cat ${name}`, `cat './${name}'`, ["cat", name]]) {
+      const tool = Array.isArray(command) ? "aidevops_bounded_operation" : "bash";
+      assert.throws(() => check(tool, { command, action: "start", workdir: configDir }), /classification_mutation/);
+    }
+    assert.throws(() => check("bash", { command: `cat config-alias/${name}` }), /classification_mutation/);
+    assert.throws(() => check("bash", { command: `cat ../.config/aidevops/${name}` }), /classification_mutation/);
+    for (const operand of [`config-alias/../aidevops/${name}`, `${f.publicRoot}/config-alias/../aidevops/${name}`]) {
+      assert.throws(() => check("bash", { command: `cat ${operand}` }), /classification_mutation/);
+      assert.throws(() => check("aidevops_bounded_operation", {
+        action: "start", command: ["cat", operand],
+      }), /classification_mutation/);
+    }
+    for (const command of [`cat ${name}; true`, `cat config-alias/${name} | wc`]) {
+      assert.throws(() => check("bash", { command, workdir: configDir }), /unclassifiable_shell_read/);
+    }
+    for (const [shell, option] of combinations(
+      ["sh", "/bin/bash", "dash", "ash", "zsh", "ksh", "mksh", "fish", "csh", "tcsh"], ["-c", "-lc"],
+    )) {
+      const script = `cat ../.config/aidevops/${name}`;
+      assert.throws(() => check("bash", { command: `${shell} ${option} '${script}'` }), /unclassifiable_shell_read/);
+      assert.throws(() => check("aidevops_bounded_operation", {
+        action: "start", command: [shell, option, script],
+      }), /unclassifiable_shell_read/);
+    }
+    assert.doesNotThrow(() => check("bash", { command: `cat ${name}` }), "same basename outside config remains allowed");
+    assert.doesNotThrow(() => check("bash", { command: "cat ../public/plain.txt" }), "ordinary parent traversal remains allowed");
+  }
+});
+
+test("interpreter scripts naming operator config fail closed before bound-session and empty-roots exemptions", (t) => {
+  const f = fixture(t);
+  for (const [bound, roots, name, [shell, option]] of combinations(
+    [false, true], [f.classification.roots, []],
+    ["local-only-roots.json", "local-ai-providers.conf"],
+    [["sh", "-c"], ["/bin/bash", "-lc"], ["dash", "-ec"], ["fish", "--command"]],
+  )) {
+    const script = `cat ../.config/aidevops/${name}`;
+    const check = (tool, command) => assertPrivateProcessingRead({
+      tool, args: { action: "start", command }, repositoryDir: f.publicRoot,
+      classification: { ...f.classification, roots }, binding: { bound }, append: () => true,
+    });
+    assert.throws(() => check("bash", `${shell} ${option} '${script}'`), /unclassifiable_shell_read/);
+    assert.throws(() => check("aidevops_bounded_operation", [shell, option, script]), /unclassifiable_shell_read/);
+  }
+});
+
+test("GH#36017: ordinary compound commands and scripts pass outside classified unbound sessions", (t) => {
+  const f = fixture(t);
+  for (const [bound, roots] of [[true, f.classification.roots], [true, []], [false, []]]) {
+    const check = (tool, command) => assertPrivateProcessingRead({
+      tool, args: { action: "start", command }, repositoryDir: f.publicRoot,
+      classification: { ...f.classification, roots }, binding: { bound }, append: () => true,
+    });
+    for (const command of ["git status && git log -1 | head -5", "rg foo $DIR", "ls *.md; true",
+      "sh -c 'git status'", "pwd\ngit status"]) {
+      assert.doesNotThrow(() => check("bash", command), command);
+    }
+    assert.doesNotThrow(() => check("aidevops_bounded_operation", ["bash", "-lc", "pnpm test"]));
+    // Differently-cased config names stay denied in opaque text.
+    assert.throws(() => check("bash", "cat LOCAL-ONLY-ROOTS.JSON | wc"), /unclassifiable_shell_read/);
+  }
+  // Classified unbound sessions keep the strict literal-reader path.
+  const strict = (command) => assertPrivateProcessingRead({ tool: "bash", args: { command },
+    repositoryDir: f.publicRoot, classification: f.classification, binding: { bound: false }, append: () => true });
+  assert.throws(() => strict("git status && git log -1 | head -5"), /unclassifiable_shell_read/);
+  assert.throws(() => strict("sh -c 'git status'"), /unclassifiable_shell_read/);
 });
 
 test("receipt failure cannot obscure a denial or import ambient metadata", () => {

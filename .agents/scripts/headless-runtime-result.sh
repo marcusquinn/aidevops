@@ -47,6 +47,8 @@ _initialize_run_result() {
 	_run_classification_source=""
 	_run_classification_pattern=""
 	_HRW_PR_LESS_VERIFIED_CONTEXT=""
+	_HRW_OWN_MERGED_VERIFIED_CONTEXT=""
+	_HRW_OWN_MERGED_RUNTIME_SESSION=""
 	return 0
 }
 
@@ -155,6 +157,36 @@ _run_result_capture_live_blocker() {
 	return 0
 }
 
+# Objective proof complements, rather than broadens, model marker parsing.
+_run_result_terminal_completion_confirmed() {
+	_HRW_PR_LESS_REJECTION=""
+	if [[ "${_run_classification_source:-}" == "pr_less_completion_rejected" ]]; then
+		_run_classification_source=""
+		_run_classification_pattern=""
+	fi
+	if _hrw_own_merged_terminal_complete "$session_key" "${work_dir:-}"; then
+		_run_failure_reason=""
+		_run_classification_source="merged_pr_cleanup_receipt"
+		_run_classification_pattern="verified_own_merged_objective"
+		return 0
+	fi
+	output_has_completion_signal "$output_file" && return 0
+	if _hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
+		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
+		if [[ -n "${_HRW_SCOPED_DELIVERY_RECEIPT:-}" ]]; then
+			_run_failure_reason=""
+			_run_classification_source="scoped_delivery_receipt"
+			_run_classification_pattern="verified_already_delivered_scope"
+		fi
+		return 0
+	fi
+	if [[ -n "${_HRW_PR_LESS_REJECTION:-}" ]]; then
+		_run_classification_source="pr_less_completion_rejected"
+		_run_classification_pattern="$_HRW_PR_LESS_REJECTION"
+	fi
+	return 1
+}
+
 _handle_run_result_success_output() {
 	if _run_result_requires_task_complete && ! _private_output_has_task_complete "$output_file"; then
 		local incomplete_label="private_incomplete"
@@ -222,7 +254,8 @@ _handle_run_result_success_output() {
 			_run_classification_source="$_RUN_RESULT_MODEL_BLOCKED_SIGNAL"
 			_run_classification_pattern="terminal_blocked"
 			if declare -F terminal_blocker_capture_output >/dev/null 2>&1; then
-				terminal_blocker_capture_output "$output_file" || true
+				# Judge the final part with the pattern that classified this exit.
+				terminal_blocker_capture_output "$output_file" false "${_HEADLESS_BLOCKED_LINE_PATTERN:-}" || true
 				local blocker_reason=""
 				blocker_reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
 				_run_result_reconcile_unknown_blocker "$blocker_reason" && return 0
@@ -237,11 +270,7 @@ _handle_run_result_success_output() {
 			print_warning "$selected_model worker reported a terminal BLOCKED state"
 			return 83
 		fi
-		# GH#33672: reconcile verified PR-less terminal objectives before the
-		# continuation gate. Prose alone ("already delivered") is not evidence.
-		if ! output_has_completion_signal "$output_file" &&
-			! _hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
-			"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
+		if ! _run_result_terminal_completion_confirmed; then
 			_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
 			_run_result_label="premature_exit"
 			rm -f "$output_file"

@@ -21,8 +21,8 @@ import { mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import {
-  canonicalizeSqliteDbPath, setDbPath, sqliteAvailable, sqliteExec, sqliteExecSync,
-  shutdownSqlite as _shutdownSqlite, sqlEscape,
+  acquireSqlite, canonicalizeSqliteDbPath, setDbPath, sqliteAvailable, sqliteExec, sqliteExecSync,
+  sqlEscape,
 } from "./observability-sqlite.mjs";
 import {
   createSchema as _createSchema,
@@ -223,6 +223,8 @@ const partStreamSummaries = new PartStreamSummaryTracker();
 let dbReady = false;
 let aidevopsVersion = "";
 let runtime = {};
+/** @type {Array<() => void>} */
+const transportReleases = [];
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -258,10 +260,21 @@ export function initObservability(options = {}) {
   dbReady = initDatabase();
   if (dbReady) {
     console.error("[aidevops] Observability: SQLite DB ready at " + DB_PATH);
-    // Shut down the persistent sqlite3 process on exit
-    process.on("exit", _shutdownSqlite);
+    // GH#35702: each successful init holds one shared transport ownership,
+    // paired with disposeObservability(). The transport registry reaps the
+    // sqlite3 child on process exit with a single listener.
+    transportReleases.push(acquireSqlite());
   }
   return dbReady;
+}
+
+/**
+ * Release the transport ownership taken by the matching initObservability().
+ * The last release reaps the sqlite3 child after queued writes drain; other
+ * owners (another V2 location, duplicate module instances) keep it alive.
+ */
+export function disposeObservability() {
+  transportReleases.pop()?.();
 }
 
 /**

@@ -535,9 +535,9 @@ _fetch_issue_linked_prs() {
 # Returns 0 if the comment body contains a lifecycle event marker.
 _comment_has_lifecycle_marker() {
 	local body="$1"
-	printf '%s' "$body" | grep -qE \
+	printf '%s' "$body" | grep -E \
 		'WORKER_BRANCH_ORPHAN|CLAIM_RELEASED|CLAIM_DEFERRED|[Ww]atchdog|STUCK_WORKER|source:ci-failure|source:conflict-feedback|DISPATCH_CLAIM|worker.kill|WORKER_KILLED|_aborting_dispatch' \
-		2>/dev/null
+		>/dev/null 2>&1
 	return $?
 }
 
@@ -550,7 +550,7 @@ _lifecycle_comment_excerpt() {
 		| grep -v '^---' \
 		| grep -v 'aidevops\.sh' \
 		| grep -E 'WORKER_BRANCH_ORPHAN|CLAIM_RELEASED|CLAIM_DEFERRED|[Ww]atchdog|STUCK_WORKER|source:ci|source:conflict|DISPATCH_CLAIM|worker.kill|WORKER_KILLED|_aborting' \
-		| head -2 \
+		| sed -n '1,2p' \
 		| sed 's/^[[:space:]]*//'
 	return 0
 }

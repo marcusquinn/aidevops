@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESOLVER="${SCRIPT_DIR}/../issue-sync-pr-task-resolver.sh"
 WORKFLOW="${SCRIPT_DIR}/../../../.github/workflows/issue-sync-reusable.yml"
-PROTECTED_PUBLISH_CALL='issue-sync-git-push-helper\.sh" publish-todo main 3'
+PROTECTED_PUBLISH_CALL="issue-sync-git-push-helper\.sh\" publish-todo \"\\\$ISSUE_SYNC_TARGET_BRANCH\" 3"
 MULTI_TASK_PUBLICATION="chore: mark \\\$UPDATED_TASK_IDS complete (\\\$PROOF) \[skip ci\]"
 PAIR_MATCH="if [[ \"\${ISSUE_TASK_PAIR%%:*}\" == \"\$ISSUE_NUM\" ]]"
 MAPPED_TASK_REF="TASK_REF=\" Task \$MAPPED_TASK_ID\""

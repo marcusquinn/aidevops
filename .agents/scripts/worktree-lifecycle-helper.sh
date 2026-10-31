@@ -18,7 +18,10 @@ install_lifecycle_scheduler() {
 	fi
 	# shellcheck source=setup/modules/schedulers-linux.sh
 	source "${SCRIPT_DIR}/setup/modules/schedulers-linux.sh"
-	_systemd_user_available || { printf '%s\n' 'User systemd is unavailable; no scheduler installed.' >&2; return 1; }
+	_systemd_user_available || {
+		printf '%s\n' 'User systemd is unavailable; no scheduler installed.' >&2
+		return 1
+	}
 	mkdir -p "$log_dir"
 	printf -v command '%q %q run' "$(command -v bash)" "$deployed"
 	_install_scheduler_systemd "aidevops-worktree-lifecycle" "$command" "600" \
@@ -29,9 +32,9 @@ install_lifecycle_scheduler() {
 main() {
 	local action="${1:-report}"
 	case "$action" in
-	report)
+	report | activity)
 		shift || true
-		python3 "${SCRIPT_DIR}/worktree_lifecycle_status.py" report "$@" || return 1
+		python3 "${SCRIPT_DIR}/worktree_lifecycle_status.py" "$action" "$@" || return 1
 		;;
 	reconcile)
 		timeout_sec 90 python3 "${SCRIPT_DIR}/worktree_lifecycle_status.py" reconcile || return 1
@@ -42,7 +45,10 @@ main() {
 		python3 "${SCRIPT_DIR}/worktree_lifecycle_status.py" report --summary || return 1
 		;;
 	install-scheduler) install_lifecycle_scheduler || return 1 ;;
-	*) printf '%s\n' 'Usage: worktree-lifecycle-helper.sh [report [--summary]|reconcile|run|install-scheduler]' >&2; return 1 ;;
+	*)
+		printf '%s\n' 'Usage: worktree-lifecycle-helper.sh [report|activity [--summary]|reconcile|run|install-scheduler]' >&2
+		return 1
+		;;
 	esac
 	return 0
 }

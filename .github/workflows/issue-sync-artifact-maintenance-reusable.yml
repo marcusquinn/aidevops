@@ -35,7 +35,7 @@ jobs:
   plan:
     if: inputs.mode == 'plan' && inputs.protected_artifact_id != ''
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: read
@@ -56,7 +56,9 @@ jobs:
   apply:
     if: inputs.mode == 'apply' && inputs.protected_artifact_id != ''
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 5
+    # The helper caps deletions (400) and wall time (420s) per run, so a large
+    # backlog shrinks on every run and finishes inside this timeout.
+    timeout-minutes: 10
     permissions:
       actions: write
       contents: read

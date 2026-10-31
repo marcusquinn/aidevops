@@ -112,6 +112,9 @@ STUB_RULESETS_LIST=""            # JSON response for /rulesets list endpoint
 STUB_RULESET_DETAIL=""           # JSON response for /rulesets/{id} detail endpoint
 STUB_ACTIONS_PR_CREATION="false" # "true" when GITHUB_TOKEN may create PRs
 STUB_METRICS_CONTENT=""          # Active or commented uses: line in an arbitrary caller
+STUB_SECRET_UPDATED_AT=""        # Empty defaults to a freshly updated secret
+STUB_FAILED_RUN=""               # Latest failed issue-sync run ID
+STUB_RUN_JOBS='{"jobs":[]}'       # Step conclusions from that run
 
 # Single shared gh stub — dispatches based on STUB_* variables
 gh() {
@@ -122,7 +125,13 @@ gh() {
 		;;
 	api)
 		local url="${2:-}"
-		if [[ "$url" == */contents/.github/workflows ]]; then
+		if [[ "$url" == */actions/workflows/issue-sync.yml/runs* ]]; then
+			printf '%s' "$STUB_FAILED_RUN"
+			return 0
+		elif [[ "$url" == */actions/runs/*/jobs* ]]; then
+			printf '%s' "$STUB_RUN_JOBS"
+			return 0
+		elif [[ "$url" == */contents/.github/workflows ]]; then
 			[[ -n "$STUB_METRICS_CONTENT" ]] || return 1
 			printf '.github/workflows/custom-metrics.yaml\n'
 			return 0
@@ -164,7 +173,10 @@ gh() {
 		return 1
 		;;
 	secret)
-		echo "$STUB_SECRET_RESPONSE"
+		if [[ -n "$STUB_SECRET_RESPONSE" ]]; then
+			command jq -n --arg updated "$STUB_SECRET_UPDATED_AT" \
+				'{name:"SYNC_PAT", updatedAt: (if $updated == "" then (now | strftime("%Y-%m-%dT%H:%M:%SZ")) else $updated end)}'
+		fi
 		return 0
 		;;
 	esac
@@ -272,6 +284,7 @@ eval "$(sed -n '/^_default_branch_ruleset_details()/,/^}/p' "${SCRIPTS_DIR}/secu
 eval "$(sed -n '/^_branch_is_rulesets_protected()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^_actions_can_create_pull_requests()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^_repo_uses_metrics_workflow()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
+eval "$(sed -n '/^_check_sync_pat_health()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^_check_sync_pat_need()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^check_sync_pat()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 
@@ -316,6 +329,9 @@ reset_state() {
 	STUB_RULESET_DETAIL=""
 	STUB_ACTIONS_PR_CREATION="false"
 	STUB_METRICS_CONTENT=""
+	STUB_SECRET_UPDATED_AT=""
+	STUB_FAILED_RUN=""
+	STUB_RUN_JOBS='{"jobs":[]}'
 	return 0
 }
 
@@ -641,6 +657,62 @@ if [[ ! -f "$ADVISORY_PATH" ]]; then
 	pass "Commented metrics example does not activate the advisory"
 else
 	fail "Commented metrics example incorrectly activates the advisory"
+fi
+
+# GH#35924: metadata-only rotation checks use the existing advisory harness.
+reset_state
+STUB_SECRET_RESPONSE="SYNC_PAT"
+STUB_SECRET_UPDATED_AT=$(command jq -nr '(now - 76 * 86400) | strftime("%Y-%m-%dT%H:%M:%SZ")')
+STUB_PROTECTION_RESPONSE=""
+check_sync_pat "$FAKE_REPO"
+if [[ -f "$ADVISORY_PATH" ]] && grep -q 'may expire soon' "$ADVISORY_PATH"; then
+	pass "76-day secret warns even without branch protection"
+else
+	fail "76-day secret missing rotation advisory"
+fi
+
+reset_state
+STUB_SECRET_RESPONSE="SYNC_PAT"
+STUB_SECRET_UPDATED_AT=$(command jq -nr '(now - 75 * 86400) | strftime("%Y-%m-%dT%H:%M:%SZ")')
+check_sync_pat "$FAKE_REPO"
+if [[ ! -f "$ADVISORY_PATH" ]]; then
+	pass "75-day secret does not warn before threshold"
+else
+	fail "Secret age advisory emitted before 76 days"
+fi
+
+for checkout_name in 'Checkout' 'Checkout repo before closing-hygiene validation'; do
+	reset_state
+	STUB_SECRET_RESPONSE="SYNC_PAT"
+	STUB_ACTIONS_PR_CREATION="true"
+	STUB_FAILED_RUN="12345"
+	STUB_RUN_JOBS=$(command jq -n --arg name "$checkout_name" \
+		'{jobs:[{steps:[{name:$name,conclusion:"failure"}]}]}')
+	check_sync_pat "$FAKE_REPO"
+	if [[ ! -f "$ADVISORY_PATH" ]] && grep -q 'run 12345 failed at checkout; the selected credential is unknown' "$OUTPUT_LOG"; then
+		pass "Failed $checkout_name warns without attributing the selected credential"
+	else
+		fail "Failed $checkout_name omitted neutral warning or emitted rotation advisory"
+	fi
+done
+
+reset_state
+STUB_SECRET_RESPONSE="SYNC_PAT"
+STUB_FAILED_RUN="12345"
+STUB_RUN_JOBS='{"jobs":[{"steps":[{"name":"Checkout aidevops framework scripts","conclusion":"failure"}]}]}'
+check_sync_pat "$FAKE_REPO"
+if [[ ! -f "$ADVISORY_PATH" ]]; then
+	pass "Unrelated framework checkout failure does not blame SYNC_PAT"
+else
+	fail "Unrelated checkout caused rotation advisory"
+fi
+
+STUB_RUN_JOBS='{"jobs":[{"steps":[{"name":"Checkout","conclusion":"success"}]}]}'
+check_sync_pat "$FAKE_REPO"
+if [[ ! -f "$ADVISORY_PATH" ]]; then
+	pass "Successful checkout in failed run does not warn"
+else
+	fail "Successful checkout caused rotation advisory"
 fi
 
 # =============================================================================

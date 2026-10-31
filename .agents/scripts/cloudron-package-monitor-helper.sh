@@ -20,6 +20,7 @@ _CLOUDRON_MONITOR_JSON_TYPE_OBJECT=object
 _CLOUDRON_MONITOR_SOURCE_TAGS=tags
 _CLOUDRON_MONITOR_SOURCE_COMMITS=commits
 _CLOUDRON_MONITOR_GH_TIMEOUT_DEFAULT=90
+_CLOUDRON_MONITOR_DEFAULT_MANIFEST=CloudronManifest.json
 
 _cloudron_monitor_error() {
 	local message="$1"
@@ -454,7 +455,7 @@ ${package_test_note}
 - Reproduce and assess the finding against current upstream and Cloudron packaging guidance.
 - Update package source and tests only when the finding remains actionable.
 - Run the package release preflight before proposing a tag.
-- Do not publish a release, image, catalog entry, or deployment without separate operator authorization.
+- Prepare and verify the release PR, then run \`cloudron-release-approval-helper.sh request <repo> <pr>\`; do not merge. Merge and publication happen only after signed maintainer approval of the release issue.
 
 ## Verification
 
@@ -468,6 +469,92 @@ EOF
 	fi
 	rm -f "$body_file"
 	return 1
+}
+
+# All comments go through the managed wrapper, which supplies the signature.
+_cloudron_monitor_comment() {
+	local slug="$1" issue_number="$2" body="$3"
+	local wrapper="${CLOUDRON_PACKAGE_COMMENT_WRAPPER:-gh_issue_comment}"
+	local body_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" body_file="" rc=0
+	command -v "$wrapper" >/dev/null 2>&1 || return 1
+	mkdir -p "$body_dir" || return 1
+	body_file=$(mktemp "${body_dir}/cloudron-supersede.XXXXXX") || return 1
+	printf '%s\n' "$body" >"$body_file"
+	"$wrapper" "$issue_number" --repo "$slug" --body-file "$body_file" >/dev/null || rc=$?
+	rm -f "$body_file"
+	return "$rc"
+}
+
+# Retry cleanup on deduplicated runs too: a transient API failure after filing
+# must not permanently strand the older findings. Never infer safety on error.
+_cloudron_monitor_supersede_upstream() {
+	local slug="$1" fingerprint="$2" new_number="$3"
+	local newest="" new_url="" pages="" candidates="" number="" issue="" old="" timeline="" prs=""
+	local closing_link="" referenced_link=""
+	local retained="" comments="" marker="aidevops:cloudron-upstream-retained ${fingerprint}"
+	[[ "$fingerprint" == upstream-v* || "$fingerprint" == upstream-commit-* ]] || return 0
+	[[ "$new_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	_cloudron_monitor_has_authority "$slug" || return 1
+	newest=$(gh api "repos/${slug}/issues/${new_number}") || return 1
+	jq -e --arg state open '.state == $state' <<<"$newest" >/dev/null || return 0
+	new_url=$(jq -er --arg string_type "$_CLOUDRON_MONITOR_JSON_TYPE_STRING" '.html_url | select(type == $string_type and startswith("https://"))' <<<"$newest") || return 1
+	pages=$(gh api "repos/${slug}/issues?state=open&per_page=100" --paginate --slurp) || return 1
+	candidates=$(jq -er --argjson newest "$new_number" --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" '
+		if type == $array_type and all(.[]; type == $array_type) then
+			[.[][] | select(.pull_request == null and .number < $newest)
+			 | select((.body // "") | test("(?m)^<!-- aidevops:cloudron-package-monitor upstream-(v[0-9]+\\.[0-9]+\\.[0-9]+|commit-[a-f0-9]{40}) -->$"))
+			 | .number] | @tsv
+		else error("Invalid issue pages") end' <<<"$pages") || return 1
+	for number in $candidates; do
+		# Refresh ownership immediately before deciding; list snapshots may be stale.
+		issue=$(gh api "repos/${slug}/issues/${number}") || return 1
+		# aidevops:trust-boundary — copied markers on outsider-authored issues
+		# never authorize closure. Require a trusted author and exact own-line marker.
+		jq -e --arg state open '.state == $state and .pull_request == null and
+			(.author_association | test("^(OWNER|MEMBER)$"))' <<<"$issue" >/dev/null || continue
+		old=$(jq -r '(.body // "") | capture("(?m)^<!-- aidevops:cloudron-package-monitor (?<fingerprint>upstream-(v[0-9]+\\.[0-9]+\\.[0-9]+|commit-[a-f0-9]{40})) -->$").fingerprint' <<<"$issue") || return 1
+		case "$fingerprint:$old" in
+		upstream-v*:upstream-v*)
+			_cloudron_monitor_version_newer "${fingerprint#upstream-v}" "${old#upstream-v}" || continue ;;
+		upstream-commit-*:upstream-commit-*) [[ "$old" != "$fingerprint" ]] || continue ;;
+		*) continue ;;
+		esac
+		jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" '(.assignees | type == $array_type) and (.labels | type == $array_type)' <<<"$issue" >/dev/null || return 1
+		if ! jq -e '(.assignees | length == 0) and
+			all(.labels[]; .name != "status:in-progress" and .name != "status:claimed")' <<<"$issue" >/dev/null; then
+			retained="${retained} #${number} (claimed or assigned);"
+			continue
+		fi
+		# Check both explicit closing links and ordinary cross-references, including
+		# drafts/conflicted PRs. Complete pagination is required before any closure.
+		prs=$(gh pr list --repo "$slug" --state open --limit 1000 --json closingIssuesReferences) || return 1
+		jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" 'type == $array_type and length < 1000 and all(.[];
+			(.closingIssuesReferences | type == $array_type) and (.closingIssuesReferences | length < 100))' <<<"$prs" >/dev/null || return 1
+		timeline=$(gh api "repos/${slug}/issues/${number}/timeline?per_page=100" --paginate --slurp) || return 1
+		jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" 'type == $array_type and all(.[]; type == $array_type)' <<<"$timeline" >/dev/null || return 1
+		# Capture booleans without -e: an evaluation error must not be confused
+		# with a valid false result. Historical connected/disconnected events are
+		# covered by the current closingIssuesReferences projection above.
+		closing_link=$(jq -r --argjson number "$number" 'any(.[]; any(.closingIssuesReferences[]; .number == $number))' <<<"$prs") || return 1
+		referenced_link=$(jq -r 'any(.[][]; .event == "cross-referenced" and
+			.source.issue.pull_request != null and .source.issue.state != "closed")' <<<"$timeline") || return 1
+		if [[ "$closing_link" == true || "$referenced_link" == true ]]; then
+			retained="${retained} #${number} (linked PR);"
+			continue
+		fi
+		_cloudron_monitor_comment "$slug" "$number" "Superseded by ${new_url}. This older upstream finding is unassigned, unclaimed, and has no open linked PR." || return 1
+		gh issue close "$number" --repo "$slug" --reason 'not planned' >/dev/null || return 1
+	done
+	if [[ -n "$retained" ]]; then
+		comments=$(terminal_blocker_fetch_trusted_comments "$new_number" "$slug") || return 1
+		# aidevops:trust-boundary — only trusted notes suppress a duplicate note.
+		if ! jq -e --arg marker "$marker" 'any(.[];
+			(.author_association | test("^(OWNER|MEMBER)$")) and (.body | contains($marker)))' <<<"$comments" >/dev/null; then
+			_cloudron_monitor_comment "$slug" "$new_number" "<!-- ${marker} -->
+Older upstream findings were left open to preserve active work:${retained} Coordinate these findings before starting overlapping package updates." || return 1
+		fi
+	fi
+	return 0
 }
 
 _cloudron_monitor_apply_finding() {
@@ -486,6 +573,9 @@ _cloudron_monitor_apply_finding() {
 			_cloudron_monitor_rearm_ready_issue "$slug" "$_CLOUDRON_MONITOR_ISSUE_NUMBER" "$source_proof" || return 1
 		fi
 		printf 'Already handled in %s: %s\n' "$slug" "$fingerprint"
+		if [[ "$apply" == true ]]; then
+			_cloudron_monitor_supersede_upstream "$slug" "$fingerprint" "$_CLOUDRON_MONITOR_ISSUE_NUMBER" || return 1
+		fi
 		return 0
 	else
 		exists_rc=$?
@@ -496,8 +586,12 @@ _cloudron_monitor_apply_finding() {
 		return 0
 	fi
 	_cloudron_monitor_has_authority "$slug" || _cloudron_monitor_error "ADMIN or MAINTAIN issue authority is required for $slug." || return 1
-	_cloudron_monitor_create_issue "$slug" "$title" "$fingerprint" "$summary" "$verification" "$manifest_rel" "$repo_path"
-	return $?
+	_cloudron_monitor_create_issue "$slug" "$title" "$fingerprint" "$summary" "$verification" "$manifest_rel" "$repo_path" || return 1
+	if [[ "$fingerprint" == upstream-* ]]; then
+		_cloudron_monitor_issue_exists "$slug" "$fingerprint" || return 1
+		_cloudron_monitor_supersede_upstream "$slug" "$fingerprint" "$_CLOUDRON_MONITOR_ISSUE_NUMBER" || return 1
+	fi
+	return 0
 }
 
 # Commit mode: follow a branch head for upstreams that publish no releases or
@@ -549,7 +643,7 @@ _cloudron_monitor_upstream_entry() {
 	local upstream_source=""
 	slug=$(jq -r '.slug // empty' <<<"$entry")
 	repo_path=$(jq -r '.path // empty' <<<"$entry")
-	manifest_rel=$(jq -r '.cloudron_package.manifest // "CloudronManifest.json"' <<<"$entry")
+	manifest_rel=$(jq -r --arg manifest "$_CLOUDRON_MONITOR_DEFAULT_MANIFEST" '.cloudron_package.manifest // $manifest' <<<"$entry")
 	upstream_slug=$(jq -r '.cloudron_package.upstream_slug // empty' <<<"$entry")
 	monitor_enabled=$(jq -r 'if (.cloudron_package.monitor_upstream | type) == "boolean" then .cloudron_package.monitor_upstream else ((.cloudron_package.upstream_slug // "") != "") end' <<<"$entry")
 	[[ "$monitor_enabled" == true ]] || return 0
@@ -617,7 +711,7 @@ _cloudron_monitor_compatibility_entry() {
 	local monitor_enabled=""
 	slug=$(jq -r '.slug // empty' <<<"$entry")
 	repo_path=$(jq -r '.path // empty' <<<"$entry")
-	manifest_rel=$(jq -r '.cloudron_package.manifest // "CloudronManifest.json"' <<<"$entry")
+	manifest_rel=$(jq -r --arg manifest "$_CLOUDRON_MONITOR_DEFAULT_MANIFEST" '.cloudron_package.manifest // $manifest' <<<"$entry")
 	monitor_enabled=$(jq -r 'if (.cloudron_package.monitor_compatibility | type) == "boolean" then .cloudron_package.monitor_compatibility else true end' <<<"$entry")
 	[[ "$monitor_enabled" == true ]] || return 0
 	[[ "$slug" == */* ]] || _cloudron_monitor_error "Cloudron compatibility monitoring requires a target slug." || return 1
@@ -641,15 +735,87 @@ _cloudron_monitor_compatibility_entry() {
 	return $?
 }
 
+# Reuse the existing publication authority, never infer it from registry metadata.
+# A successful dispatch leaves a per-version receipt; failed dispatches may retry.
+_cloudron_monitor_publication_secret() {
+	local entry="$1" slug="" enabled="" secrets="" pat_rc=0
+	slug=$(jq -er '.slug | select(test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' <<<"$entry") || return 1
+	enabled=$(gh api "/repos/${slug}/actions/variables" --paginate --jq '.variables[] | select(.name == "CLOUDRON_PUBLICATION_ENABLED") | .value') || return 1
+	[[ "$enabled" == true ]] || return 0
+	# The job token publishes unless rules on main block its direct push.
+	cloudron_publication_pat_required "$slug" || pat_rc=$?
+	[[ "$pat_rc" -ne 1 ]] || return 0
+	[[ "$pat_rc" -ne 2 ]] || _cloudron_monitor_error "Could not read branch rules for main in $slug." || return 1
+	secrets=$(gh secret list --repo "$slug" --json name) || _cloudron_monitor_error "Could not verify CLOUDRON_RELEASE_PAT in $slug." || return 1
+	if ! jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null; then
+		printf 'FINDING %s: missing CLOUDRON_RELEASE_PAT, which main branch rules (required PRs or checks) need for the catalog push; publication blocked. Relax those rules or configure a fine-grained PAT with Contents write access; see cloudron-app-publishing-skill.md.\n' "$slug"
+		return 3
+	fi
+	return 0
+}
+
+_cloudron_monitor_reconcile_entry() {
+	local entry="$1" apply="$2" slug="" enabled="" repository="" remote="" sha="" version="" catalog="" runs=""
+	local state_dir="${HOME}/.aidevops/cache/cloudron-catalog-reconcile" receipt=""
+	slug=$(jq -er '.slug | select(test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' <<<"$entry") || return 1
+	enabled=$(gh api "/repos/${slug}/actions/variables" --paginate --jq '.variables[] | select(.name == "CLOUDRON_PUBLICATION_ENABLED") | .value') || return 1
+	[[ "$enabled" == true ]] || return 0
+	repository=$(gh api "/repos/${slug}") || return 1
+	[[ "$(jq -r '.default_branch' <<<"$repository")" == main ]] || return 0
+	remote=$(_cloudron_monitor_fetch_remote_manifest "$slug" "$_CLOUDRON_MONITOR_DEFAULT_MANIFEST") || return $?
+	sha="${remote%%$'\n'*}"
+	version=$(jq -er '.version' <<<"${remote#*$'\n'}") || return 1
+	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	catalog=$(gh api "/repos/${slug}/contents/CloudronVersions.json?ref=${sha}" --jq '.content | @base64d') || return 1
+	jq -e --arg object_type "$_CLOUDRON_MONITOR_JSON_TYPE_OBJECT" '.versions | type == $object_type' <<<"$catalog" >/dev/null || return 1
+	if jq -e --arg version "$version" '.versions | has($version)' <<<"$catalog" >/dev/null; then
+		return 0
+	fi
+	runs=$(gh api "/repos/${slug}/actions/workflows/cloudron-catalog-publish.yml/runs?branch=main&per_page=100" --paginate --jq '[.workflow_runs[] | select(.status != "completed")] | length') || return 1
+	# Each paginated count must be zero, including queued/waiting/requested runs.
+	[[ -n "$runs" && "${runs//[$'\n'0]/}" == "" ]] || return 0
+	printf 'FINDING %s: manifest v%s is absent from the publication catalog.\n' "$slug" "$version"
+	[[ "$apply" == true ]] || return 0
+	_cloudron_monitor_has_authority "$slug" || return 1
+	mkdir -p "$state_dir/${slug%/*}" || return 1
+	receipt="$state_dir/${slug}-v${version}"
+	if ! mkdir "$receipt" 2>/dev/null; then
+		[[ -d "$receipt" ]] || return 1
+		return 0
+	fi
+	# aidevops:trust-boundary — dispatch only the enabled main publication path.
+	if ! gh workflow run cloudron-catalog-publish.yml --repo "$slug" --ref main; then
+		rmdir "$receipt"
+		return 1
+	fi
+	printf 'Dispatched catalog reconciliation for %s v%s.\n' "$slug" "$version"
+	return 0
+}
+
 _cloudron_monitor_run() {
 	local mode="$1"
 	local apply="$2"
 	local failures=0
 	local entry=""
 	local entry_rc=0
+	local secret_rc=0
 	while IFS= read -r entry; do
 		entry_rc=0
+		secret_rc=0
+		_cloudron_monitor_publication_secret "$entry" || secret_rc=$?
+		# One finding per repository per scan, in either mode. Never dispatch a
+		# reconciliation with a missing or unverified publication credential.
+		[[ "$secret_rc" -ne 75 ]] || return 75
+		if [[ "$secret_rc" -ne 0 && "$secret_rc" -ne 3 ]]; then
+			failures=$((failures + 1))
+		fi
 		if [[ "$mode" == "upstream" ]]; then
+			if [[ "$secret_rc" -eq 0 ]]; then
+				_cloudron_monitor_reconcile_entry "$entry" "$apply" || entry_rc=$?
+			fi
+			[[ "$entry_rc" -eq 0 ]] || failures=$((failures + 1))
+			[[ "$entry_rc" -ne 75 ]] || return 75
+			entry_rc=0
 			_cloudron_monitor_upstream_entry "$entry" "$apply" || entry_rc=$?
 		else
 			_cloudron_monitor_compatibility_entry "$entry" "$apply" || entry_rc=$?
@@ -673,7 +839,9 @@ Usage:
 
 Without --apply, findings are reported without creating issues. With --apply,
 deduplicated issues are created in each registered package repository after an
-ADMIN/MAINTAIN permission check. No package source or release state is changed.
+ADMIN/MAINTAIN permission check. The daily upstream check also reports enabled
+main versions missing from the catalog; --apply dispatches the existing catalog
+workflow once per version when no run is active. No package source is changed.
 HELP
 	return 0
 }

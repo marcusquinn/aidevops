@@ -8,7 +8,8 @@ mutations are delegated to canonical-write-policy-helper.py so every canonical
 checkout is read-only regardless of branch name or target path.
 
 This hook runs before Bash/Edit/Write tool calls execute. It is registered under
-both the Bash and direct-file-tool PreToolUse matchers.
+both the Bash and direct-file-tool PreToolUse matchers, and under the
+WebFetch/MCP matcher so URL-bearing tools never open redirect links (GH#35655).
 
 Installed by: aidevops setup (setup.sh) or install-hooks-helper.sh
 Location: ~/.aidevops/hooks/git_safety_guard.py
@@ -232,6 +233,55 @@ def _check_command_policy(command: str) -> "dict | None":
     }
 
 
+REDIRECT_EXEMPT_TOOLS = {"bash", "read", "grep", "glob", "task", "todowrite", "notebookread"}
+
+
+def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
+    """Deny URL-bearing tools that would resolve a redirect link (GH#35655).
+
+    Decision lives in scripts/redirect_link_tool_check.py (lexical only, no
+    network). Bash is covered by the shared command policy; file tools are
+    exempt. Any helper failure fails closed.
+    """
+    if _normalise_tool_name(tool_name) in REDIRECT_EXEMPT_TOOLS or _is_direct_file_tool(tool_name):
+        return None
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_REDIRECT_TOOL_CHECK", "redirect_link_tool_check.py"
+    )
+    reason = "redirect-link policy helper is unavailable"
+    if helper:
+        try:
+            payload_text = json.dumps({"tool_name": tool_name, "tool_input": tool_input})
+            _, payload = _run_policy_helper(helper, [], payload_text)
+            if payload.get("decision") == "allow":
+                return None
+            reason = str(payload.get("reason") or "redirect link detected")
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError) as exc:
+            reason = f"redirect-link policy helper failed: {exc}"
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"BLOCKED by redirect-link policy\n\nReason: {reason}",
+        }
+    }
+
+
+def docker_owner_advisory(command: str, session_id: str):
+    """Delegate optional Docker context without affecting safety decisions."""
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_DOCKER_OWNER_ADVISORY_HELPER", "docker_owner_advisory.py"
+    )
+    if not helper:
+        return None
+    try:
+        _, payload = _run_policy_helper(helper, [command, session_id])
+        return payload or None
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        # Advisory failures must never block commands or override policy.
+        return None
+
+
 def main():
     """Delegate Bash policy and enforce direct-file worktree isolation."""
     try:
@@ -241,6 +291,11 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input") or {}
+
+    redirect_deny = _check_redirect_links(tool_name, tool_input)
+    if redirect_deny:
+        print(json.dumps(redirect_deny))
+        sys.exit(0)
 
     if _is_direct_file_tool(tool_name):
         file_path = (
@@ -264,6 +319,10 @@ def main():
     deny = _check_command_policy(command)
     if deny:
         print(json.dumps(deny))
+    else:
+        advisory = docker_owner_advisory(command, input_data.get("session_id", ""))
+        if advisory:
+            print(json.dumps(advisory))
     sys.exit(0)
 
 

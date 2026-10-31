@@ -8,6 +8,11 @@ add-ons such as CodeRabbit are advisory: absent, pending, unavailable,
 rate-limited, or late results never delay a trusted maintainer-controlled PR.
 Late feedback is swept after merge and filed as worker-ready follow-up issues.
 
+CodeRabbit posts `COMMENTED` reviews (`.coderabbit.yaml`
+`request_changes_workflow: false`, GH#35860), so its findings never set
+`reviewDecision=CHANGES_REQUESTED`. Re-enabling formal change requests restores
+the t2093 close-and-redispatch loop for every worker PR CodeRabbit comments on.
+
 Gemini Code Assist's retired GitHub review integration is legacy-only. The
 framework still recognizes its historical comments, reviews, and threads, but
 does not advertise it as active, accept new per-tool policy, or let stale

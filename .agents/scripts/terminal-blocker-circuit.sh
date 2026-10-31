@@ -7,9 +7,13 @@
 [[ -n "${_TERMINAL_BLOCKER_CIRCUIT_LOADED:-}" ]] && return 0
 _TERMINAL_BLOCKER_CIRCUIT_LOADED=1
 
+# shellcheck source=terminal-blocker-github.sh
+source "${BASH_SOURCE[0]%/*}/terminal-blocker-github.sh"
+
 _TBC_OBSERVATION_MARKER='aidevops:terminal-blocker-observation'
 _TBC_CIRCUIT_MARKER='aidevops:terminal-blocker-circuit'
 _TBC_RETRY_MARKER='terminal-blocker-circuit:retry'
+_TBC_FLEET_MARKER='aidevops:fleet-capability fingerprint='
 _TBC_MISSING_SCOPE='missing_files_scope'
 _TBC_UNKNOWN='unknown'
 _TBC_RUNNER_CAPABILITY='runner_capability_unmet'
@@ -26,7 +30,23 @@ _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
 # revision includes the default-branch HEAD, so any target-code change re-arms
 # it (any-merge granularity was chosen over a narrower signal because the
 # defect lives in code outside the brief and no linked-fix marker is reliable).
-_TBC_REVISION_REARM_REASONS=' missing_files_scope files_scope_excluded input_required external_trigger_pending source_access_blocked target_code_blocker '
+# GH#35745: unknown is held as status:blocked too (_hrff_blocked_exit_holds), so
+# it needs the same wake conditions: a brief/dependency revision (its documented
+# repair path) or a trusted retry. Without them the hold never released.
+_TBC_REVISION_REARM_REASONS=' missing_files_scope files_scope_excluded input_required external_trigger_pending source_access_blocked target_code_blocker unknown '
+# GH#35925: these first-observation holds require scheduling consent, never a
+# revision change. Include legacy timeout observations without changing their hash.
+_TBC_RETRY_ONLY_REARM_REASONS=' permission_required push_policy_timeout network_policy_timeout '
+# GH#36232: a permission_required hold without a published permission request
+# gives the maintainer nothing to approve. It re-arms once per backoff window,
+# which mirrors the zero-attempt window (ZERO_OUTPUT_HOLD_WINDOW_SECONDS,
+# GH#36214). worker-permission-helper.sh owns the request/decision markers.
+_TBC_PERMISSION_REQUIRED='permission_required'
+_TBC_PERMISSION_WINDOW_DEFAULT=43200
+_TBC_PERMISSION_LABEL='needs-maintainer-permissions'
+_TBC_PERMISSION_REQUEST_MARKER='<!-- aidevops-permission-request -->'
+_TBC_PERMISSION_GRANT_MARKER='<!-- aidevops-signed-permission-grant -->'
+_TBC_PERMISSION_WITHDRAWAL_MARKER='<!-- aidevops-signed-permission-withdrawal -->'
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
 # Legacy/malformed IDs never let a tied retry clear evidence. For selection,
@@ -170,10 +190,14 @@ _terminal_blocker_input_owner() {
 
 # Capture only final assistant text, not tool output. A missing canonical scope
 # can also be established from the current brief, without interpreting prose.
+# Optional $3 is the anchored line pattern that classified the exit as BLOCKED
+# (headless-runtime-model.sh). Judging the final part with that same pattern
+# stops a classified exit such as "**BLOCKED — ...**" losing its evidence.
 _terminal_blocker_capture_json() {
 	local output_file="$1"
 	local live_blocked="${2:-false}"
-	python3 - "$output_file" "$live_blocked" <<'PY'
+	local blocked_line_pattern="${3:-}"
+	python3 - "$output_file" "$live_blocked" "$blocked_line_pattern" <<'PY'
 import json
 import re
 import sys
@@ -181,7 +205,9 @@ from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(errors="ignore")
 parts = []
+results = []
 text_field = "text"
+result_field = "result"
 for raw_line in raw.splitlines():
     line = raw_line.strip()
     if not line.startswith("{"):
@@ -190,16 +216,34 @@ for raw_line in raw.splitlines():
         event = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         continue
-    if not isinstance(event, dict) or event.get("type") != text_field:
+    if not isinstance(event, dict):
+        continue
+    # Claude CLI stream-json carries the final report in its `result` event,
+    # which the classifier also reads; tool output never appears there.
+    final_report = event.get(result_field)
+    if event.get("type") == result_field and isinstance(final_report, str):
+        results.append(final_report)
+        continue
+    if event.get("type") != text_field:
         continue
     part = event.get("part") if isinstance(event.get("part"), dict) else {}
+    # GH#33274: runtime-injected parts are not model output.
+    if part.get("synthetic") is True:
+        continue
     text = event.get(text_field) or part.get(text_field) or ""
     if text:
         parts.append(text)
 
 marker = re.compile(r"(^|\n)\s*BLOCKED(?:\s*:|\s*$)", re.IGNORECASE)
-candidate = parts[-1] if parts else (raw if not raw.lstrip().startswith('{') else '')
-if not marker.search(candidate) and sys.argv[2] != 'true':
+classifier = re.compile(sys.argv[3], re.MULTILINE) if sys.argv[3] else None
+if parts:
+    candidate = parts[-1]
+elif results:
+    candidate = results[-1]
+else:
+    candidate = raw if not raw.lstrip().startswith('{') else ''
+blocked = marker.search(candidate) or (classifier is not None and classifier.search(candidate))
+if not blocked and sys.argv[2] != 'true':
     raise SystemExit(1)
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
@@ -245,13 +289,14 @@ PY
 terminal_blocker_capture_output() {
 	local output_file="$1"
 	local live_blocked="${2:-false}"
+	local blocked_line_pattern="${3:-}"
 	local normalized="" fingerprint="" issue_json="" captured=""
 	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=""
 	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=""
 	AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
 	[[ -f "$output_file" ]] || return 1
-	captured=$(_terminal_blocker_capture_json "$output_file" "$live_blocked") || captured=""
+	captured=$(_terminal_blocker_capture_json "$output_file" "$live_blocked" "$blocked_line_pattern") || captured=""
 	[[ -n "$captured" ]] || return 1
 	normalized=$(printf '%s' "$captured" | jq -r '.reason') || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=$(printf '%s' "$captured" | jq -r '.explicit_reason') || return 1
@@ -261,8 +306,10 @@ terminal_blocker_capture_output() {
 	# Do not infer a missing heading from words such as "Files Scope excludes".
 	# Verify the structural condition independently against the issue itself.
 	# Access denials keep their evidenced class; a scope edit cannot grant access.
+	# Verified admin/owner input and external-trigger holds likewise keep their class.
 	if [[ "$normalized" != "permission_required" && "$normalized" != "$_TBC_RUNNER_CAPABILITY" &&
-		"$normalized" != "$_TBC_SOURCE_ACCESS" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ &&
+		"$normalized" != "$_TBC_SOURCE_ACCESS" && "$normalized" != input_required:* &&
+		"$normalized" != "external_trigger_pending" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ &&
 		"${DISPATCH_REPO_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 		issue_json=$(gh api "repos/${DISPATCH_REPO_SLUG}/issues/${WORKER_ISSUE_NUMBER}" 2>/dev/null) || issue_json=""
 		if printf '%s' "$issue_json" | jq -e '.body | type == "string"' >/dev/null 2>&1 &&
@@ -342,8 +389,15 @@ terminal_blocker_task_revision() {
 	local issue_number="$3"
 	local repo_path="$4"
 	local reason="${5:-}"
-	local task_json="" dependency_signature="" target_revision="" canonical=""
+	local task_json="" dependency_signature="" target_revision="" canonical="" named_unknown=false
 	[[ -n "$reason" ]] || reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
+	# GH#35745: only a named unknown class (explicit reason, or the producer's
+	# exact v2:unknown fingerprint) is brief-bound. An absent or unrecognised
+	# fingerprint also maps to unknown and keeps the conservative default below.
+	if [[ "$reason" == "$_TBC_UNKNOWN" ]] && [[ "${5:-}" == "$_TBC_UNKNOWN" ||
+		"${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}" == "$(_terminal_blocker_hash "v2:${_TBC_UNKNOWN}")" ]]; then
+		named_unknown=true
+	fi
 	# A brief edit, unrelated merge or GraphQL outage cannot satisfy a permission
 	# prerequisite. Explicit retry only schedules a new check; it grants nothing.
 	if [[ "$reason" == "permission_required" ]]; then
@@ -367,8 +421,10 @@ terminal_blocker_task_revision() {
 	# Missing input (GH#33332) is likewise supplied through the brief, not code.
 	# A source denial (GH#34223) re-arms on verified access recorded through a
 	# brief/dependency change or trusted retry, never on unrelated merges.
+	# An unknown blocker (GH#35745) is repaired through the brief; tracking
+	# default-branch HEAD would release its hold on every unrelated merge.
 	if [[ "$reason" == "external_trigger_pending" || "$reason" == "input_required" ||
-		"$reason" == "$_TBC_SOURCE_ACCESS" ]]; then
+		"$reason" == "$_TBC_SOURCE_ACCESS" || "$named_unknown" == true ]]; then
 		canonical=$(jq -nc --arg reason "$reason" --argjson task "$task_json" \
 			--argjson dependencies "$dependency_signature" \
 			'{reason: $reason, task: $task, dependencies: $dependencies}') || return 1
@@ -390,8 +446,7 @@ terminal_blocker_fetch_trusted_comments() {
 	local self_login="${3:-}"
 	local raw=""
 	[[ "$self_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || self_login=""
-	raw=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+	raw=$(terminal_blocker_fetch_comments "$repo_slug" "$issue_number") || return 1
 	printf '%s' "$raw" | jq -c --arg self "$self_login" '
 		def trusted: . == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
 		[(if type == "array" and ((.[0]? | type) == "array") then .[] else . end)[]
@@ -538,9 +593,122 @@ terminal_blocker_rearms_on_revision() {
 	return $?
 }
 
+# Retry authorizes scheduling only; permission and policy guards still run.
+terminal_blocker_rearms_on_retry_only() {
+	local reason="$1"
+	[[ -n "$reason" && "$_TBC_RETRY_ONLY_REARM_REASONS" == *" ${reason} "* ]]
+	return $?
+}
+
+# Both sets need recovery intake for a held first observation.
+terminal_blocker_observation_recoverable() {
+	local reason="$1"
+	terminal_blocker_rearms_on_revision "$reason" || terminal_blocker_rearms_on_retry_only "$reason"
+	return $?
+}
+
+_terminal_blocker_permission_window_seconds() {
+	local window="${ZERO_OUTPUT_HOLD_WINDOW_SECONDS:-}"
+	[[ "$window" =~ ^[1-9][0-9]{0,8}$ ]] || window="$_TBC_PERMISSION_WINDOW_DEFAULT"
+	printf '%s\n' "$window"
+	return 0
+}
+
+# GH#36232 #aidevops:trust-boundary — returns 0 while a permission request is
+# published and undecided: the issue carries needs-maintainer-permissions, or
+# the newest trusted worker-permission-helper.sh request has no later
+# OWNER/MEMBER signed grant/withdrawal or retry directive. Returns 1 when no
+# actionable request exists. Unreadable input returns 0 (fail closed: hold).
+# Request evidence only strengthens a hold, so OWNER/MEMBER/COLLABORATOR or
+# this runner's own login qualify; clearing evidence stays OWNER/MEMBER.
+# Args: comments_json issue_json (labels optional)
+terminal_blocker_permission_request_evidenced() {
+	local comments_json="$1"
+	local issue_json="${2:-}"
+	local labelled="" request="" self_login=""
+	local retry="" decided=""
+	[[ -n "$issue_json" ]] || issue_json='{}'
+	labelled=$(jq -r --arg label "$_TBC_PERMISSION_LABEL" '
+		[(.labels // [])[]? | if type == "object" then (.name // "") else . end] | index($label) != null
+	' <<<"$issue_json" 2>/dev/null) || return 0
+	[[ "$labelled" == false ]] || return 0
+	self_login=$(_terminal_blocker_self_login)
+	request=$(jq -c --arg marker "$_TBC_PERMISSION_REQUEST_MARKER" --arg self "$self_login" \
+		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}"'
+		[.[] | select(((.author_association // "") as $a | ($authoritative + ["COLLABORATOR"]) | index($a) != null)
+			or ($self != "" and (.author // .user.login // "") == $self))
+		| select(valid_time) | select((.body // "") | ltrimstr("\n") | startswith($marker))]
+		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty
+	' <<<"$comments_json" 2>/dev/null) || return 0
+	[[ -n "$request" ]] || return 1
+	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || return 0
+	_terminal_blocker_retry_after "$retry" "$request" && return 1
+	decided=$(jq -r --argjson request "$request" --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		--arg grant "$_TBC_PERMISSION_GRANT_MARKER" --arg withdrawal "$_TBC_PERMISSION_WITHDRAWAL_MARKER" \
+		"${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		([($request.body // "") | scan("perm-[0-9a-f]{16}")] | first) as $rid
+		| any(.[]; authoritative_author($authoritative) and retry_after($request)
+			and ((.body // "") | (contains($grant) or contains($withdrawal))
+				and ($rid == null or contains($rid))))
+	' <<<"$comments_json" 2>/dev/null) || return 0
+	[[ "$decided" == true ]] && return 1
+	return 0
+}
+
+# GH#36232 #aidevops:trust-boundary — re-arming schedules a new attempt only;
+# it never grants a permission. A worker that meets the real guard again must
+# publish a request (worker-permission-helper.sh request) and is then held.
+# Prints the elapsed window index (>= 1) and returns 0 when an unevidenced
+# permission_required hold event (observation or circuit comment) is at least
+# one window old; returns 1 while it holds (inside the window, evidenced, or an
+# unreadable/future event time).
+# Args: comments_json issue_json evidence_comment_json
+terminal_blocker_permission_window_expired() {
+	local comments_json="$1"
+	local issue_json="$2"
+	local evidence="$3"
+	local now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}" window="" observed="" index=0
+	[[ -n "$evidence" ]] || return 1
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
+	terminal_blocker_permission_request_evidenced "$comments_json" "$issue_json" && return 1
+	observed=$(jq -r 'try (.created_at | fromdateiso8601 | floor) catch 0' <<<"$evidence" 2>/dev/null) || return 1
+	[[ "$observed" =~ ^[0-9]+$ && "$observed" -gt 0 && "$observed" -le "$now_epoch" ]] || return 1
+	window=$(_terminal_blocker_permission_window_seconds)
+	index=$(((now_epoch - observed) / window))
+	[[ "$index" -ge 1 ]] || return 1
+	printf '%s\n' "$index"
+	return 0
+}
+
+# Next epoch at which the newest unevidenced permission_required hold event
+# crosses a window boundary, so mechanical recovery can skip unchanged issue
+# snapshots until then. Prints nothing (returns 1) when not applicable.
+# Args: comments_json issue_json
+terminal_blocker_permission_rearm_after() {
+	local comments_json="$1"
+	local issue_json="$2"
+	local fingerprint="" evidence="" observation="" circuit="" observed="" window=""
+	local now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
+	observation=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_OBSERVATION_MARKER revision=") || return 1
+	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=") || return 1
+	evidence=$(jq -nc --argjson observation "${observation:-null}" --argjson circuit "${circuit:-null}" \
+		"${_TBC_ORDER_JQ}"'[$observation, $circuit] | map(select(. != null))
+		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty' 2>/dev/null) || return 1
+	[[ -n "$evidence" ]] || return 1
+	fingerprint=$(jq -r '.body | capture("<!-- aidevops:terminal-blocker-(?:observation|circuit) revision=[a-f0-9]{24} blocker=(?<f>[a-f0-9]{24}) -->").f' <<<"$evidence" 2>/dev/null) || return 1
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == "$_TBC_PERMISSION_REQUIRED" ]] || return 1
+	terminal_blocker_permission_request_evidenced "$comments_json" "$issue_json" && return 1
+	observed=$(jq -r 'try (.created_at | fromdateiso8601 | floor) catch 0' <<<"$evidence" 2>/dev/null) || return 1
+	[[ "$observed" =~ ^[0-9]+$ && "$observed" -gt 0 && "$observed" -le "$now_epoch" ]] || return 1
+	window=$(_terminal_blocker_permission_window_seconds)
+	printf '%s\n' "$((observed + ((now_epoch - observed) / window + 1) * window))"
+	return 0
+}
+
 # GH#34846: a runtime-owned blocked exit projects status:blocked from the first
 # observation, which has no circuit for the recovery owner to re-arm. Report
-# whether the newest trusted observation still holds a revision-re-armed class.
+# whether the newest trusted observation still holds a recoverable class.
 # Returns 0 (prints a summary) while the observed task revision is current and
 # no later OWNER/MEMBER retry exists; 1 when re-armed or not applicable; 2 when
 # the current revision cannot be computed (fail closed: keep the hold).
@@ -560,10 +728,19 @@ terminal_blocker_observation_hold_active() {
 	read -r observed_revision fingerprint <<<"$marker"
 	[[ "$observed_revision" =~ ^[a-f0-9]{24}$ && "$fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 1
 	reason=$(_terminal_blocker_reason "$fingerprint")
-	terminal_blocker_rearms_on_revision "$reason" || return 1
+	terminal_blocker_observation_recoverable "$reason" || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	if _terminal_blocker_retry_after "$retry" "$observation"; then
 		return 1
+	fi
+	if terminal_blocker_rearms_on_retry_only "$reason"; then
+		# GH#36232: an unpublished permission request re-arms once per window.
+		if [[ "$reason" == "$_TBC_PERMISSION_REQUIRED" ]] &&
+			terminal_blocker_permission_window_expired "$comments_json" "$issue_json" "$observation" >/dev/null; then
+			return 1
+		fi
+		printf 'TERMINAL_BLOCKER_OBSERVATION_HOLD reason=%s task_revision=%s\n' "$reason" "$observed_revision"
+		return 0
 	fi
 	current_revision=$(terminal_blocker_task_revision "$issue_json" "$repo_slug" "$issue_number" "$repo_path" "$reason") || return 2
 	[[ "$current_revision" == "$observed_revision" ]] || return 1
@@ -621,7 +798,7 @@ _terminal_blocker_recovery() {
 		;;
 	*)
 		owner="worker-triage"
-		action='Interpret the protected dossier and record a known blocker class or repair the brief. No global dispatch hold is imposed.'
+		action='Interpret the protected dossier and record a known blocker class or repair the brief. A brief or dependency change, or an OWNER/MEMBER retry directive, re-arms dispatch.'
 		;;
 	esac
 	[[ "$issue" =~ ^[0-9]+$ ]] || issue="$_TBC_UNKNOWN"
@@ -682,7 +859,7 @@ terminal_blocker_backoff_active() {
 			| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
 			| select($release != null and $release.runner == ($comment.author // $comment.user.login // ""))
 			| epoch] | [length, (max // 0)] | @tsv
-	' 2>/dev/null) || return 1
+	' 2>/dev/null) || return 2
 	IFS=$'\t' read -r count last_epoch <<<"$evidence"
 	[[ "$count" =~ ^[0-9]+$ && "$last_epoch" =~ ^[0-9]+$ && "$count" -ge 2 ]] || return 1
 	# Two failures: 15 minutes; each further failure doubles the delay, capped
@@ -699,6 +876,180 @@ terminal_blocker_backoff_active() {
 	return 0
 }
 
+# GH#35788: the issue's immutable release observations are the durable fleet
+# hold. A local cooldown expiring cannot erase them. Require two *different*
+# authenticated runners on this exact task revision, not two attempts/devices.
+_terminal_blocker_fleet_authorize() {
+	local comments="$1" repo="$2"
+	local login="" permission=""
+	# aidevops:trust-boundary — association alone does not prove a collaborator
+	# can write. Verify actual repository permission before fleet aggregation.
+	while IFS= read -r login; do
+		[[ "$login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || continue
+		permission=$(gh api "repos/${repo}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || continue
+		case "$permission" in
+		admin | maintain | write)
+			comments=$(jq -c --arg login "$login" 'map(if (.author // .user.login // "") == $login then .author_association="MEMBER" else . end)' <<<"$comments") || return 1
+			;;
+		esac
+	done < <(jq -r --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(authoritative_author($authoritative) | not)
+		| select(.body // empty | test("aidevops:terminal-blocker-observation|^<!-- aidevops:fleet-capability"))
+		| (.author // .user.login // "")] | unique[]' <<<"$comments")
+	printf '%s\n' "$comments"
+	return 0
+}
+
+_terminal_blocker_fleet_observations() {
+	local comments="$1" revision="$2" fingerprint="$3"
+	jq -c --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		--arg marker "<!-- $_TBC_OBSERVATION_MARKER revision=${revision} blocker=${fingerprint} -->" "${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(authoritative_author($authoritative))
+		| . as $comment
+		| select((.body // "") | contains($marker))
+		| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
+		| select($release != null and $release.runner == ($comment.author // $comment.user.login // ""))
+		| {runner:$release.runner, at:.created_at, id:.id}]
+		| group_by(.runner) | map(max_by(.at))
+	' <<<"$comments"
+	return $?
+}
+
+# This is a fresh read-only probe, never an install or an approval. A current
+# approved bootstrap policy also qualifies: the normal worktree prepare path
+# will perform its frozen, script-free install before the worker starts.
+_terminal_blocker_fleet_ready() {
+	local path="$1" brief="$2"
+	local helpers="${BASH_SOURCE[0]%/*}" probe="" policy=""
+	[[ -d "$path" ]] || return 1
+	# shellcheck source=runner-capability-helper.sh
+	source "${helpers}/runner-capability-helper.sh"
+	runner_capability_check "$path" "$brief" fresh >/dev/null 2>&1 || return 1
+	probe=$(bash "${helpers}/worktree-js-readiness-helper.sh" probe "$path" --json --no-cache 2>/dev/null) || return 1
+	if jq -e '.state == "ready" or (.state | startswith("not-applicable:"))' <<<"$probe" >/dev/null; then
+		return 0
+	fi
+	policy=$(bash "${helpers}/worktree-js-readiness-helper.sh" status "$path" 2>/dev/null) || return 1
+	[[ "$policy" == JS_DEPENDENCY_POLICY=current$'\n'* ]]
+	return $?
+}
+
+# Resolve a single repository-wide supervisor dashboard, independent of the
+# observing runner. Never create escalation comments on implementation issues.
+_terminal_blocker_fleet_dashboard() {
+	local repo="$1"
+	gh api "repos/${repo}/issues?state=open&labels=supervisor&per_page=100" --paginate --slurp 2>/dev/null |
+		jq -er '[.[][] | select(.pull_request == null)
+		| select(.title | startswith("[Supervisor:"))] | sort_by(.number) | first.number // empty'
+	return $?
+}
+
+# Upsert one safe, structured escalation per repository/fingerprint. Preserve
+# the accumulated issue list across observations. Readiness is task-specific:
+# the legacy fingerprint names a class, not an exact secret/tool requirement.
+_terminal_blocker_fleet_update() {
+	local repo="$1" dashboard="$2" fingerprint="$3" issue="$4" state="$5" existing="$6"
+	local checkpoint="${7:-}" id="" body="" held="" old_body="" ready=""
+	id=$(jq -r '.id // empty' <<<"$existing")
+	old_body=$(jq -r '.body // ""' <<<"$existing")
+	held=$(jq -rn --arg old "$old_body" --arg issue "$issue" '
+		[($old | scan("(?m)^Held issues: ([0-9,]+)$")[] | split(",")[]), $issue]
+		| unique | sort_by(tonumber) | join(",")') || return 1
+	ready=$(jq -rn --arg old "$old_body" --arg key "$checkpoint" --arg state "$state" '
+		[($old | scan("(?m)^Ready checkpoints: ([a-f0-9,]+)$")[] | split(",")[]),
+		 ($key | select($state == "ready" and test("^[a-f0-9]{24}$")))] | unique | join(",")') || return 1
+	body="<!-- ${_TBC_FLEET_MARKER}${fingerprint} -->
+Fleet capability circuit (readiness is checked per task before launch)
+Wake condition: capability:${fingerprint}
+Held issues: ${held}
+Ready checkpoints: ${ready}
+
+Runner owners: inspect the protected blocker dossier for the exact missing prerequisite. For node-modules-missing (tsc), run \`worktree-js-readiness-helper.sh approve <worktree> --track-default-branch\` interactively. A fresh readiness probe or current approved frozen-install policy on a capable runner releases the hold automatically. No brief change is needed. Do not install without approval, bypass hooks, or publish secret values."
+	[[ "$body" != "$old_body" ]] || return 0
+	if [[ "$id" =~ ^[1-9][0-9]*$ ]]; then
+		gh api "repos/${repo}/issues/comments/${id}" --method PATCH --raw-field body="$body" >/dev/null || return 1
+	else
+		gh api "repos/${repo}/issues/${dashboard}/comments" --method POST --raw-field body="$body" >/dev/null || return 1
+	fi
+	return 0
+}
+
+# Reconcile concurrent creators on the next observation (and immediately after
+# creation). Merge both lists before removing duplicate generated comments;
+# never delete ordinary dashboard comments or untrusted marker lookalikes.
+_terminal_blocker_fleet_existing() {
+	local repo="$1" dashboard="$2" fingerprint="$3"
+	local shared="" matches="" existing="" duplicate="" merged=""
+	shared=$(terminal_blocker_fetch_trusted_comments "$dashboard" "$repo") || return 1
+	shared=$(_terminal_blocker_fleet_authorize "$shared" "$repo") || return 1
+	# aidevops:trust-boundary — a copied marker does not authorize edits/deletes.
+	matches=$(jq -c --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		--arg marker "<!-- ${_TBC_FLEET_MARKER}${fingerprint} -->" "${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(authoritative_author($authoritative))
+		| select((.body // "") | startswith($marker))] | sort_by(.id)' <<<"$shared") || return 1
+	existing=$(jq -c 'first // {}' <<<"$matches")
+	if [[ "$(jq 'length' <<<"$matches")" -gt 1 ]]; then
+		merged=$(jq -r 'map(.body) | join("\n")' <<<"$matches")
+		# Feed all structured rows to the normal formatter, preserving union.
+		existing=$(jq -c --arg body "$merged" '.body=$body' <<<"$existing")
+		_terminal_blocker_fleet_update "$repo" "$dashboard" "$fingerprint" \
+			"$(jq -r '[.[].body | scan("(?m)^Held issues: ([0-9,]+)$")[] | split(",")[]] | first' <<<"$matches")" held "$existing" || return 1
+		while IFS= read -r duplicate; do
+			[[ "$duplicate" =~ ^[1-9][0-9]*$ ]] || continue
+			gh api "repos/${repo}/issues/comments/${duplicate}" --method DELETE >/dev/null || return 1
+		done < <(jq -r '.[1:][].id' <<<"$matches")
+		# Return the newly formatted canonical body, not the merged raw rows.
+		shared=$(terminal_blocker_fetch_trusted_comments "$dashboard" "$repo") || return 1
+		existing=$(jq -c --argjson id "$(jq '.id' <<<"$existing")" '[.[] | select(.id == $id)] | first // {}' <<<"$shared")
+	fi
+	printf '%s\n' "$existing"
+	return 0
+}
+
+terminal_blocker_fleet_hold_active() {
+	local comments="$1" brief="$2" repo="$3" issue="$4" path="$5"
+	local fingerprint=""
+	local revision="" observations="" dashboard="" checkpoint="" existing='{}'
+	fingerprint=$(_terminal_blocker_hash "v2:${_TBC_RUNNER_CAPABILITY}") || return 1
+	# Avoid dependency/API work on issues without capability observations.
+	[[ "$comments" == *"blocker=${fingerprint}"* ]] || return 1
+	# The dispatch admission metadata deliberately omits body. Fetch the brief
+	# before hashing; a title-only hash can never match worker observations.
+	if ! jq -e '[.body,.title] | all(type == "string")' <<<"$brief" >/dev/null 2>&1; then
+		brief=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 1
+	fi
+	revision=$(terminal_blocker_task_revision "$brief" "$repo" "$issue" "$path" "$_TBC_RUNNER_CAPABILITY") || return 1
+	comments=$(_terminal_blocker_fleet_authorize "$comments" "$repo") || return 1
+	observations=$(_terminal_blocker_fleet_observations "$comments" "$revision" "$fingerprint") || return 1
+	[[ "$(jq 'length' <<<"$observations")" -ge 2 ]] || return 1
+	checkpoint=$(_terminal_blocker_hash "${revision}:${observations}") || return 1
+	dashboard=$(_terminal_blocker_fleet_dashboard "$repo") || dashboard=""
+	if [[ "$dashboard" =~ ^[1-9][0-9]*$ ]]; then
+		# An unreadable collection is not an empty collection: never POST a
+		# replacement escalation after a failed read.
+		existing=$(_terminal_blocker_fleet_existing "$repo" "$dashboard" "$fingerprint") || {
+			printf 'TERMINAL_BLOCKER_FLEET_HOLD escalation=unreadable wake=capability:%s\n' "$fingerprint"
+			return 0
+		}
+	fi
+	# Every runner probes before *launch*, including a runner that has never
+	# failed this issue. A new capable runner/approved policy therefore wakes
+	# it without spending a worker attempt. Receipts cover only these exact
+	# observations and this revision, never another issue or a later failure.
+	if jq -e --arg key "$checkpoint" '.body // "" | [scan("(?m)^Ready checkpoints: ([a-f0-9,]+)$")[] | split(",")[]] | index($key) != null' <<<"$existing" >/dev/null; then
+		return 1
+	fi
+	if _terminal_blocker_fleet_ready "$path" "$brief"; then
+		[[ -z "$dashboard" ]] || _terminal_blocker_fleet_update "$repo" "$dashboard" "$fingerprint" "$issue" ready "$existing" "$checkpoint" || true
+		[[ -z "$dashboard" ]] || _terminal_blocker_fleet_existing "$repo" "$dashboard" "$fingerprint" >/dev/null || true
+		return 1
+	fi
+	[[ -z "$dashboard" ]] || _terminal_blocker_fleet_update "$repo" "$dashboard" "$fingerprint" "$issue" held "$existing" || true
+	[[ -z "$dashboard" ]] || _terminal_blocker_fleet_existing "$repo" "$dashboard" "$fingerprint" >/dev/null || true
+	printf 'TERMINAL_BLOCKER_FLEET_HOLD task_revision=%s wake=capability:%s\n' "$revision" "$fingerprint"
+	return 0
+}
+
 terminal_blocker_circuit_active() {
 	local comments_json="$1"
 	local issue_json="$2"
@@ -707,6 +1058,9 @@ terminal_blocker_circuit_active() {
 	local repo_path="$5"
 	local circuit="" retry="" current_revision="" fingerprint="" reason=""
 	_terminal_blocker_report_ignored_evidence "$comments_json"
+	if terminal_blocker_fleet_hold_active "$comments_json" "$issue_json" "$repo_slug" "$issue_number" "$repo_path"; then
+		return 0
+	fi
 	if terminal_blocker_backoff_active "$comments_json"; then
 		return 0
 	fi
@@ -720,6 +1074,12 @@ terminal_blocker_circuit_active() {
 	[[ -n "$circuit" ]] || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	if _terminal_blocker_retry_after "$retry" "$circuit"; then
+		return 1
+	fi
+	# GH#36232: a repeated permission blocker without a published request
+	# re-arms once per backoff window, like its first observation.
+	if [[ "$reason" == "$_TBC_PERMISSION_REQUIRED" ]] &&
+		terminal_blocker_permission_window_expired "$comments_json" "$issue_json" "$circuit" >/dev/null; then
 		return 1
 	fi
 	printf 'TERMINAL_BLOCKER_CIRCUIT task_revision=%s\n' "$current_revision"

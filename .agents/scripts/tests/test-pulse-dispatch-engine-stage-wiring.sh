@@ -418,6 +418,87 @@ assert_label_maintenance_cycle_budget_contract() {
 	return 0
 }
 
+ownership_deadline_trace() {
+	local mode="$1" requested=600 starved=0 rc=0
+	unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
+	# shellcheck source=../pulse-dispatch-preflight-lib.sh
+	source "$PREFLIGHT_LIB"
+	LOGFILE="/dev/null" PULSE_STAGE_DEADLINE_EPOCH=1384
+	AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=1 AIDEVOPS_PULSE_NORMALIZE_FLOOR_S=60
+	case "$mode" in
+	recovery) starved=1 ;;
+	standalone)
+		unset PULSE_STAGE_DEADLINE_EPOCH
+		starved=1
+		;;
+	async)
+		AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=0
+		starved=1
+		;;
+	invalid) PULSE_STAGE_DEADLINE_EPOCH=invalid ;;
+	expired) PULSE_STAGE_DEADLINE_EPOCH=999 ;;
+	requested) requested=200 ;;
+	prefetch_exhausted | reconcile_exhausted) requested=10 ;;
+	esac
+	date() {
+		printf '1000\n'
+		return 0
+	}
+	prefetch_contribution_watch() {
+		[[ "$mode" != prefetch_exhausted ]] || SECONDS=$((SECONDS + requested))
+		return 0
+	}
+	_log_substage_timing() { return 0; }
+	_pulse_blocker_refresh_starved() {
+		[[ "$starved" -eq 1 ]] && return 0
+		return 1
+	}
+	run_stage_with_timeout() {
+		local stage_name="$1" timeout_seconds="$2"
+		case "$stage_name" in
+		reconcile_issues_single_pass) printf 'r:%s;' "$timeout_seconds" ;;
+		normalize_active_issue_assignments)
+			printf 'n:%s;' "$timeout_seconds"
+			[[ "$mode" != normalize_deferred ]] || return 124
+			[[ "$mode" != normalize_failed ]] || return 1
+			;;
+		esac
+		# Model each child consuming its complete allocation without sleeps.
+		SECONDS=$((SECONDS + timeout_seconds))
+		return 0
+	}
+	_preflight_ownership_reconcile "$requested" || rc=$?
+	printf 'rc:%s;' "$rc"
+	return 0
+}
+
+assert_ownership_deadline_contract() {
+	local mode actual="" expected=""
+	for mode in clamped recovery standalone async invalid expired requested prefetch_exhausted reconcile_exhausted normalize_deferred normalize_failed; do
+		TESTS_RUN=$((TESTS_RUN + 1))
+		case "$mode" in
+		clamped | async) expected="r:316;n:60;rc:0;" ;;
+		recovery) expected="r:124;n:60;rc:0;" ;;
+		standalone | invalid) expected="r:380;n:212;rc:0;" ;;
+		expired) expected="rc:124;" ;;
+		requested) expected="r:132;n:60;rc:0;" ;;
+		prefetch_exhausted) expected="rc:124;" ;;
+		reconcile_exhausted) expected="r:8;rc:124;" ;;
+		normalize_deferred) expected="r:316;n:60;rc:124;" ;;
+		normalize_failed) expected="r:316;n:60;rc:1;" ;;
+		esac
+		# Keep case statements outside command substitution for Bash 3.2.
+		actual=$(ownership_deadline_trace "$mode")
+		if [[ "$actual" == "$expected" ]]; then
+			echo "${TEST_GREEN}PASS${TEST_NC}: ownership deadline budget ${mode}"
+		else
+			TESTS_FAILED=$((TESTS_FAILED + 1))
+			echo "${TEST_RED}FAIL${TEST_NC}: ownership deadline budget ${mode} expected=${expected} actual=${actual}"
+		fi
+	done
+	return 0
+}
+
 assert_stage_cycle_budget_contract() {
 	local test_root="" actual="" expected="clamp:1;defer:124;optout:1;unset:1;"
 	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-stage-cycle-XXXXXX") || return 1
@@ -545,6 +626,7 @@ assert_interrupted_dispatch_progress_contract() {
 # Resolve paths relative to this test file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
+HOUSEKEEPING="$SCRIPT_DIR/pulse-dispatch-engine-housekeeping.sh"
 CORE="$SCRIPT_DIR/pulse-dispatch-core.sh"
 DISPATCH_LOCKS="$SCRIPT_DIR/pulse-dispatch-locks.sh"
 DISPATCH_LIB="$SCRIPT_DIR/pulse-dispatch-lib.sh"
@@ -577,64 +659,72 @@ assert_not_grep \
 	'run_stage_with_timeout "complexity_scan"' \
 	"$ENGINE"
 
-# Assertions 2-6: each stage uses two separate greps (2a/2b pattern) because the
-# dispatch engine wires stages with a backslash line-continuation:
-#   _pulse_run_optional_stage_with_timeout "coderabbit_review" "$stage_timeout" run_daily_codebase_review || true
+# Assertions 3-6: each stage uses two separate greps (3a/3b pattern) because the
+# housekeeping module wires stages with a backslash line-continuation:
+#   _pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
 # Single-line grep -E cannot span the newline, so split into stage-name + function-name.
 
-assert_grep \
-	"2a: coderabbit_review stage call present" \
-	'_pulse_run_optional_stage_with_timeout "coderabbit_review"' \
+assert_not_grep \
+	"2a: retired coderabbit_review stage must NOT be in dispatch engine (GH#35865)" \
+	'coderabbit_review' \
 	"$ENGINE"
-assert_grep \
-	"2b: coderabbit_review function name present" \
+assert_not_grep \
+	"2a: retired coderabbit_review stage must NOT be in housekeeping module (GH#35865)" \
+	'coderabbit_review' \
+	"$HOUSEKEEPING"
+assert_not_grep \
+	"2b: retired daily review function must NOT be in dispatch engine" \
 	'run_daily_codebase_review' \
 	"$ENGINE"
+assert_not_grep \
+	"2b: retired daily review function must NOT be in housekeeping module" \
+	'run_daily_codebase_review' \
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"3a: post_merge_scanner stage call present" \
 	'_pulse_run_optional_stage_with_timeout "post_merge_scanner"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"3b: post_merge_scanner function name present" \
 	'_run_post_merge_review_scanner' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"3c: pr_review_thread_response stage call present" \
 	'_pulse_run_optional_stage_with_timeout "pr_review_thread_response"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"3d: pr_review_thread_response function name present" \
 	'_run_pr_review_thread_response_scanner' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"4a: auto_decomposer_scanner stage call present" \
 	'_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"4b: auto_decomposer_scanner function name present" \
 	'_run_auto_decomposer_scanner' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"5a: dedup_cleanup stage call present" \
 	'_pulse_run_optional_stage_with_timeout "dedup_cleanup"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"5b: dedup_cleanup function name present" \
 	'run_simplification_dedup_cleanup' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 assert_grep \
 	"6a: fast_fail_prune_expired stage call present" \
 	'_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired"' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 assert_grep \
 	"6b: fast_fail_prune_expired function name present" \
 	'fast_fail_prune_expired' \
-	"$ENGINE"
+	"$HOUSEKEEPING"
 
 # --- The shared-budget wrapper must NOT exist ---
 
@@ -870,6 +960,7 @@ assert_grep \
 	"$WRAPPER"
 assert_prefetch_degraded_contract
 
+assert_ownership_deadline_contract
 assert_stage_cycle_budget_contract
 assert_dispatch_cycle_budget_contract
 assert_interrupted_dispatch_progress_contract

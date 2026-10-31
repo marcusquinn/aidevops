@@ -5,6 +5,7 @@ on:
     types: [opened]
 
 permissions:
+  contents: read
   issues: write
 
 jobs:
@@ -15,8 +16,37 @@ jobs:
       group: issue-triage-${{ github.event.issue.number }}
       cancel-in-progress: true
     steps:
+      # GH#35655: redirect-link spam gets no welcome comment (no attention, no
+      # notification). Lexical scan only; the link is never resolved.
+      - name: Checkout trusted redirect-link scanner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            .agents/configs/redirect-hosts.conf
+            .agents/scripts/redirect_link_policy.py
+            .agents/scripts/redirect_link_rules.py
+          sparse-checkout-cone-mode: false
+
+      - name: Scan for redirect links
+        id: redirect
+        run: |
+          set -uo pipefail
+          scanner=".agents/scripts/redirect_link_policy.py"
+          spam=false
+          if [[ -f "$scanner" ]]; then
+            rc=0
+            jq -r '[.issue.title // "", .issue.body // ""] | join("\n")' "$GITHUB_EVENT_PATH" \
+              | python3 "$scanner" scan >/dev/null || rc=$?
+            [[ "$rc" -eq 1 ]] && spam=true
+          fi
+          echo "spam=${spam}" >> "$GITHUB_OUTPUT"
+
       - name: Check author association and apply triage label
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REDIRECT_LINK_SPAM: ${{ steps.redirect.outputs.spam }}
         with:
           script: |
             const issue = context.payload.issue;
@@ -193,6 +223,13 @@ jobs:
               } catch (e) {
                 // Label not present — fine
               }
+            }
+
+            // GH#35655: redirect-link spam is closed silently by the
+            // Redirect-Link Spam Guard; never thank or @-mention the author.
+            if (process.env.REDIRECT_LINK_SPAM === 'true') {
+              console.log(`Issue #${issue.number} contains a redirect link — skipping welcome comment`);
+              return;
             }
 
             // Post a welcome comment

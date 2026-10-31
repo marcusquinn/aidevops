@@ -167,10 +167,9 @@ _dispatch_registered_worktree_count() {
 _dispatch_run_guarded_worktree_cleanup() {
 	local repo_path="$1"
 	local helper="$2"
-	(
-		cd -- "$repo_path" || exit 125
-		bash "$helper" clean --auto --force-merged
-	) >>"${LOGFILE:-/dev/null}" 2>&1
+	local budget="$3"
+	bash "$helper" --capacity "$repo_path" "$budget" >>"${LOGFILE:-/dev/null}" 2>&1
+	return $?
 }
 
 # At the dispatch worktree cap, synchronously give the existing guarded cleanup
@@ -182,10 +181,11 @@ _dispatch_cleanup_worktree_capacity() {
 	local repo_slug="$3"
 	local before_count="$4"
 	local max_count="$5"
-	local helper="${AIDEVOPS_WORKTREE_HELPER:-${BASH_SOURCE[0]%/*}/worktree-helper.sh}"
+	local helper="${AIDEVOPS_WORKTREE_CAPACITY_HELPER:-${BASH_SOURCE[0]%/*}/cleanup-worktrees-async-helper.sh}"
 	local cleanup_timeout="${AIDEVOPS_DISPATCH_WORKTREE_CLEANUP_TIMEOUT:-60}"
 	local cleanup_rc=0
 	local after_count=""
+	local reason="retained-or-backlog"
 
 	[[ "$cleanup_timeout" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || cleanup_timeout=60
 	[[ "$cleanup_timeout" -ge 1 ]] || cleanup_timeout=1
@@ -200,7 +200,7 @@ _dispatch_cleanup_worktree_capacity() {
 
 	echo "[dispatch_with_dedup] Live worktree count ${before_count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; attempting guarded cleanup (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
 	run_stage_with_timeout "dispatch_worktree_capacity_cleanup" "$cleanup_timeout" \
-		_dispatch_run_guarded_worktree_cleanup "$repo_path" "$helper" || cleanup_rc=$?
+		_dispatch_run_guarded_worktree_cleanup "$repo_path" "$helper" "$cleanup_timeout" || cleanup_rc=$?
 	if ! after_count=$(_dispatch_registered_worktree_count "$repo_path"); then
 		echo "[dispatch_with_dedup] Guarded capacity cleanup could not verify the post-cleanup worktree count for #${issue_number} in ${repo_slug} (before ${before_count}, cap ${max_count}, cleanup_rc=${cleanup_rc}); dispatch remains fail-closed" >>"$LOGFILE"
 		return 1
@@ -211,7 +211,14 @@ _dispatch_cleanup_worktree_capacity() {
 	fi
 
 	[[ "$after_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || after_count="$before_count"
-	echo "[dispatch_with_dedup] Guarded capacity cleanup could not recover dispatch capacity for #${issue_number} in ${repo_slug}: ${before_count} -> ${after_count} worktrees (cap ${max_count}, cleanup_rc=${cleanup_rc}); existing cleanup safety gates preserved remaining worktrees" >>"$LOGFILE"
+	case "$cleanup_rc" in
+	124) reason="deadline-resume-next-pass" ;;
+	75) reason="cleanup-lock-busy" ;;
+	76) reason="cleanup-api-quota" ;;
+	0) [[ "$after_count" -ge "$before_count" ]] || reason="progress-still-over-cap" ;;
+	*) reason="cleanup-error" ;;
+	esac
+	echo "[dispatch_with_dedup] Guarded capacity cleanup could not recover dispatch capacity for #${issue_number} in ${repo_slug}: ${before_count} -> ${after_count} worktrees (cap ${max_count}, cleanup_rc=${cleanup_rc}, reason=${reason}); existing cleanup safety gates preserved remaining worktrees; inspect cleanup_worktrees.log job-start/job-end and repository cursor on next pass" >>"$LOGFILE"
 	return 1
 }
 
@@ -485,6 +492,7 @@ _dispatch_dedup_scope_gates() {
 	# `gh issue view --json labels` call (label CSV derived from JSON instead).
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "consolidation" "$_dss_t0" _ds_stage_attempt_id
+	local _consolidation_defer=""
 	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		_CONSOLIDATION_DISPATCH_OUTCOME=""
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
@@ -493,12 +501,19 @@ _dispatch_dedup_scope_gates() {
 		if [[ "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" == "preflight_skipped" ]]; then
 			echo "[dispatch_with_dedup] Consolidation pre-flight skipped for #${issue_number} in ${repo_slug}; continuing dispatch gates (GH#33306)" >>"$LOGFILE"
 		else
-			echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
-			_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
-			return 1
+			_consolidation_defer="issue needs comment consolidation"
 		fi
+	elif [[ "${_CONSOLIDATION_CHILD_PENDING:-0}" == 1 ]]; then
+		# An in-flight consolidation child will supersede this parent. Without
+		# this, only the cycle that created the child deferred; the next cycle
+		# launched an implementation worker on the parent in parallel (#35605).
+		_consolidation_defer="consolidation child in flight"
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
+	if [[ -n "$_consolidation_defer" ]]; then
+		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: ${_consolidation_defer}" >>"$LOGFILE"
+		return 1
+	fi
 
 	# Pre-dispatch: large-file simplification gate. If the issue body
 	# references files that exceed LARGE_FILE_LINE_THRESHOLD, create a
@@ -545,6 +560,13 @@ _dispatch_dedup_check_layers() {
 	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
 	_dispatch_dedup_dependency_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_meta_json" || gate_rc=$?
 	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
+
+	# GH#36214: only eligible candidates fetch backoff evidence or post a notice.
+	# Held issues still return before check_dispatch_dedup can write a claim.
+	if declare -F _dlw_preclaim_zero_attempt_backoff >/dev/null 2>&1 &&
+		_dlw_preclaim_zero_attempt_backoff "$issue_number" "$repo_slug"; then
+		return 3
+	fi
 
 	# Read-only dedup layers — cannot be skipped.
 	# t2996: ISSUE_META_JSON forwards the canonical bundle to
@@ -1170,6 +1192,9 @@ dispatch_with_dedup() {
 	source "${SCRIPT_DIR}/runner-capability-helper.sh"
 	runner_capability_check_fresh "$repo_path" "$issue_number" "$repo_slug" "$LOGFILE" || return 1
 	_dispatch_preclaim_brief_scope "$issue_number" "$repo_slug" "$issue_meta_json" || return 1
+	# GH#36214: the preclaim backoff in the dedup layers passes its metrics
+	# snapshot to prompt preparation via dynamic scope.
+	local _dispatch_zero_output_metrics=""
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.
@@ -1622,7 +1647,7 @@ _match_terminal_blocker_pattern() {
 	local user_action=""
 
 	# Pattern 1: GitHub CLI too old for gh api --paginate --slurp
-	if echo "$all_bodies" | grep -qiE 'unknown flag: --slurp'; then
+	if echo "$all_bodies" | grep -iE 'unknown flag: --slurp' >/dev/null; then
 		local gh_slurp_message=""
 		if declare -F aidevops_gh_slurp_status_message >/dev/null 2>&1; then
 			gh_slurp_message=$(aidevops_gh_slurp_status_message)
@@ -1632,19 +1657,19 @@ _match_terminal_blocker_pattern() {
 		blocker_reason="GitHub CLI prerequisite failed — ${gh_slurp_message}"
 		user_action="Upgrade GitHub CLI to a version that supports \`gh api --paginate --slurp\` (minimum gh ${AIDEVOPS_GH_MIN_SLURP_VERSION:-2.51.0}), then remove the \`status:blocked\` label."
 	# Pattern 2: workflow scope missing
-	elif echo "$all_bodies" | grep -qiE 'workflow scope|refusing to allow an OAuth App to create or update workflow|token lacks.*workflow'; then
+	elif echo "$all_bodies" | grep -iE 'workflow scope|refusing to allow an OAuth App to create or update workflow|token lacks.*workflow' >/dev/null; then
 		blocker_reason="GitHub token lacks \`workflow\` scope — workers cannot push workflow file changes"
 		user_action="Run \`gh auth refresh -s workflow\` to add the workflow scope to your token, then remove the \`status:blocked\` label."
 	# Pattern 3: generic token/auth scope issues
-	elif echo "$all_bodies" | grep -qiE 'token lacks.*scope|missing.*scope.*token|token.*missing.*scope'; then
+	elif echo "$all_bodies" | grep -iE 'token lacks.*scope|missing.*scope.*token|token.*missing.*scope' >/dev/null; then
 		blocker_reason="GitHub token is missing a required scope — workers cannot complete this task"
 		user_action="Check the error details in the comments above, run \`gh auth refresh -s <missing-scope>\` to add the required scope, then remove the \`status:blocked\` label."
 	# Pattern 4: ACTION REQUIRED (supervisor-posted)
-	elif echo "$all_bodies" | grep -qF 'ACTION REQUIRED'; then
+	elif echo "$all_bodies" | grep -F 'ACTION REQUIRED' >/dev/null; then
 		blocker_reason="A previous supervisor comment flagged this issue as requiring user action"
 		user_action="Read the ACTION REQUIRED comment above, complete the requested action, then remove the \`status:blocked\` label."
 	# Pattern 5: persistent authentication/permission failures
-	elif echo "$all_bodies" | grep -qiE 'authentication required.*workflow|permission denied.*workflow|push declined.*workflow'; then
+	elif echo "$all_bodies" | grep -iE 'authentication required.*workflow|permission denied.*workflow|push declined.*workflow' >/dev/null; then
 		blocker_reason="Persistent authentication or permission failure for workflow files"
 		user_action="Check your GitHub token scopes with \`gh auth status\`, refresh if needed with \`gh auth refresh -s workflow\`, then remove the \`status:blocked\` label."
 	fi

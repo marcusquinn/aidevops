@@ -33,7 +33,7 @@ PASSED=0
 FAILED=0
 WARNINGS=0
 SKIPPED=0
-POSTFLIGHT_COMMIT_SHA=""
+POSTFLIGHT_COMMIT_SHA="${POSTFLIGHT_COMMIT_SHA:-}"
 POSTFLIGHT_STABLE_RELEASE_CHECKS=""
 
 print_header() {
@@ -233,6 +233,35 @@ _postflight_report_advisory_checks() {
 	return 0
 }
 
+# Resolve against the remote tag, not the caller's potentially unrelated HEAD.
+resolve_release_commit() {
+	local repo="$1"
+	local release_tag="${POSTFLIGHT_RELEASE_TAG:-}"
+	local tag_sha explicit_sha
+	if [[ -z "$release_tag" ]]; then
+		POSTFLIGHT_COMMIT_SHA="${POSTFLIGHT_COMMIT_SHA:-$(git -C "$ORIGINAL_PWD" rev-parse HEAD 2>/dev/null || true)}"
+		return 0
+	fi
+	# The commits endpoint peels annotated tags and works without a local tag fetch.
+	tag_sha=$(gh api "repos/${repo}/commits/${release_tag}" --jq '.sha' 2>/dev/null) || {
+		count_failure "Could not resolve release tag $release_tag to a commit"
+		return 1
+	}
+	if [[ ! "$tag_sha" =~ ^[0-9a-f]{40}$ ]]; then
+		count_failure "Invalid commit returned for release tag $release_tag"
+		return 1
+	fi
+	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
+		explicit_sha=$(git -C "$ORIGINAL_PWD" rev-parse --verify "${POSTFLIGHT_COMMIT_SHA}^{commit}" 2>/dev/null) || explicit_sha="$POSTFLIGHT_COMMIT_SHA"
+		if [[ "$explicit_sha" != "$tag_sha" ]]; then
+			count_failure "Release commit mismatch: $release_tag resolves to $tag_sha, but explicit SHA is $POSTFLIGHT_COMMIT_SHA"
+			return 1
+		fi
+	fi
+	POSTFLIGHT_COMMIT_SHA="$tag_sha"
+	return 0
+}
+
 # Check GitHub Actions CI/CD status using release-owned exact-SHA evidence.
 check_cicd_status() {
 	print_section "CI/CD Pipeline Status"
@@ -249,7 +278,8 @@ check_cicd_status() {
 		return 1
 	fi
 	print_info "Repository: $repo"
-	release_sha="${POSTFLIGHT_COMMIT_SHA:-$(git -C "$ORIGINAL_PWD" rev-parse HEAD 2>/dev/null || true)}"
+	resolve_release_commit "$repo" || return 1
+	release_sha="$POSTFLIGHT_COMMIT_SHA"
 	if [[ -z "$release_sha" ]]; then
 		count_failure "Could not determine exact release commit"
 		return 1

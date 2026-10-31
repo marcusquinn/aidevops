@@ -21,6 +21,11 @@ ADMIN_FILES = {"HEAD", "index", "AUTO_MERGE", "ORIG_HEAD", "FETCH_HEAD", "COMMIT
 PRIVATE_PREFIXES = ("refs/worktree/", "refs/bisect/", "refs/rewritten/")
 OPERATIONS = {"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG"}
+# Runtime requests and generation identity are not Git state or grants to restore.
+# A restored worktree must enroll a new generation, never inherit the source UUID.
+RUNTIME_ADMIN_FILES = frozenset({"aidevops-permission-pending", "aidevops-generation.json"})
+IGNORED_ADMIN_FILES = {False: RUNTIME_ADMIN_FILES,
+                      True: RUNTIME_ADMIN_FILES | {"commondir", "gitdir"}}
 
 
 def admin_path_allowed(name):
@@ -46,7 +51,8 @@ def administration_files(admin, directory, linked, allow_merge=False):
     for entry in sorted(directory.iterdir()):
         name = entry.relative_to(admin).as_posix()
         validate_admin_entry(entry, name, allow_merge)
-        if name in {"commondir", "gitdir"} and linked and entry.is_file():
+        # Validate before ignoring: symlinks and non-files remain refused.
+        if name in IGNORED_ADMIN_FILES[linked] and entry.is_file():
             continue
         if entry.is_dir() and admin_directory_allowed(name):
             files.update(administration_files(admin, entry, linked, allow_merge))

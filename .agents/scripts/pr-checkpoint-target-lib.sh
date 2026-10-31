@@ -6,13 +6,26 @@
 [[ -n "${_PR_CHECKPOINT_TARGET_LIB_LOADED:-}" ]] && return 0
 _PR_CHECKPOINT_TARGET_LIB_LOADED=1
 _PCTL_INTERACTIVE_LABEL="origin:interactive"
+_PCTL_AUTO_DISPATCH_LABEL="auto-dispatch"
+_PCTL_HOLD_LABEL="hold-for-review"
+_PCTL_LABELED_EVENT="labeled"
 
 _PCTL_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_PCTL_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _PCTL_SCRIPT_DIR="."
 # shellcheck source=pr-closing-link-lib.sh
 source "${_PCTL_SCRIPT_DIR}/pr-closing-link-lib.sh"
+# shellcheck source=dispatch-claim-trust.sh
+source "${_PCTL_SCRIPT_DIR}/dispatch-claim-trust.sh"
 _PR_CHECKPOINT_REVISION_VALIDATOR="${_PCTL_SCRIPT_DIR}/pr-checkpoint-revision.py"
 unset _PCTL_SCRIPT_DIR
+
+# Resolve each ambiguous API author once, including paginated comment snapshots.
+_pr_checkpoint_trusted_logins() {
+	local comments="$1" repo="$2" flat=""
+	flat=$(jq -c 'flatten' <<<"$comments") || return 1
+	_claim_permission_trusted_authors "$flat" "$repo"
+	return $?
+}
 
 # GH#34008: the pulse's own orphan-recovery drafts (`checkpoint: recover dirty
 # worker worktree for #N`, shared-claim-lifecycle.sh) carry a non-closing
@@ -22,19 +35,50 @@ unset _PCTL_SCRIPT_DIR
 # same-repository draft labelled origin:worker-takeover, and no
 # origin:worker or protective label. Bare mentions, ready PRs and conflicting
 # closing links never match.
+#
+# Ordinary worker checkpoint drafts link the same way: full-loop deliberately
+# keeps `For #N`/`Ref #N` on incomplete work (GH#33374), and has-open-pr already
+# treats such a draft as the issue's WORKER_DRAFT_CHECKPOINT, which blocks
+# ordinary redispatch. Requiring a closing link here left those drafts with no
+# continuation, stale-recovery or approval path, so the issue stalled
+# permanently. worker_checkpoint_draft_links accepts an open same-repository
+# origin:worker/origin:worker-takeover draft with no closing identity and no
+# protective label whose line-start `For #N` lines name exactly issue N or,
+# without any `For` line, whose line-start `Ref #N`/`Refs #N` lines do. Several
+# targets are ambiguous and never match. Continuation turns that line into a
+# closing link only once the issue criteria are met (_prrts_write_prompt_file).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
 _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_label_names: [.labels[]? | (.name? // .) | strings];
+	def worker_origin_label: "origin:worker";
+	def takeover_origin_label: "origin:worker-takeover";
+	def checkpoint_has_label($name): checkpoint_label_names | any(. == $name);
 	def for_issue_line($issue):
 		(.body // "") | test("(?m)^For #" + ($issue | tostring) + "([.]([ \\t]|$)|[ \\t]*$)");
+	def checkpoint_protected:
+		checkpoint_label_names | any(test(
+			"^(origin:interactive|hold-for-review|no-auto-dispatch|no-takeover|needs-maintainer-review|persistent)$"
+		));
 	def recovery_draft_links($issue):
 		(.closingIssuesReferences == []) and
 		(.isDraft == true) and (.isCrossRepository == false) and
-		(checkpoint_label_names | any(. == "origin:worker-takeover")) and
-		(checkpoint_label_names | any(test(
-			"^(origin:worker|origin:interactive|hold-for-review|no-auto-dispatch|no-takeover|needs-maintainer-review|persistent)$"
-		)) | not) and
+		checkpoint_has_label(takeover_origin_label) and
+		(checkpoint_has_label(worker_origin_label) | not) and
+		(checkpoint_protected | not) and
 		for_issue_line($issue);
+	def checkpoint_line_issues($keyword):
+		[(.body // "") | scan("(?m)^" + $keyword + " #([1-9][0-9]*)(?:[.](?:[ \\t]|$)|[ \\t]*$)") | .[0] | tonumber] | unique;
+	def checkpoint_reference_issues:
+		checkpoint_line_issues("For") as $for |
+		if ($for | length) > 0 then $for else checkpoint_line_issues("Refs?") end;
+	def worker_checkpoint_draft_links($issue):
+		(.closingIssuesReferences == []) and
+		(.isDraft == true) and (.isCrossRepository == false) and
+		(checkpoint_has_label(worker_origin_label) or checkpoint_has_label(takeover_origin_label)) and
+		(checkpoint_protected | not) and
+		(checkpoint_reference_issues == [$issue]);
+	def checkpoint_draft_links($issue):
+		recovery_draft_links($issue) or worker_checkpoint_draft_links($issue);
 '
 
 # Args: $1=PR JSON (needs body, labels, isDraft, isCrossRepository and
@@ -50,8 +94,21 @@ _pr_checkpoint_recovery_draft_links_issue() {
 	return 0
 }
 
-# Exact checkpoint linkage: one same-repository closing identity, or the
-# orphan-recovery `For #N` draft rule above (GH#34008).
+# Args: $1=PR JSON (same fields as above), $2=linked issue number
+# Returns: 0 when the PR is a non-closing checkpoint draft for exactly this
+#          issue: an orphan-recovery draft or a worker For/Ref checkpoint
+_pr_checkpoint_nonclosing_draft_links_issue() {
+	local pr_json="$1"
+	local linked_issue="$2"
+	[[ "$linked_issue" =~ ^[1-9][0-9]*$ ]] || return 1
+	jq -e --argjson issue "$linked_issue" \
+		"${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS} checkpoint_draft_links(\$issue)" \
+		<<<"$pr_json" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Exact checkpoint linkage: one same-repository closing identity, or one of the
+# non-closing checkpoint draft rules above (GH#34008 and worker For/Ref drafts).
 # Args: $1=PR JSON, $2=repo slug, $3=linked issue number
 _pr_checkpoint_pr_links_issue() {
 	local pr_json="$1"
@@ -60,41 +117,136 @@ _pr_checkpoint_pr_links_issue() {
 	if _pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue"; then
 		return 0
 	fi
-	_pr_checkpoint_recovery_draft_links_issue "$pr_json" "$linked_issue" || return 1
+	_pr_checkpoint_nonclosing_draft_links_issue "$pr_json" "$linked_issue" || return 1
+	return 0
+}
+
+#aidevops:trust-boundary — GH#36138: a worker that needs brief-owner input may
+# label its own draft hold-for-review. The owner's validated exact-head approval
+# is that input, so it supersedes only a hold the approved runner applied to its
+# own draft before the approval. A hold from any other actor, a reapplication
+# after the approval, a PR-only merge contract (fail-safe on any marker), a
+# feedback-route automation hold or a release approval gate keeps protecting
+# the checkpoint. Unreadable label history fails closed.
+# Args: $1=repo slug, $2=PR JSON, $3=issue JSON, $4=comments JSON (paginated or
+#       flat), $5=validated approval JSON (pr, runner, approval_id)
+# Returns: 0 when the PR hold is superseded, 1 otherwise
+_pr_checkpoint_self_hold_superseded() {
+	local repo_slug="$1" pr_json="$2" issue_json="$3" comments_json="$4" approval="$5"
+	local pr_number="" runner="" approval_id="" approved_at="" pr_events=""
+	jq -e --arg hold "$_PCTL_HOLD_LABEL" '
+		[.labels[]? | (.name? // .) | strings] as $names |
+		($names | index($hold)) != null and ($names | index("release-approval-required")) == null
+	' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	pr_number=$(jq -er '.pr | numbers' <<<"$approval" 2>/dev/null) || return 1
+	runner=$(jq -er '.runner | strings' <<<"$approval" 2>/dev/null) || return 1
+	approval_id=$(jq -er '.approval_id | numbers' <<<"$approval" 2>/dev/null) || return 1
+	[[ "$runner" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || return 1
+	jq -e --arg runner "$runner" '(.author.login // "") == $runner' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	jq -e '(.body // "") | contains("<!-- aidevops:completion-contract:pr-only/v1 -->") | not' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	approved_at=$(jq -er --argjson id "$approval_id" --argjson pr "$pr_number" '
+		[arrays | flatten[] | objects] as $comments |
+		if any($comments[]; (.body // "") | test("feedback-route:automation-hold:[^:]*:PR" + ($pr | tostring) + ":"))
+		then empty
+		else [$comments[] | select(.id == $id) | .created_at | strings] | first // empty end
+	' <<<"$comments_json" 2>/dev/null) || return 1
+	[[ "$approved_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || return 1
+	pr_events=$(gh api "repos/${repo_slug}/issues/${pr_number}/events?per_page=100" --paginate --slurp 2>/dev/null) || return 2
+	jq -e --arg hold "$_PCTL_HOLD_LABEL" --arg labeled "$_PCTL_LABELED_EVENT" \
+		--arg runner "$runner" --arg approved_at "$approved_at" '
+		arrays | [flatten[] | objects | select(.event == $labeled and (.label.name // "") == $hold)] as $holds |
+		($holds | length) > 0 and
+		all($holds[]; (.actor.login // "") == $runner and
+			((.created_at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")) and (.created_at < $approved_at))
+	' <<<"$pr_events" >/dev/null 2>&1 || return 1
 	return 0
 }
 
 #aidevops:trust-boundary — only an authenticated exact revision envelope may
-# relax provenance/absent assignment; every protective label remains enforced.
+# relax provenance/absent assignment; every other protective label remains
+# enforced (a runner's own superseded draft hold: GH#36138).
 _pr_checkpoint_revised_target() {
 	local repo_slug="$1" pr_json="$2" issue_json="$3" comments_json="$4"
 	local assignee="$5" lease="${6:-}" session="${7:-}" claiming="${8:-false}"
 	local approval="" linked_issue="" pr_number="" normalized_issue="" normalized_pr=""
-	approval=$(jq -n --arg repo "$repo_slug" --argjson pr "$pr_json" \
-		--argjson issue "$issue_json" --argjson comments "$comments_json" \
+	local status_prefix="status:" blocked_status="status:blocked"
+	local trusted_logins=""
+	# 2 denotes unavailable metadata; callers must not diagnose consumed approval.
+	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments_json" "$repo_slug") || return 2
+	# Keep complete metadata off exec argv (GH#35632), including the potentially
+	# large trusted-author list. Slurp all four documents before emitting input;
+	# malformed or incomplete metadata must never authorize a continuation.
+	approval=$(printf '%s\n' "$pr_json" "$issue_json" "$comments_json" "$trusted_logins" |
+		jq -se --arg repo "$repo_slug" \
 		--arg assignee "$assignee" --arg lease "$lease" --arg session "$session" --argjson claiming "$claiming" \
-		'{repo:$repo,pr:$pr,issue:$issue,comments:$comments,assignee:$assignee,lease:$lease,session:$session,claiming:$claiming}' |
+		'select(length == 4 and (.[0] | type) == "object" and (.[1] | type) == "object" and
+			(.[2] | type) == "array" and (.[3] | type) == "array") |
+		{repo:$repo,pr:.[0],issue:.[1],comments:.[2],trusted_logins:.[3],assignee:$assignee,lease:$lease,session:$session,claiming:$claiming}' |
 		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR") || return 1
 	local approval_actor="" permission=""
 	approval_actor=$(jq -er '.approval_actor' <<<"$approval") || return 1
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$approval_actor" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-	permission=$(gh api "repos/${repo_slug}/collaborators/${approval_actor}/permission" --jq '.permission') || return 1
+	permission=$(gh api "repos/${repo_slug}/collaborators/${approval_actor}/permission" --jq '.permission') || return 2
 	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
 	linked_issue=$(jq -r '.issue' <<<"$approval") || return 1
 	pr_number=$(jq -r '.pr' <<<"$approval") || return 1
+	if jq -e --arg prefix "$status_prefix" --arg blocked "$blocked_status" \
+		'[.labels[].name | select(startswith($prefix))] == [$blocked]' <<<"$issue_json" >/dev/null; then
+		# Comments update issue.updated_at as well, including our own claim during
+		# consensus. Check lifecycle events so that claim remains valid but a later
+		# label removal/reapplication cannot revive the approved blocked snapshot.
+		local lifecycle_events="" blocked_snapshot=""
+		blocked_snapshot=$(jq -er '.blocked_issue_updated_at' <<<"$approval") || return 1
+		lifecycle_events=$(gh api "repos/${repo_slug}/issues/${linked_issue}/events?per_page=100" --paginate --slurp) || return 2
+		jq -e --arg snapshot "$blocked_snapshot" --arg prefix "$status_prefix" --arg blocked "$blocked_status" \
+			--arg labeled "$_PCTL_LABELED_EVENT" '
+			arrays | flatten |
+			[.[] | select(.event == $labeled or .event == "unlabeled") |
+				select(.label.name | startswith($prefix))] |
+			any(.event == $labeled and .label.name == $blocked) and
+			all(.created_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") and . <= $snapshot)
+		' <<<"$lifecycle_events" >/dev/null || return 1
+	fi
 	normalized_pr="$pr_json"
 	if ! _pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue"; then
-		# A signed exact pair can recover a partial For-only checkpoint, never
-		# conflicting closing links or an arbitrary bare mention.
+		# A signed exact pair can recover a partial For/Ref-only checkpoint,
+		# never conflicting closing links or an arbitrary bare mention.
 		normalized_pr=$(jq -e --argjson issue "$linked_issue" --arg repo "$repo_slug" "${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
 			select((.closingIssuesReferences | type) == "array" and (.closingIssuesReferences | length) == 0) |
-			select(for_issue_line($issue)) |
+			select(for_issue_line($issue) or (checkpoint_reference_issues == [$issue])) |
 			($repo | split("/")) as $parts |
 			.closingIssuesReferences = [{number:$issue,repository:{name:$parts[1],owner:{login:$parts[0]}}}]
 		' <<<"$pr_json") || return 1
 	fi
+	# The exact approval supplies missing provenance only in this local view.
+	# Keep all real labels so protective labels still reject the checkpoint,
+	# except the runner's own pre-approval draft hold it answers (GH#36138).
+	local self_hold_superseded=false
+	if _pr_checkpoint_self_hold_superseded "$repo_slug" "$pr_json" "$issue_json" "$comments_json" "$approval"; then
+		self_hold_superseded=true
+	else
+		local hold_rc=$?
+		[[ "$hold_rc" -ne 2 ]] || return 2
+	fi
+	normalized_pr=$(jq -e --argjson drop_hold "$self_hold_superseded" --arg hold "$_PCTL_HOLD_LABEL" \
+		"${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
+		select((.labels | type) == "array") |
+		(if $drop_hold then .labels |= map(select((.name? // .) != $hold)) else . end) |
+		.labels += [{name:worker_origin_label}]
+	' <<<"$normalized_pr") || return 1
+	approval=$(jq -ec --argjson superseded "$self_hold_superseded" \
+		'. + {self_hold_superseded:$superseded}' <<<"$approval") || return 1
+	# The validator requires an approval-time blocked snapshot; the event fence
+	# above rejects later lifecycle changes before this sole-blocked normalization.
+	# Conflicting statuses and every other hold remain visible to the predicate.
 	normalized_issue=$(jq --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" \
-		'.labels |= map(select(.name != $interactive_label))' <<<"$issue_json") || return 1
+		--arg prefix "$status_prefix" --arg blocked "$blocked_status" \
+		'.labels |= map(select(.name != $interactive_label)) |
+		if [.labels[].name | select(startswith($prefix))] == [$blocked] then
+			(if (.assignees | length) == 0 then "status:available" else "status:in-review" end) as $status |
+			.labels |= map(if .name == $blocked then .name = $status else . end)
+		else . end' <<<"$issue_json") || return 1
 	_pr_checkpoint_pr_metadata_is_eligible "$normalized_pr" "$repo_slug" "$pr_number" \
 		"$linked_issue" "" "" "$(jq -r '.runner' <<<"$approval")" || return 1
 	# The revision validator above authorizes the original owner or an unassigned
@@ -121,11 +273,12 @@ _pr_checkpoint_pr_metadata_is_eligible() {
 
 	printf '%s' "$pr_json" | jq -e --argjson pr "$pr_number" \
 		--arg expected_head_sha "$expected_head_sha" --arg expected_head_ref "$expected_head_ref" \
-		--arg expected_author "$expected_author" --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" '
+		--arg expected_author "$expected_author" --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" \
+		--arg hold_label "$_PCTL_HOLD_LABEL" '
 		def names: [.labels[]? | if type == "string" then . else (.name // empty) end];
 		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
 		def protected: names | any(
-			. == $interactive_label or . == "hold-for-review" or
+			. == $interactive_label or . == $hold_label or
 			. == "no-auto-dispatch" or . == "no-takeover" or
 			. == "needs-maintainer-review" or . == "persistent"
 		);
@@ -139,6 +292,26 @@ _pr_checkpoint_pr_metadata_is_eligible() {
 	' >/dev/null 2>&1 || return 1
 	return 0
 }
+
+# One trust and ordering rule for issue coordination comments, whether raw
+# `gh api --paginate --slurp` pages or a flat array: the newest trusted release,
+# claim, launch or interactive-claim event decides who owns the issue now.
+# Every jq consumer in this library uses these definitions so the rule cannot
+# drift between them. `flatten` merges page nesting and keeps comment objects.
+# shellcheck disable=SC2016 # jq program text, not shell expansion.
+_PCTL_COORDINATION_JQ_DEFS='
+	def pctl_comments: if type == "array" then flatten else [] end;
+	def pctl_trusted_comments:
+		[pctl_comments[]? | select((.author_association // "") as $association |
+			$association == "OWNER" or $association == "MEMBER" or $association == "COLLABORATOR")];
+	def pctl_newest_coordination_body:
+		[pctl_trusted_comments[]
+			| select((.body // "") | test("(^|\\n)(CLAIM_RELEASED reason=|DISPATCH_CLAIM |Dispatching worker|Interactive session claimed)"))
+			| {body: (.body // ""), created_at: (.created_at // ""), id: ((.id // 0) | tonumber? // 0)}]
+		| sort_by(.created_at, .id)
+		| last
+		| (.body // "");
+'
 
 #######################################
 # Verify that the newest trusted coordination event is the worker's explicit
@@ -155,22 +328,24 @@ _pr_checkpoint_comments_have_verified_release() {
 	local marker="CLAIM_RELEASED reason=worker_draft_checkpoint runner=${checkpoint_runner} "
 	[[ "$checkpoint_runner" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || return 1
 
-	printf '%s' "$comments_json" | jq -e --arg marker "$marker" --arg array_type "array" '
-		def trusted_association:
-			. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
-		def comments:
-			if type == $array_type and ((.[0]? | type) == $array_type) then [.[][]?]
-			elif type == $array_type then .
-			else [] end;
-		[comments[]?
-			| select((.author_association // "") | trusted_association)
-			| select((.body // "") | test("(^|\\n)(CLAIM_RELEASED reason=|DISPATCH_CLAIM |Dispatching worker|Interactive session claimed)"))
-			| {body: (.body // ""), created_at: (.created_at // ""), id: ((.id // 0) | tonumber? // 0)}]
-		| sort_by(.created_at, .id)
-		| last
-		| (.body // "")
-		| contains($marker)
-	' >/dev/null 2>&1 || return 1
+	printf '%s' "$comments_json" | jq -e --arg marker "$marker" \
+		"${_PCTL_COORDINATION_JQ_DEFS}"' pctl_newest_coordination_body | contains($marker)' \
+		>/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# Report whether the newest trusted coordination event is an interactive
+# session claim: a human session then owns the objective, whatever the labels.
+# Args: $1=raw paginated or flat comments JSON
+# Returns: 0 when a trusted interactive claim is the newest event, 1 otherwise
+#######################################
+_pr_checkpoint_comments_newest_is_interactive_claim() {
+	local comments_json="$1"
+
+	printf '%s' "$comments_json" | jq -e \
+		"${_PCTL_COORDINATION_JQ_DEFS}"' pctl_newest_coordination_body | test("(^|\\n)Interactive session claimed")' \
+		>/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -182,33 +357,43 @@ _pr_checkpoint_issue_metadata_is_eligible() {
 	local expected_assignee="${3:-}"
 	local comments_json="${4:-[]}"
 	local checkpoint_runner="${5:-$expected_assignee}"
-	local interactive_checkpoint="false"
+	# JSON booleans for jq --argjson: the runner's own draft-checkpoint release
+	# is the newest event, or a trusted interactive session claim is.
+	local interactive_checkpoint=false
+	local interactive_claimed=false
 	local allow_released="${6:-false}"
 
 	[[ "$linked_issue" =~ ^[1-9][0-9]*$ ]] || return 1
 	# A blocked release requires the revised envelope regardless of provenance.
 	# It must not fall back to legacy eligibility by dropping origin:interactive.
-	# GH#34758: the released-issue continuation path accepts only the runner-local
-	# capability class, which needs a capable runner rather than a brief change.
-	if jq -e --argjson allow_released "$allow_released" '
-		(if (.[0]? | type) == "array" then [.[][]] else . end) |
-		[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")] as $trusted |
-		($trusted | any((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED "))) or
-		([$trusted[] | select((.body // "") | test("(^|\\n)(CLAIM_RELEASED reason=|DISPATCH_CLAIM |Dispatching worker|Interactive session claimed)"))] |
-		sort_by(.created_at,.id) | last | (.body // "") |
-		test("(^|\\n)CLAIM_RELEASED reason=blocked ") and
-		(($allow_released and test("(^|\\n)Terminal blocker: reason=runner_capability_unmet ")) | not))
+	# GH#34758: the runner-local capability class is the one exception: it needs
+	# a capable runner rather than a brief change. GH#35883: that also holds
+	# after the released-issue continuation claims the issue. The successor's
+	# worker fence runs with the issue assigned to it while the capability
+	# release is still the newest coordination event, so an exception limited to
+	# the released state stopped every capability continuation before launch.
+	# Assignment, lifecycle and protective labels are still enforced below.
+	if jq -e "${_PCTL_COORDINATION_JQ_DEFS}"'
+		(pctl_trusted_comments | any((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED "))) or
+		(pctl_newest_coordination_body |
+			test("(^|\\n)CLAIM_RELEASED reason=blocked ") and
+			(test("(^|\\n)Terminal blocker: reason=runner_capability_unmet ") | not))
 	' <<<"$comments_json" >/dev/null 2>&1; then
 		return 1
 	fi
 	if _pr_checkpoint_comments_have_verified_release "$comments_json" "$checkpoint_runner"; then
-		interactive_checkpoint="true"
+		interactive_checkpoint=true
+	fi
+	if _pr_checkpoint_comments_newest_is_interactive_claim "$comments_json"; then
+		interactive_claimed=true
 	fi
 	printf '%s' "$issue_json" | jq -e --argjson issue "$linked_issue" \
 		--arg expected_assignee "$expected_assignee" \
-		--arg interactive_checkpoint "$interactive_checkpoint" --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" \
-		--argjson allow_released "$allow_released" '
+		--argjson interactive_checkpoint "$interactive_checkpoint" --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" \
+		--argjson interactive_claimed "$interactive_claimed" --arg auto_dispatch_label "$_PCTL_AUTO_DISPATCH_LABEL" \
+		--argjson allow_released "$allow_released" --arg hold_label "$_PCTL_HOLD_LABEL" '
 		def names: [.labels[]? | if type == "string" then . else (.name // empty) end];
+		def has_label($name): names | any(. == $name);
 		def lifecycle_statuses: [names[] | select(startswith("status:"))];
 		def runnable_status:
 			lifecycle_statuses as $statuses |
@@ -217,10 +402,17 @@ _pr_checkpoint_issue_metadata_is_eligible() {
 				$statuses[0] == "status:in-progress" or
 				$statuses[0] == "status:in-review" or
 				($allow_released and $statuses[0] == "status:available" and ((.assignees // []) | length) == 0));
-		def protected: names | any(
+		# GH#35883: origin:* labels are provenance and auto-dispatch authorizes
+		# worker pickup (reference/task-lifecycle.md), as _dispatch_has_interactive_hold
+		# applies it. Interactive provenance holds a worker draft only without
+		# auto-dispatch, or while a newer trusted interactive claim owns the issue.
+		def interactive_hold:
+			($interactive_checkpoint | not) and
+			((has_label($auto_dispatch_label) | not) or $interactive_claimed);
+		def protected: interactive_hold as $hold | names | any(
 			. == "needs-maintainer-review" or . == "needs-maintainer-permissions" or
-			. == "no-auto-dispatch" or . == "hold-for-review" or . == "persistent" or
-			(. == $interactive_label and $interactive_checkpoint != "true") or
+			. == "no-auto-dispatch" or . == $hold_label or . == "persistent" or
+			(. == $interactive_label and $hold) or
 			. == "parent-task" or . == "research" or
 			. == "research-task" or . == "blocked" or . == "on hold"
 		);

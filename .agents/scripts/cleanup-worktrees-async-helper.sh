@@ -386,16 +386,32 @@ _reconcile_lifecycle_receipts() {
 
 main() {
 	local mode="${1:-normal}"
+	local repo="${2:-}"
+	local budget="${3:-60}"
 	case "$mode" in
 	normal | --lifecycle-only) ;;
-	*) printf '%s\n' 'Usage: cleanup-worktrees-async-helper.sh [--lifecycle-only]' >&2; return 1 ;;
+	--capacity)
+		[[ "$repo" == /* && "$budget" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
+		git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || return 1
+		;;
+	*) printf '%s\n' 'Usage: cleanup-worktrees-async-helper.sh [--lifecycle-only | --capacity REPO SECONDS]' >&2; return 1 ;;
 	esac
 	if ! _lock_acquire; then
 		echo "[cleanup-worktrees-async] ${_LOCK_SKIP_REASON:-Lock unavailable} — skipping this invocation" >>"$LOGFILE"
+		[[ "$mode" != "--capacity" ]] || return 75
 		return 0
 	fi
 	_rotate_log_if_oversize
 	echo "[cleanup-worktrees-async] PID=$$ starting at $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
+
+	if [[ "$mode" == "--capacity" ]]; then
+		# Admission shares the async lock, but not its cadence or unrelated
+		# maintenance/deletion scope. A timeout leaves the next job checkpointed.
+		# shellcheck source=pulse-cleanup-progress.sh
+		source "${SCRIPT_DIR}/pulse-cleanup-progress.sh" || return 1
+		_pc_cleanup_resumable_unlocked "$budget" "$repo"
+		return $?
+	fi
 
 	if ! _cadence_ok; then
 		return 0

@@ -5,10 +5,8 @@
 # Tests for _dispatch_pr_fix_worker() and _build_review_feedback_section()
 # (t2093).
 #
-# When a review bot posts CHANGES_REQUESTED on an open worker-authored PR,
-# the pulse merge pass must route the feedback to the linked issue and close
-# the PR so the dispatch queue can re-pick the task. Before t2093, such PRs
-# accumulated indefinitely.
+# Trusted human change requests retain the t2093 route. Bot-only requests must
+# leave the PR and linked issue intact and use trust-gated advisory dismissal.
 #
 # These tests exercise the helpers in isolation with a mock `gh` stub. No
 # real repository is touched.
@@ -16,6 +14,11 @@
 # Sourced by test-pulse-merge-fix-worker-dispatch.sh; defines cases and assertions.
 [[ -n "${_PULSE_MERGE_FIX_DISPATCH_CASES_LOADED:-}" ]] && return 0
 _PULSE_MERGE_FIX_DISPATCH_CASES_LOADED=1
+
+# This is also the issue's documented verification entry point, not a no-op.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	exec bash "${BASH_SOURCE[0]%/*}/test-pulse-merge-fix-worker-dispatch.sh" test_advisory_review_gate
+fi
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -205,6 +208,8 @@ define_helpers_under_test() {
 	# leaking the host shell's real status-label wrapper into this isolated test.
 	unset -f set_issue_status 2>/dev/null || true
 	_interactive_claim_fence_blocks_dispatch() { return 1; }
+	# No live worker dispatch lease on the linked issue (GH#35939).
+	_feedback_route_worker_lease_allows() { return 0; }
 	_classify_ci_failures_by_pattern() { return 0; }
 	return 0
 }
@@ -1622,5 +1627,89 @@ EOF
 		return 0
 	fi
 	print_result "feedback release converges cross-runner duplicate comments" 0
+	return 0
+}
+
+# Exercise the production gate and real shared dismissal command. Keep its gh
+# boundary isolated; route attempts and dismissal writes are observable files.
+test_advisory_review_gate() {
+	local gate_rc=0
+	(
+		reset_mock_state
+		local helper_dir="${SCRIPT_DIR}/.."
+		local _PULSE_MERGE_DIR="$helper_dir"
+		export TEST_GATE_ASSOCIATION=MEMBER TEST_GATE_DRIFT=0 TEST_GATE_FAIL=0
+		export TEST_GATE_LABELS=origin:worker TEST_GATE_SNAPSHOT=valid TEST_GATE_POST=valid
+		# shellcheck disable=SC1090
+		source <(sed -n '/^_handle_changes_requested_review_gate() {/,/^}/p' "${helper_dir}/pulse-merge.sh")
+		_pmf_gh_read() { "$@"; return $?; }
+		_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
+		_route_pr_to_fix_worker() { touch "${TEST_ROOT}/routed"; return 0; }
+		cat >"${TEST_ROOT}/bin/gh" <<'GATE_GH'
+#!/usr/bin/env bash
+case "$*" in
+*dismissals*) touch "${TEST_ROOT}/dismissed"; printf '[]\n' >"${TEST_ROOT}/reviews.json" ;;
+*reviews*)
+	[[ "$TEST_GATE_FAIL" == 0 ]] || exit 1
+	cat "${TEST_ROOT}/reviews.json" ;;
+*'pr view'*)
+	jq -n --arg head "$TEST_READY_SHA" --arg mode "$TEST_GATE_POST" \
+		'{headRefOid:$head,reviewDecision:"APPROVED"} | if $mode == "missing" then del(.reviewDecision) else . end' ;;
+*pulls/100*)
+	if [[ "$TEST_GATE_DRIFT" == 1 && -f "${TEST_ROOT}/snapshot" ]]; then
+		TEST_READY_SHA=3333333333333333333333333333333333333333
+	fi
+	if [[ "$TEST_GATE_SNAPSHOT" == racing && -f "${TEST_ROOT}/snapshot" ]]; then
+		TEST_GATE_LABELS=external-contributor
+	fi
+	touch "${TEST_ROOT}/snapshot"
+	jq -n --arg head "$TEST_READY_SHA" --arg association "$TEST_GATE_ASSOCIATION" --arg labels "$TEST_GATE_LABELS" --arg mode "$TEST_GATE_SNAPSHOT" \
+		'{head:{sha:$head},state:"open",author_association:$association,labels:($labels|split(",")|map({name:.}))}
+		| if $mode == "missing" then del(.labels) else . end' ;;
+*) exit 1 ;;
+esac
+GATE_GH
+		export TEST_READY_SHA
+		local scenario="" rc=0 expected=0 dismissed=0
+		for scenario in bot human external unknown unavailable malformed approval comment drift lookalike labels racing post; do
+			rm -f "${TEST_ROOT}/routed" "${TEST_ROOT}/dismissed" "${TEST_ROOT}/snapshot"
+			TEST_GATE_ASSOCIATION=MEMBER TEST_GATE_DRIFT=0 TEST_GATE_FAIL=0
+			TEST_GATE_LABELS=origin:worker TEST_GATE_SNAPSHOT=valid TEST_GATE_POST=valid
+			jq -n --arg head "$TEST_READY_SHA" '[{id:1,state:"CHANGES_REQUESTED",submitted_at:"2026-10-29T00:00:00Z",commit_id:$head,user:{login:"coderabbitai[bot]",type:"Bot"},author_association:"NONE"}]' >"${TEST_ROOT}/reviews.json"
+			expected=75
+			case "$scenario" in
+			bot) expected=0 ;;
+			human|approval|comment)
+				jq --arg state "$( [[ "$scenario" == approval ]] && printf APPROVED || printf COMMENTED )" \
+					'. + [.[0] | .id=2 | .user={login:"maintainer",type:"User"} | .author_association="OWNER"]
+					| . + [.[1] | .id=3 | .state=$state]' \
+					"${TEST_ROOT}/reviews.json" >"${TEST_ROOT}/updated.json"
+				mv "${TEST_ROOT}/updated.json" "${TEST_ROOT}/reviews.json"
+				[[ "$scenario" == approval ]] && expected=0 || expected=1 ;;
+			external) TEST_GATE_LABELS=origin:worker,external-contributor; expected=1 ;;
+			unknown) TEST_GATE_ASSOCIATION=NONE ;;
+			unavailable) TEST_GATE_FAIL=1 ;;
+			malformed) printf '{}\n' >"${TEST_ROOT}/reviews.json" ;;
+			drift) TEST_GATE_DRIFT=1 ;;
+			labels) TEST_GATE_SNAPSHOT=missing ;;
+			racing) TEST_GATE_SNAPSHOT=racing ;;
+			post) TEST_GATE_POST=missing ;;
+			lookalike) jq '.[0].user.type="User"' "${TEST_ROOT}/reviews.json" >"${TEST_ROOT}/updated.json"; mv "${TEST_ROOT}/updated.json" "${TEST_ROOT}/reviews.json" ;;
+			esac
+			rc=0
+			_handle_changes_requested_review_gate 100 owner/repo CHANGES_REQUESTED 42 "$TEST_GATE_LABELS" dismissed || rc=$?
+			if [[ "$rc" != "$expected" ]] \
+				|| { [[ "$scenario" != human && "$scenario" != comment ]] && [[ -f "${TEST_ROOT}/routed" ]]; } \
+				|| { [[ "$expected" == 0 ]] && [[ ! -f "${TEST_ROOT}/dismissed" || "$dismissed" != 1 ]]; } \
+				|| { [[ "$expected" != 0 && "$scenario" != post ]] && [[ -f "${TEST_ROOT}/dismissed" ]]; } \
+				|| { [[ "$scenario" == human || "$scenario" == comment ]] && [[ ! -f "${TEST_ROOT}/routed" ]]; }; then
+				print_result "advisory review gate: ${scenario}" 1 "expected rc=${expected}, got ${rc}"
+			else
+				print_result "advisory review gate: ${scenario}" 0
+			fi
+		done
+		[[ "$TESTS_FAILED" == 0 ]]
+	) || gate_rc=$?
+	print_result "advisory review gate matrix" "$gate_rc"
 	return 0
 }

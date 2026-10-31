@@ -46,6 +46,49 @@ Local provider IDs are listed once in `configs/local-ai-providers.conf`, shared
 by the plugin and `vault-data-policy-helper.sh`; a missing list means nothing
 is local. Denials never include prompt content or the endpoint URL.
 
+### Operator provider override (GH#35723)
+
+`~/.aidevops/agents` points into a versioned runtime bundle, so edits to the
+bundled list are reverted by `aidevops update`. To run a local model under your
+own provider ID, create an operator file that **replaces** the shared list:
+
+```bash
+mkdir -p ~/.config/aidevops
+printf 'custom-local\nollama\n' > ~/.config/aidevops/local-ai-providers.conf
+chmod 600 ~/.config/aidevops/local-ai-providers.conf
+```
+
+The path is `${XDG_CONFIG_HOME:-~/.config}/aidevops/local-ai-providers.conf`,
+resolved from the launch environment. The format is unchanged: one provider ID
+per line matching `^[A-Za-z0-9._-]{1,64}$`, `#` comments and blank lines ignored.
+It uses the same trust check as `local-only-roots.json`: a regular, non-symlink,
+current-user-owned file with mode exactly `600` and at most 64 KiB. If the file
+is present but insecure, unreadable or contains an invalid entry, nothing is
+local; it never falls back to the shared list. An absent file keeps the shared
+list. The plugin reads it once at init (restart after changes) and the headless
+helper reads it on each check. Tool writes, patches and shell commands naming
+the file are refused like the roots list. The loopback endpoint check is
+unchanged for interactive sessions; see the headless gap below.
+
+### Compaction residency (GH#35893)
+
+OpenCode 1.x takes the compaction model only from global agent config
+(`agent.compaction.model`, else the session's own model); no plugin hook can
+choose it per session. The plugin routes unpinned compaction to a fitting
+simple-tier model, so it decides residency at startup:
+
+- **Bound:** only local simple-tier candidates are routed. With none that fits
+  the 240K compaction input, compaction stays on the session's local model.
+- **Unbound, default `model` is a local provider:** the same local-only filter,
+  using the configured local-provider list above.
+- **Unbound, cloud default:** routing is unchanged. A session that later
+  switches to a local model is still compacted by the global route; the plugin
+  logs one content-free `[compaction]` warning naming both provider IDs.
+
+To keep every compaction on a chosen model, pin `agent.compaction.model` in
+`opencode.json`; any pin disables this routing. Use the local-only binding when
+residency is a requirement rather than a preference.
+
 ## Protected reads and local failure visibility (Phase 2)
 
 The operator may classify roots with a mode-600, current-user-owned JSON file at
@@ -165,6 +208,12 @@ the plugin cannot revoke an exporter already initialized by trusted host code.
   arbitrary code or bound Bash can alter files for a future launch; the current
   frozen policy is unchanged. Review classification before relaunching after
   running untrusted code. This is not an OS isolation or attestation mechanism.
+- The headless gate (`vault-data-policy-helper.sh`, and the Python and helper
+  callers that delegate to it) decides on provider ID alone; it has no endpoint
+  check. An operator provider override that lists a remote provider ID such as
+  `openai` therefore allows headless local-only dispatch to that remote API.
+  Interactive sessions still require a literal loopback endpoint. List only
+  provider IDs whose configured endpoints are on this device.
 - Local MCP processes, their configuration and binaries are trusted executable
   code, not network-isolated: a local MCP that forwards content is equivalent to
   a loopback proxy. Only install/configure local-only services for bound work.

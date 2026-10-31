@@ -49,6 +49,10 @@ outside the web root. Use directory mode `700` and file mode `600`. Never put
 backups under `public_html`, `wp-content/uploads`, or any other web-served path;
 web-server or security-plugin blocking is not a substitute for private storage.
 
+For readable addresses in schema, plugin settings or contact links, follow
+[Email Exposure Audit](../../seo/email-exposure-audit.md). Back up exact serialized
+options privately before approved source changes; verify raw HTML and browser links.
+
 ## Composer-Based WordPress (Bedrock)
 
 Prefer [WP Composer](https://wp-composer.com/) over WPackagist (acquired by WP Engine, March 2024). Packages: `wp-plugin/{slug}`, `wp-theme/{slug}`. Setup: `composer config repositories.wp-composer composer https://repo.wp-composer.com`. Migration: [guide](https://wp-composer.com/wp-composer-vs-wpackagist) | [script](https://github.com/roots/wp-composer/blob/main/scripts/migrate-from-wpackagist.sh)

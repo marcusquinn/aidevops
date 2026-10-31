@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.39.67
+# Version: 3.39.103
 
 set -euo pipefail
 
@@ -1262,7 +1262,7 @@ _help_commands() {
 	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
 	echo "  campaign <cmd>     Campaign plane: init/provision/ls (P1) + asset (P4) + new/list/status/archive (P2) + draft (P5) + launch/promote (P6) + grow (orchestration)"
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
-	echo "  tabby <cmd>        Manage Tabby terminal profiles (sync/status/zshrc/help)"
+	echo "  tabby <cmd>        Manage Tabby profiles (sync/status) and remote tmux tabs (sessions)"
 	echo "  buzz <cmd>         Manage Buzz Desktop OpenCode ACP compatibility"
 	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
 	echo "  detect             Find and register aidevops projects"
@@ -2171,7 +2171,7 @@ _main_dispatch_cleanup() {
 		shift || true
 		_dispatch_helper "local-branch-cleanup-helper.sh" "local-branch-cleanup-helper.sh" "$@"
 		;;
-	report | status | all | tmp | worktrees | artefacts | opencode | observability)
+	report | status | all | tmp | worktrees | artefacts | opencode | observability | maintenance)
 		# GH#35245: storage stores route to their existing owning cleaners.
 		_dispatch_helper "$storage_helper" "$storage_helper" "$@"
 		return $?
@@ -2184,6 +2184,8 @@ _main_dispatch_cleanup() {
 		echo "  all [--apply]     Preview or clean every store"
 		echo "  tmp|worktrees|artefacts|opencode|observability [--apply]  One store"
 		echo "  Daily automatic run: routine r922 Storage hygiene (installed by setup)"
+		echo "  maintenance plan --repo PATH  Plan legacy worktrees (read-only)"
+		echo "  maintenance check|apply --plan FILE --confirm TOKEN  Explicit user-space maintenance"
 		echo ""
 		echo "Branches (dry-run unless --apply):"
 		echo "  branches          Audit stale remote branches"

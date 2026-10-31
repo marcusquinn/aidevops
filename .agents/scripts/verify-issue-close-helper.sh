@@ -554,6 +554,65 @@ check_no_code_prerequisite() {
 	return 0
 }
 
+# Read-only terminal evidence, NOT a pre-close verdict. Unlike `check`, every
+# canonical scope entry must be a literal path delivered by this merged PR.
+# Fresh evidence is returned directly to the runtime, never accepted from model
+# output or replayed from an issue comment/file. Missing/ambiguous scopes fail shut.
+check_scoped_delivery() {
+	local issue_number="${1:-}" pr_number="${2:-}" repo_slug="${3:-}" work_dir="${4:-}"
+	local attempt="${AIDEVOPS_ATTEMPT_ID:-}" started="${AIDEVOPS_ATTEMPT_STARTED_AT:-}"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$pr_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$repo_slug" == */* && -n "$attempt" && "$started" =~ ^[0-9]{19}$ ]] || return 1
+	work_dir=$(cd "$work_dir" && pwd -P) || return 1
+	local issue_json pr_json scope files merge head branch path blob dirty delivered="[]"
+	local pr_endpoint="repos/${repo_slug}/pulls"
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	# aidevops:trust-boundary — only classify an existing trusted completed issue.
+	jq -e --argjson issue "$issue_number" '.number == $issue and .pull_request == null
+		and .state == "closed" and .state_reason == "completed"
+		and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")' \
+		<<<"$issue_json" >/dev/null || return 1
+	# Deliberately support only canonical finite scopes. Globs, prose, duplicate
+	# headings and empty sections cannot establish complete authorized delivery.
+	scope=$(jq -er '.body
+		| select((split("\n") | map(select(test("^#{1,6}[ \t]+Files Scope([ \t]|$)"; "i"))) | length) == 1)
+		| split("### Files Scope\n") | select(length == 2) | .[1]
+		| split("\n#")[0] | split("\n") | map(select(length > 0))
+		| select(length > 0 and all(.[]; test("^- `([A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+`$")))
+		| map(ltrimstr("- `") | rtrimstr("`"))
+		| select(all(.[]; split("/") | all(.[]; . != ".." and . != "."))) | unique' \
+		<<<"$issue_json") || return 1
+	pr_json=$(gh api "${pr_endpoint}/${pr_number}" 2>/dev/null) || return 1
+	jq -e --argjson pr "$pr_number" --arg repo "$repo_slug" --arg issue "$issue_number" '
+		.number == $pr and .merged_at != null and .state == "closed"
+		and (.base.repo.full_name | ascii_downcase) == ($repo | ascii_downcase)
+		and (.body | test("(?im)(^|[^a-z0-9])(for|ref) +#" + $issue + "([^0-9]|$)"))' \
+		<<<"$pr_json" >/dev/null || return 1
+	merge=$(jq -er '.merge_commit_sha | select(test("^[0-9a-f]{40}$"))' <<<"$pr_json") || return 1
+	files=$(get_pr_changed_files "$pr_number" "$repo_slug") || return 1
+	head=$(git -C "$work_dir" rev-parse HEAD) || return 1
+	branch=$(git -C "$work_dir" branch --show-current) || return 1
+	dirty=$(git -C "$work_dir" status --porcelain --untracked-files=all) || return 1
+	[[ -n "$branch" && -z "$dirty" ]] || return 1
+	git -C "$work_dir" merge-base --is-ancestor "$merge" "$head" || return 1
+	while IFS= read -r path; do
+		grep -Fxq -- "$path" <<<"$files" || return 1
+		# Deleted paths, rewritten/reverted artifacts, and partial PRs fail shut.
+		blob=$(git -C "$work_dir" rev-parse "${merge}:${path}") || return 1
+		[[ "$(git -C "$work_dir" cat-file -t "$blob")" == blob ]] || return 1
+		[[ "$(git -C "$work_dir" rev-parse "${head}:${path}")" == "$blob" ]] || return 1
+		delivered=$(jq -c --arg path "$path" --arg blob "$blob" '. + [{path:$path,blob:$blob}]' <<<"$delivered") || return 1
+	done < <(jq -r '.[]' <<<"$scope")
+	jq -cn --arg repo "$repo_slug" --argjson issue "$issue_number" --argjson pr "$pr_number" \
+		--arg attempt "$attempt" --arg started "$started" --arg worktree "$work_dir" \
+		--arg branch "$branch" --arg head "$head" --arg merge "$merge" --argjson files "$delivered" \
+		--arg updated "$(jq -r '.updated_at' <<<"$issue_json")" \
+		'{schema_version:1,kind:"scoped_delivery",repository:$repo,issue:$issue,pr:$pr,
+		attempt_id:$attempt,attempt_started_at:$started,worktree:$worktree,branch:$branch,
+		head:$head,merge_commit:$merge,issue_updated_at:$updated,files:$files,verified:true}'
+	return 0
+}
+
 # =============================================================================
 # Commands
 # =============================================================================
@@ -634,6 +693,11 @@ COMMANDS
   check <issue> <pr> <slug>    Verify PR fixes issue (file overlap check)
                                Exit 0 = verified, exit 1 = rejected
 
+  check-scoped-delivery <issue> <pr> <slug> <worktree>
+                               Emit fresh attempt-bound JSON terminal evidence for
+                               complete literal Files Scope delivery; never close
+                               an issue or authorize publication
+
   check-no-code <issue> <pr> <slug> <parent>
                                Verify a merged For/Ref prerequisite PR supports a
                                no-code triage resolution (never an implementation
@@ -663,6 +727,7 @@ main() {
 
 	case "$command" in
 	check) cmd_check "$@" ;;
+	check-scoped-delivery) check_scoped_delivery "$@" ;;
 	check-no-code) cmd_check_no_code "$@" ;;
 	extract-paths) cmd_extract_paths "$@" ;;
 	help | --help | -h) cmd_help ;;

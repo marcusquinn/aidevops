@@ -33,6 +33,8 @@ TOKEN_CHARSET = re.compile(r"[A-Za-z0-9._~+/=-]+")
 # Public account identifiers (for example WPORG_USERNAME) are not secrets.
 # Must mirror IDENTIFIER_ENV_NAME in registered-value-sources.mjs.
 IDENTIFIER_NAME = re.compile(r"(?:^|_)(?:USER|USERNAME|LOGIN|EMAIL)$")
+# Mirror PUBLIC_VALUE_PATTERN in registered-value-sources.mjs (GH#35829).
+PUBLIC_VALUE = re.compile(r"aidevops", re.IGNORECASE)
 PLACEHOLDERS = {
     "", "***", "[redacted]", "[redacted-credential]", "<redacted>", "not set",
     "(not set)", "none", "null", "undefined", "missing", "changeme",
@@ -82,6 +84,8 @@ def load_key(path: Path) -> bytes:
 def usable(value: str) -> bool:
     # Must mirror TOKEN_RUN in registered-value-redaction.mjs: the plugin only
     # hashes windows made of these characters.
+    if PUBLIC_VALUE.fullmatch(value) is not None:
+        return False
     return (
         MIN_LENGTH <= len(value) <= MAX_LENGTH
         and TOKEN_CHARSET.fullmatch(value) is not None

@@ -895,13 +895,15 @@ test_run_redacts_sed_significant_literal_values() {
 	trap 'teardown' RETURN
 	local fixture='literal|fixture&with\slashes/[].*^$'
 	export AIDEVOPS_TEST_SECRET="$fixture"
-	local output=""
+	local output="" errors=""
 	local exit_code=0
 
 	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
-		'printf "stdout:%s\n" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2; exit 23') || exit_code=$?
+		'printf "stdout:%s\n" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2; exit 23' 2>"$TEST_DIR/stderr") || exit_code=$?
+	errors=$(<"$TEST_DIR/stderr")
 
-	if [[ "$exit_code" -eq 23 && "$output" == $'stdout:[REDACTED]\nstderr:[REDACTED]' && "$output" != *"$fixture"* && "$output" != *"unterminated substitute pattern"* ]]; then
+	if [[ "$exit_code" -eq 23 && "$output" == 'stdout:[REDACTED]' && "$errors" == 'stderr:[REDACTED]' &&
+		"$output$errors" != *"$fixture"* && "$output$errors" != *"unterminated substitute pattern"* ]]; then
 		print_result "run redacts sed-significant literals on both output streams" 0
 	else
 		print_result "run redacts sed-significant literals on both output streams" 1 "Redaction or exit-status assertion failed"
@@ -919,8 +921,11 @@ test_run_skips_short_value_and_masks_long_value() {
 	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
 		'printf "stdout:%s %s\n" "$REDACTION_KEY" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2' 2>"$TEST_DIR/warning")
 	warning=$(<"$TEST_DIR/warning")
-	if [[ "$output" == $'stdout:openai openai\nstderr:openai' &&
-		"$warning" == 'WARN: secret REDACTION_KEY value too short to redact safely; not masked' ]]; then
+	# The names-only warning and the relayed child stderr share fd 2 from two
+	# writers, so assert content and count rather than order.
+	local warn_line='WARN: secret REDACTION_KEY value too short to redact safely; not masked'
+	if [[ "$output" == 'stdout:openai openai' &&
+		("$warning" == "$warn_line"$'\nstderr:openai' || "$warning" == $'stderr:openai\n'"$warn_line") ]]; then
 		print_result "short value passes through with one names-only warning" 0
 	else
 		print_result "short value passes through with one names-only warning" 1 "Short-value output or warning mismatch"
@@ -930,7 +935,7 @@ test_run_skips_short_value_and_masks_long_value() {
 	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
 		'printf "stdout:%s\n" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2' 2>"$TEST_DIR/warning")
 	warning=$(<"$TEST_DIR/warning")
-	if [[ "$output" == $'stdout:[REDACTED]\nstderr:[REDACTED]' && -z "$warning" ]]; then
+	if [[ "$output" == 'stdout:[REDACTED]' && "$warning" == 'stderr:[REDACTED]' ]]; then
 		print_result "24-character value remains masked on stdout and stderr" 0
 	else
 		print_result "24-character value remains masked on stdout and stderr" 1 "Long-value redaction or warning mismatch"
@@ -1022,6 +1027,77 @@ PY
 		print_result "run streams safe output while child remains alive" 0
 	else
 		print_result "run streams safe output while child remains alive" 1 "Expected marker before child exit"
+	fi
+	return 0
+}
+
+test_run_progresses_with_unread_stderr() {
+	setup
+	trap 'teardown' RETURN
+	export AIDEVOPS_TEST_SECRET='unread-stderr-fixture-value'
+	local result=""
+	result=$(
+		HOME="$TEST_DIR/home" HELPER_UNDER_TEST="$HELPER" python3 - <<'PY'
+import os
+import select
+import signal
+import subprocess
+import sys
+
+# Exceed both pipe capacity and the bounded relay queue before stdout is
+# emitted. Never read stderr until the command has exited; communicate()
+# would drain it and hide the original deadlock.
+program = '''
+import os, sys
+value = os.environ["REDACTION_KEY"]
+sys.stderr.write("diagnostic:" + value + "\\n")
+sys.stderr.flush()
+chunk = (value + ":diagnostic\\n").encode() * 2048
+for _ in range(40):
+    sys.stderr.buffer.write(chunk)
+sys.stderr.flush()
+print("READY", flush=True)
+assert sys.stdin.readline() == "continue\\n"
+print("DONE", flush=True)
+sys.exit(23)
+'''
+for mode in ("specific", "run", "passthrough"):
+    env = os.environ.copy()
+    if mode == "passthrough":
+        env["AIDEVOPS_TEST_SECRET"] = "abc"  # No usable redaction values.
+    args = ["run"] if mode == "run" else ["REDACTION_KEY", "--"]
+    process = subprocess.Popen(
+        ["bash", os.environ["HELPER_UNDER_TEST"], *args,
+         sys.executable, "-c", program],
+        env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, start_new_session=True,
+    )
+    try:
+        assert select.select([process.stdout], [], [], 30)[0], mode
+        assert process.stdout.readline() == b"READY\n", mode
+        process.stdin.write(b"continue\n")
+        process.stdin.flush()
+        assert process.wait(timeout=10) == 23, mode
+        assert process.stdout.read() == b"DONE\n", mode
+        errors = process.stderr.read()
+        if mode != "passthrough":
+            assert env["AIDEVOPS_TEST_SECRET"].encode() not in errors, mode
+            assert b"diagnostic:[REDACTED]" in errors, mode
+        else:
+            assert b"diagnostic:abc" in errors, mode
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        for stream in (process.stdin, process.stdout, process.stderr):
+            stream.close()
+print("ok")
+PY
+	) || result="failed"
+	if [[ "$result" == "ok" ]]; then
+		print_result "run preserves stdout, stdin and exit status with unread saturated stderr" 0
+	else
+		print_result "run preserves stdout, stdin and exit status with unread saturated stderr" 1 "Bounded relay assertion failed"
 	fi
 	return 0
 }
@@ -1248,6 +1324,7 @@ main() {
 	test_run_redacts_sed_significant_literal_values
 	test_run_skips_short_value_and_masks_long_value
 	test_run_streams_safe_output_before_child_exit
+	test_run_progresses_with_unread_stderr
 	test_run_redacts_overlapping_secrets_split_across_writes
 	test_run_fails_closed_when_redactor_cannot_start
 	test_multiline_gopass_injection_preserves_embedded_newlines

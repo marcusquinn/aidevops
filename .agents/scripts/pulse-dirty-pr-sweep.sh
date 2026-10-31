@@ -146,6 +146,8 @@ readonly _DIRTY_ACTION_SKIP="skip"
 
 readonly _DIRTY_LABEL_ORIGIN_WORKER="origin:worker"
 readonly _DIRTY_LABEL_ORIGIN_WORKER_TAKEOVER="origin:worker-takeover"
+# Pulse TODO handoff heads (pulse-todo-publication.sh); see GH#36112.
+readonly _DIRTY_PULSE_TODO_HANDOFF_PREFIX="aidevops/pulse-todo-"
 
 # Comment markers for idempotency when scanning PR comment history.
 readonly _DIRTY_PR_NOTIFY_MARKER="<!-- pulse-dirty-pr-escalate -->"  # string preserved for comment-history dedup continuity
@@ -402,7 +404,7 @@ _dps_pr_labels() {
 _dps_labels_has() {
 	local labels="$1"
 	local target="$2"
-	printf '%s' "$labels" | grep -qx "$target"
+	printf '%s' "$labels" | grep -x "$target" >/dev/null
 }
 
 # Check whether a PR body contains a recognised issue reference (t2708).
@@ -437,9 +439,9 @@ _dps_extract_linked_issue_from_body() {
 	local body="$1"
 	local match=""
 	[[ -n "$body" ]] || return 1
-	match=$(printf '%s' "$body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?|for|ref)[[:space:]]+#[0-9]+' | head -n 1) || match=""
+	match=$(printf '%s' "$body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?|for|ref)[[:space:]]+#[0-9]+' | sed -n '1p') || match=""
 	[[ -n "$match" ]] || return 1
-	printf '%s' "$match" | grep -oE '[0-9]+' | head -n 1
+	printf '%s' "$match" | grep -oE '[0-9]+' | sed -n '1p'
 	return 0
 }
 
@@ -656,6 +658,25 @@ _dps_closed_by_other_merged_pr_reason() {
 	return 0
 }
 
+# Print why the sweep must not classify a PR, or return 1 to classify it.
+# Args: $1=mergeStateStatus $2=head ref name
+_dps_skip_reason() {
+	local mss="$1"
+	local head_ref="$2"
+	if [[ "$mss" != "DIRTY" ]]; then
+		printf 'not-dirty'
+		return 0
+	fi
+	# GH#36112: a Pulse TODO handoff has no work issue, so its Ref lines must not
+	# drive rebase, conflict routing, close or notify. The merge pass supersedes
+	# trusted conflicting handoffs and the publisher regenerates them.
+	if [[ "$head_ref" == "${_DIRTY_PULSE_TODO_HANDOFF_PREFIX}"* ]]; then
+		printf 'pulse-todo-handoff-owned-by-merge-pass'
+		return 0
+	fi
+	return 1
+}
+
 #
 # Given a PR JSON object (from `gh pr list`), classify the action:
 #   rebase | conflict | close | notify | skip
@@ -678,7 +699,7 @@ _dirty_pr_classify() {
 	local repo_path="$3"
 	local self_login="$4"
 
-	local pr_number mss created updated author head_ref body
+	local pr_number mss created updated author head_ref body skip_reason
 	pr_number=$(printf '%s' "$pr_json" | jq -r '.number // empty')
 	mss=$(printf '%s' "$pr_json" | jq -r '.mergeStateStatus // empty')
 	created=$(printf '%s' "$pr_json" | jq -r '.createdAt // empty')
@@ -691,8 +712,8 @@ _dirty_pr_classify() {
 		printf '%s|invalid-pr-json' "$_DIRTY_ACTION_SKIP"
 		return 0
 	fi
-	if [[ "$mss" != "DIRTY" ]]; then
-		printf '%s|not-dirty' "$_DIRTY_ACTION_SKIP"
+	if skip_reason=$(_dps_skip_reason "$mss" "$head_ref"); then
+		printf '%s|%s' "$_DIRTY_ACTION_SKIP" "$skip_reason"
 		return 0
 	fi
 
@@ -814,7 +835,7 @@ _dps_post_comment_if_new() {
 	# Check existing comments for marker.
 	local existing
 	existing=$(_dps_pr_comment_bodies_rest "$pr_number" "$repo_slug" 2>/dev/null) || existing=""
-	if printf '%s' "$existing" | grep -qF "$marker"; then
+	if printf '%s' "$existing" | grep -F "$marker" >/dev/null; then
 		_dps_log "PR #$pr_number ($repo_slug): comment marker '$marker' already present — skipping"
 		return 0
 	fi
@@ -1188,7 +1209,7 @@ _dirty_pr_action_close() {
 		local linked_state linked_labels
 		linked_state=$(gh issue view "$linked" --repo "$repo_slug" --json state --jq '.state // empty' 2>/dev/null) || linked_state=""
 		linked_labels=$(gh issue view "$linked" --repo "$repo_slug" --json labels --jq '[.labels[].name] | .[]' 2>/dev/null | tr '[:upper:]' '[:lower:]') || linked_labels=""
-		if [[ "$linked_state" == "OPEN" ]] && printf '%s' "$linked_labels" | grep -qx 'parent-task'; then
+		if [[ "$linked_state" == "OPEN" ]] && printf '%s' "$linked_labels" | grep -x 'parent-task' >/dev/null; then
 		_dps_log "PR #$pr_number ($repo_slug): close skipped — linked issue #$linked is open parent-task"
 		_dirty_pr_action_notify "$pr_number" "$repo_slug" "parent-task-linked"
 			return 0

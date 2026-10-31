@@ -32,6 +32,10 @@ Applied to GitHub issues. The pulse checks these before spawning a worker.
 
 Permission grants are limited to exact-pattern `bash` and `external_directory` requests, bound to the issue, request digest, worker session, branch, and worktree hash, and expire after four hours. Action-only permissions and credential-bearing or unbounded paths remain non-grantable.
 
+Every request, grantable or not, can be released with a signed withdrawal (`--withdraw`). The withdrawal grants nothing and binds to one request digest; a newer request still blocks. A non-grantable latest request (for example a `task` denial) on an issue with label history blocks dispatch (`MALFORMED_REQUEST`) until it is withdrawn. To clear many stale holds with one sudo prompt and one `WITHDRAW` confirmation, run `sudo aidevops approve permissions batch --withdraw --all-blocked <owner/repo>`, or list explicit `issue:<n>:perm-<id>` targets instead of `--all-blocked`. Each request is preflighted (trusted, intact, still latest) and signed individually. Grants are never batched.
+
+Scratch `external_directory` requests are owned recovery, not holds: `write`/`edit` on `tmp`, `temp` or `.cache` paths, and `bash`/`read` on `tmp`/`temp` paths outside `node_modules`. The worker is pointed at `AIDEVOPS_TEMP_DIR` and the issue redispatches without a grant.
+
 The permission broker, approval flow, and grant verifier append blocker-state
 transitions to `~/.aidevops/logs/worker-progress-blockers.jsonl`. Diagnose the
 label and its exact local reason with `pulse-diagnose-helper.sh issue <N> --repo

@@ -46,6 +46,46 @@ _normalize_headless_tier() {
 	return 0
 }
 
+# Print routing-table tier candidates that pass the optional provider allowlist,
+# before dispatch-time auth/OAuth-pool availability filtering. Callers use this
+# to distinguish "configured but temporarily unavailable" from "not configured".
+_allowlisted_tier_candidates() {
+	local tier_name="$1"
+	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
+	local -a allowlist=()
+	local provider="" model="" allowed_provider="" allowed=false
+	if [[ -n "$allowlist_raw" ]]; then
+		IFS=',' read -r -a allowlist <<<"$allowlist_raw"
+	fi
+	while IFS= read -r model; do
+		[[ -n "$model" ]] || continue
+		provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
+		[[ -n "$provider" ]] || continue
+		if [[ ${#allowlist[@]} -gt 0 ]]; then
+			allowed=false
+			for allowed_provider in "${allowlist[@]}"; do
+				allowed_provider=$(trim_spaces "$allowed_provider")
+				if [[ "$allowed_provider" == "$provider" ]]; then
+					allowed=true
+					break
+				fi
+			done
+			[[ "$allowed" == "true" ]] || continue
+		fi
+		printf '%s\n' "$model"
+	done < <(model_tier_candidates "$tier_name" 2>/dev/null || true)
+	return 0
+}
+
+# Return success when the tier has allowlisted candidates, even if every one is
+# currently filtered by auth/OAuth-pool availability (GH#35684).
+_tier_has_allowlisted_candidates() {
+	local tier_name=""
+	tier_name=$(_normalize_headless_tier "${1:-standard}")
+	[[ -n "$(_allowlisted_tier_candidates "$tier_name")" ]] && return 0
+	return 1
+}
+
 # Derive the headless model list from the routing table (GH#17769).
 # Flow: routing table standard tier -> optional provider allowlist -> providers with
 # usable auth at dispatch time. This eliminates AIDEVOPS_HEADLESS_MODELS as a
@@ -55,8 +95,6 @@ get_configured_models() {
 	local requested_tier="${1:-standard}"
 	local tier_name
 	tier_name=$(_normalize_headless_tier "$requested_tier")
-	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
-	local -a allowlist=()
 	local -a models=()
 	local provider model
 
@@ -79,27 +117,10 @@ get_configured_models() {
 		fi
 	fi
 
-	if [[ -n "$allowlist_raw" ]]; then
-		IFS=',' read -r -a allowlist <<<"$allowlist_raw"
-	fi
-
 	while IFS= read -r model; do
 			[[ -z "$model" ]] && continue
 			provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
 			[[ -z "$provider" ]] && continue
-
-			if [[ ${#allowlist[@]} -gt 0 ]]; then
-				local allowed=false
-				local allowed_provider
-				for allowed_provider in "${allowlist[@]}"; do
-					allowed_provider=$(trim_spaces "$allowed_provider")
-					if [[ "$allowed_provider" == "$provider" ]]; then
-						allowed=true
-						break
-					fi
-				done
-				[[ "$allowed" == "true" ]] || continue
-			fi
 
 			if ! provider_auth_available "$provider"; then
 				continue
@@ -109,7 +130,7 @@ get_configured_models() {
 			fi
 
 			models+=("$model")
-	done < <(model_tier_candidates "$tier_name" 2>/dev/null || true)
+	done < <(_allowlisted_tier_candidates "$tier_name")
 
 	# Local is a privacy boundary: an empty local tier means unavailable, never
 	# permission to use the historical cloud fallback.
@@ -348,6 +369,13 @@ _choose_model_auto() {
 		[[ "$select_status" -ne 0 ]] || rotated=true
 	else
 		current_model=$(_first_healthy_configured_model "$tier_name" "$selection_mode" "$preferred_model") || select_status=$?
+	fi
+	# GH#35684: get_configured_models drops providers whose auth or OAuth pool
+	# is unavailable, so a transient cooldown of every configured provider
+	# looks like "nothing configured". Classify it as backoff (75) instead of a
+	# permanent configuration failure (1).
+	if [[ "$select_status" -eq 1 ]] && _tier_has_allowlisted_candidates "$tier_name"; then
+		select_status=75
 	fi
 	if [[ "$select_status" -eq 1 ]]; then
 		print_error "No direct provider models configured for headless runtime"

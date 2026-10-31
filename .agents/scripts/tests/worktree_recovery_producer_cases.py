@@ -37,8 +37,22 @@ class ProducerCases:
                        "ValueError: " + messages[0] + "\nother failure", messages[0].encode()):
             error = subprocess.CalledProcessError(1, ["private-command"], stderr=stderr)
             self.assertEqual(producer_engine.failure_reason(error), "producer:evidence-unavailable")
-        self.assertEqual(producer_engine.failure_reason(subprocess.TimeoutExpired("private", 1)),
-                         "producer:evidence-unavailable")
+        timeout_reason = producer_engine.failure_reason(subprocess.TimeoutExpired("private", 1))
+        self.assertTrue(timeout_reason.startswith("producer:git-timeout;"))
+        self.assertNotIn("private", timeout_reason)
+
+    def test_base_import_timeout_is_bounded_and_sanitized(self):
+        import worktree_archive_snapshot as snapshot_engine
+        self.assertEqual(snapshot_engine.base_import_timeout(), 300)
+        for raw, expected in (("5", 60), ("99999", 1800), ("bad", 300), ("120", 120)):
+            with patch.dict(os.environ, {"AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT": raw}):
+                self.assertEqual(snapshot_engine.base_import_timeout(), expected)
+        manifest = {"base_sha": "a" * 40, "source_git_common_dir": str(self.repo / ".git")}
+        with patch.object(snapshot_engine, "git", side_effect=subprocess.TimeoutExpired("private", 1)):
+            with self.assertRaises(ValueError) as caught:
+                snapshot_engine.seed_base(self.work, manifest)
+        self.assertTrue(str(caught.exception).startswith("producer:base-import-timeout;"))
+        self.assertNotIn("private", str(caught.exception))
 
     def test_tracked_permissions_follow_git_model(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)

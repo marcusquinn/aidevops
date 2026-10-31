@@ -32,13 +32,16 @@ const PLACEHOLDERS = new Set(["", "***", "[redacted]", REDACTION_TOKEN, "<redact
 // WPORG_USERNAME) are not secrets. Redacting them corrupts GitHub URLs, git
 // remotes and commit metadata. Mirrored by redaction-digest-registry.py.
 export const IDENTIFIER_ENV_NAME = /(?:^|_)(?:USER|USERNAME|LOGIN|EMAIL)$/;
+// Public framework text is not a bare credential, even if accidentally registered.
+// Mirror in redaction-digest-registry.py; named-sensitive assignments still scrub it.
+export const PUBLIC_VALUE_PATTERN = /^aidevops$/i;
 
 const hasUsableLength = (value) => value.length >= MIN_VALUE_LENGTH && value.length <= MAX_VALUE_LENGTH;
 const isPlaceholder = (value) => PLACEHOLDERS.has(value.toLowerCase()) || value.includes(REDACTION_TOKEN);
 
 export function usableValue(value) {
   if (typeof value !== "string" || !hasUsableLength(value)) return false;
-  return !value.includes("\n") && !isPlaceholder(value);
+  return !value.includes("\n") && !isPlaceholder(value) && !PUBLIC_VALUE_PATTERN.test(value);
 }
 
 function fileSignature(path) {

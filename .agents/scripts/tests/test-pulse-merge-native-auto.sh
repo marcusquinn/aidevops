@@ -125,14 +125,20 @@ if [[ "$1" == "api" && "$2" == repos/*/pulls/* && "$2" != */update-branch ]]; th
 	done
 	if [[ -n "$filter" ]]; then
 		jq -c "$filter" "${TEST_ROOT}/auto_merge_request.txt"
-	else
+	elif [[ "${STUB_IDENTITY_RAW:-0}" == 1 ]]; then
 		cat "${TEST_ROOT}/auto_merge_request.txt"
-		echo
+	else
+		jq -c '.head.ref //= "feature/review" | .labels //= []' "${TEST_ROOT}/auto_merge_request.txt"
 	fi
 	exit 0
 fi
 
 # Fixed-cost GraphQL fallback for REST's missing auto_merge.enabled_at field.
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"--json autoMergeRequest"* ]]; then
+	jq '.auto_merge == null' "${TEST_ROOT}/auto_merge_request.txt"
+	exit 0
+fi
+
 if [[ "$1" == "api" && "$2" == "graphql" ]]; then
 	[[ -f "${TEST_ROOT}/graphql_auto_merge_response.txt" ]] || exit 1
 	cat "${TEST_ROOT}/graphql_auto_merge_response.txt"
@@ -198,6 +204,13 @@ teardown_test_env() {
 define_helpers_under_test() {
 	local src_stuck src_repo_allow src_existing_green_behind src_green_behind
 	local src_stop_external src_enable_native src_handle_existing src_set_native
+	# shellcheck source=../protected-release-helper.sh
+	source "${SCRIPT_DIR}/../protected-release-helper.sh"
+	local release_function="" release_source=""
+	for release_function in _pmp_is_protected_release_pr _pmp_hold_protected_release_pr; do
+		release_source=$(awk -v name="$release_function" '$0 ~ "^" name "\\(\\) \\{" { active=1 } active { print } active && /^}$/ { exit }' "$PROCESS_SCRIPT")
+		eval "$release_source"
+	done
 	# shellcheck source=/dev/null
 	source "$REST_STATE_SCRIPT"
 	src_stuck=$(awk '
@@ -812,6 +825,107 @@ test_protected_release_pr_uses_exact_merge_owner() {
 	return 0
 }
 
+test_protected_release_native_auto_is_held() {
+	setup_test_env
+	define_helpers_under_test
+	printf '%s' '{"auto_merge":{"enabled_at":"2026-07-14T12:00:00Z"},"head":{"ref":"chore/release-v1.2.3-provenance","sha":"drifted"},"labels":[{"name":"release"}]}' >"${TEST_ROOT}/auto_merge_request.txt"
+	local result=0
+	_set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
+	if [[ "$result" -eq 2 ]] && grep -q -- '--disable-auto' "$GH_LOG" && ! grep -q -- '--auto --squash' "$GH_LOG"; then
+		print_result "Drifted protected release disarms native auto-merge" 0
+	else
+		print_result "Drifted protected release disarms native auto-merge" 1 "rc=${result}"
+	fi
+	: >"$GH_LOG"
+	result=0
+	FAIL_DISABLE_AUTO=1 _pmp_hold_protected_release_pr 903 owner/repo chore/release-v1.2.3-provenance drifted || result=$?
+	if [[ "$result" -eq 0 ]] && grep -q -- '--undo' "$GH_LOG"; then
+		print_result "Protected release draft fallback is a successful safe hold" 0
+	else
+		print_result "Protected release draft fallback is a successful safe hold" 1 "rc=${result}"
+	fi
+	result=0
+	FAIL_DISABLE_AUTO=1 FAIL_DRAFT_HOLD=1 _pmp_hold_protected_release_pr 903 owner/repo chore/release-v1.2.3-provenance drifted || result=$?
+	if [[ "$result" -eq 1 ]]; then
+		print_result "Protected release fails closed when both hold transports fail" 0
+	else
+		print_result "Protected release fails closed when both hold transports fail" 1 "rc=${result}"
+	fi
+	: >"$GH_LOG"
+	result=0
+	DRY_RUN=1 _set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
+	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG"; then
+		print_result "Protected release dry-run performs no GitHub writes" 0
+	else
+		print_result "Protected release dry-run performs no GitHub writes" 1
+	fi
+	printf '%s' '{"auto_merge":null,"head":{"ref":"chore/release-v1.2.3-provenance","sha":"drifted"},"labels":[{"name":"release"}]}' >"${TEST_ROOT}/auto_merge_request.txt"
+	: >"$GH_LOG"
+	result=0
+	_set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
+	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG"; then
+		print_result "Unarmed protected release remains ready without redundant disarm" 0
+	else
+		print_result "Unarmed protected release remains ready without redundant disarm" 1
+	fi
+	printf '%s' '{}' >"${TEST_ROOT}/auto_merge_request.txt"
+	: >"$GH_LOG"
+	result=0
+	STUB_IDENTITY_RAW=1 _set_native_auto_merge_or_skip 903 owner/repo 0 APPROVED drifted || result=$?
+	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG"; then
+		print_result "Missing native-auto identity defers without merge fall-through" 0
+	else
+		print_result "Missing native-auto identity defers without merge fall-through" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_protected_release_staged_head_comparison() {
+	setup_test_env
+	# Match the pulse runtime's portable timeout dependency.
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/../shared-constants.sh"
+	# shellcheck source=../protected-release-helper.sh
+	source "${SCRIPT_DIR}/../protected-release-helper.sh"
+	local project_dir="${SCRIPT_DIR}/../../.." signed_head="" blob="" tree="" envelope=""
+	git init -q "${TEST_ROOT}/repo"
+	git -C "${TEST_ROOT}/repo" fetch -q --depth=1 "$project_dir" HEAD
+	signed_head=$(git -C "${TEST_ROOT}/repo" rev-parse FETCH_HEAD)
+	ssh-keygen -q -t ed25519 -N '' -f "${TEST_ROOT}/release-key"
+	printf 'release@example.invalid %s\n' "$(<"${TEST_ROOT}/release-key.pub")" >"${TEST_ROOT}/allowed-signers"
+	# Limit signing identity and trust to this fixture; do not alter host config.
+	if (
+		git() {
+			command git -c user.name=Release -c user.email=release@example.invalid \
+				-c gpg.format=ssh -c user.signingkey="${TEST_ROOT}/release-key" \
+				-c gpg.ssh.allowedSignersFile="${TEST_ROOT}/allowed-signers" "$@"
+			return $?
+		}
+		git -C "${TEST_ROOT}/repo" tag -s v1.2.3 "$signed_head" -m Release || exit 1
+		blob=$(git -C "${TEST_ROOT}/repo" cat-file tag v1.2.3 | git -C "${TEST_ROOT}/repo" hash-object -w --stdin) || exit 1
+		tree=$(printf '100644 blob %s\ttag\n' "$blob" | git -C "${TEST_ROOT}/repo" mktree) || exit 1
+		envelope=$(git -C "${TEST_ROOT}/repo" commit-tree -S -p "$signed_head" -m Envelope "$tree") || exit 1
+		git -C "${TEST_ROOT}/repo" update-ref refs/aidevops/release-tags/v1.2.3 "$envelope" || exit 1
+		git init -q "${TEST_ROOT}/consumer" || exit 1
+		git -C "${TEST_ROOT}/consumer" remote add origin "${TEST_ROOT}/repo" || exit 1
+		protected_release_head_matches_staged "${TEST_ROOT}/consumer" chore/release-v1.2.3-provenance "$signed_head" &&
+			! protected_release_head_matches_staged "${TEST_ROOT}/consumer" chore/release-v1.2.3-provenance "$envelope" &&
+			! protected_release_head_matches_staged "${TEST_ROOT}/consumer" chore/release-v1.2.3-provenance drifted &&
+			! protected_release_head_matches_staged "${TEST_ROOT}/consumer" chore/release-v9.9.9-provenance "$signed_head" || exit 1
+		# A stale local staging ref cannot replace deleted remote evidence.
+		git -C "${TEST_ROOT}/consumer" update-ref refs/aidevops/release-tags/v1.2.3 "$envelope" || exit 1
+		git -C "${TEST_ROOT}/repo" update-ref -d refs/aidevops/release-tags/v1.2.3 || exit 1
+		! protected_release_head_matches_staged "${TEST_ROOT}/consumer" chore/release-v1.2.3-provenance "$signed_head"
+	); then
+		print_result "Remote signed envelope accepts release head, rejects envelope, drift and stale evidence" 0
+	else
+		print_result "Remote signed envelope accepts release head, rejects envelope, drift and stale evidence" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_case_a_pending_ci_sets_auto_merge
 	test_case_a_missing_head_does_not_set_auto_merge
@@ -831,6 +945,8 @@ main() {
 	test_external_existing_auto_merge_is_disabled
 	test_external_auto_merge_disable_failure_applies_draft_hold
 	test_protected_release_pr_uses_exact_merge_owner
+	test_protected_release_native_auto_is_held
+	test_protected_release_staged_head_comparison
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"

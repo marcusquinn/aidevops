@@ -251,7 +251,7 @@ _is_assigned_check_parent_task() {
 	local _jq_rc=0
 	local parent_task_hit
 	parent_task_hit=$(printf '%s' "$meta_json" |
-		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' 2>/dev/null | head -n 1) || _jq_rc=$?
+		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' 2>/dev/null | sed -n '1p') || _jq_rc=$?
 	if [[ "$_jq_rc" -ne 0 ]]; then
 		printf 'GUARD_UNCERTAIN (reason=jq-failure call=parent-task-check issue=%s repo=%s)\n' \
 			"$issue_number" "$repo_slug"
@@ -307,7 +307,7 @@ _is_assigned_check_label_block() {
 	local _jq_rc=0
 	local label_hit
 	label_hit=$(printf '%s' "$meta_json" |
-		jq -r --arg label_name "$label_name" '(.labels // [])[].name | select(. == $label_name)' 2>/dev/null | head -n 1) || _jq_rc=$?
+		jq -r --arg label_name "$label_name" '(.labels // [])[].name | select(. == $label_name)' 2>/dev/null | sed -n '1p') || _jq_rc=$?
 	if [[ "$_jq_rc" -ne 0 ]]; then
 		printf 'GUARD_UNCERTAIN (reason=jq-failure call=%s issue=%s repo=%s)\n' \
 			"$check_name" "$issue_number" "$repo_slug"

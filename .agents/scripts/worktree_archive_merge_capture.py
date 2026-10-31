@@ -37,9 +37,6 @@ def supported_merge_administration(root):
         raise ValueError('merge:unsupported_private_state')
     if git(root, 'rev-parse', '--is-shallow-repository').strip() != b'false':
         raise ValueError('merge:shallow_history')
-    draft = bytes.fromhex(state['files'].get('COMMIT_EDITMSG', '')).rstrip(b'\n')
-    if draft and draft != git(root, 'log', '-1', '--format=%B').rstrip(b'\n'):
-        raise ValueError('merge:uncommitted_message_draft')
     if state['files'].get('FETCH_HEAD'):
         raise ValueError('merge:unpreserved_fetch_head')
     return state

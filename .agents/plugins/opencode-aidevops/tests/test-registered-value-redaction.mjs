@@ -9,8 +9,8 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createHmac, randomBytes } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
@@ -71,6 +71,72 @@ async function processListing(args) {
 }
 
 describe("registered secret value redaction (GH#32362)", () => {
+  test("public framework name survives plaintext registration and stale digests (GH#35829)", async () => {
+    const { root, redactor } = fixture({
+      credentials: { SYNTHETIC_PROJECT: "aidevops" },
+      env: { SYNTHETIC_PROJECT: "aidevops", SYNTHETIC_API_TOKEN: "aidevops" },
+    });
+    // Simulate an old registry: the new writer must not create this digest.
+    const registryDir = join(root, "registry");
+    mkdirSync(registryDir, { mode: 0o700 });
+    const key = randomBytes(32);
+    writeFileSync(join(registryDir, "key"), key.toString("hex"), { mode: 0o600 });
+    const digest = createHmac("sha256", key).update("aidevops").digest("hex");
+    writeFileSync(join(registryDir, "digests"), `8 ${digest}\n`, { mode: 0o600 });
+    const content = "## Built with aidevops\n<!-- aidevops:managed-readme:start -->\n"
+      + "the weekly Star History workflow is pinned to one aidevops version\naidevops-managed\n";
+    const path = join(root, "README.md");
+    writeFileSync(path, content);
+    for (const tool of ["read", "bash"]) {
+      const result = await afterHook(redactor, root, { output: readFileSync(path, "utf8"), title: "", metadata: {} }, tool);
+      assert.equal(result.output, content);
+      // Text copied from model-visible Read output must match the actual bytes.
+      const oldString = result.output.split("\n").slice(0, 2).join("\n");
+      const edited = readFileSync(path, "utf8").replace(oldString, "replacement");
+      assert.equal(edited, content.replace(oldString, "replacement"));
+      assert.ok(edited.startsWith("replacement\n"));
+    }
+  });
+
+  test("digest writer excludes only the public name, not longer credentials containing it", async () => {
+    const longer = `aidevops-${marker("Credential")}`;
+    const { root, redactor } = fixture({ registered: ["aidevops", "AIDEVOPS", longer] });
+    const lines = readFileSync(join(root, "registry", "digests"), "utf8").trim().split("\n");
+    assert.equal(lines.length, 1);
+    assert.equal(redactor.redactText(`aidevops AIDEVOPS ${longer}`).text, `aidevops AIDEVOPS ${TOKEN}`);
+    const plain = fixture({ credentials: { SYNTHETIC_AUTH: longer } });
+    assert.equal(plain.redactor.redactText(longer).text, TOKEN);
+    const output = await afterHook(redactor, root, { output: "PASSWORD=aidevops", title: "", metadata: {} });
+    assert.equal(output.output, `PASSWORD=${TOKEN}`, "sensitive assignments remain protected");
+  });
+
+  test("public-name credential assignments are scrubbed across all persisted fields", async () => {
+    const { root, redactor } = fixture({ credentials: { SYNTHETIC_PROJECT: "aidevops" } });
+    for (const tool of ["read", "bash"]) {
+      const result = await afterHook(redactor, root, {
+        output: "SERVICE_CREDENTIAL=aidevops SERVICE_CREDENTIALS=aidevops",
+        title: "PASSWORD=aidevops",
+        metadata: {
+          description: "SERVICE_CREDENTIAL=aidevops",
+          nested: [{ SERVICE_CREDENTIALS: "aidevops", ordinary: "Built with aidevops" }, 7, null],
+          pair: { name: "SERVICE_CREDENTIAL", value: "aidevops" },
+        },
+      }, tool);
+      assert.equal(result.output, `SERVICE_CREDENTIAL=${TOKEN} SERVICE_CREDENTIALS=${TOKEN}`);
+      assert.equal(result.title, `PASSWORD=${TOKEN}`);
+      assert.deepEqual(result.metadata, {
+        description: `SERVICE_CREDENTIAL=${TOKEN}`,
+        nested: [{ SERVICE_CREDENTIALS: TOKEN, ordinary: "Built with aidevops" }, 7, null],
+        pair: { name: "SERVICE_CREDENTIAL", value: TOKEN },
+      });
+      const titleOnly = await afterHook(redactor, root, { title: "PASSWORD=aidevops" }, tool);
+      assert.deepEqual(titleOnly, { title: `PASSWORD=${TOKEN}` });
+      const metadataOnly = await afterHook(redactor, root, { metadata: { PASSWORD: "aidevops" } }, tool);
+      assert.deepEqual(metadataOnly, { metadata: { PASSWORD: TOKEN } });
+      assert.deepEqual(await afterHook(redactor, root, {}, tool), {});
+    }
+  });
+
   test("process listing redacts a credential-file value inside a provider command line", async () => {
     const secret = marker("Cred");
     const ordinary = marker("Ordinary");

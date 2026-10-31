@@ -3,9 +3,10 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Rootless owner-cgroup observations, not synthetic systemd completion receipts.
 
-PID disappearance and an empty arbitrary session cgroup never prove descendant
-completion. Only a recorded managed user-service invocation can supply that
-proof. Unsupported observations remain explicit and cannot authorize removal.
+PID completion is reconciled separately from containment. Managed invocations
+retain their systemd completion contract. Without that contract, a legacy
+parent's completion permits removal only after its recorded boot has ended.
+An empty, missing or replaced arbitrary cgroup is not descendant evidence.
 """
 
 import json
@@ -98,6 +99,43 @@ def process_identity(pid):
     return fields[19]
 
 
+def recorded_process_status(launch):
+    """Observe one saved process generation, never authorize source removal.
+
+    A dead parent in the current boot says nothing about surviving descendants.
+    Reading only the recorded PID avoids global CWD visibility requirements.
+    """
+    result = {"status": "unknown", "descendants": "unknown"}
+    try:
+        saved_boot = launch.get("boot_id")
+        current_boot = boot_id()
+        require(isinstance(saved_boot, str) and
+                re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", saved_boot) is not None,
+                "invalid saved boot identity")
+        require(isinstance(current_boot, str) and
+                re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", current_boot) is not None,
+                "boot identity unavailable")
+        pid = launch.get("owner_pid")
+        start = launch.get("owner_start")
+        require(type(pid) is int and pid > 0 and isinstance(start, str) and start.isdecimal(),
+                "invalid saved process identity")
+        if saved_boot != current_boot:
+            return {"status": "previous-boot", "descendants": "previous-boot-ended"}
+        try:
+            observed = process_identity(pid)
+            result["status"] = "same-process-alive" if observed == start else "pid-reused"
+        except FileNotFoundError:
+            # ENOENT reading stat alone can be a race or unavailable procfs.
+            # Require the process entry to be absent under a readable proc root.
+            require(Path("/proc/self/stat").is_file(), "procfs unavailable")
+            require(not os.path.lexists(Path("/proc") / str(pid)), "process identity unavailable")
+            result["status"] = "pid-absent"
+        require(boot_id() == current_boot, "boot changed during observation")
+    except (OSError, ValueError, IndexError, TypeError, AttributeError):
+        result = {"status": "unknown", "descendants": "unknown"}
+    return result
+
+
 def observe(pid, session):
     observation = {"kind": KIND, "owner_pid": pid, "owner_session": session,
                    "observed_at": time.time(), "evidence": "unavailable"}
@@ -138,6 +176,10 @@ def observe(pid, session):
 
 
 def drain(launch):
+    if launch.get("completion_evidence") is None:
+        from worktree_lifetime_reconcile import quiescence
+        launch["observation_quiescence"] = quiescence(launch)
+        return
     require(launch.get("completion_evidence") == "systemd-cgroup-v1",
             "owner has no managed descendant-completion contract")
     drain_unit(launch)
@@ -270,5 +312,7 @@ def register(connection, path, pid, session, creating=False):
     record.pop("idle", None)
     record["ownership_epoch"] = record.get("ownership_epoch", 0) + 1
     record["observed_admission_epoch"] = record["admission_epoch"]
+    from worktree_lifetime_reconcile import reconcile
+    reconcile(record)
     connection.execute("INSERT OR REPLACE INTO worktree_managed_lifetimes VALUES (?, ?)",
                        (path, json.dumps(record, sort_keys=True)))

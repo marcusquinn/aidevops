@@ -1177,7 +1177,7 @@ _route_lookup_models() {
 		fallback_model="${fallback_model:-anthropic/claude-haiku-5-5}"
 		;;
 	standard)
-		primary_model="${primary_model:-openai/gpt-5.6-terra}"
+		primary_model="${primary_model:-openai/gpt-6.1-terra}"
 		fallback_model="${fallback_model:-anthropic/claude-sonnet-5-5}"
 		;;
 	thinking)

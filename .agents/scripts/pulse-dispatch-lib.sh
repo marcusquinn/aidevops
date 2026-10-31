@@ -243,11 +243,44 @@ _dispatch_maintainer_gate_from_lines() {
 	return 1
 }
 
+# Read only the local complete PR snapshot: cooldown enumeration must not add
+# per-candidate network reads. Missing/stale evidence fails open to dispatch.
+_dispatch_checkpoint_pr_head() {
+	local repo="$1" pr="$2" snapshot=""
+	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+	snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) || return 1
+	jq -er --argjson pr "$pr" '
+		select(.complete == true) |
+		select((now - (.timestamp | fromdateiso8601)) >= 0 and
+			(now - (.timestamp | fromdateiso8601)) < 900) |
+		.items[] | select(.number == $pr) | .headRefOid |
+		select(type == "string" and length > 0)
+	' <<<"$snapshot" 2>/dev/null
+	return $?
+}
+
+# Strip leading zeros before arithmetic, rejecting values beyond a portable
+# signed 32-bit range without ever evaluating the unbounded input in Bash:
+# the length guard short-circuits first, so arithmetic sees at most 10 digits,
+# well inside Bash's 64-bit integers.
+_dispatch_checkpoint_decimal() {
+	local value="$1" fallback="$2"
+	if [[ "$value" =~ ^0*([1-9][0-9]*|0)$ ]]; then
+		value="${BASH_REMATCH[1]}"
+		if [[ "${#value}" -le 10 ]] && [[ "$value" -lt 2147483648 ]]; then
+			printf '%s\n' "$value"
+			return 0
+		fi
+	fi
+	printf '%s\n' "$fallback"
+	return 0
+}
+
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
-		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
@@ -270,7 +303,7 @@ _dispatch_negative_cache_record() {
 	fi
 	if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 		[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -gt 0 ]] || return 0
-		pr="-" # Nonempty TSV placeholder: read must not shift the fingerprint.
+		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr") || return 0
 		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") || return 0
 	fi
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
@@ -289,6 +322,8 @@ _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
 	local expected_reason="${2:-}"
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
+	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
+	local quiet_after="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_AFTER_SECONDS:-14400}" revision_epoch=""
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
@@ -301,6 +336,7 @@ _dispatch_negative_cache_reason() {
 	# hold is keyed to the owner generation rather than the issue revision.
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
 	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
+		"$reason" != zero_attempt_backoff &&
 		"$reason" != worker_draft_checkpoint_blocked &&
 		"$reason" != worker_draft_checkpoint_cooldown &&
 		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
@@ -317,13 +353,29 @@ _dispatch_negative_cache_reason() {
 		[[ "$ttl" -gt 0 && -n "$fingerprint" ]] || return 1
 		current=$(_dispatch_checkpoint_fingerprint "$candidate") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
+		current=$(_dispatch_checkpoint_pr_head "$repo" "$pr") || return 1
+		[[ -n "$owner_path" && "$current" == "$owner_path" ]] || return 1
+		# Only old, unassigned revisions can outlive the base cooldown: recent
+		# claims may still expire, and assigned issues need stale-owner recovery.
+		quiet_ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
+		((quiet_ttl <= 86400)) || quiet_ttl=86400
+		quiet_after=$(_dispatch_checkpoint_decimal "$quiet_after" 14400)
+		if ((quiet_ttl > ttl)); then
+			revision_epoch=$(jq -er 'select((.assignees // [] | length) == 0) |
+				.updatedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' <<<"$candidate" 2>/dev/null) || revision_epoch=""
+			if [[ "$revision_epoch" =~ ^[0-9]+$ ]] && ((stamp >= revision_epoch && stamp - revision_epoch >= quiet_after)); then
+				ttl="$quiet_ttl"
+			fi
+		fi
 		;;
 	terminal_blocker_circuit)
 		# The circuit hold applies to unowned available issues by design. An
 		# unchanged updatedAt proves no edit, retry directive or new comment.
 		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
 		;;
-	terminal_blocker_backoff)
+	terminal_blocker_backoff | zero_attempt_backoff)
+		# GH#36214: the zero-attempt backoff is windowed and self-expiring like
+		# the unknown-blocker backoff; a reset comment bumps updatedAt at once.
 		ttl="$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS"
 		;;
 	dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
@@ -1300,6 +1352,43 @@ _dispatch_product_reservation_slots() {
 	echo "[pulse-wrapper] PRIORITY_CAPACITY product_target=${target} product_active_verified=${product_active} reserved_new=${required}" >>"$LOGFILE"
 	printf '%s\n' "$required"
 	return 0
+}
+
+#######################################
+# GH#35698: Capture dispatch output while the caller supervises liveness.
+# Call directly in the cycle owner, NOT inside a command substitution. Dispatch
+# still executes in a child, just as it did with $(dispatch_max ...); all nested
+# enumeration, capacity/reservation waits, priority waves and final drains are
+# covered without changing their launch ownership, wait semantics or deadlines.
+# This is not a new stage timeout: candidate supervisors retain their deadlines.
+# Heartbeat rejection is best-effort and never becomes a dispatch failure.
+#
+# Arguments: $1 - output variable name; remaining arguments - command and args
+#######################################
+_dispatch_capture_with_owner_liveness() {
+	local output_variable="$1"
+	shift
+	local capture_file="" capture_pid="" capture_rc=0
+	local now=0 last_heartbeat=0
+	capture_file=$(mktemp) || return 1
+	# Explicit stdin keeps async Bash from substituting /dev/null.
+	"$@" <&0 >"$capture_file" &
+	capture_pid=$!
+	while kill -0 "$capture_pid" 2>/dev/null; do
+		now=$(date +%s)
+		if ((now - last_heartbeat >= 60)); then
+			if declare -F _pulse_cycle_state_stage_heartbeat >/dev/null 2>&1; then
+				_pulse_cycle_state_stage_heartbeat || true
+			fi
+			last_heartbeat="$now"
+		fi
+		sleep 2
+	done
+	wait "$capture_pid" || capture_rc=$?
+	# Match command substitution's trailing-newline stripping and exit status.
+	printf -v "$output_variable" '%s' "$(<"$capture_file")"
+	rm -f "$capture_file"
+	return "$capture_rc"
 }
 
 #######################################

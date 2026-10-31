@@ -42,6 +42,12 @@ class EvidenceTests(unittest.TestCase):
         self.attest_mutation = lambda result, image: None
         self.extra_runs = []
         self.source_files = {}
+        self.workflow = "name: Standalone\njobs:\n  build:\n    runs-on: ubuntu-latest\n"
+        self.pin = None
+        self.parent = "4" * 40
+        self.comparison = {"status": "ahead", "total_commits": 1, "commits": [{"sha": self.parent}]}
+        self.docs_commit = {"parents": [{"sha": self.source}],
+                            "files": [{"filename": "docs/metrics/activity.svg", "status": "modified"}]}
 
     def api_content(self, path, value):
         data = value.encode() if isinstance(value, str) else json.dumps(value).encode()
@@ -53,19 +59,24 @@ class EvidenceTests(unittest.TestCase):
             endpoint = args[1].removeprefix("repos/" + self.repo + "/")
             mapping = {
                 "commits/" + self.commit: self.commit_data,
+                "commits/" + self.parent + "?per_page=100": self.docs_commit,
+                "compare/" + self.source + "..." + self.parent: self.comparison,
                 "releases/tags/v2.0.12": self.release,
                 "contents/CloudronVersions.json?ref=" + self.source: self.api_content(MODULE.CATALOG, self.before),
                 "contents/CloudronVersions.json?ref=" + self.commit: self.api_content(MODULE.CATALOG, self.after),
                 "contents/CloudronManifest.json?ref=" + self.source: self.api_content("CloudronManifest.json", self.manifest),
                 "contents/CHANGELOG?ref=" + self.source: self.api_content("CHANGELOG", "[2.0.12]\n* Fix startup.\n\n[2.0.11]\n* Earlier.\n"),
+                "contents/.github/workflows/publish.yml?ref=" + self.source: self.api_content(".github/workflows/publish.yml", self.workflow),
                 "actions/workflows/publish.yml/runs?event=push&status=success&per_page=100": {"workflow_runs": [self.run, *self.extra_runs]},
             }
             mapping.update({"contents/" + path + "?ref=" + self.source: self.api_content(path, content)
                             for path, content in self.source_files.items()})
             return copy.deepcopy(mapping[endpoint])
         self.assertEqual(args[:2], ("attestation", "verify"))
-        self.assertEqual(args[3:], ("--repo", self.repo, "--signer-workflow", self.repo + "/.github/workflows/publish.yml",
-                                    "--source-ref", "refs/heads/main", "--format", "json"))
+        signer_workflow = MODULE.MANAGED_WORKFLOW if self.pin else self.repo + "/.github/workflows/publish.yml"
+        self.assertEqual(args[3:], ("--repo", self.repo, "--signer-workflow", signer_workflow,
+                                    "--source-ref", "refs/heads/main", "--source-digest", self.source,
+                                    "--signer-digest", self.pin or self.source, "--format", "json"))
         image = args[2].startswith("oci://")
         name = "ghcr.io/" + self.repo if image else MODULE.CATALOG
         digest = "3" * 64 if image else hashlib.sha256(Path(args[2]).read_bytes()).hexdigest()
@@ -73,8 +84,9 @@ class EvidenceTests(unittest.TestCase):
         cert = dict(issuer="https://token.actions.githubusercontent.com",
                     sourceRepositoryURI=self.proof.repository_url, sourceRepositoryDigest=self.source,
                     sourceRepositoryRef=MODULE.SOURCE_REF, buildConfigURI=self.proof.signer,
-                    buildConfigDigest=self.source, buildSignerURI=self.proof.signer,
-                    buildSignerDigest=self.source, buildTrigger="push", runInvocationURI=invocation)
+                     buildConfigDigest=self.source,
+                     buildSignerURI="https://github.com/" + signer_workflow + "@" + (self.pin or MODULE.SOURCE_REF),
+                     buildSignerDigest=self.pin or self.source, buildTrigger="push", runInvocationURI=invocation)
         verified = {"signature": {"certificate": cert}, "statement": {
             "predicateType": "https://slsa.dev/provenance/v1", "subject": [{"name": name, "digest": {"sha256": digest}}],
             "predicate": {"runDetails": {"metadata": {"invocationId": invocation}}}}}
@@ -89,6 +101,86 @@ class EvidenceTests(unittest.TestCase):
     def test_valid_catalog_and_replay(self):
         self.assertTrue(self.verify())
         self.assertTrue(self.verify())
+
+    def set_attestation_invocation(self, result, run_id, attempt):
+        invocation = self.proof.repository_url + f"/actions/runs/{run_id}/attempts/{attempt}"
+        result["signature"]["certificate"]["runInvocationURI"] = invocation
+        result["statement"]["predicate"]["runDetails"]["metadata"]["invocationId"] = invocation
+
+    def test_failed_job_rerun_retains_build_attestation(self):
+        self.run["run_attempt"] = 2
+        self.attest_mutation = lambda result, image: self.set_attestation_invocation(result, 123, 1 if image else 2)
+        for managed in (False, True):
+            if managed:
+                self.workflow = self.managed_workflow()
+            with self.subTest(managed=managed):
+                self.assertTrue(self.verify())
+
+    def test_rerun_rejects_out_of_range_attempts(self):
+        self.run["run_attempt"] = 2
+        for attempt in (0, 3):
+            self.attest_mutation = lambda result, image: self.set_attestation_invocation(result, 123, attempt)
+            with self.subTest(attempt=attempt), self.assertRaises(MODULE.EvidenceError):
+                self.verify()
+
+    def test_rerun_does_not_accept_unsuccessful_run(self):
+        self.extra_runs = [dict(self.run, id=124)]
+        self.run.update(run_attempt=2, conclusion="failure")
+        self.attest_mutation = lambda result, image: self.set_attestation_invocation(result, 123, 1 if image else 2)
+        with self.assertRaises(MODULE.EvidenceError):
+            self.verify()
+
+    def managed_workflow(self):
+        self.pin = "a" * 40
+        return ("jobs:\n  catalog:\n    uses: " + MODULE.MANAGED_WORKFLOW + "@" + self.pin
+                + "\n    with:\n      aidevops_ref: " + self.pin
+                + "\n      package_checks: |\n        echo checks\n"
+                + "    secrets:\n      CLOUDRON_RELEASE_PAT: ${{ secrets.CLOUDRON_RELEASE_PAT }}\n")
+
+    def test_managed_signer_and_secret_forwarding(self):
+        self.workflow = self.managed_workflow()
+        self.assertEqual(MODULE.managed_caller(self.workflow, require_secret=True), self.pin)
+        self.assertTrue(self.verify())
+        for field in ("buildSignerURI", "buildSignerDigest", "buildConfigURI", "buildConfigDigest",
+                      "sourceRepositoryURI", "sourceRepositoryDigest", "sourceRepositoryRef", "runInvocationURI"):
+            self.attest_mutation = lambda result, image: result["signature"]["certificate"].update({field: "forged"})
+            with self.subTest(field=field), self.assertRaises(MODULE.EvidenceError):
+                self.verify()
+
+    def test_actual_managed_template(self):
+        template = Path(__file__).resolve().parents[2] / "templates/workflows/cloudron-catalog-publish-caller.yml"
+        pin = MODULE.managed_caller(template.read_text(), require_secret=True)
+        self.assertRegex(pin, r"^[a-f0-9]{40}$")
+
+    def test_approval_rejects_unmanaged_caller(self):
+        for workflow in (self.workflow, self.managed_workflow().replace(MODULE.MANAGED_WORKFLOW, "other/repo/.github/workflows/build.yml")):
+            with self.subTest(workflow=workflow), self.assertRaises(MODULE.EvidenceError):
+                MODULE.managed_caller(workflow, require_secret=True)
+
+    def test_managed_caller_negatives(self):
+        workflow = self.managed_workflow()
+        mutations = [
+            workflow.replace("aidevops_ref: " + self.pin, "aidevops_ref: " + "b" * 40),
+            workflow.replace(self.pin, "main"),
+            workflow.replace("      aidevops_ref:", "      wrong_ref:"),
+            workflow.replace("    with:\n", "    with:\n      aidevops_ref: bad\n"),
+            workflow.replace("    secrets:\n", "    secrets: inherit\n    unused:\n"),
+            workflow.replace("${{ secrets.CLOUDRON_RELEASE_PAT }}", "${{ secrets.SYNC_PAT }}"),
+            workflow.replace("    secrets:\n", "    secrets: &alias\n    unused:\n"),
+            workflow.replace("  catalog:", "  catalog: &alias"),
+            workflow.replace("jobs:", "jobs: {}\nunused:"),
+        ]
+        for changed in mutations:
+            with self.subTest(workflow=changed), self.assertRaises(MODULE.EvidenceError):
+                MODULE.managed_caller(changed, require_secret=True)
+
+    def test_arbitrary_reusable_signer_rejected(self):
+        self.workflow = self.managed_workflow()
+        for signer in ("https://github.com/other/repo/.github/workflows/build.yml@" + self.pin,
+                       "https://github.com/" + MODULE.MANAGED_WORKFLOW + "@refs/heads/main"):
+            self.attest_mutation = lambda result, image: result["signature"]["certificate"].update(buildSignerURI=signer)
+            with self.subTest(signer=signer), self.assertRaises(MODULE.EvidenceError):
+                self.verify()
 
     def test_valid_tagged_image_uses_canonical_attestation_subject(self):
         self.image = "ghcr.io/" + self.repo + ":2.0.12@sha256:" + "3" * 64
@@ -154,6 +246,84 @@ class EvidenceTests(unittest.TestCase):
                 self.commit_data = dict(original, **change)
                 with self.assertRaises(MODULE.EvidenceError):
                     self.verify()
+
+    def rebase_catalog(self):
+        self.commit_data["parents"] = [{"sha": self.parent}]
+        self.commit_data["commit"] = {"message": "Publish catalog\n\nCloudron-Source: " + self.source}
+
+    def test_docs_only_rebase_accepts_publisher_allowlist(self):
+        self.rebase_catalog()
+        self.workflow = self.managed_workflow()
+        for path in ("README.md", "docs/metrics/activity.svg", "metrics/activity.svg",
+                     ".github/metrics/activity.svg", ".github/star-history/activity.svg",
+                     "star-history.svg", "star-history-dark.svg"):
+            self.docs_commit["files"] = [{"filename": path, "status": "modified"}]
+            with self.subTest(path=path):
+                self.assertTrue(self.verify())
+
+    def test_docs_only_rebase_rejects_package_changes_and_rename_origins(self):
+        self.rebase_catalog()
+        for path in (MODULE.CATALOG, "CloudronManifest.json", "Dockerfile", "start.sh",
+                     "README.md.sh", "other/docs/file", "docs-other/file", ".github/workflows/publish.yml"):
+            for renamed in (False, True):
+                self.docs_commit["files"] = [{"filename": "docs/moved" if renamed else path,
+                                             **({"previous_filename": path} if renamed else {})}]
+                with self.subTest(path=path, renamed=renamed), self.assertRaisesRegex(
+                        MODULE.EvidenceError, "outside the docs-only allowlist"):
+                    self.verify()
+
+    def test_docs_only_rebase_requires_single_exact_trailer(self):
+        self.rebase_catalog()
+        trailer = "Cloudron-Source: " + self.source
+        for message in ("Publish catalog", "Publish catalog\n\nCloudron-Source: " + "5" * 40,
+                        "Publish catalog\n\n" + trailer + "\n" + trailer,
+                        "Publish catalog\n\n" + trailer + "\ncloudron-source: " + self.source,
+                        "Publish catalog\n" + trailer, "Publish catalog\n\n" + trailer + "\nNot a trailer"):
+            self.commit_data["commit"]["message"] = message
+            with self.subTest(message=message), self.assertRaisesRegex(MODULE.EvidenceError, "trailer"):
+                self.verify()
+
+    def test_docs_only_rebase_rejects_non_ancestor_and_incomplete_history(self):
+        self.rebase_catalog()
+        original = copy.deepcopy(self.comparison)
+        for change in ({"status": "diverged"}, {"status": "behind"}, {"status": "identical"},
+                       {"total_commits": 2}, {"total_commits": 0, "commits": []},
+                       {"total_commits": 251, "commits": [{"sha": self.parent}] * 251}):
+            self.comparison = dict(original, **change)
+            with self.subTest(change=change), self.assertRaises(MODULE.EvidenceError):
+                self.verify()
+
+    def test_docs_only_rebase_checks_history_not_net_diff(self):
+        self.rebase_catalog()
+        # A clean net comparison must not hide a package edit later reverted.
+        self.comparison["files"] = [{"filename": "docs/metrics/activity.svg"}]
+        self.docs_commit["files"].append({"filename": "Dockerfile", "status": "modified"})
+        with self.assertRaisesRegex(MODULE.EvidenceError, "outside the docs-only allowlist"):
+            self.verify()
+
+    def test_docs_only_rebase_rejects_truncated_files(self):
+        self.rebase_catalog()
+        self.docs_commit["files"] *= 100
+        with self.assertRaisesRegex(MODULE.EvidenceError, "truncated"):
+            self.verify()
+
+    def test_docs_only_rebase_rejects_partial_merge_diff(self):
+        self.rebase_catalog()
+        # First-parent files can be docs-only while another parent differs in code.
+        self.docs_commit["parents"].append({"sha": "5" * 40})
+        with self.assertRaisesRegex(MODULE.EvidenceError, "history must be linear"):
+            self.verify()
+
+    def test_docs_only_rebase_keeps_catalog_and_attestation_boundaries(self):
+        self.rebase_catalog()
+        self.commit_data["files"].append({"filename": "README.md", "status": "modified"})
+        with self.assertRaisesRegex(MODULE.EvidenceError, "modify only the existing catalog"):
+            self.verify()
+        self.commit_data["files"].pop()
+        self.attest_mutation = lambda result, image: result["signature"]["certificate"].update(
+            sourceRepositoryDigest=self.parent)
+        with self.assertRaisesRegex(MODULE.EvidenceError, "expected source/workflow/run"):
+            self.verify()
 
     def test_catalog_cannot_change_history_or_manifest(self):
         mutations = [
@@ -224,14 +394,12 @@ class EvidenceTests(unittest.TestCase):
                 self.verify()
 
     def test_different_successful_runs_do_not_combine(self):
+        self.run["run_attempt"] = 2
         self.extra_runs = [dict(self.run, id=124)]
         def different_run(result, image):
-            if image:
-                invocation = self.proof.repository_url + "/actions/runs/124/attempts/1"
-                result["signature"]["certificate"]["runInvocationURI"] = invocation
-                result["statement"]["predicate"]["runDetails"]["metadata"]["invocationId"] = invocation
+            self.set_attestation_invocation(result, 124 if image else 123, 1 if image else 2)
         self.attest_mutation = different_run
-        with self.assertRaises(MODULE.EvidenceError):
+        with self.assertRaisesRegex(MODULE.EvidenceError, "same successful run"):
             self.verify()
 
     def test_duplicate_json_and_api_failure(self):

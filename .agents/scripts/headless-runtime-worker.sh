@@ -52,6 +52,10 @@ _HRW_REASON_READY_MISSING_SUMMARY="worker_ready_missing_summary"
 _HRW_REASON_READY_HANDOFF_FAILED="worker_ready_missing_summary_transition_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
 _HRW_REASON_UNVERIFIED_HANDOFF="worker_post_pr_handoff_unverified"
+# GH#36171: exact-head handoff evidence stayed unreadable (transport deferral).
+_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED="worker_post_pr_handoff_verification_deferred"
+_HRW_HANDOFF_CONFIRMED_ON_RETRY=2
+_HRW_HANDOFF_ROUTED=3
 _HRW_REASON_ORIGIN_RECONCILIATION_FAILED="worker_origin_reconciliation_failed"
 _HRW_ORIGIN_WORKER_LABEL="origin:worker"
 _HRW_ORIGIN_STATE_MISSING="missing"
@@ -114,718 +118,13 @@ _hrw_release_dispatch_claim() {
 	return 0
 }
 
-# =============================================================================
-# Runtime invocation support — auth rotation & rate-limit monitoring
-# =============================================================================
+# shellcheck source=./headless-runtime-worker-invocation.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/headless-runtime-worker-invocation.sh"
 
-# _maybe_rotate_isolated_auth: pre-dispatch OAuth rotation check for headless workers (t2249).
-#
-# When the account copied into the isolated auth.json is currently in
-# cooldown per the SHARED pool metadata (recorded by a prior worker's
-# mark-failure), rotate the isolated file to a healthy account BEFORE
-# opencode spawns. This prevents wasted dispatches on known-dead accounts.
-#
-# Safe because OPENCODE_AUTH_FILE in oauth-pool-helper.sh is now
-# XDG_DATA_HOME-aware (t2249): rotate writes to the ISOLATED file,
-# not the shared interactive auth.json.
-#
-# Args: $1 = absolute path to the isolated auth.json
-#       $2 = provider (e.g., "anthropic")
-# Returns: 0 always — best-effort; rotation failure must not block dispatch.
-_maybe_rotate_isolated_auth() {
-	local isolated_auth="$1"
-	local provider="$2"
-	local pool_file="${AIDEVOPS_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
-	local oauth_helper="${OAUTH_POOL_HELPER:-${HOME}/.aidevops/agents/scripts/oauth-pool-helper.sh}"
-
-	# Skip silently when prerequisites are missing (jq, pool, isolated auth, helper).
-	command -v jq >/dev/null 2>&1 || return 0
-	[[ -f "$isolated_auth" ]] || return 0
-	[[ -f "$pool_file" ]] || return 0
-	[[ -x "$oauth_helper" ]] || return 0
-
-	# Extract BOTH the email and access token currently written in the
-	# isolated auth for this provider. build_auth_entry (in
-	# oauth-pool-lib/_common.py) writes only {type, refresh, access, expires}
-	# on rotation — NOT email. So after the first rotation, the isolated
-	# auth.json has no email field and the previous email-only lookup here
-	# returned early, defeating the rotation on every subsequent dispatch.
-	# (CodeRabbit review #4135227617, verified against live production
-	# ~/.local/share/opencode/auth.json 2026-04-19.)
-	local current_email current_access
-	current_email=$(jq -r --arg p "$provider" '.[$p].email // empty' "$isolated_auth" 2>/dev/null || true)
-	current_access=$(jq -r --arg p "$provider" '.[$p].access // empty' "$isolated_auth" 2>/dev/null || true)
-	[[ -n "$current_email" || -n "$current_access" ]] || return 0
-
-	# Look up the account in the shared pool. Try email first (most common —
-	# interactive auth with email was copied to isolated at worker startup).
-	# Fall back to access-token match when email is absent (isolated auth
-	# was already rotated at least once, dropping email per build_auth_entry).
-	local pool_match=""
-	if [[ -n "$current_email" ]]; then
-		pool_match=$(jq -c --arg p "$provider" --arg e "$current_email" \
-			'.[$p] | map(select(.email == $e)) | .[0] // empty' "$pool_file" 2>/dev/null || true)
-	fi
-	if [[ -z "$pool_match" && -n "$current_access" ]]; then
-		pool_match=$(jq -c --arg p "$provider" --arg a "$current_access" \
-			'.[$p] | map(select(.access == $a)) | .[0] // empty' "$pool_file" 2>/dev/null || true)
-	fi
-	[[ -n "$pool_match" ]] || return 0
-
-	local cooldown_until now_ms identity_label
-	cooldown_until=$(printf '%s' "$pool_match" | jq -r '.cooldownUntil // 0' 2>/dev/null || echo 0)
-	[[ -n "$cooldown_until" ]] || cooldown_until=0
-	# Log-friendly identity: private workloads suppress account identity, while
-	# ordinary workers may use email. Never log access-token fragments.
-	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == "1" ]]; then
-		identity_label="[private]"
-	elif [[ -n "$current_email" ]]; then
-		identity_label="$current_email"
-	else
-		identity_label="access credential"
-	fi
-	now_ms=$(($(date +%s) * 1000))
-
-	# Only rotate when cooldown is still active (in the future).
-	if [[ "$cooldown_until" -gt "$now_ms" ]]; then
-		local isolated_dir
-		isolated_dir="$(dirname "$(dirname "$isolated_auth")")"
-		print_info "[lifecycle] pre_dispatch_rotate: ${provider} account=${identity_label} in cooldown; rotating isolated auth (dir=${isolated_dir})"
-		# XDG_DATA_HOME is already exported by caller; passing it explicitly here
-		# makes the intent explicit in logs and protects against env stripping.
-		if XDG_DATA_HOME="$isolated_dir" "$oauth_helper" rotate "$provider" >/dev/null 2>&1; then
-			local new_email new_access new_label
-			new_email=$(jq -r --arg p "$provider" '.[$p].email // empty' "$isolated_auth" 2>/dev/null || echo "")
-			new_access=$(jq -r --arg p "$provider" '.[$p].access // empty' "$isolated_auth" 2>/dev/null || echo "")
-			if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == "1" ]]; then
-				new_label="[private]"
-			elif [[ -n "$new_email" ]]; then
-				new_label="$new_email"
-			elif [[ -n "$new_access" ]]; then
-				new_label="access credential"
-			else
-				new_label="$_HRW_STATUS_UNKNOWN"
-			fi
-			print_info "[lifecycle] pre_dispatch_rotate: ${provider} ${identity_label} -> ${new_label}"
-		else
-			print_warning "[lifecycle] pre_dispatch_rotate failed for ${provider}; continuing with current account"
-		fi
-	fi
-
-	return 0
-}
-
-#######################################
-# Return whether startup output contains an attributable provider failure that
-# should stop a worker before its first model event. Reuse the canonical trusted
-# classifier so IDs, paths, tool output, and other incidental text cannot create
-# provider backoff.
-#
-# Args:
-#   $1 output_file — worker startup output
-#
-# Returns: 0 for trusted rate-limit/quota/server failures, 1 otherwise.
-#######################################
-_output_has_trusted_fast_provider_failure() {
-	local output_file="$1"
-	local classification=""
-	local reason="" provider_type="" provider_status="" classification_source="" classification_pattern=""
-
-	[[ -f "$output_file" ]] || return 1
-	classification=$(_classify_trusted_provider_failure "$output_file" 2>/dev/null) || return 1
-	[[ -n "$classification" ]] || return 1
-	IFS=$'\t' read -r reason provider_type provider_status classification_source classification_pattern <<<"$classification"
-
-	case "$reason" in
-	rate_limit | quota_exceeded)
-		return 0
-		;;
-	provider_error)
-		[[ "$provider_type" == "server_error" ]] && return 0
-		;;
-	esac
-	return 1
-}
-
-#######################################
-# _launch_rate_limit_fast_monitor: background 30s sentinel that detects
-# Anthropic 429 / provider-overload patterns on the FIRST API call and
-# kills the worker cleanly before the 20-min opencode retry zombie forms.
-#
-# GH#21578 / t3021 — Three simultaneous workers were killed at t=20min
-# (exit 143, duration_ms ~1.2M) because opencode silently retried a 429
-# for the full slot lifetime. Each zombie blocked one dispatch slot.
-#
-# Strategy: poll output_file every 5s for monitor_window seconds (default 30).
-# If rate-limit / HTTP-5xx patterns appear AND the worker produced no LLM
-# activity yet (JSON events), SIGTERM the worker, write exit_code=0 and the
-# .rate_limit_fast sentinel next to exit_code_file, then exit.
-# _execute_run_attempt reads the sentinel and routes to exit 80, which
-# cmd_run handles without incrementing the fast-fail / NMR counter.
-#
-# Args:
-#   $1 output_file      — tee'd worker output file to monitor
-#   $2 worker_pid       — the worker subshell PID to kill on detection
-#   $3 exit_code_file   — path for writing exit_code=0 + creating sentinel
-#   $4 monitor_window   — seconds to watch (default: 30)
-#
-# Returns: 0 always (launched in background; caller captures PID via $!)
-#######################################
-_launch_rate_limit_fast_monitor() {
-	local output_file="$1"
-	local worker_pid="$2"
-	local exit_code_file="$3"
-	local monitor_window="${4:-30}"
-	local poll_interval=5
-
-	(
-		set +e
-		local elapsed=0
-		local sentinel="${exit_code_file}.rate_limit_fast"
-		local activity_detected=""
-
-		while [[ "$elapsed" -lt "$monitor_window" ]]; do
-			sleep "$poll_interval"
-			elapsed=$((elapsed + poll_interval))
-
-			# Exit cleanly if the worker already finished on its own.
-			if ! kill -0 "$worker_pid" 2>/dev/null; then
-				return 0
-			fi
-
-			# Only fire if no LLM activity has been produced yet.
-			# If the model already started working (step_start, tool, etc.),
-			# this is not a dead-on-arrival rate limit — let the watchdog handle it.
-			activity_detected=$(output_has_activity "$output_file" 2>/dev/null) || activity_detected="0"
-			if [[ "$activity_detected" == "1" ]]; then
-				return 0
-			fi
-
-			# Only canonical, attributable provider evidence may stop the worker.
-			if _output_has_trusted_fast_provider_failure "$output_file"; then
-				# Kill the worker cleanly — this is a transient API condition.
-				kill -TERM "$worker_pid" 2>/dev/null || true
-				sleep 2
-				kill -0 "$worker_pid" 2>/dev/null && kill -KILL "$worker_pid" 2>/dev/null || true
-				# Signal _execute_run_attempt to route as rate_limit_fast (exit 80).
-				printf '%s' "0" >"$exit_code_file" 2>/dev/null || true
-				printf '%s' "1" >"$sentinel" 2>/dev/null || true
-				return 0
-			fi
-		done
-		return 0
-	) &
-	printf '%s' "$!"
-	return 0
-}
-
-# =============================================================================
-# Claude CLI invocation
-# =============================================================================
-
-# _invoke_claude: run the claude CLI command and capture output.
-# Same interface shape as _invoke_opencode (output/exit_code first), with an
-# additional work_dir slot so the caller can set the child cwd via shell
-# rather than a CLI flag.
-#
-# GH#21886: Claude CLI has no --cwd / --directory / --working-directory
-# flag. Setting cwd MUST happen via `cd` in the parent shell before exec.
-# This function isolates the cd in a subshell so it does not pollute the
-# caller's PWD. Empty work_dir is allowed (no-op cd) for callers that
-# legitimately want to inherit the current cwd.
-#
-# GH#33117: the sandboxed path normalizes the process-scoped signing and
-# repository-bound Git-auth environment exactly like
-# _invoke_opencode_run_sandboxed (headless-runtime-invoke.sh), failing closed
-# with exit 87/88 when either cannot be isolated. Without this, ambient
-# GIT_CONFIG_* entries ahead of the signing entries make the passthrough drop
-# the dedicated signing config and the worker signs with the global key.
-#
-# Args: output_file exit_code_file work_dir cmd_args...
-_invoke_claude() {
-	local output_file="$1"
-	local exit_code_file="$2"
-	local work_dir="$3"
-	shift 3
-	local -a cmd=("$@")
-
-	(
-		set +e
-		local egress_mode="${AIDEVOPS_WORKER_EGRESS_MODE:-auto}"
-		local egress_worker_id="${AIDEVOPS_WORKER_ID:-${_invoke_session_key:-headless}}"
-		# Set child cwd via shell since claude CLI has no flag for it.
-		if [[ -n "$work_dir" ]]; then
-			if ! cd "$work_dir"; then
-				print_error "_invoke_claude: cd '$work_dir' failed (GH#21886)"
-				printf '%s' "1" >"$exit_code_file"
-				exit 1
-			fi
-		fi
-		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
-			local passthrough_csv=""
-			local runtime_role="${_invoke_role:-worker}"
-			if ! prepare_headless_signing_sandbox_env "$runtime_role"; then
-				print_error "Headless signing configuration could not be safely isolated for the sandbox"
-				printf '%s' "87" >"$exit_code_file"
-				exit 87
-			fi
-			if ! prepare_headless_git_auth_sandbox_env "$runtime_role"; then
-				print_error "Repository-bound worker Git authentication could not be safely isolated for the sandbox"
-				printf '%s' "88" >"$exit_code_file"
-				exit 88
-			fi
-			passthrough_csv="$(build_sandbox_passthrough_csv "${_invoke_provider:-}" "$runtime_role")"
-			if [[ -n "$passthrough_csv" ]]; then
-				if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --egress-mode "$egress_mode" --worker-id "$egress_worker_id" --passthrough "$passthrough_csv" -- "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
-				else
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --egress-mode "$egress_mode" --worker-id "$egress_worker_id" --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
-				fi
-			else
-				if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --egress-mode "$egress_mode" --worker-id "$egress_worker_id" -- "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
-				else
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --egress-mode "$egress_mode" --worker-id "$egress_worker_id" -- "${cmd[@]}" 2>&1 | tee "$output_file"
-				fi
-			fi
-			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
-		else
-			if [[ "$egress_mode" == "required" ]]; then
-				print_error "Whole-process worker egress is required, but the sandbox launcher is disabled or unavailable"
-				printf '%s' "126" >"$exit_code_file"
-				exit 126
-			fi
-			if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
-				print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare timeout (no privilege isolation) (GH#20146 audit)"
-			fi
-			if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
-				timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
-			else
-				timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${cmd[@]}" 2>&1 | tee "$output_file"
-			fi
-			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
-		fi
-	) || true
-	return 0
-}
-
-# =============================================================================
-# Output preservation and classification
-# =============================================================================
-
-#######################################
-# t2119: Preserve a worker output file on no_activity failure so operators
-# can diagnose why the runtime exited without ever producing JSON events.
-#
-# Before t2119, _handle_run_result unconditionally `rm -f "$output_file"`
-# on the no_activity path, erasing the only forensic evidence (opencode
-# stderr via tee, plugin startup log lines, sandbox exec trace). This
-# left the residual 30s failures observed in the t2116 session with zero
-# diagnostic surface.
-#
-# Strategy: move (not copy — keeps disk usage bounded) the output file
-# to ~/.aidevops/logs/worker-no-activity/<session>-<ts>.log. Size-cap
-# each preserved file to 256KB (worker output files rarely exceed this;
-# truncation is fine for forensic purposes). Retention-cap the directory
-# to the 50 most recent files so the log directory doesn't grow
-# unbounded on a looping failure.
-#
-# Best-effort throughout — a preservation failure must never propagate
-# into the caller's error-handling path. The goal is forensics, not
-# hard-guaranteed persistence.
-#
-# Args:
-#   $1 - output_file path
-#   $2 - session_key (e.g. issue-19114 or pulse)
-#   $3 - model (for filename disambiguation; slashes stripped)
-#######################################
-_preserve_no_activity_output() {
-	local output_file="$1"
-	local session_key="${2:-unknown}"
-	local model="${3:-unknown}"
-
-	if [[ -z "$output_file" || ! -f "$output_file" ]]; then
-		return 0
-	fi
-	if _headless_private_workload_enabled; then
-		rm -f "$output_file" 2>/dev/null || true
-		return 0
-	fi
-
-	local diag_dir="${HOME}/.aidevops/logs/worker-no-activity"
-	if ! mkdir -p "$diag_dir" 2>/dev/null; then
-		# Fall back to the original delete behaviour if the diagnostic
-		# directory can't be created — we must not keep tmp files around.
-		rm -f "$output_file" 2>/dev/null || true
-		return 0
-	fi
-
-	# Sanitize session + model for use in a filename.
-	local safe_session safe_model
-	safe_session=$(printf '%s' "$session_key" | tr '/ ' '__' | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
-	safe_model=$(printf '%s' "$model" | tr '/ ' '__' | tr -cd 'A-Za-z0-9._-' | cut -c1-32)
-	[[ -n "$safe_session" ]] || safe_session="$_HRW_STATUS_UNKNOWN"
-	[[ -n "$safe_model" ]] || safe_model="$_HRW_STATUS_UNKNOWN"
-
-	local ts
-	ts=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%s)
-	local dest="${diag_dir}/${ts}-${safe_session}-${safe_model}.log"
-
-	# Size-cap: take the first 256KB of the output. For the no_activity
-	# failure mode the interesting content (plugin init errors, opencode
-	# startup logs, migration output, auth refresh messages) always
-	# lands in the first few KB; anything past 256KB is noise.
-	local max_bytes=262144
-	if head -c "$max_bytes" "$output_file" >"$dest" 2>/dev/null; then
-		local orig_size
-		orig_size=$(wc -c <"$output_file" 2>/dev/null | tr -d ' ') || orig_size=0
-		if [[ "$orig_size" -gt "$max_bytes" ]]; then
-			printf '\n\n[...t2119 TRUNCATED at %d bytes, original %d bytes...]\n' \
-				"$max_bytes" "$orig_size" >>"$dest" 2>/dev/null || true
-		fi
-	fi
-
-	rm -f "$output_file" 2>/dev/null || true
-
-	# Retention cap: keep the 50 most recent preserved files.
-	# ls -t returns newest first; tail -n +51 selects everything beyond the cap.
-	# Using find -print0 | sort would be more robust but ls is enough for
-	# our flat directory of predictable filenames.
-	local keep=50
-	local prune_list
-	prune_list=$(cd "$diag_dir" 2>/dev/null && ls -1t -- *.log 2>/dev/null | tail -n +$((keep + 1))) || prune_list=""
-	if [[ -n "$prune_list" ]]; then
-		while IFS= read -r _victim; do
-			[[ -n "$_victim" ]] || continue
-			rm -f "${diag_dir}/${_victim}" 2>/dev/null || true
-		done <<<"$prune_list"
-	fi
-
-	return 0
-}
-
-# =============================================================================
-# Worker output classification
-# =============================================================================
-
-#######################################
-# Resolve the repository default branch for worker-output guards.
-#
-# Args:
-#   $1 - work_dir (worktree root; must be a git repo)
-#######################################
-_hrw_resolve_default_branch() {
-	local work_dir="$1"
-	local default_branch=""
-
-	default_branch=$(git -C "$work_dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
-	if [[ "$default_branch" == origin/* ]]; then
-		default_branch="${default_branch#origin/}"
-	fi
-
-	if [[ -z "$default_branch" ]]; then
-		for default_branch in main master; do
-			if git -C "$work_dir" show-ref --verify --quiet "refs/remotes/origin/${default_branch}" 2>/dev/null || \
-				git -C "$work_dir" show-ref --verify --quiet "refs/heads/${default_branch}" 2>/dev/null; then
-				printf '%s' "$default_branch"
-				return 0
-			fi
-		done
-		default_branch=""
-	fi
-
-	if [[ -n "$default_branch" ]]; then
-		printf '%s' "$default_branch"
-		return 0
-	fi
-
-	return 0
-}
-
-#######################################
-# Resolve the comparison base and count commits beyond it.
-# Output: <default-branch>|<count|unknown>
-# Args: $1=work_dir
-#######################################
-_hrw_worker_base_commit_state() {
-	local work_dir="$1"
-	local default_branch=""
-	local commit_count=""
-
-	default_branch=$(_hrw_resolve_default_branch "$work_dir")
-	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
-	if commit_count=$(git -C "$work_dir" rev-list --count "origin/${default_branch}..${_HRW_GIT_HEAD}" 2>/dev/null) && \
-		[[ "$commit_count" =~ ^[0-9]+$ ]]; then
-		printf '%s|%s' "$default_branch" "$commit_count"
-	else
-		printf '%s|unknown' "$default_branch"
-	fi
-	return 0
-}
-
-#######################################
-# Detect whether a worker produced any tangible output.
-#
-# Checks three independent signals. Returns 0 (true — has output) if ANY
-# signal is present; returns 1 (false — zero output) only when ALL are absent.
-#
-# Args:
-#   $1 - session_key (e.g. "issue-20721")
-#   $2 - work_dir    (worktree root; must be a git repo)
-#
-# Signals checked (in order of cheapness):
-#   1. Commits on feature branch beyond the resolved remote default branch
-#      (git rev-list --count origin/<default>..HEAD > 0)
-#   2. Branch pushed to remote
-#      (git ls-remote origin refs/heads/<branch> is non-empty)
-#   3. PR linked to this issue via gh
-#      (gh pr list --search "<issue_number>" returns at least one result)
-#
-# Design principle — fail-open: every check that errors (no remote, no gh,
-# detached HEAD, network failure) returns 0 so false-negatives are impossible.
-# Only a confirmed absence of all three signals triggers a noop classification.
-#######################################
-# _worker_produced_output — classify worker output quality (GH#20819)
-#
-# Returns a concrete lifecycle/output classification via stdout:
-#   "pr_exists"             — PR confirmed, or fail-open (cannot evaluate signals)
-#   "branch_orphan"         — branch pushed + commits exist BUT no PR found
-#                             (requires DISPATCH_REPO_SLUG + gh to confirm absence)
-#   "local_branch_unpushed" — local branch has commits but no remote branch or PR
-#   "dirty_worktree"        — uncommitted/untracked edits exist after a crash
-#   "draft_checkpoint"      — exact-head worker draft (durable, incomplete)
-#   "protected_draft"       — interactive/held/NMR/non-worker draft
-#   "closed_unmerged"       — exact-head PR closed without merge
-#   "unverified_open_pr"    — issue-search fallback cannot prove exact head
-#   "head_mismatch"         — local HEAD is not the open PR head
-#   "ready_missing_linkage" — exact-head ready PR lacks a closing issue reference
-#   "merged_missing_linkage" — exact-head merged PR lacks a closing issue reference
-#   "ready_missing_summary" — exact-head ready PR lacks MERGE_SUMMARY
-#   "merged_missing_summary" — exact-head merged PR lacks MERGE_SUMMARY
-#   "noop"                  — no commits, no pushed branch, no PR
-#
-# Fail-open semantics are preserved: any condition that prevents confident
-# signal evaluation echoes "pr_exists" so false-negatives (real work
-# misclassified as orphan or noop) are impossible.  Only a confirmed
-# absence of all signals (noop), a confirmed remote branch-without-PR
-# (branch_orphan), or a confirmed local committed branch-without-PR
-# (local_branch_unpushed) triggers those classifications.
-#
-# Always returns 0. Callers capture stdout:
-#   local classification
-#   classification=$(_worker_produced_output "$session_key" "$work_dir")
-#######################################
-_hrw_is_issue_worker_session() {
-	local session_key="$1"
-	local manual_issue_number=""
-	[[ "$session_key" == issue-* ]] && return 0
-	if [[ "$session_key" =~ ^manual-cli-([1-9][0-9]*)-[0-9]+$ ]]; then
-		manual_issue_number="${BASH_REMATCH[1]}"
-	fi
-	[[ -n "$manual_issue_number" && "${WORKER_ISSUE_NUMBER:-}" == "$manual_issue_number" ]]
-}
-
-_hrw_issue_number_for_session() {
-	local session_key="$1"
-	if [[ "$session_key" =~ ^issue-([1-9][0-9]*)$ ]]; then
-		printf '%s\n' "${BASH_REMATCH[1]}"
-		return 0
-	fi
-	_scl_worker_issue_number "$session_key"
-}
-
-# GH#33374: a merged checkpoint or reopened issue is not worker completion.
-_hrw_merged_pr_output_class() {
-	local pr_state="$1" repo_slug="$2" issue_number="$3"
-	local issue_state=""
-	issue_state=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.state | ascii_downcase' 2>/dev/null) || issue_state=""
-	case "${issue_state}:${pr_state}" in
-	open:*) printf 'merged_checkpoint' ;;
-	closed:merged) printf 'pr_exists' ;;
-	*) printf 'merged_missing_linkage' ;;
-	esac
-	return 0
-}
-
-_hrw_pr_output_class() {
-	local pr_state="$1" repo_slug="$2" issue_number="$3" has_pushed_branch="$4"
-	case "$pr_state" in
-	ready) printf 'pr_exists' ;;
-	merged | merged_missing_linkage)
-		_hrw_merged_pr_output_class "$pr_state" "$repo_slug" "$issue_number"
-		;;
-	draft_checkpoint | protected_draft | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_linkage | ready_missing_summary | merged_missing_summary)
-		printf '%s' "$pr_state"
-		;;
-	absent)
-		if [[ "$has_pushed_branch" -eq 1 ]]; then
-			printf 'branch_orphan'
-		else
-			printf 'local_branch_unpushed'
-		fi
-		;;
-	*) printf 'pr_exists' ;; # unknown -> fail-open
-	esac
-	return 0
-}
-
-_worker_produced_output() {
-	local session_key="$1"
-	local work_dir="$2"
-
-	# Manual keys remain issue workers when their contract matches the embedded issue.
-	if ! _hrw_is_issue_worker_session "$session_key"; then
-		printf 'pr_exists'  # fail-open for non-worker sessions
-		return 0
-	fi
-
-	# Bail if work_dir is not a valid git repo — fail-open
-	if [[ -z "$work_dir" ]] || ! git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1; then
-		printf 'pr_exists'  # fail-open: cannot evaluate signals
-		return 0
-	fi
-
-	# Compare against the resolved default, not an assumed main/master base.
-	local base_commit_state=""
-	local default_branch=""
-	local commit_count=""
-	local has_commits=0
-	local commit_comparison_known=0
-	base_commit_state=$(_hrw_worker_base_commit_state "$work_dir")
-	default_branch="${base_commit_state%%|*}"
-	commit_count="${base_commit_state#*|}"
-	if [[ "$commit_count" =~ ^[0-9]+$ ]]; then
-		commit_comparison_known=1
-		[[ "$commit_count" -gt 0 ]] && has_commits=1
-	fi
-
-	# Signal 2: a remote feature ref is output evidence only off the resolved
-	# default branch (t2899).
-	local has_pushed_branch=0
-	local branch_name=""
-	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-	if [[ -n "$branch_name" && "$branch_name" != "$_HRW_GIT_HEAD" && "$branch_name" != "$default_branch" ]]; then
-		local remote_ref=""
-		remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/$branch_name" 2>/dev/null || true)
-		[[ -n "$remote_ref" ]] && has_pushed_branch=1
-	fi
-
-	# A successful zero-count comparison proves the branch has no PR-able output,
-	# even when a same-SHA feature ref already exists remotely. Check for dirty
-	# edits first so crash recovery still preserves uncommitted work.
-	if [[ "$has_commits" -eq 0 ]]; then
-		local task_status=""
-		if ! task_status=$(_hrw_worktree_task_status "$work_dir"); then
-			printf 'pr_exists' # fail-open: cannot safely classify local state
-			return 0
-		fi
-		if [[ -n "$task_status" ]]; then
-			printf 'dirty_worktree'
-			return 0
-		fi
-		if [[ "$commit_comparison_known" -eq 1 ]]; then
-			printf 'noop'
-			return 0
-		fi
-		if [[ "$has_pushed_branch" -eq 0 ]]; then
-			printf 'pr_exists' # fail-open: resolved base ref could not be compared
-			return 0
-		fi
-	fi
-	# t2899: HEAD on default branch with commits ahead but no feature branch pushed.
-	# This is "worker landed on main with local commits" — not an orphan branch.
-	# Without a feature branch to recover, Signal 1 alone cannot produce a meaningful
-	# branch_orphan classification, so collapse to noop.
-	if [[ "$has_pushed_branch" -eq 0 && "$branch_name" == "$default_branch" ]]; then
-		printf 'noop'
-		return 0
-	fi
-
-	# Signal 3: exact-head lifecycle first; issue search is inconclusive fallback.
-	local issue_number=""
-	issue_number=$(_hrw_issue_number_for_session "$session_key")
-	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	local pr_handoff="unknown|"
-	local pr_state="unknown"
-	local local_head=""
-	local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)
-	[[ -n "$local_head" ]] || local_head="missing-local-head"
-	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" \
-		"branch-or-issue" "$local_head" 1)
-	pr_state="${pr_handoff%%|*}"
-	_hrw_pr_output_class "$pr_state" "$repo_slug" "$issue_number" "$has_pushed_branch"
-	return 0
-}
-
-#######################################
-# Preserve an exact-head worker PR for continuation. The issue remains assigned
-# and in-review while auto-dispatch is disabled; stale recovery can then route
-# the exact existing PR instead of launching a competing branch.
-# Failed or invisible transitions retain the claim.
-# Args: $1=session key, $2=repo slug, $3=lifecycle state, $4=release reason,
-#       $5=transition failure reason
-#######################################
-_escalate_worker_pr_checkpoint() {
-	local session_key="$1"
-	local repo_slug="$2"
-	local lifecycle_state="$3"
-	local release_reason="${4:-$_HRW_REASON_DRAFT_CHECKPOINT}"
-	local transition_failure_reason="${5:-$_HRW_REASON_DRAFT_ESCALATION_FAILED}"
-	local issue_number=""
-	local runner_login=""
-	local -a transition_args=(--remove-label "auto-dispatch")
-
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
-	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
-		_HRW_RECOVERY_CLASSIFICATION="$transition_failure_reason"
-		print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — issue/repo unavailable; retaining claim"
-		return 0
-	fi
-	if declare -F _hrff_resolve_release_runner_login >/dev/null 2>&1; then
-		runner_login=$(_hrff_resolve_release_runner_login)
-		[[ -n "$runner_login" ]] && transition_args+=(--add-assignee "$runner_login")
-	fi
-	if declare -F set_issue_status >/dev/null 2>&1; then
-		if ! set_issue_status "$issue_number" "$repo_slug" "in-review" "${transition_args[@]}"; then
-			_HRW_RECOVERY_CLASSIFICATION="$transition_failure_reason"
-			print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — continuation transition failed; retaining claim"
-			return 0
-		fi
-	elif ! gh issue edit "$issue_number" --repo "$repo_slug" \
-		--add-label "status:in-review" \
-		--remove-label "status:available,status:queued,status:in-progress" \
-		"${transition_args[@]}" >/dev/null 2>&1; then
-		_HRW_RECOVERY_CLASSIFICATION="$transition_failure_reason"
-		print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — continuation transition failed; retaining claim"
-		return 0
-	fi
-	if ! _worker_pr_checkpoint_block_visible "$issue_number" "$repo_slug" "$runner_login"; then
-		_HRW_RECOVERY_CLASSIFICATION="$transition_failure_reason"
-		print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — continuation state not visible; retaining claim"
-		return 0
-	fi
-
-	_hrw_release_dispatch_claim "$session_key" "$release_reason"
-	_HRW_RECOVERY_CLASSIFICATION="$release_reason"
-	print_warning "[lifecycle] worker_pr_handoff_preserved session=${session_key} state=${lifecycle_state} — exact-head continuation pending"
-	return 0
-}
-
-_worker_pr_checkpoint_block_visible() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local expected_runner="${3:-}"
-	gh issue view "$issue_number" --repo "$repo_slug" --json state,labels,assignees 2>/dev/null \
-		| jq -e --arg runner "$expected_runner" '
-			([.labels[]?.name]) as $labels |
-			([.assignees[]?.login]) as $assignees |
-			.state == "OPEN" and
-			($labels | index("status:in-review")) != null and
-			(["status:available", "status:queued", "status:in-progress", "auto-dispatch"] - $labels | length) == 4 and
-			($runner == "" or ($assignees | index($runner)) != null)
-		' >/dev/null 2>&1
-	return $?
-}
+# shellcheck source=./headless-runtime-worker-output.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/headless-runtime-worker-output.sh"
 
 # =============================================================================
 # Orphan handling
@@ -1368,6 +667,84 @@ _worker_external_terminal_complete() {
 	return 1
 }
 
+# GH#35629: own squash merges need exact PR-head proof, not ancestry against
+# the default tip. Keep this separate from the stricter PR-less contract.
+# A finalized guarded receipt binds delivery to this session and attempt window.
+_hrw_own_merged_terminal_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	local runtime_session="${discovered_session:-${_HRW_OWN_MERGED_RUNTIME_SESSION:-}}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
+	local issue_number branch head dirty context started
+	[[ -n "$runtime_session" && -n "${AIDEVOPS_ATTEMPT_ID:-}" ]] || return 1
+	[[ "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]{19}$ ]] || return 1
+	_hrw_is_issue_worker_session "$session_key" || return 1
+	issue_number=$(_hrw_issue_number_for_session "$session_key") || return 1
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
+	[[ "${WORKER_ISSUE_NUMBER:-}" == "$issue_number" && -d "$work_dir" ]] || return 1
+	work_dir=$(cd "$work_dir" && pwd -P) || return 1
+	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
+	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
+	dirty=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	[[ -n "$branch" && "$head" =~ ^[0-9a-f]{40}$ && -z "$dirty" ]] || return 1
+	context="${session_key}|${repo_slug}|${issue_number}|${AIDEVOPS_ATTEMPT_ID}|${AIDEVOPS_ATTEMPT_STARTED_AT}|${runtime_session}|${work_dir}|${branch}|${head}"
+	# Reuse only in-process proof for the identical attempt and clean head. A
+	# later API outage must not erase verified delivery during finalization.
+	[[ "$context" == "${_HRW_OWN_MERGED_VERIFIED_CONTEXT:-}" ]] && return 0
+	started="${AIDEVOPS_ATTEMPT_STARTED_AT:0:10}"
+	local issue_json handoff pr_number pr_json receipt
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	jq -e --arg closed closed --arg completed completed \
+		'.state == $closed and .state_reason == $completed and .pull_request == null' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	handoff=$(_pr_handoff_state_for_branch_or_issue "$branch" "$issue_number" \
+		"$repo_slug" head-only "$head" 1) || return 1
+	[[ "$handoff" =~ ^merged\|[1-9][0-9]*$ ]] || return 1
+	pr_number="${handoff#*|}"
+	# Bypass cached views and revalidate actual closing references, repository,
+	# branch and head rather than trusting a search match or a prose summary.
+	pr_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh pr view "$pr_number" --repo "$repo_slug" \
+		--json number,state,mergedAt,mergeCommit,headRefOid,headRefName,headRepository,headRepositoryOwner,closingIssuesReferences 2>/dev/null) || return 1
+	jq -e --argjson pr "$pr_number" --argjson issue "$issue_number" \
+		--arg repo "$repo_slug" --arg branch "$branch" --arg head "$head" \
+		--arg separator / --arg string_type string --argjson started "$started" '
+		.number == $pr and .state == "MERGED"
+		and (.mergedAt | fromdateiso8601) >= $started
+		and (.mergeCommit.oid | type == $string_type and test("^[0-9a-f]{40}$"))
+		and .headRefOid == $head and .headRefName == $branch
+		and ([.headRepositoryOwner.login, .headRepository.name] | join($separator) | ascii_downcase) == ($repo | ascii_downcase)
+		and any(.closingIssuesReferences[]?; .number == $issue
+			and ([.repository.owner.login, .repository.name] | join($separator) | ascii_downcase) == ($repo | ascii_downcase))
+	' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	receipt=$(_full_loop_cleanup_receipt_path "$repo_slug" "$pr_number") || return 1
+	[[ -f "$receipt" && ! -L "$receipt" ]] || return 1
+	jq -e --arg repo "$repo_slug" --argjson pr "$pr_number" --arg worktree "$work_dir" \
+		--arg branch "$branch" --arg session "$runtime_session" --argjson started "$started" \
+		--arg deferred "$_FULL_LOOP_CLEANUP_DEFERRED" --arg leased "$_FULL_LOOP_CLEANUP_LEASED" --arg string_type string '
+		.schema_version == 1 and .repository == $repo and .pr_number == $pr
+		and .worktree == $worktree and .branch == $branch and .owner.session == $session
+		and (.owner.pid | type == "number" and . > 0)
+		and (.owner.process_identity | type == $string_type and length > 0)
+		and (.created_at | fromdateiso8601) >= $started
+		and .executor_completion_state == "COMPLETE"
+		and (.resource_cleanup_state == $deferred or .resource_cleanup_state == $leased)
+		and (.release_status == "not-requested" or .release_status == "published" or .release_status == "superseded")
+	' "$receipt" >/dev/null 2>&1 || return 1
+	_HRW_OWN_MERGED_VERIFIED_CONTEXT="$context"
+	_HRW_OWN_MERGED_RUNTIME_SESSION="$runtime_session"
+	print_info "[lifecycle] worker_own_merged complete session=${session_key} attempt=${AIDEVOPS_ATTEMPT_ID} issue=${issue_number} pr=${pr_number} head=${head}"
+	return 0
+}
+
+_hrw_terminal_objective_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	_hrw_own_merged_terminal_complete "$session_key" "$work_dir" && return 0
+	_hrw_pr_less_terminal_complete "$session_key" "$work_dir" \
+		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}" && return 0
+	return 1
+}
+
 # PR-less objectives with a trusted terminal contract: explicit data-only work,
 # pulse consolidation children, or work already delivered by a closing merged
 # PR (GH#33672). The issue is fetched
@@ -1377,6 +754,8 @@ _hrw_pr_less_terminal_complete() {
 	local work_dir="$2"
 	local issue_number="$3"
 	local repo_slug="$4"
+	# Internal constant predicate names only: never retain API output or prose.
+	_HRW_PR_LESS_REJECTION="invalid_context"
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
 	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
 	[[ -d "$work_dir" ]] || return 1
@@ -1386,54 +765,115 @@ _hrw_pr_less_terminal_complete() {
 	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || head=""
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || branch=""
 	if [[ -n "$head" && -n "$branch" ]]; then
-		context="${session_key}|${repo_slug}|${issue_number}|${work_dir}|${branch}|${head}"
+		context="${session_key}|${repo_slug}|${issue_number}|${work_dir}|${branch}|${head}|${AIDEVOPS_ATTEMPT_ID:-}|${AIDEVOPS_ATTEMPT_STARTED_AT:-}"
 		if [[ "$context" == "${_HRW_PR_LESS_VERIFIED_CONTEXT:-}" ]]; then
+			_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
 			task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
-			[[ -z "$task_status" ]] && return 0
+			if [[ -z "$task_status" ]]; then
+				_HRW_PR_LESS_REJECTION=""
+				return 0
+			fi
+			_HRW_PR_LESS_REJECTION="unpublished_worktree_changes"
 			return 1
 		fi
 	fi
 	local issue_json=""
+	_HRW_SCOPED_DELIVERY_RECEIPT=""
+	_HRW_PR_LESS_REJECTION="issue_evidence_unavailable"
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="issue_not_closed"
 	jq -e '.state == "closed"' <<<"$issue_json" >/dev/null 2>&1 || return 1
 	if _hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_already_delivered_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json"; then
-		_HRW_PR_LESS_VERIFIED_CONTEXT="$context"
+		# Scoped evidence is freshly regenerated, never replayed from this cache.
+		if [[ -z "$_HRW_SCOPED_DELIVERY_RECEIPT" ]]; then
+			_HRW_PR_LESS_VERIFIED_CONTEXT="$context"
+		fi
+		_HRW_PR_LESS_REJECTION=""
 		return 0
 	fi
 	return 1
 }
 
 # A different worker may have delivered the issue before this run. Require an
-# exact closing reference on a merged PR and no unpublished work, not a prose
-# verdict, issue-number search match, or arbitrary closed issue.
+# exact closing reference or independently verified full-scope delivery on a
+# merged PR, and no unpublished work; prose and search matches are not proof.
 _hrw_already_delivered_terminal_complete() {
 	local session_key="$1"
 	local work_dir="$2"
 	local issue_number="$3"
 	local repo_slug="$4"
 	local issue_json="$5"
+	_HRW_PR_LESS_REJECTION="issue_not_trusted_completed"
 	jq -e '.state == "closed" and .state_reason == "completed"
 		and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")' \
 		<<<"$issue_json" >/dev/null 2>&1 || return 1
-	local candidates="" pr_number="" pr_json=""
+	local candidates="" pr_number="" pr_json="" scoped_rejection=""
+	_HRW_PR_LESS_REJECTION="candidate_discovery_unavailable"
 	candidates=$(gh pr list --repo "$repo_slug" --state merged --search "$issue_number" \
 		--limit 20 --json number --jq '.[].number' 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="no_merged_pr_candidate"
 	while IFS= read -r pr_number; do
 		[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || continue
+		_HRW_PR_LESS_REJECTION="candidate_evidence_unavailable"
 		pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
 			--json state,mergedAt,closingIssuesReferences 2>/dev/null) || continue
 		jq -e --argjson issue "$issue_number" --arg repo "$repo_slug" \
 			'.state == "MERGED" and .mergedAt != null
 			and any(.closingIssuesReferences[]?; .number == $issue
 				and ((.repository.owner.login + "/" + .repository.name) | ascii_downcase) == ($repo | ascii_downcase))' \
-			<<<"$pr_json" >/dev/null 2>&1 || continue
+			<<<"$pr_json" >/dev/null 2>&1 || {
+			_hrw_scoped_delivery_terminal_complete "$work_dir" "$issue_number" "$repo_slug" "$pr_number" "$issue_json" && return 0
+			# Do not lose a concrete receipt/local-work rejection when another
+			# search candidate later becomes unreadable. Retain one bounded reason.
+			[[ -n "$scoped_rejection" ]] || scoped_rejection="$_HRW_PR_LESS_REJECTION"
+			continue
+		}
 		_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
 		print_info "[lifecycle] worker_already_delivered complete session=${session_key} issue=${issue_number} pr=${pr_number}"
 		return 0
 	done <<<"$candidates"
+	[[ -z "$scoped_rejection" ]] || _HRW_PR_LESS_REJECTION="$scoped_rejection"
 	return 1
+}
+
+# A fresh verifier-produced lifecycle receipt is an alternative only for a
+# completed, fully delivered literal scope. It cannot close an issue, authorize
+# publication, or bypass the unchanged no-unpublished-work guard.
+_hrw_scoped_delivery_terminal_complete() {
+	local work_dir="$1" issue_number="$2" repo_slug="$3" pr_number="$4" issue_json="$5"
+	local receipt head branch path blob
+	_HRW_PR_LESS_REJECTION="scoped_attempt_binding_missing"
+	[[ -n "${AIDEVOPS_ATTEMPT_ID:-}" && "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]{19}$ ]] || return 1
+	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	_HRW_PR_LESS_REJECTION="scoped_local_context_unavailable"
+	work_dir=$(cd "$work_dir" && pwd -P) || return 1
+	head=$(git -C "$work_dir" rev-parse HEAD) || return 1
+	branch=$(git -C "$work_dir" branch --show-current) || return 1
+	_HRW_PR_LESS_REJECTION="scoped_receipt_unavailable"
+	receipt=$(bash "${SCRIPT_DIR}/verify-issue-close-helper.sh" check-scoped-delivery \
+		"$issue_number" "$pr_number" "$repo_slug" "$work_dir" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="scoped_receipt_invalid"
+	jq -e --arg repo "$repo_slug" --argjson issue "$issue_number" --argjson pr "$pr_number" \
+		--arg attempt "$AIDEVOPS_ATTEMPT_ID" --arg started "$AIDEVOPS_ATTEMPT_STARTED_AT" \
+		--arg worktree "$work_dir" --arg head "$head" --arg branch "$branch" \
+		--arg updated "$(jq -r '.updated_at' <<<"$issue_json")" '
+		.schema_version == 1 and .kind == "scoped_delivery" and .verified == true
+		and .repository == $repo and .issue == $issue and .pr == $pr
+		and .attempt_id == $attempt and .attempt_started_at == $started
+		and .worktree == $worktree and .head == $head and .branch == $branch
+		and .issue_updated_at == $updated and (.files | length > 0)
+	' <<<"$receipt" >/dev/null 2>&1 || return 1
+	# The guard fetched the exact live default tip. A behind checkout must not
+	# hide artifacts subsequently removed or reverted on that integration branch.
+	_HRW_PR_LESS_REJECTION="scoped_default_blob_mismatch"
+	while IFS=$'\t' read -r path blob; do
+		[[ "$(git -C "$work_dir" rev-parse "FETCH_HEAD:${path}" 2>/dev/null)" == "$blob" ]] || return 1
+	done < <(jq -r '.files[] | [.path,.blob] | @tsv' <<<"$receipt")
+	_HRW_SCOPED_DELIVERY_RECEIPT="$receipt"
+	print_info "[lifecycle] worker_scoped_delivery complete issue=${issue_number} pr=${pr_number} attempt=${AIDEVOPS_ATTEMPT_ID} head=${head}"
+	return 0
 }
 
 # A PR-less completion must leave nothing unpublished: a clean non-default
@@ -1442,26 +882,38 @@ _hrw_pr_less_worktree_clean() {
 	local work_dir="$1"
 	local repo_slug="$2"
 	local default_branch="" default_ref="" branch="" remote_tip="" local_head="" pr_count="" task_status=""
+	_HRW_PR_LESS_REJECTION="default_branch_unavailable"
 	default_branch=$(_hrw_resolve_default_branch "$work_dir") || return 1
 	[[ -n "$default_branch" ]] || return 1
+	_HRW_PR_LESS_REJECTION="worktree_branch_invalid"
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
 	[[ -n "$branch" && "$branch" != "$default_branch" ]] || return 1
+	_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
 	task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="unpublished_worktree_changes"
 	[[ -z "$task_status" ]] || return 1
+	_HRW_PR_LESS_REJECTION="local_head_unavailable"
 	local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
 	default_ref="refs/heads/${default_branch}"
+	_HRW_PR_LESS_REJECTION="default_tip_unavailable"
 	remote_tip=$(git -C "$work_dir" ls-remote origin "$default_ref" 2>/dev/null) || return 1
 	remote_tip="${remote_tip%%[[:space:]]*}"
 	[[ "$remote_tip" =~ ^[0-9a-f]{40}$ ]] || return 1
 	# Do not trust a stale origin/default tracking ref; fetch the exact live tip.
 	git -C "$work_dir" fetch -q origin "$default_ref" 2>/dev/null || return 1
+	_HRW_PR_LESS_REJECTION="default_tip_changed"
 	[[ "$(git -C "$work_dir" rev-parse FETCH_HEAD 2>/dev/null)" == "$remote_tip" ]] || return 1
+	_HRW_PR_LESS_REJECTION="unpublished_local_commits"
 	[[ "$(git -C "$work_dir" rev-list --count "${remote_tip}..${local_head}" 2>/dev/null)" == "0" ]] || return 1
 	# A pushed orphan (even if the local branch is clean) must never be waived.
 	local remote_branch=""
+	_HRW_PR_LESS_REJECTION="remote_branch_unavailable"
 	remote_branch=$(git -C "$work_dir" ls-remote origin "refs/heads/${branch}" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="unpublished_remote_branch"
 	[[ -z "$remote_branch" || "${remote_branch%%[[:space:]]*}" == "$local_head" ]] || return 1
+	_HRW_PR_LESS_REJECTION="branch_pr_evidence_unavailable"
 	pr_count=$(gh pr list --repo "$repo_slug" --head "$branch" --state all --json number --jq 'length' 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="branch_has_pr"
 	[[ "$pr_count" == "0" ]] || return 1
 	return 0
 }
@@ -1627,391 +1079,9 @@ _hrw_post_merge_permission_completion_evidence() {
 # Run lifecycle — prepare, finish, retry, detach
 # =============================================================================
 
-_hrw_current_worktree_branch() {
-	local work_dir="$1"
-	local branch=""
-
-	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null || true)
-	if [[ -z "$branch" ]]; then
-		branch="detached"
-	fi
-	printf '%s\n' "$branch"
-	return 0
-}
-
-_hrw_epoch_seconds_from_iso() {
-	local iso_ts="$1"
-	[[ -n "$iso_ts" ]] || return 1
-	python3 - "$iso_ts" <<'PY' 2>/dev/null || return 1
-import datetime
-import sys
-
-value = sys.argv[1].strip()
-if value.endswith("Z"):
-    value = value[:-1] + "+00:00"
-print(int(datetime.datetime.fromisoformat(value).timestamp()))
-PY
-	return 0
-}
-
-_hrw_worktree_task_status() {
-	local work_dir="$1"
-	local status_output=""
-	status_output=$(git -C "$work_dir" status --porcelain 2>/dev/null) || return 1
-
-	# Heal markers created by the pre-t18098 exclusion helper. This exemption is
-	# intentionally exact and macOS-only: every other untracked or modified path
-	# remains task state and continues to block ownership transfer or trigger
-	# recovery. An empty regular file proves the known Spotlight marker shape.
-	if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" && \
-		-f "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && ! -L "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && \
-		! -s "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" ]] && \
-		printf '%s\n' "$status_output" | grep -Fqx "?? ${_HRW_SPOTLIGHT_MARKER}"; then
-		local exclude_file=""
-		exclude_file=$(git -C "$work_dir" rev-parse --git-path info/exclude 2>/dev/null) || return 1
-		[[ -n "$exclude_file" ]] || return 1
-		if [[ "$exclude_file" != /* ]]; then
-			exclude_file="${work_dir}/${exclude_file}"
-		fi
-		[[ -f "$exclude_file" ]] || return 1
-		if ! grep -Fqx "/${_HRW_SPOTLIGHT_MARKER}" "$exclude_file" 2>/dev/null; then
-			printf '/%s\n' "$_HRW_SPOTLIGHT_MARKER" >>"$exclude_file" 2>/dev/null || return 1
-		fi
-		git -C "$work_dir" check-ignore --quiet --no-index -- "$_HRW_SPOTLIGHT_MARKER" 2>/dev/null || return 1
-		status_output=$(git -C "$work_dir" status --porcelain 2>/dev/null) || return 1
-	fi
-
-	printf '%s' "$status_output"
-	return 0
-}
-
-_hrw_worktree_clean_for_owner_reclaim() {
-	local work_dir="$1"
-	local status_output=""
-	status_output=$(_hrw_worktree_task_status "$work_dir") || return 1
-	[[ -z "$status_output" ]] || return 1
-
-	local upstream_ref=""
-	upstream_ref=$(git -C "$work_dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
-	if [[ -z "$upstream_ref" ]]; then
-		if git -C "$work_dir" rev-parse --verify "origin/HEAD" >/dev/null 2>&1; then
-			upstream_ref="origin/HEAD"
-		elif git -C "$work_dir" rev-parse --verify "origin/main" >/dev/null 2>&1; then
-			upstream_ref="origin/main"
-		elif git -C "$work_dir" rev-parse --verify "origin/master" >/dev/null 2>&1; then
-			upstream_ref="origin/master"
-		else
-			upstream_ref="$_HRW_GIT_HEAD"
-		fi
-	fi
-
-	local upstream_ahead=""
-	upstream_ahead=$(git -C "$work_dir" rev-list --count "${upstream_ref}..HEAD" 2>/dev/null) || return 1
-	[[ "$upstream_ahead" =~ ^[0-9]+$ ]] || return 1
-	[[ "$upstream_ahead" -eq 0 ]] || return 1
-
-	return 0
-}
-
-_hrw_is_dispatch_precreate_owner() {
-	local owner_session="$1"
-	case "$owner_session" in
-		dispatch-precreate | dispatch-precreate-*) return 0 ;;
-	esac
-	return 1
-}
-
-_hrw_transfer_worktree_owner_snapshot() {
-	local session_key="$1"
-	local work_dir="$2"
-	local branch="$3"
-	local owner_pid="$4"
-	local owner_session="$5"
-	local owner_batch="$6"
-	local owner_task="$7"
-	local created_at="$8"
-	local owner_process_start="$9"
-
-	transfer_worktree_ownership_if_expected "$work_dir" "$branch" \
-		--session "$session_key" \
-		--task "${WORKER_ISSUE_NUMBER:-}" \
-		--owner-pid "$$" \
-		--expected-owner-pid "$owner_pid" \
-		--expected-session "$owner_session" \
-		--expected-batch "$owner_batch" \
-		--expected-task "$owner_task" \
-		--expected-created-at "$created_at" \
-		--expected-process-start "$owner_process_start" || return 1
-	return 0
-}
-
-_hrw_transfer_authorized_continuation_owner() {
-	local session_key="$1"
-	local work_dir="$2"
-	local branch="$3"
-	local expected_owner_pid="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID:-}"
-	local expected_owner_session="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION:-}"
-	local expected_owner_batch="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH:-}"
-	local expected_owner_task="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK:-}"
-	local expected_owner_created_at="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}"
-	local expected_owner_process_start="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_PROCESS_START:-}"
-
-	_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
-	[[ "$expected_owner_pid" =~ ^[0-9]+$ ]] || return 1
-	[[ -n "$expected_owner_session" && -n "$expected_owner_task" && -n "$expected_owner_created_at" &&
-		-n "$expected_owner_process_start" ]] || return 1
-	if [[ -z "${WORKER_ISSUE_NUMBER:-}" || "$expected_owner_task" != "${WORKER_ISSUE_NUMBER:-}" ]]; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_task_mismatch"
-		return 1
-	fi
-
-	local owner_info="" snapshot_status=0
-	owner_info=$(check_worktree_owner_snapshot "$work_dir" 2>/dev/null) || snapshot_status=$?
-	if [[ "$snapshot_status" -eq 1 ]]; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_OWNER_ABSENT"
-		return 1
-	fi
-	if [[ "$snapshot_status" -ne 0 || -z "$owner_info" ]]; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_owner_unavailable"
-		return 1
-	fi
-
-	local owner_pid="" owner_session="" owner_batch="" owner_task="" created_at="" owner_process_start=""
-	IFS='|' read -r owner_pid owner_session owner_batch owner_task created_at owner_process_start <<<"$owner_info"
-	if [[ "$owner_task" != "${WORKER_ISSUE_NUMBER:-}" ]]; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_task_mismatch"
-		return 1
-	fi
-	if [[ "$owner_pid" != "$expected_owner_pid" || "$owner_session" != "$expected_owner_session" ||
-		"$owner_batch" != "$expected_owner_batch" || "$created_at" != "$expected_owner_created_at" ||
-		"$owner_process_start" != "$expected_owner_process_start" ]]; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_owner_mismatch"
-		return 1
-	fi
-
-	if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
-		"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at" "$owner_process_start"; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_concurrent_mutation"
-		return 1
-	fi
-
-	print_info "[lifecycle] worker_worktree_continuation_owner_transferred session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
-	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
-	return 0
-}
-
-_hrw_export_worker_worktree_owner_proof() {
-	local session_key="$1"
-	local work_dir="$2"
-	local resolved_work_dir=""
-	resolved_work_dir=$(cd "$work_dir" 2>/dev/null && pwd -P) || return 1
-
-	export AIDEVOPS_WORKTREE_OWNER_PID="$$"
-	export AIDEVOPS_WORKTREE_OWNER_SESSION="$session_key"
-	export AIDEVOPS_WORKTREE_OWNER_TASK="${WORKER_ISSUE_NUMBER:-}"
-	export AIDEVOPS_WORKTREE_OWNER_PATH="$resolved_work_dir"
-	return 0
-}
-
-_hrw_reclaim_stale_worker_worktree_owner() {
-	local session_key="$1"
-	local work_dir="$2"
-	local branch="$3"
-	local owner_info=""
-	_HRW_WORKTREE_RECLAIM_OUTCOME=""
-
-	owner_info=$(check_worktree_owner_snapshot "$work_dir" 2>/dev/null || true)
-	[[ -n "$owner_info" ]] || return 1
-
-	local owner_pid="" owner_session="" owner_batch="" owner_task="" created_at="" owner_process_start=""
-	IFS='|' read -r owner_pid owner_session owner_batch owner_task created_at owner_process_start <<<"$owner_info"
-
-	if [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-		if ! declare -F _wt_pid_is_definitely_absent >/dev/null 2>&1 ||
-			! _wt_pid_is_definitely_absent "$owner_pid"; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_live_owner"
-			return 1
-		fi
-		if ! _wt_unregister_owner_if_generation_matches "$work_dir" "$owner_pid" \
-			"$owner_process_start" "$created_at" 2>/dev/null; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
-			return 1
-		fi
-		print_info "[lifecycle] worker_worktree_reclaimed_dead_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid}"
-		_HRW_WORKTREE_RECLAIM_OUTCOME="$_HRW_WORKTREE_RECLAIM_VACATED"
-		return 0
-	fi
-
-	_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_live_owner"
-	[[ -n "${WORKER_ISSUE_NUMBER:-}" && "$owner_task" == "${WORKER_ISSUE_NUMBER:-}" ]] || return 1
-
-	# Dispatcher worktree pre-creation registers ownership to a live pulse
-	# process before the detached worker starts. That owner is intentionally
-	# short-lived and transferable; otherwise every worker sees a live owner,
-	# exits immediately, and pulse retries the same issue forever.
-	if _hrw_is_dispatch_precreate_owner "$owner_session"; then
-		# Heal only the exact legacy infrastructure marker when possible, but
-		# never make task-state cleanliness a prerequisite for transferring the
-		# dispatcher's same-task placeholder owner.
-		_hrw_worktree_task_status "$work_dir" >/dev/null 2>&1 || true
-		if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
-			"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at" "$owner_process_start"; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
-			return 1
-		fi
-		print_info "[lifecycle] worker_worktree_reclaimed_dispatch_precreate_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
-		_HRW_WORKTREE_RECLAIM_OUTCOME="$_HRW_WORKTREE_RECLAIM_TRANSFERRED"
-		unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
-		return 0
-	fi
-
-	if [[ "${AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER:-0}" == "1" ]]; then
-		if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
-			return 1
-		fi
-		if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
-			"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at" "$owner_process_start"; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
-			return 1
-		fi
-		print_info "[lifecycle] worker_worktree_reclaimed_authorized_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
-		_HRW_WORKTREE_RECLAIM_OUTCOME="$_HRW_WORKTREE_RECLAIM_TRANSFERRED"
-		unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
-		return 0
-	fi
-
-	[[ -n "$created_at" ]] || return 1
-
-	local now_epoch="" created_epoch=""
-	now_epoch=$(date +%s 2>/dev/null || true)
-	created_epoch=$(_hrw_epoch_seconds_from_iso "$created_at" 2>/dev/null || true)
-	[[ "$now_epoch" =~ ^[0-9]+$ && "$created_epoch" =~ ^[0-9]+$ ]] || return 1
-
-	local owner_age_s=$((now_epoch - created_epoch))
-	local reclaim_age_s="${AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS:-900}"
-	[[ "$reclaim_age_s" =~ ^[0-9]+$ ]] || reclaim_age_s=900
-	[[ "$owner_age_s" -ge "$reclaim_age_s" ]] || return 1
-
-	if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
-		return 1
-	fi
-
-	if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
-		"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at" "$owner_process_start"; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
-		return 1
-	fi
-	print_warning "[lifecycle] worker_worktree_reclaimed_stale_live_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} age_s=${owner_age_s}"
-	_HRW_WORKTREE_RECLAIM_OUTCOME="$_HRW_WORKTREE_RECLAIM_TRANSFERRED"
-	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
-	return 0
-}
-
-_hrw_claim_worker_worktree() {
-	local session_key="$1"
-	local work_dir="$2"
-
-	# Only dispatcher-created issue workers need this transfer. Interactive
-	# sessions already hold either a registry entry or an interactive claim stamp.
-	if [[ -z "${WORKER_ISSUE_NUMBER:-}" || -z "$work_dir" || ! -d "$work_dir" ]]; then
-		return 0
-	fi
-
-	local branch=""
-	branch=$(_hrw_current_worktree_branch "$work_dir")
-	local transfer_mode="${AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE:-}"
-	if [[ -n "$transfer_mode" ]]; then
-		if [[ "$transfer_mode" != "continuation" ]]; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
-			print_error "[fatal] unsupported worker worktree transfer mode: ${transfer_mode}"
-			return 1
-		fi
-		if _hrw_transfer_authorized_continuation_owner "$session_key" "$work_dir" "$branch"; then
-			_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
-			print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$ mode=continuation"
-			return 0
-		fi
-		if [[ "${_WORKER_PRELAUNCH_FAILURE_REASON:-}" == "$_HRW_REASON_WORKTREE_CONTINUATION_OWNER_ABSENT" ]]; then
-			# The dispatcher snapshot can become stale after the previous owner
-			# exits. Claiming through the registry is the atomic absence check:
-			# a concurrent replacement owner makes this fail closed.
-			if claim_worktree_ownership "$work_dir" "$branch" \
-				--session "$session_key" \
-				--task "${WORKER_ISSUE_NUMBER:-}" \
-				--owner-pid "$$"; then
-				unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
-				_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
-				print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$ mode=continuation-owner-absent"
-				return 0
-			fi
-			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
-		fi
-		print_error "[fatal] worker worktree continuation transfer rejected: ${work_dir} reason=${_WORKER_PRELAUNCH_FAILURE_REASON:-worker_worktree_live_owner}"
-		return 1
-	fi
-
-	# t3550: dispatcher pre-creation registers the worktree to a short-lived
-	# pulse subshell. After that subshell exits, cleanup sees a dead owner and
-	# can remove the worker's cwd while validators/merge-gate fixes still run.
-	# Transfer ownership to the long-lived headless-runtime-helper PID so
-	# worktree cleanup treats the active worker as the canonical owner.
-	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
-	if ! claim_worktree_ownership "$work_dir" "$branch" \
-		--session "$session_key" \
-		--task "${WORKER_ISSUE_NUMBER:-}" \
-		--owner-pid "$$"; then
-		if _hrw_reclaim_stale_worker_worktree_owner "$session_key" "$work_dir" "$branch"; then
-			if [[ "$_HRW_WORKTREE_RECLAIM_OUTCOME" == "$_HRW_WORKTREE_RECLAIM_TRANSFERRED" ]]; then
-				_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
-				print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$ mode=owner-transfer"
-				return 0
-			fi
-			if [[ "$_HRW_WORKTREE_RECLAIM_OUTCOME" == "$_HRW_WORKTREE_RECLAIM_VACATED" ]] && \
-				claim_worktree_ownership "$work_dir" "$branch" \
-					--session "$session_key" \
-					--task "${WORKER_ISSUE_NUMBER:-}" \
-					--owner-pid "$$"; then
-				_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
-				print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$ mode=vacated-owner"
-				return 0
-			fi
-		fi
-		print_error "[fatal] worker worktree already has a live owner: $work_dir"
-		return 1
-	fi
-
-	_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
-	print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$"
-	return 0
-}
-
-_hrw_renew_dispatch_prelaunch_lease() {
-	local session_key="$1"
-
-	if [[ -z "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" || -z "${WORKER_ISSUE_NUMBER:-}" || -z "${WORKER_REPO_SLUG:-}" ]]; then
-		return 0
-	fi
-	# GH#34901: manual dispatch runs as manual-cli-* but its claim lease
-	# session is issue-N; the dispatcher names that lease session explicitly.
-	"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition prelaunch "$WORKER_ISSUE_NUMBER" \
-		"$WORKER_REPO_SLUG" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}" \
-		"${AIDEVOPS_DISPATCH_CLAIM_ORPHAN_GRACE:-120}" 2>/dev/null || return 1
-	return 0
-}
-
-_hrw_release_worker_worktree() {
-	local work_dir="$1"
-	local session_key="$2"
-
-	if [[ -z "${WORKER_ISSUE_NUMBER:-}" || -z "$work_dir" || -z "$session_key" ]]; then
-		return 0
-	fi
-	unregister_worktree_if_owner_contract "$work_dir" "$$" "$session_key" \
-		"${WORKER_ISSUE_NUMBER:-}" 2>/dev/null || true
-	return 0
-}
+# shellcheck source=./headless-runtime-worker-ownership.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/headless-runtime-worker-ownership.sh"
 
 _hrw_run_finish_crash_type() {
 	case "${_run_result_label:-}" in
@@ -2427,34 +1497,139 @@ _hrw_preserve_blocked_outcome() {
 # assigned, auto-dispatch removed) so they neither escalate the tier nor return
 # the issue to the dispatch queue while the PR exists (GH#33115).
 #
-# Every other class (including fail-open `pr_exists`) keeps the unverified
-# handoff failure path: release, fast-fail as overwhelmed, failed terminal.
+# GH#36171: a transport deferral is not evidence that no durable PR exists.
+# When the exact-head state was unreadable, re-verify a bounded number of
+# times; a handoff that then confirms continues the normal success path, and
+# one that stays unreadable is deferred with the claim retained.
+#
+# Every other class keeps the unverified handoff failure path: release,
+# fast-fail as overwhelmed, failed terminal.
 #
 # Args: $1=session key, $2=work dir
-# Returns: 0 when a durable checkpoint handler ran, 1 when the run was routed
-#          as an unverified-handoff failure.
+# Env:  AIDEVOPS_POST_PR_HANDOFF_VERIFY_ATTEMPTS (1-5, default 3)
+#       AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS (0-120, default 20)
+# Returns: 0 when a durable checkpoint handler ran or verification was
+#          deferred, 1 when the run was routed as an unverified-handoff
+#          failure, 2 (_HRW_HANDOFF_CONFIRMED_ON_RETRY) when re-verification
+#          confirmed the handoff.
 #######################################
 _hrw_handle_unverified_post_pr_handoff() {
 	local session_key="$1"
 	local work_dir="$2"
 	local output_class=""
+	local attempt=1
+	local max_attempts="${AIDEVOPS_POST_PR_HANDOFF_VERIFY_ATTEMPTS:-3}"
+	local retry_delay="${AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS:-20}"
+	[[ "$max_attempts" =~ ^[1-5]$ ]] || max_attempts=3
+	[[ "$retry_delay" =~ ^[0-9]+$ && "$retry_delay" -le 120 ]] || retry_delay=20
 
-	[[ -n "$work_dir" ]] && output_class=$(_worker_produced_output "$session_key" "$work_dir")
-	case "$output_class" in
-	draft_checkpoint) _hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class" ;;
-	merged_checkpoint) _hrw_preserve_merged_checkpoint_handoff "$session_key" "$work_dir" ;;
-	ready_missing_summary) _hrw_preserve_ready_missing_summary_handoff "$session_key" "$output_class" ;;
-	ready_missing_linkage) _hrw_preserve_ready_missing_linkage_handoff "$session_key" "$output_class" ;;
-	*)
-		print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} — exact-head non-draft PR handoff could not be verified; routing as failure"
-		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
-		_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
-		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_UNVERIFIED_HANDOFF"
-		return 1
-		;;
-	esac
+	while :; do
+		output_class=""
+		[[ -n "$work_dir" ]] && output_class=$(_worker_produced_output "$session_key" "$work_dir")
+		case "$output_class" in
+		draft_checkpoint) _hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class"; break ;;
+		merged_checkpoint) _hrw_preserve_merged_checkpoint_handoff "$session_key" "$work_dir"; break ;;
+		ready_missing_summary) _hrw_preserve_ready_missing_summary_handoff "$session_key" "$output_class"; break ;;
+		ready_missing_linkage) _hrw_preserve_ready_missing_linkage_handoff "$session_key" "$output_class"; break ;;
+		esac
+		if ! _hrw_post_pr_handoff_reverifiable "$output_class"; then
+			print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} output_class=${output_class:-none} handoff_state=${_WORKER_POST_PR_HANDOFF_STATE:-rejected} — exact-head non-draft PR handoff could not be verified; routing as failure"
+			_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+			_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+			return 1
+		fi
+		if [[ "$attempt" -ge "$max_attempts" ]]; then
+			_hrw_defer_unverified_post_pr_handoff "$session_key" "$output_class" "$attempt"
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		print_info "[lifecycle] post_pr_handoff verification indeterminate session=${session_key} output_class=${output_class:-none} handoff_state=${_WORKER_POST_PR_HANDOFF_STATE:-unknown}; re-verifying in ${retry_delay}s (attempt ${attempt}/${max_attempts})"
+		sleep "$retry_delay"
+		if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+			print_info "[lifecycle] post_pr_handoff session=${session_key} confirmed on re-verification attempt ${attempt}/${max_attempts}"
+			return "$_HRW_HANDOFF_CONFIRMED_ON_RETRY"
+		fi
+	done
 	print_info "[lifecycle] unverified post_pr_handoff session=${session_key} routed to exact-head checkpoint state=${output_class}"
 	return 0
+}
+
+#######################################
+# GH#36171: decide whether an unconfirmed POST_PR_HANDOFF may still verify.
+#
+# A local transport deferral (quota cooldown/pacing) makes the exact-head
+# probe return `unknown`, which `_worker_produced_output` fails open to
+# `pr_exists` — the same class it prints for a confirmed ready PR. Retry only
+# when the strict probe could not read GitHub, or when the independent
+# classifier readback saw `pr_exists` while the strict probe reported missing
+# linkage/summary (one of those reads was deferred). Identity/precondition
+# rejections (`rejected`) and consistent definitive states stay final.
+#
+# Args: $1=output class from the latest classifier pass
+# Returns: 0 when bounded re-verification may change the outcome, 1 otherwise
+#######################################
+_hrw_post_pr_handoff_reverifiable() {
+	local output_class="$1"
+	case "${_WORKER_POST_PR_HANDOFF_STATE:-rejected}" in
+	unknown | merged_issue_unreadable) return 0 ;;
+	ready_missing_* | merged_missing_*)
+		[[ "$output_class" == "pr_exists" ]] && return 0
+		;;
+	esac
+	return 1
+}
+
+#######################################
+# GH#36171: record an exact-head handoff whose GitHub state stayed unreadable.
+#
+# Keep the dispatch claim: no CLAIM_RELEASED, fast-fail or tier escalation.
+# The pushed PR (if any) remains the dedup signal; Pulse merge and stale-claim
+# recovery decide on fresh state once GitHub is readable again. The outcome is
+# deferred (retry_infrastructure), never success, so an unverifiable
+# handoff still cannot be counted as completion (GH#33115).
+#
+# Args: $1=session key, $2=last output class, $3=verification attempts made
+#######################################
+_hrw_defer_unverified_post_pr_handoff() {
+	local session_key="$1"
+	local output_class="$2"
+	local attempts="$3"
+	print_warning "[lifecycle] ${_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED} session=${session_key} output_class=${output_class:-none} handoff_state=${_WORKER_POST_PR_HANDOFF_STATE:-unknown} attempts=${attempts} — exact-head PR state stayed unreadable; retaining claim without tier escalation"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
+	_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_CHECKPOINTED"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED"
+	return 0
+}
+
+#######################################
+# Gate a POST_PR_HANDOFF before the verified-handoff success path.
+#
+# Never reuses a verification state recorded by an earlier probe. A handoff
+# confirmed on bounded re-verification (GH#36171) continues exactly like one
+# confirmed by the first probe.
+#
+# Args: $1=session key, $2=work dir
+# Returns: 0 when the verified success path may continue, 1 when the run was
+#          routed as an unverified-handoff failure, _HRW_HANDOFF_ROUTED when a
+#          checkpoint handler or verification deferral already finished it.
+#######################################
+_hrw_post_pr_handoff_gate() {
+	local session_key="$1"
+	local work_dir="$2"
+	local handoff_rc=0
+	_WORKER_POST_PR_HANDOFF_STATE=""
+	if declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 &&
+		_worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+		return 0
+	fi
+	_hrw_handle_unverified_post_pr_handoff "$session_key" "$work_dir" || handoff_rc=$?
+	case "$handoff_rc" in
+	0) return "$_HRW_HANDOFF_ROUTED" ;;
+	"$_HRW_HANDOFF_CONFIRMED_ON_RETRY") return 0 ;;
+	esac
+	return 1
 }
 
 _hrw_finish_success_run() {
@@ -2467,11 +1642,11 @@ _hrw_finish_success_run() {
 		_hrw_preserve_blocked_outcome "$session_key" "$work_dir"
 		return 0
 	fi
-	if [[ "${_run_result_label:-}" == "post_pr_handoff" ]] &&
-		(! declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 ||
-			! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"); then
-		_hrw_handle_unverified_post_pr_handoff "$session_key" "$work_dir" && return 0
-		return 1
+	if [[ "${_run_result_label:-}" == "post_pr_handoff" ]]; then
+		local handoff_gate_rc=0
+		_hrw_post_pr_handoff_gate "$session_key" "$work_dir" || handoff_gate_rc=$?
+		[[ "$handoff_gate_rc" -eq "$_HRW_HANDOFF_ROUTED" ]] && return 0
+		[[ "$handoff_gate_rc" -eq 0 ]] || return 1
 	fi
 
 	# GH#20721 + GH#20819: Classify worker output quality.
@@ -2488,8 +1663,7 @@ _hrw_finish_success_run() {
 	# repo, no gh, no remote) the classification is "pr_exists", so false-negatives
 	# (legit work misclassified) are impossible.
 	if [[ "$release_needed" -eq 1 && -n "$work_dir" ]] && \
-		! _hrw_pr_less_terminal_complete "$session_key" "$work_dir" \
-		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
+		! _hrw_terminal_objective_complete "$session_key" "$work_dir"; then
 		local output_class="pr_exists"
 		output_class=$(_worker_produced_output "$session_key" "$work_dir")
 		case "$output_class" in

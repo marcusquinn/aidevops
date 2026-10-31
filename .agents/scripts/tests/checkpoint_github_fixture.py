@@ -37,6 +37,7 @@ def comments_request(args, data, state):
     added = comment(number, body, "next-worker")
     added["created_at"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data["comments"].append(added)
+    data["issue"]["updated_at"] = added["created_at"]
     state.write_text(json.dumps(data))
     print(number)
 
@@ -48,6 +49,7 @@ def read_response(args, data):
         "pr view": json.dumps(data["pr"]),
         "issue view": json.dumps({**data["issue"], "state": "OPEN"}),
         "api repos/owner/repo/issues/123": json.dumps(data["issue"]),
+        "api repos/owner/repo/issues/123/events?per_page=100": json.dumps([data.get("issue_events", [])]),
     }
     key = " ".join(args[:2])
     if key not in responses:

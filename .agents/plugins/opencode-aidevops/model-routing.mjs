@@ -6,8 +6,17 @@
 // capability failure moves down escalationOrder.
 
 import { existsSync, readFileSync } from "fs";
-import { floorReasoning, reasoningFloor, normalizeInteractiveDefault, normalizeSpecialistAdvisor } from "./model-routing-variant.mjs";
+import {
+  compactionReasoning,
+  floorReasoning,
+  normalizeInteractiveDefault,
+  normalizeSpecialistAdvisor,
+  reasoningFloor,
+} from "./model-routing-variant.mjs";
 import { activeLocalOnlyPolicy, isLocalProvider } from "./local-only-policy.mjs";
+import { providerHasUsableCredentials } from "./provider-credentials.mjs";
+
+export { providerHasUsableCredentials };
 
 export const DEFAULT_ESCALATION_ORDER = ["simple", "standard", "thinking"];
 
@@ -45,6 +54,7 @@ export function normalizeModelRouting(value = {}) {
     specialistAdvisor: normalizeSpecialistAdvisor(value.specialist_advisor),
     interactiveDefault: normalizeInteractiveDefault(value.interactive_default),
     minimumReasoning: reasoningFloor(value?.settings?.minimum_reasoning),
+    compactionReasoning: compactionReasoning(value?.settings?.compaction_reasoning),
   };
 }
 
@@ -66,6 +76,9 @@ function mergeTier(baseTier, tierOverride) {
 export function mergeModelRouting(base, override = {}) {
   const merged = normalizeModelRouting();
   merged.minimumReasoning = reasoningFloor(override?.settings?.minimum_reasoning ?? base?.minimumReasoning);
+  merged.compactionReasoning = compactionReasoning(
+    override?.settings?.compaction_reasoning ?? base?.compactionReasoning,
+  );
   merged.interactiveDefault = Object.hasOwn(override, "interactive_default")
     ? normalizeInteractiveDefault(override.interactive_default)
     : base?.interactiveDefault || null;
@@ -126,7 +139,8 @@ export function selectConnectedRoutingCandidate(routing, tier, providerState, po
     const { providerID, modelID } = routingModelIdentity(candidate);
     if (policy?.bound && !isLocalProvider(policy, providerID)) continue;
     const provider = providers.get(providerID);
-    if (!provider || !connected.has(providerID)) continue;
+    // Connected is not authenticated: skip credential-less config providers (GH#35762).
+    if (!provider || !connected.has(providerID) || !providerHasUsableCredentials(provider)) continue;
     const models = provider.models && typeof provider.models === "object" ? provider.models : {};
     const registered = Object.entries(models).some(
       ([key, value]) => key === modelID || value?.id === modelID,

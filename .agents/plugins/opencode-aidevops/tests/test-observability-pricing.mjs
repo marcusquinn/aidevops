@@ -23,13 +23,16 @@ test("GPT-6 Astra and GPT-5.6 pricing use published Standard short-context API r
   assert.deepEqual(getPricing("openai/gpt-6.1-sol"), {
     input: 2.0, output: 10.0, cacheRead: 0.10, cacheWrite: 2.50,
   });
+  assert.deepEqual(getPricing("openai/gpt-6.1-terra"), {
+    input: 1.0, output: 5.0, cacheRead: 0.05, cacheWrite: 1.25,
+  });
   assert.deepEqual(getPricing("openai/gpt-6-sol"), {
     input: 2.0, output: 10.0, cacheRead: 0.20, cacheWrite: 2.50,
   });
   assert.deepEqual(getPricing("openai/gpt-6-luna"), {
     input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125,
   });
-  assert.equal(PRICING_VERSION, "2026-10-07.1");
+  assert.equal(PRICING_VERSION, "2026-10-26.1");
 });
 
 test("specific Anthropic IDs win over generic family keys", () => {
@@ -57,6 +60,7 @@ test("price estimates retain exact, fallback, and unknown quality", () => {
   assert.equal(getPricingProvenance("unlisted-model").quality, "fallback");
   assert.equal(getPricingProvenance("gpt-5.6-sol-pro").quality, "unknown");
   assert.equal(getPricingProvenance("gpt-6.1-sol").quality, "exact_model");
+  assert.equal(getPricingProvenance("gpt-6.1-terra").quality, "exact_model");
   assert.equal(getPricingProvenance("gpt-6-sol").quality, "exact_model");
   assert.equal(getPricingProvenance("gpt-6-luna").quality, "exact_model");
 });

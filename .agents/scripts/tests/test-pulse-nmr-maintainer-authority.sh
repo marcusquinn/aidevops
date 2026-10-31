@@ -37,6 +37,8 @@ setup_test_env() {
 	export POSTED_COMMENT="${TEST_ROOT}/posted-comment.txt"
 	export STATUS_CALLS_FILE="${TEST_ROOT}/status-calls.txt"
 	export ISSUE_EDIT_CALLS_FILE="${TEST_ROOT}/issue-edit-calls.txt"
+	export ISSUE_LOCK_CALLS_FILE="${TEST_ROOT}/issue-lock-calls.txt"
+	export PROTECTED_LABEL_FLAP_STATE_DIR="${TEST_ROOT}/flap-state"
 	export AGENTS_DIR="${TEST_ROOT}"
 	export ISSUE_ASSOC="OWNER"
 	export ISSUE_API_AUTHOR="maintainer"
@@ -56,11 +58,22 @@ setup_test_env() {
 	: >"$STATUS_CALLS_FILE"
 	: >"$ISSUE_EDIT_CALLS_FILE"
 	printf '{"initialized_repos":[{"slug":"owner/repo","maintainer":"maintainer","pulse":true}]}' >"$REPOS_JSON"
+	write_gh_stub
+	return 0
+}
+
+write_gh_stub() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "api" ]]; then
 	path="${2:-}"
+	if [[ "$path" == "--paginate" && "${3:-}" == "--slurp" ]]; then
+		case "${4:-}" in
+		*/timeline\?*) [[ "${TIMELINE_API_FAIL:-0}" -eq 0 ]] || exit 1; printf '[%s]\n' "${NMR_TIMELINE_JSON:-[]}"; exit 0 ;;
+		*/comments\?*) [[ "${COMMENTS_API_FAIL:-0}" -eq 0 ]] || exit 1; printf '[%s]\n' "${ISSUE_COMMENTS_JSON:-[]}"; exit 0 ;;
+		esac
+	fi
 	if [[ "$path" == "-i" ]]; then
 		path="${3:-}"
 		if [[ "$path" == */collaborators/runner/permission ]]; then
@@ -112,6 +125,7 @@ if [[ "${1:-}" == "api" ]]; then
 	fi
 fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "lock" ]]; then
+	printf '%s\n' "$*" >>"${ISSUE_LOCK_CALLS_FILE}"
 	exit 0
 fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "edit" ]]; then
@@ -221,6 +235,17 @@ test_blocks_actor_without_write_permission() {
 	return 0
 }
 
+# Protected removal and its postflight now precede the remaining label edit.
+has_ordered_label_edits() {
+	local added_label="$1"
+	local edits=""
+	edits=$(<"$ISSUE_EDIT_CALLS_FILE")
+	if [[ "$edits" == *"--remove-label needs-maintainer-review"*"--add-label ${added_label}"* ]]; then
+		return 0
+	fi
+	return 1
+}
+
 test_allows_owner_author_with_write_permission() {
 	setup_test_env
 	export ISSUE_ASSOC="OWNER"
@@ -233,7 +258,7 @@ test_allows_owner_author_with_write_permission() {
 		print_result "trusted OWNER normalization does not post a synthetic approval" 1 "unexpected approval marker"
 	fi
 	if grep -q -- '^24479 owner/repo available$' "$STATUS_CALLS_FILE" 2>/dev/null \
-		&& grep -q -- '--remove-label needs-maintainer-review --add-label auto-dispatch' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null; then
+		&& has_ordered_label_edits auto-dispatch; then
 		print_result "auto-approval establishes available status before clearing NMR" 0
 	else
 		print_result "auto-approval establishes available status before clearing NMR" 1 \
@@ -253,7 +278,7 @@ test_allows_write_authorized_collaborator() {
 	run_auto_approve
 	if ! grep -q 'aidevops-signed-approval' "$POSTED_COMMENT" 2>/dev/null \
 		&& grep -q -- '^24479 owner/repo available$' "$STATUS_CALLS_FILE" 2>/dev/null \
-		&& grep -q -- '--remove-label needs-maintainer-review --add-label auto-dispatch' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null; then
+		&& has_ordered_label_edits auto-dispatch; then
 		print_result "trusted collaborator normalization clears NMR without synthetic approval" 0
 	else
 		print_result "trusted collaborator normalization clears NMR without synthetic approval" 1 "unexpected approval marker or missing status transition"
@@ -312,7 +337,7 @@ test_clears_unreasoned_peer_nmr() {
 	run_auto_approve
 	if [[ ! -s "$POSTED_COMMENT" ]] \
 		&& grep -q -- '^24479 owner/repo available$' "$STATUS_CALLS_FILE" 2>/dev/null \
-		&& grep -q -- '--remove-label needs-maintainer-review --add-label auto-dispatch' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null \
+		&& has_ordered_label_edits auto-dispatch \
 		&& ! grep -q -- 'hold-for-review' "$STATUS_CALLS_FILE" "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null; then
 		print_result "unreasoned trusted-author NMR clears without manufacturing a hold" 0
 	else
@@ -333,7 +358,7 @@ test_structured_reason_becomes_explicit_hold() {
 	export NMR_TIMELINE_JSON='[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"trusted-author"},"created_at":"2026-07-30T20:00:00Z"}]'
 	export ISSUE_COMMENTS_JSON='[{"created_at":"2026-07-30T20:00:01Z","body":"<!-- nmr-reason code=security class=genuine-authority -->"}]'
 	run_auto_approve
-	if grep -q -- '--remove-label needs-maintainer-review --add-label hold-for-review' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null \
+	if has_ordered_label_edits hold-for-review \
 		&& [[ ! -s "$STATUS_CALLS_FILE" ]] \
 		&& grep -q -- 'nmr-decision-packet reason=security' "$POSTED_COMMENT" 2>/dev/null; then
 		print_result "structured genuine-authority reason becomes explicit hold and preserves status" 0
@@ -386,7 +411,7 @@ test_legacy_breaker_becomes_structural_block() {
 	export ISSUE_COMMENTS_JSON='[{"created_at":"2026-07-30T20:00:02Z","body":"<!-- stale-recovery-tick:escalated (threshold=2) -->"}]'
 	run_auto_approve
 	if grep -q -- '^24479 owner/repo blocked$' "$STATUS_CALLS_FILE" 2>/dev/null \
-		&& grep -q -- '--remove-label needs-maintainer-review --add-label auto-dispatch' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null \
+		&& has_ordered_label_edits auto-dispatch \
 		&& ! grep -q -- 'hold-for-review' "$STATUS_CALLS_FILE" "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null; then
 		print_result "legacy machine breaker becomes status:blocked instead of a human hold" 0
 	else
@@ -404,7 +429,7 @@ test_cost_breaker_becomes_structural_block() {
 	export ISSUE_COMMENTS_JSON='[{"created_at":"2026-07-30T20:00:02Z","body":"<!-- cost-circuit-breaker:fired tier=thinking -->"}]'
 	run_auto_approve
 	if grep -q -- '^24479 owner/repo blocked$' "$STATUS_CALLS_FILE" 2>/dev/null \
-		&& grep -q -- '--remove-label needs-maintainer-review --add-label auto-dispatch' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null \
+		&& has_ordered_label_edits auto-dispatch \
 		&& ! grep -q -- 'hold-for-review' "$STATUS_CALLS_FILE" "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null; then
 		print_result "cost circuit breaker becomes status:blocked instead of a human hold" 0
 	else
@@ -422,7 +447,7 @@ test_security_label_wins_over_machine_breaker() {
 	export ISSUE_COMMENTS_JSON='[{"created_at":"2026-07-30T20:00:02Z","body":"<!-- cost-circuit-breaker:fired tier=thinking -->"}]'
 	run_auto_approve
 	if [[ ! -s "$STATUS_CALLS_FILE" ]] \
-		&& grep -q -- '--remove-label needs-maintainer-review --add-label hold-for-review' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null \
+		&& has_ordered_label_edits hold-for-review \
 		&& grep -q -- 'nmr-decision-packet reason=security' "$POSTED_COMMENT" 2>/dev/null; then
 		print_result "security label takes precedence over machine-breaker recovery" 0
 	else
@@ -510,7 +535,7 @@ test_resolved_breaker_preserves_active_status() {
 	_NMR_FORCE_AVAILABLE=1
 	_nmr_restore_dispatchable_state 24479 owner/repo
 	if [[ ! -s "$STATUS_CALLS_FILE" ]] \
-		&& grep -q -- '--remove-label needs-maintainer-review --add-label auto-dispatch' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null; then
+		&& has_ordered_label_edits auto-dispatch; then
 		print_result "resolved breaker retry preserves active lifecycle status" 0
 	else
 		print_result "resolved breaker retry preserves active lifecycle status" 1 \
@@ -528,7 +553,7 @@ test_resolved_breaker_recovers_blocked_status() {
 	_NMR_FORCE_AVAILABLE=1
 	_nmr_restore_dispatchable_state 24479 owner/repo
 	if grep -q -- '^24479 owner/repo available$' "$STATUS_CALLS_FILE" 2>/dev/null \
-		&& grep -q -- '--remove-label needs-maintainer-review --add-label auto-dispatch' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null; then
+		&& has_ordered_label_edits auto-dispatch; then
 		print_result "resolved breaker retry restores status:available from blocked" 0
 	else
 		print_result "resolved breaker retry restores status:available from blocked" 1 \
@@ -614,7 +639,7 @@ test_crypto_approval_preserves_independent_security_hold() {
 	source "$NMR_SCRIPT"
 	_nmr_apply_auto_approval_transition 24479 owner/repo "$NMR_TRANSITION_CRYPTO_APPROVED" "test approval"
 	if [[ "$_NMR_AUTO_TRANSITION_RESULT" == "$NMR_AUTO_RESULT_APPROVED" && ! -s "$STATUS_CALLS_FILE" ]] \
-		&& grep -q -- '--remove-label needs-maintainer-review --add-label hold-for-review' "$ISSUE_EDIT_CALLS_FILE" 2>/dev/null \
+		&& has_ordered_label_edits hold-for-review \
 		&& grep -q -- 'aidevops-signed-approval' "$POSTED_COMMENT" 2>/dev/null; then
 		print_result "cryptographic authority approval preserves independent security hold" 0
 	else
@@ -699,6 +724,52 @@ test_ever_nmr_history_bypasses_self_approval_for_trusted_author() {
 	return 0
 }
 
+test_flap_cooldown_preserves_lifecycle() {
+	setup_test_env
+	export ISSUE_LABELS_JSON='[{"name":"needs-maintainer-review"}]'
+	export NMR_TIMELINE_JSON='[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"maintainer"},"created_at":"2026-07-30T20:00:00Z"}]'
+	# Counterfactual through the real caller: identical evidence without a marker
+	# must attempt the lifecycle transition, not merely fail on a later read.
+	run_auto_approve
+	if [[ -s "$STATUS_CALLS_FILE" && -s "$ISSUE_EDIT_CALLS_FILE" ]]; then
+		print_result "without flap cooldown the caller attempts normalization" 0
+	else
+		print_result "without flap cooldown the caller attempts normalization" 1
+	fi
+	export ISSUE_LABELS_JSON='[{"name":"needs-maintainer-review"}]'
+	: >"$STATUS_CALLS_FILE"
+	: >"$ISSUE_EDIT_CALLS_FILE"
+	: >"$LOGFILE"
+	ISSUE_COMMENTS_JSON=$(jq -cn '[{author_association:"OWNER",
+		body:"<!-- aidevops:protected-label-flap:needs-maintainer-review:v1 -->",
+		created_at:(now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]')
+	export ISSUE_COMMENTS_JSON
+	run_auto_approve
+	if [[ ! -s "$STATUS_CALLS_FILE" && ! -s "$ISSUE_EDIT_CALLS_FILE" ]] \
+		&& grep -q 'Trusted-author NMR normalization FAILED' "$LOGFILE"; then
+		print_result "flap cooldown blocks lifecycle promotion as well as NMR removal" 0
+	else
+		print_result "flap cooldown blocks lifecycle promotion as well as NMR removal" 1
+	fi
+	# Exercise the cryptographic transition entry point twice: containment must
+	# precede approval comments and locks, not just the later label operation.
+	_nmr_apply_auto_approval_transition 24479 owner/repo "$NMR_TRANSITION_CRYPTO_APPROVED" verified
+	_nmr_apply_auto_approval_transition 24479 owner/repo "$NMR_TRANSITION_CRYPTO_APPROVED" verified
+	if [[ ! -s "$POSTED_COMMENT" && ! -s "$ISSUE_LOCK_CALLS_FILE" && ! -s "$ISSUE_EDIT_CALLS_FILE" ]]; then
+		print_result "flap cooldown suppresses repeated crypto approval comments and locks" 0
+	else
+		print_result "flap cooldown suppresses repeated crypto approval comments and locks" 1
+	fi
+	if grep -q 'Auto-approve deferred.*flap guard held or containment unverified' "$LOGFILE" \
+		&& [[ -z "$_NMR_AUTO_TRANSITION_RESULT" ]]; then
+		print_result "flap deferral is logged without reporting a successful approval" 0
+	else
+		print_result "flap deferral is logged without reporting a successful approval" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_ever_nmr_history_still_blocks_external_author() {
 	setup_test_env
 	export ISSUE_API_AUTHOR="external-contributor"
@@ -744,6 +815,7 @@ main() {
 	test_decision_packet_is_idempotent_across_pages
 	test_decision_packet_defers_when_comments_unavailable
 	test_ever_nmr_history_bypasses_self_approval_for_trusted_author
+	test_flap_cooldown_preserves_lifecycle
 	test_ever_nmr_history_still_blocks_external_author
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"

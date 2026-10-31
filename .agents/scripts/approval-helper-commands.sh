@@ -74,6 +74,8 @@ cmd_help() {
 	echo "  batch <kind:number...> [slug] Approve mixed issues/PRs with one confirmation"
 	echo "  permissions issue|pr <number> [slug] --request perm-<id> [--withdraw]"
 	echo "                             --withdraw signs a decline: grants nothing, releases the hold"
+	echo "  permissions batch --withdraw [--all-blocked] [kind:number:perm-<id>...] [slug]"
+	echo "                             Withdraw many requests with one confirmation (never grants)"
 	_approval_commands_blank_line
 	echo "Commands (no sudo needed):"
 	echo "  verify [issue|pr] <number> [slug] [--expect-head SHA] [--require-authority]"
@@ -89,6 +91,7 @@ cmd_help() {
 	echo "  sudo aidevops approve pr 17439 17441 <owner/repo>"
 	echo "  sudo aidevops approve batch issue:17438 pr:17439 pr:17441 <owner/repo>"
 	echo "  sudo aidevops approve permissions issue 17438 <owner/repo> --request perm-0123456789abcdef"
+	echo "  sudo aidevops approve permissions batch --withdraw --all-blocked <owner/repo>"
 	echo "  aidevops approve verify 17438"
 	echo "  aidevops approve verify pr 17439 <owner/repo> --expect-head <sha>"
 	_approval_commands_blank_line

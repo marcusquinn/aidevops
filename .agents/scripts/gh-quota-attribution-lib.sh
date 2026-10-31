@@ -479,12 +479,14 @@ _ghqa_record_bootstrap() {
 	local quota_cost="$3"
 	local page="$4"
 	local remaining="$5"
+	local reset="${6:-}"
+	local used="${7:-}"
 	local logical_id=""
 	declare -F gh_record_attempt >/dev/null 2>&1 || return 0
 	logical_id=$(gh_new_logical_id 2>/dev/null || true)
 	gh_record_attempt rest gh-quota-bootstrap "$logical_id" "" "$page" 0 "$outcome" \
 		"" "$elapsed_ms" "$quota_cost" "${AIDEVOPS_GH_AUTH_MODE:-gh-pat}" \
-		rest-core quota-state-bootstrap "$remaining"
+		rest-core quota-state-bootstrap "$remaining" "${AIDEVOPS_GH_AUTH_FINGERPRINT:-}" "$reset" "" "$used"
 	return 0
 }
 
@@ -507,7 +509,7 @@ _ghqa_bootstrap_state() {
 			search_used search_remaining search_reset <<<"$output"
 		if _ghqa_state_write_all "$state_file" "$core_used" "$core_reset" \
 			"$graphql_used" "$graphql_reset" "$search_used" "$search_reset"; then
-			_ghqa_record_bootstrap success "$elapsed_ms" 0 1 "$core_remaining"
+			_ghqa_record_bootstrap success "$elapsed_ms" 0 1 "$core_remaining" "$core_reset" "$core_used"
 			return 0
 		fi
 	fi
@@ -674,6 +676,11 @@ _ghqa_write_complete_frames() {
 	local kind="" frame_index="" status_count="" status="" resource="" used="" remaining="" reset="" elapsed="" response_cost=""
 	local frame_total=0 path="" pool="" page="" outcome="" quota_cost="" exact_success_cost="" decision=""
 	local invalidate_state=0
+	# Capture the sample time while holding the credential lock. Appending after
+	# release must not move an older observation past the next command's sample.
+	# All frames share command-completion time, not precise HTTP response times.
+	local sampled_at=""
+	sampled_at=$(_gh_now_seconds 2>/dev/null || true)
 	local success_quota_cost="${AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS:-}"
 	frame_total=$(printf '%s\n' "$parsed" | awk -F '\t' '$1 == "frame" { count++ } END { print count + 0 }')
 	if [[ "$command_rc" -eq 0 && "$frame_total" -eq 1 ]]; then
@@ -718,9 +725,9 @@ _ghqa_write_complete_frames() {
 		# costs, so the next response can prove or reject continuity.
 		_ghqa_state_update "$state_file" "$resource" "$used" "$reset" 2>/dev/null || true
 		decision="${AIDEVOPS_GH_ROUTE_DECISION:-${pool}-selected}"
-		printf 'attempt\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		printf 'attempt\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"$path" "$page" "$outcome" "$status" "$elapsed" "$quota_cost" \
-			"$pool" "$decision" "$remaining" >>"$result_file"
+			"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" >>"$result_file"
 	done <<<"$parsed"
 	[[ "$invalidate_state" -eq 0 ]] || rm -f -- "$state_file" 2>/dev/null || true
 	return 0
@@ -733,19 +740,32 @@ _ghqa_write_incomplete_frames() {
 	local command_rc="$4"
 	local parsed="$5"
 	local elapsed_ms="$6"
-	local kind="" frame_index="" ignored="" page="" frame_elapsed=""
+	local line="" kind="" frame_index="" status_count="" status="" resource="" used="" remaining="" reset="" ignored=""
+	local page="" frame_elapsed="" pool="" decision="" sampled_at=""
 	local frame_total=0 rows=0 outcome=success
 	[[ "$command_rc" -eq 0 ]] || outcome=error
 	frame_total=$(printf '%s\n' "$parsed" | awk -F '\t' '$1 == "frame" { count++ } END { print count + 0 }')
-	while IFS=$'\t' read -r kind frame_index ignored; do
+	sampled_at=$(_gh_now_seconds 2>/dev/null || true)
+	pool=$(_gh_default_pool "$original_path")
+	decision="${AIDEVOPS_GH_ROUTE_DECISION:-${pool}-selected}"
+	while IFS= read -r line; do
+		IFS=$'\t' read -r kind frame_index status_count status resource used remaining reset ignored <<<"$line"
 		[[ "$kind" == frame && "$frame_index" =~ ^[1-9][0-9]*$ ]] || continue
 		page=$(_ghqa_frame_page "$original_page" "$frame_index" "$frame_total") || continue
 		# Only aggregate process latency is available for incomplete frames. Own it
 		# on the final frame and use zero for preceding frames so totals stay exact.
 		frame_elapsed=0
-		[[ "$frame_index" -ne "$frame_total" ]] || frame_elapsed="$elapsed_ms"
-		_ghqa_write_fallback_attempt "$result_file" "$original_path" "$page" \
-			"$outcome" "$frame_elapsed" ""
+		[[ "$frame_index" -ne "$frame_total" ]] || frame_elapsed="${elapsed_ms:-x}"
+		if _ghqa_capture_frames_valid "$line" 1 2>/dev/null; then
+			# An individually complete frame keeps its cumulative counter evidence;
+			# quota cost stays unknown because a sibling frame is incomplete.
+			printf 'attempt\t%s\t%s\t%s\t%s\t%s\tx\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+				"$original_path" "$page" "$outcome" "$status" "$frame_elapsed" \
+				"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" >>"$result_file"
+		else
+			_ghqa_write_fallback_attempt "$result_file" "$original_path" "$page" \
+				"$outcome" "$frame_elapsed" ""
+		fi
 		rows=$((rows + 1))
 	done <<<"$parsed"
 	[[ "$rows" -gt 0 ]]
@@ -826,13 +846,14 @@ _ghqa_record_result_file() {
 	local caller="$2"
 	local logical_id="$3"
 	local retry="$4"
-	local kind path page outcome status elapsed quota pool decision budget
+	local kind path page outcome status elapsed quota pool decision budget reset sampled_at used
 	local attempts=0
-	while IFS=$'\t' read -r kind path page outcome status elapsed quota pool decision budget; do
+	while IFS=$'\t' read -r kind path page outcome status elapsed quota pool decision budget reset sampled_at used; do
 		[[ "$kind" == attempt ]] || continue
 		attempts=$((attempts + 1))
 		gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
-			"$status" "$elapsed" "$quota" "${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "$decision" "$budget"
+			"$status" "$elapsed" "$quota" "${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "$decision" "$budget" \
+			"${AIDEVOPS_GH_AUTH_FINGERPRINT:-}" "$reset" "$sampled_at" "$used"
 	done <"$result_file"
 	# An exact capture path that observed malformed debug output writes an opaque
 	# row above. An empty result is valid only when gh made no HTTP request.
@@ -880,6 +901,9 @@ _ghqa_run_transport_attempt() {
 		_GHQA_TRANSPORT_HANDLED=0
 		return 125
 	fi
+	# Dynamically scoped to this invocation, including bootstrap attempts. Never
+	# reuse a parent's fingerprint after auth routing switches credentials.
+	local AIDEVOPS_GH_AUTH_FINGERPRINT="$fingerprint"
 	state_dir="${AIDEVOPS_GH_QUOTA_STATE_DIR:-${HOME}/.aidevops/state/gh-quota-attribution}"
 	temp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	if ! _ghqa_prepare_private_dir "$state_dir" || ! _ghqa_prepare_private_dir "$temp_dir"; then

@@ -36,6 +36,42 @@ Keep these states distinct: **upstream detected** (a monitor finding),
 published** (a reviewed image is present in `CloudronVersions.json`). Detection
 does not authorize any later state.
 
+### Publication boundary: signed managed releases
+
+For managed catalog packages, use **upstream detected → release PR ready →
+release approval requested → approved → published**. After package tests,
+`preflight-release` and green PR preflight (including the no-push image build),
+run `cloudron-release-approval-helper.sh request <repo> <pr>`; do not merge.
+The helper holds the PR and creates a version-deduplicated release issue with
+the exact PR head, versions, changelog and evidence. `release-approval-required`
+is a dedicated signed gate, not `needs-maintainer-review`. The approval-only
+issue carries `no-auto-dispatch`; older unsigned requests are superseded.
+
+The maintainer runs only `sudo aidevops approve issue <N> <repo>`. Routine `r924`
+processes these issues every 30 minutes, requiring `VERIFIED` from
+`approval-helper.sh verify issue <N> <repo> --require-authority`, the unchanged
+head and green checks. It removes only its release hold and uses the normal
+full-loop merge gates. A changed head requires an updated issue and new signed
+approval. API/verification failures never authorize a merge.
+
+For an interactive continuation authorized for one release, use
+`cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.
+Omit `--apply` to preview the same scope without merging or publishing. `--repo`
+still requires a registered, maintained Cloudron package and admin/maintain
+permission; `--issue` selects only that approval issue number. Issue numbers are
+repository-local, so use both filters for a single release. Unscoped `process`
+(or `process --apply`) retains the routine default: all approval issues in all
+registered maintained Cloudron package repositories. Keep the full repos registry;
+no temporary `AIDEVOPS_REPOS_FILE` override is needed for scoping.
+
+After merge, the existing main catalog workflow owns publication. The routine
+waits boundedly and resumes verification later, then closes with evidence only
+when the catalog version, version tag and non-draft GitHub release all exist.
+GH#35649's workflow and upstream monitor own catalog-race recovery. Approval
+never enables publication, changes credentials/protection, deploys an app, or
+authorizes unrelated publication. See `cloudron-app-packaging.md` **Managed
+Package Lifecycle** for the complete operator contract.
+
 ```bash
 cloudron versions init  # creates CloudronVersions.json + DESCRIPTION.md, CHANGELOG, POSTINSTALL.md (edit all placeholders)
 cloudron builder login  # authenticate with the Container registry app
@@ -170,8 +206,31 @@ New `aidevops init` Cloudron projects receive both the legacy tag-release caller
 and the pinned catalog caller. Existing packages opt in by copying
 `templates/workflows/cloudron-catalog-publish-caller.yml` to
 `.github/workflows/cloudron-catalog-publish.yml`, or running
-`cloudron-package-helper.sh scaffold catalog`. Existing callers are never
-overwritten. The caller pins the reusable workflow by immutable commit SHA;
+`cloudron-package-helper.sh scaffold catalog`. Existing workflows are never
+overwritten by default. To replace an inline publisher, run
+`cloudron-package-helper.sh scaffold catalog --migrate [package-directory]`
+(requires Ruby with its standard YAML library). Migration uses the managed
+template's immutable pin, which includes GH#35649 push-race recovery and GH#35650
+no-push PR builds. It moves unconditional package shell-script checks into
+`package_checks` and preserves literal image and paired CLI inputs. Unmapped
+jobs, steps or configuration are listed and block migration without modifying
+the original. In particular, integrate Nostr Relay's `runtime-smoke` explicitly;
+do not remove it to make migration pass. Already-reusable callers require manual
+pin/input review rather than being reset. Review every generated diff, including
+the standard publisher steps replaced by the reusable workflow.
+
+Roll out one migration PR per package after the helper lands. Keep
+`CloudronManifest.json` version unchanged, confirm it is already published and
+its existing tag/release are complete, and verify the PR preflight's no-push
+image build before merge. Do not modify catalog entries, tags or releases as
+part of migration. Only after reviewing the existing publication prerequisites,
+set the repository variable `CLOUDRON_PUBLICATION_ENABLED=true`; this is required
+for **both publication and upstream monitor reconcile**, including packages whose
+old inline workflow published without the variable. Enabling it with an
+unpublished manifest version or incomplete release can publish/reconcile that
+version, so an unchanged manifest alone is not proof of a no-publication rollout.
+
+The caller pins the reusable workflow by immutable commit SHA;
 `aidevops_ref` must match that pin and constrains attestation signer verification.
 Keep the original pin available when reconciling catalogs signed by that revision;
 updating a caller does not authorize an older signer automatically.
@@ -180,8 +239,14 @@ The caller grants the permission ceiling (`contents`, `packages`, `attestations`
 write and OIDC); each reusable job narrows its permissions. Only preflight runs
 on PRs: static manifest/Dockerfile checks, ShellCheck, optional `package_checks`
 (set this input to the package's static checks and pinned-upstream patch check),
-and the real CLI catalog dry run above. No publication credential is exposed to
-those commands. The CLI version and npm sha512 integrity are pinned together;
+the real CLI catalog dry run above, and a no-push `linux/amd64` image build at
+the validated SHA. Preflight proves the image builds before merge: a failing
+Dockerfile fails that same check, even when publication is disabled or the version
+already exists in the catalog. Its 45-minute job timeout bounds the build, and its
+read-only token has no GHCR write permission. No registry login or publication
+credential is exposed to those commands. The PR and main builds share the platform
+setting, image tag, metadata output and build context; only main may push.
+The CLI version and npm sha512 integrity are pinned together;
 the registry metadata and installed lockfile integrity must both match, and
 lifecycle scripts are disabled. Override both CLI inputs together after review.
 This pins the CLI package, not its entire transitive npm dependency graph; it is
@@ -191,13 +256,50 @@ with an explicit image, which a stateless runner needs even for `versions update
 Publication is disabled until the repository **variable**
 `CLOUDRON_PUBLICATION_ENABLED` equals `true`. Even then, only `push` or
 `workflow_dispatch` runs on `refs/heads/main` may publish (including no
-`pull_request_target` exception). Add the explicitly passed repository **secret**
-`CLOUDRON_RELEASE_PAT`: a fine-grained PAT restricted to this package repository,
-with Contents write access for its catalog commit and tag. Grant only any
-additional access required by the repository's existing branch policy; this
-workflow never changes or bypasses that policy. The normal job token pushes to
-GHCR. Review protection, Actions permissions, package checks and credentials
-before enabling the variable. Do not test publication against a real catalog.
+`pull_request_target` exception). No personal token is needed under the
+protection baseline below: the per-run job token (scoped to this repository,
+expiring with the job) pushes to GHCR and, in the final publish step only,
+pushes the catalog commit and tag. That is narrower than any PAT and needs no
+rotation. The caller still forwards the optional repository **secret**
+`CLOUDRON_RELEASE_PAT`; set it only when rules on `main` block a direct
+job-token push (required pull requests, status checks or deployments, or
+restricted updates). The approval, scaffold and monitor helpers check
+`gh api repos/<owner/repo>/rules/branches/main` and require the secret only in
+that case; classic branch protection is not inspected. This workflow never
+changes or bypasses branch policy. Review protection, Actions permissions and
+package checks before enabling the variable. Do not test publication against a
+real catalog.
+
+**When a publication PAT is needed:** reuse one purpose-scoped fine-grained
+`CLOUDRON_RELEASE_PAT` per owner, separate from `SYNC_PAT`. Select **Only select
+repositories** and include every package repository that needs it (for example,
+the owner's `cloudron-*-app` repositories). Grant repository **Contents:
+read/write** and the automatically included **Metadata: read** only; no workflow
+or user permissions. Store the value once in gopass, not once per repository.
+
+**Add a new package repo:** open GitHub **Settings → Developer settings →
+Fine-grained tokens → CLOUDRON_RELEASE_PAT → Edit** and add the repository to
+the existing token's access list if absent. Editing access leaves the value
+unchanged. Set the repository's Actions secret from gopass without displaying it:
+
+```bash
+aidevops secret CLOUDRON_RELEASE_PAT -- sh -c 'printf %s "$CLOUDRON_RELEASE_PAT" | gh secret set CLOUDRON_RELEASE_PAT --repo OWNER/REPO'
+```
+
+GitHub user accounts have no account-level Actions secrets: set the same value
+in each repository that needs it. **First time / value lost:** create the token
+only if none exists; if its value is lost, **Regenerate** the existing token
+(permissions and repository list are retained). Run
+`aidevops secret set CLOUDRON_RELEASE_PAT` in a terminal to save the value in
+gopass. Then set the secret from gopass in **every repository listed on the
+token**: regeneration revokes the old value and invalidates every existing copy.
+Never paste values into chat or logs.
+
+**Verify distribution without reading values:** run
+`gh secret list --repo OWNER/REPO --app actions` for each repository updated and
+confirm `CLOUDRON_RELEASE_PAT` is listed. Presence alone does not prove the
+token's repository access, permissions or branch-policy bypass; review those
+separately. Do not trigger a real publication to test token distribution.
 
 **Repository protection:** before enabling publication, a maintainer should
 deliberately apply these two repository rulesets with `enforcement: active` and
@@ -228,7 +330,13 @@ Requiring pull requests and required checks is a separate, optional policy, not
 part of this baseline. It blocks these workflows' direct pushes to `main` unless
 the owner is an authorized bypass actor and the pushes authenticate with owner
 PATs (`CLOUDRON_RELEASE_PAT` for catalog publication, `SYNC_PAT` for sync
-workflows). This bypass path is **untested with fine-grained PATs**; do not
+workflows). If you adopt it, one fine-grained PAT covering all affected package
+repositories per owner and purpose is enough: Contents write for publication;
+see `reference/sync-pat-platforms.md` for sync permissions. Keep release and sync
+tokens separate; extend each token's selected repository list rather than
+creating a token per repository.
+This bypass path is
+**untested with fine-grained PATs**; do not
 recommend or enable it without separately verifying the token permissions,
 bypass configuration and affected workflows.
 
@@ -243,11 +351,26 @@ publication. A tag with absent or mismatched provenance fails closed; investigat
 it rather than deleting or overwriting it automatically.
 
 The generated catalog is attested and its exact bundle verified before a
-catalog-only commit and tag are pushed atomically. Concurrent changes to `main`
-reject the push; rerun against the new revision after review. Caller concurrency
+catalog-only commit and tag are pushed atomically. If `main` advances, publication
+fetches it and retries once after rebasing only the catalog commit. Every
+intervening change must be allowlisted documentation or metrics/Star History
+assets (`README.md`, `docs/`, `metrics/`, `.github/metrics/`,
+`.github/star-history/`, or root `star-history.svg`/`star-history-dark.svg`).
+Package inputs, catalog changes, rewritten ancestry, conflicts, or a second race
+fail closed. Catalog bytes remain unchanged, and the commit records the original
+validated SHA for both catalog and image attestation verification. Caller concurrency
 serializes main runs and never cancels an in-flight publication. Existing
 catalogs without this workflow's attestations require an owner-reviewed
 provenance adoption before release reconciliation; it never fabricates evidence.
+
+The daily `cloudron-package-monitor-helper.sh upstream` check reports a remote
+main manifest version missing from the catalog when publication is enabled and
+no catalog run is active. With `--apply` and ADMIN/MAINTAIN authority it dispatches
+the existing main workflow once per version, with a local persistent receipt
+under `~/.aidevops/cache/cloudron-catalog-reconcile/`. Failed dispatches may retry;
+a successfully dispatched but failed workflow requires investigation before
+removing that version's receipt. This resumes already-authorized publication;
+it does not enable publication, alter caller pins, or bypass workflow gates.
 
 The catalog workflow creates the GitHub release itself, from the tagged
 catalog's embedded version changelog, after checking tag ancestry, public image

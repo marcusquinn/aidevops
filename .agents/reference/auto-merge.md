@@ -32,7 +32,7 @@ Interactive PRs default to human-controlled merge. `pulse-merge.sh` only merges 
 2. PR author has `admin` or `maintain` permission on the repo (OWNER or org MEMBER — write-only COLLABORATORs go through the normal review gate instead).
 3. All required status checks PASS or SKIPPED.
 4. No `CHANGES_REQUESTED` review from a human reviewer.
-5. PR is **not a draft** — `/pr-loop` or an explicit finalise/ready request may convert it with `gh pr ready <PR>`.
+5. PR is **not a draft** — after verification, implementation intent in a maintainer repository (`workflows/full-loop.md` Step 4.2), `/pr-loop`, or an explicit finalise/ready request converts it with `gh pr ready <PR>`.
 6. PR does **not** carry the `hold-for-review` label.
 7. Merge throughput is explicitly opted in by one of:
    - PR label: `allow-auto-merge` (specific PR)

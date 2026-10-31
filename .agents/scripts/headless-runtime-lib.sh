@@ -1072,6 +1072,16 @@ Name the exact trigger and checked evidence in the protected dossier. This class
 re-arms on a brief or linked dependency change or trusted retry, not unrelated
 default-branch commits. Do not use it for generic provider outages, missing
 permissions, uncertain availability or a trigger that is already satisfied.
+When a required external source keeps refusing access on every approved
+acquisition path (HTTP 403, bot challenge, DNS failure, TLS or origin failure,
+or a removed page), use:
+TERMINAL_BLOCKER_REASON=source_access_blocked
+Name the URLs or hosts, the observed status per approved path, and the reopen
+condition in the protected dossier. This class routes recovery to access-owner
+and re-arms on a brief or linked dependency change or trusted retry, not unrelated
+default-branch commits. Never use it for missing local credentials or runner-local
+account failures (runner_capability_unmet), or permission guards
+(permission_required). Do not bypass access controls or retry denied reads.
 A tool absent from PATH is not yet proof it is uninstalled (GH#34110). First
 check only what the repository declares: `.aidevops.json` `.verify` commands and
 a worktree-local `.venv/bin/<tool>`; never scan host directories or install.
@@ -1086,6 +1096,9 @@ Name the missing tool, interpreter and checked declarations in the dossier.
 A runner-local account or credential that this runner lacks or the service
 rejects (for example a staging sign-in returning HTTP 401) is the same class,
 not permission_required; another runner may hold it (GH#34901).
+A host-local lock or serialization guard held on this runner pending its operator's reconciliation is runner_capability_unmet, not permission_required, because another runner may not hold it.
+A brief precondition measured on this runner (local telemetry, logs, data or checkouts) that is unmet here is runner_capability_unmet, even when the brief names external_trigger_pending or input_required: another runner may meet it. Name the precondition and the value observed here.
+A VAULT_POLICY_DENIED with check unclassifiable_shell_read or classification_unavailable inside the worker's own worktree, asking for a local-only relaunch, is runner_capability_unmet; protected_read, classification_mutation, and owner-signed SSH or network grant denials remain permission_required.
 For an evidenced unresolved permission boundary, including a continued session
 whose prior protected-source denial has no changed exact-context grant, use the
 next class; never for missing tooling or forbidden dependency installation:
@@ -1105,6 +1118,13 @@ interpretation are yours to decide, never this class. Name the exact input and
 where you looked; never guess it. Not for permissions or external events.
 If no class is established, omit the reason line: unknown evidence stays retryable
 with bounded cross-runner backoff, not a permanent hold.
+EOF
+	_worker_headless_contract_recovery_text
+	return 0
+}
+
+_worker_headless_contract_recovery_text() {
+	cat <<'EOF'
 
 Owned integration recovery (GH#31305): for an unresolved adjacent path, explicit
 hard boundary, concurrent owner, missing context or genuine human-only decision,

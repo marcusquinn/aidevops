@@ -153,7 +153,7 @@ with supplied evidence; selection, exclusions and envelope: `reference/agent-rou
 | WordPress | `tools/wordpress/wp-dev.md` |
 | UI/layout/design/CSS | `tools/design/design-md.md` + `workflows/ui-verification.md` + `tools/ui/frontend-debugging.md`; load Playwright emulation only for an explicit or risk-justified browser matrix |
 | Design system/brand/style | `tools/design/design-md.md` + `tools/design/design-inspiration.md` + `tools/design/ui-ux-inspiration.md` + `tools/design/ui-ux-catalogue.toon` + `tools/design/brand-identity.md` |
-| Browser automation | `tools/browser/browser-automation.md` |
+| Browser automation | `tools/browser/browser-automation.md`; default **Playwright** (headless, headed-hidden, headed). **Playwriter** is a different tool: only when the user names it |
 | Accessibility | `tools/accessibility/accessibility-audit.md` |
 | Local dev / .local / ports / proxy / HTTPS / LocalWP | `services/hosting/local-hosting.md` |
 | Backblaze B2 / B2 cloud storage | `services/hosting/backblaze-b2.md` |

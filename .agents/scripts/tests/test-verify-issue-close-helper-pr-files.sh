@@ -28,6 +28,17 @@ cat >"$TMPDIR/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${SCOPED_FIXTURE:-}" == 1 ]]; then
+	case "$*" in
+	"api repos/owner/repo/issues/200") jq '.' "$SCOPED_ISSUE" ;;
+	"api repos/owner/repo/pulls/100") jq '.' "$SCOPED_PR" ;;
+	"api --paginate repos/owner/repo/pulls/100/files?per_page=100"*)
+		printf '%s\n' "$SCOPED_FILES" ;;
+	*) exit 1 ;;
+	esac
+	exit 0
+fi
+
 if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
 	case "${3:-}" in
 	200)
@@ -203,6 +214,62 @@ assert_check_passes "signature-like marker cannot hide a later repository path" 
 assert_check_passes "glob Files Scope entry matches a PR file" 110 211
 assert_check_rejects "glob Files Scope entry rejects a non-matching or nested PR file" 211 111
 assert_check_rejects "glob without a literal directory prefix contributes no overlap" 212 110
+
+test_scoped_delivery() {
+	local shape="$1" repo="$TMPDIR/scoped-$1" output rc=0 expected=1 head
+	mkdir -p "$repo"
+	git -C "$repo" init -q
+	git -C "$repo" config user.email test@example.invalid
+	git -C "$repo" config user.name Test
+	printf 'review A\n' >"$repo/a.md"
+	printf 'review B\n' >"$repo/b.md"
+	git -C "$repo" add a.md b.md
+	git -C "$repo" commit -qm artifacts
+	head=$(git -C "$repo" rev-parse HEAD)
+	local SCOPED_FIXTURE=1 SCOPED_ISSUE="$TMPDIR/issue.json" SCOPED_PR="$TMPDIR/pr.json" SCOPED_FILES
+	local AIDEVOPS_ATTEMPT_ID=fixture AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
+	export SCOPED_FIXTURE SCOPED_ISSUE SCOPED_PR SCOPED_FILES AIDEVOPS_ATTEMPT_ID AIDEVOPS_ATTEMPT_STARTED_AT
+	SCOPED_FILES=$'a.md\nb.md'
+	jq -n --arg shape "$shape" '{number:200,state:"closed",state_reason:"completed",
+		author_association:"COLLABORATOR",updated_at:"2026-10-25T12:00:00Z",
+		body:"### Files Scope\n- `a.md`\n- `b.md`\n"}
+		| if $shape == "open" then .state = "open"
+		elif $shape == "untrusted" then .author_association = "NONE"
+		elif $shape == "wrong_issue" then .number = 201
+		elif $shape == "no_scope" then .body = "a.md b.md"
+		elif $shape == "glob" then .body = "### Files Scope\n- `review/*.md`\n"
+		elif $shape == "traversal" then .body = "### Files Scope\n- `../a.md`\n"
+		elif $shape == "empty" then .body = "### Files Scope\n"
+		elif $shape == "duplicate_scope" then .body = "### Files Scope\n- `a.md`\n\n## Files Scope\n- `b.md`\n"
+		else . end' >"$SCOPED_ISSUE"
+	jq -n --arg head "$head" --arg shape "$shape" '{number:100,state:"closed",
+		merged_at:"2026-10-25T11:00:00Z",merge_commit_sha:$head,
+		base:{repo:{full_name:"owner/repo"}},body:"For #200"}
+		| if $shape == "unrelated" then .body = "For #2000"
+		elif $shape == "cross_repo" then .base.repo.full_name = "other/repo"
+		elif $shape == "unmerged" then .merged_at = null
+		elif $shape == "not_ancestor" then .merge_commit_sha = ("f" * 40)
+		else . end' >"$SCOPED_PR"
+	case "$shape" in
+	complete) expected=0 ;;
+	partial) SCOPED_FILES=a.md ;;
+	dirty) touch "$repo/unpublished" ;;
+	changed) printf 'replaced\n' >"$repo/b.md"; git -C "$repo" add b.md; git -C "$repo" commit -qm changed ;;
+	invalid_attempt) AIDEVOPS_ATTEMPT_STARTED_AT=invalid ;;
+	esac
+	output=$(bash "$HELPER_PATH" check-scoped-delivery 200 100 owner/repo "$repo" 2>/dev/null) || rc=$?
+	if [[ "$rc" == "$expected" ]] && { [[ "$rc" != 0 ]] || jq -e --arg head "$head" \
+		'.verified and .kind == "scoped_delivery" and .head == $head and (.files | length == 2) and .attempt_id == "fixture"' <<<"$output" >/dev/null; }; then
+		PASS=$((PASS + 1)); printf 'PASS: scoped delivery %s\n' "$shape"
+	else
+		FAIL=$((FAIL + 1)); printf 'FAIL: scoped delivery %s rc=%s output=%s\n' "$shape" "$rc" "$output"
+	fi
+	return 0
+}
+
+for shape in complete partial open untrusted wrong_issue no_scope glob traversal empty duplicate_scope unrelated cross_repo unmerged not_ancestor dirty changed invalid_attempt; do
+	test_scoped_delivery "$shape"
+done
 
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

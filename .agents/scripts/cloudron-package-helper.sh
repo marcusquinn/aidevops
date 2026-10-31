@@ -409,10 +409,16 @@ cmd_test() {
 # Generate boilerplate for specific app types
 scaffold_catalog_workflow() {
 	local target_root="${1:-.}"
+	local migrate="${2:-false}"
 	local template_path="${SCRIPT_DIR}/../templates/workflows/cloudron-catalog-publish-caller.yml"
 	local workflow_path="${target_root}/.github/workflows/cloudron-catalog-publish.yml"
 	[[ -f "${target_root}/CloudronManifest.json" ]] || return 0
 	if [[ -e "$workflow_path" ]]; then
+		if [[ "$migrate" == true ]]; then
+			migrate_catalog_workflow "$workflow_path" "$template_path" || return 1
+			catalog_publication_secret_warning "$target_root"
+			return 0
+		fi
 		log_info "Cloudron catalog caller already present; preserving it"
 		return 0
 	fi
@@ -423,6 +429,161 @@ scaffold_catalog_workflow() {
 	mkdir -p "${target_root}/.github/workflows"
 	cp "$template_path" "$workflow_path"
 	log_success "Installed Cloudron catalog caller (publication remains opt-in)"
+	catalog_publication_secret_warning "$target_root"
+	return 0
+}
+
+# Inspect names only; scaffolding remains usable before a remote is configured.
+catalog_publication_secret_warning() {
+	local target_root="$1" slug="" secrets="" origin="" pat_rc=0
+	if ! origin=$(git -C "$target_root" remote get-url origin 2>/dev/null) || [[ -z "$origin" ]] ||
+		! slug=$(gh repo view --repo "$origin" --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null) || [[ -z "$slug" ]]; then
+		log_warn "Publication credentials unverified: configure the package origin, then check main's branch rules (see cloudron-app-publishing-skill.md)" >&2
+		return 0
+	fi
+	# The job token publishes unless rules on main block its direct push.
+	cloudron_publication_pat_required "$slug" || pat_rc=$?
+	if [[ "$pat_rc" -eq 1 ]]; then
+		return 0
+	elif [[ "$pat_rc" -eq 2 ]]; then
+		log_warn "Publication credentials unverified: unable to read branch rules for main in $slug" >&2
+	elif ! secrets=$(gh secret list --repo "$slug" --json name); then
+		log_warn "Publication blocked: unable to verify CLOUDRON_RELEASE_PAT in $slug" >&2
+	elif ! jq -e 'any(.[]; .name == "CLOUDRON_RELEASE_PAT")' <<<"$secrets" >/dev/null; then
+		log_warn "Publication blocked: $slug is missing CLOUDRON_RELEASE_PAT, which its main branch rules (required PRs or checks) need for the catalog push. Reuse the owner's purpose-scoped fine-grained CLOUDRON_RELEASE_PAT (Contents write and Metadata read only): add this repository to its selected access if needed, then set the repo secret from gopass with aidevops secret CLOUDRON_RELEASE_PAT -- sh -c 'printf %s \"\$CLOUDRON_RELEASE_PAT\" | gh secret set CLOUDRON_RELEASE_PAT --repo $slug'. See cloudron-app-publishing-skill.md for first-time or lost-value setup. Never put values in logs or chat." >&2
+	fi
+	return 0
+}
+
+_catalog_migration_standard_steps() {
+	cat <<'STEPS'
+Check out repository
+Require trusted publication source
+Install pinned Cloudron CLI
+Dry-run catalog entry with the real Cloudron CLI
+Read manifest metadata
+Decide whether this version needs publication
+Validate an existing release entry
+Check out the verified revision
+Verify the build source stayed immutable
+Log in to GHCR
+Set up Docker Buildx
+Build and push amd64 image
+Record immutable image reference
+Attest image provenance
+Verify the release source stayed immutable
+Set up Docker Buildx for anonymous verification
+Verify anonymous registry visibility
+Publish and verify catalog entry
+Attest catalog provenance
+Verify catalog provenance
+Commit generated catalog
+Create GitHub release
+Verify existing immutable image is anonymously pullable
+Check out published source
+Verify existing package tag and digest
+Attest existing catalog provenance
+Verify existing catalog provenance
+Reconcile GitHub release
+STEPS
+	return 0
+}
+
+# Parse YAML rather than guessing step boundaries with line-oriented matching.
+# Ruby/Psych is required only for the explicit migration operation.
+migrate_catalog_workflow() {
+	local workflow_path="$1"
+	local template_path="$2"
+	local standard_steps=""
+	standard_steps=$(_catalog_migration_standard_steps)
+	command -v ruby >/dev/null 2>&1 || {
+		log_error "Catalog migration requires Ruby with the standard YAML library"
+		return 1
+	}
+	CLOUDRON_CATALOG_STANDARD_STEPS="$standard_steps" ruby - "$workflow_path" "$template_path" <<'RUBY' || return 1
+require 'yaml'
+path, template = ARGV
+begin
+  original = File.read(path)
+  source = YAML.safe_load(original)
+  target = YAML.safe_load(File.read(template))
+  errors = []
+  checks = []
+  events = source['on'] || source[true]
+  events = events.to_h { |event| [event, nil] } if events.is_a?(Array)
+  unless events.is_a?(Hash) && (events.keys - %w[pull_request push workflow_dispatch]).empty? &&
+         events.all? { |event, config| config.nil? || (event == 'push' && config == { 'branches' => ['main'] }) }
+    errors << 'workflow triggers (custom filters/inputs/events require manual integration)'
+  end
+  jobs = source.fetch('jobs')
+  # Already-managed callers may contain custom inputs: never reset them.
+  if jobs.values.any? { |job| job.key?('uses') }
+    abort 'Migration blocked: reusable caller already present; review its inputs and pin manually'
+  end
+  standard_jobs = %w[preflight build publish verify-existing reconcile-existing-release]
+  (jobs.keys - standard_jobs).each { |name| errors << "job #{name}" }
+  standard_steps = ENV.fetch('CLOUDRON_CATALOG_STANDARD_STEPS').split("\n")
+  jobs.each do |job_name, job|
+    next unless standard_jobs.include?(job_name)
+    (job.keys - %w[runs-on permissions outputs steps needs if timeout-minutes]).each do |key|
+      errors << "job #{job_name}: #{key}"
+    end
+    conditions = [
+      "github.event_name != 'pull_request' && needs.preflight.outputs.publish == 'true'",
+      "github.event_name != 'pull_request' && needs.preflight.outputs.publish == 'false'",
+      "needs.preflight.outputs.publish == 'false'"
+    ]
+    if job.key?('if') && !conditions.include?(job['if'])
+      errors << "job #{job_name}: custom condition"
+    end
+    job.fetch('steps').each do |step|
+      name = step['name'] || step['uses'] || '(unnamed)'
+      # Only unconditional, self-contained script invocations map into package_checks.
+      # Context, environment, outputs, actions and runtime setup need manual integration.
+      if job_name == 'preflight' && (step.keys - %w[name run]).empty? &&
+         step['run'].is_a?(String) &&
+         step['run'].strip.match?(/\Abash (?:\.\/)?(?:test|scripts)\/[\w.\/-]+\.sh\z/)
+        checks << step['run'].strip
+      elsif !standard_steps.include?(name)
+        errors << "step #{job_name}/#{name}"
+      elsif !(step.keys - %w[name uses with run shell id if env]).empty?
+        errors << "step #{job_name}/#{name}: custom execution options"
+      end
+    end
+  end
+  env = source.fetch('env', {})
+  (env.keys - %w[IMAGE_REPOSITORY CLOUDRON_CLI_VERSION CLOUDRON_CLI_INTEGRITY]).each do |key|
+    errors << "environment #{key}"
+  end
+  (source.keys - ['name', 'on', true, 'concurrency', 'permissions', 'env', 'jobs']).each do |key|
+    errors << "workflow #{key}"
+  end
+  abort "Migration blocked; unmapped configuration:\n- #{errors.join("\n- ")}" unless errors.empty?
+  inputs = target.fetch('jobs').fetch('catalog').fetch('with')
+  inputs['package_checks'] = checks.join("\n") + "\n" unless checks.empty?
+  if env.key?('IMAGE_REPOSITORY')
+    image = env['IMAGE_REPOSITORY']
+    abort 'Migration blocked: IMAGE_REPOSITORY must be a literal GHCR path' unless
+      image.is_a?(String) && image.match?(/\Aghcr\.io\/[a-z0-9._\/-]+\z/)
+    inputs['image_repository'] = image
+  end
+  # Preserve the old CLI version/integrity as a pair, never silently upgrade one.
+  if env.key?('CLOUDRON_CLI_VERSION') || env.key?('CLOUDRON_CLI_INTEGRITY')
+    abort 'Migration blocked: incomplete CLI version/integrity pair' unless
+      env['CLOUDRON_CLI_VERSION'].is_a?(String) && env['CLOUDRON_CLI_INTEGRITY'].is_a?(String)
+    inputs['cli_version'] = env['CLOUDRON_CLI_VERSION']
+    inputs['cli_integrity'] = env['CLOUDRON_CLI_INTEGRITY']
+  end
+  # YAML 1.1 parses GitHub's unquoted on key as true. Emit an explicit string key.
+  target['on'] = target.delete(true) if target.key?(true)
+  rendered = YAML.dump(target)
+  abort 'Migration blocked: workflow changed during analysis' unless File.read(path) == original
+  File.write(path, rendered)
+  puts "Migrated catalog caller; preserved #{checks.length} package checks. Review the diff before committing."
+rescue Psych::Exception, KeyError, NoMethodError, TypeError => error
+  abort "Migration blocked: invalid or unsupported workflow (#{error.class})"
+end
+RUBY
 	return 0
 }
 
@@ -431,7 +592,20 @@ cmd_scaffold() {
 
 	case "$app_type" in
 	catalog)
-		scaffold_catalog_workflow "${2:-.}"
+		local target_root="."
+		local migrate=false
+		local option=""
+		shift
+		while [[ $# -gt 0 ]]; do
+			local option="$1"
+			case "$option" in
+			--migrate) migrate=true ;;
+			--*) log_error "Unknown catalog option: $option"; return 1 ;;
+			*) target_root="$option" ;;
+			esac
+			shift
+		done
+		scaffold_catalog_workflow "$target_root" "$migrate" || return 1
 		;;
 	php)
 		scaffold_php

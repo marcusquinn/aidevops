@@ -96,6 +96,91 @@ has_worker_for_repo_issue() {
 		return 0
 	fi
 
+	# GH#36186: an exact-head draft continuation runs under the session key
+	# pr-checkpoint-continuation-<safe-slug>-<pr>, which names the PR, not
+	# the issue. Recognise it when that PR links this issue.
+	if _has_live_checkpoint_continuation_for_issue "$issue_number" "$repo_slug" "$worker_lines"; then
+		return 0
+	fi
+
+	return 1
+}
+
+# Per-process cache of "slug|pr|linked issue numbers" rows (GH#36186).
+_PULSE_CONTINUATION_LINK_CACHE=""
+# Result of the last _continuation_pr_linked_issues call (space-separated).
+_PULSE_CONTINUATION_LINKED=""
+
+#######################################
+# Resolve the issue numbers a PR links (closing references plus `#N` mentions
+# in its body) into _PULSE_CONTINUATION_LINKED, cached per process. Call it
+# directly, not in a command substitution, so the cache persists.
+# Arguments: $1 repo slug, $2 PR number
+# Exit codes: 0 resolved, 1 PR unreadable
+#######################################
+_continuation_pr_linked_issues() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local cache_row="" cache_key="${repo_slug}|${pr_number}|" pr_json="" linked=""
+	_PULSE_CONTINUATION_LINKED=""
+	while IFS= read -r cache_row; do
+		if [[ "$cache_row" == "$cache_key"* ]]; then
+			_PULSE_CONTINUATION_LINKED="${cache_row#"$cache_key"}"
+			return 0
+		fi
+	done <<<"$_PULSE_CONTINUATION_LINK_CACHE"
+	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json closingIssuesReferences,body 2>/dev/null) || return 1
+	linked=$(printf '%s' "$pr_json" | jq -r '
+		([.closingIssuesReferences[]?.number] +
+			[(.body // "") | scan("(?:^|[^0-9A-Za-z_/])#([0-9]+)") | .[0] | tonumber]) |
+		unique | map(tostring) | join(" ")
+	' 2>/dev/null) || return 1
+	_PULSE_CONTINUATION_LINK_CACHE="${_PULSE_CONTINUATION_LINK_CACHE}${_PULSE_CONTINUATION_LINK_CACHE:+$'\n'}${cache_key}${linked}"
+	_PULSE_CONTINUATION_LINKED="$linked"
+	return 0
+}
+
+#######################################
+# GH#36186: true when a local draft-checkpoint continuation session for a PR
+# linked to this issue is running. A running continuation whose linkage cannot
+# be read fails closed (treated as live) so dispatch never launches a
+# competing worker on transient API errors.
+# Arguments: $1 issue number, $2 repo slug, $3 active worker lines
+# Exit codes: 0 live continuation, 1 none
+#######################################
+_has_live_checkpoint_continuation_for_issue() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local worker_lines="$3"
+	local session_prefix="" pr_numbers="" pr_number=""
+	[[ -n "$worker_lines" && "$repo_slug" == */* ]] || return 1
+	session_prefix="pr-checkpoint-continuation-$(printf '%s' "$repo_slug" | tr '/:' '--')-"
+	# The session key is lossy (org/a-b vs org-a/b): when the process line
+	# exposes WORKER_REPO_SLUG, it must match this repo before the line counts.
+	pr_numbers=$(printf '%s\n' "$worker_lines" | awk -v prefix="$session_prefix" -v slug="$repo_slug" '
+		{
+			other = 0
+			for (i = 1; i <= NF; i++) {
+				if (index($i, "WORKER_REPO_SLUG=") == 1 && substr($i, 18) != slug) other = 1
+			}
+			if (other) next
+			for (i = 1; i < NF; i++) {
+				if ($i == "--session-key" && index($(i + 1), prefix) == 1) {
+					rest = substr($(i + 1), length(prefix) + 1)
+					if (rest ~ /^[1-9][0-9]*$/) print rest
+				}
+			}
+		}
+	' | sort -u) || pr_numbers=""
+	[[ -n "$pr_numbers" ]] || return 1
+	while IFS= read -r pr_number; do
+		[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || continue
+		if ! _continuation_pr_linked_issues "$repo_slug" "$pr_number"; then
+			[[ -n "${LOGFILE:-}" ]] && echo "[pulse-wrapper] has_worker: continuation for PR #${pr_number} in ${repo_slug} has unreadable linkage; treating issue #${issue_number} as owned (GH#36186)" >>"$LOGFILE"
+			return 0
+		fi
+		[[ " ${_PULSE_CONTINUATION_LINKED} " == *" ${issue_number} "* ]] && return 0
+	done <<<"$pr_numbers"
 	return 1
 }
 
@@ -638,7 +723,7 @@ _task_id_in_recent_commits() {
 	# Subtask decimal suffix preserved (GH#19165) — t2053.2 must NOT match parent t2053 commits.
 	local -a subject_patterns=()
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | sed -n '1p' | sed 's/[.]/\\./g') || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
 		subject_patterns+=("$task_id_match")
 	fi
@@ -646,7 +731,7 @@ _task_id_in_recent_commits() {
 	# Pattern 2: GH#NNN from title (e.g., "GH#17574: fix pulse dispatch")
 	# Subject-only: body mentions of other GH# IDs must not match.
 	local gh_id_match
-	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | head -1) || gh_id_match=""
+	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | sed -n '1p') || gh_id_match=""
 	if [[ -n "$gh_id_match" ]]; then
 		subject_patterns+=("$gh_id_match")
 	fi
@@ -764,16 +849,16 @@ _task_id_in_changed_files() {
 
 	# Check for tNNN or tNNN.X completion marker: "- [x] tNNN ..."
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | sed -n '1p' | sed 's/[.]/\\./g') || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
-		if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)"; then
+		if printf '%s' "$todo_content" | grep -E "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)" >/dev/null; then
 			echo "[pulse-wrapper] _task_id_in_changed_files: found completed '${task_id_match}' in TODO.md on origin/main" >>"$LOGFILE"
 			return 0
 		fi
 	fi
 
 	# Check for GH#NNN completion marker: "- [x] ... GH#NNN ..."
-	if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\].*\bGH#${issue_number}\b"; then
+	if printf '%s' "$todo_content" | grep -E "^\s*-\s*\[x\].*\bGH#${issue_number}\b" >/dev/null; then
 		echo "[pulse-wrapper] _task_id_in_changed_files: found completed 'GH#${issue_number}' in TODO.md on origin/main" >>"$LOGFILE"
 		return 0
 	fi

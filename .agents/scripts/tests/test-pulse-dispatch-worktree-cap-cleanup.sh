@@ -13,12 +13,12 @@ eval "$(awk '/^_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN=/ { print; exit }' "$COR
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 LOGFILE="${TEST_ROOT}/pulse.log"
-AIDEVOPS_WORKTREE_HELPER="${TEST_ROOT}/worktree-helper.sh"
+AIDEVOPS_WORKTREE_CAPACITY_HELPER="${TEST_ROOT}/capacity-helper.sh"
 FAKE_ARGS_FILE="${TEST_ROOT}/helper.args"
 FAKE_COUNT_FILE="${TEST_ROOT}/worktree.count"
 # shellcheck disable=SC2016 # The generated fixture expands these variables when executed.
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >"$FAKE_ARGS_FILE"\nif [[ "${FAKE_REMOVE_COUNT:-0}" == "1" ]]; then rm -f "$FAKE_COUNT_FILE"; elif [[ -n "${FAKE_AFTER_COUNT:-}" ]]; then printf "%%s\\n" "$FAKE_AFTER_COUNT" >"$FAKE_COUNT_FILE"; fi\nexit 0\n' >"$AIDEVOPS_WORKTREE_HELPER"
-chmod +x "$AIDEVOPS_WORKTREE_HELPER"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >"$FAKE_ARGS_FILE"\nif [[ "${FAKE_REMOVE_COUNT:-0}" == "1" ]]; then rm -f "$FAKE_COUNT_FILE"; elif [[ -n "${FAKE_AFTER_COUNT:-}" ]]; then printf "%%s\\n" "$FAKE_AFTER_COUNT" >"$FAKE_COUNT_FILE"; fi\nexit 0\n' >"$AIDEVOPS_WORKTREE_CAPACITY_HELPER"
+chmod +x "$AIDEVOPS_WORKTREE_CAPACITY_HELPER"
 export FAKE_ARGS_FILE FAKE_COUNT_FILE
 
 TESTS_RUN=0
@@ -134,7 +134,7 @@ test_cleanup_recovers_capacity() {
 	AIDEVOPS_DISPATCH_WORKTREE_CLEANUP_TIMEOUT=17
 	if _dispatch_worktree_capacity_gate "$TEST_ROOT" 30032 "owner/repo" 200 &&
 		[[ "$STAGE_TIMEOUT" == "17" ]] &&
-		[[ "$(<"$FAKE_ARGS_FILE")" == "clean --auto --force-merged" ]] &&
+		[[ "$(<"$FAKE_ARGS_FILE")" == "--capacity $TEST_ROOT 17" ]] &&
 		[[ "$(<"$FAKE_COUNT_FILE")" == "199" ]] &&
 		grep -q "recovered dispatch capacity.*200 -> 199" "$LOGFILE"; then
 		print_result "cap gate invokes guarded cleanup and proceeds after recount" 0
@@ -170,11 +170,33 @@ test_timeout_remains_fail_closed() {
 	STAGE_RC=124
 	if _dispatch_worktree_capacity_gate "$TEST_ROOT" 30032 "owner/repo" 200; then
 		print_result "timed-out cleanup remains fail-closed" 1
-	elif grep -q "cleanup_rc=124" "$LOGFILE"; then
+	elif grep -q "cleanup_rc=124, reason=deadline-resume-next-pass" "$LOGFILE"; then
 		print_result "timed-out cleanup remains fail-closed" 0
 	else
 		print_result "timed-out cleanup remains fail-closed" 1
 	fi
+	STAGE_RC=0
+	return 0
+}
+
+test_capacity_deferral_reasons() {
+	local status="" reason=""
+	printf '200\n' >"$FAKE_COUNT_FILE"
+	for status in 75 76 1; do
+		case "$status" in
+		75) reason="cleanup-lock-busy" ;;
+		76) reason="cleanup-api-quota" ;;
+		1) reason="cleanup-error" ;;
+		esac
+		STAGE_RC="$status"
+		if _dispatch_worktree_capacity_gate "$TEST_ROOT" 35619 "owner/repo" 200; then
+			print_result "capacity deferral $reason stays closed" 1
+		elif grep -q "cleanup_rc=$status, reason=$reason" "$LOGFILE"; then
+			print_result "capacity deferral $reason stays closed" 0
+		else
+			print_result "capacity deferral $reason stays closed" 1
+		fi
+	done
 	STAGE_RC=0
 	return 0
 }
@@ -294,6 +316,7 @@ main() {
 	test_cleanup_recovers_capacity
 	test_cleanup_fails_closed_without_reduction
 	test_timeout_remains_fail_closed
+	test_capacity_deferral_reasons
 	test_production_count_probe_validation
 	test_post_cleanup_recount_failure_remains_fail_closed
 	test_count_probe_failure_remains_fail_closed

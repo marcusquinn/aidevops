@@ -71,6 +71,34 @@ managed worktrees are safely cleaned. Success means verified preservation and
 removal for the candidate, not making every protected process CWD readable.
 See `scripts/worktree-archive-helper.md` for archive and idle-window contracts.
 
+### Reconcile recorded launches, not unrelated process CWDs
+
+`worktree-managed-lifetime.py reconcile-processes /absolute/worktree` persists
+completion of each recorded owner process by boot UUID, PID and process start
+identity. Missing PIDs, reused PIDs and previous boots are distinct outcomes;
+permission failures or malformed identities remain unknown. Completed launches
+stay in history and are not polled again. Lock expiry does not complete a launch,
+and a later admission does not erase earlier launches.
+
+For a bounded registry scan, run:
+
+```bash
+python3 .agents/scripts/worktree_lifecycle_status.py reconcile-processes --limit 1000
+```
+
+The ordinary lifecycle `reconcile` operation also reconciles process completion
+within its existing bounded, rotating batch. Writes use the registry transaction,
+revalidate source identity and do not seal generations or remove data. Reports
+show saved completions separately from fresh observations of unfinished launches.
+
+Parent completion is not descendant completion. Managed user-service invocations
+retain their existing completion contract. An observation-only legacy launch can
+prove all its old processes ended after its recorded boot has ended; a missing,
+empty or replaced cgroup during the same boot is insufficient. The resulting
+legacy receipt is distinct from a systemd `InvocationID` receipt and still must
+pass admission fencing, ownership, policy and archive checks. No reboot or service
+stop is performed by reconciliation.
+
 Legacy compact migration only preserves and compares data; its journal does not
 clear degraded CWD visibility, manufacture lifetime evidence or authorize source
 retirement. See [the migration contract](storage-lifecycle-worktree-recovery.md#explicit-compact-migration-no-retirement).

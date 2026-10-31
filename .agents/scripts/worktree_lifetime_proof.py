@@ -21,6 +21,10 @@ def proof(record, source_inode):
         require(bool(record["launches"]), "missing owner admission evidence")
         owner_lifetime.require_admission_observed(record)
         for launch in record["launches"]:
+            if launch.get("completion_evidence") is None:
+                from worktree_lifetime_reconcile import validate_quiescence
+                validate_quiescence(launch)
+                continue
             require(launch.get("kind") == owner_lifetime.KIND and
                     launch.get("completion_evidence") == "systemd-cgroup-v1" and
                     launch.get("quiescence") and not launch.get("admission_cancelled"),
@@ -30,6 +34,8 @@ def proof(record, source_inode):
     if not record["launches"]:
         require(record.get("admission_cancelled") is True, "missing admission cancellation")
     for launch in record["launches"]:
+        if record.get("manager") == owner_lifetime.MANAGER and launch.get("completion_evidence") is None:
+            continue  # Independently validated observation receipt above, not a unit receipt.
         if launch.get("admission_cancelled") is True:
             require(launch["invocation"] is None, "admitted work cannot be cancelled")
             continue

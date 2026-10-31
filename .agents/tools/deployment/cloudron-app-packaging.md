@@ -357,6 +357,14 @@ Core routines provide ongoing reporting:
 Both routines deduplicate package-local issues, require maintainer-equivalent
 issue authority, and fail closed on GitHub/API errors. They never execute
 upstream instructions or modify package source.
+After filing a newer upstream release or commit finding, the applied monitor
+supersedes older trusted monitor findings in the same package repository. It
+closes only unassigned findings without `status:in-progress` or `status:claimed`
+labels and without an open linked PR, posting a signed comment linking the new
+issue. Active findings remain open and receive one consolidated note on the new
+issue instead. Release findings are compared by version; commit findings use
+issue creation order. Failed API reads never authorize closure, and subsequent
+deduplicated runs retry cleanup. Compatibility findings are not superseded.
 Applied upstream findings read the package manifest from the target repository's
 remote default branch at a captured commit SHA. The generated schema-v2 brief
 includes a canonical Files Scope; a detected upstream release is only a finding,
@@ -375,10 +383,37 @@ next package registration and records a reset-aware deferred attempt. Pulse
 retries after the shared cooldown boundary plus bounded jitter instead of using
 the generic 15-minute failure retry.
 
-**Publication boundary:** pushing a `vX.Y.Z` tag is the explicit trigger for the
-managed caller to validate and create a GitHub release. Tag creation, image
-pushes, Cloudron catalog publication, and deployment remain separate operator
-actions and require explicit authorization.
+**Publication boundary:** managed catalog packages follow **upstream detected →
+release PR ready → release approval requested → approved → published**. A worker
+updates the manifest and both changelogs, runs package tests and
+`preflight-release`, and waits for green PR preflight (including its no-push image
+build). It then runs `cloudron-release-approval-helper.sh request <repo> <pr>`
+instead of merging. This places a PR hold and creates a deduplicated
+`Release <package> v<version>` issue with `release-approval-required` and
+`no-auto-dispatch`. The issue records the exact head, package/upstream versions,
+changelog and check evidence. New requests supersede older unsigned requests.
+
+The maintainer's single action is:
+
+```bash
+sudo aidevops approve issue <N> <repo>
+```
+
+Routine `r924` runs `cloudron-release-approval-helper.sh process --apply` every
+30 minutes. Only `approval-helper.sh verify issue <N> <repo> --require-authority`
+returning `VERIFIED` can release this helper's PR hold and merge the approved
+head through the normal full-loop gates. Head drift requests re-approval;
+verification/API errors fail closed. The helper waits boundedly for the main
+catalog run, resumes on subsequent invocations, and closes the release issue
+only after the catalog version, `v<version>` tag and GitHub release are verified.
+Catalog race recovery/reconciliation remains owned by the publishing workflow
+and upstream monitor (GH#35649).
+
+This dedicated label does not change `needs-maintainer-review` semantics and
+trusted authors alone cannot satisfy it. Signing authorizes only this release's
+merge and already-configured catalog publication, not deployment, changing
+publication credentials/settings, or unrelated external publication. Legacy
+tag-only packages still require separate explicit operator publication authority.
 
 ## Troubleshooting
 

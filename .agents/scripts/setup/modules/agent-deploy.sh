@@ -1381,6 +1381,23 @@ _migrate_wavespeed_md() {
 	return 0
 }
 
+_prepare_framework_workspace() {
+	local workspace_dir="${AIDEVOPS_WORKSPACE_DIR:-${HOME}/.aidevops/.agent-workspace}"
+	case "$workspace_dir" in
+	\~/*) workspace_dir="$HOME/${workspace_dir#\~/}" ;;
+	esac
+	if [[ "$workspace_dir" != /* ]]; then
+		print_error "Framework workspace must be an absolute path"
+		return 1
+	fi
+	# Prepare only the workspace parent. The first eligible worker exclusively
+	# creates its private registry; setup must not initialize or repair that state.
+	(umask 077; mkdir -p "$workspace_dir") || return 1
+	AIDEVOPS_WORKSPACE_DIR=$(cd "$workspace_dir" && pwd -P) || return 1
+	export AIDEVOPS_WORKSPACE_DIR
+	return 0
+}
+
 # _deploy_agents_post_copy target_dir repo_dir source_dir plugins_file
 # Orchestrates all post-copy steps: permissions, VERSION, advisories, plan-reminder,
 # mailbox migration, stale-file migration, model resolution, and plugin deployment.
@@ -1390,6 +1407,10 @@ _deploy_agents_post_copy() {
 	local source_dir="$3"
 	local plugins_file="$4"
 
+	if ! _prepare_framework_workspace; then
+		[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == "1" ]] || return 1
+		print_warning "Lifecycle observation is disabled; continuing deployment without workspace preparation"
+	fi
 	_set_script_permissions_and_report "$target_dir"
 	_install_agent_runtime_deps "$target_dir" || return 1
 	_install_opencode_plugin_deps "$target_dir" || return 1

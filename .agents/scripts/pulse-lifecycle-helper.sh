@@ -1005,7 +1005,7 @@ _start() {
 	_pulse_launch_unmanaged
 
 	if _is_running; then
-		_pl_ok "Pulse started (PID: $(_pulse_pids | head -1))"
+		_pl_ok "Pulse started (PID: $(_pulse_pids | sed -n '1p'))"
 		return 0
 	fi
 	_pl_err "Pulse failed to start — check $_PULSE_LOG"
@@ -1204,7 +1204,7 @@ _status() {
 			_setime=$(ps -p "$_pid" -o etime= 2>/dev/null | tr -d ' ')
 			_scmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 			# Extract role flag from argv for the display label.
-			_srole=$(printf '%s' "$_scmd" | grep -oE "$_PULSE_SIDECAR_FLAGS_RE" | head -1)
+			_srole=$(printf '%s' "$_scmd" | grep -oE "$_PULSE_SIDECAR_FLAGS_RE" | sed -n '1p')
 			printf '    PID %s [%s] (uptime %s)\n' "$_pid" "${_srole:-sidecar}" "${_setime:-unknown}"
 		done <<<"$_sidecar_pids"
 	fi

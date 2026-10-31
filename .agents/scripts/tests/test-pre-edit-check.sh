@@ -46,6 +46,9 @@ print_result() {
 
 setup_test_repo() {
 	TEST_ROOT=$(mktemp -d)
+	# Worktree creation canonicalizes its base (GH#35781), so path assertions
+	# must use the physical fixture path; macOS TMPDIR is under the /var symlink.
+	TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || return 1
 	TEST_WORKTREE_BASE="$(dirname "$TEST_ROOT")/$(basename "$TEST_ROOT")-worktrees"
 	TEST_REGISTRY_DIR="${TEST_ROOT}/.registry"
 	TEST_REGISTRY_DB="${TEST_REGISTRY_DIR}/worktree-registry.db"

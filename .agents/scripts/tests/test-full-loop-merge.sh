@@ -290,6 +290,7 @@ main() {
 	test_other_error_no_fallback
 	test_late_review_blocks_every_merge_transport
 	test_graphql_rate_limit_rest_fallback
+	test_transient_server_error_recovery
 	test_protected_release_merge_reconciles_matching_lane
 	test_qlty_billing_skip_note_is_idempotent
 	test_graphql_rate_limit_cmd_merge_phase_autofile

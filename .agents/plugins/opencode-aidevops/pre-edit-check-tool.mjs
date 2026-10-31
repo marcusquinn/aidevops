@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { execFileSync, spawn } from "child_process";
+import { execFileSync } from "child_process";
 import { existsSync, realpathSync, statSync } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
+import { runPreEditCheck } from "./pre-edit-check-process.mjs";
 
 const PRE_EDIT_GUIDANCE = {
   1: "STOP — you are on main/master branch. Create a worktree first.",
@@ -208,9 +209,14 @@ function formatPreEditCheckResult(result, timeoutMs) {
     response = `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
   } else {
     const code = result.code ?? 1;
+    const ownershipUnavailable = code === 2
+      && cmdOutput.split(/\r?\n/).some((line) => line === "WORKTREE_OWNERSHIP_UNAVAILABLE=true");
+    const guidance = ownershipUnavailable
+      ? "STOP — retry ownership verification in this worktree; do not create another worktree."
+      : (PRE_EDIT_GUIDANCE[code] || "Unknown");
     response = code === 0
       ? `Pre-edit check PASSED (exit 0):\n${cmdOutput}`
-      : `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput}`;
+      : `Pre-edit check exit ${code}: ${guidance}\n${cmdOutput}`;
   }
   return response;
 }
@@ -248,59 +254,5 @@ export function createPreEditCheckTool(tool, z, scriptsDir, timeoutMs = 120000) 
       const result = await runPreEditCheck(script, taskArgs, targetWorkdir, timeoutMs, context);
       return formatPreEditCheckResult(result, timeoutMs);
     },
-  });
-}
-
-/**
- * Run loop-mode checks in their own process group so a timeout cannot leave a
- * helper running long enough to create a worktree after the tool has returned.
- * @param {string} script
- * @param {string[]} args
- * @param {string} cwd
- * @param {number} timeoutMs
- * @param {object} [context] - OpenCode tool context
- * @returns {Promise<{code: number|null, stdout: string, stderr: string, timedOut: boolean, error?: Error}>}
- */
-function runPreEditCheck(script, args, cwd, timeoutMs, context) {
-  return new Promise((resolve) => {
-    const sessionID = String(context?.sessionID || "");
-    const sessionEnv = /^ses_[A-Za-z0-9_-]+$/.test(sessionID)
-      ? {
-          OPENCODE: "1",
-          OPENCODE_PID: String(process.pid),
-          OPENCODE_SESSION_ID: sessionID,
-          AIDEVOPS_OPENCODE_SESSION_ID: sessionID,
-        }
-      : {};
-    const child = spawn("bash", [script, ...args], {
-      cwd,
-      detached: true,
-      env: { ...process.env, ...sessionEnv },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let spawnError;
-
-    child.stdout.setEncoding("utf-8");
-    child.stderr.setEncoding("utf-8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", (error) => { spawnError = error; });
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-    }, timeoutMs);
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr, timedOut, error: spawnError });
-    });
   });
 }

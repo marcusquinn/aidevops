@@ -298,6 +298,12 @@ test_cross_runner_seed_and_pending() {
 		_tbr_check_entry "$queue" >/dev/null && exit 1
 		[[ ! -f "$queue" ]] || exit 1
 
+		# GH#36114: another runner's observation found by discovery is
+		# public-only too, independent of repo policy.
+		tbr_enqueue owner/repo 77 source_access_blocked remote_observation || exit 1
+		out=$(_tbr_check_entry "$queue") || exit 1
+		printf '%s' "$out" | jq -e '.intake == "remote_observation" and .local_excerpts == []' >/dev/null || exit 1
+
 		# Local enqueue (producing runner path) is unchanged and keeps excerpts.
 		tbr_enqueue owner/repo 77 source_access_blocked || exit 1
 		out=$(_tbr_check_entry "$queue") || exit 1

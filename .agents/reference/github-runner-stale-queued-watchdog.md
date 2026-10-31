@@ -33,13 +33,20 @@ the original run's `created_at`, not runner capacity or job count.
 The same hourly scan also looks at open PRs (first 30). A GitHub Actions check run
 still `in_progress` past `AIDEVOPS_ORPHAN_JOB_MAX_AGE_HOURS` (default `2`, `0`
 disables; also disabled when the queued max age is `0`) is resolved to its job and
-run. When the run is `completed` and the job's runner is online with `busy=false`,
-the run is rerun once (`POST /actions/runs/{id}/rerun`) and logged as
+run. When the run is `completed` and the job's runner no longer holds it, the run is
+rerun once (`POST /actions/runs/{id}/rerun`) and logged as
 `orphaned-in-progress-job rerun run=<id> pr=<N>`. The run ID is recorded as
 `<run-id>.orphan-rerun` under the repository state directory before the call, so a
 run is never rerun twice. At most five reruns per repo scan; any unverifiable read
 skips. Checks are never marked successful and the pending merge gate is untouched:
 Pulse merges only after the rerun produces terminal results.
+
+"No longer holds it" depends on the runner type. A self-hosted runner must be listed
+by `GET /repos/{repo}/actions/runners` as online with `busy=false`. A GitHub-hosted
+job (`runner_group_id` `0`, `runner_group_name` `GitHub Actions`) needs no runner
+lookup: hosted runners are ephemeral and that endpoint lists only self-hosted
+runners, so requiring a listing would leave every hosted orphan pending forever
+(GH#36177).
 
 Unkillable ghosts are logged once per repository/run ID and left alone by default,
 except job-less runs with no logs, which hold no work and are deleted.

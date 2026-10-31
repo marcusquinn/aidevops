@@ -10,6 +10,501 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.103] - 2026-10-31
+
+### Fixed
+
+- bound pre-launch abort loops with a self-healing windowed backoff
+- align recurrent failure summary with recent evidence (#36218)
+
+## [3.39.102] - 2026-10-31
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#36215)
+- Maintenance: mark t18823 complete (pr:#36191 completed:2026-10-31) (#36209)
+
+## [3.39.101] - 2026-10-31
+
+### Changed
+
+- Maintenance: mark t18827 complete (pr:#36201 completed:2026-10-31) (#36203)
+- Maintenance: sync GitHub issue refs to TODO.md (#36206)
+
+### Fixed
+
+- retry indeterminate repo-state authority instead of silently dropping CLAIM_RELEASED
+- recover abandoned worker-draft claims so stranded drafts are continued (#36197)
+- honour AIDEVOPS_PLAYWRIGHT_EXECUTABLE in playwright runtime-check readiness
+
+## [3.39.100] - 2026-10-31
+
+### Added
+
+- label same-login external REST quota cost (#36196)
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#36202)
+- Maintenance: mark t18822 complete (pr:#36178 completed:2026-10-31) (#36189)
+- Maintenance: sync GitHub issue refs to TODO.md (#36193)
+- Maintenance: mark t18821 complete (pr:#36176 completed:2026-10-31) (#36179)
+
+### Fixed
+
+- pace REST admissions as time-to-reset divided by remaining quota (t18827) (#36201)
+- recover deferred identity reads via GraphQL (#36192) (#36198)
+- skip bundled Chromium on Playwright pin-bump reinstall when AIDEVOPS_PLAYWRIGHT_EXECUTABLE is valid (GH#36190) (#36195)
+- rerun orphaned in_progress jobs on GitHub-hosted runners
+
+## [3.39.99] - 2026-10-31
+
+### Changed
+
+- Tests: keep retired-stage guards on both dispatch engine and housekeeping (GH#36160) (#36170)
+- Tests: cover main-cycle permission breaker in dispatch pipeline (GH#36154) (#36168)
+- Tests: reject stdout on persistent snapshot read failures (GH#36150) (#36157)
+- Maintenance: sync GitHub issue refs to TODO.md (#36146)
+
+### Fixed
+
+- re-verify and defer unreadable POST_PR_HANDOFF instead of tier escalation
+- classify rename sources and isolate data fixture (GH#36163) (#36173)
+- recheck hard stop before restoring draft-checkpoint candidate (#36166)
+- trigger pre-edit regression for worktree entrypoint (GH#36151) (#36159)
+- preserve helper pins during floating migration (GH#36149) (#36158)
+- preserve full changelog section in release notes (#36156)
+- preserve complete-frame quota counters when sibling frame is incomplete (GH#36153) (#36167)
+- accept user-private group-writable git admin dirs in generation enrollment (GH#36142) (#36145)
+- task-complete-helper refuses canonical checkouts (GH#36130) (#36140)
+
+## [3.39.98] - 2026-10-30
+
+### Changed
+
+- Maintenance: mark t18818 complete (pr:#36134 completed:2026-10-30) (#36137)
+- Maintenance: sync GitHub issue refs to TODO.md (#36139)
+- Maintenance: mark t18817 complete (pr:#36129 completed:2026-10-30) (#36131)
+- Maintenance: sync GitHub issue refs to TODO.md (#36135)
+
+### Fixed
+
+- exact-head approval supersedes a runner's own draft hold-for-review
+- defer parent dispatch while its consolidation child is in flight; runner-local preconditions are runner_capability_unmet
+
+## [3.39.97] - 2026-10-30
+
+### Changed
+
+- Documentation: clarify Ghostscript advisory checks (GH#36116) (#36119)
+
+### Fixed
+
+- re-arm must not release holds with unresolved blocked-by dependencies
+- enforce runner-local dispatch breakers on every worker launch path
+- paginate recovery search and add owner-scoped discovery to the rearm cadence
+
+## [3.39.96] - 2026-10-30
+
+### Added
+
+- identify rejected checkpoint history events (#36113)
+
+### Changed
+
+- Tests: stub lifetime binder in dispatch capability fixture (GH#36108) (#36115)
+
+### Fixed
+
+- migrate floating metrics callers (GH#36105) (#36106)
+- enrich preserves appended sections and skips footer-only rewrites
+- supersede conflicting TODO handoffs instead of holding them
+- preserve PR-less completion rejection evidence (GH#36100) (#36102)
+
+## [3.39.95] - 2026-10-30
+
+### Changed
+
+- Maintenance: mark t18812 complete (pr:#36097 completed:2026-10-30) (#36101)
+- Maintenance: mark t18809 complete (pr:#36093 completed:2026-10-30) (#36086)
+
+### Fixed
+
+- attribute auth-hop gh calls and make post-merge scanner quota-aware
+- respect effective ownership deadlines
+- retry network-layer GitHub read failures (#36097)
+- honor approved checkpoint eligibility
+- track orphan interactive PRs for handover (GH#36080) (#36093)
+- resolve plugin fixture executables portably (#36091)
+- scope Dependabot intake and report approval-required (#36089)
+- recover transient GitHub merge server errors (#36076)
+
+## [3.39.94] - 2026-10-30
+
+### Added
+
+- scope Cloudron release approval processing (#36078)
+
+### Changed
+
+- Maintenance: mark t18807 complete (pr:#36065 completed:2026-10-30) (#36067)
+- Maintenance: sync GitHub issue refs to TODO.md (#36059)
+
+### Fixed
+
+- pre-edit regression test uses physical tmp path; widen preflight trigger
+- re-arm aged checkpoint attention for untried runners; take over idle interactive PRs after 12h
+- run recovery before optional housekeeping scans (#36072)
+- recover authenticated checkpoint release handoffs
+- fall back to GraphQL for terminal blocker recovery (GH#36063) (#36065)
+
+## [3.39.93] - 2026-10-30
+
+### Changed
+
+- never hold status:blocked without recorded evidence
+
+### Fixed
+
+- pause runners after distinct permission blockers (#36046)
+
+## [3.39.92] - 2026-10-30
+
+### Changed
+
+- Maintenance: mark t18802 complete (pr:#36047 completed:2026-10-30) (#36050)
+- Maintenance: mark t18801 complete (pr:#36037 completed:2026-10-30) (#36043)
+
+### Fixed
+
+- release rearmed blocker holds independently of LLM cadence (#36042)
+
+## [3.39.91] - 2026-10-30
+
+### Changed
+
+- queue retry-only first observations so a trusted retry re-arms them
+
+## [3.39.90] - 2026-10-30
+
+### Changed
+
+- Maintenance: mark t18799 complete (pr:#36023 completed:2026-10-30) (#36020)
+
+### Fixed
+
+- restore stranded worker draft checkpoints (#36031)
+- diagnose and retry Homebrew tap rate limits (#36029)
+
+## [3.39.89] - 2026-10-30
+
+### Changed
+
+- continue open worker drafts after draft-checkpoint, clean and completed releases
+
+## [3.39.88] - 2026-10-30
+
+### Fixed
+
+- stop denying all compound shell commands in every session (v3.39.87 regression)
+- recognize stale-reset never-ready claims and accept the first-ready attempt rebind in checkpoint history
+
+## [3.39.87] - 2026-10-30
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#36009)
+
+### Fixed
+
+- correct t18776 PR reference and ignore planning PRs in issue-sync merge lookup
+
+## [3.39.86] - 2026-10-29
+
+### Changed
+
+- Maintenance: mark t18794 complete (pr:#35995 completed:2026-10-29) (#35997)
+- Maintenance: mark t18777 complete (pr:#35969 completed:2026-10-29) (#35987)
+- Maintenance: sync GitHub issue refs to TODO.md (#35988)
+- Documentation: scope and remove temporary SES bypass filter (#35981)
+- Tests: retain derived status label when inventory is unreadable (#35980)
+
+### Fixed
+
+- treat non-markdown data files under todo/ as deliverables
+- wait for merge-first test marker content (GH#36004) (#36006)
+- make draft checkpoint cooldown take effect across cycles (GH#36000) (#36001)
+- diagnose bounded-operation termination and preserve TERM grace (GH#35824) (#35835)
+- bound secret-run stderr backpressure (#35982)
+- preserve Starter-managed gitignore during init (#35963)
+
+## [3.39.85] - 2026-10-29
+
+### Added
+
+- read-only Claude Code agent_summary exposure diagnostic and cost-visibility guidance
+- annotate interactive user turns with receive time (#35889)
+
+### Changed
+
+- Maintenance: mark t18788 complete (pr:#35944 completed:2026-10-29) (#35958)
+- Maintenance: sync ref:GH#35939 to TODO.md (#35940)
+- Maintenance: mark t18784 complete (pr:#35916 completed:2026-10-29) (#35926)
+
+### Fixed
+
+- accept legacy-guards worktree creation in archive restoration proof and recover interrupted verification slots
+- Playwriter Task handoff waits for a new attachment and classifies stale re-attached tabs
+- let partial terminal-blocker scans wake the recovery supervisor
+- route Claude Code version checks and upgrades by install owner
+- create issues on external repos when derived labels cannot be provisioned
+- count capability releases as one stall and let capable runners continue the head
+- portable binding precedence for jq 1.7/1.8 and a blocking gate
+- label Docker test stacks and clean anonymous volumes (#35921)
+- surface non-fork SonarCloud scan failures (GH#35917) (#35919)
+- preserve one recovery worktree across failed retries (#35922)
+- align capability secret check stubs with current helper (#35903)
+
+## [3.39.84] - 2026-10-29
+
+### Changed
+
+- Maintenance: mark t18781 complete (pr:#35891 completed:2026-10-29) (#35892)
+
+### Fixed
+
+- wire DB activity heartbeat for idle-gated archive
+- keep secret run stdout/stderr separate so MCP stdio responses are not corrupted
+
+## [3.39.83] - 2026-10-29
+
+### Added
+
+- add secret-backed AWS access and SES operations (GH#35879) (#35882)
+
+### Fixed
+
+- keep compaction local for bound local-only sessions and sessions with a local default model
+- classify and suppress GraphQL commit permission denials (#35888)
+
+## [3.39.82] - 2026-10-29
+
+### Changed
+
+- Documentation: treat remote-state answers as current-turn queries
+
+### Fixed
+
+- accept attestations across successful run attempts (#35876)
+- retire daily closed-issue CodeRabbit review requests (#35878)
+
+## [3.39.81] - 2026-10-29
+
+### Added
+
+- enable worker lifecycle observation by default
+- add portable worker lifecycle registry (GH#35821) (#35826)
+
+### Changed
+
+- Refactor: split worker-briefed trust chain out of pulse-merge-process.sh (GH#27171) (#35847)
+- Refactor: clarify lifecycle storage module naming
+- Refactor: extract worker launch bundle routing (GH#35810) (#35813)
+
+### Fixed
+
+- suppress already-applied closed-PR salvage candidates
+- post advisory COMMENTED reviews instead of blocking CHANGES_REQUESTED (GH#35860)
+- preserve public framework name without exposing credential assignments (GH#35829) (#35833)
+- preserve contrast findings in browser QA (GH#35823) (#35825)
+- teach workers the source-access blocker class (GH#35819) (#35820)
+- respect bare changelog version headings (GH#35811) (#35815)
+- stop fleet capability redispatch loops (#35806)
+
+## [3.39.80] - 2026-10-28
+
+### Fixed
+
+- auto-merge scoped canary worker briefs; track default-branch JS lockfiles
+- link v3.39.79 release heading
+
+## [3.39.79] - 2026-10-28
+
+### Changed
+
+- Maintenance: promote OpenCode v2 pin to 2.2.0
+
+### Fixed
+
+- restore automatic review label eligibility (GH#35782) (#35791)
+- show local retry time for core rate-limit exhaustion
+- fix isolated OpenCode canary plugin loading
+- resolve release commit from tag for GH#35786 (#35787)
+
+## [3.39.78] - 2026-10-27
+
+### Added
+
+- playwright-runtime install --with-axe
+- add explicit worker archive plans
+
+### Changed
+
+- Maintenance: bump the actions group with 2 updates (#35770)
+
+### Fixed
+
+- detach routines outside supervisor-pulse cgroup, launch once
+- comment-aware, normalized TODO duplicate gates
+- align React and React DOM at 19.3.1 for GH#35767 (#35773)
+- pin patched litellm 1.100.4 (GH#35771) (#35774)
+- update litellm to 1.100.4 (#35775)
+- skip credential-less config-only providers in subagent model routing
+- observe Pulse worker activity from one process census
+- expose sanitized release GitHub read diagnostics (#35756)
+- omit disposable permission requests from archives
+
+## [3.39.77] - 2026-10-27
+
+### Added
+
+- guarded resumable bucket migration in object-storage-helper (GH#35725) (#35728)
+
+### Changed
+
+- Maintenance: mark t18774 complete (pr:#35736 completed:2026-10-27) (#35729)
+- Maintenance: t18773 → done; add t18774 (GH#35730)
+
+### Fixed
+
+- release unknown terminal-blocker holds on trusted retry or brief revision
+- reconcile recorded owner process generations
+- guard publication prerequisites and accept pinned managed signers (#35742)
+- don't block cloudron release approval on in-progress catalog run (#35735)
+- tolerate deleted cwd in git shim guard and bash32 gate test (#35736)
+- skip signer-pinned repair verification when release already published (GH#35732) (#35734)
+
+## [3.39.76] - 2026-10-27
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [3.39.75] - 2026-10-26
+
+### Fixed
+
+- release dispatch claims on pre-launch failure and treat provider cooldown as backoff
+- restore bounded terminal-blocker recovery progress (GH#35716) (#35718)
+- preserve released supervisor heartbeat liveness (GH#35710) (#35714)
+- exclude runtime state from pending risk (GH#35709) (#35713)
+- align dependency reducer operational hold classification (#35711)
+
+## [3.39.74] - 2026-10-26
+
+### Added
+
+- route standard tier to GPT-6.1 Terra
+- add explicit legacy maintenance workflow
+
+### Changed
+
+- Maintenance: mark t18772 complete (pr:#35677 completed:2026-10-26) (#35679)
+
+### Fixed
+
+- refresh supervisor watchdog owner heartbeat (GH#35704) (#35705)
+- classify lifecycle evidence and ignore commit editor metadata
+- keep parallel dispatch owner heartbeat fresh (#35700)
+- verify manual CLI worker PR handoffs (GH#35699) (#35701)
+- keep supervised Pulse stages live without claiming progress (GH#35695) (#35696)
+- discover managed workers without prompt prose (#35693)
+- close never-ready blocked claims in checkpoint approval history (GH#35683) (#35690)
+- preserve explicit input_required/external_trigger_pending blocker when Files Scope absent (GH#35685) (#35687)
+- explain release approval precondition failures (#35681)
+
+## [3.39.73] - 2026-10-26
+
+### Added
+
+- add opt-in lossless historical Markdown archive helper
+- detect restored WordPress installations (GH#35672) (#35675)
+
+### Fixed
+
+- register fixture repos in test-canonical-recovery-helper.sh (GH#35669) (#35671)
+
+## [3.39.72] - 2026-10-26
+
+### Added
+
+- add read-only SSL status command (GH#35663) (#35665)
+- signed exact-head release approvals (#35660)
+
+### Changed
+
+- Maintenance: mark t18771 complete (pr:#35658 completed:2026-10-25) (#35661)
+
+### Fixed
+
+- preserve local project config during canonical untracking sync
+
+## [3.39.71] - 2026-10-25
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#35643)
+
+### Fixed
+
+- verify Cloudron images during PR preflight (#35656)
+- keep GUI build tooling out of runtime dependencies (#35653)
+- stream checkpoint revision metadata (GH#35632) (#35634)
+- align CI repair with merge required contexts (#35645)
+- restore managed CLI in worker tool PATH (#35635)
+
+## [3.39.70] - 2026-10-25
+
+### Changed
+
+- Refactor: extract headless worker output classification (#35633)
+
+### Fixed
+
+- exempt consolidation tasks from large-file gate (GH#35623) (#35625)
+- resume guarded worktree capacity cleanup (#35621)
+- block manual dispatch over preserved draft PR ownership (#35620)
+
+## [3.39.69] - 2026-10-25
+
+### Added
+
+- bound coordinator checkpoint cleanup, add keepalive, default pruning (GH#35594) (#35601)
+
+### Changed
+
+- Documentation: document Playwriter selected-tab handoff order and stale-bundle pin
+- Maintenance: sync GitHub issue refs to TODO.md (#35597)
+
+### Fixed
+
+- normalize PATH version in mcp-diagnose.sh to avoid false Playwriter mismatch (GH#35604) (#35606)
+- require a publication reserve before queued ownership and time precreate sub-stages (GH#35602) (#35607)
+
+## [3.39.68] - 2026-10-25
+
+### Added
+
+- Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking
+
+### Changed
+
+- Refactor: extract change-plan value and term-usage helpers
+
+### Fixed
+
+- preserve shell env-var references in output scrubber (GH#35586) (#35588)
+
 ## [3.39.67] - 2026-10-25
 
 ### Fixed
@@ -23654,6 +24149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic quality assurance setup
 
 [Unreleased]: https://github.com/marcusquinn/aidevops/compare/v3.17.28...HEAD
+[3.39.79]: https://github.com/marcusquinn/aidevops/compare/v3.39.78...v3.39.79
 [3.17.28]: https://github.com/marcusquinn/aidevops/compare/v3.17.27...v3.17.28
 [3.17.27]: https://github.com/marcusquinn/aidevops/compare/v3.17.26...v3.17.27
 [2.29.0]: https://github.com/marcusquinn/aidevops/compare/v2.28.0...v2.29.0

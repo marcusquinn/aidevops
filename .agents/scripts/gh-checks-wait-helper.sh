@@ -19,6 +19,12 @@ _GCW_ACTIVE_DEFERRAL=""
 _GCW_API_ERROR_VISIBLE=0
 _GCW_NEXT_INTERVAL=""
 _GCW_EMPTY_REQUIRED_SETTLE_SECONDS="${AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS:-90}"
+# GH#35830: a concurrency-cancelled run (e.g. after `gh pr ready`) is superseded
+# by a newer run that may not be visible yet. Treat cancel-only failures as
+# pending for this grace window before calling them terminal.
+_GCW_CANCEL_GRACE_SECONDS="${AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS-180}"
+_GCW_CANCEL_FIRST_EPOCH=""
+_GCW_GRACED_CLASSIFICATION=""
 
 usage() {
 	cat <<'EOF'
@@ -425,6 +431,40 @@ classify_state() {
 	return 0
 }
 
+# True when every failing check is a bare cancellation (no real failure).
+only_cancelled_failures() {
+	local checks="$1"
+	printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
+		'[.[] | select(.bucket != $pass and .bucket != $pending and .bucket != $skipping)] | length > 0 and all(.[]; .bucket == "cancel")' >/dev/null
+	return $?
+}
+
+# Sets _GCW_GRACED_CLASSIFICATION: a cancel-only failure stays pending until the
+# grace window since it was first seen elapses (GH#35830).
+apply_cancel_grace() {
+	local classification="$1" checks="$2" now_epoch="$3"
+	local attempt_checks="${4:-$checks}"
+	local cancelled_set=""
+	_GCW_GRACED_CLASSIFICATION="$classification"
+	if [[ "$classification" == "failure" ]] && only_cancelled_failures "$checks"; then
+		# Include run links and timestamps so a different cancelled attempt of the same check
+		# gets its own window; sort to ignore API ordering changes. Use raw attempt
+		# metadata without changing the canonical transition/heartbeat comparison.
+		cancelled_set=$(printf '%s' "$attempt_checks" | jq -c '[.[] | select(.bucket == "cancel") | {workflow, name, link, startedAt, completedAt}] | sort_by(.workflow, .name, .link, .startedAt, .completedAt)')
+		if [[ -z "$_GCW_CANCEL_FIRST_EPOCH" || "$cancelled_set" != "${_GCW_CANCEL_SET:-}" ]]; then
+			_GCW_CANCEL_FIRST_EPOCH="$now_epoch"
+		fi
+		_GCW_CANCEL_SET="$cancelled_set"
+		if [[ $((now_epoch - _GCW_CANCEL_FIRST_EPOCH)) -lt "$_GCW_CANCEL_GRACE_SECONDS" ]]; then
+			_GCW_GRACED_CLASSIFICATION="pending"
+		fi
+	else
+		_GCW_CANCEL_FIRST_EPOCH=""
+		_GCW_CANCEL_SET=""
+	fi
+	return 0
+}
+
 emit_failure_details() {
 	local checks="$1"
 	printf 'FAIL: required checks reached a terminal failure\n'
@@ -552,6 +592,8 @@ wait_for_checks() {
 	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
+	_GCW_CANCEL_FIRST_EPOCH=""
+	_GCW_CANCEL_SET=""
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
@@ -587,6 +629,8 @@ wait_for_checks() {
 		fi
 		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
 		IFS=$'\t' read -r classification missing_contexts <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")"
+		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
+		classification="$_GCW_GRACED_CLASSIFICATION"
 		state_summary=$(state_counts "$current" "$missing_contexts")
 		emit_recovered_state "$state_summary"
 		valid_state_seen=1
@@ -673,6 +717,17 @@ cmd_wait() {
 	fi
 	if [[ "$initial_interval" -gt "$max_interval" ]]; then
 		log_error "initial interval cannot exceed maximum interval"
+		return 1
+	fi
+	# Canonical decimal only: reject octal-looking values and bound the length
+	# before arithmetic to avoid overflow or expression evaluation from config.
+	if [[ ! "$_GCW_CANCEL_GRACE_SECONDS" =~ ^(0|[1-9][0-9]{0,4})$ ]]; then
+		log_error "AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS must be a decimal integer from 0 to 86400 (no leading zeros)"
+		return 1
+	fi
+	_GCW_CANCEL_GRACE_SECONDS=$((10#${_GCW_CANCEL_GRACE_SECONDS}))
+	if [[ "$_GCW_CANCEL_GRACE_SECONDS" -gt 86400 ]]; then
+		log_error "AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS must be a decimal integer from 0 to 86400 (no leading zeros)"
 		return 1
 	fi
 	repo=$(resolve_repo "$repo") || {

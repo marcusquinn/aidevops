@@ -106,4 +106,29 @@ def summary(record):
     task = record.get("task") if isinstance(record.get("task"), dict) else {}
     last = classified(launches[-1].get("provenance")) if launches else None
     return {"generation": record.get("generation"), "created_by": classified(record.get("created_by")),
-            "task_issue": task.get("issue"), "attempts": len(launches), "last_attempt_by": last}
+            "task_issue": task.get("issue"), "attempts": len(launches), "last_attempt_by": last,
+            "evidence_class": evidence_class(record)}
+
+
+def evidence_class(record):
+    """Describe recorded contracts, not liveness or permission to delete.
+
+    In particular, historical `running` owner observations are not managed
+    executions. Keep their original state and receipts untouched; only the
+    existing cleanup-ready/proof operations can validate completion.
+    """
+    launches = record.get("launches")
+    if not isinstance(launches, list) or not launches:
+        return "unrecorded"
+    if not all(isinstance(launch, dict) for launch in launches):
+        return "incomplete"
+    completion_contract = True
+    if record.get("manager") == "owner-cgroup":
+        if all(launch.get("kind") == "owner-cgroup-v1" and
+               not any(launch.get(key) for key in ("unit", "invocation", "completion_evidence", "quiescence"))
+               for launch in launches):
+            return "observation-only"
+        completion_contract = all(launch.get("completion_evidence") == "systemd-cgroup-v1" for launch in launches)
+    complete = completion_contract and all(launch.get("unit") and launch.get("boot_id") and
+               (launch.get("invocation") or launch.get("admission_cancelled") is True) for launch in launches)
+    return "managed-contract-recorded" if complete else "incomplete"
