@@ -698,6 +698,8 @@ _preflight_ownership_reconcile() {
 		run_stage_with_timeout "normalize_active_issue_assignments" "$remaining" normalize_active_issue_assignments || true
 	else
 		echo "[pulse-wrapper] Assignment normalization deferred: ownership budget exhausted" >>"$LOGFILE"
+		# Keep unfinished ownership work eligible for the next resumable pass.
+		return 124
 	fi
 
 	return 0

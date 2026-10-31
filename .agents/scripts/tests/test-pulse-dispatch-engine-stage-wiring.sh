@@ -438,12 +438,16 @@ ownership_deadline_trace() {
 	invalid) PULSE_STAGE_DEADLINE_EPOCH=invalid ;;
 	expired) PULSE_STAGE_DEADLINE_EPOCH=999 ;;
 	requested) requested=200 ;;
+	prefetch_exhausted | reconcile_exhausted) requested=10 ;;
 	esac
 	date() {
 		printf '1000\n'
 		return 0
 	}
-	prefetch_contribution_watch() { return 0; }
+	prefetch_contribution_watch() {
+		[[ "$mode" != prefetch_exhausted ]] || SECONDS=$((SECONDS + requested))
+		return 0
+	}
 	_log_substage_timing() { return 0; }
 	_pulse_blocker_refresh_starved() {
 		[[ "$starved" -eq 1 ]] && return 0
@@ -466,7 +470,7 @@ ownership_deadline_trace() {
 
 assert_ownership_deadline_contract() {
 	local mode actual="" expected=""
-	for mode in clamped recovery standalone async invalid expired requested; do
+	for mode in clamped recovery standalone async invalid expired requested prefetch_exhausted reconcile_exhausted; do
 		TESTS_RUN=$((TESTS_RUN + 1))
 		case "$mode" in
 		clamped | async) expected="r:316;n:60;rc:0;" ;;
@@ -474,6 +478,8 @@ assert_ownership_deadline_contract() {
 		standalone | invalid) expected="r:380;n:212;rc:0;" ;;
 		expired) expected="rc:124;" ;;
 		requested) expected="r:132;n:60;rc:0;" ;;
+		prefetch_exhausted) expected="rc:124;" ;;
+		reconcile_exhausted) expected="r:8;rc:124;" ;;
 		esac
 		# Keep case statements outside command substitution for Bash 3.2.
 		actual=$(ownership_deadline_trace "$mode")
