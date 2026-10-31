@@ -271,11 +271,15 @@ class RestorationProof:
         def resolved(*args):
             return Path(os.fsdecode(git(target, *args)).rstrip("\n")).resolve(strict=True)
 
-        require(resolved("rev-parse", "--show-toplevel") == target.resolve(strict=True), unsealed)
-        require(resolved("rev-parse", "--path-format=absolute", "--git-common-dir") == common,
-                "restore-proof:wrong-base")
-        admin = resolved("rev-parse", "--absolute-git-dir")
-        require(admin.parent == common / "worktrees", unsealed)
+        try:
+            require(resolved("rev-parse", "--show-toplevel") == target.resolve(strict=True), unsealed)
+            require(resolved("rev-parse", "--path-format=absolute", "--git-common-dir") == common,
+                    "restore-proof:wrong-base")
+            admin = resolved("rev-parse", "--absolute-git-dir")
+            require(admin.parent == common / "worktrees", unsealed)
+        except (subprocess.SubprocessError, OSError):
+            # Half-created copies remain protected with the same recovery text.
+            raise ValueError(unsealed) from None
         return admin
 
     @staticmethod
