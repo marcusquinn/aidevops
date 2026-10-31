@@ -352,9 +352,9 @@ parse_task_line() {
 
 	# Extract checkbox status
 	local status="open"
-	if echo "$line" | grep -qE '^\s*- \[x\]'; then
+	if echo "$line" | grep -E '^\s*- \[x\]' >/dev/null; then
 		status="completed"
-	elif echo "$line" | grep -qE '^\s*- \[-\]'; then
+	elif echo "$line" | grep -E '^\s*- \[-\]' >/dev/null; then
 		status="declined"
 	fi
 
@@ -376,7 +376,7 @@ parse_task_line() {
 
 	# Extract estimate (with optional breakdown)
 	local estimate
-	estimate=$(echo "$line" | grep -oE '~[0-9]+[hmd](\s*\(ai:[^)]+\))?' | head -1 || echo "")
+	estimate=$(echo "$line" | grep -oE '~[0-9]+[hmd](\s*\(ai:[^)]+\))?' | sed -n '1p' || echo "")
 
 	# Extract plan link
 	local plan_link
@@ -384,7 +384,7 @@ parse_task_line() {
 
 	# Extract existing GH ref
 	local gh_ref
-	gh_ref=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+	gh_ref=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | sed -n '1p' | sed 's/ref:GH#//' || echo "")
 
 	# Extract logged date
 	local logged
@@ -392,19 +392,19 @@ parse_task_line() {
 
 	# Extract assignee
 	local assignee
-	assignee=$(echo "$line" | sed -nE 's/.*assignee:([A-Za-z0-9._@-]+).*/\1/p' | head -1 || echo "")
+	assignee=$(echo "$line" | sed -nE 's/.*assignee:([A-Za-z0-9._@-]+).*/\1/p' | sed -n '1p' || echo "")
 
 	# Extract started timestamp
 	local started
-	started=$(echo "$line" | sed -nE 's/.*started:([0-9T:Z-]+).*/\1/p' | head -1 || echo "")
+	started=$(echo "$line" | sed -nE 's/.*started:([0-9T:Z-]+).*/\1/p' | sed -n '1p' || echo "")
 
 	# Extract completed date
 	local completed
-	completed=$(echo "$line" | sed -nE 's/.*completed:([0-9-]+).*/\1/p' | head -1 || echo "")
+	completed=$(echo "$line" | sed -nE 's/.*completed:([0-9-]+).*/\1/p' | sed -n '1p' || echo "")
 
 	# Extract actual time
 	local actual
-	actual=$(echo "$line" | sed -nE 's/.*actual:([0-9.]+[hmd]).*/\1/p' | head -1 || echo "")
+	actual=$(echo "$line" | sed -nE 's/.*actual:([0-9.]+[hmd]).*/\1/p' | sed -n '1p' || echo "")
 
 	# Extract blocked-by dependencies
 	local blocked_by
@@ -420,7 +420,7 @@ parse_task_line() {
 
 	# Extract verified date
 	local verified
-	verified=$(echo "$line" | sed -nE 's/.*verified:([0-9-]+).*/\1/p' | head -1 || echo "")
+	verified=$(echo "$line" | sed -nE 's/.*verified:([0-9-]+).*/\1/p' | sed -n '1p' || echo "")
 
 	echo "task_id=$task_id"
 	echo "status=$status"
@@ -638,17 +638,18 @@ _extract_plan_subsection() {
 	local result
 	result=$(echo "$plan_section" | awk -v pattern="$heading_pattern" -v skip_toon="$skip_toon" -v max_lines="$max_lines" -v skip_placeholder="$skip_placeholder" '
     BEGIN { in_section = 0; count = 0 }
+    done { next }
     /^####[[:space:]]+/ {
-        if (in_section == 1) { exit }
+        if (in_section == 1) { done = 1; next }
         if ($0 ~ "^####[[:space:]]+" pattern) { in_section = 1; next }
         next
     }
-    /^###[[:space:]]+/ { if (in_section == 1) exit }
+    /^###[[:space:]]+/ { if (in_section == 1) { done = 1; next } }
     in_section == 1 {
-        if (skip_toon == "true" && $0 ~ /^<!--TOON:/) exit
+        if (skip_toon == "true" && $0 ~ /^<!--TOON:/) { done = 1; next }
         if (/^[[:space:]]*$/) next
         if (skip_placeholder == "true" && $0 ~ /To be populated/) next
-        if (max_lines > 0 && count >= max_lines) exit
+        if (max_lines > 0 && count >= max_lines) { done = 1; next }
         print
         count++
     }
@@ -844,7 +845,7 @@ find_related_files() {
 	# 1. Follow explicit ref:todo/tasks/ from the task line
 	if [[ -f "$todo_file" ]]; then
 		local task_line
-		task_line=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+		task_line=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | sed -n '1p' || echo "")
 		local explicit_refs
 		explicit_refs=$(echo "$task_line" | grep -oE 'ref:todo/tasks/[^ ]+' | sed 's/ref://' || true)
 		while IFS= read -r ref; do
