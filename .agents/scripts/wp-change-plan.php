@@ -69,6 +69,20 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 		/** @var array Taxonomies touched by the plan (keys). */
 		private $taxonomies = array();
 
+		/** @var WPCP_Reader Site reads and read-back comparisons. */
+		private $reader;
+
+		/** @var WPCP_Writer Site writes through core APIs. */
+		private $writer;
+
+		/**
+		 * Create the site access collaborators used by apply and restore.
+		 */
+		public function __construct() {
+			$this->reader = new WPCP_Reader();
+			$this->writer = new WPCP_Writer();
+		}
+
 		/**
 		 * Entry point for `wp eval-file`.
 		 *
@@ -715,7 +729,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			$item['now']    = WPCP_Values::sorted( $item['now'] );
 			$item['new']    = WPCP_Values::sorted( $item['new'] );
 			$item['stored'] = $item['new'];
-			return $this->resolve( $item, WPCP_Reader::post_term_slugs( $post->ID, $taxonomy ) );
+			return $this->resolve( $item, $this->reader->post_term_slugs( $post->ID, $taxonomy ) );
 		}
 
 		/**
@@ -848,7 +862,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				$this->backup['applied'][ $key ]   = $record;
 				$this->save_backup();
 				$errors                            = $this->write_target( $target );
-				list( $record, $mismatches )       = WPCP_Reader::read_back( $target, $record );
+				list( $record, $mismatches )       = $this->reader->read_back( $target, $record );
 				$record['status']                  = ( $errors || $mismatches ) ? 'mismatch' : 'applied';
 				$this->backup['applied'][ $key ]   = $record;
 				$this->save_backup();
@@ -956,9 +970,9 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				return ( true === $result ) ? array() : array( 'wp_delete_term failed' . ( is_wp_error( $result ) ? ': ' . $result->get_error_message() : '' ) );
 			}
 			if ( 'term' === $target['type'] ) {
-				return WPCP_Writer::write_term_items( $target['id'], $target['taxonomy'], $items, 'new' );
+				return $this->writer->write_term_items( $target['id'], $target['taxonomy'], $items, 'new' );
 			}
-			return WPCP_Writer::write_post_items( $target['id'], $items, 'new' );
+			return $this->writer->write_post_items( $target['id'], $items, 'new' );
 		}
 
 		// ------------------------------------------------------------------
@@ -1134,7 +1148,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			$type     = $record['type'];
 			$id       = (int) $record['id'];
 			$taxonomy = (string) $record['taxonomy'];
-			WPCP_Reader::flush_caches( $type, $id, $taxonomy );
+			$this->reader->flush_caches( $type, $id, $taxonomy );
 			if ( '' !== $taxonomy ) {
 				$this->taxonomies[ $taxonomy ] = true;
 			}
@@ -1144,16 +1158,16 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				return $left;
 			}
 			if ( 'term' === $type ) {
-				$errors = WPCP_Writer::write_term_items( $id, $taxonomy, $revert, 'old' );
+				$errors = $this->writer->write_term_items( $id, $taxonomy, $revert, 'old' );
 			} else {
 				// $revert keeps post_status so the read-back below still checks it.
 				list( $errors, $writes, $dates ) = $this->restore_post_status( $id, $revert );
-				$errors                          = array_merge( $errors, WPCP_Writer::write_post_items( $id, $writes, 'old', $dates ) );
+				$errors                          = array_merge( $errors, $this->writer->write_post_items( $id, $writes, 'old', $dates ) );
 			}
 			foreach ( $errors as $error ) {
 				WP_CLI::line( "{$record['label']}: $error" );
 			}
-			WPCP_Reader::flush_caches( $type, $id, $taxonomy );
+			$this->reader->flush_caches( $type, $id, $taxonomy );
 			return $left + $this->restore_read_back( $record, $revert );
 		}
 
@@ -1167,7 +1181,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			$revert = array();
 			$left   = 0;
 			foreach ( $record['items'] as $item ) {
-				$site  = WPCP_Reader::read_item( (int) $record['id'], (string) $record['taxonomy'], $item );
+				$site  = $this->reader->read_item( (int) $record['id'], (string) $record['taxonomy'], $item );
 				$label = "{$record['label']} " . WPCP_Values::label( $item );
 				if ( 'terms' === $item['kind'] ) {
 					$this->taxonomies[ $item['name'] ] = true;
@@ -1194,7 +1208,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 		private function restore_read_back( array $record, array $revert ) {
 			$left = 0;
 			foreach ( $revert as $item ) {
-				$site  = WPCP_Reader::read_item( (int) $record['id'], (string) $record['taxonomy'], $item );
+				$site  = $this->reader->read_item( (int) $record['id'], (string) $record['taxonomy'], $item );
 				$label = "{$record['label']} " . WPCP_Values::label( $item );
 				if ( WPCP_Values::same( $site, $item['old'] ) || ( ! empty( $item['absent'] ) && WPCP_Values::same( $site, '' ) ) ) {
 					WP_CLI::line( "$label: restored " . WPCP_Values::show( $item['old'] ) );
@@ -1220,7 +1234,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				}
 				unset( $revert[ $index ] );
 				$dates = $this->draft_dates( $id, $item['old'], $revert );
-				$error = WPCP_Writer::update_post( $id, array_merge( array( 'post_status' => $item['old'] ), $dates ) );
+				$error = $this->writer->update_post( $id, array_merge( array( 'post_status' => $item['old'] ), $dates ) );
 				return array( '' === $error ? array() : array( $error ), $revert, $dates );
 			}
 			return array( array(), $revert, array() );

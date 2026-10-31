@@ -10,11 +10,11 @@
  * @package aidevops
  */
 
-if ( ! defined( 'ABSPATH' ) ) {
+if ( defined( 'ABSPATH' ) === false ) {
 	exit( 2 );
 }
 
-if ( ! class_exists( 'WPCP_Writer' ) ) {
+if ( class_exists( 'WPCP_Writer' ) === false ) {
 
 	/**
 	 * Stateless site writes shared by apply and restore.
@@ -32,10 +32,10 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 		 * @param array  $dates     Restored draft dates to resend so WordPress keeps them.
 		 * @return array Errors.
 		 */
-		public static function write_post_items( $target_id, array $items, $value_key, array $dates = array() ) {
+		public function write_post_items( $target_id, array $items, $value_key, array $dates = array() ) {
 			$errors = array();
 			foreach ( array( 'acf', 'terms', 'meta', 'thumbnail', 'alt' ) as $kind ) {
-				$errors = array_merge( $errors, self::write_values_of_kind( $target_id, $items, $kind, $value_key ) );
+				$errors = array_merge( $errors, $this->write_values_of_kind( $target_id, $items, $kind, $value_key ) );
 			}
 			$fields = array();
 			foreach ( $items as $item ) {
@@ -43,9 +43,9 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 					$fields[ $item['name'] ] = $item[ $value_key ];
 				}
 			}
-			if ( $fields ) {
+			if ( $fields !== array() ) {
 				// Without the dates, wp_update_post() gives a floating draft the current date.
-				$error = self::update_post( $target_id, array_merge( $fields, $dates ) );
+				$error = $this->update_post( $target_id, array_merge( $fields, $dates ) );
 				if ( '' !== $error ) {
 					$errors[] = $error;
 				}
@@ -62,7 +62,7 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 		 * @param string $value_key new or old.
 		 * @return array Errors.
 		 */
-		public static function write_term_items( $target_id, $taxonomy, array $items, $value_key ) {
+		public function write_term_items( $target_id, $taxonomy, array $items, $value_key ) {
 			$errors = array();
 			$fields = array();
 			foreach ( $items as $item ) {
@@ -70,13 +70,13 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 					$fields[ $item['name'] ] = 'parent' === $item['name'] ? (int) $item[ $value_key ] : (string) $item[ $value_key ];
 				}
 			}
-			if ( $fields ) {
+			if ( $fields !== array() ) {
 				$result = wp_update_term( $target_id, $taxonomy, wp_slash( $fields ) );
 				if ( is_wp_error( $result ) ) {
 					$errors[] = 'wp_update_term: ' . $result->get_error_message();
 				}
 			}
-			return array_merge( $errors, self::write_values_of_kind( $target_id, $items, 'term_meta', $value_key ) );
+			return array_merge( $errors, $this->write_values_of_kind( $target_id, $items, 'term_meta', $value_key ) );
 		}
 
 		/**
@@ -88,10 +88,10 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 		 * @param string $value_key new or old.
 		 * @return array Errors.
 		 */
-		private static function write_values_of_kind( $target_id, array $items, $kind, $value_key ) {
+		private function write_values_of_kind( $target_id, array $items, $kind, $value_key ) {
 			$errors = array();
 			foreach ( $items as $item ) {
-				$error = $kind === $item['kind'] ? self::write_value( $target_id, $item, $value_key ) : '';
+				$error = $kind === $item['kind'] ? $this->write_value( $target_id, $item, $value_key ) : '';
 				if ( '' !== $error ) {
 					$errors[] = $error;
 				}
@@ -107,13 +107,13 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 		 * @param string $value_key new or old.
 		 * @return string Error or ''.
 		 */
-		private static function write_value( $target_id, array $item, $value_key ) {
+		private function write_value( $target_id, array $item, $value_key ) {
 			$kind  = $item['kind'];
 			$value = $item[ $value_key ];
 			if ( 'terms' === $kind ) {
-				return self::write_post_terms( $target_id, $item['name'], (array) $value );
+				return $this->write_post_terms( $target_id, $item['name'], (array) $value );
 			}
-			$writers = self::value_writers( $target_id, $item['name'] );
+			$writers = $this->value_writers( $target_id, $item['name'] );
 			if ( ! isset( $writers[ $kind ] ) ) {
 				return "unknown item kind $kind";
 			}
@@ -134,7 +134,7 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 		 * @param string $name Item name (field, meta key or attachment id).
 		 * @return array Kind => ['update' => callable( $value ), 'delete' => callable()].
 		 */
-		private static function value_writers( $target_id, $name ) {
+		private function value_writers( $target_id, $name ) {
 			$alt_id  = (int) $name;
 			$alt_key = self::ALT_KEY;
 			return array(
@@ -189,7 +189,7 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 		 * @param array  $slugs    Term slugs.
 		 * @return string Error or ''.
 		 */
-		private static function write_post_terms( $target_id, $taxonomy, array $slugs ) {
+		private function write_post_terms( $target_id, $taxonomy, array $slugs ) {
 			$ids = array();
 			foreach ( $slugs as $slug ) {
 				$term = get_term_by( 'slug', $slug, $taxonomy );
@@ -209,7 +209,7 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 		 * @param array $fields Fields.
 		 * @return string Error or ''.
 		 */
-		public static function update_post( $target_id, array $fields ) {
+		public function update_post( $target_id, array $fields ) {
 			$postarr = array_merge( array( 'ID' => $target_id ), $fields );
 			if ( isset( $fields['post_date'] ) ) {
 				$postarr['edit_date'] = true;

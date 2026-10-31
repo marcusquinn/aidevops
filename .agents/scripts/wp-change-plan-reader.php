@@ -10,11 +10,11 @@
  * @package aidevops
  */
 
-if ( ! defined( 'ABSPATH' ) ) {
+if ( defined( 'ABSPATH' ) === false ) {
 	exit( 2 );
 }
 
-if ( ! class_exists( 'WPCP_Reader' ) ) {
+if ( class_exists( 'WPCP_Reader' ) === false ) {
 
 	/**
 	 * Stateless site reads shared by evaluation, apply and restore.
@@ -30,16 +30,16 @@ if ( ! class_exists( 'WPCP_Reader' ) ) {
 		 * @param array $record Applied record.
 		 * @return array [record with read-back values, mismatches].
 		 */
-		public static function read_back( array $target, array $record ) {
+		public function read_back( array $target, array $record ) {
 			$mismatches = array();
-			self::flush_caches( $target['type'], $target['id'], $target['taxonomy'] );
+			$this->flush_caches( $target['type'], $target['id'], $target['taxonomy'] );
 			foreach ( $target['items'] as $item ) {
-				$site   = self::read_item( $target['id'], $target['taxonomy'], $item );
+				$site   = $this->read_item( $target['id'], $target['taxonomy'], $item );
 				$expect = 'change' === $item['state'] ? $item['stored'] : $item['site'];
 				if ( 'delete' === $item['kind'] ) {
 					$expect = '';
 				}
-				if ( ! WPCP_Values::same( $site, $expect ) ) {
+				if ( WPCP_Values::same( $site, $expect ) === false ) {
 					$mismatches[] = WPCP_Values::label( $item ) . ': expected ' . WPCP_Values::show( $expect ) . ', site has ' . WPCP_Values::show( $site );
 				}
 				foreach ( $record['items'] as $index => $written ) {
@@ -58,7 +58,7 @@ if ( ! class_exists( 'WPCP_Reader' ) ) {
 		 * @param int    $target_id Post or term id.
 		 * @param string $taxonomy Taxonomy.
 		 */
-		public static function flush_caches( $type, $target_id, $taxonomy ) {
+		public function flush_caches( $type, $target_id, $taxonomy ) {
 			if ( 'post' === $type ) {
 				clean_post_cache( $target_id );
 			} elseif ( '' !== $taxonomy ) {
@@ -74,7 +74,7 @@ if ( ! class_exists( 'WPCP_Reader' ) ) {
 		 * @param array  $item     Item.
 		 * @return mixed
 		 */
-		public static function read_item( $target_id, $taxonomy, array $item ) {
+		public function read_item( $target_id, $taxonomy, array $item ) {
 			$name  = $item['name'];
 			$value = null;
 			switch ( $item['kind'] ) {
@@ -87,7 +87,7 @@ if ( ! class_exists( 'WPCP_Reader' ) ) {
 					$value = WPCP_Values::single( get_post_meta( $target_id, $name, false ) );
 					break;
 				case 'terms':
-					$value = self::post_term_slugs( $target_id, $name );
+					$value = $this->post_term_slugs( $target_id, $name );
 					break;
 				case 'thumbnail':
 					$value = (int) get_post_thumbnail_id( $target_id );
@@ -96,7 +96,7 @@ if ( ! class_exists( 'WPCP_Reader' ) ) {
 					$value = (string) WPCP_Values::single( get_post_meta( (int) $name, self::ALT_KEY, false ) );
 					break;
 				default:
-					$value = self::read_term_item( $target_id, $taxonomy, $item );
+					$value = $this->read_term_item( $target_id, $taxonomy, $item );
 					break;
 			}
 			return $value;
@@ -110,7 +110,7 @@ if ( ! class_exists( 'WPCP_Reader' ) ) {
 		 * @param array  $item Item.
 		 * @return mixed
 		 */
-		private static function read_term_item( $target_id, $taxonomy, array $item ) {
+		private function read_term_item( $target_id, $taxonomy, array $item ) {
 			$name = $item['name'];
 			switch ( $item['kind'] ) {
 				case 'term':
@@ -132,7 +132,7 @@ if ( ! class_exists( 'WPCP_Reader' ) ) {
 		 * @param string $taxonomy Taxonomy.
 		 * @return array
 		 */
-		public static function post_term_slugs( $target_id, $taxonomy ) {
+		public function post_term_slugs( $target_id, $taxonomy ) {
 			$slugs = wp_get_object_terms( $target_id, $taxonomy, array( 'fields' => 'slugs' ) );
 			return is_wp_error( $slugs ) ? array() : WPCP_Values::sorted( $slugs );
 		}
