@@ -11,6 +11,9 @@
 #        local ver; ver=$(aidevops_find_version)
 
 # VERSION file locations - checked in order of preference:
+# 0. AIDEVOPS_VERSION_FILE, when set (explicit override; the same variable
+#    dispatch-claim-helper.sh honours). GH#36247: the Issue Sync CI gh shim
+#    copies scripts into RUNNER_TEMP, where candidates 1-4 cannot resolve.
 # 1. Deployed agents directory (setup.sh copies here for all install methods)
 # 2. Legacy location (some older installs)
 # 3. Source repo containing this library (CI / secondary checkout friendly)
@@ -48,11 +51,13 @@ aidevops_read_version_file() {
 
 # aidevops_find_version - print the local aidevops version string, or "unknown"
 #
-# Checks three locations in priority order. Uses -r (readable) rather than -f
-# (exists) so that cat never fails under set -e on permission-denied files.
+# Checks the locations above in priority order; an unset, unreadable or empty
+# override falls through. Uses -r (readable) rather than -f (exists) so that
+# reads never fail under set -e on permission-denied files.
 aidevops_find_version() {
 	local version_file version
 	for version_file in \
+		"${AIDEVOPS_VERSION_FILE:-}" \
 		"$AIDEVOPS_VERSION_FILE_AGENTS" \
 		"$AIDEVOPS_VERSION_FILE_LEGACY" \
 		"$(aidevops_repo_version_file)" \
