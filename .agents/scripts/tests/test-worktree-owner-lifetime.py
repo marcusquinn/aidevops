@@ -652,6 +652,33 @@ class ProcessReconciliationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 proof.proof(record, "fixture-inode")
 
+    def test_same_boot_idle_quiescence_passes_identity_and_shares_census(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        record = self.record()
+        record["identity"] = {"path": "/worktree", "source_inode": "fixture-inode"}
+        now = time.time()
+        sample = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                  "uid": os.getuid(), "references": 0, "uncertain": 0}
+        samples = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
+        with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                patch.object(census, "path_census", side_effect=samples * 2) as observe, \
+                patch.object(reconcile.time, "sleep") as pause:
+            reconcile.reconcile(record)
+            lifetime.idle_quiescence(record)
+            # One shared pair for the idle loop and a fresh pair for sealing,
+            # not one pair per launch in either loop.
+            self.assertEqual(observe.call_count, 4)
+            self.assertEqual(pause.call_count, 2)
+        self.assertEqual(record["state"], "sealed")
+        for launch in record["launches"]:
+            receipt = launch["observation_quiescence"]
+            self.assertEqual(receipt["worktree_identity"], record["identity"])
+            self.assertEqual(receipt["identity"], reconcile.identity(launch))
+            self.assertEqual(receipt["process_completion"], launch["process_completion"])
+            reconcile.validate_quiescence(launch, record["identity"])
+
     def test_present_removal_proof_refreshes_receipts_and_rechecks_parents(self):
         import worktree_lifetime_reconcile as reconcile
         import worktree_process_snapshot as census
