@@ -36,6 +36,7 @@ from worktree_archive_index import (
 )
 from worktree_archive_objects import (
     administration_roots, bundle_roots, capture_auto_merge,
+    base_graph_missing, require_independent_base_receiver, verify_imported_base,
     verify_auto_merge as verify_auto_merge,
     verify_git_objects as verify_git_objects,
 )
@@ -95,14 +96,8 @@ def seed_base(root, manifest):
         return git(repository, *args, timeout=remaining)
 
     try:
-        admin = bounded_git(root, 'rev-parse', '--absolute-git-dir').strip()
-        receiver = bounded_git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()
-        receiver_path = Path(os.fsdecode(receiver)).resolve()
-        if (Path(os.fsdecode(admin)).resolve() != receiver_path or receiver_path == common.resolve()
-                or os.path.lexists(receiver_path / 'objects/info/alternates')):
-            raise ValueError('git_admin:base_import_requires_independent_scratch')
-        graph = bounded_git(common, 'rev-list', '--objects', '--no-object-names', '--missing=print', base)
-        if any(line.startswith(b'?') for line in graph.splitlines()):
+        require_independent_base_receiver(root, common, bounded_git)
+        if base_graph_missing(common, base, bounded_git):
             # No shared-source lazy fetch, even for sealed partial clones. The
             # receiver is new operation-owned scratch, never the shared store.
             try:
@@ -120,10 +115,7 @@ def seed_base(root, manifest):
             bounded_git(root, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags',
                         '--no-auto-maintenance', '--upload-pack=' + base_upload_pack(),
                         '--no-write-fetch-head', str(common), base)
-        graph = bounded_git(root, 'rev-list', '--objects', '--no-object-names', '--missing=print', base)
-        if any(line.startswith(b'?') for line in graph.splitlines()):
-            raise ValueError(MISSING_PROMISOR_BASE)
-        bounded_git(root, 'fsck', '--full', '--no-reflogs', base)
+        verify_imported_base(root, base, bounded_git)
         bounded_git(root, 'update-ref', 'refs/archive/base', base)
     except subprocess.CalledProcessError as error:
         raise ValueError(base_import_failure(error)) from None
