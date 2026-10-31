@@ -240,16 +240,16 @@ _validate_completion_bookkeeping_request() {
 _completion_bookkeeping_body_has_reference() {
 	local body="$1"
 	local issue_number="$2"
-	printf '%s\n' "$body" | grep -Eiq \
-		"(^|[[:space:]])(for|ref|close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)"
+	grep -Eiq \
+		"(^|[[:space:]])(for|ref|close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)" <<<"$body"
 	return $?
 }
 
 _completion_bookkeeping_body_has_closing_reference() {
 	local body="$1"
 	local issue_number="$2"
-	printf '%s\n' "$body" | grep -Eiq \
-		"(^|[[:space:]])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)"
+	grep -Eiq \
+		"(^|[[:space:]])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)" <<<"$body"
 	return $?
 }
 
@@ -354,10 +354,10 @@ _validate_completion_bookkeeping_todo() {
 		return 1
 	fi
 	completion_line="$issue_mapping_lines"
-	if ! printf '%s\n' "$completion_line" | grep -Eq \
-		"^[[:blank:]]*- \[x\] ${task_pattern}([[:space:]]|$)" ||
-		! printf '%s\n' "$completion_line" | grep -Eq "pr:#${proof_pr}([^0-9]|$)" ||
-		! printf '%s\n' "$completion_line" | grep -Eq 'completed:[0-9]{4}-[0-9]{2}-[0-9]{2}([^0-9]|$)'; then
+	if ! grep -Eq \
+		"^[[:blank:]]*- \[x\] ${task_pattern}([[:space:]]|$)" <<<"$completion_line" ||
+		! grep -Eq "pr:#${proof_pr}([^0-9]|$)" <<<"$completion_line" ||
+		! grep -Eq 'completed:[0-9]{4}-[0-9]{2}-[0-9]{2}([^0-9]|$)' <<<"$completion_line"; then
 		print_error "Completion bookkeeping TODO.md proof must complete ${task_id} with merged PR #${proof_pr}"
 		return 1
 	fi
@@ -380,8 +380,8 @@ _validate_completion_bookkeeping_todo() {
 		+* | -*)
 			patch_payload="${patch_line:1}"
 			[[ "$patch_payload" =~ ^[[:space:]]*$ ]] && continue
-			if ! printf '%s\n' "$patch_payload" | grep -Eq \
-				"^[[:blank:]]*- \[[ x]\] ${task_pattern}([[:space:]]|$)"; then
+			if ! grep -Eq \
+				"^[[:blank:]]*- \[[ x]\] ${task_pattern}([[:space:]]|$)" <<<"$patch_payload"; then
 				print_error "Completion bookkeeping TODO.md diff changes content outside task ${task_id}"
 				return 1
 			fi
@@ -398,8 +398,8 @@ _validate_completion_bookkeeping_pr_body() {
 		print_error "Completion bookkeeping PR body contains a closing keyword for issue #${issue_number}"
 		return 1
 	fi
-	if ! printf '%s\n' "$pr_body" | grep -Eiq \
-		"(^|[[:space:]])(for|ref)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)"; then
+	if ! grep -Eiq \
+		"(^|[[:space:]])(for|ref)[[:space:]]*:?[[:space:]]*#${issue_number}([^0-9]|$)" <<<"$pr_body"; then
 		print_error "Completion bookkeeping PR body must use For/Ref #${issue_number}"
 		return 1
 	fi
@@ -965,7 +965,7 @@ _classify_remote_branch() {
 		printf 'unknown \n'
 		return 0
 	fi
-	remote_sha=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${branch}" '$2 == ref { print $1; exit }')
+	remote_sha=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${branch}" '!found && $2 == ref { print $1; found=1 }')
 	if [[ -z "$remote_sha" ]]; then
 		printf 'absent \n'
 		return 0
@@ -1160,7 +1160,7 @@ _issue_has_parent_task_label() {
 
 	local hit=""
 	hit=$(printf '%s' "$labels_json" |
-		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | head -n 1 || true)
+		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | sed -n '1p' || true)
 
 	if [[ -n "$hit" ]]; then
 		return 0
@@ -1337,7 +1337,7 @@ _derive_pr_title_prefix() {
 	# boundary after the number so ref:GH#123 doesn't match ref:GH#12345.
 	local task_id=""
 	task_id=$(grep -E "^- \[[ x]\] t[0-9]+ .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null |
-		head -1 |
+		sed -n '1p' |
 		grep -oE '^- \[[ x]\] t[0-9]+' |
 		grep -oE 't[0-9]+$' ||
 		true)
@@ -1764,8 +1764,8 @@ _ensure_worker_pr_linkage() {
 	# A qualified close reference targets another repository. Do not add a local
 	# reference to an ambiguous body: pulse must remain fail-closed for cross-repo
 	# or multi-issue relationships.
-	if [[ -n "$closing_issues" ]] || printf '%s' "$current_body" | grep -Eiq \
-		'(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+[^[:space:]]+#[0-9]+'; then
+	if [[ -n "$closing_issues" ]] || grep -Eiq \
+		'(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+[^[:space:]]+#[0-9]+' <<<"$current_body"; then
 		print_error "Worker PR #${pr_number} has ambiguous or cross-repository closing references; refusing linkage repair"
 		return 1
 	fi

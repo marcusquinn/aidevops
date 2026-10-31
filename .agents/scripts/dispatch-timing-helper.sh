@@ -181,7 +181,7 @@ _dt_p95() {
 	idx=$(((count * 95 + 99) / 100 - 1))
 	((idx < 0)) && idx=0
 	((idx >= count)) && idx=$((count - 1))
-	p95=$(printf '%s\n' "$sorted" | awk -v i="$idx" 'NR==i+1 {print; exit}')
+	p95=$(printf '%s\n' "$sorted" | awk -v i="$idx" 'NR==i+1 {print}')
 	echo "${p95:-0}"
 	return 0
 }
@@ -499,7 +499,7 @@ _dt_cmd_stats() {
 		sorted=$(printf '%s\n' "$success_values" | sort -n)
 		idx=$(((count * 50 + 99) / 100 - 1))
 		((idx < 0)) && idx=0
-		p50=$(printf '%s\n' "$sorted" | awk -v i="$idx" 'NR==i+1 {print; exit}')
+		p50=$(printf '%s\n' "$sorted" | awk -v i="$idx" 'NR==i+1 {print}')
 		[[ -z "$p50" ]] && p50=0
 		p95=$(_dt_p95 "$success_values")
 	fi

@@ -77,7 +77,8 @@ _gh_edit_audit_rejection() {
 	local reason="$2"
 	shift 2
 	local context
-	context=$(printf '%q ' "$@" | head -c 500)
+	context=$(printf '%q ' "$@")
+	context=$(printf '%.500s' "$context")
 	local audit_helper
 	audit_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/audit-log-helper.sh"
 	if [[ -x "$audit_helper" ]]; then
@@ -668,7 +669,7 @@ _gh_pr_body_negated_closing_ref() {
 	stripped=$(printf '%s\n' "$body_text" |
 		awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced' |
 		sed -E "s/${backtick}[^${backtick}]*${backtick}//g")
-	match=$(printf '%s\n' "$stripped" | grep -oiE "$pattern" | head -n 1) || true
+	match=$(printf '%s\n' "$stripped" | grep -oiE "$pattern" | sed -n '1p') || true
 	[[ -n "$match" ]] || return 1
 	match="${match#"${match%%[![:space:]]*}"}"
 	printf '%s\n' "$match"

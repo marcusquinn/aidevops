@@ -606,7 +606,7 @@ sync_counter_branch() {
 		return 1
 	}
 	existing_tree=$(_counter_git ls-tree "${REMOTE_NAME}/${target_branch}" 2>/dev/null || true)
-	if echo "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+	if grep -q "${COUNTER_FILE}$" <<<"$existing_tree"; then
 		tree_sha=$(echo "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_git mktree 2>/dev/null) || {
 			log_error "COUNTER_BRANCH_SYNC_ERROR: failed to build replacement tree"
 			return 1
@@ -878,15 +878,15 @@ _cas_push_rejection_is_protected_branch() {
 # transport, authentication, hook, and provider-policy failures are hard errors.
 _cas_push_rejection_is_non_fast_forward() {
 	local push_stderr="$1"
-	printf '%s\n' "$push_stderr" | grep -Eiq \
-		'non-fast-forward|\(fetch first\)|stale info|remote ref updated since checkout'
+	grep -Eiq \
+		'non-fast-forward|\(fetch first\)|stale info|remote ref updated since checkout' <<<"$push_stderr"
 	return $?
 }
 
 _cas_push_rejection_is_auth_failure() {
 	local push_stderr="$1"
-	printf '%s\n' "$push_stderr" | grep -Eiq \
-		'authentication failed|could not read Username|permission denied \(publickey\)|http[^[:space:]]* 40[13]|repository not found'
+	grep -Eiq \
+		'authentication failed|could not read Username|permission denied \(publickey\)|http[^[:space:]]* 40[13]|repository not found' <<<"$push_stderr"
 	return $?
 }
 
@@ -1054,7 +1054,7 @@ _cas_build_reconciled_counter_tree() {
 		_task_counter_status "unrecoverable_desync" "tree_read_failed"
 		return 1
 	}
-	if printf '%s\n' "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+	if grep -q "${COUNTER_FILE}$" <<<"$existing_tree"; then
 		tree_sha=$(printf '%s\n' "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_git mktree) || {
 			log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to replace reconciled counter tree entry"
 			_task_counter_status "unrecoverable_desync" "tree_replace_failed"
@@ -1377,7 +1377,7 @@ bootstrap_remote_counter() {
 			log_warn "BOOTSTRAP_COUNTER: failed to create tree (orphan)"
 			return 1
 		}
-	elif echo "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+	elif grep -q "${COUNTER_FILE}$" <<<"$existing_tree"; then
 		# Replace existing (invalid) entry
 		tree_sha=$(echo "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_git mktree 2>/dev/null) || {
 			log_warn "BOOTSTRAP_COUNTER: failed to create tree (replace)"

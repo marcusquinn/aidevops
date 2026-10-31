@@ -775,7 +775,7 @@ _full_loop_recovery_restore_preparation() {
 	[[ ! -e "$release_path" && -d "$worktree_base" ]] || return 1
 	[[ "$(_release_lane_executor_observe "$_AIDEVOPS_RELEASE_LANE_JSON" | jq -r '.state')" == "dead" ]] || return 1
 	registered=$(git -C "$REPO_ROOT" worktree list --porcelain) || return 1
-	if printf '%s\n' "$registered" | grep -Fxq "worktree $release_path"; then
+	if grep -Fxq "worktree $release_path" <<<"$registered"; then
 		printf 'Missing release preparation still has a Git registration; refusing reconstruction.\n' >&2
 		return 1
 	fi

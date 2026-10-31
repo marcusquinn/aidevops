@@ -603,7 +603,7 @@ get_model_pricing() {
 			.models | to_entries[] |
 			select(.key as $k | $ms | contains($k)) |
 			"\(.value.input)|\(.value.output)|\(.value.cache_read)|\(.value.cache_write)"
-		' 2>/dev/null | head -1)
+		' 2>/dev/null | sed -n '1p')
 		if [[ -n "$result" ]]; then
 			echo "$result"
 			return 0

@@ -385,7 +385,7 @@ readonly AIDEVOPS_GH_MIN_SLURP_VERSION="2.51.0"
 aidevops_parse_semver() {
 	local input="$1"
 	local parsed=""
-	parsed=$(printf '%s\n' "$input" | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+	parsed=$(printf '%s\n' "$input" | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | sed -n '1p' || true)
 	if [[ -z "$parsed" ]]; then
 		return 1
 	fi
@@ -1824,7 +1824,7 @@ _is_process_alive_and_matches() {
 		local cmd
 		cmd=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
 		[[ -z "$cmd" ]] && return 1
-		printf '%s' "$cmd" | grep -qE "$pattern" || return 1
+		grep -qE "$pattern" <<<"$cmd" || return 1
 	fi
 
 	# Step 3: if a stored hash was provided, verify it matches

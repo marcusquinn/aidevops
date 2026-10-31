@@ -89,7 +89,7 @@ _merge_reconcile_planning_publication() {
 
 	[[ -x "$reconciler" && "$merge_sha" =~ ^[0-9a-f]{40}$ ]] || return 0
 	changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files" --jq '.[].filename' 2>/dev/null || true)
-	if ! printf '%s\n' "$changed_files" | grep -qE '^(TODO\.md|todo/tasks/)'; then
+	if ! grep -qE '^(TODO\.md|todo/tasks/)' <<<"$changed_files"; then
 		return 0
 	fi
 	if [[ "$canonical_synced" != "1" ]]; then
@@ -270,7 +270,7 @@ _merge_canonical_remote_head() {
 		fi
 		return 1
 	fi
-	remote_head=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${default_branch}" '$2 == ref { print $1; exit }')
+	remote_head=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${default_branch}" '!found && $2 == ref { print $1; found=1 }')
 	if [[ ! "$remote_head" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
 		print_warning "CANONICAL_SYNC_PENDING=true reason=origin_query_failed"
 		return 1
@@ -340,7 +340,7 @@ _merge_fast_forward_canonical() {
 		printf '%s\n' "$helper_output" | grep '^POST_SYNC outcome=' || true
 		return 0
 	fi
-	refusal=$(printf '%s\n' "$helper_output" | grep -m1 'BLOCKED' || true)
+	refusal=$(grep -m1 'BLOCKED' <<<"$helper_output" || true)
 	print_warning "CANONICAL_SYNC_PENDING=true reason=fast_forward_refused${refusal:+ detail=${refusal}}"
 	return 1
 }
@@ -581,4 +581,3 @@ _merge_record_deferred_cleanup_owner() {
 	fi
 	return 0
 }
-

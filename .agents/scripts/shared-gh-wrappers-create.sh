@@ -278,7 +278,7 @@ _gh_ci_validate_dispatch_scope() {
 		[[ -r "$body_file" ]] || return 1
 		body=$(<"$body_file")
 	fi
-	if printf '%s\n' "$body" | grep -Eqi '^[[:space:]]*(#{1,3}[[:space:]]*)?(planning-only|pure planning|brief-only|no code changes)(:|[[:space:]]*$)'; then
+	if grep -Eqi '^[[:space:]]*(#{1,3}[[:space:]]*)?(planning-only|pure planning|brief-only|no code changes)(:|[[:space:]]*$)' <<<"$body"; then
 		return 0
 	fi
 	# GH#33227: shared by both rejection paths below so the "no Files Scope
@@ -294,7 +294,7 @@ _gh_ci_validate_dispatch_scope() {
 		/^# / || /^## / || /^### / { section=0 }
 		section && /^[[:space:]]*-[[:space:]]*(EDIT|NEW):[[:space:]]*`?[^`[:space:]]/ { found=1 }
 		END { exit !found }
-	' && ! printf '%s\n' "$body" | grep -Eq '^#{2,3} Files Scope[[:space:]]*$'; then
+	' && ! grep -Eq '^#{2,3} Files Scope[[:space:]]*$' <<<"$body"; then
 		# GH#32531/GH#33243: the author has the most context to choose the scope,
 		# so ask while the brief is still in hand. Without it the worker spends
 		# its first step on scope discovery; the pulse no longer holds the issue.
@@ -487,7 +487,7 @@ _gh_ci_prepare_parent_close_contract() {
 	[[ "$body" == *"<!-- parent-close-contract:"* ]] && return 0
 
 	local marker='<!-- parent-close-contract: needs-decomposition -->'
-	if printf '%s\n' "$body" | grep -qE '^##[[:space:]]+Phases([[:space:]]|$)'; then
+	if grep -qE '^##[[:space:]]+Phases([[:space:]]|$)' <<<"$body"; then
 		local phase_rows="" phase_lib=""
 		phase_lib="$(dirname "${BASH_SOURCE[0]}")/shared-phase-filing.sh"
 		if [[ -r "$phase_lib" ]]; then
@@ -504,11 +504,11 @@ _gh_ci_prepare_parent_close_contract() {
 		fi
 	else
 		local children_count=0
-		children_count=$(printf '%s\n' "$body" | awk '
+		children_count=$(awk '
 			/^##[[:space:]]+(Children|Child Issues|Sub-issues|Sub-tasks)([[:space:]]|$)/ { in_children=1; next }
 			in_children && /^##[[:space:]]/ { exit }
 			in_children { print }
-		' | grep -oE '#[0-9]+' | sort -u | wc -l | tr -d ' ' || true)
+		' <<<"$body" | grep -oE '#[0-9]+' | sort -u | wc -l | tr -d ' ' || true)
 		if [[ "$children_count" =~ ^[0-9]+$ ]] && [[ "$children_count" -gt 0 ]]; then
 			marker="<!-- parent-close-contract: expected-children=${children_count} -->"
 		fi
@@ -782,7 +782,7 @@ _gh_resolve_task_id_to_issue() {
 		--search "${tid}: in:title" --json number,title --limit 5 2>/dev/null |
 		jq -r --arg prefix "${tid}: " \
 			'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
-		head -1
+		sed -n '1p'
 	return 0
 }
 
@@ -799,7 +799,7 @@ _gh_parse_parent_from_body() {
 	# shellcheck disable=SC2016  # sed pattern contains literal `*` and backticks
 	parent_ref=$(printf '%s\n' "$body" |
 		sed -nE 's/^[[:space:]]*\**Parent:\**[[:space:]]*`?(t[0-9]+|GH#[0-9]+|#[0-9]+)`?.*/\1/p' |
-		head -1 || true)
+		sed -n '1p' || true)
 	[[ -z "$parent_ref" ]] && return 0
 	if [[ "$parent_ref" =~ ^#([0-9]+)$ ]]; then
 		echo "${BASH_REMATCH[1]}"

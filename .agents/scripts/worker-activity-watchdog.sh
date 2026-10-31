@@ -333,7 +333,7 @@ _watchdog_lsof_network_active() {
 	lsof_output=$(lsof -nP -a -p "$pid_csv" -iTCP -sTCP:ESTABLISHED 2>/dev/null || true)
 	[[ -n "$lsof_output" ]] || return 1
 
-	if printf '%s\n' "$lsof_output" | grep -Eq -- '->[^[:space:]]+:(443|8443)([[:space:]]|$)'; then
+	if grep -Eq -- '->[^[:space:]]+:(443|8443)([[:space:]]|$)' <<<"$lsof_output"; then
 		return 0
 	fi
 	return 1
@@ -361,7 +361,7 @@ _watchdog_ss_network_active() {
 	local pid=""
 	for pid in "${pid_list[@]}"; do
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
-		if printf '%s\n' "$ss_output" | grep -Eq -- "[[:space:]][^[:space:]]+:(443|8443)([[:space:]]|$).*pid=${pid},"; then
+		if grep -Eq -- "[[:space:]][^[:space:]]+:(443|8443)([[:space:]]|$).*pid=${pid}," <<<"$ss_output"; then
 			return 0
 		fi
 	done

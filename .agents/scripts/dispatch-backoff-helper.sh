@@ -606,9 +606,9 @@ _main() {
 					printf '%s\n' "$backoff_stderr_output"
 
 					# Post the extended-cooldown notice once at the threshold.
-					if printf '%s' "$backoff_stderr_output" | grep -q 'BACKOFF_NOTICE_REQUIRED'; then
+					if grep -q 'BACKOFF_NOTICE_REQUIRED' <<<"$backoff_stderr_output"; then
 						local count_field
-						count_field=$(printf '%s' "$backoff_stderr_output" | grep -oE 'count=[0-9]+' | head -1 | cut -d= -f2)
+						count_field=$(printf '%s' "$backoff_stderr_output" | grep -oE 'count=[0-9]+' | sed -n '1p' | cut -d= -f2)
 						[[ "$count_field" =~ ^[0-9]+$ ]] || count_field="$DISPATCH_BACKOFF_NMR_THRESHOLD"
 						_db_record_extended_backoff_notice "$issue_number" "$slug" "$count_field"
 					fi

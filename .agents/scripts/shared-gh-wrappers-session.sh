@@ -56,10 +56,10 @@ gh_token_has_workflow_scope() {
 	# gh auth status outputs scopes in various formats depending on version:
 	#   Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo', 'workflow'
 	#   Token scopes: admin:public_key, gist, read:org, repo, workflow
-	if echo "$auth_output" | grep -q "'workflow'"; then
+	if grep -q "'workflow'" <<<"$auth_output"; then
 		return 0
 	fi
-	if echo "$auth_output" | grep -qiE 'Token scopes:.*workflow'; then
+	if grep -qiE 'Token scopes:.*workflow' <<<"$auth_output"; then
 		return 0
 	fi
 

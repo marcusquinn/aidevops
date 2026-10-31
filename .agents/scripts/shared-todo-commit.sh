@@ -167,7 +167,7 @@ _todo_default_branch() {
 	local default_branch=""
 	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || default_branch=""
 	if [[ -z "$default_branch" ]]; then
-		default_branch=$(git -C "$repo_path" remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p' | head -1) || default_branch=""
+		default_branch=$(git -C "$repo_path" remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p' | sed -n '1p') || default_branch=""
 	fi
 	if [[ -z "$default_branch" ]]; then
 		if git -C "$repo_path" rev-parse --verify --quiet main >/dev/null 2>&1; then
@@ -510,7 +510,7 @@ _todo_create_planning_worktree() {
 		git -C "$repo_path" fetch -q origin "+refs/heads/${branch_name}:refs/remotes/origin/${branch_name}" 2>>"$log_target" || return 1
 		remote_commit=$(git -C "$repo_path" rev-parse "refs/remotes/origin/${branch_name}" 2>/dev/null) || return 1
 		if ! git -C "$repo_path" log -1 --format=%B "$remote_commit" 2>/dev/null |
-			grep -Fqx "Planning-Publication-ID: ${publication_id}"; then
+			grep -Fx "Planning-Publication-ID: ${publication_id}" >/dev/null; then
 			printf '%s\n' "[todo_commit_push] Planning publication branch collision: ${branch_name}" >>"$log_target"
 			printf '[todo_commit_push] Existing remote branch %s does not match publication %s; refusing to overwrite it.\n' \
 				"$branch_name" "$publication_id" >&2
