@@ -1374,6 +1374,9 @@ _prrts_publish_continuation_blocker() {
 	local head="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}"
 	local marker="" details="" body="" existing=""
 	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 0
+	local current_head=""
+	current_head=$(_prrts_gh_call read gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.head.sha' 2>/dev/null) || current_head=""
+	[[ "$current_head" =~ ^[0-9a-fA-F]{40,64}$ ]] && head="$current_head"
 	[[ "$head" =~ ^[0-9a-fA-F]{40,64}$ ]] || head="$PRRTS_VALUE_UNKNOWN"
 	blocked_by="$(_prrts_normalise_blocked_by "$blocked_by")"
 	reason="$(_prrts_state_value_line "$reason" 240)"
@@ -1381,8 +1384,11 @@ _prrts_publish_continuation_blocker() {
 		details="$(_prrts_state_value_line "$(<"$details_file")" 700)"
 	fi
 	marker="aidevops:continuation-blocker pr=${pr_number} head=${head}"
-	existing=$(_prrts_gh_call read gh api "repos/${repo_slug}/issues/${issue}/comments" --paginate \
-		--jq ".[] | select((.body // \"\") | contains(\"${marker} \")) | .id" 2>/dev/null) || existing=""
+	if ! existing=$(_prrts_gh_call read gh api "repos/${repo_slug}/issues/${issue}/comments" --paginate \
+		--jq ".[] | select((.body // \"\") | contains(\"${marker} \")) | .id" 2>/dev/null); then
+		_prrts_log "blocker-publish: ${repo_slug}#${issue} duplicate lookup failed for PR #${pr_number}; skipping post"
+		return 1
+	fi
 	if [[ -n "$existing" ]]; then
 		_prrts_log "blocker-publish: ${repo_slug}#${issue} already has record for PR #${pr_number} head=${head}"
 		return 0
