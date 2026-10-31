@@ -21,7 +21,29 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${GH_CALL_LOG}"
 mode=$(cat "${GH_MODE_FILE}")
 if [[ "$1" == "api" && "$2" == "user" ]]; then
+  if [[ "$mode" == "rest-down" || "$mode" == "all-down" ]]; then
+    printf '%s\n' '[gh-transport] deferred: rest core reservation' >&2
+    exit 75
+  fi
   printf '%s\n' "tester"
+  exit 0
+fi
+# GraphQL viewer (separate quota bucket). The real call shapes output with
+# --jq as "<login>|<viewerPermission>"; GitHub reports READ for a public repo
+# the viewer cannot push to.
+if [[ "$1" == "api" && "$2" == "graphql" ]]; then
+  case "$mode" in
+    all-down) exit 1 ;;
+    rest-down) viewer="tester"; permission="WRITE" ;;
+    viewer-mismatch) viewer="someone-else"; permission="WRITE" ;;
+    managed) viewer="tester"; permission="WRITE" ;;
+    *) viewer="tester"; permission="READ" ;;
+  esac
+  if [[ "$*" == *viewerPermission* ]]; then
+    printf '%s|%s\n' "$viewer" "$permission"
+  else
+    printf '%s\n' "$viewer"
+  fi
   exit 0
 fi
 if [[ "$1" == "api" && "$2" == "-i" && "${3:-}" == */collaborators/*/permission ]]; then
@@ -192,6 +214,56 @@ if [[ "$release_rc" -eq 0 && "$release_output" == *"Released claim"* ]]; then
 	check 1 "managed release still posts"
 else
 	check 0 "managed release still posts" "rc=${release_rc} output=${release_output}"
+fi
+
+# GH#36184: REST deferral must not be recorded as "not managed".
+guard_rc_for() {
+	local slug="$1"
+	local rc=0
+	aidevops_can_manage_repo_issue_state "$slug" || rc=$?
+	printf '%s' "$rc"
+	return 0
+}
+
+printf 'rest-down\n' >"$mode_file"
+rc=$(guard_rc_for "tester/project")
+check "$([[ "$rc" == 0 ]] && echo 1 || echo 0)" "owner resolved via GraphQL viewer when REST user lookup is deferred" "rc=${rc}"
+rc=$(guard_rc_for "other/project")
+check "$([[ "$rc" == 0 ]] && echo 1 || echo 0)" "write collaborator resolved via GraphQL viewerPermission when REST is deferred" "rc=${rc}"
+
+printf 'external\n' >"$mode_file"
+rc=$(guard_rc_for "other/project")
+check "$([[ "$rc" == 1 ]] && echo 1 || echo 0)" "confirmed READ viewer stays a confirmed block (rc 1)" "rc=${rc}"
+
+printf 'viewer-mismatch\n' >"$mode_file"
+rc=$(guard_rc_for "other/project")
+check "$([[ "$rc" == 2 ]] && echo 1 || echo 0)" "viewerPermission for a different login is not trusted (rc 2)" "rc=${rc}"
+
+printf 'all-down\n' >"$mode_file"
+rc=$(guard_rc_for "tester/project")
+check "$([[ "$rc" == 2 ]] && echo 1 || echo 0)" "unresolvable login is indeterminate (rc 2), not unmanaged" "rc=${rc}"
+
+: >"$call_log"
+set +e
+indeterminate_output=$(AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS="0" bash -c '
+  source "${0}/shared-constants.sh"
+  source "${0}/worker-lifecycle-common.sh"
+  source "${0}/headless-runtime-failure.sh"
+  WORKER_ISSUE_NUMBER=866 DISPATCH_REPO_SLUG=tester/project _release_dispatch_claim issue-866 worker_complete 0 0
+' "$AGENTS_SCRIPTS_DIR" 2>&1)
+indeterminate_rc=$?
+set -e
+if [[ "$indeterminate_rc" -eq 1 && "$indeterminate_output" == *"remains unpersisted"* &&
+	"$indeterminate_output" == *"retrying claim release in 0s"* &&
+	"$indeterminate_output" != *"not managed"* ]]; then
+	check 1 "indeterminate authority retries, then reports the release unpersisted"
+else
+	check 0 "indeterminate authority retries, then reports the release unpersisted" "rc=${indeterminate_rc} output=${indeterminate_output}"
+fi
+if grep -q 'issues/866/comments' "$call_log"; then
+	check 0 "indeterminate authority posts no release comment"
+else
+	check 1 "indeterminate authority posts no release comment"
 fi
 
 printf '\nResult: %d passed, %d failed\n' "$pass_count" "$fail_count"
