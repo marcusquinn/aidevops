@@ -337,7 +337,7 @@ _run_pre_edit_regression_test() {
 	local pre_edit_test_script="$2"
 	local trigger="" triggered=0
 
-	for trigger in pre-edit-check.sh tests/test-pre-edit-check.sh worktree-helper-add.sh \
+	for trigger in pre-edit-check.sh tests/test-pre-edit-check.sh worktree-helper.sh worktree-helper-add.sh \
 		worktree-paths.sh shared-worktree-registry.sh shared-worktree-registry-owner.py; do
 		if [[ "$changed_files" == *".agents/scripts/${trigger}"* ]]; then
 			triggered=1
