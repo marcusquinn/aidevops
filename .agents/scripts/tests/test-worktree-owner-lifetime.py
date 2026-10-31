@@ -691,11 +691,12 @@ class ProcessSnapshotTests(unittest.TestCase):
                        "import os,time; fd=os.open(%r, os.O_RDONLY); time.sleep(30)" % directory,
                        "import time; time.sleep(30)", "import time; time.sleep(30)"]
             for index, script in enumerate(scripts):
-                env = dict(os.environ, PWD="/", AIDEVOPS_WORKTREE="/")
+                env = dict(os.environ)
+                env.update({"PWD": "/", "AIDEVOPS_WORKTREE": "/"})
                 if index >= 2:
                     env[("PWD", "AIDEVOPS_WORKTREE")[index - 2]] = directory
-                child = subprocess.Popen([sys.executable, "-c", script],
-                                         cwd=directory if index == 0 else "/", env=env)
+                child = subprocess.Popen(  # nosec B603 -- current interpreter, fixed fixture code and disposable cwd
+                    [sys.executable, "-c", script], cwd=directory if index == 0 else "/", env=env)
                 try:
                     # Wait boundedly for the fd child to open its target.
                     deadline = time.monotonic() + 5
@@ -743,8 +744,8 @@ class ProcessSnapshotTests(unittest.TestCase):
                   "assert ctypes.CDLL(None).prctl(4,0,0,0,0)==0; "
                   "print('ready',flush=True); time.sleep(30)")
         with tempfile.TemporaryDirectory() as directory:
-            child = subprocess.Popen([sys.executable, "-c", script], cwd=directory,
-                                     stdout=subprocess.PIPE, text=True)
+            child = subprocess.Popen(  # nosec B603 -- current interpreter, constant prctl/sleep fixture, no shell
+                [sys.executable, "-c", script], cwd=directory, stdout=subprocess.PIPE, text=True)
             try:
                 import select
                 self.assertTrue(select.select([child.stdout], [], [], 5)[0])
