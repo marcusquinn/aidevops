@@ -119,11 +119,11 @@ assert_windowed_hold() {
 	local rc="$2"
 	local calls="$3"
 	if [[ "$rc" -eq 0 ]] \
-		&& printf '%s' "$calls" | grep -q 'gh_issue_comment 123 <!-- dispatch-infrastructure-failure -->' \
-		&& printf '%s' "$calls" | grep -q 'Dispatch resumes automatically' \
-		&& ! printf '%s' "$calls" | grep -q 'set_issue_status 123 owner/repo blocked' \
-		&& ! printf '%s' "$calls" | grep -q -- '--add-label' \
-		&& ! printf '%s' "$calls" | grep -q 'needs-brief-rewrite'; then
+		&& [[ "$calls" == *'gh_issue_comment 123 <!-- dispatch-infrastructure-failure -->'* ]] \
+		&& [[ "$calls" == *'Dispatch resumes automatically'* ]] \
+		&& [[ "$calls" != *'set_issue_status 123 owner/repo blocked'* ]] \
+		&& [[ "$calls" != *'--add-label'* ]] \
+		&& [[ "$calls" != *'needs-brief-rewrite'* ]]; then
 		pass "$name"
 	else
 		fail "$name" "rc=${rc}; gh_calls=${calls}"
