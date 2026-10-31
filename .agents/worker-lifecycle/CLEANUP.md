@@ -211,23 +211,18 @@ pre-reserved directories retain their existing creation path but do not acquire
 controlled-creation provenance. Failed construction retains partial results;
 repeating it cannot adopt an existing directory, even an empty one.
 
-Managed producer services enter the same native launcher through
-`worker-lifecycle-state.sh` before executing their command. The service does not
-inherit its parent's runtime or session identity. Explicit generation/attempt
-admission requirements remain mandatory. Post-completion callbacks run outside
-that producer identity; legacy service receipts never
-replace the new registry's creation, admission and retirement checks.
+Managed producers use `worker-lifecycle-state.sh` to enter the native launcher before execution.
+Parent runtime/session identity is replaced; explicit generation/attempt requirements remain mandatory.
+Post-completion callbacks run outside that identity. Legacy service receipts cannot replace
+registry creation, admission or retirement checks.
 
-Claude creator-context integration is outside this rollout. Standalone/unconnected
-creators and unknown pre-enrollment writers
-therefore still prevent a claim of complete registered-owner coverage.
-Linux disposable-Git tests cover creation, enrollment and native launch together;
-retained portable reports do not qualify this Git-dependent enrollment path.
+Claude creator integration is outside this rollout; standalone creators and unknown pre-enrollment
+writers still prevent a claim of complete registered-owner coverage.
+Linux disposable-Git tests cover creation, enrollment and native launch; portable reports do not qualify enrollment.
 
 ### Remaining rollout boundaries
 
-The following source integration points are verified, not an exhaustive inventory
-of every possible writer. Paths are relative to `scripts/`.
+These verified integration points (paths relative to `scripts/`) are not an exhaustive writer inventory.
 
 | Boundary | Existing entry points | Required new-registry contract |
 |----------|-----------------------|--------------------------------|
