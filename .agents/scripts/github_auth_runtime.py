@@ -18,7 +18,7 @@ import subprocess
 import sys
 import tempfile
 
-from github_app_auth import AuthError, cached_token, missing_permissions
+from github_app_auth import AuthError, cached_token, installation_permissions, missing_permissions
 from github_auth_config import paths, registry, settings, update_registry
 import github_auth_routing
 from github_auth_routing import APP, classify, decide, valid_slug
@@ -106,8 +106,12 @@ def auth_status(args, registry_path, config_path):
         reason, _ = decide(command, data, config_path)
         if reason != APP:
             raise AuthError(f"Repository metadata read would use existing auth ({reason}), not the App")
-        # /repos/{repo} passes without contents access, yet Pulse's open-PR commit
-        # query then fails FORBIDDEN. Compare the minted token's permissions.
+        # Diagnose installation grants before a scoped token request can fail.
+        missing = missing_permissions(installation_permissions(profile, auth["installation_id"], args.repo))
+        if missing:
+            raise AuthError("Pulse App installation lacks required read permissions: "
+                            + ", ".join(missing) + " (grant them on the installation)")
+        # Also check token scope: a custom profile may deliberately be narrower.
         cache = Path(os.environ.get("AIDEVOPS_GITHUB_APP_CACHE_DIR", Path.home() / ".aidevops/cache/github-app"))
         minted = cached_token(profile, auth["installation_id"], args.repo, cache)
         missing = missing_permissions(minted.get("permissions"))
