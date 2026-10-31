@@ -17,7 +17,9 @@ eval "$(awk '/^_merge_check_closure_metadata\(\)/ { capture=1 } capture { print 
 eval "$(awk '/^cmd_merge\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/../full-loop-helper-merge.sh")"
 
 gh_pr_view() {
-	if [[ "$*" == *"body,closingIssuesReferences"* ]]; then
+	local read_command="${1:-}"
+	# Raw gh reads do not use the gh_pr_view wrapper cache.
+	if [[ "$read_command" != gh && "$*" == *"body,closingIssuesReferences"* ]]; then
 		[[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == 1 ]] || return 1
 	fi
 	[[ "$READ_FAIL" -eq 0 ]] || return 1
@@ -44,7 +46,7 @@ _merge_parse_command_args() {
 }
 _merge_resolve_repo() { printf '%s' 'test/repo'; return 0; }
 _merge_handle_already_merged_provenance() { return 2; }
-_flm_gh_read() { gh_pr_view; return $?; }
+_flm_gh_read() { gh_pr_view "$@"; return $?; }
 _merge_pre_merge_gate_with_admission_retry() { REVIEWS=$((REVIEWS + 1)); return 1; }
 _merge_report_pre_merge_gate_failure() { return 0; }
 
@@ -74,7 +76,7 @@ check_case 'partial-delivery negation held and routed' 'For #123. Merge records 
 check_case 'For/native contradiction held' $'For #123\nResolves #123' "$LOCAL_REFS" 1
 check_case 'For colon/native contradiction held' $'For: #123\nResolves #123' "$LOCAL_REFS" 1
 check_case 'Ref colon/native contradiction held' $'Ref: #123\nResolves #123' "$LOCAL_REFS" 1
-check_case 'inline code between negation and keyword routed without looping' 'Do not `x` close #123' "$LOCAL_REFS" 1
+check_case 'inline code between negation and keyword routed without looping' "Do not \`x\` close #123" "$LOCAL_REFS" 1
 check_case 'case-insensitive Ref/native contradiction held' 'rEf #123' "$LOCAL_REFS" 1
 check_case 'qualified same-repo contradiction held' 'For test/repo#123' "$LOCAL_REFS" 1
 check_case 'legitimate leaf closure allowed' 'Resolves #123' "$LOCAL_REFS" 0
