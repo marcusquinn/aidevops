@@ -21,6 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK_SOURCE="${SCRIPT_DIR}/../hooks/git_safety_guard.py"
+LIFECYCLE_SOURCE="${SCRIPT_DIR}/../hooks/git_safety_lifecycle.py"
 
 # Colors — sourced from shared-constants.sh (Pattern A, t2053.3)
 # shellcheck source=shared-constants.sh
@@ -60,11 +61,14 @@ check_python() {
 }
 
 check_hook_source() {
-	if [[ ! -f "${HOOK_SOURCE}" ]]; then
-		printf "${RED}Error: Hook source not found at %s${NC}\n" "${HOOK_SOURCE}" >&2
-		printf "Run 'aidevops update' to restore framework files.\n" >&2
-		return 1
-	fi
+	local source_path=""
+	for source_path in "$HOOK_SOURCE" "$LIFECYCLE_SOURCE"; do
+		if [[ ! -f "$source_path" ]]; then
+			printf "${RED}Error: Hook source not found at %s${NC}\n" "$source_path" >&2
+			printf "Run 'aidevops update' to restore framework files.\n" >&2
+			return 1
+		fi
+	done
 	return 0
 }
 
@@ -244,10 +248,12 @@ install_hook() {
 	check_python || return 1
 	check_hook_source || return 1
 
-	mkdir -p "${install_dir}/hooks"
+	mkdir -p "${install_dir}/hooks" || return 1
 
-	cp "${HOOK_SOURCE}" "${install_dir}/hooks/git_safety_guard.py"
-	chmod +x "${install_dir}/hooks/git_safety_guard.py"
+	# Install dependencies first; never publish a guard with a missing import.
+	cp "$LIFECYCLE_SOURCE" "${install_dir}/hooks/git_safety_lifecycle.py" || return 1
+	cp "$HOOK_SOURCE" "${install_dir}/hooks/git_safety_guard.py" || return 1
+	chmod +x "${install_dir}/hooks/git_safety_guard.py" || return 1
 	printf "${GREEN}+${NC} Deployed %s/hooks/git_safety_guard.py\n" "${install_dir}"
 
 	local settings_file="${install_dir}/settings.json"

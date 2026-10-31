@@ -444,6 +444,27 @@ _check_pre_commit_only_result() {
 	return "$result"
 }
 
+test_standalone_hook_bundle() {
+	local mode="$1"
+	local fixture="" install_dir="" result=0
+	local -a options=()
+	fixture=$(mktemp -d) || return 1
+	mkdir -p "$fixture/home" "$fixture/project" || return 1
+	install_dir="$fixture/home/.claude"
+	if [[ "$mode" == "project" ]]; then
+		options=(--project)
+		install_dir="$fixture/project/.claude"
+	fi
+	(cd "$fixture/project" && HOME="$fixture/home" bash \
+		"$TEST_SCRIPTS_DIR/install-hooks.sh" "${options[@]}") >"$fixture/install.log" 2>&1 || result=1
+	HOME="$fixture/home" python3 -I -S -B -c \
+		'import sys; sys.path.insert(0, sys.argv[1]); import git_safety_guard' \
+		"$install_dir/hooks" >>"$fixture/install.log" 2>&1 || result=1
+	print_result "standalone $mode hook imports its installed lifecycle adapter" "$result"
+	rm -rf "$fixture"
+	return 0
+}
+
 # --- Run all tests ---
 main() {
 	echo "=== install-hooks-helper.sh validator preflight tests (t2226) ==="
@@ -459,6 +480,8 @@ main() {
 	test_help_text
 	test_runtime_dependency_preflight
 	test_installed_hook_probe
+	test_standalone_hook_bundle global
+	test_standalone_hook_bundle project
 	local mode
 	for mode in happy linked managed existing symlink hooks-path missing-runtime bad-validator bad-runtime local-runtime outside bare force unknown; do
 		test_pre_commit_only_case "$mode" || return 1
