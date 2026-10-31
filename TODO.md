@@ -1808,7 +1808,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18822 fix(pulse): rerun orphaned in_progress jobs on GitHub-hosted runners #bug #priority:high ref:GH#36177 pr:#36178 completed:2026-10-31
 
-- [ ] t18827 fix(gh): pace REST admissions as time-to-reset divided by remaining quota #bug ref:GH#36199
+- [x] t18827 fix(gh): pace REST admissions as time-to-reset divided by remaining quota #bug ref:GH#36199 pr:#36201 completed:2026-10-31
 
 ## In Progress
 
