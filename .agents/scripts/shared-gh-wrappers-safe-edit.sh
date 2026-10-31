@@ -730,6 +730,7 @@ _gh_pr_repair_merge_closure() {
 		discovery_body="${discovery_body//"$offending"/The issue remains open.}"
 	done
 	command -v python3 >/dev/null 2>&1 || return 1
+	# shellcheck disable=SC2016 # Literal Python regexes contain Markdown backticks, not shell substitutions.
 	repaired=$(printf '%s' "$pr_json" | python3 -c '
 import json, re, sys
 pr = json.load(sys.stdin)
