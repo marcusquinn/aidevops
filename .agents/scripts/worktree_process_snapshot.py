@@ -146,10 +146,11 @@ def under_worktree(target, path):
 
 def inspect_path_references(directory, path):
     """A missing fd can be a close race; all other unreadable state is unknown."""
-    start = owner.process_identity(int(directory.name))
-    state = (directory / "stat").read_text().rsplit(")", 1)[1].split()[0]
-    if state in ("Z", "X"):
+    fields = (directory / "stat").read_text().rsplit(")", 1)[1].split()
+    if fields[0] in ("Z", "X"):
         return False
+    start = fields[19]
+    owner.require(start.isdecimal(), "invalid task start")
     if under_worktree(os.readlink(directory / "cwd"), path):
         return True
     for descriptor in (directory / "fd").iterdir():
@@ -164,7 +165,7 @@ def inspect_path_references(directory, path):
         if separator and key in (b"PWD", b"AIDEVOPS_WORKTREE"):
             if under_worktree(os.fsdecode(value), path):
                 return True
-    owner.require(owner.process_identity(int(directory.name)) == start,
+    owner.require((directory / "stat").read_text().rsplit(")", 1)[1].split()[19] == start,
                   "process changed during path census")
     return False
 
