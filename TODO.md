@@ -1834,6 +1834,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18840 fix(signature): CI gh shim signs comments as vunknown because version.sh cannot find VERSION #bug #framework ref:GH#36247 pr:#36254 completed:2026-10-31
 
+- [ ] t18841 fix(tests): make test-gh-shim.sh hermetic so deployed libs cannot change its result #bug #framework ref:GH#36255
+
 - [ ] t18842 fix(pulse-merge): route CI/review repair for worker PRs that use For/Ref instead of a closing keyword #bug #framework ref:GH#36260
 
 - [ ] t18843 fix(workflows): permission rollout check must not demand caller edits when the reusable permission union is unchanged #auto-dispatch #bug #framework ref:GH#36264
