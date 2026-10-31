@@ -163,8 +163,11 @@ else:
                     with os.fdopen(fd, 'wb') as output:
                         environment = {k: v for k, v in os.environ.items() if not k.startswith('MYSQL')}
                         environment['MYSQL_TEST_LOGIN_FILE'] = str(work / 'no-login-paths')
+                        # Shared hosting grants only per-database privileges; --lock-all-tables
+                        # needs global RELOAD. WordPress tables are InnoDB, so one snapshot suffices.
                         subprocess.run(['mysqldump', '--defaults-file=' + str(defaults),
-                                        '--lock-all-tables', '--no-tablespaces', '--', values['NAME']],
+                                        '--single-transaction', '--quick', '--no-tablespaces',
+                                        '--', values['NAME']],
                                        stdout=output, stderr=subprocess.PIPE, timeout=600, check=True,
                                        env=environment)
                     if backup.stat().st_size == 0:

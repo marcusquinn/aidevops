@@ -266,8 +266,9 @@ wp-fleet-helper.sh core-minor report --run-dir /private/core-run
 updates=… major-offers=… holds=… rollback=never` summary suitable for a routine
 `run:` command. Deploy checks version/locale/config drift, locks each canonical
 root, validates the locale ZIP, backs up with a temporary 0600 MySQL defaults
-file, then updates and verifies. Dumps use table locks for nontransactional
-tables too: schedule a maintenance window; missing lock privileges hold the site.
+file, then updates and verifies. Dumps use `--single-transaction`, which needs
+only per-database privileges (shared hosting lacks global `RELOAD`, so table-lock
+dumps fail there); non-InnoDB plugin tables are not snapshot-consistent.
 Credentials and raw subprocess stderr are never printed. A backup journal is
 written before core mutation and retained for recovery; no restore is automatic.
 Home/login HTTP 401/403 count as alive for Basic-Auth staging, not proof of a

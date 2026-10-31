@@ -313,7 +313,8 @@ the web root before applying a SHA1-verified locale package. Filtered WordPress
 HTTP can make `wp core update --minor` falsely report "latest"; this workflow
 queries the release API outside WordPress and verifies the installed version,
 checksums and home/login probes. It never applies major releases or rolls back
-automatically. Remote Python 3.9+ and database table-lock privileges are required.
+automatically. Remote Python 3.9+ is required; the dump uses `--single-transaction`,
+so the site's own per-database grants suffice.
 
 `wp db export` also fails with `Cannot do 'Process::run'`. Call `mysqldump` directly with the site's own credentials, passed through the environment so the password never appears in output or the process list:
 
