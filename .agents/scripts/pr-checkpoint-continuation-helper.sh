@@ -66,7 +66,7 @@ _PCC_ATTENTION_REARM_SECONDS="${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}"
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # GH#36186: attention detail when an approved revision can no longer continue.
 # shellcheck disable=SC2016 # Markdown backticks, not command substitution.
-_PCC_APPROVAL_CONSUMED_NOTE='The trusted `CHECKPOINT_CONTINUATION_APPROVED` decision on this issue was used by a continuation that stopped without releasing its claim, so it no longer authorizes this head, the legacy continuation route stays disabled and the re-arm window above does not apply. Automatic continuation resumes only after one of the actions below or a new revision approval (see `reference/checkpoint-revision-recovery.md`).'
+_PCC_APPROVAL_CONSUMED_NOTE='The trusted `CHECKPOINT_CONTINUATION_APPROVED` decision on this issue was used by a continuation that stopped without releasing its claim, so it no longer authorizes this head, the legacy continuation route stays disabled and the re-arm window above does not apply. Automatic continuation resumes only after a new revision approval for the current head (see `reference/checkpoint-revision-recovery.md`).'
 # Shared jq definitions for trusted coordination-event evidence in issue
 # comments (blocked and stall release lookups).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
@@ -589,7 +589,8 @@ _pcc_dispatch() {
 	# _pcc_dispatch_stalled. expected_assignee stays the claim being replaced:
 	# a draft continued by a different runner leaves them unequal.
 	PCC_CHECKPOINT_ASSIGNEE=$(_pcc_live_checkpoint_author "$repo_slug" "$pr_number") || {
-		PCC_TARGET_REJECTED=1
+		# 2 = unreadable metadata, not a confirmed approval-history rejection.
+		PCC_TARGET_REJECTED=2
 		printf 'PR_CHECKPOINT_CONTINUATION_BLOCKED: PR #%s in %s author is unreadable or unsafe for issue #%s\n' \
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 1

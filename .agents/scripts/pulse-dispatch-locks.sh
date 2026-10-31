@@ -155,8 +155,15 @@ _has_live_checkpoint_continuation_for_issue() {
 	local session_prefix="" pr_numbers="" pr_number=""
 	[[ -n "$worker_lines" && "$repo_slug" == */* ]] || return 1
 	session_prefix="pr-checkpoint-continuation-$(printf '%s' "$repo_slug" | tr '/:' '--')-"
-	pr_numbers=$(printf '%s\n' "$worker_lines" | awk -v prefix="$session_prefix" '
+	# The session key is lossy (org/a-b vs org-a/b): when the process line
+	# exposes WORKER_REPO_SLUG, it must match this repo before the line counts.
+	pr_numbers=$(printf '%s\n' "$worker_lines" | awk -v prefix="$session_prefix" -v slug="$repo_slug" '
 		{
+			other = 0
+			for (i = 1; i <= NF; i++) {
+				if (index($i, "WORKER_REPO_SLUG=") == 1 && substr($i, 18) != slug) other = 1
+			}
+			if (other) next
 			for (i = 1; i < NF; i++) {
 				if ($i == "--session-key" && index($(i + 1), prefix) == 1) {
 					rest = substr($(i + 1), length(prefix) + 1)

@@ -267,9 +267,10 @@ _normalize_stale_has_live_lease() {
 		| to_entries
 		| reduce .[] as $e ({}; ($e.value | field("lease_token")) as $t |
 			.[(if $t == "" then "line-\($e.key)" else $t end)] = $e.value)
-		| [.[] | select(field("phase") != "terminal") |
-			(field("expires_at") | tonumber? // 0) | select(. > $now)]
-		| length > 0
+		| [.[] | select(field("phase") != "terminal") | field("expires_at")] as $exp
+		| if any($exp[]; . != "" and (test("^[0-9]+$") | not)) then "unreadable"
+		  else ([$exp[] | (tonumber? // 0) | select(. > $now)] | length > 0)
+		  end
 	' 2>/dev/null) || return 2
 	[[ "$live" == true ]] && return 0
 	[[ "$live" == false ]] && return 1
