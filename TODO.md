@@ -1818,6 +1818,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18831 fix(checkpoint): publish continuation mark-blocked findings so frozen drafts surface the concrete need #auto-dispatch #bug #framework ref:GH#36227
 
+- [ ] t18832 fix(pulse-merge): skip partial parent closeout for planning publication PRs #bug #framework ref:GH#36230
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
