@@ -1812,9 +1812,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18823 fix(release): retry indeterminate repo-state authority instead of silently dropping CLAIM_RELEASED #bug ref:GH#36184 pr:#36191 completed:2026-10-31
 
-- [ ] t18824 fix(pulse): recover abandoned worker-draft claims so stranded drafts are continued #auto-dispatch #bug ref:GH#36186
+- [x] t18824 fix(pulse): recover abandoned worker-draft claims so stranded drafts are continued #auto-dispatch #bug ref:GH#36186 pr:#36197 completed:2026-10-31
 
-- [ ] t18826 fix(gh-shim): answer gh api user from GraphQL viewer when REST core is deferred or in cooldown #auto-dispatch #bug ref:GH#36192
+- [x] t18826 fix(gh-shim): answer gh api user from GraphQL viewer when REST core is deferred or in cooldown #auto-dispatch #bug ref:GH#36192 pr:#36198 completed:2026-10-31
 
 ## In Progress
 
