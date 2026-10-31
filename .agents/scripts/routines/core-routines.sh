@@ -1015,6 +1015,10 @@ describe_r924() {
 Processes release-approval-required issues in registered Cloudron package repos.
 The maintainer signs once with \`sudo aidevops approve issue <N> <repo>\`.
 
+It also owns the worker release handoff (GH#36268). A held worker PR gets its
+approval request once checks are green. Older unsigned upstream bumps that main
+or the requested PR already bundles are closed with their findings.
+
 ## Schedule
 
 | Field | Value |
@@ -1032,6 +1036,7 @@ $(_scheduler_row_pulse "repeat:cron(*/30 * * * *)")
 - Keeps all existing merge, review, checks and publication workflow gates.
 - Waits at most 120 seconds per catalog run, resuming on the next invocation.
 - Closes only after verifying catalog version, tag and GitHub release.
+- Never supersedes signed approvals, human PRs or non-upstream PRs; branches are kept.
 - Never enables publication or deploys an app. NMR semantics are unchanged.
 $(_pulse_diag_commands "$os")
 $(_platform_footnote "$os")
