@@ -534,6 +534,15 @@ _route_ci_repair_fallback() {
 
 ${attempt_summary}"
 	fi
+	# A For/Ref source PR is a partial delivery. Persist the same non-closing
+	# receipt as review routing, or the replacement PR would gain closure
+	# authority over an issue the source PR meant to keep open.
+	if ! declare -F _review_feedback_preserve_linkage >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: linkage-preservation helper unavailable for PR #${pr_number} in ${repo_slug} — preserving PR for a later repair pass" >>"$LOGFILE"
+		return "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}"
+	fi
+	feedback_section=$(_review_feedback_preserve_linkage "$pr_number" "$repo_slug" "$linked_issue" "$feedback_section") ||
+		return "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}"
 	local close_comment="## CI repair feedback routed to issue #${linked_issue}
 
 This worker PR had terminal failed CI checks. The check details have been appended

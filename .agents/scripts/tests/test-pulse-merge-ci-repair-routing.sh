@@ -220,6 +220,7 @@ fi
 
 GHEOF
 	_append_gh_auth_mock_routes
+	_append_gh_pr_body_mock_route
 	_append_gh_mock_routes
 	_append_gh_annotation_mock_routes
 	_append_gh_ownership_mock_routes
@@ -238,6 +239,17 @@ _append_gh_auth_mock_routes() {
 	if [[ "${1:-} ${2:-}" == "api graphql" ]]; then
 		[[ "${TEST_GH_GRAPHQL_FAIL:-0}" == "1" ]] && exit 1
 		printf '%s\n' "${TEST_GH_GRAPHQL_LOGIN:-expected-runner}"
+		exit 0
+	fi
+GHEOF
+	return 0
+}
+
+# Linkage preservation reads only the PR body; this precedes the PR metadata route.
+_append_gh_pr_body_mock_route() {
+	cat >>"${TEST_ROOT}/bin/gh" <<'GHEOF'
+	if [[ "${1:-} ${2:-}" == "api repos/owner/repo/pulls/100" && "$*" == *'.body // ""'* ]]; then
+		printf '%s\n' "${TEST_PR_BODY:-}"
 		exit 0
 	fi
 GHEOF
@@ -625,6 +637,7 @@ define_feedback_helpers() {
 		_ci_repair_hash_text
 		_ci_repair_session_key
 		_dispatch_ci_repair_session
+		_review_feedback_preserve_linkage
 		_route_ci_repair_fallback
 	)
 	local fn fn_src
@@ -1791,9 +1804,35 @@ test_ci_repair_preserves_pr_until_launch_retries_exhausted() {
 	elif ! grep -qF '### In-place repair attempt outcomes' "${TEST_ROOT}/issue-body.txt" \
 		|| ! grep -qF "$expected_outcome_line" "${TEST_ROOT}/issue-body.txt"; then
 		print_result "exhausted CI repair fallback includes durable attempt outcomes" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	elif grep -qF 'review-repair:non-closing' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "a closing source PR gets no non-closing receipt" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
 	else
 		print_result "CI repair preserves the PR until bounded launch retries exhaust" 0
 	fi
+	teardown_test_env
+	return 0
+}
+
+# A For/Ref source PR is a partial delivery: the exhausted CI fallback must
+# persist the non-closing receipt so the replacement PR keeps For #N.
+test_ci_repair_fallback_preserves_non_closing_linkage() {
+	setup_test_env
+	export TEST_WORKTREE_ADD_FAIL="1"
+	export TEST_PR_BODY=$'Partial delivery\n\nFor #42'
+	define_feedback_helpers || { print_result "defines feedback helpers for non-closing CI fallback" 1 "could not extract feedback helpers"; unset TEST_PR_BODY; teardown_test_env; return 0; }
+	local attempt=0 close_count=0
+	for attempt in 1 2 3; do
+		_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	done
+	close_count=$(grep -cF 'gh pr close 100' "$GH_LOG" || true)
+	if [[ "$close_count" -ne 1 ]]; then
+		print_result "non-closing source PR takes one durable CI fallback" 1 "close count=${close_count}; GH log: $(cat "$GH_LOG")"
+	elif ! grep -qF '<!-- aidevops:review-repair:non-closing:42 -->' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "CI fallback persists the non-closing receipt for a For/Ref source PR" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	else
+		print_result "CI fallback persists the non-closing receipt for a For/Ref source PR" 0
+	fi
+	unset TEST_PR_BODY
 	teardown_test_env
 	return 0
 }
@@ -1968,6 +2007,7 @@ main() {
 	test_ci_feedback_keeps_zero_step_check_without_billing_annotation
 	test_ci_feedback_owner_arrives_during_routing
 	test_ci_repair_preserves_pr_until_launch_retries_exhausted
+	test_ci_repair_fallback_preserves_non_closing_linkage
 	test_ci_repair_recovers_one_stale_lease_then_exhausts
 	test_ci_repair_consumes_abandoned_append_only_claim
 	test_ci_repair_waits_for_prelock_startup_before_retry
