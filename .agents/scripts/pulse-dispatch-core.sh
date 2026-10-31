@@ -1185,6 +1185,14 @@ dispatch_with_dedup() {
 	source "${SCRIPT_DIR}/runner-capability-helper.sh"
 	runner_capability_check_fresh "$repo_path" "$issue_number" "$repo_slug" "$LOGFILE" || return 1
 	_dispatch_preclaim_brief_scope "$issue_number" "$repo_slug" "$issue_meta_json" || return 1
+	# GH#36214: the windowed zero-attempt backoff runs before the claim below,
+	# so a held issue writes no DISPATCH_CLAIM or prelaunch lease. The metrics
+	# snapshot reaches prompt preparation via dynamic scope.
+	local _dispatch_zero_output_metrics=""
+	if declare -F _dlw_preclaim_zero_attempt_backoff >/dev/null 2>&1 &&
+		_dlw_preclaim_zero_attempt_backoff "$issue_number" "$repo_slug"; then
+		return 3
+	fi
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.

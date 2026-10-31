@@ -20,7 +20,40 @@ TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dlw-comment-metrics-XXXXXX")"
 FAKE_BIN="${TEST_TMP}/bin"
 GH_CALLS_FILE="${TEST_TMP}/gh-calls"
 GH_COMMENTS_FIXTURE="${TEST_TMP}/gh-comments.json"
+NOTICE_LOG="${TEST_TMP}/notices"
+PERMISSION_LOOKUPS="${TEST_TMP}/permission-lookups"
 mkdir -p "$FAKE_BIN" || exit 1
+
+# GH#36214: deterministic repository permissions for ambiguous associations.
+_gh_collaborator_permission_lookup() {
+	local _repo_slug="$1"
+	local user="$2"
+	local out_var="$3"
+	printf '%s\n' "$user" >>"$PERMISSION_LOOKUPS"
+	case "$user" in
+	peer-writer) printf -v "$out_var" '%s' write ;;
+	triage-user) printf -v "$out_var" '%s' triage ;;
+	*) return 2 ;;
+	esac
+	return 0
+}
+
+declare -F _ds_now_ns >/dev/null 2>&1 || _ds_now_ns() { printf '0'; return 0; }
+declare -F _ds_record >/dev/null 2>&1 || _ds_record() { return 0; }
+
+# Record backoff notices instead of calling the GitHub write wrapper.
+gh_issue_comment() {
+	local body_file=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--body-file) body_file="${2:-}"; shift 2 ;;
+		*) shift ;;
+		esac
+	done
+	[[ -f "$body_file" ]] || return 1
+	printf '%s\n---END_NOTICE---\n' "$(<"$body_file")" >>"$NOTICE_LOG"
+	return 0
+}
 
 cleanup() {
 	rm -rf "$TEST_TMP" 2>/dev/null || true
@@ -129,7 +162,7 @@ cat >"$GH_COMMENTS_FIXTURE" <<'EOF'
 EOF
 untrusted_claim_metrics=$(DLW_COMMENT_METRICS_NOW_EPOCH=1577837200 \
 	DISPATCH_CLAIM_ORPHAN_GRACE=120 _dlw_comment_bloat_metrics "123" "owner/repo")
-IFS=$'\t' read -r _untrusted_comments _untrusted_ops untrusted_zero _untrusted_chars untrusted_zero_attempt <<<"$untrusted_claim_metrics"
+IFS=$'\t' read -r _untrusted_comments _untrusted_ops untrusted_zero _untrusted_chars untrusted_zero_attempt _untrusted_rest <<<"$untrusted_claim_metrics"
 if [[ "$untrusted_zero" != "0" || "$untrusted_zero_attempt" != "0" ]]; then
 	fail "bare-collaborator forged claims entered zero-attempt evidence: ${untrusted_claim_metrics}"
 fi
@@ -153,7 +186,7 @@ cat >"$GH_COMMENTS_FIXTURE" <<'EOF'
 EOF
 claim_storm_metrics=$(DLW_COMMENT_METRICS_NOW_EPOCH=1577837200 \
 	DISPATCH_CLAIM_ORPHAN_GRACE=120 _dlw_comment_bloat_metrics "123" "owner/repo")
-IFS=$'\t' read -r _storm_comments _storm_ops storm_zero _storm_chars storm_zero_attempt <<<"$claim_storm_metrics"
+IFS=$'\t' read -r _storm_comments _storm_ops storm_zero _storm_chars storm_zero_attempt _storm_rest <<<"$claim_storm_metrics"
 if [[ "$storm_zero" != "4" || "$storm_zero_attempt" != "4" ]]; then
 	fail "four unmatched prelaunch claims were not counted as zero-attempt failures: ${claim_storm_metrics}"
 fi
@@ -161,6 +194,105 @@ if ! LOGFILE="${TEST_TMP}/pulse.log" ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD=4 
 	_dlw_hold_repeated_zero_output "123" "owner/repo" "$claim_storm_metrics"; then
 	fail "unmatched prelaunch claims did not trigger the bounded infrastructure hold"
 fi
+
+# GH#36214: a pre-launch abort deletes its claim but leaves the prelaunch
+# lease. Orphan leases from a write-verified COLLABORATOR peer count once per
+# author+token; a surviving unmatched claim counts once (not again via its
+# lease); ready, fresh, triage-only and lookup-failure leases never count.
+cat >"$GH_COMMENTS_FIXTURE" <<'EOF'
+[[
+  {"id":30,"body":"DISPATCH_LEASE phase=prelaunch lease_token=lease-1 device=peer-device session=issue-123 expires_at=1577836920 attempt_id=a1","created_at":"2020-01-01T00:00:00Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}},
+  {"id":31,"body":"DISPATCH_LEASE phase=prelaunch lease_token=lease-1 device=peer-device session=issue-123 expires_at=1577836950 attempt_id=a1","created_at":"2020-01-01T00:00:30Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}},
+  {"id":32,"body":"DISPATCH_LEASE phase=prelaunch lease_token=lease-2 device=peer-device session=issue-123 expires_at=1577836980 attempt_id=a2","created_at":"2020-01-01T00:01:00Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}},
+  {"id":33,"body":"DISPATCH_LEASE phase=prelaunch lease_token=lease-3 device=peer-device session=issue-123 expires_at=1577837040 attempt_id=a3","created_at":"2020-01-01T00:02:00Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}},
+  {"id":34,"body":"DISPATCH_LEASE phase=prelaunch lease_token=lease-4 device=peer-device session=issue-123 expires_at=1577837100 attempt_id=a4","created_at":"2020-01-01T00:03:00Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}},
+  {"id":35,"body":"DISPATCH_LEASE phase=prelaunch lease_token=readied device=peer-device session=issue-123 expires_at=1577837110 attempt_id=a5","created_at":"2020-01-01T00:03:10Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}},
+  {"id":36,"body":"DISPATCH_LEASE phase=ready lease_token=readied device=peer-device session=issue-123 expires_at=1577844000 attempt_id=a5","created_at":"2020-01-01T00:03:20Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}},
+  {"id":37,"body":"DISPATCH_CLAIM nonce=claimed runner=peer-writer lease_token=claimed device=peer-device session=issue-123 phase=prelaunch expires_at=1577837160","created_at":"2020-01-01T00:04:00Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}},
+  {"id":38,"body":"DISPATCH_LEASE phase=prelaunch lease_token=claimed device=peer-device session=issue-123 expires_at=1577837165 attempt_id=a6","created_at":"2020-01-01T00:04:05Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}},
+  {"id":39,"body":"DISPATCH_LEASE phase=prelaunch lease_token=fresh device=peer-device session=issue-123 expires_at=1577837280 attempt_id=a7","created_at":"2020-01-01T00:06:00Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}}
+], [
+  {"id":40,"body":"DISPATCH_LEASE phase=prelaunch lease_token=t-1 device=triage-device session=issue-123 expires_at=1577836920","created_at":"2020-01-01T00:00:00Z","author_association":"COLLABORATOR","user":{"login":"triage-user"}},
+  {"id":41,"body":"DISPATCH_LEASE phase=prelaunch lease_token=t-2 device=triage-device session=issue-123 expires_at=1577836980","created_at":"2020-01-01T00:01:00Z","author_association":"COLLABORATOR","user":{"login":"triage-user"}},
+  {"id":42,"body":"DISPATCH_LEASE phase=prelaunch lease_token=t-3 device=triage-device session=issue-123 expires_at=1577837040","created_at":"2020-01-01T00:02:00Z","author_association":"COLLABORATOR","user":{"login":"triage-user"}},
+  {"id":43,"body":"DISPATCH_LEASE phase=prelaunch lease_token=t-4 device=triage-device session=issue-123 expires_at=1577837100","created_at":"2020-01-01T00:03:00Z","author_association":"COLLABORATOR","user":{"login":"triage-user"}},
+  {"id":44,"body":"DISPATCH_LEASE phase=prelaunch lease_token=lf-1 device=lf-device session=issue-123 expires_at=1577836920","created_at":"2020-01-01T00:00:00Z","author_association":"CONTRIBUTOR","user":{"login":"lookup-fail"}}
+]]
+EOF
+: >"$PERMISSION_LOOKUPS"
+orphan_metrics=$(DLW_COMMENT_METRICS_NOW_EPOCH=1577837200 \
+	DISPATCH_CLAIM_ORPHAN_GRACE=120 _dlw_comment_bloat_metrics "123" "owner/repo")
+IFS=$'\t' read -r _orphan_comments _orphan_ops orphan_zero _orphan_chars orphan_zero_attempt \
+	orphan_recent orphan_notices orphan_epochs orphan_reset <<<"$orphan_metrics"
+if [[ "$orphan_zero" != "5" || "$orphan_zero_attempt" != "5" || "$orphan_recent" != "5" ||
+	"$orphan_notices" != "0" || "$orphan_reset" != "0" ]]; then
+	fail "orphan prelaunch leases were not counted once per trusted author+token: ${orphan_metrics}"
+fi
+if [[ "$orphan_epochs" != "1577836830,1577836860,1577836920,1577836980,1577837040" ]]; then
+	fail "orphan lease evidence epochs were not the latest renewal per attempt: ${orphan_epochs}"
+fi
+if [[ "$(sort "$PERMISSION_LOOKUPS" | tr '\n' ' ')" != "lookup-fail peer-writer triage-user " ]]; then
+	fail "ambiguous evidence authors were not each resolved exactly once: $(tr '\n' ' ' <"$PERMISSION_LOOKUPS")"
+fi
+
+: >"$NOTICE_LOG"
+: >"$GH_CALLS_FILE"
+: >"${TEST_TMP}/backoff.log"
+if ! LOGFILE="${TEST_TMP}/backoff.log" ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD=4 FAST_FAIL_STATE_FILE="" \
+	_dlw_hold_repeated_zero_output "123" "owner/repo" "$orphan_metrics"; then
+	fail "orphan prelaunch leases did not trigger the windowed backoff"
+fi
+if ! grep -Fq 'DISPATCH_BLOCK_REASON reason=zero_attempt_backoff signal=windowed_evidence issue=#123 repo=owner/repo' "${TEST_TMP}/backoff.log"; then
+	fail "windowed backoff did not log its benign block reason: $(<"${TEST_TMP}/backoff.log")"
+fi
+if [[ "$(grep -c -- '---END_NOTICE---' "$NOTICE_LOG")" != "1" ]] ||
+	! grep -Fq 'Dispatch resumes automatically after 2020-01-01T12:01:00Z' "$NOTICE_LOG" ||
+	! grep -Fq '<!-- dispatch-infrastructure-failure -->' "$NOTICE_LOG"; then
+	fail "windowed backoff did not post exactly one self-describing notice: $(<"$NOTICE_LOG")"
+fi
+if grep -Eq 'issue edit|status:blocked' "$GH_CALLS_FILE" "${TEST_TMP}/backoff.log"; then
+	fail "windowed backoff mutated labels or applied status:blocked"
+fi
+
+# A trusted notice inside the window holds without posting another.
+notice_metrics=$(jq -c '.[1] += [{"id":45,"body":"<!-- dispatch-infrastructure-failure -->\n## Dispatch paused","created_at":"2020-01-01T00:05:00Z","author_association":"COLLABORATOR","user":{"login":"peer-writer"}}]' \
+	"$GH_COMMENTS_FIXTURE")
+printf '%s' "$notice_metrics" >"$GH_COMMENTS_FIXTURE"
+notice_metrics=$(DLW_COMMENT_METRICS_NOW_EPOCH=1577837200 \
+	DISPATCH_CLAIM_ORPHAN_GRACE=120 _dlw_comment_bloat_metrics "123" "owner/repo")
+: >"$NOTICE_LOG"
+if ! LOGFILE="${TEST_TMP}/backoff.log" ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD=4 FAST_FAIL_STATE_FILE="" \
+	_dlw_hold_repeated_zero_output "123" "owner/repo" "$notice_metrics"; then
+	fail "a recent notice released the windowed backoff early: ${notice_metrics}"
+fi
+if [[ -s "$NOTICE_LOG" ]]; then
+	fail "windowed backoff posted a second notice inside one window"
+fi
+
+# Evidence older than the window self-heals: no hold, no relabel required.
+aged_metrics=$(DLW_COMMENT_METRICS_NOW_EPOCH=$((1577837200 + 50000)) \
+	DISPATCH_CLAIM_ORPHAN_GRACE=120 _dlw_comment_bloat_metrics "123" "owner/repo")
+IFS=$'\t' read -r _aged_comments _aged_ops aged_zero _aged_chars _aged_zero_attempt aged_recent _aged_rest <<<"$aged_metrics"
+if [[ "$aged_recent" != "0" || "$aged_zero" -lt 5 ]]; then
+	fail "aged evidence was not separated from the windowed count: ${aged_metrics}"
+fi
+if LOGFILE="${TEST_TMP}/backoff.log" ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD=4 FAST_FAIL_STATE_FILE="" \
+	_dlw_hold_repeated_zero_output "123" "owner/repo" "$aged_metrics"; then
+	fail "evidence older than the window kept the issue held"
+fi
+
+# Pre-claim gate shares one metrics snapshot with prompt preparation.
+: >"$GH_CALLS_FILE"
+_dispatch_zero_output_metrics=""
+if LOGFILE="${TEST_TMP}/backoff.log" ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD=4 FAST_FAIL_STATE_FILE="" \
+	DLW_COMMENT_METRICS_NOW_EPOCH=$((1577837200 + 50000)) \
+	_dlw_preclaim_zero_attempt_backoff "123" "owner/repo"; then
+	fail "pre-claim gate held on aged evidence"
+fi
+if [[ "$_dispatch_zero_output_metrics" != "$aged_metrics" ]]; then
+	fail "pre-claim gate did not expose its metrics snapshot: ${_dispatch_zero_output_metrics}"
+fi
+unset _dispatch_zero_output_metrics
 
 LOGFILE="${TEST_TMP}/pulse.log" \
 	ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/false" \
@@ -371,6 +503,9 @@ printf 'PASS: zero-attempt evidence detection uses one shared pattern\n'
 printf 'PASS: zero-attempt infrastructure holds override clean-room brief bypasses\n'
 printf 'PASS: bare-collaborator forged claims cannot trigger the infrastructure hold\n'
 printf 'PASS: unmatched prelaunch claims trigger the bounded infrastructure hold\n'
+printf 'PASS: orphan prelaunch leases count once per write-verified author and token\n'
+printf 'PASS: windowed backoff holds without relabelling and posts one notice per window\n'
+printf 'PASS: evidence older than the window self-heals and the pre-claim gate shares metrics\n'
 printf 'PASS: invalid clean-room snapshots cannot authorize implementation\n'
 printf 'PASS: clean-room briefs project only trusted approval/retry metadata\n'
 printf 'PASS: retry context is bounded, deterministic, and excludes prior prose\n'

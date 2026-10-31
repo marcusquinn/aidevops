@@ -343,7 +343,7 @@ _dispatch_candidate_failure_reason() {
 _dispatch_candidate_benign_block_reason() {
 	local reason="$1"
 	case "$reason" in
-		blocked_by_unresolved | brief_scope_hold | consolidated | dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | dependabot_target_owned | dirty_worktree_recovery | footprint_overlap | interactive_review_hold | issue_closed | needs_maintainer_permissions | no_auto_dispatch | parent_task | permission_grant_unverified | policy_gate | pr_target_not_dispatchable | publication_pending | renovate_dependency_dashboard | terminal_blocker_backoff | terminal_blocker_circuit)
+		blocked_by_unresolved | brief_scope_hold | consolidated | dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | dependabot_target_owned | dirty_worktree_recovery | footprint_overlap | interactive_review_hold | issue_closed | needs_maintainer_permissions | no_auto_dispatch | parent_task | permission_grant_unverified | policy_gate | pr_target_not_dispatchable | publication_pending | renovate_dependency_dashboard | terminal_blocker_backoff | terminal_blocker_circuit | zero_attempt_backoff)
 			return 0
 			;;
 	esac
