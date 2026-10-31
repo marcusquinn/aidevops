@@ -874,7 +874,7 @@ test_review_repair_admission() {
 
 test_live_merge_state_matrix() {
 	local scenario="" labels="" state="" draft="" review="" head="" result=0
-	for scenario in hold late-hold changes-requested head-drift failed malformed closed merged draft invalid-draft invalid-review invalid-state malformed-label cleared-hold no-review; do
+	for scenario in hold late-hold changes-requested head-drift failed malformed closed merged draft invalid-draft invalid-review rejected-newline approved-newline invalid-state malformed-label cleared-hold no-review; do
 		labels='[{"name":"origin:worker-takeover"}]'
 		state=OPEN draft=false review='"APPROVED"' head=head-current result=0
 		case "$scenario" in
@@ -886,6 +886,8 @@ test_live_merge_state_matrix() {
 		draft) draft=true ;;
 		invalid-draft) draft=null ;;
 		invalid-review) review='"unreadable"' ;;
+		rejected-newline) review='"CHANGES_REQUESTED\n"' ;;
+		approved-newline) review='"APPROVED\n"' ;;
 		invalid-state) state=unknown ;;
 		malformed-label) labels='[{"name":null}]' ;;
 		no-review) review=null ;;

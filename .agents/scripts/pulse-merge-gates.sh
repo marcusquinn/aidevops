@@ -215,7 +215,7 @@ _pulse_merge_admin_pr_json_graphql() {
 		| select(($pr.isDraft | type) == "boolean")
 		| select($pr | has("reviewDecision"))
 		| select($pr.reviewDecision == null or
-			($pr.reviewDecision | strings | test("^(APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED)$")))
+			($pr.reviewDecision | strings | test("\\A(APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED)\\z")))
 		| select(($pr.labels.nodes | type) == "array")
 		| select(all($pr.labels.nodes[]; (.name | type) == $string_type and (.name | length) > 0))
 		| select($pr.labels.pageInfo.hasNextPage == false)
