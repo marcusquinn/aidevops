@@ -5,14 +5,35 @@
 
 import os
 from pathlib import Path
+import stat
 import subprocess
 
 from worktree_archive_administration import git
 from worktree_archive_registration import LEGACY_TABLE, MANAGED_TABLE, REGISTRATION_SQL, legacy_registration
 
 
+SPOTLIGHT_MARKER = ".metadata_never_index"
+
+
 class UnsealedRecovery:
     """Recovery operations shared by canonical restoration proofs."""
+
+    @staticmethod
+    def framework_marker_only(target, status):
+        """GH#36279: tolerate only the exclusions helper's own Spotlight marker.
+
+        Older backfills touched it inside archive scratch slots. Accept a status
+        that is exactly that ignored entry, and only for an empty, regular,
+        non-symlink root file (the `_we_apply_spotlight` rule). Anything else,
+        including any second entry, still retains the slot.
+        """
+        if status != b"!! " + SPOTLIGHT_MARKER.encode() + b"\n":
+            return False
+        try:
+            observed = os.lstat(target / SPOTLIGHT_MARKER)
+        except OSError:
+            return False
+        return stat.S_ISREG(observed.st_mode) and observed.st_size == 0 and observed.st_nlink == 1
 
     @staticmethod
     def unregistered_admin(target, common, unsealed):
@@ -90,8 +111,8 @@ class UnsealedRecovery:
             index_entries = git(target, "ls-files", "-v", "-z").split(b"\0")
             require(not any(entry[:1] == b"S" or entry[:1].islower()
                             for entry in index_entries if entry), unsealed)
-            require(not git(target, "status", "--porcelain=v1", "--untracked-files=all", "--ignored"),
-                    unsealed)
+            status = git(target, "status", "--porcelain=v1", "--untracked-files=all", "--ignored")
+            require(not status or UnsealedRecovery.framework_marker_only(target, status), unsealed)
             require(git(target, "for-each-ref", "--contains=HEAD", "--format=%(refname)").strip(), unsealed)
             entries = git(common, "worktree", "list", "--porcelain", "-z").split(b"\0")
             require(b"worktree " + os.fsencode(target) in entries, unsealed)

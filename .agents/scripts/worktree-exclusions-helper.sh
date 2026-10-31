@@ -332,6 +332,8 @@ cmd_apply() {
 		# Path may have been removed in a race — silent.
 		return 0
 	fi
+	# GH#36279: archive-verification scratch stays byte-exact.
+	_we_is_archive_scratch "$wt_path" && return 0
 
 	if _we_is_macos; then
 		_we_apply_spotlight "$wt_path"
@@ -352,9 +354,28 @@ cmd_apply() {
 }
 
 ###############################################################################
+# GH#36279: framework-owned archive-verification scratch worktrees live under
+# the archive root (same default as worktree-archive-helper.sh). They must
+# never receive indexer side effects: the Spotlight marker makes their
+# fail-closed restore-proof status checks retain the slot forever.
+# Returns 0 when $1 is inside the archive root (logical or physical path).
+###############################################################################
+_we_is_archive_scratch() {
+	local wt_path="$1"
+	local archive_root="${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}"
+	archive_root="${archive_root%/}"
+	[[ -n "$archive_root" ]] || return 1
+	[[ "$wt_path" == "$archive_root"/* ]] && return 0
+	local physical_root=""
+	physical_root=$(cd -P "$archive_root" 2>/dev/null && pwd -P) || return 1
+	[[ -n "$physical_root" && "$wt_path" == "$physical_root"/* ]] && return 0
+	return 1
+}
+
+###############################################################################
 # Enumerate worktree paths across all registered repos.
 # Prints one absolute path per line on stdout. Skips the canonical repo dirs
-# (only worktrees attached to them).
+# (only worktrees attached to them) and framework archive scratch copies.
 ###############################################################################
 _we_enumerate_worktrees() {
 	[[ -f "$REPOS_JSON" ]] || return 0
@@ -377,6 +398,7 @@ _we_enumerate_worktrees() {
 			[[ -n "$_wt" ]] || continue
 			[[ "$_wt" == "$repo_path" ]] && continue
 			[[ -d "$_wt" ]] || continue
+			_we_is_archive_scratch "$_wt" && continue
 			printf '%s\n' "$_wt"
 		done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
 	done < <(jq -r '.initialized_repos[]?.path // empty' "$REPOS_JSON" 2>/dev/null)

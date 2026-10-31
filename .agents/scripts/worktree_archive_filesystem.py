@@ -20,8 +20,15 @@ def supported_metadata(observed, attributes, tar_metadata=False):
         raise ValueError("ownership, ACLs or extended attributes require separate preservation")
     if tar_metadata and stat.S_ISREG(observed.st_mode):
         return  # PAX retains permissions; external inode relationships are not archived.
+    if stat.S_ISLNK(observed.st_mode):
+        # GH#36279: Linux symlinks are always 0o777, but macOS applies umask
+        # (`ln -s` gives 0o755). Evidence binds the link target, not its mode;
+        # special bits and hard-linked links still need separate preservation.
+        if stat.S_IMODE(observed.st_mode) & 0o7000 or observed.st_nlink != 1:
+            raise ValueError("special permissions or hard links require separate preservation")
+        return
     directory = stat.S_ISDIR(observed.st_mode)
-    allowed = (0o755,) if directory else ((0o777,) if stat.S_ISLNK(observed.st_mode) else (0o644, 0o755))
+    allowed = (0o755,) if directory else (0o644, 0o755)
     if stat.S_IMODE(observed.st_mode) not in allowed or (not directory and observed.st_nlink != 1):
         raise ValueError("special permissions or hard links require separate preservation")
 
