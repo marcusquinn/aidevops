@@ -100,10 +100,10 @@ if [[ "${1:-}" != "api" ]]; then
 	exit 0
 fi
 case "${2:-}" in
-repos/marcusquinn/aidevops/releases/latest)
+repos/marcusquinn/aidevops/releases/latest | repos/other/project/releases/latest)
 	printf '%s\n' 'v3.39.45'
 	;;
-repos/marcusquinn/aidevops/commits/v3.39.45)
+repos/marcusquinn/aidevops/commits/v3.39.45 | repos/other/project/commits/v3.39.45)
 	printf '%s\n' "${RELEASE_SHA:-0123456789abcdef0123456789abcdef01234567}"
 	;;
 repos/fake/admin)
@@ -357,7 +357,7 @@ cp "$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
 "$real_git" -C "$apply_repo" commit -q -m 'legacy floating metrics caller'
 "$real_git" -C "$apply_repo" push -q github main
 
-for pin_case in floating tag sha unrelated-main unrelated-tag wrong-repo registry global optout mirror; do
+for pin_case in floating tag sha helper-tag helper-sha helper-missing unrelated-main unrelated-tag wrong-repo configured-repo registry global optout mirror; do
 	case "$pin_case" in
 	floating) pin=main ;;
 	tag | unrelated-main) pin=v3.38.35 ;;
@@ -377,7 +377,18 @@ for pin_case in floating tag sha unrelated-main unrelated-tag wrong-repo registr
 			"$apply_repo/.github/workflows/loc-badge.yml" >"$test_root/caller.yml"
 		cp "$test_root/caller.yml" "$apply_repo/.github/workflows/loc-badge.yml"
 		;;
-	wrong-repo)
+	helper-tag | helper-sha | helper-missing)
+		helper_pin=v3.38.35
+		[[ "$pin_case" == helper-sha ]] && helper_pin=1111111111111111111111111111111111111111
+		sed "s/aidevops_ref: main/aidevops_ref: $helper_pin/" \
+			"$apply_repo/.github/workflows/loc-badge.yml" >"$test_root/caller.yml"
+		if [[ "$pin_case" == helper-missing ]]; then
+			sed '/aidevops_ref:/d' "$test_root/caller.yml" >"$apply_repo/.github/workflows/loc-badge.yml"
+		else
+			cp "$test_root/caller.yml" "$apply_repo/.github/workflows/loc-badge.yml"
+		fi
+		;;
+	wrong-repo | configured-repo)
 		sed 's|marcusquinn/aidevops|other/project|g' \
 			"$apply_repo/.github/workflows/loc-badge.yml" >"$test_root/caller.yml"
 		cp "$test_root/caller.yml" "$apply_repo/.github/workflows/loc-badge.yml"
@@ -385,11 +396,13 @@ for pin_case in floating tag sha unrelated-main unrelated-tag wrong-repo registr
 	esac
 	jq --arg mode "$pin_case" '
 		del(.workflow_reusable_ref, .initialized_repos[0].workflow_reusable_ref,
+		    .initialized_repos[0].workflow_reusable_repo,
 		    .initialized_repos[0].badges, .initialized_repos[0].mirror_upstream)
 		| if $mode == "registry" then .initialized_repos[0].workflow_reusable_ref = "main"
 		  elif $mode == "global" then .workflow_reusable_ref = "main"
 		  elif $mode == "optout" then .initialized_repos[0].badges = false
 		  elif $mode == "mirror" then .initialized_repos[0].mirror_upstream = "fake/source"
+		  elif $mode == "configured-repo" then .initialized_repos[0].workflow_reusable_repo = "other/project"
 		  else . end
 	' "$test_root/.config/aidevops/repos.json" >"$test_root/registry.json"
 	cp "$test_root/registry.json" "$test_root/.config/aidevops/repos.json"
@@ -397,7 +410,7 @@ for pin_case in floating tag sha unrelated-main unrelated-tag wrong-repo registr
 		GH_CALL_LOG="$test_root/gh.log" bash "$HELPER" \
 		--repo fake/apply --workflow loc-badge --pin-floating --json 2>&1)
 	assert_exit "floating migration $pin_case preview succeeds" 0 "$?"
-	if [[ "$pin_case" == floating || "$pin_case" == unrelated-tag ]]; then
+	if [[ "$pin_case" == floating || "$pin_case" == unrelated-tag || "$pin_case" == configured-repo ]]; then
 		assert_contains "floating caller is actionable" "$preview" '"outcome":"PLANNED"'
 		assert_contains "floating caller targets release SHA and tag" "$preview" \
 			'@0123456789abcdef0123456789abcdef01234567 # v3.39.45'

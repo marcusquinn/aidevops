@@ -709,7 +709,7 @@ _sync_target_ref_for_slug() {
 _is_floating_caller() {
 	local _slug="$1"
 	local _workflow_file="$2"
-	local _repo _pin
+	local _repo _pin _helper_ref
 	[[ "$_workflow_file" == */loc-badge.yml ]] || return 1
 	[[ -z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]] || return 1
 	[[ -f "$_workflow_file" ]] || return 1
@@ -721,6 +721,9 @@ _is_floating_caller() {
 		}
 	' "$_workflow_file")
 	[[ "$_pin" == "$_BRANCH_DEFAULT_NAME" ]] || return 1
+	# A floating workflow must not overwrite an intentional helper pin.
+	_helper_ref=$(sed -nE 's|^      aidevops_ref:[[:space:]]*([^[:space:]]+).*$|\1|p' "$_workflow_file")
+	[[ "$_helper_ref" == "$_pin" ]] || return 1
 	return 0
 }
 
