@@ -68,6 +68,17 @@ when evidence ages out, or sooner after an OWNER/MEMBER
 cannot bypass the backoff; clean-room fallback remains available for model/brief
 zero-output evidence.
 
+A `permission_required` terminal-blocker hold (observation or circuit) with no
+published permission request uses the same window (GH#36232). With no
+`needs-maintainer-permissions` label and no undecided
+`<!-- aidevops-permission-request -->` comment (no later OWNER/MEMBER signed
+grant, withdrawal or retry), the hold stops blocking once its newest event is
+one window old. `terminal-blocker-recovery-helper.sh` then projects
+`status:available` with decision `unevidenced_permission_window`. Its hidden
+rearm receipt binds the event and window index, so it releases at most once per
+window. Re-arming grants nothing: a worker that meets the real guard again must
+run `worker-permission-helper.sh request`, and that request keeps the hold.
+
 ### Dispatch claim comment states
 
 Use the issue timeline to distinguish expected dispatch ownership from noisy

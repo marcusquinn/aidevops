@@ -37,6 +37,16 @@ _TBC_REVISION_REARM_REASONS=' missing_files_scope files_scope_excluded input_req
 # GH#35925: these first-observation holds require scheduling consent, never a
 # revision change. Include legacy timeout observations without changing their hash.
 _TBC_RETRY_ONLY_REARM_REASONS=' permission_required push_policy_timeout network_policy_timeout '
+# GH#36232: a permission_required hold without a published permission request
+# gives the maintainer nothing to approve. It re-arms once per backoff window,
+# which mirrors the zero-attempt window (ZERO_OUTPUT_HOLD_WINDOW_SECONDS,
+# GH#36214). worker-permission-helper.sh owns the request/decision markers.
+_TBC_PERMISSION_REQUIRED='permission_required'
+_TBC_PERMISSION_WINDOW_DEFAULT=43200
+_TBC_PERMISSION_LABEL='needs-maintainer-permissions'
+_TBC_PERMISSION_REQUEST_MARKER='<!-- aidevops-permission-request -->'
+_TBC_PERMISSION_GRANT_MARKER='<!-- aidevops-signed-permission-grant -->'
+_TBC_PERMISSION_WITHDRAWAL_MARKER='<!-- aidevops-signed-permission-withdrawal -->'
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
 # Legacy/malformed IDs never let a tied retry clear evidence. For selection,
@@ -597,6 +607,105 @@ terminal_blocker_observation_recoverable() {
 	return $?
 }
 
+_terminal_blocker_permission_window_seconds() {
+	local window="${ZERO_OUTPUT_HOLD_WINDOW_SECONDS:-}"
+	[[ "$window" =~ ^[1-9][0-9]{0,8}$ ]] || window="$_TBC_PERMISSION_WINDOW_DEFAULT"
+	printf '%s\n' "$window"
+	return 0
+}
+
+# GH#36232 #aidevops:trust-boundary — returns 0 while a permission request is
+# published and undecided: the issue carries needs-maintainer-permissions, or
+# the newest trusted worker-permission-helper.sh request has no later
+# OWNER/MEMBER signed grant/withdrawal or retry directive. Returns 1 when no
+# actionable request exists. Unreadable input returns 0 (fail closed: hold).
+# Request evidence only strengthens a hold, so OWNER/MEMBER/COLLABORATOR or
+# this runner's own login qualify; clearing evidence stays OWNER/MEMBER.
+# Args: comments_json issue_json (labels optional)
+terminal_blocker_permission_request_evidenced() {
+	local comments_json="$1"
+	local issue_json="${2:-}"
+	local labelled="" request="" self_login=""
+	local retry="" decided=""
+	[[ -n "$issue_json" ]] || issue_json='{}'
+	labelled=$(jq -r --arg label "$_TBC_PERMISSION_LABEL" '
+		[(.labels // [])[]? | if type == "object" then (.name // "") else . end] | index($label) != null
+	' <<<"$issue_json" 2>/dev/null) || return 0
+	[[ "$labelled" == false ]] || return 0
+	self_login=$(_terminal_blocker_self_login)
+	request=$(jq -c --arg marker "$_TBC_PERMISSION_REQUEST_MARKER" --arg self "$self_login" \
+		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}"'
+		[.[] | select(((.author_association // "") as $a | ($authoritative + ["COLLABORATOR"]) | index($a) != null)
+			or ($self != "" and (.author // .user.login // "") == $self))
+		| select(valid_time) | select((.body // "") | ltrimstr("\n") | startswith($marker))]
+		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty
+	' <<<"$comments_json" 2>/dev/null) || return 0
+	[[ -n "$request" ]] || return 1
+	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || return 0
+	_terminal_blocker_retry_after "$retry" "$request" && return 1
+	decided=$(jq -r --argjson request "$request" --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		--arg grant "$_TBC_PERMISSION_GRANT_MARKER" --arg withdrawal "$_TBC_PERMISSION_WITHDRAWAL_MARKER" \
+		"${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		([($request.body // "") | scan("perm-[0-9a-f]{16}")] | first) as $rid
+		| any(.[]; authoritative_author($authoritative) and retry_after($request)
+			and ((.body // "") | (contains($grant) or contains($withdrawal))
+				and ($rid == null or contains($rid))))
+	' <<<"$comments_json" 2>/dev/null) || return 0
+	[[ "$decided" == true ]] && return 1
+	return 0
+}
+
+# GH#36232 #aidevops:trust-boundary — re-arming schedules a new attempt only;
+# it never grants a permission. A worker that meets the real guard again must
+# publish a request (worker-permission-helper.sh request) and is then held.
+# Prints the elapsed window index (>= 1) and returns 0 when an unevidenced
+# permission_required hold event (observation or circuit comment) is at least
+# one window old; returns 1 while it holds (inside the window, evidenced, or an
+# unreadable/future event time).
+# Args: comments_json issue_json evidence_comment_json
+terminal_blocker_permission_window_expired() {
+	local comments_json="$1"
+	local issue_json="$2"
+	local evidence="$3"
+	local now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}" window="" observed="" index=0
+	[[ -n "$evidence" ]] || return 1
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
+	terminal_blocker_permission_request_evidenced "$comments_json" "$issue_json" && return 1
+	observed=$(jq -r 'try (.created_at | fromdateiso8601 | floor) catch 0' <<<"$evidence" 2>/dev/null) || return 1
+	[[ "$observed" =~ ^[0-9]+$ && "$observed" -gt 0 && "$observed" -le "$now_epoch" ]] || return 1
+	window=$(_terminal_blocker_permission_window_seconds)
+	index=$(((now_epoch - observed) / window))
+	[[ "$index" -ge 1 ]] || return 1
+	printf '%s\n' "$index"
+	return 0
+}
+
+# Next epoch at which the newest unevidenced permission_required hold event
+# crosses a window boundary, so mechanical recovery can skip unchanged issue
+# snapshots until then. Prints nothing (returns 1) when not applicable.
+# Args: comments_json issue_json
+terminal_blocker_permission_rearm_after() {
+	local comments_json="$1"
+	local issue_json="$2"
+	local fingerprint="" evidence="" observation="" circuit="" observed="" window=""
+	local now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
+	observation=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_OBSERVATION_MARKER revision=") || return 1
+	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=") || return 1
+	evidence=$(jq -nc --argjson observation "${observation:-null}" --argjson circuit "${circuit:-null}" \
+		"${_TBC_ORDER_JQ}"'[$observation, $circuit] | map(select(. != null))
+		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty' 2>/dev/null) || return 1
+	[[ -n "$evidence" ]] || return 1
+	fingerprint=$(jq -r '.body | capture("<!-- aidevops:terminal-blocker-(?:observation|circuit) revision=[a-f0-9]{24} blocker=(?<f>[a-f0-9]{24}) -->").f' <<<"$evidence" 2>/dev/null) || return 1
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == "$_TBC_PERMISSION_REQUIRED" ]] || return 1
+	terminal_blocker_permission_request_evidenced "$comments_json" "$issue_json" && return 1
+	observed=$(jq -r 'try (.created_at | fromdateiso8601 | floor) catch 0' <<<"$evidence" 2>/dev/null) || return 1
+	[[ "$observed" =~ ^[0-9]+$ && "$observed" -gt 0 && "$observed" -le "$now_epoch" ]] || return 1
+	window=$(_terminal_blocker_permission_window_seconds)
+	printf '%s\n' "$((observed + ((now_epoch - observed) / window + 1) * window))"
+	return 0
+}
+
 # GH#34846: a runtime-owned blocked exit projects status:blocked from the first
 # observation, which has no circuit for the recovery owner to re-arm. Report
 # whether the newest trusted observation still holds a recoverable class.
@@ -625,6 +734,11 @@ terminal_blocker_observation_hold_active() {
 		return 1
 	fi
 	if terminal_blocker_rearms_on_retry_only "$reason"; then
+		# GH#36232: an unpublished permission request re-arms once per window.
+		if [[ "$reason" == "$_TBC_PERMISSION_REQUIRED" ]] &&
+			terminal_blocker_permission_window_expired "$comments_json" "$issue_json" "$observation" >/dev/null; then
+			return 1
+		fi
 		printf 'TERMINAL_BLOCKER_OBSERVATION_HOLD reason=%s task_revision=%s\n' "$reason" "$observed_revision"
 		return 0
 	fi
@@ -960,6 +1074,12 @@ terminal_blocker_circuit_active() {
 	[[ -n "$circuit" ]] || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	if _terminal_blocker_retry_after "$retry" "$circuit"; then
+		return 1
+	fi
+	# GH#36232: a repeated permission blocker without a published request
+	# re-arms once per backoff window, like its first observation.
+	if [[ "$reason" == "$_TBC_PERMISSION_REQUIRED" ]] &&
+		terminal_blocker_permission_window_expired "$comments_json" "$issue_json" "$circuit" >/dev/null; then
 		return 1
 	fi
 	printf 'TERMINAL_BLOCKER_CIRCUIT task_revision=%s\n' "$current_revision"

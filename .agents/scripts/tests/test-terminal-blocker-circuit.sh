@@ -20,6 +20,10 @@ export AIDEVOPS_BLOCKER_RECOVERY_DIR="${TEST_ROOT}/default-recovery-queue"
 # Never consult the runner's registry, including from spawned helper CLIs.
 export REPOS_JSON="${TEST_ROOT}/repos.json"
 printf '{"initialized_repos":[{"slug":"owner/repo"}]}\n' >"$REPOS_JSON"
+# GH#36232: fixtures date permission_required holds against the wall clock.
+# Keep them inside the unevidenced-permission backoff window; the window test
+# sets its own window and clock.
+export ZERO_OUTPUT_HOLD_WINDOW_SECONDS=999999999
 
 cleanup() {
 	rm -rf "$TEST_ROOT"
@@ -1332,6 +1336,149 @@ test_retry_only_observation_recovery() {
 	return 0
 }
 
+# GH#36232: a permission_required hold with no published permission request
+# re-arms once per backoff window; a real request (label or undecided request
+# marker) keeps it held, and timeout classes stay retry-only.
+test_unevidenced_permission_window_rearm() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		export ZERO_OUTPUT_HOLD_WINDOW_SECONDS=43200
+		export TERMINAL_BLOCKER_NOW_EPOCH=1793361600 # 2026-10-30T12:00:00Z
+		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
+		local revision="" fingerprint="" observation="" tb_comments="" variant="" receipt_log=""
+		local projected=0 receipts=0 rc=0 request=""
+		set_issue_status() {
+			projected=$((projected + 1))
+			return 0
+		}
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			receipts=$((receipts + 1))
+			receipt_log+="${marker};"
+			tb_comments=$(jq -c --arg body "$marker" '. + [{id:(90 + length),body:$body,author_association:"MEMBER",created_at:"2026-10-30T11:59:00Z"}]' <<<"$tb_comments")
+			return 0
+		}
+		gh_issue_edit_safe() { return 0; }
+		fingerprint=$(_terminal_blocker_hash v2:permission_required)
+		revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" permission_required) || exit 1
+		# 14 hours old: one full window has elapsed (index 1).
+		observation=$(jq -nc --arg r "$revision" --arg f "$fingerprint" \
+			'[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->\nTerminal blocker: reason=permission_required owner=permission-maintainer"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-29T22:00:00Z"}]')
+		request='{"id":11,"body":"<!-- aidevops-permission-request -->\n## Maintainer permission required\n\n**Request:** perm-0123456789abcdef","author":"runner-b","author_association":"COLLABORATOR","created_at":"2026-10-29T22:00:05Z"}'
+		# Positive: unevidenced and older than the window is not an active hold.
+		terminal_blocker_permission_request_evidenced "$observation" "$issue" && exit 1
+		[[ "$(terminal_blocker_permission_window_expired "$observation" "$issue" "$(jq -c '.[0]' <<<"$observation")")" == 1 ]] || exit 1
+		terminal_blocker_observation_hold_active "$observation" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		# The recovery pass projects status:available once with only the hidden receipt.
+		tb_comments="$observation"
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" 2>"${TEST_ROOT}/permission-window.err" || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		[[ "$receipt_log" =~ ^'<!-- aidevops:terminal-blocker-rearmed key='[a-f0-9]{24}' -->;'$ ]] || exit 1
+		grep -q 'reason=unevidenced_permission_window' "${TEST_ROOT}/permission-window.err" || exit 1
+		# A second pass in the same window writes nothing.
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" 2>/dev/null || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		# The next window may release the same unchanged event once more.
+		TERMINAL_BLOCKER_NOW_EPOCH=$((1793361600 + 43200)) _tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" 2>/dev/null || exit 1
+		[[ "$projected" -eq 2 && "$receipts" -eq 2 ]] || exit 1
+		# Negative: inside the window the observation still holds and writes nothing.
+		projected=0 receipts=0
+		variant=$(jq -c '.[0].created_at="2026-10-30T06:00:00Z"' <<<"$observation")
+		terminal_blocker_observation_hold_active "$variant" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		[[ "$(terminal_blocker_permission_rearm_after "$variant" "$issue")" == $((1793361600 - 21600 + 43200)) ]] || exit 1
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$variant" 2>/dev/null || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
+		# Negative: needs-maintainer-permissions keeps the hold; the label guard writes nothing.
+		variant=$(jq -c '.labels += [{name:"needs-maintainer-permissions"}]' <<<"$issue")
+		terminal_blocker_permission_request_evidenced "$observation" "$variant" || exit 1
+		terminal_blocker_observation_hold_active "$observation" "$variant" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		terminal_blocker_permission_rearm_after "$observation" "$variant" >/dev/null && exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$variant" "$observation" 2>/dev/null || exit 1
+		[[ "$projected" -eq 0 ]] || exit 1
+		# Negative: an undecided request marker keeps the hold.
+		tb_comments=$(jq -c --argjson request "$request" '. + [$request]' <<<"$observation")
+		terminal_blocker_permission_request_evidenced "$tb_comments" "$issue" || exit 1
+		terminal_blocker_observation_hold_active "$tb_comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" 2>/dev/null || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "unevidenced permission hold re-arms once per window; label or undecided request keeps it held" "$status"
+	return 0
+}
+
+# GH#36232: request evidence trust, the repeated-circuit form and the
+# unchanged retry-only timeout classes.
+test_unevidenced_permission_window_evidence() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		export ZERO_OUTPUT_HOLD_WINDOW_SECONDS=43200
+		export TERMINAL_BLOCKER_NOW_EPOCH=1793361600 # 2026-10-30T12:00:00Z
+		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
+		local revision="" fingerprint="" observation="" tb_comments="" variant="" circuit=""
+		local projected=0 rc=0 request="" timeout_fp=""
+		set_issue_status() {
+			projected=$((projected + 1))
+			return 0
+		}
+		_tbr_post_rearm_receipt() { return 0; }
+		fingerprint=$(_terminal_blocker_hash v2:permission_required)
+		revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" permission_required) || exit 1
+		observation=$(jq -nc --arg r "$revision" --arg f "$fingerprint" \
+			'[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-29T22:00:00Z"}]')
+		request='{"id":11,"body":"<!-- aidevops-permission-request -->\n**Request:** perm-0123456789abcdef","author":"runner-b","author_association":"COLLABORATOR","created_at":"2026-10-29T22:00:05Z"}'
+		tb_comments=$(jq -c --argjson request "$request" '. + [$request]' <<<"$observation")
+		terminal_blocker_permission_request_evidenced "$tb_comments" "$issue" || exit 1
+		# A foreign (NONE) marker is not request evidence; neither is quoted prose.
+		variant=$(jq -c '.[1].author="outsider" | .[1].author_association="NONE"' <<<"$tb_comments")
+		terminal_blocker_permission_request_evidenced "$variant" "$issue" && exit 1
+		variant=$(jq -c '.[1].body = ("> " + .[1].body)' <<<"$tb_comments")
+		terminal_blocker_permission_request_evidenced "$variant" "$issue" && exit 1
+		# A later OWNER/MEMBER signed decision for that request ends the evidence;
+		# a COLLABORATOR or other-request decision does not.
+		variant=$(jq -c '. + [{id:12,body:"<!-- aidevops-signed-permission-withdrawal -->\nperm-0123456789abcdef",author_association:"COLLABORATOR",created_at:"2026-10-29T23:00:00Z"}]' <<<"$tb_comments")
+		terminal_blocker_permission_request_evidenced "$variant" "$issue" || exit 1
+		variant=$(jq -c '. + [{id:12,body:"<!-- aidevops-signed-permission-grant -->\nperm-ffffffffffffffff",author_association:"OWNER",created_at:"2026-10-29T23:00:00Z"}]' <<<"$tb_comments")
+		terminal_blocker_permission_request_evidenced "$variant" "$issue" || exit 1
+		variant=$(jq -c '. + [{id:12,body:"<!-- aidevops-signed-permission-grant -->\nperm-0123456789abcdef",author_association:"OWNER",created_at:"2026-10-29T23:00:00Z"}]' <<<"$tb_comments")
+		terminal_blocker_permission_request_evidenced "$variant" "$issue" && exit 1
+		terminal_blocker_observation_hold_active "$variant" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		# A repeated permission circuit follows the same window in dispatch and recovery.
+		circuit=$(jq -c '.[0].body |= sub("terminal-blocker-observation"; "terminal-blocker-circuit")' <<<"$observation")
+		terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		_tbr_circuit_blocks_release "$(jq -c '.[0]' <<<"$circuit")" '' "$issue" owner/repo 42 "$TEST_ROOT" "$circuit" && exit 1
+		# Without the comments, request evidence is unknown: keep the circuit.
+		_tbr_circuit_blocks_release "$(jq -c '.[0]' <<<"$circuit")" '' "$issue" owner/repo 42 "$TEST_ROOT" || exit 1
+		variant=$(jq -c --argjson request "$request" '. + [$request]' <<<"$circuit")
+		terminal_blocker_circuit_active "$variant" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		variant=$(jq -c '.[0].created_at="2026-10-30T06:00:00Z"' <<<"$circuit")
+		terminal_blocker_circuit_active "$variant" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		# Push/network policy timeouts stay retry-only however old they are.
+		for timeout_fp in push_policy_timeout network_policy_timeout; do
+			projected=0
+			variant=$(jq -c --arg f "$(_terminal_blocker_hash "v2:${timeout_fp}")" \
+				'.[0].body |= sub("blocker=[a-f0-9]{24}"; "blocker=" + $f) | .[0].created_at="2026-09-01T00:00:00Z"' <<<"$observation")
+			terminal_blocker_observation_hold_active "$variant" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+			rc=0
+			_tbr_release_circuit_hold owner/repo 42 "$issue" "$variant" 2>/dev/null || rc=$?
+			[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
+		done
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "permission request evidence is trust-bound; circuits share the window; timeouts stay retry-only" "$status"
+	return 0
+}
+
 test_mechanical_rearm_pass() {
 	local status=0
 	if ! (
@@ -1375,7 +1522,11 @@ test_mechanical_rearm_pass() {
 		tbr_main rearm >"${TBR_ROOT}/out" || exit 1
 		[[ -f "$queue_file" && "$projected" -eq 0 && "$receipts" -eq 0 && ! -s "${TBR_ROOT}/out" ]] || exit 1
 		[[ "$(jq -r .rearm_checked_updated_at "$queue_file")" == "$fixture_at" ]] || exit 1
+		# GH#36232: an unevidenced permission hold records its next window
+		# boundary; unchanged snapshots are skipped only until then.
+		[[ "$(jq -r .rearm_after "$queue_file")" == $((1793318400 + ZERO_OUTPUT_HOLD_WINDOW_SECONDS)) ]] || exit 1
 		tbr_main rearm >"${TBR_ROOT}/out" || exit 1
+		TERMINAL_BLOCKER_NOW_EPOCH=$((1793318400 + ZERO_OUTPUT_HOLD_WINDOW_SECONDS - 1)) tbr_main rearm >"${TBR_ROOT}/out" || exit 1
 		[[ "$(wc -l <"${TBR_ROOT}/comment-reads")" -eq 1 && "$projected" -eq 0 ]] || exit 1
 		# An incomplete fetch must not stamp the newer snapshot or lose intake.
 		fixture_at=2026-10-30T02:00:00Z
@@ -1598,6 +1749,8 @@ main() {
 	test_legacy_hold_requires_bound_retry
 	test_unknown_hold_rearms_on_trusted_retry
 	test_retry_only_observation_recovery
+	test_unevidenced_permission_window_rearm
+	test_unevidenced_permission_window_evidence
 	test_mechanical_rearm_pass
 	test_rearm_waits_for_blocked_by_dependency
 	test_mechanical_rearm_scheduler
