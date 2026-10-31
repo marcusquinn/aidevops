@@ -35,6 +35,7 @@ import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mj
 
 const realGit = resolveTrustedExecutable("git");
 const realSshKeygen = resolveTrustedExecutable("ssh-keygen");
+const realPython3 = resolveTrustedExecutable("python3");
 
 const BASE = {
   tool: "read",
@@ -142,11 +143,16 @@ test("an unapproved scope creates a request and preserves the original block", (
           return "0123456789abcdef0123456789abcdef\n";
         },
       }),
-    /sudo -k \/usr\/bin\/python3 -I -B \/etc\/aidevops\/source-access\/source-access-helper.py approve 0123456789abcdef0123456789abcdef --ttl 12h/,
+    (error) => {
+      assert.ok(error.message.includes(
+        `sudo -k ${realPython3} -I -B /etc/aidevops/source-access/source-access-helper.py approve 0123456789abcdef0123456789abcdef --ttl 12h`,
+      ));
+      return true;
+    },
   );
   assert.deepEqual(calls, [
     {
-      command: "/usr/bin/python3",
+      command: realPython3,
       args: [
         "-I",
         "-B",
