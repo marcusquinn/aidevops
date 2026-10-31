@@ -1889,16 +1889,12 @@ _dispatch_launch_worker() {
 	# t3034: per-stage timing for launch sub-stages
 	local _ds_t0
 
-	# GH#36214: dispatch_with_dedup evaluates the zero-attempt backoff before
-	# its cross-runner claim and shares the metrics snapshot through dynamic
-	# scope. Direct callers without that gate evaluate it here, still before
-	# the prelaunch lease and any local preparation.
+	# GH#36214: reuse dispatch_with_dedup's pre-claim backoff snapshot; direct
+	# callers evaluate the backoff here, before the prelaunch lease.
 	local zero_output_comment_metrics="${_dispatch_zero_output_metrics:-}"
 	if [[ -z "$zero_output_comment_metrics" ]]; then
 		local _dispatch_zero_output_metrics=""
-		if _dlw_preclaim_zero_attempt_backoff "$issue_number" "$repo_slug"; then
-			return 3
-		fi
+		_dlw_preclaim_zero_attempt_backoff "$issue_number" "$repo_slug" && return 3
 		zero_output_comment_metrics="$_dispatch_zero_output_metrics"
 	fi
 

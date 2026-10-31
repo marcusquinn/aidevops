@@ -113,6 +113,19 @@ _DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS='
 			end;
 '
 
+# GH#36214: dispatch-marker accessors for the comment metrics program. Append
+# after _DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS, which defines body_text.
+# shellcheck disable=SC2016  # jq program is intentionally single-quoted.
+_DLW_DISPATCH_MARKER_JQ_DEFS='
+		def marker_value($name):
+			try (body_text | capture($name + "=(?<value>[^ ]+)").value) catch "";
+		def lease_device: marker_value("device");
+		def lease_session: marker_value("session");
+		def author_login: (.user.login // .author // "");
+		def comment_epoch: ((try ((.created_at // "") | fromdateiso8601) catch 0) // 0);
+		def count_since($start): map(select(. >= $start)) | length;
+'
+
 _dlw_zero_output_comment_count() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -173,20 +186,13 @@ _dlw_comment_bloat_metrics_from_json() {
 		--argjson window_seconds "$window_seconds" \
 		--arg zero_output_pattern "$zero_output_pattern" \
 		--arg zero_attempt_pattern "$zero_attempt_pattern" '
-'"${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}"'
-		def marker_value($name):
-			try (body_text | capture($name + "=(?<value>[^ ]+)").value) catch "";
+'"${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}${_DLW_DISPATCH_MARKER_JQ_DEFS}"'
 		def lease_token: marker_value("lease_token");
-		def lease_device: marker_value("device");
-		def lease_session: marker_value("session");
-		def author_login: (.user.login // .author // "");
 		# #aidevops:trust-boundary: trusted_authors holds only logins whose
 		# per-repository permission was verified as write or higher.
 		def evidence_trusted:
 			authoritative_association
 			or (author_login as $login | $login != "" and (($trusted_authors | index($login)) != null));
-		def comment_epoch: ((try ((.created_at // "") | fromdateiso8601) catch 0) // 0);
-		def count_since($start): map(select(. >= $start)) | length;
 		(if $window_seconds > 0 then ($now_epoch - $window_seconds) else 0 end) as $window_start |
 		comments as $comments |
 		($comments | evidence_comments) as $evidence |
