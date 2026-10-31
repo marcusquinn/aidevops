@@ -90,6 +90,7 @@ export AIDEVOPS_CODEGRAPH_INIT_LOCK_STALE_SECONDS=10
 export AIDEVOPS_MIN_WORKTREE_FREE_KB=1
 export AIDEVOPS_MIN_WORKTREE_FREE_PERCENT=0
 export AIDEVOPS_TEMP_DIR="${TEST_ROOT}/state"
+export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle"
 export AIDEVOPS_LOG_DIR="${TEST_ROOT}/logs"
 export AIDEVOPS_CODEGRAPH_LOG_FILE="${AIDEVOPS_LOG_DIR}/codegraph.log"
 export CODEGRAPH_CALLS_FILE="${TEST_ROOT}/calls.log"
@@ -138,4 +139,20 @@ sleep 2
 [[ ! -e "${LINKED_FOUR}/.codegraph/codegraph.db" ]] || fail "timed-out CodeGraph init wrote a completed index"
 grep -q 'status=failed rc=124 issue=4' "$AIDEVOPS_CODEGRAPH_LOG_FILE" || fail "timeout was not recorded as a bounded failure"
 
-printf 'PASS: CodeGraph worktree init is asynchronous, local, singleflight, queued, optional, and bounded\n'
+# A queued job must not run after closure, including at a reused public pathname.
+REGISTRY="${TEST_DIR}/../../worker-lifecycle/worker-registry.py"
+context=$(python3 -B "$REGISTRY" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" resolve-generation --path "$LINKED_ONE")
+generation=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["generation_id"])' "$context")
+run=$(python3 -c 'import uuid; print(uuid.uuid4())')
+closed=$(python3 -B "$REGISTRY" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" prepare-cleanup --path "$LINKED_ONE")
+python3 -c 'import json,sys; result=json.loads(sys.argv[1]); assert result["admission"] == "closed" and result["registered_runs"] >= 2' "$closed" || fail "CodeGraph executions were not admitted and reconciled"
+before_count=$(wc -l <"$CODEGRAPH_CALLS_FILE" | tr -d ' ')
+AIDEVOPS_CODEGRAPH_GENERATION_ID="$generation" AIDEVOPS_CODEGRAPH_RUN_ID="$run" "$HELPER" run "$LINKED_ONE" 5
+[[ "$(wc -l <"$CODEGRAPH_CALLS_FILE" | tr -d ' ')" == "$before_count" ]] || fail "closed-generation job executed"
+git -C "${TEST_ROOT}/one-canonical" worktree remove --force "$LINKED_ONE"
+git -C "${TEST_ROOT}/one-canonical" worktree add -q -b feature/replacement "$LINKED_ONE"
+AIDEVOPS_CODEGRAPH_GENERATION_ID="$generation" AIDEVOPS_CODEGRAPH_RUN_ID="$run" "$HELPER" run "$LINKED_ONE" 6
+[[ "$(wc -l <"$CODEGRAPH_CALLS_FILE" | tr -d ' ')" == "$before_count" ]] || fail "queued job redirected to replacement"
+[[ ! -e "${LINKED_ONE}/.codegraph/codegraph.db" ]] || fail "old generation wrote into replacement"
+
+printf 'PASS: CodeGraph init is asynchronous, admitted, generation-bound, singleflight, queued, optional, and bounded\n'

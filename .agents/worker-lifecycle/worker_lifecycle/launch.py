@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from .admission import AdmissionClosed, AdmissionRegistry
 from .directory_handle import DirectoryHandle
-from .enrollment import GenerationEnrollment
+from .enrollment import GenerationEnrollment, MARKER, _git_directory
 from .process import ObservationUnavailable
 from .runtime import adapter_for, require_ready
 from .storage import LifecycleRegistry
@@ -58,8 +58,8 @@ def record(state_dir: Path, worktree: Path, initialize: bool = False) -> str:
 def enrolled_generation(state_dir: Path, worktree: Path, initialize: bool) -> tuple[str, Path] | None:
     """Select registered generations, never infer them from legacy bindings.
 
-    Bootstrap failures still belong to the observe-only rollout gap. A known
-    admission row, however, must never degrade into hypothetical registration.
+    A failed lookup cannot establish that admission is unnecessary. Neither an
+    unknown nor a known admission may degrade into hypothetical registration.
     """
     require_ready(adapter_for(str(uuid4())))
     store = initialize_or_open(state_dir) if initialize else LifecycleRegistry(state_dir)
@@ -67,17 +67,54 @@ def enrolled_generation(state_dir: Path, worktree: Path, initialize: bool) -> tu
     path = Path(os.path.abspath(worktree))
     with store.connection() as connection:
         if connection.execute("PRAGMA user_version").fetchone()[0] == 1:
-            return None
-        row = connection.execute("SELECT 1 FROM generation_admissions WHERE path=?", (str(path),)).fetchone()
-        if row is None:
-            path = worktree.resolve(strict=True)
-            row = connection.execute("SELECT 1 FROM generation_admissions WHERE path=?", (str(path),)).fetchone()
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE name='generation_admissions'").fetchone():
+                raise ValueError("schema-one-with-admission-state")
+            row = None
+        else:
+            query = (
+                "SELECT path FROM generation_admissions "
+                "WHERE path=? OR substr(?,1,length(path)+1)=path||'/' "
+                "ORDER BY (state='closed') DESC,length(path) DESC LIMIT 1"
+            )
+            declared = connection.execute(query, (str(path), str(path))).fetchone()
+            resolved = str(worktree.resolve(strict=True))
+            row = connection.execute(query, (resolved, resolved)).fetchone()
+            if declared and (row is None or declared["path"] != row["path"]):
+                raise AdmissionClosed("declared-resource-resolution-changed")
+            if row is not None:
+                path = Path(row["path"])
     if row is None:
+        if _has_generation_marker(worktree):
+            raise AdmissionClosed("marker-without-matching-registry-admission")
         return None
     try:
         return GenerationEnrollment(store).resolve(path), path
     except (ValueError, OSError, RuntimeError, sqlite3.Error, subprocess.SubprocessError) as error:
         raise AdmissionClosed("enrolled-generation-unavailable") from error
+
+
+def _has_generation_marker(worktree: Path) -> bool:
+    path = worktree.resolve(strict=True)
+    if not path.is_dir():
+        raise ValueError("unregistered-worktree-unavailable")
+    for directory in (path, *path.parents):
+        if (directory / ".git").is_symlink():
+            raise ValueError("unregistered-worktree-unavailable")
+        if (directory / ".git").is_file():
+            marker = _git_directory(directory) / MARKER
+            if marker.exists() or marker.is_symlink():
+                return True
+    return False
+
+
+def require_unregistered(state_dir: Path, worktree: Path) -> None:
+    """Verify exclusion without recording private/disabled workloads or new state."""
+    if state_dir.exists() or state_dir.is_symlink():
+        if enrolled_generation(state_dir, worktree, False) is not None:
+            raise AdmissionClosed("excluded-workload-on-enrolled-generation")
+        return
+    if _has_generation_marker(worktree):
+        raise AdmissionClosed("excluded-workload-on-marked-generation")
 
 
 def main() -> int:
@@ -87,6 +124,8 @@ def main() -> int:
     parser.add_argument("--initialize", action="store_true", help="create absent private state; never replace existing state")
     parser.add_argument("--generation-id", help="require admission to this pre-reserved generation; no fail-open fallback")
     parser.add_argument("--run-id", help="stable attempt ID required with --generation-id; replay never executes again")
+    parser.add_argument("--unregistered-only", action="store_true",
+                        help="never observe; refuse managed generations or unknown registration")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command
@@ -96,24 +135,42 @@ def main() -> int:
         parser.error("a native command is required after --")
     if (args.generation_id is None) != (args.run_id is None):
         parser.error("--generation-id and --run-id must be supplied together")
+    if args.unregistered_only:
+        if args.initialize or args.generation_id is not None:
+            parser.error("--unregistered-only cannot initialize or request admission")
+        try:
+            require_unregistered(args.state_dir, args.worktree)
+        except (ValueError, OSError, RuntimeError, sqlite3.Error,
+                subprocess.SubprocessError, ObservationUnavailable) as error:
+            print(f"[worker-lifecycle] admission-denied reason={type(error).__name__}", file=sys.stderr)
+            return 75
+        return execute(command)
     if args.generation_id is not None:
         if args.initialize:
             parser.error("admission requires existing state; --initialize is not allowed")
         return run_admitted(args.state_dir, args.worktree, args.run_id, args.generation_id, command)
     try:
         enrollment = enrolled_generation(args.state_dir, args.worktree, args.initialize)
-        if enrollment is not None:
-            generation, path = enrollment
-            return run_admitted(args.state_dir, path, str(uuid4()), generation, command)
-        run_id = record(args.state_dir, args.worktree, args.initialize)
-        print(f"[worker-lifecycle] registered run={run_id} pid={os.getpid()}", file=sys.stderr)
     except AdmissionClosed:
         print("[worker-lifecycle] admission-denied reason=enrolled-generation-unavailable", file=sys.stderr)
         return 75
+    except (ValueError, OSError, RuntimeError, sqlite3.Error,
+            subprocess.SubprocessError, ObservationUnavailable) as error:
+        print(f"[worker-lifecycle] admission-denied reason={type(error).__name__}", file=sys.stderr)
+        return 75
+    if enrollment is not None:
+        generation, path = enrollment
+        return run_admitted(args.state_dir, path, str(uuid4()), generation, command)
+    run_id = str(uuid4())
+    try:
+        # Fail-open observation is limited to a successfully checked, unreserved
+        # path. A failed lookup above never permits native execution.
+        run_id = record(args.state_dir, args.worktree, args.initialize)
+        print(f"[worker-lifecycle] registered run={run_id} pid={os.getpid()}", file=sys.stderr)
     except (ValueError, OSError, RuntimeError, sqlite3.Error, ObservationUnavailable) as error:
         # Keep paths, command arguments and database contents out of logs.
         print(f"[worker-lifecycle] observation-gap reason={type(error).__name__}", file=sys.stderr)
-    return execute(command)
+    return execute(command, session_id=run_id)
 
 
 def run_admitted(state_dir: Path, worktree: Path, run_id: str, generation_id: str, command: list[str]) -> int:
@@ -121,6 +178,9 @@ def run_admitted(state_dir: Path, worktree: Path, run_id: str, generation_id: st
     try:
         with DirectoryHandle(worktree) as handle:
             store = LifecycleRegistry(state_dir)
+            if _has_generation_marker(worktree):
+                if GenerationEnrollment(store).resolve(worktree) != generation_id:
+                    raise AdmissionClosed("physical-generation-mismatch")
             adapter = adapter_for(store.installation_id())
             require_ready(adapter)
             identity = adapter.capture(os.getpid())
@@ -128,15 +188,24 @@ def run_admitted(state_dir: Path, worktree: Path, run_id: str, generation_id: st
                 raise AdmissionClosed("replay-is-not-execution-authority")
             if not handle.matches_path():
                 raise ValueError("directory-changed-before-exec")
-            return execute(command, admitted=True)
-    except (ValueError, OSError, RuntimeError, sqlite3.Error, ObservationUnavailable) as error:
+            return execute(command, admitted=True, session_id=run_id)
+    except (ValueError, OSError, RuntimeError, sqlite3.Error,
+            subprocess.SubprocessError, ObservationUnavailable) as error:
         print(f"[worker-lifecycle] admission-denied reason={type(error).__name__}", file=sys.stderr)
         return 75
 
 
-def execute(command: list[str], *, admitted: bool = False) -> int:
+def execute(
+    command: list[str], *, admitted: bool = False, session_id: str | None = None,
+) -> int:
     """Replace this process, preserving the existing native command contract."""
     environment = os.environ.copy()
+    # Independent launch replaces inherited creator identity, including disabled runs.
+    environment.pop("AIDEVOPS_LIFECYCLE_RUNTIME_PID", None)
+    environment.pop("AIDEVOPS_LIFECYCLE_SESSION_ID", None)
+    if session_id is not None:
+        environment["AIDEVOPS_LIFECYCLE_RUNTIME_PID"] = str(os.getpid())
+        environment["AIDEVOPS_LIFECYCLE_SESSION_ID"] = session_id
     if admitted:
         # These select this attempt, not a descendant's future admission.
         environment.pop("AIDEVOPS_LIFECYCLE_RUN_ID", None)

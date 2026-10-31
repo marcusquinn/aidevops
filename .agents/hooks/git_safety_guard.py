@@ -82,11 +82,14 @@ def _resolve_policy_helper(environment_key: str, filename: str) -> str:
     return next((path for path in candidates if path and os.path.isfile(path)), "")
 
 
-def _run_policy_helper(helper: str, arguments: list, input_text=None):
+def _run_policy_helper(
+    helper: str, arguments: list, input_text=None, *, isolate_python=False,
+):
     """Execute a validated Python policy helper and require an object payload."""
     # nosec B603 -- fixed interpreter and policy argv, no shell
     result = subprocess.run(  # nosec B603
-        [sys.executable, helper, *arguments],
+        [sys.executable, *(["-E", "-s", "-B"] if isolate_python else []),
+         helper, *arguments],
         input=input_text,
         capture_output=True,
         text=True,
@@ -134,7 +137,7 @@ def _direct_write_deny(reason: str) -> dict:
 
 
 def _check_canonical_write(
-    file_path: str, patch_text: "str | None" = None
+    file_path: str, patch_text: "str | None" = None, session_id: str = "",
 ) -> "dict | None":
     """Delegate a direct file mutation to the shared structural policy."""
     helper = _resolve_policy_helper(
@@ -162,7 +165,10 @@ def _check_canonical_write(
     ) as exc:
         return _direct_write_deny(f"canonical-write policy failed closed: {exc}")
     if returncode == 0 and payload.get("decision") == "allow":
-        return None
+        paths = (
+            payload.get("patch_paths", []) if patch_text is not None else [file_path]
+        )
+        return _check_session_owner(paths, session_id)
     return _direct_write_deny(
         payload.get("reason", "canonical-write policy returned an invalid response")
     )
@@ -233,7 +239,43 @@ def _check_command_policy(command: str) -> "dict | None":
     }
 
 
-REDIRECT_EXEMPT_TOOLS = {"bash", "read", "grep", "glob", "task", "todowrite", "notebookread"}
+def _check_session_owner(
+    paths: list, session_id: str, command: str = "",
+) -> "dict | None":
+    """Register the runtime parent, not this short-lived hook process."""
+    if sys.platform not in {"linux", "darwin"}:
+        return None
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_LIFECYCLE_SESSION_HELPER", "worker-lifecycle-session-helper.py",
+    )
+    if helper:
+        # #aidevops:trust-boundary — the installed hook execs directly under
+        # the runtime. A command-authored PID or session override is not used.
+        arguments = ["--cwd", os.getcwd(), "--runtime-pid", str(os.getppid()),
+                     "--session-id", session_id]
+        for path in paths:
+            arguments.extend(["--path", path])
+        if command:
+            arguments.extend(["--command", command])
+        try:
+            returncode, payload = _run_policy_helper(
+                helper, arguments, isolate_python=True,
+            )
+            if returncode == 0 and payload.get("status") in {
+                "admitted", "excluded-unregistered", "not-applicable",
+            }:
+                return None
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+            pass
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": "BLOCKED: lifecycle owner admission unavailable",
+    }}
+
+
+REDIRECT_EXEMPT_TOOLS = {
+    "bash", "read", "grep", "glob", "task", "todowrite", "notebookread",
+}
 
 
 def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
@@ -243,7 +285,8 @@ def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
     network). Bash is covered by the shared command policy; file tools are
     exempt. Any helper failure fails closed.
     """
-    if _normalise_tool_name(tool_name) in REDIRECT_EXEMPT_TOOLS or _is_direct_file_tool(tool_name):
+    if (_normalise_tool_name(tool_name) in REDIRECT_EXEMPT_TOOLS
+            or _is_direct_file_tool(tool_name)):
         return None
     helper = _resolve_policy_helper(
         "AIDEVOPS_REDIRECT_TOOL_CHECK", "redirect_link_tool_check.py"
@@ -251,7 +294,9 @@ def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
     reason = "redirect-link policy helper is unavailable"
     if helper:
         try:
-            payload_text = json.dumps({"tool_name": tool_name, "tool_input": tool_input})
+            payload_text = json.dumps(
+                {"tool_name": tool_name, "tool_input": tool_input}
+            )
             _, payload = _run_policy_helper(helper, [], payload_text)
             if payload.get("decision") == "allow":
                 return None
@@ -262,7 +307,9 @@ def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": f"BLOCKED by redirect-link policy\n\nReason: {reason}",
+            "permissionDecisionReason": (
+                f"BLOCKED by redirect-link policy\n\nReason: {reason}"
+            ),
         }
     }
 
@@ -308,7 +355,9 @@ def main():
             patch_text = tool_input.get("patchText", "") or tool_input.get(
                 "patch_text", ""
             )
-        deny = _check_canonical_write(file_path, patch_text)
+        deny = _check_canonical_write(
+            file_path, patch_text, input_data.get("session_id", ""),
+        )
         if deny:
             print(json.dumps(deny))
         sys.exit(0)
@@ -317,6 +366,8 @@ def main():
     if tool_name != "Bash" or not isinstance(command, str) or not command:
         sys.exit(0)
     deny = _check_command_policy(command)
+    if not deny:
+        deny = _check_session_owner([], input_data.get("session_id", ""), command)
     if deny:
         print(json.dumps(deny))
     else:

@@ -212,8 +212,11 @@ _pc_thirdparty_candidate() {
 	if [[ -n "$archive" ]]; then
 		_worktree_compact_source_matches "$candidate" "$archive" "$_WTAR_PC_CALLER" 'thirdparty-cleanup' || return 1
 	fi
-	git -C "$canonical" worktree remove --force "$candidate" 2>>"${LOGFILE:-/dev/null}" || return 1
-	[[ -n "$archive" ]] && printf 'archived-removed\n' || printf 'removed\n'
+	# Scope/PR heuristics never replace controlled creation and writer exclusion.
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" || return 1
+	worker_lifecycle_cleanup_worktree "$candidate" >>"${LOGFILE:-/dev/null}" 2>&1 || return 1
+	printf 'archived-removed\n'
 	return 0
 }
 

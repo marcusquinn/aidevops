@@ -210,6 +210,8 @@ PYEOF
 #!/usr/bin/env python3
 raise SystemExit(0)
 PYEOF
+		cp "$test_home/.aidevops/agents/scripts/canonical-write-policy-helper.py" \
+			"$test_home/.aidevops/agents/scripts/worker-lifecycle-session-helper.py"
 	fi
 
 	cat >"$test_tmpdir/harness.sh" <<HARNESS_EOF

@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "e8fc78691628d26c143b982f39e8b2e7fda36cc58e2d87d5df2f15f6546517f2",
+  "bundle_sha256": "81799f5e3ced5277f45db81f653ac97ea68987b8481027d3e70c601e3a0bc534",
   "checks": [
     {
       "name": "tests.test_storage.StorageContract.test_atomic_attempt_binding_conflict_rolls_back_registration",
@@ -138,7 +138,11 @@
       "status": "passed"
     },
     {
-      "name": "tests.test_launch.LaunchContract.test_unavailable_registry_preserves_command_and_exit",
+      "name": "tests.test_launch.LaunchContract.test_unavailable_registry_cannot_prove_admission_is_unnecessary",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_launch.LaunchContract.test_unregistered_only_preserves_exclusion_without_creating_state",
       "status": "passed"
     },
     {
@@ -178,6 +182,10 @@
       "status": "passed"
     },
     {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_declared_worktree_does_not_require_matching_cwd",
+      "status": "passed"
+    },
+    {
       "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_full_journal_never_executes",
       "status": "passed"
     },
@@ -187,6 +195,10 @@
     },
     {
       "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_missing_registry_never_executes_or_initializes",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_native_environment_consumes_only_admission_ids",
       "status": "passed"
     },
     {
@@ -203,10 +215,6 @@
     },
     {
       "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_unknown_generation_never_executes",
-      "status": "passed"
-    },
-    {
-      "name": "tests.test_admitted_launch.AdmittedLaunchContract.test_wrong_cwd_never_executes",
       "status": "passed"
     },
     {
@@ -284,6 +292,118 @@
     {
       "name": "tests.test_cleanup_policy.CleanupPolicyContract.test_unpublished_results_require_archive",
       "status": "passed"
+    },
+    {
+      "name": "tests.test_creation.CreationContract.test_creator_exit_allows_closed_preparation",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_creation.CreationContract.test_publication_does_not_replace_existing_directory",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_preservation.PreservationContract.test_corrupt_archive_is_refused_and_source_stays",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_preservation.PreservationContract.test_late_source_change_invalidates_snapshot",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_preservation.PreservationContract.test_pinned_base_restores_after_fixture_worktree_branch_and_reflog_removal",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_preservation.PreservationContract.test_registry_cli_preserves_and_rechecks_real_wip_without_ignored_data",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_preservation.PreservationContract.test_tar_metadata_survives_different_creation_and_restore_umasks",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_preservation.PreservationContract.test_unpublished_commit_index_working_files_and_links_round_trip",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_preservation.PreservationContract.test_wip_archive_excludes_ignored_files",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_changed_archive_stops_resumption",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_child_retains_lock_after_controller_death",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_cleanup_cli_uses_controlled_registry_candidates",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_cleanup_respects_maintenance_scope_and_live_owner",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_cleanup_resumes_private_generation_not_public_replacement",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_cleanup_rotates_unproven_generations_without_adopting_them",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_completed_remove_can_be_acknowledged_after_interruption",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_existing_enrollment_does_not_authorize_removal",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_git_lock_blocks_retirement_until_unlocked",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_incomplete_git_move_keeps_private_data_and_public_replacement",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_late_lock_blocks_private_native_removal",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_late_write_after_move_preserves_private_source",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_late_write_before_relocation_preserves_source",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_live_creator_keeps_admission_open",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_name_reuse_does_not_redirect_old_generation_retry",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_partial_remove_keeps_remaining_data",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_resume_after_move_preserves_public_replacement",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_resume_rechecks_generation_and_owner_evidence",
+      "status": "passed"
+    },
+    {
+      "name": "tests.test_retirement.RetirementContract.test_retirement_restores_git_data_but_not_ignored_files",
+      "status": "passed"
     }
   ],
   "cleanup_authorized": false,
@@ -298,8 +418,8 @@
   "status": "passed",
   "suite": "registry-integration",
   "system": "Darwin",
-  "tests_run": 71,
-  "timestamp": "2026-10-29T15:44:42.567228+00:00",
+  "tests_run": 101,
+  "timestamp": "2026-10-31T03:00:25.601179+00:00",
   "untested": [
     "power-loss",
     "disk-full",

@@ -46,6 +46,7 @@ setup_subject() {
 	trap teardown EXIT
 	export HOME="${TEST_ROOT}/home"
 	export AIDEVOPS_REPOS_JSON="${HOME}/.config/aidevops/repos.json"
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
 	export AIDEVOPS_WORKTREE_BASE_DIR="${TEST_ROOT}/Git/_worktrees"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup.log"
@@ -232,13 +233,13 @@ test_thirdparty_apply_guards() {
 	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || decision=skipped
 	[[ "$decision" == skipped && -f "$wt/dirty.txt" ]] || rc=1
 	_worktree_compact_source_matches() { return 0; }
-	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || rc=1
-	[[ "$decision" == archived-removed && ! -d "$wt" ]] || rc=1
-	git -C "$repo" worktree add -q -b old-feature "$wt" main || rc=1
+	# Legacy archive proof cannot authorize retirement without the registry.
+	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || decision=skipped
+	[[ "$decision" == skipped && -f "$wt/dirty.txt" ]] || rc=1
 	_pc_thirdparty_pr() { printf 'null\n'; return 0; }
 	_pc_unregistered_activity_epoch() { printf '100000\n'; return 0; }
-	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || rc=1
-	[[ "$decision" == archived-removed && ! -d "$wt" ]] || rc=1
+	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || decision=skipped
+	[[ "$decision" == skipped && -f "$wt/dirty.txt" ]] || rc=1
 	printf 'gitdir: %s/.git/worktrees/missing-canonical\n' "${TEST_ROOT}/Git/deleted" >"$orphan/.git"
 	printf 'recovery\n' >"$orphan/evidence.txt"
 	decision=$(_pc_thirdparty_candidate "$orphan" "" "${TEST_ROOT}/cache" 0) || rc=1
@@ -246,7 +247,7 @@ test_thirdparty_apply_guards() {
 	_pc_trash_orphan_dir() { mv "$1" "${TEST_ROOT}/trash"; return $?; }
 	decision=$(_pc_thirdparty_candidate "$orphan" "" "${TEST_ROOT}/cache" 1) || rc=1
 	[[ "$decision" == orphan-removed && -f "${TEST_ROOT}/trash/evidence.txt" ]] || rc=1
-	print_result "closed dirty archive failure veto, verified removal, orphan recoverable trash" "$rc" "$decision"
+	print_result "unregistered linked worktree retained; orphan recoverable trash preserved" "$rc" "$decision"
 	return 0
 }
 

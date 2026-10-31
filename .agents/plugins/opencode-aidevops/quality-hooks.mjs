@@ -57,6 +57,7 @@ import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
 import { assertBrowserTaskTransport } from "./browser-task-transport.mjs";
 import { adviseDockerCreation, appendDockerAdvisory } from "./docker-owner-advisory.mjs";
+import { admitToolOwner } from "./lifecycle-admission.mjs";
 
 export { needsDockerOwnerAdvisory } from "./docker-owner-advisory.mjs";
 
@@ -341,6 +342,10 @@ async function handleToolBefore(ctx, log, input, output) {
   enforceBoundedOperationSafety(ctx, input, output, sessionId);
   if (isBashTool(input.tool)) rememberBashOutputPolicy(callID, output.args);
   enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceContextForPath });
+  admitToolOwner({
+    scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
+    bash: isBashTool(input.tool), bounded: isBoundedOperationTool(input.tool),
+  });
 }
 
 function scrubObservedToolOutput(ctx, log, toolName, output) {

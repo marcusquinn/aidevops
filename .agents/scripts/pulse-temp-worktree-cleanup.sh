@@ -430,18 +430,15 @@ _ptwc_remove_candidate() {
 		audit_context=$(_pc_worktree_audit_context "" "" "0" "0" "$age_secs" \
 			"remote-ref" "$_PTWC_GUARD_CLEAR" "$_PTWC_GUARD_CLEAR" "$_PTWC_GUARD_CLEAR" "remote-ref")
 	fi
-	# Use the linked candidate as Git context. The canonical Git guard permits
-	# linked-worktree mutation but correctly rejects `worktree remove` when -C
-	# points at the canonical checkout.
-	git -C "$wt_path" worktree remove "$wt_path" >/dev/null 2>&1 || return 1
+	# Candidate heuristics cannot authorize removal; require registry retirement.
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" || return 1
+	worker_lifecycle_cleanup_worktree "$wt_path" >>"${LOGFILE:-/dev/null}" 2>&1 || return 1
 	if declare -F log_worktree_removal_event >/dev/null 2>&1; then
 		log_worktree_removal_event "${_WTAR_REMOVED:-worktree-removed}" "pulse-temp-worktree-cleanup.sh" \
-			"$wt_path" "$_PTWC_REASON" "permanent" "$audit_context"
+			"$wt_path" "$_PTWC_REASON" "registry-retirement" "$audit_context"
 	fi
-	if declare -F unregister_worktree >/dev/null 2>&1; then
-		unregister_worktree "$wt_path" 2>/dev/null || true
-	fi
-	printf '%s\n' "[pulse-wrapper] Temp worktree cleanup: removed detached fixture ${wt_path} — clean, age ${age_secs}s, HEAD reachable from remote" >>"${LOGFILE:-/dev/null}"
+	printf '%s\n' "[pulse-wrapper] Temp worktree cleanup: registry retired ${wt_path}" >>"${LOGFILE:-/dev/null}"
 	return 0
 }
 

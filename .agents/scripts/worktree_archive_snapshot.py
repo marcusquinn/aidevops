@@ -165,7 +165,7 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
         if include_untracked:
             paths = sorted(filter(None, git(root, 'ls-files', '--others', '--exclude-standard', '-z').split(b'\0')))
             contents = untracked_contents(root, paths)
-            result.update(untracked_files=len(paths),
+            result.update(untracked_files=len(paths), untracked_symlink_modes=True,
                           untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode('ascii')).hexdigest())
         return result
     options = ("--binary", "--full-index", "--no-ext-diff", "--no-textconv",
@@ -189,6 +189,7 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
             raise ValueError("untracked payload exceeds configured limit")
         contents = untracked_contents(root, paths)
         result.update(schema=3, untracked_files=len(paths), bytes=result["bytes"] + size,
+                      untracked_symlink_modes=True,
                       untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode("ascii")).hexdigest())
     return result
 
@@ -234,9 +235,15 @@ def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--preserve-git-admin", action="store_true")
     parser.add_argument("--include-ignored", action="store_true")
+    parser.add_argument("--git-only", action="store_true")
     parser.add_argument("worktree")
     args = parser.parse_args(argv)
-    print(json.dumps(snapshot(args.worktree, args.preserve_git_admin, args.include_ignored), sort_keys=True))
+    if args.git_only and (args.preserve_git_admin or args.include_ignored):
+        parser.error("--git-only cannot expand the WIP capture policy")
+    value = snapshot(
+        args.worktree, args.preserve_git_admin, args.include_ignored, args.git_only,
+    )
+    print(json.dumps(value, sort_keys=True))
     return 0
 
 

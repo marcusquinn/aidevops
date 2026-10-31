@@ -247,6 +247,9 @@ function projectFrameworkEnvironment(env, config) {
 
 function projectSessionIdentity(input, env, onSessionIdentity) {
   const { sessionId, modelId } = sessionModelIdentity(input);
+  // Stamp this runtime, never an inherited creator from another invocation.
+  env.AIDEVOPS_LIFECYCLE_RUNTIME_PID = sessionId ? String(process.pid) : "";
+  env.AIDEVOPS_LIFECYCLE_SESSION_ID = sessionId || "";
   if (sessionId) {
     env.OPENCODE_SESSION_ID = sessionId;
     env.AIDEVOPS_OPENCODE_SESSION_ID = sessionId;

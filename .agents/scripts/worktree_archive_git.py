@@ -22,10 +22,13 @@ def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
     executable = shutil.which('git')
     if executable is None:
         raise ValueError('Git executable unavailable')
+    # Fingerprinting via diff must not refresh the source's cached index stats.
     return subprocess.run(  # nosec B603 -- resolved Git, fixed subcommands, argv-only paths and object IDs
-                          [str(Path(executable).absolute()), "-c", "core.hooksPath=/dev/null", "-C", str(root), *args], input=data, env=environment,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          check=True, timeout=timeout).stdout
+        [str(Path(executable).absolute()), "-c", "core.hooksPath=/dev/null",
+         "-c", "diff.autoRefreshIndex=false", "-C", str(root), *args],
+        input=data, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        check=True, timeout=timeout,
+    ).stdout
 
 
 def auto_merge_oid(data):
