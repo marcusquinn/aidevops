@@ -172,8 +172,9 @@ def seal(record: dict) -> None:
         require(bool(record["launches"]), "missing owner admission evidence")
         owner_lifetime.require_admission_observed(record)
         process_reconciliation.reconcile(record)
+        census_cache = {}
         for launch in record["launches"]:
-            owner_lifetime.drain(launch, record["identity"])
+            owner_lifetime.drain(launch, record["identity"], census_cache)
         record.update(state="sealed", sealed_at=time.time())
         return
     if record["state"] == "sealed":

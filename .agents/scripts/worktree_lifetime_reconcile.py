@@ -101,7 +101,7 @@ def reconcile(record, snapshot=None):
     return counts
 
 
-def quiescence(launch, worktree_identity=None):
+def quiescence(launch, worktree_identity=None, census_cache=None):
     """Require a boot transition or two complete, empty Linux path censuses."""
     owner.require(finished(launch), "recorded process is not reconciled as finished")
     before = owner.boot_id()
@@ -115,13 +115,19 @@ def quiescence(launch, worktree_identity=None):
                       bool(worktree_identity.get("source_inode")),
                       "same-boot parent requires worktree generation identity")
         from worktree_process_snapshot import path_census
-        samples = []
-        for index in range(2):
-            if index:
-                time.sleep(CENSUS_INTERVAL)
-            sample = path_census(worktree_identity["path"])
-            owner.require(empty_census(sample, before), "same-boot process census active or unavailable")
-            samples.append(sample)
+        # This cache belongs to one seal/authorization call, never the registry.
+        key = (worktree_identity["path"], worktree_identity["source_inode"], os.getuid(), before)
+        samples = census_cache.get(key) if census_cache is not None else None
+        if samples is None:
+            samples = []
+            for index in range(2):
+                if index:
+                    time.sleep(CENSUS_INTERVAL)
+                sample = path_census(worktree_identity["path"])
+                owner.require(empty_census(sample, before), "same-boot process census active or unavailable")
+                samples.append(sample)
+            if census_cache is not None:
+                census_cache[key] = samples
         owner.require(samples[1]["observed_at"] - samples[0]["observed_at"] >= CENSUS_INTERVAL,
                       "process census interval too short")
         owner.require(owner.recorded_process_status(launch)["status"] in ENDED,

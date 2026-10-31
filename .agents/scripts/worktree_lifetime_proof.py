@@ -12,7 +12,7 @@ def require(condition, reason):
         raise ValueError(reason)
 
 
-def proof(record, source_inode):
+def proof(record, source_inode, fresh=False):
     require(not record.get("creation_pending"), "replacement creation has no completed admission")
     require(record["state"] == "sealed" and record["identity"]["source_inode"] == source_inode,
             "no matching sealed generation")
@@ -20,10 +20,15 @@ def proof(record, source_inode):
     if record.get("manager") == owner_lifetime.MANAGER:
         require(bool(record["launches"]), "missing owner admission evidence")
         owner_lifetime.require_admission_observed(record)
+        census_cache = {}
         for launch in record["launches"]:
             if launch.get("completion_evidence") is None:
                 from worktree_lifetime_reconcile import validate_quiescence
                 validate_quiescence(launch, record["identity"])
+                if fresh:
+                    # Persisted path observations are history, not present-tense
+                    # deletion authority. Recheck parents and references now.
+                    owner_lifetime.drain(launch, record["identity"], census_cache)
                 continue
             require(launch.get("kind") == owner_lifetime.KIND and
                     launch.get("completion_evidence") == "systemd-cgroup-v1" and
@@ -57,7 +62,10 @@ def inspect(record, path, extra, connection, verify_identity):
         source_inode = f"{observed.st_dev}:{observed.st_ino}"
     else:
         source_inode = extra[0]
-    proof(record, source_inode)
+    present = path.exists()
+    if present:
+        verify_identity(record, path)
+    proof(record, source_inode, fresh=present)
     if "archive_operation" in record:
         from worktree_lifetime_archive import require_verified
         require(record["archive_operation"]["phase"] in ("verified", "removed"),

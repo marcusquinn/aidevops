@@ -630,11 +630,15 @@ class ProcessReconciliationTests(unittest.TestCase):
         samples = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
         with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
                 patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
-                patch.object(census, "path_census", side_effect=samples * 2), \
+                patch.object(census, "path_census", side_effect=samples) as observe, \
                 patch.object(reconcile.time, "sleep") as pause:
             lifetime.seal(record)
             proof.proof(record, "fixture-inode")
-            self.assertEqual(pause.call_count, 2)
+            self.assertEqual(pause.call_count, 1)
+            self.assertEqual(observe.call_count, 2)
+        receipts = [launch["observation_quiescence"] for launch in record["launches"]]
+        self.assertEqual(receipts[0]["samples"], receipts[1]["samples"])
+        self.assertNotEqual(receipts[0]["identity"], receipts[1]["identity"])
         receipt = record["launches"][0]["observation_quiescence"]
         self.assertEqual(receipt["group"], "same-boot-proc-census")
         for change in ({"path": "/other"}, {"source_inode": "new-inode"}):
@@ -647,6 +651,43 @@ class ProcessReconciliationTests(unittest.TestCase):
             receipt["samples"] = [samples[0], bad]
             with self.assertRaises(ValueError):
                 proof.proof(record, "fixture-inode")
+
+    def test_present_removal_proof_refreshes_receipts_and_rechecks_parents(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        with tempfile.TemporaryDirectory() as directory:
+            record = self.record()
+            record["identity"] = {"path": directory, "source_inode": "fixture-inode"}
+            now = time.time()
+            sample = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                      "uid": os.getuid(), "references": 0, "uncertain": 0}
+            samples = [dict(sample, observed_at=now - 10), dict(sample, observed_at=now - 8)]
+            with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                    patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}) as parent, \
+                    patch.object(census, "path_census", side_effect=samples) as observe, \
+                    patch.object(reconcile.time, "sleep"):
+                lifetime.seal(record)
+                fresh = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
+                observe.side_effect = fresh
+                observe.reset_mock()
+                parent.reset_mock()
+                proof.inspect(record, Path(directory), ["fixture-inode"], None, lambda *_: None)
+                self.assertEqual(observe.call_count, 2)
+                self.assertEqual(parent.call_count, 2)
+                self.assertTrue(all(item["observation_quiescence"]["samples"] == fresh
+                                    for item in record["launches"]))
+                # A later FD/environment reference or incomplete census must
+                # refuse authorization even though the sealed receipt is valid.
+                for change in ({"references": 1}, {"uncertain": 1}, {"status": "unavailable"}):
+                    observe.side_effect = [dict(fresh[0], **change)]
+                    with self.subTest(change=change), self.assertRaisesRegex(ValueError, "active or unavailable"):
+                        proof.inspect(record, Path(directory), ["fixture-inode"], None, lambda *_: None)
+                observe.side_effect = fresh
+                parent.return_value = {"status": "same-process-alive"}
+                with self.assertRaisesRegex(ValueError, "parent no longer finished"):
+                    proof.inspect(record, Path(directory), ["fixture-inode"], None, lambda *_: None)
+                observe.side_effect = AssertionError("absent source must use historical receipts")
+                proof.inspect(record, Path(directory) / "absent", ["fixture-inode"], None, lambda *_: None)
 
     def test_same_boot_busy_or_unknown_census_preserves_worktree(self):
         import worktree_lifetime_reconcile as reconcile
