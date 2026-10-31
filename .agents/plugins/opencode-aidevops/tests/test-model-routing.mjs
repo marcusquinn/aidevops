@@ -19,7 +19,12 @@ import {
   applyAgentRoutingProfile,
   registerAgentRoutingIntent,
 } from "../config-agent-profiles.mjs";
-import { applyCompactionRouting, capCompactionEffort, createCompactionResidencyWarning } from "../compaction-routing.mjs";
+import { applyCompactionEffort } from "../compaction-effort.mjs";
+import {
+  applyCompactionRouting,
+  createCompactionCredentialCheck,
+  createCompactionResidencyWarning,
+} from "../compaction-routing.mjs";
 
 test("a model serving several tiers resolves by observed variant", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));
@@ -226,18 +231,20 @@ test("agent routing metadata defers tier selection while preserving explicit mod
   assert.deepEqual(pinned, { model: "other/pinned" });
 });
 
+const credentialed = () => true;
+
 test("compaction uses the simple route only when its input budget fits the managed target", () => {
   const routing = { tiers: { simple: { models: ["openai/gpt-6-luna"], reasoning: { openai: "low" } } } };
   const config = { provider: { openai: { models: {
     "gpt-6-luna": { limit: { input: 260000, output: 128000, context: 388000 } },
   } } } };
-  assert.equal(applyCompactionRouting(config, routing), true);
-  assert.deepEqual(config.agent.compaction, { model: "openai/gpt-6-luna", variant: "medium" });
+  assert.equal(applyCompactionRouting(config, routing, { hasCredentials: credentialed }), true);
+  assert.deepEqual(config.agent.compaction, { model: "openai/gpt-6-luna", variant: "high" });
 
   const tooSmall = { provider: { openai: { models: {
     "gpt-6-luna": { limit: { input: 239999 } },
   } } } };
-  assert.equal(applyCompactionRouting(tooSmall, routing), false);
+  assert.equal(applyCompactionRouting(tooSmall, routing, { hasCredentials: credentialed }), false);
   assert.deepEqual(tooSmall.agent.compaction, {});
 });
 
@@ -250,34 +257,92 @@ test("compaction skips a too-small first simple candidate for the next that fits
     anthropic: { models: { "claude-haiku-4-5": { limit: { context: 200000, output: 32000 } } } },
     openai: { models: { "gpt-6-luna": { limit: { input: 260000, output: 128000, context: 388000 } } } },
   } };
-  assert.equal(applyCompactionRouting(config, routing), true);
-  assert.deepEqual(config.agent.compaction, { model: "openai/gpt-6-luna", variant: "medium" });
+  assert.equal(applyCompactionRouting(config, routing, { hasCredentials: credentialed }), true);
+  assert.equal(config.agent.compaction.model, "openai/gpt-6-luna");
 });
 
-test("compaction effort is clamped down, never raised, and only for the compaction agent", () => {
-  const routing = { tiers: { simple: { models: ["openai/gpt-6-luna"], reasoning: { "openai/gpt-6-luna": "medium" } } } };
-  const opus = { providerID: "anthropic", id: "claude-opus-5-5" };
-  const maxed = { options: { thinking: { type: "adaptive" }, effort: "max" } };
+test("compaction without OpenAI credentials falls back to catalog Haiku 5.5, then the parent (GH#36169)", () => {
+  const routing = { compactionReasoning: "xhigh", tiers: { simple: {
+    models: ["openai/gpt-6-luna", "anthropic/claude-haiku-5-5"],
+  } } };
+  // The plugin always writes OpenAI limits; Haiku 5.5 exists only in the catalog.
+  const config = () => ({ provider: { openai: { models: { "gpt-6-luna": { limit: { input: 260000 } } } } } });
+  const env = {};
+  const anthropicOnly = config();
+  const check = createCompactionCredentialCheck(anthropicOnly, { env, authProviders: new Set(["anthropic"]), localProviders: [] });
+  assert.equal(applyCompactionRouting(anthropicOnly, routing, { hasCredentials: check }), true);
+  assert.deepEqual(anthropicOnly.agent.compaction, { model: "anthropic/claude-haiku-5-5", variant: "xhigh" });
+
+  const none = config();
+  const noCredentials = createCompactionCredentialCheck(none, { env, authProviders: new Set(), localProviders: [] });
+  assert.equal(applyCompactionRouting(none, routing, { hasCredentials: noCredentials }), false);
+  assert.deepEqual(none.agent.compaction, {});
+
+  const keyed = config();
+  const envCheck = createCompactionCredentialCheck(keyed, { env: { OPENAI_API_KEY: "x" }, authProviders: new Set(), localProviders: [] });
+  assert.equal(applyCompactionRouting(keyed, routing, { hasCredentials: envCheck }), true);
+  assert.equal(keyed.agent.compaction.model, "openai/gpt-6-luna");
+
+  const disabled = { ...config(), disabled_providers: ["openai"] };
+  const disabledCheck = createCompactionCredentialCheck(disabled, { env, authProviders: new Set(["openai", "anthropic"]), localProviders: [] });
+  assert.equal(applyCompactionRouting(disabled, routing, { hasCredentials: disabledCheck }), true);
+  assert.equal(disabled.agent.compaction.model, "anthropic/claude-haiku-5-5");
+});
+
+test("compaction credential check trusts local providers and credential options", () => {
+  const config = { provider: { custom: { options: { baseURL: "http://localhost:1/v1" } }, bare: {} } };
+  const check = createCompactionCredentialCheck(config, { env: {}, authProviders: new Set(), localProviders: ["ollama"] });
+  assert.equal(check("ollama"), true);
+  assert.equal(check("custom"), true);
+  assert.equal(check("bare"), false);
+  assert.equal(check("openai"), false);
+});
+
+test("compaction effort is fixed both ways from the model's own variants (GH#36169)", () => {
+  const routing = { compactionReasoning: "high", tiers: { simple: { models: ["openai/gpt-6-luna"] } } };
+  const lunaVariants = Object.fromEntries(["none", "low", "medium", "high", "xhigh"]
+    .map((effort) => [effort, { reasoningEffort: effort, reasoningSummary: "auto" }]));
+  const luna = { providerID: "openai", id: "gpt-6-luna", variants: lunaVariants };
   const logs = [];
   const log = (level, message) => logs.push(`${level} ${message}`);
-  assert.deepEqual(capCompactionEffort({ agent: "compaction", model: opus }, maxed, routing, { env: {}, log }), [{ from: "max", to: "high" }]);
-  assert.equal(maxed.options.effort, "high");
-  assert.deepEqual(logs, ["INFO [compaction] effort capped max -> high (claude-opus-5-5)"]);
 
-  const luna = { providerID: "openai", id: "gpt-6-luna" };
-  const lunaXhigh = { options: { reasoningEffort: "xhigh" } };
-  capCompactionEffort({ agent: "compaction", model: luna }, lunaXhigh, routing, { env: {} });
-  assert.equal(lunaXhigh.options.reasoningEffort, "medium");
+  const low = { options: { reasoningEffort: "low" } };
+  assert.deepEqual(applyCompactionEffort({ agent: "compaction", model: luna }, low, routing, { env: {}, log }), { from: "low", to: "high" });
+  assert.deepEqual(low.options, { reasoningEffort: "high", reasoningSummary: "auto" });
+  assert.deepEqual(logs, ["INFO [compaction] effort low -> high (gpt-6-luna)"]);
 
-  const low = { options: { effort: "low" } };
-  assert.deepEqual(capCompactionEffort({ agent: "compaction", model: opus }, low, routing, { env: {} }), []);
+  // An Opus parent's `max` has no Luna variant, so OpenCode sent no effort at all.
+  const absent = { options: {} };
+  assert.deepEqual(applyCompactionEffort({ agent: "compaction", model: luna }, absent, routing, { env: {} }), { from: "default", to: "high" });
+
+  const maxed = { options: { reasoningEffort: "xhigh" } };
+  applyCompactionEffort({ agent: "compaction", model: luna }, maxed, { ...routing, compactionReasoning: "max" }, { env: {} });
+  assert.equal(maxed.options.reasoningEffort, "xhigh", "max falls back to Luna's highest catalogued variant");
+
+  const opusVariants = { high: { thinking: { type: "adaptive" }, effort: "high" }, max: { thinking: { type: "adaptive" }, effort: "max" } };
+  const opus = { providerID: "anthropic", id: "claude-opus-5-5", variants: opusVariants };
+  const opusMax = { options: { thinking: { type: "adaptive", display: "summarized" }, effort: "max" } };
+  applyCompactionEffort({ agent: "compaction", model: opus }, opusMax, routing, { env: {} });
+  assert.deepEqual(opusMax.options, { thinking: { type: "adaptive", display: "summarized" }, effort: "high" });
+
   const primary = { options: { effort: "max" } };
-  assert.deepEqual(capCompactionEffort({ agent: "build-plus", model: opus }, primary, routing, { env: {} }), []);
+  assert.equal(applyCompactionEffort({ agent: "build-plus", model: opus }, primary, routing, { env: {} }), null);
   assert.equal(primary.options.effort, "max");
 
-  const override = { options: { reasoning: { effort: "xhigh" } } };
-  capCompactionEffort({ agent: "compaction", model: opus }, override, routing, { env: { AIDEVOPS_COMPACTION_MAX_EFFORT: "medium" } });
-  assert.equal(override.options.reasoning.effort, "medium");
+  const envTarget = { options: { reasoningEffort: "high" } };
+  applyCompactionEffort({ agent: "compaction", model: luna }, envTarget, routing, { env: { AIDEVOPS_COMPACTION_EFFORT: "xhigh" } });
+  assert.equal(envTarget.options.reasoningEffort, "xhigh");
+  const capped = { options: { reasoningEffort: "high" } };
+  applyCompactionEffort({ agent: "compaction", model: luna }, capped, routing, { env: { AIDEVOPS_COMPACTION_EFFORT: "xhigh", AIDEVOPS_COMPACTION_MAX_EFFORT: "medium" } });
+  assert.equal(capped.options.reasoningEffort, "medium");
+
+  // No variant catalogue: existing keys are only clamped down.
+  const uncatalogued = { providerID: "vendor", id: "model" };
+  const nested = { options: { reasoning: { effort: "max" } } };
+  applyCompactionEffort({ agent: "compaction", model: uncatalogued }, nested, routing, { env: {} });
+  assert.equal(nested.options.reasoning.effort, "high");
+  const lowNested = { options: { reasoning: { effort: "low" } } };
+  assert.equal(applyCompactionEffort({ agent: "compaction", model: uncatalogued }, lowNested, routing, { env: {} }), null);
 });
 
 test("compaction routing keeps local sessions local (GH#35893)", () => {
@@ -291,29 +356,30 @@ test("compaction routing keeps local sessions local (GH#35893)", () => {
   });
   const bound = { bound: true, localProviders: ["ollama"] };
 
+  const opts = (extra) => ({ hasCredentials: credentialed, ...extra });
   const boundLocal = { provider: provider() };
-  assert.equal(applyCompactionRouting(boundLocal, routing, { policy: bound }), true);
+  assert.equal(applyCompactionRouting(boundLocal, routing, opts({ policy: bound })), true);
   assert.equal(boundLocal.agent.compaction.model, "ollama/qwen-big");
 
   const boundCloudOnly = { provider: { openai: provider().openai } };
   const cloudRouting = { tiers: { simple: { models: ["openai/gpt-6-luna"] } } };
-  assert.equal(applyCompactionRouting(boundCloudOnly, cloudRouting, { policy: bound }), false);
+  assert.equal(applyCompactionRouting(boundCloudOnly, cloudRouting, opts({ policy: bound })), false);
   assert.deepEqual(boundCloudOnly.agent.compaction, {});
 
   const unbound = { bound: false, localProviders: [] };
   const localDefault = { model: "ollama/qwen-big", provider: provider() };
-  assert.equal(applyCompactionRouting(localDefault, routing, { policy: unbound, localProviders: ["ollama"] }), true);
+  assert.equal(applyCompactionRouting(localDefault, routing, opts({ policy: unbound, localProviders: ["ollama"] })), true);
   assert.equal(localDefault.agent.compaction.model, "ollama/qwen-big");
 
   let reads = 0;
   const cloudDefault = { model: "anthropic/claude-opus-5-5", provider: provider() };
   const thunk = () => { reads += 1; return ["ollama"]; };
-  assert.equal(applyCompactionRouting(cloudDefault, routing, { policy: unbound, localProviders: thunk }), true);
-  assert.deepEqual(cloudDefault.agent.compaction, { model: "openai/gpt-6-luna", variant: "medium" });
+  assert.equal(applyCompactionRouting(cloudDefault, routing, opts({ policy: unbound, localProviders: thunk })), true);
+  assert.deepEqual(cloudDefault.agent.compaction, { model: "openai/gpt-6-luna", variant: "high" });
   assert.equal(reads, 1);
 
   const noDefault = { provider: provider() };
-  assert.equal(applyCompactionRouting(noDefault, routing, { policy: unbound, localProviders: () => assert.fail("not read") }), true);
+  assert.equal(applyCompactionRouting(noDefault, routing, opts({ policy: unbound, localProviders: () => assert.fail("not read") })), true);
   assert.equal(noDefault.agent.compaction.model, "openai/gpt-6-luna");
 });
 

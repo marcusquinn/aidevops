@@ -24,7 +24,7 @@ const envelope = JSON.stringify({
 });
 
 test("shipped routes keep Sol medium in charge and Astra outside automatic escalation", () => {
-  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "medium" });
+  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "high" });
   assert.deepEqual(routingProfile(routing, "standard"), { tier: "standard", model: "openai/gpt-6.1-sol", variant: "medium" });
   assert.deepEqual(routingProfile(routing, "thinking"), { tier: "thinking", model: "openai/gpt-6.1-sol", variant: "medium" });
   assert.equal(nextRoutingTier(routing, "thinking"), "");
@@ -36,7 +36,7 @@ test("shipped routes keep Sol medium in charge and Astra outside automatic escal
   assert.deepEqual(routingProfile(partial, "standard"), {
     tier: "standard", model: "openai/gpt-6.1-terra", variant: "medium",
   });
-  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "medium" });
+  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "high" });
 });
 
 test("policy requires one bounded highest-capability consultation before an avoidable user decision", () => {

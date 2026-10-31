@@ -49,7 +49,8 @@ import {
 import { compactingHook } from "./compaction.mjs";
 import { createCompactionAutoContinueGuard } from "./compaction-lifecycle.mjs";
 import { createCompactionInputReplay } from "./compaction-pinned-input.mjs";
-import { capCompactionEffort, createCompactionResidencyWarning } from "./compaction-routing.mjs";
+import { applyCompactionEffort } from "./compaction-effort.mjs";
+import { createCompactionResidencyWarning } from "./compaction-routing.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
@@ -742,8 +743,8 @@ export async function AidevopsPlugin({ directory, client }) {
         tierReasoning,
         },
       );
-      // GH#32934: last, so no earlier hook can restore a max/xhigh summary.
-      capCompactionEffort(input, output, modelRouting, { log: qualityLog });
+      // GH#32934/GH#36169: last, so no earlier hook can change compaction effort.
+      applyCompactionEffort(input, output, modelRouting, { log: qualityLog });
       return applied;
     },
 
