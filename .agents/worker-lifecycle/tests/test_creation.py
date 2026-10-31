@@ -28,6 +28,7 @@ class CreationContract(unittest.TestCase):
             key: value for key, value in os.environ.items()
             if not key.startswith("GIT_")
         }
+        environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         for arguments in (
             ["init", "-q", str(self.repo)],
             ["-C", str(self.repo), "config", "core.hooksPath", "/dev/null"],

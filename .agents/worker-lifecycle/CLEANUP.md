@@ -166,7 +166,7 @@ These hooks do not establish complete writer coverage. Opaque programs must obey
 the declared-worktree contract; their internal file accesses are not inferred.
 Disposable Linux hook tests are not evidence of live Claude/OpenCode SDK deployment
 or macOS qualification. Pre-existing unregistered writers remain uncovered.
-Automatic removal remains disconnected.
+Scheduled Pulse cleanup can retire registered generations that satisfy the registry checks.
 
 ### Restartable generation enrollment
 

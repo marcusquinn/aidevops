@@ -1,8 +1,8 @@
 # Portable registry validation
 
 Copy only `worker-lifecycle-registry-validate.pyz` to the target Linux or macOS
-machine. Python 3.10+ with its standard-library SQLite module, native Git and Bash
-are required. No
+machine. Python 3.10+ with its standard-library SQLite module, native Git supporting
+`init --initial-branch` and `rev-parse --path-format`, and Bash are required. No
 repository checkout, pip installation, OpenCode, account credentials or sudo.
 
 ```bash

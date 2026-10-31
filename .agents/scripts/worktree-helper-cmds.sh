@@ -592,7 +592,11 @@ cmd_remove() {
 	# infer authority from legacy ownership, cwd scans or branch/PR status.
 	# shellcheck source=./worker-lifecycle-state.sh
 	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" || return 1
-	worker_lifecycle_cleanup_worktree "$path_to_remove" || return 1
+	if ! worker_lifecycle_cleanup_worktree "$path_to_remove"; then
+		printf 'Retirement refused; worktree retained: %s\n' "$path_to_remove" >&2
+		printf '%s\n' '--force cannot override lifecycle registry checks.' >&2
+		return 1
+	fi
 
 	return 0
 }
