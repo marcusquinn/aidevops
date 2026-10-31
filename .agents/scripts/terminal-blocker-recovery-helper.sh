@@ -620,6 +620,7 @@ _tbr_release_legacy_hold() {
 	retry=$(_terminal_blocker_latest_retry_comment "$comments") || return 2
 	[[ -n "$retry" ]] || return 2
 	events=$(gh api "repos/${repo}/issues/${issue}/events?per_page=100" --paginate --slurp 2>/dev/null) || return 2
+	# shellcheck disable=SC2016 # jq variables are supplied via --arg/--argjson
 	local label_filter='
 		if type != $array or any(.[]; type != $array) then error("invalid history") else flatten end
 		| map(select((.event == "labeled" or .event == "unlabeled") and .label.name == $blocked))
@@ -628,6 +629,7 @@ _tbr_release_legacy_hold() {
 		| sort_by(.created_at, .id) | last | select(.event == "labeled")
 	'
 	label=$(jq -ce --argjson now "$now" --arg blocked "$blocked" --arg array "$array_type" "${order_jq}${label_filter}" <<<"$events") || return 2
+	# shellcheck disable=SC2016 # jq variables are supplied via --argjson
 	local key_filter='
 		select(comment_id != null and ($release | comment_id) != null and ($retry | comment_id) != null)
 		| select(($retry.created_at | fromdateiso8601) <= $now)
