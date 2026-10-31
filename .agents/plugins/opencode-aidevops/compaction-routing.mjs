@@ -1,27 +1,92 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
+import { readFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { DEFAULT_COMPACTION_TARGET } from "./context-budget-policy.mjs";
 import { activeLocalOnlyPolicy, configuredLocalProviders, isLocalProvider } from "./local-only-policy.mjs";
-import { routingCandidates, routingModelIdentity, routingVariant } from "./model-routing.mjs";
+import { CLAUDE_MODEL_LIMITS } from "./model-limits.mjs";
+import { routingCandidates, routingModelIdentity } from "./model-routing.mjs";
+import { COMPACTION_REASONING_DEFAULT, compactionReasoning } from "./model-routing-variant.mjs";
+import { optionsHaveCredentials } from "./provider-credentials.mjs";
 import { clampReasoningVariant } from "./subagent-effort.mjs";
 
-// GH#32934: OpenCode sends the session variant with compaction, and variant
-// options merge last, so `agent.compaction.variant` cannot lower effort. Opus
-// 5.5 `max` compactions ran 165-196s with no output before being aborted.
-export const COMPACTION_EFFORT_CEILING = "high";
+// GH#36169: OpenCode builds compaction options from the parent user message's
+// variant only (session/llm/request.ts), so `agent.compaction.variant` has no
+// effect and a `low` session compacts at `low`, or at the provider default
+// when the parent variant does not exist on the compaction model. The
+// chat.params hook therefore applies one fixed compaction effort, up or down.
+// GH#32934: Opus 5.5 `max` compactions stalled 165-196s; legacy
+// AIDEVOPS_COMPACTION_MAX_EFFORT still caps the target.
 const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 const EFFORT_KEYS = ["effort", "reasoningEffort", "reasoning_effort"];
 
+// Catalog env keys for providers the shipped simple tier names. Other remote
+// providers need stored auth, a configured env list, or credential options.
+const PROVIDER_ENV_KEYS = {
+  openai: ["OPENAI_API_KEY"],
+  anthropic: ["ANTHROPIC_API_KEY"],
+};
+
+function claudeCatalogInputLimit(providerID, modelID) {
+  if (providerID !== "anthropic") return 0;
+  const limit = CLAUDE_MODEL_LIMITS[modelID];
+  return limit ? limit.context - limit.output : 0;
+}
+
+// Native catalog models (Haiku 5.5) have no config.provider entry; fall back
+// to the managed Claude limits rather than treating them as too small.
 function inputLimit(config, model) {
   const { providerID, modelID } = routingModelIdentity(model);
   const limit = config?.provider?.[providerID]?.models?.[modelID]?.limit;
-  if (!limit || typeof limit !== "object") return 0;
+  if (!limit || typeof limit !== "object") return claudeCatalogInputLimit(providerID, modelID);
   if (Number.isFinite(limit.input)) return limit.input;
   if (Number.isFinite(limit.context) && Number.isFinite(limit.output)) {
     return limit.context - limit.output;
   }
-  return 0;
+  return claudeCatalogInputLimit(providerID, modelID);
+}
+
+/** Provider IDs with stored OpenCode credentials; key names only, never values. */
+export function storedAuthProviders(env = process.env) {
+  const dataHome = env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+  try {
+    const parsed = JSON.parse(readFileSync(join(dataHome, "opencode", "auth.json"), "utf8"));
+    return new Set(parsed && typeof parsed === "object" ? Object.keys(parsed) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Config-time credential check for compaction candidates (GH#36169). The
+ * plugin always writes `config.provider.openai`, which OpenCode lists as a
+ * `source: "config"` provider even without a key, so an uncredentialed Luna
+ * route fails with "OpenAI API key is missing" instead of falling back.
+ * @returns {(providerID: string) => boolean}
+ */
+export function createCompactionCredentialCheck(config, {
+  env = process.env,
+  authProviders = () => storedAuthProviders(env),
+  localProviders = () => configuredLocalProviders(),
+} = {}) {
+  let stored = null;
+  let local = null;
+  const enabled = Array.isArray(config?.enabled_providers) ? config.enabled_providers : null;
+  const disabled = Array.isArray(config?.disabled_providers) ? config.disabled_providers : [];
+  return (providerID) => {
+    if (!providerID || disabled.includes(providerID)) return false;
+    if (enabled && !enabled.includes(providerID)) return false;
+    local ??= (typeof localProviders === "function" ? localProviders() : localProviders) || [];
+    if (local.includes(providerID)) return true;
+    stored ??= typeof authProviders === "function" ? authProviders() : authProviders;
+    if (stored?.has?.(providerID)) return true;
+    const definition = config?.provider?.[providerID] || {};
+    const envKeys = [...(PROVIDER_ENV_KEYS[providerID] || []), ...(Array.isArray(definition.env) ? definition.env : [])];
+    if (envKeys.some((key) => Boolean(env?.[key]))) return true;
+    return optionsHaveCredentials(definition.options);
+  };
 }
 
 // GH#35893: OpenCode 1.x reads the compaction model only from global agent
@@ -42,19 +107,21 @@ function allowedCompactionProvider(config, policy, localProviders) {
 
 /**
  * Route unpinned OpenCode compaction summaries to the first simple-tier
- * candidate that can accept the full managed compaction input and is allowed
- * by local-provider residency. Candidates that are too small (Haiku's 168K)
- * or non-local for a local session are skipped rather than disabling the
- * route; with no fitting candidate compaction stays on the parent model.
+ * candidate that has usable credentials, can accept the full managed
+ * compaction input, and is allowed by local-provider residency. Unusable
+ * candidates are skipped (no OpenAI credentials: Luna -> Haiku 5.5); with no
+ * fitting candidate compaction stays on the parent model.
  * @param {object} config - OpenCode Config object (mutable)
  * @param {object} routing - resolved aidevops routing table
- * @param {object} [opts] - `policy` (local-only binding) and `localProviders`
- *   (list or thunk; read only when the default model needs classifying)
+ * @param {object} [opts] - `policy` (local-only binding), `localProviders`
+ *   (list or thunk; read only when the default model needs classifying) and
+ *   `hasCredentials(providerID)` (defaults to createCompactionCredentialCheck)
  * @returns {boolean} whether a compaction route was applied
  */
 export function applyCompactionRouting(config, routing, {
   policy = activeLocalOnlyPolicy(),
   localProviders = () => configuredLocalProviders(),
+  hasCredentials = createCompactionCredentialCheck(config, { localProviders }),
 } = {}) {
   if (!config || !routing) return false;
   config.agent ??= {};
@@ -63,11 +130,12 @@ export function applyCompactionRouting(config, routing, {
 
   const allowed = allowedCompactionProvider(config, policy, localProviders);
   for (const model of routingCandidates(routing, "simple")) {
-    if (!allowed(routingModelIdentity(model).providerID)) continue;
+    const { providerID } = routingModelIdentity(model);
+    if (!allowed(providerID) || !hasCredentials(providerID)) continue;
     if (inputLimit(config, model) < DEFAULT_COMPACTION_TARGET) continue;
     compaction.model = model;
-    const variant = routingVariant(routing, "simple", model);
-    if (variant) compaction.variant = variant;
+    // Informational: OpenCode ignores it for compaction; chat.params applies it.
+    compaction.variant = compactionReasoning(routing.compactionReasoning);
     return true;
   }
   return false;
@@ -105,36 +173,73 @@ export function createCompactionResidencyWarning({
   };
 }
 
-function compactionEffortCeiling(input, routing, env) {
-  const override = String(env?.AIDEVOPS_COMPACTION_MAX_EFFORT || "").toLowerCase();
-  const ceiling = EFFORT_LEVELS.includes(override) ? override : COMPACTION_EFFORT_CEILING;
-  const providerID = input?.model?.providerID ?? input?.provider?.id ?? "";
-  const modelID = input?.model?.id ?? input?.model?.modelID ?? "";
-  const model = `${providerID}/${modelID}`;
-  if (!routingCandidates(routing, "simple").includes(model)) return ceiling;
-  const routed = routingVariant(routing, "simple", model);
-  return routed ? clampReasoningVariant(routed, ceiling) : ceiling;
+function envEffort(env, key) {
+  const value = String(env?.[key] || "").toLowerCase();
+  return EFFORT_LEVELS.includes(value) ? value : "";
+}
+
+/** Effective compaction effort: AIDEVOPS_COMPACTION_EFFORT, else the table setting, capped by the legacy ceiling. */
+export function compactionEffortTarget(routing, env = process.env) {
+  const target = envEffort(env, "AIDEVOPS_COMPACTION_EFFORT")
+    || compactionReasoning(routing?.compactionReasoning ?? COMPACTION_REASONING_DEFAULT);
+  const ceiling = envEffort(env, "AIDEVOPS_COMPACTION_MAX_EFFORT");
+  return ceiling ? clampReasoningVariant(target, ceiling) : target;
+}
+
+// Highest catalogued variant at or below the target (Luna has no `max`).
+function catalogVariant(variants, target) {
+  if (!variants || typeof variants !== "object") return "";
+  for (let rank = EFFORT_LEVELS.indexOf(target); rank >= 0; rank -= 1) {
+    const name = EFFORT_LEVELS[rank];
+    if (variants[name] && typeof variants[name] === "object") return name;
+  }
+  return "";
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeOptions(target, source) {
+  for (const [key, value] of Object.entries(source)) {
+    if (isPlainObject(value) && isPlainObject(target[key])) mergeOptions(target[key], value);
+    else target[key] = isPlainObject(value) ? structuredClone(value) : value;
+  }
+}
+
+function currentEffort(options) {
+  for (const target of [options, options?.reasoning, options?.output_config]) {
+    for (const key of EFFORT_KEYS) {
+      if (typeof target?.[key] === "string") return target[key];
+    }
+  }
+  return "";
 }
 
 /**
- * Clamp compaction reasoning effort down (never up) to the routed simple-tier
- * variant, or to COMPACTION_EFFORT_CEILING on the parent model. Covers
- * Anthropic adaptive `effort`, OpenAI `reasoningEffort`/`reasoning_effort`,
- * and nested `reasoning.effort`/`output_config.effort` shapes.
- * @param {object} [opts] - `env` for the ceiling override, `log(level, msg)`
- * @returns {{from: string, to: string}[]} applied clamps
+ * Apply one compaction effort, raising or lowering the parent variant's, by
+ * merging the compaction model's own catalogued variant options (so each
+ * provider gets its native shape). Without a variant catalogue, existing
+ * effort keys are only clamped down. Only the compaction agent is affected.
+ * @param {object} [opts] - `env` (effort overrides), `log(level, msg)`
+ * @returns {{from: string, to: string}|null} applied change
  */
-export function capCompactionEffort(input, output, routing, { env = process.env, log } = {}) {
-  if (compactionAgent(input) !== "compaction" || !output?.options) return [];
-  const ceiling = compactionEffortCeiling(input, routing, env);
+export function applyCompactionEffort(input, output, routing, { env = process.env, log } = {}) {
+  if (compactionAgent(input) !== "compaction" || !output?.options) return null;
+  const target = compactionEffortTarget(routing, env);
   const { options } = output;
-  const applied = [options, options.reasoning, options.output_config]
-    .flatMap((target) => clampEffortKeys(target, ceiling));
+  const from = currentEffort(options) || "default";
   const model = input?.model?.id ?? input?.model?.modelID ?? "unknown model";
-  for (const { from, to } of applied) {
-    log?.("INFO", `[compaction] effort capped ${from} -> ${to} (${model})`);
+  const name = catalogVariant(input?.model?.variants, target);
+  if (name) {
+    mergeOptions(options, input.model.variants[name]);
+  } else {
+    [options, options.reasoning, options.output_config].forEach((part) => clampEffortKeys(part, target));
   }
-  return applied;
+  const to = currentEffort(options) || from;
+  if (to === from) return null;
+  log?.("INFO", `[compaction] effort ${from} -> ${to} (${model})`);
+  return { from, to };
 }
 
 function clampEffortKeys(target, ceiling) {

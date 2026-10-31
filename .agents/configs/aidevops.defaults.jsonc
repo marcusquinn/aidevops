@@ -281,7 +281,7 @@
     "tiers": {
       "simple": {
         "models": ["openai/gpt-6-luna", "anthropic/claude-haiku-5-5"],
-        "reasoning": { "openai/gpt-6-luna": "medium", "anthropic/claude-haiku-5-5": "medium" }
+        "reasoning": { "openai/gpt-6-luna": "high", "anthropic/claude-haiku-5-5": "high" }
       },
       "standard": {
         "models": ["openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-5-5"],
