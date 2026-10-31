@@ -22,6 +22,7 @@ import pulse_auth_usage as usage
 import pulse_repo_auth as auth
 import github_auth_cli as cli
 import github_auth_migration as migration
+import github_auth_runtime as runtime
 from github_auth_policy import policy
 
 
@@ -361,6 +362,43 @@ class RepositoryAuthTests(unittest.TestCase):
                 path.write_text(json.dumps(value))
             backend.cached_token(self.profile, "456", "owner/repo", cache)
             self.assertEqual(mint.call_count, 5)
+
+    def test_exchange_caps_permissions_to_installation_grants(self):
+        requested = {name: "read" for name in backend.REQUIRED_PULSE_PERMISSIONS}
+        granted = {"metadata": "read", "issues": "write", "pull_requests": "read"}
+        identity = {"app_id": 123, "account": {"login": "owner"}, "permissions": granted}
+        response = {"token": self.installation_credential, "expires_at": "2099-01-01T00:00:00Z"}
+        for grants in (granted, requested):
+            with patch.object(backend, "jwt", return_value="test-jwt"), \
+                    patch.object(backend, "api", side_effect=[dict(identity, permissions=grants), response]) as api:
+                backend.exchange(self.profile, "456", "owner/repo", requested)
+            body = api.call_args.args[3]
+            self.assertEqual(body["permissions"], {name: "read" for name in grants})
+            self.assertEqual(body["repositories"], ["repo"])
+
+    def test_legacy_default_migrates_but_custom_scope_is_preserved(self):
+        legacy = {"metadata": "read", "issues": "read", "pull_requests": "read"}
+        custom = {"metadata": "read", "issues": "read"}
+        response = {"token": self.installation_credential, "expires_at_epoch": time.time() + 3600}
+        for configured in (legacy, custom):
+            profile = dict(self.profile, permissions=configured)
+            with patch.object(backend, "exchange", return_value=response) as mint:
+                backend.cached_token(profile, "456", "owner/repo", self.root / "cache")
+            expected = ({name: "read" for name in backend.REQUIRED_PULSE_PERMISSIONS}
+                        if configured == legacy else custom)
+            self.assertEqual(mint.call_args.args[3], expected)
+            self.assertEqual(profile["permissions"], configured)
+
+    def test_check_names_missing_installation_permissions_before_mint(self):
+        registry = self.root / "repos.json"
+        backend.atomic_json(registry, self.data)
+        args = cli.parser().parse_args(["check", "owner/repo"])
+        grants = {name: "read" for name in backend.REQUIRED_PULSE_PERMISSIONS if name != "contents"}
+        with patch.object(runtime, "installation_permissions", return_value=grants), \
+                patch.object(runtime, "cached_token") as mint:
+            with self.assertRaisesRegex(backend.AuthError, "installation.*contents"):
+                runtime.auth_status(args, registry, self.config)
+        mint.assert_not_called()
 
     def test_private_file_and_lock_safety(self):
         with self.assertRaises(backend.AuthError):

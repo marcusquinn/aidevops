@@ -19,6 +19,31 @@ from worktree_recovery_retirement_transaction import inventory
 
 
 class MetadataCases:
+    def test_symlink_permission_bits_do_not_block_capture(self):
+        # GH#36279: macOS `ln -s` gives 0o755 links; only the target is evidence.
+        observed = Mock(st_uid=os.geteuid(), st_gid=os.getegid(), st_nlink=1)
+        for tar_metadata in (False, True):
+            for mode in (0o777, 0o755, 0o700):
+                observed.st_mode = stat.S_IFLNK | mode
+                filesystem.supported_metadata(observed, [], tar_metadata)
+            for mode in (0o1755, 0o2755, 0o4777):
+                observed.st_mode = stat.S_IFLNK | mode
+                with self.assertRaises(ValueError):
+                    filesystem.supported_metadata(observed, [], tar_metadata)
+        observed.st_mode = stat.S_IFLNK | 0o755
+        observed.st_nlink = 2
+        with self.assertRaises(ValueError):
+            filesystem.supported_metadata(observed, [])
+        observed.st_nlink = 1
+        with self.assertRaises(ValueError):
+            filesystem.supported_metadata(observed, ["user.must-preserve"])
+        observed.st_uid += 1
+        with self.assertRaises(ValueError):
+            filesystem.supported_metadata(observed, [])
+        link = self.work / "umask-link"
+        link.symlink_to("/nonexistent")
+        self.assertEqual(filesystem.fingerprint(self.work, b"umask-link", True), ["symlink", "/nonexistent"])
+
     def test_darwin_missing_os_xattr_uses_nofollow_and_descriptor_abi(self):
         payload = b"com.apple.provenance\0com.apple.quarantine\0"
 
