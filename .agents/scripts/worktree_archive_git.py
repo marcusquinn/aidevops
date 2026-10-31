@@ -10,11 +10,17 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+from urllib.parse import urlsplit
 
 
 DEFAULT_TIMEOUT = 60
 RETAINED_VERIFICATION_SCRATCH = ('archive-verify:retained-scratch; prior verification evidence retained; '
                                  'review required before retry')
+MISSING_PROMISOR_BASE = (
+    'producer:missing-promisor-object; complete recorded base unavailable locally; '
+    'source and archive retained; authorize independent recovery with '
+    'AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE and AIDEVOPS_WORKTREE_BASE_RECOVERY_COMMON_DIR '
+    'matching the current repository origin and common directory; prior scratch requires review')
 
 
 def git_executable():
@@ -42,6 +48,8 @@ def base_import_failure(error):
     stderr = stderr.lower()
     packing = 'pack-objects-died' if b'pack-objects died' in stderr else 'git-failed'
     detail = 'unclassified'
+    if b'promisor remote' in stderr and b'could not fetch' in stderr:
+        return MISSING_PROMISOR_BASE
     for signatures, category in (
         ((b'out of memory', b'malloc failed', b'cannot allocate memory'), 'allocation-failed'),
         ((b'no space left on device',), 'storage-full'),
@@ -66,7 +74,7 @@ def nested_base_import_failure(stderr):
     final = lines[-1] if lines else ''
     for prefix in ('ValueError: ', 'archive-snapshot: '):
         final = final.removeprefix(prefix)
-    if final == RETAINED_VERIFICATION_SCRATCH:
+    if final in (RETAINED_VERIFICATION_SCRATCH, MISSING_PROMISOR_BASE):
         return final
     pattern = (r'producer:base-import-failed; stage=base-import; exit=(?:-?[0-9]{1,3}|unknown); '
                r'stderr=(?:pack-objects-died|git-failed)/'
@@ -116,6 +124,43 @@ def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
                           [git_executable(), "-c", "core.hooksPath=/dev/null", "-C", str(root), *args], input=data, env=environment,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           check=True, timeout=timeout).stdout
+
+
+def authorized_base_source(root, common, run_git):
+    """Bind explicit operator consent to live repository context, not archive URLs.
+
+    Both variables are invocation-only authority. SOURCE must exactly equal the
+    current origin; COMMON_DIR pins which repository that consent applies to.
+    Only HTTPS (no embedded credentials/redirects) and explicit local file URLs
+    are supported. Preserve the installed shim, auth routing and Git environment.
+    """
+    source = os.environ.get('AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE', '')
+    authorized = Path(os.environ.get('AIDEVOPS_WORKTREE_BASE_RECOVERY_COMMON_DIR', ''))
+    if not source or not authorized.is_absolute() or authorized.resolve() != common.resolve():
+        raise ValueError(MISSING_PROMISOR_BASE)
+    live = run_git(common, 'rev-parse', '--path-format=absolute', '--git-common-dir')
+    if Path(os.fsdecode(live.strip())).resolve() != authorized.resolve():
+        raise ValueError(MISSING_PROMISOR_BASE)
+    origin = run_git(common, 'config', '--local', '--get', 'remote.origin.url')
+    if origin.decode('utf-8').strip() != source:
+        raise ValueError(MISSING_PROMISOR_BASE)
+    parsed = urlsplit(source)
+    if (any(ord(character) < 33 for character in source) or parsed.query or parsed.fragment
+            or parsed.username is not None or parsed.password is not None):
+        raise ValueError(MISSING_PROMISOR_BASE)
+    if parsed.scheme == 'https' and parsed.hostname and parsed.path.startswith('/'):
+        protocol = 'https'
+    elif (parsed.scheme == 'file' and not parsed.netloc and parsed.path.startswith('/')
+          and Path(parsed.path).resolve().as_uri() == source):
+        protocol = 'file'
+    else:
+        raise ValueError(MISSING_PROMISOR_BASE)
+    # --get-url expands insteadOf without contacting anything. Refuse rewrites,
+    # including inherited global policy: explicit consent names the exact URL.
+    effective = run_git(root, 'ls-remote', '--get-url', source)
+    if effective.decode('utf-8').strip() != source:
+        raise ValueError(MISSING_PROMISOR_BASE)
+    return source, protocol
 
 
 def auto_merge_oid(data):

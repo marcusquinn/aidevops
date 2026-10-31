@@ -3,10 +3,12 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Producer cases run by the existing archive lifecycle suite and its fixture."""
 
+from contextlib import closing
 import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -53,6 +55,17 @@ class ProducerCases:
                 snapshot_engine.seed_base(self.work, manifest)
         self.assertTrue(str(caught.exception).startswith("producer:base-import-timeout;"))
         self.assertNotIn("private", str(caught.exception))
+        target = self.root / 'timed-base'
+        target.mkdir(mode=0o700)
+        self.git(target, 'init', '-q')
+        # One deadline covers all inspection/authorization/import/verification
+        # subprocesses, rather than renewing a full budget for each command.
+        with patch.dict(os.environ, self.env, clear=True), patch.object(snapshot_engine, 'time') as clock, \
+                patch.object(snapshot_engine, 'git', wraps=snapshot_engine.git) as commands:
+            clock.monotonic.side_effect = [0, 100, 200, 301]
+            with self.assertRaisesRegex(ValueError, 'producer:base-import-timeout'):
+                snapshot_engine.seed_base(target, manifest)
+        self.assertEqual([call.kwargs['timeout'] for call in commands.call_args_list], [200, 100])
 
     def test_tracked_permissions_follow_git_model(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)
@@ -113,6 +126,210 @@ class ProducerCases:
             for suffix in (' private', '\nprivate failure'):
                 nested = subprocess.CalledProcessError(1, ['private'], stderr=message + suffix)
                 self.assertEqual(producer_engine.failure_reason(nested), 'producer:evidence-unavailable')
+
+    def incomplete_promisor_fixture(self):
+        # A historical blob absent at HEAD forces full-graph verification, not
+        # merely a successful checkout. Everything lives in this disposable fixture.
+        (self.repo / 'historical').write_bytes(b'promised historical payload\n')
+        self.git(self.repo, 'add', 'historical')
+        self.git(self.repo, 'commit', '-qm', 'historical payload')
+        self.git(self.repo, 'rm', '-q', 'historical')
+        self.git(self.repo, 'commit', '-qm', 'remove historical payload')
+        base = self.git(self.repo, 'rev-parse', 'HEAD').decode().strip()
+        expected = self.git(self.repo, 'rev-list', '--objects', '--no-object-names', base)
+        self.git(self.work, 'reset', '--hard', base)
+        origin = self.root / 'promisor-origin'
+        self.run_command('git', 'clone', '-q', '--bare', '--no-hardlinks', self.repo, origin)
+        self.git(origin, 'config', 'uploadpack.allowFilter', 'true')
+        (self.repo / 'future').write_bytes(b'unrelated future payload\n')
+        self.git(self.repo, 'add', 'future')
+        self.git(self.repo, 'commit', '-qm', 'future payload')
+        future = self.git(self.repo, 'rev-parse', 'HEAD').decode().strip()
+        self.git(self.repo, 'push', '-q', str(origin), 'HEAD:refs/heads/future')
+        self.git(self.repo, 'reset', '--hard', base)
+        partial = self.root / 'incomplete-partial'
+        self.run_command('git', 'clone', '-q', '--filter=blob:none', '--no-checkout',
+                         origin.as_uri(), partial)
+        self.git(partial, 'checkout', '-q', '--detach', base)
+        # This is a genuine filtered clone, with current checkout blobs hydrated
+        # but historical promised blobs still absent. Install its object store in
+        # the fixture's source without invoking any production lifecycle helper.
+        (self.repo / '.git/objects').rename(self.repo / '.git/saved-full-objects')
+        shutil.copytree(partial / '.git/objects', self.repo / '.git/objects')
+        self.git(self.repo, 'config', 'remote.origin.url', origin.as_uri())
+        self.git(self.repo, 'config', 'remote.origin.promisor', 'true')
+        self.git(self.repo, 'config', 'remote.origin.partialclonefilter', 'blob:none')
+        self.env['GIT_NO_LAZY_FETCH'] = '1'
+        missing = self.git(self.repo, 'rev-list', '--objects', '--no-object-names', '--missing=print', base)
+        self.assertTrue(any(line.startswith(b'?') for line in missing.splitlines()))
+        return origin, base, future, expected
+
+    def test_missing_promisor_fails_closed_through_producer(self):
+        from worktree_archive_git import MISSING_PROMISOR_BASE
+        origin, base, _, _ = self.incomplete_promisor_fixture()
+        result = self.producer('capture', self.work, self.archives, 'test.sh', 'promisor')
+        archive = Path(result.stdout.decode().strip())
+        managed, sealed = self.seal_promisor_source()
+        manifest = (archive / 'manifest.json').read_bytes()
+        source_files = {path.relative_to(self.repo / '.git'): path.read_bytes()
+                        for path in (self.repo / '.git').rglob('*') if path.is_file()}
+        journal = producer_engine.journal_for_archive(archive)
+        failed = self.producer('verify', archive, check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(MISSING_PROMISOR_BASE.encode(), failed.stderr)
+        self.assertNotIn(str(origin).encode(), failed.stderr)
+        self.assertNotIn(base.encode(), failed.stderr)
+        self.assertEqual((archive / 'manifest.json').read_bytes(), manifest)
+        self.assertEqual({path.relative_to(self.repo / '.git'): path.read_bytes()
+                          for path in (self.repo / '.git').rglob('*') if path.is_file()}, source_files)
+        self.assertEqual(self.managed_record(managed), sealed)
+        record = json.loads(journal.read_text())
+        self.assertEqual(record['phase'], 'archived')
+        self.assertEqual(record['source_removal_outcome'], 'pending')
+        scratch = list(archive.parent.glob('.archive-verify-*'))
+        self.assertEqual(len(scratch), 1)
+        self.assertEqual(stat.S_IMODE(scratch[0].stat().st_mode), 0o700)
+        # The existing producer records each attempted restoration, but cannot
+        # advance its source/removal receipt or overwrite verification evidence.
+        failed = self.producer('verify', archive, check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        retried = json.loads(journal.read_text())
+        for key in ('phase', 'source', 'source_removal_outcome', 'manifest_sha256'):
+            self.assertEqual(retried[key], record[key])
+        self.assertEqual(list(archive.parent.glob('.archive-verify-*')), scratch)
+        self.assertEqual(self.managed_record(managed), sealed)
+
+    def seal_promisor_source(self):
+        managed = self.managed_fixture()
+        with closing(sqlite3.connect(self.env['WORKTREE_REGISTRY_DB'])) as connection:
+            record = managed.load(connection, str(self.work))
+            managed.seal(record)
+            managed.save(connection, record)
+            connection.commit()
+        sealed = self.managed_record(managed)
+        self.assertEqual(sealed['state'], 'sealed')
+        return managed, sealed
+
+    def test_authorized_promisor_recovery_is_exact_and_independent(self):
+        import worktree_archive_snapshot as snapshot_engine
+        origin, base, future, expected = self.incomplete_promisor_fixture()
+        managed, sealed = self.seal_promisor_source()
+        target = self.root / 'recovered-base'
+        target.mkdir(mode=0o700)
+        self.git(target, 'init', '-q')
+        common = self.repo / '.git'
+        manifest = {'base_sha': base, 'source_git_common_dir': str(common)}
+        before = {path.relative_to(common): path.read_bytes() for path in common.rglob('*') if path.is_file()}
+        self.env.update(AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE=origin.as_uri(),
+                        AIDEVOPS_WORKTREE_BASE_RECOVERY_COMMON_DIR=str(common))
+        with patch.dict(os.environ, self.env, clear=True):
+            snapshot_engine.seed_base(target, manifest)
+        self.assertEqual({path.relative_to(common): path.read_bytes() for path in common.rglob('*')
+                          if path.is_file()}, before)
+        self.assertEqual(self.managed_record(managed), sealed)
+        self.assertEqual(self.git(target, 'rev-list', '--objects', '--no-object-names', '--all'), expected)
+        self.assertFalse((target / '.git/objects/info/alternates').exists())
+        self.assertNotEqual(self.run_command('git', '-C', target, 'cat-file', '-e', future,
+                                            check=False).returncode, 0)
+        (common / 'objects').rename(common / 'hidden-objects')
+        origin.rename(self.root / 'hidden-promisor-origin')
+        self.git(target, 'checkout', '-q', '--detach', base)
+        self.git(target, 'fsck', '--full')
+        self.assertEqual((target / 'mixed.txt').read_bytes(), b'base\n')
+
+    def test_promisor_recovery_rejects_mismatched_authority_and_url_rewrites(self):
+        import worktree_archive_snapshot as snapshot_engine
+        from worktree_archive_git import MISSING_PROMISOR_BASE
+        origin, base, _, _ = self.incomplete_promisor_fixture()
+        common = self.repo / '.git'
+        manifest = {'base_sha': base, 'source_git_common_dir': str(common),
+                    'recovery_source': origin.as_uri()}  # Archive content is not authority.
+        target = self.root / 'unauthorized-base'
+        target.mkdir(mode=0o700)
+        self.git(target, 'init', '-q')
+        for source, approved_common in (('', str(common)), (origin.as_uri(), ''),
+                                        (origin.as_uri(), str(self.root)),
+                                        ((self.root / 'other').as_uri(), str(common))):
+            with self.subTest(source=source, common=approved_common):
+                environment = dict(self.env, AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE=source,
+                                   AIDEVOPS_WORKTREE_BASE_RECOVERY_COMMON_DIR=approved_common)
+                with patch.dict(os.environ, environment, clear=True), \
+                        patch.object(snapshot_engine, 'git', wraps=snapshot_engine.git) as commands:
+                    with self.assertRaisesRegex(ValueError, 'producer:missing-promisor-object'):
+                        snapshot_engine.seed_base(target, manifest)
+                    self.assertFalse(any('fetch' in call.args for call in commands.call_args_list))
+        self.git(target, 'config', f'url.{(self.root / "other").as_uri()}.insteadOf', origin.as_uri())
+        environment = dict(self.env, AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE=origin.as_uri(),
+                           AIDEVOPS_WORKTREE_BASE_RECOVERY_COMMON_DIR=str(common))
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaises(ValueError) as caught:
+                snapshot_engine.seed_base(target, manifest)
+        self.assertEqual(str(caught.exception), MISSING_PROMISOR_BASE)
+        # Invocation against either the source or its linked worktree is never
+        # permission to seed a shared store, even with otherwise valid consent.
+        with patch.dict(os.environ, environment, clear=True):
+            for receiver in (self.repo, self.work):
+                with self.assertRaisesRegex(ValueError, 'base_import_requires_independent_scratch'):
+                    snapshot_engine.seed_base(receiver, manifest)
+
+    def test_promisor_https_redirect_policy_overrides_url_specific_config(self):
+        import worktree_archive_snapshot as snapshot_engine
+        # No HTTP fixture or network: inspect the real fetch argv, then let Git's
+        # config URL matcher prove the effective redirect policy for that argv.
+        source = 'https://example.invalid/fixture/repo.git'
+        common = self.repo / '.git'
+        base = self.git(self.repo, 'rev-parse', 'HEAD').decode().strip()
+        target = self.root / 'https-policy'
+        target.mkdir(mode=0o700)
+        self.git(target, 'init', '-q')
+        self.git(common, 'config', 'remote.origin.url', source)
+        self.git(target, 'config', f'http.{source}.followRedirects', 'true')
+        real_git = snapshot_engine.git
+        fetches = []
+
+        def intercepted(root, *args, **kwargs):
+            if root == common and 'rev-list' in args:
+                return b'?0123456789012345678901234567890123456789\n'
+            if 'fetch' in args:
+                fetches.append(args)
+                raise subprocess.CalledProcessError(128, ['git'], stderr=b'fixture stop before network')
+            return real_git(root, *args, **kwargs)
+
+        environment = dict(self.env, AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE=source,
+                           AIDEVOPS_WORKTREE_BASE_RECOVERY_COMMON_DIR=str(common))
+        with patch.dict(os.environ, environment, clear=True), \
+                patch.object(snapshot_engine, 'git', side_effect=intercepted):
+            with self.assertRaises(ValueError):
+                snapshot_engine.seed_base(target, {'base_sha': base, 'source_git_common_dir': str(common)})
+        self.assertEqual(len(fetches), 1)
+        options = fetches[0][:fetches[0].index('fetch')]
+        self.assertEqual(self.git(target, *options, 'config', '--get-urlmatch',
+                                  'http.followRedirects', source).strip(), b'false')
+        self.assertIn('protocol.allow=never', options)
+        self.assertIn('protocol.https.allow=always', options)
+
+    def test_promisor_authorization_rejects_unsafe_transport_and_credentials(self):
+        from worktree_archive_git import authorized_base_source, git, MISSING_PROMISOR_BASE
+        common = self.repo / '.git'
+        for source in ('ext::private-command', 'ssh://example.invalid/private',
+                       'https://user:private@example.invalid/repo', 'https://example.invalid/repo?private',
+                       'https://example.invalid/repo#private', 'https://[invalid/private',
+                       'https://example.invalid/private\n'):
+            self.git(common, 'config', 'remote.origin.url', source)
+            environment = dict(self.env, AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE=source,
+                               AIDEVOPS_WORKTREE_BASE_RECOVERY_COMMON_DIR=str(common))
+            with patch.dict(os.environ, environment, clear=True):
+                # seed_base also maps malformed URL parsing exceptions to the
+                # same fixed diagnostic; direct validation must never fetch.
+                with self.assertRaises(ValueError):
+                    authorized_base_source(self.work, common, git)
+        from worktree_archive_git import base_import_failure, nested_base_import_failure
+        error = subprocess.CalledProcessError(128, ['private'],
+                                             stderr=b'could not fetch private from promisor remote')
+        self.assertEqual(base_import_failure(error), MISSING_PROMISOR_BASE)
+        for prefix in ('ValueError: ', 'archive-snapshot: ', ''):
+            self.assertEqual(nested_base_import_failure(prefix + MISSING_PROMISOR_BASE), MISSING_PROMISOR_BASE)
+        self.assertIsNone(nested_base_import_failure(MISSING_PROMISOR_BASE + ' private'))
 
     def test_local_pack_failure_retains_source_archive_journal_and_scratch(self):
         result = self.producer('capture', self.work, self.archives, 'test.sh', 'pack-failure')
