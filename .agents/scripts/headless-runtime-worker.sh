@@ -52,6 +52,9 @@ _HRW_REASON_READY_MISSING_SUMMARY="worker_ready_missing_summary"
 _HRW_REASON_READY_HANDOFF_FAILED="worker_ready_missing_summary_transition_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
 _HRW_REASON_UNVERIFIED_HANDOFF="worker_post_pr_handoff_unverified"
+# GH#36171: exact-head handoff evidence stayed unreadable (transport deferral).
+_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED="worker_post_pr_handoff_verification_deferred"
+_HRW_HANDOFF_CONFIRMED_ON_RETRY=2
 _HRW_REASON_ORIGIN_RECONCILIATION_FAILED="worker_origin_reconciliation_failed"
 _HRW_ORIGIN_WORKER_LABEL="origin:worker"
 _HRW_ORIGIN_STATE_MISSING="missing"
@@ -1493,33 +1496,109 @@ _hrw_preserve_blocked_outcome() {
 # assigned, auto-dispatch removed) so they neither escalate the tier nor return
 # the issue to the dispatch queue while the PR exists (GH#33115).
 #
-# Every other class (including fail-open `pr_exists`) keeps the unverified
-# handoff failure path: release, fast-fail as overwhelmed, failed terminal.
+# GH#36171: a transport deferral is not evidence that no durable PR exists.
+# When the exact-head state was unreadable, re-verify a bounded number of
+# times; a handoff that then confirms continues the normal success path, and
+# one that stays unreadable is deferred with the claim retained.
+#
+# Every other class keeps the unverified handoff failure path: release,
+# fast-fail as overwhelmed, failed terminal.
 #
 # Args: $1=session key, $2=work dir
-# Returns: 0 when a durable checkpoint handler ran, 1 when the run was routed
-#          as an unverified-handoff failure.
+# Env:  AIDEVOPS_POST_PR_HANDOFF_VERIFY_ATTEMPTS (1-5, default 3)
+#       AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS (0-120, default 20)
+# Returns: 0 when a durable checkpoint handler ran or verification was
+#          deferred, 1 when the run was routed as an unverified-handoff
+#          failure, 2 (_HRW_HANDOFF_CONFIRMED_ON_RETRY) when re-verification
+#          confirmed the handoff.
 #######################################
 _hrw_handle_unverified_post_pr_handoff() {
 	local session_key="$1"
 	local work_dir="$2"
 	local output_class=""
+	local attempt=1
+	local max_attempts="${AIDEVOPS_POST_PR_HANDOFF_VERIFY_ATTEMPTS:-3}"
+	local retry_delay="${AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS:-20}"
+	[[ "$max_attempts" =~ ^[1-5]$ ]] || max_attempts=3
+	[[ "$retry_delay" =~ ^[0-9]+$ && "$retry_delay" -le 120 ]] || retry_delay=20
 
-	[[ -n "$work_dir" ]] && output_class=$(_worker_produced_output "$session_key" "$work_dir")
-	case "$output_class" in
-	draft_checkpoint) _hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class" ;;
-	merged_checkpoint) _hrw_preserve_merged_checkpoint_handoff "$session_key" "$work_dir" ;;
-	ready_missing_summary) _hrw_preserve_ready_missing_summary_handoff "$session_key" "$output_class" ;;
-	ready_missing_linkage) _hrw_preserve_ready_missing_linkage_handoff "$session_key" "$output_class" ;;
-	*)
-		print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} — exact-head non-draft PR handoff could not be verified; routing as failure"
-		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
-		_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
-		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_UNVERIFIED_HANDOFF"
-		return 1
+	while :; do
+		output_class=""
+		[[ -n "$work_dir" ]] && output_class=$(_worker_produced_output "$session_key" "$work_dir")
+		case "$output_class" in
+		draft_checkpoint) _hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class"; break ;;
+		merged_checkpoint) _hrw_preserve_merged_checkpoint_handoff "$session_key" "$work_dir"; break ;;
+		ready_missing_summary) _hrw_preserve_ready_missing_summary_handoff "$session_key" "$output_class"; break ;;
+		ready_missing_linkage) _hrw_preserve_ready_missing_linkage_handoff "$session_key" "$output_class"; break ;;
+		esac
+		if ! _hrw_post_pr_handoff_reverifiable "$output_class"; then
+			print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} output_class=${output_class:-none} handoff_state=${_WORKER_POST_PR_HANDOFF_STATE:-rejected} — exact-head non-draft PR handoff could not be verified; routing as failure"
+			_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+			_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+			return 1
+		fi
+		if [[ "$attempt" -ge "$max_attempts" ]]; then
+			_hrw_defer_unverified_post_pr_handoff "$session_key" "$output_class" "$attempt"
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		print_info "[lifecycle] post_pr_handoff verification indeterminate session=${session_key} output_class=${output_class:-none} handoff_state=${_WORKER_POST_PR_HANDOFF_STATE:-unknown}; re-verifying in ${retry_delay}s (attempt ${attempt}/${max_attempts})"
+		sleep "$retry_delay"
+		if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+			print_info "[lifecycle] post_pr_handoff session=${session_key} confirmed on re-verification attempt ${attempt}/${max_attempts}"
+			return "$_HRW_HANDOFF_CONFIRMED_ON_RETRY"
+		fi
+	done
+	print_info "[lifecycle] unverified post_pr_handoff session=${session_key} routed to exact-head checkpoint state=${output_class}"
+	return 0
+}
+
+#######################################
+# GH#36171: decide whether an unconfirmed POST_PR_HANDOFF may still verify.
+#
+# A local transport deferral (quota cooldown/pacing) makes the exact-head
+# probe return `unknown`, which `_worker_produced_output` fails open to
+# `pr_exists` — the same class it prints for a confirmed ready PR. Retry only
+# when the strict probe could not read GitHub, or when the independent
+# classifier readback saw `pr_exists` while the strict probe reported missing
+# linkage/summary (one of those reads was deferred). Identity/precondition
+# rejections (`rejected`) and consistent definitive states stay final.
+#
+# Args: $1=output class from the latest classifier pass
+# Returns: 0 when bounded re-verification may change the outcome, 1 otherwise
+#######################################
+_hrw_post_pr_handoff_reverifiable() {
+	local output_class="$1"
+	case "${_WORKER_POST_PR_HANDOFF_STATE:-rejected}" in
+	unknown | merged_issue_unreadable) return 0 ;;
+	ready_missing_* | merged_missing_*)
+		[[ "$output_class" == "pr_exists" ]] && return 0
 		;;
 	esac
-	print_info "[lifecycle] unverified post_pr_handoff session=${session_key} routed to exact-head checkpoint state=${output_class}"
+	return 1
+}
+
+#######################################
+# GH#36171: record an exact-head handoff whose GitHub state stayed unreadable.
+#
+# Keep the dispatch claim: no CLAIM_RELEASED, fast-fail or tier escalation.
+# The pushed PR (if any) remains the dedup signal; Pulse merge and stale-claim
+# recovery decide on fresh state once GitHub is readable again. The outcome is
+# deferred (retry_infrastructure), never success, so an unverifiable
+# handoff still cannot be counted as completion (GH#33115).
+#
+# Args: $1=session key, $2=last output class, $3=verification attempts made
+#######################################
+_hrw_defer_unverified_post_pr_handoff() {
+	local session_key="$1"
+	local output_class="$2"
+	local attempts="$3"
+	print_warning "[lifecycle] ${_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED} session=${session_key} output_class=${output_class:-none} handoff_state=${_WORKER_POST_PR_HANDOFF_STATE:-unknown} attempts=${attempts} — exact-head PR state stayed unreadable; retaining claim without tier escalation"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
+	_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_CHECKPOINTED"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED"
 	return 0
 }
 
@@ -1533,11 +1612,21 @@ _hrw_finish_success_run() {
 		_hrw_preserve_blocked_outcome "$session_key" "$work_dir"
 		return 0
 	fi
-	if [[ "${_run_result_label:-}" == "post_pr_handoff" ]] &&
-		(! declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 ||
-			! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"); then
-		_hrw_handle_unverified_post_pr_handoff "$session_key" "$work_dir" && return 0
-		return 1
+	if [[ "${_run_result_label:-}" == "post_pr_handoff" ]]; then
+		# Never reuse a verification state recorded by an earlier probe.
+		_WORKER_POST_PR_HANDOFF_STATE=""
+		if ! declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 ||
+			! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+			local handoff_rc=0
+			_hrw_handle_unverified_post_pr_handoff "$session_key" "$work_dir" || handoff_rc=$?
+			# GH#36171: a handoff confirmed on bounded re-verification continues
+			# the normal verified-handoff success path below.
+			case "$handoff_rc" in
+			0) return 0 ;;
+			"$_HRW_HANDOFF_CONFIRMED_ON_RETRY") ;;
+			*) return 1 ;;
+			esac
+		fi
 	fi
 
 	# GH#20721 + GH#20819: Classify worker output quality.

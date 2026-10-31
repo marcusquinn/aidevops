@@ -593,6 +593,10 @@ _derive_worker_failure_evidence() {
 #   $2 - work dir
 # Returns: 0 for an exact-head, linked, summarised ready PR, or a merged PR
 #          with the same evidence whose issue is confirmed closed.
+# Sets _WORKER_POST_PR_HANDOFF_STATE to the observed exact-head state so a
+# caller can separate unreadable GitHub state (`unknown`,
+# `merged_issue_unreadable`) from a definitive rejection (GH#36171).
+# `rejected` means the identity or local preconditions failed.
 #######################################
 _worker_post_pr_handoff_confirmed() {
 	local session_key="$1"
@@ -601,6 +605,7 @@ _worker_post_pr_handoff_confirmed() {
 	local branch_name
 	local local_head
 	local issue_number=""
+	_WORKER_POST_PR_HANDOFF_STATE="rejected"
 
 	# aidevops:trust-boundary — accept only launcher-defined identities. Manual
 	# sessions must bind to trusted dispatch metadata, never digits in prompt text.
@@ -626,15 +631,23 @@ _worker_post_pr_handoff_confirmed() {
 	local handoff_state=""
 	handoff_state=$(_pr_handoff_state_for_branch_or_issue \
 		"$branch_name" "$issue_number" "$repo_slug" "head-only" "$local_head" "1") || return 1
-	case "${handoff_state%%|*}" in
+	_WORKER_POST_PR_HANDOFF_STATE="${handoff_state%%|*}"
+	[[ -n "$_WORKER_POST_PR_HANDOFF_STATE" ]] || _WORKER_POST_PR_HANDOFF_STATE="unknown"
+	case "$_WORKER_POST_PR_HANDOFF_STATE" in
 	ready) return 0 ;;
 	merged)
 		# GH#34931: a worker may merge its own PR before emitting POST_PR_HANDOFF.
 		# Reopened/open issues remain merged checkpoints, never completion.
 		local issue_state=""
-		issue_state=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
-			--jq '.state | ascii_downcase' 2>/dev/null) || return 1
-		[[ "$issue_state" == "closed" ]] || return 1
+		if ! issue_state=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
+			--jq '.state | ascii_downcase' 2>/dev/null); then
+			_WORKER_POST_PR_HANDOFF_STATE="merged_issue_unreadable"
+			return 1
+		fi
+		if [[ "$issue_state" != "closed" ]]; then
+			_WORKER_POST_PR_HANDOFF_STATE="merged_issue_open"
+			return 1
+		fi
 		return 0
 		;;
 	esac

@@ -13,6 +13,9 @@ CALL_LOG="${TMP_HOME}/gh-calls.log"
 : >"$CALL_LOG"
 export AIDEVOPS_TEST_MODE=1
 export AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS=1
+# Terminal-blocker capture appends to the worker blocker log; keep fixture
+# rows out of the operator's live ~/.aidevops/logs diagnostics (GH#36171).
+export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${TMP_HOME}/worker-progress-blockers.jsonl"
 
 cleanup() {
 	rm -rf "$TMP_HOME"
