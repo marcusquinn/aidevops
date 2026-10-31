@@ -1759,74 +1759,11 @@ _worktree_compact_source_matches() {
 # re-checked after every other probe, immediately before native removal).
 _worktree_remove_with_native_git() {
 	local wt_path="$1"
-	local caller="$2"
-	local context="$3"
-	local force_remove="$4"
-	local archive_path="${5:-}"
-	local compact_dir="${6:-}"
-	local real_git=""
-	local common_dir=""
-	local wt_path_real="$wt_path"
-	local git_state=""
-
-	if [[ -L "$wt_path" ]]; then
-		_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
-		return 1
-	fi
-	if [[ ! -e "$wt_path" ]]; then
-		if [[ -n "$archive_path" ]]; then
-			_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
-			return 1
-		fi
-		return 0
-	fi
-	if [[ -e "$wt_path" ]]; then
-		wt_path_real=$(cd "$wt_path" 2>/dev/null && pwd -P) || wt_path_real="$wt_path"
-	fi
-	git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||
-		git_state="$_WT_GIT_STATE_UNREADABLE"
-	if [[ "$git_state" != "$_WT_GIT_STATE_CLEAR" ]]; then
-		_worktree_log_git_refusal "$wt_path" "$caller" "$git_state" "$context"
-		return 1
-	fi
-	if ! real_git=$(_worktree_cleanup_real_git); then
-		_worktree_log_git_refusal "$wt_path" "$caller" "$_WT_GIT_STATE_UNREADABLE" "$context"
-		return 1
-	fi
-	if ! common_dir=$(_worktree_git_common_dir "$real_git" "$wt_path"); then
-		_worktree_log_git_refusal "$wt_path" "$caller" "$_WT_GIT_STATE_UNREADABLE" "$context"
-		return 1
-	fi
-	worktree_managed_require_removal_proof "$wt_path_real" || return 1
-	if [[ -n "$archive_path" ]] && ! _worktree_archive_source_matches "$wt_path" "$archive_path"; then
-		_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
-		return 1
-	fi
-	# Last content check: only the native removal itself follows. A write
-	# landing after this point is the residual, unavoidable race window.
-	if [[ -n "$compact_dir" ]] &&
-		! _worktree_compact_source_matches "$wt_path_real" "$compact_dir" "$caller" "$context"; then
-		return 1
-	fi
-
-	if [[ "$force_remove" == "$_WTAR_BOOL_TRUE" ]]; then
-		# One force can remove dirty state, but Git requires force twice to
-		# override a worktree lock acquired after our final metadata check.
-		"$real_git" --git-dir="$common_dir" worktree remove --force "$wt_path_real" 2>/dev/null || {
-			git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||
-				git_state="$_WT_GIT_STATE_UNREADABLE"
-			_worktree_log_git_refusal "$wt_path" "$caller" "$git_state" "$context"
-			return 1
-		}
-	else
-		"$real_git" --git-dir="$common_dir" worktree remove "$wt_path_real" 2>/dev/null || {
-			git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||
-				git_state="$_WT_GIT_STATE_UNREADABLE"
-			_worktree_log_git_refusal "$wt_path" "$caller" "$git_state" "$context"
-			return 1
-		}
-	fi
-	[[ ! -e "$wt_path" && ! -e "$wt_path_real" ]] || return 1
+	# Compatibility entrypoint only: old proof/force/archive arguments cannot
+	# authorize deletion. The registry executor verifies its own preservation.
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" || return 1
+	worker_lifecycle_cleanup_worktree "$wt_path" || return 1
 	return 0
 }
 

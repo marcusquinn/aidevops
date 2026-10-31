@@ -17,11 +17,15 @@ from uuid import uuid4
 import zipfile
 
 from .process import ObservationUnavailable
+from .bundle import registry_members
+from .preservation import _helper
 from .runtime import adapter_for, require_ready
 
 
 TEST_MODULES = ("tests.test_storage", "tests.test_events", "tests.test_launch", "tests.test_admission",
-                "tests.test_admitted_launch", "tests.test_directory_handle", "tests.test_cleanup_policy")
+                "tests.test_admitted_launch", "tests.test_directory_handle",
+                "tests.test_cleanup_policy", "tests.test_creation",
+                "tests.test_preservation", "tests.test_retirement")
 
 
 class ReportResult(unittest.TextTestResult):
@@ -66,6 +70,11 @@ def run_suite() -> int:
         if not hasattr(os, "getuid") or os.getuid() == 0 or os.geteuid() == 0:
             raise ObservationUnavailable("unprivileged-run-required")
         require_ready(adapter_for(str(uuid4())))
+        try:
+            _helper("--help")
+        except subprocess.CalledProcessError as error:
+            sys.stderr.write(os.fsdecode(error.stderr or b""))
+            raise ObservationUnavailable("archive-backend-unavailable") from error
     except (ObservationUnavailable, OSError, ValueError) as error:
         report["reason"] = str(error) if isinstance(error, ObservationUnavailable) else type(error).__name__
         print(json.dumps(report, sort_keys=True))
@@ -95,26 +104,29 @@ def main() -> int:
         digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
         with tempfile.TemporaryDirectory(prefix="worker-lifecycle-validation-") as directory:
             root = Path(directory).resolve()
+            package = root / "worker-lifecycle"
             with zipfile.ZipFile(artifact) as archive:
                 names = archive.namelist()
-                if len(names) > 32 or len(names) != len(set(names)):
+                if set(names) != registry_members() or len(names) != len(set(names)):
                     raise ValueError("invalid-bundle-members")
                 for info in archive.infolist():
                     path = PurePosixPath(info.filename)
                     unsafe_path = path.is_absolute() or ".." in path.parts or "\\" in info.filename
                     if unsafe_path:
                         raise ValueError("unsafe-bundle-path")
-                    if path.suffix != ".py" or info.file_size > 262144:
+                    if path.suffix not in (".py", ".sh") or info.file_size > 262144:
                         raise ValueError("invalid-bundle-member")
-                    target = root.joinpath(*path.parts)
+                    parent = root if path.parts[0] == "scripts" else package
+                    target = parent.joinpath(*path.parts)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(archive.read(info))
-            environment = dict(os.environ, PYTHONPATH=str(root), PYTHONDONTWRITEBYTECODE="1", TMPDIR=str(root))
+            environment = dict(os.environ, PYTHONPATH=str(package),
+                               PYTHONDONTWRITEBYTECODE="1", TMPDIR=str(root))
             command = [sys.executable, "-B", "-c",
                        "from worker_lifecycle.integration_validation import run_suite; raise SystemExit(run_suite())"]
-            # No shell, AI runtime, scheduler or dependency installation is used.
-            result = subprocess.run(command, cwd=root, env=environment, stdout=subprocess.PIPE,  # nosec B603 # fixed suite entry point
-                                    text=True, timeout=180)
+            # Git/Bash operate only on disposable fixtures; no AI or scheduler.
+            result = subprocess.run(command, cwd=package, env=environment, stdout=subprocess.PIPE,  # nosec B603 # fixed suite entry point
+                                    text=True, timeout=900)
             report = json.loads(result.stdout)
             report["bundle_sha256"] = digest
         encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"

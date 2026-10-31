@@ -14,8 +14,18 @@ export const owner = { sessionID: "ses_owner" };
 export const recorded = [];
 const managers = [];
 
+// Real supervisors use a disposable registry, never the operator's installation.
+const lifecycleKeys = ["AIDEVOPS_LIFECYCLE_STATE_DIR", "AIDEVOPS_PRIVATE_WORKLOAD", "AIDEVOPS_LIFECYCLE_DISABLED"];
+const priorLifecycleEnvironment = Object.fromEntries(lifecycleKeys.map((key) => [key, process.env[key]]));
+for (const key of lifecycleKeys) delete process.env[key];
+process.env.AIDEVOPS_LIFECYCLE_STATE_DIR = join(root, "lifecycle-state");
+
 after(() => {
   for (const instance of managers) instance.dispose();
+  for (const key of lifecycleKeys) {
+    if (priorLifecycleEnvironment[key] === undefined) delete process.env[key];
+    else process.env[key] = priorLifecycleEnvironment[key];
+  }
   rmSync(root, { recursive: true, force: true });
 });
 

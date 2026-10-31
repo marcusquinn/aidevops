@@ -684,14 +684,14 @@ printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n
       });
 
       const sessionAOutput = {
-        args: { command: 'gh issue comment 1 --repo o/r --body "one"', workdir: process.cwd() },
+        args: { command: 'gh issue comment 1 --repo o/r --body "one"', workdir: dir },
       };
       await hooks.toolExecuteBefore(
         { tool: "bash", sessionID: "session-a" },
         sessionAOutput,
       );
       const sessionBOutput = {
-        args: { command: 'gh issue comment 1 --repo o/r --body "two"', workdir: process.cwd() },
+        args: { command: 'gh issue comment 1 --repo o/r --body "two"', workdir: dir },
       };
       await hooks.toolExecuteBefore(
         { tool: "bash", sessionID: "session-b" },

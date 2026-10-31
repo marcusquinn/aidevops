@@ -35,7 +35,7 @@ class DirectoryHandle:
             return False
         try:
             held = os.fstat(self._descriptor)
-            current = self.path.stat(follow_symlinks=False)
+            current = self.path.lstat()
             self._valid = (
                 self.path.resolve(strict=True) == self.path
                 and (held.st_dev, held.st_ino) == self._identity

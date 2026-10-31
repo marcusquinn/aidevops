@@ -7,6 +7,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PULSE_CLEANUP="${SCRIPT_DIR}/../pulse-cleanup.sh"
+GIT_BIN=$(python3 -E -s -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_git import real_git; print(real_git(sys.argv[2]))' "${SCRIPT_DIR}/.." "${AIDEVOPS_TEST_GIT_BIN:-}") || exit 1
 TEST_ROOT=""
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -14,7 +15,7 @@ TESTS_FAILED=0
 # Fixture repositories are intentionally isolated under TEST_ROOT. Use native
 # Git so the production canonical-worktree shim does not block test setup.
 git() {
-	/usr/bin/git "$@"
+	"$GIT_BIN" "$@"
 	return $?
 }
 
@@ -65,6 +66,7 @@ setup_subject() {
 	export HOME="${TEST_ROOT}/home"
 	export AIDEVOPS_LOG_DIR="${HOME}/.aidevops/logs"
 	export AIDEVOPS_REPOS_JSON="${HOME}/.config/aidevops/repos.json"
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
 	export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup.log"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export AIDEVOPS_TEMP_DIR="${TEST_ROOT}/automation"
@@ -192,19 +194,19 @@ test_fast_temp_cleanup_guards() {
 	}
 
 	removed=$(cleanup_stale_temp_worktrees) || rc=1
-	[[ "$removed" == "1" ]] || rc=1
-	[[ ! -e "$old_clean" ]] || rc=1
+	[[ "$removed" == "0" ]] || rc=1
+	[[ -d "$old_clean" ]] || rc=1
 	[[ -d "$old_dirty" && -f "$old_dirty/dirty.txt" ]] || rc=1
 	[[ -d "$old_ignored" && -f "$old_ignored/.fixture-cache" ]] || rc=1
 	[[ -d "$old_unpushed" && -f "$old_unpushed/unique.txt" ]] || rc=1
 	[[ -d "$old_active" ]] || rc=1
 	[[ -d "$fresh_clean" ]] || rc=1
-	# Both otherwise-removable candidates get independent snapshots. The active
-	# candidate is refused and the clean candidate is removed.
+	# Legacy selectors may inspect both candidates, but neither a clear snapshot
+	# nor remote reachability can replace registry retirement authority.
 	[[ -f "$snapshot_count_file" ]] && [[ "$(<"$snapshot_count_file")" == "2" ]] || rc=1
-	git -C "$repo_path" worktree list --porcelain | grep -Fq "worktree $old_clean" && rc=1
-	grep -q 'stale-temp-fixture' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "fast cleanup removes only old clean remote-reachable detached fixtures" "$rc" \
+	git -C "$repo_path" worktree list --porcelain | grep -F "worktree $old_clean" >/dev/null || rc=1
+	[[ ! -e "$AIDEVOPS_LIFECYCLE_STATE_DIR" ]] || rc=1
+	print_result "fast cleanup preserves unregistered fixtures despite legacy eligibility" "$rc" \
 		"removed=$removed"
 	return 0
 }
@@ -264,12 +266,12 @@ test_cleanup_bounds_fresh_snapshots() {
 	}
 
 	removed=$(cleanup_stale_temp_worktrees) || rc=1
-	[[ "$removed" == "1" ]] || rc=1
-	[[ "$(<"$snapshot_count_file")" == "1" ]] || rc=1
+	[[ "$removed" == "0" ]] || rc=1
+	[[ "$(<"$snapshot_count_file")" == "2" ]] || rc=1
 	[[ -d "$wt_one" ]] && remaining=$((remaining + 1))
 	[[ -d "$wt_two" ]] && remaining=$((remaining + 1))
-	[[ "$remaining" -eq 1 ]] || rc=1
-	print_result "fast cleanup bounds removals and captures one fresh snapshot per removal" "$rc" \
+	[[ "$remaining" -eq 2 ]] || rc=1
+	print_result "a removal cap does not authorize unregistered fixture removal" "$rc" \
 		"removed=$removed remaining=$remaining"
 	return 0
 }
@@ -403,9 +405,9 @@ test_stale_local_main_uses_remote_default() {
 
 	_cleanup_single_worktree "$repo_path" "$wt_path" "" "$now_epoch" "example/repo" "main" >/dev/null 2>&1
 	cleanup_rc=$?
-	[[ "$cleanup_rc" -eq 0 ]] || rc=1
-	[[ ! -e "$wt_path" ]] || rc=1
-	print_result "orphan cleanup compares against origin/main when local main is stale" "$rc" \
+	[[ "$cleanup_rc" -ne 0 ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	print_result "remote reachability does not authorize unregistered orphan removal" "$rc" \
 		"cleanup_rc=$cleanup_rc"
 	return 0
 }
@@ -456,24 +458,21 @@ test_todo_sync_live_pid_with_hidden_identity_is_preserved() {
 	local live_start=""
 	local workspace_root=""
 	local visibility_definition=""
-	local ps_definition=""
+	local fingerprint_definition=""
 	local removed=0
 	local rc=0
 	now_epoch=$(date +%s) || return 1
 	live_start=$(_ptsw_process_start_fingerprint "$$") || return 1
 	workspace_root=$(create_todo_sync_candidate "pulse-todo-sync.LIVEID" "$$" "$live_start" "$((now_epoch - 20))") || return 1
 	visibility_definition=$(declare -f _ptsw_process_visibility_available)
-	ps_definition=$(declare -f ps 2>/dev/null || true)
+	fingerprint_definition=$(declare -f _ptsw_process_start_fingerprint)
 	_ptsw_process_visibility_available() { return 0; }
-	ps() { return 1; }
+	# Hide identity at the platform-neutral boundary: Linux reads /proc, not ps.
+	_ptsw_process_start_fingerprint() { return 1; }
 
 	removed=$(_ptsw_sweep_stale_workspaces) || rc=1
 	eval "$visibility_definition"
-	if [[ -n "$ps_definition" ]]; then
-		eval "$ps_definition"
-	else
-		unset -f ps
-	fi
+	eval "$fingerprint_definition"
 	[[ "$removed" == "0" ]] || rc=1
 	[[ -d "$workspace_root" ]] || rc=1
 	grep -q 'reason=owner-visibility-unknown workspace=pulse-todo-sync.LIVEID' "$LOGFILE" 2>/dev/null || rc=1

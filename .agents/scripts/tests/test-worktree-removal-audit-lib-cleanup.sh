@@ -86,9 +86,9 @@ test_guard_refuses_other_process_cwd() {
 }
 
 # =============================================================================
-# Test 9: permanent helper removes only after guard passes and logs mode
+# A clear legacy guard cannot authorize removal without the new registry.
 # =============================================================================
-test_permanent_helper_removes_and_logs() {
+test_permanent_helper_requires_registry() {
 	local log_file="${TEST_DIR}/t9-cleanup.log"
 	local repo_path="${TEST_DIR}/old-repo"
 	export AIDEVOPS_CLEANUP_LOG="$log_file"
@@ -101,18 +101,22 @@ test_permanent_helper_removes_and_logs() {
 	source "$AUDIT_HELPER"
 
 	local rc=0
-	(
+	if (
 		capture_worktree_process_cwds() {
 			printf '/\n'
 			return 0
 		}
 		with_complete_cwd_snapshot remove_worktree_path_permanently \
 			"$wt_path" "test.sh" "age-eligible"
-	) || rc=$?
-	[[ ! -e "$wt_path" ]] || rc=1
-	assert_file_contains "$log_file" "worktree-removed.*age-eligible.*mode=permanent" || rc=1
-	print_result "permanent_helper_removes_and_logs" "$rc" \
-		"Expected permanent removal audit. Log: $(cat "$log_file" 2>/dev/null)"
+	); then
+		rc=1
+	fi
+	[[ -d "$wt_path" ]] || rc=1
+	if [[ -f "$log_file" ]] && assert_file_contains "$log_file" "worktree-removed"; then
+		rc=1
+	fi
+	print_result "permanent_helper_requires_registry" "$rc" \
+		"Expected source retention and no false removal audit without registry authority"
 	return 0
 }
 
@@ -241,11 +245,11 @@ test_missing_worktree_physical_parent_alias() {
 }
 
 # =============================================================================
-# Git remains the final permanent-removal authority. A foreign lock acquired
-# after the initial guard but before `git worktree remove` must preserve the
-# physical path and metadata.
+# Missing registry authority must stop before a legacy native-Git wrapper runs.
+# Real late-lock and late-write races are exercised against the retirement
+# executor in worker-lifecycle/tests/test_retirement.py.
 # =============================================================================
-test_permanent_helper_preserves_lock_acquired_after_guard() {
+test_permanent_helper_refuses_before_legacy_git_injection() {
 	local log_file="${TEST_DIR}/race-cleanup.log"
 	local repo_path="${TEST_DIR}/race-repo"
 	local wt_path="${TEST_DIR}/race-worktree"
@@ -280,20 +284,17 @@ RACE_GIT
 	); then
 		rc=1
 	fi
-	[[ -d "$wt_path" && -e "$marker_path" ]] || rc=1
+	[[ -d "$wt_path" && ! -e "$marker_path" ]] || rc=1
 	wt_root=$("$GIT_BIN" -C "$wt_path" rev-parse --show-toplevel 2>/dev/null) || rc=1
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
 	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || rc=1
-	printf '%s\n' "$metadata" | grep -Eq '^locked([[:space:]]|$)' || rc=1
-	assert_file_contains "$log_file" "worktree-skipped.*git-worktree-locked.*mode=skipped" || rc=1
-	print_result "permanent_helper_preserves_lock_acquired_after_guard" "$rc" \
-		"Expected a lock acquired after guard evaluation to block final deletion"
+	print_result "permanent_helper_refuses_before_legacy_git_injection" "$rc" \
+		"Expected registry refusal before invoking an injected native-removal command"
 	return 0
 }
 
 # =============================================================================
-# Recoverable cleanup creates a complete archive while the registered source is
-# still intact, then lets native Git remove the source and exact metadata.
+# Archive creation preserves evidence but cannot authorize source removal.
 # =============================================================================
 test_recovery_store_selects_platform_semantics() {
 	local fixture_home="${TEST_DIR}/platform-home"
@@ -419,14 +420,14 @@ test_recovery_inventory_reports_legacy_buckets_fail_closed() {
 	return 0
 }
 
-test_recoverable_archive_then_native_remove() {
+test_recoverable_archive_does_not_authorize_removal() {
 	local repo_path="${TEST_DIR}/archive-repo"
 	local wt_path="${TEST_DIR}/archive-worktree"
 	local trash_root="${TEST_DIR}/archive-trash"
 	local archive_path=""
 	local wt_root=""
 	local metadata=""
-	local index_path="" index_before=""
+	local index_path="" index_before="" index_after=""
 	local rc=0
 	local AIDEVOPS_WORKTREE_TRASH_ROOT="$trash_root"
 
@@ -439,34 +440,34 @@ test_recoverable_archive_then_native_remove() {
 	AIDEVOPS_SESSION_ID="ses_test_recovery" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" archive_worktree_path_recoverably \
 		"$wt_path" "test.sh" "archive-test" || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	[[ "$("$GIT_BIN" hash-object "$index_path")" == "$index_before" ]] || rc=1
+	index_after=$("$GIT_BIN" hash-object "$index_path") || rc=1
+	[[ "$index_after" == "$index_before" ]] || rc=1
 	[[ -d "$wt_path" && -f "$archive_path/manifest.json" && ! -e "$archive_path/.git" ]] || rc=1
 	_worktree_recovery_archive_is_valid "$archive_path" || rc=1
-	jq -e '.phase == "verified" and .caller == "test.sh" and .context == "archive-test"
+	jq -e '.phase == "archived" and .source.capture_policy == "git-only"
+		and .caller == "test.sh" and .context == "archive-test"
 		and .session_id == "ses_test_recovery" and .source_removal_outcome == "pending"' \
 		"$trash_root"/.producer-transactions/*/journal.json >/dev/null || rc=1
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
-	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || rc=1
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
+	printf '%s\n' "$metadata" | grep -Fx "worktree $wt_root" >/dev/null || rc=1
+	if AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
 		"$wt_path" "$archive_path" "test.sh" "recoverable-test" \
-		"recovery_path=archive-first" "false" "false" || rc=1
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" prune_missing_worktree_metadata "$repo_path" "$wt_path" || rc=1
-	if "$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fqx "worktree $wt_root"; then
+		"recovery_path=archive-first" "false" "false"; then
 		rc=1
 	fi
-	[[ ! -e "$wt_path" && -f "$archive_path/manifest.json" ]] || rc=1
-	jq -e '.source_removal_outcome == "removed"' \
+	"$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fx "worktree $wt_root" >/dev/null || rc=1
+	[[ -d "$wt_path" && -f "$archive_path/manifest.json" ]] || rc=1
+	jq -e '.source_removal_outcome == "pending"' \
 		"$trash_root"/.producer-transactions/*/journal.json >/dev/null || rc=1
-	print_result "recoverable_archive_then_native_remove" "$rc" \
-		"Expected archive retention after native source and metadata removal"
+	print_result "recoverable_archive_does_not_authorize_removal" "$rc" \
+		"Expected archive/source retention; index before=$index_before after=$index_after; journal=$(jq -c '{phase, caller, context, session_id, source_removal_outcome}' "$trash_root"/.producer-transactions/*/journal.json 2>/dev/null)"
 	return 0
 }
 
 # =============================================================================
-# A foreign lock acquired after archive completion but before native Git removal
-# must preserve the registered source while the completed archive also remains.
+# A completed archive cannot enable a legacy injected native-removal command.
 # =============================================================================
-test_recoverable_archive_preserves_late_lock() {
+test_recoverable_archive_refuses_legacy_git_injection() {
 	local repo_path="${TEST_DIR}/archive-race-repo"
 	local wt_path="${TEST_DIR}/archive-race-worktree"
 	local trash_root="${TEST_DIR}/archive-race-trash"
@@ -500,17 +501,16 @@ RACE_GIT
 		rc=1
 	fi
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
-	[[ -d "$wt_path" && -f "$archive_path/manifest.json" && -e "$marker_path" ]] || rc=1
+	[[ -d "$wt_path" && -f "$archive_path/manifest.json" && ! -e "$marker_path" ]] || rc=1
 	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || rc=1
-	printf '%s\n' "$metadata" | grep -Fxq "locked foreign-after-archive" || rc=1
-	print_result "recoverable_archive_preserves_late_lock" "$rc" \
-		"Expected a late lock to preserve source, metadata, and completed archive"
+	print_result "recoverable_archive_refuses_legacy_git_injection" "$rc" \
+		"Expected registry refusal before an injected Git removal, with archive retained"
 	return 0
 }
 
 # =============================================================================
-# Forced recovery keeps a usable detached admin snapshot with the exact staged,
-# unstaged, and untracked state that existed before native source removal.
+# Git-only recovery preserves staging and working files without ignored data;
+# the common Git repository remains a declared dependency.
 # =============================================================================
 # Populate the caller's fixture paths; all mutations stay under TEST_DIR.
 create_compact_removal_fixture() {
@@ -533,22 +533,24 @@ create_compact_removal_fixture() {
 	return 0
 }
 
-test_compact_archive_native_removal() {
+test_compact_archive_retains_source_and_restores_git_only() {
 	local repo_path="" wt_path="" archive_path="" journal_path=""
 	local restored="${TEST_DIR}/compact-independent-restore"
 	local rc=0
 	create_compact_removal_fixture compact-success || return 1
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
-		"$wt_path" "$archive_path" test.sh compact-test "" false true || rc=1
-	[[ ! -e "$wt_path" ]] || rc=1
-	jq -e '.source_removal_outcome == "removed"' "$journal_path" >/dev/null || rc=1
+	if AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
+		"$wt_path" "$archive_path" test.sh compact-test "" false true; then
+		rc=1
+	fi
+	[[ -d "$wt_path" ]] || rc=1
+	jq -e '.source_removal_outcome == "pending"' "$journal_path" >/dev/null || rc=1
 	_worktree_recovery_archive_is_valid "$archive_path" || rc=1
-	mv "$repo_path" "$repo_path-original" || rc=1
-	bash "${SCRIPT_DIR}/../worktree-archive-helper.sh" restore "$archive_path" --target "$restored" >/dev/null || rc=1
+	# Git-only archives retain their common-repository dependency, not ignored data.
+	bash "${SCRIPT_DIR}/../worktree-archive-helper.sh" restore "$archive_path" --target "$restored" --verification-copy >/dev/null || rc=1
 	[[ "$("$GIT_BIN" -C "$restored" show :README.md)" == staged ]] || rc=1
 	assert_file_contains "$restored/README.md" '^unstaged$' || rc=1
-	assert_file_contains "$restored/unique.ignored" '^unique ignored$' || rc=1
-	print_result compact_archive_native_removal "$rc" "Expected independently recoverable dirty state after native removal"
+	[[ ! -e "$restored/unique.ignored" && -f "$wt_path/unique.ignored" ]] || rc=1
+	print_result compact_archive_retains_source_and_restores_git_only "$rc" "Expected source retention and a Git-only restoration using the common repository"
 	return 0
 }
 
@@ -656,19 +658,21 @@ test_recovery_archive_preserves_index_and_dirty_files() {
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" archive_worktree_path_recoverably \
 		"$wt_path" "test.sh" "dirty-archive" || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
+	if AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
 		"$wt_path" "$archive_path" "test.sh" "dirty-archive" \
-		"recovery_path=archive-first" "false" "true" || rc=1
-	bash "${SCRIPT_DIR}/../worktree-archive-helper.sh" restore "$archive_path" --target "$restored" >/dev/null || rc=1
+		"recovery_path=archive-first" "false" "true"; then
+		rc=1
+	fi
+	bash "${SCRIPT_DIR}/../worktree-archive-helper.sh" restore "$archive_path" --target "$restored" --verification-copy >/dev/null || rc=1
 	actual_status=$("$GIT_BIN" -C "$restored" status --porcelain=v1 --untracked-files=all) || rc=1
 	actual_head=$("$GIT_BIN" -C "$restored" rev-parse --verify HEAD) || rc=1
 	recorded_branch=$(jq -r '.branch' "$archive_path/manifest.json") || rc=1
-	[[ ! -e "$wt_path" && "$actual_status" == "$expected_status" ]] || rc=1
+	[[ -d "$wt_path" && "$actual_status" == "$expected_status" ]] || rc=1
 	[[ "$actual_head" == "$expected_head" ]] || rc=1
 	[[ "$recorded_branch" == "feature/archive-dirty" ]] || rc=1
-	[[ "$("$GIT_BIN" -C "$restored" symbolic-ref -q HEAD)" == "refs/heads/feature/archive-dirty" ]] || rc=1
+	[[ "$("$GIT_BIN" -C "$wt_path" symbolic-ref -q HEAD)" == "refs/heads/feature/archive-dirty" ]] || rc=1
 	print_result "recovery_archive_preserves_index_and_dirty_files" "$rc" \
-		"Expected independent restoration of the original branch, index, and dirty file state"
+		"Expected source retention, original branch metadata, and exact index/dirty restoration"
 	return 0
 }
 
@@ -690,18 +694,20 @@ test_recovery_archive_preserves_detached_head_identity() {
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" archive_worktree_path_recoverably \
 		"$wt_path" "test.sh" "detached-archive" || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
+	if AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
 		"$wt_path" "$archive_path" "test.sh" "detached-archive" \
-		"recovery_path=archive-first" "false" "false" || rc=1
-	bash "${SCRIPT_DIR}/../worktree-archive-helper.sh" restore "$archive_path" --target "$restored" >/dev/null || rc=1
+		"recovery_path=archive-first" "false" "false"; then
+		rc=1
+	fi
+	bash "${SCRIPT_DIR}/../worktree-archive-helper.sh" restore "$archive_path" --target "$restored" --verification-copy >/dev/null || rc=1
 	actual_head=$("$GIT_BIN" -C "$restored" rev-parse --verify HEAD) || rc=1
 	recorded_branch=$(jq -r '.branch' "$archive_path/manifest.json") || rc=1
-	[[ "$actual_head" == "$expected_head" && "$recorded_branch" == "detached" ]] || rc=1
+	[[ -d "$wt_path" && "$actual_head" == "$expected_head" && "$recorded_branch" == "detached" ]] || rc=1
 	if "$GIT_BIN" -C "$restored" symbolic-ref -q HEAD >/dev/null 2>&1; then
 		rc=1
 	fi
 	print_result "recovery_archive_preserves_detached_head_identity" "$rc" \
-		"Expected detached identity and HEAD to survive native removal"
+		"Expected source retention and detached identity/HEAD to survive restoration"
 	return 0
 }
 
@@ -740,7 +746,7 @@ test_recoverable_archive_refuses_replacement_worktree() {
 	return 0
 }
 
-test_recoverable_archive_refuses_late_unarchived_write_without_force() {
+test_recoverable_archive_does_not_execute_legacy_remove_wrapper() {
 	local log_file="${TEST_DIR}/archive-late-write.log"
 	local repo_path="${TEST_DIR}/archive-late-write-repo"
 	local wt_path="${TEST_DIR}/archive-late-write-worktree"
@@ -771,10 +777,10 @@ LATE_WRITE_GIT
 		"late-write-test" "recovery_path=archive-first" "false" "false"; then
 		rc=1
 	fi
-	[[ -f "$wt_path/late-write.txt" && ! -e "$archive_path/late-write.txt" ]] || rc=1
-	assert_file_contains "$log_file" "git-worktree-remove-failed.*mode=skipped" || rc=1
-	print_result "recoverable_archive_refuses_late_unarchived_write_without_force" "$rc" \
-		"Expected an unforced native removal to preserve a late write"
+	[[ -d "$wt_path" && -f "$archive_path/manifest.json" && ! -e "$marker_path" ]] || rc=1
+	[[ ! -e "$wt_path/late-write.txt" ]] || rc=1
+	print_result "recoverable_archive_does_not_execute_legacy_remove_wrapper" "$rc" \
+		"Expected source/archive retention and no legacy native-removal invocation"
 	return 0
 }
 
@@ -807,7 +813,7 @@ test_removal_helpers_refuse_direct_symlink_alias() {
 # Manual cleanup archives first, removes through native Git, and verifies exact
 # metadata absence before ownership is unregistered.
 # =============================================================================
-test_manual_cleanup_archives_removes_and_prunes() {
+test_manual_cleanup_refusal_preserves_receipt_and_registration() {
 	local log_file="${TEST_DIR}/manual-archive-cleanup.log"
 	local repo_path="${TEST_DIR}/manual-archive-repo"
 	local wt_path="${TEST_DIR}/manual-archive-worktree"
@@ -851,31 +857,34 @@ test_manual_cleanup_archives_removes_and_prunes() {
 		}
 		localdev_auto_branch_rm() { return 0; }
 		preview_proxy_auto_free() { return 0; }
-		_remove_cleanup_and_execute "$wt_path"
+		_remove_resolve_path() {
+			local target="$1"
+			printf '%s\n' "$target"
+			return 0
+		}
+		local receipt_before=""
+		receipt_before=$("$GIT_BIN" hash-object "$cleanup_receipt") || exit 1
+		if cmd_remove "$wt_path" --force; then
+			exit 1
+		fi
+		[[ "$("$GIT_BIN" hash-object "$cleanup_receipt")" == "$receipt_before" ]] || exit 1
 	); then
 		rc=1
 	fi
-	[[ ! -e "$wt_path" && -d "$trash_destination" ]] || rc=1
-	jq -e '.phase == "verified" and .source_removal_outcome == "removed"' \
-		"$trash_destination"/.producer-transactions/*/journal.json >/dev/null || rc=1
-	if "$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fqx "worktree $wt_root"; then
-		rc=1
-	fi
-	grep -Fxq "$wt_path" "$unregister_log" 2>/dev/null || rc=1
-	assert_file_contains "$log_file" "worktree-removed.*manual.*mode=trash" || rc=1
+	[[ -d "$wt_path" && ! -e "$trash_destination" && ! -e "$unregister_log" ]] || rc=1
+	"$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fx "worktree $wt_root" >/dev/null || rc=1
 	jq -e '.repository == "example/repo" and .pr_number == 321
-		and .resource_cleanup_state == "CLEANED" and .cleanup_lease.state == "released"' \
+		and .resource_cleanup_state != "CLEANED"' \
 		"$cleanup_receipt" >/dev/null || rc=1
-	print_result "manual_cleanup_archives_removes_and_prunes" "$rc" \
-		"Expected archive-first manual cleanup to verify metadata, unregister, and transition its exact receipt"
+	print_result "manual_cleanup_refusal_preserves_receipt_and_registration" "$rc" \
+		"Expected registry refusal without pruning, legacy unregister or a false cleanup receipt"
 	return 0
 }
 
 # =============================================================================
-# Manual targeted cleanup may recover from degraded process-CWD visibility only
-# with exact-head merged-PR proof, no open PR, clean state, and an owned lease.
+# Even exact-head merged-PR and legacy lease evidence cannot replace the registry.
 # =============================================================================
-test_manual_cleanup_recovers_degraded_visibility_exact_head() {
+test_manual_cleanup_rejects_legacy_exact_head_proof() {
 	local log_file="${TEST_DIR}/manual-degraded-cleanup.log" repo_path="${TEST_DIR}/manual-degraded-repo"
 	local wt_path="${TEST_DIR}/manual-degraded-worktree" trash_destination="${TEST_DIR}/manual-degraded-trash"
 	local unregister_log="${TEST_DIR}/manual-degraded-unregister.log" branch_name="feature/manual-degraded"
@@ -884,7 +893,7 @@ test_manual_cleanup_recovers_degraded_visibility_exact_head() {
 
 	create_git_worktree_fixture "$repo_path" "$wt_path" "$branch_name" || rc=1
 	head_sha=$("$GIT_BIN" -C "$wt_path" rev-parse --verify HEAD) || rc=1
-	if ! (
+	if (
 		cd "$repo_path" || exit 1
 		unset _WORKTREE_CMDS_LIB_LOADED _WORKTREE_CLEAN_LIB_LOADED 2>/dev/null || true
 		SCRIPT_DIR="${COMMANDS_HELPER%/*}"
@@ -961,18 +970,16 @@ test_manual_cleanup_recovers_degraded_visibility_exact_head() {
 			printf '%s\n' "$target"
 			return 0
 		}
-		cmd_remove "$wt_path"
+		cmd_remove "$wt_path" --force
 	); then
 		rc=1
 	fi
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
-	[[ ! -e "$wt_path" && -d "$trash_destination" ]] || rc=1
-	printf '%s\n' "$metadata" | grep -Fqx "branch refs/heads/${branch_name}" && rc=1
+	[[ -d "$wt_path" && ! -e "$trash_destination" && ! -e "$unregister_log" ]] || rc=1
+	printf '%s\n' "$metadata" | grep -Fx "branch refs/heads/${branch_name}" >/dev/null || rc=1
 	"$GIT_BIN" -C "$repo_path" show-ref --verify --quiet "refs/heads/${branch_name}" || rc=1
-	grep -Fxq "$wt_path" "$unregister_log" 2>/dev/null || rc=1
-	assert_file_contains "$log_file" "worktree-removed.*manual.*mode=recoverable-trash.*merged_pr=42.*branch_preserved=true" || rc=1
-	print_result "manual_cleanup_recovers_degraded_visibility_exact_head" "$rc" \
-		"Expected candidate-local archive-first removal with exact merged proof and branch preservation"
+	print_result "manual_cleanup_rejects_legacy_exact_head_proof" "$rc" \
+		"Expected registry refusal despite legacy merged proof, with source/branch retained"
 	return 0
 }
 
@@ -1283,11 +1290,12 @@ test_recoverable_cleanup_preserves_lease_loss_after_archive() {
 	[[ -d "$wt_path" ]] || rc=1
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
 	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || rc=1
-	jq -e '.phase == "verified" and .source_removal_outcome == "pending"' \
+	jq -e '.phase == "archived" and .source.capture_policy == "git-only"
+		and .source_removal_outcome == "pending"' \
 		"$trash_root"/.producer-transactions/*/journal.json >/dev/null || rc=1
 	assert_file_contains "$log_file" "worktree-skipped.*cleanup-lease-changed-after-archive.*mode=skipped" || rc=1
 	print_result "recoverable_cleanup_preserves_lease_loss_after_archive" "$rc" \
-		"Expected source, metadata, and archive retention after cleanup lease replacement"
+		"Expected source, metadata, and archive retention after cleanup lease replacement; audit: $(cat "$log_file" 2>/dev/null); journal: $(jq -c '{phase, source_removal_outcome}' "$trash_root"/.producer-transactions/*/journal.json 2>/dev/null)"
 	return 0
 }
 

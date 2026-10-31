@@ -236,8 +236,8 @@ _launch_rate_limit_fast_monitor() {
 # GH#21886: Claude CLI has no --cwd / --directory / --working-directory
 # flag. Setting cwd MUST happen via `cd` in the parent shell before exec.
 # This function isolates the cd in a subshell so it does not pollute the
-# caller's PWD. Empty work_dir is allowed (no-op cd) for callers that
-# legitimately want to inherit the current cwd.
+# caller's PWD. A work directory is required, matching the public run command;
+# inherited cwd must not stand in for explicit lifecycle context.
 #
 # GH#33117: the sandboxed path normalizes the process-scoped signing and
 # repository-bound Git-auth environment exactly like
@@ -253,11 +253,31 @@ _invoke_claude() {
 	local work_dir="$3"
 	shift 3
 	local -a cmd=("$@")
+	if [[ -z "$work_dir" ]]; then
+		print_error "Worker launch requires an explicit work directory"
+		printf '%s' "75" >"$exit_code_file"
+		return 0
+	fi
 
 	(
 		set +e
 		local egress_mode="${AIDEVOPS_WORKER_EGRESS_MODE:-auto}"
 		local egress_worker_id="${AIDEVOPS_WORKER_ID:-${_invoke_session_key:-headless}}"
+		local lifecycle_status=0 private_workload=0
+		local lifecycle_worktree="$work_dir"
+		if [[ -n "$lifecycle_worktree" && "$lifecycle_worktree" != /* ]]; then
+			lifecycle_worktree="${PWD%/}/$lifecycle_worktree"
+		fi
+		if _headless_private_workload_enabled; then
+			private_workload=1
+		fi
+		# shellcheck source=worker-lifecycle-state.sh
+		source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
+		worker_lifecycle_prepare_launch "$lifecycle_worktree" "${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py" "$private_workload" || lifecycle_status=$?
+		if [[ "$lifecycle_status" -ne 0 ]]; then
+			printf '%s' "$lifecycle_status" >"$exit_code_file"
+			exit "$lifecycle_status"
+		fi
 		# Set child cwd via shell since claude CLI has no flag for it.
 		if [[ -n "$work_dir" ]]; then
 			if ! cd "$work_dir"; then
@@ -267,6 +287,9 @@ _invoke_claude() {
 			fi
 		fi
 		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
+			# The sandbox entry owns admission; do not wrap the command twice.
+			export AIDEVOPS_LIFECYCLE_WORKTREE="$lifecycle_worktree"
+			export AIDEVOPS_PRIVATE_WORKLOAD="$private_workload"
 			local passthrough_csv=""
 			local runtime_role="${_invoke_role:-worker}"
 			if ! prepare_headless_signing_sandbox_env "$runtime_role"; then
@@ -303,6 +326,7 @@ _invoke_claude() {
 			if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
 				print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare timeout (no privilege isolation) (GH#20146 audit)"
 			fi
+			cmd=(${WORKER_LIFECYCLE_PREFIX[@]+"${WORKER_LIFECYCLE_PREFIX[@]}"} "${cmd[@]}")
 			if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
 				timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
 			else

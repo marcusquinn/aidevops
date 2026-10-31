@@ -17,8 +17,12 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
+from worker_lifecycle.cleanup_plan import prepare_cleanup
+from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import GenerationEnrollment, MARKER, _git_directory
 from worker_lifecycle.registry import main
+from worker_lifecycle.runtime import adapter_for
+from worker_lifecycle.session import admit_session
 from worker_lifecycle.storage import LifecycleRegistry, StoreConflict
 
 
@@ -46,6 +50,30 @@ class EnrollmentContract(unittest.TestCase):
             check=True, capture_output=True, timeout=15,
             env={name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
         )
+
+    def test_session_owner_retries_and_finishes_after_admission_closes(self):
+        first = admit_session(self.store, self.tree, os.getpid(), "session-fixture")
+        self.assertEqual(first["status"], "admitted")
+        prepared = prepare_cleanup(self.store, self.tree)
+        self.assertEqual(prepared["status"], "waiting-for-runs")
+        self.assertEqual(prepared["admission"], "open")
+        AdmissionRegistry(self.store).close_generation(
+            str(uuid4()), self.enrollment.resolve(self.tree),
+        )
+        before = self.store.summary()
+        repeated = admit_session(self.store, self.tree, os.getpid(), "session-fixture")
+        self.assertEqual(repeated["run_id"], first["run_id"])
+        self.assertEqual(repeated["status"], "existing-owner")
+        self.assertEqual(self.store.summary(), before)
+        with self.assertRaises(AdmissionClosed):
+            admit_session(self.store, self.tree, os.getpid(), "different-session")
+        self.assertEqual(self.store.summary(), before)
+
+    def test_session_admission_rejects_missing_identity_without_enrollment(self):
+        with self.assertRaises(ValueError):
+            admit_session(self.store, self.tree, os.getpid(), "")
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.store.summary()["bindings"], 0)
 
     def test_replay_and_lookup_preserve_generation_without_new_events(self):
         generation = self.enrollment.resolve(self.tree, create=True)
@@ -224,14 +252,62 @@ class EnrollmentContract(unittest.TestCase):
         os.link(self.marker, self.marker.parent / ".interrupted-publish.tmp")
         self.assertEqual(self.enrollment.resolve(self.tree, create=True), self.enrollment.resolve(self.tree))
 
-    def launch(self, path, *, cwd=None, sentinel=None):
+    def launch(self, path, *, cwd=None, sentinel=None, excluded=False):
         entry = Path(__file__).resolve().parents[1] / "worker-launch.py"
         return subprocess.run(  # nosec B603 # fixed Python entry point and disposable marker command
-            [sys.executable, "-E", "-s", "-B", str(entry), "--initialize",
+            [sys.executable, "-E", "-s", "-B", str(entry),
+             "--unregistered-only" if excluded else "--initialize",
              "--state-dir", str(self.store.directory), "--worktree", str(path),
              "--", "touch", str(sentinel or path / "executed")],
             cwd=cwd or path, capture_output=True, text=True, timeout=30,
         )
+
+    def test_subdirectory_launch_uses_enclosing_generation(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        directory = self.tree / "subdirectory"
+        directory.mkdir()
+        result = self.launch(directory)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with self.store.connection() as connection:
+            bindings = connection.execute("SELECT generation_id FROM bindings").fetchall()
+        self.assertEqual([row["generation_id"] for row in bindings], [generation])
+        (directory / "executed").unlink()
+        AdmissionRegistry(self.store).close_generation(str(uuid4()), generation)
+        for excluded in (False, True):
+            result = self.launch(directory, excluded=excluded)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertFalse((directory / "executed").exists())
+
+    def test_subdirectory_marker_prevents_an_alternate_registry(self):
+        self.enrollment.resolve(self.tree, create=True)
+        directory = self.tree / "subdirectory"
+        directory.mkdir()
+        self.store = LifecycleRegistry.initialize(self.root / "other-state")
+        for excluded in (False, True):
+            result = self.launch(directory, excluded=excluded)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertFalse((directory / "executed").exists())
+
+    def test_excluded_workload_cannot_bypass_enrollment_or_close(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        for closed in (False, True):
+            if closed:
+                AdmissionRegistry(self.store).close_generation(str(uuid4()), generation)
+            before = self.store.summary()
+            result = self.launch(self.tree, excluded=True)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertFalse((self.tree / "executed").exists())
+            self.assertEqual(self.store.summary(), before)
+
+    def test_excluded_workload_checks_marker_when_registry_has_disappeared(self):
+        self.enrollment.resolve(self.tree, create=True)
+        retained = self.root / "retained-state"
+        self.store.directory.rename(retained)
+        result = self.launch(self.tree, excluded=True)
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertFalse((self.tree / "executed").exists())
+        self.assertFalse(self.store.directory.exists())
+        self.assertTrue(retained.is_dir())
 
     def test_missing_registered_path_cannot_fall_back_to_observation(self):
         generation = self.enrollment.resolve(self.tree, create=True)
@@ -309,6 +385,8 @@ class EnrollmentContract(unittest.TestCase):
                if not key.startswith(("AIDEVOPS_", "GIT_", "WORKTREE_"))}
         env.update(HOME=str(self.root), AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory),
                    GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.hooksPath", GIT_CONFIG_VALUE_0="/dev/null")
+        env.update(AIDEVOPS_LIFECYCLE_RUNTIME_PID=str(os.getpid()),
+                   AIDEVOPS_LIFECYCLE_SESSION_ID="native-creator")
         bash = shutil.which("bash")
         if bash is None:
             self.fail("Bash is required for creation-hook integration")
@@ -320,12 +398,61 @@ class EnrollmentContract(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         generation = self.enrollment.resolve(created)
+        prepared = prepare_cleanup(self.store, created)
+        self.assertEqual(prepared["status"], "waiting-for-runs")
+        self.assertTrue(prepared["creation_verified"])
+        self.assertEqual(prepared["registered_runs"], 1)
+        self.assertEqual(prepared["admission"], "open")
         result = self.launch(created)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((created / "executed").exists())
         with self.store.connection() as connection:
             bindings = connection.execute("SELECT generation_id FROM bindings").fetchall()
-            self.assertEqual([row[0] for row in bindings], [generation])
+            self.assertEqual([row[0] for row in bindings], [generation, generation])
+
+    def test_controlled_creation_cannot_adopt_existing_directory(self):
+        target = self.root / "existing"
+        target.mkdir()
+        before = self.store.summary()
+        with self.assertRaises(FileExistsError):
+            create_worktree(self.store, WorktreeSpec(self.repo, target, "HEAD", ("--detach",)),
+                            os.getpid(), "creator")
+        self.assertEqual(list(target.iterdir()), [])
+        self.assertEqual(self.store.summary(), before)
+
+    def test_admitted_existing_tree_has_no_creation_proof(self):
+        admit_session(self.store, self.tree, os.getpid(), "adopting-session")
+        self.assertFalse(prepare_cleanup(self.store, self.tree)["creation_verified"])
+
+    def test_creation_rejects_replacement_after_publication(self):
+        from worker_lifecycle.creation import _publish_directory
+
+        target = self.root / "replaced-creation"
+        retained = self.root / "original-directory"
+        before = self.store.summary()
+
+        def replace_after_publish(source, destination, name):
+            _publish_directory(source, destination, name)
+            target.rename(retained)
+            target.mkdir()
+
+        with patch("worker_lifecycle.creation._publish_directory",
+                   side_effect=replace_after_publish):
+            with self.assertRaisesRegex(StoreConflict, "creation-directory-changed"):
+                create_worktree(self.store, WorktreeSpec(self.repo, target, "HEAD", ("--detach",)),
+                                os.getpid(), "creator")
+        self.assertEqual(list(target.iterdir()), [])
+        self.assertTrue(retained.is_dir())
+        self.assertEqual(self.store.summary(), before)
+
+    def test_failed_native_creation_does_not_publish_proof(self):
+        target = self.root / "failed-creation"
+        before = self.store.summary()
+        with self.assertRaises(subprocess.CalledProcessError):
+            create_worktree(self.store, WorktreeSpec(self.repo, target, "missing-ref", ("--detach",)),
+                            os.getpid(), "creator")
+        self.assertEqual(self.store.summary(), before)
+        self.assertTrue(target.is_dir())
 
     def creation_enrollment(self, path):
         scripts = Path(__file__).resolve().parents[2] / "scripts"
@@ -395,6 +522,117 @@ class EnrollmentContract(unittest.TestCase):
         result = self.launch(self.tree)
         self.assertEqual(result.returncode, 75, result.stderr)
         self.assertFalse((self.tree / "executed").exists())
+
+    def test_unavailable_registry_cannot_bypass_closed_generation(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        AdmissionRegistry(self.store).close_generation(str(uuid4()), generation)
+        before = self.store.summary()
+        self.store.path.chmod(0o644)
+        try:
+            result = self.launch(self.tree)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertFalse((self.tree / "executed").exists())
+        finally:
+            self.store.path.chmod(0o600)
+        self.assertEqual(self.store.summary(), before)
+
+    def test_other_registry_cannot_bypass_a_marked_generation(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        AdmissionRegistry(self.store).close_generation(str(uuid4()), generation)
+        original = self.store
+        before = original.summary()
+        self.store = LifecycleRegistry.initialize(self.root / "other-state")
+        result = self.launch(self.tree)
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertFalse((self.tree / "executed").exists())
+        other_generation = str(uuid4())
+        AdmissionRegistry(self.store).open_generation(
+            str(uuid4()), other_generation, self.tree,
+        )
+        entry = Path(__file__).resolve().parents[1] / "worker-launch.py"
+        result = subprocess.run(  # nosec B603 # owned alternative-registry probe
+            [sys.executable, "-E", "-s", "-B", str(entry),
+             "--state-dir", str(self.store.directory), "--worktree", str(self.tree),
+             "--generation-id", other_generation, "--run-id", str(uuid4()),
+             "--", "touch", str(self.tree / "executed")],
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertFalse((self.tree / "executed").exists())
+        self.assertEqual(self.store.summary()["runs"], {})
+        self.assertEqual(original.summary(), before)
+
+    def test_cleanup_cli_closes_and_reconciles_a_finished_native_launch(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        launched = self.launch(self.tree)
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        entry = Path(__file__).resolve().parents[1] / "worker-registry.py"
+        result = subprocess.run(  # nosec B603 # fixed CLI, isolated store and worktree
+            [sys.executable, "-E", "-s", "-B", str(entry), "--state-dir",
+             str(self.store.directory), "prepare-cleanup", "--path", str(self.tree)],
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "registered-runs-ended")
+        self.assertEqual(report["registered_runs"], 1)
+        self.assertFalse(report["cleanup_authorized"])
+        self.assertTrue((self.tree / "executed").exists())
+        self.assertEqual(self.enrollment.inspect(self.tree), generation)
+        before = self.store.summary()
+        self.assertEqual(prepare_cleanup(self.store, self.tree), report)
+        self.assertEqual(self.store.summary(), before)
+        self.assertEqual(self.launch(self.tree).returncode, 75)
+        with self.assertRaises(AdmissionClosed):
+            self.enrollment.resolve(self.tree)
+
+    def test_cleanup_waits_for_live_registered_run(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        AdmissionRegistry(self.store).admit(str(uuid4()), identity, generation)
+        report = prepare_cleanup(self.store, self.tree)
+        self.assertEqual(report["status"], "waiting-for-runs")
+        self.assertEqual(report["unfinished_runs"], 1)
+        self.assertFalse(report["cleanup_authorized"])
+        self.assertEqual(report["admission"], "open")
+        self.assertEqual(self.enrollment.resolve(self.tree), generation)
+
+    def test_cleanup_does_not_promote_observation_bindings_to_admitted_runs(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        run = str(uuid4())
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        self.store.register(str(uuid4()), run, identity)
+        self.store.bind(str(uuid4()), run, generation, str(self.tree))
+        report = prepare_cleanup(self.store, self.tree)
+        self.assertEqual(report["status"], "coverage-gap")
+        self.assertFalse(report["cleanup_authorized"])
+        self.assertEqual(report["admission"], "open")
+
+    def test_cleanup_empty_registration_is_not_proof_of_ended_runs(self):
+        self.enrollment.resolve(self.tree, create=True)
+        report = prepare_cleanup(self.store, self.tree)
+        self.assertEqual(report["status"], "coverage-gap")
+        self.assertFalse(report["cleanup_authorized"])
+        self.assertEqual(report["admission"], "open")
+        launched = self.launch(self.tree)
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+
+    def test_cleanup_does_not_close_over_a_racing_new_owner(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        launched = self.launch(self.tree)
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        close = AdmissionRegistry.close_generation
+
+        def racing_close(registry, event, target, **options):
+            registry.admit(str(uuid4()), identity, target)
+            return close(registry, event, target, **options)
+
+        with patch.object(AdmissionRegistry, "close_generation", racing_close):
+            report = prepare_cleanup(self.store, self.tree)
+        self.assertEqual(report["status"], "retry-required")
+        self.assertFalse(report["cleanup_authorized"])
+        self.assertEqual(self.enrollment.resolve(self.tree), generation)
 
 
 if __name__ == "__main__":

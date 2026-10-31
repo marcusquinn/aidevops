@@ -23,7 +23,7 @@ from canonical_git_repository import real_git as real_git
 
 BLOCK_EXIT = 42
 READ_ONLY = frozenset(
-    (
+    {
         "status",
         "diff",
         "diff-files",
@@ -52,7 +52,7 @@ READ_ONLY = frozenset(
         "count-objects",
         "version",
         "help",
-    )
+    }
 )
 
 

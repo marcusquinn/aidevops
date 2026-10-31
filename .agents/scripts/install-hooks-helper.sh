@@ -42,7 +42,7 @@ STOP_HOOK_CAPTURE_SCRIPT="$HOOKS_DIR/session_capture_check.py"
 REPLAY_HOOK_SCRIPT="$HOOKS_DIR/compaction_user_input_replay.py"
 REPLAY_HOOK_TRANSCRIPT_SCRIPT="$HOOKS_DIR/compaction_replay_transcript.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
-HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
+HOOK_COMMAND="exec \$HOME/.aidevops/hooks/git_safety_guard.py"
 POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
 CREDENTIAL_SCRUB_COMMAND="\$HOME/.aidevops/hooks/credential-transcript-scrub.py"
 SECRET_READ_GUARD_COMMAND="\$HOME/.aidevops/hooks/secret_file_read_guard.py"
@@ -730,6 +730,9 @@ _runtime_policy_helper_path() {
 	AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER)
 		configured_path="${AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER:-}"
 		;;
+	AIDEVOPS_LIFECYCLE_SESSION_HELPER)
+		configured_path="${AIDEVOPS_LIFECYCLE_SESSION_HELPER:-}"
+		;;
 	*)
 		print_error "Unknown runtime policy helper key: $environment_key"
 		return 1
@@ -745,16 +748,20 @@ _runtime_policy_helper_path() {
 }
 
 _check_runtime_policy_dependencies() {
+	local install_guidance="Run 'aidevops update' or './setup.sh --stage agents' before installing hooks"
 	local command_helper
 	command_helper=$(_runtime_policy_helper_path \
 		"AIDEVOPS_COMMAND_POLICY_HELPER" "command-policy-helper.py")
 	local write_helper
 	write_helper=$(_runtime_policy_helper_path \
 		"AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER" "canonical-write-policy-helper.py")
+	local lifecycle_helper
+	lifecycle_helper=$(_runtime_policy_helper_path \
+		"AIDEVOPS_LIFECYCLE_SESSION_HELPER" "worker-lifecycle-session-helper.py")
 
 	if [[ ! -f "$command_helper" ]]; then
 		print_error "Command policy helper is unavailable: $command_helper"
-		print_info "Run 'aidevops update' or './setup.sh --stage agents' before installing hooks"
+		print_info "$install_guidance"
 		return 1
 	fi
 	if ! python3 "$command_helper" validate >/dev/null 2>&1; then
@@ -764,12 +771,17 @@ _check_runtime_policy_dependencies() {
 	fi
 	if [[ ! -f "$write_helper" ]]; then
 		print_error "Canonical-write policy helper is unavailable: $write_helper"
-		print_info "Run 'aidevops update' or './setup.sh --stage agents' before installing hooks"
+		print_info "$install_guidance"
 		return 1
 	fi
 	if ! python3 "$write_helper" classify --cwd "$PWD" >/dev/null 2>&1; then
 		print_error "Canonical-write policy helper failed its validation: $write_helper"
 		print_info "Run 'aidevops update' or './setup.sh --stage agents' to repair the deployed agents tree"
+		return 1
+	fi
+	if [[ ! -f "$lifecycle_helper" ]] || ! python3 -E -s -B "$lifecycle_helper" --help >/dev/null 2>&1; then
+		print_error "Lifecycle admission helper or its imports are unavailable: $lifecycle_helper"
+		print_info "$install_guidance"
 		return 1
 	fi
 
@@ -785,10 +797,17 @@ _probe_hook_runtime() {
 		print_error "Installed hook is unavailable or not executable: $hook_script"
 		return 1
 	fi
-	output=$(python3 "$hook_script" <<<"$hook_input" 2>&1) || {
+	# Readiness is not a tool invocation: do not enroll the installer's worktree
+	# or manufacture a runtime session. A fresh non-Git cwd exercises the hook.
+	local probe_dir=""
+	local probe_status=0
+	probe_dir=$(mktemp -d) || return 1
+	output=$(cd "$probe_dir" && python3 "$hook_script" <<<"$hook_input" 2>&1) || probe_status=$?
+	rmdir "$probe_dir" || return 1
+	if [[ "$probe_status" -ne 0 ]]; then
 		print_error "Installed hook runtime probe failed: $hook_script"
 		return 1
-	}
+	fi
 	if [[ -n "$output" ]]; then
 		print_error "Installed hook denied a benign Bash probe"
 		if [[ "$output" == *"policy.helper-unavailable"* ]]; then
@@ -847,6 +866,8 @@ install_hook() {
 	# Find source hook
 	local source_hook
 	source_hook=$(find_source_hook) || return 1
+	local source_lifecycle_adapter
+	source_lifecycle_adapter=$(find_source_hook "git_safety_lifecycle.py") || return 1
 	local source_post_hook
 	source_post_hook=$(find_source_hook "mcp_task_post_hook.py") || return 1
 	local source_credential_scrub_hook
@@ -869,6 +890,7 @@ install_hook() {
 	mkdir -p "$HOOKS_DIR"
 
 	# Copy hook script
+	cp "$source_lifecycle_adapter" "$HOOKS_DIR/git_safety_lifecycle.py"
 	cp "$source_hook" "$HOOK_SCRIPT"
 	chmod +x "$HOOK_SCRIPT"
 	print_success "Installed $HOOK_SCRIPT"
@@ -1037,7 +1059,7 @@ for h in hooks.get('PreToolUse', []):
     matcher = h.get('matcher', '')
     for sub in h.get('hooks', []):
         cmd = sub.get('command', '')
-        if 'git_safety_guard' in cmd:
+        if 'git_safety_guard' in cmd and cmd.startswith('exec '):
             if matcher == 'Bash':
                 has_guard_bash = True
             if 'Edit' in matcher or 'Write' in matcher:
@@ -1080,6 +1102,12 @@ with open('$CLAUDE_SETTINGS') as f:
 
 if 'hooks' not in settings:
     settings['hooks'] = {}
+
+# Replace only the framework-owned command, preserving custom wrappers.
+for entry in settings['hooks'].get('PreToolUse', []):
+    for sub in entry.get('hooks', []):
+        if sub.get('command') == '$HOOK_COMMAND'.removeprefix('exec '):
+            sub['command'] = '$HOOK_COMMAND'
 
 def has_hook(entries, needle):
     for entry in entries:

@@ -633,7 +633,7 @@ restore_untracked_payload() {
 	local archive_dir="$1"
 	local target="$2"
 	if [[ -f "$archive_dir/untracked.tar.gz" ]]; then
-		python3 - "$archive_dir/untracked.tar.gz" "$target" <<'PY' || return 1
+		python3 - "$archive_dir/untracked.tar.gz" "$target" "$SCRIPT_DIR" <<'PY' || return 1
 import pathlib
 import os
 import posixpath
@@ -643,6 +643,8 @@ import sys
 import tarfile
 source = pathlib.Path(sys.argv[1])
 target = pathlib.Path(sys.argv[2]).resolve()
+sys.path.insert(0, sys.argv[3])
+from worktree_archive_untracked import restore_symlink
 
 def open_parent(parts):
     descriptor = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -678,7 +680,7 @@ with tarfile.open(source, "r:gz") as payload:
             if member.isdir():
                 os.mkdir(name, dir_fd=parent)
             elif member.issym():
-                os.symlink(member.linkname, name, dir_fd=parent)
+                restore_symlink(member, parent, name)
             elif member.islnk():
                 if member.linkname not in created_regular:
                     raise SystemExit("hard link target is not a restored payload file")
