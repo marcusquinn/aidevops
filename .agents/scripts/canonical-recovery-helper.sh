@@ -1420,6 +1420,12 @@ if [[ "$cmd" == "$FOLLOW_TRANSFER_CMD" ]]; then
 		printf 'BLOCKED: transfer following requires the registered GitHub origin\n' >&2
 		exit 1
 	}
+	transfer_lock="${common_dir}/aidevops-canonical-recovery.lock"
+	mkdir "$transfer_lock" 2>/dev/null || {
+		printf 'BLOCKED: canonical recovery lock is already held\n' >&2
+		exit 1
+	}
+	trap 'rmdir "$transfer_lock" 2>/dev/null || true' EXIT
 	# The native Git entrypoint is restricted to this audited recovery operation.
 	# No fetch, ref update, checkout, transfer API write, or layout move occurs here.
 	python3 - "$repo_path" "$registered_slug" "$bootstrap_slug" \
@@ -1446,7 +1452,7 @@ audit_env = dict(os.environ, AUDIT_QUIET="true",
 
 def run(*args, env=None):
     return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, env=env).stdout.strip()
+                          stderr=subprocess.PIPE, env=env, timeout=60).stdout.strip()
 
 def git_values(key):
     result = subprocess.run([git, '-C', repo, "config", "--get-all", key],
@@ -1529,7 +1535,7 @@ def apply_transfer():
 
 try:
     apply_transfer()
-except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError):
+except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
     # Provider errors can contain private URLs or credentials; do not relay stderr.
     print("BLOCKED: transfer identity, origin, registry, or audit verification failed; inspect local state before retrying", file=sys.stderr)
     sys.exit(1)
