@@ -409,9 +409,10 @@ JS
 	# GH#36181: with bundled Chromium removed, a valid configured executable
 	# satisfies readiness; unset, invalid or stale-pin cases do not.
 	local missing_env=("${runtime_env[@]}" FAKE_PLAYWRIGHT_BROWSER="${tmp_dir}/removed-chromium" AIDEVOPS_PLAYWRIGHT_VERSION="9.9.9")
-	local configured_ok=0 unset_ok=0 invalid_ok=0 configured_stale_ok=0
-	if (cd "${tmp_dir}/isolated" && env "${missing_env[@]}" AIDEVOPS_PLAYWRIGHT_EXECUTABLE="$browser_path" \
-		node "$PLAYWRIGHT_RUNTIME" runtime-check | grep -qF "\"configuredExecutable\":\"${browser_path}\""); then
+	local configured_ok=0 unset_ok=0 invalid_ok=0 configured_stale_ok=0 configured_status=""
+	if configured_status=$(cd "${tmp_dir}/isolated" && env "${missing_env[@]}" AIDEVOPS_PLAYWRIGHT_EXECUTABLE="$browser_path" \
+		node "$PLAYWRIGHT_RUNTIME" runtime-check) &&
+		[[ "$configured_status" == *"\"configuredExecutable\":\"${browser_path}\""* ]]; then
 		configured_ok=1
 	fi
 	if ! (cd "${tmp_dir}/isolated" && env "${missing_env[@]}" node "$PLAYWRIGHT_RUNTIME" runtime-check >/dev/null); then
