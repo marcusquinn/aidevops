@@ -1194,16 +1194,17 @@ do_scan() {
 	fi
 	pr_numbers=$(gh pr list --state merged --search "merged:>${since_date}" \
 		--repo "$repo" --limit "$SCANNER_PR_LIMIT" --json number --jq '.[].number') || list_rc=$?
-	if [[ "$list_rc" -ne 0 ]] && scanner_gh_cooldown_active core graphql search; then
-		scanner_yield_at "$repo" "$cursor_next_pr" 0 "$SCANNER_COOLDOWN_REASON"
+	if [[ "$list_rc" -ne 0 ]]; then
+		local list_failure_reason="merged-pr-list-failed"
+		if scanner_gh_cooldown_active core graphql search; then
+			list_failure_reason="$SCANNER_COOLDOWN_REASON"
+		fi
+		log "Merged PR listing failed (rc=${list_rc}); yielding to retry"
+		scanner_yield_at "$repo" "$cursor_next_pr" 0 "$list_failure_reason"
 		return 0
 	fi
 	if [[ -z "$pr_numbers" ]]; then
-		if [[ "$list_rc" -ne 0 ]]; then
-			log "Merged PR listing failed (rc=${list_rc})"
-		else
-			log "No merged PRs found"
-		fi
+		log "No merged PRs found"
 		clear_scan_cursor "$repo"
 		log_run_event "$repo" "finish" "status=complete issues_created=0"
 		return 0
