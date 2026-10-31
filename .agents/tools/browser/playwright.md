@@ -185,7 +185,7 @@ const context = await chromium.launchPersistentContext('/tmp/brave-profile', {
 });
 ```
 
-Managed Playwright, Browser QA and setup readiness honour `AIDEVOPS_PLAYWRIGHT_EXECUTABLE=/path/to/browser` (export it where `aidevops update` runs); set `AIDEVOPS_PLAYWRIGHT_BROWSER=chromium` when bundled Chromium is required exactly.
+Managed Playwright, Browser QA and setup readiness honour `AIDEVOPS_PLAYWRIGHT_EXECUTABLE=/path/to/browser`. Export it in the environment inherited by both `aidevops update` and every later process that launches Playwright (including service or worker environments). Setting it only for the update process is insufficient: setup may skip bundled Chromium, leaving later launches without a browser if they do not inherit the override. Set `AIDEVOPS_PLAYWRIGHT_BROWSER=chromium` when bundled Chromium is required exactly.
 
 ## Bounded Completion Checks
 
