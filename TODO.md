@@ -1814,6 +1814,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18824 fix(pulse): recover abandoned worker-draft claims so stranded drafts are continued #auto-dispatch #bug ref:GH#36186
 
+- [ ] t18826 fix(gh-shim): answer gh api user from GraphQL viewer when REST core is deferred or in cooldown #auto-dispatch #bug ref:GH#36192
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
