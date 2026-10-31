@@ -561,6 +561,13 @@ _dispatch_dedup_check_layers() {
 	_dispatch_dedup_dependency_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_meta_json" || gate_rc=$?
 	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
 
+	# GH#36214: only eligible candidates fetch backoff evidence or post a notice.
+	# Held issues still return before check_dispatch_dedup can write a claim.
+	if declare -F _dlw_preclaim_zero_attempt_backoff >/dev/null 2>&1 &&
+		_dlw_preclaim_zero_attempt_backoff "$issue_number" "$repo_slug"; then
+		return 3
+	fi
+
 	# Read-only dedup layers — cannot be skipped.
 	# t2996: ISSUE_META_JSON forwards the canonical bundle to
 	# dispatch-dedup-helper.sh (Layer 6 `is-assigned`, Layer 4 `has-open-pr`,
@@ -1185,6 +1192,9 @@ dispatch_with_dedup() {
 	source "${SCRIPT_DIR}/runner-capability-helper.sh"
 	runner_capability_check_fresh "$repo_path" "$issue_number" "$repo_slug" "$LOGFILE" || return 1
 	_dispatch_preclaim_brief_scope "$issue_number" "$repo_slug" "$issue_meta_json" || return 1
+	# GH#36214: the preclaim backoff in the dedup layers passes its metrics
+	# snapshot to prompt preparation via dynamic scope.
+	local _dispatch_zero_output_metrics=""
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.

@@ -21,11 +21,20 @@ fi
 # shellcheck source=shared-constants.sh
 # shellcheck disable=SC1091  # This module's directory is resolved at runtime.
 source "${BASH_SOURCE[0]%/*}/shared-constants.sh"
+# shellcheck source=shared-gh-collaborator-permission.sh
+# shellcheck disable=SC1091  # This module's directory is resolved at runtime.
+source "${BASH_SOURCE[0]%/*}/shared-gh-collaborator-permission.sh"
 
+# Args: issue number, repo slug, optional precomputed comment count, optional
+#       minimum state epoch (GH#36214: >0 ignores a local state entry last
+#       updated before it, so the self-healing hold ages out, and honours a
+#       maintainer reset, on the runner that recorded the failures too)
 _dlw_zero_output_failure_count() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local precomputed_comment_count="${3:-}"
+	local min_state_epoch="${4:-0}"
+	[[ "$min_state_epoch" =~ ^[0-9]+$ ]] || min_state_epoch=0
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
 	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
@@ -43,15 +52,19 @@ _dlw_zero_output_failure_count() {
 
 	local key="${repo_slug}/${issue_number}"
 	local result=""
-	result=$(jq -r --arg k "$key" 'def s: . // ""; .[$k] | if . then [(.count // 0 | tostring), (.reason | s), (.crash_type | s)] | @tsv else empty end' "$FAST_FAIL_STATE_FILE") || result=""
+	result=$(jq -r --arg k "$key" 'def s: . // ""; .[$k] | if . then [(.count // 0 | tostring), (.ts // 0 | tostring), (.reason | s), (.crash_type | s)] | @tsv else empty end' "$FAST_FAIL_STATE_FILE") || result=""
 	if [[ -z "$result" ]]; then
 		printf '%s' "$comment_count"
 		return 0
 	fi
 
-	local reason="" crash_type="" count=""
-	IFS=$'\t' read -r count reason crash_type <<<"$result"
+	local reason="" crash_type="" count="" state_ts=""
+	IFS=$'\t' read -r count state_ts reason crash_type <<<"$result"
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	[[ "$state_ts" =~ ^[0-9]+$ ]] || state_ts=0
+	if [[ "$min_state_epoch" -gt 0 && "$state_ts" -lt "$min_state_epoch" ]]; then
+		count=0
+	fi
 
 	case "${reason}:${crash_type}" in
 	worker_noop_zero_output:* | *:no_work | no_work:*) state_count="$count" ;;
@@ -67,9 +80,9 @@ _dlw_zero_output_failure_count() {
 
 # Shared jq prelude for zero-output evidence (GH#32928).
 # - #aidevops:trust-boundary — bare COLLABORATOR is ambiguous (read/triage
-#   access also receives it). A pure comment scan cannot perform the required
-#   permission lookup, so only authoritative OWNER/MEMBER comments may fuse or
-#   reset the hold.
+#   access also receives it). Only authoritative OWNER/MEMBER comments may
+#   reset the hold; evidence additionally accepts authors whose write access
+#   was verified beforehand (_dlw_evidence_trusted_authors, GH#36214).
 # - breaker_notice: the hold's own "dispatch-infrastructure-failure" notice
 #   mentions "zero-output"; counting it made every hold feed the next one.
 # - evidence_comments: evidence before the latest authoritative reset
@@ -100,6 +113,19 @@ _DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS='
 			end;
 '
 
+# GH#36214: dispatch-marker accessors for the comment metrics program. Append
+# after _DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS, which defines body_text.
+# shellcheck disable=SC2016  # jq program is intentionally single-quoted.
+_DLW_DISPATCH_MARKER_JQ_DEFS='
+		def marker_value($name):
+			try (body_text | capture($name + "=(?<value>[^ ]+)").value) catch "";
+		def lease_device: marker_value("device");
+		def lease_session: marker_value("session");
+		def author_login: (.user.login // .author // "");
+		def comment_epoch: ((try ((.created_at // "") | fromdateiso8601) catch 0) // 0);
+		def count_since($start): map(select(. >= $start)) | length;
+'
+
 _dlw_zero_output_comment_count() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -127,9 +153,20 @@ _dlw_zero_output_comment_count() {
 # Compute comment-bloat metrics from one normalized or paginated comment JSON
 # snapshot. Claims older than the prelaunch grace with no authenticated ready
 # transition are zero-attempt infrastructure evidence.
+#
+# GH#36214: a pre-launch abort deletes its DISPATCH_CLAIM (t3549) but leaves
+# the dispatcher's DISPATCH_LEASE phase=prelaunch renewal (GH#34057). Such an
+# orphan lease (no surviving claim for its token, no ready/terminal transition)
+# is the only cross-runner trace of the failed attempt, so it counts once per
+# author+token. Evidence authors are OWNER/MEMBER or logins in the
+# permission-verified trusted_authors list (peer runners on user-owned repos
+# are COLLABORATOR). The windowed count bounds the self-healing hold.
 # Args: raw comments JSON, now epoch, orphan grace, zero-output regex,
-#       zero-attempt regex
-# Output: comments, ops, zero, chars, zero-attempt as a TSV row
+#       zero-attempt regex, trusted authors JSON array (default []),
+#       hold window seconds (default 43200; 0 counts all evidence)
+# Output: comments, ops, zero, chars, zero-attempt, recent-zero,
+#         recent-hold-notices, recent evidence epochs (ascending CSV, "-" when
+#         none), latest authoritative reset epoch (0 when none) as a TSV row
 #######################################
 _dlw_comment_bloat_metrics_from_json() {
 	local raw_comments="$1"
@@ -137,29 +174,41 @@ _dlw_comment_bloat_metrics_from_json() {
 	local orphan_grace="$3"
 	local zero_output_pattern="$4"
 	local zero_attempt_pattern="$5"
+	local trusted_authors="${6:-[]}"
+	local window_seconds="${7:-43200}"
+	[[ "$window_seconds" =~ ^[0-9]+$ ]] || window_seconds=43200
+	jq -e 'arrays | all(.[]; type == "string")' <<<"$trusted_authors" >/dev/null 2>&1 || trusted_authors='[]'
 
 	printf '%s' "$raw_comments" | jq -r \
 		--argjson now_epoch "$now_epoch" \
 		--argjson orphan_grace "$orphan_grace" \
+		--argjson trusted_authors "$trusted_authors" \
+		--argjson window_seconds "$window_seconds" \
 		--arg zero_output_pattern "$zero_output_pattern" \
 		--arg zero_attempt_pattern "$zero_attempt_pattern" '
-'"${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}"'
-		def marker_value($name):
-			try (body_text | capture($name + "=(?<value>[^ ]+)").value) catch "";
+'"${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}${_DLW_DISPATCH_MARKER_JQ_DEFS}"'
+		def lease_token: marker_value("lease_token");
+		# #aidevops:trust-boundary: trusted_authors holds only logins whose
+		# per-repository permission was verified as write or higher.
+		def evidence_trusted:
+			authoritative_association
+			or (author_login as $login | $login != "" and (($trusted_authors | index($login)) != null));
+		(if $window_seconds > 0 then ($now_epoch - $window_seconds) else 0 end) as $window_start |
 		comments as $comments |
 		($comments | evidence_comments) as $evidence |
 		([$comments[] | select(body_text | test("ops:start|DISPATCH_CLAIM|CLAIM_RELEASED|dispatch-cooldown|Worker Watchdog Kill"; "i"))] | length) as $ops |
-		([$evidence[] | select(authoritative_association and (breaker_notice | not) and (body_text | test($zero_output_pattern; "i")))] | length) as $explicit_zero |
-		([$evidence[] | select(authoritative_association and (breaker_notice | not) and (body_text | test($zero_attempt_pattern; "i")) and (body_text | test("session_count=0"; "i")))] | length) as $explicit_zero_attempt |
+		[$evidence[] | select(evidence_trusted and (breaker_notice | not) and (body_text | test($zero_output_pattern; "i"))) | comment_epoch] as $explicit_zero_epochs |
+		([$evidence[] | select(evidence_trusted and (breaker_notice | not) and (body_text | test($zero_attempt_pattern; "i")) and (body_text | test("session_count=0"; "i")))] | length) as $explicit_zero_attempt |
+		([$evidence[] | select(evidence_trusted and breaker_notice) | comment_epoch] | count_since($window_start)) as $recent_notices |
 		([$evidence[]
-			| select(authoritative_association)
+			| select(evidence_trusted)
 			| select(body_text | test("DISPATCH_CLAIM nonce="; "i"))
 			| select(body_text | contains("lease_token="))
 			| . as $claim
-			| ($claim | marker_value("lease_token")) as $token
+			| ($claim | lease_token) as $token
 			| ($claim | marker_value("runner")) as $claim_runner
-			| ($claim | marker_value("device")) as $claim_device
-			| ($claim | marker_value("session")) as $claim_session
+			| ($claim | lease_device) as $claim_device
+			| ($claim | lease_session) as $claim_session
 			| (($claim.user.login // $claim.author // "")) as $claim_author
 			| ((try (($claim.created_at // "") | fromdateiso8601) catch 0) // 0) as $claim_epoch
 			| select($token != "" and $claim_author != "" and $claim_author == $claim_runner)
@@ -167,25 +216,99 @@ _dlw_comment_bloat_metrics_from_json() {
 			| select($claim_epoch > 0 and ($now_epoch - $claim_epoch) >= $orphan_grace)
 			| select([
 				$comments[]
-				| select(authoritative_association)
+				| select(evidence_trusted)
 				| select(body_text | test("DISPATCH_LEASE phase=ready"; "i"))
-				| select(marker_value("lease_token") == $token)
-				| select((.user.login // .author // "") == $claim_author)
-				| select(marker_value("device") == $claim_device)
-				| select(marker_value("session") == $claim_session)
+				| select(lease_token == $token)
+				| select(author_login == $claim_author)
+				| select(lease_device == $claim_device)
+				| select(lease_session == $claim_session)
 				| select([(.created_at // ""), ((.id | tonumber?) // 0)] >= [($claim.created_at // ""), (($claim.id | tonumber?) // 0)])
 			] | length == 0)
-		] | length) as $unmatched_claims |
+			| {token: $token, author: $claim_author, epoch: $claim_epoch}
+		]) as $unmatched_claims |
+		([$comments[]
+			| select(body_text | test("DISPATCH_CLAIM nonce="; "i"))
+			| [author_login, lease_token]
+			| select(.[0] != "" and .[1] != "")]) as $claim_keys |
+		([$evidence[]
+			| select(evidence_trusted)
+			| select(body_text | test("DISPATCH_LEASE phase=prelaunch "; "i"))
+			| . as $lease
+			| ($lease | lease_token) as $token
+			| ($lease | author_login) as $lease_author
+			| ($lease | comment_epoch) as $lease_epoch
+			| select($token != "" and $lease_author != "")
+			| select(($lease | lease_device) != "" and ($lease | lease_session) != "")
+			| select($lease_epoch > 0 and ($now_epoch - $lease_epoch) >= $orphan_grace)
+			| select(($claim_keys | any(.[]; . == [$lease_author, $token])) | not)
+			| select([
+				$comments[]
+				| select(author_login == $lease_author)
+				| select(body_text | test("DISPATCH_LEASE phase=(ready|terminal) |Dispatching worker"; "i"))
+				| select(lease_token == $token)
+			] | length == 0)
+			| {token: $token, author: $lease_author, epoch: $lease_epoch}
+		] | group_by([.author, .token]) | map(max_by(.epoch))) as $orphan_leases |
+		(($unmatched_claims | length) + ($orphan_leases | length)) as $attempt_failures |
+		($explicit_zero_epochs + [$unmatched_claims[].epoch] + [$orphan_leases[].epoch]
+			| map(select(. >= $window_start)) | sort) as $recent_epochs |
 		[
 			($comments | length),
 			$ops,
-			($explicit_zero + $unmatched_claims),
+			(($explicit_zero_epochs | length) + $attempt_failures),
 			([$comments[] | (body_text | length)] | add // 0),
-			($explicit_zero_attempt + $unmatched_claims)
+			($explicit_zero_attempt + $attempt_failures),
+			($recent_epochs | length),
+			$recent_notices,
+			(if ($recent_epochs | length) == 0 then "-" else ($recent_epochs | map(tostring) | join(",")) end),
+			([$comments[] | select(reset_notice) | comment_epoch] | max // 0)
 		] | @tsv
 	' 2>/dev/null
 	return $?
 }
+
+#######################################
+# GH#36214: resolve the ambiguous-association authors (COLLABORATOR,
+# CONTRIBUTOR, NONE) of dispatch-evidence comments to the logins holding
+# verified repository write authority. Peer runners on a user-owned repository
+# are COLLABORATOR, so without this their failed attempts never count.
+# #aidevops:trust-boundary — only admin/maintain/write trusts an author, a
+# lookup failure fails closed, and at most five distinct authors are resolved
+# per snapshot (collaborators first) to bound API cost.
+# Args: raw comments JSON, repo slug, evidence regex
+# Output: JSON array of trusted logins
+#######################################
+_dlw_evidence_trusted_authors() {
+	local raw_comments="$1"
+	local repo_slug="$2"
+	local evidence_pattern="$3"
+	local candidates="" login="" association="" trusted='[]'
+
+	if [[ -z "$repo_slug" ]] || ! declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1; then
+		printf '[]'
+		return 0
+	fi
+	candidates=$(printf '%s' "$raw_comments" | jq -r --arg pattern "$evidence_pattern" "${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}"'
+		[comments[]
+			| select((.author_association // "") as $association
+				| ["COLLABORATOR", "CONTRIBUTOR", "NONE"] | index($association) != null)
+			| select(body_text | test($pattern; "i"))
+			| {login: (.user.login // .author // ""), association: .author_association}
+			| select(.login | test("^[A-Za-z0-9]([A-Za-z0-9-]{0,38})(\\[bot\\])?$"))]
+		| unique_by(.login)
+		| sort_by(if .association == "COLLABORATOR" then 0 else 1 end)
+		| .[:5][] | [.login, .association] | @tsv' 2>/dev/null) || candidates=""
+	while IFS=$'\t' read -r login association; do
+		[[ -n "$login" ]] || continue
+		if _gh_actor_has_repo_write_authority "$repo_slug" "$login" "$association"; then
+			trusted=$(jq -c --arg login "$login" '. + [$login]' <<<"$trusted") || trusted='[]'
+		fi
+	done <<<"$candidates"
+	printf '%s' "$trusted"
+	return 0
+}
+
+_DLW_EMPTY_COMMENT_METRICS=$'0\t0\t0\t0\t0\t0\t0\t-\t0'
 
 _dlw_comment_bloat_metrics() {
 	local issue_number="$1"
@@ -193,24 +316,30 @@ _dlw_comment_bloat_metrics() {
 	local zero_output_pattern="${_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN}"
 	local zero_attempt_pattern="${_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN}"
 
-	[[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" ]] || { printf '0\t0\t0\t0\t0'; return 0; }
-	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0\t0\t0\t0\t0'; return 0; }
-	[[ -n "$repo_slug" ]] || { printf '0\t0\t0\t0\t0'; return 0; }
+	[[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" ]] || { printf '%s' "$_DLW_EMPTY_COMMENT_METRICS"; return 0; }
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '%s' "$_DLW_EMPTY_COMMENT_METRICS"; return 0; }
+	[[ -n "$repo_slug" ]] || { printf '%s' "$_DLW_EMPTY_COMMENT_METRICS"; return 0; }
 
 	local orphan_grace="${DISPATCH_CLAIM_ORPHAN_GRACE:-120}"
 	local now_epoch="${DLW_COMMENT_METRICS_NOW_EPOCH:-}"
+	local window_seconds="${ZERO_OUTPUT_HOLD_WINDOW_SECONDS:-43200}"
 	local raw_comments=""
+	local trusted_authors="[]"
 	local metrics=""
 	[[ "$orphan_grace" =~ ^[0-9]+$ ]] || orphan_grace=120
 	[[ "$orphan_grace" -le 3600 ]] || orphan_grace=120
+	[[ "$window_seconds" =~ ^[0-9]+$ ]] || window_seconds=43200
 	if [[ ! "$now_epoch" =~ ^[0-9]+$ ]]; then
 		now_epoch=$(date -u '+%s' 2>/dev/null || printf '0')
 	fi
 	raw_comments=$(gh api --paginate --slurp \
 		"repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || raw_comments="[]"
+	trusted_authors=$(_dlw_evidence_trusted_authors "$raw_comments" "$repo_slug" \
+		"DISPATCH_CLAIM nonce=|DISPATCH_LEASE phase=|dispatch-infrastructure-failure|${zero_output_pattern}")
 	metrics=$(_dlw_comment_bloat_metrics_from_json "$raw_comments" "$now_epoch" "$orphan_grace" \
-		"$zero_output_pattern" "$zero_attempt_pattern") || metrics=$'0\t0\t0\t0\t0'
-	[[ -n "$metrics" ]] || metrics=$'0\t0\t0\t0\t0'
+		"$zero_output_pattern" "$zero_attempt_pattern" "$trusted_authors" "$window_seconds") ||
+		metrics="$_DLW_EMPTY_COMMENT_METRICS"
+	[[ -n "$metrics" ]] || metrics="$_DLW_EMPTY_COMMENT_METRICS"
 	printf '%s' "$metrics"
 	return 0
 }
@@ -225,10 +354,13 @@ _dlw_comment_bloat_requires_clean_room() {
 	local zero=""
 	local chars=""
 	local zero_attempt=""
+	local _windowed_columns=""
 	if [[ -z "$precomputed_metrics" ]]; then
 		precomputed_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
 	fi
-	IFS=$'\t' read -r comments ops zero chars zero_attempt \
+	# GH#36214: trailing windowed columns belong to the hold; keep them out of
+	# zero_attempt so the brief-failure arithmetic stays exact.
+	IFS=$'\t' read -r comments ops zero chars zero_attempt _windowed_columns \
 		<<<"$precomputed_metrics"
 	[[ "$comments" =~ ^[0-9]+$ ]] || comments=0
 	[[ "$ops" =~ ^[0-9]+$ ]] || ops=0
@@ -560,6 +692,7 @@ _dlw_prepare_prompt_for_launch() {
 	local metrics_zero_count=""
 	local chars=""
 	local zero_attempt_count=""
+	local _windowed_columns=""
 	local precomputed_zero_count=""
 	local prior_attempt_context=""
 
@@ -572,7 +705,7 @@ _dlw_prepare_prompt_for_launch() {
 
 	comment_metrics="$precomputed_comment_metrics"
 	[[ -n "$comment_metrics" ]] || comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
-	IFS=$'\t' read -r comments ops metrics_zero_count chars zero_attempt_count <<<"$comment_metrics"
+	IFS=$'\t' read -r comments ops metrics_zero_count chars zero_attempt_count _windowed_columns <<<"$comment_metrics"
 	[[ "$zero_attempt_count" =~ ^[0-9]+$ ]] || zero_attempt_count=0
 	if [[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" && "$metrics_zero_count" =~ ^[0-9]+$ ]]; then
 		precomputed_zero_count="$metrics_zero_count"
@@ -619,52 +752,103 @@ _dlw_prepare_prompt_for_launch() {
 	return 0
 }
 
+#######################################
+# GH#36214: self-healing backoff for repeated zero-attempt or zero-output
+# failures. Callers evaluate it before the cross-runner claim, so a held
+# attempt publishes no DISPATCH_CLAIM or DISPATCH_LEASE. It holds only while
+# the evidence inside ZERO_OUTPUT_HOLD_WINDOW_SECONDS (default 12h) reaches
+# ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD. Labels never change, so dispatch
+# resumes on its own as evidence ages out (the former status:blocked fuse
+# needed a human requeue). Runners post at most one notice per window.
+# Clean-room mode changes prompt content, never this retry budget.
+# Args: issue number, repo slug, optional precomputed comment metrics
+# Returns: 0 = hold (DISPATCH_BLOCK_REASON logged), 1 = dispatch may proceed
+#######################################
 _dlw_hold_repeated_zero_output() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local precomputed_comment_metrics="${3:-}"
-	local comment_metrics=""
-	local comments=""
-	local ops=""
-	local metrics_zero_count=""
-	local chars=""
-	local zero_attempt_count=""
-	local precomputed_zero_count=""
+	local comment_metrics="" comments="" ops="" metrics_zero_count="" chars="" zero_attempt_count=""
+	local recent_zero="" recent_notices="" recent_epochs="" reset_epoch="" state_count="" hold_count=0
+	local now_epoch="${DLW_COMMENT_METRICS_NOW_EPOCH:-}" min_state_epoch=0
+	local window_seconds="${ZERO_OUTPUT_HOLD_WINDOW_SECONDS:-43200}"
+	local hold_threshold="${ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD:-4}"
+	[[ "$window_seconds" =~ ^[0-9]+$ ]] || window_seconds=43200
+	[[ "$hold_threshold" =~ ^[1-9][0-9]*$ ]] || hold_threshold=4
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
 
 	comment_metrics="$precomputed_comment_metrics"
 	[[ -n "$comment_metrics" ]] || comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
-	IFS=$'\t' read -r comments ops metrics_zero_count chars zero_attempt_count <<<"$comment_metrics"
-	[[ "$zero_attempt_count" =~ ^[0-9]+$ ]] || zero_attempt_count=0
-	if [[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" && "$metrics_zero_count" =~ ^[0-9]+$ ]]; then
-		precomputed_zero_count="$metrics_zero_count"
+	IFS=$'\t' read -r comments ops metrics_zero_count chars zero_attempt_count recent_zero recent_notices recent_epochs \
+		reset_epoch <<<"$comment_metrics"
+	[[ "$metrics_zero_count" =~ ^[0-9]+$ ]] || metrics_zero_count=0
+	# Legacy 4/5-column metrics carry no timestamps: treat their evidence as recent.
+	[[ "$recent_zero" =~ ^[0-9]+$ ]] || recent_zero="$metrics_zero_count"
+	[[ "$recent_notices" =~ ^[0-9]+$ ]] || recent_notices=0
+	[[ "$reset_epoch" =~ ^[0-9]+$ ]] || reset_epoch=0
+	[[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" ]] || recent_zero=0
+	# The local fast-fail counter obeys the same window and maintainer reset as
+	# the comment evidence, so no runner keeps holding on stale local state.
+	[[ "$window_seconds" -eq 0 ]] || min_state_epoch=$((now_epoch - window_seconds))
+	[[ "$reset_epoch" -le "$min_state_epoch" ]] || min_state_epoch="$reset_epoch"
+	state_count=$(_dlw_zero_output_failure_count "$issue_number" "$repo_slug" 0 "$min_state_epoch")
+	[[ "$state_count" =~ ^[0-9]+$ ]] || state_count=0
+	hold_count="$recent_zero"
+	[[ "$state_count" -le "$hold_count" ]] || hold_count="$state_count"
+	[[ "$hold_count" -ge "$hold_threshold" ]] || return 1
+
+	local resume_at="when the evidence ages out"
+	local -a epochs=()
+	if [[ "$window_seconds" -gt 0 && "$recent_epochs" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+		IFS=',' read -r -a epochs <<<"$recent_epochs"
+		local release_index=$((${#epochs[@]} - hold_threshold))
+		if [[ "$release_index" -ge 0 ]]; then
+			local release_epoch=$((epochs[release_index] + window_seconds))
+			resume_at=$(date -u -r "$release_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+				date -u -d "@${release_epoch}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+				printf 'epoch %s' "$release_epoch")
+			resume_at="after ${resume_at}"
+		fi
 	fi
-
-	local hold_threshold="${ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD:-4}"
-	[[ "$hold_threshold" =~ ^[0-9]+$ ]] || hold_threshold=4
-	# Clean-room mode changes prompt content, never the retry budget. Otherwise
-	# failures create enough comments to disable the very fuse bounding them.
-
-	local zero_count=""
-	zero_count=$(_dlw_zero_output_evidence_count "$issue_number" "$repo_slug" "$precomputed_zero_count")
-	[[ "$zero_count" =~ ^[0-9]+$ ]] || zero_count=0
-	if [[ "$zero_count" -lt "$hold_threshold" ]]; then
-		return 1
+	echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=zero_attempt_backoff signal=windowed_evidence issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+	echo "[dispatch_with_dedup] Holding #${issue_number} in ${repo_slug}: ${hold_count} zero-output or zero-attempt failures within ${window_seconds}s (threshold ${hold_threshold}); no claim posted, labels unchanged, resumes ${resume_at}" >>"$LOGFILE"
+	if [[ "$recent_notices" -eq 0 ]]; then
+		_dlw_post_zero_attempt_backoff_notice "$issue_number" "$repo_slug" "$hold_count" "$window_seconds" "$resume_at"
 	fi
+	return 0
+}
 
-	echo "[dispatch_with_dedup] Holding #${issue_number} in ${repo_slug}: ${zero_count} zero-output or zero-attempt failures; applying dispatch infrastructure hold" >>"$LOGFILE"
-	if declare -F set_issue_status >/dev/null 2>&1; then
-		set_issue_status "$issue_number" "$repo_slug" "blocked" >/dev/null 2>&1 || true
+# Post the single per-window backoff notice. Its dispatch-infrastructure-failure
+# marker keeps it out of the evidence count and marks the window as notified.
+# Args: issue number, repo slug, evidence count, window seconds, resume text
+_dlw_post_zero_attempt_backoff_notice() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local hold_count="$3"
+	local window_seconds="$4"
+	local resume_at="$5"
+	local body_file=""
+
+	body_file=$(mktemp) || return 0
+	{
+		printf '<!-- dispatch-infrastructure-failure -->\n'
+		if declare -F aidevops_ops_marker >/dev/null 2>&1; then
+			aidevops_ops_marker dispatch-backoff
+		fi
+		printf '## Dispatch paused: repeated pre-launch or zero-output failures\n\n'
+		printf '%s dispatch attempts in the last %s hours ended before a worker produced output. Automatic dispatch is backing off; labels are unchanged and no further claims are posted while this holds.\n\n' \
+			"$hold_count" "$((window_seconds / 3600))"
+		# shellcheck disable=SC2016 # Markdown backticks are intentional literals.
+		printf 'Dispatch resumes automatically %s. To find the failing stage, search runner pulse logs for `PRE_RUNTIME_FAILURE issue=%s`.\n\n' \
+			"$resume_at" "$issue_number"
+		# shellcheck disable=SC2016 # Markdown backticks are intentional literals.
+		printf 'To retry sooner after a fix ships, a maintainer can comment `<!-- dispatch-infrastructure-reset -->` (or a signed approval); earlier evidence is then ignored. This notice never counts as evidence.\n'
+	} >"$body_file"
+	if declare -F gh_issue_comment >/dev/null 2>&1; then
+		gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null 2>&1 || true
 	else
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "status:blocked" \
-			--remove-label "status:available" \
-			--remove-label "status:queued" >/dev/null 2>&1 || true
+		gh issue comment "$issue_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null 2>&1 || true
 	fi
-	gh issue comment "$issue_number" --repo "$repo_slug" --body "<!-- dispatch-infrastructure-failure -->
-## Dispatch infrastructure failure detected
-
-This issue has accumulated ${zero_count} zero-output or zero-attempt worker failures. The brief may still be valid; repeated setup/runtime failures must be diagnosed before another automatic dispatch.
-
-Next action: fix or wait out the worker/runtime failure family, then approve and requeue the issue so pulse can reconsider it afresh. After the fix ships, a maintainer comment containing \`<!-- dispatch-infrastructure-reset -->\` (or a signed approval) clears earlier failure evidence; hold notices never count as evidence." >/dev/null 2>&1 || true
+	rm -f "$body_file"
 	return 0
 }

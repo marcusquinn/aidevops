@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.103] - 2026-10-31
+
+### Fixed
+
+- bound pre-launch abort loops with a self-healing windowed backoff
+- align recurrent failure summary with recent evidence (#36218)
+
 ## [3.39.102] - 2026-10-31
 
 ### Changed
