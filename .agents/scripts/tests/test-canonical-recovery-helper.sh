@@ -1194,19 +1194,40 @@ printf '{"initialized_repos":[{"slug":"example/unborn-mirror","path":"%s","pr_ba
 	"$UNBORN_REPO" >"$UNBORN_CONFIG"
 export AIDEVOPS_REPOS_CONFIG="$UNBORN_CONFIG"
 
-unborn_fast_forward_output=""
-unborn_fast_forward_rc=0
-unborn_fast_forward_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
-	fast-forward-current --repo "$UNBORN_REPO" --branch develop --issue 31755 \
-	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unborn_fast_forward_rc=$?
-if [[ "$unborn_fast_forward_rc" -ne 0 ]] &&
-	[[ "$unborn_fast_forward_output" == *"BLOCKED: local develop tip cannot be resolved"* ]] &&
+unborn_restore_output=""
+unborn_restore_rc=0
+unborn_restore_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+	restore-default --repo "$UNBORN_REPO" --issue 31755 \
+	--confirm RESTORE_CANONICAL_DEFAULT 2>&1) || unborn_restore_rc=$?
+if [[ "$unborn_restore_rc" -ne 0 ]] &&
+	[[ "$unborn_restore_output" == *"BLOCKED: local develop tip cannot be resolved"* ]] &&
 	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
-	printf 'PASS non-sync recovery continues to reject an unborn local branch\n'
+	printf 'PASS non-synchronizing recovery continues to reject an unborn local branch\n'
 else
-	printf 'FAIL non-sync recovery accepted or changed an unborn local branch\n'
+	printf 'FAIL non-synchronizing recovery accepted or changed an unborn local branch\n'
+	printf '%s\n' "$unborn_restore_output"
 	exit 1
 fi
+
+# GH#36289: an unborn fast-forward still refuses any untracked file and leaves
+# it untouched; nothing is moved into preservation for an unborn checkout.
+printf 'unborn untracked state\n' >"${UNBORN_REPO}/ff-untracked.txt"
+unborn_ff_dirty_output=""
+unborn_ff_dirty_rc=0
+unborn_ff_dirty_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+	fast-forward-current --repo "$UNBORN_REPO" --branch develop --issue 36289 \
+	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unborn_ff_dirty_rc=$?
+if [[ "$unborn_ff_dirty_rc" -ne 0 ]] &&
+	[[ "$unborn_ff_dirty_output" == *"BLOCKED: unborn canonical worktree is not clean"* ]] &&
+	[[ "$(<"${UNBORN_REPO}/ff-untracked.txt")" == "unborn untracked state" ]] &&
+	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+	printf 'PASS unborn fast-forward refuses and preserves untracked state in place\n'
+else
+	printf 'FAIL unborn fast-forward accepted or moved untracked state\n'
+	printf '%s\n' "$unborn_ff_dirty_output"
+	exit 1
+fi
+rm "${UNBORN_REPO}/ff-untracked.txt"
 
 printf 'untracked state\n' >"${UNBORN_REPO}/untracked.txt"
 unborn_untracked_output=""
@@ -1327,6 +1348,36 @@ else
 	if ! /usr/bin/git -C "$UNBORN_REPO" show-ref; then
 		printf 'No refs found in failed unborn synchronization fixture\n'
 	fi
+	exit 1
+fi
+
+# GH#36289: full-loop's post-merge fast-forward initializes a clean unborn
+# canonical branch through the same audited compare-and-swap path.
+UNBORN_FF_REPO="${ROOT}/unborn-ff-repo"
+UNBORN_FF_CONFIG="${ROOT}/unborn-ff-repos.json"
+mkdir -p "$UNBORN_FF_REPO"
+/usr/bin/git -C "$UNBORN_FF_REPO" init -q -b develop
+/usr/bin/git -C "$UNBORN_FF_REPO" config "url.${UNBORN_REMOTE}.insteadOf" "$UNBORN_URL"
+/usr/bin/git -C "$UNBORN_FF_REPO" remote add github "$UNBORN_URL"
+printf '{"initialized_repos":[{"slug":"example/unborn-mirror","path":"%s","pr_base_branch":"develop"}]}\n' \
+	"$UNBORN_FF_REPO" >"$UNBORN_FF_CONFIG"
+unborn_ff_output=""
+unborn_ff_rc=0
+unborn_ff_output=$(AIDEVOPS_REPOS_CONFIG="$UNBORN_FF_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+	fast-forward-current --repo "$UNBORN_FF_REPO" --branch develop --issue 36289 \
+	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unborn_ff_rc=$?
+if [[ "$unborn_ff_rc" -eq 0 ]] &&
+	[[ "$unborn_ff_output" == *"Fast-forwarded canonical develop to github/develop"* ]] &&
+	[[ "$(/usr/bin/git -C "$UNBORN_FF_REPO" symbolic-ref HEAD)" == "refs/heads/develop" ]] &&
+	[[ "$(/usr/bin/git -C "$UNBORN_FF_REPO" rev-parse HEAD)" == "$unborn_remote_tip" ]] &&
+	[[ -z "$(/usr/bin/git -C "$UNBORN_FF_REPO" status --porcelain=v1)" ]] &&
+	[[ -f "${UNBORN_FF_REPO}/README.md" && -f "${UNBORN_FF_REPO}/remote-only.txt" ]] &&
+	grep -q '"operation":"fast-forward-current".*"local_state":"unborn"\|"local_state":"unborn".*"operation":"fast-forward-current"' \
+		"$HOME/.aidevops/logs/canonical-recovery-audit.jsonl"; then
+	printf 'PASS clean unborn fast-forward initializes the exact pinned remote tip with audit evidence\n'
+else
+	printf 'FAIL clean unborn fast-forward did not initialize and verify the canonical branch\n'
+	printf '%s\n' "$unborn_ff_output"
 	exit 1
 fi
 

@@ -1657,7 +1657,10 @@ local_state="$LOCAL_STATE_BORN"
 unborn_empty_tree=""
 null_oid="${target_sha//?/0}"
 if [[ -z "$local_sha" ]]; then
-	[[ "$cmd" == "$SYNC_MIRROR_CMD" ]] || {
+	# GH#36289: initializing a clean unborn branch to the pinned remote tip is a
+	# fast-forward from empty, so full-loop's post-merge fast-forward shares the
+	# existing zero-OID compare-and-swap, rollback and verification path.
+	[[ "$cmd" == "$SYNC_MIRROR_CMD" || "$cmd" == "$FAST_FORWARD_CMD" ]] || {
 		printf 'BLOCKED: local %s tip cannot be resolved\n' "$target_branch" >&2
 		exit 1
 	}
