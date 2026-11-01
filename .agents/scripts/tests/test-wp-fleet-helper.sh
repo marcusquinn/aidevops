@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from unittest import mock
 import zipfile
 from pathlib import Path
 
@@ -315,5 +316,100 @@ with tempfile.TemporaryDirectory(prefix='aidevops-wp-fleet-', dir=base) as tempo
           (directory / 'recovery.json').exists() and b'fixture' not in result.stderr)
     report = subprocess.check_output(['bash', str(scripts / 'wp-fleet-helper.sh'), 'report', '--run-dir', str(directory)])
     check('public report is sanitized', json.loads(report)['installations'] == 2 and b'fixture' not in report)
+    # Exercise the embedded core-minor controller with offline SSH replies.
+    source = (scripts / 'wp-fleet-helper.sh').read_text().split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+    core = {}
+    exec(compile(source.rsplit('raise SystemExit(main())', 1)[0], '<core-minor>', 'exec'), core)
+    good = {'ssh_host': 'fixture-host', 'wp_path': str(root), 'backup_dir': storage}
+    cases = [dict(good, ssh_host=None), dict(good, ssh_host=22),
+             dict(good, ssh_host='bad-path', wp_path=None),
+             dict(good, ssh_host='bad-backup', backup_dir=[])]
+    valid_plan = {'current': '6.8.1', 'target': '6.8.2', 'locale': 'en_US',
+                  'config_hash': 'a' * 64, 'majors': []}
+    replies = [[], None, 22, 'invalid', {'failed_stage': None}, {'failed_stage': []}, {}]
+    replies += [{key: value for key, value in valid_plan.items() if key != missing}
+                for missing in valid_plan]
+    sites = cases + [dict(good) for _ in replies] + [dict(good, ssh_host='other-host')]
+    inventory_path = temp / 'core-inventory.json'
+    inventory_path.write_text(json.dumps(sites))
+    core_run = temp / 'core-run'
+    calls = []
+    def core_ssh(argv, **kwargs):
+        calls.append(argv)
+        reply = replies[len(calls) - 1] if len(calls) <= len(replies) else valid_plan
+        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(reply).encode())
+    summary = io.StringIO()
+    with mock.patch.object(sys, 'argv', ['core-minor', 'plan', '--inventory', str(inventory_path),
+                                       '--run-dir', str(core_run)]), \
+            mock.patch.object(subprocess, 'run', side_effect=core_ssh), contextlib.redirect_stdout(summary):
+        status = core['main']()
+    saved_rows = json.loads((core_run / 'core-minor.json').read_text())
+    check('core malformed rows and replies hold without aborting summary', status == 1 and
+          'holds=' + str(len(sites) - 1) in summary.getvalue() and
+          all(r.get('hold') and 'plan' not in r for r in saved_rows[:-1]))
+    check('core later site still receives valid plan', saved_rows[-1]['plan']['target'] == '6.8.2' and
+          len(calls) == len(replies) + 1)
+    valid_result = dict(valid_plan, verified=True, health=[200, 200], backup=None)
+    deploy_replies = [{}, valid_plan] + [
+        {key: value for key, value in valid_result.items() if key != missing}
+        for missing in ('verified', 'health', 'backup')]
+    deploy_replies.append(valid_result)
+    deploy_run = temp / 'core-deploy'
+    deploy_run.mkdir(mode=0o700)
+    deploy_path = deploy_run / 'core-minor.json'
+    deploy_path.write_text(json.dumps([
+        {'site': good, 'plan': valid_plan, 'hold': 'Previous failure'} for _ in deploy_replies]))
+    with mock.patch.object(sys, 'argv', ['core-minor', 'deploy', '--approve', '--retry-held',
+                                       '--run-dir', str(deploy_run)]), \
+            mock.patch.object(subprocess, 'run', side_effect=[
+                subprocess.CompletedProcess([], 0, stdout=json.dumps(reply).encode())
+                for reply in deploy_replies]), contextlib.redirect_stdout(io.StringIO()):
+        deploy_status = core['main']()
+    deployed_rows = json.loads(deploy_path.read_text())
+    check('core incomplete deployment replies retain holds without saving success', deploy_status == 1 and
+          all(r.get('hold') and 'result' not in r for r in deployed_rows[:-1]))
+    check('core complete deployment evidence clears previous hold',
+          deployed_rows[-1]['result'] == valid_result and 'hold' not in deployed_rows[-1])
+    # A valid same-host pair includes both roots, but not another account's root.
+    sibling = parent / 'two'
+    sibling.mkdir()
+    pair = [good, dict(good, wp_path=str(sibling)),
+            dict(good, ssh_host='other-host', wp_path='/other-account')]
+    inventory_path.write_text(json.dumps(pair))
+    captured = []
+    def capture_ssh(argv, **kwargs):
+        import shlex
+        captured.append(json.loads(shlex.split(argv[-1])[-1]))
+        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(valid_plan).encode())
+    with mock.patch.object(sys, 'argv', ['core-minor', 'plan', '--inventory', str(inventory_path),
+                                       '--run-dir', str(temp / 'core-pair')]), \
+            mock.patch.object(subprocess, 'run', side_effect=capture_ssh), contextlib.redirect_stdout(io.StringIO()):
+        check_status = core['main']()
+    check('core request includes every same-host root only', check_status == 0 and
+          captured[0]['web_roots'] == [str(root), str(sibling)] and
+          captured[2]['web_roots'] == ['/other-account'])
+    # Execute the actual remote guard: reject overlaps before any WP command/write.
+    alias_to_sibling = temp / 'sibling-alias'
+    alias_to_sibling.symlink_to(sibling, target_is_directory=True)
+    for backup_dir in (root, root / 'dump', sibling, sibling / 'dump', parent,
+                       alias_to_sibling / 'dump'):
+        for action in ('plan', 'deploy'):
+            req = dict(captured[0], action=action, site=dict(good, backup_dir=str(backup_dir)))
+            with mock.patch.object(sys, 'argv', ['remote', json.dumps(req)]), \
+                    mock.patch.object(subprocess, 'check_output') as wp_call:
+                try:
+                    exec(compile(core['REMOTE'], '<core-remote>', 'exec'), {})
+                except RuntimeError as error:
+                    check('core refuses overlap before ' + action + ': ' + backup_dir.name,
+                          'separate from all inventory web roots' in str(error) and not wp_call.called)
+                else:
+                    raise AssertionError('unsafe core backup accepted')
+    check('core overlap guard creates no backup directories', not (sibling / 'dump').exists() and
+          not (root / 'dump').exists())
+    safe_request = dict(captured[0], site=dict(good, backup_dir=str(temp / 'private-core-backups')))
+    prefix = core['REMOTE'].split("\ncurrent = wp('core', 'version')", 1)[0]
+    with mock.patch.object(sys, 'argv', ['remote', json.dumps(safe_request)]):
+        exec(compile(prefix, '<core-remote-preflight>', 'exec'), {})
+    check('core permits separate private backup path', not Path(safe_request['site']['backup_dir']).exists())
 print('Tests: %d passed' % count)
 PY

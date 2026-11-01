@@ -38,6 +38,12 @@ site = request['site']
 root = Path(site['wp_path']).resolve(strict=True)
 if not (root / 'wp-config.php').is_file():
     raise RuntimeError('WordPress root with wp-config.php required')
+storage = Path(site['backup_dir']).resolve()
+# Resolve on the remote host so sibling roots and symlink aliases are covered.
+roots = [Path(value).resolve(strict=True) for value in request['web_roots']]
+if any(storage == other or other in storage.parents or storage in other.parents
+       for other in [root, *roots]):
+    raise RuntimeError('Backup storage must be separate from all inventory web roots')
 stage = 'inspect'
 config_hash = hashlib.sha256((root / 'wp-config.php').read_bytes()).hexdigest()
 
@@ -98,10 +104,6 @@ else:
     if (version(target)[:2] != branch or version(target) < version(current)
             or locale != plan['locale'] or config_hash != plan['config_hash']):
         raise RuntimeError('Branch, downgrade or locale guard failed')
-    storage = Path(site['backup_dir']).expanduser().resolve()
-    # A caller must name an account-private directory, not another site's web root.
-    if storage == root or root in storage.parents or storage in root.parents:
-        raise RuntimeError('Backup storage must be separate from the web root')
     storage.mkdir(mode=0o700, parents=True, exist_ok=True)
     if storage.stat().st_mode & 0o077:
         raise RuntimeError('Backup directory must have mode 0700')
@@ -163,8 +165,8 @@ else:
                     with os.fdopen(fd, 'wb') as output:
                         environment = {k: v for k, v in os.environ.items() if not k.startswith('MYSQL')}
                         environment['MYSQL_TEST_LOGIN_FILE'] = str(work / 'no-login-paths')
-                        # Shared hosting grants only per-database privileges; --lock-all-tables
-                        # needs global RELOAD. WordPress tables are InnoDB, so one snapshot suffices.
+                        # InnoDB snapshot without global table locks. GTID-enabled MySQL
+                        # may still require RELOAD/FLUSH_TABLES; dump failures stop deployment.
                         subprocess.run(['mysqldump', '--defaults-file=' + str(defaults),
                                         '--single-transaction', '--quick', '--no-tablespaces',
                                         '--', values['NAME']],
@@ -231,14 +233,20 @@ def main():
     for row in rows:
         site = row['site']
         try:
-            if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', site['ssh_host']):
+            if (not isinstance(site.get('ssh_host'), str) or
+                    not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', site['ssh_host'])):
                 raise ValueError('ssh_host must be an SSH config alias')
             if not all(isinstance(site[k], str) and site[k].startswith('/')
                        for k in ('wp_path', 'backup_dir')):
                 raise ValueError('Absolute wp_path and private backup_dir required')
             if args.action == 'deploy' and ('plan' not in row or (row.get('hold') and not args.retry_held)):
                 continue
-            request = {'site': site, 'action': args.action, 'plan': row.get('plan')}
+            web_roots = [other['site']['wp_path'] for other in rows
+                         if other['site'].get('ssh_host') == site['ssh_host']]
+            if not all(isinstance(value, str) and value.startswith('/') for value in web_roots):
+                raise ValueError('All same-host inventory web roots must be absolute paths')
+            request = {'site': site, 'action': args.action, 'plan': row.get('plan'),
+                       'web_roots': web_roots}
             guarded = ('stage = "bootstrap"\ntry:\n    exec(' + repr(REMOTE) + ')\n'
                        'except Exception:\n    print(json.dumps({"failed_stage": stage}))\n')
             command = shlex.join(['python3', '-c', 'import json\n' + guarded, json.dumps(request)])
@@ -248,12 +256,28 @@ def main():
                 # Raw remote errors can include DB credentials; never expose them.
                 raise RuntimeError('Remote operation failed; inspect private site logs (no rollback)')
             response = json.loads(result.stdout)
+            if not isinstance(response, dict):
+                raise ValueError('Remote response must be a JSON object')
             if 'failed_stage' in response:
+                if not isinstance(response['failed_stage'], str):
+                    raise ValueError('Remote failure stage must be a string')
                 row['hold'] = 'Remote failure at ' + response['failed_stage'] + '; inspect private backup journal; no rollback'
             else:
+                if (not all(isinstance(response.get(key), str) and response[key]
+                            for key in ('current', 'target', 'locale', 'config_hash')) or
+                        not isinstance(response.get('majors'), list) or
+                        not all(isinstance(value, str) for value in response['majors'])):
+                    raise ValueError('Remote success response requires complete plan fields')
+                if args.action == 'deploy' and (
+                        response.get('verified') is not True or
+                        not isinstance(response.get('health'), list) or
+                        len(response['health']) != 2 or
+                        'backup' not in response or
+                        (response['backup'] is not None and not isinstance(response['backup'], str))):
+                    raise ValueError('Remote deployment response requires verification evidence')
                 row['plan' if args.action == 'plan' else 'result'] = response
                 row.pop('hold', None)
-        except (OSError, ValueError, KeyError, subprocess.TimeoutExpired, RuntimeError):
+        except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired, RuntimeError):
             row['hold'] = 'Inspect SSH, runtime, API, backup, drift and verification; no automatic rollback'
         temporary = path.with_suffix('.pending')
         temporary.write_text(json.dumps(rows, indent=2) + '\n')
