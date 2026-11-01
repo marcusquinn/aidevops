@@ -46,7 +46,7 @@ extract_function() {
 	return 0
 }
 
-for function_name in _update_verify_deployment_state _run_update_setup_transaction _run_update_source_access_reconciliation _update_render_changelog _update_install_framework _update_existing_install _update_already_current _update_apply_remote _update_finish _update_start_pulse cmd_update; do
+for function_name in _update_verify_deployment_state _run_update_setup_transaction _update_adopt_deployed_version _run_update_source_access_reconciliation _update_render_changelog _update_install_framework _update_existing_install _update_already_current _update_apply_remote _update_finish _update_start_pulse cmd_update; do
 	extract_function "$function_name" "$TEST_ROOT/$function_name.sh"
 	# shellcheck source=/dev/null
 	source "$TEST_ROOT/$function_name.sh"
@@ -242,6 +242,63 @@ if [[ "$VERIFY_REPO" == "$INSTALL_DIR" &&
 else
 	fail "updater delegates verification to the stable active deployment" \
 		"repo=$VERIFY_REPO sha=$VERIFY_SHA active=$VERIFY_ACTIVE_LINK stamp=$VERIFY_STAMP_FILE"
+fi
+
+# Exercise the production same-version branch and transaction together. All Git,
+# stamps and activation stubs stay in the disposable fixture (GH#36372).
+run_lifecycle_only_update_test() (
+	INSTALL_DIR="$TEST_ROOT/lifecycle-repo"
+	/usr/bin/git init -q "$INSTALL_DIR"
+	/usr/bin/git -C "$INSTALL_DIR" config user.name Test
+	/usr/bin/git -C "$INSTALL_DIR" config user.email test@test.local
+	/usr/bin/git -C "$INSTALL_DIR" config commit.gpgsign false
+	mkdir -p "$INSTALL_DIR/.agents/worker-lifecycle"
+	printf '1.0.0\n' >"$INSTALL_DIR/VERSION"
+	printf 'SCHEMA_VERSION = 1\n' >"$INSTALL_DIR/.agents/worker-lifecycle/registry.py"
+	/usr/bin/git -C "$INSTALL_DIR" add -A
+	/usr/bin/git -C "$INSTALL_DIR" commit -qm baseline
+	baseline_sha=$(/usr/bin/git -C "$INSTALL_DIR" rev-parse HEAD)
+	printf 'SCHEMA_VERSION = 2\n' >"$INSTALL_DIR/.agents/worker-lifecycle/registry.py"
+	/usr/bin/git -C "$INSTALL_DIR" add -A
+	/usr/bin/git -C "$INSTALL_DIR" commit -qm lifecycle
+	lifecycle_sha=$(/usr/bin/git -C "$INSTALL_DIR" rev-parse HEAD)
+	_update_repo_verify_files_changed() { return 1; }
+	_update_check_workflow_drift() { return 0; }
+	printf '%s\n' "$baseline_sha" >"$HOME/.aidevops/.deployed-sha"
+	SETUP_SHA="$lifecycle_sha"
+	VERIFY_SHA=""
+	_update_already_current "$lifecycle_sha" compact || return 1
+	[[ "$VERIFY_SHA" == "$lifecycle_sha" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$lifecycle_sha" ]] || return 1
+
+	# Equal SHA and docs-only drift must not call setup or verification.
+	SETUP_SHA=unexpected
+	VERIFY_SHA=""
+	_update_already_current "$lifecycle_sha" compact || return 1
+	printf '# documentation\n' >"$INSTALL_DIR/README.md"
+	/usr/bin/git -C "$INSTALL_DIR" add -A
+	/usr/bin/git -C "$INSTALL_DIR" commit -qm docs
+	docs_sha=$(/usr/bin/git -C "$INSTALL_DIR" rev-parse HEAD)
+	_update_already_current "$docs_sha" compact || return 1
+	[[ -z "$VERIFY_SHA" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$lifecycle_sha" ]] || return 1
+
+	# Setup success cannot hide failed activated-bundle verification.
+	# Activate the candidate, not the baseline: this checks error propagation,
+	# not rollback (the setup stub only writes a stamp and has no active link).
+	printf '%s\n' "$baseline_sha" >"$HOME/.aidevops/.deployed-sha"
+	SETUP_SHA="$lifecycle_sha"
+	VERIFY_RC=1
+	VERIFY_ERROR="stale activated bundle"
+	if _update_already_current "$lifecycle_sha" compact; then return 1; fi
+	[[ "$VERIFY_SHA" == "$lifecycle_sha" ]] || return 1
+	return 0
+)
+if run_lifecycle_only_update_test; then
+	pass "lifecycle-only drift uses verified transaction, skips no-ops, and propagates verification failure"
+else
+	fail "lifecycle-only drift uses verified transaction, skips no-ops, and propagates verification failure" \
+		"same-version transaction, verification, or stamp mismatch"
 fi
 
 # Replace the transaction stub with the authoritative implementation and model
