@@ -263,6 +263,18 @@ def main():
                     raise ValueError('Remote failure stage must be a string')
                 row['hold'] = 'Remote failure at ' + response['failed_stage'] + '; inspect private backup journal; no rollback'
             else:
+                if (not all(isinstance(response.get(key), str) and response[key]
+                            for key in ('current', 'target', 'locale', 'config_hash')) or
+                        not isinstance(response.get('majors'), list) or
+                        not all(isinstance(value, str) for value in response['majors'])):
+                    raise ValueError('Remote success response requires complete plan fields')
+                if args.action == 'deploy' and (
+                        response.get('verified') is not True or
+                        not isinstance(response.get('health'), list) or
+                        len(response['health']) != 2 or
+                        'backup' not in response or
+                        (response['backup'] is not None and not isinstance(response['backup'], str))):
+                    raise ValueError('Remote deployment response requires verification evidence')
                 row['plan' if args.action == 'plan' else 'result'] = response
                 row.pop('hold', None)
         except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired, RuntimeError):

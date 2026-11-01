@@ -324,7 +324,11 @@ with tempfile.TemporaryDirectory(prefix='aidevops-wp-fleet-', dir=base) as tempo
     cases = [dict(good, ssh_host=None), dict(good, ssh_host=22),
              dict(good, ssh_host='bad-path', wp_path=None),
              dict(good, ssh_host='bad-backup', backup_dir=[])]
-    replies = [[], None, 22, 'invalid', {'failed_stage': None}, {'failed_stage': []}]
+    valid_plan = {'current': '6.8.1', 'target': '6.8.2', 'locale': 'en_US',
+                  'config_hash': 'a' * 64, 'majors': []}
+    replies = [[], None, 22, 'invalid', {'failed_stage': None}, {'failed_stage': []}, {}]
+    replies += [{key: value for key, value in valid_plan.items() if key != missing}
+                for missing in valid_plan]
     sites = cases + [dict(good) for _ in replies] + [dict(good, ssh_host='other-host')]
     inventory_path = temp / 'core-inventory.json'
     inventory_path.write_text(json.dumps(sites))
@@ -332,8 +336,7 @@ with tempfile.TemporaryDirectory(prefix='aidevops-wp-fleet-', dir=base) as tempo
     calls = []
     def core_ssh(argv, **kwargs):
         calls.append(argv)
-        reply = replies[len(calls) - 1] if len(calls) <= len(replies) else {
-            'current': '6.8.1', 'target': '6.8.2', 'majors': []}
+        reply = replies[len(calls) - 1] if len(calls) <= len(replies) else valid_plan
         return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(reply).encode())
     summary = io.StringIO()
     with mock.patch.object(sys, 'argv', ['core-minor', 'plan', '--inventory', str(inventory_path),
@@ -342,9 +345,31 @@ with tempfile.TemporaryDirectory(prefix='aidevops-wp-fleet-', dir=base) as tempo
         status = core['main']()
     saved_rows = json.loads((core_run / 'core-minor.json').read_text())
     check('core malformed rows and replies hold without aborting summary', status == 1 and
-          'holds=10' in summary.getvalue() and all(r.get('hold') for r in saved_rows[:-1]))
+          'holds=' + str(len(sites) - 1) in summary.getvalue() and
+          all(r.get('hold') and 'plan' not in r for r in saved_rows[:-1]))
     check('core later site still receives valid plan', saved_rows[-1]['plan']['target'] == '6.8.2' and
           len(calls) == len(replies) + 1)
+    valid_result = dict(valid_plan, verified=True, health=[200, 200], backup=None)
+    deploy_replies = [{}, valid_plan] + [
+        {key: value for key, value in valid_result.items() if key != missing}
+        for missing in ('verified', 'health', 'backup')]
+    deploy_replies.append(valid_result)
+    deploy_run = temp / 'core-deploy'
+    deploy_run.mkdir(mode=0o700)
+    deploy_path = deploy_run / 'core-minor.json'
+    deploy_path.write_text(json.dumps([
+        {'site': good, 'plan': valid_plan, 'hold': 'Previous failure'} for _ in deploy_replies]))
+    with mock.patch.object(sys, 'argv', ['core-minor', 'deploy', '--approve', '--retry-held',
+                                       '--run-dir', str(deploy_run)]), \
+            mock.patch.object(subprocess, 'run', side_effect=[
+                subprocess.CompletedProcess([], 0, stdout=json.dumps(reply).encode())
+                for reply in deploy_replies]), contextlib.redirect_stdout(io.StringIO()):
+        deploy_status = core['main']()
+    deployed_rows = json.loads(deploy_path.read_text())
+    check('core incomplete deployment replies retain holds without saving success', deploy_status == 1 and
+          all(r.get('hold') and 'result' not in r for r in deployed_rows[:-1]))
+    check('core complete deployment evidence clears previous hold',
+          deployed_rows[-1]['result'] == valid_result and 'hold' not in deployed_rows[-1])
     # A valid same-host pair includes both roots, but not another account's root.
     sibling = parent / 'two'
     sibling.mkdir()
@@ -355,7 +380,7 @@ with tempfile.TemporaryDirectory(prefix='aidevops-wp-fleet-', dir=base) as tempo
     def capture_ssh(argv, **kwargs):
         import shlex
         captured.append(json.loads(shlex.split(argv[-1])[-1]))
-        return subprocess.CompletedProcess(argv, 0, stdout=b'{}')
+        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(valid_plan).encode())
     with mock.patch.object(sys, 'argv', ['core-minor', 'plan', '--inventory', str(inventory_path),
                                        '--run-dir', str(temp / 'core-pair')]), \
             mock.patch.object(subprocess, 'run', side_effect=capture_ssh), contextlib.redirect_stdout(io.StringIO()):
