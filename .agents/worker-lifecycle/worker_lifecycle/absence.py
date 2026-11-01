@@ -21,7 +21,7 @@ def _absent(path: Path) -> bool:
 
 
 def _commit_absence(
-    store: LifecycleRegistry, connection: sqlite3.Connection, path: Path,
+    connection: sqlite3.Connection, path: Path,
     generation: str, rows: list[dict], parent: DirectoryHandle,
 ) -> dict:
     result = {"generation_id": generation, "cleanup_authorized": False}
@@ -56,7 +56,7 @@ def _commit_absence(
         path=str(path), outcome=outcome, preservation="unverified",
         registered_runs=sorted(row["run_id"] for row in rows),
     )
-    store._event(connection, _event_id(generation, "absence-reconciled"), evidence)
+    LifecycleRegistry._event(connection, _event_id(generation, "absence-reconciled"), evidence)
     released = connection.execute(
         "DELETE FROM generation_admissions WHERE generation_id=? AND path=?",
         (generation, str(path)),
@@ -81,24 +81,28 @@ def reconcile_absence(store: LifecycleRegistry, path: Path, generation: str) -> 
             return previous  # Replays never inspect a replacement generation.
         if _event(store, _event_id(generation, "planned")) is not None:
             return dict(result, status="retry-required")
-        try:
-            parent = DirectoryHandle(path.parent)
-        except FileNotFoundError:
-            return dict(result, status="source-absence-unconfirmed", reason="parent-missing")
-        with parent:
-            if not _absent(path):
-                return dict(result, status="retry-required")
+        return _reconcile_source(store, path, generation)
+
+
+def _reconcile_source(store: LifecycleRegistry, path: Path, generation: str) -> dict:
+    result = {"generation_id": generation, "cleanup_authorized": False}
+    try:
+        parent = DirectoryHandle(path.parent)
+    except FileNotFoundError:
+        return dict(result, status="source-absence-unconfirmed", reason="parent-missing")
+    with parent:
+        if not _absent(path):
+            return dict(result, status="retry-required")
+        rows = _runs(store, generation)
+        if not all(row["admitted"] for row in rows):
+            return dict(result, status="coverage-gap")
+        if rows:
+            adapter = adapter_for(store.installation_id())
+            require_ready(adapter)
+            _refresh_runs(store, rows, adapter)
             rows = _runs(store, generation)
-            if not all(row["admitted"] for row in rows):
-                return dict(result, status="coverage-gap")
-            if rows:
-                adapter = adapter_for(store.installation_id())
-                require_ready(adapter)
-                _refresh_runs(store, rows, adapter)
-                rows = _runs(store, generation)
-            if not all(row["admitted"] and row["state"] == "ended" for row in rows):
-                return dict(result, status="waiting-for-runs")
-            # The same writer transaction excludes new admissions while checking
-            # the exact owner set, recording the outcome and releasing the path.
-            with store.connection(write=True) as connection:
-                return _commit_absence(store, connection, path, generation, rows, parent)
+        if not all(row["admitted"] and row["state"] == "ended" for row in rows):
+            return dict(result, status="waiting-for-runs")
+        # Serialize the snapshot validation, journal and admission release together.
+        with store.connection(write=True) as connection:
+            return _commit_absence(connection, path, generation, rows, parent)

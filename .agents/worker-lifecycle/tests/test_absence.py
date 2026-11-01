@@ -163,7 +163,7 @@ class AbsenceContract(unittest.TestCase):
             native(*args)
             raise OSError("fixture journal interruption")
 
-        with patch.object(self.store, "_event", side_effect=interrupted):
+        with patch.object(type(self.store), "_event", side_effect=interrupted):
             self.assertEqual(self.cleanup()["failed"], 1)
         self.assertTrue(self.reserved())
         self.assertEqual(self.cleanup()["reconciled"], 1)
