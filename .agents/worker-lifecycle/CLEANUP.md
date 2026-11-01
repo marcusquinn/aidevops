@@ -2,12 +2,11 @@
 
 ## Status and authority
 
-One policy applies to Pulse, interactive sessions and other supported launchers.
-Launchers supply registration facts; they do not select different safety rules.
-The new registry and native OS adapter are the only lifecycle evidence sources.
-Legacy registries, dispatch ledgers and old owner statuses cannot fill evidence
-gaps or authorize an operation. Git and the filesystem supply content evidence,
-not process liveness.
+Pulse, interactive sessions and other supported launchers share one policy:
+launchers supply registration facts, not different safety rules. Only the new
+registry and native OS adapter supply lifecycle evidence. Legacy registries,
+dispatch ledgers and old owner statuses cannot fill gaps or authorize operations.
+Git and the filesystem supply content evidence, not process liveness.
 
 The managed launch contract in [DESIGN.md](DESIGN.md#managed-launch-contract)
 defines ownership coverage. Independent worktree writers must register separate
@@ -16,28 +15,55 @@ child commands remain the launching runtime's responsibility. Lifecycle does not
 discover or control process trees; an unregistered independent writer is outside
 the contract, not an owner inferred from PID, PPID or cwd.
 
-`worker_lifecycle/cleanup_policy.py` implements a **report-only decision table**.
-Its assertions are inputs for future verified evidence collectors, not CLI flags
-or proof objects. It performs no I/O and always reports `cleanup_authorized=False`.
-Neither a production evidence collector nor a destructive executor is connected
-to this policy. Tests of the decision table are not archive/restore validation.
+`worker_lifecycle/cleanup_policy.py` is a **report-only decision table**: no I/O,
+always `cleanup_authorized=False`. Its assertions are inputs for future verified
+collectors, not CLI flags or proof objects. No production collector or destructive
+executor is connected to this policy; its tests do not validate archive/restore.
 
-`directory_handle.py` provides an operation-local, read-only directory check. It
-holds an open descriptor and compares device/inode identity at the canonical path.
-Observed replacement, loss of access, process change or closure invalidates the
-handle. It is not persistent generation identity, a content snapshot, a Git
-identity check or an admission lock. Contents can change while the directory still
-matches. A positive check cannot eliminate a race with a later pathname operation.
-After a crash/restart, evidence must be established anew; saved device/inode values
-alone are not sufficient. Retained registry reports qualify these tests on Linux
-and macOS Intel for their recorded artifact and environments.
+`directory_handle.py` holds a read-only descriptor and compares device/inode identity
+at the canonical path for one operation. Observed replacement, lost access, process
+change or closure invalidates it. It is not persistent generation identity, a snapshot,
+a Git identity check or an admission lock: contents can change despite a match,
+and a positive check cannot prevent a later pathname race. Re-establish evidence
+after crash/restart; saved device/inode values alone are insufficient. Retained
+registry reports qualify these tests only for their recorded Linux/macOS Intel
+artifacts and environments.
 
-Default observe-only launch bindings use a per-attempt UUID, not a verified physical worktree
-generation. Observation failure deliberately permits the original command to
-execute. Consequently these bindings cannot supply `generation_verified`,
-`ownership_complete` or `admission_closed` to the cleanup policy. A later active
-admission protocol must deny managed launches when admission is closed/unavailable,
-without silently changing the existing observe-only launch contract.
+Default observe-only bindings use per-attempt UUIDs, not verified physical worktree
+generations. Enrollment lookup must first confirm an unregistered, unmarked path;
+lookup failures deny execution. If the subsequent `record()` call fails, the launcher
+reports `observation-gap` and deliberately executes the original command.
+They cannot supply `generation_verified`, `ownership_complete` or `admission_closed`.
+A later active admission protocol must deny managed launches on closed/unavailable
+admission without silently changing this observe-only contract.
+
+## Simple algorithm
+
+1. Verify the physical worktree generation and complete ownership coverage.
+   Missing registration or path reuse means hold.
+2. Require every admitted run to be ended. Independently registered jobs remain
+   owners after launcher exit; shared runtimes also need explicit session-completion
+   semantics, not just PID polling. Close admission only if the exact nonempty run
+   set remains ended in the admission transaction. A racing new owner means retry,
+   not closure over live work.
+3. Inventory all results. Incomplete inventory means hold, not an empty worktree.
+4. Propose archive for results needing preservation, removal for verified
+   preservation, and hold for unknown preservation.
+5. A future executor must revalidate evidence and perform the protected operation;
+   a report is never a deletion capability.
+
+| Evidence | Report |
+|----------|--------|
+| Unknown generation, uncovered owner, open admission | Hold |
+| Any alive/unknown run, no recorded runs, possible remaining writers | Hold |
+| Failed or incomplete content inventory | Hold |
+| All safety preconditions proved; unique local results | Archive candidate |
+| All safety preconditions proved; results demonstrably preserved | Remove candidate |
+
+`ended` means process termination, not task success. No push/PR is a normal
+preservation case: local work may be the only copy. Nor does a push/PR prove the
+latest work is preserved. With squash merges, commit ancestry alone cannot prove
+work was lost or remains unpublished.
 
 ## Transactional admission core
 
@@ -61,16 +87,15 @@ It shares the registry's SQLite transaction and journal, not a second database:
   **not permission for a second exec**. Lost acknowledgements need original-run
   recovery. Replaying an old open event cannot reopen closed admission.
 
-Schema 2 supports this API; schema 1 needs the explicit transactional upgrade
-described in [REGISTRY.md](REGISTRY.md). No production migration was performed.
-The explicit launcher mode and automatically resolved enrolled generations use
-this API; unmanaged observe-only launches still bypass it. It is not system-wide exclusion, physical generation
-evidence or cleanup authority. Production launcher coverage, registered-run completion,
-restart recovery and closing-versus-exec integration remain to be qualified.
-Portable reports cover their recorded source only. The retained Linux and macOS
-Intel registry reports include admission, directory-handle checks and disposable
-archive/retirement execution. They do not qualify production AI launchers,
-unregistered writers or production rollout.
+Schema 2 supports this API; schema 1 needs the explicit transactional upgrade in
+[REGISTRY.md](REGISTRY.md). No production migration was performed. Explicit launcher
+mode and automatically resolved enrolled generations use the API; unmanaged
+observe-only launches bypass it. It supplies neither system-wide exclusion,
+physical generation evidence nor cleanup authority. Production launcher coverage,
+registered-run completion, restart recovery and closing-versus-exec integration
+remain unqualified. Portable reports cover their recorded source only: retained
+Linux/macOS Intel reports include admission, directory-handle checks and disposable
+archive/retirement, not production AI launchers, unregistered writers or rollout.
 
 ### Explicit admitted launch
 
@@ -240,34 +265,6 @@ launch with a fresh UUID, infer a generation from path equality, or automaticall
 reopen a closed path. Recovery of interrupted creation and intentional path reuse
 need explicit contracts before that boundary can be considered covered.
 
-## Simple algorithm
-
-1. Verify the physical worktree generation and establish
-   complete ownership coverage. Missing registration or a reused path means hold.
-2. Require every admitted run to be ended under the managed launch contract.
-   Independently registered jobs remain owners after their launcher exits. A shared
-   runtime also needs explicit session-completion semantics, not just PID polling.
-   Close admission only if that exact nonempty run set is still ended in the
-   admission transaction. A racing new owner means retry, not closure over live work.
-3. Inventory all results. Incomplete inventory means hold, not an empty worktree.
-4. If results need preservation, propose an archive. If preservation is already
-   verified, propose removal. Unknown preservation means hold.
-5. A future executor must revalidate evidence and perform the protected operation;
-   a report is never a deletion capability.
-
-| Evidence | Report |
-|----------|--------|
-| Unknown generation, uncovered owner, open admission | Hold |
-| Any alive/unknown run, no recorded runs, possible remaining writers | Hold |
-| Failed or incomplete content inventory | Hold |
-| All safety preconditions proved; unique local results | Archive candidate |
-| All safety preconditions proved; results demonstrably preserved | Remove candidate |
-
-`ended` records process termination, not task success. No push and no PR is a
-normal preservation case: local work may be the only copy. A PR or push is also
-not sufficient evidence that the latest work is preserved. Squash merges mean
-that commit ancestry alone cannot prove work was lost or remains unpublished.
-
 ## Preparation and WIP preservation commands
 
 The registry CLI provides two non-destructive operations:
@@ -287,13 +284,12 @@ The registry CLI provides two non-destructive operations:
   be canonical, private and outside the source worktree and its administration
   directory. Missing evidence or failed verification leaves the source intact.
 
-Both commands require `--state-dir` before the subcommand. Neither initializes or
-migrates state, reopens admission, removes worktrees or consults legacy ownership.
-Closure survives failure: do not use these commands on trees needing more launches.
-
-Preservation records a registry receipt. Repeating the same generation/content/
-destination request rechecks the archive; old receipts are not current proof.
-Results retain `cleanup_authorized=false` and `common_repository_required=true`.
+Both require `--state-dir` before the subcommand. Neither initializes/migrates state,
+reopens admission, removes worktrees nor consults legacy ownership. Closure survives
+failure: do not use them on trees needing more launches. Preservation records a
+registry receipt; repeating the same generation/content/destination rechecks the
+archive, since old receipts are not current proof. Results retain
+`cleanup_authorized=false` and `common_repository_required=true`.
 
 Archives pin `refs/aidevops/wip-base/OPERATION_ID` through branch deletion and Git GC,
 but still depend on the common repository. Retain pins while dependent archives exist;
@@ -345,14 +341,13 @@ scheduling or existing worktrees.
 
 ## Archive payload qualification
 
-`tests/test_preservation.py` exercises the existing archive payload engine
-(`scripts/worktree-archive-helper.sh`) and its new registry orchestration,
-not its legacy lifecycle controllers.
-Fixtures use private temporary Git repositories and an invalid legacy-state
-sentinel. Restore uses `--verification-copy`, avoiding registered restoration.
-No production registry, archive or worktree is touched, and no cleanup eligibility
-is derived from the engine. The portable registry validator includes these
-Git/Bash tests and their actual source dependencies.
+`tests/test_preservation.py` exercises the archive payload engine
+(`scripts/worktree-archive-helper.sh`) and new registry orchestration, not legacy
+controllers. Fixtures use private temporary Git repositories, an invalid legacy-state
+sentinel and `--verification-copy` restore (no registered restoration). They touch no
+production registry, archive or worktree and derive no cleanup eligibility from the
+engine. The portable registry validator includes these Git/Bash tests and their
+actual source dependencies.
 
 Linux checks cover unpublished commits, independent staged/unstaged changes,
 binary edits, new files with unusual names, symlinks, corrupt payload rejection
@@ -369,14 +364,12 @@ preservation, and cannot substitute for current preservation evidence.
 The portable test crosses creation and restoration masks `022`, `077` and `002`,
 including dangling links and ordinary untracked files.
 
-Ignored files are deliberately excluded from WIP archives. The corresponding test
-verifies this policy, not a preservation defect or a requirement to expand capture.
-A WIP archive is not a full backup of the local working environment.
-
-The compact archive depends on retained base Git objects; the round-trip test is
-not evidence of recovery after loss of the common repository. Preservation evidence
-must describe the WIP payload and its actual Git-object dependencies, not claim a
-self-contained backup or preservation of excluded data.
+Ignored files are deliberately excluded; the corresponding test verifies policy,
+not a preservation defect or a requirement to expand capture. A WIP archive is not
+a full environment backup. It depends on retained base Git objects: round-trip tests
+do not prove recovery after common-repository loss. Preservation evidence must name
+the WIP payload and actual Git-object dependencies, not claim a self-contained
+backup or preservation of excluded data.
 
 ## Preservation policy and executor invariants
 
@@ -385,11 +378,10 @@ state, unstaged modifications, deletions, non-ignored untracked files,
 symlinks and executable modes. Submodules, external dependencies and unsupported
 filesystem features must be handled explicitly or block the operation.
 
-Honor the existing Git ignore policy. Do not add ignored files, even when they
-contain local configuration or databases: sensitive data must not unexpectedly
-enter a WIP archive. Do not introduce filename exceptions or content-based guesses
-to override that policy. Exclusion alone is not a secret scanner; archives remain
-local and private, with no automatic public push, PR or upload.
+Honor Git ignore policy, including local configuration/databases: no filename
+exceptions or content-based guesses may add ignored files and unexpectedly archive
+sensitive data. Exclusion is not a secret scanner; archives stay local/private,
+with no automatic public push, PR or upload.
 
 The executor must:
 
@@ -482,12 +474,11 @@ inventory of arbitrary Git invocations, or production rollout qualification.
 
 ## Integration and replacement
 
-Ordinary OpenCode worker launch hooks register automatically, and Pulse invokes
-bounded reconciliation. That does not establish coverage for every interactive
-session, retry path, private workload or alternate runtime. Maintain an explicit
-coverage matrix before enabling destructive behavior. Multiple logical sessions
-in one process need distinct run IDs; shared process liveness cannot prove each
-logical session is active.
+Ordinary OpenCode worker hooks register automatically; Pulse invokes bounded
+reconciliation. This does not cover every interactive session, retry path, private
+workload or alternate runtime. Maintain an explicit coverage matrix before enabling
+destructive behavior. Logical sessions sharing a process need distinct run IDs;
+shared process liveness cannot prove each session active.
 
 Unregistered existing worktrees stay unresolved. A future adoption procedure must
 establish fresh generation and exclusive admission evidence; it must not import
