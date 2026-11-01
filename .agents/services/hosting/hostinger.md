@@ -309,13 +309,23 @@ This bypasses uninstall hooks, preserving saved data rather than asking the plug
 ### Database backups without WP-CLI
 
 For fleet core minor releases, use the [core-minor workflow](../../tools/wordpress/wp-cli-reference.md#core-minor-releases-across-ssh-installs).
-It calls `mysqldump` with a temporary 0600 defaults file and stores dumps outside
-the web root before applying a SHA1-verified locale package. Filtered WordPress
+It calls `mysqldump` with a temporary 0600 defaults file and checks that backup
+storage is separate from every same-SSH-alias inventory web root (including
+resolved symlinks) before applying a SHA1-verified locale package. Inventory must
+include all web roots on the account, using one SSH alias per account; unlisted
+roots and different aliases for the same account cannot be inferred. Filtered WordPress
 HTTP can make `wp core update --minor` falsely report "latest"; this workflow
 queries the release API outside WordPress and verifies the installed version,
 checksums and home/login probes. It never applies major releases or rolls back
-automatically. Remote Python 3.9+ is required; the dump uses `--single-transaction`,
-so the site's own per-database grants suffice.
+automatically. Remote Python 3.9+ is required. The dump uses `--single-transaction`
+and `--no-tablespaces`, suitable for InnoDB without global table locks, but these
+flags do not guarantee that per-database grants suffice. Hostinger's GTID mode
+is not assumed: on MySQL 8.0.32+, `gtid_mode=ON` with the default
+`--set-gtid-purged=AUTO` can require `RELOAD` or `FLUSH_TABLES`. Verify the server
+and client configuration and backup privileges before deployment; a failed dump
+holds the site without applying core updates. Do not disable GTID metadata merely
+to bypass privileges: retain the backup/restore contract. Nontransactional tables
+and concurrent DDL are not protected by the InnoDB snapshot.
 
 `wp db export` also fails with `Cannot do 'Process::run'`. Call `mysqldump` directly with the site's own credentials, passed through the environment so the password never appears in output or the process list:
 
