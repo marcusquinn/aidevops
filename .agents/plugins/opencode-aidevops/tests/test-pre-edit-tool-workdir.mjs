@@ -4,7 +4,7 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,7 @@ import { releasePreEditSessionOwnership, runPreEditCheck } from "../pre-edit-che
 const testDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(testDir, "../../../scripts");
 // Native admission must never write fixture paths into the operator's registry.
-const lifecycleRoot = mkdtempSync(join(tmpdir(), "pre-edit-native-state-"));
+const lifecycleRoot = realpathSync(mkdtempSync(join(tmpdir(), "pre-edit-native-state-")));
 const lifecycleState = join(lifecycleRoot, "state");
 const savedLifecycleState = process.env.AIDEVOPS_LIFECYCLE_STATE_DIR;
 process.env.AIDEVOPS_LIFECYCLE_STATE_DIR = lifecycleState;
@@ -35,7 +35,7 @@ function git(cwd, args) {
 }
 
 test("caller context preserves its live runtime PID and fences other sessions", async () => {
-  const root = mkdtempSync(join(tmpdir(), "gh36057-pre-edit-owner-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gh36057-pre-edit-owner-")));
   const repo = join(root, "repo");
   const linked = join(root, "linked");
   const runtime = spawn("sleep", ["120"]);
@@ -211,7 +211,7 @@ test("inherited ownership requires matching generation evidence", async () => {
 });
 
 test("pre-edit tool validates the explicitly targeted Git worktree", async () => {
-  const root = mkdtempSync(join(tmpdir(), "t27909-pre-edit-tool-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "t27909-pre-edit-tool-")));
   const repo = join(root, "repo");
   const linked = join(root, "linked");
   const otherLinked = join(root, "other-linked");
