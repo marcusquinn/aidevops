@@ -13,6 +13,7 @@ from typing import Any
 KNOWN_MATCHERS = {
     "rm_recursive_force_root",
     "rm_recursive_force",
+    "git_worktree_add",
     "git_checkout_worktree_path",
     "git_restore_worktree",
     "git_reset_destructive",

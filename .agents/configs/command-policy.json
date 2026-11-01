@@ -49,6 +49,12 @@
   ],
   "rules": [
     {
+      "id": "git.worktree-controlled-creation-required",
+      "matcher": "git_worktree_add",
+      "decision": "forbid",
+      "reason": "Direct git worktree add bypasses controlled-creation receipts; use worktree-helper.sh add or aidevops worktree add"
+    },
+    {
       "id": "github.pr-disable-auto-direct",
       "matcher": "gh_pr_disable_auto_direct",
       "decision": "forbid",
@@ -122,6 +128,54 @@
     }
   ],
   "fixtures": [
+    {
+      "name": "direct worktree creation",
+      "command": "git worktree add -b feature/example ../example HEAD",
+      "decision": "forbid",
+      "rule_id": "git.worktree-controlled-creation-required"
+    },
+    {
+      "name": "worktree creation with Git global options",
+      "argv": ["/usr/bin/git", "-C", ".", "-c", "color.ui=false", "worktree", "add", "../example"],
+      "decision": "forbid",
+      "rule_id": "git.worktree-controlled-creation-required"
+    },
+    {
+      "name": "wrapped worktree creation",
+      "command": "env EXAMPLE=1 bash -lc 'git -C . worktree add ../example'",
+      "decision": "forbid",
+      "rule_id": "git.worktree-controlled-creation-required"
+    },
+    {
+      "name": "helper does not exempt a chained raw creation",
+      "command": "worktree-helper.sh add feature/example && git worktree add ../other",
+      "decision": "forbid",
+      "rule_id": "git.worktree-controlled-creation-required"
+    },
+    {
+      "name": "controlled worktree helper",
+      "command": "worktree-helper.sh add feature/example",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "controlled worktree CLI",
+      "command": "aidevops worktree add feature/example",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "read-only worktree listing",
+      "command": "git worktree list --porcelain",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "quoted worktree command is not executed",
+      "command": "printf '%s' 'git worktree add ../example'",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
     {
       "name": "safe status",
       "command": "git status --short",
