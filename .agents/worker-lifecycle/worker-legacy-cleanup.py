@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import subprocess  # nosec B404 # exception classification only
 
+from worker_lifecycle.filesystem import FilesystemValidationError, filesystem_error_details
 from worker_lifecycle.legacy_cleanup import run
 from worker_lifecycle.process import ObservationUnavailable
 from worker_lifecycle.storage import LifecycleRegistry
@@ -32,7 +33,8 @@ def main():
             ObservationUnavailable) as error:
         reason = (str(error) if isinstance(error, (ValueError, ObservationUnavailable))
                   else type(error).__name__)
-        print(json.dumps({"status": "unavailable", "reason": reason}))
+        details = filesystem_error_details(error) if isinstance(error, FilesystemValidationError) else {"reason": reason}
+        print(json.dumps({"status": "unavailable", **details}))
         return 2
     print(json.dumps(result, sort_keys=True))
     return 0

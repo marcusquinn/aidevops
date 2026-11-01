@@ -7,9 +7,9 @@ from datetime import datetime
 from pathlib import Path
 
 from .enrollment import _git_directory
+from .filesystem import validate_private_path as _private
 from .process import ProcessIdentity
 from .retirement import _git, _id
-from .storage import _private
 
 
 def queue(store, items):

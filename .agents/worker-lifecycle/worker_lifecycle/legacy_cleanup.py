@@ -20,12 +20,12 @@ from .archive_path import validate_archive_path
 from .cleanup import _failure_details, _repositories
 from .directory_handle import DirectoryHandle
 from .enrollment import _git_directory
+from .filesystem import validate_private_path as _private
 from .legacy_inventory import advance, inspect, inventory, queue, require_ended
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
 from .runtime import adapter_for, require_ready
-from .storage import _private
 
 
 @dataclass(frozen=True)

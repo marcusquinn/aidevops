@@ -18,6 +18,7 @@ from worker_lifecycle import legacy_cleanup as legacy
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.archive_path import validate_archive_path
 from worker_lifecycle.enrollment import _git_directory
+from worker_lifecycle.filesystem import FilesystemValidationError
 from worker_lifecycle.process import ObservationUnavailable, ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 
@@ -65,9 +66,9 @@ class ArchiveRootContract(unittest.TestCase):
         destination.chmod(0o755)
         self.root.symlink_to(destination, target_is_directory=True)
         for target in (self.root, self.root / "nested"):
-            with self.assertRaises(ValueError) as raised:
+            with self.assertRaises(FilesystemValidationError) as raised:
                 validate_archive_path(target)
-            self.assertIn(str(self.root), str(raised.exception))
+            self.assertEqual(raised.exception.path, self.root)
         self.assertEqual(destination.stat().st_mode & 0o777, 0o755)
         self.assertFalse((destination / "nested").exists())
         self.root.unlink()

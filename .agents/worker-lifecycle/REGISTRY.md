@@ -54,6 +54,32 @@ claims on the same generation are reported as conflicts, never forcibly resolved
 An unknown observation does not end a run. Shared-runtime session completion needs
 an additional session protocol: process survival alone cannot settle it.
 
+## Filesystem validation and diagnostics
+
+`worker_lifecycle/filesystem.py` provides read-only checks shared by registry and
+cleanup code; it never creates paths or changes permissions. `checked_directory()`
+walks the directory chain using descriptor-relative, no-follow opens, rejecting
+untrusted ownership and externally writable components. Trusted sticky ancestors
+are allowed above the protected archive root, not at or below it.
+
+`validate_private_path()` checks that chain and requires the final object to be
+the expected type, owned by the current user, with no group/other permissions.
+Ancestors need integrity, not 0700: an owned 0755 parent is valid. Compared with
+leaf-only validation, unsafe ancestors now also cause a refusal. Explicit registry
+initialization checks the parent chain before creating state.
+
+`validate_archive_path()` keeps a separate policy: owned 0755 archive roots and
+intermediate directories are valid; the final archive directory remains private.
+The archive producer and SQLite schema are unchanged by these shared checks.
+
+Filesystem refusals retain machine-readable `reason` codes and add
+`filesystem_path`, optionally `filesystem_violation` and numeric `errno`, to local
+CLI JSON. Cleanup's source-worktree `path` is not overwritten. Diagnostics do not
+serialize arbitrary exception text, subprocess arguments or output. Private-path
+absence remains `FileNotFoundError` for callers that initialize missing state.
+These POSIX mode-bit checks trust the same UID and administrators; they do not
+evaluate extended ACLs or sandbox hostile same-user processes.
+
 ## Persistence and recovery
 
 - Initialization exclusively creates a 0700 directory and 0600 database. Existing
