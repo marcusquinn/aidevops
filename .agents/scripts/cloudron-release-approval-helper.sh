@@ -124,6 +124,12 @@ release_request_body() {
 	return 0
 }
 
+release_request_interrupted() {
+	local repo="$1" pr="$2"
+	printf 'ERROR: Release approval request interrupted; leave BOTH release-approval-required and hold-for-review on PR #%s. Retry after API recovery: gh pr edit %s --repo %s --add-label release-approval-required --add-label hold-for-review; cloudron-release-approval-helper.sh request %s %s\n' "$pr" "$pr" "$repo" "$repo" "$pr" >&2
+	return 4
+}
+
 release_request() {
 	local repo="$1" pr="$2"
 	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" url="" older="" rc=0
@@ -149,7 +155,9 @@ release_request() {
 		found { print }
 	')
 	[[ -n "${notes//[[:space:]]/}" ]] || release_error 'Release changelog entry is empty.' || return 1
-	issues=$(release_issues "$repo") || return 1
+	#aidevops:trust-boundary — a bare hold belongs to another review workflow.
+	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '(all(.labels[]; .name != "hold-for-review") or any(.labels[]; .name == $label)) and .auto_merge == null' <<<"$snapshot" >/dev/null || release_error 'Resolve existing PR hold/auto-merge before requesting a release.' || return 1
+	issues=$(release_issues "$repo") || { release_request_interrupted "$repo" "$pr"; return 4; }
 	existing=$(jq -c --arg marker "<!-- aidevops:cloudron-release-approval ${version} -->" '.[] | select(.body | contains($marker))' <<<"$issues") || return 1
 	if [[ -n "$existing" ]]; then
 		metadata=$(release_metadata "$(jq -r '.body' <<<"$existing")" "$repo") || return 1
@@ -181,9 +189,8 @@ release_request() {
 	fi
 	# A durable hold prevents ordinary merge automation from publishing first.
 	# Retry an interrupted request only when its dedicated PR label is present.
-	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '(all(.labels[]; .name != "hold-for-review") or any(.labels[]; .name == $label)) and .auto_merge == null' <<<"$snapshot" >/dev/null || release_error 'Resolve existing PR hold/auto-merge before requesting a release.' || return 1
-	release_ensure_labels "$repo" || return 1
-	gh_pr_edit_safe "$pr" --repo "$repo" --add-label release-approval-required --add-label hold-for-review >/dev/null || return 1
+	release_ensure_labels "$repo" || { release_request_interrupted "$repo" "$pr"; return 4; }
+	gh_pr_edit_safe "$pr" --repo "$repo" --add-label release-approval-required --add-label hold-for-review >/dev/null || { release_request_interrupted "$repo" "$pr"; return 4; }
 	snapshot=$(release_pr "$repo" "$pr") || return 1
 	[[ "$(jq -r '.head.sha' <<<"$snapshot")" == "$sha" ]] || return 1
 	metadata=$(jq -cn --arg repo "$repo" --argjson pr "$pr" --arg sha "$sha" --arg version "$version" --arg upstream "$upstream" '{schema:1,repository:$repo,pr:$pr,head:$sha,version:$version,upstream:$upstream,owns_hold:true}') || return 1
@@ -595,6 +602,34 @@ release_reconcile_held() {
 	return 0
 }
 
+# Recover interrupted requests beyond the newest worker upstream bump handled
+# above (including human-created package PRs). Never rewrite an existing request,
+# even if it binds an older head: its signature/re-approval belongs to its owner.
+release_retry_interrupted() {
+	local repo="$1" apply="$2" prs='' issues='' pr='' requests='' rc=0 failures=0
+	prs=$(gh pr list --repo "$repo" --state open --label "$RELEASE_APPROVAL_LABEL" \
+		--limit "$RELEASE_HELD_PR_LIMIT" --json number,isDraft,isCrossRepository) || return 1
+	jq -e --argjson limit "$RELEASE_HELD_PR_LIMIT" 'type == "array" and length < $limit' <<<"$prs" >/dev/null || return 1
+	[[ "$(jq 'length' <<<"$prs")" -gt 0 ]] || return 0
+	issues=$(release_issues "$repo") || return 1
+	while IFS= read -r pr; do
+		[[ -n "$pr" ]] || continue
+		requests=$(release_requests_for_pr "$repo" "$issues" "$pr") || return 1
+		#aidevops:trust-boundary — labels allow requesting approval, never releasing
+		# a hold or modifying a signed/stale request for this PR.
+		[[ -z "$requests" ]] || continue
+		rc=0
+		release_request_held "$repo" "$apply" "$pr" || rc=$?
+		if [[ "$rc" -eq 0 && "$apply" == true ]]; then
+			issues=$(release_issues "$repo") || return 1
+		elif [[ "$rc" -ne 0 && "$rc" -ne 3 ]]; then
+			failures=$((failures + 1))
+		fi
+	done < <(jq -r '.[] | select(.isDraft == false and .isCrossRepository == false) | .number' <<<"$prs")
+	[[ "$failures" -eq 0 ]] || return 1
+	return 0
+}
+
 release_process() {
 	local apply="$1" repo_filter="${2:-}" issue_filter="${3:-}"
 	local repo="" issues="" issue="" failures=0 repos=""
@@ -620,6 +655,7 @@ release_process() {
 		# A single-issue run targets one approval; held-PR reconciliation is repo-wide.
 		if [[ -z "$issue_filter" ]]; then
 			release_reconcile_held "$repo" "$apply" "$issues" || failures=$((failures + 1))
+			release_retry_interrupted "$repo" "$apply" || failures=$((failures + 1))
 		fi
 	done <<<"$repos"
 	[[ "$failures" -eq 0 ]] || return 1
@@ -636,7 +672,7 @@ main() {
 		;;
 	request)
 		[[ $# -eq 3 ]] || return 1
-		release_request "$arg2" "$arg3" || return 1
+		release_request "$arg2" "$arg3" || return $?
 		;;
 	process)
 		local apply=false repo_filter="" issue_filter=""
