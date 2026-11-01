@@ -30,7 +30,9 @@ registry reports qualify these tests only for their recorded Linux/macOS Intel
 artifacts and environments.
 
 Default observe-only bindings use per-attempt UUIDs, not verified physical worktree
-generations, and deliberately execute the original command on observation failure.
+generations. Enrollment lookup must first confirm an unregistered, unmarked path;
+lookup failures deny execution. If the subsequent `record()` call fails, the launcher
+reports `observation-gap` and deliberately executes the original command.
 They cannot supply `generation_verified`, `ownership_complete` or `admission_closed`.
 A later active admission protocol must deny managed launches on closed/unavailable
 admission without silently changing this observe-only contract.
