@@ -18,7 +18,6 @@ Same-UID cgroup accounting is evidence, not a sandbox against hostile processes.
 from __future__ import annotations
 
 import argparse
-import copy
 from contextlib import closing
 import json
 import os
@@ -28,10 +27,12 @@ import sqlite3
 import subprocess
 import sys
 import time
+import types
 import uuid
 
 import worktree_lifetime_idle as idle_policy
 import worktree_lifetime_launch as launch_contract
+import worktree_lifetime_observe as observe
 import worktree_lifetime_proof as lifetime_proof
 import worktree_lifetime_owner as owner_lifetime
 import worktree_lifetime_reconcile as process_reconciliation
@@ -275,29 +276,8 @@ def mutate_record(record: dict, path: Path, operation: str, extra: list[str], co
 
 
 def seal_observed(connection, path: Path, operation: str, extra: list[str]) -> None:
-    # Release even the read snapshot before slow reconciliation/census work.
-    # In rollback-journal mode a retained reader can also delay other writers.
-    connection.execute("BEGIN")
-    original = load(connection, str(path))
-    connection.execute("COMMIT")
-    observed = copy.deepcopy(original)
-    mutate_record(observed, path, operation, extra, connection)
-
-    connection.execute("BEGIN IMMEDIATE")
-    initialize(connection)
-    current = load(connection, str(path))
-    require(current.get("generation") == original.get("generation"), "worktree generation changed during observation")
-    if current.get("manager") == owner_lifetime.MANAGER:
-        owner_lifetime.require_admission_observed(current)
-    # Also reject changes to leases, idle policy, archive state or launch history;
-    # never overwrite a concurrent mutation with an older observation snapshot.
-    require(current == original, "lifetime changed during observation; retry sealing")
-    verify_identity(current, path)
-    if operation == "seal-idle":
-        idle_policy.owner_clear(connection, str(path))
-        idle_policy.require_elapsed(current, boot_id(), int(extra[0]) if extra else idle_policy.IDLE_SECONDS)
-    save(connection, observed)
-    connection.execute("COMMIT")
+    # Resolve ops at call time so module-level patches stay effective.
+    observe.seal_observed(types.SimpleNamespace(**globals()), connection, path, operation, extra)
 
 
 def main() -> int:
