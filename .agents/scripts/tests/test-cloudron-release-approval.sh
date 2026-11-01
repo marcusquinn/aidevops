@@ -21,7 +21,7 @@ cat >"${TEST_ROOT}/approval-helper.sh" <<'STUB'
 [[ "$*" == 'verify issue 12 owner/app --require-authority' ]] || exit 9
 printf 'verify\n' >>"${TEST_ROOT}/calls"
 case "$SCENARIO" in
-unsigned | request_unsigned) printf 'NO_APPROVAL\n'; exit 1 ;;
+unsigned | request_unsigned | request_retry) printf 'NO_APPROVAL\n'; exit 1 ;;
 api_error) printf 'API_ERROR\n'; exit 6 ;;
 bad_exit) printf 'VERIFIED\n'; exit 6 ;;
 stale) printf 'STALE_APPROVAL\n'; exit 2 ;;
@@ -38,7 +38,8 @@ STUB
 chmod +x "${TEST_ROOT}/approval-helper.sh" "${TEST_ROOT}/full-loop-helper.sh"
 
 request_issues() {
-	if [[ "$SCENARIO" == request_existing || "$SCENARIO" == request_unsigned || "$SCENARIO" == request_signed ]]; then
+	[[ "$SCENARIO" != request_issues_error ]] || return 1
+	if [[ "$SCENARIO" == request_existing || "$SCENARIO" == request_unsigned || "$SCENARIO" == request_signed || ("$SCENARIO" == request_retry && -f "${TEST_ROOT}/request") ]]; then
 		jq -cn --rawfile body "${TEST_ROOT}/request" '[{number:12,html_url:"https://example.invalid/issue/12",body:$body}]'
 	elif [[ "$SCENARIO" == request* ]]; then
 		printf '[]\n'
@@ -49,15 +50,20 @@ request_issues() {
 }
 
 pull_request_json() {
-	local head="$HEAD_SHA" merged=false state=open
+	local head="$HEAD_SHA" merged=false state=open labels='[]'
+	if [[ "$SCENARIO" == request_bare_hold ]]; then
+		labels='[{"name":"hold-for-review"}]'
+	elif [[ "$SCENARIO" == request_retry && -f "${TEST_ROOT}/held-labels" ]]; then
+		labels=$(<"${TEST_ROOT}/held-labels")
+	fi
 	[[ "$SCENARIO" != changed ]] || head="$OTHER_SHA"
 	if [[ -f "${TEST_ROOT}/merged" || "$SCENARIO" == resumed ]]; then
 		merged=true
 		state=closed
 	fi
 	[[ "$SCENARIO" != pr_error ]] || return 1
-	jq -cn --arg head "$head" --arg state "$state" --argjson merged "$merged" --arg scenario "$SCENARIO" '
-		{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},state:$state,merged:$merged,merge_commit_sha:$head,draft:false,labels:[],auto_merge:null}
+	jq -cn --arg head "$head" --arg state "$state" --argjson merged "$merged" --arg scenario "$SCENARIO" --argjson labels "$labels" '
+		{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},state:$state,merged:$merged,merge_commit_sha:$head,draft:false,labels:$labels,auto_merge:null}
 		| if $scenario == "draft" then .draft = true
 		  elif $scenario == "fork" then .head.repo.full_name = "other/app"
 		  elif $scenario == "wrong_repo" then .base.repo.full_name = "other/app"
@@ -155,7 +161,13 @@ gh() {
 		;;
 	'label create') return 0 ;;
 	# No held worker PRs: approval processing alone (GH#36268 cases run below).
-	'pr list') printf '[]\n' ;;
+	'pr list')
+		if [[ "$SCENARIO" == request_retry ]]; then
+			jq -cn --arg head "$HEAD_SHA" --slurpfile labels "${TEST_ROOT}/held-labels" '[{number:7,isDraft:false,isCrossRepository:false,headRefOid:$head,labels:$labels[0],closingIssuesReferences:[]}]'
+		else
+			printf '[]\n'
+		fi
+		;;
 	*)
 		printf 'Unexpected gh call: %s\n' "$*" >&2
 		return 9
@@ -166,6 +178,10 @@ gh() {
 
 gh_pr_edit_safe() {
 	printf 'pr-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
+	if [[ "$SCENARIO" == request_create_error || "$SCENARIO" == request_retry ]]; then
+		[[ "$*" == '7 --repo owner/app --add-label release-approval-required --add-label hold-for-review' ]] || return 9
+		printf '[{"name":"release-approval-required"},{"name":"hold-for-review"}]\n' >"${TEST_ROOT}/held-labels"
+	fi
 	return 0
 }
 
@@ -179,6 +195,7 @@ gh_issue_comment() {
 gh_create_issue() {
 	local body=""
 	body=$(</dev/stdin)
+	[[ "$SCENARIO" != request_create_error ]] || return 1
 	printf '%s\n' "$body" >"${TEST_ROOT}/request"
 	printf 'create %s\n' "$*" >>"${TEST_ROOT}/calls"
 	if [[ "$SCENARIO" == request_bad_url ]]; then
@@ -324,7 +341,8 @@ export SCENARIO=request_labels_error
 : >"${TEST_ROOT}/calls"
 rc=0
 output=$(release_request owner/app 7 2>&1) || rc=$?
-[[ "$rc" -eq 1 && "$output" == *'Unable to provision release approval labels in owner/app'* ]]
+[[ "$rc" -eq 4 && "$output" == *'Unable to provision release approval labels in owner/app'* ]]
+[[ "$output" == *'--add-label release-approval-required --add-label hold-for-review'* ]]
 if grep -Eq '^(label create |pr-edit |create )' "${TEST_ROOT}/calls"; then exit 1; fi
 printf 'PASS request provisions only missing labels and fails closed on unknown label state\n'
 
@@ -355,6 +373,34 @@ grep -q 'Maintainer command: `sudo aidevops approve issue 12 owner/app`' "${TEST
 if grep -q 'Request finalization pending\.' "${TEST_ROOT}/request"; then exit 1; fi
 grep -q 'issue-edit 12 --repo owner/app --body-file -' "${TEST_ROOT}/calls"
 printf 'PASS interrupted unsigned request recovers; signed body is not rewritten\n'
+
+# GH#36402: a failed create leaves both labels; repo-wide processing retries
+# a non-worker PR once, without a signature or permission to release its hold.
+export SCENARIO=request_create_error
+rm -f "${TEST_ROOT}/request" "${TEST_ROOT}/held-labels"
+: >"${TEST_ROOT}/calls"
+if release_request owner/app 7; then exit 1; fi
+[[ ! -f "${TEST_ROOT}/request" ]]
+jq -e 'any(.[]; .name == "release-approval-required") and any(.[]; .name == "hold-for-review")' "${TEST_ROOT}/held-labels" >/dev/null
+export SCENARIO=request_retry
+release_process false
+[[ ! -f "${TEST_ROOT}/request" ]]
+release_process true
+[[ -f "${TEST_ROOT}/request" ]]
+release_process true
+[[ "$(grep -c '^create ' "${TEST_ROOT}/calls")" -eq 1 ]]
+if grep -Eq 'merge$|--remove-label|issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+printf 'PASS interrupted request retries exactly once and retains unsigned hold\n'
+export SCENARIO=request_issues_error
+rc=0
+output=$(main request owner/app 7 2>&1) || rc=$?
+[[ "$rc" -eq 4 && "$output" == *'--add-label release-approval-required --add-label hold-for-review'* ]]
+printf 'PASS pre-hold API failure preserves distinct CLI recovery status\n'
+export SCENARIO=request_bare_hold
+: >"${TEST_ROOT}/calls"
+if release_request owner/app 7; then exit 1; fi
+if grep -Eq '^pr-edit |^create ' "${TEST_ROOT}/calls"; then exit 1; fi
+printf 'PASS bare unrelated hold still refuses request\n'
 
 export SCENARIO=unsigned
 if release_authorize owner/app 7 "$HEAD_SHA"; then exit 1; fi
@@ -414,6 +460,9 @@ printf 'PASS half-hour approval routine registered\n'
 	}
 	# Scope selection only; held-PR reconciliation is exercised separately below.
 	release_reconcile_held() {
+		return 0
+	}
+	release_retry_interrupted() {
 		return 0
 	}
 	assert_scope() {
