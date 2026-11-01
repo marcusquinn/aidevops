@@ -10,7 +10,7 @@ import re
 import shutil
 import stat
 from worktree_recovery_timing import timed
-from worktree_archive_git import RETAINED_VERIFICATION_SCRATCH
+from worktree_archive_git import MISSING_PROMISOR_BASE, RETAINED_VERIFICATION_SCRATCH
 
 from worktree_archive_administration import (
     auto_merge_oid, fetch_head_roots, git, load_administration,
@@ -18,6 +18,29 @@ from worktree_archive_administration import (
 from worktree_archive_auto_merge import (
     capture_auto_merge as capture_auto_merge, verify_auto_merge,
 )
+
+
+def require_independent_base_receiver(root, common, run_git):
+    """Refuse shared stores and alternates before any base-object import."""
+    admin = run_git(root, 'rev-parse', '--absolute-git-dir').strip()
+    receiver = run_git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()
+    receiver_path = Path(os.fsdecode(receiver)).resolve()
+    if (Path(os.fsdecode(admin)).resolve() != receiver_path or receiver_path == common.resolve()
+            or os.path.lexists(receiver_path / 'objects/info/alternates')):
+        raise ValueError('git_admin:base_import_requires_independent_scratch')
+
+
+def base_graph_missing(root, base, run_git):
+    """Inspect the full recorded graph through the caller's bounded Git policy."""
+    graph = run_git(root, 'rev-list', '--objects', '--no-object-names', '--missing=print', base)
+    return any(line.startswith(b'?') for line in graph.splitlines())
+
+
+def verify_imported_base(root, base, run_git):
+    """Require complete independent objects, not just successful transfer."""
+    if base_graph_missing(root, base, run_git):
+        raise ValueError(MISSING_PROMISOR_BASE)
+    run_git(root, 'fsck', '--full', '--no-reflogs', base)
 
 
 def index_roots(root):

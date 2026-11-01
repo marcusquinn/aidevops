@@ -17,30 +17,32 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from worktree_recovery_timing import timed
 
 from worktree_archive_filesystem import fingerprint, supported_directories
+from worktree_archive_fingerprint import git_snapshot as git_snapshot
 from worktree_archive_untracked import (
-    untracked_contents,
     verify_untracked_payload as verify_untracked_payload,
 )
 from worktree_archive_administration import (
     ADMIN_FILES, administration, git, load_administration,
     OPERATIONS as OPERATIONS,
 )
-from worktree_archive_state import auto_merge, inventories, supported_state
-from worktree_archive_state import capture_merge, merge_digest, restore_merge
+from worktree_archive_state import inventories, supported_state
+from worktree_archive_state import capture_merge, restore_merge
 from worktree_archive_index import (
     archive_policies as archive_policies, git_index_state as git_index_state,
 )
 from worktree_archive_objects import (
     administration_roots, bundle_roots, capture_auto_merge,
+    base_graph_missing, require_independent_base_receiver, verify_imported_base,
     verify_auto_merge as verify_auto_merge,
     verify_git_objects as verify_git_objects,
 )
 from worktree_archive_auto_merge import restore_auto_merge as restore_auto_merge
 from worktree_archive_git import (
-    base_import_failure, base_upload_pack,
+    MISSING_PROMISOR_BASE, authorized_base_source, base_import_failure, base_upload_pack,
     capture_bundle as capture_bundle, fetch_preservation as fetch_preservation,
 )
 
@@ -85,17 +87,42 @@ def seed_base(root, manifest):
         raise ValueError('git_admin:invalid_base')
     if not common.is_absolute() or not common.is_dir():
         raise ValueError('git_admin:base_repository_unavailable')
+    deadline = time.monotonic() + base_import_timeout()
+
+    def bounded_git(repository, *args):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired('base-import', base_import_timeout())
+        return git(repository, *args, timeout=remaining)
+
     try:
-        git(root, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags',
-            '--no-auto-maintenance', '--upload-pack=' + base_upload_pack(),
-            '--no-write-fetch-head', str(common), base, timeout=base_import_timeout())
+        require_independent_base_receiver(root, common, bounded_git)
+        if base_graph_missing(common, base, bounded_git):
+            # No shared-source lazy fetch, even for sealed partial clones. The
+            # receiver is new operation-owned scratch, never the shared store.
+            try:
+                source, protocol = authorized_base_source(root, common, bounded_git)
+            except (ValueError, subprocess.CalledProcessError):
+                # This function also runs beneath the archive shell's inline
+                # Python CLI: suppress exception chains containing Git argv.
+                raise ValueError(MISSING_PROMISOR_BASE) from None
+            bounded_git(root, '-c', 'protocol.allow=never', '-c', f'protocol.{protocol}.allow=always',
+                        '-c', 'http.followRedirects=false', '-c', f'http.{source}.followRedirects=false',
+                        'fetch', '--quiet', '--no-tags',
+                        '--no-auto-maintenance', '--no-write-fetch-head', '--refetch',
+                        '--upload-pack=' + base_upload_pack(), source, base)
+        else:
+            bounded_git(root, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags',
+                        '--no-auto-maintenance', '--upload-pack=' + base_upload_pack(),
+                        '--no-write-fetch-head', str(common), base)
+        verify_imported_base(root, base, bounded_git)
+        bounded_git(root, 'update-ref', 'refs/archive/base', base)
     except subprocess.CalledProcessError as error:
-        raise ValueError(base_import_failure(error)) from error
-    except subprocess.TimeoutExpired as error:
+        raise ValueError(base_import_failure(error)) from None
+    except subprocess.TimeoutExpired:
         raise ValueError('producer:base-import-timeout; local base import exceeded its time budget; '
                          'source and archive retained; retry when host load is lower or raise '
-                         'AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT (seconds, max 1800)') from error
-    git(root, 'update-ref', 'refs/archive/base', base)
+                         'AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT (seconds, max 1800)') from None
 
 
 def prepare_incremental_restore(archive, target):
@@ -151,50 +178,6 @@ def verify_administration(archive, scratch, manifest):
     checked = git(scratch, 'cat-file', '--batch-check', data=('\n'.join(roots) + '\n').encode('ascii'))
     if len(checked.splitlines()) != len(roots) or any(line.endswith(b' missing') for line in checked.splitlines()):
         raise ValueError('git_admin:missing_object')
-
-
-def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
-    """Describe Git changes and ordinary untracked files, excluding Git-ignored files.
-
-    Capture passes its already-written patches, so describing the archive does
-    not repeat diffs or verify restoration. Comparison is a separate operation.
-    """
-    root = Path(path).resolve(strict=True)
-    metadata = metadata if metadata is not None else git_index_state(root)
-    if 'merge' in metadata:
-        state = metadata['merge']
-        result = {'schema': 4, 'policy': 'git-only', 'head': state['head'],
-                  'files': len(state['working']), 'bytes': sum(len(value[1]) // 2 for value in state['working'].values() if value),
-                  'merge_sha256': merge_digest(state)}
-        if include_untracked:
-            paths = sorted(filter(None, git(root, 'ls-files', '--others', '--exclude-standard', '-z').split(b'\0')))
-            contents = untracked_contents(root, paths)
-            result.update(untracked_files=len(paths),
-                          untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode('ascii')).hexdigest())
-        return result
-    options = ("--binary", "--full-index", "--no-ext-diff", "--no-textconv",
-               "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short")
-    staged = (patches / "staged.patch").read_bytes() if patches else git(root, "diff", "--cached", *options)
-    unstaged = (patches / "diff.patch").read_bytes() if patches else git(root, "diff", *options)
-    head = metadata["head"]
-    values = [head, metadata["index"],
-              hashlib.sha256(staged).hexdigest(), hashlib.sha256(unstaged).hexdigest()]
-    result = {"schema": 2, "policy": "git-only", "head": head, "files": metadata["files"],
-               "bytes": len(staged) + len(unstaged),
-               "sha256": hashlib.sha256(json.dumps(values).encode("ascii")).hexdigest()}
-    oid = auto_merge(root)
-    if oid is not None:
-        result['auto_merge'] = oid
-    if include_untracked:
-        paths = sorted(filter(None, git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")))
-        size = sum((root / os.fsdecode(raw)).lstat().st_size for raw in paths)
-        if (len(paths) > int(os.environ.get("AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES", "10000"))
-                or size > int(os.environ.get("AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES", "1073741824"))):
-            raise ValueError("untracked payload exceeds configured limit")
-        contents = untracked_contents(root, paths)
-        result.update(schema=3, untracked_files=len(paths), bytes=result["bytes"] + size,
-                      untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode("ascii")).hexdigest())
-    return result
 
 
 def snapshot(path, preserve_git_admin=False, include_ignored=False, git_only=False):
