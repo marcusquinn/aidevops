@@ -45,8 +45,58 @@ _worktree_enroll_generation() {
 	if ! enrollment_result=$("$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
 		--state-dir "$state_dir" "${enrollment_args[@]}"); then
 		printf 'Generation enrollment refused: %s\n' "$enrollment_result" >&2
+		_worktree_refusal_remediation "$enrollment_result" "$state_dir"
 		return 1
 	fi
+	return 0
+}
+
+# Shell-safe path for a pasteable command; reports are often pasted into
+# issues, so the home directory is abbreviated to ~ (GH#36370).
+_worktree_display_path() {
+	local path="$1"
+	local home_real="" prefix=""
+	home_real=$(cd -- "$HOME" 2>/dev/null && pwd -P) || home_real="$HOME"
+	for prefix in "$HOME" "$home_real"; do
+		if [[ -n "$prefix" && "$path" == "$prefix"/* ]]; then
+			# \176 is a literal ~: display only, never expanded by this shell.
+			printf '\176/%q' "${path#"$prefix"/}"
+			return 0
+		fi
+	done
+	printf '%q' "$path"
+	return 0
+}
+
+# Print one remediation line for a known lifecycle refusal code (GH#36370).
+# Input is the registry's JSON result; only the stable `detail` code is read.
+_worktree_refusal_remediation() {
+	local result="$1"
+	local state_dir="$2"
+	local code="" registry_cli="" upgrade_cmd=""
+	[[ "$result" =~ \"detail\":\ \"([a-z0-9-]+)\" ]] || return 0
+	code="${BASH_REMATCH[1]}"
+	registry_cli=$(cd -- "${BASH_SOURCE[0]%/*}/../worker-lifecycle" 2>/dev/null && pwd -P)/worker-registry.py
+	upgrade_cmd="python3 $(_worktree_display_path "$registry_cli") --state-dir $(_worktree_display_path "$state_dir") upgrade"
+	case "$code" in
+	database-locked | upgrade-backup-timeout)
+		printf 'Refusal cause: %s; another lifecycle operation holds the registry. Retry shortly.\n' "$code" >&2
+		;;
+	ref-already-checked-out)
+		printf 'Refusal cause: %s; the ref is checked out in another worktree. Create a new branch instead.\n' "$code" >&2
+		;;
+	upgrade-* | schema-*)
+		printf 'Refusal cause: %s; upgrade the registry: %s\n' "$code" "$upgrade_cmd" >&2
+		;;
+	no-such-table | no-such-column)
+		# A current-schema registry missing objects is not repaired by upgrade.
+		printf 'Refusal cause: %s; the registry schema is incomplete. Run: %s; if it reports already-current, keep the state directory unchanged and report this refusal.\n' \
+			"$code" "$upgrade_cmd" >&2
+		;;
+	*)
+		printf 'Refusal cause: %s\n' "$code" >&2
+		;;
+	esac
 	return 0
 }
 
@@ -80,6 +130,7 @@ _worktree_create_native() {
 		--state-dir "$state_dir" create-worktree --initialize --repo "$repo" \
 		--path "$path" --ref "$ref" --pid "$runtime_pid" --session-id "$session_id" -- "$@"); then
 		printf 'Native worktree creation refused; partial results retained: %s\n' "$result" >&2
+		_worktree_refusal_remediation "$result" "$state_dir"
 		return 1
 	fi
 	return 0
