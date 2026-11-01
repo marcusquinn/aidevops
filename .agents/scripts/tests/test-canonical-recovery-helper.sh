@@ -1245,11 +1245,15 @@ for unborn_dirty_kind in ignored-collision ignored-noncollision hidden-untracked
 	fi
 	for unborn_dirty_cmd in fast-forward-current sync-mirror; do
 		unborn_dirty_confirm="FAST_FORWARD_CANONICAL_BRANCH"
-		[[ "$unborn_dirty_cmd" != sync-mirror ]] || unborn_dirty_confirm="SYNCHRONIZE_CANONICAL_MIRROR"
+		unborn_dirty_args=(--branch develop)
+		if [[ "$unborn_dirty_cmd" == sync-mirror ]]; then
+			unborn_dirty_confirm="SYNCHRONIZE_CANONICAL_MIRROR"
+			unborn_dirty_args=()
+		fi
 		unborn_dirty_output=""
 		unborn_dirty_rc=0
 		unborn_dirty_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
-			"$unborn_dirty_cmd" --repo "$UNBORN_REPO" --branch develop --issue 36326 \
+			"$unborn_dirty_cmd" --repo "$UNBORN_REPO" "${unborn_dirty_args[@]}" --issue 36326 \
 			--confirm "$unborn_dirty_confirm" 2>&1) || unborn_dirty_rc=$?
 		if [[ "$unborn_dirty_rc" -ne 0 ]] &&
 			[[ "$unborn_dirty_output" == *"BLOCKED: unborn canonical worktree is not clean"* ]] &&
