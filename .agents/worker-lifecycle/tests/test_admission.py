@@ -103,7 +103,11 @@ class AdmissionContract(unittest.TestCase):
             self.gate.close_generation(str(uuid4()), self.generation)
         self.store.upgrade_schema()
         self.store.upgrade_schema()
-        self.assertEqual(before, self.store.summary())
+        self.assertEqual({**before, "schema_version": 2, "upgrade_required": False},
+                         self.store.summary())
+        backups = list(self.store.directory.glob("schema-1-backup-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(LifecycleRegistry(backups[0]).summary(), before)
         with self.store.connection() as connection:
             self.assertEqual(connection.execute("SELECT count(*) FROM generation_admissions").fetchone()[0], 0)
 

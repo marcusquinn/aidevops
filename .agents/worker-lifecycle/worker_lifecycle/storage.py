@@ -4,6 +4,8 @@ Event ingestion and its projection commit together. Observations are sampled
 outside transactions and applied only against the exact run version sampled.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 from contextlib import contextmanager
 import json
@@ -92,14 +94,22 @@ class LifecycleRegistry:
     def _create_admissions(connection: sqlite3.Connection) -> None:
         connection.execute("CREATE TABLE generation_admissions (generation_id TEXT PRIMARY KEY REFERENCES generations(generation_id), path TEXT UNIQUE NOT NULL, state TEXT NOT NULL CHECK(state IN ('open','closed')))")
 
-    def upgrade_schema(self) -> None:
+    def upgrade_schema(self, *, backup_dir: Path | None = None) -> bool:
         """Explicit transactional upgrade; never adopt historical bindings as owners."""
         with self.connection(write=True) as connection:
             if connection.execute("PRAGMA user_version").fetchone()[0] == 1:
+                from .upgrade import backup_before_upgrade
+
+                if connection.execute("SELECT 1 FROM sqlite_master WHERE name='generation_admissions'").fetchone():
+                    raise StoreConflict("schema-one-with-admission-state")
+                directory = backup_dir or self.directory / f"schema-1-backup-{uuid4()}"
+                backup_before_upgrade(self, connection, directory)
                 self._create_admissions(connection)
                 # Fixed module integer, not user SQL; SQLite PRAGMAs cannot bind parameters.
                 # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
                 connection.execute(f"PRAGMA user_version={SCHEMA}")
+                return True
+        return False
 
     def _connect(self) -> sqlite3.Connection:
         _private(self.directory, directory=True)
@@ -271,9 +281,11 @@ class LifecycleRegistry:
 
     def summary(self) -> dict:
         with self.connection() as connection:
+            schema = connection.execute("PRAGMA user_version").fetchone()[0]
             count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
             maximum = connection.execute("SELECT max_events FROM metadata").fetchone()[0]
             return {"mode": "observe-only", "runs": dict(connection.execute("SELECT state,count(*) FROM runs GROUP BY state").fetchall()),
+                    "schema_version": schema, "upgrade_required": schema < SCHEMA,
                     "events": count, "event_limit": maximum,
                     "journal_full": count >= maximum,
                     "last_event_at": connection.execute("SELECT recorded_at FROM events ORDER BY sequence DESC LIMIT 1").fetchone()[0] if count else None,
