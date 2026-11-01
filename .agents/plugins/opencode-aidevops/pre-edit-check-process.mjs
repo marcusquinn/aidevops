@@ -27,7 +27,7 @@ export async function releasePreEditSessionOwnership(input) {
   await execFileAsync("python3", [
     fileURLToPath(new URL("../../scripts/shared-worktree-registry-owner.py", import.meta.url)),
     "release-session", database, String(process.pid), session, identity,
-  ], { timeout: 10000 });
+  ], { timeout: 35000 }); // Must exceed BUSY_TIMEOUT_SECONDS (30s) in the Python helper.
 }
 
 /**
