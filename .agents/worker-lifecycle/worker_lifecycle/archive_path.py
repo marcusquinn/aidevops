@@ -5,6 +5,21 @@ from pathlib import Path
 import stat
 
 
+def _validate_directory(descriptor: int, current: Path, root: Path,
+                        archive: Path | None) -> None:
+    """Apply the ownership/mode policy to an already opened directory."""
+    info = os.fstat(descriptor)
+    inside = current.is_relative_to(root)
+    owners = (os.getuid(),) if inside else (0, os.getuid())
+    if info.st_uid not in owners:
+        raise ValueError(f"archive-path-wrong-owner: {current}")
+    sticky_ancestor = not inside and bool(info.st_mode & stat.S_ISVTX)
+    if info.st_mode & 0o022 and not sticky_ancestor:
+        raise ValueError(f"archive-path-externally-writable: {current}")
+    if current == archive and info.st_mode & 0o077:
+        raise ValueError(f"archive-directory-not-private: {current}")
+
+
 def validate_archive_path(root: Path, archive: Path | None = None) -> None:
     """Check POSIX ownership/mode bits without requiring a private root.
 
@@ -25,16 +40,7 @@ def validate_archive_path(root: Path, archive: Path | None = None) -> None:
     descriptor = os.open(current, flags)
     try:
         for component in (*target.parts[1:], None):
-            info = os.fstat(descriptor)
-            inside = current.is_relative_to(root)
-            owners = (os.getuid(),) if inside else (0, os.getuid())
-            if info.st_uid not in owners:
-                raise ValueError(f"archive-path-wrong-owner: {current}")
-            sticky_ancestor = not inside and bool(info.st_mode & stat.S_ISVTX)
-            if info.st_mode & 0o022 and not sticky_ancestor:
-                raise ValueError(f"archive-path-externally-writable: {current}")
-            if current == archive and info.st_mode & 0o077:
-                raise ValueError(f"archive-directory-not-private: {current}")
+            _validate_directory(descriptor, current, root, archive)
             if component is None:
                 break
             current = current / component
