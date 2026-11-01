@@ -57,7 +57,7 @@ import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
 import { assertBrowserTaskTransport } from "./browser-task-transport.mjs";
 import { adviseDockerCreation, appendDockerAdvisory } from "./docker-owner-advisory.mjs";
-import { admitToolOwner } from "./lifecycle-admission.mjs";
+import { admitToolOwner, createLifecycleDiagnosticNotifier } from "./lifecycle-admission.mjs";
 
 export { needsDockerOwnerAdvisory } from "./docker-owner-advisory.mjs";
 
@@ -243,6 +243,7 @@ function enforceBashToolSafety(ctx, log, input, output, sessionId) {
   admitToolOwner({
     scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
     bash: true, bounded: false,
+    notifyDiagnostic: ctx.notifyLifecycleDiagnostic,
   });
   const signatureModel = ctx.resolveSessionModel(sessionId);
   checkSignatureFooterGate(bashArgs.command || "", log, ctx.scriptsDir, output, {
@@ -351,6 +352,7 @@ async function handleToolBefore(ctx, log, input, output) {
   admitToolOwner({
     scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
     bash: false, bounded: isBoundedOperationTool(input.tool),
+    notifyDiagnostic: ctx.notifyLifecycleDiagnostic,
   });
 }
 
@@ -478,6 +480,7 @@ export function createQualityHooks(deps) {
     detailMaxBytes,
     repositoryDir: deps.repositoryDir,
     continuationGuard,
+    notifyLifecycleDiagnostic: createLifecycleDiagnosticNotifier(deps.client, boundQualityLog),
     secretRedactor: deps.secretRedactor || defaultSecretValueRedactor(),
     sourceAccessProvenance,
     sourceAccessReason: SOURCE_ACCESS_REASON,

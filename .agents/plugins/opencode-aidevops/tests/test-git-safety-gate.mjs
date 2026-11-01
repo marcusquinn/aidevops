@@ -27,6 +27,7 @@ import {
 } from "../quality-hooks-git-safety.mjs";
 import { validateBashWorkingDirectory } from "../quality-hooks-workdir.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
+import { createLifecycleDiagnosticNotifier } from "../lifecycle-admission.mjs";
 import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
 
 // GH#35139: the worker write fence reads the ambient headless environment.
@@ -233,6 +234,79 @@ test("classifies every apply-patch target instead of trusting linked cwd", () =>
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("schema-1 coverage gaps reach both runtimes without admitting owners or authorizing cleanup", async () => {
+  const { root, linked } = setupRepo();
+  const previousState = process.env.AIDEVOPS_LIFECYCLE_STATE_DIR;
+  const state = join(root, "schema-one-state");
+  process.env.AIDEVOPS_LIFECYCLE_STATE_DIR = state;
+  const python = resolveTrustedExecutable("python3");
+  try {
+    execFileSync(python, ["-E", "-s", "-B", "-c", [
+      "import sys",
+      "from pathlib import Path",
+      "sys.path.insert(0, sys.argv[1])",
+      "from worker_lifecycle.storage import LifecycleRegistry",
+      "store = LifecycleRegistry.initialize(Path(sys.argv[2]))",
+      "with store.connection(write=True) as connection:",
+      "    connection.execute('DROP TABLE generation_admissions')",
+      "    connection.execute('PRAGMA user_version=1')",
+    ].join("\n"), join(scriptsDir, "..", "worker-lifecycle"), state]);
+    const inspectState = () => execFileSync(python, ["-E", "-s", "-B", "-c", [
+      "import json, sqlite3, sys",
+      "connection = sqlite3.connect(sys.argv[1])",
+      "print(json.dumps([connection.execute('PRAGMA user_version').fetchone()[0], list(connection.iterdump())]))",
+    ].join("\n"), join(state, "registry.sqlite3")], { encoding: "utf8" });
+    const before = inspectState();
+    const helperResult = JSON.parse(execFileSync(python, [
+      "-E", "-s", "-B", join(scriptsDir, "worker-lifecycle-session-helper.py"),
+      "--cwd", linked, "--runtime-pid", String(process.pid), "--session-id", "coverage-owner",
+    ], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+    assert.equal(helperResult.status, "coverage-gap");
+    assert.equal(helperResult.cleanup_authorized, false);
+    assert.match(helperResult.diagnostic, /coverage-gap: schema-upgrade-required/);
+    const toasts = [];
+    const hooks = createQualityHooks({ scriptsDir, logsDir: root, repositoryDir: linked,
+      client: { tui: { showToast: async (toast) => { toasts.push(toast); } } } });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await hooks.toolExecuteBefore({ tool: "bash", sessionID: "coverage-owner" },
+        { args: { command: "git status", workdir: linked } });
+    }
+    assert.equal(toasts.length, 1, "the warning must not repeat for every tool call");
+    assert.equal(toasts[0].body.message, helperResult.diagnostic);
+    assert.equal(toasts[0].body.variant, "warning");
+    for (const tool of [
+      { tool_name: "Write", tool_input: { file_path: join(linked, "result.md") } },
+      { tool_name: "Bash", tool_input: { command: "git status" } },
+    ]) {
+      const response = JSON.parse(execFileSync(python, [
+        join(scriptsDir, "..", "hooks", "git_safety_guard.py"),
+      ], { cwd: linked, encoding: "utf8", input: JSON.stringify({ session_id: "coverage-owner", ...tool }) }));
+      assert.equal(response.systemMessage, helperResult.diagnostic);
+      assert.equal(response.hookSpecificOutput?.permissionDecision, undefined);
+    }
+    assert.equal(inspectState(), before, "observation must not migrate or mutate the registry");
+    const gitDirectory = execFileSync(realGit, ["rev-parse", "--absolute-git-dir"],
+      { cwd: linked, encoding: "utf8" }).trim();
+    assert.ok(!readdirSync(gitDirectory).includes("aidevops-generation.json"));
+  } finally {
+    process.env.AIDEVOPS_LIFECYCLE_STATE_DIR = previousState;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("lifecycle diagnostic transport failures remain advisory", async () => {
+  for (const showToast of [() => { throw new Error("offline"); }, async () => { throw new Error("offline"); }]) {
+    const messages = [];
+    const notify = createLifecycleDiagnosticNotifier({ tui: { showToast } },
+      (level, message) => messages.push([level, message]));
+    assert.doesNotThrow(() => notify("coverage-gap: schema-upgrade-required"));
+    notify("coverage-gap: schema-upgrade-required");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0][0], "WARN");
   }
 });
 

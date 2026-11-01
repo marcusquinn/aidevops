@@ -35,7 +35,7 @@ function ownerArguments(scriptsDir, input, args, context) {
   return helperArgs;
 }
 
-export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash, bounded }) {
+export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash, bounded, notifyDiagnostic }) {
   // Unsupported hosts cannot run the native cleanup collector either.
   if (!["linux", "darwin"].includes(process.platform)) return;
   const args = output.args || {};
@@ -55,9 +55,30 @@ export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash,
   if (!ADMITTED_STATUSES.includes(result.status)) {
     throw new Error("BLOCKED: lifecycle owner admission was not confirmed");
   }
+  if (result.status === "coverage-gap" && typeof result.diagnostic === "string") {
+    notifyDiagnostic?.(result.diagnostic);
+  }
 }
 
 const ADMITTED_STATUSES = ["admitted", "coverage-gap", "excluded-unregistered", "not-applicable"];
+
+// One warning per plugin instance, not a toast for every accepted tool call.
+export function createLifecycleDiagnosticNotifier(client, log) {
+  let notified = false;
+  return (message) => {
+    if (notified) return;
+    notified = true;
+    log("WARN", `[worker-lifecycle] ${message}`);
+    try {
+      Promise.resolve(client?.tui?.showToast?.({ body: {
+        title: "Lifecycle observe-only coverage gap", message,
+        variant: "warning", duration: 10000,
+      } })).catch(() => {});
+    } catch {
+      // An advisory transport failure must not turn observation into refusal.
+    }
+  };
+}
 
 // Name the helper's refusal so sessions need not debug the helper (GH#36349).
 // Diagnostic only: the decision above is already a refusal.

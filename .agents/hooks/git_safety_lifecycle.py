@@ -29,6 +29,10 @@ def check_session_owner(resolve_helper, run_helper, paths, session_id, command="
             if returncode == 0 and payload.get("status") in {
                 "admitted", "coverage-gap", "excluded-unregistered", "not-applicable",
             }:
+                if (payload.get("status") == "coverage-gap"
+                        and isinstance(payload.get("diagnostic"), str)):
+                    # Advisory only: omit permissionDecision so normal policy applies.
+                    return {"systemMessage": payload["diagnostic"]}
                 return None
         except (OSError, subprocess.SubprocessError, ValueError, TypeError):
             pass

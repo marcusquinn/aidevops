@@ -131,7 +131,13 @@ def main():
             "detail": str(error)[:200],
         }))
         return 75
-    print(json.dumps({"status": status, "cleanup_authorized": False}))
+    payload = {"status": status, "cleanup_authorized": False}
+    if status == "coverage-gap":
+        payload["diagnostic"] = (
+            "coverage-gap: schema-upgrade-required; no session owner admitted; "
+            "cleanup remains unauthorized"
+        )
+    print(json.dumps(payload))
     return 0
 
 
