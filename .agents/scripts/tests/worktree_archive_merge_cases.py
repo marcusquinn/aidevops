@@ -12,6 +12,28 @@ from unittest.mock import patch
 
 
 class MergeCases:
+    def test_merge_index_types_use_closure_batch_and_reject_non_blobs(self):
+        import worktree_archive_merge_objects as objects
+        from worktree_archive_merge_capture import merge_state
+        self.start_conflicted_merge()
+        state = merge_state(self.work)
+        blobs = {entry[2] for entry in state['index'] + state['undo']}
+        with patch.object(objects, 'git', wraps=objects.git) as commands:
+            objects.verify_merge_objects(self.work, state)
+        queries = [call.args[1:] for call in commands.call_args_list]
+        self.assertEqual(sum(query == ('cat-file', '--batch-check') for query in queries), 1)
+        self.assertFalse(any(query[:2] == ('cat-file', '-t') and query[2] in blobs for query in queries))
+        original = state['index'][0][2]
+        tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}').strip().decode()
+        for oid in (state['head'], tree):
+            state['index'][0][2] = oid
+            with self.assertRaisesRegex(ValueError, 'merge:index_not_blob'):
+                objects.verify_merge_objects(self.work, state)
+        state['index'][0][2] = original
+        state['undo'] = [[state['index'][0][0], '100644', state['head'], 1]]
+        with self.assertRaisesRegex(ValueError, 'merge:index_not_blob'):
+            objects.verify_merge_objects(self.work, state)
+
     def test_merge_fetch_head_survives_source_loss_and_gc(self):
         self.start_conflicted_merge()
         self.git(self.work, 'fetch', str(self.repo), 'other')

@@ -50,9 +50,6 @@ def verify_merge_objects(root, state):
                                for line in bytes.fromhex(state['metadata'][name]).splitlines()]:
         if git(root, 'cat-file', '-t', oid).strip() != b'commit':
             raise ValueError('merge:parent_not_commit')
-    for _, _, oid, _ in state['index'] + state['undo']:
-        if git(root, 'cat-file', '-t', oid).strip() != b'blob':
-            raise ValueError('merge:index_not_blob')
     if 'AUTO_MERGE' in state['metadata']:
         validate_auto_merge(root, bytes.fromhex(state['metadata']['AUTO_MERGE']).strip().decode('ascii'))
     closure = git(root, 'rev-list', '--objects', '--no-object-names', '--stdin',
@@ -60,3 +57,7 @@ def verify_merge_objects(root, state):
     checked = git(root, 'cat-file', '--batch-check', data=closure)
     if len(checked.splitlines()) != len(closure.splitlines()) or any(line.endswith(b' missing') for line in checked.splitlines()):
         raise ValueError('merge:missing_object')
+    # The closure batch already includes every index/REUC root and its type.
+    kinds = {line.split()[0]: line.split()[1] for line in checked.splitlines()}
+    if any(kinds.get(oid.encode('ascii')) != b'blob' for _, _, oid, _ in state['index'] + state['undo']):
+        raise ValueError('merge:index_not_blob')
