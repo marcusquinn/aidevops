@@ -217,6 +217,7 @@ _sq_scan_orphans() {
 		((reruns < 5)) || break
 		_sq_api GET "repos/${repo}/commits/${sha}/check-runs?per_page=100" "${SQ_WORK}/checks.json" || continue
 		while IFS= read -r job_id; do
+			((reruns < 5)) || break
 			if _sq_orphan_job_run "$repo" "$state" "$pr" "$job_id"; then
 				reruns=$((reruns + 1))
 			fi
