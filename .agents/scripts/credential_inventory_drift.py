@@ -17,6 +17,9 @@ from typing import Any
 EXPIRY_WARN_DAYS = 30
 STALE_DAYS = 30
 VERIFIABLE_PROVIDERS = {"cloudflare"}
+# Only bearer API tokens can be verified; account IDs, R2 keys, endpoints and
+# similar records cannot (GH#36391). A record without a kind stays verifiable.
+VERIFIABLE_KINDS = {"api_token", "token"}
 CONVENTIONAL_PROVIDERS = {"cloudflare", "github", "hetzner", "vercel", "openai", "anthropic"}
 
 
@@ -92,23 +95,34 @@ def zone_account_findings(credentials: dict[str, dict]) -> list[dict]:
     return findings
 
 
+def is_verifiable(record: dict[str, Any]) -> bool:
+    """Provider has a verifier and the record is a token (or has no kind)."""
+    kind = record.get("kind")
+    return record.get("provider") in VERIFIABLE_PROVIDERS and (not kind or kind in VERIFIABLE_KINDS)
+
+
 def account_findings(data: dict[str, Any], name: str, record: dict[str, Any]) -> list[dict]:
-    """Recorded account name absent from the accounts the token actually sees."""
+    """Recorded account name absent from the accounts the token actually sees.
+
+    Seeing no account at all is unknown, not a mismatch (GH#36391).
+    """
     cache = record.get("verification")
     account = (data.get("provider_accounts") or {}).get(record.get("account_ref") or "")
-    if not cache or not account:
+    if not cache or not account or not is_verifiable(record):
         return []
-    seen = {str(item.get("name", "")).casefold() for item in cache.get("accounts") or []}
-    if str(account.get("name", "")).casefold() in seen:
+    observed = [str(item.get("name", "")) for item in cache.get("accounts") or [] if item.get("name")]
+    if not observed:
+        return [{"check": "account-unobserved", "credential": name,
+                 "detail": f"recorded '{account.get('name')}'; verification saw no account name"}]
+    if str(account.get("name", "")).casefold() in {item.casefold() for item in observed}:
         return []
-    names = ", ".join(sorted(item.get("name", "") for item in cache.get("accounts") or [])) or "none"
     return [{"check": "account-mismatch", "credential": name,
-             "detail": f"recorded '{account.get('name')}', token sees: {names}"}]
+             "detail": f"recorded '{account.get('name')}', token sees: {', '.join(sorted(observed))}"}]
 
 
 def freshness_findings(name: str, record: dict[str, Any], now: datetime) -> list[dict]:
     """Verifiable credentials never verified, or verified too long ago."""
-    if record.get("provider") not in VERIFIABLE_PROVIDERS:
+    if not is_verifiable(record):
         return []
     verified = _parse_time((record.get("verification") or {}).get("verified_at"))
     if verified is None:
@@ -135,6 +149,10 @@ def drift(data: dict[str, Any], stored: list[str] | None, now: datetime | None =
     known = set(credentials) | {alias for record in credentials.values() for alias in record.get("aliases") or []}
     if stored is not None:
         findings += [{"check": "undescribed", "credential": name} for name in stored if name not in known]
+        present = set(stored)
+        findings += [{"check": "record-without-secret", "credential": name,
+                      "detail": f"secret no longer stored; aidevops secret forget {name}"}
+                     for name in sorted(credentials) if name not in present]
     return {"findings": findings, "stored_listing": "ok" if stored is not None else "unavailable"}
 
 

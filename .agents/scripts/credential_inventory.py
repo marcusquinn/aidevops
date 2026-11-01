@@ -208,18 +208,45 @@ def cmd_organise(args: argparse.Namespace) -> int:
 
 
 def cmd_verify_targets(args: argparse.Namespace) -> int:
-    """Recorded credentials for a provider (or the given names, aliases resolved)."""
+    """Recorded token credentials for a provider (or the given names, aliases resolved).
+
+    Non-token kinds (account IDs, R2 keys, endpoints) are skipped (GH#36391);
+    naming one explicitly reports it as not verifiable, never as a failure.
+    """
+    import credential_inventory_drift as drift
+
     data = store.load()
     credentials = data["credentials"]
     wanted = [names.alias_owner(data, name) or name for name in args.names] or sorted(credentials)
-    targets = [name for name in wanted if (credentials.get(name) or {}).get("provider") == args.provider]
-    for name in sorted(set(wanted) - set(targets)) if args.names else []:
+    recorded = [name for name in wanted if (credentials.get(name) or {}).get("provider") == args.provider]
+    for name in sorted(set(wanted) - set(recorded)) if args.names else []:
         print(f"ERROR: {name} is not recorded for {args.provider}; record it first with: "
               f"aidevops secret record {name} --provider {args.provider} --account REF", file=sys.stderr)
-    if args.names and len(targets) != len(wanted):
+    if args.names and len(recorded) != len(wanted):
         return EXIT_INVALID
-    print("\n".join(dict.fromkeys(targets)))
-    return 0 if targets else 1
+    targets = [name for name in recorded if drift.is_verifiable(credentials[name])]
+    skipped = [name for name in recorded if name not in targets]
+    for name in dict.fromkeys(skipped) if args.names else []:
+        print(f"{name}: not-verifiable (kind={credentials[name].get('kind')})", file=sys.stderr)
+    if targets:
+        print("\n".join(dict.fromkeys(targets)))
+    return 0 if targets or (args.names and skipped) else 1
+
+
+def cmd_forget(args: argparse.Namespace) -> int:
+    """Drop registry records whose secrets are gone (GH#36391); values are never touched."""
+    stored = view.stored_secret_names()
+    if not args.force:
+        if stored is None:
+            raise rules.InventoryError("stored-secret listing unavailable; rerun with --force to forget anyway")
+        still = [name for name in args.names if name in stored]
+        if still:
+            raise rules.InventoryError(f"still stored: {', '.join(still)}; use: aidevops secret rm NAME (or forget --force)")
+    with store.locked() as data:
+        removed = [name for name in args.names if store.forget_credential(data, name)]
+    for name in args.names:
+        print(f"Removed {name} from the credential registry" if name in removed else f"{name} is not recorded; nothing to forget")
+    return 0
 
 
 # --------------------------------------------------------------------------
@@ -307,6 +334,10 @@ def add_drift_parsers(sub: argparse._SubParsersAction) -> None:
     targets.add_argument("provider", choices=["cloudflare"])
     targets.add_argument("names", nargs="*")
     targets.set_defaults(func=cmd_verify_targets)
+    forget = sub.add_parser("forget", help="remove registry records whose secrets are no longer stored")
+    forget.add_argument("names", nargs="+")
+    forget.add_argument("--force", action="store_true", help="forget even if the secret is still stored")
+    forget.set_defaults(func=cmd_forget)
 
 
 def build_parser() -> argparse.ArgumentParser:

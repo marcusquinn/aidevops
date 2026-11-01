@@ -67,11 +67,8 @@ def remove_registry(names):
 
     with store.locked() as data:
         for name in names:
-            if data['credentials'].pop(name, None) is None:
-                continue
-            for provider in [p for p, value in data['defaults'].items() if value == name]:
-                data['defaults'].pop(provider)
-            print(f'Removed {name} from the credential registry')
+            if store.forget_credential(data, name):
+                print(f'Removed {name} from the credential registry')
     return 0
 
 
