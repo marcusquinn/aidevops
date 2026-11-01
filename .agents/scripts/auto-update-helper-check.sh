@@ -344,12 +344,12 @@ _cmd_check_stale_agent_redeploy() {
 			fi
 			local has_code_drift=0
 			# Per Gemini code-review on PR #20342: use git's path filter +
-			# `grep -q .` to detect drift across the full set of deploy-affecting
+			# a consuming grep to detect drift without SIGPIPE under pipefail across
 			# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
 			# and aidevops.sh itself, which are deployed/sourced by setup).
 			if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$head_sha" -- \
 				.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ .agents/worker-lifecycle/ \
-				setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
+				setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep . >/dev/null; then
 				has_code_drift=1
 			fi
 			# Same-version drift redeploys restart the Pulse; batch them so a busy
