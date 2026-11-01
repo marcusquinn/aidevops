@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.108] - 2026-11-01
+
+### Changed
+
+- Documentation: document same-login external REST-core drain diagnosis
+- Maintenance: sync GitHub issue refs to TODO.md (#36317)
+
+### Fixed
+
+- bound upstream watch REST cost and serialize retries
+- check Pulse App token permissions and alert on commit_permission_denied (#36311)
+
 ## [3.39.107] - 2026-10-31
 
 ### Changed

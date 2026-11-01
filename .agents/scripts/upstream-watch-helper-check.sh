@@ -217,7 +217,7 @@ _report_github_repo_update() {
 
 #######################################
 # Display release changelog between two tags
-# Shows all releases between from_tag and to_tag, plus latest release notes.
+# Shows up to 10 recent releases since from_tag, plus latest release notes.
 # Arguments:
 #   $1 - Repository slug (owner/repo)
 #   $2 - From tag (last seen, empty for first check)
@@ -242,36 +242,36 @@ _show_release_diff() {
 		return 0
 	fi
 
-	# Show all releases between from_tag and to_tag
+	# Bound both API cost and output even when the acknowledged tag was deleted
+	# or renamed. The listing already contains all summary metadata; never make
+	# per-tag requests for names/dates or paginate through the entire history.
 	local releases
-	releases=$(gh api --paginate "repos/${slug}/releases" --jq '.[].tag_name' 2>/dev/null) || {
+	releases=$(gh api "repos/${slug}/releases?per_page=10" --jq '.[] | [.tag_name, (.published_at // ""), (.name // .tag_name)] | @tsv' 2>/dev/null) || {
 		echo "  (Could not fetch release list)"
 		return 0
 	}
 
 	# Find releases newer than from_tag
-	local in_range=true
 	local release_count=0
+	local tag summary rel_date rel_name
 	echo "  Releases since ${from_tag}:"
-	while IFS= read -r tag; do
+	while IFS= read -r summary; do
+		tag="${summary%%$'\t'*}"
 		[[ -z "$tag" ]] && continue
 		if [[ "$tag" == "$from_tag" ]]; then
-			in_range=false
-			continue
+			break
 		fi
-		if [[ "$in_range" == true ]]; then
-			release_count=$((release_count + 1))
-			# Get one-line summary for each release
-			local rel_name rel_date
-			rel_name=$(gh api "repos/${slug}/releases/tags/${tag}" --jq '.name // .tag_name' 2>/dev/null) || rel_name="$tag"
-			rel_date=$(gh api "repos/${slug}/releases/tags/${tag}" --jq '.published_at // ""' 2>/dev/null) || rel_date=""
-			local date_short="${rel_date:0:10}"
-			echo "    ${tag} (${date_short}) -- ${rel_name}"
-		fi
+		summary="${summary#*$'\t'}"
+		rel_date="${summary%%$'\t'*}"
+		rel_name="${summary#*$'\t'}"
+		release_count=$((release_count + 1))
+		echo "    ${tag} (${rel_date:0:10}) -- ${rel_name}"
 	done <<<"$releases"
 
 	if [[ "$release_count" -eq 0 ]]; then
 		echo "    (none found -- tags may not match release list)"
+	elif [[ "$release_count" -eq 10 ]]; then
+		echo "    (showing newest 10 releases only -- older releases omitted)"
 	fi
 
 	# Show latest release notes
