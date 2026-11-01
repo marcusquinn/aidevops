@@ -60,16 +60,13 @@ _worktree_create_native() {
 	local helper_dir="${BASH_SOURCE[0]%/*}"
 	local state_dir="" python="" result="" parent=""
 	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 || "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 ||
+		( -z "$runtime_pid" && -z "$session_id" ) ||
 		-e "$path" || -L "$path" ]]; then
 		# These callers do not gain controlled-creation provenance.
+		# An undeclared runtime must retain a coverage gap: the helper shell's
+		# exit does not establish that the user has finished with the tree.
 		git -C "$repo" worktree add "$@" -- "$path" "$ref" || return 1
 		return 0
-	fi
-	if [[ -z "$runtime_pid" && -z "$session_id" ]]; then
-		# Record this actual creator when no longer-lived runtime was declared.
-		# This does not admit later writers; they must register before writing.
-		runtime_pid="${BASHPID:-$$}"
-		session_id="worktree-creator:${runtime_pid}"
 	fi
 	[[ -n "$runtime_pid" && -n "$session_id" ]] || return 1
 	# shellcheck source=worker-lifecycle-state.sh

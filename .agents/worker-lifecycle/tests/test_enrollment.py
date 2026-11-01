@@ -410,7 +410,7 @@ class EnrollmentContract(unittest.TestCase):
             bindings = connection.execute("SELECT generation_id FROM bindings").fetchall()
             self.assertEqual([row[0] for row in bindings], [generation, generation])
 
-    def test_creation_without_runtime_identity_records_actual_creator(self):
+    def test_creation_without_runtime_identity_retains_coverage_gap(self):
         scripts = Path(__file__).resolve().parents[2] / "scripts"
         created = self.root / "shell-created"
         env = {key: value for key, value in os.environ.items()
@@ -426,9 +426,11 @@ class EnrollmentContract(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         prepared = prepare_cleanup(self.store, created)
-        self.assertTrue(prepared["creation_verified"])
-        self.assertEqual(prepared["status"], "registered-runs-ended")
-        self.assertEqual(prepared["registered_runs"], 1)
+        self.assertFalse(prepared["creation_verified"])
+        self.assertEqual(prepared["status"], "coverage-gap")
+        self.assertEqual(prepared["admission"], "open")
+        self.assertFalse(prepared["cleanup_authorized"])
+        self.assertTrue(created.is_dir())
 
     def test_controlled_creation_cannot_adopt_existing_directory(self):
         target = self.root / "existing"
