@@ -54,7 +54,8 @@ def base_import_failure(error):
     for signatures, category in (
         ((b'missing blob', b'missing tree', b'missing commit', b'missing object',
           b'bad object', b'bad tree object', b'bad commit object',
-          b'not our ref', b'did not send all necessary objects'), 'missing-object'),
+          b'did not send all necessary objects'), 'missing-object'),
+        ((b'not our ref',), 'object-unavailable-or-denied'),
         ((b'out of memory', b'malloc failed', b'cannot allocate memory'), 'allocation-failed'),
         ((b'no space left on device',), 'storage-full'),
         ((b'permission denied',), 'permission-denied'),
@@ -84,7 +85,8 @@ def nested_base_import_failure(stderr):
         return final
     pattern = (r'producer:base-import-failed; stage=base-import; exit=(?:-?[0-9]{1,3}|unknown); '
                r'stderr=(?:pack-objects-died|git-failed)/'
-               r'(?:unclassified|missing-object|allocation-failed|storage-full|permission-denied|thread-failed); '
+               r'(?:unclassified|missing-object|object-unavailable-or-denied|allocation-failed|'
+               r'storage-full|permission-denied|thread-failed); '
                r'source and archive retained')
     return final if re.fullmatch(pattern, final) else None
 
@@ -131,7 +133,9 @@ def base_import_timeout():
 
 
 def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
-    environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
+    # Classifiers consume local Git diagnostics; remote servers keep their locale.
+    environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1",
+                       LC_ALL="C", LANGUAGE="C")
     for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
         environment.pop(name, None)

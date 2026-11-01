@@ -115,6 +115,7 @@ class ProducerCases:
                             (b'private: unable to read ' + b'a' * 40, 'missing-object'),
                             (b'private: could not read ' + b'b' * 64, 'missing-object'),
                             (b'private: did not send all necessary objects', 'missing-object'),
+                            (b'private: not our ref ' + b'c' * 40, 'object-unavailable-or-denied'),
                             (b'private pack-objects died', 'unclassified'),
                             (None, 'unclassified')):
             error = subprocess.CalledProcessError(128, ['private'], stderr=raw)
@@ -131,6 +132,25 @@ class ProducerCases:
             for suffix in (' private', '\nprivate failure'):
                 nested = subprocess.CalledProcessError(1, ['private'], stderr=message + suffix)
                 self.assertEqual(producer_engine.failure_reason(nested), 'producer:evidence-unavailable')
+
+    def test_local_git_missing_object_diagnostic_uses_fixed_locale(self):
+        import worktree_archive_git as archive_git
+        origin, base, _, _ = self.incomplete_promisor_fixture()
+        oid = self.git(origin, 'rev-parse', base + '^:historical').decode().strip()
+        (origin / 'objects' / oid[:2] / oid[2:]).unlink()
+        environment = dict(self.env, LC_ALL='de_DE.UTF-8', LANG='de_DE.UTF-8', LANGUAGE='de')
+        with patch.dict(os.environ, environment, clear=True), \
+                patch.object(archive_git.subprocess, 'run', wraps=subprocess.run) as commands:
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                archive_git.git(origin, 'pack-objects', '--all', '--stdout')
+        effective = commands.call_args.kwargs['env']
+        self.assertEqual(effective['LC_ALL'], 'C')
+        self.assertEqual(effective['LANGUAGE'], 'C')
+        self.assertIn(b'unable to read ' + oid.encode(), caught.exception.stderr)
+        message = archive_git.base_import_failure(caught.exception)
+        self.assertIn('/missing-object;', message)
+        self.assertNotIn(oid, message)
+        self.assertEqual(archive_git.nested_base_import_failure(message), message)
 
     def incomplete_promisor_fixture(self):
         # A historical blob absent at HEAD forces full-graph verification, not
