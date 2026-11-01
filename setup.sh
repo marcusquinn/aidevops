@@ -1401,8 +1401,12 @@ _setup_ai_session_verify_deploy() {
 		"$INSTALL_DIR" \
 		"$expected_sha" \
 		"$HOME/.aidevops/agents" \
-		"$HOME/.aidevops/.deployed-sha"
-	return $?
+		"$HOME/.aidevops/.deployed-sha" || {
+		_runtime_bundle_rollback "$HOME/.aidevops/agents" ||
+			print_error "Failed to roll back the runtime bundle after convergence failure"
+		return 1
+	}
+	return 0
 }
 
 # OpenCode DB archive (daily) and maintenance (weekly) schedulers keep the
