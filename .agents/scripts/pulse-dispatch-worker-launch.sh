@@ -1834,9 +1834,9 @@ _dlw_nohup_launch() {
 # the dispatcher posted "Worker PID: <empty>" and launch validation recorded
 # the spawn failure as no_worker_process ~60s later (supervisor breaker trip
 # GH#36389). The systemd backend writes "${worker_log}.systemd-launch" before
-# submitting a unit; clearing it first makes its absence mean "no unit was
-# submitted", which is a definite spawn failure. A submitted unit whose
-# readiness is unconfirmed may still own a live worker, so that case keeps the
+# submitting a unit; its absence or an explicit submission_failed state means
+# no unit owns the launch, which is a definite spawn failure. A unit whose
+# submission/readiness is unconfirmed may still own a live worker, so it keeps the
 # legacy empty-PID handoff and launch validation still decides by process scan.
 # Arguments: issue_number repo_slug worker_log attempt_id worker_cmd...
 # Stdout: worker PID (empty only for the submitted-but-unconfirmed case)
@@ -1856,8 +1856,8 @@ _dlw_spawn_worker_or_fail() {
 		printf '%s\n' "$spawned_pid"
 		return 0
 	fi
-	if [[ -f "$systemd_state_file" ]]; then
-		echo "[dispatch_worker_launch] WARN: systemd unit submitted for #${issue_number} (${repo_slug}) but readiness unconfirmed rc=${spawn_rc}; deferring to launch validation (GH#36390)" >>"$LOGFILE"
+	if [[ -f "$systemd_state_file" ]] && ! grep -q '^LaunchState=submission_failed$' "$systemd_state_file"; then
+		echo "[dispatch_worker_launch] WARN: systemd unit submission/readiness unconfirmed for #${issue_number} (${repo_slug}) rc=${spawn_rc}; deferring to launch validation (GH#36390)" >>"$LOGFILE"
 		return 0
 	fi
 	_dlw_append_lifecycle_log "$worker_log" "$attempt_id" \

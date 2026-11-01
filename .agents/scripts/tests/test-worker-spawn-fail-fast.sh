@@ -67,6 +67,10 @@ _dlw_exec_detached() {
 	case "$STUB_MODE" in
 	presubmit_fail) return 1 ;;
 	empty_success) return 0 ;;
+	systemd_*)
+		_dlw_launch_systemd_worker "$@"
+		return $?
+		;;
 	submitted_unconfirmed)
 		printf 'LaunchState=submitting\n' >"${worker_log}.systemd-launch"
 		return 1
@@ -75,6 +79,25 @@ _dlw_exec_detached() {
 		printf '4242\n'
 		return 0
 		;;
+	esac
+	return 1
+}
+
+# Exercise the real systemd backend's non-zero submission path, including a
+# manager query that exits 4 but still reports LoadState=not-found.
+_dlw_systemd_user_service_available() {
+	return 0
+}
+
+systemd-run() {
+	return 1
+}
+
+systemctl() {
+	case "$STUB_MODE" in
+	systemd_absent) printf 'not-found\n'; return 4 ;;
+	systemd_lost_reply) printf 'loaded\n'; return 0 ;;
+	systemd_unreachable) return 1 ;;
 	esac
 	return 1
 }
@@ -133,6 +156,26 @@ if [[ "$RUN_RC" -eq 0 && "$RUN_OUT" == "4242" && -z "$RUN_CB" ]]; then
 else
 	fail "successful spawn prints the worker PID" "rc=$RUN_RC out='$RUN_OUT' cb='$RUN_CB'"
 fi
+
+run_spawn systemd_absent 0
+if [[ "$RUN_RC" -eq 1 && -z "$RUN_OUT" && -n "$RUN_CB" ]] &&
+	grep -q '^LaunchState=submission_failed$' "${RUN_LOG}.systemd-launch" &&
+	grep -q 'classification=submission_failed' "$RUN_LOG"; then
+	pass "failed systemd submission with confirmed absent unit fails fast"
+else
+	fail "failed systemd submission with confirmed absent unit fails fast" "rc=$RUN_RC cb='$RUN_CB'"
+fi
+
+for mode in systemd_lost_reply systemd_unreachable; do
+	run_spawn "$mode" 0
+	if [[ "$RUN_RC" -eq 0 && -z "$RUN_OUT" && -z "$RUN_CB" ]] &&
+		grep -q '^Unit=' "${RUN_LOG}.systemd-launch" &&
+		grep -q '^LaunchState=submission_unconfirmed$' "${RUN_LOG}.systemd-launch"; then
+		pass "$mode retains ownership without fallback or breaker failure"
+	else
+		fail "$mode retains ownership without fallback or breaker failure" "rc=$RUN_RC cb='$RUN_CB'"
+	fi
+done
 
 printf '\n%s\n' "--- Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ---"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
