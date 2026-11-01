@@ -12,9 +12,10 @@ import subprocess  # nosec B404 # fixed local helper programs, explicit argv
 import sys
 from uuid import UUID, uuid5
 
+from .archive_path import validate_archive_path
 from .cleanup_plan import prepare_cleanup
 from .enrollment import _git_directory
-from .storage import LifecycleRegistry, StoreConflict, _private, encode
+from .storage import LifecycleRegistry, StoreConflict, encode
 
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
@@ -83,7 +84,7 @@ def verify_preservation(archive: Path, root: Path, snapshot: dict) -> dict:
     """Verify deltas and payloads against the retained base without a full restore."""
     if archive.resolve(strict=True) != archive or not archive.is_relative_to(root):
         raise ValueError("archive-outside-private-output-root")
-    _private(archive, directory=True)
+    validate_archive_path(root, archive)
     _helper("verify-local", str(archive))
     manifest = json.loads((archive / "manifest.json").read_bytes())
     if (manifest.get("capture_policy") != "git-only"
@@ -109,7 +110,7 @@ def preserve_wip(
     """
     if not root.is_absolute() or root.resolve(strict=True) != root:
         raise ValueError("canonical-output-root-required")
-    _private(root, directory=True)
+    validate_archive_path(root)
     if root.is_relative_to(path) or root.is_relative_to(_git_directory(path)):
         raise ValueError("archive-output-must-be-outside-worktree")
     prepared = prepare_cleanup(store, path)

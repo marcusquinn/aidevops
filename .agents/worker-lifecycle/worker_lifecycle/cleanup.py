@@ -11,6 +11,7 @@ import time
 from uuid import UUID, uuid5
 
 from .absence import reconcile_absence
+from .archive_path import validate_archive_path
 from .enrollment import GenerationEnrollment
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
 from .storage import LifecycleRegistry, _private, identifier
@@ -187,7 +188,7 @@ def cleanup_worktree(
     repositories = _repositories(config)
     generation = GenerationEnrollment(store).inspect(path)
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    _private(root, directory=True)
+    validate_archive_path(root)
     return _candidate(store, repositories, root, generation, path)
 
 
@@ -220,7 +221,7 @@ def cleanup_pass(
         rows.sort(key=lambda row: (row["generation_id"] <= after, row["generation_id"]))
         deadline = time.monotonic() + budget_seconds
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        _private(root, directory=True)
+        validate_archive_path(root)
         for row in rows[:limit]:
             if time.monotonic() >= deadline:
                 break

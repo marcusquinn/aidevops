@@ -48,8 +48,12 @@ python3 -E -s -B ~/.aidevops/agents/worker-lifecycle/worker-legacy-cleanup.py --
 ```
 
 Add `--apply` to archive and remove the selected worktrees. `--min-age-seconds`,
-`--limit` and `--budget-seconds` bound a manual invocation. The archive root must
-be an owned private directory, as required by the existing archive executor.
+`--limit` and `--budget-seconds` bound a manual invocation. Both cleanup passes
+use the same read-only archive-path validation described in [CLEANUP.md](CLEANUP.md).
+An owned archive root with mode 0755 is accepted without changing permissions;
+individual archives remain private. Unsafe paths prevent source retirement and
+report the offending component. No existing permissions are automatically changed.
+Preview does not create the root or change its permissions.
 
 The JSON report distinguishes historical generation count, unique path count,
 eligible candidates, attempted operations and actually retired worktrees. Its

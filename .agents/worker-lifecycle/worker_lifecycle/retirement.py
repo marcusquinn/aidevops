@@ -19,6 +19,7 @@ import stat
 import tempfile
 from uuid import UUID, uuid5
 
+from .archive_path import validate_archive_path
 from .cleanup_plan import _runs, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .enrollment import (
@@ -109,7 +110,7 @@ def _preserved(store: LifecycleRegistry, plan: dict, root: Path) -> dict:
     archive = Path(receipt["archive"])
     if archive.resolve(strict=True) != archive or not archive.is_relative_to(root):
         raise StoreConflict("archive-outside-output-root")
-    _private(archive, directory=True)
+    validate_archive_path(root, archive)
     digest = hashlib.sha256((archive / "manifest.json").read_bytes()).hexdigest()
     if digest != receipt["manifest_sha256"]:
         raise StoreConflict("archive-manifest-changed")
@@ -265,7 +266,7 @@ def retire_worktree(
         raise ValueError("canonical-source-parent-required")
     if not root.is_absolute() or root.resolve(strict=True) != root:
         raise ValueError("canonical-output-root-required")
-    _private(root, directory=True)
+    validate_archive_path(root)
     generation = str(UUID(generation))
     with store.connection() as connection:
         row = connection.execute(

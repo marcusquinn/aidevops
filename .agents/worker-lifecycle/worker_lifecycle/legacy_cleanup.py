@@ -16,6 +16,7 @@ import tempfile
 import time
 from uuid import UUID, uuid5
 
+from .archive_path import validate_archive_path
 from .cleanup import _failure_details, _repositories
 from .directory_handle import DirectoryHandle
 from .enrollment import _git_directory
@@ -215,7 +216,7 @@ def run(store, config, root, **arguments):
         if not root.is_absolute() or root.resolve() != root:
             raise ValueError("canonical-output-root-required")
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        _private(root, directory=True)
+        validate_archive_path(root)
         items = queue(store, items)
     report: dict = {
         "status": "legacy-cleanup", "apply": options.apply, "paths": len(items),

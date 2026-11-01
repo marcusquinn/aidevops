@@ -86,6 +86,7 @@ Existing schema-2/3, standalone AUTO_MERGE and legacy preservation archives reta
 | HEAD, ordered MERGE_HEAD parents, MERGE_MSG, required ORIG_HEAD | Preserved byte-for-byte; object IDs and commit types validated |
 | MERGE_MODE absent, empty or `no-ff` | Preserved; unfamiliar modes refused |
 | AUTO_MERGE present or absent | Optional validated comparison tree and full closure |
+| FETCH_HEAD absent, empty or populated | Exact bytes preserved; all fetched roots, including `not-for-merge`, included in the bundle |
 | Content, add/add, modify/delete, ordinary rename, binary conflicts | Structured index stages 1/2/3 and exact working bytes |
 | Partial resolutions, staged files/deletions, resolve-undo | Stage 0 and REUC rebuilt through Git update-index; no raw index copy |
 | Regular files, executable modes, ordinary untracked files | Captured independently of index stages; untracked payload remains fingerprint-bound |
@@ -93,10 +94,11 @@ Existing schema-2/3, standalone AUTO_MERGE and legacy preservation archives reta
 | Submodules, directory/file conflicts | Refused conservatively, retaining source |
 | Rebase, cherry-pick, revert, sequencer, autostash, unknown admin state | Refused, retaining source |
 | Split/special index flags, intent-to-add, filters, shallow history | Refused |
-| Private refs/config, unique message drafts, nonempty FETCH_HEAD | Refused until separately preservable |
+| Private refs/config, unique message drafts | Refused until separately preservable |
 
-Paths use hex-encoded Git bytes, not newline parsing. The bundle retains the complete closure of HEAD, merge parents, required ORIG_HEAD, AUTO_MERGE and index/resolve-undo blobs through named preservation tips.
+Paths use hex-encoded Git bytes, not newline parsing. The bundle retains the complete closure of HEAD, merge parents, required ORIG_HEAD, AUTO_MERGE, FETCH_HEAD roots and index/resolve-undo blobs through named preservation tips.
 It deliberately does not subtract the shared base: merge parents and required operation objects need not be ancestors of HEAD. Source loss and subsequent ordinary GC therefore do not remove required objects.
+FETCH_HEAD uses the existing Git administration parser and is covered by the merge fingerprint. Malformed entries or unavailable objects still refuse capture. Restoring older merge archives without this optional field leaves FETCH_HEAD absent; older readers refuse populated metadata they do not support rather than silently losing it.
 Measure archive bytes separately from incremental shared-base bytes (capture adds zero shared-base bytes).
 
 The schema-4 guarantee is **current-state preservation**, not arbitrary historical reflog recovery. It preserves unpublished current HEAD history and required operation objects even when otherwise reachable only through operation references or reflog; it does not preserve raw reflogs or abandoned historical states.
