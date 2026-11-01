@@ -20,6 +20,7 @@ from .archive_path import validate_archive_path
 from .cleanup import _failure_details, _repositories
 from .directory_handle import DirectoryHandle
 from .enrollment import _git_directory
+from .legacy_discovery import discover
 from .legacy_inventory import advance, inspect, inventory, queue, require_ended
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
@@ -212,6 +213,7 @@ def run(store, config, root, **arguments):
     require_ready(adapter)
     with store.connection() as connection:
         items = inventory(connection)
+    items, discovery_errors = discover(items, repositories)
     if options.apply:
         if not root.is_absolute() or root.resolve() != root:
             raise ValueError("canonical-output-root-required")
@@ -222,6 +224,7 @@ def run(store, config, root, **arguments):
         "status": "legacy-cleanup", "apply": options.apply, "paths": len(items),
         "generations": sum(len(i["generations"]) for i in items),
         "retired": 0, "eligible": 0, "attempted": 0, "results": [],
+        "discovery_errors": discovery_errors,
     }
     deadline = time.monotonic() + options.budget
     for item in items:
@@ -238,7 +241,7 @@ def run(store, config, root, **arguments):
         report["retired"] += outcome["status"] == "retired"
         report["results"].append(outcome)
     report["examined"] = len(report["results"])
-    report["incomplete"] = report["examined"] < len(items)
+    report["incomplete"] = bool(discovery_errors) or report["examined"] < len(items)
     report["archive_failed"] = sum(
         bool(result.get("archive_failure", False)) for result in report["results"]
     )

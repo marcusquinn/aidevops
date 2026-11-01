@@ -110,7 +110,7 @@ def inspect(item, repositories, adapter, now, min_age):
         raise ValueError("git-worktree-locked")
     latest = max(item["last_event"], path.stat().st_mtime,
                  (admin / "HEAD").stat().st_mtime, (admin / "index").stat().st_mtime)
-    if not item["last_event"] or now - latest < min_age:
+    if now - latest < min_age:
         raise ValueError("too-recent")
     require_ended(item, adapter)
     return {"source": str(path), "directory": _id(path), "admin": str(admin),

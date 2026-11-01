@@ -1,21 +1,27 @@
 # Temporary observation-era worktree cleanup
 
-`worker-legacy-cleanup.py` drains worktrees recorded before admission-controlled
-creation was enabled. It is a transition tool, not another permanent lifecycle
+`worker-legacy-cleanup.py` inventories legacy worktrees, including directories never
+recorded before admission-controlled creation. It is a transition tool, not another permanent lifecycle
 system. It reads the existing `generations`, `bindings`, `runs` and `events` tables.
 It does not create a database, migrate the schema, invent creation events or insert
 historical rows into `generation_admissions`.
 
 ## Algorithm
 
-1. Group historical generations by pathname. Multiple attempts can refer to one
-   directory; absent directories are reported, not counted as newly removed.
+1. Union Git's linked-worktree registrations for configured maintenance repositories,
+   immediate directories/symlinks in `AIDEVOPS_WORKTREE_BASE_DIR` (default
+   `~/Git/_worktrees`), and historical registry paths. Deduplicate by pathname;
+   Git registrations also cover sibling and temporary worktrees outside the central
+   directory. Main checkouts are not added by Git discovery. Unregistered/orphan
+   directories receive explicit inspection results, not silent omission.
 2. Select old linked worktrees within the configured maintenance repositories.
    The default age is one hour since the latest recorded event or worktree/HEAD/index
    modification. Current admission-controlled generations are left to normal cleanup.
 3. Recheck every recorded process using the native Linux/macOS identity adapter.
    Alive or unknown results retain the directory. A cached `ended` row or a missing
    PID alone is insufficient. There is no global process-cwd scan or descendant census.
+   No recorded owners means `no-recorded-processes`, not permission to delete.
+   Discovery does not fabricate process records or `created-worktree` events.
 4. Archive using the existing Git-only archive helper and verify captured payloads
    with `verify-local`, without a full checkout or shared-repository `fsck`.
    Preserve unpublished commits, index state and non-ignored working files;
@@ -59,6 +65,8 @@ The JSON report distinguishes historical generation count, unique path count,
 eligible candidates, attempted operations and actually retired worktrees. Its
 `counts` field groups specific retention reasons. `incomplete` means another
 bounded pass is needed, not that the remaining directories have been examined.
+Discovery failures appear in `discovery_errors` and also set `incomplete`; other
+sources are still inspected. Discovery and preview do not create registry rows.
 
 ## Interruptions and removal of the transition tool
 
@@ -71,7 +79,8 @@ Archives still require their common repository and retained base ref.
 
 After the observation-era backlog and pending retirements have been resolved,
 remove `worker-legacy-cleanup.py`, `worker_lifecycle/legacy_cleanup.py`,
-`worker_lifecycle/legacy_inventory.py`, their focused test, this document and the
+`worker_lifecycle/legacy_inventory.py`, `worker_lifecycle/legacy_discovery.py`,
+their focused test, this document and the
 temporary Pulse call. Restore the full Pulse budget to admission-based cleanup.
 Retain completed archive receipts and historical registry events; do not rewrite
 the evidence or delete archives as part of removing this code.
