@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.109] - 2026-11-01
+
+### Added
+
+- add registry-authorized worktree retirement and preservation (#36224)
+- guarded rm/remove/delete subcommand (#36335)
+
+### Changed
+
+- Documentation: document Cloudflare Email Routing subdomain apex SPF/DKIM side effects
+- Documentation: clarify legacy cleanup failure reporting (#36381)
+- Documentation: prioritize cleanup safety decisions (GH#36348) (#36354)
+- Documentation: clarify REST quota attribution and installation tokens (#36328)
+
+### Fixed
+
+- classify missing archive base objects (GH#36385) (#36388)
+- classify deferred handoff verification as infrastructure (#36405)
+- isolate brew convergence test from host tools (#36400)
+- read normalised email secret names and stop sending app passwords as Bearer tokens
+- fix settings get for empty-default keys and document browser.playwright_executable
+- inventory all legacy worktrees before cleanup
+- require controlled worktree creation for agent commands
+- retain coverage gap without runtime identity (#36382)
+- preserve FETCH_HEAD during interrupted merges
+- automatically upgrade schema-1 registries
+- restore schema-1 OpenCode tool compatibility (#36360)
+- reconcile absent worktrees without claiming preservation
+- keep schema-1 session admission observe-only
+- drain observation-era worktrees through Pulse
+- probe lifecycle admission before installation (GH#36337) (#36347)
+- isolate core minor holds and sibling backup roots (#36345)
+- enforce orphan rerun limit inside job loop (#36346)
+- label lifecycle ownership errors and wait on registry locks (GH#36332) (#36334)
+- preserve same-boot cleanup with focused census policy (#36313)
+
 ## [3.39.108] - 2026-11-01
 
 ### Changed
