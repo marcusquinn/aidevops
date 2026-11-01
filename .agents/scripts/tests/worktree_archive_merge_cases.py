@@ -12,6 +12,104 @@ from unittest.mock import patch
 
 
 class MergeCases:
+    def replace_merge_link(self, root, name, target):
+        (root / name).unlink(missing_ok=True)
+        (root / name).symlink_to(target)
+
+    def start_symlink_merge(self):
+        for name in ('stable-link', 'conflict-link', 'resolved-link', 'deleted-link', 'link-to-file'):
+            (self.repo / name).symlink_to('mixed.txt')
+        (self.repo / 'dangling-link').symlink_to(os.fsdecode(b'missing\t\n\xff'))
+        self.git(self.repo, 'add', '.')
+        self.git(self.repo, 'commit', '-qm', 'base links')
+        self.git(self.work, 'merge', '--ff-only', 'develop')
+        self.git(self.repo, 'checkout', '-qb', 'other')
+        for root, destination in ((self.repo, 'theirs'), (self.work, 'ours')):
+            for name in ('conflict-link', 'resolved-link'):
+                self.replace_merge_link(root, name, destination)
+            (root / 'mixed.txt').write_text(destination + '\n')
+            self.git(root, 'add', '.')
+            self.git(root, 'commit', '-qm', destination)
+        result = self.run_command('git', '-C', self.work, 'merge', 'other', check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.replace_merge_link(self.work, 'resolved-link', 'resolved')
+        self.replace_merge_link(self.work, 'run.sh', 'missing-script')
+        (self.work / 'link-to-file').unlink()
+        (self.work / 'link-to-file').write_bytes(b'regular replacement\n')
+        self.git(self.work, 'add', 'resolved-link', 'run.sh', 'link-to-file')
+        self.git(self.work, 'rm', 'deleted-link')
+
+    def test_merge_symlinks_roundtrip_and_continuation(self):
+        self.start_symlink_merge()
+        baseline = {option: self.git(self.work, 'ls-files', option, '-z')
+                    for option in ('--stage', '--resolve-undo')}
+        status = self.git(self.work, 'status', '--porcelain=v1', '-z')
+        links = {path.name: os.fsencode(os.readlink(path))
+                 for path in self.work.iterdir() if path.is_symlink()}
+        parents = [self.git(self.work, 'rev-parse', ref).strip() for ref in ('HEAD', 'MERGE_HEAD')]
+        archive = self.archive()
+        self.helper('verify-local', archive)
+        self.replace_merge_link(self.work, 'stable-link', 'changed-target')
+        self.assertNotEqual(self.helper('source-matches', archive, self.work, check=False).returncode, 0)
+        shutil.rmtree(self.work)
+        shutil.rmtree(self.repo)
+        self.helper('verify', archive)
+        for operation in ('continue', 'abort'):
+            target = self.root / operation
+            self.helper('restore', archive, '--target', target)
+            self.git(target, 'gc', '--prune=now')
+            for name, destination in links.items():
+                self.assertEqual(os.fsencode(os.readlink(target / name)), destination)
+            for option, expected in baseline.items():
+                self.assertEqual(self.git(target, 'ls-files', option, '-z'), expected)
+            self.assertEqual(self.git(target, 'status', '--porcelain=v1', '-z'), status)
+            if operation == 'continue':
+                (target / 'mixed.txt').write_text('resolved\n')
+                self.replace_merge_link(target, 'conflict-link', 'resolved-target')
+                self.git(target, 'add', '.')
+                self.env['GIT_EDITOR'] = 'true'
+                self.git(target, 'merge', '--continue')
+                self.assertEqual(self.git(target, 'show', '-s', '--format=%P').strip(), b' '.join(parents))
+            else:
+                self.git(target, 'merge', '--abort')
+                self.assertEqual(self.git(target, 'rev-parse', 'HEAD').strip(), parents[0])
+
+    def test_merge_symlink_restore_never_traverses_links(self):
+        from worktree_archive_merge_restore import write_merge_working
+        from worktree_archive_merge_index import validate_merge_working
+        outside = self.root / 'outside'
+        outside.mkdir()
+        sentinel = outside / 'sentinel'
+        sentinel.write_bytes(b'untouched')
+        self.replace_merge_link(self.work, 'leaf', str(sentinel))
+        write_merge_working(self.work, b'leaf'.hex(), [0o644, b'replacement'.hex()])
+        self.assertEqual(sentinel.read_bytes(), b'untouched')
+        self.assertEqual((self.work / 'leaf').read_bytes(), b'replacement')
+        write_merge_working(self.work, b'leaf'.hex(), ['symlink', os.fsencode(sentinel).hex()])
+        self.assertEqual(os.readlink(self.work / 'leaf'), str(sentinel))
+        (self.work / 'parent-link').symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(OSError):
+            write_merge_working(self.work, b'parent-link/new/file'.hex(), [0o644, '00'])
+        self.assertEqual(list(outside.iterdir()), [sentinel])
+        write_merge_working(self.work, b'leaf'.hex(), None)
+        self.assertFalse(os.path.lexists(self.work / 'leaf'))
+        self.assertEqual(sentinel.read_bytes(), b'untouched')
+        os.link(sentinel, self.work / 'leaf')
+        write_merge_working(self.work, b'leaf'.hex(), [0o644, b'new inode'.hex()])
+        self.assertEqual(sentinel.read_bytes(), b'untouched')
+
+        def swap_parent(name, *, dir_fd):
+            os.symlink(str(outside), name, dir_fd=dir_fd)
+            raise FileExistsError(name)
+
+        with patch('worktree_archive_filesystem.os.mkdir', side_effect=swap_parent):
+            with self.assertRaises(OSError):
+                write_merge_working(self.work, b'raced/new/file'.hex(), [0o644, '00'])
+        self.assertEqual(list(outside.iterdir()), [sentinel])
+        for invalid in ('', '00'):
+            with self.assertRaisesRegex(ValueError, 'invalid_link_target'):
+                validate_merge_working({b'link'.hex(): ['symlink', invalid]}, set())
+
     def test_merge_index_types_use_closure_batch_and_reject_non_blobs(self):
         import worktree_archive_merge_objects as objects
         from worktree_archive_merge_capture import merge_state

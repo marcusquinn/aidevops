@@ -90,7 +90,8 @@ Existing schema-2/3, standalone AUTO_MERGE and legacy preservation archives reta
 | Content, add/add, modify/delete, ordinary rename, binary conflicts | Structured index stages 1/2/3 and exact working bytes |
 | Partial resolutions, staged files/deletions, resolve-undo | Stage 0 and REUC rebuilt through Git update-index; no raw index copy |
 | Regular files, executable modes, ordinary untracked files | Captured independently of index stages; untracked payload remains fingerprint-bound |
-| Symlinks in HEAD/index/working paths, submodules, directory/file conflicts | Refused conservatively, retaining source |
+| Symlinks in HEAD/index/working paths | Git mode `120000` and exact target bytes preserved, including dangling links and conflicted stages; destinations are never followed |
+| Submodules, directory/file conflicts | Refused conservatively, retaining source |
 | Rebase, cherry-pick, revert, sequencer, autostash, unknown admin state | Refused, retaining source |
 | Split/special index flags, intent-to-add, filters, shallow history | Refused |
 | Private refs/config, unique message drafts | Refused until separately preservable |
@@ -104,6 +105,7 @@ The schema-4 guarantee is **current-state preservation**, not arbitrary historic
 Ordinary Git-only capture uses that current-state history policy too; legacy preserve-v1 comparisons and required structured merge history are unchanged.
 
 Restore validates artifacts/object closure before modifying a new target, reconstructs files/index with hooks disabled, and writes validated metadata to target Git administration. It never executes hooks or `merge --continue` itself.
+Working entries retain the existing regular-file `[mode, hex-content]` and absent `null` representations; links use `["symlink", hex-target]`. This is an additive type in the same structured format: older readers refuse unsupported link entries, and older regular-only archives remain readable. Link permissions follow Git's target-byte model, not full filesystem metadata preservation. Parent traversal and creation use no-follow directory descriptors. Restore unlinks the leaf itself before exclusive creation, allowing file/link transitions without following destinations or truncating a shared inode.
 Self-contained merge restores work without the original common repository. The user completes remaining resolutions and runs `git merge --continue` normally.
 Managed removal compares an independent restored snapshot and unchanged source; schema-4 migration retirement additionally performs a fresh isolated restore/comparison under its operation lock.
 Corruption, missing objects, unsupported metadata, failed comparison or source drift retain source/journals. No production deletion, historical reflog deletion or forced production GC is authorized by capture or these disposable tests.

@@ -32,7 +32,7 @@ def validate_merge_index(entries, stages):
     seen = {}
     for path, mode, oid, stage in entries:
         raw = merge_path(path)
-        if mode not in ('100644', '100755') or not isinstance(stage, int) or isinstance(stage, bool) or stage not in stages:
+        if mode not in ('100644', '100755', '120000') or not isinstance(stage, int) or isinstance(stage, bool) or stage not in stages:
             raise ValueError('merge:unsupported_index_entry')
         merge_oid(oid)
         current = seen.setdefault(raw, set())
@@ -51,9 +51,11 @@ def validate_merge_working(working, paths):
         if any(b'/'.join(raw.split(b'/')[:number]).hex() in working for number in range(1, len(raw.split(b'/')))):
             raise ValueError('merge:directory_file_conflict')
         if value is not None:
-            if not isinstance(value, list) or len(value) != 2 or value[0] not in (0o644, 0o755):
+            if not isinstance(value, list) or len(value) != 2 or value[0] not in (0o644, 0o755, 'symlink'):
                 raise ValueError('merge:invalid_working_file')
-            bytes.fromhex(value[1])
+            content = bytes.fromhex(value[1])
+            if value[0] == 'symlink' and (not content or b'\0' in content):
+                raise ValueError('merge:invalid_link_target')
 
 
 def restore_merge_index(root, state):

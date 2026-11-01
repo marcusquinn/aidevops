@@ -17,25 +17,24 @@ from worktree_archive_merge_objects import MERGE_FILES, verify_merge_objects
 def write_merge_working(root, path, value):
     from worktree_archive_filesystem import open_parent
     relative = Path(os.fsdecode(merge_path(path)))
-    target = root / relative
-    if target.is_symlink():
-        raise ValueError('merge:symlink_target')
-    if value is not None:
-        target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        parent = open_parent(root, relative.parts[:-1])
+        parent = open_parent(root, relative.parts[:-1], create=value is not None)
     except FileNotFoundError:
         if value is None:
             return
         raise
     try:
+        # Replace the leaf itself, never its symlink destination or hard-link inode.
+        try:
+            os.unlink(relative.name, dir_fd=parent)
+        except FileNotFoundError:
+            pass
         if value is None:
-            try:
-                os.unlink(relative.name, dir_fd=parent)
-            except FileNotFoundError:
-                pass
+            return
+        if value[0] == 'symlink':
+            os.symlink(os.fsdecode(bytes.fromhex(value[1])), relative.name, dir_fd=parent)
         else:
-            descriptor = os.open(relative.name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+            descriptor = os.open(relative.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                                  0o600, dir_fd=parent)
             with os.fdopen(descriptor, 'wb') as stream:
                 stream.write(bytes.fromhex(value[1]))
@@ -45,8 +44,8 @@ def write_merge_working(root, path, value):
 
 
 def restore_merge_working(root, archive, state):
-    # Remove the clean checkout first, then create parents using no-follow file
-    # descriptors. Symlinks and directory/file conflicts are deliberately refused.
+    # Replace checkout leaves through no-follow parent descriptors. Symlinks are
+    # data, not traversal; directory/file conflicts remain deliberately refused.
     untracked = set()
     if (archive / 'untracked.tar.gz').exists():
         with tarfile.open(archive / 'untracked.tar.gz', 'r:gz') as payload:
