@@ -56,6 +56,7 @@ source_extracted() {
 	OUTDATED_TOOL_SPECS=()
 	JSON_RESULTS=()
 	JSON_OUTPUT=true
+	AUTO_UPDATE=false
 	version_lt() {
 		local left="$1"
 		local right="$2"
