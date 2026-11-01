@@ -9,8 +9,9 @@ historical rows into `generation_admissions`.
 ## Algorithm
 
 1. Union Git's linked-worktree registrations for configured maintenance repositories,
-   immediate directories/symlinks in `AIDEVOPS_WORKTREE_BASE_DIR` (default
-   `~/Git/_worktrees`), and historical registry paths. Deduplicate by pathname;
+   immediate directories/symlinks in `AIDEVOPS_WORKTREE_BASE_DIR` (by default the
+   `_worktrees` directory beneath the user's `Git` directory), and historical registry paths.
+   Deduplicate by pathname;
    Git registrations also cover sibling and temporary worktrees outside the central
    directory. Main checkouts are not added by Git discovery. Unregistered/orphan
    directories receive explicit inspection results, not silent omission.

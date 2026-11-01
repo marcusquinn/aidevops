@@ -35,7 +35,8 @@ def discover(items, repositories):
     """
     paths = {item["path"]: item for item in items}
     errors = []
-    root = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR", "~/Git/_worktrees")).expanduser()
+    default_root = Path.home() / "Git" / "_worktrees"
+    root = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR", default_root)).expanduser()
     sources = [(str(root), lambda: _directories(root))]
     sources.extend((common, lambda common=common: _registered(common))
                    for common in sorted(repositories))
