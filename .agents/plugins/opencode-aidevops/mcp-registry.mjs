@@ -184,11 +184,11 @@ function configuredPlaywrightExecutable() {
 }
 
 function preferredPlaywrightExecutable() {
+  if (process.env.AIDEVOPS_PLAYWRIGHT_BROWSER === "chromium") return "";
   const explicit = configuredPlaywrightExecutable();
   // Preserve an invalid explicit path so Playwright fails closed instead of
   // silently launching a different browser.
   if (explicit) return findExecutable(explicit) || explicit;
-  if (process.env.AIDEVOPS_PLAYWRIGHT_BROWSER === "chromium") return "";
 
   let candidates;
   if (platform() === "darwin") {
