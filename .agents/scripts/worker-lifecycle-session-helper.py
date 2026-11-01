@@ -121,9 +121,12 @@ def main():
             subprocess.SubprocessError, ObservationUnavailable) as error:
         # Only expose known safe protocol reasons, not exception text containing
         # paths, SQL or other host details. Keep schema refusal actionable.
-        reason = ("explicit-schema-upgrade-required"
-                  if str(error) == "explicit-schema-upgrade-required"
-                  else type(error).__name__)
+        safe_reasons = {
+            "explicit-schema-upgrade-required",
+            "schema-one-with-admission-state",
+            "schema-one-with-generation-marker",
+        }
+        reason = str(error) if str(error) in safe_reasons else type(error).__name__
         print(json.dumps({"status": "unavailable", "reason": reason}))
         return 75
     result = {"status": status, "cleanup_authorized": False}
