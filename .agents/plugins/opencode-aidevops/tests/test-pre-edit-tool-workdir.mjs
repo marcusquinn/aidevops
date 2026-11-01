@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,16 @@ import { releasePreEditSessionOwnership, runPreEditCheck } from "../pre-edit-che
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(testDir, "../../../scripts");
+// Native admission must never write fixture paths into the operator's registry.
+const lifecycleRoot = realpathSync(mkdtempSync(join(tmpdir(), "pre-edit-native-state-")));
+const lifecycleState = join(lifecycleRoot, "state");
+const savedLifecycleState = process.env.AIDEVOPS_LIFECYCLE_STATE_DIR;
+process.env.AIDEVOPS_LIFECYCLE_STATE_DIR = lifecycleState;
+after(() => {
+  if (savedLifecycleState === undefined) delete process.env.AIDEVOPS_LIFECYCLE_STATE_DIR;
+  else process.env.AIDEVOPS_LIFECYCLE_STATE_DIR = savedLifecycleState;
+  rmSync(lifecycleRoot, { recursive: true, force: true });
+});
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -25,7 +35,7 @@ function git(cwd, args) {
 }
 
 test("caller context preserves its live runtime PID and fences other sessions", async () => {
-  const root = mkdtempSync(join(tmpdir(), "gh36057-pre-edit-owner-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gh36057-pre-edit-owner-")));
   const repo = join(root, "repo");
   const linked = join(root, "linked");
   const runtime = spawn("sleep", ["120"]);
@@ -58,6 +68,17 @@ test("caller context preserves its live runtime PID and fences other sessions", 
     const owner = () => execFileSync("sqlite3", [overrides.WORKTREE_REGISTRY_DB,
       "SELECT owner_pid || '|' || owner_session FROM worktree_owners;"], { encoding: "utf8" }).trim();
     assert.equal(owner(), `${runtime.pid}|ses_caller_fixture`, "tool and Bash must retain the same runtime owner");
+
+    // A pre-edit-only session must also bind the native lifecycle owner, not
+    // merely the compatibility registry. The transport/test process is not it.
+    const nativeOwner = execFileSync("python3", ["-E", "-s", "-B", "-c", [
+      "import json, sqlite3, sys",
+      "from pathlib import Path",
+      "db = Path(sys.argv[1]) / 'registry.sqlite3'",
+      "connection = sqlite3.connect(db)",
+      "print(json.loads(connection.execute('SELECT identity FROM runs').fetchone()[0])['pid'])",
+    ].join("; "), lifecycleState], { encoding: "utf8" }).trim();
+    assert.equal(nativeOwner, String(runtime.pid));
 
     // Tool arguments cannot impersonate the caller; context is authoritative.
     const rejected = await tool.execute({ workdir: linked, sessionID: "ses_caller_fixture",
@@ -176,8 +197,8 @@ test("inherited ownership requires matching generation evidence", async () => {
       const result = await runPreEditCheck(script, [], root, 5000,
         { sessionID: "ses_generation_fixture" });
       assert.equal(result.code, 0);
-      const expected = proof === identity ? runtime.pid : process.pid;
-      assert.equal(result.stdout.trim(), `${expected}\n${processStartIdentity(expected)}`);
+      const expected = proof === identity ? `${runtime.pid}\n${identity}` : "";
+      assert.equal(result.stdout.trim(), expected);
     }
   } finally {
     runtime.kill();
@@ -190,14 +211,19 @@ test("inherited ownership requires matching generation evidence", async () => {
 });
 
 test("pre-edit tool validates the explicitly targeted Git worktree", async () => {
-  const root = mkdtempSync(join(tmpdir(), "t27909-pre-edit-tool-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "t27909-pre-edit-tool-")));
   const repo = join(root, "repo");
   const linked = join(root, "linked");
   const otherLinked = join(root, "other-linked");
   const nonGit = join(root, "not-git");
   const injectionMarker = join(root, "injected");
+  const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+  const saved = keys.map(key => process.env[key]);
 
   try {
+    process.env.OPENCODE_PID = String(process.pid);
+    process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+    process.env.OPENCODE_SESSION_ID = "ses_target_fixture";
     mkdirSync(repo);
     mkdirSync(nonGit);
     git(repo, ["init", "--initial-branch=main"]);
@@ -218,14 +244,14 @@ test("pre-edit tool validates the explicitly targeted Git worktree", async () =>
     const linkedResult = await preEditTool.execute({
       workdir: linked,
       task: `fix fixture '; touch ${injectionMarker}`,
-    });
+    }, { sessionID: "ses_target_fixture" });
     assert.match(linkedResult, /Pre-edit check PASSED \(exit 0\)/);
     assert.equal(existsSync(injectionMarker), false, "task text must remain one argv value");
 
     const otherLinkedResult = await preEditTool.execute({
       workdir: linked,
       targetPaths: [join(otherLinked, "README.md")],
-    });
+    }, { sessionID: "ses_target_fixture" });
     assert.match(otherLinkedResult, /Pre-edit check PASSED \(exit 0\)/);
     assert.match(otherLinkedResult, /bugfix\/other-fixture/);
     assert.doesNotMatch(otherLinkedResult, /bugfix\/fixture[^-]/);
@@ -301,6 +327,10 @@ test("pre-edit tool validates the explicitly targeted Git worktree", async () =>
     const malformedArrayResult = await preEditTool.execute({ workdir: repo, targetPaths: {} });
     assert.match(malformedArrayResult, /targetPaths must be an array/);
   } finally {
+    keys.forEach((key, index) => {
+      if (saved[index] === undefined) delete process.env[key];
+      else process.env[key] = saved[index];
+    });
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -310,10 +340,17 @@ test("slow loop-mode creation is reported exactly once beyond the former timeout
   const repo = join(root, "repo");
   const linked = join(root, "slow-linked");
   const fixtureScripts = join(root, "scripts");
+  const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+  const saved = keys.map(key => process.env[key]);
 
   try {
+    process.env.OPENCODE_PID = String(process.pid);
+    process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+    process.env.OPENCODE_SESSION_ID = "ses_pre_edit_fixture";
     mkdirSync(repo);
     mkdirSync(fixtureScripts);
+    symlinkSync(join(scriptsDir, "worker-lifecycle-session-helper.py"),
+      join(fixtureScripts, "worker-lifecycle-session-helper.py"));
     git(repo, ["init", "--initial-branch=main"]);
     git(repo, ["config", "user.email", "test@example.invalid"]);
     git(repo, ["config", "user.name", "Test"]);
@@ -344,6 +381,10 @@ printf 'LOOP_DECISION=worktree_created\\nWORKTREE_PATH=%s\\nNEXT_STEP: cd to the
     const worktreeList = git(repo, ["worktree", "list", "--porcelain"]);
     assert.equal(worktreeList.split("branch refs/heads/bugfix/slow-fixture").length - 1, 1);
   } finally {
+    keys.forEach((key, index) => {
+      if (saved[index] === undefined) delete process.env[key];
+      else process.env[key] = saved[index];
+    });
     rmSync(root, { recursive: true, force: true });
   }
 });

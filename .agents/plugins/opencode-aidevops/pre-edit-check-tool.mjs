@@ -5,12 +5,9 @@ import { execFileSync } from "child_process";
 import { existsSync, realpathSync, statSync } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
 import { runPreEditCheck } from "./pre-edit-check-process.mjs";
+import { admitToolOwner } from "./lifecycle-admission.mjs";
+import { formatPreEditCheckResult } from "./pre-edit-check-result.mjs";
 
-const PRE_EDIT_GUIDANCE = {
-  1: "STOP — you are on main/master branch. Create a worktree first.",
-  2: "Create a worktree before proceeding with edits.",
-  3: "WARNING — proceed with caution.",
-};
 const MAX_TARGET_PATHS = 32;
 const EXTERNAL_TARGET_RESPONSE =
   "Git isolation not applicable: all explicit targetPaths resolve outside Git worktrees.\n"
@@ -195,33 +192,6 @@ export function resolveGitWorktree(requestedWorkdir) {
 }
 
 /**
- * Format the pre-edit subprocess outcome for the tool response.
- * @param {{code: number|null, stdout: string, stderr: string, timedOut: boolean, error?: Error}} result
- * @param {number} timeoutMs
- * @returns {string}
- */
-function formatPreEditCheckResult(result, timeoutMs) {
-  const cmdOutput = (result.stdout + result.stderr).trim();
-  let response;
-  if (result.timedOut) {
-    response = `Pre-edit check TIMED OUT after ${timeoutMs}ms: child process tree terminated before returning\n${cmdOutput}`;
-  } else if (result.error) {
-    response = `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
-  } else {
-    const code = result.code ?? 1;
-    const ownershipUnavailable = code === 2
-      && cmdOutput.split(/\r?\n/).some((line) => line === "WORKTREE_OWNERSHIP_UNAVAILABLE=true");
-    const guidance = ownershipUnavailable
-      ? "STOP — retry ownership verification in this worktree; do not create another worktree."
-      : (PRE_EDIT_GUIDANCE[code] || "Unknown");
-    response = code === 0
-      ? `Pre-edit check PASSED (exit 0):\n${cmdOutput}`
-      : `Pre-edit check exit ${code}: ${guidance}\n${cmdOutput}`;
-  }
-  return response;
-}
-
-/**
  * Create the pre-edit check tool.
  * @param {function} tool - OpenCode tool factory
  * @param {object} z - OpenCode tool schema helpers
@@ -252,6 +222,16 @@ export function createPreEditCheckTool(tool, z, scriptsDir, timeoutMs = 120000) 
         ? [...(normalizedArgs.task ? ["--loop-mode"] : []), "--file", repositoryTarget]
         : (normalizedArgs.task ? ["--loop-mode", "--task", normalizedArgs.task] : []);
       const result = await runPreEditCheck(script, taskArgs, targetWorkdir, timeoutMs, context);
+      if (result.code === 0 && !result.timedOut && !result.error) {
+        try {
+          admitToolOwner({
+            scriptsDir, input: { tool: "aidevops_pre_edit_check", sessionID: context?.sessionID || "" },
+            output: { args: { cwd: targetWorkdir } }, bash: true,
+          });
+        } catch (error) {
+          return `Pre-edit check exit 1: ${error.message}`;
+        }
+      }
       return formatPreEditCheckResult(result, timeoutMs);
     },
   });

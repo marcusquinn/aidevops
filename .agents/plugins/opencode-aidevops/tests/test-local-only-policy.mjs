@@ -382,6 +382,10 @@ test("real pre-tool hooks: fake external endpoint receives nothing; literal loop
       process.env.AIDEVOPS_RUNTIME_POLICY = '';
       policy.captureLocalOnlyMcpConfig({ remote: {type:'remote',url:'http://0.0.0.0:'+port}, local: {type:'local'} },home);
       const {createQualityHooks} = await import(pluginDir + '/quality-hooks.mjs');
+      const {processStartIdentity} = await import(pluginDir + '/process-start-identity.mjs');
+      process.env.OPENCODE_PID = String(process.pid);
+      process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+      process.env.OPENCODE_SESSION_ID = 'ses_local_only_fixture';
       const hooks = createQualityHooks({scriptsDir: pluginDir+'/../../scripts', logsDir: home, repositoryDir: home});
       const external = 'http://0.0.0.0:'+port+'/'+sentinel;
       for (const [tool,args] of [['remote_send',{content:sentinel}],['webfetch',{url:external}],
@@ -404,10 +408,10 @@ test("real pre-tool hooks: fake external endpoint receives nothing; literal loop
       const url = 'http://127.0.0.1:'+port+'/local';
       const command = policy.LOCAL_ONLY_CURL+" --disable --noproxy '*' --proxy '' --max-time 30 --url '"+url+"'";
       const shell = {args:{command:'curl '+url,workdir:home}};
-      await hooks.toolExecuteBefore({tool:'bash'},shell);
+      await hooks.toolExecuteBefore({tool:'bash',sessionID:'ses_local_only_fixture'},shell);
       assert.equal(shell.args.command,command);
       const bounded = {args:{action:'start',command:['curl',url],cwd:home}};
-      await hooks.toolExecuteBefore({tool:'aidevops_bounded_operation'},bounded);
+      await hooks.toolExecuteBefore({tool:'aidevops_bounded_operation',sessionID:'ses_local_only_fixture'},bounded);
       assert.equal(bounded.args.command[0],policy.LOCAL_ONLY_CURL);
       assert.equal(bounded.args.command[1],'--disable');
       const result = execFileSync(policy.LOCAL_ONLY_CURL,['--disable','--noproxy','*','--proxy','','--max-time','30','--url',url],{encoding:'utf8'});

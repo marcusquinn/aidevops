@@ -147,6 +147,7 @@ export async function runSupervisor() {
       input: { tool: "aidevops_bounded_operation", sessionID: operationID },
       output: { args: { action: "start", cwd: process.cwd(), command } },
       bounded: true,
+      allowSelfFallback: true,
     });
   } catch {
     process.stderr.write("BLOCKED: bounded-operation lifecycle admission unavailable\n");
@@ -195,8 +196,8 @@ export async function runSupervisor() {
       ...process.env,
       AIDEVOPS_OPERATION_ID: operationID,
       AIDEVOPS_OPERATION_OWNER_PID: String(process.pid),
-      AIDEVOPS_LIFECYCLE_RUNTIME_PID: String(process.pid),
-      AIDEVOPS_LIFECYCLE_SESSION_ID: operationID,
+      // Creation belongs to the authenticated runtime propagated by the manager,
+      // not this command-scoped supervisor. Missing identity retains a coverage gap.
     },
     stdio: ["ignore", "inherit", "inherit"],
   });

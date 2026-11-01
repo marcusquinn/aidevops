@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { processStartIdentity } from "./process-start-identity.mjs";
+import { runtimeOwner } from "./runtime-owner.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -43,27 +44,7 @@ export async function releasePreEditSessionOwnership(input) {
 export function runPreEditCheck(script, args, cwd, timeoutMs, context) {
   return new Promise((resolve) => {
     const sessionID = String(context?.sessionID || "");
-    // The plugin may run in a transport process. Keep the runtime identity
-    // delivered by OpenCode's environment only with matching generation proof.
-    // Liveness alone cannot distinguish a runtime from a reused PID.
-    let ownerPID = String(process.pid);
-    let ownerIdentity = processStartIdentity(process.pid);
-    const inheritedPID = process.env.OPENCODE_PID || "";
-    const inheritedIdentity = process.env.OPENCODE_PID_START_IDENTITY || "";
-    if (sessionID === process.env.OPENCODE_SESSION_ID
-      && /^[1-9][0-9]*$/.test(inheritedPID) && inheritedIdentity) {
-      try {
-        process.kill(Number(inheritedPID), 0);
-        // #aidevops:trust-boundary — proof comes from the runtime environment,
-        // never from tool arguments or a freshly sampled replacement process.
-        if (processStartIdentity(Number(inheritedPID)) === inheritedIdentity) {
-          ownerPID = inheritedPID;
-          ownerIdentity = inheritedIdentity;
-        }
-      } catch {
-        // Missing or inaccessible process evidence is not an owner override.
-      }
-    }
+    const { pid: ownerPID, identity: ownerIdentity } = runtimeOwner(sessionID);
     const sessionEnv = /^ses_[A-Za-z0-9_-]+$/.test(sessionID)
       ? {
           OPENCODE: "1",
@@ -71,8 +52,10 @@ export function runPreEditCheck(script, args, cwd, timeoutMs, context) {
           OPENCODE_PID_START_IDENTITY: ownerIdentity,
           OPENCODE_SESSION_ID: sessionID,
           AIDEVOPS_OPENCODE_SESSION_ID: sessionID,
+          AIDEVOPS_LIFECYCLE_RUNTIME_PID: ownerIdentity ? ownerPID : "",
+          AIDEVOPS_LIFECYCLE_SESSION_ID: ownerIdentity ? sessionID : "",
         }
-      : {};
+      : { AIDEVOPS_LIFECYCLE_RUNTIME_PID: "", AIDEVOPS_LIFECYCLE_SESSION_ID: "" };
     const child = spawn("bash", [script, ...args], {
       cwd,
       detached: true,

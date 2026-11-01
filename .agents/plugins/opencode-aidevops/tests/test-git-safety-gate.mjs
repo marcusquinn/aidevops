@@ -28,6 +28,7 @@ import {
 } from "../quality-hooks-git-safety.mjs";
 import { validateBashWorkingDirectory } from "../quality-hooks-workdir.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
+import { processStartIdentity } from "../process-start-identity.mjs";
 import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
 
 // GH#35139: the worker write fence reads the ambient headless environment.
@@ -43,10 +44,15 @@ const realGit = resolveTrustedExecutable("git");
 
 // Ownership checks must never initialize or modify the developer's registry.
 const lifecycleRoot = realpathSync(mkdtempSync(join(tmpdir(), "git-gate-lifecycle-")));
-const lifecycleKeys = ["AIDEVOPS_LIFECYCLE_STATE_DIR", "AIDEVOPS_PRIVATE_WORKLOAD", "AIDEVOPS_LIFECYCLE_DISABLED"];
+const lifecycleKeys = ["AIDEVOPS_LIFECYCLE_STATE_DIR", "AIDEVOPS_PRIVATE_WORKLOAD", "AIDEVOPS_LIFECYCLE_DISABLED",
+  "OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
 const lifecycleEnvironment = Object.fromEntries(lifecycleKeys.map((key) => [key, process.env[key]]));
 for (const key of lifecycleKeys) delete process.env[key];
 process.env.AIDEVOPS_LIFECYCLE_STATE_DIR = join(lifecycleRoot, "state");
+// Model the runtime's session-bound native generation proof, not a self fallback.
+process.env.OPENCODE_PID = String(process.pid);
+process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+process.env.OPENCODE_SESSION_ID = "fixture-owner";
 after(() => {
   for (const key of lifecycleKeys) {
     if (lifecycleEnvironment[key] === undefined) delete process.env[key];
@@ -208,7 +214,7 @@ test("preserves valid Bash workdir inputs and the implicit fallback", async () =
       { command: "pwd" },
     ]) {
       const output = { args: { ...args } };
-      await assert.doesNotReject(() => hooks.toolExecuteBefore({ tool: "Bash" }, output));
+      await assert.doesNotReject(() => hooks.toolExecuteBefore({ tool: "Bash", sessionID: "fixture-owner" }, output));
       assert.deepEqual(output.args, args);
     }
   } finally {
