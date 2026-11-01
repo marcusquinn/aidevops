@@ -218,9 +218,11 @@ def run(store, config, root, **arguments):
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
         _private(root, directory=True)
         items = queue(store, items)
-    report = {"status": "legacy-cleanup", "apply": options.apply, "paths": len(items),
-              "generations": sum(len(i["generations"]) for i in items),
-              "retired": 0, "eligible": 0, "attempted": 0, "results": []}
+    report: dict = {
+        "status": "legacy-cleanup", "apply": options.apply, "paths": len(items),
+        "generations": sum(len(i["generations"]) for i in items),
+        "retired": 0, "eligible": 0, "attempted": 0, "results": [],
+    }
     deadline = time.monotonic() + options.budget
     for item in items:
         if (time.monotonic() >= deadline
