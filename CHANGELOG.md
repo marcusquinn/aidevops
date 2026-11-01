@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.110] - 2026-11-01
+
+### Changed
+
+- Tests: exercise Cloudron update path in tool-version-check freshness fixture (#36420)
+- Documentation: warn that Cloudron packageUrl breaks whole catalogs on Cloudron 9
+
+### Fixed
+
+- stop vacuous readiness releasing fleet capability holds
+
 ## [3.39.109] - 2026-11-01
 
 ### Added
