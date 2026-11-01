@@ -155,6 +155,16 @@ def set_verification(data: dict[str, Any], name: str, observation: dict[str, Any
     record["verification"] = observation
 
 
+def forget_credential(data: dict[str, Any], name: str) -> bool:
+    """Drop a record, its aliases and verification cache, and defaults naming it."""
+    check_name("secret name", name)
+    if data["credentials"].pop(name, None) is None:
+        return False
+    for provider in [provider for provider, value in data["defaults"].items() if value == name]:
+        data["defaults"].pop(provider)
+    return True
+
+
 def _apply_account(data: dict[str, Any], record: dict[str, Any], provider: str, ref: str | None) -> None:
     if not ref:
         return

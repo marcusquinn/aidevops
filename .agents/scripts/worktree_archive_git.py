@@ -48,15 +48,22 @@ def base_import_failure(error):
     stderr = stderr.lower()
     packing = 'pack-objects-died' if b'pack-objects died' in stderr else 'git-failed'
     detail = 'unclassified'
-    if b'promisor remote' in stderr and b'could not fetch' in stderr:
+    if ((b'promisor remote' in stderr and b'could not fetch' in stderr)
+            or b'missing promisor object' in stderr or b'missing promised object' in stderr):
         return MISSING_PROMISOR_BASE
-    for signatures, category in (
-        ((b'out of memory', b'malloc failed', b'cannot allocate memory'), 'allocation-failed'),
-        ((b'no space left on device',), 'storage-full'),
-        ((b'permission denied',), 'permission-denied'),
-        ((b'unable to create thread', b'cannot create thread'), 'thread-failed'),
+    # Ordered patterns keep resource failures ahead of missing-object fallbacks.
+    for pattern, category in (
+        (rb'out of memory|malloc failed|cannot allocate memory', 'allocation-failed'),
+        (rb'no space left on device', 'storage-full'),
+        (rb'permission denied', 'permission-denied'),
+        (rb'unable to create thread|cannot create thread', 'thread-failed'),
+        (rb'missing blob|missing tree|missing commit|missing object|'
+         rb'bad object|bad tree object|bad commit object', 'missing-object'),
+        (rb'not our ref', 'object-unavailable-or-denied'),
+        (rb'(?:unable to read|could not read) (?:sha1 file )?[0-9a-f]{40,64}\b', 'missing-object'),
+        (rb'did not send all necessary objects', 'transfer-failed'),
     ):
-        if any(signature in stderr for signature in signatures):
+        if re.search(pattern, stderr):
             detail = category
             break
     code = error.returncode if -255 <= error.returncode <= 255 else 'unknown'
@@ -78,7 +85,8 @@ def nested_base_import_failure(stderr):
         return final
     pattern = (r'producer:base-import-failed; stage=base-import; exit=(?:-?[0-9]{1,3}|unknown); '
                r'stderr=(?:pack-objects-died|git-failed)/'
-               r'(?:unclassified|allocation-failed|storage-full|permission-denied|thread-failed); '
+               r'(?:unclassified|missing-object|object-unavailable-or-denied|allocation-failed|'
+               r'storage-full|permission-denied|thread-failed|transfer-failed); '
                r'source and archive retained')
     return final if re.fullmatch(pattern, final) else None
 
@@ -125,7 +133,9 @@ def base_import_timeout():
 
 
 def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
-    environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
+    # Classifiers consume local Git diagnostics; remote servers keep their locale.
+    environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1",
+                       LC_ALL="C", LANGUAGE="C")
     for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
         environment.pop(name, None)

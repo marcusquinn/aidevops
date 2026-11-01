@@ -48,8 +48,24 @@ export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash,
   try {
     // Admission replay is idempotent, including a retry after a lost acknowledgement.
     result = parsePolicyPayload(runPolicyHelper(helperArgs, { stdio: ["ignore", "pipe", "pipe"] }));
-  } catch {
+  } catch (error) {
+    let reason;
+    try { reason = parsePolicyPayload(error.stdout?.toString()).reason; } catch { /* No safe payload. */ }
+    const inspectionCommand = 'python3 -E -s -B "$HOME/.aidevops/agents/worker-lifecycle/worker-registry.py" --state-dir <state-directory> status';
+    if (["schema-one-with-admission-state", "schema-one-with-generation-marker"].includes(reason)) {
+      throw new Error(`BLOCKED: ${reason}; conflicting schema-1 state is outside observe-only compatibility; no write authorized. Inspect read-only with ${inspectionCommand} and coordinate recovery with all clients. Do not reset, downgrade, migrate, or perform an uncoordinated upgrade`);
+    }
+    if (reason === "explicit-schema-upgrade-required") {
+      throw new Error(`BLOCKED: explicit-schema-upgrade-required; schema-1 observe-only compatibility requires an unmarked linked worktree and valid observation store. Inspect with ${inspectionCommand}; coordinate all older clients before any explicit schema upgrade. No production upgrade command is installed; never reset or downgrade live state`);
+    }
     throw new Error("BLOCKED: lifecycle owner admission is unavailable; no write authorized");
+  }
+  if (result.status === "coverage-gap" && result.reason === "schema-upgrade-required"
+      && result.cleanup_authorized === false) {
+    // Observation is not ownership. Independent command/canonical-write gates
+    // remain mandatory; the console router persists this diagnostic off-TUI.
+    console.error("[aidevops] [worker-lifecycle] coverage-gap: schema-upgrade-required; observe-only, no owner admitted or cleanup authorized");
+    return;
   }
   if (!["admitted", "excluded-unregistered", "not-applicable"].includes(result.status)) {
     throw new Error("BLOCKED: lifecycle owner admission was not confirmed");

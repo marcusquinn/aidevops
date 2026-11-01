@@ -20,7 +20,7 @@ from native_git import real_git
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "worker-lifecycle"))
 
-from worker_lifecycle.enrollment import _git_directory
+from worker_lifecycle.enrollment import GenerationEnrollment, _git_directory
 from worker_lifecycle.launch import initialize_or_open, require_unregistered
 from worker_lifecycle.process import ObservationUnavailable
 from worker_lifecycle.runtime import adapter_for, require_ready
@@ -88,8 +88,14 @@ def admit_targets(cwd, targets, pid, session_id):
         for root in sorted(roots):
             require_unregistered(state, root)
         return "excluded-unregistered"
-    require_ready(adapter_for(str(uuid4())))
     store = initialize_or_open(state)
+    enrollment = GenerationEnrollment(store)
+    # Validate every target before accepting observation; no native owner is
+    # required or admitted for this supported schema-1 compatibility path.
+    gaps = [enrollment.has_schema_one_gap(root) for root in sorted(roots)]
+    if all(gaps):
+        return "coverage-gap"
+    require_ready(adapter_for(str(uuid4())))
     for root in sorted(roots):
         admit_session(store, root, pid, session_id)
     return "admitted"
@@ -113,9 +119,19 @@ def main():
         status = admit_targets(args.cwd, targets, args.runtime_pid, args.session_id)
     except (ValueError, OSError, RuntimeError, sqlite3.Error,
             subprocess.SubprocessError, ObservationUnavailable) as error:
-        print(json.dumps({"status": "unavailable", "reason": type(error).__name__}))
+        # Expose safe protocol reasons, never host paths or SQL exception text.
+        safe_reasons = {
+            "explicit-schema-upgrade-required",
+            "schema-one-with-admission-state",
+            "schema-one-with-generation-marker",
+        }
+        reason = str(error) if str(error) in safe_reasons else type(error).__name__
+        print(json.dumps({"status": "unavailable", "reason": reason}))
         return 75
-    print(json.dumps({"status": status, "cleanup_authorized": False}))
+    result = {"status": status, "cleanup_authorized": False}
+    if status == "coverage-gap":
+        result["reason"] = "schema-upgrade-required"
+    print(json.dumps(result))
     return 0
 
 

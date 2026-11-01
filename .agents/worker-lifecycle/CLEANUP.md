@@ -2,12 +2,11 @@
 
 ## Status and authority
 
-One policy applies to Pulse, interactive sessions and other supported launchers.
-Launchers supply registration facts; they do not select different safety rules.
-The new registry and native OS adapter are the only lifecycle evidence sources.
-Legacy registries, dispatch ledgers and old owner statuses cannot fill evidence
-gaps or authorize an operation. Git and the filesystem supply content evidence,
-not process liveness.
+Pulse, interactive sessions and other supported launchers share one policy:
+launchers supply registration facts, not different safety rules. Only the new
+registry and native OS adapter supply lifecycle evidence. Legacy registries,
+dispatch ledgers and old owner statuses cannot fill gaps or authorize operations.
+Git and the filesystem supply content evidence, not process liveness.
 
 The managed launch contract in [DESIGN.md](DESIGN.md#managed-launch-contract)
 defines ownership coverage. Independent worktree writers must register separate
@@ -16,28 +15,55 @@ child commands remain the launching runtime's responsibility. Lifecycle does not
 discover or control process trees; an unregistered independent writer is outside
 the contract, not an owner inferred from PID, PPID or cwd.
 
-`worker_lifecycle/cleanup_policy.py` implements a **report-only decision table**.
-Its assertions are inputs for future verified evidence collectors, not CLI flags
-or proof objects. It performs no I/O and always reports `cleanup_authorized=False`.
-Neither a production evidence collector nor a destructive executor is connected
-to this policy. Tests of the decision table are not archive/restore validation.
+`worker_lifecycle/cleanup_policy.py` is a **report-only decision table**: no I/O,
+always `cleanup_authorized=False`. Its assertions are inputs for future verified
+collectors, not CLI flags or proof objects. No production collector or destructive
+executor is connected to this policy; its tests do not validate archive/restore.
 
-`directory_handle.py` provides an operation-local, read-only directory check. It
-holds an open descriptor and compares device/inode identity at the canonical path.
-Observed replacement, loss of access, process change or closure invalidates the
-handle. It is not persistent generation identity, a content snapshot, a Git
-identity check or an admission lock. Contents can change while the directory still
-matches. A positive check cannot eliminate a race with a later pathname operation.
-After a crash/restart, evidence must be established anew; saved device/inode values
-alone are not sufficient. Retained registry reports qualify these tests on Linux
-and macOS Intel for their recorded artifact and environments.
+`directory_handle.py` holds a read-only descriptor and compares device/inode identity
+at the canonical path for one operation. Observed replacement, lost access, process
+change or closure invalidates it. It is not persistent generation identity, a snapshot,
+a Git identity check or an admission lock: contents can change despite a match,
+and a positive check cannot prevent a later pathname race. Re-establish evidence
+after crash/restart; saved device/inode values alone are insufficient. Retained
+registry reports qualify these tests only for their recorded Linux/macOS Intel
+artifacts and environments.
 
-Default observe-only launch bindings use a per-attempt UUID, not a verified physical worktree
-generation. Observation failure deliberately permits the original command to
-execute. Consequently these bindings cannot supply `generation_verified`,
-`ownership_complete` or `admission_closed` to the cleanup policy. A later active
-admission protocol must deny managed launches when admission is closed/unavailable,
-without silently changing the existing observe-only launch contract.
+Default observe-only bindings use per-attempt UUIDs, not verified physical worktree
+generations. Enrollment lookup must first confirm an unregistered, unmarked path;
+lookup failures deny execution. If the subsequent `record()` call fails, the launcher
+reports `observation-gap` and deliberately executes the original command.
+They cannot supply `generation_verified`, `ownership_complete` or `admission_closed`.
+A later active admission protocol must deny managed launches on closed/unavailable
+admission without silently changing this observe-only contract.
+
+## Simple algorithm
+
+1. Verify the physical worktree generation and complete ownership coverage.
+   Missing registration or path reuse means hold.
+2. Require every admitted run to be ended. Independently registered jobs remain
+   owners after launcher exit; shared runtimes also need explicit session-completion
+   semantics, not just PID polling. Close admission only if the exact nonempty run
+   set remains ended in the admission transaction. A racing new owner means retry,
+   not closure over live work.
+3. Inventory all results. Incomplete inventory means hold, not an empty worktree.
+4. Propose archive for results needing preservation, removal for verified
+   preservation, and hold for unknown preservation.
+5. A future executor must revalidate evidence and perform the protected operation;
+   a report is never a deletion capability.
+
+| Evidence | Report |
+|----------|--------|
+| Unknown generation, uncovered owner, open admission | Hold |
+| Any alive/unknown run, no recorded runs, possible remaining writers | Hold |
+| Failed or incomplete content inventory | Hold |
+| All safety preconditions proved; unique local results | Archive candidate |
+| All safety preconditions proved; results demonstrably preserved | Remove candidate |
+
+`ended` means process termination, not task success. No push/PR is a normal
+preservation case: local work may be the only copy. Nor does a push/PR prove the
+latest work is preserved. With squash merges, commit ancestry alone cannot prove
+work was lost or remains unpublished.
 
 ## Transactional admission core
 
@@ -61,16 +87,15 @@ It shares the registry's SQLite transaction and journal, not a second database:
   **not permission for a second exec**. Lost acknowledgements need original-run
   recovery. Replaying an old open event cannot reopen closed admission.
 
-Schema 2 supports this API; schema 1 needs the explicit transactional upgrade
-described in [REGISTRY.md](REGISTRY.md). No production migration was performed.
-The explicit launcher mode and automatically resolved enrolled generations use
-this API; unmanaged observe-only launches still bypass it. It is not system-wide exclusion, physical generation
-evidence or cleanup authority. Production launcher coverage, registered-run completion,
-restart recovery and closing-versus-exec integration remain to be qualified.
-Portable reports cover their recorded source only. The retained Linux and macOS
-Intel registry reports include admission, directory-handle checks and disposable
-archive/retirement execution. They do not qualify production AI launchers,
-unregistered writers or production rollout.
+Schema 2 supports this API; schema 1 needs the explicit transactional upgrade in
+[REGISTRY.md](REGISTRY.md). No production migration was performed. Explicit launcher
+mode and automatically resolved enrolled generations use the API; unmanaged
+observe-only launches bypass it. It supplies neither system-wide exclusion,
+physical generation evidence nor cleanup authority. Production launcher coverage,
+registered-run completion, restart recovery and closing-versus-exec integration
+remain unqualified. Portable reports cover their recorded source only: retained
+Linux/macOS Intel reports include admission, directory-handle checks and disposable
+archive/retirement, not production AI launchers, unregistered writers or rollout.
 
 ### Explicit admitted launch
 
@@ -173,11 +198,13 @@ Scheduled Pulse cleanup can retire registered generations that satisfy the regis
 `worktree_create_registered` invokes `worker-registry.py enroll --initialize --allow-schema-1-observation`
 after creation and retains the tree if enrollment fails. Private/disabled
 observation is excluded. An absent store can be initialized; schema 1 is never
-implicitly migrated. With this compatibility flag, an un-enrolled schema-1 tree
-continues observe-only with a `coverage-gap: schema-upgrade-required` diagnostic;
-it has no admitted generation. Existing markers or admission tables in schema 1
-are contradictions and cause refusal. Ordinary `enroll` remains schema-2-only.
-Coordinate migration before requiring admission for these installations.
+implicitly migrated. With this flag, and in interactive session admission and
+hooks (GH#36349), an un-enrolled schema-1 tree stays observe-only: a
+`coverage-gap: schema-upgrade-required` diagnostic, no admitted generation, no
+cleanup authority. OpenCode logs this gap for Bash, explicit `git -C`, bounded
+commands and Write/Edit inside or outside the worktree base; command/canonical-write
+policy still applies. Schema-1 markers or admission tables refuse; ordinary `enroll`
+stays schema-2-only. Inspection and coordinated recovery: [REGISTRY.md](REGISTRY.md).
 
 `enroll --path PATH` publishes a private `aidevops-generation.json` in the Git
 administrative directory, not among worktree files. It contains a UUID and the
@@ -206,7 +233,8 @@ does not itself authorize deletion. This is not a PID-only liveness test or a
 legacy ownership lookup.
 Independent launches replace inherited creator identity; excluded launches clear
 it. Partial declarations fail without removing the tree. Missing declarations
-only enroll the generation and do not establish writer coverage. Callers with
+bind the creating shell for a fresh path; later writers still need their own
+admission. This does not establish coverage beyond that creator. Callers with
 pre-reserved directories retain their existing creation path but do not acquire
 controlled-creation provenance. Failed construction retains partial results;
 repeating it cannot adopt an existing directory, even an empty one.
@@ -226,7 +254,7 @@ These verified integration points (paths relative to `scripts/`) are not an exha
 
 | Boundary | Existing entry points | Required new-registry contract |
 |----------|-----------------------|--------------------------------|
-| Native creation | `shared-worktree-create.sh:worktree_create_registered` | Enroll and bind the runtime-declared creator when available; preserve the tree on failed enrollment/admission |
+| Native creation | `shared-worktree-create.sh:worktree_create_registered` | Bind the declared runtime, or the actual creating shell; preserve partial results on failure |
 | Existing-tree adoption | `worktree-helper-add.sh`, `dispatch-single-issue-helper.sh`, `pulse-dispatch-worker-launch.sh` | Verify the generation independently; never translate legacy ownership into proof |
 | Runtime launch | `headless-runtime-invoke.sh`, `sandbox-exec-helper.sh` | Supply generation and attempt IDs from the new controller, with per-attempt retry semantics |
 | Other creators | Release/recovery, scratch, workflow-sync and archive restore callers of `worktree_create_registered` | Cover their actual writer lifetime, not merely the short-lived creation subprocess |
@@ -237,35 +265,7 @@ Implement enrollment and identity propagation before switching cleanup consumers
 pre-creation lock or a persistent physical identity check. Do not call it on every
 launch with a fresh UUID, infer a generation from path equality, or automatically
 reopen a closed path. Recovery of interrupted creation and intentional path reuse
-need explicit contracts before that boundary can be considered covered.
-
-## Simple algorithm
-
-1. Verify the physical worktree generation and establish
-   complete ownership coverage. Missing registration or a reused path means hold.
-2. Require every admitted run to be ended under the managed launch contract.
-   Independently registered jobs remain owners after their launcher exits. A shared
-   runtime also needs explicit session-completion semantics, not just PID polling.
-   Close admission only if that exact nonempty run set is still ended in the
-   admission transaction. A racing new owner means retry, not closure over live work.
-3. Inventory all results. Incomplete inventory means hold, not an empty worktree.
-4. If results need preservation, propose an archive. If preservation is already
-   verified, propose removal. Unknown preservation means hold.
-5. A future executor must revalidate evidence and perform the protected operation;
-   a report is never a deletion capability.
-
-| Evidence | Report |
-|----------|--------|
-| Unknown generation, uncovered owner, open admission | Hold |
-| Any alive/unknown run, no recorded runs, possible remaining writers | Hold |
-| Failed or incomplete content inventory | Hold |
-| All safety preconditions proved; unique local results | Archive candidate |
-| All safety preconditions proved; results demonstrably preserved | Remove candidate |
-
-`ended` records process termination, not task success. No push and no PR is a
-normal preservation case: local work may be the only copy. A PR or push is also
-not sufficient evidence that the latest work is preserved. Squash merges mean
-that commit ancestry alone cannot prove work was lost or remains unpublished.
+need explicit contracts; terminal absence reconciliation is described in [ABSENCE.md](ABSENCE.md).
 
 ## Preparation and WIP preservation commands
 
@@ -281,27 +281,28 @@ The registry CLI provides two non-destructive operations:
   Successful closure is permanent. `registered-runs-ended` describes registered runs,
   not coverage of unregistered writers or permission to remove anything.
 - `preserve-wip --path PATH --repo OWNER/REPO --base-branch BRANCH --output-root DIR`
-  performs preparation, creates a WIP archive, restores an isolated verification
-  copy and compares its fingerprint with the source. `DIR` must already exist,
-  be canonical, private and outside the source worktree and its administration
+  performs preparation, creates a WIP archive and verifies its captured payloads
+  against the source fingerprint and retained base. `DIR` must already exist,
+  be canonical, owned and outside the source worktree and its administration
   directory. Missing evidence or failed verification leaves the source intact.
 
-Both commands require the usual `--state-dir` before the subcommand. Neither
-command initializes/migrates state, reopens admission, removes a worktree or
-consults legacy ownership. A failure after closure deliberately leaves the gate
-closed. Do not use these commands to inspect a worktree intended for more launches.
+`archive_path.validate_archive_path` is shared by preservation, retirement and both cleanup passes; it checks every component without following symlinks or changing permissions.
+The root and descendant directories must belong to the current user and deny group/other writes. Root/intermediate mode 0755 is allowed; individual archives must deny all group/other access.
+Ancestors must belong to root/current user and deny external writes, except sticky ancestors such as system temporary directories. Same-UID processes and administrators remain trusted.
+These POSIX ownership/mode-bit checks do not evaluate extended macOS/NFSv4 ACLs; effective access must match the mode-bit policy for these guarantees to hold.
+The archive producer remains unchanged. Unsafe paths prevent source retirement rather than triggering permission repair.
 
-Successful preservation records a receipt in the new registry. Repeating the
-same generation/content/destination request rechecks its existing archive rather
-than treating the old receipt as current proof. The receipt and result retain
+Both require `--state-dir` before the subcommand. Neither initializes/migrates state,
+reopens admission, removes worktrees nor consults legacy ownership. Closure survives
+failure: do not use them on trees needing more launches. Preservation records a
+registry receipt; repeating the same generation/content/destination rechecks the
+archive, since old receipts are not current proof. Results retain
 `cleanup_authorized=false` and `common_repository_required=true`.
 
-Each archive pins its base commit under `refs/aidevops/wip-base/OPERATION_ID`.
-This keeps prerequisites reachable through branch deletion and ordinary Git GC;
-it does not protect against loss of the common repository. These pins must remain
-while dependent archives are retained. Automatic archive/pin retirement is not
-implemented by these commands. Git/filesystem work runs outside SQLite write
-transactions; only the verified receipt is published transactionally.
+Archives pin `refs/aidevops/wip-base/OPERATION_ID` through branch deletion and Git GC,
+but still depend on the common repository. Retain pins while dependent archives exist;
+these commands do not retire archives/pins automatically. Git/filesystem work stays
+outside SQLite write transactions; only verified receipts are published transactionally.
 
 ## Explicit guarded retirement
 
@@ -312,52 +313,49 @@ a **specified generation**, not whichever resource currently occupies a pathname
 python3 -E -s -B /absolute/path/to/worker-registry.py --state-dir /absolute/private/state retire-worktree --path /absolute/canonical/worktree --generation-id GENERATION_UUID --repo OWNER/REPO --base-branch main --output-root /absolute/private/archives
 ```
 
-This command is destructive and is not scheduled automatically. It requires a
-controlled-creation receipt, ended admitted owners, closed admission and verified
-Git-only preservation. Existing enrollment without creation provenance is not
-sufficient. No legacy ownership data is consulted and no branches are deleted.
+This unscheduled destructive command requires controlled creation, ended admitted
+owners, closed admission and verified Git-only preservation; enrollment alone is
+insufficient. It neither consults legacy ownership nor deletes branches.
 
-The executor journals its intent in the same SQLite registry, then uses native
-`git worktree move` to claim the tree inside a private sibling directory. Git
-metadata and the saved content snapshot must match before native removal of that
-private path. The original public name is never a removal target. A per-generation
-OS lock serializes controllers; filesystem work does not hold a SQLite writer
-transaction. The archive and its pinned base remain after removal.
+Configured `cleanup`/`cleanup-worktree` additionally recover missing creation receipts
+only after all bound runs are admitted and ended, and admission is closed.
+`worktree-recovery-authorized` binds the physical directory, Git administration and
+exact run set; it never fabricates `created-worktree`. The same archive, source-recheck,
+relocation and retry protections apply. Empty/observation-only registrations,
+live/unknown runs and invalid existing creation receipts remain held.
 
-Explicitly launched helpers inherit the lock descriptor. If the controller dies
-while its helper is still running, another controller cannot acquire the lock
-until that helper closes its descriptor. This uses kernel descriptor lifetime,
+The executor journals intent, then uses native `git worktree move` to claim a private
+sibling path. Metadata and content must match before its native removal; the public
+name is never a removal target. Per-generation OS locks serialize controllers without
+holding SQLite writer transactions across filesystem work. Archives/base pins remain.
+
+Explicit helpers inherit the lock descriptor. After controller death, another controller
+cannot acquire it until surviving helpers close it. This uses kernel descriptor lifetime,
 not descendant discovery, PID signalling or cwd inspection.
 
-Repeat the same command and generation ID after interruption. Completed relocation
-can resume even if another directory now occupies the public name. Completed
-removal can be acknowledged after a lost acknowledgement. Completion releases the
-path reservation, permitting a new controlled generation at that name; a retry
-for the old UUID never targets the new generation.
+Retry the same command/generation after interruption. Relocation resumes despite public-name
+reuse; completed removal can be acknowledged after a lost acknowledgement. Completion
+releases the path reservation; retries of the old UUID never target a new generation.
 
-An incomplete Git metadata update, changed archive, changed private tree, partial
-removal or uncertain outcome stops rather than guessing. The journal,
-archive and surviving private data remain available for recovery. The executor
-does not run repository-wide `git worktree repair` or prune unrelated metadata.
-Git locks remain effective: relocation is not forced and removal uses only the
-single force needed for archived dirty state. Ignored files are deliberately
-discarded with the worktree, never added to the archive.
+Incomplete Git updates, changed archives/private trees, partial removal or uncertain
+outcomes stop with journal, archive and surviving data retained. No repository-wide
+repair or unrelated metadata pruning runs. Git locks remain effective: relocation is
+not forced; removal uses only the single force needed for archived dirty state.
+Ignored files are deliberately discarded with the worktree, never archived.
 
-`tests/test_retirement.py` uses real Git and the CLI in disposable repositories,
-including interruption boundaries and public-name reuse. The portable registry
-validator includes these checks. Only reports listing them qualify that artifact's
-fixture behavior; they do not qualify production scheduling or existing worktrees.
+`tests/test_retirement.py` exercises real Git/CLI interruption and name reuse in disposable
+repositories. Portable reports qualify only their listed fixture checks, not production
+scheduling or existing worktrees.
 
 ## Archive payload qualification
 
-`tests/test_preservation.py` exercises the existing archive payload engine
-(`scripts/worktree-archive-helper.sh`) and its new registry orchestration,
-not its legacy lifecycle controllers.
-Fixtures use private temporary Git repositories and an invalid legacy-state
-sentinel. Restore uses `--verification-copy`, avoiding registered restoration.
-No production registry, archive or worktree is touched, and no cleanup eligibility
-is derived from the engine. The portable registry validator includes these
-Git/Bash tests and their actual source dependencies.
+`tests/test_preservation.py` exercises the archive payload engine
+(`scripts/worktree-archive-helper.sh`) and new registry orchestration, not legacy
+controllers. Fixtures use private temporary Git repositories, an invalid legacy-state
+sentinel and `--verification-copy` restore (no registered restoration). They touch no
+production registry, archive or worktree and derive no cleanup eligibility from the
+engine. The portable registry validator includes these Git/Bash tests and their
+actual source dependencies.
 
 Linux checks cover unpublished commits, independent staged/unstaged changes,
 binary edits, new files with unusual names, symlinks, corrupt payload rejection
@@ -374,14 +372,12 @@ preservation, and cannot substitute for current preservation evidence.
 The portable test crosses creation and restoration masks `022`, `077` and `002`,
 including dangling links and ordinary untracked files.
 
-Ignored files are deliberately excluded from WIP archives. The corresponding test
-verifies this policy, not a preservation defect or a requirement to expand capture.
-A WIP archive is not a full backup of the local working environment.
-
-The compact archive depends on retained base Git objects; the round-trip test is
-not evidence of recovery after loss of the common repository. Preservation evidence
-must describe the WIP payload and its actual Git-object dependencies, not claim a
-self-contained backup or preservation of excluded data.
+Ignored files are deliberately excluded; the corresponding test verifies policy,
+not a preservation defect or a requirement to expand capture. A WIP archive is not
+a full environment backup. It depends on retained base Git objects: round-trip tests
+do not prove recovery after common-repository loss. Preservation evidence must name
+the WIP payload and actual Git-object dependencies, not claim a self-contained
+backup or preservation of excluded data.
 
 ## Preservation policy and executor invariants
 
@@ -390,11 +386,10 @@ state, unstaged modifications, deletions, non-ignored untracked files,
 symlinks and executable modes. Submodules, external dependencies and unsupported
 filesystem features must be handled explicitly or block the operation.
 
-Honor the existing Git ignore policy. Do not add ignored files, even when they
-contain local configuration or databases: sensitive data must not unexpectedly
-enter a WIP archive. Do not introduce filename exceptions or content-based guesses
-to override that policy. Exclusion alone is not a secret scanner; archives remain
-local and private, with no automatic public push, PR or upload.
+Honor Git ignore policy, including local configuration/databases: no filename
+exceptions or content-based guesses may add ignored files and unexpectedly archive
+sensitive data. Exclusion is not a secret scanner; archives stay local/private,
+with no automatic public push, PR or upload.
 
 The executor must:
 
@@ -404,7 +399,11 @@ The executor must:
   uncooperative writers; full coverage and an enforceable no-writers contract are
   prerequisites. Unregistered/ad-hoc access remains outside that guarantee.
 - Write the archive to a private temporary destination; check space and errors.
-  Publish a durable receipt only after integrity and isolated restoration checks.
+  Publish a durable receipt only after artifact integrity, unique-object coverage
+  and captured-state checks. Cleanup uses `verify-local`: an isolated index and
+  the retained common base, without a full checkout or common-repository `fsck`.
+  Full restoration remains a format/recovery test; repository-wide integrity
+  auditing is a separate operation, not a per-worktree cleanup prerequisite.
 - Revalidate generation and content before removal. Content changes, path reuse,
   lost exclusion or incomplete evidence invalidate the plan.
 - Keep the original on archive, verification, I/O or disk-full failure. Never
@@ -433,9 +432,10 @@ or `local_only: true` are excluded. Missing or detached canonical checkouts do n
 establish scope. The archive receives the canonical checkout's actual branch name,
 not a guessed default or a commit ID passed as a branch name.
 
-Only controlled-creation receipts permit calling the generation-bound retirement
-executor. Enrollment alone remains a coverage gap. Live or uncertain owners hold
-the source. Retries use the recorded retirement plan, including its archive root,
+Controlled-creation receipts use normal retirement. A missing creation receipt can
+use the explicit recovery-evidence path described above when all bound owners are
+admitted and ended. Enrollment alone remains a coverage gap; live or uncertain
+owners hold the source. Retries use the recorded plan, including its archive root,
 and do not redirect an interrupted operation to a replacement at the public path.
 A private cursor rotates candidates across bounded passes; it is not deletion
 authority. A pass lock prevents overlapping collectors.
@@ -482,12 +482,11 @@ inventory of arbitrary Git invocations, or production rollout qualification.
 
 ## Integration and replacement
 
-Ordinary OpenCode worker launch hooks register automatically, and Pulse invokes
-bounded reconciliation. That does not establish coverage for every interactive
-session, retry path, private workload or alternate runtime. Maintain an explicit
-coverage matrix before enabling destructive behavior. Multiple logical sessions
-in one process need distinct run IDs; shared process liveness cannot prove each
-logical session is active.
+Ordinary OpenCode worker hooks register automatically; Pulse invokes bounded
+reconciliation. This does not cover every interactive session, retry path, private
+workload or alternate runtime. Maintain an explicit coverage matrix before enabling
+destructive behavior. Logical sessions sharing a process need distinct run IDs;
+shared process liveness cannot prove each session active.
 
 Unregistered existing worktrees stay unresolved. A future adoption procedure must
 establish fresh generation and exclusive admission evidence; it must not import

@@ -211,6 +211,13 @@ printf '%s %s %s\n' "$CLEANUP_WORKTREES_REMOVED_COUNT" \
         self.assertEqual(len(list(output.rglob("manifest.json"))), 1)
         self.assertFalse((self.root / "legacy-called").exists())
 
+        invoke(creator)
+        invoke(["git", "-C", str(repo), "worktree", "remove", "--force", str(target)])
+        self.assertEqual(invoke(command).stdout.strip(), "0 0 0")
+        log = (self.root / "pulse.log").read_text()
+        self.assertIn("archive_failed=0 reconciled=1", log)
+        self.assertIn("source-absent-reconciled", log)
+
         compatibility = r'''
 source "$1/audit-worktree-removal-helper.sh"
 worktree_managed_require_removal_proof() { return 0; }

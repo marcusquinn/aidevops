@@ -25,8 +25,9 @@ def check_session_owner(resolve_helper, run_helper, paths, session_id, command="
             arguments.extend(["--command", command])
         try:
             returncode, payload = run_helper(helper, arguments, isolate_python=True)
+            # coverage-gap: valid schema-1 store, observe-only (GH#36349).
             if returncode == 0 and payload.get("status") in {
-                "admitted", "excluded-unregistered", "not-applicable",
+                "admitted", "coverage-gap", "excluded-unregistered", "not-applicable",
             }:
                 return None
         except (OSError, subprocess.SubprocessError, ValueError, TypeError):

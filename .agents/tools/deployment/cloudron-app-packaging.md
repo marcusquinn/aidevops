@@ -42,7 +42,7 @@ tools:
 **CLI Workflow**:
 
 ```bash
-npm install -g cloudron
+npm install -g cloudron   # once installed, aidevops update-tools and auto-update keep it current
 cloudron login my.cloudron.example && cloudron init
 cloudron build && cloudron install --location testapp
 cloudron build && cloudron update --app testapp  # iterate
@@ -392,6 +392,14 @@ instead of merging. This places a PR hold and creates a deduplicated
 `Release <package> v<version>` issue with `release-approval-required` and
 `no-auto-dispatch`. The issue records the exact head, package/upstream versions,
 changelog and check evidence. New requests supersede older unsigned requests.
+If the request fails, leave **both** `release-approval-required` and
+`hold-for-review` on the PR, never a bare `hold-for-review`. Exit code 4 means
+the API failed before the helper could establish that state; after API recovery,
+apply exactly those two labels using the command in its error message. Do not
+remove an unrelated bare hold to force a request through. Routine `r924` retries
+labelled interrupted requests without an open approval issue, including PRs
+without `origin:worker`, once checks pass. An existing request for a different
+head is retained for explicit re-approval, never silently rewritten.
 
 The maintainer's single action is:
 

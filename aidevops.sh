@@ -279,12 +279,39 @@ _run_update_setup_transaction() {
 	local output_mode="$1"
 	local expected_sha="$2"
 	local setup_exit=0
-	_run_update_setup "$output_mode" || setup_exit=$?
+	local rollback_receipt=""
+	rollback_receipt=$(mktemp) || return 1
+	AIDEVOPS_UPDATE_ROLLBACK_RECEIPT="$rollback_receipt" _run_update_setup "$output_mode" || setup_exit=$?
 	if [[ "$setup_exit" -ne 0 ]]; then
+		rm -f "$rollback_receipt"
 		print_error "Agent deployment failed: setup exited with code $setup_exit"
 		return 1
 	fi
-	_update_verify_deployment_state "$expected_sha" || return 1
+	if ! _update_verify_deployment_state "$expected_sha"; then
+		# Load deployment helpers only in the recovery subprocess, keeping the
+		# CLI's already-sourced runtime and global state unchanged.
+		if [[ -s "$rollback_receipt" ]]; then
+			(
+				if ! declare -F _runtime_bundle_rollback >/dev/null; then
+					# shellcheck source=.agents/scripts/setup/modules/agent-deploy.sh
+					source "$INSTALL_DIR/.agents/scripts/setup/modules/agent-deploy.sh" || exit 1
+				fi
+				if ! declare -F aidevops_runtime_transition_lock_acquire >/dev/null; then
+					# shellcheck source=.agents/scripts/setup/modules/agent-runtime.sh
+					source "$INSTALL_DIR/.agents/scripts/setup/modules/agent-runtime.sh" || exit 1
+				fi
+				{
+					IFS= read -r _AIDEVOPS_ACTIVE_BUNDLE_ROOT &&
+						IFS= read -r _AIDEVOPS_PREVIOUS_BUNDLE_ROOT &&
+						IFS= read -r _AIDEVOPS_PREVIOUS_DEPLOYED_SHA
+				} <"$rollback_receipt" || exit 1
+				_runtime_bundle_rollback "$_AIDEVOPS_REAL_HOME/.aidevops/agents"
+			) || print_error "Failed to roll back the runtime bundle after convergence failure"
+		fi
+		rm -f "$rollback_receipt"
+		return 1
+	fi
+	rm -f "$rollback_receipt"
 	_update_adopt_deployed_version
 	return 0
 }
@@ -460,7 +487,7 @@ _update_already_current() {
 	deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
 	[[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]] || return 0
 	if _update_repo_verify_files_changed "$deployed_sha" "$local_hash"; then _AIDEVOPS_UPDATE_RECONCILE_REPO_VERIFY=true; fi
-	if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- .agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
+	if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- .agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ .agents/worker-lifecycle/ setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep . >/dev/null; then
 		print_warning "Deployed scripts drifted (${deployed_sha:0:7}→${local_hash:0:7})"
 		print_info "Re-running incremental setup to deploy latest scripts..."
 		_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1

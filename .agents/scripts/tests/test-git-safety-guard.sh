@@ -556,6 +556,31 @@ test_worker_network_policy() {
 	return 0
 }
 
+test_controlled_worktree_creation() {
+	local command json output headless
+	for headless in false true; do
+		for command in 'git worktree add ../example' 'git -C . worktree add -b feature/example ../example'; do
+			json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$command")
+			output=$(run_hook "$TEST_ROOT" "$json" "AIDEVOPS_HEADLESS=$headless") || true
+			if hook_is_deny "$output" "git.worktree-controlled-creation-required"; then
+				print_result "raw worktree creation denied (headless=$headless): $command" 0
+			else
+				print_result "raw worktree creation denied (headless=$headless): $command" 1 "$output"
+			fi
+		done
+	done
+	for command in 'git worktree list --porcelain' 'worktree-helper.sh add feature/example' 'aidevops worktree add feature/example'; do
+		json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$command")
+		output=$(run_hook "$TEST_ROOT" "$json") || true
+		if [[ -z "$output" ]]; then
+			print_result "controlled creation or listing allowed: $command" 0
+		else
+			print_result "controlled creation or listing allowed: $command" 1 "$output"
+		fi
+	done
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -574,6 +599,7 @@ main() {
 	test_no_origin_head_falls_back_to_main
 	test_canonical_guard_skip_env_var
 	test_worker_network_policy
+	test_controlled_worktree_creation
 
 	teardown_test_repo
 

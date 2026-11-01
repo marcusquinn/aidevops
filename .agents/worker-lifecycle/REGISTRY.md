@@ -54,6 +54,32 @@ claims on the same generation are reported as conflicts, never forcibly resolved
 An unknown observation does not end a run. Shared-runtime session completion needs
 an additional session protocol: process survival alone cannot settle it.
 
+## Filesystem validation and diagnostics
+
+`worker_lifecycle/filesystem.py` provides read-only checks shared by registry and
+cleanup code; it never creates paths or changes permissions. `checked_directory()`
+walks the directory chain using descriptor-relative, no-follow opens, rejecting
+untrusted ownership and externally writable components. Trusted sticky ancestors
+are allowed above the protected archive root, not at or below it.
+
+`validate_private_path()` checks that chain and requires the final object to be
+the expected type, owned by the current user, with no group/other permissions.
+Ancestors need integrity, not 0700: an owned 0755 parent is valid. Compared with
+leaf-only validation, unsafe ancestors now also cause a refusal. Explicit registry
+initialization checks the parent chain before creating state.
+
+`validate_archive_path()` keeps a separate policy: owned 0755 archive roots and
+intermediate directories are valid; the final archive directory remains private.
+The archive producer and SQLite schema are unchanged by these shared checks.
+
+Filesystem refusals retain machine-readable `reason` codes and add
+`filesystem_path`, optionally `filesystem_violation` and numeric `errno`, to local
+CLI JSON. Cleanup's source-worktree `path` is not overwritten. Diagnostics do not
+serialize arbitrary exception text, subprocess arguments or output. Private-path
+absence remains `FileNotFoundError` for callers that initialize missing state.
+These POSIX mode-bit checks trust the same UID and administrators; they do not
+evaluate extended ACLs or sandbox hostile same-user processes.
+
 ## Persistence and recovery
 
 - Initialization exclusively creates a 0700 directory and 0600 database. Existing
@@ -87,11 +113,54 @@ New stores use schema 2. Observation still accepts schema 1 without upgrading it
 other versions are rejected. The explicit `upgrade_schema()` API transactionally
 adds the admission table to schema 1 and updates the version, retaining existing
 events, runs and bindings. It never adopts historical bindings as admission proof.
-Repeated upgrades are no-ops. No automatic migration or production upgrade command
-is installed. Back up real state and coordinate clients before a future upgrade:
-older schema-1-only code will reject schema 2. Do not reset or downgrade live state.
+After updating aidevops, the first Pulse reconciliation or registry CLI enrollment,
+creation or session admission automatically backs up and upgrades schema 1 before
+continuing. Both current schemas are supported by the updated clients. This is
+an additive migration: live runs need not drain, and their records remain intact.
+Repeated upgrades are no-ops. Older schema-1-only clients reject schema 2; do not
+roll back to those clients or reset/downgrade live state.
+Before that upgrade, OpenCode tool-owner checks retain their validated schema-1
+observe-only compatibility path: unmarked linked worktrees report
+`coverage-gap: schema-upgrade-required` without admission, enrollment or migration.
+This applies to Bash (including explicit `git -C` targets), bounded commands and
+direct Write/Edit, independent of the configured worktree base. Canonical-write
+policy still applies. Use
+`python3 -E -s -B "$HOME/.aidevops/agents/worker-lifecycle/worker-registry.py" --state-dir <state-directory> status`
+for read-only inspection, replacing `<state-directory>` with the quoted absolute
+state path; no upgrade is required for this compatibility path.
+Schema-1 generation markers or admission state remain conflicting-state refusals;
+coordinate recovery of conflicting state with all clients, without reset or downgrade.
 Event envelope schema 1 is separate and unchanged. Admission requirements and
 current integration limitations are documented in [CLEANUP.md](CLEANUP.md).
+
+### Automatic and manual schema upgrade
+
+`status` is read-only and reports `schema_version` and `upgrade_required`.
+The same upgrade can be requested explicitly from the installed `worker-lifecycle/`
+package, without waiting for Pulse:
+
+```bash
+python3 -E -s -B -m worker_lifecycle.registry --state-dir /absolute/private-state upgrade
+```
+
+An optional `--backup-dir /absolute/private-parent/new-backup` selects a new backup
+directory. Otherwise a unique `schema-1-backup-UUID` directory is created inside
+the selected registry directory, with mode 0700 and a 0600 `registry.sqlite3`.
+SQLite's backup API includes committed WAL data. Integrity, foreign keys, schema
+and installation identity are checked and the standalone backup is synced before
+migration. One writer lock covers backup and migration, so competing writers cannot
+slip records between them. Concurrent upgraders recheck the schema under that lock;
+only the winning upgrader creates a backup. Lock contention can refuse an invocation
+and is retried by a later ordinary Pulse tick or command.
+
+Backup/migration failure refuses the requested operation and retains schema 1;
+partial backup artifacts are retained for investigation, never overwritten. A
+process interrupted after commit may already have schema 2; inspect `status` and
+retry safely. Backups are evidence, not permission to restore an old database over
+new writes. They are not automatically deleted. Pulse creates no absent store.
+Previously unenrolled worktrees are not adopted by migration, and historical
+bindings do not grant admission or cleanup authority. Only subsequent normal
+enrollment establishes a generation under the existing identity checks.
 
 Generation marker format 2 records the directory inodes alongside canonical paths,
 installation and generation UUIDs. Device numbers may change between mounts and

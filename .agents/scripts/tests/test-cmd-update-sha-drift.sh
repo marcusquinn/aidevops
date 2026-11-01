@@ -212,17 +212,24 @@ printf '#!/usr/bin/env bash\necho aidevops v2\n' >"$SANDBOX_REPO/aidevops.sh"
 /usr/bin/git -C "$SANDBOX_REPO" commit -qm "update aidevops.sh" 2>/dev/null
 HEAD_WITH_AIDEVOPS_DRIFT_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
 
+# GH#36372: equal-version runtime module drift must not be mistaken for docs.
+mkdir -p "$SANDBOX_REPO/.agents/worker-lifecycle"
+printf 'SCHEMA_VERSION = 2\n' >"$SANDBOX_REPO/.agents/worker-lifecycle/registry.py"
+/usr/bin/git -C "$SANDBOX_REPO" add -A
+/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update lifecycle module" 2>/dev/null
+HEAD_WITH_LIFECYCLE_DRIFT_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
+
 # Add an intentional linked-worktree-style hotfix deployment ahead of the
 # canonical HEAD, then return the sandbox checkout to the canonical commit.
 printf '#!/usr/bin/env bash\necho hotfix\n' >"$SANDBOX_REPO/.agents/scripts/foo.sh"
 /usr/bin/git -C "$SANDBOX_REPO" add -A
 /usr/bin/git -C "$SANDBOX_REPO" commit -qm "active hotfix" 2>/dev/null
 DEPLOYED_AHEAD_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
-/usr/bin/git -C "$SANDBOX_REPO" checkout -q --detach "$HEAD_WITH_AIDEVOPS_DRIFT_SHA"
+/usr/bin/git -C "$SANDBOX_REPO" checkout -q --detach "$HEAD_WITH_LIFECYCLE_DRIFT_SHA"
 
 if [[ -z "$DEPLOYED_SHA" || -z "$HEAD_SHA" || -z "$HEAD_WITH_DOCS_SHA" ||
 	-z "$HEAD_WITH_SETUP_DRIFT_SHA" || -z "$HEAD_WITH_AIDEVOPS_DRIFT_SHA" ||
-	-z "$DEPLOYED_AHEAD_SHA" ]]; then
+	-z "$HEAD_WITH_LIFECYCLE_DRIFT_SHA" || -z "$DEPLOYED_AHEAD_SHA" ]]; then
 	printf '%sSETUP FAILED%s sandbox repo SHAs empty\n' "$TEST_RED" "$TEST_RESET"
 	exit 1
 fi
@@ -231,6 +238,13 @@ fi
 FAKE_SETUP="${SANDBOX_REPO}/setup.sh"
 printf '#!/usr/bin/env bash\nprintf "called %%s\n" "$$" >> "%s"\n' "$SETUP_CALLS_LOG" >"$FAKE_SETUP"
 chmod +x "$FAKE_SETUP"
+
+# Execute the production branch rather than maintaining a second drift filter.
+awk '/^_update_already_current\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' \
+	"$AIDEVOPS_SH" >"$TEST_ROOT/already-current.sh"
+# Extract only the foreground detector; never launch the background redeployer.
+awk '/^_check_script_drift\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' \
+	"$UPDATE_CHECK_SH" >"$TEST_ROOT/script-drift.sh"
 
 # Sync VERSION file to "current" so only the stamp/SHA triggers the redeploy
 printf 'v1\n' >"$SANDBOX_AIDEVOPS/agents/VERSION"
@@ -252,31 +266,20 @@ run_cmd_update_stamp_branch() {
 		rm -f "$SANDBOX_AIDEVOPS/.deployed-sha"
 	fi
 
-	# Inline stamp check mirroring the t2706 addition in aidevops.sh cmd_update.
-	# This is a structural copy, not a source reference, because the logic lives
-	# inside a much larger function that is not safely sourceable.
-	# Pattern updated per Gemini code-review on PR #20342 to match aidevops.sh
-	# and auto-update-helper.sh (path filter + grep -q . + expanded path list).
 	HOME="$SANDBOX_HOME" bash -c '
-		set +e
-		INSTALL_DIR="'"$SANDBOX_REPO"'"
-		local_hash="'"$head_sha"'"
-		stamp_file="$HOME/.aidevops/.deployed-sha"
-		if [[ -f "$stamp_file" ]]; then
-			deployed_sha=$(tr -d "[:space:]" <"$stamp_file" 2>/dev/null) || deployed_sha=""
-			if [[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]]; then
-				has_code_drift=0
-				if /usr/bin/git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- \
-					.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
-					setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
-					has_code_drift=1
-				fi
-				if [[ "$has_code_drift" -eq 1 ]]; then
-					bash "$INSTALL_DIR/setup.sh" --stage ai-session >/dev/null 2>&1
-				fi
-			fi
-		fi
-	' 2>/dev/null
+		INSTALL_DIR="$1"
+		source "$3"
+		print_success() { return 0; }
+		print_warning() { return 0; }
+		print_info() { return 0; }
+		_update_repo_verify_files_changed() { return 1; }
+		_update_check_workflow_drift() { return 0; }
+		_run_update_setup_transaction() {
+			bash "$INSTALL_DIR/setup.sh" --stage ai-session
+			return $?
+		}
+		_update_already_current "$2" compact
+	' _ "$SANDBOX_REPO" "$head_sha" "$TEST_ROOT/already-current.sh" 2>/dev/null
 	return 0
 }
 
@@ -391,6 +394,32 @@ fi
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+rm -f "$SETUP_CALLS_LOG"
+run_cmd_update_stamp_branch "$HEAD_WITH_AIDEVOPS_DRIFT_SHA" "$HEAD_WITH_LIFECYCLE_DRIFT_SHA"
+if [[ "$(count_setup_calls)" -eq 1 ]]; then
+	print_result "normal update schedules lifecycle-only drift deployment" 0
+else
+	print_result "normal update schedules lifecycle-only drift deployment" 1
+fi
+
+rm -f "$SETUP_CALLS_LOG"
+run_auto_update_stale_check "$HEAD_WITH_AIDEVOPS_DRIFT_SHA"
+if [[ "$(count_setup_calls)" -eq 1 ]]; then
+	print_result "auto-update schedules lifecycle-only drift deployment" 0
+else
+	print_result "auto-update schedules lifecycle-only drift deployment" 1
+fi
+
+# A non-executable sandbox setup returns the detection message without spawning.
+chmod -x "$FAKE_SETUP"
+session_drift=$(HOME="$SANDBOX_HOME" AIDEVOPS_FRAMEWORK_REPO="$SANDBOX_REPO" \
+	bash -c 'source "$1"; _check_script_drift' _ "$TEST_ROOT/script-drift.sh")
+if [[ "$session_drift" == *"Script drift detected"* ]]; then
+	print_result "session-start detects lifecycle-only drift" 0
+else
+	print_result "session-start detects lifecycle-only drift" 1
+fi
+
 echo ""
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf '%sAll %d tests passed.%s\n' "$TEST_GREEN" "$TESTS_RUN" "$TEST_RESET"

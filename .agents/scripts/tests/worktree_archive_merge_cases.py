@@ -12,6 +12,185 @@ from unittest.mock import patch
 
 
 class MergeCases:
+    def replace_merge_link(self, root, name, target):
+        (root / name).unlink(missing_ok=True)
+        (root / name).symlink_to(target)
+
+    def start_symlink_merge(self):
+        for name in ('stable-link', 'conflict-link', 'resolved-link', 'deleted-link', 'link-to-file'):
+            (self.repo / name).symlink_to('mixed.txt')
+        (self.repo / 'dangling-link').symlink_to(os.fsdecode(b'missing\t\n\xff'))
+        self.git(self.repo, 'add', '.')
+        self.git(self.repo, 'commit', '-qm', 'base links')
+        self.git(self.work, 'merge', '--ff-only', 'develop')
+        self.git(self.repo, 'checkout', '-qb', 'other')
+        for root, destination in ((self.repo, 'theirs'), (self.work, 'ours')):
+            for name in ('conflict-link', 'resolved-link'):
+                self.replace_merge_link(root, name, destination)
+            (root / 'mixed.txt').write_text(destination + '\n')
+            self.git(root, 'add', '.')
+            self.git(root, 'commit', '-qm', destination)
+        result = self.run_command('git', '-C', self.work, 'merge', 'other', check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.replace_merge_link(self.work, 'resolved-link', 'resolved')
+        self.replace_merge_link(self.work, 'run.sh', 'missing-script')
+        (self.work / 'link-to-file').unlink()
+        (self.work / 'link-to-file').write_bytes(b'regular replacement\n')
+        self.git(self.work, 'add', 'resolved-link', 'run.sh', 'link-to-file')
+        self.git(self.work, 'rm', 'deleted-link')
+
+    def test_merge_symlinks_roundtrip_and_continuation(self):
+        self.start_symlink_merge()
+        baseline = {option: self.git(self.work, 'ls-files', option, '-z')
+                    for option in ('--stage', '--resolve-undo')}
+        status = self.git(self.work, 'status', '--porcelain=v1', '-z')
+        links = {path.name: os.fsencode(os.readlink(path))
+                 for path in self.work.iterdir() if path.is_symlink()}
+        parents = [self.git(self.work, 'rev-parse', ref).strip() for ref in ('HEAD', 'MERGE_HEAD')]
+        archive = self.archive()
+        self.helper('verify-local', archive)
+        self.replace_merge_link(self.work, 'stable-link', 'changed-target')
+        self.assertNotEqual(self.helper('source-matches', archive, self.work, check=False).returncode, 0)
+        shutil.rmtree(self.work)
+        shutil.rmtree(self.repo)
+        self.helper('verify', archive)
+        for operation in ('continue', 'abort'):
+            target = self.root / operation
+            self.helper('restore', archive, '--target', target)
+            self.git(target, 'gc', '--prune=now')
+            for name, destination in links.items():
+                self.assertEqual(os.fsencode(os.readlink(target / name)), destination)
+            for option, expected in baseline.items():
+                self.assertEqual(self.git(target, 'ls-files', option, '-z'), expected)
+            self.assertEqual(self.git(target, 'status', '--porcelain=v1', '-z'), status)
+            if operation == 'continue':
+                (target / 'mixed.txt').write_text('resolved\n')
+                self.replace_merge_link(target, 'conflict-link', 'resolved-target')
+                self.git(target, 'add', '.')
+                self.env['GIT_EDITOR'] = 'true'
+                self.git(target, 'merge', '--continue')
+                self.assertEqual(self.git(target, 'show', '-s', '--format=%P').strip(), b' '.join(parents))
+            else:
+                self.git(target, 'merge', '--abort')
+                self.assertEqual(self.git(target, 'rev-parse', 'HEAD').strip(), parents[0])
+
+    def test_merge_symlink_restore_never_traverses_links(self):
+        from worktree_archive_merge_restore import write_merge_working
+        from worktree_archive_merge_index import validate_merge_working
+        outside = self.root / 'outside'
+        outside.mkdir()
+        sentinel = outside / 'sentinel'
+        sentinel.write_bytes(b'untouched')
+        self.replace_merge_link(self.work, 'leaf', str(sentinel))
+        write_merge_working(self.work, b'leaf'.hex(), [0o644, b'replacement'.hex()])
+        self.assertEqual(sentinel.read_bytes(), b'untouched')
+        self.assertEqual((self.work / 'leaf').read_bytes(), b'replacement')
+        write_merge_working(self.work, b'leaf'.hex(), ['symlink', os.fsencode(sentinel).hex()])
+        self.assertEqual(os.readlink(self.work / 'leaf'), str(sentinel))
+        (self.work / 'parent-link').symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(OSError):
+            write_merge_working(self.work, b'parent-link/new/file'.hex(), [0o644, '00'])
+        self.assertEqual(list(outside.iterdir()), [sentinel])
+        write_merge_working(self.work, b'leaf'.hex(), None)
+        self.assertFalse(os.path.lexists(self.work / 'leaf'))
+        self.assertEqual(sentinel.read_bytes(), b'untouched')
+        os.link(sentinel, self.work / 'leaf')
+        write_merge_working(self.work, b'leaf'.hex(), [0o644, b'new inode'.hex()])
+        self.assertEqual(sentinel.read_bytes(), b'untouched')
+
+        def swap_parent(name, *, dir_fd):
+            os.symlink(str(outside), name, dir_fd=dir_fd)
+            raise FileExistsError(name)
+
+        with patch('worktree_archive_filesystem.os.mkdir', side_effect=swap_parent):
+            with self.assertRaises(OSError):
+                write_merge_working(self.work, b'raced/new/file'.hex(), [0o644, '00'])
+        self.assertEqual(list(outside.iterdir()), [sentinel])
+        for invalid in ('', '00'):
+            with self.assertRaisesRegex(ValueError, 'invalid_link_target'):
+                validate_merge_working({b'link'.hex(): ['symlink', invalid]}, set())
+
+    def test_merge_index_types_use_closure_batch_and_reject_non_blobs(self):
+        import worktree_archive_merge_objects as objects
+        from worktree_archive_merge_capture import merge_state
+        self.start_conflicted_merge()
+        state = merge_state(self.work)
+        blobs = {entry[2] for entry in state['index'] + state['undo']}
+        with patch.object(objects, 'git', wraps=objects.git) as commands:
+            objects.verify_merge_objects(self.work, state)
+        queries = [call.args[1:] for call in commands.call_args_list]
+        self.assertEqual(sum(query == ('cat-file', '--batch-check') for query in queries), 1)
+        self.assertFalse(any(query[:2] == ('cat-file', '-t') and query[2] in blobs for query in queries))
+        original = state['index'][0][2]
+        tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}').strip().decode()
+        for oid in (state['head'], tree):
+            state['index'][0][2] = oid
+            with self.assertRaisesRegex(ValueError, 'merge:index_not_blob'):
+                objects.verify_merge_objects(self.work, state)
+        state['index'][0][2] = original
+        state['undo'] = [[state['index'][0][0], '100644', state['head'], 1]]
+        with self.assertRaisesRegex(ValueError, 'merge:index_not_blob'):
+            objects.verify_merge_objects(self.work, state)
+
+    def test_merge_fetch_head_survives_source_loss_and_gc(self):
+        self.start_conflicted_merge()
+        self.git(self.work, 'fetch', str(self.repo), 'other')
+        fetch = self.auto_merge_path().parent / 'FETCH_HEAD'
+        tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}').strip().decode()
+        orphan = self.git(self.work, 'commit-tree', tree, '-m', 'fetch-only').strip()
+        # This root is not reachable from HEAD or either merge parent.
+        content = fetch.read_bytes() + orphan + b'\tnot-for-merge\tfixture\xff\n'
+        fetch.write_bytes(content)
+        parents = [self.git(self.work, 'rev-parse', ref).strip()
+                   for ref in ('HEAD', 'MERGE_HEAD')]
+        archive = self.archive()
+        self.helper('verify-local', archive)
+        self.helper('source-matches', archive, self.work)
+        fetch.write_bytes(content + content)
+        self.assertNotEqual(self.helper('source-matches', archive, self.work,
+                                        check=False).returncode, 0)
+        fetch.write_bytes(content)
+        shutil.rmtree(self.work)
+        shutil.rmtree(self.repo)
+        self.helper('verify', archive)
+        for operation in ('continue', 'abort'):
+            with self.subTest(operation=operation):
+                target = self.root / operation
+                self.helper('restore', archive, '--target', target)
+                self.git(target, 'gc', '--prune=now')
+                admin = Path(os.fsdecode(self.git(target, 'rev-parse', '--absolute-git-dir')).strip())
+                self.assertEqual((admin / 'FETCH_HEAD').read_bytes(), content)
+                self.assertEqual(self.git(target, 'cat-file', '-t', orphan.decode()).strip(), b'commit')
+                if operation == 'continue':
+                    (target / 'mixed.txt').write_bytes(b'resolved\n')
+                    self.git(target, 'add', 'mixed.txt')
+                    self.env['GIT_EDITOR'] = 'true'
+                    self.git(target, 'merge', '--continue')
+                    self.assertEqual(self.git(target, 'show', '-s', '--format=%P').strip(), b' '.join(parents))
+                else:
+                    self.git(target, 'merge', '--abort')
+                    self.assertEqual(self.git(target, 'rev-parse', 'HEAD').strip(), parents[0])
+
+    def test_merge_fetch_head_empty_invalid_and_missing_object(self):
+        from worktree_archive_merge_capture import merge_state, validate_merge
+        self.start_conflicted_merge()
+        fetch = self.auto_merge_path().parent / 'FETCH_HEAD'
+        fetch.write_bytes(b'')
+        state = merge_state(self.work)
+        self.assertEqual(state['metadata']['FETCH_HEAD'], '')
+        self.helper('verify', self.archive())
+        state['metadata']['FETCH_HEAD'] = b'invalid\n'.hex()
+        with self.assertRaisesRegex(ValueError, 'invalid_FETCH_HEAD'):
+            validate_merge(state)
+        for content in (b'invalid\n', b'f' * 40 + b'\t\tmissing object\n'):
+            fetch.write_bytes(content)
+            with self.subTest(content=content):
+                result = self.helper('archive', self.work, '--repo', 'fixture/repo', '--issue', '99',
+                                     '--reason', 'failed-worker', '--base-branch', 'develop',
+                                     '--output-root', self.archives, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(fetch.read_bytes(), content)
+
     def test_merge_untracked_deleted_path_and_hook_isolation(self):
         self.start_conflicted_merge()
         self.git(self.work, 'rm', 'mixed.txt')

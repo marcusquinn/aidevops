@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
 import {
   bindActiveScriptsDir,
+  checkArgvSafetyGate,
   checkCanonicalGitSafetyGate,
   checkCanonicalWriteSafetyGate,
   checkCommandSafetyGate,
@@ -98,6 +99,38 @@ function registerRepo(root, repo) {
     else process.env.AIDEVOPS_REPOS_FILE = previous;
   };
 }
+
+test("Bash and bounded operations require controlled worktree creation", async () => {
+  const { root, linked } = setupRepo();
+  try {
+    const hooks = createQualityHooks({ scriptsDir, logsDir: root, repositoryDir: linked });
+    const reason = /git\.worktree-controlled-creation-required.*worktree-helper\.sh add.*aidevops worktree add/s;
+    for (const command of [
+      "git worktree add ../example",
+      "git -C . worktree add -b feature/example ../example",
+      "worktree-helper.sh add feature/example; git worktree add ../other",
+    ]) {
+      await assert.rejects(
+        () => hooks.toolExecuteBefore({ tool: "bash" }, { args: { command, workdir: linked } }),
+        reason,
+      );
+    }
+    // Exercise the bounded-operation argv gate without requiring a live owner
+    // admission in this suite's deliberately uninitialized lifecycle registry.
+    for (const worker of [false, true]) {
+      assert.throws(
+        () => checkArgvSafetyGate(["git", "-C", linked, "worktree", "add", "../example"], scriptsDir, linked, { worker }),
+        reason,
+      );
+      assert.doesNotThrow(() => checkArgvSafetyGate(["worktree-helper.sh", "add", "feature/example"], scriptsDir, linked, { worker }));
+    }
+    for (const command of ["git worktree list --porcelain", "worktree-helper.sh add feature/example", "aidevops worktree add feature/example"]) {
+      assert.doesNotThrow(() => checkCommandSafetyGate(command, scriptsDir, linked));
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("classifies built-in and namespaced direct file mutation tools", () => {
   for (const tool of ["Write", "write_file", "edit", "edit_file", "write", "functions.apply_patch", "namespace/Edit", "tools::apply-patch"]) {

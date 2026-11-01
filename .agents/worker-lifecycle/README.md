@@ -84,6 +84,10 @@ The launcher-independent, report-only cleanup decision table and preservation
 requirements are documented in [CLEANUP.md](CLEANUP.md). No destructive executor
 or production cleanup-evidence collector is connected to that policy.
 
+For the temporary Pulse backlog pass over pre-admission observations, see
+[LEGACY-CLEANUP.md](LEGACY-CLEANUP.md). It reuses existing archives and registry
+events without creating a database or fabricating historical admissions.
+
 For the new native storage/exec checks, copy the standalone
 `worker-lifecycle-registry-validate.pyz`; see [REGISTRY-VALIDATION.md](REGISTRY-VALIDATION.md).
 It reuses the existing tests in disposable state and produces one JSON report.

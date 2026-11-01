@@ -10,13 +10,14 @@ SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "macos.py", "v
 ENTRYPOINT = b"from worker_lifecycle.validation import main\nraise SystemExit(main())\n"
 REGISTRY_SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "macos.py",
                     "storage.py", "events.py", "registry.py", "launch.py", "integration_validation.py",
-                    "launch_state.py",
+                    "launch_state.py", "upgrade.py", "archive_path.py", "filesystem.py",
                     "admission.py", "directory_handle.py", "cleanup_policy.py", "enrollment.py",
                     "cleanup_plan.py", "preservation.py", "session.py", "creation.py",
-                    "retirement.py", "cleanup.py", "bundle.py")
+                    "retirement.py", "recovery.py", "absence.py", "cleanup.py", "bundle.py")
 REGISTRY_TESTS = ("test_storage.py", "test_events.py", "test_launch.py", "test_admission.py",
                   "test_admitted_launch.py", "test_directory_handle.py", "test_cleanup_policy.py",
-                  "test_creation.py", "test_preservation.py", "test_retirement.py")
+                  "test_creation.py", "test_preservation.py", "test_retirement.py",
+                  "test_admission_recovery.py", "test_absence.py", "test_local_archive_verification.py")
 ARCHIVE_SOURCES = (
     "native_git.py", "runtime-env.sh", "shared-constants.sh",
     "portable-stat.sh", "managed-label-provisioning-lib.sh",
@@ -30,6 +31,7 @@ ARCHIVE_SOURCES = (
     "worktree_archive_base_source.py", "worktree_archive_fingerprint.py",
     "worktree_archive_filesystem.py", "worktree_archive_git.py",
     "worktree_archive_history.py", "worktree_archive_index.py",
+    "worktree_archive_local_verify.py",
     "worktree_archive_merge_capture.py", "worktree_archive_merge_index.py",
     "worktree_archive_merge_objects.py", "worktree_archive_merge_restore.py",
     "worktree_archive_objects.py", "worktree_archive_readiness.py",

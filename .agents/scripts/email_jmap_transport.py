@@ -38,7 +38,7 @@ def _get_auth():
         file=sys.stderr,
     )
     print(
-        "Set via: JMAP_TOKEN=$(gopass show -o email-jmap-account) python3 ...",
+        "Set via: JMAP_TOKEN=$(gopass show -o aidevops/EMAIL_JMAP_<ACCOUNT>) python3 ...",
         file=sys.stderr,
     )
     sys.exit(1)

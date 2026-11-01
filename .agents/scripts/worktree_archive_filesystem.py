@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Filesystem evidence: Git owns tracked state, tar owns untracked files."""
 
+from contextlib import suppress
 import hashlib
 import os
 from pathlib import Path
@@ -62,10 +63,14 @@ def regular_fingerprint(path, parent, tar_metadata=False, git_metadata=False):
     return ["file", mode, before.st_size, digest.hexdigest()]
 
 
-def open_parent(root, parts):
+def open_parent(root, parts, *, create=False):
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for name in parts:
+            if create:
+                # The no-follow open below still checks the entry type.
+                with suppress(FileExistsError):
+                    os.mkdir(name, dir_fd=descriptor)
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child

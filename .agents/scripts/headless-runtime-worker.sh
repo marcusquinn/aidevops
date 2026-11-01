@@ -1767,6 +1767,8 @@ _hrw_write_external_final_outcome() {
 	elif [[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]]; then
 		external_reason="${external_reason:-$_HRW_REASON_WORKER_COMPLETE}"
 		external_retry_class="$_HRFF_RETRY_CLASS_REMEDIATION"
+	elif [[ "$external_reason" == "$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED" ]]; then
+		external_retry_class="$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
 	elif [[ "$_HRW_FINAL_RUNTIME_STATUS" == "$_HRW_STATUS_CHECKPOINTED" ]]; then
 		external_retry_class="$_HRFF_RETRY_CLASS_REMEDIATION"
 	fi

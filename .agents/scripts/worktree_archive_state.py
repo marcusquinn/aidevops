@@ -18,8 +18,9 @@ from worktree_archive_merge_objects import verify_merge_objects as verify_merge_
 from worktree_archive_merge_restore import restore_merge as restore_merge
 
 
-def inventories(root, include_ignored=False):
-    index = git(root, "ls-files", "--stage", "-z")
+def inventories(root, include_ignored=False, *, index=None):
+    if index is None:
+        index = git(root, "ls-files", "--stage", "-z")
     paths = set()
     for entry in index.split(b"\0"):
         if not entry:

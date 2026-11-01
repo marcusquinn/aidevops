@@ -201,7 +201,7 @@ _run_runtime_dependency_test() {
 	local test_home="$test_tmpdir/home"
 	mkdir -p "$test_home/.aidevops/agents/scripts"
 
-	if [[ "$mode" == "healthy" ]]; then
+	if [[ "$mode" != "missing" ]]; then
 		cat >"$test_home/.aidevops/agents/scripts/command-policy-helper.py" <<'PYEOF'
 #!/usr/bin/env python3
 raise SystemExit(0)
@@ -210,8 +210,38 @@ PYEOF
 #!/usr/bin/env python3
 raise SystemExit(0)
 PYEOF
-		cp "$test_home/.aidevops/agents/scripts/canonical-write-policy-helper.py" \
-			"$test_home/.aidevops/agents/scripts/worker-lifecycle-session-helper.py"
+		cat >"$test_home/.aidevops/agents/scripts/worker-lifecycle-session-helper.py" <<'PYEOF'
+import argparse
+import json
+import os
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+for name in ("cwd", "path", "runtime-pid", "session-id", "command"):
+    parser.add_argument("--" + name, required=True)
+args = parser.parse_args()
+assert Path(args.cwd).resolve() == Path.cwd()
+assert not (Path(args.cwd) / ".git").exists()
+assert os.environ["AIDEVOPS_LIFECYCLE_DISABLED"] == "1"
+assert os.environ["AIDEVOPS_LIFECYCLE_STATE_DIR"] == args.cwd + "/state"
+assert args.path == args.cwd + "/probe"
+assert int(args.runtime_pid) > 0
+assert args.session_id == "hook-install-preflight" and args.command == "true"
+print(json.dumps({"status": "not-applicable", "cleanup_authorized": False}))
+PYEOF
+		case "$mode" in
+		help-only)
+			printf 'import sys\nsys.exit(0 if "--help" in sys.argv else 75)\n' \
+				>"$test_tmpdir/override.py"
+			;;
+		invalid-response)
+			printf 'print("{}")\n' >"$test_tmpdir/override.py"
+			;;
+		denied)
+			printf 'print(\x27{"status":"denied","cleanup_authorized":false}\x27)\n' \
+				>"$test_tmpdir/override.py"
+			;;
+		esac
 	fi
 
 	cat >"$test_tmpdir/harness.sh" <<HARNESS_EOF
@@ -225,7 +255,10 @@ HARNESS_EOF
 
 	local rc=0
 	local output=""
-	output=$(HOME="$test_home" bash "$test_tmpdir/harness.sh" 2>&1) || rc=$?
+	local helper="$test_home/.aidevops/agents/scripts/worker-lifecycle-session-helper.py"
+	[[ ! -f "$test_tmpdir/override.py" ]] || helper="$test_tmpdir/override.py"
+	output=$(HOME="$test_home" AIDEVOPS_LIFECYCLE_SESSION_HELPER="$helper" \
+		bash "$test_tmpdir/harness.sh" 2>&1) || rc=$?
 	rm -rf "$test_tmpdir"
 	if [[ "$rc" -ne 0 && "$mode" == "healthy" ]]; then
 		printf '%s\n' "$output" >&2
@@ -249,6 +282,16 @@ test_runtime_dependency_preflight() {
 	else
 		print_result "healthy deployed policy graph passes hook preflight" 1 "exit=$rc"
 	fi
+	local mode=""
+	for mode in help-only invalid-response denied; do
+		rc=0
+		_run_runtime_dependency_test "$mode" || rc=$?
+		if [[ "$rc" -ne 0 ]]; then
+			print_result "$mode lifecycle override blocks hook preflight" 0
+		else
+			print_result "$mode lifecycle override blocks hook preflight" 1 "expected non-zero exit"
+		fi
+	done
 	return 0
 }
 

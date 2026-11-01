@@ -410,6 +410,28 @@ class EnrollmentContract(unittest.TestCase):
             bindings = connection.execute("SELECT generation_id FROM bindings").fetchall()
             self.assertEqual([row[0] for row in bindings], [generation, generation])
 
+    def test_creation_without_runtime_identity_retains_coverage_gap(self):
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        created = self.root / "shell-created"
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("AIDEVOPS_", "GIT_", "WORKTREE_"))}
+        env.update(HOME=str(self.root),
+                   AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory))
+        result = subprocess.run(  # nosec B603 B607 # fixed fixture shell and argv
+            ["bash", "-c", 'source "$1/shared-constants.sh" && '
+             'source "$1/shared-worktree-create.sh" && '
+             'worktree_create_registered "$2" "$3" HEAD --detach',
+             "fixture", str(scripts), str(self.repo), str(created)],
+            cwd=self.root, env=env, capture_output=True, text=True, timeout=40,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prepared = prepare_cleanup(self.store, created)
+        self.assertFalse(prepared["creation_verified"])
+        self.assertEqual(prepared["status"], "coverage-gap")
+        self.assertEqual(prepared["admission"], "open")
+        self.assertFalse(prepared["cleanup_authorized"])
+        self.assertTrue(created.is_dir())
+
     def test_controlled_creation_cannot_adopt_existing_directory(self):
         target = self.root / "existing"
         target.mkdir()
@@ -468,7 +490,7 @@ class EnrollmentContract(unittest.TestCase):
             cwd=self.root, env=env, capture_output=True, text=True, timeout=30,
         )
 
-    def test_schema_one_creation_reports_gap_without_migration(self):
+    def test_schema_one_creation_upgrades_and_enrolls_automatically(self):
         with self.store.connection(write=True) as connection:
             connection.execute("DROP TABLE generation_admissions")
             connection.execute("PRAGMA user_version=1")
@@ -476,13 +498,16 @@ class EnrollmentContract(unittest.TestCase):
         result = self.creation_enrollment(self.tree)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
-        self.assertIn("coverage-gap: schema-upgrade-required", result.stderr)
-        self.assertFalse(self.marker.exists())
-        self.assertEqual(self.store.summary(), before)
+        self.assertIn("schema-upgraded from=1 to=2", result.stderr)
+        self.assertNotIn("coverage-gap", result.stderr)
+        self.assertTrue(self.marker.exists())
+        backups = list(self.store.directory.glob("schema-1-backup-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(LifecycleRegistry(backups[0]).summary(), before)
         with self.store.connection() as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
-        with self.assertRaises(ValueError):
-            self.enrollment.resolve(self.tree, create=True)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(self.enrollment.resolve(self.tree),
+                         self.enrollment.resolve(self.tree, create=True))
 
     def test_schema_one_compatibility_refuses_existing_marker(self):
         self.enrollment.resolve(self.tree, create=True)

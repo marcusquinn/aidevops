@@ -91,6 +91,7 @@ class RetirementContract(unittest.TestCase):
 
     def test_retirement_restores_git_data_but_not_ignored_files(self):
         self.create()
+        self.output.chmod(0o755)
         self.generation = GenerationEnrollment(self.store).inspect(self.target)
         entry = Path(__file__).resolve().parents[1] / "worker-registry.py"
         completed = subprocess.run(  # nosec B603 # real CLI, disposable fixture
@@ -102,6 +103,7 @@ class RetirementContract(unittest.TestCase):
         )
         result = json.loads(completed.stdout)
         self.assertEqual(result["status"], "retired")
+        self.assertEqual(self.output.stat().st_mode & 0o777, 0o755)
         self.assertFalse(self.target.exists())
         self.assertNotIn(
             f"worktree {self.target}\n", self.git("worktree", "list", "--porcelain"),
@@ -335,6 +337,7 @@ class RetirementContract(unittest.TestCase):
 
     def test_cleanup_cli_uses_controlled_registry_candidates(self):
         self.create()
+        self.output.chmod(0o755)
         config = self.cleanup_config()
         entry = Path(__file__).resolve().parents[1] / "worker-registry.py"
         completed = subprocess.run(  # nosec B603 # disposable registry and repositories
@@ -345,12 +348,29 @@ class RetirementContract(unittest.TestCase):
         )
         result = json.loads(completed.stdout)
         self.assertEqual((result["retired"], result["failed"]), (1, 0))
+        self.assertEqual(self.output.stat().st_mode & 0o777, 0o755)
         self.assertFalse(self.target.exists())
         archive = result["results"][0]["archive"]
         restored = self.root / "restored"
         _helper("restore", archive, "--target", str(restored), "--verification-copy")
         self.assertEqual((restored / "work.txt").read_text(), "unfinished result")
         self.assertFalse((restored / "cache.ignored").exists())
+
+    def test_writable_archive_parent_prevents_retirement(self):
+        self.create()
+        parent = self.output / "fixture__repository" / "unattributed"
+        parent.mkdir(parents=True)
+        parent.chmod(0o777)
+        with self.assertRaisesRegex(ValueError, "archive-path-externally-writable"):
+            self.retire()
+        self.assertTrue(self.target.exists())
+        self.assertEqual(parent.stat().st_mode & 0o777, 0o777)
+        report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        result = report["results"][0]
+        self.assertEqual(result["reason"], "archive-path-externally-writable")
+        self.assertEqual(result["filesystem_path"], str(parent))
+        self.assertEqual(result["path"], str(self.target))
+        self.assertTrue(self.target.exists())
 
     def test_cleanup_resumes_private_generation_not_public_replacement(self):
         self.create()
