@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.107] - 2026-10-31
+
+### Changed
+
+- Maintenance: mark t18846 complete (pr:#36300 completed:2026-10-31) (#36303)
+- Maintenance: sync GitHub issue refs to TODO.md (#36306)
+
+### Fixed
+
+- let fast-forward-current initialize clean unborn canonical branches
+
 ## [3.39.106] - 2026-10-31
 
 ### Changed

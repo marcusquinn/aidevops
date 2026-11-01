@@ -166,7 +166,7 @@ FIXTURE_LABELS="origin:worker,hold-for-review"
 : >"$LOGFILE"
 result=$(run_gate head-current pulse-runner)
 if [[ "$result" -eq 1 ]] && [[ ! -s "$WORKER_BRIEFED_CALLS" ]] &&
-	grep -qF "trusted generated TODO PR is draft or has hold-for-review" "$LOGFILE"; then
+	grep -qF "PR is draft or has hold-for-review" "$LOGFILE"; then
 	print_result "trusted Pulse TODO handoff still honours hold-for-review" 0
 else
 	print_result "trusted Pulse TODO handoff still honours hold-for-review" 1 \

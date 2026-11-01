@@ -104,6 +104,9 @@ _generate_defaults() {
   "ui": {
     "color_output": true,
     "verbose": false
+  },
+  "browser": {
+    "playwright_executable": ""
   }
 }
 DEFAULTS
@@ -134,6 +137,7 @@ _env_var_for_key() {
 	supervisor.peak_hours_tz) echo "AIDEVOPS_PEAK_HOURS_TZ" ;;
 	supervisor.peak_hours_worker_fraction) echo "AIDEVOPS_PEAK_HOURS_WORKER_FRACTION" ;;
 	repo_sync.enabled) echo "AIDEVOPS_REPO_SYNC" ;;
+	browser.playwright_executable) echo "AIDEVOPS_PLAYWRIGHT_EXECUTABLE" ;;
 	*) echo "" ;;
 	esac
 	return 0

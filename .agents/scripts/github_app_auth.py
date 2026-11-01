@@ -104,18 +104,32 @@ def jwt(profile):
     return (unsigned + b"." + encode(result.stdout)).decode()
 
 
+def installation_permissions(profile, installation, repo):
+    """Read installation grants without first requesting a scoped token."""
+    if not str(installation).isdigit():
+        raise AuthError("Invalid installation ID")
+    identity = api("GET", f"/app/installations/{installation}", jwt(profile))
+    if (str(identity.get("app_id")) != str(profile["app_id"])
+            or identity.get("account", {}).get("login", "").lower() != repo.split("/")[0].lower()
+            or identity.get("suspended_at")):
+        raise AuthError("App/installation/repository ownership mismatch or suspension")
+    return identity.get("permissions", {})
+
+
 def exchange(profile, installation, repo=None, permissions=None):
     if not str(installation).isdigit():
         raise AuthError("Invalid installation ID")
     credential = jwt(profile)
     body = {}
     if repo:
-        identity = api("GET", f"/app/installations/{installation}", credential)
-        if (str(identity.get("app_id")) != str(profile["app_id"])
-                or identity.get("account", {}).get("login", "").lower() != repo.split("/")[0].lower()
-                or identity.get("suspended_at")):
-            raise AuthError("App/installation/repository ownership mismatch or suspension")
-        body = {"repositories": [repo.split("/")[1]], "permissions": permissions}
+        granted = installation_permissions(profile, installation, repo)
+        # Never request grants the installation lacks; narrower installations
+        # must retain usable read tokens. `check` diagnoses Pulse requirements.
+        available = {name: level for name, level in permissions.items()
+                     if granted.get(name) in ("read", "write", "admin")}
+        if not available:
+            raise AuthError("Installation lacks all requested read permissions")
+        body = {"repositories": [repo.split("/")[1]], "permissions": available}
     response = api("POST", f"/app/installations/{installation}/access_tokens", credential, body)
     try:
         expiry = datetime.datetime.fromisoformat(response["expires_at"].replace("Z", "+00:00")).timestamp()
@@ -149,8 +163,22 @@ def lock(path, timeout=100):
         os.close(fd)
 
 
+# Read permissions Pulse dispatch needs; `contents` backs the open-PR commits query.
+REQUIRED_PULSE_PERMISSIONS = ("contents", "pull_requests", "issues", "metadata", "checks", "statuses")
+
+
+def missing_permissions(granted):
+    """Names from REQUIRED_PULSE_PERMISSIONS the token lacks at read level or above."""
+    granted = granted if isinstance(granted, dict) else {}
+    return [name for name in REQUIRED_PULSE_PERMISSIONS if granted.get(name) not in ("read", "write", "admin")]
+
+
 def cached_token(profile, installation, repo, cache):
-    permissions = profile.get("permissions", {"metadata": "read", "issues": "read", "pull_requests": "read"})
+    permissions = profile.get("permissions", {name: "read" for name in REQUIRED_PULSE_PERMISSIONS})
+    # Migrate the historical generated default in memory. Other explicit maps
+    # remain unchanged; actual token grants are capped by the installation.
+    if permissions == {"metadata": "read", "issues": "read", "pull_requests": "read"}:
+        permissions = {name: "read" for name in REQUIRED_PULSE_PERMISSIONS}
     if (not isinstance(permissions, dict) or not permissions
             or any(value != "read" for value in permissions.values())):
         raise AuthError("Pulse App profiles support read-only permissions")

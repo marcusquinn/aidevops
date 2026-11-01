@@ -56,9 +56,46 @@ _ddpr_commit_denial_cache() {
 		return 0
 	fi
 	[[ "$action" == "record" ]] || return 1
-	(umask 077; mkdir -p "$cache_dir" &&
-		jq -n --argjson at "$now" '{reason:"commit_permission_denied",scope:"open_commits",owner:"human",denied_at:$at,recheck_after:($at+900)}' \
-			>"${file}.tmp.$$" && mv "${file}.tmp.$$" "$file") || return 1
+	# Serialize check-and-record, then alert only after the claim is durable.
+	# flock is provided by Python on both Linux and macOS; no stale mkdir lock.
+	local claim_rc=0
+	python3 -c '
+import fcntl
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+path = Path(sys.argv[1])
+now = int(sys.argv[2])
+os.umask(0o077)
+path.parent.mkdir(parents=True, exist_ok=True)
+with open(str(path) + ".lock", "a") as guard:
+    fcntl.flock(guard, fcntl.LOCK_EX)
+    try:
+        denied_at = json.loads(path.read_text())["denied_at"]
+        if isinstance(denied_at, int) and 0 <= now - denied_at < 900:
+            sys.exit(2)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    fd, temporary = tempfile.mkstemp(prefix=".denial-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(dict(reason="commit_permission_denied", scope="open_commits",
+                           owner="human", denied_at=now, recheck_after=now + 900), stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+' "$file" "$now" || claim_rc=$?
+	if [[ "$claim_rc" -eq 0 ]]; then
+		printf 'PULSE_ALERT: commit_permission_denied for %s; if this repo uses a per-repo Pulse GitHub App, grant it contents: read (verify: github_auth_runtime.py check %s). Dispatch is blocked until fixed.\n' \
+			"$repo_slug" "$repo_slug" >&2
+	fi
+	[[ "$claim_rc" -eq 0 || "$claim_rc" -eq 2 ]] || return 1
 	return 0
 }
 
