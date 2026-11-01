@@ -30,9 +30,17 @@ const PLUGIN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = resolve(PLUGIN_DIR, "../../..");
 const SENTINEL = "SENTINEL-GH34125-must-not-leave-device";
 
+// No operator override, so the shared list applies whatever the developer's
+// own ~/.config contains. Every bound fixture uses it unless it builds its own
+// override home; without it a developer override changes the local list.
+const NO_OVERRIDE_HOME = mkdtempSync(join(tmpdir(), "aidevops-no-override-"));
+process.on("exit", () => rmSync(NO_OVERRIDE_HOME, { recursive: true, force: true }));
+const NO_OVERRIDE_ENV = { HOME: NO_OVERRIDE_HOME, XDG_CONFIG_HOME: "" };
+const BOUND_SHARED = { ...NO_OVERRIDE_ENV, AIDEVOPS_RUNTIME_POLICY: "local-only" };
+
 test("literal shell readers deny credential paths and symlink aliases", () => {
   const root = mkdtempSync(join(tmpdir(), "local-only-reader-"));
-  const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const policy = loadLocalOnlyPolicy(BOUND_SHARED);
   try {
     writeFileSync(join(root, ".env"), SENTINEL);
     writeFileSync(join(root, "public.txt"), "public fixture");
@@ -56,20 +64,14 @@ test("binding: unset and provider-* opt-outs are unbound; local tokens and unkno
   assert.equal(loadLocalOnlyPolicy({}).bound, false);
   assert.equal(loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "provider-ai" }).bound, false);
   for (const value of ["local-only", "LOCAL-LLM-ONLY", " local-ai "]) {
-    const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: value });
+    const policy = loadLocalOnlyPolicy({ ...NO_OVERRIDE_ENV, AIDEVOPS_RUNTIME_POLICY: value });
     assert.equal(policy.bound, true, value);
     assert.equal(policy.reason, "declared");
   }
-  const unknown = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "lcoal-only" });
+  const unknown = loadLocalOnlyPolicy({ ...NO_OVERRIDE_ENV, AIDEVOPS_RUNTIME_POLICY: "lcoal-only" });
   assert.equal(unknown.bound, true);
   assert.equal(unknown.reason, "unrecognised-policy-fails-closed");
 });
-
-// No operator override, so the shared list applies whatever the developer's
-// own ~/.config contains.
-const NO_OVERRIDE_HOME = mkdtempSync(join(tmpdir(), "aidevops-no-override-"));
-process.on("exit", () => rmSync(NO_OVERRIDE_HOME, { recursive: true, force: true }));
-const BOUND_SHARED = { AIDEVOPS_RUNTIME_POLICY: "local-only", HOME: NO_OVERRIDE_HOME, XDG_CONFIG_HOME: "" };
 
 test("binding is frozen and the shared provider list matches the headless helper", () => {
   const policy = loadLocalOnlyPolicy(BOUND_SHARED);
@@ -187,7 +189,7 @@ test("inaccessible configuration root fails closed in both gates", {
 });
 
 test("egress gate: V1 and V2 input shapes; unknown provider is non-local; unbound is a no-op", () => {
-  const bound = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const bound = loadLocalOnlyPolicy(BOUND_SHARED);
   assert.doesNotThrow(() => assertLocalOnlyEgress(bound, { model: { providerID: "ollama", api: { url: LOCAL_URL } } }, "chat"));
   assert.doesNotThrow(() => assertLocalOnlyEgress(
     bound, { provider: { info: { id: "local" }, options: { baseURL: "http://localhost:8080" } } }, "chat"));
@@ -201,7 +203,7 @@ test("egress gate: V1 and V2 input shapes; unknown provider is non-local; unboun
 });
 
 test("egress gate: a remote endpoint under a local provider name is refused (security review GH#34125)", () => {
-  const bound = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const bound = loadLocalOnlyPolicy(BOUND_SHARED);
   const remoteUnderLocalName = [
     // V1: options.baseURL overrides model.api.url, as in OpenCode resolveSDK.
     [{ model: { providerID: "ollama", api: { url: LOCAL_URL } }, provider: { options: { baseURL: "https://api.example.com/v1" } } }, "chat"],
@@ -230,7 +232,7 @@ test("bound routing never selects a non-local candidate; no local candidate yiel
       { id: "anthropic", models: { fallback: { id: "fallback" } } },
     ],
   };
-  const bound = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const bound = loadLocalOnlyPolicy(BOUND_SHARED);
   assert.equal(selectConnectedRoutingCandidate(routing, "standard", providerState, bound), "ollama/qwen");
   const noLocal = { connected: ["openai", "anthropic"], all: providerState.all };
   assert.equal(selectConnectedRoutingCandidate(routing, "standard", noLocal, bound), "");
@@ -319,7 +321,7 @@ test("delegated specialist with an explicit remote model is denied at the real c
 });
 
 test("tool policy rejects opaque execution, wrappers, unknown MCP and unsafe curl options", () => {
-  const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const policy = loadLocalOnlyPolicy(BOUND_SHARED);
   const config = { local_server: { type: "local" }, loop: { type: "remote", url: LOCAL_URL },
     remote: { type: "remote", url: "https://api.example.com" } };
   captureLocalOnlyMcpConfig(config);
@@ -507,7 +509,9 @@ test("bound Ollama helper uses loopback without proxies or redirect fallback", a
   try {
     const scripts = join(REPO_ROOT, ".agents/scripts");
     const python = 'import sys; sys.path.insert(0,sys.argv[1]); import email_md_summary as m; print(m._summarise_with_ollama(sys.argv[2],"subject"))';
-    const env = { ...process.env, AIDEVOPS_RUNTIME_POLICY: "local-only",
+    // The Python gate delegates to vault-data-policy-helper.sh, which also
+    // honours the operator override, so keep the shared list here too.
+    const env = { ...process.env, ...BOUND_SHARED,
       HTTP_PROXY: "http://0.0.0.0:1", HTTPS_PROXY: "http://0.0.0.0:1", NO_PROXY: "" };
     const local = `http://127.0.0.1:${server.address().port}`;
     const result = await childResult("python3", ["-c", python, scripts, SENTINEL], { ...env, OLLAMA_API_URL: local + "/local" });
@@ -539,7 +543,7 @@ test("launcher disables remote OTEL before host startup, preserving unbound envi
 });
 
 test("MCP approvals cannot cross project configuration boundaries", () => {
-  const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const policy = loadLocalOnlyPolicy(BOUND_SHARED);
   const localProject = join(REPO_ROOT, "project-local");
   const remoteProject = join(REPO_ROOT, "project-remote");
   captureLocalOnlyMcpConfig({ same: { type: "local" } }, localProject);
