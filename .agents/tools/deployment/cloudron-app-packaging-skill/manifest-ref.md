@@ -49,7 +49,7 @@ The `containerPort` is the port inside the container. `defaultValue` is the sugg
 | `mediaLinks` | URL array | Screenshot URLs (3:1 aspect ratio, HTTPS); pin to a commit SHA; frozen per published version |
 | `packagerName` | string | Name of package maintainer |
 | `packagerUrl` | URL | Package maintainer URL |
-| `packageUrl` | URL | Package source repository URL. Requires `minBoxVersion: 10.0.0` |
+| `packageUrl` | URL | Package source repository URL. Requires `minBoxVersion: 10.0.0`; any catalog entry with it breaks the whole catalog on Cloudron 9.x |
 | `documentationUrl` | URL | Link to app docs |
 | `forumUrl` | URL | Link to support forum |
 | `upstreamVersion` | string | Upstream app version (display only) |
