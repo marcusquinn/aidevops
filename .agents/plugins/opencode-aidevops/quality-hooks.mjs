@@ -242,7 +242,7 @@ function enforceBashToolSafety(ctx, log, input, output, sessionId) {
   // multiline content (or writes its body file); neither changes Git targets.
   admitToolOwner({
     scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
-    bash: true, bounded: false,
+    bash: true, bounded: false, client: ctx.client,
   });
   const signatureModel = ctx.resolveSessionModel(sessionId);
   checkSignatureFooterGate(bashArgs.command || "", log, ctx.scriptsDir, output, {
@@ -350,7 +350,7 @@ async function handleToolBefore(ctx, log, input, output) {
   enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceContextForPath });
   admitToolOwner({
     scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
-    bash: false, bounded: isBoundedOperationTool(input.tool),
+    bash: false, bounded: isBoundedOperationTool(input.tool), client: ctx.client,
   });
 }
 
@@ -470,6 +470,7 @@ export function createQualityHooks(deps) {
   const ctx = {
     privateProcessingPolicy: loadPrivateProcessingPolicy(),
     scriptsDir,
+    client: deps.client,
     activeScriptsDir,
     activeScriptsDirBinding,
     logsDir,
