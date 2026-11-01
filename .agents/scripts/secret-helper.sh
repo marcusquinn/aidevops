@@ -11,6 +11,7 @@
 #   secret-helper.sh set NAME              # Interactive hidden input -> gopass
 #   secret-helper.sh get NAME              # Get secret value (for scripts/piping)
 #   secret-helper.sh list                  # List secret names (never values)
+#   secret-helper.sh rm NAME... [--yes]    # Guarded removal (gopass + plaintext + read-back)
 #   secret-helper.sh inventory             # Deterministic names-only JSON inventory
 #   secret-helper.sh describe [NAME]       # Non-secret registry: account, reach, owner, expiry
 #   secret-helper.sh record|account|default|alias|resolve ...  # Registry maintenance (GH#34680)
@@ -1169,6 +1170,137 @@ cmd_check() {
 	return 0
 }
 
+# Run one secret-removal.py step (plaintext loader / registry; names only).
+run_secret_removal() {
+	local removal_cli="${SCRIPT_DIR}/secret-removal.py"
+	if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "$removal_cli" ]]; then
+		print_error "python3 and secret-removal.py are required for plaintext and registry removal" >&2
+		return 1
+	fi
+	local exit_code=0
+	python3 "$removal_cli" "$@" || exit_code=$?
+	return "$exit_code"
+}
+
+# Parse `rm` arguments into globals RM_YES and RM_NAMES (normalised, deduplicated).
+parse_rm_args() {
+	RM_YES=false
+	RM_NAMES=()
+	local arg=""
+	local name=""
+	for arg in "$@"; do
+		case "$arg" in
+		--yes | -y)
+			RM_YES=true
+			continue
+			;;
+		-*)
+			print_error "Unknown option: $arg" >&2
+			return 1
+			;;
+		esac
+		name=$(printf '%s' "$arg" | tr '[:lower:]-' '[:upper:]_')
+		if [[ ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+			print_error "Invalid secret name: $arg" >&2
+			return 1
+		fi
+		case " ${RM_NAMES[*]:-} " in
+		*" $name "*) ;;
+		*) RM_NAMES+=("$name") ;;
+		esac
+	done
+	if [[ ${#RM_NAMES[@]} -eq 0 ]]; then
+		print_error "Usage: aidevops secret rm NAME [NAME...] [--yes]" >&2
+		return 1
+	fi
+	return 0
+}
+
+# Remove secrets from gopass and the active-tenant plaintext store (GH#35850).
+# Every name must resolve before anything is deleted; output is names only.
+cmd_rm() {
+	local -a RM_NAMES=()
+	local RM_YES=false
+	parse_rm_args "$@" || return 1
+
+	local name="" source_name="" missing=0
+	for name in "${RM_NAMES[@]}"; do
+		if secret_name_stored "$name"; then
+			continue
+		fi
+		missing=1
+		if source_name=$(resolve_injection_source "$name" 2>/dev/null); then
+			print_error "$name is an alias/default for $source_name; remove $source_name by name" >&2
+		else
+			print_error "Secret not found: $name" >&2
+		fi
+	done
+	[[ "$missing" -eq 0 ]] || return 1
+
+	local registry_names=() warning_line="" warning_output=""
+	for name in "${RM_NAMES[@]}"; do
+		warning_output=$(run_secret_removal warnings "$name" 2>/dev/null) || warning_output=""
+		while IFS= read -r warning_line; do
+			[[ -n "$warning_line" ]] || continue
+			print_warning "$name: ${warning_line#*: }"
+			[[ "$warning_line" == registry:* ]] && registry_names+=("$name")
+		done <<<"$warning_output"
+	done
+
+	local answer=""
+	if [[ "$RM_YES" != true ]]; then
+		if [[ ! -t 0 ]]; then
+			print_error "Confirmation required: rerun with --yes in non-interactive use" >&2
+			return 1
+		fi
+		printf 'Remove %s? [y/N] ' "${RM_NAMES[*]}" >&2
+		read -r answer || answer=""
+		[[ "$answer" == y || "$answer" == Y ]] || {
+			print_info "Nothing removed"
+			return 1
+		}
+	fi
+
+	local rc=0
+	for name in "${RM_NAMES[@]}"; do
+		if has_gopass && gopass_owns_secret "$name"; then
+			if ! gopass rm -f "${GOPASS_PREFIX}/${name}" </dev/null >/dev/null 2>&1; then
+				print_error "Failed to remove $name from gopass" >&2
+				rc=1
+			fi
+		fi
+	done
+	local store_file=""
+	store_file=$(credential_store_file)
+	if [[ -f "$store_file" ]]; then
+		run_secret_removal plaintext "$store_file" "${RM_NAMES[@]}" || rc=1
+	fi
+
+	if [[ ${#registry_names[@]} -gt 0 ]]; then
+		answer=y
+		if [[ "$RM_YES" != true ]]; then
+			printf 'Also remove the registry record for %s? [y/N] ' "${registry_names[*]}" >&2
+			read -r answer || answer=""
+		fi
+		if [[ "$answer" == y || "$answer" == Y ]]; then
+			run_secret_removal registry "${registry_names[@]}" || rc=1
+		fi
+	fi
+
+	local check_rc=0
+	for name in "${RM_NAMES[@]}"; do
+		check_rc=0
+		cmd_check "$name" || check_rc=$?
+		if [[ "$check_rc" -eq 1 ]]; then
+			print_success "Removed $name (check: absent)"
+		else
+			print_error "$name is still resolvable after removal (another tenant file or backend may hold it)" >&2
+			rc=1
+		fi
+	done
+	return "$rc"
+}
+
 # List secret names (NEVER values)
 cmd_list() {
 	local has_secrets=false
@@ -1722,6 +1854,8 @@ cmd_help() {
 	echo "                                    Piped stdin is read in full until EOF"
 	echo "  get <NAME>                        Get a secret value (for scripts/piping)"
 	echo "  check <NAME>                      Resolve by name; exit status only, no output"
+	echo "  rm <NAME> [NAME...] [--yes]       Remove from gopass + active plaintext store, then"
+	echo "                                    read back with check (alias: remove, delete)"
 	echo "  list                              List secret names (never values)"
 	echo "  inventory                         Names-only structured local inventory"
 	echo "  audit-credentials                 Names-only JSON Lines hygiene audit (offline)"
@@ -1809,6 +1943,9 @@ main() {
 		;;
 	check)
 		cmd_check "$@"
+		;;
+	rm | remove | delete)
+		cmd_rm "$@" || return $?
 		;;
 	list | ls)
 		cmd_list "$@"
