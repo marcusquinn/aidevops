@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import subprocess  # nosec B404 # disposable fixture process, fixed argv
 import sys
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
@@ -15,9 +16,83 @@ from uuid import uuid4
 from tests import test_retirement as fixtures
 from worker_lifecycle import legacy_cleanup as legacy
 from worker_lifecycle.admission import AdmissionRegistry
+from worker_lifecycle.archive_path import validate_archive_path
 from worker_lifecycle.enrollment import _git_directory
 from worker_lifecycle.process import ObservationUnavailable, ProcessObservation
 from worker_lifecycle.runtime import adapter_for
+
+
+class ArchiveRootContract(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.parent = Path(temporary.name).resolve()
+        self.root = self.parent / "archives"
+
+    def test_missing_root_is_not_created(self):
+        with self.assertRaisesRegex(ValueError, "archive-path-unavailable"):
+            validate_archive_path(self.root)
+        self.assertFalse(self.root.exists())
+
+    def test_validation_does_not_change_contents_or_permissions(self):
+        self.root.mkdir(mode=0o755)
+        self.root.chmod(0o755)
+        payload = self.root / "keep"
+        payload.write_text("recovery evidence")
+        payload.chmod(0o644)
+        parent_mode = self.parent.stat().st_mode
+        validate_archive_path(self.root)
+        self.assertEqual(self.root.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(payload.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(payload.read_text(), "recovery evidence")
+        self.assertEqual(self.parent.stat().st_mode, parent_mode)
+
+    def test_unowned_or_externally_writable_root_is_not_adopted(self):
+        self.root.mkdir(mode=0o755)
+        self.root.chmod(0o755)
+        with patch("worker_lifecycle.archive_path.os.getuid", return_value=os.getuid() + 1):
+            with self.assertRaisesRegex(ValueError, "archive-path-wrong-owner"):
+                validate_archive_path(self.root)
+        self.assertEqual(self.root.stat().st_mode & 0o777, 0o755)
+        self.root.chmod(0o777)
+        with self.assertRaisesRegex(ValueError, "archive-path-externally-writable"):
+            validate_archive_path(self.root)
+        self.assertEqual(self.root.stat().st_mode & 0o777, 0o777)
+
+    def test_links_and_files_fail_with_path_without_chmod(self):
+        destination = self.parent / "destination"
+        destination.mkdir(mode=0o755)
+        destination.chmod(0o755)
+        self.root.symlink_to(destination, target_is_directory=True)
+        for target in (self.root, self.root / "nested"):
+            with self.assertRaises(ValueError) as raised:
+                validate_archive_path(target)
+            self.assertIn(str(self.root), str(raised.exception))
+        self.assertEqual(destination.stat().st_mode & 0o777, 0o755)
+        self.assertFalse((destination / "nested").exists())
+        self.root.unlink()
+        self.root.write_text("not a directory")
+        with self.assertRaisesRegex(ValueError, "archive-path-unavailable"):
+            validate_archive_path(self.root)
+
+    def test_intermediate_directory_and_archive_privacy(self):
+        archive = self.root / "repo" / "unattributed" / "capture"
+        archive.mkdir(mode=0o700, parents=True)
+        self.root.chmod(0o755)
+        validate_archive_path(self.root, archive)
+        archive.parent.chmod(0o777)
+        with self.assertRaisesRegex(ValueError, "archive-path-externally-writable"):
+            validate_archive_path(self.root, archive)
+        archive.parent.chmod(0o755)
+        archive.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "archive-directory-not-private"):
+            validate_archive_path(self.root, archive)
+
+    def test_writable_ancestor_above_root_is_rejected(self):
+        self.root.mkdir(mode=0o755)
+        self.parent.chmod(0o777)
+        with self.assertRaisesRegex(ValueError, "archive-path-externally-writable"):
+            validate_archive_path(self.root)
 
 
 class LegacyCleanupContract(unittest.TestCase):
@@ -54,12 +129,16 @@ class LegacyCleanupContract(unittest.TestCase):
 
     def test_archive_remove_retry_and_ignored_exclusion(self):
         self.stop_owner()
+        self.output.mkdir(mode=0o755, exist_ok=True)
+        self.output.chmod(0o755)
         before = self.store.summary()
         preview = self.cleanup(apply=False)
         self.assertEqual(preview["eligible"], 1, preview)
         self.assertEqual(self.store.summary(), before)
+        self.assertEqual(self.output.stat().st_mode & 0o777, 0o755)
         result = self.cleanup()
         self.assertEqual(result["retired"], 1, result)
+        self.assertEqual(self.output.stat().st_mode & 0o777, 0o755)
         self.assertFalse(self.target.exists())
         with self.store.connection() as connection:
             self.assertEqual(connection.execute(

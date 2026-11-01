@@ -283,8 +283,23 @@ The registry CLI provides two non-destructive operations:
 - `preserve-wip --path PATH --repo OWNER/REPO --base-branch BRANCH --output-root DIR`
   performs preparation, creates a WIP archive and verifies its captured payloads
   against the source fingerprint and retained base. `DIR` must already exist,
-  be canonical, private and outside the source worktree and its administration
+  be canonical, owned and outside the source worktree and its administration
   directory. Missing evidence or failed verification leaves the source intact.
+
+`archive_path.validate_archive_path` provides the shared read-only path check for
+preservation, retirement and both cleanup passes. The archive root and all
+descendant directories must belong to the current user and deny group/other
+write access; 0755 is allowed for the root and intermediate directories. The
+individual archive must remain private (no group/other access). Every component
+is opened without following symlinks. Ancestors above the root must belong to
+the current user or root and deny external writes, except sticky ancestors such
+as the system temporary directory. Existing modes are never changed. These are
+local POSIX ownership/mode-bit checks, not isolation from same-UID processes or
+administrators. Extended ACL models granting access beyond mode bits (notably
+macOS/NFSv4 ACLs) are not evaluated; effective access must match this mode-bit
+policy for the guarantees above to hold.
+The archive producer remains unchanged; unsafe preservation paths prevent source
+retirement rather than triggering permission repair.
 
 Both require `--state-dir` before the subcommand. Neither initializes/migrates state,
 reopens admission, removes worktrees nor consults legacy ownership. Closure survives
