@@ -215,8 +215,8 @@ def _error_details(error: Exception, operation: str) -> dict:
         detail["detail"] = str(error)[:200]
     # GH#36370: creation refusals carry a stable code; `reason` stays unchanged.
     code = refusal_code(error, operation)
-    if code and "detail" not in detail:
-        detail["detail"] = code
+    if code:
+        detail.setdefault("detail", code)
     return detail
 
 

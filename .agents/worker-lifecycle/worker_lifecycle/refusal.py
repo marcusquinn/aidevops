@@ -6,6 +6,7 @@ only the matched code is ever emitted, never the underlying message.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import re
 import sqlite3
 import subprocess  # nosec B404 # exception types only; no process is started here
@@ -34,24 +35,24 @@ _GIT_CODES = (
 )
 
 
-def _git_code(error: subprocess.CalledProcessError) -> str:
-    stderr = error.stderr.decode("utf-8", "replace") if isinstance(error.stderr, bytes) else str(error.stderr or "")
-    stderr = stderr.casefold()
+def _git_code(error: Exception) -> str:
+    raw = getattr(error, "stderr", None)
+    stderr = (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw or "")).casefold()
     return next((code for needle, code in _GIT_CODES if needle in stderr), "git-worktree-add-failed")
 
 
-def _sqlite_code(error: sqlite3.Error) -> str:
+def _sqlite_code(error: Exception) -> str:
     message = str(error).casefold()
     code = next((code for needle, code in _SQLITE_CODES if needle in message), None)
     return code or "sqlite-" + re.sub(r"(?<!^)(?=[A-Z])", "-", type(error).__name__).lower()
 
 
-def _value_code(error: ValueError) -> str | None:
+def _value_code(error: Exception) -> str | None:
     text = str(error)
     return text if _REFUSAL_CODE.fullmatch(text) else None
 
 
-_HANDLERS = (
+_HANDLERS: tuple[tuple[type[Exception], Callable[[Exception], str | None]], ...] = (
     (subprocess.TimeoutExpired, lambda _error: "git-timeout"),
     (subprocess.CalledProcessError, _git_code),
     (sqlite3.Error, _sqlite_code),
