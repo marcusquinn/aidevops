@@ -29,7 +29,8 @@ set -euo pipefail
 #
 # Requires: python3 (for IMAP/JMAP operations), jq
 # Config: configs/email-providers.json (from .json.txt template)
-# Credentials: gopass show -o email-imap-{account} (IMAP) or email-jmap-{account} (JMAP)
+# Credentials: aidevops secret EMAIL_IMAP_<ACCOUNT>, EMAIL_JMAP_<ACCOUNT>,
+#   EMAIL_IMAP_USER_<ACCOUNT>; legacy gopass aidevops/email-{imap,jmap}-{account}
 #
 # Part of aidevops email system (t1493, t1525)
 
@@ -157,18 +158,55 @@ get_smtp_details() {
 	return 0
 }
 
+# Name `aidevops secret set` stores for an account credential (GH#36386):
+# it upper-cases and replaces hyphens, so `email-jmap-fastmail` is stored as
+# EMAIL_JMAP_FASTMAIL. kind: IMAP | JMAP | IMAP_USER.
+_email_secret_name() {
+	local kind="$1"
+	local account="$2"
+	printf 'EMAIL_%s_%s\n' "$kind" "$(printf '%s' "$account" | tr '[:lower:]-' '[:upper:]_')"
+	return 0
+}
+
+# Resolve one credential without printing diagnostics: injected environment
+# variable (`aidevops secret NAME -- cmd`), gopass normalised name, then the
+# legacy lowercase gopass path kept for existing installs.
+_email_secret_value() {
+	local normalised="$1"
+	local legacy="${2:-}"
+	local value=""
+	if [[ "$normalised" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+		value="${!normalised:-}"
+		if [[ -n "$value" ]]; then
+			printf '%s\n' "$value"
+			return 0
+		fi
+	fi
+	command -v gopass &>/dev/null || return 1
+	local -a paths=("aidevops/${normalised}")
+	[[ -z "$legacy" ]] || paths+=("aidevops/${legacy}")
+	local path
+	for path in "${paths[@]}"; do
+		value=$(gopass show -o "$path" 2>/dev/null) || value=""
+		if [[ -n "$value" ]]; then
+			printf '%s\n' "$value"
+			return 0
+		fi
+	done
+	return 1
+}
+
 # Get IMAP password from gopass (never printed, passed as env var)
 get_imap_password() {
 	local account="$1"
-	local secret_name="email-imap-${account}"
+	local secret_name
+	secret_name=$(_email_secret_name IMAP "$account")
 
-	if command -v gopass &>/dev/null; then
-		local password
-		password=$(gopass show -o "aidevops/${secret_name}" 2>/dev/null) || password=""
-		if [[ -n "$password" ]]; then
-			echo "$password"
-			return 0
-		fi
+	local password
+	password=$(_email_secret_value "$secret_name" "email-imap-${account}") || password=""
+	if [[ -n "$password" ]]; then
+		echo "$password"
+		return 0
 	fi
 
 	# Try credentials.sh fallback
@@ -198,15 +236,26 @@ get_imap_password() {
 # Get IMAP username (email address) for an account
 get_imap_user() {
 	local account="$1"
+	local user_secret
+	user_secret=$(_email_secret_name IMAP_USER "$account")
 
-	# Try gopass for the username
+	# `aidevops secret set` stores single-line values, so the username has its
+	# own normalised name; the legacy gopass `user:` field is still honoured.
+	local user=""
+	user=$(_email_secret_value "$user_secret") || user=""
+	if [[ -n "$user" ]]; then
+		echo "$user"
+		return 0
+	fi
 	if command -v gopass &>/dev/null; then
-		local user
-		user=$(gopass show "aidevops/email-imap-${account}" user 2>/dev/null) || user=""
-		if [[ -n "$user" ]]; then
-			echo "$user"
-			return 0
-		fi
+		local entry
+		for entry in "$(_email_secret_name IMAP "$account")" "email-imap-${account}"; do
+			user=$(gopass show "aidevops/${entry}" user 2>/dev/null) || user=""
+			if [[ -n "$user" ]]; then
+				echo "$user"
+				return 0
+			fi
+		done
 	fi
 
 	# Try credentials.sh
@@ -235,7 +284,8 @@ get_imap_user() {
 	fi
 
 	print_error "No IMAP username found for account '$account'"
-	print_info "Store via: gopass edit aidevops/email-imap-${account} (add 'user: you@example.com')"
+	print_info "Store via: aidevops secret set ${user_secret} (value: you@example.com)"
+	print_info "Or set IMAP_USER_$(echo "$account" | tr '[:lower:]-' '[:upper:]_') in credentials.sh"
 	return 1
 }
 
@@ -292,18 +342,18 @@ get_jmap_url() {
 	return 0
 }
 
-# Get JMAP token from gopass (never printed, passed as env var)
+# Get JMAP API token (Bearer) from gopass (never printed, passed as env var).
+# Only real API tokens qualify; run_jmap_adapter owns the app-password fallback.
 get_jmap_token() {
 	local account="$1"
-	local secret_name="email-jmap-${account}"
+	local secret_name
+	secret_name=$(_email_secret_name JMAP "$account")
 
-	if command -v gopass &>/dev/null; then
-		local token
-		token=$(gopass show -o "aidevops/${secret_name}" 2>/dev/null) || token=""
-		if [[ -n "$token" ]]; then
-			echo "$token"
-			return 0
-		fi
+	local token
+	token=$(_email_secret_value "$secret_name" "email-jmap-${account}") || token=""
+	if [[ -n "$token" ]]; then
+		echo "$token"
+		return 0
 	fi
 
 	# Try credentials.sh fallback
@@ -321,14 +371,6 @@ get_jmap_token() {
 			echo "$token"
 			return 0
 		fi
-	fi
-
-	# Fall back to IMAP password (Fastmail uses app passwords for both)
-	local password
-	password=$(get_imap_password "$account" 2>/dev/null) || password=""
-	if [[ -n "$password" ]]; then
-		echo "$password"
-		return 0
 	fi
 
 	print_error "No JMAP token found for account '$account'"
@@ -430,11 +472,29 @@ run_jmap_adapter() {
 	local user
 	user=$(get_imap_user "$account") || return 1
 
+	# Credentials pass via environment variables (never as argv). An API token
+	# uses Bearer auth; an app password only works with HTTP Basic (GH#36386),
+	# so the IMAP-password fallback must never be sent as a Bearer token.
 	local token
-	token=$(get_jmap_token "$account") || return 1
+	token=$(get_jmap_token "$account" 2>/dev/null) || token=""
+	if [[ -n "$token" ]]; then
+		JMAP_TOKEN="$token" JMAP_PASSWORD="" python3 "$JMAP_ADAPTER" \
+			--session-url "$session_url" \
+			--user "$user" \
+			"$command" \
+			"${extra_args[@]}"
+		return $?
+	fi
 
-	# Pass token via environment variable (never as argv)
-	JMAP_TOKEN="$token" python3 "$JMAP_ADAPTER" \
+	local password
+	password=$(get_imap_password "$account" 2>/dev/null) || password=""
+	if [[ -z "$password" ]]; then
+		print_error "No JMAP token or IMAP app password found for account '$account'"
+		print_info "Store via: aidevops secret set $(_email_secret_name JMAP "$account")"
+		return 1
+	fi
+	print_info "No JMAP API token for '$account'; using the IMAP app password with HTTP Basic auth"
+	JMAP_TOKEN="" JMAP_PASSWORD="$password" python3 "$JMAP_ADAPTER" \
 		--session-url "$session_url" \
 		--user "$user" \
 		"$command" \
@@ -504,8 +564,8 @@ cmd_accounts() {
 			if get_imap_user "$slug" >/dev/null 2>&1; then
 				# Test actual connectivity via preferred protocol
 				if [[ "$protocol" == "jmap" ]]; then
-					if get_jmap_token "$slug" >/dev/null 2>&1 &&
-						run_jmap_adapter "$slug" "connect" >/dev/null 2>&1; then
+					# run_jmap_adapter selects token (Bearer) or app password (Basic).
+					if run_jmap_adapter "$slug" "connect" >/dev/null 2>&1; then
 						status_icon="OK(jmap)"
 					elif get_imap_password "$slug" >/dev/null 2>&1 &&
 						run_imap_adapter "$slug" "connect" >/dev/null 2>&1; then
@@ -1195,9 +1255,13 @@ Flag Taxonomy:
   Add-to-Contacts New contact, save their details
 
 Credentials:
-  IMAP: aidevops secret set email-imap-<account>
-  JMAP: aidevops secret set email-jmap-<account> (or falls back to IMAP password)
-  Username: gopass edit aidevops/email-imap-<account> (add 'user: you@example.com')
+  Names follow aidevops secret normalisation (account "my-mail" -> MY_MAIL).
+  IMAP: aidevops secret set EMAIL_IMAP_<ACCOUNT>
+  JMAP: aidevops secret set EMAIL_JMAP_<ACCOUNT> (API token, Bearer auth;
+        without it the IMAP app password is used with HTTP Basic auth)
+  Username: aidevops secret set EMAIL_IMAP_USER_<ACCOUNT> (value: you@example.com)
+  Legacy gopass entries aidevops/email-imap-<account> (with 'user:' field) and
+  aidevops/email-jmap-<account> are still read.
 
 Provider Config:
   Template: .agents/configs/email-providers.json.txt
