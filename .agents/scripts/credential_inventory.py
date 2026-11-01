@@ -208,18 +208,17 @@ def cmd_organise(args: argparse.Namespace) -> int:
 
 
 def cmd_verify_targets(args: argparse.Namespace) -> int:
-    """Recorded credentials for a provider (or the given names, aliases resolved)."""
-    data = store.load()
-    credentials = data["credentials"]
-    wanted = [names.alias_owner(data, name) or name for name in args.names] or sorted(credentials)
-    targets = [name for name in wanted if (credentials.get(name) or {}).get("provider") == args.provider]
-    for name in sorted(set(wanted) - set(targets)) if args.names else []:
-        print(f"ERROR: {name} is not recorded for {args.provider}; record it first with: "
-              f"aidevops secret record {name} --provider {args.provider} --account REF", file=sys.stderr)
-    if args.names and len(targets) != len(wanted):
-        return EXIT_INVALID
-    print("\n".join(dict.fromkeys(targets)))
-    return 0 if targets else 1
+    """Recorded token credentials for a provider; non-token kinds are skipped (GH#36391)."""
+    import credential_inventory_targets as targets
+
+    return targets.verify_targets(store.load(), args.provider, args.names)
+
+
+def cmd_forget(args: argparse.Namespace) -> int:
+    """Drop registry records whose secrets are gone (GH#36391); values are never touched."""
+    import credential_inventory_targets as targets
+
+    return targets.forget(args.names, args.force)
 
 
 # --------------------------------------------------------------------------
@@ -307,6 +306,10 @@ def add_drift_parsers(sub: argparse._SubParsersAction) -> None:
     targets.add_argument("provider", choices=["cloudflare"])
     targets.add_argument("names", nargs="*")
     targets.set_defaults(func=cmd_verify_targets)
+    forget = sub.add_parser("forget", help="remove registry records whose secrets are no longer stored")
+    forget.add_argument("names", nargs="+")
+    forget.add_argument("--force", action="store_true", help="forget even if the secret is still stored")
+    forget.set_defaults(func=cmd_forget)
 
 
 def build_parser() -> argparse.ArgumentParser:

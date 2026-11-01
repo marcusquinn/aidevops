@@ -1670,7 +1670,7 @@ cmd_verify() {
 	local targets_rc=0
 	targets=$(run_credential_inventory verify-targets "$provider" "$@") || targets_rc=$?
 	if [[ "$targets_rc" -ne 0 ]]; then
-		[[ "$targets_rc" -eq 1 ]] && print_error "No recorded $provider credentials; record them with: aidevops secret record NAME --provider $provider --account REF"
+		[[ "$targets_rc" -eq 1 ]] && print_error "No recorded $provider API tokens; record them with: aidevops secret record NAME --provider $provider --kind api_token --account REF"
 		return 1
 	fi
 	local -a names=()
@@ -1878,6 +1878,7 @@ cmd_help() {
 	echo "  drift [--json]                    Offline expiry/overlap/ownership/freshness report"
 	echo "  owner RESOURCE [--json]           Which account/credentials hold a zone or resource"
 	echo "  organise [--json] [--apply-drafts] Plan cleanup; drafts only, never renames/deletes"
+	echo "  forget NAME... [--force]          Drop registry records whose secrets are gone"
 	echo ""
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
@@ -1960,7 +1961,7 @@ main() {
 		warn_credential_backups
 		run_credential_inventory "$command" "$@" || return $?
 		;;
-	describe | record | account | default | alias | resolve | validate | dependents | owner | organise | organize)
+	describe | record | account | default | alias | resolve | validate | dependents | owner | organise | organize | forget)
 		run_credential_inventory "$command" "$@" || return $?
 		;;
 	verify)
