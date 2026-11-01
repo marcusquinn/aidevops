@@ -1,5 +1,6 @@
 """Read-only discovery for the temporary cleanup; paths grant no authority."""
 
+from functools import partial
 import os
 from pathlib import Path
 import subprocess  # nosec B404 # exception classification only
@@ -7,7 +8,7 @@ import subprocess  # nosec B404 # exception classification only
 from .retirement import _git
 
 
-def _registered(common):
+def _registered(common: str) -> list[str]:
     output = _git("--git-dir", common, "worktree", "list", "--porcelain", "-z")
     paths = [field.removeprefix("worktree ") for field in output.split("\0")
              if field.startswith("worktree ")]
@@ -17,7 +18,7 @@ def _registered(common):
     return paths[1:]
 
 
-def _directories(root):
+def _directories(root: Path) -> list[str]:
     if not root.is_absolute() or root.resolve() != root:
         raise ValueError("noncanonical-worktree-root")
     try:
@@ -37,8 +38,8 @@ def discover(items, repositories):
     errors = []
     default_root = Path.home() / "Git" / "_worktrees"
     root = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR", default_root)).expanduser()
-    sources = [(str(root), lambda: _directories(root))]
-    sources.extend((common, lambda common=common: _registered(common))
+    sources = [(str(root), partial(_directories, root))]
+    sources.extend((common, partial(_registered, common))
                    for common in sorted(repositories))
     for source, collect in sources:
         try:
