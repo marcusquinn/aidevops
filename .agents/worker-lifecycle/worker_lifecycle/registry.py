@@ -199,6 +199,22 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     return reconcile(store, args.limit) if args.operation == "reconcile" else store.summary()
 
 
+def _error_details(error: Exception, operation: str) -> dict:
+    """Translate CLI failures without exposing arbitrary system error text."""
+    reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
+    if operation in {"retire-worktree", "cleanup", "upgrade"} and isinstance(error, StoreConflict):
+        reason = str(error)
+    mode = "retirement" if operation in ("retire-worktree", "cleanup") else "observe-only"
+    detail = {"mode": mode, "status": "unavailable", "reason": reason,
+              "cleanup_authorized": False}
+    if isinstance(error, FilesystemValidationError):
+        detail.update(filesystem_error_details(error))
+    # GH#36142: name the enrollment refusal; OSError text may carry paths.
+    if operation == "enroll" and isinstance(error, ValueError):
+        detail["detail"] = str(error)[:200]
+    return detail
+
+
 def main() -> int:
     args = argument_parser().parse_args()
     result: Mapping[str, object]
@@ -219,19 +235,7 @@ def main() -> int:
         print(json.dumps(result, sort_keys=True))
         return 0
     except (ValueError, OSError, sqlite3.Error, subprocess.SubprocessError, ObservationUnavailable) as error:
-        reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
-        retiring = args.operation in ("retire-worktree", "cleanup")
-        if args.operation in {"retire-worktree", "cleanup", "upgrade"} and isinstance(error, StoreConflict):
-            reason = str(error)
-        mode = "retirement" if retiring else "observe-only"
-        detail = {"mode": mode, "status": "unavailable", "reason": reason,
-                  "cleanup_authorized": False}
-        if isinstance(error, FilesystemValidationError):
-            detail.update(filesystem_error_details(error))
-        # GH#36142: name the enrollment refusal; OSError text may carry paths.
-        if args.operation == "enroll" and isinstance(error, ValueError):
-            detail["detail"] = str(error)[:200]
-        print(json.dumps(detail, sort_keys=True))
+        print(json.dumps(_error_details(error, args.operation), sort_keys=True))
         return 2
 
 
