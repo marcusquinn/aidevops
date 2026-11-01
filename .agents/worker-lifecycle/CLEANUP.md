@@ -201,8 +201,10 @@ observation is excluded. An absent store can be initialized; schema 1 is never
 implicitly migrated. With this flag, and in interactive session admission and
 hooks (GH#36349), an un-enrolled schema-1 tree stays observe-only: a
 `coverage-gap: schema-upgrade-required` diagnostic, no admitted generation, no
-cleanup authority. Schema-1 markers or admission tables are refused. Ordinary
-`enroll` stays schema-2-only; coordinate migration before requiring admission.
+cleanup authority. OpenCode logs this gap for Bash, explicit `git -C`, bounded
+commands and Write/Edit inside or outside the worktree base; command/canonical-write
+policy still applies. Schema-1 markers or admission tables refuse; ordinary `enroll`
+stays schema-2-only. Inspection and coordinated recovery: [REGISTRY.md](REGISTRY.md).
 
 `enroll --path PATH` publishes a private `aidevops-generation.json` in the Git
 administrative directory, not among worktree files. It contains a UUID and the
