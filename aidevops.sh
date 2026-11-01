@@ -292,10 +292,14 @@ _run_update_setup_transaction() {
 		# CLI's already-sourced runtime and global state unchanged.
 		if [[ -s "$rollback_receipt" ]]; then
 			(
-				# shellcheck source=.agents/scripts/setup/modules/agent-deploy.sh
-				source "$INSTALL_DIR/.agents/scripts/setup/modules/agent-deploy.sh" || exit 1
-				# shellcheck source=.agents/scripts/setup/modules/agent-runtime.sh
-				source "$INSTALL_DIR/.agents/scripts/setup/modules/agent-runtime.sh" || exit 1
+				if ! declare -F _runtime_bundle_rollback >/dev/null; then
+					# shellcheck source=.agents/scripts/setup/modules/agent-deploy.sh
+					source "$INSTALL_DIR/.agents/scripts/setup/modules/agent-deploy.sh" || exit 1
+				fi
+				if ! declare -F aidevops_runtime_transition_lock_acquire >/dev/null; then
+					# shellcheck source=.agents/scripts/setup/modules/agent-runtime.sh
+					source "$INSTALL_DIR/.agents/scripts/setup/modules/agent-runtime.sh" || exit 1
+				fi
 				{
 					IFS= read -r _AIDEVOPS_ACTIVE_BUNDLE_ROOT &&
 						IFS= read -r _AIDEVOPS_PREVIOUS_BUNDLE_ROOT &&

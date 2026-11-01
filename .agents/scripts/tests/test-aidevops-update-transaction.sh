@@ -729,6 +729,60 @@ run_activation_stamp_test() (
 	if _verify_agents_deploy_or_restore "$REPO_ROOT/.agents" "$HOME/.aidevops/agents"; then return 1; fi
 	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
 	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	# Exercise setup's actual convergence failure path, not just tree checks.
+	INSTALL_DIR="$REPO_ROOT"
+	extract_function _setup_ai_session_verify_deploy "$TEST_ROOT/setup-verify.sh" "$REPO_ROOT/setup.sh"
+	# shellcheck source=/dev/null
+	source "$TEST_ROOT/setup-verify.sh"
+	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old" || return 1
+	VERIFY_RC=0
+	_setup_ai_session_verify_deploy "$old_sha" || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$old_sha" ]] || return 1
+	VERIFY_RC=1
+	VERIFY_ERROR="injected convergence failure"
+	if _setup_ai_session_verify_deploy "$old_sha"; then return 1; fi
+	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	# Capture candidate ownership, then perform a real concurrent activation.
+	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old" || return 1
+	local candidate_root="$_AIDEVOPS_ACTIVE_BUNDLE_ROOT"
+	local previous_root="$_AIDEVOPS_PREVIOUS_BUNDLE_ROOT"
+	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/new" || return 1
+	_AIDEVOPS_ACTIVE_BUNDLE_ROOT="$candidate_root"
+	_AIDEVOPS_PREVIOUS_BUNDLE_ROOT="$previous_root"
+	if _setup_ai_session_verify_deploy "$old_sha"; then return 1; fi
+	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	# Model CLI setup as a subprocess: rollback must use its receipt rather
+	# than the parent's stale activation globals or an observed current link.
+	INSTALL_DIR="$REPO_ROOT"
+	_AIDEVOPS_REAL_HOME="$HOME"
+	local concurrent=false
+	_run_update_setup() (
+		_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old" || return 1
+		if [[ "$concurrent" == true ]]; then
+			unset AIDEVOPS_UPDATE_ROLLBACK_RECEIPT
+			_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/new" || return 1
+		fi
+		return 0
+	)
+	if _run_update_setup_transaction compact "$old_sha"; then return 1; fi
+	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	concurrent=true
+	if _run_update_setup_transaction compact "$old_sha"; then return 1; fi
+	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	# An unwritable receipt must fail activation without leaving the candidate.
+	if AIDEVOPS_UPDATE_ROLLBACK_RECEIPT="$bundles" _runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old"; then return 1; fi
+	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	# First-install convergence failure has no previous link or stamp to keep.
+	rm "$HOME/.aidevops/agents" "$HOME/.aidevops/.deployed-sha"
+	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old" || return 1
+	if _setup_ai_session_verify_deploy "$old_sha"; then return 1; fi
+	[[ ! -e "$HOME/.aidevops/agents" && ! -L "$HOME/.aidevops/agents" ]] || return 1
+	[[ ! -e "$HOME/.aidevops/.deployed-sha" ]] || return 1
 	return 0
 )
 
