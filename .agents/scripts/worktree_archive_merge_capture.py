@@ -38,8 +38,6 @@ def supported_merge_administration(root):
         raise ValueError('merge:unsupported_private_state')
     if git(root, 'rev-parse', '--is-shallow-repository').strip() != b'false':
         raise ValueError('merge:shallow_history')
-    if state['files'].get('FETCH_HEAD'):
-        raise ValueError('merge:unpreserved_fetch_head')
     return state
 
 

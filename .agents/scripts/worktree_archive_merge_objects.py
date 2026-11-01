@@ -5,10 +5,10 @@
 
 import re
 
-from worktree_archive_git import auto_merge_oid, git, validate_auto_merge
+from worktree_archive_git import auto_merge_oid, fetch_head_roots, git, validate_auto_merge
 
 
-MERGE_FILES = {'MERGE_HEAD', 'MERGE_MSG', 'MERGE_MODE', 'ORIG_HEAD', 'AUTO_MERGE'}
+MERGE_FILES = {'MERGE_HEAD', 'MERGE_MSG', 'MERGE_MODE', 'ORIG_HEAD', 'AUTO_MERGE', 'FETCH_HEAD'}
 
 
 def merge_oid(value):
@@ -31,6 +31,7 @@ def validate_merge_metadata(metadata):
         raise ValueError('merge:unsupported_mode')
     if 'AUTO_MERGE' in decoded:
         auto_merge_oid(decoded['AUTO_MERGE'])
+    fetch_head_roots(metadata.get('FETCH_HEAD', ''))
 
 
 def merge_roots(state):
@@ -39,6 +40,7 @@ def merge_roots(state):
         for line in bytes.fromhex(state['metadata'].get(name, '')).splitlines():
             roots.add(merge_oid(line.decode('ascii')))
     roots.update(entry[2] for entry in state['index'] + state['undo'])
+    roots.update(fetch_head_roots(state['metadata'].get('FETCH_HEAD', '')))
     return sorted(roots)
 
 

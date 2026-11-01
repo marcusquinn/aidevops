@@ -12,6 +12,65 @@ from unittest.mock import patch
 
 
 class MergeCases:
+    def test_merge_fetch_head_survives_source_loss_and_gc(self):
+        self.start_conflicted_merge()
+        self.git(self.work, 'fetch', str(self.repo), 'other')
+        fetch = self.auto_merge_path().parent / 'FETCH_HEAD'
+        tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}').strip().decode()
+        orphan = self.git(self.work, 'commit-tree', tree, '-m', 'fetch-only').strip()
+        # This root is not reachable from HEAD or either merge parent.
+        content = fetch.read_bytes() + orphan + b'\tnot-for-merge\tfixture\xff\n'
+        fetch.write_bytes(content)
+        parents = [self.git(self.work, 'rev-parse', ref).strip()
+                   for ref in ('HEAD', 'MERGE_HEAD')]
+        archive = self.archive()
+        self.helper('verify-local', archive)
+        self.helper('source-matches', archive, self.work)
+        fetch.write_bytes(content + content)
+        self.assertNotEqual(self.helper('source-matches', archive, self.work,
+                                        check=False).returncode, 0)
+        fetch.write_bytes(content)
+        shutil.rmtree(self.work)
+        shutil.rmtree(self.repo)
+        self.helper('verify', archive)
+        for operation in ('continue', 'abort'):
+            with self.subTest(operation=operation):
+                target = self.root / operation
+                self.helper('restore', archive, '--target', target)
+                self.git(target, 'gc', '--prune=now')
+                admin = Path(os.fsdecode(self.git(target, 'rev-parse', '--absolute-git-dir')).strip())
+                self.assertEqual((admin / 'FETCH_HEAD').read_bytes(), content)
+                self.assertEqual(self.git(target, 'cat-file', '-t', orphan.decode()).strip(), b'commit')
+                if operation == 'continue':
+                    (target / 'mixed.txt').write_bytes(b'resolved\n')
+                    self.git(target, 'add', 'mixed.txt')
+                    self.env['GIT_EDITOR'] = 'true'
+                    self.git(target, 'merge', '--continue')
+                    self.assertEqual(self.git(target, 'show', '-s', '--format=%P').strip(), b' '.join(parents))
+                else:
+                    self.git(target, 'merge', '--abort')
+                    self.assertEqual(self.git(target, 'rev-parse', 'HEAD').strip(), parents[0])
+
+    def test_merge_fetch_head_empty_invalid_and_missing_object(self):
+        from worktree_archive_merge_capture import merge_state, validate_merge
+        self.start_conflicted_merge()
+        fetch = self.auto_merge_path().parent / 'FETCH_HEAD'
+        fetch.write_bytes(b'')
+        state = merge_state(self.work)
+        self.assertEqual(state['metadata']['FETCH_HEAD'], '')
+        self.helper('verify', self.archive())
+        state['metadata']['FETCH_HEAD'] = b'invalid\n'.hex()
+        with self.assertRaisesRegex(ValueError, 'invalid_FETCH_HEAD'):
+            validate_merge(state)
+        for content in (b'invalid\n', b'f' * 40 + b'\t\tmissing object\n'):
+            fetch.write_bytes(content)
+            with self.subTest(content=content):
+                result = self.helper('archive', self.work, '--repo', 'fixture/repo', '--issue', '99',
+                                     '--reason', 'failed-worker', '--base-branch', 'develop',
+                                     '--output-root', self.archives, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(fetch.read_bytes(), content)
+
     def test_merge_untracked_deleted_path_and_hook_isolation(self):
         self.start_conflicted_merge()
         self.git(self.work, 'rm', 'mixed.txt')
