@@ -158,6 +158,16 @@ class GenerationEnrollment:
             if connection.execute("SELECT 1 FROM sqlite_master WHERE name='generation_admissions'").fetchone():
                 raise StoreConflict("schema-one-with-admission-state")
             self.store.summary()  # Validate the observation tables before compatibility handling.
+            # Summary counts do not read generations or every observation column.
+            # Prepare complete table reads even when a corrupt store has no rows.
+            for query in (
+                "SELECT installation_id,mode,max_events FROM metadata LIMIT 0",
+                "SELECT sequence,event_id,payload,recorded_at FROM events LIMIT 0",
+                "SELECT run_id,identity,state,version,checked_sequence,observation FROM runs LIMIT 0",
+                "SELECT generation_id,path FROM generations LIMIT 0",
+                "SELECT run_id,generation_id FROM bindings LIMIT 0",
+            ):
+                connection.execute(query)
             with DirectoryHandle(path) as root:
                 directory = _git_directory(path)
                 with DirectoryHandle(directory) as admin:
