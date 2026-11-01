@@ -211,7 +211,7 @@ release_request() {
 			release_comment "$repo" "$older" "Superseded by ${url}. No release was authorized by this unsigned request." || return 1
 			gh issue close "$older" --repo "$repo" --reason 'not planned' || return 1
 		fi
-	done < <(jq -r --arg version "$version" '.[] | . as $issue | (.body | split("\n") | map(fromjson? | select(.schema == 1)) | .[0].version // "") as $old | select(($old | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and (($old | split(".") | map(tonumber)) < ($version | split(".") | map(tonumber)))) | $issue.number' <<<"$issues")
+	done < <(jq -r --arg version "$version" '.[] | . as $issue | (.body | split("\n") | map(fromjson? | select(type == "object" and .schema == 1)) | .[0].version // "") as $old | select(($old | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and (($old | split(".") | map(tonumber)) < ($version | split(".") | map(tonumber)))) | $issue.number' <<<"$issues")
 	printf '%s\nAPPROVAL_COMMAND=%s\n' "$url" "$command"
 	return 0
 }
