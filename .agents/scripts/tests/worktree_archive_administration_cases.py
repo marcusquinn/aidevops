@@ -12,6 +12,38 @@ from worktree_archive_administration import administration_files
 
 
 class AdministrationCases:
+    def test_git_only_rejects_unpreserved_opaque_records(self):
+        from worktree_archive_fingerprint import git_snapshot
+        from worktree_archive_index import git_index_state
+
+        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
+        (admin / 'aidevops').mkdir(mode=0o700)
+        for merge in (False, True):
+            if merge:
+                self.start_conflicted_merge()
+            archive = self.archive()
+            for name in ('aidevops/js-admission.json', 'aidevops-profile-publication.json'):
+                with self.subTest(merge=merge, name=name):
+                    record = admin / name
+                    record.write_bytes(b'opaque historical record\n')
+                    # Policy-neutral index validation must still support preserve-v1.
+                    metadata = git_index_state(self.work)
+                    reason = f'git_admin:requires_preservation:{name}'
+                    with self.assertRaisesRegex(ValueError, re.escape(reason)):
+                        git_snapshot(self.work, metadata=metadata)
+                    result = self.helper('archive', self.work, '--repo', 'fixture/repo',
+                                         '--issue', '99', '--reason', 'failed-worker',
+                                         '--base-branch', 'develop', '--output-root', self.archives,
+                                         check=False)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(reason.encode(), result.stderr)
+                    # A record added after capture must block source retirement too.
+                    self.assertNotEqual(self.helper('source-matches', archive, self.work,
+                                                    check=False).returncode, 0)
+                    self.assertTrue(self.work.is_dir())
+                    self.assertEqual(record.read_bytes(), b'opaque historical record\n')
+                    record.unlink()
+
     def test_legacy_js_admission_round_trip_preserves_local_commits(self):
         from worktree_archive_administration import administration
         from worktree_archive_snapshot import capture_administration, restore_administration, snapshot
