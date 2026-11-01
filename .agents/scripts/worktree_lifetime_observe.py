@@ -1,9 +1,30 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Seal without holding SQLite locks during slow observation (callers inject managed-lifetime ops)."""
+"""Readiness and sealing observations (callers inject managed-lifetime ops)."""
 
 import copy
 from pathlib import Path
+
+
+def inspect_record(ops, record: dict, path: Path, operation: str, extra: list[str]) -> None:
+    connection = ops.connection
+    reader = ops.READERS.get(operation)
+    if reader:
+        reader(record, path, extra, connection)
+        return
+    ops.verify_identity(record, path)
+    if operation in ("cleanup-ready", "idle-ready"):
+        # Dry-run only: do not persist a seal before policy and owner checks.
+        if operation == "idle-ready":
+            ops.require(len(extra) <= 1, "at most one idle window is accepted")
+            ops.idle_policy.owner_clear(connection, str(path))
+            ops.idle_policy.require_elapsed(record, ops.boot_id(), int(extra[0]) if extra else ops.idle_policy.IDLE_SECONDS)
+            ops.idle_quiescence(record)
+        ops.seal(record)
+        return
+    ops.require(record["state"] in ("created", "running"), "worktree cannot be reused")
+    if record["launches"]:
+        ops.drain(record["launches"][-1])
 
 
 def seal_observed(ops, connection, path: Path, operation: str, extra: list[str]) -> None:

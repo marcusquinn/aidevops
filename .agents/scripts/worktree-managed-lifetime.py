@@ -223,23 +223,8 @@ READERS = {"status": print_status, "proof": print_proof, "match": print_match}
 
 
 def inspect_record(record: dict, path: Path, operation: str, extra: list[str], connection=None) -> None:
-    reader = READERS.get(operation)
-    if reader:
-        reader(record, path, extra, connection)
-        return
-    verify_identity(record, path)
-    if operation in ("cleanup-ready", "idle-ready"):
-        # Dry-run only: do not persist a seal before policy and owner checks.
-        if operation == "idle-ready":
-            require(len(extra) <= 1, "at most one idle window is accepted")
-            idle_policy.owner_clear(connection, str(path))
-            idle_policy.require_elapsed(record, boot_id(), int(extra[0]) if extra else idle_policy.IDLE_SECONDS)
-            idle_quiescence(record)
-        seal(record)
-        return
-    require(record["state"] in ("created", "running"), "worktree cannot be reused")
-    if record["launches"]:
-        drain(record["launches"][-1])
+    ops = types.SimpleNamespace(**globals(), connection=connection)
+    observe.inspect_record(ops, record, path, operation, extra)
 
 
 def observe_idle(connection, record: dict) -> None:
