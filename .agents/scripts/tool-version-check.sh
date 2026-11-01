@@ -223,6 +223,7 @@ NPM_TOOLS=(
 	"npm|Claude Code MCP|claude-code-mcp|--version|@steipete/claude-code-mcp|npm install -g @steipete/claude-code-mcp@latest"
 	"npm|Google Workspace CLI|gws|--version|@googleworkspace/cli|npm install -g @googleworkspace/cli@latest"
 	"npm|Cloudflare cf CLI|cf|--version|cf|npm install -g cf@latest"
+	"npm|Cloudron CLI|cloudron|--version|cloudron|npm install -g cloudron@latest"
 )
 
 BREW_TOOLS=(
