@@ -90,6 +90,14 @@ events, runs and bindings. It never adopts historical bindings as admission proo
 Repeated upgrades are no-ops. No automatic migration or production upgrade command
 is installed. Back up real state and coordinate clients before a future upgrade:
 older schema-1-only code will reject schema 2. Do not reset or downgrade live state.
+OpenCode tool-owner checks use the same validated schema-1 observe-only path as
+worktree creation: unmarked linked worktrees report
+`coverage-gap: schema-upgrade-required` without admission, enrollment or migration.
+This applies to Bash (including explicit `git -C` targets), bounded commands and
+direct Write/Edit, independent of the configured worktree base. Canonical-write
+policy still applies. Use `worker-registry.py --state-dir <state-directory> status` for read-only inspection;
+an upgrade is not required to continue this supported compatibility path. Before
+any future explicit upgrade, coordinate all older clients and back up the store.
 Event envelope schema 1 is separate and unchanged. Admission requirements and
 current integration limitations are documented in [CLEANUP.md](CLEANUP.md).
 

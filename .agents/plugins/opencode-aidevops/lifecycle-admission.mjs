@@ -48,8 +48,21 @@ export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash,
   try {
     // Admission replay is idempotent, including a retry after a lost acknowledgement.
     result = parsePolicyPayload(runPolicyHelper(helperArgs, { stdio: ["ignore", "pipe", "pipe"] }));
-  } catch {
+  } catch (error) {
+    let reason;
+    try { reason = parsePolicyPayload(error.stdout?.toString()).reason; } catch { /* No safe payload. */ }
+    if (reason === "explicit-schema-upgrade-required") {
+      throw new Error("BLOCKED: explicit-schema-upgrade-required; schema-1 observe-only compatibility requires an unmarked linked worktree and valid observation store. Inspect with worker-registry.py --state-dir <state-directory> status; coordinate all older clients before any explicit schema upgrade. No production upgrade command is installed; never reset or downgrade live state");
+    }
     throw new Error("BLOCKED: lifecycle owner admission is unavailable; no write authorized");
+  }
+  if (result.status === "coverage-gap" && result.reason === "schema-upgrade-required"
+      && result.cleanup_authorized === false) {
+    // This is observation, not ownership or write authorization. The independent
+    // canonical-write and command-policy gates still apply to every tool call.
+    // The plugin console router persists tagged diagnostics without TUI noise.
+    console.error("[aidevops] [worker-lifecycle] coverage-gap: schema-upgrade-required; observe-only, no owner admitted or cleanup authorized");
+    return;
   }
   if (!["admitted", "excluded-unregistered", "not-applicable"].includes(result.status)) {
     throw new Error("BLOCKED: lifecycle owner admission was not confirmed");

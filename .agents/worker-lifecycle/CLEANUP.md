@@ -171,13 +171,13 @@ Scheduled Pulse cleanup can retire registered generations that satisfy the regis
 ### Restartable generation enrollment
 
 `worktree_create_registered` invokes `worker-registry.py enroll --initialize --allow-schema-1-observation`
-after creation and retains the tree if enrollment fails. Private/disabled
-observation is excluded. An absent store can be initialized; schema 1 is never
-implicitly migrated. With this compatibility flag, an un-enrolled schema-1 tree
-continues observe-only with a `coverage-gap: schema-upgrade-required` diagnostic;
-it has no admitted generation. Existing markers or admission tables in schema 1
-are contradictions and cause refusal. Ordinary `enroll` remains schema-2-only.
-Coordinate migration before requiring admission for these installations.
+after creation, retaining the tree on failure; private/disabled observation is excluded.
+Absent stores may initialize; schema 1 never implicitly migrates. Unmarked schema-1
+trees continue observe-only with `coverage-gap: schema-upgrade-required`, no admitted
+generation or cleanup authority. OpenCode validates the same gap for Bash, `git -C`,
+bounded commands and Write/Edit outside or inside the worktree base; independent
+command/canonical-write policy remains mandatory. Schema-1 markers/admission tables refuse;
+ordinary `enroll` stays schema-2-only. Inspection/recovery and upgrade coordination: [REGISTRY.md](REGISTRY.md).
 
 `enroll --path PATH` publishes a private `aidevops-generation.json` in the Git
 administrative directory, not among worktree files. It contains a UUID and the
