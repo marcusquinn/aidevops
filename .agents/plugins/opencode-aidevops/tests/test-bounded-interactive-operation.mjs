@@ -20,6 +20,7 @@ import {
 } from "../bounded-operation-process-tree.mjs";
 import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
 import { resolveGptImageProjectRoot, resolveSessionOwnedWorktreeRoot } from "../gpt-image-worktree.mjs";
+import { processStartIdentity } from "../process-start-identity.mjs";
 
 describe("bounded interactive operations", () => {
   test("start returns control and explicit progress reaches a private terminal receipt", async () => {
@@ -219,13 +220,14 @@ describe("bounded interactive operations", () => {
       const instance = manager({ projectRoot: fixture, scriptsDir });
       // The normal resolver uses the isolated registry, with no verification stub.
       const environmentKeys = ["WORKTREE_REGISTRY_DB", "AIDEVOPS_FULL_LOOP_CLEANUP_DIR",
-        "AIDEVOPS_SESSION_ID", "OPENCODE_SESSION_ID", "OPENCODE_PID"];
+        "AIDEVOPS_SESSION_ID", "OPENCODE_SESSION_ID", "OPENCODE_PID", "OPENCODE_PID_START_IDENTITY"];
       const priorEnvironment = Object.fromEntries(environmentKeys.map((key) => [key, process.env[key]]));
       process.env.WORKTREE_REGISTRY_DB = env.WORKTREE_REGISTRY_DB;
       process.env.AIDEVOPS_FULL_LOOP_CLEANUP_DIR = join(fixture, "cleanup-receipts");
       process.env.AIDEVOPS_SESSION_ID = "";
-      process.env.OPENCODE_SESSION_ID = "ses_stale_host_environment";
+      process.env.OPENCODE_SESSION_ID = owner.sessionID;
       process.env.OPENCODE_PID = String(process.pid);
+      process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
       try {
         const handoff = await instance.start({
           command: ["bash", "-c", 'SCRIPT_DIR="$1"; source "$SCRIPT_DIR/shared-constants.sh"; source "$SCRIPT_DIR/full-loop-helper-state.sh"; source "$SCRIPT_DIR/full-loop-helper-merge.sh"; _merge_record_deferred_cleanup_owner 123 example/repo "$2"',

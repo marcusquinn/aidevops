@@ -147,6 +147,7 @@ export async function runSupervisor() {
       input: { tool: "aidevops_bounded_operation", sessionID: operationID },
       output: { args: { action: "start", cwd: process.cwd(), command } },
       bounded: true,
+      allowSelfFallback: true,
     });
   } catch {
     process.stderr.write("BLOCKED: bounded-operation lifecycle admission unavailable\n");

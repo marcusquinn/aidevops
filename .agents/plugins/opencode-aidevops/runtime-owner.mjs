@@ -3,10 +3,10 @@
 
 import { processStartIdentity } from "./process-start-identity.mjs";
 
-/** Resolve only runtime-provided identity, never a producer or arbitrary ancestor. */
-export function runtimeOwner(sessionID) {
-  let pid = String(process.pid);
-  let identity = processStartIdentity(process.pid);
+/** Resolve runtime-provided identity; only supervisors may explicitly own themselves. */
+export function runtimeOwner(sessionID, { allowSelfFallback = false } = {}) {
+  let pid = allowSelfFallback ? String(process.pid) : "";
+  let identity = allowSelfFallback ? processStartIdentity(process.pid) : "";
   const inheritedPID = process.env.OPENCODE_PID || "";
   const inheritedIdentity = process.env.OPENCODE_PID_START_IDENTITY || "";
   if (sessionID && sessionID === process.env.OPENCODE_SESSION_ID
@@ -19,7 +19,7 @@ export function runtimeOwner(sessionID) {
         identity = inheritedIdentity;
       }
     } catch {
-      // Unavailable or reused inherited identities never override this runtime.
+      // Unavailable or reused inherited identities never establish runtime ownership.
     }
   }
   return { pid, identity };

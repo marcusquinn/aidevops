@@ -54,7 +54,11 @@ test("bounded creation retains the actual interactive runtime until it exits", {
     import { BoundedInteractiveOperationManager } from ${JSON.stringify(managerURL)};
     import { createPreEditCheckTool } from ${JSON.stringify(preEditURL)};
     import { admitToolOwner } from ${JSON.stringify(admissionURL)};
+    import { processStartIdentity } from ${JSON.stringify(new URL("../process-start-identity.mjs", import.meta.url).href)};
     const context = { sessionID: 'ses_interactive_fixture' };
+    process.env.OPENCODE_PID = String(process.pid);
+    process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+    process.env.OPENCODE_SESSION_ID = context.sessionID;
     const manager = new BoundedInteractiveOperationManager({ projectRoot: ${JSON.stringify(f.repo)},
       recordOutput: async content => { process.stderr.write(content); return 'fixture'; } });
     const start = await manager.start({ command: ${JSON.stringify(f.command)}, budgetMs: 120000 }, context);
@@ -123,9 +127,14 @@ test("runtime owner requires matching session and original native generation pro
     process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(child.pid);
     process.env.OPENCODE_SESSION_ID = "ses_fixture";
     assert.equal(runtimeOwner("ses_fixture").pid, String(child.pid));
-    assert.equal(runtimeOwner("ses_other").pid, String(process.pid));
+    assert.deepEqual(runtimeOwner("ses_other"), { pid: "", identity: "" });
     process.env.OPENCODE_PID_START_IDENTITY = "stale-generation";
-    assert.equal(runtimeOwner("ses_fixture").pid, String(process.pid));
+    assert.deepEqual(runtimeOwner("ses_fixture"), { pid: "", identity: "" });
+    delete process.env.OPENCODE_PID_START_IDENTITY;
+    assert.deepEqual(runtimeOwner("ses_fixture"), { pid: "", identity: "" });
+    assert.deepEqual(runtimeOwner("operation_fixture", { allowSelfFallback: true }), {
+      pid: String(process.pid), identity: processStartIdentity(process.pid),
+    });
   } finally {
     child.kill();
     await once(child, "exit");

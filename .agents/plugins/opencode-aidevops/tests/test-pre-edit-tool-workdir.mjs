@@ -197,8 +197,8 @@ test("inherited ownership requires matching generation evidence", async () => {
       const result = await runPreEditCheck(script, [], root, 5000,
         { sessionID: "ses_generation_fixture" });
       assert.equal(result.code, 0);
-      const expected = proof === identity ? runtime.pid : process.pid;
-      assert.equal(result.stdout.trim(), `${expected}\n${processStartIdentity(expected)}`);
+      const expected = proof === identity ? `${runtime.pid}\n${identity}` : "";
+      assert.equal(result.stdout.trim(), expected);
     }
   } finally {
     runtime.kill();
@@ -217,8 +217,13 @@ test("pre-edit tool validates the explicitly targeted Git worktree", async () =>
   const otherLinked = join(root, "other-linked");
   const nonGit = join(root, "not-git");
   const injectionMarker = join(root, "injected");
+  const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+  const saved = keys.map(key => process.env[key]);
 
   try {
+    process.env.OPENCODE_PID = String(process.pid);
+    process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+    process.env.OPENCODE_SESSION_ID = "ses_target_fixture";
     mkdirSync(repo);
     mkdirSync(nonGit);
     git(repo, ["init", "--initial-branch=main"]);
@@ -322,6 +327,10 @@ test("pre-edit tool validates the explicitly targeted Git worktree", async () =>
     const malformedArrayResult = await preEditTool.execute({ workdir: repo, targetPaths: {} });
     assert.match(malformedArrayResult, /targetPaths must be an array/);
   } finally {
+    keys.forEach((key, index) => {
+      if (saved[index] === undefined) delete process.env[key];
+      else process.env[key] = saved[index];
+    });
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -331,8 +340,13 @@ test("slow loop-mode creation is reported exactly once beyond the former timeout
   const repo = join(root, "repo");
   const linked = join(root, "slow-linked");
   const fixtureScripts = join(root, "scripts");
+  const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+  const saved = keys.map(key => process.env[key]);
 
   try {
+    process.env.OPENCODE_PID = String(process.pid);
+    process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+    process.env.OPENCODE_SESSION_ID = "ses_pre_edit_fixture";
     mkdirSync(repo);
     mkdirSync(fixtureScripts);
     symlinkSync(join(scriptsDir, "worker-lifecycle-session-helper.py"),
@@ -367,6 +381,10 @@ printf 'LOOP_DECISION=worktree_created\\nWORKTREE_PATH=%s\\nNEXT_STEP: cd to the
     const worktreeList = git(repo, ["worktree", "list", "--porcelain"]);
     assert.equal(worktreeList.split("branch refs/heads/bugfix/slow-fixture").length - 1, 1);
   } finally {
+    keys.forEach((key, index) => {
+      if (saved[index] === undefined) delete process.env[key];
+      else process.env[key] = saved[index];
+    });
     rmSync(root, { recursive: true, force: true });
   }
 });

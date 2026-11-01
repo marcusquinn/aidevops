@@ -24,10 +24,10 @@ function mutationPaths(input, args, cwd) {
 }
 
 function ownerArguments(scriptsDir, input, args, context) {
-  const { cwd, fileMutation, bash, bounded } = context;
+  const { cwd, fileMutation, bash, bounded, allowSelfFallback } = context;
   const paths = fileMutation ? mutationPaths(input, args, cwd) : [];
   const sessionID = input.sessionID || input.sessionId || input.session?.id || "";
-  const owner = runtimeOwner(sessionID);
+  const owner = runtimeOwner(sessionID, { allowSelfFallback });
   // #aidevops:trust-boundary — these identities come from the runtime, not tool args.
   const helperArgs = ["-E", "-s", "-B", join(scriptsDir, "worker-lifecycle-session-helper.py"),
     "--cwd", cwd, "--runtime-pid", owner.pid, "--session-id", sessionID];
@@ -37,14 +37,14 @@ function ownerArguments(scriptsDir, input, args, context) {
   return helperArgs;
 }
 
-export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash, bounded }) {
+export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash, bounded, allowSelfFallback = false }) {
   // Unsupported hosts cannot run the native cleanup collector either.
   if (!["linux", "darwin"].includes(process.platform)) return;
   const args = output.args || {};
   const fileMutation = isDirectFileMutationTool(input.tool);
   if (!fileMutation && !bash && !(bounded && args.action === "start")) return;
   const helperArgs = ownerArguments(scriptsDir, input, args, {
-    cwd: ownerWorkingDirectory(args, repositoryDir, bash), fileMutation, bash, bounded,
+    cwd: ownerWorkingDirectory(args, repositoryDir, bash), fileMutation, bash, bounded, allowSelfFallback,
   });
   let result;
   try {
