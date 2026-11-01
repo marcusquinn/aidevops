@@ -1,5 +1,7 @@
 """Read-only archive path checks for preservation and destructive retirement."""
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 import stat
