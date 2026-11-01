@@ -110,6 +110,11 @@ class ProducerCases:
         from worktree_archive_git import base_import_failure
         for raw, detail in ((b'private pack-objects died: malloc failed', 'allocation-failed'),
                             ('private pack-objects died: No space left on device', 'storage-full'),
+                            (b'private pack-objects died: missing blob deadbeef', 'missing-object'),
+                            ('private: bad tree object deadbeef', 'missing-object'),
+                            (b'private: unable to read ' + b'a' * 40, 'missing-object'),
+                            (b'private: could not read ' + b'b' * 64, 'missing-object'),
+                            (b'private: did not send all necessary objects', 'missing-object'),
                             (b'private pack-objects died', 'unclassified'),
                             (None, 'unclassified')):
             error = subprocess.CalledProcessError(128, ['private'], stderr=raw)
@@ -198,6 +203,38 @@ class ProducerCases:
             self.assertEqual(retried[key], record[key])
         self.assertEqual(list(archive.parent.glob('.archive-verify-*')), scratch)
         self.assertEqual(self.managed_record(managed), sealed)
+
+    def test_incomplete_recovery_origin_reports_missing_object_through_producer(self):
+        origin, base, _, _ = self.incomplete_promisor_fixture()
+        result = self.producer('capture', self.work, self.archives, 'test.sh', 'incomplete-origin')
+        archive = Path(result.stdout.decode().strip())
+        managed, sealed = self.seal_promisor_source()
+        # The independent recovery origin cannot supply the historical blob
+        # either. Remove only an object in this operation-owned disposable fixture.
+        oid = self.git(origin, 'rev-parse', base + '^:historical').decode().strip()
+        (origin / 'objects' / oid[:2] / oid[2:]).unlink()
+        self.env.update(AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE=origin.as_uri(),
+                        AIDEVOPS_WORKTREE_BASE_RECOVERY_COMMON_DIR=str(self.repo / '.git'))
+        manifest = (archive / 'manifest.json').read_bytes()
+        source_files = {path.relative_to(self.repo / '.git'): path.read_bytes()
+                        for path in (self.repo / '.git').rglob('*') if path.is_file()}
+        journal = producer_engine.journal_for_archive(archive)
+        failed = self.producer('verify', archive, check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(b'producer:base-import-failed;', failed.stderr)
+        self.assertIn(b'/missing-object;', failed.stderr)
+        self.assertNotIn(str(origin).encode(), failed.stderr)
+        self.assertNotIn(oid.encode(), failed.stderr)
+        self.assertEqual((archive / 'manifest.json').read_bytes(), manifest)
+        self.assertEqual({path.relative_to(self.repo / '.git'): path.read_bytes()
+                          for path in (self.repo / '.git').rglob('*') if path.is_file()}, source_files)
+        self.assertEqual(self.managed_record(managed), sealed)
+        record = json.loads(journal.read_text())
+        self.assertEqual(record['phase'], 'archived')
+        self.assertEqual(record['source_removal_outcome'], 'pending')
+        scratch = list(archive.parent.glob('.archive-verify-*'))
+        self.assertEqual(len(scratch), 1)
+        self.assertEqual(stat.S_IMODE(scratch[0].stat().st_mode), 0o700)
 
     def seal_promisor_source(self):
         managed = self.managed_fixture()

@@ -48,9 +48,13 @@ def base_import_failure(error):
     stderr = stderr.lower()
     packing = 'pack-objects-died' if b'pack-objects died' in stderr else 'git-failed'
     detail = 'unclassified'
-    if b'promisor remote' in stderr and b'could not fetch' in stderr:
+    if ((b'promisor remote' in stderr and b'could not fetch' in stderr)
+            or b'missing promisor object' in stderr or b'missing promised object' in stderr):
         return MISSING_PROMISOR_BASE
     for signatures, category in (
+        ((b'missing blob', b'missing tree', b'missing commit', b'missing object',
+          b'bad object', b'bad tree object', b'bad commit object',
+          b'not our ref', b'did not send all necessary objects'), 'missing-object'),
         ((b'out of memory', b'malloc failed', b'cannot allocate memory'), 'allocation-failed'),
         ((b'no space left on device',), 'storage-full'),
         ((b'permission denied',), 'permission-denied'),
@@ -59,6 +63,8 @@ def base_import_failure(error):
         if any(signature in stderr for signature in signatures):
             detail = category
             break
+    if re.search(rb'(?:unable to read|could not read) (?:sha1 file )?[0-9a-f]{40,64}\b', stderr):
+        detail = 'missing-object'
     code = error.returncode if -255 <= error.returncode <= 255 else 'unknown'
     return (f'producer:base-import-failed; stage=base-import; exit={code}; '
             f'stderr={packing}/{detail}; source and archive retained')
@@ -78,7 +84,7 @@ def nested_base_import_failure(stderr):
         return final
     pattern = (r'producer:base-import-failed; stage=base-import; exit=(?:-?[0-9]{1,3}|unknown); '
                r'stderr=(?:pack-objects-died|git-failed)/'
-               r'(?:unclassified|allocation-failed|storage-full|permission-denied|thread-failed); '
+               r'(?:unclassified|missing-object|allocation-failed|storage-full|permission-denied|thread-failed); '
                r'source and archive retained')
     return final if re.fullmatch(pattern, final) else None
 
