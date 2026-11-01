@@ -15,6 +15,8 @@ import worktree_lifetime_owner as owner
 from worktree_lifetime_quiescence import quiescence as quiescence
 from worktree_lifetime_quiescence import validate_quiescence as validate_quiescence
 
+__all__ = ["quiescence", "validate_quiescence"]
+
 
 IDENTITY_FIELDS = ("boot_id", "owner_pid", "owner_start", "cgroup", "cgroup_inode", "namespace")
 ENDED = ("previous-boot", "pid-absent", "pid-reused")

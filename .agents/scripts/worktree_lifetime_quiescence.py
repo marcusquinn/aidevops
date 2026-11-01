@@ -49,13 +49,17 @@ def quiescence(launch, worktree_identity=None, census_cache=None):
     return dict(receipt, observed_at=time.time())
 
 
+def _integer_equals(value, expected):
+    return isinstance(value, int) and not isinstance(value, bool) and value == expected
+
+
 def empty_census(sample, boot):
     from worktree_lifetime_reconcile import valid_timestamp
     return isinstance(sample, dict) and all((
         sample.get("status") == "available", sample.get("boot_id") == boot,
-        type(sample.get("uid")) is int and sample["uid"] == os.getuid(),
-        type(sample.get("references")) is int and sample["references"] == 0,
-        type(sample.get("uncertain")) is int and sample["uncertain"] == 0,
+        _integer_equals(sample.get("uid"), os.getuid()),
+        _integer_equals(sample.get("references"), 0),
+        _integer_equals(sample.get("uncertain"), 0),
         valid_timestamp(sample.get("observed_at"))))
 
 
