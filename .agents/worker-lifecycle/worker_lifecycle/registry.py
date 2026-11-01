@@ -127,15 +127,12 @@ def argument_parser() -> argparse.ArgumentParser:
         enrollment.add_argument("--path", required=True, type=Path)
         if name == "enroll":
             enrollment.add_argument("--initialize", action="store_true", help="create absent state; existing schema 1 is backed up and upgraded")
-            enrollment.add_argument("--allow-schema-1-observation", action="store_true", help="report an unenrolled schema-1 creation as a coverage gap, never as admission")
+            enrollment.add_argument("--allow-schema-1-observation", action="store_true", help="legacy compatibility flag; enrollment now requires automatic upgrade")
     return parser
 
 
 def enrollment_result(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
     enrollment = GenerationEnrollment(store)
-    if getattr(args, "allow_schema_1_observation", False) and enrollment.has_schema_one_gap(args.path):
-        print("[worker-lifecycle] coverage-gap: schema-upgrade-required; no generation admitted", file=sys.stderr)
-        return {"status": "coverage-gap", "reason": "schema-upgrade-required", "cleanup_authorized": False}
     generation = enrollment.resolve(args.path, create=args.operation == "enroll")
     return {"generation_id": generation, "cleanup_authorized": False}
 
@@ -172,8 +169,6 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
 
 
 def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    if args.operation == "upgrade":
-        return upgrade_registry(store, args.backup_dir)
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
     if args.operation == "cleanup-worktree":
@@ -210,6 +205,8 @@ def main() -> int:
         if args.operation == "init":
             require_ready(adapter_for(str(uuid4())))
             result = LifecycleRegistry.initialize(args.state_dir, max_events=args.max_events).summary()
+        elif args.operation == "upgrade":
+            result = upgrade_registry(LifecycleRegistry(args.state_dir), args.backup_dir)
         else:
             if (args.operation in ("enroll", "admit-session", "create-worktree")
                     and args.initialize):
@@ -223,7 +220,7 @@ def main() -> int:
     except (ValueError, OSError, sqlite3.Error, subprocess.SubprocessError, ObservationUnavailable) as error:
         reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
         retiring = args.operation in ("retire-worktree", "cleanup")
-        if (retiring or args.operation == "upgrade") and isinstance(error, StoreConflict):
+        if args.operation in {"retire-worktree", "cleanup", "upgrade"} and isinstance(error, StoreConflict):
             reason = str(error)
         mode = "retirement" if retiring else "observe-only"
         detail = {"mode": mode, "status": "unavailable", "reason": reason,

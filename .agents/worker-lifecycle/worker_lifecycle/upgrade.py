@@ -60,12 +60,15 @@ def backup_before_upgrade(
 
     with closing(store._connect()) as source, closing(sqlite3.connect(destination)) as target:
         source.backup(target, pages=256, progress=progress)
-        if (target.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
-                or target.execute("PRAGMA foreign_key_check").fetchall()
-                or target.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
-                or target.execute("PRAGMA user_version").fetchone()[0] != 1
-                or target.execute("SELECT installation_id FROM metadata").fetchone()[0]
-                != locked.execute("SELECT installation_id FROM metadata").fetchone()[0]):
+        verified = (
+            target.execute("PRAGMA integrity_check").fetchall() == [("ok",)],
+            not target.execute("PRAGMA foreign_key_check").fetchall(),
+            target.execute("PRAGMA application_id").fetchone()[0] == APPLICATION_ID,
+            target.execute("PRAGMA user_version").fetchone()[0] == 1,
+            target.execute("SELECT installation_id FROM metadata").fetchone()[0]
+            == locked.execute("SELECT installation_id FROM metadata").fetchone()[0],
+        )
+        if not all(verified):
             raise StoreConflict("upgrade-backup-verification-failed")
         # Make the backup a standalone database, without a required WAL sidecar.
         if target.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
