@@ -779,8 +779,34 @@ _check_runtime_policy_dependencies() {
 		print_info "Run 'aidevops update' or './setup.sh --stage agents' to repair the deployed agents tree"
 		return 1
 	fi
-	if [[ ! -f "$lifecycle_helper" ]] || ! python3 -E -s -B "$lifecycle_helper" --help >/dev/null 2>&1; then
-		print_error "Lifecycle admission helper or its imports are unavailable: $lifecycle_helper"
+	# Exercise the admission API, not --help, without enrolling this installer.
+	# Match the standalone installer's private, non-Git preflight context.
+	if ! python3 -E -s -B - "$lifecycle_helper" <<'PY'
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+try:
+    with tempfile.TemporaryDirectory(prefix="hook-admission-probe-") as directory:
+        environment = dict(os.environ, AIDEVOPS_LIFECYCLE_DISABLED="1",
+                           AIDEVOPS_LIFECYCLE_STATE_DIR=directory + "/state")
+        result = subprocess.run(
+            [sys.executable, "-E", "-s", "-B", sys.argv[1], "--cwd", directory,
+             "--path", directory + "/probe", "--runtime-pid", str(os.getpid()),
+             "--session-id", "hook-install-preflight", "--command", "true"],
+            cwd=directory, env=environment, capture_output=True, text=True, timeout=10)
+        payload = json.loads(result.stdout)
+        if (result.returncode != 0 or not isinstance(payload, dict)
+                or payload.get("status") != "not-applicable"
+                or payload.get("cleanup_authorized") is not False):
+            raise ValueError("incompatible admission response")
+except (OSError, ValueError, subprocess.SubprocessError):
+    sys.exit(1)
+PY
+	then
+		print_error "Lifecycle admission helper is unavailable or incompatible: $lifecycle_helper"
 		print_info "$install_guidance"
 		return 1
 	fi
