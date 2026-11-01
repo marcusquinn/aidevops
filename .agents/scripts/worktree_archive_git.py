@@ -51,23 +51,21 @@ def base_import_failure(error):
     if ((b'promisor remote' in stderr and b'could not fetch' in stderr)
             or b'missing promisor object' in stderr or b'missing promised object' in stderr):
         return MISSING_PROMISOR_BASE
-    for signatures, category in (
-        ((b'out of memory', b'malloc failed', b'cannot allocate memory'), 'allocation-failed'),
-        ((b'no space left on device',), 'storage-full'),
-        ((b'permission denied',), 'permission-denied'),
-        ((b'unable to create thread', b'cannot create thread'), 'thread-failed'),
-        ((b'missing blob', b'missing tree', b'missing commit', b'missing object',
-          b'bad object', b'bad tree object', b'bad commit object'), 'missing-object'),
-        ((b'not our ref',), 'object-unavailable-or-denied'),
+    # Ordered patterns keep resource failures ahead of missing-object fallbacks.
+    for pattern, category in (
+        (rb'out of memory|malloc failed|cannot allocate memory', 'allocation-failed'),
+        (rb'no space left on device', 'storage-full'),
+        (rb'permission denied', 'permission-denied'),
+        (rb'unable to create thread|cannot create thread', 'thread-failed'),
+        (rb'missing blob|missing tree|missing commit|missing object|'
+         rb'bad object|bad tree object|bad commit object', 'missing-object'),
+        (rb'not our ref', 'object-unavailable-or-denied'),
+        (rb'(?:unable to read|could not read) (?:sha1 file )?[0-9a-f]{40,64}\b', 'missing-object'),
+        (rb'did not send all necessary objects', 'transfer-failed'),
     ):
-        if any(signature in stderr for signature in signatures):
+        if re.search(pattern, stderr):
             detail = category
             break
-    if detail == 'unclassified':
-        if re.search(rb'(?:unable to read|could not read) (?:sha1 file )?[0-9a-f]{40,64}\b', stderr):
-            detail = 'missing-object'
-        elif b'did not send all necessary objects' in stderr:
-            detail = 'transfer-failed'
     code = error.returncode if -255 <= error.returncode <= 255 else 'unknown'
     return (f'producer:base-import-failed; stage=base-import; exit={code}; '
             f'stderr={packing}/{detail}; source and archive retained')
