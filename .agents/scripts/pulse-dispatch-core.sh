@@ -213,7 +213,7 @@ _dispatch_cleanup_worktree_capacity() {
 	[[ "$after_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || after_count="$before_count"
 	case "$cleanup_rc" in
 	124) reason="deadline-resume-next-pass" ;;
-	75) reason="cleanup-lock-busy" ;;
+	75) reason="cleanup-lock-busy-after-bounded-wait" ;;
 	76) reason="cleanup-api-quota" ;;
 	0) [[ "$after_count" -ge "$before_count" ]] || reason="progress-still-over-cap" ;;
 	*) reason="cleanup-error" ;;

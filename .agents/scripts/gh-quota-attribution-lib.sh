@@ -756,16 +756,19 @@ _ghqa_write_incomplete_frames() {
 		# on the final frame and use zero for preceding frames so totals stay exact.
 		frame_elapsed=0
 		[[ "$frame_index" -ne "$frame_total" ]] || frame_elapsed="${elapsed_ms:-x}"
-		if _ghqa_capture_frames_valid "$line" 1 2>/dev/null; then
-			# An individually complete frame keeps its cumulative counter evidence;
-			# quota cost stays unknown because a sibling frame is incomplete.
-			printf 'attempt\t%s\t%s\t%s\t%s\t%s\tx\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-				"$original_path" "$page" "$outcome" "$status" "$frame_elapsed" \
-				"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" >>"$result_file"
-		else
-			_ghqa_write_fallback_attempt "$result_file" "$original_path" "$page" \
-				"$outcome" "$frame_elapsed" ""
-		fi
+		# Preserve each response-owned header independently. Missing latency or a
+		# sibling's headers cannot invalidate this frame's reset/used evidence.
+		# Use nonempty sentinels: Bash's tab IFS otherwise collapses empty fields.
+		pool=$(_ghqa_pool_for_resource "$resource")
+		[[ "$pool" != other ]] || pool=$(_gh_default_pool "$original_path")
+		decision="${AIDEVOPS_GH_ROUTE_DECISION:-${pool}-selected}"
+		[[ "$status" =~ ^[0-9]+$ ]] || status=x
+		[[ "$remaining" =~ ^[0-9]+$ ]] || remaining=x
+		[[ "$reset" =~ ^[1-9][0-9]*$ ]] || reset=x
+		[[ "$used" =~ ^[0-9]+$ ]] || used=x
+		printf 'attempt\t%s\t%s\t%s\t%s\t%s\tx\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$(_ghqa_path_for_resource "$original_path" "$resource")" "$page" "$outcome" "$status" "$frame_elapsed" \
+			"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" >>"$result_file"
 		rows=$((rows + 1))
 	done <<<"$parsed"
 	[[ "$rows" -gt 0 ]]

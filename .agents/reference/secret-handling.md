@@ -77,6 +77,22 @@ warnings go to stderr, preserving `--json` output. These backups are
 not removed by pruning. Review and restrict/delete them under your local
 secure-deletion policy; ordinary removal cannot erase snapshots or SSD copies.
 
+## Retiring a credential
+
+```bash
+aidevops secret rm NAME [NAME...] [--yes]   # aliases: remove, delete
+```
+
+Use this instead of raw `gopass rm`: `gopass rm -f a b` treats `b` as a field of
+`a` and deletes nothing. Every name must be stored directly (an alias or
+provider default is refused; remove its source by name) or nothing is deleted.
+The command warns about registry records and `dependents` references, asks for
+confirmation (`--yes` for non-interactive use, which also removes the registry
+record), runs one `gopass rm -f` per name, removes single-line exports from the
+active-tenant plaintext store only, then reads back with `secret check`. Exit is
+non-zero if a name is still resolvable (for example from another tenant file).
+Output is names only. Revoke the credential at the provider separately.
+
 ---
 
 ## Storing multi-line secrets

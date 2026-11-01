@@ -6,7 +6,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PULSE_CLEANUP="${SCRIPT_DIR}/../pulse-cleanup.sh"
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-$(PYTHONPATH="${SCRIPT_DIR}/.." python3 -c 'from native_git import real_git; print(real_git())')}"
 
 TEST_ROOT=""
 TESTS_RUN=0
@@ -46,6 +46,7 @@ setup_subject() {
 	trap teardown EXIT
 	export HOME="${TEST_ROOT}/home"
 	export AIDEVOPS_REPOS_JSON="${HOME}/.config/aidevops/repos.json"
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
 	export AIDEVOPS_WORKTREE_BASE_DIR="${TEST_ROOT}/Git/_worktrees"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup.log"
@@ -222,23 +223,23 @@ test_thirdparty_apply_guards() {
 	_worktree_owner_alive() { return 1; }
 	_pc_thirdparty_pr() { printf '{"number":11,"state":"CLOSED"}\n'; return 0; }
 	_pc_compact_archive_policy_clear() { return 0; }
-	_pc_archive_worktree_compactly() { return 1; }
+	_pc_archive_worktree_compactly() { touch "${TEST_ROOT}/legacy-archive-called"; return 1; }
 	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || decision=skipped
 	[[ "$decision" == skipped && -d "$wt" ]] || rc=1
-	_pc_archive_worktree_compactly() { printf '%s\n' "${TEST_ROOT}/verified-archive"; return 0; }
+	_pc_archive_worktree_compactly() { touch "${TEST_ROOT}/legacy-archive-called"; printf '%s\n' "${TEST_ROOT}/verified-archive"; return 0; }
 	worktree_removal_guard() { return 0; }
-	# GH#34943: an archive whose source fingerprint cannot be confirmed
-	# (here: no manifest at all) vetoes the forced removal.
+	# Legacy archive/fingerprint evidence cannot authorize registry retirement.
 	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || decision=skipped
 	[[ "$decision" == skipped && -f "$wt/dirty.txt" ]] || rc=1
 	_worktree_compact_source_matches() { return 0; }
-	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || rc=1
-	[[ "$decision" == archived-removed && ! -d "$wt" ]] || rc=1
-	git -C "$repo" worktree add -q -b old-feature "$wt" main || rc=1
+	# Legacy archive proof cannot authorize retirement without the registry.
+	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || decision=skipped
+	[[ "$decision" == skipped && -f "$wt/dirty.txt" ]] || rc=1
 	_pc_thirdparty_pr() { printf 'null\n'; return 0; }
 	_pc_unregistered_activity_epoch() { printf '100000\n'; return 0; }
-	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || rc=1
-	[[ "$decision" == archived-removed && ! -d "$wt" ]] || rc=1
+	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || decision=skipped
+	[[ "$decision" == skipped && -f "$wt/dirty.txt" ]] || rc=1
+	[[ ! -e "${TEST_ROOT}/legacy-archive-called" ]] || rc=1
 	printf 'gitdir: %s/.git/worktrees/missing-canonical\n' "${TEST_ROOT}/Git/deleted" >"$orphan/.git"
 	printf 'recovery\n' >"$orphan/evidence.txt"
 	decision=$(_pc_thirdparty_candidate "$orphan" "" "${TEST_ROOT}/cache" 0) || rc=1
@@ -246,7 +247,7 @@ test_thirdparty_apply_guards() {
 	_pc_trash_orphan_dir() { mv "$1" "${TEST_ROOT}/trash"; return $?; }
 	decision=$(_pc_thirdparty_candidate "$orphan" "" "${TEST_ROOT}/cache" 1) || rc=1
 	[[ "$decision" == orphan-removed && -f "${TEST_ROOT}/trash/evidence.txt" ]] || rc=1
-	print_result "closed dirty archive failure veto, verified removal, orphan recoverable trash" "$rc" "$decision"
+	print_result "unregistered linked worktree retained; orphan recoverable trash preserved" "$rc" "$decision"
 	return 0
 }
 

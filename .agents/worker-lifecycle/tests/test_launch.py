@@ -22,9 +22,10 @@ class LaunchContract(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.state = self.root / "state"
 
-    def command(self, code, initialize=False):
+    def command(self, code, initialize=False, unregistered_only=False):
         return [sys.executable, "-E", "-s", "-B", str(ENTRY), "--state-dir", str(self.state),
                  "--worktree", str(self.root), *(["--initialize"] if initialize else []),
+                 *(["--unregistered-only"] if unregistered_only else []),
                  "--", sys.executable, "-I", "-B", "-c", code]
 
     def test_concurrent_first_launch_initializes_once(self):
@@ -56,23 +57,28 @@ class LaunchContract(unittest.TestCase):
         result = subprocess.run(  # nosec B603 # fixed failure probe
             self.command("raise SystemExit(9)", initialize=True),
             capture_output=True, text=True, timeout=15)
-        self.assertEqual(result.returncode, 9)
-        self.assertIn("observation-gap", result.stderr)
+        self.assertEqual(result.returncode, 75)
+        self.assertIn("admission-denied", result.stderr)
         self.assertEqual(evidence.read_text(), "existing evidence")
         self.assertEqual(list(self.state.iterdir()), [evidence])
 
     def test_exec_identity_then_natural_exit(self):
         store = LifecycleRegistry.initialize(self.state)
-        code = ("import os,select,sys; print(os.getpid(),flush=True); "
+        code = ("import os,select,sys; print(os.getpid(), "
+                "os.environ['AIDEVOPS_LIFECYCLE_RUNTIME_PID'], "
+                "os.environ['AIDEVOPS_LIFECYCLE_SESSION_ID'], flush=True); "
                 "ready,_,_=select.select([sys.stdin],[],[],10); "
                 "sys.stdin.read(1) if ready else None; sys.exit(7)")
         with subprocess.Popen(self.command(code), stdin=subprocess.PIPE,  # nosec B603 # fixed identity probe
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
             try:
-                native_pid = int(child.stdout.readline())
+                pid, creator_pid, session_id = child.stdout.readline().split()
+                native_pid = int(pid)
                 self.assertEqual(native_pid, child.pid)
+                self.assertEqual(creator_pid, pid)
                 rows = store.pending(10)
                 self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["run_id"], session_id)
                 self.assertEqual(json.loads(rows[0]["identity"])["pid"], native_pid)
                 self.assertEqual(reconcile(store)["processed"], 1)
                 self.assertEqual(store.summary()["runs"], {"bound": 1})
@@ -84,22 +90,42 @@ class LaunchContract(unittest.TestCase):
         self.assertEqual(store.summary()["runs"], {"ended": 1})
         self.assertFalse(store.summary()["cleanup_authorized"])
 
-    def test_unavailable_registry_preserves_command_and_exit(self):
+    def test_unavailable_registry_cannot_prove_admission_is_unnecessary(self):
         result = subprocess.run(self.command("print('native-output'); raise SystemExit(9)"),  # nosec B603 # fixed exit probe
                                 capture_output=True, text=True, timeout=15)
-        self.assertEqual(result.returncode, 9)
+        self.assertEqual(result.returncode, 75)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("admission-denied", result.stderr)
+        self.assertFalse(self.state.exists())
+
+    def test_unregistered_only_preserves_exclusion_without_creating_state(self):
+        environment = dict(
+            os.environ, AIDEVOPS_LIFECYCLE_RUNTIME_PID="1",
+            AIDEVOPS_LIFECYCLE_SESSION_ID="inherited-owner",
+        )
+        code = (
+            "import os; "
+            "assert 'AIDEVOPS_LIFECYCLE_RUNTIME_PID' not in os.environ; "
+            "assert 'AIDEVOPS_LIFECYCLE_SESSION_ID' not in os.environ; "
+            "print('native-output'); raise SystemExit(9)"
+        )
+        result = subprocess.run(  # nosec B603 # fixed native command in a disposable directory
+            self.command(code, unregistered_only=True),
+            env=environment, capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 9, result.stderr)
         self.assertEqual(result.stdout, "native-output\n")
-        self.assertIn("observation-gap", result.stderr)
         self.assertFalse(self.state.exists())
 
     def test_python_environment_cannot_block_observer_startup(self):
+        LifecycleRegistry.initialize(self.state)
         environment = dict(os.environ, PYTHONHOME="/nonexistent-lifecycle-python-home",
                            PYTHONPATH="/nonexistent-lifecycle-python-path")
         result = subprocess.run(self.command("import os; print(os.environ['PYTHONHOME'])"),  # nosec B603 # fixed environment probe
                                 env=environment, capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), environment["PYTHONHOME"])
-        self.assertIn("observation-gap", result.stderr)
+        self.assertIn("registered run=", result.stderr)
 
     def test_full_registry_preserves_command_and_reports_gap(self):
         store = LifecycleRegistry.initialize(self.state, max_events=1)

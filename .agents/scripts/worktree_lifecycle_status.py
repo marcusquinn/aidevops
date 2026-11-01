@@ -187,7 +187,7 @@ def reconcile(limit, maximum):
                 record = managed.load(connection, str(path))
                 managed.idle_policy.owner_clear(connection, str(path))
                 identifier = archive.operation(record)["id"]
-            managed.proof(record, record["identity"]["source_inode"])
+            managed.proof(record, record["identity"]["source_inode"], fresh=True)
             archive.finish_removal(managed, path, record)
             result["completed"] += 1
         except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError) as error:

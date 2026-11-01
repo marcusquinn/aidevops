@@ -1657,7 +1657,10 @@ local_state="$LOCAL_STATE_BORN"
 unborn_empty_tree=""
 null_oid="${target_sha//?/0}"
 if [[ -z "$local_sha" ]]; then
-	[[ "$cmd" == "$SYNC_MIRROR_CMD" ]] || {
+	# GH#36289: initializing a clean unborn branch to the pinned remote tip is a
+	# fast-forward from empty, so full-loop's post-merge fast-forward shares the
+	# existing zero-OID compare-and-swap, rollback and verification path.
+	[[ "$cmd" == "$SYNC_MIRROR_CMD" || "$cmd" == "$FAST_FORWARD_CMD" ]] || {
 		printf 'BLOCKED: local %s tip cannot be resolved\n' "$target_branch" >&2
 		exit 1
 	}
@@ -1672,7 +1675,8 @@ if [[ -z "$local_sha" ]]; then
 		printf 'BLOCKED: unborn canonical HEAD does not target %s\n' "$local_ref" >&2
 		exit 1
 	}
-	unborn_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1) || {
+	# Ignored files and user-hidden untracked files are still local data.
+	unborn_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1 --ignored --untracked-files=all) || {
 		printf 'BLOCKED: unborn canonical worktree status cannot be read safely\n' >&2
 		exit 1
 	}

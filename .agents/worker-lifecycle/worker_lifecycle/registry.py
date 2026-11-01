@@ -14,6 +14,7 @@ from uuid import uuid4
 from .process import ObservationUnavailable, ProcessIdentity
 from .events import ingest
 from .enrollment import GenerationEnrollment
+from .cleanup_plan import prepare_cleanup
 from .launch import initialize_or_open
 from .runtime import adapter_for, require_ready
 from .storage import MAX_EVENT_BYTES, LifecycleRegistry, StoreCapacity, StoreConflict
@@ -72,6 +73,51 @@ def argument_parser() -> argparse.ArgumentParser:
     bind.add_argument("--path", required=True)
     scan = commands.add_parser("reconcile")
     scan.add_argument("--limit", type=int, default=100)
+    session = commands.add_parser(
+        "admit-session", help="admit a runtime-identified owner before writes",
+    )
+    session.add_argument("--path", required=True, type=Path)
+    session.add_argument("--pid", required=True, type=int)
+    session.add_argument("--session-id", required=True)
+    session.add_argument("--initialize", action="store_true")
+    create = commands.add_parser("create-worktree", help="create and admit a fresh tree")
+    create.add_argument("--repo", required=True, type=Path)
+    create.add_argument("--path", required=True, type=Path)
+    create.add_argument("--ref", required=True)
+    create.add_argument("--pid", required=True, type=int)
+    create.add_argument("--session-id", required=True)
+    create.add_argument("--initialize", action="store_true")
+    create.add_argument("git_options", nargs=argparse.REMAINDER)
+    prepare = commands.add_parser(
+        "prepare-cleanup", help="close quiescent admission; never delete",
+    )
+    prepare.add_argument("--path", required=True, type=Path)
+    preserve = commands.add_parser(
+        "preserve-wip", help="close admission and verify a WIP archive; never delete",
+    )
+    preserve.add_argument("--path", required=True, type=Path)
+    preserve.add_argument("--repo", required=True)
+    preserve.add_argument("--base-branch", required=True)
+    preserve.add_argument("--output-root", required=True, type=Path)
+    retire = commands.add_parser(
+        "retire-worktree", help="archive and remove a controlled generation",
+    )
+    retire.add_argument("--path", required=True, type=Path)
+    retire.add_argument("--generation-id", required=True)
+    retire.add_argument("--repo", required=True)
+    retire.add_argument("--base-branch", required=True)
+    retire.add_argument("--output-root", required=True, type=Path)
+    cleanup = commands.add_parser("cleanup", help="retire controlled registry candidates")
+    cleanup.add_argument("--repos-config", required=True, type=Path)
+    cleanup.add_argument("--output-root", required=True, type=Path)
+    cleanup.add_argument("--limit", type=int, default=25)
+    cleanup.add_argument("--budget-seconds", type=float, default=120)
+    targeted = commands.add_parser(
+        "cleanup-worktree", help="retire only the current controlled generation",
+    )
+    targeted.add_argument("--path", required=True, type=Path)
+    targeted.add_argument("--repos-config", required=True, type=Path)
+    targeted.add_argument("--output-root", required=True, type=Path)
     for name in ("enroll", "resolve-generation"):
         enrollment = commands.add_parser(name, help="enroll or resolve a linked worktree; schema 2 required")
         enrollment.add_argument("--path", required=True, type=Path)
@@ -90,7 +136,52 @@ def enrollment_result(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     return {"generation_id": generation, "cleanup_authorized": False}
 
 
+def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation == "create-worktree":
+        from .creation import WorktreeSpec, create_worktree
+
+        options = args.git_options
+        if options[:1] == ["--"]:
+            options = options[1:]
+        return create_worktree(
+            store, WorktreeSpec(args.repo, args.path, args.ref, tuple(options)),
+            args.pid, args.session_id,
+        )
+    if args.operation == "admit-session":
+        from .session import admit_session
+
+        return admit_session(store, args.path, args.pid, args.session_id)
+    if args.operation == "preserve-wip":
+        from .preservation import preserve_wip
+
+        return preserve_wip(store, args.path, args.repo, args.base_branch, args.output_root)
+    if args.operation == "prepare-cleanup":
+        return prepare_cleanup(store, args.path)
+    if args.operation == "retire-worktree":
+        from .retirement import ArchiveTarget, retire_worktree
+
+        return retire_worktree(
+            store, args.path, args.generation_id,
+            ArchiveTarget(args.repo, args.base_branch, args.output_root),
+        )
+    raise ValueError("unsupported-worktree-operation")
+
+
 def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation == "cleanup-worktree":
+        from .cleanup import cleanup_worktree
+
+        return cleanup_worktree(store, args.repos_config, args.output_root, args.path)
+    if args.operation == "cleanup":
+        from .cleanup import cleanup_pass
+
+        return cleanup_pass(
+            store, args.repos_config, args.output_root, args.limit, args.budget_seconds,
+        )
+    if args.operation in {
+        "create-worktree", "admit-session", "preserve-wip", "prepare-cleanup", "retire-worktree",
+    }:
+        return _worktree_operation(store, args)
     if args.operation == "register":
         adapter = adapter_for(store.installation_id())
         require_ready(adapter)
@@ -112,7 +203,8 @@ def main() -> int:
             require_ready(adapter_for(str(uuid4())))
             result = LifecycleRegistry.initialize(args.state_dir, max_events=args.max_events).summary()
         else:
-            if args.operation == "enroll" and args.initialize:
+            if (args.operation in ("enroll", "admit-session", "create-worktree")
+                    and args.initialize):
                 require_ready(adapter_for(str(uuid4())))
                 store = initialize_or_open(args.state_dir)
             else:
@@ -122,7 +214,11 @@ def main() -> int:
         return 0
     except (ValueError, OSError, sqlite3.Error, subprocess.SubprocessError, ObservationUnavailable) as error:
         reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
-        detail = {"mode": "observe-only", "status": "unavailable", "reason": reason,
+        retiring = args.operation in ("retire-worktree", "cleanup")
+        if retiring and isinstance(error, StoreConflict):
+            reason = str(error)
+        mode = "retirement" if retiring else "observe-only"
+        detail = {"mode": mode, "status": "unavailable", "reason": reason,
                   "cleanup_authorized": False}
         # GH#36142: name the enrollment refusal; OSError text may carry paths.
         if args.operation == "enroll" and isinstance(error, ValueError):

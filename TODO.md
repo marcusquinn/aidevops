@@ -1844,6 +1844,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18845 fix(cloudron-release): r924 fails creating approval requests in repos without no-auto-dispatch; one failed request blocks unrelated supersession #bug #framework ref:GH#36292 -> [todo/tasks/t18845-brief.md] pr:#36293 completed:2026-10-31
 
+- [x] t18846 fix(pulse-merge): skip partial parent closeout for TODO-projection PRs and closed issues #bug #framework ref:GH#36299 -> [todo/tasks/t18846-brief.md] pr:#36300 completed:2026-10-31
+
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
@@ -5457,4 +5459,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [-] t18814 fix(sync-workflows): re-pin legacy @main loc-badge callers to release SHA and keep pins current #auto-dispatch #bug ref:GH#36105 declined:2026-10-31
 
-- [ ] t18829 Attribute and govern REST core spend outside the local transport governor #bug ref:GH#36212
+- [-] t18829 Attribute and govern REST core spend outside the local transport governor #bug ref:GH#36212 declined:2026-10-31

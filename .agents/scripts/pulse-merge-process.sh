@@ -629,7 +629,7 @@ _attempt_pr_ci_rebase_retry() {
 		# keeps PR-level needs-maintainer-review authoritative even though the
 		# repair-only gate intentionally stops before merge-only final checks.
 		if ! declare -F _pulse_merge_admin_safety_check >/dev/null 2>&1 \
-			|| ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$_head_oid"; then
+			|| ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$_head_oid" "$_review_repair_policy"; then
 			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: live PR authority failed before strict review-repair rebase; preserving CHANGES_REQUESTED" >>"$LOGFILE"
 			return 1
 		fi
@@ -1519,6 +1519,9 @@ _enable_native_auto_merge_for_head() {
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: native auto-merge not set because the gated head SHA is unavailable" >>"$LOGFILE"
 		return 1
 	fi
+	# #aidevops:trust-boundary — enabling auto-merge can merge immediately.
+	_pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
+	[[ "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" != "1" ]] || return 1
 	auto_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash \
 		--match-head-commit "$expected_head_sha" 2>&1)
 	auto_exit=$?

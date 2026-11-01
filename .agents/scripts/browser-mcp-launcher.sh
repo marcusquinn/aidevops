@@ -48,6 +48,32 @@ _launcher_inside_git_worktree() {
 	return $?
 }
 
+# GH#36278: generated MCP configs carry no browser path, and MCP clients
+# launched by launchd or a GUI never read shell rc files. Resolve the
+# configured browser (AIDEVOPS_PLAYWRIGHT_EXECUTABLE, then settings.json
+# browser.playwright_executable) at launch and hand it to @playwright/mcp via
+# PLAYWRIGHT_MCP_EXECUTABLE_PATH. Explicit --browser, --executable-path, --extension, an
+# existing PLAYWRIGHT_MCP_EXECUTABLE_PATH, or no configured browser leave the
+# server defaults untouched.
+_launcher_export_playwright_executable() {
+	local script_dir="$1"
+	shift
+	local runtime_script="$script_dir/playwright-runtime.mjs" arg executable=""
+	[[ -n "${PLAYWRIGHT_MCP_EXECUTABLE_PATH:-}" ]] && return 0
+	[[ -n "${PLAYWRIGHT_MCP_BROWSER:-}" ]] && return 0
+	for arg in "$@"; do
+		case "$arg" in
+		--browser | --browser=* | --executable-path | --executable-path=* | --extension) return 0 ;;
+		esac
+	done
+	[[ -f "$runtime_script" ]] || return 0
+	executable=$(node "$runtime_script" configured-executable 2>/dev/null) || executable=""
+	if [[ -n "$executable" ]]; then
+		export PLAYWRIGHT_MCP_EXECUTABLE_PATH="$executable"
+	fi
+	return 0
+}
+
 main() {
 	local server="${1:-}"
 	case "$server" in
@@ -88,6 +114,10 @@ main() {
 		_launcher_fail "cannot create per-launch artifact directory"
 		return 1
 	}
+	# Settings and executable paths may be relative to the caller's cwd.
+	if [[ "$server" == "playwright" ]]; then
+		_launcher_export_playwright_executable "$script_dir" "$@"
+	fi
 	cd -- "$session_dir" || return 1
 	if [[ "$server" == "playwright" ]]; then
 		# GH#35159: native tool `filename`s resolve against the MCP client root

@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import sqlite3
 import subprocess
@@ -18,7 +19,8 @@ from unittest.mock import Mock, patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
-import worktree_lifetime_owner as owner
+owner = importlib.import_module("worktree_lifetime_owner")
+native_git = importlib.import_module("native_git")
 
 SPEC = importlib.util.spec_from_file_location("managed_run", SCRIPTS / "worktree-managed-run.py")
 runner = importlib.util.module_from_spec(SPEC)
@@ -26,13 +28,49 @@ SPEC.loader.exec_module(runner)
 
 
 class RunnerControlTests(unittest.TestCase):
+    def test_service_preserves_admission_requirements_not_parent_identity(self):
+        keys = ("RUNTIME_PID", "SESSION_ID", "GENERATION_ID", "RUN_ID")
+        environment = {"AIDEVOPS_LIFECYCLE_" + key: "parent" for key in keys}
+        environment["AIDEVOPS_LIFECYCLE_STATE_DIR"] = "/fixture/state"
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(runner.inherited_environment(), [
+                "--setenv=AIDEVOPS_LIFECYCLE_GENERATION_ID",
+                "--setenv=AIDEVOPS_LIFECYCLE_RUN_ID",
+                "--setenv=AIDEVOPS_LIFECYCLE_STATE_DIR",
+            ])
+
+    def test_lifecycle_entry_executes_with_its_own_native_identity(self):
+        bash = shutil.which("bash")
+        self.assertIsNotNone(bash, "Bash is required for the lifecycle entry test")
+        with tempfile.TemporaryDirectory(prefix="managed-lifecycle-") as directory:
+            environment = dict(os.environ, HOME=directory,
+                               AIDEVOPS_LIFECYCLE_STATE_DIR=directory + "/state",
+                               AIDEVOPS_LIFECYCLE_RUNTIME_PID="1",
+                               AIDEVOPS_LIFECYCLE_SESSION_ID="parent")
+            command = [bash, str(SCRIPTS / "worker-lifecycle-state.sh"),
+                       sys.executable, "-c", "import os; "
+                       "assert os.environ['AIDEVOPS_LIFECYCLE_RUNTIME_PID'] == str(os.getpid()); "
+                       "assert os.environ['AIDEVOPS_LIFECYCLE_SESSION_ID'] != 'parent'"]
+            result = subprocess.run(  # nosec B603 # resolved Bash, fixed fixture argv, no shell
+                command,
+                cwd=directory, env=environment, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            environment.update(AIDEVOPS_LIFECYCLE_GENERATION_ID="invalid",
+                               AIDEVOPS_LIFECYCLE_RUN_ID="invalid")
+            denied = subprocess.run(  # nosec B603 # repeats the fixed fixture argv above
+                command, cwd=directory, env=environment,
+                capture_output=True, text=True, timeout=15)
+            self.assertEqual(denied.returncode, 75, denied.stderr)
+
     def test_native_enrichment_exec_preserves_managed_admission(self):
         if not runner.backend_available():
             self.skipTest("rootless user-systemd unavailable")
+        git = native_git.real_git()
         with tempfile.TemporaryDirectory(prefix="enrichment-managed-") as directory:
             root = Path(directory)
             repo, remote = root / "repo", root / "remote.git"
             env = dict(os.environ, HOME=str(root), AIDEVOPS_WORKTREE_BASE_DIR=str(root / "trees"),
+                       AIDEVOPS_LIFECYCLE_STATE_DIR=str(root / "lifecycle"),
                        WORKTREE_REGISTRY_DIR=str(root / "registry"),
                        WORKTREE_REGISTRY_DB=str(root / "registry/registry.db"),
                        AIDEVOPS_LOG_DIR=str(root / "logs"), LOGFILE=str(root / "pulse.log"),
@@ -44,24 +82,33 @@ class RunnerControlTests(unittest.TestCase):
                          ("-C", str(repo), "remote", "add", "origin", str(remote)),
                          ("-C", str(repo), "push", "-u", "origin", "main"),
                          ("-C", str(repo), "remote", "set-head", "origin", "main")):
-                subprocess.run(["git", *args], env=env, capture_output=True, check=True, timeout=15)
+                subprocess.run(  # nosec B603 # resolved native Git and fixed disposable setup
+                    [git, *args], env=env, capture_output=True, check=True, timeout=15)
+            configuration = root / ".config/aidevops"
+            configuration.mkdir(parents=True)
+            (configuration / "repos.json").write_text(json.dumps({
+                "initialized_repos": [{"path": str(repo), "slug": "owner/repo"}],
+            }))
             runtime = root / "runtime.sh"
             runtime.write_text('#!/usr/bin/env bash\nset -euo pipefail\n'
                 f'source "{SCRIPTS}/shared-constants.sh"\n'
                 'branch=$(git -C "$WORKER_WORKTREE_PATH" symbolic-ref --short HEAD)\n'
                 'claim_worktree_ownership "$WORKER_WORKTREE_PATH" "$branch" '
-                '--owner-pid "$$" --session fixture-enrichment --task 502\n')
+                '--owner-pid "$$" --session enrichment-fixture --task 502\n')
             runtime.chmod(0o700)
             env["HEADLESS_RUNTIME_HELPER"] = str(runtime)
             prompt = root / "prompt"
             prompt.write_text("fixture, no model or GitHub access")
             helper = str(SCRIPTS / "pulse-enrichment-run-helper.sh")
-            result = subprocess.run([sys.executable, str(SCRIPTS / "worktree-managed-run.py"),
+            result = subprocess.run(  # nosec B603 # fixed interpreter and owned fixture paths
+                [sys.executable, str(SCRIPTS / "worktree-managed-run.py"),
                 "--timeout-seconds", "90", "--after", "bash", "--after", helper,
                 "--after", "cleanup", "--after", str(repo), "--", "bash", helper, "run", str(prompt), "502",
                 "owner/repo", str(repo), "test/model", "enrichment-fixture"],
-                env=env, capture_output=True, text=True, timeout=110)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                 cwd=repo, env=env, capture_output=True, text=True, timeout=110)
+            log_path = root / "pulse.log"
+            log = log_path.read_text() if log_path.exists() else ""
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr + log)
             with sqlite3.connect(env["WORKTREE_REGISTRY_DB"]) as db:
                 records = [json.loads(row[0]) for row in db.execute("SELECT record FROM worktree_managed_lifetimes")]
             records = [r for r in records if "enrichment-fixture" in r["identity"]["path"]]
@@ -119,12 +166,15 @@ class RunnerControlTests(unittest.TestCase):
         if not runner.backend_available():
             self.skipTest("rootless user-systemd unavailable")
         for mask in (0o022, 0o077, 0o002):
-            with self.subTest(mask=oct(mask)):
-                result = subprocess.run(
+            with self.subTest(mask=oct(mask)), tempfile.TemporaryDirectory() as directory:
+                environment = dict(os.environ, HOME=directory,
+                                   AIDEVOPS_LIFECYCLE_STATE_DIR=directory + "/state")
+                result = subprocess.run(  # nosec B603 # fixed interpreter and umask probe
                     [sys.executable, str(SCRIPTS / "worktree-managed-run.py"),
                      "--timeout-seconds", "20", "--", sys.executable, "-c",
                      "import os; print(oct(os.umask(0o077)))"],
-                    umask=mask, capture_output=True, text=True, timeout=30, check=True)
+                    cwd=directory, env=environment, umask=mask,
+                    capture_output=True, text=True, timeout=30, check=True)
                 self.assertEqual(result.stdout.strip(), oct(mask))
 
 

@@ -134,8 +134,10 @@ This records an attempted launch, not proof that exec or the AI task succeeded.
 If the native command spawns a separate runtime rather than execing it, that child
 is NOT tracked. No cleanup decision may use the wrapper's completion.
 
-The OpenCode worker launch path in `headless-runtime-invoke.sh` enables observation
-by default on supported Linux/macOS installations, independent of systemd or launchd.
+The OpenCode and Claude launch paths enable lifecycle checks by default on
+supported Linux/macOS installations, independent of systemd or launchd. Both
+require an explicit work directory, matching the public `run --dir` contract;
+inherited cwd is not used to infer resource ownership.
 The default private state is `~/.aidevops/.agent-workspace/worker-lifecycle`;
 when `AIDEVOPS_WORKSPACE_DIR` is set, its `worker-lifecycle` subdirectory is used.
 `AIDEVOPS_LIFECYCLE_STATE_DIR` optionally overrides the path, not activation.
@@ -150,9 +152,9 @@ then the workspace/default path above. For matching reconciliation, use the host
 file rather than a worker-only environment override. The file contains path data,
 never shell code; spaces are preserved and expressions are not evaluated. Use an
 absolute path or a literal leading `~/`; relative host-configured paths (including
-option-like values such as `-registry`) report an observation gap and leave native
-worker execution unwrapped. An empty/unreadable file or inaccessible parent
-directory also reports a gap instead of silently selecting a different registry.
+option-like values such as `-registry`) refuse launch rather than leaving native
+execution unwrapped. An empty/unreadable file or inaccessible parent directory
+also refuses launch instead of silently selecting a different registry.
 Only a confirmed absent setting permits workspace/default resolution.
 Remove the file to restore workspace/default resolution, after draining the old
 registry as described below.
@@ -168,7 +170,7 @@ produce a warning without blocking bundle activation.
 Both hooks pass `--initialize`: after platform readiness, the first launch creates
 the private store. Concurrent initializers briefly wait for the winning initializer's
 commit. Existing state is validated, never replaced, migrated or repaired; interrupted
-initialization produces an observation gap and requires explicit investigation.
+initialization refuses launch and requires explicit investigation.
 Direct CLI calls without `--initialize` still require an initialized store.
 The bare hook comes after
 the existing sandbox-required guard. For sandbox execution, the launcher supplies
@@ -176,13 +178,16 @@ a worktree hint via `AIDEVOPS_LIFECYCLE_WORKTREE` to `sandbox-exec-helper.sh`;
 it is not added to the child's env
 allowlist. Original argv passes normal admission before the exec shim is inserted
 inside env clearing, egress containment and optional seatbelt. Protected/private
-workloads are excluded. Never disable sandbox policy to exercise observation.
+workloads are excluded from observation. Their native guard permits only an
+unregistered worktree; it does not create state or record private runs. An enrolled
+or marked worktree cannot bypass admission through private mode or observation
+opt-out. Never disable sandbox policy to exercise observation.
 No producer queue is enabled or shipped; durable delivery is a later boundary.
 
-Both hooks require the worker role and start the observer with `python3 -E -s -B`.
+The hooks start the native gate with `python3 -E -s -B`.
 They resolve the Python executable and check launcher bootstrap with `--help`
-before wrapping the command. An unavailable entry or incompatible interpreter leaves
-the original command intact and reports an observation gap. The same resolved
+before wrapping the command. An unavailable entry or incompatible interpreter
+refuses execution with status 75. The same resolved
 executable is used after sandbox environment clearing.
 Python-specific environment variables and user-site customization cannot alter
 observer startup; these flags do not remove variables from the native command's
@@ -190,16 +195,20 @@ environment. The installed interpreter and system packages remain trusted.
 Interpreter/bootstrap failures before the handler is entered are not fail-open;
 the wrapper does not retry a native command whose execution may have begun.
 
-Handled observation/storage failures print `observation-gap` and still exec the
-native command. The launcher uses `register_attempt` to commit registration and
+Only after a successful lookup confirms an unregistered, unmarked path may an
+observation failure print `observation-gap` and still exec the native command.
+Unknown registration, failed bootstrap, or a marker belonging to a different
+registry refuses execution. The launcher uses `register_attempt` to commit registration and
 its initial binding together. A binding error, capacity failure or crash before
 commit leaves neither event nor projection from that attempt. Database lock waits
 are bounded (2 seconds per connection), but startup
 latency is not zero. Initialization retries have a 2-second deadline checked between
 attempts; an in-flight SQLite wait can extend that deadline. No scheduler or persistent
 global environment is installed. Set `AIDEVOPS_LIFECYCLE_DISABLED=1` to disable launch
-observation and Pulse reconciliation; preserve the store. This remains bounded, best-effort observation: the journal
-capacity is unchanged and full stores report gaps rather than deleting evidence.
+observation and Pulse reconciliation; preserve the store. This is not permission
+to run on enrolled worktrees without admission. Observation on unregistered paths
+remains best-effort: journal capacity is unchanged, and full stores report gaps
+rather than deleting evidence.
 
 ### Changing or removing the host setting
 

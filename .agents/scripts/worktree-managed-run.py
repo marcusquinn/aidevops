@@ -53,9 +53,11 @@ def backend_available():
 def inherited_environment():
     # Forward values through systemd-run's inherited-variable form, not argv.
     # Do not forward old invocation IDs or parent runtime PIDs into the new unit.
+    # Explicit generation/attempt admission requirements must remain mandatory.
     excluded = {"INVOCATION_ID", "SYSTEMD_EXEC_PID", "MANAGERPID", "NOTIFY_SOCKET",
                 "WATCHDOG_PID", "WATCHDOG_USEC", "LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES",
                 "JOURNAL_STREAM", "OPENCODE_PID", "CLAUDE_PID", "AIDEVOPS_WORKTREE_CREATING",
+                "AIDEVOPS_LIFECYCLE_RUNTIME_PID", "AIDEVOPS_LIFECYCLE_SESSION_ID",
                 "AIDEVOPS_WORKTREE_MANAGER", "AIDEVOPS_MANAGED_WORKTREE_RUN", "AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT"}
     names = {key for key in os.environ if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)} - excluded
     return ["--setenv=" + key for key in sorted(names)]
@@ -160,6 +162,11 @@ def run(command, callback, timeout, producer=True):
     # Keep private caller modes private and ordinary archival modes unchanged.
     caller_umask = os.umask(0o077)
     os.umask(caller_umask)
+    if producer:
+        # Capture this service's native identity before any controlled creation.
+        # Legacy invocation records remain scheduling hints, not removal proof.
+        entry = Path(__file__).resolve().parent / "worker-lifecycle-state.sh"
+        command = ["bash", str(entry), *command]
     with isolated_service_io() as (stdio, relay, mode):
         client = subprocess.Popen(
             ["systemd-run", "--user", "--no-ask-password", "--quiet", "--unit=" + unit, mode,

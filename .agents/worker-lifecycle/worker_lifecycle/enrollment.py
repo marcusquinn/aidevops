@@ -92,7 +92,7 @@ def _git_directory(path: Path) -> Path:
 
 def _directory_inode(path: Path) -> int:
     """Persistent protocol evidence; device numbers are operation-local only."""
-    return path.stat(follow_symlinks=False).st_ino
+    return path.lstat().st_ino
 
 
 def _marker_identity(value: dict) -> dict:
@@ -169,6 +169,17 @@ class GenerationEnrollment:
         return True
 
     def resolve(self, path: Path, *, create: bool = False) -> str:
+        """Resolve an open generation for launch; never reopen closed admission."""
+        return self._resolve(path, create=create, require_open=True)
+
+    def inspect(self, path: Path) -> str:
+        """Validate an existing physical generation, including a closed one.
+
+        This read-only lookup never enrolls, admits a run or authorizes removal.
+        """
+        return self._resolve(path, create=False, require_open=False)
+
+    def _resolve(self, path: Path, *, create: bool, require_open: bool) -> str:
         """Enroll or resolve; never initialize/migrate a DB or reopen a closed gate.
 
         A crash after marker publication is recovered by repeating create=True.
@@ -204,7 +215,9 @@ class GenerationEnrollment:
                     row = connection.execute(
                         "SELECT path,state FROM generation_admissions WHERE generation_id=?", (generation,),
                     ).fetchone()
-                    if row is None or row["state"] != "open" or row["path"] != str(path):
+                    if (row is None or row["state"] not in ("open", "closed")
+                            or row["path"] != str(path)
+                            or (require_open and row["state"] != "open")):
                         raise AdmissionClosed("generation-not-open")
                 if not root.matches_path() or not admin.matches_path() or _git_directory(path) != directory:
                     raise StoreConflict("generation-directory-changed")

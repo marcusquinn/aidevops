@@ -55,15 +55,15 @@ class LifetimeTests(unittest.TestCase):
     def test_missing_receipt_and_wrong_inode_refuse(self):
         record = self.record()
         with self.assertRaises(ValueError):
-            MODULE.proof(record, "1:2")
+            MODULE.proof(record, "1:2", fresh=False)
         record["state"] = "sealed"
         record["sealed_at"] = time.time()
         with self.assertRaises(ValueError):
-            MODULE.proof(record, "1:2")
+            MODULE.proof(record, "1:2", fresh=False)
         record["launches"][0]["quiescence"] = self.snapshot()
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         with self.assertRaises(ValueError):
-            MODULE.proof(record, "1:3")
+            MODULE.proof(record, "1:3", fresh=False)
 
     def test_live_descendants_and_reused_invocation_refuse(self):
         for values in ({"SubState": "running"}, {"MainPID": "123"},
@@ -80,7 +80,7 @@ class LifetimeTests(unittest.TestCase):
                 patch.object(MODULE, "unit_snapshot", return_value=self.snapshot()), \
                 patch.object(Path, "read_text", return_value="populated 0\nfrozen 0\n"):
             MODULE.seal(record)
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         with self.assertRaises(ValueError):
             MODULE.reserve(record, "aidevops-worker-next")
 
@@ -114,7 +114,7 @@ class LifetimeTests(unittest.TestCase):
         self.assertEqual(len(record["launches"]), 2)
         self.assertIn("quiescence", record["launches"][0])
         MODULE.seal(record)
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         self.assertTrue(record["launches"][-1]["admission_cancelled"])
         with self.assertRaises(ValueError):
             MODULE.bind(record)
@@ -123,7 +123,7 @@ class LifetimeTests(unittest.TestCase):
         record = self.record()
         record.update(state="created", launches=[])
         MODULE.seal(record)
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         with self.assertRaises(ValueError):
             MODULE.reserve(record, "aidevops-worker-delayed")
 

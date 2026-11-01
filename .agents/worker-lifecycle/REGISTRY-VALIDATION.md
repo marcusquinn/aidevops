@@ -1,7 +1,8 @@
 # Portable registry validation
 
 Copy only `worker-lifecycle-registry-validate.pyz` to the target Linux or macOS
-machine. Python 3.10+ with its standard-library SQLite module is required. No
+machine. Python 3.10+ with its standard-library SQLite module, native Git supporting
+`init --initial-branch` and `rev-parse --path-format`, and Bash are required. No
 repository checkout, pip installation, OpenCode, account credentials or sudo.
 
 ```bash
@@ -13,6 +14,7 @@ are never overwritten: choose another filename if it already exists. Test progre
 and failure tracebacks go to stderr; stdout and the output file contain JSON.
 Exit 0 means every included test passed; 1 means test failure or skipped coverage;
 2 means the environment or runner was unavailable. No reboot is needed.
+Allow up to 15 minutes for the archive/restore and interruption checks.
 
 The archive contains the actual implementation and its registry contract tests,
 not an independently reimplemented observer. It unpacks into its own temporary
@@ -28,10 +30,17 @@ another shared-host filesystem for native SQLite durability qualification.
 - Capacity refusal without partial updates, stable event replay after PID exit.
 - Identity across exec, natural process exit and reconciliation.
 - Unchanged-observation journal suppression, fair batch rotation and stale-version rejection.
-- Original command output/exit status when the registry is missing or full.
+- Admission refusal when registry state is unavailable; observation-capacity
+  failures preserve command behavior on verified unregistered paths.
 - Isolated observer startup without removing the native command's Python environment.
+- Controlled native-Git creation, creator exit and closed admission preparation.
+- Atomic directory publication without replacing an existing destination on Linux/macOS.
+- Git-only archive/restore, unpublished commits, staged/unstaged files and ignored
+  file exclusion, including restoration after source and branch removal.
+- Generation-scoped retirement, Git-lock refusal, interrupted relocation/removal,
+  changed evidence and retries after reuse of the original pathname.
 
-Only disposable stores and owned test children are touched. No existing lifecycle
+Only disposable stores, Git repositories and owned test children are touched. No existing lifecycle
 database, worktree contents, scheduler or worker process is modified. No AI task
 is launched. Full real-worker/sandbox launcher validation is a separate stage;
 passing this archive must not be presented as testing that integration on macOS.

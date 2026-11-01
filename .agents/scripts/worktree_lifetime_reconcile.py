@@ -12,6 +12,10 @@ import re
 import time
 
 import worktree_lifetime_owner as owner
+from worktree_lifetime_quiescence import quiescence as quiescence
+from worktree_lifetime_quiescence import validate_quiescence as validate_quiescence
+
+__all__ = ["quiescence", "validate_quiescence"]
 
 
 IDENTITY_FIELDS = ("boot_id", "owner_pid", "owner_start", "cgroup", "cgroup_inode", "namespace")
@@ -97,32 +101,6 @@ def reconcile(record, snapshot=None):
     # own completion, owner, policy, archive and generation-fencing contracts.
     record["process_reconciliation"] = dict(counts, observed_at=time.time())
     return counts
-
-
-def quiescence(launch):
-    """Only a boot transition proves all legacy descendants ended without a unit contract."""
-    owner.require(finished(launch), "recorded process is not reconciled as finished")
-    before = owner.boot_id()
-    owner.require(valid_boot(before) and before != launch["boot_id"],
-                  "same-boot parent ended without managed descendant-completion evidence")
-    owner.require(owner.boot_id() == before, "boot changed during observation")
-    return {"schema": "owner-observation-quiescence/v1", "identity": identity(launch),
-            "process_completion": dict(launch["process_completion"]), "group": "previous-boot-ended",
-            "observed_boot": before, "observed_at": time.time()}
-
-
-def validate_quiescence(launch):
-    invalid = "invalid observation completion receipt"
-    owner.require(finished(launch), invalid)
-    receipt = launch.get("observation_quiescence", {})
-    owner.require(isinstance(receipt, dict), invalid)
-    owner.require(all((receipt.get("schema") == "owner-observation-quiescence/v1",
-                       receipt.get("identity") == identity(launch),
-                       receipt.get("process_completion") == launch.get("process_completion"),
-                       receipt.get("group") == "previous-boot-ended",
-                       valid_boot(receipt.get("observed_boot")),
-                       receipt.get("observed_boot") != launch["boot_id"],
-                       valid_timestamp(receipt.get("observed_at")))), invalid)
 
 
 def reconcile_entries(observed):

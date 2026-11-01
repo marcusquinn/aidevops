@@ -609,6 +609,58 @@ assert_eq "new reset starts external baseline" "0" "$(jq '.rest_core_attribution
 assert_eq "device attribution without login mapping stays unknown" "unknown" "$(jq -r "$external_series | .other_devices" "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "external attribution is explicitly an upper bound" "true" "$(jq '.rest_core_attribution.same_login_external_cost_is_upper_bound' "$AIDEVOPS_GH_API_REPORT")"
 
+# --- GH#36312: read-only quota report joins independent CI evidence ---------
+gh_clear_log
+quota_fixture 1 report-base 4900 1 "$pool_a" 2000000000 100
+quota_fixture 61 report-newer 4897 1 "$pool_a" 2000000000 103
+quota_fixture 62 report-late 4898 1 "$pool_a" 2000000000 102
+quota_fixture 123 report-final 4895 1 "$pool_a" 2000000000 105
+quota_fixture 123 report-final 4895 1 "$pool_a" 2000000000 105
+ci_fixture="$TMPDIR/ci-samples.jsonl"
+ci_sample() {
+	local fingerprint="$1" reset="$2" id="$3" before="$4" after="$5" cost="$6"
+	jq -cn --arg fp "$fingerprint" --arg id "$id" --argjson reset "$reset" \
+		--argjson before "$before" --argjson after "$after" --argjson cost "$cost" \
+		--argjson ts "$((fixture_minute + 70))" \
+		'{event:"quota-ci-sample",auth_fingerprint:$fp,sample_id:$id,
+		  sample_start:$ts,sample_end:($ts+1),before:{used:$before,reset:$reset},
+		  after:{used:$after,reset:$reset},known_api_requests:$cost}' >>"$ci_fixture"
+	return 0
+}
+ci_sample "$pool_a" 2000000000 audit-1 103 104 1
+ci_sample "$pool_a" 2000000000 audit-1 103 104 1
+ci_sample "$pool_a" 2000000000 audit-overlap 103 104 1
+ci_sample "$pool_b" 2000000000 other-credential 100 105 5
+ci_sample "$pool_a" 2000000100 other-reset 100 105 5
+ci_sample "$pool_a" 2000000000 impossible-cost 100 101 2
+ci_sample "$pool_a" 2000000000 outside-range 99 100 1
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "quota report orders late counters without double counting" "5:3:1" \
+	"$(jq -r '[.used_delta,.known_local_cost,.counter_regressions] | join(":")' <<<"$quota_report")"
+assert_eq "CI counts only independent same-series nonoverlapping evidence" "1" \
+	"$(jq '.attributed_ci_cost' <<<"$quota_report")"
+assert_eq "proven local plus CI coverage is non-null" "0.8" "$(jq '.accounted_fraction' <<<"$quota_report")"
+assert_eq "unattributed residual retains upper-bound semantics" "1:true:unknown" \
+	"$(jq -r '[.unattributed_cost,.unattributed_is_upper_bound,.other_devices] | join(":")' <<<"$quota_report")"
+assert_eq "duplicate attempt ID is visible but adds no coverage" "1" "$(jq '.duplicate_attempt_ids' <<<"$quota_report")"
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600)
+assert_eq "no CI evidence never invents CI cost" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+: >"$ci_fixture"
+ci_sample "$pool_a" 2000000000 possibly-local 100 105 1
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "CI probe possibly logged locally cannot claim spare interval capacity" "0:0.6" \
+	"$(jq -r '[.attributed_ci_cost,.accounted_fraction] | join(":")' <<<"$quota_report")"
+: >"$ci_fixture"
+ci_sample "$pool_a" 2000000000 audit-1 103 104 1
+quota_fixture 80 report-unknown 4896 '' "$pool_a" 2000000000 104
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "unknown request cost invalidates coverage, not replaced by delta" "null:1" \
+	"$(jq -r '[.accounted_fraction,.unknown_cost_attempts] | map(tostring) | join(":")' <<<"$quota_report")"
+quota_fixture 81 report-no-reset '' 1 "$pool_a" ''
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "reset-unknown costs stay separately labelled and cannot prove coverage" "1:1:null" \
+	"$(jq -r '[.missing_metadata_attempts,.same_credential_reset_unknown_cost,.accounted_fraction] | map(tostring) | join(":")' <<<"$quota_report")"
+
 # --- Test 11: command arguments remain private and exit status is preserved --
 gh_clear_log
 gh_run_transport_attempt rest privacy-caller logical-private 1 0 -- true \
@@ -692,6 +744,22 @@ assert_eq "bootstrap preserves known reset metadata" "$pool_a:1800000000" \
 	"$(awk -F '\t' '$2 == "gh-quota-bootstrap" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
 assert_eq "bootstrap preserves observed cumulative counter" "4901" \
 	"$(awk -F '\t' '$2 == "gh-quota-bootstrap" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+
+# Incomplete response latency/remaining headers must not erase available quota
+# headers, nor turn unknown costs into claimed coverage (GH#36312).
+partial_result="$TMPDIR/partial-headers.result"
+partial_frames=$'frame\t1\t1\t200\tcore\t0\tx\t1800000000\tx\nframe\t2\t1\tx\tcore\t11\t4989\tx\tx'
+_ghqa_write_incomplete_frames "$partial_result" graphql 1 1 "$partial_frames" 25
+gh_clear_log
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
+	_ghqa_record_result_file "$partial_result" partial-headers logical-partial 0
+assert_eq "partial REST frame preserves zero used and reset despite missing other headers" \
+	"rest:rest-core:$pool_a:1800000000:0" \
+	"$(awk -F '\t' 'NR == 1 { print $3 ":" $5 ":" $20 ":" $21 ":" $22 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "partial frame with no reset preserves used without inventing reset" \
+	":11" "$(awk -F '\t' 'NR == 2 { print $21 ":" $22 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "both partial-frame costs remain unknown" "2" \
+	"$(awk -F '\t' '$17 == "" { n++ } END { print n+0 }' "$AIDEVOPS_GH_API_LOG")"
 
 # --- Test 11d: successful native multi-frame REST costs are exact -----------
 native_multi_result="$TMPDIR/native-multi.result"

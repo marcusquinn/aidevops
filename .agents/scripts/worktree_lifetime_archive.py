@@ -358,7 +358,7 @@ def main():
         return 0
     if arguments.operation == "ready":
         managed.verify_identity(record, path)
-        managed.proof(record, managed.inode(path))
+        managed.proof(record, managed.inode(path), fresh=True)
         require(operation(record)["phase"] == "verified", "archive is not removal-ready")
         require_verified(record)
         return 0

@@ -11,6 +11,12 @@ import shutil
 import subprocess
 import tempfile
 
+from worktree_archive_base_source import (
+    MISSING_PROMISOR_BASE as MISSING_PROMISOR_BASE,
+    authorized_base_source as authorized_base_source,
+)
+
+__all__ = ['MISSING_PROMISOR_BASE', 'authorized_base_source']
 
 DEFAULT_TIMEOUT = 60
 RETAINED_VERIFICATION_SCRATCH = ('archive-verify:retained-scratch; prior verification evidence retained; '
@@ -42,6 +48,8 @@ def base_import_failure(error):
     stderr = stderr.lower()
     packing = 'pack-objects-died' if b'pack-objects died' in stderr else 'git-failed'
     detail = 'unclassified'
+    if b'promisor remote' in stderr and b'could not fetch' in stderr:
+        return MISSING_PROMISOR_BASE
     for signatures, category in (
         ((b'out of memory', b'malloc failed', b'cannot allocate memory'), 'allocation-failed'),
         ((b'no space left on device',), 'storage-full'),
@@ -66,7 +74,7 @@ def nested_base_import_failure(stderr):
     final = lines[-1] if lines else ''
     for prefix in ('ValueError: ', 'archive-snapshot: '):
         final = final.removeprefix(prefix)
-    if final == RETAINED_VERIFICATION_SCRATCH:
+    if final in (RETAINED_VERIFICATION_SCRATCH, MISSING_PROMISOR_BASE):
         return final
     pattern = (r'producer:base-import-failed; stage=base-import; exit=(?:-?[0-9]{1,3}|unknown); '
                r'stderr=(?:pack-objects-died|git-failed)/'
@@ -107,15 +115,27 @@ def producer_failure_reason(error):
     return str(error) if isinstance(error, ValueError) else "producer:evidence-unavailable"
 
 
+def base_import_timeout():
+    """Bounded budget for the local base-object import (default 300s, max 1800s)."""
+    try:
+        value = int(os.environ.get('AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT', '300'))
+    except ValueError:
+        value = 300
+    return max(60, min(value, 1800))
+
+
 def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
     for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
         environment.pop(name, None)
+    # Fingerprinting via diff must not refresh the source's cached index stats.
     return subprocess.run(  # nosec B603 -- resolved Git, fixed subcommands, argv-only paths and object IDs
-                          [git_executable(), "-c", "core.hooksPath=/dev/null", "-C", str(root), *args], input=data, env=environment,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          check=True, timeout=timeout).stdout
+        [git_executable(), "-c", "core.hooksPath=/dev/null",
+         "-c", "diff.autoRefreshIndex=false", "-C", str(root), *args],
+        input=data, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        check=True, timeout=timeout,
+    ).stdout
 
 
 def auto_merge_oid(data):

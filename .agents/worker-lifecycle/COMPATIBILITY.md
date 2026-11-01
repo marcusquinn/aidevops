@@ -15,14 +15,16 @@ checks and limitations. Different fingerprints are not proof of the same build.
 Operator-provided hardware identification for the macOS host: MacBook Pro Retina
 15-inch, model A1398 (Intel). This is supplemental information, not automatically
 collected validator evidence; no exact model year is inferred.
-The Linux registry report validates the current artifact: 71 tests pass.
-The retained macOS registry report has 71 passing tests on an earlier artifact;
-it does not qualify the current enrollment integration or cwd-independent admission.
+The Linux and Intel macOS registry reports each contain 101 passing tests, with
+no failures, errors or skips, for the same `bundle_sha256`:
+`81799f5e3ced5277f45db81f653ac97ea68987b8481027d3e70c601e3a0bc534`.
 Both reports include coverage of
 concurrent first-launch initialization, preservation of unknown existing state,
 atomic attempt rollback, owned-process crashes, unchanged-observation rotation,
 transactional admission, explicit admitted launch denial, directory replacement,
-schema upgrade and report-only cleanup decisions.
+schema upgrade, cwd-independent admission, controlled creation, Git-only archive
+restoration, umask/symlink metadata, interrupted retirement, late writes/locks,
+public-path reuse and bounded registry cleanup in disposable repositories.
 The retained macOS process report covers an earlier artifact and does not
 validate the current process artifact.
 
@@ -69,6 +71,7 @@ the retained report. See [reports/README.md](reports/README.md).
 
 These reports do not establish real PID reuse, timestamp uniqueness, reboot,
 power-loss durability, disk-full handling, Apple Silicon compatibility, real
-macOS AI-worker/sandbox integration or long-term reliability. The registry has
-no cleanup authority. A terminated process does not prove descendant quiescence.
+macOS AI-worker/sandbox integration or long-term reliability. Validation reports
+never authorize production cleanup. A terminated process does not prove that
+unregistered writers have stopped.
 Native ABI details are in [NATIVE-ABI.md](NATIVE-ABI.md).

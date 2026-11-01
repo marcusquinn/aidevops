@@ -31,9 +31,52 @@ _worktree_enroll_generation() {
 	python=$(type -P python3) || return 1
 	path=$(cd -- "$path" && pwd -P) || return 1
 	local enrollment_result=""
+	local runtime_pid="${AIDEVOPS_LIFECYCLE_RUNTIME_PID:-}"
+	local session_id="${AIDEVOPS_LIFECYCLE_SESSION_ID:-}"
+	local -a enrollment_args=(enroll --initialize --allow-schema-1-observation --path "$path")
+	if [[ -n "$runtime_pid" || -n "$session_id" ]]; then
+		if [[ -z "$runtime_pid" || -z "$session_id" ]]; then
+			printf 'Generation enrollment refused: incomplete runtime identity\n' >&2
+			return 1
+		fi
+		# Runtime declarations are captured natively; legacy owner records are not input.
+		enrollment_args=(admit-session --initialize --path "$path" --pid "$runtime_pid" --session-id "$session_id")
+	fi
 	if ! enrollment_result=$("$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
-		--state-dir "$state_dir" enroll --initialize --allow-schema-1-observation --path "$path"); then
+		--state-dir "$state_dir" "${enrollment_args[@]}"); then
 		printf 'Generation enrollment refused: %s\n' "$enrollment_result" >&2
+		return 1
+	fi
+	return 0
+}
+
+_worktree_create_native() {
+	local repo="$1"
+	local path="$2"
+	local ref="$3"
+	shift 3
+	local runtime_pid="${AIDEVOPS_LIFECYCLE_RUNTIME_PID:-}"
+	local session_id="${AIDEVOPS_LIFECYCLE_SESSION_ID:-}"
+	local helper_dir="${BASH_SOURCE[0]%/*}"
+	local state_dir="" python="" result="" parent=""
+	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 || "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 ||
+		( -z "$runtime_pid" && -z "$session_id" ) || -e "$path" || -L "$path" ]]; then
+		# These callers do not gain controlled-creation provenance.
+		git -C "$repo" worktree add "$@" -- "$path" "$ref" || return 1
+		return 0
+	fi
+	[[ -n "$runtime_pid" && -n "$session_id" ]] || return 1
+	# shellcheck source=worker-lifecycle-state.sh
+	source "${helper_dir}/worker-lifecycle-state.sh" || return 1
+	state_dir=$(worker_lifecycle_state_dir) || return 1
+	python=$(type -P python3) || return 1
+	repo=$(cd -- "$repo" && pwd -P) || return 1
+	parent=$(cd -- "$(dirname -- "$path")" && pwd -P) || return 1
+	path="${parent}/$(basename -- "$path")"
+	if ! result=$("$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
+		--state-dir "$state_dir" create-worktree --initialize --repo "$repo" \
+		--path "$path" --ref "$ref" --pid "$runtime_pid" --session-id "$session_id" -- "$@"); then
+		printf 'Native worktree creation refused; partial results retained: %s\n' "$result" >&2
 		return 1
 	fi
 	return 0
@@ -65,7 +108,7 @@ worktree_create_registered() {
 	creation_token=$(python3 "${registry_helper%.sh}-owner.py" begin-create \
 		"$WORKTREE_REGISTRY_DB" "$path") || return 1
 	_ds_substage_record precreate.registry_begin_create "$stage_t0"
-	_ds_substage_run precreate.git_worktree_add git -C "$repo" worktree add "$@" -- "$path" "$ref" || return 1
+	_ds_substage_run precreate.git_worktree_add _worktree_create_native "$repo" "$path" "$ref" "$@" || return 1
 	branch=$(git -C "$path" symbolic-ref --quiet --short HEAD) || branch="HEAD"
 	# Generic producers inside a managed run belong to its invocation leader,
 	# not the user manager or an inherited interactive session. Observation still

@@ -16,6 +16,10 @@ import sys
 import worktree_lifetime_owner as owner_lifetime
 import worktree_lifetime_proof as lifetime_proof
 
+# Wait for transient registry locks (concurrent pulse/session writers) instead of
+# failing at sqlite3's 5 second default.
+BUSY_TIMEOUT_SECONDS = 30.0
+
 
 def release_session(args: list[str]) -> int:
     """Release only this live server generation's deleted-session ownership."""
@@ -45,7 +49,8 @@ def release_session(args: list[str]) -> int:
                 env={**os.environ, "LC_ALL": "C"}, stderr=subprocess.DEVNULL)
             start = " ".join(registry_start.split())
         if Path(database).is_file():
-            with closing(sqlite3.connect(Path(database).resolve().as_uri() + "?mode=rw", uri=True)) as connection:
+            with closing(sqlite3.connect(Path(database).resolve().as_uri() + "?mode=rw", uri=True,
+                                          timeout=BUSY_TIMEOUT_SECONDS)) as connection:
                 connection.execute(
                     """DELETE FROM worktree_owners WHERE owner_pid=? AND owner_session=?
                        AND COALESCE(owner_process_start, '')=?""", (int(pid), session, start))
@@ -61,7 +66,8 @@ def release_completed(args: list[str]) -> int:
         return 1
     database, path, pid, start, created = args
     try:
-        with closing(sqlite3.connect(database, isolation_level=None)) as connection:
+        with closing(sqlite3.connect(database, isolation_level=None,
+                                     timeout=BUSY_TIMEOUT_SECONDS)) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT record FROM worktree_managed_lifetimes WHERE path=?", (path,)).fetchone()
@@ -70,7 +76,7 @@ def release_completed(args: list[str]) -> int:
             owner_lifetime.require(record.get("manager") == owner_lifetime.MANAGER, "unexpected lifetime manager")
             identity = owner_lifetime.identity(Path(path))
             owner_lifetime.require(record.get("identity") == identity, "lifetime identity changed")
-            lifetime_proof.proof(record, identity["source_inode"])
+            lifetime_proof.proof(record, identity["source_inode"], fresh=False)
             try:
                 os.kill(int(pid), 0)
             except ProcessLookupError:
@@ -158,7 +164,8 @@ def begin_creation_command(args):
     database, path = args
     if not os.path.exists(database):
         return 0  # No registry means there is no old receipt to fence.
-    with closing(sqlite3.connect(database, isolation_level=None)) as connection:
+    with closing(sqlite3.connect(database, isolation_level=None,
+                                 timeout=BUSY_TIMEOUT_SECONDS)) as connection:
         connection.execute("BEGIN IMMEDIATE")
         token = owner_lifetime.begin_creation(connection, str(Path(path).resolve()))
         connection.execute("COMMIT")
@@ -204,12 +211,14 @@ def main(argv: list[str]) -> int:
         lifecycle_commands = {"release-completed": release_completed, "release-session": release_session,
                               "begin-create": begin_creation_command}
         if operation in lifecycle_commands:
+            stage = f"lifecycle:{operation}"
             return lifecycle_commands[operation](args)
         expected = {"register": 10, "claim": 10, "transfer": 15, "adopt": 15}[operation]
         owner_lifetime.require(len(args) == expected, "invalid ownership arguments")
         # Closing an uncommitted SQLite connection rolls back every write, including
         # generation rotation; the separately committed pre-creation fence remains.
-        with closing(sqlite3.connect(args[0], isolation_level=None)) as connection:
+        with closing(sqlite3.connect(args[0], isolation_level=None,
+                                     timeout=BUSY_TIMEOUT_SECONDS)) as connection:
             stage = "begin"
             connection.execute("BEGIN IMMEDIATE")
             creating = (operation == "register" and os.environ.get("AIDEVOPS_WORKTREE_CREATING") == "1" and

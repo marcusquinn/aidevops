@@ -38,6 +38,20 @@ function makeHook() {
   });
 }
 
+test("creator identity comes from the runtime and cannot inherit a stale owner", async () => {
+  const hook = makeHook();
+  const output = { env: {
+    AIDEVOPS_LIFECYCLE_RUNTIME_PID: "1",
+    AIDEVOPS_LIFECYCLE_SESSION_ID: "old-session",
+  } };
+  await hook({ sessionID: "native-session" }, output);
+  assert.equal(output.env.AIDEVOPS_LIFECYCLE_RUNTIME_PID, String(process.pid));
+  assert.equal(output.env.AIDEVOPS_LIFECYCLE_SESSION_ID, "native-session");
+  await hook({}, output);
+  assert.equal(output.env.AIDEVOPS_LIFECYCLE_RUNTIME_PID, "");
+  assert.equal(output.env.AIDEVOPS_LIFECYCLE_SESSION_ID, "");
+});
+
 test("runtime PATH keeps inherited order, injects no distro roots, drops unsafe entries", () => {
   const path = runtimePath("/guard:/project/bin:/guard::relative:/opt/toolchain/bin:/usr/bin");
   assert.deepEqual(path.split(":"), ["/guard", "/project/bin", "/opt/toolchain/bin", "/usr/bin"]);

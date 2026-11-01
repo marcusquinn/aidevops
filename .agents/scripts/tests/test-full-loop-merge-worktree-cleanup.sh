@@ -131,6 +131,11 @@ gh() {
 				'{headRefName:$head_ref,headRefOid:$head_oid,headRepository:{nameWithOwner:$head_repo},isCrossRepository:false}'
 			return 0
 		fi
+		# GH#36174 merge-time closure check reads body plus parsed references.
+		if [[ "$args" == *"body,closingIssuesReferences"* ]]; then
+			printf '%s\n' '{"body":"Resolves #42","closingIssuesReferences":[{"number":42}]}'
+			return 0
+		fi
 		if [[ "$args" == *"body"* ]]; then
 			printf '%s\n' "Resolves #42"
 			return 0
@@ -869,6 +874,48 @@ test_untracked_only_canonical_fast_forwards_through_helper() {
 	return 0
 }
 
+# GH#36289: an unborn canonical default branch (git init + remote, all work in
+# linked worktrees) routes to the audited fast-forward instead of reading the
+# literal "HEAD" from `git rev-parse HEAD` and dead-ending.
+test_unborn_canonical_fast_forwards_through_helper() {
+	make_fast_forward_fixture "unborn-seed"
+	local origin_repo="${TEST_ROOT}/ff-unborn-seed-origin.git"
+	FF_CANONICAL="${TEST_ROOT}/ff-unborn"
+	FF_HELPER_LOG="${TEST_ROOT}/ff-unborn-helper.log"
+	rm -f "$FF_HELPER_LOG"
+	mkdir -p "$FF_CANONICAL"
+	git -C "$FF_CANONICAL" init -q -b main
+	git -C "$FF_CANONICAL" remote add origin "$origin_repo"
+	local output=""
+	local sync_rc=0
+	local rc=0
+	output=$(run_interactive_sync_report 2>&1) || sync_rc=$?
+	grep -qF -- "fast-forward-current --repo ${FF_CANONICAL} --branch main --issue 33013 --confirm FAST_FORWARD_CANONICAL_BRANCH" \
+		"$FF_HELPER_LOG" || rc=1
+	[[ "$sync_rc" -eq 0 ]] || rc=1
+	[[ "$output" == *"LIFECYCLE_STATE=CANONICAL_SYNCED sha=${FF_TIP}"* ]] || rc=1
+	[[ "$output" != *"sync-mirror"* ]] || rc=1
+	[[ "$(git -C "$FF_CANONICAL" rev-parse HEAD)" == "$FF_TIP" ]] || rc=1
+	print_result "unborn canonical default branch fast-forwards through the audited helper" "$rc" "$output"
+
+	# With fast-forward disabled, the pending report names the same route.
+	FF_CANONICAL="${TEST_ROOT}/ff-unborn-optout"
+	FF_HELPER_LOG="${TEST_ROOT}/ff-unborn-optout-helper.log"
+	rm -f "$FF_HELPER_LOG"
+	mkdir -p "$FF_CANONICAL"
+	git -C "$FF_CANONICAL" init -q -b main
+	git -C "$FF_CANONICAL" remote add origin "$origin_repo"
+	rc=0
+	sync_rc=0
+	output=$(SYNC_ENV_OVERRIDE="AIDEVOPS_MERGE_CANONICAL_FAST_FORWARD=0" run_interactive_sync_report 2>&1) || sync_rc=$?
+	[[ "$sync_rc" -ne 0 ]] || rc=1
+	[[ "$output" == *"CANONICAL_SYNC_NEXT=canonical-recovery-helper.sh fast-forward-current"* ]] || rc=1
+	[[ ! -s "$FF_HELPER_LOG" ]] || rc=1
+	git -C "$FF_CANONICAL" rev-parse --verify --quiet 'HEAD^{commit}' >/dev/null && rc=1
+	print_result "unborn canonical pending report names fast-forward-current" "$rc" "$output"
+	return 0
+}
+
 assert_sync_report_does_not_mutate() {
 	local label="$1"
 	local expected_next="$2"
@@ -991,6 +1038,7 @@ main() {
 	test_refresh_canonical_reports_pending_without_mutation
 	test_interactive_merge_fast_forwards_canonical_through_helper
 	test_untracked_only_canonical_fast_forwards_through_helper
+	test_unborn_canonical_fast_forwards_through_helper
 	test_canonical_fast_forward_exclusions
 	test_canonical_guard_denial_is_reported
 	test_planning_reconcile_waits_for_canonical_sync
