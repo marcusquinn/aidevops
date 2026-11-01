@@ -46,16 +46,22 @@ def _sqlite_code(error: sqlite3.Error) -> str:
     return code or "sqlite-" + re.sub(r"(?<!^)(?=[A-Z])", "-", type(error).__name__).lower()
 
 
+def _value_code(error: ValueError) -> str | None:
+    text = str(error)
+    return text if _REFUSAL_CODE.fullmatch(text) else None
+
+
+_HANDLERS = (
+    (subprocess.TimeoutExpired, lambda _error: "git-timeout"),
+    (subprocess.CalledProcessError, _git_code),
+    (sqlite3.Error, _sqlite_code),
+    (ValueError, _value_code),
+)
+
+
 def refusal_code(error: Exception, operation: str) -> str | None:
     """Stable cause of a creation-path refusal, or None outside creation operations."""
-    if operation not in CREATION_OPERATIONS:
+    handler = next((handler for kind, handler in _HANDLERS if isinstance(error, kind)), None)
+    if handler is None or operation not in CREATION_OPERATIONS:
         return None
-    if isinstance(error, subprocess.TimeoutExpired):
-        return "git-timeout"
-    if isinstance(error, subprocess.CalledProcessError):
-        return _git_code(error)
-    if isinstance(error, sqlite3.Error):
-        return _sqlite_code(error)
-    if isinstance(error, ValueError) and _REFUSAL_CODE.fullmatch(str(error)):
-        return str(error)
-    return None
+    return handler(error)
