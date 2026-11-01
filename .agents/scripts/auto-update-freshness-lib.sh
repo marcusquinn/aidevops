@@ -759,11 +759,38 @@ _locate_upstream_watch() {
 	return 0
 }
 
-check_upstream_watch() {
+check_upstream_watch() (
+	# A subshell confines EXIT/signal cleanup to this check, not its caller.
 	# Opt-out via config (env var or config file)
 	if ! is_feature_enabled upstream_watch; then
 		log_info "Upstream watch disabled via config"
 		return 0
+	fi
+
+	local lock_dir="${STATE_FILE}.upstream-watch.lock"
+	local owner_file owner_pid
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		# Removing the dead owner's directory elects exactly one recoverer.
+		# Losers must not remove a newly acquired, not-yet-stamped lock.
+		for owner_file in "$lock_dir"/[0-9]*; do
+			[[ -d "$owner_file" ]] || continue
+			owner_pid="${owner_file##*/}"
+			if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+				if rmdir "$owner_file" 2>/dev/null; then
+					rmdir "$lock_dir" 2>/dev/null || true
+				fi
+			fi
+		done
+		if ! mkdir "$lock_dir" 2>/dev/null; then
+			log_info "Upstream watch check already running — skipping"
+			return 0
+		fi
+	fi
+	local watch_pid="${BASHPID:-$$}"
+	trap 'rmdir "$lock_dir/$watch_pid" 2>/dev/null; rmdir "$lock_dir" 2>/dev/null || true' EXIT
+	trap 'exit 1' HUP INT TERM
+	if ! mkdir "$lock_dir/$watch_pid"; then
+		return 1
 	fi
 
 	local freshness_hours
@@ -773,6 +800,12 @@ check_upstream_watch() {
 	# Time gate: skip if checked recently
 	local gate_result
 	gate_result=$(_check_freshness_time_gate "last_upstream_watch_check" "$freshness_seconds" "Upstream watch")
+	if [[ "$gate_result" == "skip" ]]; then
+		return 0
+	fi
+
+	# Recheck under the lock so simultaneous ticks cannot both pass the gate.
+	gate_result=$(_check_freshness_time_gate "last_upstream_watch_attempt" 3600 "Upstream watch attempt")
 	if [[ "$gate_result" == "skip" ]]; then
 		return 0
 	fi
@@ -788,20 +821,27 @@ check_upstream_watch() {
 	local repo_count
 	repo_count=$(jq '.repos | length' "$watch_config" 2>/dev/null || echo "0")
 
+	# Persist before execution: failures and interrupted runs must back off too.
+	if ! update_upstream_watch_timestamp "last_upstream_watch_attempt"; then
+		log_warn "Could not record upstream watch attempt — skipping"
+		return 1
+	fi
 	log_info "Running daily upstream watch check (${repo_count} repos)..."
 	if "$upstream_watch_script" check >>"$LOG_FILE" 2>&1; then
 		log_info "Upstream watch check complete"
 		update_upstream_watch_timestamp
 	else
-		log_warn "Upstream watch check had errors (exit code: $?) — will retry next run"
+		log_warn "Upstream watch check had errors (exit code: $?) — retry in at least 1 hour"
 	fi
 	return 0
-}
+)
 
 #######################################
-# Record last_upstream_watch_check timestamp in state file
+# Record a successful check (default) or attempt timestamp in state file.
+# Args: $1 = timestamp field (optional)
 #######################################
 update_upstream_watch_timestamp() {
+	local field="${1:-last_upstream_watch_check}"
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -811,17 +851,19 @@ update_upstream_watch_timestamp() {
 		trap 'rm -f "${tmp_state:-}"' RETURN
 
 		if [[ -f "$STATE_FILE" ]]; then
-			if ! jq --arg ts "$timestamp" \
-				'. + {last_upstream_watch_check: $ts}' \
+			if ! jq --arg ts "$timestamp" --arg field "$field" \
+				'. + {($field): $ts}' \
 				"$STATE_FILE" >"$tmp_state" 2>&1; then
 				log_warn "Failed to update upstream watch timestamp (jq error on state file)"
 				return 1
 			fi
-			mv "$tmp_state" "$STATE_FILE"
+			mv "$tmp_state" "$STATE_FILE" || return 1
 		else
-			jq -n --arg ts "$timestamp" \
-				'{last_upstream_watch_check: $ts}' >"$STATE_FILE"
+			jq -n --arg ts "$timestamp" --arg field "$field" \
+				'{($field): $ts}' >"$STATE_FILE" || return 1
 		fi
+	else
+		return 1
 	fi
 	return 0
 }
