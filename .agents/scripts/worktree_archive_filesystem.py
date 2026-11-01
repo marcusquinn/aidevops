@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Filesystem evidence: Git owns tracked state, tar owns untracked files."""
 
+from contextlib import suppress
 import hashlib
 import os
 from pathlib import Path
@@ -67,10 +68,9 @@ def open_parent(root, parts, *, create=False):
     try:
         for name in parts:
             if create:
-                try:
+                # The no-follow open below still checks the entry type.
+                with suppress(FileExistsError):
                     os.mkdir(name, dir_fd=descriptor)
-                except FileExistsError:
-                    pass  # The no-follow open below still checks the entry type.
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
