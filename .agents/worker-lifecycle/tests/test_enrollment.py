@@ -531,9 +531,13 @@ class EnrollmentContract(unittest.TestCase):
         result = self.creation_enrollment(self.repo)
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
-        detail = json.loads(result.stderr.removeprefix("Generation enrollment refused: "))
+        first, *rest = result.stderr.splitlines()
+        detail = json.loads(first.removeprefix("Generation enrollment refused: "))
         self.assertEqual(detail["reason"], "ValueError")
         self.assertFalse(detail["cleanup_authorized"])
+        # GH#36370: at most one remediation line follows the JSON diagnostic.
+        self.assertLessEqual(len(rest), 1, result.stderr)
+        self.assertTrue(all(line.startswith("Refusal cause: ") for line in rest), result.stderr)
 
     def test_automatic_launch_cannot_bypass_closed_or_damaged_enrollment(self):
         generation = self.enrollment.resolve(self.tree, create=True)
