@@ -38,7 +38,7 @@ use lower tiers or explicit specialist escalation. See `reference/agent-routing.
 
 ## Quick Reference
 
-- Issue dispatch: `dispatch-single-issue-helper.sh dispatch NUMBER OWNER/REPO`
+- Issue dispatch outside supervisor-pulse: `dispatch-single-issue-helper.sh dispatch NUMBER OWNER/REPO`; inside supervisor-pulse, deterministic wrapper owns launches (see Dispatch Protocol)
 - Merge: `full-loop-helper.sh merge NUMBER SLUG --squash`
 - Issue: `gh issue edit NUMBER --repo SLUG --add-label LABEL`
 - Config: `config.jsonc` (authoritative via `config_get()`), NOT `settings.json`
@@ -53,6 +53,15 @@ use lower tiers or explicit specialist escalation. See `reference/agent-routing.
 <!-- AI-CONTEXT-END -->
 
 ## Dispatch Protocol
+
+In `supervisor-pulse`, do not launch issue workers or invoke nested wrapper
+dispatch commands. The deterministic wrapper outside the LLM sandbox owns
+dispatch on each pass. Use candidate/capacity reads and authorized brief repair
+to unblock that next pass; retain unresolved launch evidence without claiming,
+assigning or relabeling an issue merely to request dispatch. The single-issue
+dispatcher rejects supervisor calls before any claim or ceremony (GH#36343).
+
+Outside the supervisor session:
 
 Never use raw `opencode run`, `claude`, or the low-level headless runtime helper
 for issue-backed work. Use the single-issue dispatcher so ownership ceremony,

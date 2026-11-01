@@ -8,6 +8,24 @@
 [[ -n "${_TEST_DSI_PRELAUNCH_LOADED:-}" ]] && return 0
 _TEST_DSI_PRELAUNCH_LOADED=1
 
+test_supervisor_dispatch_refuses_before_side_effects() {
+	local result=0
+	(
+		export WORKER_SESSION_KEY=supervisor-pulse
+		# Fail if dispatch reaches even argument parsing: no metadata, ownership,
+		# ceremony, worktree creation or launch may run in this context.
+		_dsi_parse_dispatch_args() { exit 99; }
+		local out="" rc=0 mode=""
+		for mode in normal --dry-run --no-ceremony; do
+			rc=0
+			out=$(cmd_dispatch 123 owner/repo "$mode" 2>&1) || rc=$?
+			[[ "$rc" -eq 1 && "$out" == *supervisor_dispatch_deferred* ]] || exit 1
+		done
+	) || result=1
+	print_result "supervisor dispatch refuses before parsing or ownership side effects" "$result"
+	return 0
+}
+
 test_manual_resume_reuses_dispatch_lifecycle() {
 	local result=0
 	(
