@@ -56,8 +56,8 @@ def release_session(args: list[str]) -> int:
                        AND COALESCE(owner_process_start, '')=?""", (int(pid), session, start))
                 connection.commit()
         return 0
-    except (sqlite3.Error, ValueError, OSError, subprocess.SubprocessError):
-        return 1
+    except ProcessLookupError:
+        return 1  # Process vanished mid-proof: not an ownership error.
 
 
 def release_completed(args: list[str]) -> int:
@@ -65,32 +65,30 @@ def release_completed(args: list[str]) -> int:
     if len(args) != 5:
         return 1
     database, path, pid, start, created = args
-    try:
-        with closing(sqlite3.connect(database, isolation_level=None,
-                                     timeout=BUSY_TIMEOUT_SECONDS)) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT record FROM worktree_managed_lifetimes WHERE path=?", (path,)).fetchone()
-            owner_lifetime.require(bool(row), "missing lifetime record")
-            record = json.loads(row[0])
-            owner_lifetime.require(record.get("manager") == owner_lifetime.MANAGER, "unexpected lifetime manager")
-            identity = owner_lifetime.identity(Path(path))
-            owner_lifetime.require(record.get("identity") == identity, "lifetime identity changed")
-            lifetime_proof.proof(record, identity["source_inode"])
-            try:
-                os.kill(int(pid), 0)
-            except ProcessLookupError:
-                pass
-            else:
-                raise ValueError("owner remains alive")
-            cursor = connection.execute(
-                """DELETE FROM worktree_owners WHERE worktree_path=? AND owner_pid=?
-                   AND COALESCE(owner_process_start, '')=? AND COALESCE(created_at, '')=?""",
-                (path, int(pid), start, created))
-            connection.execute("COMMIT")
-            return 0 if cursor.rowcount == 1 else 1
-    except (sqlite3.Error, ValueError, OSError, KeyError, subprocess.SubprocessError):
-        return 1
+    # Exceptions propagate to main(), which reports the lifecycle stage.
+    with closing(sqlite3.connect(database, isolation_level=None,
+                                 timeout=BUSY_TIMEOUT_SECONDS)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT record FROM worktree_managed_lifetimes WHERE path=?", (path,)).fetchone()
+        owner_lifetime.require(bool(row), "missing lifetime record")
+        record = json.loads(row[0])
+        owner_lifetime.require(record.get("manager") == owner_lifetime.MANAGER, "unexpected lifetime manager")
+        identity = owner_lifetime.identity(Path(path))
+        owner_lifetime.require(record.get("identity") == identity, "lifetime identity changed")
+        lifetime_proof.proof(record, identity["source_inode"])
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise ValueError("owner remains alive")
+        cursor = connection.execute(
+            """DELETE FROM worktree_owners WHERE worktree_path=? AND owner_pid=?
+               AND COALESCE(owner_process_start, '')=? AND COALESCE(created_at, '')=?""",
+            (path, int(pid), start, created))
+        connection.execute("COMMIT")
+        return 0 if cursor.rowcount == 1 else 1
 
 
 def owner_values(args: list[str]) -> tuple[str, int, str, str, str, str, str]:
