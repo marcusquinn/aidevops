@@ -354,6 +354,16 @@ _dlw_exec_systemd_user_service() {
 		/usr/bin/env bash -lc "$runner_script" _ "$pid_file" "$worker_log" "$@" \
 		>/dev/null 2>>"$LOGFILE"; then
 		rm -f "$pid_file" 2>/dev/null || true
+		# A failed call can also mean the manager's submission reply was lost.
+		# Only an explicit not-found response proves there is no unit to own;
+		# an unreachable manager is inconclusive and must retain ownership.
+		local load_state=""
+		load_state=$(systemctl --user show "$unit_name" --property=LoadState --value 2>>"$LOGFILE") || true
+		if [[ "$load_state" == "not-found" ]]; then
+			printf 'LaunchState=submission_failed\n' >>"$state_file"
+		else
+			printf 'LaunchState=submission_unconfirmed\n' >>"$state_file"
+		fi
 		return 1
 	fi
 
@@ -413,7 +423,9 @@ _dlw_handle_systemd_launch_failure() {
 
 	if [[ -f "$systemd_state_file" ]]; then
 		{
-			if [[ "$systemd_rc" -eq 2 ]]; then
+			if grep -q '^LaunchState=submission_failed$' "$systemd_state_file"; then
+				printf '[systemd-launch] classification=submission_failed\n'
+			elif [[ "$systemd_rc" -eq 2 ]]; then
 				printf '[systemd-launch] classification=crash_during_startup\n'
 			else
 				printf '[systemd-launch] classification=readiness_unconfirmed\n'
