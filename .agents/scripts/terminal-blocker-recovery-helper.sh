@@ -581,7 +581,12 @@ _tbr_post_rearm_receipt() {
 	local repo="$1"
 	local issue="$2"
 	local marker="$3"
-	printf '%s\n' "$marker" | bash "${_TBR_SCRIPT_DIR}/gh-write-helper.sh" issue comment "$issue" \
+	local extra="${4:-}"
+	# The key marker stays on its own line: replay suppression matches lines.
+	{
+		printf '%s\n' "$marker"
+		[[ -z "$extra" ]] || printf '%s\n' "$extra"
+	} | bash "${_TBR_SCRIPT_DIR}/gh-write-helper.sh" issue comment "$issue" \
 		--repo "$repo" --body-file - >/dev/null || return 2
 	return 0
 }
@@ -740,7 +745,7 @@ _tbr_release_circuit_hold() {
 	# In particular, intake can see a foreign COLLABORATOR observation which
 	# the authoritative hold selectors deliberately ignore. Never release it.
 	local observation="" circuit="" evidence="" parsed="" observed_rev="" fingerprint=""
-	local current_rev="" retry="" decision="" receipt="" receipt_key="" repo_path=""
+	local current_rev="" retry="" decision="" repo_path=""
 	local reason=""
 	observation=$(_terminal_blocker_latest_marker "$comments" "$_TBC_OBSERVATION_MARKER revision=") || return 2
 	circuit=$(_terminal_blocker_latest_marker "$comments" "$_TBC_CIRCUIT_MARKER revision=") || return 2
@@ -787,6 +792,11 @@ _tbr_release_circuit_hold() {
 		# GH#36232 #aidevops:trust-boundary: no published request to approve.
 		# Schedules one new attempt per window; it grants no permission.
 		decision=unevidenced_permission_window
+	elif [[ "$reason" == "$_TBC_PERMISSION_REQUIRED" ]] &&
+		terminal_blocker_permission_window_spent "$comments" "$issue_json" "$evidence"; then
+		# GH#36342 #aidevops:trust-boundary: the window re-arm already repeated
+		# this result; only a retry, new trusted input or brief revision wakes it.
+		decision=permission_window_spent
 	fi
 	# A newer circuit for the current revision wins over an older observation
 	# or retry; unreadable evidence must not fall through into label projection.
@@ -800,27 +810,44 @@ _tbr_release_circuit_hold() {
 		"$decision" == unevidenced_permission_window ]] || return 2
 	# GH#36126: hold without a receipt while a dependency is open.
 	_tbr_dependency_unresolved "$repo" "$issue" "$issue_json" "$observed_rev" "$current_rev" && return 3
-	# The key binds the observed event, destination revision and retry event.
-	# A public receipt, not runner-local queue retirement, suppresses replay.
-	# Hash immutable event identity only, not mutable author associations or prose.
-	# GH#36232: a window release also binds its window index, so each window
-	# releases at most once; other decisions keep their historical key shape.
-	receipt_key=$(jq -nc --argjson evidence "$evidence" --argjson retry "${retry:-null}" \
+	_tbr_release_decided_hold "$repo" "$issue" "$issue_json" "$comments" "$evidence" "${retry:-null}" \
+		"$observed_rev" "$fingerprint" "$current_rev" "$decision" "$window_index"
+	return $?
+}
+
+# Post the keyed receipt and project a decided re-arm.
+# The key binds the observed event, destination revision and retry event.
+# A public receipt, not runner-local queue retirement, suppresses replay.
+# Hash immutable event identity only, not mutable author associations or prose.
+# GH#36232: a window release also binds its window index, so each window
+# releases at most once; other decisions keep their historical key shape.
+# GH#36342: it also binds and records the brief, so a brief revision after a
+# spent window releases once more without waiting for the next window.
+_tbr_release_decided_hold() {
+	local repo="$1" issue="$2" issue_json="$3" comments="$4" evidence="$5" retry="$6"
+	local observed_rev="$7" fingerprint="$8" current_rev="$9" decision="${10}" window_index="${11}"
+	local receipt_key="" receipt="" brief_rev="" brief_line=""
+	if [[ "$decision" == unevidenced_permission_window ]]; then
+		brief_rev=$(terminal_blocker_permission_brief_revision "$issue_json") || brief_rev=""
+		[[ -z "$brief_rev" ]] || brief_line="<!-- ${_TBC_PERMISSION_BRIEF_MARKER} revision=${brief_rev} -->"
+	fi
+	receipt_key=$(jq -nc --argjson evidence "$evidence" --argjson retry "$retry" \
 		--arg observed "$observed_rev" --arg fingerprint "$fingerprint" --arg current "$current_rev" --arg decision "$decision" \
-		--arg window "$window_index" \
+		--arg window "$window_index" --arg brief "$brief_rev" \
 		'{event: ($evidence | {id,created_at}), observed:$observed, fingerprint:$fingerprint, current:$current,
 		 retry: (if $decision == "trusted_retry" then ($retry | {id,created_at}) else null end)}
-		 + (if $decision == "unevidenced_permission_window" then {window: ($window | tonumber)} else {} end)') || return 2
+		 + (if $decision == "unevidenced_permission_window" then {window: ($window | tonumber), brief: $brief} else {} end)') || return 2
 	receipt_key=$(_terminal_blocker_hash "$receipt_key") || return 2
 	receipt="<!-- aidevops:terminal-blocker-rearmed key=${receipt_key} -->"
-	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" "$observed_rev" "$current_rev"
+	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" "$observed_rev" "$current_rev" "$brief_line"
 	return $?
 }
 
 # Shared idempotent projection for structured and legacy re-arm decisions.
+# Optional $8: one extra receipt line (GH#36342 window brief record).
 _tbr_project_rearm() {
 	local repo="$1" issue="$2" issue_json="$3" comments="$4" receipt="$5"
-	local observed_rev="$6" current_rev="$7"
+	local observed_rev="$6" current_rev="$7" extra="${8:-}"
 	# Suppression only: accepting a fetched collaborator receipt grants no release.
 	if printf '%s' "$comments" | jq -e --arg marker "$receipt" 'any(.[]; (.body // "") | split("\n") | index($marker) != null)' >/dev/null; then
 		printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=already_released\n' "$issue" "$observed_rev" "$current_rev" >&2
@@ -841,7 +868,7 @@ _tbr_project_rearm() {
 	if printf '%s' "$issue_json" | jq -e --arg blocked status:blocked 'any(.labels[]; .name == $blocked)' >/dev/null; then
 		set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || return 2
 	fi
-	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" || return 2
+	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" "$extra" || return 2
 	return 0
 }
 

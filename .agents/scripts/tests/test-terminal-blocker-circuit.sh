@@ -1479,6 +1479,99 @@ test_unevidenced_permission_window_evidence() {
 	return 0
 }
 
+# GH#36342: the window re-arms an unevidenced permission hold once per
+# unchanged result. After a repeated identical exit it waits for a new
+# OWNER/MEMBER comment, a trusted retry or a brief revision.
+test_permission_window_rearms_once_per_result() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		export ZERO_OUTPUT_HOLD_WINDOW_SECONDS=43200
+		export TERMINAL_BLOCKER_NOW_EPOCH=1793361600 # 2026-10-30T12:00:00Z
+		local issue='{"title":"Live probe","body":"needs operator billing","labels":[{"name":"status:blocked"}]}'
+		local revision="" fingerprint="" observation="" tb_comments="" repeated="" variant="" edited=""
+		local projected=0 receipts=0 rc=0 receipt_at=2026-10-30T11:59:00Z
+		local later=$((1793361600 + 86400)) # 2026-10-31T12:00:00Z
+		set_issue_status() {
+			projected=$((projected + 1))
+			return 0
+		}
+		_tbr_post_rearm_receipt() {
+			local marker="$3" extra="${4:-}"
+			receipts=$((receipts + 1))
+			tb_comments=$(jq -c --arg body "${marker}"$'\n'"${extra}"$'\n<!-- aidevops:origin:worker -->' --arg at "$receipt_at" \
+				'. + [{id:(100 + length),body:$body,author:"runner-a",author_association:"MEMBER",created_at:$at}]' <<<"$tb_comments")
+			return 0
+		}
+		add_comment() {
+			local body="$1" at="$2" association="${3:-MEMBER}"
+			tb_comments=$(jq -c --arg body "$body" --arg at "$at" --arg a "$association" \
+				'. + [{id:(100 + length),body:$body,author:"runner-a",author_association:$a,created_at:$at}]' <<<"$tb_comments")
+			return 0
+		}
+		gh_issue_edit_safe() { return 0; }
+		fingerprint=$(_terminal_blocker_hash v2:permission_required)
+		revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" permission_required) || exit 1
+		observation="<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->"
+		# An older OWNER condition predates the hold; it is not new input.
+		tb_comments='[{"id":5,"body":"Operator billing authority is required.\n<!-- aidevops:origin:interactive -->","author":"owner","author_association":"OWNER","created_at":"2026-10-03T07:56:53Z"}]'
+		add_comment $'CLAIM_RELEASED reason=blocked runner=runner-a\n'"${observation}" 2026-10-29T22:00:00Z
+		# First window (the GH#36232 runner-local case): re-arms once and records the brief.
+		terminal_blocker_permission_window_spent "$tb_comments" "$issue" "$(jq -c '.[1]' <<<"$tb_comments")" && exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" 2>/dev/null || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		jq -e 'last.body | test("<!-- aidevops:terminal-blocker-rearm-brief revision=[a-f0-9]{24} -->")' <<<"$tb_comments" >/dev/null || exit 1
+		# The re-armed attempt repeats the identical result (circuit form).
+		repeated=$(jq -c --arg r "$revision" --arg f "$fingerprint" \
+			'. + [{id:200,body:("CLAIM_RELEASED reason=blocked runner=runner-a\n<!-- aidevops:terminal-blocker-circuit revision=" + $r + " blocker=" + $f + " -->"),author:"runner-a",author_association:"MEMBER",created_at:"2026-10-30T12:05:00Z"}]' <<<"$tb_comments")
+		export TERMINAL_BLOCKER_NOW_EPOCH="$later"
+		terminal_blocker_permission_window_spent "$repeated" "$issue" "$(jq -c 'last' <<<"$repeated")" || exit 1
+		terminal_blocker_circuit_active "$repeated" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		terminal_blocker_permission_rearm_after "$repeated" "$issue" >/dev/null && exit 1
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$repeated" 2>/dev/null || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 1 ]] || exit 1
+		# Open-circuit form: a bare blocked release after the re-arm is also a repeat.
+		repeated=$(jq -c '. + [{id:201,body:"CLAIM_RELEASED reason=blocked runner=runner-a ts=2026-10-30T12:05:00Z\n<!-- aidevops:origin:worker -->",author:"runner-a",author_association:"MEMBER",created_at:"2026-10-30T12:05:00Z"}]' <<<"$tb_comments")
+		terminal_blocker_observation_hold_active "$repeated" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$repeated" 2>"${TEST_ROOT}/permission-spent.err" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 1 ]] || exit 1
+		grep -q 'reason=permission_window_spent' "${TEST_ROOT}/permission-spent.err" || exit 1
+		# Automation comments from an OWNER-associated runner are not new input.
+		variant=$(jq -c '. + [{id:202,body:"<!-- ops:start -->\nDISPATCH_CLAIM nonce=abc runner=runner-a",author:"owner",author_association:"OWNER",created_at:"2026-10-30T13:00:00Z"}]' <<<"$repeated")
+		terminal_blocker_observation_hold_active "$variant" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		# A collaborator comment is not trusted input either.
+		variant=$(jq -c '. + [{id:202,body:"Any update?",author:"helper",author_association:"COLLABORATOR",created_at:"2026-10-30T13:00:00Z"}]' <<<"$repeated")
+		terminal_blocker_observation_hold_active "$variant" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		# A newer OWNER/MEMBER comment re-arms the window once more.
+		variant=$(jq -c '. + [{id:202,body:"Billing scope is configured now.",author:"owner",author_association:"OWNER",created_at:"2026-10-30T13:00:00Z"}]' <<<"$repeated")
+		terminal_blocker_observation_hold_active "$variant" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		tb_comments="$variant" receipt_at=2026-10-30T13:05:00Z
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" 2>/dev/null || exit 1
+		[[ "$projected" -eq 2 && "$receipts" -eq 2 ]] || exit 1
+		# A repeat after that input is spent again.
+		add_comment $'CLAIM_RELEASED reason=blocked runner=runner-a\n<!-- aidevops:origin:worker -->' 2026-10-30T13:10:00Z
+		terminal_blocker_observation_hold_active "$tb_comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		# A brief revision differs from the recorded brief: one more re-arm.
+		edited=$(jq -c '.body = "operator billing scope supplied"' <<<"$issue")
+		terminal_blocker_observation_hold_active "$tb_comments" "$edited" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		receipt_at=2026-10-30T13:20:00Z
+		_tbr_release_circuit_hold owner/repo 42 "$edited" "$tb_comments" 2>/dev/null || exit 1
+		[[ "$projected" -eq 3 && "$receipts" -eq 3 ]] || exit 1
+		add_comment $'CLAIM_RELEASED reason=blocked runner=runner-a\n<!-- aidevops:origin:worker -->' 2026-10-30T13:30:00Z
+		terminal_blocker_observation_hold_active "$tb_comments" "$edited" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		# Issue metadata without a brief cannot fake a brief revision.
+		terminal_blocker_observation_hold_active "$tb_comments" '{}' owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "permission window re-arms once per unchanged result; new trusted input or brief revision re-arms it" "$status"
+	return 0
+}
+
 test_mechanical_rearm_pass() {
 	local status=0
 	if ! (
@@ -1751,6 +1844,7 @@ main() {
 	test_retry_only_observation_recovery
 	test_unevidenced_permission_window_rearm
 	test_unevidenced_permission_window_evidence
+	test_permission_window_rearms_once_per_result
 	test_mechanical_rearm_pass
 	test_rearm_waits_for_blocked_by_dependency
 	test_mechanical_rearm_scheduler
