@@ -460,7 +460,7 @@ _update_already_current() {
 	deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
 	[[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]] || return 0
 	if _update_repo_verify_files_changed "$deployed_sha" "$local_hash"; then _AIDEVOPS_UPDATE_RECONCILE_REPO_VERIFY=true; fi
-	if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- .agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
+	if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- .agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ .agents/worker-lifecycle/ setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
 		print_warning "Deployed scripts drifted (${deployed_sha:0:7}→${local_hash:0:7})"
 		print_info "Re-running incremental setup to deploy latest scripts..."
 		_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1

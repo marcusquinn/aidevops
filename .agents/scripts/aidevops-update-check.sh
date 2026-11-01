@@ -674,7 +674,7 @@ _check_script_drift() {
 	local has_code_drift=0
 	while IFS= read -r filepath; do
 		case "$filepath" in
-		.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/* | setup.sh | aidevops.sh | VERSION)
+		.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/* | .agents/worker-lifecycle/* | setup.sh | aidevops.sh | VERSION)
 			has_code_drift=1
 			break
 			;;
