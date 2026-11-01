@@ -20,6 +20,8 @@ import worktree_lifetime_owner as owner
 from worktree_process_activity import activity as activity
 from worktree_process_census import path_census as path_census
 
+__all__ = ["activity", "path_census"]
+
 
 def worker_directory(arguments):
     launchers = {"headless-runtime-helper.sh", "headless-runtime-worker.sh"}

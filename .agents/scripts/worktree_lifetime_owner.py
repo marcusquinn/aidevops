@@ -202,7 +202,7 @@ def begin_creation(connection, path):
     require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
     record.pop("creation_pending", None)
     from worktree_lifetime_proof import proof
-    proof(record, record["identity"]["source_inode"])
+    proof(record, record["identity"]["source_inode"], fresh=True)
     token = uuid.uuid4().hex
     record["creation_pending"] = token
     connection.execute("UPDATE worktree_managed_lifetimes SET record=? WHERE path=?",
@@ -223,7 +223,7 @@ def prepare_creation(connection, path):
     require(bool(token) and token == os.environ.get("AIDEVOPS_WORKTREE_CREATION_TOKEN"),
             "replacement has no matching pre-creation fence")
     from worktree_lifetime_proof import proof
-    proof(record, record["identity"]["source_inode"])
+    proof(record, record["identity"]["source_inode"], fresh=False)
     require(re.fullmatch(r"[0-9a-f]{32}", record.get("generation", "")) is not None,
             "missing generation identity")
     connection.execute("""CREATE TABLE IF NOT EXISTS worktree_lifetime_history (

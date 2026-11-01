@@ -5,7 +5,7 @@
 
 import os
 from pathlib import Path
-import subprocess
+import subprocess  # nosec B404 -- tests spawn fixed fixture processes only
 import sys
 import tempfile
 import time
