@@ -410,6 +410,26 @@ class EnrollmentContract(unittest.TestCase):
             bindings = connection.execute("SELECT generation_id FROM bindings").fetchall()
             self.assertEqual([row[0] for row in bindings], [generation, generation])
 
+    def test_creation_without_runtime_identity_records_actual_creator(self):
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        created = self.root / "shell-created"
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("AIDEVOPS_", "GIT_", "WORKTREE_"))}
+        env.update(HOME=str(self.root),
+                   AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory))
+        result = subprocess.run(  # nosec B603 B607 # fixed fixture shell and argv
+            ["bash", "-c", 'source "$1/shared-constants.sh" && '
+             'source "$1/shared-worktree-create.sh" && '
+             'worktree_create_registered "$2" "$3" HEAD --detach',
+             "fixture", str(scripts), str(self.repo), str(created)],
+            cwd=self.root, env=env, capture_output=True, text=True, timeout=40,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prepared = prepare_cleanup(self.store, created)
+        self.assertTrue(prepared["creation_verified"])
+        self.assertEqual(prepared["status"], "registered-runs-ended")
+        self.assertEqual(prepared["registered_runs"], 1)
+
     def test_controlled_creation_cannot_adopt_existing_directory(self):
         target = self.root / "existing"
         target.mkdir()

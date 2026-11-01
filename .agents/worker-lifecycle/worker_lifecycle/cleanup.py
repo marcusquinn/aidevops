@@ -109,8 +109,6 @@ def _candidate(
         "generation_id": generation, "status": "coverage-gap",
     }
     creation = _event(store, str(uuid5(UUID(generation), "created-worktree")))
-    if creation is None:
-        return result
     plan = _event(store, _event_id(generation, "planned"))
     if plan is not None:
         common = plan["common"]
@@ -124,7 +122,10 @@ def _candidate(
     slug, base = repositories[common]
     if plan is not None:
         slug, base, root = plan["repo"], plan["base"], Path(plan["output_root"])
-    return retire_worktree(store, path, generation, ArchiveTarget(slug, base, root))
+    return retire_worktree(
+        store, path, generation,
+        ArchiveTarget(slug, base, root, recover=creation is None),
+    )
 
 
 def cleanup_worktree(

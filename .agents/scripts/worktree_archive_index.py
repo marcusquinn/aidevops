@@ -42,7 +42,9 @@ def git_index_state(path, head=None):
     if os.path.lexists(lock):
         raise ValueError('git_admin:index_locked:index.lock')
     from worktree_archive_state import merge_pending, merge_state
-    if merge_pending(root):
+    # Share reads only within this capture; subsequent snapshots start fresh.
+    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    if merge_pending(root, admin=admin):
         state = merge_state(root)
         return {'head': state['head'], 'merge': state}
     index = git(root, "ls-files", "--stage", "-z")
@@ -62,11 +64,10 @@ def git_index_state(path, head=None):
     # Git-only preserves current HEAD, not abandoned reflog/previous-HEAD history.
     # Unknown administration, unique drafts and interrupted operations still need
     # preservation. Structured merges returned above preserve required ORIG_HEAD.
-    administration(root)
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    administration(root, admin=admin)
     if (admin / 'SQUASH_MSG').exists():
         raise ValueError('uncommitted squash draft requires separate preservation')
     supported_history(root, admin, require_reachable_history=False)
-    inventories(root)  # Reuse the existing Git-filter/LFS preservation guard.
+    inventories(root, index=index)  # Retain the Git-filter/LFS preservation guard.
     return {"head": head or git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii"),
             "index": hashlib.sha256(index).hexdigest(), "files": len(entries)}

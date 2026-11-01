@@ -25,6 +25,7 @@ Commands:
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
+  verify-local ARCHIVE_DIR              Verify deltas against the retained local base
   source-matches ARCHIVE_DIR WORKTREE   Exit 0 only if WORKTREE is unchanged since capture
   prune --older-than 14d --max-total-size 20G [--dry-run|--apply]
       [--output-root DIR]
@@ -511,8 +512,9 @@ archive_worktree() {
 
 verify_archive() {
 	local archive_dir="$1"
+	local verification_mode="${2:-full}"
 	validate_archive_dir "$archive_dir" || return 1
-	python3 - "$archive_dir" "$ARCHIVE_SCHEMA" "$SCRIPT_DIR" <<'PY'
+	python3 - "$archive_dir" "$ARCHIVE_SCHEMA" "$SCRIPT_DIR" "$verification_mode" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -568,8 +570,12 @@ for artifact in manifest['artifacts']:
         raise SystemExit("missing or unsafe artifact: " + artifact['name'])
     if path.stat().st_size != artifact["size"] or hashlib.sha256(path.read_bytes()).hexdigest() != artifact["sha256"]:
         raise SystemExit("artifact integrity mismatch: " + artifact['name'])
-from worktree_archive_snapshot import verify_git_objects
-verify_git_objects(archive, manifest)
+if sys.argv[4] == 'local':
+    from worktree_archive_local_verify import verify_local
+    verify_local(archive, manifest)
+else:
+    from worktree_archive_snapshot import verify_git_objects
+    verify_git_objects(archive, manifest)
 payload = archive / "untracked.tar.gz"
 if payload.exists():
     with tarfile.open(payload, "r:gz") as source:
@@ -830,6 +836,7 @@ main() {
 	restore) restore_archive "$@" ;;
 	list) list_archives "$@" ;;
 	verify) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$1" ;;
+	verify-local) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$@" local ;;
 	source-matches) [[ $# -eq 2 ]] || { usage >&2; return 1; }; source_matches "$@" ;;
 	prune) prune_archives "$@" ;;
 	help|-h|--help) usage ;;
