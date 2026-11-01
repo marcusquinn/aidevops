@@ -11,6 +11,12 @@ import shutil
 import subprocess
 import tempfile
 
+from worktree_archive_base_source import (
+    MISSING_PROMISOR_BASE as MISSING_PROMISOR_BASE,
+    authorized_base_source as authorized_base_source,
+)
+
+__all__ = ['MISSING_PROMISOR_BASE', 'authorized_base_source']
 
 DEFAULT_TIMEOUT = 60
 RETAINED_VERIFICATION_SCRATCH = ('archive-verify:retained-scratch; prior verification evidence retained; '
@@ -42,6 +48,8 @@ def base_import_failure(error):
     stderr = stderr.lower()
     packing = 'pack-objects-died' if b'pack-objects died' in stderr else 'git-failed'
     detail = 'unclassified'
+    if b'promisor remote' in stderr and b'could not fetch' in stderr:
+        return MISSING_PROMISOR_BASE
     for signatures, category in (
         ((b'out of memory', b'malloc failed', b'cannot allocate memory'), 'allocation-failed'),
         ((b'no space left on device',), 'storage-full'),
@@ -66,7 +74,7 @@ def nested_base_import_failure(stderr):
     final = lines[-1] if lines else ''
     for prefix in ('ValueError: ', 'archive-snapshot: '):
         final = final.removeprefix(prefix)
-    if final == RETAINED_VERIFICATION_SCRATCH:
+    if final in (RETAINED_VERIFICATION_SCRATCH, MISSING_PROMISOR_BASE):
         return final
     pattern = (r'producer:base-import-failed; stage=base-import; exit=(?:-?[0-9]{1,3}|unknown); '
                r'stderr=(?:pack-objects-died|git-failed)/'
