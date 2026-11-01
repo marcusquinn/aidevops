@@ -4,6 +4,8 @@ Event ingestion and its projection commit together. Observations are sampled
 outside transactions and applied only against the exact run version sampled.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 from contextlib import contextmanager
 import json

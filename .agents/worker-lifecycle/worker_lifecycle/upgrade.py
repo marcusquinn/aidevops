@@ -1,5 +1,7 @@
 """Coordinated schema upgrade backup; never infer admission from old bindings."""
 
+from __future__ import annotations
+
 from contextlib import closing
 import os
 from pathlib import Path
