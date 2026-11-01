@@ -32,6 +32,19 @@ Manual removal, classified cleanup, profile publication and Pulse profile cleanu
 
 Legacy storage defaults to macOS `$HOME/.Trash` (OS Trash semantics), otherwise framework-owned `$HOME/.aidevops/recovery/worktrees`, protected from normal “Empty Trash”. Override with absolute `AIDEVOPS_WORKTREE_TRASH_ROOT` or legacy `AIDEVOPS_ORPHAN_TRASH_ROOT`.
 
+For a store relocated to another disk, configure the **physical directory**, not
+the compatibility symlink: `aidevops config set storage.worktree_recovery_root
+/absolute/physical/recovery-root`. The async compaction runner reads this setting;
+the two environment overrides still take precedence. Standalone recovery commands
+continue to use those environment overrides. Configuration does not adopt a
+symlink or bypass root, identity, ownership, process or preservation checks.
+It does not enable compact-archive expiry (`dry-run` remains the default).
+
+Async cleanup reports `partial-failure` and exits nonzero when archive attempts,
+recovery maintenance or compact retention fail. Independent maintenance stages
+still run, but a partial pass does not update the successful-run timestamp.
+Per-pass audit events recover archive failures lost across repository subshells.
+
 Historical `aidevops-worktree-recovery-v2` evidence binds Git identity, creation time, producer/context, optional session identity, completion, source-removal outcome, `framework` ownership, `recovery` class and `manual-review` policy. Completion follows integrity/identity validation; successful native removal atomically changes `pending` to `removed`. `manual-review` is format compatibility, not deletion authority: manual confirmation or a policy-bound automatic plan must revalidate the exact bucket.
 
 Readers accept complete platform-storage-transition v1 buckets and markerless legacy v1 buckets with valid original Git recovery structure. Never reinterpret partial v2 evidence as v1. Older readers reject v2, failing closed without archive damage.

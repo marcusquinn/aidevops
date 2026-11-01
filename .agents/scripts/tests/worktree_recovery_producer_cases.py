@@ -69,6 +69,7 @@ class ProducerCases:
 
     def test_tracked_permissions_follow_git_model(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)
+        self.work.chmod(0o775)
         tracked = self.work / "mixed.txt"
         original = tracked.read_bytes()
         registration = self.git(self.repo, "worktree", "list", "--porcelain")
@@ -79,6 +80,7 @@ class ProducerCases:
                 self.helper("verify", archive)
                 self.assertEqual(tracked.read_bytes(), original)
                 self.assertEqual(stat.S_IMODE(tracked.stat().st_mode), mode)
+                self.assertEqual(stat.S_IMODE(self.work.stat().st_mode), 0o775)
                 self.assertEqual(self.git(self.repo, "worktree", "list", "--porcelain"), registration)
 
     def test_base_import_is_exact_and_independent(self):
