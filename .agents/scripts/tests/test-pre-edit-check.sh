@@ -660,7 +660,7 @@ test_creation_refusal_without_collision() {
 		run_helper "$TEST_ROOT" --loop-mode --task "Issue #30001 creation refusal" 2>&1) || exit_code=$?
 	rm -f "$TEST_WORKTREE_BASE"
 	TEST_WORKTREE_BASE="$saved_base"
-	if [[ "$exit_code" -eq 2 && "$output" == *"WORKTREE_COLLISION=none"* &&
+	if [[ "$exit_code" -eq 2 && "$output" == *"WORKTREE_COLLISION=unreported"* &&
 		"$output" == *"ACTION_REQUIRED=inspect_creation_refusal"* &&
 		"$output" == *"No branch collision was reported"* &&
 		"$output" != *"Inspect the reported branch collision"* ]]; then

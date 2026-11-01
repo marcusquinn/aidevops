@@ -27,6 +27,7 @@ _SQLITE_CODES = (
 _GIT_CODES = (
     ("is already used by worktree", "ref-already-checked-out"),
     ("is already checked out", "ref-already-checked-out"),
+    ("a branch named", "branch-already-exists"),
     ("already exists", "path-already-exists"),
     ("invalid reference", "invalid-ref"),
     ("not a valid object name", "invalid-ref"),

@@ -483,7 +483,7 @@ _print_loop_worktree_failure_next_step() {
 		return 0
 	fi
 	if [[ "$action" == "inspect_creation_refusal" ]]; then
-		echo "NEXT_STEP: No branch collision was reported; worktree creation itself was refused. Resolve the refusal, then retry the continuation command."
+		echo "NEXT_STEP: No branch collision was reported; worktree creation itself was refused. Resolve the refusal, then retry the continuation command and confirm it reports no refusal."
 		[[ -z "$refusal" ]] || echo "REFUSAL: $refusal"
 		return 0
 	fi
@@ -570,9 +570,10 @@ _handle_loop_mode_on_protected() {
 		# Worktree creation failed — fall back to signalling exit 2
 		echo -e "${RED}LOOP-AUTO${NC}: Failed to auto-create worktree '$_wt_branch_name'"
 		# GH#36370: a failure without WORKTREE_COLLISION is a creation refusal,
-		# not a branch collision; never send the caller looking for a branch.
+		# not a known branch collision. `unreported` (not `none`) because the
+		# helper may have stopped before checking for one.
 		if [[ -z "$_wt_collision" ]]; then
-			_wt_collision="none"
+			_wt_collision="unreported"
 			[[ -n "$_wt_failure_action" ]] || _wt_failure_action="inspect_creation_refusal"
 		fi
 		echo "LOOP_DECISION=worktree"
