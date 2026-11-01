@@ -137,6 +137,8 @@ function braveExecutableCandidates() {
 // Precedence matches settings-helper.sh: env var, then settings.json
 // `browser.playwright_executable`. Returns the raw configured value or ''.
 export function configuredExecutableSetting() {
+  // The per-process bundled-browser selector overrides persisted browser choices.
+  if (process.env.AIDEVOPS_PLAYWRIGHT_BROWSER === 'chromium') return '';
   const fromEnv = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim();
   if (fromEnv) return fromEnv;
   const settingsPath = process.env.AIDEVOPS_SETTINGS_FILE?.trim()
@@ -343,7 +345,10 @@ export async function ownedRuntimeStatus() {
     : { packageImportable: false, chromiumExecutable: null };
   const { chromiumExecutable } = owned;
   const configuredExecutable = configuredBrowserExecutable();
-  const ready = Boolean(chromiumExecutable || (owned.packageImportable && configuredExecutable));
+  // A configured but invalid executable must not be masked by bundled Chromium:
+  // launch paths use the configured value rather than falling back to the bundle.
+  const selectedExecutable = configuredExecutableSetting() ? configuredExecutable : chromiumExecutable;
+  const ready = Boolean(owned.packageImportable && selectedExecutable);
   const axe = await ownedAxeStatus(runtimeDir);
   return { runtimeDir, version, installedVersion, chromiumExecutable, configuredExecutable, ready, axe };
 }
