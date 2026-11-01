@@ -265,6 +265,13 @@ AI brief owner:
 5. **Permission, secret, spend or trust boundary**: never grant or work around.
    Name the smallest human input on the issue (for example an interactive
    `aidevops setup --scope source-access`) and record `wake: human_decision`.
+   A spend, billing or credential-route decision only a maintainer can make is
+   `input_required` with `TERMINAL_BLOCKER_INPUT_OWNER=maintainer` (or `admin`):
+   it re-arms on a brief or dependency revision, never on a time window.
+   `permission_required` stays for runtime tool-permission denials. Without a
+   published permission request it re-arms once per backoff window, but only
+   until that re-arm repeats the same result; then a trusted retry, a new
+   OWNER/MEMBER comment or a brief revision wakes it (GH#36342).
 6. Record exactly one decision per entry: `terminal-blocker-recovery-helper.sh
    record <repo> <issue>` with stdin `{"wake","next_action","evidence"}`
    (`wake`: `brief_revision`, `environment_fix`, `owner_change`,
