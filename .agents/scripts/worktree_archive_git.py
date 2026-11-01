@@ -52,20 +52,22 @@ def base_import_failure(error):
             or b'missing promisor object' in stderr or b'missing promised object' in stderr):
         return MISSING_PROMISOR_BASE
     for signatures, category in (
-        ((b'missing blob', b'missing tree', b'missing commit', b'missing object',
-          b'bad object', b'bad tree object', b'bad commit object',
-          b'did not send all necessary objects'), 'missing-object'),
-        ((b'not our ref',), 'object-unavailable-or-denied'),
         ((b'out of memory', b'malloc failed', b'cannot allocate memory'), 'allocation-failed'),
         ((b'no space left on device',), 'storage-full'),
         ((b'permission denied',), 'permission-denied'),
         ((b'unable to create thread', b'cannot create thread'), 'thread-failed'),
+        ((b'missing blob', b'missing tree', b'missing commit', b'missing object',
+          b'bad object', b'bad tree object', b'bad commit object'), 'missing-object'),
+        ((b'not our ref',), 'object-unavailable-or-denied'),
     ):
         if any(signature in stderr for signature in signatures):
             detail = category
             break
-    if re.search(rb'(?:unable to read|could not read) (?:sha1 file )?[0-9a-f]{40,64}\b', stderr):
-        detail = 'missing-object'
+    if detail == 'unclassified':
+        if re.search(rb'(?:unable to read|could not read) (?:sha1 file )?[0-9a-f]{40,64}\b', stderr):
+            detail = 'missing-object'
+        elif b'did not send all necessary objects' in stderr:
+            detail = 'transfer-failed'
     code = error.returncode if -255 <= error.returncode <= 255 else 'unknown'
     return (f'producer:base-import-failed; stage=base-import; exit={code}; '
             f'stderr={packing}/{detail}; source and archive retained')
@@ -86,7 +88,7 @@ def nested_base_import_failure(stderr):
     pattern = (r'producer:base-import-failed; stage=base-import; exit=(?:-?[0-9]{1,3}|unknown); '
                r'stderr=(?:pack-objects-died|git-failed)/'
                r'(?:unclassified|missing-object|object-unavailable-or-denied|allocation-failed|'
-               r'storage-full|permission-denied|thread-failed); '
+               r'storage-full|permission-denied|thread-failed|transfer-failed); '
                r'source and archive retained')
     return final if re.fullmatch(pattern, final) else None
 
