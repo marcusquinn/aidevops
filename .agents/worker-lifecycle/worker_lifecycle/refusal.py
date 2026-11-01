@@ -1,0 +1,61 @@
+"""Stable, path-free refusal codes for worktree creation failures (GH#36370).
+
+Git stderr and OSError text carry local paths that end up pasted into issues;
+only the matched code is ever emitted, never the underlying message.
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+import subprocess  # nosec B404 # exception types only; no process is started here
+
+CREATION_OPERATIONS = frozenset({"create-worktree", "admit-session", "enroll"})
+_REFUSAL_CODE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
+_SQLITE_CODES = (
+    ("database is locked", "database-locked"),
+    ("database table is locked", "database-locked"),
+    ("no such table", "no-such-table"),
+    ("no such column", "no-such-column"),
+    ("readonly database", "database-readonly"),
+    ("disk i/o error", "disk-io-error"),
+    ("unable to open database", "database-unopenable"),
+    ("database disk image is malformed", "database-malformed"),
+    ("database or disk is full", "database-full"),
+)
+_GIT_CODES = (
+    ("is already used by worktree", "ref-already-checked-out"),
+    ("is already checked out", "ref-already-checked-out"),
+    ("already exists", "path-already-exists"),
+    ("invalid reference", "invalid-ref"),
+    ("not a valid object name", "invalid-ref"),
+    ("not a valid branch name", "invalid-ref"),
+    ("locked", "worktree-locked"),
+)
+
+
+def _git_code(error: subprocess.CalledProcessError) -> str:
+    stderr = error.stderr.decode("utf-8", "replace") if isinstance(error.stderr, bytes) else str(error.stderr or "")
+    stderr = stderr.casefold()
+    return next((code for needle, code in _GIT_CODES if needle in stderr), "git-worktree-add-failed")
+
+
+def _sqlite_code(error: sqlite3.Error) -> str:
+    message = str(error).casefold()
+    code = next((code for needle, code in _SQLITE_CODES if needle in message), None)
+    return code or "sqlite-" + re.sub(r"(?<!^)(?=[A-Z])", "-", type(error).__name__).lower()
+
+
+def refusal_code(error: Exception, operation: str) -> str | None:
+    """Stable cause of a creation-path refusal, or None outside creation operations."""
+    if operation not in CREATION_OPERATIONS:
+        return None
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "git-timeout"
+    if isinstance(error, subprocess.CalledProcessError):
+        return _git_code(error)
+    if isinstance(error, sqlite3.Error):
+        return _sqlite_code(error)
+    if isinstance(error, ValueError) and _REFUSAL_CODE.fullmatch(str(error)):
+        return str(error)
+    return None
