@@ -284,19 +284,20 @@ run_lifecycle_only_update_test() (
 	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$lifecycle_sha" ]] || return 1
 
 	# Setup success cannot hide failed activated-bundle verification.
+	# Activate the candidate, not the baseline: this checks error propagation,
+	# not rollback (the setup stub only writes a stamp and has no active link).
 	printf '%s\n' "$baseline_sha" >"$HOME/.aidevops/.deployed-sha"
-	SETUP_SHA="$baseline_sha"
+	SETUP_SHA="$lifecycle_sha"
 	VERIFY_RC=1
 	VERIFY_ERROR="stale activated bundle"
 	if _update_already_current "$lifecycle_sha" compact; then return 1; fi
 	[[ "$VERIFY_SHA" == "$lifecycle_sha" ]] || return 1
-	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$baseline_sha" ]] || return 1
 	return 0
 )
 if run_lifecycle_only_update_test; then
-	pass "lifecycle-only drift uses verified transaction and preserves no-op/failure evidence"
+	pass "lifecycle-only drift uses verified transaction, skips no-ops, and propagates verification failure"
 else
-	fail "lifecycle-only drift uses verified transaction and preserves no-op/failure evidence" \
+	fail "lifecycle-only drift uses verified transaction, skips no-ops, and propagates verification failure" \
 		"same-version transaction, verification, or stamp mismatch"
 fi
 
