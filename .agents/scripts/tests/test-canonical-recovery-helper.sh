@@ -1229,6 +1229,47 @@ else
 fi
 rm "${UNBORN_REPO}/ff-untracked.txt"
 
+# GH#36326: neither ignored data nor config-hidden untracked data is empty.
+# Exercise both entrypoints, including an ignored path the remote would replace.
+for unborn_dirty_kind in ignored-collision ignored-noncollision hidden-untracked; do
+	case "$unborn_dirty_kind" in
+	ignored-collision) unborn_dirty_path="remote-only.txt" ;;
+	ignored-noncollision) unborn_dirty_path="local-only.log" ;;
+	hidden-untracked) unborn_dirty_path="hidden-untracked.txt" ;;
+	esac
+	printf 'keep local data\n' >"${UNBORN_REPO}/${unborn_dirty_path}"
+	if [[ "$unborn_dirty_kind" == hidden-untracked ]]; then
+		/usr/bin/git -C "$UNBORN_REPO" config status.showUntrackedFiles no
+	else
+		printf '%s\n' "$unborn_dirty_path" >"${UNBORN_REPO}/.git/info/exclude"
+	fi
+	for unborn_dirty_cmd in fast-forward-current sync-mirror; do
+		unborn_dirty_confirm="FAST_FORWARD_CANONICAL_BRANCH"
+		unborn_dirty_args=(--branch develop)
+		if [[ "$unborn_dirty_cmd" == sync-mirror ]]; then
+			unborn_dirty_confirm="SYNCHRONIZE_CANONICAL_MIRROR"
+			unborn_dirty_args=()
+		fi
+		unborn_dirty_output=""
+		unborn_dirty_rc=0
+		unborn_dirty_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+			"$unborn_dirty_cmd" --repo "$UNBORN_REPO" "${unborn_dirty_args[@]}" --issue 36326 \
+			--confirm "$unborn_dirty_confirm" 2>&1) || unborn_dirty_rc=$?
+		if [[ "$unborn_dirty_rc" -ne 0 ]] &&
+			[[ "$unborn_dirty_output" == *"BLOCKED: unborn canonical worktree is not clean"* ]] &&
+			[[ "$(<"${UNBORN_REPO}/${unborn_dirty_path}")" == "keep local data" ]] &&
+			! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+			printf 'PASS unborn %s refuses and preserves %s\n' "$unborn_dirty_cmd" "$unborn_dirty_kind"
+		else
+			printf 'FAIL unborn %s accepted or changed %s\n%s\n' "$unborn_dirty_cmd" "$unborn_dirty_kind" "$unborn_dirty_output"
+			exit 1
+		fi
+	done
+	rm "${UNBORN_REPO}/${unborn_dirty_path}"
+done
+/usr/bin/git -C "$UNBORN_REPO" config --unset status.showUntrackedFiles
+printf '' >"${UNBORN_REPO}/.git/info/exclude"
+
 printf 'untracked state\n' >"${UNBORN_REPO}/untracked.txt"
 unborn_untracked_output=""
 unborn_untracked_rc=0

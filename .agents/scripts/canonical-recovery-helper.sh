@@ -1675,7 +1675,8 @@ if [[ -z "$local_sha" ]]; then
 		printf 'BLOCKED: unborn canonical HEAD does not target %s\n' "$local_ref" >&2
 		exit 1
 	}
-	unborn_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1) || {
+	# Ignored files and user-hidden untracked files are still local data.
+	unborn_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1 --ignored --untracked-files=all) || {
 		printf 'BLOCKED: unborn canonical worktree status cannot be read safely\n' >&2
 		exit 1
 	}
