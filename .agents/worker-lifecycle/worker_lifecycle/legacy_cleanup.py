@@ -16,7 +16,7 @@ import tempfile
 import time
 from uuid import UUID, uuid5
 
-from .cleanup import _repositories
+from .cleanup import _failure_details, _repositories
 from .directory_handle import DirectoryHandle
 from .enrollment import _git_directory
 from .legacy_inventory import advance, inspect, inventory, queue, require_ended
@@ -198,10 +198,9 @@ def process_item(store, item, repositories, adapter, options):
                 outcome["status"] = retire(store, item, repositories, adapter, options)
     except (ValueError, OSError, sqlite3.Error, ObservationUnavailable,
             subprocess.SubprocessError) as error:
-        reason = (str(error)
-                  if isinstance(error, (ValueError, ObservationUnavailable))
-                  else type(error).__name__)
-        outcome.update(status="retained", reason=reason)
+        outcome.update(status="retained", **_failure_details(error))
+        if isinstance(error, ObservationUnavailable):
+            outcome["reason"] = str(error)
     return outcome, eligible, attempted
 
 
@@ -239,6 +238,9 @@ def run(store, config, root, **arguments):
         report["results"].append(outcome)
     report["examined"] = len(report["results"])
     report["incomplete"] = report["examined"] < len(items)
+    report["archive_failed"] = sum(
+        bool(result.get("archive_failure", False)) for result in report["results"]
+    )
     report["counts"] = dict(Counter(
         result.get("reason", result["status"]) for result in report["results"]
     ))

@@ -263,7 +263,7 @@ Implement enrollment and identity propagation before switching cleanup consumers
 pre-creation lock or a persistent physical identity check. Do not call it on every
 launch with a fresh UUID, infer a generation from path equality, or automatically
 reopen a closed path. Recovery of interrupted creation and intentional path reuse
-need explicit contracts before that boundary can be considered covered.
+need explicit contracts; terminal absence reconciliation is described in [ABSENCE.md](ABSENCE.md).
 
 ## Preparation and WIP preservation commands
 

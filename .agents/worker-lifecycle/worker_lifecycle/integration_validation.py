@@ -26,7 +26,8 @@ TEST_MODULES = ("tests.test_storage", "tests.test_events", "tests.test_launch", 
                 "tests.test_admitted_launch", "tests.test_directory_handle",
                 "tests.test_cleanup_policy", "tests.test_creation",
                 "tests.test_preservation", "tests.test_retirement",
-                "tests.test_admission_recovery", "tests.test_local_archive_verification")
+                "tests.test_admission_recovery", "tests.test_absence",
+                "tests.test_local_archive_verification")
 
 
 class ReportResult(unittest.TextTestResult):

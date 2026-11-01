@@ -5,11 +5,12 @@ import os
 from pathlib import Path
 import re
 import stat
-import subprocess
+import subprocess  # nosec B404 # classify helper exceptions, never execute error argv
 import tempfile
 import time
 from uuid import UUID, uuid5
 
+from .absence import reconcile_absence
 from .enrollment import GenerationEnrollment
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
 from .storage import LifecycleRegistry, _private, identifier
@@ -101,6 +102,46 @@ def _advance(store: LifecycleRegistry, generation: str) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _failure_details(error: Exception) -> dict:
+    """Report stable diagnostics, never raw argv, stdout or stderr."""
+    details: dict = {"reason": type(error).__name__}
+    if isinstance(error, ValueError) and re.fullmatch(r"[a-z][a-z0-9:_-]{0,159}", str(error)):
+        details["reason"] = str(error)
+    if isinstance(error, OSError) and error.errno is not None:
+        details["errno"] = error.errno
+    if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        details.update(_command_failure(error))
+    return details
+
+
+def _command_failure(
+    error: "subprocess.CalledProcessError | subprocess.TimeoutExpired",
+) -> dict:
+    details: dict = {"operation": "subprocess"}
+    if isinstance(error, subprocess.CalledProcessError):
+        details["returncode"] = error.returncode
+    else:
+        details["timeout_seconds"] = error.timeout
+    command = error.cmd
+    if not isinstance(command, (list, tuple)) or len(command) < 3:
+        return details
+    if (not isinstance(command[1], str)
+            or Path(command[1]).name != "worktree-archive-helper.sh"
+            or command[2] not in {"archive", "verify-local", "source-matches"}):
+        return details
+    details.update(operation=command[2], archive_failure=True)
+    # Only the helper's namespaced validation code is useful here. Drop paths,
+    # descriptions and all other stderr (which may contain sensitive Git URLs).
+    stderr = error.stderr or b""
+    text = stderr[-8192:]
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
+    match = re.search(r"(?m)^ValueError: ((?:merge|git_admin):[a-z_]{1,64})(?::[^\n]*)?$", text)
+    if match:
+        details["reason"] = match[1]
+    return details
+
+
 def _candidate(
     store: LifecycleRegistry, repositories: dict[str, tuple[str, str]],
     root: Path, generation: str, path: Path,
@@ -113,6 +154,12 @@ def _candidate(
     if plan is not None:
         common = plan["common"]
     else:
+        # A planned private relocation must resume instead of accepting absence.
+        # lstat keeps dangling links distinct; access/metadata errors still fail.
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return reconcile_absence(store, path, generation)
         if GenerationEnrollment(store).inspect(path) != generation:
             raise ValueError("cleanup-generation-changed")
         common = _git("-C", str(path), "rev-parse",
@@ -159,7 +206,8 @@ def cleanup_pass(
         raise ValueError("canonical-archive-root-required")
     namespace = UUID(store.installation_id())
     report: dict = {"status": "cleanup-pass", "examined": 0, "retired": 0,
-                    "held": 0, "failed": 0, "results": [],
+                    "held": 0, "failed": 0, "archive_failed": 0, "reconciled": 0,
+                    "results": [],
                     "cleanup_authorized": False}
     with _lock(store, str(uuid5(namespace, "cleanup-pass"))):
         repositories = _repositories(config)
@@ -181,10 +229,13 @@ def cleanup_pass(
             report["examined"] += 1
             try:
                 result = _candidate(store, repositories, root, generation, path)
-                report["retired" if result["status"] == "retired" else "held"] += 1
+                counter = {"retired": "retired", "source-absent-reconciled": "reconciled"}
+                report[counter.get(str(result["status"]), "held")] += 1
             except (ValueError, OSError, subprocess.SubprocessError) as error:
                 report["failed"] += 1
                 result = {"generation_id": generation, "status": "unavailable",
-                          "reason": type(error).__name__}
+                          **_failure_details(error)}
+            result["path"] = str(path)
+            report["archive_failed"] += bool(result.get("archive_failure", False))
             report["results"].append(result)
     return report

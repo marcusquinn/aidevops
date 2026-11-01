@@ -13,11 +13,11 @@ REGISTRY_SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "maco
                     "launch_state.py",
                     "admission.py", "directory_handle.py", "cleanup_policy.py", "enrollment.py",
                     "cleanup_plan.py", "preservation.py", "session.py", "creation.py",
-                    "retirement.py", "recovery.py", "cleanup.py", "bundle.py")
+                    "retirement.py", "recovery.py", "absence.py", "cleanup.py", "bundle.py")
 REGISTRY_TESTS = ("test_storage.py", "test_events.py", "test_launch.py", "test_admission.py",
                   "test_admitted_launch.py", "test_directory_handle.py", "test_cleanup_policy.py",
                   "test_creation.py", "test_preservation.py", "test_retirement.py",
-                  "test_admission_recovery.py", "test_local_archive_verification.py")
+                  "test_admission_recovery.py", "test_absence.py", "test_local_archive_verification.py")
 ARCHIVE_SOURCES = (
     "native_git.py", "runtime-env.sh", "shared-constants.sh",
     "portable-stat.sh", "managed-label-provisioning-lib.sh",
