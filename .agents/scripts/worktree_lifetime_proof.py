@@ -31,7 +31,7 @@ def owner_proof(record, fresh):
                 "missing owner completion receipt")
 
 
-def proof(record, source_inode, fresh=False):
+def proof(record, source_inode, *, fresh):
     require(not record.get("creation_pending"), "replacement creation has no completed admission")
     require(record["state"] == "sealed" and record["identity"]["source_inode"] == source_inode,
             "no matching sealed generation")

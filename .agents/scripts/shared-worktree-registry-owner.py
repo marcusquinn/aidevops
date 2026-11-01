@@ -70,7 +70,7 @@ def release_completed(args: list[str]) -> int:
             owner_lifetime.require(record.get("manager") == owner_lifetime.MANAGER, "unexpected lifetime manager")
             identity = owner_lifetime.identity(Path(path))
             owner_lifetime.require(record.get("identity") == identity, "lifetime identity changed")
-            lifetime_proof.proof(record, identity["source_inode"])
+            lifetime_proof.proof(record, identity["source_inode"], fresh=False)
             try:
                 os.kill(int(pid), 0)
             except ProcessLookupError:

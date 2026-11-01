@@ -267,7 +267,7 @@ class OwnerEvidenceTests(unittest.TestCase):
                 db.commit()  # This durable fence precedes the native Git operation.
                 pending = db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0]
                 with self.assertRaises(ValueError):
-                    proof.proof(json.loads(pending), previous["source_inode"])
+                    proof.proof(json.loads(pending), previous["source_inode"], fresh=False)
                 db.execute("BEGIN IMMEDIATE")
                 with patch.object(owner, "identity", return_value=current), \
                         patch.object(owner, "observe", return_value={"evidence": "unavailable"}), \
@@ -279,7 +279,7 @@ class OwnerEvidenceTests(unittest.TestCase):
                         replacement = json.loads(db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0])
                         self.assertNotEqual(replacement["generation"], record["generation"])
                         with self.assertRaises(ValueError):
-                            proof.proof(replacement, current["source_inode"])
+                            proof.proof(replacement, current["source_inode"], fresh=False)
                     else:
                         with self.assertRaises(ValueError):
                             owner.prepare_creation(db, "/fixture")
@@ -358,7 +358,7 @@ class OwnerEvidenceTests(unittest.TestCase):
                   "launches": [{"kind": owner.KIND, "quiescence": {"MainPID": "0"}}]}
         with patch.object(owner, "drain", side_effect=ValueError("invocation changed")):
             with self.assertRaises(ValueError):
-                proof.proof(record, "1:2")
+                proof.proof(record, "1:2", fresh=False)
 
     def test_raw_ownership_change_invalidates_admission_not_liveness_updates(self):
         with closing(self.database()) as db, \
@@ -394,10 +394,10 @@ class OwnerEvidenceTests(unittest.TestCase):
                   "launches": [{"kind": owner.KIND, "completion_evidence": "systemd-cgroup-v1",
                                 "invocation": "invocation", "quiescence": snapshot}]}
         with patch.object(owner, "unit_snapshot", side_effect=ValueError("unit collected")):
-            proof.proof(record, "1:2")
+            proof.proof(record, "1:2", fresh=False)
         record["observed_admission_epoch"] = -1
         with self.assertRaises(ValueError):
-            proof.proof(record, "1:2")
+            proof.proof(record, "1:2", fresh=False)
 
 
 class ProcessReconciliationTests(unittest.TestCase):
@@ -493,7 +493,7 @@ class ProcessReconciliationTests(unittest.TestCase):
                 patch.object(census, "path_census", side_effect=samples) as observe, \
                 patch.object(reconcile.time, "sleep") as pause:
             lifetime.seal(record)
-            proof.proof(record, "fixture-inode")
+            proof.proof(record, "fixture-inode", fresh=False)
             self.assertEqual(pause.call_count, 1)
             self.assertEqual(observe.call_count, 2)
         receipts = [launch["observation_quiescence"] for launch in record["launches"]]
@@ -510,7 +510,7 @@ class ProcessReconciliationTests(unittest.TestCase):
                     dict(samples[1], observed_at=samples[0]["observed_at"] + 1)):
             receipt["samples"] = [samples[0], bad]
             with self.assertRaises(ValueError):
-                proof.proof(record, "fixture-inode")
+                proof.proof(record, "fixture-inode", fresh=False)
 
     def test_same_boot_idle_quiescence_passes_identity_and_shares_census(self):
         import worktree_lifetime_reconcile as reconcile
@@ -563,6 +563,23 @@ class ProcessReconciliationTests(unittest.TestCase):
                 self.assertEqual(parent.call_count, 2)
                 self.assertTrue(all(item["observation_quiescence"]["samples"] == fresh
                                     for item in record["launches"]))
+                # Replacement admission must use live proof, even for an absent
+                # source path; historical receipts cannot authorize a new generation.
+                with closing(sqlite3.connect(":memory:")) as db:
+                    db.execute("CREATE TABLE worktree_managed_lifetimes (path TEXT PRIMARY KEY, record TEXT)")
+                    db.execute("INSERT INTO worktree_managed_lifetimes VALUES (?, ?)",
+                               (directory, json.dumps(record)))
+                    for change in ({"references": 1}, {"uncertain": 1}, {"status": "unavailable"}):
+                        observe.side_effect = [dict(fresh[0], **change)]
+                        with self.subTest(admission=change), self.assertRaisesRegex(ValueError, "active or unavailable"):
+                            owner.begin_creation(db, directory)
+                    observe.side_effect = fresh
+                    parent.return_value = {"status": "same-process-alive"}
+                    with self.assertRaisesRegex(ValueError, "parent no longer finished"):
+                        owner.begin_creation(db, directory)
+                    parent.return_value = {"status": "pid-absent"}
+                    observe.side_effect = fresh
+                    self.assertTrue(owner.begin_creation(db, directory))
                 # A later FD/environment reference or incomplete census must
                 # refuse authorization even though the sealed receipt is valid.
                 for change in ({"references": 1}, {"uncertain": 1}, {"status": "unavailable"}):
@@ -599,12 +616,12 @@ class ProcessReconciliationTests(unittest.TestCase):
         record["identity"] = {"source_inode": "fixture-inode"}
         with patch.object(owner, "boot_id", return_value="22222222-2222-2222-2222-222222222222"):
             lifetime.seal(record)
-            proof.proof(record, "fixture-inode")
+            proof.proof(record, "fixture-inode", fresh=False)
         self.assertEqual(record["state"], "sealed")
         self.assertTrue(all(reconcile.finished(launch) for launch in record["launches"]))
         del record["launches"][0]["observation_quiescence"]
         with self.assertRaisesRegex(ValueError, "observation completion"):
-            proof.proof(record, "fixture-inode")
+            proof.proof(record, "fixture-inode", fresh=False)
 
 
     def test_batch_negative_is_revalidated_before_completion_is_persisted(self):

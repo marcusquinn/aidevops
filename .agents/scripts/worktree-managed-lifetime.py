@@ -18,6 +18,7 @@ Same-UID cgroup accounting is evidence, not a sandbox against hostile processes.
 from __future__ import annotations
 
 import argparse
+import copy
 from contextlib import closing
 import json
 import os
@@ -273,6 +274,32 @@ def mutate_record(record: dict, path: Path, operation: str, extra: list[str], co
         seal(record)
 
 
+def seal_observed(connection, path: Path, operation: str, extra: list[str]) -> None:
+    # Release even the read snapshot before slow reconciliation/census work.
+    # In rollback-journal mode a retained reader can also delay other writers.
+    connection.execute("BEGIN")
+    original = load(connection, str(path))
+    connection.execute("COMMIT")
+    observed = copy.deepcopy(original)
+    mutate_record(observed, path, operation, extra, connection)
+
+    connection.execute("BEGIN IMMEDIATE")
+    initialize(connection)
+    current = load(connection, str(path))
+    require(current.get("generation") == original.get("generation"), "worktree generation changed during observation")
+    if current.get("manager") == owner_lifetime.MANAGER:
+        owner_lifetime.require_admission_observed(current)
+    # Also reject changes to leases, idle policy, archive state or launch history;
+    # never overwrite a concurrent mutation with an older observation snapshot.
+    require(current == original, "lifetime changed during observation; retry sealing")
+    verify_identity(current, path)
+    if operation == "seal-idle":
+        idle_policy.owner_clear(connection, str(path))
+        idle_policy.require_elapsed(current, boot_id(), int(extra[0]) if extra else idle_policy.IDLE_SECONDS)
+    save(connection, observed)
+    connection.execute("COMMIT")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("enroll", "reserve", "bind-exec", "seal", "proof", "status", "ready", "cleanup-ready",
@@ -289,6 +316,9 @@ def main() -> int:
         readonly = args.operation in ("proof", "status", "ready", "cleanup-ready", "idle-ready", "match")
         uri = Path(db).resolve().as_uri() + ("?mode=ro" if readonly else "?mode=rw")
         with closing(sqlite3.connect(uri, uri=True, timeout=10, isolation_level=None)) as connection:
+            if args.operation in ("seal", "seal-idle"):
+                seal_observed(connection, path, args.operation, args.extra)
+                return 0
             connection.execute("BEGIN" if readonly else "BEGIN IMMEDIATE")
             if not readonly:
                 initialize(connection)

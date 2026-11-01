@@ -55,15 +55,15 @@ class LifetimeTests(unittest.TestCase):
     def test_missing_receipt_and_wrong_inode_refuse(self):
         record = self.record()
         with self.assertRaises(ValueError):
-            MODULE.proof(record, "1:2")
+            MODULE.proof(record, "1:2", fresh=False)
         record["state"] = "sealed"
         record["sealed_at"] = time.time()
         with self.assertRaises(ValueError):
-            MODULE.proof(record, "1:2")
+            MODULE.proof(record, "1:2", fresh=False)
         record["launches"][0]["quiescence"] = self.snapshot()
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         with self.assertRaises(ValueError):
-            MODULE.proof(record, "1:3")
+            MODULE.proof(record, "1:3", fresh=False)
 
     def test_live_descendants_and_reused_invocation_refuse(self):
         for values in ({"SubState": "running"}, {"MainPID": "123"},
@@ -80,7 +80,7 @@ class LifetimeTests(unittest.TestCase):
                 patch.object(MODULE, "unit_snapshot", return_value=self.snapshot()), \
                 patch.object(Path, "read_text", return_value="populated 0\nfrozen 0\n"):
             MODULE.seal(record)
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         with self.assertRaises(ValueError):
             MODULE.reserve(record, "aidevops-worker-next")
 
@@ -114,7 +114,7 @@ class LifetimeTests(unittest.TestCase):
         self.assertEqual(len(record["launches"]), 2)
         self.assertIn("quiescence", record["launches"][0])
         MODULE.seal(record)
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         self.assertTrue(record["launches"][-1]["admission_cancelled"])
         with self.assertRaises(ValueError):
             MODULE.bind(record)
@@ -123,9 +123,50 @@ class LifetimeTests(unittest.TestCase):
         record = self.record()
         record.update(state="created", launches=[])
         MODULE.seal(record)
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         with self.assertRaises(ValueError):
             MODULE.reserve(record, "aidevops-worker-delayed")
+
+    def test_seal_observations_allow_writers_and_reject_concurrent_changes(self):
+        for change in (None, "generation", "admission_epoch", "both_epochs", "ownership_epoch"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                database = str(Path(directory) / "registry.db")
+                with closing(sqlite3.connect(database, isolation_level=None)) as connection, \
+                        closing(sqlite3.connect(database, isolation_level=None, timeout=0)) as writer:
+                    connection.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, task_id TEXT, owner_session TEXT)")
+                    MODULE.initialize(connection)
+                    record = dict(self.record(), manager=MODULE.owner_lifetime.MANAGER,
+                                  generation="a" * 32, admission_epoch=0, observed_admission_epoch=0)
+                    MODULE.save(connection, record)
+
+                    def observe(observed):
+                        self.assertFalse(connection.in_transaction)
+                        # This would fail immediately if a writer/read lock were retained.
+                        writer.execute("BEGIN IMMEDIATE")
+                        current = MODULE.load(writer, "/fixture")
+                        if change == "generation":
+                            current[change] = "b" * 32
+                        elif change == "both_epochs":
+                            current.update(admission_epoch=1, observed_admission_epoch=1)
+                        elif change:
+                            current[change] = 1
+                        MODULE.save(writer, current)
+                        writer.execute("COMMIT")
+                        observed.update(state="sealed", sealed_at=time.time())
+
+                    with patch.object(MODULE, "verify_identity"), patch.object(MODULE, "seal", side_effect=observe):
+                        if change:
+                            with self.assertRaises(ValueError):
+                                MODULE.seal_observed(connection, Path("/fixture"), "seal", [])
+                            connection.rollback()
+                        else:
+                            MODULE.seal_observed(connection, Path("/fixture"), "seal", [])
+                    current = MODULE.load(connection, "/fixture")
+                    self.assertEqual(current["state"], "running" if change else "sealed")
+                    if change == "generation":
+                        self.assertEqual(current[change], "b" * 32)
+                    elif change:
+                        self.assertEqual(current["admission_epoch" if change == "both_epochs" else change], 1)
 
     def test_admitted_work_cannot_be_disguised_as_cancelled(self):
         record = self.record()
