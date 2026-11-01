@@ -19,6 +19,16 @@ _worker_lifecycle_config_parent_accessible() {
 	return 0
 }
 
+# Standalone entry for launchers which cannot source this library themselves.
+# Exec keeps the observed native PID/start identity throughout the producer.
+worker_lifecycle_exec() {
+	local entry="${BASH_SOURCE[0]%/*}/../worker-lifecycle/worker-launch.py"
+	[[ "$#" -gt 0 ]] || return 1
+	worker_lifecycle_prepare_launch "$PWD" "$entry" "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" || return $?
+	exec "${WORKER_LIFECYCLE_PREFIX[@]}" "$@"
+	return 1
+}
+
 worker_lifecycle_state_dir() {
 	local state_dir="${AIDEVOPS_LIFECYCLE_STATE_DIR:-}"
 	local config_file="${HOME}/.config/aidevops/lifecycle-state-dir"
@@ -55,6 +65,25 @@ worker_lifecycle_state_dir() {
 	return 0
 }
 
+# Targeted removal shares the collector's registry policy and preservation executor.
+worker_lifecycle_cleanup_worktree() {
+	local worktree="$1"
+	local entry="${BASH_SOURCE[0]%/*}/../worker-lifecycle/worker-registry.py"
+	local state_dir="" python="" result=""
+	[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+	python=$(type -P python3) || return 1
+	state_dir=$(worker_lifecycle_state_dir) || return 1
+	[[ -n "$state_dir" && -d "$state_dir" ]] || return 1
+	# Never enroll, initialize, migrate, or fall back to legacy removal proofs.
+	result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" cleanup-worktree \
+		--path "$worktree" --repos-config "${HOME}/.config/aidevops/repos.json" \
+		--output-root "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}") || return 1
+	printf '%s\n' "$result"
+	jq -e '.status == "retired"' >/dev/null <<<"$result" || return 1
+	return 0
+}
+
 # Produce argv, not shell text. IDs are supplied by the new admission controller,
 # never inferred from old registries. Missing mandatory prerequisites deny launch.
 worker_lifecycle_prepare_launch() {
@@ -63,7 +92,7 @@ worker_lifecycle_prepare_launch() {
 	local private_workload="${3:-0}"
 	local generation="${AIDEVOPS_LIFECYCLE_GENERATION_ID:-}"
 	local run="${AIDEVOPS_LIFECYCLE_RUN_ID:-}"
-	local required=0
+	local required=0 unregistered_only=0
 	local state_dir="" python=""
 	WORKER_LIFECYCLE_PREFIX=()
 	if [[ -n "$generation" || -n "$run" ]]; then
@@ -72,26 +101,33 @@ worker_lifecycle_prepare_launch() {
 			printf '[worker-lifecycle] admission-denied reason=incomplete-or-excluded-context\n' >&2
 			return 75
 		fi
-	elif [[ -z "$worktree" || "$private_workload" == 1 || "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 ]]; then
+	elif [[ -z "$worktree" ]]; then
 		return 0
+	elif [[ "$private_workload" == 1 || "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 ]]; then
+		unregistered_only=1
 	fi
+	# Preserve the declared spelling (including symlinks) for reservation checks.
+	[[ "$worktree" == /* ]] || worktree="${PWD%/}/$worktree"
 	state_dir=$(worker_lifecycle_state_dir)
 	if [[ -z "$state_dir" || ! -f "$entry" ]] || ! python="$(type -P python3)" ||
 		! "$python" -E -s -B "$entry" --help >/dev/null 2>&1; then
-		if [[ "$required" -eq 1 ]]; then
-			printf '[worker-lifecycle] admission-denied reason=entry-or-state-unavailable\n' >&2
-			return 75
-		fi
-		printf '[worker-lifecycle] observation-gap reason=entry-or-runtime-unavailable\n' >&2
-		return 0
+		printf '[worker-lifecycle] admission-denied reason=entry-or-state-unavailable\n' >&2
+		return 75
 	fi
 	if [[ "$required" -eq 1 ]]; then
 		worktree=$(cd -- "$worktree" && pwd -P) || return 75
 		WORKER_LIFECYCLE_PREFIX=("$python" -E -s -B "$entry" --state-dir "$state_dir"
 			--worktree "$worktree" --generation-id "$generation" --run-id "$run" --)
+	elif [[ "$unregistered_only" -eq 1 ]]; then
+		WORKER_LIFECYCLE_PREFIX=("$python" -E -s -B "$entry" --state-dir "$state_dir"
+			--worktree "$worktree" --unregistered-only --)
 	else
 		WORKER_LIFECYCLE_PREFIX=("$python" -E -s -B "$entry" --initialize --state-dir "$state_dir"
 			--worktree "$worktree" --)
 	fi
 	return 0
 }
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	worker_lifecycle_exec "$@"
+fi

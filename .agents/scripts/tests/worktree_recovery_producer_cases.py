@@ -511,7 +511,7 @@ class ProducerCases:
         self.assertEqual(self.git(restored, "rev-parse", "--path-format=absolute", "--git-common-dir"),
                          self.git(self.repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
 
-    def test_manual_cli_removal_and_independent_restore(self):
+    def test_manual_cli_refuses_legacy_removal_even_with_force(self):
         scripts = Path(producer_engine.__file__).parent
         home = self.root / "home"
         home.mkdir()
@@ -533,46 +533,21 @@ class ProducerCases:
         (self.work / "untracked").write_bytes(b"unique untracked\n")
         before = self.snapshot(self.work)
         index = self.git(self.work, "ls-files", "--stage", "-z")
-        source_bytes = producer_engine.allocated_bytes(self.work)
         result = self.run_command("bash", scripts / "worktree-helper.sh", "remove",
                                   self.work, "--force", cwd=self.repo, check=False)
-        if result.returncode and b"cwd-visibility-degraded" in result.stderr:
-            self.assertTrue(self.work.is_dir())
-            self.assertEqual(before, self.snapshot(self.work))
-            self.assertFalse(list(self.archives.rglob("manifest.json")))
-            self.skipTest("host CWD visibility is incomplete; rerun in an isolated PID namespace")
-        self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).decode(errors="replace"))
-        locations = [line.removeprefix("Recovery archive: ") for line in result.stdout.decode().splitlines()
-                     if line.startswith("Recovery archive: ")]
-        self.assertEqual(len(locations), 1, result.stdout.decode())
-        archive = Path(locations[0])
-        self.assertFalse(self.work.exists())
-        self.assertNotIn(str(self.work).encode(), self.git(self.repo, "worktree", "list", "--porcelain"))
-        journal = producer_engine.journal_for_archive(archive)
-        record = json.loads(journal.read_text())
-        self.assertEqual(record["phase"], "archived")
-        self.assertEqual(record["source_removal_outcome"], "removed")
-        self.assertTrue((archive / ".aidevops-archive-pin").is_file())
-        self.assertFalse(list(self.archives.glob("aidevops-worktree-cleanup-*")))
-        self.assertFalse(list(journal.parent.glob(".restore-*")))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"--force cannot override lifecycle registry checks", result.stderr)
+        self.assertTrue(self.work.is_dir())
+        self.assertEqual(before, self.snapshot(self.work))
+        self.assertEqual(self.git(self.work, "ls-files", "--stage", "-z"), index)
+        self.assertEqual((self.work / "unique.ignored").read_bytes(), b"unique ignored\n")
+        self.assertIn(os.fsencode(self.work), self.git(self.repo, "worktree", "list", "--porcelain"))
+        self.assertFalse(list(self.archives.rglob("manifest.json")))
         retry = self.run_command("bash", scripts / "worktree-helper.sh", "remove",
                                  self.work, "--force", cwd=self.repo, check=False)
         self.assertNotEqual(retry.returncode, 0)
-        self.assertEqual(list(self.archives.rglob("manifest.json")), [archive / "manifest.json"])
-        self.assertIn(str(archive).encode(), self.helper("list", "--output-root", self.archives).stdout)
-        self.producer("verify", archive)
-        restored = self.root / "independent-restore"
-        self.helper("restore", archive, "--target", restored)
-        self.assertEqual(self.git(restored, "ls-files", "--stage", "-z"), index)
-        self.assertEqual(before, self.snapshot(restored))
-        self.assertFalse((restored / "unique.ignored").exists())
-        self.assertFalse((restored / ".git/objects/info/alternates").exists())
-        self.git(restored, "fsck", "--connectivity-only")
-        print(json.dumps({"cli_acceptance": {
-            "source_retired": True, "source_allocated_bytes": source_bytes,
-            "archive_allocated_bytes": producer_engine.allocated_bytes(archive),
-            "transaction_metadata_allocated_bytes": producer_engine.allocated_bytes(journal.parent),
-            "installed_store_reclamation_claimed": False}}, sort_keys=True))
+        self.assertEqual(before, self.snapshot(self.work))
+        self.assertFalse(list(self.archives.rglob("manifest.json")))
 
     def test_list_discovers_producers_without_scratch_or_legacy_entries(self):
         standalone = self.archive()

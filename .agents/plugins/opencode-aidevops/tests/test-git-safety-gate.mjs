@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
   bindActiveScriptsDir,
   checkCanonicalGitSafetyGate,
@@ -39,6 +39,20 @@ const here = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = join(here, "..", "..", "..", "scripts");
 // Resolve before fixtures change PATH, without selecting caller-owned wrappers.
 const realGit = resolveTrustedExecutable("git");
+
+// Ownership checks must never initialize or modify the developer's registry.
+const lifecycleRoot = realpathSync(mkdtempSync(join(tmpdir(), "git-gate-lifecycle-")));
+const lifecycleKeys = ["AIDEVOPS_LIFECYCLE_STATE_DIR", "AIDEVOPS_PRIVATE_WORKLOAD", "AIDEVOPS_LIFECYCLE_DISABLED"];
+const lifecycleEnvironment = Object.fromEntries(lifecycleKeys.map((key) => [key, process.env[key]]));
+for (const key of lifecycleKeys) delete process.env[key];
+process.env.AIDEVOPS_LIFECYCLE_STATE_DIR = join(lifecycleRoot, "state");
+after(() => {
+  for (const key of lifecycleKeys) {
+    if (lifecycleEnvironment[key] === undefined) delete process.env[key];
+    else process.env[key] = lifecycleEnvironment[key];
+  }
+  rmSync(lifecycleRoot, { recursive: true, force: true });
+});
 
 test("trusted JS and Python discovery preserve explicit PATH and symlink/.. components", () => {
   for (const name of ["git", "python3"]) {
@@ -149,9 +163,11 @@ test("blocks an invalid Bash workdir before command policy execution", async () 
 
 test("preserves valid Bash workdir inputs and the implicit fallback", async () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-bash-workdir-valid-"));
+  const originalCwd = process.cwd();
   const directoryAlias = join(root, "directory-alias");
   symlinkSync(root, directoryAlias, "dir");
   try {
+    process.chdir(root);
     const hooks = createQualityHooks({ scriptsDir, logsDir: root, repositoryDir: root });
     for (const args of [
       { command: "pwd", workdir: root },
@@ -163,6 +179,7 @@ test("preserves valid Bash workdir inputs and the implicit fallback", async () =
       assert.deepEqual(output.args, args);
     }
   } finally {
+    process.chdir(originalCwd);
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -226,11 +243,79 @@ test("uses the plugin repository directory when mutation tools omit workdir", as
     const linkedPatch = `*** Begin Patch\n*** Add File: ${join(linked, "plugin-context.md")}\n+safe\n*** End Patch\n`;
     await assert.doesNotReject(
       () => hooks.toolExecuteBefore(
-        { tool: "functions.apply_patch" },
+        { tool: "functions.apply_patch", sessionID: "fixture-owner" },
         { args: { patchText: linkedPatch } },
       ),
       "the plugin project directory must establish same-repository linked-worktree identity",
     );
+
+    const runOperation = (operationID) => execFileSync(process.execPath, [
+      join(here, "..", "bounded-operation-supervisor.mjs"),
+    ], {
+      cwd: linked, detached: true, encoding: "utf8", timeout: 10000,
+      input: JSON.stringify({ operationID, command: [process.execPath, "-e", "process.stdout.write('operation-executed')"] }),
+    }).trim();
+    assert.equal(runOperation("fixture-operation"), "operation-executed");
+
+    const preparation = JSON.parse(execFileSync("python3", [
+      "-E", "-s", "-B", join(scriptsDir, "..", "worker-lifecycle", "worker-registry.py"),
+      "--state-dir", process.env.AIDEVOPS_LIFECYCLE_STATE_DIR,
+      "prepare-cleanup", "--path", realpathSync(linked),
+    ], { encoding: "utf8" }));
+    assert.equal(preparation.status, "waiting-for-runs");
+    assert.equal(preparation.registered_runs, 2);
+    assert.equal(preparation.unfinished_runs, 1);
+    assert.equal(preparation.admission, "open");
+    // Explicit shutdown is distinct from cleanup's conditional quiescent close.
+    execFileSync("python3", ["-E", "-s", "-B", "-c", [
+      "import sys, uuid",
+      "from pathlib import Path",
+      "sys.path.insert(0, sys.argv[1])",
+      "from worker_lifecycle.storage import LifecycleRegistry",
+      "from worker_lifecycle.admission import AdmissionRegistry",
+      "AdmissionRegistry(LifecycleRegistry(Path(sys.argv[2]))).close_generation(str(uuid.uuid4()), sys.argv[3])",
+    ].join("\n"), join(scriptsDir, "..", "worker-lifecycle"),
+    process.env.AIDEVOPS_LIFECYCLE_STATE_DIR, preparation.generation_id]);
+    assert.throws(() => runOperation("closed-operation"), (error) =>
+      error.status === 75 && !String(error.stdout).includes("operation-executed"));
+    await assert.rejects(() => hooks.toolExecuteBefore(
+      { tool: "functions.apply_patch", sessionID: "different-owner" },
+      { args: { patchText: linkedPatch } },
+    ), /lifecycle owner admission/);
+    await assert.doesNotReject(() => hooks.toolExecuteBefore(
+      { tool: "functions.apply_patch", sessionID: "fixture-owner" },
+      { args: { patchText: linkedPatch } },
+    ));
+
+    for (const command of [`git -C "${linked}" status`, `git -C "${linked}" -C . status`]) {
+      await assert.rejects(() => hooks.toolExecuteBefore(
+        { tool: "bash", sessionID: "different-owner" },
+        { args: { workdir: repo, command } },
+      ), /lifecycle owner admission/);
+      await assert.doesNotReject(() => hooks.toolExecuteBefore(
+        { tool: "bash", sessionID: "fixture-owner" },
+        { args: { workdir: repo, command } },
+      ));
+    }
+    await assert.rejects(() => hooks.toolExecuteBefore(
+      { tool: "bash", sessionID: "fixture-owner" },
+      { args: { workdir: repo, command: `cd "${linked}" && git status` } },
+    ), /directory-changing shell builtins are unsupported/);
+    await assert.rejects(() => hooks.toolExecuteBefore(
+      { tool: "aidevops_bounded_operation", sessionID: "different-owner" },
+      { args: { action: "start", cwd: repo, command: [realGit, "-C", linked, "status"] } },
+    ), /lifecycle owner admission/);
+
+    // An exec-based Claude hook observes this same native runtime parent.
+    const claudeHook = (sessionID) => execFileSync("sh", [
+      "-c", 'exec "$1" "$2"', "hook",
+      resolveTrustedExecutable("python3"), join(scriptsDir, "..", "hooks", "git_safety_guard.py"),
+    ], {
+      cwd: linked, encoding: "utf8",
+      input: JSON.stringify({ session_id: sessionID, tool_name: "Write", tool_input: { file_path: join(linked, "result.md") } }),
+    }).trim();
+    assert.equal(claudeHook("fixture-owner"), "");
+    assert.equal(JSON.parse(claudeHook("different-owner")).hookSpecificOutput.permissionDecision, "deny");
 
     const canonicalPatch = "*** Begin Patch\n*** Update File: README.md\n@@\n-seed\n+unsafe\n*** End Patch\n";
     await assert.rejects(
@@ -253,7 +338,7 @@ test("uses an explicit linked-worktree context without weakening canonical or es
     const linkedPatch = `*** Begin Patch\n*** Add File: ${join(linked, "explicit-context.md")}\n+safe\n*** End Patch\n`;
     await assert.doesNotReject(
       () => hooks.toolExecuteBefore(
-        { tool: "functions.apply_patch" },
+        { tool: "functions.apply_patch", sessionID: "fixture-owner" },
         { args: { workdir: linked, patchText: linkedPatch } },
       ),
     );

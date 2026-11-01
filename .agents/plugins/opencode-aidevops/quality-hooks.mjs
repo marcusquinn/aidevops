@@ -57,6 +57,7 @@ import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
 import { assertBrowserTaskTransport } from "./browser-task-transport.mjs";
 import { adviseDockerCreation, appendDockerAdvisory } from "./docker-owner-advisory.mjs";
+import { admitToolOwner } from "./lifecycle-admission.mjs";
 
 export { needsDockerOwnerAdvisory } from "./docker-owner-advisory.mjs";
 
@@ -237,6 +238,12 @@ function enforceBashToolSafety(ctx, log, input, output, sessionId) {
       ownedListenerRoots: ctx.ownedListenerRoots(sessionId),
     },
   );
+  // Admit the policy-checked command before trusted signature repair adds
+  // multiline content (or writes its body file); neither changes Git targets.
+  admitToolOwner({
+    scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
+    bash: true, bounded: false,
+  });
   const signatureModel = ctx.resolveSessionModel(sessionId);
   checkSignatureFooterGate(bashArgs.command || "", log, ctx.scriptsDir, output, {
     model: signatureModel,
@@ -341,6 +348,10 @@ async function handleToolBefore(ctx, log, input, output) {
   enforceBoundedOperationSafety(ctx, input, output, sessionId);
   if (isBashTool(input.tool)) rememberBashOutputPolicy(callID, output.args);
   enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceContextForPath });
+  admitToolOwner({
+    scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
+    bash: false, bounded: isBoundedOperationTool(input.tool),
+  });
 }
 
 function scrubObservedToolOutput(ctx, log, toolName, output) {

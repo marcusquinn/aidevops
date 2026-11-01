@@ -13,12 +13,59 @@ import tarfile
 from unittest.mock import Mock, patch
 
 import worktree_archive_filesystem as filesystem
+import worktree_archive_untracked as untracked
 import worktree_archive_xattrs as xattrs
 from worktree_archive_snapshot import git_snapshot
 from worktree_recovery_retirement_transaction import inventory
 
 
 class MetadataCases:
+    def test_tar_symlink_modes_keep_metadata_guards(self):
+        observed = Mock(st_uid=os.geteuid(), st_gid=os.getegid(), st_nlink=1)
+        for mode in range(0o1000):
+            observed.st_mode = stat.S_IFLNK | mode
+            filesystem.supported_metadata(observed, [], tar_metadata=True)
+        for mode in (0o1755, 0o2755, 0o4755):
+            observed.st_mode = stat.S_IFLNK | mode
+            with self.assertRaises(ValueError):
+                filesystem.supported_metadata(observed, [], tar_metadata=True)
+        observed.st_mode = stat.S_IFLNK | 0o755
+        observed.st_nlink = 2
+        with self.assertRaises(ValueError):
+            filesystem.supported_metadata(observed, [], tar_metadata=True)
+        observed.st_nlink = 1
+        with self.assertRaises(ValueError):
+            filesystem.supported_metadata(
+                observed, ["user.must-preserve"], tar_metadata=True,
+            )
+        observed.st_uid += 1
+        with self.assertRaises(ValueError):
+            filesystem.supported_metadata(observed, [], tar_metadata=True)
+
+    def test_symlink_restore_refuses_silently_ignored_chmod(self):
+        probe = self.work / "mode-probe"
+        probe.symlink_to("mixed.txt")
+        member = tarfile.TarInfo("restored-link")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "mixed.txt"
+        member.mode = stat.S_IMODE(probe.lstat().st_mode) ^ 0o040
+        before = (self.work / "mixed.txt").stat().st_mode
+        parent = os.open(self.work, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with patch.object(untracked.os, "chmod") as chmod:
+                with self.assertRaisesRegex(ValueError, "metadata was not restored"):
+                    untracked.restore_symlink(member, parent, member.name)
+                chmod.assert_called_once_with(
+                    member.name, member.mode, dir_fd=parent, follow_symlinks=False,
+                )
+        finally:
+            os.close(parent)
+        self.assertEqual((self.work / "mixed.txt").stat().st_mode, before)
+        self.assertEqual(untracked.untracked_member_fingerprint(None, member),
+                         ["symlink", "mixed.txt"])
+        self.assertEqual(untracked.untracked_member_fingerprint(None, member, True),
+                         ["symlink", member.mode, "mixed.txt"])
+
     def test_symlink_permission_bits_do_not_block_capture(self):
         # GH#36279: macOS `ln -s` gives 0o755 links; only the target is evidence.
         observed = Mock(st_uid=os.geteuid(), st_gid=os.getegid(), st_nlink=1)
@@ -42,7 +89,10 @@ class MetadataCases:
             filesystem.supported_metadata(observed, [])
         link = self.work / "umask-link"
         link.symlink_to("/nonexistent")
-        self.assertEqual(filesystem.fingerprint(self.work, b"umask-link", True), ["symlink", "/nonexistent"])
+        self.assertEqual(filesystem.fingerprint(self.work, b"umask-link"),
+                         ["symlink", "/nonexistent"])
+        self.assertEqual(filesystem.fingerprint(self.work, b"umask-link", True),
+                         ["symlink", stat.S_IMODE(link.lstat().st_mode), "/nonexistent"])
 
     def test_darwin_missing_os_xattr_uses_nofollow_and_descriptor_abi(self):
         payload = b"com.apple.provenance\0com.apple.quarantine\0"

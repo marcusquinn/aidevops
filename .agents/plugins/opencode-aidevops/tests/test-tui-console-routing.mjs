@@ -97,6 +97,8 @@ test("pre-tool bash handling tolerates a missing args payload", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "aidevops-missing-tool-args-"));
 
   try {
+    writeFileSync(join(tempDir, "worker-lifecycle-session-helper.py"),
+      'import json\nprint(json.dumps({"status": "not-applicable"}))\n');
     const hooks = createQualityHooks({ scriptsDir: tempDir, logsDir: tempDir });
     await assert.doesNotReject(
       hooks.toolExecuteBefore(

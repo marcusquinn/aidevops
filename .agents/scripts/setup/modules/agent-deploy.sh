@@ -317,6 +317,7 @@ _verify_deployed_core_plugin_freshness() {
 	local -a core_plugin_files=(
 		"configs/opencode-runtime-profiles.json"
 		"hooks/git_safety_guard.py"
+		"hooks/git_safety_lifecycle.py"
 		"plugins/opencode-aidevops/index.mjs"
 		"plugins/opencode-aidevops/model-limits.mjs"
 		"plugins/opencode-aidevops/quality-hooks-git-safety.mjs"

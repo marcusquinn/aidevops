@@ -141,7 +141,7 @@ PY
 }
 
 _pc_thirdparty_candidate() {
-	local candidate="$1" canonical="$2" cache="$3" apply="$4" branch="" pr="" state="" unique="" activity="" age="" slug="" url="" archive="" snapshot="" head=""
+	local candidate="$1" canonical="$2" cache="$3" apply="$4" branch="" pr="" state="" unique="" activity="" age="" archive=""
 	[[ -f "$candidate/.git" && ! -L "$candidate/.git" ]] || return 1
 	# The missing-canonical branch below also bypasses native Git removal.
 	worktree_managed_require_removal_proof "$candidate" || return 1
@@ -178,42 +178,12 @@ _pc_thirdparty_candidate() {
 		fi
 	fi
 	[[ "$apply" == 1 ]] || { printf 'eligible\n'; return 0; }
-	snapshot=$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null) || return 1
-	head=$(git -C "$candidate" rev-parse HEAD 2>/dev/null) || return 1
-	# Resolve the actual upstream repository for archive metadata. Missing or
-	# non-GitHub identities are uncertain and cannot authorize removal.
-	slug=$(jq -r '.repo // empty' <<<"$pr") || return 1
-	if [[ -z "$slug" ]]; then
-	for url in "$(git -C "$candidate" remote get-url upstream 2>/dev/null)" "$(git -C "$candidate" remote get-url origin 2>/dev/null)"; do
-		case "$url" in
-		https://github.com/*) slug="${url#https://github.com/}"; break ;;
-		git@github.com:*) slug="${url#git@github.com:}"; break ;;
-		esac
-	done
-	slug="${slug%.git}"
-	fi
-	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
-	if [[ "$unique" == yes ]]; then
-		if [[ "$state" == CLOSED ]]; then
-			_pc_compact_archive_policy_clear "$candidate" "$(jq -r '.number' <<<"$pr")" "$slug" pr "$(_pc_issue_from_branch "$branch" 2>/dev/null || true)" >/dev/null || return 1
-		else
-			_pc_unattributed_archive_policy_clear "$candidate" >/dev/null || return 1
-		fi
-		archive=$(_pc_archive_worktree_compactly "$canonical" "$candidate" "$(jq -r '.number // empty' <<<"$pr")" "$slug" "$_PC_ARCHIVE_REASON_UNATTRIBUTED") || return 1
-	fi
-	[[ "$(_pc_central_canonical "$candidate")" == "$canonical" ]] || return 1
-	_pc_fixture_process_clear "$candidate" && ! _worktree_owner_alive "$candidate" "" || return 1
-	[[ "$(git -C "$candidate" rev-parse HEAD 2>/dev/null)" == "$head" &&
-		"$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null)" == "$snapshot" ]] || return 1
-	worktree_removal_guard "$candidate" "$_WTAR_PC_CALLER" 'thirdparty-cleanup' || return 1
-	worktree_managed_require_removal_proof "$candidate" || return 1
-	# GH#34943: the porcelain snapshot misses content edits to already-dirty
-	# files; the archive fingerprint covers them.
-	if [[ -n "$archive" ]]; then
-		_worktree_compact_source_matches "$candidate" "$archive" "$_WTAR_PC_CALLER" 'thirdparty-cleanup' || return 1
-	fi
-	git -C "$canonical" worktree remove --force "$candidate" 2>>"${LOGFILE:-/dev/null}" || return 1
-	[[ -n "$archive" ]] && printf 'archived-removed\n' || printf 'removed\n'
+	# The registry owns eligibility, preservation and retirement as one operation.
+	# Never allocate a legacy archive before it can reject an unregistered path.
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" || return 1
+	worker_lifecycle_cleanup_worktree "$candidate" >>"${LOGFILE:-/dev/null}" 2>&1 || return 1
+	printf 'archived-removed\n'
 	return 0
 }
 

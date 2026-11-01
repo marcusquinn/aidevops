@@ -23,8 +23,7 @@ import time
 from unittest.mock import Mock, patch
 
 
-HELPER = Path(__file__).resolve().parents[1] / "worktree-archive-helper.sh"
-sys.path.insert(0, str(HELPER.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import worktree_lifetime_archive as lifecycle
 import worktree_lifecycle_status as lifecycle_status
@@ -34,6 +33,8 @@ from worktree_archive_canonical_cases import CanonicalCases
 from worktree_archive_administration_cases import AdministrationCases
 from worktree_archive_metadata_cases import MetadataCases
 from worktree_archive_unregistered_cases import UnregisteredCases
+
+HELPER = Path(__file__).resolve().parents[1] / "worktree-archive-helper.sh"
 
 
 class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, MergeCases,
@@ -1555,7 +1556,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         result = self.run_command("bash", "-c", script, "_", HELPER.parent)
         self.assertEqual(result.stdout.strip(), b"345600")
 
-    def test_managed_archive_restores_before_authorizing_removal(self):
+    def test_legacy_managed_archive_does_not_authorize_removal(self):
         managed = self.managed_fixture()
         (self.work / "mixed.txt").write_text("unique dirty work\n")
         archive = self.prepare_managed(managed)
@@ -1589,18 +1590,19 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
             connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(self.work),))
             connection.commit()
-        # Only remote policy is stubbed. Receipt reuse, source comparisons,
-        # rootless native removal and final durable receipt use production paths.
+        # A verified legacy archive is preservation evidence, not registry authority.
         script = ('source "$1/pulse-cleanup.sh"; LOGFILE="$2"; '
                   '_pc_branch_archive_pr_state_clear() { return 0; }; '
                   '_pc_compact_archive_policy_clear() { return 0; }; '
                   'unregister_worktree() { return 0; }; '
                   '_pc_handle_confirmed_idle_archive "$3" "$4" feature/fixture 1 0 1 86401 fixture fixture/repo')
-        self.run_command("bash", "-c", script, "_", HELPER.parent, self.root / "pulse.log", self.repo, self.work)
-        self.assertFalse(self.work.exists())
-        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "removed")
-        self.run_command(sys.executable, HELPER.with_name("worktree_lifetime_archive.py"), "removed", self.work)
-        recovered = self.root / "recovered-after-removal"
+        result = self.run_command("bash", "-c", script, "_", HELPER.parent,
+                                  self.root / "pulse.log", self.repo, self.work, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.work.is_dir())
+        self.assertEqual((self.work / "mixed.txt").read_text(), "unique dirty work\n")
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "verified")
+        recovered = self.root / "recovered-after-refusal"
         self.helper("restore", archive, "--target", recovered)
         self.assertEqual((recovered / "mixed.txt").read_text(), "unique dirty work\n")
 

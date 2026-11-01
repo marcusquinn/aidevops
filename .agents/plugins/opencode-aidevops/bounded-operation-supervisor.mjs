@@ -2,9 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { isDirectEntrypoint } from "../../scripts/entrypoint-guard.mjs";
 import { createProcessTreeTracker, signalEach } from "./bounded-operation-process-tree.mjs";
+import { admitToolOwner } from "./lifecycle-admission.mjs";
 
 function boundedInteger(value, fallback, minimum, maximum) {
   value = Number(value);
@@ -137,6 +139,20 @@ export async function runSupervisor() {
   const { command } = config;
   const operationID = String(config.operationID || "");
 
+  // This existing supervisor owns the operation until its normal drain completes.
+  // Register its native identity before spawning, independently of the UI owner.
+  try {
+    admitToolOwner({
+      scriptsDir: fileURLToPath(new URL("../../scripts/", import.meta.url)),
+      input: { tool: "aidevops_bounded_operation", sessionID: operationID },
+      output: { args: { action: "start", cwd: process.cwd(), command } },
+      bounded: true,
+    });
+  } catch {
+    process.stderr.write("BLOCKED: bounded-operation lifecycle admission unavailable\n");
+    return 75;
+  }
+
   const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
   const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 300 * 1000);
   const result = { finished: false, exit: 1, started: Promise.resolve(), commandIdentity: null };
@@ -175,7 +191,13 @@ export async function runSupervisor() {
 
   const child = spawn(command[0], command.slice(1), {
     cwd: process.cwd(),
-    env: { ...process.env, AIDEVOPS_OPERATION_ID: operationID, AIDEVOPS_OPERATION_OWNER_PID: String(process.pid) },
+    env: {
+      ...process.env,
+      AIDEVOPS_OPERATION_ID: operationID,
+      AIDEVOPS_OPERATION_OWNER_PID: String(process.pid),
+      AIDEVOPS_LIFECYCLE_RUNTIME_PID: String(process.pid),
+      AIDEVOPS_LIFECYCLE_SESSION_ID: operationID,
+    },
     stdio: ["ignore", "inherit", "inherit"],
   });
 

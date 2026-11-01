@@ -6,6 +6,7 @@
 import hashlib
 import json
 import os
+import stat
 import tarfile
 
 from worktree_archive_filesystem import fingerprint
@@ -27,8 +28,10 @@ def untracked_contents(root, paths):
     return contents
 
 
-def untracked_member_fingerprint(source, member):
+def untracked_member_fingerprint(source, member, symlink_modes=False):
     if member.issym():
+        if symlink_modes:
+            return ['symlink', member.mode, member.linkname]
         return ['symlink', member.linkname]
     if member.islnk():
         return ['hardlink', member.linkname]
@@ -39,6 +42,21 @@ def untracked_member_fingerprint(source, member):
         for chunk in iter(lambda: handle.read(1048576), b''):
             digest.update(chunk)
     return ['file', member.mode, member.size, digest.hexdigest()]
+
+
+def restore_symlink(member, parent, name):
+    """Restore the tar mode on the link itself, never its target."""
+    if member.mode & ~0o777:
+        raise ValueError('unsupported symlink permissions')
+    os.symlink(member.linkname, name, dir_fd=parent)
+    observed = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if stat.S_IMODE(observed.st_mode) != member.mode:
+        os.chmod(name, member.mode, dir_fd=parent, follow_symlinks=False)
+    observed = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if (not stat.S_ISLNK(observed.st_mode)
+            or stat.S_IMODE(observed.st_mode) != member.mode
+            or os.readlink(name, dir_fd=parent) != member.linkname):
+        raise ValueError('symlink metadata was not restored')
 
 
 def verify_untracked_payload(archive, manifest):
@@ -61,7 +79,9 @@ def verify_untracked_payload(archive, manifest):
                         raise ValueError('hard link must reference an earlier regular payload member')
                 elif member.isfile():
                     regular[member.name] = member
-            contents = [[member.name, untracked_member_fingerprint(source, member)]
+            # Older payload fingerprints did not bind symlink permissions.
+            modes = saved.get('untracked_symlink_modes', False)
+            contents = [[member.name, untracked_member_fingerprint(source, member, modes)]
                         for member in sorted(members, key=lambda entry: os.fsencode(entry.name))]
     digest = hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode('ascii')).hexdigest()
     if len(contents) != saved.get('untracked_files') or digest != saved.get('untracked_sha256'):

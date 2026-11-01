@@ -30,7 +30,7 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
         if include_untracked:
             paths = sorted(filter(None, git(root, 'ls-files', '--others', '--exclude-standard', '-z').split(b'\0')))
             contents = untracked_contents(root, paths)
-            result.update(untracked_files=len(paths),
+            result.update(untracked_files=len(paths), untracked_symlink_modes=True,
                           untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode('ascii')).hexdigest())
         return result
     options = ("--binary", "--full-index", "--no-ext-diff", "--no-textconv",
@@ -54,5 +54,6 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
             raise ValueError("untracked payload exceeds configured limit")
         contents = untracked_contents(root, paths)
         result.update(schema=3, untracked_files=len(paths), bytes=result["bytes"] + size,
+                      untracked_symlink_modes=True,
                       untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode("ascii")).hexdigest())
     return result

@@ -24,7 +24,7 @@ class UnregisteredCases:
         self.resume_legacy_scratch(record)
         self.assertNotIn(os.fsencode(target), self.git(self.repo, "worktree", "list", "--porcelain"))
 
-    def test_remove_recovers_unregistered_scratch_and_seals_fresh_proof(self):
+    def test_remove_refuses_legacy_scratch_without_registry_authority(self):
         import worktree_recovery_producer as producer_engine
         from worktree_lifetime_archive import __file__ as lifecycle_path
         helper = Path(lifecycle_path).with_name("audit-worktree-removal-helper.sh")
@@ -51,25 +51,25 @@ class UnregisteredCases:
             with connection:
                 connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
                 connection.execute("DELETE FROM worktree_creation_backends WHERE path = ?", (str(target),))
-        # Exercise the shared guarded removal entrypoint, not RestorationProof directly.
-        # Allow degraded host CWD visibility only for this disposable fixture.
+        # Scratch recovery cannot substitute for registry removal authority.
+        before = self.snapshot(self.work)
         script = ('source "$1" && remove_archived_worktree_path "$2" "$3" '
                   'test.sh regression "" true false')
-        self.run_command("bash", "-c", script, "fixture-removal",
-                         helper, self.work, archive, cwd=self.repo)
+        result = self.run_command("bash", "-c", script, "fixture-removal",
+                                  helper, self.work, archive, cwd=self.repo, check=False)
+        self.assertNotEqual(result.returncode, 0)
         record = json.loads(journal.read_text())
         receipt = record["canonical_restore"]
         self.assertNotEqual(receipt["slot"], previous["slot"])
         self.assertEqual(receipt["state"], "cleaned")
-        self.assertEqual(receipt["registration"]["backend"], "legacy-guards")
-        self.assertRegex(receipt["creation_sha256"], r"^[0-9a-f]{64}$")
-        self.assertEqual(record["source_removal_outcome"], "removed")
-        self.assertFalse(self.work.exists())
+        self.assertNotEqual(record.get("source_removal_outcome"), "removed")
+        self.assertTrue(self.work.is_dir())
+        self.assertEqual(self.snapshot(self.work), before)
         self.assertFalse(slot.exists())
-        self.assertFalse((journal.parent / receipt["slot"]).exists())
+        self.assertTrue(archive.is_dir())
         listed = self.git(self.repo, "worktree", "list", "--porcelain")
         self.assertNotIn(os.fsencode(target), listed)
-        self.assertNotIn(os.fsencode(self.work), listed)
+        self.assertIn(os.fsencode(self.work), listed)
 
     def test_recover_unregistered_scratch_rejects_dirty_ignored_and_unreachable(self):
         record, _slot, target = self.unregistered_scratch()

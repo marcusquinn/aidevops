@@ -89,6 +89,27 @@ PID absence proves only the saved process generation ended. An expired lease or
 heartbeat proves neither process death nor loss of filesystem access. A fencing
 number in a database cannot fence arbitrary file writes by an old process.
 
+### Managed launch contract
+
+Lifecycle accounts for explicitly registered runs, not inferred process trees.
+Every independent process that writes a managed worktree must be admitted through
+the launch system with its own run identity and generation binding before writing.
+A process intended to outlive its launching job is an independent run, not an
+implicitly inherited owner of that job's worktree.
+
+Ordinary child commands belong to their launching runtime. Waiting for and stopping
+those commands remains that runtime's responsibility, including failure and
+cancellation handling. Lifecycle neither registers each child PID nor discovers
+or terminates unregistered descendants. An unregistered background writer violates
+this contract; generic process containment is outside this subsystem's scope.
+
+Cleanup guarantees are conditional on participation in this protocol, not physical
+exclusion of arbitrary same-user processes. Closing admission must prevent new
+managed runs, and every registered run bound to the generation must be confirmed
+ended before cleanup can proceed. Missing registration or unknown identity remains
+incomplete evidence, not implicit completion. This contract does not itself enable
+cleanup or establish that every existing launch path already participates.
+
 ## Domain model
 
 | Entity | Identity and meaning |
@@ -136,7 +157,7 @@ An ended run never becomes bound again; a retry gets a new run ID.
 
 Worktree generation has a separate lifecycle: open, closing, sealed, retired.
 Future active mode must atomically close admission before checking quiescence.
-Sealing requires all admitted runs tracked and an enforceable no-writers
+Sealing requires all admitted runs tracked and completed under the managed launch
 contract. Retirement belongs after the archive/removal executor's verified
 receipt, not after observing a dead PID. Observe-only mode only predicts these changes.
 
@@ -207,7 +228,7 @@ unless an explicit migration establishes their new contract.
 | Database busy, full, unavailable or corrupt | Explicit failed/deferred lifecycle tracking; no false success |
 | Observer restart | Continue from durable state without resetting identities |
 | Missed launcher event | Report incomplete coverage, never fabricate provenance |
-| Dead parent with surviving child | No claim that the worktree has no writers |
+| Independent registered process outlives its launcher | Its own run and generation binding remain active; launcher exit does not complete it |
 | Late old owner after timeout | Timeout alone grants neither replacement nor cleanup authority |
 
 ## Promotion and replacement
@@ -223,9 +244,10 @@ Exactly one subsystem controls a generation. Record authority routing explicitly
 Rollback must quiesce the new authority and reconcile its admitted runs before
 handoff; an application flag alone is not a safe ownership rollback.
 
-Before active promotion, specify and prove the worker execution/containment
-contract that prevents surviving or stale writers. This is an open design gate,
-not solved by lifecycle tracking, a lease, or a saved process ID.
+Before active promotion, verify participation of all supported independent launch
+paths, registered-run completion, and rejection of launches after admission closes.
+Ordinary child-command cleanup belongs to the runtime, not a new lifecycle process
+supervisor. These checks do not establish containment of arbitrary outside writers.
 
 ## Delivery slices and measurements
 

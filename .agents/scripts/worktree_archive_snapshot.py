@@ -42,6 +42,7 @@ from worktree_archive_objects import (
 )
 from worktree_archive_auto_merge import restore_auto_merge as restore_auto_merge
 from worktree_archive_git import (
+    base_import_timeout,
     MISSING_PROMISOR_BASE, authorized_base_source, base_import_failure, base_upload_pack,
     capture_bundle as capture_bundle, fetch_preservation as fetch_preservation,
 )
@@ -67,15 +68,6 @@ def capture_administration(root, archive, include_ignored, base=''):
     if roots:
         capture_bundle(root, archive, sorted(roots), base)
     (archive / 'git-admin.json').write_text(json.dumps(state, sort_keys=True) + '\n', encoding='ascii')
-
-
-def base_import_timeout():
-    """Bounded budget for the local base-object import (default 300s, max 1800s)."""
-    try:
-        value = int(os.environ.get('AIDEVOPS_WORKTREE_BASE_IMPORT_TIMEOUT', '300'))
-    except ValueError:
-        value = 300
-    return max(60, min(value, 1800))
 
 
 @timed("base-import")
@@ -221,9 +213,15 @@ def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--preserve-git-admin", action="store_true")
     parser.add_argument("--include-ignored", action="store_true")
+    parser.add_argument("--git-only", action="store_true")
     parser.add_argument("worktree")
     args = parser.parse_args(argv)
-    print(json.dumps(snapshot(args.worktree, args.preserve_git_admin, args.include_ignored), sort_keys=True))
+    if args.git_only and (args.preserve_git_admin or args.include_ignored):
+        parser.error("--git-only cannot expand the WIP capture policy")
+    value = snapshot(
+        args.worktree, args.preserve_git_admin, args.include_ignored, args.git_only,
+    )
+    print(json.dumps(value, sort_keys=True))
     return 0
 
 

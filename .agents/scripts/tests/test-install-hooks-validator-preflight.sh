@@ -210,6 +210,8 @@ PYEOF
 #!/usr/bin/env python3
 raise SystemExit(0)
 PYEOF
+		cp "$test_home/.aidevops/agents/scripts/canonical-write-policy-helper.py" \
+			"$test_home/.aidevops/agents/scripts/worker-lifecycle-session-helper.py"
 	fi
 
 	cat >"$test_tmpdir/harness.sh" <<HARNESS_EOF
@@ -257,6 +259,7 @@ test_installed_hook_probe() {
 	local installed_hook="$test_home/.aidevops/hooks/git_safety_guard.py"
 	mkdir -p "$(dirname "$installed_hook")"
 	cp "$TEST_SCRIPTS_DIR/../hooks/git_safety_guard.py" "$installed_hook"
+	cp "$TEST_SCRIPTS_DIR/../hooks/git_safety_lifecycle.py" "$(dirname "$installed_hook")/git_safety_lifecycle.py"
 	chmod +x "$installed_hook"
 	cat >"$test_tmpdir/harness.sh" <<HARNESS_EOF
 #!/usr/bin/env bash
@@ -441,6 +444,53 @@ _check_pre_commit_only_result() {
 	return "$result"
 }
 
+test_standalone_hook_bundle() {
+	local mode="$1"
+	local fixture="" install_dir="" result=0
+	local -a options=()
+	fixture=$(mktemp -d) || return 1
+	mkdir -p "$fixture/home" "$fixture/project" || return 1
+	install_dir="$fixture/home/.claude"
+	if [[ "$mode" == "project" ]]; then
+		options=(--project)
+		install_dir="$fixture/project/.claude"
+	fi
+	(cd "$fixture/project" && HOME="$fixture/home" \
+		AIDEVOPS_LIFECYCLE_SESSION_HELPER="$TEST_SCRIPTS_DIR/worker-lifecycle-session-helper.py" bash \
+		"$TEST_SCRIPTS_DIR/install-hooks.sh" "${options[@]}") >"$fixture/install.log" 2>&1 || result=1
+	HOME="$fixture/home" python3 -I -S -B -c \
+		'import sys; sys.path.insert(0, sys.argv[1]); import git_safety_guard' \
+		"$install_dir/hooks" >>"$fixture/install.log" 2>&1 || result=1
+	print_result "standalone $mode hook imports its installed lifecycle adapter" "$result"
+	rm -rf "$fixture"
+	return 0
+}
+
+test_standalone_missing_admission() {
+	local fixture="" mode="" result=0 helper=""
+	fixture=$(mktemp -d) || return 1
+	mkdir -p "$fixture/home/.claude" "$fixture/project" || return 1
+	printf '{"preserved":true}\n' >"$fixture/home/.claude/settings.json"
+	cp "$fixture/home/.claude/settings.json" "$fixture/before.json"
+	for mode in missing help-only invalid-response; do
+		helper="$fixture/$mode.py"
+		if [[ "$mode" == help-only ]]; then
+			printf 'import sys\nsys.exit(0 if "--help" in sys.argv else 75)\n' >"$helper"
+		elif [[ "$mode" == invalid-response ]]; then
+			printf 'print("{}")\n' >"$helper"
+		fi
+		result=0
+		(cd "$fixture/project" && HOME="$fixture/home" \
+			AIDEVOPS_LIFECYCLE_SESSION_HELPER="$helper" bash \
+			"$TEST_SCRIPTS_DIR/install-hooks.sh") >"$fixture/install.log" 2>&1 && result=1
+		cmp -s "$fixture/before.json" "$fixture/home/.claude/settings.json" || result=1
+		[[ ! -e "$fixture/home/.claude/hooks" ]] || result=1
+		print_result "standalone rejects $mode admission before changing hooks/settings" "$result"
+	done
+	rm -rf "$fixture"
+	return 0
+}
+
 # --- Run all tests ---
 main() {
 	echo "=== install-hooks-helper.sh validator preflight tests (t2226) ==="
@@ -456,6 +506,9 @@ main() {
 	test_help_text
 	test_runtime_dependency_preflight
 	test_installed_hook_probe
+	test_standalone_hook_bundle global
+	test_standalone_hook_bundle project
+	test_standalone_missing_admission
 	local mode
 	for mode in happy linked managed existing symlink hooks-path missing-runtime bad-validator bad-runtime local-runtime outside bare force unknown; do
 		test_pre_commit_only_case "$mode" || return 1

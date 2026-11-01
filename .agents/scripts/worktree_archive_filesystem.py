@@ -21,9 +21,8 @@ def supported_metadata(observed, attributes, tar_metadata=False):
     if tar_metadata and stat.S_ISREG(observed.st_mode):
         return  # PAX retains permissions; external inode relationships are not archived.
     if stat.S_ISLNK(observed.st_mode):
-        # GH#36279: Linux symlinks are always 0o777, but macOS applies umask
-        # (`ln -s` gives 0o755). Evidence binds the link target, not its mode;
-        # special bits and hard-linked links still need separate preservation.
+        # Git preserves link targets; tar additionally restores and verifies mode.
+        # Ordinary mode bits vary with umask on macOS.
         if stat.S_IMODE(observed.st_mode) & 0o7000 or observed.st_nlink != 1:
             raise ValueError("special permissions or hard links require separate preservation")
         return
@@ -90,8 +89,11 @@ def fingerprint(root, raw, tar_metadata=False, git_metadata=False):
         except FileNotFoundError:
             return ["missing"]
         if stat.S_ISLNK(observed.st_mode):
-            supported_metadata(observed, list_xattrs(root / relative))
-            return ["symlink", os.readlink(relative.name, dir_fd=parent)]
+            supported_metadata(observed, list_xattrs(root / relative), tar_metadata)
+            link = os.readlink(relative.name, dir_fd=parent)
+            if tar_metadata:
+                return ["symlink", stat.S_IMODE(observed.st_mode), link]
+            return ["symlink", link]
         if not stat.S_ISREG(observed.st_mode):
             raise ValueError("unsupported recovery file type")
         return regular_fingerprint(relative.name, parent, tar_metadata, git_metadata)

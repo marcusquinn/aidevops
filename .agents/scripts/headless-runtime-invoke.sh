@@ -29,6 +29,11 @@ fi
 # Validate the invocation boundary and classify its trust mode.
 # Uses caller-scoped output_file, exit_code_file, runtime_role, and mode flags.
 _invoke_opencode_validate_context() {
+	if [[ -z "${_invoke_work_dir:-}" ]]; then
+		print_error "Worker launch requires an explicit work directory"
+		printf '%s' "75" >"$exit_code_file"
+		return 1
+	fi
 	if _headless_private_workload_enabled; then
 		private_workload=1
 		if [[ ! -f "$PRIVATE_OUTPUT_FILTER" ]] || ! command -v python3 >/dev/null 2>&1; then
@@ -252,11 +257,8 @@ _invoke_opencode_prepare_child_command() {
 _invoke_opencode_run_sandboxed() {
 	local passthrough_csv=""
 	# This launcher-only hint is NOT added to the child's environment allowlist.
-	# Protected workloads remain outside lifecycle observation.
-	local AIDEVOPS_LIFECYCLE_WORKTREE=""
-	if [[ "$private_workload" -ne 1 && "$runtime_role" == "worker" ]]; then
-		AIDEVOPS_LIFECYCLE_WORKTREE="${_invoke_work_dir:-}"
-	fi
+	# Protected workloads remain unobserved, but cannot bypass managed admission.
+	local AIDEVOPS_LIFECYCLE_WORKTREE="${_invoke_work_dir:-}"
 	export AIDEVOPS_LIFECYCLE_WORKTREE
 	if ! prepare_headless_signing_sandbox_env "$runtime_role"; then
 		print_error "Headless signing configuration could not be safely isolated for the sandbox"
@@ -319,7 +321,7 @@ _invoke_opencode_run_bare() {
 	# execution. Never disable isolation to enable observation. The exec shim
 	# records its own identity, not worker_pid (which belongs to a shell).
 	# An absent worktree must not be interpreted as the current directory.
-	if [[ "$runtime_role" == "worker" || -n "${AIDEVOPS_LIFECYCLE_GENERATION_ID:-}" || -n "${AIDEVOPS_LIFECYCLE_RUN_ID:-}" ]]; then
+	if [[ -n "${_invoke_work_dir:-}" || -n "${AIDEVOPS_LIFECYCLE_GENERATION_ID:-}" || -n "${AIDEVOPS_LIFECYCLE_RUN_ID:-}" ]]; then
 		local lifecycle_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py"
 		# shellcheck source=worker-lifecycle-state.sh
 		source "${SCRIPT_DIR}/worker-lifecycle-state.sh"

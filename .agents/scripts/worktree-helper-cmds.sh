@@ -560,11 +560,6 @@ _remove_cleanup_and_execute() {
 # Remove a worktree by branch name or path, with optional --force.
 cmd_remove() {
 	local target=""
-	local force_remove=0
-	_WT_REMOVE_DEGRADED_RECOVERY=0
-	_WT_REMOVE_DEGRADED_BRANCH=""
-	_WT_REMOVE_DEGRADED_PR=""
-	_WT_REMOVE_DEGRADED_AUDIT_CONTEXT=""
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -572,7 +567,8 @@ cmd_remove() {
 		shift
 		case "$_ropt" in
 		--force | -f)
-			force_remove=1
+			# Compatibility spelling; never bypass registry evidence.
+			:
 			;;
 		*)
 			target="$_ropt"
@@ -586,22 +582,21 @@ cmd_remove() {
 		return 1
 	fi
 
-	# Export for ownership check
-	if [[ "$force_remove" -eq 1 ]]; then
-		export WORKTREE_FORCE_REMOVE="1"
-	fi
-
 	# Resolve target to an absolute path
 	local path_to_remove
 	if ! path_to_remove=$(_remove_resolve_path "$target"); then
 		return 1
 	fi
 
-	# Validate path is safe to remove
-	_remove_validate_path "$path_to_remove" || return 1
-
-	# Clean up runtime files and execute removal
-	_remove_cleanup_and_execute "$path_to_remove" || return 1
+	# The registry validates the generation, owners and preservation. Do not
+	# infer authority from legacy ownership, cwd scans or branch/PR status.
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" || return 1
+	if ! worker_lifecycle_cleanup_worktree "$path_to_remove"; then
+		printf 'Retirement refused; worktree retained: %s\n' "$path_to_remove" >&2
+		printf '%s\n' '--force cannot override lifecycle registry checks.' >&2
+		return 1
+	fi
 
 	return 0
 }

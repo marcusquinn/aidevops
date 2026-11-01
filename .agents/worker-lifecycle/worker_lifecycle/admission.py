@@ -80,13 +80,32 @@ class AdmissionRegistry:
             self.store._bind(connection, str(uuid5(namespace, "bind")), run_id, generation_id, generation["path"])
             return True
 
-    def close_generation(self, event_id: str, generation_id: str) -> tuple[str, ...]:
-        """Close monotonically and return all non-ended bindings in one transaction."""
+    def close_generation(
+        self, event_id: str, generation_id: str, *,
+        expected_ended_runs: tuple[str, ...] | None = None,
+    ) -> tuple[str, ...]:
+        """Close monotonically; optionally require an unchanged, ended run set.
+
+        Cleanup supplies its observed run IDs. The predicate and closure share
+        the admission writer transaction, so a racing new owner prevents closure.
+        Omitting the predicate retains explicit controller shutdown semantics.
+        """
         identifier(generation_id)
         with self.store.connection(write=True) as connection:
             self._require_schema(connection)
             if not connection.execute("SELECT 1 FROM generation_admissions WHERE generation_id=?", (generation_id,)).fetchone():
                 raise AdmissionClosed("generation-not-registered")
+            if expected_ended_runs is not None:
+                rows = connection.execute(
+                    "SELECT r.run_id,r.state FROM runs r JOIN bindings b "
+                    "USING(run_id) WHERE b.generation_id=? ORDER BY r.run_id",
+                    (generation_id,),
+                ).fetchall()
+                if (not rows
+                        or tuple(row["run_id"] for row in rows)
+                        != tuple(sorted(expected_ended_runs))
+                        or any(row["state"] != "ended" for row in rows)):
+                    raise StoreConflict("generation-not-quiescent")
             self.store._event(connection, event_id, {"type": "close-admission", "generation_id": generation_id})
             connection.execute("UPDATE generation_admissions SET state='closed' WHERE generation_id=?", (generation_id,))
             return tuple(row[0] for row in connection.execute(
