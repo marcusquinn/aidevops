@@ -4,72 +4,11 @@
 """Offline REST-core attribution for gh-checks-wait-helper.sh quota-report."""
 
 import json
-import re
 import sys
 import time
 from collections import defaultdict
 
-AUTH_PATTERN = re.compile(r"[a-f0-9]{64}")
-
-
-def number(value):
-    """Reject oversized or non-ASCII counters without inventing a value."""
-    return int(value) if re.fullmatch(r"[0-9]{1,20}", value) else None
-
-
-def read_local(path, start, end):
-    """Keep credential/reset series independent and duplicate IDs auditable."""
-    series = defaultdict(list)
-    reset_unknown = defaultdict(int)
-    seen = {}
-    missing = duplicates = 0
-    conflicting = False
-    with open(path, encoding="utf-8") as source:
-        for line in source:
-            row = line.rstrip("\n").split("\t")
-            if len(row) < 17:
-                continue
-            ts = number(row[0])
-            if (ts is None or not start <= ts <= end
-                    or row[4] != "rest-core" or row[8] != "attempt"):
-                continue
-            if row[10] and row[10] != "unknown":
-                if row[10] in seen:
-                    duplicates += 1
-                    conflicting |= seen[row[10]] != row
-                    continue
-                seen[row[10]] = row
-            cost = number(row[16])
-            reset = number(row[20]) if len(row) >= 21 else None
-            if (len(row) < 22 or not AUTH_PATTERN.fullmatch(row[19])
-                    or reset is None or reset <= 0):
-                missing += 1
-                if len(row) >= 20 and AUTH_PATTERN.fullmatch(row[19]):
-                    reset_unknown[row[19]] += cost or 0
-                continue
-            series[(row[19], reset)].append((ts, number(row[21]), cost))
-    return series, reset_unknown, missing, duplicates, conflicting
-
-
-def ci_sample(sample, start, end):
-    """Validate independently known request costs, never shared-counter deltas."""
-    if sample.get("event") != "quota-ci-sample":
-        return None
-    fp = sample["auth_fingerprint"]
-    before, after = sample["before"], sample["after"]
-    before_used, after_used = before["used"], after["used"]
-    before_reset, after_reset = before["reset"], after["reset"]
-    lo, hi = sample["sample_start"], sample["sample_end"]
-    cost, ident = sample["known_api_requests"], sample["sample_id"]
-    numbers = (lo, hi, cost, before_used, after_used, before_reset, after_reset)
-    if (not isinstance(fp, str) or not AUTH_PATTERN.fullmatch(fp)
-            or not isinstance(ident, str) or not ident
-            or any(type(n) is not int or n < 0 for n in numbers)
-            or not start <= lo <= hi <= end or before_reset <= 0
-            or before_reset != after_reset
-            or not 0 < cost <= after_used - before_used):
-        return None
-    return (fp, before_reset, ident), (lo, hi, before_used, after_used, cost)
+from gh_quota_evidence import ci_sample, read_local
 
 
 def read_ci(path, start, end):
