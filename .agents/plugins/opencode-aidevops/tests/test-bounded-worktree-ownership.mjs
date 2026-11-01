@@ -32,9 +32,10 @@ function fixture(t) {
     FULL_LOOP_HEADLESS: "false", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
   };
   for (const key of Object.keys(env)) {
-    if (key.startsWith("OPENCODE") || key.startsWith("WORKER_") || key.startsWith("GIT_")
-        && !["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"].includes(key)
-        || key.startsWith("AIDEVOPS_LIFECYCLE_RUNTIME") || key === "AIDEVOPS_LIFECYCLE_SESSION_ID") delete env[key];
+    if (["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"].includes(key)) continue;
+    const runtimePrefixes = ["OPENCODE", "WORKER_", "GIT_", "AIDEVOPS_LIFECYCLE_RUNTIME"];
+    if (runtimePrefixes.some(prefix => key.startsWith(prefix))) delete env[key];
+    if (key === "AIDEVOPS_LIFECYCLE_SESSION_ID") delete env[key];
   }
   const git = (args) => execFileSync("git", args, { env, encoding: "utf8", stdio: "pipe" });
   git(["init", "-q", "--initial-branch=main", repo]);
