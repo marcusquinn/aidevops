@@ -11,6 +11,21 @@ from worker_lifecycle.bundle import build
 
 
 class BundleContract(unittest.TestCase):
+    def test_registry_bundle_contains_shared_archive_validator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            bundle = root / "registry.pyz"
+            build(bundle, suite="registry")
+            imported = subprocess.run(  # nosec B603 # imports locally built bundle
+                [sys.executable, "-I", "-B", "-c",
+                 "import sys; sys.path.insert(0, sys.argv[1]); "
+                 "import worker_lifecycle.cleanup; "
+                 "from worker_lifecycle.archive_path import validate_archive_path",
+                 str(bundle)],
+                cwd=root, capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(imported.returncode, 0, imported.stderr)
+
     def test_reproducible_and_preserves_failed_exit_status(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
