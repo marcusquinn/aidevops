@@ -795,7 +795,8 @@ check_upstream_watch() (
 	trap 'rmdir "$lock_dir/$watch_pid" 2>/dev/null || true; rmdir "$lock_dir" 2>/dev/null || true' EXIT
 	trap 'exit 1' HUP INT TERM
 	if ! mkdir "$lock_dir/$watch_pid"; then
-		return 1
+		log_warn "Could not acquire upstream watch lock — skipping"
+		return 0
 	fi
 
 	local freshness_hours
@@ -830,16 +831,18 @@ check_upstream_watch() (
 	# Persist before execution: failures and interrupted runs must back off too.
 	if ! update_upstream_watch_timestamp "$attempt_field"; then
 		log_warn "Could not record upstream watch attempt — skipping"
-		return 1
+		return 0
 	fi
 	log_info "Running daily upstream watch check (${repo_count} repos)..."
 	if "$upstream_watch_script" check >>"$LOG_FILE" 2>&1; then
 		log_info "Upstream watch check complete"
-		update_upstream_watch_timestamp
+		update_upstream_watch_timestamp ||
+			log_warn "Could not record upstream watch completion"
 	else
 		log_warn "Upstream watch check had errors (exit code: $?) — retry in at least 1 hour"
 		# A long failed check still needs a full hour after it finishes.
-		update_upstream_watch_timestamp "$attempt_field" || return 1
+		update_upstream_watch_timestamp "$attempt_field" ||
+			log_warn "Could not record upstream watch retry backoff"
 	fi
 	return 0
 )
