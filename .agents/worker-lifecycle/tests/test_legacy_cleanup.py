@@ -101,6 +101,11 @@ class LegacyCleanupContract(unittest.TestCase):
 
     def setUp(self):
         fixtures.RetirementContract.setUp(self)
+        self.scan_root = self.root / "_worktrees"
+        self.scan_root.mkdir()
+        environment = patch.dict(os.environ, {"AIDEVOPS_WORKTREE_BASE_DIR": str(self.scan_root)})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.git("worktree", "add", "-q", "--detach", str(self.target))
         (self.target / "work.txt").write_text("unfinished work\n")
         (self.target / ".gitignore").write_text("*.ignored\n")
@@ -166,6 +171,46 @@ class LegacyCleanupContract(unittest.TestCase):
         result = self.cleanup(min_age=3600)
         self.assertEqual(result["results"][0]["reason"], "too-recent")
         self.assertTrue(self.target.exists())
+
+    def test_discovers_unregistered_git_and_unregistered_directory_without_writes(self):
+        outside = self.root / "outside registry\nworktree"
+        self.git("worktree", "add", "-q", "--detach", str(outside))
+        orphan = self.scan_root / "orphan"
+        orphan.mkdir()
+        (orphan / "keep").write_text("unregistered data")
+        link = self.scan_root / "alias"
+        link.symlink_to(outside, target_is_directory=True)
+        before = self.store.summary()
+        archives = list(self.output.iterdir())
+        report = self.cleanup(apply=False)
+        results = {row["path"]: row for row in report["results"]}
+        self.assertEqual(results[str(outside)]["reason"], "no-recorded-processes")
+        self.assertIn(str(orphan), results)
+        self.assertEqual(results[str(link)]["reason"], "noncanonical-path")
+        self.assertNotIn(str(self.repo), results)
+        self.assertEqual(len(results), 4)
+        self.assertFalse(report["incomplete"])
+        self.assertEqual(self.store.summary(), before)
+        self.assertEqual(list(self.output.iterdir()), archives)
+        self.assertEqual((orphan / "keep").read_text(), "unregistered data")
+
+    def test_discovery_errors_are_reported_without_hiding_other_sources(self):
+        from worker_lifecycle import legacy_discovery
+        with patch.object(legacy_discovery, "_registered", side_effect=OSError("unavailable")):
+            report = self.cleanup(apply=False)
+        self.assertTrue(report["incomplete"])
+        self.assertEqual(len(report["discovery_errors"]), 1)
+        self.assertEqual(report["results"][0]["reason"], "process-alive")
+
+    def test_git_filesystem_and_registry_discovery_are_deduplicated(self):
+        self.git("worktree", "move", str(self.target), str(self.scan_root / "registered"))
+        moved = self.scan_root / "registered"
+        identity = adapter_for(self.store.installation_id()).capture(self.owner.pid)
+        self.store.register_attempt(str(uuid4()), identity, str(uuid4()), str(moved))
+        report = self.cleanup(apply=False)
+        self.assertEqual(sum(row["path"] == str(moved) for row in report["results"]), 1)
+        row = next(row for row in report["results"] if row["path"] == str(moved))
+        self.assertEqual(row["reason"], "process-alive")
 
     def test_modern_generation_is_not_legacy(self):
         self.stop_owner()
