@@ -80,9 +80,10 @@ def validate_admin_config(root, admin):
                 raise ValueError('git_admin:location_dependent_config:' + key.decode('ascii'))
 
 
-def administration(root, allow_merge=False):
+def administration(root, allow_merge=False, *, admin=None):
     """Read only explicitly supported per-worktree administration, never common config."""
-    admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
     common = Path(os.fsdecode(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").rstrip(b"\n")))
     files = administration_files(admin, admin, admin.resolve() != common.resolve(), allow_merge)
     fetch_head_roots(files.get("FETCH_HEAD", ""))

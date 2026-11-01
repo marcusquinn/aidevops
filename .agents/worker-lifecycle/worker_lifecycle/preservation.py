@@ -10,7 +10,6 @@ from pathlib import Path
 import shutil
 import subprocess  # nosec B404 # fixed local helper programs, explicit argv
 import sys
-import tempfile
 from uuid import UUID, uuid5
 
 from .cleanup_plan import prepare_cleanup
@@ -19,7 +18,9 @@ from .storage import LifecycleRegistry, StoreConflict, _private, encode
 
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-_OPERATION_LOCKS: ContextVar[tuple[int, ...]] = ContextVar("operation_locks", default=())
+_OPERATION_LOCKS: ContextVar[tuple[int, ...]] = ContextVar(
+    "operation_locks", default=(),
+)
 
 
 @contextmanager
@@ -78,28 +79,22 @@ def _retain_base(path: Path, operation: str, base: str) -> str:
     return reference
 
 
-def verify_restoration(archive: Path, root: Path, snapshot: dict) -> dict:
-    """Verify archive contents independently of the source's current pathname."""
+def verify_preservation(archive: Path, root: Path, snapshot: dict) -> dict:
+    """Verify deltas and payloads against the retained base without a full restore."""
     if archive.resolve(strict=True) != archive or not archive.is_relative_to(root):
         raise ValueError("archive-outside-private-output-root")
     _private(archive, directory=True)
-    _helper("verify", str(archive))
+    _helper("verify-local", str(archive))
     manifest = json.loads((archive / "manifest.json").read_bytes())
     if (manifest.get("capture_policy") != "git-only"
             or manifest.get("include_ignored", False) is not False
             or manifest.get("source_fingerprint") != snapshot):
         raise ValueError("archive-policy-or-content-mismatch")
-    with tempfile.TemporaryDirectory(prefix=".verify-wip-", dir=root) as temporary:
-        restored = Path(temporary) / "tree"
-        _helper("restore", str(archive), "--target", str(restored),
-                "--verification-copy")
-        if _snapshot(restored) != snapshot:
-            raise ValueError("restored-wip-does-not-match-source")
     return manifest
 
 
 def _verify(archive: Path, path: Path, root: Path, snapshot: dict) -> dict:
-    manifest = verify_restoration(archive, root, snapshot)
+    manifest = verify_preservation(archive, root, snapshot)
     _helper("source-matches", str(archive), str(path))
     return manifest
 
@@ -107,7 +102,7 @@ def _verify(archive: Path, path: Path, root: Path, snapshot: dict) -> dict:
 def preserve_wip(
     store: LifecycleRegistry, path: Path, repo: str, base_branch: str, root: Path,
 ) -> dict[str, object]:
-    """Close, archive and compare restoration; ignored files remain excluded.
+    """Close, archive and verify captured data; ignored files remain excluded.
 
     Receipts describe the current common repository dependency, not a standalone
     backup or removal authority. Replays verify the existing archive again.

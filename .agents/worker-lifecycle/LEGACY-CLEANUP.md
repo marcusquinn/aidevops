@@ -16,7 +16,8 @@ historical rows into `generation_admissions`.
 3. Recheck every recorded process using the native Linux/macOS identity adapter.
    Alive or unknown results retain the directory. A cached `ended` row or a missing
    PID alone is insufficient. There is no global process-cwd scan or descendant census.
-4. Archive using the existing Git-only archive helper and verify a restoration.
+4. Archive using the existing Git-only archive helper and verify captured payloads
+   with `verify-local`, without a full checkout or shared-repository `fsck`.
    Preserve unpublished commits, index state and non-ignored working files;
    ignored files remain excluded. Pin the archive base in the common repository.
 5. Recheck the registered writers, directory identities and content snapshot.

@@ -15,8 +15,9 @@ from worktree_archive_merge_index import merge_entries, merge_path, validate_mer
 from worktree_archive_merge_objects import MERGE_FILES, merge_oid, merge_roots, validate_merge_metadata, verify_merge_objects
 
 
-def merge_pending(root):
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+def merge_pending(root, *, admin=None):
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
     return os.path.lexists(admin / 'MERGE_HEAD')
 
 

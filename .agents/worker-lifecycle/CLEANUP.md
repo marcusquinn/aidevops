@@ -206,7 +206,8 @@ does not itself authorize deletion. This is not a PID-only liveness test or a
 legacy ownership lookup.
 Independent launches replace inherited creator identity; excluded launches clear
 it. Partial declarations fail without removing the tree. Missing declarations
-only enroll the generation and do not establish writer coverage. Callers with
+bind the creating shell for a fresh path; later writers still need their own
+admission. This does not establish coverage beyond that creator. Callers with
 pre-reserved directories retain their existing creation path but do not acquire
 controlled-creation provenance. Failed construction retains partial results;
 repeating it cannot adopt an existing directory, even an empty one.
@@ -226,7 +227,7 @@ These verified integration points (paths relative to `scripts/`) are not an exha
 
 | Boundary | Existing entry points | Required new-registry contract |
 |----------|-----------------------|--------------------------------|
-| Native creation | `shared-worktree-create.sh:worktree_create_registered` | Enroll and bind the runtime-declared creator when available; preserve the tree on failed enrollment/admission |
+| Native creation | `shared-worktree-create.sh:worktree_create_registered` | Bind the declared runtime, or the actual creating shell; preserve partial results on failure |
 | Existing-tree adoption | `worktree-helper-add.sh`, `dispatch-single-issue-helper.sh`, `pulse-dispatch-worker-launch.sh` | Verify the generation independently; never translate legacy ownership into proof |
 | Runtime launch | `headless-runtime-invoke.sh`, `sandbox-exec-helper.sh` | Supply generation and attempt IDs from the new controller, with per-attempt retry semantics |
 | Other creators | Release/recovery, scratch, workflow-sync and archive restore callers of `worktree_create_registered` | Cover their actual writer lifetime, not merely the short-lived creation subprocess |
@@ -281,8 +282,8 @@ The registry CLI provides two non-destructive operations:
   Successful closure is permanent. `registered-runs-ended` describes registered runs,
   not coverage of unregistered writers or permission to remove anything.
 - `preserve-wip --path PATH --repo OWNER/REPO --base-branch BRANCH --output-root DIR`
-  performs preparation, creates a WIP archive, restores an isolated verification
-  copy and compares its fingerprint with the source. `DIR` must already exist,
+  performs preparation, creates a WIP archive and verifies its captured payloads
+  against the source fingerprint and retained base. `DIR` must already exist,
   be canonical, private and outside the source worktree and its administration
   directory. Missing evidence or failed verification leaves the source intact.
 
@@ -316,6 +317,22 @@ This command is destructive and is not scheduled automatically. It requires a
 controlled-creation receipt, ended admitted owners, closed admission and verified
 Git-only preservation. Existing enrollment without creation provenance is not
 sufficient. No legacy ownership data is consulted and no branches are deleted.
+
+The configured `cleanup`/`cleanup-worktree` paths additionally recover an enrolled
+generation whose creation receipt is absent, but only when every bound run has a
+valid admission and has ended. Preparation closes admission before recovery.
+The journal records `worktree-recovery-authorized`, binding the current physical
+directory, Git administration and exact admitted run set. This is not a synthetic
+`created-worktree` event. Recovery uses the same verified archive, relocation,
+source rechecks and retry protocol below. Empty registrations, observation-only
+bindings, live/unknown runs and invalid existing creation receipts remain held.
+
+For fresh creation through `shared-worktree-create.sh`, callers without an explicit
+runtime declaration now register the creating shell itself. An explicit runtime
+owner remains preferred when it also performs subsequent preparation. Registering
+the creator does not cover later writers: each must still obtain its own admission.
+Private/disabled lifecycle mode and pre-existing reserved paths do not gain a
+controlled-creation receipt through this fallback.
 
 The executor journals its intent in the same SQLite registry, then uses native
 `git worktree move` to claim the tree inside a private sibling directory. Git
@@ -404,7 +421,11 @@ The executor must:
   uncooperative writers; full coverage and an enforceable no-writers contract are
   prerequisites. Unregistered/ad-hoc access remains outside that guarantee.
 - Write the archive to a private temporary destination; check space and errors.
-  Publish a durable receipt only after integrity and isolated restoration checks.
+  Publish a durable receipt only after artifact integrity, unique-object coverage
+  and captured-state checks. Cleanup uses `verify-local`: an isolated index and
+  the retained common base, without a full checkout or common-repository `fsck`.
+  Full restoration remains a format/recovery test; repository-wide integrity
+  auditing is a separate operation, not a per-worktree cleanup prerequisite.
 - Revalidate generation and content before removal. Content changes, path reuse,
   lost exclusion or incomplete evidence invalidate the plan.
 - Keep the original on archive, verification, I/O or disk-full failure. Never
@@ -433,9 +454,10 @@ or `local_only: true` are excluded. Missing or detached canonical checkouts do n
 establish scope. The archive receives the canonical checkout's actual branch name,
 not a guessed default or a commit ID passed as a branch name.
 
-Only controlled-creation receipts permit calling the generation-bound retirement
-executor. Enrollment alone remains a coverage gap. Live or uncertain owners hold
-the source. Retries use the recorded retirement plan, including its archive root,
+Controlled-creation receipts use normal retirement. A missing creation receipt can
+use the explicit recovery-evidence path described above when all bound owners are
+admitted and ended. Enrollment alone remains a coverage gap; live or uncertain
+owners hold the source. Retries use the recorded plan, including its archive root,
 and do not redirect an interrupted operation to a replacement at the public path.
 A private cursor rotates candidates across bounded passes; it is not deletion
 authority. A pass lock prevents overlapping collectors.

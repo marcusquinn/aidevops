@@ -58,7 +58,7 @@ _cleanup_observation_era_worktrees() {
 	retained=$(jq -c '[.results[] | select(.status == "retained")] | group_by(.reason) | map({reason: .[0].reason, count: length})' <<<"$result") || return 0
 	CLEANUP_WORKTREES_REMOVED_COUNT="$retired"
 	CLEANUP_WORKTREES_ARCHIVED_COUNT="$retired"
-	CLEANUP_WORKTREES_SKIPPED=0
+	# Only the admission pass may acknowledge completion of the scheduled run.
 	printf '[pulse-wrapper] Observation-era cleanup: retired=%s retained=%s\n' "$retired" "$retained" >>"$LOGFILE"
 	return 0
 }

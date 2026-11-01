@@ -16,7 +16,7 @@ from tests import test_retirement as fixtures
 from worker_lifecycle import legacy_cleanup as legacy
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.enrollment import _git_directory
-from worker_lifecycle.process import ProcessObservation
+from worker_lifecycle.process import ObservationUnavailable, ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 
 
@@ -132,14 +132,14 @@ class LegacyCleanupContract(unittest.TestCase):
 
     def test_source_drift_after_verification_retains_source(self):
         self.stop_owner()
-        verify = legacy.verify_restoration
+        verify = legacy.verify_preservation
 
         def changed(*arguments):
             result = verify(*arguments)
             (self.target / "new-work").write_text("keep")
             return result
 
-        with patch.object(legacy, "verify_restoration", side_effect=changed):
+        with patch.object(legacy, "verify_preservation", side_effect=changed):
             result = self.cleanup()
         self.assertEqual(result["retired"], 0, result)
         self.assertEqual((self.target / "new-work").read_text(), "keep")
@@ -170,6 +170,21 @@ class LegacyCleanupContract(unittest.TestCase):
         with patch.object(type(adapter), "observe", side_effect=observed):
             result = self.cleanup()
         self.assertEqual(result["results"][0]["reason"], "process-unknown")
+        self.assertTrue(self.target.exists())
+
+    def test_unavailable_observation_is_reported_per_path(self):
+        adapter = adapter_for(self.store.installation_id())
+        native = adapter.observe
+
+        def observed(identity):
+            if identity.pid == self.owner.pid:
+                raise ObservationUnavailable("fixture-unavailable")
+            return native(identity)
+
+        with patch.object(type(adapter), "observe", side_effect=observed):
+            result = self.cleanup()
+        self.assertEqual(result["results"][0]["reason"], "fixture-unavailable")
+        self.assertEqual(result["retired"], 0)
         self.assertTrue(self.target.exists())
 
     def test_failed_candidate_does_not_starve_next_pass(self):

@@ -22,11 +22,12 @@ from uuid import UUID, uuid5
 from .cleanup_plan import _runs, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .enrollment import (
-    MARKER, GenerationEnrollment, _directory_inode, _git_directory, _read_marker,
+    MARKER, _directory_inode, _git_directory, _read_marker,
 )
 from .preservation import (
-    SCRIPTS, _run, _snapshot, inherit_operation_lock, preserve_wip, verify_restoration,
+    SCRIPTS, _run, _snapshot, inherit_operation_lock, preserve_wip, verify_preservation,
 )
+from .recovery import prepare_retirement, recovery_evidence
 from .storage import LifecycleRegistry, StoreConflict, _private
 
 
@@ -35,6 +36,7 @@ class ArchiveTarget:
     repository: str
     base_branch: str
     root: Path
+    recover: bool = False
 
 
 def _id(path: Path) -> list[int]:
@@ -117,7 +119,7 @@ def _preserved(store: LifecycleRegistry, plan: dict, root: Path) -> dict:
             or _git("--git-dir", str(common), "rev-parse", "--verify",
                     receipt["base_ref"]) != receipt["base_sha"]):
         raise StoreConflict("common-repository-or-base-pin-changed")
-    manifest = verify_restoration(archive, root, receipt["snapshot"])
+    manifest = verify_preservation(archive, root, receipt["snapshot"])
     if manifest.get("source_worktree") != plan["source"]:
         raise StoreConflict("archive-source-changed")
     return receipt
@@ -155,9 +157,12 @@ def _relocate_source(
     with DirectoryHandle(path) as original:
         prepared = prepare_cleanup(store, path)
         if (prepared["generation_id"] != plan["generation_id"]
-                or not prepared["creation_verified"]
                 or prepared["status"] != "registered-runs-ended"):
             raise StoreConflict("source-changed-before-relocation")
+        if not prepared["creation_verified"]:
+            recovered = _event(store, _event_id(plan["generation_id"], "recovered"))
+            if recovered != recovery_evidence(store, path, plan["generation_id"]):
+                raise StoreConflict("recovery-evidence-changed")
         if (_directory_inode(path) != plan["directory_identity"]
                 or _snapshot(path) != receipt["snapshot"]
                 or not original.matches_path()):
@@ -254,7 +259,7 @@ def _finish(
 def retire_worktree(
     store: LifecycleRegistry, path: Path, generation: str, archive: ArchiveTarget,
 ) -> dict[str, object]:
-    """Execute only for controlled, quiescent generations with verified archives."""
+    """Retire controlled generations, or explicitly recover fully admitted owners."""
     repo, base, root = archive.repository, archive.base_branch, archive.root
     if not path.is_absolute() or path.parent.resolve(strict=True) != path.parent:
         raise ValueError("canonical-source-parent-required")
@@ -271,15 +276,7 @@ def retire_worktree(
     with _lock(store, generation):
         plan = _event(store, _event_id(generation, "planned"))
         if plan is None:
-            creation = _event(store, str(uuid5(UUID(generation), "created-worktree")))
-            if not any(row["admitted"] and creation == {
-                "type": "created-worktree", "generation_id": generation,
-                "creator_run_id": row["run_id"], "path": str(path),
-            } for row in _runs(store, generation)):
-                return {"status": "coverage-gap", "cleanup_authorized": False}
-            if GenerationEnrollment(store).inspect(path) != generation:
-                raise StoreConflict("generation-changed")
-            prepared = prepare_cleanup(store, path)
+            prepared = prepare_retirement(store, path, generation, archive.recover)
             if prepared["status"] != "registered-runs-ended":
                 return prepared
             with DirectoryHandle(path):
