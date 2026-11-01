@@ -5,6 +5,7 @@ import { execFileSync } from "child_process";
 import { existsSync, realpathSync, statSync } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
 import { runPreEditCheck } from "./pre-edit-check-process.mjs";
+import { admitToolOwner } from "./lifecycle-admission.mjs";
 
 const PRE_EDIT_GUIDANCE = {
   1: "STOP — you are on main/master branch. Create a worktree first.",
@@ -252,6 +253,16 @@ export function createPreEditCheckTool(tool, z, scriptsDir, timeoutMs = 120000) 
         ? [...(normalizedArgs.task ? ["--loop-mode"] : []), "--file", repositoryTarget]
         : (normalizedArgs.task ? ["--loop-mode", "--task", normalizedArgs.task] : []);
       const result = await runPreEditCheck(script, taskArgs, targetWorkdir, timeoutMs, context);
+      if (result.code === 0 && !result.timedOut && !result.error) {
+        try {
+          admitToolOwner({
+            scriptsDir, input: { tool: "aidevops_pre_edit_check", sessionID: context?.sessionID || "" },
+            output: { args: { cwd: targetWorkdir } }, bash: true,
+          });
+        } catch (error) {
+          return `Pre-edit check exit 1: ${error.message}`;
+        }
+      }
       return formatPreEditCheckResult(result, timeoutMs);
     },
   });

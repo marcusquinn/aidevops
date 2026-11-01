@@ -33,6 +33,7 @@ import {
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
 import { liveSupervisorRoots, processStartIdentity } from "./process-start-identity.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
+import { runtimeOwner } from "./runtime-owner.mjs";
 
 const MAX_OPERATIONS = 24;
 const SUPERVISOR_PATH = fileURLToPath(new URL("./bounded-operation-supervisor.mjs", import.meta.url));
@@ -104,11 +105,19 @@ export class BoundedInteractiveOperationManager {
 
   spawnOwned(operation, command, stage) {
     const childBudgetMs = command === operation.command ? operation.budgetMs : operation.restorationBudgetMs;
+    const owner = runtimeOwner(operation.owner);
     const child = this.spawn(this.supervisorRuntime, [SUPERVISOR_PATH], {
       cwd: operation.cwd,
       detached: true,
       // Lifecycle helpers must inherit the authenticated caller, not a stale host session.
-      env: { ...process.env, OPENCODE_SESSION_ID: operation.owner },
+      env: {
+        ...process.env,
+        OPENCODE_SESSION_ID: operation.owner,
+        OPENCODE_PID: owner.pid,
+        OPENCODE_PID_START_IDENTITY: owner.identity,
+        AIDEVOPS_LIFECYCLE_RUNTIME_PID: owner.identity ? owner.pid : "",
+        AIDEVOPS_LIFECYCLE_SESSION_ID: owner.identity ? operation.owner : "",
+      },
       stdio: ["pipe", "pipe", "pipe", "ipc"],
     });
     child.on("message", (message) => {

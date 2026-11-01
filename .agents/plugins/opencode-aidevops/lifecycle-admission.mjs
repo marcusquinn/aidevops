@@ -5,6 +5,7 @@ import { join } from "path";
 import { patchTargetPaths } from "./worker-write-fence.mjs";
 import { isApplyPatchMutationTool, isDirectFileMutationTool } from "./quality-hooks-git-safety.mjs";
 import { parsePolicyPayload, runPolicyHelper } from "./quality-hooks-policy-runner.mjs";
+import { runtimeOwner } from "./runtime-owner.mjs";
 
 function ownerWorkingDirectory(args, repositoryDir, bash) {
   return bash
@@ -26,9 +27,10 @@ function ownerArguments(scriptsDir, input, args, context) {
   const { cwd, fileMutation, bash, bounded } = context;
   const paths = fileMutation ? mutationPaths(input, args, cwd) : [];
   const sessionID = input.sessionID || input.sessionId || input.session?.id || "";
+  const owner = runtimeOwner(sessionID);
   // #aidevops:trust-boundary — these identities come from the runtime, not tool args.
   const helperArgs = ["-E", "-s", "-B", join(scriptsDir, "worker-lifecycle-session-helper.py"),
-    "--cwd", cwd, "--runtime-pid", String(process.pid), "--session-id", sessionID];
+    "--cwd", cwd, "--runtime-pid", owner.pid, "--session-id", sessionID];
   for (const path of paths) helperArgs.push("--path", path);
   if (bash && typeof args.command === "string") helperArgs.push("--command", args.command);
   if (bounded && Array.isArray(args.command)) helperArgs.push("--argv-json", JSON.stringify(args.command));
