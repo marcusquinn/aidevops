@@ -95,8 +95,10 @@ worktree creation: unmarked linked worktrees report
 `coverage-gap: schema-upgrade-required` without admission, enrollment or migration.
 This applies to Bash (including explicit `git -C` targets), bounded commands and
 direct Write/Edit, independent of the configured worktree base. Canonical-write
-policy still applies. Use `worker-registry.py --state-dir <state-directory> status`
-for read-only inspection; no upgrade is required for this compatibility path.
+policy still applies. Use
+`python3 -E -s -B "$HOME/.aidevops/agents/worker-lifecycle/worker-registry.py" --state-dir <state-directory> status`
+for read-only inspection, replacing `<state-directory>` with the quoted absolute
+state path; no upgrade is required for this compatibility path.
 Schema-1 generation markers or admission state remain conflicting-state refusals;
 coordinate recovery with all clients, without reset, downgrade or implicit migration.
 Event envelope schema 1 is separate and unchanged. Admission requirements and
