@@ -62,10 +62,15 @@ def regular_fingerprint(path, parent, tar_metadata=False, git_metadata=False):
     return ["file", mode, before.st_size, digest.hexdigest()]
 
 
-def open_parent(root, parts):
+def open_parent(root, parts, *, create=False):
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for name in parts:
+            if create:
+                try:
+                    os.mkdir(name, dir_fd=descriptor)
+                except FileExistsError:
+                    pass  # The no-follow open below still checks the entry type.
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child

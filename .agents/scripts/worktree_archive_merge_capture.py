@@ -57,7 +57,7 @@ def merge_working_paths(root, head, entries):
     for entry in git(root, 'ls-tree', '-r', '-z', head).split(b'\0'):
         if entry:
             metadata, path = entry.split(b'\t', 1)
-            if metadata.split()[0] not in (b'100644', b'100755'):
+            if metadata.split()[0] not in (b'100644', b'100755', b'120000'):
                 raise ValueError('merge:unsupported_head_entry')
             paths.add(path.hex())
     attributes = git(root, 'check-attr', '-z', '--stdin', 'filter', data=b'\0'.join(bytes.fromhex(path) for path in sorted(paths)) + b'\0')
@@ -72,8 +72,10 @@ def merge_working_file(root, path):
     observed = fingerprint(root, raw, git_metadata=True)
     if observed == ['missing']:
         return None
+    if observed[0] == 'symlink':
+        return ['symlink', os.fsencode(observed[1]).hex()]
     if observed[0] != 'file':
-        raise ValueError('merge:symlink_not_supported')
+        raise ValueError('merge:unsupported_file')
     relative = Path(os.fsdecode(raw))
     parent = open_parent(root, relative.parts[:-1])
     try:
