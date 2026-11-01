@@ -786,8 +786,13 @@ check_upstream_watch() (
 			return 0
 		fi
 	fi
-	local watch_pid="${BASHPID:-$$}"
-	trap 'rmdir "$lock_dir/$watch_pid" 2>/dev/null; rmdir "$lock_dir" 2>/dev/null || true' EXIT
+	local watch_pid="${BASHPID:-}"
+	# Bash 3.2 has no BASHPID, and $$ still identifies the parent shell here.
+	# exec makes the command-substitution child report this subshell's PID.
+	if [[ -z "$watch_pid" ]]; then
+		watch_pid=$(exec sh -c 'printf "%s" "$PPID"')
+	fi
+	trap 'rmdir "$lock_dir/$watch_pid" 2>/dev/null || true; rmdir "$lock_dir" 2>/dev/null || true' EXIT
 	trap 'exit 1' HUP INT TERM
 	if ! mkdir "$lock_dir/$watch_pid"; then
 		return 1
@@ -805,7 +810,8 @@ check_upstream_watch() (
 	fi
 
 	# Recheck under the lock so simultaneous ticks cannot both pass the gate.
-	gate_result=$(_check_freshness_time_gate "last_upstream_watch_attempt" 3600 "Upstream watch attempt")
+	local attempt_field="last_upstream_watch_attempt"
+	gate_result=$(_check_freshness_time_gate "$attempt_field" 3600 "Upstream watch attempt")
 	if [[ "$gate_result" == "skip" ]]; then
 		return 0
 	fi
@@ -822,7 +828,7 @@ check_upstream_watch() (
 	repo_count=$(jq '.repos | length' "$watch_config" 2>/dev/null || echo "0")
 
 	# Persist before execution: failures and interrupted runs must back off too.
-	if ! update_upstream_watch_timestamp "last_upstream_watch_attempt"; then
+	if ! update_upstream_watch_timestamp "$attempt_field"; then
 		log_warn "Could not record upstream watch attempt — skipping"
 		return 1
 	fi
@@ -832,6 +838,8 @@ check_upstream_watch() (
 		update_upstream_watch_timestamp
 	else
 		log_warn "Upstream watch check had errors (exit code: $?) — retry in at least 1 hour"
+		# A long failed check still needs a full hour after it finishes.
+		update_upstream_watch_timestamp "$attempt_field" || return 1
 	fi
 	return 0
 )
