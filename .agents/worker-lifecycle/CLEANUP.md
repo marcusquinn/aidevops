@@ -287,22 +287,18 @@ The registry CLI provides two non-destructive operations:
   be canonical, private and outside the source worktree and its administration
   directory. Missing evidence or failed verification leaves the source intact.
 
-Both commands require the usual `--state-dir` before the subcommand. Neither
-command initializes/migrates state, reopens admission, removes a worktree or
-consults legacy ownership. A failure after closure deliberately leaves the gate
-closed. Do not use these commands to inspect a worktree intended for more launches.
+Both commands require `--state-dir` before the subcommand. Neither initializes or
+migrates state, reopens admission, removes worktrees or consults legacy ownership.
+Closure survives failure: do not use these commands on trees needing more launches.
 
-Successful preservation records a receipt in the new registry. Repeating the
-same generation/content/destination request rechecks its existing archive rather
-than treating the old receipt as current proof. The receipt and result retain
-`cleanup_authorized=false` and `common_repository_required=true`.
+Preservation records a registry receipt. Repeating the same generation/content/
+destination request rechecks the archive; old receipts are not current proof.
+Results retain `cleanup_authorized=false` and `common_repository_required=true`.
 
-Each archive pins its base commit under `refs/aidevops/wip-base/OPERATION_ID`.
-This keeps prerequisites reachable through branch deletion and ordinary Git GC;
-it does not protect against loss of the common repository. These pins must remain
-while dependent archives are retained. Automatic archive/pin retirement is not
-implemented by these commands. Git/filesystem work runs outside SQLite write
-transactions; only the verified receipt is published transactionally.
+Archives pin `refs/aidevops/wip-base/OPERATION_ID` through branch deletion and Git GC,
+but still depend on the common repository. Retain pins while dependent archives exist;
+these commands do not retire archives/pins automatically. Git/filesystem work stays
+outside SQLite write transactions; only verified receipts are published transactionally.
 
 ## Explicit guarded retirement
 
@@ -313,57 +309,39 @@ a **specified generation**, not whichever resource currently occupies a pathname
 python3 -E -s -B /absolute/path/to/worker-registry.py --state-dir /absolute/private/state retire-worktree --path /absolute/canonical/worktree --generation-id GENERATION_UUID --repo OWNER/REPO --base-branch main --output-root /absolute/private/archives
 ```
 
-This command is destructive and is not scheduled automatically. It requires a
-controlled-creation receipt, ended admitted owners, closed admission and verified
-Git-only preservation. Existing enrollment without creation provenance is not
-sufficient. No legacy ownership data is consulted and no branches are deleted.
+This unscheduled destructive command requires controlled creation, ended admitted
+owners, closed admission and verified Git-only preservation; enrollment alone is
+insufficient. It neither consults legacy ownership nor deletes branches.
 
-The configured `cleanup`/`cleanup-worktree` paths additionally recover an enrolled
-generation whose creation receipt is absent, but only when every bound run has a
-valid admission and has ended. Preparation closes admission before recovery.
-The journal records `worktree-recovery-authorized`, binding the current physical
-directory, Git administration and exact admitted run set. This is not a synthetic
-`created-worktree` event. Recovery uses the same verified archive, relocation,
-source rechecks and retry protocol below. Empty registrations, observation-only
-bindings, live/unknown runs and invalid existing creation receipts remain held.
+Configured `cleanup`/`cleanup-worktree` additionally recover missing creation receipts
+only after all bound runs are admitted and ended, and admission is closed.
+`worktree-recovery-authorized` binds the physical directory, Git administration and
+exact run set; it never fabricates `created-worktree`. The same archive, source-recheck,
+relocation and retry protections apply. Empty/observation-only registrations,
+live/unknown runs and invalid existing creation receipts remain held.
 
-For fresh creation through `shared-worktree-create.sh`, callers without an explicit
-runtime declaration now register the creating shell itself. An explicit runtime
-owner remains preferred when it also performs subsequent preparation. Registering
-the creator does not cover later writers: each must still obtain its own admission.
-Private/disabled lifecycle mode and pre-existing reserved paths do not gain a
-controlled-creation receipt through this fallback.
+The executor journals intent, then uses native `git worktree move` to claim a private
+sibling path. Metadata and content must match before its native removal; the public
+name is never a removal target. Per-generation OS locks serialize controllers without
+holding SQLite writer transactions across filesystem work. Archives/base pins remain.
 
-The executor journals its intent in the same SQLite registry, then uses native
-`git worktree move` to claim the tree inside a private sibling directory. Git
-metadata and the saved content snapshot must match before native removal of that
-private path. The original public name is never a removal target. A per-generation
-OS lock serializes controllers; filesystem work does not hold a SQLite writer
-transaction. The archive and its pinned base remain after removal.
-
-Explicitly launched helpers inherit the lock descriptor. If the controller dies
-while its helper is still running, another controller cannot acquire the lock
-until that helper closes its descriptor. This uses kernel descriptor lifetime,
+Explicit helpers inherit the lock descriptor. After controller death, another controller
+cannot acquire it until surviving helpers close it. This uses kernel descriptor lifetime,
 not descendant discovery, PID signalling or cwd inspection.
 
-Repeat the same command and generation ID after interruption. Completed relocation
-can resume even if another directory now occupies the public name. Completed
-removal can be acknowledged after a lost acknowledgement. Completion releases the
-path reservation, permitting a new controlled generation at that name; a retry
-for the old UUID never targets the new generation.
+Retry the same command/generation after interruption. Relocation resumes despite public-name
+reuse; completed removal can be acknowledged after a lost acknowledgement. Completion
+releases the path reservation; retries of the old UUID never target a new generation.
 
-An incomplete Git metadata update, changed archive, changed private tree, partial
-removal or uncertain outcome stops rather than guessing. The journal,
-archive and surviving private data remain available for recovery. The executor
-does not run repository-wide `git worktree repair` or prune unrelated metadata.
-Git locks remain effective: relocation is not forced and removal uses only the
-single force needed for archived dirty state. Ignored files are deliberately
-discarded with the worktree, never added to the archive.
+Incomplete Git updates, changed archives/private trees, partial removal or uncertain
+outcomes stop with journal, archive and surviving data retained. No repository-wide
+repair or unrelated metadata pruning runs. Git locks remain effective: relocation is
+not forced; removal uses only the single force needed for archived dirty state.
+Ignored files are deliberately discarded with the worktree, never archived.
 
-`tests/test_retirement.py` uses real Git and the CLI in disposable repositories,
-including interruption boundaries and public-name reuse. The portable registry
-validator includes these checks. Only reports listing them qualify that artifact's
-fixture behavior; they do not qualify production scheduling or existing worktrees.
+`tests/test_retirement.py` exercises real Git/CLI interruption and name reuse in disposable
+repositories. Portable reports qualify only their listed fixture checks, not production
+scheduling or existing worktrees.
 
 ## Archive payload qualification
 
