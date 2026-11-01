@@ -87,11 +87,43 @@ New stores use schema 2. Observation still accepts schema 1 without upgrading it
 other versions are rejected. The explicit `upgrade_schema()` API transactionally
 adds the admission table to schema 1 and updates the version, retaining existing
 events, runs and bindings. It never adopts historical bindings as admission proof.
-Repeated upgrades are no-ops. No automatic migration or production upgrade command
-is installed. Back up real state and coordinate clients before a future upgrade:
-older schema-1-only code will reject schema 2. Do not reset or downgrade live state.
+After updating aidevops, the first Pulse reconciliation or registry CLI enrollment,
+creation or session admission automatically backs up and upgrades schema 1 before
+continuing. Both current schemas are supported by the updated clients. This is
+an additive migration: live runs need not drain, and their records remain intact.
+Repeated upgrades are no-ops. Older schema-1-only clients reject schema 2; do not
+roll back to those clients or reset/downgrade live state.
 Event envelope schema 1 is separate and unchanged. Admission requirements and
 current integration limitations are documented in [CLEANUP.md](CLEANUP.md).
+
+### Automatic and manual schema upgrade
+
+`status` is read-only and reports `schema_version` and `upgrade_required`.
+The same upgrade can be requested explicitly from the installed `worker-lifecycle/`
+package, without waiting for Pulse:
+
+```bash
+python3 -E -s -B -m worker_lifecycle.registry --state-dir /absolute/private-state upgrade
+```
+
+An optional `--backup-dir /absolute/private-parent/new-backup` selects a new backup
+directory. Otherwise a unique `schema-1-backup-UUID` directory is created inside
+the selected registry directory, with mode 0700 and a 0600 `registry.sqlite3`.
+SQLite's backup API includes committed WAL data. Integrity, foreign keys, schema
+and installation identity are checked and the standalone backup is synced before
+migration. One writer lock covers backup and migration, so competing writers cannot
+slip records between them. Concurrent upgraders recheck the schema under that lock;
+only the winning upgrader creates a backup. Lock contention can refuse an invocation
+and is retried by a later ordinary Pulse tick or command.
+
+Backup/migration failure refuses the requested operation and retains schema 1;
+partial backup artifacts are retained for investigation, never overwritten. A
+process interrupted after commit may already have schema 2; inspect `status` and
+retry safely. Backups are evidence, not permission to restore an old database over
+new writes. They are not automatically deleted. Pulse creates no absent store.
+Previously unenrolled worktrees are not adopted by migration, and historical
+bindings do not grant admission or cleanup authority. Only subsequent normal
+enrollment establishes a generation under the existing identity checks.
 
 Generation marker format 2 records the directory inodes alongside canonical paths,
 installation and generation UUIDs. Device numbers may change between mounts and

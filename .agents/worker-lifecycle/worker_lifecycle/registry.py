@@ -18,6 +18,7 @@ from .cleanup_plan import prepare_cleanup
 from .launch import initialize_or_open
 from .runtime import adapter_for, require_ready
 from .storage import MAX_EVENT_BYTES, LifecycleRegistry, StoreCapacity, StoreConflict
+from .upgrade import upgrade_registry
 
 
 class ReconciliationResult(TypedDict, total=False):
@@ -61,6 +62,9 @@ def argument_parser() -> argparse.ArgumentParser:
     initialize = commands.add_parser("init", help="create a NEW private directory/store after readiness")
     initialize.add_argument("--max-events", type=int, default=10000)
     commands.add_parser("status", help="report aggregate registry state")
+    upgrade = commands.add_parser("upgrade", help="back up and upgrade schema-1 state")
+    upgrade.add_argument("--backup-dir", type=Path,
+                         help="NEW private directory; defaults to a unique directory inside state")
     commands.add_parser("ingest", help="accept one stable event envelope from stdin without recapturing its PID")
     register = commands.add_parser("register", help="capture an explicit run's process")
     register.add_argument("--event-id", required=True)
@@ -122,7 +126,7 @@ def argument_parser() -> argparse.ArgumentParser:
         enrollment = commands.add_parser(name, help="enroll or resolve a linked worktree; schema 2 required")
         enrollment.add_argument("--path", required=True, type=Path)
         if name == "enroll":
-            enrollment.add_argument("--initialize", action="store_true", help="create absent state; never migrate existing state")
+            enrollment.add_argument("--initialize", action="store_true", help="create absent state; existing schema 1 is backed up and upgraded")
             enrollment.add_argument("--allow-schema-1-observation", action="store_true", help="report an unenrolled schema-1 creation as a coverage gap, never as admission")
     return parser
 
@@ -168,6 +172,10 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
 
 
 def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation == "upgrade":
+        return upgrade_registry(store, args.backup_dir)
+    if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
+        upgrade_registry(store)
     if args.operation == "cleanup-worktree":
         from .cleanup import cleanup_worktree
 
@@ -215,7 +223,7 @@ def main() -> int:
     except (ValueError, OSError, sqlite3.Error, subprocess.SubprocessError, ObservationUnavailable) as error:
         reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
         retiring = args.operation in ("retire-worktree", "cleanup")
-        if retiring and isinstance(error, StoreConflict):
+        if (retiring or args.operation == "upgrade") and isinstance(error, StoreConflict):
             reason = str(error)
         mode = "retirement" if retiring else "observe-only"
         detail = {"mode": mode, "status": "unavailable", "reason": reason,

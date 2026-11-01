@@ -488,7 +488,7 @@ class EnrollmentContract(unittest.TestCase):
             cwd=self.root, env=env, capture_output=True, text=True, timeout=30,
         )
 
-    def test_schema_one_creation_reports_gap_without_migration(self):
+    def test_schema_one_creation_upgrades_and_enrolls_automatically(self):
         with self.store.connection(write=True) as connection:
             connection.execute("DROP TABLE generation_admissions")
             connection.execute("PRAGMA user_version=1")
@@ -496,13 +496,16 @@ class EnrollmentContract(unittest.TestCase):
         result = self.creation_enrollment(self.tree)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
-        self.assertIn("coverage-gap: schema-upgrade-required", result.stderr)
-        self.assertFalse(self.marker.exists())
-        self.assertEqual(self.store.summary(), before)
+        self.assertIn("schema-upgraded from=1 to=2", result.stderr)
+        self.assertNotIn("coverage-gap", result.stderr)
+        self.assertTrue(self.marker.exists())
+        backups = list(self.store.directory.glob("schema-1-backup-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(LifecycleRegistry(backups[0]).summary(), before)
         with self.store.connection() as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
-        with self.assertRaises(ValueError):
-            self.enrollment.resolve(self.tree, create=True)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(self.enrollment.resolve(self.tree),
+                         self.enrollment.resolve(self.tree, create=True))
 
     def test_schema_one_compatibility_refuses_existing_marker(self):
         self.enrollment.resolve(self.tree, create=True)
