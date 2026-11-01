@@ -45,8 +45,42 @@ _worktree_enroll_generation() {
 	if ! enrollment_result=$("$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
 		--state-dir "$state_dir" "${enrollment_args[@]}"); then
 		printf 'Generation enrollment refused: %s\n' "$enrollment_result" >&2
+		_worktree_refusal_remediation "$enrollment_result" "$state_dir"
 		return 1
 	fi
+	return 0
+}
+
+# Print one remediation line for a known lifecycle refusal code (GH#36370).
+# Input is the registry's JSON result; only the stable `detail` code is read.
+_worktree_refusal_remediation() {
+	local result="$1"
+	local state_dir="$2"
+	local code="" registry_cli=""
+	[[ "$result" =~ \"detail\":\ \"([a-z0-9-]+)\" ]] || return 0
+	code="${BASH_REMATCH[1]}"
+	# Reports are often pasted into issues; abbreviate the home directory.
+	registry_cli=$(cd -- "${BASH_SOURCE[0]%/*}/../worker-lifecycle" 2>/dev/null && pwd -P)/worker-registry.py
+	local home_real=""
+	home_real=$(cd -- "$HOME" 2>/dev/null && pwd -P) || home_real="$HOME"
+	[[ "$registry_cli" != "$home_real"/* ]] || registry_cli="~${registry_cli#"$home_real"}"
+	[[ "$state_dir" != "$HOME"/* ]] || state_dir="~${state_dir#"$HOME"}"
+	[[ "$state_dir" != "$home_real"/* ]] || state_dir="~${state_dir#"$home_real"}"
+	case "$code" in
+	database-locked | upgrade-backup-timeout)
+		printf 'Refusal cause: %s; another lifecycle operation holds the registry. Retry shortly.\n' "$code" >&2
+		;;
+	ref-already-checked-out)
+		printf 'Refusal cause: %s; the ref is checked out in another worktree. Create a new branch instead.\n' "$code" >&2
+		;;
+	no-such-table | no-such-column | upgrade-* | schema-*)
+		printf 'Refusal cause: %s; upgrade the registry: python3 %s --state-dir %s upgrade\n' "$code" \
+			"$registry_cli" "$state_dir" >&2
+		;;
+	*)
+		printf 'Refusal cause: %s\n' "$code" >&2
+		;;
+	esac
 	return 0
 }
 
@@ -80,6 +114,7 @@ _worktree_create_native() {
 		--state-dir "$state_dir" create-worktree --initialize --repo "$repo" \
 		--path "$path" --ref "$ref" --pid "$runtime_pid" --session-id "$session_id" -- "$@"); then
 		printf 'Native worktree creation refused; partial results retained: %s\n' "$result" >&2
+		_worktree_refusal_remediation "$result" "$state_dir"
 		return 1
 	fi
 	return 0

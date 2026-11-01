@@ -648,6 +648,29 @@ test_task_branch_remote_refresh_failure_fails_closed() {
 	return 0
 }
 
+# GH#36370: a creation failure that reports no collision must not send the
+# caller looking for a branch collision that does not exist.
+test_creation_refusal_without_collision() {
+	local saved_base="$TEST_WORKTREE_BASE"
+	TEST_WORKTREE_BASE="${TEST_ROOT}/worktree-base-is-a-file"
+	printf 'not a directory\n' >"$TEST_WORKTREE_BASE"
+	local output=""
+	local exit_code=0
+	output=$(OPENCODE_SESSION_ID=refusal-session FULL_LOOP_HEADLESS=true \
+		run_helper "$TEST_ROOT" --loop-mode --task "Issue #30001 creation refusal" 2>&1) || exit_code=$?
+	rm -f "$TEST_WORKTREE_BASE"
+	TEST_WORKTREE_BASE="$saved_base"
+	if [[ "$exit_code" -eq 2 && "$output" == *"WORKTREE_COLLISION=none"* &&
+		"$output" == *"ACTION_REQUIRED=inspect_creation_refusal"* &&
+		"$output" == *"No branch collision was reported"* &&
+		"$output" != *"Inspect the reported branch collision"* ]]; then
+		print_result "creation refusal without collision is not reported as a collision" 0
+	else
+		print_result "creation refusal without collision is not reported as a collision" 1 "exit=${exit_code} output=${output}"
+	fi
+	return 0
+}
+
 main() {
 	trap teardown_test_repo EXIT
 	setup_test_repo
@@ -676,6 +699,7 @@ main() {
 	test_stale_task_branch_is_replaced_and_owned_continuation_resumes
 	test_unique_task_branch_fails_closed
 	test_task_branch_remote_refresh_failure_fails_closed
+	test_creation_refusal_without_collision
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

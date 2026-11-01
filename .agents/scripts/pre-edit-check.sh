@@ -443,6 +443,7 @@ _create_loop_task_worktree() {
 	_LOOP_WT_BEHIND=""
 	_LOOP_WT_COLLISION=""
 	_LOOP_WT_ACTION=""
+	_LOOP_WT_REFUSAL=""
 	_LOOP_WT_RC=1
 	[[ -x "$helper" ]] || return 1
 
@@ -462,7 +463,13 @@ _create_loop_task_worktree() {
 	_LOOP_WT_COLLISION=$(_loop_worktree_output_value "$output" WORKTREE_COLLISION)
 	_LOOP_WT_ACTION=$(_loop_worktree_output_value "$output" ACTION_REQUIRED)
 	if [[ "$_LOOP_WT_RC" -ne 0 ]]; then
-		printf '%s\n' "$output" | awk '!/^[A-Z_]+=/'
+		local diagnostics=""
+		diagnostics=$(printf '%s\n' "$output" | awk '!/^[A-Z_]+=/')
+		printf '%s\n' "$diagnostics"
+		# GH#36370: keep the helper's own refusal line for the no-collision path.
+		_LOOP_WT_REFUSAL=$(printf '%s\n' "$diagnostics" | grep -iE 'refused|error|failed' | tail -n 1 | cut -c1-300) || _LOOP_WT_REFUSAL=""
+		[[ -n "$_LOOP_WT_REFUSAL" ]] ||
+			_LOOP_WT_REFUSAL=$(printf '%s\n' "$diagnostics" | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-300) || _LOOP_WT_REFUSAL=""
 		return 1
 	fi
 	return 0
@@ -470,8 +477,14 @@ _create_loop_task_worktree() {
 
 _print_loop_worktree_failure_next_step() {
 	local action="$1"
+	local refusal="${2:-}"
 	if [[ "$action" == "refresh_target" ]]; then
 		echo "NEXT_STEP: Restore remote access, refresh the target branch, and retry without changing local task branches."
+		return 0
+	fi
+	if [[ "$action" == "inspect_creation_refusal" ]]; then
+		echo "NEXT_STEP: No branch collision was reported; worktree creation itself was refused. Resolve the refusal, then retry the continuation command."
+		[[ -z "$refusal" ]] || echo "REFUSAL: $refusal"
 		return 0
 	fi
 	echo "NEXT_STEP: Inspect the reported branch collision, then choose an explicit continuation or a new branch."
@@ -556,10 +569,16 @@ _handle_loop_mode_on_protected() {
 	else
 		# Worktree creation failed — fall back to signalling exit 2
 		echo -e "${RED}LOOP-AUTO${NC}: Failed to auto-create worktree '$_wt_branch_name'"
+		# GH#36370: a failure without WORKTREE_COLLISION is a creation refusal,
+		# not a branch collision; never send the caller looking for a branch.
+		if [[ -z "$_wt_collision" ]]; then
+			_wt_collision="none"
+			[[ -n "$_wt_failure_action" ]] || _wt_failure_action="inspect_creation_refusal"
+		fi
 		echo "LOOP_DECISION=worktree"
 		echo "WORKTREE_BRANCH=${_wt_actual_branch:-$_wt_branch_name}"
 		[[ -z "$_wt_path" ]] || echo "WORKTREE_PATH=$_wt_path"
-		echo "WORKTREE_COLLISION=${_wt_collision:-creation_failed}"
+		echo "WORKTREE_COLLISION=${_wt_collision}"
 		[[ -z "$_wt_target" ]] || echo "WORKTREE_TARGET=$_wt_target"
 		[[ -z "$_wt_ahead" ]] || echo "WORKTREE_AHEAD=$_wt_ahead"
 		[[ -z "$_wt_behind" ]] || echo "WORKTREE_BEHIND=$_wt_behind"
@@ -567,7 +586,7 @@ _handle_loop_mode_on_protected() {
 		# Preserve the branch as an explicit continuation target. Never delete it:
 		# another process may have added commits since worktree creation failed.
 		printf 'CONTINUATION_COMMAND: worktree-helper.sh add %q\n' "${_wt_actual_branch:-$_wt_branch_name}"
-		_print_loop_worktree_failure_next_step "$_wt_failure_action"
+		_print_loop_worktree_failure_next_step "$_wt_failure_action" "$_LOOP_WT_REFUSAL"
 		exit 2 # Special exit code for "create worktree"
 	fi
 }
