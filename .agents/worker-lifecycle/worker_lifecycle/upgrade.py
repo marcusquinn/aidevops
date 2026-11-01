@@ -10,7 +10,8 @@ import sys
 import time
 from uuid import uuid4
 
-from .storage import APPLICATION_ID, LifecycleRegistry, StoreConflict, _private
+from .filesystem import validate_private_path as _private
+from .storage import APPLICATION_ID, LifecycleRegistry, StoreConflict
 
 
 def upgrade_registry(store: LifecycleRegistry, backup_dir: Path | None = None) -> dict:

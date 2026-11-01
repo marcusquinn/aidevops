@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from .process import ObservationUnavailable, ProcessIdentity
 from .events import ingest
+from .filesystem import FilesystemValidationError, filesystem_error_details
 from .enrollment import GenerationEnrollment
 from .cleanup_plan import prepare_cleanup
 from .launch import initialize_or_open
@@ -225,6 +226,8 @@ def main() -> int:
         mode = "retirement" if retiring else "observe-only"
         detail = {"mode": mode, "status": "unavailable", "reason": reason,
                   "cleanup_authorized": False}
+        if isinstance(error, FilesystemValidationError):
+            detail.update(filesystem_error_details(error))
         # GH#36142: name the enrollment refusal; OSError text may carry paths.
         if args.operation == "enroll" and isinstance(error, ValueError):
             detail["detail"] = str(error)[:200]

@@ -22,6 +22,7 @@ from uuid import UUID, uuid5
 from .archive_path import validate_archive_path
 from .cleanup_plan import _runs, prepare_cleanup
 from .directory_handle import DirectoryHandle
+from .filesystem import validate_private_path as _private
 from .enrollment import (
     MARKER, _directory_inode, _git_directory, _read_marker,
 )
@@ -29,7 +30,7 @@ from .preservation import (
     SCRIPTS, _run, _snapshot, inherit_operation_lock, preserve_wip, verify_preservation,
 )
 from .recovery import prepare_retirement, recovery_evidence
-from .storage import LifecycleRegistry, StoreConflict, _private
+from .storage import LifecycleRegistry, StoreConflict
 
 
 @dataclass(frozen=True)
