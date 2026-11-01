@@ -95,18 +95,19 @@ full-loop-helper.sh merge NUMBER SLUG --squash
 
 Triage review dispatch is handled deterministically by `dispatch_triage_reviews()` in `pulse-wrapper.sh` BEFORE the LLM session starts. NMR issues are NOT included in the LLM state file (t1894 security gate). The LLM MUST NOT attempt to list, fetch, comment on, relabel, or dispatch workers for NMR issues. Approval is cryptographic — only `sudo aidevops approve issue <number>` can unlock the gate.
 
-### 4. Dispatch workers for open issues
+### 4. Prepare open issues for deterministic dispatch
 
 ```bash
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-candidates SLUG 100
-
-# Atomic dispatch — runs all 7 dedup layers, assigns, launches, records ledger
-~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
-  "Issue #NUMBER: TITLE" "TASK_ID: TITLE" RUNNER_USER PATH \
-  "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION"
 ```
 
-Repeat until `AVAILABLE` slots are filled or no dispatchable issues remain.
+The deterministic wrapper outside this sandbox owns worker launches on each
+pass. Do not invoke `dispatch-single-issue-helper.sh dispatch` or nested
+`pulse-wrapper.sh --command dispatch` from supervisor-pulse: inherited lifecycle
+ownership can refuse worktree creation after claim/ceremony (GH#36343). Use
+authorized brief repair to unblock candidates for the next deterministic pass;
+do not claim, assign or relabel solely to request a launch. Record unresolved
+launch evidence and continue safe triage rather than retry an unchanged refusal.
 
 ### 4.5. Scan status:needs-info issues for contributor replies
 

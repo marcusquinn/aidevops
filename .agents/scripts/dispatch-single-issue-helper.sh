@@ -1627,6 +1627,13 @@ _dsi_check_runner_capability() {
 # Subcommand: dispatch <issue> <slug> [--model M] [--dry-run]
 #######################################
 cmd_dispatch() {
+	# GH#36343: supervisor children inherit a restricted lifecycle owner. Do not
+	# acquire claims/labels only to fail native worktree creation later. The
+	# deterministic wrapper outside the LLM session owns worker launches.
+	if [[ "${WORKER_SESSION_KEY:-}" == "supervisor-pulse" ]]; then
+		_dsi_err "supervisor_dispatch_deferred: dispatch runs in the deterministic wrapper outside the supervisor session; no claim or ceremony performed"
+		return 1
+	fi
 	local rc=0
 	_dsi_parse_dispatch_args "$@" || rc=$?
 	case "$rc" in
