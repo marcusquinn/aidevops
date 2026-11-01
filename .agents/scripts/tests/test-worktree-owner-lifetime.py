@@ -577,7 +577,6 @@ class ProcessReconciliationTests(unittest.TestCase):
                 proof.inspect(record, Path(directory) / "absent", ["fixture-inode"], None, lambda *_: None)
 
     def test_same_boot_busy_or_unknown_census_preserves_worktree(self):
-        import worktree_lifetime_reconcile as reconcile
         import worktree_process_snapshot as census
         for status, references, uncertain in (("available", 1, 0), ("available", 0, 1),
                                               ("unavailable", 0, 0)):
