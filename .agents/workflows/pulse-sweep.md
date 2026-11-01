@@ -322,19 +322,12 @@ Compute the caps yourself from `MAX_WORKERS` (integer division, minimum 1):
 
 ### Worktree dispatch (MANDATORY for quality-debt)
 
-Quality-debt workers MUST use pre-created worktrees to prevent branch conflicts:
-
-```bash
-git -C PATH rev-parse --abbrev-ref HEAD
-~/.aidevops/agents/scripts/pulse-wrapper.sh --command create-debt-worktree PATH NUMBER TITLE
-
-~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
-  "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" RUNNER_USER QD_WT_PATH \
-  "/full-loop Implement issue #NUMBER (URL) -- TITLE"
-```
-
-Skip the issue unless the `rev-parse` output is `main` or `master`. Use the
-worktree path printed by `create-debt-worktree` as `QD_WT_PATH`; skip on failure.
+Quality-debt workers MUST use pre-created worktrees to prevent branch conflicts.
+The deterministic wrapper outside this sandbox owns worktree creation and worker
+launches. Do not invoke `create-debt-worktree` or nested
+`pulse-wrapper.sh --command dispatch` from supervisor-pulse. Record eligible
+quality-debt candidates for the next deterministic pass, subject to the concurrency
+and overlap caps; use authorized brief repair to unblock them as described in Step 4.
 
 **PR title for debt issues:** `GH#<number>: <description>` — never `qd-`, bare numbers, or `t` prefix.
 
