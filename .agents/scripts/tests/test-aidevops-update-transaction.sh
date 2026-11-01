@@ -292,6 +292,30 @@ run_lifecycle_only_update_test() (
 	VERIFY_ERROR="stale activated bundle"
 	if _update_already_current "$lifecycle_sha" compact; then return 1; fi
 	[[ "$VERIFY_SHA" == "$lifecycle_sha" ]] || return 1
+
+	# Exercise the real caller under suppressed errexit, as in the install path.
+	# Keep fetching local and make both hashes equal without touching a remote.
+	/usr/bin/git -C "$INSTALL_DIR" branch -M main
+	/usr/bin/git -C "$INSTALL_DIR" update-ref refs/remotes/origin/main "$docs_sha"
+	_update_fetch_main() { return 0; }
+	printf '%s\n' "$baseline_sha" >"$HOME/.aidevops/.deployed-sha"
+	SETUP_SHA="$docs_sha"
+	VERIFY_SHA=""
+	if _update_existing_install 1.0.0 compact; then return 1; fi
+	[[ "$VERIFY_SHA" == "$docs_sha" ]] || return 1
+
+	# Setup failure must also propagate without reaching bundle verification.
+	printf '%s\n' "$baseline_sha" >"$HOME/.aidevops/.deployed-sha"
+	SETUP_RC=23
+	VERIFY_RC=0
+	VERIFY_SHA=""
+	if _update_existing_install 1.0.0 compact; then return 1; fi
+	[[ -z "$VERIFY_SHA" ]] || return 1
+
+	SETUP_RC=0
+	_update_existing_install 1.0.0 compact || return 1
+	[[ "$VERIFY_SHA" == "$docs_sha" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$docs_sha" ]] || return 1
 	return 0
 )
 if run_lifecycle_only_update_test; then

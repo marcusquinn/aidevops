@@ -463,7 +463,7 @@ _update_existing_install() {
 		return 1
 	fi
 	if [[ "$local_hash" == "$remote_hash" ]]; then
-		_update_already_current "$local_hash" "$update_output_mode"
+		_update_already_current "$local_hash" "$update_output_mode" || return 1
 	else
 		_update_apply_remote "$local_hash" "$remote_hash" "$current_version" "$update_output_mode"
 	fi
