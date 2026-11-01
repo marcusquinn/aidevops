@@ -407,7 +407,7 @@ _setup_browser_tools_playwright() {
 		if [[ "$runtime_status" == *'"chromiumExecutable":null'* && "$runtime_status" == *'"configuredExecutable":"'* ]]; then
 			print_info "Using configured Playwright browser; bundled Chromium is not required"
 		fi
-		print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated (configured browser passed at launch)"
+		print_info "Playwright MCP runs via: bash ~/.aidevops/agents/scripts/browser-mcp-launcher.sh playwright npx -y @playwright/mcp@0.0.79 --headless --isolated"
 		return 0
 	fi
 
@@ -439,7 +439,7 @@ _setup_browser_tools_playwright() {
 		print_info "Install later with: ${install_command}"
 	fi
 
-	print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated (configured browser passed at launch)"
+	print_info "Playwright MCP runs via: bash ~/.aidevops/agents/scripts/browser-mcp-launcher.sh playwright npx -y @playwright/mcp@0.0.79 --headless --isolated"
 	return 0
 }
 
