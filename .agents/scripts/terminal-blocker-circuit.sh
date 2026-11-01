@@ -983,35 +983,70 @@ _terminal_blocker_fleet_authorize() {
 	return 0
 }
 
+# Every trusted runner's blocked release carrying this exact observation marker.
+# Rows keep the {runner, at, id} shape that fleet checkpoints hash.
+# shellcheck disable=SC2016 # jq definitions, not shell expansions.
+_TBC_FLEET_ROWS_JQ='
+def fleet_rows($authoritative; $marker):
+  [.[] | select(authoritative_author($authoritative))
+  | . as $comment
+  | select((.body // "") | contains($marker))
+  | ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
+  | select($release != null and $release.runner == ($comment.author // $comment.user.login // ""))
+  | {runner:$release.runner, at:.created_at, id:.id}];
+'
+
+_terminal_blocker_fleet_query() {
+	local comments="$1" revision="$2" fingerprint="$3" filter="$4"
+	jq -c --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		--arg marker "<!-- $_TBC_OBSERVATION_MARKER revision=${revision} blocker=${fingerprint} -->" \
+		"${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}${_TBC_FLEET_ROWS_JQ}fleet_rows(\$authoritative; \$marker) | ${filter}" <<<"$comments"
+	return $?
+}
+
 _terminal_blocker_fleet_observations() {
 	local comments="$1" revision="$2" fingerprint="$3"
-	jq -c --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
-		--arg marker "<!-- $_TBC_OBSERVATION_MARKER revision=${revision} blocker=${fingerprint} -->" "${_TBC_HOLD_EVIDENCE_JQ}"'
-		[.[] | select(authoritative_author($authoritative))
-		| . as $comment
-		| select((.body // "") | contains($marker))
-		| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
-		| select($release != null and $release.runner == ($comment.author // $comment.user.login // ""))
-		| {runner:$release.runner, at:.created_at, id:.id}]
-		| group_by(.runner) | map(max_by(.at))
-	' <<<"$comments"
+	_terminal_blocker_fleet_query "$comments" "$revision" "$fingerprint" 'group_by(.runner) | map(max_by(.at))'
+	return $?
+}
+
+# GH#36417: once two distinct runners have observed this revision the hold has
+# formed. Any later observation is a launch whose readiness probe was falsified
+# by the same blocker, so the probe cannot be trusted to wake this hold again.
+# Prints {"post":<observations after the hold formed>,"latest":<last observation>}.
+_terminal_blocker_fleet_falsified() {
+	local comments="$1" revision="$2" fingerprint="$3"
+	# shellcheck disable=SC2016 # jq program, not shell expansions.
+	_terminal_blocker_fleet_query "$comments" "$revision" "$fingerprint" '
+		map(. + {created_at: .at}) | sort_by(.created_at, (comment_id // 9007199254740992)) as $all
+		| ([range(0; $all | length) | select(([$all[0:(. + 1)][].runner] | unique | length) >= 2)] | first) as $formed
+		| {post: (if $formed == null then 0 else ($all | length) - $formed - 1 end), latest: ($all | last)}'
 	return $?
 }
 
 # This is a fresh read-only probe, never an install or an approval. A current
 # approved bootstrap policy also qualifies: the normal worktree prepare path
 # will perform its frozen, script-free install before the worker starts.
+# GH#36417: readiness must be positive evidence. A brief that declares no
+# runner-checkable requirement (requirements=0) on a repo without JS
+# dependencies verifies nothing about the prerequisite that actually failed.
 _terminal_blocker_fleet_ready() {
 	local path="$1" brief="$2"
-	local helpers="${BASH_SOURCE[0]%/*}" probe="" policy=""
+	local helpers="${BASH_SOURCE[0]%/*}" probe="" policy="" check="" state="" declared=0
 	[[ -d "$path" ]] || return 1
 	# shellcheck source=runner-capability-helper.sh
 	source "${helpers}/runner-capability-helper.sh"
-	runner_capability_check "$path" "$brief" fresh >/dev/null 2>&1 || return 1
+	check=$(runner_capability_check "$path" "$brief" fresh 2>&1 >/dev/null) || return 1
+	[[ "$check" =~ requirements=([0-9]+) ]] && declared="${BASH_REMATCH[1]}"
 	probe=$(bash "${helpers}/worktree-js-readiness-helper.sh" probe "$path" --json --no-cache 2>/dev/null) || return 1
-	if jq -e '.state == "ready" or (.state | startswith("not-applicable:"))' <<<"$probe" >/dev/null; then
-		return 0
-	fi
+	state=$(jq -r '.state // ""' <<<"$probe" 2>/dev/null) || state=""
+	case "$state" in
+	ready) return 0 ;;
+	not-applicable:*)
+		[[ "$declared" -gt 0 ]]
+		return $?
+		;;
+	esac
 	policy=$(bash "${helpers}/worktree-js-readiness-helper.sh" status "$path" 2>/dev/null) || return 1
 	[[ "$policy" == JS_DEPENDENCY_POLICY=current$'\n'* ]]
 	return $?
@@ -1093,6 +1128,7 @@ terminal_blocker_fleet_hold_active() {
 	local comments="$1" brief="$2" repo="$3" issue="$4" path="$5"
 	local fingerprint=""
 	local revision="" observations="" dashboard="" checkpoint="" existing='{}'
+	local original="$comments" falsified='' retry=''
 	fingerprint=$(_terminal_blocker_hash "v2:${_TBC_RUNNER_CAPABILITY}") || return 1
 	# Avoid dependency/API work on issues without capability observations.
 	[[ "$comments" == *"blocker=${fingerprint}"* ]] || return 1
@@ -1105,6 +1141,18 @@ terminal_blocker_fleet_hold_active() {
 	comments=$(_terminal_blocker_fleet_authorize "$comments" "$repo") || return 1
 	observations=$(_terminal_blocker_fleet_observations "$comments" "$revision" "$fingerprint") || return 1
 	[[ "$(jq 'length' <<<"$observations")" -ge 2 ]] || return 1
+	# GH#36417: a failure after the hold formed falsified the readiness probe.
+	# Only a brief revision (new task revision) or an OWNER/MEMBER retry posted
+	# after the latest observation may wake it; the retry buys one launch.
+	# aidevops:trust-boundary — read the retry from the unauthorized comments so
+	# write-collaborator promotion for observations never authorizes a retry.
+	falsified=$(_terminal_blocker_fleet_falsified "$comments" "$revision" "$fingerprint") || return 1
+	if [[ "$(jq -r '.post // 0' <<<"$falsified")" -gt 0 ]]; then
+		retry=$(_terminal_blocker_latest_retry_comment "$original") || retry=""
+		_terminal_blocker_retry_after "$retry" "$(jq -c '.latest' <<<"$falsified")" && return 1
+		printf 'TERMINAL_BLOCKER_FLEET_HOLD task_revision=%s probe=falsified wake=brief_or_retry\n' "$revision"
+		return 0
+	fi
 	checkpoint=$(_terminal_blocker_hash "${revision}:${observations}") || return 1
 	dashboard=$(_terminal_blocker_fleet_dashboard "$repo") || dashboard=""
 	if [[ "$dashboard" =~ ^[1-9][0-9]*$ ]]; then
