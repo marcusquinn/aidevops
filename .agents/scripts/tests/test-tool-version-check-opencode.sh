@@ -107,7 +107,7 @@ printf '1.18.9\n' >"$SANDBOX/routine-freshness/opencode-version"
 write_executable "$SANDBOX/routine-freshness/bin/opencode" '#!/usr/bin/env bash
 version=$(<"'"$SANDBOX"'/routine-freshness/opencode-version")
 printf "%s\n" "$version"'
-for cli in claude codex mcp-local-wp chrome-devtools-mcp playwriter macos-automator-mcp claude-code-mcp gws cf; do
+for cli in claude codex mcp-local-wp chrome-devtools-mcp playwriter macos-automator-mcp claude-code-mcp gws cf cloudron; do
 	write_executable "$SANDBOX/routine-freshness/bin/$cli" '#!/usr/bin/env bash
 printf "9.99.9\n"'
 done
@@ -255,7 +255,7 @@ root) printf "%s/user prefix/lib/node_modules\n" "$PREFIX_CASE" ;;
 install) printf "{\"version\":\"1.19.4\"}\n" >"$PREFIX_CASE/user prefix/lib/node_modules/opencode-ai/package.json" ;;
 *) exit 1 ;;
 esac'
-for cli in claude codex mcp-local-wp chrome-devtools-mcp playwriter macos-automator-mcp claude-code-mcp gws cf; do
+for cli in claude codex mcp-local-wp chrome-devtools-mcp playwriter macos-automator-mcp claude-code-mcp gws cf cloudron; do
 	write_executable "$prefix_case/tools/$cli" '#!/usr/bin/env bash
 printf "9.99.9\n"'
 done
