@@ -1256,7 +1256,7 @@ _help_commands() {
 	echo "  github auth <cmd> Repository auth routes, App profiles, checks and local usage"
 	echo "  github-app-auth    GitHub App auth setup/status and API route decisions"
 	echo "  source-access <cmd> Session-bound, sudo-signed source-read approvals"
-	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
+	echo "  secret <cmd>       Manage secrets (set/rm/list/run/init/import/status)"
 	echo "  vault <cmd>        Local encrypted Vault broker (init/unlock/lock/status/read/update)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
 	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
@@ -1341,6 +1341,7 @@ _help_detailed_sections_content() {
 	_help_security_sections
 	echo "Secrets:"
 	echo "  aidevops secret set NAME     # Store a secret (hidden input)"
+	echo "  aidevops secret rm NAME      # Remove from gopass + plaintext (confirm or --yes)"
 	echo "  aidevops secret list         # List secret names (never values)"
 	echo "  aidevops secret run CMD      # Run with secrets injected + redacted"
 	echo "  aidevops secret init         # Initialize gopass encrypted store"
