@@ -150,13 +150,6 @@ runtime-provided session ID. Framework-managed hook commands use `exec` so an
 intermediate shell is not mistaken for the owning runtime. Custom command
 wrappers are not qualified by this integration.
 
-On a valid, un-enrolled schema-1 store, the session helper applies the same
-compatibility rule as creation enrollment: it returns `coverage-gap` with a
-`coverage-gap: schema-upgrade-required` diagnostic, admits no owner, publishes
-no marker and does not migrate (GH#36349). Hooks accept it as observe-only; it
-never authorizes cleanup. Schema-1 markers or admission tables still refuse.
-Refusals name the helper reason, such as `explicit-schema-upgrade-required`.
-
 Replaying the same session/process registration is idempotent, including after
 admission closes; it does not start another independent run. A new owner cannot
 enter a closed generation. Shared runtime processes are retained conservatively
@@ -180,11 +173,11 @@ Scheduled Pulse cleanup can retire registered generations that satisfy the regis
 `worktree_create_registered` invokes `worker-registry.py enroll --initialize --allow-schema-1-observation`
 after creation and retains the tree if enrollment fails. Private/disabled
 observation is excluded. An absent store can be initialized; schema 1 is never
-implicitly migrated. With this compatibility flag, an un-enrolled schema-1 tree
-continues observe-only with a `coverage-gap: schema-upgrade-required` diagnostic;
-it has no admitted generation. Existing markers or admission tables in schema 1
-are contradictions and cause refusal. Ordinary `enroll` remains schema-2-only.
-Coordinate migration before requiring admission for these installations.
+implicitly migrated. With this flag, and in interactive session admission and
+hooks (GH#36349), an un-enrolled schema-1 tree stays observe-only: a
+`coverage-gap: schema-upgrade-required` diagnostic, no admitted generation, no
+cleanup authority. Schema-1 markers or admission tables are refused. Ordinary
+`enroll` stays schema-2-only; coordinate migration before requiring admission.
 
 `enroll --path PATH` publishes a private `aidevops-generation.json` in the Git
 administrative directory, not among worktree files. It contains a UUID and the
