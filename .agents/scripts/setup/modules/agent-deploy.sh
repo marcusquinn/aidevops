@@ -984,6 +984,33 @@ _runtime_bundle_stale_candidate_reason() {
 	return 0
 }
 
+# This is a deployment compatibility check, not an approval or trust grant.
+# Preserve an installed broker's working read flow instead of activating newer
+# helpers that its byte-for-byte runtime check will reject. First installations
+# without a broker retain the existing fail-closed approval provisioning path.
+_runtime_bundle_check_source_access_broker() {
+	local agents_root="$1"
+	local broker_dir="${2:-/etc/aidevops/source-access}"
+	local name="" candidate="" installed=""
+
+	[[ -f "$agents_root/plugins/opencode-aidevops/source-access-approval.mjs" ]] || return 0
+	[[ -e "$broker_dir" || -L "$broker_dir" ]] || return 0
+	for name in source-access-helper.py source_access_core.py source_access_documents.py; do
+		candidate="$agents_root/scripts/$name"
+		installed="$broker_dir/$name"
+		# Older signed helpers do not import the extracted documents module.
+		if [[ "$name" == "source_access_documents.py" && ! -e "$candidate" && ! -L "$candidate" ]]; then
+			continue
+		fi
+		if [[ -L "$broker_dir" || ! -f "$candidate" || -L "$candidate" ||
+			! -f "$installed" || -L "$installed" ]] || ! cmp -s "$candidate" "$installed"; then
+			print_error "Refusing incompatible source-access runtime deployment: $name differs from the installed broker. The active runtime is unchanged. Use a matching signed release and reconcile the broker with 'aidevops setup --scope source-access' before retrying deployment; setup from an unreleased installer cannot repair this mismatch."
+			return 1
+		fi
+	done
+	return 0
+}
+
 _runtime_bundle_validate() {
 	local bundle_dir="$1"
 	local source_dir="$2"
@@ -1016,6 +1043,7 @@ _runtime_bundle_stage() {
 	local git_sha="$_AIDEVOPS_BUNDLE_UNKNOWN"
 	local bundle_id=""
 
+	_runtime_bundle_check_source_access_broker "$source_dir" || return 1
 	mkdir -p "$bundles_dir" || return 1
 	[[ -r "$repo_dir/VERSION" ]] && IFS= read -r version <"$repo_dir/VERSION"
 	git_sha=$(git -C "$repo_dir" rev-parse --short=12 HEAD 2>/dev/null || printf '%s' "$_AIDEVOPS_BUNDLE_UNKNOWN")
@@ -1235,6 +1263,9 @@ _runtime_bundle_activate_locked() {
 	agents_root=$(_runtime_bundle_resolve_root "$bundle_dir/agents") || return 1
 	bundles_dir=$(cd "${bundle_dir%/*}" && pwd -P) || return 1
 
+	# Recheck the actual staged bytes under the activation lock before any link,
+	# legacy-directory, previous-bundle or deployment-stamp mutation.
+	_runtime_bundle_check_source_access_broker "$agents_root" || return 1
 	if previous_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
 		stale_reason=$(_runtime_bundle_stale_candidate_reason "$bundle_dir" "$previous_root")
 		if [[ -n "$stale_reason" ]]; then
