@@ -40,10 +40,33 @@ source "${_PULSE_CLEANUP_SCRIPT_DIR}/pulse-cleanup-worktree-removal-central.sh"
 # shellcheck disable=SC1091 # Sibling library resolved at runtime
 source "${_PULSE_CLEANUP_SCRIPT_DIR}/pulse-cleanup-worktree-removal-profile.sh"
 
+# Temporary backlog pass; remove together with worker-legacy-cleanup.py.
+# This consumes observation-era bindings, not legacy owner JSON or fake admissions.
+_cleanup_observation_era_worktrees() {
+	local state_dir="$1"
+	local python="$2"
+	local budget="$3"
+	local result="" retired="" retained=""
+	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worker-legacy-cleanup.py" \
+		--state-dir "$state_dir" --repos-config "${HOME}/.config/aidevops/repos.json" \
+		--output-root "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}" \
+		--apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
+		printf '[pulse-wrapper] Observation-era cleanup unavailable: %s\n' "$result" >>"$LOGFILE"
+		return 0
+	fi
+	retired=$(jq -er '.retired | numbers' <<<"$result") || return 0
+	retained=$(jq -c '[.results[] | select(.status == "retained")] | group_by(.reason) | map({reason: .[0].reason, count: length})' <<<"$result") || return 0
+	CLEANUP_WORKTREES_REMOVED_COUNT="$retired"
+	CLEANUP_WORKTREES_ARCHIVED_COUNT="$retired"
+	CLEANUP_WORKTREES_SKIPPED=0
+	printf '[pulse-wrapper] Observation-era cleanup: retired=%s retained=%s\n' "$retired" "$retained" >>"$LOGFILE"
+	return 0
+}
+
 # Retain the public pass orchestrator here for source-location contract checks.
 cleanup_worktrees() {
 	local cleanup_budget="${1:-120}"
-	local state_dir="" python="" result=""
+	local state_dir="" python="" result="" retired="" pass_budget=0
 	CLEANUP_WORKTREES_SKIPPED=1
 	CLEANUP_WORKTREES_REMOVED_COUNT=0
 	CLEANUP_WORKTREES_ARCHIVED_COUNT=0
@@ -55,20 +78,24 @@ cleanup_worktrees() {
 	source "${_PULSE_CLEANUP_SCRIPT_DIR}/worker-lifecycle-state.sh" || return 0
 	state_dir=$(worker_lifecycle_state_dir) || return 0
 	[[ -n "$state_dir" && -d "$state_dir" ]] || return 0
-	# Never initialize/migrate state, consult old owners, prune broadly or fall
-	# back to legacy removal. The scheduler retains its external hard watchdog.
+	[[ "$cleanup_budget" =~ ^[0-9]+$ && "$cleanup_budget" -ge 2 ]] || return 0
+	pass_budget=$((cleanup_budget / 2))
+	_cleanup_observation_era_worktrees "$state_dir" "$python" "$pass_budget"
+	# Neither pass initializes/migrates state or consults old owner files.
+	# Each gets half the budget; the scheduler retains its hard watchdog.
 	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worker-registry.py" \
 		--state-dir "$state_dir" cleanup --repos-config "${HOME}/.config/aidevops/repos.json" \
 		--output-root "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}" \
-		--budget-seconds "$cleanup_budget" 2>>"$LOGFILE"); then
-		printf '[pulse-wrapper] Lifecycle cleanup unavailable; no legacy fallback\n' >>"$LOGFILE"
+		--budget-seconds "$pass_budget" 2>>"$LOGFILE"); then
+		printf '[pulse-wrapper] Admission cleanup unavailable; backlog pass reported separately\n' >>"$LOGFILE"
 		return 0
 	fi
-	CLEANUP_WORKTREES_REMOVED_COUNT=$(jq -er '.retired | numbers' <<<"$result") || return 0
+	retired=$(jq -er '.retired | numbers' <<<"$result") || return 0
+	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + retired))
 	CLEANUP_WORKTREES_ARCHIVED_COUNT="$CLEANUP_WORKTREES_REMOVED_COUNT"
 	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$(jq -er '.failed | numbers' <<<"$result") || return 0
 	CLEANUP_WORKTREES_SKIPPED=0
 	printf '[pulse-wrapper] Lifecycle cleanup: retired=%s failed=%s\n' \
-		"$CLEANUP_WORKTREES_REMOVED_COUNT" "$CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT" >>"$LOGFILE"
+		"$retired" "$CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT" >>"$LOGFILE"
 	return 0
 }
