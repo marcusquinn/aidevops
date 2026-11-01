@@ -52,8 +52,10 @@ export function runPreEditCheck(script, args, cwd, timeoutMs, context) {
           OPENCODE_PID_START_IDENTITY: ownerIdentity,
           OPENCODE_SESSION_ID: sessionID,
           AIDEVOPS_OPENCODE_SESSION_ID: sessionID,
+          AIDEVOPS_LIFECYCLE_RUNTIME_PID: ownerIdentity ? ownerPID : "",
+          AIDEVOPS_LIFECYCLE_SESSION_ID: ownerIdentity ? sessionID : "",
         }
-      : {};
+      : { AIDEVOPS_LIFECYCLE_RUNTIME_PID: "", AIDEVOPS_LIFECYCLE_SESSION_ID: "" };
     const child = spawn("bash", [script, ...args], {
       cwd,
       detached: true,
