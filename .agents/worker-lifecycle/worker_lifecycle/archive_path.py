@@ -15,10 +15,10 @@ def validate_archive_path(root: Path, archive: Path | None = None) -> None:
     No directories are created and no permissions are changed.
     """
     target = root if archive is None else archive
-    if (not root.is_absolute() or not target.is_absolute()
-            or ".." in root.parts or ".." in target.parts
-            or not target.is_relative_to(root)
-            or (archive is not None and archive == root)):
+    for path in (root, target):
+        if not path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"invalid-archive-path: {path}")
+    if not target.is_relative_to(root) or archive == root:
         raise ValueError(f"invalid-archive-path: {target}")
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     current = Path(target.anchor)
