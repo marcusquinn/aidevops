@@ -27,6 +27,49 @@ from worker_lifecycle.runtime import adapter_for, require_ready
 from worker_lifecycle.session import admit_session
 
 SCRIPTS = Path(__file__).resolve().parent
+REPOSITORY_OPTIONS = {"-C", "--git-dir", "--work-tree"}
+# Fixed protocol tokens only; never host paths, command text or SQL errors.
+SAFE_REASONS = {
+    "explicit-schema-upgrade-required",
+    "schema-one-with-admission-state",
+    "schema-one-with-generation-marker",
+    "runtime-owner-unresolved",
+    "git-target-unavailable",
+    "inconsistent-git-target",
+    "target-classification-unavailable",
+    "explicit-absolute-context-required",
+    "invalid-command-argv",
+    "invalid-session-identity",
+    "lifecycle-state-unavailable",
+    "state-parent-must-be-canonical",
+    "session-owner-already-ended",
+    "generation-changed-during-session-admission",
+}
+
+
+def runtime_pid(value):
+    """Return a positive runtime PID, or None when the runtime proved none."""
+    text = (value or "").strip()
+    if text.isdigit() and int(text) > 0:
+        return int(text)
+    if text:
+        raise ValueError("runtime-owner-unresolved")
+    return None
+
+
+def expand_repository_options(prefix):
+    """Apply the shell's unquoted leading-tilde expansion to Git targets."""
+    expanded = []
+    for index, value in enumerate(prefix):
+        option = prefix[index - 1] if index else ""
+        if option in REPOSITORY_OPTIONS and value.startswith("~"):
+            value = os.path.expanduser(value)
+        else:
+            name, separator, target = value.partition("=")
+            if separator and name in REPOSITORY_OPTIONS and target.startswith("~"):
+                value = f"{name}={os.path.expanduser(target)}"
+        expanded.append(value)
+    return expanded
 
 
 def state_directory():
@@ -56,6 +99,8 @@ def command_targets(cwd, command, argv_json):
         prefix, effective, verb, _ = split_invocation(argv[1:], str(cwd))
         if not prefix or not verb:
             continue
+        # The runtime shell expands `git -C ~/repo`; resolve the same target.
+        prefix = expand_repository_options(prefix)
         common, directory, top = _git_repo_identity(real_git(), effective, prefix)
         if not all((common, directory, top)) or not Path(top).is_absolute():
             raise ValueError("git-target-unavailable")
@@ -95,6 +140,10 @@ def admit_targets(cwd, targets, pid, session_id):
     gaps = [enrollment.has_schema_one_gap(root) for root in sorted(roots)]
     if all(gaps):
         return "coverage-gap"
+    # #aidevops:trust-boundary — only linked worktrees need a runtime owner;
+    # an unproven runtime is refused here, never replaced by a tool argument.
+    if pid is None:
+        raise ValueError("runtime-owner-unresolved")
     require_ready(adapter_for(str(uuid4())))
     for root in sorted(roots):
         admit_session(store, root, pid, session_id)
@@ -105,7 +154,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cwd", type=Path, required=True)
     parser.add_argument("--path", type=Path, action="append", default=[])
-    parser.add_argument("--runtime-pid", type=int, required=True)
+    # An empty PID means the runtime proved no owner. Non-linked targets do not
+    # need one; admit_targets refuses only linked targets without it (GH#36430).
+    parser.add_argument("--runtime-pid", default="")
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--command", default="")
     parser.add_argument("--argv-json", default="")
@@ -116,16 +167,13 @@ def main():
             targets = [
                 *targets, *command_targets(args.cwd, args.command, args.argv_json),
             ]
-        status = admit_targets(args.cwd, targets, args.runtime_pid, args.session_id)
+        status = admit_targets(
+            args.cwd, targets, runtime_pid(args.runtime_pid), args.session_id,
+        )
     except (ValueError, OSError, RuntimeError, sqlite3.Error,
             subprocess.SubprocessError, ObservationUnavailable) as error:
         # Expose safe protocol reasons, never host paths or SQL exception text.
-        safe_reasons = {
-            "explicit-schema-upgrade-required",
-            "schema-one-with-admission-state",
-            "schema-one-with-generation-marker",
-        }
-        reason = str(error) if str(error) in safe_reasons else type(error).__name__
+        reason = str(error) if str(error) in SAFE_REASONS else type(error).__name__
         print(json.dumps({"status": "unavailable", "reason": reason}))
         return 75
     result = {"status": status, "cleanup_authorized": False}

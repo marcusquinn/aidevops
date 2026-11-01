@@ -128,14 +128,16 @@ test("runtime owner requires matching session and original native generation pro
     process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(child.pid);
     process.env.OPENCODE_SESSION_ID = "ses_fixture";
     assert.equal(runtimeOwner("ses_fixture").pid, String(child.pid));
-    assert.deepEqual(runtimeOwner("ses_other"), { pid: "", identity: "" });
+    // Without matching inherited proof, the plugin's own runtime owns the
+    // session (GH#36430); a foreign or stale identity is never adopted.
+    const self = { pid: String(process.pid), identity: processStartIdentity(process.pid) };
+    assert.deepEqual(runtimeOwner("ses_other"), self);
     process.env.OPENCODE_PID_START_IDENTITY = "stale-generation";
-    assert.deepEqual(runtimeOwner("ses_fixture"), { pid: "", identity: "" });
+    assert.deepEqual(runtimeOwner("ses_fixture"), self);
     delete process.env.OPENCODE_PID_START_IDENTITY;
-    assert.deepEqual(runtimeOwner("ses_fixture"), { pid: "", identity: "" });
-    assert.deepEqual(runtimeOwner("operation_fixture", { allowSelfFallback: true }), {
-      pid: String(process.pid), identity: processStartIdentity(process.pid),
-    });
+    assert.deepEqual(runtimeOwner("ses_fixture"), self);
+    for (const key of keys) delete process.env[key];
+    assert.deepEqual(runtimeOwner("ses_fixture"), self);
   } finally {
     child.kill();
     await once(child, "exit");
