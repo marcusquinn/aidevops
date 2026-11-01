@@ -6,6 +6,8 @@
 No CWD, environment, dispatch-ledger or retained-unit listing is read. Only the
 worker role and explicit directory are extracted from known runtime launchers;
 raw arguments are never retained or reported. Unknown membership is not absence.
+The separate worktree_process_census module reads path references only when
+sealing a finished legacy launch; it never retains environment contents.
 """
 
 import os
@@ -16,6 +18,9 @@ import time
 
 import worktree_lifetime_owner as owner
 from worktree_process_activity import activity as activity
+from worktree_process_census import path_census as path_census
+
+__all__ = ["activity", "path_census"]
 
 
 def worker_directory(arguments):

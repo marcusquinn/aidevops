@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Unified creation/owner evidence and opt-in real rootless lifecycle POC."""
+"""Unified creation/owner evidence; native POC: test-worktree-owner-native.py."""
 
 from contextlib import closing
 import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sqlite3
 import subprocess
@@ -268,7 +267,7 @@ class OwnerEvidenceTests(unittest.TestCase):
                 db.commit()  # This durable fence precedes the native Git operation.
                 pending = db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0]
                 with self.assertRaises(ValueError):
-                    proof.proof(json.loads(pending), previous["source_inode"])
+                    proof.proof(json.loads(pending), previous["source_inode"], fresh=False)
                 db.execute("BEGIN IMMEDIATE")
                 with patch.object(owner, "identity", return_value=current), \
                         patch.object(owner, "observe", return_value={"evidence": "unavailable"}), \
@@ -280,7 +279,7 @@ class OwnerEvidenceTests(unittest.TestCase):
                         replacement = json.loads(db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0])
                         self.assertNotEqual(replacement["generation"], record["generation"])
                         with self.assertRaises(ValueError):
-                            proof.proof(replacement, current["source_inode"])
+                            proof.proof(replacement, current["source_inode"], fresh=False)
                     else:
                         with self.assertRaises(ValueError):
                             owner.prepare_creation(db, "/fixture")
@@ -359,7 +358,7 @@ class OwnerEvidenceTests(unittest.TestCase):
                   "launches": [{"kind": owner.KIND, "quiescence": {"MainPID": "0"}}]}
         with patch.object(owner, "drain", side_effect=ValueError("invocation changed")):
             with self.assertRaises(ValueError):
-                proof.proof(record, "1:2")
+                proof.proof(record, "1:2", fresh=False)
 
     def test_raw_ownership_change_invalidates_admission_not_liveness_updates(self):
         with closing(self.database()) as db, \
@@ -395,149 +394,10 @@ class OwnerEvidenceTests(unittest.TestCase):
                   "launches": [{"kind": owner.KIND, "completion_evidence": "systemd-cgroup-v1",
                                 "invocation": "invocation", "quiescence": snapshot}]}
         with patch.object(owner, "unit_snapshot", side_effect=ValueError("unit collected")):
-            proof.proof(record, "1:2")
+            proof.proof(record, "1:2", fresh=False)
         record["observed_admission_epoch"] = -1
         with self.assertRaises(ValueError):
-            proof.proof(record, "1:2")
-
-
-@unittest.skipUnless(os.environ.get("AIDEVOPS_TEST_SYSTEMD") == "1", "explicit native user-systemd POC")
-class NativeOwnerCycle(unittest.TestCase):
-    def test_managed_success_and_error_return_pipe_eof(self):
-        for command, expected in ((["true"], 0), (["bash", "-c", "exit 7"], 7)):
-            with self.subTest(command=command):
-                result = subprocess.run(
-                    [sys.executable, str(SCRIPTS / "worktree-managed-run.py"),
-                     "--timeout-seconds", "3", "--", *command],
-                    capture_output=True, text=True, timeout=6, check=False)
-                self.assertEqual(result.returncode, expected, result.stderr)
-
-    def test_creation_work_descendant_completion_archive_restore(self):
-        base = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
-        self.assertTrue(base.is_dir())
-        with tempfile.TemporaryDirectory(prefix="owner-lifecycle-poc-", dir=base) as temporary:
-            root = Path(temporary)
-            repo, work = root / "repo", root / "work"
-            home = root / "home"
-            home.mkdir()
-            git = os.environ.get("AIDEVOPS_TEST_GIT_BIN", shutil.which("git"))
-            env = dict(os.environ, HOME=str(home), WORKTREE_REGISTRY_DIR=str(root / "registry"),
-                       WORKTREE_REGISTRY_DB=str(root / "registry/registry.db"),
-                       AIDEVOPS_WORKTREE_ARCHIVE_ROOT=str(root / "archives"),
-                       AIDEVOPS_REPOS_FILE=str(home / "repos.json"),
-                       AIDEVOPS_CLEANUP_LOG=str(root / "cleanup.log"),
-                       AIDEVOPS_WORKTREE_BASE_DIR=str(root),
-                       WORKTREE_NODE_MODULES_RESTORE_ENABLED="0")
-            env["PATH"] = str(Path(git).parent) + os.pathsep + env["PATH"]
-            def run(*argv, check=True):
-                return subprocess.run([str(arg) for arg in argv], env=env, capture_output=True,
-                                      text=True, check=check, timeout=60)
-            def git_run(path, *args):
-                return run(git, "-C", path, *args).stdout
-            run(git, "init", "-q", "-b", "main", repo)
-            (repo / "tracked").write_text("base\n")
-            git_run(repo, "add", "tracked")
-            git_run(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-                    "commit", "-qm", "base")
-            unit = ""
-            launcher = None
-            log = root / "managed-run.log"
-            # The production shared creator runs as the invocation leader's child.
-            # Work stays in this real user-service cgroup, including a setsid child.
-            script = ('set -eu; source "$1/shared-worktree-create.sh"; '
-                      'worktree_create_registered "$2" "$3" HEAD -b poc; '
-                      'exec "$4" -c "$5" "$3"')
-            workload = ("import pathlib,subprocess,sys,time,os; p=pathlib.Path(sys.argv[1]); "
-                        "(p/'tracked').write_text('committed\\n'); "
-                        "subprocess.run(['git','-C',str(p),'add','tracked'],check=True); "
-                        "subprocess.run(['git','-C',str(p),'-c','user.name=Fixture','-c',"
-                        "'user.email=fixture@example.invalid','commit','-qm','work'],check=True); "
-                        "(p/'tracked').write_text('staged\\n'); "
-                        "subprocess.run(['git','-C',str(p),'add','tracked'],check=True); "
-                        "(p/'tracked').write_text('unstaged\\n'); "
-                        "(p/'untracked').write_text('excluded\\n'); "
-                        "subprocess.Popen(['sleep','8'],cwd=p,start_new_session=True); "
-                        "(p.parent/'ready').write_text(str(os.getpid())); time.sleep(1)")
-            try:
-                with log.open("w") as output:
-                    launcher = subprocess.Popen(
-                        ["bash", str(SCRIPTS / "worktree-helper.sh"), "run", "--timeout-seconds", "45", "--",
-                         "bash", "-c", script, "owner-poc", str(SCRIPTS), str(repo), str(work), sys.executable, workload],
-                        env=env, stdout=output, stderr=subprocess.STDOUT)
-                deadline = time.monotonic() + 20
-                while not (root / "ready").exists() and time.monotonic() < deadline:
-                    if launcher.poll() is not None:
-                        break
-                    time.sleep(0.1)
-                self.assertTrue((root / "ready").exists(), log.read_text())
-                helper = [sys.executable, SCRIPTS / "worktree-managed-lifetime.py"]
-                record = json.loads(run(*helper, "status", work).stdout)
-                self.assertEqual(record["manager"], owner.MANAGER)
-                self.assertEqual(record["launches"][0].get("completion_evidence"), "systemd-cgroup-v1", record)
-                time.sleep(1.2)
-                self.assertNotEqual(run(*helper, "seal", work, check=False).returncode, 0)
-                self.assertNotEqual(run(*helper, "proof", work, check=False).returncode, 0)
-                guard = SCRIPTS / "audit-worktree-removal-helper.sh"
-                guard_script = 'source "$1"; worktree_removal_guard "$2" owner-poc owner-poc'
-                self.assertNotEqual(run("bash", "-c", guard_script, "poc", guard, work, check=False).returncode, 0)
-                commands = [("rev-parse", "HEAD"), ("ls-files", "--stage"),
-                            ("diff", "--cached", "--binary"), ("diff", "--binary")]
-                before = [git_run(work, *args) for args in commands]
-                deadline = time.monotonic() + 15
-                while time.monotonic() < deadline:
-                    sealed = run(*helper, "seal", work, check=False)
-                    if sealed.returncode == 0:
-                        break
-                    time.sleep(0.2)
-                self.assertEqual(sealed.returncode, 0, sealed.stderr)
-                self.assertEqual(launcher.wait(timeout=15), 0, log.read_text())
-                run(*helper, "proof", work)
-                run("bash", "-c", guard_script, "poc", guard, work)
-                captured = run(sys.executable, SCRIPTS / "worktree_recovery_producer.py",
-                               "capture", work, root / "archives", "owner-poc", "git-only")
-                archive = Path(captured.stdout.strip())
-                # Production guarded removal, not rmtree as a substitute for
-                # completed ownership. Native force handles preserved Git dirt;
-                # allow_degraded is false, so the process guard is not bypassed.
-                run("bash", "-c", 'source "$1"; remove_archived_worktree_path "$2" "$3" '
-                    'owner-poc owner-poc "" false true', "poc", guard, work, archive)
-                self.assertFalse(work.exists())
-                restored = root / "restored"
-                run("bash", SCRIPTS / "worktree-archive-helper.sh", "restore", archive, "--target", restored)
-                self.assertEqual(before, [git_run(restored, *args) for args in commands])
-                self.assertFalse((restored / "untracked").exists())
-                restored_record = json.loads(run(*helper, "status", restored).stdout)
-                self.assertEqual(restored_record["manager"], owner.MANAGER)
-                self.assertNotEqual(run(*helper, "proof", restored, check=False).returncode, 0)
-                previous = json.loads(run(*helper, "status", work).stdout)
-                failed = run("bash", "-c", 'source "$1/shared-worktree-create.sh"; '
-                             'worktree_create_registered "$2" "$3" missing-fixture-ref --detach',
-                             "failed-recreate", SCRIPTS, repo, work, check=False)
-                self.assertNotEqual(failed.returncode, 0)
-                self.assertFalse(work.exists())
-                self.assertNotEqual(run(*helper, "proof", work, previous["identity"]["source_inode"],
-                                        check=False).returncode, 0)
-                run("bash", "-c", 'source "$1/shared-worktree-create.sh"; '
-                    'worktree_create_registered "$2" "$3" HEAD -b second',
-                    "recreate", SCRIPTS, repo, work)
-                replacement = json.loads(run(*helper, "status", work).stdout)
-                self.assertNotEqual(replacement["generation"], previous["generation"])
-                self.assertEqual(replacement["state"], "running")
-                self.assertNotEqual(run(*helper, "proof", work, check=False).returncode, 0)
-                with closing(sqlite3.connect(env["WORKTREE_REGISTRY_DB"])) as db:
-                    historical = db.execute("SELECT record FROM worktree_lifetime_history WHERE path=? AND generation=?",
-                                            (str(work), previous["generation"])).fetchone()
-                self.assertEqual(json.loads(historical[0]), previous)
-            finally:
-                # Only this fixture's unique service; production/session services untouched.
-                match = re.search(r"Managed worktree run: (aidevops-worker-session-[a-f0-9]+\.service)",
-                                  log.read_text() if log.exists() else "")
-                if match:
-                    unit = match[1]
-                    run("systemctl", "--user", "stop", unit, check=False)
-                    run("systemctl", "--user", "reset-failed", unit, check=False)
-                if launcher is not None:
-                    launcher.wait(timeout=15)
+            proof.proof(record, "1:2", fresh=False)
 
 
 class ProcessReconciliationTests(unittest.TestCase):
@@ -619,111 +479,156 @@ class ProcessReconciliationTests(unittest.TestCase):
         launch["owner_pid"] = None
         self.assertFalse(reconcile.finished(launch))
 
+    def test_same_boot_empty_census_seals_and_binds_generation(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        record = self.record()
+        record["identity"] = {"path": "/worktree", "source_inode": "fixture-inode"}
+        now = time.time()
+        sample = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                  "uid": os.getuid(), "references": 0, "uncertain": 0}
+        samples = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
+        with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                patch.object(census, "path_census", side_effect=samples) as observe, \
+                patch.object(reconcile.time, "sleep") as pause:
+            lifetime.seal(record)
+            proof.proof(record, "fixture-inode", fresh=False)
+            self.assertEqual(pause.call_count, 1)
+            self.assertEqual(observe.call_count, 2)
+        receipts = [launch["observation_quiescence"] for launch in record["launches"]]
+        self.assertEqual(receipts[0]["samples"], receipts[1]["samples"])
+        self.assertNotEqual(receipts[0]["identity"], receipts[1]["identity"])
+        receipt = record["launches"][0]["observation_quiescence"]
+        self.assertEqual(receipt["group"], "same-boot-proc-census")
+        for change in ({"path": "/other"}, {"source_inode": "new-inode"}):
+            changed = dict(record["identity"], **change)
+            with self.assertRaises(ValueError):
+                reconcile.validate_quiescence(record["launches"][0], changed)
+        for bad in (dict(samples[1], references=1), dict(samples[1], uncertain=1),
+                    dict(samples[1], status="unavailable"),
+                    dict(samples[1], observed_at=samples[0]["observed_at"] + 1)):
+            receipt["samples"] = [samples[0], bad]
+            with self.assertRaises(ValueError):
+                proof.proof(record, "fixture-inode", fresh=False)
+
+    def test_same_boot_idle_quiescence_passes_identity_and_shares_census(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        record = self.record()
+        record["identity"] = {"path": "/worktree", "source_inode": "fixture-inode"}
+        now = time.time()
+        sample = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                  "uid": os.getuid(), "references": 0, "uncertain": 0}
+        samples = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
+        with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                patch.object(census, "path_census", side_effect=samples * 2) as observe, \
+                patch.object(reconcile.time, "sleep") as pause:
+            reconcile.reconcile(record)
+            lifetime.idle_quiescence(record)
+            # One shared pair for the idle loop and a fresh pair for sealing,
+            # not one pair per launch in either loop.
+            self.assertEqual(observe.call_count, 4)
+            self.assertEqual(pause.call_count, 2)
+        self.assertEqual(record["state"], "sealed")
+        for launch in record["launches"]:
+            receipt = launch["observation_quiescence"]
+            self.assertEqual(receipt["worktree_identity"], record["identity"])
+            self.assertEqual(receipt["identity"], reconcile.identity(launch))
+            self.assertEqual(receipt["process_completion"], launch["process_completion"])
+            reconcile.validate_quiescence(launch, record["identity"])
+
+    def test_present_removal_proof_refreshes_receipts_and_rechecks_parents(self):
+        import worktree_lifetime_reconcile as reconcile
+        import worktree_process_snapshot as census
+        with tempfile.TemporaryDirectory() as directory:
+            record = self.record()
+            record["identity"] = {"path": directory, "source_inode": "fixture-inode"}
+            now = time.time()
+            sample = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                      "uid": os.getuid(), "references": 0, "uncertain": 0}
+            samples = [dict(sample, observed_at=now - 10), dict(sample, observed_at=now - 8)]
+            with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                    patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}) as parent, \
+                    patch.object(census, "path_census", side_effect=samples) as observe, \
+                    patch.object(reconcile.time, "sleep"):
+                lifetime.seal(record)
+                fresh = [dict(sample, observed_at=now - 4), dict(sample, observed_at=now - 2)]
+                observe.side_effect = fresh
+                observe.reset_mock()
+                parent.reset_mock()
+                proof.inspect(record, Path(directory), ["fixture-inode"], None, lambda *_: None)
+                self.assertEqual(observe.call_count, 2)
+                self.assertEqual(parent.call_count, 2)
+                self.assertTrue(all(item["observation_quiescence"]["samples"] == fresh
+                                    for item in record["launches"]))
+                # Replacement admission must use live proof, even for an absent
+                # source path; historical receipts cannot authorize a new generation.
+                with closing(sqlite3.connect(":memory:")) as db:
+                    db.execute("CREATE TABLE worktree_managed_lifetimes (path TEXT PRIMARY KEY, record TEXT)")
+                    db.execute("INSERT INTO worktree_managed_lifetimes VALUES (?, ?)",
+                               (directory, json.dumps(record)))
+                    for change in ({"references": 1}, {"uncertain": 1}, {"status": "unavailable"}):
+                        observe.side_effect = [dict(fresh[0], **change)]
+                        with self.subTest(admission=change), self.assertRaisesRegex(ValueError, "active or unavailable"):
+                            owner.begin_creation(db, directory)
+                    observe.side_effect = fresh
+                    parent.return_value = {"status": "same-process-alive"}
+                    with self.assertRaisesRegex(ValueError, "parent no longer finished"):
+                        owner.begin_creation(db, directory)
+                    parent.return_value = {"status": "pid-absent"}
+                    observe.side_effect = fresh
+                    self.assertTrue(owner.begin_creation(db, directory))
+                # A later FD/environment reference or incomplete census must
+                # refuse authorization even though the sealed receipt is valid.
+                for change in ({"references": 1}, {"uncertain": 1}, {"status": "unavailable"}):
+                    observe.side_effect = [dict(fresh[0], **change)]
+                    with self.subTest(change=change), self.assertRaisesRegex(ValueError, "active or unavailable"):
+                        proof.inspect(record, Path(directory), ["fixture-inode"], None, lambda *_: None)
+                observe.side_effect = fresh
+                parent.return_value = {"status": "same-process-alive"}
+                with self.assertRaisesRegex(ValueError, "parent no longer finished"):
+                    proof.inspect(record, Path(directory), ["fixture-inode"], None, lambda *_: None)
+                observe.side_effect = AssertionError("absent source must use historical receipts")
+                proof.inspect(record, Path(directory) / "absent", ["fixture-inode"], None, lambda *_: None)
+
+    def test_same_boot_busy_or_unknown_census_preserves_worktree(self):
+        import worktree_process_snapshot as census
+        for status, references, uncertain in (("available", 1, 0), ("available", 0, 1),
+                                              ("unavailable", 0, 0)):
+            record = self.record()
+            record["identity"] = {"path": "/worktree", "source_inode": "fixture-inode"}
+            sample = {"status": status, "boot_id": record["launches"][0]["boot_id"],
+                      "uid": os.getuid(), "references": references, "uncertain": uncertain,
+                      "observed_at": time.time()}
+            with patch.object(owner, "boot_id", return_value=sample["boot_id"]), \
+                    patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                    patch.object(census, "path_census", return_value=sample), \
+                    self.assertRaisesRegex(ValueError, "active or unavailable"):
+                lifetime.seal(record)
+            self.assertEqual(record["state"], "running")
+            self.assertNotIn("observation_quiescence", record["launches"][0])
+
     def test_seal_checks_every_launch_and_preserves_distinct_receipt_contract(self):
         import worktree_lifetime_reconcile as reconcile
         record = self.record()
         record["identity"] = {"source_inode": "fixture-inode"}
         with patch.object(owner, "boot_id", return_value="22222222-2222-2222-2222-222222222222"):
             lifetime.seal(record)
-            proof.proof(record, "fixture-inode")
+            proof.proof(record, "fixture-inode", fresh=False)
         self.assertEqual(record["state"], "sealed")
         self.assertTrue(all(reconcile.finished(launch) for launch in record["launches"]))
         del record["launches"][0]["observation_quiescence"]
         with self.assertRaisesRegex(ValueError, "observation completion"):
-            proof.proof(record, "fixture-inode")
+            proof.proof(record, "fixture-inode", fresh=False)
 
-
-class ProcessSnapshotTests(unittest.TestCase):
-    def snapshot(self):
-        return {"status": "available", "boot_id": "11111111-1111-1111-1111-111111111111",
-                "processes": {100: {"start": "10", "state": "S", "cgroup": "/user/aidevops-worker-one.service"}},
-                "uncertain_pids": [], "membership_unavailable": False}
-
-    def managed(self):
-        return {"manager": "pulse", "created_by": {"entrypoint": "pulse"}, "state": "running",
-                "launches": [{"unit": "aidevops-worker-one", "invocation": "a" * 32,
-                              "boot_id": self.snapshot()["boot_id"],
-                              "cgroup": "/user/aidevops-worker-one.service"}]}
-
-    def test_snapshot_distinguishes_process_identity_absence_and_uncertainty(self):
-        import worktree_process_snapshot as census
-        launch = ProcessReconciliationTests().record()["launches"][0]
-        snapshot = self.snapshot()
-        self.assertEqual(census.recorded_status(launch, snapshot)["status"], "same-process-alive")
-        launch["owner_start"] = "20"
-        self.assertEqual(census.recorded_status(launch, snapshot)["status"], "pid-reused")
-        snapshot["processes"].clear()
-        self.assertEqual(census.recorded_status(launch, snapshot)["status"], "pid-absent")
-        snapshot["uncertain_pids"] = [100]
-        self.assertEqual(census.recorded_status(launch, snapshot)["status"], "unknown")
-        snapshot["status"] = "unavailable"
-        self.assertEqual(census.recorded_status(launch, snapshot)["status"], "unknown")
-
-    def test_empty_or_failed_process_listing_is_unavailable(self):
-        import worktree_process_snapshot as census
-        for output in ("", "malformed"):
-            with self.subTest(output=output), patch.object(subprocess, "check_output", return_value=output):
-                self.assertEqual(census.capture()["status"], "unavailable")
-
-    def test_managed_activity_uses_processes_not_retained_unit_objects(self):
-        import worktree_process_snapshot as census
-        snapshot, record = self.snapshot(), self.managed()
-        self.assertEqual(census.activity(record, snapshot)["state"], "active")
-        snapshot["processes"][100]["cgroup"] += "/child"
-        self.assertEqual(census.activity(record, snapshot)["state"], "active")
-        snapshot["processes"][100]["cgroup"] = "/user/aidevops-worker-one.service-other"
-        self.assertEqual(census.activity(record, snapshot)["state"], "not-observed")
-        self.assertFalse(census.activity(record, snapshot)["deletion_authorized"])
-
-    def test_unknown_admission_membership_and_provenance_do_not_become_idle(self):
-        import worktree_process_snapshot as census
-        snapshot, record = self.snapshot(), self.managed()
-        snapshot["processes"].clear()
-        snapshot["membership_unavailable"] = True
-        self.assertEqual(census.activity(record, snapshot)["state"], "unknown")
-        snapshot["membership_unavailable"] = False
-        snapshot["runtime_inspection_unavailable"] = [200]
-        self.assertEqual(census.activity(record, snapshot)["state"], "unknown")
-        snapshot["runtime_inspection_unavailable"] = []
-        record["launches"][0]["invocation"] = None
-        self.assertEqual(census.activity(record, snapshot)["state"], "unknown")
-        record["manager"] = "owner-cgroup"
-        self.assertEqual(census.activity(record, snapshot)["reason"], "pulse-management-unrecorded")
-
-    def test_runtime_directory_positive_match_protects_legacy_without_enrollment(self):
-        import worktree_process_snapshot as census
-        arguments = ["bash", "/agents/scripts/headless-runtime-helper.sh", "run",
-                     "--role", "worker", "--dir", "/worktree", "--prompt", "never-report-this"]
-        self.assertEqual(census.worker_directory(arguments), "/worktree")
-        arguments[4] = "pulse"
-        self.assertIsNone(census.worker_directory(arguments))
-        snapshot = self.snapshot()
-        snapshot["processes"][100]["worker_worktree"] = "/worktree"
-        record = {"manager": "owner-cgroup", "identity": {"path": "/worktree"}}
-        self.assertEqual(census.activity(record, snapshot)["state"], "active")
-        self.assertEqual(record["manager"], "owner-cgroup")
-
-    def test_malformed_managed_identities_remain_unknown(self):
-        import worktree_process_snapshot as census
-        snapshot = self.snapshot()
-        snapshot["processes"].clear()
-        cases = (("launch", "boot_id", "invalid"), ("launch", "invocation", "invalid"),
-                 ("launch", "unit", []), ("launch", "cgroup", "relative/aidevops-worker-one.service"),
-                 ("launch", "cgroup", "/user/./aidevops-worker-one.service"),
-                 ("launch", "cgroup", "//user/aidevops-worker-one.service"),
-                 ("record", "identity", []), ("record", "identity", False),
-                 ("record", "identity", 0), ("record", "identity", ""), ("record", "identity", None))
-        for scope, key, value in cases:
-            record = self.managed()
-            targets = {"launch": record["launches"][0], "record": record}
-            targets[scope][key] = value
-            with self.subTest(scope=scope, key=key, value=value):
-                self.assertEqual(census.activity(record, snapshot)["state"], "unknown")
 
     def test_batch_negative_is_revalidated_before_completion_is_persisted(self):
         import worktree_lifetime_reconcile as reconcile
-        record, snapshot = ProcessReconciliationTests().record(), self.snapshot()
-        snapshot["processes"].clear()
+        record = self.record()
+        snapshot = {"status": "available", "boot_id": record["launches"][0]["boot_id"],
+                    "processes": {}, "uncertain_pids": [], "membership_unavailable": False}
         with patch.object(owner, "recorded_process_status", return_value={"status": "same-process-alive"}):
             self.assertEqual(reconcile.reconcile(record, snapshot), {"finished": 0, "active": 2, "unknown": 0})
         self.assertTrue(all("process_completion" not in launch for launch in record["launches"]))

@@ -388,6 +388,7 @@ main() {
 	local mode="${1:-normal}"
 	local repo="${2:-}"
 	local budget="${3:-60}"
+	local capacity_mode="--capacity"
 	case "$mode" in
 	normal | --lifecycle-only) ;;
 	--capacity)
@@ -396,15 +397,31 @@ main() {
 		;;
 	*) printf '%s\n' 'Usage: cleanup-worktrees-async-helper.sh [--lifecycle-only | --capacity REPO SECONDS]' >&2; return 1 ;;
 	esac
-	if ! _lock_acquire; then
+	local lock_started="$SECONDS"
+	local lock_wait=0
+	if [[ "$mode" == "$capacity_mode" ]]; then
+		# Spend at most a third of this admission budget (capped at 15s)
+		# waiting for the background holder; never steal a live cleanup lock.
+		lock_wait=$((budget / 3))
+		[[ "$lock_wait" -le 15 ]] || lock_wait=15
+	fi
+	while ! _lock_acquire; do
+		if [[ "$mode" == "$capacity_mode" && $((SECONDS - lock_started)) -lt "$lock_wait" ]]; then
+			sleep 1
+			continue
+		fi
 		echo "[cleanup-worktrees-async] ${_LOCK_SKIP_REASON:-Lock unavailable} — skipping this invocation" >>"$LOGFILE"
-		[[ "$mode" != "--capacity" ]] || return 75
+		[[ "$mode" != "$capacity_mode" ]] || return 75
 		return 0
+	done
+	if [[ "$mode" == "$capacity_mode" ]]; then
+		budget=$((budget - (SECONDS - lock_started)))
+		[[ "$budget" -gt 0 ]] || return 124
 	fi
 	_rotate_log_if_oversize
 	echo "[cleanup-worktrees-async] PID=$$ starting at $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
 
-	if [[ "$mode" == "--capacity" ]]; then
+	if [[ "$mode" == "$capacity_mode" ]]; then
 		# Admission shares the async lock, but not its cadence or unrelated
 		# maintenance/deletion scope. A timeout leaves the next job checkpointed.
 		# shellcheck source=pulse-cleanup-progress.sh
