@@ -17,6 +17,7 @@ from .filesystem import FilesystemValidationError, filesystem_error_details
 from .enrollment import GenerationEnrollment
 from .cleanup_plan import prepare_cleanup
 from .launch import initialize_or_open
+from .refusal import refusal_code
 from .runtime import adapter_for, require_ready
 from .storage import MAX_EVENT_BYTES, LifecycleRegistry, StoreCapacity, StoreConflict
 from .upgrade import upgrade_registry
@@ -212,6 +213,10 @@ def _error_details(error: Exception, operation: str) -> dict:
     # GH#36142: name the enrollment refusal; OSError text may carry paths.
     if operation == "enroll" and isinstance(error, ValueError):
         detail["detail"] = str(error)[:200]
+    # GH#36370: creation refusals carry a stable code; `reason` stays unchanged.
+    code = refusal_code(error, operation)
+    if code:
+        detail.setdefault("detail", code)
     return detail
 
 

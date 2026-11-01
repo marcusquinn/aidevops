@@ -19,6 +19,7 @@ upstream_url: https://github.com/cloudflare/skills
 - **Operations** (DNS, WAF, DDoS, R2 buckets, deployments): `cf` CLI when installed (`../../tools/api/cloudflare-cf-cli.md`), else Code Mode MCP (`../../tools/api/cloudflare-mcp.md`)
 - **cf vs Wrangler**: `cloudflare.config.ts` projects use `cf init/dev/build/deploy`; `wrangler.toml`/`wrangler.json[c]` projects keep the Wrangler guidance in this skill until migrated with `cf migrate`. Wrangler stays supported during the `cf` beta and 18 months after it.
 - **Products**: Decision trees below → load `./cloudflare-platform-skill/<product>.md`
+- **Email Routing DNS side effects** (subdomain enablement adds apex SPF/DKIM) and token permissions: `cloudflare.md` "Email Routing on a Subdomain"
 
 <!-- AI-CONTEXT-END -->
 
