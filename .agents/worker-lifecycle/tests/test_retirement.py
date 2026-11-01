@@ -365,6 +365,12 @@ class RetirementContract(unittest.TestCase):
             self.retire()
         self.assertTrue(self.target.exists())
         self.assertEqual(parent.stat().st_mode & 0o777, 0o777)
+        report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        result = report["results"][0]
+        self.assertEqual(result["reason"], "archive-path-externally-writable")
+        self.assertEqual(result["filesystem_path"], str(parent))
+        self.assertEqual(result["path"], str(self.target))
+        self.assertTrue(self.target.exists())
 
     def test_cleanup_resumes_private_generation_not_public_replacement(self):
         self.create()

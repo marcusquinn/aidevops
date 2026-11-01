@@ -13,8 +13,10 @@ from uuid import UUID, uuid5
 from .absence import reconcile_absence
 from .archive_path import validate_archive_path
 from .enrollment import GenerationEnrollment
+from .filesystem import FilesystemValidationError, filesystem_error_details
+from .filesystem import validate_private_path as _private
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
-from .storage import LifecycleRegistry, _private, identifier
+from .storage import LifecycleRegistry, identifier
 
 
 def _repository_entries(config: Path) -> list:
@@ -105,6 +107,8 @@ def _advance(store: LifecycleRegistry, generation: str) -> None:
 
 def _failure_details(error: Exception) -> dict:
     """Report stable diagnostics, never raw argv, stdout or stderr."""
+    if isinstance(error, FilesystemValidationError):
+        return filesystem_error_details(error)
     details: dict = {"reason": type(error).__name__}
     if isinstance(error, ValueError) and re.fullmatch(r"[a-z][a-z0-9:_-]{0,159}", str(error)):
         details["reason"] = str(error)

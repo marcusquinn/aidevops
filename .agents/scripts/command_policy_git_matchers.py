@@ -56,6 +56,7 @@ def _git_worktree_matches(
     worktree: bool,
 ) -> dict[str, bool]:
     return {
+        "git_worktree_add": subcommand == "worktree" and git_args[:1] == ["add"],
         "git_checkout_worktree_path": subcommand == "checkout" and "--" in git_args,
         "git_restore_worktree": subcommand == "restore" and (worktree or not staged),
         "git_reset_destructive": subcommand == "reset"

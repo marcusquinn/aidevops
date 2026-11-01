@@ -1304,6 +1304,16 @@ _runtime_bundle_activate() {
 		IFS= read -r _AIDEVOPS_PREVIOUS_DEPLOYED_SHA <"${target_dir%/*}/.deployed-sha" || true
 	fi
 	_runtime_bundle_activate_locked "$target_dir" "$bundle_dir" || activate_rc=$?
+	# Carry exact activation ownership across the CLI's setup subprocess. Never
+	# infer the candidate from the active link after setup returns: it may have
+	# been replaced by a concurrent deployment by then.
+	if [[ "$activate_rc" -eq 0 && -n "${AIDEVOPS_UPDATE_ROLLBACK_RECEIPT:-}" ]]; then
+		if ! printf '%s\n' "$_AIDEVOPS_ACTIVE_BUNDLE_ROOT" "${_AIDEVOPS_PREVIOUS_BUNDLE_ROOT:-}" \
+			"${_AIDEVOPS_PREVIOUS_DEPLOYED_SHA:-}" >"$AIDEVOPS_UPDATE_ROLLBACK_RECEIPT"; then
+			_runtime_bundle_rollback_locked "$target_dir" || true
+			activate_rc=1
+		fi
+	fi
 	aidevops_runtime_transition_lock_release
 	[[ "$activate_rc" -eq 0 ]] || return "$activate_rc"
 	return 0
@@ -1617,6 +1627,31 @@ _verify_agents_deploy_or_restore_locked() {
 		return 1
 	fi
 
+	return 0
+}
+
+_runtime_bundle_rollback() {
+	local target_dir="$1"
+	local rollback_rc=0
+	aidevops_runtime_transition_lock_acquire || return 1
+	_runtime_bundle_rollback_locked "$target_dir" || rollback_rc=$?
+	aidevops_runtime_transition_lock_release
+	return "$rollback_rc"
+}
+
+_runtime_bundle_rollback_locked() {
+	local target_dir="$1"
+	local previous_root="${_AIDEVOPS_PREVIOUS_BUNDLE_ROOT:-}"
+	# An empty context or a different active root is not ours to roll back.
+	[[ -n "${_AIDEVOPS_ACTIVE_BUNDLE_ROOT:-}" ]] || return 0
+	[[ "$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null || true)" == "$_AIDEVOPS_ACTIVE_BUNDLE_ROOT" ]] || return 0
+	if [[ -n "$previous_root" ]]; then
+		[[ -d "$previous_root" ]] || return 1
+		_runtime_bundle_switch_link "$target_dir" "$previous_root" || return 1
+	else
+		rm -f "$target_dir" || return 1
+	fi
+	_runtime_bundle_restore_stamp "$target_dir" || return 1
 	return 0
 }
 

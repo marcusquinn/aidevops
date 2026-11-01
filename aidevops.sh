@@ -279,12 +279,39 @@ _run_update_setup_transaction() {
 	local output_mode="$1"
 	local expected_sha="$2"
 	local setup_exit=0
-	_run_update_setup "$output_mode" || setup_exit=$?
+	local rollback_receipt=""
+	rollback_receipt=$(mktemp) || return 1
+	AIDEVOPS_UPDATE_ROLLBACK_RECEIPT="$rollback_receipt" _run_update_setup "$output_mode" || setup_exit=$?
 	if [[ "$setup_exit" -ne 0 ]]; then
+		rm -f "$rollback_receipt"
 		print_error "Agent deployment failed: setup exited with code $setup_exit"
 		return 1
 	fi
-	_update_verify_deployment_state "$expected_sha" || return 1
+	if ! _update_verify_deployment_state "$expected_sha"; then
+		# Load deployment helpers only in the recovery subprocess, keeping the
+		# CLI's already-sourced runtime and global state unchanged.
+		if [[ -s "$rollback_receipt" ]]; then
+			(
+				if ! declare -F _runtime_bundle_rollback >/dev/null; then
+					# shellcheck source=.agents/scripts/setup/modules/agent-deploy.sh
+					source "$INSTALL_DIR/.agents/scripts/setup/modules/agent-deploy.sh" || exit 1
+				fi
+				if ! declare -F aidevops_runtime_transition_lock_acquire >/dev/null; then
+					# shellcheck source=.agents/scripts/setup/modules/agent-runtime.sh
+					source "$INSTALL_DIR/.agents/scripts/setup/modules/agent-runtime.sh" || exit 1
+				fi
+				{
+					IFS= read -r _AIDEVOPS_ACTIVE_BUNDLE_ROOT &&
+						IFS= read -r _AIDEVOPS_PREVIOUS_BUNDLE_ROOT &&
+						IFS= read -r _AIDEVOPS_PREVIOUS_DEPLOYED_SHA
+				} <"$rollback_receipt" || exit 1
+				_runtime_bundle_rollback "$_AIDEVOPS_REAL_HOME/.aidevops/agents"
+			) || print_error "Failed to roll back the runtime bundle after convergence failure"
+		fi
+		rm -f "$rollback_receipt"
+		return 1
+	fi
+	rm -f "$rollback_receipt"
 	_update_adopt_deployed_version
 	return 0
 }

@@ -78,16 +78,16 @@ export function appendRuntimePolicyArgs(helperArgs, options) {
 }
 
 /**
- * GH#33969: apply the shared worker command policy to an exact argv before a
+ * Apply the shared command policy to an exact argv before a
  * bounded operation spawns it, so recognized clients get the same decision as
- * in Bash. Shell bodies the strict parser cannot represent (redirection,
+ * in Bash, including interactive safety-floor rules. Shell bodies the strict parser cannot represent (redirection,
  * background jobs) stay outside argv control, like unrecognized clients; the
  * worker egress backend owns whole-process enforcement.
  * @returns {object|null} policy result, or null when not applicable
  */
 export function checkArgvSafetyGate(argv, scriptsDir, cwd = process.cwd(), options = {}) {
   const worker = options.worker ?? isWorkerContext();
-  if (!worker || !Array.isArray(argv) || argv.length === 0) return null;
+  if (!Array.isArray(argv) || argv.length === 0) return null;
   const helper = join(scriptsDir, "command-policy-helper.py");
   if (!existsSync(helper)) {
     throw new Error("BLOCKED: required command policy helper is missing");

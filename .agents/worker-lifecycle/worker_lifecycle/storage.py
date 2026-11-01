@@ -12,10 +12,10 @@ import json
 import os
 from pathlib import Path
 import sqlite3
-import stat
 import sys
 from uuid import UUID, uuid4, uuid5
 
+from .filesystem import checked_directory, validate_private_path
 from .process import ProcessIdentity, ProcessObservation
 
 
@@ -43,10 +43,8 @@ def encode(value: object) -> str:
 
 
 def _private(path: Path, directory: bool = False) -> None:
-    info = path.lstat()
-    kind = stat.S_ISDIR if directory else stat.S_ISREG
-    if not kind(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise ValueError("state-path-must-be-private-and-owned")
+    """Compatibility adapter; filesystem policy is independent of SQLite."""
+    validate_private_path(path, directory=directory)
 
 
 class LifecycleRegistry:
@@ -64,7 +62,8 @@ class LifecycleRegistry:
         directory = directory.absolute()
         if directory.parent.resolve(strict=True) != directory.parent:
             raise ValueError("state-parent-must-be-canonical")
-        directory.mkdir(mode=0o700)
+        with checked_directory(directory.parent):
+            directory.mkdir(mode=0o700)
         descriptor = os.open(directory / "registry.sqlite3", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(descriptor)
         store = cls(directory)
