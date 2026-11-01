@@ -5,6 +5,22 @@ import { join } from "path";
 import { patchTargetPaths } from "./worker-write-fence.mjs";
 import { isApplyPatchMutationTool, isDirectFileMutationTool } from "./quality-hooks-git-safety.mjs";
 import { parsePolicyPayload, runPolicyHelper } from "./quality-hooks-policy-runner.mjs";
+import { emitToast } from "./greeting-toast.mjs";
+
+const advisedSessions = new Set();
+
+function adviseDiagnostic(result, input, client) {
+  const sessionID = input.sessionID || input.sessionId || input.session?.id || "";
+  if (!result.diagnostic || !sessionID || !client?.tui?.showToast
+      || advisedSessions.has(sessionID)) return;
+  advisedSessions.add(sessionID);
+  // The existing toast path swallows transport failures; advice is never a gate.
+  void emitToast(client, {
+    title: "Worker lifecycle coverage gap",
+    message: "schema-upgrade-required: lifecycle coverage is observe-only until the store is upgraded. No owner admitted or cleanup authorized. This operation is not blocked.",
+    variant: "warning", duration: 15000,
+  });
+}
 
 function ownerWorkingDirectory(args, repositoryDir, bash) {
   return bash
@@ -35,7 +51,7 @@ function ownerArguments(scriptsDir, input, args, context) {
   return helperArgs;
 }
 
-export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash, bounded }) {
+export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash, bounded, client }) {
   // Unsupported hosts cannot run the native cleanup collector either.
   if (!["linux", "darwin"].includes(process.platform)) return;
   const args = output.args || {};
@@ -62,6 +78,7 @@ export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash,
   }
   if (result.status === "coverage-gap" && result.reason === "schema-upgrade-required"
       && result.cleanup_authorized === false) {
+    adviseDiagnostic(result, input, client);
     // Observation is not ownership. Independent command/canonical-write gates
     // remain mandatory; the console router persists this diagnostic off-TUI.
     console.error("[aidevops] [worker-lifecycle] coverage-gap: schema-upgrade-required; observe-only, no owner admitted or cleanup authorized");

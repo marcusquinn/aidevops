@@ -131,6 +131,9 @@ def main():
     result = {"status": status, "cleanup_authorized": False}
     if status == "coverage-gap":
         result["reason"] = "schema-upgrade-required"
+        result["diagnostic"] = "schema-upgrade-required"
+        print("[worker-lifecycle] coverage-gap: schema-upgrade-required; "
+              "observe-only, no owner admitted or cleanup authorized", file=sys.stderr)
     print(json.dumps(result))
     return 0
 
