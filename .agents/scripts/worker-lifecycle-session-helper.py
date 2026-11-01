@@ -20,7 +20,7 @@ from native_git import real_git
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "worker-lifecycle"))
 
-from worker_lifecycle.enrollment import _git_directory
+from worker_lifecycle.enrollment import GenerationEnrollment, _git_directory
 from worker_lifecycle.launch import initialize_or_open, require_unregistered
 from worker_lifecycle.process import ObservationUnavailable
 from worker_lifecycle.runtime import adapter_for, require_ready
@@ -90,8 +90,21 @@ def admit_targets(cwd, targets, pid, session_id):
         return "excluded-unregistered"
     require_ready(adapter_for(str(uuid4())))
     store = initialize_or_open(state)
+    enrollment = GenerationEnrollment(store)
+    gaps = 0
     for root in sorted(roots):
+        # GH#36349: a valid, unmarked schema-1 store keeps the documented
+        # observe-only coverage gap (as worktree creation does) instead of
+        # refusing every write. This never enrolls, migrates or authorizes
+        # cleanup; marked or partially upgraded schema-1 state still fails.
+        if enrollment.has_schema_one_gap(root):
+            gaps += 1
+            continue
         admit_session(store, root, pid, session_id)
+    if gaps:
+        print("[worker-lifecycle] coverage-gap: schema-upgrade-required; "
+              "no session owner admitted", file=sys.stderr)
+        return "coverage-gap"
     return "admitted"
 
 
@@ -113,7 +126,10 @@ def main():
         status = admit_targets(args.cwd, targets, args.runtime_pid, args.session_id)
     except (ValueError, OSError, RuntimeError, sqlite3.Error,
             subprocess.SubprocessError, ObservationUnavailable) as error:
-        print(json.dumps({"status": "unavailable", "reason": type(error).__name__}))
+        print(json.dumps({
+            "status": "unavailable", "reason": type(error).__name__,
+            "detail": str(error)[:200],
+        }))
         return 75
     print(json.dumps({"status": status, "cleanup_authorized": False}))
     return 0

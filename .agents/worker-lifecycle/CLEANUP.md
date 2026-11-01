@@ -150,6 +150,13 @@ runtime-provided session ID. Framework-managed hook commands use `exec` so an
 intermediate shell is not mistaken for the owning runtime. Custom command
 wrappers are not qualified by this integration.
 
+On a valid, un-enrolled schema-1 store, the session helper applies the same
+compatibility rule as creation enrollment: it returns `coverage-gap` with a
+`coverage-gap: schema-upgrade-required` diagnostic, admits no owner, publishes
+no marker and does not migrate (GH#36349). Hooks accept it as observe-only; it
+never authorizes cleanup. Schema-1 markers or admission tables still refuse.
+Refusals name the helper reason, such as `explicit-schema-upgrade-required`.
+
 Replaying the same session/process registration is idempotent, including after
 admission closes; it does not start another independent run. A new owner cannot
 enter a closed generation. Shared runtime processes are retained conservatively

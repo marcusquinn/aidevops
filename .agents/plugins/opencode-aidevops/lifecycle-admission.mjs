@@ -48,10 +48,26 @@ export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash,
   try {
     // Admission replay is idempotent, including a retry after a lost acknowledgement.
     result = parsePolicyPayload(runPolicyHelper(helperArgs, { stdio: ["ignore", "pipe", "pipe"] }));
-  } catch {
-    throw new Error("BLOCKED: lifecycle owner admission is unavailable; no write authorized");
+  } catch (error) {
+    throw new Error(`BLOCKED: lifecycle owner admission is unavailable; no write authorized${unavailableReason(error)}`);
   }
-  if (!["admitted", "excluded-unregistered", "not-applicable"].includes(result.status)) {
+  // coverage-gap: valid schema-1 store, observe-only; cleanup stays unauthorized (GH#36349).
+  if (!ADMITTED_STATUSES.includes(result.status)) {
     throw new Error("BLOCKED: lifecycle owner admission was not confirmed");
+  }
+}
+
+const ADMITTED_STATUSES = ["admitted", "coverage-gap", "excluded-unregistered", "not-applicable"];
+
+// Name the helper's refusal so sessions need not debug the helper (GH#36349).
+// Diagnostic only: the decision above is already a refusal.
+function unavailableReason(error) {
+  try {
+    const payload = parsePolicyPayload(String(error?.stdout ?? ""));
+    const reason = [payload.reason, payload.detail]
+      .filter((value) => typeof value === "string" && value).join(": ");
+    return reason ? ` (${reason.slice(0, 240)})` : "";
+  } catch {
+    return "";
   }
 }
