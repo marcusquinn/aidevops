@@ -340,9 +340,22 @@ Other entries under `aidevops/` remain unsupported; the
 Symlinks and oversized readiness records fail closed during capture, and the
 artifact reader also enforces the size limit before restoring them.
 
+The legacy `aidevops/js-admission.json` record is preserved under the same
+bounded opaque-byte policy, including its original branch, HEAD and policy
+bindings. Capture and restore neither interpret this record nor execute its
+contents, approve dependency installation, or change lifecycle/ownership evidence.
+It is historical data, not fresh admission authority; restored work still requires
+the current readiness and dependency-policy checks. Unknown sibling files and the
+`aidevops/js-install-partial` marker remain blocked.
+
 The known `aidevops-profile-publication.json` record is also preserved as opaque
 bytes under the same 1 MiB limit. It is historical metadata, not fresh publication
 or removal authority; restore does not rewrite its original path bindings.
+Git-only capture (including structured merges) rejects either the legacy admission
+or publication record because it does not preserve `git-admin.json`. Source
+comparison also rejects these records if they appear after capture; retain the
+source rather than discard this metadata. The historical `preserve-v1` reader and
+administration-preservation path remain unchanged.
 Special working-file permissions (for example, a tracked file with mode 0600)
 remain unsupported and block migration rather than being normalized or discarded.
 

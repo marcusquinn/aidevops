@@ -1242,7 +1242,8 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
             path.unlink()
         payload = self.root / 'malformed-admin'
         payload.mkdir()
-        for name in ('aidevops/js-readiness.json', 'aidevops-profile-publication.json'):
+        for name in ('aidevops/js-readiness.json', 'aidevops/js-admission.json',
+                     'aidevops-profile-publication.json'):
             with self.subTest(name=name):
                 path = admin / name
                 path.symlink_to(self.work / 'mixed.txt')

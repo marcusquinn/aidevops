@@ -21,6 +21,13 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     not repeat diffs or verify restoration. Comparison is a separate operation.
     """
     root = Path(path).resolve(strict=True)
+    # These opaque records are preserved only by preserve-v1's git-admin.json.
+    # Guard this policy boundary even with cached metadata or a structured merge;
+    # git_index_state is also used independently of the archive capture policy.
+    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    for name in ('aidevops/js-admission.json', 'aidevops-profile-publication.json'):
+        if os.path.lexists(admin / name):
+            raise ValueError(f'git_admin:requires_preservation:{name}')
     metadata = metadata if metadata is not None else git_index_state(root)
     if 'merge' in metadata:
         state = metadata['merge']
