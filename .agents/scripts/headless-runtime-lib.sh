@@ -456,7 +456,7 @@ append_runtime_metric() {
 		OBSERVED_REQUEST_COUNT="${_MODEL_REPLAY_REQUEST_COUNT:-}" OBSERVED_USAGE_COUNT="${_MODEL_REPLAY_USAGE_COUNT:-}" \
 		OBSERVED_TOKENS_TOTAL="${_MODEL_REPLAY_TOKENS_TOTAL:-}" OBSERVED_COST_COUNT="${_MODEL_REPLAY_COST_COUNT:-}" \
 		OBSERVED_COST_USD="${_MODEL_REPLAY_COST_USD:-}" \
-		METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
+		METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || return 0
 import json
 import os
 import time
@@ -536,6 +536,8 @@ except (AttributeError, OSError):
 with open(os.environ["METRICS_PATH"], "a") as f:
     f.write(json.dumps(record, separators=(",", ":")) + "\n")
 PY
+	# A later EXIT trap must not duplicate an already persisted invocation metric.
+	_HEADLESS_RUNTIME_LAST_METRIC_KEY="${AIDEVOPS_RUN_ID:-${_WORKER_START_EPOCH_MS:-0}}:${session_key}"
 	return 0
 }
 
