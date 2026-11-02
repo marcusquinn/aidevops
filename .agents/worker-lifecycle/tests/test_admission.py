@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -83,6 +84,27 @@ class AdmissionContract(unittest.TestCase):
             results = list(pool.map(lambda _: self.gate.admit(run, self.identity, self.generation), range(2)))
         self.assertEqual(sorted(results), [False, True])
         self.assertEqual(self.store.summary()["bindings"], 1)
+
+    def test_replays_do_not_require_writer_admission(self):
+        run = str(uuid4())
+        self.assertTrue(self.gate.admit(run, self.identity, self.generation))
+        before = self.store.summary()
+        with self.store.connection(write=True):
+            self.gate.open_generation(self.open_event, self.generation, self.root)
+            self.assertFalse(self.gate.admit(run, self.identity, self.generation))
+            # A new owner cannot use the read-only replay path to bypass a lock.
+            with self.assertRaises(sqlite3.OperationalError):
+                self.gate.admit(str(uuid4()), self.identity, self.generation)
+        self.assertEqual(before, self.store.summary())
+
+    def test_replay_checks_payload_even_while_writer_is_busy(self):
+        run = str(uuid4())
+        self.gate.admit(run, self.identity, self.generation)
+        with self.store.connection(write=True):
+            with self.assertRaisesRegex(StoreConflict, "event-id-payload-conflict"):
+                self.gate.admit(run, self.identity, self.generation, str(self.root))
+            with self.assertRaisesRegex(StoreConflict, "event-id-payload-conflict"):
+                self.gate.open_generation(self.open_event, str(uuid4()), self.root)
 
     def test_capacity_failure_rolls_back_admission_and_registration(self):
         with self.store.connection(write=True) as connection:
