@@ -101,8 +101,7 @@ def load_public_identifiers(path: Path, signature: tuple[int, int]) -> frozenset
             if isinstance(repo_path, str) and repo_path:
                 # Match Node basename lexically: do not normalize a final '/.'.
                 name = os.path.basename(repo_path.rstrip("/"))
-                if name and name not in {".", ".."}:
-                    values.add(name)
+                values.update({name} - {"", ".", ".."})
     except (OSError, ValueError):
         pass  # Missing or malformed configuration grants no exemptions.
     return frozenset(values)

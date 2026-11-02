@@ -4,6 +4,7 @@
 /** Credential transcript scrubbing shared by OpenCode post-tool hooks. */
 
 import { parseStructuredText } from "./structured-text-parser.mjs";
+import { scrubEscapedNonStringCredentials } from "./escaped-credential-values.mjs";
 
 const CREDENTIAL_PATTERN =
   /(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
@@ -17,9 +18,6 @@ const NAME_VALUE_PAIR_PATTERN =
 // JSON records embedded in plain text with escaped quotes (not standalone JSON).
 const ESCAPED_CREDENTIAL_ASSIGNMENT_PATTERN =
   /(\\"([A-Za-z_][A-Za-z0-9_. -]*)\\"\s*[:=]\s*\\")((?:[^"\\]|\\\\(?:\\.|[^\\])|\\[^"\\])*)(?=\\")/gi;
-const ESCAPED_NON_STRING_ASSIGNMENT_PATTERN =
-  /\\"([A-Za-z_][A-Za-z0-9_. -]*)\\"\s*[:=]\s*(?=[\[{\d-]|true\b|false\b|null\b)/gi;
-const ESCAPED_STRING_PATTERN = /\\"(?:[^"\\]|\\\\(?:\\.|[^\\])|\\[^"\\])*\\"/y;
 const PEM_BEGIN_MARKER = "-----BEGIN ";
 const PEM_KEY_SUFFIX = "PRIVATE KEY-----";
 const PEM_LABEL_PATTERN = /^[A-Z0-9 ]*$/;
@@ -139,58 +137,11 @@ function redactGroupValues(pattern, text, named) {
   return { text: replaced, count };
 }
 
-// Locate a complete escaped JSON container without stopping at commas or brackets inside strings.
-function escapedNonStringValueEnd(text, start, cache) {
-  if (cache.has(start)) return cache.get(start);
-  const scalar = /^(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)(?=$|[\s,}\]])/.exec(text.slice(start));
-  if (scalar) return start + scalar[0].length;
-  const stack = [];
-  for (let cursor = start; cursor < text.length; cursor++) {
-    ESCAPED_STRING_PATTERN.lastIndex = cursor;
-    const quoted = ESCAPED_STRING_PATTERN.exec(text);
-    if (quoted) {
-      cursor += quoted[0].length - 1;
-      continue;
-    }
-    const char = text[cursor];
-    if (char === "[" || char === "{") stack.push(cursor);
-    else if (char === "]" || char === "}") {
-      const opening = stack.at(-1);
-      if (opening === undefined || (text[opening] === "[" ? "]" : "}") !== char) break;
-      stack.pop();
-      cache.set(opening, cursor + 1);
-      if (stack.length === 0) return cursor + 1;
-    }
-  }
-  // Only unfinished containers failed; completed nested values remain usable.
-  for (const opening of stack) cache.set(opening, opening);
-  cache.set(start, start);
-  return start;
-}
-
-function scrubEscapedNonStringCredentials(text) {
-  const chunks = [];
-  let cursor = 0;
-  let count = 0;
-  const valueEndCache = new Map();
-  for (const match of text.matchAll(ESCAPED_NON_STRING_ASSIGNMENT_PATTERN)) {
-    if (match.index < cursor || !isSensitiveFieldName(match[1])) continue;
-    const start = match.index + match[0].length;
-    const end = escapedNonStringValueEnd(text, start, valueEndCache);
-    if (end === start || text.slice(start, end) === "null") continue;
-    chunks.push(text.slice(cursor, start), `\\"${REDACTION_TOKEN}\\"`);
-    cursor = end;
-    count++;
-  }
-  chunks.push(text.slice(cursor));
-  return { text: chunks.join(""), count };
-}
-
 /** Scrub known token prefixes and unknown-format values under sensitive names. */
 function scrubPlainCredentials(text) {
   const { scrubbed: pemScrubbed, count: pemCount } = scrubPrivateKeys(text);
   let count = pemCount;
-  const nonStringScrubbed = scrubEscapedNonStringCredentials(pemScrubbed);
+  const nonStringScrubbed = scrubEscapedNonStringCredentials(pemScrubbed, isSensitiveFieldName, REDACTION_TOKEN);
   count += nonStringScrubbed.count;
   const escapedScrubbed = redactGroupValues(ESCAPED_CREDENTIAL_ASSIGNMENT_PATTERN, nonStringScrubbed.text, true);
   const pairScrubbed = redactGroupValues(NAME_VALUE_PAIR_PATTERN, escapedScrubbed.text, true);

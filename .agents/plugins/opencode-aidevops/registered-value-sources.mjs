@@ -16,7 +16,8 @@
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
+import { parsePublicRepoIdentifiers } from "./registered-repo-identifiers.mjs";
 
 export const REDACTION_TOKEN = "[redacted-credential]";
 export const MIN_VALUE_LENGTH = 8;
@@ -143,22 +144,7 @@ export class RegisteredValueSources {
     const path = join(this.configDir, "repos.json");
     const key = fileSignature(path);
     if (key !== this.publicIdentifierCache.key) {
-      const values = new Set();
-      try {
-        const repos = JSON.parse(readText(path)).initialized_repos;
-        for (const repo of Array.isArray(repos) ? repos : []) {
-          if (!repo || typeof repo !== "object") continue;
-          if (typeof repo.slug === "string" && /^[^/\s]+\/[^/\s]+$/.test(repo.slug)) {
-            for (const value of [repo.slug, ...repo.slug.split("/")]) values.add(value);
-          }
-          if (typeof repo.path === "string" && repo.path) {
-            const name = basename(repo.path);
-            if (name && name !== "." && name !== "..") values.add(name);
-          }
-        }
-      } catch {
-        // Missing or malformed configuration grants no exemptions.
-      }
+      const values = parsePublicRepoIdentifiers(readText(path));
       this.publicIdentifierCache = { key, values };
     }
     return this.publicIdentifierCache.values;
