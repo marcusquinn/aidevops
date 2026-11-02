@@ -14,6 +14,9 @@ const URL_USERINFO_PATTERN = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s:@/"'<>\\]+:)([
 // {"name":"X_PASSWORD","value":"secret"} where the secret name is a sibling field.
 const NAME_VALUE_PAIR_PATTERN =
   /(\\?"(?:name|key|variable)\\?"\s*:\s*\\?"([^"\\]*)\\?"\s*,\s*\\?"value\\?"\s*:\s*\\?")([^"\\]+)(?=\\?")/gi;
+// JSON records embedded in plain text with escaped quotes (not standalone JSON).
+const ESCAPED_CREDENTIAL_ASSIGNMENT_PATTERN =
+  /(\\"([A-Za-z_][A-Za-z0-9_. -]*)\\"\s*[:=]\s*\\")((?:[^"\\]|\\\\(?:\\.|[^\\])|\\[^"\\])*)(?=\\")/gi;
 const PEM_BEGIN_MARKER = "-----BEGIN ";
 const PEM_KEY_SUFFIX = "PRIVATE KEY-----";
 const PEM_LABEL_PATTERN = /^[A-Z0-9 ]*$/;
@@ -137,9 +140,10 @@ function redactGroupValues(pattern, text, named) {
 function scrubPlainCredentials(text) {
   const { scrubbed: pemScrubbed, count: pemCount } = scrubPrivateKeys(text);
   let count = pemCount;
-  const pairScrubbed = redactGroupValues(NAME_VALUE_PAIR_PATTERN, pemScrubbed, true);
+  const escapedScrubbed = redactGroupValues(ESCAPED_CREDENTIAL_ASSIGNMENT_PATTERN, pemScrubbed, true);
+  const pairScrubbed = redactGroupValues(NAME_VALUE_PAIR_PATTERN, escapedScrubbed.text, true);
   const urlScrubbed = redactGroupValues(URL_USERINFO_PATTERN, pairScrubbed.text, false);
-  count += pairScrubbed.count + urlScrubbed.count;
+  count += escapedScrubbed.count + pairScrubbed.count + urlScrubbed.count;
   const namedScrubbed = urlScrubbed.text.replace(
     NAMED_CREDENTIAL_ASSIGNMENT_PATTERN,
     (match, boundary, name, separator, value) => {

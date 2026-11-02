@@ -17,6 +17,7 @@ import { createHmac } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createQualityHooks, scrubCredentials } from "../quality-hooks.mjs";
 import { createSecretValueRedactor } from "../registered-value-redaction.mjs";
@@ -81,12 +82,15 @@ describe("credential transcript scrub boundary", () => {
           await hooks.toolExecuteAfter({ tool, callID: "" }, output);
           assert.equal(output.output, `bare ${value} FOO_TOKEN=${REDACTION_TOKEN} FOO_SECRET=${REDACTION_TOKEN} FOO_PASSWORD=${REDACTION_TOKEN}`);
           assert.deepEqual(output.metadata, { ordinary: value, pair: { name: "FOO_TOKEN", value: REDACTION_TOKEN } });
+          const escaped = { output: String.raw`{\"password\":\"${value}\",\"repo\":\"${value}\"}` };
+          await hooks.toolExecuteAfter({ tool, callID: "" }, escaped);
+          assert.equal(escaped.output, String.raw`{\"password\":\"${REDACTION_TOKEN}\",\"repo\":\"${value}\"}`);
         }
       }
       const helper = new URL("../../../scripts/redaction-digest-registry.py", import.meta.url);
       const writerDir = join(root, "writer-registry");
       const longer = `${identifiers[1]}-synthetic-credential`;
-      execFileSync("python3", [helper.pathname, "register"], {
+      execFileSync("python3", [fileURLToPath(helper), "register"], {
         input: [...identifiers, longer, "dot-path-secret"].map((value) => `FOO_DB_NAME=${value}\0`).join(""),
         env: { ...process.env, HOME: root, AIDEVOPS_SECRET_REDACTION_DIR: writerDir },
       });
