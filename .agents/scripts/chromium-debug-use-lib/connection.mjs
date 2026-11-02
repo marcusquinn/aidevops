@@ -1,6 +1,6 @@
 // Browser discovery and WebSocket URL resolution.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { IS_WINDOWS } from './constants.mjs';
@@ -81,6 +81,29 @@ function buildPortFileCandidates(home) {
   ].filter(Boolean);
 }
 
+// Profiles started by `chromium-debug-use-helper.sh launch` use a free port
+// recorded in their own DevToolsActivePort file. Only a live endpoint counts, so
+// stale files left by a closed browser are skipped.
+async function findLaunchedProfileWsUrl(home) {
+  const base = process.env.AIDEVOPS_BROWSER_PROFILE_DIR
+    || resolve(home, '.aidevops/.agent-workspace/browser-profiles');
+  let entries = [];
+  try {
+    entries = readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    const portFile = resolve(base, entry.name, 'DevToolsActivePort');
+    if (!existsSync(portFile)) continue;
+    const port = readFileSync(portFile, 'utf8').split('\n')[0].trim();
+    if (!/^\d+$/.test(port)) continue;
+    const wsUrl = await tryBrowserUrl(`http://127.0.0.1:${port}`);
+    if (wsUrl) return wsUrl;
+  }
+  return null;
+}
+
 export async function getWsUrl() {
   const explicitWsEndpoint = process.env.CHROMIUM_DEBUG_USE_WS_ENDPOINT || process.env.CDP_WS_ENDPOINT || '';
   if (explicitWsEndpoint) return explicitWsEndpoint;
@@ -97,12 +120,15 @@ export async function getWsUrl() {
   }
 
   const home = homedir();
+  const launchedWsUrl = await findLaunchedProfileWsUrl(home);
+  if (launchedWsUrl) return launchedWsUrl;
+
   const candidates = buildPortFileCandidates(home);
 
   const portFile = candidates.find((candidate) => existsSync(candidate));
   if (!portFile) {
     throw new Error(
-      'No Chromium debugging endpoint found. Launch a browser with --remote-debugging-port=9222 or set CHROMIUM_DEBUG_USE_BROWSER_URL.'
+      'No Chromium debugging endpoint found. Run "chromium-debug-use-helper.sh launch" for a dedicated profile, or set CHROMIUM_DEBUG_USE_BROWSER_URL.'
     );
   }
 
