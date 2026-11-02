@@ -44,9 +44,11 @@ def _run(command: list[str]) -> str:
         AIDEVOPS_WORKTREE_RECOVERY_POLICY="git-only",
         PYTHONDONTWRITEBYTECODE="1",
     )
+    # Archive helpers create intermediate directories; do not inherit a caller's
+    # group-writable umask or change permissions on existing recovery paths.
     result = subprocess.run(  # nosec B603 # local helpers and literal path arguments
         command, env=environment, capture_output=True, check=True, timeout=120,
-        pass_fds=_OPERATION_LOCKS.get(),
+        pass_fds=_OPERATION_LOCKS.get(), umask=0o077,
     )
     return os.fsdecode(result.stdout).removesuffix("\n")
 

@@ -164,6 +164,24 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(again["results"][0]["status"], "already-retired")
         self.assertEqual((self.target / "replacement").read_text(), "keep")
 
+    def test_group_writable_caller_umask_keeps_new_archives_private(self):
+        self.stop_owner()
+        previous = os.umask(0o002)
+        try:
+            result = self.cleanup()
+            self.assertEqual(os.umask(0o002), 0o002)
+        finally:
+            os.umask(previous)
+        self.assertEqual(result["retired"], 1, result)
+        self.assertFalse(self.target.exists())
+        with self.store.connection() as connection:
+            archives = [json.loads(row[0]) for row in connection.execute(
+                "SELECT payload FROM events"
+            ) if json.loads(row[0]).get("type") == "legacy-worktree-archive"]
+        archive = Path(archives[0]["archive"])
+        self.assertEqual(archive.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(archive.stat().st_mode & 0o777, 0o700)
+
     def test_alive_and_recent_sources_remain(self):
         result = self.cleanup()
         self.assertEqual(result["results"][0]["reason"], "process-alive")
