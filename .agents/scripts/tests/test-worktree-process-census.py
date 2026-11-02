@@ -109,7 +109,7 @@ class ProcessCensusTests(unittest.TestCase):
                   "print('ready',flush=True); time.sleep(30)")
         child = subprocess.Popen(  # nosec B603 -- fixed disposable non-dumpable child, no shell
             [sys.executable, "-c", script], cwd="/", stdout=subprocess.PIPE, text=True,
-            env=dict(os.environ, PWD="/", AIDEVOPS_WORKTREE="/"))
+            env=dict(os.environ, PWD=os.path.sep, AIDEVOPS_WORKTREE=os.path.sep))
         try:
             import select
             self.assertTrue(select.select([child.stdout], [], [], 5)[0])
