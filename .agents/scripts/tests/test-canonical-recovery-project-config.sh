@@ -243,7 +243,7 @@ pcu_migrate true
 pcu_drift_hook="${ROOT}/pcu-drift-hook.sh"
 printf '%s\n' \
 	'#!/usr/bin/env bash' \
-	"/usr/bin/git -C \"\${1:-}\" update-ref refs/remotes/origin/main \"\${3:-}\"" >"$pcu_drift_hook"
+	"\"${GIT}\" -C \"\${1:-}\" update-ref refs/remotes/origin/main \"\${3:-}\"" >"$pcu_drift_hook"
 chmod +x "$pcu_drift_hook"
 PCU_RC=0
 PCU_OUTPUT=$(AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK="$pcu_drift_hook" AIDEVOPS_REAL_GIT_BIN="$GIT" \
@@ -320,6 +320,8 @@ PCU_CONFIG='{"default_branch":"main"},'
 pcu_fixture malformedremoved
 printf 'local edits\n' >>"${PCU_REPO}/README.md"
 pcu_migrate false
+# The resolver reads committed remote-tracking metadata, not the network.
+"$GIT" -C "$PCU_REPO" fetch -q origin
 pcu_run sync-mirror --repo "$PCU_REPO" --issue 36426 --confirm SYNCHRONIZE_CANONICAL_MIRROR
 if [[ "$PCU_RC" -eq 0 ]] &&
 	[[ "$PCU_OUTPUT" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
