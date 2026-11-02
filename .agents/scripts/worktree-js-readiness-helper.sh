@@ -85,7 +85,7 @@ Usage:
   worktree-js-readiness-helper.sh entry <worktree> <session-key>
   worktree-js-readiness-helper.sh record-restore <worktree> contention|rejected|provisioned [reason]
   worktree-js-readiness-helper.sh prepare <worktree> [--lock-held]
-  worktree-js-readiness-helper.sh approve <repo-or-worktree> [--track-default-branch]
+  worktree-js-readiness-helper.sh approve <repo-or-worktree> [--track-default-branch] [--node-major <N>]...
   worktree-js-readiness-helper.sh revoke|status <repo-or-worktree>
   worktree-js-readiness-helper.sh review [--report-only]
 USAGE
@@ -543,6 +543,39 @@ _jsr_node_major() {
 	return 0
 }
 
+# True when the current Node major is in the policy's node_majors list or equals
+# the legacy scalar node_major. Package manager, lockfile and scope are checked
+# separately and never widened by this list.
+_jsr_policy_node_matches() {
+	local policy="$1"
+	local current=""
+	current=$(_jsr_node_major)
+	jq -e --arg cur "$current" \
+		'(((.node_majors // []) | map(tostring)) + [(.node_major // empty | tostring)]) | index($cur) != null' \
+		<<<"$policy" >/dev/null 2>&1
+	return $?
+}
+
+# Warn at approval time when the aidevops runtime's Node major (AIDEVOPS_NODE_BIN,
+# if set) differs from the approving shell's, since the policy would be stale there.
+_jsr_warn_runtime_node() {
+	local shell_major="$1"
+	local runtime_bin="${AIDEVOPS_NODE_BIN:-}"
+	local runtime_major=""
+	if [[ -z "$runtime_bin" ]]; then
+		printf 'Runtime Node major: unknown (AIDEVOPS_NODE_BIN not set). If the agent runtime uses a different Node major, re-run with --node-major <N> for each major.\n'
+		return 0
+	fi
+	runtime_major=$("$runtime_bin" --version 2>/dev/null || true)
+	runtime_major="${runtime_major#v}"
+	runtime_major="${runtime_major%%.*}"
+	if [[ "$runtime_major" =~ ^[0-9]+$ && "$runtime_major" != "$shell_major" ]]; then
+		printf 'WARNING: runtime Node major %s (%s) differs from this shell (%s); the policy would report stale-node-major there. Re-run with --node-major %s --node-major %s\n' \
+			"$runtime_major" "$runtime_bin" "$shell_major" "$shell_major" "$runtime_major" >&2
+	fi
+	return 0
+}
+
 _jsr_manager_bin() {
 	local name="$1"
 	local bin=""
@@ -685,7 +718,7 @@ _jsr_review_status() {
 	if [[ "$(jq -r '.lockfile_source // empty' <<<"$policy")" != "$JSR_POLICY_SOURCE_DEFAULT_BRANCH" &&
 		"$(jq -r '.lockfile_sha256 // empty' <<<"$policy")" != "$remote_sha" ]]; then
 		JSR_POLICY_STATUS="stale-lockfile"
-	elif [[ "$(jq -r '.node_major // empty | tostring' <<<"$policy")" != "$(_jsr_node_major)" ]]; then
+	elif ! _jsr_policy_node_matches "$policy"; then
 		# _jsr_policy_evaluate stops at the lockfile check, so re-check Node here.
 		JSR_POLICY_STATUS="stale-node-major"
 	else
@@ -711,7 +744,7 @@ _jsr_policy_evaluate() {
 		! { [[ "$(jq -r '.lockfile_source // empty' <<<"$policy")" == "$JSR_POLICY_SOURCE_DEFAULT_BRANCH" ]] &&
 			_jsr_lock_matches_default_branch "$dir"; }; then
 		JSR_POLICY_STATUS="stale-lockfile"
-	elif [[ "$(jq -r '.node_major // empty | tostring' <<<"$policy")" != "$(_jsr_node_major)" ]]; then
+	elif ! _jsr_policy_node_matches "$policy"; then
 		JSR_POLICY_STATUS="stale-node-major"
 	else
 		JSR_POLICY_STATUS="current"
@@ -1007,16 +1040,34 @@ cmd_approve() {
 		printf 'worktree-js-readiness: approve is an owner decision and is refused in headless/worker sessions\n' >&2
 		return 1
 	fi
-	local source=""
-	case "${2:-}" in
-	"") ;;
-	--track-default-branch) source="$JSR_POLICY_SOURCE_DEFAULT_BRANCH" ;;
-	*)
-		_jsr_usage >&2
-		return 1
-		;;
-	esac
-	target=$(_jsr_policy_target "${1:-}") || return 1
+	local source="" majors_json="[]" requested=""
+	local arg_target="${1:-}"
+	[[ $# -eq 0 ]] || shift
+	local opt="" opt_val=""
+	while [[ $# -gt 0 ]]; do
+		opt="${1:-}"
+		opt_val="${2:-}"
+		case "$opt" in
+		--track-default-branch)
+			source="$JSR_POLICY_SOURCE_DEFAULT_BRANCH"
+			shift
+			;;
+		--node-major)
+			requested="$opt_val"
+			if [[ ! "$requested" =~ ^[0-9]+$ ]]; then
+				printf 'worktree-js-readiness: --node-major needs a numeric Node major version\n' >&2
+				return 1
+			fi
+			majors_json=$(jq -c --arg m "$requested" '(. + [$m]) | unique' <<<"$majors_json")
+			shift 2
+			;;
+		*)
+			_jsr_usage >&2
+			return 1
+			;;
+		esac
+	done
+	target=$(_jsr_policy_target "$arg_target") || return 1
 	dir="${target%%$'\n'*}"
 	canon="${target#*$'\n'}"
 	if ! _jsr_lock_identity "$dir"; then
@@ -1024,9 +1075,17 @@ cmd_approve() {
 		return 1
 	fi
 	node_major=$(_jsr_node_major)
+	printf 'Approving shell Node: %s (major %s)\n' "$(command -v node 2>/dev/null || printf 'not found')" "$node_major"
+	if [[ "$majors_json" == "[]" ]]; then
+		majors_json=$(jq -cn --arg m "$node_major" '[$m]')
+		_jsr_warn_runtime_node "$node_major"
+	else
+		node_major=$(jq -r '.[0]' <<<"$majors_json")
+	fi
 	policy=$(jq -cn --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg sha "$JSR_LOCK_SHA" --arg pm "$JSR_PM" \
-		--arg node "$node_major" --arg scope "$JSR_POLICY_SCOPE" --arg source "$source" \
+		--arg node "$node_major" --argjson majors "$majors_json" --arg scope "$JSR_POLICY_SCOPE" --arg source "$source" \
 		'{approved_at:$at,lockfile_sha256:$sha,package_manager:$pm,node_major:$node,scope:$scope}
+		+ (if ($majors | length) > 1 then {node_majors:$majors} else {} end)
 		+ (if $source == "" then {} else {lockfile_source:$source} end)')
 	_jsr_policy_write "$canon" "$policy" || rc=$?
 	if [[ "$rc" -eq 2 ]]; then
