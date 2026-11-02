@@ -16,7 +16,7 @@ source "${SCRIPT_DIR}/portable-stat.sh"
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
 export HOME="${ROOT}/home"
-GIT=/usr/bin/git
+GIT=$(PYTHONPATH="$SCRIPT_DIR" python3 -c 'from native_git import real_git; print(real_git())') || exit 1
 SYNC_REGISTRY_DIR="${ROOT}/sync-registry"
 SYNC_REGISTRY_DB="${SYNC_REGISTRY_DIR}/worktree-registry.db"
 mkdir -p "$HOME" "$SYNC_REGISTRY_DIR"
@@ -313,4 +313,45 @@ if [[ "$PCU_RC" -ne 0 ]] &&
 	pcu_pass 'fast-forward-local refuses an edited project config before changing anything'
 else
 	pcu_fail 'fast-forward-local did not refuse an edited project config safely'
+fi
+
+# GH#36426: stale malformed HEAD metadata must not prevent its own replacement.
+PCU_CONFIG='{"default_branch":"main"},'
+pcu_fixture malformedremoved
+printf 'local edits\n' >>"${PCU_REPO}/README.md"
+pcu_migrate false
+pcu_run sync-mirror --repo "$PCU_REPO" --issue 36426 --confirm SYNCHRONIZE_CANONICAL_MIRROR
+if [[ "$PCU_RC" -eq 0 ]] &&
+	[[ "$PCU_OUTPUT" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
+	[[ "$PCU_OUTPUT" == *"PRESERVED_BACKUP_ID="* ]] &&
+	[[ "$("$GIT" -C "$PCU_REPO" rev-parse HEAD)" == "$PCU_TIP" ]]; then
+	pcu_pass 'sync-mirror replaces malformed stale HEAD and preserves dirty state'
+else
+	pcu_fail 'sync-mirror blocked on malformed metadata removed by origin'
+fi
+
+pcu_fixture malformedfixed
+printf '{"default_branch":"main"}\n' >"${PCU_PEER}/.aidevops.json"
+"$GIT" -C "$PCU_PEER" add .aidevops.json
+"$GIT" -C "$PCU_PEER" commit -q -m 'repair branch metadata'
+"$GIT" -C "$PCU_PEER" push -q origin main
+"$GIT" -C "$PCU_REPO" fetch -q origin
+pcu_source=$(python3 "${SCRIPT_DIR}/canonical-write-policy-helper.py" resolve-branch \
+	--cwd "$PCU_REPO" --field source)
+if [[ "$pcu_source" == "project-config-at-remote-default" ]]; then
+	pcu_pass 'repaired remote-default metadata supplies the branch policy'
+else
+	pcu_fail 'repaired remote-default metadata was not used'
+fi
+
+pcu_fixture malformedboth
+pcu_before=$("$GIT" -C "$PCU_REPO" rev-parse HEAD)
+pcu_run sync-mirror --repo "$PCU_REPO" --issue 36426 --confirm SYNCHRONIZE_CANONICAL_MIRROR
+if [[ "$PCU_RC" -ne 0 ]] &&
+	[[ "$PCU_OUTPUT" == *"configured branch metadata is unreadable: HEAD:.aidevops.json:"* ]] &&
+	[[ "$("$GIT" -C "$PCU_REPO" rev-parse HEAD)" == "$pcu_before" ]] &&
+	[[ "$PCU_OUTPUT" != *"PRESERVED_BACKUP_ID="* ]]; then
+	pcu_pass 'malformed metadata at both refs still blocks before mutation'
+else
+	pcu_fail 'malformed metadata at both refs did not block safely'
 fi
