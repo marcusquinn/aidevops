@@ -247,7 +247,8 @@ headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"
 trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
 [[ "$HEADLESS_SSH_AGENT_STATUS" == "healed" ]]
 [[ "$SSH_AUTH_SOCK" != *"dead-agent.sock" ]]
-ssh-add -L | grep -qxF "$(<"${HOME}/.ssh/id_ed25519_signing.pub")"
+loaded_keys=$(ssh-add -L)
+grep -qxF -- "$(<"${HOME}/.ssh/id_ed25519_signing.pub")" <<<"$loaded_keys"
 headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"
 [[ "$HEADLESS_SSH_AGENT_STATUS" == "live" ]]
 printf 'PASS stale agent.env is healed with the headless key and then reused\n'
