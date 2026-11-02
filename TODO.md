@@ -1866,7 +1866,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18858 Lifecycle archive-path validation rejects owner-private-group 0775 archive roots (umask 002 hosts) #bug ref:GH#36490 pr:#36497 completed:2026-11-02
 
-- [ ] t18859 Document observed ChatGPT fan-out and retrieval capture for SEO/GEO measurement #documentation ref:GH#36517
+- [x] t18859 Document observed ChatGPT fan-out and retrieval capture for SEO/GEO measurement #documentation ref:GH#36517 pr:#36518 completed:2026-11-02
 
 ## In Progress
 
