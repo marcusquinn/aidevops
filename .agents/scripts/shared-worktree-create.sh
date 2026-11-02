@@ -15,7 +15,8 @@ if ! declare -F _ds_substage_run >/dev/null 2>&1; then
 	}
 fi
 
-# Enroll only the newly created tree. Legacy records are not enrollment input.
+# Enroll a newly created tree or retry enrollment before reusing a retained tree.
+# Legacy records are not enrollment input.
 # Schema 1 stays observe-only with an explicit gap until coordinated migration.
 _worktree_enroll_generation() {
 	local path="$1"
