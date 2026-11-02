@@ -14,7 +14,6 @@ import sys
 import time
 import uuid
 
-from worktree_archive_git import base_import_timeout
 from worktree_archive_process import run_bounded, termination_as_exit
 from worktree_archive_scratch import sweep_root
 
@@ -22,28 +21,30 @@ from worktree_archive_scratch import sweep_root
 PIN = ".aidevops-archive-pin"
 RETENTION_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError,
                     subprocess.TimeoutExpired)
-# A verification needs the base import budget plus restore checks. Starting
-# one with less time left only produces a killed, wasted attempt.
-MIN_VERIFY_SECONDS = 60
+# Retention only needs to prove it is deleting an intact compact archive, not
+# that the archive restores: a broken archive loses nothing by expiring. The
+# structural check (schema, exact inventory, artifact hashes) reads local files
+# only, so it needs seconds, not the base-object import of a full `verify`.
+STRUCTURE_CHECK_SECONDS = 120
+MIN_CHECK_SECONDS = 10
 DEADLINE = None  # time.monotonic() bound for the whole pass, or None.
 
 
 class Deferred(Exception):
-    """The pass budget cannot fit another verification; resume next pass."""
+    """The pass budget cannot fit another check; resume next pass."""
 
 
 def ensure_budget():
-    """Raise Deferred before any change when the pass cannot fit a verification."""
-    if DEADLINE is not None and DEADLINE - time.monotonic() < MIN_VERIFY_SECONDS:
+    """Raise Deferred before any change when the pass cannot fit a check."""
+    if DEADLINE is not None and DEADLINE - time.monotonic() < MIN_CHECK_SECONDS:
         raise Deferred("pass budget exhausted")
 
 
 def verify_timeout():
-    """Per-verification budget, clipped to the pass deadline (never raises)."""
-    budget = base_import_timeout() + 300
+    """Per-check budget, clipped to the pass deadline (never raises)."""
     if DEADLINE is None:
-        return budget
-    return max(1, min(budget, DEADLINE - time.monotonic()))
+        return STRUCTURE_CHECK_SECONDS
+    return max(1, min(STRUCTURE_CHECK_SECONDS, DEADLINE - time.monotonic()))
 
 
 def identity(path):
@@ -52,13 +53,13 @@ def identity(path):
 
 
 def verify(helper, directory):
+    """Structural check only: a full recovery copy or tampered archive fails it."""
     bash = shutil.which("bash")
     if bash is None:
         raise FileNotFoundError("archive verification requires bash")
     # The caller supplies the local helper; archive data is only a path argument.
-    # run_bounded() terminates gracefully so the verifier removes its scratch.
     result = run_bounded(
-        [str(Path(bash).absolute()), str(helper), "verify", str(directory)],
+        [str(Path(bash).absolute()), str(helper), "verify-structure", str(directory)],
         verify_timeout(), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if result.returncode:
         raise ValueError("archive verification failed")
@@ -67,8 +68,8 @@ def verify(helper, directory):
 def inspect(root, directory):
     """Reject aliases, pins and malformed metadata from cheap local state only.
 
-    Full verification is expensive (it imports the base graph), so it runs
-    only for archives selected for removal, never for every archive.
+    The structural check (artifact hashes) still runs only for archives
+    selected for removal, never for every archive.
     """
     for path in (directory, *directory.parents):
         if path == root:
