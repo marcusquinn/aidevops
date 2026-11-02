@@ -222,30 +222,24 @@ inode reuse outside the cooperating creation protocol are not excluded. It also
 does not by itself register the creator's writer lifetime.
 
 OpenCode's shell environment, bounded-operation supervisor, native launcher and Pulse script-routine
-runner declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and `AIDEVOPS_LIFECYCLE_SESSION_ID`; the
-routine runner does so only when its lifecycle prerequisite checks pass and the workload is not
-private. With lifecycle disabled, missing prerequisites or a private workload, it clears those
-declarations; automatic retirement is not expected. Otherwise, the runner waits for its script,
-so helper-created trees become eligible for registry retirement once it exits (GH#36494).
+runner declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and `AIDEVOPS_LIFECYCLE_SESSION_ID`.
+The routine runner clears these declarations when lifecycle is disabled, prerequisites fail or
+the workload is private; automatic retirement is not expected then. Otherwise, it waits for its
+script, so helper-created trees become eligible for registry retirement after it exits (GH#36494).
 For a new path, the shared helper invokes `create-worktree`: it exclusively creates the directory, runs native Git,
 captures the owner's start identity and binds it before returning the new tree.
-Only successful controlled creation records a `created-worktree` event. Ordinary
-enrollment or admission of an existing tree cannot mint that evidence.
-`prepare-cleanup` exposes the validated receipt as `creation_verified`; this
-does not itself authorize deletion. This is not a PID-only liveness test or a
-legacy ownership lookup.
-Independent launches replace inherited creator identity; excluded launches clear
-it. Partial declarations fail without removing the tree. Missing declarations
-bind the creating shell for a fresh path; later writers still need their own
-admission. This does not establish coverage beyond that creator. Callers with
-pre-reserved directories retain their existing creation path but do not acquire
-controlled-creation provenance. Failed construction retains partial results;
-repeating it cannot adopt an existing directory, even an empty one.
+Only successful controlled creation records a `created-worktree` event; ordinary enrollment or
+admission of an existing tree cannot mint it. `prepare-cleanup` exposes the validated receipt as
+`creation_verified`, not deletion authority, a PID-only liveness test or a legacy ownership lookup.
+Independent launches replace inherited creator identity; excluded launches clear it.
+Partial declarations fail without removal; missing declarations bind the creating shell for a fresh
+path, not later writers, who need their own admission. Coverage stops at that creator. Callers with
+pre-reserved directories retain their creation path without controlled-creation provenance.
+Failed construction retains partial results; repeating it cannot adopt even an empty existing directory.
 
 Managed producers use `worker-lifecycle-state.sh` to enter the native launcher before execution.
 Parent runtime/session identity is replaced; explicit generation/attempt requirements remain mandatory.
-Post-completion callbacks run outside that identity. Legacy service receipts cannot replace
-registry creation, admission or retirement checks.
+Post-completion callbacks run outside that identity; legacy receipts cannot replace registry creation, admission or retirement checks.
 
 Claude creator integration is outside this rollout; standalone creators and unknown pre-enrollment
 writers still prevent a claim of complete registered-owner coverage.
@@ -449,13 +443,12 @@ fall back to the old cleanup passes. Disposable tests exercise both refusal and
 successful preservation/removal through the actual shell entrypoint.
 
 `cleanup-worktree --path PATH --repos-config CONFIG --output-root ROOT` selects only that path's
-currently validated generation and shares the collector's policy and executor. It never adopts an
-unknown tree or scans unrelated candidates. If a source has already moved, use the explicit
-`retire-worktree --generation-id` retry contract instead of guessing from a missing public path.
-A linked tree without an enrollment marker or modern enrollment history is refused with
-`detail: not-enrolled`; manual removal then prints the operator-confirmed
-[LEGACY-CLEANUP.md](LEGACY-CLEANUP.md) command (GH#36494). If modern registry history exists,
-`generation-marker-missing` instead requires metadata/history inspection, not legacy retirement.
+validated generation, sharing the collector's policy/executor without adopting unknown trees or
+scanning unrelated candidates. For an already moved source, use `retire-worktree --generation-id`
+to retry, never guess from a missing public path. A linked tree without a marker or modern history
+refuses with `detail: not-enrolled`; manual removal prints the operator-confirmed
+[LEGACY-CLEANUP.md](LEGACY-CLEANUP.md) command (GH#36494). With modern history, the refusal is
+`generation-marker-missing`: inspect metadata/history instead of using legacy retirement.
 `worktree-locked` requires inspecting Git's lock reason; unlock the listed path only when the
 lock is no longer needed, then retry. Neither refusal overrides the registry checks.
 
