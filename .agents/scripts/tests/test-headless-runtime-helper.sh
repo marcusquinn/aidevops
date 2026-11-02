@@ -405,6 +405,67 @@ test_detached_worker_log_uses_managed_root() {
 	return 0
 }
 
+# _signing_probe_case <name> <gpgsign:true|unset> <signer:ok|fail>
+# Prints "<status>:<signer-invoked yes|no>" for one real-git probe run.
+_signing_probe_case() {
+	local case_name="$1"
+	local gpgsign="$2"
+	local signer_mode="$3"
+	local case_root="${TEST_ROOT}/signing-probe-${case_name}"
+	local repo_dir="${case_root}/repo"
+	local signer="${case_root}/fake-gpg.sh"
+	local marker="${case_root}/signer-invoked"
+	local status=0 tree_id="" commit_id=""
+	mkdir -p "$repo_dir"
+	# Stub OpenPGP signer: records the call, then signs or refuses (an
+	# unusable key that cannot sign without a prompt).
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf ': >%q\n' "$marker"
+		if [[ "$signer_mode" == "ok" ]]; then
+			printf '%s\n' "printf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 FIXTURE\\n' >&2" \
+				"printf '%s\\n' '-----BEGIN PGP SIGNATURE-----' 'fixture' '-----END PGP SIGNATURE-----'" \
+				'exit 0'
+		else
+			printf '%s\n' 'exit 1'
+		fi
+	} >"$signer"
+	chmod 700 "$signer"
+	(
+		unset GIT_CONFIG_COUNT
+		export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+		git -C "$repo_dir" init -q || exit 2
+		git -C "$repo_dir" config user.name "aidevops-test"
+		git -C "$repo_dir" config user.email "aidevops-test@example.invalid"
+		tree_id=$(git -C "$repo_dir" hash-object -w -t tree --stdin </dev/null) || exit 2
+		commit_id=$(git -C "$repo_dir" commit-tree "$tree_id" -m initial </dev/null) || exit 2
+		git -C "$repo_dir" update-ref HEAD "$commit_id" || exit 2
+		git -C "$repo_dir" config gpg.format openpgp
+		git -C "$repo_dir" config gpg.program "$signer"
+		git -C "$repo_dir" config user.signingkey FIXTURE
+		[[ "$gpgsign" == "true" ]] && git -C "$repo_dir" config commit.gpgsign true
+		headless_signing_commit_probe "$repo_dir" 1
+	) >/dev/null 2>&1 || status=$?
+	printf '%s:%s\n' "$status" "$([[ -f "$marker" ]] && printf yes || printf no)"
+	return 0
+}
+
+# GH#36515: commit-tree ignores commit.gpgsign, so the worker probe must pass
+# -S to prove signing; repositories without required signing stay unsigned.
+test_worker_signing_probe_signs_with_real_git() {
+	local unusable="" usable="" unsigned=""
+	unusable=$(_signing_probe_case unusable true fail)
+	usable=$(_signing_probe_case usable true ok)
+	unsigned=$(_signing_probe_case unsigned unset fail)
+	if [[ "$unusable" == "1:yes" && "$usable" == "0:yes" && "$unsigned" == "0:no" ]]; then
+		print_result "worker signing probe signs when required and fails on an unusable key" 0
+	else
+		print_result "worker signing probe signs when required and fails on an unusable key" 1 \
+			"unusable=${unusable} usable=${usable} unsigned=${unsigned}"
+	fi
+	return 0
+}
+
 run_failure_evidence_tests() {
 	test_fast_rate_limit_classifier_requires_trusted_provider_evidence
 	test_fast_rate_limit_monitor_ignores_uuid_metadata
@@ -432,6 +493,7 @@ main() {
 	test_execute_run_attempt_preserves_file_creation_status
 	test_run_attempt_command_reports_cwd_recovery_failure
 	run_worker_signing_contract_tests
+	test_worker_signing_probe_signs_with_real_git
 	test_repository_bound_git_auth_contract
 	run_private_workload_attempt_identity_tests
 	test_startup_no_activity_timeout_returns_watchdog_continue
