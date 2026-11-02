@@ -99,7 +99,8 @@ def load_public_identifiers(path: Path, signature: tuple[int, int]) -> frozenset
                 values.update([slug, *slug.split("/")])
             repo_path = repo.get("path")
             if isinstance(repo_path, str) and repo_path:
-                name = Path(repo_path).name
+                # Match Node basename lexically: do not normalize a final '/.'.
+                name = os.path.basename(repo_path.rstrip("/"))
                 if name and name not in {".", ".."}:
                     values.add(name)
     except (OSError, ValueError):

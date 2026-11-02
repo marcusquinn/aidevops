@@ -59,7 +59,10 @@ describe("credential transcript scrub boundary", () => {
       mkdirSync(configDir, { recursive: true });
       mkdirSync(registryDir);
       writeFileSync(join(configDir, "repos.json"), JSON.stringify({
-        initialized_repos: [{ slug: identifiers[2], path: "/synthetic/checkout-alias/" }],
+        initialized_repos: [
+          { slug: identifiers[2], path: "/synthetic/checkout-alias/" },
+          { path: "/synthetic/dot-path-secret/." },
+        ],
       }));
       writeFileSync(join(configDir, "credentials.sh"), identifiers.map((value, index) =>
         `export FOO_DB_NAME_${index}="${value}"`).join("\n"));
@@ -84,13 +87,13 @@ describe("credential transcript scrub boundary", () => {
       const writerDir = join(root, "writer-registry");
       const longer = `${identifiers[1]}-synthetic-credential`;
       execFileSync("python3", [helper.pathname, "register"], {
-        input: [...identifiers, longer].map((value) => `FOO_DB_NAME=${value}\0`).join(""),
+        input: [...identifiers, longer, "dot-path-secret"].map((value) => `FOO_DB_NAME=${value}\0`).join(""),
         env: { ...process.env, HOME: root, AIDEVOPS_SECRET_REDACTION_DIR: writerDir },
       });
-      assert.equal(readFileSync(join(writerDir, "digests"), "utf8").trim().split("\n").length, 1);
+      assert.equal(readFileSync(join(writerDir, "digests"), "utf8").trim().split("\n").length, 2);
       const digestRedactor = createSecretValueRedactor({ configDir, registryDir: writerDir, env: {} });
-      assert.equal(digestRedactor.redactText(`${identifiers.join(" ")} ${longer}`).text,
-        `${identifiers.join(" ")} ${REDACTION_TOKEN}`);
+      assert.equal(digestRedactor.redactText(`${identifiers.join(" ")} ${longer} dot-path-secret`).text,
+        `${identifiers.join(" ")} ${REDACTION_TOKEN} ${REDACTION_TOKEN}`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
