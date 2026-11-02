@@ -12,6 +12,8 @@ from uuid import UUID, uuid5
 
 from .absence import reconcile_absence
 from .archive_path import create_archive_root, validate_archive_path
+from .admission import AdmissionRegistry
+from .cleanup_plan import enrolled_only_event_id
 from .enrollment import GenerationEnrollment
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .filesystem import validate_private_path as _private
@@ -191,6 +193,48 @@ def cleanup_worktree(
         raise ValueError("canonical-archive-root-required")
     repositories = _repositories(config)
     generation = GenerationEnrollment(store).inspect_retirement(path)
+    create_archive_root(root)
+    validate_archive_path(root)
+    return _candidate(store, repositories, root, generation, path)
+
+
+def retire_enrolled_only(
+    store: LifecycleRegistry, config: Path, root: Path, path: Path, confirm: bool,
+) -> dict[str, object]:
+    """Operator-confirmed, archive-first retirement of a never-owned generation.
+
+    Eligible: enrolled, zero bound runs, no `created-worktree` receipt. Without
+    `confirm` this only previews. Confirmation closes admission and records
+    `operator_confirmed` evidence atomically, then reuses `retire_worktree`
+    (archive, verify, private move, native removal); the branch is kept.
+    """
+    if not root.is_absolute() or root.resolve() != root:
+        raise ValueError("canonical-archive-root-required")
+    repositories = _repositories(config)
+    generation = GenerationEnrollment(store).inspect_retirement(path)
+    with store.connection() as connection:
+        admission = connection.execute(
+            "SELECT state FROM generation_admissions WHERE generation_id=?",
+            (generation,),
+        ).fetchone()
+        owned = connection.execute(
+            "SELECT 1 FROM bindings WHERE generation_id=?", (generation,),
+        ).fetchone() or _event(store, str(uuid5(UUID(generation), "created-worktree")))
+    result: dict[str, object] = {
+        "generation_id": generation, "cleanup_authorized": False,
+        "admission": admission["state"] if admission else "absent",
+    }
+    if admission is None or owned:
+        return dict(result, status="not-enrolled-only")
+    common = _git("-C", str(path), "rev-parse", "--path-format=absolute",
+                  "--git-common-dir")
+    if common not in repositories:
+        return dict(result, status="outside-maintenance-scope")
+    if not confirm:
+        return dict(result, status="enrolled-only-preview", confirm_required=True)
+    AdmissionRegistry(store).authorize_enrolled_only(
+        enrolled_only_event_id(generation), generation,
+    )
     create_archive_root(root)
     validate_archive_path(root)
     return _candidate(store, repositories, root, generation, path)

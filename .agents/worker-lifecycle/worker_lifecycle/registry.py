@@ -124,6 +124,14 @@ def argument_parser() -> argparse.ArgumentParser:
     targeted.add_argument("--path", required=True, type=Path)
     targeted.add_argument("--repos-config", required=True, type=Path)
     targeted.add_argument("--output-root", required=True, type=Path)
+    enrolled_only = commands.add_parser(
+        "retire-enrolled-only",
+        help="preview or confirm archive-first retirement of a never-owned enrolled tree",
+    )
+    enrolled_only.add_argument("--path", required=True, type=Path)
+    enrolled_only.add_argument("--repos-config", required=True, type=Path)
+    enrolled_only.add_argument("--output-root", required=True, type=Path)
+    enrolled_only.add_argument("--confirm", action="store_true")
     for name in ("enroll", "resolve-generation"):
         enrollment = commands.add_parser(name, help="enroll or resolve a linked worktree; schema 2 required")
         enrollment.add_argument("--path", required=True, type=Path)
@@ -177,6 +185,12 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
         from .cleanup import cleanup_worktree
 
         return cleanup_worktree(store, args.repos_config, args.output_root, args.path)
+    if args.operation == "retire-enrolled-only":
+        from .cleanup import retire_enrolled_only
+
+        return retire_enrolled_only(
+            store, args.repos_config, args.output_root, args.path, args.confirm,
+        )
     if args.operation == "cleanup":
         from .cleanup import cleanup_pass
 
@@ -203,9 +217,9 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
 def _error_details(error: Exception, operation: str) -> dict:
     """Translate CLI failures without exposing arbitrary system error text."""
     reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
-    if operation in {"retire-worktree", "cleanup", "upgrade"} and isinstance(error, StoreConflict):
+    if operation in {"retire-worktree", "cleanup", "upgrade", "retire-enrolled-only"} and isinstance(error, StoreConflict):
         reason = str(error)
-    retirement = ("retire-worktree", "cleanup", "cleanup-worktree")
+    retirement = ("retire-worktree", "cleanup", "cleanup-worktree", "retire-enrolled-only")
     mode = "retirement" if operation in retirement else "observe-only"
     detail = {"mode": mode, "status": "unavailable", "reason": reason,
               "cleanup_authorized": False}

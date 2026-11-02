@@ -11,7 +11,9 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from worker_lifecycle import retirement
-from worker_lifecycle.cleanup import cleanup_pass
+from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
+from worker_lifecycle.cleanup import cleanup_pass, retire_enrolled_only
+from worker_lifecycle.cleanup_plan import enrolled_only_event_id
 from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import MARKER, GenerationEnrollment
 from worker_lifecycle.preservation import _helper
@@ -218,6 +220,53 @@ class RetirementContract(unittest.TestCase):
         GenerationEnrollment(self.store).resolve(self.target, create=True)
         self.assertEqual(self.retire()["status"], "coverage-gap")
         self.assertTrue(self.target.exists())
+
+    def enrolled_only(self, confirm):
+        return retire_enrolled_only(
+            self.store, self.cleanup_config(), self.output, self.target, confirm,
+        )
+
+    def test_enrolled_only_previews_then_archives_and_keeps_branch(self):
+        self.git("worktree", "add", "-b", "chore/probe", str(self.target))
+        (self.target / "README.md").write_text("staged change")
+        retirement._git("-C", str(self.target), "add", "README.md")
+        GenerationEnrollment(self.store).resolve(self.target, create=True)
+        preview = self.enrolled_only(False)
+        self.assertEqual(preview["status"], "enrolled-only-preview")
+        self.assertTrue(self.target.exists())
+        self.assertEqual(list(self.output.iterdir()), [])
+        result = self.enrolled_only(True)
+        self.assertEqual(result["status"], "retired")
+        self.assertFalse(self.target.exists())
+        self.assertIn("chore/probe", self.git("branch", "--list", "chore/probe"))
+        self.assertTrue(list(Path(result["archive"]).rglob("staged.patch")))
+        with self.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM generation_admissions").fetchone())
+
+    def test_enrolled_only_refuses_any_admitted_run(self):
+        self.create()
+        result = self.enrolled_only(True)
+        self.assertEqual(result["status"], "not-enrolled-only")
+        self.assertTrue(self.target.exists())
+
+    def test_enrolled_only_admission_race_loses_after_closure(self):
+        self.git("worktree", "add", "--detach", str(self.target))
+        generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
+        self.assertEqual(self.enrolled_only(False)["status"], "enrolled-only-preview")
+        AdmissionRegistry(self.store).authorize_enrolled_only(
+            enrolled_only_event_id(generation), generation)
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        with self.assertRaises(AdmissionClosed):
+            AdmissionRegistry(self.store).admit(str(uuid4()), identity, generation)
+        # Admitted first: the operation refuses instead.
+        other = self.root / "second"
+        self.git("worktree", "add", "--detach", str(other))
+        second = GenerationEnrollment(self.store).resolve(other, create=True)
+        AdmissionRegistry(self.store).admit(str(uuid4()), identity, second)
+        with self.assertRaisesRegex(StoreConflict, "generation-has-admitted-owner"):
+            AdmissionRegistry(self.store).authorize_enrolled_only(
+                enrolled_only_event_id(second), second)
 
     def test_changed_archive_stops_resumption(self):
         self.create()

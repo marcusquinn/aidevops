@@ -20,7 +20,7 @@ import tempfile
 from uuid import UUID, uuid5
 
 from .archive_path import validate_archive_path
-from .cleanup_plan import _runs, prepare_cleanup
+from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .enrollment import (
@@ -218,7 +218,9 @@ def _finish(
             (generation,),
         ).fetchone()
     rows = _runs(store, generation)
-    if (admission is None or admission["state"] != "closed" or not rows
+    enrolled_only = not rows and enrolled_only_authorized(store, generation)
+    if not enrolled_only and (
+            admission is None or admission["state"] != "closed" or not rows
             or not all(row["admitted"] and row["state"] == "ended" for row in rows)):
         raise StoreConflict("retirement-owner-evidence-changed")
     container = Path(plan["container"])

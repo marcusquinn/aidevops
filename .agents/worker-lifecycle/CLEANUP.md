@@ -431,8 +431,18 @@ not a guessed default or a commit ID passed as a branch name.
 
 Controlled-creation receipts use normal retirement. A missing creation receipt can
 use the explicit recovery-evidence path described above when all bound owners are
-admitted and ended. Enrollment alone remains a coverage gap; live or uncertain
-owners hold the source. Retries use the recorded plan, including its archive root,
+admitted and ended. Enrollment alone remains a coverage gap for automatic cleanup;
+live or uncertain owners hold the source.
+
+Enrolled-only generations (no bound run and no `created-worktree` receipt, for example
+pre-GH#36494 helper trees) retire only through an explicit operator command (GH#36516):
+`worker-registry.py --state-dir S retire-enrolled-only --repos-config C --output-root R
+--path P` previews; adding `--confirm` closes admission and records
+`operator_confirmed` evidence in one registry transaction, then reuses the archive,
+`verify-local`, private-move and native-removal flow. A concurrent `admit-session`
+either commits first (the operation refuses with `generation-has-admitted-owner`) or
+finds admission closed. Any bound run, live or ended, makes the tree ineligible. The
+branch is kept; the stale admission reservation is released on success. Retries use the recorded plan, including its archive root,
 and do not redirect an interrupted operation to a replacement at the public path.
 A private cursor rotates candidates across bounded passes; it is not deletion
 authority. A pass lock prevents overlapping collectors.

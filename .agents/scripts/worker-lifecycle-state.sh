@@ -156,7 +156,12 @@ _worker_lifecycle_refusal_next_step() {
 			"$legacy_cli" "$state_dir" "${HOME}/.config/aidevops/repos.json" "$archive_root" "$worktree" >&2
 		;;
 	coverage-gap)
-		printf '[worker-lifecycle] next: enrolled without a registered owner, so the registry cannot prove its writers ended; it stays retained. See worker-lifecycle/CLEANUP.md "Registry-driven cleanup pass".\n' >&2
+		legacy_cli=$(cd -- "${BASH_SOURCE[0]%/*}/../worker-lifecycle" 2>/dev/null && pwd -P) ||
+			legacy_cli="${BASH_SOURCE[0]%/*}/../worker-lifecycle"
+		legacy_cli="${legacy_cli}/worker-registry.py"
+		printf '[worker-lifecycle] next: enrolled without a registered owner, so the registry cannot prove its writers ended; it stays retained. If it was never owned, stop any process using it, preview, then add --confirm to archive, verify and remove it (branch kept):\n' >&2
+		printf '  python3 -E -s -B %q --state-dir %q retire-enrolled-only --repos-config %q --output-root %q --path %q\n' \
+			"$legacy_cli" "$state_dir" "${HOME}/.config/aidevops/repos.json" "$archive_root" "$worktree" >&2
 		;;
 	generation-marker-missing)
 		printf '[worker-lifecycle] next: registry history records enrollment but the generation marker is missing. Retain the tree and inspect its Git admin metadata and registry history; legacy retirement is not applicable.\n' >&2
