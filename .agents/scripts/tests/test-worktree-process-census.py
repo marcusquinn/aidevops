@@ -102,13 +102,17 @@ class ProcessCensusTests(unittest.TestCase):
 
 
     @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
-    def test_live_aged_non_dumpable_daemon_is_excluded(self):
+    def test_live_aged_spoofed_daemon_acquiring_worktree_is_uncertain(self):
         script = ("import ctypes,time; libc=ctypes.CDLL(None); "
                   "assert libc.prctl(15,b'ssh-agent',0,0,0)==0; "
                   "assert libc.prctl(4,0,0,0,0)==0; "
-                  "print('ready',flush=True); time.sleep(30)")
+                  "print('ready',flush=True); "
+                  "import os,sys; target=sys.stdin.readline().strip(); "
+                  "os.chdir(target); fd=os.open(target,os.O_RDONLY); "
+                  "print('holding',flush=True); time.sleep(30)")
         child = subprocess.Popen(  # nosec B603 -- fixed disposable non-dumpable child, no shell
-            [sys.executable, "-c", script], cwd="/", stdout=subprocess.PIPE, text=True,
+            [sys.executable, "-c", script], cwd="/", stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, text=True,
             env=dict(os.environ, PWD=os.path.sep, AIDEVOPS_WORKTREE=os.path.sep))
         try:
             import select
@@ -116,9 +120,10 @@ class ProcessCensusTests(unittest.TestCase):
             self.assertEqual(child.stdout.readline().strip(), "ready")
             time.sleep(2.1)  # Clear both second-resolution timestamp boundaries.
             with tempfile.TemporaryDirectory() as directory:
-                birth = census.worktree_birth(directory)
-                if birth is None:
-                    self.skipTest("filesystem birth time unavailable")
+                child.stdin.write(directory + "\n")
+                child.stdin.flush()
+                self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+                self.assertEqual(child.stdout.readline().strip(), "holding")
                 process = Path(f"/proc/{child.pid}")
                 try:
                     os.readlink(process / "cwd")
@@ -127,67 +132,47 @@ class ProcessCensusTests(unittest.TestCase):
                 else:
                     self.skipTest("runner can inspect non-dumpable tasks")
                 result = {"references": 0, "uncertain": 0, "excluded_nondumpable": 0}
-                census.collect_path_references(process, directory, result, birth)
-                self.assertEqual(result, {"references": 0, "uncertain": 0,
-                                          "excluded_nondumpable": 1})
+                census.collect_path_references(process, directory, result)
+                self.assertEqual(result, {"references": 0, "uncertain": 1,
+                                          "excluded_nondumpable": 0})
+                import worktree_lifetime_quiescence as quiescence
+                sample = census.path_census(directory)
+                self.assertFalse(quiescence.empty_census(sample, sample.get("boot_id")))
         finally:
             child.terminate()
             child.wait(timeout=5)
+            child.stdin.close()
             child.stdout.close()
 
-    def test_only_permission_denied_old_allowlisted_tasks_are_excluded(self):
+    def test_unreadable_tasks_are_uncertain_regardless_of_name_or_age(self):
         with tempfile.TemporaryDirectory() as directory:
             process = Path(directory)
             task = process / "task" / "100"
             task.mkdir(parents=True)
             (task / "status").write_text("Uid:\t" + "\t".join([str(os.getuid())] * 4) + "\n")
-            for name, start, error, birth, excluded in (
-                    ("ssh-agent", 100, PermissionError(), 110, 1),
-                    ("gpg-agent", 100, PermissionError(), 110, 1),
-                    ("(sd-pam)", 100, PermissionError(), 110, 1),
-                    ("systemd", 100, PermissionError(), 110, 1),
-                    ("sshd", 100, PermissionError(), 110, 1),
-                    ("dbus-daemon", 100, PermissionError(), 110, 1),
-                    ("ssh-agent", 1100, PermissionError(), 110, 0),
-                    ("ssh-agent", 900, PermissionError(), 110, 0),
-                    ("python3", 100, PermissionError(), 110, 0),
-                    ("ssh-agent", 100, OSError(), 110, 0),
-                    ("ssh-agent", 100, PermissionError(), None, 0),
-                    ("ssh-agent", 0, PermissionError(), 110, 0),
-                    ("ssh-agent", "bad", PermissionError(), 110, 0)):
+            for name, start, error in (
+                    ("ssh-agent", 100, PermissionError()),
+                    ("gpg-agent", 100, PermissionError()),
+                    ("(sd-pam)", 100, PermissionError()),
+                    ("systemd", 100, PermissionError()),
+                    ("sshd", 100, PermissionError()),
+                    ("dbus-daemon", 100, PermissionError()),
+                    ("ssh-agent", 1100, PermissionError()),
+                    ("ssh-agent", 900, PermissionError()),
+                    ("python3", 100, PermissionError()),
+                    ("ssh-agent", 100, OSError()),
+                    ("ssh-agent", 0, PermissionError()),
+                    ("ssh-agent", "bad", PermissionError())):
                 fields = ["S"] + ["0"] * 18 + [str(start)]
                 stat = f"100 ({name}) " + " ".join(fields)
                 (task / "stat").write_text(stat)
                 result = {"references": 0, "uncertain": 0, "excluded_nondumpable": 0}
-                original_read = Path.read_text
-
-                def read_text(path, *args, **kwargs):
-                    if path == Path("/proc/stat"):
-                        return "btime 100\n"
-                    return original_read(path, *args, **kwargs)
-
-                with self.subTest(name=name, start=start, error=error, birth=birth), \
-                        patch.object(census, "inspect_path_references", side_effect=error), \
-                        patch.object(Path, "read_text", read_text), \
-                        patch.object(os, "sysconf", return_value=100):
-                    census.collect_path_references(process, "/worktree", result, birth)
-                    self.assertEqual(result["excluded_nondumpable"], excluded)
-                    self.assertEqual(result["uncertain"], 1 - excluded)
+                with self.subTest(name=name, start=start, error=error), \
+                        patch.object(census, "inspect_path_references", side_effect=error):
+                    census.collect_path_references(process, "/worktree", result)
+                    self.assertEqual(result["excluded_nondumpable"], 0)
+                    self.assertEqual(result["uncertain"], 1)
                     self.assertEqual(result["references"], 0)
-
-    def test_birth_time_requires_same_inode_and_never_uses_ctime(self):
-        with tempfile.TemporaryDirectory() as directory:
-            observed = os.stat(directory)
-            identity = f"{observed.st_dev}:{observed.st_ino}"
-            for output, expected in ((f"{identity} 100", 100), (f"{identity} 0", None),
-                                     ("1:2 100", None), ("bad", None),
-                                     (f"{identity} 999999999999", None)):
-                with self.subTest(output=output), \
-                        patch.object(subprocess, "check_output", return_value=output):
-                    self.assertEqual(census.worktree_birth(directory), expected)
-            with patch.object(subprocess, "check_output", side_effect=FileNotFoundError()):
-                self.assertIsNone(census.worktree_birth(directory))
-            self.assertIsNone(census.worktree_birth(directory, "wrong-generation"))
 
     @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
     def test_census_rejects_mismatched_or_replaced_generation(self):
@@ -197,14 +182,6 @@ class ProcessCensusTests(unittest.TestCase):
             with patch.object(census.owner, "inode", side_effect=["original", "replacement"]):
                 sample = census.path_census(directory, source_inode="original")
                 self.assertEqual(sample["status"], "unavailable")
-
-    def test_daemon_generation_change_is_not_excluded(self):
-        stat = "100 (ssh-agent) S " + "0 " * 18 + "100"
-        for values in ([stat, "btime 100\n", stat.replace("100", "200")],
-                       [stat, "missing boot time"], ["malformed"]):
-            with self.subTest(values=values), patch.object(Path, "read_text", side_effect=values), \
-                    patch.object(os, "sysconf", return_value=100):
-                self.assertFalse(census.predates_worktree(Path("/proc/100"), 110))
 
     def test_exclusion_counts_do_not_relax_quiescence(self):
         import worktree_lifetime_quiescence as quiescence

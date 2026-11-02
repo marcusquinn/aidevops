@@ -5,60 +5,10 @@
 
 import os
 from pathlib import Path
-import stat
-import subprocess  # nosec B404 -- fixed stat invocation, never a shell
 import sys
 import time
 
 import worktree_lifetime_owner as owner
-
-
-NON_DUMPABLE_DAEMONS = frozenset({"ssh-agent", "gpg-agent", "(sd-pam)",
-                                "systemd", "sshd", "dbus-daemon"})
-
-
-def worktree_birth(path, source_inode=None):
-    """Return an inode-bound birth-time lower bound, never ctime or mtime."""
-    try:
-        before = os.stat(path, follow_symlinks=False)
-        inode = f"{before.st_dev}:{before.st_ino}"
-        if not stat.S_ISDIR(before.st_mode) or (source_inode is not None and source_inode != inode):
-            return None
-        value = subprocess.check_output(  # nosec B603 B607 -- fixed Linux stat command, path after --
-            ["stat", "--format=%d:%i %W", "--", path], text=True,
-            stderr=subprocess.DEVNULL, timeout=5).split()
-        after = os.stat(path, follow_symlinks=False)
-        identity = (before.st_dev, before.st_ino)
-        if (identity == (after.st_dev, after.st_ino) and len(value) == 2 and
-                value[0] == inode and value[1].isdecimal()):
-            birth = int(value[1])
-            if 0 < birth <= time.time():
-                return birth
-    except (OSError, ValueError, subprocess.SubprocessError):
-        pass
-    return None
-
-
-def predates_worktree(task, birth):
-    """Only known daemon tasks older than this directory may be excluded."""
-    if birth is None:
-        return False
-    try:
-        stat = (task / "stat").read_text()
-        comm, fields = stat.split("(", 1)[1].rsplit(")", 1)
-        start = fields.split()[19]
-        if comm not in NON_DUMPABLE_DAEMONS or not start.isdecimal() or int(start) <= 0:
-            return False
-        boot = [line.split()[1] for line in Path("/proc/stat").read_text().splitlines()
-                if line.startswith("btime ")]
-        if len(boot) != 1 or not boot[0].isdecimal():
-            return False
-        # btime is second-resolution: use its upper bound, not a rounded-down
-        # start, so tasks within the boundary second remain uncertain.
-        started_before = int(boot[0]) + 1 + int(start) / os.sysconf("SC_CLK_TCK") < birth
-        return started_before and (task / "stat").read_text() == stat
-    except (OSError, ValueError, IndexError, ZeroDivisionError):
-        return False
 
 
 def under_worktree(target, path):
@@ -113,7 +63,7 @@ def require_proc_visibility():
                           for option in mounts[0]), "filtered proc mount")
 
 
-def collect_path_references(directory, path, result, birth=None):
+def collect_path_references(directory, path, result):
     """Inspect all threads: unshared CWD and descriptor tables can differ."""
     for task in (directory / "task").iterdir():
         try:
@@ -128,10 +78,9 @@ def collect_path_references(directory, path, result, birth=None):
             try:
                 result["references"] += int(inspect_path_references(task, path))
             except PermissionError:
-                if predates_worktree(task, birth):
-                    result["excluded_nondumpable"] = result.get("excluded_nondumpable", 0) + 1
-                else:
-                    result["uncertain"] += 1
+                # Neither mutable comm nor task age proves absence of references:
+                # even an older task can enter the worktree after its creation.
+                result["uncertain"] += 1
         except FileNotFoundError:
             if os.path.lexists(task):
                 result["uncertain"] += 1
@@ -140,7 +89,7 @@ def collect_path_references(directory, path, result, birth=None):
 
 
 def path_census(path, source_inode=None):
-    """Fail closed except for aged non-dumpable daemons; expose counts only."""
+    """Fail closed for all unreadable task references; expose counts only."""
     result = {"status": "unavailable", "observed_at": time.time(),
               "uid": os.getuid(), "references": 0, "uncertain": 0,
               "excluded_nondumpable": 0}
@@ -151,14 +100,13 @@ def path_census(path, source_inode=None):
         boot = owner.boot_id()
         if source_inode is not None:
             owner.require(owner.inode(Path(path)) == source_inode, "worktree generation changed")
-        birth = worktree_birth(path, source_inode)
         seen_self = False
         for directory in Path("/proc").iterdir():
             if not directory.name.isdecimal():
                 continue
             try:
                 seen_self |= int(directory.name) == os.getpid()
-                collect_path_references(directory, path, result, birth)
+                collect_path_references(directory, path, result)
             except FileNotFoundError:
                 if os.path.lexists(directory):
                     result["uncertain"] += 1
