@@ -36,11 +36,11 @@ source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 source "${SCRIPT_DIR}/worker-failure-evidence.sh"
 
 # SSH agent integration for commit signing (t1882)
-# Source persisted agent.env so workers can sign commits without passphrase prompts.
-if [[ -f "$HOME/.ssh/agent.env" ]]; then
-	# shellcheck source=/dev/null
-	. "$HOME/.ssh/agent.env" >/dev/null 2>&1 || true
-fi
+# Source persisted agent.env so workers can sign commits without passphrase
+# prompts. GH#36493: restart the agent when agent.env outlived it (reboot).
+# shellcheck source=./headless-ssh-agent-lib.sh
+source "${SCRIPT_DIR}/headless-ssh-agent-lib.sh"
+headless_ssh_agent_ensure "${SCRIPT_DIR}/signing-setup.sh" || true
 
 # Absolute fallback when both pool and routing table are unavailable (GH#17769)
 readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-5-5"
