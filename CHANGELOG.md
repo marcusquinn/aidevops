@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.112] - 2026-11-02
+
+### Changed
+
+- Tests: repair baseline runtime timeout and event fixtures
+- Tests: verify hidden unborn recovery fixtures (GH#36336) (#36459)
+- Tests: verify private snapshot index and tree (GH#36451) (#36454)
+- Tests: cover hook admission replay under writer contention (#36455)
+- Maintenance: mark t18848 complete (pr:#36440 completed:2026-11-02) (#36446)
+
+### Fixed
+
+- account for unexpected worker exits
+- fix lifecycle archive directories under group-writable umask
+- avoid lifecycle writer locks for admission replays (#36449)
+
 ## [3.39.111] - 2026-11-02
 
 ### Changed
