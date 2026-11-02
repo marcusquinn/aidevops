@@ -21,17 +21,11 @@ from .enrollment import _git_directory
 from .filesystem import validate_private_path as _private
 from .legacy_discovery import discover
 from .legacy_inventory import advance, inspect, inventory, queue, require_ended
-from .legacy_options import CleanupOptions
+from .legacy_options import CleanupOptions, unrecorded
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
 from .runtime import adapter_for, require_ready
-
-
-def unrecorded(path):
-    """An inventory observation, not a fabricated registry row or owner."""
-    return {"path": path, "generations": set(), "runs": {}, "last_event": 0,
-            "modern": False, "unbound": True}
 
 
 def event_id(operation, phase):
@@ -225,12 +219,7 @@ def run(store, config, root, **arguments):
     with store.connection() as connection:
         items = inventory(connection)
     items, discovery_errors = discover(items, repositories)
-    if options.confirmed_paths:
-        by_path = {item["path"]: item for item in items}
-        # Keep explicitly selected absent paths so an interrupted private move can
-        # resume from its existing journal. No other discovered path is selected.
-        items = [by_path.get(path, unrecorded(path))
-                 for path in sorted(set(options.confirmed_paths))]
+    items = options.select(items)
     if options.apply:
         if not root.is_absolute() or root.resolve() != root:
             raise ValueError("canonical-output-root-required")

@@ -5,6 +5,12 @@ import math
 from pathlib import Path
 
 
+def unrecorded(path):
+    """An inventory observation, not a fabricated registry row or owner."""
+    return {"path": path, "generations": set(), "runs": {}, "last_event": 0,
+            "modern": False, "unbound": True}
+
+
 @dataclass(frozen=True)
 class CleanupOptions:
     root: Path
@@ -23,3 +29,12 @@ class CleanupOptions:
                        or str(Path(path).resolve()) != path
                        for path in self.confirmed_paths)):
             raise ValueError("canonical-confirmed-paths-required")
+
+    def select(self, items):
+        if not self.confirmed_paths:
+            return items
+        by_path = {item["path"]: item for item in items}
+        # Retain selected absent paths to resume interrupted private moves.
+        # No other discovered path inherits the operator's confirmation.
+        return [by_path.get(path, unrecorded(path))
+                for path in sorted(set(self.confirmed_paths))]
