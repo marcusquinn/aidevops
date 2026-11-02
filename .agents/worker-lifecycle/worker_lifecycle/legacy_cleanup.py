@@ -36,11 +36,23 @@ class CleanupOptions:
     min_age: float = 3600
     limit: int = 25
     budget: float = 120
+    confirmed_paths: tuple[str, ...] = ()
 
     def __post_init__(self):
         if (not math.isfinite(self.min_age) or self.min_age < 0
                 or not 1 <= self.limit <= 1000 or not 0 < self.budget <= 900):
             raise ValueError("invalid-cleanup-limits")
+        if (len(self.confirmed_paths) > 1000
+                or any(not isinstance(path, str) or not Path(path).is_absolute()
+                       or str(Path(path).resolve()) != path
+                       for path in self.confirmed_paths)):
+            raise ValueError("canonical-confirmed-paths-required")
+
+
+def unrecorded(path):
+    """An inventory observation, not a fabricated registry row or owner."""
+    return {"path": path, "generations": set(), "runs": {}, "last_event": 0,
+            "modern": False, "unbound": True}
 
 
 def event_id(operation, phase):
@@ -57,6 +69,16 @@ def receipt(connection, operation, phase):
     return json.loads(row[0]) if row else None
 
 
+def require_confirmation(connection, operation, confirmed):
+    """An interrupted capture carries manual authority before a plan exists."""
+    if confirmed:
+        return
+    for phase in ("archive", "plan"):
+        previous = receipt(connection, operation, phase)
+        if previous and previous.get("operator_confirmed") is True:
+            raise ValueError("operator-confirmation-required")
+
+
 def checkpoint(store, connection, operation, phase, payload):
     """Persist before destructive steps, then reacquire the admission writer lock."""
     store._event(connection, event_id(operation, phase), payload)
@@ -66,12 +88,15 @@ def checkpoint(store, connection, operation, phase, payload):
 
 def unchanged(connection, plan, adapter):
     current = next((item for item in inventory(connection)
-                    if item["path"] == plan["source"]), None)
+                     if item["path"] == plan["source"]), None)
+    confirmed = plan.get("operator_confirmed") is True
+    if current is None and confirmed:
+        current = unrecorded(plan["source"])
     if (current is None or current["modern"]
             or sorted(current["generations"]) != plan["generations"]
             or current["runs"] != plan["runs"]):
         raise ValueError("registered-writers-changed")
-    require_ended(current, adapter)
+    require_ended(current, adapter, operator_confirmed=confirmed)
 
 
 def same_tree(path, plan):
@@ -147,17 +172,22 @@ def finish(store, connection, operation, plan, adapter):
 
 def retire(store, item, repositories, adapter, options):
     operation = operation_id(store, item["path"])
+    confirmed = item["path"] in options.confirmed_paths
     with _lock(store, operation), store.connection(write=True) as connection:
         if receipt(connection, operation, "retired") is not None:
             return "already-retired"
+        require_confirmation(connection, operation, confirmed)
         plan = receipt(connection, operation, "plan")
         if plan is None:
-            current = next(row for row in inventory(connection)
-                           if row["path"] == item["path"])
+            current = next((row for row in inventory(connection)
+                            if row["path"] == item["path"]), unrecorded(item["path"]))
             identity = inspect(
                 current, repositories, adapter, time.time(), options.min_age,
+                operator_confirmed=confirmed,
             )
             identity["output_root"] = str(options.root)
+            if confirmed:
+                identity["operator_confirmed"] = True
             with DirectoryHandle(Path(item["path"])):
                 archive = archive_source(
                     store, connection, operation, identity, adapter,
@@ -185,14 +215,18 @@ def process_item(store, item, repositories, adapter, options):
     eligible = attempted = 0
     try:
         operation = operation_id(store, item["path"])
+        confirmed = item["path"] in options.confirmed_paths
         with store.connection() as connection:
             done = receipt(connection, operation, "retired")
             pending = receipt(connection, operation, "plan")
+            if not done:
+                require_confirmation(connection, operation, confirmed)
         if done:
             outcome["status"] = "already-retired"
         else:
             if not pending:
-                inspect(item, repositories, adapter, time.time(), options.min_age)
+                inspect(item, repositories, adapter, time.time(), options.min_age,
+                        operator_confirmed=confirmed)
             eligible = 1
             outcome["status"] = "pending-retry" if pending else "eligible"
             if options.apply:
@@ -214,6 +248,12 @@ def run(store, config, root, **arguments):
     with store.connection() as connection:
         items = inventory(connection)
     items, discovery_errors = discover(items, repositories)
+    if options.confirmed_paths:
+        by_path = {item["path"]: item for item in items}
+        # Keep explicitly selected absent paths so an interrupted private move can
+        # resume from its existing journal. No other discovered path is selected.
+        items = [by_path.get(path, unrecorded(path))
+                 for path in sorted(set(options.confirmed_paths))]
     if options.apply:
         if not root.is_absolute() or root.resolve() != root:
             raise ValueError("canonical-output-root-required")
@@ -225,6 +265,7 @@ def run(store, config, root, **arguments):
         "generations": sum(len(i["generations"]) for i in items),
         "retired": 0, "eligible": 0, "attempted": 0, "results": [],
         "discovery_errors": discovery_errors,
+        "operator_confirmed_paths": list(options.confirmed_paths),
     }
     deadline = time.monotonic() + options.budget
     for item in items:

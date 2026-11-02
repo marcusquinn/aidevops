@@ -22,12 +22,17 @@ def main():
     parser.add_argument("--min-age-seconds", type=float, default=3600)
     parser.add_argument("--limit", type=int, default=25)
     parser.add_argument("--budget-seconds", type=float, default=120)
+    parser.add_argument(
+        "--confirm-legacy-path", action="append", default=[], metavar="ABSOLUTE_PATH",
+        help="Authorize this legacy source; repeat for a batch. "
+             "Select only these paths; retain known active or unknown owners.",
+    )
     args = parser.parse_args()
     try:
         result = run(
             LifecycleRegistry(args.state_dir), args.repos_config, args.output_root,
             apply=args.apply, min_age=args.min_age_seconds, limit=args.limit,
-            budget=args.budget_seconds,
+            budget=args.budget_seconds, confirmed_paths=tuple(args.confirm_legacy_path),
         )
     except (ValueError, OSError, sqlite3.Error, subprocess.SubprocessError,
             ObservationUnavailable) as error:

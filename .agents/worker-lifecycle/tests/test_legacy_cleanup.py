@@ -212,6 +212,128 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(list(self.output.iterdir()), archives)
         self.assertEqual((orphan / "keep").read_text(), "unregistered data")
 
+    def test_confirmed_unrecorded_source_archives_retires_and_restores(self):
+        outside = self.root / "unrecorded"
+        self.git("worktree", "add", "-q", "--detach", str(outside))
+        (outside / "keep.txt").write_text("legacy work")
+        (outside / ".gitignore").write_text("*.ignored\n")
+        (outside / "private.ignored").write_text("excluded")
+        before = self.store.summary()
+        options = {"confirmed_paths": (str(outside),)}
+        preview = self.cleanup(apply=False, **options)
+        self.assertEqual(preview["eligible"], 1, preview)
+        self.assertEqual(self.store.summary(), before)
+        result = self.cleanup(**options)
+        self.assertEqual(result["retired"], 1, result)
+        self.assertEqual(result["paths"], 1)
+        self.assertTrue(self.target.exists())
+        self.assertFalse(outside.exists())
+        with self.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM generations WHERE path=?", (str(outside),),
+            ).fetchone())
+            operation = legacy.operation_id(self.store, str(outside))
+            archive = legacy.receipt(connection, operation, "archive")
+        self.assertTrue(archive["operator_confirmed"])
+        restored = self.root / "operator-restored"
+        legacy._helper("restore", archive["archive"], "--target", str(restored),
+                       "--verification-copy")
+        self.assertEqual((restored / "keep.txt").read_text(), "legacy work")
+        self.assertFalse((restored / "private.ignored").exists())
+
+    def test_operator_confirmation_does_not_override_alive_or_modern(self):
+        options = {"confirmed_paths": (str(self.target),)}
+        result = self.cleanup(**options)
+        self.assertEqual(result["results"][0]["reason"], "process-alive")
+        adapter = adapter_for(self.store.installation_id())
+        native = adapter.observe
+
+        def observed(identity):
+            if identity.pid == self.owner.pid:
+                return ProcessObservation("unknown", "fixture")
+            return native(identity)
+
+        with patch.object(type(adapter), "observe", side_effect=observed):
+            result = self.cleanup(**options)
+        self.assertEqual(result["results"][0]["reason"], "process-unknown")
+        self.stop_owner()
+        AdmissionRegistry(self.store).open_generation(
+            str(uuid4()), str(uuid4()), self.target,
+        )
+        result = self.cleanup(**options)
+        self.assertEqual(result["results"][0]["reason"], "managed-by-current-cleanup")
+        self.assertTrue(self.target.exists())
+
+    def test_confirmed_no_checkout_source_does_not_require_index_file(self):
+        outside = self.root / "no-checkout"
+        self.git("worktree", "add", "-q", "--detach", "--no-checkout", str(outside))
+        admin = _git_directory(outside)
+        self.assertFalse((admin / "index").exists())
+        native = legacy._git
+
+        def checked(*arguments):
+            if "move" in arguments or "remove" in arguments:
+                self.assertFalse((admin / "index").exists())
+            return native(*arguments)
+
+        with patch.object(legacy, "_git", side_effect=checked):
+            result = self.cleanup(confirmed_paths=(str(outside),))
+        self.assertEqual(result["retired"], 1, result)
+        self.assertFalse(outside.exists())
+        with self.store.connection() as connection:
+            operation = legacy.operation_id(self.store, str(outside))
+            archive = legacy.receipt(connection, operation, "archive")
+        restored = self.root / "no-checkout-restored"
+        legacy._helper("restore", archive["archive"], "--target", str(restored),
+                       "--verification-copy")
+        self.assertEqual(legacy._git("-C", str(restored), "ls-files", "--stage"), "")
+        self.assertEqual(legacy._git("-C", str(restored), "ls-files", "--others",
+                                    "--exclude-standard"), "")
+
+    def test_operator_archive_only_retry_requires_confirmation(self):
+        self.stop_owner()
+        checkpoint = legacy.checkpoint
+
+        def interrupted(store, connection, operation, phase, payload):
+            checkpoint(store, connection, operation, phase, payload)
+            if phase == "archive":
+                raise OSError("fixture interruption after archive receipt")
+
+        options = {"confirmed_paths": (str(self.target),)}
+        with patch.object(legacy, "checkpoint", side_effect=interrupted):
+            result = self.cleanup(**options)
+        self.assertEqual(result["retired"], 0)
+        for apply in (False, True):
+            result = self.cleanup(apply=apply)
+            self.assertEqual(result["results"][0]["reason"],
+                             "operator-confirmation-required")
+            self.assertTrue(self.target.exists())
+        result = self.cleanup(**options)
+        self.assertEqual(result["retired"], 1, result)
+
+    def test_operator_plan_needs_confirmation_again_after_interruption(self):
+        self.stop_owner()
+        native = legacy._git
+
+        def interrupted(*arguments):
+            value = native(*arguments)
+            if "move" in arguments:
+                raise OSError("fixture interruption")
+            return value
+
+        options = {"confirmed_paths": (str(self.target),)}
+        with patch.object(legacy, "_git", side_effect=interrupted):
+            result = self.cleanup(**options)
+        self.assertEqual(result["retired"], 0)
+        result = self.cleanup()
+        row = next(row for row in result["results"] if row["path"] == str(self.target))
+        self.assertEqual(row["reason"], "operator-confirmation-required")
+        self.target.mkdir()
+        (self.target / "replacement").write_text("keep")
+        result = self.cleanup(**options)
+        self.assertEqual(result["retired"], 1, result)
+        self.assertEqual((self.target / "replacement").read_text(), "keep")
+
     def test_discovery_errors_are_reported_without_hiding_other_sources(self):
         from worker_lifecycle import legacy_discovery
         with patch.object(legacy_discovery, "_registered", side_effect=OSError("unavailable")):
