@@ -1256,11 +1256,11 @@ test_claude_bare_paths_use_resolved_sandbox_timeout() {
 	}
 
 	_HEADLESS_CLAUDE_STDIN_FILE=""
-	_invoke_claude "$direct_output" "$direct_exit" "" bash -c 'printf "direct-output\n"' >/dev/null 2>&1
+	_invoke_claude "$direct_output" "$direct_exit" "$TEST_ROOT" bash -c 'printf "direct-output\n"' >/dev/null 2>&1
 	printf 'stdin-output\n' >"$stdin_file"
 	_HEADLESS_CLAUDE_STDIN_FILE="$stdin_file"
 	# shellcheck disable=SC2016 # The nested bash expands $line after reading stdin.
-	_invoke_claude "$stdin_output" "$stdin_exit" "" bash -c 'IFS= read -r line; printf "%s\n" "$line"' >/dev/null 2>&1
+	_invoke_claude "$stdin_output" "$stdin_exit" "$TEST_ROOT" bash -c 'IFS= read -r line; printf "%s\n" "$line"' >/dev/null 2>&1
 
 	local timeout_values=""
 	local direct_status=""
@@ -1270,8 +1270,10 @@ test_claude_bare_paths_use_resolved_sandbox_timeout() {
 	timeout_values=$(<"$timeout_log")
 	direct_status=$(<"$direct_exit")
 	stdin_status=$(<"$stdin_exit")
-	direct_value=$(<"$direct_output")
-	stdin_value=$(<"$stdin_output")
+	# Admission writes a registration notice into the combined output stream.
+	# Remove only that notice; retain all command output for exact assertions.
+	direct_value=$(sed '/^\[worker-lifecycle\] registered run=[^ ]* pid=[0-9][0-9]*$/d' "$direct_output")
+	stdin_value=$(sed '/^\[worker-lifecycle\] registered run=[^ ]* pid=[0-9][0-9]*$/d' "$stdin_output")
 	unset -f timeout
 	unset _HEADLESS_CLAUDE_STDIN_FILE
 

@@ -131,10 +131,16 @@ assert "worker.exited" not in handler
 assert "_hrff_finalize_exit_trap" in handler
 finalizer = failure[failure.index("_hrff_finalize_exit_trap()") : failure.index("_exit_trap_handler()")]
 assert finalizer.index("_push_wip_commits_on_exit") < finalizer.index("_emit_worker_runtime_event")
-assert finalizer.index('reason="worker_complete"') < finalizer.index("_emit_worker_runtime_event")
+assert finalizer.index("_escalate_worker_pr_checkpoint") < finalizer.index("_emit_worker_runtime_event")
+assert 'reason="${_HRW_RECOVERY_CLASSIFICATION:-worker_draft_checkpoint_escalation_failed}"' in finalizer
+assert 'if [[ "$reason" == "worker_complete" ]]; then' in finalizer
+assert '_emit_worker_runtime_event "worker.completed" "recovered" "$reason"' in finalizer
+assert 'elif [[ "$reason" == "$checkpoint_reason" ]]; then' in finalizer
+assert '_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"' in finalizer
+assert '_emit_worker_runtime_event "worker.failed" "failed" "$reason"' in finalizer
 
 worker = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
-finish = worker[worker.index("_cmd_run_finish()") : worker.index("_cmd_run_prepare()")]
+finish = worker[worker.index("_cmd_run_finish() {") :].split("\n}\n", 1)[0]
 assert finish.index("_hrw_finish_failed_run") < finish.index("_emit_worker_runtime_event")
 assert "_HRW_FINAL_RUNTIME_EVENT" in finish
 PY
