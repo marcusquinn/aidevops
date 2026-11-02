@@ -560,6 +560,7 @@ _jsr_policy_node_matches() {
 # if set) differs from the approving shell's, since the policy would be stale there.
 _jsr_warn_runtime_node() {
 	local shell_major="$1"
+	local approved_json="${2:-[]}"
 	local runtime_bin="${AIDEVOPS_NODE_BIN:-}"
 	local runtime_major=""
 	if [[ -z "$runtime_bin" ]]; then
@@ -569,9 +570,13 @@ _jsr_warn_runtime_node() {
 	runtime_major=$("$runtime_bin" --version 2>/dev/null || true)
 	runtime_major="${runtime_major#v}"
 	runtime_major="${runtime_major%%.*}"
-	if [[ "$runtime_major" =~ ^[0-9]+$ && "$runtime_major" != "$shell_major" ]]; then
-		printf 'WARNING: runtime Node major %s (%s) differs from this shell (%s); the policy would report stale-node-major there. Re-run with --node-major %s --node-major %s\n' \
-			"$runtime_major" "$runtime_bin" "$shell_major" "$shell_major" "$runtime_major" >&2
+	if [[ "$approved_json" == "[]" ]]; then
+		approved_json=$(jq -cn --arg m "$shell_major" '[$m]')
+	fi
+	if [[ "$runtime_major" =~ ^[0-9]+$ ]] &&
+		! jq -e --arg r "$runtime_major" 'index($r) != null' <<<"$approved_json" >/dev/null 2>&1; then
+		printf 'WARNING: runtime Node major %s (%s) is not in the approved majors %s; the policy would report stale-node-major there. Re-run with --node-major <N> for every intended major, including %s\n' \
+			"$runtime_major" "$runtime_bin" "$approved_json" "$runtime_major" >&2
 	fi
 	return 0
 }
@@ -1078,10 +1083,10 @@ cmd_approve() {
 	printf 'Approving shell Node: %s (major %s)\n' "$(command -v node 2>/dev/null || printf 'not found')" "$node_major"
 	if [[ "$majors_json" == "[]" ]]; then
 		majors_json=$(jq -cn --arg m "$node_major" '[$m]')
-		_jsr_warn_runtime_node "$node_major"
 	else
 		node_major=$(jq -r '.[0]' <<<"$majors_json")
 	fi
+	_jsr_warn_runtime_node "$node_major" "$majors_json"
 	policy=$(jq -cn --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg sha "$JSR_LOCK_SHA" --arg pm "$JSR_PM" \
 		--arg node "$node_major" --argjson majors "$majors_json" --arg scope "$JSR_POLICY_SCOPE" --arg source "$source" \
 		'{approved_at:$at,lockfile_sha256:$sha,package_manager:$pm,node_major:$node,scope:$scope}
@@ -1151,7 +1156,8 @@ cmd_status() {
 # Args: [--report-only]
 cmd_review() {
 	local report_only=0 repos_file="" path="" canon="" policy="" answer=""
-	local stale=0 renewed=0 unapproved=0
+	local stale=0 renewed=0 unapproved=0 m="" add_cur=false
+	local -a major_args=()
 	[[ "${1:-}" == "--report-only" ]] && report_only=1
 	if _jsr_is_headless || [[ ! -t 0 || ! -t 1 ]]; then
 		report_only=1
@@ -1190,7 +1196,18 @@ cmd_review() {
 		answer=""
 		read -r answer || answer=""
 		case "$answer" in
-		y | Y | yes | YES) cmd_approve "$canon" --track-default-branch && renewed=$((renewed + 1)) ;;
+		y | Y | yes | YES)
+			# Preserve previously approved majors; add this shell's major when it was the stale one.
+			major_args=()
+			add_cur=false
+			[[ "$JSR_POLICY_STATUS" == stale-node-* ]] && add_cur=true
+			while IFS= read -r m; do
+				[[ -n "$m" ]] && major_args+=(--node-major "$m")
+			done < <(jq -r --arg cur "$(_jsr_node_major)" --argjson add "$add_cur" \
+				'(((.node_majors // []) | map(tostring)) + [(.node_major // empty | tostring)] + (if $add then [$cur] else [] end))
+				| map(select(test("^[0-9]+$"))) | unique | .[]' <<<"$policy" 2>/dev/null || true)
+			cmd_approve "$canon" --track-default-branch "${major_args[@]+"${major_args[@]}"}" && renewed=$((renewed + 1))
+			;;
 		esac
 	done
 	if [[ "$stale" -gt "$renewed" ]]; then
