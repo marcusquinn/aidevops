@@ -78,7 +78,8 @@ def _refresh_remote_default(repo_root: str, git_output: GitOutput) -> str:
 
     def run(*args: str) -> str:
         try:
-            result = subprocess.run(
+            # Validated native Git; fixed callers use argv and --, never a shell.
+            result = subprocess.run(  # nosec B603
                 [real_git(), "-C", repo_root, *args],
                 capture_output=True, text=True, timeout=30, check=True,
                 env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
