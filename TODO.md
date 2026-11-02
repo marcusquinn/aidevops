@@ -1850,6 +1850,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18850 fix: bound producer recovery archive retention and skip empty-delta archives #bug ref:GH#36470
 
+- [x] t18851 Compact-archive prune: replace full restore verification with structural checks before deletion #feat ref:GH#36479 pr:#36503 completed:2026-11-02
+
 - [x] t18852 Local SEO capability for aidevops (parent roadmap) #feat #parent-task #interactive ref:GH#36480 logged:2026-11-02 -> [todo/tasks/t18852-brief.md] verified:2026-11-02 completed:2026-11-02
 
 - [x] t18853 Local SEO: add evidence-labelled local SEO agent (seo/local-seo.md) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36481 pr:#36487 logged:2026-11-02 -> [todo/tasks/t18853-brief.md] completed:2026-11-02

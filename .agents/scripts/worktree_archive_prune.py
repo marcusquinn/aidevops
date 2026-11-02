@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 
+import worktree_archive_producer_retention as producer_retention
 from worktree_archive_process import run_bounded, termination_as_exit
 from worktree_archive_scratch import sweep_root
 
@@ -96,7 +97,9 @@ def remove_verified(root, root_identity, entry, helper):
     """Anchor removal to no-follow directory descriptors, not mutable ancestor paths."""
     if not getattr(shutil.rmtree, "avoids_symlink_attacks", False):
         raise ValueError("safe directory removal unavailable on this platform")
-    directory, expected_identity, expected_manifest = entry[2:]
+    directory, expected_identity, expected_manifest = entry[2:5]
+    expected_pin = next(iter(entry[5:6]), None)  # producer entries only
+    policy_unchanged = producer_retention.pin_unchanged
     descriptors = []
     original_cwd = os.open(".", os.O_RDONLY)
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -113,7 +116,7 @@ def remove_verified(root, root_identity, entry, helper):
         os.fchdir(descriptor)
         if identity(Path(".")) != expected_identity:
             raise ValueError("archive identity changed")
-        if os.path.lexists(PIN) or Path("manifest.json").read_bytes() != expected_manifest:
+        if not policy_unchanged(Path("."), expected_pin) or Path("manifest.json").read_bytes() != expected_manifest:
             raise ValueError("archive policy or manifest changed")
         # Atomically claim the name into a private transaction directory before
         # verification/removal. A replacement at the old public name is never
@@ -130,7 +133,7 @@ def remove_verified(root, root_identity, entry, helper):
             if identity(claimed) != expected_identity:
                 raise ValueError("archive replaced while claiming")
             verify(helper, claimed)
-            if (os.path.lexists(claimed / PIN) or
+            if (not policy_unchanged(claimed, expected_pin) or
                     (claimed / "manifest.json").read_bytes() != expected_manifest):
                 raise ValueError("archive policy or manifest changed during verification")
             shutil.rmtree(claimed)
@@ -156,7 +159,8 @@ def candidate_entries(root):
     return sorted(entries, key=lambda entry: (entry[0], str(entry[2])))
 
 
-Target = collections.namedtuple("Target", "root identity helper mode")
+Target = collections.namedtuple("Target", "root identity helper mode producer_ttl",
+                                defaults=(producer_retention.DEFAULT_TTL_DAYS,))
 
 
 def attempt(target, entry):
@@ -164,7 +168,7 @@ def attempt(target, entry):
     ensure_budget()
     try:
         if target.mode == "apply":
-            remove_verified(target.root, target.identity, entry, target.helper)
+            producer_retention.remove_entry(target, entry, remove_verified)
         else:
             verify(target.helper, entry[2])
     except RETENTION_ERRORS as error:
@@ -174,16 +178,20 @@ def attempt(target, entry):
     return True
 
 
-def prune(target, entries, days, limit):
+def prune(target, entries, days, limit, producers=((), 0)):
     """Remove expired archives, then the oldest survivors above the size cap.
 
     Unverifiable archives are kept and do not count as freed space. Running
     out of pass budget defers the rest to the next pass; it is not a failure.
+    Producer archives expire only on their own evidence (`producers` holds the
+    eligible entries and the bytes of protected ones): the cap counts them but
+    never removes one.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
     expired = [entry for entry in entries if (now - entry[0]).days >= days]
+    expired += producers[0]
     survivors = [entry for entry in entries if (now - entry[0]).days < days]
-    survivor_total = sum(entry[1] for entry in survivors)
+    survivor_total = sum(entry[1] for entry in survivors) + producers[1]
     failed = False
     try:
         for entry in expired:
@@ -206,6 +214,7 @@ def main():
     days, raw_limit, mode = int(sys.argv[2]), sys.argv[3], sys.argv[4]
     helper = Path(sys.argv[5]).resolve()
     budget = int(sys.argv[6]) if len(sys.argv) > 6 else 0
+    producer_ttl = producer_retention.ttl_days(sys.argv[7] if len(sys.argv) > 7 else "")
     if mode not in ("apply", "dry-run") or budget < 0:
         raise SystemExit("invalid prune mode or budget")
     if budget:
@@ -218,8 +227,10 @@ def main():
     # in both modes (GH#36468).
     for path in sweep_root(root):
         print(f"reclaimed-scratch\t{path}", file=sys.stderr)
-    target = Target(root, identity(root), helper, mode)
-    return prune(target, candidate_entries(root), days, limit)
+    target = Target(root, identity(root), helper, mode, producer_ttl)
+    producers = producer_retention.entries(
+        root, producer_ttl, lambda line: print(line, file=sys.stderr))
+    return prune(target, candidate_entries(root), days, limit, producers)
 
 
 if __name__ == "__main__":
