@@ -727,6 +727,72 @@ _tbr_dependency_unresolved() {
 # evidence (retire the entry); 2 indeterminate; 3 re-armed but a declared
 # blocked-by dependency is unresolved (GH#36126: keep the entry, write nothing).
 #######################################
+# GH#36457: only protected, metric-bound excerpts from this repository qualify.
+# A full quiet pulse window plus fresh positive admission proves local recovery;
+# silence alone (an offline/broken plugin) is never evidence of health.
+_tbr_lifecycle_recovered() {
+	local repo="$1" issue="$2" evidence="$3"
+	local metrics="${AIDEVOPS_HEADLESS_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}"
+	python3 - "$repo" "$issue" "$evidence" "$metrics" "$TBR_EXCERPT_DIR" \
+		"${HOME}/.aidevops/logs/lifecycle-admission" "${TERMINAL_BLOCKER_NOW_EPOCH:-}" \
+		"${AIDEVOPS_PULSE_MIN_INTERVAL_S:-90}" <<'PY'
+import datetime
+import json
+import re
+import sys
+import time
+from pathlib import Path
+
+repo, issue, evidence, metrics, excerpts, admissions, clock, window = sys.argv[1:]
+try:
+    now = int(clock) if clock else int(time.time())
+    window = max(90, int(window))
+    observed = datetime.datetime.fromisoformat(json.loads(evidence)["created_at"].replace("Z", "+00:00")).timestamp()
+    rows = [json.loads(line) for line in Path(metrics).open()]
+    rows = [r for r in rows if r.get("repo_slug", "").lower() == repo.lower()
+            and str(r.get("issue_number")) == issue and r.get("role") == "worker"]
+    latest = max(rows, key=lambda r: r["ts"])
+    if latest.get("result") != "blocked" or not 0 <= observed - latest["ts"] <= 3600:
+        sys.exit(1)
+    path = Path(latest["output_file"])
+    if path.parent.resolve() != Path(excerpts).resolve() or path.is_symlink():
+        sys.exit(1)
+    if not re.fullmatch(r"issue-" + re.escape(issue) + r"-\d{8}T\d{6}Z-\d+\.log", path.name):
+        sys.exit(1)
+    text = path.read_text()
+    # Match an actual failed tool result, not quoted assistant commentary.
+    signature = r"^BLOCKED: lifecycle owner admission is unavailable(?: \([A-Za-z0-9_.-]+\))?; no write authorized$"
+    refused = False
+    for line in text.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        part = event.get("part", {})
+        state = part.get("state", {})
+        if event.get("type") == "tool_use" and state.get("status") == "error":
+            refused |= bool(re.fullmatch(signature, state.get("error", "")))
+    if not refused or re.search(r"TERMINAL_BLOCKER_(?:REASON|MISSING_SECRETS)=", text):
+        sys.exit(1)
+    events = [json.loads(line) for p in Path(admissions).glob("*.jsonl") for line in p.open()]
+    if not events or not all(e.get("schema") == 1 and isinstance(e.get("ts"), int) for e in events):
+        sys.exit(1)
+    boundary = max([e["ts"] / 1000 for e in events if e.get("outcome") == "refused"]
+                   or [min(e["ts"] / 1000 for e in events)])
+    # Schema-1 observe-only compatibility is a deliberate linked-worktree
+    # success path (GH#36430), not ownership. Non-repository/excluded operations
+    # cannot prove that linked-worktree tooling has recovered.
+    passed = max(e["ts"] / 1000 for e in events if e.get("outcome") == "passed"
+                 and e.get("status") in ("admitted", "coverage-gap"))
+    if not (boundary <= now - window and boundary < passed <= now and now - passed <= window):
+        sys.exit(1)
+except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    sys.exit(1)
+sys.exit(0)
+PY
+	return $?
+}
+
 _tbr_release_circuit_hold() {
 	local repo="$1"
 	local issue="$2"
@@ -797,17 +863,19 @@ _tbr_release_circuit_hold() {
 		# GH#36342 #aidevops:trust-boundary: the window re-arm already repeated
 		# this result; only a retry, new trusted input or brief revision wakes it.
 		decision=permission_window_spent
+	elif [[ "$reason" == "$_TBC_UNKNOWN" ]] && _tbr_lifecycle_recovered "$repo" "$issue" "$evidence"; then
+		decision=lifecycle_recovered
 	fi
 	# A newer circuit for the current revision wins over an older observation
 	# or retry; unreadable evidence must not fall through into label projection.
 	local active_rc=0
 	_tbr_circuit_blocks_release "$circuit" "$retry" "$issue_json" "$repo" "$issue" "$repo_path" "$comments" || active_rc=$?
-	[[ "$active_rc" -eq 1 ]] || decision=active_circuit
+	[[ "$active_rc" -eq 1 || "$decision" == lifecycle_recovered ]] || decision=active_circuit
 	[[ "$active_rc" -lt 2 ]] || decision=indeterminate_circuit
 	printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=%s\n' \
 		"$issue" "$observed_rev" "$current_rev" "$decision" >&2
 	[[ "$decision" == revision_changed || "$decision" == trusted_retry ||
-		"$decision" == unevidenced_permission_window ]] || return 2
+		"$decision" == unevidenced_permission_window || "$decision" == lifecycle_recovered ]] || return 2
 	# GH#36126: hold without a receipt while a dependency is open.
 	_tbr_dependency_unresolved "$repo" "$issue" "$issue_json" "$observed_rev" "$current_rev" && return 3
 	_tbr_release_decided_hold "$repo" "$issue" "$issue_json" "$comments" "$evidence" "${retry:-null}" \
@@ -945,7 +1013,7 @@ _tbr_check_entry() {
 		# unreadable timestamps never suppress verification. Revision-bound
 		# holds must recheck target/dependency changes independent of issue edits.
 		if [[ -n "$updated_at" && -n "$last_updated_at" && ! "$updated_at" > "$last_updated_at" ]] &&
-			! terminal_blocker_rearms_on_revision "$reason" && ! _tbr_rearm_window_due "$file"; then
+			[[ "$reason" != unknown ]] && ! terminal_blocker_rearms_on_revision "$reason" && ! _tbr_rearm_window_due "$file"; then
 			return 1
 		fi
 	fi
@@ -979,6 +1047,16 @@ _tbr_check_entry() {
 	fi
 	# Indeterminate revision: keep the entry for the next pass, report nothing.
 	[[ "$hold_rc" -eq 0 ]] || return 2
+	# Infrastructure recovery is a positive wake condition even for an active
+	# unknown circuit. The release helper still enforces labels and dependencies.
+	if [[ "$reason" == unknown ]]; then
+		local lifecycle_rc=0
+		_tbr_release_circuit_hold "$repo" "$issue" "$issue_json" "$comments" || lifecycle_rc=$?
+		if [[ "$lifecycle_rc" -eq 0 ]]; then
+			rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
+			return 1
+		fi
+	fi
 	if [[ "$mode" == rearm ]]; then
 		# Only a complete, still-held observation may skip unchanged comments.
 		# Do not consult owner decisions or collect excerpts for the LLM.

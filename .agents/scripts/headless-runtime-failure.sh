@@ -584,6 +584,7 @@ _hrff_lifecycle_refusal_only() {
 	[[ "$session_id" =~ ^[A-Za-z0-9_-]+$ && -f "$db_path" && -d "$evidence_dir" ]] || return 1
 	python3 - "$session_id" "$db_path" "$evidence_dir" <<'PY'
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -595,10 +596,14 @@ try:
         for line in path.open():
             event = json.loads(line)
             if event.get("schema") == 1 and event.get("session") == session and event.get("outcome") == "refused":
+                # Policy refusals are not helper infrastructure failures.
+                if not re.fullmatch(r"helper-(?:timeout|unavailable|exit-[0-9]+)|ENOENT|ETIMEDOUT", event.get("reason", "")):
+                    sys.exit(1)
                 refused = True
     with sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True) as db:
         # Require the session itself to exist; an empty/wrong DB is not evidence.
-        assert db.execute("SELECT 1 FROM session WHERE id = ?", (session,)).fetchone()
+        if not db.execute("SELECT 1 FROM session WHERE id = ?", (session,)).fetchone():
+            sys.exit(1)
         count = db.execute("""WITH RECURSIVE owned(id) AS (
             SELECT id FROM session WHERE id = ? UNION
             SELECT s.id FROM session s JOIN owned o ON s.parent_id = o.id)
@@ -606,7 +611,7 @@ try:
             AND json_extract(data, '$.type') = 'tool'
             AND json_extract(data, '$.state.status') = 'completed'""", (session,)).fetchone()[0]
     sys.exit(0 if refused and count == 0 else 1)
-except (OSError, ValueError, sqlite3.Error, AssertionError):
+except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
     sys.exit(1)
 PY
 	return $?
