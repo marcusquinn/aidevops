@@ -101,6 +101,79 @@ class ProcessCensusTests(unittest.TestCase):
             census.require_proc_visibility()
 
 
+    def test_only_permission_denied_old_allowlisted_tasks_are_excluded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = Path(directory)
+            task = process / "task" / "100"
+            task.mkdir(parents=True)
+            (task / "status").write_text("Uid:\t" + "\t".join([str(os.getuid())] * 4) + "\n")
+            for name, start, error, birth, excluded in (
+                    ("ssh-agent", 100, PermissionError(), 110, 1),
+                    ("gpg-agent", 100, PermissionError(), 110, 1),
+                    ("(sd-pam)", 100, PermissionError(), 110, 1),
+                    ("systemd", 100, PermissionError(), 110, 1),
+                    ("sshd", 100, PermissionError(), 110, 1),
+                    ("dbus-daemon", 100, PermissionError(), 110, 1),
+                    ("ssh-agent", 1100, PermissionError(), 110, 0),
+                    ("ssh-agent", 900, PermissionError(), 110, 0),
+                    ("python3", 100, PermissionError(), 110, 0),
+                    ("ssh-agent", 100, OSError(), 110, 0),
+                    ("ssh-agent", 100, PermissionError(), None, 0),
+                    ("ssh-agent", 0, PermissionError(), 110, 0),
+                    ("ssh-agent", "bad", PermissionError(), 110, 0)):
+                fields = ["S"] + ["0"] * 18 + [str(start)]
+                stat = f"100 ({name}) " + " ".join(fields)
+                (task / "stat").write_text(stat)
+                result = {"references": 0, "uncertain": 0, "excluded_nondumpable": 0}
+                original_read = Path.read_text
+
+                def read_text(path, *args, **kwargs):
+                    if path == Path("/proc/stat"):
+                        return "btime 100\n"
+                    return original_read(path, *args, **kwargs)
+
+                with self.subTest(name=name, start=start, error=error, birth=birth), \
+                        patch.object(census, "inspect_path_references", side_effect=error), \
+                        patch.object(Path, "read_text", read_text), \
+                        patch.object(os, "sysconf", return_value=100):
+                    census.collect_path_references(process, "/worktree", result, birth)
+                    self.assertEqual(result["excluded_nondumpable"], excluded)
+                    self.assertEqual(result["uncertain"], 1 - excluded)
+                    self.assertEqual(result["references"], 0)
+
+    def test_birth_time_requires_same_inode_and_never_uses_ctime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            observed = os.stat(directory)
+            identity = f"{observed.st_dev}:{observed.st_ino}"
+            for output, expected in ((f"{identity} 100", 100), (f"{identity} 0", None),
+                                     ("1:2 100", None), ("bad", None),
+                                     (f"{identity} 999999999999", None)):
+                with self.subTest(output=output), \
+                        patch.object(subprocess, "check_output", return_value=output):
+                    self.assertEqual(census.worktree_birth(directory), expected)
+            with patch.object(subprocess, "check_output", side_effect=FileNotFoundError()):
+                self.assertIsNone(census.worktree_birth(directory))
+
+    def test_daemon_generation_change_is_not_excluded(self):
+        stat = "100 (ssh-agent) S " + "0 " * 18 + "100"
+        for values in ([stat, "btime 100\n", stat.replace("100", "200")],
+                       [stat, "missing boot time"], ["malformed"]):
+            with self.subTest(values=values), patch.object(Path, "read_text", side_effect=values), \
+                    patch.object(os, "sysconf", return_value=100):
+                self.assertFalse(census.predates_worktree(Path("/proc/100"), 110))
+
+    def test_exclusion_counts_do_not_relax_quiescence(self):
+        import worktree_lifetime_quiescence as quiescence
+        sample = {"status": "available", "boot_id": "boot", "uid": os.getuid(),
+                  "observed_at": time.time(), "references": 0, "uncertain": 0,
+                  "excluded_nondumpable": 4}
+        self.assertTrue(quiescence.empty_census(sample, "boot"))
+        sample["uncertain"] = 1
+        self.assertFalse(quiescence.empty_census(sample, "boot"))
+        sample.update(uncertain=0, references=1)
+        self.assertFalse(quiescence.empty_census(sample, "boot"))
+
+
 class ProcessSnapshotTests(unittest.TestCase):
     def snapshot(self):
         return {"status": "available", "boot_id": "11111111-1111-1111-1111-111111111111",
