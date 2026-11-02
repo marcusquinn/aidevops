@@ -250,6 +250,25 @@ class RetirementContract(unittest.TestCase):
         self.assertEqual(result["status"], "not-enrolled-only")
         self.assertTrue(self.target.exists())
 
+    def test_enrolled_only_invalid_archive_root_keeps_admission_open(self):
+        self.git("worktree", "add", "--detach", str(self.target))
+        generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
+        invalid = self.output / "not-a-directory"
+        invalid.write_text("keep")
+        with self.assertRaises(ValueError):
+            retire_enrolled_only(
+                self.store, self.cleanup_config(), invalid, self.target, True,
+            )
+        with self.store.connection() as connection:
+            admission = connection.execute(
+                "SELECT state FROM generation_admissions WHERE generation_id=?",
+                (generation,),
+            ).fetchone()
+        self.assertEqual(admission["state"], "open")
+        self.assertIsNone(retirement._event(self.store, enrolled_only_event_id(generation)))
+        self.assertTrue(self.target.exists())
+        self.assertEqual(invalid.read_text(), "keep")
+
     def test_enrolled_only_admission_race_loses_after_closure(self):
         self.git("worktree", "add", "--detach", str(self.target))
         generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
