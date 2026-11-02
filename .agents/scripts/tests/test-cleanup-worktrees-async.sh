@@ -86,7 +86,8 @@ run_helper_in_isolation() {
 timeout_sec() {
 	local seconds="$1"
 	shift
-	case "$seconds" in 90 | 120) ;; *) return 1 ;; esac
+	# Recovery 90s, verify-scratch sweep 60s, prune budget 540s + 60s backstop.
+	case "$seconds" in 60 | 90 | 600) ;; *) return 1 ;; esac
 	"$@" || return 1
 	return 0
 }
@@ -702,15 +703,21 @@ test_compact_retention_policy() {
 		marker="${TEST_DIR}/compact-retention-ran"
 		AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE="$policy" run_helper_in_isolation
 		if [[ "$policy" == "dry-run" || "$policy" == "apply" ]]; then
-			if grep -q -- "prune --older-than 14d --max-total-size 20G --${policy}" "$marker"; then
+			if grep -q -- "prune --older-than 14d --max-total-size 20G --${policy} --budget-seconds 540" "$marker"; then
 				print_result "compact-retention: ${policy} forwards bounded policy" 0
 			else
 				print_result "compact-retention: ${policy} forwards bounded policy" 1
 			fi
-		elif [[ ! -e "$marker" ]]; then
+		elif ! grep -q '^prune' "$marker" 2>/dev/null; then
 			print_result "compact-retention: ${policy} never deletes" 0
 		else
 			print_result "compact-retention: ${policy} never deletes" 1
+		fi
+		# GH#36468: dead verification scratch is reclaimed in every mode.
+		if grep -qx 'sweep-scratch' "$marker" 2>/dev/null; then
+			print_result "compact-retention: ${policy} reclaims dead verify scratch" 0
+		else
+			print_result "compact-retention: ${policy} reclaims dead verify scratch" 1
 		fi
 	done
 	return 0
@@ -743,7 +750,7 @@ test_compact_retention_defaults_config_and_failure() {
 	teardown
 	setup
 	MOCK_CLEANUP_SKIPPED=1 run_helper_in_isolation
-	if [[ ! -e "${TEST_DIR}/compact-retention-ran" ]]; then
+	if ! grep -q '^prune' "${TEST_DIR}/compact-retention-ran" 2>/dev/null; then
 		print_result "compact-retention: safety-skipped cleanup never applies retention" 0
 	else
 		print_result "compact-retention: safety-skipped cleanup never applies retention" 1
