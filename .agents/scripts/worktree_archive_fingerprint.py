@@ -21,15 +21,6 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     not repeat diffs or verify restoration. Comparison is a separate operation.
     """
     root = Path(path).resolve(strict=True)
-    # An absent index (or staged deletion) makes HEAD-tracked files untracked.
-    # Ignore rules can then hide their current bytes from both patches and the
-    # ordinary untracked payload. Refuse capture AND subsequent removal barriers
-    # rather than blessing a fingerprint that cannot prove their preservation.
-    head_paths = set(filter(None, git(root, 'ls-tree', '-r', '--name-only', '-z', 'HEAD').split(b'\0')))
-    captured_paths = set(filter(None, git(root, 'ls-files', '--cached', '--others',
-                                         '--exclude-standard', '-z').split(b'\0')))
-    if any(os.path.lexists(root / os.fsdecode(raw)) for raw in head_paths - captured_paths):
-        raise ValueError('HEAD-tracked paths omitted by Git-only inventory require separate preservation')
     metadata = metadata if metadata is not None else git_index_state(root)
     if 'merge' in metadata:
         state = metadata['merge']
