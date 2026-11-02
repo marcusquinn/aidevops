@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import { join } from "path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { patchTargetPaths } from "./worker-write-fence.mjs";
 import { isApplyPatchMutationTool, isDirectFileMutationTool } from "./quality-hooks-git-safety.mjs";
 import { parsePolicyPayload, runPolicyHelper } from "./quality-hooks-policy-runner.mjs";
@@ -9,6 +11,20 @@ import { runtimeOwner } from "./runtime-owner.mjs";
 import { emitToast } from "./greeting-toast.mjs";
 
 const advisedSessions = new Set();
+
+// Diagnostic evidence only: never changes admission policy or logs tool args.
+function recordAdmission(input, outcome, reason = "", status = "") {
+  const session = input.sessionID || input.sessionId || input.session?.id || "";
+  // Interactive tools and plugin fixture sessions are not worker health probes.
+  if (!/^[1-9][0-9]*$/.test(process.env.WORKER_ISSUE_NUMBER || "")) return;
+  if (!/^[A-Za-z0-9_-]+$/.test(session)) return;
+  try {
+    const directory = join(homedir(), ".aidevops", "logs", "lifecycle-admission");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    appendFileSync(join(directory, `${new Date().toISOString().slice(0, 10)}.jsonl`),
+      JSON.stringify({ schema: 1, ts: Date.now(), session, outcome, reason, status }) + "\n", { mode: 0o600 });
+  } catch { /* Missing diagnostic storage must never grant or refuse a tool. */ }
+}
 
 function adviseDiagnostic(result, input, client) {
   const sessionID = input.sessionID || input.sessionId || input.session?.id || "";
@@ -95,6 +111,7 @@ export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash,
     result = parsePolicyPayload(runPolicyHelper(helperArgs, { stdio: ["ignore", "pipe", "pipe"] }));
   } catch (error) {
     const reason = failureReason(error);
+    recordAdmission(input, "refused", reason);
     const inspectionCommand = 'python3 -E -s -B "$HOME/.aidevops/agents/worker-lifecycle/worker-registry.py" --state-dir <state-directory> status';
     if (["schema-one-with-admission-state", "schema-one-with-generation-marker"].includes(reason)) {
       throw new Error(`BLOCKED: ${reason}; conflicting schema-1 state is outside observe-only compatibility; no write authorized. Inspect read-only with ${inspectionCommand} and coordinate recovery with all clients. Do not reset, downgrade, migrate, or perform an uncoordinated upgrade`);
@@ -109,6 +126,7 @@ export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash,
   }
   if (result.status === "coverage-gap" && result.reason === "schema-upgrade-required"
       && result.cleanup_authorized === false) {
+    recordAdmission(input, "passed", "", result.status);
     adviseDiagnostic(result, input, client);
     // Observation is not ownership. Independent command/canonical-write gates
     // remain mandatory; the console router persists this diagnostic off-TUI.
@@ -116,6 +134,8 @@ export function admitToolOwner({ scriptsDir, repositoryDir, input, output, bash,
     return;
   }
   if (!["admitted", "excluded-unregistered", "not-applicable"].includes(result.status)) {
+    recordAdmission(input, "refused", "admission-unconfirmed");
     throw new Error("BLOCKED: lifecycle owner admission was not confirmed");
   }
+  recordAdmission(input, "passed", "", result.status);
 }
