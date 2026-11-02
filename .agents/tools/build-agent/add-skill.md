@@ -57,6 +57,29 @@ Max depth: 2 levels.
 | `.cursorrules` | Cursor | Wrap in Markdown with generated frontmatter (`description`, `mode: subagent`, `imported_from: cursorrules`). |
 | Raw Markdown | README.md, etc. | Copy as-is, add frontmatter if missing. Rename → `{name}-skill.md`. |
 
+## Content Review
+
+After the security scan, review each imported file before activation. This is an agent review, not a helper/scanner change; `--skip-security` bypasses only the security scan.
+
+Check:
+
+1. **Vendor and affiliate bias:** default routing to one paid tool; “use whenever connected” or “cheapest/only option” claims; referral links/codes; pricing/credit claims and inconsistent cost figures. Check README, licence and author links for ownership of promoted tools.
+2. **Unsupported claims:** ranking/performance claims without primary sources, survey opinion presented as confirmed fact, correlation presented as causation, or invented thresholds.
+3. **Policy violations:** tactics contrary to the platform’s published guidelines, such as review gating; verify against those guidelines.
+4. **Conflicts:** name each conflicting aidevops file and keep our guidance unless the import supplies primary evidence supporting a change.
+5. **Staleness:** deprecated features, APIs or roles; verify current primary documentation before retaining them.
+
+Assign one verdict per file:
+
+| Verdict | Action |
+|---------|--------|
+| **ADOPT** | Retain as-is when the checks pass and the content adds value. |
+| **ADAPT** | Keep only vetted material; correct or remove problematic guidance before use. |
+| **SKIP** | Omit redundant, irrelevant or obsolete material with no useful addition. |
+| **REJECT** | Exclude content whose misleading or policy-violating guidance cannot be safely retained. |
+
+When checks 1–3 find problems, prefer extracting vetted workflows into native agents over wholesale import. Do not activate SKIP/REJECT files. Record per-file verdicts, reasons, evidence, conflicting paths and adaptations in the import’s existing `skill-sources.json` `notes` field.
+
 ## Conflict Resolution
 
 | Option | When | Action |

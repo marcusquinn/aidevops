@@ -44,7 +44,8 @@ Import an external skill, convert to aidevops format, and register for update tr
 2. **Run helper:** `~/.aidevops/agents/scripts/add-skill-helper.sh add "$ARGUMENTS"` (other commands: `list | check-updates | remove <name>`)
 3. **Handle conflicts** (if file exists): Merge / Replace / Separate / Skip.
 4. **Security scan:** [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) if installed — CRITICAL/HIGH blocks import. `--skip-security` bypasses; `--force` only controls file overwrite. Scan also runs on `aidevops skill update`.
-5. **Post-import:** Placed in `.agents/` per conventions → registered in `.agents/configs/skill-sources.json` → run `./setup.sh` to create symlinks.
+5. **Content review:** Apply `tools/build-agent/add-skill.md` “Content Review” to each imported file before post-import activation.
+6. **Post-import:** Placed in `.agents/` per conventions → registered in `.agents/configs/skill-sources.json` → run `./setup.sh` to create symlinks.
 
 ## Supported Sources & Formats
 
