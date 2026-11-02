@@ -19,14 +19,15 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Reuse an already-open Chrome/Chromium/Brave/Edge/Vivaldi session instead of launching a fresh browser
-- **Mechanism**: Start the browser with `--remote-debugging-port=9222`, then attach with the local CDP helper or Playwright CDP
-- **Helper**: `.agents/scripts/chromium-debug-use-helper.sh` (Node 22+, raw CDP, no Playwright dependency)
+- **Purpose**: Drive a real, logged-in Brave/Chrome/Chromium/Edge/Vivaldi session over CDP instead of a Playwright-launched browser
+- **Default route ("use my logged-in browser")**: `chromium-debug-use-helper.sh launch <url>` starts a plain-process browser (Brave preferred) on a dedicated persistent aidevops profile with CDP on a free `127.0.0.1` port; the user logs in once, then attach with the helper or `connectOverCDP`
+- **Cannot be driven**: the user's already-open everyday tab. Chromium ignores `--remote-debugging-port` on the default profile (Chrome 136+, Brave follows), the Playwright Extension is not documented for Brave, and AppleScript cannot read the DOM. Say so in one turn and offer `launch`; do not trial-and-error extension, AppleScript, or cookie-extraction routes
+- **Helper**: `.agents/scripts/chromium-debug-use-helper.sh` (`launch`/`launch-status`/`launch-stop` need only curl; page commands need Node 22+, raw CDP, no Playwright dependency)
 - **Skill entry**: `tools/browser/chromium-debug-use/SKILL.md`
-- **Best for**: Logged-in/manual-auth flows, extension-heavy sessions, debugging real state, handoff between manual and scripted work
-- **Not for**: Isolated parallel test runs, Firefox/WebKit, or hostile sites where exposed remote debugging is unsafe
+- **Best for**: Logged-in/manual-auth flows, bot-defended sites (social platforms), extension-heavy sessions, debugging real state, handoff between manual and scripted work
+- **Not for**: Isolated parallel test runs, Firefox/WebKit, headless workers/CI, or hostile sites where exposed remote debugging is unsafe
 
-**Core rule**: This pattern attaches to a live browser profile. Treat it as stateful and non-isolated. Prefer fresh Playwright contexts for reproducible tests.
+**Core rule**: This pattern attaches to a live browser profile. Treat it as stateful and non-isolated. Prefer fresh Playwright contexts for reproducible tests. Interactive sessions only; stop launched browsers with `launch-stop` when the work is done.
 
 <!-- AI-CONTEXT-END -->
 
@@ -34,17 +35,34 @@ tools:
 
 Use this path only when aidevops explicitly needs to inspect or automate your live Chromium-family browser. Do not leave remote debugging enabled as a standing default.
 
-`--remote-debugging-port=9222` grants local processes profile-level access (cookies, local storage, logged-in tabs) until the browser is closed or restarted without the flag.
+`--remote-debugging-port` grants local processes profile-level access (cookies, local storage, logged-in tabs) until the browser is closed or restarted without the flag.
 
 Security boundaries:
 
-- Bind to loopback only: `http://127.0.0.1:9222`, not a LAN IP.
-- Prefer a temporary `--user-data-dir` so investigation state is isolated and easy to discard.
+- Bind to loopback only (`127.0.0.1`), never a LAN IP.
+- Use a dedicated aidevops `--user-data-dir`, never the everyday profile; it keeps the debug-exposed state separate and easy to discard.
 - For interactive selected-tab consent instead of profile-level debugging, use the official Playwright Extension route in `tools/browser/playwright.md` only while the user is available.
 
-## Start a Debuggable Browser
+## Use a Logged-in Session (Dedicated Profile)
 
-All Chromium-family browsers use the same flags. Use a dedicated profile when possible.
+```bash
+.agents/scripts/chromium-debug-use-helper.sh launch https://x.com/login
+# LAUNCH=started  PROFILE=cdp  PID=…  BROWSER_URL=http://127.0.0.1:<port>
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp list
+.agents/scripts/chromium-debug-use-helper.sh launch-status   # running | orphan (0 pages) | stopped
+.agents/scripts/chromium-debug-use-helper.sh launch-stop     # or: launch-stop --all
+```
+
+- Starts the browser as a plain process: no Playwright `--enable-automation` switch or automation infobar, and `--disable-blink-features=AutomationControlled` keeps `navigator.webdriver` false (remote debugging alone sets it true).
+- Profiles persist under `~/.aidevops/.agent-workspace/browser-profiles/<name>` (`--profile NAME`, default `cdp`), so a login survives restarts. `launch` reuses a running profile and opens the URL as a new tab.
+- `--remote-debugging-port=0` picks a free port, so it never collides with `dev-browser` or another browser on 9222. The PID is recorded; `launch-stop` signals only a process whose command line still owns that profile.
+- Override the browser with `AIDEVOPS_CDP_BROWSER=/path/to/browser`; default order is Brave, Chrome, Edge, Chromium.
+- Attach from Playwright with `chromium.connectOverCDP('<BROWSER_URL>')`. Human-facing windows keep their native size; when creating a context for a person to use, pass `viewport: null`.
+- The launched instance is a second process of the same app, so AppleScript `tell application "Brave Browser"` may resolve to it. Target windows by Unix PID or CDP target (see Troubleshooting), and stop the instance when finished.
+
+## Start a Debuggable Browser Manually
+
+All Chromium-family browsers use the same flags. Always use a dedicated, non-default `--user-data-dir`: Chromium ignores `--remote-debugging-port` on the default profile. Prefer the `launch` command above, which also records ownership for cleanup.
 
 ```bash
 # Replace <browser-path> with the binary for your browser:
@@ -95,7 +113,7 @@ The helper provides a direct CDP command surface without requiring Playwright or
 
 Notes:
 
-- Commands default to `http://127.0.0.1:9222`, then fall back to browser `DevToolsActivePort` discovery.
+- Commands default to `http://127.0.0.1:9222`, then a live profile started by `launch`, then browser `DevToolsActivePort` discovery. `--profile NAME` targets one launched profile explicitly.
 - Override with `--browser-url http://127.0.0.1:9333` or `CHROMIUM_DEBUG_USE_BROWSER_URL=...`.
 - Uses raw CDP over WebSocket with a per-tab daemon — repeated commands do not reconnect.
 - Run `list` first, then use the displayed target prefix for page-specific commands.
@@ -127,10 +145,10 @@ const browser = await chromium.connectOverCDP(
 
 ### Reuse manual login
 
-1. Start Chromium with remote debugging.
-2. Complete login or CAPTCHA manually.
-3. Attach with Playwright CDP.
-4. Continue scripted actions in the same session.
+1. `chromium-debug-use-helper.sh launch <login-url>` (dedicated profile; first run only needs a login).
+2. The user completes login, passkey, MFA, or CAPTCHA in that window.
+3. Attach with the helper or `connectOverCDP` using the printed `BROWSER_URL`.
+4. Continue scripted actions in the same session, then `launch-stop`.
 
 ### Inspect existing tabs
 
@@ -155,14 +173,14 @@ Rule of thumb: inspect and gather facts with `chromium-debug-use`, then formaliz
 
 | Need | Prefer |
 |------|--------|
-| Reuse a whole live Chromium profile | Chromium Debug Use (this doc) |
-| Interactively approve selected tabs in your everyday browser while you are available | `tools/browser/playwright.md` extension mode |
+| Logged-in session in the recommended browser (Brave), bot-defended sites | Chromium Debug Use `launch` (this doc) |
+| Interactively approve selected tabs in your everyday Chrome/Edge/Chromium while you are available | `tools/browser/playwright.md` extension mode |
 | Inspection/perf analysis without reusing your active session | `tools/browser/chrome-devtools.md` |
 | Persistent local profile managed by aidevops | `tools/browser/dev-browser.md` |
 | Fast isolated headed/headless automation / repeatable scripts / CI | `tools/browser/playwright.md` with Brave preferred |
 | Natural-language experimentation before locking in selectors | `tools/browser/stagehand.md` |
 
-Chrome/Brave/Edge/Vivaldi require relaunching with the debug flag (profile-level consent). Microsoft's Playwright Extension instead uses connection approval and selected tab groups in Chrome/Edge/Chromium, but only belongs in an interactive user-present session. Both routes are local and user-approved; upstream does not document Brave extension support.
+CDP needs a browser started with the debug flag on a dedicated profile; the everyday default profile cannot be attached even after a relaunch. Microsoft's Playwright Extension instead uses connection approval and selected tab groups in Chrome/Edge/Chromium, but only belongs in an interactive user-present session. Both routes are local and user-approved; upstream does not document Brave extension support, so Brave users get `launch`.
 
 ## Troubleshooting
 
@@ -176,12 +194,16 @@ When an isolated browser renders while the user profile is blank, verify the lis
 
 | Problem | Fix |
 |---------|-----|
-| `ECONNREFUSED` on `9222` | Browser was not started with `--remote-debugging-port=9222` |
+| `ECONNREFUSED` on `9222` | Browser was not started with the debug flag; use `launch` (free port) or pass its `BROWSER_URL` |
+| Debug flag ignored after relaunching the everyday browser | Expected: Chromium refuses remote debugging on the default profile. Use `launch` |
+| Debug port listens only on `[::1]` | `127.0.0.1:<port>` was taken (often 9222 by `dev-browser` or another instance). Stop the other owner or use `launch` |
+| Stray tab-less instance hijacks AppleScript targeting | `launch-status` shows it as `orphan`; run `launch-stop` (or `--all`). Unknown instances: identify by PID/command line before stopping |
+| Site blocks or flags automation | Playwright-launched browsers set `navigator.webdriver`; use `launch` for user-assisted logins on bot-defended sites |
 | No pages found | Open a tab manually or create one with `context.newPage()` |
 | Attach works but state is wrong | Wrong profile launched; verify `--user-data-dir` |
 | Browser closes unexpectedly | Another tool owns the session or profile lock; use a dedicated debug profile |
 | Browser policy blocks remote debugging | Use `tools/browser/playwright.md` extension mode or `tools/browser/chrome-devtools.md --headless` |
-| Don't want to relaunch browser | Use `tools/browser/playwright.md` extension mode instead of profile-level CDP attach |
+| Don't want a second browser window | Chrome/Edge/Chromium: `tools/browser/playwright.md` extension mode. Brave: no supported route; use `launch` |
 | Ungoogled Chromium never exposes `/json/version` | Treat that build as unsupported; switch to Chrome/Brave/Edge/Vivaldi/Chromium |
 | Need repeatable tests | Stop using live-session attach; launch a fresh Playwright context instead |
 | `Socket path too long ... SingletonSocket` | The ProcessSingleton socket lives under `$TMPDIR`, not `--user-data-dir`. `sandbox-exec-helper.sh` sets a short per-exec `TMPDIR`; outside it, export a `TMPDIR` of at most 53 characters. Prefer framework browser helpers over raw `google-chrome` in workers |
