@@ -12,11 +12,15 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createQualityHooks, scrubCredentials } from "../quality-hooks.mjs";
+import { createSecretValueRedactor } from "../registered-value-redaction.mjs";
+import { RegisteredValueSources } from "../registered-value-sources.mjs";
 
 const REDACTION_TOKEN = "[redacted-credential]";
 const PEM_REDACTION_TOKEN = "[redacted-private-key]";
@@ -46,6 +50,75 @@ describe("Cloudron addon log shapes", () => {
 });
 
 describe("credential transcript scrub boundary", () => {
+  test("registered repo identifiers survive bare output and stale digests, not sensitive assignments (GH#36456)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-repo-identifiers-"));
+    const configDir = join(root, ".config", "aidevops");
+    const registryDir = join(root, "registry");
+    const identifiers = ["example-owner", "examplerepo", "example-owner/examplerepo", "checkout-alias"];
+    try {
+      mkdirSync(configDir, { recursive: true });
+      mkdirSync(registryDir);
+      writeFileSync(join(configDir, "repos.json"), JSON.stringify({
+        initialized_repos: [{ slug: identifiers[2], path: "/synthetic/checkout-alias/" }],
+      }));
+      writeFileSync(join(configDir, "credentials.sh"), identifiers.map((value, index) =>
+        `export FOO_DB_NAME_${index}="${value}"`).join("\n"));
+      const key = Buffer.alloc(32, 1);
+      writeFileSync(join(registryDir, "key"), key.toString("hex"));
+      writeFileSync(join(registryDir, "digests"), identifiers.map((value) =>
+        `${value.length} ${createHmac("sha256", key).update(value).digest("hex")}`).join("\n"));
+      const redactor = createSecretValueRedactor({ configDir, registryDir, env: { SYNTHETIC_TOKEN: identifiers[0] } });
+      const hooks = createQualityHooks({ scriptsDir: root, logsDir: root, secretRedactor: redactor });
+      for (const tool of ["read", "bash"]) {
+        for (const value of identifiers) {
+          const output = {
+            output: `bare ${value} FOO_TOKEN=${value} FOO_SECRET=${value} FOO_PASSWORD=${value}`,
+            metadata: { ordinary: value, pair: { name: "FOO_TOKEN", value } },
+          };
+          await hooks.toolExecuteAfter({ tool, callID: "" }, output);
+          assert.equal(output.output, `bare ${value} FOO_TOKEN=${REDACTION_TOKEN} FOO_SECRET=${REDACTION_TOKEN} FOO_PASSWORD=${REDACTION_TOKEN}`);
+          assert.deepEqual(output.metadata, { ordinary: value, pair: { name: "FOO_TOKEN", value: REDACTION_TOKEN } });
+        }
+      }
+      const helper = new URL("../../../scripts/redaction-digest-registry.py", import.meta.url);
+      const writerDir = join(root, "writer-registry");
+      const longer = `${identifiers[1]}-synthetic-credential`;
+      execFileSync("python3", [helper.pathname, "register"], {
+        input: [...identifiers, longer].map((value) => `FOO_DB_NAME=${value}\0`).join(""),
+        env: { ...process.env, HOME: root, AIDEVOPS_SECRET_REDACTION_DIR: writerDir },
+      });
+      assert.equal(readFileSync(join(writerDir, "digests"), "utf8").trim().split("\n").length, 1);
+      const digestRedactor = createSecretValueRedactor({ configDir, registryDir: writerDir, env: {} });
+      assert.equal(digestRedactor.redactText(`${identifiers.join(" ")} ${longer}`).text,
+        `${identifiers.join(" ")} ${REDACTION_TOKEN}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("repo identifier cache follows configuration changes and fails closed on invalid config", () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-repo-identifier-cache-"));
+    try {
+      const path = join(root, "repos.json");
+      const sources = new RegisteredValueSources({ configDir: root, env: { SYNTHETIC_TOKEN: "examplerepo" } });
+      assert.deepEqual(sources.plaintextValues(), ["examplerepo"]);
+      writeFileSync(path, JSON.stringify({ initialized_repos: [null, {}, { slug: "example-owner/examplerepo" }] }));
+      const cached = sources.publicIdentifiers();
+      assert.equal(sources.publicIdentifiers(), cached);
+      assert.deepEqual(sources.plaintextValues(), []);
+      writeFileSync(path, JSON.stringify({ initialized_repos: [{ slug: "another-owner/another-repository" }] }));
+      assert.deepEqual(sources.plaintextValues(), ["examplerepo"]);
+      for (const invalid of ["{", "null", '{"initialized_repos":{}}', '{"initialized_repos":[{"slug":"bad/slug/extra"}]}']) {
+        writeFileSync(path, invalid);
+        assert.deepEqual(sources.plaintextValues(), ["examplerepo"]);
+      }
+      rmSync(path);
+      assert.equal(sources.publicIdentifiers().size, 0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("does not redact credential prefix embedded mid-word", () => {
     assertScrub("module task-syntheticfixture", "module task-syntheticfixture", 0);
   });

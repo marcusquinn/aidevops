@@ -16,7 +16,7 @@
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 export const REDACTION_TOKEN = "[redacted-credential]";
 export const MIN_VALUE_LENGTH = 8;
@@ -39,9 +39,10 @@ export const PUBLIC_VALUE_PATTERN = /^aidevops$/i;
 const hasUsableLength = (value) => value.length >= MIN_VALUE_LENGTH && value.length <= MAX_VALUE_LENGTH;
 const isPlaceholder = (value) => PLACEHOLDERS.has(value.toLowerCase()) || value.includes(REDACTION_TOKEN);
 
-export function usableValue(value) {
+export function usableValue(value, publicIdentifiers = new Set()) {
   if (typeof value !== "string" || !hasUsableLength(value)) return false;
-  return !value.includes("\n") && !isPlaceholder(value) && !PUBLIC_VALUE_PATTERN.test(value);
+  return !value.includes("\n") && !isPlaceholder(value) && !PUBLIC_VALUE_PATTERN.test(value)
+    && !publicIdentifiers.has(value);
 }
 
 function fileSignature(path) {
@@ -134,6 +135,33 @@ export class RegisteredValueSources {
     this.env = options.env || process.env;
     this.fileCache = { key: null, entries: [] };
     this.registryCache = { key: null, registry: null };
+    this.publicIdentifierCache = { key: null, values: new Set() };
+  }
+
+  /** Operator-registered identifiers, not bare secrets. Mirror in the digest writer. */
+  publicIdentifiers() {
+    const path = join(this.configDir, "repos.json");
+    const key = fileSignature(path);
+    if (key !== this.publicIdentifierCache.key) {
+      const values = new Set();
+      try {
+        const repos = JSON.parse(readText(path)).initialized_repos;
+        for (const repo of Array.isArray(repos) ? repos : []) {
+          if (!repo || typeof repo !== "object") continue;
+          if (typeof repo.slug === "string" && /^[^/\s]+\/[^/\s]+$/.test(repo.slug)) {
+            for (const value of [repo.slug, ...repo.slug.split("/")]) values.add(value);
+          }
+          if (typeof repo.path === "string" && repo.path) {
+            const name = basename(repo.path);
+            if (name && name !== "." && name !== "..") values.add(name);
+          }
+        }
+      } catch {
+        // Missing or malformed configuration grants no exemptions.
+      }
+      this.publicIdentifierCache = { key, values };
+    }
+    return this.publicIdentifierCache.values;
   }
 
   credentialEntries() {
@@ -149,11 +177,13 @@ export class RegisteredValueSources {
   plaintextValues() {
     const entries = this.credentialEntries();
     const registeredNames = new Set(entries.map((entry) => entry.name));
-    const values = new Set(entries.filter((entry) => !IDENTIFIER_ENV_NAME.test(entry.name)).map((entry) => entry.value).filter(usableValue));
+    const publicIdentifiers = this.publicIdentifiers();
+    const values = new Set(entries.filter((entry) => !IDENTIFIER_ENV_NAME.test(entry.name))
+      .map((entry) => entry.value).filter((value) => usableValue(value, publicIdentifiers)));
     for (const [name, value] of Object.entries(this.env)) {
       if (IDENTIFIER_ENV_NAME.test(name)) continue;
       const namedSecret = registeredNames.has(name) || SENSITIVE_ENV_NAME.test(name);
-      if (namedSecret && usableValue(value)) values.add(value);
+      if (namedSecret && usableValue(value, publicIdentifiers)) values.add(value);
     }
     return [...values].sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
   }
@@ -165,7 +195,8 @@ export class RegisteredValueSources {
    */
   identifierValues() {
     const secrets = new Set(this.plaintextValues());
-    const values = new Set();
+    // Also suppress stale digests created before repository identifiers were excluded.
+    const values = new Set(this.publicIdentifiers());
     for (const entry of this.credentialEntries()) {
       if (IDENTIFIER_ENV_NAME.test(entry.name) && usableValue(entry.value) && !secrets.has(entry.value)) values.add(entry.value);
     }
