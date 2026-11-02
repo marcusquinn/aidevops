@@ -5,9 +5,7 @@ Current-generation cleanup is unchanged. Remove this module after the backlog.
 """
 
 from collections import Counter
-from dataclasses import dataclass
 import json
-import math
 import os
 from pathlib import Path
 import sqlite3
@@ -23,24 +21,11 @@ from .enrollment import _git_directory
 from .filesystem import validate_private_path as _private
 from .legacy_discovery import discover
 from .legacy_inventory import advance, inspect, inventory, queue, require_ended
+from .legacy_options import CleanupOptions, require_manual_confirmation, unrecorded
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
 from .runtime import adapter_for, require_ready
-
-
-@dataclass(frozen=True)
-class CleanupOptions:
-    root: Path
-    apply: bool = False
-    min_age: float = 3600
-    limit: int = 25
-    budget: float = 120
-
-    def __post_init__(self):
-        if (not math.isfinite(self.min_age) or self.min_age < 0
-                or not 1 <= self.limit <= 1000 or not 0 < self.budget <= 900):
-            raise ValueError("invalid-cleanup-limits")
 
 
 def event_id(operation, phase):
@@ -57,6 +42,14 @@ def receipt(connection, operation, phase):
     return json.loads(row[0]) if row else None
 
 
+def require_confirmation(connection, operation, confirmed):
+    """An interrupted capture carries manual authority before a plan exists."""
+    require_manual_confirmation(
+        (receipt(connection, operation, phase) for phase in ("archive", "plan")),
+        confirmed,
+    )
+
+
 def checkpoint(store, connection, operation, phase, payload):
     """Persist before destructive steps, then reacquire the admission writer lock."""
     store._event(connection, event_id(operation, phase), payload)
@@ -66,12 +59,15 @@ def checkpoint(store, connection, operation, phase, payload):
 
 def unchanged(connection, plan, adapter):
     current = next((item for item in inventory(connection)
-                    if item["path"] == plan["source"]), None)
+                     if item["path"] == plan["source"]), None)
+    confirmed = plan.get("operator_confirmed") is True
+    if current is None and confirmed:
+        current = unrecorded(plan["source"])
     if (current is None or current["modern"]
             or sorted(current["generations"]) != plan["generations"]
             or current["runs"] != plan["runs"]):
         raise ValueError("registered-writers-changed")
-    require_ended(current, adapter)
+    require_ended(current, adapter, operator_confirmed=confirmed)
 
 
 def same_tree(path, plan):
@@ -147,17 +143,21 @@ def finish(store, connection, operation, plan, adapter):
 
 def retire(store, item, repositories, adapter, options):
     operation = operation_id(store, item["path"])
+    confirmed = item["path"] in options.confirmed_paths
     with _lock(store, operation), store.connection(write=True) as connection:
         if receipt(connection, operation, "retired") is not None:
             return "already-retired"
+        require_confirmation(connection, operation, confirmed)
         plan = receipt(connection, operation, "plan")
         if plan is None:
-            current = next(row for row in inventory(connection)
-                           if row["path"] == item["path"])
+            current = next((row for row in inventory(connection)
+                            if row["path"] == item["path"]), unrecorded(item["path"]))
             identity = inspect(
-                current, repositories, adapter, time.time(), options.min_age,
+                current, repositories, adapter, time.time(), options,
             )
             identity["output_root"] = str(options.root)
+            if confirmed:
+                identity["operator_confirmed"] = True
             with DirectoryHandle(Path(item["path"])):
                 archive = archive_source(
                     store, connection, operation, identity, adapter,
@@ -185,14 +185,17 @@ def process_item(store, item, repositories, adapter, options):
     eligible = attempted = 0
     try:
         operation = operation_id(store, item["path"])
+        confirmed = item["path"] in options.confirmed_paths
         with store.connection() as connection:
             done = receipt(connection, operation, "retired")
             pending = receipt(connection, operation, "plan")
+            if not done:
+                require_confirmation(connection, operation, confirmed)
         if done:
             outcome["status"] = "already-retired"
         else:
             if not pending:
-                inspect(item, repositories, adapter, time.time(), options.min_age)
+                inspect(item, repositories, adapter, time.time(), options)
             eligible = 1
             outcome["status"] = "pending-retry" if pending else "eligible"
             if options.apply:
@@ -214,6 +217,7 @@ def run(store, config, root, **arguments):
     with store.connection() as connection:
         items = inventory(connection)
     items, discovery_errors = discover(items, repositories)
+    items = options.select(items)
     if options.apply:
         if not root.is_absolute() or root.resolve() != root:
             raise ValueError("canonical-output-root-required")
@@ -225,6 +229,7 @@ def run(store, config, root, **arguments):
         "generations": sum(len(i["generations"]) for i in items),
         "retired": 0, "eligible": 0, "attempted": 0, "results": [],
         "discovery_errors": discovery_errors,
+        "operator_confirmed_paths": list(options.confirmed_paths),
     }
     deadline = time.monotonic() + options.budget
     for item in items:
