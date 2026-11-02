@@ -395,6 +395,50 @@ fi
 git init --bare -q "$SNAPSHOT_REPO"
 assert_allowed "allows an isolated snapshot repository to index a linked worktree" "$REPO" \
 	"git --git-dir='$SNAPSHOT_REPO' --work-tree='$LINKED' add --all --sparse"
+
+# GH#36442: OpenCode snapshots write private metadata, not the canonical index.
+export XDG_DATA_HOME="${TEST_ROOT}/data"
+OPENCODE_SNAPSHOT="${XDG_DATA_HOME}/opencode/snapshot/project"
+mkdir -p "$OPENCODE_SNAPSHOT"
+git init --bare -q "$OPENCODE_SNAPSHOT"
+for SNAPSHOT_COMMAND in "add ." "add --all --sparse" "write-tree" "gc --prune=7.days" "prune"; do
+	assert_allowed "allows private OpenCode snapshot $SNAPSHOT_COMMAND" "$REPO" \
+		"git --git-dir '$OPENCODE_SNAPSHOT' --work-tree '$REPO' $SNAPSHOT_COMMAND"
+done
+assert_allowed "allows OpenCode snapshot equals options and safe config" "$REPO" \
+	"git -c core.autocrlf=false --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+assert_blocked "blocks snapshot outside OpenCode storage" \
+	"git --git-dir='$SNAPSHOT_REPO' --work-tree='$REPO' add ."
+assert_blocked "blocks canonical git-dir snapshot impersonation" \
+	"git --git-dir='$REPO/.git' --work-tree='$REPO' add ."
+assert_blocked "blocks snapshot checkout mutation" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' read-tree -mu HEAD"
+assert_blocked "blocks snapshot add renormalization" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add --renormalize ."
+assert_blocked "blocks snapshot config redirection" \
+	"git -c core.worktree='$REPO' --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+ln -s "$REPO/.git" "${XDG_DATA_HOME}/opencode/snapshot/canonical-alias"
+assert_blocked "blocks snapshot symlink to canonical metadata" \
+	"git --git-dir='${XDG_DATA_HOME}/opencode/snapshot/canonical-alias' --work-tree='$REPO' add ."
+LINKED_SNAPSHOT_GIT_DIR=$(git -C "$LINKED" rev-parse --path-format=absolute --git-dir)
+ln -s "$LINKED_SNAPSHOT_GIT_DIR" "${XDG_DATA_HOME}/opencode/snapshot/linked-alias"
+assert_blocked "blocks snapshot symlink to linked metadata" \
+	"git --git-dir='${XDG_DATA_HOME}/opencode/snapshot/linked-alias' --work-tree='$REPO' add ."
+ln -s "$REPO/.git/index" "$OPENCODE_SNAPSHOT/index"
+assert_blocked "blocks snapshot index symlink to canonical index" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+rm "$OPENCODE_SNAPSHOT/index"
+GIT_INDEX_FILE="$REPO/.git/index" assert_blocked "blocks inherited snapshot index override" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+CANONICAL_INDEX_BEFORE=$(git hash-object "$REPO/.git/index")
+if (cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" add .) &&
+	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" write-tree) &&
+	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" gc --prune=7.days) &&
+	[[ "$(git hash-object "$REPO/.git/index")" == "$CANONICAL_INDEX_BEFORE" && "$(git -C "$REPO" rev-parse HEAD)" == "$INITIAL_HEAD" ]]; then
+	pass "PATH shim executes snapshot lifecycle without touching canonical index or HEAD"
+else
+	fail "PATH shim executes snapshot lifecycle without touching canonical index or HEAD"
+fi
 assert_allowed "allows canonical linked worktree removal" "$REPO" "git worktree remove --force '$LINKED'"
 assert_allowed "allows canonical linked worktree removal with option terminator" "$REPO" "git worktree remove -f -- '$LINKED'"
 assert_blocked "blocks canonical worktree removal of canonical root" "git worktree remove --force '$REPO'"

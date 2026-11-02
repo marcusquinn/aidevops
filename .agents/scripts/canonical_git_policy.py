@@ -142,6 +142,64 @@ def _is_isolated_routines_publisher(
     )
 
 
+def _is_isolated_opencode_snapshot(
+    real_git_path: str, cwd: str, prefix: list[str], subcommand: str, args: list[str]
+) -> bool:
+    """Permit index/object maintenance, never checkout writes, in private snapshots."""
+    safe_args = {
+        "add": ([], ["."], ["--all"], ["--all", "--sparse"]),
+        "write-tree": ([],),
+        "gc": ([], ["--prune=7.days"]),
+        "prune": ([],),
+    }
+    if args not in safe_args.get(subcommand, ()):
+        return False
+    #aidevops:trust-boundary -- explicit private Git storage is not a checkout edit.
+    # Reject alternate write targets, including inherited index/object overrides.
+    if any(os.environ.get(name) for name in (
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+    )):
+        return False
+    explicit_git_dir = False
+    remaining = iter(prefix)
+    for option in remaining:
+        if option in {"--git-dir", "--work-tree", "-C"}:
+            if not next(remaining, ""):
+                return False
+            explicit_git_dir |= option == "--git-dir"
+        elif option.startswith(("--git-dir=", "--work-tree=")):
+            explicit_git_dir |= option.startswith("--git-dir=")
+        elif option == "-c":
+            if next(remaining, "") not in {
+                "core.autocrlf=false", "core.longpaths=true", "core.fsmonitor=false",
+            }:
+                return False
+        else:
+            return False
+    if not explicit_git_dir:
+        return False
+    common, git_dir, top = _git_repo_identity(real_git_path, cwd, prefix)
+    if not all((common, git_dir, top)):
+        return False
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    if not data_home.is_absolute():
+        return False
+    root = (data_home / "opencode/snapshot").resolve()
+    storage = Path(git_dir).resolve()
+    canonical_common = _git_output(
+        real_git_path, top, "rev-parse", "--path-format=absolute", "--git-common-dir"
+    )
+    return bool(
+        root in storage.parents
+        and Path(common).resolve() == storage
+        and canonical_common
+        and Path(canonical_common).resolve() != storage
+        and all(storage in (storage / name).resolve().parents for name in ("index", "objects"))
+    )
+
+
 def _worktree_remove_target(args: list[str]) -> str:
     """Return the single remove target when args are in the safe subset."""
     target = ""
@@ -258,6 +316,8 @@ def _classify_canonical_operation(
         result = True, "isolated prospective merge-tree probe"
     elif _is_isolated_routines_publisher(real_git_path, cwd, prefix, subcommand):
         result = True, "isolated routines publisher mutation"
+    elif _is_isolated_opencode_snapshot(real_git_path, cwd, prefix, subcommand, args):
+        result = True, "isolated OpenCode snapshot maintenance"
     elif subcommand == "worktree" and _is_linked_worktree_remove_for_canonical(
         real_git_path, cwd, prefix, args
     ):
