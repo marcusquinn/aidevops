@@ -205,7 +205,8 @@ def _error_details(error: Exception, operation: str) -> dict:
     reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
     if operation in {"retire-worktree", "cleanup", "upgrade"} and isinstance(error, StoreConflict):
         reason = str(error)
-    mode = "retirement" if operation in ("retire-worktree", "cleanup") else "observe-only"
+    retirement = ("retire-worktree", "cleanup", "cleanup-worktree")
+    mode = "retirement" if operation in retirement else "observe-only"
     detail = {"mode": mode, "status": "unavailable", "reason": reason,
               "cleanup_authorized": False}
     if isinstance(error, FilesystemValidationError):
@@ -213,7 +214,8 @@ def _error_details(error: Exception, operation: str) -> dict:
     # GH#36142: name the enrollment refusal; OSError text may carry paths.
     if operation == "enroll" and isinstance(error, ValueError):
         detail["detail"] = str(error)[:200]
-    # GH#36370: creation refusals carry a stable code; `reason` stays unchanged.
+    # GH#36370/GH#36494: creation and targeted-retirement refusals carry a
+    # stable code; `reason` stays unchanged.
     code = refusal_code(error, operation)
     if code:
         detail.setdefault("detail", code)

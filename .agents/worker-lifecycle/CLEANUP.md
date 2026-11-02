@@ -221,10 +221,10 @@ The fingerprint is not an everlasting physical identity: copied metadata and
 inode reuse outside the cooperating creation protocol are not excluded. It also
 does not by itself register the creator's writer lifetime.
 
-OpenCode's shell environment, bounded-operation supervisor and native launcher
-declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and
-`AIDEVOPS_LIFECYCLE_SESSION_ID`. For a new path, the shared helper invokes
-`create-worktree`: it exclusively creates the directory, runs native Git,
+OpenCode's shell environment, bounded-operation supervisor, native launcher and Pulse script-routine
+runner declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and `AIDEVOPS_LIFECYCLE_SESSION_ID`; the
+routine runner waits for its script, so helper-created trees become retirable once it exits (GH#36494).
+For a new path, the shared helper invokes `create-worktree`: it exclusively creates the directory, runs native Git,
 captures the owner's start identity and binds it before returning the new tree.
 Only successful controlled creation records a `created-worktree` event. Ordinary
 enrollment or admission of an existing tree cannot mint that evidence.
@@ -445,11 +445,12 @@ migrating the registry. Missing state/configuration or a failed invocation does 
 fall back to the old cleanup passes. Disposable tests exercise both refusal and
 successful preservation/removal through the actual shell entrypoint.
 
-`cleanup-worktree --path PATH --repos-config CONFIG --output-root ROOT` selects
-only that path's currently validated generation and shares the collector's policy
-and executor. It never adopts an unknown tree or scans unrelated candidates.
-If a source has already moved, use the explicit `retire-worktree --generation-id`
-retry contract instead of guessing an operation from a missing public path.
+`cleanup-worktree --path PATH --repos-config CONFIG --output-root ROOT` selects only that path's
+currently validated generation and shares the collector's policy and executor. It never adopts an
+unknown tree or scans unrelated candidates. If a source has already moved, use the explicit
+`retire-worktree --generation-id` retry contract instead of guessing from a missing public path.
+A linked tree without an enrollment marker is refused with `detail: not-enrolled`; manual removal
+then prints the operator-confirmed [LEGACY-CLEANUP.md](LEGACY-CLEANUP.md) command (GH#36494).
 
 The shared native-removal compatibility entrypoint, manual `worktree-helper.sh
 remove`, and the central/temp Pulse removal primitives use this targeted command.
