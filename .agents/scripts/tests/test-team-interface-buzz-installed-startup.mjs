@@ -16,6 +16,18 @@ const runtimeHelper = path.join(agentsDirectory, "scripts/team-interface-buzz-ru
 const privateTempParent = process.env.AIDEVOPS_TEMP_DIR
   || path.join(os.homedir(), ".aidevops/.agent-workspace/tmp");
 
+// Child processes belong to the fixture, not the invoking runtime's registry.
+// Apply deliberate fixture overrides after filtering, without mutating the parent.
+const fixtureEnvironment = {...process.env};
+for (const key of Object.keys(fixtureEnvironment)) {
+  if (key.startsWith("AIDEVOPS_LIFECYCLE_")
+    || key === "OPENCODE_SESSION_ID"
+    || key === "AIDEVOPS_OPENCODE_SESSION_ID"
+    || key.startsWith("OPENCODE_PID")) {
+    delete fixtureEnvironment[key];
+  }
+}
+
 function requireSuccess(result, label) {
   assert.equal(result.status, 0, `${label} failed:\n${result.stderr || result.error || "unknown error"}`);
   return result;
@@ -24,6 +36,7 @@ function requireSuccess(result, label) {
 function git(cwd, argumentsList, label) {
   return requireSuccess(spawnSync("/usr/bin/git", ["-C", cwd, ...argumentsList], {
     encoding: "utf8",
+    env: fixtureEnvironment,
   }), label);
 }
 
@@ -88,7 +101,9 @@ async function exchangeAcpStartup({command, cwd, environment, initialize, sessio
   return {initializeResponse, promptResponse, responses, sessionResponse, stderr};
 }
 
-const version = spawnSync("opencode", ["--version"], {encoding: "utf8", timeout: 10000});
+const version = spawnSync("opencode", ["--version"], {
+  encoding: "utf8", env: fixtureEnvironment, timeout: 10000,
+});
 if (version.error?.code === "ENOENT") {
   process.stdout.write("Buzz installed startup canary skipped: opencode is unavailable\n");
   process.exit(0);
@@ -144,7 +159,7 @@ try {
     "--app-data-dir", appDataDirectory,
   ], {
     encoding: "utf8",
-    env: {...process.env, AIDEVOPS_BUZZ_RUNNING_OVERRIDE: "false"},
+    env: {...fixtureEnvironment, AIDEVOPS_BUZZ_RUNNING_OVERRIDE: "false"},
     timeout: 120000,
   }), "pinned Buzz runtime installation");
 
@@ -165,7 +180,7 @@ try {
     "--agents-dir", pinnedAgents,
   ], {
     encoding: "utf8",
-    env: {...process.env, AIDEVOPS_BUZZ_HOST_SLUG: hostSlug},
+    env: {...fixtureEnvironment, AIDEVOPS_BUZZ_HOST_SLUG: hostSlug},
     timeout: 60000,
   }), "pinned Buzz team snapshot generation");
   const buildMember = JSON.parse(snapshot.stdout).members.find(
@@ -201,7 +216,7 @@ try {
     },
   };
   const startupEnvironment = {
-    ...process.env,
+    ...fixtureEnvironment,
     ...manifest.env,
     AIDEVOPS_BUZZ_CLI: "/usr/bin/true",
     AIDEVOPS_BUZZ_HOST_SLUG: hostSlug,
