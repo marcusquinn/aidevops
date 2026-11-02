@@ -75,7 +75,12 @@ def collect_path_references(directory, path, result):
                           all(value.isdecimal() for value in rows[0]), "task UID unavailable")
             if str(os.getuid()) not in rows[0]:
                 continue
-            result["references"] += int(inspect_path_references(task, path))
+            try:
+                result["references"] += int(inspect_path_references(task, path))
+            except PermissionError:
+                # Neither mutable comm nor task age proves absence of references:
+                # even an older task can enter the worktree after its creation.
+                result["uncertain"] += 1
         except FileNotFoundError:
             if os.path.lexists(task):
                 result["uncertain"] += 1
@@ -83,15 +88,18 @@ def collect_path_references(directory, path, result):
             result["uncertain"] += 1
 
 
-def path_census(path):
-    """Fail closed on any inaccessible same-UID task; expose counts, not paths."""
+def path_census(path, source_inode=None):
+    """Fail closed for all unreadable task references; expose counts only."""
     result = {"status": "unavailable", "observed_at": time.time(),
-              "uid": os.getuid(), "references": 0, "uncertain": 0}
+              "uid": os.getuid(), "references": 0, "uncertain": 0,
+              "excluded_nondumpable": 0}
     if sys.platform != "linux":
         return result
     try:
         require_proc_visibility()
         boot = owner.boot_id()
+        if source_inode is not None:
+            owner.require(owner.inode(Path(path)) == source_inode, "worktree generation changed")
         seen_self = False
         for directory in Path("/proc").iterdir():
             if not directory.name.isdecimal():
@@ -105,6 +113,8 @@ def path_census(path):
             except (OSError, ValueError, IndexError):
                 result["uncertain"] += 1
         owner.require(seen_self and owner.boot_id() == boot, "incomplete path census")
+        if source_inode is not None:
+            owner.require(owner.inode(Path(path)) == source_inode, "worktree generation changed")
         result.update(status="available", boot_id=boot, observed_at=time.time())
     except (OSError, ValueError, IndexError):
         pass

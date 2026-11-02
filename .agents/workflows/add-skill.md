@@ -41,10 +41,11 @@ Import an external skill, convert to aidevops format, and register for update tr
 ## Workflow
 
 1. **Parse input** — GitHub shorthand, full URL, ClawdHub shorthand/URL, raw URL, or management command.
-2. **Run helper:** `~/.aidevops/agents/scripts/add-skill-helper.sh add "$ARGUMENTS"` (other commands: `list | check-updates | remove <name>`)
+2. **Stage import:** Follow `tools/build-agent/add-skill.md` “Staging and Promotion”. Run `AIDEVOPS_AGENTS_DIR="$staging_dir" ~/.aidevops/agents/scripts/add-skill-helper.sh add "$ARGUMENTS"` only with a verified isolated staging directory outside agent discovery, never the live agents root. The helper writes files and registers them before returning; setup is not the activation boundary. Management commands remain `list | check-updates | remove <name>` against the intended registry.
 3. **Handle conflicts** (if file exists): Merge / Replace / Separate / Skip.
 4. **Security scan:** [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) if installed — CRITICAL/HIGH blocks import. `--skip-security` bypasses; `--force` only controls file overwrite. Scan also runs on `aidevops skill update`.
-5. **Post-import:** Placed in `.agents/` per conventions → registered in `.agents/configs/skill-sources.json` → run `./setup.sh` to create symlinks.
+5. **Content review:** Apply `tools/build-agent/add-skill.md` “Content Review” to each staged file. Remove SKIP/REJECT targets, companion resources and staged registry entries; finalize ADAPT/ADOPT content and registry `notes` before promotion.
+6. **Promote reviewed imports only:** Follow “Staging and Promotion” to copy accepted files/resources to the intended agents root and merge only accepted registry entries with corrected `local_path` values. Verify no rejected or unreviewed material is discoverable before setup or use.
 
 ## Supported Sources & Formats
 

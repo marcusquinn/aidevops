@@ -245,6 +245,124 @@ test_clean_retry_class_requires_typed_terminal_outcome() {
 	return 0
 }
 
+# Keep the heredoc outside command substitution for the Bash 3.2 parser.
+_summarize_exit_trap_accounting() {
+	local metrics_file="$1"
+	local outcome_file="$2"
+	local mode="$3"
+	python3 - "$metrics_file" "$outcome_file" "$mode" <<'PY' || return 1
+import json
+import pathlib
+import sys
+
+metrics, outcome, mode = sys.argv[1:]
+rows = [json.loads(line) for line in pathlib.Path(metrics).read_text().splitlines()] if pathlib.Path(metrics).is_file() else []
+if rows:
+    last = rows[-1]
+    assert last["attempt_id"] == "exit-accounting-attempt"
+    assert last["model"] == "openai/test-model"
+    assert last["provider"] == "openai"
+    assert last["duration_ms"] == 0
+    if mode != "normal":
+        assert last["classification_source"] == "exit_trap"
+    if mode == "new-run":
+        assert last["run_id"] == "second-run"
+    print(f'metric={last["result"]}|reason={last["failure_reason"]}|exit={last["exit_code"]}|rows={len(rows)}')
+else:
+    print("metric=missing")
+receipt = dict(line.split("=", 1) for line in pathlib.Path(outcome).read_text().splitlines())
+print(f'receipt={receipt["reason"]}')
+PY
+	return 0
+}
+
+# Exercise the real metric writer and external receipt against disposable paths.
+# All preservation/release operations are stubbed: never touch a live worker.
+_check_exit_trap_accounting() {
+	local reason="$1"
+	local exit_status="$2"
+	local expected_reason="$3"
+	local expected_result="$4"
+	local mode="${5:-trap}"
+	local fixture_reason="$reason"
+	local result=""
+	result=$(
+		(
+			SCRIPT_DIR="$AGENTS_SCRIPTS"
+			# shellcheck source=../headless-runtime-lib.sh
+			source "${AGENTS_SCRIPTS}/headless-runtime-lib.sh"
+			METRICS_DIR=$(mktemp -d "${TMPDIR_TEST}/exit-metrics.XXXXXX")
+			METRICS_FILE="${METRICS_DIR}/metrics.jsonl"
+			HOME="$METRICS_DIR"
+			AIDEVOPS_RUN_ID="exit-accounting-run"
+			AIDEVOPS_ATTEMPT_ID="exit-accounting-attempt"
+			AIDEVOPS_ROUTING_MODEL="openai/test-model"
+			_WORKER_START_EPOCH_MS=0
+			_WORKER_RUNTIME_LAUNCH_STARTED=1
+			_WORKER_DIRTY_WORK_PRESERVED=0
+			_WORKER_EXTERNAL_OUTCOME_FILE="${METRICS_DIR}/outcome"
+			_WORKER_EXTERNAL_OUTCOME_ID="exit-accounting"
+			unset _HEADLESS_RUNTIME_LAST_METRIC_KEY
+			_push_wip_commits_on_exit() { return 0; }
+			_recover_dirty_worker_pr() { return 0; }
+			_escalate_worker_pr_checkpoint() {
+				_HRW_RECOVERY_CLASSIFICATION="worker_draft_checkpoint"
+				return 0
+			}
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+			_release_session_lock() { return 0; }
+			_update_dispatch_ledger() { return 0; }
+			aidevops_runtime_bundle_lease_release() { return 0; }
+			cleanup_headless_git_auth() { return 0; }
+			if [[ "$mode" == "dirty" ]]; then
+				_WORKER_DIRTY_WORK_PRESERVED=1
+			elif [[ "$mode" == "normal" || "$mode" == "new-run" ]]; then
+				append_runtime_metric worker fixture openai/test-model openai success 0 "" 1 0
+				[[ "$mode" != "new-run" ]] || AIDEVOPS_RUN_ID="second-run"
+			elif [[ "$mode" == "write-failure" ]]; then
+				METRICS_FILE="${METRICS_DIR}/missing/metrics.jsonl"
+			fi
+			if [[ "$mode" == "trap" ]]; then
+				# The classifier itself is covered above; drive the full real EXIT trap
+				# with a deterministic reason, including a zero-status process exit.
+				classify_worker_exit() { printf '%s' "$fixture_reason"; return 0; }
+				(trap '_exit_trap_handler fixture' EXIT; exit "$exit_status") || true
+			else
+				_hrff_finalize_exit_trap fixture "$reason" "$exit_status" 1 0
+				# Re-entry must not append a second terminal metric for the same run.
+				_hrff_record_exit_metric fixture "$expected_reason" "$exit_status" 1
+			fi
+			_summarize_exit_trap_accounting "$METRICS_FILE" "$_WORKER_EXTERNAL_OUTCOME_FILE" "$mode"
+		)
+	)
+	local expected_metric="metric=${expected_result}|reason=${expected_reason}|exit=${exit_status}|rows=1"
+	case "$mode" in
+	normal) expected_metric="metric=success|reason=|exit=0|rows=1" ;;
+	new-run) expected_metric="metric=${expected_result}|reason=${expected_reason}|exit=${exit_status}|rows=2" ;;
+	write-failure) expected_metric="metric=missing" ;;
+	esac
+	if [[ "$mode" == "dirty" ]]; then
+		assert_eq "exit accounting: ${reason}/${mode}" "$result" \
+			"${expected_metric}"$'\n'"receipt=${expected_reason}"
+	else
+		assert_eq "exit accounting: ${reason}/${mode}" "$result" \
+			"release=${expected_reason}"$'\n'"${expected_metric}"$'\n'"receipt=${expected_reason}"
+	fi
+	return 0
+}
+
+test_exit_trap_terminal_accounting() {
+	_check_exit_trap_accounting clean 0 worker_incomplete_exit failed
+	_check_exit_trap_accounting signal_killed:15 143 signal_killed:15 failed
+	_check_exit_trap_accounting worker_complete 0 worker_complete success
+	_check_exit_trap_accounting worker_draft_checkpoint 0 worker_draft_checkpoint deferred
+	_check_exit_trap_accounting clean 0 worker_draft_checkpoint deferred dirty
+	_check_exit_trap_accounting clean 0 worker_incomplete_exit failed normal
+	_check_exit_trap_accounting clean 0 worker_incomplete_exit failed new-run
+	_check_exit_trap_accounting clean 0 worker_incomplete_exit failed write-failure
+	return 0
+}
+
 # t3050: clean exit + session before start_ms → worker_noop_zero_output.
 # A pre-existing session in the shared DB does not count toward this
 # worker's window — must be classified as zero-output.
@@ -698,6 +816,7 @@ main() {
 	test_clean_exit_fresh_session_with_assistant_message
 	test_clean_exit_fresh_session_with_assistant_part
 	test_clean_retry_class_requires_typed_terminal_outcome
+	test_exit_trap_terminal_accounting
 	test_clean_exit_session_before_start
 	test_clean_exit_continued_session_with_assistant_activity
 	test_clean_exit_continued_session_placeholder_only

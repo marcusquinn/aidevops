@@ -1848,7 +1848,25 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18848 docs(hostinger): installed package release without rpm (debug link), Red Hat VEX source, ImageMagick advisories, account policy test #documentation ref:GH#36439 pr:#36440 completed:2026-11-02
 
+- [ ] t18850 fix: bound producer recovery archive retention and skip empty-delta archives #bug ref:GH#36470
+
+- [x] t18852 Local SEO capability for aidevops (parent roadmap) #feat #parent-task #interactive ref:GH#36480 logged:2026-11-02 -> [todo/tasks/t18852-brief.md] verified:2026-11-02 completed:2026-11-02
+
+- [x] t18853 Local SEO: add evidence-labelled local SEO agent (seo/local-seo.md) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36481 pr:#36487 logged:2026-11-02 -> [todo/tasks/t18853-brief.md] completed:2026-11-02
+
+- [x] t18854 Local SEO: geogrid metric definitions and cost-efficient grid collection (SEO Utils, DataForSEO, SerpApi) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36482 pr:#36488 logged:2026-11-02 -> [todo/tasks/t18854-brief.md] completed:2026-11-02
+
+- [x] t18855 Local SEO: Local Services Ads and local paid search guidance (proposal-only) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36483 pr:#36492 logged:2026-11-02 -> [todo/tasks/t18855-brief.md] completed:2026-11-02
+
+- [x] t18856 Local SEO: recurring monitoring and reporting SOPs (routine-ready, draft-only actions) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36484 pr:#36499 logged:2026-11-02 -> [todo/tasks/t18856-brief.md] completed:2026-11-02
+
+- [x] t18857 add-skill: content review for vendor/affiliate bias and unsupported claims before importing external skills #feat #interactive tier:standard ~35m ref:GH#36485 pr:#36489 logged:2026-11-02 -> [todo/tasks/t18857-brief.md] completed:2026-11-02
+
+- [x] t18858 Lifecycle archive-path validation rejects owner-private-group 0775 archive roots (umask 002 hosts) #bug ref:GH#36490 pr:#36497 completed:2026-11-02
+
 ## In Progress
+
+- [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
 

@@ -575,6 +575,52 @@ _hrff_post_claim_released_comment() {
 # available for a capable runner (GH#34758). Legacy consumers clear to
 # available. Returns 0 when the exit projects status:blocked.
 #######################################
+# Structured plugin refusals plus the runtime-owned session DB, never model prose.
+# Unreadable evidence fails closed; completed tools in child sessions count too.
+_hrff_lifecycle_refusal_only() {
+	local session_id="$1"
+	local db_path="${_WORKER_ISOLATED_DB_PATH:-${HOME}/.local/share/opencode/opencode.db}"
+	local evidence_dir="${HOME}/.aidevops/logs/lifecycle-admission"
+	[[ "$session_id" =~ ^[A-Za-z0-9_-]+$ && -f "$db_path" && -d "$evidence_dir" ]] || return 1
+	python3 - "$session_id" "$db_path" "$evidence_dir" <<'PY'
+import json
+import re
+import sqlite3
+import sys
+from pathlib import Path
+
+session, database, directory = sys.argv[1:]
+try:
+    with sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True) as db:
+        # Require the session itself to exist; an empty/wrong DB is not evidence.
+        owned = {row[0] for row in db.execute("""WITH RECURSIVE owned(id) AS (
+            SELECT id FROM session WHERE id = ? UNION
+            SELECT s.id FROM session s JOIN owned o ON s.parent_id = o.id)
+            SELECT id FROM owned""", (session,))}
+        if not owned:
+            sys.exit(1)
+        count = db.execute("""WITH RECURSIVE owned(id) AS (
+            SELECT id FROM session WHERE id = ? UNION
+            SELECT s.id FROM session s JOIN owned o ON s.parent_id = o.id)
+            SELECT count(*) FROM part WHERE session_id IN (SELECT id FROM owned)
+            AND json_extract(data, '$.type') = 'tool'
+            AND json_extract(data, '$.state.status') = 'completed'""", (session,)).fetchone()[0]
+    refused = False
+    for path in Path(directory).glob("*.jsonl"):
+        for line in path.open():
+            event = json.loads(line)
+            if event.get("schema") == 1 and event.get("session") in owned and event.get("outcome") == "refused":
+                # Policy refusals anywhere in the same session tree veto recovery.
+                if not re.fullmatch(r"helper-(?:timeout|unavailable|exit-[0-9]+)|ENOENT|ETIMEDOUT", event.get("reason", "")):
+                    sys.exit(1)
+                refused = True
+    sys.exit(0 if refused and count == 0 else 1)
+except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
+    sys.exit(1)
+PY
+	return $?
+}
+
 _hrff_blocked_exit_holds() {
 	declare -F gh_issue_edit_safe >/dev/null 2>&1 || return 1
 	[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != runner_capability_unmet ||
@@ -1746,6 +1792,43 @@ _hrff_record_runner_health_failure() {
 }
 
 #######################################
+# Fill the canonical metric gap when an EXIT trap bypasses normal result handling.
+# Preserve the observed process status; the result/reason describe task outcome.
+# Args: $1=session, $2=reason, $3=exit status, $4=activity count
+#######################################
+_hrff_record_exit_metric() {
+	local session_key="$1"
+	local reason="$2"
+	local exit_status="$3"
+	local session_count="$4"
+	local metric_key="${AIDEVOPS_RUN_ID:-${_WORKER_START_EPOCH_MS:-0}}:${session_key}"
+	[[ "${_HEADLESS_RUNTIME_LAST_METRIC_KEY:-}" != "$metric_key" ]] || return 0
+	declare -F append_runtime_metric >/dev/null 2>&1 || return 0
+
+	local model="${AIDEVOPS_ROUTING_MODEL:-unknown}"
+	local result="${_HRW_TELEMETRY_FAILED:-failed}" activity=0 duration_ms=0 end_ms=0
+	local start_ms="${_WORKER_START_EPOCH_MS:-0}"
+	case "$reason" in
+	"${_HRW_REASON_WORKER_COMPLETE:-worker_complete}") result="success" ;;
+	"${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}") result="deferred" ;;
+	esac
+	[[ "$session_count" =~ ^[1-9][0-9]*$ ]] && activity=1
+	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null) || end_ms=0
+	if [[ "$start_ms" =~ ^[0-9]+$ && "$end_ms" =~ ^[0-9]+$ ]] &&
+		((start_ms > 0 && end_ms >= start_ms)); then
+		duration_ms=$((end_ms - start_ms))
+	fi
+	if ! append_runtime_metric "worker" "$session_key" "$model" "${model%%/*}" \
+		"$result" "$exit_status" "$reason" "$activity" "$duration_ms" \
+		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
+		"${_WORKER_WORKTREE_PATH:-}" "" "${_WORKER_PERSISTED_SESSION_ID:-}" \
+		"" "" "" "exit_trap" || [[ "${_HEADLESS_RUNTIME_LAST_METRIC_KEY:-}" != "$metric_key" ]]; then
+		print_warning "[exit-trap] metric recording failed; continuing terminal handoff for session=${session_key}"
+	fi
+	return 0
+}
+
+#######################################
 # Finalize an EXIT-trap classification: preserve work, emit terminal evidence,
 # release the claim/lock, and force a non-zero process exit when preparation
 # ended cleanly before runtime invocation.
@@ -1768,7 +1851,6 @@ _hrff_finalize_exit_trap() {
 		last_stage="${last_stage:-${_WORKER_PRELAUNCH_LAST_STAGE:-}}"
 		last_completed_stage="${last_completed_stage:-${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}}"
 	fi
-	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
 	_push_wip_commits_on_exit
 	if [[ "${_WORKER_DIRTY_WORK_PRESERVED:-0}" == "1" ]]; then
 		if _recover_dirty_worker_pr "$session_key"; then
@@ -1784,6 +1866,11 @@ _hrff_finalize_exit_trap() {
 			reason="worker_dirty_work_preserved"
 		fi
 	fi
+	# Status zero is process evidence, not proof of a completed task or handoff.
+	# Dirty-work recovery above may supply an authoritative checkpoint instead.
+	[[ "$reason" != "clean" ]] || reason="worker_incomplete_exit"
+	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
+	_hrff_record_exit_metric "$session_key" "$reason" "$exit_status" "$session_count"
 	if ! _hrff_write_external_outcome "$session_key" "$reason" "$session_count"; then
 		print_warning "[exit-trap] failed to persist external outcome for session=${session_key}"
 	fi

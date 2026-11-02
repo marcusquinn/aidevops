@@ -265,11 +265,44 @@ class RestorationProof(UnsealedRecovery):
             git(self.common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
 
     @staticmethod
+    def adopt_sealed(slot, receipt):
+        """GH#36468: make a sealed but never-compared copy reclaimable.
+
+        A proof that died (or failed) after ``.creation.json`` but before
+        comparison left state ``restoring``; cleanup refused it forever, so
+        every retry leaked nothing new but the slot stayed for good. The
+        caller holds the exclusive operation lock, so no live proof owns the
+        slot. Ownership is proven by the sealed creation receipt instead: slot
+        and target inodes must match, and cleanup still requires the current
+        registration and owner to equal the sealed ones (a transferred owner
+        stays retained). Only the content comparison is skipped: an
+        uncompared copy has no digest, and its archive is unchanged.
+        """
+        import hashlib
+        from worktree_lifetime_archive import inode, require
+        from worktree_recovery_migration_state import load
+        changed = "restore-proof:slot-changed"
+        creation = slot / ".creation.json"
+        require(slot == slot.resolve(strict=True) and inode(slot) == receipt["slot_inode"], changed)
+        require(creation.is_file() and not creation.is_symlink(), changed)
+        created = load(creation, "canonical-creation/v1")
+        target = slot / "worktree"
+        require(created["slot_inode"] == receipt["slot_inode"]
+                and (not os.path.lexists(target) or inode(target) == created["target_inode"]),
+                "restore-proof:creation-identity-changed")
+        receipt.update(state="cleanup-pending", uncompared=True, registration=created["registration"],
+                       owner=created["owner"], target_inode=created["target_inode"],
+                       creation_sha256=hashlib.sha256(creation.read_bytes()).hexdigest())
+
+    @staticmethod
     def cleanup(directory, receipt, save, record):
         from worktree_lifetime_archive import inode, require, transaction
         name = receipt["slot"]
         require(Path(name).name == name and name.startswith(".restore-"), "restore-proof:unsafe-slot")
         slot = directory / name
+        if receipt["state"] == "restoring" and os.path.lexists(slot / ".creation.json"):
+            RestorationProof.adopt_sealed(slot, receipt)
+            save(record)
         if os.path.lexists(slot):
             require(slot == slot.resolve(strict=True) and inode(slot) == receipt["slot_inode"],
                     "restore-proof:slot-changed")
@@ -296,10 +329,11 @@ class RestorationProof(UnsealedRecovery):
             if os.path.lexists(target):
                 require(inode(target) == receipt["target_inode"] and not target.is_symlink(),
                         "restore-proof:target-changed")
-                from worktree_archive_snapshot import git_snapshot
-                from worktree_recovery_retirement_transaction import fingerprint
-                require(git_snapshot(target) == receipt["source"]["snapshot"]
-                        and fingerprint(target) == receipt["target_digest"], "restore-proof:scratch-drift")
+                if not receipt.get("uncompared"):
+                    from worktree_archive_snapshot import git_snapshot
+                    from worktree_recovery_retirement_transaction import fingerprint
+                    require(git_snapshot(target) == receipt["source"]["snapshot"]
+                            and fingerprint(target) == receipt["target_digest"], "restore-proof:scratch-drift")
                 # The canonical linked-removal exception verifies the checkout
                 # top-level as well as the common dir; -C <common> has no top-level.
                 entries = git(common, "worktree", "list", "--porcelain", "-z").split(b"\0")

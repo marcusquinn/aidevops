@@ -20,10 +20,12 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 MIN_LENGTH = 8
@@ -81,10 +83,43 @@ def load_key(path: Path) -> bytes:
     return bytes.fromhex(text)
 
 
+@lru_cache(maxsize=1)
+def load_public_identifiers(path: Path, signature: tuple[int, int]) -> frozenset[str]:
+    """Cache only exact registered identifiers; never log their values."""
+    del signature  # Cache key tracks mtime and size, as in registered-value-sources.mjs.
+    values: set[str] = set()
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+        repos = config.get("initialized_repos", []) if isinstance(config, dict) else []
+        for repo in repos if isinstance(repos, list) else []:
+            if not isinstance(repo, dict):
+                continue
+            slug = repo.get("slug")
+            if isinstance(slug, str) and re.fullmatch(r"[^/\s]+/[^/\s]+", slug):
+                values.update([slug, *slug.split("/")])
+            repo_path = repo.get("path")
+            if isinstance(repo_path, str) and repo_path:
+                # Match Node basename lexically: do not normalize a final '/.'.
+                name = os.path.basename(repo_path.rstrip("/"))
+                values.update({name} - {"", ".", ".."})
+    except (OSError, ValueError):
+        pass  # Missing or malformed configuration grants no exemptions.
+    return frozenset(values)
+
+
+def public_identifiers() -> frozenset[str]:
+    path = Path.home() / ".config" / "aidevops" / "repos.json"
+    try:
+        stat = path.stat()
+    except OSError:
+        return frozenset()
+    return load_public_identifiers(path, (stat.st_mtime_ns, stat.st_size))
+
+
 def usable(value: str) -> bool:
     # Must mirror TOKEN_RUN in registered-value-redaction.mjs: the plugin only
     # hashes windows made of these characters.
-    if PUBLIC_VALUE.fullmatch(value) is not None:
+    if PUBLIC_VALUE.fullmatch(value) is not None or value in public_identifiers():
         return False
     return (
         MIN_LENGTH <= len(value) <= MAX_LENGTH

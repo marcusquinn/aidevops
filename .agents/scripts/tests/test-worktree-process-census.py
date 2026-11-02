@@ -101,6 +101,100 @@ class ProcessCensusTests(unittest.TestCase):
             census.require_proc_visibility()
 
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
+    def test_live_aged_spoofed_daemon_acquiring_worktree_is_uncertain(self):
+        script = ("import ctypes,time; libc=ctypes.CDLL(None); "
+                  "assert libc.prctl(15,b'ssh-agent',0,0,0)==0; "
+                  "assert libc.prctl(4,0,0,0,0)==0; "
+                  "print('ready',flush=True); "
+                  "import os,sys; target=sys.stdin.readline().strip(); "
+                  "os.chdir(target); fd=os.open(target,os.O_RDONLY); "
+                  "print('holding',flush=True); time.sleep(30)")
+        child = subprocess.Popen(  # nosec B603 -- fixed disposable non-dumpable child, no shell
+            [sys.executable, "-c", script], cwd="/", stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, text=True,
+            env=dict(os.environ, PWD=os.path.sep, AIDEVOPS_WORKTREE=os.path.sep))
+        try:
+            import select
+            self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+            self.assertEqual(child.stdout.readline().strip(), "ready")
+            time.sleep(2.1)  # Clear both second-resolution timestamp boundaries.
+            with tempfile.TemporaryDirectory() as directory:
+                child.stdin.write(directory + "\n")
+                child.stdin.flush()
+                self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+                self.assertEqual(child.stdout.readline().strip(), "holding")
+                process = Path(f"/proc/{child.pid}")
+                try:
+                    os.readlink(process / "cwd")
+                except PermissionError:
+                    pass
+                else:
+                    self.skipTest("runner can inspect non-dumpable tasks")
+                result = {"references": 0, "uncertain": 0, "excluded_nondumpable": 0}
+                census.collect_path_references(process, directory, result)
+                self.assertEqual(result, {"references": 0, "uncertain": 1,
+                                          "excluded_nondumpable": 0})
+                import worktree_lifetime_quiescence as quiescence
+                sample = census.path_census(directory)
+                self.assertFalse(quiescence.empty_census(sample, sample.get("boot_id")))
+        finally:
+            child.terminate()
+            child.wait(timeout=5)
+            child.stdin.close()
+            child.stdout.close()
+
+    def test_unreadable_tasks_are_uncertain_regardless_of_name_or_age(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = Path(directory)
+            task = process / "task" / "100"
+            task.mkdir(parents=True)
+            (task / "status").write_text("Uid:\t" + "\t".join([str(os.getuid())] * 4) + "\n")
+            for name, start, error in (
+                    ("ssh-agent", 100, PermissionError()),
+                    ("gpg-agent", 100, PermissionError()),
+                    ("(sd-pam)", 100, PermissionError()),
+                    ("systemd", 100, PermissionError()),
+                    ("sshd", 100, PermissionError()),
+                    ("dbus-daemon", 100, PermissionError()),
+                    ("ssh-agent", 1100, PermissionError()),
+                    ("ssh-agent", 900, PermissionError()),
+                    ("python3", 100, PermissionError()),
+                    ("ssh-agent", 100, OSError()),
+                    ("ssh-agent", 0, PermissionError()),
+                    ("ssh-agent", "bad", PermissionError())):
+                fields = ["S"] + ["0"] * 18 + [str(start)]
+                stat = f"100 ({name}) " + " ".join(fields)
+                (task / "stat").write_text(stat)
+                result = {"references": 0, "uncertain": 0, "excluded_nondumpable": 0}
+                with self.subTest(name=name, start=start, error=error), \
+                        patch.object(census, "inspect_path_references", side_effect=error):
+                    census.collect_path_references(process, "/worktree", result)
+                    self.assertEqual(result["excluded_nondumpable"], 0)
+                    self.assertEqual(result["uncertain"], 1)
+                    self.assertEqual(result["references"], 0)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
+    def test_census_rejects_mismatched_or_replaced_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sample = census.path_census(directory, source_inode="wrong-generation")
+            self.assertEqual(sample["status"], "unavailable")
+            with patch.object(census.owner, "inode", side_effect=["original", "replacement"]):
+                sample = census.path_census(directory, source_inode="original")
+                self.assertEqual(sample["status"], "unavailable")
+
+    def test_exclusion_counts_do_not_relax_quiescence(self):
+        import worktree_lifetime_quiescence as quiescence
+        sample = {"status": "available", "boot_id": "boot", "uid": os.getuid(),
+                  "observed_at": time.time(), "references": 0, "uncertain": 0,
+                  "excluded_nondumpable": 4}
+        self.assertTrue(quiescence.empty_census(sample, "boot"))
+        sample["uncertain"] = 1
+        self.assertFalse(quiescence.empty_census(sample, "boot"))
+        sample.update(uncertain=0, references=1)
+        self.assertFalse(quiescence.empty_census(sample, "boot"))
+
+
 class ProcessSnapshotTests(unittest.TestCase):
     def snapshot(self):
         return {"status": "available", "boot_id": "11111111-1111-1111-1111-111111111111",

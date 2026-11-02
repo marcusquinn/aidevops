@@ -71,6 +71,34 @@ Data caveats:
 - Log analysis: check `log_analysis_reports.bucket_schema_version`; only upgraded reports (`>= 1`) have per-bucket AI hit columns.
 - Treat ranked-page HTML diffs as correlated evidence, not proof of ranking causation.
 
+## Geogrid metrics
+
+A geogrid scan checks where one business ranks in the Google Maps / local pack from many sample points around a centre. Use SEO Utils' stored GMB grid values (`google_business_*` tables, `describe_table` first) when matching data is available and its MCP is reachable, and record which definition each stored number uses. Otherwise (including missing data or a disabled or unreachable MCP), collect the grid with `seo/dataforseo.md` "Local pack / Maps grid collection" (alternative: `seo/serpapi.md`).
+
+Definitions. `C` = cutoff, the deepest rank checked (e.g. 20). `N` = all grid points. A point is **found** when the business appears within `C`; `rank` is its position there.
+
+| Metric | Formula | Notes |
+|--------|---------|-------|
+| ARP (average rank position) | sum of found ranks / found points | Ignores not-found points, so it flatters sparse visibility |
+| ATRP (average total rank position) | (sum of found ranks + (C+1) × not-found points) / N | Not-found counts as `C+1`; lower is better |
+| SoLV (share of local voice) | 100 × points ranked 1-3 / N | Top-3 share of grid points only |
+| Found rate | 100 × found points / N | Separate metric; never call it SoLV |
+
+Worked example: `N=49`, `C=20`, 30 found points with rank sum 90, 19 not found, 12 points ranked 1-3. ARP = 90/30 = 3.0. ATRP = (90 + 21×19)/49 = 10.0. SoLV = 100×12/49 ≈ 24.5. Found rate = 100×30/49 ≈ 61.2.
+
+ARP, ATRP and SoLV are Local Falcon's names. Our definitions are stated above; before comparing against any vendor's report, check that vendor's current documentation for the same formulas and cutoff.
+
+Required scan metadata, stored with every number: keyword, business identifier (place ID or CID), centre latitude/longitude, grid size, spacing or radius, platform (Maps or local pack), device, language, cutoff `C`, timestamp (UTC), provider and metric definition used.
+
+Guardrails:
+
+- Compare scans only when business identifier, grid geometry, keyword, platform, device, language, cutoff and metric definition match.
+- Grid points are sample locations, not customers or audience share. Never describe SoLV as a percentage of customers.
+- A single scan is a snapshot; treat 1-2 position moves as noise unless repeated.
+- Movement does not prove cause; attribute only with dated change logs.
+- Estimate cost as points × keywords × price-per-task and ask before spending (see Write and spend safety).
+- Source order: matching, reachable SEO Utils data first, otherwise the DataForSEO standard queue, then SerpApi. Do not route grid tracking to a dedicated paid grid vendor by default.
+
 ## Workspaces
 
 SQL sees every workspace: filter tables that have `workspace_id` by the active workspace from `list_workspaces`. Actions run in the active workspace only. `set_workspace` lasts until the MCP reconnects; the stdio connection cannot pin a workspace, so name the workspace in each request when working across clients. A named workspace that does not exist is refused, never substituted.

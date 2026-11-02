@@ -26,9 +26,16 @@ Commands:
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
   verify-local ARCHIVE_DIR              Verify deltas against the retained local base
+  verify-structure ARCHIVE_DIR          Check schema, inventory and artifact hashes
+                                        only (no Git import, no restore)
   source-matches ARCHIVE_DIR WORKTREE   Exit 0 only if WORKTREE is unchanged since capture
   prune --older-than 14d --max-total-size 20G [--dry-run|--apply]
-      [--output-root DIR]
+      [--output-root DIR] [--budget-seconds N]
+                                        Structure-checks only selected archives;
+                                        stops cleanly within N seconds (0 =
+                                        unbounded) and reclaims dead verification scratch
+  sweep-scratch                         Reclaim only dead verification scratch
+                                        under the archive root
 
 Environment:
   AIDEVOPS_WORKTREE_ARCHIVE_ROOT                Override the archive root.
@@ -570,6 +577,11 @@ for artifact in manifest['artifacts']:
         raise SystemExit("missing or unsafe artifact: " + artifact['name'])
     if path.stat().st_size != artifact["size"] or hashlib.sha256(path.read_bytes()).hexdigest() != artifact["sha256"]:
         raise SystemExit("artifact integrity mismatch: " + artifact['name'])
+if sys.argv[4] == 'structural':
+    # Retention identity check: proves a compact archive (never a full recovery
+    # copy) without importing base objects; restorability is irrelevant to expiry.
+    print(f"structure-verified {archive}")
+    raise SystemExit(0)
 if sys.argv[4] == 'local':
     from worktree_archive_local_verify import verify_local
     verify_local(archive, manifest)
@@ -809,10 +821,11 @@ PY
 }
 
 prune_archives() {
-	local older_than="" max_total="" mode="" output_root="$ARCHIVE_ROOT"
+	local older_than="" max_total="" mode="" output_root="$ARCHIVE_ROOT" budget="0"
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--older-than) require_value "$1" "${2:-}" || return 1; older_than="$2"; shift 2 ;;
+		--budget-seconds) budget="${2:-}"; shift; shift || true ;;
 		--max-total-size) require_value "$1" "${2:-}" || return 1; max_total="$2"; shift 2 ;;
 		--dry-run) [[ -z "$mode" ]] || { die "choose only one prune mode"; return 1; }; mode="dry-run"; shift ;;
 		--apply) [[ -z "$mode" ]] || { die "choose only one prune mode"; return 1; }; mode="apply"; shift ;;
@@ -823,8 +836,16 @@ prune_archives() {
 	[[ "$older_than" =~ ^[1-9][0-9]*d$ ]] || { die "--older-than must use positive day syntax such as 14d"; return 1; }
 	[[ "$max_total" =~ ^[1-9][0-9]*([KMGTP])?$ ]] || { die "invalid --max-total-size"; return 1; }
 	[[ -n "$mode" ]] || { die "prune requires --dry-run or --apply"; return 1; }
+	[[ "$budget" =~ ^[0-9]+$ ]] || { die "--budget-seconds must be a non-negative integer"; return 1; }
 	python3 "${SCRIPT_DIR}/worktree_archive_prune.py" "$output_root" "${older_than%d}" \
-		"$max_total" "$mode" "${SCRIPT_DIR}/worktree-archive-helper.sh"
+		"$max_total" "$mode" "${SCRIPT_DIR}/worktree-archive-helper.sh" "$budget"
+	return $?
+}
+
+# Verification scratch is derived data: reclaim dead copies regardless of the
+# archive retention mode. Live (flock-held) scratch is never touched.
+sweep_scratch() {
+	python3 "${SCRIPT_DIR}/worktree_archive_scratch.py" sweep "$ARCHIVE_ROOT"
 	return $?
 }
 
@@ -837,8 +858,10 @@ main() {
 	list) list_archives "$@" ;;
 	verify) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$1" ;;
 	verify-local) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$@" local ;;
+	verify-structure) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$@" structural ;;
 	source-matches) [[ $# -eq 2 ]] || { usage >&2; return 1; }; source_matches "$@" ;;
 	prune) prune_archives "$@" ;;
+	sweep-scratch) [[ $# -eq 0 ]] || { usage >&2; return 1; }; sweep_scratch ;;
 	help|-h|--help) usage ;;
 	*) usage >&2; return 1 ;;
 	esac

@@ -1289,7 +1289,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
     def test_pin_added_during_verification_preserves_claimed_archive(self):
         archive = self.archive()
         module = self.prune_module()
-        entry = module.inspect(self.archives, archive, HELPER)
+        entry = module.inspect(self.archives, archive)
         original_verify = module.verify
 
         def pin_during_verify(helper, directory):
@@ -1307,7 +1307,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
     def test_replacement_at_original_name_is_never_deleted(self):
         archive = self.archive()
         module = self.prune_module()
-        entry = module.inspect(self.archives, archive, HELPER)
+        entry = module.inspect(self.archives, archive)
         original_rename = os.rename
 
         def replace_after_claim(*args, **kwargs):
@@ -1372,6 +1372,21 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         self.assertFalse(old.exists())
         self.assertTrue(recent.exists())
         self.assertEqual(self.prune().stdout, b"")
+
+    def test_retention_pass_budget_defers_and_reclaims_dead_scratch(self):
+        # GH#36468: an exhausted pass budget defers without killing a verifier,
+        # and dead verification scratch is reclaimed in every mode.
+        old = self.archive()
+        self.update_manifest(old, created_at="2000-01-01T00:00:00Z")
+        dead = old.parent / ".archive-verify-killed1"
+        (dead / "objects").mkdir(parents=True)
+        os.utime(dead, (0, 0))
+        deferred = self.helper("prune", "--older-than", "14d", "--max-total-size", "20G",
+                               "--apply", "--output-root", self.archives, "--budget-seconds", "1")
+        self.assertIn(b"deferred\t", deferred.stderr)
+        self.assertTrue(old.exists())
+        self.assertFalse(dead.exists())
+        self.assertEqual(list(old.parent.glob(".archive-verify-*")), [])
 
     def test_size_pressure_evicts_oldest_unpinned(self):
         old, recent = self.archive(), self.archive()

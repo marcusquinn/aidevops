@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess  # nosec B404 # fixed local helper programs, explicit argv
 import sys
 from uuid import UUID, uuid5
@@ -44,11 +45,43 @@ def _run(command: list[str]) -> str:
         AIDEVOPS_WORKTREE_RECOVERY_POLICY="git-only",
         PYTHONDONTWRITEBYTECODE="1",
     )
-    result = subprocess.run(  # nosec B603 # local helpers and literal path arguments
-        command, env=environment, capture_output=True, check=True, timeout=120,
-        pass_fds=_OPERATION_LOCKS.get(),
-    )
-    return os.fsdecode(result.stdout).removesuffix("\n")
+    # Archive helpers create intermediate directories; do not inherit a caller's
+    # group-writable umask or change permissions on existing recovery paths.
+    # A timeout must let the helper tree clean its verification scratch
+    # (GH#36468): SIGTERM the process group, then SIGKILL after a grace period.
+    with subprocess.Popen(  # nosec B603 # local helpers and literal path arguments
+        command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        pass_fds=_OPERATION_LOCKS.get(), umask=0o077, start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=_HELPER_TIMEOUT)
+        except BaseException as error:
+            _terminate_group(process)
+            stdout, stderr = process.communicate()
+            if isinstance(error, subprocess.TimeoutExpired):
+                raise subprocess.TimeoutExpired(
+                    command, _HELPER_TIMEOUT, output=stdout, stderr=stderr) from None
+            raise
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+    return os.fsdecode(stdout).removesuffix("\n")
+
+
+_HELPER_TIMEOUT = 120
+_TERMINATION_GRACE = 10
+
+
+def _terminate_group(process: subprocess.Popen) -> None:
+    for number, wait in ((signal.SIGTERM, _TERMINATION_GRACE), (signal.SIGKILL, None)):
+        try:
+            os.killpg(process.pid, number)
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def _snapshot(path: Path) -> dict:
