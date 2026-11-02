@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Retention for verified compact archives, never full recovery worktrees."""
 
+import collections
 import datetime
 import json
 import os
@@ -14,7 +15,8 @@ import time
 import uuid
 
 from worktree_archive_git import base_import_timeout
-from worktree_archive_scratch import run_bounded, sweep_root, termination_as_exit
+from worktree_archive_process import run_bounded, termination_as_exit
+from worktree_archive_scratch import sweep_root
 
 
 PIN = ".aidevops-archive-pin"
@@ -153,22 +155,25 @@ def candidate_entries(root):
     return sorted(entries, key=lambda entry: (entry[0], str(entry[2])))
 
 
-def attempt(root, root_identity, entry, helper, mode):
+Target = collections.namedtuple("Target", "root identity helper mode")
+
+
+def attempt(target, entry):
     """Verify (and in apply mode remove) one candidate; True only on success."""
     ensure_budget()
     try:
-        if mode == "apply":
-            remove_verified(root, root_identity, entry, helper)
+        if target.mode == "apply":
+            remove_verified(target.root, target.identity, entry, target.helper)
         else:
-            verify(helper, entry[2])
+            verify(target.helper, entry[2])
     except RETENTION_ERRORS as error:
         print(f"kept\t{entry[2]}\t{error}", file=sys.stderr)
         return False
-    print(f"{mode}\t{entry[2]}")
+    print(f"{target.mode}\t{entry[2]}")
     return True
 
 
-def prune(root, root_identity, entries, helper, mode, days, limit):
+def prune(target, entries, days, limit):
     """Remove expired archives, then the oldest survivors above the size cap.
 
     Unverifiable archives are kept and do not count as freed space. Running
@@ -181,11 +186,11 @@ def prune(root, root_identity, entries, helper, mode, days, limit):
     failed = False
     try:
         for entry in expired:
-            failed |= not attempt(root, root_identity, entry, helper, mode)
+            failed |= not attempt(target, entry)
         for entry in survivors:
             if survivor_total <= limit:
                 break
-            if attempt(root, root_identity, entry, helper, mode):
+            if attempt(target, entry):
                 survivor_total -= entry[1]
             else:
                 failed = True
@@ -212,8 +217,8 @@ def main():
     # in both modes (GH#36468).
     for path in sweep_root(root):
         print(f"reclaimed-scratch\t{path}", file=sys.stderr)
-    root_identity = identity(root)
-    return prune(root, root_identity, candidate_entries(root), helper, mode, days, limit)
+    target = Target(root, identity(root), helper, mode)
+    return prune(target, candidate_entries(root), days, limit)
 
 
 if __name__ == "__main__":

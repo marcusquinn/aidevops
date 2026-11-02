@@ -24,12 +24,11 @@ import os
 from pathlib import Path
 import re
 import shutil
-import signal
-import subprocess
 import sys
 import tempfile
-import threading
 import time
+
+from worktree_archive_process import termination_as_exit
 
 PREFIX = '.archive-verify-'
 LOCAL_PREFIX = '.verify-local-'
@@ -41,7 +40,6 @@ STALE_GRACE_SECONDS = 600
 NAME = re.compile(r'\.(?P<kind>archive-verify|verify-local)-'
                   r'(?:(?P<key>[0-9a-f]{64})(?:-[a-z0-9_]{1,32})?|[a-z0-9_]{1,32})')
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
 
 
 def evidence_ttl_seconds():
@@ -55,28 +53,6 @@ def evidence_ttl_seconds():
 
 def archive_key(archive):
     return hashlib.sha256(os.fsencode(archive)).hexdigest()
-
-
-@contextlib.contextmanager
-def termination_as_exit():
-    """Turn SIGTERM/SIGHUP into SystemExit so ``finally`` cleanup runs.
-
-    Python's default disposition terminates without unwinding. Only the main
-    thread may install handlers; elsewhere this is a no-op.
-    """
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-
-    def leave(signum, _frame):
-        raise SystemExit(128 + signum)
-
-    previous = {number: signal.signal(number, leave) for number in TERMINATION_SIGNALS}
-    try:
-        yield
-    finally:
-        for number, handler in previous.items():
-            signal.signal(number, handler)
 
 
 def _remove(path, opened):
@@ -123,36 +99,42 @@ def sweep(parent, now=None, supersede=None):
     """
     parent = Path(parent)
     now = time.time() if now is None else now
-    ttl = evidence_ttl_seconds()
+    dead = []
     try:
-        names = sorted(entry.name for entry in os.scandir(parent)
-                       if NAME.fullmatch(entry.name) and entry.is_dir(follow_symlinks=False))
-    except OSError:
-        return []
-    dead, newest = [], {}
-    try:
-        for name in names:
+        for name in _scratch_names(parent):
             probed = _probe(parent / name)
-            if probed is None:
-                continue
-            descriptor, opened, failed = probed
-            dead.append((name, descriptor, opened, failed))
-            match = NAME.fullmatch(name)
-            key = match['key'] and (match['kind'], match['key'])
-            if failed and key and key != supersede and now - opened.st_mtime < ttl:
-                if key not in newest or opened.st_mtime > newest[key][1]:
-                    newest[key] = (name, opened.st_mtime)
-        kept = {name for name, _ in newest.values()}
-        removed = []
-        for name, _descriptor, opened, failed in dead:
-            if name in kept or (not failed and now - opened.st_mtime < STALE_GRACE_SECONDS):
-                continue
-            if _remove(parent / name, opened):
-                removed.append(parent / name)
-        return removed
+            if probed is not None:
+                dead.append((name, *probed))
+        kept = _kept_evidence(dead, now, supersede)
+        return [parent / name for name, _descriptor, opened, failed in dead
+                if name not in kept and (failed or now - opened.st_mtime >= STALE_GRACE_SECONDS)
+                and _remove(parent / name, opened)]
     finally:
         for _name, descriptor, _opened, _failed in dead:
             os.close(descriptor)
+
+
+def _scratch_names(parent):
+    """Sorted scratch directory names directly in ``parent`` (no symlinks)."""
+    try:
+        return sorted(entry.name for entry in os.scandir(parent)
+                      if NAME.fullmatch(entry.name) and entry.is_dir(follow_symlinks=False))
+    except OSError:
+        return []
+
+
+def _kept_evidence(dead, now, supersede):
+    """Names of the newest unexpired failure copy per archive key."""
+    ttl = evidence_ttl_seconds()
+    newest = {}
+    for name, _descriptor, opened, failed in dead:
+        match = NAME.fullmatch(name)
+        key = match['key'] and (match['kind'], match['key'])
+        if not (failed and key) or key == supersede or now - opened.st_mtime >= ttl:
+            continue
+        if key not in newest or opened.st_mtime > newest[key][1]:
+            newest[key] = (name, opened.st_mtime)
+    return {name for name, _ in newest.values()}
 
 
 def _mark_failed(descriptor, error):
@@ -203,49 +185,6 @@ def verification_scratch(archive, prefix=PREFIX):
                 sweep(archive.parent, supersede=key)
     finally:
         os.close(descriptor)
-
-
-def run_bounded(command, timeout, grace=10, **options):
-    """``subprocess.run`` equivalent that lets the child clean up on timeout.
-
-    The child gets its own session, so the whole tree is signalled. Timeout
-    sends SIGTERM to the group, waits ``grace`` seconds, then SIGKILLs it.
-    Raises ``subprocess.TimeoutExpired`` or ``CalledProcessError`` like run().
-    """
-    check = options.pop('check', False)
-    capture = options.pop('capture_output', False)
-    if capture:
-        options.setdefault('stdout', subprocess.PIPE)
-        options.setdefault('stderr', subprocess.PIPE)
-    data = options.pop('input', None)
-    if data is not None:
-        options['stdin'] = subprocess.PIPE
-    with subprocess.Popen(command, start_new_session=True, **options) as process:  # nosec B603
-        try:
-            stdout, stderr = process.communicate(data, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _terminate_group(process, grace)
-            stdout, stderr = process.communicate()
-            raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr) from None
-        except BaseException:
-            _terminate_group(process, grace)
-            raise
-    if check and process.returncode:
-        raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
-    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-
-
-def _terminate_group(process, grace):
-    for number, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, None)):
-        try:
-            os.killpg(process.pid, number)
-        except ProcessLookupError:
-            return
-        try:
-            process.wait(timeout=wait)
-            return
-        except subprocess.TimeoutExpired:
-            continue
 
 
 def sweep_root(root):
