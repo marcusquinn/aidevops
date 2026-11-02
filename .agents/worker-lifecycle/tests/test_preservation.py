@@ -4,6 +4,7 @@ Requires the Git/Bash archive backend included in the portable registry validato
 Only disposable repositories are used.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -161,6 +162,78 @@ class PreservationContract(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(target.exists())
         self.assertEqual((self.work / "mixed").read_bytes(), b"unique work\n")
+
+    def test_compact_deletions_preserve_index_and_working_state(self):
+        # Include binary, executable, symlink and non-shell-safe names.
+        names = ("large", "space\nname", ":(glob)*", "executable")
+        for name in names:
+            (self.work / name).write_bytes(b"deleted content\n" * 10000)
+        (self.work / "executable").chmod(0o755)
+        (self.work / "deleted-link").symlink_to("mixed")
+        self.git(self.work, "add", ".")
+        self.git(self.work, "commit", "-qm", "deletion bases")
+        self.git(self.work, "rm", "binary", "deleted-link")
+        (self.work / "mixed").write_bytes(b"staged modification\n")
+        self.git(self.work, "add", "mixed")
+        (self.work / "mixed").unlink()
+        for name in names:
+            (self.work / name).unlink()
+        # A staged deletion may coexist with a new ordinary untracked file.
+        (self.work / "binary").write_bytes(b"replacement untracked\n")
+        staged = self.git(self.work, "diff", "--cached", "--binary")
+        working = self.git(self.work, "diff", "--binary")
+        archive = self.archive()
+        manifest = json.loads((archive / "manifest.json").read_text())
+        self.assertEqual(manifest["deletion_policy"], "compact-v1")
+        self.assertLess((archive / "deletions-v1.json").stat().st_size, 4096)
+        self.assertLess((archive / "diff.patch").stat().st_size, 4096)
+        self.helper("verify-local", archive)
+        self.helper("source-matches", archive, self.work)
+        target, _ = self.restore(archive)
+        self.assertEqual(self.git(target, "diff", "--cached", "--binary"), staged)
+        self.assertEqual(self.git(target, "diff", "--binary"), working)
+        self.assertEqual((target / "binary").read_bytes(), b"replacement untracked\n")
+        self.assertFalse((target / "deleted-link").is_symlink())
+
+    def test_legacy_full_deletion_patch_remains_readable(self):
+        (self.work / "mixed").unlink()
+        (self.work / "binary").unlink()
+        archive = self.archive()
+        # Reconstruct the pre-extension on-disk format, with its original
+        # fingerprint unchanged, rather than exercising only new captures.
+        patch = self.git(self.work, "diff", "--binary", "--full-index")
+        (archive / "diff.patch").write_bytes(patch)
+        (archive / "deletions-v1.json").unlink()
+        manifest = json.loads((archive / "manifest.json").read_text())
+        del manifest["deletion_policy"]
+        manifest["artifacts"] = [item for item in manifest["artifacts"]
+                                 if item["name"] != "deletions-v1.json"]
+        for item in manifest["artifacts"]:
+            if item["name"] == "diff.patch":
+                item.update(size=len(patch), sha256=hashlib.sha256(patch).hexdigest())
+        (archive / "manifest.json").write_text(json.dumps(manifest))
+        self.helper("verify-local", archive)
+        target, _ = self.restore(archive)
+        self.assertEqual(self.git(target, "diff", "--binary", "--full-index"), patch)
+
+    def test_unsafe_or_wrong_deletion_identity_is_refused(self):
+        (self.work / "mixed").unlink()
+        archive = self.archive()
+        payload = archive / "deletions-v1.json"
+        original = json.loads(payload.read_text())
+        for path, oid in ((b"../outside", original["unstaged"][0][2]),
+                          (b"mixed", "0" * 40)):
+            with self.subTest(path=path, oid=oid):
+                value = {"staged": [], "unstaged": [[path.hex(), "100644", oid]]}
+                data = json.dumps(value).encode()
+                payload.write_bytes(data)
+                manifest = json.loads((archive / "manifest.json").read_text())
+                for item in manifest["artifacts"]:
+                    if item["name"] == payload.name:
+                        item.update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
+                (archive / "manifest.json").write_text(json.dumps(manifest))
+                self.assertNotEqual(self.helper("verify-local", archive,
+                                                check=False).returncode, 0)
 
     def test_late_source_change_invalidates_snapshot(self):
         archive = self.archive()

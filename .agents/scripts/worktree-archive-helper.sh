@@ -410,6 +410,8 @@ if sys.argv[20] == '1':
 if manifest['source_fingerprint'].get('schema') == 4:
     manifest['merge_policy'] = 'structured-v1'
     manifest['self_contained'] = True
+if (archive / 'deletions-v1.json').is_file():
+    manifest['deletion_policy'] = 'compact-v1'
 (archive / 'manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding='utf-8')
 PY
 	return $?
@@ -425,9 +427,7 @@ capture_archive_payload() {
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-capture "$worktree" "$archive_dir" || return 1
 	else
 		# diff must not refresh the source index while capturing it.
-		local -a patch_options=(--binary --full-index --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ --submodule=short)
-		git -c diff.autoRefreshIndex=false -C "$worktree" diff "${patch_options[@]}" >"$archive_dir/diff.patch" || return 1
-		git -c diff.autoRefreshIndex=false -C "$worktree" diff --cached "${patch_options[@]}" >"$archive_dir/staged.patch" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" capture "$worktree" "$archive_dir" || return 1
 		commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
 		if [[ "$commit_count" -gt 0 ]]; then
 			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
@@ -502,7 +502,7 @@ archive_worktree() {
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
 	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" || return 1
-	if [[ -s "$archive_dir/staged.patch" || -s "$archive_dir/diff.patch" || -s "$archive_dir/untracked-files.txt" || -f "$archive_dir/merge-state-v1.json" ]]; then
+	if [[ -s "$archive_dir/staged.patch" || -s "$archive_dir/diff.patch" || -s "$archive_dir/untracked-files.txt" || -f "$archive_dir/merge-state-v1.json" || -f "$archive_dir/deletions-v1.json" ]]; then
 		dirty_state="dirty"
 	fi
 	# GH#34943: a capture that raced a late writer is not a faithful copy.
@@ -548,6 +548,12 @@ if not isinstance(artifacts, list) or not all(isinstance(item, dict) for item in
 names = [item.get('name') for item in artifacts]
 mandatory = {'diff.patch', 'staged.patch', 'untracked-files.txt'}
 allowed = mandatory | {'commits.bundle', 'untracked.tar.gz', 'failure.log'}
+if 'deletion_policy' in manifest:
+    if (manifest['deletion_policy'] != 'compact-v1' or capture_policy != 'git-only'
+            or manifest.get('merge_policy') or policy is not None):
+        raise SystemExit('unsupported deletion policy')
+    mandatory.add('deletions-v1.json')
+    allowed.add('deletions-v1.json')
 if manifest.get('merge_policy') == 'structured-v1':
     mandatory.update({'merge-state-v1.json', 'commits.bundle'})
     allowed.update({'merge-state-v1.json', 'commits.bundle'})
@@ -588,6 +594,9 @@ if sys.argv[4] == 'local':
 else:
     from worktree_archive_snapshot import verify_git_objects
     verify_git_objects(archive, manifest)
+if manifest.get('deletion_policy'):
+    from worktree_archive_deletions import load
+    load(archive)
 payload = archive / "untracked.tar.gz"
 if payload.exists():
     with tarfile.open(payload, "r:gz") as source:
@@ -751,7 +760,9 @@ restore_archive() {
 	if [[ -f "$archive_dir/merge-state-v1.json" ]]; then
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" || return 1
 	fi
+	python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" restore "$target" "$archive_dir" staged || return 1
 	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
+	python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" restore "$target" "$archive_dir" unstaged || return 1
 	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
 	restore_untracked_payload "$archive_dir" "$target" || return 1
 	if [[ -f "$archive_dir/git-admin.json" ]]; then

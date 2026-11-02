@@ -30,6 +30,7 @@ ARCHIVE_SOURCES = (
     "worktree-archive-helper.sh", "worktree_recovery_timing.py",
     "worktree_archive_administration.py", "worktree_archive_auto_merge.py",
     "worktree_archive_base_source.py", "worktree_archive_fingerprint.py",
+    "worktree_archive_deletions.py",
     "worktree_archive_filesystem.py", "worktree_archive_git.py",
     "worktree_archive_history.py", "worktree_archive_index.py",
     "worktree_archive_local_verify.py",

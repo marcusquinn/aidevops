@@ -34,20 +34,35 @@ def imported_objects(scratch, archive):
 
 def verify_patches(scratch, archive, manifest):
     """Reconstruct only the index; bind both patches to the captured fingerprint."""
+    from worktree_archive_deletions import OPTIONS, load, remove
+
     head = manifest['head_sha']
     git(scratch, 'read-tree', head)
     staged = (archive / 'staged.patch').read_bytes()
     unstaged = (archive / 'diff.patch').read_bytes()
+    compact = manifest.get('deletion_policy') == 'compact-v1'
+    deletions = load(archive) if compact else None
+    if compact:
+        remove(scratch, deletions['staged'], index_only=True)
     if staged:
         git(scratch, 'apply', '--cached', str(archive / 'staged.patch'))
     index = git(scratch, 'ls-files', '--stage', '-z')
+    if compact:
+        # Preserve the existing fingerprint contract for old receipts/readers.
+        # Expanded diffs exist only in memory, never in the archive payload.
+        staged = git(scratch, 'diff', '--cached', *OPTIONS, head)
+        staged_tree = git(scratch, 'write-tree').strip().decode('ascii')
+        remove(scratch, deletions['unstaged'], index_only=True)
+        if unstaged:
+            git(scratch, 'apply', '--cached', str(archive / 'diff.patch'))
+        unstaged = git(scratch, 'diff', '--cached', *OPTIONS, staged_tree)
     values = [head, hashlib.sha256(index).hexdigest(),
               hashlib.sha256(staged).hexdigest(), hashlib.sha256(unstaged).hexdigest()]
     digest = hashlib.sha256(json.dumps(values).encode('ascii')).hexdigest()
     saved = manifest['source_fingerprint']
     if saved.get('head') != head or saved.get('sha256') != digest:
         raise ValueError('archive-local:patch-or-index-mismatch')
-    if unstaged:
+    if unstaged and not compact:
         git(scratch, 'apply', '--cached', '--check', str(archive / 'diff.patch'))
 
 

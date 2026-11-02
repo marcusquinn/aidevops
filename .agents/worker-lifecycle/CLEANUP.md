@@ -379,6 +379,23 @@ do not prove recovery after common-repository loss. Preservation evidence must n
 the WIP payload and actual Git-object dependencies, not claim a self-contained
 backup or preservation of excluded data.
 
+### Compact deletion payloads
+
+New non-merge archives with deleted files declare `deletion_policy: compact-v1`.
+`deletions-v1.json` contains separate staged/unstaged lists of hex-encoded pathname,
+Git mode and pre-deletion blob ID. Other changes remain in the existing patches.
+The artifact inventory hashes this file; verification rejects unsafe paths,
+duplicate paths and mismatched index identities. Restoration removes staged paths
+from the index and working tree before applying the staged patch, then removes
+unstaged paths only from the working tree before applying its patch. Untracked
+replacements are restored last. Ignored files remain excluded.
+
+Archives without this policy retain their original full-patch reader. The source
+fingerprint contract is unchanged: local verification reconstructs full diffs in
+memory against an isolated index. This reduces stored deletion payloads, not all
+fingerprinting CPU/memory costs. Old archives are not automatically rewritten,
+and retained Git base objects remain required for recovery.
+
 ## Preservation policy and executor invariants
 
 An archive must preserve local commits and required Git objects, index/staging
