@@ -337,3 +337,10 @@ worktree-helper.sh remove <worktree> --force   # reuses the existing archive
 The archive lives under the recovery root's `.producer-archives/`. Alternatively
 review the archive and retire the reservation through the recovery lifecycle
 helpers; never delete the archive by hand.
+
+Compact retention (`worktree-archive-helper.sh prune`) expires a producer
+archive only after its source and Git registration are gone: an empty delta
+at the next apply pass, any other archive 30 days after capture
+(`AIDEVOPS_WORKTREE_PRODUCER_ARCHIVE_TTL_DAYS`). It also retires the matching
+`.producer-transactions/<id>/` journal. Create `<archive>/.keep` to retain one
+indefinitely. Details: `scripts/worktree-archive-helper.md` "Retention".
