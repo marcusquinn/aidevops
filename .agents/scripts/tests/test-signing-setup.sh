@@ -216,6 +216,25 @@ EOF
 SHORT_HOME=$(mktemp -d /tmp/aidv-sg.XXXXXX)
 trap 'cleanup; rm -rf "$SHORT_HOME"' EXIT
 mkdir -p "${SHORT_HOME}/.ssh"
+# A newly reachable agent is not healed if the dedicated key could not load.
+ssh-keygen -t ed25519 -N 'x' -q -f "${SHORT_HOME}/.ssh/id_ed25519_signing"
+printf 'export SSH_AUTH_SOCK=%q\nexport SSH_AGENT_PID=%q\n' \
+	"${TEST_ROOT}/dead-agent.sock" "999999" >"${SHORT_HOME}/.ssh/agent.env"
+env -u SSH_AUTH_SOCK -u SSH_AGENT_PID HOME="$SHORT_HOME" bash -s -- "$SCRIPT_DIR" <<'EOF'
+set -euo pipefail
+script_dir="$1"
+# shellcheck source=/dev/null
+source "${script_dir}/headless-ssh-agent-lib.sh"
+if headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"; then
+	trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
+	printf 'FAIL recovery accepted a reachable agent after key loading failed\n'
+	exit 1
+fi
+trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
+[[ "$HEADLESS_SSH_AGENT_STATUS" == "dead" ]]
+headless_ssh_agent_reachable
+printf 'PASS failed key loading is not reported as healed despite a reachable agent\n'
+EOF
 cp "${TEST_HOME}/.ssh/id_ed25519_signing" "${TEST_HOME}/.ssh/id_ed25519_signing.pub" "${SHORT_HOME}/.ssh/"
 printf 'export SSH_AUTH_SOCK=%q\nexport SSH_AGENT_PID=%q\n' \
 	"${TEST_ROOT}/dead-agent.sock" "999999" >"${SHORT_HOME}/.ssh/agent.env"

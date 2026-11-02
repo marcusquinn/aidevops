@@ -46,7 +46,7 @@ _headless_ssh_agent_source_env() {
 # Source agent.env. When it names an unreachable agent and the dedicated
 # headless key exists, restart the agent through `signing-setup.sh agent-start`
 # without any prompt, then re-source. Sets HEADLESS_SSH_AGENT_STATUS.
-# Returns 0 for absent/live/healed and 1 when the agent is still unreachable.
+# Returns 0 for absent/live/healed and 1 when recovery fails.
 headless_ssh_agent_ensure() {
 	local signing_helper="${1:-${AIDEVOPS_SIGNING_SETUP_HELPER:-}}"
 	local agent_env="${AIDEVOPS_SSH_AGENT_ENV:-${HOME}/.ssh/agent.env}"
@@ -64,10 +64,11 @@ headless_ssh_agent_ensure() {
 		return 0
 	fi
 	if [[ -f "$headless_key_path" && -n "$signing_helper" && -x "$signing_helper" ]]; then
+		local start_rc=0
 		SSH_ASKPASS=/usr/bin/false SSH_ASKPASS_REQUIRE=force DISPLAY=aidevops-headless \
-			"$signing_helper" agent-start </dev/null >/dev/null 2>&1 || true
+			"$signing_helper" agent-start </dev/null >/dev/null 2>&1 || start_rc=$?
 		_headless_ssh_agent_source_env "$agent_env"
-		if headless_ssh_agent_reachable; then
+		if [[ "$start_rc" -eq 0 ]] && headless_ssh_agent_reachable; then
 			HEADLESS_SSH_AGENT_STATUS="healed"
 			return 0
 		fi
