@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 from canonical_git_management import is_registered_common_dir
@@ -36,13 +37,20 @@ def _snapshot_prefix_is_safe(prefix: list[str]) -> bool:
 def _snapshot_has_private_files(storage: Path) -> bool:
     """Reject nested symlinks and shared files, including object fanout/pack paths."""
     def reject_walk_error(error: OSError) -> None:
-        raise error
+        if not isinstance(error, FileNotFoundError):
+            raise error
 
     try:
         for base, directories, files in os.walk(storage, onerror=reject_walk_error):
             for name in directories + files:
-                path = Path(base) / name
-                if path.is_symlink() or (path.is_file() and path.stat().st_nlink > 1):
+                try:
+                    info = os.lstat(os.path.join(base, name))
+                except FileNotFoundError:
+                    # Concurrent snapshot pruning may remove a listed entry.
+                    continue
+                if stat.S_ISLNK(info.st_mode) or (
+                    stat.S_ISREG(info.st_mode) and info.st_nlink > 1
+                ):
                     return False
     except OSError:
         return False
