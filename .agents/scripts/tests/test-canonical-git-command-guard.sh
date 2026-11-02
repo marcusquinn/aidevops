@@ -428,6 +428,30 @@ ln -s "$REPO/.git/index" "$OPENCODE_SNAPSHOT/index"
 assert_blocked "blocks snapshot index symlink to canonical index" \
 	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
 rm "$OPENCODE_SNAPSHOT/index"
+ln "$REPO/.git/index" "$OPENCODE_SNAPSHOT/index"
+assert_blocked "blocks snapshot hardlink to canonical index" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+rm "$OPENCODE_SNAPSHOT/index"
+ln -s "$REPO/.git/objects" "$OPENCODE_SNAPSHOT/objects/00"
+assert_blocked "blocks nested snapshot object fanout symlink" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+rm "$OPENCODE_SNAPSHOT/objects/00"
+rmdir "$OPENCODE_SNAPSHOT/objects/pack"
+ln -s "$REPO/.git/objects/pack" "$OPENCODE_SNAPSHOT/objects/pack"
+assert_blocked "blocks nested snapshot pack symlink" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' gc"
+rm "$OPENCODE_SNAPSHOT/objects/pack"
+mkdir "$OPENCODE_SNAPSHOT/objects/pack"
+mkdir -p "$TEST_ROOT/redirected/opencode"
+ln -s "${XDG_DATA_HOME}/opencode/snapshot" "$TEST_ROOT/redirected/opencode/snapshot"
+XDG_DATA_HOME="$TEST_ROOT/redirected" assert_blocked "blocks redirected snapshot root" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+OTHER_SNAPSHOT_COMMON="${XDG_DATA_HOME}/opencode/snapshot/other-canonical"
+git init -q --separate-git-dir "$OTHER_SNAPSHOT_COMMON" "$TEST_ROOT/other-canonical"
+printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"},{"path":"%s"},{"path":"%s"}]}\n' \
+	"$REPO" "$SEPARATE_REPO" "$MARKED_REPO" "$TEST_ROOT/other-canonical" >"$REPOS_FILE"
+assert_blocked "blocks another registered canonical common dir inside snapshot root" \
+	"git --git-dir='$OTHER_SNAPSHOT_COMMON' --work-tree='$REPO' add ."
 GIT_INDEX_FILE="$REPO/.git/index" assert_blocked "blocks inherited snapshot index override" \
 	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
 CANONICAL_INDEX_BEFORE=$(git hash-object "$REPO/.git/index")

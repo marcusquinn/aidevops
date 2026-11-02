@@ -16,6 +16,7 @@ from canonical_git_invocation import (
     repository_values,
     split_invocation,
 )
+from canonical_git_management import is_registered_common_dir
 from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
@@ -142,26 +143,8 @@ def _is_isolated_routines_publisher(
     )
 
 
-def _is_isolated_opencode_snapshot(
-    real_git_path: str, cwd: str, prefix: list[str], subcommand: str, args: list[str]
-) -> bool:
-    """Permit index/object maintenance, never checkout writes, in private snapshots."""
-    safe_args = {
-        "add": ([], ["."], ["--all"], ["--all", "--sparse"]),
-        "write-tree": ([],),
-        "gc": ([], ["--prune=7.days"]),
-        "prune": ([],),
-    }
-    if args not in safe_args.get(subcommand, ()):
-        return False
-    #aidevops:trust-boundary -- explicit private Git storage is not a checkout edit.
-    # Reject alternate write targets, including inherited index/object overrides.
-    if any(os.environ.get(name) for name in (
-        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
-    )):
-        return False
+def _snapshot_prefix_is_safe(prefix: list[str]) -> bool:
+    """Require explicit storage and reject config/option write-target redirection."""
     explicit_git_dir = False
     remaining = iter(prefix)
     for option in remaining:
@@ -178,7 +161,43 @@ def _is_isolated_opencode_snapshot(
                 return False
         else:
             return False
-    if not explicit_git_dir:
+    return explicit_git_dir
+
+
+def _snapshot_has_private_files(storage: Path) -> bool:
+    """Reject nested symlinks and shared files, including object fanout/pack paths."""
+    def reject_walk_error(error: OSError) -> None:
+        raise error
+
+    try:
+        for base, directories, files in os.walk(storage, onerror=reject_walk_error):
+            for name in directories + files:
+                path = Path(base) / name
+                if path.is_symlink() or (path.is_file() and path.stat().st_nlink > 1):
+                    return False
+    except OSError:
+        return False
+    return True
+
+
+def _is_isolated_opencode_snapshot(
+    real_git_path: str, cwd: str, prefix: list[str], subcommand: str, args: list[str]
+) -> bool:
+    """Permit index/object maintenance, never checkout writes, in private snapshots."""
+    safe_args = {
+        "add": ([], ["."], ["--all"], ["--all", "--sparse"]),
+        "write-tree": ([],),
+        "gc": ([], ["--prune=7.days"]),
+        "prune": ([],),
+    }
+    if args not in safe_args.get(subcommand, ()):
+        return False
+    #aidevops:trust-boundary -- explicit private Git storage is not a checkout edit.
+    if any(os.environ.get(name) for name in (
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+    )) or not _snapshot_prefix_is_safe(prefix):
         return False
     common, git_dir, top = _git_repo_identity(real_git_path, cwd, prefix)
     if not all((common, git_dir, top)):
@@ -186,17 +205,20 @@ def _is_isolated_opencode_snapshot(
     data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
     if not data_home.is_absolute():
         return False
-    root = (data_home / "opencode/snapshot").resolve()
+    root = data_home.resolve() / "opencode/snapshot"
     storage = Path(git_dir).resolve()
     canonical_common = _git_output(
         real_git_path, top, "rev-parse", "--path-format=absolute", "--git-common-dir"
     )
     return bool(
-        root in storage.parents
+        root.resolve() == root
+        and root in storage.parents
+        and storage.name != ".git"
+        and not is_registered_common_dir(str(storage))
         and Path(common).resolve() == storage
         and canonical_common
         and Path(canonical_common).resolve() != storage
-        and all(storage in (storage / name).resolve().parents for name in ("index", "objects"))
+        and _snapshot_has_private_files(storage)
     )
 
 
