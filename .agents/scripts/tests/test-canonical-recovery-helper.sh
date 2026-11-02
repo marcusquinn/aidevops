@@ -1237,12 +1237,36 @@ for unborn_dirty_kind in ignored-collision ignored-noncollision hidden-untracked
 	ignored-noncollision) unborn_dirty_path="local-only.log" ;;
 	hidden-untracked) unborn_dirty_path="hidden-untracked.txt" ;;
 	esac
-	printf 'keep local data\n' >"${UNBORN_REPO}/${unborn_dirty_path}"
-	if [[ "$unborn_dirty_kind" == hidden-untracked ]]; then
-		/usr/bin/git -C "$UNBORN_REPO" config status.showUntrackedFiles no
-	else
-		printf '%s\n' "$unborn_dirty_path" >"${UNBORN_REPO}/.git/info/exclude"
+	if ! printf 'keep local data\n' >"${UNBORN_REPO}/${unborn_dirty_path}"; then
+		printf 'FAIL could not create %s fixture\n' "$unborn_dirty_kind"
+		exit 1
 	fi
+	if [[ "$unborn_dirty_kind" == hidden-untracked ]]; then
+		if ! /usr/bin/git -C "$UNBORN_REPO" config status.showUntrackedFiles no; then
+			printf 'FAIL could not configure hidden-untracked fixture\n'
+			exit 1
+		fi
+		if ! unborn_visible_status=$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1 --untracked-files=all) ||
+			[[ "$unborn_visible_status" != "?? ${unborn_dirty_path}" ]]; then
+			printf 'FAIL hidden-untracked fixture is not visible with explicit untracked reporting\n'
+			exit 1
+		fi
+	else
+		if ! printf '%s\n' "$unborn_dirty_path" >"${UNBORN_REPO}/.git/info/exclude"; then
+			printf 'FAIL could not configure %s fixture\n' "$unborn_dirty_kind"
+			exit 1
+		fi
+		if ! /usr/bin/git -C "$UNBORN_REPO" check-ignore -q -- "$unborn_dirty_path"; then
+			printf 'FAIL %s fixture is not ignored\n' "$unborn_dirty_kind"
+			exit 1
+		fi
+	fi
+	if ! unborn_hidden_status=$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1) ||
+		[[ -n "$unborn_hidden_status" ]]; then
+		printf 'FAIL %s fixture is not hidden from default status\n' "$unborn_dirty_kind"
+		exit 1
+	fi
+	printf 'PASS unborn %s fixture setup is verified and hidden from default status\n' "$unborn_dirty_kind"
 	for unborn_dirty_cmd in fast-forward-current sync-mirror; do
 		unborn_dirty_confirm="FAST_FORWARD_CANONICAL_BRANCH"
 		unborn_dirty_args=(--branch develop)
