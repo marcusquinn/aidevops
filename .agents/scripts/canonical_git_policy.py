@@ -202,6 +202,12 @@ def _is_isolated_opencode_snapshot(
     common, git_dir, top = _git_repo_identity(real_git_path, cwd, prefix)
     if not all((common, git_dir, top)):
         return False
+    # Filtered repacks can export packs outside objects/ without filesystem links.
+    # Inspect effective config, including global settings and repository includes.
+    if subcommand == "gc" and _git_output(
+        real_git_path, cwd, *prefix, "config", "--get", "gc.repackFilterTo"
+    ):
+        return False
     data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
     if not data_home.is_absolute():
         return False

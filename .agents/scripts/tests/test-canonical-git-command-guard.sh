@@ -454,6 +454,12 @@ assert_blocked "blocks another registered canonical common dir inside snapshot r
 	"git --git-dir='$OTHER_SNAPSHOT_COMMON' --work-tree='$REPO' add ."
 GIT_INDEX_FILE="$REPO/.git/index" assert_blocked "blocks inherited snapshot index override" \
 	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+git --git-dir "$OPENCODE_SNAPSHOT" config gc.repackFilter blob:none
+git --git-dir "$OPENCODE_SNAPSHOT" config gc.repackFilterTo "$REPO/.git/objects/pack/export"
+assert_blocked "blocks snapshot GC configured to export packs outside private storage" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' gc"
+git --git-dir "$OPENCODE_SNAPSHOT" config --unset gc.repackFilter
+git --git-dir "$OPENCODE_SNAPSHOT" config --unset gc.repackFilterTo
 CANONICAL_INDEX_BEFORE=$(git hash-object "$REPO/.git/index")
 if (cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" add .) &&
 	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" write-tree) &&
