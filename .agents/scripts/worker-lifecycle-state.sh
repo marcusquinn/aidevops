@@ -69,7 +69,7 @@ worker_lifecycle_state_dir() {
 worker_lifecycle_cleanup_worktree() {
 	local worktree="$1"
 	local entry="${BASH_SOURCE[0]%/*}/../worker-lifecycle/worker-registry.py"
-	local state_dir="" python="" result=""
+	local state_dir="" python="" result="" rc=0
 	[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 ]] || return 1
 	command -v jq >/dev/null 2>&1 || return 1
 	python=$(type -P python3) || return 1
@@ -78,9 +78,29 @@ worker_lifecycle_cleanup_worktree() {
 	# Never enroll, initialize, migrate, or fall back to legacy removal proofs.
 	result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" cleanup-worktree \
 		--path "$worktree" --repos-config "${HOME}/.config/aidevops/repos.json" \
-		--output-root "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}") || return 1
+		--output-root "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}") || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		_worker_lifecycle_report_refusal "$result" "$rc"
+		return 1
+	fi
 	printf '%s\n' "$result"
-	jq -e '.status == "retired"' >/dev/null <<<"$result" || return 1
+	if ! jq -e '.status == "retired"' >/dev/null <<<"$result"; then
+		_worker_lifecycle_report_refusal "$result" "$rc"
+		return 1
+	fi
+	return 0
+}
+
+# Surface only the registry's controlled diagnostic fields, never raw output.
+_worker_lifecycle_report_refusal() {
+	local result="$1"
+	local rc="$2"
+	local summary=""
+	summary=$(jq -r '[("status=" + (.status // "unknown" | tostring)),
+		(if .reason then "reason=" + (.reason | tostring) else empty end),
+		(if .filesystem_path then "path=" + (.filesystem_path | tostring) else empty end)]
+		| join(" ")' 2>/dev/null <<<"$result") || summary=""
+	printf '[worker-lifecycle] retirement-refused %s rc=%s\n' "${summary:-status=unparseable}" "$rc" >&2
 	return 0
 }
 

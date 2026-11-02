@@ -21,9 +21,7 @@ historical rows into `generation_admissions`.
 3. Recheck every recorded process using the native Linux/macOS identity adapter.
    Alive or unknown results retain the directory. A cached `ended` row or a missing
    PID alone is insufficient. There is no global process-cwd scan or descendant census.
-   Automatic passes retain sources with missing owner records. Explicit operator
-   confirmation can authorize a named legacy source without historical registration;
-   it never overrides a recorded alive/unknown owner or modern admission.
+   No recorded owners means `no-recorded-processes`, not permission to delete.
    Discovery does not fabricate process records or `created-worktree` events.
 4. Archive using the existing Git-only archive helper and verify captured payloads
    with `verify-local`, without a full checkout or shared-repository `fsck`.
@@ -65,27 +63,6 @@ Exception messages name the offending component; per-item JSON `reason` values
 report `ValueError`. No existing permissions are automatically changed.
 Preview does not create the root or change its permissions.
 
-### Operator-confirmed legacy transition
-
-Legacy worktrees may predate owner registration. For an operator-approved source,
-repeat `--confirm-legacy-path /absolute/worktree/path` on the command above, then
-add `--apply` to perform archive, verification and retirement. This selects **only**
-the named paths, not all discovered worktrees. Preview remains read-only.
-
-The operator decision authorizes the transition without requiring historical owner
-records; it is not proof that an unregistered writer is absent. The operator must
-stop independent unregistered writers before approving the source. Recorded native
-owners must still be ended. Modern admissions, age, Git locks, directory identity,
-archive verification and source-content comparisons remain enforced. No root or
-process-CWD scan is introduced. Ignored files remain excluded.
-
-The existing archive/retirement journal records `operator_confirmed: true` with the
-exact source identity and fingerprint. No generation or owner is manufactured.
-An interrupted operator transaction requires the same explicit path confirmation
-to resume; Pulse cannot adopt its permission. Retries preserve replacements at the
-original path. The new lifecycle and ordinary `worktree-helper.sh remove --force`
-are unchanged. After backlog migration this option leaves with the temporary tool.
-
 The JSON report distinguishes historical generation count, unique path count,
 eligible candidates, attempted operations and actually retired worktrees. Its
 `counts` field groups specific retention reasons. `incomplete` means another
@@ -105,7 +82,7 @@ Archives still require their common repository and retained base ref.
 After the observation-era backlog and pending retirements have been resolved,
 remove `worker-legacy-cleanup.py`, `worker_lifecycle/legacy_cleanup.py`,
 `worker_lifecycle/legacy_inventory.py`, `worker_lifecycle/legacy_discovery.py`,
-`worker_lifecycle/legacy_options.py`, their focused test, this document and the
+their focused test, this document and the
 temporary Pulse call. Restore the full Pulse budget to admission-based cleanup.
 Retain completed archive receipts and historical registry events; do not rewrite
 the evidence or delete archives as part of removing this code.

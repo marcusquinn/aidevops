@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from worker_lifecycle.archive_path import create_archive_root, validate_archive_path
 from worker_lifecycle.cleanup import _failure_details
 from worker_lifecycle.filesystem import (
     FilesystemValidationError, checked_directory, filesystem_error_details,
@@ -89,6 +90,48 @@ class FilesystemContract(unittest.TestCase):
         with self.assertRaisesRegex(FilesystemValidationError, "externally-writable"):
             with checked_directory(self.state, owned_root=self.root):
                 self.fail("sticky archive root must not be accepted")
+
+    def test_group_write_requires_private_group_or_sealed_ancestor(self):
+        archives = self.root / "recovery" / "archives"
+        archives.mkdir(parents=True)
+        for directory in (archives.parent, archives):
+            directory.chmod(0o775)
+        self.root.chmod(0o755)  # searchable by others: does not seal descendants
+        module = "worker_lifecycle.filesystem."
+        cases = ((False, True, False), (True, False, False), (True, True, True))
+        for private_group, no_acl, accepted in cases:
+            with self.subTest(private_group=private_group, no_acl=no_acl):
+                with patch(module + "user_private_group", return_value=private_group), \
+                        patch(module + "no_extended_access_acl", return_value=no_acl):
+                    if accepted:
+                        validate_archive_path(archives)
+                    else:
+                        with self.assertRaisesRegex(FilesystemValidationError,
+                                                    "archive-path-externally-writable"):
+                            validate_archive_path(archives)
+        self.root.chmod(0o700)  # unsearchable owned ancestor seals group bits below
+        with patch(module + "user_private_group", return_value=False), \
+                patch(module + "no_extended_access_acl", return_value=True):
+            validate_archive_path(archives)
+            archives.chmod(0o777)
+            with self.assertRaisesRegex(FilesystemValidationError,
+                                        "archive-path-externally-writable"):
+                validate_archive_path(archives)
+        self.assertEqual(archives.parent.stat().st_mode & 0o777, 0o775)
+
+    def test_archive_root_creation_ignores_group_writable_umask(self):
+        existing = self.root / "existing"
+        existing.mkdir()
+        existing.chmod(0o755)
+        root = existing / "recovery" / "archives"
+        previous = os.umask(0o002)
+        try:
+            create_archive_root(root)
+        finally:
+            os.umask(previous)
+        for directory in (root.parent, root):
+            self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(existing.stat().st_mode & 0o777, 0o755)
 
     def test_directory_descriptor_closes_on_body_failure(self):
         descriptor = -1

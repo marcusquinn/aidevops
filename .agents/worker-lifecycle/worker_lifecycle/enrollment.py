@@ -4,20 +4,17 @@ The marker identifies a protocol generation, not all writers or a deletion right
 Copied metadata and inode reuse outside this protocol are not excluded by it.
 """
 
-import errno
-import grp
 import json
 import os
 from pathlib import Path
-import pwd
 import shutil
 import stat
 import subprocess  # nosec B404 # read-only Git query using explicit argv, never a shell
-import sys
 from uuid import UUID, uuid4, uuid5
 
 from .admission import AdmissionClosed, AdmissionRegistry
 from .directory_handle import DirectoryHandle
+from .filesystem import no_extended_access_acl, user_private_group
 from .storage import LifecycleRegistry, StoreConflict, encode, identifier
 
 
@@ -25,39 +22,12 @@ MARKER = "aidevops-generation.json"
 
 
 def _user_private_group(gid: int) -> bool:
-    """True when gid is the owner's primary group and no other account is in it.
-
-    Git creates admin directories under the process umask; umask 002 with
-    user-private groups (the Ubuntu default) yields group-writable directories
-    that only the owner can write. Shared or unknown groups stay untrusted.
-    """
-    try:
-        owner = pwd.getpwuid(os.getuid())
-        group = grp.getgrgid(gid)
-    except KeyError:
-        return False
-    if gid != owner.pw_gid or any(member != owner.pw_name for member in group.gr_mem):
-        return False
-    return all(entry.pw_gid != gid or entry.pw_uid == owner.pw_uid for entry in pwd.getpwall())
+    """Git admin directories follow the process umask; see filesystem helper."""
+    return user_private_group(gid)
 
 
 def _no_extended_access_acl(directory: Path) -> bool:
-    """Allow Linux's private-group exception only without an access ACL.
-
-    With a POSIX ACL, group mode bits describe the mask, not just the owning
-    group's rights. Reject all extended access ACLs rather than trusting named
-    entries. Other platforms retain the original no-group-write restriction.
-    """
-    if sys.platform != "linux":
-        return False
-    try:
-        os.getxattr(directory, "system.posix_acl_access")
-    except OSError as error:
-        # Only a supported query reporting an absent ACL qualifies. ENOTSUP
-        # can hide another ACL model (e.g. NFSv4), not prove the absence of ACLs.
-        # Fail closed even on ACL-less filesystems rather than guess their model.
-        return error.errno == errno.ENODATA
-    return False
+    return no_extended_access_acl(directory)
 
 
 def _git_directory(path: Path) -> Path:

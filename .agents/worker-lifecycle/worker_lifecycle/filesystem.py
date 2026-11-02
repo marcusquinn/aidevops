@@ -1,16 +1,24 @@
 """Read-only POSIX path checks and controlled local diagnostic fields.
 
-Same-UID processes and administrators remain trusted. Extended ACL models that
-grant access beyond mode bits are not evaluated. Never chmod or create paths.
+Same-UID processes and administrators remain trusted. Group write is accepted
+only where no other principal can use it: the owner's user-private group, or
+below an owned directory that other principals cannot search. Both exceptions
+require a Linux directory without an extended access ACL; otherwise extended
+ACL models are not evaluated. Other write is never accepted. Never chmod or
+create paths.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+import errno
+import grp
 import os
 from pathlib import Path
+import pwd
 import stat
+import sys
 
 
 class FilesystemValidationError(ValueError):
@@ -36,15 +44,71 @@ def filesystem_error_details(error: FilesystemValidationError) -> dict[str, obje
     return details
 
 
-def _check_directory(descriptor: int, path: Path, owned_root: Path | None) -> None:
+def user_private_group(gid: int) -> bool:
+    """True when gid is the owner's primary group and no other account is in it.
+
+    umask 002 with user-private groups (the Ubuntu/Debian `USERGROUPS_ENAB`
+    default) yields group-writable directories that only the owner can write.
+    Shared or unknown groups stay untrusted.
+    """
+    try:
+        owner = pwd.getpwuid(os.getuid())
+        group = grp.getgrgid(gid)
+    except KeyError:
+        return False
+    if gid != owner.pw_gid or any(member != owner.pw_name for member in group.gr_mem):
+        return False
+    return all(entry.pw_gid != gid or entry.pw_uid == owner.pw_uid for entry in pwd.getpwall())
+
+
+def no_extended_access_acl(directory: Path | int) -> bool:
+    """Allow mode-bit exceptions only without a Linux access ACL.
+
+    With a POSIX ACL, group mode bits describe the mask, not just the owning
+    group's rights. Reject all extended access ACLs rather than trusting named
+    entries. Other platforms retain the original no-group-write restriction.
+    """
+    if sys.platform != "linux":
+        return False
+    try:
+        os.getxattr(directory, "system.posix_acl_access")
+    except OSError as error:
+        # Only a supported query reporting an absent ACL qualifies. ENOTSUP
+        # can hide another ACL model (e.g. NFSv4), not prove the absence of ACLs.
+        # Fail closed even on ACL-less filesystems rather than guess their model.
+        return error.errno == errno.ENODATA
+    return False
+
+
+def _seals_descendants(descriptor: int, info: os.stat_result) -> bool:
+    """An owned directory nobody else can search hides its descendants' group bits."""
+    return (info.st_uid == os.getuid() and not info.st_mode & 0o011
+            and no_extended_access_acl(descriptor))
+
+
+def _check_directory(
+    descriptor: int, path: Path, owned_root: Path | None, sealed: bool = False,
+) -> bool:
+    """Validate one chain component; return whether it seals later components."""
     info = os.fstat(descriptor)
     inside = owned_root is not None and path.is_relative_to(owned_root)
     owners = (os.getuid(),) if inside else (0, os.getuid())
     if info.st_uid not in owners:
         raise FilesystemValidationError("filesystem-path-wrong-owner", path)
     sticky_ancestor = not inside and bool(info.st_mode & stat.S_ISVTX)
-    if info.st_mode & 0o022 and not sticky_ancestor:
-        raise FilesystemValidationError("filesystem-path-externally-writable", path)
+    if not sticky_ancestor:
+        if info.st_mode & 0o002:
+            raise FilesystemValidationError("filesystem-path-externally-writable", path)
+        if info.st_mode & 0o020 and not _group_write_is_private(descriptor, info, sealed):
+            raise FilesystemValidationError("filesystem-path-externally-writable", path)
+    return sealed or _seals_descendants(descriptor, info)
+
+
+def _group_write_is_private(descriptor: int, info: os.stat_result, sealed: bool) -> bool:
+    if sealed:
+        return True
+    return (info.st_uid == os.getuid() and user_private_group(info.st_gid)
+            and no_extended_access_acl(descriptor))
 
 
 def _check_path_scope(path: Path, owned_root: Path | None) -> None:
@@ -61,16 +125,18 @@ def checked_directory(path: Path, *, owned_root: Path | None = None) -> Iterator
     """Open and check the full chain, yielding its final directory descriptor.
 
     Ancestors allow root/current-user ownership and sticky system temp paths.
-    At/below owned_root require current-user ownership and no external writes.
+    At/below owned_root require current-user ownership and no external writes;
+    group write counts as private only under the module's two exceptions.
     Preserve OSError subclasses, notably FileNotFoundError used by initialization.
     """
     _check_path_scope(path, owned_root)
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     current = Path(path.anchor)
     descriptor = os.open(current, flags)
+    sealed = False
     try:
         for component in (*path.parts[1:], None):
-            _check_directory(descriptor, current, owned_root)
+            sealed = _check_directory(descriptor, current, owned_root, sealed)
             if component is None:
                 break
             current = current / component

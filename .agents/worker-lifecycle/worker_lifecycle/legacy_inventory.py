@@ -44,15 +44,14 @@ def advance(store, path):
 
 
 def inventory(connection):
-    """Merge historical aliases before indexing their owners and admissions."""
+    """Group historical generations by path, including missing directories."""
     paths: dict[str, dict] = {}
     for row in connection.execute(
         "SELECT g.path,g.generation_id,r.run_id,r.identity FROM generations g "
         "LEFT JOIN bindings b USING(generation_id) LEFT JOIN runs r USING(run_id)"
     ):
-        canonical_path = str(Path(row["path"]).resolve())
-        item = paths.setdefault(canonical_path, {
-            "path": canonical_path, "generations": set(), "runs": {}, "last_event": 0,
+        item = paths.setdefault(row["path"], {
+            "path": row["path"], "generations": set(), "runs": {}, "last_event": 0,
             "modern": False, "unbound": False,
         })
         item["generations"].add(row["generation_id"])
@@ -79,16 +78,16 @@ def inventory(connection):
     return sorted(paths.values(), key=lambda item: (item["last_event"], item["path"]))
 
 
-def require_ended(item, adapter, *, operator_confirmed=False):
+def require_ended(item, adapter):
+    if not item["runs"] or item["unbound"]:
+        raise ValueError("no-recorded-processes")
     for value in item["runs"].values():
         observed = adapter.observe(ProcessIdentity.from_dict(value))
         if observed.status != "ended":
             raise ValueError("process-" + observed.status)
-    if not operator_confirmed and (not item["runs"] or item["unbound"]):
-        raise ValueError("no-recorded-processes")
 
 
-def inspect(item, repositories, adapter, now, options):
+def inspect(item, repositories, adapter, now, min_age):
     """Age selects candidates; native identities are rechecked, never PID alone."""
     path = Path(item["path"])
     if item["modern"]:
@@ -110,17 +109,10 @@ def inspect(item, repositories, adapter, now, options):
     if (admin / "locked").exists():
         raise ValueError("git-worktree-locked")
     latest = max(item["last_event"], path.stat().st_mtime,
-                 (admin / "HEAD").stat().st_mtime)
-    try:
-        latest = max(latest, (admin / "index").stat().st_mtime)
-    except FileNotFoundError:
-        # Git permits an absent index, for example after add --no-checkout.
-        # Archive verification still validates the actual index/working state.
-        pass
-    if now - latest < options.min_age:
+                 (admin / "HEAD").stat().st_mtime, (admin / "index").stat().st_mtime)
+    if now - latest < min_age:
         raise ValueError("too-recent")
-    require_ended(item, adapter,
-                  operator_confirmed=item["path"] in options.confirmed_paths)
+    require_ended(item, adapter)
     return {"source": str(path), "directory": _id(path), "admin": str(admin),
             "admin_identity": _id(admin), "common": common,
             "generations": sorted(item["generations"]), "runs": item["runs"],
