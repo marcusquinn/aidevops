@@ -411,6 +411,17 @@ test("admits tools without an inherited runtime identity (GH#36430)", async () =
       "--command", "git -C ~/repo status"], home).status, "not-applicable");
     assert.deepEqual(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x",
       "--command", "git -C ~/missing status"], home), { status: "unavailable", reason: "git-target-unavailable" });
+    // Quoted tildes, exec argv and `--git-dir=~/x` reach Git literally; admission must not expand them.
+    const literal = { status: "unavailable", reason: "git-target-unavailable" };
+    for (const declared of [
+      ["--command", "git -C '~/repo' status"],
+      ["--command", 'git -C "~/repo" status'],
+      ["--argv-json", JSON.stringify(["git", "-C", "~/repo", "status"])],
+      ["--command", "git --git-dir=~/repo/.git status"],
+    ]) {
+      assert.deepEqual(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x",
+        ...declared], home), literal, declared.join(" "));
+    }
   } finally {
     runtimeKeys.forEach((key, index) => {
       if (saved[index] === undefined) delete process.env[key];
