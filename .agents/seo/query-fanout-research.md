@@ -59,6 +59,52 @@ Predict stages before content work: product-detail branches → stage 2; trust/r
 - Pages should match `site:yourdomain.com [category] [feature] [year]` patterns
 - Third-party branches need current review-platform profiles with canonical facts matching the primary site
 
+## Observed Fan-Out Capture (ChatGPT)
+
+Use observed captures to corroborate modeled branches (steps 3 and 5) and to
+supply the retrieval denominator for selection rate in
+`ai-search-kpi-template.md`. The ChatGPT web app loads each conversation as JSON
+from an internal, undocumented endpoint (`/backend-api/conversation/{id}`).
+Message metadata in a web-search conversation holds three layers:
+
+| Field | Contains | Use |
+|-------|----------|-----|
+| `search_model_queries` | Queries the model issued, grouped by `working_turn_id` | Observed sub-queries to compare with modeled branches |
+| `search_result_groups` | Every retrieved result: title, URL, snippet, attribution, publication date | Retrieval denominator; the snippet text the model read |
+| `content_references` | URLs cited in the answer | Citation numerator (match retrieved URLs after normalization) |
+
+Capture and analysis rules:
+
+- **Manual, own-account capture only** — read the response in browser DevTools
+  or with a reviewed client-side userscript from your signed-in session. Do not
+  script requests against the endpoint or share session tokens. The endpoint and
+  field names are unofficial; re-check them before each capture batch.
+- **Turn, not query, attribution** — one search turn can issue several queries
+  and return one merged result pool. Never attribute a result to a specific
+  query; report results per turn alongside that turn's query set.
+- **Active branch only** — conversations are a tree (`mapping` plus
+  `current_node`); regenerated or edited replies leave off-branch results.
+  Count the active branch by default and flag any regenerated results you keep.
+- **Citation is a proxy for use** — the data has no separate "read" signal.
+- **Source-type mix** — bucket retrieved domains (owned, review platform,
+  directory, maps, Reddit, YouTube, other social) and report retrieval and
+  citation share per bucket. A high third-party share means stage 3 validation
+  drives the category, so listings and profiles may matter more than new pages.
+- **Snippet review** — the retrieved snippet for your own pages is the text the
+  model worked with; weak snippets usually trace to weak page intros or meta
+  descriptions (see `sro-grounding.md`).
+- **Sample, don't anecdote** — results vary by account, location, time, and
+  model routing. Record the model slug and capture date, and repeat across the
+  prompt cohort before drawing conclusions.
+- **Phrase frequency is a hypothesis** — terms that over-index in cited versus
+  uncited snippets are small-sample correlation; use them to choose copy tests,
+  never as a KPI.
+- **Referral tagging** — note whether cited URLs carry `utm_source=chatgpt`;
+  it helps match ChatGPT referrals in analytics.
+
+Observed queries show what the model searched, not what users search: they
+corroborate branches but are not demand metrics.
+
 ## Guardrails
 
 - Optimize for thematic completeness, not maximal query count
