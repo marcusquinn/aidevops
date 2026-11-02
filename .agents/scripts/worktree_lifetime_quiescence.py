@@ -34,7 +34,8 @@ def quiescence(launch, worktree_identity=None, census_cache=None):
             for index in range(2):
                 if index:
                     time.sleep(CENSUS_INTERVAL)
-                sample = path_census(worktree_identity["path"])
+                sample = path_census(worktree_identity["path"],
+                                     source_inode=worktree_identity["source_inode"])
                 owner.require(empty_census(sample, before), "same-boot process census active or unavailable")
                 samples.append(sample)
             if census_cache is not None:
