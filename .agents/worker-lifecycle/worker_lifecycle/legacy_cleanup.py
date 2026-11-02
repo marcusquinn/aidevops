@@ -5,9 +5,7 @@ Current-generation cleanup is unchanged. Remove this module after the backlog.
 """
 
 from collections import Counter
-from dataclasses import dataclass
 import json
-import math
 import os
 from pathlib import Path
 import sqlite3
@@ -23,30 +21,11 @@ from .enrollment import _git_directory
 from .filesystem import validate_private_path as _private
 from .legacy_discovery import discover
 from .legacy_inventory import advance, inspect, inventory, queue, require_ended
+from .legacy_options import CleanupOptions
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
 from .runtime import adapter_for, require_ready
-
-
-@dataclass(frozen=True)
-class CleanupOptions:
-    root: Path
-    apply: bool = False
-    min_age: float = 3600
-    limit: int = 25
-    budget: float = 120
-    confirmed_paths: tuple[str, ...] = ()
-
-    def __post_init__(self):
-        if (not math.isfinite(self.min_age) or self.min_age < 0
-                or not 1 <= self.limit <= 1000 or not 0 < self.budget <= 900):
-            raise ValueError("invalid-cleanup-limits")
-        if (len(self.confirmed_paths) > 1000
-                or any(not isinstance(path, str) or not Path(path).is_absolute()
-                       or str(Path(path).resolve()) != path
-                       for path in self.confirmed_paths)):
-            raise ValueError("canonical-confirmed-paths-required")
 
 
 def unrecorded(path):
@@ -182,8 +161,7 @@ def retire(store, item, repositories, adapter, options):
             current = next((row for row in inventory(connection)
                             if row["path"] == item["path"]), unrecorded(item["path"]))
             identity = inspect(
-                current, repositories, adapter, time.time(), options.min_age,
-                operator_confirmed=confirmed,
+                current, repositories, adapter, time.time(), options,
             )
             identity["output_root"] = str(options.root)
             if confirmed:
@@ -225,8 +203,7 @@ def process_item(store, item, repositories, adapter, options):
             outcome["status"] = "already-retired"
         else:
             if not pending:
-                inspect(item, repositories, adapter, time.time(), options.min_age,
-                        operator_confirmed=confirmed)
+                inspect(item, repositories, adapter, time.time(), options)
             eligible = 1
             outcome["status"] = "pending-retry" if pending else "eligible"
             if options.apply:

@@ -87,7 +87,7 @@ def require_ended(item, adapter, *, operator_confirmed=False):
         raise ValueError("no-recorded-processes")
 
 
-def inspect(item, repositories, adapter, now, min_age, *, operator_confirmed=False):
+def inspect(item, repositories, adapter, now, options):
     """Age selects candidates; native identities are rechecked, never PID alone."""
     path = Path(item["path"])
     if item["modern"]:
@@ -116,9 +116,10 @@ def inspect(item, repositories, adapter, now, min_age, *, operator_confirmed=Fal
         # Git permits an absent index, for example after add --no-checkout.
         # Archive verification still validates the actual index/working state.
         pass
-    if now - latest < min_age:
+    if now - latest < options.min_age:
         raise ValueError("too-recent")
-    require_ended(item, adapter, operator_confirmed=operator_confirmed)
+    require_ended(item, adapter,
+                  operator_confirmed=item["path"] in options.confirmed_paths)
     return {"source": str(path), "directory": _id(path), "admin": str(admin),
             "admin_identity": _id(admin), "common": common,
             "generations": sorted(item["generations"]), "runs": item["runs"],
