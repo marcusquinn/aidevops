@@ -163,8 +163,8 @@ class GenerationEnrollment:
         """`inspect`, naming a linked tree whose own Git admin has no marker.
 
         GH#36494: trees created before enrollment, or by producers without a declared
-        runtime, refuse as `not-enrolled`. Missing sources and damaged markers keep
-        their errors.
+        runtime, refuse as `not-enrolled` only without modern enrollment history.
+        Missing sources and damaged markers keep their errors.
         """
         try:
             return self.inspect(path)
@@ -174,8 +174,27 @@ class GenerationEnrollment:
             except (OSError, ValueError, subprocess.SubprocessError):
                 absent = False
             if absent:
+                if self._has_enrollment_history(path):
+                    raise ValueError("generation-marker-missing") from error
                 raise ValueError("not-enrolled") from error
             raise
+
+    def _has_enrollment_history(self, path: Path) -> bool:
+        """Match current admission or modern historical events, not observations."""
+        with self.store.connection() as connection:
+            if connection.execute(
+                "SELECT 1 FROM generation_admissions WHERE path=?", (str(path),),
+            ).fetchone():
+                return True
+            generations = {row["generation_id"] for row in connection.execute(
+                "SELECT generation_id FROM generations WHERE path=?", (str(path),),
+            )}
+            for row in connection.execute("SELECT payload FROM events"):
+                event = json.loads(row["payload"])
+                if (event.get("generation_id") in generations
+                        and event.get("type") in ("open-admission", "admit", "created-worktree")):
+                    return True
+        return False
 
     def _resolve(self, path: Path, *, create: bool, require_open: bool) -> str:
         """Enroll or resolve; never initialize/migrate a DB or reopen a closed gate.

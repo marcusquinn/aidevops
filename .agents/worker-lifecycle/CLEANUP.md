@@ -223,7 +223,10 @@ does not by itself register the creator's writer lifetime.
 
 OpenCode's shell environment, bounded-operation supervisor, native launcher and Pulse script-routine
 runner declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and `AIDEVOPS_LIFECYCLE_SESSION_ID`; the
-routine runner waits for its script, so helper-created trees become retirable once it exits (GH#36494).
+routine runner does so only when its lifecycle prerequisite checks pass and the workload is not
+private. With lifecycle disabled, missing prerequisites or a private workload, it clears those
+declarations; automatic retirement is not expected. Otherwise, the runner waits for its script,
+so helper-created trees become eligible for registry retirement once it exits (GH#36494).
 For a new path, the shared helper invokes `create-worktree`: it exclusively creates the directory, runs native Git,
 captures the owner's start identity and binds it before returning the new tree.
 Only successful controlled creation records a `created-worktree` event. Ordinary
@@ -449,8 +452,12 @@ successful preservation/removal through the actual shell entrypoint.
 currently validated generation and shares the collector's policy and executor. It never adopts an
 unknown tree or scans unrelated candidates. If a source has already moved, use the explicit
 `retire-worktree --generation-id` retry contract instead of guessing from a missing public path.
-A linked tree without an enrollment marker is refused with `detail: not-enrolled`; manual removal
-then prints the operator-confirmed [LEGACY-CLEANUP.md](LEGACY-CLEANUP.md) command (GH#36494).
+A linked tree without an enrollment marker or modern enrollment history is refused with
+`detail: not-enrolled`; manual removal then prints the operator-confirmed
+[LEGACY-CLEANUP.md](LEGACY-CLEANUP.md) command (GH#36494). If modern registry history exists,
+`generation-marker-missing` instead requires metadata/history inspection, not legacy retirement.
+`worktree-locked` requires inspecting Git's lock reason; unlock the listed path only when the
+lock is no longer needed, then retry. Neither refusal overrides the registry checks.
 
 The shared native-removal compatibility entrypoint, manual `worktree-helper.sh
 remove`, and the central/temp Pulse removal primitives use this targeted command.

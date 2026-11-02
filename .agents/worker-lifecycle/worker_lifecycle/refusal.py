@@ -66,7 +66,9 @@ _HANDLERS: tuple[tuple[type[Exception], Callable[[Exception], str | None]], ...]
 def refusal_code(error: Exception, operation: str) -> str | None:
     """Stable cause of a creation-path refusal, or None outside creation operations."""
     if operation in RETIREMENT_OPERATIONS:
-        # GH#36494: only code-shaped ValueError text (e.g. `not-enrolled`) is named.
+        # Never expose Git stderr: it may contain private paths or lock reasons.
+        if isinstance(error, subprocess.CalledProcessError):
+            return "worktree-locked" if _git_code(error) == "worktree-locked" else None
         return _value_code(error) if isinstance(error, ValueError) else None
     handler = next((handler for kind, handler in _HANDLERS if isinstance(error, kind)), None)
     if handler is None or operation not in CREATION_OPERATIONS:

@@ -158,6 +158,12 @@ _worker_lifecycle_refusal_next_step() {
 	coverage-gap)
 		printf '[worker-lifecycle] next: enrolled without a registered owner, so the registry cannot prove its writers ended; it stays retained. See worker-lifecycle/CLEANUP.md "Registry-driven cleanup pass".\n' >&2
 		;;
+	generation-marker-missing)
+		printf '[worker-lifecycle] next: registry history records enrollment but the generation marker is missing. Retain the tree and inspect its Git admin metadata and registry history; legacy retirement is not applicable.\n' >&2
+		;;
+	worktree-locked)
+		printf '[worker-lifecycle] next: inspect the Git worktree lock and its reason with git worktree list --porcelain. Only after confirming the lock is no longer needed, use git worktree unlock PATH on the listed path and retry retirement.\n' >&2
+		;;
 	waiting-for-runs)
 		printf '[worker-lifecycle] next: a registered owner is still running or unconfirmed; retry after it exits (Pulse cleanup retries automatically).\n' >&2
 		;;

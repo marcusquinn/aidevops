@@ -15,6 +15,7 @@ from worker_lifecycle.cleanup import cleanup_pass
 from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import MARKER, GenerationEnrollment
 from worker_lifecycle.preservation import _helper
+from worker_lifecycle.refusal import refusal_code
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.storage import LifecycleRegistry, StoreConflict
 
@@ -129,8 +130,9 @@ class RetirementContract(unittest.TestCase):
     def test_git_lock_blocks_retirement_until_unlocked(self):
         self.create()
         self.git("worktree", "lock", str(self.target))
-        with self.assertRaises(subprocess.CalledProcessError):
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
             self.retire()
+        self.assertEqual(refusal_code(caught.exception, "cleanup-worktree"), "worktree-locked")
         self.assertEqual((self.target / "work.txt").read_text(), "unfinished result")
         self.git("worktree", "unlock", str(self.target))
         self.assertEqual(self.retire()["status"], "retired")
@@ -188,8 +190,9 @@ class RetirementContract(unittest.TestCase):
             return native(*arguments)
 
         with patch.object(retirement, "_git", side_effect=locked_private):
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
                 self.retire()
+        self.assertEqual(refusal_code(caught.exception, "cleanup-worktree"), "worktree-locked")
         private = next(self.root.glob(".lifecycle-retire-*/tree"))
         self.assertEqual((private / "work.txt").read_text(), "unfinished result")
         self.assertEqual(len(removed), 1)
