@@ -5,6 +5,7 @@ mode: subagent
 subagents:
   - keywords-standard
   - ecommerce-seo
+  - local-seo
   - keyword-research
   - conversational-search-intent
   - google-search-console
@@ -67,6 +68,7 @@ subagents:
 
 **Subagents** (`seo/` and `services/analytics/`):
 
+- **Local**: `local-seo` (evidence-labelled local SEO, GBP/map pack, citations, service-area/multi-location pages, Apple Business Connect, Bing Places and reinstatement)
 - **Research**: `conversational-search-intent` (user jobs, query forms, provenance, trends) | `keyword-research` (SERP weakness, 17 types, KeywordScore 0-100) | `ranking-opportunities` (quick wins, striking distance, cannibalization) | `query-fanout-research` (thematic fan-out) | `keyword-mapper` (placement/density) | `domain-research` | `domain-opportunities` (ranked local auction evidence)
 - **Data providers**: `google-search-console` (queries, performance, index) | `dataforseo` (SERP, keywords, backlinks, on-page REST API) | `seo-utils` (SEO Utils desktop app: local rank trackers, GSC history, GA4, GMB grids, LLM visibility, log analysis via on-demand MCP) | `serper` (Google Search API) | `serpapi` (multi-engine SERP API) | `ahrefs` (backlinks, DR, REST API v3) | `semrush` (domain analytics, competitor research)
 - **Analytics**: `google-analytics` (GA4 reporting) | `analytics-tracking` (GA4 setup, events, UTM, attribution)
