@@ -24,7 +24,7 @@ outputs `PARTIAL` with the missing inputs, coverage, and safe next action.
 - **Suggested schedule:** `repeat:weekly(mon@07:00)` (the project chooses the actual schedule in `TODO.md`)
 - **Targets:** supplied by the routine entry or a private targets file — never embedded here
 - **Evidence source:** matching stored SEO Utils GMB-grid data first; otherwise the approved DataForSEO Maps grid recipe. Record all metadata required by `seo/seo-utils.md`.
-- **Output:** `~/.aidevops/.agent-workspace/work/seo-data/{domain}/local/geogrid/<date>.md` with matching-geometry comparisons only, ARP, ATRP, SoLV, found rate, cutoff, and limitations.
+- **Output:** `~/.aidevops/.agent-workspace/work/seo-data/{domain}/local/geogrid/{location-key}/<date>/{run-key}.md` with matching-geometry comparisons only, ARP, ATRP, SoLV, found rate, cutoff, and limitations. Use a stable, filesystem-safe location key from the routine entry or private targets file. Use a filesystem-safe unique run key (UTC timestamp plus a unique suffix), retain both keys in the output metadata, and never overwrite an existing snapshot, including on same-day reruns.
 - **Approval:** read-only; any external lookup needs its exact bounded cost and approval before collection.
 - **Failure handling:** return `PARTIAL` with unavailable dimensions or data-source access; do not retry paid lookups automatically.
 - **Do not:** compare changed query, business ID, grid geometry, platform, device, language, cutoff, or metric definition as a trend; describe sampled grid points as customers or audience share.
