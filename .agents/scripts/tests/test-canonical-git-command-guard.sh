@@ -395,6 +395,80 @@ fi
 git init --bare -q "$SNAPSHOT_REPO"
 assert_allowed "allows an isolated snapshot repository to index a linked worktree" "$REPO" \
 	"git --git-dir='$SNAPSHOT_REPO' --work-tree='$LINKED' add --all --sparse"
+
+# GH#36442: OpenCode snapshots write private metadata, not the canonical index.
+export XDG_DATA_HOME="${TEST_ROOT}/data"
+OPENCODE_SNAPSHOT="${XDG_DATA_HOME}/opencode/snapshot/project"
+mkdir -p "$OPENCODE_SNAPSHOT"
+git init --bare -q "$OPENCODE_SNAPSHOT"
+for SNAPSHOT_COMMAND in "add ." "add --all --sparse" "write-tree" "gc --prune=7.days" "prune"; do
+	assert_allowed "allows private OpenCode snapshot $SNAPSHOT_COMMAND" "$REPO" \
+		"git --git-dir '$OPENCODE_SNAPSHOT' --work-tree '$REPO' $SNAPSHOT_COMMAND"
+done
+assert_allowed "allows OpenCode snapshot equals options and safe config" "$REPO" \
+	"git -c core.autocrlf=false --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+assert_blocked "blocks snapshot outside OpenCode storage" \
+	"git --git-dir='$SNAPSHOT_REPO' --work-tree='$REPO' add ."
+assert_blocked "blocks canonical git-dir snapshot impersonation" \
+	"git --git-dir='$REPO/.git' --work-tree='$REPO' add ."
+assert_blocked "blocks snapshot checkout mutation" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' read-tree -mu HEAD"
+assert_blocked "blocks snapshot add renormalization" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add --renormalize ."
+assert_blocked "blocks snapshot config redirection" \
+	"git -c core.worktree='$REPO' --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+ln -s "$REPO/.git" "${XDG_DATA_HOME}/opencode/snapshot/canonical-alias"
+assert_blocked "blocks snapshot symlink to canonical metadata" \
+	"git --git-dir='${XDG_DATA_HOME}/opencode/snapshot/canonical-alias' --work-tree='$REPO' add ."
+LINKED_SNAPSHOT_GIT_DIR=$(git -C "$LINKED" rev-parse --path-format=absolute --git-dir)
+ln -s "$LINKED_SNAPSHOT_GIT_DIR" "${XDG_DATA_HOME}/opencode/snapshot/linked-alias"
+assert_blocked "blocks snapshot symlink to linked metadata" \
+	"git --git-dir='${XDG_DATA_HOME}/opencode/snapshot/linked-alias' --work-tree='$REPO' add ."
+ln -s "$REPO/.git/index" "$OPENCODE_SNAPSHOT/index"
+assert_blocked "blocks snapshot index symlink to canonical index" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+rm "$OPENCODE_SNAPSHOT/index"
+ln "$REPO/.git/index" "$OPENCODE_SNAPSHOT/index"
+assert_blocked "blocks snapshot hardlink to canonical index" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+rm "$OPENCODE_SNAPSHOT/index"
+ln -s "$REPO/.git/objects" "$OPENCODE_SNAPSHOT/objects/00"
+assert_blocked "blocks nested snapshot object fanout symlink" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+rm "$OPENCODE_SNAPSHOT/objects/00"
+rmdir "$OPENCODE_SNAPSHOT/objects/pack"
+ln -s "$REPO/.git/objects/pack" "$OPENCODE_SNAPSHOT/objects/pack"
+assert_blocked "blocks nested snapshot pack symlink" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' gc"
+rm "$OPENCODE_SNAPSHOT/objects/pack"
+mkdir "$OPENCODE_SNAPSHOT/objects/pack"
+mkdir -p "$TEST_ROOT/redirected/opencode"
+ln -s "${XDG_DATA_HOME}/opencode/snapshot" "$TEST_ROOT/redirected/opencode/snapshot"
+XDG_DATA_HOME="$TEST_ROOT/redirected" assert_blocked "blocks redirected snapshot root" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+OTHER_SNAPSHOT_COMMON="${XDG_DATA_HOME}/opencode/snapshot/other-canonical"
+git init -q --separate-git-dir "$OTHER_SNAPSHOT_COMMON" "$TEST_ROOT/other-canonical"
+printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"},{"path":"%s"},{"path":"%s"}]}\n' \
+	"$REPO" "$SEPARATE_REPO" "$MARKED_REPO" "$TEST_ROOT/other-canonical" >"$REPOS_FILE"
+assert_blocked "blocks another registered canonical common dir inside snapshot root" \
+	"git --git-dir='$OTHER_SNAPSHOT_COMMON' --work-tree='$REPO' add ."
+GIT_INDEX_FILE="$REPO/.git/index" assert_blocked "blocks inherited snapshot index override" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+git --git-dir "$OPENCODE_SNAPSHOT" config gc.repackFilter blob:none
+git --git-dir "$OPENCODE_SNAPSHOT" config gc.repackFilterTo "$REPO/.git/objects/pack/export"
+assert_blocked "blocks snapshot GC configured to export packs outside private storage" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' gc"
+git --git-dir "$OPENCODE_SNAPSHOT" config --unset gc.repackFilter
+git --git-dir "$OPENCODE_SNAPSHOT" config --unset gc.repackFilterTo
+CANONICAL_INDEX_BEFORE=$(git hash-object "$REPO/.git/index")
+if (cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" add .) &&
+	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" write-tree) &&
+	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" gc --prune=7.days) &&
+	[[ "$(git hash-object "$REPO/.git/index")" == "$CANONICAL_INDEX_BEFORE" && "$(git -C "$REPO" rev-parse HEAD)" == "$INITIAL_HEAD" ]]; then
+	pass "PATH shim executes snapshot lifecycle without touching canonical index or HEAD"
+else
+	fail "PATH shim executes snapshot lifecycle without touching canonical index or HEAD"
+fi
 assert_allowed "allows canonical linked worktree removal" "$REPO" "git worktree remove --force '$LINKED'"
 assert_allowed "allows canonical linked worktree removal with option terminator" "$REPO" "git worktree remove -f -- '$LINKED'"
 assert_blocked "blocks canonical worktree removal of canonical root" "git worktree remove --force '$REPO'"
@@ -509,6 +583,8 @@ ln -s "$GUARD" "${OLD_BUNDLE}/canonical-git-command-guard.py"
 ln -s "$GUARD" "${NEW_BUNDLE}/canonical-git-command-guard.py"
 ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${OLD_BUNDLE}/canonical_git_policy.py"
 ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${NEW_BUNDLE}/canonical_git_policy.py"
+ln -s "${SCRIPT_DIR}/canonical_git_snapshot.py" "${OLD_BUNDLE}/canonical_git_snapshot.py"
+ln -s "${SCRIPT_DIR}/canonical_git_snapshot.py" "${NEW_BUNDLE}/canonical_git_snapshot.py"
 ln -s "${SCRIPT_DIR}/canonical_git_invocation.py" "${OLD_BUNDLE}/canonical_git_invocation.py"
 ln -s "${SCRIPT_DIR}/canonical_git_invocation.py" "${NEW_BUNDLE}/canonical_git_invocation.py"
 ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${OLD_BUNDLE}/canonical_git_readonly.py"

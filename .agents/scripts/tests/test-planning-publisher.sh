@@ -1046,6 +1046,7 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 		"${SCRIPT_DIR_TEST}/../canonical_git_clone.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_invocation.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_policy.py" \
+		"${SCRIPT_DIR_TEST}/../canonical_git_snapshot.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_readonly.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_ref_queries.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_config.py" \
