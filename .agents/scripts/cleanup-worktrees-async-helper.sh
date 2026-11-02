@@ -233,9 +233,19 @@ _maintain_compact_archives() {
 	local mode="${AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE:-}"
 	local days="${AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS:-14}"
 	local maximum="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE:-20G}"
+	# prune stops itself inside this budget; the outer timeout is only a
+	# backstop. Each verification may import a base graph (GH#36468).
+	local budget="${AIDEVOPS_WORKTREE_ARCHIVE_PRUNE_BUDGET:-540}"
 	local helper="${SCRIPT_DIR}/worktree-archive-helper.sh"
 	local rc=0
 
+	[[ "$budget" =~ ^[1-9][0-9]*$ ]] || budget=540
+	# Dead verification scratch is derived data, not a recovery copy: reclaim
+	# it in every retention mode, including off.
+	if [[ -f "$helper" ]] && declare -F timeout_sec >/dev/null 2>&1; then
+		timeout_sec 60 bash "$helper" sweep-scratch >>"$LOGFILE" 2>&1 ||
+			echo "[cleanup-worktrees-async] verify-scratch sweep failed; retrying next pass" >>"$LOGFILE"
+	fi
 	if [[ -z "$mode" ]] && declare -F config_get >/dev/null 2>&1; then
 		mode=$(config_get "storage.worktree_archive_retention_mode" "dry-run")
 	fi
@@ -250,8 +260,8 @@ _maintain_compact_archives() {
 		echo "[cleanup-worktrees-async] compact-retention helper or bounded runner unavailable; skipping" >>"$LOGFILE"
 		return 0
 	fi
-	timeout_sec 120 bash "$helper" prune --older-than "${days}d" \
-		--max-total-size "$maximum" "--${mode}" >>"$LOGFILE" 2>&1 || rc=$?
+	timeout_sec $((budget + 60)) bash "$helper" prune --older-than "${days}d" \
+		--max-total-size "$maximum" "--${mode}" --budget-seconds "$budget" >>"$LOGFILE" 2>&1 || rc=$?
 	printf '[cleanup-worktrees-async] compact-retention mode=%s rc=%s\n' "$mode" "$rc" >>"$LOGFILE"
 	return 0
 }

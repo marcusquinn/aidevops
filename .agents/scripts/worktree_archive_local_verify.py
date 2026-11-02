@@ -8,9 +8,9 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
 
 from worktree_archive_git import git
+from worktree_archive_scratch import LOCAL_PREFIX, verification_scratch
 from worktree_archive_auto_merge import verify_auto_merge
 from worktree_archive_merge_objects import merge_roots, verify_merge_objects
 
@@ -89,10 +89,9 @@ def verify_local(archive, manifest):
     common = Path(manifest['source_git_common_dir'])
     objects = base_objects(common)
     git(common, 'cat-file', '-e', base + '^{commit}')
-    with tempfile.TemporaryDirectory(
-        prefix='.verify-local-', dir=archive.parent,
-    ) as name:
-        scratch = Path(name)
+    # Same liveness-fenced scratch as full verification (GH#36468): a killed
+    # caller cannot leave an unreclaimable copy beside the archive.
+    with verification_scratch(archive, LOCAL_PREFIX) as scratch:
         object_format = 'sha256' if len(head) == 64 else 'sha1'
         git(scratch, 'init', '--bare', '--quiet', '--object-format=' + object_format)
         (scratch / 'objects/info/alternates').write_bytes(os.fsencode(objects) + b'\n')

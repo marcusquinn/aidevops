@@ -3,14 +3,13 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Select and validate existing archive dependencies without changing Git state."""
 
-import hashlib
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 from worktree_recovery_timing import timed
-from worktree_archive_git import MISSING_PROMISOR_BASE, RETAINED_VERIFICATION_SCRATCH
+from worktree_archive_git import MISSING_PROMISOR_BASE
+from worktree_archive_scratch import verification_scratch
 
 from worktree_archive_administration import (
     auto_merge_oid, fetch_head_roots, git, load_administration,
@@ -117,24 +116,16 @@ def verify_object_graph(archive, scratch, manifest):
 
 
 def verify_in_scratch(archive, manifest):
-    # The exclusive directory is also the per-archive retry fence. A failure or
-    # cancellation leaves it in place; never reuse or retire prior evidence.
-    archive = archive.resolve(strict=True)
-    key = hashlib.sha256(os.fsencode(archive)).hexdigest()
-    scratch = archive.parent / ('.archive-verify-' + key)
-    try:
-        scratch.mkdir(mode=0o700)
-    except FileExistsError as error:
-        raise ValueError(RETAINED_VERIFICATION_SCRATCH) from error
-    created = scratch.lstat()
-    verify_object_graph(archive, scratch, manifest)
-    observed = scratch.lstat()
-    if (not stat.S_ISDIR(observed.st_mode)
-            or (observed.st_dev, observed.st_ino) != (created.st_dev, created.st_ino)):
-        raise ValueError('archive-verify:scratch-identity-changed; evidence retained')
-    if not shutil.rmtree.avoids_symlink_attacks:
-        raise ValueError('archive-verify:safe-cleanup-unavailable; evidence retained')
-    shutil.rmtree(scratch)
+    # Each attempt owns a private, flock-held scratch (GH#36468). Success and
+    # cancellation remove it; a failure keeps bounded evidence; dead scratch
+    # from killed attempts is reclaimed, so a retry is never blocked.
+    with verification_scratch(archive) as scratch:
+        created = scratch.lstat()
+        verify_object_graph(archive, scratch, manifest)
+        observed = scratch.lstat()
+        if (not stat.S_ISDIR(observed.st_mode)
+                or (observed.st_dev, observed.st_ino) != (created.st_dev, created.st_ino)):
+            raise ValueError('archive-verify:scratch-identity-changed; evidence retained')
 
 
 @timed("git-object-preparation")

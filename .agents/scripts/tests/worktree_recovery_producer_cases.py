@@ -8,10 +8,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import sqlite3
 import stat
 import subprocess
 import sys
+import time
 from unittest.mock import patch
 
 import worktree_recovery_producer as producer_engine
@@ -226,14 +228,18 @@ class ProducerCases:
         scratch = list(archive.parent.glob('.archive-verify-*'))
         self.assertEqual(len(scratch), 1)
         self.assertEqual(stat.S_IMODE(scratch[0].stat().st_mode), 0o700)
+        self.assertIn(MISSING_PROMISOR_BASE.encode(),
+                      (scratch[0] / '.aidevops-verify-failed').read_bytes())
         # The existing producer records each attempted restoration, but cannot
-        # advance its source/removal receipt or overwrite verification evidence.
+        # advance its source/removal receipt. A retry is never blocked; its
+        # newer evidence replaces the old copy (GH#36468).
         failed = self.producer('verify', archive, check=False)
         self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(MISSING_PROMISOR_BASE.encode(), failed.stderr)
         retried = json.loads(journal.read_text())
         for key in ('phase', 'source', 'source_removal_outcome', 'manifest_sha256'):
             self.assertEqual(retried[key], record[key])
-        self.assertEqual(list(archive.parent.glob('.archive-verify-*')), scratch)
+        self.assertEqual(len(list(archive.parent.glob('.archive-verify-*'))), 1)
         self.assertEqual(self.managed_record(managed), sealed)
 
     def test_incomplete_recovery_origin_reports_missing_object_through_producer(self):
@@ -444,53 +450,115 @@ class ProducerCases:
         retained = list(archive.parent.glob('.archive-verify-*'))
         self.assertEqual(len(retained), 1)
         self.assertEqual(stat.S_IMODE(retained[0].stat().st_mode), 0o700)
-        evidence = {path: path.read_bytes() for path in retained[0].rglob('*') if path.is_file()}
+        marker = (retained[0] / '.aidevops-verify-failed').read_bytes()
+        self.assertIn(b'stderr=pack-objects-died/allocation-failed;', marker)
+        self.assertNotIn(b'private source', marker)
         for _attempt in range(2):
+            # Retries re-run verification (GH#36468); bounded evidence keeps
+            # only the newest failure copy for this archive.
             retried = self.producer('verify', archive, check=False)
             self.assertNotEqual(retried.returncode, 0)
-            self.assertIn(b'archive-verify:retained-scratch;', retried.stderr)
-            self.assertEqual(list(archive.parent.glob('.archive-verify-*')), retained)
-            self.assertEqual({path: path.read_bytes() for path in retained[0].rglob('*')
-                              if path.is_file()}, evidence)
+            self.assertIn(b'stderr=pack-objects-died/allocation-failed;', retried.stderr)
+            self.assertEqual(len(list(archive.parent.glob('.archive-verify-*'))), 1)
             self.assertEqual((archive / 'manifest.json').read_bytes(), manifest)
             self.assertEqual(self.snapshot(self.work), before)
             record = json.loads(journal.read_text())
             self.assertEqual(record['phase'], 'archived')
             self.assertEqual(record['source_removal_outcome'], 'pending')
 
-    def test_verification_scratch_is_exclusive_and_archive_specific(self):
+    def test_verification_scratch_is_bounded_and_never_blocks_retries(self):
+        import fcntl
         import worktree_archive_objects as objects
+        import worktree_archive_scratch as scratch_engine
         first, second = self.root / 'first-archive', self.root / 'second-archive'
         first.mkdir()
         second.mkdir()
 
+        def scratches():
+            return sorted(self.root.glob('.archive-verify-*'))
+
         def interrupted(archive, scratch, manifest):
-            (scratch / 'evidence').write_bytes(b'keep interrupted verification')
+            (scratch / 'evidence').write_bytes(b'interrupted verification')
             raise KeyboardInterrupt()
 
-        with patch.object(objects, 'verify_object_graph', side_effect=interrupted) as graph:
+        # Cancellation is the caller's decision, not evidence: always removed.
+        with patch.object(objects, 'verify_object_graph', side_effect=interrupted):
             with self.assertRaises(KeyboardInterrupt):
                 objects.verify_in_scratch(first, {})
-            retained = list(self.root.glob('.archive-verify-*'))
-            with self.assertRaisesRegex(ValueError, 'archive-verify:retained-scratch'):
-                objects.verify_in_scratch(first, {})
-            graph.assert_called_once()
-        with patch.object(objects, 'verify_object_graph') as graph:
-            objects.verify_in_scratch(second, {})
-            objects.verify_in_scratch(second, {})
+        self.assertEqual(scratches(), [])
+        # A real failure keeps one marked copy; a retry still runs.
+        with patch.object(objects, 'verify_object_graph',
+                          side_effect=ValueError('fixture:failure')) as graph:
+            for _attempt in range(2):
+                with self.assertRaisesRegex(ValueError, 'fixture:failure'):
+                    objects.verify_in_scratch(first, {})
             self.assertEqual(graph.call_count, 2)
-        self.assertEqual(list(self.root.glob('.archive-verify-*')), retained)
-        self.assertEqual((retained[0] / 'evidence').read_bytes(), b'keep interrupted verification')
-        # An existing symlink is a refusal, not permission to follow or delete it.
-        saved = retained[0].with_name('saved-verification-evidence')
-        retained[0].rename(saved)
-        retained[0].symlink_to(saved, target_is_directory=True)
+        retained = scratches()
+        self.assertEqual(len(retained), 1)
+        self.assertEqual((retained[0] / '.aidevops-verify-failed').read_bytes(), b'fixture:failure\n')
+        # Evidence for one archive never affects another; success supersedes it.
         with patch.object(objects, 'verify_object_graph') as graph:
-            with self.assertRaisesRegex(ValueError, 'archive-verify:retained-scratch'):
+            objects.verify_in_scratch(second, {})
+            self.assertEqual(scratches(), retained)
+            objects.verify_in_scratch(first, {})
+            self.assertEqual(graph.call_count, 2)
+        self.assertEqual(scratches(), [])
+        # Disabled evidence retention removes failures too.
+        with patch.dict(os.environ, {'AIDEVOPS_WORKTREE_VERIFY_EVIDENCE_TTL_HOURS': '0'}), \
+                patch.object(objects, 'verify_object_graph', side_effect=ValueError('fixture:failure')):
+            with self.assertRaises(ValueError):
                 objects.verify_in_scratch(first, {})
-            graph.assert_not_called()
-        self.assertTrue(retained[0].is_symlink())
-        self.assertEqual((saved / 'evidence').read_bytes(), b'keep interrupted verification')
+        self.assertEqual(scratches(), [])
+        # SIGKILL leftovers and legacy names are reclaimed once their grace
+        # expires; live (flock-held) scratch and symlinks are never touched.
+        dead = self.root / '.archive-verify-legacy1'
+        fresh = self.root / ('.archive-verify-' + 'a' * 64 + '-fresh')
+        live = self.root / '.archive-verify-live1'
+        for path in (dead, fresh, live):
+            path.mkdir()
+        old = time.time() - scratch_engine.STALE_GRACE_SECONDS - 1
+        for path in (dead, live):
+            os.utime(path, (old, old))
+        outside = self.root / 'outside-evidence'
+        outside.mkdir()
+        link = self.root / '.archive-verify-link1'
+        link.symlink_to(outside, target_is_directory=True)
+        holder = os.open(live, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            fcntl.flock(holder, fcntl.LOCK_EX)
+            self.assertEqual(scratch_engine.sweep(self.root), [dead])
+        finally:
+            os.close(holder)
+        self.assertTrue(fresh.is_dir() and live.is_dir() and link.is_symlink() and outside.is_dir())
+        self.assertEqual(scratch_engine.sweep(self.root), [live])
+
+    def test_terminated_verification_removes_its_scratch(self):
+        archive = self.root / 'terminated-archive'
+        archive.mkdir()
+        ready = self.root / 'verification-started'
+        program = ('import sys, time\n'
+                   'from pathlib import Path\n'
+                   'from unittest.mock import patch\n'
+                   f'sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})\n'
+                   'import worktree_archive_objects as objects\n'
+                   'def slow(archive, scratch, manifest):\n'
+                   f'    Path({str(ready)!r}).touch()\n'
+                   '    time.sleep(60)\n'
+                   'with patch.object(objects, "verify_object_graph", side_effect=slow):\n'
+                   f'    objects.verify_in_scratch(Path({str(archive)!r}), {{}})\n')
+        process = subprocess.Popen([sys.executable, '-c', program])  # nosec B603 # fixed fixture program
+        try:
+            deadline = time.monotonic() + 30
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(ready.exists())
+            self.assertEqual(len(list(self.root.glob('.archive-verify-*'))), 1)
+            process.terminate()
+            self.assertEqual(process.wait(timeout=30), 128 + signal.SIGTERM)
+        finally:
+            if process.poll() is None:
+                process.kill()
+        self.assertEqual(list(self.root.glob('.archive-verify-*')), [])
 
     def test_git_only_capture_contains_commits_and_two_patches_without_verification(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)

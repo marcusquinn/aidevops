@@ -19,8 +19,6 @@ from worktree_archive_base_source import (
 __all__ = ['MISSING_PROMISOR_BASE', 'authorized_base_source']
 
 DEFAULT_TIMEOUT = 60
-RETAINED_VERIFICATION_SCRATCH = ('archive-verify:retained-scratch; prior verification evidence retained; '
-                                 'review required before retry')
 
 
 def git_executable():
@@ -81,7 +79,7 @@ def nested_base_import_failure(stderr):
     final = lines[-1] if lines else ''
     for prefix in ('ValueError: ', 'archive-snapshot: '):
         final = final.removeprefix(prefix)
-    if final in (RETAINED_VERIFICATION_SCRATCH, MISSING_PROMISOR_BASE):
+    if final == MISSING_PROMISOR_BASE:
         return final
     pattern = (r'producer:base-import-failed; stage=base-import; exit=(?:-?[0-9]{1,3}|unknown); '
                r'stderr=(?:pack-objects-died|git-failed)/'
