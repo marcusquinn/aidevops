@@ -1413,6 +1413,11 @@ _cmd_add_use_existing_worktree() {
 		_cmd_add_emit_collision concurrent_worktree "$branch" inspect_existing_task_worktree "$existing_path"
 		return 2
 	fi
+	# A previous creation may have retained this tree after enrollment failed.
+	# Retry before offering reuse; return 2 so cmd_add cannot fall through to creation.
+	# shellcheck source=shared-worktree-create.sh
+	source "${SCRIPT_DIR}/shared-worktree-create.sh" || return 2
+	_worktree_enroll_generation "$existing_path" || return 2
 	echo -e "${YELLOW}Worktree already exists for branch '$branch'${NC}"
 	echo -e "Path: ${BOLD}$existing_path${NC}"
 	echo ""

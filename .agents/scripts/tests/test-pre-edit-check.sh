@@ -662,6 +662,7 @@ test_creation_refusal_without_collision() {
 	TEST_WORKTREE_BASE="$saved_base"
 	if [[ "$exit_code" -eq 2 && "$output" == *"WORKTREE_COLLISION=unreported"* &&
 		"$output" == *"ACTION_REQUIRED=inspect_creation_refusal"* &&
+		"$output" == *"REFUSAL: Worktree base directory refused: configured path is not a directory"* &&
 		"$output" == *"No branch collision was reported"* &&
 		"$output" != *"Inspect the reported branch collision"* ]]; then
 		print_result "creation refusal without collision is not reported as a collision" 0
