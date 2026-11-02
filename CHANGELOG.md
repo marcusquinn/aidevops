@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.114] - 2026-11-02
+
+### Changed
+
+- Maintenance: mark t18859 complete (pr:#36518 completed:2026-11-02) (#36519)
+- Maintenance: sync GitHub issue refs to TODO.md (#36520)
+
+### Fixed
+
+- worker signing probe passes -S so it proves signing (#36521)
+- dedicated-profile CDP launcher for logged-in Brave/Chrome sessions
+
 ## [3.39.113] - 2026-11-02
 
 ### Changed
