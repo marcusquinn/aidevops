@@ -159,6 +159,24 @@ class GenerationEnrollment:
         """
         return self._resolve(path, create=False, require_open=False)
 
+    def inspect_retirement(self, path: Path) -> str:
+        """`inspect`, naming a linked tree whose own Git admin has no marker.
+
+        GH#36494: trees created before enrollment, or by producers without a declared
+        runtime, refuse as `not-enrolled`. Missing sources and damaged markers keep
+        their errors.
+        """
+        try:
+            return self.inspect(path)
+        except FileNotFoundError as error:
+            try:
+                absent = not os.path.lexists(_git_directory(path) / MARKER)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                absent = False
+            if absent:
+                raise ValueError("not-enrolled") from error
+            raise
+
     def _resolve(self, path: Path, *, create: bool, require_open: bool) -> str:
         """Enroll or resolve; never initialize/migrate a DB or reopen a closed gate.
 

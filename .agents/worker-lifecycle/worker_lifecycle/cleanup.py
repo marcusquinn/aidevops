@@ -12,7 +12,7 @@ from uuid import UUID, uuid5
 
 from .absence import reconcile_absence
 from .archive_path import create_archive_root, validate_archive_path
-from .enrollment import MARKER, GenerationEnrollment, _git_directory
+from .enrollment import GenerationEnrollment
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .filesystem import validate_private_path as _private
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
@@ -180,29 +180,6 @@ def _candidate(
     )
 
 
-def _enrollment_marker_absent(path: Path) -> bool:
-    """True only when the linked tree's own Git administration lacks a marker."""
-    try:
-        directory = _git_directory(path)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return False
-    return not os.path.lexists(directory / MARKER)
-
-
-def _inspect_enrolled(store: LifecycleRegistry, path: Path) -> str:
-    """Name an unenrolled linked worktree instead of a bare FileNotFoundError.
-
-    GH#36494: trees created before enrollment, or by producers without a declared
-    runtime, have no marker. Missing sources and damaged markers keep their errors.
-    """
-    try:
-        return GenerationEnrollment(store).inspect(path)
-    except FileNotFoundError as error:
-        if not _enrollment_marker_absent(path):
-            raise
-        raise ValueError("not-enrolled") from error
-
-
 def cleanup_worktree(
     store: LifecycleRegistry, config: Path, root: Path, path: Path,
 ) -> dict[str, object]:
@@ -213,7 +190,7 @@ def cleanup_worktree(
     if not root.is_absolute() or root.resolve() != root:
         raise ValueError("canonical-archive-root-required")
     repositories = _repositories(config)
-    generation = _inspect_enrolled(store, path)
+    generation = GenerationEnrollment(store).inspect_retirement(path)
     create_archive_root(root)
     validate_archive_path(root)
     return _candidate(store, repositories, root, generation, path)
