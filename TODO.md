@@ -1850,6 +1850,18 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18850 fix: bound producer recovery archive retention and skip empty-delta archives #bug ref:GH#36470
 
+- [ ] t18852 Local SEO capability for aidevops (parent roadmap) #feat #parent-task #interactive ref:GH#36480 logged:2026-11-02 -> [todo/tasks/t18852-brief.md]
+
+- [ ] t18853 Local SEO: add evidence-labelled local SEO agent (seo/local-seo.md) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36481 logged:2026-11-02 -> [todo/tasks/t18853-brief.md]
+
+- [ ] t18854 Local SEO: geogrid metric definitions and cost-efficient grid collection (SEO Utils, DataForSEO, SerpApi) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36482 logged:2026-11-02 -> [todo/tasks/t18854-brief.md]
+
+- [ ] t18855 Local SEO: Local Services Ads and local paid search guidance (proposal-only) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36483 logged:2026-11-02 -> [todo/tasks/t18855-brief.md]
+
+- [ ] t18856 Local SEO: recurring monitoring and reporting SOPs (routine-ready, draft-only actions) #auto-dispatch #feat #interactive tier:standard ~2h blocked-by:t18853,t18854 ref:GH#36484 logged:2026-11-02 -> [todo/tasks/t18856-brief.md]
+
+- [ ] t18857 add-skill: content review for vendor/affiliate bias and unsupported claims before importing external skills #feat #interactive tier:standard ~35m ref:GH#36485 logged:2026-11-02 -> [todo/tasks/t18857-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
