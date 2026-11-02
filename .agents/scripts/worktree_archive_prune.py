@@ -93,21 +93,13 @@ def inspect(root, directory):
     return created, size, directory, identity(directory), raw
 
 
-def policy_unchanged(directory, expected_pin):
-    """Compact archives must stay unpinned; producer archives keep their exact pin."""
-    pin = directory / PIN
-    if expected_pin is None:
-        return not os.path.lexists(pin)
-    return (not pin.is_symlink() and pin.is_file() and pin.read_bytes() == expected_pin
-            and not os.path.lexists(directory / ".keep"))
-
-
 def remove_verified(root, root_identity, entry, helper):
     """Anchor removal to no-follow directory descriptors, not mutable ancestor paths."""
     if not getattr(shutil.rmtree, "avoids_symlink_attacks", False):
         raise ValueError("safe directory removal unavailable on this platform")
     directory, expected_identity, expected_manifest = entry[2:5]
-    expected_pin = entry[5] if len(entry) > 5 else None
+    expected_pin = next(iter(entry[5:6]), None)  # producer entries only
+    policy_unchanged = producer_retention.pin_unchanged
     descriptors = []
     original_cwd = os.open(".", os.O_RDONLY)
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -175,10 +167,8 @@ def attempt(target, entry):
     """Verify (and in apply mode remove) one candidate; True only on success."""
     ensure_budget()
     try:
-        if target.mode == "apply" and len(entry) > 5:
-            producer_retention.remove(target, entry, remove_verified)
-        elif target.mode == "apply":
-            remove_verified(target.root, target.identity, entry, target.helper)
+        if target.mode == "apply":
+            producer_retention.remove_entry(target, entry, remove_verified)
         else:
             verify(target.helper, entry[2])
     except RETENTION_ERRORS as error:

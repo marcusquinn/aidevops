@@ -26,48 +26,78 @@ EMPTY_ARTIFACTS = {"diff.patch", "staged.patch", "untracked-files.txt"}
 DEFAULT_TTL_DAYS = 30
 
 
+def empty_artifact(item):
+    return isinstance(item, dict) and item.get("size") == 0 and item.get("name") in EMPTY_ARTIFACTS
+
+
+def empty_artifacts(artifacts):
+    if not isinstance(artifacts, list) or not artifacts:
+        return False
+    return all(map(empty_artifact, artifacts))
+
+
+def head_at_base(manifest):
+    head = manifest.get("head_sha")
+    return isinstance(head, str) and len(head) >= 40 and head == manifest.get("base_sha")
+
+
 def empty_delta(manifest):
     """True only when the manifest itself proves there is nothing to restore."""
-    artifacts = manifest.get("artifacts")
-    head = manifest.get("head_sha")
-    return (manifest.get("capture_policy") == "git-only"
-            and manifest.get("dirty_state") == "clean"
-            and isinstance(head, str) and len(head) >= 40 and head == manifest.get("base_sha")
-            and isinstance(artifacts, list) and bool(artifacts)
-            and all(isinstance(item, dict) and item.get("size") == 0
-                    and item.get("name") in EMPTY_ARTIFACTS for item in artifacts))
+    checks = (manifest.get("capture_policy") == "git-only",
+              manifest.get("dirty_state") == "clean",
+              head_at_base(manifest),
+              empty_artifacts(manifest.get("artifacts")))
+    return all(checks)
 
 
-def eligibility(directory, record, manifest, created, now, ttl_days):
+def evidence_complete(directory, record):
+    """Completed capture, source and registration gone, no explicit keep.
+
+    "pending" journals whose source was retired by another path carry the same
+    evidence check(removed=True) records: path and registration are gone.
+    """
+    git_only = record["source"].get("capture_policy") == "git-only"
+    source = record["source"]["identity"]
+    checks = (record.get("phase") == ("archived" if git_only else "verified"),
+              record.get("source_removal_outcome") in ("removed", "pending"),
+              not os.path.lexists(source["path"]),
+              not os.path.lexists(source["admin"]),
+              not os.path.lexists(directory / KEEP))
+    return all(checks)
+
+
+def eligibility(directory, record, manifest, expired):
     """Return the expiry reason, or None while the archive must be kept."""
     if record.get("archive") != str(directory) or record.get("manifest_sha256") != manifest_digest(directory):
         raise ValueError("producer journal does not match archive")
-    git_only = record["source"].get("capture_policy") == "git-only"
-    if record.get("phase") != ("archived" if git_only else "verified"):
-        return None
-    if record.get("source_removal_outcome") not in ("removed", "pending"):
-        return None
-    source = record["source"]["identity"]
-    # "pending" journals whose source was retired by another path carry the
-    # same evidence check(removed=True) records: path and registration gone.
-    if os.path.lexists(source["path"]) or os.path.lexists(source["admin"]):
-        return None
-    if os.path.lexists(directory / KEEP):
+    if not evidence_complete(directory, record):
         return None
     if empty_delta(manifest):
         return "empty-delta"
-    if (now - created).days >= ttl_days:
-        return "ttl"
-    return None
+    return "ttl" if expired else None
+
+
+def pin_unchanged(directory, expected_pin):
+    """Compact archives must stay unpinned; producer archives keep their exact pin."""
+    pin = directory / PIN
+    if expected_pin is None:
+        return not os.path.lexists(pin)
+    checks = (not pin.is_symlink() and pin.is_file() and pin.read_bytes() == expected_pin,
+              not os.path.lexists(directory / KEEP))
+    return all(checks)
+
+
+def reject_aliases(root, directory):
+    for path in (directory, *directory.parents):
+        if path == root:
+            return
+        if path.is_symlink():
+            raise ValueError("symlinked archive path")
 
 
 def inspect(root, directory, now, ttl_days):
     """Return (entry, reason); entry carries the exact pin bytes to re-check."""
-    for path in (directory, *directory.parents):
-        if path == root:
-            break
-        if path.is_symlink():
-            raise ValueError("symlinked archive path")
+    reject_aliases(root, directory)
     pin = directory / PIN
     if pin.is_symlink() or not pin.is_file():
         raise ValueError("producer archive without regular pin")
@@ -82,7 +112,7 @@ def inspect(root, directory, now, ttl_days):
     if created.tzinfo is None or created > now:
         raise ValueError("invalid archive creation time")
     record = load(journal_for_archive(directory), SCHEMA)
-    reason = eligibility(directory, record, manifest, created, now, ttl_days)
+    reason = eligibility(directory, record, manifest, (now - created).days >= ttl_days)
     value = directory.lstat()
     size = sum(path.stat().st_size for path in directory.iterdir())
     entry = (created, size, directory, (value.st_dev, value.st_ino), raw, pin.read_bytes())
@@ -118,8 +148,8 @@ def remove(target, entry, remove_verified):
     with operation_lock(transaction):
         manifest = json.loads(entry[4])
         record = load(journal, SCHEMA)
-        now = datetime.datetime.now(datetime.timezone.utc)
-        if eligibility(directory, record, manifest, entry[0], now, target.producer_ttl) is None:
+        age = datetime.datetime.now(datetime.timezone.utc) - entry[0]
+        if eligibility(directory, record, manifest, age.days >= target.producer_ttl) is None:
             raise ValueError("producer expiry evidence changed")
         remove_verified(target.root, target.identity, entry, target.helper)
         # The archive was the only payload; the journal now describes nothing.
@@ -130,6 +160,14 @@ def remove(target, entry, remove_verified):
             os.rmdir(parent)
         except OSError:
             break
+
+
+def remove_entry(target, entry, remove_verified):
+    """Producer entries carry their pin bytes; compact entries do not."""
+    if len(entry) > 5:
+        remove(target, entry, remove_verified)
+    else:
+        remove_verified(target.root, target.identity, entry, target.helper)
 
 
 def ttl_days(value):
