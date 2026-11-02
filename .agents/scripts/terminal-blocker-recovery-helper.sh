@@ -963,6 +963,20 @@ _tbr_stamp_rearm_check() {
 	return 0
 }
 
+# Snapshot caching cannot suppress time-based infrastructure recovery.
+_tbr_skip_unchanged_entry() {
+	local file="$1" updated_at="$2" reason="$3" mode="$4"
+	local last_updated_at=""
+	[[ "$mode" == rearm && "$reason" != unknown ]] || return 1
+	last_updated_at=$(jq -r '.rearm_checked_updated_at // ""' "$file") || return 1
+	# Cache the remote snapshot, not wall-clock time: a retry arriving during
+	# this check must still be seen next pass. Missing timestamps never skip.
+	[[ -n "$updated_at" && -n "$last_updated_at" && ! "$updated_at" > "$last_updated_at" ]] || return 1
+	terminal_blocker_rearms_on_revision "$reason" && return 1
+	_tbr_rearm_window_due "$file" && return 1
+	return 0
+}
+
 #######################################
 # Re-verify one entry against GitHub. Prints a JSON line when the circuit is
 # still active and unowned; retires the entry when resolved. Returns 0 when
@@ -970,7 +984,7 @@ _tbr_stamp_rearm_check() {
 #######################################
 _tbr_check_entry() {
 	local file="$1"
-	local mode="${2:-}" updated_at="" last_updated_at=""
+	local mode="${2:-}" updated_at=""
 	local repo="" issue="" reason="" opened_at="" key="" intake=""
 	_tbr_entry_registered "$file" || return $?
 	repo=$(jq -r '.repo // ""' "$file" 2>/dev/null) || return 1
@@ -1005,18 +1019,8 @@ _tbr_check_entry() {
 	fi
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
-	if [[ "$mode" == rearm ]]; then
-		updated_at=$(printf '%s' "$issue_json" | jq -r '.updated_at // ""')
-		last_updated_at=$(jq -r '.rearm_checked_updated_at // ""' "$file")
-		# Persist the remote snapshot, not wall-clock time: a retry arriving
-		# during this check must still be seen on the next pass. Missing or
-		# unreadable timestamps never suppress verification. Revision-bound
-		# holds must recheck target/dependency changes independent of issue edits.
-		if [[ -n "$updated_at" && -n "$last_updated_at" && ! "$updated_at" > "$last_updated_at" ]] &&
-			[[ "$reason" != unknown ]] && ! terminal_blocker_rearms_on_revision "$reason" && ! _tbr_rearm_window_due "$file"; then
-			return 1
-		fi
-	fi
+	updated_at=$(printf '%s' "$issue_json" | jq -r '.updated_at // ""')
+	_tbr_skip_unchanged_entry "$file" "$updated_at" "$reason" "$mode" && return 1
 	local comments="" brief="" repo_path=""
 	printf 'blocker-recovery: checking stage=entry_comments repo=%s issue=%s\n' "$repo" "$issue" >&2
 	# GH#35355: keep this runner's own comments whatever association GitHub reports.
