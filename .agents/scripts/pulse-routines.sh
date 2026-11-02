@@ -47,6 +47,10 @@ fi
 # keep the session-detach launcher.
 # shellcheck source=./systemd-scope-launch.sh
 source "${BASH_SOURCE[0]%/*}/systemd-scope-launch.sh" || true
+# Shared headless signing preparation (GH#36491). Non-fatal: without it,
+# script routines keep the inherited signing configuration.
+# shellcheck source=./headless-signing-lib.sh
+source "${BASH_SOURCE[0]%/*}/headless-signing-lib.sh" || true
 _PULSE_ROUTINES_LOADED=1
 _ROUTINE_STATUS_SUCCESS="success"
 _ROUTINE_STATUS_FAILURE="failure"
@@ -622,6 +626,21 @@ _routine_claim_runner_lock() {
 	return 0
 }
 
+# GH#36491: script routines that commit must sign with the dedicated headless
+# key, like workers, not the passphrase-protected interactive global key. Export
+# the key through process-scoped Git config so the child inherits it, and heal a
+# stopped headless agent once. Never blocks the launch: routines that do not
+# commit are unaffected, and committing helpers run their own fail-closed probe.
+_routine_prepare_signing() {
+	local routine_id="$1"
+	local repo_path="$2"
+	declare -F headless_signing_preflight >/dev/null 2>&1 || return 0
+	headless_signing_export_key_env || true
+	headless_signing_preflight "$repo_path" && return 0
+	echo "[pulse-wrapper] routine ${routine_id}: headless commit signing unavailable; committing steps will fail closed (run 'aidevops signing headless-setup' in a terminal)" >>"$LOGFILE"
+	return 0
+}
+
 _routine_run_detached_script() {
 	local routine_id="$1"
 	local script_path="$2"
@@ -638,6 +657,7 @@ _routine_run_detached_script() {
 	_routine_runner_arm_traps "$routine_id" "$started_epoch" "" "$pid_file" "$lock_dir"
 	_routine_update_state "$routine_id" "$_ROUTINE_STATUS_RUNNING"
 	_routine_record_lifecycle "$routine_id" "$_ROUTINE_STATUS_RUNNING" 0
+	_routine_prepare_signing "$routine_id" "$repo_path"
 	# Background + wait so a TERM/INT/HUP trap fires immediately.
 	if [[ "$#" -gt 0 ]]; then
 		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 &
