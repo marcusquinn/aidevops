@@ -5,6 +5,7 @@
 
 import os
 from pathlib import Path
+import stat
 import subprocess  # nosec B404 -- fixed stat invocation, never a shell
 import sys
 import time
@@ -13,20 +14,23 @@ import worktree_lifetime_owner as owner
 
 
 NON_DUMPABLE_DAEMONS = frozenset({"ssh-agent", "gpg-agent", "(sd-pam)",
-                                   "systemd", "sshd", "dbus-daemon"})
+                                "systemd", "sshd", "dbus-daemon"})
 
 
-def worktree_birth(path):
+def worktree_birth(path, source_inode=None):
     """Return an inode-bound birth-time lower bound, never ctime or mtime."""
     try:
         before = os.stat(path, follow_symlinks=False)
+        inode = f"{before.st_dev}:{before.st_ino}"
+        if not stat.S_ISDIR(before.st_mode) or (source_inode is not None and source_inode != inode):
+            return None
         value = subprocess.check_output(  # nosec B603 B607 -- fixed Linux stat command, path after --
             ["stat", "--format=%d:%i %W", "--", path], text=True,
             stderr=subprocess.DEVNULL, timeout=5).split()
         after = os.stat(path, follow_symlinks=False)
         identity = (before.st_dev, before.st_ino)
         if (identity == (after.st_dev, after.st_ino) and len(value) == 2 and
-                value[0] == f"{identity[0]}:{identity[1]}" and value[1].isdecimal()):
+                value[0] == inode and value[1].isdecimal()):
             birth = int(value[1])
             if 0 < birth <= time.time():
                 return birth
@@ -135,7 +139,7 @@ def collect_path_references(directory, path, result, birth=None):
             result["uncertain"] += 1
 
 
-def path_census(path):
+def path_census(path, source_inode=None):
     """Fail closed except for aged non-dumpable daemons; expose counts only."""
     result = {"status": "unavailable", "observed_at": time.time(),
               "uid": os.getuid(), "references": 0, "uncertain": 0,
@@ -145,7 +149,9 @@ def path_census(path):
     try:
         require_proc_visibility()
         boot = owner.boot_id()
-        birth = worktree_birth(path)
+        if source_inode is not None:
+            owner.require(owner.inode(Path(path)) == source_inode, "worktree generation changed")
+        birth = worktree_birth(path, source_inode)
         seen_self = False
         for directory in Path("/proc").iterdir():
             if not directory.name.isdecimal():
@@ -159,6 +165,8 @@ def path_census(path):
             except (OSError, ValueError, IndexError):
                 result["uncertain"] += 1
         owner.require(seen_self and owner.boot_id() == boot, "incomplete path census")
+        if source_inode is not None:
+            owner.require(owner.inode(Path(path)) == source_inode, "worktree generation changed")
         result.update(status="available", boot_id=boot, observed_at=time.time())
     except (OSError, ValueError, IndexError):
         pass

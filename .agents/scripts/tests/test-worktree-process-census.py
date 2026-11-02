@@ -101,6 +101,40 @@ class ProcessCensusTests(unittest.TestCase):
             census.require_proc_visibility()
 
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
+    def test_live_aged_non_dumpable_daemon_is_excluded(self):
+        script = ("import ctypes,time; libc=ctypes.CDLL(None); "
+                  "assert libc.prctl(15,b'ssh-agent',0,0,0)==0; "
+                  "assert libc.prctl(4,0,0,0,0)==0; "
+                  "print('ready',flush=True); time.sleep(30)")
+        child = subprocess.Popen(  # nosec B603 -- fixed disposable non-dumpable child, no shell
+            [sys.executable, "-c", script], cwd="/", stdout=subprocess.PIPE, text=True,
+            env=dict(os.environ, PWD="/", AIDEVOPS_WORKTREE="/"))
+        try:
+            import select
+            self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+            self.assertEqual(child.stdout.readline().strip(), "ready")
+            time.sleep(2.1)  # Clear both second-resolution timestamp boundaries.
+            with tempfile.TemporaryDirectory() as directory:
+                birth = census.worktree_birth(directory)
+                if birth is None:
+                    self.skipTest("filesystem birth time unavailable")
+                process = Path(f"/proc/{child.pid}")
+                try:
+                    os.readlink(process / "cwd")
+                except PermissionError:
+                    pass
+                else:
+                    self.skipTest("runner can inspect non-dumpable tasks")
+                result = {"references": 0, "uncertain": 0, "excluded_nondumpable": 0}
+                census.collect_path_references(process, directory, result, birth)
+                self.assertEqual(result, {"references": 0, "uncertain": 0,
+                                          "excluded_nondumpable": 1})
+        finally:
+            child.terminate()
+            child.wait(timeout=5)
+            child.stdout.close()
+
     def test_only_permission_denied_old_allowlisted_tasks_are_excluded(self):
         with tempfile.TemporaryDirectory() as directory:
             process = Path(directory)
@@ -153,6 +187,16 @@ class ProcessCensusTests(unittest.TestCase):
                     self.assertEqual(census.worktree_birth(directory), expected)
             with patch.object(subprocess, "check_output", side_effect=FileNotFoundError()):
                 self.assertIsNone(census.worktree_birth(directory))
+            self.assertIsNone(census.worktree_birth(directory, "wrong-generation"))
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
+    def test_census_rejects_mismatched_or_replaced_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sample = census.path_census(directory, source_inode="wrong-generation")
+            self.assertEqual(sample["status"], "unavailable")
+            with patch.object(census.owner, "inode", side_effect=["original", "replacement"]):
+                sample = census.path_census(directory, source_inode="original")
+                self.assertEqual(sample["status"], "unavailable")
 
     def test_daemon_generation_change_is_not_excluded(self):
         stat = "100 (ssh-agent) S " + "0 " * 18 + "100"
