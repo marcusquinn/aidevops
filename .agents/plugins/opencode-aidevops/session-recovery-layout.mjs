@@ -7,7 +7,7 @@
 // the non-repository owner directory forever (GH#36438). Relocate only that
 // exact shape, and only into a repos.json-registered repository.
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -15,9 +15,22 @@ export function defaultReposFile() {
   return process.env.AIDEVOPS_REPOS_JSON || join(homedir(), ".config", "aidevops", "repos.json");
 }
 
+// Only a definite absence counts as "no .git"; any other probe error (EACCES,
+// ELOOP, ...) propagates so the resolver rejects the marker instead of
+// relocating a directory whose work-tree status is unknown.
+function hasGitEntry(directory) {
+  try {
+    lstatSync(join(directory, ".git"));
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
 function insideGitWorkTree(directory) {
   for (let current = directory; ; current = dirname(current)) {
-    if (existsSync(join(current, ".git"))) return true;
+    if (hasGitEntry(current)) return true;
     if (dirname(current) === current) return false;
   }
 }
