@@ -73,7 +73,26 @@ def _project_branch(repo_root: str, git_output: GitOutput) -> tuple[str, str]:
     payload = git_output(Path(repo_root), "show", "HEAD:.aidevops.json")
     if not payload:
         return "", ""
-    branch = _branch_from_mapping(_load_json_text(payload, "HEAD:.aidevops.json"))
+    try:
+        mapping = _load_json_text(payload, "HEAD:.aidevops.json")
+    except RuntimeError as head_error:
+        # Sync may be the operation that replaces this stale, malformed HEAD.
+        # Trust only committed metadata at the remote default, never local dirt.
+        default_branch, _ = _origin_default_branch(repo_root, git_output)
+        if not default_branch:
+            raise
+        remote_name = os.environ.get("AIDEVOPS_CANONICAL_REMOTE", "origin")
+        remote_source = f"refs/remotes/{remote_name}/{default_branch}:.aidevops.json"
+        remote_payload = git_output(Path(repo_root), "show", remote_source)
+        if not remote_payload:
+            return "", ""
+        try:
+            mapping = _load_json_text(remote_payload, remote_source)
+        except RuntimeError:
+            raise head_error from None
+        branch = _branch_from_mapping(mapping)
+        return (branch, "project-config-at-remote-default") if branch else ("", "")
+    branch = _branch_from_mapping(mapping)
     return (branch, "project-config-at-head") if branch else ("", "")
 
 
