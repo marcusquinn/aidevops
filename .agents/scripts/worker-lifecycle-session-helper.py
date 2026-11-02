@@ -12,11 +12,8 @@ import subprocess
 import sys
 from uuid import uuid4
 
-from canonical_git_invocation import split_invocation
-from canonical_git_policy import _git_repo_identity
 from canonical_write_policy_paths import classify_location
-from command_policy_parser import _shell_invocations
-from native_git import real_git
+from worker_lifecycle_command_targets import command_targets
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "worker-lifecycle"))
 
@@ -27,7 +24,6 @@ from worker_lifecycle.runtime import adapter_for, require_ready
 from worker_lifecycle.session import admit_session
 
 SCRIPTS = Path(__file__).resolve().parent
-REPOSITORY_OPTIONS = {"-C", "--git-dir", "--work-tree"}
 # Fixed protocol tokens only; never host paths, command text or SQL errors.
 SAFE_REASONS = {
     "explicit-schema-upgrade-required",
@@ -57,21 +53,6 @@ def runtime_pid(value):
     return None
 
 
-def expand_repository_options(prefix):
-    """Apply the shell's unquoted leading-tilde expansion to Git targets."""
-    expanded = []
-    for index, value in enumerate(prefix):
-        option = prefix[index - 1] if index else ""
-        if option in REPOSITORY_OPTIONS and value.startswith("~"):
-            value = os.path.expanduser(value)
-        else:
-            name, separator, target = value.partition("=")
-            if separator and name in REPOSITORY_OPTIONS and target.startswith("~"):
-                value = f"{name}={os.path.expanduser(target)}"
-        expanded.append(value)
-    return expanded
-
-
 def state_directory():
     result = subprocess.run(  # nosec B603 B607 # fixed resolver, path passed as argv
         ["bash", "-c", 'source "$1" && worker_lifecycle_state_dir',
@@ -82,34 +63,6 @@ def state_directory():
     if not value:
         raise ValueError("lifecycle-state-unavailable")
     return Path(value)
-
-
-def command_targets(cwd, command, argv_json):
-    """Resolve literal command declarations, never infer process cwd ownership."""
-    invocations = _shell_invocations(command) if command else []
-    if argv_json:
-        argv = json.loads(argv_json)
-        if not isinstance(argv, list) or not all(isinstance(v, str) for v in argv):
-            raise ValueError("invalid-command-argv")
-        invocations.append(argv)
-    targets = {cwd}
-    for argv in invocations:
-        if not argv or Path(argv[0]).name != "git":
-            continue
-        prefix, effective, verb, _ = split_invocation(argv[1:], str(cwd))
-        if not prefix or not verb:
-            continue
-        # The runtime shell expands `git -C ~/repo`; resolve the same target.
-        prefix = expand_repository_options(prefix)
-        common, directory, top = _git_repo_identity(real_git(), effective, prefix)
-        if not all((common, directory, top)) or not Path(top).is_absolute():
-            raise ValueError("git-target-unavailable")
-        target = Path(top)
-        if (Path(common).resolve() != Path(directory).resolve()
-                and _git_directory(target) != Path(directory).resolve()):
-            raise ValueError("inconsistent-git-target")
-        targets.add(target)
-    return targets
 
 
 def admit_targets(cwd, targets, pid, session_id):
@@ -165,7 +118,9 @@ def main():
         targets = args.path
         if args.command or args.argv_json:
             targets = [
-                *targets, *command_targets(args.cwd, args.command, args.argv_json),
+                *targets, *command_targets(
+                    args.cwd, args.command, args.argv_json, _git_directory,
+                ),
             ]
         status = admit_targets(
             args.cwd, targets, runtime_pid(args.runtime_pid), args.session_id,
