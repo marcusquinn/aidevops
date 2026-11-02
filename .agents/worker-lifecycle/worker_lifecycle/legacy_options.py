@@ -11,6 +11,15 @@ def unrecorded(path):
             "modern": False, "unbound": True}
 
 
+def require_manual_confirmation(receipts, confirmed):
+    """Interrupted manual work cannot acquire automatic execution authority."""
+    if confirmed:
+        return
+    for previous in receipts:
+        if previous and previous.get("operator_confirmed") is True:
+            raise ValueError("operator-confirmation-required")
+
+
 @dataclass(frozen=True)
 class CleanupOptions:
     root: Path

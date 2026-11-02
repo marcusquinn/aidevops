@@ -21,7 +21,7 @@ from .enrollment import _git_directory
 from .filesystem import validate_private_path as _private
 from .legacy_discovery import discover
 from .legacy_inventory import advance, inspect, inventory, queue, require_ended
-from .legacy_options import CleanupOptions, unrecorded
+from .legacy_options import CleanupOptions, require_manual_confirmation, unrecorded
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
@@ -44,12 +44,10 @@ def receipt(connection, operation, phase):
 
 def require_confirmation(connection, operation, confirmed):
     """An interrupted capture carries manual authority before a plan exists."""
-    if confirmed:
-        return
-    for phase in ("archive", "plan"):
-        previous = receipt(connection, operation, phase)
-        if previous and previous.get("operator_confirmed") is True:
-            raise ValueError("operator-confirmation-required")
+    require_manual_confirmation(
+        (receipt(connection, operation, phase) for phase in ("archive", "plan")),
+        confirmed,
+    )
 
 
 def checkpoint(store, connection, operation, phase, payload):
