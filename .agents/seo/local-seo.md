@@ -21,6 +21,7 @@ mode: subagent
 - **Data**: `seo/seo-utils.md` for existing GMB grids/tracking; `seo/dataforseo.md` or `seo/serpapi.md` (`google_maps`) for bounded raw observations; `content/social-google-business-profile.md` for authorized owner data (read-only).
 - **Evidence labels**: every ranking statement in analysis and deliverables must carry **Google-documented**, **practitioner-observed (named source)** or **unsupported**, with source/date and limitations. Policy compliance is not proof of a ranking effect.
 - **Actions**: use `workflows/marketing-actions.md` only for at most one exact UTF-8 replacement per version-controlled file, for `title`, `meta_description` or `internal_link`. Review requests/replies, appeal submissions and other platform changes are approval-ready handoffs only; execution needs a separately authorized platform route. Never auto-post or submit from an audit.
+- **Recurring work**: `seo/local-seo-routines.md` supplies draft-only monitoring and reporting SOPs. Install a selected routine through `/routine`; targets, schedules, and SOPs remain separate.
 - **Related**: `seo/programmatic-seo.md` for page generation, `seo/schema-validator.md` for markup, `seo/link-building.md` for approved outreach.
 
 <!-- AI-CONTEXT-END -->
