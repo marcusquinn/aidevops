@@ -140,7 +140,8 @@ function redactGroupValues(pattern, text, named) {
 }
 
 // Locate a complete escaped JSON container without stopping at commas or brackets inside strings.
-function escapedNonStringValueEnd(text, start) {
+function escapedNonStringValueEnd(text, start, cache) {
+  if (cache.has(start)) return cache.get(start);
   const scalar = /^(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)(?=$|[\s,}\]])/.exec(text.slice(start));
   if (scalar) return start + scalar[0].length;
   const stack = [];
@@ -152,12 +153,18 @@ function escapedNonStringValueEnd(text, start) {
       continue;
     }
     const char = text[cursor];
-    if (char === "[" || char === "{") stack.push(char === "[" ? "]" : "}");
+    if (char === "[" || char === "{") stack.push(cursor);
     else if (char === "]" || char === "}") {
-      if (stack.pop() !== char) return start;
+      const opening = stack.at(-1);
+      if (opening === undefined || (text[opening] === "[" ? "]" : "}") !== char) break;
+      stack.pop();
+      cache.set(opening, cursor + 1);
       if (stack.length === 0) return cursor + 1;
     }
   }
+  // Only unfinished containers failed; completed nested values remain usable.
+  for (const opening of stack) cache.set(opening, opening);
+  cache.set(start, start);
   return start;
 }
 
@@ -165,10 +172,11 @@ function scrubEscapedNonStringCredentials(text) {
   const chunks = [];
   let cursor = 0;
   let count = 0;
+  const valueEndCache = new Map();
   for (const match of text.matchAll(ESCAPED_NON_STRING_ASSIGNMENT_PATTERN)) {
     if (match.index < cursor || !isSensitiveFieldName(match[1])) continue;
     const start = match.index + match[0].length;
-    const end = escapedNonStringValueEnd(text, start);
+    const end = escapedNonStringValueEnd(text, start, valueEndCache);
     if (end === start || text.slice(start, end) === "null") continue;
     chunks.push(text.slice(cursor, start), `\\"${REDACTION_TOKEN}\\"`);
     cursor = end;

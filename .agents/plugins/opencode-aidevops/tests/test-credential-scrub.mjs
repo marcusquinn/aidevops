@@ -114,6 +114,20 @@ describe("credential transcript scrub boundary", () => {
     }
   });
 
+  test("escaped container scan caches malformed suffixes without skipping complete values", () => {
+    const prefix = String.raw`\"password\":[`.repeat(6000);
+    const suffix = String.raw`\"credentials\":{\"nested\":[123]},\"token\":456`;
+    const expected = String.raw`\"credentials\":\"${REDACTION_TOKEN}\",\"token\":\"${REDACTION_TOKEN}\"`;
+    const start = performance.now();
+    assertScrub(prefix + suffix, prefix + expected, 2);
+    assert.ok(performance.now() - start < 1000, "84 KB malformed suffix scan exceeded one second");
+    assertScrub(
+      String.raw`\"password\":[\"credentials\":{\"nested\":[123]}},\"token\":[456]`,
+      String.raw`\"password\":[\"credentials\":\"${REDACTION_TOKEN}\"},\"token\":\"${REDACTION_TOKEN}\"`,
+      2,
+    );
+  });
+
   test("repo identifier cache follows configuration changes and fails closed on invalid config", () => {
     const root = mkdtempSync(join(tmpdir(), "aidevops-repo-identifier-cache-"));
     try {
