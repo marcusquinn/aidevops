@@ -1,1 +1,0 @@
-../../workflows/tech-stack.md
