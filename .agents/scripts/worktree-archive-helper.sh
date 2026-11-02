@@ -26,12 +26,14 @@ Commands:
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
   verify-local ARCHIVE_DIR              Verify deltas against the retained local base
+  verify-structure ARCHIVE_DIR          Check schema, inventory and artifact hashes
+                                        only (no Git import, no restore)
   source-matches ARCHIVE_DIR WORKTREE   Exit 0 only if WORKTREE is unchanged since capture
   prune --older-than 14d --max-total-size 20G [--dry-run|--apply]
       [--output-root DIR] [--budget-seconds N]
-                                        Verifies only selected archives; stops
-                                        cleanly within N seconds (0 = unbounded)
-                                        and reclaims dead verification scratch
+                                        Structure-checks only selected archives;
+                                        stops cleanly within N seconds (0 =
+                                        unbounded) and reclaims dead verification scratch
   sweep-scratch                         Reclaim only dead verification scratch
                                         under the archive root
 
@@ -575,6 +577,11 @@ for artifact in manifest['artifacts']:
         raise SystemExit("missing or unsafe artifact: " + artifact['name'])
     if path.stat().st_size != artifact["size"] or hashlib.sha256(path.read_bytes()).hexdigest() != artifact["sha256"]:
         raise SystemExit("artifact integrity mismatch: " + artifact['name'])
+if sys.argv[4] == 'structural':
+    # Retention identity check: proves a compact archive (never a full recovery
+    # copy) without importing base objects; restorability is irrelevant to expiry.
+    print(f"structure-verified {archive}")
+    raise SystemExit(0)
 if sys.argv[4] == 'local':
     from worktree_archive_local_verify import verify_local
     verify_local(archive, manifest)
@@ -851,6 +858,7 @@ main() {
 	list) list_archives "$@" ;;
 	verify) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$1" ;;
 	verify-local) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$@" local ;;
+	verify-structure) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$@" structural ;;
 	source-matches) [[ $# -eq 2 ]] || { usage >&2; return 1; }; source_matches "$@" ;;
 	prune) prune_archives "$@" ;;
 	sweep-scratch) [[ $# -eq 0 ]] || { usage >&2; return 1; }; sweep_scratch ;;
