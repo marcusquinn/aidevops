@@ -232,11 +232,11 @@ def retire_enrolled_only(
         return dict(result, status="outside-maintenance-scope")
     if not confirm:
         return dict(result, status="enrolled-only-preview", confirm_required=True)
+    create_archive_root(root)
+    validate_archive_path(root)
     AdmissionRegistry(store).authorize_enrolled_only(
         enrolled_only_event_id(generation), generation,
     )
-    create_archive_root(root)
-    validate_archive_path(root)
     return _candidate(store, repositories, root, generation, path)
 
 
