@@ -22,6 +22,7 @@ const fixtureEnvironment = {...process.env};
 for (const key of Object.keys(fixtureEnvironment)) {
   if (key.startsWith("AIDEVOPS_LIFECYCLE_")
     || key === "OPENCODE_SESSION_ID"
+    || key === "AIDEVOPS_OPENCODE_SESSION_ID"
     || key.startsWith("OPENCODE_PID")) {
     delete fixtureEnvironment[key];
   }
