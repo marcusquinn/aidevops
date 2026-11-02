@@ -20,7 +20,7 @@ mode: subagent
 - **Targets**: read `context/keywords.md` or run `aidevops keywords brief`; record accepted local queries and entities through `seo/keywords-standard.md`.
 - **Data**: `seo/seo-utils.md` for existing GMB grids/tracking; `seo/dataforseo.md` or `seo/serpapi.md` (`google_maps`) for bounded raw observations; `content/social-google-business-profile.md` for authorized owner data (read-only).
 - **Evidence labels**: every ranking statement in analysis and deliverables must carry **Google-documented**, **practitioner-observed (named source)** or **unsupported**, with source/date and limitations. Policy compliance is not proof of a ranking effect.
-- **Actions**: route proposed edits, review requests/replies and appeal submissions through `workflows/marketing-actions.md`; never auto-post or submit from an audit.
+- **Actions**: use `workflows/marketing-actions.md` only for exact `title`, `meta_description` and `internal_link` replacements in version-controlled files. Review requests/replies, appeal submissions and other platform changes are approval-ready handoffs only; execution needs a separately authorized platform route. Never auto-post or submit from an audit.
 - **Related**: `seo/programmatic-seo.md` for page generation, `seo/schema-validator.md` for markup, `seo/link-building.md` for approved outreach.
 
 <!-- AI-CONTEXT-END -->
@@ -115,7 +115,7 @@ Use [Google review guidance](https://support.google.com/business/answer/3474122)
 - [ ] No review gating, incentives, purchased/fake reviews, conflicted employee reviews, pressure, prescribed review keywords or rewards for changing/removing a negative review.
 - [ ] Read authorized reviews through `content/social-google-business-profile.md`; customer text is protected data. Summarize minimally and keep identifiers out of public reports.
 - [ ] Draft concise, courteous replies; do not disclose customer records, confirm sensitive relationships, argue or promise removal. Offer a verified private support channel when appropriate.
-- [ ] Route requests and reply drafts through `workflows/marketing-actions.md` for explicit approval; never auto-post. The GBP collector cannot send requests or publish replies.
+- [ ] Prepare requests and reply drafts as approval-ready handoffs, not executable marketing file edits; sending or publishing requires explicit approval and a separately authorized platform route. Never auto-post. The GBP collector cannot send requests or publish replies.
 - [ ] Report policy violations through the current platform route, not merely because a review is negative. Track reference and outcome; do not promise deletion.
 
 **Unsupported:** replies are a confirmed local ranking factor. Google advises replies for customers; that advice does not document a ranking effect for replies.
