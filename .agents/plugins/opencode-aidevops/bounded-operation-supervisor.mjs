@@ -148,8 +148,10 @@ export async function runSupervisor() {
       output: { args: { action: "start", cwd: process.cwd(), command } },
       bounded: true,
     });
-  } catch {
-    process.stderr.write("BLOCKED: bounded-operation lifecycle admission unavailable\n");
+  } catch (error) {
+    // The admission error carries only a safe protocol reason, never host paths.
+    const detail = String(error?.message || "").replace(/^BLOCKED:\s*/, "");
+    process.stderr.write(`BLOCKED: bounded-operation lifecycle admission unavailable${detail ? `: ${detail}` : ""}\n`);
     return 75;
   }
 
@@ -195,8 +197,8 @@ export async function runSupervisor() {
       ...process.env,
       AIDEVOPS_OPERATION_ID: operationID,
       AIDEVOPS_OPERATION_OWNER_PID: String(process.pid),
-      AIDEVOPS_LIFECYCLE_RUNTIME_PID: String(process.pid),
-      AIDEVOPS_LIFECYCLE_SESSION_ID: operationID,
+      // Creation belongs to the authenticated runtime propagated by the manager,
+      // not this command-scoped supervisor. Missing identity retains a coverage gap.
     },
     stdio: ["ignore", "inherit", "inherit"],
   });

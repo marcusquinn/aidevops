@@ -3,13 +3,14 @@
 
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after } from "node:test";
 import { BoundedInteractiveOperationManager } from "../bounded-interactive-operation.mjs";
 
-export const root = mkdtempSync(join(tmpdir(), "aidevops-bounded-operation-"));
+// The lifecycle registry requires a canonical state parent (macOS /var is a symlink).
+export const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-bounded-operation-")));
 export const owner = { sessionID: "ses_owner" };
 export const recorded = [];
 const managers = [];

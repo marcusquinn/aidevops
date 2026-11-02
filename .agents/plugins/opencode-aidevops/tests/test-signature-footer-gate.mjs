@@ -31,6 +31,7 @@ import {
   createQualityHooks,
 } from "../quality-hooks.mjs";
 import { FAIL_REASON } from "../quality-hooks-signature.mjs";
+import { processStartIdentity } from "../process-start-identity.mjs";
 import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
 
 const realGit = resolveTrustedExecutable("git");
@@ -672,9 +673,14 @@ printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n
 
   test("pre-execution hook resolves model by session without process-env leakage", async () => {
     const priorSigModel = process.env.AIDEVOPS_SIG_MODEL;
+    const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+    const saved = keys.map((key) => process.env[key]);
     process.env.AIDEVOPS_SIG_MODEL = "openai/stale-global";
     const dir = mkdtempSync(join(tmpdir(), "session-hook-model-"));
     try {
+      process.env.OPENCODE_PID = String(process.pid);
+      process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+      process.env.OPENCODE_SESSION_ID = "session-a";
       const scriptsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts");
       const hooks = createQualityHooks({
         scriptsDir,
@@ -693,6 +699,7 @@ printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n
       const sessionBOutput = {
         args: { command: 'gh issue comment 1 --repo o/r --body "two"', workdir: dir },
       };
+      process.env.OPENCODE_SESSION_ID = "session-b";
       await hooks.toolExecuteBefore(
         { tool: "bash", sessionID: "session-b" },
         sessionBOutput,
@@ -701,6 +708,10 @@ printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n
       assert.match(sessionAOutput.args.command, / with session-a/);
       assert.doesNotMatch(sessionBOutput.args.command, / with stale-global/);
     } finally {
+      keys.forEach((key, index) => {
+        if (saved[index] === undefined) delete process.env[key];
+        else process.env[key] = saved[index];
+      });
       if (priorSigModel === undefined) delete process.env.AIDEVOPS_SIG_MODEL;
       else process.env.AIDEVOPS_SIG_MODEL = priorSigModel;
       rmSync(dir, { recursive: true, force: true });

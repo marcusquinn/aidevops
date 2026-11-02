@@ -99,9 +99,21 @@ test_fleet_capability_hold() {
 		changed=$(jq -c '.[1].id=3' <<<"$comments")
 		terminal_blocker_fleet_hold_active "$changed" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
 		[[ "$updates" -eq 3 ]] || exit 1
+		# GH#36417: a failure after the hold formed falsifies readiness. Only an
+		# OWNER/MEMBER retry posted after it, or a brief revision, wakes the hold.
+		local falsified="" retried=""
+		ready=0
+		falsified=$(jq -c '. + [(.[0] | .id=4 | .created_at="2026-10-27T11:00:00Z")]' <<<"$comments")
+		terminal_blocker_fleet_hold_active "$falsified" "$brief" owner/repo 42 "$TEST_ROOT" | rg -q 'probe=falsified' || exit 1
+		retried=$(jq -c '. + [{id:5,author:"owner",author_association:"OWNER",created_at:"2026-10-27T12:00:00Z",body:"terminal-blocker-circuit:retry"}]' <<<"$falsified")
+		terminal_blocker_fleet_hold_active "$retried" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		retried=$(jq -c '.[-1].author_association="COLLABORATOR"' <<<"$retried")
+		terminal_blocker_fleet_hold_active "$retried" "$brief" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		terminal_blocker_fleet_hold_active "$falsified" '{"title":"Changed","body":"requires-secrets: TOKEN"}' owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		[[ "$updates" -eq 3 ]] || exit 1
 		exit 0
 	); then status=1; fi
-	print_result "fleet hold requires distinct authenticated runners and a current revision; readiness wakes it" "$status"
+	print_result "fleet hold requires distinct authenticated runners and a current revision; readiness wakes it until a post-hold failure falsifies it" "$status"
 	return 0
 }
 

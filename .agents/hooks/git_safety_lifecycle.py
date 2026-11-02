@@ -2,9 +2,34 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Runtime-parent admission adapter; policy helpers own the registry protocol."""
 
+import hashlib
 import os
+import re
+from pathlib import Path
 import subprocess
 import sys
+
+
+def diagnostic_advisory(payload, session_id):
+    """Return advisory-only output once across short-lived hooks in a session."""
+    if not payload.get("diagnostic") or not session_id:
+        return None
+    marker_dir = (Path.home() / ".aidevops" / ".agent-workspace" / "tmp"
+                  / "lifecycle-advisory")
+    marker = marker_dir / hashlib.sha256(session_id.encode()).hexdigest()
+    try:
+        marker_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with marker.open("x"):
+            pass
+    except OSError:
+        # Existing marker or unwritable advisory state never changes admission.
+        return None
+    message = ("[worker-lifecycle] coverage-gap: schema-upgrade-required; "
+               "lifecycle coverage is observe-only until the store is upgraded. "
+               "No owner admitted or cleanup authorized. This operation is not blocked.")
+    return {"systemMessage": message, "hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "additionalContext": message,
+    }}
 
 
 def check_session_owner(resolve_helper, run_helper, paths, session_id, command=""):
@@ -14,6 +39,7 @@ def check_session_owner(resolve_helper, run_helper, paths, session_id, command="
     helper = resolve_helper(
         "AIDEVOPS_LIFECYCLE_SESSION_HELPER", "worker-lifecycle-session-helper.py",
     )
+    reason = "helper-unavailable"
     if helper:
         # #aidevops:trust-boundary — the installed hook execs directly under
         # the runtime. A command-authored PID or session override is not used.
@@ -29,10 +55,19 @@ def check_session_owner(resolve_helper, run_helper, paths, session_id, command="
             if returncode == 0 and payload.get("status") in {
                 "admitted", "coverage-gap", "excluded-unregistered", "not-applicable",
             }:
-                return None
-        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
-            pass
+                return diagnostic_advisory(payload, session_id)
+            reason = _safe_reason(payload.get("reason")) or f"helper-exit-{returncode}"
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):
+            reason = "helper-failed"
+    # The helper's reason is a fixed protocol token; never host paths (GH#36430).
     return {"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny",
-        "permissionDecisionReason": "BLOCKED: lifecycle owner admission unavailable",
+        "permissionDecisionReason": f"BLOCKED: lifecycle owner admission unavailable ({reason})",
     }}
+
+
+def _safe_reason(value):
+    """Accept only short protocol tokens, never free-form helper output."""
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", value):
+        return value
+    return ""

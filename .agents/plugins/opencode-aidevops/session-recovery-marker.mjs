@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { isOwnerProcessLive, processStartToken } from "./process-liveness.mjs";
 import { pathIsInside, validateRecoveryData } from "./session-recovery-data.mjs";
+import { defaultReposFile, relocatedSessionDirectory } from "./session-recovery-layout.mjs";
 
 const SESSION_ID_RE = /^ses_[A-Za-z0-9]{6,128}$/;
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/;
@@ -165,7 +166,13 @@ function readRecoveryMarker(canonicalCwd, uid) {
 // `runtime` names the caller. A marker from the other runtime yields only its
 // project directory (`foreignRuntime`) so the caller can leave the marker
 // directory without resuming a session it cannot open.
-export function resolveSessionRecoveryMarker({ cwd, workDir, runtime = "v1", dataDir: expectedDataDir = "" }) {
+export function resolveSessionRecoveryMarker({
+  cwd,
+  workDir,
+  runtime = "v1",
+  dataDir: expectedDataDir = "",
+  reposFile = defaultReposFile(),
+}) {
   assertSafeText(cwd, "recovered working directory");
   assertSafeText(workDir, "aidevops work directory");
   if (!isAbsolute(cwd) || !isAbsolute(workDir)) throw new Error("Recovery paths must be absolute");
@@ -179,7 +186,10 @@ export function resolveSessionRecoveryMarker({ cwd, workDir, runtime = "v1", dat
   const dataDir = assertSafeText(marker.data_dir, "marker OpenCode data directory");
   if (!isAbsolute(directory) || !isAbsolute(dataDir)) throw new Error("Recovery marker paths must be absolute");
   const canonicalDirectory = realpathSync(directory);
-  const base = { sessionID: marker.session_id, directory: canonicalDirectory, markerDirectory: canonicalCwd, runtime: marker.runtime };
+  // A stale pre-migration owner directory relaunches in its moved repository (GH#36438).
+  const relocate = (path) => relocatedSessionDirectory(path, reposFile);
+  const launchDirectory = relocate(canonicalDirectory);
+  const base = { sessionID: marker.session_id, directory: launchDirectory, markerDirectory: canonicalCwd, runtime: marker.runtime };
   if (marker.runtime !== runtime) {
     return { ...base, dataDir: "", ownerLive: false, foreignRuntime: true };
   }
@@ -192,6 +202,7 @@ export function resolveSessionRecoveryMarker({ cwd, workDir, runtime = "v1", dat
     uid,
     sessionID: marker.session_id,
     canonicalDirectory,
+    relocate,
   });
 
   return { ...base, dataDir: canonicalDataDir, ownerLive: isOwnerProcessLive(marker.owner_pid, marker.owner_start), foreignRuntime: false };

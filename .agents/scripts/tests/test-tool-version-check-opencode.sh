@@ -107,20 +107,31 @@ printf '1.18.9\n' >"$SANDBOX/routine-freshness/opencode-version"
 write_executable "$SANDBOX/routine-freshness/bin/opencode" '#!/usr/bin/env bash
 version=$(<"'"$SANDBOX"'/routine-freshness/opencode-version")
 printf "%s\n" "$version"'
-for cli in claude codex mcp-local-wp chrome-devtools-mcp playwriter macos-automator-mcp claude-code-mcp gws cf cloudron; do
+for cli in claude codex mcp-local-wp chrome-devtools-mcp playwriter macos-automator-mcp claude-code-mcp gws cf; do
 	write_executable "$SANDBOX/routine-freshness/bin/$cli" '#!/usr/bin/env bash
 printf "9.99.9\n"'
 done
+printf '8.2.6\n' >"$SANDBOX/routine-freshness/cloudron-version"
+# shellcheck disable=SC2016 # Literal stub body; quoted SANDBOX segments are expanded by the outer script.
+write_executable "$SANDBOX/routine-freshness/bin/cloudron" '#!/usr/bin/env bash
+version=$(<"'"$SANDBOX"'/routine-freshness/cloudron-version")
+printf "%s\n" "$version"'
 # shellcheck disable=SC2016 # Literal stub body; quoted SANDBOX segments are expanded by the outer script.
 write_executable "$SANDBOX/routine-freshness/bin/npm" '#!/usr/bin/env bash
 case "${1:-}" in
 view) printf "9.99.9\n" ;;
-install) printf "%s\n" "$*" >>"'"$SANDBOX"'/routine-freshness/calls"
-  printf "9.99.9\n" >"'"$SANDBOX"'/routine-freshness/opencode-version" ;;
+install)
+  case "$*" in
+  *cloudron@latest) printf "%s\n" "$*" >>"'"$SANDBOX"'/routine-freshness/cloudron-calls"
+    printf "9.99.9\n" >"'"$SANDBOX"'/routine-freshness/cloudron-version" ;;
+  *) printf "%s\n" "$*" >>"'"$SANDBOX"'/routine-freshness/calls"
+    printf "9.99.9\n" >"'"$SANDBOX"'/routine-freshness/opencode-version" ;;
+  esac ;;
 *) exit 1 ;;
 esac'
 routine_output=$(PATH="$SANDBOX/routine-freshness/bin:$SYSTEM_PATH" "$TOOL_VERSION_CHECK" --category npm --update --quiet)
 assert_eq "general tool update installs registry latest" "install -g opencode-ai@latest" "$(tr '\n' ';' <"$SANDBOX/routine-freshness/calls" | sed 's/;$//')"
+assert_eq "stale Cloudron CLI installs registry latest" "install -g cloudron@latest" "$(tr '\n' ';' <"$SANDBOX/routine-freshness/cloudron-calls" | sed 's/;$//')"
 
 printf '1.18.9\n' >"$SANDBOX/routine-freshness/opencode-version"
 routine_json=$(PATH="$SANDBOX/routine-freshness/bin:$SYSTEM_PATH" "$TOOL_VERSION_CHECK" --category npm --json)

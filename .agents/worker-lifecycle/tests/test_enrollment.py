@@ -75,6 +75,23 @@ class EnrollmentContract(unittest.TestCase):
         self.assertFalse(self.marker.exists())
         self.assertEqual(self.store.summary()["bindings"], 0)
 
+    def test_sessions_in_separate_worktrees_replay_while_writer_is_busy(self):
+        trees = [self.tree, self.root / "second", self.root / "third"]
+        for tree in trees[1:]:
+            self.git("-C", str(self.repo), "worktree", "add", "-q", "--detach", str(tree))
+        owners = [admit_session(self.store, tree, os.getpid(), "busy-session") for tree in trees]
+        before = self.store.summary()
+        with self.store.connection(write=True):
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                repeated = list(pool.map(
+                    lambda tree: admit_session(self.store, tree, os.getpid(), "busy-session"), trees,
+                ))
+            self.assertEqual([owner["run_id"] for owner in repeated],
+                             [owner["run_id"] for owner in owners])
+            self.assertTrue(all(owner["status"] == "existing-owner" for owner in repeated))
+            self.assertEqual(self.git("-C", str(trees[2]), "status", "--porcelain").stdout, b"")
+        self.assertEqual(before, self.store.summary())
+
     def test_replay_and_lookup_preserve_generation_without_new_events(self):
         generation = self.enrollment.resolve(self.tree, create=True)
         before = self.store.summary()
@@ -531,9 +548,13 @@ class EnrollmentContract(unittest.TestCase):
         result = self.creation_enrollment(self.repo)
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
-        detail = json.loads(result.stderr.removeprefix("Generation enrollment refused: "))
+        first, *rest = result.stderr.splitlines()
+        detail = json.loads(first.removeprefix("Generation enrollment refused: "))
         self.assertEqual(detail["reason"], "ValueError")
         self.assertFalse(detail["cleanup_authorized"])
+        # GH#36370: at most one remediation line follows the JSON diagnostic.
+        self.assertLessEqual(len(rest), 1, result.stderr)
+        self.assertTrue(all(line.startswith("Refusal cause: ") for line in rest), result.stderr)
 
     def test_automatic_launch_cannot_bypass_closed_or_damaged_enrollment(self):
         generation = self.enrollment.resolve(self.tree, create=True)

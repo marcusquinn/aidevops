@@ -40,9 +40,18 @@ aidevops_worktree_base_dir_configured() {
 
 aidevops_ensure_worktree_base_dir() {
 	local base_dir="$1"
-	[[ -n "$base_dir" ]] || return 1
-	[[ -e "$base_dir" && ! -d "$base_dir" ]] && return 1
-	mkdir -p "$base_dir" 2>/dev/null || return 1
+	if [[ -z "$base_dir" ]]; then
+		printf 'Worktree base directory refused: empty configuration\n' >&2
+		return 1
+	fi
+	if [[ -e "$base_dir" && ! -d "$base_dir" ]]; then
+		printf 'Worktree base directory refused: configured path is not a directory\n' >&2
+		return 1
+	fi
+	if ! mkdir -p "$base_dir" 2>/dev/null; then
+		printf 'Worktree base directory refused: directory creation failed\n' >&2
+		return 1
+	fi
 	return 0
 }
 

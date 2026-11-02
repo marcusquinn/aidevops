@@ -489,6 +489,7 @@ export async function AidevopsPlugin({ directory, client }) {
     tempDir: join(WORKSPACE_DIR, "tmp"), enabled: !isHeadless(),
   });
   const { toolExecuteBefore, toolExecuteAfter, qualityLog } = createQualityHooks({
+    client,
     activeScriptsDir: join(ACTIVE_AGENTS_DIR, "scripts"),
     scriptsDir: SCRIPTS_DIR,
     logsDir: LOGS_DIR,

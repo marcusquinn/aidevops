@@ -11,7 +11,7 @@ import sqlite3
 from uuid import UUID, uuid5
 
 from .process import ProcessIdentity
-from .storage import LifecycleRegistry, SCHEMA, StoreConflict, identifier
+from .storage import LifecycleRegistry, SCHEMA, StoreConflict, encode, identifier
 
 
 class AdmissionClosed(StoreConflict):
@@ -27,6 +27,25 @@ class AdmissionRegistry:
         if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA:
             raise ValueError("explicit-schema-upgrade-required")
 
+    def _replayed(self, event_id: str, payload: dict) -> bool:
+        """Recognize immutable committed evidence without competing for a writer.
+
+        A miss is only a hint: the writer path must repeat event deduplication
+        atomically with admission. A replay never authorizes a second launch or
+        reopens a generation, even if another transaction is closing it.
+        """
+        identifier(event_id)
+        with self.store.connection() as connection:
+            self._require_schema(connection)
+            row = connection.execute(
+                "SELECT payload FROM events WHERE event_id=?", (event_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            if row["payload"] != encode(payload):
+                raise StoreConflict("event-id-payload-conflict")
+            return True
+
     def open_generation(self, event_id: str, generation_id: str, path: Path) -> None:
         """Reserve a canonical path. This does not verify a physical generation."""
         identifier(generation_id)
@@ -35,11 +54,12 @@ class AdmissionRegistry:
         value = str(path)
         if len(value) > 4096:
             raise ValueError("generation-path-too-long")
+        payload = {"type": "open-admission", "generation_id": generation_id, "path": value}
+        if self._replayed(event_id, payload):
+            return
         with self.store.connection(write=True) as connection:
             self._require_schema(connection)
-            _, duplicate = self.store._event(connection, event_id, {
-                "type": "open-admission", "generation_id": generation_id, "path": value,
-            })
+            _, duplicate = self.store._event(connection, event_id, payload)
             if duplicate:
                 return  # Replaying an old open must never reopen a closed gate.
             if connection.execute("SELECT 1 FROM generations WHERE generation_id=?", (generation_id,)).fetchone():
@@ -60,13 +80,17 @@ class AdmissionRegistry:
         namespace = UUID(identifier(run_id))
         identifier(generation_id)
         identity.validate()
+        event_id = str(uuid5(namespace, "admit"))
+        payload = {
+            "type": "admit", "run_id": run_id,
+            "generation_id": generation_id, "identity": identity.to_dict(),
+            "expected_path": expected_path,
+        }
+        if self._replayed(event_id, payload):
+            return False
         with self.store.connection(write=True) as connection:
             self._require_schema(connection)
-            _, duplicate = self.store._event(connection, str(uuid5(namespace, "admit")), {
-                "type": "admit", "run_id": run_id,
-                "generation_id": generation_id, "identity": identity.to_dict(),
-                "expected_path": expected_path,
-            })
+            _, duplicate = self.store._event(connection, event_id, payload)
             if duplicate:
                 return False
             generation = connection.execute(

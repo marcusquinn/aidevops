@@ -387,6 +387,7 @@ export async function setupAidevopsV2(ctx) {
     });
     const sessionModels = createSessionModelStore();
     const { toolExecuteBefore, toolExecuteAfter, qualityLog } = createQualityHooks({
+      client,
       activeScriptsDir: join(ACTIVE_AGENTS_DIR, "scripts"),
       scriptsDir: SCRIPTS_DIR,
       logsDir: LOGS_DIR,

@@ -1115,7 +1115,9 @@ TERMINAL_BLOCKER_INPUT_OWNER=maintainer
 Owner is one of user, contributor, maintainer or admin: whoever alone can
 supply it. Reversible implementation choices, naming, defaults and scope
 interpretation are yours to decide, never this class. Name the exact input and
-where you looked; never guess it. Not for permissions or external events.
+where you looked; never guess it. Not for tool permissions or external events.
+A spend, billing or credential-route decision only a maintainer can make is
+input_required with owner maintainer (or admin), not permission_required.
 If no class is established, omit the reason line: unknown evidence stays retryable
 with bounded cross-runner backoff, not a permanent hold.
 EOF

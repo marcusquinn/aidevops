@@ -20,6 +20,7 @@ from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
 from canonical_git_repository import real_git as real_git
+from canonical_git_snapshot import is_isolated_opencode_snapshot
 
 BLOCK_EXIT = 42
 READ_ONLY = frozenset(
@@ -258,6 +259,8 @@ def _classify_canonical_operation(
         result = True, "isolated prospective merge-tree probe"
     elif _is_isolated_routines_publisher(real_git_path, cwd, prefix, subcommand):
         result = True, "isolated routines publisher mutation"
+    elif is_isolated_opencode_snapshot(real_git_path, cwd, prefix, subcommand, args):
+        result = True, "isolated OpenCode snapshot maintenance"
     elif subcommand == "worktree" and _is_linked_worktree_remove_for_canonical(
         real_git_path, cwd, prefix, args
     ):

@@ -184,6 +184,42 @@ separate migration preference, inspect an authorized dashboard network request o
 use Cloudflare Code Mode OpenAPI search, then document the verified field before
 automating it.
 
+## Email Routing on a Subdomain
+
+Use this when the apex MX belongs to another provider (Google Workspace, M365) and
+only a subdomain such as `marketing.<domain>` should forward through Cloudflare.
+Dashboard onboarding covers the apex only and proposes replacing the apex MX, so
+subdomain enablement is API-only:
+
+- Preview: `GET /zones/{zone_id}/email/routing/dns?subdomain=<sub>.<domain>`
+- Enable: `POST /zones/{zone_id}/email/routing/dns` with `{"name": "<sub>.<domain>"}`
+- Token permissions (observed): `Zone Settings Write`, `Email Routing Rules Write`,
+  `DNS Write`, and `Account Email Routing Addresses Write`. Without Zone Settings
+  Write the settings/DNS endpoints return code `10000`.
+
+**Apex side effect (not shown in the preview):** besides the subdomain MX and SPF,
+enablement can also create an apex `TXT "v=spf1 include:_spf.mx.cloudflare.net ~all"`
+when the apex had no SPF, plus a locked apex `cf2024-1._domainkey` DKIM record. That
+SPF omits the existing provider, so its outbound mail moves from SPF `none` to
+`softfail`. Cloudflare documents the same apex behaviour for normal onboarding in
+[Domain configuration](https://developers.cloudflare.com/email-service/configuration/domains/index.md).
+
+1. Export the zone's DNS records before enabling.
+2. Enable, then export again and diff. Never trust the preview or the POST response alone.
+3. If an apex SPF appeared and the apex had none, replace it with the real sending
+   provider's SPF (for example `v=spf1 include:_spf.google.com ~all`) or delete it;
+   unlock it first under Email Routing > Settings if it is locked. If the apex already
+   had SPF, Cloudflare does not add another; leave it unchanged.
+4. Keep the `cf2024-1._domainkey` record; its selector does not conflict with
+   provider DKIM selectors.
+5. Check the subdomain's routing status (`ready`), not the zone's. Zone-level
+   `misconfigured` (`mx.foreign`) is expected while the apex MX stays foreign.
+
+Disabling Email Routing later deletes every record Cloudflare associates with it,
+including unlocked records you edited. Destination-address verification links sit
+behind a Cloudflare challenge and fail in headless browsers; ask a human to open
+them in a normal browser.
+
 ## If a Token Is Compromised
 
 1. **Immediately revoke** the token in Cloudflare dashboard
