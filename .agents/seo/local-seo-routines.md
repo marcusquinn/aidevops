@@ -29,6 +29,21 @@ outputs `PARTIAL` with the missing inputs, coverage, and safe next action.
 - **Failure handling:** return `PARTIAL` with unavailable dimensions or data-source access; do not retry paid lookups automatically.
 - **Do not:** compare changed query, business ID, grid geometry, platform, device, language, cutoff, or metric definition as a trend; describe sampled grid points as customers or audience share.
 
+#### Geogrid input selection for reports and rollups
+
+Record each snapshot's completion status and UTC completion timestamp alongside
+its observation timestamp. For each location, comparable grid series and reporting
+period, select exactly one non-`PARTIAL`, completed run: its observation timestamp
+must fall within the recorded period bounds and its completion timestamp must be
+at or before the recorded UTC reporting cutoff. Choose the latest observation,
+then latest completion, then lexicographically greatest run key to break ties.
+Record the selected location key, run key, source path, timestamps, period bounds
+and reporting cutoff in both reports and rollups; never count reruns as additional
+locations or observations. Exclude `PARTIAL` runs and runs lacking selection
+metadata from metrics, list those exclusions as coverage gaps, and mark the
+report or rollup `PARTIAL` if any required location/series/period has no eligible
+run. Do not substitute zero for missing inputs or mix non-comparable series.
+
 ### Review velocity and unanswered-review queue
 
 - **Suggested schedule:** `repeat:weekly(mon@08:00)` (the project chooses the actual schedule in `TODO.md`)
@@ -64,6 +79,7 @@ outputs `PARTIAL` with the missing inputs, coverage, and safe next action.
 - **Suggested schedule:** `repeat:monthly(1@10:00)` (the project chooses the actual schedule in `TODO.md`)
 - **Targets:** supplied by the routine entry or a private targets file — never embedded here
 - **Evidence source:** completed prior local outputs only; render the report using `/report-render` without initiating new paid calls.
+- **Geogrid inputs:** apply the geogrid input selection rule above and record the selected run keys and exclusions.
 - **Output:** `~/.aidevops/.agent-workspace/work/seo-data/{domain}/local/reports/<date>.md` or the selected report artifact, with partial-data accounting, source dates, and evidence labels.
 - **Approval:** read-only draft report; recommendations and external actions remain approval-ready handoffs under `workflows/marketing-actions.md`.
 - **Failure handling:** return `PARTIAL` with every missing prior output, non-comparable metric, or coverage gap; do not backfill through new paid calls automatically.
@@ -74,6 +90,7 @@ outputs `PARTIAL` with the missing inputs, coverage, and safe next action.
 - **Suggested schedule:** `repeat:monthly(2@09:00)` (the project chooses the actual schedule in `TODO.md`)
 - **Targets:** supplied by the routine entry or a private targets file — never embedded here
 - **Evidence source:** completed per-location local outputs and their retained source metadata; do not initiate location-level collection for the rollup.
+- **Geogrid inputs:** apply the same geogrid input selection rule above, including when consuming monthly reports; require their recorded cutoff and selected run keys to match the rollup's period and cutoff, or reselect from stored snapshots without new collection.
 - **Output:** `~/.aidevops/.agent-workspace/work/seo-data/{domain}/local/rollups/<date>.md` with location-labelled aggregates, comparison constraints, and an explicit missing-location list.
 - **Approval:** read-only draft report; any recommended listing or outreach action is an approval-ready handoff only.
 - **Failure handling:** return `PARTIAL` with missing locations and non-comparable inputs listed; do not automatically retry paid collection or infer absent locations as zero.
