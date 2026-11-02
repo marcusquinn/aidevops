@@ -162,7 +162,7 @@ _worker_lifecycle_refusal_next_step() {
 		printf '[worker-lifecycle] next: registry history records enrollment but the generation marker is missing. Retain the tree and inspect its Git admin metadata and registry history; legacy retirement is not applicable.\n' >&2
 		;;
 	worktree-locked)
-		printf '[worker-lifecycle] next: inspect the Git worktree lock and its reason with git worktree list --porcelain. Only after confirming the lock is no longer needed, use git worktree unlock PATH on the listed path and retry retirement.\n' >&2
+		printf '[worker-lifecycle] next: inspect the Git worktree lock and its reason with git worktree list --porcelain. Only after confirming the lock is no longer needed, use git worktree unlock PATH on the listed current path. If already relocated to a private path, resume via worker-registry.py retire-worktree --path ORIGINAL_PATH --generation-id GENERATION_UUID with the original state, repository, base and output-root options, or wait for the registry cleanup pass; otherwise retry retirement.\n' >&2
 		;;
 	waiting-for-runs)
 		printf '[worker-lifecycle] next: a registered owner is still running or unconfirmed; retry after it exits (Pulse cleanup retries automatically).\n' >&2

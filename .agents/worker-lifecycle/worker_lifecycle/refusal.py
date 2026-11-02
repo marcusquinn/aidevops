@@ -38,9 +38,13 @@ _GIT_CODES = (
 )
 
 
-def _git_code(error: Exception) -> str:
+def _git_stderr(error: Exception) -> str:
     raw = getattr(error, "stderr", None)
-    stderr = (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw or "")).casefold()
+    return (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw or "")).casefold()
+
+
+def _git_code(error: Exception) -> str:
+    stderr = _git_stderr(error)
     return next((code for needle, code in _GIT_CODES if needle in stderr), "git-worktree-add-failed")
 
 
@@ -64,11 +68,12 @@ _HANDLERS: tuple[tuple[type[Exception], Callable[[Exception], str | None]], ...]
 
 
 def refusal_code(error: Exception, operation: str) -> str | None:
-    """Stable cause of a creation-path refusal, or None outside creation operations."""
+    """Stable cause of a supported creation or targeted retirement refusal."""
     if operation in RETIREMENT_OPERATIONS:
         # Never expose Git stderr: it may contain private paths or lock reasons.
         if isinstance(error, subprocess.CalledProcessError):
-            return "worktree-locked" if _git_code(error) == "worktree-locked" else None
+            # Creation patterns must not consume words in a retirement lock reason.
+            return "worktree-locked" if "locked" in _git_stderr(error) else None
         return _value_code(error) if isinstance(error, ValueError) else None
     handler = next((handler for kind, handler in _HANDLERS if isinstance(error, kind)), None)
     if handler is None or operation not in CREATION_OPERATIONS:

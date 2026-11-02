@@ -129,11 +129,29 @@ class RetirementContract(unittest.TestCase):
 
     def test_git_lock_blocks_retirement_until_unlocked(self):
         self.create()
-        self.git("worktree", "lock", str(self.target))
+        self.git("worktree", "lock", "--reason", "already exists", str(self.target))
         with self.assertRaises(subprocess.CalledProcessError) as caught:
             self.retire()
         self.assertEqual(refusal_code(caught.exception, "cleanup-worktree"), "worktree-locked")
         self.assertEqual((self.target / "work.txt").read_text(), "unfinished result")
+        self.git("worktree", "unlock", str(self.target))
+        self.assertEqual(self.retire()["status"], "retired")
+
+    def test_lock_reason_does_not_mask_native_move_refusal(self):
+        self.create()
+        native = retirement._git
+
+        def locked_source(*arguments):
+            if "move" in arguments:
+                native("-C", str(self.repo), "worktree", "lock", "--reason",
+                       "already exists", str(self.target))
+            return native(*arguments)
+
+        with patch.object(retirement, "_git", side_effect=locked_source):
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                self.retire()
+        self.assertEqual(refusal_code(caught.exception, "cleanup-worktree"), "worktree-locked")
+        self.assertEqual(refusal_code(caught.exception, "create-worktree"), "path-already-exists")
         self.git("worktree", "unlock", str(self.target))
         self.assertEqual(self.retire()["status"], "retired")
 
@@ -186,7 +204,8 @@ class RetirementContract(unittest.TestCase):
             if "remove" in arguments:
                 removed.append(arguments)
                 # Acquire the lock after final validation, just before native Git.
-                native("-C", str(self.repo), "worktree", "lock", arguments[-1])
+                native("-C", str(self.repo), "worktree", "lock", "--reason",
+                       "already exists", arguments[-1])
             return native(*arguments)
 
         with patch.object(retirement, "_git", side_effect=locked_private):
