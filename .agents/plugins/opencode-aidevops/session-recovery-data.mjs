@@ -77,8 +77,19 @@ function canonicalV2DataDir(dataDir, expectedDataDir, uid) {
 }
 
 // Returns the canonical data home once the marker's session is proven to be a
-// root session in that data home's database for canonicalDirectory.
-export function validateRecoveryData({ runtime, dataDir, expectedDataDir, workDir, uid, sessionID, canonicalDirectory }) {
+// root session in that data home's database for canonicalDirectory. OpenCode
+// never rewrites session.directory, so a session relaunched in its migrated
+// repository matches when both sides relocate to the same path (GH#36438).
+export function validateRecoveryData({
+  runtime,
+  dataDir,
+  expectedDataDir,
+  workDir,
+  uid,
+  sessionID,
+  canonicalDirectory,
+  relocate = (path) => path,
+}) {
   const canonicalDataDir = runtime === "v2"
     ? canonicalV2DataDir(dataDir, expectedDataDir, uid)
     : canonicalV1DataDir(dataDir, workDir, uid);
@@ -87,7 +98,8 @@ export function validateRecoveryData({ runtime, dataDir, expectedDataDir, workDi
   if (!databaseStat.isFile() || databaseStat.isSymbolicLink() || databaseStat.uid !== uid) {
     throw new Error("Unsafe OpenCode recovery database");
   }
-  if (realpathSync(querySessionDirectory(databasePath, sessionID, runtime)) !== canonicalDirectory) {
+  const sessionDirectory = realpathSync(querySessionDirectory(databasePath, sessionID, runtime));
+  if (sessionDirectory !== canonicalDirectory && relocate(sessionDirectory) !== relocate(canonicalDirectory)) {
     throw new Error("Recovery marker directory does not match the OpenCode session");
   }
   return canonicalDataDir;
