@@ -79,6 +79,12 @@ owners must still be ended. Modern admissions, age, Git locks, directory identit
 archive verification and source-content comparisons remain enforced. No root or
 process-CWD scan is introduced. Ignored files remain excluded.
 
+An absent index is accepted only when the Git-only archive can represent the
+working state. Present `HEAD`-tracked paths hidden by ignore rules after losing
+their index entry (including staged deletions) require separate preservation:
+capture and source-content checks fail closed, leaving the source intact. Operator
+confirmation does not override this retention guard.
+
 The existing archive/retirement journal records `operator_confirmed: true` with the
 exact source identity and fingerprint. No generation or owner is manufactured.
 An interrupted operator transaction requires the same explicit path confirmation

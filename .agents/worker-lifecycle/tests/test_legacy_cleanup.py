@@ -316,6 +316,35 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(legacy._git("-C", str(restored), "ls-files", "--others",
                                     "--exclude-standard"), "")
 
+    def test_ignored_head_tracked_bytes_without_index_entry_retain_source(self):
+        (self.repo / ".gitignore").write_text("*.ignored\n")
+        (self.repo / "tracked.ignored").write_text("committed bytes\n")
+        self.git("add", ".gitignore")
+        self.git("add", "--force", "tracked.ignored")
+        self.git("-c", "user.name=Fixture", "-c",
+                 "user.email=fixture@example.invalid", "commit", "-qm", "ignored tracked file")
+        for no_checkout in (True, False):
+            with self.subTest(no_checkout=no_checkout):
+                outside = self.root / ("missing-index" if no_checkout else "staged-deletion")
+                options = ("--no-checkout",) if no_checkout else ()
+                self.git("worktree", "add", "-q", "--detach", *options, str(outside))
+                if no_checkout:
+                    (outside / ".gitignore").write_text("*.ignored\n")
+                else:
+                    legacy._git("-C", str(outside), "rm", "--cached", "tracked.ignored")
+                payload = outside / "tracked.ignored"
+                payload.write_bytes(b"unique local bytes\x00\n")
+                with self.assertRaises(subprocess.CalledProcessError) as raised:
+                    legacy._snapshot(outside)
+                self.assertIn(b"HEAD-tracked paths omitted", raised.exception.stderr)
+                result = self.cleanup(confirmed_paths=(str(outside),))
+                self.assertEqual(result["retired"], 0, result)
+                self.assertEqual(payload.read_bytes(), b"unique local bytes\x00\n")
+                with self.store.connection() as connection:
+                    operation = legacy.operation_id(self.store, str(outside))
+                    self.assertIsNone(legacy.receipt(connection, operation, "archive"))
+                    self.assertIsNone(legacy.receipt(connection, operation, "plan"))
+
     def test_operator_archive_only_retry_requires_confirmation(self):
         self.stop_owner()
         checkpoint = legacy.checkpoint
