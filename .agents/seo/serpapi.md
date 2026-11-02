@@ -40,4 +40,18 @@ Common Google parameters: `q`, `gl` (country), `hl` (language), `location`
 `start` (pagination offset). Errors come back as a top-level `error` string;
 `search_metadata.status` is `Success` on completion.
 
+Geogrid alternative (third in order, after SEO Utils and `seo/dataforseo.md`
+"Local pack / Maps grid collection"): run `engine=google_maps` with
+`type=search`, `q=<keyword>` and `ll=@<lat>,<lng>,<zoom>z` (for example
+`@40.7455096,-74.0083012,14z`; `map_height` in metres also works) once per grid
+point, keeping `hl`, `google_domain` and the cutoff constant. Hold the provider's
+device context constant across all points and record it as `device` in scan
+metadata; verify the Maps engine's current device support before attempting an
+override rather than assuming Google Search's device options apply. Read the
+business's `position` in `local_results` by `place_id`. Results are not
+guaranteed to lie inside the requested area. Each search counts against the
+plan, and identical searches within 1h may be served free from cache (`no_cache`
+forces a fresh, billable fetch), so estimate points × keywords before running
+and ask first. Metrics and guardrails: `seo/seo-utils.md` "Geogrid metrics".
+
 <!-- AI-CONTEXT-END -->
