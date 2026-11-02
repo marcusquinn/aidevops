@@ -269,6 +269,21 @@ class RetirementContract(unittest.TestCase):
         self.assertTrue(self.target.exists())
         self.assertEqual(invalid.read_text(), "keep")
 
+    def test_enrolled_only_invalid_archive_keeps_admission_open(self):
+        self.git("worktree", "add", "--detach", str(self.target))
+        generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
+        self.output.chmod(0o777)
+        with self.assertRaisesRegex(ValueError, "archive-path-externally-writable"):
+            self.enrolled_only(True)
+        self.assertTrue(self.target.exists())
+        self.assertEqual(list(self.output.iterdir()), [])
+        self.assertIsNone(retirement._event(
+            self.store, enrolled_only_event_id(generation),
+        ))
+        self.assertEqual(self.enrolled_only(False)["admission"], "open")
+        self.output.chmod(0o700)
+        self.assertEqual(self.enrolled_only(True)["status"], "retired")
+
     def test_enrolled_only_admission_race_loses_after_closure(self):
         self.git("worktree", "add", "--detach", str(self.target))
         generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
