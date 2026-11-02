@@ -1,4 +1,5 @@
-"""Stable, path-free refusal codes for worktree creation failures (GH#36370).
+"""Stable, path-free refusal codes for worktree creation (GH#36370) and
+targeted retirement (GH#36494) failures.
 
 Git stderr and OSError text carry local paths that end up pasted into issues;
 only the matched code is ever emitted, never the underlying message.
@@ -12,6 +13,7 @@ import sqlite3
 import subprocess  # nosec B404 # exception types only; no process is started here
 
 CREATION_OPERATIONS = frozenset({"create-worktree", "admit-session", "enroll"})
+RETIREMENT_OPERATIONS = frozenset({"cleanup-worktree"})
 _REFUSAL_CODE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
 _SQLITE_CODES = (
     ("database is locked", "database-locked"),
@@ -63,6 +65,11 @@ _HANDLERS: tuple[tuple[type[Exception], Callable[[Exception], str | None]], ...]
 
 def refusal_code(error: Exception, operation: str) -> str | None:
     """Stable cause of a creation-path refusal, or None outside creation operations."""
+    if operation in RETIREMENT_OPERATIONS:
+        # Never expose Git stderr: it may contain private paths or lock reasons.
+        if isinstance(error, subprocess.CalledProcessError):
+            return "worktree-locked" if _git_code(error) == "worktree-locked" else None
+        return _value_code(error) if isinstance(error, ValueError) else None
     handler = next((handler for kind, handler in _HANDLERS if isinstance(error, kind)), None)
     if handler is None or operation not in CREATION_OPERATIONS:
         return None

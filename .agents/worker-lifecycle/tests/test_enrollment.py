@@ -52,6 +52,31 @@ class EnrollmentContract(unittest.TestCase):
             env={name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
         )
 
+    def test_retirement_of_never_enrolled_tree_names_legacy_case(self):
+        with self.assertRaisesRegex(ValueError, "^not-enrolled$"):
+            self.enrollment.inspect_retirement(self.tree)
+
+    def test_retirement_of_enrolled_tree_with_lost_marker_is_not_legacy(self):
+        self.enrollment.resolve(self.tree, create=True)
+        self.marker.unlink()
+        before = self.store.summary()
+        with self.assertRaisesRegex(ValueError, "^generation-marker-missing$"):
+            self.enrollment.inspect_retirement(self.tree)
+        self.assertEqual(self.store.summary(), before)
+        self.assertFalse(self.marker.exists())
+
+    def test_retirement_checks_history_even_without_current_admission(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        self.marker.unlink()
+        with self.store.connection(write=True) as connection:
+            connection.execute("DELETE FROM generation_admissions WHERE generation_id=?", (generation,))
+        with self.assertRaisesRegex(ValueError, "^generation-marker-missing$"):
+            self.enrollment.inspect_retirement(self.tree)
+
+    def test_retirement_missing_source_keeps_filesystem_error(self):
+        with self.assertRaises(FileNotFoundError):
+            self.enrollment.inspect_retirement(self.root / "absent")
+
     def test_session_owner_retries_and_finishes_after_admission_closes(self):
         first = admit_session(self.store, self.tree, os.getpid(), "session-fixture")
         self.assertEqual(first["status"], "admitted")

@@ -190,7 +190,7 @@ def cleanup_worktree(
     if not root.is_absolute() or root.resolve() != root:
         raise ValueError("canonical-archive-root-required")
     repositories = _repositories(config)
-    generation = GenerationEnrollment(store).inspect(path)
+    generation = GenerationEnrollment(store).inspect_retirement(path)
     create_archive_root(root)
     validate_archive_path(root)
     return _candidate(store, repositories, root, generation, path)
