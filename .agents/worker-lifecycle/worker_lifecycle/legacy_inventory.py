@@ -44,14 +44,15 @@ def advance(store, path):
 
 
 def inventory(connection):
-    """Group historical generations by path, including missing directories."""
+    """Merge historical aliases before indexing their owners and admissions."""
     paths: dict[str, dict] = {}
     for row in connection.execute(
         "SELECT g.path,g.generation_id,r.run_id,r.identity FROM generations g "
         "LEFT JOIN bindings b USING(generation_id) LEFT JOIN runs r USING(run_id)"
     ):
-        item = paths.setdefault(row["path"], {
-            "path": row["path"], "generations": set(), "runs": {}, "last_event": 0,
+        canonical_path = str(Path(row["path"]).resolve())
+        item = paths.setdefault(canonical_path, {
+            "path": canonical_path, "generations": set(), "runs": {}, "last_event": 0,
             "modern": False, "unbound": False,
         })
         item["generations"].add(row["generation_id"])

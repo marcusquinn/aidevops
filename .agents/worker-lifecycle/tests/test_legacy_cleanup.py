@@ -264,6 +264,32 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(result["results"][0]["reason"], "managed-by-current-cleanup")
         self.assertTrue(self.target.exists())
 
+    def test_confirmed_alias_keeps_recorded_owner_and_merged_modern_state(self):
+        outside = self.root / "alias-target"
+        self.git("worktree", "add", "-q", "--detach", str(outside))
+        alias = self.root / "registered-alias"
+        alias.symlink_to(outside, target_is_directory=True)
+        identity = adapter_for(self.store.installation_id()).capture(self.owner.pid)
+        self.store.register_attempt(str(uuid4()), identity, str(uuid4()), str(alias))
+        options = {"confirmed_paths": (str(outside),)}
+        result = self.cleanup(apply=False, **options)
+        self.assertEqual(result["results"][0].get("reason"), "process-alive", result)
+        self.assertTrue(outside.exists())
+        self.stop_owner()
+        AdmissionRegistry(self.store).open_generation(
+            str(uuid4()), str(uuid4()), outside,
+        )
+        result = self.cleanup(**options)
+        self.assertEqual(result["results"][0]["reason"], "managed-by-current-cleanup")
+        with self.store.connection() as connection:
+            item = next(row for row in legacy.inventory(connection)
+                        if row["path"] == str(outside))
+        self.assertEqual(len(item["generations"]), 2)
+        self.assertEqual(len(item["runs"]), 1)
+        self.assertTrue(item["unbound"])
+        self.assertTrue(item["modern"])
+        self.assertTrue(outside.exists())
+
     def test_confirmed_no_checkout_source_does_not_require_index_file(self):
         outside = self.root / "no-checkout"
         self.git("worktree", "add", "-q", "--detach", "--no-checkout", str(outside))
