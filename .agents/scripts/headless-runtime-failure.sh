@@ -575,6 +575,43 @@ _hrff_post_claim_released_comment() {
 # available for a capable runner (GH#34758). Legacy consumers clear to
 # available. Returns 0 when the exit projects status:blocked.
 #######################################
+# Structured plugin refusals plus the runtime-owned session DB, never model prose.
+# Unreadable evidence fails closed; completed tools in child sessions count too.
+_hrff_lifecycle_refusal_only() {
+	local session_id="$1"
+	local db_path="${_WORKER_ISOLATED_DB_PATH:-${HOME}/.local/share/opencode/opencode.db}"
+	local evidence_dir="${HOME}/.aidevops/logs/lifecycle-admission"
+	[[ "$session_id" =~ ^[A-Za-z0-9_-]+$ && -f "$db_path" && -d "$evidence_dir" ]] || return 1
+	python3 - "$session_id" "$db_path" "$evidence_dir" <<'PY'
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+session, database, directory = sys.argv[1:]
+try:
+    refused = False
+    for path in Path(directory).glob("*.jsonl"):
+        for line in path.open():
+            event = json.loads(line)
+            if event.get("schema") == 1 and event.get("session") == session and event.get("outcome") == "refused":
+                refused = True
+    with sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True) as db:
+        # Require the session itself to exist; an empty/wrong DB is not evidence.
+        assert db.execute("SELECT 1 FROM session WHERE id = ?", (session,)).fetchone()
+        count = db.execute("""WITH RECURSIVE owned(id) AS (
+            SELECT id FROM session WHERE id = ? UNION
+            SELECT s.id FROM session s JOIN owned o ON s.parent_id = o.id)
+            SELECT count(*) FROM part WHERE session_id IN (SELECT id FROM owned)
+            AND json_extract(data, '$.type') = 'tool'
+            AND json_extract(data, '$.state.status') = 'completed'""", (session,)).fetchone()[0]
+    sys.exit(0 if refused and count == 0 else 1)
+except (OSError, ValueError, sqlite3.Error, AssertionError):
+    sys.exit(1)
+PY
+	return $?
+}
+
 _hrff_blocked_exit_holds() {
 	declare -F gh_issue_edit_safe >/dev/null 2>&1 || return 1
 	[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != runner_capability_unmet ||

@@ -157,6 +157,19 @@ _run_result_capture_live_blocker() {
 	return 0
 }
 
+# GH#36457: infrastructure refusals are runner-local, not a task hold. Never
+# replace an explicit policy/permission/secret dossier with this inference.
+_run_result_classify_lifecycle_refusal() {
+	[[ "${AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON:-}" == false &&
+		-z "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" &&
+		"$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == unknown ]] || return 1
+	_hrff_lifecycle_refusal_only "$discovered_session" || return 1
+	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:runner_capability_unmet') || return 1
+	_run_classification_source="lifecycle_admission_evidence"
+	_run_classification_pattern="refusals_without_completed_tools"
+	return 0
+}
+
 # Objective proof complements, rather than broadens, model marker parsing.
 _run_result_terminal_completion_confirmed() {
 	_HRW_PR_LESS_REJECTION=""
@@ -209,6 +222,7 @@ _handle_run_result_success_output() {
 			_run_result_label="$_RUN_RESULT_BLOCKED"
 			_run_failure_reason="$_RUN_RESULT_BLOCKED"
 			_run_classification_source="live_issue_blocked_backstop"
+			_run_result_classify_lifecycle_refusal || true
 			rm -f "$output_file"
 			return 83
 		fi
@@ -256,6 +270,7 @@ _handle_run_result_success_output() {
 			if declare -F terminal_blocker_capture_output >/dev/null 2>&1; then
 				# Judge the final part with the pattern that classified this exit.
 				terminal_blocker_capture_output "$output_file" false "${_HEADLESS_BLOCKED_LINE_PATTERN:-}" || true
+				_run_result_classify_lifecycle_refusal || true
 				local blocker_reason=""
 				blocker_reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
 				_run_result_reconcile_unknown_blocker "$blocker_reason" && return 0
