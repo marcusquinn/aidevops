@@ -1,1 +1,0 @@
-../../workflows/patterns.md

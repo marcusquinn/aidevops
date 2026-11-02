@@ -1,5 +1,0 @@
-# Cases plane — gitignore rules
-# Drafts may contain privileged work product.
-
-*/drafts/
-.alarm-state.json
