@@ -1846,7 +1846,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18846 fix(pulse-merge): skip partial parent closeout for TODO-projection PRs and closed issues #bug #framework ref:GH#36299 -> [todo/tasks/t18846-brief.md] pr:#36300 completed:2026-10-31
 
-- [ ] t18848 docs(hostinger): installed package release without rpm (debug link), Red Hat VEX source, ImageMagick advisories, account policy test #documentation ref:GH#36439
+- [x] t18848 docs(hostinger): installed package release without rpm (debug link), Red Hat VEX source, ImageMagick advisories, account policy test #documentation ref:GH#36439 pr:#36440 completed:2026-11-02
 
 ## In Progress
 
