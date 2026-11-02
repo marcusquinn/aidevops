@@ -331,13 +331,16 @@ else
 fi
 
 pcu_fixture malformedfixed
-printf '{"default_branch":"main"}\n' >"${PCU_PEER}/.aidevops.json"
+printf '{"default_branch":"trunk"}\n' >"${PCU_PEER}/.aidevops.json"
 "$GIT" -C "$PCU_PEER" add .aidevops.json
 "$GIT" -C "$PCU_PEER" commit -q -m 'repair branch metadata'
 "$GIT" -C "$PCU_PEER" push -q origin main
 pcu_source=$(python3 "${SCRIPT_DIR}/canonical-write-policy-helper.py" resolve-branch \
 	--cwd "$PCU_REPO" --field source)
-if [[ "$pcu_source" == "project-config-at-remote-default" ]]; then
+pcu_branch=$(python3 "${SCRIPT_DIR}/canonical-write-policy-helper.py" resolve-branch \
+	--cwd "$PCU_REPO" --field branch)
+if [[ "$pcu_source" == "project-config-at-remote-default" ]] &&
+	[[ "$pcu_branch" == "trunk" ]]; then
 	pcu_pass 'repaired remote-default metadata supplies the branch policy'
 else
 	pcu_fail 'repaired remote-default metadata was not used'
