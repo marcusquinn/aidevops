@@ -86,7 +86,8 @@ run_helper_in_isolation() {
 timeout_sec() {
 	local seconds="$1"
 	shift
-	case "$seconds" in 90 | 120) ;; *) return 1 ;; esac
+	# Recovery 90s, verify-scratch sweep 60s, prune budget 540s + 60s backstop.
+	case "$seconds" in 60 | 90 | 600) ;; *) return 1 ;; esac
 	"$@" || return 1
 	return 0
 }

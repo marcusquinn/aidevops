@@ -1850,6 +1850,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
+- [ ] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md]
+
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
 
 - [x] t18769 Playwright-first browser preference: headed-hidden mode and explicit Playwright/Playwriter disambiguation #feat #interactive ref:GH#35617 assignee:marcusquinn pr:#35618 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18769-brief.md] completed:2026-10-25
