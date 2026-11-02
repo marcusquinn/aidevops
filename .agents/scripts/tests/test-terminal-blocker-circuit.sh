@@ -1848,12 +1848,29 @@ PY
 		AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=EXAMPLE_SECRET
 		_run_result_classify_lifecycle_refusal && exit 1
 		AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=""
-		# A completed tool in a child session disqualifies the inference.
-		python3 - "$_WORKER_ISOLATED_DB_PATH" <<'PY' || exit 1
+		# Child policy evidence vetoes a parent's infrastructure-only inference.
+		python3 - "$_WORKER_ISOLATED_DB_PATH" "$HOME" <<'PY' || exit 1
+import json
 import sqlite3
 import sys
+from pathlib import Path
 with sqlite3.connect(sys.argv[1]) as db:
     db.execute("INSERT INTO session VALUES ('ses_child', 'ses_refused_fixture')")
+path = next((Path(sys.argv[2]) / '.aidevops/logs/lifecycle-admission').glob('*.jsonl'))
+with path.open('a') as log:
+    log.write(json.dumps({'schema':1,'session':'ses_child','outcome':'refused','reason':'runtime-owner-unresolved'}) + '\n')
+PY
+		_run_result_classify_lifecycle_refusal && exit 1
+		# Remove that policy evidence: a completed child tool alone also vetoes.
+		python3 - "$_WORKER_ISOLATED_DB_PATH" "$HOME" <<'PY' || exit 1
+import json
+import sqlite3
+import sys
+from pathlib import Path
+path = next((Path(sys.argv[2]) / '.aidevops/logs/lifecycle-admission').glob('*.jsonl'))
+events = [json.loads(line) for line in path.read_text().splitlines()]
+path.write_text('\n'.join(json.dumps(e) for e in events if e.get('session') != 'ses_child') + '\n')
+with sqlite3.connect(sys.argv[1]) as db:
     db.execute("INSERT INTO part VALUES (?, ?)", ('ses_child', '{"type":"tool","state":{"status":"completed"}}'))
 PY
 		_run_result_classify_lifecycle_refusal && exit 1

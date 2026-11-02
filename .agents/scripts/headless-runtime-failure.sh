@@ -591,18 +591,13 @@ from pathlib import Path
 
 session, database, directory = sys.argv[1:]
 try:
-    refused = False
-    for path in Path(directory).glob("*.jsonl"):
-        for line in path.open():
-            event = json.loads(line)
-            if event.get("schema") == 1 and event.get("session") == session and event.get("outcome") == "refused":
-                # Policy refusals are not helper infrastructure failures.
-                if not re.fullmatch(r"helper-(?:timeout|unavailable|exit-[0-9]+)|ENOENT|ETIMEDOUT", event.get("reason", "")):
-                    sys.exit(1)
-                refused = True
     with sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True) as db:
         # Require the session itself to exist; an empty/wrong DB is not evidence.
-        if not db.execute("SELECT 1 FROM session WHERE id = ?", (session,)).fetchone():
+        owned = {row[0] for row in db.execute("""WITH RECURSIVE owned(id) AS (
+            SELECT id FROM session WHERE id = ? UNION
+            SELECT s.id FROM session s JOIN owned o ON s.parent_id = o.id)
+            SELECT id FROM owned""", (session,))}
+        if not owned:
             sys.exit(1)
         count = db.execute("""WITH RECURSIVE owned(id) AS (
             SELECT id FROM session WHERE id = ? UNION
@@ -610,6 +605,15 @@ try:
             SELECT count(*) FROM part WHERE session_id IN (SELECT id FROM owned)
             AND json_extract(data, '$.type') = 'tool'
             AND json_extract(data, '$.state.status') = 'completed'""", (session,)).fetchone()[0]
+    refused = False
+    for path in Path(directory).glob("*.jsonl"):
+        for line in path.open():
+            event = json.loads(line)
+            if event.get("schema") == 1 and event.get("session") in owned and event.get("outcome") == "refused":
+                # Policy refusals anywhere in the same session tree veto recovery.
+                if not re.fullmatch(r"helper-(?:timeout|unavailable|exit-[0-9]+)|ENOENT|ETIMEDOUT", event.get("reason", "")):
+                    sys.exit(1)
+                refused = True
     sys.exit(0 if refused and count == 0 else 1)
 except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
     sys.exit(1)
