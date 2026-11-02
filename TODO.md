@@ -1846,8 +1846,6 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18846 fix(pulse-merge): skip partial parent closeout for TODO-projection PRs and closed issues #bug #framework ref:GH#36299 -> [todo/tasks/t18846-brief.md] pr:#36300 completed:2026-10-31
 
-- [x] t18848 docs(hostinger): installed package release without rpm (debug link), Red Hat VEX source, ImageMagick advisories, account policy test #documentation ref:GH#36439 pr:#36440 completed:2026-11-02
-
 ## In Progress
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
@@ -1928,6 +1926,8 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 -->
 
 ## Done
+- [x] t18848 docs(hostinger): installed package release without rpm (debug link), Red Hat VEX source, ImageMagick advisories, account policy test #documentation ref:GH#36439 pr:#36440 completed:2026-11-02
+
 - [x] t18222 Ship owner-reviewed Buzz interactive team runtime #agents #auto-dispatch #feat #framework #reliability #security ~8h tier:thinking ref:GH#29831 assignee:marcusquinn started:2026-08-08 logged:2026-08-09 -> [todo/tasks/t18222-brief.md] pr:#29834 testing:runtime-verified completed:2026-08-09
 - [x] t18208 Generate restricted OpenCode conversation launch overlays #mission:m-20260804-5d06b1 #enhancement #security #framework #agents #interactive #auto-dispatch ~5h tier:thinking parent:t18201 ref:GH#29686 logged:2026-08-06 -> [todo/tasks/t18208-brief.md] pr:#29673 testing:runtime-verified completed:2026-08-07
 - [x] t18207 Refactor Matrix behind the team-interface contracts #mission:m-20260804-5d06b1 #enhancement #security #reliability #framework #interactive #auto-dispatch ~6h tier:thinking parent:t18201 ref:GH#29646 logged:2026-08-06 -> [todo/tasks/t18207-brief.md] pr:#29669 testing:runtime-verified completed:2026-08-07
