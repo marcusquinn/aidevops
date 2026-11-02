@@ -1504,7 +1504,9 @@ archive_worktree_path_recoverably() {
 		fi
 		return 1
 	fi
-	mkdir -p "$recovery_root_real" 2>/dev/null || return 1
+	# A group-writable caller umask must not shape new archive-store directories;
+	# existing directories keep their modes.
+	(umask 077 && mkdir -p "$recovery_root_real") 2>/dev/null || return 1
 	_worktree_recovery_acquire_producer_lock "$recovery_root_real" || return 1
 	case "$hold_seconds" in
 	'' | *[!0-9]*) hold_seconds=0 ;;

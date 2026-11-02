@@ -11,7 +11,7 @@ import time
 from uuid import UUID, uuid5
 
 from .absence import reconcile_absence
-from .archive_path import validate_archive_path
+from .archive_path import create_archive_root, validate_archive_path
 from .enrollment import GenerationEnrollment
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .filesystem import validate_private_path as _private
@@ -191,7 +191,7 @@ def cleanup_worktree(
         raise ValueError("canonical-archive-root-required")
     repositories = _repositories(config)
     generation = GenerationEnrollment(store).inspect(path)
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    create_archive_root(root)
     validate_archive_path(root)
     return _candidate(store, repositories, root, generation, path)
 
@@ -224,7 +224,7 @@ def cleanup_pass(
         after = _position(store)
         rows.sort(key=lambda row: (row["generation_id"] <= after, row["generation_id"]))
         deadline = time.monotonic() + budget_seconds
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        create_archive_root(root)
         validate_archive_path(root)
         for row in rows[:limit]:
             if time.monotonic() >= deadline:
