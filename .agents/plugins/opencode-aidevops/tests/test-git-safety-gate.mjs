@@ -370,6 +370,67 @@ test("uses the plugin repository directory when mutation tools omit workdir", as
   }
 });
 
+test("admits tools without an inherited runtime identity (GH#36430)", async () => {
+  // The OpenCode server exports no OPENCODE_PID/OPENCODE_PID_START_IDENTITY and
+  // its session never equals an inherited OPENCODE_SESSION_ID.
+  const runtimeKeys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+  const saved = runtimeKeys.map((key) => process.env[key]);
+  for (const key of runtimeKeys) delete process.env[key];
+  const { root, repo, linked } = setupRepo();
+  const helper = join(scriptsDir, "worker-lifecycle-session-helper.py");
+  const runHelper = (args, env = process.env) => {
+    try {
+      return JSON.parse(execFileSync("python3", ["-E", "-s", "-B", helper, ...args], { encoding: "utf8", env }));
+    } catch (error) {
+      return JSON.parse(error.stdout);
+    }
+  };
+  try {
+    const hooks = createQualityHooks({ scriptsDir, logsDir: root, repositoryDir: repo });
+    const session = { tool: "bash", sessionID: "ses_unbound_runtime" };
+    // Non-linked targets need no runtime owner: outside Git and canonical.
+    await assert.doesNotReject(() => hooks.toolExecuteBefore(session, { args: { workdir: root, command: "pwd" } }));
+    await assert.doesNotReject(() => hooks.toolExecuteBefore(session, { args: { workdir: repo, command: "git status --short" } }));
+    // Linked targets are owned by the runtime process that loaded the plugin.
+    await assert.doesNotReject(() => hooks.toolExecuteBefore(session, { args: { workdir: linked, command: "git status --short" } }));
+    const preparation = JSON.parse(execFileSync("python3", [
+      "-E", "-s", "-B", join(scriptsDir, "..", "worker-lifecycle", "worker-registry.py"),
+      "--state-dir", process.env.AIDEVOPS_LIFECYCLE_STATE_DIR,
+      "prepare-cleanup", "--path", realpathSync(linked),
+    ], { encoding: "utf8" }));
+    assert.equal(preparation.registered_runs, 1);
+
+    // An empty PID no longer aborts argument parsing before classification.
+    assert.equal(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x"]).status, "not-applicable");
+    assert.equal(runHelper(["--cwd", realpathSync(repo), "--runtime-pid", "", "--session-id", "x"]).status, "not-applicable");
+    assert.deepEqual(runHelper(["--cwd", realpathSync(linked), "--runtime-pid", "", "--session-id", "x"]),
+      { status: "unavailable", reason: "runtime-owner-unresolved" });
+    // The shell expands `git -C ~/repo`; admission resolves the same target.
+    const home = { ...process.env, HOME: realpathSync(root) };
+    assert.equal(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x",
+      "--command", "git -C ~/repo status"], home).status, "not-applicable");
+    assert.deepEqual(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x",
+      "--command", "git -C ~/missing status"], home), { status: "unavailable", reason: "git-target-unavailable" });
+    // Quoted tildes, exec argv and `--git-dir=~/x` reach Git literally; admission must not expand them.
+    const literal = { status: "unavailable", reason: "git-target-unavailable" };
+    for (const declared of [
+      ["--command", "git -C '~/repo' status"],
+      ["--command", 'git -C "~/repo" status'],
+      ["--argv-json", JSON.stringify(["git", "-C", "~/repo", "status"])],
+      ["--command", "git --git-dir=~/repo/.git status"],
+    ]) {
+      assert.deepEqual(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x",
+        ...declared], home), literal, declared.join(" "));
+    }
+  } finally {
+    runtimeKeys.forEach((key, index) => {
+      if (saved[index] === undefined) delete process.env[key];
+      else process.env[key] = saved[index];
+    });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("uses an explicit linked-worktree context without weakening canonical or escape denials", async () => {
   const { root, repo, linked } = setupRepo();
   try {

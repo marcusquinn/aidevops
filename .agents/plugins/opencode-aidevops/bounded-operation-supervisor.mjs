@@ -147,10 +147,11 @@ export async function runSupervisor() {
       input: { tool: "aidevops_bounded_operation", sessionID: operationID },
       output: { args: { action: "start", cwd: process.cwd(), command } },
       bounded: true,
-      allowSelfFallback: true,
     });
-  } catch {
-    process.stderr.write("BLOCKED: bounded-operation lifecycle admission unavailable\n");
+  } catch (error) {
+    // The admission error carries only a safe protocol reason, never host paths.
+    const detail = String(error?.message || "").replace(/^BLOCKED:\s*/, "");
+    process.stderr.write(`BLOCKED: bounded-operation lifecycle admission unavailable${detail ? `: ${detail}` : ""}\n`);
     return 75;
   }
 

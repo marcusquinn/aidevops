@@ -197,8 +197,10 @@ test("inherited ownership requires matching generation evidence", async () => {
       const result = await runPreEditCheck(script, [], root, 5000,
         { sessionID: "ses_generation_fixture" });
       assert.equal(result.code, 0);
-      const expected = proof === identity ? `${runtime.pid}\n${identity}` : "";
-      assert.equal(result.stdout.trim(), expected);
+      // Unproven inherited identities fall back to the plugin's own runtime
+      // generation, never to the inherited PID or an empty owner (GH#36430).
+      const expected = proof === identity ? runtime.pid : process.pid;
+      assert.equal(result.stdout.trim(), `${expected}\n${processStartIdentity(expected)}`);
     }
   } finally {
     runtime.kill();
