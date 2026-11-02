@@ -461,9 +461,13 @@ assert_blocked "blocks snapshot GC configured to export packs outside private st
 git --git-dir "$OPENCODE_SNAPSHOT" config --unset gc.repackFilter
 git --git-dir "$OPENCODE_SNAPSHOT" config --unset gc.repackFilterTo
 CANONICAL_INDEX_BEFORE=$(git hash-object "$REPO/.git/index")
+SNAPSHOT_README_BLOB=$(git hash-object "$REPO/README.md")
+SNAPSHOT_TREE_FILE="${TEST_ROOT}/snapshot-tree"
 if (cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" add .) &&
-	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" write-tree) &&
+	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" write-tree >"$SNAPSHOT_TREE_FILE") &&
 	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" gc --prune=7.days) &&
+	[[ "$(git --git-dir "$OPENCODE_SNAPSHOT" ls-files --stage -- README.md | awk '{print $2}')" == "$SNAPSHOT_README_BLOB" ]] &&
+	git --git-dir "$OPENCODE_SNAPSHOT" cat-file -e "$(<"$SNAPSHOT_TREE_FILE")^{tree}" &&
 	[[ "$(git hash-object "$REPO/.git/index")" == "$CANONICAL_INDEX_BEFORE" && "$(git -C "$REPO" rev-parse HEAD)" == "$INITIAL_HEAD" ]]; then
 	pass "PATH shim executes snapshot lifecycle without touching canonical index or HEAD"
 else
