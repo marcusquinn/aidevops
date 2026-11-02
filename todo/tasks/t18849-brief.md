@@ -19,6 +19,7 @@ Root cause (verified):
 - The inner work is budgeted much higher: `base_import_timeout()` defaults to 300 s (`worktree_archive_git.py:126`), plus `fsck --full`.
 - Measured: `worktree-archive-helper.sh verify` on a 16 KB delta archive took **57 s** on an idle host (base import dominates). Under load it overruns 60/120 s, the child is SIGKILLed, and scratch leaks on every retry.
 - Main producer: compact retention (`cleanup-worktrees-async-helper.sh:253`, `timeout_sec 120 ... prune`). `prune` runs a full `verify` on **every** archive before selecting anything (`worktree_archive_prune.py:57`, inside `inspect`), even in dry-run. With ~60 s per archive, the pass can never complete. The log shows `rc=124` on every run, and each new scratch directory appears 1-12 s before the kill. About 300 MB leaks per pass (10-15 GB/day observed, quota rising ~6 GB in one morning), and retention has never completed once, so it cannot be enabled.
+- Same class in producer transactions: a restoration proof that dies or fails after `.creation.json` but before comparison leaves `<root>/.producer-transactions/<id>/.restore-*/worktree` (a full registered worktree) in state `restoring`. `RestorationProof.cleanup` then refuses it on every retry (`restore-proof:unsealed-copy-retained`, `worktree_archive_restore.py:279`), so the slot is never reclaimed. Observed: 2195 `canonical-restore` starts against 2155 successful scratch cleanups.
 - Since ce8e2732a (GH#36281) the scratch name is a deterministic per-archive hash used as a retry fence. One kill now makes that archive permanently unverifiable (`archive-verify:retained-scratch; review required`), so prune keeps it forever and recovery/compaction stops.
 
 ## How
@@ -47,6 +48,9 @@ Root cause (verified):
 - .agents/scripts/worktree_archive_git.py
 - .agents/scripts/worktree_archive_scratch.py
 - .agents/scripts/worktree_archive_prune.py
+- .agents/scripts/worktree_archive_restore.py
+- .agents/scripts/worktree_archive_local_verify.py
+- .agents/scripts/worktree-archive-helper.sh
 - .agents/scripts/cleanup-worktrees-async-helper.sh
 - .agents/worker-lifecycle/worker_lifecycle/preservation.py
 - .agents/scripts/tests/worktree_recovery_producer_cases.py
@@ -56,4 +60,5 @@ Root cause (verified):
 - [ ] Killing a running `verify` (SIGTERM, or SIGKILL via timeout) followed by a retry verifies successfully, and no `.archive-verify-*` remains afterwards.
 - [ ] Two concurrent verifications of the same archive never share or delete each other's scratch.
 - [ ] The maintenance sweep removes the legacy orphans on the reporting host; archives and their `manifest.json` are untouched.
+- [ ] A retried restoration proof reclaims the previous sealed, uncompared `.restore-*` slot under the operation lock. At most one slot remains per transaction, and a slot whose registration or owner changed stays retained.
 - [ ] Existing producer/prune tests pass; ShellCheck is clean.

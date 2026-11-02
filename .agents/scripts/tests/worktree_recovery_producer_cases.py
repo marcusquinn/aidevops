@@ -465,6 +465,10 @@ class ProducerCases:
             record = json.loads(journal.read_text())
             self.assertEqual(record['phase'], 'archived')
             self.assertEqual(record['source_removal_outcome'], 'pending')
+            # The sealed, uncompared restore slot of the previous attempt is
+            # reclaimed under the operation lock; only the newest remains.
+            self.assertEqual(record['canonical_restore']['state'], 'restoring')
+            self.assertEqual(len(list(journal.parent.glob('.restore-*'))), 1)
 
     def test_verification_scratch_is_bounded_and_never_blocks_retries(self):
         import fcntl
