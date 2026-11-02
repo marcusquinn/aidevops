@@ -320,8 +320,6 @@ PCU_CONFIG='{"default_branch":"main"},'
 pcu_fixture malformedremoved
 printf 'local edits\n' >>"${PCU_REPO}/README.md"
 pcu_migrate false
-# The resolver reads committed remote-tracking metadata, not the network.
-"$GIT" -C "$PCU_REPO" fetch -q origin
 pcu_run sync-mirror --repo "$PCU_REPO" --issue 36426 --confirm SYNCHRONIZE_CANONICAL_MIRROR
 if [[ "$PCU_RC" -eq 0 ]] &&
 	[[ "$PCU_OUTPUT" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
@@ -337,7 +335,6 @@ printf '{"default_branch":"main"}\n' >"${PCU_PEER}/.aidevops.json"
 "$GIT" -C "$PCU_PEER" add .aidevops.json
 "$GIT" -C "$PCU_PEER" commit -q -m 'repair branch metadata'
 "$GIT" -C "$PCU_PEER" push -q origin main
-"$GIT" -C "$PCU_REPO" fetch -q origin
 pcu_source=$(python3 "${SCRIPT_DIR}/canonical-write-policy-helper.py" resolve-branch \
 	--cwd "$PCU_REPO" --field source)
 if [[ "$pcu_source" == "project-config-at-remote-default" ]]; then
@@ -356,4 +353,40 @@ if [[ "$PCU_RC" -ne 0 ]] &&
 	pcu_pass 'malformed metadata at both refs still blocks before mutation'
 else
 	pcu_fail 'malformed metadata at both refs did not block safely'
+fi
+
+# A cached origin/HEAD must not override a newly advertised default branch.
+pcu_fixture malformedrenamed
+"$GIT" -C "$PCU_PEER" switch -q -c trunk
+printf '{"default_branch":"trunk"}\n' >"${PCU_PEER}/.aidevops.json"
+"$GIT" -C "$PCU_PEER" add .aidevops.json
+"$GIT" -C "$PCU_PEER" commit -q -m 'rename remote default'
+"$GIT" -C "$PCU_PEER" push -q origin trunk
+"$GIT" -C "$PCU_REMOTE" symbolic-ref HEAD refs/heads/trunk
+pcu_branch=$(python3 "${SCRIPT_DIR}/canonical-write-policy-helper.py" resolve-branch \
+	--cwd "$PCU_REPO" --field branch)
+if [[ "$pcu_branch" == "trunk" ]]; then
+	pcu_pass 'advertised remote default supersedes stale cached origin HEAD'
+else
+	pcu_fail 'resolver used the stale cached default branch'
+fi
+
+# A successful advertisement does not imply the branch fetch will succeed.
+# Hide the branch while leaving HEAD advertised and valid metadata cached.
+pcu_fixture malformedfetchfailure
+printf '{"default_branch":"main"}\n' >"${PCU_PEER}/.aidevops.json"
+"$GIT" -C "$PCU_PEER" add .aidevops.json
+"$GIT" -C "$PCU_PEER" commit -q -m 'repair remote metadata'
+"$GIT" -C "$PCU_PEER" push -q origin main
+"$GIT" -C "$PCU_REPO" fetch -q origin
+"$GIT" -C "$PCU_REMOTE" config uploadpack.hideRefs refs/heads/main
+pcu_before=$("$GIT" -C "$PCU_REPO" rev-parse HEAD)
+pcu_run sync-mirror --repo "$PCU_REPO" --issue 36426 --confirm SYNCHRONIZE_CANONICAL_MIRROR
+if [[ "$PCU_RC" -ne 0 ]] &&
+	[[ "$PCU_OUTPUT" == *"remote-default metadata refresh failed"* ]] &&
+	[[ "$("$GIT" -C "$PCU_REPO" rev-parse HEAD)" == "$pcu_before" ]] &&
+	[[ "$PCU_OUTPUT" != *"PRESERVED_BACKUP_ID="* ]]; then
+	pcu_pass 'failed remote-default fetch refuses valid cached metadata before mutation'
+else
+	pcu_fail 'failed remote-default fetch did not block stale metadata safely'
 fi
