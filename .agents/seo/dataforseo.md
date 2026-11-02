@@ -115,6 +115,28 @@ curl -s -X POST "https://api.dataforseo.com/v3/on_page/task_post" \
   -d '[{"target": "example.com", "max_crawl_pages": 100}]'
 ```
 
+## Local pack / Maps grid collection
+
+Use when SEO Utils is not installed or its stored grids do not cover the need. Metric definitions, required scan metadata and guardrails: `seo/seo-utils.md` "Geogrid metrics". Source order: SEO Utils, then this recipe, then `seo/serpapi.md`.
+
+Recipe: one Google Maps SERP task per grid point, with the point passed as `location_coordinate` in `"latitude,longitude,zoom"` format (max 7 decimals; zoom 3z-21z; default 17z). Do not send `location_code` or `location_name` alongside it. Keep `keyword`, `language_code`, `device` and `depth` identical across points. Set `depth` to the cutoff `C` (default 100; billing is per SERP of up to 100 results, so a small `depth` does not cut the price). Store each task's `tag` as the grid point ID, and read the business's `rank_group` for `type: maps_search` items, matching on `place_id` or `cid`.
+
+```bash
+# Inside an injected shell with DFS_AUTH set (see Authentication). One billed task per point.
+curl -s -X POST "https://api.dataforseo.com/v3/serp/google/maps/task_post" \
+  -H "Authorization: Basic $DFS_AUTH" -H "Content-Type: application/json" \
+  -d '[{"keyword": "plumber", "location_coordinate": "51.5074,-0.1278,15z", "language_code": "en", "device": "mobile", "depth": 20, "tag": "p01"}]'
+```
+
+Cost before running: `cost = points × keywords × price_per_task` (+ the priority surcharge if `priority: 2`). Example: a 7×7 grid is 49 points; 3 keywords = 147 tasks; 147 × `<price_per_task>` from the DataForSEO pricing page (Google Maps SERP). Show this total and get approval before submitting; a repeat scan multiplies it.
+
+Standard queue vs live:
+
+- **Standard queue** (`task_post`, then `tasks_ready` and `task_get`, or `postback_url`/`pingback_url`): the cheaper default for scheduled grids. `priority` 1 (default) is normal; `priority` 2 is high and carries an extra charge.
+- **Live** (`/v3/serp/google/maps/live/advanced`): results in the response, one task per call, at the live price. Use for a small spot check, not full grids.
+
+Verify before use: current per-task prices and queue turnaround on the pricing page, and the live and `task_post` parameter lists, at <https://docs.dataforseo.com/v3/serp/google/maps/task_post/> and <https://docs.dataforseo.com/v3/serp/google/maps/live/advanced/>. Check one point against the returned `check_url` before running the full grid.
+
 ## Optional MCP settings
 
 ```bash
