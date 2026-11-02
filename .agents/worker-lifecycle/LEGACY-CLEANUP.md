@@ -105,7 +105,7 @@ Archives still require their common repository and retained base ref.
 After the observation-era backlog and pending retirements have been resolved,
 remove `worker-legacy-cleanup.py`, `worker_lifecycle/legacy_cleanup.py`,
 `worker_lifecycle/legacy_inventory.py`, `worker_lifecycle/legacy_discovery.py`,
-their focused test, this document and the
+`worker_lifecycle/legacy_options.py`, their focused test, this document and the
 temporary Pulse call. Restore the full Pulse budget to admission-based cleanup.
 Retain completed archive receipts and historical registry events; do not rewrite
 the evidence or delete archives as part of removing this code.
