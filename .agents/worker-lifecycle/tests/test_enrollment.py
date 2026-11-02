@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 import errno
+import importlib.util
 import io
 import json
 import os
@@ -91,6 +92,47 @@ class EnrollmentContract(unittest.TestCase):
             self.assertTrue(all(owner["status"] == "existing-owner" for owner in repeated))
             self.assertEqual(self.git("-C", str(trees[2]), "status", "--porcelain").stdout, b"")
         self.assertEqual(before, self.store.summary())
+
+    def test_hook_replays_real_helper_admission_while_writer_is_busy(self):
+        hook_path = Path(__file__).resolve().parents[2] / "hooks" / "git_safety_guard.py"
+        with patch.object(sys, "path", [str(hook_path.parent), *sys.path]):
+            spec = importlib.util.spec_from_file_location("git_safety_guard", hook_path)
+            hook = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(hook)
+        session_id = "hook-busy-session"
+        owner_pid = os.getpid()
+        admit_session(self.store, self.tree, owner_pid, session_id)
+        before = self.store.summary()
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith(("GIT_", "AIDEVOPS_", "WORKTREE_"))}
+        env.update(HOME=str(self.root), AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory))
+        request = io.StringIO(json.dumps({
+            "tool_name": "Bash", "tool_input": {"command": "git status"},
+            "session_id": session_id,
+        }))
+        output = io.StringIO()
+        helper_results = []
+        run_helper = hook._run_policy_helper
+
+        def observe_helper(helper, arguments, *args, **kwargs):
+            result = run_helper(helper, arguments, *args, **kwargs)
+            if Path(helper).name == "worker-lifecycle-session-helper.py":
+                helper_results.append(result)
+            return result
+
+        # Only runtime context and observation are supplied by the fixture;
+        # command policy, target discovery and admission run their real helpers.
+        with self.store.connection(write=True), patch.dict(os.environ, env, clear=True):
+            with patch.object(hook.os, "getcwd", return_value=str(self.tree)), \
+                    patch.object(hook.os, "getppid", return_value=owner_pid), \
+                    patch.object(sys, "stdin", request), redirect_stdout(output), \
+                    patch.object(hook, "_run_policy_helper", side_effect=observe_helper):
+                with self.assertRaises(SystemExit) as exited:
+                    hook.main()
+                self.assertEqual(exited.exception.code, 0)
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(helper_results, [(0, {"status": "admitted", "cleanup_authorized": False})])
+        self.assertEqual(self.store.summary(), before)
 
     def test_replay_and_lookup_preserve_generation_without_new_events(self):
         generation = self.enrollment.resolve(self.tree, create=True)
