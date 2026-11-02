@@ -349,52 +349,35 @@ scheduling or existing worktrees.
 
 ## Archive payload qualification
 
-`tests/test_preservation.py` exercises the archive payload engine
-(`scripts/worktree-archive-helper.sh`) and new registry orchestration, not legacy
-controllers. Fixtures use private temporary Git repositories, an invalid legacy-state
-sentinel and `--verification-copy` restore (no registered restoration). They touch no
-production registry, archive or worktree and derive no cleanup eligibility from the
-engine. The portable registry validator includes these Git/Bash tests and their
-actual source dependencies.
+`tests/test_preservation.py` tests `scripts/worktree-archive-helper.sh` and new registry orchestration, not legacy controllers.
+Private Git fixtures use an invalid legacy-state sentinel and unregistered `--verification-copy` restores.
+They touch no production data and grant no cleanup authority; the portable validator includes these Git/Bash tests and dependencies.
 
-Linux checks cover unpublished commits, independent staged/unstaged changes,
-binary edits, new files with unusual names, symlinks, corrupt payload rejection
-and late source changes. The original worktree path is made unavailable during
-round-trip validation, while its contents and common Git repository remain intact.
+Linux checks cover unpublished commits, independent staged/unstaged changes, binary edits, unusual filenames,
+symlinks, corrupt payload rejection and late source changes. Round trips make the original path unavailable
+while retaining its contents and common Git repository.
 
-Untracked symlinks use the PAX payload's actual mode and link target, not an
-allowlist derived from umask. Restoration sets the mode without following the
-link and verifies it; unsupported restoration fails rather than changing the
-target or silently normalizing permissions. Source permissions are never changed.
-The `untracked_symlink_modes` fingerprint field binds modes into verification.
-Fingerprints without that field verify legacy payload content only, not permission
-preservation, and cannot substitute for current preservation evidence.
-The portable test crosses creation and restoration masks `022`, `077` and `002`,
-including dangling links and ordinary untracked files.
+Untracked symlinks retain PAX modes/targets, not a umask-derived allowlist. Restore sets and verifies the mode
+without following links; unsupported restoration fails without changing targets, normalizing permissions or modifying sources.
+`untracked_symlink_modes` binds modes into verification; older fingerprints verify content only, not current preservation evidence.
+Portable tests cross creation/restoration masks `022`, `077`, `002`, including dangling links and ordinary untracked files.
 
-Ignored files are deliberately excluded; the corresponding test verifies policy,
-not a preservation defect or a requirement to expand capture. A WIP archive is not
-a full environment backup. It depends on retained base Git objects: round-trip tests
-do not prove recovery after common-repository loss. Preservation evidence must name
-the WIP payload and actual Git-object dependencies, not claim a self-contained
-backup or preservation of excluded data.
+Ignored files are deliberately excluded; tests verify that policy, not a preservation defect or need to expand capture.
+WIP archives depend on retained Git bases: round trips do not prove recovery after common-repository loss.
+Evidence must name payload/object dependencies, not claim full environment backups, self-containment or preservation of excluded data.
 
 ### Compact deletion payloads
 
 New non-merge archives with deleted files declare `deletion_policy: compact-v1`.
 `deletions-v1.json` contains separate staged/unstaged lists of hex-encoded pathname,
 Git mode and pre-deletion blob ID. Other changes remain in the existing patches.
-The artifact inventory hashes this file; verification rejects unsafe paths,
-duplicate paths and mismatched index identities. Restoration removes staged paths
-from the index and working tree before applying the staged patch, then removes
-unstaged paths only from the working tree before applying its patch. Untracked
-replacements are restored last. Ignored files remain excluded.
+Artifact hashes cover this file; verification rejects unsafe/duplicate paths and mismatched index identities.
+Restore removes staged paths from index and working tree before the staged patch, then unstaged paths
+only from the working tree before its patch. Untracked replacements come last; ignored files stay excluded.
 
-Archives without this policy retain their original full-patch reader. The source
-fingerprint contract is unchanged: local verification reconstructs full diffs in
-memory against an isolated index. This reduces stored deletion payloads, not all
-fingerprinting CPU/memory costs. Old archives are not automatically rewritten,
-and retained Git base objects remain required for recovery.
+Older archives retain their full-patch reader. Fingerprints are unchanged: local verification reconstructs
+full diffs in memory against an isolated index, reducing storage but not all fingerprinting CPU/memory costs.
+Old archives are not automatically rewritten; retained Git base objects remain required for recovery.
 
 ## Preservation policy and executor invariants
 
