@@ -17,6 +17,9 @@ const NAME_VALUE_PAIR_PATTERN =
 // JSON records embedded in plain text with escaped quotes (not standalone JSON).
 const ESCAPED_CREDENTIAL_ASSIGNMENT_PATTERN =
   /(\\"([A-Za-z_][A-Za-z0-9_. -]*)\\"\s*[:=]\s*\\")((?:[^"\\]|\\\\(?:\\.|[^\\])|\\[^"\\])*)(?=\\")/gi;
+const ESCAPED_NON_STRING_ASSIGNMENT_PATTERN =
+  /\\"([A-Za-z_][A-Za-z0-9_. -]*)\\"\s*[:=]\s*(?=[\[{\d-]|true\b|false\b|null\b)/gi;
+const ESCAPED_STRING_PATTERN = /\\"(?:[^"\\]|\\\\(?:\\.|[^\\])|\\[^"\\])*\\"/y;
 const PEM_BEGIN_MARKER = "-----BEGIN ";
 const PEM_KEY_SUFFIX = "PRIVATE KEY-----";
 const PEM_LABEL_PATTERN = /^[A-Z0-9 ]*$/;
@@ -136,11 +139,52 @@ function redactGroupValues(pattern, text, named) {
   return { text: replaced, count };
 }
 
+// Locate a complete escaped JSON container without stopping at commas or brackets inside strings.
+function escapedNonStringValueEnd(text, start) {
+  const scalar = /^(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)(?=$|[\s,}\]])/.exec(text.slice(start));
+  if (scalar) return start + scalar[0].length;
+  const stack = [];
+  for (let cursor = start; cursor < text.length; cursor++) {
+    ESCAPED_STRING_PATTERN.lastIndex = cursor;
+    const quoted = ESCAPED_STRING_PATTERN.exec(text);
+    if (quoted) {
+      cursor += quoted[0].length - 1;
+      continue;
+    }
+    const char = text[cursor];
+    if (char === "[" || char === "{") stack.push(char === "[" ? "]" : "}");
+    else if (char === "]" || char === "}") {
+      if (stack.pop() !== char) return start;
+      if (stack.length === 0) return cursor + 1;
+    }
+  }
+  return start;
+}
+
+function scrubEscapedNonStringCredentials(text) {
+  const chunks = [];
+  let cursor = 0;
+  let count = 0;
+  for (const match of text.matchAll(ESCAPED_NON_STRING_ASSIGNMENT_PATTERN)) {
+    if (match.index < cursor || !isSensitiveFieldName(match[1])) continue;
+    const start = match.index + match[0].length;
+    const end = escapedNonStringValueEnd(text, start);
+    if (end === start || text.slice(start, end) === "null") continue;
+    chunks.push(text.slice(cursor, start), `\\"${REDACTION_TOKEN}\\"`);
+    cursor = end;
+    count++;
+  }
+  chunks.push(text.slice(cursor));
+  return { text: chunks.join(""), count };
+}
+
 /** Scrub known token prefixes and unknown-format values under sensitive names. */
 function scrubPlainCredentials(text) {
   const { scrubbed: pemScrubbed, count: pemCount } = scrubPrivateKeys(text);
   let count = pemCount;
-  const escapedScrubbed = redactGroupValues(ESCAPED_CREDENTIAL_ASSIGNMENT_PATTERN, pemScrubbed, true);
+  const nonStringScrubbed = scrubEscapedNonStringCredentials(pemScrubbed);
+  count += nonStringScrubbed.count;
+  const escapedScrubbed = redactGroupValues(ESCAPED_CREDENTIAL_ASSIGNMENT_PATTERN, nonStringScrubbed.text, true);
   const pairScrubbed = redactGroupValues(NAME_VALUE_PAIR_PATTERN, escapedScrubbed.text, true);
   const urlScrubbed = redactGroupValues(URL_USERINFO_PATTERN, pairScrubbed.text, false);
   count += escapedScrubbed.count + pairScrubbed.count + urlScrubbed.count;

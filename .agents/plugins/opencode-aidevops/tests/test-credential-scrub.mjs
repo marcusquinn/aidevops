@@ -55,7 +55,7 @@ describe("credential transcript scrub boundary", () => {
     const root = mkdtempSync(join(tmpdir(), "aidevops-repo-identifiers-"));
     const configDir = join(root, ".config", "aidevops");
     const registryDir = join(root, "registry");
-    const identifiers = ["example-owner", "examplerepo", "example-owner/examplerepo", "checkout-alias"];
+    const identifiers = ["example-owner", "examplerepo", "example-owner/examplerepo", "checkout-alias", "12345678"];
     try {
       mkdirSync(configDir, { recursive: true });
       mkdirSync(registryDir);
@@ -63,6 +63,7 @@ describe("credential transcript scrub boundary", () => {
         initialized_repos: [
           { slug: identifiers[2], path: "/synthetic/checkout-alias/" },
           { path: "/synthetic/dot-path-secret/." },
+          { slug: `example-owner/${identifiers[4]}` },
         ],
       }));
       writeFileSync(join(configDir, "credentials.sh"), identifiers.map((value, index) =>
@@ -85,6 +86,16 @@ describe("credential transcript scrub boundary", () => {
           const escaped = { output: String.raw`{\"password\":\"${value}\",\"repo\":\"${value}\"}` };
           await hooks.toolExecuteAfter({ tool, callID: "" }, escaped);
           assert.equal(escaped.output, String.raw`{\"password\":\"${REDACTION_TOKEN}\",\"repo\":\"${value}\"}`);
+          for (const sensitiveValue of [
+            String.raw`[\"${value}\"]`,
+            String.raw`[\"${value}\",{\"nested\":[\"${value}\",\"bracket ] comma ,\"]}]`,
+            String.raw`{\"nested\":[\"${value}\"]}`,
+            ...(value === identifiers[4] ? [value] : []),
+          ]) {
+            const record = { output: String.raw`log {\"credentials\":${sensitiveValue},\"repo\":${sensitiveValue}} done` };
+            await hooks.toolExecuteAfter({ tool, callID: "" }, record);
+            assert.equal(record.output, String.raw`log {\"credentials\":\"${REDACTION_TOKEN}\",\"repo\":${sensitiveValue}} done`);
+          }
         }
       }
       const helper = new URL("../../../scripts/redaction-digest-registry.py", import.meta.url);
