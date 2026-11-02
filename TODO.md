@@ -1852,15 +1852,15 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18852 Local SEO capability for aidevops (parent roadmap) #feat #parent-task #interactive ref:GH#36480 logged:2026-11-02 -> [todo/tasks/t18852-brief.md]
 
-- [ ] t18853 Local SEO: add evidence-labelled local SEO agent (seo/local-seo.md) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36481 logged:2026-11-02 -> [todo/tasks/t18853-brief.md]
+- [x] t18853 Local SEO: add evidence-labelled local SEO agent (seo/local-seo.md) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36481 pr:#36487 logged:2026-11-02 -> [todo/tasks/t18853-brief.md] completed:2026-11-02
 
-- [ ] t18854 Local SEO: geogrid metric definitions and cost-efficient grid collection (SEO Utils, DataForSEO, SerpApi) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36482 logged:2026-11-02 -> [todo/tasks/t18854-brief.md]
+- [x] t18854 Local SEO: geogrid metric definitions and cost-efficient grid collection (SEO Utils, DataForSEO, SerpApi) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36482 pr:#36488 logged:2026-11-02 -> [todo/tasks/t18854-brief.md] completed:2026-11-02
 
-- [ ] t18855 Local SEO: Local Services Ads and local paid search guidance (proposal-only) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36483 logged:2026-11-02 -> [todo/tasks/t18855-brief.md]
+- [x] t18855 Local SEO: Local Services Ads and local paid search guidance (proposal-only) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#36483 pr:#36492 logged:2026-11-02 -> [todo/tasks/t18855-brief.md] completed:2026-11-02
 
 - [ ] t18856 Local SEO: recurring monitoring and reporting SOPs (routine-ready, draft-only actions) #auto-dispatch #feat #interactive tier:standard ~2h blocked-by:t18853,t18854 ref:GH#36484 logged:2026-11-02 -> [todo/tasks/t18856-brief.md]
 
-- [ ] t18857 add-skill: content review for vendor/affiliate bias and unsupported claims before importing external skills #feat #interactive tier:standard ~35m ref:GH#36485 logged:2026-11-02 -> [todo/tasks/t18857-brief.md]
+- [x] t18857 add-skill: content review for vendor/affiliate bias and unsupported claims before importing external skills #feat #interactive tier:standard ~35m ref:GH#36485 pr:#36489 logged:2026-11-02 -> [todo/tasks/t18857-brief.md] completed:2026-11-02
 
 ## In Progress
 
