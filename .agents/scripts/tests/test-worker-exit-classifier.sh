@@ -245,6 +245,37 @@ test_clean_retry_class_requires_typed_terminal_outcome() {
 	return 0
 }
 
+# Keep the heredoc outside command substitution for the Bash 3.2 parser.
+_summarize_exit_trap_accounting() {
+	local metrics_file="$1"
+	local outcome_file="$2"
+	local mode="$3"
+	python3 - "$metrics_file" "$outcome_file" "$mode" <<'PY' || return 1
+import json
+import pathlib
+import sys
+
+metrics, outcome, mode = sys.argv[1:]
+rows = [json.loads(line) for line in pathlib.Path(metrics).read_text().splitlines()] if pathlib.Path(metrics).is_file() else []
+if rows:
+    last = rows[-1]
+    assert last["attempt_id"] == "exit-accounting-attempt"
+    assert last["model"] == "openai/test-model"
+    assert last["provider"] == "openai"
+    assert last["duration_ms"] == 0
+    if mode != "normal":
+        assert last["classification_source"] == "exit_trap"
+    if mode == "new-run":
+        assert last["run_id"] == "second-run"
+    print(f'metric={last["result"]}|reason={last["failure_reason"]}|exit={last["exit_code"]}|rows={len(rows)}')
+else:
+    print("metric=missing")
+receipt = dict(line.split("=", 1) for line in pathlib.Path(outcome).read_text().splitlines())
+print(f'receipt={receipt["reason"]}')
+PY
+	return 0
+}
+
 # Exercise the real metric writer and external receipt against disposable paths.
 # All preservation/release operations are stubbed: never touch a live worker.
 _check_exit_trap_accounting() {
@@ -283,14 +314,14 @@ _check_exit_trap_accounting() {
 			_update_dispatch_ledger() { return 0; }
 			aidevops_runtime_bundle_lease_release() { return 0; }
 			cleanup_headless_git_auth() { return 0; }
-			case "$mode" in
-			dirty) _WORKER_DIRTY_WORK_PRESERVED=1 ;;
-			normal | new-run)
+			if [[ "$mode" == "dirty" ]]; then
+				_WORKER_DIRTY_WORK_PRESERVED=1
+			elif [[ "$mode" == "normal" || "$mode" == "new-run" ]]; then
 				append_runtime_metric worker fixture openai/test-model openai success 0 "" 1 0
 				[[ "$mode" != "new-run" ]] || AIDEVOPS_RUN_ID="second-run"
-				;;
-			write-failure) METRICS_FILE="${METRICS_DIR}/missing/metrics.jsonl" ;;
-			esac
+			elif [[ "$mode" == "write-failure" ]]; then
+				METRICS_FILE="${METRICS_DIR}/missing/metrics.jsonl"
+			fi
 			if [[ "$mode" == "trap" ]]; then
 				# The classifier itself is covered above; drive the full real EXIT trap
 				# with a deterministic reason, including a zero-status process exit.
@@ -301,29 +332,7 @@ _check_exit_trap_accounting() {
 				# Re-entry must not append a second terminal metric for the same run.
 				_hrff_record_exit_metric fixture "$expected_reason" "$exit_status" 1
 			fi
-			python3 - "$METRICS_FILE" "$_WORKER_EXTERNAL_OUTCOME_FILE" "$mode" <<'PY'
-import json
-import pathlib
-import sys
-
-metrics, outcome, mode = sys.argv[1:]
-rows = [json.loads(line) for line in pathlib.Path(metrics).read_text().splitlines()] if pathlib.Path(metrics).is_file() else []
-if rows:
-    last = rows[-1]
-    assert last["attempt_id"] == "exit-accounting-attempt"
-    assert last["model"] == "openai/test-model"
-    assert last["provider"] == "openai"
-    assert last["duration_ms"] == 0
-    if mode != "normal":
-        assert last["classification_source"] == "exit_trap"
-    if mode == "new-run":
-        assert last["run_id"] == "second-run"
-    print(f'metric={last["result"]}|reason={last["failure_reason"]}|exit={last["exit_code"]}|rows={len(rows)}')
-else:
-    print("metric=missing")
-receipt = dict(line.split("=", 1) for line in pathlib.Path(outcome).read_text().splitlines())
-print(f'receipt={receipt["reason"]}')
-PY
+			_summarize_exit_trap_accounting "$METRICS_FILE" "$_WORKER_EXTERNAL_OUTCOME_FILE" "$mode"
 		)
 	)
 	local expected_metric="metric=${expected_result}|reason=${expected_reason}|exit=${exit_status}|rows=1"
