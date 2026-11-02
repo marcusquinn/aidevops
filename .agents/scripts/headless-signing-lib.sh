@@ -36,11 +36,16 @@ headless_signing_required() {
 # Create a signed commit object without prompting, moving refs, or touching
 # the worktree. drop_agent=1 probes without the caller's ssh-agent (sandboxed
 # workers never receive SSH_AUTH_SOCK, GH#33064).
+# commit-tree ignores commit.gpgsign, so -S is passed whenever <dir> requires
+# signing; without it the probe never signs and cannot detect an unusable key
+# or agent (GH#36515). Directories without required signing stay unsigned.
 headless_signing_commit_probe() {
 	local work_dir="$1"
 	local drop_agent="${2:-0}"
 	local tree_id=""
+	local sign_args=()
 	tree_id=$(git -C "$work_dir" rev-parse 'HEAD^{tree}' 2>/dev/null) || return 1
+	headless_signing_required "$work_dir" && sign_args=(-S)
 	(
 		if [[ "$drop_agent" == "1" ]]; then
 			unset SSH_AUTH_SOCK SSH_AGENT_PID
@@ -49,7 +54,7 @@ headless_signing_commit_probe() {
 			SSH_ASKPASS=/usr/bin/false \
 			SSH_ASKPASS_REQUIRE=force \
 			DISPLAY=aidevops-headless \
-			git -C "$work_dir" commit-tree "$tree_id" \
+			git -C "$work_dir" commit-tree ${sign_args[@]+"${sign_args[@]}"} "$tree_id" \
 				-m "aidevops headless signing preflight" </dev/null >/dev/null 2>&1
 	) || return 1
 	return 0

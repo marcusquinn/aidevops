@@ -1,6 +1,6 @@
 ---
 name: chromium-debug-use
-description: Attach to a user's already-open Chromium-family browser for live inspection and light interaction after explicit local approval
+description: Use a logged-in Chromium-family session (Brave preferred) over CDP via an aidevops dedicated profile, after explicit local approval
 mode: subagent
 ---
 
@@ -13,12 +13,12 @@ Read `tools/browser/chromium-debug-use.md` first.
 
 ## Use This Skill When
 
-The user wants to inspect or lightly interact with something already open in a Chromium-family browser (Chrome, Brave, Edge, Vivaldi, Chromium) before committing to a heavier automation tool.
+The user wants the agent to use their logged-in session, or to inspect or lightly interact with a real Chromium-family browser (Brave, Chrome, Edge, Vivaldi, Chromium), before committing to a heavier automation tool.
 
 ## Workflow
 
-1. Confirm explicit, user-approved live-session investigation.
-2. If the debug port is not yet open, have the user launch with the flag from `tools/browser/chromium-debug-use.md`.
+1. Confirm explicit, user-approved live-session work. State up front that the user's already-open everyday tab cannot be attached (default-profile remote debugging is blocked; the extension is not documented for Brave).
+2. Run `.agents/scripts/chromium-debug-use-helper.sh launch <url>`; the user logs in once in that window (the profile persists).
 3. Use `.agents/scripts/chromium-debug-use-helper.sh version` and `list` to confirm access.
 4. Prefer `snapshot`, `html`, and `eval` to understand the page before using `click`, `type`, `navigate`, or `screenshot`.
 5. Once the flow is understood, hand off to the best-fit longer-term tool:
@@ -29,13 +29,16 @@ The user wants to inspect or lightly interact with something already open in a C
 
 ## Safety
 
-- Local-only and temporary; the user must have enabled the debug path for this investigation.
-- Prefer loopback endpoints and temporary profiles.
-- Do not use this path for unrelated tabs or long-lived background control.
+- Local-only and interactive; never for headless workers or CI.
+- Loopback endpoints and dedicated profiles only.
+- Do not use this path for unrelated tabs or long-lived background control; run `launch-stop` when finished.
 
 ## Commands
 
 ```bash
+.agents/scripts/chromium-debug-use-helper.sh launch [url]
+.agents/scripts/chromium-debug-use-helper.sh launch-status
+.agents/scripts/chromium-debug-use-helper.sh launch-stop
 .agents/scripts/chromium-debug-use-helper.sh version
 .agents/scripts/chromium-debug-use-helper.sh list
 .agents/scripts/chromium-debug-use-helper.sh snapshot <target>
@@ -46,4 +49,4 @@ The user wants to inspect or lightly interact with something already open in a C
 .agents/scripts/chromium-debug-use-helper.sh screenshot <target> /tmp/page.png
 ```
 
-Use `--browser-url http://127.0.0.1:9222` when the session is not on the default endpoint.
+Commands auto-discover a live launched profile; use `--profile NAME` or `--browser-url http://127.0.0.1:<port>` to select one explicitly.

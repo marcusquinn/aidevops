@@ -641,6 +641,30 @@ _routine_prepare_signing() {
 	return 0
 }
 
+# GH#36494: declare this runner as the lifecycle owner of worktrees that the
+# routine's helpers create, replacing any inherited identity. The runner waits
+# for the script, so its exit ends the owner and registry cleanup can archive
+# and retire those trees. Without a declaration they stay enrolled-only (a
+# coverage gap) or unenrolled, and no cleanup path can retire them.
+# Excluded or unavailable lifecycle hosts clear the declaration instead, so
+# helpers keep their plain creation path.
+_routine_declare_lifecycle_owner() {
+	local routine_id="$1"
+	local started_epoch="$2"
+	local runner_pid="${BASHPID:-$$}"
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	if [[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 || "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 ]]; then
+		return 0
+	fi
+	command -v python3 >/dev/null 2>&1 || return 0
+	# shellcheck source=worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" 2>/dev/null || return 0
+	[[ -n "$(worker_lifecycle_state_dir 2>/dev/null)" ]] || return 0
+	export AIDEVOPS_LIFECYCLE_RUNTIME_PID="$runner_pid"
+	export AIDEVOPS_LIFECYCLE_SESSION_ID="routine:${routine_id}:${started_epoch}:${runner_pid}"
+	return 0
+}
+
 _routine_run_detached_script() {
 	local routine_id="$1"
 	local script_path="$2"
@@ -658,6 +682,7 @@ _routine_run_detached_script() {
 	_routine_update_state "$routine_id" "$_ROUTINE_STATUS_RUNNING"
 	_routine_record_lifecycle "$routine_id" "$_ROUTINE_STATUS_RUNNING" 0
 	_routine_prepare_signing "$routine_id" "$repo_path"
+	_routine_declare_lifecycle_owner "$routine_id" "$started_epoch"
 	# Background + wait so a TERM/INT/HUP trap fires immediately.
 	if [[ "$#" -gt 0 ]]; then
 		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 &

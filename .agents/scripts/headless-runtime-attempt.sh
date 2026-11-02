@@ -53,8 +53,9 @@ _headless_worker_runs_sandboxed() {
 }
 
 # Verify that a worker can create a signed commit without prompting before any
-# model tokens are spent. commit-tree exercises Git's effective signing config
-# without moving refs or changing the worktree.
+# model tokens are spent. commit-tree -S exercises Git's effective signing config
+# without moving refs or changing the worktree (GH#36515: commit-tree ignores
+# commit.gpgsign, so the shared probe passes -S whenever signing is required).
 #
 # GH#33064: the sandbox never receives SSH_AUTH_SOCK (passing it would expose
 # every key in the user's agent to the model process). Probe without the
@@ -80,6 +81,8 @@ _append_headless_worker_git_config_env() {
 # process-scoped Git config inherited by the runtime and exit-trap Git commands.
 # During migration, an existing effective signing configuration remains valid
 # only when the same noninteractive signed-commit probe succeeds (GH#29902).
+# The agent heal in _prepare_headless_worker_signing needs the dedicated key,
+# so this migration path fails closed with setup guidance instead (GH#36515).
 _configure_headless_worker_signing_env() {
 	local work_dir="$1"
 	[[ "${_AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED:-0}" == "1" ]] && return 0
@@ -88,7 +91,10 @@ _configure_headless_worker_signing_env() {
 	[[ "$signing_required" == "$_HEADLESS_SIGNING_TRUE" ]] || return 0
 	local signing_public_key="${AIDEVOPS_HEADLESS_SIGNING_PUBLIC_KEY:-${HOME}/.ssh/id_ed25519_signing.pub}"
 	if [[ ! -r "$signing_public_key" ]]; then
-		_headless_worker_signing_commit_probe "$work_dir" || return 1
+		if ! _headless_worker_signing_commit_probe "$work_dir"; then
+			print_error "[lifecycle] existing commit signing cannot sign without a prompt and no dedicated headless signing key exists; run 'aidevops signing headless-setup' directly in a terminal"
+			return 1
+		fi
 		export _AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED=1
 		return 0
 	fi
