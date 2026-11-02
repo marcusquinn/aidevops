@@ -1848,7 +1848,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18848 docs(hostinger): installed package release without rpm (debug link), Red Hat VEX source, ImageMagick advisories, account policy test #documentation ref:GH#36439 pr:#36440 completed:2026-11-02
 
-- [ ] t18850 fix: bound producer recovery archive retention and skip empty-delta archives #bug ref:GH#36470
+- [x] t18850 fix: bound producer recovery archive retention and skip empty-delta archives #bug ref:GH#36470 pr:#36507 completed:2026-11-02
 
 - [x] t18851 Compact-archive prune: replace full restore verification with structural checks before deletion #feat ref:GH#36479 pr:#36503 completed:2026-11-02
 
