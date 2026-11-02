@@ -117,25 +117,29 @@ curl -s -X POST "https://api.dataforseo.com/v3/on_page/task_post" \
 
 ## Local pack / Maps grid collection
 
-Use when SEO Utils is not installed or its stored grids do not cover the need. Metric definitions, required scan metadata and guardrails: `seo/seo-utils.md` "Geogrid metrics". Source order: SEO Utils, then this recipe, then `seo/serpapi.md`.
+Use when matching SEO Utils grid data is unavailable or unreachable. Metric definitions, required scan metadata and guardrails: `seo/seo-utils.md` "Geogrid metrics". Source order: matching, reachable SEO Utils data, then this recipe, then `seo/serpapi.md`.
 
 Recipe: one Google Maps SERP task per grid point, with the point passed as `location_coordinate` in `"latitude,longitude,zoom"` format (max 7 decimals; zoom 3z-21z; default 17z). Do not send `location_code` or `location_name` alongside it. Keep `keyword`, `language_code`, `device` and `depth` identical across points. Set `depth` to the cutoff `C` (default 100; billing is per SERP of up to 100 results, so a small `depth` does not cut the price). Store each task's `tag` as the grid point ID, and read the business's `rank_group` for `type: maps_search` items, matching on `place_id` or `cid`.
 
+For this recipe, provision a protected netrc file at `~/.config/aidevops/dataforseo.netrc` through your credential manager (parent directory mode 700, file mode 600). Its entry must use `machine api.dataforseo.com`, with the API login and API password from the secret store. Never print its contents or enable shell tracing or curl verbose/trace logs. Unlike an expanded authorization header, the example below keeps credentials out of curl's process arguments.
+
 ```bash
-# Inside an injected shell with DFS_AUTH set (see Authentication). One billed task per point.
+# One billed task per point; only the protected file path appears in argv.
 curl -s -X POST "https://api.dataforseo.com/v3/serp/google/maps/task_post" \
-  -H "Authorization: Basic $DFS_AUTH" -H "Content-Type: application/json" \
+  --netrc-file "$HOME/.config/aidevops/dataforseo.netrc" -H "Content-Type: application/json" \
   -d '[{"keyword": "plumber", "location_coordinate": "51.5074,-0.1278,15z", "language_code": "en", "device": "mobile", "depth": 20, "tag": "p01"}]'
 ```
 
 Cost before running: `cost = points × keywords × price_per_task` (+ the priority surcharge if `priority: 2`). Example: a 7×7 grid is 49 points; 3 keywords = 147 tasks; 147 × `<price_per_task>` from the DataForSEO pricing page (Google Maps SERP). Show this total and get approval before submitting; a repeat scan multiplies it.
 
+Split task arrays into batches of at most 100 tasks per `task_post` request (147 tasks require batches of 100 and 47). Approval covers the entire scan, not just the first batch.
+
 Standard queue vs live:
 
-- **Standard queue** (`task_post`, then `tasks_ready` and `task_get`, or `postback_url`/`pingback_url`): the cheaper default for scheduled grids. `priority` 1 (default) is normal; `priority` 2 is high and carries an extra charge.
+- **Standard queue** (`task_post`, then `tasks_ready` and `task_get`, or `postback_url`/`pingback_url`): the cheaper default for scheduled grids. Fetch the `endpoint_advanced` returned by `tasks_ready`, or `/v3/serp/google/maps/task_get/advanced/{id}`, for the Maps fields above and `check_url`. When using `postback_url`, set `postback_data: "advanced"`; a `pingback_url` notification still requires fetching the advanced result. `priority` 1 (default) is normal; `priority` 2 is high and carries an extra charge.
 - **Live** (`/v3/serp/google/maps/live/advanced`): results in the response, one task per call, at the live price. Use for a small spot check, not full grids.
 
-Verify before use: current per-task prices and queue turnaround on the pricing page, and the live and `task_post` parameter lists, at <https://docs.dataforseo.com/v3/serp/google/maps/task_post/> and <https://docs.dataforseo.com/v3/serp/google/maps/live/advanced/>. Check one point against the returned `check_url` before running the full grid.
+Verify before use: current per-task prices and queue turnaround on the pricing page, and the live and `task_post` parameter lists, at <https://docs.dataforseo.com/v3/serp/google/maps/task_post/> and <https://docs.dataforseo.com/v3/serp/google/maps/live/advanced/>. After approval, submit one planned grid task and check it against the returned `check_url` before submitting the rest; reuse its result as that grid point rather than billing it twice. If using a separate live spot check or repeating a task, include that additional billed cost in the total before approval. Posting a task incurs its charge.
 
 ## Optional MCP settings
 

@@ -73,7 +73,7 @@ Data caveats:
 
 ## Geogrid metrics
 
-A geogrid scan checks where one business ranks in the Google Maps / local pack from many sample points around a centre. Use SEO Utils' stored GMB grid values (`google_business_*` tables, `describe_table` first) when present, and record which definition each stored number uses. If SEO Utils is not installed, collect the grid with `seo/dataforseo.md` "Local pack / Maps grid collection" (alternative: `seo/serpapi.md`).
+A geogrid scan checks where one business ranks in the Google Maps / local pack from many sample points around a centre. Use SEO Utils' stored GMB grid values (`google_business_*` tables, `describe_table` first) when matching data is available and its MCP is reachable, and record which definition each stored number uses. Otherwise (including missing data or a disabled or unreachable MCP), collect the grid with `seo/dataforseo.md` "Local pack / Maps grid collection" (alternative: `seo/serpapi.md`).
 
 Definitions. `C` = cutoff, the deepest rank checked (e.g. 20). `N` = all grid points. A point is **found** when the business appears within `C`; `rank` is its position there.
 
@@ -92,12 +92,12 @@ Required scan metadata, stored with every number: keyword, business identifier (
 
 Guardrails:
 
-- Compare scans only when grid geometry, keyword, device, language and cutoff match.
+- Compare scans only when business identifier, grid geometry, keyword, platform, device, language, cutoff and metric definition match.
 - Grid points are sample locations, not customers or audience share. Never describe SoLV as a percentage of customers.
 - A single scan is a snapshot; treat 1-2 position moves as noise unless repeated.
 - Movement does not prove cause; attribute only with dated change logs.
 - Estimate cost as points × keywords × price-per-task and ask before spending (see Write and spend safety).
-- Source order: SEO Utils first if installed, else the DataForSEO standard queue, else SerpApi. Do not route grid tracking to a dedicated paid grid vendor by default.
+- Source order: matching, reachable SEO Utils data first, otherwise the DataForSEO standard queue, then SerpApi. Do not route grid tracking to a dedicated paid grid vendor by default.
 
 ## Workspaces
 
