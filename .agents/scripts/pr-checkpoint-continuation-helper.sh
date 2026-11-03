@@ -691,7 +691,7 @@ _pcc_lift_superseded_self_hold() {
 # Args: $1=slurped comment pages JSON. Prints the (possibly normalised) JSON.
 _pcc_normalise_hidden_unedited() {
 	local raw="$1" ids="" chunk="" resp="" clean="[]" id=""
-	local query='query($ids: [ID!]!) { nodes(ids: $ids) { ... on IssueComment { id lastEditedAt } } }'
+	local query="query(\$ids: [ID!]!) { nodes(ids: \$ids) { ... on IssueComment { id lastEditedAt } } }"
 	local -a args=()
 	ids=$(jq -r '[flatten[] | select((.updated_at // .created_at) != .created_at and
 		((.node_id // empty) | test("^[A-Za-z0-9_=-]+$"))) | .node_id] | unique | _nwise(50) | join(" ")' \
