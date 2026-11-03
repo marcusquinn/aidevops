@@ -77,7 +77,7 @@ function validateSize(value) {
   const boundedEdges = longEdge <= 3840 && longEdge / shortEdge <= 3;
   const boundedPixels = pixels >= 655_360 && pixels <= 8_294_400;
   if (!aligned || !boundedEdges || !boundedPixels) {
-    throw new Error("Image size violates GPT Image 2 dimension constraints.");
+    throw new Error("Image size violates GPT Image 2 dimension constraints: width and height must be multiples of 16, the longest edge at most 3840, aspect ratio at most 3:1, and pixel count 655360-8294400.");
   }
   return size;
 }
@@ -138,7 +138,8 @@ async function executeImageGeneration(rawArgs, options, context) {
   const dimensions = `${saved.width}x${saved.height}`;
   const requestedModel = result.requestedModel || "provider-managed";
   const providerModel = result.providerModel || "unknown";
-  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}. Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${versionNote}${cleanupNote}`;
+  const routerNote = result.routerModel ? ` OAuth router model: ${result.routerModel}.` : "";
+  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}.${routerNote} Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${versionNote}${cleanupNote}`;
 }
 
 export function createGptImageTool(tool, z, options = {}) {

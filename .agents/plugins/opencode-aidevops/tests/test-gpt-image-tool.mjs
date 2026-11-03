@@ -90,6 +90,7 @@ describe("GPT image OpenCode tool", () => {
     assert.match(output, /ChatGPT subscription OAuth/);
     assert.match(output, /generated\/test\.png/);
     assert.match(output, /Requested size: auto; native dimensions: 1x1/);
+    assert.match(output, /OAuth router model: gpt-6-sol/);
     assert.match(output, /Requested image model: provider-managed; provider-confirmed image model: unknown/);
     assert.doesNotMatch(output, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
@@ -200,6 +201,17 @@ describe("GPT image OpenCode tool", () => {
     const output = await tool.execute({ prompt: "draw a test", out: "generated/test.webp", format: "webp" });
     assert.equal(requestBody.tools[0].output_format, "webp");
     assert.match(output, /generated\/test\.webp/);
+  });
+
+  test("explains unaligned dimensions before authentication or network access", async () => {
+    const tool = createTool({
+      resolveOAuthAccount: async () => assert.fail("must validate size before authentication"),
+      fetchImpl: async () => assert.fail("must validate size before generation"),
+    });
+    await assert.rejects(
+      tool.execute({ prompt: "draw a test", out: "test.webp", format: "webp", size: "1448x1086" }),
+      /width and height must be multiples of 16/,
+    );
   });
 
   test("rejects format and extension mismatches before network access", async () => {

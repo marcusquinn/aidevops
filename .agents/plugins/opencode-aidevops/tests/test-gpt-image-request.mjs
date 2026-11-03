@@ -172,13 +172,16 @@ describe("GPT image provider requests", () => {
     const body = JSON.parse(captured.init.body);
     assert.equal(captured.url, "https://chatgpt.com/backend-api/codex/responses");
     assert.equal(captured.init.headers.Authorization, "Bearer oauth-test-token");
-    assert.equal(body.model, "gpt-6.1-sol");
+    assert.equal(body.model, "gpt-6-sol");
     assert.equal(body.tools[0].type, "image_generation");
     assert.equal(body.tools[0].output_format, "webp");
     assert.equal(body.tools[0].size, "1024x1024");
     assert.equal(Object.hasOwn(body.tools[0], "model"), false);
     assert.equal(body.input[0].content[1].type, "input_image");
     assert.equal(result.base64, IMAGE_RESULT);
+    assert.equal(result.routerModel, "gpt-6-sol");
+    assert.equal(result.requestedModel, null);
+    assert.equal(result.providerModel, null);
   });
 
   test("leaves OAuth hosted-tool size automatic when auto is requested", async () => {
@@ -199,26 +202,20 @@ describe("GPT image provider requests", () => {
     assert.equal(Object.hasOwn(captured.tools[0], "size"), false);
   });
 
-  test("retries OAuth image generation once with the next routed model", async () => {
+  test("does not fall back to workload aliases when the Codex router is unavailable", async () => {
     const models = [];
-    const event = `data: ${JSON.stringify({
-      type: "response.output_item.done",
-      item: { type: "image_generation_call", result: IMAGE_RESULT },
-    })}\n\n`;
     const result = await requestOAuthImage(
       { accessToken: "[redacted-credential]" },
       { prompt: "draw a test", quality: "auto", size: "auto", format: "png" },
       [],
       async (_url, init) => {
         models.push(JSON.parse(init.body).model);
-        if (models.length === 1) {
-          return Response.json({ error: { code: "model_not_found", message: "unavailable" } }, { status: 404 });
-        }
-        return new Response(event, { status: 200 });
+        return Response.json({ error: { code: "model_not_found", message: "unavailable" } }, { status: 400 });
       },
     );
-    assert.deepEqual(models, ["gpt-6.1-sol", "gpt-6.1-terra"]);
-    assert.equal(result.base64, IMAGE_RESULT);
+    assert.deepEqual(models, ["gpt-6-sol"]);
+    assert.equal(result.error.code, "model_not_found");
+    assert.equal(result.base64, "");
   });
 
   test("does not retry non-model OAuth errors", async () => {

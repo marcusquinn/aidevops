@@ -8,7 +8,6 @@
 const CODEX_RESPONSES_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
 const OPENAI_IMAGES_GENERATE_ENDPOINT = "https://api.openai.com/v1/images/generations";
 const OPENAI_IMAGES_EDIT_ENDPOINT = "https://api.openai.com/v1/images/edits";
-import { readFileSync } from "node:fs";
 import { parseImageSse, redactProviderDetail } from "./gpt-image-sse.mjs";
 
 export { parseImageSse };
@@ -19,7 +18,10 @@ export const API_IMAGE_MODELS = Object.freeze([
   "gpt-image-2.5-sunburst",
 ]);
 
-const MODEL_ROUTING_TABLE = new URL("../../configs/model-routing-table.json", import.meta.url);
+// Codex hosted-image router, independent of the general workload model table.
+// opencode-gpt-imagegen c9db37c84c25f1724953f23c876d05dd8db0ddb0 uses
+// this ChatGPT-supported slug; API/workload aliases are not Codex model IDs.
+const OAUTH_IMAGE_ROUTER_MODEL = "gpt-6-sol";
 const MAX_API_RESPONSE_BYTES = 96 * 1024 * 1024;
 const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
 const IMAGE_REQUEST_TIMEOUT_MS = 180_000;
@@ -65,15 +67,6 @@ function imageToolArgs(args) {
   };
 }
 
-function subscriptionRouterModels() {
-  const routing = JSON.parse(readFileSync(MODEL_ROUTING_TABLE, "utf8"));
-  const models = ["thinking", "standard", "simple"]
-    .flatMap((tier) => routing.tiers?.[tier]?.models || [])
-    .filter((model) => model.startsWith("openai/"))
-    .map((model) => model.slice("openai/".length));
-  return [...new Set(models)].slice(0, 2);
-}
-
 function oauthRequestBody(args, images, model) {
   const content = [{ type: "input_text", text: args.prompt }];
   for (const image of images) content.push({ type: "input_image", image_url: image.dataUrl });
@@ -99,32 +92,24 @@ function oauthHeaders(auth) {
 }
 
 export async function requestOAuthImage(auth, args, images, fetchImpl) {
-  const models = subscriptionRouterModels();
-  if (models.length === 0) throw new Error("No OpenAI subscription router model is configured.");
   return withImageRequestTimeout(async (signal) => {
     const started = performance.now();
-    let result;
-    for (const model of models) {
-      const response = await fetchImageResponse(fetchImpl, CODEX_RESPONSES_ENDPOINT, {
-        method: "POST",
-        headers: oauthHeaders(auth),
-        body: JSON.stringify(oauthRequestBody(args, images, model)),
-        signal,
-      }, "oauth", started);
-      if (response.ok) {
-        return {
-          response,
-          base64: await parseImageSse(response.body, (error) => {
-            throw transportFailure("oauth", "response-body", error, { started, response, signal });
-          }),
-          requestedModel: null,
-          providerModel: null,
-        };
-      }
-      result = { response, base64: "", error: await imageRequestError(response, "oauth") };
-      if (result.error.code !== "model_not_found") return result;
-    }
-    return result;
+    const response = await fetchImageResponse(fetchImpl, CODEX_RESPONSES_ENDPOINT, {
+      method: "POST",
+      headers: oauthHeaders(auth),
+      body: JSON.stringify(oauthRequestBody(args, images, OAUTH_IMAGE_ROUTER_MODEL)),
+      signal,
+    }, "oauth", started);
+    if (!response.ok) return { response, base64: "", error: await imageRequestError(response, "oauth") };
+    return {
+      response,
+      base64: await parseImageSse(response.body, (error) => {
+        throw transportFailure("oauth", "response-body", error, { started, response, signal });
+      }),
+      routerModel: OAUTH_IMAGE_ROUTER_MODEL,
+      requestedModel: null,
+      providerModel: null,
+    };
   });
 }
 
