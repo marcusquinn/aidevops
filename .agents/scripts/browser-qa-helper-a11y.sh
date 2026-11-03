@@ -60,10 +60,9 @@ _run_contrast_checks() {
 			if [[ "$contrast_exit" -gt 1 ]] || ! jq -e -s 'length == 1' >/dev/null 2>&1 <<<"$contrast_result"; then
 				contrast_result=$(jq -cn --argjson exit "$contrast_exit" '{error: "contrast check failed", exit: $exit}')
 			fi
-			contrast_json=$(jq -c \
+			contrast_json=$(printf '%s\n%s\n' "$contrast_json" "$contrast_result" | jq -cs \
 				--arg page "$page_path" \
-				--argjson contrast "$contrast_result" \
-				'. + [{page: $page, contrast: $contrast}]' <<<"$contrast_json")
+				'.[0] + [{page: $page, contrast: .[1]}]') || return 1
 		else
 			log_warn "Contrast script not found at ${contrast_script}"
 			contrast_json=$(jq -c \
@@ -201,7 +200,6 @@ ${document_checks}"
 	cat >"$script_file" <<SCRIPT
 const playwrightImport = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = playwrightImport.chromium ? playwrightImport : playwrightImport.default;
-const { readFile } = await import('node:fs/promises');
 
 const baseUrl = '${safe_url}';
 const pagesDefault = ${pages_default};
@@ -209,6 +207,7 @@ $(_page_url_js)
 const pages = [${pages_array}];
 
 async function run() {
+  const { readFile } = await import('node:fs/promises');
   const launchOptions = { headless: true };
   if (process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE) launchOptions.executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE;
   const browser = await chromium.launch(launchOptions);
@@ -290,30 +289,26 @@ cmd_a11y() {
 		case "$option" in
 		--url)
 			url="$value"
-			shift 2
 			;;
 		--pages)
 			pages="$value"
 			pages_default=false
-			shift 2
 			;;
 		--level)
 			level="$value"
-			shift 2
 			;;
 		--format)
 			format="$value"
-			shift 2
 			;;
 		--viewports)
 			viewports="$value"
-			shift 2
 			;;
 		*)
 			log_error "Unknown option: $option"
 			return 1
 			;;
 		esac
+		shift 2
 	done
 
 	if [[ -z "$url" ]]; then
@@ -348,11 +343,20 @@ cmd_a11y() {
 	local -a viewport_list
 	IFS=',' read -r -a viewport_list <<<"$viewports"
 	for viewport in "${viewport_list[@]}"; do
-		contrast_json=$(_run_contrast_checks "$url" "$pages" "$level" "$pages_default" "$viewport") || { exit_code=1; break; }
+		contrast_json=$(_run_contrast_checks "$url" "$pages" "$level" "$pages_default" "$viewport") || {
+			exit_code=1
+			break
+		}
 		printf '%s\n' "$contrast_json" >"$script_dir/contrast.json"
-		output=$(run_playwright_node "$script_file" "$script_dir/contrast.json" "$viewport") || { exit_code=$?; break; }
+		output=$(run_playwright_node "$script_file" "$script_dir/contrast.json" "$viewport") || {
+			exit_code=$?
+			break
+		}
 		report=$(printf '%s\n%s\n' "$report" "$output" | jq -cs --arg viewport "$viewport" \
-			'.[0] + (.[1] | map(. + {viewport: $viewport}))') || { exit_code=1; break; }
+			'.[0] + (.[1] | map(. + {viewport: $viewport}))') || {
+			exit_code=1
+			break
+		}
 	done
 	rm -rf "$script_dir"
 	if [[ "$exit_code" -ne 0 ]]; then
