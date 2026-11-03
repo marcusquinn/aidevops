@@ -840,10 +840,11 @@ _consolidation_dispatch_comment_owns_parent() {
 # (which then released its lock) can be missed. This lists open
 # consolidation-task issues by label (not search) and matches either the
 # "Consolidation target: #N" body anchor or the "merge thread on #N" title.
-# Fails open (returns 1) on API error: the lock is already held, and the
-# caller must not wedge consolidation on a transient read failure.
+# The body marker is anchored to the generated first line so copied parent
+# text cannot masquerade as a child marker. Fails closed: an API error or
+# invalid count returns 2 (distinct from a confirmed empty list).
 # Args: $1=parent_num $2=repo_slug
-# Returns: 0 if an open child names the parent, 1 otherwise.
+# Returns: 0 if an open child names the parent, 1 if none, 2 on read error.
 #######################################
 _PTE_CONSOLIDATION_TASK_LABEL="consolidation-task"
 _consolidation_open_child_listed() {
@@ -854,15 +855,15 @@ _consolidation_open_child_listed() {
 
 	# parent_num is validated numeric above, so inlining it in the filter is safe.
 	local jq_filter="" match_count="" list_exit=0
-	jq_filter="[.[]? | select(((.body // \"\") | test(\"Consolidation target: #${parent_num}([^0-9]|\$)\")) or ((.title // \"\") | test(\"merge thread on #${parent_num}([^0-9]|\$)\")))] | length"
+	jq_filter="[.[]? | select(((.body // \"\") | test(\"^(## )?Consolidation target: #${parent_num}([^0-9]|\$)\")) or ((.title // \"\") | test(\"merge thread on #${parent_num}([^0-9]|\$)\")))] | length"
 	match_count=$(gh_issue_list --repo "$repo_slug" --state open \
 		--label "$_PTE_CONSOLIDATION_TASK_LABEL" \
-		--json number,title,body --limit 200 \
+		--json number,title,body --limit 1000 \
 		--jq "$jq_filter" 2>/dev/null) || list_exit=$?
-	[[ "$list_exit" -eq 0 ]] || return 1
-	[[ "$match_count" =~ ^[0-9]+$ ]] || return 1
-	[[ "$match_count" -gt 0 ]]
-	return $?
+	[[ "$list_exit" -eq 0 ]] || return 2
+	[[ "$match_count" =~ ^[0-9]+$ ]] || return 2
+	[[ "$match_count" -gt 0 ]] && return 0
+	return 1
 }
 
 _consolidation_child_exists() {

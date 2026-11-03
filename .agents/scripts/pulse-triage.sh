@@ -266,7 +266,15 @@ _consolidation_post_lock_dedup_skip() {
 	local repo_slug="$2"
 	local self_login="$3"
 
-	_consolidation_open_child_listed "$issue_number" "$repo_slug" || return 1
+	local listed_rc=0
+	_consolidation_open_child_listed "$issue_number" "$repo_slug" || listed_rc=$?
+	[[ "$listed_rc" -eq 1 ]] && return 1
+	if [[ "$listed_rc" -ne 0 ]]; then
+		# Listing failed: cannot prove no child exists; yield and retry next cycle.
+		_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
+		echo "[pulse-wrapper] Consolidation: post-lock child listing failed for #${issue_number} in ${repo_slug}; released lock, retry next cycle (GH#36536)" >>"$LOGFILE"
+		return 0
+	fi
 	_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
 	gh issue edit "$issue_number" --repo "$repo_slug" \
 		--add-label "needs-consolidation" 2>/dev/null || true
@@ -336,7 +344,7 @@ _dispatch_issue_consolidation() {
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || parent_labels=""
 
 	# Substantive comments (shared filter) and the Contributors cc line.
-	local substantive_json authors_csv
+	local substantive_json="" authors_csv=""
 	substantive_json=$(_consolidation_substantive_comments "$issue_number" "$repo_slug")
 	[[ -n "$substantive_json" ]] || substantive_json="[]"
 	authors_csv=$(printf '%s' "$substantive_json" | jq -r '
