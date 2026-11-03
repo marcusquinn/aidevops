@@ -2,55 +2,49 @@
 
 ## Status and authority
 
-Pulse, interactive sessions and other supported launchers share one policy:
-launchers supply registration facts, not different safety rules. Only the new
-registry and native OS adapter supply lifecycle evidence. Legacy registries,
-dispatch ledgers and old owner statuses cannot fill gaps or authorize operations.
-Git and the filesystem supply content evidence, not process liveness.
+All supported launchers (Pulse, interactive and others) supply registration facts,
+not separate safety rules. Only the new registry and native OS adapter supply
+lifecycle evidence; legacy registries, dispatch ledgers and old owner statuses
+cannot fill gaps or authorize operations. Git/filesystem evidence proves content,
+not process liveness.
 
-The managed launch contract in [DESIGN.md](DESIGN.md#managed-launch-contract)
-defines ownership coverage. Independent worktree writers must register separate
-runs before writing, including jobs intended to outlive their launcher. Ordinary
-child commands remain the launching runtime's responsibility. Lifecycle does not
-discover or control process trees; an unregistered independent writer is outside
-the contract, not an owner inferred from PID, PPID or cwd.
+The [managed launch contract](DESIGN.md#managed-launch-contract) defines ownership
+coverage. Independent writers, including jobs outliving their launcher, must
+register separate runs before writing. Ordinary child commands remain the runtime's
+responsibility. Lifecycle neither discovers nor controls process trees: unregistered
+independent writers are outside the contract, not owners inferred from PID, PPID or cwd.
 
 `worker_lifecycle/cleanup_policy.py` is a **report-only decision table**: no I/O,
 always `cleanup_authorized=False`. Its assertions are inputs for future verified
 collectors, not CLI flags or proof objects. No production collector or destructive
 executor is connected to this policy; its tests do not validate archive/restore.
 
-`directory_handle.py` holds a read-only descriptor and compares device/inode identity
-at the canonical path for one operation. Observed replacement, lost access, process
-change or closure invalidates it. It is not persistent generation identity, a snapshot,
-a Git identity check or an admission lock: contents can change despite a match,
-and a positive check cannot prevent a later pathname race. Re-establish evidence
-after crash/restart; saved device/inode values alone are insufficient. Retained
-registry reports qualify these tests only for their recorded Linux/macOS Intel
-artifacts and environments.
+`directory_handle.py` compares a read-only descriptor's device/inode with the canonical
+path for one operation. Observed replacement, lost access, process change or closure
+invalidates it. It is not persistent generation identity, a snapshot, a Git identity
+check or an admission lock: matching identity neither freezes content nor prevents
+later pathname races. Re-establish evidence after crash/restart; saved device/inode
+values are insufficient. Retained reports qualify only their recorded Linux/macOS
+Intel artifacts and environments.
 
-Default observe-only bindings use per-attempt UUIDs, not verified physical worktree
-generations. Enrollment lookup must first confirm an unregistered, unmarked path;
-lookup failures deny execution. If the subsequent `record()` call fails, the launcher
-reports `observation-gap` and deliberately executes the original command.
-They cannot supply `generation_verified`, `ownership_complete` or `admission_closed`.
-A later active admission protocol must deny managed launches on closed/unavailable
-admission without silently changing this observe-only contract.
+Default observe-only bindings use per-attempt UUIDs, not verified physical generations.
+Enrollment lookup must confirm an unregistered, unmarked path; failure denies execution.
+Subsequent `record()` failure reports `observation-gap` but deliberately executes the
+original command. These bindings cannot supply `generation_verified`, `ownership_complete`
+or `admission_closed`. Future active admission must deny closed/unavailable managed
+launches without silently changing the observe-only contract.
 
 ## Simple algorithm
 
-1. Verify the physical worktree generation and complete ownership coverage.
-   Missing registration or path reuse means hold.
+1. Verify physical generation and complete ownership; missing registration or path reuse means hold.
 2. Require every admitted run to be ended. Independently registered jobs remain
    owners after launcher exit; shared runtimes also need explicit session-completion
    semantics, not just PID polling. Close admission only if the exact nonempty run
    set remains ended in the admission transaction. A racing new owner means retry,
    not closure over live work.
-3. Inventory all results. Incomplete inventory means hold, not an empty worktree.
-4. Propose archive for results needing preservation, removal for verified
-   preservation, and hold for unknown preservation.
-5. A future executor must revalidate evidence and perform the protected operation;
-   a report is never a deletion capability.
+3. Inventory all results; incomplete inventory means hold, not an empty worktree.
+4. Propose archive for unpreserved results, removal for verified preservation, hold for unknowns.
+5. A future executor must revalidate evidence and perform the protected operation; reports never authorize deletion.
 
 | Evidence | Report |
 |----------|--------|
@@ -60,15 +54,14 @@ admission without silently changing this observe-only contract.
 | All safety preconditions proved; unique local results | Archive candidate |
 | All safety preconditions proved; results demonstrably preserved | Remove candidate |
 
-`ended` means process termination, not task success. No push/PR is a normal
-preservation case: local work may be the only copy. Nor does a push/PR prove the
-latest work is preserved. With squash merges, commit ancestry alone cannot prove
-work was lost or remains unpublished.
+`ended` means process termination, not task success. Without a push/PR, local work
+may be the only copy; a push/PR still does not prove the latest work preserved.
+With squash merges, ancestry alone cannot prove loss or unpublished work.
 
 ## Transactional admission core
 
-`admission.py` supplies an API for cooperating callers, tested in private stores.
-It shares the registry's SQLite transaction and journal, not a second database:
+`admission.py` serves cooperating callers, tested in private stores, using the
+registry's SQLite transaction and journal, not a second database:
 
 - `open_generation` reserves a canonical path for one generation ID. Closed paths
   remain reserved; assigning another UUID cannot bypass closure. Verified
@@ -87,15 +80,14 @@ It shares the registry's SQLite transaction and journal, not a second database:
   **not permission for a second exec**. Lost acknowledgements need original-run
   recovery. Replaying an old open event cannot reopen closed admission.
 
-Schema 2 supports this API; schema 1 needs the explicit transactional upgrade in
-[REGISTRY.md](REGISTRY.md). No production migration was performed. Explicit launcher
-mode and automatically resolved enrolled generations use the API; unmanaged
-observe-only launches bypass it. It supplies neither system-wide exclusion,
-physical generation evidence nor cleanup authority. Production launcher coverage,
-registered-run completion, restart recovery and closing-versus-exec integration
-remain unqualified. Portable reports cover their recorded source only: retained
-Linux/macOS Intel reports include admission, directory-handle checks and disposable
-archive/retirement, not production AI launchers, unregistered writers or rollout.
+Schema 2 supports this API; schema 1 requires the explicit transactional upgrade in
+[REGISTRY.md](REGISTRY.md). No production migration occurred. Explicit launches and
+automatically resolved enrolled generations use it; unmanaged observe-only launches
+bypass it. It proves neither system-wide exclusion, physical generation nor cleanup
+authority. Production launcher coverage, run completion, restart recovery and
+closing-versus-exec integration remain unqualified. Retained Linux/macOS Intel reports
+cover their recorded admission, directory-handle and disposable archive/retirement
+source only, not production AI launchers, unregistered writers or rollout.
 
 ### Explicit admitted launch
 
@@ -109,23 +101,21 @@ python3 -E -s -B /absolute/path/to/worker-launch.py \
   --generation-id GENERATION_UUID --run-id ATTEMPT_UUID -- native-command
 ```
 
-Both IDs are required together. The attempt ID must remain stable across delivery
-retries. This mode disallows `--initialize`, verifies the declared reserved path,
-holds a directory handle until exec, and records the exact pre-exec process identity.
-Process cwd is neither ownership evidence nor an admission condition. Native
-runtime working-directory options remain separate from lifecycle registration.
+Supply both IDs together and retain the attempt ID across delivery retries. This
+mode disallows `--initialize`, verifies the reserved path, holds a directory handle
+until exec and records exact pre-exec process identity. Cwd proves neither ownership
+nor admission; native working-directory options remain separate from registration.
 Closed/unknown admission, missing state, schema 1, replay, capacity failure or
 unavailable observations return 75 without executing the native command. Invalid
 CLI combinations return 2. Successful exec preserves native output and exit code;
 native exec failures retain the existing 126/127 convention. Reconciliation records
 the process ending, including a launch that failed after committing admission.
 
-The directory descriptor is non-inheritable and closes on exec; it is NOT a writer
-lock for the worker's lifetime. An already-admitted run may reach exec after close:
-it remains a registered non-ended owner, so close is not permission to remove its
-worktree. Independently continuing jobs must have their own admitted runs;
-ordinary child-command cleanup remains the runtime's responsibility.
-No installed launcher hook is switched into this mode by these changes.
+The non-inheritable directory descriptor closes on exec; it is NOT a lifetime writer
+lock. A run reaching exec after admission closes remains a registered non-ended owner,
+so closure cannot authorize removal. Independently continuing jobs need their own
+admitted runs; ordinary child-command cleanup remains the runtime's responsibility.
+These changes switch no installed launcher hook into this mode.
 
 ### Bare and sandbox integration
 
@@ -139,13 +129,12 @@ Private workloads with this public-store context are refused rather than logged
 into that store. Existing private/disabled observation without admission metadata
 retains its previous behavior.
 
-The shim remains inside sandbox environment clearing and egress/seatbelt policy;
-it does not expand native-command permissions or disable isolation. Bare launch
-still requires the existing sandbox policy to permit it. The bare integration's
-fixture stubs only that upstream policy and runtime setup, then executes the real
-launch-boundary function; the sandbox fixture exercises the command-line helper.
-Tests use disposable state and `touch`, not AI workers. These shell integrations
-have Linux evidence; the portable Mac report does not cover the shell hooks.
+The shim preserves sandbox environment clearing, egress/seatbelt policy, native-command
+permissions and isolation. Bare launch still needs sandbox-policy permission. Its
+fixture stubs only upstream policy/runtime setup before executing the real launch
+boundary; the sandbox fixture exercises the command-line helper. Tests use disposable
+state and `touch`, not AI workers. Linux evidence covers these shell integrations;
+the portable Mac report does not cover shell hooks.
 
 Without explicit controller metadata, the shim checks the new admission table.
 A registered generation must pass enrollment validation and admission; a closed
@@ -175,10 +164,9 @@ runtime-provided session ID. Framework-managed hook commands use `exec` so an
 intermediate shell is not mistaken for the owning runtime. Custom command
 wrappers are not qualified by this integration.
 
-Replaying the same session/process registration is idempotent, including after
-admission closes; it does not start another independent run. A new owner cannot
-enter a closed generation. Shared runtime processes are retained conservatively
-until native process termination: session completion/release is not implemented.
+Session/process replay is idempotent even after closure, not a new independent run.
+New owners cannot enter closed generations. Shared runtimes remain conservatively
+retained until native process termination; session completion/release is unimplemented.
 
 The existing bounded-operation supervisor also registers its own native identity
 before spawning the command. Its lifetime remains governed by the existing
@@ -217,32 +205,28 @@ Format-1 compatibility and operation-local device checks are described in
 [REGISTRY.md](REGISTRY.md). Device-renumbering tests simulate the identity comparison;
 they do not establish native reboot/remount coverage on macOS.
 
-The fingerprint is not an everlasting physical identity: copied metadata and
-inode reuse outside the cooperating creation protocol are not excluded. It also
-does not by itself register the creator's writer lifetime.
+The fingerprint neither excludes copied metadata/inode reuse outside cooperating
+creation nor registers the creator's writer lifetime; it is not everlasting physical identity.
 
-OpenCode's shell environment, bounded-operation supervisor and native launcher
-declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and
-`AIDEVOPS_LIFECYCLE_SESSION_ID`. For a new path, the shared helper invokes
-`create-worktree`: it exclusively creates the directory, runs native Git,
+OpenCode's shell environment, bounded-operation supervisor, native launcher and Pulse script-routine
+runner declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and `AIDEVOPS_LIFECYCLE_SESSION_ID`.
+The routine runner clears these declarations when lifecycle is disabled, prerequisites fail or
+the workload is private; automatic retirement is not expected then. Otherwise, it waits for its
+script, so helper-created trees become eligible for registry retirement after it exits (GH#36494).
+For a new path, the shared helper invokes `create-worktree`: it exclusively creates the directory, runs native Git,
 captures the owner's start identity and binds it before returning the new tree.
-Only successful controlled creation records a `created-worktree` event. Ordinary
-enrollment or admission of an existing tree cannot mint that evidence.
-`prepare-cleanup` exposes the validated receipt as `creation_verified`; this
-does not itself authorize deletion. This is not a PID-only liveness test or a
-legacy ownership lookup.
-Independent launches replace inherited creator identity; excluded launches clear
-it. Partial declarations fail without removing the tree. Missing declarations
-bind the creating shell for a fresh path; later writers still need their own
-admission. This does not establish coverage beyond that creator. Callers with
-pre-reserved directories retain their existing creation path but do not acquire
-controlled-creation provenance. Failed construction retains partial results;
-repeating it cannot adopt an existing directory, even an empty one.
+Only successful controlled creation records a `created-worktree` event; ordinary enrollment or
+admission of an existing tree cannot mint it. `prepare-cleanup` exposes the validated receipt as
+`creation_verified`, not deletion authority, a PID-only liveness test or a legacy ownership lookup.
+Independent launches replace inherited creator identity; excluded launches clear it.
+Partial declarations fail without removal; missing declarations bind the creating shell for a fresh
+path, not later writers, who need their own admission. Coverage stops at that creator. Callers with
+pre-reserved directories retain their creation path without controlled-creation provenance.
+Failed construction retains partial results; repeating it cannot adopt even an empty existing directory.
 
 Managed producers use `worker-lifecycle-state.sh` to enter the native launcher before execution.
 Parent runtime/session identity is replaced; explicit generation/attempt requirements remain mandatory.
-Post-completion callbacks run outside that identity. Legacy service receipts cannot replace
-registry creation, admission or retirement checks.
+Post-completion callbacks run outside that identity; legacy receipts cannot replace registry creation, admission or retirement checks.
 
 Claude creator integration is outside this rollout; standalone creators and unknown pre-enrollment
 writers still prevent a claim of complete registered-owner coverage.
@@ -261,11 +245,11 @@ These verified integration points (paths relative to `scripts/`) are not an exha
 | Removal consumers | `pulse-cleanup-worktree-removal-lifecycle.sh`, `worktree-helper-cmds.sh`, `pulse-temp-worktree-cleanup.sh` | Replace legacy ownership authority only after coverage and generation checks are proven |
 
 Implement enrollment and identity propagation before switching cleanup consumers.
-`open_generation` currently reserves an existing canonical directory; it is not a
-pre-creation lock or a persistent physical identity check. Do not call it on every
-launch with a fresh UUID, infer a generation from path equality, or automatically
-reopen a closed path. Recovery of interrupted creation and intentional path reuse
-need explicit contracts; terminal absence reconciliation is described in [ABSENCE.md](ABSENCE.md).
+`open_generation` reserves an existing canonical directory, not a pre-creation lock
+or persistent physical identity. Never use fresh UUIDs per launch, infer generation
+from path equality or automatically reopen closed paths. Interrupted creation and
+intentional path reuse need explicit recovery contracts; see [ABSENCE.md](ABSENCE.md)
+for terminal absence reconciliation.
 
 ## Preparation and WIP preservation commands
 
@@ -292,17 +276,16 @@ Ancestors must belong to root/current user and deny external writes, except stic
 These POSIX ownership/mode-bit checks do not evaluate extended macOS/NFSv4 ACLs; effective access must match the mode-bit policy for these guarantees to hold.
 The archive producer remains unchanged. Unsafe paths prevent source retirement rather than triggering permission repair.
 
-Both require `--state-dir` before the subcommand. Neither initializes/migrates state,
+Both require `--state-dir` before the subcommand; neither initializes/migrates state,
 reopens admission, removes worktrees nor consults legacy ownership. Closure survives
-failure: do not use them on trees needing more launches. Preservation records a
-registry receipt; repeating the same generation/content/destination rechecks the
-archive, since old receipts are not current proof. Results retain
-`cleanup_authorized=false` and `common_repository_required=true`.
+failure: do not use on trees needing more launches. Repeating preservation for the
+same generation/content/destination rechecks the archive; old registry receipts are
+not current proof. Results retain `cleanup_authorized=false` and `common_repository_required=true`.
 
-Archives pin `refs/aidevops/wip-base/OPERATION_ID` through branch deletion and Git GC,
-but still depend on the common repository. Retain pins while dependent archives exist;
-these commands do not retire archives/pins automatically. Git/filesystem work stays
-outside SQLite write transactions; only verified receipts are published transactionally.
+Archives pin `refs/aidevops/wip-base/OPERATION_ID` through branch deletion/Git GC but
+still need the common repository. Retain pins while dependent archives exist; neither
+is retired automatically. Git/filesystem work stays outside SQLite write transactions;
+only verified receipts publish transactionally.
 
 ## Explicit guarded retirement
 
@@ -314,8 +297,8 @@ python3 -E -s -B /absolute/path/to/worker-registry.py --state-dir /absolute/priv
 ```
 
 This unscheduled destructive command requires controlled creation, ended admitted
-owners, closed admission and verified Git-only preservation; enrollment alone is
-insufficient. It neither consults legacy ownership nor deletes branches.
+owners, closed admission and verified Git-only preservation, not enrollment alone.
+It neither consults legacy ownership nor deletes branches.
 
 Configured `cleanup`/`cleanup-worktree` additionally recover missing creation receipts
 only after all bound runs are admitted and ended, and admission is closed.
@@ -324,18 +307,17 @@ exact run set; it never fabricates `created-worktree`. The same archive, source-
 relocation and retry protections apply. Empty/observation-only registrations,
 live/unknown runs and invalid existing creation receipts remain held.
 
-The executor journals intent, then uses native `git worktree move` to claim a private
-sibling path. Metadata and content must match before its native removal; the public
-name is never a removal target. Per-generation OS locks serialize controllers without
-holding SQLite writer transactions across filesystem work. Archives/base pins remain.
+The executor journals intent, then claims a private sibling via native `git worktree move`.
+Metadata/content must match before native removal; never target the public name.
+Per-generation OS locks serialize controllers without SQLite writer transactions
+across filesystem work. Archives/base pins remain.
 
-Explicit helpers inherit the lock descriptor. After controller death, another controller
-cannot acquire it until surviving helpers close it. This uses kernel descriptor lifetime,
-not descendant discovery, PID signalling or cwd inspection.
+Explicit helpers inherit the lock descriptor, so after controller death no other controller
+acquires it until surviving helpers close it (kernel descriptor lifetime, not process discovery).
 
-Retry the same command/generation after interruption. Relocation resumes despite public-name
-reuse; completed removal can be acknowledged after a lost acknowledgement. Completion
-releases the path reservation; retries of the old UUID never target a new generation.
+Retry the same command/generation after interruption: relocation tolerates public-name
+reuse and completed removal tolerates lost acknowledgements. Completion releases the
+path reservation; old-UUID retries never target a new generation.
 
 Incomplete Git updates, changed archives/private trees, partial removal or uncertain
 outcomes stop with journal, archive and surviving data retained. No repository-wide
@@ -344,8 +326,7 @@ not forced; removal uses only the single force needed for archived dirty state.
 Ignored files are deliberately discarded with the worktree, never archived.
 
 `tests/test_retirement.py` exercises real Git/CLI interruption and name reuse in disposable
-repositories. Portable reports qualify only their listed fixture checks, not production
-scheduling or existing worktrees.
+repositories; it does not qualify production scheduling or existing worktrees.
 
 ## Archive payload qualification
 
@@ -415,9 +396,8 @@ The executor must:
 - Record retirement only after verified removal. Archive retention and later
   archive deletion are separate policies, not implicit consequences of `ended`.
 
-Slow filesystem/Git operations must not hold SQLite write transactions. Safety
-across those operations requires persistent exclusion and revalidation, not one
-long transaction. This is a local-host system, not a distributed SQLite service.
+Keep slow filesystem/Git work outside SQLite write transactions; persistent exclusion
+and revalidation provide safety, not one long transaction. This is local-host, not distributed SQLite.
 
 ## Registry-driven cleanup pass
 
@@ -434,22 +414,29 @@ not a guessed default or a commit ID passed as a branch name.
 
 Controlled-creation receipts use normal retirement. A missing creation receipt can
 use the explicit recovery-evidence path described above when all bound owners are
-admitted and ended. Enrollment alone remains a coverage gap; live or uncertain
-owners hold the source. Retries use the recorded plan, including its archive root,
+admitted and ended. Enrollment alone remains a coverage gap; live or uncertain owners hold
+the source. Never-owned enrolled trees (no bound run or `created-worktree`) retire only via
+`retire-enrolled-only --path P --repos-config C --output-root R` (GH#36516): it previews;
+`--confirm` closes admission with `operator_confirmed` evidence in one registry transaction
+(a racing `admit-session` wins and refuses it, or finds admission closed), then archives and removes; the branch is kept. Retries use the recorded plan, including its archive root,
 and do not redirect an interrupted operation to a replacement at the public path.
 A private cursor rotates candidates across bounded passes; it is not deletion
 authority. A pass lock prevents overlapping collectors.
 
-Pulse's `cleanup_worktrees` entrypoint calls this operation without initializing or
-migrating the registry. Missing state/configuration or a failed invocation does not
-fall back to the old cleanup passes. Disposable tests exercise both refusal and
-successful preservation/removal through the actual shell entrypoint.
+Pulse's `cleanup_worktrees` calls this operation without initializing/migrating the
+registry. Missing state/configuration or invocation failure never falls back to old
+passes. Disposable tests exercise refusal and successful preservation/removal through
+the actual shell entrypoint.
 
-`cleanup-worktree --path PATH --repos-config CONFIG --output-root ROOT` selects
-only that path's currently validated generation and shares the collector's policy
-and executor. It never adopts an unknown tree or scans unrelated candidates.
-If a source has already moved, use the explicit `retire-worktree --generation-id`
-retry contract instead of guessing an operation from a missing public path.
+`cleanup-worktree --path PATH --repos-config CONFIG --output-root ROOT` selects only that path's
+validated generation, sharing the collector's policy/executor without adopting unknown trees or
+scanning unrelated candidates. For an already moved source, use `retire-worktree --generation-id`
+to retry, never guess from a missing public path. A linked tree without a marker or modern history
+refuses with `detail: not-enrolled`; manual removal prints the operator-confirmed
+[LEGACY-CLEANUP.md](LEGACY-CLEANUP.md) command (GH#36494). With modern history, the refusal is
+`generation-marker-missing`: inspect metadata/history instead of using legacy retirement.
+`worktree-locked` requires inspecting Git's lock reason; unlock the listed path only when the
+lock is no longer needed, then retry. Neither refusal overrides the registry checks.
 
 The shared native-removal compatibility entrypoint, manual `worktree-helper.sh
 remove`, and the central/temp Pulse removal primitives use this targeted command.
@@ -457,9 +444,8 @@ Legacy proof, archive and force arguments cannot authorize deletion or bypass a
 missing registry. Manual removal retains branches and external resources; their
 cleanup is a separate operation, not an unverified path-based post-removal step.
 
-Legacy candidate selectors still exist and can conservatively hold work before
-reaching the registry gate. This is not their complete removal, an exhaustive
-inventory of arbitrary Git invocations, or production rollout qualification.
+Legacy candidate selectors still exist and may hold work before the registry gate;
+this is not their removal, a Git-invocation inventory, or rollout qualification.
 
 ## Coverage matrix
 
@@ -482,11 +468,11 @@ inventory of arbitrary Git invocations, or production rollout qualification.
 
 ## Integration and replacement
 
-Ordinary OpenCode worker hooks register automatically; Pulse invokes bounded
-reconciliation. This does not cover every interactive session, retry path, private
-workload or alternate runtime. Maintain an explicit coverage matrix before enabling
-destructive behavior. Logical sessions sharing a process need distinct run IDs;
-shared process liveness cannot prove each session active.
+Ordinary OpenCode worker hooks register automatically; Pulse reconciles boundedly.
+This excludes some interactive sessions, retries, private workloads and alternate
+runtimes: maintain an explicit coverage matrix before enabling destructive behavior.
+Logical sessions sharing a process need distinct run IDs; shared process liveness
+cannot prove each session active.
 
 Unregistered existing worktrees stay unresolved. A future adoption procedure must
 establish fresh generation and exclusive admission evidence; it must not import

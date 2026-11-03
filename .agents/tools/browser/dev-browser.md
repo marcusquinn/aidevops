@@ -174,14 +174,14 @@ If the server doesn't expose `executablePath`, use Playwright direct with `launc
 | **Best for** | Dev testing and managed persistent automation | Inspect first, then choose the right automation path | Existing sessions with selected-tab consent | Cross-browser | AI automation |
 | **Requires** | Bun + server | Debug-enabled Chromium browser | Official extension | Nothing | API key |
 
-Use `chromium-debug-use` when you need to understand a live session that is already open. Switch to dev-browser when that investigation turns into a repeatable workflow that should keep its own persistent state under aidevops control.
+Use `chromium-debug-use` (`launch` for a logged-in session in Brave/Chrome without automation flags) when you need a real live session. Switch to dev-browser when that investigation turns into a repeatable workflow that should keep its own persistent state under aidevops control.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
 | Server not running | `dev-browser-helper.sh status` then `start` |
-| Port 9222 in use | `lsof -i :9222` then `kill $(lsof -t -i :9222)` then `restart` |
+| Port 9222 in use | `lsof -nP -iTCP:9222 -sTCP:LISTEN`, confirm the owner by PID/command line, stop only that verified owner, then `restart`. A browser that lost the port race may listen on `[::1]` only |
 | Bun not found | `curl -fsSL https://bun.sh/install \| bash` then `source ~/.bashrc` |
 | Debug current state | Take a screenshot: `await page.screenshot({ path: "tmp/debug.png" })` |
 

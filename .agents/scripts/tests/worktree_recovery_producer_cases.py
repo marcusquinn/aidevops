@@ -759,6 +759,32 @@ class ProducerCases:
         self.assertEqual((restored / "untracked").read_bytes(), b"unique untracked\n")
         self.assertFalse((restored / ".git/objects/info/alternates").exists())
 
+    def test_prune_expires_producer_archive_only_on_evidence(self):
+        import worktree_archive_producer_retention as retention
+        archive = Path(self.producer("capture", self.work, self.archives, "test.sh",
+                                     "retention-fixture").stdout.decode().strip())
+        journal = producer_engine.journal_for_archive(archive)
+        manifest = json.loads((archive / "manifest.json").read_text())
+        self.assertTrue(retention.empty_delta(manifest))
+        self.assertFalse(retention.empty_delta(dict(manifest, head_sha="f" * 40)))
+        prune = ["prune", "--older-than", "14d", "--max-total-size", "1K",
+                 "--output-root", self.archives]
+        # The source still exists: neither expiry nor the size cap may remove it.
+        self.helper(*prune, "--apply")
+        self.assertTrue(archive.is_dir())
+        self.git(self.repo, "worktree", "remove", "--force", self.work)
+        (archive / ".keep").write_bytes(b"")
+        self.helper(*prune, "--apply")
+        self.assertTrue(archive.is_dir())
+        (archive / ".keep").unlink()
+        preview = self.helper(*prune, "--dry-run")
+        self.assertIn(b"empty-delta", preview.stderr)
+        self.assertTrue(archive.is_dir())
+        self.helper(*prune, "--apply")
+        self.assertFalse(os.path.lexists(archive))
+        self.assertFalse(os.path.lexists(journal.parent))
+        self.assertFalse(os.path.lexists(archive.parents[2]))
+
     def test_producer_transaction_rejects_drift_without_duplicate(self):
         result = self.producer("capture", self.work, self.archives, "test.sh", "drift-fixture")
         archive = Path(result.stdout.decode().strip())

@@ -49,6 +49,39 @@ source "${SCRIPT_DIR}/terminal-blocker-circuit.sh"
 # shellcheck source=../headless-runtime-failure.sh
 source "${SCRIPT_DIR}/headless-runtime-failure.sh"
 
+# Exercise the production triage parser with bounded inference responses, never
+# contact a provider from this suite (including the older unknown-release cases).
+test_unknown_triage() (
+	local captured='{"explicit_reason":false,"detail":"BLOCKED: Only unfinished authorized implementation remains; no external prerequisite exists."}'
+	local issue='{"body":"### Files Scope\n- helper.sh"}' reason="" expected="" status=0
+	local WORKER_WORKTREE_PATH="$SCRIPT_DIR" TRIAGE_RESPONSE="" AIDEVOPS_TERMINAL_BLOCKER_TRIAGE=""
+	timeout() { printf '%s\n' "$TRIAGE_RESPONSE"; return 0; }
+	TRIAGE_RESPONSE='{"reason":"unknown","owner":"","pending_only":true}'
+	_terminal_blocker_triage_unknown "$captured" "$issue" || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" =~ ^pending_work\ brief=[a-f0-9]{64}\ head=[a-f0-9]{40,64}$ ]] || status=1
+	for reason in external_trigger_pending permission_required input_required files_scope_excluded source_access_blocked runner_capability_unmet; do
+		TRIAGE_RESPONSE=$(jq -nc --arg reason "$reason" '{reason:$reason,owner:"maintainer",pending_only:false}')
+		_terminal_blocker_triage_unknown "$captured" "$issue" || status=1
+		expected="known:${reason}"
+		[[ "$reason" != input_required ]] || expected="${expected}:maintainer"
+		[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" == "$expected" ]] || status=1
+	done
+	TRIAGE_RESPONSE='{"reason":"permission_required","owner":"","pending_only":true}'
+	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
+	TRIAGE_RESPONSE='not JSON'
+	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
+	TRIAGE_RESPONSE='{"reason":"unknown","owner":"","pending_only":true}'
+	if _terminal_blocker_triage_unknown '{"explicit_reason":true,"detail":"BLOCKED: ambiguous reason declarations"}' "$issue"; then status=1; fi
+	[[ "$status" == 0 ]] || return 1
+	return 0
+)
+if test_unknown_triage; then
+	print_result "unknown triage classifies pending work and concrete prerequisites; malformed/conflicting evidence stays held" 0
+else
+	print_result "unknown triage classifies pending work and concrete prerequisites; malformed/conflicting evidence stays held" 1
+fi
+_terminal_blocker_triage_unknown() { return 1; }
+
 _terminal_blocker_dependency_signature() {
 	local repo_slug="$1"
 	local issue_number="$2"

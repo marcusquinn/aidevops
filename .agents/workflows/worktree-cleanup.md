@@ -126,6 +126,34 @@ decision emits a `thirdparty` row and the pass emits a summary with eligible,
 candidate_bytes, removed, archived and kept_open_pr counts. Enable apply with
 `WORKTREE_UNREGISTERED_APPLY=1` only after reviewing a clean report cycle.
 
+## Refused retirement and helper-retained worktrees
+
+`worktree-helper.sh remove` uses the lifecycle registry; `--force` cannot
+override it. A refusal prints the registry `detail`/`status` and the next step
+(GH#36494):
+
+- `not-enrolled`: the tree predates enrollment or was created without a declared
+  runtime. Stop any process using it, then run the printed
+  `worker-legacy-cleanup.py --confirm-legacy-path PATH` preview; add `--apply`
+  to archive, verify and remove it. Branches are kept. See
+  [LEGACY-CLEANUP.md](../worker-lifecycle/LEGACY-CLEANUP.md).
+- `waiting-for-runs`: a registered owner is still running; Pulse retries after it exits.
+- `coverage-gap`: enrolled without a registered owner; it stays retained.
+- `generation-marker-missing`: modern enrollment history exists but its marker is
+  missing. Retain the tree and inspect Git admin metadata and registry history;
+  legacy retirement is not applicable.
+- `worktree-locked`: inspect the lock reason with `git worktree list --porcelain`.
+  Only when the lock is no longer needed, run `git worktree unlock PATH` on the
+  listed path and retry retirement.
+
+Script routines declare a lifecycle runtime only when their lifecycle prerequisite
+checks pass and the workload is not private. With lifecycle disabled, missing
+prerequisites or a private workload, the runner clears its ownership declarations;
+do not expect automatic retirement. Otherwise, worktrees their helpers create
+(for example badges sync) become eligible for registry cleanup after the routine
+exits. `registry-state-unavailable`, `python3-unavailable`,
+`jq-unavailable` and `lifecycle-disabled` name missing local prerequisites.
+
 ## Abandoned central test fixtures
 
 The API-free cleanup pass also recognises legacy `tmp.<random>-feature-auto-*`

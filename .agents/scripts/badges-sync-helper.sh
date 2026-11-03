@@ -44,8 +44,15 @@
 #
 # Exit codes:
 #   0  no work needed OR all targets succeeded
-#   1  one or more repos failed
+#   1  one or more repos failed or blocked (BLOCKED-SIGNING, BLOCKED-RETAINED,
+#      BLOCKED-READINESS)
 #   2  config error
+#
+# Recovery (GH#36491): a retained chore/badges-sync-* worktree whose changes
+# and unpublished commits touch only the declared outputs (README.md,
+# docs/metrics, .github/badges, .github/workflows/loc-badge.yml) is refreshed
+# onto the current default branch, regenerated and published. Anything else is
+# BLOCKED-RETAINED and left untouched.
 
 set -uo pipefail
 
@@ -67,6 +74,14 @@ else
 	printf '[%s] WARN: shared-gh-wrappers.sh not found — PR creation will fail\n' \
 		"$SCRIPT_NAME" >&2
 fi
+
+# Headless commits sign with the dedicated key, never the interactive default
+# (GH#36491).
+# shellcheck source=./headless-signing-lib.sh
+source "$SELF_DIR/headless-signing-lib.sh" || {
+	printf '[%s] ERROR: headless-signing-lib.sh not found — run: aidevops update\n' "$SCRIPT_NAME" >&2
+	exit 2
+}
 
 _C_GREEN=$'\033[0;32m'
 _C_RED=$'\033[0;31m'
@@ -171,6 +186,8 @@ readonly _STATUS_SKIPPED="SKIPPED"
 readonly _STATUS_PLANNED="PLANNED"
 readonly _STATUS_APPLIED="APPLIED"
 readonly _STATUS_FAILED="FAILED"
+readonly _STATUS_BLOCKED_SIGNING="BLOCKED-SIGNING"
+readonly _STATUS_BLOCKED_RETAINED="BLOCKED-RETAINED"
 
 readonly _BRANCH_DEFAULT_NAME="main"
 
@@ -525,26 +542,33 @@ _apply_repo() (
 		printf '%s\t%s\topen sync PR: %s\n' "$_slug" "$_STATUS_SKIPPED" "$_existing"
 		return 0
 	fi
-	# A failed transaction may never reach GitHub. Leave its worktree untouched
-	# for recovery instead of generating another identical unpushed commit.
-	local _record _retained="" _worktrees
-	_worktrees=$(git -C "$_canonical" worktree list --porcelain) || return 1
-	while IFS= read -r _record; do
-		case "$_record" in
-		worktree\ *) _retained="${_record#worktree }" ;;
-		branch\ refs/heads/"${_prefix}"-*)
-			printf '%s\t%s\tretained recovery worktree: %s\n' "$_slug" "$_STATUS_SKIPPED" "$_retained"
-			return 0
-			;;
-		esac
-	done <<<"$_worktrees"
+	# Prove a prompt-free signed commit before allocating anything, so an
+	# unavailable signer never leaves a worktree behind (GH#36491).
+	if ! headless_signing_preflight "$_canonical"; then
+		printf '%s\t%s\t%s\n' "$_slug" "$_STATUS_BLOCKED_SIGNING" \
+			"commit signing unavailable without a prompt; run 'aidevops signing headless-setup' in a terminal, then 'aidevops signing agent-start'"
+		return 1
+	fi
 	_default=$(gh api "repos/$_slug" --jq '.default_branch') || return 1
 	[[ -n "$_default" && "$_default" != "null" ]] || return 1
 	_helper=$(_resolve_helper worktree-helper.sh) || return 1
-	_branch="${_prefix}-$(date +%Y%m%d%H%M%S)-$$-${RANDOM}"
-	git check-ref-format --branch "$_branch" >/dev/null || return 1
-	_worktree="${AIDEVOPS_WORKTREE_BASE_DIR:-$HOME/Git/_worktrees}/${_slug//\//-}-${_branch//\//-}"
-	(cd "$_canonical" && bash "$_helper" add "$_branch" "$_worktree" --base "origin/$_default") >&2 || return 1
+	# A failed transaction may never reach GitHub. Recover its worktree instead
+	# of allocating another one or skipping forever (GH#36491).
+	local _retained_row _lease=""
+	_retained_row=$(_find_retained_worktree "$_canonical" "$_prefix") || return 1
+	if [[ -n "$_retained_row" ]]; then
+		_branch="${_retained_row%%$'\t'*}"
+		_worktree="${_retained_row#*$'\t'}"
+		if ! _lease=$(_recover_retained_worktree "$_slug" "$_worktree" "$_branch" "$_default"); then
+			[[ -z "$_lease" ]] || printf '%s\n' "$_lease"
+			return 1
+		fi
+	else
+		_branch="${_prefix}-$(date +%Y%m%d%H%M%S)-$$-${RANDOM}"
+		git check-ref-format --branch "$_branch" >/dev/null || return 1
+		_worktree="${AIDEVOPS_WORKTREE_BASE_DIR:-$HOME/Git/_worktrees}/${_slug//\//-}-${_branch//\//-}"
+		(cd "$_canonical" && bash "$_helper" add "$_branch" "$_worktree" --base "origin/$_default") >&2 || return 1
+	fi
 	if bash "$_BADGES_HELPER" starter-owned "$_worktree/README.md" >/dev/null 2>&1; then
 		printf '%s\t%s\tstarter-owned badge block left alone\n' "$_slug" "$_STATUS_SKIPPED"
 	else
@@ -554,16 +578,85 @@ _apply_repo() (
 		if [[ "$_no_workflow" -eq 0 ]]; then
 			_install_workflow "$_slug" "$_worktree" 1 >&2 || return 1
 		fi
-		_publish_worktree "$_slug" "$_worktree" "$_branch" "$_default" || return 1
+		_publish_worktree "$_slug" "$_worktree" "$_branch" "$_default" "$_lease" || return 1
 	fi
 	(cd "$_canonical" && bash "$_helper" remove "$_worktree") >&2 ||
 		_warn "$_slug: guarded cleanup deferred; worktree retained at $_worktree"
 	return 0
 )
 
-_publish_worktree() {
+# _find_retained_worktree <canonical> <prefix> — print "branch<TAB>path" for
+# the newest retained sync worktree, or nothing when none exists.
+_find_retained_worktree() {
+	local _canonical="$1" _prefix="$2"
+	local _worktrees _record _path="" _branch _best_branch="" _best_path=""
+	_worktrees=$(git -C "$_canonical" worktree list --porcelain) || return 1
+	while IFS= read -r _record; do
+		case "$_record" in
+		worktree\ *) _path="${_record#worktree }" ;;
+		branch\ refs/heads/"${_prefix}"-*)
+			_branch="${_record#branch refs/heads/}"
+			# Branch names embed a creation timestamp; the greatest is newest.
+			if [[ -z "$_best_branch" || "$_branch" > "$_best_branch" ]]; then
+				_best_branch="$_branch"
+				_best_path="$_path"
+			fi
+			;;
+		esac
+	done <<<"$_worktrees"
+	[[ -z "$_best_branch" ]] || printf '%s\t%s\n' "$_best_branch" "$_best_path"
+	return 0
+}
+
+# _is_declared_output <path> — 0 when <path> is regenerable sync output.
+_is_declared_output() {
+	local _candidate="$1"
+	case "$_candidate" in
+	README.md | .github/workflows/loc-badge.yml) return 0 ;;
+	docs/metrics/* | .github/badges/*) return 0 ;;
+	esac
+	return 1
+}
+
+# _recover_retained_worktree <slug> <path> <branch> <default>
+# Refresh a retained worktree onto the current remote default when every
+# uncommitted change and unpublished commit touches only declared outputs.
+# Prints the remote branch SHA to lease against (empty when unpublished).
+# Otherwise prints a BLOCKED-RETAINED row and returns 1 without changes.
+_recover_retained_worktree() {
 	local _slug="$1" _path="$2" _branch="$3" _default="$4"
-	local _paths=() _candidate
+	local _fresh _changed _file _remote=""
+	if [[ ! -d "$_path" ]] || ! git -C "$_path" fetch -q origin "$_default" >&2; then
+		printf '%s\t%s\tretained worktree unavailable or unfetchable: %s\n' \
+			"$_slug" "$_STATUS_BLOCKED_RETAINED" "$_path"
+		return 1
+	fi
+	_fresh=$(git -C "$_path" rev-parse FETCH_HEAD) || return 1
+	_changed=$(
+		git -C "$_path" diff --name-only HEAD &&
+			git -C "$_path" ls-files --others --exclude-standard &&
+			git -C "$_path" diff --name-only "${_fresh}...HEAD"
+	) || return 1
+	while IFS= read -r _file; do
+		[[ -z "$_file" ]] && continue
+		_is_declared_output "$_file" && continue
+		printf '%s\t%s\tretained worktree holds non-regenerable change %s: %s\n' \
+			"$_slug" "$_STATUS_BLOCKED_RETAINED" "$_file" "$_path"
+		return 1
+	done <<<"$_changed"
+	# Everything here is regenerated below; refresh onto the current default.
+	git -C "$_path" reset -q --hard "$_fresh" >&2 || return 1
+	git -C "$_path" clean -fdq -- README.md docs/metrics .github/badges \
+		.github/workflows/loc-badge.yml >&2 || return 1
+	_remote=$(git -C "$_path" ls-remote --heads origin "refs/heads/$_branch") || return 1
+	_info "$_slug: recovering retained worktree $_path" >&2
+	printf '%s\n' "${_remote%%[[:space:]]*}"
+	return 0
+}
+
+_publish_worktree() {
+	local _slug="$1" _path="$2" _branch="$3" _default="$4" _lease="${5:-}"
+	local _paths=() _candidate _push_args=(-u)
 	for _candidate in README.md docs/metrics .github/badges .github/workflows/loc-badge.yml; do
 		[[ ! -e "$_path/$_candidate" ]] || _paths+=("$_candidate")
 	done
@@ -575,8 +668,11 @@ _publish_worktree() {
 		return 0
 	fi
 	git -C "$_path" commit -q -m "chore: refresh aidevops badges, metrics and workflow" || return 1
+	# A recovered branch already published without a PR is helper-owned output;
+	# replace it only if the remote still holds the commit we observed.
+	[[ -z "$_lease" ]] || _push_args+=("--force-with-lease=refs/heads/${_branch}:${_lease}")
 	local _push_output _line _readiness=""
-	if ! _push_output=$(git -C "$_path" push -u origin "$_branch" 2>&1); then
+	if ! _push_output=$(git -C "$_path" push "${_push_args[@]}" origin "$_branch" 2>&1); then
 		printf '%s\n' "$_push_output" >&2
 		while IFS= read -r _line; do
 			case "$_line" in
@@ -670,7 +766,9 @@ _process_rows() {
 			local _apply_result _apply_rc=0
 			_apply_result=$(_apply_repo "$_slug" "$_rpath" "$_branch_name" "$_no_workflow" "$_workflow_only_arg") || _apply_rc=$?
 			if [[ "$_apply_rc" -ne 0 ]]; then
-				if [[ "$_apply_result" != "${_slug}"$'\tBLOCKED-READINESS\t'* ]]; then
+				# Keep actionable BLOCKED-* rows; they count as failures so
+				# routine state and advisories keep surfacing them (GH#36491).
+				if [[ "$_apply_result" != "${_slug}"$'\tBLOCKED-'* ]]; then
 					_apply_result="${_slug}	${_STATUS_FAILED}	sync failed; any created worktree retained for recovery"
 				fi
 				_any_failed=1
@@ -685,38 +783,39 @@ _process_rows() {
 		fi
 
 		# Sync README badge block (skip when --workflow-only)
-		local _workflow_only="$_workflow_only_arg"
-		if [[ "$_workflow_only" -eq 0 ]]; then
-			local _readme_result
-			_readme_result=$(_sync_readme "$_slug" "$_rpath" 0)
-			_print_result_row "$_json_out" "$_readme_result"
-			local _readme_outcome
-			_readme_outcome=$(printf '%s' "$_readme_result" | awk -F'\t' '{print $2}')
-			case "$_readme_outcome" in
-			"$_STATUS_APPLIED") _COUNT_APPLIED=$((_COUNT_APPLIED + 1)) ;;
-			"$_STATUS_PLANNED") _COUNT_PLANNED=$((_COUNT_PLANNED + 1)) ;;
-			"$_STATUS_SKIPPED") _COUNT_SKIPPED=$((_COUNT_SKIPPED + 1)) ;;
-			"$_STATUS_FAILED") _any_failed=1; _COUNT_FAILED=$((_COUNT_FAILED + 1)) ;;
-			esac
+		if [[ "$_workflow_only_arg" -eq 0 ]]; then
+			_tally_result_row "$_json_out" "$(_sync_readme "$_slug" "$_rpath" 0)" || _any_failed=1
 		fi
 
 		# Install repo metrics workflow if not suppressed
 		if [[ "$_no_workflow" -eq 0 ]]; then
-			local _wf_result
-			_wf_result=$(_install_workflow "$_slug" "$_rpath" 0)
-			_print_result_row "$_json_out" "$_wf_result"
-			local _wf_outcome
-			_wf_outcome=$(printf '%s' "$_wf_result" | awk -F'\t' '{print $2}')
-			case "$_wf_outcome" in
-			"$_STATUS_APPLIED") _COUNT_APPLIED=$((_COUNT_APPLIED + 1)) ;;
-			"$_STATUS_PLANNED") _COUNT_PLANNED=$((_COUNT_PLANNED + 1)) ;;
-			"$_STATUS_SKIPPED") _COUNT_SKIPPED=$((_COUNT_SKIPPED + 1)) ;;
-			"$_STATUS_FAILED") _any_failed=1; _COUNT_FAILED=$((_COUNT_FAILED + 1)) ;;
-			esac
+			_tally_result_row "$_json_out" "$(_install_workflow "$_slug" "$_rpath" 0)" || _any_failed=1
 		fi
 	done
 
 	return "$_any_failed"
+}
+
+# _tally_result_row <json_out> <result_tsv>
+# Prints a dry-run result row and updates the global outcome counters.
+# Must run in the current shell (not a subshell) so counters persist.
+# Returns 1 when the row records a failure.
+_tally_result_row() {
+	local _json_out="$1"
+	local _result="$2"
+	_print_result_row "$_json_out" "$_result"
+	local _outcome
+	_outcome=$(printf '%s' "$_result" | awk -F'\t' '{print $2}')
+	case "$_outcome" in
+	"$_STATUS_APPLIED") _COUNT_APPLIED=$((_COUNT_APPLIED + 1)) ;;
+	"$_STATUS_PLANNED") _COUNT_PLANNED=$((_COUNT_PLANNED + 1)) ;;
+	"$_STATUS_SKIPPED") _COUNT_SKIPPED=$((_COUNT_SKIPPED + 1)) ;;
+	"$_STATUS_FAILED")
+		_COUNT_FAILED=$((_COUNT_FAILED + 1))
+		return 1
+		;;
+	esac
+	return 0
 }
 
 # _print_result_row <json_out> <result_tsv>
@@ -734,7 +833,7 @@ _print_result_row() {
 	local _colour="$_C_BLUE"
 	case "$_r_outcome" in
 	"$_STATUS_APPLIED") _colour="$_C_GREEN" ;;
-	"$_STATUS_FAILED") _colour="$_C_RED" ;;
+	"$_STATUS_FAILED" | BLOCKED-*) _colour="$_C_RED" ;;
 	"$_STATUS_SKIPPED") _colour="$_C_YELLOW" ;;
 	esac
 	printf '  %-40s %s%-10s%s %s\n' \
@@ -789,6 +888,9 @@ main() {
 	if [[ -z "$_OPT_BRANCH_NAME" ]]; then
 		_OPT_BRANCH_NAME="chore/badges-sync"
 	fi
+	# Prefer the dedicated headless signing key when present (idempotent when
+	# the routine runner already exported it).
+	[[ "$_OPT_APPLY" -eq 0 ]] || headless_signing_export_key_env || true
 
 	local _tsv
 	if ! _tsv=$(_list_actionable_repos "$_OPT_FILTER_SLUG"); then

@@ -12,6 +12,7 @@
 // Output: JSON array of contrast issues or Markdown report
 
 import { loadPlaywright, resolvePlaywrightBrowserExecutable } from '../playwright-runtime.mjs';
+import { formatMarkdown, formatSummary, isFailingAtLevel } from './contrast-formatters.mjs';
 
 // ============================================================================
 // CLI Argument Parsing
@@ -19,17 +20,22 @@ import { loadPlaywright, resolvePlaywrightBrowserExecutable } from '../playwrigh
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const options = { url: null, format: 'summary', level: 'AA', limit: 0, failOnly: false, timeout: 30000 };
+  const options = { url: null, format: 'summary', level: 'AA', limit: 0, failOnly: false, timeout: 30000, viewport: 'desktop' };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--format' || args[i] === '-f') options.format = args[++i];
     else if (args[i] === '--level' || args[i] === '-l') options.level = args[++i]?.toUpperCase();
     else if (args[i] === '--limit' || args[i] === '-n') options.limit = parseInt(args[++i], 10);
     else if (args[i] === '--fail-only') options.failOnly = true;
     else if (args[i] === '--timeout') options.timeout = parseInt(args[++i], 10);
+    else if (args[i] === '--viewport') options.viewport = args[++i];
     else if (args[i] === '--help' || args[i] === '-h') { printUsage(); process.exit(0); }
     else if (!args[i].startsWith('-')) options.url = args[i];
   }
   if (!options.url) { console.error('ERROR: URL is required'); printUsage(); process.exit(1); }
+  if (!['desktop', 'tablet', 'mobile'].includes(options.viewport)) {
+    console.error('ERROR: --viewport must be desktop, tablet or mobile');
+    process.exit(2);
+  }
   return options;
 }
 
@@ -42,6 +48,7 @@ Options:
   --limit, -n    Max elements to report (0 = all, default: 0)
   --fail-only    Only report failing elements
   --timeout      Page load timeout in ms (default: 30000)
+  --viewport     desktop (default), tablet or mobile
   --help, -h     Show this help`);
 }
 
@@ -109,7 +116,7 @@ function _cBackground(el) {
 // Complex background flags (gradient/image)
 function _cComplexBg(el) {
   const flags = [];
-  for (let c = el, d = 0; c && d < 6; c = c.parentElement, d++) {
+  for (let c = el; c; c = c.parentElement) {
     const img = window.getComputedStyle(c).backgroundImage;
     if (img && img !== 'none') flags.push(img.includes('gradient') ? 'gradient' : 'background-image');
   }
@@ -142,15 +149,17 @@ function _cAnalyse(el, tag, selector) {
   const bold = st.fontWeight === 'bold' || st.fontWeight === 'bolder' || parseInt(st.fontWeight, 10) >= 700;
   const large = pt >= 18 || (pt >= 14 && bold);
   const text = [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent.trim()).join(' ').substring(0, 80);
+  const complexBackground = _cComplexBg(el);
   return {
     selector, tag, text,
     foreground: 'rgb(' + finalFg.r + ',' + finalFg.g + ',' + finalFg.b + ')',
     background: 'rgb(' + bg.r + ',' + bg.g + ',' + bg.b + ')',
     foregroundRaw: st.color, backgroundRaw: st.backgroundColor, fontSize: st.fontSize, fontWeight: st.fontWeight, isLargeText: large,
-    ratio,
-    aa: { threshold: large ? 3.0 : 4.5, pass: ratio >= (large ? 3.0 : 4.5), criterion: large ? '1.4.3 (large text)' : '1.4.3' },
-    aaa: { threshold: large ? 4.5 : 7.0, pass: ratio >= (large ? 4.5 : 7.0), criterion: large ? '1.4.6 (large text)' : '1.4.6' },
-    complexBackground: _cComplexBg(el),
+    ratio: complexBackground ? null : ratio,
+    aa: { threshold: large ? 3.0 : 4.5, pass: complexBackground ? null : ratio >= (large ? 3.0 : 4.5), criterion: large ? '1.4.3 (large text)' : '1.4.3' },
+    aaa: { threshold: large ? 4.5 : 7.0, pass: complexBackground ? null : ratio >= (large ? 4.5 : 7.0), criterion: large ? '1.4.6 (large text)' : '1.4.6' },
+    status: complexBackground ? 'needs-manual-check' : 'evaluated',
+    complexBackground,
   };
 }
 
@@ -172,60 +181,6 @@ function extractContrastData() {
   return results;
 }
 `;
-
-// ============================================================================
-// Output Formatters
-// ============================================================================
-
-function getLevel(element, level) {
-  return level === 'AAA' ? element.aaa : element.aa;
-}
-
-function isFailingAtLevel(element, level) {
-  return !getLevel(element, level).pass;
-}
-
-function formatFailureLines(f, level) {
-  const { threshold, criterion } = getLevel(f, level);
-  const lines = [`  ${f.selector}`, `    Ratio: ${f.ratio}:1 (need ${threshold}:1) — SC ${criterion}`, `    FG: ${f.foreground} | BG: ${f.background}`, `    Size: ${f.fontSize} weight: ${f.fontWeight}${f.isLargeText ? ' (large text)' : ''}`];
-  if (f.text) lines.push(`    Text: "${f.text}"`);
-  if (f.complexBackground) lines.push(`    WARNING: ${f.complexBackground.join(', ')} — manual review needed`);
-  lines.push('');
-  return lines;
-}
-
-function formatSummary(results, level) {
-  const failures = results.filter((r) => isFailingAtLevel(r, level));
-  const complex = results.filter((r) => r.complexBackground);
-  const lines = ['', '--- Playwright Contrast Extraction ---', `  Elements analysed: ${results.length}`, `  WCAG ${level} Pass: ${results.length - failures.length}`, `  WCAG ${level} Fail: ${failures.length}`];
-  if (complex.length > 0) lines.push(`  Complex backgrounds (manual review): ${complex.length}`);
-  lines.push('');
-  if (failures.length > 0) {
-    lines.push(`--- Failing Elements (WCAG ${level}) ---`);
-    for (const f of failures) lines.push(...formatFailureLines(f, level));
-  }
-  if (complex.length > 0) {
-    lines.push('--- Elements with Complex Backgrounds ---');
-    for (const r of complex) lines.push(`  ${r.selector} — ${r.complexBackground.join(', ')} (ratio: ${r.ratio}:1)`);
-    lines.push('');
-  }
-  return lines.join('\n');
-}
-
-function formatMarkdown(results, level) {
-  const failures = results.filter((r) => isFailingAtLevel(r, level));
-  const lines = [`## Contrast Analysis Report (WCAG ${level})`, '', `| Metric | Value |`, `|--------|-------|`, `| Elements analysed | ${results.length} |`, `| Pass | ${results.length - failures.length} |`, `| Fail | ${failures.length} |`, ''];
-  if (failures.length > 0) {
-    lines.push(`### Failing Elements`, '', `| Element | Ratio | Required | FG | BG | Size | WCAG |`, `|---------|-------|----------|----|----|------|------|`);
-    for (const f of failures) {
-      const { threshold, criterion } = getLevel(f, level);
-      const sel = f.selector.length > 40 ? `${f.selector.substring(0, 37)}...` : f.selector;
-      lines.push(`| \`${sel}\` | ${f.ratio}:1 | ${threshold}:1 | ${f.foreground} | ${f.background} | ${f.fontSize} ${f.fontWeight}${f.isLargeText ? ' (L)' : ''} | SC ${criterion} |`);
-    }
-    lines.push('');
-  }
-  return lines.join('\n');
-}
 
 async function waitForPageReady(page, timeout) {
   await page.waitForLoadState('load', { timeout });
@@ -271,7 +226,8 @@ async function main() {
       launchOptions.executablePath = resolvePlaywrightBrowserExecutable(runtime);
     }
     browser = await runtime.chromium.launch(launchOptions);
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const viewports = { desktop: { width: 1440, height: 900 }, tablet: { width: 768, height: 1024 }, mobile: { width: 375, height: 812 } };
+    const context = await browser.newContext({ viewport: viewports[options.viewport] });
     const page = await context.newPage();
     await page.goto(options.url, { waitUntil: 'load', timeout: options.timeout });
     await waitForPageReady(page, options.timeout);

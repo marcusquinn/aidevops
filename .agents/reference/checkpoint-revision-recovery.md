@@ -17,6 +17,67 @@ and release. That comment names the release ID, attempt and both exits: approve
 after correcting the brief, or close the draft to restart dispatch (GH#33132).
 It grants nothing, starts no line with an event prefix and never dispatches.
 
+### Unknown-blocker triage (GH#36525)
+
+Before publishing an unclassified blocked release, the releasing runner makes
+one bounded (45-second, simple-tier) inference over its protected final-assistant
+report. Tool output and public PR prose are not classification evidence. An
+explicit class always wins. Known dependency, permission, input, access,
+scope-exclusion and runner-prerequisite findings use the normal class/owner
+release path; they are never automatically approved by this feature.
+
+Only a complete, nonempty report positively establishing unfinished authorised
+in-scope work with no unresolved prerequisite can emit `CHECKPOINT_UNKNOWN_TRIAGE
+pending_work brief=... head=...`. This is a classification, not approval. Missing
+inference tooling, timeout, invalid JSON, conflicting declarations, truncation
+or uncertainty retain the ordinary unknown hold. Existing releases without this
+runner-produced evidence are not promoted by interpreting a draft body.
+
+Automatic approval is **off by default**. An operator with current repository
+write/maintain/admin permission can configure the registered `repos.json` entry:
+
+```json
+{
+  "slug": "OWNER/REPO",
+  "checkpoint_policy": {
+    "auto_continue_unknown_pending_work": true,
+    "configured_by": "WRITE_AUTHORISED_LOGIN"
+  }
+}
+```
+
+Both `configured_by`, the releasing runner and the publishing account must have
+current write authority. The policy is local operator configuration, not an
+issue/PR-body directive. `blocked-attention` checks the runner's head/brief binding,
+fresh unassigned/unheld issue and eligible worker draft, then generates the line
+through `approval-template` and publishes it through `gh-write-helper.sh`. It
+does not launch directly, remove labels or transfer ownership. `dispatch-approved`
+still enforces the exact head/ref, complete brief SHA, 24-hour expiry, current
+permissions, coordination history and fenced claim. An already-valid approval
+owns scheduling; approval-looking text from an untrusted commenter does not.
+
+Without the policy, eligible drafts go into one `UNKNOWN_CHECKPOINT_DIGEST` comment
+per repository/UTC day. Native creation of the unassigned repository label
+`checkpoint-digest:YYYY-MM-DD` reserves publication atomically across runners;
+it never attaches a label or alters an issue's holds. Only the reservation's
+creator posts the digest. The label description identifies the anchor issue.
+Reservations are retained as an audit trail, including when an ambiguous failed
+publication cannot safely be retried that day.
+
+The winner collects a bounded snapshot (100 blocked auto-dispatch issues, 100
+worker drafts, 40-second enrichment budget). Each entry contains a fresh validated
+`approval-template` command, not an approval. Snapshots are immutable: simultaneous
+writers cannot lose entries through competing comment updates. Candidates arriving
+later, beyond the bounds, or unreadable during collection are reconsidered in the
+next UTC day's snapshot. No protected report text is posted. The digest remains
+informational if the head/brief later changes; running a command revalidates it.
+
+Pulse check reports the observed unknown triage backlog, oldest release age in
+minutes, and unreadable/unscanned count. Age is measured from the trusted release,
+never from `updatedAt`, attention comments or lease renewals. These are bounded
+observations of unassigned blocked auto-dispatch issues, not a complete fleet
+inventory or authority to clear holds.
+
 ### Non-blocked releases with an open draft (GH#33850, GH#36019)
 
 An open worker draft is preserved work, and an exit classification is not
@@ -156,6 +217,14 @@ open episode's claim (or `none`). Reasons are `edited`, `untrusted`,
 body is printed. These diagnostics do not change history acceptance.
 All current assignment, hold, permission, brief-revision and exact-head checks
 remain in force.
+
+Hidden-but-unedited coordination is valid evidence (GH#36529). Dispatch comment
+hygiene minimizes a runner's old `DISPATCH_CLAIM`/`DISPATCH_LEASE` comments, which
+bumps REST `updated_at` without changing the body. The helper therefore reads
+GraphQL `lastEditedAt` for each comment whose `updated_at` differs from
+`created_at` and treats the comment as unedited only when it is `null`. A non-null
+value, a missing node or an unreadable GraphQL response keeps the comment edited
+(fail closed), so an edited body never counts as recovery evidence.
 
 A stale-assignment release after prelaunch is not a completed history when the
 ready/terminal evidence is absent. Do not synthesize missing events, reinterpret

@@ -399,7 +399,7 @@ _run_qa_phases() {
 	# Phase 4: Accessibility
 	log_info "--- Phase 4: Accessibility ---"
 	local a11y_result
-	a11y_result=$(cmd_a11y "${page_args[@]}" 2>/dev/null) || a11y_result='{"error": "accessibility check failed"}'
+	a11y_result=$(cmd_a11y "${page_args[@]}" --viewports "$viewports" 2>/dev/null) || a11y_result='{"error": "accessibility check failed"}'
 
 	cat <<REPORT
 {
@@ -469,6 +469,11 @@ cmd_run() {
 
 	if [[ -z "$url" ]]; then
 		log_error "URL is required. Use --url http://localhost:3000"
+		return 1
+	fi
+
+	if [[ ! "$viewports" =~ ^(desktop|tablet|mobile)(,(desktop|tablet|mobile))*$ ]]; then
+		log_error "Use --viewports desktop,tablet,mobile (one or more)"
 		return 1
 	fi
 

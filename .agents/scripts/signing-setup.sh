@@ -16,6 +16,10 @@ readonly SSH_KEY_HEADLESS_PUB="$HOME/.ssh/id_ed25519_signing.pub"
 readonly ALLOWED_SIGNERS_FILE="$HOME/.ssh/allowed_signers"
 readonly SSH_AGENT_ENV="$HOME/.ssh/agent.env"
 
+_SIGNING_SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./headless-ssh-agent-lib.sh
+source "${_SIGNING_SETUP_DIR}/headless-ssh-agent-lib.sh"
+
 # Trusted maintainer key for aidevops framework supply chain verification.
 # This fingerprint is checked during `aidevops update` to verify that pulled
 # code was signed by the framework maintainer. Good stuff for provenance.
@@ -141,6 +145,11 @@ cmd_check() {
 			_print_headless_signing_remediation
 		fi
 		_source_signing_agent_env
+		# GH#36493: a plain ssh-agent dies on reboot while agent.env survives.
+		if [[ -r "$SSH_AGENT_ENV" ]] && ! headless_ssh_agent_reachable; then
+			_print_warn "$SSH_AGENT_ENV names an unreachable ssh-agent (stale after reboot?)"
+			echo "Pulse restarts it on its next cycle; to fix now run: aidevops signing agent-start"
+		fi
 		# Check if key is loaded in ssh-agent
 		if _headless_signing_key_loaded; then
 			_print_ok "Key is loaded in ssh-agent"
@@ -327,12 +336,14 @@ cmd_agent_start() {
 		return 1
 	fi
 
-	# Check if a valid agent is already running
+	# Check if a valid agent is already running. A live agent with no
+	# identities (`ssh-add -l` exit 1) is reused; only an unreachable agent
+	# (exit 2) is replaced, so an empty agent is never orphaned (GH#36493).
 	local agent_running=false
 	if [[ -f "$SSH_AGENT_ENV" ]]; then
 		# shellcheck source=/dev/null
 		. "$SSH_AGENT_ENV" >/dev/null 2>&1 || true
-		if [[ -n "${SSH_AUTH_SOCK:-}" ]] && ssh-add -l >/dev/null 2>&1; then
+		if headless_ssh_agent_reachable; then
 			agent_running=true
 		fi
 	fi
