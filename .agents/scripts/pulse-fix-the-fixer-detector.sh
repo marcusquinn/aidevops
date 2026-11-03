@@ -375,7 +375,7 @@ _ensure_fix_the_fixer_label() {
 	if api_out=$(gh api "repos/${slug}/labels/${FIX_THE_FIXER_LABEL}" 2>&1); then
 		return 0
 	fi
-	if ! printf '%s' "$api_out" | grep -Eq '404|Not Found'; then
+	if [[ "$api_out" != *404* && "$api_out" != *"Not Found"* ]]; then
 		_log_warn "failed to inspect labels in ${slug}; skipping classification"
 		return 1
 	fi

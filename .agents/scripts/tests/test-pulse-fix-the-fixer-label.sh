@@ -21,6 +21,10 @@ gh() {
 			printf 'gh: Not Found (HTTP 404)\n'
 			return 1
 			;;
+		missing_large)
+			printf 'gh: Not Found (HTTP 404)\n%262144s\n' 'diagnostic padding'
+			return 1
+			;;
 		failure)
 			printf 'gh: server error (HTTP 500)\n'
 			return 1
@@ -49,6 +53,11 @@ _ensure_fix_the_fixer_label "owner/repo"
 [[ "$CREATE_CALLS" -eq 0 ]]
 
 TEST_MODE="missing"
+CREATE_CALLS=0
+_ensure_fix_the_fixer_label "owner/repo"
+[[ "$CREATE_CALLS" -eq 1 ]]
+
+TEST_MODE="missing_large"
 CREATE_CALLS=0
 _ensure_fix_the_fixer_label "owner/repo"
 [[ "$CREATE_CALLS" -eq 1 ]]
