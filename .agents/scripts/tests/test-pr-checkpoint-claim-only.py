@@ -555,9 +555,10 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
         self.recovery.append(self.path, row)
         return row
 
-    def drain(self, result=None, live=False, ended=True):
+    def drain(self, result=None, live=False, ended=True, state="open"):
         with mock.patch.object(self.recovery, "executor_live", return_value=live), \
              mock.patch.object(self.recovery, "worker_ended", return_value=ended), \
+             mock.patch.object(self.recovery, "issue_state", return_value=state), \
              mock.patch.object(self.recovery.subprocess, "run", return_value=result) as run:
             counts = self.recovery.drain()
         return counts, run
@@ -633,6 +634,33 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
         with mock.patch.object(self.recovery.time, "time", return_value=221):
             counts, _ = self.drain(subprocess.CompletedProcess([], 0, "", ""))
             self.assertEqual(counts["closed"], 1)
+
+    def test_closed_issue_resolves_locally_without_github_write(self):
+        self.pending()
+        counts, run = self.drain(state="closed")
+        self.assertEqual(counts, {"candidates": 1, "closed": 1, "blocked": 0})
+        run.assert_not_called()
+        self.assertEqual(self.recovery.rows(self.path)[-1]["reason"], "issue_closed")
+        _, run = self.drain(state="closed")
+        run.assert_not_called()
+
+    def test_unreadable_issue_state_defers_batch(self):
+        for issue in range(1, 3):
+            self.pending(issue_number=issue)
+        counts, run = self.drain(state=None)
+        run.assert_not_called()
+        self.assertEqual(counts, {"candidates": 2, "closed": 0, "blocked": 0})
+        self.assertEqual(len(self.recovery.rows(self.path)), 2)
+
+    def test_missing_identity_blocks_once_without_github(self):
+        self.pending(process_identity=None)
+        counts, run = self.drain(ended=False)
+        self.assertEqual(counts["blocked"], 1)
+        run.assert_not_called()
+        self.assertEqual(self.recovery.rows(self.path)[-1]["reason"], "identity_unavailable")
+        counts, run = self.drain(ended=False)
+        self.assertEqual(counts["candidates"], 0)
+        run.assert_not_called()
 
     def test_unknown_native_identity_is_not_exit_proof(self):
         self.assertFalse(self.recovery.worker_ended({}))

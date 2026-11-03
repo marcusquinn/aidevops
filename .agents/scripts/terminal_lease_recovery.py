@@ -79,6 +79,36 @@ def worker_ended(row):
         return False
 
 
+def identity_usable(row):
+    """False when the pending row can never prove its worker ended."""
+    try:
+        ProcessIdentity.from_dict(row.get("process_identity"))
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def issue_state(row):
+    """Return "open" or "closed", or None when GitHub cannot answer."""
+    executable = shutil.which("gh")
+    if not executable or not Path(executable).is_absolute():
+        return None
+    try:
+        result = subprocess.run([executable, "api",  # nosec B603 — absolute gh, fixed arguments, positional data only
+                                 f"repos/{row['repo']}/issues/{row['issue_number']}", "--jq", ".state"],
+                                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    state = result.stdout.strip()
+    return state if result.returncode == 0 and state in ("open", "closed") else None
+
+
+def local_resolution(row, kind, reason):
+    resolution = {name: row[name] for name in KEYS}
+    resolution.update(ts=int(time.time()), record_type=PREFIX + kind, reason=reason)
+    return resolution
+
+
 def close_pending(row):
     """Return a token-free resolution, or None to defer the remaining batch."""
     helper = Path(__file__).resolve().with_name("dispatch-claim-helper.sh")
@@ -129,9 +159,22 @@ def drain():
             expiry = row.get("expires_at")
             if not isinstance(expiry, int) or int(time.time()) <= expiry + 120:
                 continue
-            if executor_live(row["session"]) or not worker_ended(row):
+            if executor_live(row["session"]):
                 continue
-            resolution = close_pending(row)
+            if not worker_ended(row):
+                if identity_usable(row):
+                    continue
+                # Without a native identity the exit can never be proven: block
+                # once, locally, instead of re-scanning the row every cycle.
+                append(path, local_resolution(row, "blocked", "identity_unavailable"))
+                counts["blocked"] += 1
+                continue
+            # Closed issues are resolved locally; the pulse never writes to them.
+            state = issue_state(row)
+            if state is None:
+                break
+            resolution = (local_resolution(row, "resolved", "issue_closed") if state == "closed"
+                          else close_pending(row))
             if resolution is None:
                 break
             processed += 1
