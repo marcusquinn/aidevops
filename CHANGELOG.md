@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.115] - 2026-11-03
+
+### Added
+
+- archive-first retire-enrolled-only path for never-owned worktrees (GH#36516) (#36527)
+
+### Fixed
+
+- fix unbound positional args in crawl4ai, dns and watercrawl helpers
+
 ## [3.39.114] - 2026-11-02
 
 ### Changed
