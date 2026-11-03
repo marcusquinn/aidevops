@@ -97,6 +97,19 @@ the OpenCode session ID and local directory references, use owner-only
 permissions, and are inert unless Tabby starts the launcher from that exact
 marker directory.
 
+Tabby uses the reported directory both for restoration and as the starting
+directory of any new tab opened from the focused OpenCode tab. Restored
+plain-shell tabs also start there. Setup therefore sources
+`scripts/tabby-recovery-shell-guard.sh` from interactive bash/zsh startup files
+(`setup_tabby_recovery_shell_guard`, run only when Tabby is installed). An
+interactive shell that starts inside a marker moves to the session's project
+directory, or to `$HOME` if the marker is unusable. When the owning OpenCode
+process is gone, the shell prints the `cd <marker> && aidevops opencode
+--tabby-shell` (or `opencode2`) resume command at the first prompt.
+Command-string shells (`-c`), including managed profiles, skip the guard so
+they can still restore the session. Set `AIDEVOPS_TABBY_MARKER_GUARD=0` to opt
+out.
+
 ## OpenCode V2 (`opencode2`)
 
 V2 server plugins run in the tty-less background service, so the V2 TUI plugin
@@ -107,7 +120,7 @@ marker for the routed root session and reports it with `OSC 1337`. Switching
 sessions rewrites the marker.
 
 Launching `opencode2` from a marker directory, whether Tabby re-runs the
-profile command or you type it in a restored shell tab, resolves the marker
+profile command or you run the printed resume command in a restored shell tab, resolves the marker
 against the V2 data home and the `session_v2` table, then runs
 `--session <id>` in the session's directory. The shim only opens the project
 directory, without resuming, when:
