@@ -647,7 +647,59 @@ test_release_clears_label_when_alone() {
 	return 0
 }
 
+# -------------- 7. GH#36536: search-lag miss, child caught after lock --------------
+test_post_lock_listing_blocks_duplicate_child() {
+	setup_gh_stub
+	export GH_SELF_LOGIN="bob"
+	export GH_LOCK_MARKERS_JSON
+	GH_LOCK_MARKERS_JSON=$(fixture_single_marker "bob" "2026-04-16T10:00:00Z" 401)
+	export GH_ISSUE_VIEW_LABELS="bug,tier:standard,consolidation-in-progress"
+	export GH_API_COMMENTS_JSON
+	GH_API_COMMENTS_JSON=$(fixture_two_substantive_comments_t2151)
+	export GH_ISSUE_LIST_CHILD_JSON='[{"number":9200,"title":"consolidation-task: merge thread on #100 into single spec","body":"Consolidation target: #100"}]'
+	export GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+
+	# Simulate search-index lag: the pre-lock search-based check misses the child.
+	local saved_fn
+	saved_fn=$(declare -f _consolidation_child_exists)
+	_consolidation_child_exists() { return 1; }
+
+	local rc=0
+	_dispatch_issue_consolidation 100 "owner/repo" "/tmp/fake-path" || rc=$?
+	eval "$saved_fn"
+
+	local failures=0 failmsg=""
+	[[ "$rc" -eq 0 ]] || { failures=$((failures + 1)); failmsg="${failmsg} | dispatch returned $rc"; }
+	if grep -q 'issue create' "$GH_LOG" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | duplicate child was created"
+	fi
+	if ! grep -q 'dedup skip for #100' "$LOGFILE" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | dedup skip not logged"
+	fi
+	if ! grep -qE 'api -X DELETE .*/issues/comments/401' "$GH_LOG" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | lock marker not released"
+	fi
+	# Helper must not match a different parent whose number shares a prefix.
+	if _consolidation_open_child_listed 10 "owner/repo"; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | helper matched #10 against child for #100"
+	fi
+
+	if [[ $failures -eq 0 ]]; then
+		print_result "GH#36536 post-lock listing blocks duplicate consolidation child" 0
+	else
+		print_result "GH#36536 post-lock listing blocks duplicate consolidation child" 1 "$failmsg"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
 main() {
+	test_post_lock_listing_blocks_duplicate_child
 	test_single_runner_acquire_create_release
 	test_race_lexicographic_tiebreaker_loser_yields
 	test_race_lexicographic_tiebreaker_winner_proceeds
