@@ -18,9 +18,9 @@ The user wants the agent to use their logged-in session, or to inspect or lightl
 ## Workflow
 
 1. Confirm explicit, user-approved live-session work. State up front that the user's already-open everyday tab cannot be attached (default-profile remote debugging is blocked; the extension is not documented for Brave).
-2. Run `.agents/scripts/chromium-debug-use-helper.sh launch <url>`; the user logs in once in that window (the profile persists).
-3. Use `.agents/scripts/chromium-debug-use-helper.sh version` and `list` to confirm access.
-4. Prefer `snapshot`, `html`, and `eval` to understand the page before using `click`, `type`, `navigate`, or `screenshot`.
+2. Run `.agents/scripts/chromium-debug-use-helper.sh --profile cdp launch <url>`; the user logs in once in that window (the profile persists).
+3. Use `.agents/scripts/chromium-debug-use-helper.sh --profile cdp version` and `--profile cdp list` to confirm access.
+4. Keep `--profile cdp` on every page command. Prefer `snapshot`, `html`, and `eval` to understand the page before using `click`, `type`, `navigate`, or `screenshot`.
 5. Once the flow is understood, hand off to the best-fit longer-term tool:
    - `tools/browser/playwright.md` — repeatable isolated automation
    - `tools/browser/dev-browser.md` — aidevops-managed persistent profile
@@ -36,17 +36,17 @@ The user wants the agent to use their logged-in session, or to inspect or lightl
 ## Commands
 
 ```bash
-.agents/scripts/chromium-debug-use-helper.sh launch [url]
-.agents/scripts/chromium-debug-use-helper.sh launch-status
-.agents/scripts/chromium-debug-use-helper.sh launch-stop
-.agents/scripts/chromium-debug-use-helper.sh version
-.agents/scripts/chromium-debug-use-helper.sh list
-.agents/scripts/chromium-debug-use-helper.sh snapshot <target>
-.agents/scripts/chromium-debug-use-helper.sh html <target> [selector]
-.agents/scripts/chromium-debug-use-helper.sh eval <target> "document.title"
-.agents/scripts/chromium-debug-use-helper.sh click <target> "button.submit"
-.agents/scripts/chromium-debug-use-helper.sh type <target> "hello world"
-.agents/scripts/chromium-debug-use-helper.sh screenshot <target> /tmp/page.png
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp launch [url]
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp launch-status
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp launch-stop
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp version
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp list
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp snapshot <target>
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp html <target> [selector]
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp eval <target> "document.title"
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp click <target> "button.submit"
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp type <target> "hello world"
+.agents/scripts/chromium-debug-use-helper.sh --profile cdp screenshot <target> /tmp/page.png
 ```
 
-Commands auto-discover a live launched profile; use `--profile NAME` or `--browser-url http://127.0.0.1:<port>` to select one explicitly.
+Without `--profile` or an explicit endpoint, commands try `http://127.0.0.1:9222` first (for example `dev-browser`), then the first live launched profile found; discovery order is not guaranteed. Explicit endpoints are tried before port 9222. After `launch`, pass `--profile NAME` (default `cdp`) or `--browser-url http://127.0.0.1:<port>` to every page command; replace `cdp` in the examples when using another profile name.
