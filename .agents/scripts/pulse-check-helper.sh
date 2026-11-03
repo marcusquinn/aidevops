@@ -244,6 +244,7 @@ _render_text_report() {
 		"- Fresh cross-runner durable dispatch claims: " + (.summary.fresh_cross_runner_durable_claims | count_text) + " (fleet activity: " + (.summary.fleet_activity_state // unknown) + "; audit evidence, not a process count)",
 		"- Auto-dispatch queue: " + (.summary.auto_dispatch_available_unassigned | count_text) + " available (" + (.summary.auto_dispatch_eligible_available_unassigned | count_text) + " label-eligible; launch admission not verified) / " + (.summary.auto_dispatch_open | count_text) + " open across " + (.queue.repos | count_text) + " pulse repos",
 		"- Queue scan state: " + (.summary.auto_dispatch_scan_state // "scanned"),
+		"- Unknown checkpoint triage: " + (.queue.unknown_checkpoint_triage | count_text) + " observed; oldest release age: " + (.queue.oldest_unknown_checkpoint_triage_age_min | count_text) + " minutes; unreadable/unscanned: " + (.queue.unknown_checkpoint_triage_unreadable | count_text),
 		"- Queue coverage: " + (.queue.repos_scanned | count_text) + "/" + (.queue.repos | count_text) + " repositories; counts are " + .summary.queue_counts_basis + ", not independent work targets",
 		"- Collection evidence: " + (.collection | tojson),
 		"- Current window launches: " + (.summary.worker_launches_in_window | count_text) + "; terminal worker events: " + (.summary.worker_terminal_events_in_window | count_text),
