@@ -156,13 +156,6 @@ def _count_durable_progress(aggregate: dict[str, int], slug: str,
     aggregate[key] += 1
 
 
-def _count_unknown_checkpoint_triage(aggregate: dict[str, int], slug: str,
-                                      issue: dict[str, Any], now: dt.datetime) -> None:
-    """Advisory age from the release, never from updatedAt or attention comments."""
-    context = checkpoint_scan.CheckpointContext(slug, _run_gh_json)
-    checkpoint_scan.count_unknown_triage(aggregate, issue, now, context)
-
-
 def _load_repos(repos_json: pathlib.Path) -> tuple[list[dict[str, Any]], str]:
     try:
         data = json.loads(repos_json.read_text(encoding="utf-8"))
@@ -322,16 +315,6 @@ def _enrich_repo_history(aggregate: dict[str, int], slug: str,
             aggregate["durable_progress_unknown"] += 1
 
 
-def _enrich_repo_checkpoints(aggregate: dict[str, int], slug: str,
-                             max_issues: int, now: dt.datetime) -> None:
-    """Use only the budget remaining after all repositories' durable progress."""
-    for issue in (_fetch_repo_issues(slug, max_issues) or [])[:max_issues]:
-        if time.monotonic() < dependency_scan.QUERY_DEADLINE:
-            _count_unknown_checkpoint_triage(aggregate, slug, issue, now)
-        elif "status:blocked" in _issue_labels(issue) and not issue.get("assignees"):
-            aggregate["unknown_checkpoint_triage_unreadable"] += 1
-
-
 def main() -> int:
     repos_json = pathlib.Path(os.environ.get("PULSE_CHECK_REPOS_JSON", ""))
     skip_gh = os.environ.get("PULSE_CHECK_SKIP_GH", "") in {"1", "true", "TRUE", "yes", "YES"}
@@ -371,7 +354,11 @@ def main() -> int:
 
     # Advisory checkpoint reads must not starve durable progress in any repository.
     for repo in repos:
-        _enrich_repo_checkpoints(aggregate, str(repo.get("slug") or ""), max_issues, now)
+        slug = str(repo.get("slug") or "")
+        context = checkpoint_scan.CheckpointContext(slug, _run_gh_json)
+        checkpoint_scan.enrich_repo(
+            aggregate, (_fetch_repo_issues(slug, max_issues) or [])[:max_issues],
+            now, context, dependency_scan.QUERY_DEADLINE)
 
     error = "queue_budget_exhausted" if time.monotonic() >= dependency_scan.QUERY_DEADLINE else ""
     if not error and aggregate["repos_truncated"]:

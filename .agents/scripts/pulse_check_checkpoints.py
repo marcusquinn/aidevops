@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Callable, Optional
@@ -105,3 +106,13 @@ def count_unknown_triage(aggregate: dict[str, int], issue: dict[str, Any],
         aggregate["unknown_checkpoint_triage"] += 1
         aggregate["oldest_unknown_checkpoint_triage_age_min"] = max(
             aggregate["oldest_unknown_checkpoint_triage_age_min"], age)
+
+
+def enrich_repo(aggregate: dict[str, int], issues: list[dict[str, Any]],
+                now: dt.datetime, context: CheckpointContext, deadline: float) -> None:
+    """Use only the budget remaining after all repositories' durable progress."""
+    for issue in issues:
+        if time.monotonic() < deadline:
+            count_unknown_triage(aggregate, issue, now, context)
+        elif _unowned_blocked_issue(issue):
+            aggregate["unknown_checkpoint_triage_unreadable"] += 1
