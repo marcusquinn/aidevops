@@ -230,10 +230,25 @@ if headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"; then
 	printf 'FAIL recovery accepted a reachable agent after key loading failed\n'
 	exit 1
 fi
-trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
 [[ "$HEADLESS_SSH_AGENT_STATUS" == "dead" ]]
-headless_ssh_agent_reachable
-printf 'PASS failed key loading is not reported as healed despite a reachable agent\n'
+# GH#36550: the empty agent is stopped and never persisted, so agent.env keeps
+# naming the dead agent and every later ensure keeps reporting the failure.
+if headless_ssh_agent_reachable; then
+	kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true
+	printf 'FAIL failed key loading left a reachable empty agent persisted\n'
+	exit 1
+fi
+grep -qF 'dead-agent.sock' "${HOME}/.ssh/agent.env"
+for staged in "${HOME}"/.ssh/agent.env.*; do
+	[[ ! -e "$staged" ]] || { printf 'FAIL staged agent env left behind: %s\n' "$staged"; exit 1; }
+done
+if headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"; then
+	trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
+	printf 'FAIL repeated recovery reported success after key loading failed\n'
+	exit 1
+fi
+[[ "$HEADLESS_SSH_AGENT_STATUS" == "dead" ]]
+printf 'PASS failed key loading stops the new agent and keeps reporting dead\n'
 EOF
 cp "${TEST_HOME}/.ssh/id_ed25519_signing" "${TEST_HOME}/.ssh/id_ed25519_signing.pub" "${SHORT_HOME}/.ssh/"
 printf 'export SSH_AUTH_SOCK=%q\nexport SSH_AGENT_PID=%q\n' \
