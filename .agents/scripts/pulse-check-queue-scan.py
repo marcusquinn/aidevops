@@ -18,6 +18,7 @@ from functools import lru_cache
 from typing import Any, Optional
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import pulse_check_checkpoints as checkpoint_scan
 import pulse_check_dependencies as dependency_scan
 import pulse_check_progress as progress_scan
 
@@ -155,64 +156,11 @@ def _count_durable_progress(aggregate: dict[str, int], slug: str,
     aggregate[key] += 1
 
 
-@lru_cache(maxsize=None)
-def _checkpoint_health_writer(slug: str, login: str) -> bool:
-    """Resolve ambiguous associations once without changing dispatch authority."""
-    if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
-        return False
-    result = _run_gh_json(["gh", "api", f"repos/{slug}/collaborators/{login}/permission"])
-    return isinstance(result, dict) and result.get("permission") in {"write", "maintain", "admin"}
-
-
 def _count_unknown_checkpoint_triage(aggregate: dict[str, int], slug: str,
-                                     issue: dict[str, Any], now: dt.datetime) -> None:
+                                      issue: dict[str, Any], now: dt.datetime) -> None:
     """Advisory age from the release, never from updatedAt or attention comments."""
-    if "status:blocked" not in _issue_labels(issue) or issue.get("assignees"):
-        return
-    number = issue.get("number")
-    if not isinstance(number, int) or number < 1:
-        return
-    pages = _run_gh_json(["gh", "api", "--paginate", "--slurp",
-                          f"repos/{slug}/issues/{number}/comments?per_page=100"])
-    if not isinstance(pages, list):
-        aggregate["unknown_checkpoint_triage_unreadable"] += 1
-        return
-    comments = [comment for page in pages for comment in
-                (page if isinstance(page, list) else [page]) if isinstance(comment, dict)]
-    events = []
-    for comment in comments:
-        lines = [line for line in str(comment.get("body") or "").splitlines()
-                 if line.startswith(("CLAIM_RELEASED ", "DISPATCH_CLAIM ",
-                                     "Dispatching worker", "Interactive claim"))]
-        if not lines:
-            continue
-        # #aidevops:trust-boundary — association alone does not make a
-        # COLLABORATOR or cross-org runner authoritative.
-        if (comment.get("author_association") not in {"OWNER", "MEMBER"} and
-                not _checkpoint_health_writer(slug, comment.get("user", {}).get("login", ""))):
-            continue
-        events.extend((comment, line) for line in lines)
-    if not events:
-        return
-    comment, line = max(events, key=lambda event: event[0].get("id", 0))
-    if (not line.startswith("CLAIM_RELEASED reason=blocked ") or
-            "Terminal blocker: reason=unknown owner=worker-triage " not in str(comment.get("body")) or
-            comment.get("updated_at", comment.get("created_at")) != comment.get("created_at")):
-        return
-    runner = re.search(r"(?:^| )runner=([A-Za-z0-9-]+)(?: |$)", line)
-    if not runner or runner.group(1) != comment.get("user", {}).get("login"):
-        return
-    try:
-        released = dt.datetime.fromisoformat(comment["created_at"].replace("Z", "+00:00"))
-        age = int((now - released).total_seconds() // 60)
-    except (KeyError, TypeError, ValueError):
-        aggregate["unknown_checkpoint_triage_unreadable"] += 1
-        return
-    if age < 0:
-        return
-    aggregate["unknown_checkpoint_triage"] += 1
-    aggregate["oldest_unknown_checkpoint_triage_age_min"] = max(
-        aggregate["oldest_unknown_checkpoint_triage_age_min"], age)
+    context = checkpoint_scan.CheckpointContext(slug, _run_gh_json)
+    checkpoint_scan.count_unknown_triage(aggregate, issue, now, context)
 
 
 def _load_repos(repos_json: pathlib.Path) -> tuple[list[dict[str, Any]], str]:
@@ -364,6 +312,19 @@ def _scan_repo(
     aggregate["repos_with_available"] += int(repo_available > 0)
 
 
+def _enrich_repo_history(aggregate: dict[str, int], slug: str,
+                         max_issues: int, now: dt.datetime) -> None:
+    """Keep optional history within the dependency inventory's remaining budget."""
+    for issue in (_fetch_repo_issues(slug, max_issues) or [])[:max_issues]:
+        if time.monotonic() < dependency_scan.QUERY_DEADLINE:
+            _count_unknown_checkpoint_triage(aggregate, slug, issue, now)
+            _count_durable_progress(aggregate, slug, issue, now)
+        else:
+            aggregate["durable_progress_unknown"] += 1
+            if "status:blocked" in _issue_labels(issue) and not issue.get("assignees"):
+                aggregate["unknown_checkpoint_triage_unreadable"] += 1
+
+
 def main() -> int:
     repos_json = pathlib.Path(os.environ.get("PULSE_CHECK_REPOS_JSON", ""))
     skip_gh = os.environ.get("PULSE_CHECK_SKIP_GH", "") in {"1", "true", "TRUE", "yes", "YES"}
@@ -399,15 +360,7 @@ def main() -> int:
 
     # Optional history must not consume the dependency inventory's budget.
     for repo in repos:
-        slug = str(repo.get("slug") or "")
-        for issue in (_fetch_repo_issues(slug, max_issues) or [])[:max_issues]:
-            if time.monotonic() < dependency_scan.QUERY_DEADLINE:
-                _count_unknown_checkpoint_triage(aggregate, slug, issue, now)
-                _count_durable_progress(aggregate, slug, issue, now)
-            else:
-                aggregate["durable_progress_unknown"] += 1
-                if "status:blocked" in _issue_labels(issue) and not issue.get("assignees"):
-                    aggregate["unknown_checkpoint_triage_unreadable"] += 1
+        _enrich_repo_history(aggregate, str(repo.get("slug") or ""), max_issues, now)
 
     error = "queue_budget_exhausted" if time.monotonic() >= dependency_scan.QUERY_DEADLINE else ""
     if not error and aggregate["repos_truncated"]:
