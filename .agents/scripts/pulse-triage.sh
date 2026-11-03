@@ -256,6 +256,21 @@ _consolidation_preflight_skip_outcome() {
 	return 0
 }
 
+# GH#36536: with the lock held, skip when an open child already names the
+# parent. Releases the lock and flags the parent. Returns 0 when skipped.
+_consolidation_post_lock_dedup_skip() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+
+	_consolidation_open_child_listed "$issue_number" "$repo_slug" || return 1
+	_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "needs-consolidation" 2>/dev/null || true
+	echo "[pulse-wrapper] Consolidation: dedup skip for #${issue_number} in ${repo_slug}; open consolidation child found after lock acquire (GH#36536)" >>"$LOGFILE"
+	return 0
+}
+
 _dispatch_issue_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -309,13 +324,7 @@ _dispatch_issue_consolidation() {
 	# index, so a child another runner created moments ago (then released its
 	# lock) can be missed. Re-check via a label-filtered list now that we hold
 	# the lock, before composing or creating anything.
-	if _consolidation_open_child_listed "$issue_number" "$repo_slug"; then
-		_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-consolidation" 2>/dev/null || true
-		echo "[pulse-wrapper] Consolidation: dedup skip for #${issue_number} in ${repo_slug}; open consolidation child found after lock acquire (GH#36536)" >>"$LOGFILE"
-		return 0
-	fi
+	_consolidation_post_lock_dedup_skip "$issue_number" "$repo_slug" "$self_login" && return 0
 
 	# Fetch parent metadata.
 	local parent_title parent_body parent_labels
