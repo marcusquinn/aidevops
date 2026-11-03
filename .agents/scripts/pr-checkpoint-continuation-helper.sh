@@ -386,8 +386,7 @@ _pcc_issue_metadata_is_eligible() {
 	local checkpoint_assignee="$5"
 	local comments_json="[]"
 
-	comments_json=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 2
+	comments_json=$(_pcc_issue_comments "$repo_slug" "$linked_issue" 2>/dev/null) || return 2
 	_pr_checkpoint_issue_metadata_is_eligible "$issue_json" "$linked_issue" \
 		"$expected_assignee" "$comments_json" "$checkpoint_assignee" "$PCC_ALLOW_RELEASED"
 	return $?
@@ -427,7 +426,7 @@ _pcc_target_row() {
 		rejection="issue_metadata_ineligible"
 	fi
 	if [[ -n "$rejection" ]]; then
-		comments=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" --paginate --slurp) || {
+		comments=$(_pcc_issue_comments "$repo_slug" "$linked_issue") || {
 			_pcc_target_rejected issue_comments_unavailable
 			return 2
 		}
@@ -683,12 +682,48 @@ _pcc_lift_superseded_self_hold() {
 	return 0
 }
 
+# GH#36529: hiding a comment (dispatch comment hygiene, minimizeComment) bumps
+# REST updated_at without changing the body. Read GraphQL lastEditedAt for each
+# comment whose updated_at differs from created_at and normalise updated_at to
+# created_at only when GitHub confirms the body was never edited. Any failure
+# (query error, missing node, non-null lastEditedAt) leaves updated_at untouched,
+# so the stricter edit fence fails closed.
+# Args: $1=slurped comment pages JSON. Prints the (possibly normalised) JSON.
+_pcc_normalise_hidden_unedited() {
+	local raw="$1" ids="" chunk="" resp="" clean="[]" id=""
+	local query='query($ids: [ID!]!) { nodes(ids: $ids) { ... on IssueComment { id lastEditedAt } } }'
+	local -a args=()
+	ids=$(jq -r '[flatten[] | select((.updated_at // .created_at) != .created_at and
+		((.node_id // empty) | test("^[A-Za-z0-9_=-]+$"))) | .node_id] | unique | _nwise(50) | join(" ")' \
+		<<<"$raw" 2>/dev/null) || ids=""
+	if [[ -z "$ids" ]]; then
+		printf '%s' "$raw"
+		return 0
+	fi
+	while IFS= read -r chunk; do
+		[[ -n "$chunk" ]] || continue
+		args=()
+		for id in $chunk; do
+			args+=(-f "ids[]=${id}")
+		done
+		resp=$(gh api graphql -f query="$query" "${args[@]}" 2>/dev/null) || continue
+		clean=$(jq -c --argjson prev "$clean" \
+			'$prev + [(.data.nodes // [])[] | select(.id != null and .lastEditedAt == null) | .id]' \
+			<<<"$resp" 2>/dev/null) || continue
+	done <<<"$ids"
+	jq -c --argjson clean "$clean" \
+		'map(map(if .node_id as $n | $n != null and ($clean | index($n)) != null
+			then .updated_at = .created_at else . end))' <<<"$raw" 2>/dev/null || printf '%s' "$raw"
+	return 0
+}
+
 # Paginated issue comments (slurped pages) for coordination-event evidence.
 # Args: $1=repo slug, $2=issue number
 _pcc_issue_comments() {
-	local repo="$1" issue="$2"
-	gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp
-	return $?
+	local repo="$1" issue="$2" raw=""
+	raw=$(gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp) || return 1
+	_pcc_normalise_hidden_unedited "$raw"
+	return 0
 }
 
 _pcc_dispatch_approved() {
