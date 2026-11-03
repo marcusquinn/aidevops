@@ -250,6 +250,23 @@ SCRIPT
 	return 0
 }
 
+# Format an a11y report from stdin without placing report data in argv.
+_format_a11y_markdown() {
+	local level="$1"
+	printf '## Accessibility report (WCAG %s)\n\n' "$level"
+	jq -r --arg level "$level" '.[] |
+		"### \(.page) — \(.viewport)\n",
+		(if .error then "Error: \(.error)" else
+		"Structure: \(.summary.errors) errors, \(.summary.warnings) warnings",
+		(.issues[] | "- \(.severity): \(.message)") end),
+		(if (.contrast | type) == "array" then
+		(.contrast | group_by(if .complexBackground then "manual" elif (if $level == "AAA" then .aaa.pass else .aa.pass end) then "pass" else "fail" end)[] |
+		"Contrast \(.[0] | if .complexBackground then "needs manual/pixel check" elif (if $level == "AAA" then .aaa.pass else .aa.pass end) then "pass" else "fail" end): \(length)",
+		(.[] | "- \(.selector): \(if .complexBackground then "needs manual/pixel check (" + (.complexBackground | join(", ")) + ")" else (.ratio | tostring) + ":1" end)"))
+		else "Contrast check error: \(.contrast.error // "no data")" end), ""' || return 1
+	return 0
+}
+
 # Run accessibility checks on pages using Playwright.
 # Delegates to playwright-contrast.mjs for contrast, adds ARIA and structure checks.
 # Args: --url URL --pages "/ /about" --level AA|AAA --format json|markdown
@@ -342,17 +359,7 @@ cmd_a11y() {
 		return "$exit_code"
 	fi
 	if [[ "$format" == "markdown" ]]; then
-		printf '## Accessibility report (WCAG %s)\n\n' "$level"
-		printf '%s\n' "$report" | jq -r --arg level "$level" '.[] |
-			"### \(.page) — \(.viewport)\n",
-			(if .error then "Error: \(.error)" else
-			"Structure: \(.summary.errors) errors, \(.summary.warnings) warnings",
-			(.issues[] | "- \(.severity): \(.message)") end),
-			(if (.contrast | type) == "array" then
-			(.contrast | group_by(if .complexBackground then "manual" elif (if $level == "AAA" then .aaa.pass else .aa.pass end) then "pass" else "fail" end)[] |
-			"Contrast \(.[0] | if .complexBackground then "needs manual/pixel check" elif (if $level == "AAA" then .aaa.pass else .aa.pass end) then "pass" else "fail" end): \(length)",
-			(.[] | "- \(.selector): \(if .complexBackground then "needs manual/pixel check (" + (.complexBackground | join(", ")) + ")" else (.ratio | tostring) + ":1" end)"))
-			else "Contrast check error: \(.contrast.error // "no data")" end), ""'
+		printf '%s\n' "$report" | _format_a11y_markdown "$level" || return 1
 	else
 		printf '%s\n' "$report"
 	fi
