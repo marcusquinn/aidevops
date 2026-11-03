@@ -16,6 +16,23 @@ def unreadable_directory(error):
     raise error
 
 
+def process_umask():
+    """Current umask when it keeps owner rwx and denies world writes, else 022.
+
+    GH#36543: user-private-group hosts (umask 002) create 0775 directories and
+    0664 files; restore recreates them under the same umask, so they round-trip.
+    """
+    try:
+        with open("/proc/self/status", encoding="ascii") as status:
+            mask = next(int(line.split()[1], 8) for line in status if line.startswith("Umask:"))
+    except (OSError, StopIteration, ValueError, IndexError):
+        mask = os.umask(0o022)  # Portable fallback; restore immediately.
+        os.umask(mask)
+    if mask & 0o700 or not mask & 0o002:
+        return 0o022
+    return mask & 0o077
+
+
 def supported_metadata(observed, attributes, tar_metadata=False):
     if observed.st_uid != os.geteuid() or observed.st_gid != os.getegid() or attributes:
         raise ValueError("ownership, ACLs or extended attributes require separate preservation")
@@ -28,7 +45,11 @@ def supported_metadata(observed, attributes, tar_metadata=False):
             raise ValueError("special permissions or hard links require separate preservation")
         return
     directory = stat.S_ISDIR(observed.st_mode)
-    allowed = (0o755,) if directory else (0o644, 0o755)
+    mask = process_umask()
+    if directory:
+        allowed = {0o755, 0o777 & ~mask}
+    else:
+        allowed = {0o644, 0o755, 0o666 & ~mask, 0o777 & ~mask}
     if stat.S_IMODE(observed.st_mode) not in allowed or (not directory and observed.st_nlink != 1):
         raise ValueError("special permissions or hard links require separate preservation")
 
