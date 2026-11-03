@@ -550,7 +550,7 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
     def pending(self, **changes):
         row = dict(repo="owner/repo", issue_number=124, attempt_id="raw-1", claim_id=4,
                    device="dev", session=self.session, ts=1, expires_at=100,
-                   record_type="terminal_lease_pending")
+                   process_identity={"fixture": True}, record_type="terminal_lease_pending")
         row.update(changes)
         self.recovery.append(self.path, row)
         return row

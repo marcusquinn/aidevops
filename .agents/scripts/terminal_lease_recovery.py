@@ -26,6 +26,7 @@ PERMANENT_DENIALS = frozenset((
     "claim_unmatched", "identity_mismatch", "not_checkpoint_claim", "later_coordination",
     "already_terminal", "already_released", "not_ready", "attempt_unknown", "expiry_unknown",
 ))
+SKIP = object()  # settle(): leave the pending row for a later cycle
 
 
 def record(kind, repo, issue, session, pid):
@@ -79,33 +80,22 @@ def worker_ended(row):
         return False
 
 
-def identity_usable(row):
-    """False when the pending row can never prove its worker ended."""
-    try:
-        ProcessIdentity.from_dict(row.get("process_identity"))
-    except (ValueError, TypeError):
-        return False
-    return True
-
-
 def issue_state(row):
-    """Return "open" or "closed", or None when GitHub cannot answer."""
-    executable = shutil.which("gh")
-    if not executable or not Path(executable).is_absolute():
-        return None
+    """Return the GitHub issue state ("open"/"closed"), or None when GitHub cannot answer."""
     try:
-        result = subprocess.run([executable, "api",  # nosec B603 — absolute gh, fixed arguments, positional data only
+        result = subprocess.run([str(Path(shutil.which("gh")).resolve()), "api",  # nosec B603 — resolved gh, fixed arguments, positional data only
                                  f"repos/{row['repo']}/issues/{row['issue_number']}", "--jq", ".state"],
-                                capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    state = result.stdout.strip()
-    return state if result.returncode == 0 and state in ("open", "closed") else None
+                                capture_output=True, text=True, timeout=60, check=True)
+    except (TypeError, OSError, subprocess.SubprocessError):
+        return None  # Missing gh, transport errors and pacing all defer the batch.
+    return result.stdout.strip()
 
 
-def local_resolution(row, kind, reason):
+def local_resolution(row, kind, reason=None):
     resolution = {name: row[name] for name in KEYS}
-    resolution.update(ts=int(time.time()), record_type=PREFIX + kind, reason=reason)
+    resolution.update(ts=int(time.time()), record_type=PREFIX + kind)
+    if reason:
+        resolution["reason"] = reason
     return resolution
 
 
@@ -119,18 +109,32 @@ def close_pending(row):
                                 capture_output=True, text=True, timeout=90)
     except (OSError, subprocess.SubprocessError):
         return None
-    resolution = {name: row[name] for name in KEYS}
-    resolution["ts"] = int(time.time())
     if result.returncode == 0:
-        resolution["record_type"] = PREFIX + "resolved"
-        return resolution
+        return local_resolution(row, "resolved")
     # No raw helper/transport output enters the evidence log. Unknown failures
     # (including pacing and rate limits) defer the batch without a retry.
     match = re.fullmatch(r"PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=([a-z_]+)\s*", result.stderr)
     if not match or match[1] not in PERMANENT_DENIALS:
         return None
-    resolution.update(record_type=PREFIX + "blocked", reason=match[1])
-    return resolution
+    return local_resolution(row, "blocked", match[1])
+
+
+def settle(row):
+    """Return a resolution, SKIP to keep the row pending, or None to defer the batch."""
+    expiry = row.get("expires_at")
+    if not isinstance(expiry, int) or int(time.time()) <= expiry + 120 or executor_live(row["session"]):
+        return SKIP
+    # Without a native identity the exit can never be proven: block once,
+    # locally, instead of re-scanning the row every cycle.
+    if row.get("process_identity") is None:
+        return local_resolution(row, "blocked", "identity_unavailable")
+    if not worker_ended(row):
+        return SKIP
+    # Closed issues are resolved locally; the pulse never writes to them.
+    state = issue_state(row)
+    if state != "open":
+        return local_resolution(row, "resolved", "issue_closed") if state == "closed" else None
+    return close_pending(row)
 
 
 def local_pending(history, device):
@@ -156,25 +160,9 @@ def drain():
         for row in pending.values():
             if processed == 3:
                 break
-            expiry = row.get("expires_at")
-            if not isinstance(expiry, int) or int(time.time()) <= expiry + 120:
+            resolution = settle(row)
+            if resolution is SKIP:
                 continue
-            if executor_live(row["session"]):
-                continue
-            if not worker_ended(row):
-                if identity_usable(row):
-                    continue
-                # Without a native identity the exit can never be proven: block
-                # once, locally, instead of re-scanning the row every cycle.
-                append(path, local_resolution(row, "blocked", "identity_unavailable"))
-                counts["blocked"] += 1
-                continue
-            # Closed issues are resolved locally; the pulse never writes to them.
-            state = issue_state(row)
-            if state is None:
-                break
-            resolution = (local_resolution(row, "resolved", "issue_closed") if state == "closed"
-                          else close_pending(row))
             if resolution is None:
                 break
             processed += 1
