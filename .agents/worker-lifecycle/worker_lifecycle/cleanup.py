@@ -12,7 +12,10 @@ from uuid import UUID, uuid5
 
 from .absence import reconcile_absence
 from .archive_path import create_archive_root, validate_archive_path
-from .enrollment import GenerationEnrollment
+from .admission import AdmissionRegistry
+from .cleanup_failure import command_failure as _command_failure
+from .cleanup_plan import enrolled_only_event_id
+from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .filesystem import validate_private_path as _private
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
@@ -119,34 +122,6 @@ def _failure_details(error: Exception) -> dict:
     return details
 
 
-def _command_failure(
-    error: "subprocess.CalledProcessError | subprocess.TimeoutExpired",
-) -> dict:
-    details: dict = {"operation": "subprocess"}
-    if isinstance(error, subprocess.CalledProcessError):
-        details["returncode"] = error.returncode
-    else:
-        details["timeout_seconds"] = error.timeout
-    command = error.cmd
-    if not isinstance(command, (list, tuple)) or len(command) < 3:
-        return details
-    if (not isinstance(command[1], str)
-            or Path(command[1]).name != "worktree-archive-helper.sh"
-            or command[2] not in {"archive", "verify-local", "source-matches"}):
-        return details
-    details.update(operation=command[2], archive_failure=True)
-    # Only the helper's namespaced validation code is useful here. Drop paths,
-    # descriptions and all other stderr (which may contain sensitive Git URLs).
-    stderr = error.stderr or b""
-    text = stderr[-8192:]
-    if isinstance(text, bytes):
-        text = text.decode("utf-8", errors="replace")
-    match = re.search(r"(?m)^ValueError: ((?:merge|git_admin):[a-z_]{1,64})(?::[^\n]*)?$", text)
-    if match:
-        details["reason"] = match[1]
-    return details
-
-
 def _candidate(
     store: LifecycleRegistry, repositories: dict[str, tuple[str, str]],
     root: Path, generation: str, path: Path,
@@ -193,6 +168,50 @@ def cleanup_worktree(
     generation = GenerationEnrollment(store).inspect_retirement(path)
     create_archive_root(root)
     validate_archive_path(root)
+    return _candidate(store, repositories, root, generation, path)
+
+
+def retire_enrolled_only(
+    store: LifecycleRegistry, config: Path, root: Path, path: Path, confirm: bool,
+) -> dict[str, object]:
+    """Operator-confirmed, archive-first retirement of a never-owned generation.
+
+    Eligible: enrolled, zero bound runs, no `created-worktree` receipt. Without
+    `confirm` this only previews. Confirmation closes admission and records
+    `operator_confirmed` evidence atomically, then reuses `retire_worktree`
+    (archive, verify, private move, native removal); the branch is kept.
+    """
+    if not root.is_absolute() or root.resolve() != root:
+        raise ValueError("canonical-archive-root-required")
+    repositories = _repositories(config)
+    generation = GenerationEnrollment(store).inspect_retirement(path)
+    with store.connection() as connection:
+        admission = connection.execute(
+            "SELECT state FROM generation_admissions WHERE generation_id=?",
+            (generation,),
+        ).fetchone()
+        owned = connection.execute(
+            "SELECT 1 FROM bindings WHERE generation_id=?", (generation,),
+        ).fetchone() or _event(store, str(uuid5(UUID(generation), "created-worktree")))
+    result: dict[str, object] = {
+        "generation_id": generation, "cleanup_authorized": False,
+        "admission": admission["state"] if admission else "absent",
+    }
+    if admission is None or owned:
+        return dict(result, status="not-enrolled-only")
+    common = _git("-C", str(path), "rev-parse", "--path-format=absolute",
+                  "--git-common-dir")
+    if common not in repositories:
+        return dict(result, status="outside-maintenance-scope")
+    if not confirm:
+        return dict(result, status="enrolled-only-preview", confirm_required=True)
+    if root.is_relative_to(path) or root.is_relative_to(_git_directory(path)):
+        raise ValueError("archive-output-must-be-outside-worktree")
+    create_archive_root(root)
+    validate_archive_path(root)
+    AdmissionRegistry(store).authorize_enrolled_only(
+        enrolled_only_event_id(generation), generation,
+    )
     return _candidate(store, repositories, root, generation, path)
 
 

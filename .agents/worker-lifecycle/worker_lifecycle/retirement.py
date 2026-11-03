@@ -20,7 +20,7 @@ import tempfile
 from uuid import UUID, uuid5
 
 from .archive_path import validate_archive_path
-from .cleanup_plan import _runs, prepare_cleanup
+from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .enrollment import (
@@ -201,6 +201,22 @@ def _remove_private(
         _git("--git-dir", plan["common"], "worktree", "remove", "--force", str(target))
 
 
+def _validate_owner_evidence(store: LifecycleRegistry, generation: str) -> None:
+    """Require closed admission and either ended owners or operator authorization."""
+    with store.connection() as connection:
+        admission = connection.execute(
+            "SELECT state FROM generation_admissions WHERE generation_id=?",
+            (generation,),
+        ).fetchone()
+    rows = _runs(store, generation)
+    enrolled_only = not rows and enrolled_only_authorized(store, generation)
+    if not enrolled_only:
+        if admission is None or admission["state"] != "closed":
+            raise StoreConflict("retirement-owner-evidence-changed")
+        if not rows or not all(row["admitted"] and row["state"] == "ended" for row in rows):
+            raise StoreConflict("retirement-owner-evidence-changed")
+
+
 def _finish(
     store: LifecycleRegistry, path: Path, generation: str, plan: dict, root: Path,
 ) -> dict[str, object]:
@@ -212,15 +228,7 @@ def _finish(
     }
     if _event(store, _event_id(generation, "retired")) is not None:
         return result  # Never inspect/remove a replacement at the public name.
-    with store.connection() as connection:
-        admission = connection.execute(
-            "SELECT state FROM generation_admissions WHERE generation_id=?",
-            (generation,),
-        ).fetchone()
-    rows = _runs(store, generation)
-    if (admission is None or admission["state"] != "closed" or not rows
-            or not all(row["admitted"] and row["state"] == "ended" for row in rows)):
-        raise StoreConflict("retirement-owner-evidence-changed")
+    _validate_owner_evidence(store, generation)
     container = Path(plan["container"])
     if (container.parent != path.parent
             or not container.name.startswith(".lifecycle-retire-")

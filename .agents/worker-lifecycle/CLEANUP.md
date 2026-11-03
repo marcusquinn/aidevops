@@ -326,9 +326,8 @@ sibling path. Metadata and content must match before its native removal; the pub
 name is never a removal target. Per-generation OS locks serialize controllers without
 holding SQLite writer transactions across filesystem work. Archives/base pins remain.
 
-Explicit helpers inherit the lock descriptor. After controller death, another controller
-cannot acquire it until surviving helpers close it. This uses kernel descriptor lifetime,
-not descendant discovery, PID signalling or cwd inspection.
+Explicit helpers inherit the lock descriptor, so after controller death no other controller
+acquires it until surviving helpers close it (kernel descriptor lifetime, not process discovery).
 
 Retry the same command/generation after interruption. Relocation resumes despite public-name
 reuse; completed removal can be acknowledged after a lost acknowledgement. Completion
@@ -341,8 +340,7 @@ not forced; removal uses only the single force needed for archived dirty state.
 Ignored files are deliberately discarded with the worktree, never archived.
 
 `tests/test_retirement.py` exercises real Git/CLI interruption and name reuse in disposable
-repositories. Portable reports qualify only their listed fixture checks, not production
-scheduling or existing worktrees.
+repositories; it does not qualify production scheduling or existing worktrees.
 
 ## Archive payload qualification
 
@@ -431,8 +429,11 @@ not a guessed default or a commit ID passed as a branch name.
 
 Controlled-creation receipts use normal retirement. A missing creation receipt can
 use the explicit recovery-evidence path described above when all bound owners are
-admitted and ended. Enrollment alone remains a coverage gap; live or uncertain
-owners hold the source. Retries use the recorded plan, including its archive root,
+admitted and ended. Enrollment alone remains a coverage gap; live or uncertain owners hold
+the source. Never-owned enrolled trees (no bound run or `created-worktree`) retire only via
+`retire-enrolled-only --path P --repos-config C --output-root R` (GH#36516): it previews;
+`--confirm` closes admission with `operator_confirmed` evidence in one registry transaction
+(a racing `admit-session` wins and refuses it, or finds admission closed), then archives and removes; the branch is kept. Retries use the recorded plan, including its archive root,
 and do not redirect an interrupted operation to a replacement at the public path.
 A private cursor rotates candidates across bounded passes; it is not deletion
 authority. A pass lock prevents overlapping collectors.
@@ -458,9 +459,8 @@ Legacy proof, archive and force arguments cannot authorize deletion or bypass a
 missing registry. Manual removal retains branches and external resources; their
 cleanup is a separate operation, not an unverified path-based post-removal step.
 
-Legacy candidate selectors still exist and can conservatively hold work before
-reaching the registry gate. This is not their complete removal, an exhaustive
-inventory of arbitrary Git invocations, or production rollout qualification.
+Legacy candidate selectors still exist and may hold work before the registry gate;
+this is not their removal, a Git-invocation inventory, or rollout qualification.
 
 ## Coverage matrix
 

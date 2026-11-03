@@ -41,6 +41,32 @@ def _runs(store: LifecycleRegistry, generation: str) -> list[dict]:
         return result
 
 
+def enrolled_only_event_id(generation: str) -> str:
+    return str(uuid5(UUID(generation), "enrolled-only-authorized"))
+
+
+def enrolled_only_authorized(store: LifecycleRegistry, generation: str) -> bool:
+    """True only for the operator-confirmed, closed, never-owned generation."""
+    with store.connection() as connection:
+        event = connection.execute(
+            "SELECT payload FROM events WHERE event_id=?",
+            (enrolled_only_event_id(generation),),
+        ).fetchone()
+        admission = connection.execute(
+            "SELECT state FROM generation_admissions WHERE generation_id=?",
+            (generation,),
+        ).fetchone()
+    expected = {
+        "type": "enrolled-only-retirement-authorized",
+        "generation_id": generation, "operator_confirmed": True,
+    }
+    if event is None or admission is None:
+        return False
+    if json.loads(event["payload"]) != expected or admission["state"] != "closed":
+        return False
+    return not _runs(store, generation)
+
+
 def _refresh_runs(
     store: LifecycleRegistry, rows: list[dict], adapter: ProcessAdapter,
 ) -> None:
@@ -126,6 +152,9 @@ def prepare_cleanup(store: LifecycleRegistry, path: Path) -> dict[str, object]:
         }
         for row in rows
     )
+    if not rows and enrolled_only_authorized(store, generation):
+        return dict(result, status="registered-runs-ended", admission="closed",
+                    enrolled_only=True)
     if not rows or not all(row["admitted"] for row in rows):
         return result
     try:
