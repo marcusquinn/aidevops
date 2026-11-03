@@ -14,7 +14,7 @@ from .absence import reconcile_absence
 from .archive_path import create_archive_root, validate_archive_path
 from .admission import AdmissionRegistry
 from .cleanup_plan import enrolled_only_event_id
-from .enrollment import GenerationEnrollment
+from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .filesystem import validate_private_path as _private
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
@@ -232,6 +232,8 @@ def retire_enrolled_only(
         return dict(result, status="outside-maintenance-scope")
     if not confirm:
         return dict(result, status="enrolled-only-preview", confirm_required=True)
+    if root.is_relative_to(path) or root.is_relative_to(_git_directory(path)):
+        raise ValueError("archive-output-must-be-outside-worktree")
     create_archive_root(root)
     validate_archive_path(root)
     AdmissionRegistry(store).authorize_enrolled_only(

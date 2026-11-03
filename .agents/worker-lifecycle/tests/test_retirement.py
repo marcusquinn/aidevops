@@ -284,6 +284,30 @@ class RetirementContract(unittest.TestCase):
         self.output.chmod(0o700)
         self.assertEqual(self.enrolled_only(True)["status"], "retired")
 
+    def test_enrolled_only_contained_archive_keeps_admission_open(self):
+        self.git("worktree", "add", "--detach", str(self.target))
+        generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
+        git_directory = Path(retirement._git(
+            "-C", str(self.target), "rev-parse", "--absolute-git-dir",
+        ))
+        for parent in (self.target, git_directory):
+            for root in (parent, parent / "archives"):
+                with self.subTest(root=root):
+                    existed = root.exists()
+                    with self.assertRaisesRegex(
+                        ValueError, "archive-output-must-be-outside-worktree",
+                    ):
+                        retire_enrolled_only(
+                            self.store, self.cleanup_config(), root, self.target, True,
+                        )
+                    self.assertEqual(root.exists(), existed)
+                    self.assertTrue(self.target.exists())
+                    self.assertIsNone(retirement._event(
+                        self.store, enrolled_only_event_id(generation),
+                    ))
+                    self.assertEqual(self.enrolled_only(False)["admission"], "open")
+        self.assertEqual(self.enrolled_only(True)["status"], "retired")
+
     def test_enrolled_only_admission_race_loses_after_closure(self):
         self.git("worktree", "add", "--detach", str(self.target))
         generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
