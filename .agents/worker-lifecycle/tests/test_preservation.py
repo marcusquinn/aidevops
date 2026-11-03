@@ -230,7 +230,9 @@ class PreservationContract(unittest.TestCase):
                 manifest = json.loads((archive / "manifest.json").read_text())
                 for item in manifest["artifacts"]:
                     if item["name"] == payload.name:
-                        item.update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
+                        item.update(
+                            size=len(data), sha256=hashlib.sha256(data).hexdigest(),
+                        )
                 (archive / "manifest.json").write_text(json.dumps(manifest))
                 self.assertNotEqual(self.helper("verify-local", archive,
                                                 check=False).returncode, 0)
