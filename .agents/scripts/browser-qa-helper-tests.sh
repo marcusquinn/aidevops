@@ -472,6 +472,11 @@ cmd_run() {
 		return 1
 	fi
 
+	if [[ ! "$viewports" =~ ^(desktop|tablet|mobile)(,(desktop|tablet|mobile))*$ ]]; then
+		log_error "Use --viewports desktop,tablet,mobile (one or more)"
+		return 1
+	fi
+
 	mkdir -p "$output_dir"
 	local timestamp
 	timestamp=$(date -u +"%Y%m%dT%H%M%SZ")
