@@ -532,10 +532,11 @@ _repo_registration_update_existing() {
 	local cloudron_defaults="${12}"
 	local cloudron_app_type="${13}"
 	local detected_role="${14}"
+	local sync_only="${15:-false}"
 	local temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
 	jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 		--arg slug "$slug" --argjson local_only "$is_local_only" --arg maintainer "$maintainer" \
-		--arg detected_role "$detected_role" \
+		--arg detected_role "$detected_role" --argjson sync_only "$sync_only" \
 		--argjson pulse_default "$default_pulse" --arg priority_default "$default_priority" \
 		--arg init_scope_default "$default_init_scope" --arg has_interface "$has_interface" \
 		--arg app_type_default "$app_type_default" --argjson cloudron_defaults "$cloudron_defaults" \
@@ -545,6 +546,7 @@ _repo_registration_update_existing() {
 			| if $slug != "" then .slug = $slug else . end
 			| if $local_only then .local_only = true else del(.local_only) end
 			| if .pulse == null then .pulse = (if $local_only then false else $pulse_default end) else . end
+			| if $sync_only then .pulse = false | .maintenance = false else . end
 			| if (.priority == null or .priority == "") and $priority_default != "" then .priority = $priority_default else . end
 			| if (.maintainer == null or .maintainer == "") and $maintainer != "" then .maintainer = $maintainer else . end
 			| if (.role == null or .role == "") and $detected_role != "" then .role = $detected_role else . end
@@ -561,7 +563,7 @@ _repo_registration_update_existing() {
 }
 
 # Register a repo in repos.json
-# Usage: register_repo <path> <version> <features> [verified-slug]
+# Usage: register_repo <path> <version> <features> [verified-slug] [sync-only: true|false]
 register_repo() {
 	aidevops_with_registry_lock "$REPOS_FILE" _register_repo_locked "$@"
 	return $?
@@ -570,6 +572,7 @@ register_repo() {
 _register_repo_locked() {
 	local repo_path="$1" version="$2" features="$3"
 	local verified_slug="${4:-}"
+	local sync_only="${5:-false}"
 
 	init_repos_file || return 1
 
@@ -632,12 +635,12 @@ _register_repo_locked() {
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
 		_repo_registration_update_existing "$repo_path" "$version" "$features" "$slug" \
 			"$is_local_only" "$maintainer" "$DEFAULT_PULSE" "$DEFAULT_PRIORITY" \
-			"$default_init_scope" "$has_interface" "$app_type_default" "$cloudron_defaults" "$cloudron_app_type" "$detected_role" || return 1
+			"$default_init_scope" "$has_interface" "$app_type_default" "$cloudron_defaults" "$cloudron_app_type" "$detected_role" "$sync_only" || return 1
 	else
 		local temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --arg maintainer "$maintainer" \
-			--arg detected_role "$detected_role" \
+			--arg detected_role "$detected_role" --argjson sync_only "$sync_only" \
 			--argjson local_only "$is_local_only" --argjson pulse_default "$DEFAULT_PULSE" \
 			--arg priority_default "$DEFAULT_PRIORITY" --arg init_scope "$default_init_scope" --arg has_interface "$has_interface" \
 			--arg app_type_default "$app_type_default" --argjson cloudron_defaults "$cloudron_defaults" \
@@ -655,6 +658,7 @@ _register_repo_locked() {
 				| if $slug != "" then . + {slug: $slug} else . end
 				| if $detected_role != "" then . + {role: $detected_role} else . end
 				| if $local_only then . + {local_only: true, pulse: false} else . end
+				| if $sync_only then . + {pulse: false, maintenance: false} else . end
 				| if $priority_default != "" then . + {priority: $priority_default} else . end
 				| if $has_interface == "true" then . + {has_interface: true} elif $has_interface == "false" then . + {has_interface: false} else . end
 				| if $app_type_default != "" then . + {app_type: $app_type_default} else . end
