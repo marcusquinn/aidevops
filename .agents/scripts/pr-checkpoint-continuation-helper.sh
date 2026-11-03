@@ -47,11 +47,14 @@ _PCC_STALL_FUSE_MARKER="aidevops:stalled-checkpoint-fuse"
 # own `worker_draft_checkpoint` handoff ("exact-head continuation pending") and
 # `clean`/`worker_complete` exits that left the draft open: exit classifications
 # are not proof the draft is done, so a continuation worker inspects the exact
-# head and finishes, marks ready or records a concrete blocker. Other non-blocked
+# head and finishes, marks ready or records a concrete blocker. GH#36597 adds
+# `worker_noop_zero_output` and `worker_incomplete_exit`: neither records a worker
+# decision, so an unchanged head is a runtime stall under the same retry bounds.
+# Other non-blocked
 # reasons get one attention record (_pcc_completed_attention). A `blocked`
 # release is excluded unless its recovery line names the runner-local
 # capability class (GH#34758): that needs only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 # GH#36019: per-PR fuse across heads. A continuation that pushes a new head and
 # then releases again re-arms the per-head bound; this caps the total number of
 # continuation-eligible releases since the PR was created before attention.

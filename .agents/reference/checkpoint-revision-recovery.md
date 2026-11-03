@@ -87,7 +87,10 @@ terminal lease is ignored, GH#33839), Pulse routes the draft by release reason:
 
 - **Continuation-eligible** (`dispatch-stalled`): stall/timeout,
   `stale_assignment_reset`, `worker_ownership_lost`, the worker's own
-  `worker_draft_checkpoint` handoff, `clean` and `worker_complete`. Pulse
+  `worker_draft_checkpoint` handoff, `worker_noop_zero_output`,
+  `worker_incomplete_exit`, `clean` and `worker_complete`. Zero-output and
+  incomplete exits with an unchanged head are runtime stalls, not worker
+  decisions (GH#36597). Pulse
   launches one exact-head continuation per head. The continuation finishes the
   missing in-scope work and marks the draft ready, or it records a concrete
   blocker with `mark-blocked`; already-landed work is `decision already_landed`.
