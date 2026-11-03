@@ -331,8 +331,9 @@ delete_branch() {
 		return 0
 	fi
 	# Recheck open PRs immediately before mutation; errors are conservative.
-	pr_evidence "$branch" "$sha" "$slug" "$((1 - merged_by_ancestry))"
-	if [[ "$PR_STATUS" == open || "$PR_STATUS" == unavailable ]]; then
+	pr_evidence "$branch" "$sha" "$slug" "$((1 - merged_by_ancestry))" 1
+	if [[ "$PR_STATUS" == open || "$PR_STATUS" == unavailable ||
+		("$merged_by_ancestry" -eq 0 && "$PR_STATUS" != merged && "$PR_STATUS" != merged-ancestor) ]]; then
 		report keep "$branch" 'open PR or github evidence unavailable'
 		return 0
 	fi
