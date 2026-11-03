@@ -935,23 +935,20 @@ _hrff_emit_release_terminal_lease() {
 	local repo_slug="$2"
 	local session_key="${3:-}"
 	local helper="${DISPATCH_CLAIM_HELPER:-${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/dispatch-claim-helper.sh}"
-	local lease_session="" deny_output="" deny_reason=""
+	local lease_session=""
 
 	[[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
 	if [[ ! -x "$helper" ]]; then
-		print_warning "Terminal lease helper unavailable for #${issue_number}; dispatch lock retires at lease expiry"
-		return 0
+		print_warning "Terminal lease helper unavailable for #${issue_number}; retaining eligible checkpoint evidence locally"
 	fi
 	lease_session="${AIDEVOPS_DISPATCH_LEASE_SESSION:-${session_key:-issue-${issue_number}}}"
-	if deny_output=$("$helper" transition terminal "$issue_number" "$repo_slug" \
-		"$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$lease_session" 0 2>&1 >/dev/null); then
+	# shellcheck source=./terminal-lease-recovery.sh
+	source "${BASH_SOURCE[0]%/*}/terminal-lease-recovery.sh"
+	if _terminal_lease_emit_or_record "$issue_number" "$repo_slug" "$lease_session" "$helper"; then
 		print_info "Posted terminal dispatch lease on #${issue_number} after ready handoff release"
 		return 0
 	fi
-	# Report only the helper's allowlisted reason token, never raw output.
-	deny_reason=$(printf '%s\n' "$deny_output" |
-		sed -n 's/^DISPATCH_LEASE_TRANSITION_DENIED reason=\([a-z_]*\)$/\1/p' | sed -n '1p')
-	print_warning "Terminal dispatch lease not posted on #${issue_number} (reason: ${deny_reason:-unknown}); dispatch lock retires at lease expiry"
+	print_warning "Terminal dispatch lease not posted on #${issue_number}; checkpoint recovery recorded locally when eligible"
 	return 0
 }
 

@@ -129,7 +129,9 @@ _pcc_claim_revised_checkpoint() {
 	[[ "$(jq -r '.approval_id' <<<"$claim")" == "$PCC_REVISION_APPROVAL" ]] || return 1
 	AIDEVOPS_DISPATCH_LEASE_TOKEN=$(jq -er '.lease' <<<"$claim") || return 1
 	AIDEVOPS_PR_CHECKPOINT_SESSION="$session"
-	export AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_PR_CHECKPOINT_SESSION
+	AIDEVOPS_PR_CHECKPOINT_CLAIM_ID=$(jq -er '.claim_id // empty' <<<"$claim") || return 1
+	[[ "$AIDEVOPS_PR_CHECKPOINT_CLAIM_ID" =~ ^[1-9][0-9]*$ ]] || return 1
+	export AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_PR_CHECKPOINT_SESSION AIDEVOPS_PR_CHECKPOINT_CLAIM_ID
 	PCC_PREVIOUS_ASSIGNEE=$(jq -r '.previous_assignee' <<<"$claim") || return 1
 	PCC_ORIGINAL_STATUS=$(jq -r '.previous_status' <<<"$claim") || return 1
 	# The distributed claim is acquired before modifying assignment. The generic

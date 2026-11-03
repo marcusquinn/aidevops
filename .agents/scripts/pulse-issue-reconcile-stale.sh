@@ -25,6 +25,15 @@ _PULSE_ISSUE_RECONCILE_STALE_LOADED=1
 # GH#36186: extra audit tokens for the next stale release (set per candidate).
 _NORMALIZE_STALE_RELEASE_DETAIL=""
 
+# GH#36553: local-first recovery; the existing close command owns all GH guards.
+_normalize_stale_close_pending_checkpoint_leases() {
+	local module="${BASH_SOURCE[0]%/*}/terminal_lease_recovery.py"
+	local summary=""
+	summary=$(python3 "$module" drain) || return 1
+	printf '[pulse-wrapper] Pending checkpoint leases: %s\n' "$summary" >>"$LOGFILE"
+	return 0
+}
+
 #######################################
 # (Phase 12 helper) Reset a single stale issue's labels and assignee.
 #
