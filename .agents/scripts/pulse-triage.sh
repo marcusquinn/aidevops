@@ -305,6 +305,18 @@ _dispatch_issue_consolidation() {
 	local self_login
 	self_login=$(_consolidation_lock_self_login)
 
+	# GH#36536: the pre-lock child check uses the eventually consistent search
+	# index, so a child another runner created moments ago (then released its
+	# lock) can be missed. Re-check via a label-filtered list now that we hold
+	# the lock, before composing or creating anything.
+	if _consolidation_open_child_listed "$issue_number" "$repo_slug"; then
+		_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "needs-consolidation" 2>/dev/null || true
+		echo "[pulse-wrapper] Consolidation: dedup skip for #${issue_number} in ${repo_slug}; open consolidation child found after lock acquire (GH#36536)" >>"$LOGFILE"
+		return 0
+	fi
+
 	# Fetch parent metadata.
 	local parent_title parent_body parent_labels
 	parent_title=$(gh issue view "$issue_number" --repo "$repo_slug" \
