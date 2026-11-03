@@ -369,6 +369,8 @@ _bounded_seed_resume_checks() {
 test_bounded_recovery_intake() {
 	local status=0
 	if ! (
+		local check_stage="setup"
+		trap 'rc=$?; if [[ "$rc" -ne 0 ]]; then printf "FAIL bounded intake stage=%s exit=%s\n" "$check_stage" "$rc" >&2; fi' EXIT
 		# shellcheck source=../terminal-blocker-recovery-helper.sh
 		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
 		TBR_ROOT="${TEST_ROOT}/bounded-intake"
@@ -418,6 +420,7 @@ test_bounded_recovery_intake() {
 		printf '{"wake":"brief_revision","next_action":"hold unchanged brief","evidence":"fixture"}\n' |
 			tbr_record owner/repo 42 || exit 1
 		local rc=0 started="$SECONDS" decision=""
+		check_stage="initial_stalled_entry"
 		decision=$(jq -c . "${TBR_ROOT}/decisions/owner--repo--42.json")
 		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
 		[[ "$rc" -eq 2 && $((SECONDS - started)) -le 3 && ! -s "${TBR_ROOT}/out" ]] || exit 1
@@ -426,23 +429,28 @@ test_bounded_recovery_intake() {
 		# Resume past the stalled entry: retire closed entries and suppress an
 		# unchanged held decision, then wrap and retry (not delete) the slow one.
 		export BLOCKER_RECOVERY_BUDGET_SECONDS=4
+		check_stage="resume_past_stalled_entry"
 		rc=0
 		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending --count >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
 		[[ "$rc" -eq 2 && "$(<"${TBR_ROOT}/out")" == 0 ]] || exit 1
 		[[ ! -f "${TBR_ROOT}/queue/owner--repo--2.json" && -f "${TBR_ROOT}/queue/owner--repo--42.json" ]] || exit 1
 		[[ "$(jq -c . "${TBR_ROOT}/decisions/owner--repo--42.json")" == "$decision" ]] || exit 1
 		# With only the unchanged held entry, observation is complete and empty.
+		check_stage="unchanged_held_entry"
 		rm -f "${TBR_ROOT}/queue/owner--repo--1.json"
 		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || exit 1
 		[[ ! -s "${TBR_ROOT}/out" ]] || exit 1
 		# Seed failures are explicit too, and never stamp an incomplete scan.
+		check_stage="incomplete_seed"
 		rm -f "${TBR_ROOT}/last_seed_epoch"
 		printf '{"initialized_repos":[{"slug":"owner/repo","pulse":true}]}\n' >"$TBR_REPOS_JSON"
 		rc=0
 		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
 		[[ "$rc" -eq 2 && ! -f "${TBR_ROOT}/last_seed_epoch" ]] || exit 1
 		[[ "$(<"${TBR_ROOT}/err")" == *'incomplete stage=seed'* ]] || exit 1
+		check_stage="bounded_seed_resume"
 		_bounded_seed_resume_checks || exit 1
+		check_stage="default_budget_progress"
 		_default_budget_progress_checks || exit 1
 		exit 0
 	); then

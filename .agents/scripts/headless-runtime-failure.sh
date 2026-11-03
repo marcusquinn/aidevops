@@ -46,6 +46,8 @@ fi
 source "${_HRFF_SCRIPT_DIR}/terminal-blocker-circuit.sh"
 # shellcheck source=fast-fail-release-policy.sh
 source "${_HRFF_SCRIPT_DIR}/fast-fail-release-policy.sh"
+# shellcheck source=headless-runtime-release-claim.sh
+source "${_HRFF_SCRIPT_DIR}/headless-runtime-release-claim.sh"
 unset _HRFF_SCRIPT_DIR
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 
@@ -535,23 +537,37 @@ _hrff_build_claim_released_line() {
 #   $1 = issue_number
 #   $2 = repo_slug
 #   $3 = comment_body
+#   $4-$6 = optional session, runner and original claim ID (inherit release context)
 #######################################
 _hrff_post_claim_released_comment() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local comment_body="$3"
+	local post_session="${4:-${AIDEVOPS_DISPATCH_LEASE_SESSION:-${session_key:-}}}"
+	local post_runner="${5:-${runner_name:-}}" post_claim_id="${6:-${_HRFF_RELEASE_CLAIM_ID:-}}"
 	local attempts="${AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS:-3}"
 	local retry_delay="${AIDEVOPS_CLAIM_RELEASE_POST_RETRY_DELAY:-1}"
 	local attempt=1
-	local post_error=""
+	local post_error="" projection_line=""
+	projection_line=$(jq -Rrs '[split("\n")[] | select(startswith("CLAIM_RELEASED "))] |
+		if length == 1 then .[0] else error("ambiguous release line") end' <<<"$comment_body") || return 1
 
 	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
 	[[ "$retry_delay" =~ ^[0-9]+$ ]] || retry_delay=1
 	while [[ "$attempt" -le "$attempts" ]]; do
+		# Refresh after backoff too. This is not an atomic GitHub transaction;
+		# bound release fields and the post-write check limit stale projections.
+		_hrff_check_release_claim "$issue_number" "$repo_slug" "$post_runner" "$post_session" || return 1
+		[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 && "${_HRFF_RELEASE_CLAIM_ID:-}" == "$post_claim_id" ]] || return 1
 		if post_error=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 			--method POST \
 			--field body="$comment_body" \
 			2>&1 >/dev/null); then
+			_hrff_check_release_claim "$issue_number" "$repo_slug" "$post_runner" "$post_session" "$projection_line" || return 1
+			if [[ "$_HRFF_RELEASE_CLAIM_OWNED" -ne 1 || "${_HRFF_RELEASE_CLAIM_ID:-}" != "$post_claim_id" ]]; then
+				print_warning "Release persisted for #${issue_number}, but projection is held: claim generation changed; do not replay"
+				return 1
+			fi
 			return 0
 		fi
 		post_error="${post_error//$'\n'/ }"
@@ -783,7 +799,7 @@ _hrff_handle_terminal_blocker_release() {
 	circuit)
 		if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" \
 			"$_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY"; then
-			print_warning "Terminal blocker circuit for #${issue_number} remains unpersisted and retryable; retaining issue lifecycle state"
+			print_warning "Terminal blocker release or ownership verification incomplete for #${issue_number}; retaining issue state; reconcile persisted comments before retrying"
 			return 11
 		fi
 		print_info "Opened unchanged terminal-blocker circuit on #${issue_number}"
@@ -856,25 +872,35 @@ _release_dispatch_claim() {
 		return 0
 	fi
 	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return "${_HRFF_RELEASE_AUTHORITY_SKIP_RC:-0}"
+	runner_name=$(_hrff_resolve_release_runner_login)
+	_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" || return 1
+	[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 ]] || return 0
+	local claim_id="${_HRFF_RELEASE_CLAIM_ID:-}"
+	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
 
 	if [[ "$reason" == "rate_limit_transient" ]]; then
 		if ! _hrff_handle_rate_limit_release_circuit "$issue_number" "$repo_slug"; then
 			# The per-issue breaker is already active. Keep state cleanup so the
 			# GitHub issue is not stranded in an active lifecycle state, but skip
 			# the duplicate CLAIM_RELEASED audit comment that caused storms.
+			_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" || return 1
+			[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 && "${_HRFF_RELEASE_CLAIM_ID:-}" == "$claim_id" ]] || return 0
 			_hrff_release_rate_limit_circuit_cleanup "$issue_number" "$repo_slug"
 			return 0
 		fi
 	fi
 
-	runner_name=$(_hrff_resolve_release_runner_login)
 	if [[ "$reason" == blocked ]] && _hrff_blocked_release_persisted "$issue_number" "$repo_slug" "$runner_name"; then
+		_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" || return 1
+		[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 && "${_HRFF_RELEASE_CLAIM_ID:-}" == "$claim_id" ]] || return 0
 		local persisted_reason="$reason"
 		[[ "${_HRFF_PERSISTED_RELEASE_UNRECORDED:-0}" -eq 0 ]] || persisted_reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
 		_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$persisted_reason"
 		return $?
 	fi
 	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
+	machine_readable_part+=" claim_id=${claim_id} nonce=${AIDEVOPS_DISPATCH_LEASE_TOKEN:-} lease_token=${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}"
+	machine_readable_part+=" device=${AIDEVOPS_DISPATCH_LEASE_DEVICE:-${AIDEVOPS_DEVICE_ID:-}} session=${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}"
 	local terminal_blocker_fragment=""
 	case "$reason" in
 	blocked | push_policy_timeout | network_policy_timeout)
@@ -910,11 +936,16 @@ _release_dispatch_claim() {
 ${machine_readable_part}${terminal_blocker_fragment}
 <!-- ops:end -->"
 
-	if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" "$comment_body"; then
-		print_warning "Claim release for #${issue_number} remains unpersisted and retryable; retaining issue lifecycle state"
+	if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" "$comment_body" "$session_key" "$runner_name" "$claim_id"; then
+		print_warning "Claim release or ownership verification incomplete for #${issue_number}; retaining issue state; reconcile persisted comments before retrying"
 		return 1
 	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
+	_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" "$machine_readable_part" || return 1
+	if [[ "$_HRFF_RELEASE_CLAIM_OWNED" -ne 1 || "${_HRFF_RELEASE_CLAIM_ID:-}" != "$claim_id" ]]; then
+		print_info "Preserved issue lifecycle state on #${issue_number}: release generation changed after publication"
+		return 0
+	fi
 	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$projection_reason" "$session_key" || return 1
 	[[ "$projection_reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
 	return 0
