@@ -18,6 +18,7 @@ TRANSPORT=""
 FAILURES=0
 MAX_LOOKUPS=500
 LOOKUPS=0
+ANCESTRY_ALLOWED=1
 OPEN_PR_REFS=""
 OPEN_PR_STATUS=unavailable
 OPEN_PR_LOADED_AT=""
@@ -361,7 +362,7 @@ scan_branch() {
 	if is_protected_branch "$branch" "$default"; then reason='protected/default branch'
 	elif active_branch "$branch"; then reason='checked out'
 	else
-		if repo_git merge-base --is-ancestor "$sha" "$(ancestry_base_ref "$default")" 2>/dev/null; then
+		if [[ "$ANCESTRY_ALLOWED" -eq 1 ]] && repo_git merge-base --is-ancestor "$sha" "$(ancestry_base_ref "$default")" 2>/dev/null; then
 			merged_by_ancestry=1
 		fi
 		pr_evidence "$branch" "$sha" "$slug" "$((1 - merged_by_ancestry))" 1
@@ -387,13 +388,18 @@ scan_branch() {
 }
 
 main() {
-	local default="" slug="" branch="" rc=0
+	local default="" slug="" scanned_slug="" branch="" rc=0
 	parse_args "$@" || return 1
 	repo_git rev-parse --git-dir >/dev/null 2>&1 || return 1
 	[[ -z "$ONLY_BRANCH" ]] || repo_git check-ref-format --branch "$ONLY_BRANCH" >/dev/null 2>&1 || return 1
 	default=$(default_branch)
-	slug=$(repo_slug) || slug=""
-	slug=$(base_repo_slug "$slug") || slug=""
+	scanned_slug=$(repo_slug) || scanned_slug=""
+	slug=$(base_repo_slug "$scanned_slug") || slug=""
+	# A fork's default branch is not proof of an upstream merge. Require PR
+	# evidence rather than authorizing deletion from that remote's ancestry.
+	if [[ -n "$slug" && "$slug" != "$scanned_slug" ]]; then
+		ANCESTRY_ALLOWED=0
+	fi
 	# Retire the transport on every exit path, including a bounded caller's
 	# timeout signal; leftovers from hard kills are reclaimed by guarded cleanup.
 	trap 'cleanup_transport || true' EXIT

@@ -84,6 +84,7 @@ case "$*" in
 	contributor%3Aabsent) ref=absent; sha=1111111111111111111111111111111111111111 ;;
 	contributor%3Aunrelated) ref=unrelated; sha="$OTHER" ;;
 	contributor%3Aunmerged) ref=unmerged; sha="$TIP"; merged=null ;;
+	contributor%3Afork-only) printf '%s\n' '[]'; exit 0 ;;
 	contributor%3Alookup-error) exit 1 ;;
 	contributor%3Atopic%2Foriginal) ref=topic/original; sha="$TIP" ;;
 	base%3Afallback) ref=fallback; sha="$TIP" ;;
@@ -154,4 +155,14 @@ if git -C "$REPO" show-ref --verify --quiet refs/heads/ancestor; then
 	fail 'ancestor branch survived apply'
 fi
 [[ "$(git -C "$REPO" worktree list --porcelain)" != *"$ROOT/transport"* ]] || fail 'deletion transport leaked'
+
+# A commit reachable from the fork's main but not the parent's main is not
+# upstream merge evidence, even if the parent has no open PR for it.
+git -C "$REPO" update-ref refs/heads/fork-only "$TIP"
+git -C "$REPO" update-ref refs/remotes/fork/main "$TIP"
+git -C "$REPO" config branch.fork-only.remote fork
+git -C "$REPO" config branch.fork-only.merge refs/heads/fork-only
+refused=$(run_scan --remote fork --branch fork-only --apply)
+assert_has "$refused" 'keep fork-only unmerged local commits'
+git -C "$REPO" show-ref --verify --quiet refs/heads/fork-only || fail 'fork-only ancestry deleted a ref'
 printf 'PASS: fork PR exact, ancestor, absent object, renamed upstream, errors, budget and apply guards\n'
