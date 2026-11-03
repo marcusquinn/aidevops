@@ -43,6 +43,7 @@ _run_contrast_checks() {
 	local pages="$2"
 	local level="$3"
 	local pages_default="${4:-false}"
+	local viewport="${5:-desktop}"
 	local contrast_script="${SCRIPT_DIR}/accessibility/playwright-contrast.mjs"
 	local contrast_json='[]'
 
@@ -54,7 +55,7 @@ _run_contrast_checks() {
 		if [[ -f "$contrast_script" ]]; then
 			local contrast_result
 			local contrast_exit=0
-			contrast_result=$(run_playwright_node "$contrast_script" "$full_url" --format json --level "$level" 2>/dev/null) || contrast_exit=$?
+			contrast_result=$(run_playwright_node "$contrast_script" "$full_url" --format json --level "$level" --viewport "$viewport" 2>/dev/null) || contrast_exit=$?
 			# Exit 1 means findings, not a tool error. Require one complete JSON value.
 			if [[ "$contrast_exit" -gt 1 ]] || ! jq -e -s 'length == 1' >/dev/null 2>&1 <<<"$contrast_result"; then
 				contrast_result=$(jq -cn --argjson exit "$contrast_exit" '{error: "contrast check failed", exit: $exit}')
@@ -200,6 +201,7 @@ ${document_checks}"
 	cat >"$script_file" <<SCRIPT
 const playwrightImport = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = playwrightImport.chromium ? playwrightImport : playwrightImport.default;
+const { readFile } = await import('node:fs/promises');
 
 const baseUrl = '${safe_url}';
 const pagesDefault = ${pages_default};
@@ -210,10 +212,12 @@ async function run() {
   const launchOptions = { headless: true };
   if (process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE) launchOptions.executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE;
   const browser = await chromium.launch(launchOptions);
-  const context = await browser.newContext();
+  const viewports = { desktop: { width: 1440, height: 900 }, tablet: { width: 768, height: 1024 }, mobile: { width: 375, height: 812 } };
+  const context = await browser.newContext({ viewport: viewports[process.argv[3]] });
   const page = await context.newPage();
   const a11yResults = [];
-  const contrastData = JSON.parse(process.argv[2] || '[]');
+  // Keep potentially large reports off argv (and the process startup stack).
+  const contrastData = JSON.parse(await readFile(process.argv[2], 'utf8'));
 
   for (const pagePath of pages) {
     const url = resolvePageUrl(baseUrl, pagePath, pagesDefault);
@@ -248,31 +252,48 @@ SCRIPT
 
 # Run accessibility checks on pages using Playwright.
 # Delegates to playwright-contrast.mjs for contrast, adds ARIA and structure checks.
-# Args: --url URL --pages "/ /about" --level AA|AAA
-# Output: JSON accessibility report
+# Args: --url URL --pages "/ /about" --level AA|AAA --format json|markdown
+#       --viewports desktop,tablet,mobile (default: desktop)
+# Output: JSON or Markdown accessibility report
 cmd_a11y() {
 	local url=""
 	local pages="/"
 	local pages_default=true
 	local level="AA"
+	local format="json"
+	local viewports="desktop"
 
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local option="$1"
+		local value="${2:-}"
+		if [[ -z "$value" || "$value" == --* ]]; then
+			log_error "$option requires a value"
+			return 1
+		fi
+		case "$option" in
 		--url)
-			url="$2"
+			url="$value"
 			shift 2
 			;;
 		--pages)
-			pages="$2"
+			pages="$value"
 			pages_default=false
 			shift 2
 			;;
 		--level)
-			level="$2"
+			level="$value"
+			shift 2
+			;;
+		--format)
+			format="$value"
+			shift 2
+			;;
+		--viewports)
+			viewports="$value"
 			shift 2
 			;;
 		*)
-			log_error "Unknown option: $1"
+			log_error "Unknown option: $option"
 			return 1
 			;;
 		esac
@@ -283,12 +304,18 @@ cmd_a11y() {
 		return 1
 	fi
 
-	local contrast_json
-	contrast_json=$(_run_contrast_checks "$url" "$pages" "$level" "$pages_default") || return 1
+	if [[ "$format" != "json" && "$format" != "markdown" ]] || [[ "$level" != "AA" && "$level" != "AAA" ]]; then
+		log_error "Use --format json|markdown and --level AA|AAA"
+		return 1
+	fi
+	if [[ ! "$viewports" =~ ^(desktop|tablet|mobile)(,(desktop|tablet|mobile))*$ ]]; then
+		log_error "Use --viewports desktop,tablet,mobile (one or more)"
+		return 1
+	fi
 
 	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
 	local script_dir script_file
-	script_dir=$(mktemp -d "${TMPDIR:-/tmp}/browser-qa-a11y-XXXXXX")
+	script_dir=$(mktemp -d "${TMPDIR:-/tmp}/browser-qa-a11y-XXXXXX") || return 1
 	script_file="$script_dir/script.mjs"
 
 	local pages_array
@@ -299,7 +326,35 @@ cmd_a11y() {
 	_generate_a11y_script "$script_file" "$safe_url" "$pages_array" "$pages_default"
 
 	local exit_code=0
-	run_playwright_node "$script_file" "$contrast_json" || exit_code=$?
+	local viewport contrast_json output
+	local report='[]'
+	local -a viewport_list
+	IFS=',' read -r -a viewport_list <<<"$viewports"
+	for viewport in "${viewport_list[@]}"; do
+		contrast_json=$(_run_contrast_checks "$url" "$pages" "$level" "$pages_default" "$viewport") || { exit_code=1; break; }
+		printf '%s\n' "$contrast_json" >"$script_dir/contrast.json"
+		output=$(run_playwright_node "$script_file" "$script_dir/contrast.json" "$viewport") || { exit_code=$?; break; }
+		report=$(printf '%s\n%s\n' "$report" "$output" | jq -cs --arg viewport "$viewport" \
+			'.[0] + (.[1] | map(. + {viewport: $viewport}))') || { exit_code=1; break; }
+	done
 	rm -rf "$script_dir"
+	if [[ "$exit_code" -ne 0 ]]; then
+		return "$exit_code"
+	fi
+	if [[ "$format" == "markdown" ]]; then
+		printf '## Accessibility report (WCAG %s)\n\n' "$level"
+		printf '%s\n' "$report" | jq -r --arg level "$level" '.[] |
+			"### \(.page) — \(.viewport)\n",
+			(if .error then "Error: \(.error)" else
+			"Structure: \(.summary.errors) errors, \(.summary.warnings) warnings",
+			(.issues[] | "- \(.severity): \(.message)") end),
+			(if (.contrast | type) == "array" then
+			(.contrast | group_by(if .complexBackground then "manual" elif (if $level == "AAA" then .aaa.pass else .aa.pass end) then "pass" else "fail" end)[] |
+			"Contrast \(.[0] | if .complexBackground then "needs manual/pixel check" elif (if $level == "AAA" then .aaa.pass else .aa.pass end) then "pass" else "fail" end): \(length)",
+			(.[] | "- \(.selector): \(if .complexBackground then "needs manual/pixel check (" + (.complexBackground | join(", ")) + ")" else (.ratio | tostring) + ":1" end)"))
+			else "Contrast check error: \(.contrast.error // "no data")" end), ""'
+	else
+		printf '%s\n' "$report"
+	fi
 	return $exit_code
 }
