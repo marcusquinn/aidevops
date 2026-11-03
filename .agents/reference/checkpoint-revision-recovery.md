@@ -264,6 +264,33 @@ The exact expired owner abort is still required; edited or foreign diagnostics,
 identity-bearing releases, a second diagnostic, and ready/launch/renewal events
 after the diagnostic remain rejecting cases. No published evidence is removed.
 
+### Ready leases that expired without a release (GH#36544)
+
+A continuation attempt can post its ready lease and then exit without a
+`CLAIM_RELEASED` or terminal lease. `approval-template` then reports
+`reason=open_at_end` at that ready lease, and `transition terminal` refuses the
+expired lease (`lease_unmatched`). The claim owner, on the same authenticated
+account, device and session, closes it explicitly once the executor has stopped:
+
+```bash
+dispatch-claim-helper.sh close-expired-pr-checkpoint-lease ISSUE OWNER/REPO CLAIM_COMMENT_ID SESSION
+```
+
+The command takes the claim comment ID, so the operator never handles the lease
+token. It refuses a live local process with that `--session-key`, a non-checkpoint
+claim, another actor's or an edited event, mismatched token, device or session, a
+claim with no ready lease (use `abort-pr-checkpoint-claim`), an existing release
+or terminal lease, unknown or unelapsed expiry, and any later coordination event
+from another attempt. It appends `CLAIM_RELEASED
+reason=expired_ready_lease_reconciled claim_id=… attempt_id=…` and then the
+attempt's `DISPATCH_LEASE phase=terminal … expires_at=0`. A rerun after an
+interrupted terminal post appends only the missing terminal lease.
+
+History then records an ordinary closed episode (claim, ready, release,
+terminal). The closure grants nothing: a new generated approval must list it in
+`released_successors`. A lost device cannot use this path; that history stays
+blocked pending a reviewed decision.
+
 ### Claims released as blocked before ready (GH#35683)
 
 A later claim can end at prelaunch with the runner's own

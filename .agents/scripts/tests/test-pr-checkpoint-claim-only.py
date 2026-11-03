@@ -419,5 +419,109 @@ class AbortPredicateTests(unittest.TestCase):
                 self.assertTrue(abort_decision(data, **kwargs).startswith("deny:"))
 
 
+EXPIRED_READY_LEASE = f"{LT}=claimb device=devb session=issue-124"
+EXPIRED_READY_RELEASE = ("CLAIM_RELEASED reason=expired_ready_lease_reconciled runner=worker "
+                         "ts=2026-09-05T12:00:00Z claim_id=4 attempt_id=attempt:a device=devb session=issue-124")
+
+
+def expired_ready_fixture(*events):
+    """GH#36544: claim B reached ready, then its ready lease expired unreleased."""
+    return successor_claim_fixture(
+        comment(4.6, f"DISPATCH_LEASE phase=ready {EXPIRED_READY_LEASE} expires_at=3 attempt_id=a", "worker"),
+        *events)
+
+
+def expired_ready_closed_fixture():
+    return expired_ready_fixture(
+        comment(5, EXPIRED_READY_RELEASE, "worker"),
+        comment(6, f"DISPATCH_LEASE phase=terminal {EXPIRED_READY_LEASE} expires_at=0 attempt_id=attempt:a",
+                "worker"))
+
+
+class ExpiredReadyLeaseHistoryTests(unittest.TestCase):
+    EPISODE = {"runner": "worker", "attempt": "attempt:a", "claim_id": 4,
+               "ready_id": 4.6, "release_id": 5, "terminal_id": 6}
+
+    def test_unreleased_ready_lease_stays_open_at_end(self):
+        assert_rejection(self, expired_ready_fixture(), 4.6, "open_at_end")
+
+    def test_owner_closure_is_an_ordinary_released_successor(self):
+        result = revision.validate(approved(expired_ready_closed_fixture()))
+        self.assertEqual(result["released_successors"], [self.EPISODE])
+
+    def test_release_without_terminal_lease_stays_open(self):
+        data = expired_ready_fixture(comment(5, EXPIRED_READY_RELEASE, "worker"))
+        assert_rejection(self, data, 5, "open_at_end")
+
+
+def ready_pages(*extra, claim_author="worker", approval="checkpoint_approval=3 ", ready_expiry=" expires_at=150"):
+    lease = f"{LT}=tok device=dev session=s1"
+    return [[
+        comment(4, f"DISPATCH_CLAIM nonce=tok runner=worker {LT}=tok device=dev "
+                   f"{approval}session=s1 phase=prelaunch expires_at=100", claim_author),
+        comment(5, f"DISPATCH_LEASE phase=prelaunch {lease} expires_at=110 attempt_id=raw-1"),
+        comment(6, f"DISPATCH_LEASE phase=ready {lease}{ready_expiry} attempt_id=raw-1"),
+        *extra]]
+
+
+RECOVERY = ("CLAIM_RELEASED reason=expired_ready_lease_reconciled runner=worker claim_id=4 "
+            "attempt_id=attempt:raw-1 device=dev session=s1")
+
+
+def ready_decision(data, now=200, runner="worker", device="dev", claim_id=4):
+    command = ('source "$1/dispatch-claim-checkpoint.sh"; '
+               '_dch_expired_ready_claim "$2" "$3" "$6" s1 "$4" "$5"')
+    # Fixed Bash source; JSON and identities are positional data only.
+    return subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), json.dumps(data),  # nosec B603
+                           runner, device, str(now), str(claim_id)],
+                          capture_output=True, text=True, check=False).stdout.strip()
+
+
+def live_executor(session, processes):
+    command = 'source "$1/dispatch-claim-checkpoint.sh"; _dch_session_has_live_executor "$2" "$3"'
+    return subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), session, processes],  # nosec B603
+                          capture_output=True, text=True, check=False).returncode == 0
+
+
+class ExpiredReadyPredicateTests(unittest.TestCase):
+    def test_owned_expired_ready_claim_is_selected(self):
+        self.assertEqual(ready_decision(ready_pages()), "4\ttok\tattempt:raw-1\topen")
+        self.assertEqual(ready_decision(ready_pages(comment(7, RECOVERY))),
+                         "4\ttok\tattempt:raw-1\treleased")
+
+    def test_expired_ready_closure_fails_closed(self):
+        lease = f"{LT}=tok device=dev session=s1"
+        cases = {
+            "lease_live": (ready_pages(), {"now": 120}),
+            "unknown_ready_expiry": (ready_pages(ready_expiry=""), {}),
+            "runner": (ready_pages(), {"runner": "other"}),
+            "device": (ready_pages(), {"device": "other"}),
+            "claim_id": (ready_pages(), {"claim_id": 5}),
+            "author": (ready_pages(claim_author="other"), {}),
+            "generic_claim": (ready_pages(approval=""), {}),
+            "never_ready": ([ready_pages()[0][:2]], {}),
+            "released": (ready_pages(comment(7, "CLAIM_RELEASED reason=clean runner=worker")), {}),
+            "released_with_token": (ready_pages(comment(7, f"CLAIM_RELEASED reason=clean {lease}")), {}),
+            "terminal": (ready_pages(comment(7, f"DISPATCH_LEASE phase=terminal {lease} expires_at=0")), {}),
+            "foreign_event": (ready_pages(comment(7, f"DISPATCH_LEASE phase=ready {lease}", "other")), {}),
+            "wrong_session": (ready_pages(comment(7, f"DISPATCH_LEASE phase=ready {LT}=tok device=dev "
+                                                      "session=s2 expires_at=150")), {}),
+            "later_claim": (ready_pages(comment(7, f"DISPATCH_CLAIM nonce=n2 {LT}=n2 runner=worker "
+                                                   "session=s9 phase=prelaunch expires_at=1")), {}),
+            "edited_recovery": (ready_pages({**comment(7, RECOVERY), "updated_at": "2026-09-06T00:00:00Z"}), {}),
+            "foreign_recovery": (ready_pages(comment(7, RECOVERY, "other")), {}),
+            "duplicate_recovery": (ready_pages(comment(7, RECOVERY), comment(8, RECOVERY)), {}),
+            "recovery_wrong_attempt": (ready_pages(comment(7, RECOVERY.replace("raw-1", "raw-2"))), {}),
+        }
+        for case, (data, kwargs) in cases.items():
+            with self.subTest(case=case):
+                self.assertTrue(ready_decision(data, **kwargs).startswith("deny:"))
+
+    def test_live_executor_probe_matches_exact_session(self):
+        self.assertTrue(live_executor("s1", "bash run --session-key s1 --dir x\n"))
+        self.assertFalse(live_executor("s1", "bash run --session-key s12 --dir x\n"))
+        self.assertFalse(live_executor("s1", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
