@@ -6,11 +6,14 @@
 import copy
 import importlib.util
 import json
+import os
 import pathlib
 import shutil
 import subprocess  # nosec B404 — executes fixed offline fixture programs only
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 TESTS = pathlib.Path(__file__).resolve().parent
 SCRIPTS = TESTS.parent
@@ -509,6 +512,8 @@ class ExpiredReadyPredicateTests(unittest.TestCase):
             "later_claim": (ready_pages(comment(7, f"DISPATCH_CLAIM nonce=n2 {LT}=n2 runner=worker "
                                                    "session=s9 phase=prelaunch expires_at=1")), {}),
             "edited_recovery": (ready_pages({**comment(7, RECOVERY), "updated_at": "2026-09-06T00:00:00Z"}), {}),
+            "edited_claim": ([[{**ready_pages()[0][0], "updated_at": "2026-09-06T00:00:00Z"},
+                                *ready_pages()[0][1:]]], {}),
             "foreign_recovery": (ready_pages(comment(7, RECOVERY, "other")), {}),
             "duplicate_recovery": (ready_pages(comment(7, RECOVERY), comment(8, RECOVERY)), {}),
             "recovery_wrong_attempt": (ready_pages(comment(7, RECOVERY.replace("raw-1", "raw-2"))), {}),
@@ -521,6 +526,171 @@ class ExpiredReadyPredicateTests(unittest.TestCase):
         self.assertTrue(live_executor("s1", "bash run --session-key s1 --dir x\n"))
         self.assertFalse(live_executor("s1", "bash run --session-key s12 --dir x\n"))
         self.assertFalse(live_executor("s1", ""))
+
+
+class TerminalLeaseOutboxTests(unittest.TestCase):
+    def setUp(self):
+        self.recovery = load("terminal_lease_recovery", SCRIPTS / "terminal_lease_recovery.py")
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = pathlib.Path(self.temp.name) / "evidence.jsonl"
+        self.session = "pr-checkpoint-continuation-owner-repo-42"
+        self.env = mock.patch.dict(os.environ, {
+            "AIDEVOPS_OBJECTIVE_EVIDENCE_FILE": str(self.path),
+            "AIDEVOPS_PR_CHECKPOINT_SESSION": self.session,
+            "AIDEVOPS_PR_CHECKPOINT_CLAIM_ID": "4",
+            "AIDEVOPS_ATTEMPT_ID": "raw-1",
+        })
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        device = mock.patch.object(self.recovery, "device_id", return_value="dev")
+        device.start()
+        self.addCleanup(device.stop)
+
+    def pending(self, **changes):
+        row = dict(repo="owner/repo", issue_number=124, attempt_id="raw-1", claim_id=4,
+                   device="dev", session=self.session, ts=1, expires_at=100,
+                   record_type="terminal_lease_pending")
+        row.update(changes)
+        self.recovery.append(self.path, row)
+        return row
+
+    def drain(self, result=None, live=False, ended=True):
+        with mock.patch.object(self.recovery, "executor_live", return_value=live), \
+             mock.patch.object(self.recovery, "worker_ended", return_value=ended), \
+             mock.patch.object(self.recovery.subprocess, "run", return_value=result) as run:
+            counts = self.recovery.drain()
+        return counts, run
+
+    def test_empty_log_never_calls_github_or_process_scan(self):
+        with mock.patch.object(self.recovery.subprocess, "run") as run:
+            self.assertEqual(self.recovery.drain()["candidates"], 0)
+            run.assert_not_called()
+
+    def test_pending_closes_once_with_exact_guarded_command(self):
+        self.pending()
+        counts, run = self.drain(subprocess.CompletedProcess([], 0, "closed", ""))
+        self.assertEqual(counts, {"candidates": 1, "closed": 1, "blocked": 0})
+        self.assertEqual(run.call_args.args[0], [str(SCRIPTS / "dispatch-claim-helper.sh"),
+                         "close-expired-pr-checkpoint-lease", "124", "owner/repo", "4", self.session])
+        counts, run = self.drain()
+        self.assertEqual(counts["candidates"], 0)
+        run.assert_not_called()
+
+    def test_live_unexpired_foreign_unknown_and_ordinary_records_stay_local(self):
+        for change, kwargs in [({}, {"live": True}), ({}, {"ended": False}),
+                               ({"expires_at": 9999999999}, {}), ({"device": "foreign"}, {}),
+                               ({"session": "issue-124"}, {})]:
+            with self.subTest(change=change, kwargs=kwargs):
+                self.path.unlink(missing_ok=True)
+                self.pending(**change)
+                counts, run = self.drain(**kwargs)
+                self.assertEqual(counts["closed"], 0)
+                run.assert_not_called()
+
+    def test_deny_is_allowlisted_blocked_and_never_retried(self):
+        self.pending()
+        counts, _ = self.drain(subprocess.CompletedProcess([], 1, "",
+                              "PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=identity_mismatch\n"))
+        self.assertEqual(counts["blocked"], 1)
+        self.assertEqual(self.recovery.rows(self.path)[-1]["reason"], "identity_mismatch")
+        _, run = self.drain()
+        run.assert_not_called()
+
+    def test_transport_failure_stops_batch_without_blocking_or_retrying(self):
+        for issue in range(1, 5):
+            self.pending(issue_number=issue)
+        counts, run = self.drain(subprocess.CompletedProcess([], 75, "", "gh-transport pacing"))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(counts, {"candidates": 4, "closed": 0, "blocked": 0})
+        self.assertEqual(len(self.recovery.rows(self.path)), 4)
+
+    def test_at_most_three_closures_per_cycle(self):
+        for issue in range(1, 6):
+            self.pending(issue_number=issue)
+        counts, run = self.drain(subprocess.CompletedProcess([], 0, "", ""))
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(counts["closed"], 3)
+
+    def test_partial_tail_is_preserved_without_swallowing_next_record(self):
+        self.path.write_text('{"interrupted":')
+        self.pending()
+        self.assertEqual(len(self.recovery.rows(self.path)), 1)
+        self.assertTrue(self.path.read_text().startswith('{"interrupted":\n'))
+
+    def test_unknown_deny_stays_pending(self):
+        self.pending()
+        counts, _ = self.drain(subprocess.CompletedProcess([], 1, "",
+                              "PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=future_transient\n"))
+        self.assertEqual(counts["blocked"], 0)
+        self.assertEqual(len(self.recovery.rows(self.path)), 1)
+
+    def test_expiry_grace_boundary(self):
+        self.pending()
+        with mock.patch.object(self.recovery.time, "time", return_value=220):
+            _, run = self.drain()
+            run.assert_not_called()
+        with mock.patch.object(self.recovery.time, "time", return_value=221):
+            counts, _ = self.drain(subprocess.CompletedProcess([], 0, "", ""))
+            self.assertEqual(counts["closed"], 1)
+
+    def test_unknown_native_identity_is_not_exit_proof(self):
+        self.assertFalse(self.recovery.worker_ended({}))
+
+    def test_capture_unavailable_preserves_pending_without_authority(self):
+        with mock.patch.object(self.recovery, "adapter_for", side_effect=OSError):
+            self.recovery.record("pending", "owner/repo", "124", self.session, "1")
+        row = self.recovery.rows(self.path)[0]
+        self.assertIsNone(row["process_identity"])
+        self.assertFalse(self.recovery.worker_ended(row))
+
+    def test_pulse_logs_one_idle_summary_without_external_state(self):
+        logfile = pathlib.Path(self.temp.name) / "pulse.log"
+        result = subprocess.run([BASH, "-c", 'source "$1/pulse-issue-reconcile-stale.sh"; '  # nosec B603 — fixed offline fixture, absolute Bash
+                                 '_normalize_stale_close_pending_checkpoint_leases',
+                                 "test", str(SCRIPTS)],
+                                env={**os.environ, "LOGFILE": str(logfile)},
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(logfile.read_text(),
+                         "[pulse-wrapper] Pending checkpoint leases: candidates=0 closed=0 blocked=0\n")
+
+    def test_native_lifecycle_proof_and_token_free_idempotent_record(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])  # nosec B603 — fixed fixture using this interpreter
+        try:
+            self.recovery.record("pending", "owner/repo", "124", self.session, str(child.pid))
+            self.recovery.record("pending", "owner/repo", "124", self.session, str(child.pid))
+            records = self.recovery.rows(self.path)
+            self.assertEqual(len(records), 1)
+            row = records[0]
+            self.assertGreaterEqual(row["expires_at"], row["ts"] + 7200)
+            self.assertFalse(self.recovery.worker_ended(row))
+            self.assertNotIn(LT, self.path.read_text())
+        finally:
+            child.terminate()
+            child.wait()
+        self.assertTrue(self.recovery.worker_ended(row))
+        self.recovery.record("resolved", "owner/repo", "124", self.session, str(child.pid))
+        counts, run = self.drain()
+        self.assertEqual(counts["candidates"], 0)
+        run.assert_not_called()
+
+    def test_exit_helper_retries_once_and_records_one_pending(self):
+        command = ('source "$1/terminal-lease-recovery.sh"; '
+                   'sleep() { return 0; }; '
+                   'fail_post() { printf "post\\n" >> "$2.calls"; return 1; }; '
+                   'export AIDEVOPS_DISPATCH_LEASE_TOKEN=opaque-fixture; '
+                   '_terminal_lease_emit_or_record 124 owner/repo "$2" fail_post || true')
+        # Use a local device file for the child, not any host state.
+        device = pathlib.Path(self.temp.name) / "device-id"
+        device.write_text("dev\n")
+        result = subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), self.session],  # nosec B603 — fixed offline fixture, absolute Bash
+                                cwd=self.temp.name, env={**os.environ, "AIDEVOPS_DEVICE_ID_FILE": str(device)},
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((pathlib.Path(self.temp.name) / "terminal.calls").read_text(), "post\npost\n")
+        self.assertEqual(len(self.recovery.rows(self.path)), 1)
+        self.assertNotIn("opaque-fixture", self.path.read_text())
 
 
 if __name__ == "__main__":
