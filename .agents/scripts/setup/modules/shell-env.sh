@@ -1248,3 +1248,41 @@ setup_terminal_title() {
 
 	return 0
 }
+
+# Tabby gives a live OpenCode tab's recovery-marker directory (reported with
+# OSC 1337) to new tabs and restored plain-shell tabs. This sources a guard
+# from interactive bash/zsh startup that moves such shells to the session's
+# project directory. See reference/tabby-profiles.md. Idempotent.
+setup_tabby_recovery_shell_guard() {
+	local guard_file="$HOME/.aidevops/agents/scripts/tabby-recovery-shell-guard.sh"
+	local marker="# aidevops tabby-recovery shell guard"
+	local rc_file=""
+	local added_to=""
+	# shellcheck disable=SC2016 # Expanded by the user's shell at startup.
+	local source_line='if [ -f "$HOME/.aidevops/agents/scripts/tabby-recovery-shell-guard.sh" ]; then . "$HOME/.aidevops/agents/scripts/tabby-recovery-shell-guard.sh"; fi'
+
+	if [[ ! -f "$guard_file" ]]; then
+		print_skip "Tabby recovery shell guard" "guard not deployed" "Deploy agents first (setup.sh), then re-run"
+		return 0
+	fi
+
+	while IFS= read -r rc_file; do
+		[[ -n "$rc_file" ]] || continue
+		case "$rc_file" in
+		*.fish) continue ;;
+		esac
+		[[ -f "$rc_file" ]] || continue
+		grep -Fq "$marker" "$rc_file" && continue
+		{
+			echo ""
+			echo "$marker (leave Tabby OpenCode recovery-marker directories)"
+			echo "$source_line"
+		} >>"$rc_file" || continue
+		added_to="${added_to:+$added_to, }$rc_file"
+	done < <(get_all_shell_rcs)
+
+	if [[ -n "$added_to" ]]; then
+		print_success "Added Tabby recovery shell guard to: $added_to"
+	fi
+	return 0
+}
