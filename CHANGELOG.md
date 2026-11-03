@@ -10,6 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.116] - 2026-11-03
+
+### Added
+
+- add sync-only repository registration (GH#36568) (#36573)
+
+### Changed
+
+- Maintenance: promote OpenCode v2 pin to 2.2.5 (GH#36562) (#36574)
+- Maintenance: promote OpenCode v1 pin to 1.19.5 (GH#36563) (#36569)
+- Tests: cover enrolled-only retirement admission races (GH#36548) (#36557)
+- Documentation: clarify installed launcher hook contract (GH#36546) (#36554)
+- Documentation: tighten cleanup and preservation contract (GH#36530) (#36533)
+
+### Fixed
+
+- recognize fork-headed merged local branches (GH#36566) (#36571)
+- recover dropped checkpoint terminal leases (GH#36553)
+- use quarterly cron schedule for citation audit SOP (#36558)
+- persist new headless ssh-agent only after signing key loads (GH#36550) (#36559)
+- align WaterCrawl fallback unknown-command text (#36556)
+- preserve unknown CDP page counts and document profile selection (GH#36549) (#36555)
+- let the owner close an expired unreleased ready lease
+- propagate same-version update reconciliation failures (GH#36413) (#36415)
+- re-check open consolidation child after lock acquire (GH#36536) (#36539)
+- check fix-the-fixer label directly, not via paged list (#36538)
+- treat hygiene-minimized unedited claims as unedited (#36540)
+
 ## [3.39.115] - 2026-11-03
 
 ### Added
