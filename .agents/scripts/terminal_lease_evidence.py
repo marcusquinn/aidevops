@@ -4,6 +4,7 @@
 """Append-only, token-free checkpoint evidence sharing the objective log lock."""
 
 from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -47,6 +48,28 @@ def key(row):
     return tuple(row.get(name) for name in KEYS)
 
 
+def reap_stale_lock(lock):
+    """Recover only a recorded, positive PID proven absent on this host."""
+    owner = lock / "owner.pid"
+    try:
+        with owner.open() as stream:
+            # Serialize Python reapers on the old owner inode. A waiter holding
+            # an unlinked file must never delete a newly acquired lock's owner.
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if not os.path.samestat(os.fstat(stream.fileno()), owner.stat()):
+                return
+            pid = int(stream.read().strip())
+            if pid <= 0:
+                return
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                owner.unlink()
+                lock.rmdir()
+    except (OSError, ValueError, OverflowError):
+        pass  # Missing/invalid owner or permission denial is not proof of death.
+
+
 @contextmanager
 def locked(path):
     """Share the objective writer's mkdir/owner.pid append lock, never unlocked."""
@@ -57,6 +80,7 @@ def locked(path):
             lock.mkdir()
             break
         except FileExistsError:
+            reap_stale_lock(lock)
             time.sleep(0.05)
     else:
         raise TimeoutError("evidence-lock-busy")

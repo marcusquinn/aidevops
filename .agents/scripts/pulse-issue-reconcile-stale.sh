@@ -29,7 +29,10 @@ _NORMALIZE_STALE_RELEASE_DETAIL=""
 _normalize_stale_close_pending_checkpoint_leases() {
 	local module="${BASH_SOURCE[0]%/*}/terminal_lease_recovery.py"
 	local summary=""
-	summary=$(python3 "$module" drain) || return 1
+	if ! summary=$(python3 "$module" drain); then
+		printf '[pulse-wrapper] Pending checkpoint leases: drain deferred (local evidence or transport unavailable)\n' >>"$LOGFILE"
+		return 0
+	fi
 	printf '[pulse-wrapper] Pending checkpoint leases: %s\n' "$summary" >>"$LOGFILE"
 	return 0
 }

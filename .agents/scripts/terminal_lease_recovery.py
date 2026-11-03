@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 — absolute system ps and repository-owned helper, argv only; never a shell
 import sys
 import time
 from uuid import NAMESPACE_URL, uuid5

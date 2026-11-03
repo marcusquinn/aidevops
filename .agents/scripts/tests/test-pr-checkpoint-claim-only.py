@@ -618,6 +618,38 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
         self.assertEqual(len(self.recovery.rows(self.path)), 1)
         self.assertTrue(self.path.read_text().startswith('{"interrupted":\n'))
 
+    def test_dead_owner_locks_allow_append_and_drain(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])  # nosec B603 — fixed fixture using this interpreter
+        child.wait()
+        for suffix in (".lockdir", ".terminal-drain.lockdir"):
+            lock = pathlib.Path(str(self.path) + suffix)
+            lock.mkdir()
+            (lock / "owner.pid").write_text(str(child.pid))
+        self.pending()
+        counts, _ = self.drain(subprocess.CompletedProcess([], 0, "", ""))
+        self.assertEqual(counts["closed"], 1)
+        self.assertFalse(pathlib.Path(str(self.path) + ".lockdir").exists())
+        self.assertFalse(pathlib.Path(str(self.path) + ".terminal-drain.lockdir").exists())
+
+    def test_uncertain_lock_owner_is_never_reaped(self):
+        evidence = sys.modules["terminal_lease_evidence"]
+        lock = pathlib.Path(str(self.path) + ".lockdir")
+        lock.mkdir()
+        owner = lock / "owner.pid"
+        for value in (None, "invalid", "0", "-1", str(10**100), str(os.getpid())):
+            with self.subTest(value=value):
+                owner.unlink(missing_ok=True)
+                if value is not None:
+                    owner.write_text(value)
+                with mock.patch.object(evidence.time, "sleep"), self.assertRaises(TimeoutError):
+                    self.pending()
+                self.assertTrue(lock.is_dir())
+                self.assertEqual(owner.read_text() if owner.exists() else None, value)
+        with mock.patch.object(evidence.os, "kill", side_effect=PermissionError), \
+             mock.patch.object(evidence.time, "sleep"), self.assertRaises(TimeoutError):
+            self.pending()
+        self.assertEqual(owner.read_text(), str(os.getpid()))
+
     def test_unknown_deny_stays_pending(self):
         self.pending()
         counts, _ = self.drain(subprocess.CompletedProcess([], 1, "",
@@ -654,6 +686,18 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(logfile.read_text(),
                          "[pulse-wrapper] Pending checkpoint leases: candidates=0 closed=0 blocked=0\n")
+
+    def test_pulse_logs_deferred_drain_and_continues(self):
+        self.path.mkdir()  # Unreadable evidence input for the real drain CLI.
+        logfile = pathlib.Path(self.temp.name) / "pulse.log"
+        result = subprocess.run([BASH, "-c", 'source "$1/pulse-issue-reconcile-stale.sh"; '  # nosec B603 — fixed offline fixture, absolute Bash
+                                 '_normalize_stale_close_pending_checkpoint_leases',
+                                 "test", str(SCRIPTS)],
+                                env={**os.environ, "LOGFILE": str(logfile)},
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("drain deferred", logfile.read_text())
+        self.assertNotIn("candidates=", logfile.read_text())
 
     def test_native_lifecycle_proof_and_token_free_idempotent_record(self):
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])  # nosec B603 — fixed fixture using this interpreter
