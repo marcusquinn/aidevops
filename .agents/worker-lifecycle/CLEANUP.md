@@ -115,7 +115,7 @@ The non-inheritable directory descriptor closes on exec; it is NOT a lifetime wr
 lock. A run reaching exec after admission closes remains a registered non-ended owner,
 so closure cannot authorize removal. Independently continuing jobs need their own
 admitted runs; ordinary child-command cleanup remains the runtime's responsibility.
-These changes switch no installed launcher hook into this mode.
+These changes do not enable this mode for any installed hook used by a launcher.
 
 ### Bare and sandbox integration
 
