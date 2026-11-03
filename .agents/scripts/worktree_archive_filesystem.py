@@ -22,15 +22,9 @@ def process_umask():
     GH#36543: user-private-group hosts (umask 002) create 0775 directories and
     0664 files; restore recreates them under the same umask, so they round-trip.
     """
-    try:
-        with open("/proc/self/status", encoding="ascii") as status:
-            mask = next(int(line.split()[1], 8) for line in status if line.startswith("Umask:"))
-    except (OSError, StopIteration, ValueError, IndexError):
-        mask = os.umask(0o022)  # Portable fallback; restore immediately.
-        os.umask(mask)
-    if mask & 0o700 or not mask & 0o002:
-        return 0o022
-    return mask & 0o077
+    mask = os.umask(0o022)  # Portable read; restore immediately.
+    os.umask(mask)
+    return mask if (mask & 0o702) == 0o002 else 0o022
 
 
 def supported_metadata(observed, attributes, tar_metadata=False):
@@ -46,10 +40,7 @@ def supported_metadata(observed, attributes, tar_metadata=False):
         return
     directory = stat.S_ISDIR(observed.st_mode)
     mask = process_umask()
-    if directory:
-        allowed = {0o755, 0o777 & ~mask}
-    else:
-        allowed = {0o644, 0o755, 0o666 & ~mask, 0o777 & ~mask}
+    allowed = {0o755, 0o777 & ~mask} if directory else {0o644, 0o755, 0o666 & ~mask, 0o777 & ~mask}
     if stat.S_IMODE(observed.st_mode) not in allowed or (not directory and observed.st_nlink != 1):
         raise ValueError("special permissions or hard links require separate preservation")
 
