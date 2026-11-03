@@ -833,6 +833,39 @@ _consolidation_dispatch_comment_owns_parent() {
 	return 1
 }
 
+#######################################
+# GH#36536: Post-lock re-check for an open consolidation-task child. The
+# search-based check in _consolidation_child_exists reads GitHub's eventually
+# consistent search index, so a child created seconds earlier by another runner
+# (which then released its lock) can be missed. This lists open
+# consolidation-task issues by label (not search) and matches either the
+# "Consolidation target: #N" body anchor or the "merge thread on #N" title.
+# The body marker is anchored to the generated first line so copied parent
+# text cannot masquerade as a child marker. Fails closed: an API error or
+# invalid count returns 2 (distinct from a confirmed empty list).
+# Args: $1=parent_num $2=repo_slug
+# Returns: 0 if an open child names the parent, 1 if none, 2 on read error.
+#######################################
+_PTE_CONSOLIDATION_TASK_LABEL="consolidation-task"
+_consolidation_open_child_listed() {
+	local parent_num="$1"
+	local repo_slug="$2"
+
+	[[ "$parent_num" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
+
+	# parent_num is validated numeric above, so inlining it in the filter is safe.
+	local jq_filter="" match_count="" list_exit=0
+	jq_filter="[.[]? | select(((.body // \"\") | test(\"^(## )?Consolidation target: #${parent_num}([^0-9]|\$)\")) or ((.title // \"\") | test(\"merge thread on #${parent_num}([^0-9]|\$)\")))] | length"
+	match_count=$(gh_issue_list --repo "$repo_slug" --state open \
+		--label "$_PTE_CONSOLIDATION_TASK_LABEL" \
+		--json number,title,body --limit 1000 \
+		--jq "$jq_filter" 2>/dev/null) || list_exit=$?
+	[[ "$list_exit" -eq 0 ]] || return 2
+	[[ "$match_count" =~ ^[0-9]+$ ]] || return 2
+	[[ "$match_count" -gt 0 ]] && return 0
+	return 1
+}
+
 _consolidation_child_exists() {
 	local parent_num="$1"
 	local repo_slug="$2"
@@ -843,7 +876,7 @@ _consolidation_child_exists() {
 	# Fast path: any open child immediately owns the parent.
 	local open_count open_exit=0
 	open_count=$(gh_issue_list --repo "$repo_slug" --state open \
-		--label "consolidation-task" \
+		--label "$_PTE_CONSOLIDATION_TASK_LABEL" \
 		--search "in:body \"Consolidation target: #${parent_num}\"" \
 		--json number --jq 'length' --limit 5 2>/dev/null) || open_exit=$?
 	if [[ "$open_exit" -ne 0 ]]; then
@@ -882,7 +915,7 @@ _consolidation_child_exists() {
 
 	local recent_closed_count recent_closed_exit=0
 	recent_closed_count=$(gh_issue_list --repo "$repo_slug" --state closed \
-		--label "consolidation-task" \
+		--label "$_PTE_CONSOLIDATION_TASK_LABEL" \
 		--search "in:body \"Consolidation target: #${parent_num}\" closed:>${cutoff_iso}" \
 		--json number --jq 'length' --limit 5 2>/dev/null) || recent_closed_exit=$?
 	[[ "$recent_closed_exit" -eq 0 ]] || return 0

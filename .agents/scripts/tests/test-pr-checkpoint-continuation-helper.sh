@@ -195,6 +195,33 @@ else
 	print_result "concurrent daily digest writers publish one immutable snapshot without approval or lost entries" 1
 fi
 
+# GH#36529: a hygiene-hidden (minimized) but never-edited claim bumps REST
+# updated_at; only a real body edit (or unreadable GraphQL state) may fence it.
+test_hidden_unedited_fence() (
+	local pages="" out="" mode="" status=0
+	pages='[[{"id":1,"node_id":"IC_hidden","created_at":"2026-11-02T00:00:00Z","updated_at":"2026-11-02T00:02:00Z","body":"DISPATCH_CLAIM x"},{"id":2,"node_id":"IC_edited","created_at":"2026-11-02T00:00:00Z","updated_at":"2026-11-02T00:02:00Z","body":"DISPATCH_CLAIM y"},{"id":3,"node_id":"IC_plain","created_at":"2026-11-02T00:00:00Z","updated_at":"2026-11-02T00:00:00Z","body":"z"}]]'
+	gh() {
+		[[ "$mode" != fail ]] || return 1
+		printf '{"data":{"nodes":[{"id":"IC_hidden","lastEditedAt":null},{"id":"IC_edited","lastEditedAt":"2026-11-02T00:02:00Z"}]}}\n'
+		return 0
+	}
+	mode=ok
+	out=$(_pcc_normalise_hidden_unedited "$pages")
+	jq -e "${_PCC_JQ_RELEASE_DEFS}"'
+		[flatten[] | select(unedited) | .id] == [1,3]' <<<"$out" >/dev/null || status=1
+	mode=fail
+	out=$(_pcc_normalise_hidden_unedited "$pages")
+	jq -e "${_PCC_JQ_RELEASE_DEFS}"'
+		[flatten[] | select(unedited) | .id] == [3]' <<<"$out" >/dev/null || status=1
+	[[ "$status" == 0 ]] || return 1
+	return 0
+)
+if test_hidden_unedited_fence; then
+	print_result "hidden unedited comments count as unedited; edited or unreadable GraphQL state fails closed" 0
+else
+	print_result "hidden unedited comments count as unedited; edited or unreadable GraphQL state fails closed" 1
+fi
+
 # A trusted approval must not turn an API outage into a consumed-approval
 # diagnosis. Exercise the real dispatch-to-target error propagation.
 for metadata_failure in pr issue comments; do
