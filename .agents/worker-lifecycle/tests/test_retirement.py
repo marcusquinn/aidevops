@@ -1,8 +1,10 @@
 """Exercise retirement only in disposable repositories, using the real backend."""
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess  # nosec B404 # fixed creator program in disposable repositories
 import sys
 import tempfile
@@ -325,6 +327,86 @@ class RetirementContract(unittest.TestCase):
         with self.assertRaisesRegex(StoreConflict, "generation-has-admitted-owner"):
             AdmissionRegistry(self.store).authorize_enrolled_only(
                 enrolled_only_event_id(second), second)
+
+    def test_enrolled_only_public_path_refuses_admission_before_outer_check(self):
+        self.git("worktree", "add", "--detach", str(self.target))
+        generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        contender = LifecycleRegistry(self.store.directory)
+        self.assertTrue(AdmissionRegistry(contender).admit(
+            str(uuid4()), identity, generation))
+
+        self.assertEqual(self.enrolled_only(True)["status"], "not-enrolled-only")
+        self.assertTrue(self.target.exists())
+        self.assertEqual(list(self.output.iterdir()), [])
+        self.assertIsNone(retirement._event(
+            self.store, enrolled_only_event_id(generation)))
+
+    def test_enrolled_only_public_path_refuses_admission_before_inner_check(self):
+        self.git("worktree", "add", "--detach", str(self.target))
+        generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        contender = LifecycleRegistry(self.store.directory)
+        authorize = AdmissionRegistry.authorize_enrolled_only
+
+        def admit_before_authorization(registry, event_id, generation_id):
+            self.assertTrue(AdmissionRegistry(contender).admit(
+                str(uuid4()), identity, generation_id))
+            return authorize(registry, event_id, generation_id)
+
+        with patch.object(AdmissionRegistry, "authorize_enrolled_only",
+                          new=admit_before_authorization):
+            with self.assertRaisesRegex(StoreConflict, "generation-has-admitted-owner"):
+                self.enrolled_only(True)
+        self.assertTrue(self.target.exists())
+        self.assertEqual(list(self.output.iterdir()), [])
+        self.assertIsNone(retirement._event(
+            self.store, enrolled_only_event_id(generation)))
+
+    def test_enrolled_only_public_path_excludes_admission_after_inner_check(self):
+        self.git("worktree", "add", "--detach", str(self.target))
+        generation = GenerationEnrollment(self.store).resolve(self.target, create=True)
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        contender = LifecycleRegistry(self.store.directory)
+        connect = contender._connect
+        event = self.store._event
+        run = str(uuid4())
+        attempts = []
+
+        def no_lock_wait():
+            connection = connect()
+            connection.execute("PRAGMA busy_timeout=0")
+            return connection
+
+        def compete_after_checks(connection, event_id, payload):
+            if event_id == enrolled_only_event_id(generation):
+                # This event is written after both inner eligibility checks but
+                # before closure. Never wait for a competing commit under the lock.
+                self.assertTrue(connection.in_transaction)
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    attempt = executor.submit(
+                        AdmissionRegistry(contender).admit, run, identity, generation,
+                    )
+                    with self.assertRaisesRegex(
+                        sqlite3.OperationalError, "database is locked",
+                    ):
+                        attempt.result(timeout=5)
+                attempts.append(event_id)
+            return event(connection, event_id, payload)
+
+        with patch.object(contender, "_connect", side_effect=no_lock_wait):
+            with patch.object(self.store, "_event", side_effect=compete_after_checks):
+                result = self.enrolled_only(True)
+            self.assertEqual(attempts, [enrolled_only_event_id(generation)])
+            self.assertEqual(result["status"], "retired")
+            with self.assertRaisesRegex(AdmissionClosed, "generation-not-open"):
+                AdmissionRegistry(contender).admit(run, identity, generation)
+        self.assertFalse(self.target.exists())
+        self.assertTrue(Path(result["archive"]).is_dir())
+        with self.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM bindings WHERE generation_id=?", (generation,),
+            ).fetchone())
 
     def test_changed_archive_stops_resumption(self):
         self.create()
