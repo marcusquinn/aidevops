@@ -98,6 +98,103 @@ STUB_PR_JSON="$(valid_pr_json)"
 STUB_ISSUE_JSON="$(valid_issue_json)"
 STUB_COMMENTS_JSON='[]'
 export STUB_PR_JSON STUB_ISSUE_JSON STUB_COMMENTS_JSON
+
+test_unknown_pending_policy() (
+	local root="${TEST_ROOT}/unknown-policy" head="1111111111111111111111111111111111111111"
+	local comments="" body_hash="" status=0 test_permission="write" metadata="" brief="" STUB_TEMPLATE_FAIL=false
+	mkdir -p "$root"
+	local SCRIPT_DIR="$root" AIDEVOPS_REPOS_JSON="${root}/repos.json"
+	export STUB_APPROVAL_FILE="${root}/approval"
+	# shellcheck disable=SC2016 # Expand in the generated fixture, not its writer.
+	printf '%s\n' '#!/usr/bin/env bash' 'tee "$STUB_APPROVAL_FILE" >/dev/null' >"${root}/gh-write-helper.sh"
+	chmod +x "${root}/gh-write-helper.sh"
+	metadata=$(valid_issue_json '[{"name":"auto-dispatch"},{"name":"status:blocked"}]' | jq '.assignees=[] | .body="### Files Scope\n- helper.sh"')
+	body_hash=$(jq -r '.body' <<<"$metadata" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()[:-1]).hexdigest())')
+	brief="$body_hash"
+	comments=$(jq -nc --arg head "$head" --arg brief "$brief" '[{id:20,created_at:"2026-11-02T00:00:00Z",user:{login:"worker-bot"},body:("Terminal blocker: reason=unknown owner=worker-triage task=123\nCHECKPOINT_UNKNOWN_TRIAGE pending_work brief="+$brief+" head="+$head)}]')
+	gh() {
+		local command="$*"
+		case "$command" in
+		'api repos/owner/repo/issues/123') printf '%s\n' "$metadata" ;;
+		pr\ view*) valid_pr_json ;;
+		'api user --jq .login') printf 'maintainer\n' ;;
+		api\ repos/owner/repo/collaborators/*) printf '%s\n' "$test_permission" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	_pcc_approval_template() {
+		[[ "$STUB_TEMPLATE_FAIL" == false ]] || return 1
+		printf 'CHECKPOINT_CONTINUATION_APPROVED {"head":"%s","brief_sha256":"%s","release_id":20}\n' "$head" "$body_hash"
+		return 0
+	}
+	_pcc_unknown_digest() { printf 'digest\n' >"${root}/digest"; return 0; }
+	printf '{"initialized_repos":[]}\n' >"$AIDEVOPS_REPOS_JSON"
+	_pcc_unknown_pending_work owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || status=1
+	[[ -f "${root}/digest" && ! -f "$STUB_APPROVAL_FILE" ]] || status=1
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","checkpoint_policy":{"auto_continue_unknown_pending_work":true,"configured_by":"maintainer"}}]}' >"$AIDEVOPS_REPOS_JSON"
+	_pcc_unknown_pending_work owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || status=1
+	[[ -s "$STUB_APPROVAL_FILE" ]] || status=1
+	rm -f "$STUB_APPROVAL_FILE"
+	test_permission='read'
+	if _pcc_unknown_pending_work owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments"; then status=1; fi
+	test_permission='write'
+	if _pcc_unknown_pending_work owner/repo 123 42 "2222222222222222222222222222222222222222" worker-bot 20 attempt:old "$comments"; then status=1; fi
+	metadata=$(jq '.labels += [{name:"no-auto-dispatch"}]' <<<"$metadata")
+	if _pcc_unknown_pending_work owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments"; then status=1; fi
+	metadata=$(jq '.labels=[{name:"auto-dispatch"}] | .assignees=[{login:"new-owner"}]' <<<"$metadata")
+	if _pcc_unknown_pending_work owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments"; then status=1; fi
+	metadata=$(jq '.assignees=[]' <<<"$metadata")
+	STUB_TEMPLATE_FAIL=true
+	if _pcc_unknown_pending_work owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments"; then status=1; fi
+	[[ ! -f "$STUB_APPROVAL_FILE" && "$status" == 0 ]] || return 1
+	return 0
+)
+if test_unknown_pending_policy; then
+	print_result "unknown pending policy routes off-policy digest and guarded approval; holds, owner, moved head and permissions reject" 0
+else
+	print_result "unknown pending policy routes off-policy digest and guarded approval; holds, owner, moved head and permissions reject" 1
+fi
+
+test_unknown_daily_digest() (
+	local root="${TEST_ROOT}/daily-digest" head="1111111111111111111111111111111111111111" first='' second=''
+	mkdir -p "$root"
+	local SCRIPT_DIR="$root"
+	export STUB_DIGEST_BODY="${root}/body" STUB_DIGEST_CALLS="${root}/calls"
+	# shellcheck disable=SC2016 # Expand in the generated fixture, not its writer.
+	printf '%s\n' '#!/usr/bin/env bash' 'tee "$STUB_DIGEST_BODY" >/dev/null' 'printf "POST\n" >>"$STUB_DIGEST_CALLS"' >"${root}/gh-write-helper.sh"
+	chmod +x "${root}/gh-write-helper.sh"
+	gh() {
+		local args="$*"
+		case "$args" in
+		'api repos/owner/repo/labels --method POST'*) mkdir "${root}/reservation" ;;
+		'api repos/owner/repo/labels/checkpoint-digest:'*) test -d "${root}/reservation" ;;
+		*) return 1 ;;
+		esac
+		return $?
+	}
+	_pcc_unknown_digest_snapshot() {
+		_pcc_unknown_digest_entry owner/repo 123 42 "$head" 20 attempt:old
+		_pcc_unknown_digest_entry owner/repo 456 43 "$head" 30 attempt:other
+		return 0
+	}
+	_pcc_unknown_digest owner/repo 123 42 "$head" 20 attempt:old &
+	first=$!
+	_pcc_unknown_digest owner/repo 456 43 "$head" 30 attempt:other &
+	second=$!
+	wait "$first" || return 1
+	wait "$second" || return 1
+	_pcc_unknown_digest owner/repo 123 42 "$head" 20 attempt:old || return 1
+	[[ "$(wc -l <"$STUB_DIGEST_CALLS")" -eq 1 ]] || return 1
+	jq -eRs 'contains("PR #42") and contains("PR #43") and (contains("CHECKPOINT_CONTINUATION_APPROVED") | not)' "$STUB_DIGEST_BODY" >/dev/null || return 1
+	return 0
+)
+if test_unknown_daily_digest; then
+	print_result "concurrent daily digest writers publish one immutable snapshot without approval or lost entries" 0
+else
+	print_result "concurrent daily digest writers publish one immutable snapshot without approval or lost entries" 1
+fi
+
 # A trusted approval must not turn an API outage into a consumed-approval
 # diagnosis. Exercise the real dispatch-to-target error propagation.
 for metadata_failure in pr issue comments; do
