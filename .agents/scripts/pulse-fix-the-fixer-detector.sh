@@ -369,15 +369,15 @@ _classify_via_llm() {
 # ---------------------------------------------------------------------------
 _ensure_fix_the_fixer_label() {
 	local slug="$1"
-	local labels_json=""
+	local api_out=""
 
-	labels_json=$(gh label list --repo "$slug" --limit 100 --json name 2>/dev/null) || {
+	# Direct lookup (not a paged listing, which misses labels past the first page).
+	if api_out=$(gh api "repos/${slug}/labels/${FIX_THE_FIXER_LABEL}" 2>&1); then
+		return 0
+	fi
+	if ! printf '%s' "$api_out" | grep -Eq '404|Not Found'; then
 		_log_warn "failed to inspect labels in ${slug}; skipping classification"
 		return 1
-	}
-	if printf '%s' "$labels_json" | jq -e --arg label "$FIX_THE_FIXER_LABEL" \
-		'any(.[]?; .name == $label)' >/dev/null 2>&1; then
-		return 0
 	fi
 	if ! gh label create "$FIX_THE_FIXER_LABEL" --repo "$slug" \
 		--color "$FIX_THE_FIXER_LABEL_COLOR" \
