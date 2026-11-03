@@ -42,8 +42,10 @@ def _repository_entries(config: Path) -> list:
 
 
 def _repository_scope(entry: dict, *, explicit: bool = False) -> "tuple[str, str, str] | None":
-    if ((not explicit and entry.get("maintenance", True) is not True)
-            or entry.get("local_only", False) is not False):
+    if not all((
+        explicit or entry.get("maintenance", True) is True,
+        entry.get("local_only", False) is False,
+    )):
         return None
     slug, location = entry.get("slug"), entry.get("path")
     if (not isinstance(slug, str) or not isinstance(location, str)
