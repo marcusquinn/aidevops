@@ -550,7 +550,10 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
     def pending(self, **changes):
         row = dict(repo="owner/repo", issue_number=124, attempt_id="raw-1", claim_id=4,
                    device="dev", session=self.session, ts=1, expires_at=100,
-                   process_identity={"fixture": True}, record_type="terminal_lease_pending")
+                   process_identity=dict(schema=1, installation_id="00000000-0000-0000-0000-000000000001",
+                                         platform="linux", boot_id="00000000-0000-0000-0000-000000000002",
+                                         scope="host", pid=1, generation="fixture", uid=os.getuid()),
+                   record_type="terminal_lease_pending")
         row.update(changes)
         self.recovery.append(self.path, row)
         return row
@@ -652,15 +655,30 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
         self.assertEqual(counts, {"candidates": 2, "closed": 0, "blocked": 0})
         self.assertEqual(len(self.recovery.rows(self.path)), 2)
 
-    def test_missing_identity_blocks_once_without_github(self):
-        self.pending(process_identity=None)
-        counts, run = self.drain(ended=False)
-        self.assertEqual(counts["blocked"], 1)
-        run.assert_not_called()
-        self.assertEqual(self.recovery.rows(self.path)[-1]["reason"], "identity_unavailable")
-        counts, run = self.drain(ended=False)
-        self.assertEqual(counts["candidates"], 0)
-        run.assert_not_called()
+    def test_missing_or_malformed_identity_blocks_once_without_github(self):
+        for identity in (None, {}, {"fixture": True}):
+            with self.subTest(identity=identity):
+                self.path.unlink(missing_ok=True)
+                self.pending(process_identity=identity)
+                counts, run = self.drain(ended=False)
+                self.assertEqual(counts["blocked"], 1)
+                run.assert_not_called()
+                self.assertEqual(self.recovery.rows(self.path)[-1]["reason"], "identity_unavailable")
+                counts, run = self.drain(ended=False)
+                self.assertEqual(counts["candidates"], 0)
+                run.assert_not_called()
+
+    def test_valid_identity_with_unavailable_observation_stays_pending(self):
+        self.pending()
+        with mock.patch.object(self.recovery, "executor_live", return_value=False), \
+             mock.patch.object(self.recovery, "adapter_for", side_effect=self.recovery.ObservationUnavailable), \
+             mock.patch.object(self.recovery, "issue_state") as state, \
+             mock.patch.object(self.recovery.subprocess, "run") as run:
+            for _ in range(2):
+                self.assertEqual(self.recovery.drain(), {"candidates": 1, "closed": 0, "blocked": 0})
+            state.assert_not_called()
+            run.assert_not_called()
+        self.assertEqual(len(self.recovery.rows(self.path)), 1)
 
     def test_unknown_native_identity_is_not_exit_proof(self):
         self.assertFalse(self.recovery.worker_ended({}))

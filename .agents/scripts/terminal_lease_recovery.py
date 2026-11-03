@@ -124,9 +124,11 @@ def settle(row):
     expiry = row.get("expires_at")
     if not isinstance(expiry, int) or int(time.time()) <= expiry + 120 or executor_live(row["session"]):
         return SKIP
-    # Without a native identity the exit can never be proven: block once,
+    # Without a valid native identity the exit can never be proven: block once,
     # locally, instead of re-scanning the row every cycle.
-    if row.get("process_identity") is None:
+    try:
+        ProcessIdentity.from_dict(row.get("process_identity"))
+    except ValueError:
         return local_resolution(row, "blocked", "identity_unavailable")
     if not worker_ended(row):
         return SKIP
