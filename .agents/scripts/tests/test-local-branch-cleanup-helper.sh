@@ -58,8 +58,9 @@ cat >"$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_LOG"
 case "$*" in
+*'api repos/example/aidevops') printf '%s\n' '{"fork":false,"full_name":"example/aidevops"}' ;;
 *'pulls?state=open&'*) printf '%s\n' '[{"state":"open","head":{"ref":"fork-pr","sha":"x"},"merged_at":null},{"state":"open","head":{"ref":"open-pr","sha":"x"},"merged_at":null}]' ;;
-*'example:squash&'*) printf '[{"state":"closed","head":{"ref":"squash","sha":"%s"},"merged_at":"2026-09-29T00:00:00Z"}]\n' "$SQUASH_SHA" ;;
+*'example%3Asquash&'*) printf '[{"state":"closed","head":{"ref":"squash","sha":"%s"},"merged_at":"2026-09-29T00:00:00Z"}]\n' "$SQUASH_SHA" ;;
 *) printf '%s\n' '[]' ;;
 esac
 STUB
