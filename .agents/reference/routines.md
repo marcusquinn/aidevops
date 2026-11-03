@@ -96,6 +96,11 @@ a long-lived retry process.
 
 Use `run:` for scripts, exports, health checks. Use `agent:` when judgment or summarisation is needed.
 
+Script routines inherit Pulse's `SSH_AUTH_SOCK` from `~/.ssh/agent.env`, which holds
+only the headless signing key and is restarted automatically after a reboot. A
+routine that SSHes to other hosts needs its own scoped key via `IdentityFile`; see
+[Git signing → Agent lifecycle](git-signing.md#agent-lifecycle).
+
 Core routine **r923**, certificate watch, runs daily at 06:40 via
 `scripts/cert-watch-helper.sh run --apply`. It baselines Certificate Transparency,
 audits inherited CAA, and files deduplicated operator-triage issues only in

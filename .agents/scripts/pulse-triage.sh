@@ -256,6 +256,32 @@ _consolidation_preflight_skip_outcome() {
 	return 0
 }
 
+# GH#36536: with the lock held, skip when an open child already names the
+# parent. The pre-lock check reads GitHub's eventually consistent search index,
+# so a child another runner just created (and whose lock it released) can be
+# missed; this re-check uses a label-filtered list. Releases the lock and flags
+# the parent. Returns 0 when skipped.
+_consolidation_post_lock_dedup_skip() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+
+	local listed_rc=0
+	_consolidation_open_child_listed "$issue_number" "$repo_slug" || listed_rc=$?
+	[[ "$listed_rc" -eq 1 ]] && return 1
+	if [[ "$listed_rc" -ne 0 ]]; then
+		# Listing failed: cannot prove no child exists; yield and retry next cycle.
+		_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
+		echo "[pulse-wrapper] Consolidation: post-lock child listing failed for #${issue_number} in ${repo_slug}; released lock, retry next cycle (GH#36536)" >>"$LOGFILE"
+		return 0
+	fi
+	_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "needs-consolidation" 2>/dev/null || true
+	echo "[pulse-wrapper] Consolidation: dedup skip for #${issue_number} in ${repo_slug}; open consolidation child found after lock acquire (GH#36536)" >>"$LOGFILE"
+	return 0
+}
+
 _dispatch_issue_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -305,6 +331,9 @@ _dispatch_issue_consolidation() {
 	local self_login
 	self_login=$(_consolidation_lock_self_login)
 
+	# GH#36536: re-check for an open child now that the lock is held.
+	_consolidation_post_lock_dedup_skip "$issue_number" "$repo_slug" "$self_login" && return 0
+
 	# Fetch parent metadata.
 	local parent_title parent_body parent_labels
 	parent_title=$(gh issue view "$issue_number" --repo "$repo_slug" \
@@ -314,13 +343,10 @@ _dispatch_issue_consolidation() {
 	parent_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || parent_labels=""
 
-	# Fetch substantive comments via the shared filter helper.
-	local substantive_json
+	# Substantive comments (shared filter) and the Contributors cc line.
+	local substantive_json="" authors_csv=""
 	substantive_json=$(_consolidation_substantive_comments "$issue_number" "$repo_slug")
 	[[ -n "$substantive_json" ]] || substantive_json="[]"
-
-	# Build the Contributors cc line (unique, @-prefixed).
-	local authors_csv
 	authors_csv=$(printf '%s' "$substantive_json" | jq -r '
 		[.[] | .login] | unique | map("@" + .) | join(" ")
 	' 2>/dev/null) || authors_csv=""

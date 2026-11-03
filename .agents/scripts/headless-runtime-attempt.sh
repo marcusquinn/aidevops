@@ -25,6 +25,12 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$_attempt_lib_path" && pwd)"
 	unset _attempt_lib_path
 fi
+# Shared probe, process-scoped config and agent heal (GH#36491).
+_attempt_module_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_attempt_module_dir" == "${BASH_SOURCE[0]}" ]] && _attempt_module_dir="."
+# shellcheck source=./headless-signing-lib.sh
+source "${_attempt_module_dir}/headless-signing-lib.sh" || return 1
+unset _attempt_module_dir
 
 # Preserve a machine-readable exit-trap reason while identifying the exact
 # prelaunch helper that failed in the worker log.
@@ -47,8 +53,9 @@ _headless_worker_runs_sandboxed() {
 }
 
 # Verify that a worker can create a signed commit without prompting before any
-# model tokens are spent. commit-tree exercises Git's effective signing config
-# without moving refs or changing the worktree.
+# model tokens are spent. commit-tree -S exercises Git's effective signing config
+# without moving refs or changing the worktree (GH#36515: commit-tree ignores
+# commit.gpgsign, so the shared probe passes -S whenever signing is required).
 #
 # GH#33064: the sandbox never receives SSH_AUTH_SOCK (passing it would expose
 # every key in the user's agent to the model process). Probe without the
@@ -56,30 +63,16 @@ _headless_worker_runs_sandboxed() {
 # signer fails pre-launch instead of at the worker's first commit.
 _headless_worker_signing_commit_probe() {
 	local work_dir="$1"
-	local tree_id=""
-	tree_id=$(git -C "$work_dir" rev-parse 'HEAD^{tree}' 2>/dev/null) || return 1
-	(
-		if _headless_worker_runs_sandboxed; then
-			unset SSH_AUTH_SOCK SSH_AGENT_PID
-		fi
-		GIT_TERMINAL_PROMPT=0 \
-			SSH_ASKPASS=/usr/bin/false \
-			SSH_ASKPASS_REQUIRE=force \
-			DISPLAY=aidevops-headless \
-			git -C "$work_dir" commit-tree "$tree_id" \
-				-m "aidevops headless signing preflight" </dev/null >/dev/null 2>&1
-	) || return 1
+	local drop_agent=0
+	_headless_worker_runs_sandboxed && drop_agent=1
+	headless_signing_commit_probe "$work_dir" "$drop_agent" || return 1
 	return 0
 }
 
 _append_headless_worker_git_config_env() {
 	local config_key="$1"
 	local config_value="$2"
-	local config_count="${GIT_CONFIG_COUNT:-0}"
-	[[ "$config_count" =~ ^[0-9]+$ ]] || return 1
-	export "GIT_CONFIG_KEY_${config_count}=${config_key}"
-	export "GIT_CONFIG_VALUE_${config_count}=${config_value}"
-	export GIT_CONFIG_COUNT=$((config_count + 1))
+	headless_signing_append_git_config_env "$config_key" "$config_value" || return 1
 	return 0
 }
 
@@ -88,6 +81,8 @@ _append_headless_worker_git_config_env() {
 # process-scoped Git config inherited by the runtime and exit-trap Git commands.
 # During migration, an existing effective signing configuration remains valid
 # only when the same noninteractive signed-commit probe succeeds (GH#29902).
+# The agent heal in _prepare_headless_worker_signing needs the dedicated key,
+# so this migration path fails closed with setup guidance instead (GH#36515).
 _configure_headless_worker_signing_env() {
 	local work_dir="$1"
 	[[ "${_AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED:-0}" == "1" ]] && return 0
@@ -96,7 +91,10 @@ _configure_headless_worker_signing_env() {
 	[[ "$signing_required" == "$_HEADLESS_SIGNING_TRUE" ]] || return 0
 	local signing_public_key="${AIDEVOPS_HEADLESS_SIGNING_PUBLIC_KEY:-${HOME}/.ssh/id_ed25519_signing.pub}"
 	if [[ ! -r "$signing_public_key" ]]; then
-		_headless_worker_signing_commit_probe "$work_dir" || return 1
+		if ! _headless_worker_signing_commit_probe "$work_dir"; then
+			print_error "[lifecycle] existing commit signing cannot sign without a prompt and no dedicated headless signing key exists; run 'aidevops signing headless-setup' directly in a terminal"
+			return 1
+		fi
 		export _AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED=1
 		return 0
 	fi
@@ -114,9 +112,6 @@ _configure_headless_worker_signing_env() {
 _prepare_headless_worker_signing() {
 	local work_dir="$1"
 	local signing_required=""
-	local signing_helper="${AIDEVOPS_SIGNING_SETUP_HELPER:-${SCRIPT_DIR}/signing-setup.sh}"
-	local signing_key="${AIDEVOPS_HEADLESS_SIGNING_KEY:-${HOME}/.ssh/id_ed25519_signing}"
-	local agent_env="${AIDEVOPS_SSH_AGENT_ENV:-${HOME}/.ssh/agent.env}"
 
 	signing_required=$(git -C "$work_dir" config --bool commit.gpgsign 2>/dev/null || true)
 	[[ "$signing_required" == "$_HEADLESS_SIGNING_TRUE" ]] || return 0
@@ -126,12 +121,7 @@ _prepare_headless_worker_signing() {
 	fi
 	_headless_worker_signing_commit_probe "$work_dir" && return 0
 
-	if [[ -f "$signing_key" && -x "$signing_helper" ]]; then
-		"$signing_helper" agent-start >/dev/null 2>&1 || true
-		if [[ -r "$agent_env" ]]; then
-			# shellcheck source=/dev/null
-			. "$agent_env" >/dev/null 2>&1 || true
-		fi
+	if headless_signing_heal_agent; then
 		_headless_worker_signing_commit_probe "$work_dir" && return 0
 	fi
 

@@ -124,6 +124,14 @@ def argument_parser() -> argparse.ArgumentParser:
     targeted.add_argument("--path", required=True, type=Path)
     targeted.add_argument("--repos-config", required=True, type=Path)
     targeted.add_argument("--output-root", required=True, type=Path)
+    enrolled_only = commands.add_parser(
+        "retire-enrolled-only",
+        help="preview or confirm archive-first retirement of a never-owned enrolled tree",
+    )
+    enrolled_only.add_argument("--path", required=True, type=Path)
+    enrolled_only.add_argument("--repos-config", required=True, type=Path)
+    enrolled_only.add_argument("--output-root", required=True, type=Path)
+    enrolled_only.add_argument("--confirm", action="store_true")
     for name in ("enroll", "resolve-generation"):
         enrollment = commands.add_parser(name, help="enroll or resolve a linked worktree; schema 2 required")
         enrollment.add_argument("--path", required=True, type=Path)
@@ -170,19 +178,31 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
     raise ValueError("unsupported-worktree-operation")
 
 
-def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
-        upgrade_registry(store)
+def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
     if args.operation == "cleanup-worktree":
         from .cleanup import cleanup_worktree
 
         return cleanup_worktree(store, args.repos_config, args.output_root, args.path)
+    if args.operation == "retire-enrolled-only":
+        from .cleanup import retire_enrolled_only
+
+        return retire_enrolled_only(
+            store, args.repos_config, args.output_root, args.path, args.confirm,
+        )
     if args.operation == "cleanup":
         from .cleanup import cleanup_pass
 
         return cleanup_pass(
             store, args.repos_config, args.output_root, args.limit, args.budget_seconds,
         )
+    raise ValueError("unsupported-cleanup-operation")
+
+
+def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
+        upgrade_registry(store)
+    if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only"}:
+        return _cleanup_operation(store, args)
     if args.operation in {
         "create-worktree", "admit-session", "preserve-wip", "prepare-cleanup", "retire-worktree",
     }:
@@ -203,9 +223,10 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
 def _error_details(error: Exception, operation: str) -> dict:
     """Translate CLI failures without exposing arbitrary system error text."""
     reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
-    if operation in {"retire-worktree", "cleanup", "upgrade"} and isinstance(error, StoreConflict):
+    if operation in {"retire-worktree", "cleanup", "upgrade", "retire-enrolled-only"} and isinstance(error, StoreConflict):
         reason = str(error)
-    mode = "retirement" if operation in ("retire-worktree", "cleanup") else "observe-only"
+    retirement = ("retire-worktree", "cleanup", "cleanup-worktree", "retire-enrolled-only")
+    mode = "retirement" if operation in retirement else "observe-only"
     detail = {"mode": mode, "status": "unavailable", "reason": reason,
               "cleanup_authorized": False}
     if isinstance(error, FilesystemValidationError):
@@ -213,7 +234,8 @@ def _error_details(error: Exception, operation: str) -> dict:
     # GH#36142: name the enrollment refusal; OSError text may carry paths.
     if operation == "enroll" and isinstance(error, ValueError):
         detail["detail"] = str(error)[:200]
-    # GH#36370: creation refusals carry a stable code; `reason` stays unchanged.
+    # GH#36370/GH#36494: creation and targeted-retirement refusals carry a
+    # stable code; `reason` stays unchanged.
     code = refusal_code(error, operation)
     if code:
         detail.setdefault("detail", code)

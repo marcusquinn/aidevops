@@ -10,6 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.115] - 2026-11-03
+
+### Added
+
+- archive-first retire-enrolled-only path for never-owned worktrees (GH#36516) (#36527)
+
+### Fixed
+
+- fix unbound positional args in crawl4ai, dns and watercrawl helpers
+
+## [3.39.114] - 2026-11-02
+
+### Changed
+
+- Maintenance: mark t18859 complete (pr:#36518 completed:2026-11-02) (#36519)
+- Maintenance: sync GitHub issue refs to TODO.md (#36520)
+
+### Fixed
+
+- worker signing probe passes -S so it proves signing (#36521)
+- dedicated-profile CDP launcher for logged-in Brave/Chrome sessions
+
+## [3.39.113] - 2026-11-02
+
+### Changed
+
+- Documentation: document observed ChatGPT fan-out and retrieval capture
+- Maintenance: mark t18850 complete (pr:#36507 completed:2026-11-02) (#36510)
+- Maintenance: sync GitHub issue refs to TODO.md (#36509)
+- Maintenance: sync GitHub issue refs to TODO.md (#36502)
+- Maintenance: mark t18858 complete (pr:#36497 completed:2026-11-02) (#36498)
+- Maintenance: sync GitHub issue refs to TODO.md (#36500)
+- Maintenance: add local SEO roadmap t18852-t18856 and add-skill review t18857
+- Documentation: add proposal-only Local Services Ads guide (t18855) (#36492)
+- Tests: assert configured branch in repaired-metadata case (GH#36477) (#36478)
+- Maintenance: sync GitHub issue refs to TODO.md (#36476)
+
+### Fixed
+
+- self-heal stale headless ssh-agent after reboot
+- headless signing for script routines; badges-sync recovers retained worktrees
+
 ## [3.39.112] - 2026-11-02
 
 ### Changed

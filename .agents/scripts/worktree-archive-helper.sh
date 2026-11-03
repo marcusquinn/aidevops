@@ -30,7 +30,10 @@ Commands:
                                         only (no Git import, no restore)
   source-matches ARCHIVE_DIR WORKTREE   Exit 0 only if WORKTREE is unchanged since capture
   prune --older-than 14d --max-total-size 20G [--dry-run|--apply]
-      [--output-root DIR] [--budget-seconds N]
+      [--output-root DIR] [--budget-seconds N] [--producer-ttl-days 30]
+                                        Producer archives expire only once their
+                                        source is gone: empty deltas at once,
+                                        others after the TTL; .keep retains.
                                         Structure-checks only selected archives;
                                         stops cleanly within N seconds (0 =
                                         unbounded) and reclaims dead verification scratch
@@ -821,10 +824,11 @@ PY
 }
 
 prune_archives() {
-	local older_than="" max_total="" mode="" output_root="$ARCHIVE_ROOT" budget="0"
+	local older_than="" max_total="" mode="" output_root="$ARCHIVE_ROOT" budget="0" producer_ttl="30"
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--older-than) require_value "$1" "${2:-}" || return 1; older_than="$2"; shift 2 ;;
+		--producer-ttl-days) producer_ttl="${2:-}"; shift; shift || true ;;
 		--budget-seconds) budget="${2:-}"; shift; shift || true ;;
 		--max-total-size) require_value "$1" "${2:-}" || return 1; max_total="$2"; shift 2 ;;
 		--dry-run) [[ -z "$mode" ]] || { die "choose only one prune mode"; return 1; }; mode="dry-run"; shift ;;
@@ -837,8 +841,9 @@ prune_archives() {
 	[[ "$max_total" =~ ^[1-9][0-9]*([KMGTP])?$ ]] || { die "invalid --max-total-size"; return 1; }
 	[[ -n "$mode" ]] || { die "prune requires --dry-run or --apply"; return 1; }
 	[[ "$budget" =~ ^[0-9]+$ ]] || { die "--budget-seconds must be a non-negative integer"; return 1; }
+	[[ "$producer_ttl" =~ ^[1-9][0-9]*$ ]] || { die "--producer-ttl-days must be a positive integer"; return 1; }
 	python3 "${SCRIPT_DIR}/worktree_archive_prune.py" "$output_root" "${older_than%d}" \
-		"$max_total" "$mode" "${SCRIPT_DIR}/worktree-archive-helper.sh" "$budget"
+		"$max_total" "$mode" "${SCRIPT_DIR}/worktree-archive-helper.sh" "$budget" "$producer_ttl"
 	return $?
 }
 

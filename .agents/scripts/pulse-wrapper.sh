@@ -420,14 +420,15 @@ source "${SCRIPT_DIR}/pulse-canonical-recovery.sh"
 
 #######################################
 # SSH agent integration for commit signing (t1882)
-# Source the persisted agent.env so headless workers can sign commits
-# without a passphrase prompt. Safe to source even if the file doesn't
-# exist — the conditional guard prevents errors.
+# Source the persisted agent.env so headless workers and script routines can
+# sign commits without a passphrase prompt. GH#36493: agent.env outlives its
+# ssh-agent across reboots; restart a dead agent with the dedicated headless
+# key so routines and workers inherit a live SSH_AUTH_SOCK.
 #######################################
-if [[ -f "$HOME/.ssh/agent.env" ]]; then
-	# shellcheck source=/dev/null
-	. "$HOME/.ssh/agent.env" >/dev/null 2>&1 || true
-fi
+# shellcheck source=./headless-ssh-agent-lib.sh
+source "${SCRIPT_DIR}/headless-ssh-agent-lib.sh"
+# The outcome is logged after pulse-wrapper-config.sh defines LOGFILE.
+headless_ssh_agent_ensure "${SCRIPT_DIR}/signing-setup.sh" || true
 
 #######################################
 # Source credentials.sh for API keys (GH#17546)
@@ -467,6 +468,18 @@ source "${SCRIPT_DIR}/pulse-budget-priority.sh"
 # shellcheck source=./pulse-wrapper-config.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/pulse-wrapper-config.sh"
+
+# GH#36493: report the headless ssh-agent check performed above. A heal is
+# rare (once after a reboot); a persistent failure is logged each cycle
+# because routines and workers cannot sign or authenticate until fixed.
+case "${HEADLESS_SSH_AGENT_STATUS:-}" in
+healed)
+	printf '[pulse-wrapper] Restarted stale headless ssh-agent from ~/.ssh/agent.env (GH#36493)\n' >>"$LOGFILE" 2>/dev/null || true
+	;;
+dead)
+	printf '[pulse-wrapper] WARN: ~/.ssh/agent.env names an unreachable ssh-agent and self-heal failed; run: aidevops signing agent-start\n' >>"$LOGFILE" 2>/dev/null || true
+	;;
+esac
 
 # Cycle-running helpers + bootstrap helpers extracted to two sub-libraries
 # (GH#21311 / t2936-child). Order matters only insofar as

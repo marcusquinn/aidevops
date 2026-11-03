@@ -30,6 +30,7 @@
 #   AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE — off|dry-run|apply (default dry-run)
 #   AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS — compact archive age (default 14)
 #   AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE — eligible archive cap (default 20G)
+#   AIDEVOPS_WORKTREE_PRODUCER_ARCHIVE_TTL_DAYS — producer archive age from capture, once its source is gone (default 30)
 #   AIDEVOPS_LOG_DIR — explicit log directory override (required if HOME unset)
 #
 # Observability (for pulse-diagnose-helper.sh):
@@ -233,6 +234,8 @@ _maintain_compact_archives() {
 	local mode="${AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE:-}"
 	local days="${AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS:-14}"
 	local maximum="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE:-20G}"
+	# Producer archives may be the only copy: longer than the compact default.
+	local producer_ttl="${AIDEVOPS_WORKTREE_PRODUCER_ARCHIVE_TTL_DAYS:-30}"
 	# prune stops itself inside this budget; the outer timeout is only a
 	# backstop. Each verification may import a base graph (GH#36468).
 	local budget="${AIDEVOPS_WORKTREE_ARCHIVE_PRUNE_BUDGET:-540}"
@@ -252,7 +255,8 @@ _maintain_compact_archives() {
 	mode="${mode:-dry-run}"
 	[[ "$mode" != "off" ]] || return 0
 	if [[ "$mode" != "dry-run" && "$mode" != "apply" ]] ||
-		[[ ! "$days" =~ ^[1-9][0-9]*$ || ! "$maximum" =~ ^[1-9][0-9]*([KMGTP])?$ ]]; then
+		[[ ! "$days" =~ ^[1-9][0-9]*$ || ! "$producer_ttl" =~ ^[1-9][0-9]*$ ||
+			! "$maximum" =~ ^[1-9][0-9]*([KMGTP])?$ ]]; then
 		echo "[cleanup-worktrees-async] compact-retention invalid policy; preserving archives" >>"$LOGFILE"
 		return 0
 	fi
@@ -261,7 +265,8 @@ _maintain_compact_archives() {
 		return 0
 	fi
 	timeout_sec $((budget + 60)) bash "$helper" prune --older-than "${days}d" \
-		--max-total-size "$maximum" "--${mode}" --budget-seconds "$budget" >>"$LOGFILE" 2>&1 || rc=$?
+		--max-total-size "$maximum" "--${mode}" --budget-seconds "$budget" \
+		--producer-ttl-days "$producer_ttl" >>"$LOGFILE" 2>&1 || rc=$?
 	printf '[cleanup-worktrees-async] compact-retention mode=%s rc=%s\n' "$mode" "$rc" >>"$LOGFILE"
 	return 0
 }

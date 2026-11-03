@@ -104,6 +104,37 @@ class AdmissionRegistry:
             self.store._bind(connection, str(uuid5(namespace, "bind")), run_id, generation_id, generation["path"])
             return True
 
+    def authorize_enrolled_only(self, event_id: str, generation_id: str) -> None:
+        """Operator-confirmed: close admission for a generation with no owner ever.
+
+        The no-run predicate, the evidence event and the closure share one writer
+        transaction, so a racing `admit` either committed first (this refuses) or
+        finds the generation closed. Any bound run, live or ended, is ineligible.
+        """
+        identifier(generation_id)
+        creation = str(uuid5(UUID(generation_id), "created-worktree"))
+        with self.store.connection(write=True) as connection:
+            self._require_schema(connection)
+            if not connection.execute(
+                "SELECT 1 FROM generation_admissions WHERE generation_id=?",
+                (generation_id,),
+            ).fetchone():
+                raise AdmissionClosed("generation-not-registered")
+            if (connection.execute(
+                    "SELECT 1 FROM bindings WHERE generation_id=?", (generation_id,),
+                ).fetchone() or connection.execute(
+                    "SELECT 1 FROM events WHERE event_id=?", (creation,),
+                ).fetchone()):
+                raise StoreConflict("generation-has-admitted-owner")
+            self.store._event(connection, event_id, {
+                "type": "enrolled-only-retirement-authorized",
+                "generation_id": generation_id, "operator_confirmed": True,
+            })
+            connection.execute(
+                "UPDATE generation_admissions SET state='closed' WHERE generation_id=?",
+                (generation_id,),
+            )
+
     def close_generation(
         self, event_id: str, generation_id: str, *,
         expected_ended_runs: tuple[str, ...] | None = None,

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from uuid import UUID, uuid5
 
-from .cleanup_plan import _runs, prepare_cleanup
+from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
 from .enrollment import GenerationEnrollment, _directory_inode, _git_directory
 from .storage import LifecycleRegistry, StoreConflict
 
@@ -21,6 +21,14 @@ def recovery_evidence(
             (generation,),
         ).fetchone()
     rows = _runs(store, generation)
+    if not rows and enrolled_only_authorized(store, generation):
+        admin = _git_directory(path)
+        return {
+            "type": "worktree-recovery-authorized", "generation_id": generation,
+            "path": str(path), "directory_identity": _directory_inode(path),
+            "git_directory": str(admin), "git_identity": _directory_inode(admin),
+            "admitted_runs": [], "operator_confirmed": True,
+        }
     if (admission is None or admission["state"] != "closed" or not rows
             or not all(row["admitted"] and row["state"] == "ended" for row in rows)):
         raise StoreConflict("recovery-owner-evidence-incomplete")

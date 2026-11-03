@@ -1848,7 +1848,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18848 docs(hostinger): installed package release without rpm (debug link), Red Hat VEX source, ImageMagick advisories, account policy test #documentation ref:GH#36439 pr:#36440 completed:2026-11-02
 
-- [ ] t18850 fix: bound producer recovery archive retention and skip empty-delta archives #bug ref:GH#36470
+- [x] t18850 fix: bound producer recovery archive retention and skip empty-delta archives #bug ref:GH#36470 pr:#36507 completed:2026-11-02
+
+- [x] t18851 Compact-archive prune: replace full restore verification with structural checks before deletion #feat ref:GH#36479 pr:#36503 completed:2026-11-02
 
 - [x] t18852 Local SEO capability for aidevops (parent roadmap) #feat #parent-task #interactive ref:GH#36480 logged:2026-11-02 -> [todo/tasks/t18852-brief.md] verified:2026-11-02 completed:2026-11-02
 
@@ -1863,6 +1865,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18857 add-skill: content review for vendor/affiliate bias and unsupported claims before importing external skills #feat #interactive tier:standard ~35m ref:GH#36485 pr:#36489 logged:2026-11-02 -> [todo/tasks/t18857-brief.md] completed:2026-11-02
 
 - [x] t18858 Lifecycle archive-path validation rejects owner-private-group 0775 archive roots (umask 002 hosts) #bug ref:GH#36490 pr:#36497 completed:2026-11-02
+
+- [x] t18859 Document observed ChatGPT fan-out and retrieval capture for SEO/GEO measurement #documentation ref:GH#36517 pr:#36518 completed:2026-11-02
 
 ## In Progress
 
