@@ -16,6 +16,7 @@ assert_eq() {
 		printf 'FAIL: %s: expected %s, got %s\n' "$label" "$expected" "$actual" >&2
 		exit 1
 	fi
+	return 0
 }
 
 assert_eq "default remains rollback-safe until canary promotion" "v1" "$(python3 "$HELPER" default)"
@@ -28,6 +29,19 @@ assert_eq "explicit rollback selection" "v1" "$(AIDEVOPS_OPENCODE_PROFILE=v1 pyt
 
 SANDBOX=$(mktemp -d -t aidevops-opencode-profile.XXXXXX)
 trap 'rm -rf "$SANDBOX"' EXIT
+# GH#36562: the promoted JSON profile and bootstrap shell fallback must agree.
+# shellcheck source=../shared-constants.sh
+source "$REPO_ROOT/.agents/scripts/shared-constants.sh"
+assert_eq "V2 promoted headless pin" "2.2.5" "$(python3 "$HELPER" get v2 headlessPin)"
+assert_eq "V2 shell pin" "2.2.5" "$OPENCODE_V2_PINNED_VERSION"
+assert_eq "V2 plugin compatibility version" "2.2.5" "$OPENCODE_V2_PLUGIN_TESTED_VERSION"
+for field in headlessPin testedVersion lastCanaryDate lastCanaryResult reviewDeadline; do
+	assert_eq "V2 JSON-backed $field" "$(python3 "$HELPER" get v2 "$field")" \
+		"$(AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" aidevops_opencode_profile_value "$field" v2)"
+	# This directory has no profile helper, forcing the bootstrap fallback.
+	assert_eq "V2 shell fallback $field" "$(python3 "$HELPER" get v2 "$field")" \
+		"$(AIDEVOPS_AGENTS_DIR="$SANDBOX" aidevops_opencode_profile_value "$field" v2)"
+done
 mkdir -p "$SANDBOX/bin"
 cat >"$SANDBOX/bin/npm" <<'SHIM'
 #!/usr/bin/env bash
