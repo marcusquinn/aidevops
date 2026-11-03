@@ -10,6 +10,7 @@ registry writes, published-event edits or lease credentials belong in this log.
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -56,7 +57,10 @@ def record(kind, repo, issue, session, pid):
 
 
 def executor_live(session):
-    output = subprocess.run(["ps", "-eo", "args="], capture_output=True, text=True, check=True).stdout
+    executable = shutil.which("ps", path=os.defpath)
+    if not executable or not Path(executable).is_absolute():
+        return True  # Missing process visibility must never authorize a close.
+    output = subprocess.run([executable, "-eo", "args="], capture_output=True, text=True, check=True).stdout  # nosec B603 — absolute system ps, fixed arguments
     for line in output.splitlines():
         args = line.split()
         if any(arg == "--session-key" and args[index + 1] == session
@@ -77,9 +81,9 @@ def worker_ended(row):
 
 def close_pending(row):
     """Return a token-free resolution, or None to defer the remaining batch."""
-    helper = Path(__file__).with_name("dispatch-claim-helper.sh")
+    helper = Path(__file__).resolve().with_name("dispatch-claim-helper.sh")
     try:
-        result = subprocess.run([str(helper), "close-expired-pr-checkpoint-lease",
+        result = subprocess.run([str(helper), "close-expired-pr-checkpoint-lease",  # nosec B603 — repository-owned absolute helper, positional data only
                                  str(row["issue_number"]), row["repo"],
                                  str(row["claim_id"]), row["session"]],
                                 capture_output=True, text=True, timeout=90)

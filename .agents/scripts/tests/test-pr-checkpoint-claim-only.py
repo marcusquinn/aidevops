@@ -646,7 +646,7 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
 
     def test_pulse_logs_one_idle_summary_without_external_state(self):
         logfile = pathlib.Path(self.temp.name) / "pulse.log"
-        result = subprocess.run([BASH, "-c", 'source "$1/pulse-issue-reconcile-stale.sh"; '
+        result = subprocess.run([BASH, "-c", 'source "$1/pulse-issue-reconcile-stale.sh"; '  # nosec B603 — fixed offline fixture, absolute Bash
                                  '_normalize_stale_close_pending_checkpoint_leases',
                                  "test", str(SCRIPTS)],
                                 env={**os.environ, "LOGFILE": str(logfile)},
@@ -656,7 +656,7 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
                          "[pulse-wrapper] Pending checkpoint leases: candidates=0 closed=0 blocked=0\n")
 
     def test_native_lifecycle_proof_and_token_free_idempotent_record(self):
-        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])  # nosec B603 — fixed fixture using this interpreter
         try:
             self.recovery.record("pending", "owner/repo", "124", self.session, str(child.pid))
             self.recovery.record("pending", "owner/repo", "124", self.session, str(child.pid))
@@ -684,7 +684,7 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
         # Use a local device file for the child, not any host state.
         device = pathlib.Path(self.temp.name) / "device-id"
         device.write_text("dev\n")
-        result = subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), self.session],
+        result = subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), self.session],  # nosec B603 — fixed offline fixture, absolute Bash
                                 cwd=self.temp.name, env={**os.environ, "AIDEVOPS_DEVICE_ID_FILE": str(device)},
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
