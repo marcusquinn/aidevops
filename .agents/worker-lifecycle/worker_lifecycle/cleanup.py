@@ -41,8 +41,8 @@ def _repository_entries(config: Path) -> list:
     return entries
 
 
-def _repository_scope(entry: dict) -> "tuple[str, str, str] | None":
-    if (entry.get("maintenance", True) is not True
+def _repository_scope(entry: dict, *, explicit: bool = False) -> "tuple[str, str, str] | None":
+    if ((not explicit and entry.get("maintenance", True) is not True)
             or entry.get("local_only", False) is not False):
         return None
     slug, location = entry.get("slug"), entry.get("path")
@@ -63,13 +63,13 @@ def _repository_scope(entry: dict) -> "tuple[str, str, str] | None":
     return common, slug, base
 
 
-def _repositories(config: Path) -> dict[str, tuple[str, str]]:
-    """Read operator scope without network calls or consulting legacy owners."""
+def _repositories(config: Path, *, explicit: bool = False) -> dict[str, tuple[str, str]]:
+    """Read registered scope; only automatic cleanup requires maintenance."""
     result: dict[str, tuple[str, str]] = {}
     for entry in _repository_entries(config):
         if not isinstance(entry, dict):
             raise ValueError("invalid-repository-entry")
-        scope = _repository_scope(entry)
+        scope = _repository_scope(entry, explicit=explicit)
         if scope is None:
             continue
         common, slug, base = scope
@@ -164,7 +164,7 @@ def cleanup_worktree(
     """
     if not root.is_absolute() or root.resolve() != root:
         raise ValueError("canonical-archive-root-required")
-    repositories = _repositories(config)
+    repositories = _repositories(config, explicit=True)
     generation = GenerationEnrollment(store).inspect_retirement(path)
     create_archive_root(root)
     validate_archive_path(root)
@@ -183,7 +183,7 @@ def retire_enrolled_only(
     """
     if not root.is_absolute() or root.resolve() != root:
         raise ValueError("canonical-archive-root-required")
-    repositories = _repositories(config)
+    repositories = _repositories(config, explicit=True)
     generation = GenerationEnrollment(store).inspect_retirement(path)
     with store.connection() as connection:
         admission = connection.execute(
