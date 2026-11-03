@@ -40,6 +40,7 @@ PROFILE_PUBLICATION_CANONICAL_HEAD=""
 PROFILE_PUBLICATION_CANONICAL_STATUS=""
 PROFILE_PUBLICATION_INTENT_PATH=""
 PROFILE_PUBLICATION_REGISTRY_TASK="profile-readme"
+PROFILE_PUBLICATION_INTENT_SCHEMA="aidevops-profile-publication-intent/v1"
 PROFILE_CONTRIBUTIONS_REFRESHED=false
 
 # --- Serialize profile refreshes so scheduler overlap cannot duplicate scans/writes ---
@@ -205,7 +206,7 @@ _profile_write_publication_intent() {
 	[[ ! -e "$intent_path" && ! -L "$intent_path" ]] || return 1
 	intent_tmp=$(mktemp "${intent_path}.XXXXXX") || return 1
 	if ! jq -n \
-		--arg schema "aidevops-profile-publication-intent/v1" \
+		--arg schema "$PROFILE_PUBLICATION_INTENT_SCHEMA" \
 		--arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" \
 		--arg intent_id "$worktree_name" \
 		--arg worktree_path "$resolved_worktree_path" \
@@ -302,34 +303,46 @@ _profile_publication_worktree_has_no_active_owner() {
 	return 0
 }
 
-_profile_publication_worktree_recovery_is_safe() {
+# Producer-owned shape: detached, named for this canonical repo, directly under
+# the worktree base and sharing the canonical common dir.
+_profile_publication_worktree_shape_is_safe() {
 	local worktree_path="$1"
-	local canonical_head=""
-	local canonical_status=""
+	local canonical_repo="$2"
+	local worktree_base="$3"
 	local canonical_common_dir=""
 	local worktree_common_dir=""
 	local worktree_parent=""
 	local worktree_basename=""
 
-	[[ -n "$worktree_path" && "$worktree_path" == "${PROFILE_PUBLICATION_WORKTREE:-}" ]] || return 1
-	[[ -n "${PROFILE_PUBLICATION_CANONICAL_REPO:-}" && -n "${PROFILE_PUBLICATION_WORKTREE_BASE:-}" &&
-		-n "${PROFILE_PUBLICATION_CANONICAL_HEAD:-}" && -d "$worktree_path" ]] || return 1
+	[[ -n "$canonical_repo" && -n "$worktree_base" && -d "$worktree_path" && ! -L "$worktree_path" ]] || return 1
 	worktree_parent=$(cd "${worktree_path%/*}" 2>/dev/null && pwd -P) || return 1
-	[[ "$worktree_parent" == "$PROFILE_PUBLICATION_WORKTREE_BASE" ]] || return 1
+	[[ "$worktree_parent" == "$worktree_base" ]] || return 1
 	worktree_basename="${worktree_path##*/}"
-	[[ "$worktree_basename" == "$(basename "$PROFILE_PUBLICATION_CANONICAL_REPO")-profile-readme-"* ]] || return 1
+	[[ "$worktree_basename" == "$(basename "$canonical_repo")-profile-readme-"* ]] || return 1
 	git -C "$worktree_path" symbolic-ref -q HEAD >/dev/null 2>&1 && return 1
-	canonical_common_dir=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" rev-parse --git-common-dir 2>/dev/null) || return 1
+	canonical_common_dir=$(git -C "$canonical_repo" rev-parse --git-common-dir 2>/dev/null) || return 1
 	worktree_common_dir=$(git -C "$worktree_path" rev-parse --git-common-dir 2>/dev/null) || return 1
 	case "$canonical_common_dir" in
 	/*) ;;
-	*) canonical_common_dir=$(cd "$PROFILE_PUBLICATION_CANONICAL_REPO/$canonical_common_dir" 2>/dev/null && pwd -P) || return 1 ;;
+	*) canonical_common_dir=$(cd "$canonical_repo/$canonical_common_dir" 2>/dev/null && pwd -P) || return 1 ;;
 	esac
 	case "$worktree_common_dir" in
 	/*) ;;
 	*) worktree_common_dir=$(cd "$worktree_path/$worktree_common_dir" 2>/dev/null && pwd -P) || return 1 ;;
 	esac
 	[[ "$canonical_common_dir" == "$worktree_common_dir" ]] || return 1
+	return 0
+}
+
+_profile_publication_worktree_recovery_is_safe() {
+	local worktree_path="$1"
+	local canonical_head=""
+	local canonical_status=""
+
+	[[ -n "$worktree_path" && "$worktree_path" == "${PROFILE_PUBLICATION_WORKTREE:-}" ]] || return 1
+	[[ -n "${PROFILE_PUBLICATION_CANONICAL_HEAD:-}" ]] || return 1
+	_profile_publication_worktree_shape_is_safe "$worktree_path" \
+		"${PROFILE_PUBLICATION_CANONICAL_REPO:-}" "${PROFILE_PUBLICATION_WORKTREE_BASE:-}" || return 1
 	canonical_head=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" rev-parse HEAD 2>/dev/null) || return 1
 	[[ "$canonical_head" == "$PROFILE_PUBLICATION_CANONICAL_HEAD" ]] || return 1
 	canonical_status=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" status --porcelain --untracked-files=all) || return 1
@@ -340,13 +353,42 @@ _profile_publication_worktree_recovery_is_safe() {
 	return 0
 }
 
+# GH#36543: an earlier run's tree has no current-run canonical snapshot to
+# compare, so it qualifies only when it holds nothing to preserve: clean
+# including untracked files, HEAD already published and no live owner.
+_profile_publication_prior_worktree_is_safe() {
+	local worktree_path="$1"
+	local canonical_repo="$2"
+	local worktree_base="$3"
+	local worktree_status=""
+	local worktree_head=""
+	local default_branch=""
+
+	[[ -n "$worktree_path" && "$worktree_path" != "${PROFILE_PUBLICATION_WORKTREE:-}" ]] || return 1
+	_profile_publication_worktree_shape_is_safe "$worktree_path" "$canonical_repo" "$worktree_base" || return 1
+	worktree_status=$(git -C "$worktree_path" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	[[ -z "$worktree_status" ]] || return 1
+	worktree_head=$(git -C "$worktree_path" rev-parse --verify -q HEAD 2>/dev/null) || return 1
+	default_branch=$(_profile_default_branch "$canonical_repo")
+	git -C "$canonical_repo" merge-base --is-ancestor "$worktree_head" \
+		"refs/remotes/origin/${default_branch}" 2>/dev/null || return 1
+	_profile_publication_worktree_has_no_active_owner "$worktree_path" || return 1
+	return 0
+}
+
+# Args: $1=worktree, then an optional safety predicate and its extra arguments
+# (default: the current-run predicate). The predicate runs before capture and
+# again immediately before guarded removal.
 _archive_and_remove_profile_publication_worktree() {
 	local worktree_path="$1"
+	shift
 	local archive_path=""
 	local caller="profile-readme-helper.sh"
 	local context="recovery_path=profile-publication-archive profile_scratch=true"
+	local safety_check="${1:-_profile_publication_worktree_recovery_is_safe}"
+	[[ "$#" -eq 0 ]] || shift
 
-	_profile_publication_worktree_recovery_is_safe "$worktree_path" || return 1
+	"$safety_check" "$worktree_path" "$@" || return 1
 	printf '%s\n' 'Profile publication recovery: capturing completed worktree' >&2
 	archive_worktree_path_recoverably "$worktree_path" "$caller" "$context" || return 1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
@@ -354,7 +396,7 @@ _archive_and_remove_profile_publication_worktree() {
 	printf '%s\n' 'Profile publication recovery: checking guarded removal' >&2
 	# Recheck after compact verification so a changed canonical checkout or newly claimed
 	# worktree remains recoverable instead of being removed.
-	_profile_publication_worktree_recovery_is_safe "$worktree_path" || return 1
+	"$safety_check" "$worktree_path" "$@" || return 1
 	remove_archived_worktree_path "$worktree_path" "$archive_path" "$caller" \
 		"profile-publication" "$context" "true" "true" || return 1
 	log_worktree_removal_event "$_WTAR_REMOVED" "$caller" "$worktree_path" \
@@ -393,6 +435,117 @@ _cleanup_profile_publication_worktree() {
 	_profile_publication_registry_update unregister "$worktree_path" || true
 	_profile_remove_publication_intent || true
 	_profile_clear_publication_state
+	return 0
+}
+
+# Args: $1=raw value, $2=default, $3=minimum, $4=maximum (decimal integers).
+_profile_publication_sweep_setting() {
+	local value="${1//[!0-9]/}"
+	local default_value="$2"
+	local minimum="$3"
+	local maximum="$4"
+
+	if [[ -z "$value" || ${#value} -gt 9 ]]; then
+		printf '%s\n' "$default_value"
+		return 0
+	fi
+	value=$((10#$value))
+	if [[ "$value" -lt "$minimum" || "$value" -gt "$maximum" ]]; then
+		value="$default_value"
+	fi
+	printf '%s\n' "$value"
+	return 0
+}
+
+# Retire one prior tree through the same sequence as the current run: guarded
+# worktree-helper removal first, then recoverable archive and guarded removal.
+_profile_retire_prior_publication_worktree() {
+	local worktree_path="$1"
+	local canonical_repo="$2"
+	local worktree_base="$3"
+	local intent_path="$4"
+	local worktree_helper=""
+
+	worktree_helper=$(_profile_publication_worktree_helper)
+	if [[ -x "$worktree_helper" ]] &&
+		(cd "$canonical_repo" && "$worktree_helper" remove "$worktree_path" >/dev/null 2>&1); then
+		:
+	elif ! _archive_and_remove_profile_publication_worktree "$worktree_path" \
+		_profile_publication_prior_worktree_is_safe "$canonical_repo" "$worktree_base"; then
+		return 1
+	fi
+	[[ ! -e "$worktree_path" ]] || return 1
+	_profile_publication_registry_update unregister "$worktree_path" >/dev/null 2>&1 || true
+	if [[ -f "$intent_path" && ! -L "$intent_path" ]]; then
+		rm -f "$intent_path" || true
+	fi
+	return 0
+}
+
+# GH#36543: a failed retirement used to leak its tree permanently because only
+# the current run's tree was ever cleaned. Before creating a new tree, retry
+# earlier ones named by the producer's durable intents. Never blocks publication.
+_profile_sweep_prior_publication_worktrees() {
+	local canonical_repo="$1"
+	local worktree_base="$2"
+	local common_dir=""
+	local intent_dir=""
+	local intent_path=""
+	local intent_values=""
+	local intent_id=""
+	local worktree_path=""
+	local intent_common_dir=""
+	local created_epoch=0
+	local now_epoch=0
+	local min_age=0
+	local cap=0
+	local attempts=0
+	local retired=0
+	local preserved=0
+
+	common_dir=$(git -C "$canonical_repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+	intent_dir="${common_dir}/aidevops-profile-publication-intents"
+	[[ -d "$intent_dir" && ! -L "$intent_dir" ]] || return 0
+	# The age floor keeps a just-finished managed run's own cleanup-managed
+	# callback from racing this sweep; hourly runs still clear the previous tree.
+	min_age=$(_profile_publication_sweep_setting "${AIDEVOPS_PROFILE_PUBLICATION_SWEEP_MIN_AGE_SECS:-}" 1800 0 604800)
+	cap=$(_profile_publication_sweep_setting "${AIDEVOPS_PROFILE_PUBLICATION_SWEEP_CAP:-}" 10 1 100)
+	now_epoch=$(date +%s)
+	for intent_path in "$intent_dir"/*.json; do
+		[[ -f "$intent_path" && ! -L "$intent_path" ]] || continue
+		intent_values=$(jq -er --arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" \
+			--arg schema "$PROFILE_PUBLICATION_INTENT_SCHEMA" '
+			select(.schema == $schema)
+			| select(.producer == $producer)
+			| select(.created_epoch | numbers | . > 0 and floor == .)
+			| select((.intent_id | strings | length > 0) and (.worktree_path | strings | length > 0))
+			| [.intent_id, .worktree_path, .canonical_common_dir, .created_epoch] | @tsv
+		' "$intent_path" 2>/dev/null) || continue
+		IFS=$'\t' read -r intent_id worktree_path intent_common_dir created_epoch <<<"$intent_values"
+		[[ "$intent_id" == "$(basename "$intent_path" .json)" &&
+			"$intent_common_dir" == "$common_dir" &&
+			"$worktree_path" == "${worktree_base}/${intent_id}" &&
+			"$worktree_path" != "${PROFILE_PUBLICATION_WORKTREE:-}" ]] || continue
+		# Intents whose tree is gone stay with Pulse's dated stale-intent cleanup.
+		[[ -d "$worktree_path" ]] || continue
+		[[ "$now_epoch" -ge "$created_epoch" && $((now_epoch - created_epoch)) -ge "$min_age" ]] || continue
+		if [[ "$attempts" -ge "$cap" ]] ||
+			! _profile_publication_prior_worktree_is_safe "$worktree_path" "$canonical_repo" "$worktree_base"; then
+			preserved=$((preserved + 1))
+			continue
+		fi
+		attempts=$((attempts + 1))
+		if _profile_retire_prior_publication_worktree "$worktree_path" "$canonical_repo" \
+			"$worktree_base" "$intent_path"; then
+			retired=$((retired + 1))
+		else
+			preserved=$((preserved + 1))
+		fi
+	done
+	if [[ "$retired" -gt 0 || "$preserved" -gt 0 ]]; then
+		printf 'Profile publication sweep: retired %s earlier worktree(s); %s preserved for guarded recovery\n' \
+			"$retired" "$preserved" >&2
+	fi
 	return 0
 }
 
@@ -2078,6 +2231,7 @@ _profile_run_in_worktree() {
 	worktree_name="$(basename "$canonical_repo")-profile-readme-$(date -u +%Y%m%d%H%M%S)-$$-${RANDOM}"
 	mkdir -p "$worktree_base" || return 1
 	PROFILE_PUBLICATION_WORKTREE_BASE=$(cd "$worktree_base" 2>/dev/null && pwd -P) || return 1
+	_profile_sweep_prior_publication_worktrees "$canonical_repo" "$PROFILE_PUBLICATION_WORKTREE_BASE" || true
 	local worktree_path="${PROFILE_PUBLICATION_WORKTREE_BASE}/${worktree_name}"
 	PROFILE_PUBLICATION_WORKTREE="$worktree_path"
 	PROFILE_PUBLICATION_CANONICAL_REPO="$canonical_repo"
@@ -2187,8 +2341,8 @@ cmd_cleanup_managed() {
 	[[ -f "$PROFILE_PUBLICATION_INTENT_PATH" && ! -L "$PROFILE_PUBLICATION_INTENT_PATH" ]] || return 1
 	common=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" rev-parse --path-format=absolute --git-common-dir) || return 1
 	jq -e --arg path "$PROFILE_PUBLICATION_WORKTREE" --arg common "$common" \
-		--arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" \
-		'.schema == "aidevops-profile-publication-intent/v1" and .producer == $producer and
+		--arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" --arg schema "$PROFILE_PUBLICATION_INTENT_SCHEMA" \
+		'.schema == $schema and .producer == $producer and
 		 .worktree_path == $path and .canonical_common_dir == $common and
 		 (.canonical_status | type == "string")' "$PROFILE_PUBLICATION_INTENT_PATH" >/dev/null || return 1
 	PROFILE_PUBLICATION_CANONICAL_HEAD=$(jq -er '.canonical_head' "$PROFILE_PUBLICATION_INTENT_PATH") || return 1

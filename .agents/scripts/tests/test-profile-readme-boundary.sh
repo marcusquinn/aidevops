@@ -455,6 +455,62 @@ EOF
 	return 0
 }
 
+profile_publication_trees() {
+	local profile_repo="$1"
+	git -C "$profile_repo" worktree list --porcelain | sed -n 's/^worktree //p' | grep -- '-profile-readme-' || true
+	return 0
+}
+
+# GH#36543: a failed retirement must not leak its tree forever. Later runs sweep
+# earlier clean, published trees through the guarded path and keep dirty ones.
+test_update_sweeps_prior_publication_worktrees() {
+	local test_name="profile update sweeps earlier clean publication trees and preserves dirty ones"
+	TEST_DIR=$(mktemp -d)
+	local fixture_home="${TEST_DIR}/home" fixture_repo="${TEST_DIR}/profile-repo"
+	local fixture_remote="${TEST_DIR}/profile-remote.git" helper_dir="${TEST_DIR}/helper"
+	local refusing_helper="${TEST_DIR}/refusing-worktree-helper.sh" output_file="${TEST_DIR}/update-output"
+	local phase="" tree_a="" tree_b="" intent_dir="" remaining=""
+
+	mkdir -p "$helper_dir" "$fixture_home"
+	install_helper_with_libs "$helper_dir"
+	write_stub_dependencies "$helper_dir"
+	create_profile_repo_fixture "$fixture_home" "$fixture_repo" "$fixture_remote"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"$refusing_helper"
+	chmod +x "$refusing_helper"
+	intent_dir="$(git -C "$fixture_repo" rev-parse --path-format=absolute --git-common-dir)/aidevops-profile-publication-intents"
+
+	for phase in refused-a refused-b sweep; do
+		local worktree_helper="$refusing_helper" min_age=""
+		if [[ "$phase" == sweep ]]; then
+			worktree_helper="${helper_dir}/worktree-helper.sh"
+			min_age=0
+			tree_b=$(profile_publication_trees "$fixture_repo" | grep -vxF -- "$tree_a" || true)
+			[[ -n "$tree_b" ]] && printf 'local edit\n' >"${tree_b}/unpublished-note"
+		fi
+		HOME="$fixture_home" \
+			PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
+			AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
+			AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
+			AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/recovery" \
+			AIDEVOPS_PROFILE_WORKTREE_HELPER="$worktree_helper" \
+			AIDEVOPS_PROFILE_PUBLICATION_SWEEP_MIN_AGE_SECS="$min_age" \
+			bash "${helper_dir}/profile-readme-helper.sh" update >"$output_file" 2>&1 || true
+		[[ "$phase" == refused-a ]] && tree_a=$(profile_publication_trees "$fixture_repo")
+	done
+
+	remaining=$(profile_publication_trees "$fixture_repo")
+	if [[ -z "$tree_a" || -z "$tree_b" || "$tree_a" == *$'\n'* ]] ||
+		[[ "$remaining" != "$tree_b" || -e "$tree_a" ]] ||
+		[[ -e "${intent_dir}/${tree_a##*/}.json" || ! -f "${intent_dir}/${tree_b##*/}.json" ]] ||
+		[[ "$(cat "${tree_b}/unpublished-note" 2>/dev/null)" != 'local edit' ]] ||
+		! grep -q 'Profile publication sweep: retired 1 earlier worktree(s); 1 preserved' "$output_file"; then
+		print_helper_failure "$test_name" "expected only the dirty earlier tree to remain (a=${tree_a##*/} b=${tree_b##*/})" "$output_file"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
 test_update_dry_run_is_canonical_safe() {
 	local test_name="profile update dry-run leaves canonical checkout and remote unchanged"
 	TEST_DIR=$(mktemp -d)
@@ -1676,6 +1732,8 @@ main() {
 		test_update_recovers_dirty_profile_publication_worktree
 		teardown
 		test_update_recovers_dirty_profile_publication_worktree 0600
+		teardown
+		test_update_sweeps_prior_publication_worktrees
 		teardown
 		test_update_dry_run_is_canonical_safe
 		teardown
