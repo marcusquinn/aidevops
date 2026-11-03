@@ -13,6 +13,7 @@ from uuid import UUID, uuid5
 from .absence import reconcile_absence
 from .archive_path import create_archive_root, validate_archive_path
 from .admission import AdmissionRegistry
+from .cleanup_failure import command_failure as _command_failure
 from .cleanup_plan import enrolled_only_event_id
 from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import FilesystemValidationError, filesystem_error_details
@@ -118,34 +119,6 @@ def _failure_details(error: Exception) -> dict:
         details["errno"] = error.errno
     if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
         details.update(_command_failure(error))
-    return details
-
-
-def _command_failure(
-    error: "subprocess.CalledProcessError | subprocess.TimeoutExpired",
-) -> dict:
-    details: dict = {"operation": "subprocess"}
-    if isinstance(error, subprocess.CalledProcessError):
-        details["returncode"] = error.returncode
-    else:
-        details["timeout_seconds"] = error.timeout
-    command = error.cmd
-    if not isinstance(command, (list, tuple)) or len(command) < 3:
-        return details
-    if (not isinstance(command[1], str)
-            or Path(command[1]).name != "worktree-archive-helper.sh"
-            or command[2] not in {"archive", "verify-local", "source-matches"}):
-        return details
-    details.update(operation=command[2], archive_failure=True)
-    # Only the helper's namespaced validation code is useful here. Drop paths,
-    # descriptions and all other stderr (which may contain sensitive Git URLs).
-    stderr = error.stderr or b""
-    text = stderr[-8192:]
-    if isinstance(text, bytes):
-        text = text.decode("utf-8", errors="replace")
-    match = re.search(r"(?m)^ValueError: ((?:merge|git_admin):[a-z_]{1,64})(?::[^\n]*)?$", text)
-    if match:
-        details["reason"] = match[1]
     return details
 
 

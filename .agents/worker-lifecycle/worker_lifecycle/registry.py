@@ -178,9 +178,7 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
     raise ValueError("unsupported-worktree-operation")
 
 
-def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
-        upgrade_registry(store)
+def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
     if args.operation == "cleanup-worktree":
         from .cleanup import cleanup_worktree
 
@@ -197,6 +195,14 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
         return cleanup_pass(
             store, args.repos_config, args.output_root, args.limit, args.budget_seconds,
         )
+    raise ValueError("unsupported-cleanup-operation")
+
+
+def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
+        upgrade_registry(store)
+    if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only"}:
+        return _cleanup_operation(store, args)
     if args.operation in {
         "create-worktree", "admit-session", "preserve-wip", "prepare-cleanup", "retire-worktree",
     }:

@@ -60,9 +60,11 @@ def enrolled_only_authorized(store: LifecycleRegistry, generation: str) -> bool:
         "type": "enrolled-only-retirement-authorized",
         "generation_id": generation, "operator_confirmed": True,
     }
-    return (event is not None and json.loads(event["payload"]) == expected
-            and admission is not None and admission["state"] == "closed"
-            and not _runs(store, generation))
+    if event is None or admission is None:
+        return False
+    if json.loads(event["payload"]) != expected or admission["state"] != "closed":
+        return False
+    return not _runs(store, generation)
 
 
 def _refresh_runs(
