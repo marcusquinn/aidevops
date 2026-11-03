@@ -218,6 +218,14 @@ body is printed. These diagnostics do not change history acceptance.
 All current assignment, hold, permission, brief-revision and exact-head checks
 remain in force.
 
+Hidden-but-unedited coordination is valid evidence (GH#36529). Dispatch comment
+hygiene minimizes a runner's old `DISPATCH_CLAIM`/`DISPATCH_LEASE` comments, which
+bumps REST `updated_at` without changing the body. The helper therefore reads
+GraphQL `lastEditedAt` for each comment whose `updated_at` differs from
+`created_at` and treats the comment as unedited only when it is `null`. A non-null
+value, a missing node or an unreadable GraphQL response keeps the comment edited
+(fail closed), so an edited body never counts as recovery evidence.
+
 A stale-assignment release after prelaunch is not a completed history when the
 ready/terminal evidence is absent. Do not synthesize missing events, reinterpret
 that release as `claim_only_no_worker`, or change published records to recover it.
