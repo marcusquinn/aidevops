@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from worker_lifecycle import retirement
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
-from worker_lifecycle.cleanup import cleanup_pass, retire_enrolled_only
+from worker_lifecycle.cleanup import cleanup_pass, cleanup_worktree, retire_enrolled_only
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id
 from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import MARKER, GenerationEnrollment
@@ -572,6 +572,51 @@ class RetirementContract(unittest.TestCase):
         result = cleanup_pass(self.store, self.cleanup_config(), self.output)
         self.assertEqual((result["retired"], result["failed"]), (1, 0))
         self.assertEqual((self.target / "replacement").read_text(), "keep")
+
+    def test_explicit_cleanup_accepts_registered_quiet_repository(self):
+        self.create()
+        config = self.cleanup_config(maintenance=False, pulse=False)
+        report = cleanup_pass(self.store, config, self.output)
+        self.assertEqual((report["retired"], report["held"]), (0, 1))
+        self.assertEqual(report["results"][0]["status"], "outside-maintenance-scope")
+        self.assertTrue(self.target.exists())
+        self.assertEqual(list(self.output.iterdir()), [])
+        result = cleanup_worktree(self.store, config, self.output, self.target)
+        self.assertEqual(result["status"], "retired")
+        self.assertFalse(self.target.exists())
+        restored = self.root / "restored"
+        _helper("restore", result["archive"], "--target", str(restored), "--verification-copy")
+        self.assertEqual((restored / "work.txt").read_text(), "unfinished result")
+
+    def test_explicit_cleanup_still_requires_registered_nonlocal_repository(self):
+        self.create()
+        for settings in ({"local_only": True}, {"slug": "invalid"},
+                         {"path": str(self.root / "unregistered")}):
+            result = cleanup_worktree(
+                self.store, self.cleanup_config(**settings), self.output, self.target,
+            )
+            self.assertEqual(result["status"], "outside-maintenance-scope")
+            self.assertTrue(self.target.exists())
+        config = self.root / "empty-repos.json"
+        config.write_text(json.dumps({"initialized_repos": []}))
+        result = cleanup_worktree(self.store, config, self.output, self.target)
+        self.assertEqual(result["status"], "outside-maintenance-scope")
+        self.assertTrue(self.target.exists())
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_enrolled_only_accepts_registered_quiet_repository(self):
+        self.git("worktree", "add", "--detach", str(self.target), "HEAD")
+        GenerationEnrollment(self.store).resolve(self.target, create=True)
+        config = self.cleanup_config(maintenance=False, pulse=False)
+        preview = retire_enrolled_only(
+            self.store, config, self.output, self.target, False,
+        )
+        self.assertEqual(preview["status"], "enrolled-only-preview")
+        result = retire_enrolled_only(
+            self.store, config, self.output, self.target, True,
+        )
+        self.assertEqual(result["status"], "retired")
+        self.assertFalse(self.target.exists())
 
     def test_cleanup_respects_maintenance_scope_and_live_owner(self):
         self.create()
