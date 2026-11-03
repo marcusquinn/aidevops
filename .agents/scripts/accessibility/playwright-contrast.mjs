@@ -115,7 +115,7 @@ function _cBackground(el) {
 // Complex background flags (gradient/image)
 function _cComplexBg(el) {
   const flags = [];
-  for (let c = el, d = 0; c && d < 6; c = c.parentElement, d++) {
+  for (let c = el; c; c = c.parentElement) {
     const img = window.getComputedStyle(c).backgroundImage;
     if (img && img !== 'none') flags.push(img.includes('gradient') ? 'gradient' : 'background-image');
   }

@@ -399,7 +399,7 @@ _run_qa_phases() {
 	# Phase 4: Accessibility
 	log_info "--- Phase 4: Accessibility ---"
 	local a11y_result
-	a11y_result=$(cmd_a11y "${page_args[@]}" 2>/dev/null) || a11y_result='{"error": "accessibility check failed"}'
+	a11y_result=$(cmd_a11y "${page_args[@]}" --viewports "$viewports" 2>/dev/null) || a11y_result='{"error": "accessibility check failed"}'
 
 	cat <<REPORT
 {
