@@ -39,7 +39,7 @@ def _trusted_events(comments: list[dict[str, Any]], context: CheckpointContext) 
         # #aidevops:trust-boundary — association alone does not make a
         # COLLABORATOR or cross-org runner authoritative.
         if (comment.get("author_association") not in {"OWNER", "MEMBER"} and
-                not _checkpoint_health_writer(context, comment.get("user", {}).get("login", ""))):
+                not _checkpoint_health_writer(context, (comment.get("user") or {}).get("login", ""))):
             continue
         events.extend((comment, line) for line in lines)
     return events
@@ -52,7 +52,7 @@ def _is_unknown_release(comment: dict[str, Any], line: str) -> bool:
             comment.get("updated_at", comment.get("created_at")) != comment.get("created_at")):
         return False
     runner = re.search(r"(?:^| )runner=([A-Za-z0-9-]+)(?: |$)", line)
-    return bool(runner and runner.group(1) == comment.get("user", {}).get("login"))
+    return bool(runner and runner.group(1) == (comment.get("user") or {}).get("login"))
 
 
 def _release_age(comment: dict[str, Any], now: dt.datetime) -> int:

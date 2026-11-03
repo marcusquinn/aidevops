@@ -314,15 +314,22 @@ def _scan_repo(
 
 def _enrich_repo_history(aggregate: dict[str, int], slug: str,
                          max_issues: int, now: dt.datetime) -> None:
-    """Keep optional history within the dependency inventory's remaining budget."""
+    """Collect durable progress before spending budget on advisory checkpoints."""
     for issue in (_fetch_repo_issues(slug, max_issues) or [])[:max_issues]:
         if time.monotonic() < dependency_scan.QUERY_DEADLINE:
-            _count_unknown_checkpoint_triage(aggregate, slug, issue, now)
             _count_durable_progress(aggregate, slug, issue, now)
         else:
             aggregate["durable_progress_unknown"] += 1
-            if "status:blocked" in _issue_labels(issue) and not issue.get("assignees"):
-                aggregate["unknown_checkpoint_triage_unreadable"] += 1
+
+
+def _enrich_repo_checkpoints(aggregate: dict[str, int], slug: str,
+                             max_issues: int, now: dt.datetime) -> None:
+    """Use only the budget remaining after all repositories' durable progress."""
+    for issue in (_fetch_repo_issues(slug, max_issues) or [])[:max_issues]:
+        if time.monotonic() < dependency_scan.QUERY_DEADLINE:
+            _count_unknown_checkpoint_triage(aggregate, slug, issue, now)
+        elif "status:blocked" in _issue_labels(issue) and not issue.get("assignees"):
+            aggregate["unknown_checkpoint_triage_unreadable"] += 1
 
 
 def main() -> int:
@@ -361,6 +368,10 @@ def main() -> int:
     # Optional history must not consume the dependency inventory's budget.
     for repo in repos:
         _enrich_repo_history(aggregate, str(repo.get("slug") or ""), max_issues, now)
+
+    # Advisory checkpoint reads must not starve durable progress in any repository.
+    for repo in repos:
+        _enrich_repo_checkpoints(aggregate, str(repo.get("slug") or ""), max_issues, now)
 
     error = "queue_budget_exhausted" if time.monotonic() >= dependency_scan.QUERY_DEADLINE else ""
     if not error and aggregate["repos_truncated"]:
