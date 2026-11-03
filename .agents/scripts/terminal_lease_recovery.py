@@ -26,6 +26,7 @@ PERMANENT_DENIALS = frozenset((
     "claim_unmatched", "identity_mismatch", "not_checkpoint_claim", "later_coordination",
     "already_terminal", "already_released", "not_ready", "attempt_unknown", "expiry_unknown",
 ))
+SKIP = object()  # settle(): leave the pending row for a later cycle
 
 
 def record(kind, repo, issue, session, pid):
@@ -79,6 +80,25 @@ def worker_ended(row):
         return False
 
 
+def issue_state(row):
+    """Return the GitHub issue state ("open"/"closed"), or None when GitHub cannot answer."""
+    try:
+        result = subprocess.run([str(Path(shutil.which("gh")).resolve()), "api",  # nosec B603 — resolved gh, fixed arguments, positional data only
+                                 f"repos/{row['repo']}/issues/{row['issue_number']}", "--jq", ".state"],
+                                capture_output=True, text=True, timeout=60, check=True)
+    except (TypeError, OSError, subprocess.SubprocessError):
+        return None  # Missing gh, transport errors and pacing all defer the batch.
+    return result.stdout.strip()
+
+
+def local_resolution(row, kind, reason=None):
+    resolution = {name: row[name] for name in KEYS}
+    resolution.update(ts=int(time.time()), record_type=PREFIX + kind)
+    if reason:
+        resolution["reason"] = reason
+    return resolution
+
+
 def close_pending(row):
     """Return a token-free resolution, or None to defer the remaining batch."""
     helper = Path(__file__).resolve().with_name("dispatch-claim-helper.sh")
@@ -89,18 +109,34 @@ def close_pending(row):
                                 capture_output=True, text=True, timeout=90)
     except (OSError, subprocess.SubprocessError):
         return None
-    resolution = {name: row[name] for name in KEYS}
-    resolution["ts"] = int(time.time())
     if result.returncode == 0:
-        resolution["record_type"] = PREFIX + "resolved"
-        return resolution
+        return local_resolution(row, "resolved")
     # No raw helper/transport output enters the evidence log. Unknown failures
     # (including pacing and rate limits) defer the batch without a retry.
     match = re.fullmatch(r"PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=([a-z_]+)\s*", result.stderr)
     if not match or match[1] not in PERMANENT_DENIALS:
         return None
-    resolution.update(record_type=PREFIX + "blocked", reason=match[1])
-    return resolution
+    return local_resolution(row, "blocked", match[1])
+
+
+def settle(row):
+    """Return a resolution, SKIP to keep the row pending, or None to defer the batch."""
+    expiry = row.get("expires_at")
+    if not isinstance(expiry, int) or int(time.time()) <= expiry + 120 or executor_live(row["session"]):
+        return SKIP
+    # Without a valid native identity the exit can never be proven: block once,
+    # locally, instead of re-scanning the row every cycle.
+    try:
+        ProcessIdentity.from_dict(row.get("process_identity"))
+    except ValueError:
+        return local_resolution(row, "blocked", "identity_unavailable")
+    if not worker_ended(row):
+        return SKIP
+    # Closed issues are resolved locally; the pulse never writes to them.
+    state = issue_state(row)
+    if state != "open":
+        return local_resolution(row, "resolved", "issue_closed") if state == "closed" else None
+    return close_pending(row)
 
 
 def local_pending(history, device):
@@ -126,12 +162,9 @@ def drain():
         for row in pending.values():
             if processed == 3:
                 break
-            expiry = row.get("expires_at")
-            if not isinstance(expiry, int) or int(time.time()) <= expiry + 120:
+            resolution = settle(row)
+            if resolution is SKIP:
                 continue
-            if executor_live(row["session"]) or not worker_ended(row):
-                continue
-            resolution = close_pending(row)
             if resolution is None:
                 break
             processed += 1
