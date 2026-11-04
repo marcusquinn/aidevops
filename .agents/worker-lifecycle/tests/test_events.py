@@ -233,6 +233,28 @@ class EventContract(unittest.TestCase):
         self.store.raise_capacity(DEFAULT_MAX_EVENTS, apply=True)
         self.assertEqual(self.stored_limit(), DEFAULT_MAX_EVENTS)
 
+    def test_capacity_raise_rejects_reserved_legacy_target_without_silent_lift(self):
+        with self.store.connection(write=True, maintenance=False) as connection:
+            connection.execute("UPDATE metadata SET max_events=5000")
+        before = self.store.summary()
+        for apply in (False, True):
+            with self.subTest(apply=apply), self.assertRaisesRegex(
+                    ValueError, "capacity-target-reserved-for-legacy-lift"):
+                self.store.raise_capacity(LEGACY_DEFAULT_MAX_EVENTS, apply=apply)
+            self.assertEqual(self.store.summary(), before)
+            self.assertEqual(self.stored_limit(), 5000)
+        self.assertEqual(list(self.path.glob("capacity-backup-*")), [])
+        ingest(self.store, json.dumps(self.envelope(os.getpid())))
+        self.assertEqual(self.stored_limit(), 5000)
+        self.assertEqual(self.store.summary()["event_limit"], 5000)
+
+    def test_compaction_rejects_boolean_and_non_integer_retention(self):
+        for age in (True, False, "0", 0.0, -1, 315360001):
+            with self.subTest(age=age), self.assertRaisesRegex(ValueError, "invalid-retention-age"):
+                self.store.compact(age=age, apply=True)
+        self.assertEqual(self.store.summary()["events"], 0)
+        self.assertEqual(self.store.compact(age=0)["eligible_events"], 0)
+
     def test_status_reports_insufficient_three_event_headroom(self):
         ingest(self.store, json.dumps(self.envelope(os.getpid())))
         status = self.cli("status")

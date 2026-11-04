@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from .filesystem import checked_directory
 from .storage import (
-    ADMISSION_EVENT_NEED, DEFAULT_MAX_EVENTS, MAX_EVENT_BYTES,
+    ADMISSION_EVENT_NEED, DEFAULT_MAX_EVENTS, LEGACY_DEFAULT_MAX_EVENTS, MAX_EVENT_BYTES,
     LifecycleRegistry, StoreCapacity, StoreConflict, encode, identifier,
 )
 
@@ -71,7 +71,7 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
     Keeping projections prevents archived register/bind/admit replays from
     resurrecting ended owners. Generation-only control events stay online.
     """
-    if type(age) is not int or not 0 <= age <= 315360000:
+    if not isinstance(age, int) or isinstance(age, bool) or not 0 <= age <= 315360000:
         raise ValueError("invalid-retention-age")
     rows = connection.execute(
         "SELECT e.* FROM events e JOIN runs r ON r.run_id=json_extract(e.payload,'$.run_id') "
@@ -125,8 +125,12 @@ def raise_capacity(store: LifecycleRegistry, connection: sqlite3.Connection, max
     current = connection.execute("SELECT max_events FROM metadata").fetchone()[0]
     count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
     minimum = max(current + 1, count, store._event_limit(connection))
-    if type(maximum) is not int or not minimum <= maximum <= DEFAULT_MAX_EVENTS:
+    if (not isinstance(maximum, int) or isinstance(maximum, bool)
+            or not minimum <= maximum <= DEFAULT_MAX_EVENTS):
         raise ValueError("capacity-must-increase-within-schema-limit")
+    # This value identifies historical defaults and is lifted on event writes.
+    if maximum == LEGACY_DEFAULT_MAX_EVENTS:
+        raise ValueError("capacity-target-reserved-for-legacy-lift")
     backup = None
     if apply:
         backup = store.directory / f"capacity-backup-{uuid4()}.sqlite3"
