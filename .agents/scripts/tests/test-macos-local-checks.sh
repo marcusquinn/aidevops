@@ -33,6 +33,14 @@ uname() {
 gh() {
 	local args="$*"
 	printf '%s\n' "$args" >>"$WORK/calls"
+	if [[ "$args" == *'--remove-label needs-macos-verification'* && "${push_during_removal:-0}" == 1 ]]; then
+		# The refresh addLabels no-ops while the old label is still present.
+		printf '%s\n' new-head >"$WORK/head"
+		printf '%s\n' absent >"$WORK/label"
+	fi
+	if [[ "$args" == *'--add-label needs-macos-verification'* ]]; then
+		printf '%s\n' present >"$WORK/label"
+	fi
 	if [[ "$args" == *--add-reviewer* ]]; then
 		return "$review_rc"
 	fi
@@ -103,4 +111,17 @@ command grep -Fq -- 'keeping needs-macos-verification' "$WORK/diagnostic"
 command grep -Fq -- 'Check out the new PR head in a clean worktree on a Mac and rerun verify-pr.' "$WORK/diagnostic"
 if command grep -q -- '--remove-label needs-macos-verification' "$WORK/calls"; then exit 1; fi
 [[ "$(<"$WORK/head")" == new-head ]]
-printf '%s\n' 'PASS: sensitive/no-op detection, native failure, host override, maintainer override/fallback, review/assignment, fail-closed diff and head-change diagnostic/label retention'
+
+# A push after the final pre-removal check must restore the removed label.
+body_edit_head=test-head
+printf '%s\n' test-head >"$WORK/head"
+printf '%s\n' present >"$WORK/label"
+push_during_removal=1
+rm "$WORK/calls"
+if macos_checks_verify_pr 123 owner/repo 2>"$WORK/diagnostic"; then exit 1; fi
+command grep -q -- '--remove-label needs-macos-verification' "$WORK/calls"
+command grep -q -- '--add-label needs-macos-verification' "$WORK/calls"
+[[ "$(<"$WORK/label")" == present ]]
+[[ "$(<"$WORK/head")" == new-head ]]
+command grep -Fq -- 'PR head changed from test-head to new-head during label removal' "$WORK/diagnostic"
+printf '%s\n' 'PASS: sensitive/no-op detection, native failure, host override, maintainer override/fallback, review/assignment, fail-closed diff, head-change diagnostic/label retention and removal-race restoration'
