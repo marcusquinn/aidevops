@@ -165,7 +165,7 @@ class PreservationContract(unittest.TestCase):
 
     def test_compact_deletions_preserve_index_and_working_state(self):
         # Include binary, executable, symlink and non-shell-safe names.
-        names = ("large", "space\nname", ":(glob)*", "executable")
+        names = ("large", "space\nname", ":(glob)*", "executable", os.fsdecode(b"raw-\xff"))
         for name in names:
             (self.work / name).write_bytes(b"deleted content\n" * 10000)
         (self.work / "executable").chmod(0o755)
@@ -215,6 +215,42 @@ class PreservationContract(unittest.TestCase):
         self.helper("verify-local", archive)
         target, _ = self.restore(archive)
         self.assertEqual(self.git(target, "diff", "--binary", "--full-index"), patch)
+
+    def test_compact_deletions_ignore_local_diff_order_and_rename_settings(self):
+        """Source-local diff configuration cannot change reconstructed hashes."""
+        order = self.root / "diff-order"
+        order.write_text("mixed\nlocal-commit\nbinary\n")
+        self.git(self.work, "config", "diff.orderFile", str(order))
+        self.git(self.work, "config", "diff.renames", "false")
+        self.git(self.work, "mv", "local-commit", "renamed")
+        self.git(self.work, "rm", "binary")
+        (self.work / "mixed").write_bytes(b"staged modification\n")
+        self.git(self.work, "add", "mixed")
+        (self.work / "mixed").unlink()
+        archive = self.archive()
+        self.helper("verify-local", archive)
+        self.helper("source-matches", archive, self.work)
+        target, _ = self.restore(archive)
+        self.assertEqual(self.git(target, "ls-files", "--stage", "-z"),
+                         self.git(self.work, "ls-files", "--stage", "-z"))
+        self.assertEqual((target / "renamed").read_bytes(), b"only local\n")
+        self.assertFalse((target / "mixed").exists())
+
+    def test_gitlink_deletion_is_refused_during_capture(self):
+        """Do not publish compact records that the restoration reader rejects."""
+        oid = self.git(self.work, "rev-parse", "HEAD").decode().strip()
+        self.git(self.work, "update-index", "--add", "--cacheinfo", "160000", oid, "submodule")
+        self.git(self.work, "commit", "-qm", "gitlink base")
+        self.git(self.work, "update-index", "--force-remove", "submodule")
+        before = self.git(self.work, "diff", "--cached", "--raw")
+        result = self.helper("archive", self.work, "--repo", "fixture/repository",
+                             "--issue", "1", "--reason", "failed-worker",
+                             "--base-branch", "develop", "--output-root", self.root / "archives",
+                             check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"unsafe deletion mode", result.stderr)
+        self.assertFalse(list((self.root / "archives").rglob("manifest.json")))
+        self.assertEqual(self.git(self.work, "diff", "--cached", "--raw"), before)
 
     def test_unsafe_or_wrong_deletion_identity_is_refused(self):
         (self.work / "mixed").unlink()

@@ -13,7 +13,8 @@ from worktree_archive_git import git
 
 NAME = "deletions-v1.json"
 OPTIONS = ("--binary", "--full-index", "--no-ext-diff", "--no-textconv",
-           "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short")
+           "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short",
+           "--find-renames", "-O" + os.devnull)
 
 
 def capture(root, archive):
@@ -22,14 +23,17 @@ def capture(root, archive):
     for phase, flags, filename in (("staged", ("--cached",), "staged.patch"),
                                    ("unstaged", (), "diff.patch")):
         raw = git(root, "diff", *flags, "--raw", "--no-abbrev", "-z",
-                  "--diff-filter=D", "--no-ext-diff", "--no-textconv")
+                  "--diff-filter=D", "--no-ext-diff", "--no-textconv",
+                  "--find-renames", "-O" + os.devnull)
         fields = raw.split(b"\0")[:-1]
         entries = []
         for header, path in zip(fields[::2], fields[1::2], strict=True):
             old_mode, _, old_oid, _, status = header.lstrip(b":").split()
             if status != b"D":
                 raise ValueError("unexpected deletion status")
-            entries.append([path.hex(), old_mode.decode(), old_oid.decode()])
+            entry = [path.hex(), old_mode.decode(), old_oid.decode()]
+            deletion_path(entry)  # Refuse unsupported modes before publishing a payload.
+            entries.append(entry)
         records[phase] = entries
         (archive / filename).write_bytes(
             git(root, "diff", *flags, *OPTIONS, "--diff-filter=d"))

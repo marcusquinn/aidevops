@@ -355,11 +355,13 @@ New non-merge archives with deleted files declare `deletion_policy: compact-v1`.
 `deletions-v1.json` contains separate staged/unstaged lists of hex-encoded pathname,
 Git mode and pre-deletion blob ID. Other changes remain in the existing patches.
 Artifact hashes cover this file; verification rejects unsafe/duplicate paths and mismatched index identities.
+Capture refuses gitlink deletions rather than publishing unrestorable submodule records.
 Restore removes staged paths from index and working tree before the staged patch, then unstaged paths
 only from the working tree before its patch. Untracked replacements come last; ignored files stay excluded.
 
 Older archives retain their full-patch reader. Fingerprints are unchanged: local verification reconstructs
 full diffs in memory against an isolated index, reducing storage but not all fingerprinting CPU/memory costs.
+Capture and reconstruction pin default rename detection and pathname order, independent of local diff configuration.
 Old archives are not automatically rewritten; retained Git base objects remain required for recovery.
 
 ## Preservation policy and executor invariants
