@@ -245,6 +245,8 @@ def _error_details(error: Exception, operation: str) -> dict:
     # GH#36142: name the enrollment refusal; OSError text may carry paths.
     if operation == "enroll" and isinstance(error, ValueError):
         detail["detail"] = str(error)[:200]
+    if operation in {"compact", "raise-capacity"} and isinstance(error, ValueError):
+        detail["detail"] = str(error)[:200]
     # GH#36370/GH#36494: creation and targeted-retirement refusals carry a
     # stable code; `reason` stays unchanged.
     code = refusal_code(error, operation)

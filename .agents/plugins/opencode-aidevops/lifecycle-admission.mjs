@@ -56,7 +56,7 @@ function mutationPaths(input, args, cwd) {
 }
 
 // Recovery guidance per safe helper reason; never includes host paths or secrets.
-const CAPACITY_GUIDANCE = 'journal admission has insufficient event headroom; no write authorized. Inspect with worker-registry.py --state-dir <state-directory> status; preview recovery with compact, then use compact --apply to archive eligible ended-run evidence. If no evidence is eligible, preview raise-capacity --max-events <higher-limit>, then repeat with --apply for a verified backup and guarded increase. Never reset or truncate live state';
+const CAPACITY_GUIDANCE = 'journal admission has insufficient event headroom; no write authorized. Inspect with worker-registry.py --state-dir <state-directory> status; preview recovery with compact, then use compact --apply to archive eligible ended-run evidence. If no evidence is eligible and the stored limit is below 100000, preview raise-capacity --max-events <higher-limit> (at most 100000), then repeat with --apply for a verified backup and guarded increase. A store already at 100000 cannot be raised; retry compact when ended-run evidence is old enough, reviewing --min-age-seconds if needed. Never reset or truncate live state';
 const REASON_GUIDANCE = {
   "StoreCapacity": CAPACITY_GUIDANCE,
   "journal-event-limit-reached": CAPACITY_GUIDANCE,

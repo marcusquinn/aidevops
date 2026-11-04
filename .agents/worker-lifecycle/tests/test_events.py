@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+from contextlib import redirect_stderr
 from pathlib import Path
 import sqlite3
 import subprocess  # nosec B404 # bounded, owned test processes only
@@ -17,7 +18,7 @@ from worker_lifecycle.events import ingest, parse_event
 from worker_lifecycle.integration_validation import ReportResult
 from worker_lifecycle.process import ProcessObservation
 from worker_lifecycle.runtime import adapter_for
-from worker_lifecycle.registry import reconcile
+from worker_lifecycle.registry import _error_details, reconcile
 from worker_lifecycle.storage import (DEFAULT_MAX_EVENTS, LEGACY_DEFAULT_MAX_EVENTS, LifecycleRegistry,
                                       StoreCapacity, StoreConflict, encode)
 
@@ -165,6 +166,49 @@ class EventContract(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.store.compact(age=0, apply=True)
         self.assertEqual(self.store.summary(), before)
+
+    def test_automatic_compaction_failure_is_soft_only_with_admission_headroom(self):
+        for headroom in (3, 2):
+            for retention in ("0", "invalid"):
+                with self.subTest(headroom=headroom, retention=retention):
+                    self.store = LifecycleRegistry.initialize(
+                        Path(self.temp.name).resolve() / f"state-{headroom}-{retention}",
+                        max_events=27 + headroom,
+                    )
+                    self.adapter = adapter_for(self.store.installation_id())
+                    self.ended_event()
+                    with self.store.connection(write=True, maintenance=False) as connection:
+                        connection.executemany("INSERT INTO events(event_id,payload) VALUES (?,?)",
+                                               [(str(uuid4()), "{}") for _ in range(25)])
+                    before = self.store.summary()
+                    event = json.dumps(self.envelope(os.getpid()))
+                    log = io.StringIO()
+                    with patch.dict(os.environ, {"AIDEVOPS_LIFECYCLE_RETENTION_SECONDS": retention}), \
+                            patch("worker_lifecycle.storage.os.fsync", side_effect=OSError("private-sentinel")), \
+                            redirect_stderr(log):
+                        if headroom == 3:
+                            ingest(self.store, event)
+                        else:
+                            with self.assertRaises(OSError if retention == "0" else ValueError):
+                                ingest(self.store, event)
+                    self.assertEqual(self.store.summary()["events"], 28 if headroom == 3 else 27)
+                    self.assertNotIn("private-sentinel", log.getvalue())
+                    if headroom == 3:
+                        self.assertIn("automatic-compaction-skipped", log.getvalue())
+                    else:
+                        self.assertEqual(self.store.summary(), before)
+                    with self.store.connection() as connection:
+                        self.assertIsNone(connection.execute(
+                            "SELECT 1 FROM sqlite_master WHERE name='archived_event_ids'").fetchone())
+
+    def test_maintenance_refusal_details_are_bounded_and_do_not_expose_os_errors(self):
+        for operation in ("compact", "raise-capacity"):
+            for error_type in (ValueError, StoreConflict):
+                with self.subTest(operation=operation, error_type=error_type):
+                    result = _error_details(error_type("refusal-" + "x" * 300), operation)
+                    self.assertEqual(result["detail"], "refusal-" + "x" * 192)
+                    self.assertFalse(result["cleanup_authorized"])
+            self.assertNotIn("detail", _error_details(OSError("private-sentinel"), operation))
 
     def test_capacity_raise_requires_apply_and_verified_backup(self):
         ingest(self.store, json.dumps(self.envelope(os.getpid())))

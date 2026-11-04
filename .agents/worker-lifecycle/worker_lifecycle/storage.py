@@ -157,8 +157,16 @@ class LifecycleRegistry:
             if write and maintenance:
                 count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
                 maximum = self._event_limit(connection)
-                if count * 10 >= maximum * 9 or maximum - count < ADMISSION_EVENT_NEED:
-                    self._compact(connection, self.retention_seconds(), apply=True)
+                short = maximum - count < ADMISSION_EVENT_NEED
+                if short or count * 10 >= maximum * 9:
+                    try:
+                        self._compact(connection, self.retention_seconds(), apply=True)
+                    except (OSError, ValueError):
+                        # Archive/retention failures precede journal mutations.
+                        # Maintenance is best effort until admission needs room.
+                        if short:
+                            raise
+                        print("[worker-lifecycle] automatic-compaction-skipped", file=sys.stderr)
             yield connection
             connection.commit()
         except BaseException:
