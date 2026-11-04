@@ -337,7 +337,7 @@ fetch_remote_refs() {
 		"+refs/heads/*:refs/remotes/${REMOTE_NAME}/*" 2>&1 >/dev/null); then
 		# Report the cause (bounded, credential-scrubbed); the stale/refuse
 		# logic keys off the return code only.
-		error_output=$(printf '%s\n' "$error_output" | head -n 3)
+		error_output=$(sed -n '1,3p' <<<"$error_output")
 		if [[ -n "$error_output" ]]; then
 			print_warning "fetch failed: $(scrub_credentials "$error_output")"
 		fi
