@@ -703,6 +703,22 @@ test_exit_push_preserves_dirty_worktree() {
 		print_result "exit push preserves staged, unstaged, and untracked work" 1 \
 			"preserved=${preserved} status='${status}' pushed_count=${pushed_count} tracked='${tracked_content}'"
 	fi
+
+	# A missing default ref still preserves locally, without publishing the commit.
+	git -C "$repo_dir" symbolic-ref --delete refs/remotes/origin/HEAD
+	local remote_before="" remote_after="" local_after=""
+	remote_before=$(git --git-dir="$origin_dir" rev-parse refs/heads/feature/dirty-preserve)
+	printf 'missing default ref\n' >>"${repo_dir}/tracked.txt"
+	_WORKER_WORKTREE_PATH="$repo_dir"
+	_push_wip_commits_on_exit
+	assert_eq "missing default ref marks dirty work preserved" "${_WORKER_DIRTY_WORK_PRESERVED:-0}" "1"
+	status=$(git -C "$repo_dir" status --porcelain)
+	assert_eq "missing default ref commits local dirty work" "$status" ""
+	local_after=$(git -C "$repo_dir" rev-list --count "${remote_before}..HEAD")
+	assert_eq "missing default ref creates one preservation commit" "$local_after" "1"
+	remote_after=$(git --git-dir="$origin_dir" rev-parse refs/heads/feature/dirty-preserve)
+	assert_eq "missing default ref does not push" "$remote_after" "$remote_before"
+	unset _WORKER_WORKTREE_PATH _WORKER_DIRTY_WORK_PRESERVED
 	unset -f git
 	return 0
 }

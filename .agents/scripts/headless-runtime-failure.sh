@@ -1511,11 +1511,9 @@ _push_wip_commits_on_exit() {
 			default_ref="refs/remotes/origin/main"
 		elif git -C "$work_dir" show-ref --verify --quiet refs/remotes/origin/master; then
 			default_ref="refs/remotes/origin/master"
-		else
-			return 0
 		fi
 	fi
-	[[ "$branch_name" == "${default_ref#refs/remotes/origin/}" ]] && return 0
+	[[ -n "$default_ref" && "$branch_name" == "${default_ref#refs/remotes/origin/}" ]] && return 0
 
 	_hrff_unstage_deferred_cleanup_marker "$work_dir"
 	local dirty_status=""
@@ -1535,6 +1533,8 @@ _push_wip_commits_on_exit() {
 		fi
 	fi
 
+	# Missing base metadata must not skip local preservation, but cannot allow push.
+	[[ -n "$default_ref" ]] || return 0
 	# Count against the resolved default only; zero must not select another base.
 	local ahead_count=0
 	ahead_count=$(git -C "$work_dir" rev-list --count "${default_ref}..HEAD" 2>/dev/null || true)

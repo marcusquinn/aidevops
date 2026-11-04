@@ -361,14 +361,15 @@ cmd_record_outcome() {
 	# Routine launches can use a different checkout/signing context. Keep their
 	# failure in the audit ledger without incrementing OR resetting issue health.
 	local routine_signing=0
-	if [[ "$signal" == "worker_signing_unavailable" && "$issue" == routine-* ]]; then
+	# Repository-qualified issue identifiers contain #; routine session IDs do not.
+	if [[ "$signal" == "worker_signing_unavailable" && "$issue" != *'#'* && "$issue" == routine-* ]]; then
 		routine_signing=1
 	fi
 
 	# Window expiry: if the rolling window has elapsed without tripping,
 	# zero out the counter and re-anchor the window. Done BEFORE applying
 	# the new outcome so a stale window doesn't carry an old counter.
-	if _rh_window_expired; then
+	if [[ "$routine_signing" -eq 0 ]] && _rh_window_expired; then
 		# shellcheck disable=SC2016 # $now is a jq variable supplied by --arg.
 		_rh_state_apply '.consecutive_zero_attempts = 0 | .window_started_at = $now' --arg now "$now" || true
 	fi

@@ -329,13 +329,38 @@ else
 		"paused_rc=$routine_rc counter=$counter ledger_entries=$routine_entries"
 fi
 # GH#29920 remains intact even after the excluded routine failures.
-_h record-outcome worker_signing_unavailable owner/repo#2 >/dev/null 2>&1
+_h record-outcome worker_signing_unavailable routine-tools/app#2 >/dev/null 2>&1
 issue_rc=0
 _h is-paused || issue_rc=$?
 if [[ "$issue_rc" -eq 0 ]]; then
 	print_result "issue signing failure still trips immediately after routine outcomes" "PASS"
 else
 	print_result "issue signing failure still trips immediately after routine outcomes" "FAIL" "paused_rc=$issue_rc"
+fi
+_teardown_sandbox
+
+# Routine signing failures must leave even an expired issue window untouched.
+_setup_sandbox
+_h record-outcome no_worker_process owner/repo#1 >/dev/null 2>&1
+expired_state=$(jq '.window_started_at = "2000-01-01T00:00:00Z"' "$RUNNER_HEALTH_STATE_FILE")
+printf '%s\n' "$expired_state" >"$RUNNER_HEALTH_STATE_FILE"
+_h record-outcome worker_signing_unavailable routine-pulse >/dev/null 2>&1
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+window=$(jq -r '.window_started_at' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$counter" -eq 1 && "$window" == "2000-01-01T00:00:00Z" ]]; then
+	print_result "routine signing leaves expired issue counter and window untouched" "PASS"
+else
+	print_result "routine signing leaves expired issue counter and window untouched" "FAIL" \
+		"counter=$counter window=$window"
+fi
+_h record-outcome no_worker_process owner/repo#2 >/dev/null 2>&1
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+window=$(jq -r '.window_started_at' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$counter" -eq 1 && "$window" != "2000-01-01T00:00:00Z" ]]; then
+	print_result "next issue outcome still expires and re-anchors stale window" "PASS"
+else
+	print_result "next issue outcome still expires and re-anchors stale window" "FAIL" \
+		"counter=$counter window=$window"
 fi
 _teardown_sandbox
 
