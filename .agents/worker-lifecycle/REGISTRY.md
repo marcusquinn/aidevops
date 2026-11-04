@@ -13,7 +13,7 @@ State must live in a new directory under an existing canonical, user-controlled
 parent on a local filesystem, not NFS or a shared-host volume.
 
 ```bash
-python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state init --max-events 10000
+python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state init --max-events 100000
 python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state status
 python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state register --event-id EVENT_UUID --run-id RUN_UUID --pid PID
 python3 -B -m worker_lifecycle.registry --state-dir /absolute/new-private-state bind --event-id OTHER_EVENT_UUID --run-id RUN_UUID --generation-id GENERATION_UUID --path /absolute/worktree
@@ -97,7 +97,9 @@ evaluate extended ACLs or sandbox hostile same-user processes.
 - Events have a UTC `recorded_at` timestamp generated at insertion, not a claim
   about when the producer performed the action. Sequence orders events; wall-clock
   changes are never used as evidence of process death.
-- New-event admission stops at `max_events` (default 10,000; maximum 100,000).
+- New-event admission stops at `max_events` (default and schema maximum 100,000).
+  A store still at the original 10,000 default is lifted to 100,000 inside its next
+  event write; `status` reports that effective limit. Other explicit limits are kept.
   Payloads are capped at 16 KiB; binding paths at 4,096 characters. Existing exact
   replays still succeed at capacity. No history is silently evicted, and a refused
   observation cannot partially change a run. Status reports capacity and last event.

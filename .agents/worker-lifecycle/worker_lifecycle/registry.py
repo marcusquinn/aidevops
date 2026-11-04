@@ -19,7 +19,7 @@ from .cleanup_plan import prepare_cleanup
 from .launch import initialize_or_open
 from .refusal import refusal_code
 from .runtime import adapter_for, require_ready
-from .storage import MAX_EVENT_BYTES, LifecycleRegistry, StoreCapacity, StoreConflict
+from .storage import DEFAULT_MAX_EVENTS, MAX_EVENT_BYTES, LifecycleRegistry, StoreCapacity, StoreConflict
 from .upgrade import upgrade_registry
 
 
@@ -62,7 +62,7 @@ def argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-dir", type=Path, required=True)
     commands = parser.add_subparsers(dest="operation", required=True)
     initialize = commands.add_parser("init", help="create a NEW private directory/store after readiness")
-    initialize.add_argument("--max-events", type=int, default=10000)
+    initialize.add_argument("--max-events", type=int, default=DEFAULT_MAX_EVENTS)
     commands.add_parser("status", help="report aggregate registry state")
     upgrade = commands.add_parser("upgrade", help="back up and upgrade schema-1 state")
     upgrade.add_argument("--backup-dir", type=Path,
