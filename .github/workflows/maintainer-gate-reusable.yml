@@ -408,6 +408,17 @@ jobs:
               continue
             }
 
+            # GitHub closing keywords link issues, never pull requests. Prose
+            # such as "close #<source-PR> as superseded" in a Dependabot
+            # replacement body must not demand an assignee on that PR; it held
+            # the whole dependency queue behind one replacement (GH#36682).
+            # Skipping is equivalent to omitting the
+            # reference, so it grants nothing a real linked issue would deny.
+            if echo "$RAW_ISSUE_DATA" | jq -e '.pull_request != null' >/dev/null 2>&1; then
+              echo "SKIP: #$ISSUE_NUM is a pull request, not an issue — closing keywords cannot link it"
+              continue
+            fi
+
             # Debug: log raw assignees and labels arrays for troubleshooting (opt-in via workflow_dispatch or re-run)
             if [[ "${MAINTAINER_GATE_DEBUG:-false}" == "true" ]]; then
               echo "DEBUG: Raw assignees for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.assignees[]?.login]')"
