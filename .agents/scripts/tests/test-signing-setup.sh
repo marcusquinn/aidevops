@@ -225,6 +225,18 @@ set -euo pipefail
 script_dir="$1"
 # shellcheck source=/dev/null
 source "${script_dir}/headless-ssh-agent-lib.sh"
+# Observe the newly started agent in the child before the real key load fails.
+# Keep this wrapper local to the failed-load scenario; do not mock ssh-add.
+ssh-add() {
+	local argument="${1:-}"
+	if [[ "$argument" == "${HOME}/.ssh/id_ed25519_signing" ]]; then
+		printf 'export SSH_AUTH_SOCK=%q\nexport SSH_AGENT_PID=%q\n' \
+			"$SSH_AUTH_SOCK" "$SSH_AGENT_PID" >"${HOME}/.ssh/failed-load-agent.env"
+	fi
+	command ssh-add "$@"
+	return $?
+}
+export -f ssh-add
 if headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"; then
 	trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
 	printf 'FAIL recovery accepted a reachable agent after key loading failed\n'
@@ -242,6 +254,25 @@ grep -qF 'dead-agent.sock' "${HOME}/.ssh/agent.env"
 for staged in "${HOME}"/.ssh/agent.env.*; do
 	[[ ! -e "$staged" ]] || { printf 'FAIL staged agent env left behind: %s\n' "$staged"; exit 1; }
 done
+# Inspect the captured agent, not the stale values restored from agent.env.
+(
+	# shellcheck source=/dev/null
+	source "${HOME}/.ssh/failed-load-agent.env"
+	trap 'kill "$SSH_AGENT_PID" 2>/dev/null || true' EXIT
+	[[ "$SSH_AUTH_SOCK" != *"dead-agent.sock" ]]
+	[[ "$SSH_AGENT_PID" != "999999" ]]
+	if kill -0 "$SSH_AGENT_PID" 2>/dev/null; then
+		printf 'FAIL failed key loading left the new agent process running\n'
+		exit 1
+	fi
+	if ssh-add -l >/dev/null 2>&1; then
+		printf 'FAIL failed key loading left the new agent socket reachable\n'
+		exit 1
+	else
+		# Exit 1 is a reachable empty agent; only exit 2 means unreachable.
+		[[ "$?" -eq 2 ]]
+	fi
+)
 if headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"; then
 	trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
 	printf 'FAIL repeated recovery reported success after key loading failed\n'
