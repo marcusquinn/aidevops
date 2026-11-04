@@ -138,7 +138,8 @@ async function executeImageGeneration(rawArgs, options, context) {
   const dimensions = `${saved.width}x${saved.height}`;
   const requestedModel = result.requestedModel || "provider-managed";
   const providerModel = result.providerModel || "unknown";
-  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}. Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${versionNote}${cleanupNote}`;
+  const routerNote = result.routerModel ? ` OAuth router model: ${result.routerModel}.` : "";
+  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}.${routerNote} Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${versionNote}${cleanupNote}`;
 }
 
 export function createGptImageTool(tool, z, options = {}) {
