@@ -243,6 +243,16 @@ class EventContract(unittest.TestCase):
         self.assertEqual(self.store.compact(apply=True)["archived_events"], 1000)
         self.assertEqual(self.store.compact(apply=True)["archived_events"], 5)
 
+    def test_schema_one_generation_compaction_without_admissions_table(self):
+        self.generation_events(legacy=True)
+        with self.store.connection(write=True, maintenance=False) as connection:
+            connection.execute("DROP TABLE generation_admissions")
+            connection.execute("PRAGMA user_version=1")
+        self.assertEqual(self.store.compact()["eligible_events"], 2)
+        self.assertEqual(self.store.compact(apply=True)["archived_events"], 2)
+        with self.store.connection() as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+
     def test_automatic_compaction_failure_is_soft_only_with_admission_headroom(self):
         for headroom in (3, 2):
             for retention in ("0", "invalid"):

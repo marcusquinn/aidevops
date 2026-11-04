@@ -116,7 +116,7 @@ evaluate extended ACLs or sandbox hostile same-user processes.
 new private immutable checksum archive before inserting replay-conflict digest
 tombstones and deleting journal rows in the writer transaction. Automatic
 compaction uses the same path at 90% capacity or below three-event admission
-headroom. Default retention is seven days, configurable with
+headroom. Default retention is one day, configurable with
 `AIDEVOPS_LIFECYCLE_RETENTION_SECONDS` (manual `--min-age-seconds` overrides it).
 Each pass selects at most 1,000 ended-run events plus 1,000 generation events.
 
