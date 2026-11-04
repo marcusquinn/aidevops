@@ -456,6 +456,7 @@ for core in /opt/alt/alt-ImageMagick/usr/lib64/libMagickCore-7.*.so.*; do
 done
 if [ "$core_found" = false ]; then printf 'ImageMagick core: unavailable\n'; fi
 if [ -n "$policy_php" ]; then
+    printf 'Package policy rules (not effective account policy): %s\n' "$cfg/policy.xml"
     run "$policy_php" -r 'if (!class_exists("DOMDocument")) { echo "policy: DOM unavailable", PHP_EOL; exit; } $d = new DOMDocument(); if ($d->load($argv[1], LIBXML_NONET)) { foreach ($d->getElementsByTagName("policy") as $p) { echo $d->saveXML($p), PHP_EOL; } }' "$cfg/policy.xml"
 else
     printf 'policy: PHP unavailable\n'
@@ -526,7 +527,9 @@ image_libs_command() {
     fi
     # Capture stderr too: SSH diagnostics can contain the remote account name.
     output=$(_image_libs_remote_script | ssh -o BatchMode=yes -o ConnectTimeout=15 "$alias" 'bash -s' 2>&1) || status=$?
-    printf '%s\n' "$output" | sed -E "s@(/home|/Users)/[^/[:space:]'\"]+@~@g; s/[[:alnum:]_.-]+@/@/g; s/\bu[0-9]{6,}\b/[account]/g"
+    # Retry matches so IDs sharing a delimiter are all masked (BSD/GNU sed).
+    printf '%s\n' "$output" | sed -E "s@(/home|/Users)/[^/[:space:]'\"]+@~@g; s/[[:alnum:]_.-]+@/@/g" |
+        sed -E -e ':mask' -e 's/(^|[^[:alnum:]_])u[0-9]{6,}([^[:alnum:]_]|$)/\1[account]\2/g' -e 't mask'
     if [[ "$vendor" = true && "$status" -eq 0 ]]; then
         el=$(printf '%s\n' "$output" | sed -nE 's/^kernel: .*\.(el[0-9]+)([._-].*)?$/\1/p')
         _image_libs_vendor "$el"
