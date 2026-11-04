@@ -1387,7 +1387,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
                 self.assertEqual(list(self.archives.glob(".prune-*")), [])
                 kept = [line.split("\t") for line in pruned.stderr.decode().splitlines()
                         if line.startswith("kept\t")]
-                self.assertTrue(any(Path(fields[1]).name == archive.name for fields in kept), kept)
+                self.assertTrue(any(Path(fields[1]) == archive for fields in kept), kept)
 
     def test_symlinked_bucket_never_deletes_external_archive(self):
         archive = self.archive()
