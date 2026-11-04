@@ -27,7 +27,12 @@ def capture(root, archive):
                   "--find-renames", "-O" + os.devnull)
         fields = raw.split(b"\0")[:-1]
         entries = []
-        for header, path in zip(fields[::2], fields[1::2], strict=True):
+        # macOS system Python 3.9 has no zip(strict=...). Keep the same
+        # fail-closed pairing check, including when there are no deletions.
+        if len(fields) % 2:
+            raise ValueError("incomplete deletion record")
+        for offset in range(0, len(fields), 2):
+            header, path = fields[offset:offset + 2]
             old_mode, _, old_oid, _, status = header.lstrip(b":").split()
             if status != b"D":
                 raise ValueError("unexpected deletion status")
