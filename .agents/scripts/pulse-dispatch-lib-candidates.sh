@@ -1471,8 +1471,9 @@ _dispatch_filter_capability_cooled_candidates() {
 # ranking re-attempted the same blocked head candidates every cycle and never
 # reached the untried tail. Every DISPATCH_CANDIDATE_ATTEMPT stamps the
 # candidate; a confirmed worker launch clears the stamp. dispatch_max then puts
-# candidates stamped within the window after the rest of their priority tier,
-# oldest attempt first. Order only: every live gate still runs for every
+# candidates stamped within the window after fresh urgent work, oldest attempt
+# first within each tier, sharing attempts with fresh rank-0 work (GH#36712).
+# Order only: every live gate still runs for every
 # attempted candidate. Runner-local soft state; 0 disables; capped at 7 days.
 #######################################
 _DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS="${AIDEVOPS_DISPATCH_ATTEMPT_RECENCY_SECONDS:-86400}"
@@ -1535,10 +1536,12 @@ _dispatch_attempt_recency_stamps() {
 
 #######################################
 # Order one round's ranked candidates for attempt-recency rotation (see
-# above): stable sort by explicit priority tier (GH#32703 urgent labels still
-# lead strictly), then not-recently-attempted before recently attempted, then
-# oldest attempt first, then the incoming rank. Fails open: any state or jq
-# error returns the input unchanged.
+# above): fresh urgent candidates lead strictly by tier (GH#32703). Then share
+# attempts 3:1 between urgent retries and fresh rank-0 work, so a blocked urgent
+# backlog cannot consume the whole first wave (GH#36712). Each stream retains
+# tier/oldest-attempt/incoming-rank order; unused share is borrowed immediately.
+# Rank-0 retries remain last. Fails open: any state or jq error returns the input
+# unchanged. "Fresh" means no stamp inside the runner-local recency window.
 #
 # Arguments: ranked candidate JSON array
 # Stdout: reordered JSON array
@@ -1557,8 +1560,16 @@ _dispatch_order_attempt_recency_candidates() {
 		def stamp_key: "\((.repo_slug // "") | sub("/"; "--"))--\(.number // "")";
 		($stamps | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: (.[1] | tonumber)}) | from_entries) as $at |
 		[to_entries[] | {i: .key, c: .value, tier: (.value.priority_rank // 0), at: $at[.value | stamp_key]}] as $rows |
+		($rows | sort_by([-.tier, (if .at == null then 0 else 1 end), (.at // 0), .i])) as $sorted |
+		($sorted | map(select(.tier > 0 and .at == null))) as $urgent |
+		($sorted | map(select(.tier > 0 and .at != null))) as $retries |
+		($sorted | map(select(.tier <= 0 and .at == null))) as $fresh |
+		($sorted | map(select(.tier <= 0 and .at != null))) as $tail |
 		($rows | map(select(.at != null)) | length),
-		($rows | sort_by([-.tier, (if .at == null then 0 else 1 end), (.at // 0), .i]) | map(.c))
+		(($urgent +
+			(([$retries | to_entries[] | {slot: ((.key / 3) | floor), stream: 0, i: .key, row: .value}] +
+			  [$fresh | to_entries[] | {slot: .key, stream: 1, i: .key, row: .value}]) |
+			 sort_by([.slot, .stream, .i]) | map(.row)) + $tail) | map(.c))
 	' <<<"$candidates_json" 2>/dev/null) || ! { IFS= read -r demoted && IFS= read -r ordered; } <<<"$result" ||
 		[[ ! "$demoted" =~ ^[1-9][0-9]*$ || -z "$ordered" ]]; then
 		# No stamped candidate in this round (or a parse failure): keep the
@@ -1566,7 +1577,7 @@ _dispatch_order_attempt_recency_candidates() {
 		printf '%s\n' "$candidates_json"
 		return 0
 	fi
-	echo "[pulse-wrapper] Dispatch_max: attempt-recency rotation — ${demoted} candidate(s) attempted without launch in the last ${_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS}s ordered after the rest of their priority tier, oldest attempt first (GH#34363)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Dispatch_max: attempt-recency rotation — ${demoted} candidate(s) attempted without launch in the last ${_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS}s; fresh urgent work first, urgent retries share attempts 3:1 with fresh rank-0 work (GH#34363/GH#36712)" >>"$LOGFILE"
 	_dispatch_stats_increment "dispatch_candidate_attempt_recency_demoted"
 	printf '%s\n' "$ordered"
 	return 0

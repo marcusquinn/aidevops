@@ -245,3 +245,44 @@ _preflight_post_label_refill
 [[ "$(tr '\n' ';' <"$EVENTS")" == 'invalidate:label_maintenance_complete;refill:skip;' ]]
 [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 0 ]]
 printf 'PASS post-label refill invalidates stale candidates and defers backlog normalization without partial first-wave discovery\n'
+
+# GH#36712: run the production round ordering with real recency stamps. Thirty
+# blocked urgent candidates must not hide fresh work behind the attempt budget.
+# shellcheck source=../pulse-dispatch-lib-candidates.sh
+source "${SCRIPT_DIR}/pulse-dispatch-lib-candidates.sh"
+_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=86400
+now=$(date +%s)
+for ((issue = 1; issue <= 30; issue++)); do
+	_dispatch_attempt_recency_stamp "$issue" owner/urgent "$((now - 100 + issue))"
+done
+backlog=$(jq -nc '[range(1;31) | {number:., repo_slug:"owner/urgent", priority_rank:1}]
+	+ [{number:100, repo_slug:"owner/small", priority_rank:0}]')
+ordered=$(_dispatch_order_round_candidates "$backlog" 6)
+jq -e 'length == 31 and .[3].repo_slug == "owner/small"
+	and ([.[] | select(.priority_rank == 1) | .number] == [range(1;31)])' <<<"$ordered" >/dev/null
+[[ "$(jq -c 'sort_by(.repo_slug, .number)' <<<"$ordered")" == "$(jq -c 'sort_by(.repo_slug, .number)' <<<"$backlog")" ]]
+printf 'PASS fresh rank-0 candidate reaches attempt four ahead of thirty urgent retries; no candidates lost\n'
+
+# Fresh urgent work still strictly leads, including across urgent tiers. More
+# fresh ordinary work receives one in four attempts after that urgent prefix.
+mixed=$(jq -c '. + [range(101;105) | {number:., repo_slug:"owner/small", priority_rank:0}]
+	+ [{number:200, repo_slug:"owner/high", priority_rank:1},
+	   {number:201, repo_slug:"owner/critical", priority_rank:2}]' <<<"$backlog")
+ordered=$(_dispatch_order_round_candidates "$mixed" 20)
+jq -e '[.[0:2][].number] == [201,200]
+	and ([.[2:22][] | select(.priority_rank == 0) | .number] == [100,101,102,103,104])
+	and ([.[2:6][].number] == [1,2,3,100])' <<<"$ordered" >/dev/null
+printf 'PASS fresh urgent tiers lead strictly, then fresh rank-0 work gets a quarter of attempts\n'
+
+# Preserve soft-state behavior: attempted ordinary work remains behind fresh
+# ordinary work, confirmed launch clears a stamp, expiry and disable fail open.
+_dispatch_attempt_recency_stamp 100 owner/small "$((now - 20))"
+ordered=$(_dispatch_order_round_candidates "$mixed" 20)
+jq -e '.[5].number == 101 and .[-1].number == 100' <<<"$ordered" >/dev/null
+_dispatch_attempt_recency_clear 100 owner/small
+_dispatch_attempt_recency_clear 1 owner/urgent
+ordered=$(_dispatch_order_round_candidates "$backlog" 6)
+jq -e '.[0].number == 1 and .[4].number == 100' <<<"$ordered" >/dev/null
+[[ "$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=0 _dispatch_order_round_candidates "$backlog" 6)" == "$backlog" ]]
+[[ "$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=1 _dispatch_order_round_candidates "$backlog" 6)" == "$backlog" ]]
+printf 'PASS ordinary retries, launch clearing, disabled rotation and expired stamps preserve recency semantics\n'
