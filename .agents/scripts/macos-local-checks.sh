@@ -104,7 +104,7 @@ macos_checks_route() {
 }
 
 macos_checks_verify_pr() {
-	local pr="$1" repo="$2" metadata="" head="" base="" evidence="" body_file="" helper_dir=""
+	local pr="$1" repo="$2" metadata="" head="" current_head="" base="" evidence="" body_file="" helper_dir=""
 	[[ "$(macos_checks_host)" == Darwin ]] || return 1
 	metadata=$(gh pr view "$pr" --repo "$repo" --json headRefOid,baseRefOid,body) || return 1
 	head=$(jq -r .headRefOid <<<"$metadata")
@@ -122,7 +122,12 @@ macos_checks_verify_pr() {
 	rm -f "$body_file"
 	# A push during the body edit invalidates the evidence; retain the label.
 	metadata=$(gh pr view "$pr" --repo "$repo" --json headRefOid) || return 1
-	[[ "$(jq -r .headRefOid <<<"$metadata")" == "$head" ]] || return 1
+	current_head=$(jq -r .headRefOid <<<"$metadata") || return 1
+	if [[ "$current_head" != "$head" ]]; then
+		printf 'macOS verification failed: PR head changed from %s to %s; keeping needs-macos-verification.\n' "$head" "$current_head" >&2
+		printf '%s\n' 'Check out the new PR head in a clean worktree on a Mac and rerun verify-pr.' >&2
+		return 1
+	fi
 	gh pr edit "$pr" --repo "$repo" --remove-label needs-macos-verification || return 1
 	return 0
 }

@@ -97,7 +97,10 @@ macos_checks_verify_pr 123 owner/repo
 command grep -q -- '--remove-label needs-macos-verification' "$WORK/calls"
 body_edit_head=new-head
 rm "$WORK/calls"
-if macos_checks_verify_pr 123 owner/repo; then exit 1; fi
+if macos_checks_verify_pr 123 owner/repo 2>"$WORK/diagnostic"; then exit 1; fi
+command grep -Fq -- 'PR head changed from test-head to new-head' "$WORK/diagnostic"
+command grep -Fq -- 'keeping needs-macos-verification' "$WORK/diagnostic"
+command grep -Fq -- 'Check out the new PR head in a clean worktree on a Mac and rerun verify-pr.' "$WORK/diagnostic"
 if command grep -q -- '--remove-label needs-macos-verification' "$WORK/calls"; then exit 1; fi
 [[ "$(<"$WORK/head")" == new-head ]]
-printf '%s\n' 'PASS: sensitive/no-op detection, native failure, host override, maintainer override/fallback, review/assignment, fail-closed diff and head-change label retention'
+printf '%s\n' 'PASS: sensitive/no-op detection, native failure, host override, maintainer override/fallback, review/assignment, fail-closed diff and head-change diagnostic/label retention'
