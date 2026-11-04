@@ -261,8 +261,23 @@ done
 	trap 'kill "$SSH_AGENT_PID" 2>/dev/null || true' EXIT
 	[[ "$SSH_AUTH_SOCK" != *"dead-agent.sock" ]]
 	[[ "$SSH_AGENT_PID" != "999999" ]]
-	if kill -0 "$SSH_AGENT_PID" 2>/dev/null; then
-		printf 'FAIL failed key loading left the new agent process running\n'
+	# ssh-agent -k sends SIGTERM without waiting; allow up to five seconds.
+	# A zombie has stopped, even if its parent has not reaped it yet.
+	agent_stopped=false
+	for attempt in {1..50}; do
+		if ! kill -0 "$SSH_AGENT_PID" 2>/dev/null; then
+			agent_stopped=true
+			break
+		fi
+		agent_state=$(ps -o stat= -p "$SSH_AGENT_PID" 2>/dev/null || true)
+		if [[ "$agent_state" == *Z* ]]; then
+			agent_stopped=true
+			break
+		fi
+		sleep 0.1
+	done
+	if [[ "$agent_stopped" != true ]]; then
+		printf 'FAIL failed key loading left the new agent process running after five seconds\n'
 		exit 1
 	fi
 	if ssh-add -l >/dev/null 2>&1; then
