@@ -55,7 +55,7 @@ assert_row() {
 assert_no_phantom_rows() {
 	local output="$1"
 	local message="$2"
-	if printf '%s\n' "$output" | grep -Eq '^[a-z-]+ +(origin|HEAD) '; then
+	if grep -Eq '^[a-z-]+ +(origin|HEAD) ' <<<"$output"; then
 		fail "$message"
 	fi
 	pass "$message"
