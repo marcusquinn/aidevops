@@ -1323,8 +1323,9 @@ _underfill_host_sample() {
 # Read only the new log interval, bounded to 1 MiB. Collapse prose into stable
 # categories; never copy issue titles, paths or raw provider errors to advisories.
 _underfill_reason_tally() {
-	local offset="$1"
-	tail -c "+$((offset + 1))" "$LOGFILE" 2>/dev/null | tail -c 1048576 | awk '
+	local offset="$1" end="${2:-$(wc -c <"$LOGFILE")}" start
+	start=$((end - 1048576 > offset ? end - 1048576 : offset))
+	tail -c "+$((start + 1))" "$LOGFILE" 2>/dev/null | head -c "$((end - start))" | awk '
 		/pre-launch failure|Dispatch blocked/ {
 			reason="dispatch_blocked"
 			if (match($0, /reason=[A-Za-z0-9_-]+/)) reason=substr($0,RSTART+7,RLENGTH-7)
@@ -1332,6 +1333,12 @@ _underfill_reason_tally() {
 			else if ($0 ~ /permission|cryptographic approval|author_association/) reason="permission_gate"
 			else if ($0 ~ /secret|vault|unlock/) reason="secret_gate"
 			else if ($0 ~ /pacing|rate.limit|cooldown/) reason="github_pacing"
+			if (reason !~ /^(local_capacity_gate|worktree_cap|config_clamp|permission_gate|secret_gate|dedup_active_claim|WORKER_DRAFT_CHECKPOINT|github_pacing)$/) {
+				if (reason ~ /permission|approval/) reason="permission_gate"
+				else if (reason ~ /secret|vault|unlock/) reason="secret_gate"
+				else if (reason ~ /pacing|rate_limit|cooldown/) reason="github_pacing"
+				else reason="dispatch_blocked"
+			}
 			count[reason]++
 		}
 		END {for (reason in count) print reason, count[reason]}
@@ -1350,12 +1357,14 @@ _attribute_sustained_underfill() {
 	previous=$(jq -c . "$state" 2>/dev/null || printf '{}')
 	[[ "$(jq -r '.cycle // ""' <<<"$previous")" != "$cycle" ]] || return 0
 	now=$(date +%s)
-	local cores load memory disk offset size deficit=0 streak=0 reasons summary runner
+	local cores load memory disk offset size identity deficit=0 streak=0 reasons summary runner
 	read -r cores load memory disk <<<"$(_underfill_host_sample)"
+	identity=$(LC_ALL=C ls -di "$LOGFILE" 2>/dev/null | awk '{print $1}')
 	size=$(wc -c <"$LOGFILE")
 	offset=$(jq -r '.offset // 0' <<<"$previous")
+	[[ "$(jq -r '.log_identity // ""' <<<"$previous")" == "$identity" ]] || offset=0
 	[[ "$offset" =~ ^[0-9]+$ && "$offset" -le "$size" ]] || offset=0
-	reasons=$(_underfill_reason_tally "$offset")
+	reasons=$(_underfill_reason_tally "$offset" "$size")
 	((target > 0)) && deficit=$(((target - active) * 100 / target))
 	# Config clamps must be visible even when a full clamped pool looks healthy.
 	local capacity_file="$dir/pulse-underfill-capacity.json" capacity='{}'
@@ -1408,11 +1417,11 @@ _attribute_sustained_underfill() {
 			escalated=$(jq --arg r "$reason" --argjson now "$now" '. + {($r):$now}' <<<"$escalated")
 		done < <(jq -r '.[] | "\(.reason) \(.count)"' <<<"$reasons")
 	fi
-	jq -n --arg cycle "$cycle" --arg runner "$runner" --arg top "$summary" \
+	jq -n --arg cycle "$cycle" --arg runner "$runner" --arg top "$summary" --arg identity "$identity" \
 		--arg load "$load" --arg memory "$memory" --arg disk "$disk" --arg cores "$cores" \
 		--argjson timestamp "$now" --argjson offset "$size" --argjson streak "$streak" \
 		--argjson deficit "$deficit" --argjson reasons "$reasons" --argjson escalated "$escalated" --argjson capacity "$capacity" \
-		'{cycle:$cycle,runner:$runner,timestamp:$timestamp,offset:$offset,streak:$streak,deficit:$deficit,top:$top,reasons:$reasons,escalated:$escalated,capacity:$capacity,host:{load:$load,cores:$cores,memory_mb:$memory,disk_free_kb:$disk}}' \
+		'{cycle:$cycle,runner:$runner,timestamp:$timestamp,offset:$offset,log_identity:$identity,streak:$streak,deficit:$deficit,top:$top,reasons:$reasons,escalated:$escalated,capacity:$capacity,host:{load:$load,cores:$cores,memory_mb:$memory,disk_free_kb:$disk}}' \
 		>"${state}.tmp" && mv "${state}.tmp" "$state"
 	return 0
 }

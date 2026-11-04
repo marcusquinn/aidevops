@@ -522,6 +522,19 @@ pulse_apply_provider_load_capacity_cap() {
 	fi
 
 	_pulse_capacity_emit_gauges "$account_available" "$failures" "$final_max"
+	# Separate diagnostic snapshot: stdout remains the two-field admission API.
+	# Explicit operator caps can hide spare RAM even when the clamped pool is full.
+	local detected_target=$((ram_cap / colocated_runners)) config_clamp=false
+	if [[ "${MAX_WORKERS_CAP_AUTO:-0}" != 1 && "${MAX_WORKERS_CAP:-0}" =~ ^[1-9][0-9]*$ ]] &&
+		((MAX_WORKERS_CAP < detected_target)); then
+		config_clamp=true
+	fi
+	local capacity_cache="${HOME}/.aidevops/cache/pulse-underfill-capacity.json"
+	mkdir -p "${HOME}/.aidevops/cache"
+	jq -n --argjson timestamp "$(date +%s)" --argjson raw "$raw_max_workers" --argjson final "$final_max" \
+		--argjson detected "$detected_target" --arg cap "${MAX_WORKERS_CAP:-0}" --argjson clamp "$config_clamp" \
+		'{timestamp:$timestamp,simultaneous_target_raw:$raw,simultaneous_target_final:$final,detected_target:$detected,max_workers_cap:$cap,config_clamp:$clamp,clamp_source:(if $clamp then "orchestration.max_workers_cap / MAX_WORKERS_CAP" else "provider/account/health/RAM or automatic ceiling" end)}' \
+		>"${capacity_cache}.tmp" && mv "${capacity_cache}.tmp" "$capacity_cache"
 	local health_window_seconds="${PULSE_DISPATCH_CAPACITY_HEALTH_WINDOW_SECONDS:-900}"
 	[[ "$health_window_seconds" =~ ^[0-9]+$ ]] || health_window_seconds=900
 	printf '[pulse-wrapper] Dispatch_capacity: capacity_unit=simultaneous_workers simultaneous_target_raw=%s simultaneous_target_final=%s active_workers=%s provider=%s provider_accounts_total=%s provider_accounts_available=%s account_cap=%s provider_account_slot_multiplier=%s provider_account_slot_multiplier_source=%s override_hint="lower orchestration.provider_account_slot_multiplier or PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER if provider plan cannot sustain this concurrency" rate_limited_accounts=%s auth_error_accounts=%s worker_terminal_failures=%s rate_limits=%s service_interruptions=%s provider_5xx=%s worker_progress_heartbeats=%s failure_observation_window_seconds=%s task_duration_limit=none min_floor=%s floor_allowed=%s floor_active=%s auth_error_only_cycles=%s colocated_runners=%s shared_host_worker_cap=%s worker_cap_auto=%s admission_policy=ram_only ram_available_mb=%s ram_worker_growth_mb=%s ram_slots=%s ram_cap=%s\n' \
