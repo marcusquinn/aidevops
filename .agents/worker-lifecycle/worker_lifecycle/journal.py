@@ -91,8 +91,9 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
     checksum = hashlib.sha256(encode(evidence).encode("utf-8")).hexdigest()
     document = encode({"evidence": evidence, "sha256": checksum}).encode("utf-8")
     archive = store.directory / f"events-archive-{uuid4()}.json"
-    with checked_directory(store.directory):
-        descriptor = os.open(archive, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with checked_directory(store.directory) as directory_fd:
+        descriptor = os.open(archive.name, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW,
+                             0o600, dir_fd=directory_fd)
         with os.fdopen(descriptor, "w+b") as stream:
             stream.write(document)
             stream.flush()
@@ -103,11 +104,7 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
                     or hashlib.sha256(encode(verified["evidence"]).encode("utf-8")).hexdigest()
                     != verified["sha256"]):
                 raise StoreConflict("event-archive-verification-failed")
-        directory_fd = os.open(store.directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        os.fsync(directory_fd)
     # Small digest tombstones retain global event-ID conflict protection,
     # without retaining unbounded full payloads in the admission journal.
     connection.execute("CREATE TABLE IF NOT EXISTS archived_event_ids "
