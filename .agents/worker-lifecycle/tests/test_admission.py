@@ -10,6 +10,7 @@ import unittest
 from uuid import uuid4
 
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
+from worker_lifecycle.process import ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.storage import LifecycleRegistry, StoreCapacity, StoreConflict
 
@@ -113,6 +114,30 @@ class AdmissionContract(unittest.TestCase):
         with self.assertRaises(StoreCapacity):
             self.gate.admit(str(uuid4()), self.identity, self.generation)
         self.assertEqual(before, self.store.summary())
+
+    def test_full_store_automatically_archives_before_new_admission(self):
+        ended = str(uuid4())
+        self.gate.admit(ended, self.identity, self.generation)
+        self.store.observe(str(uuid4()), ended, 2, ProcessObservation("ended", "pid-absent"))
+        with self.store.connection(write=True) as connection:
+            connection.execute("UPDATE events SET recorded_at='2000-01-01T00:00:00.000Z'")
+            connection.execute("UPDATE metadata SET max_events=5")
+        self.assertEqual(self.store.summary()["event_headroom"], 0)
+        self.assertTrue(self.gate.admit(str(uuid4()), self.identity, self.generation))
+        self.assertEqual(self.store.summary()["runs"], {"bound": 1, "ended": 1})
+        self.assertEqual(self.store.summary()["events"], 4)  # open + new admit/register/bind
+        self.assertEqual(len(list(self.store.directory.glob("events-archive-*"))), 1)
+        with self.assertRaisesRegex(StoreConflict, "run-already-registered"):
+            self.gate.admit(ended, self.identity, self.generation)
+
+    def test_compaction_keeps_evidence_shared_with_bound_owner(self):
+        ended, live = str(uuid4()), str(uuid4())
+        self.gate.admit(ended, self.identity, self.generation)
+        self.gate.admit(live, self.identity, self.generation)
+        self.store.observe(str(uuid4()), ended, 2, ProcessObservation("ended", "pid-absent"))
+        before = self.store.summary()
+        self.assertEqual(self.store.compact(age=0, apply=True)["archived_events"], 0)
+        self.assertEqual(self.store.summary(), before)
 
     def test_explicit_upgrade_preserves_observations_without_adopting_them(self):
         run = str(uuid4())

@@ -191,6 +191,7 @@ class LifecycleRegistry:
         rows = connection.execute(
             "SELECT e.* FROM events e JOIN runs r ON r.run_id=json_extract(e.payload,'$.run_id') "
             "WHERE r.state='ended' AND julianday(e.recorded_at)<=julianday('now',?) "
+            "AND json_extract(e.payload,'$.type') IN ('register','bind','admit','observe') "
             "AND NOT EXISTS (SELECT 1 FROM bindings own JOIN bindings peer USING(generation_id) "
             "JOIN runs live ON live.run_id=peer.run_id WHERE own.run_id=r.run_id AND live.state='bound') "
             "ORDER BY e.sequence LIMIT 1000", (f"-{age} seconds",),
@@ -222,6 +223,12 @@ class LifecycleRegistry:
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
+        # Small digest tombstones retain global event-ID conflict protection,
+        # without retaining unbounded full payloads in the admission journal.
+        connection.execute("CREATE TABLE IF NOT EXISTS archived_event_ids "
+                           "(event_id TEXT PRIMARY KEY, payload_sha256 TEXT NOT NULL)")
+        connection.executemany("INSERT INTO archived_event_ids VALUES (?,?)", [
+            (row["event_id"], hashlib.sha256(row["payload"].encode("utf-8")).hexdigest()) for row in rows])
         connection.executemany("DELETE FROM events WHERE sequence=? AND event_id=?",
                                [(row["sequence"], row["event_id"]) for row in rows])
         result.update(archived_events=len(rows), archive=archive.name)
@@ -239,7 +246,8 @@ class LifecycleRegistry:
         with self.connection(write=apply, maintenance=False) as connection:
             current = connection.execute("SELECT max_events FROM metadata").fetchone()[0]
             count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
-            if type(maximum) is not int or not max(current + 1, count) <= maximum <= DEFAULT_MAX_EVENTS:
+            minimum = max(current + 1, count, self._event_limit(connection))
+            if type(maximum) is not int or not minimum <= maximum <= DEFAULT_MAX_EVENTS:
                 raise ValueError("capacity-must-increase-within-schema-limit")
             backup = None
             if apply:
@@ -287,6 +295,17 @@ class LifecycleRegistry:
             if old["payload"] != value:
                 raise StoreConflict("event-id-payload-conflict")
             return old["sequence"], True
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE name='archived_event_ids'").fetchone():
+            archived = connection.execute("SELECT payload_sha256 FROM archived_event_ids WHERE event_id=?",
+                                          (event_id,)).fetchone()
+            if archived and archived[0] != hashlib.sha256(value.encode("utf-8")).hexdigest():
+                raise StoreConflict("event-id-payload-conflict")
+        # Archived replay must conflict before capacity checking or appending.
+        if payload.get("type") in {"register", "bind", "admit", "observe"} and connection.execute(
+                "SELECT 1 FROM runs WHERE run_id=? AND state='ended'", (payload.get("run_id"),),
+        ).fetchone():
+            raise StoreConflict("run-already-registered" if payload["type"] in {"register", "admit"}
+                                else "run-not-bound")
         count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
         maximum = LifecycleRegistry._event_limit(connection, lift=True)
         if count >= maximum:

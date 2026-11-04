@@ -1,13 +1,16 @@
 """Bounded journal admission and stable producer-envelope replay."""
 
+import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess  # nosec B404 # bounded, owned test processes only
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from worker_lifecycle.events import ingest, parse_event
@@ -16,7 +19,7 @@ from worker_lifecycle.process import ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.registry import reconcile
 from worker_lifecycle.storage import (DEFAULT_MAX_EVENTS, LEGACY_DEFAULT_MAX_EVENTS, LifecycleRegistry,
-                                      StoreCapacity)
+                                      StoreCapacity, StoreConflict, encode)
 
 
 class EventContract(unittest.TestCase):
@@ -119,6 +122,79 @@ class EventContract(unittest.TestCase):
     def test_missing_schema_rejected(self):
         with self.assertRaises(ValueError):
             parse_event("{}")
+
+    def ended_event(self):
+        event = self.envelope(os.getpid())
+        ingest(self.store, json.dumps(event))
+        self.store.observe(str(uuid4()), event["run_id"], 1, ProcessObservation("ended", "pid-absent"))
+        return event
+
+    def cli(self, *arguments):
+        command = [sys.executable, "-B", "-m", "worker_lifecycle.registry",
+                   "--state-dir", str(self.path), *arguments]
+        result = subprocess.run(command, text=True, capture_output=True, timeout=10)  # nosec B603 # fixed CLI
+        self.assertEqual(result.returncode, 0, result.stdout)
+        return json.loads(result.stdout)
+
+    def test_compact_cli_preview_archive_checksum_and_replay(self):
+        event = self.ended_event()
+        before = self.store.summary()
+        self.assertEqual(self.cli("compact", "--min-age-seconds", "0")["eligible_events"], 2)
+        self.assertEqual(self.store.summary(), before)
+        self.assertEqual(list(self.path.glob("events-archive-*")), [])
+        result = self.cli("compact", "--min-age-seconds", "0", "--apply")
+        archive = self.path / result["archive"]
+        document = json.loads(archive.read_text())
+        self.assertEqual(document["sha256"], hashlib.sha256(encode(document["evidence"]).encode()).hexdigest())
+        self.assertIn(event["event_id"], [row["event_id"] for row in document["evidence"]["events"]])
+        self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.store.summary()["events"], 0)
+        self.assertEqual(self.store.summary()["runs"], {"ended": 1})
+        with self.assertRaisesRegex(StoreConflict, "run-already-registered"):
+            ingest(self.store, json.dumps(event))
+        changed = dict(event, run_id=str(uuid4()))
+        with self.assertRaisesRegex(StoreConflict, "event-id-payload-conflict"):
+            ingest(self.store, json.dumps(changed))
+        self.assertEqual(self.store.summary()["events"], 0)
+
+    def test_age_and_archive_failure_preserve_journal(self):
+        self.ended_event()
+        self.assertEqual(self.store.compact(apply=True)["archived_events"], 0)
+        before = self.store.summary()
+        with patch("worker_lifecycle.storage.os.fsync", side_effect=OSError("archive-unavailable")):
+            with self.assertRaises(OSError):
+                self.store.compact(age=0, apply=True)
+        self.assertEqual(self.store.summary(), before)
+
+    def test_capacity_raise_requires_apply_and_verified_backup(self):
+        ingest(self.store, json.dumps(self.envelope(os.getpid())))
+        self.assertTrue(self.cli("raise-capacity", "--max-events", "10")["dry_run"])
+        self.assertEqual(self.stored_limit(), 3)
+        result = self.cli("raise-capacity", "--max-events", "10", "--apply")
+        self.assertEqual(self.stored_limit(), 10)
+        with sqlite3.connect(self.path / result["backup"]) as connection:
+            self.assertEqual(connection.execute("SELECT max_events FROM metadata").fetchone()[0], 3)
+            self.assertEqual(connection.execute("SELECT count(*) FROM events").fetchone()[0], 1)
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        for maximum in (9, 10, 100001, True):
+            with self.assertRaises(ValueError):
+                self.store.raise_capacity(maximum, apply=True)
+
+    def test_capacity_raise_cannot_lower_effective_legacy_limit(self):
+        with self.store.connection(write=True) as connection:
+            connection.execute("UPDATE metadata SET max_events=?", (LEGACY_DEFAULT_MAX_EVENTS,))
+        with self.assertRaises(ValueError):
+            self.store.raise_capacity(20000, apply=True)
+        self.assertEqual(self.store.summary()["event_limit"], DEFAULT_MAX_EVENTS)
+        self.store.raise_capacity(DEFAULT_MAX_EVENTS, apply=True)
+        self.assertEqual(self.stored_limit(), DEFAULT_MAX_EVENTS)
+
+    def test_status_reports_insufficient_three_event_headroom(self):
+        ingest(self.store, json.dumps(self.envelope(os.getpid())))
+        status = self.cli("status")
+        self.assertEqual(status["event_headroom"], 2)
+        self.assertEqual(status["admission_event_need"], 3)
+        self.assertTrue(status["journal_full"])
 
     def test_subtest_failures_are_reported_without_private_parameters(self):
         class Probe(unittest.TestCase):
