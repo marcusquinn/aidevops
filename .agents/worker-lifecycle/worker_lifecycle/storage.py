@@ -196,8 +196,8 @@ class LifecycleRegistry:
             "JOIN runs live ON live.run_id=peer.run_id WHERE own.run_id=r.run_id AND live.state='bound') "
             "ORDER BY e.sequence LIMIT 1000", (f"-{age} seconds",),
         ).fetchall()
-        result = {"eligible_events": len(rows), "archived_events": 0,
-                  "archive": None, "dry_run": not apply, "cleanup_authorized": False}
+        result: dict[str, object] = {"eligible_events": len(rows), "archived_events": 0,
+                                     "archive": None, "dry_run": not apply, "cleanup_authorized": False}
         if not apply or not rows:
             return result
         evidence = {"schema": 1, "installation_id": connection.execute(
