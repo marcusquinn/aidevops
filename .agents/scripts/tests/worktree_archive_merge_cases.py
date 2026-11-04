@@ -336,7 +336,11 @@ class MergeCases:
         (self.work / 'run.sh').chmod(0o755)
         (self.work / 'ordinary-untracked').write_bytes(b'ordinary\0bytes')
         unusual = os.fsdecode(b'odd\tname\n\xff')
-        (self.work / unusual).write_bytes(b'path-safe staged bytes\0')
+        try:
+            (self.work / unusual).write_bytes(b'path-safe staged bytes\0')
+        except OSError:  # e.g. APFS rejects invalid UTF-8; keep tab/newline coverage
+            unusual = 'odd\tname\n\u00ff'
+            (self.work / unusual).write_bytes(b'path-safe staged bytes\0')
         self.git(self.work, 'add', '--', unusual)
         baseline = {option: self.git(self.work, 'ls-files', option, '-z') for option in ('--stage', '--resolve-undo')}
         status = self.git(self.work, 'status', '--porcelain=v1', '-z')
