@@ -31,6 +31,15 @@ TESTS_FAILED=0
 
 TEST_DIR=""
 
+# macOS mktemp returns /var/... (a symlink to /private/var/...); lifecycle state
+# requires a canonical parent (state-parent-must-be-canonical), so resolve it.
+make_canonical_temp_dir() {
+	local raw_dir=""
+	raw_dir=$(mktemp -d) || return 1
+	(cd "$raw_dir" && pwd -P) || return 1
+	return 0
+}
+
 print_result() {
 	local test_name="$1"
 	local result="$2"
@@ -235,7 +244,7 @@ strip_dynamic_sections() {
 
 test_chart_assets_publish_and_chart_only_changes_are_not_skipped() {
 	local test_name="daily chart assets publish together and chart-only repairs commit without refetch"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="$TEST_DIR/home" fixture_repo="$TEST_DIR/profile-repo"
 	local fixture_remote="$TEST_DIR/profile-remote.git" helper_dir="$TEST_DIR/helper"
 	local stub_bin="$TEST_DIR/bin" output="$TEST_DIR/output" calls="$TEST_DIR/graphql-calls"
@@ -299,7 +308,7 @@ PY
 test_update_preserves_manual_sections() {
 	local test_name="profile update publishes once from a linked worktree and preserves the canonical checkout"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -369,7 +378,7 @@ test_update_preserves_manual_sections() {
 test_update_recovers_dirty_profile_publication_worktree() {
 	local fixture_mode="${1:-0644}"
 	local test_name="legacy profile recovery retains source and canonical files with fixture mode $fixture_mode"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -465,7 +474,7 @@ profile_publication_trees() {
 # earlier clean, published trees through the guarded path and keep dirty ones.
 test_update_sweeps_prior_publication_worktrees() {
 	local test_name="profile update sweeps earlier clean publication trees and preserves dirty ones"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home" fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git" helper_dir="${TEST_DIR}/helper"
 	local refusing_helper="${TEST_DIR}/refusing-worktree-helper.sh" output_file="${TEST_DIR}/update-output"
@@ -513,7 +522,7 @@ test_update_sweeps_prior_publication_worktrees() {
 
 test_update_dry_run_is_canonical_safe() {
 	local test_name="profile update dry-run leaves canonical checkout and remote unchanged"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -551,7 +560,7 @@ test_update_dry_run_is_canonical_safe() {
 
 test_update_prepublication_failure_is_canonical_safe() {
 	local test_name="profile update pre-publication failure leaves canonical checkout unchanged"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -587,7 +596,7 @@ test_update_prepublication_failure_is_canonical_safe() {
 
 test_internal_override_rejects_canonical_checkout() {
 	local test_name="profile publication override rejects a canonical checkout target"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -620,7 +629,7 @@ test_internal_override_rejects_canonical_checkout() {
 
 test_canonical_cleanliness_ignores_untracked_files() {
 	local test_name="profile publication ignores untracked canonical files but rejects tracked changes"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -655,7 +664,7 @@ test_canonical_cleanliness_ignores_untracked_files() {
 test_update_migrates_generated_readme_with_commit_history_chart() {
 	local test_name="profile update adds commit-history chart to older generated README"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -728,7 +737,7 @@ teardown() {
 test_inject_markers_into_existing_readme() {
 	local test_name="inject markers into README without markers"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -813,7 +822,7 @@ EOF
 test_diverged_history_recovery() {
 	local test_name="recover from diverged git history"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -901,7 +910,7 @@ EOF
 test_default_template_replaced_with_rich_readme() {
 	local test_name="default GitHub template replaced with rich profile README"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -1008,7 +1017,7 @@ EOF
 test_default_template_with_existing_markers_replaced() {
 	local test_name="default template with existing markers gets replaced"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -1111,7 +1120,7 @@ EOF
 test_session_time_vars_default_missing_null_values() {
 	local test_name="session time vars default missing and null values"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local stdout_file="${TEST_DIR}/stdout"
 	local stderr_file="${TEST_DIR}/stderr"
 
@@ -1169,7 +1178,7 @@ test_session_time_vars_default_missing_null_values() {
 test_work_with_ai_worker_counts_above_thousand() {
 	local test_name="work with AI worker counts above one thousand render"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	mkdir -p "${TEST_DIR}/home"
 
 	# shellcheck source=../profile-readme-data-lib.sh
@@ -1222,7 +1231,7 @@ test_work_with_ai_worker_counts_above_thousand() {
 
 test_work_with_ai_unavailable_is_not_zero() {
 	local test_name="work with AI renders collector failures as unavailable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	mkdir -p "${TEST_DIR}/home"
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "${SOURCE_DATA_LIB}"
@@ -1247,7 +1256,7 @@ test_work_with_ai_unavailable_is_not_zero() {
 
 test_model_usage_renders_activity_metrics_without_costs() {
 	local test_name="model usage renders cache and session activity without cost or savings claims"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "$SOURCE_DATA_LIB"
 	# shellcheck source=../profile-readme-render-lib.sh
@@ -1277,7 +1286,7 @@ test_model_usage_renders_activity_metrics_without_costs() {
 
 test_observability_model_usage_calculates_sessions_and_hours() {
 	local test_name="observability model usage calculates distinct sessions and generation hours"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "$SOURCE_DATA_LIB"
 	OBS_DB_FILE="${TEST_DIR}/llm-requests.db"
@@ -1315,7 +1324,7 @@ test_observability_model_usage_calculates_sessions_and_hours() {
 
 test_opencode_model_usage_deduplicates_variants_and_rejects_partial_duration() {
 	local test_name="OpenCode model usage deduplicates normalized sessions and leaves incomplete duration unavailable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "$SOURCE_DATA_LIB"
 	OPENCODE_DB_FILE="${TEST_DIR}/opencode.db"
@@ -1348,7 +1357,7 @@ test_opencode_model_usage_deduplicates_variants_and_rejects_partial_duration() {
 
 test_jsonl_model_usage_rejects_partial_duration() {
 	local test_name="JSONL model usage leaves partial duration unavailable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "$SOURCE_DATA_LIB"
 	METRICS_FILE="${TEST_DIR}/metrics.jsonl"
@@ -1369,7 +1378,7 @@ EOF
 
 test_screen_json_paths_are_optional_and_fail_visibly() {
 	local test_name="screen JSON paths are optional and invalid payloads remain visibly unavailable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-render-lib.sh
 	source "$SOURCE_RENDER_LIB"
 	local assignments screen_today screen_status screen_source
@@ -1400,7 +1409,7 @@ test_screen_json_paths_are_optional_and_fail_visibly() {
 
 test_top_apps_batches_jq_processing() {
 	local test_name="top-app rendering batches jq processing"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-render-lib.sh
 	source "$SOURCE_RENDER_LIB"
 	local db_path="${TEST_DIR}/knowledgeC.db"
@@ -1446,7 +1455,7 @@ EOF
 
 test_profile_update_lock_is_bounded() {
 	local test_name="profile update lock uses portable mtime and remains token-owned, race-safe, and stale-recoverable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local result
 	result=$(
 		set -- help
@@ -1628,7 +1637,7 @@ test_token_totals_from_selected_model_population_are_equivalent() {
 
 test_profile_model_bundle_scans_each_population_once() {
 	local test_name="profile model bundle scans each required population once"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local calls_file="${TEST_DIR}/model-source-calls"
 	_get_model_usage_from_obs_db() {
 		local date_filter="${1:-}"
@@ -1719,7 +1728,7 @@ main() {
 		return 1
 	fi
 	# Keep managed launches independent of the invoking worktree and registry.
-	SUITE_ROOT=$(mktemp -d) || return 1
+	SUITE_ROOT=$(make_canonical_temp_dir) || return 1
 	trap 'rm -rf -- "$SUITE_ROOT"' EXIT
 	export AIDEVOPS_LIFECYCLE_STATE_DIR="$SUITE_ROOT/lifecycle"
 	cd "$SUITE_ROOT" || return 1
