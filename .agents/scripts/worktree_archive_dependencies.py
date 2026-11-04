@@ -39,7 +39,9 @@ def import_published_head(target, common, head):
         git(target, "-c", "protocol.allow=never", "-c", f"protocol.{protocol}.allow=always",
             "-c", "http.followRedirects=false", "-c", f"http.{source}.followRedirects=false",
             "fetch", "--quiet", "--no-tags", "--no-auto-maintenance", "--no-write-fetch-head",
-            "--upload-pack=" + base_upload_pack(), source, head, timeout=base_import_timeout())
+            "--refetch", "--upload-pack=" + base_upload_pack(), source, head, timeout=base_import_timeout())
         git(target, "cat-file", "-e", head + "^{commit}")
+        if not object_present(target, head):
+            raise ValueError(MISSING_PROMISOR_BASE)
     except (ValueError, subprocess.CalledProcessError):
         raise ValueError(MISSING_PROMISOR_BASE) from None
