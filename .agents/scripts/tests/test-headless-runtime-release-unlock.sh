@@ -61,8 +61,13 @@ gh() {
 			return 0
 		fi
 		if [[ "$path" == graphql ]]; then
-			[[ -n "${GH_EDIT_RESPONSE:-}" ]] || return 1
-			printf '%s\n' "$GH_EDIT_RESPONSE"
+			[[ "${GH_EDIT_READ_FAILURE:-0}" -eq 0 ]] || return 1
+			if [[ -n "${GH_EDIT_RESPONSE:-}" ]]; then
+				printf '%s\n' "$GH_EDIT_RESPONSE"
+			else
+				jq -nc --args '$ARGS.positional | map(select(startswith("ids[]=")) |
+					{id:ltrimstr("ids[]="),lastEditedAt:null}) | {data:{nodes:.}}' -- "$@"
+			fi
 			return 0
 		fi
 		if [[ "$path" == 'repos/owner/repo/issues/12345' && -n "${GH_LIVE_ISSUE:-}" ]]; then
@@ -85,7 +90,7 @@ gh() {
 			else
 				claim_fixture=$(jq -nc --arg author "${CLAIM_FIXTURE_AUTHOR:-${WORKER_GITHUB_LOGIN:-api-login}}" \
 					--arg token "${CLAIM_FIXTURE_TOKEN:-fixture-lease}" '
-					[[{id:100, user:{login:$author}, author_association:"OWNER", created_at:"2026-11-01T00:00:00Z",
+					[[{id:100, node_id:"CLAIM_FIXTURE_100", user:{login:$author}, author_association:"OWNER", created_at:"2026-11-01T00:00:00Z",
 					updated_at:"2026-11-01T00:00:00Z", body:("DISPATCH_CLAIM runner=" + $author +
 					" nonce=" + $token + " lease_token=" + $token + " device=fixture-device session=issue-12345")}]]')
 			fi
@@ -132,7 +137,7 @@ gh() {
 				return 1
 			fi
 			jq -nc --arg body "$body" --arg author "${WORKER_GITHUB_LOGIN:-api-login}" '
-				{id:200,user:{login:$author},created_at:"2026-11-03T00:00:00Z",updated_at:"2026-11-03T00:00:00Z",body:$body}' \
+				{id:200,node_id:"CLAIM_FIXTURE_200",user:{login:$author},created_at:"2026-11-03T00:00:00Z",updated_at:"2026-11-03T00:00:00Z",body:$body}' \
 				>"${TMP_HOME}/posted-release.json"
 			printf 'POSTED_RELEASE\n' >>"$CALL_LOG"
 		fi
@@ -224,8 +229,12 @@ valid_claim_evidence=$(gh api 'repos/owner/repo/issues/12345/comments?per_page=1
 for evidence_case in edited ambiguous unreadable invalid_timestamp duplicate_fields already_released terminal; do
 	: >"$CALL_LOG"
 	expected_result=1
+	evidence_edit_response=""
 	case "$evidence_case" in
-	edited) evidence=$(jq -c '.[0][0].updated_at = "2026-11-02T00:00:00Z"' <<<"$valid_claim_evidence") ;;
+	edited)
+		evidence=$(jq -c '.[0][0].updated_at = "2026-11-02T00:00:00Z"' <<<"$valid_claim_evidence")
+		evidence_edit_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":"2026-11-02T00:00:00Z"}]}}'
+		;;
 	ambiguous) evidence=$(jq -c '.[0] += .[0]' <<<"$valid_claim_evidence") ;;
 	unreadable) evidence='not JSON' ;;
 	invalid_timestamp) evidence=$(jq -c '.[0][0] |= (.created_at = "invalid" | .updated_at = "invalid")' <<<"$valid_claim_evidence") ;;
@@ -241,7 +250,8 @@ for evidence_case in edited ambiguous unreadable invalid_timestamp duplicate_fie
 		;;
 	esac
 	result=0
-	GH_CLAIM_EVIDENCE="$evidence" _release_dispatch_claim "issue-12345" worker_complete || result=$?
+	GH_CLAIM_EVIDENCE="$evidence" GH_EDIT_RESPONSE="$evidence_edit_response" \
+		_release_dispatch_claim "issue-12345" worker_complete || result=$?
 	if [[ "$result" -ne "$expected_result" ]] ||
 		grep -Eq 'API method=POST|^CLEAR |^UNLOCK ' "$CALL_LOG"; then
 		printf 'FAIL invalid or consumed claim evidence was not held safely: %s\n' "$evidence_case"
@@ -301,7 +311,7 @@ edited_claim_evidence=$(jq -c '.[0][0].node_id = "NODE_FIXTURE" |
 for edit_case in confirmed_unedited body_edited partial_response; do
 	: >"$CALL_LOG"
 	case "$edit_case" in
-	confirmed_unedited) edit_response='{"data":{"nodes":[{"id":"NODE_FIXTURE","lastEditedAt":null}]}}' ;;
+	confirmed_unedited) edit_response='{"data":{"nodes":[{"id":"NODE_FIXTURE","lastEditedAt":null},{"id":"CLAIM_FIXTURE_200","lastEditedAt":null}]}}' ;;
 	body_edited) edit_response='{"data":{"nodes":[{"id":"NODE_FIXTURE","lastEditedAt":"2026-11-02T00:00:00Z"}]}}' ;;
 	partial_response) edit_response='{"data":{"nodes":[{"id":"NODE_FIXTURE"}]}}' ;;
 	esac
@@ -315,6 +325,39 @@ for edit_case in confirmed_unedited body_edited partial_response; do
 		! grep -Eq '^(API .*POST|CLEAR|UNLOCK|EDIT|LEASE) ' "$CALL_LOG" || exit 1
 	fi
 	printf 'PASS edit evidence remains fail-closed: %s\n' "$edit_case"
+done
+
+# Equal REST timestamps cannot exclude same-second edits of either the claim
+# or a later protocol event. Missing positive edit evidence must also hold.
+for same_second_case in edited missing_evidence partial_evidence later_lease_edit projection_edit; do
+	: >"$CALL_LOG"
+	same_second_evidence="$valid_claim_evidence"
+	same_second_failure=0
+	same_second_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":"2026-11-01T00:00:00Z"}]}}'
+	case "$same_second_case" in
+	missing_evidence) same_second_failure=1 ;;
+	partial_evidence) same_second_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100"}]}}' ;;
+	later_lease_edit)
+		same_second_evidence=$(jq -c '.[0] += [(.[0][0] | .id=101 | .node_id="CLAIM_FIXTURE_101" |
+			.body="DISPATCH_LEASE phase=ready lease_token=fixture-lease device=fixture-device session=issue-12345")]' <<<"$valid_claim_evidence")
+		same_second_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":null},{"id":"CLAIM_FIXTURE_101","lastEditedAt":"2026-11-01T00:00:00Z"}]}}'
+		;;
+	projection_edit)
+		same_second_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":null},{"id":"CLAIM_FIXTURE_200","lastEditedAt":"2026-11-03T00:00:00Z"}]}}'
+		;;
+	esac
+	if GH_CLAIM_EVIDENCE="$same_second_evidence" GH_EDIT_RESPONSE="$same_second_response" \
+		GH_EDIT_READ_FAILURE="$same_second_failure" _release_dispatch_claim issue-12345 worker_complete; then
+		printf 'FAIL same-second edit evidence authorized projection: %s\n' "$same_second_case"
+		exit 1
+	fi
+	! grep -Eq '^(CLEAR|UNLOCK|EDIT|LEASE) ' "$CALL_LOG" || exit 1
+	if [[ "$same_second_case" == projection_edit ]]; then
+		grep -q '^POSTED_RELEASE$' "$CALL_LOG" || exit 1
+	else
+		! grep -q 'API method=POST' "$CALL_LOG" || exit 1
+	fi
+	printf 'PASS same-second edit fence: %s\n' "$same_second_case"
 done
 
 # GH#35684: model selection fails before _cmd_run_prepare exports

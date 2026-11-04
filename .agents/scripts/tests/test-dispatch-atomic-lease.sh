@@ -38,6 +38,11 @@ if [[ "${1:-}" == issue && "${2:-}" == comment ]]; then exit 0; fi
 [[ "${1:-}" == api ]] || exit 1
 endpoint="${2:-}"
 shift 2
+if [[ "$endpoint" == graphql ]]; then
+	jq -nc --args '$ARGS.positional | map(select(startswith("ids[]=")) |
+		{id:ltrimstr("ids[]="),lastEditedAt:null}) | {data:{nodes:.}}' -- "$@"
+	exit 0
+fi
 if [[ "$endpoint" == repos/*/issues/[0-9]* && "$endpoint" != */comments* ]]; then
 	printf '{"assignees":[]}\n'
 	exit 0
@@ -68,7 +73,7 @@ if [[ "$method" == POST ]]; then
 	jq -cn --argjson id "$id" --arg body "$body" --arg created "$created" \
 		--arg login "${MOCK_GH_LOGIN:-shared-login}" \
 		--arg association "${MOCK_GH_ASSOCIATION:-MEMBER}" \
-		'{id:$id,body:$body,created_at:$created,updated_at:$created,user:{login:$login},author_association:$association}' >>"$comments"
+		'{id:$id,node_id:("MOCK_NODE_" + ($id|tostring)),body:$body,created_at:$created,updated_at:$created,user:{login:$login},author_association:$association}' >>"$comments"
 	rmdir "$lock"
 	printf '%s\n' "$id"
 	exit 0

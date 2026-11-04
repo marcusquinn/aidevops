@@ -11,7 +11,7 @@ def fields:
     else null end;
 def unedited:
     (.created_at | type) == "string" and
-    (try (.created_at | fromdateiso8601) catch null) != null and .updated_at == .created_at;
+    (try (.created_at | fromdateiso8601) catch null) != null and ._release_body_unedited == true;
 def bound($event):
     $event.comment.user.login == $runner and
     $event.f.runner == $runner and $event.f.lease_token == $token and

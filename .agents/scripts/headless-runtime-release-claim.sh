@@ -2,14 +2,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-# Match the checkpoint reader's hidden-comment handling without sourcing its
-# dispatcher. Missing/partial GraphQL evidence never clears the REST edit fence.
+# Require positive body-edit evidence, including when REST timestamps match:
+# their second resolution cannot exclude a same-second edit. Missing/partial
+# GraphQL evidence never authorizes a coordination write or state projection.
 _hrff_release_comment_edits() {
 	local raw="$1" ids="" chunk="" id="" response="" clean="[]"
 	local query="query(\$ids: [ID!]!) { nodes(ids: \$ids) { ... on IssueComment { id lastEditedAt } } }"
 	local -a args=()
 	ids=$(jq -r '[.[][] | select((.body // "") | test("(?m)^(DISPATCH_CLAIM|DISPATCH_LEASE|CLAIM_RELEASED) ")) |
-		select(.updated_at != .created_at and ((.node_id // "") | test("^[A-Za-z0-9_=-]+$"))) |
+		select((.node_id // "") | test("^[A-Za-z0-9_=-]+$")) |
 		.node_id] | unique | _nwise(50) | join(" ")' <<<"$raw" 2>/dev/null) || return 1
 	while IFS= read -r chunk; do
 		[[ -n "$chunk" ]] || continue
@@ -22,7 +23,7 @@ _hrff_release_comment_edits() {
 		' <<<"$response" 2>/dev/null) || continue
 	done <<<"$ids"
 	jq -c --argjson clean "$clean" 'map(map(.node_id as $id |
-		if $id != null and ($clean | index($id)) != null then .updated_at = .created_at else . end
+		._release_body_unedited = ($id != null and ($clean | index($id)) != null)
 	))' <<<"$raw" 2>/dev/null || return 1
 	return 0
 }
