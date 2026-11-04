@@ -16,6 +16,8 @@ export AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS=1
 # Terminal-blocker capture appends to the worker blocker log; keep fixture
 # rows out of the operator's live ~/.aidevops/logs diagnostics (GH#36171).
 export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${TMP_HOME}/worker-progress-blockers.jsonl"
+# Keep the upstream terminal-lease recovery outbox isolated as well.
+export AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="${TMP_HOME}/objective-evidence.jsonl"
 
 cleanup() {
 	rm -rf "$TMP_HOME"
@@ -49,6 +51,39 @@ whoami() {
 	return 0
 }
 
+# Return the paginated fixture snapshot, including any release just persisted.
+claim_comment_pages() {
+	[[ "${GH_CLAIM_READ_FAILURE:-0}" -eq 0 ]] || return 1
+	local claim_read_count=0 claim_fixture=""
+	claim_read_count=$(grep -c '^CLAIM_READ$' "$CALL_LOG") || claim_read_count=0
+	claim_read_count=$((claim_read_count + 1))
+	printf 'CLAIM_READ\n' >>"$CALL_LOG"
+	if [[ "${GH_CLAIM_READ_FAIL_AFTER_POST:-0}" -eq 1 ]] && grep -q '^POSTED_RELEASE$' "$CALL_LOG"; then
+		return 1
+	fi
+	if [[ -n "${GH_CLAIM_EVIDENCE:-}" ]]; then
+		claim_fixture="$GH_CLAIM_EVIDENCE"
+	elif [[ -n "${GH_RELEASE_COMMENTS:-}" ]]; then
+		claim_fixture=$(jq -c '[.]' <<<"$GH_RELEASE_COMMENTS")
+	else
+		claim_fixture=$(jq -nc --arg author "${CLAIM_FIXTURE_AUTHOR:-${WORKER_GITHUB_LOGIN:-api-login}}" \
+			--arg token "${CLAIM_FIXTURE_TOKEN:-fixture-lease}" '
+			[[{id:100, node_id:"CLAIM_FIXTURE_100", user:{login:$author}, author_association:"OWNER", created_at:"2026-11-01T00:00:00Z",
+			updated_at:"2026-11-01T00:00:00Z", body:("DISPATCH_CLAIM runner=" + $author +
+			" nonce=" + $token + " lease_token=" + $token + " device=fixture-device session=issue-12345")}]]')
+	fi
+	if [[ "$claim_read_count" -ge 2 && -n "${GH_CLAIM_EVIDENCE_AFTER_READ:-}" ]]; then
+		claim_fixture="$GH_CLAIM_EVIDENCE_AFTER_READ"
+	fi
+	if grep -q '^POSTED_RELEASE$' "$CALL_LOG"; then
+		claim_fixture="${GH_CLAIM_EVIDENCE_AFTER_POST:-$claim_fixture}"
+		jq -c --slurpfile posted "${TMP_HOME}/posted-release.json" '.[0] += $posted' <<<"$claim_fixture"
+	else
+		printf '%s\n' "$claim_fixture"
+	fi
+	return 0
+}
+
 gh() {
 	local cmd="${1:-}"
 	shift || true
@@ -60,9 +95,23 @@ gh() {
 			printf 'api-login\n'
 			return 0
 		fi
+		if [[ "$path" == graphql ]]; then
+			[[ "${GH_EDIT_READ_FAILURE:-0}" -eq 0 ]] || return 1
+			if [[ -n "${GH_EDIT_RESPONSE:-}" ]]; then
+				printf '%s\n' "$GH_EDIT_RESPONSE"
+			else
+				jq -nc --args '$ARGS.positional | map(select(startswith("ids[]=")) |
+					{id:ltrimstr("ids[]="),lastEditedAt:null}) | {data:{nodes:.}}' -- "$@"
+			fi
+			return 0
+		fi
 		if [[ "$path" == 'repos/owner/repo/issues/12345' && -n "${GH_LIVE_ISSUE:-}" ]]; then
 			printf '%s\n' "$GH_LIVE_ISSUE"
 			return 0
+		fi
+		if [[ "$path" == *'/comments?per_page=100' && " $* " == *' --slurp '* ]]; then
+			claim_comment_pages
+			return $?
 		fi
 		if [[ "$path" == *'/comments?per_page=100' && -n "${GH_RELEASE_COMMENTS:-}" ]]; then
 			printf '%s\n' "$GH_RELEASE_COMMENTS"
@@ -95,6 +144,10 @@ gh() {
 				printf 'temporary comment failure %s\n' "$attempt_count" >&2
 				return 1
 			fi
+			jq -nc --arg body "$body" --arg author "${WORKER_GITHUB_LOGIN:-api-login}" '
+				{id:200,node_id:"CLAIM_FIXTURE_200",user:{login:$author},created_at:"2026-11-03T00:00:00Z",updated_at:"2026-11-03T00:00:00Z",body:$body}' \
+				>"${TMP_HOME}/posted-release.json"
+			printf 'POSTED_RELEASE\n' >>"$CALL_LOG"
 		fi
 		printf '{}\n'
 		;;
@@ -146,19 +199,182 @@ printf 'PASS empty non-worker claim release is a silent no-op\n'
 
 export DISPATCH_REPO_SLUG="owner/repo"
 export WORKER_GITHUB_LOGIN="assigned-bot"
-_release_dispatch_claim "issue-12345" "worker_noop" "0" "0"
+export AIDEVOPS_DISPATCH_LEASE_TOKEN="fixture-lease"
+export AIDEVOPS_DISPATCH_LEASE_DEVICE="fixture-device"
+export AIDEVOPS_DISPATCH_LEASE_SESSION="issue-12345"
+# Keep lease-transition subprocesses offline; the explicit denial case below
+# supplies its own executable fixture.
+export DISPATCH_CLAIM_HELPER="${TMP_HOME}/missing-claim-helper"
+
+for unowned_case in missing_context absent_claim wrong_actor wrong_token wrong_session wrong_device; do
+	: >"$CALL_LOG"
+	case "$unowned_case" in
+	missing_context) AIDEVOPS_DISPATCH_LEASE_TOKEN="" _release_dispatch_claim "issue-12345" worker_ownership_lost ;;
+	absent_claim) GH_CLAIM_EVIDENCE='[[]]' _release_dispatch_claim "issue-12345" worker_complete ;;
+	wrong_actor) CLAIM_FIXTURE_AUTHOR="another-worker" _release_dispatch_claim "issue-12345" worker_complete ;;
+	wrong_token) AIDEVOPS_DISPATCH_LEASE_TOKEN="another-lease" _release_dispatch_claim "issue-12345" worker_complete ;;
+	wrong_session) AIDEVOPS_DISPATCH_LEASE_SESSION="another-session" _release_dispatch_claim "issue-12345" worker_complete ;;
+	wrong_device) AIDEVOPS_DISPATCH_LEASE_DEVICE="another-device" _release_dispatch_claim "issue-12345" worker_complete ;;
+	esac
+	if grep -Eq 'API method=POST|^CLEAR |^UNLOCK ' "$CALL_LOG"; then
+		printf 'FAIL unowned release mutated issue state: %s\n' "$unowned_case"
+		exit 1
+	fi
+	printf 'PASS unowned release has no coordination or issue-state writes: %s\n' "$unowned_case"
+done
+: >"$CALL_LOG"
+if GH_CLAIM_READ_FAILURE=1 _release_dispatch_claim "issue-12345" worker_complete; then
+	printf 'FAIL unavailable claim evidence was treated as release authority\n'
+	exit 1
+fi
+if grep -Eq 'API method=POST|^CLEAR |^UNLOCK ' "$CALL_LOG"; then
+	printf 'FAIL unavailable claim evidence mutated issue state\n'
+	exit 1
+fi
+printf 'PASS unavailable claim evidence remains retryable without writes\n'
+
+valid_claim_evidence=$(gh api 'repos/owner/repo/issues/12345/comments?per_page=100' --slurp)
+for evidence_case in edited ambiguous unreadable invalid_timestamp duplicate_fields already_released unbound_release wrong_claim_release wrong_nonce_release edited_release mixed_receipts terminal; do
+	: >"$CALL_LOG"
+	expected_result=1
+	evidence_edit_response=""
+	case "$evidence_case" in
+	edited)
+		evidence=$(jq -c '.[0][0].updated_at = "2026-11-02T00:00:00Z"' <<<"$valid_claim_evidence")
+		evidence_edit_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":"2026-11-02T00:00:00Z"}]}}'
+		;;
+	ambiguous) evidence=$(jq -c '.[0] += .[0]' <<<"$valid_claim_evidence") ;;
+	unreadable) evidence='not JSON' ;;
+	invalid_timestamp) evidence=$(jq -c '.[0][0] |= (.created_at = "invalid" | .updated_at = "invalid")' <<<"$valid_claim_evidence") ;;
+	duplicate_fields) evidence=$(jq -c '.[0][0].body += " nonce=fixture-lease"' <<<"$valid_claim_evidence") ;;
+	already_released | unbound_release | wrong_claim_release | wrong_nonce_release | edited_release | mixed_receipts)
+		evidence=$(jq -c '.[0] += [(.[0][0] | .id=101 | .node_id="CLAIM_FIXTURE_101" |
+			.body="CLAIM_RELEASED reason=worker_complete runner=assigned-bot claim_id=100 nonce=fixture-lease")]' <<<"$valid_claim_evidence")
+		case "$evidence_case" in
+		already_released) expected_result=0 ;;
+		unbound_release) evidence=$(jq -c '.[0][1].body="CLAIM_RELEASED reason=worker_complete runner=assigned-bot"' <<<"$evidence") ;;
+		wrong_claim_release) evidence=$(jq -c '.[0][1].body |= sub("claim_id=100";"claim_id=99")' <<<"$evidence") ;;
+		wrong_nonce_release) evidence=$(jq -c '.[0][1].body |= sub("nonce=fixture-lease";"nonce=other-lease")' <<<"$evidence") ;;
+		edited_release) evidence_edit_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":null},{"id":"CLAIM_FIXTURE_101","lastEditedAt":"2026-11-01T00:00:00Z"}]}}' ;;
+		mixed_receipts) evidence=$(jq -c '.[0] += [(.[0][1] | .id=102 | .node_id="CLAIM_FIXTURE_102" | .body |= sub("claim_id=100";"claim_id=99"))]' <<<"$evidence") ;;
+		esac
+		;;
+	terminal)
+		expected_result=0
+		evidence=$(jq -c '.[0] += [(.[0][0] | .id = 101 |
+			.body = "DISPATCH_LEASE phase=terminal lease_token=fixture-lease device=fixture-device session=issue-12345")]' <<<"$valid_claim_evidence")
+		;;
+	esac
+	result=0
+	GH_CLAIM_EVIDENCE="$evidence" GH_EDIT_RESPONSE="$evidence_edit_response" \
+		_release_dispatch_claim "issue-12345" worker_complete || result=$?
+	if [[ "$result" -ne "$expected_result" ]] ||
+		grep -Eq 'API method=POST|^CLEAR |^UNLOCK ' "$CALL_LOG"; then
+		printf 'FAIL invalid or consumed claim evidence was not held safely: %s\n' "$evidence_case"
+		exit 1
+	fi
+	printf 'PASS invalid or consumed claim evidence has no writes: %s\n' "$evidence_case"
+done
+: >"$CALL_LOG"
+paginated_claim_evidence=$(jq -c '[[], .[0]]' <<<"$valid_claim_evidence")
+AIDEVOPS_DISPATCH_LEASE_DEVICE="" AIDEVOPS_DEVICE_ID="fixture-device" \
+	GH_CLAIM_EVIDENCE="$paginated_claim_evidence" _release_dispatch_claim "issue-12345" "worker_noop" "0" "0"
 
 if grep -q 'CLAIM_RELEASED reason=worker_noop' "$CALL_LOG" &&
 	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot draft=available' "$CALL_LOG" &&
 	grep -q 'runner=assigned-bot' "$CALL_LOG" &&
 	! grep -q 'runner=local-os-user' "$CALL_LOG" &&
 	grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG"; then
-	printf 'PASS release posts claim, clears assigned GitHub login, and unlocks issue\n'
+	printf 'PASS paginated own claim with explicit device identity releases and projects issue state\n'
 else
 	printf 'FAIL release lifecycle missing expected calls\n'
 	sed 's/^/  /' "$CALL_LOG"
 	exit 1
 fi
+
+# A replacement generation fences both pre-post retries and post-write projection.
+replacement_claim_evidence=$(jq -c '.[0] += [ (.[0][0] | .id = 101 |
+	.user.login = "another-worker" | .body = "DISPATCH_CLAIM runner=another-worker nonce=other lease_token=other device=other session=other") ]' <<<"$valid_claim_evidence")
+for race_case in before_post after_post unavailable_after_post; do
+	: >"$CALL_LOG"
+	case "$race_case" in
+	before_post)
+		GH_CLAIM_EVIDENCE_AFTER_READ="$replacement_claim_evidence" \
+			_release_dispatch_claim "issue-12345" "worker_noop" "0" "0" && exit 1
+		! grep -q '^POSTED_RELEASE$' "$CALL_LOG" || exit 1
+		;;
+	after_post)
+		GH_CLAIM_EVIDENCE_AFTER_POST="$replacement_claim_evidence" \
+			_release_dispatch_claim "issue-12345" "worker_noop" "0" "0" && exit 1
+		grep -q '^POSTED_RELEASE$' "$CALL_LOG" || exit 1
+		;;
+	unavailable_after_post)
+		GH_CLAIM_READ_FAIL_AFTER_POST=1 \
+			_release_dispatch_claim "issue-12345" "worker_noop" "0" "0" && exit 1
+		grep -q '^POSTED_RELEASE$' "$CALL_LOG" || exit 1
+		;;
+	esac
+	if grep -Eq '^(CLEAR|UNLOCK|EDIT|LEASE) ' "$CALL_LOG"; then
+		printf 'FAIL stale or uncertain generation projected issue state: %s\n' "$race_case"
+		exit 1
+	fi
+	printf 'PASS claim-generation race preserves issue state: %s\n' "$race_case"
+done
+
+# Minimized comments can have REST update timestamps without a body edit.
+edited_claim_evidence=$(jq -c '.[0][0].node_id = "NODE_FIXTURE" |
+	.[0][0].updated_at = "2026-11-02T00:00:00Z"' <<<"$valid_claim_evidence")
+for edit_case in confirmed_unedited body_edited partial_response; do
+	: >"$CALL_LOG"
+	case "$edit_case" in
+	confirmed_unedited) edit_response='{"data":{"nodes":[{"id":"NODE_FIXTURE","lastEditedAt":null},{"id":"CLAIM_FIXTURE_200","lastEditedAt":null}]}}' ;;
+	body_edited) edit_response='{"data":{"nodes":[{"id":"NODE_FIXTURE","lastEditedAt":"2026-11-02T00:00:00Z"}]}}' ;;
+	partial_response) edit_response='{"data":{"nodes":[{"id":"NODE_FIXTURE"}]}}' ;;
+	esac
+	edit_rc=0
+	GH_CLAIM_EVIDENCE="$edited_claim_evidence" GH_EDIT_RESPONSE="$edit_response" \
+		_release_dispatch_claim "issue-12345" "worker_noop" "0" "0" || edit_rc=$?
+	if [[ "$edit_case" == confirmed_unedited ]]; then
+		[[ "$edit_rc" -eq 0 ]] && grep -q '^CLEAR ' "$CALL_LOG" || exit 1
+	else
+		[[ "$edit_rc" -ne 0 ]] || exit 1
+		! grep -Eq '^(API .*POST|CLEAR|UNLOCK|EDIT|LEASE) ' "$CALL_LOG" || exit 1
+	fi
+	printf 'PASS edit evidence remains fail-closed: %s\n' "$edit_case"
+done
+
+# Equal REST timestamps cannot exclude same-second edits of either the claim
+# or a later protocol event. Missing positive edit evidence must also hold.
+for same_second_case in edited missing_evidence partial_evidence later_lease_edit projection_edit; do
+	: >"$CALL_LOG"
+	same_second_evidence="$valid_claim_evidence"
+	same_second_failure=0
+	same_second_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":"2026-11-01T00:00:00Z"}]}}'
+	case "$same_second_case" in
+	missing_evidence) same_second_failure=1 ;;
+	partial_evidence) same_second_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100"}]}}' ;;
+	later_lease_edit)
+		same_second_evidence=$(jq -c '.[0] += [(.[0][0] | .id=101 | .node_id="CLAIM_FIXTURE_101" |
+			.body="DISPATCH_LEASE phase=ready lease_token=fixture-lease device=fixture-device session=issue-12345")]' <<<"$valid_claim_evidence")
+		same_second_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":null},{"id":"CLAIM_FIXTURE_101","lastEditedAt":"2026-11-01T00:00:00Z"}]}}'
+		;;
+	projection_edit)
+		same_second_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":null},{"id":"CLAIM_FIXTURE_200","lastEditedAt":"2026-11-03T00:00:00Z"}]}}'
+		;;
+	esac
+	if GH_CLAIM_EVIDENCE="$same_second_evidence" GH_EDIT_RESPONSE="$same_second_response" \
+		GH_EDIT_READ_FAILURE="$same_second_failure" _release_dispatch_claim issue-12345 worker_complete; then
+		printf 'FAIL same-second edit evidence authorized projection: %s\n' "$same_second_case"
+		exit 1
+	fi
+	! grep -Eq '^(CLEAR|UNLOCK|EDIT|LEASE) ' "$CALL_LOG" || exit 1
+	if [[ "$same_second_case" == projection_edit ]]; then
+		grep -q '^POSTED_RELEASE$' "$CALL_LOG" || exit 1
+	else
+		! grep -q 'API method=POST' "$CALL_LOG" || exit 1
+	fi
+	printf 'PASS same-second edit fence: %s\n' "$same_second_case"
+done
 
 # GH#35684: model selection fails before _cmd_run_prepare exports
 # DISPATCH_REPO_SLUG; the dispatcher-supplied WORKER_REPO_SLUG must still
@@ -309,7 +525,7 @@ for ready_reason in worker_ready_missing_linkage worker_ready_missing_summary; d
 done
 
 # GH#35574: a denied terminal-lease transition on the ready handoff is
-# surfaced with only the allowlisted reason and never blocks the release.
+# surfaced without raw helper output and never blocks the release.
 : >"$CALL_LOG"
 rm -f "${TMP_HOME}/comment-attempts"
 STUB_CLAIM_HELPER="${TMP_HOME}/stub-claim-helper.sh"
@@ -317,10 +533,10 @@ printf '#!/usr/bin/env bash\nprintf "STUB %%s\\n" "$*" >>"%s"\nprintf "DISPATCH_
 	"$CALL_LOG" >"$STUB_CLAIM_HELPER"
 chmod +x "$STUB_CLAIM_HELPER"
 STUB_LEASE="stub-lease-fixture"
-if AIDEVOPS_DISPATCH_LEASE_TOKEN="$STUB_LEASE" DISPATCH_CLAIM_HELPER="$STUB_CLAIM_HELPER" \
+if AIDEVOPS_DISPATCH_LEASE_TOKEN="$STUB_LEASE" CLAIM_FIXTURE_TOKEN="$STUB_LEASE" DISPATCH_CLAIM_HELPER="$STUB_CLAIM_HELPER" \
 	_release_dispatch_claim "issue-12345" worker_ready_missing_linkage "0" "0" && \
 	grep -q "STUB transition terminal 12345 owner/repo ${STUB_LEASE} issue-12345 0" "$CALL_LOG" && \
-	grep -q 'WARN Terminal dispatch lease not posted on #12345 (reason: lease_unmatched)' "$CALL_LOG" && \
+	grep -q 'WARN Terminal dispatch lease not posted on #12345; checkpoint recovery recorded locally when eligible' "$CALL_LOG" && \
 	! grep -q "^WARN .*${STUB_LEASE}" "$CALL_LOG" && \
 	grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG"; then
 	printf 'PASS ready handoff surfaces a denied terminal lease without failing release\n'
@@ -368,7 +584,7 @@ fi
 (
 	unset GH_ISSUE_LABELS
 	GH_LIVE_ISSUE='{"state":"open","body":"### Files Scope","assignees":[{"login":"assigned-bot"}],"labels":[{"name":"status:blocked"},{"name":"origin:interactive"}]}'
-	GH_RELEASE_COMMENTS='[]'
+	GH_RELEASE_COMMENTS=$(jq -c '.[0]' <<<"$valid_claim_evidence")
 	# shellcheck source=../headless-runtime-result.sh
 	source "${SCRIPT_DIR}/headless-runtime-result.sh"
 	_headless_private_workload_enabled() { return 1; }
@@ -406,7 +622,8 @@ fi
 	post_line=$(grep -n '^API method=POST' "$CALL_LOG" | cut -d: -f1)
 	edit_line=$(grep -n '^EDIT ' "$CALL_LOG" | sed -n '1s/:.*//p')
 	[[ "$post_line" -lt "$edit_line" ]]
-	GH_RELEASE_COMMENTS='[{"id":1,"author_association":"OWNER","body":"DISPATCH_CLAIM nonce=first"},{"id":2,"author_association":"OWNER","body":"CLAIM_RELEASED reason=blocked runner=assigned-bot "}]'
+	GH_RELEASE_COMMENTS=$(jq -c '.[0] + [(.[0][0] | .id=101 | .node_id="CLAIM_FIXTURE_101" |
+		.body="CLAIM_RELEASED reason=blocked runner=assigned-bot claim_id=100 nonce=fixture-lease")]' <<<"$valid_claim_evidence")
 	_release_dispatch_claim issue-12345 blocked
 	[[ "$(grep -c 'CLAIM_RELEASED reason=blocked' "$CALL_LOG")" == 1 ]]
 	printf 'PASS legacy live-blocked checkpoint releases exactly once before projection and gates missing names\n'
@@ -420,7 +637,7 @@ fi
 	# A mixed-version dispatch may reach a circuit opened by an older attempt.
 	_hrff_prepare_terminal_blocker_release() { _HRFF_TERMINAL_BLOCKER_MODE=open; return 0; }
 	GH_LIVE_ISSUE='{"state":"open","labels":[{"name":"status:in-progress"}]}'
-	GH_RELEASE_COMMENTS='[{"id":1,"author_association":"OWNER","body":"CLAIM_RELEASED reason=blocked runner=assigned-bot "},{"id":2,"author_association":"OWNER","body":"DISPATCH_CLAIM nonce=new"}]'
+	GH_RELEASE_COMMENTS=$(jq -c '[{id:99, user:{login:"assigned-bot"}, author_association:"OWNER", body:"CLAIM_RELEASED reason=blocked runner=assigned-bot "}] + .[0]' <<<"$valid_claim_evidence")
 	: >"$CALL_LOG"
 	rm -f "${TMP_HOME}/comment-attempts"
 	if GH_COMMENT_FAILURES_BEFORE_SUCCESS=3 AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS=1 \

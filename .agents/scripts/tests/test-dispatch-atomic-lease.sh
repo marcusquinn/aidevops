@@ -38,6 +38,11 @@ if [[ "${1:-}" == issue && "${2:-}" == comment ]]; then exit 0; fi
 [[ "${1:-}" == api ]] || exit 1
 endpoint="${2:-}"
 shift 2
+if [[ "$endpoint" == graphql ]]; then
+	jq -nc --args '$ARGS.positional | map(select(startswith("ids[]=")) |
+		{id:ltrimstr("ids[]="),lastEditedAt:null}) | {data:{nodes:.}}' -- "$@"
+	exit 0
+fi
 if [[ "$endpoint" == repos/*/issues/[0-9]* && "$endpoint" != */comments* ]]; then
 	printf '{"assignees":[]}\n'
 	exit 0
@@ -68,7 +73,7 @@ if [[ "$method" == POST ]]; then
 	jq -cn --argjson id "$id" --arg body "$body" --arg created "$created" \
 		--arg login "${MOCK_GH_LOGIN:-shared-login}" \
 		--arg association "${MOCK_GH_ASSOCIATION:-MEMBER}" \
-		'{id:$id,body:$body,created_at:$created,user:{login:$login},author_association:$association}' >>"$comments"
+		'{id:$id,node_id:("MOCK_NODE_" + ($id|tostring)),body:$body,created_at:$created,updated_at:$created,user:{login:$login},author_association:$association}' >>"$comments"
 	rmdir "$lock"
 	printf '%s\n' "$id"
 	exit 0
@@ -678,23 +683,26 @@ test_ready_handoff_release_retires_marked_dispatch() {
 	local root="${TMP_DIR}/ready-handoff-release"
 	create_mock_gh "$root"
 
-	# Pre-fix behaviour: CLAIM_RELEASED alone cannot retire a marked dispatch.
+	# The producer now emits an exact claim_id/nonce release. The existing
+	# reader treats that authenticated release as terminal even without a helper.
+	# Unbound-release rejection remains covered by the generation tests above.
 	_ready_release_fixture "$root" 55 "${root}/missing-claim-helper"
-	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
-		"$DEDUP" has-dispatch-comment 55 owner/repo shared-login >/dev/null ||
-		fail "CLAIM_RELEASED alone unexpectedly retired a generation-marked dispatch"
+	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment 55 owner/repo shared-login >/dev/null; then
+		fail "exact bound release left its generation-marked dispatch active"
+	fi
 	grep -q 'Terminal lease helper unavailable for #55' "$root/release-55.err" ||
 		fail "missing terminal lease helper was not surfaced"
 
 	: >"$root/state/comments.jsonl"
 	_ready_release_fixture "$root" 56 "$CLAIM"
-	grep -q 'DISPATCH_LEASE phase=terminal .*session=issue-56 .*attempt_id=attempt-56' "$root/state/comments.jsonl" ||
-		fail "ready-release did not post the attempt's terminal lease"
+	grep -q 'CLAIM_RELEASED .*claim_id=[0-9]* nonce=[^ ]* .*session=issue-56' "$root/state/comments.jsonl" ||
+		fail "ready-release did not bind its terminal release to the claim generation"
 	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
 		"$DEDUP" has-dispatch-comment 56 owner/repo shared-login >/dev/null 2>&1; then
 		fail "ready-handoff release left the generation-marked dispatch active"
 	fi
-	pass "ready-handoff release posts its terminal lease and leaves the issue dispatchable"
+	pass "ready-handoff release terminalizes its exact claim with or without a lease helper"
 	return 0
 }
 

@@ -49,13 +49,27 @@ source "${SCRIPT_DIR}/terminal-blocker-circuit.sh"
 # shellcheck source=../headless-runtime-failure.sh
 source "${SCRIPT_DIR}/headless-runtime-failure.sh"
 
+# These circuit fixtures represent separate owned attempts. The integrated
+# release-authority cases live in test-headless-runtime-release-unlock.sh.
+_hrff_check_release_claim() {
+	_HRFF_RELEASE_CLAIM_OWNED=1
+	_HRFF_RELEASE_CLAIM_ID=100
+	return 0
+}
+
 # Exercise the production triage parser with bounded inference responses, never
 # contact a provider from this suite (including the older unknown-release cases).
 test_unknown_triage() (
 	local captured='{"explicit_reason":false,"detail":"BLOCKED: Only unfinished authorized implementation remains; no external prerequisite exists."}'
 	local issue='{"body":"### Files Scope\n- helper.sh"}' reason="" expected="" status=0
 	local WORKER_WORKTREE_PATH="$SCRIPT_DIR" TRIAGE_RESPONSE="" AIDEVOPS_TERMINAL_BLOCKER_TRIAGE=""
-	timeout() { printf '%s\n' "$TRIAGE_RESPONSE"; return 0; }
+	timeout() {
+		# Consume the producer's input before exiting, as the real helper does.
+		# Otherwise pipefail can report a scheduling-dependent broken pipe.
+		while IFS= read -r; do :; done
+		printf '%s\n' "$TRIAGE_RESPONSE"
+		return 0
+	}
 	TRIAGE_RESPONSE='{"reason":"unknown","owner":"","pending_only":true}'
 	_terminal_blocker_triage_unknown "$captured" "$issue" || status=1
 	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" =~ ^pending_work\ brief=[a-f0-9]{64}\ head=[a-f0-9]{40,64}$ ]] || status=1
