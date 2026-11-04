@@ -146,7 +146,7 @@ _cleanup_headless_runtime_temp_paths() {
 		"$managed_temp_root"/aidevops-headless-* | "$tmp_root"/aidevops-* | /tmp/aidevops-* | /var/folders/*/T/*/aidevops-*)
 			path_cleanup_failed=0
 			rm -rf -- "$path" 2>/dev/null || path_cleanup_failed=1
-			for suffix in wait_status kill_reason watchdog_killed watchdog_stall_killed rate_limit_fast; do
+			for suffix in wait_status kill_reason watchdog_killed watchdog_stall_killed watchdog_events rate_limit_fast; do
 				rm -f -- "${path}.${suffix}" 2>/dev/null || path_cleanup_failed=1
 				[[ ! -e "${path}.${suffix}" && ! -L "${path}.${suffix}" ]] || path_cleanup_failed=1
 			done
