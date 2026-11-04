@@ -44,6 +44,8 @@ Environment:
   AIDEVOPS_WORKTREE_ARCHIVE_ROOT                Override the archive root.
   AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES Maximum untracked paths (10000).
   AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES Maximum untracked bytes (1 GiB).
+  AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES       Free space kept beyond the
+                                                estimated archive (512 MiB).
 USAGE
 	return 0
 }
@@ -453,6 +455,52 @@ PY
 	return 0
 }
 
+# GH#36564: reserve the maximum untracked payload as well as the estimated Git
+# payload before allocating. Estimation failure (old Git) is not a refusal.
+# Python decimal integers avoid Bash octal parsing and signed overflow.
+archive_capacity_check() {
+	local worktree="$1" output_root="$2" head_sha="$3" base_sha="$4"
+	local reserve="${AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES:-536870912}"
+	local estimate=""
+	estimate=$(git -C "$worktree" rev-list --objects --disk-usage "$head_sha" "^${base_sha}" 2>/dev/null) || estimate=0
+	python3 - "$output_root" "$estimate" "$reserve" "$MAX_UNTRACKED_BYTES" <<'PY'
+import pathlib
+import re
+import shutil
+import sys
+
+def decimal(value):
+    if not re.fullmatch(r"[0-9]+", value):
+        raise ValueError("invalid capacity operand")
+    return int(value, 10)
+
+try:
+    estimate, reserve, untracked = map(decimal, sys.argv[2:])
+    path = pathlib.Path(sys.argv[1]).absolute()
+    while not path.exists():
+        path = path.parent
+    free = decimal(str(shutil.disk_usage(path).free))
+except (OSError, ValueError):
+    raise SystemExit("Error: archive capacity unavailable") from None
+estimate += untracked
+if estimate + reserve > free:
+    raise SystemExit(
+        f"Error: producer:insufficient-capacity; estimate={estimate}; reserve={reserve}; "
+        f"free={free}; no archive written; source retained")
+PY
+	return $?
+}
+
+# GH#36564: this invocation created archive_dir (mkdir without -p), so a
+# failed capture owns it outright. It has no manifest or pin and can never be
+# restored; keeping it only leaks disk on every refused cleanup attempt.
+discard_failed_archive() {
+	local archive_dir="$1"
+	[[ -n "$archive_dir" && -d "$archive_dir" && ! -L "$archive_dir" ]] || return 0
+	rm -rf -- "$archive_dir"
+	return 0
+}
+
 archive_worktree() {
 	local worktree="${1:-}"
 	shift || true
@@ -502,20 +550,31 @@ archive_worktree() {
 	repo_path="${repo//\//__}"
 	archive_dir="${output_root%/}/${repo_path}/${issue}/${timestamp}"
 	if [[ -e "$archive_dir" ]]; then archive_dir="${archive_dir}-$$"; fi
+	archive_capacity_check "$worktree" "$output_root" "$head_sha" "$base_sha" || return 1
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
-	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" || return 1
+	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" || {
+		discard_failed_archive "$archive_dir"
+		return 1
+	}
 	if [[ -s "$archive_dir/staged.patch" || -s "$archive_dir/diff.patch" || -s "$archive_dir/untracked-files.txt" || -f "$archive_dir/merge-state-v1.json" ]]; then
 		dirty_state="dirty"
 	fi
 	# GH#34943: a capture that raced a late writer is not a faithful copy.
 	# Compare live diffs, not the saved patches: a late tracked write must fail.
-	fingerprint_after=$(source_fingerprint "$worktree" 0 0 1) || return 1
+	fingerprint_after=$(source_fingerprint "$worktree" 0 0 1) || {
+		discard_failed_archive "$archive_dir"
+		return 1
+	}
 	if [[ "$fingerprint_before" != "$fingerprint_after" ]]; then
+		discard_failed_archive "$archive_dir"
 		die "worktree changed during archive capture: $worktree"
 		return 1
 	fi
-	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" 0 0 0 1 || return 1
+	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" 0 0 0 1 || {
+		discard_failed_archive "$archive_dir"
+		return 1
+	}
 	printf '%s\n' "$archive_dir"
 	return 0
 }
