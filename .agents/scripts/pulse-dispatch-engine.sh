@@ -1311,7 +1311,7 @@ enforce_utilization_invariants() {
 #######################################
 # Sample host headroom for diagnostics only, never for worker admission.
 _underfill_host_sample() {
-	local cores load memory disk
+	local cores="" load="" memory="" disk=""
 	cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf '0')
 	load=$(LC_ALL=C uptime | awk -F 'load averages?: ' '{split($2,a,"[, ]"); print a[1]}')
 	memory=$(_pulse_ram_available_mb)
@@ -1323,7 +1323,7 @@ _underfill_host_sample() {
 # Read only the new log interval, bounded to 1 MiB. Collapse prose into stable
 # categories; never copy issue titles, paths or raw provider errors to advisories.
 _underfill_reason_tally() {
-	local offset="$1" end="${2:-$(wc -c <"$LOGFILE")}" start
+	local offset="$1" end="${2:-$(wc -c <"$LOGFILE")}" start=0
 	start=$((end - 1048576 > offset ? end - 1048576 : offset))
 	tail -c "+$((start + 1))" "$LOGFILE" 2>/dev/null | head -c "$((end - start))" | awk '
 		/pre-launch failure|Dispatch blocked/ {
@@ -1350,14 +1350,14 @@ _underfill_reason_tally() {
 # state survives wrapper restarts. Recovery clears advisories, not safety gates.
 _attribute_sustained_underfill() {
 	local target="$1" active="$2" runnable="$3"
-	local cycle="${_PULSE_CYCLE_ID:-}" dir="${HOME}/.aidevops/cache" now state previous
+	local cycle="${_PULSE_CYCLE_ID:-}" dir="${HOME}/.aidevops/cache" now=0 state="" previous=""
 	[[ -n "$cycle" ]] || return 0
 	mkdir -p "$dir" "${HOME}/.aidevops/advisories" || return 0
 	state="$dir/pulse-underfill.json"
 	previous=$(jq -c . "$state" 2>/dev/null || printf '{}')
 	[[ "$(jq -r '.cycle // ""' <<<"$previous")" != "$cycle" ]] || return 0
 	now=$(date +%s)
-	local cores load memory disk offset size identity deficit=0 streak=0 reasons summary runner
+	local cores="" load="" memory="" disk="" offset=0 size=0 identity="" deficit=0 streak=0 reasons="" summary="" runner=""
 	read -r cores load memory disk <<<"$(_underfill_host_sample)"
 	identity=$(LC_ALL=C ls -di "$LOGFILE" 2>/dev/null | awk '{print $1}')
 	size=$(wc -c <"$LOGFILE")
@@ -1370,7 +1370,7 @@ _attribute_sustained_underfill() {
 	local capacity_file="$dir/pulse-underfill-capacity.json" capacity='{}'
 	[[ ! -f "$capacity_file" ]] || capacity=$(jq -c . "$capacity_file" 2>/dev/null || printf '{}')
 	if jq -e --argjson now "$now" '(.timestamp // 0) > ($now - 900) and .config_clamp == true' <<<"$capacity" >/dev/null; then
-		local detected
+		local detected=0
 		detected=$(jq -r '.detected_target' <<<"$capacity")
 		if ((detected > target)); then
 			target="$detected"
@@ -1395,7 +1395,7 @@ _attribute_sustained_underfill() {
 	if ((streak >= 3)); then
 		[[ "$(jq 'length' <<<"$reasons")" != 0 ]] || reasons='[{"reason":"unattributed","count":1}]'
 		summary=$(jq -r 'map(.reason + ":" + (.count|tostring)) | join(",")' <<<"$reasons")
-		local reason count last action remedy pattern map_action map_remedy
+		local reason="" count=0 last=0 action="" remedy="" pattern="" map_action="" map_remedy=""
 		while read -r reason count; do
 			last=$(jq -r --arg r "$reason" '.[$r] // 0' <<<"$escalated")
 			((now - last >= 86400)) || continue
