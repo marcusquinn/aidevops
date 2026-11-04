@@ -1144,26 +1144,30 @@ test_parallel_loop_skips_cached_blocks_before_wave() {
 }
 
 # GH#33560: isolate clocks and cache writes in subshells, without live API calls.
+# GH#36603: admission needs floor (600) + pre-stage margin (60) [+ enumeration].
 test_enumeration_budget_admission() {
 	local rc=0
 	(
-		local test_remaining=899
+		local test_remaining=959
 		_pulse_cycle_remaining_seconds() { printf '%s\n' "$test_remaining"; return 0; }
 		_DISPATCH_TEST_CACHE="${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
 		mkdir -p "${HOME}/.aidevops/cache"
 		rm -f "$_DISPATCH_TEST_CACHE"
 		[[ "$(_dispatch_enumeration_expected_seconds)" == 300 ]] || exit 1
 		_dispatch_cycle_budget_admits_round test before && exit 1
-		test_remaining=900
+		test_remaining=960
 		_dispatch_cycle_budget_admits_round test before || exit 1
 		printf '400\n' >"$_DISPATCH_TEST_CACHE"
 		_dispatch_cycle_budget_admits_round test before && exit 1
-		test_remaining=1000
+		test_remaining=1060
 		_dispatch_cycle_budget_admits_round test before || exit 1
-		test_remaining=600
+		test_remaining=660
 		_dispatch_cycle_budget_admits_round test after || exit 1
-		test_remaining=599
+		test_remaining=659
 		_dispatch_cycle_budget_admits_round test after && exit 1
+		# Rollback knob restores the bare floor; invalid values keep the default.
+		DISPATCH_PRESTAGE_MARGIN_SECONDS=0 _dispatch_cycle_budget_admits_round test after || exit 1
+		[[ "$(DISPATCH_PRESTAGE_MARGIN_SECONDS=bogus _dispatch_prestage_margin_seconds)" == 60 ]] || exit 1
 		printf 'corrupt\n' >"$_DISPATCH_TEST_CACHE"
 		[[ "$(_dispatch_enumeration_expected_seconds)" == 300 ]] || exit 1
 		unset -f _pulse_cycle_remaining_seconds
@@ -1209,10 +1213,11 @@ test_enumeration_overrun_retains_refill() {
 		: >"$trigger"
 		rm -f "$enumerated" "${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
 		printf '1000000\n' >"$clock_file"
+		# GH#36603: before-enumeration admission needs 600 floor + 60 margin + 300.
 		if [[ "$stage" == before ]]; then
-			printf '899\n' >"$remaining_file"
+			printf '959\n' >"$remaining_file"
 		else
-			printf '950\n' >"$remaining_file"
+			printf '1010\n' >"$remaining_file"
 		fi
 		_pulse_cycle_remaining_seconds() { read -r value <"$remaining_file"; printf '%s\n' "$value"; return 0; }
 		_dispatch_now_ms() { read -r value <"$clock_file"; printf '%s\n' "$value"; return 0; }

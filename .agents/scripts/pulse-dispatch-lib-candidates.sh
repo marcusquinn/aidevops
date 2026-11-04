@@ -680,9 +680,11 @@ _dispatch_with_timeout() {
 
 #######################################
 # GH#34428: re-check the per-candidate floor where the dispatch stage starts.
-# Mirrors _dispatch_graphql_budget_allows_next, which runs before the
-# candidate's pre-stage checks. Fails open when the remaining-seconds helper
-# is unavailable or returns a non-integer.
+# _dispatch_graphql_budget_allows_next runs before the candidate's pre-stage
+# checks and requires floor + _dispatch_prestage_margin_seconds (GH#36603);
+# this guard deliberately keeps the bare floor, so the margin absorbs the
+# pre-stage work and no stage starts below the floor. Fails open when the
+# remaining-seconds helper is unavailable or returns a non-integer.
 #
 # Arguments: $1 issue number, $2 repo slug (log line only)
 # Returns: 0 defer (logged + counted), 1 proceed
@@ -782,6 +784,21 @@ _dispatch_enumeration_expected_seconds() {
 	return 0
 }
 
+# GH#36603: slack between candidate admission (_dispatch_graphql_budget_allows_next)
+# and the stage-start floor guard (_dispatch_cycle_budget_defers_candidate).
+# Both compared against the same floor, and every pre-dispatch reserve landed
+# dispatch exactly on it, so a pass that housekeeping clamped to its full
+# allowance lost a few seconds to pre-stage checks and deferred every
+# candidate at 592-599s. Admission and the reserves add this margin; the
+# stage-start guard keeps the bare floor, so no stage starts below it.
+# DISPATCH_PRESTAGE_MARGIN_SECONDS=0 restores the previous zero-slack sizing.
+_dispatch_prestage_margin_seconds() {
+	local margin="${DISPATCH_PRESTAGE_MARGIN_SECONDS:-60}"
+	[[ "$margin" =~ ^[0-9]{1,4}$ ]] || margin=60
+	printf '%s\n' "$((10#$margin))"
+	return 0
+}
+
 _dispatch_record_enumeration_seconds() {
 	local started_ms="$1" ended_ms="" elapsed=0 expected=0 timing_dir="${HOME}/.aidevops/cache" temporary=""
 	local timing_file="${timing_dir}/pulse-dispatch-enumeration-seconds"
@@ -804,15 +821,16 @@ _dispatch_record_enumeration_seconds() {
 # A skipped round returns a distinct status to its orchestrator, not a successful
 # empty queue. That lets the existing event refill failure path restore its signal.
 _dispatch_cycle_budget_admits_round() {
-	local context="$1" stage="${2:-before}" remaining="" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" enumeration=0
+	local context="$1" stage="${2:-before}" remaining="" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" enumeration=0 margin=0
 	[[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" ]] || return 0
 	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 0
 	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 0
 	[[ "$remaining" =~ ^-?[0-9]+$ ]] || return 0
 	[[ "$floor" =~ ^[1-9][0-9]*$ ]] || floor=600
+	margin=$(_dispatch_prestage_margin_seconds)
 	[[ "$stage" != "before" ]] || enumeration=$(_dispatch_enumeration_expected_seconds)
-	((remaining >= floor + enumeration)) && return 0
-	echo "[pulse-wrapper] ${context} skipped ${stage} candidate enumeration: cycle wall-clock budget below dispatch reserve (remaining=${remaining}s floor=${floor}s enumeration=${enumeration}s); refill trigger retained for a fresh-budget pass (GH#33560)" >>"$LOGFILE"
+	((remaining >= floor + margin + enumeration)) && return 0
+	echo "[pulse-wrapper] ${context} skipped ${stage} candidate enumeration: cycle wall-clock budget below dispatch reserve (remaining=${remaining}s floor=${floor}s prestage_margin=${margin}s enumeration=${enumeration}s); refill trigger retained for a fresh-budget pass (GH#33560)" >>"$LOGFILE"
 	_dispatch_stats_increment "pulse_dispatch_cycle_budget_skipped"
 	return 1
 }
@@ -852,17 +870,21 @@ _dispatch_enumerate_ranked_round() {
 #
 # Returns:
 #   0 — budget is sufficient, unavailable, or checker is not loaded
-#   1 — cycle wall-clock budget is below the per-candidate floor (logged here)
+#   1 — cycle wall-clock budget is below the per-candidate floor plus the
+#       pre-stage margin (logged here)
 #   2 — GraphQL budget is below threshold; caller should stop the loop
 #######################################
 _dispatch_graphql_budget_allows_next() {
 	# Both serial and parallel candidate loops call this before any candidate
 	# API work. Keep the 600s ceremony floor; defer instead of shrinking it.
-	local cycle_remaining="" floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
+	# GH#36603: admit only with the pre-stage margin on top of the floor, so a
+	# candidate admitted here still clears the stage-start floor guard.
+	local cycle_remaining="" floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" margin=0
 	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
+	margin=$(_dispatch_prestage_margin_seconds)
 	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && cycle_remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
-		if [[ "$cycle_remaining" -lt "$floor_seconds" ]]; then
-			echo "[pulse-wrapper] Dispatch_max stopping early: cycle wall-clock budget below per-candidate floor (remaining=${cycle_remaining}s floor=${floor_seconds}s)" >>"$LOGFILE"
+		if [[ "$cycle_remaining" -lt $((floor_seconds + margin)) ]]; then
+			echo "[pulse-wrapper] Dispatch_max stopping early: cycle wall-clock budget below candidate admission reserve (remaining=${cycle_remaining}s floor=${floor_seconds}s prestage_margin=${margin}s)" >>"$LOGFILE"
 			return 1
 		fi
 	fi
