@@ -22,6 +22,13 @@ from .process import ProcessIdentity, ProcessObservation
 APPLICATION_ID = 0x574C4353
 SCHEMA = 2
 MAX_EVENT_BYTES = 16384
+# Ordinary work filled the original 10,000-event default within a week (GH#36620).
+# Stores still at that legacy default are lifted on their next write; other explicit
+# limits are kept. 100,000 is also the schema CHECK maximum, so no migration is needed.
+DEFAULT_MAX_EVENTS = 100000
+LEGACY_DEFAULT_MAX_EVENTS = 10000
+ADMISSION_EVENT_NEED = 3  # admit + register + bind, committed atomically
+DEFAULT_RETENTION_SECONDS = 86400
 
 
 class StoreConflict(ValueError):
@@ -55,7 +62,7 @@ class LifecycleRegistry:
         _private(self.path)
 
     @classmethod
-    def initialize(cls, directory: Path, max_events: int = 10000) -> "LifecycleRegistry":
+    def initialize(cls, directory: Path, max_events: int = DEFAULT_MAX_EVENTS) -> "LifecycleRegistry":
         # Explicit init only. Never mkdir parents or reuse an existing directory.
         if type(max_events) is not int or not 1 <= max_events <= 100000:  # pylint: disable=unidiomatic-typecheck  # Reject bool
             raise ValueError("invalid-event-limit")
@@ -132,7 +139,7 @@ class LifecycleRegistry:
                 raise ValueError("fullfsync-unavailable")
 
     @contextmanager
-    def connection(self, write: bool = False) -> Iterator[sqlite3.Connection]:
+    def connection(self, write: bool = False, *, maintenance: bool = True) -> Iterator[sqlite3.Connection]:
         connection = self._connect()
         try:
             if connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
@@ -146,6 +153,10 @@ class LifecycleRegistry:
             if len(metadata) != 1 or metadata[0]["mode"] != "observe-only":
                 raise ValueError("invalid-store-metadata")
             identifier(metadata[0]["installation_id"])
+            if write and maintenance:
+                from .journal import automatic_compaction
+
+                automatic_compaction(self, connection)
             yield connection
             connection.commit()
         except BaseException:
@@ -159,24 +170,50 @@ class LifecycleRegistry:
             return connection.execute("SELECT installation_id FROM metadata").fetchone()[0]
 
     @staticmethod
-    def _event(connection: sqlite3.Connection, event_id: str, payload: dict) -> tuple[int, bool]:
-        identifier(event_id)
-        value = encode(payload)
-        if len(value.encode("utf-8")) > MAX_EVENT_BYTES:
-            raise ValueError("event-payload-too-large")
-        old = connection.execute("SELECT sequence,payload FROM events WHERE event_id=?", (event_id,)).fetchone()
-        if old is not None:
-            if old["payload"] != value:
-                raise StoreConflict("event-id-payload-conflict")
-            return old["sequence"], True
-        count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
+    def retention_seconds() -> int:
+        """Automatic retention is configurable without changing a store's schema."""
+        age = int(os.environ.get("AIDEVOPS_LIFECYCLE_RETENTION_SECONDS", DEFAULT_RETENTION_SECONDS))
+        if not 0 <= age <= 315360000:
+            raise ValueError("invalid-retention-age")
+        return age
+
+    def _compact(self, connection: sqlite3.Connection, age: int, *, apply: bool) -> dict:
+        from .journal import compact
+
+        return compact(self, connection, age, apply=apply)
+
+    def compact(self, *, age: int | None = None, apply: bool = False) -> dict:
+        """Preview by default; archive before deleting any eligible journal rows."""
+        with self.connection(write=apply, maintenance=False) as connection:
+            return self._compact(connection, self.retention_seconds() if age is None else age, apply=apply)
+
+    def raise_capacity(self, maximum: int, *, apply: bool = False) -> dict:
+        """Only raise the stored cap, after a verified standalone SQLite backup."""
+        from .journal import raise_capacity
+
+        with self.connection(write=apply, maintenance=False) as connection:
+            return raise_capacity(self, connection, maximum, apply=apply)
+
+    @staticmethod
+    def _event_limit(connection: sqlite3.Connection, *, lift: bool = False) -> int:
+        """Return the effective journal cap; with lift, persist it for a legacy-default store.
+
+        Lifting runs inside the caller's write transaction, so it commits or rolls back
+        with the event that needed it.
+        """
         maximum = connection.execute("SELECT max_events FROM metadata").fetchone()[0]
-        if count >= maximum:
-            raise StoreCapacity("journal-event-limit-reached")
-        cursor = connection.execute("INSERT INTO events(event_id,payload) VALUES (?,?)", (event_id, value))
-        if cursor.lastrowid is None:
-            raise RuntimeError("event-sequence-unavailable")
-        return cursor.lastrowid, False
+        if maximum != LEGACY_DEFAULT_MAX_EVENTS:
+            return maximum
+        if lift:
+            connection.execute("UPDATE metadata SET max_events=? WHERE max_events=?",
+                               (DEFAULT_MAX_EVENTS, LEGACY_DEFAULT_MAX_EVENTS))
+        return DEFAULT_MAX_EVENTS
+
+    @staticmethod
+    def _event(connection: sqlite3.Connection, event_id: str, payload: dict) -> tuple[int, bool]:
+        from .journal import append_event
+
+        return append_event(connection, event_id, payload)
 
     def register(self, event_id: str, run_id: str, identity: ProcessIdentity) -> None:
         with self.connection(write=True) as connection:
@@ -282,11 +319,13 @@ class LifecycleRegistry:
         with self.connection() as connection:
             schema = connection.execute("PRAGMA user_version").fetchone()[0]
             count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
-            maximum = connection.execute("SELECT max_events FROM metadata").fetchone()[0]
+            # Read-only: report the limit the next write will enforce.
+            maximum = self._event_limit(connection)
             return {"mode": "observe-only", "runs": dict(connection.execute("SELECT state,count(*) FROM runs GROUP BY state").fetchall()),
                     "schema_version": schema, "upgrade_required": schema < SCHEMA,
                     "events": count, "event_limit": maximum,
-                    "journal_full": count >= maximum,
+                    "event_headroom": maximum - count, "admission_event_need": ADMISSION_EVENT_NEED,
+                    "journal_full": maximum - count < ADMISSION_EVENT_NEED,
                     "last_event_at": connection.execute("SELECT recorded_at FROM events ORDER BY sequence DESC LIMIT 1").fetchone()[0] if count else None,
                     "bindings": connection.execute("SELECT count(*) FROM bindings").fetchone()[0],
                     "conflicting_generations": connection.execute("SELECT count(*) FROM (SELECT b.generation_id FROM bindings b JOIN runs r USING(run_id) WHERE r.state='bound' GROUP BY b.generation_id HAVING count(*)>1)").fetchone()[0],

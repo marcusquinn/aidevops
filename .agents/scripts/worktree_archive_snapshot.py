@@ -35,7 +35,7 @@ from worktree_archive_index import (
     archive_policies as archive_policies, git_index_state as git_index_state,
 )
 from worktree_archive_objects import (
-    administration_roots, bundle_roots, capture_auto_merge,
+    administration_roots, bundle_roots, capture_auto_merge, dependency_commit,
     base_graph_missing, require_independent_base_receiver, verify_imported_base,
     verify_auto_merge as verify_auto_merge,
     verify_git_objects as verify_git_objects,
@@ -72,8 +72,14 @@ def capture_administration(root, archive, include_ignored, base=''):
 
 @timed("base-import")
 def seed_base(root, manifest):
-    """Import only the recorded base graph, never unrelated source objects."""
-    base = manifest['base_sha']
+    """Import only the recorded dependency graph, never unrelated source objects.
+
+    The dependency is the exact base, or the published head when the archive
+    omitted its bundle because the commits were already on a remote (GH#36607).
+    A missing published head uses the same explicitly authorized origin fetch
+    as a missing promisor base; there is no implicit network access.
+    """
+    base = dependency_commit(manifest)
     common = Path(manifest.get('source_git_common_dir', ''))
     if not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', base):
         raise ValueError('git_admin:invalid_base')

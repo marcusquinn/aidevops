@@ -411,6 +411,17 @@ assert_not_contains "text report omits private slug" "private/repo-one" "$OUT"
 assert_not_contains "text report omits issue titles" "secret one" "$OUT"
 assert_not_contains "text report omits canonical branch detail" "origin/develop" "$OUT"
 
+mkdir -p "$TEST_ROOT/.aidevops/cache"
+jq -n --argjson now "$(date +%s)" '{timestamp:$now,streak:3,deficit:100,top:"local_capacity_gate:5"}' >"$TEST_ROOT/.aidevops/cache/pulse-underfill.json"
+UNDERFILL_OUT=$(env "${COMMON_ENV[@]}" "HOME=$TEST_ROOT" "$HELPER" report 2>&1)
+assert_contains "health summary names sustained capacity blocker" '"top":"local_capacity_gate:5"' "$UNDERFILL_OUT"
+UNDERFILL_JSON=$(env "${COMMON_ENV[@]}" "HOME=$TEST_ROOT" "$HELPER" json 2>&1)
+assert_eq "health JSON preserves sustained attribution" "local_capacity_gate:5" "$(jq -r '.current_state.underfill_attribution.top' <<<"$UNDERFILL_JSON")"
+jq '.timestamp = 1' "$TEST_ROOT/.aidevops/cache/pulse-underfill.json" >"$TEST_ROOT/.aidevops/cache/stale.json"
+mv "$TEST_ROOT/.aidevops/cache/stale.json" "$TEST_ROOT/.aidevops/cache/pulse-underfill.json"
+UNDERFILL_OUT=$(env "${COMMON_ENV[@]}" "HOME=$TEST_ROOT" "$HELPER" report 2>&1)
+assert_not_contains "health summary ignores stale attribution" '"top":"local_capacity_gate:5"' "$UNDERFILL_OUT"
+
 BLOCKER_OUT=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_BLOCKER_FIXTURE=retained" "$HELPER" report --since 7d 2>&1)
 assert_contains "healthy idle report exposes retained supervisor blocker advisory" "retained-supervisor-permission-blockers" "$BLOCKER_OUT"
 assert_contains "retained blocker report preserves healthy runner state" "Runner health: HEALTHY" "$BLOCKER_OUT"

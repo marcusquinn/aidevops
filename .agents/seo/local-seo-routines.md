@@ -66,7 +66,7 @@ run. Do not substitute zero for missing inputs or mix non-comparable series.
 
 ### Quarterly citation audit
 
-- **Suggested schedule:** `repeat:monthly(1@09:00)` with a project-side quarterly enablement rule
+- **Suggested schedule:** `repeat:cron(0 9 1 1,4,7,10 *)` (the project chooses the actual schedule in `TODO.md`)
 - **Targets:** supplied by the routine entry or a private targets file — never embedded here
 - **Evidence source:** read-only inventory of approved listing URLs and the owner-approved location register, following `seo/local-seo.md`.
 - **Output:** `~/.aidevops/.agent-workspace/work/seo-data/{domain}/local/citations/<date>.md` with observed URLs, substantive versus cosmetic differences, and net changes since the preceding audit.

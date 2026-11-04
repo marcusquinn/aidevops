@@ -94,6 +94,30 @@ class MetadataCases:
         self.assertEqual(filesystem.fingerprint(self.work, b"umask-link", True),
                          ["symlink", stat.S_IMODE(link.lstat().st_mode), "/nonexistent"])
 
+    def test_umask_default_modes_round_trip_but_world_writes_refuse(self):
+        # GH#36543: umask 002 hosts create 0775 directories and 0664 files.
+        observed = Mock(st_uid=os.geteuid(), st_gid=os.getegid(), st_nlink=1)
+        cases = (
+            (0o002, stat.S_IFDIR, (0o755, 0o775), (0o777, 0o2775)),
+            (0o002, stat.S_IFREG, (0o644, 0o664, 0o775), (0o666, 0o4755)),
+            (0o022, stat.S_IFDIR, (0o755,), (0o775,)),
+            (0o000, stat.S_IFDIR, (0o755,), (0o777,)),
+            (0o077, stat.S_IFREG, (0o600, 0o644), (0o664,)),
+        )
+        for mask, kind, accepted, refused in cases:
+            with patch.object(filesystem, "process_umask", return_value=mask
+                              if mask & 0o002 and not mask & 0o700 else 0o022):
+                for mode in accepted:
+                    observed.st_mode = kind | mode
+                    filesystem.supported_metadata(observed, [])
+                for mode in refused:
+                    observed.st_mode = kind | mode
+                    with self.assertRaises(ValueError):
+                        filesystem.supported_metadata(observed, [])
+        with patch.object(filesystem.os, "umask", side_effect=[0o000, 0o022]), \
+                patch("builtins.open", side_effect=OSError):
+            self.assertEqual(filesystem.process_umask(), 0o022)
+
     def test_darwin_missing_os_xattr_uses_nofollow_and_descriptor_abi(self):
         payload = b"com.apple.provenance\0com.apple.quarantine\0"
 

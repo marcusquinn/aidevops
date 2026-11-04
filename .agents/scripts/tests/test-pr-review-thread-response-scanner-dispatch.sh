@@ -22,6 +22,29 @@ test_scan_finds_unresolved_bot_thread() {
 	return 0
 }
 
+test_scan_skips_interactive_prs() {
+	local labels="" output=""
+	for labels in origin:interactive origin:interactive,status:in-review status:in-review,origin:interactive; do
+		setup_test_env
+		export STUB_PR_LIST=$'2\tInteractive PR\tfalse\t'"${labels}"$'\tfeature/interactive\t'"${TEST_HEAD_OID_1}"$'\tmaintainer'
+		output="$($SCANNER scan owner/repo "${TEST_ROOT}/repo")"
+		if [[ -z "$output" ]] &&
+			grep -Fq 'scan: owner/repo#2 skipped — interactive PR' "$LOGFILE"; then
+			print_result "scan skips interactive PR (${labels})" 0
+		else
+			print_result "scan skips interactive PR (${labels})" 1 "output=${output}"
+		fi
+		$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+		if ! grep -Fq 'dispatch: launched response worker for owner/repo#2' "$LOGFILE"; then
+			print_result "dispatch never launches interactive PR worker (${labels})" 0
+		else
+			print_result "dispatch never launches interactive PR worker (${labels})" 1
+		fi
+		teardown_test_env
+	done
+	return 0
+}
+
 test_scan_skips_draft_prs() {
 	setup_test_env
 	export STUB_PR_LIST=$'2\tDraft PR\ttrue\torigin:worker\tfeature/draft\t'"${TEST_HEAD_OID_1}"$'\tworker-bot'

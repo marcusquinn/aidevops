@@ -40,7 +40,23 @@ class ProducerCases:
         for stderr in (None, "", "private failure", "ValueError: " + messages[0] + " private-path",
                        "ValueError: " + messages[0] + "\nother failure", messages[0].encode()):
             error = subprocess.CalledProcessError(1, ["private-command"], stderr=stderr)
-            self.assertEqual(producer_engine.failure_reason(error), "producer:evidence-unavailable")
+            # GH#36564: the generic reason names a bounded cause, never raw text.
+            self.assertEqual(producer_engine.failure_reason(error),
+                             "producer:evidence-unavailable; cause=stderr/unclassified; exit=1")
+        for stderr, cause in (("private\nError: worktree changed during archive capture: /private/path",
+                               "source-changed-during-capture"),
+                              (b"private: No space left on device", "stderr/storage-full")):
+            error = subprocess.CalledProcessError(1, ["private-command"], stderr=stderr)
+            self.assertEqual(producer_engine.failure_reason(error),
+                             f"producer:evidence-unavailable; cause={cause}; exit=1")
+        capacity = ("producer:insufficient-capacity; estimate=10; reserve=20; free=5; "
+                    "no archive written; source retained")
+        error = subprocess.CalledProcessError(1, ["private-command"], stderr="private\nError: " + capacity)
+        self.assertEqual(producer_engine.failure_reason(error), capacity)
+        self.assertEqual(producer_engine.failure_reason(OSError(28, "private")),
+                         "producer:evidence-unavailable; cause=os-error/ENOSPC")
+        self.assertEqual(producer_engine.failure_reason(KeyError("private")),
+                         "producer:evidence-unavailable; cause=exception/KeyError")
         timeout_reason = producer_engine.failure_reason(subprocess.TimeoutExpired("private", 1))
         self.assertTrue(timeout_reason.startswith("producer:git-timeout;"))
         self.assertNotIn("private", timeout_reason)
@@ -145,7 +161,9 @@ class ProducerCases:
                     self.assertEqual(producer_engine.failure_reason(nested), message)
             for suffix in (' private', '\nprivate failure'):
                 nested = subprocess.CalledProcessError(1, ['private'], stderr=message + suffix)
-                self.assertEqual(producer_engine.failure_reason(nested), 'producer:evidence-unavailable')
+                reason = producer_engine.failure_reason(nested)
+                self.assertTrue(reason.startswith('producer:evidence-unavailable; cause=stderr/'))
+                self.assertNotIn('private', reason)
 
     def test_local_git_missing_object_diagnostic_uses_fixed_locale(self):
         import worktree_archive_git as archive_git
@@ -587,17 +605,25 @@ class ProducerCases:
         (cache / "payload").write_bytes(b"not recovery data\n")
         self.git(self.work, "config", "diff.noprefix", "true")
         self.git(self.work, "config", "color.ui", "always")
+        from worktree_archive_deletions import OPTIONS, load
         options = ("--binary", "--full-index", "--no-ext-diff", "--no-textconv",
                    "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short")
         staged = self.git(self.work, "diff", "--cached", *options)
         unstaged = self.git(self.work, "diff", *options)
+        # GH#36504: deletions are stored as index identities, not patch hunks.
+        staged_patch = self.git(self.work, "diff", "--cached", *OPTIONS, "--diff-filter=d")
+        unstaged_patch = self.git(self.work, "diff", *OPTIONS, "--diff-filter=d")
         result = self.producer("capture", self.work, self.archives, "test.sh", "git-only")
         archive = Path(result.stdout.decode().strip())
         manifest = json.loads((archive / "manifest.json").read_text())
         self.assertEqual(manifest["capture_policy"], "git-only")
         self.assertEqual(manifest["head_sha"].encode(), head)
-        self.assertEqual((archive / "staged.patch").read_bytes(), staged)
-        self.assertEqual((archive / "diff.patch").read_bytes(), unstaged)
+        self.assertEqual(manifest["deletion_policy"], "compact-v1")
+        self.assertEqual((archive / "staged.patch").read_bytes(), staged_patch)
+        self.assertEqual((archive / "diff.patch").read_bytes(), unstaged_patch)
+        deletions = load(archive)
+        self.assertEqual([bytes.fromhex(entry[0]) for entry in deletions["staged"]], [b"staged-delete"])
+        self.assertEqual([bytes.fromhex(entry[0]) for entry in deletions["unstaged"]], [b"unstaged-delete"])
         self.assertEqual((archive / "untracked-files.txt").read_bytes(), b"untracked\n")
         self.assertTrue((archive / "untracked.tar.gz").exists())
         self.assertFalse((archive / "git-admin.json").exists())
@@ -841,21 +867,62 @@ class ProducerCases:
         self.assertTrue(self.work.is_dir())
 
     def test_producer_preserves_partial_capture_and_serializes_retry(self):
+        """GH#36607: retries never reallocate over a leaked partial; only the
+        guarded sweep reclaims it, after which a retry captures normally."""
         with patch.dict(os.environ, self.env):
             current, directory, output = producer_engine.reservation(self.work, self.archives)
             with producer_engine.operation_lock(directory):
                 producer_engine.reserve(current, directory, output, "test.sh", "partial-fixture")
                 blocked = self.producer("capture", self.work, self.archives, "test.sh", "partial-fixture", check=False)
                 self.assertNotEqual(blocked.returncode, 0)
-        partial = output / "partial-artifact"
-        partial.write_bytes(b"interrupted capture evidence")
+        partial = output / "owner__repo" / "unattributed" / "20260101T000000Z"
+        partial.mkdir(parents=True)
+        (partial / "commits.bundle").write_bytes(b"interrupted capture evidence")
         for _ in range(2):
             retry = self.producer("capture", self.work, self.archives, "test.sh", "partial-fixture", check=False)
             self.assertNotEqual(retry.returncode, 0)
             self.assertIn(b"capture-incomplete", retry.stderr)
-        self.assertEqual(partial.read_bytes(), b"interrupted capture evidence")
-        self.assertEqual(list(output.iterdir()), [partial])
+        self.assertEqual((partial / "commits.bundle").read_bytes(), b"interrupted capture evidence")
+        dry = self.producer("sweep-partials", self.archives, "dry-run")
+        self.assertEqual(dry.stdout.decode(), f"would-remove\t{partial}\n")
+        self.assertTrue(partial.is_dir())
+        with producer_engine.operation_lock(directory):
+            busy = self.producer("sweep-partials", self.archives, "apply")
+        self.assertIn(b"busy", busy.stderr)
+        self.assertTrue(partial.is_dir())
+        swept = self.producer("sweep-partials", self.archives, "apply")
+        self.assertEqual(swept.stdout.decode(), f"removed\t{partial}\n")
+        self.assertEqual(list(output.iterdir()), [])
+        result = self.producer("capture", self.work, self.archives, "test.sh", "partial-fixture")
+        archive = Path(result.stdout.decode().strip())
+        self.assertEqual(archive.parent.parent.parent, output)
+        self.assertEqual(json.loads((directory / "journal.json").read_text())["phase"], "archived")
+        again = self.producer("sweep-partials", self.archives, "apply")
+        self.assertEqual(again.stdout, b"")
+        self.assertTrue((archive / "manifest.json").is_file())
         self.assertTrue(self.work.is_dir())
+
+    def test_producer_never_resumes_legacy_preserve_reservation(self):
+        """GH#36607: a saved preserve-v1 journal cannot re-arm its refusals."""
+        import hashlib
+        identifier = hashlib.sha256(json.dumps(
+            producer_engine.identity(self.work), sort_keys=True).encode()).hexdigest()
+        legacy = self.archives / ".producer-transactions" / identifier
+        producer_engine.private_directory(legacy)
+        producer_engine.private_directory(self.archives / ".producer-archives" / identifier)
+        producer_engine.publish(legacy / "journal.json", {
+            "schema": producer_engine.SCHEMA, "phase": "reserved",
+            "source": {"identity": producer_engine.identity(self.work)}, "source_bytes": 1 << 60})
+        before = (legacy / "journal.json").read_bytes()
+        (self.work / "empty-directory").mkdir()
+        result = self.producer("capture", self.work, self.archives, "test.sh", "legacy-successor")
+        archive = Path(result.stdout.decode().strip())
+        successor = producer_engine.successor_identifier(identifier)
+        self.assertTrue(archive.is_relative_to(self.archives / ".producer-archives" / successor))
+        self.assertEqual(json.loads((archive / "manifest.json").read_text())["capture_policy"], "git-only")
+        self.assertEqual((legacy / "journal.json").read_bytes(), before)
+        again = self.producer("capture", self.work, self.archives, "test.sh", "legacy-successor")
+        self.assertEqual(Path(again.stdout.decode().strip()), archive)
 
     def test_producer_refuses_unsafe_roots_and_source_aliases(self):
         for root in (self.work / "archives", self.repo / ".git/archives"):

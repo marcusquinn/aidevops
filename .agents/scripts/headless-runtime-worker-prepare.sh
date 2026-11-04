@@ -434,6 +434,11 @@ _cmd_run_prepare() {
 				_WORKER_PRELAUNCH_FAILURE_REASON="worker_claim_ready_transition_failed"
 				return 1
 			fi
+			# GH#36646: checkpoint-only, non-fatal; ordinary workers are a no-op.
+			# shellcheck source=./terminal-lease-recovery.sh
+			source "${SCRIPT_DIR}/terminal-lease-recovery.sh"
+			_terminal_lease_record_ready "$WORKER_ISSUE_NUMBER" "$DISPATCH_REPO_SLUG" \
+				"${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}"
 		fi
 	fi
 	return 0

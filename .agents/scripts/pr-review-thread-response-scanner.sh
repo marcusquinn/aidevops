@@ -727,7 +727,7 @@ _prrts_labels_block_response() {
 	local labels_csv="$1"
 	local labels=",${labels_csv},"
 	case "$labels" in
-	*,hold-for-review,* | *,needs-maintainer-review,*)
+	*,hold-for-review,* | *,needs-maintainer-review,* | *,origin:interactive,*)
 		return 0
 		;;
 	*)
@@ -765,7 +765,11 @@ _prrts_scan_repo_to_files() {
 			continue
 		fi
 		if _prrts_labels_block_response "$labels"; then
-			_prrts_log "scan: ${repo_slug}#${pr_number} skipped — protected label present (${labels})"
+			if [[ ",${labels}," == *,origin:interactive,* ]]; then
+				_prrts_log "scan: ${repo_slug}#${pr_number} skipped — interactive PR"
+			else
+				_prrts_log "scan: ${repo_slug}#${pr_number} skipped — protected label present (${labels})"
+			fi
 			continue
 		fi
 		if protected_release_pr "$head_ref" "$labels"; then

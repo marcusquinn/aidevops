@@ -16,22 +16,11 @@ from worktree_archive_registration import (
     NOT_ENROLLED, REGISTRATION_SQL,
     creation_registration, registration_table,
 )
+from worktree_archive_objects import dependency_commit
+from worktree_archive_dependencies import import_published_head, object_present, object_store_files
 from worktree_archive_snapshot import fetch_preservation
 from worktree_archive_unsealed import UnsealedRecovery
 from worktree_recovery_timing import timed
-
-
-def object_store_files(objects):
-    """Traverse dependency files without accepting symlinked store entries."""
-    from worktree_lifetime_archive import require
-    pending = [objects]
-    while pending:
-        path = pending.pop()
-        require(not path.is_symlink(), "restore-proof:symlinked-object-store")
-        if path.is_dir():
-            pending.extend(path.iterdir())
-        else:
-            yield path
 
 
 def failure_message(final, default):
@@ -84,6 +73,13 @@ def prepare(archive, target, verification=False):
     # our registered worktree at the available base first, then import objects
     # through that owned linked target without touching shared preservation refs.
     initial_head = manifest["base_sha"] if bundle.is_file() else manifest["head_sha"]
+    # GH#36607: a published archive has no bundle and depends on its pushed
+    # head. If the source store no longer holds it, start at the base and
+    # import the head through the owned target from the authorized origin.
+    published_import = (not bundle.is_file() and dependency_commit(manifest) != manifest["base_sha"]
+                        and not object_present(common, manifest["head_sha"]))
+    if published_import:
+        initial_head = manifest["base_sha"]
     environment = dict(os.environ, AIDEVOPS_SKIP_AUTO_CLAIM="1", WORKTREE_NODE_MODULES_RESTORE_ENABLED="0",
                        AIDEVOPS_WORKTREE_JS_BOOTSTRAP_ENABLED="0",
                        GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.hooksPath", GIT_CONFIG_VALUE_0=os.devnull)
@@ -118,7 +114,9 @@ def prepare(archive, target, verification=False):
                        [str(Path(bash).absolute()), str(helper), "add", "recovery/" + uuid.uuid4().hex,
                         str(target), "--base", initial_head], cwd=repository,
                        env=environment, stdout=sys.stderr, check=True, timeout=180)
-    if bundle.is_file():
+    if published_import:
+        import_published_head(target, common, manifest["head_sha"])
+    if bundle.is_file() or published_import:
         fetch_preservation(target, archive)
         if verification:
             git(target, "checkout", "--quiet", "--detach", manifest["head_sha"])
@@ -228,7 +226,8 @@ class RestorationProof(UnsealedRecovery):
             for _path in object_store_files(self.objects):
                 pass
             self.objects_digest = fingerprint(self.objects)
-            git(common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
+            # GH#36607: a published archive depends on its pushed head instead.
+            git(common, "cat-file", "-e", dependency_commit(self.manifest) + "^{commit}")
         from worktree_lifetime_archive import transaction
         with transaction() as connection:
             registered = creation_registration(connection, target)
@@ -262,7 +261,7 @@ class RestorationProof(UnsealedRecovery):
                     "restore-proof:archive-changed")
             require(inode(self.common) == self.common_inode and fingerprint(self.objects) == self.objects_digest,
                     "restore-proof:base-changed")
-            git(self.common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
+            git(self.common, "cat-file", "-e", dependency_commit(self.manifest) + "^{commit}")
 
     @staticmethod
     def adopt_sealed(slot, receipt):

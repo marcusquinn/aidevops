@@ -40,8 +40,9 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
             result.update(untracked_files=len(paths), untracked_symlink_modes=True,
                           untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode('ascii')).hexdigest())
         return result
-    options = ("--binary", "--full-index", "--no-ext-diff", "--no-textconv",
-               "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short")
+    # Scratch verification must not inherit source-local rename/order settings.
+    from worktree_archive_deletions import OPTIONS as options
+
     staged = (patches / "staged.patch").read_bytes() if patches else git(root, "diff", "--cached", *options)
     unstaged = (patches / "diff.patch").read_bytes() if patches else git(root, "diff", *options)
     head = metadata["head"]

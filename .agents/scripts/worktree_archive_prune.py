@@ -4,8 +4,9 @@
 """Retention for verified compact archives, never full recovery worktrees."""
 
 import collections
+import ctypes
 import datetime
-import json
+import errno
 import os
 from pathlib import Path
 import shutil
@@ -15,11 +16,12 @@ import time
 import uuid
 
 import worktree_archive_producer_retention as producer_retention
+from worktree_archive_prune_metadata import PIN as PIN
+from worktree_archive_prune_metadata import identity, inspect
 from worktree_archive_process import run_bounded, termination_as_exit
 from worktree_archive_scratch import sweep_root
 
 
-PIN = ".aidevops-archive-pin"
 RETENTION_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError,
                     subprocess.TimeoutExpired)
 # Retention only needs to prove it is deleting an intact compact archive, not
@@ -29,6 +31,10 @@ RETENTION_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError,
 STRUCTURE_CHECK_SECONDS = 120
 MIN_CHECK_SECONDS = 10
 DEADLINE = None  # time.monotonic() bound for the whole pass, or None.
+
+
+class Kept(Exception):
+    """Verification failed; the archive was restored to its public name."""
 
 
 class Deferred(Exception):
@@ -48,11 +54,6 @@ def verify_timeout():
     return max(1, min(STRUCTURE_CHECK_SECONDS, DEADLINE - time.monotonic()))
 
 
-def identity(path):
-    value = path.lstat()
-    return value.st_dev, value.st_ino
-
-
 def verify(helper, directory):
     """Structural check only: a full recovery copy or tampered archive fails it."""
     bash = shutil.which("bash")
@@ -66,31 +67,23 @@ def verify(helper, directory):
         raise ValueError("archive verification failed")
 
 
-def inspect(root, directory):
-    """Reject aliases, pins and malformed metadata from cheap local state only.
+def restore_claimed(parent_fd, name, claimed_fd, transaction, root_fd):
+    """Return an unverifiable archive to its public name; never replace anything.
 
-    The structural check (artifact hashes) still runs only for archives
-    selected for removal, never for every archive.
+    If the name was taken or atomic restoration is unavailable, raise so the
+    caller reports the retained transaction and marks the pass as failed.
     """
-    for path in (directory, *directory.parents):
-        if path == root:
-            break
-        if path.is_symlink():
-            raise ValueError("symlinked archive path")
-    if os.path.lexists(directory / PIN):
-        raise ValueError("pinned archive")
-    manifest_path = directory / "manifest.json"
-    if manifest_path.is_symlink():
-        raise ValueError("symlinked manifest")
-    raw = manifest_path.read_bytes()
-    manifest = json.loads(raw)
-    if not isinstance(manifest, dict):
-        raise ValueError("manifest must be an object")
-    created = datetime.datetime.fromisoformat(manifest["created_at"].replace("Z", "+00:00"))
-    if created.tzinfo is None or created > datetime.datetime.now(datetime.timezone.utc):
-        raise ValueError("invalid archive creation time")
-    size = sum(path.stat().st_size for path in directory.iterdir())
-    return created, size, directory, identity(directory), raw
+    libc = ctypes.CDLL(None, use_errno=True)
+    primitive, flag = ("renameatx_np", 4) if sys.platform == "darwin" else ("renameat2", 1)
+    rename = getattr(libc, primitive, None)
+    if rename is None:
+        raise OSError(errno.ENOSYS, "atomic archive restoration unavailable", name)
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(claimed_fd, b"archive", parent_fd, os.fsencode(name), flag) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), name)
+    os.rmdir(transaction, dir_fd=root_fd)
 
 
 def remove_verified(root, root_identity, entry, helper):
@@ -132,12 +125,18 @@ def remove_verified(root, root_identity, entry, helper):
         try:
             if identity(claimed) != expected_identity:
                 raise ValueError("archive replaced while claiming")
-            verify(helper, claimed)
+            try:
+                verify(helper, claimed)
+            except RETENTION_ERRORS as error:
+                restore_claimed(parent_fd, parts[-1], claimed_fd, transaction, descriptors[0])
+                raise Kept(str(error)) from error
             if (not policy_unchanged(claimed, expected_pin) or
                     (claimed / "manifest.json").read_bytes() != expected_manifest):
                 raise ValueError("archive policy or manifest changed during verification")
             shutil.rmtree(claimed)
             os.rmdir(transaction, dir_fd=descriptors[0])
+        except Kept:
+            raise
         except Exception:
             print(f"retained-transaction\t{root / transaction}", file=sys.stderr)
             raise
@@ -171,6 +170,9 @@ def attempt(target, entry):
             producer_retention.remove_entry(target, entry, remove_verified)
         else:
             verify(target.helper, entry[2])
+    except Kept as error:
+        print(f"kept\t{entry[2]}\t{error}", file=sys.stderr)
+        return None
     except RETENTION_ERRORS as error:
         print(f"kept\t{entry[2]}\t{error}", file=sys.stderr)
         return False
@@ -195,13 +197,14 @@ def prune(target, entries, days, limit, producers=((), 0)):
     failed = False
     try:
         for entry in expired:
-            failed |= not attempt(target, entry)
+            failed |= attempt(target, entry) is False
         for entry in survivors:
             if survivor_total <= limit:
                 break
-            if attempt(target, entry):
+            outcome = attempt(target, entry)
+            if outcome:
                 survivor_total -= entry[1]
-            else:
+            elif outcome is False:
                 failed = True
     except Deferred as reason:
         print(f"deferred\t{reason}", file=sys.stderr)

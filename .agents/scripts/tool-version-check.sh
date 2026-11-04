@@ -276,7 +276,7 @@ _tool_package_supported_on_platform() {
 # which skips latest-version lookup and just reports installed version
 CUSTOM_TOOLS=(
 	"self|Cursor CLI|agent|--version|cursor-agent|agent update"
-	"self|Droid CLI|droid|--version|droid|curl -fsSL https://app.factory.ai/install.sh | bash"
+	"self|Droid CLI|droid|--version|droid|curl -fsSL https://app.factory.ai/cli | sh"
 )
 if [[ -n "$_cc_self_tool_spec" ]]; then
 	CUSTOM_TOOLS=("$_cc_self_tool_spec" "${CUSTOM_TOOLS[@]}")

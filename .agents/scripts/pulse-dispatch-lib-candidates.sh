@@ -680,9 +680,11 @@ _dispatch_with_timeout() {
 
 #######################################
 # GH#34428: re-check the per-candidate floor where the dispatch stage starts.
-# Mirrors _dispatch_graphql_budget_allows_next, which runs before the
-# candidate's pre-stage checks. Fails open when the remaining-seconds helper
-# is unavailable or returns a non-integer.
+# _dispatch_graphql_budget_allows_next runs before the candidate's pre-stage
+# checks and requires floor + _dispatch_prestage_margin_seconds (GH#36603);
+# this guard deliberately keeps the bare floor, so the margin absorbs the
+# pre-stage work and no stage starts below the floor. Fails open when the
+# remaining-seconds helper is unavailable or returns a non-integer.
 #
 # Arguments: $1 issue number, $2 repo slug (log line only)
 # Returns: 0 defer (logged + counted), 1 proceed
@@ -782,6 +784,21 @@ _dispatch_enumeration_expected_seconds() {
 	return 0
 }
 
+# GH#36603: slack between candidate admission (_dispatch_graphql_budget_allows_next)
+# and the stage-start floor guard (_dispatch_cycle_budget_defers_candidate).
+# Both compared against the same floor, and every pre-dispatch reserve landed
+# dispatch exactly on it, so a pass that housekeeping clamped to its full
+# allowance lost a few seconds to pre-stage checks and deferred every
+# candidate at 592-599s. Admission and the reserves add this margin; the
+# stage-start guard keeps the bare floor, so no stage starts below it.
+# DISPATCH_PRESTAGE_MARGIN_SECONDS=0 restores the previous zero-slack sizing.
+_dispatch_prestage_margin_seconds() {
+	local margin="${DISPATCH_PRESTAGE_MARGIN_SECONDS:-60}"
+	[[ "$margin" =~ ^[0-9]{1,4}$ ]] || margin=60
+	printf '%s\n' "$((10#$margin))"
+	return 0
+}
+
 _dispatch_record_enumeration_seconds() {
 	local started_ms="$1" ended_ms="" elapsed=0 expected=0 timing_dir="${HOME}/.aidevops/cache" temporary=""
 	local timing_file="${timing_dir}/pulse-dispatch-enumeration-seconds"
@@ -804,15 +821,16 @@ _dispatch_record_enumeration_seconds() {
 # A skipped round returns a distinct status to its orchestrator, not a successful
 # empty queue. That lets the existing event refill failure path restore its signal.
 _dispatch_cycle_budget_admits_round() {
-	local context="$1" stage="${2:-before}" remaining="" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" enumeration=0
+	local context="$1" stage="${2:-before}" remaining="" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" enumeration=0 margin=0
 	[[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" ]] || return 0
 	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 0
 	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 0
 	[[ "$remaining" =~ ^-?[0-9]+$ ]] || return 0
 	[[ "$floor" =~ ^[1-9][0-9]*$ ]] || floor=600
+	margin=$(_dispatch_prestage_margin_seconds)
 	[[ "$stage" != "before" ]] || enumeration=$(_dispatch_enumeration_expected_seconds)
-	((remaining >= floor + enumeration)) && return 0
-	echo "[pulse-wrapper] ${context} skipped ${stage} candidate enumeration: cycle wall-clock budget below dispatch reserve (remaining=${remaining}s floor=${floor}s enumeration=${enumeration}s); refill trigger retained for a fresh-budget pass (GH#33560)" >>"$LOGFILE"
+	((remaining >= floor + margin + enumeration)) && return 0
+	echo "[pulse-wrapper] ${context} skipped ${stage} candidate enumeration: cycle wall-clock budget below dispatch reserve (remaining=${remaining}s floor=${floor}s prestage_margin=${margin}s enumeration=${enumeration}s); refill trigger retained for a fresh-budget pass (GH#33560)" >>"$LOGFILE"
 	_dispatch_stats_increment "pulse_dispatch_cycle_budget_skipped"
 	return 1
 }
@@ -852,17 +870,21 @@ _dispatch_enumerate_ranked_round() {
 #
 # Returns:
 #   0 — budget is sufficient, unavailable, or checker is not loaded
-#   1 — cycle wall-clock budget is below the per-candidate floor (logged here)
+#   1 — cycle wall-clock budget is below the per-candidate floor plus the
+#       pre-stage margin (logged here)
 #   2 — GraphQL budget is below threshold; caller should stop the loop
 #######################################
 _dispatch_graphql_budget_allows_next() {
 	# Both serial and parallel candidate loops call this before any candidate
 	# API work. Keep the 600s ceremony floor; defer instead of shrinking it.
-	local cycle_remaining="" floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
+	# GH#36603: admit only with the pre-stage margin on top of the floor, so a
+	# candidate admitted here still clears the stage-start floor guard.
+	local cycle_remaining="" floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" margin=0
 	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
+	margin=$(_dispatch_prestage_margin_seconds)
 	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && cycle_remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
-		if [[ "$cycle_remaining" -lt "$floor_seconds" ]]; then
-			echo "[pulse-wrapper] Dispatch_max stopping early: cycle wall-clock budget below per-candidate floor (remaining=${cycle_remaining}s floor=${floor_seconds}s)" >>"$LOGFILE"
+		if [[ "$cycle_remaining" -lt $((floor_seconds + margin)) ]]; then
+			echo "[pulse-wrapper] Dispatch_max stopping early: cycle wall-clock budget below candidate admission reserve (remaining=${cycle_remaining}s floor=${floor_seconds}s prestage_margin=${margin}s)" >>"$LOGFILE"
 			return 1
 		fi
 	fi
@@ -1188,11 +1210,14 @@ _dispatch_capability_cooldown_record() {
 
 # Import worker-discovered gaps at the live candidate gate. Subsequent passes
 # use the existing pre-ranking cache filter, without repeating worker launches.
+# Optional $4 is the round's resolved login (GH#36616): reuse it so a dispatch
+# round spends one `gh api user` call, not one more per candidate.
 _dispatch_capability_cooldown_from_observation() {
 	local candidate="$1" issue="$2" repo="$3"
-	local self='' issue_json='' comments='' stamp='' now=''
+	local self="${4:-}" issue_json='' comments='' stamp='' now=''
 	declare -F terminal_blocker_runner_capability_observation_epoch >/dev/null || return 0
-	self=$(gh api user --jq '.login' 2>/dev/null) || return 0
+	[[ -n "$self" ]] || self=$(gh api user --jq '.login' 2>/dev/null) || return 0
+	[[ -n "$self" ]] || return 0
 	issue_json=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 0
 	# GH#35090: keep this login's own comments even when the read reports them
 	# as CONTRIBUTOR/NONE; otherwise the import never finds its observation.
@@ -1209,8 +1234,10 @@ _dispatch_capability_cooldown_from_observation() {
 
 # Dispatch-time check for candidates taken from a short-lived ranked snapshot
 # captured before the record was written. Returns 0 to skip.
+# Optional $5 is the round's resolved GitHub login, forwarded to avoid
+# re-resolving it per candidate (GH#36616).
 _dispatch_skip_for_capability_cooldown() {
-	local candidate="$1" issue="$2" repo="$3" repo_path="$4"
+	local candidate="$1" issue="$2" repo="$3" repo_path="$4" self_login="${5:-}"
 	local fields="" number=""
 	local updated='' classes='' fingerprint=''
 	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 ]] || return 1
@@ -1220,9 +1247,9 @@ _dispatch_skip_for_capability_cooldown() {
 	[[ "$number" == "$issue" && "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	fingerprint=$(_dispatch_capability_fingerprint "$updated" "$classes" \
 		"$(_dispatch_capability_config_fingerprint "$repo_path")") || return 1
-	if ! _dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint"; then
-		_dispatch_capability_cooldown_from_observation "$candidate" "$issue" "$repo"
-		_dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint" || return 1
+	if ! _dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint" "$self_login"; then
+		_dispatch_capability_cooldown_from_observation "$candidate" "$issue" "$repo" "$self_login"
+		_dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint" "$self_login" || return 1
 	fi
 	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 	echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — runner_capability_unmet cooldown active (requirements unchanged)" >>"$LOGFILE"

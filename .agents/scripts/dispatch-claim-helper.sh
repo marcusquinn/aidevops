@@ -2023,6 +2023,14 @@ Usage:
     Exit 1 = draft, linkage, labels, issue state, assignment, or head changed
     Exit 2 = contract or metadata unavailable/invalid (fail closed)
 
+  dispatch-claim-helper.sh close-expired-pr-checkpoint-lease <issue-number> <repo-slug> <claim-comment-id> <session>
+    Close your own checkpoint attempt whose ready lease expired with no release
+    or terminal lease (GH#36544). Same account, device and session only; refuses
+    a live lease, unknown expiry, later coordination or a live local executor.
+    Exit 0 = release and terminal lease appended
+    Exit 1 = denied (PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=...)
+    Exit 2 = invalid arguments
+
   dispatch-claim-helper.sh help
     Show this help.
 
@@ -2087,6 +2095,9 @@ main() {
 		;;
 	abort-pr-checkpoint-claim)
 		cmd_abort_pr_checkpoint_claim "$@"
+		;;
+	close-expired-pr-checkpoint-lease)
+		cmd_close_expired_pr_checkpoint_lease "$@"
 		;;
 	transition)
 		cmd_transition "$@"

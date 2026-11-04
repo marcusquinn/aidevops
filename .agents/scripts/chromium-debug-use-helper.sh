@@ -212,7 +212,11 @@ endpoint_ok() {
 page_count() {
 	local url="$1"
 	local body=""
-	body="$(curl -fsS --max-time 2 "${url}/json/list" 2>/dev/null || true)"
+	# An unavailable target list is not evidence that the browser has no pages.
+	if ! body="$(curl -fsS --max-time 2 "${url}/json/list" 2>/dev/null)" || [[ -z "$body" ]]; then
+		printf 'unknown\n'
+		return 0
+	fi
 	local count=0
 	local rest="$body"
 	while [[ "$rest" == *'"type": "page"'* ]]; do

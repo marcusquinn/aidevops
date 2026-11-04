@@ -159,6 +159,31 @@ aidevops repos pulse on owner/repo          # refused while maintenance is pause
 aidevops repos pulse off owner/repo
 ```
 
+### Sync-only registration
+
+Use `aidevops repos add <path> --sync-only` to register a third-party upstream
+without opting into automation. Omit `<path>` for the current checkout. This
+writes `pulse: false` and `maintenance: false` atomically with registration,
+including when updating an existing entry, and preserves an existing `role` or
+the normally detected role. Plain `repos add` keeps its existing defaults;
+re-registering without the flag does not resume paused maintenance or Pulse.
+
+Sync-only registration retains canonical path resolution for
+`canonical-recovery-helper.sh fast-forward-current` and explicit
+`worktree-helper.sh remove` (with the registered explicit-remove support from
+child B of #36561). Their normal cleanliness, ownership, preservation and
+permission guards still apply. It disables Pulse task/issue automation,
+recurring scanners, and workflow/badge rollout; it does not disable the
+registration-scoped safety hygiene described above or explicitly requested
+one-repository operations.
+
+The flag does not scaffold `.aidevops.json` or bypass bootstrap verification.
+For a config-free canonical checkout, use the existing confirmed bootstrap form:
+
+```bash
+aidevops repos add <path> --sync-only --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY
+```
+
 Repository layout migration treats every explicit `initialized_repos[].path` as
 authoritative. `aidevops repos migrate-layout plan` reports such entries as
 excluded unless `--include-registered-paths` is supplied. That flag approves

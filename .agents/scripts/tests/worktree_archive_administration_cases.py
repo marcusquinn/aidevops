@@ -181,8 +181,8 @@ class AdministrationCases:
             branches = admin / "branches"
             branches.mkdir()
             self.assertEqual(administration_files(admin, admin, False), {})
-            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
-                administration_files(admin, admin, True)
+            # GH#36607: an empty legacy directory carries no state, linked or not.
+            self.assertEqual(administration_files(admin, admin, True), {})
             child = branches / "origin"
             child.write_text("legacy remote\n")
             with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):

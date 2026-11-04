@@ -4,28 +4,26 @@ No new tables or fabricated admissions. Receipts use the existing event journal.
 Current-generation cleanup is unchanged. Remove this module after the backlog.
 """
 
-from collections import Counter
 import json
 import os
 from pathlib import Path
 import sqlite3
+import socket
 import subprocess  # nosec B404 # exception classification; helpers execute fixed argv
 import tempfile
 import time
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
-from .archive_path import create_archive_root, validate_archive_path
-from .cleanup import _failure_details, _repositories
+from .cleanup import _failure_details
 from .directory_handle import DirectoryHandle
-from .enrollment import _git_directory
 from .filesystem import validate_private_path as _private
-from .legacy_discovery import discover
-from .legacy_inventory import advance, inspect, inventory, queue, require_ended
-from .legacy_options import CleanupOptions, require_manual_confirmation, unrecorded
+from .legacy_discovery import open_pull_requests, same_tree
+from .legacy_inventory import inspect, inventory, unchanged
+from .legacy_inventory import reconstructible, requires_reconstructible
+from .legacy_options import require_manual_confirmation, unrecorded
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
-from .runtime import adapter_for, require_ready
 
 
 def event_id(operation, phase):
@@ -55,26 +53,6 @@ def checkpoint(store, connection, operation, phase, payload):
     store._event(connection, event_id(operation, phase), payload)
     connection.commit()
     connection.execute("BEGIN IMMEDIATE")
-
-
-def unchanged(connection, plan, adapter):
-    current = next((item for item in inventory(connection)
-                     if item["path"] == plan["source"]), None)
-    confirmed = plan.get("operator_confirmed") is True
-    if current is None and confirmed:
-        current = unrecorded(plan["source"])
-    if (current is None or current["modern"]
-            or sorted(current["generations"]) != plan["generations"]
-            or current["runs"] != plan["runs"]):
-        raise ValueError("registered-writers-changed")
-    require_ended(current, adapter, operator_confirmed=confirmed)
-
-
-def same_tree(path, plan):
-    admin = Path(plan["admin"])
-    if (_id(path) != plan["directory"] or _git_directory(path) != admin
-            or _id(admin) != plan["admin_identity"]):
-        raise ValueError("worktree-replaced")
 
 
 def archive_source(store, connection, operation, plan, adapter):
@@ -194,8 +172,8 @@ def process_item(store, item, repositories, adapter, options):
         if done:
             outcome["status"] = "already-retired"
         else:
-            if not pending:
-                inspect(item, repositories, adapter, time.time(), options)
+            if not pending and requires_reconstructible(item, repositories, adapter, options):
+                return process_reconstructible(store, item, repositories, adapter, options)
             eligible = 1
             outcome["status"] = "pending-retry" if pending else "eligible"
             if options.apply:
@@ -209,48 +187,99 @@ def process_item(store, item, repositories, adapter, options):
     return outcome, eligible, attempted
 
 
+def prepare_reconstructible_probe(store, connection, host, plan):
+    """Recover removed probes; cancel unremoved attempts only by native identity."""
+    if receipt(connection, host, "verified") is not None:
+        return False
+    row = connection.execute(
+        "SELECT payload FROM events WHERE json_extract(payload,'$.type')=? "
+        "AND json_extract(payload,'$.host')=? ORDER BY sequence DESC LIMIT 1",
+        ("reconstructible-host-probe-plan", host),
+    ).fetchone()
+    if row:
+        previous = json.loads(row[0])
+        original = previous["plan"]
+        if not os.path.lexists(original["source"]):
+            try:
+                verify_reconstructible(original, probe=True)
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
+                raise ValueError("reconstructible-probe-verification-pending") from error
+            checkpoint(store, connection, host, "verified",
+                       dict(original, type="reconstructible-host-probe-verified"))
+            checkpoint(store, connection, operation_id(store, original["source"]),
+                       "retired", dict(original, type="reconstructible-worktree-retired",
+                                       branch_preserved=True))
+            return False
+        # An intact original worktree/admin proves removal never completed.
+        # A replacement or unresolved missing source must not unlock batching.
+        same_tree(Path(original["source"]), original)
+        checkpoint(store, connection, previous["attempt"], "cancelled",
+                   {"type": "reconstructible-host-probe-cancelled", "host": host})
+    attempt = str(uuid4())
+    checkpoint(store, connection, attempt, "plan",
+               {"type": "reconstructible-host-probe-plan", "host": host,
+                "attempt": attempt, "plan": plan})
+    return True
+
+
+def current_legacy_item(connection, item):
+    return next((row for row in inventory(connection)
+                 if row["path"] == item["path"]), item)
+
+
+def process_reconstructible(store, item, repositories, adapter, options):
+    """Journal a non-forced removal; the first successful probe unlocks batching."""
+    operation = operation_id(store, item["path"])
+    outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
+    if not options.apply:
+        reconstructible(item, repositories, adapter, open_pull_requests)
+        return outcome, 1, 0
+    probe = str(uuid5(UUID(store.installation_id()),
+                      "reconstructible-host-probe:" + socket.gethostname()))
+    # Serialize host probes across checkpoint commits and independent invocations.
+    with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
+        item = current_legacy_item(connection, item)
+        plan = reconstructible(item, repositories, adapter, open_pull_requests)
+        test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
+        revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
+        checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
+        # Refresh GitHub and /proc immediately before non-forced native removal.
+        current = reconstructible(current_legacy_item(connection, item),
+                                  repositories, adapter, open_pull_requests)
+        if current != plan:
+            raise ValueError("reconstructible-source-changed")
+        _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])
+        verify_reconstructible(plan, probe=test_removal)
+        checkpoint(store, connection, operation, "retired",
+                   dict(plan, type="reconstructible-worktree-retired", branch_preserved=True))
+        if test_removal:
+            checkpoint(store, connection, probe, "verified",
+                       dict(plan, type="reconstructible-host-probe-verified"))
+        outcome["status"] = "retired"
+    return outcome, 1, 1
+
+
+def verify_reconstructible(plan, *, probe):
+    if os.path.lexists(plan["source"]):
+        raise ValueError("reconstructible-source-still-present")
+    common, head, branch = plan["common"], plan["head"], plan["branch"]
+    _git("--git-dir", common, "cat-file", "-e", head + "^{commit}")
+    if branch != "HEAD" and _git("--git-dir", common, "rev-parse", branch) != head:
+        raise ValueError("reconstructible-branch-changed")
+    if probe:
+        # A fresh disposable checkout proves restoration without touching the branch.
+        parent = Path(tempfile.mkdtemp(prefix=".reconstructible-probe-",
+                                      dir=Path(plan["source"]).parent))
+        target = str(parent / "tree")
+        _git("--git-dir", common, "worktree", "add", "--detach", target, head)
+        if _git("-C", target, "rev-parse", "HEAD") != head:
+            raise ValueError("reconstructible-restore-mismatch")
+        _git("--git-dir", common, "worktree", "remove", target)
+        parent.rmdir()
+
+
 def run(store, config, root, **arguments):
-    options = CleanupOptions(root, **arguments)
-    repositories = _repositories(config)
-    adapter = adapter_for(store.installation_id())
-    require_ready(adapter)
-    with store.connection() as connection:
-        items = inventory(connection)
-    items, discovery_errors = discover(items, repositories)
-    items = options.select(items)
-    if options.apply:
-        if not root.is_absolute() or root.resolve() != root:
-            raise ValueError("canonical-output-root-required")
-        create_archive_root(root)
-        validate_archive_path(root)
-        items = queue(store, items)
-    report: dict = {
-        "status": "legacy-cleanup", "apply": options.apply, "paths": len(items),
-        "generations": sum(len(i["generations"]) for i in items),
-        "retired": 0, "eligible": 0, "attempted": 0, "results": [],
-        "discovery_errors": discovery_errors,
-        "operator_confirmed_paths": list(options.confirmed_paths),
-    }
-    deadline = time.monotonic() + options.budget
-    for item in items:
-        if (time.monotonic() >= deadline
-                or (options.apply and report["attempted"] >= options.limit)):
-            break
-        if options.apply:
-            advance(store, item["path"])
-        outcome, eligible, attempted = process_item(
-            store, item, repositories, adapter, options,
-        )
-        report["eligible"] += eligible
-        report["attempted"] += attempted
-        report["retired"] += outcome["status"] == "retired"
-        report["results"].append(outcome)
-    report["examined"] = len(report["results"])
-    report["incomplete"] = bool(discovery_errors) or report["examined"] < len(items)
-    report["archive_failed"] = sum(
-        bool(result.get("archive_failure", False)) for result in report["results"]
-    )
-    report["counts"] = dict(Counter(
-        result.get("reason", result["status"]) for result in report["results"]
-    ))
-    return report
+    # Keep the existing API while separating bounded pass/report orchestration.
+    from .legacy_runner import run as run_pass
+
+    return run_pass(store, config, root, **arguments)

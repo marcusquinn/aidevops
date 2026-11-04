@@ -173,7 +173,7 @@ _worker_lifecycle_refusal_next_step() {
 		printf '[worker-lifecycle] next: a registered owner is still running or unconfirmed; retry after it exits (Pulse cleanup retries automatically).\n' >&2
 		;;
 	outside-maintenance-scope)
-		printf '[worker-lifecycle] next: the repository is not in maintenance scope in ~/.config/aidevops/repos.json.\n' >&2
+		printf '[worker-lifecycle] next: explicit retirement requires a registered, non-local_only repository with a valid canonical path and slug. Register the canonical checkout with aidevops repos add <path>, then set pulse: false, maintenance: false in ~/.config/aidevops/repos.json to keep automatic maintenance disabled; retry removal.\n' >&2
 		;;
 	*)
 		printf '[worker-lifecycle] next: see worker-lifecycle/CLEANUP.md "Registry-driven cleanup pass"; --force cannot override registry checks.\n' >&2

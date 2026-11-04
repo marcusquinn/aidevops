@@ -166,6 +166,28 @@ _fix_codex_docker_mcp() {
 	return 0
 }
 
+# Download the vendor installer to a file and run it only when it is a shell
+# script. Piping `curl -f` into sh reports success when the download fails
+# (sh reads empty input), and an HTML page must never reach the shell.
+_run_droid_installer() {
+	local url="$1"
+	local script=""
+	script=$(mktemp) || return 1
+	if ! curl -fsSL "$url" -o "$script"; then
+		rm -f "$script"
+		return 1
+	fi
+	if [[ "$(head -c 2 "$script")" != "#!" ]]; then
+		print_warning "Droid installer response is not a shell script"
+		rm -f "$script"
+		return 1
+	fi
+	local rc=0
+	sh "$script" || rc=$?
+	rm -f "$script"
+	return "$rc"
+}
+
 setup_droid_cli() {
 	print_info "Setting up Factory.AI Droid CLI..."
 
@@ -177,7 +199,10 @@ setup_droid_cli() {
 		return 0
 	fi
 
-	# Droid uses its own installer — not available via npm/brew
+	# GH#36594: Factory's installer moved to /cli (the old /install.sh now
+	# serves HTML). The npm package `droid` is the documented alternative.
+	local installer_url="https://app.factory.ai/cli"
+	local docs_url="https://docs.factory.ai/cli/getting-started/quickstart"
 	print_info "Droid (Factory.AI) is an AI coding agent CLI"
 	echo "  It provides autonomous coding capabilities with Factory.AI models."
 	echo "${TOOL_INSTALL_EMPTY}"
@@ -186,23 +211,32 @@ setup_droid_cli() {
 	setup_prompt install_droid "Install Droid CLI? [Y/n]: " "Y"
 	if [[ "$install_droid" =~ ^[Yy]?$ ]]; then
 		print_info "Installing Droid CLI..."
+		local installed=false
 		if command -v curl >/dev/null 2>&1; then
-			if curl -fsSL https://app.factory.ai/install.sh | bash 2>/dev/null; then
-				print_success "Droid installed"
-				echo "${TOOL_INSTALL_EMPTY}"
-				print_info "Run 'droid auth login' to authenticate with Factory.AI."
-				echo "${TOOL_INSTALL_EMPTY}"
+			if _run_droid_installer "$installer_url"; then
+				installed=true
 			else
-				print_warning "Droid installation failed"
-				print_info "Install manually from: https://docs.factory.ai/cli/installation"
+				print_warning "Droid installer failed: $installer_url"
 			fi
+		fi
+		if [[ "$installed" != "true" ]] && { command -v npm >/dev/null 2>&1 || command -v bun >/dev/null 2>&1; }; then
+			if run_with_spinner "Installing Droid via npm" npm_global_install droid; then
+				installed=true
+			fi
+		fi
+		if [[ "$installed" == "true" ]]; then
+			print_success "Droid installed"
+			echo "${TOOL_INSTALL_EMPTY}"
+			print_info "Run 'droid auth login' to authenticate with Factory.AI."
+			echo "${TOOL_INSTALL_EMPTY}"
 		else
-			print_warning "curl not found - cannot install Droid"
-			print_info "Install manually from: https://docs.factory.ai/cli/installation"
+			print_warning "Droid installation failed"
+			print_info "Install manually: curl -fsSL $installer_url | sh  (or: npm install -g droid)"
+			print_info "Docs: $docs_url"
 		fi
 	else
 		print_info "Skipped Droid installation"
-		print_info "Install later: curl -fsSL https://app.factory.ai/install.sh | bash"
+		print_info "Install later: curl -fsSL $installer_url | sh  (or: npm install -g droid)"
 	fi
 
 	return 0

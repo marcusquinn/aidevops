@@ -45,7 +45,7 @@ _PDCU_MARKER_KIND="draft-checkpoint-unblock"
 # _PCC_STALL_RELEASE_PATTERN without the classes that keep or transfer
 # ownership. Terminal-blocker classes stay held (GH#34775); ownership loss
 # preserves a live owner.
-_PDCU_RELEASE_REASON_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_draft_checkpoint|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PDCU_RELEASE_REASON_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 _PDCU_HELD_REASON_PATTERN='^(blocked|push_policy_timeout|network_policy_timeout|worker_ownership_lost)$'
 # A claim or a non-terminal lease after the release means a newer owner.
 _PDCU_OWNER_EVENT_PATTERN='(^|\n)(DISPATCH_CLAIM |DISPATCH_LEASE phase=(?!terminal )|Dispatching worker|(> )?Interactive session claimed)'

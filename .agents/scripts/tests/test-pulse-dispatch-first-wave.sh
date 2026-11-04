@@ -111,6 +111,8 @@ pulse_rest_core_priority_allows_next() {
 	return 1
 }
 _preflight_start_merge_first() { return 0; }
+# GH#36026 preflight stage: keep hermetic (no PULSE_DIR stamp, no live rearm helper).
+_pulse_rearm_blocker_holds() { return 0; }
 calculate_max_workers() { printf 'host-capacity\n' >>"$EVENTS"; return 0; }
 calculate_priority_allocations() { printf 'allocation\n' >>"$EVENTS"; advance_clock 900; return 0; }
 check_session_count() { printf '0\n'; return 0; }

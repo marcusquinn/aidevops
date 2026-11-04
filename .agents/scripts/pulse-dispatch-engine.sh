@@ -1309,6 +1309,128 @@ enforce_utilization_invariants() {
 }
 
 #######################################
+# Sample host headroom for diagnostics only, never for worker admission.
+_underfill_host_sample() {
+	local cores="" load="" memory="" disk=""
+	cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf '0')
+	load=$(LC_ALL=C uptime | awk -F 'load averages?: ' '{split($2,a,"[, ]"); print a[1]}')
+	memory=$(_pulse_ram_available_mb)
+	disk=$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')
+	printf '%s %s %s %s\n' "${cores:-0}" "${load:-unknown}" "${memory:-0}" "${disk:-0}"
+	return 0
+}
+
+# Read only the new log interval, bounded to 1 MiB. Collapse prose into stable
+# categories; never copy issue titles, paths or raw provider errors to advisories.
+_underfill_reason_tally() {
+	local offset="$1" end="${2:-$(wc -c <"$LOGFILE")}" start=0
+	start=$((end - 1048576 > offset ? end - 1048576 : offset))
+	python3 -c 'import sys
+with open(sys.argv[1], "rb") as log:
+    start, end = map(int, sys.argv[2:])
+    log.seek(start)
+    sys.stdout.buffer.write(log.read(max(0, end - start)))
+' "$LOGFILE" "$start" "$end" | awk '
+		/pre-launch failure|Dispatch blocked/ {
+			reason="dispatch_blocked"
+			if (match($0, /reason=[A-Za-z0-9_-]+/)) reason=substr($0,RSTART+7,RLENGTH-7)
+			else if ($0 ~ /worktree capacity|worktree count/) reason="worktree_cap"
+			else if ($0 ~ /permission|cryptographic approval|author_association/) reason="permission_gate"
+			else if ($0 ~ /secret|vault|unlock/) reason="secret_gate"
+			else if ($0 ~ /pacing|rate.limit|cooldown/) reason="github_pacing"
+			if (reason !~ /^(local_capacity_gate|worktree_cap|config_clamp|permission_gate|secret_gate|dedup_active_claim|WORKER_DRAFT_CHECKPOINT|github_pacing)$/) {
+				if (reason ~ /permission|approval/) reason="permission_gate"
+				else if (reason ~ /secret|vault|unlock/) reason="secret_gate"
+				else if (reason ~ /pacing|rate_limit|cooldown/) reason="github_pacing"
+				else reason="dispatch_blocked"
+			}
+			count[reason]++
+		}
+		END {for (reason in count) print reason, count[reason]}
+	' | jq -Rn '[inputs | split(" ") | {reason:.[0], count:(.[1]|tonumber)}] | sort_by([-.count,.reason])'
+	return 0
+}
+
+# Once per real Pulse cycle, before watchdog early returns. Persistent local
+# state survives wrapper restarts. Recovery clears advisories, not safety gates.
+_attribute_sustained_underfill() {
+	local target="$1" active="$2" runnable="$3"
+	local cycle="${_PULSE_CYCLE_ID:-}" dir="${HOME}/.aidevops/cache" now=0 state="" previous=""
+	[[ -n "$cycle" ]] || return 0
+	mkdir -p "$dir" "${HOME}/.aidevops/advisories" || return 0
+	state="$dir/pulse-underfill.json"
+	previous=$(jq -c . "$state" 2>/dev/null || printf '{}')
+	[[ "$(jq -r '.cycle // ""' <<<"$previous")" != "$cycle" ]] || return 0
+	now=$(date +%s)
+	local cores="" load="" memory="" disk="" offset=0 size=0 identity="" deficit=0 streak=0 reasons="" summary="" runner=""
+	read -r cores load memory disk <<<"$(_underfill_host_sample)"
+	identity=$(LC_ALL=C ls -di "$LOGFILE" 2>/dev/null | awk '{print $1}')
+	size=$(wc -c <"$LOGFILE")
+	offset=$(jq -r '.offset // 0' <<<"$previous")
+	[[ "$(jq -r '.log_identity // ""' <<<"$previous")" == "$identity" ]] || offset=0
+	[[ "$offset" =~ ^[0-9]+$ && "$offset" -le "$size" ]] || offset=0
+	reasons=$(_underfill_reason_tally "$offset" "$size")
+	((target > 0)) && deficit=$(((target - active) * 100 / target))
+	# Config clamps must be visible even when a full clamped pool looks healthy.
+	local capacity_file="$dir/pulse-underfill-capacity.json" capacity='{}'
+	[[ ! -f "$capacity_file" ]] || capacity=$(jq -c . "$capacity_file" 2>/dev/null || printf '{}')
+	if jq -e --argjson now "$now" '(.timestamp // 0) > ($now - 900) and .config_clamp == true' <<<"$capacity" >/dev/null; then
+		local detected=0
+		detected=$(jq -r '.detected_target' <<<"$capacity")
+		if ((detected > target)); then
+			target="$detected"
+			deficit=$(((target - active) * 100 / target))
+			reasons=$(jq '. + [{reason:"config_clamp",count:1}] | sort_by([-.count,.reason])' <<<"$reasons")
+		fi
+	fi
+	if ((target > 0 && deficit >= 50 && runnable * 100 >= target * 5)) &&
+		awk -v c="$cores" -v l="$load" -v m="$memory" -v floor="${RAM_RESERVE_MB:-6144}" 'BEGIN {exit !(c>0 && l ~ /^[0-9.]+$/ && l<c && m>floor)}'; then
+		streak=$(jq -r --argjson now "$now" 'if (.timestamp // 0) > ($now - 900) then (.streak // 0) + 1 else 1 end' <<<"$previous")
+	fi
+	# Keep 24h dedupe stamps while pressure remains, including temporary lack of
+	# headroom/backlog. Only actual pool recovery re-arms a cause immediately.
+	local escalated='{}'
+	if ((deficit >= 50)); then
+		escalated=$(jq -c '.escalated // {}' <<<"$previous")
+	else
+		rm -f "${HOME}/.aidevops/advisories/underfill-"*.advisory
+	fi
+	runner=$(id -un)
+	summary=""
+	if ((streak >= 3)); then
+		[[ "$(jq 'length' <<<"$reasons")" != 0 ]] || reasons='[{"reason":"unattributed","count":1}]'
+		summary=$(jq -r 'map(.reason + ":" + (.count|tostring)) | join(",")' <<<"$reasons")
+		local reason="" count=0 last=0 action="" remedy="" pattern="" map_action="" map_remedy=""
+		while read -r reason count; do
+			last=$(jq -r --arg r "$reason" '.[$r] // 0' <<<"$escalated")
+			((now - last >= 86400)) || continue
+			action=advisory
+			remedy='Run pulse-current-state-helper.sh --window 1h --json to inspect this launch gate'
+			while IFS='|' read -r pattern map_action map_remedy; do
+				[[ "$pattern" == "$reason" ]] || continue
+				action="$map_action" remedy="$map_remedy"
+				break
+			done <"${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/../configs/underfill-remediation.conf"
+			if [[ "$action" == worktrees ]] && declare -F _preflight_launch_async_cleanup >/dev/null; then
+				_preflight_launch_async_cleanup "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/cleanup-worktrees-async-helper.sh" \
+					"${HOME}/.aidevops/logs/cleanup_worktrees.log" worktrees || true
+			fi
+			printf 'UNDERFILL_ATTRIBUTION runner=%s deficit=%s top=%s\nRemedy: %s\n' "$runner" "$deficit" "$reason:$count" "$remedy" \
+				>"${HOME}/.aidevops/advisories/underfill-${reason}.advisory"
+			printf '[pulse-wrapper] UNDERFILL_ATTRIBUTION runner=%s deficit=%s top=%s load=%s cores=%s memory_mb=%s disk_free_kb=%s\n' \
+				"$runner" "$deficit" "$summary" "$load" "$cores" "$memory" "$disk" >>"$LOGFILE"
+			escalated=$(jq --arg r "$reason" --argjson now "$now" '. + {($r):$now}' <<<"$escalated")
+		done < <(jq -r '.[] | "\(.reason) \(.count)"' <<<"$reasons")
+	fi
+	jq -n --arg cycle "$cycle" --arg runner "$runner" --arg top "$summary" --arg identity "$identity" \
+		--arg load "$load" --arg memory "$memory" --arg disk "$disk" --arg cores "$cores" \
+		--argjson timestamp "$now" --argjson offset "$size" --argjson streak "$streak" \
+		--argjson deficit "$deficit" --argjson reasons "$reasons" --argjson escalated "$escalated" --argjson capacity "$capacity" \
+		'{cycle:$cycle,runner:$runner,timestamp:$timestamp,offset:$offset,log_identity:$identity,streak:$streak,deficit:$deficit,top:$top,reasons:$reasons,escalated:$escalated,capacity:$capacity,host:{load:$load,cores:$cores,memory_mb:$memory,disk_free_kb:$disk}}' \
+		>"${state}.tmp" && mv "${state}.tmp" "$state"
+	return 0
+}
+
 # Recycle stale workers aggressively when underfill is severe
 #
 # During deep underfill, long-running workers can occupy slots while making
@@ -1338,6 +1460,8 @@ run_underfill_worker_recycler() {
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 	[[ "$runnable_count" =~ ^[0-9]+$ ]] || runnable_count=0
 	[[ "$queued_without_worker" =~ ^[0-9]+$ ]] || queued_without_worker=0
+
+	_attribute_sustained_underfill "$max_workers" "$active_workers" "$runnable_count" || true
 
 	if [[ "$active_workers" -ge "$max_workers" ]]; then
 		return 0

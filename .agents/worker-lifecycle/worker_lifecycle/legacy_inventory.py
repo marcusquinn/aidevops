@@ -2,45 +2,74 @@
 
 import json
 import os
-import tempfile
+import re
+import time
 from datetime import datetime
 from pathlib import Path
 
 from .enrollment import _git_directory
-from .filesystem import validate_private_path as _private
-from .process import ProcessIdentity
+from .legacy_options import reconstructible_path, unrecorded
+from .legacy_proc import require_ended, require_idle_proc
 from .retirement import _git, _id
 
 
-def queue(store, items):
-    """A private cursor gives bounded passes fair progress; it grants no authority."""
-    cursor = store.directory / "legacy-cleanup-position"
-    position = ""
-    if os.path.lexists(cursor):
-        _private(cursor)
-        if cursor.stat().st_size > 8192:
-            raise ValueError("invalid-legacy-cleanup-position")
-        position = json.loads(cursor.read_text(encoding="utf-8"))
-        if not isinstance(position, str):
-            raise ValueError("invalid-legacy-cleanup-position")
-    ordered = sorted(items, key=lambda item: item["path"])
-    return ([item for item in ordered if item["path"] > position]
-            + [item for item in ordered if item["path"] <= position])
+def unchanged(connection, plan, adapter):
+    current = next((item for item in inventory(connection)
+                     if item["path"] == plan["source"]), None)
+    confirmed = plan.get("operator_confirmed") is True
+    if current is None and confirmed:
+        current = unrecorded(plan["source"])
+    if (current is None or current["modern"]
+            or sorted(current["generations"]) != plan["generations"]
+            or current["runs"] != plan["runs"]):
+        raise ValueError("registered-writers-changed")
+    require_ended(current, adapter, operator_confirmed=confirmed)
 
 
-def advance(store, path):
-    temporary = None
+def requires_reconstructible(item, repositories, adapter, options):
+    """Only missing writer evidence may select the independent recovery class."""
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
-                                         dir=store.directory, delete=False) as stream:
-            temporary = Path(stream.name)
-            json.dump(path, stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, store.directory / "legacy-cleanup-position")
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+        inspect(item, repositories, adapter, time.time(), options)
+    except ValueError as error:
+        if str(error) == "no-recorded-processes":
+            return True
+        if str(error) == "too-recent" and (not item["runs"] or item["unbound"]):
+            return True
+        raise
+    return False
+
+
+def reconstructible(item, repositories, adapter, open_prs):
+    """Independent remote-recoverable class, never inferred from writer history."""
+    path = reconstructible_path(item)
+    admin = _git_directory(path)
+    common = _git("-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if common not in repositories or admin == Path(common):
+        raise ValueError("repository-out-of-scope")
+    if (admin / "locked").exists():
+        raise ValueError("git-worktree-locked")
+    require_ended(item, adapter, operator_confirmed=True)
+    if _git("-C", str(path), "status", "--porcelain", "--untracked-files=all",
+            "--ignored", "--ignore-submodules=none"):
+        raise ValueError("nonempty-worktree-state")
+    head = _git("-C", str(path), "rev-parse", "HEAD")
+    if not _git("--git-dir", common, "for-each-ref", "--format=%(refname)",
+                "--contains=" + head, "refs/remotes/"):
+        raise ValueError("head-not-on-remote")
+    branch = _git("-C", str(path), "rev-parse", "--symbolic-full-name", "HEAD")
+    if branch != "HEAD" and not branch.startswith("refs/heads/"):
+        raise ValueError("invalid-branch-ref")
+    slug = repositories[common][0]
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", slug):
+        raise ValueError("invalid-repository-slug")
+    for pr in open_prs(slug):
+        if (pr["head"]["sha"] == head
+                or (branch != "HEAD" and pr["head"]["ref"] == branch[11:])):
+            raise ValueError("open-pull-request")
+    require_idle_proc(path)
+    return {"source": str(path), "directory": _id(path), "admin": str(admin),
+            "admin_identity": _id(admin), "common": common, "head": head,
+            "branch": branch, "repo": slug}
 
 
 def inventory(connection):
@@ -77,15 +106,6 @@ def inventory(connection):
         for item in targets:
             item["last_event"] = max(item["last_event"], stamp.timestamp())
     return sorted(paths.values(), key=lambda item: (item["last_event"], item["path"]))
-
-
-def require_ended(item, adapter, *, operator_confirmed=False):
-    for value in item["runs"].values():
-        observed = adapter.observe(ProcessIdentity.from_dict(value))
-        if observed.status != "ended":
-            raise ValueError("process-" + observed.status)
-    if not operator_confirmed and (not item["runs"] or item["unbound"]):
-        raise ValueError("no-recorded-processes")
 
 
 def inspect(item, repositories, adapter, now, options):

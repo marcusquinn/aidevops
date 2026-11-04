@@ -43,6 +43,50 @@ writers are not inferred from cwd, age or Git state.
 
 ## Pulse and manual operation
 
+### Remote-reconstructible class (Linux)
+
+Unrecorded/unbound legacy worktrees can retire without writer history only when
+their complete content is remote-recoverable and current liveness is observable.
+This class is independent of the ordinary legacy age threshold. It does not
+adopt current-generation admissions or operator-confirmed archive operations.
+It requires a canonical owned linked worktree beneath the managed base, no Git
+lock, and an empty Git status including untracked **and ignored** files and
+submodule state. HEAD must be contained in a remote-tracking ref. All pages of
+GitHub open PRs must be fetched successfully; either a matching branch or head
+SHA retains the source. API failures never prove PR absence.
+
+Names containing `preserved`, `readonly`, `recovery` or `review` are retained,
+case-insensitively. `AIDEVOPS_WORKTREE_PRESERVE_PATTERNS` adds comma-separated
+literal substrings (not regular expressions); the systemd launcher forwards it.
+Every same-UID Linux thread's kernel credentials, cwd and fd table are inspected,
+including threads surviving a dead leader. An unreadable or still-live thread
+with missing observations fails closed. A vanished task/closed fd is distinguished
+from unavailable observations. Other operating systems retain these candidates.
+
+Under the existing registry writer transaction, eligibility, GitHub PR absence
+and the process census are checked again immediately before native
+`git worktree remove` **without `--force`**. Branches are never deleted. The event
+journal records the exact plan before deletion and a
+`reconstructible-worktree-retired` receipt after verifying directory absence,
+commit presence and the unchanged branch ref. Results identify the class; receipts
+remain in the existing journal, not a new database or fabricated admission.
+
+Before batch mode on each host/installation, one source is removed and its commit
+is checked out at a fresh private probe path, verified, and removed non-forcibly.
+Only then is `reconstructible-host-probe-verified` journaled. Failed/interrupted
+verification blocks further removals until that original plan is reverified;
+replacement sources never inherit its authority. Failed probe trees are retained,
+not recursively erased. A later pass can reverify and resume.
+
+At 80% of `AIDEVOPS_MAX_WORKTREES`, or below existing disk thresholds, dispatch
+kicks the existing isolated async cleanup launcher once per executor. Admission
+still fails closed at the cap/disk limit; it never spends its 60-second budget on
+heavy cleanup. Pressure bypasses routine cadence, not the cleanup lock or safety
+checks. The async helper also checks pressure before honoring its cadence so
+preflight kicks continue draining a backlog over bounded passes. Production
+rollout evidence is the count falling below 80% and disappearance of
+`local_capacity_gate`; disposable-repository tests do not claim host deployment.
+
 Pulse calls the temporary pass before admission-based cleanup. Each receives half
 the worktree-cleanup budget; the existing outer watchdog remains responsible for
 hard termination. The temporary pass attempts at most 25 worktrees per invocation.
