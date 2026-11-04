@@ -11,6 +11,10 @@ GIT_SHIM="${SCRIPTS_DIR}/git"
 TEST_ROOT="${PWD}/.agents/tmp/test-remote-branch-cleanup.$$"
 export WORKTREE_REGISTRY_DIR="$TEST_ROOT/registry"
 export WORKTREE_REGISTRY_DB="$WORKTREE_REGISTRY_DIR/owners.db"
+# Every scan now fetches through a linked transport (GH#36601); keep those
+# transports inside the fixture instead of the user's worktree base.
+export AIDEVOPS_WORKTREE_BASE_DIR="$TEST_ROOT/worktrees"
+export REMOTE_BRANCH_CLEANUP_STUB_CLOSED_JSON="$TEST_ROOT/closed-prs.json"
 
 fail() {
 	local message="$1"
@@ -33,6 +37,38 @@ assert_contains() {
 	*"$needle"*) pass "$message" ;;
 	*) fail "$message (missing: $needle)" ;;
 	esac
+	return 0
+}
+
+assert_row() {
+	local output="$1"
+	local action="$2"
+	local branch="$3"
+	local reason="$4"
+	local message="$5"
+	local row=""
+	row=$(printf '%-10s %-55s %s' "$action" "$branch" "$reason")
+	assert_contains "$output" "$row" "$message"
+	return 0
+}
+
+assert_no_phantom_rows() {
+	local output="$1"
+	local message="$2"
+	if grep -Eq '^[a-z-]+ +(origin|HEAD) ' <<<"$output"; then
+		fail "$message"
+	fi
+	pass "$message"
+	return 0
+}
+
+assert_no_transport() {
+	local repo="$1"
+	local message="$2"
+	if git -C "$repo" worktree list --porcelain | grep -F "$AIDEVOPS_WORKTREE_BASE_DIR" >/dev/null 2>&1; then
+		fail "$message"
+	fi
+	pass "$message"
 	return 0
 }
 
@@ -126,12 +162,92 @@ case "$endpoint" in
 *"pulls?state=open&per_page=100&page=2"*)
 	printf '%s\n' '[{"head":{"ref":"open-pr"},"merged_at":null}]'
 	;;
-*"pulls?state=closed&per_page=100&page=1"*) printf '%s\n' '[]' ;;
+*"pulls?state=closed&per_page=100&page=1"*)
+	if [[ -f "${REMOTE_BRANCH_CLEANUP_STUB_CLOSED_JSON:-}" ]]; then
+		cat "$REMOTE_BRANCH_CLEANUP_STUB_CLOSED_JSON"
+	else
+		printf '%s\n' '[]'
+	fi
+	;;
 *) exit 1 ;;
 esac
 exit 0
 STUB
 	chmod +x "${bin_dir}/gh"
+	return 0
+}
+
+install_fetch_failure_git_stub() {
+	local bin_dir="$1"
+	mkdir -p "$bin_dir"
+	cat >"${bin_dir}/git" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ " \$* " == *" fetch "* ]]; then
+	exit 1
+fi
+exec "${GIT_SHIM}" "\$@"
+STUB
+	chmod +x "${bin_dir}/git"
+	return 0
+}
+
+# Closed-PR fixture rows. head.repo.full_name must equal the helper's slug
+# (the origin URL minus .git) to count as same-repository evidence.
+closed_pr_row() {
+	local number="$1"
+	local ref="$2"
+	local sha="$3"
+	local merged="$4"
+	local full_name="$5"
+	jq -cn --argjson n "$number" --arg ref "$ref" --arg sha "$sha" \
+		--arg merged "$merged" --arg full_name "$full_name" \
+		'{number: $n, merged_at: (if $merged == "1" then "2026-01-01T00:00:00Z" else null end),
+		  head: {ref: $ref, sha: $sha, repo: {full_name: $full_name}}}'
+	return 0
+}
+
+setup_pr_evidence_fixtures() {
+	local repo="$1"
+	local slug="${TEST_ROOT}/origin"
+	local exact_sha after_head ancestor_head fork_sha closed_exact_sha closed_after_head
+	local rows=()
+
+	# Squash-merged head: PR head SHA equals the branch tip.
+	make_branch "$repo" squash-exact squash-exact.txt squash-exact
+	exact_sha=$(git -C "$repo" rev-parse HEAD)
+
+	# Post-merge commit: the PR merged at an earlier head (issue scenario).
+	make_branch "$repo" squash-after squash-after.txt squash-after
+	after_head=$(git -C "$repo" rev-parse HEAD)
+	make_commit "$repo" squash-after-2.txt post-merge
+	git -C "$repo" push -q origin squash-after
+
+	# Tip is an ancestor of the merged PR head (later head commit not pushed).
+	make_branch "$repo" squash-ancestor squash-ancestor.txt squash-ancestor
+	make_commit "$repo" squash-ancestor-2.txt later
+	ancestor_head=$(git -C "$repo" rev-parse HEAD)
+
+	# A fork PR whose head.ref happens to equal an origin branch name.
+	make_branch "$repo" fork-same-name fork.txt fork
+	fork_sha=$(git -C "$repo" rev-parse HEAD)
+
+	make_branch "$repo" closed-exact closed-exact.txt closed-exact
+	closed_exact_sha=$(git -C "$repo" rev-parse HEAD)
+
+	make_branch "$repo" closed-after closed-after.txt closed-after
+	closed_after_head=$(git -C "$repo" rev-parse HEAD)
+	make_commit "$repo" closed-after-2.txt post-close
+	git -C "$repo" push -q origin closed-after
+
+	git -C "$repo" checkout -q main
+	rows+=("$(closed_pr_row 101 squash-exact "$exact_sha" 1 "$slug")")
+	rows+=("$(closed_pr_row 102 squash-after "$after_head" 1 "$slug")")
+	rows+=("$(closed_pr_row 103 squash-ancestor "$ancestor_head" 1 "$slug")")
+	rows+=("$(closed_pr_row 104 fork-same-name "$fork_sha" 1 "someone-else/fork")")
+	rows+=("$(closed_pr_row 105 closed-exact "$closed_exact_sha" 0 "$slug")")
+	rows+=("$(closed_pr_row 106 closed-after "$closed_after_head" 0 "$slug")")
+	printf '%s\n' "${rows[@]}" | jq -cs '.' >"$REMOTE_BRANCH_CLEANUP_STUB_CLOSED_JSON"
 	return 0
 }
 
@@ -173,7 +289,11 @@ setup_repo() {
 	merge_branch_to_main "$TEST_ROOT/repo" active-worktree
 	git -C "$TEST_ROOT/repo" worktree add -q "$TEST_ROOT/active-wt" active-worktree
 
+	setup_pr_evidence_fixtures "$TEST_ROOT/repo"
+
 	git -C "$TEST_ROOT/repo" fetch -q origin
+	# refs/remotes/origin/HEAD abbreviates to "origin" with %(refname:short).
+	git -C "$TEST_ROOT/repo" remote set-head origin main >/dev/null
 	return 0
 }
 
@@ -207,6 +327,91 @@ run_dry_run_assertions() {
 		fail "remote branch cleanup must not use native gh pr list"
 	fi
 	pass "remote branch cleanup avoids native gh pr list"
+
+	# GH#36601: merged/closed PR evidence is bound to the branch tip SHA.
+	assert_row "$output" would-del squash-exact "merged PR #101 head SHA" "exact merged PR head is a deletion candidate"
+	assert_row "$output" would-del squash-ancestor "merged PR #103 head ancestor" "tip behind merged PR head is a deletion candidate"
+	assert_row "$output" review squash-after "tip differs from merged PR #102 head" "post-merge commits require review"
+	assert_row "$output" review fork-same-name "unmerged/no closed evidence" "same-named fork PR is not merged evidence"
+	assert_row "$output" review closed-exact "unmerged/no closed evidence" "closed PR is not evidence without --include-closed-pr"
+	assert_no_phantom_rows "$output" "remote HEAD symref does not appear as a branch row"
+	assert_contains "$output" "refs=unfetched" "--skip-fetch reports unfetched refs"
+
+	output=$(PATH="$gh_bin:$PATH" bash "$HELPER" --repo "$repo" --skip-fetch --include-closed-pr)
+	assert_row "$output" would-del closed-exact "closed PR #105 head SHA (--include-closed-pr)" "exact closed PR head is a candidate with --include-closed-pr"
+	assert_row "$output" review closed-after "tip differs from closed PR #106 head" "post-close commits require review"
+	return 0
+}
+
+run_fetch_assertions() {
+	local repo="$1"
+	local gh_bin="$TEST_ROOT/bin"
+	local fail_bin="$TEST_ROOT/fetch-fail-bin"
+	local repos_file="$TEST_ROOT/repos.json"
+	local late_clone="$TEST_ROOT/late-clone"
+	local output=""
+	local direct_rc=0
+	local rc=0
+	printf '{"initialized_repos":[{"path":"%s"}]}\n' "$repo" >"$repos_file"
+
+	# A branch pushed elsewhere is unknown until the scan refreshes refs.
+	git clone -q "$TEST_ROOT/origin.git" "$late_clone"
+	git -C "$late_clone" config user.email test@example.invalid
+	git -C "$late_clone" config user.name "Remote Branch Cleanup Test"
+	git -C "$late_clone" checkout -qb late-branch
+	make_commit "$late_clone" late.txt late
+	git -C "$late_clone" push -q origin late-branch
+
+	if (cd "$repo" && AIDEVOPS_REPOS_FILE="$repos_file" PATH="$SCRIPTS_DIR:$PATH" git fetch -q origin >/dev/null 2>&1); then
+		fail "direct canonical git fetch must remain blocked"
+	else
+		direct_rc=$?
+	fi
+	[[ "$direct_rc" -eq 42 ]] || fail "direct canonical git fetch returns guard exit 42 (rc=$direct_rc)"
+	pass "direct canonical git fetch remains blocked"
+
+	# Inherited context from a different repository must not redirect the scan
+	# or register its transport in that repository. late_clone already holds the
+	# late-branch objects, so an inherited object directory or alternate would
+	# let fetch move the ref without storing those objects in --repo.
+	output=$(GIT_DIR="$late_clone/.git" GIT_WORK_TREE="$late_clone" \
+		GIT_COMMON_DIR="$late_clone/.git" GIT_INDEX_FILE="$late_clone/.git/index" \
+		GIT_OBJECT_DIRECTORY="$late_clone/.git/objects" \
+		GIT_ALTERNATE_OBJECT_DIRECTORIES="$late_clone/.git/objects" \
+		AIDEVOPS_REPOS_FILE="$repos_file" PATH="$SCRIPTS_DIR:$gh_bin:$PATH" \
+		bash "$HELPER" --repo "$repo" 2>&1)
+	assert_contains "$output" "refs=fresh" "canonical scan refreshes refs through the linked transport"
+	assert_row "$output" review late-branch "unmerged/no closed evidence" "refreshed refs include a newly pushed branch"
+	assert_row "$output" would-del squash-exact "merged PR #101 head SHA" "inherited Git context does not redirect repository reads"
+	assert_no_transport "$late_clone" "inherited Git context does not register transport in another repository"
+	if git -C "$repo" cat-file -e "refs/remotes/origin/late-branch^{commit}" 2>/dev/null; then
+		pass "inherited object directories do not divert fetched objects from --repo"
+	else
+		fail "inherited object directories do not divert fetched objects from --repo"
+	fi
+	if [[ "$output" == *"Fetch/prune failed"* ]]; then
+		fail "canonical scan must not report a fetch failure"
+	fi
+	pass "canonical scan does not report a fetch failure"
+	assert_no_transport "$repo" "dry-run retires its fetch transport"
+
+	install_fetch_failure_git_stub "$fail_bin"
+	output=$(AIDEVOPS_REPOS_FILE="$repos_file" PATH="$fail_bin:$gh_bin:$PATH" \
+		bash "$HELPER" --repo "$repo" 2>&1)
+	assert_contains "$output" "refs=stale" "failed fetch marks a dry-run audit stale"
+	assert_contains "$output" "dry-run audit uses stale remote-tracking refs" "failed fetch warns in dry-run"
+
+	if output=$(AIDEVOPS_REPOS_FILE="$repos_file" PATH="$fail_bin:$gh_bin:$PATH" \
+		bash "$HELPER" --repo "$repo" --apply 2>&1); then
+		fail "apply must refuse when fetch/prune fails"
+	else
+		rc=$?
+	fi
+	[[ "$rc" -eq 1 ]] || fail "refused apply returns 1 (rc=$rc)"
+	assert_contains "$output" "refusing --apply against stale remote-tracking refs" "apply reports stale-ref refusal"
+	assert_ref_exists "$repo" merged-safe "refused apply deletes nothing"
+	assert_ref_exists "$repo" squash-exact "refused apply preserves PR-evidence candidates"
+	assert_no_transport "$repo" "refused apply retires its fetch transport"
 	return 0
 }
 
@@ -233,6 +438,11 @@ run_apply_assertions() {
 		bash "$HELPER" --repo "$repo" --skip-fetch --apply >/dev/null
 
 	assert_ref_missing "$repo" merged-safe "apply deletes merged safe branch"
+	assert_ref_missing "$repo" squash-exact "apply deletes exact merged PR head"
+	assert_ref_missing "$repo" squash-ancestor "apply deletes tip behind merged PR head"
+	assert_ref_exists "$repo" squash-after "apply preserves post-merge commits"
+	assert_ref_exists "$repo" fork-same-name "apply preserves branch matched only by a fork PR"
+	assert_ref_exists "$repo" closed-exact "apply preserves closed PR branch without --include-closed-pr"
 	assert_ref_exists "$repo" unmerged "apply preserves unmerged branch"
 	assert_ref_exists "$repo" open-pr "apply preserves open PR branch"
 	assert_ref_exists "$repo" active-worktree "apply preserves active worktree branch"
@@ -324,6 +534,7 @@ run_sync_assertions() {
 main() {
 	setup_repo
 	run_dry_run_assertions "$TEST_ROOT/repo"
+	run_fetch_assertions "$TEST_ROOT/repo"
 	run_apply_assertions "$TEST_ROOT/repo"
 	run_readback_failure_assertions "$TEST_ROOT/repo"
 	run_sync_assertions

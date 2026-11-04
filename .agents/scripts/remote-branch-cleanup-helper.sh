@@ -6,6 +6,13 @@
 
 set -euo pipefail
 
+# Explicit --repo selection must win over inherited repository context, including
+# during transport creation and read-only queries before transport Git calls.
+# Object-store overrides are cleared too: an inherited object directory or
+# alternate would let fetch store objects outside --repo while its refs move.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE \
+	GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -17,15 +24,21 @@ REMOTE_NAME="origin"
 APPLY=0
 INCLUDE_CLOSED_PR=0
 SKIP_FETCH=0
+FETCH_STATE="pending"
 DELETE_TRANSPORT_WORKTREE=""
 DELETE_FAILURES=0
+PR_MATCH=""
+PR_MATCH_NUMBER=""
+CLASSIFY_SAFE=""
+CLASSIFY_REVIEW=""
 
 usage() {
 	cat <<'EOF'
 Usage: remote-branch-cleanup-helper.sh [scan] [options]
 
 Audits stale remote branches and optionally deletes only branches proven safe.
-Default mode is dry-run.
+Default mode is dry-run. Merged/closed PR evidence counts only when the branch
+tip equals, or is an ancestor of, a same-repository PR head SHA.
 
 Options:
   --repo PATH           Repository path (default: current directory)
@@ -34,6 +47,9 @@ Options:
   --include-closed-pr   Treat closed-without-merge PR branches as safe candidates
   --skip-fetch          Do not fetch/prune before scanning (tests/offline only)
   -h, --help            Show this help
+
+Fetch/prune runs through an isolated linked worktree because canonical
+checkouts refuse `git fetch`. --apply refuses to run when that fetch fails.
 
 Examples:
   aidevops cleanup remote-branches
@@ -102,24 +118,16 @@ default_branch() {
 }
 
 remote_branches() {
-	repo_git for-each-ref --format='%(refname:short)' "refs/remotes/${REMOTE_NAME}" |
+	# Use the full refname: `%(refname:short)` abbreviates the remote HEAD
+	# symref to the bare remote name ("origin"), which then leaked into the
+	# audit as a phantom branch (GH#36601).
+	local prefix="refs/remotes/${REMOTE_NAME}/"
+	repo_git for-each-ref --format='%(refname)' "refs/remotes/${REMOTE_NAME}" |
 		while IFS= read -r ref; do
-			[[ -z "$ref" ]] && continue
-			[[ "$ref" == "${REMOTE_NAME}/HEAD" ]] && continue
-			printf '%s\n' "${ref#"${REMOTE_NAME}"/}"
-		done
-	return 0
-}
-
-merged_remote_branches() {
-	local branch="$1"
-	repo_git branch -r --merged "${REMOTE_NAME}/${branch}" 2>/dev/null |
-		sed 's/^[*[:space:]]*//' |
-		while IFS= read -r ref; do
-			[[ -z "$ref" ]] && continue
-			[[ "$ref" == "${REMOTE_NAME}/HEAD" ]] && continue
-			[[ "$ref" != "${REMOTE_NAME}/"* ]] && continue
-			printf '%s\n' "${ref#"${REMOTE_NAME}"/}"
+			[[ "$ref" == "$prefix"* ]] || continue
+			ref="${ref#"$prefix"}"
+			[[ -z "$ref" || "$ref" == "HEAD" ]] && continue
+			printf '%s\n' "$ref"
 		done
 	return 0
 }
@@ -147,6 +155,12 @@ gh_pr_branches() {
 	local page_json=""
 	slug=$(repo_slug)
 	[[ -n "$slug" ]] || return 0
+	# Open PRs only protect branches, so a name match (including a fork head
+	# with the same ref) stays conservative. Merged/closed evidence authorizes
+	# deletion, so it is restricted to same-repository heads and carries the
+	# head SHA and PR number for tip binding (GH#36601).
+	# shellcheck disable=SC2016 # $slug is a jq variable bound with --arg below.
+	local same_repo_rows='select(((.head.repo.full_name // "") | ascii_downcase) == ($slug | ascii_downcase)) | [.head.ref, (.head.sha // ""), (.number | tostring)] | @tsv'
 	case "$state" in
 	open)
 		api_state="open"
@@ -154,11 +168,11 @@ gh_pr_branches() {
 		;;
 	merged)
 		api_state="closed"
-		jq_filter='.[] | select(.merged_at != null) | .head.ref'
+		jq_filter=".[] | select(.merged_at != null) | ${same_repo_rows}"
 		;;
 	closed)
 		api_state="closed"
-		jq_filter='.[] | select(.merged_at == null) | .head.ref'
+		jq_filter=".[] | select(.merged_at == null) | ${same_repo_rows}"
 		;;
 	*) return 0 ;;
 	esac
@@ -171,7 +185,7 @@ gh_pr_branches() {
 			2>/dev/null) || return 0
 		page_count=$(printf '%s' "$page_json" | jq -r 'if type == "array" then length else -1 end' 2>/dev/null) || return 0
 		[[ "$page_count" =~ ^[0-9]+$ ]] || return 0
-		printf '%s' "$page_json" | jq -r "$jq_filter" 2>/dev/null || return 0
+		printf '%s' "$page_json" | jq -r --arg slug "$slug" "$jq_filter" 2>/dev/null || return 0
 		[[ "$page_count" -lt 100 ]] && break
 		page=$((page + 1))
 	done
@@ -194,6 +208,45 @@ contains_line() {
 	local haystack="$2"
 	[[ $'\n'"$haystack"$'\n' == *$'\n'"$needle"$'\n'* ]]
 	return $?
+}
+
+# Bind PR evidence to the audited tip (GH#36601), matching the
+# local-branch-cleanup-helper.sh closed_pr_lookup rule: the tip must equal a
+# same-repository PR head SHA or be an ancestor of one. A branch name alone is
+# not evidence, because squash-merged heads never reach the default branch and
+# commits pushed after the merge would otherwise be deleted with it.
+# rows: "<head.ref>\t<head.sha>\t<number>" lines from gh_pr_branches.
+# Sets PR_MATCH to sha|ancestor|differs (empty: no same-name PR evidence) and
+# PR_MATCH_NUMBER.
+pr_head_evidence() {
+	local branch="$1"
+	local tip="$2"
+	local rows="$3"
+	local ref=""
+	local head_sha=""
+	local number=""
+	PR_MATCH=""
+	PR_MATCH_NUMBER=""
+	[[ -n "$tip" && -n "$rows" ]] || return 0
+	while IFS=$'\t' read -r ref head_sha number; do
+		[[ "$ref" == "$branch" ]] || continue
+		[[ "$head_sha" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]] || continue
+		if [[ "$head_sha" == "$tip" ]]; then
+			PR_MATCH="sha"
+			PR_MATCH_NUMBER="$number"
+			return 0
+		fi
+		if [[ "$PR_MATCH" != "ancestor" ]] &&
+			repo_git cat-file -e "${head_sha}^{commit}" 2>/dev/null &&
+			repo_git merge-base --is-ancestor "$tip" "$head_sha" 2>/dev/null; then
+			PR_MATCH="ancestor"
+			PR_MATCH_NUMBER="$number"
+		elif [[ -z "$PR_MATCH" ]]; then
+			PR_MATCH="differs"
+			PR_MATCH_NUMBER="$number"
+		fi
+	done <<<"$rows"
+	return 0
 }
 
 is_protected_branch() {
@@ -252,11 +305,13 @@ prepare_delete_transport() {
 		# Synchronous, process-scoped transport: choose the legacy backend before
 		# creation so this process can retire it on exit instead of leaving an
 		# owner-cgroup record that only a later exit could seal (GH#35490).
+		# No checkout: the transport only fetches, reads and pushes refs, and it
+		# is now created on every scan, including dry runs (GH#36601).
 		AIDEVOPS_WORKTREE_MANAGER=legacy-guards \
-			worktree_create_registered "$REPO_PATH" "$worktree" HEAD --detach
+			worktree_create_registered "$REPO_PATH" "$worktree" HEAD --detach --no-checkout
 	) >/dev/null; then
 		DELETE_TRANSPORT_WORKTREE=""
-		print_error "Unable to create an isolated linked worktree for remote-ref deletion"
+		print_error "Unable to create an isolated linked worktree for remote-ref transport"
 		return 1
 	fi
 	return 0
@@ -269,6 +324,19 @@ delete_transport_git() {
 	return $?
 }
 
+# The canonical Git guard refuses `git fetch` in canonical checkouts, so a
+# direct fetch always failed there and the audit ran on stale tracking refs.
+# A linked worktree shares the remote-tracking refs and may update them.
+# The explicit all-heads refspec keeps a single-branch clone's narrow configured
+# refspec from refreshing one ref while the audit reports every ref fresh;
+# --prune with it still preserves the refs/remotes/<remote>/HEAD symref.
+fetch_remote_refs() {
+	prepare_delete_transport || return 1
+	delete_transport_git fetch --prune --quiet "$REMOTE_NAME" \
+		"+refs/heads/*:refs/remotes/${REMOTE_NAME}/*" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 record_delete_failure() {
 	local branch="$1"
 	local reason="$2"
@@ -279,7 +347,9 @@ record_delete_failure() {
 
 delete_branch() {
 	local branch="$1"
-	local expected_sha=""
+	# The lease SHA is the exact tip the classification evidence was bound to,
+	# not a re-read that a concurrent fetch could have advanced (GH#36601).
+	local expected_sha="${2:-}"
 	local remote_output=""
 	local remote_sha=""
 	local verify_rc=0
@@ -288,7 +358,6 @@ delete_branch() {
 		record_delete_failure "$branch" "invalid branch ref"
 		return 0
 	fi
-	expected_sha=$(repo_git rev-parse --verify "refs/remotes/${REMOTE_NAME}/${branch}" 2>/dev/null) || expected_sha=""
 	if [[ -z "$expected_sha" ]]; then
 		record_delete_failure "$branch" "unable to resolve audited remote-tracking ref"
 		return 0
@@ -410,19 +479,74 @@ sync_default_branch_after_cleanup() {
 	return 0
 }
 
+# Classify one remote branch from SHA-bound evidence only. Sets CLASSIFY_SAFE
+# to the deletion reason, or leaves it empty with CLASSIFY_REVIEW explaining
+# why the branch needs manual review.
+classify_branch() {
+	local branch="$1"
+	local tip="$2"
+	local default="$3"
+	local default_tip="$4"
+	local merged_prs="$5"
+	local closed_prs="$6"
+	CLASSIFY_SAFE=""
+	CLASSIFY_REVIEW="unmerged/no closed evidence"
+	if [[ -z "$tip" ]]; then
+		CLASSIFY_REVIEW="unable to resolve remote-tracking ref"
+		return 0
+	fi
+	if [[ -n "$default_tip" ]] && repo_git merge-base --is-ancestor "$tip" "$default_tip" 2>/dev/null; then
+		CLASSIFY_SAFE="merged to ${default}"
+		return 0
+	fi
+	pr_head_evidence "$branch" "$tip" "$merged_prs"
+	case "$PR_MATCH" in
+	sha)
+		CLASSIFY_SAFE="merged PR #${PR_MATCH_NUMBER} head SHA"
+		return 0
+		;;
+	ancestor)
+		CLASSIFY_SAFE="merged PR #${PR_MATCH_NUMBER} head ancestor"
+		return 0
+		;;
+	differs) CLASSIFY_REVIEW="tip differs from merged PR #${PR_MATCH_NUMBER} head" ;;
+	esac
+	[[ -n "$closed_prs" ]] || return 0
+	pr_head_evidence "$branch" "$tip" "$closed_prs"
+	case "$PR_MATCH" in
+	sha) CLASSIFY_SAFE="closed PR #${PR_MATCH_NUMBER} head SHA (--include-closed-pr)" ;;
+	ancestor) CLASSIFY_SAFE="closed PR #${PR_MATCH_NUMBER} head ancestor (--include-closed-pr)" ;;
+	differs)
+		if [[ "$CLASSIFY_REVIEW" == "unmerged/no closed evidence" ]]; then
+			CLASSIFY_REVIEW="tip differs from closed PR #${PR_MATCH_NUMBER} head"
+		fi
+		;;
+	esac
+	return 0
+}
+
 scan_branches() {
 	if [[ ! -d "$REPO_PATH/.git" && ! -f "$REPO_PATH/.git" ]]; then
 		print_error "Not a git worktree: $REPO_PATH"
 		return 1
 	fi
 
-	if [[ "$SKIP_FETCH" != "1" ]]; then
-		repo_git fetch --prune "$REMOTE_NAME" >/dev/null 2>&1 || print_warning "Fetch/prune failed; continuing with local remote refs"
+	if [[ "$SKIP_FETCH" == "1" ]]; then
+		FETCH_STATE="unfetched"
+	elif fetch_remote_refs; then
+		FETCH_STATE="fresh"
+	else
+		FETCH_STATE="stale"
+		if [[ "$APPLY" == "1" ]]; then
+			print_error "Fetch/prune failed; refusing --apply against stale remote-tracking refs"
+			return 1
+		fi
+		print_warning "Fetch/prune failed; dry-run audit uses stale remote-tracking refs"
 	fi
 
-	local default merged active open_prs merged_prs closed_prs branch reason safe_count skip_count review_count mode skip_action dash_label
+	local default default_tip active open_prs merged_prs closed_prs branch tip safe_count skip_count review_count mode skip_action dash_label
 	default=$(default_branch)
-	merged=$(merged_remote_branches "$default")
+	default_tip=$(repo_git rev-parse --verify "refs/remotes/${REMOTE_NAME}/${default}" 2>/dev/null) || default_tip=""
 	active=$(active_worktree_branches)
 	open_prs=$(gh_pr_branches open)
 	merged_prs=$(gh_pr_branches merged)
@@ -438,13 +562,12 @@ scan_branches() {
 	dash_label="------"
 	[[ "$APPLY" == "1" ]] && mode="apply"
 
-	printf 'Remote branch cleanup audit: repo=%s remote=%s default=%s mode=%s\n' "$REPO_PATH" "$REMOTE_NAME" "$default" "$mode"
+	printf 'Remote branch cleanup audit: repo=%s remote=%s default=%s mode=%s refs=%s\n' "$REPO_PATH" "$REMOTE_NAME" "$default" "$mode" "$FETCH_STATE"
 	printf '%-10s %-55s %s\n' "action" "branch" "reason"
 	printf '%-10s %-55s %s\n' "$dash_label" "$dash_label" "$dash_label"
 
 	while IFS= read -r branch; do
 		[[ -z "$branch" ]] && continue
-		reason=""
 		if is_protected_branch "$branch" "$default"; then
 			print_candidate "$skip_action" "$branch" "protected/default branch"
 			skip_count=$((skip_count + 1))
@@ -460,24 +583,19 @@ scan_branches() {
 			skip_count=$((skip_count + 1))
 			continue
 		fi
-		if contains_line "$branch" "$merged"; then
-			reason="merged to ${default}"
-		elif contains_line "$branch" "$merged_prs"; then
-			reason="merged PR branch"
-		elif contains_line "$branch" "$closed_prs"; then
-			reason="closed PR branch (--include-closed-pr)"
-		fi
+		tip=$(repo_git rev-parse --verify "refs/remotes/${REMOTE_NAME}/${branch}" 2>/dev/null) || tip=""
+		classify_branch "$branch" "$tip" "$default" "$default_tip" "$merged_prs" "$closed_prs"
 
-		if [[ -n "$reason" ]]; then
+		if [[ -n "$CLASSIFY_SAFE" ]]; then
 			safe_count=$((safe_count + 1))
 			if [[ "$APPLY" == "1" ]]; then
-				delete_branch "$branch"
+				delete_branch "$branch" "$tip"
 			else
-				print_candidate "would-del" "$branch" "$reason"
+				print_candidate "would-del" "$branch" "$CLASSIFY_SAFE"
 			fi
 		else
 			review_count=$((review_count + 1))
-			print_candidate "review" "$branch" "unmerged/no closed evidence"
+			print_candidate "review" "$branch" "$CLASSIFY_REVIEW"
 		fi
 	done < <(remote_branches)
 
