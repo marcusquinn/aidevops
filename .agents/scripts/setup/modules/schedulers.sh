@@ -461,6 +461,7 @@ MONITOR_PLIST
 # Accumulates data in screen-time.jsonl (macOS Knowledge DB retains only ~28 days).
 # Always installed when the script exists; no consent needed (data collection only).
 # macOS: launchd plist (every 6h, RunAtLoad=true) | Linux: systemd timer or cron (every 6h)
+# plus a per-minute input-activity sampler, because Linux has no screen-time store.
 setup_screen_time_snapshot() {
 	local st_script="$HOME/.aidevops/agents/scripts/screen-time-helper.sh"
 	local st_label="sh.aidevops.screen-time-snapshot"
@@ -542,6 +543,20 @@ ST_PLIST
 			"" \
 			"Screen time snapshot enabled (every 6h)" \
 			"Failed to install screen time snapshot scheduler" \
+			"true" \
+			"true"
+		# Records input timestamps only (tty atime, desktop idle time); silent
+		# on success so the per-minute log stays small.
+		_install_scheduler_linux \
+			"aidevops-screen-activity-sampler" \
+			"aidevops: screen-activity-sampler" \
+			"$CRON_EVERY_MINUTE" \
+			"\"${st_script}\" sample" \
+			"60" \
+			"$HOME/.aidevops/.agent-workspace/logs/screen-activity-sampler.log" \
+			"" \
+			"Screen activity sampler enabled (every 60s)" \
+			"Failed to install screen activity sampler" \
 			"true" \
 			"true"
 	fi
