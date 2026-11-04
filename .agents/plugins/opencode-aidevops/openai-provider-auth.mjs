@@ -226,6 +226,9 @@ async function maybeRotateBeforeOpenAIFetch(client, input, init) {
 }
 
 async function handleOpenAIProviderFetch({ client, originalFetch, input, init }) {
+  // Snapshot the body reference (immutable string) before the first fetch so a
+  // caller mutating init.body in flight cannot change the fallback retry; parsing stays deferred.
+  const originalBody = init?.body;
   const prepared = await prepareOpenAIRequest(input, init);
   const retryInput = buildRetryRequest(prepared.input);
   const firstInit = await maybeRotateBeforeOpenAIFetch(client, prepared.input, prepared.init);
@@ -235,6 +238,7 @@ async function handleOpenAIProviderFetch({ client, originalFetch, input, init })
     ctx.response = await recordAttempt(ctx.attempts, firstKind, () => originalFetch(prepared.input, firstInit));
     ctx.response = await retryCodexModelRejection(ctx.response, retryInput, extendRequestInit(init, {
       headers: headersFrom(prepared.input, firstInit),
+      ...(originalBody === undefined ? {} : { body: originalBody }),
     }), (retry, retryInit) => recordAttempt(ctx.attempts, "model-fallback", () => originalFetch(retry, retryInit)));
     // A fallback is the one retry for this rejection; surface its outcome.
     if (ctx.attempts.at(-1)?.kind === "model-fallback") return ctx.response;
