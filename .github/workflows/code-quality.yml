@@ -119,7 +119,11 @@ jobs:
   cross-platform-shellcheck:
     name: ShellCheck (${{ matrix.os }})
     needs: detect-scope
-    runs-on: ${{ matrix.os }}
+    # GH#36686: with shell=false every step below is skipped and the leg only
+    # reports its required context, so run that no-op on Ubuntu instead of
+    # waiting on scarce macOS capacity. The job name (required context) is
+    # unchanged; shell-scope PRs and push events (fail-open) keep real macOS.
+    runs-on: ${{ (matrix.os == 'macos-latest' && needs.detect-scope.outputs.shell != 'true') && 'ubuntu-latest' || matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
