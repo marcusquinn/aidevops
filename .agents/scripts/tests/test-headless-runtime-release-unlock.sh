@@ -16,6 +16,8 @@ export AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS=1
 # Terminal-blocker capture appends to the worker blocker log; keep fixture
 # rows out of the operator's live ~/.aidevops/logs diagnostics (GH#36171).
 export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${TMP_HOME}/worker-progress-blockers.jsonl"
+# Keep the upstream terminal-lease recovery outbox isolated as well.
+export AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="${TMP_HOME}/objective-evidence.jsonl"
 
 cleanup() {
 	rm -rf "$TMP_HOME"
@@ -49,6 +51,39 @@ whoami() {
 	return 0
 }
 
+# Return the paginated fixture snapshot, including any release just persisted.
+claim_comment_pages() {
+	[[ "${GH_CLAIM_READ_FAILURE:-0}" -eq 0 ]] || return 1
+	local claim_read_count=0 claim_fixture=""
+	claim_read_count=$(grep -c '^CLAIM_READ$' "$CALL_LOG") || claim_read_count=0
+	claim_read_count=$((claim_read_count + 1))
+	printf 'CLAIM_READ\n' >>"$CALL_LOG"
+	if [[ "${GH_CLAIM_READ_FAIL_AFTER_POST:-0}" -eq 1 ]] && grep -q '^POSTED_RELEASE$' "$CALL_LOG"; then
+		return 1
+	fi
+	if [[ -n "${GH_CLAIM_EVIDENCE:-}" ]]; then
+		claim_fixture="$GH_CLAIM_EVIDENCE"
+	elif [[ -n "${GH_RELEASE_COMMENTS:-}" ]]; then
+		claim_fixture=$(jq -c '[.]' <<<"$GH_RELEASE_COMMENTS")
+	else
+		claim_fixture=$(jq -nc --arg author "${CLAIM_FIXTURE_AUTHOR:-${WORKER_GITHUB_LOGIN:-api-login}}" \
+			--arg token "${CLAIM_FIXTURE_TOKEN:-fixture-lease}" '
+			[[{id:100, node_id:"CLAIM_FIXTURE_100", user:{login:$author}, author_association:"OWNER", created_at:"2026-11-01T00:00:00Z",
+			updated_at:"2026-11-01T00:00:00Z", body:("DISPATCH_CLAIM runner=" + $author +
+			" nonce=" + $token + " lease_token=" + $token + " device=fixture-device session=issue-12345")}]]')
+	fi
+	if [[ "$claim_read_count" -ge 2 && -n "${GH_CLAIM_EVIDENCE_AFTER_READ:-}" ]]; then
+		claim_fixture="$GH_CLAIM_EVIDENCE_AFTER_READ"
+	fi
+	if grep -q '^POSTED_RELEASE$' "$CALL_LOG"; then
+		claim_fixture="${GH_CLAIM_EVIDENCE_AFTER_POST:-$claim_fixture}"
+		jq -c --slurpfile posted "${TMP_HOME}/posted-release.json" '.[0] += $posted' <<<"$claim_fixture"
+	else
+		printf '%s\n' "$claim_fixture"
+	fi
+	return 0
+}
+
 gh() {
 	local cmd="${1:-}"
 	shift || true
@@ -75,35 +110,8 @@ gh() {
 			return 0
 		fi
 		if [[ "$path" == *'/comments?per_page=100' && " $* " == *' --slurp '* ]]; then
-			[[ "${GH_CLAIM_READ_FAILURE:-0}" -eq 0 ]] || return 1
-			local claim_read_count=0 claim_fixture=""
-			claim_read_count=$(grep -c '^CLAIM_READ$' "$CALL_LOG") || claim_read_count=0
-			claim_read_count=$((claim_read_count + 1))
-			printf 'CLAIM_READ\n' >>"$CALL_LOG"
-			if [[ "${GH_CLAIM_READ_FAIL_AFTER_POST:-0}" -eq 1 ]] && grep -q '^POSTED_RELEASE$' "$CALL_LOG"; then
-				return 1
-			fi
-			if [[ -n "${GH_CLAIM_EVIDENCE:-}" ]]; then
-				claim_fixture="$GH_CLAIM_EVIDENCE"
-			elif [[ -n "${GH_RELEASE_COMMENTS:-}" ]]; then
-				claim_fixture=$(jq -c '[.]' <<<"$GH_RELEASE_COMMENTS")
-			else
-				claim_fixture=$(jq -nc --arg author "${CLAIM_FIXTURE_AUTHOR:-${WORKER_GITHUB_LOGIN:-api-login}}" \
-					--arg token "${CLAIM_FIXTURE_TOKEN:-fixture-lease}" '
-					[[{id:100, node_id:"CLAIM_FIXTURE_100", user:{login:$author}, author_association:"OWNER", created_at:"2026-11-01T00:00:00Z",
-					updated_at:"2026-11-01T00:00:00Z", body:("DISPATCH_CLAIM runner=" + $author +
-					" nonce=" + $token + " lease_token=" + $token + " device=fixture-device session=issue-12345")}]]')
-			fi
-			if [[ "$claim_read_count" -ge 2 && -n "${GH_CLAIM_EVIDENCE_AFTER_READ:-}" ]]; then
-				claim_fixture="$GH_CLAIM_EVIDENCE_AFTER_READ"
-			fi
-			if grep -q '^POSTED_RELEASE$' "$CALL_LOG"; then
-				claim_fixture="${GH_CLAIM_EVIDENCE_AFTER_POST:-$claim_fixture}"
-				jq -c --slurpfile posted "${TMP_HOME}/posted-release.json" '.[0] += $posted' <<<"$claim_fixture"
-			else
-				printf '%s\n' "$claim_fixture"
-			fi
-			return 0
+			claim_comment_pages
+			return $?
 		fi
 		if [[ "$path" == *'/comments?per_page=100' && -n "${GH_RELEASE_COMMENTS:-}" ]]; then
 			printf '%s\n' "$GH_RELEASE_COMMENTS"
@@ -509,7 +517,7 @@ for ready_reason in worker_ready_missing_linkage worker_ready_missing_summary; d
 done
 
 # GH#35574: a denied terminal-lease transition on the ready handoff is
-# surfaced with only the allowlisted reason and never blocks the release.
+# surfaced without raw helper output and never blocks the release.
 : >"$CALL_LOG"
 rm -f "${TMP_HOME}/comment-attempts"
 STUB_CLAIM_HELPER="${TMP_HOME}/stub-claim-helper.sh"
@@ -520,7 +528,7 @@ STUB_LEASE="stub-lease-fixture"
 if AIDEVOPS_DISPATCH_LEASE_TOKEN="$STUB_LEASE" CLAIM_FIXTURE_TOKEN="$STUB_LEASE" DISPATCH_CLAIM_HELPER="$STUB_CLAIM_HELPER" \
 	_release_dispatch_claim "issue-12345" worker_ready_missing_linkage "0" "0" && \
 	grep -q "STUB transition terminal 12345 owner/repo ${STUB_LEASE} issue-12345 0" "$CALL_LOG" && \
-	grep -q 'WARN Terminal dispatch lease not posted on #12345 (reason: lease_unmatched)' "$CALL_LOG" && \
+	grep -q 'WARN Terminal dispatch lease not posted on #12345; checkpoint recovery recorded locally when eligible' "$CALL_LOG" && \
 	! grep -q "^WARN .*${STUB_LEASE}" "$CALL_LOG" && \
 	grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG"; then
 	printf 'PASS ready handoff surfaces a denied terminal lease without failing release\n'

@@ -823,6 +823,29 @@ _hrff_handle_terminal_blocker_release() {
 	return 0
 }
 
+# Persist one bound release, then project only while its generation still matches.
+_hrff_persist_and_project_release() {
+	local issue_number="$1" repo_slug="$2" runner_name="$3" reason="$4"
+	local projection_reason="$5" session_key="$6" claim_id="$7"
+	local machine_readable_part="$8" terminal_blocker_fragment="$9" comment_body=""
+	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+${machine_readable_part}${terminal_blocker_fragment}
+<!-- ops:end -->"
+	if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" "$comment_body" "$session_key" "$runner_name" "$claim_id"; then
+		print_warning "Claim release or ownership verification incomplete for #${issue_number}; retaining issue state; reconcile persisted comments before retrying"
+		return 1
+	fi
+	print_info "Released claim on #${issue_number} (reason: ${reason})"
+	_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" "$machine_readable_part" || return 1
+	if [[ "$_HRFF_RELEASE_CLAIM_OWNED" -ne 1 || "${_HRFF_RELEASE_CLAIM_ID:-}" != "$claim_id" ]]; then
+		print_info "Preserved issue lifecycle state on #${issue_number}: release generation changed after publication"
+		return 0
+	fi
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$projection_reason" "$session_key" || return 1
+	[[ "$projection_reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
+	return 0
+}
+
 #######################################
 # Release a dispatch claim by posting a CLAIM_RELEASED comment.
 # The dedup guard recognises this and allows immediate re-dispatch
@@ -846,7 +869,6 @@ _release_dispatch_claim() {
 	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
 	local runner_name=""
 	local machine_readable_part=""
-	local comment_body=""
 	local repair_pr_number="${AIDEVOPS_PR_REPAIR_NUMBER:-}"
 
 	# Direct PR-remediation workers are dispatched against a pull request rather
@@ -932,22 +954,8 @@ _release_dispatch_claim() {
 	if [[ "$reason" == worker_merged_partial* && -n "${_HRW_MERGED_DELIVERY_KEY:-}" ]]; then
 		terminal_blocker_fragment+="MERGED_PARTIAL_DELIVERY key=${_HRW_MERGED_DELIVERY_KEY}"$'\n'
 	fi
-	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-${machine_readable_part}${terminal_blocker_fragment}
-<!-- ops:end -->"
-
-	if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" "$comment_body" "$session_key" "$runner_name" "$claim_id"; then
-		print_warning "Claim release or ownership verification incomplete for #${issue_number}; retaining issue state; reconcile persisted comments before retrying"
-		return 1
-	fi
-	print_info "Released claim on #${issue_number} (reason: ${reason})"
-	_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" "$machine_readable_part" || return 1
-	if [[ "$_HRFF_RELEASE_CLAIM_OWNED" -ne 1 || "${_HRFF_RELEASE_CLAIM_ID:-}" != "$claim_id" ]]; then
-		print_info "Preserved issue lifecycle state on #${issue_number}: release generation changed after publication"
-		return 0
-	fi
-	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$projection_reason" "$session_key" || return 1
-	[[ "$projection_reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
+	_hrff_persist_and_project_release "$issue_number" "$repo_slug" "$runner_name" "$reason" \
+		"$projection_reason" "$session_key" "$claim_id" "$machine_readable_part" "$terminal_blocker_fragment" || return 1
 	return 0
 }
 
