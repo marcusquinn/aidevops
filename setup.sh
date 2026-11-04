@@ -1280,6 +1280,7 @@ _setup_ai_session_reset_plan() {
 	_SETUP_AI_SESSION_NEEDS_HOOKS=0
 	_SETUP_AI_SESSION_NEEDS_REPO_VERIFY=0
 	_SETUP_AI_SESSION_NEEDS_PULSE=0
+	_SETUP_AI_SESSION_NEEDS_SCHEDULERS=0
 	_SETUP_AI_SESSION_NEEDS_GUI=0
 	_SETUP_AI_SESSION_REQUIRES_FULL=0
 	return 0
@@ -1338,8 +1339,13 @@ _setup_ai_session_plan_file() {
 		.agents/scripts/aidevops-cli/aidevops-init-lib.sh | .agents/scripts/aidevops-cli/aidevops-update-lib.sh)
 		_SETUP_AI_SESSION_NEEDS_REPO_VERIFY=1
 		;;
-	.agents/scripts/setup/modules/schedulers*.sh | .agents/scripts/setup/_scheduler_runtime.sh)
+	.agents/scripts/setup/modules/schedulers-pulse.sh)
 		_SETUP_AI_SESSION_NEEDS_PULSE=1
+		;;
+	.agents/scripts/setup/modules/schedulers*.sh | .agents/scripts/setup/_scheduler_runtime.sh)
+		# Shared scheduler modules define non-pulse schedulers too (e.g. the
+		# Linux screen-activity sampler); refresh every installed one (GH#36709).
+		_SETUP_AI_SESSION_NEEDS_SCHEDULERS=1
 		;;
 	.agents/scripts/setup/modules/agent-deploy.sh | .agents/scripts/setup/modules/plugins.sh)
 		:
@@ -1480,7 +1486,10 @@ _setup_run_ai_session_incremental() {
 	if [[ "$_SETUP_AI_SESSION_NEEDS_REPO_VERIFY" -eq 1 ]]; then
 		_time_step "setup_repo_verify_guard" setup_repo_verify_guard || return $?
 	fi
-	if [[ "$_SETUP_AI_SESSION_NEEDS_PULSE" -eq 1 ]]; then
+	if [[ "$_SETUP_AI_SESSION_NEEDS_SCHEDULERS" -eq 1 ]]; then
+		# Includes the consent-gated pulse refresh; each step is time-stepped.
+		_setup_noninteractive_schedulers "$os"
+	elif [[ "$_SETUP_AI_SESSION_NEEDS_PULSE" -eq 1 ]]; then
 		_time_step "$SETUP_STAGE_PULSE" setup_supervisor_pulse "$os" || return $?
 	fi
 	if [[ "$_SETUP_AI_SESSION_NEEDS_GUI" -eq 1 ]]; then
@@ -1900,7 +1909,8 @@ _setup_noninteractive_schedulers() {
 	if _should_setup_noninteractive_scheduler "Memory pressure" "sh.aidevops.memory-pressure-monitor" "aidevops: memory-pressure-monitor" "aidevops-memory-pressure-monitor"; then
 		_time_step "setup_memory_pressure_monitor" setup_memory_pressure_monitor
 	fi
-	if _should_setup_noninteractive_scheduler "Screen time" "sh.aidevops.screen-time-snapshot" "aidevops: screen-time-snapshot" "aidevops-screen-time-snapshot"; then
+	# GH#36709: Linux profile README installs also need the activity sampler.
+	if _should_setup_noninteractive_screen_time; then
 		_time_step "setup_screen_time_snapshot" setup_screen_time_snapshot
 	fi
 	if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then

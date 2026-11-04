@@ -171,17 +171,21 @@ PY
 	[[ "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0" || "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0.0" ]] || fail "explicit OFF observation was not preserved as legitimate zero: ${zero_json}"
 	[[ "$(printf '%s' "$zero_json" | jq -r '.periods.day.status')" == "ok" ]] || fail "explicit zero observation was marked unavailable"
 
+	# Midday anchor: 4h app spans from a wall-clock "now" after 20:00 would cross
+	# local midnight into the excluded current day and break the 32h expectation.
+	local sparse_now
+	sparse_now=$(python3 -c 'import datetime as d; print(int(d.datetime(2026,7,12,12).astimezone().timestamp()))')
 	local sparse_db="${tmpdir}/relative-sparse.db"
 	create_knowledge_db "$sparse_db"
-	insert_backlit_pair "$sparse_db" "$((now - 2 * 86400))" "$((now - 2 * 86400 + 3600))"
-	insert_backlit_pair "$sparse_db" "$((now - 3600))" "$now"
+	insert_backlit_pair "$sparse_db" "$((sparse_now - 2 * 86400))" "$((sparse_now - 2 * 86400 + 3600))"
+	insert_backlit_pair "$sparse_db" "$((sparse_now - 3600))" "$sparse_now"
 	local day
 	for day in 1 2 3 4 5 6 7 8; do
-		insert_app_usage "$sparse_db" "$((now - day * 86400))" "$((now - day * 86400 + 4 * 3600))"
+		insert_app_usage "$sparse_db" "$((sparse_now - day * 86400))" "$((sparse_now - day * 86400 + 4 * 3600))"
 	done
 	local sparse_json
 	mkdir -p "${tmpdir}/sparse-home"
-	sparse_json=$(HOME="${tmpdir}/sparse-home" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$sparse_db")
+	sparse_json=$(HOME="${tmpdir}/sparse-home" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$sparse_now" profile_stats "$sparse_db")
 	[[ "$(printf '%s' "$sparse_json" | jq -r '.periods.month.source')" == "macos-knowledge-db:/app/usage-union" ]] || fail "two sparse backlit days incorrectly beat eight app-usage days"
 	[[ "$(printf '%s' "$sparse_json" | jq -r '.month_hours')" == "32" || "$(printf '%s' "$sparse_json" | jq -r '.month_hours')" == "32.0" ]] || fail "relative app coverage duration was not selected"
 	pass "empty sources, explicit zero, and relative sparse-source selection are distinct"
@@ -361,6 +365,21 @@ PY
 	[[ "$(printf '%s' "$unsampled" | jq -r '[.collection_status, .today_hours, .week_hours] | map(tostring) | join(",")')" == "unavailable,null,null" ]] ||
 		fail "Linux without input samples reported proxy or history hours: ${unsampled}"
 
+	# GH#36709: completed days before the first sample are unknown, not 0h.
+	local fresh_home="${tmpdir}/linux-fresh-sampler-home"
+	mkdir -p "${fresh_home}/.aidevops/.agent-workspace/observability"
+	PYTHONPATH="$SCRIPTS_DIR" python3 - "${fresh_home}/.aidevops/.agent-workspace/observability" "$((now - 7200))" <<'PY'
+import sys
+from screen_time_linux_activity import record_sample
+directory, start = sys.argv[1], int(sys.argv[2])
+for minute in range(0, 61):
+    record_sample(directory, start + minute * 60, {"last_input": start + minute * 60, "kinds": ["tty-atime"]})
+PY
+	local fresh
+	fresh=$(linux_helper "$fresh_home" "$now" profile-stats)
+	[[ "$(printf '%s' "$fresh" | jq -r '[.collection_status, .today_hours, .week_hours, .month_hours, .year_hours, .periods.month.reason] | map(tostring) | join(",")')" == "ok,null,null,null,null,before-first-sample" ]] ||
+		fail "Linux periods before the first sample rendered as observed zero: ${fresh}"
+
 	# 09:00-10:00 typing, idle, one key at 10:58, suspended 11:00-13:00, one key at 13:10.
 	PYTHONPATH="$SCRIPTS_DIR" python3 - "$observability" "$base" <<'PY'
 import sys
@@ -381,6 +400,8 @@ PY
 	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "1.2" ]] || fail "input activity intervals were not 1.2h: ${output}"
 	[[ "$(printf '%s' "$output" | jq -r '.week_hours')" == "1.2" ]] || fail "legacy Linux proxy history displaced activity data: ${output}"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.day.source')" == "linux-input-activity:idle-cutoff-300s" ]] || fail "Linux activity provenance missing: ${output}"
+	# Coverage starts at the first sample (yesterday 09:00), not 28 days ago.
+	[[ "$(printf '%s' "$output" | jq -r '.periods.month.coverage_days')" == "0.6" ]] || fail "Linux month coverage was not clipped to sampling start: ${output}"
 
 	linux_helper "$home" "$now" snapshot >/dev/null
 	local snapshot_hours

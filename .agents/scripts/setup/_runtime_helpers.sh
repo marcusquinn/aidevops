@@ -132,6 +132,33 @@ _should_setup_noninteractive_complexity_scan() {
 	return 1
 }
 
+# Linux has no OS screen-time store: the profile README's screen-time row is
+# measured only by the per-minute input-activity sampler that
+# setup_screen_time_snapshot installs. Installs that publish a profile README
+# but never got the snapshot timer would otherwise stay "unavailable" forever
+# under the generic regenerate-if-installed gate (GH#36709).
+_should_setup_noninteractive_screen_time() {
+	if _should_setup_noninteractive_scheduler \
+		"Screen time" \
+		"sh.aidevops.screen-time-snapshot" \
+		"aidevops: screen-time-snapshot" \
+		"aidevops-screen-time-snapshot"; then
+		return 0
+	fi
+
+	# Profile-README-dependency escape hatch (Linux only; macOS reads the
+	# Knowledge DB directly at render time).
+	if [[ "$(uname -s)" == "Linux" ]] && _should_setup_noninteractive_scheduler \
+		"Profile README" \
+		"sh.aidevops.profile-readme-update" \
+		"aidevops: profile-readme-update" \
+		"aidevops-profile-readme-update"; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Pulse-merge-routine is a REQUIRED dependency of the supervisor pulse — it
 # is the merge-side of pulse, running merge_ready_prs_all_repos() on a fast
 # 120s cadence so green PRs land within ~3 min of CI completion instead of
