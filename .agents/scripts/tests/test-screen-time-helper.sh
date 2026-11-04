@@ -331,78 +331,109 @@ PY
 	return 0
 }
 
-test_linux_state_machine() {
+linux_helper() {
+	local home="$1"
+	local now="$2"
+	shift 2
+	HOME="$home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" "$HELPER" "$@"
+	return $?
+}
+
+test_linux_input_activity_intervals() {
 	local tmpdir="$1"
-	local now
-	now=$(python3 -c 'import datetime as d; print(int(d.datetime(2033,5,19,12).timestamp()))')
-	local fixture="${tmpdir}/logind.txt"
-	python3 - "$fixture" "$now" <<'PY'
+	local home="${tmpdir}/linux-activity-home"
+	local observability="${home}/.aidevops/.agent-workspace/observability"
+	mkdir -p "$observability"
+	local base now yesterday
+	read -r base now yesterday <<<"$(python3 -c 'import datetime as d; t=d.date.today(); y=t-d.timedelta(days=1); e=lambda day,h:int(d.datetime.combine(day,d.time(h)).timestamp()); print(e(y,9), e(t,12), y)')"
+	# Legacy login-session proxy rows (24h/day, no collector) must never count.
+	python3 - "${observability}/screen-time.jsonl" "$now" <<'PY'
 import datetime as dt
+import json
 import sys
-
-target = sys.argv[1]
-now = int(sys.argv[2])
-events = [
-    (-30, "New session c1 of user fixture."),
-    (-29, "Session c1 locked."),
-    (-28, "Session c1 unlocked."),
-    (-27, "Lid closed."),
-    (-26, "Lid opened."),
-    (-25, "Removed session c1."),
-]
-with open(target, "w", encoding="utf-8") as handle:
-    for hours, message in events:
-        stamp = dt.datetime.fromtimestamp(now + hours * 3600, dt.timezone.utc).isoformat()
-        handle.write(f"{stamp} host systemd-logind[1]: {message}\n")
-PY
-	local output hours source
-	output=$(AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$fixture" \
-		AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
-	hours=$(printf '%s' "$output" | jq -r '.today_hours')
-	source=$(printf '%s' "$output" | jq -r '.periods.day.source')
-	[[ "$hours" == "3" || "$hours" == "3.0" ]] || fail "expected lock/lid/session state to produce 3.0h, got ${hours}"
-	[[ "$source" == *"session-lid-lock-state"* ]] || fail "Linux provenance missing state semantics: ${source}"
-	pass "Linux state retains username-less session OFF events and clips active windows"
-	local zero_fixture="${tmpdir}/logind-zero.txt"
-	python3 - "$zero_fixture" "$now" <<'PY'
-import datetime as dt
-import sys
-stamp = dt.datetime.fromtimestamp(int(sys.argv[2]) - 30 * 3600, dt.timezone.utc).isoformat()
+today = dt.datetime.fromtimestamp(int(sys.argv[2])).date()
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
-    handle.write(f"{stamp} host systemd-logind[1]: New session z1 of user fixture.\n")
-    handle.write(f"{stamp} host systemd-logind[1]: Removed session z1.\n")
+    for age in range(1, 7):
+        handle.write(json.dumps({"date": str(today - dt.timedelta(days=age)), "screen_hours": 24}) + "\n")
 PY
-	local zero_output
-	zero_output=$(AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$zero_fixture" \
-		AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
-	[[ "$(printf '%s' "$zero_output" | jq -r '.today_hours')" == "0" || "$(printf '%s' "$zero_output" | jq -r '.today_hours')" == "0.0" ]] || fail "explicit zero-duration logind events were not preserved"
-	[[ "$(printf '%s' "$zero_output" | jq -r '.periods.day.status')" == "ok" ]] || fail "explicit logind zero was treated as source failure"
+	local unsampled
+	unsampled=$(linux_helper "$home" "$now" profile-stats)
+	[[ "$(printf '%s' "$unsampled" | jq -r '[.collection_status, .today_hours, .week_hours] | map(tostring) | join(",")')" == "unavailable,null,null" ]] ||
+		fail "Linux without input samples reported proxy or history hours: ${unsampled}"
 
-	local missing_journal="${tmpdir}/missing-journal"
-	local wtmp_fixture="${tmpdir}/wtmp.txt"
-	printf '%s|%s\n' "$((now - 30 * 3600))" "$((now - 29 * 3600))" >"$wtmp_fixture"
-	local fallback
-	fallback=$(AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$missing_journal" \
-		AIDEVOPS_LAST_FIXTURE="$wtmp_fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" \
-		AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
-	[[ "$(printf '%s' "$fallback" | jq -r '.today_hours')" == "1" || "$(printf '%s' "$fallback" | jq -r '.today_hours')" == "1.0" ]] || fail "wtmp fallback hours were not parsed"
-	[[ "$(printf '%s' "$fallback" | jq -r '.periods.day.source')" == "linux-wtmp:login-session-proxy" ]] || fail "wtmp fallback provenance was not truthful"
-	pass "Linux collection failure falls back to clipped wtmp sessions with proxy provenance"
+	# 09:00-10:00 typing, idle, one key at 10:58, suspended 11:00-13:00, one key at 13:10.
+	PYTHONPATH="$SCRIPTS_DIR" python3 - "$observability" "$base" <<'PY'
+import sys
+from screen_time_linux_activity import record_sample
+directory, base = sys.argv[1], int(sys.argv[2])
+def last_input(minute):
+    if minute <= 60:
+        return minute * 60
+    if minute < 118:
+        return 3600
+    return 118 * 60 if minute < 250 else 250 * 60
+for minute in list(range(0, 121)) + list(range(240, 271)):
+    record_sample(directory, base + minute * 60, {"last_input": base + last_input(minute), "kinds": ["tty-atime"]})
+PY
+	local output
+	output=$(linux_helper "$home" "$now" profile-stats)
+	# 65m (input + 5m cut-off) + 2m (tail clipped at suspend) + 5m = 1.2h.
+	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "1.2" ]] || fail "input activity intervals were not 1.2h: ${output}"
+	[[ "$(printf '%s' "$output" | jq -r '.week_hours')" == "1.2" ]] || fail "legacy Linux proxy history displaced activity data: ${output}"
+	[[ "$(printf '%s' "$output" | jq -r '.periods.day.source')" == "linux-input-activity:idle-cutoff-300s" ]] || fail "Linux activity provenance missing: ${output}"
 
-	local empty_journal="${tmpdir}/empty-logind.txt"
-	local realistic_last="${tmpdir}/last-F.txt"
-	: >"$empty_journal"
-	cat >"$realistic_last" <<'EOF'
-fixture  pts/0  host  Wed May 18 01:00:00 2033 - Wed May 18 02:00:00 2033  (01:00)
-fixture  pts/1  host  Wed May 18 03:00:00 2033   still logged in
-EOF
-	local empty_fallback
-	empty_fallback=$(TZ=UTC AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$empty_journal" \
-		AIDEVOPS_LAST_FIXTURE="$realistic_last" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" \
-		AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
-	[[ "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "22" || "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "22.0" ]] || fail "real last -F completed+active records were not clipped to the completed day"
-	[[ "$(printf '%s' "$empty_fallback" | jq -r '.periods.day.reason')" == *"journal-readable-no-user-observations"* ]] || fail "empty readable logind did not truthfully fall back"
-	pass "empty logind falls back and parses realistic local last -F records"
+	linux_helper "$home" "$now" snapshot >/dev/null
+	local snapshot_hours
+	snapshot_hours=$(jq -r --arg date "$yesterday" 'select(.date == $date and ((.collector // "") | startswith("linux-input-activity"))) | .screen_hours' "${observability}/screen-time.jsonl")
+	[[ "$snapshot_hours" == "1.2" ]] || fail "snapshot did not record the activity day beside legacy rows: ${snapshot_hours}"
+	[[ "$(linux_helper "$home" "$now" history)" == *"1 valid day(s)"* ]] || fail "Linux history counted legacy proxy rows"
+	pass "Linux input activity clips idle and suspend gaps and ignores legacy proxy history"
+	return 0
+}
+
+write_probe_fixture() {
+	local fixture="$1"
+	local now="$2"
+	local idle="$3"
+	python3 - "$fixture" "$now" "$idle" <<'PY'
+import json
+import sys
+now, idle = int(sys.argv[2]), sys.argv[3]
+payload = {
+    "sessions": [
+        {"Type": "tty", "Class": "user", "State": "active", "TTY": "pts/7", "LockedHint": "no"},
+        {"Type": "wayland", "Class": "user", "State": "active", "TTY": "tty2", "LockedHint": "yes"},
+        {"Type": "x11", "Class": "user", "State": "online", "TTY": "", "LockedHint": "no", "IdleHint": "no", "IdleSinceHint": "0"},
+        {"Type": "tty", "Class": "user", "State": "closing", "TTY": "pts/9", "LockedHint": "no"},
+    ],
+    "tty_atime": {"pts/7": now - 30, "pts/9": now - 5, "tty2": now - 1, "pts/3": now - 90},
+    "who": ["pts/3", "tty2"],
+}
+if idle:
+    payload["desktop_idle_seconds"] = int(idle)
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+PY
+	return 0
+}
+
+test_linux_input_evidence_probe() {
+	local tmpdir="$1"
+	local now="$2"
+	local home="${tmpdir}/linux-probe-home"
+	local fixture="${tmpdir}/linux-probe.json"
+	local state="${home}/.aidevops/.agent-workspace/observability/screen-activity-state.json"
+	write_probe_fixture "$fixture" "$now" ""
+	AIDEVOPS_SCREEN_ACTIVITY_FIXTURE="$fixture" linux_helper "$home" "$now" sample >/dev/null
+	# Closing sessions, locked desktops and their VT are ignored; an unmanaged
+	# desktop is reported as unobservable rather than active.
+	[[ "$(jq -r '.last_input | floor' "$state")" == "$((now - 30))" ]] || fail "probe did not take the latest live tty input: $(<"$state")"
+	[[ "$(jq -r '.evidence | join(",")' "$state")" == "graphical-idle-unavailable,locked,tty-atime" ]] || fail "probe evidence kinds wrong: $(<"$state")"
+	[[ "$(linux_helper "$home" "$now" profile-stats | jq -r '.collection_status')" == "partial" ]] || fail "unobservable desktop was not surfaced as partial"
+	write_probe_fixture "$fixture" "$now" 20
+	AIDEVOPS_SCREEN_ACTIVITY_FIXTURE="$fixture" linux_helper "$home" "$((now + 60))" sample >/dev/null
+	[[ "$(jq -r '.last_input | floor' "$state")" == "$((now + 40))" ]] || fail "desktop idle time was not used for graphical input: $(<"$state")"
+	pass "Linux probe reads tty atime and desktop idle, ignoring locked and closing sessions"
 	return 0
 }
 
@@ -486,8 +517,7 @@ test_screen_engine_sibling_modules_deploy_together() {
 		"${SCRIPTS_DIR}/screen_time_macos_apps.py" \
 		"${SCRIPTS_DIR}/screen_time_macos_pmset.py" \
 		"${SCRIPTS_DIR}/screen_time_linux.py" \
-		"${SCRIPTS_DIR}/screen_time_linux_wtmp.py" \
-		"${SCRIPTS_DIR}/screen_time_linux_logind.py" \
+		"${SCRIPTS_DIR}/screen_time_linux_activity.py" \
 		"${SCRIPTS_DIR}/screen_time_history.py" "$deploy_dir/"
 	local output
 	output=$(python3 "${deploy_dir}/screen-time-interval-engine.py" history-summary --os-type Unsupported)
@@ -536,6 +566,7 @@ main() {
 
 	local db="${tmpdir}/knowledgeC.db"
 	create_knowledge_db "$db"
+	unset AIDEVOPS_SCREEN_ACTIVITY_DIR AIDEVOPS_SCREEN_ACTIVITY_FIXTURE AIDEVOPS_SCREEN_ACTIVITY_IDLE_SECONDS
 	: >"${tmpdir}/empty-pmset.log"
 	export AIDEVOPS_PMSET_FIXTURE="${tmpdir}/empty-pmset.log"
 
@@ -578,7 +609,8 @@ main() {
 	test_local_midnight_dst_boundaries "$tmpdir"
 	test_profile_completed_day_dst_semantics "$tmpdir"
 	test_pmset_permission_free_fallback "$tmpdir"
-	test_linux_state_machine "$tmpdir"
+	test_linux_input_activity_intervals "$tmpdir"
+	test_linux_input_evidence_probe "$tmpdir" "$now"
 	test_history_calendar_coverage_and_staleness "$tmpdir"
 	test_corrupt_core_data_and_history_paths_are_safe "$tmpdir" "$now"
 	test_screen_engine_sibling_modules_deploy_together "$tmpdir"
