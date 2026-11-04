@@ -4,7 +4,7 @@
 """Shared fixtures and compact archive integration cases for the lifecycle runner."""
 
 import datetime
-from contextlib import closing
+from contextlib import closing, redirect_stderr
 import hashlib
 import importlib.util
 import io
@@ -1318,6 +1318,39 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         with patch.object(module.os, "rename", replace_after_claim):
             module.remove_verified(self.archives, module.identity(self.archives), entry, HELPER)
         self.assertEqual((archive / "replacement-data").read_text(), "keep me")
+
+    def test_failed_prune_restore_reports_retained_transaction(self):
+        module = self.prune_module()
+        for reason in ("occupied", "unavailable"):
+            with self.subTest(reason=reason):
+                archive = self.archive()
+                entry = module.inspect(self.archives, archive)
+                target = module.Target(self.archives, module.identity(self.archives), HELPER, "apply")
+                replacement_identity = []
+
+                def reject_archive(helper, directory):
+                    if reason == "occupied":
+                        archive.mkdir()
+                        replacement_identity.append(module.identity(archive))
+                    raise ValueError("unverifiable archive")
+
+                stderr = io.StringIO()
+                with patch.object(module, "verify", reject_archive), redirect_stderr(stderr):
+                    if reason == "unavailable":
+                        with patch.object(module.ctypes, "CDLL", return_value=object()):
+                            result = module.attempt(target, entry)
+                    else:
+                        result = module.attempt(target, entry)
+                self.assertIs(result, False)
+                retained = [path for path in self.archives.glob(".prune-*/archive")
+                            if (path / "manifest.json").read_bytes() == entry[4]]
+                self.assertTrue(retained)
+                self.assertIn(f"retained-transaction\t{retained[-1].parent}", stderr.getvalue())
+                if reason == "occupied":
+                    self.assertEqual(module.identity(archive), replacement_identity[0])
+                    self.assertEqual(list(archive.iterdir()), [])
+                else:
+                    self.assertFalse(archive.exists())
 
     def test_restore_never_overwrites_or_creates_through_tracked_symlinks(self):
         outside = self.root / "outside"

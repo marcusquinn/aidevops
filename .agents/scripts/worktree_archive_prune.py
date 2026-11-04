@@ -4,7 +4,9 @@
 """Retention for verified compact archives, never full recovery worktrees."""
 
 import collections
+import ctypes
 import datetime
+import errno
 import json
 import os
 from pathlib import Path
@@ -100,15 +102,19 @@ def inspect(root, directory):
 def restore_claimed(parent_fd, name, claimed_fd, transaction, root_fd):
     """Return an unverifiable archive to its public name; never replace anything.
 
-    If the name was taken meanwhile, leave the archive in its transaction.
+    If the name was taken or atomic restoration is unavailable, raise so the
+    caller reports the retained transaction and marks the pass as failed.
     """
-    try:
-        os.lstat(name, dir_fd=parent_fd)
-    except FileNotFoundError:
-        pass
-    else:
-        return
-    os.rename("archive", name, src_dir_fd=claimed_fd, dst_dir_fd=parent_fd)
+    libc = ctypes.CDLL(None, use_errno=True)
+    primitive, flag = ("renameatx_np", 4) if sys.platform == "darwin" else ("renameat2", 1)
+    rename = getattr(libc, primitive, None)
+    if rename is None:
+        raise OSError(errno.ENOSYS, "atomic archive restoration unavailable", name)
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(claimed_fd, b"archive", parent_fd, os.fsencode(name), flag) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), name)
     os.rmdir(transaction, dir_fd=root_fd)
 
 
