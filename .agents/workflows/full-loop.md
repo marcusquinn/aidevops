@@ -227,6 +227,8 @@ Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr c
 
 Explicit `--title` task prefixes are validated before push against TODO/linked-issue proof; issue-only work uses `GH#NNN`, not an invented `tNNN` task ID.
 
+**Non-closing link (GH#36598):** for an interactive PR on a long-running, non-parent issue that must stay open after merge, add `--keep-issue-open`. The body uses `For #NNN`, merge leaves the issue open, and the issue `status:in-review` handoff is skipped. Workers, `--allow-parent-close`, and `--completion-bookkeeping` refuse it. Parent-task and planning-only diffs already use `For` automatically.
+
 External contributions use the target's fork/branch, PR template, title, issue-linking, and review conventions from `workflows/pr.md`; do not add aidevops labels, merge summaries, signatures, or issue-closing automation.
 
 **Self-modifying helper fixes:** If this PR edits `full-loop-helper.sh` or its sourced helper libraries, run the committed worktree helper explicitly for merge verification instead of resolving `full-loop-helper.sh` from PATH. Commit first, then use `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"` so the merge path exercises the code that will ship, not the deployed helper copy.
@@ -239,15 +241,11 @@ External contributions use the target's fork/branch, PR template, title, issue-l
 
 For post-creation PR body changes, use `gh-write-helper.sh pr edit` instead of raw `gh pr edit --body-file`; the wrapper preserves the managed signature footer.
 
-**4.2.1 Managed Merge Summary Comment (MANDATORY):** `commit-and-pr` posts automatically. Managed manual PRs — post immediately after PR creation:
+**4.2.1 Managed Merge Summary Comment (MANDATORY):** `commit-and-pr` posts automatically. Managed manual PRs — post immediately after PR creation.
 
-Create and sign the merge-summary body in one Bash tool call, then post it with
-`--body-file` in a later Bash tool call; same-command body-file creation is
-blocked by the signature gate.
+Runtime-neutral path (works where Bash redirects and variable expansion are blocked, such as OpenCode): create the body with the Write tool at the absolute path of `~/.aidevops/.agent-workspace/tmp/aidevops-merge-summary.md`, then post it in a separate Bash call through the wrapper, which appends the signature footer automatically. Substitute literal values for the `<...>` placeholders:
 
-```bash
-MERGE_SUMMARY_FILE="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-merge-summary.md"
-cat <<'EOF' > "$MERGE_SUMMARY_FILE"
+```markdown
 <!-- MERGE_SUMMARY -->
 ## Completion Summary
 
@@ -256,15 +254,15 @@ cat <<'EOF' > "$MERGE_SUMMARY_FILE"
 - **Files changed**: <comma-separated list of key files>
 - **Testing**: <what was verified — linter, build, manual, etc.>
 - **Key decisions**: <any notable trade-offs or choices made>
-EOF
-~/.aidevops/agents/scripts/gh-signature-helper.sh footer >> "$MERGE_SUMMARY_FILE"
 ```
 
 ```bash
-gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$MERGE_SUMMARY_FILE"
+~/.aidevops/agents/scripts/gh-write-helper.sh pr comment <PR_NUMBER> --repo <owner/repo> --body-file <absolute-summary-path>
 ```
 
-Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length'` must return `1`.
+In a CLI shell that allows redirects, you may instead write the same body with a heredoc and append `gh-signature-helper.sh footer`; create the file in one Bash call and post it in a later call, because same-command body-file creation is blocked by the signature gate.
+
+Verify it posted: `gh api repos/<owner/repo>/issues/<PR_NUMBER>/comments --jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length'` must return `1`.
 
 **4.3 Managed Label `status:in-review` (t1343):** `commit-and-pr` handles automatic status bookkeeping; no further handoff is necessary when it already set `status:in-review`. Workers and managed manual PRs that still need a progress-to-review handoff must use the explicit verified path after the PR is non-draft:
 
@@ -272,7 +270,7 @@ Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[
 gh-write-helper.sh issue review-handoff "$ISSUE_NUMBER" --repo "$REPO" --pr "$PR_NUMBER"
 ```
 
-This requires an open issue assigned to the current actor with `status:in-progress`, and an open non-draft PR authored by that actor whose closing references include this issue in the same repository. It changes only the two status labels and independently rechecks live PR ownership and issue state before recording verified audit provenance. Missing ownership, linkage, or API evidence fails closed; do not fall back to generic `issue edit` to obtain an exemption. Generic edits remain audited and reportable. Draft checkpoints are not review handoffs.
+Skip this handoff for `--keep-issue-open` / `For #NNN` PRs: the issue stays in progress and has no closing reference. This requires an open issue assigned to the current actor with `status:in-progress`, and an open non-draft PR authored by that actor whose closing references include this issue in the same repository. It changes only the two status labels and independently rechecks live PR ownership and issue state before recording verified audit provenance. Missing ownership, linkage, or API evidence fails closed; do not fall back to generic `issue edit` to obtain an exemption. Generic edits remain audited and reportable. Draft checkpoints are not review handoffs.
 
 An already `status:in-review` issue with the same valid ownership and PR linkage returns 0 with `REVIEW_HANDOFF=already-in-review`, without a write or audit exemption. Failed preconditions return 3 with a specific `REVIEW_HANDOFF=<reason>` on stderr (for example `pr-draft`, `issue-not-assigned-to-actor`, or `api-unavailable`), distinct from a failed label write (exit 1).
 

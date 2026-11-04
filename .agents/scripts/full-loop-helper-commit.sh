@@ -156,6 +156,12 @@ _parse_commit_and_pr_args() {
 			allow_parent_close=1
 			index=$((index + 1))
 			;;
+		--keep-issue-open)
+			# GH#36598: link a long-running issue with `For #N` so merge
+			# leaves it open; skips the issue status:in-review handoff.
+			keep_issue_open=1
+			index=$((index + 1))
+			;;
 		--skip-hooks)
 			# Pass --no-verify to git push. Use for doc-only PRs when hooks
 			# have been manually verified clean. See GH#20138.
