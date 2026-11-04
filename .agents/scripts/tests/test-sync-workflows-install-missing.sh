@@ -357,6 +357,17 @@ cp "$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
 "$real_git" -C "$apply_repo" commit -q -m 'legacy floating metrics caller'
 "$real_git" -C "$apply_repo" push -q github main
 
+# GH#36421: a clone behind its upstream reports NO-WORKFLOW locally while the
+# upstream already carries the floating caller; --pin-floating must select it.
+"$real_git" -C "$apply_repo" reset -q --hard HEAD~1
+stale_preview=$(HOME="$test_root" PATH="$test_root/bin:$PATH" \
+	GH_CALL_LOG="$test_root/gh.log" bash "$HELPER" \
+	--repo fake/apply --workflow loc-badge --pin-floating --json 2>&1)
+assert_exit "stale NO-WORKFLOW pin-floating preview succeeds" 0 "$?"
+assert_contains "stale NO-WORKFLOW with upstream floating caller is actionable" \
+	"$stale_preview" '"outcome":"PLANNED"'
+"$real_git" -C "$apply_repo" reset -q --hard github/main
+
 for pin_case in floating tag sha helper-tag helper-sha helper-missing unrelated-main unrelated-tag wrong-repo configured-repo registry global optout mirror; do
 	case "$pin_case" in
 	floating) pin=main ;;
