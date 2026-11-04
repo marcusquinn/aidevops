@@ -102,6 +102,20 @@ function billingLabel(mode) {
   return mode === "oauth" ? "ChatGPT subscription OAuth" : "OpenAI Platform API";
 }
 
+function imageGenerationReceipt({ saved, project, args, result, auth }) {
+  const versionNote = saved.versioned ? " Existing output was preserved with a versioned filename." : "";
+  const cleanupNote = saved.cleanupWarning ? " Temporary-file cleanup reported a filesystem warning." : "";
+  const rootNote = project.linked ? " in the validated session-owned linked worktree" : "";
+  const dimensions = `${saved.width}x${saved.height}`;
+  const requestedModel = result.requestedModel || "provider-managed";
+  const providerModel = result.providerModel || "unknown";
+  const routerNote = result.routerModel ? ` OAuth router model: ${result.routerModel}.` : "";
+  const sizeNote = auth.mode === "oauth" && args.size !== "auto" && args.size !== dimensions
+    ? ` Warning: OAuth size is best-effort; the provider returned ${dimensions} rather than ${args.size}. Saved native output without resizing.`
+    : "";
+  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}.${routerNote} Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${sizeNote}${versionNote}${cleanupNote}`;
+}
+
 async function executeImageGeneration(rawArgs, options, context) {
   assertLocalOnlyToolDestination(false);
   validateRawArgs(rawArgs);
@@ -134,17 +148,7 @@ async function executeImageGeneration(rawArgs, options, context) {
     spawnImpl: options.imageWriterSpawn,
   });
   if (auth.mode === "oauth") (options.markOAuthSuccess || markOAuthImageSuccess)(auth);
-  const versionNote = saved.versioned ? " Existing output was preserved with a versioned filename." : "";
-  const cleanupNote = saved.cleanupWarning ? " Temporary-file cleanup reported a filesystem warning." : "";
-  const rootNote = project.linked ? " in the validated session-owned linked worktree" : "";
-  const dimensions = `${saved.width}x${saved.height}`;
-  const requestedModel = result.requestedModel || "provider-managed";
-  const providerModel = result.providerModel || "unknown";
-  const routerNote = result.routerModel ? ` OAuth router model: ${result.routerModel}.` : "";
-  const sizeNote = auth.mode === "oauth" && args.size !== "auto" && args.size !== dimensions
-    ? ` Warning: OAuth size is best-effort; the provider returned ${dimensions} rather than ${args.size}. Saved native output without resizing.`
-    : "";
-  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}.${routerNote} Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${sizeNote}${versionNote}${cleanupNote}`;
+  return imageGenerationReceipt({ saved, project, args, result, auth });
 }
 
 export function createGptImageTool(tool, z, options = {}) {
