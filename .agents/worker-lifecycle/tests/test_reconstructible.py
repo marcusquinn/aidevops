@@ -88,6 +88,23 @@ class ReconstructibleContract(unittest.TestCase):
                             and row["branch_preserved"] for row in receipts))
         self.assertTrue(any(row.get("type") == "reconstructible-host-probe-verified" for row in receipts))
 
+    def test_preview_is_read_only(self):
+        self.options = CleanupOptions(self.output, apply=False, min_age=0)
+        before = set(self.store.directory.iterdir())
+        summary = self.store.summary()
+        result, _, attempted = self.retire()
+        self.assertEqual(result["status"], "eligible", result)
+        self.assertEqual(attempted, 0)
+        self.assertEqual(set(self.store.directory.iterdir()), before)
+        self.assertEqual(self.store.summary(), summary)
+        self.assertTrue(self.target.exists())
+
+    def test_api_failure_retains_source(self):
+        self.prs.side_effect = subprocess.CalledProcessError(1, ["gh", "api"])
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retained", result)
+        self.assertTrue(self.target.exists())
+
     def test_untracked_and_ignored_files_remain(self):
         (self.target / "keep").write_text("untracked")
         self.assert_retained("nonempty-worktree-state")
@@ -180,6 +197,26 @@ class ReconstructibleContract(unittest.TestCase):
 
         with patch.object(inventory, "require_idle_proc", side_effect=census):
             self.assert_retained("live-process-reference")
+
+    def test_unremoved_probe_can_retry_after_head_changes(self):
+        native = cleanup.reconstructible
+        calls = 0
+
+        def changed(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise ValueError("live-process-reference")
+            return native(*args)
+
+        with patch.object(cleanup, "reconstructible", side_effect=changed):
+            self.assert_retained("live-process-reference")
+        self.git("-C", str(self.target), "-c", "user.name=Fixture", "-c",
+                 "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "new head")
+        self.head = self.git("-C", str(self.target), "rev-parse", "HEAD")
+        self.git("update-ref", "refs/remotes/origin/feature", self.head)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
 
     def test_failed_first_probe_blocks_batch(self):
         with patch.object(cleanup, "verify_reconstructible", side_effect=ValueError("probe-failed")):

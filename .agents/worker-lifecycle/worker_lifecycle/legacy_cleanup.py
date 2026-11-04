@@ -13,7 +13,7 @@ import socket
 import subprocess  # nosec B404 # exception classification; helpers execute fixed argv
 import tempfile
 import time
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from .archive_path import create_archive_root, validate_archive_path
 from .cleanup import _failure_details, _repositories
@@ -226,52 +226,84 @@ def open_pull_requests(slug):
         check=True, capture_output=True, text=True, timeout=60,
     )
     pages = json.loads(result.stdout)
-    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+    if (not isinstance(pages, list) or not pages
+            or any(not isinstance(page, list) for page in pages)):
         raise ValueError("invalid-open-pr-response")
-    return [pr for page in pages for pr in page]
+    prs = [pr for page in pages for pr in page]
+    for pr in prs:
+        if (not isinstance(pr, dict) or not isinstance(pr.get("head"), dict)
+                or not isinstance(pr["head"].get("ref"), str)
+                or not isinstance(pr["head"].get("sha"), str)):
+            raise ValueError("invalid-open-pr-response")
+    return prs
+
+
+def prepare_reconstructible_probe(store, connection, host, plan):
+    """Recover removed probes; cancel unremoved attempts only by native identity."""
+    if receipt(connection, host, "verified") is not None:
+        return False
+    row = connection.execute(
+        "SELECT payload FROM events WHERE json_extract(payload,'$.type')=? "
+        "AND json_extract(payload,'$.host')=? ORDER BY sequence DESC LIMIT 1",
+        ("reconstructible-host-probe-plan", host),
+    ).fetchone()
+    if row:
+        previous = json.loads(row[0])
+        original = previous["plan"]
+        if not os.path.lexists(original["source"]):
+            try:
+                verify_reconstructible(original, probe=True)
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
+                raise ValueError("reconstructible-probe-verification-pending") from error
+            checkpoint(store, connection, host, "verified",
+                       dict(original, type="reconstructible-host-probe-verified"))
+            checkpoint(store, connection, operation_id(store, original["source"]),
+                       "retired", dict(original, type="reconstructible-worktree-retired",
+                                       branch_preserved=True))
+            return False
+        # An intact original worktree/admin proves removal never completed.
+        # A replacement or unresolved missing source must not unlock batching.
+        same_tree(Path(original["source"]), original)
+        checkpoint(store, connection, previous["attempt"], "cancelled",
+                   {"type": "reconstructible-host-probe-cancelled", "host": host})
+    attempt = str(uuid4())
+    checkpoint(store, connection, attempt, "plan",
+               {"type": "reconstructible-host-probe-plan", "host": host,
+                "attempt": attempt, "plan": plan})
+    return True
+
+
+def current_legacy_item(connection, item):
+    return next((row for row in inventory(connection)
+                 if row["path"] == item["path"]), item)
 
 
 def process_reconstructible(store, item, repositories, adapter, options):
     """Journal a non-forced removal; the first successful probe unlocks batching."""
     operation = operation_id(store, item["path"])
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
-    with _lock(store, operation), store.connection(write=True) as connection:
-        item = next((row for row in inventory(connection)
-                     if row["path"] == item["path"]), item)
+    if not options.apply:
+        reconstructible(item, repositories, adapter, open_pull_requests)
+        return outcome, 1, 0
+    probe = str(uuid5(UUID(store.installation_id()),
+                      "reconstructible-host-probe:" + socket.gethostname()))
+    # Serialize host probes across checkpoint commits and independent invocations.
+    with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
+        item = current_legacy_item(connection, item)
         plan = reconstructible(item, repositories, adapter, open_pull_requests)
-        if not options.apply:
-            return outcome, 1, 0
-        probe = str(uuid5(UUID(store.installation_id()),
-                          "reconstructible-host-probe:" + socket.gethostname()))
-        verified = receipt(connection, probe, "verified")
-        # An interrupted test blocks batching until its original removal is
-        # verified. Never transfer its authority to a different source identity.
-        previous = receipt(connection, probe, "plan")
-        if verified is None and previous is not None:
-            if not os.path.lexists(previous["source"]):
-                try:
-                    verify_reconstructible(previous, probe=True)
-                except (ValueError, OSError, subprocess.SubprocessError) as error:
-                    raise ValueError("reconstructible-probe-verification-pending") from error
-                verified = dict(previous, type="reconstructible-host-probe-verified")
-                checkpoint(store, connection, probe, "verified", verified)
-                checkpoint(store, connection, operation_id(store, previous["source"]),
-                           "retired", dict(previous, type="reconstructible-worktree-retired",
-                                           branch_preserved=True))
-            elif previous != plan:
-                raise ValueError("reconstructible-probe-verification-pending")
-        if verified is None:
-            checkpoint(store, connection, probe, "plan", plan)
-        checkpoint(store, connection, operation, "reconstructible-plan", plan)
+        test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
+        revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
+        checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
         # Refresh GitHub and /proc immediately before non-forced native removal.
-        current = reconstructible(item, repositories, adapter, open_pull_requests)
+        current = reconstructible(current_legacy_item(connection, item),
+                                  repositories, adapter, open_pull_requests)
         if current != plan:
             raise ValueError("reconstructible-source-changed")
         _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])
-        verify_reconstructible(plan, probe=verified is None)
+        verify_reconstructible(plan, probe=test_removal)
         checkpoint(store, connection, operation, "retired",
                    dict(plan, type="reconstructible-worktree-retired", branch_preserved=True))
-        if verified is None:
+        if test_removal:
             checkpoint(store, connection, probe, "verified",
                        dict(plan, type="reconstructible-host-probe-verified"))
         outcome["status"] = "retired"

@@ -40,14 +40,15 @@ _preflight_launch_async_cleanup() {
 	local helper="$1"
 	local log="$2"
 	local name="$3"
-	[[ "$helper" == "$AIDEVOPS_WORKTREE_CAPACITY_HELPER" && "$name" == worktrees && -n "$log" ]]
-	[[ "$CLEANUP_WORKTREES_ASYNC_CADENCE_MIN" == 0 ]]
+	[[ "$helper" == "$AIDEVOPS_WORKTREE_CAPACITY_HELPER" && "$name" == worktrees && -n "$log" ]] || return 1
+	[[ "$CLEANUP_WORKTREES_ASYNC_CADENCE_MIN" == 0 ]] || return 1
 	LAUNCHES=$((LAUNCHES + 1))
 	return 0
 }
 # Calling either inline cleanup or its timeout wrapper is a test failure.
-cleanup_worktrees() { return 99; }
-run_stage_with_timeout() { return 99; }
+INLINE_RUNS=0
+cleanup_worktrees() { INLINE_RUNS=$((INLINE_RUNS + 1)); return 99; }
+run_stage_with_timeout() { INLINE_RUNS=$((INLINE_RUNS + 1)); return 99; }
 
 _dispatch_worktree_capacity_gate "$TEST_ROOT" 36626 owner/repo 200
 [[ "$LAUNCHES" == 0 ]]
@@ -69,6 +70,7 @@ if _dispatch_cleanup_disk_pressure 36626 owner/repo "$TEST_ROOT" below-minimum 1
 [[ "$LAUNCHES" == 2 ]]
 if _dispatch_cleanup_disk_pressure 36626 owner/repo "$TEST_ROOT" below-minimum 100 1; then exit 1; fi
 [[ "$LAUNCHES" == 2 ]]
+[[ "$INLINE_RUNS" == 0 ]]
 printf 'PASS: prunable exclusion, 80%% trigger, launch deduplication, cap/unknown/disk fail-closed, no inline cleanup\n'
 
 # Exercise the production systemd command builder without starting a service.
@@ -76,9 +78,9 @@ printf 'PASS: prunable exclusion, 80%% trigger, launch deduplication, cap/unknow
 source "${SCRIPT_DIR}/../pulse-dispatch-preflight-lib.sh"
 systemd-run() {
 	local arguments="$*"
-	[[ "$arguments" == *"AIDEVOPS_WORKTREE_PRESERVE_PATTERNS=custom-keep"* ]]
-	[[ "$arguments" == *"AIDEVOPS_MAX_WORKTREES=17"* ]]
-	[[ "$arguments" == *"CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0"* ]]
+	[[ "$arguments" == *"AIDEVOPS_WORKTREE_PRESERVE_PATTERNS=custom-keep"* ]] || return 1
+	[[ "$arguments" == *"AIDEVOPS_MAX_WORKTREES=17"* ]] || return 1
+	[[ "$arguments" == *"CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0"* ]] || return 1
 	return 0
 }
 AIDEVOPS_WORKTREE_PRESERVE_PATTERNS=custom-keep
@@ -86,3 +88,17 @@ AIDEVOPS_MAX_WORKTREES=17
 CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0
 _preflight_launch_systemd_cleanup "$AIDEVOPS_WORKTREE_CAPACITY_HELPER" "$LOGFILE" worktrees
 printf 'PASS: systemd retains custom preservation and pressure settings\n'
+
+CORE_SCRIPT="${SCRIPT_DIR}/../cleanup-worktrees-async-helper.sh"
+eval "$(extract_helper _worktree_pressure_present)"
+_missing_metadata_repo_paths() { printf '/repo\n'; return 0; }
+DISK_OK=1
+aidevops_worktree_capacity_check() { return "$DISK_OK"; }
+DISK_OK=0
+AIDEVOPS_MAX_WORKTREES=2
+_worktree_pressure_present
+AIDEVOPS_MAX_WORKTREES=3
+if _worktree_pressure_present; then exit 1; fi
+DISK_OK=1
+_worktree_pressure_present
+printf 'PASS: async cadence bypass detects worktree and disk pressure\n'

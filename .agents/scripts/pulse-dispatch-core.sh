@@ -175,7 +175,7 @@ _dispatch_launch_pressure_cleanup() {
 	# This existing cadence setting is explicitly forwarded by the systemd
 	# launcher as well as inherited by the nohup fallback; no inline GC.
 	CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0 _preflight_launch_async_cleanup "$helper" \
-		"${AIDEVOPS_LOG_DIR:-${HOME}/.aidevops/logs}/cleanup_worktrees.log" "worktrees"
+		"${AIDEVOPS_LOG_DIR:-${HOME}/.aidevops/logs}/cleanup_worktrees.log" "worktrees" || return 1
 	AIDEVOPS_DISPATCH_PRESSURE_CLEANUP_STARTED=1
 	return 0
 }
