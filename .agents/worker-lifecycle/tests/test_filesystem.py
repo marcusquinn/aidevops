@@ -13,7 +13,7 @@ from unittest.mock import patch
 from worker_lifecycle.archive_path import create_archive_root, validate_archive_path
 from worker_lifecycle.cleanup import _failure_details
 from worker_lifecycle.filesystem import (
-    FilesystemValidationError, checked_directory, filesystem_error_details,
+    FilesystemValidationError, _seals_descendants, checked_directory, filesystem_error_details,
     validate_private_path,
 )
 from worker_lifecycle.storage import LifecycleRegistry, _private
@@ -98,10 +98,19 @@ class FilesystemContract(unittest.TestCase):
             directory.chmod(0o775)
         self.root.chmod(0o755)  # searchable by others: does not seal descendants
         module = "worker_lifecycle.filesystem."
+        # Host temp parents may be owned and unsearchable (macOS 0700 $TMPDIR),
+        # which would seal the whole fixture. Ignore sealing above the fixture root.
+        outside = {(p.stat().st_dev, p.stat().st_ino) for p in self.root.parents}
+        real_seals = _seals_descendants
+
+        def seals(descriptor, info):
+            return (info.st_dev, info.st_ino) not in outside and real_seals(descriptor, info)
+
         cases = ((False, True, False), (True, False, False), (True, True, True))
         for private_group, no_acl, accepted in cases:
             with self.subTest(private_group=private_group, no_acl=no_acl):
                 with patch(module + "user_private_group", return_value=private_group), \
+                        patch(module + "_seals_descendants", side_effect=seals), \
                         patch(module + "no_extended_access_acl", return_value=no_acl):
                     if accepted:
                         validate_archive_path(archives)
@@ -111,6 +120,7 @@ class FilesystemContract(unittest.TestCase):
                             validate_archive_path(archives)
         self.root.chmod(0o700)  # unsearchable owned ancestor seals group bits below
         with patch(module + "user_private_group", return_value=False), \
+                patch(module + "_seals_descendants", side_effect=seals), \
                 patch(module + "no_extended_access_acl", return_value=True):
             validate_archive_path(archives)
             archives.chmod(0o777)
