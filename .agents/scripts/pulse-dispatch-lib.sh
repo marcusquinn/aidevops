@@ -656,7 +656,7 @@ _dispatch_process_candidate() {
 	fi
 	_dispatch_prefilter_owned_candidate "$candidate_json" "$issue_number" "$repo_slug" && return 1
 	# GH#33743: unchanged runner_capability_unmet candidates from a pre-record snapshot.
-	_dispatch_skip_for_capability_cooldown "$candidate_json" "$issue_number" "$repo_slug" "$repo_path" && return 1
+	_dispatch_skip_for_capability_cooldown "$candidate_json" "$issue_number" "$repo_slug" "$repo_path" "$self_login" && return 1
 
 	pulse_dispatch_debug_log "processing #${issue_number} (${repo_slug}) labels=[${labels_csv}]"
 
