@@ -109,6 +109,10 @@ fi
 
 # shellcheck source=cleanup-worktrees-lock.sh
 source "${SCRIPT_DIR}/cleanup-worktrees-lock.sh"
+if [[ -f "${SCRIPT_DIR}/disk-capacity-lib.sh" ]]; then
+	# shellcheck source=disk-capacity-lib.sh
+	source "${SCRIPT_DIR}/disk-capacity-lib.sh"
+fi
 
 # ============================================================
 # CADENCE GATE
@@ -399,6 +403,27 @@ _reconcile_lifecycle_receipts() {
 	return 0
 }
 
+_worktree_pressure_present() {
+	local max_count="${AIDEVOPS_MAX_WORKTREES:-200}"
+	local repo_context="" listing="" count=0 line=""
+	[[ "$max_count" =~ ^[1-9][0-9]*$ ]] || max_count=200
+	if declare -F aidevops_worktree_capacity_check >/dev/null 2>&1; then
+		aidevops_worktree_capacity_check "${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}" || return 0
+	fi
+	while IFS= read -r repo_context; do
+		listing=$(git -C "$repo_context" worktree list --porcelain 2>/dev/null) || continue
+		count=0
+		while IFS= read -r line; do
+			case "$line" in
+			"worktree "*) count=$((count + 1)) ;;
+			prunable | "prunable "*) count=$((count - 1)) ;;
+			esac
+		done <<<"$listing"
+		[[ $((count * 100)) -lt $((max_count * 80)) ]] || return 0
+	done < <(_missing_metadata_repo_paths)
+	return 1
+}
+
 main() {
 	local mode="${1:-normal}"
 	local repo="${2:-}"
@@ -445,7 +470,9 @@ main() {
 		return $?
 	fi
 
-	if ! _cadence_ok; then
+	# Pressure kicks bypass routine cadence, never the single-runner lock. The
+	# lifecycle pass has its own cursor/budget and is not in dispatch's 60s stage.
+	if ! _cadence_ok && ! _worktree_pressure_present; then
 		return 0
 	fi
 

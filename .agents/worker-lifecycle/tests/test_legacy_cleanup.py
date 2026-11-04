@@ -202,7 +202,7 @@ class LegacyCleanupContract(unittest.TestCase):
         archives = list(self.output.iterdir())
         report = self.cleanup(apply=False)
         results = {row["path"]: row for row in report["results"]}
-        self.assertEqual(results[str(outside)]["reason"], "no-recorded-processes")
+        self.assertEqual(results[str(outside)]["reason"], "outside-managed-worktree-base")
         self.assertIn(str(orphan), results)
         self.assertEqual(results[str(link)]["reason"], "noncanonical-path")
         self.assertNotIn(str(self.repo), results)

@@ -1,8 +1,64 @@
 """Selection and limits for the temporary legacy cleanup operation."""
 
 from dataclasses import dataclass
+import json
 import math
+import os
 from pathlib import Path
+import tempfile
+
+from .filesystem import validate_private_path as _private
+
+
+def queue(store, items):
+    """A private cursor gives bounded passes fair progress; it grants no authority."""
+    cursor = store.directory / "legacy-cleanup-position"
+    position = ""
+    if os.path.lexists(cursor):
+        _private(cursor)
+        if cursor.stat().st_size > 8192:
+            raise ValueError("invalid-legacy-cleanup-position")
+        position = json.loads(cursor.read_text(encoding="utf-8"))
+        if not isinstance(position, str):
+            raise ValueError("invalid-legacy-cleanup-position")
+    ordered = sorted(items, key=lambda item: item["path"])
+    return ([item for item in ordered if item["path"] > position]
+            + [item for item in ordered if item["path"] <= position])
+
+
+def advance(store, path):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                                         dir=store.directory, delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(path, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, store.directory / "legacy-cleanup-position")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def reconstructible_path(item):
+    """Bound the remote-recoverable class to owned, unpreserved managed paths."""
+    path = Path(item["path"])
+    base = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR",
+                               Path.home() / "Git" / "_worktrees")).expanduser()
+    if not base.is_absolute() or base.resolve() != base:
+        raise ValueError("outside-managed-worktree-base")
+    if (path.resolve(strict=True) != path or not path.is_relative_to(base)
+            or path == base):
+        raise ValueError("outside-managed-worktree-base")
+    patterns = ["preserved", "readonly", "recovery", "review"]
+    patterns.extend(filter(None, os.environ.get(
+        "AIDEVOPS_WORKTREE_PRESERVE_PATTERNS", "").lower().split(",")))
+    if any(pattern in path.name.lower() for pattern in patterns):
+        raise ValueError("preservation-name")
+    if item["modern"] or path.stat().st_uid != os.geteuid():
+        raise ValueError("managed-or-foreign-worktree")
+    return path
 
 
 def unrecorded(path):
