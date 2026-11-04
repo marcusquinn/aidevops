@@ -216,9 +216,9 @@ if [[ "${1:-}" == api && "${2:-}" == repos/exampleorg/example-package/issues/90 
     exit 0
 fi
 if [[ "${1:-}" == pr && "${2:-}" == list ]]; then
-    [[ "${MONITOR_STALLED:-}" != closing-error ]] || exit 1
-    if [[ "${MONITOR_STALLED:-}" == closing-only || "${MONITOR_STALLED:-}" == duplicate-link ]]; then
-        printf '%s\n' '[{"number":89,"closingIssuesReferences":[{"number":101,"url":"https://github.com/exampleorg/example-package/issues/101"}]}]'
+    # The stalled-finding path must never depend on a repository-wide PR list.
+    if [[ -n "${MONITOR_STALLED:-}" ]]; then
+        jq -nc '[range(1000) | {number:., closingIssuesReferences:[]}]'
         exit 0
     fi
     [[ "${MONITOR_SUPERSEDE:-}" != pr-error ]] || exit 1
@@ -285,6 +285,20 @@ if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues?st
     else
         printf '%s\n' '[[]]'
     fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == graphql ]]; then
+    [[ "$*" == *'--paginate --slurp'* && "$*" == *'number=101'* &&
+        "$*" == *'includeClosedPrs: true'* && "$*" == *'after: $endCursor'* ]] || exit 1
+    [[ "${MONITOR_STALLED:-}" != closing-error ]] || exit 1
+    jq -nc --arg scenario "${MONITOR_STALLED:-}" '
+        def page($nodes): {data:{repository:{issue:{closedByPullRequestsReferences:{nodes:$nodes}}}}};
+        if $scenario == "malformed-closing-error" then [page(null)]
+        elif $scenario == "closing-only" or $scenario == "duplicate-link" then
+            [page([]), page([{number:89, repository:{nameWithOwner:"exampleorg/example-package"}}])]
+        elif $scenario == "foreign-pr" then
+            [page([{number:89, repository:{nameWithOwner:"other/repo"}}])]
+        else [page([])] end'
     exit 0
 fi
 if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues/101/timeline?per_page=100' ]]; then
@@ -514,7 +528,7 @@ test_monitor_deduplicates_and_preserves_source() {
 
 test_monitor_reports_stranded_upstream_findings() {
 	local scenario="" mode="" case_root="" log_file="" output="" rc=0 expected=0 expected_rc=0
-	for scenario in conflicting in-review closed-pr merged-pr closing-only duplicate-link no-auto-dispatch issue-approval pr-approval open-approval closed-issue clean-pr unknown-pr no-pr foreign-pr approval-error timeline-error closing-error pr-error; do
+	for scenario in conflicting in-review closed-pr merged-pr closing-only duplicate-link no-auto-dispatch issue-approval pr-approval open-approval closed-issue clean-pr unknown-pr no-pr foreign-pr approval-error timeline-error closing-error malformed-closing-error pr-error; do
 		case_root="${TEST_ROOT}/stalled-${scenario}"
 		log_file="${case_root}/issues.log"
 		write_fake_commands "${case_root}/bin"

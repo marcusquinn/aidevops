@@ -565,7 +565,7 @@ Older upstream findings were left open to preserve active work:${retained} Coord
 # this upstream version, including when a linked PR was already merged.
 _cloudron_monitor_stalled_upstream() {
 	local slug="$1" fingerprint="$2" number="$3"
-	local issue="" approvals="" timeline="" closing="" prs="" pr="" snapshot="" reason="" issue_url=""
+	local issue="" approvals="" timeline="" closing="" prs="" pr="" snapshot="" reason=""
 	[[ "$fingerprint" == upstream-* ]] || return 0
 	[[ "$number" =~ ^[1-9][0-9]*$ ]] || return 1
 	issue=$(gh api "repos/${slug}/issues/${number}") || return 1
@@ -577,20 +577,31 @@ _cloudron_monitor_stalled_upstream() {
 	approvals=$(gh api "repos/${slug}/issues?state=open&labels=${_CLOUDRON_MONITOR_APPROVAL_LABEL}&per_page=100" --paginate --slurp) || return 1
 	jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" 'type == $array_type and all(.[]; type == $array_type)' <<<"$approvals" >/dev/null || return 1
 	jq -e 'any(.[][]; .pull_request == null)' <<<"$approvals" >/dev/null && return 0
-	issue_url=$(jq -er '.html_url' <<<"$issue") || return 1
 	# Locked issues may lack cross-reference events even when a PR closes them.
-	# Use the same bounded closing-reference inventory as supersession, but
-	# include closed/merged PRs because those can strand this finding too.
-	closing=$(gh pr list --repo "$slug" --state all --limit 1000 --json number,closingIssuesReferences) || return 1
-	jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" 'type == $array_type and length < 1000 and all(.[];
-		(.closingIssuesReferences | type == $array_type) and (.closingIssuesReferences | length < 100))' <<<"$closing" >/dev/null || return 1
+	# Paginate issue-scoped links, including closed/merged PRs, independently of
+	# repository PR counts. Timeline links remain necessary for ordinary references.
+	# shellcheck disable=SC2016 # GraphQL variables are literal, not shell expansions.
+	closing=$(gh api graphql --paginate --slurp -F owner="${slug%/*}" -F name="${slug#*/}" -F number="$number" -f query='
+		query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+			repository(owner: $owner, name: $name) {
+				issue(number: $number) {
+					closedByPullRequestsReferences(first: 100, after: $endCursor, includeClosedPrs: true) {
+						nodes { number repository { nameWithOwner } }
+						pageInfo { hasNextPage endCursor }
+					}
+				}
+			}
+		}') || return 1
+	jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" 'type == $array_type and length > 0 and all(.[];
+		.errors == null and (.data.repository.issue.closedByPullRequestsReferences.nodes | type == $array_type))' <<<"$closing" >/dev/null || return 1
 	timeline=$(gh api "repos/${slug}/issues/${number}/timeline?per_page=100" --paginate --slurp) || return 1
 	prs=$(jq -r --arg repo "https://api.github.com/repos/${slug}" --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" \
-		--argjson closing "$closing" --arg issue_url "$issue_url" '
+		--argjson closing "$closing" --arg slug "$slug" '
 		if type == $array_type and all(.[]; type == $array_type) then
 			([.[][] | select(.event == "cross-referenced") | .source.issue
 			 | select(.repository_url == $repo and .pull_request != null)
-			 | .number] + [$closing[] | select(any(.closingIssuesReferences[]; .url == $issue_url)) | .number])
+			 | .number] + [$closing[].data.repository.issue.closedByPullRequestsReferences.nodes[]
+			 | select(.repository.nameWithOwner == $slug) | .number])
 			 | map(select(type == "number" and . > 0 and floor == .)) | unique | .[]
 		else error("Invalid timeline pages") end' <<<"$timeline") || return 1
 	for pr in $prs; do
