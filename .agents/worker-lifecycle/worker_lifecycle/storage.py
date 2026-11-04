@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,8 @@ MAX_EVENT_BYTES = 16384
 # limits are kept. 100,000 is also the schema CHECK maximum, so no migration is needed.
 DEFAULT_MAX_EVENTS = 100000
 LEGACY_DEFAULT_MAX_EVENTS = 10000
+ADMISSION_EVENT_NEED = 3  # admit + register + bind, committed atomically
+DEFAULT_RETENTION_SECONDS = 86400
 
 
 class StoreConflict(ValueError):
@@ -137,7 +140,7 @@ class LifecycleRegistry:
                 raise ValueError("fullfsync-unavailable")
 
     @contextmanager
-    def connection(self, write: bool = False) -> Iterator[sqlite3.Connection]:
+    def connection(self, write: bool = False, *, maintenance: bool = True) -> Iterator[sqlite3.Connection]:
         connection = self._connect()
         try:
             if connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
@@ -151,6 +154,11 @@ class LifecycleRegistry:
             if len(metadata) != 1 or metadata[0]["mode"] != "observe-only":
                 raise ValueError("invalid-store-metadata")
             identifier(metadata[0]["installation_id"])
+            if write and maintenance:
+                count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
+                maximum = self._event_limit(connection)
+                if count * 10 >= maximum * 9 or maximum - count < ADMISSION_EVENT_NEED:
+                    self._compact(connection, self.retention_seconds(), apply=True)
             yield connection
             connection.commit()
         except BaseException:
@@ -162,6 +170,96 @@ class LifecycleRegistry:
     def installation_id(self) -> str:
         with self.connection() as connection:
             return connection.execute("SELECT installation_id FROM metadata").fetchone()[0]
+
+    @staticmethod
+    def retention_seconds() -> int:
+        """Automatic retention is configurable without changing a store's schema."""
+        age = int(os.environ.get("AIDEVOPS_LIFECYCLE_RETENTION_SECONDS", DEFAULT_RETENTION_SECONDS))
+        if not 0 <= age <= 315360000:
+            raise ValueError("invalid-retention-age")
+        return age
+
+    def _compact(self, connection: sqlite3.Connection, age: int, *, apply: bool) -> dict:
+        """Archive bounded batches; a rollback may leave duplicate archive evidence.
+
+        Each new file is an immutable append to the archive set, never rewritten.
+        Keeping projections prevents archived register/bind/admit replays from
+        resurrecting ended owners. Generation-only control events stay online.
+        """
+        if type(age) is not int or not 0 <= age <= 315360000:
+            raise ValueError("invalid-retention-age")
+        rows = connection.execute(
+            "SELECT e.* FROM events e JOIN runs r ON r.run_id=json_extract(e.payload,'$.run_id') "
+            "WHERE r.state='ended' AND julianday(e.recorded_at)<=julianday('now',?) "
+            "AND NOT EXISTS (SELECT 1 FROM bindings own JOIN bindings peer USING(generation_id) "
+            "JOIN runs live ON live.run_id=peer.run_id WHERE own.run_id=r.run_id AND live.state='bound') "
+            "ORDER BY e.sequence LIMIT 1000", (f"-{age} seconds",),
+        ).fetchall()
+        result = {"eligible_events": len(rows), "archived_events": 0,
+                  "archive": None, "dry_run": not apply, "cleanup_authorized": False}
+        if not apply or not rows:
+            return result
+        evidence = {"schema": 1, "installation_id": connection.execute(
+            "SELECT installation_id FROM metadata").fetchone()[0],
+            "events": [dict(row) for row in rows]}
+        checksum = hashlib.sha256(encode(evidence).encode("utf-8")).hexdigest()
+        document = encode({"evidence": evidence, "sha256": checksum}).encode("utf-8")
+        archive = self.directory / f"events-archive-{uuid4()}.json"
+        with checked_directory(self.directory):
+            descriptor = os.open(archive, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, "w+b") as stream:
+                stream.write(document)
+                stream.flush()
+                os.fsync(stream.fileno())
+                stream.seek(0)
+                verified = json.load(stream)
+                if (verified != {"evidence": evidence, "sha256": checksum}
+                        or hashlib.sha256(encode(verified["evidence"]).encode("utf-8")).hexdigest()
+                        != verified["sha256"]):
+                    raise StoreConflict("event-archive-verification-failed")
+            directory_fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        connection.executemany("DELETE FROM events WHERE sequence=? AND event_id=?",
+                               [(row["sequence"], row["event_id"]) for row in rows])
+        result.update(archived_events=len(rows), archive=archive.name)
+        return result
+
+    def compact(self, *, age: int | None = None, apply: bool = False) -> dict:
+        """Preview by default; archive before deleting any eligible journal rows."""
+        with self.connection(write=apply, maintenance=False) as connection:
+            return self._compact(connection, self.retention_seconds() if age is None else age, apply=apply)
+
+    def raise_capacity(self, maximum: int, *, apply: bool = False) -> dict:
+        """Only raise the stored cap, after a verified standalone SQLite backup."""
+        from contextlib import closing
+
+        with self.connection(write=apply, maintenance=False) as connection:
+            current = connection.execute("SELECT max_events FROM metadata").fetchone()[0]
+            count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
+            if type(maximum) is not int or not max(current + 1, count) <= maximum <= DEFAULT_MAX_EVENTS:
+                raise ValueError("capacity-must-increase-within-schema-limit")
+            backup = None
+            if apply:
+                backup = self.directory / f"capacity-backup-{uuid4()}.sqlite3"
+                descriptor = os.open(backup, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.close(descriptor)
+                with closing(self._connect()) as source, closing(sqlite3.connect(backup)) as target:
+                    source.backup(target)
+                    if (target.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+                            or target.execute("SELECT count(*) FROM events").fetchone()[0] != count
+                            or target.execute("SELECT max_events FROM metadata").fetchone()[0] != current):
+                        raise StoreConflict("capacity-backup-verification-failed")
+                    target.execute("PRAGMA journal_mode=DELETE")
+                from .upgrade import _sync
+
+                _sync(backup)
+                _sync(self.directory)
+                connection.execute("UPDATE metadata SET max_events=?", (maximum,))
+            return {"previous_limit": current, "event_limit": maximum, "dry_run": not apply,
+                    "backup": backup.name if backup else None, "cleanup_authorized": False}
 
     @staticmethod
     def _event_limit(connection: sqlite3.Connection, *, lift: bool = False) -> int:
@@ -307,7 +405,8 @@ class LifecycleRegistry:
             return {"mode": "observe-only", "runs": dict(connection.execute("SELECT state,count(*) FROM runs GROUP BY state").fetchall()),
                     "schema_version": schema, "upgrade_required": schema < SCHEMA,
                     "events": count, "event_limit": maximum,
-                    "journal_full": count >= maximum,
+                    "event_headroom": maximum - count, "admission_event_need": ADMISSION_EVENT_NEED,
+                    "journal_full": maximum - count < ADMISSION_EVENT_NEED,
                     "last_event_at": connection.execute("SELECT recorded_at FROM events ORDER BY sequence DESC LIMIT 1").fetchone()[0] if count else None,
                     "bindings": connection.execute("SELECT count(*) FROM bindings").fetchone()[0],
                     "conflicting_generations": connection.execute("SELECT count(*) FROM (SELECT b.generation_id FROM bindings b JOIN runs r USING(run_id) WHERE r.state='bound' GROUP BY b.generation_id HAVING count(*)>1)").fetchone()[0],

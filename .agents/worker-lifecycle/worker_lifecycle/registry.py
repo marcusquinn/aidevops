@@ -64,6 +64,13 @@ def argument_parser() -> argparse.ArgumentParser:
     initialize = commands.add_parser("init", help="create a NEW private directory/store after readiness")
     initialize.add_argument("--max-events", type=int, default=DEFAULT_MAX_EVENTS)
     commands.add_parser("status", help="report aggregate registry state")
+    compact = commands.add_parser("compact", help="preview archive-first retention (at most 1000 events per batch)")
+    compact.add_argument("--min-age-seconds", type=int, default=None,
+                         help="default: AIDEVOPS_LIFECYCLE_RETENTION_SECONDS or 86400")
+    compact.add_argument("--apply", action="store_true", help="archive, verify, then delete eligible event rows")
+    capacity = commands.add_parser("raise-capacity", help="preview a backed-up capacity increase; never lower the cap")
+    capacity.add_argument("--max-events", type=int, required=True)
+    capacity.add_argument("--apply", action="store_true")
     upgrade = commands.add_parser("upgrade", help="back up and upgrade schema-1 state")
     upgrade.add_argument("--backup-dir", type=Path,
                          help="NEW private directory; defaults to a unique directory inside state")
@@ -199,6 +206,10 @@ def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Ma
 
 
 def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation == "compact":
+        return store.compact(age=args.min_age_seconds, apply=args.apply)
+    if args.operation == "raise-capacity":
+        return store.raise_capacity(args.max_events, apply=args.apply)
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only"}:
