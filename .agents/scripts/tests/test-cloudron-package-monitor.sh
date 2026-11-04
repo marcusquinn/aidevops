@@ -287,20 +287,6 @@ if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues?st
     fi
     exit 0
 fi
-if [[ "${1:-}" == api && "${2:-}" == graphql ]]; then
-    [[ "$*" == *'--paginate --slurp'* && "$*" == *'number=101'* &&
-        "$*" == *'includeClosedPrs: true'* && "$*" == *'after: $endCursor'* ]] || exit 1
-    [[ "${MONITOR_STALLED:-}" != closing-error ]] || exit 1
-    jq -nc --arg scenario "${MONITOR_STALLED:-}" '
-        def page($nodes): {data:{repository:{issue:{closedByPullRequestsReferences:{nodes:$nodes}}}}};
-        if $scenario == "malformed-closing-error" then [page(null)]
-        elif $scenario == "closing-only" or $scenario == "duplicate-link" then
-            [page([]), page([{number:89, repository:{nameWithOwner:"exampleorg/example-package"}}])]
-        elif $scenario == "foreign-pr" then
-            [page([{number:89, repository:{nameWithOwner:"other/repo"}}])]
-        else [page([])] end'
-    exit 0
-fi
 if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues/101/timeline?per_page=100' ]]; then
     [[ "${MONITOR_STALLED:-}" != timeline-error ]] || exit 1
     if [[ "${MONITOR_STALLED:-}" == no-pr || "${MONITOR_STALLED:-}" == closing-only ]]; then
@@ -354,6 +340,28 @@ if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
     exit 0
 fi
 SOURCE
+	write_fake_closing_reference_commands "$bin_dir"
+	return 0
+}
+
+write_fake_closing_reference_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'CLOSING'
+if [[ "${1:-}" == api && "${2:-}" == graphql ]]; then
+    [[ "$*" == *'--paginate --slurp'* && "$*" == *'number=101'* &&
+        "$*" == *'includeClosedPrs: true'* && "$*" == *'after: $endCursor'* ]] || exit 1
+    [[ "${MONITOR_STALLED:-}" != closing-error ]] || exit 1
+    jq -nc --arg scenario "${MONITOR_STALLED:-}" '
+        def page($nodes): {data:{repository:{issue:{closedByPullRequestsReferences:{nodes:$nodes}}}}};
+        if $scenario == "malformed-closing-error" then [page(null)]
+        elif $scenario == "closing-only" or $scenario == "duplicate-link" then
+            [page([]), page([{number:89, repository:{nameWithOwner:"exampleorg/example-package"}}])]
+        elif $scenario == "foreign-pr" then
+            [page([{number:89, repository:{nameWithOwner:"other/repo"}}])]
+        else [page([])] end'
+    exit 0
+fi
+CLOSING
 	return 0
 }
 
