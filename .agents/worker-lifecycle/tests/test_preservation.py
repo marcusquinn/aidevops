@@ -4,6 +4,7 @@ Requires the Git/Bash archive backend included in the portable registry validato
 Only disposable repositories are used.
 """
 
+import errno
 import hashlib
 import json
 import os
@@ -165,7 +166,15 @@ class PreservationContract(unittest.TestCase):
 
     def test_compact_deletions_preserve_index_and_working_state(self):
         # Include binary, executable, symlink and non-shell-safe names.
-        names = ("large", "space\nname", ":(glob)*", "executable", os.fsdecode(b"raw-\xff"))
+        raw_name = os.fsdecode(b"raw-\xff")
+        try:
+            (self.work / raw_name).write_bytes(b"probe")
+        except OSError as error:
+            if error.errno != errno.EILSEQ:
+                raise
+            self.skipTest("filesystem rejects non-UTF-8 file names (EILSEQ), e.g. macOS APFS")
+        (self.work / raw_name).unlink()
+        names = ("large", "space\nname", ":(glob)*", "executable", raw_name)
         for name in names:
             (self.work / name).write_bytes(b"deleted content\n" * 10000)
         (self.work / "executable").chmod(0o755)

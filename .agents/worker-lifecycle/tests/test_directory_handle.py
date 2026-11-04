@@ -57,7 +57,8 @@ class DirectoryHandleContract(unittest.TestCase):
 
     def test_permission_failure_is_not_a_match(self):
         with DirectoryHandle(self.path) as handle:
-            with patch.object(Path, "stat", side_effect=PermissionError):
+            with patch.object(Path, "stat", side_effect=PermissionError), \
+                    patch.object(Path, "lstat", side_effect=PermissionError):
                 self.assertFalse(handle.matches_path())
             self.assertFalse(handle.matches_path())
 

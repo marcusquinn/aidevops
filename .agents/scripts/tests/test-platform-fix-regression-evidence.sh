@@ -101,9 +101,14 @@ run_pass_case 'plugin test' 'Fix macOS catalogue' '## Summary' $'.agents/plugins
 run_fail_case 'summary claim without evidence' 'Add catalogue helper' $'## Summary\nFix macOS and Linux handling.\n## Runtime Testing\nTests passed.' '.agents/scripts/catalogue.sh'
 run_pass_case 'signature excluded' 'Add catalogue helper' $'## Summary\nAdds a helper.\n<!-- aidevops:sig -->\nLinux macOS' '.agents/scripts/catalogue.sh'
 
-for test_path in .agents/tests/test-platform.sh tests/test-platform.sh packages/example/tests/test-platform.sh; do
+for test_path in .agents/tests/test-platform.sh tests/test-platform.sh packages/example/tests/test-platform.sh \
+	.agents/worker-lifecycle/tests/test_directory_handle.py \
+	.agents/worker-lifecycle/tests/test_filesystem.py \
+	.agents/worker-lifecycle/tests/test_preservation.py; do
 	run_pass_case "repository test $test_path" 'Fix Linux portability' '## Summary' "${test_path}"$'\n.agents/scripts/catalogue.sh'
 done
+
+run_fail_case 'worker lifecycle production is not a test' 'Fix macOS handling' '## Summary' '.agents/worker-lifecycle/worker_lifecycle/filesystem.py'
 
 run_fail_case 'testing is not regression rationale' 'Fix macOS handling' $'## Runtime Testing\nAutomated coverage is impossible because the host is unavailable.' '.agents/scripts/catalogue.sh'
 

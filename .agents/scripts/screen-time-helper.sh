@@ -59,17 +59,17 @@ _validated_daily_hours() {
 #######################################
 cmd_snapshot() {
 	mkdir -p "$HISTORY_DIR"
-	local earliest_date today existing_dates current_date added
+	local earliest_date today existing_dates current_date added collector
 	earliest_date=$(_screen_time_engine earliest)
 	if [[ -z "$earliest_date" ]]; then
 		echo "No observed screen-time source data available"
 		return 0
 	fi
 	today=$(date +%Y-%m-%d)
-	existing_dates=""
-	if [[ -f "$HISTORY_FILE" ]]; then
-		existing_dates=$(jq -r 'select(type == "object" and (.date | type) == "string") | .date' "$HISTORY_FILE" 2>/dev/null | sort -u || true)
-	fi
+	# Only dates the current collector accepts count as recorded: on Linux,
+	# legacy login-session proxy rows must not block activity-based rows.
+	existing_dates=$(_screen_time_engine history-dates 2>/dev/null || true)
+	collector=$(_screen_time_engine collector)
 	current_date="$earliest_date"
 	added=0
 	while [[ "$current_date" < "$today" ]]; do
@@ -84,8 +84,9 @@ cmd_snapshot() {
 			record=$(jq -cn \
 				--arg date "$current_date" \
 				--arg hours "$hours" \
+				--arg collector "$collector" \
 				--arg hostname "$(hostname -s 2>/dev/null || hostname)" \
-				'{date:$date,screen_hours:($hours|tonumber),status:"observed",source:"interval-engine",hostname:$hostname,recorded_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}')
+				'{date:$date,screen_hours:($hours|tonumber),status:"observed",source:"interval-engine",collector:$collector,hostname:$hostname,recorded_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}')
 			printf '%s\n' "$record" >>"$HISTORY_FILE"
 			added=$((added + 1))
 		fi
@@ -134,13 +135,25 @@ cmd_profile_stats() {
 	return $?
 }
 
+#######################################
+# Record one human-input activity sample (Linux; no-op elsewhere).
+# Linux has no system screen-time store, so a per-minute scheduler builds
+# the active intervals that profile-stats and snapshot read.
+#######################################
+cmd_sample() {
+	mkdir -p "$HISTORY_DIR"
+	_screen_time_engine sample
+	return $?
+}
+
 case "${1:-help}" in
 snapshot) cmd_snapshot ;;
+sample) cmd_sample ;;
 query) cmd_query "${2:-1}" ;;
 history) cmd_history ;;
 profile-stats) cmd_profile_stats ;;
 help | *)
-	echo "Usage: screen-time-helper.sh {snapshot|query [days]|history|profile-stats}"
+	echo "Usage: screen-time-helper.sh {snapshot|sample|query [days]|history|profile-stats}"
 	echo "Platform: ${OS_TYPE}"
 	return 0 2>/dev/null || exit 0
 	;;
