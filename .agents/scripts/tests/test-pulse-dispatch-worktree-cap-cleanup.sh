@@ -18,7 +18,8 @@ extract_helper() {
 	awk -v name="$name" '$0 ~ "^" name "\\(\\) \\{" {capture=1} capture {print} capture && /^}$/ {exit}' "$CORE_SCRIPT"
 	return 0
 }
-eval "$(extract_helper _dispatch_registered_worktree_count)"
+PRODUCTION_COUNT_HELPER=$(extract_helper _dispatch_registered_worktree_count)
+eval "${PRODUCTION_COUNT_HELPER/_dispatch_registered_worktree_count/_production_dispatch_registered_worktree_count}"
 eval "$(extract_helper _dispatch_launch_pressure_cleanup)"
 eval "$(extract_helper _dispatch_worktree_capacity_gate)"
 eval "$(extract_helper _dispatch_cleanup_disk_pressure)"
@@ -29,7 +30,7 @@ git() {
 	printf 'worktree /repo/main\nHEAD abc\n\nworktree /repo/live\nHEAD def\n\nworktree /repo/gone\nprunable absent\n\n'
 	return 0
 }
-[[ "$(_dispatch_registered_worktree_count "$TEST_ROOT")" == 2 ]]
+[[ "$(_production_dispatch_registered_worktree_count "$TEST_ROOT")" == 2 ]]
 
 _dispatch_registered_worktree_count() {
 	[[ "$COUNT" != unknown ]] || return 1

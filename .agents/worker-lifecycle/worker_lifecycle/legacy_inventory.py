@@ -33,33 +33,39 @@ def require_idle_proc(path, proc=Path("/proc")):
         raise ValueError("proc-observation-unavailable") from error
 
 
+def live_owned_proc_task(task):
+    # Non-dumpable same-UID tasks can have root-owned /proc directories.
+    status = (task / "status").read_text(encoding="utf-8")
+    fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+    if not fields.get("Uid") or not fields.get("State"):
+        raise ValueError("proc-observation-unavailable")
+    return (str(os.geteuid()) in fields["Uid"].split()
+            and fields["State"].split()[0] not in ("Z", "X"))
+
+
+def require_idle_reference(path, reference):
+    target = Path(os.readlink(reference).removesuffix(" (deleted)"))
+    if target == path or path in target.parents:
+        raise ValueError("live-process-reference")
+
+
 def inspect_proc_task(path, task):
     try:
-        # Non-dumpable same-UID tasks can have root-owned /proc directories.
-        status = (task / "status").read_text(encoding="utf-8")
-        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
-        if "Uid" not in fields or "State" not in fields:
-            raise ValueError("proc-observation-unavailable")
-        if (str(os.geteuid()) not in fields["Uid"].split()
-                or fields["State"].split()[0] in ("Z", "X")):
+        if not live_owned_proc_task(task):
             return
-        target = Path(os.readlink(task / "cwd").removesuffix(" (deleted)"))
-        if target == path or path in target.parents:
-            raise ValueError("live-process-reference")
+        require_idle_reference(path, task / "cwd")
         for fd in (task / "fd").iterdir():
             try:
-                target = Path(os.readlink(fd).removesuffix(" (deleted)"))
+                require_idle_reference(path, fd)
             except FileNotFoundError:
                 continue  # An independently closed descriptor grants no authority.
-            if target == path or path in target.parents:
-                raise ValueError("live-process-reference")
     except FileNotFoundError:
         if task.exists():
             raise ValueError("proc-observation-unavailable") from None
 
 
-def reconstructible(item, repositories, adapter, open_prs):
-    """Independent remote-recoverable class, never inferred from writer history."""
+def reconstructible_path(item):
+    """Bound the remote-recoverable class to owned, unpreserved managed paths."""
     path = Path(item["path"])
     base = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR",
                                Path.home() / "Git" / "_worktrees")).expanduser()
@@ -74,6 +80,12 @@ def reconstructible(item, repositories, adapter, open_prs):
         raise ValueError("preservation-name")
     if item["modern"] or path.stat().st_uid != os.geteuid():
         raise ValueError("managed-or-foreign-worktree")
+    return path
+
+
+def reconstructible(item, repositories, adapter, open_prs):
+    """Independent remote-recoverable class, never inferred from writer history."""
+    path = reconstructible_path(item)
     admin = _git_directory(path)
     common = _git("-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir")
     if common not in repositories or admin == Path(common):

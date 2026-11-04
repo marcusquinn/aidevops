@@ -134,7 +134,8 @@ class ReconstructibleContract(unittest.TestCase):
     def test_real_live_process_cwd_and_fd_are_observed(self):
         (self.target / "file").write_text("keep")
         program = "import os,time; os.open('file',os.O_RDONLY); time.sleep(300)"
-        process = subprocess.Popen([sys.executable, "-c", program], cwd=self.target)
+        process = subprocess.Popen(  # nosec B603 # fixed disposable fixture argv
+            [sys.executable, "-c", program], cwd=self.target)
         try:
             # Enumerate only this real kernel task, avoiding unrelated runner tasks.
             task = Path("/proc") / str(process.pid)
