@@ -455,31 +455,40 @@ PY
 	return 0
 }
 
-# GH#36564: refuse before allocating when the estimated Git payload plus a
-# reserve exceeds free space, so cleanup on a nearly full host cannot consume
-# more disk than it frees. Estimation failure (old Git) is not a refusal.
+# GH#36564: reserve the maximum untracked payload as well as the estimated Git
+# payload before allocating. Estimation failure (old Git) is not a refusal.
+# Python decimal integers avoid Bash octal parsing and signed overflow.
 archive_capacity_check() {
 	local worktree="$1" output_root="$2" head_sha="$3" base_sha="$4"
 	local reserve="${AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES:-536870912}"
-	local estimate="" free=""
-	[[ "$reserve" =~ ^[0-9]+$ ]] || reserve=536870912
+	local estimate=""
 	estimate=$(git -C "$worktree" rev-list --objects --disk-usage "$head_sha" "^${base_sha}" 2>/dev/null) || estimate=0
-	[[ "$estimate" =~ ^[0-9]+$ ]] || estimate=0
-	free=$(python3 - "$output_root" <<'PY'
+	python3 - "$output_root" "$estimate" "$reserve" "$MAX_UNTRACKED_BYTES" <<'PY'
 import pathlib
+import re
 import shutil
 import sys
-path = pathlib.Path(sys.argv[1]).absolute()
-while not path.exists():
-    path = path.parent
-print(shutil.disk_usage(path).free)
+
+def decimal(value):
+    if not re.fullmatch(r"[0-9]+", value):
+        raise ValueError("invalid capacity operand")
+    return int(value, 10)
+
+try:
+    estimate, reserve, untracked = map(decimal, sys.argv[2:])
+    path = pathlib.Path(sys.argv[1]).absolute()
+    while not path.exists():
+        path = path.parent
+    free = decimal(str(shutil.disk_usage(path).free))
+except (OSError, ValueError):
+    raise SystemExit("Error: archive capacity unavailable") from None
+estimate += untracked
+if estimate + reserve > free:
+    raise SystemExit(
+        f"Error: producer:insufficient-capacity; estimate={estimate}; reserve={reserve}; "
+        f"free={free}; no archive written; source retained")
 PY
-	) || { die "archive capacity unavailable"; return 1; }
-	if ((estimate + reserve > free)); then
-		die "producer:insufficient-capacity; estimate=${estimate}; reserve=${reserve}; free=${free}; no archive written; source retained"
-		return 1
-	fi
-	return 0
+	return $?
 }
 
 # GH#36564: this invocation created archive_dir (mkdir without -p), so a

@@ -257,7 +257,7 @@ PY
 
 # GH#36564: a refused or failed capture must leave no archive bytes behind.
 test_failed_capture_leaves_no_archive() {
-	local paths canonical worktree root stderr_file rc=0
+	local paths canonical worktree root stderr_file reserve rc=0
 	paths=$(setup_repo reclaim) || return 1
 	IFS=$'\t' read -r canonical worktree <<<"$paths"
 	root="$TEST_ROOT/reclaim-archives"
@@ -270,6 +270,21 @@ test_failed_capture_leaves_no_archive() {
 		--repo owner/repo --issue 30 --reason failed-worker --base-branch main \
 		--output-root "$root" >/dev/null 2>"$stderr_file"; then rc=1; fi
 	grep -q 'producer:insufficient-capacity; estimate=[0-9]*; reserve=999999999999999999; free=[0-9]*; no archive written' "$stderr_file" || rc=1
+	[[ ! -e "$root" ]] || rc=1
+	# Decimal leading zeros and values beyond signed/unsigned Bash arithmetic
+	# must not turn a refusal into a successful capture.
+	for reserve in 0999999999999999999 9223372036854775808 18446744073709551615 999999999999999999999999 invalid; do
+		if AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES="$reserve" bash "$HELPER" archive "$worktree" \
+			--repo owner/repo --issue 30 --reason failed-worker --base-branch main \
+			--output-root "$root" >/dev/null 2>"$stderr_file"; then rc=1; fi
+		[[ ! -e "$root" ]] || rc=1
+	done
+	# With no general reserve, the untracked allowance alone must refuse.
+	if AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES=0 \
+		AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES=999999999999999999 bash "$HELPER" archive "$worktree" \
+		--repo owner/repo --issue 30 --reason failed-worker --base-branch main \
+		--output-root "$root" >/dev/null 2>"$stderr_file"; then rc=1; fi
+	grep -q 'producer:insufficient-capacity;' "$stderr_file" || rc=1
 	[[ ! -e "$root" ]] || rc=1
 	# Failure after commits.bundle and untracked capture are written (the
 	# failure log is checked last): the partial directory is discarded.
