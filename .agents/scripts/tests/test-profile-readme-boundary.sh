@@ -451,18 +451,22 @@ EOF
 		bash "$helper_path" update >"$output_file" 2>&1 || update_rc=$?
 	# The injected helper leaves opaque publication metadata in Git's admin dir.
 	# Git-only capture must refuse that unpreserved state, retaining the source
-	# and a pending reservation rather than claiming an archive or removal.
+	# before writing a reservation journal or claiming an archive or removal.
 	if [[ "$update_rc" -eq 0 ]]; then
 		print_helper_failure "$test_name" "legacy cleanup unexpectedly succeeded" "$output_file"
 		return 0
 	fi
 
-	retained_source=$(jq -r '.source.identity.path' "$recovery_root"/.producer-transactions/*/journal.json) || return 1
-	retained_admin=$(jq -r '.source.identity.admin' "$recovery_root"/.producer-transactions/*/journal.json) || return 1
+	retained_source=$(profile_publication_trees "$fixture_repo")
+	if [[ -z "$retained_source" || "$retained_source" == *$'\n'* ]]; then
+		print_helper_failure "$test_name" "expected exactly one retained publication worktree" "$output_file"
+		return 0
+	fi
+	retained_admin=$(git -C "$retained_source" rev-parse --path-format=absolute --git-dir) || return 1
 	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "2" ]] ||
-		[[ ! -d "$recovery_root" ]] ||
-		! jq -e '.phase == "capturing" and .caller == "profile-readme-helper.sh" and .source_removal_outcome == "pending" and (has("archive") | not)' \
-			"$recovery_root"/.producer-transactions/*/journal.json >/dev/null ||
+		! grep -qF 'git_admin:requires_preservation:aidevops-profile-publication.json' "$output_file" ||
+		compgen -G "$recovery_root/.producer-transactions/*/journal.json" >/dev/null ||
+		compgen -G "$recovery_root/.producer-archives/*/*" >/dev/null ||
 		[[ ! -f "$retained_source/README.md" ]] ||
 		[[ "$(cat "$retained_source/.profile-publication-fixture" 2>/dev/null)" != 'recoverable fixture state' ]] ||
 		! jq -e '.schema == "aidevops-profile-publication/v1" and .producer == "profile-readme"' \
