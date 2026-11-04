@@ -141,6 +141,18 @@ class RetirementContract(unittest.TestCase):
         self.git("worktree", "unlock", str(self.target))
         self.assertEqual(self.retire()["status"], "retired")
 
+    def test_unlocked_substring_is_not_a_worktree_lock(self):
+        error = subprocess.CalledProcessError(
+            1, ["git", "worktree", "remove"],
+            stderr=b"fatal: path /tmp/unlocked is unavailable\n",
+        )
+        self.assertIsNone(refusal_code(error, "cleanup-worktree"))
+        locked = subprocess.CalledProcessError(
+            1, ["git", "worktree", "remove"],
+            stderr=b"archive-snapshot: git_admin:unknown_entry:locked\n",
+        )
+        self.assertEqual(refusal_code(locked, "cleanup-worktree"), "worktree-locked")
+
     def test_late_write_before_relocation_preserves_source(self):
         self.create()
         finish = retirement._finish

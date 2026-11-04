@@ -36,6 +36,13 @@ _GIT_CODES = (
     ("not a valid branch name", "invalid-ref"),
     ("locked", "worktree-locked"),
 )
+def _git_locked(error: Exception) -> bool:
+    raw = getattr(error, "stderr", None)
+    stderr = (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw or "")).casefold()
+    # Git appends arbitrary lock reasons after the primary lock diagnostic.
+    diagnostic = stderr.partition("\n")[0]
+    lock_pattern = r"\bis locked\b|:locked\b|\bcannot (?:move|remove) a locked working tree\b"
+    return bool(re.search(lock_pattern, diagnostic))
 
 
 def _git_code(error: Exception) -> str:
@@ -68,7 +75,7 @@ def refusal_code(error: Exception, operation: str) -> str | None:
     if operation in RETIREMENT_OPERATIONS:
         # Never expose Git stderr: it may contain private paths or lock reasons.
         if isinstance(error, subprocess.CalledProcessError):
-            return "worktree-locked" if _git_code(error) == "worktree-locked" else None
+            return "worktree-locked" if _git_locked(error) else None
         return _value_code(error) if isinstance(error, ValueError) else None
     handler = next((handler for kind, handler in _HANDLERS if isinstance(error, kind)), None)
     if handler is None or operation not in CREATION_OPERATIONS:
