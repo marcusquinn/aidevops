@@ -405,6 +405,135 @@ cron_command() {
     esac
 }
 
+# Read-only evidence, delivered over stdin without remote temporary files.
+_image_libs_remote_script() {
+    cat <<'REMOTE'
+cfg=/opt/alt/alt-ImageMagick/etc/ImageMagick-7
+trace() {
+    printf '$'; printf ' %q' "$@"; printf '\n'
+    return 0
+}
+run() {
+    trace "$@" >&2
+    "$@"
+    return 0
+}
+debuglink() {
+    local binary="$1"
+    if command -v readelf >/dev/null 2>&1; then
+        trace readelf --string-dump=.gnu_debuglink "$binary" >&2
+        readelf --string-dump=.gnu_debuglink "$binary" | grep -o '[^ ]*\.debug' | sort -u
+    else
+        printf '(heuristic: whole-file debug names)\n' >&2
+        printf '$ grep -ao [A-Za-z0-9._+~-]*\\.debug %s | sort -u\n' "$binary" >&2
+        grep -ao '[A-Za-z0-9._+~-]*\.debug' "$binary" | sort -u
+    fi
+    return 0
+}
+run date -u '+checked: %Y-%m-%d %H:%M:%S UTC'
+printf '$ uname -r\nkernel: %s\n' "$(uname -r)"
+run /usr/bin/gs --version
+debuglink /usr/bin/gs
+run readlink /usr/lib64/libgs.so.9
+debuglink /usr/lib64/libgs.so.9
+run stat -L -c '%n built %y changed %z' /usr/bin/gs /usr/lib64/libgs.so.9 "$cfg/policy.xml" "$cfg/delegates.xml"
+policy_php=
+for php in /opt/alt/php[0-9]*/usr/bin/php; do
+    [ -x "$php" ] || continue
+    policy_php="$php"
+    info=$(run "$php" -r 'if (extension_loaded("imagick")) { $v = Imagick::getVersion(); echo PHP_VERSION, " | ", $v["versionString"], " | imagick ", phpversion("imagick"), PHP_EOL; } else { echo PHP_VERSION, " | imagick not loaded", PHP_EOL; }')
+    so="${php%/bin/php}/lib64/php/modules/imagick.so"
+    release=
+    if [ -f "$so" ]; then release=$(debuglink "$so"); fi
+    printf '%s: %s | %s\n' "$php" "$info" "$release"
+done
+core_found=false
+for core in /opt/alt/alt-ImageMagick/usr/lib64/libMagickCore-7.*.so.*; do
+    [ -f "$core" ] || continue
+    debuglink "$core"
+    core_found=true
+    break
+done
+if [ "$core_found" = false ]; then printf 'ImageMagick core: unavailable\n'; fi
+if [ -n "$policy_php" ]; then
+    run "$policy_php" -r 'if (!class_exists("DOMDocument")) { echo "policy: DOM unavailable", PHP_EOL; exit; } $d = new DOMDocument(); if ($d->load($argv[1], LIBXML_NONET)) { foreach ($d->getElementsByTagName("policy") as $p) { echo $d->saveXML($p), PHP_EOL; } }' "$cfg/policy.xml"
+else
+    printf 'policy: PHP unavailable\n'
+fi
+if [ -n "$policy_php" ]; then
+    run "$policy_php" -r 'if (!class_exists("DOMDocument")) { echo "delegates: DOM unavailable", PHP_EOL; exit; } $d = new DOMDocument(); if ($d->load($argv[1], LIBXML_NONET)) { foreach ($d->getElementsByTagName("delegate") as $p) { if (preg_match("/\\bgs\\b/", $p->getAttribute("command"))) { echo $d->saveXML($p), PHP_EOL; } } }' "$cfg/delegates.xml"
+fi
+run command -v gs
+REMOTE
+    _image_libs_workers_script
+    return 0
+}
+
+_image_libs_workers_script() {
+    cat <<'REMOTE'
+workers() {
+    local pid="" exe="" maps=""
+    printf '$ pgrep -u "$(id -u)" lsphp; readlink /proc/PID/exe; grep imagick.so /proc/PID/maps | sort | uniq -c\n'
+    for pid in $(pgrep -u "$(id -u)" lsphp); do
+        exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || exe='executable unavailable (worker exited or access denied)'
+        maps=$(grep -o '/[^ ]*imagick\.so\( (deleted)\)\?' "/proc/$pid/maps" 2>/dev/null | sort -u)
+        if [ -z "$maps" ]; then
+            maps='imagick mapping absent or unreadable'
+        fi
+        printf '%s | %s\n' "$exe" "$maps"
+    done | sort | uniq -c
+    return 0
+}
+workers
+exit 0
+REMOTE
+    return 0
+}
+
+_image_libs_vendor() {
+    local el="$1"
+    printf '\nCloudLinux alt-ImageMagick (%s)\n' "${el:-unknown OS}"
+    printf '$ curl -sS --fail --connect-timeout 5 --max-time 20 https://changelog.cloudlinux.com/api/packages/alt-ImageMagick | jq (newest stable/beta for %s)\n' "$el"
+    if [[ ! "$el" =~ ^el[0-9]+$ ]] || ! curl -sS --fail --connect-timeout 5 --max-time 20 \
+        https://changelog.cloudlinux.com/api/packages/alt-ImageMagick 2>/dev/null |
+        jq -er --arg el "$el" '[.versions[] | select(.os | index($el))] | sort_by(.released_at) | reverse
+            | (map(select(.channels | index("stable")))[0]), (map(select(.channels | index("beta")))[0])
+            | select(. != null) | "\(.channels | join(",")) \(.version) \(.released_at[0:10]) is_security=\(.is_security)"' 2>/dev/null; then
+        printf 'Vendor lookup unavailable (unknown OS, missing curl/jq, timeout or invalid response)\n'
+    fi
+    printf 'Ghostscript: compare the installed debug-link release with Red Hat VEX; see hostinger.md: Ghostscript fix status.\n'
+    return 0
+}
+
+image_libs_command() {
+    local alias="" vendor=false output="" el="" status=0
+    while [[ $# -gt 0 ]]; do
+        local option="$1"
+        local value="${2:-}"
+        case "$option" in
+        --ssh)
+            if [[ $# -lt 2 ]]; then break; fi
+            alias="$value"
+            shift 2
+            ;;
+        --vendor) vendor=true; shift ;;
+        *) break ;;
+        esac
+    done
+    if [[ $# -ne 0 || ! "$alias" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$ ]]; then
+        printf 'Usage: image-libs --ssh ALIAS [--vendor]\n' >&2
+        return 1
+    fi
+    # Capture stderr too: SSH diagnostics can contain the remote account name.
+    output=$(_image_libs_remote_script | ssh -o BatchMode=yes -o ConnectTimeout=15 "$alias" 'bash -s' 2>&1) || status=$?
+    printf '%s\n' "$output" | sed -E "s@(/home|/Users)/[^/[:space:]'\"]+@~@g; s/[[:alnum:]_.-]+@/@/g; s/\bu[0-9]{6,}\b/[account]/g"
+    if [[ "$vendor" = true && "$status" -eq 0 ]]; then
+        el=$(printf '%s\n' "$output" | sed -nE 's/^kernel: .*\.(el[0-9]+)([._-].*)?$/\1/p')
+        _image_libs_vendor "$el"
+    fi
+    return "$status"
+}
+
 # Main function
 main() {
     # Assign positional parameters to local variables
@@ -454,6 +583,11 @@ main() {
         cron_command "$@"
         return $?
         ;;
+    "image-libs")
+        shift
+        image_libs_command "$@"
+        return $?
+        ;;
     "help"|"-h"|"--help"|"")
         echo "Hostinger Helper Script"
         echo "Usage: $0 [command] [options]"
@@ -467,6 +601,7 @@ main() {
         echo "  wordpress-detect DOMAIN - Scan account for WordPress; bounded installation lookup"
         echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
         echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
+        echo "  image-libs --ssh ALIAS [--vendor] - Read-only Ghostscript/ImageMagick releases, policy and workers"
         echo "  help                 - $HELP_SHOW_MESSAGE"
         echo ""
         echo "Examples:"
