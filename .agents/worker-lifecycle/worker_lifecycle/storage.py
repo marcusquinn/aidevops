@@ -22,6 +22,11 @@ from .process import ProcessIdentity, ProcessObservation
 APPLICATION_ID = 0x574C4353
 SCHEMA = 2
 MAX_EVENT_BYTES = 16384
+# Ordinary work filled the original 10,000-event default within a week (GH#36620).
+# Stores still at that legacy default are lifted on their next write; other explicit
+# limits are kept. 100,000 is also the schema CHECK maximum, so no migration is needed.
+DEFAULT_MAX_EVENTS = 100000
+LEGACY_DEFAULT_MAX_EVENTS = 10000
 
 
 class StoreConflict(ValueError):
@@ -55,7 +60,7 @@ class LifecycleRegistry:
         _private(self.path)
 
     @classmethod
-    def initialize(cls, directory: Path, max_events: int = 10000) -> "LifecycleRegistry":
+    def initialize(cls, directory: Path, max_events: int = DEFAULT_MAX_EVENTS) -> "LifecycleRegistry":
         # Explicit init only. Never mkdir parents or reuse an existing directory.
         if type(max_events) is not int or not 1 <= max_events <= 100000:  # pylint: disable=unidiomatic-typecheck  # Reject bool
             raise ValueError("invalid-event-limit")
@@ -159,6 +164,21 @@ class LifecycleRegistry:
             return connection.execute("SELECT installation_id FROM metadata").fetchone()[0]
 
     @staticmethod
+    def _event_limit(connection: sqlite3.Connection, *, lift: bool = False) -> int:
+        """Return the effective journal cap; with lift, persist it for a legacy-default store.
+
+        Lifting runs inside the caller's write transaction, so it commits or rolls back
+        with the event that needed it.
+        """
+        maximum = connection.execute("SELECT max_events FROM metadata").fetchone()[0]
+        if maximum != LEGACY_DEFAULT_MAX_EVENTS:
+            return maximum
+        if lift:
+            connection.execute("UPDATE metadata SET max_events=? WHERE max_events=?",
+                               (DEFAULT_MAX_EVENTS, LEGACY_DEFAULT_MAX_EVENTS))
+        return DEFAULT_MAX_EVENTS
+
+    @staticmethod
     def _event(connection: sqlite3.Connection, event_id: str, payload: dict) -> tuple[int, bool]:
         identifier(event_id)
         value = encode(payload)
@@ -170,7 +190,7 @@ class LifecycleRegistry:
                 raise StoreConflict("event-id-payload-conflict")
             return old["sequence"], True
         count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
-        maximum = connection.execute("SELECT max_events FROM metadata").fetchone()[0]
+        maximum = LifecycleRegistry._event_limit(connection, lift=True)
         if count >= maximum:
             raise StoreCapacity("journal-event-limit-reached")
         cursor = connection.execute("INSERT INTO events(event_id,payload) VALUES (?,?)", (event_id, value))
@@ -282,7 +302,8 @@ class LifecycleRegistry:
         with self.connection() as connection:
             schema = connection.execute("PRAGMA user_version").fetchone()[0]
             count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
-            maximum = connection.execute("SELECT max_events FROM metadata").fetchone()[0]
+            # Read-only: report the limit the next write will enforce.
+            maximum = self._event_limit(connection)
             return {"mode": "observe-only", "runs": dict(connection.execute("SELECT state,count(*) FROM runs GROUP BY state").fetchall()),
                     "schema_version": schema, "upgrade_required": schema < SCHEMA,
                     "events": count, "event_limit": maximum,
