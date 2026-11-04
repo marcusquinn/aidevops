@@ -15,7 +15,8 @@ from worker_lifecycle.integration_validation import ReportResult
 from worker_lifecycle.process import ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.registry import reconcile
-from worker_lifecycle.storage import LifecycleRegistry, StoreCapacity
+from worker_lifecycle.storage import (DEFAULT_MAX_EVENTS, LEGACY_DEFAULT_MAX_EVENTS, LifecycleRegistry,
+                                      StoreCapacity)
 
 
 class EventContract(unittest.TestCase):
@@ -42,6 +43,35 @@ class EventContract(unittest.TestCase):
         with self.assertRaises(StoreCapacity):
             ingest(self.store, json.dumps(self.envelope(os.getpid())))
         self.assertEqual(self.store.summary(), before)
+
+    def stored_limit(self):
+        with self.store.connection() as connection:
+            return connection.execute("SELECT max_events FROM metadata").fetchone()[0]
+
+    def test_new_store_defaults_to_raised_limit(self):
+        store = LifecycleRegistry.initialize(Path(self.temp.name).resolve() / "default")
+        self.assertEqual(store.summary()["event_limit"], DEFAULT_MAX_EVENTS)
+
+    def test_full_legacy_default_store_is_lifted_on_next_write(self):
+        # GH#36620: one bulk transaction reaches the legacy cap without 10,000 fsyncs.
+        with self.store.connection(write=True) as connection:
+            connection.executemany("INSERT INTO events(event_id,payload) VALUES (?,?)",
+                                   [(str(uuid4()), "{}") for _ in range(LEGACY_DEFAULT_MAX_EVENTS)])
+            connection.execute("UPDATE metadata SET max_events=?", (LEGACY_DEFAULT_MAX_EVENTS,))
+        before = self.store.summary()
+        self.assertEqual((before["events"], before["event_limit"], before["journal_full"]),
+                         (LEGACY_DEFAULT_MAX_EVENTS, DEFAULT_MAX_EVENTS, False))
+        self.assertEqual(self.stored_limit(), LEGACY_DEFAULT_MAX_EVENTS, "status must not write")
+        ingest(self.store, json.dumps(self.envelope(os.getpid())))
+        self.assertEqual(self.store.summary()["events"], LEGACY_DEFAULT_MAX_EVENTS + 1)
+        self.assertEqual(self.stored_limit(), DEFAULT_MAX_EVENTS)
+
+    def test_explicit_limit_is_not_lifted(self):
+        for _ in range(3):
+            ingest(self.store, json.dumps(self.envelope(os.getpid())))
+        with self.assertRaises(StoreCapacity):
+            ingest(self.store, json.dumps(self.envelope(os.getpid())))
+        self.assertEqual((self.stored_limit(), self.store.summary()["event_limit"]), (3, 3))
 
     def test_observation_at_capacity_cannot_partially_end_run(self):
         events = [self.envelope(os.getpid()) for _ in range(3)]
