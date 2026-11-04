@@ -88,6 +88,7 @@ describe("GPT image OpenCode tool", () => {
     const output = await tool.execute({ prompt: "draw a test", out: "generated/test.png", quality: "low" });
     assert.equal(calls, 1);
     assert.match(output, /ChatGPT subscription OAuth/);
+    assert.match(output, /OAuth router model: gpt-6-sol/);
     assert.match(output, /generated\/test\.png/);
     assert.match(output, /Requested size: auto; native dimensions: 1x1/);
     assert.match(output, /Requested image model: provider-managed; provider-confirmed image model: unknown/);

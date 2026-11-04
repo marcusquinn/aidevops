@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.118] - 2026-11-04
+
+### Added
+
+- report scrubbed fetch/prune failure cause (#36619)
+
+### Fixed
+
+- raise journal event cap to 100,000 and lift legacy 10,000 stores
+- reuse round login in capability-cooldown import (GH#36616) (#36621)
+- bind remote-branch cleanup PR evidence to tip SHA
+- add dispatch pre-stage margin so admitted candidates clear the stage floor
+
 ## [3.39.117] - 2026-11-04
 
 ### Fixed
