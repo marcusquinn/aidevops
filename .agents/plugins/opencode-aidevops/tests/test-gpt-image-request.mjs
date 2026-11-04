@@ -172,7 +172,8 @@ describe("GPT image provider requests", () => {
     const body = JSON.parse(captured.init.body);
     assert.equal(captured.url, "https://chatgpt.com/backend-api/codex/responses");
     assert.equal(captured.init.headers.Authorization, "Bearer oauth-test-token");
-    assert.equal(body.model, "gpt-6.1-sol");
+    assert.equal(body.model, "gpt-6-sol");
+    assert.equal(result.routerModel, "gpt-6-sol");
     assert.equal(body.tools[0].type, "image_generation");
     assert.equal(body.tools[0].output_format, "webp");
     assert.equal(body.tools[0].size, "1024x1024");
@@ -199,7 +200,7 @@ describe("GPT image provider requests", () => {
     assert.equal(Object.hasOwn(captured.tools[0], "size"), false);
   });
 
-  test("retries OAuth image generation once with the next routed model", async () => {
+  test("does not retry a rejected OAuth router with unsupported workload aliases", async () => {
     const models = [];
     const event = `data: ${JSON.stringify({
       type: "response.output_item.done",
@@ -217,8 +218,8 @@ describe("GPT image provider requests", () => {
         return new Response(event, { status: 200 });
       },
     );
-    assert.deepEqual(models, ["gpt-6.1-sol", "gpt-6.1-terra"]);
-    assert.equal(result.base64, IMAGE_RESULT);
+    assert.deepEqual(models, ["gpt-6-sol"]);
+    assert.equal(result.error.code, "model_not_found");
   });
 
   test("does not retry non-model OAuth errors", async () => {
