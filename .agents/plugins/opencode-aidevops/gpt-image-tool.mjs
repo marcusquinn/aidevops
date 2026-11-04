@@ -127,7 +127,9 @@ async function executeImageGeneration(rawArgs, options, context) {
   if (!result.response.ok) throw result.error;
 
   const saved = await saveGeneratedImage(args.out, project.root, result.base64, args.format, {
-    requestedSize: args.size,
+    // Codex size is best-effort; keep native raster validation and secure writes.
+    // Platform API requests retain exact-size enforcement before publication.
+    requestedSize: auth.mode === "api" ? args.size : "auto",
     scriptsDir: options.scriptsDir,
     spawnImpl: options.imageWriterSpawn,
   });
@@ -139,7 +141,10 @@ async function executeImageGeneration(rawArgs, options, context) {
   const requestedModel = result.requestedModel || "provider-managed";
   const providerModel = result.providerModel || "unknown";
   const routerNote = result.routerModel ? ` OAuth router model: ${result.routerModel}.` : "";
-  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}.${routerNote} Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${versionNote}${cleanupNote}`;
+  const sizeNote = auth.mode === "oauth" && args.size !== "auto" && args.size !== dimensions
+    ? ` Warning: OAuth size is best-effort; the provider returned ${dimensions} rather than ${args.size}. Saved native output without resizing.`
+    : "";
+  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}.${routerNote} Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${sizeNote}${versionNote}${cleanupNote}`;
 }
 
 export function createGptImageTool(tool, z, options = {}) {
@@ -154,7 +159,7 @@ export function createGptImageTool(tool, z, options = {}) {
       out: z.string().describe("Project-relative output path with an extension matching format."),
       format: z.enum(["png", "jpeg", "webp"]).optional().describe("Native output format; defaults to png."),
       quality: z.enum(["low", "medium", "high", "auto"]).optional().describe("OpenAI image quality; defaults to auto."),
-      size: z.string().optional().describe("auto or WIDTHxHEIGHT satisfying supported OpenAI image constraints."),
+      size: z.string().optional().describe("auto or WIDTHxHEIGHT satisfying OpenAI image constraints. OAuth size is best-effort: native output is saved without resizing and any mismatch is reported. API sizes are enforced exactly."),
       workdir: z.string().optional().describe("Optional absolute path to the current session-owned linked worktree."),
       images: z.array(z.string()).optional().describe("Optional project-relative PNG, JPEG, or WebP reference image paths."),
       auth: z.enum(["oauth", "api"]).optional().describe("Billing route; defaults to ChatGPT OAuth. API must be explicit."),
