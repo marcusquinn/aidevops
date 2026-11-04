@@ -31,6 +31,7 @@ test("installed guard falls back once only for definite Codex model rejections",
       { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, retry: true },
       { url: codex, status: 400, payload: { detail: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account." }, retry: true, request: true },
       { url: codex, status: 404, payload: { error: { code: "model_not_found" } }, retry: true, final: 429 },
+      { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, retry: true, inherited: true },
       { url: "https://api.openai.com/v1/responses", status: 400, payload: { error: { code: "model_not_found" } } },
       { url: codex, status: 403, payload: { error: { code: "permission_denied" } } },
       { url: codex, status: 400, payload: { error: { code: "invalid_request_error" } } },
@@ -49,11 +50,15 @@ test("installed guard falls back once only for definite Codex model rejections",
         assert.equal(h.get("authorization"), headers.authorization);
         assert.equal(h.get("chatgpt-account-id"), headers["chatgpt-account-id"]);
         assert.equal(init?.signal ?? input.signal, controller.signal);
+        const normalized = new Request(input, init);
+        assert.equal(normalized.method, "POST");
+        assert.equal(normalized.credentials, "omit");
         return Response.json(calls.length === 1 ? scenario.payload : { ok: true }, { status: calls.length === 1 ? scenario.status : scenario.final || 200 });
       };
       const { installOpenAIProviderFetchRotation } = await import("./openai-provider-auth.mjs?fallback=" + Math.random());
       installOpenAIProviderFetchRotation({});
-      const init = { method: "POST", headers, body: JSON.stringify(original), signal: controller.signal };
+      const options = { method: "POST", headers, body: JSON.stringify(original), signal: controller.signal, credentials: "omit" };
+      const init = scenario.inherited ? Object.create(options) : options;
       const response = scenario.request
         ? await fetch(new Request(scenario.url, init), { signal: controller.signal })
         : await fetch(scenario.url, init);

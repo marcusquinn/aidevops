@@ -234,10 +234,9 @@ async function handleOpenAIProviderFetch({ client, originalFetch, input, init })
   const firstKind = firstInit === prepared.init ? "initial" : "preflight-rotate";
   try {
     ctx.response = await recordAttempt(ctx.attempts, firstKind, () => originalFetch(prepared.input, firstInit));
-    ctx.response = await retryCodexModelRejection(ctx.response, retryInput, {
-      ...init,
+    ctx.response = await retryCodexModelRejection(ctx.response, retryInput, extendRequestInit(init, {
       headers: headersFrom(prepared.input, firstInit),
-    }, fallbackBody, (retry, retryInit) => recordAttempt(ctx.attempts, "model-fallback", () => originalFetch(retry, retryInit)));
+    }), fallbackBody, (retry, retryInit) => recordAttempt(ctx.attempts, "model-fallback", () => originalFetch(retry, retryInit)));
     // A fallback is the one retry for this rejection; surface its outcome.
     if (ctx.attempts.at(-1)?.kind === "model-fallback") return ctx.response;
     if (await isOpenAIUsageLimitResponse(ctx.response)) return await handleOpenAIUsageLimit(ctx);
