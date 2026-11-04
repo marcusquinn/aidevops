@@ -27,6 +27,8 @@ test("installed guard falls back once only for definite Codex model rejections",
     const logs = [];
     console.error = (...args) => logs.push(args.join(" "));
     const codex = "https://chatgpt.com/backend-api/codex/responses";
+    const parse = JSON.parse;
+    const requestText = Request.prototype.text;
     for (const scenario of [
       { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, retry: true },
       { url: codex, status: 400, payload: { detail: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account." }, retry: true, request: true },
@@ -41,8 +43,23 @@ test("installed guard falls back once only for definite Codex model rejections",
       const calls = [];
       const controller = new AbortController();
       const original = { model: scenario.model || "gpt-6.1-sol", input: "private prompt", stream: true, store: false };
+      const serialized = JSON.stringify(original);
+      let bodyParses = 0;
+      let bodyReads = 0;
+      JSON.parse = (text, ...args) => {
+        if (text === serialized) bodyParses++;
+        return parse(text, ...args);
+      };
+      Request.prototype.text = function () {
+        bodyReads++;
+        return requestText.call(this);
+      };
       const headers = { authorization: "Bearer test-secret", "chatgpt-account-id": "test-account", "content-type": "application/json" };
       globalThis.fetch = async (input, init) => {
+        if (calls.length === 0) {
+          assert.equal(bodyParses, 1, "only request preparation parses the body before first fetch");
+          assert.equal(bodyReads, scenario.request ? 1 : 0, "fallback must not read Request bodies before rejection");
+        }
         const h = new Headers(init?.headers ?? input.headers);
         const raw = init?.body ?? await input.text();
         const body = JSON.parse(h.get("content-encoding") === "zstd" ? zstdDecompressSync(raw).toString() : raw);
@@ -62,6 +79,8 @@ test("installed guard falls back once only for definite Codex model rejections",
       const response = scenario.request
         ? await fetch(new Request(scenario.url, init), { signal: controller.signal })
         : await fetch(scenario.url, init);
+      JSON.parse = parse;
+      Request.prototype.text = requestText;
       assert.equal(calls.length, scenario.retry ? 2 : 1);
       assert.deepEqual(calls[0], original);
       if (scenario.retry) assert.deepEqual(calls[1], { ...original, model: "gpt-6-sol" });
