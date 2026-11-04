@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+# Explicit --repo selection must win over inherited repository context, including
+# during transport creation and read-only queries before transport Git calls.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
