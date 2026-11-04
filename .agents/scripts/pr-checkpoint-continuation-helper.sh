@@ -698,8 +698,10 @@ _pcc_normalise_hidden_unedited() {
 	local raw="$1" ids="" chunk="" resp="" clean="[]" id=""
 	local query="query(\$ids: [ID!]!) { nodes(ids: \$ids) { ... on IssueComment { id lastEditedAt } } }"
 	local -a args=()
+	# GH#36622: portable 50-ID chunking; jq 1.8 removed the internal _nwise.
 	ids=$(jq -r '[flatten[] | select((.updated_at // .created_at) != .created_at and
-		((.node_id // empty) | test("^[A-Za-z0-9_=-]+$"))) | .node_id] | unique | _nwise(50) | join(" ")' \
+		((.node_id // empty) | test("^[A-Za-z0-9_=-]+$"))) | .node_id] | unique | . as $a |
+		range(0; length; 50) | $a[.:.+50] | join(" ")' \
 		<<<"$raw" 2>/dev/null) || ids=""
 	if [[ -z "$ids" ]]; then
 		printf '%s' "$raw"
