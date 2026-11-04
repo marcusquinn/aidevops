@@ -1540,6 +1540,7 @@ _dispatch_attempt_recency_stamps() {
 # attempts 3:1 between urgent retries and fresh rank-0 work, so a blocked urgent
 # backlog cannot consume the whole first wave (GH#36712). Each stream retains
 # tier/oldest-attempt/incoming-rank order; unused share is borrowed immediately.
+# Each shared slot starts with fresh work, including waves of fewer than four attempts.
 # Rank-0 retries remain last. Fails open: any state or jq error returns the input
 # unchanged. "Fresh" means no stamp inside the runner-local recency window.
 #
@@ -1567,8 +1568,8 @@ _dispatch_order_attempt_recency_candidates() {
 		($sorted | map(select(.tier <= 0 and .at != null))) as $tail |
 		($rows | map(select(.at != null)) | length),
 		(($urgent +
-			(([$retries | to_entries[] | {slot: ((.key / 3) | floor), stream: 0, i: .key, row: .value}] +
-			  [$fresh | to_entries[] | {slot: .key, stream: 1, i: .key, row: .value}]) |
+			(([$retries | to_entries[] | {slot: ((.key / 3) | floor), stream: 1, i: .key, row: .value}] +
+			  [$fresh | to_entries[] | {slot: .key, stream: 0, i: .key, row: .value}]) |
 			 sort_by([.slot, .stream, .i]) | map(.row)) + $tail) | map(.c))
 	' <<<"$candidates_json" 2>/dev/null) || ! { IFS= read -r demoted && IFS= read -r ordered; } <<<"$result" ||
 		[[ ! "$demoted" =~ ^[1-9][0-9]*$ || -z "$ordered" ]]; then

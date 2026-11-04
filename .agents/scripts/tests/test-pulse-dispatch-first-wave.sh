@@ -255,13 +255,53 @@ now=$(date +%s)
 for ((issue = 1; issue <= 30; issue++)); do
 	_dispatch_attempt_recency_stamp "$issue" owner/urgent "$((now - 100 + issue))"
 done
-backlog=$(jq -nc '[range(1;31) | {number:., repo_slug:"owner/urgent", priority_rank:1}]
-	+ [{number:100, repo_slug:"owner/small", priority_rank:0}]')
+# Exercise the real census: urgent retries fill the numerical target in the
+# first repository, but must not stop discovery of fresh work in the next one.
+jq -n '{initialized_repos:["owner/urgent","owner/small"] | map({slug:.,path:"/fixture",pulse:true})}' >"$REPOS_JSON"
+rm -f "${HOME}/.aidevops/cache/pulse-first-wave-cursor"
+pulse_campaign_shadow_candidates_json() {
+	local slug="$1"
+	printf 'scan:%s\n' "$slug" >>"$EVENTS"
+	advance_clock 5
+	if [[ "$slug" == owner/urgent ]]; then
+		jq -nc '[range(1;31) | {number:.,labels:["priority:high","auto-dispatch","status:available"]}]'
+	else
+		printf '[{"number":100,"labels":["auto-dispatch","status:available"]}]\n'
+	fi
+	return 0
+}
+: >"$EVENTS"
+backlog=$(_PULSE_FIRST_DISPATCH_WAVE=1 _PULSE_FIRST_WAVE_CANDIDATE_TARGET=6 build_ranked_dispatch_candidates_json 50 skip)
+[[ "$(tr '\n' ';' <"$EVENTS")" == 'scan:owner/urgent;scan:owner/small;' ]]
+jq -e 'length == 31 and any(.[]; .repo_slug == "owner/small" and .priority_rank == 0)' <<<"$backlog" >/dev/null
 ordered=$(_dispatch_order_round_candidates "$backlog" 6)
-jq -e 'length == 31 and .[3].repo_slug == "owner/small"
+jq -e 'length == 31 and .[0].repo_slug == "owner/small"
 	and ([.[] | select(.priority_rank == 1) | .number] == [range(1;31)])' <<<"$ordered" >/dev/null
 [[ "$(jq -c 'sort_by(.repo_slug, .number)' <<<"$ordered")" == "$(jq -c 'sort_by(.repo_slug, .number)' <<<"$backlog")" ]]
-printf 'PASS fresh rank-0 candidate reaches attempt four ahead of thirty urgent retries; no candidates lost\n'
+printf 'PASS census discovers fresh rank-0 work beyond thirty urgent retries; fresh work leads shared attempts\n'
+
+# Drive the production serial loop with isolated candidate I/O and a three-
+# attempt budget, smaller than one four-attempt sharing slot.
+# shellcheck source=../pulse-dispatch-lib.sh
+source "${SCRIPT_DIR}/pulse-dispatch-lib.sh"
+_DISPATCH_THROTTLE_CLEARED=0
+_dispatch_graphql_budget_allows_next() {
+	if [[ "$(wc -l <"$EVENTS")" -lt 3 ]]; then return 0; fi
+	return 1
+}
+_dispatch_process_candidate() {
+	local candidate="$1" number=""
+	number=$(jq -r '.number' <<<"$candidate")
+	printf 'attempt:%s\n' "$number" >>"$EVENTS"
+	[[ "$number" == 100 ]] || return 1
+	return 0
+}
+jq -c '.[]' <<<"$ordered" >"${TEST_ROOT}/ordered.jsonl"
+: >"$EVENTS"
+result=$(_dispatch_floor_loop "${TEST_ROOT}/ordered.jsonl" 6 6 fixture-login)
+[[ "$result" == '1 4' ]]
+[[ "$(tr '\n' ';' <"$EVENTS")" == 'attempt:100;attempt:1;attempt:2;' ]]
+printf 'PASS first-wave serial dispatch attempts fresh work with only three attempts available\n'
 
 # Fresh urgent work still strictly leads, including across urgent tiers. More
 # fresh ordinary work receives one in four attempts after that urgent prefix.
@@ -271,18 +311,31 @@ mixed=$(jq -c '. + [range(101;105) | {number:., repo_slug:"owner/small", priorit
 ordered=$(_dispatch_order_round_candidates "$mixed" 20)
 jq -e '[.[0:2][].number] == [201,200]
 	and ([.[2:22][] | select(.priority_rank == 0) | .number] == [100,101,102,103,104])
-	and ([.[2:6][].number] == [1,2,3,100])' <<<"$ordered" >/dev/null
+	and ([.[2:6][].number] == [100,1,2,3])' <<<"$ordered" >/dev/null
 printf 'PASS fresh urgent tiers lead strictly, then fresh rank-0 work gets a quarter of attempts\n'
+
+# Debt fairness is an intentional outer policy, not a recency exemption.
+debt=$(jq -c 'map(if .number == 1 or .number == 100 then
+	.labels = ["quality-debt","source:review-feedback"] else . end)' <<<"$backlog")
+ordered=$(QUALITY_DEBT_CAP_PCT=30 _dispatch_order_round_candidates "$debt" 6)
+jq -e '.[0].number == 100 and .[-1].number == 1
+	and ([.[0:6][] | select((.labels // [] | index("quality-debt")) != null)] | length) == 1' <<<"$ordered" >/dev/null
+debt=$(jq -c '. + [{number:200,repo_slug:"owner/high",priority_rank:1,
+	labels:["quality-debt","source:review-feedback"]}]' <<<"$debt")
+ordered=$(QUALITY_DEBT_CAP_PCT=30 _dispatch_order_round_candidates "$debt" 6)
+jq -e '.[0].number == 200 and .[-2].number == 100 and .[-1].number == 1
+	and ([.[0:6][] | select((.labels // [] | index("quality-debt")) != null)] | length) == 1' <<<"$ordered" >/dev/null
+printf 'PASS debt cap still governs fresh rank-0 review debt after recency sharing\n'
 
 # Preserve soft-state behavior: attempted ordinary work remains behind fresh
 # ordinary work, confirmed launch clears a stamp, expiry and disable fail open.
 _dispatch_attempt_recency_stamp 100 owner/small "$((now - 20))"
 ordered=$(_dispatch_order_round_candidates "$mixed" 20)
-jq -e '.[5].number == 101 and .[-1].number == 100' <<<"$ordered" >/dev/null
+jq -e '.[2].number == 101 and .[-1].number == 100' <<<"$ordered" >/dev/null
 _dispatch_attempt_recency_clear 100 owner/small
 _dispatch_attempt_recency_clear 1 owner/urgent
 ordered=$(_dispatch_order_round_candidates "$backlog" 6)
-jq -e '.[0].number == 1 and .[4].number == 100' <<<"$ordered" >/dev/null
+jq -e '.[0].number == 1 and .[1].number == 100' <<<"$ordered" >/dev/null
 [[ "$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=0 _dispatch_order_round_candidates "$backlog" 6)" == "$backlog" ]]
 [[ "$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=1 _dispatch_order_round_candidates "$backlog" 6)" == "$backlog" ]]
 printf 'PASS ordinary retries, launch clearing, disabled rotation and expired stamps preserve recency semantics\n'
