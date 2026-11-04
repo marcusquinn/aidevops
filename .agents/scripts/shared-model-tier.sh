@@ -202,9 +202,9 @@ model_tier_candidates() {
 	fi
 
 	case "$tier" in
-	simple) printf '%s\n' "openai/gpt-6-luna" "anthropic/claude-haiku-5-5" ;;
-	standard) printf '%s\n' "openai/gpt-6.1-sol" "openai/gpt-6.1-terra" "zai-coding-plan/glm-5.2" "anthropic/claude-sonnet-5-5" ;;
-	thinking) printf '%s\n' "openai/gpt-6.1-sol" "anthropic/claude-opus-5-5" ;;
+	simple) printf '%s\n' "anthropic/claude-haiku-5-5" "openai/gpt-6-luna" ;;
+	standard) printf '%s\n' "anthropic/claude-sonnet-5-5" "openai/gpt-6.1-sol" "openai/gpt-6.1-terra" "opencode-go/deepseek-v4.1-flash" ;;
+	thinking) printf '%s\n' "anthropic/claude-opus-5-5" "openai/gpt-6.1-sol" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -645,6 +645,7 @@ get_model_pricing() {
 	*gemini-2.5-flash*) echo "0.15|0.60|0.0375|0.15" ;;
 	*gemini-3-pro*) echo "1.25|10.0|0.3125|2.50" ;;
 	*gemini-3-flash*) echo "0.10|0.40|0.025|0.10" ;;
+	*deepseek-v4.1-flash*) echo "0.15|0.60|0.003|0" ;;
 	*deepseek-r1*) echo "0.55|2.19|0.14|0.55" ;;
 	*deepseek-v3*) echo "0.27|1.10|0.07|0.27" ;;
 	*) echo "$fallback_default_pricing" ;;
@@ -659,6 +660,7 @@ get_provider_from_model() {
 	gpt-* | openai/*) echo "openai" ;;
 	gemini-* | google/*) echo "google" ;;
 	deepseek-* | deepseek/*) echo "deepseek" ;;
+	opencode-go/*) echo "opencode-go" ;;
 	grok-* | xai/*) echo "xai" ;;
 	*) echo "unknown" ;;
 	esac

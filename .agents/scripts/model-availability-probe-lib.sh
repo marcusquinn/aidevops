@@ -754,7 +754,7 @@ probe_provider() {
 		_probe_opencode "$quiet"
 		return $?
 	fi
-	if [[ "$provider" == "zai-coding-plan" ]]; then
+	if [[ "$provider" == "zai-coding-plan" || "$provider" == "opencode-go" ]]; then
 		_probe_opencode_subscription_provider "$provider" "$quiet"
 		return $?
 	fi

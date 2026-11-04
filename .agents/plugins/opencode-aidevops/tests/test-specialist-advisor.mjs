@@ -23,10 +23,10 @@ const envelope = JSON.stringify({
   output: "Propose an invariant and parent-verifiable check",
 });
 
-test("shipped routes keep Sol medium in charge and Astra outside automatic escalation", () => {
-  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "high" });
-  assert.deepEqual(routingProfile(routing, "standard"), { tier: "standard", model: "openai/gpt-6.1-sol", variant: "medium" });
-  assert.deepEqual(routingProfile(routing, "thinking"), { tier: "thinking", model: "openai/gpt-6.1-sol", variant: "medium" });
+test("shipped routes keep Anthropic primary and Astra outside automatic escalation", () => {
+  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "anthropic/claude-haiku-5-5", variant: "high" });
+  assert.deepEqual(routingProfile(routing, "standard"), { tier: "standard", model: "anthropic/claude-sonnet-5-5", variant: "medium" });
+  assert.deepEqual(routingProfile(routing, "thinking"), { tier: "thinking", model: "anthropic/claude-opus-5-5", variant: "high" });
   assert.equal(nextRoutingTier(routing, "thinking"), "");
   assert.deepEqual(routing.specialistAdvisor, { model: "openai/gpt-6-astra", variant: "medium" });
   assert.equal(mergeModelRouting(routing, { specialist_advisor: null }).specialistAdvisor, null);
@@ -36,7 +36,7 @@ test("shipped routes keep Sol medium in charge and Astra outside automatic escal
   assert.deepEqual(routingProfile(partial, "standard"), {
     tier: "standard", model: "openai/gpt-6.1-terra", variant: "medium",
   });
-  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "high" });
+  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "anthropic/claude-haiku-5-5", variant: "high" });
 });
 
 test("policy requires one bounded highest-capability consultation before an avoidable user decision", () => {
@@ -58,8 +58,8 @@ test("registration supplies canonical tool-free adviser and defaults without rep
   const state = { tiers: new Map(), pinned: new Set() };
   const config = { agent: { "Build+": { mode: "primary" } } };
   registerAgents(config, agentsDir, routing, state);
-  assert.equal(config.model, "openai/gpt-6.1-sol");
-  assert.equal(config.agent["Build+"].variant, "medium");
+  assert.equal(config.model, "anthropic/claude-opus-5-5");
+  assert.equal(config.agent["Build+"].variant, "high");
   const advisor = config.agent["specialist-advisor"];
   assert.equal(advisor.model, "openai/gpt-6-astra");
   assert.equal(advisor.variant, "medium");

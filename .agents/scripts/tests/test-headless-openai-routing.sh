@@ -111,31 +111,11 @@ test_standard_alternatives_are_scoped() {
 	local routing_table="${SCRIPT_DIR}/../../configs/model-routing-table.json"
 	local models=""
 	models=$(jq -r '.tiers.standard.models[]' "$routing_table")
-	if printf '%s\n' "$models" | grep -qx 'zai-coding-plan/glm-5.2' &&
-		! printf '%s\n' "$models" | grep -qx 'zai/glm-5.2'; then
-		print_result "Standard tier includes coding-plan GLM-5.2 but excludes direct Z.AI" 0
+	if ! printf '%s\n' "$models" | grep -q '^zai'; then
+		print_result "Standard tier ships no Z.AI GLM candidate" 0
 		return 0
 	fi
-	print_result "Standard tier includes coding-plan GLM-5.2 but excludes direct Z.AI" 1
-	return 0
-}
-
-test_coding_plan_requires_provider_auth() {
-	printf '{"openai":{"type":"oauth","access":"test-openai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
-	local selected=""
-	selected=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=zai-coding-plan bash "$HELPER_SCRIPT" select --role worker --tier standard 2>/dev/null || true)
-	if [[ -n "$selected" ]]; then
-		print_result "Coding-plan GLM requires provider-specific auth" 1 "Unexpected model without coding-plan auth: ${selected}"
-		return 0
-	fi
-
-	printf '{"zai-coding-plan":{"type":"oauth","access":"test-zai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
-	selected=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=zai-coding-plan bash "$HELPER_SCRIPT" select --role worker --tier standard 2>/dev/null || true)
-	if [[ "$selected" == "zai-coding-plan/glm-5.2" ]]; then
-		print_result "Coding-plan GLM requires provider-specific auth" 0
-		return 0
-	fi
-	print_result "Coding-plan GLM requires provider-specific auth" 1 "Expected zai-coding-plan/glm-5.2, got ${selected:-<empty>}"
+	print_result "Standard tier ships no Z.AI GLM candidate" 1
 	return 0
 }
 
@@ -146,7 +126,6 @@ main_test() {
 	test_openai_allowlist_selects_thinking_tier_model
 	test_openai_allowlist_requires_openai_auth_entry
 	test_standard_alternatives_are_scoped
-	test_coding_plan_requires_provider_auth
 	teardown_test_env
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

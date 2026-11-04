@@ -111,8 +111,9 @@ get_auth_signature() {
 			auth_material="${auth_material}|status=${auth_status}|mtime=${auth_mtime}|env=missing"
 		fi
 		;;
-	opencode)
-		# Gateway models use OpenCode's OAuth session
+	opencode | opencode-go | zai-coding-plan)
+		# Gateway and OpenCode-managed subscription providers use auth.json;
+		# its mtime changes on re-auth, which clears stale backoff.
 		local auth_mtime
 		auth_mtime=$(file_mtime "$OPENCODE_AUTH_FILE")
 		auth_material="${auth_material}|mtime=${auth_mtime}"
@@ -149,8 +150,9 @@ provider_auth_available() {
 		fi
 		return 1
 		;;
-	zai-coding-plan)
-		# Z.AI Coding Plan is an OpenCode-managed subscription provider.
+	zai-coding-plan | opencode-go)
+		# OpenCode-managed subscription providers (Z.AI Coding Plan, OpenCode Go)
+		# need their own auth.json entry; never assume availability.
 		opencode_auth_has_provider "$provider"
 		return $?
 		;;
