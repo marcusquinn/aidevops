@@ -140,7 +140,8 @@ def _kept_evidence(dead, now, supersede):
 def _mark_failed(descriptor, error):
     """Record only a fixed-format reason; never raw stderr, paths or object IDs."""
     reason = type(error).__name__
-    if isinstance(error, ValueError) and re.fullmatch(r'[a-z_-]{1,40}:[ -~]{1,300}', str(error)):
+    # 600 fits the 482-character guidance of MISSING_PROMISOR_BASE (GH#36607).
+    if isinstance(error, ValueError) and re.fullmatch(r'[a-z_-]{1,40}:[ -~]{1,600}', str(error)):
         reason = str(error)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
     try:

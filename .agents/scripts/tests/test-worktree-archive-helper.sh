@@ -298,6 +298,46 @@ test_failed_capture_leaves_no_archive() {
 	return 0
 }
 
+# GH#36607: a merged/pushed worktree's commits are already on the remote. The
+# archive omits the HEAD bundle, records the published head and still restores.
+test_published_archive_has_no_bundle() {
+	local paths canonical worktree root archive target head_sha state rc=0
+	paths=$(setup_repo published) || return 1
+	IFS=$'\t' read -r canonical worktree <<<"$paths"
+	root="$TEST_ROOT/published-archives"
+	printf 'published\n' >>"$worktree/file.txt"
+	git -C "$worktree" commit -qam published || return 1
+	git -C "$worktree" push -q -u origin feature/archive || return 1
+	head_sha=$(git -C "$worktree" rev-parse HEAD) || return 1
+	archive=$(bash "$HELPER" archive "$worktree" --repo owner/repo --issue 40 \
+		--reason post-pr-cleanup --base-branch main --output-root "$root") || return 1
+	[[ ! -e "$archive/commits.bundle" ]] || rc=1
+	state=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["remote_branch_state"], m["dirty_state"], m["head_sha"])' "$archive/manifest.json") || rc=1
+	[[ "$state" == "published clean $head_sha" ]] || rc=1
+	bash "$HELPER" verify "$archive" >/dev/null || rc=1
+	bash "$HELPER" verify-local "$archive" >/dev/null || rc=1
+	target="$TEST_ROOT/published-restored"
+	bash "$HELPER" restore "$archive" --target "$target" >/dev/null || rc=1
+	[[ "$(git -C "$target" rev-parse HEAD)" == "$head_sha" ]] || rc=1
+	grep -q '^published$' "$target/file.txt" || rc=1
+	# Unpushed work keeps the base-relative bundle.
+	printf 'local only\n' >>"$worktree/file.txt"
+	git -C "$worktree" commit -qam unpushed || return 1
+	archive=$(bash "$HELPER" archive "$worktree" --repo owner/repo --issue 41 \
+		--reason post-pr-cleanup --base-branch main --output-root "$root") || return 1
+	[[ -s "$archive/commits.bundle" ]] || rc=1
+	grep -q '"remote_branch_state": "unpublished"' "$archive/manifest.json" || rc=1
+	git -C "$worktree" reset -q --hard HEAD~1 || return 1
+	# Local verification gates removal: a published head that is no longer on
+	# any remote-tracking ref is refused rather than trusted.
+	archive=$(bash "$HELPER" archive "$worktree" --repo owner/repo --issue 42 \
+		--reason post-pr-cleanup --base-branch main --output-root "$root") || return 1
+	git -C "$canonical" update-ref -d refs/remotes/origin/feature/archive || return 1
+	if bash "$HELPER" verify-local "$archive" >/dev/null 2>&1; then rc=1; fi
+	result "published worktree archives omit the bundle and restore the pushed head" "$rc"
+	return 0
+}
+
 test_invalid_arguments() {
 	local paths canonical worktree rc=0
 	paths=$(setup_repo invalid) || return 1
@@ -319,6 +359,7 @@ test_verify_detects_tamper
 test_source_matches_detects_late_writes
 test_prune_modes
 test_failed_capture_leaves_no_archive || result "failed-capture fixture setup" 1
+test_published_archive_has_no_bundle || result "published-archive fixture setup" 1
 test_invalid_arguments
 
 printf '%s tests, %s failures\n' "$TESTS_RUN" "$TESTS_FAILED"

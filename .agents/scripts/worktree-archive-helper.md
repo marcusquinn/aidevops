@@ -73,7 +73,7 @@ The path is `<root>/<owner>__<repo>/<issue>/<UTC timestamp>/`:
 | Artifact | Purpose |
 |---|---|
 | `manifest.json` | Schema, source and Git metadata, artifact sizes/SHA-256 hashes, and restore command |
-| `commits.bundle` | Incremental Git bundle when `HEAD` contains commits beyond the exact base SHA |
+| `commits.bundle` | Incremental Git bundle when `HEAD` contains commits beyond the exact base SHA that no remote-tracking ref reaches; omitted for published heads |
 | `diff.patch` | Binary-safe unstaged tracked changes; present even when empty |
 | `staged.patch` | Binary-safe staged changes; present even when empty |
 | `untracked-files.txt` | Human-readable escaped inventory; present even when empty |
@@ -81,6 +81,8 @@ The path is `<root>/<owner>__<repo>/<issue>/<UTC timestamp>/`:
 | `failure.log` | Optional final 256 KiB excerpt supplied with `--failure-log` |
 
 The manifest records the repository, issue, reason, creation time, source worktree, source Git common directory, branch, `HEAD`, base branch and exact base SHA, default branch, remote branch state, dirty state, artifacts, and restore instructions. `verify` rejects missing, changed, or unsafe artifacts.
+
+`remote_branch_state` (GH#36607) is `published` when `HEAD` differs from the base, the index has no merge in progress, and every commit since the base is reachable from a `refs/remotes/` ref; `unpublished` when some commit is not; `unknown` otherwise (including `HEAD` equal to the base). A published archive stores no bundle and its patches apply on the recorded head, so the capacity estimate counts no commit payload. `verify-local` requires that head and its complete graph in the shared repository and still on a remote-tracking ref; otherwise removal is refused. Restore imports a missing published head only through the same explicitly authorized origin fetch as base recovery (`AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE`); there is no implicit network access.
 
 Historical self-contained archives include a complete `HEAD` ancestry bundle, including
 when HEAD equals the base. Verification checks it in an empty repository rather
@@ -134,6 +136,20 @@ provisioning is separate and must use the restored lockfiles, not the base versi
 
 Existing receipts keep their original policy; retries never silently downgrade
 them. Legacy readers and already-captured transaction recovery remain available.
+A source whose transaction holds a legacy `preserve-v1` journal is never resumed
+by capture (GH#36607): it reserves a stable git-only successor transaction
+(`sha256("<id>:git-only-successor/v1")`), and the legacy journal and archive stay
+for the existing retention, `worktree_recovery_migrate.py` and retirement paths.
+
+Earlier versions could leave a manifest-less partial capture under
+`.producer-archives/<id>/`, which blocks retries with `producer:capture-incomplete`.
+`worktree-archive-helper.sh sweep-partials --dry-run|--apply [--output-root DIR]`
+is the one-time cleanup. Under each producer operation lock (busy locks are skipped,
+never waited on) it rechecks that the journal phase is `reserved` or `capturing`,
+the directory and output inodes match the journal, and the source still has its
+recorded identity and head. It then lists (dry run) or removes only exact-layout
+`<owner>__<repo>/<issue>/<timestamp>/` directories with no `manifest.json` and no
+pin. Anything else stays for review. A retry then captures normally.
 New capture rejects `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` and the obsolete
 `--self-contained`, `--include-ignored`, and `--preserve-git-admin` creation options.
 Schema-2 receipts do not prove preservation of untracked files and cannot authorize
