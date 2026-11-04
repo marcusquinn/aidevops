@@ -5,12 +5,15 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import importlib.util
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / "consolidation-contract-validator.py"
 SPEC = importlib.util.spec_from_file_location("contract_validator", SCRIPT)
@@ -113,9 +116,10 @@ class ContractTests(unittest.TestCase):
                        "--source", str(other), "--successor", str(successor)]
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
             successor.write_text(SOURCE + "\nrequires-secrets: C\n", encoding="utf-8")
-            result = subprocess.run(command, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 1)
-            self.assertIn(VALIDATOR.MARKER_EXAMPLE, result.stderr)
+            stderr = io.StringIO()
+            with mock.patch.object(sys, "argv", command[1:]), redirect_stderr(stderr):
+                self.assertEqual(VALIDATOR.main(), 1)
+            self.assertIn(VALIDATOR.MARKER_EXAMPLE, stderr.getvalue())
             successor.write_text(SUCCESSOR, encoding="utf-8")
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 1)
             other.unlink()
