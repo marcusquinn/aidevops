@@ -276,6 +276,11 @@ bash .agents/scripts/macos-local-checks.sh verify-pr PR_NUMBER OWNER/REPO
 
 This records native results in Runtime Testing and clears the label only after
 successful checks and an unchanged remote head. Fetch the PR base first if its
-object is unavailable locally. `AIDEVOPS_MACOS_CHECKS_HOST=Linux` forces the
+object is unavailable locally. `macos-verification-refresh.yml` restores the
+handoff label on every later push to a sensitive PR, without executing PR code.
+Previous SHA-scoped Runtime Testing results remain historical evidence, not
+verification of the new head. A delayed event can conservatively restore the
+label after verification; rerun `verify-pr` for the current head in that case.
+`AIDEVOPS_MACOS_CHECKS_HOST=Linux` forces the
 handoff path for testing; it cannot manufacture a native pass on Linux. The
 label is a verification handoff, not a hosted runner or approval bypass.
