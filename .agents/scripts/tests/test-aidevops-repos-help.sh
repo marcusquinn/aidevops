@@ -126,3 +126,29 @@ fi
 cmp -s "$REPOS_FILE" "${REPOS_FILE}.before" || fail "rejected bootstrap changed registry"
 
 printf 'PASS sync-only help, new/existing registration, role preservation and unchanged defaults\n'
+
+# Simulate missing jq without hiding the other tools needed by the real CLI.
+(
+	command() {
+		local option="${1:-}"
+		local tool="${2:-}"
+		if [[ "$option" == "-v" && "$tool" == "jq" ]]; then
+			return 1
+		fi
+		builtin command "$@"
+		return $?
+	}
+	export -f command
+	# Seed enabled automation to ensure failure cannot masquerade as an opt-out.
+	jq --arg path "$DEFAULT_REPO" '(.initialized_repos[] | select(.path == $path)) +=
+		{pulse: true, maintenance: true}' "$REPOS_FILE" >"${REPOS_FILE}.tmp"
+	mv "${REPOS_FILE}.tmp" "$REPOS_FILE"
+	cp "$REPOS_FILE" "${REPOS_FILE}.before"
+	if output=$(bash "$REPO_ROOT/aidevops.sh" repos add "$DEFAULT_REPO" --sync-only 2>&1); then
+		fail "sync-only registration reported success without jq"
+	fi
+	[[ "$output" == *"jq is required for sync-only registration"* ]] || fail "missing jq omitted actionable diagnostic"
+	cmp -s "$REPOS_FILE" "${REPOS_FILE}.before" || fail "missing jq changed registry"
+	bash "$REPO_ROOT/aidevops.sh" repos add "$DEFAULT_REPO" >/dev/null
+	cmp -s "$REPOS_FILE" "${REPOS_FILE}.before" || fail "ordinary registration without jq changed registry"
+)
