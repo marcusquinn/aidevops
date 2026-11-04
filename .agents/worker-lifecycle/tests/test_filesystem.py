@@ -120,7 +120,6 @@ class FilesystemContract(unittest.TestCase):
                             validate_archive_path(archives)
         self.root.chmod(0o700)  # unsearchable owned ancestor seals group bits below
         with patch(module + "user_private_group", return_value=False), \
-                patch(module + "_seals_descendants", side_effect=seals), \
                 patch(module + "no_extended_access_acl", return_value=True):
             validate_archive_path(archives)
             archives.chmod(0o777)
