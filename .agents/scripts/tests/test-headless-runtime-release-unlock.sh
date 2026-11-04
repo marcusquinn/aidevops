@@ -234,7 +234,7 @@ fi
 printf 'PASS unavailable claim evidence remains retryable without writes\n'
 
 valid_claim_evidence=$(gh api 'repos/owner/repo/issues/12345/comments?per_page=100' --slurp)
-for evidence_case in edited ambiguous unreadable invalid_timestamp duplicate_fields already_released terminal; do
+for evidence_case in edited ambiguous unreadable invalid_timestamp duplicate_fields already_released unbound_release wrong_claim_release wrong_nonce_release edited_release mixed_receipts terminal; do
 	: >"$CALL_LOG"
 	expected_result=1
 	evidence_edit_response=""
@@ -247,9 +247,17 @@ for evidence_case in edited ambiguous unreadable invalid_timestamp duplicate_fie
 	unreadable) evidence='not JSON' ;;
 	invalid_timestamp) evidence=$(jq -c '.[0][0] |= (.created_at = "invalid" | .updated_at = "invalid")' <<<"$valid_claim_evidence") ;;
 	duplicate_fields) evidence=$(jq -c '.[0][0].body += " nonce=fixture-lease"' <<<"$valid_claim_evidence") ;;
-	already_released)
-		expected_result=0
-		evidence=$(jq -c '.[0] += [{id:101, user:{login:"assigned-bot"}, body:"CLAIM_RELEASED reason=worker_complete runner=assigned-bot"}]' <<<"$valid_claim_evidence")
+	already_released | unbound_release | wrong_claim_release | wrong_nonce_release | edited_release | mixed_receipts)
+		evidence=$(jq -c '.[0] += [(.[0][0] | .id=101 | .node_id="CLAIM_FIXTURE_101" |
+			.body="CLAIM_RELEASED reason=worker_complete runner=assigned-bot claim_id=100 nonce=fixture-lease")]' <<<"$valid_claim_evidence")
+		case "$evidence_case" in
+		already_released) expected_result=0 ;;
+		unbound_release) evidence=$(jq -c '.[0][1].body="CLAIM_RELEASED reason=worker_complete runner=assigned-bot"' <<<"$evidence") ;;
+		wrong_claim_release) evidence=$(jq -c '.[0][1].body |= sub("claim_id=100";"claim_id=99")' <<<"$evidence") ;;
+		wrong_nonce_release) evidence=$(jq -c '.[0][1].body |= sub("nonce=fixture-lease";"nonce=other-lease")' <<<"$evidence") ;;
+		edited_release) evidence_edit_response='{"data":{"nodes":[{"id":"CLAIM_FIXTURE_100","lastEditedAt":null},{"id":"CLAIM_FIXTURE_101","lastEditedAt":"2026-11-01T00:00:00Z"}]}}' ;;
+		mixed_receipts) evidence=$(jq -c '.[0] += [(.[0][1] | .id=102 | .node_id="CLAIM_FIXTURE_102" | .body |= sub("claim_id=100";"claim_id=99"))]' <<<"$evidence") ;;
+		esac
 		;;
 	terminal)
 		expected_result=0
@@ -614,7 +622,8 @@ fi
 	post_line=$(grep -n '^API method=POST' "$CALL_LOG" | cut -d: -f1)
 	edit_line=$(grep -n '^EDIT ' "$CALL_LOG" | sed -n '1s/:.*//p')
 	[[ "$post_line" -lt "$edit_line" ]]
-	GH_RELEASE_COMMENTS=$(jq -c '.[0] + [{id:101, user:{login:"assigned-bot"}, author_association:"OWNER", body:"CLAIM_RELEASED reason=blocked runner=assigned-bot "}]' <<<"$valid_claim_evidence")
+	GH_RELEASE_COMMENTS=$(jq -c '.[0] + [(.[0][0] | .id=101 | .node_id="CLAIM_FIXTURE_101" |
+		.body="CLAIM_RELEASED reason=blocked runner=assigned-bot claim_id=100 nonce=fixture-lease")]' <<<"$valid_claim_evidence")
 	_release_dispatch_claim issue-12345 blocked
 	[[ "$(grep -c 'CLAIM_RELEASED reason=blocked' "$CALL_LOG")" == 1 ]]
 	printf 'PASS legacy live-blocked checkpoint releases exactly once before projection and gates missing names\n'

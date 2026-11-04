@@ -423,8 +423,14 @@ test_bounded_recovery_intake() {
 		check_stage="initial_stalled_entry"
 		decision=$(jq -c . "${TBR_ROOT}/decisions/owner--repo--42.json")
 		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
-		[[ "$rc" -eq 2 && $((SECONDS - started)) -le 3 && ! -s "${TBR_ROOT}/out" ]] || exit 1
+		[[ "$rc" -eq 2 && $((SECONDS - started)) -le 3 && ! -s "${TBR_ROOT}/out" ]] || {
+			printf 'FAIL bounded initial result rc=%s elapsed_seconds=%s output_bytes=%s\n' \
+				"$rc" "$((SECONDS - started))" "$(wc -c <"${TBR_ROOT}/out")" >&2
+			exit 1
+		}
+		check_stage="initial_stalled_entry_markers"
 		[[ "$(<"${TBR_ROOT}/err")" == *'incomplete stage=entry'* && "$(<"${TBR_ROOT}/err")" == *'stage=entry_issue'* ]] || exit 1
+		check_stage="initial_stalled_entry_cursor"
 		[[ "$(<"${TBR_ROOT}/pending_cursor")" == owner--repo--1.json && -f "${TBR_ROOT}/queue/owner--repo--1.json" ]] || exit 1
 		# Resume past the stalled entry: retire closed entries and suppress an
 		# unchanged held decision, then wrap and retry (not delete) the slow one.

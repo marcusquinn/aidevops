@@ -19,6 +19,10 @@ def bound($event):
 def lease_bound($event):
     $event.comment.user.login == $runner and
     $event.f.lease_token == $token and $event.f.device == $device and $event.f.session == $session;
+def closes_claim($claim):
+    .comment.user.login == $runner and .f != null and .f.runner == $runner and
+    .f.claim_id == ($claim.comment.id | tostring) and .f.nonce == $token and
+    (.comment | unedited);
 
 [.[][] | . as $comment | .body | split("\n")[] |
  select(test("^(DISPATCH_CLAIM|DISPATCH_LEASE|CLAIM_RELEASED) ")) |
@@ -39,8 +43,9 @@ else $claims[0] as $claim |
         # A competing/replacement claim is not authority to release an older
         # generation. Retain state rather than adjudicating a claim race here.
         if any($later[]; .kind == "DISPATCH_CLAIM") then {verdict:"superseded"}
-        elif $projection_line == "" and any($later[];
-             .kind == "CLAIM_RELEASED" and .comment.user.login == $runner) then {verdict:"released"}
+        elif $projection_line == "" and any($later[]; .kind == "CLAIM_RELEASED") then
+             if all($later[] | select(.kind == "CLAIM_RELEASED"); closes_claim($claim))
+             then {verdict:"released"} else {verdict:"ambiguous"} end
         elif $projection_line == "" and any($later[];
              .kind == "DISPATCH_LEASE" and lease_bound(.) and .f.phase == "terminal") then {verdict:"terminal"}
         elif any($later[]; .f == null or (.comment | unedited | not)) then {verdict:"ambiguous"}
