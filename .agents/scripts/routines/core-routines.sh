@@ -593,7 +593,7 @@ describe_r909() {
 	if _is_darwin_os "$os"; then
 		screen_time_check="System Settings → Screen Time — raw data"
 	else
-		screen_time_check="\`~/.aidevops/.agent-workspace/cron/screen-time/\` — snapshot data (no native Screen Time on Linux)"
+		screen_time_check="\`~/.aidevops/.agent-workspace/observability/screen-activity.jsonl\` — input-activity intervals from the per-minute \`aidevops-screen-activity-sampler\` (no native Screen Time on Linux); \`screen-time-helper.sh profile-stats\` reports \`unavailable\` until it has samples"
 	fi
 	cat <<EOF
 # r909: Screen time snapshot

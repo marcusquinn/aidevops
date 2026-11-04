@@ -64,7 +64,12 @@ def parse_history_row(line):
         return None
 
 
-def read_history(history_path, _now):
+def accepted_row(row, collector):
+    """Without a required collector every valid row counts; with one, only its rows."""
+    return not collector or str(row.get("collector", "")).startswith(collector)
+
+
+def read_history(history_path, _now, collector=None):
     rows = {}
     skipped = 0
     if history_path is None or not history_path.is_file():
@@ -77,7 +82,7 @@ def read_history(history_path, _now):
         parsed = parse_history_row(line)
         if parsed is None:
             skipped += 1
-        else:
+        elif accepted_row(parsed[1][1], collector):
             rows[parsed[0]] = parsed[1]
     return rows, skipped
 
@@ -146,13 +151,13 @@ def estimated_year(periods, history, now, skipped):
     return periods["year"]
 
 
-def profile_payload(collection, history_path, now):
+def profile_payload(collection, history_path, now, collector=None):
     day_counts = {"day": 1, "week": 7, "month": 28, "year": 365}
     periods = {}
     for name in WINDOWS:
         start, end = completed_day_window(now, day_counts[name])
         periods[name] = bounded_period_payload(collection, start, end, "completed-local-calendar-days")
-    history, skipped = read_history(history_path, now)
+    history, skipped = read_history(history_path, now, collector)
     apply_short_history(periods, history, now, skipped)
     periods["year"] = estimated_year(periods, history, now, skipped)
     return {
