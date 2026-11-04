@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.117] - 2026-11-04
+
+### Fixed
+
+- worktree archive capture checks capacity first and never retains failed captures (GH#36564)
+- add commit-and-pr --keep-issue-open non-closing link (GH#36598)
+- fix Droid CLI installer URL and false-success install path
+- keep plain shells out of OpenCode recovery-marker directories
+- skip closed issues and block identity-less entries in checkpoint terminal-lease drain (GH#36576)
+
 ## [3.39.116] - 2026-11-03
 
 ### Added
