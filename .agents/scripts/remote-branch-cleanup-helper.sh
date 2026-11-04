@@ -327,9 +327,13 @@ delete_transport_git() {
 # The canonical Git guard refuses `git fetch` in canonical checkouts, so a
 # direct fetch always failed there and the audit ran on stale tracking refs.
 # A linked worktree shares the remote-tracking refs and may update them.
+# The explicit all-heads refspec keeps a single-branch clone's narrow configured
+# refspec from refreshing one ref while the audit reports every ref fresh;
+# --prune with it still preserves the refs/remotes/<remote>/HEAD symref.
 fetch_remote_refs() {
 	prepare_delete_transport || return 1
-	delete_transport_git fetch --prune --quiet "$REMOTE_NAME" >/dev/null 2>&1 || return 1
+	delete_transport_git fetch --prune --quiet "$REMOTE_NAME" \
+		"+refs/heads/*:refs/remotes/${REMOTE_NAME}/*" >/dev/null 2>&1 || return 1
 	return 0
 }
 
