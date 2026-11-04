@@ -111,7 +111,7 @@ test_standard_alternatives_are_scoped() {
 	local routing_table="${SCRIPT_DIR}/../../configs/model-routing-table.json"
 	local models=""
 	models=$(jq -r '.tiers.standard.models[]' "$routing_table")
-	if ! printf '%s\n' "$models" | grep -q '^zai'; then
+	if ! grep -q '^zai' <<<"$models"; then
 		print_result "Standard tier ships no Z.AI GLM candidate" 0
 		return 0
 	fi

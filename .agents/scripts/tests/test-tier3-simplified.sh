@@ -245,7 +245,7 @@ test_fallback_chain_helper() {
 	# lightweight check does not depend on host credentials.
 	export ANTHROPIC_API_KEY="$OPENAI_API_KEY"
 	output=$("$helper" resolve simple --quiet 2>&1) || true
-	if echo "$output" | grep -q "claude-haiku-5-5"; then
+	if grep -q "claude-haiku-5-5" <<<"$output"; then
 		print_result "fallback: resolve simple -> claude-haiku-5-5" 0
 	else
 		print_result "fallback: resolve simple -> claude-haiku-5-5" 1 "Got: $output"
@@ -253,7 +253,7 @@ test_fallback_chain_helper() {
 
 	# Test: resolve standard tier
 	output=$("$helper" resolve standard --quiet 2>&1) || true
-	if echo "$output" | grep -q "claude-sonnet-5-5"; then
+	if grep -q "claude-sonnet-5-5" <<<"$output"; then
 		print_result "fallback: resolve standard -> claude-sonnet-5-5" 0
 	else
 		print_result "fallback: resolve standard -> claude-sonnet-5-5" 1 "Got: $output"
@@ -261,7 +261,7 @@ test_fallback_chain_helper() {
 
 	# Test: resolve thinking tier
 	output=$("$helper" resolve thinking --quiet 2>&1) || true
-	if echo "$output" | grep -q "claude-opus-5-5"; then
+	if grep -q "claude-opus-5-5" <<<"$output"; then
 		print_result "fallback: resolve thinking -> claude-opus-5-5" 0
 	else
 		print_result "fallback: resolve thinking -> claude-opus-5-5" 1 "Got: $output"
