@@ -111,9 +111,11 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
         "AND EXISTS (SELECT 1 FROM retired WHERE retired.kind='legacy-worktree-retired' "
         "AND retired.archive=json_extract(e.payload,'$.archive')) "
         "AND NOT EXISTS (SELECT 1 FROM reservations a "
-        "WHERE a.path=json_extract(e.payload,'$.source')) "
+        "WHERE a.path=json_extract(e.payload,'$.source') OR a.generation_id IN "
+        "(SELECT value FROM json_each(e.payload,'$.generations'))) "
         "AND NOT EXISTS (SELECT 1 FROM generations g JOIN bindings b USING(generation_id) "
-        "JOIN runs r USING(run_id) WHERE g.path=json_extract(e.payload,'$.source') AND r.state='bound'))) "
+        "JOIN runs r USING(run_id) WHERE r.state='bound' AND (g.path=json_extract(e.payload,'$.source') "
+        "OR g.generation_id IN (SELECT value FROM json_each(e.payload,'$.generations')))))) "
         "ORDER BY e.sequence LIMIT 1000", (f"-{age} seconds",) * 2,
     ).fetchall()
     result: dict[str, object] = {"eligible_events": len(rows), "archived_events": 0,

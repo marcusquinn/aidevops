@@ -177,7 +177,8 @@ class EventContract(unittest.TestCase):
         if not retired:
             kinds = kinds[:-1]
         events = [(str(uuid4()), dict(type=kind, source=source, archive=f"archive-{generation}",
-                                     **({} if legacy else {"generation_id": generation}))) for kind in kinds]
+                                     **({"generations": [generation]} if legacy
+                                        else {"generation_id": generation}))) for kind in kinds]
         with self.store.connection(write=True, maintenance=False) as connection:
             connection.execute("INSERT INTO generations VALUES (?,?)", (generation, source))
             if admission:
@@ -230,6 +231,10 @@ class EventContract(unittest.TestCase):
             ingest(self.store, json.dumps(event))
             with self.store.connection(write=True, maintenance=False) as connection:
                 connection.execute("INSERT INTO bindings VALUES (?,?)", (event["run_id"], generation))
+                if legacy:
+                    # Historical aliases are still owners even when paths differ.
+                    connection.execute("UPDATE generations SET path=? WHERE generation_id=?",
+                                       (f"/alias/{generation}", generation))
         before = self.store.summary()
         self.assertEqual(self.store.compact(apply=True)["archived_events"], 0)
         self.assertEqual(self.store.summary(), before)
