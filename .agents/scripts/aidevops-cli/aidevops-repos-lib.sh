@@ -569,6 +569,16 @@ register_repo() {
 	return $?
 }
 
+_repo_registration_without_jq() {
+	local sync_only="$1"
+	if [[ "$sync_only" == "true" ]]; then
+		print_warning "jq is required for sync-only registration - automation flags were not changed"
+		return 1
+	fi
+	print_warning "jq not installed - repo tracking disabled"
+	return 0
+}
+
 _register_repo_locked() {
 	local repo_path="$1" version="$2" features="$3"
 	local verified_slug="${4:-}"
@@ -597,12 +607,8 @@ _register_repo_locked() {
 	fi
 
 	if ! command -v jq &>/dev/null; then
-		if [[ "$sync_only" == "true" ]]; then
-			print_warning "jq is required for sync-only registration - automation flags were not changed"
-			return 1
-		fi
-		print_warning "jq not installed - repo tracking disabled"
-		return 0
+		_repo_registration_without_jq "$sync_only"
+		return $?
 	fi
 
 	# Auto-detect GitHub slug from git remote
