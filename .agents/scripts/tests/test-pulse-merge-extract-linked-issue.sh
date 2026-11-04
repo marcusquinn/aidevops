@@ -29,6 +29,7 @@
 #   4. "Ref #NNN" body (no closing keyword) + tNNN title → empty
 #      (tNNN: title format has no GH# — both gates fail)
 #   5. Multiple distinct closing identities → empty
+#   5b-d. Closing references to pull requests are ignored (GH#36704)
 #   6. Cross-repository closing reference → empty
 #   7. Failed body metadata read → empty; unavailable title metadata is irrelevant
 
@@ -97,6 +98,18 @@ if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"--json body"* ]]; then
 	exit 0
 fi
 
+# gh api repos/SLUG/issues/NNN — numbers listed in TEST_PULL_NUMBERS are PRs.
+if [[ "$1" == "api" && "$2" =~ ^repos/[^/]+/[^/]+/issues/([0-9]+)$ ]]; then
+	number="${BASH_REMATCH[1]}"
+	[[ "${TEST_FAIL_METADATA:-}" == "issue-api" ]] && exit 1
+	if [[ " ${TEST_PULL_NUMBERS:-} " == *" ${number} "* ]]; then
+		printf '{"number":%s,"pull_request":{"url":"x"}}\n' "$number"
+	elif [[ -n "${TEST_PULL_NUMBERS:-}" ]]; then
+		printf '{"number":%s}\n' "$number"
+	fi
+	exit 0
+fi
+
 # Everything else — silent success
 exit 0
 EOF
@@ -106,6 +119,12 @@ EOF
 
 gh_pr_view() {
 	gh pr view "$@"
+	return $?
+}
+
+_gh_with_timeout() {
+	shift
+	"$@"
 	return $?
 }
 
@@ -127,6 +146,9 @@ define_function_under_test() {
 		return 1
 	fi
 	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$fn_src"
+	fn_src=$(awk '/^_drop_closing_pull_request_refs\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
+	[[ -n "$fn_src" ]] || return 1
 	eval "$fn_src"
 	fn_src=$(awk '/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
 	[[ -n "$fn_src" ]] || return 1
@@ -195,6 +217,26 @@ test_multiple_closing_issues_return_empty() {
 	export TEST_PR_BODY="Resolves #19042 and closes #99999"
 	assert_returns "" \
 		"scenario5: multiple closing issue identities return empty"
+	return 0
+}
+
+# GH#36704: a closing keyword before a pull-request number links nothing on
+# GitHub, so it must not make the real issue target ambiguous.
+test_pull_request_closing_reference_is_ignored() {
+	export TEST_PR_TITLE="GH#36583: bump types"
+	export TEST_PR_BODY=$'Resolves #36583\n\nThen close #36582 as superseded.'
+	export TEST_PULL_NUMBERS="36582"
+	assert_returns "36583" \
+		"scenario5b: closing reference to a pull request is ignored"
+	export TEST_PULL_NUMBERS="36582 36583"
+	assert_returns "" \
+		"scenario5c: only pull-request closing references leave no target"
+	export TEST_PULL_NUMBERS="36582"
+	export TEST_FAIL_METADATA="issue-api"
+	assert_returns "" \
+		"scenario5d: issue lookup failure keeps the ambiguity (fail closed)"
+	export TEST_FAIL_METADATA=""
+	export TEST_PULL_NUMBERS=""
 	return 0
 }
 
@@ -354,6 +396,7 @@ main() {
 	test_unrelated_title_keeps_body_target
 	test_ref_body_tnnn_title_returns_empty
 	test_multiple_closing_issues_return_empty
+	test_pull_request_closing_reference_is_ignored
 	test_cross_repo_closing_reference_returns_empty
 	test_metadata_failure_returns_empty
 	test_explicit_merge_association

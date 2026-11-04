@@ -1751,12 +1751,44 @@ _extract_linked_issue() {
 		return 0
 	fi
 	if [[ "$body_issues" == *$'\n'* ]]; then
+		body_issues=$(_drop_closing_pull_request_refs "$repo_slug" "$body_issues")
+	fi
+	if [[ "$body_issues" == *$'\n'* ]]; then
 		echo "[pulse-wrapper] _extract_linked_issue: PR #${pr_number} in ${repo_slug} has ambiguous closing issue identities — no routing target" >>"$LOGFILE"
 		return 1
 	fi
 	body_issue="$body_issues"
 
 	printf '%s' "$body_issue"
+	return 0
+}
+
+#######################################
+# Drop closing-keyword targets that are pull requests. GitHub closing keywords
+# link issues only, so prose such as "close #<source-PR> as superseded" in a
+# Dependabot replacement body must not make the real target ambiguous; that
+# held a replacement PR unmerged and footprint-deferred every other Dependabot
+# intake (GH#36704; workflow counterpart GH#36682). Only called when several
+# candidates exist, so the single-target hot path makes no API calls. A number
+# is dropped only on positive pull-request evidence; lookup failures keep it.
+# Args: $1=repo slug, $2=newline-separated candidate numbers
+# Output: remaining candidates, newline-separated
+#######################################
+_drop_closing_pull_request_refs() {
+	local repo_slug="$1"
+	local candidates="$2"
+	local candidate="" issue_json="" kept="" newline=$'\n'
+	while IFS= read -r candidate; do
+		[[ -n "$candidate" ]] || continue
+		issue_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/issues/${candidate}" 2>/dev/null) || issue_json=""
+		if [[ -n "$issue_json" ]] && printf '%s' "$issue_json" \
+			| jq -e --argjson n "$candidate" '.number == $n and .pull_request != null' >/dev/null 2>&1; then
+			echo "[pulse-wrapper] _extract_linked_issue: ignoring closing reference #${candidate} in ${repo_slug} — it is a pull request, not an issue (GH#36704)" >>"$LOGFILE"
+			continue
+		fi
+		kept="${kept:+${kept}${newline}}${candidate}"
+	done <<<"$candidates"
+	printf '%s' "$kept"
 	return 0
 }
 

@@ -24,6 +24,7 @@ _pulse_dependabot_intake_scope_lines() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local expected_head_sha="$3"
+	local reason="${4:-}"
 	local scope_json=""
 	local scope_head=""
 	local paths=""
@@ -39,7 +40,10 @@ _pulse_dependabot_intake_scope_lines() {
 		else .files[] | .path
 		end' 2>/dev/null) || return 1
 
-	if [[ "$repo_slug" == "marcusquinn/aidevops" ]]; then
+	# approval-required briefs forbid allowlist edits. Declaring the shared
+	# allowlist there made every intake overlap, so one stuck replacement
+	# footprint-deferred all ecosystems (GH#36704).
+	if [[ "$repo_slug" == "marcusquinn/aidevops" && "$reason" != "approval-required" ]]; then
 		# shellcheck disable=SC2016 # Literal Markdown scope declaration.
 		printf '%s\n' '- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'
 	fi
@@ -403,7 +407,7 @@ _pulse_dependabot_intake_body() {
 		reference_guidance="Follow the trusted boundary in \`.agents/scripts/trusted-dependabot-lib.sh\` and the repair-routing pattern in \`.agents/scripts/pulse-merge-process.sh::_route_pr_to_fix_worker\`."
 	fi
 	if [[ "$reason" == "approval-required" ]]; then
-		approval_guidance="The dependency allowlist and security checks passed; only current-head maintainer crypto-approval is missing. Do not change the allowlist to resolve this gate. Valid resolutions: an authorized maintainer runs \`sudo aidevops approve pr ${pr_number} ${repo_slug}\`, or deliver a maintainer-authored replacement PR with the identical diff and close the bot PR as superseded after verifying the replacement merged. Never manufacture approval or weaken the approval gate."
+		approval_guidance="The dependency allowlist and security checks passed; only current-head maintainer crypto-approval is missing. Do not change the allowlist to resolve this gate. Valid resolutions: an authorized maintainer runs \`sudo aidevops approve pr ${pr_number} ${repo_slug}\`, or deliver a maintainer-authored replacement PR with the identical diff. Pulse closes the bot PR as superseded after the replacement merges. Never manufacture approval or weaken the approval gate."
 		policy_guidance=""
 	fi
 
@@ -425,6 +429,10 @@ _pulse_dependabot_intake_body() {
 		with rationale. Close or supersede the source PR only after preserving this evidence.
 
 		${approval_guidance}
+
+		In the replacement PR body, refer to the source PR only as \`Supersedes #${pr_number}\`.
+		Never put a closing keyword (close, fix, resolve) before the source PR number; the only
+		closing reference is this intake issue.
 
 		### Files Scope
 
@@ -633,7 +641,7 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 		return 0
 	fi
 	scope_lines=$(_pulse_dependabot_intake_scope_lines \
-		"$pr_number" "$repo_slug" "$expected_head_sha") || {
+		"$pr_number" "$repo_slug" "$expected_head_sha" "$reason") || {
 		_pulse_dependabot_release_intake_lock "$lock_dir" || true
 		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: exact-head Files Scope unavailable; failing before issue creation" >>"$LOGFILE"
 		return 1
