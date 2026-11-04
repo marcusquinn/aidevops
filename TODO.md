@@ -1868,7 +1868,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18859 Document observed ChatGPT fan-out and retrieval capture for SEO/GEO measurement #documentation ref:GH#36517 pr:#36518 completed:2026-11-02
 
-- [ ] t18861 test: canonicalise macOS temp roots in profile README boundary tests (state-parent-must-be-canonical) #auto-dispatch #bug ref:GH#36637
+- [x] t18861 test: canonicalise macOS temp roots in profile README boundary tests (state-parent-must-be-canonical) #auto-dispatch #bug ref:GH#36637 pr:#36642 completed:2026-11-04
 
 ## In Progress
 
