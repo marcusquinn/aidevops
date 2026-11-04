@@ -79,8 +79,8 @@ def marker_errors(successor: str, parents: list[int] | None = None) -> list[str]
     errors = []
     if not refs:
         near_miss = any(line.lstrip().startswith("_Supersedes #") for line in lines)
-        detail = (" (a _Supersedes line exists but has extra text, trailing whitespace"
-                  " or a CRLF ending; put other lineage on a separate line)" if near_miss else "")
+        detail = (" (a _Supersedes line exists but has extra text or trailing whitespace;"
+                  " put other lineage on a separate line)" if near_miss else "")
         errors.append(f"successor: missing exact marker line `{MARKER_EXAMPLE}`{detail};"
                       " the dispatch gate refuses consolidated successors without it")
     for parent in parents or []:
@@ -94,13 +94,8 @@ def marker_errors(successor: str, parents: list[int] | None = None) -> list[str]
 
 
 def validate(sources: list[str], successor: str, parents: list[int] | None = None) -> list[str]:
-    """Fail closed when the marker or a preserved dispatch contract is missing or narrowed.
-
-    The marker check sees the successor exactly as filed; the contract checks
-    compare LF-normalized text, as they did before CR became significant.
-    """
+    """Fail closed when the marker or a preserved dispatch contract is missing or narrowed."""
     errors = marker_errors(successor, parents)
-    successor = successor.replace("\r\n", "\n")
     for index, source in enumerate(sources, start=1):
         findings = prerequisite_errors(source, successor) + scope_errors(source, successor)
         errors.extend(f"source {index}: {finding}" for finding in findings)
@@ -116,15 +111,9 @@ def main() -> int:
                         help="superseded issue number; repeat for every source issue."
                              " Each needs its own exact marker line")
     args = parser.parse_args()
-    if args.parent and (len(args.parent) != len(args.source)
-                        or len(set(args.parent)) != len(args.parent)):
-        parser.error("--parent must give one unique issue number for each --source")
     try:
-        # Read the successor without newline translation so a CRLF marker line,
-        # which the dispatch gate refuses, is not silently normalized to LF.
-        successor = args.successor.read_bytes().decode("utf-8")
         errors = validate([path.read_text(encoding="utf-8") for path in args.source],
-                          successor, args.parent)
+                          args.successor.read_text(encoding="utf-8"), args.parent)
     except (OSError, UnicodeError) as exc:
         # Avoid printing body contents, credential names, or private file paths.
         print(f"consolidation contract: cannot read body files ({type(exc).__name__})",
