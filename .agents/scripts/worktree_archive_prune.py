@@ -7,7 +7,6 @@ import collections
 import ctypes
 import datetime
 import errno
-import json
 import os
 from pathlib import Path
 import shutil
@@ -17,11 +16,12 @@ import time
 import uuid
 
 import worktree_archive_producer_retention as producer_retention
+from worktree_archive_prune_metadata import PIN as PIN
+from worktree_archive_prune_metadata import identity, inspect
 from worktree_archive_process import run_bounded, termination_as_exit
 from worktree_archive_scratch import sweep_root
 
 
-PIN = ".aidevops-archive-pin"
 RETENTION_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError,
                     subprocess.TimeoutExpired)
 # Retention only needs to prove it is deleting an intact compact archive, not
@@ -54,11 +54,6 @@ def verify_timeout():
     return max(1, min(STRUCTURE_CHECK_SECONDS, DEADLINE - time.monotonic()))
 
 
-def identity(path):
-    value = path.lstat()
-    return value.st_dev, value.st_ino
-
-
 def verify(helper, directory):
     """Structural check only: a full recovery copy or tampered archive fails it."""
     bash = shutil.which("bash")
@@ -70,33 +65,6 @@ def verify(helper, directory):
         verify_timeout(), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if result.returncode:
         raise ValueError("archive verification failed")
-
-
-def inspect(root, directory):
-    """Reject aliases, pins and malformed metadata from cheap local state only.
-
-    The structural check (artifact hashes) still runs only for archives
-    selected for removal, never for every archive.
-    """
-    for path in (directory, *directory.parents):
-        if path == root:
-            break
-        if path.is_symlink():
-            raise ValueError("symlinked archive path")
-    if os.path.lexists(directory / PIN):
-        raise ValueError("pinned archive")
-    manifest_path = directory / "manifest.json"
-    if manifest_path.is_symlink():
-        raise ValueError("symlinked manifest")
-    raw = manifest_path.read_bytes()
-    manifest = json.loads(raw)
-    if not isinstance(manifest, dict):
-        raise ValueError("manifest must be an object")
-    created = datetime.datetime.fromisoformat(manifest["created_at"].replace("Z", "+00:00"))
-    if created.tzinfo is None or created > datetime.datetime.now(datetime.timezone.utc):
-        raise ValueError("invalid archive creation time")
-    size = sum(path.stat().st_size for path in directory.iterdir())
-    return created, size, directory, identity(directory), raw
 
 
 def restore_claimed(parent_fd, name, claimed_fd, transaction, root_fd):
