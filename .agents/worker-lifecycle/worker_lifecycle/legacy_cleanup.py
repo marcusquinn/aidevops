@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import socket
 import subprocess  # nosec B404 # exception classification; helpers execute fixed argv
 import tempfile
 import time
@@ -199,7 +200,9 @@ def process_item(store, item, repositories, adapter, options):
                 try:
                     inspect(item, repositories, adapter, time.time(), options)
                 except ValueError as error:
-                    if str(error) != "no-recorded-processes":
+                    if (str(error) != "no-recorded-processes"
+                            and not (str(error) == "too-recent"
+                                     and (not item["runs"] or item["unbound"]))):
                         raise
                     return process_reconstructible(store, item, repositories, adapter, options)
             eligible = 1
@@ -233,14 +236,30 @@ def process_reconstructible(store, item, repositories, adapter, options):
     operation = operation_id(store, item["path"])
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
     with _lock(store, operation), store.connection(write=True) as connection:
+        item = next((row for row in inventory(connection)
+                     if row["path"] == item["path"]), item)
         plan = reconstructible(item, repositories, adapter, open_pull_requests)
         if not options.apply:
             return outcome, 1, 0
-        probe = str(uuid5(UUID(store.installation_id()), "reconstructible-host-probe"))
+        probe = str(uuid5(UUID(store.installation_id()),
+                          "reconstructible-host-probe:" + socket.gethostname()))
         verified = receipt(connection, probe, "verified")
-        # A previous incomplete test blocks batch mode, including after restart.
-        if verified is None and receipt(connection, probe, "plan") is not None:
-            raise ValueError("reconstructible-probe-verification-pending")
+        # An interrupted test blocks batching until its original removal is
+        # verified. Never transfer its authority to a different source identity.
+        previous = receipt(connection, probe, "plan")
+        if verified is None and previous is not None:
+            if not os.path.lexists(previous["source"]):
+                try:
+                    verify_reconstructible(previous, probe=True)
+                except (ValueError, OSError, subprocess.SubprocessError) as error:
+                    raise ValueError("reconstructible-probe-verification-pending") from error
+                verified = dict(previous, type="reconstructible-host-probe-verified")
+                checkpoint(store, connection, probe, "verified", verified)
+                checkpoint(store, connection, operation_id(store, previous["source"]),
+                           "retired", dict(previous, type="reconstructible-worktree-retired",
+                                           branch_preserved=True))
+            elif previous != plan:
+                raise ValueError("reconstructible-probe-verification-pending")
         if verified is None:
             checkpoint(store, connection, probe, "plan", plan)
         checkpoint(store, connection, operation, "reconstructible-plan", plan)
@@ -268,13 +287,14 @@ def verify_reconstructible(plan, *, probe):
         raise ValueError("reconstructible-branch-changed")
     if probe:
         # A fresh disposable checkout proves restoration without touching the branch.
-        with tempfile.TemporaryDirectory(prefix=".reconstructible-probe-",
-                                         dir=Path(plan["source"]).parent) as parent:
-            target = str(Path(parent) / "tree")
-            _git("--git-dir", common, "worktree", "add", "--detach", target, head)
-            if _git("-C", target, "rev-parse", "HEAD") != head:
-                raise ValueError("reconstructible-restore-mismatch")
-            _git("--git-dir", common, "worktree", "remove", target)
+        parent = Path(tempfile.mkdtemp(prefix=".reconstructible-probe-",
+                                      dir=Path(plan["source"]).parent))
+        target = str(parent / "tree")
+        _git("--git-dir", common, "worktree", "add", "--detach", target, head)
+        if _git("-C", target, "rev-parse", "HEAD") != head:
+            raise ValueError("reconstructible-restore-mismatch")
+        _git("--git-dir", common, "worktree", "remove", target)
+        parent.rmdir()
 
 
 def run(store, config, root, **arguments):

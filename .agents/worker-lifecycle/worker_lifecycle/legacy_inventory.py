@@ -14,28 +14,48 @@ from .retirement import _git, _id
 
 
 def require_idle_proc(path, proc=Path("/proc")):
-    """Linux same-UID cwd/fd census; disappearing tasks are not unreadable tasks."""
+    """Inspect every Linux thread, including private cwd/fd tables, fail closed."""
     if not (proc / "self").exists():
         raise ValueError("proc-observation-unavailable")
     try:
-        for task in proc.iterdir():
-            if not task.name.isdecimal():
+        for process in proc.iterdir():
+            if not process.name.isdecimal():
                 continue
             try:
-                if task.stat().st_uid != os.geteuid():
-                    continue
-                references = [task / "cwd"] + list((task / "fd").iterdir())
-                for reference in references:
-                    try:
-                        target = Path(os.readlink(reference).removesuffix(" (deleted)"))
-                    except FileNotFoundError:
-                        continue
-                    if target == path or path in target.parents:
-                        raise ValueError("live-process-reference")
+                threads = list((process / "task").iterdir())
             except FileNotFoundError:
+                if process.exists():
+                    raise ValueError("proc-observation-unavailable")
                 continue
-    except OSError as error:
+            for task in threads:
+                inspect_proc_task(path, task)
+    except (OSError, StopIteration) as error:
         raise ValueError("proc-observation-unavailable") from error
+
+
+def inspect_proc_task(path, task):
+    try:
+        # Non-dumpable same-UID tasks can have root-owned /proc directories.
+        status = (task / "status").read_text(encoding="utf-8")
+        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+        if "Uid" not in fields or "State" not in fields:
+            raise ValueError("proc-observation-unavailable")
+        if (str(os.geteuid()) not in fields["Uid"].split()
+                or fields["State"].split()[0] in ("Z", "X")):
+            return
+        target = Path(os.readlink(task / "cwd").removesuffix(" (deleted)"))
+        if target == path or path in target.parents:
+            raise ValueError("live-process-reference")
+        for fd in (task / "fd").iterdir():
+            try:
+                target = Path(os.readlink(fd).removesuffix(" (deleted)"))
+            except FileNotFoundError:
+                continue  # An independently closed descriptor grants no authority.
+            if target == path or path in target.parents:
+                raise ValueError("live-process-reference")
+    except FileNotFoundError:
+        if task.exists():
+            raise ValueError("proc-observation-unavailable") from None
 
 
 def reconstructible(item, repositories, adapter, open_prs):

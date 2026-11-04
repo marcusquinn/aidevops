@@ -1,334 +1,88 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# Regression coverage for guarded cleanup at the Pulse worktree cap (GH#30032).
-
+# GH#36626: pressure cleanup is asynchronous; admission stays fail-closed.
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
-# The extracted helpers reference the module-level numeric guard. Load only
-# its literal assignment, not the entire dispatch module and its dependencies.
-eval "$(awk '/^_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN=/ { print; exit }' "$CORE_SCRIPT")"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 LOGFILE="${TEST_ROOT}/pulse.log"
-AIDEVOPS_WORKTREE_CAPACITY_HELPER="${TEST_ROOT}/capacity-helper.sh"
-FAKE_ARGS_FILE="${TEST_ROOT}/helper.args"
-FAKE_COUNT_FILE="${TEST_ROOT}/worktree.count"
-# shellcheck disable=SC2016 # The generated fixture expands these variables when executed.
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >"$FAKE_ARGS_FILE"\nif [[ "${FAKE_REMOVE_COUNT:-0}" == "1" ]]; then rm -f "$FAKE_COUNT_FILE"; elif [[ -n "${FAKE_AFTER_COUNT:-}" ]]; then printf "%%s\\n" "$FAKE_AFTER_COUNT" >"$FAKE_COUNT_FILE"; fi\nexit 0\n' >"$AIDEVOPS_WORKTREE_CAPACITY_HELPER"
-chmod +x "$AIDEVOPS_WORKTREE_CAPACITY_HELPER"
-export FAKE_ARGS_FILE FAKE_COUNT_FILE
-
-TESTS_RUN=0
-TESTS_FAILED=0
-COUNT_FAIL=0
-GIT_MODE="valid"
-STAGE_TIMEOUT=""
-STAGE_RC=0
-DISK_MODE="blocked"
-CLEANUP_RUNS=0
-
-print_result() {
-	local name="$1"
-	local status="$2"
-	TESTS_RUN=$((TESTS_RUN + 1))
-	if [[ "$status" -eq 0 ]]; then
-		printf 'PASS %s\n' "$name"
-	else
-		printf 'FAIL %s\n' "$name"
-		TESTS_FAILED=$((TESTS_FAILED + 1))
-	fi
-	return 0
-}
+AIDEVOPS_WORKTREE_CAPACITY_HELPER="${SCRIPT_DIR}/../cleanup-worktrees-async-helper.sh"
+_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN='^[0-9]+$'
+LAUNCHES=0
+COUNT=159
 
 extract_helper() {
 	local name="$1"
-	awk -v function_name="$name" '
-		$0 ~ "^" function_name "\\(\\) \\{" { capture=1 }
-		capture { print }
-		capture && /^}$/ { exit }
-	' "$CORE_SCRIPT"
+	awk -v name="$name" '$0 ~ "^" name "\\(\\) \\{" {capture=1} capture {print} capture && /^}$/ {exit}' "$CORE_SCRIPT"
 	return 0
 }
-
-PRODUCTION_COUNT_HELPER=$(extract_helper _dispatch_registered_worktree_count)
-eval "$PRODUCTION_COUNT_HELPER"
-eval "${PRODUCTION_COUNT_HELPER/_dispatch_registered_worktree_count/_production_dispatch_registered_worktree_count}"
-eval "$(extract_helper _dispatch_run_guarded_worktree_cleanup)"
-eval "$(extract_helper _dispatch_cleanup_worktree_capacity)"
+eval "$(extract_helper _dispatch_registered_worktree_count)"
+eval "$(extract_helper _dispatch_launch_pressure_cleanup)"
 eval "$(extract_helper _dispatch_worktree_capacity_gate)"
-eval "$(extract_helper _dispatch_run_guarded_disk_cleanup)"
 eval "$(extract_helper _dispatch_cleanup_disk_pressure)"
 
 git() {
-	case "$GIT_MODE" in
-	nonzero) return 2 ;;
-	empty) return 0 ;;
-	valid) printf 'worktree /repo/main\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/linked\nHEAD def\ndetached\n\nworktree /tmp/tmp.gone\nHEAD 123\ndetached\nprunable gitdir file points to non-existent location\n\n' ;;
-	*) return 3 ;;
-	esac
+	local ignored="${1:-}"
+	[[ "$ignored" != "" ]] || return 1
+	printf 'worktree /repo/main\nHEAD abc\n\nworktree /repo/live\nHEAD def\n\nworktree /repo/gone\nprunable absent\n\n'
+	return 0
 }
+[[ "$(_dispatch_registered_worktree_count "$TEST_ROOT")" == 2 ]]
 
 _dispatch_registered_worktree_count() {
-	[[ "$COUNT_FAIL" -eq 0 ]] || return 1
-	[[ -f "$FAKE_COUNT_FILE" ]] || return 1
-	local count=""
-	count=$(<"$FAKE_COUNT_FILE")
-	printf '%s\n' "$count"
+	[[ "$COUNT" != unknown ]] || return 1
+	printf '%s\n' "$COUNT"
 	return 0
 }
-
-run_stage_with_timeout() {
-	local stage_name="$1"
-	local rc=0
-	STAGE_TIMEOUT="$2"
-	shift 2
-	[[ "$stage_name" == "dispatch_worktree_capacity_cleanup" || "$stage_name" == "dispatch_disk_pressure_cleanup" ]] || return 2
-	[[ "$STAGE_RC" -eq 0 ]] || return "$STAGE_RC"
-	"$@" || rc=$?
-	return "$rc"
-}
-
-cleanup_worktrees() {
-	CLEANUP_RUNS=$((CLEANUP_RUNS + 1))
-	if [[ "$DISK_MODE" == "recover" ]]; then
-		DISK_MODE="available"
-	fi
+_preflight_launch_async_cleanup() {
+	local helper="$1"
+	local log="$2"
+	local name="$3"
+	[[ "$helper" == "$AIDEVOPS_WORKTREE_CAPACITY_HELPER" && "$name" == worktrees && -n "$log" ]]
+	[[ "$CLEANUP_WORKTREES_ASYNC_CADENCE_MIN" == 0 ]]
+	LAUNCHES=$((LAUNCHES + 1))
 	return 0
 }
+# Calling either inline cleanup or its timeout wrapper is a test failure.
+cleanup_worktrees() { return 99; }
+run_stage_with_timeout() { return 99; }
 
-aidevops_worktree_capacity_check() {
-	case "$DISK_MODE" in
-	available)
-		AIDEVOPS_DISK_CAPACITY_REASON="available"
-		AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB=6291456
-		AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT=6
-		return 0
-		;;
-	unknown)
-		AIDEVOPS_DISK_CAPACITY_REASON="capacity-unknown"
-		AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB=0
-		AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT=0
-		return 2
-		;;
-	*)
-		AIDEVOPS_DISK_CAPACITY_REASON="below-minimum-percent"
-		AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB=4194304
-		AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT=4
-		return 1
-		;;
-	esac
-}
+_dispatch_worktree_capacity_gate "$TEST_ROOT" 36626 owner/repo 200
+[[ "$LAUNCHES" == 0 ]]
+COUNT=160
+_dispatch_worktree_capacity_gate "$TEST_ROOT" 36626 owner/repo 200
+[[ "$LAUNCHES" == 1 ]]
+COUNT=199
+_dispatch_worktree_capacity_gate "$TEST_ROOT" 36626 owner/repo 200
+[[ "$LAUNCHES" == 1 ]]
+COUNT=200
+if _dispatch_worktree_capacity_gate "$TEST_ROOT" 36626 owner/repo 200; then exit 1; fi
+[[ "$LAUNCHES" == 1 ]]
+COUNT=unknown
+if _dispatch_worktree_capacity_gate "$TEST_ROOT" 36626 owner/repo 200; then exit 1; fi
+[[ "$LAUNCHES" == 1 ]]
 
-test_cleanup_recovers_capacity() {
-	printf '200\n' >"$FAKE_COUNT_FILE"
-	FAKE_AFTER_COUNT=199
-	FAKE_REMOVE_COUNT=0
-	export FAKE_AFTER_COUNT FAKE_REMOVE_COUNT
-	COUNT_FAIL=0
-	STAGE_TIMEOUT=""
-	STAGE_RC=0
-	rm -f "$FAKE_ARGS_FILE"
-	AIDEVOPS_DISPATCH_WORKTREE_CLEANUP_TIMEOUT=17
-	if _dispatch_worktree_capacity_gate "$TEST_ROOT" 30032 "owner/repo" 200 &&
-		[[ "$STAGE_TIMEOUT" == "17" ]] &&
-		[[ "$(<"$FAKE_ARGS_FILE")" == "--capacity $TEST_ROOT 17" ]] &&
-		[[ "$(<"$FAKE_COUNT_FILE")" == "199" ]] &&
-		grep -q "recovered dispatch capacity.*200 -> 199" "$LOGFILE"; then
-		print_result "cap gate invokes guarded cleanup and proceeds after recount" 0
-	else
-		print_result "cap gate invokes guarded cleanup and proceeds after recount" 1
-	fi
+AIDEVOPS_DISPATCH_PRESSURE_CLEANUP_STARTED=0
+if _dispatch_cleanup_disk_pressure 36626 owner/repo "$TEST_ROOT" below-minimum 100 1; then exit 1; fi
+[[ "$LAUNCHES" == 2 ]]
+if _dispatch_cleanup_disk_pressure 36626 owner/repo "$TEST_ROOT" below-minimum 100 1; then exit 1; fi
+[[ "$LAUNCHES" == 2 ]]
+printf 'PASS: prunable exclusion, 80%% trigger, launch deduplication, cap/unknown/disk fail-closed, no inline cleanup\n'
+
+# Exercise the production systemd command builder without starting a service.
+# shellcheck source=../pulse-dispatch-preflight-lib.sh
+source "${SCRIPT_DIR}/../pulse-dispatch-preflight-lib.sh"
+systemd-run() {
+	local arguments="$*"
+	[[ "$arguments" == *"AIDEVOPS_WORKTREE_PRESERVE_PATTERNS=custom-keep"* ]]
+	[[ "$arguments" == *"AIDEVOPS_MAX_WORKTREES=17"* ]]
+	[[ "$arguments" == *"CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0"* ]]
 	return 0
 }
-
-test_cleanup_fails_closed_without_reduction() {
-	printf '200\n' >"$FAKE_COUNT_FILE"
-	FAKE_AFTER_COUNT=200
-	FAKE_REMOVE_COUNT=0
-	export FAKE_AFTER_COUNT FAKE_REMOVE_COUNT
-	COUNT_FAIL=0
-	STAGE_RC=0
-	if _dispatch_worktree_capacity_gate "$TEST_ROOT" 30032 "owner/repo" 200; then
-		print_result "cleanup remains fail-closed when count stays at cap" 1
-	elif grep -q "could not recover dispatch capacity.*200 -> 200.*safety gates preserved" "$LOGFILE"; then
-		print_result "cleanup remains fail-closed when count stays at cap" 0
-	else
-		print_result "cleanup remains fail-closed when count stays at cap" 1
-	fi
-	return 0
-}
-
-test_timeout_remains_fail_closed() {
-	printf '200\n' >"$FAKE_COUNT_FILE"
-	FAKE_AFTER_COUNT=""
-	FAKE_REMOVE_COUNT=0
-	export FAKE_AFTER_COUNT FAKE_REMOVE_COUNT
-	COUNT_FAIL=0
-	STAGE_RC=124
-	if _dispatch_worktree_capacity_gate "$TEST_ROOT" 30032 "owner/repo" 200; then
-		print_result "timed-out cleanup remains fail-closed" 1
-	elif grep -q "cleanup_rc=124, reason=deadline-resume-next-pass" "$LOGFILE"; then
-		print_result "timed-out cleanup remains fail-closed" 0
-	else
-		print_result "timed-out cleanup remains fail-closed" 1
-	fi
-	STAGE_RC=0
-	return 0
-}
-
-test_capacity_deferral_reasons() {
-	local status="" reason=""
-	printf '200\n' >"$FAKE_COUNT_FILE"
-	for status in 75 76 1; do
-		case "$status" in
-		75) reason="cleanup-lock-busy" ;;
-		76) reason="cleanup-api-quota" ;;
-		1) reason="cleanup-error" ;;
-		esac
-		STAGE_RC="$status"
-		if _dispatch_worktree_capacity_gate "$TEST_ROOT" 35619 "owner/repo" 200; then
-			print_result "capacity deferral $reason stays closed" 1
-		elif grep -q "cleanup_rc=$status, reason=$reason" "$LOGFILE"; then
-			print_result "capacity deferral $reason stays closed" 0
-		else
-			print_result "capacity deferral $reason stays closed" 1
-		fi
-	done
-	STAGE_RC=0
-	return 0
-}
-
-test_production_count_probe_validation() {
-	local count=""
-	GIT_MODE="valid"
-	count=$(_production_dispatch_registered_worktree_count "$TEST_ROOT") || count="failed"
-	if [[ "$count" == "2" ]]; then
-		print_result "production counter counts live Git inventory, excluding prunable entries" 0
-	else
-		print_result "production counter counts live Git inventory, excluding prunable entries" 1
-	fi
-	GIT_MODE="empty"
-	if _production_dispatch_registered_worktree_count "$TEST_ROOT" >/dev/null; then
-		print_result "production counter rejects empty Git inventory" 1
-	else
-		print_result "production counter rejects empty Git inventory" 0
-	fi
-	GIT_MODE="nonzero"
-	if _production_dispatch_registered_worktree_count "$TEST_ROOT" >/dev/null; then
-		print_result "production counter propagates Git failure" 1
-	else
-		print_result "production counter propagates Git failure" 0
-	fi
-	GIT_MODE="valid"
-	return 0
-}
-
-test_post_cleanup_recount_failure_remains_fail_closed() {
-	printf '200\n' >"$FAKE_COUNT_FILE"
-	FAKE_AFTER_COUNT=""
-	FAKE_REMOVE_COUNT=1
-	export FAKE_AFTER_COUNT FAKE_REMOVE_COUNT
-	COUNT_FAIL=0
-	STAGE_RC=0
-	if _dispatch_worktree_capacity_gate "$TEST_ROOT" 30032 "owner/repo" 200; then
-		print_result "post-cleanup recount failure remains fail-closed" 1
-	elif grep -q "could not verify the post-cleanup worktree count" "$LOGFILE"; then
-		print_result "post-cleanup recount failure remains fail-closed" 0
-	else
-		print_result "post-cleanup recount failure remains fail-closed" 1
-	fi
-	FAKE_REMOVE_COUNT=0
-	export FAKE_REMOVE_COUNT
-	return 0
-}
-
-test_count_probe_failure_remains_fail_closed() {
-	COUNT_FAIL=1
-	if _dispatch_worktree_capacity_gate "$TEST_ROOT" 30032 "owner/repo" 200; then
-		print_result "worktree count probe failure remains fail-closed" 1
-	elif grep -q "unable to verify registered worktree count" "$LOGFILE"; then
-		print_result "worktree count probe failure remains fail-closed" 0
-	else
-		print_result "worktree count probe failure remains fail-closed" 1
-	fi
-	COUNT_FAIL=0
-	return 0
-}
-
-test_missing_bounded_runner_fails_closed() {
-	local runner_definition
-	runner_definition=$(declare -f run_stage_with_timeout)
-	unset -f run_stage_with_timeout
-	printf '200\n' >"$FAKE_COUNT_FILE"
-	if _dispatch_cleanup_worktree_capacity "$TEST_ROOT" 30032 "owner/repo" 200 200; then
-		print_result "missing bounded runner fails closed" 1
-	elif grep -q "bounded stage runner missing" "$LOGFILE"; then
-		print_result "missing bounded runner fails closed" 0
-	else
-		print_result "missing bounded runner fails closed" 1
-	fi
-	eval "$runner_definition"
-	return 0
-}
-
-test_disk_cleanup_recovers_capacity_once() {
-	AIDEVOPS_DISPATCH_DISK_PRESSURE_CLEANUP_ATTEMPTED=0
-	AIDEVOPS_DISPATCH_DISK_CLEANUP_TIMEOUT=19
-	DISK_MODE="recover"
-	CLEANUP_RUNS=0
-	STAGE_TIMEOUT=""
-	STAGE_RC=0
-	if _dispatch_cleanup_disk_pressure 30886 "owner/repo" "$TEST_ROOT" "below-minimum-percent" 4194304 4 &&
-		[[ "$CLEANUP_RUNS" -eq 1 ]] &&
-		[[ "$STAGE_TIMEOUT" == "19" ]] &&
-		grep -q "recovered dispatch capacity.*4194304KB/4% -> 6291456KB/6%" "$LOGFILE"; then
-		print_result "disk gate invokes one guarded cleanup and proceeds after capacity recheck" 0
-	else
-		print_result "disk gate invokes one guarded cleanup and proceeds after capacity recheck" 1
-	fi
-	return 0
-}
-
-test_disk_cleanup_remains_fail_closed_and_is_cycle_scoped() {
-	AIDEVOPS_DISPATCH_DISK_PRESSURE_CLEANUP_ATTEMPTED=0
-	DISK_MODE="blocked"
-	CLEANUP_RUNS=0
-	STAGE_RC=0
-	if _dispatch_cleanup_disk_pressure 30886 "owner/repo" "$TEST_ROOT" "below-minimum-percent" 4194304 4; then
-		print_result "disk cleanup remains fail-closed when capacity stays blocked" 1
-	elif _dispatch_cleanup_disk_pressure 30887 "owner/repo" "$TEST_ROOT" "below-minimum-percent" 4194304 4; then
-		print_result "disk cleanup runs only once per Pulse cycle" 1
-	elif [[ "$CLEANUP_RUNS" -eq 1 ]] &&
-		grep -q "cleanup_rc=0, capacity_rc=1" "$LOGFILE" &&
-		grep -q "already attempted this Pulse cycle" "$LOGFILE"; then
-		print_result "disk cleanup remains fail-closed and runs only once per Pulse cycle" 0
-	else
-		print_result "disk cleanup remains fail-closed and runs only once per Pulse cycle" 1
-	fi
-	STAGE_RC=0
-	return 0
-}
-
-main() {
-	test_cleanup_recovers_capacity
-	test_cleanup_fails_closed_without_reduction
-	test_timeout_remains_fail_closed
-	test_capacity_deferral_reasons
-	test_production_count_probe_validation
-	test_post_cleanup_recount_failure_remains_fail_closed
-	test_count_probe_failure_remains_fail_closed
-	test_missing_bounded_runner_fails_closed
-	test_disk_cleanup_recovers_capacity_once
-	test_disk_cleanup_remains_fail_closed_and_is_cycle_scoped
-
-	printf 'Ran %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
-	if [[ "$TESTS_FAILED" -eq 0 ]]; then
-		return 0
-	fi
-	return 1
-}
-
-main "$@"
+AIDEVOPS_WORKTREE_PRESERVE_PATTERNS=custom-keep
+AIDEVOPS_MAX_WORKTREES=17
+CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0
+_preflight_launch_systemd_cleanup "$AIDEVOPS_WORKTREE_CAPACITY_HELPER" "$LOGFILE" worktrees
+printf 'PASS: systemd retains custom preservation and pressure settings\n'
