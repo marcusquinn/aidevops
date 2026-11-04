@@ -28,6 +28,7 @@ def append_event(connection: sqlite3.Connection, event_id: str, payload: dict) -
         if old["payload"] != value:
             raise StoreConflict("event-id-payload-conflict")
         return old["sequence"], True
+    archived = None
     if connection.execute("SELECT 1 FROM sqlite_master WHERE name='archived_event_ids'").fetchone():
         archived = connection.execute("SELECT payload_sha256 FROM archived_event_ids WHERE event_id=?",
                                       (event_id,)).fetchone()
@@ -39,6 +40,8 @@ def append_event(connection: sqlite3.Connection, event_id: str, payload: dict) -
     ).fetchone():
         raise StoreConflict("run-already-registered" if payload["type"] in {"register", "admit"}
                             else "run-not-bound")
+    if archived:
+        return 0, True  # Historical sequence is in the archive, not the digest tombstone.
     count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
     maximum = LifecycleRegistry._event_limit(connection, lift=True)
     if count >= maximum:
@@ -69,7 +72,8 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
 
     Each new file is an immutable append to the archive set, never rewritten.
     Keeping projections prevents archived register/bind/admit replays from
-    resurrecting ended owners. Generation-only control events stay online.
+    resurrecting ended owners. Final retirement, plan and preservation receipts
+    stay online because retirement retries still read them before returning.
     """
     if not isinstance(age, int) or isinstance(age, bool) or not 0 <= age <= 315360000:
         raise ValueError("invalid-retention-age")
@@ -80,6 +84,41 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
         "AND NOT EXISTS (SELECT 1 FROM bindings own JOIN bindings peer USING(generation_id) "
         "JOIN runs live ON live.run_id=peer.run_id WHERE own.run_id=r.run_id AND live.state='bound') "
         "ORDER BY e.sequence LIMIT 1000", (f"-{age} seconds",),
+    ).fetchall()
+    # Schema 1 has no admission table. A shared retirement set avoids rescanning
+    # the entire journal for every candidate; GROUP BY permits indexed lookups.
+    reservations = ([list(row) for row in connection.execute(
+        "SELECT generation_id,path FROM generation_admissions")] if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='generation_admissions'").fetchone()
+        else [])
+    rows += connection.execute(
+        "WITH reservations AS (SELECT json_extract(value,'$[0]') AS generation_id, "
+        "json_extract(value,'$[1]') AS path FROM json_each(?)), retired AS ("
+        "SELECT json_extract(payload,'$.type') AS kind, "
+        "json_extract(payload,'$.generation_id') AS generation_id, "
+        "json_extract(payload,'$.archive') AS archive FROM events "
+        "WHERE json_extract(payload,'$.type') IN ('worktree-retired','legacy-worktree-retired') "
+        "AND julianday(recorded_at)<=julianday('now',?) GROUP BY kind,generation_id,archive) "
+        "SELECT e.* FROM events e WHERE julianday(e.recorded_at)<=julianday('now',?) "
+        "AND ((json_extract(e.payload,'$.type') IN "
+        "('open-admission','close-admission','created-worktree','retirement-removing',"
+        "'worktree-recovery-authorized') AND EXISTS ("
+        "SELECT 1 FROM generations g JOIN retired ON retired.generation_id=g.generation_id "
+        "WHERE g.generation_id=json_extract(e.payload,'$.generation_id') "
+        "AND retired.kind='worktree-retired' "
+        "AND NOT EXISTS (SELECT 1 FROM reservations a WHERE a.generation_id=g.generation_id) "
+        "AND NOT EXISTS (SELECT 1 FROM bindings b JOIN runs r USING(run_id) "
+        "WHERE b.generation_id=g.generation_id AND r.state='bound'))) "
+        "OR (json_extract(e.payload,'$.type') IN ('legacy-worktree-archive','legacy-worktree-removal-planned') "
+        "AND EXISTS (SELECT 1 FROM retired WHERE retired.kind='legacy-worktree-retired' "
+        "AND retired.archive=json_extract(e.payload,'$.archive')) "
+        "AND NOT EXISTS (SELECT 1 FROM reservations a "
+        "WHERE a.path=json_extract(e.payload,'$.source') OR a.generation_id IN "
+        "(SELECT value FROM json_each(e.payload,'$.generations'))) "
+        "AND NOT EXISTS (SELECT 1 FROM generations g JOIN bindings b USING(generation_id) "
+        "JOIN runs r USING(run_id) WHERE r.state='bound' AND (g.path=json_extract(e.payload,'$.source') "
+        "OR g.generation_id IN (SELECT value FROM json_each(e.payload,'$.generations')))))) "
+        "ORDER BY e.sequence LIMIT 1000", (encode(reservations), f"-{age} seconds", f"-{age} seconds"),
     ).fetchall()
     result: dict[str, object] = {"eligible_events": len(rows), "archived_events": 0,
                                  "archive": None, "dry_run": not apply, "cleanup_authorized": False}
