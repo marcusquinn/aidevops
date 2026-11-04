@@ -180,10 +180,13 @@ STUB
 install_fetch_failure_git_stub() {
 	local bin_dir="$1"
 	mkdir -p "$bin_dir"
+	# Token assembled at runtime so no token-shaped literal is committed.
+	FAKE_FETCH_TOKEN="ghp_""PLACEHOLDERSUFFIX1234"
 	cat >"${bin_dir}/git" <<STUB
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ " \$* " == *" fetch "* ]]; then
+	echo "fatal: Authentication failed for https://x:${FAKE_FETCH_TOKEN}@example.invalid/r.git" >&2
 	exit 1
 fi
 exec "${GIT_SHIM}" "\$@"
@@ -400,6 +403,11 @@ run_fetch_assertions() {
 		bash "$HELPER" --repo "$repo" 2>&1)
 	assert_contains "$output" "refs=stale" "failed fetch marks a dry-run audit stale"
 	assert_contains "$output" "dry-run audit uses stale remote-tracking refs" "failed fetch warns in dry-run"
+	assert_contains "$output" "fetch failed: fatal: Authentication failed" "failed fetch reports its cause"
+	if [[ "$output" == *"$FAKE_FETCH_TOKEN"* ]]; then
+		fail "fetch failure diagnostic must not leak the token"
+	fi
+	pass "fetch failure diagnostic scrubs the token"
 
 	if output=$(AIDEVOPS_REPOS_FILE="$repos_file" PATH="$fail_bin:$gh_bin:$PATH" \
 		bash "$HELPER" --repo "$repo" --apply 2>&1); then

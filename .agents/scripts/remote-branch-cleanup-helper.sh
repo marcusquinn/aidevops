@@ -332,8 +332,17 @@ delete_transport_git() {
 # --prune with it still preserves the refs/remotes/<remote>/HEAD symref.
 fetch_remote_refs() {
 	prepare_delete_transport || return 1
-	delete_transport_git fetch --prune --quiet "$REMOTE_NAME" \
-		"+refs/heads/*:refs/remotes/${REMOTE_NAME}/*" >/dev/null 2>&1 || return 1
+	local error_output=""
+	if ! error_output=$(delete_transport_git fetch --prune --quiet "$REMOTE_NAME" \
+		"+refs/heads/*:refs/remotes/${REMOTE_NAME}/*" 2>&1 >/dev/null); then
+		# Report the cause (bounded, credential-scrubbed); the stale/refuse
+		# logic keys off the return code only.
+		error_output=$(sed -n '1,3p' <<<"$error_output")
+		if [[ -n "$error_output" ]]; then
+			print_warning "fetch failed: $(scrub_credentials "$error_output")"
+		fi
+		return 1
+	fi
 	return 0
 }
 
