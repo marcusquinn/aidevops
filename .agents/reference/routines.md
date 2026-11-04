@@ -96,6 +96,15 @@ a long-lived retry process.
 
 Use `run:` for scripts, exports, health checks. Use `agent:` when judgment or summarisation is needed.
 
+Agent routines and other `headless-runtime-helper.sh run` callers keep the
+activity watchdog's liveness deferrals: a quiet worker with an open API socket,
+CPU activity or CI-wait text is killed only at `WORKER_STALL_HARD_KILL_SECONDS`
+(default 1500s). Keep any outer per-attempt limit (`timeout(1)`, systemd
+`TimeoutStartSec`) above that cap, or lower the cap in the routine's
+environment. Otherwise the outer limit fires first and leaves only the wrapper's
+`activity_watchdog_started` pointers to the deferral record (GH#36700; see
+[worker diagnostics](worker-diagnostics.md#activity-watchdog-v36126-fixed-v36140)).
+
 Script routines inherit Pulse's `SSH_AUTH_SOCK` from `~/.ssh/agent.env`, which holds
 only the headless signing key and is restarted automatically after a reboot. A
 routine that SSHes to other hosts needs its own scoped key via `IdentityFile`; see

@@ -103,6 +103,10 @@ STALL_CPU_THRESHOLD="${WORKER_STALL_CPU_THRESHOLD:-2}"
 # t3056: Lifecycle log for structured kill-reason telemetry. Aggregatable
 # across all workers. Default: pulse-dispatch.log (same file the pulse reads).
 LIFECYCLE_LOG="${WORKER_LIFECYCLE_LOG:-${HOME}/.aidevops/logs/pulse-dispatch.log}"
+# GH#36700: per-attempt copy of this watchdog's decisions, next to the exit-code
+# file, so the worker wrapper can report why a quiet worker was (not) killed.
+# Never the monitored OUTPUT_FILE: writes there would count as output growth.
+WATCHDOG_EVENTS_FILE=""
 
 #######################################
 # Parse arguments
@@ -186,7 +190,36 @@ _parse_args() {
 		echo "Error: --worker-pid must be numeric" >&2
 		return 1
 	}
+	WATCHDOG_EVENTS_FILE="${EXIT_CODE_FILE}.watchdog_events"
 
+	return 0
+}
+
+#######################################
+# Append a watchdog event line to the per-attempt events file (GH#36700).
+# Best-effort: a write failure must never stop monitoring under set -e.
+#
+# Arguments:
+#   $1 - complete event line
+#######################################
+_watchdog_record_attempt_event() {
+	local event_line="$1"
+	[[ -n "$WATCHDOG_EVENTS_FILE" ]] || return 0
+	printf '%s\n' "$event_line" >>"$WATCHDOG_EVENTS_FILE" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Record a lifecycle event in the shared lifecycle log (pulse telemetry) and
+# in the per-attempt events file read by the worker wrapper (GH#36700).
+#
+# Arguments:
+#   $1 - complete event line
+#######################################
+_watchdog_record_event() {
+	local event_line="$1"
+	printf '%s\n' "$event_line" >>"$LIFECYCLE_LOG" 2>/dev/null || true
+	_watchdog_record_attempt_event "$event_line"
 	return 0
 }
 
@@ -527,8 +560,7 @@ _kill_worker() {
 		"$WORKER_PID" "$reason_class" "$_trigger_age" "$_deferral_detail" "${SESSION_KEY:-none}" \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	worker_attempt_observability_enrich lifecycle_event "$lifecycle_event"
-	printf '%s\n' "$lifecycle_event" \
-		>>"$LIFECYCLE_LOG" 2>/dev/null || true
+	_watchdog_record_event "$lifecycle_event"
 
 	# t2923: Push WIP commits before killing so the work is reachable on origin.
 	# Must happen before SIGTERM so git operations complete cleanly.
@@ -720,12 +752,13 @@ _monitor_defer_stall() {
 	_MONITOR_DEFERRED_STALL_SECONDS=$((_MONITOR_DEFERRED_STALL_SECONDS + _MONITOR_STALL_SECONDS))
 	_MONITOR_LAST_DEFER_EPOCH=$(date +%s)
 	_MONITOR_LAST_DEFER_REASON="$reason"
-	printf -v lifecycle_event '[lifecycle] worker_stall_deferred pid=%s reason=%s %sstall_seconds=%ss deferred_total=%ss ts=%s' \
+	# GH#36700: elapsed and the effective cap show when the backstop kill lands.
+	printf -v lifecycle_event '[lifecycle] worker_stall_deferred pid=%s reason=%s %sstall_seconds=%ss deferred_total=%ss elapsed=%ss hard_kill=%ss ts=%s' \
 		"$WORKER_PID" "$reason" "$detail" "$_MONITOR_STALL_SECONDS" \
-		"$_MONITOR_DEFERRED_STALL_SECONDS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		"$_MONITOR_DEFERRED_STALL_SECONDS" "$((_MONITOR_LAST_DEFER_EPOCH - _MONITOR_START_EPOCH))" \
+		"$HARD_KILL_SECONDS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	worker_attempt_observability_enrich lifecycle_event "$lifecycle_event"
-	printf '%s\n' "$lifecycle_event" \
-		>>"$LIFECYCLE_LOG" 2>/dev/null || true
+	_watchdog_record_event "$lifecycle_event"
 	_MONITOR_STALL_SECONDS=0
 	sleep "$POLL_INTERVAL"
 	return 0
@@ -880,6 +913,12 @@ main() {
 	# Set here (not in _monitor) so _kill_worker can reference it
 	# from any context.
 	_WATCHDOG_START_EPOCH=$(date +%s)
+
+	# GH#36700: per-attempt proof that the watchdog is running and which
+	# thresholds are in effect. Not sent to the shared lifecycle log.
+	_watchdog_record_attempt_event "$(printf '[lifecycle] watchdog_monitoring pid=%s worker=%s stall_timeout=%ss phase1=%ss poll=%ss hard_kill=%ss cpu_threshold=%s%% ts=%s' \
+		"$$" "$WORKER_PID" "$STALL_TIMEOUT" "$PHASE1_TIMEOUT" "$POLL_INTERVAL" \
+		"$HARD_KILL_SECONDS" "$STALL_CPU_THRESHOLD" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
 
 	_monitor
 	return 0
