@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -34,6 +34,17 @@ Use the append helper; it selects machine, date and timestamp.
 """
 MARKER = "_Supersedes #1 — this issue is the consolidated spec._"
 SUCCESSOR = f"{MARKER}\n\n{SOURCE}"
+
+
+def run_main(argv: list[str]) -> tuple[int, str]:
+    """Run the validator CLI in-process (no extra subprocess); return (exit code, stderr)."""
+    stderr = io.StringIO()
+    with mock.patch.object(sys, "argv", argv), redirect_stderr(stderr), redirect_stdout(io.StringIO()):
+        try:
+            code = VALIDATOR.main()
+        except SystemExit as exc:
+            code = exc.code
+    return code, stderr.getvalue()
 
 
 class ContractTests(unittest.TestCase):
@@ -117,10 +128,9 @@ class ContractTests(unittest.TestCase):
                        "--parent", "2", "--source", str(other), "--successor", str(successor)]
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
             successor.write_text(SOURCE + "\nrequires-secrets: C\n", encoding="utf-8")
-            stderr = io.StringIO()
-            with mock.patch.object(sys, "argv", command[1:]), redirect_stderr(stderr):
-                self.assertEqual(VALIDATOR.main(), 1)
-            self.assertIn(VALIDATOR.MARKER_EXAMPLE, stderr.getvalue())
+            code, stderr = run_main(command[1:])
+            self.assertEqual(code, 1)
+            self.assertIn(VALIDATOR.MARKER_EXAMPLE, stderr)
             successor.write_text(SUCCESSOR, encoding="utf-8")
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 1)
             other.unlink()
@@ -141,9 +151,9 @@ class ContractTests(unittest.TestCase):
                 with self.subTest(parents=parents, source_count=source_count):
                     args = command + [arg for parent in parents for arg in ("--parent", str(parent))]
                     args += [arg for _ in range(source_count) for arg in ("--source", str(source))]
-                    result = subprocess.run(args, capture_output=True, text=True)
-                    self.assertEqual(result.returncode, 2)
-                    self.assertIn("one unique issue number for each --source", result.stderr)
+                    code, stderr = run_main(args[1:])
+                    self.assertEqual(code, 2)
+                    self.assertIn("one unique issue number for each --source", stderr)
 
     def test_cli_preserves_crlf_for_marker_check(self):
         temp_root = os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp"))
@@ -155,13 +165,13 @@ class ContractTests(unittest.TestCase):
             successor.write_bytes(SUCCESSOR.replace("\n", "\r\n").encode("utf-8"))
             command = [sys.executable, str(SCRIPT), "--parent", "1", "--source", str(source),
                        "--successor", str(successor)]
-            result = subprocess.run(command, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 1)
-            self.assertIn("missing exact marker line", result.stderr)
-            self.assertNotIn("source 1:", result.stderr)
+            code, stderr = run_main(command[1:])
+            self.assertEqual(code, 1)
+            self.assertIn("missing exact marker line", stderr)
+            self.assertNotIn("source 1:", stderr)
             # A valid LF marker with matching CRLF contracts still passes.
             successor.write_bytes((MARKER + "\n\n" + SOURCE.replace("\n", "\r\n")).encode("utf-8"))
-            self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
+            self.assertEqual(run_main(command[1:])[0], 0)
 
 
 if __name__ == "__main__":
