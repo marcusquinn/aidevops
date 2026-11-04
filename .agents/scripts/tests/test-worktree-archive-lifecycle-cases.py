@@ -1382,9 +1382,12 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
                     self.update_manifest(archive, created_at="2000-01-01")
                 else:
                     (archive / "manifest.json").write_text("[]")
-                self.prune(limit="1")
+                pruned = self.prune(limit="1")
                 self.assertTrue(archive.exists())
                 self.assertEqual(list(self.archives.glob(".prune-*")), [])
+                kept = [line.split("\t") for line in pruned.stderr.decode().splitlines()
+                        if line.startswith("kept\t")]
+                self.assertTrue(any(Path(fields[1]).name == archive.name for fields in kept), kept)
 
     def test_symlinked_bucket_never_deletes_external_archive(self):
         archive = self.archive()
