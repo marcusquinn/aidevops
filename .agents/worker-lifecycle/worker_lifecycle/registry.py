@@ -13,13 +13,12 @@ from uuid import uuid4
 
 from .process import ObservationUnavailable, ProcessIdentity
 from .events import ingest
-from .filesystem import FilesystemValidationError, filesystem_error_details
 from .enrollment import GenerationEnrollment
 from .cleanup_plan import prepare_cleanup
+from .cli_errors import error_details as _error_details
 from .launch import initialize_or_open
-from .refusal import refusal_code
 from .runtime import adapter_for, require_ready
-from .storage import DEFAULT_MAX_EVENTS, MAX_EVENT_BYTES, LifecycleRegistry, StoreCapacity, StoreConflict
+from .storage import DEFAULT_MAX_EVENTS, MAX_EVENT_BYTES, LifecycleRegistry, StoreConflict
 from .upgrade import upgrade_registry
 
 
@@ -64,6 +63,13 @@ def argument_parser() -> argparse.ArgumentParser:
     initialize = commands.add_parser("init", help="create a NEW private directory/store after readiness")
     initialize.add_argument("--max-events", type=int, default=DEFAULT_MAX_EVENTS)
     commands.add_parser("status", help="report aggregate registry state")
+    compact = commands.add_parser("compact", help="preview archive-first retention (at most 1000 events per batch)")
+    compact.add_argument("--min-age-seconds", type=int, default=None,
+                         help="default: AIDEVOPS_LIFECYCLE_RETENTION_SECONDS or 86400")
+    compact.add_argument("--apply", action="store_true", help="archive, verify, then delete eligible event rows")
+    capacity = commands.add_parser("raise-capacity", help="preview a backed-up capacity increase; never lower the cap")
+    capacity.add_argument("--max-events", type=int, required=True)
+    capacity.add_argument("--apply", action="store_true")
     upgrade = commands.add_parser("upgrade", help="back up and upgrade schema-1 state")
     upgrade.add_argument("--backup-dir", type=Path,
                          help="NEW private directory; defaults to a unique directory inside state")
@@ -199,6 +205,10 @@ def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Ma
 
 
 def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation in {"compact", "raise-capacity"}:
+        return (store.compact(age=args.min_age_seconds, apply=args.apply)
+                if args.operation == "compact"
+                else store.raise_capacity(args.max_events, apply=args.apply))
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only"}:
@@ -218,28 +228,6 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     if args.operation in ("enroll", "resolve-generation"):
         return enrollment_result(store, args)
     return reconcile(store, args.limit) if args.operation == "reconcile" else store.summary()
-
-
-def _error_details(error: Exception, operation: str) -> dict:
-    """Translate CLI failures without exposing arbitrary system error text."""
-    reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
-    if operation in {"retire-worktree", "cleanup", "upgrade", "retire-enrolled-only"} and isinstance(error, StoreConflict):
-        reason = str(error)
-    retirement = ("retire-worktree", "cleanup", "cleanup-worktree", "retire-enrolled-only")
-    mode = "retirement" if operation in retirement else "observe-only"
-    detail = {"mode": mode, "status": "unavailable", "reason": reason,
-              "cleanup_authorized": False}
-    if isinstance(error, FilesystemValidationError):
-        detail.update(filesystem_error_details(error))
-    # GH#36142: name the enrollment refusal; OSError text may carry paths.
-    if operation == "enroll" and isinstance(error, ValueError):
-        detail["detail"] = str(error)[:200]
-    # GH#36370/GH#36494: creation and targeted-retirement refusals carry a
-    # stable code; `reason` stays unchanged.
-    code = refusal_code(error, operation)
-    if code:
-        detail.setdefault("detail", code)
-    return detail
 
 
 def main() -> int:

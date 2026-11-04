@@ -27,6 +27,8 @@ MAX_EVENT_BYTES = 16384
 # limits are kept. 100,000 is also the schema CHECK maximum, so no migration is needed.
 DEFAULT_MAX_EVENTS = 100000
 LEGACY_DEFAULT_MAX_EVENTS = 10000
+ADMISSION_EVENT_NEED = 3  # admit + register + bind, committed atomically
+DEFAULT_RETENTION_SECONDS = 86400
 
 
 class StoreConflict(ValueError):
@@ -137,7 +139,7 @@ class LifecycleRegistry:
                 raise ValueError("fullfsync-unavailable")
 
     @contextmanager
-    def connection(self, write: bool = False) -> Iterator[sqlite3.Connection]:
+    def connection(self, write: bool = False, *, maintenance: bool = True) -> Iterator[sqlite3.Connection]:
         connection = self._connect()
         try:
             if connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
@@ -151,6 +153,10 @@ class LifecycleRegistry:
             if len(metadata) != 1 or metadata[0]["mode"] != "observe-only":
                 raise ValueError("invalid-store-metadata")
             identifier(metadata[0]["installation_id"])
+            if write and maintenance:
+                from .journal import automatic_compaction
+
+                automatic_compaction(self, connection)
             yield connection
             connection.commit()
         except BaseException:
@@ -162,6 +168,31 @@ class LifecycleRegistry:
     def installation_id(self) -> str:
         with self.connection() as connection:
             return connection.execute("SELECT installation_id FROM metadata").fetchone()[0]
+
+    @staticmethod
+    def retention_seconds() -> int:
+        """Automatic retention is configurable without changing a store's schema."""
+        age = int(os.environ.get("AIDEVOPS_LIFECYCLE_RETENTION_SECONDS", DEFAULT_RETENTION_SECONDS))
+        if not 0 <= age <= 315360000:
+            raise ValueError("invalid-retention-age")
+        return age
+
+    def _compact(self, connection: sqlite3.Connection, age: int, *, apply: bool) -> dict:
+        from .journal import compact
+
+        return compact(self, connection, age, apply=apply)
+
+    def compact(self, *, age: int | None = None, apply: bool = False) -> dict:
+        """Preview by default; archive before deleting any eligible journal rows."""
+        with self.connection(write=apply, maintenance=False) as connection:
+            return self._compact(connection, self.retention_seconds() if age is None else age, apply=apply)
+
+    def raise_capacity(self, maximum: int, *, apply: bool = False) -> dict:
+        """Only raise the stored cap, after a verified standalone SQLite backup."""
+        from .journal import raise_capacity
+
+        with self.connection(write=apply, maintenance=False) as connection:
+            return raise_capacity(self, connection, maximum, apply=apply)
 
     @staticmethod
     def _event_limit(connection: sqlite3.Connection, *, lift: bool = False) -> int:
@@ -180,23 +211,9 @@ class LifecycleRegistry:
 
     @staticmethod
     def _event(connection: sqlite3.Connection, event_id: str, payload: dict) -> tuple[int, bool]:
-        identifier(event_id)
-        value = encode(payload)
-        if len(value.encode("utf-8")) > MAX_EVENT_BYTES:
-            raise ValueError("event-payload-too-large")
-        old = connection.execute("SELECT sequence,payload FROM events WHERE event_id=?", (event_id,)).fetchone()
-        if old is not None:
-            if old["payload"] != value:
-                raise StoreConflict("event-id-payload-conflict")
-            return old["sequence"], True
-        count = connection.execute("SELECT count(*) FROM events").fetchone()[0]
-        maximum = LifecycleRegistry._event_limit(connection, lift=True)
-        if count >= maximum:
-            raise StoreCapacity("journal-event-limit-reached")
-        cursor = connection.execute("INSERT INTO events(event_id,payload) VALUES (?,?)", (event_id, value))
-        if cursor.lastrowid is None:
-            raise RuntimeError("event-sequence-unavailable")
-        return cursor.lastrowid, False
+        from .journal import append_event
+
+        return append_event(connection, event_id, payload)
 
     def register(self, event_id: str, run_id: str, identity: ProcessIdentity) -> None:
         with self.connection(write=True) as connection:
@@ -307,7 +324,8 @@ class LifecycleRegistry:
             return {"mode": "observe-only", "runs": dict(connection.execute("SELECT state,count(*) FROM runs GROUP BY state").fetchall()),
                     "schema_version": schema, "upgrade_required": schema < SCHEMA,
                     "events": count, "event_limit": maximum,
-                    "journal_full": count >= maximum,
+                    "event_headroom": maximum - count, "admission_event_need": ADMISSION_EVENT_NEED,
+                    "journal_full": maximum - count < ADMISSION_EVENT_NEED,
                     "last_event_at": connection.execute("SELECT recorded_at FROM events ORDER BY sequence DESC LIMIT 1").fetchone()[0] if count else None,
                     "bindings": connection.execute("SELECT count(*) FROM bindings").fetchone()[0],
                     "conflicting_generations": connection.execute("SELECT count(*) FROM (SELECT b.generation_id FROM bindings b JOIN runs r USING(run_id) WHERE r.state='bound' GROUP BY b.generation_id HAVING count(*)>1)").fetchone()[0],
