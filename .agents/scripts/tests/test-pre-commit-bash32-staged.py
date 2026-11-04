@@ -15,6 +15,12 @@ import subprocess
 import tempfile
 
 
+def require(condition, message):
+    """Keep regression checks active even with Python optimization enabled."""
+    if not condition:
+        raise AssertionError(message)
+
+
 def main():
     """Check staged content independently of working-tree content."""
     source = (Path(__file__).resolve().parents[1] / "pre-commit-hook.sh").read_text()
@@ -24,10 +30,12 @@ def main():
         + "\n}\n"
     )
     bash = shutil.which("bash")
-    assert bash, "Bash is required"
+    git_executable = shutil.which("git")
+    require(bash is not None, "Bash is required")
+    require(git_executable is not None, "Git is required")
     # Bypass only the host-version guard, keeping production index/error logic.
     guard = '[[ "$major" == "3" ]] || return 0'
-    assert guard in function, "Update the test for the changed host-version guard"
+    require(guard in function, "Update the test for the changed host-version guard")
     function = function.replace(guard, ":").replace("/bin/bash", bash)
     temp_root = Path(
         os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp"))
@@ -35,8 +43,9 @@ def main():
     temp_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="bash32-staged-", dir=temp_root) as directory:
         def git(*args):
-            return subprocess.run(
-                ["git", *args], cwd=directory, check=True, capture_output=True, text=True
+            # Absolute executable; arguments are fixed test operations below.
+            return subprocess.run(  # nosec B603 - trusted test arguments, no shell
+                [git_executable, *args], cwd=directory, check=True, capture_output=True, text=True
             )
 
         git("init", "-q")
@@ -49,7 +58,8 @@ def main():
         )
 
         def run_gate():
-            return subprocess.run(
+            # Execute the repository-owned function with fixed test stubs only.
+            return subprocess.run(  # nosec B603 - trusted local production code under test
                 [bash, "-c", script], cwd=directory, capture_output=True, text=True
             )
 
@@ -66,15 +76,15 @@ def main():
             else:
                 path.write_text(working)
             result = run_gate()
-            assert result.returncode == expected, (label, result.stderr)
+            require(result.returncode == expected, (label, result.stderr))
             if expected:
-                assert path.name in result.stderr, "Failure must identify the staged file"
+                require(path.name in result.stderr, "Failure must identify the staged file")
             print(f"PASS: {label} (filename contains spaces)")
 
         git("rm", "--cached", "--", path.name)
         result = run_gate()
-        assert result.returncode != 0, "Missing index blob must fail closed"
-        assert path.name in result.stderr, "Read failure must identify the staged file"
+        require(result.returncode != 0, "Missing index blob must fail closed")
+        require(path.name in result.stderr, "Read failure must identify the staged file")
         print("PASS: missing index blob fails closed")
 
 
