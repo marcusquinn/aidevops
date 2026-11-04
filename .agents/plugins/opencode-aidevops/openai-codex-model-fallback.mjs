@@ -3,7 +3,8 @@
 
 // ChatGPT/Codex-supported slug, independently live-verified in GH#36600.
 // Workload/API aliases are not evidence of subscription availability.
-export const CODEX_FALLBACK_MODEL = "gpt-6-sol";
+export const CODEX_FALLBACK_MODELS = ["gpt-6.1-sol", "gpt-6-sol"];
+export const CODEX_FALLBACK_MODEL = CODEX_FALLBACK_MODELS.at(-1);
 
 export async function codexFallbackBody(input, init) {
   // Lazy loading keeps the image router independent of provider hook startup.
@@ -13,8 +14,7 @@ export async function codexFallbackBody(input, init) {
     const body = init?.body ?? (input instanceof Request ? await input.clone().text() : null);
     if (typeof body !== "string") return null;
     const parsed = JSON.parse(body);
-    if (typeof parsed.model !== "string" || parsed.model === CODEX_FALLBACK_MODEL) return null;
-    return { ...parsed, model: CODEX_FALLBACK_MODEL };
+    return typeof parsed.model === "string" ? parsed : null;
   } catch {
     return null;
   }
@@ -38,12 +38,23 @@ export async function retryCodexModelRejection(response, input, init, send) {
   const { extendRequestInit, headersFrom, isCodexBackendRequest, prepareOpenAIRequest, safeToken } = await import("./openai-codex-request.mjs");
   if (!isCodexBackendRequest(input) || !await isModelRejection(response)) return response;
   // Read and parse the original body only after a definite model rejection.
-  const body = await codexFallbackBody(input, init);
-  if (!body) return response;
-  const headers = headersFrom(input, init);
-  headers.delete("content-encoding");
-  headers.delete("content-length");
-  const retry = await prepareOpenAIRequest(input, extendRequestInit(init, { body: JSON.stringify(body), headers }));
-  console.error(`[aidevops] OpenAI provider: Codex model_not_found; retrying once with ChatGPT-supported model=${safeToken(body.model)}`);
-  return send(retry.input, retry.init);
+  const original = await codexFallbackBody(input, init);
+  if (!original) return response;
+  let current = response;
+  const tried = new Set();
+  while (await isModelRejection(current)) {
+    const body = { ...original, model: CODEX_FALLBACK_MODELS.find((candidate) => candidate !== original.model && !tried.has(candidate)) };
+    if (!body.model) break;
+    tried.add(body.model);
+    const headers = headersFrom(input, init);
+    headers.delete("content-encoding");
+    headers.delete("content-length");
+    const retry = await prepareOpenAIRequest(input, extendRequestInit(init, { body: JSON.stringify(body), headers }));
+    console.error(`[aidevops] OpenAI provider: Codex model rejection; retrying with ChatGPT-supported model=${safeToken(body.model)}`);
+    current = await send(retry.input, retry.init);
+  }
+  if (await isModelRejection(current) && tried.size) {
+    console.error(`[aidevops] OpenAI provider: requested model=${safeToken(original.model)} and fallback models=${[...tried].map(safeToken).join(", ")} were rejected`);
+  }
+  return current;
 }

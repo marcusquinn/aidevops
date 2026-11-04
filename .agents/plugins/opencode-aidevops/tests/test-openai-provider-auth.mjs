@@ -34,11 +34,12 @@ test("installed guard falls back once only for definite Codex model rejections",
       { url: codex, status: 400, payload: { detail: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account." }, retry: true, request: true },
       { url: codex, status: 404, payload: { error: { code: "model_not_found" } }, retry: true, final: 429 },
       { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, retry: true, inherited: true },
+      { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, retry: true, secondReject: true, retries: 2, final: 200, model: "gpt-5.6-sol" },
       { url: "https://api.openai.com/v1/responses", status: 400, payload: { error: { code: "model_not_found" } } },
       { url: codex, status: 403, payload: { error: { code: "permission_denied" } } },
       { url: codex, status: 400, payload: { error: { code: "invalid_request_error" } } },
       { url: codex, status: 200, payload: { error: { code: "model_not_found" } } },
-      { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, model: "gpt-6-sol" },
+      { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, model: "gpt-6-sol", retry: true, final: 200 },
     ]) {
       const calls = [];
       const controller = new AbortController();
@@ -70,7 +71,8 @@ test("installed guard falls back once only for definite Codex model rejections",
         const normalized = new Request(input, init);
         assert.equal(normalized.method, "POST");
         assert.equal(normalized.credentials, "omit");
-        return Response.json(calls.length === 1 ? scenario.payload : { ok: true }, { status: calls.length === 1 ? scenario.status : scenario.final || 200 });
+        const rejected = calls.length === 1 || (scenario.secondReject && calls.length === 2);
+        return Response.json(rejected ? scenario.payload : { ok: true }, { status: rejected ? scenario.status : scenario.final || 200 });
       };
       const { installOpenAIProviderFetchRotation } = await import("./openai-provider-auth.mjs?fallback=" + Math.random());
       installOpenAIProviderFetchRotation({});
@@ -81,12 +83,16 @@ test("installed guard falls back once only for definite Codex model rejections",
         : await fetch(scenario.url, init);
       JSON.parse = parse;
       Request.prototype.text = requestText;
-      assert.equal(calls.length, scenario.retry ? 2 : 1);
+      assert.equal(calls.length, scenario.retry ? (scenario.retries ? scenario.retries + 1 : 2) : 1);
       assert.deepEqual(calls[0], original);
-      if (scenario.retry) assert.deepEqual(calls[1], { ...original, model: "gpt-6-sol" });
+      if (scenario.retry) {
+        const firstFallback = original.model === "gpt-6-sol" ? "gpt-6.1-sol" : "gpt-6-sol";
+        assert.deepEqual(calls[1], { ...original, model: original.model === "gpt-5.6-sol" ? "gpt-6.1-sol" : firstFallback });
+        if (scenario.retries === 2) assert.deepEqual(calls[2], { ...original, model: "gpt-6-sol" });
+      }
       assert.equal(response.status, scenario.retry ? scenario.final || 200 : scenario.status);
     }
-    assert.ok(logs.some(line => line.includes("retrying once with ChatGPT-supported model=gpt-6-sol")));
+    assert.ok(logs.some(line => line.includes("retrying with ChatGPT-supported model=gpt-6-sol")));
     assert.ok(logs.every(line => !line.includes("private prompt") && !line.includes("test-secret") && !line.includes("test-account")));
   `);
 });
