@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Validate successor dispatch contracts against every superseded issue body.
 
+The successor must also carry the exact consolidated-spec marker line that the
+pulse dispatch gate (GH#23187) requires; otherwise it is never dispatched.
 Local text only: no API calls, credential reads, or secret values are needed.
 Repeated requires-secrets lines are intentional: runner-capability-helper.sh
 unions their comma/space-separated names before testing runner eligibility.
@@ -8,6 +10,8 @@ unions their comma/space-separated names before testing runner eligibility.
 
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
+
+from __future__ import annotations
 
 import argparse
 import re
@@ -61,9 +65,37 @@ def scope_errors(source: str, successor: str) -> list[str]:
     return errors
 
 
-def validate(sources: list[str], successor: str) -> list[str]:
-    """Fail closed when a preserved dispatch contract is missing or narrowed."""
+# Same exact-line contract as _has_consolidated_label (pulse-dispatch-commit-gates.sh)
+# and the dispatch-dedup/reconcile marker parsers. Lines split on LF only: the jq
+# dispatch gate does not strip CR, so a CRLF marker line would still be refused.
+MARKER_RE = re.compile(r"_Supersedes #([0-9]+) (?:—|-) this issue is the consolidated spec\._")
+MARKER_EXAMPLE = "_Supersedes #<N> — this issue is the consolidated spec._"
+
+
+def marker_errors(successor: str, parents: list[int] | None = None) -> list[str]:
+    """Require the exact consolidated-spec marker line the dispatch gate matches."""
+    lines = successor.split("\n")
+    refs = [int(match[1]) for line in lines if (match := MARKER_RE.fullmatch(line))]
     errors = []
+    if not refs:
+        near_miss = any(line.lstrip().startswith("_Supersedes #") for line in lines)
+        detail = (" (a _Supersedes line exists but has extra text or trailing whitespace;"
+                  " put other lineage on a separate line)" if near_miss else "")
+        errors.append(f"successor: missing exact marker line `{MARKER_EXAMPLE}`{detail};"
+                      " the dispatch gate refuses consolidated successors without it")
+    for parent in parents or []:
+        if refs and parent not in refs:
+            errors.append(f"successor: missing exact marker line for parent #{parent}")
+    if parents:
+        for ref in dict.fromkeys(refs):
+            if ref not in parents:
+                errors.append(f"successor: marker references #{ref}, which is not a --parent")
+    return errors
+
+
+def validate(sources: list[str], successor: str, parents: list[int] | None = None) -> list[str]:
+    """Fail closed when the marker or a preserved dispatch contract is missing or narrowed."""
+    errors = marker_errors(successor, parents)
     for index, source in enumerate(sources, start=1):
         findings = prerequisite_errors(source, successor) + scope_errors(source, successor)
         errors.extend(f"source {index}: {finding}" for finding in findings)
@@ -75,10 +107,13 @@ def main() -> int:
     parser.add_argument("--source", action="append", required=True, type=Path,
                         help="verbatim superseded body file; repeat for every source")
     parser.add_argument("--successor", required=True, type=Path)
+    parser.add_argument("--parent", action="append", type=int, default=[],
+                        help="superseded issue number; repeat for every source issue."
+                             " Each needs its own exact marker line")
     args = parser.parse_args()
     try:
         errors = validate([path.read_text(encoding="utf-8") for path in args.source],
-                          args.successor.read_text(encoding="utf-8"))
+                          args.successor.read_text(encoding="utf-8"), args.parent)
     except (OSError, UnicodeError) as exc:
         # Avoid printing body contents, credential names, or private file paths.
         print(f"consolidation contract: cannot read body files ({type(exc).__name__})",

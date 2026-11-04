@@ -29,50 +29,75 @@ requires-secrets: A B
 ## How
 Use the append helper; it selects machine, date and timestamp.
 """
+MARKER = "_Supersedes #1 — this issue is the consolidated spec._"
+SUCCESSOR = f"{MARKER}\n\n{SOURCE}"
 
 
 class ContractTests(unittest.TestCase):
     def test_preserved_contract_passes(self):
-        self.assertEqual(VALIDATOR.validate([SOURCE], SOURCE), [])
+        self.assertEqual(VALIDATOR.validate([SOURCE], SUCCESSOR), [])
+
+    def test_successor_requires_exact_marker_line(self):
+        self.assertTrue(VALIDATOR.validate([SOURCE], SOURCE))
+        prose = "This issue supersedes #1.\n\n" + SOURCE
+        self.assertTrue(VALIDATOR.validate([SOURCE], prose))
+        trailing = SUCCESSOR.replace("spec._", "spec. #1 itself superseded #0._", 1)
+        errors = VALIDATOR.validate([SOURCE], trailing)
+        self.assertTrue(any("separate line" in error for error in errors))
+        self.assertTrue(VALIDATOR.validate([SOURCE], SUCCESSOR.replace("spec._", "spec._ ", 1)))
+        self.assertTrue(VALIDATOR.validate([SOURCE], SUCCESSOR.replace("\n", "\r\n")))
+        ascii_dash = SUCCESSOR.replace("—", "-", 1)
+        self.assertEqual(VALIDATOR.validate([SOURCE], ascii_dash), [])
+        lineage = SUCCESSOR.replace(MARKER, MARKER + "\n#1 itself superseded #0.", 1)
+        self.assertEqual(VALIDATOR.validate([SOURCE], lineage), [])
+
+    def test_marker_numbers_must_match_parents(self):
+        self.assertEqual(VALIDATOR.validate([SOURCE], SUCCESSOR, [1]), [])
+        self.assertIn("successor: marker references #1, which is not a --parent",
+                      VALIDATOR.validate([SOURCE], SUCCESSOR, [2]))
+        self.assertIn("successor: missing exact marker line for parent #2",
+                      VALIDATOR.validate([SOURCE, SOURCE], SUCCESSOR, [1, 2]))
+        both = MARKER.replace("#1", "#2") + "\n" + SUCCESSOR
+        self.assertEqual(VALIDATOR.validate([SOURCE, SOURCE], both, [1, 2]), [])
 
     def test_every_source_contributes_to_union(self):
         other = "requires-secrets: B, C\n"
-        self.assertEqual(VALIDATOR.validate([SOURCE, other], SOURCE + "\n" + other), [])
-        self.assertTrue(VALIDATOR.validate([SOURCE, other], SOURCE))
+        self.assertEqual(VALIDATOR.validate([SOURCE, other], SUCCESSOR + "\n" + other), [])
+        self.assertTrue(VALIDATOR.validate([SOURCE, other], SUCCESSOR))
 
     def test_secret_summary_does_not_replace_verbatim_lines(self):
-        successor = SOURCE.replace("requires-secrets: A B", "requires-secrets: A, B")
+        successor = SUCCESSOR.replace("requires-secrets: A B", "requires-secrets: A, B")
         self.assertIn("source 1: missing verbatim requires-secrets line",
                       VALIDATOR.validate([SOURCE], successor))
 
     def test_prerequisite_paragraph_is_preserved(self):
-        successor = SOURCE.replace("Use a runner with ordinary test credentials.\n", "")
+        successor = SUCCESSOR.replace("Use a runner with ordinary test credentials.\n", "")
         self.assertIn("source 1: missing verbatim runner-prerequisite paragraph",
                       VALIDATOR.validate([SOURCE], successor))
 
     def test_generated_scope_must_remain_wildcard(self):
-        successor = SOURCE.replace("log/*/*/x-*.jsonl", "log/consolidated/2026-10-05/x-history.jsonl")
+        successor = SUCCESSOR.replace("log/*/*/x-*.jsonl", "log/consolidated/2026-10-05/x-history.jsonl")
         self.assertIn("source 1: missing verbatim wildcard Files Scope entry",
                       VALIDATOR.validate([SOURCE], successor))
 
     def test_pattern_in_prose_does_not_count_as_scope(self):
-        successor = SOURCE.replace("- NEW: log/*/*/x-*.jsonl\n", "")
+        successor = SUCCESSOR.replace("- NEW: log/*/*/x-*.jsonl\n", "")
         successor += "\n- NEW: log/*/*/x-*.jsonl\n"
         self.assertTrue(VALIDATOR.validate([SOURCE], successor))
 
     def test_edit_cannot_be_changed_to_new(self):
-        successor = SOURCE.replace("EDIT: src/existing.sh", "NEW: src/existing.sh")
+        successor = SUCCESSOR.replace("EDIT: src/existing.sh", "NEW: src/existing.sh")
         self.assertIn("source 1: EDIT scope entry changed to NEW",
                       VALIDATOR.validate([SOURCE], successor))
 
     def test_backtick_scope_and_multiple_sections(self):
         source = SOURCE.replace("- EDIT: src/existing.sh", "- `EDIT: src/existing.sh`")
         source += "\n### Files Scope\n- `NEW: other/[ab]/x-?.jsonl`\n"
-        self.assertEqual(VALIDATOR.validate([source], source), [])
-        self.assertTrue(VALIDATOR.validate([source], SOURCE))
+        self.assertEqual(VALIDATOR.validate([source], f"{MARKER}\n\n{source}"), [])
+        self.assertTrue(VALIDATOR.validate([source], SUCCESSOR))
 
     def test_no_contract_is_compatible(self):
-        self.assertEqual(VALIDATOR.validate(["## What\nPlain issue"], "Plain successor"), [])
+        self.assertEqual(VALIDATOR.validate(["## What\nPlain issue"], f"{MARKER}\nPlain successor"), [])
 
     def test_cli_checks_all_sources_and_fails_closed(self):
         temp_root = os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp"))
@@ -83,11 +108,15 @@ class ContractTests(unittest.TestCase):
             successor = root / "successor.md"
             source.write_text(SOURCE, encoding="utf-8")
             other.write_text("requires-secrets: C\n", encoding="utf-8")
-            successor.write_text(SOURCE + "\nrequires-secrets: C\n", encoding="utf-8")
-            command = [sys.executable, str(SCRIPT), "--source", str(source),
+            successor.write_text(SUCCESSOR + "\nrequires-secrets: C\n", encoding="utf-8")
+            command = [sys.executable, str(SCRIPT), "--parent", "1", "--source", str(source),
                        "--source", str(other), "--successor", str(successor)]
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
-            successor.write_text(SOURCE, encoding="utf-8")
+            successor.write_text(SOURCE + "\nrequires-secrets: C\n", encoding="utf-8")
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(VALIDATOR.MARKER_EXAMPLE, result.stderr)
+            successor.write_text(SUCCESSOR, encoding="utf-8")
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 1)
             other.unlink()
             result = subprocess.run(command, capture_output=True, text=True)

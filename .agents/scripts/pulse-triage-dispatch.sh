@@ -90,17 +90,20 @@ _compose_consolidation_worker_instructions() {
    - \`## Contributors\` — a cc line @-mentioning every author from the list below
 
    Start the merged body with: \`_Supersedes #${parent_num} — this issue is the consolidated spec._\`
+   That marker must be a line by itself, exactly as shown (no extra text, no trailing whitespace); the dispatch gate refuses consolidated successors without it. Put any further lineage (for example "#${parent_num} itself superseded #M") on a separate line, and add one exact marker line per additional superseded issue.
 
 3. **Validate before filing the new consolidated issue.** Save the parent body (inlined or explicitly fetched) verbatim to a local file, plus a separate body file for each additional superseded issue. Validate the merged body against ALL sources; a failed check stops publication and parent closure until the merged body is repaired:
 
 \`\`\`bash
 python3 ~/.aidevops/agents/scripts/consolidation-contract-validator.py \\
+  --parent ${parent_num} \\
   --source "<file containing the verbatim parent body>" \\
   --successor "<file containing the merged body from step 2>"
 # Repeat --source for each additional superseded issue body.
+# Repeat --parent for each additional superseded issue number.
 \`\`\`
 
-The validator must pass before running the signed creation command below. It checks verbatim secret lines and prerequisite paragraphs, wildcard scope preservation, and EDIT-to-NEW regressions. Also run \`pre-dispatch-validator-helper.sh scope-check\` on the merged body for ordinary scope syntax validation.
+The validator must pass before running the signed creation command below. It checks the exact marker line for every \`--parent\`, verbatim secret lines and prerequisite paragraphs, wildcard scope preservation, and EDIT-to-NEW regressions. Also run \`pre-dispatch-validator-helper.sh scope-check\` on the merged body for ordinary scope syntax validation.
 
 \`\`\`bash
 ~/.aidevops/agents/scripts/gh-write-helper.sh issue create --repo "${repo_slug}" \\
