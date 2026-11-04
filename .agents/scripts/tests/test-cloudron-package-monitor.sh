@@ -216,6 +216,11 @@ if [[ "${1:-}" == api && "${2:-}" == repos/exampleorg/example-package/issues/90 
     exit 0
 fi
 if [[ "${1:-}" == pr && "${2:-}" == list ]]; then
+    # The stalled-finding path must never depend on a repository-wide PR list.
+    if [[ -n "${MONITOR_STALLED:-}" ]]; then
+        jq -nc '[range(1000) | {number:., closingIssuesReferences:[]}]'
+        exit 0
+    fi
     [[ "${MONITOR_SUPERSEDE:-}" != pr-error ]] || exit 1
     if [[ "${MONITOR_SUPERSEDE:-}" == linked ]]; then
         printf '%s\n' '[{"closingIssuesReferences":[{"number":90}]}]'
@@ -259,11 +264,45 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/commits/aaaaaa
     exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101" ]]; then
-    if [[ "${MONITOR_ISSUE_STATE:-}" == claimed ]]; then
+    if [[ -n "${MONITOR_STALLED:-}" ]]; then
+        jq -nc --arg scenario "$MONITOR_STALLED" '{state:(if $scenario == "closed-issue" then "closed" else "open" end),
+            html_url:"https://github.com/exampleorg/example-package/issues/101", assignees:[],
+            labels:([{name:"auto-dispatch"},{name:"status:available"}] +
+                (if $scenario == "in-review" then [{name:"status:in-review"}] else [{name:"hold-for-review"}] end) +
+                (if $scenario == "issue-approval" then [{name:"release-approval-required"}]
+                 elif $scenario == "no-auto-dispatch" then [{name:"no-auto-dispatch"}] else [] end))}'
+    elif [[ "${MONITOR_ISSUE_STATE:-}" == claimed ]]; then
         printf '%s\n' '{"state":"open","html_url":"https://github.com/exampleorg/example-package/issues/101","assignees":[{"login":"exampleorg"}],"labels":[{"name":"auto-dispatch"},{"name":"status:claimed"}]}'
     else
         printf '%s\n' '{"state":"open","html_url":"https://github.com/exampleorg/example-package/issues/101","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}'
     fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues?state=open&labels=release-approval-required&per_page=100' ]]; then
+    [[ "${MONITOR_STALLED:-}" != approval-error ]] || exit 1
+    if [[ "${MONITOR_STALLED:-}" == open-approval ]]; then
+        printf '%s\n' '[[],[{"number":102}]]'
+    else
+        printf '%s\n' '[[]]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues/101/timeline?per_page=100' ]]; then
+    [[ "${MONITOR_STALLED:-}" != timeline-error ]] || exit 1
+    if [[ "${MONITOR_STALLED:-}" == no-pr || "${MONITOR_STALLED:-}" == closing-only ]]; then
+        printf '%s\n' '[[]]'
+    elif [[ "${MONITOR_STALLED:-}" == foreign-pr ]]; then
+        printf '%s\n' '[[{"event":"cross-referenced","source":{"issue":{"repository_url":"https://api.github.com/repos/other/repo","number":89,"pull_request":{}}}}]]'
+    else
+        printf '%s\n' '[[],[{"event":"cross-referenced","source":{"issue":{"repository_url":"https://api.github.com/repos/exampleorg/example-package","number":89,"pull_request":{}}}}]]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == pr && "${2:-}" == view && "${3:-}" == 89 ]]; then
+    [[ "${MONITOR_STALLED:-}" != pr-error ]] || exit 1
+    jq -nc --arg scenario "${MONITOR_STALLED:-}" '{state:(if $scenario == "closed-pr" then "CLOSED" elif $scenario == "merged-pr" then "MERGED" else "OPEN" end),
+        mergeable:(if $scenario == "clean-pr" then "MERGEABLE" elif $scenario == "unknown-pr" then "UNKNOWN" else "CONFLICTING" end),
+        labels:(if $scenario == "pr-approval" then [{name:"release-approval-required"}] else [] end)}'
     exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101/comments?per_page=100" ]]; then
@@ -301,6 +340,28 @@ if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
     exit 0
 fi
 SOURCE
+	write_fake_closing_reference_commands "$bin_dir"
+	return 0
+}
+
+write_fake_closing_reference_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'CLOSING'
+if [[ "${1:-}" == api && "${2:-}" == graphql ]]; then
+    [[ "$*" == *'--paginate --slurp'* && "$*" == *'number=101'* &&
+        "$*" == *'includeClosedPrs: true'* && "$*" == *'after: $endCursor'* ]] || exit 1
+    [[ "${MONITOR_STALLED:-}" != closing-error ]] || exit 1
+    jq -nc --arg scenario "${MONITOR_STALLED:-}" '
+        def page($nodes): {data:{repository:{issue:{closedByPullRequestsReferences:{nodes:$nodes}}}}};
+        if $scenario == "malformed-closing-error" then [page(null)]
+        elif $scenario == "closing-only" or $scenario == "duplicate-link" then
+            [page([]), page([{number:89, repository:{nameWithOwner:"exampleorg/example-package"}}])]
+        elif $scenario == "foreign-pr" then
+            [page([{number:89, repository:{nameWithOwner:"other/repo"}}])]
+        else [page([])] end'
+    exit 0
+fi
+CLOSING
 	return 0
 }
 
@@ -470,6 +531,37 @@ test_monitor_deduplicates_and_preserves_source() {
 	assert_equal 1 "$(grep -c '^- Upgrade base image' "$log_file")" "legacy upgrade creates one actionable finding"
 	grep -Fq 'minBoxVersion' "$log_file" && assert_equal true true "upgrade issue includes platform qualification" || assert_equal true false "upgrade issue includes platform qualification"
 	assert_equal "$docker_before" "$(cksum "${repo_dir}/Dockerfile")" "compatibility monitor does not mutate package source"
+	return 0
+}
+
+test_monitor_reports_stranded_upstream_findings() {
+	local scenario="" mode="" case_root="" log_file="" output="" rc=0 expected=0 expected_rc=0
+	for scenario in conflicting in-review closed-pr merged-pr closing-only duplicate-link no-auto-dispatch issue-approval pr-approval open-approval closed-issue clean-pr unknown-pr no-pr foreign-pr approval-error timeline-error closing-error malformed-closing-error pr-error; do
+		case_root="${TEST_ROOT}/stalled-${scenario}"
+		log_file="${case_root}/issues.log"
+		write_fake_commands "${case_root}/bin"
+		write_fixture "${case_root}/home" "${case_root}/package"
+		# Seed an existing fingerprint, without creating or changing an issue.
+		printf 'upstream-v2.0.0\n' >"$log_file"
+		for mode in report apply; do
+			rc=0
+			output=$(HOME="${case_root}/home" PATH="${case_root}/bin:$PATH" MONITOR_TEST_LOG="$log_file" \
+				MONITOR_STALLED="$scenario" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${case_root}/bin/gh_issue_comment" \
+				bash "$HELPER" upstream "--${mode}" 2>&1) || rc=$?
+			expected_rc=0
+			[[ "$scenario" != *-error ]] || expected_rc=1
+			assert_equal "$expected_rc" "$rc" "stalled ${scenario} ${mode}: API errors propagate"
+			expected=0
+			case "$scenario" in
+			conflicting | in-review | closed-pr | merged-pr | closing-only | duplicate-link | no-auto-dispatch) expected=1 ;;
+			esac
+			assert_equal "$expected" "$(grep -c '^FINDING exampleorg/example-package issue #101 PR #89: stranded upstream-v2.0.0' <<<"$output" || true)" "stalled ${scenario} ${mode}: report only non-approval stranded findings"
+			if [[ "$expected" == 1 ]]; then
+				assert_equal 0 "$(grep -c '^Already handled' <<<"$output" || true)" "stalled ${scenario} ${mode}: not silently handled"
+			fi
+		done
+		assert_equal 'upstream-v2.0.0' "$(cat "$log_file")" "stalled ${scenario}: no issue, comment, label, close or retry writes"
+	done
 	return 0
 }
 
@@ -923,6 +1015,7 @@ test_monitor_rejects_blank_package_title() {
 
 test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	local case_root="${TEST_ROOT}/source-readiness" home_dir="" repo_dir="" bin_dir="" log_file="" api_log="" releases_file="" config_tmp="" blocker="" blocked_log="" permission_blocker=""
+	local held_scenario=""
 	home_dir="${case_root}/home"
 	repo_dir="${case_root}/package"
 	bin_dir="${case_root}/bin"
@@ -963,6 +1056,13 @@ test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "existing trusted retry is not duplicated" || assert_equal true false "existing trusted retry is not duplicated"
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_ISSUE_STATE=claimed MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
 	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "claimed issue is never rearmed by the routine" || assert_equal true false "claimed issue is never rearmed by the routine"
+	for held_scenario in conflicting in-review no-auto-dispatch issue-approval; do
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" \
+			MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ready \
+			MONITOR_STALLED="$held_scenario" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" \
+			bash "$HELPER" upstream --apply >/dev/null
+		assert_equal 0 "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" "positive source proof never retries ${held_scenario} mixed with status:available"
+	done
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_FORGED_MARKER=true MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
 	assert_equal 1 "$(grep -c '^CALL_RETRY$' "$blocked_log")" "untrusted collaborator marker cannot suppress a proven-source retry"
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
@@ -1151,6 +1251,7 @@ main() {
 	test_catalog_atomic_push_races
 	test_monitor_reconciles_catalog_once
 	test_monitor_deduplicates_and_preserves_source
+	test_monitor_reports_stranded_upstream_findings
 	test_monitor_supersedes_only_idle_upstream_findings
 	test_monitor_scopes_package_tests_when_present
 	test_monitor_uses_remote_manifest_and_fails_closed

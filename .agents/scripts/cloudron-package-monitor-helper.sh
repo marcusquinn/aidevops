@@ -21,6 +21,7 @@ _CLOUDRON_MONITOR_SOURCE_TAGS=tags
 _CLOUDRON_MONITOR_SOURCE_COMMITS=commits
 _CLOUDRON_MONITOR_GH_TIMEOUT_DEFAULT=90
 _CLOUDRON_MONITOR_DEFAULT_MANIFEST=CloudronManifest.json
+_CLOUDRON_MONITOR_APPROVAL_LABEL=release-approval-required
 
 _cloudron_monitor_error() {
 	local message="$1"
@@ -331,8 +332,10 @@ _cloudron_monitor_rearm_ready_issue() {
 	local comment_wrapper="${CLOUDRON_PACKAGE_COMMENT_WRAPPER:-gh_issue_comment}"
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
 	issue=$(gh api "repos/${slug}/issues/${issue_number}") || return 1
-	jq -e '.state == "open" and (.assignees | length == 0) and
-		([.labels[].name] | index("auto-dispatch") != null and index("status:available") != null)' \
+	jq -e --arg approval "$_CLOUDRON_MONITOR_APPROVAL_LABEL" '.state == "open" and (.assignees | length == 0) and
+		([.labels[].name] | index("auto-dispatch") != null and index("status:available") != null
+		 and index("hold-for-review") == null and index("no-auto-dispatch") == null
+		 and index($approval) == null and index("status:in-review") == null)' \
 		<<<"$issue" >/dev/null || return 0
 	comments=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$slug") || return 1
 	blocker=$(_terminal_blocker_hash 'v2:target_code_blocker') || return 1
@@ -557,6 +560,64 @@ Older upstream findings were left open to preserve active work:${retained} Coord
 	return 0
 }
 
+# Reporting only: a stale fingerprint is not permission to retry, edit labels,
+# close a PR, or publish. The caller has just verified that main still needs
+# this upstream version, including when a linked PR was already merged.
+_cloudron_monitor_stalled_upstream() {
+	local slug="$1" fingerprint="$2" number="$3"
+	local issue="" approvals="" timeline="" closing="" prs="" pr="" snapshot="" reason=""
+	[[ "$fingerprint" == upstream-* ]] || return 0
+	[[ "$number" =~ ^[1-9][0-9]*$ ]] || return 1
+	issue=$(gh api "repos/${slug}/issues/${number}") || return 1
+	jq -e --arg approval "$_CLOUDRON_MONITOR_APPROVAL_LABEL" '.state == "open" and ([.labels[].name] |
+		(index("hold-for-review") != null or index("status:in-review") != null)
+		and index($approval) == null)' <<<"$issue" >/dev/null || return 0
+	# Conservative: leave every open release-approval request to its own routine,
+	# even if a legacy request has no parseable PR metadata. No writes occur here.
+	approvals=$(gh api "repos/${slug}/issues?state=open&labels=${_CLOUDRON_MONITOR_APPROVAL_LABEL}&per_page=100" --paginate --slurp) || return 1
+	jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" 'type == $array_type and all(.[]; type == $array_type)' <<<"$approvals" >/dev/null || return 1
+	jq -e 'any(.[][]; .pull_request == null)' <<<"$approvals" >/dev/null && return 0
+	# Locked issues may lack cross-reference events even when a PR closes them.
+	# Paginate issue-scoped links, including closed/merged PRs, independently of
+	# repository PR counts. Timeline links remain necessary for ordinary references.
+	# shellcheck disable=SC2016 # GraphQL variables are literal, not shell expansions.
+	closing=$(gh api graphql --paginate --slurp -F owner="${slug%/*}" -F name="${slug#*/}" -F number="$number" -f query='
+		query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+			repository(owner: $owner, name: $name) {
+				issue(number: $number) {
+					closedByPullRequestsReferences(first: 100, after: $endCursor, includeClosedPrs: true) {
+						nodes { number repository { nameWithOwner } }
+						pageInfo { hasNextPage endCursor }
+					}
+				}
+			}
+		}') || return 1
+	jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" 'type == $array_type and length > 0 and all(.[];
+		.errors == null and (.data.repository.issue.closedByPullRequestsReferences.nodes | type == $array_type))' <<<"$closing" >/dev/null || return 1
+	timeline=$(gh api "repos/${slug}/issues/${number}/timeline?per_page=100" --paginate --slurp) || return 1
+	prs=$(jq -r --arg repo "https://api.github.com/repos/${slug}" --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" \
+		--argjson closing "$closing" --arg slug "$slug" '
+		if type == $array_type and all(.[]; type == $array_type) then
+			([.[][] | select(.event == "cross-referenced") | .source.issue
+			 | select(.repository_url == $repo and .pull_request != null)
+			 | .number] + [$closing[].data.repository.issue.closedByPullRequestsReferences.nodes[]
+			 | select(.repository.nameWithOwner == $slug) | .number])
+			 | map(select(type == "number" and . > 0 and floor == .)) | unique | .[]
+		else error("Invalid timeline pages") end' <<<"$timeline") || return 1
+	for pr in $prs; do
+		snapshot=$(gh pr view "$pr" --repo "$slug" --json state,mergeable,labels) || return 1
+		jq -e --arg approval "$_CLOUDRON_MONITOR_APPROVAL_LABEL" 'any(.labels[]; .name == $approval)' <<<"$snapshot" >/dev/null && continue
+		reason=$(jq -r 'if .state == "MERGED" then "merged but upstream finding remains outstanding"
+			elif .state == "CLOSED" then "closed without resolving upstream finding"
+			elif .state == "OPEN" and .mergeable == "CONFLICTING" then "conflicting"
+			else empty end' <<<"$snapshot") || return 1
+		[[ -n "$reason" ]] || continue
+		printf 'FINDING %s issue #%s PR #%s: stranded %s (%s); holds remain authoritative; reassess current source and request signed release approval before merge.\n' \
+			"$slug" "$number" "$pr" "$fingerprint" "$reason"
+	done
+	return 0
+}
+
 _cloudron_monitor_apply_finding() {
 	local apply="$1"
 	local slug="$2"
@@ -568,11 +629,17 @@ _cloudron_monitor_apply_finding() {
 	local repo_path="${8:-}"
 	local source_proof="${9:-}"
 	local exists_rc=0
+	local stalled=""
 	if _cloudron_monitor_issue_exists "$slug" "$fingerprint"; then
+		stalled=$(_cloudron_monitor_stalled_upstream "$slug" "$fingerprint" "$_CLOUDRON_MONITOR_ISSUE_NUMBER") || return 1
 		if [[ "$apply" == true && -n "$source_proof" ]]; then
 			_cloudron_monitor_rearm_ready_issue "$slug" "$_CLOUDRON_MONITOR_ISSUE_NUMBER" "$source_proof" || return 1
 		fi
-		printf 'Already handled in %s: %s\n' "$slug" "$fingerprint"
+		if [[ -n "$stalled" ]]; then
+			printf '%s\n' "$stalled"
+		else
+			printf 'Already handled in %s: %s\n' "$slug" "$fingerprint"
+		fi
 		if [[ "$apply" == true ]]; then
 			_cloudron_monitor_supersede_upstream "$slug" "$fingerprint" "$_CLOUDRON_MONITOR_ISSUE_NUMBER" || return 1
 		fi
