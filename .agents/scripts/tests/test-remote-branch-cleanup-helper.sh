@@ -186,7 +186,11 @@ install_fetch_failure_git_stub() {
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ " \$* " == *" fetch "* ]]; then
-	echo "fatal: Authentication failed for https://x:${FAKE_FETCH_TOKEN}@example.invalid/r.git" >&2
+	printf '%s\n' \\
+		"fatal: Authentication failed for https://x:${FAKE_FETCH_TOKEN}@example.invalid/r.git" \\
+		"fetch diagnostic line 2" \\
+		"fetch diagnostic line 3" \\
+		"fetch diagnostic line 4" >&2
 	exit 1
 fi
 exec "${GIT_SHIM}" "\$@"
@@ -404,6 +408,10 @@ run_fetch_assertions() {
 	assert_contains "$output" "refs=stale" "failed fetch marks a dry-run audit stale"
 	assert_contains "$output" "dry-run audit uses stale remote-tracking refs" "failed fetch warns in dry-run"
 	assert_contains "$output" "fetch failed: fatal: Authentication failed" "failed fetch reports its cause"
+	assert_contains "$output" "fetch diagnostic line 3" "fetch failure diagnostic keeps the first three lines"
+	if [[ "$output" == *"fetch diagnostic line 4"* ]]; then
+		fail "fetch failure diagnostic must be limited to three lines"
+	fi
 	if [[ "$output" == *"$FAKE_FETCH_TOKEN"* ]]; then
 		fail "fetch failure diagnostic must not leak the token"
 	fi
