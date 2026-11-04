@@ -1325,7 +1325,12 @@ _underfill_host_sample() {
 _underfill_reason_tally() {
 	local offset="$1" end="${2:-$(wc -c <"$LOGFILE")}" start=0
 	start=$((end - 1048576 > offset ? end - 1048576 : offset))
-	tail -c "+$((start + 1))" "$LOGFILE" 2>/dev/null | head -c "$((end - start))" | awk '
+	python3 -c 'import sys
+with open(sys.argv[1], "rb") as log:
+    start, end = map(int, sys.argv[2:])
+    log.seek(start)
+    sys.stdout.buffer.write(log.read(max(0, end - start)))
+' "$LOGFILE" "$start" "$end" | awk '
 		/pre-launch failure|Dispatch blocked/ {
 			reason="dispatch_blocked"
 			if (match($0, /reason=[A-Za-z0-9_-]+/)) reason=substr($0,RSTART+7,RLENGTH-7)
