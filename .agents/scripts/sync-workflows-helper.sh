@@ -920,14 +920,39 @@ _installation_skip_reason() {
 	return 0
 }
 
+# GH#36421: a stale local clone can report NO-WORKFLOW while its upstream
+# already carries a floating caller. Inspect the upstream blob (existing refs
+# only, no network) so --pin-floating can reach apply-time reclassification.
+_upstream_is_floating_caller() {
+	local _slug="$1"
+	local _path="$2"
+	local _workflow="$3"
+	local _upstream="$4"
+	local _tmp_dir="" _rc=1
+	[[ -n "$_upstream" && "$_upstream" != "unknown" ]] || return 1
+	_tmp_dir=$(mktemp -d) || return 1
+	if git -C "$_path" show "${_upstream}:.github/workflows/${_workflow}.yml" \
+		>"${_tmp_dir}/${_workflow}.yml" 2>/dev/null &&
+		_is_floating_caller "$_slug" "${_tmp_dir}/${_workflow}.yml"; then
+		_rc=0
+	fi
+	rm -rf "$_tmp_dir"
+	return "$_rc"
+}
+
 _emit_actionable_row() {
 	local _slug="$1"
 	local _path="$2"
 	local _class="$3"
 	local _workflow="$4"
+	local _upstream="${5:-}"
 	local _skip_reason=""
 	if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 ]]; then
-		_is_floating_caller "$_slug" "$_path/.github/workflows/${_workflow}.yml" || return 0
+		if [[ "$_class" == "$_CLASS_NO_WORKFLOW" ]]; then
+			_upstream_is_floating_caller "$_slug" "$_path" "$_workflow" "$_upstream" || return 0
+		else
+			_is_floating_caller "$_slug" "$_path/.github/workflows/${_workflow}.yml" || return 0
+		fi
 	fi
 	if [[ "${_OPT_INSTALL_MISSING:-0}" -eq 1 || "$_workflow" == "$METRICS_WORKFLOW_NAME" ]]; then
 		if [[ "$_class" == "$_CLASS_LOCAL_ONLY" ]]; then
@@ -962,7 +987,9 @@ _list_actionable_repos() {
 	fi
 
 	# Step 1 — drift and migration rows are always actionable. NO-WORKFLOW and
-	# LOCAL-ONLY rows enter only through the narrow --install-missing path.
+	# LOCAL-ONLY rows enter only through the narrow --install-missing path,
+	# except that --pin-floating admits stale (behind/diverged) NO-WORKFLOW
+	# rows whose upstream blob is a floating caller (GH#36421).
 	local _candidate_rows
 	_candidate_rows=$(printf '%s\n' "$_json" | jq -r \
 		--arg drifted "$_CLASS_DRIFTED" \
@@ -970,18 +997,21 @@ _list_actionable_repos() {
 		--arg missing "$_CLASS_NO_WORKFLOW" \
 		--arg local "$_CLASS_LOCAL_ONLY" \
 		--argjson install "${_OPT_INSTALL_MISSING:-0}" \
+		--argjson pin "${_OPT_PIN_FLOATING:-0}" \
 		'select(
 			(.classification == $drifted)
 			or (.classification == $needs)
 			or (($install == 1) and (
 				(.classification == $missing) or (.classification == $local)
 			))
+			or (($pin == 1) and (.classification == $missing)
+				and ((.evidence.freshness // "") as $f | $f == "behind" or $f == "diverged"))
 		)
-		| [.slug, .path, .classification, (.workflow // "")] | @tsv' 2>/dev/null)
-	local _row_slug _row_path _row_class _row_workflow
-	while IFS=$'\t' read -r _row_slug _row_path _row_class _row_workflow; do
+		| [.slug, .path, .classification, (.workflow // ""), (.evidence.upstream // "")] | @tsv' 2>/dev/null)
+	local _row_slug _row_path _row_class _row_workflow _row_upstream
+	while IFS=$'\t' read -r _row_slug _row_path _row_class _row_workflow _row_upstream; do
 		[[ -z "$_row_slug" ]] && continue
-		_emit_actionable_row "$_row_slug" "$_row_path" "$_row_class" "$_row_workflow"
+		_emit_actionable_row "$_row_slug" "$_row_path" "$_row_class" "$_row_workflow" "$_row_upstream"
 	done <<<"$_candidate_rows"
 
 	# Step 2 — CURRENT/CALLER rows whose `runner:` value drifted from
@@ -1368,10 +1398,28 @@ _sync_write_commit_push() {
 		git -C "$_path" checkout -q "$_default_branch" || true
 		return 1
 	fi
-	if ! _git_remote_network "$_path" "$_remote" push -u "$_remote" "$_branch_name" 2>/dev/null; then
-		printf '%s\t%s\t%s\tgit push failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
+	local _push_stderr=""
+	if ! _push_stderr=$(_git_remote_network "$_path" "$_remote" push -u "$_remote" "$_branch_name" 2>&1 >/dev/null); then
+		printf '%s\t%s\t%s\tgit push failed: %s\n' "$_slug" "$_status" "$_STATUS_FAILED" \
+			"$(_summarise_push_failure "$_push_stderr")"
 		return 1
 	fi
+	return 0
+}
+
+# GH#36421: a bare "git push failed" hid actionable pre-push hook blocks
+# (for example repo-verify missing node_modules). Emit one sanitized line:
+# the first hook/git error, else the last non-empty line. Credentials in URLs
+# are masked and tabs removed so the TSV result row stays well-formed.
+_summarise_push_failure() {
+	local _stderr="$1"
+	local _line=""
+	_line=$(printf '%s\n' "$_stderr" | tr -d '\r' |
+		grep -iE '\[BLOCK\]|^(error|fatal|remote: error)|rejected|denied|command not found' | head -n 1 || true)
+	[[ -n "$_line" ]] || _line=$(printf '%s\n' "$_stderr" | tr -d '\r' | grep -v '^[[:space:]]*$' | tail -n 1 || true)
+	[[ -n "$_line" ]] || _line="no diagnostic output"
+	_line=$(printf '%s' "$_line" | tr '\t' ' ' | sed -E 's#(://)[^/@[:space:]]+@#\1***@#g')
+	printf '%s' "${_line:0:240}"
 	return 0
 }
 
