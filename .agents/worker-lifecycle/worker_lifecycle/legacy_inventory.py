@@ -3,84 +3,40 @@
 import json
 import os
 import re
-import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
 from .enrollment import _git_directory
-from .filesystem import validate_private_path as _private
-from .process import ProcessIdentity
+from .legacy_options import reconstructible_path, unrecorded
+from .legacy_proc import require_ended, require_idle_proc
 from .retirement import _git, _id
 
 
-def require_idle_proc(path, proc=Path("/proc")):
-    """Inspect every Linux thread, including private cwd/fd tables, fail closed."""
-    if not (proc / "self").exists():
-        raise ValueError("proc-observation-unavailable")
+def unchanged(connection, plan, adapter):
+    current = next((item for item in inventory(connection)
+                     if item["path"] == plan["source"]), None)
+    confirmed = plan.get("operator_confirmed") is True
+    if current is None and confirmed:
+        current = unrecorded(plan["source"])
+    if (current is None or current["modern"]
+            or sorted(current["generations"]) != plan["generations"]
+            or current["runs"] != plan["runs"]):
+        raise ValueError("registered-writers-changed")
+    require_ended(current, adapter, operator_confirmed=confirmed)
+
+
+def requires_reconstructible(item, repositories, adapter, options):
+    """Only missing writer evidence may select the independent recovery class."""
     try:
-        for process in proc.iterdir():
-            if not process.name.isdecimal():
-                continue
-            try:
-                threads = list((process / "task").iterdir())
-            except FileNotFoundError:
-                if process.exists():
-                    raise ValueError("proc-observation-unavailable")
-                continue
-            for task in threads:
-                inspect_proc_task(path, task)
-    except (OSError, StopIteration) as error:
-        raise ValueError("proc-observation-unavailable") from error
-
-
-def live_owned_proc_task(task):
-    # Non-dumpable same-UID tasks can have root-owned /proc directories.
-    status = (task / "status").read_text(encoding="utf-8")
-    fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
-    if not fields.get("Uid") or not fields.get("State"):
-        raise ValueError("proc-observation-unavailable")
-    return (str(os.geteuid()) in fields["Uid"].split()
-            and fields["State"].split()[0] not in ("Z", "X"))
-
-
-def require_idle_reference(path, reference):
-    target = Path(os.readlink(reference).removesuffix(" (deleted)"))
-    if target == path or path in target.parents:
-        raise ValueError("live-process-reference")
-
-
-def inspect_proc_task(path, task):
-    try:
-        if not live_owned_proc_task(task):
-            return
-        require_idle_reference(path, task / "cwd")
-        for fd in (task / "fd").iterdir():
-            try:
-                require_idle_reference(path, fd)
-            except FileNotFoundError:
-                continue  # An independently closed descriptor grants no authority.
-    except FileNotFoundError:
-        if task.exists():
-            raise ValueError("proc-observation-unavailable") from None
-
-
-def reconstructible_path(item):
-    """Bound the remote-recoverable class to owned, unpreserved managed paths."""
-    path = Path(item["path"])
-    base = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR",
-                               Path.home() / "Git" / "_worktrees")).expanduser()
-    if (not base.is_absolute() or base.resolve() != base
-            or path.resolve(strict=True) != path or not path.is_relative_to(base)
-            or path == base):
-        raise ValueError("outside-managed-worktree-base")
-    patterns = ["preserved", "readonly", "recovery", "review"]
-    patterns.extend(filter(None, os.environ.get(
-        "AIDEVOPS_WORKTREE_PRESERVE_PATTERNS", "").lower().split(",")))
-    if any(pattern in path.name.lower() for pattern in patterns):
-        raise ValueError("preservation-name")
-    if item["modern"] or path.stat().st_uid != os.geteuid():
-        raise ValueError("managed-or-foreign-worktree")
-    return path
+        inspect(item, repositories, adapter, time.time(), options)
+    except ValueError as error:
+        if str(error) == "no-recorded-processes":
+            return True
+        if str(error) == "too-recent" and (not item["runs"] or item["unbound"]):
+            return True
+        raise
+    return False
 
 
 def reconstructible(item, repositories, adapter, open_prs):
@@ -114,37 +70,6 @@ def reconstructible(item, repositories, adapter, open_prs):
     return {"source": str(path), "directory": _id(path), "admin": str(admin),
             "admin_identity": _id(admin), "common": common, "head": head,
             "branch": branch, "repo": slug}
-
-
-def queue(store, items):
-    """A private cursor gives bounded passes fair progress; it grants no authority."""
-    cursor = store.directory / "legacy-cleanup-position"
-    position = ""
-    if os.path.lexists(cursor):
-        _private(cursor)
-        if cursor.stat().st_size > 8192:
-            raise ValueError("invalid-legacy-cleanup-position")
-        position = json.loads(cursor.read_text(encoding="utf-8"))
-        if not isinstance(position, str):
-            raise ValueError("invalid-legacy-cleanup-position")
-    ordered = sorted(items, key=lambda item: item["path"])
-    return ([item for item in ordered if item["path"] > position]
-            + [item for item in ordered if item["path"] <= position])
-
-
-def advance(store, path):
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
-                                         dir=store.directory, delete=False) as stream:
-            temporary = Path(stream.name)
-            json.dump(path, stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, store.directory / "legacy-cleanup-position")
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
 
 
 def inventory(connection):
@@ -181,15 +106,6 @@ def inventory(connection):
         for item in targets:
             item["last_event"] = max(item["last_event"], stamp.timestamp())
     return sorted(paths.values(), key=lambda item: (item["last_event"], item["path"]))
-
-
-def require_ended(item, adapter, *, operator_confirmed=False):
-    for value in item["runs"].values():
-        observed = adapter.observe(ProcessIdentity.from_dict(value))
-        if observed.status != "ended":
-            raise ValueError("process-" + observed.status)
-    if not operator_confirmed and (not item["runs"] or item["unbound"]):
-        raise ValueError("no-recorded-processes")
 
 
 def inspect(item, repositories, adapter, now, options):

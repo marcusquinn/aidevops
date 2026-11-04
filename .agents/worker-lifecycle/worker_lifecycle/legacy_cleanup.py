@@ -4,7 +4,6 @@ No new tables or fabricated admissions. Receipts use the existing event journal.
 Current-generation cleanup is unchanged. Remove this module after the backlog.
 """
 
-from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -15,19 +14,16 @@ import tempfile
 import time
 from uuid import UUID, uuid4, uuid5
 
-from .archive_path import create_archive_root, validate_archive_path
-from .cleanup import _failure_details, _repositories
+from .cleanup import _failure_details
 from .directory_handle import DirectoryHandle
-from .enrollment import _git_directory
 from .filesystem import validate_private_path as _private
-from .legacy_discovery import discover
-from .legacy_inventory import advance, inspect, inventory, queue, require_ended
-from .legacy_inventory import reconstructible
-from .legacy_options import CleanupOptions, require_manual_confirmation, unrecorded
+from .legacy_discovery import open_pull_requests, same_tree
+from .legacy_inventory import inspect, inventory, unchanged
+from .legacy_inventory import reconstructible, requires_reconstructible
+from .legacy_options import require_manual_confirmation, unrecorded
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
-from .runtime import adapter_for, require_ready
 
 
 def event_id(operation, phase):
@@ -57,26 +53,6 @@ def checkpoint(store, connection, operation, phase, payload):
     store._event(connection, event_id(operation, phase), payload)
     connection.commit()
     connection.execute("BEGIN IMMEDIATE")
-
-
-def unchanged(connection, plan, adapter):
-    current = next((item for item in inventory(connection)
-                     if item["path"] == plan["source"]), None)
-    confirmed = plan.get("operator_confirmed") is True
-    if current is None and confirmed:
-        current = unrecorded(plan["source"])
-    if (current is None or current["modern"]
-            or sorted(current["generations"]) != plan["generations"]
-            or current["runs"] != plan["runs"]):
-        raise ValueError("registered-writers-changed")
-    require_ended(current, adapter, operator_confirmed=confirmed)
-
-
-def same_tree(path, plan):
-    admin = Path(plan["admin"])
-    if (_id(path) != plan["directory"] or _git_directory(path) != admin
-            or _id(admin) != plan["admin_identity"]):
-        raise ValueError("worktree-replaced")
 
 
 def archive_source(store, connection, operation, plan, adapter):
@@ -196,15 +172,8 @@ def process_item(store, item, repositories, adapter, options):
         if done:
             outcome["status"] = "already-retired"
         else:
-            if not pending:
-                try:
-                    inspect(item, repositories, adapter, time.time(), options)
-                except ValueError as error:
-                    if (str(error) != "no-recorded-processes"
-                            and not (str(error) == "too-recent"
-                                     and (not item["runs"] or item["unbound"]))):
-                        raise
-                    return process_reconstructible(store, item, repositories, adapter, options)
+            if not pending and requires_reconstructible(item, repositories, adapter, options):
+                return process_reconstructible(store, item, repositories, adapter, options)
             eligible = 1
             outcome["status"] = "pending-retry" if pending else "eligible"
             if options.apply:
@@ -216,26 +185,6 @@ def process_item(store, item, repositories, adapter, options):
         if isinstance(error, ObservationUnavailable):
             outcome["reason"] = str(error)
     return outcome, eligible, attempted
-
-
-def open_pull_requests(slug):
-    """All pages or no authority; never infer absence from a failed API call."""
-    result = subprocess.run(  # nosec B603 B607 # fixed gh argv, validated slug
-        ["gh", "api", "--paginate", "--slurp",
-         f"repos/{slug}/pulls?state=open&per_page=100"],
-        check=True, capture_output=True, text=True, timeout=60,
-    )
-    pages = json.loads(result.stdout)
-    if (not isinstance(pages, list) or not pages
-            or any(not isinstance(page, list) for page in pages)):
-        raise ValueError("invalid-open-pr-response")
-    prs = [pr for page in pages for pr in page]
-    for pr in prs:
-        if (not isinstance(pr, dict) or not isinstance(pr.get("head"), dict)
-                or not isinstance(pr["head"].get("ref"), str)
-                or not isinstance(pr["head"].get("sha"), str)):
-            raise ValueError("invalid-open-pr-response")
-    return prs
 
 
 def prepare_reconstructible_probe(store, connection, host, plan):
@@ -330,47 +279,7 @@ def verify_reconstructible(plan, *, probe):
 
 
 def run(store, config, root, **arguments):
-    options = CleanupOptions(root, **arguments)
-    repositories = _repositories(config)
-    adapter = adapter_for(store.installation_id())
-    require_ready(adapter)
-    with store.connection() as connection:
-        items = inventory(connection)
-    items, discovery_errors = discover(items, repositories)
-    items = options.select(items)
-    if options.apply:
-        if not root.is_absolute() or root.resolve() != root:
-            raise ValueError("canonical-output-root-required")
-        create_archive_root(root)
-        validate_archive_path(root)
-        items = queue(store, items)
-    report: dict = {
-        "status": "legacy-cleanup", "apply": options.apply, "paths": len(items),
-        "generations": sum(len(i["generations"]) for i in items),
-        "retired": 0, "eligible": 0, "attempted": 0, "results": [],
-        "discovery_errors": discovery_errors,
-        "operator_confirmed_paths": list(options.confirmed_paths),
-    }
-    deadline = time.monotonic() + options.budget
-    for item in items:
-        if (time.monotonic() >= deadline
-                or (options.apply and report["attempted"] >= options.limit)):
-            break
-        if options.apply:
-            advance(store, item["path"])
-        outcome, eligible, attempted = process_item(
-            store, item, repositories, adapter, options,
-        )
-        report["eligible"] += eligible
-        report["attempted"] += attempted
-        report["retired"] += outcome["status"] == "retired"
-        report["results"].append(outcome)
-    report["examined"] = len(report["results"])
-    report["incomplete"] = bool(discovery_errors) or report["examined"] < len(items)
-    report["archive_failed"] = sum(
-        bool(result.get("archive_failure", False)) for result in report["results"]
-    )
-    report["counts"] = dict(Counter(
-        result.get("reason", result["status"]) for result in report["results"]
-    ))
-    return report
+    # Keep the existing API while separating bounded pass/report orchestration.
+    from .legacy_runner import run as run_pass
+
+    return run_pass(store, config, root, **arguments)
