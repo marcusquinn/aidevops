@@ -192,7 +192,7 @@ setup_droid_cli() {
 	print_info "Setting up Factory.AI Droid CLI..."
 
 	# Check if Droid is already installed
-	if command -v droid >/dev/null 2>&1; then
+	if command -v droid >/dev/null 2>&1 && droid --version >/dev/null 2>&1; then
 		local droid_version
 		droid_version=$(droid --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "Droid already installed: $droid_version"
@@ -213,15 +213,22 @@ setup_droid_cli() {
 		print_info "Installing Droid CLI..."
 		local installed=false
 		if command -v curl >/dev/null 2>&1; then
-			if _run_droid_installer "$installer_url"; then
+			if _run_droid_installer "$installer_url" && command -v droid >/dev/null 2>&1 && droid --version >/dev/null 2>&1; then
 				installed=true
 			else
 				print_warning "Droid installer failed: $installer_url"
 			fi
 		fi
 		if [[ "$installed" != "true" ]] && { command -v npm >/dev/null 2>&1 || command -v bun >/dev/null 2>&1; }; then
-			if run_with_spinner "Installing Droid via npm" npm_global_install droid; then
+			if run_with_spinner "Installing Droid via package manager" npm_global_install droid && command -v droid >/dev/null 2>&1 && droid --version >/dev/null 2>&1; then
 				installed=true
+			fi
+			# npm_global_install prefers Bun. Retry via npm (with its existing
+			# prefix permission handling) if Bun failed or left no working CLI.
+			if [[ "$installed" != "${TOOL_INSTALL_BOOL_TRUE}" ]] && command -v bun >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+				if run_with_spinner "Retrying Droid via npm" _npm_global_install_via_npm droid && command -v droid >/dev/null 2>&1 && droid --version >/dev/null 2>&1; then
+					installed=true
+				fi
 			fi
 		fi
 		if [[ "$installed" == "true" ]]; then
@@ -231,12 +238,12 @@ setup_droid_cli() {
 			echo "${TOOL_INSTALL_EMPTY}"
 		else
 			print_warning "Droid installation failed"
-			print_info "Install manually: curl -fsSL $installer_url | sh  (or: npm install -g droid)"
+			print_info "Install manually: npm install -g droid"
 			print_info "Docs: $docs_url"
 		fi
 	else
 		print_info "Skipped Droid installation"
-		print_info "Install later: curl -fsSL $installer_url | sh  (or: npm install -g droid)"
+		print_info "Install later: npm install -g droid"
 	fi
 
 	return 0
