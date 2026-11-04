@@ -35,7 +35,7 @@ test_scan_skips_interactive_prs() {
 			print_result "scan skips interactive PR (${labels})" 1 "output=${output}"
 		fi
 		$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
-		if [[ ! -s "$HEADLESS_LOG" ]]; then
+		if ! grep -Fq 'dispatch: launched response worker for owner/repo#2' "$LOGFILE"; then
 			print_result "dispatch never launches interactive PR worker (${labels})" 0
 		else
 			print_result "dispatch never launches interactive PR worker (${labels})" 1
