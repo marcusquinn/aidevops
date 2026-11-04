@@ -111,9 +111,12 @@ def main() -> int:
                         help="superseded issue number; repeat for every source issue."
                              " Each needs its own exact marker line")
     args = parser.parse_args()
+    if len(args.parent) != len(args.source) or len(set(args.parent)) != len(args.parent):
+        parser.error("--parent must contain one unique issue number for each --source")
     try:
-        errors = validate([path.read_text(encoding="utf-8") for path in args.source],
-                          args.successor.read_text(encoding="utf-8"), args.parent)
+        # Preserve CR for the exact marker check and compare contracts on the same input.
+        errors = validate([path.read_bytes().decode("utf-8") for path in args.source],
+                          args.successor.read_bytes().decode("utf-8"), args.parent)
     except (OSError, UnicodeError) as exc:
         # Avoid printing body contents, credential names, or private file paths.
         print(f"consolidation contract: cannot read body files ({type(exc).__name__})",
