@@ -87,11 +87,13 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
     ).fetchall()
     # Schema 1 has no admission table. A shared retirement set avoids rescanning
     # the entire journal for every candidate; GROUP BY permits indexed lookups.
-    reservations = ("SELECT generation_id,path FROM generation_admissions" if connection.execute(
+    reservations = ([list(row) for row in connection.execute(
+        "SELECT generation_id,path FROM generation_admissions")] if connection.execute(
         "SELECT 1 FROM sqlite_master WHERE name='generation_admissions'").fetchone()
-        else "SELECT NULL AS generation_id,NULL AS path WHERE 0")
+        else [])
     rows += connection.execute(
-        f"WITH reservations AS ({reservations}), retired AS ("
+        "WITH reservations AS (SELECT json_extract(value,'$[0]') AS generation_id, "
+        "json_extract(value,'$[1]') AS path FROM json_each(?)), retired AS ("
         "SELECT json_extract(payload,'$.type') AS kind, "
         "json_extract(payload,'$.generation_id') AS generation_id, "
         "json_extract(payload,'$.archive') AS archive FROM events "
@@ -116,7 +118,7 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
         "AND NOT EXISTS (SELECT 1 FROM generations g JOIN bindings b USING(generation_id) "
         "JOIN runs r USING(run_id) WHERE r.state='bound' AND (g.path=json_extract(e.payload,'$.source') "
         "OR g.generation_id IN (SELECT value FROM json_each(e.payload,'$.generations')))))) "
-        "ORDER BY e.sequence LIMIT 1000", (f"-{age} seconds",) * 2,
+        "ORDER BY e.sequence LIMIT 1000", (encode(reservations), f"-{age} seconds", f"-{age} seconds"),
     ).fetchall()
     result: dict[str, object] = {"eligible_events": len(rows), "archived_events": 0,
                                  "archive": None, "dry_run": not apply, "cleanup_authorized": False}
