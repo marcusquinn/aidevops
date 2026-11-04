@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.120] - 2026-11-04
+
+### Added
+
+- add read-only image-library evidence (#36697)
+- compact retired generation journal events (GH#36690) (#36692)
+
+### Changed
+
+- Maintenance: bump Bun types to 1.4.4
+
+### Fixed
+
+- stop one Dependabot replacement PR from stalling the Dependabot queue
+- validate staged Bash syntax and correct CI scope docs (#36703)
+- report stranded held upstream findings (#36688)
+- clarify retirement lock recovery (#36680)
+- link local SEO child tasks to parent (GH#36679) (#36681)
+- isolate all headless signals in worker push-fence test
+
 ## [3.39.119] - 2026-11-04
 
 ### Changed
