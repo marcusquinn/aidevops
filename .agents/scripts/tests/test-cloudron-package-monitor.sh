@@ -216,6 +216,11 @@ if [[ "${1:-}" == api && "${2:-}" == repos/exampleorg/example-package/issues/90 
     exit 0
 fi
 if [[ "${1:-}" == pr && "${2:-}" == list ]]; then
+    [[ "${MONITOR_STALLED:-}" != closing-error ]] || exit 1
+    if [[ "${MONITOR_STALLED:-}" == closing-only || "${MONITOR_STALLED:-}" == duplicate-link ]]; then
+        printf '%s\n' '[{"number":89,"closingIssuesReferences":[{"number":101,"url":"https://github.com/exampleorg/example-package/issues/101"}]}]'
+        exit 0
+    fi
     [[ "${MONITOR_SUPERSEDE:-}" != pr-error ]] || exit 1
     if [[ "${MONITOR_SUPERSEDE:-}" == linked ]]; then
         printf '%s\n' '[{"closingIssuesReferences":[{"number":90}]}]'
@@ -284,7 +289,7 @@ if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues?st
 fi
 if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues/101/timeline?per_page=100' ]]; then
     [[ "${MONITOR_STALLED:-}" != timeline-error ]] || exit 1
-    if [[ "${MONITOR_STALLED:-}" == no-pr ]]; then
+    if [[ "${MONITOR_STALLED:-}" == no-pr || "${MONITOR_STALLED:-}" == closing-only ]]; then
         printf '%s\n' '[[]]'
     elif [[ "${MONITOR_STALLED:-}" == foreign-pr ]]; then
         printf '%s\n' '[[{"event":"cross-referenced","source":{"issue":{"repository_url":"https://api.github.com/repos/other/repo","number":89,"pull_request":{}}}}]]'
@@ -509,7 +514,7 @@ test_monitor_deduplicates_and_preserves_source() {
 
 test_monitor_reports_stranded_upstream_findings() {
 	local scenario="" mode="" case_root="" log_file="" output="" rc=0 expected=0 expected_rc=0
-	for scenario in conflicting in-review closed-pr merged-pr no-auto-dispatch issue-approval pr-approval open-approval closed-issue clean-pr unknown-pr no-pr foreign-pr approval-error timeline-error pr-error; do
+	for scenario in conflicting in-review closed-pr merged-pr closing-only duplicate-link no-auto-dispatch issue-approval pr-approval open-approval closed-issue clean-pr unknown-pr no-pr foreign-pr approval-error timeline-error closing-error pr-error; do
 		case_root="${TEST_ROOT}/stalled-${scenario}"
 		log_file="${case_root}/issues.log"
 		write_fake_commands "${case_root}/bin"
@@ -526,7 +531,7 @@ test_monitor_reports_stranded_upstream_findings() {
 			assert_equal "$expected_rc" "$rc" "stalled ${scenario} ${mode}: API errors propagate"
 			expected=0
 			case "$scenario" in
-			conflicting | in-review | closed-pr | merged-pr | no-auto-dispatch) expected=1 ;;
+			conflicting | in-review | closed-pr | merged-pr | closing-only | duplicate-link | no-auto-dispatch) expected=1 ;;
 			esac
 			assert_equal "$expected" "$(grep -c '^FINDING exampleorg/example-package issue #101 PR #89: stranded upstream-v2.0.0' <<<"$output" || true)" "stalled ${scenario} ${mode}: report only non-approval stranded findings"
 			if [[ "$expected" == 1 ]]; then
