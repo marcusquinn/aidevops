@@ -17,50 +17,10 @@ from worktree_archive_registration import (
     creation_registration, registration_table,
 )
 from worktree_archive_objects import dependency_commit
+from worktree_archive_dependencies import import_published_head, object_present, object_store_files
 from worktree_archive_snapshot import fetch_preservation
 from worktree_archive_unsealed import UnsealedRecovery
 from worktree_recovery_timing import timed
-
-
-def object_store_files(objects):
-    """Traverse dependency files without accepting symlinked store entries."""
-    from worktree_lifetime_archive import require
-    pending = [objects]
-    while pending:
-        path = pending.pop()
-        require(not path.is_symlink(), "restore-proof:symlinked-object-store")
-        if path.is_dir():
-            pending.extend(path.iterdir())
-        else:
-            yield path
-
-
-def object_present(common, oid):
-    """Report whether a commit and its full graph exist in the source store."""
-    try:
-        graph = git(common, "rev-list", "--objects", "--no-object-names", "--missing=print", oid)
-    except subprocess.CalledProcessError:
-        return False
-    return not any(line.startswith(b"?") for line in graph.splitlines())
-
-
-def import_published_head(target, common, head):
-    """Fetch the exact published head into the owned target, never the canonical checkout.
-
-    Uses the same explicit operator consent as missing promisor bases: the
-    origin URL and common directory must be supplied for this invocation.
-    """
-    from worktree_archive_base_source import MISSING_PROMISOR_BASE, authorized_base_source
-    from worktree_archive_git import base_import_timeout, base_upload_pack
-    try:
-        source, protocol = authorized_base_source(target, common, git)
-        git(target, "-c", "protocol.allow=never", "-c", f"protocol.{protocol}.allow=always",
-            "-c", "http.followRedirects=false", "-c", f"http.{source}.followRedirects=false",
-            "fetch", "--quiet", "--no-tags", "--no-auto-maintenance", "--no-write-fetch-head",
-            "--upload-pack=" + base_upload_pack(), source, head, timeout=base_import_timeout())
-        git(target, "cat-file", "-e", head + "^{commit}")
-    except (ValueError, subprocess.CalledProcessError):
-        raise ValueError(MISSING_PROMISOR_BASE) from None
 
 
 def failure_message(final, default):

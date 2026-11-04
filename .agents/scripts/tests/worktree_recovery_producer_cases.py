@@ -18,6 +18,7 @@ import time
 from unittest.mock import patch
 
 import worktree_recovery_producer as producer_engine
+import worktree_recovery_partials as partial_engine
 
 
 class ProducerCases:
@@ -911,7 +912,7 @@ class ProducerCases:
                     for stamp in ("20260101T000000Z", "20260102T000000Z")]
         for partial in partials:
             partial.mkdir(parents=True, exist_ok=True)
-        remove = producer_engine.remove_partial
+        remove = partial_engine.remove_partial
 
         def fail_second(output_root, capture_dir):
             if capture_dir == partials[1]:
@@ -920,7 +921,7 @@ class ProducerCases:
 
         stdout, stderr = io.StringIO(), io.StringIO()
         with patch.dict(os.environ, self.env), \
-                patch.object(producer_engine, "remove_partial", side_effect=fail_second), \
+                patch.object(partial_engine, "remove_partial", side_effect=fail_second), \
                 redirect_stdout(stdout), redirect_stderr(stderr):
             status = producer_engine.sweep_partials(self.archives, True)
         self.assertEqual(status, 1)

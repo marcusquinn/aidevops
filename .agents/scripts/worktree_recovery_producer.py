@@ -16,7 +16,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 import subprocess  # nosec B404 -- subprocess errors only; execution uses the shared helper
 import sys
@@ -30,6 +29,7 @@ from worktree_recovery_migration_state import (
     allocated_bytes, load, manifest_digest, private_directory, publish,
 )
 from worktree_recovery_timing import context as timing_context, operation, timed
+from worktree_recovery_partials import sweep_partials
 
 
 SCHEMA = "aidevops.worktree-recovery-producer/v1"
@@ -286,113 +286,6 @@ def check(archive, source=None, removed=False):
                     "producer:source-or-registration-remains")
             record["source_removal_outcome"] = "removed"
             publish(journal, record)
-
-
-PARTIAL_PHASES = ("reserved", "capturing")
-PIN = ".aidevops-archive-pin"
-
-
-def partial_captures(output):
-    """Archive-shaped ``<repo>/<issue>/<stamp>`` directories with no manifest and no pin.
-
-    Symlinks and anything outside that exact layout are never candidates.
-    """
-    found = []
-    levels = [[output]]
-    for _depth in range(3):
-        children = []
-        for parent in levels[-1]:
-            children.extend(entry for entry in sorted(parent.iterdir())
-                            if entry.is_dir() and not entry.is_symlink())
-        levels.append(children)
-    for capture_dir in levels[-1]:
-        if not os.path.lexists(capture_dir / "manifest.json") and not os.path.lexists(capture_dir / PIN):
-            found.append(capture_dir)
-    return found
-
-
-def source_intact(record):
-    """The live source still has its recorded identity (and head, when recorded)."""
-    observed = record["source"]["identity"]
-    try:
-        source = Path(observed["path"])
-        if identity(source) != observed:
-            return False
-        head = record["source"].get("snapshot", {}).get("head")
-        return not head or git(source, "rev-parse", "--verify", "HEAD").strip().decode("ascii") == head
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return False
-
-
-def remove_partial(output, capture_dir):
-    """Remove one partial capture and its now-empty layout parents, never ``output``."""
-    observed = capture_dir.lstat()
-    require(stat.S_ISDIR(observed.st_mode) and capture_dir.parent.parent.parent == output
-            and not os.path.lexists(capture_dir / "manifest.json")
-            and not os.path.lexists(capture_dir / PIN), "producer:partial-changed")
-    shutil.rmtree(capture_dir)
-    for parent in (capture_dir.parent, capture_dir.parent.parent):
-        try:
-            parent.rmdir()
-        except OSError:
-            break
-
-
-def sweep_transaction(root, directory, apply, results):
-    """Classify (and optionally remove) one reservation's partials under its lock."""
-    record = load(directory / "journal.json", SCHEMA)
-    if record.get("phase") not in PARTIAL_PHASES:
-        return
-    output = root / ".producer-archives" / directory.name
-    require(record["directory_inode"] == inode(directory) and record["output"] == str(output)
-            and output == output.resolve(strict=True) and record["output_inode"] == inode(output),
-            "producer:reservation-changed")
-    partials = partial_captures(output)
-    if partials and not source_intact(record):
-        results.extend(("retained:source-changed", path) for path in partials)
-        return
-    for path in partials:
-        if apply:
-            remove_partial(output, path)
-        results.append(("removed" if apply else "would-remove", path))
-
-
-def sweep_partials(root, apply):
-    """GH#36607: one-time sweep of manifest-less, unpinned partial captures.
-
-    Earlier versions left these behind when a capture failed or was killed.
-    Each reservation is rechecked under its producer operation lock: phase
-    ``reserved``/``capturing``, unchanged directory and output inodes, and a
-    live source with its recorded identity. A busy lock is skipped, never waited on.
-    """
-    require(root.is_absolute(), "producer:unsafe-storage-root")
-    transactions = root / ".producer-transactions"
-    if not transactions.is_dir() or transactions.is_symlink():
-        return 0
-    root = root.resolve(strict=True)
-    transactions = root / ".producer-transactions"
-    status = 0
-    for directory in sorted(transactions.iterdir()):
-        journal = directory / "journal.json"
-        if (not re.fullmatch(r"[0-9a-f]{64}", directory.name) or directory.is_symlink()
-                or not directory.is_dir() or journal.is_symlink() or not journal.is_file()):
-            continue
-        results = []
-        try:
-            with operation_lock(directory):
-                sweep_transaction(root, directory, apply, results)
-        except BlockingIOError:
-            print(f"busy\t{directory}", file=sys.stderr)
-            continue
-        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
-            reason = str(error) if isinstance(error, ValueError) else "producer:evidence-unavailable"
-            print(f"retained:{reason}\t{directory}", file=sys.stderr)
-            status = 1
-            continue
-        finally:
-            for outcome, path in results:
-                print(f"{outcome}\t{path}", file=sys.stdout if outcome in ("removed", "would-remove") else sys.stderr)
-    return status
 
 
 def main():
