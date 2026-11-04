@@ -597,6 +597,10 @@ _register_repo_locked() {
 	fi
 
 	if ! command -v jq &>/dev/null; then
+		if [[ "$sync_only" == "true" ]]; then
+			print_warning "jq is required for sync-only registration - automation flags were not changed"
+			return 1
+		fi
 		print_warning "jq not installed - repo tracking disabled"
 		return 0
 	fi
