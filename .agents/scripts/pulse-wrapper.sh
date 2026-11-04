@@ -1028,7 +1028,8 @@ source "${SCRIPT_DIR}/pulse-wrapper-cycle-gates.sh"
 #      (~250s apiece) only to stop at the floor, then consumed the refill
 #      trigger. That pushed the cycle ~750s past its budget, delaying the
 #      next fresh-budget cycle.
-# The reserve leaves one floor for dispatch before merge-only stages run; the
+# The reserve leaves one floor (plus the GH#36603 pre-stage margin) for
+# dispatch before merge-only stages run; the
 # admission gate skips enumeration entirely when no candidate could launch,
 # preserving the existing per-candidate early-stop for genuinely overrun
 # cycles. Missing/invalid cycle clocks fail open (legacy behaviour).
@@ -1040,24 +1041,41 @@ _pulse_dispatch_floor_seconds() {
 	return 0
 }
 
-# Stdout: finalisation reserve plus one dispatch floor, for stages that must
-# leave dispatch_max a launchable budget.
+# GH#36603: one dispatch floor plus the pre-stage margin that candidate
+# admission requires on top of it (_dispatch_prestage_margin_seconds). A
+# reserve of the bare floor let clamped stages land dispatch exactly on the
+# floor, so pre-stage checks pushed every candidate below the stage guard.
+# The margin is 0 when the dispatch library (which defines both the margin and
+# the admission gate that requires it) is not loaded.
+_pulse_dispatch_admission_seconds() {
+	local margin_seconds=0
+	if declare -F _dispatch_prestage_margin_seconds >/dev/null 2>&1; then
+		margin_seconds=$(_dispatch_prestage_margin_seconds) || margin_seconds=0
+	fi
+	[[ "$margin_seconds" =~ ^[0-9]+$ ]] || margin_seconds=0
+	printf '%s\n' "$(($(_pulse_dispatch_floor_seconds) + margin_seconds))"
+	return 0
+}
+
+# Stdout: finalisation reserve plus one dispatch admission budget (floor +
+# pre-stage margin), for stages that must leave dispatch_max a launchable budget.
 _pulse_dispatch_reserved_finalise_seconds() {
-	local finalise_seconds="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}" floor_seconds=""
+	local finalise_seconds="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}" admission_seconds=""
 	[[ "$finalise_seconds" =~ ^[0-9]+$ ]] || finalise_seconds=90
-	floor_seconds=$(_pulse_dispatch_floor_seconds)
+	admission_seconds=$(_pulse_dispatch_admission_seconds)
 	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" != "1" ]]; then
 		printf '%s\n' "$finalise_seconds"
 		return 0
 	fi
-	printf '%s\n' "$((finalise_seconds + floor_seconds + $(_dispatch_enumeration_expected_seconds)))"
+	printf '%s\n' "$((finalise_seconds + admission_seconds + $(_dispatch_enumeration_expected_seconds)))"
 	return 0
 }
 
 # GH#33737: optional stages that run before the early (first-wave) dispatch
 # must leave that fill its admission reserve. Cache prime ran unbounded here
 # (822-1624s) and left early dispatch with too little budget every cycle.
-# Stdout: finalisation reserve + dispatch floor + first-wave enumeration estimate.
+# Stdout: finalisation reserve + dispatch admission budget (floor + pre-stage
+# margin, GH#36603) + first-wave enumeration estimate.
 _pulse_first_wave_dispatch_reserve_seconds() {
 	local _PULSE_FIRST_DISPATCH_WAVE=1 finalise_seconds="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"
 	local enumeration_seconds=300
@@ -1070,7 +1088,7 @@ _pulse_first_wave_dispatch_reserve_seconds() {
 		enumeration_seconds=$(_dispatch_enumeration_expected_seconds) || enumeration_seconds=300
 	fi
 	[[ "$enumeration_seconds" =~ ^[0-9]+$ ]] || enumeration_seconds=300
-	printf '%s\n' "$((finalise_seconds + $(_pulse_dispatch_floor_seconds) + enumeration_seconds))"
+	printf '%s\n' "$((finalise_seconds + $(_pulse_dispatch_admission_seconds) + enumeration_seconds))"
 	return 0
 }
 

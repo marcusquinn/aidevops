@@ -537,7 +537,7 @@ assert_stage_cycle_budget_contract() {
 }
 
 assert_dispatch_cycle_budget_contract() {
-	local actual="" expected="deferred:1;unclamped:0;"
+	local actual="" expected="deferred:1;unclamped:0;margin:1;stage_guard:1;admitted:0;"
 	TESTS_RUN=$((TESTS_RUN + 1))
 	actual=$(
 		(
@@ -552,10 +552,23 @@ assert_dispatch_cycle_budget_contract() {
 			rc=0
 			_dispatch_graphql_budget_allows_next || rc=$?
 			printf 'unclamped:%s;' "$rc"
+			# GH#36603: 630s clears the stage-start floor guard (rc=1 proceeds)
+			# but not admission, which needs floor + 60s margin; 660s admits.
+			PULSE_START_EPOCH=0 PULSE_LOCK_MAX_AGE_S=1220
+			rc=0
+			_dispatch_graphql_budget_allows_next || rc=$?
+			printf 'margin:%s;' "$rc"
+			rc=0
+			_dispatch_cycle_budget_defers_candidate 1 o/r || rc=$?
+			printf 'stage_guard:%s;' "$rc"
+			PULSE_LOCK_MAX_AGE_S=1250
+			rc=0
+			_dispatch_graphql_budget_allows_next || rc=$?
+			printf 'admitted:%s;' "$rc"
 		)
 	)
 	if [[ "$actual" == "$expected" ]]; then
-		echo "${TEST_GREEN}PASS${TEST_NC}: dispatch defers candidates below ceremony floor"
+		echo "${TEST_GREEN}PASS${TEST_NC}: dispatch admits candidates only with floor plus pre-stage margin"
 	else
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 		echo "${TEST_RED}FAIL${TEST_NC}: dispatch budget admission (${actual:-none})"
