@@ -8,7 +8,10 @@ set -euo pipefail
 
 # Explicit --repo selection must win over inherited repository context, including
 # during transport creation and read-only queries before transport Git calls.
-unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE
+# Object-store overrides are cleared too: an inherited object directory or
+# alternate would let fetch store objects outside --repo while its refs move.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE \
+	GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 # shellcheck source=./shared-constants.sh

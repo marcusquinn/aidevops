@@ -371,15 +371,24 @@ run_fetch_assertions() {
 	pass "direct canonical git fetch remains blocked"
 
 	# Inherited context from a different repository must not redirect the scan
-	# or register its transport in that repository.
+	# or register its transport in that repository. late_clone already holds the
+	# late-branch objects, so an inherited object directory or alternate would
+	# let fetch move the ref without storing those objects in --repo.
 	output=$(GIT_DIR="$late_clone/.git" GIT_WORK_TREE="$late_clone" \
 		GIT_COMMON_DIR="$late_clone/.git" GIT_INDEX_FILE="$late_clone/.git/index" \
+		GIT_OBJECT_DIRECTORY="$late_clone/.git/objects" \
+		GIT_ALTERNATE_OBJECT_DIRECTORIES="$late_clone/.git/objects" \
 		AIDEVOPS_REPOS_FILE="$repos_file" PATH="$SCRIPTS_DIR:$gh_bin:$PATH" \
 		bash "$HELPER" --repo "$repo" 2>&1)
 	assert_contains "$output" "refs=fresh" "canonical scan refreshes refs through the linked transport"
 	assert_row "$output" review late-branch "unmerged/no closed evidence" "refreshed refs include a newly pushed branch"
 	assert_row "$output" would-del squash-exact "merged PR #101 head SHA" "inherited Git context does not redirect repository reads"
 	assert_no_transport "$late_clone" "inherited Git context does not register transport in another repository"
+	if git -C "$repo" cat-file -e "refs/remotes/origin/late-branch^{commit}" 2>/dev/null; then
+		pass "inherited object directories do not divert fetched objects from --repo"
+	else
+		fail "inherited object directories do not divert fetched objects from --repo"
+	fi
 	if [[ "$output" == *"Fetch/prune failed"* ]]; then
 		fail "canonical scan must not report a fetch failure"
 	fi
