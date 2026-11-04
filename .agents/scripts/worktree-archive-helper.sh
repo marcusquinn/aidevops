@@ -39,6 +39,11 @@ Commands:
                                         unbounded) and reclaims dead verification scratch
   sweep-scratch                         Reclaim only dead verification scratch
                                         under the archive root
+  sweep-partials --dry-run|--apply [--output-root DIR]
+                                        One-time removal of manifest-less,
+                                        unpinned producer partial captures whose
+                                        reservation is reserved/capturing and
+                                        whose source is intact
 
 Environment:
   AIDEVOPS_WORKTREE_ARCHIVE_ROOT                Override the archive root.
@@ -422,9 +427,29 @@ PY
 	return $?
 }
 
+# GH#36607: classify whether HEAD's commits since the base already live on a
+# origin remote-tracking ref. "published" archives omit the HEAD bundle and record the
+# pushed head as their restore dependency; merge captures always keep their own
+# bundle, so they stay "unknown". Prints published|unpublished|unknown.
+archive_remote_state() {
+	local worktree="$1" head_sha="$2" base_sha="$3"
+	local unpublished=""
+	if [[ "$head_sha" == "$base_sha" || -e "$(git -C "$worktree" rev-parse --absolute-git-dir)/MERGE_HEAD" ]]; then
+		printf 'unknown\n'
+		return 0
+	fi
+	unpublished=$(git -C "$worktree" rev-list --count "$head_sha" --not --remotes=origin 2>/dev/null) || unpublished=""
+	if [[ "$unpublished" == "0" ]]; then
+		printf 'published\n'
+	else
+		printf 'unpublished\n'
+	fi
+	return 0
+}
+
 capture_archive_payload() {
 	local worktree="$1" archive_dir="$2" head_sha="$3" base_sha="$4"
-	local failure_log="$5"
+	local failure_log="$5" remote_state="${6:-unknown}"
 	local commit_count
 	if [[ -e "$(git -C "$worktree" rev-parse --absolute-git-dir)/MERGE_HEAD" ]]; then
 		: >"$archive_dir/diff.patch"
@@ -434,7 +459,8 @@ capture_archive_payload() {
 		# diff must not refresh the source index while capturing it.
 		python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" capture "$worktree" "$archive_dir" || return 1
 		commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
-		if [[ "$commit_count" -gt 0 ]]; then
+		# A published head is already reachable from origin: no bundle.
+		if [[ "$commit_count" -gt 0 && "$remote_state" != "published" ]]; then
 			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 		fi
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
@@ -459,10 +485,14 @@ PY
 # payload before allocating. Estimation failure (old Git) is not a refusal.
 # Python decimal integers avoid Bash octal parsing and signed overflow.
 archive_capacity_check() {
-	local worktree="$1" output_root="$2" head_sha="$3" base_sha="$4"
+	local worktree="$1" output_root="$2" head_sha="$3" base_sha="$4" remote_state="${5:-unknown}"
 	local reserve="${AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES:-536870912}"
 	local estimate=""
-	estimate=$(git -C "$worktree" rev-list --objects --disk-usage "$head_sha" "^${base_sha}" 2>/dev/null) || estimate=0
+	if [[ "$remote_state" == "published" ]]; then
+		estimate=0 # GH#36607: published commits are not bundled.
+	else
+		estimate=$(git -C "$worktree" rev-list --objects --disk-usage "$head_sha" "^${base_sha}" 2>/dev/null) || estimate=0
+	fi
 	python3 - "$output_root" "$estimate" "$reserve" "$MAX_UNTRACKED_BYTES" <<'PY'
 import pathlib
 import re
@@ -542,7 +572,7 @@ archive_worktree() {
 	default_branch=$(git -C "$worktree" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
 	default_branch=${default_branch#origin/}
 	[[ -n "$default_branch" ]] || default_branch="$base_branch"
-	remote_state="unknown"
+	remote_state=$(archive_remote_state "$worktree" "$head_sha" "$base_sha") || return 1
 	dirty_state="clean"
 	git_common_dir=$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || git -C "$worktree" rev-parse --git-common-dir) || return 1
 	timestamp=$(timestamp_utc)
@@ -550,10 +580,10 @@ archive_worktree() {
 	repo_path="${repo//\//__}"
 	archive_dir="${output_root%/}/${repo_path}/${issue}/${timestamp}"
 	if [[ -e "$archive_dir" ]]; then archive_dir="${archive_dir}-$$"; fi
-	archive_capacity_check "$worktree" "$output_root" "$head_sha" "$base_sha" || return 1
+	archive_capacity_check "$worktree" "$output_root" "$head_sha" "$base_sha" "$remote_state" || return 1
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
-	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" || {
+	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" "$remote_state" || {
 		discard_failed_archive "$archive_dir"
 		return 1
 	}
@@ -917,6 +947,34 @@ prune_archives() {
 	return $?
 }
 
+# GH#36607: one-time cleanup of partial producer captures leaked by earlier
+# versions. Removes only manifest-less, unpinned <repo>/<issue>/<stamp>
+# directories of reserved/capturing reservations whose source is intact,
+# rechecked under each producer operation lock. Dry-run lists candidates.
+sweep_partials() {
+	local mode="" output_root="$ARCHIVE_ROOT" option="" expect_root=0
+	for option in "$@"; do
+		if [[ "$expect_root" -eq 1 ]]; then
+			output_root="$option"
+			expect_root=0
+			continue
+		fi
+		case "$option" in
+		--dry-run | --apply)
+			[[ -z "$mode" ]] || { die "choose only one sweep mode"; return 1; }
+			mode="${option#--}"
+			;;
+		--output-root) expect_root=1 ;;
+		*) die "unknown sweep-partials option: $option"; return 1 ;;
+		esac
+	done
+	[[ "$expect_root" -eq 0 && -n "$output_root" ]] || { die "--output-root requires a value"; return 1; }
+	[[ -n "$mode" ]] || { die "sweep-partials requires --dry-run or --apply"; return 1; }
+	[[ "$output_root" == /* ]] || { die "--output-root must be absolute"; return 1; }
+	python3 "${SCRIPT_DIR}/worktree_recovery_producer.py" sweep-partials "$output_root" "$mode"
+	return $?
+}
+
 # Verification scratch is derived data: reclaim dead copies regardless of the
 # archive retention mode. Live (flock-held) scratch is never touched.
 sweep_scratch() {
@@ -937,6 +995,7 @@ main() {
 	source-matches) [[ $# -eq 2 ]] || { usage >&2; return 1; }; source_matches "$@" ;;
 	prune) prune_archives "$@" ;;
 	sweep-scratch) [[ $# -eq 0 ]] || { usage >&2; return 1; }; sweep_scratch ;;
+	sweep-partials) sweep_partials "$@" ;;
 	help|-h|--help) usage ;;
 	*) usage >&2; return 1 ;;
 	esac

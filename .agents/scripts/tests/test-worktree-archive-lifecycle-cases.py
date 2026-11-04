@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import worktree_lifetime_archive as lifecycle
 import worktree_lifecycle_status as lifecycle_status
 from worktree_recovery_producer_cases import ProducerCases
+from worktree_recovery_partial_cases import PartialCases
 from worktree_archive_merge_cases import MergeCases
 from worktree_archive_canonical_cases import CanonicalCases
 from worktree_archive_administration_cases import AdministrationCases
@@ -38,7 +39,7 @@ HELPER = Path(__file__).resolve().parents[1] / "worktree-archive-helper.sh"
 
 
 class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, MergeCases,
-                     ProducerCases, MetadataCases):
+                     ProducerCases, PartialCases, MetadataCases):
     def setUp(self):
         self.addCleanup(os.umask, os.umask(0o022))
         self.temp = tempfile.TemporaryDirectory(prefix="archive-lifecycle-")

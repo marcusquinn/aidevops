@@ -13,6 +13,7 @@ from worktree_archive_git import git
 from worktree_archive_scratch import LOCAL_PREFIX, verification_scratch
 from worktree_archive_auto_merge import verify_auto_merge
 from worktree_archive_merge_objects import merge_roots, verify_merge_objects
+from worktree_archive_objects import dependency_commit
 
 
 def imported_objects(scratch, archive):
@@ -90,6 +91,21 @@ def base_objects(common):
     return objects
 
 
+def require_published_head(common, head):
+    """A bundle-less published archive is only as durable as its remote ref.
+
+    GH#36607: local verification gates source removal, so the omitted commits
+    must still be complete in the retained store and reachable from a
+    origin remote-tracking ref; a dangling or partially pruned graph is refused.
+    """
+    graph = git(common, 'rev-list', '--objects', '--no-object-names', '--missing=print', head)
+    if any(line.startswith(b'?') for line in graph.splitlines()):
+        raise ValueError('archive-local:published-head-incomplete; source retained')
+    if not git(common, 'for-each-ref', '--count=1', '--contains', head,
+               '--format=%(refname)', 'refs/remotes/origin/').strip():
+        raise ValueError('archive-local:published-head-not-on-remote; source retained')
+
+
 def verify_local(archive, manifest):
     """The base is a retained dependency; only the archive's new objects are audited."""
     saved = manifest.get('source_fingerprint', {})
@@ -104,6 +120,9 @@ def verify_local(archive, manifest):
     common = Path(manifest['source_git_common_dir'])
     objects = base_objects(common)
     git(common, 'cat-file', '-e', base + '^{commit}')
+    dependency = dependency_commit(manifest)
+    if dependency != base:
+        require_published_head(common, dependency)
     # Same liveness-fenced scratch as full verification (GH#36468): a killed
     # caller cannot leave an unreclaimable copy beside the archive.
     with verification_scratch(archive, LOCAL_PREFIX) as scratch:
@@ -114,7 +133,7 @@ def verify_local(archive, manifest):
         archived = imported_objects(scratch, archive)
         roots = payload_roots(scratch, archive, manifest)
         if not manifest.get('self_contained'):
-            roots.append('^' + base)
+            roots.append('^' + dependency)
         closure = git(scratch, 'rev-list', '--objects', '--no-object-names',
                       '--stdin', data=('\n'.join(roots) + '\n').encode())
         required = set(closure.splitlines())

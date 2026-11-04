@@ -16,7 +16,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 import subprocess  # nosec B404 -- subprocess errors only; execution uses the shared helper
 import sys
@@ -24,14 +23,13 @@ import sys
 from worktree_archive_snapshot import git, git_snapshot, snapshot
 from worktree_archive_git import producer_failure_reason as failure_reason
 from worktree_archive_restore import RestorationProof
-from worktree_lifetime_archive import capacity, durable_archive, inode, require
+from worktree_lifetime_archive import durable_archive, inode, require
 from worktree_recovery_migrate import archive_command
-from worktree_recovery_migration_scratch import finish_scratch, prepare_restore, verify_restore
 from worktree_recovery_migration_state import (
     allocated_bytes, load, manifest_digest, private_directory, publish,
 )
-from worktree_recovery_retirement_transaction import fingerprint
-from worktree_recovery_timing import context as timing_context, operation, phase, timed
+from worktree_recovery_timing import context as timing_context, operation, timed
+from worktree_recovery_partials import sweep_partials
 
 
 SCHEMA = "aidevops.worktree-recovery-producer/v1"
@@ -100,6 +98,23 @@ def operation_lock(directory):
         os.close(descriptor)
 
 
+LEGACY_SUCCESSOR = "git-only-successor/v1"
+
+
+def legacy_reservation(directory):
+    """True when the transaction holds a saved non-git-only (preserve-v1) journal."""
+    journal = directory / "journal.json"
+    if not os.path.lexists(journal):
+        return False
+    saved = load(journal, SCHEMA)["source"]
+    return saved.get("capture_policy", "preserve-v1") != "git-only"
+
+
+def successor_identifier(identifier):
+    """Stable git-only transaction for a source whose legacy reservation is retained."""
+    return hashlib.sha256(f"{identifier}:{LEGACY_SUCCESSOR}".encode()).hexdigest()
+
+
 @timed("reservation-preflight")
 def reservation(source, root):
     observed = identity(source)
@@ -108,6 +123,13 @@ def reservation(source, root):
              and not root.is_relative_to(Path(observed["common"])),
              "producer:unsafe-storage-root")
     identifier = hashlib.sha256(json.dumps(observed, sort_keys=True).encode()).hexdigest()
+    if legacy_reservation(root / ".producer-transactions" / identifier):
+        # GH#36607: never resume a legacy preserve-v1 reservation. Its strict
+        # full-tree snapshot re-arms refusals (empty directories, special
+        # modes, capacity) that git-only capture no longer has. The legacy
+        # journal and any archive stay untouched for the existing retention,
+        # migration and retirement paths; this source gets a git-only successor.
+        identifier = successor_identifier(identifier)
     directory = root / ".producer-transactions" / identifier
     output = root / ".producer-archives" / identifier
     private_directory(directory)
@@ -118,12 +140,11 @@ def reservation(source, root):
         saved = load(directory / "journal.json", SCHEMA)["source"]
         policy = saved.get("capture_policy", "preserve-v1")
         fingerprint_schema = saved.get("snapshot", {}).get("schema", 3)
+        require(policy == "git-only", "producer:legacy-successor-policy; existing archive retained")
     else:
         require(policy == "git-only", "producer:obsolete-capture-policy; new archives use Git changes and untracked files")
-    if policy == "git-only" and not os.path.lexists(directory / "journal.json"):
-        current = {"identity": observed, "capture_policy": policy}
-    else:
-        current = source_state(source, policy, fingerprint_schema)
+    # Persist content evidence before capture can leave a manifest-less partial.
+    current = source_state(source, policy, fingerprint_schema)
     return current, directory, output
 
 
@@ -135,6 +156,7 @@ def reserve(current, directory, output, caller, context):
         expected = dict(record["source"])
         actual = dict(current)
         if expected.get("capture_policy") == "git-only" and "snapshot" not in expected:
+            # Legacy journals remain resumable, but cannot authorize a partial sweep.
             actual.pop("snapshot", None)
         require(expected == actual, "producer:source-drift; existing archive retained")
         require(record["directory_inode"] == inode(directory) and record["output"] == str(output)
@@ -143,8 +165,9 @@ def reserve(current, directory, output, caller, context):
     require(not any(output.iterdir()), "producer:unrecorded-capture; retained for review")
     source = Path(current["identity"]["path"])
     git_only = current.get("capture_policy") == "git-only"
-    if not git_only:
-        require(shutil.disk_usage(output).free >= capacity(source, current["snapshot"]), "producer:insufficient-capacity")
+    # GH#36607: new reservations are git-only; the helper owns its capacity
+    # check. The full-tree preserve-v1 capacity refusal is never re-armed.
+    require(git_only, "producer:obsolete-capture-policy; new archives use Git changes and untracked files")
     repo, base = attribution(source, current["identity"])
     record = {"schema": SCHEMA, "phase": "reserved", "source": current,
               "directory_inode": inode(directory), "output": str(output), "output_inode": inode(output),
@@ -222,39 +245,13 @@ def prepare(source, root, caller, context):
                        receipt=str(directory / "journal.json"), source_bytes=record["source_bytes"])
         if record["phase"] in ("reserved", "capturing"):
             capture(directory, record, lock)
-        if record["source"].get("capture_policy") == "git-only":
-            require(record["phase"] in ("captured", "archived"), "producer:incomplete-phase")
-            record.update(phase="archived", archive_bytes=allocated_bytes(Path(record["archive"])))
-            publish(directory / "journal.json", record)
-            timing_context(archive=record["archive"], archive_bytes=record["archive_bytes"],
-                           capture_policy="git-only", source_removal_outcome=record["source_removal_outcome"])
-            return record["archive"]
-        if record["phase"] == "captured":
-            restored = prepare_restore(directory, record)
-            # A previous process may have restored data but died before sealing
-            # it. Never adopt that mutable tree as a new deletion baseline.
-            require(not os.path.lexists(restored), "producer:unsealed-restore-retained; review required")
-            archive_command(lock, "restore", record["archive"], "--target", restored)
-            with phase("compare-restoration"):
-                verify_restore(restored, record)
-            verify_archive(record, lock)
-            require(source_state(source, "preserve-v1") == record["source"], "producer:source-drift")
-            record.update(phase="restore-verified", restore_inode=inode(restored),
-                          restore_fingerprint=fingerprint(restored),
-                          archive_bytes=allocated_bytes(Path(record["archive"])))
-            publish(directory / "journal.json", record)
-        if record["phase"] in ("restore-verified", "cleanup-pending"):
-            verify_archive(record, lock)
-            require(source_state(source, "preserve-v1") == record["source"], "producer:source-drift")
-            with phase("cleanup-verification-scratch"):
-                finish_scratch(directory, record)
-            record["phase"] = "verified"
-            publish(directory / "journal.json", record)
-        require(record["phase"] == "verified", "producer:incomplete-phase")
-        verify_archive(record, lock)
-        require(source_state(source, "preserve-v1") == record["source"], "producer:source-drift")
+        # reservation() never resumes a legacy preserve-v1 journal (GH#36607).
+        require(record["source"].get("capture_policy") == "git-only", "producer:legacy-successor-policy")
+        require(record["phase"] in ("captured", "archived"), "producer:incomplete-phase")
+        record.update(phase="archived", archive_bytes=allocated_bytes(Path(record["archive"])))
+        publish(directory / "journal.json", record)
         timing_context(archive=record["archive"], archive_bytes=record["archive_bytes"],
-                       source_removal_outcome=record["source_removal_outcome"])
+                       capture_policy="git-only", source_removal_outcome=record["source_removal_outcome"])
         return record["archive"]
 
 
@@ -292,7 +289,7 @@ def check(archive, source=None, removed=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("capture", "verify", "source-matches", "removed"))
+    parser.add_argument("command", choices=("capture", "verify", "source-matches", "removed", "sweep-partials"))
     parser.add_argument("path", type=Path)
     parser.add_argument("arguments", nargs="*")
     args = parser.parse_args()
@@ -303,6 +300,8 @@ def main():
         check(args.path, Path(args.arguments[0]))
     elif args.command in ("verify", "removed") and not args.arguments:
         check(args.path, removed=args.command == "removed")
+    elif args.command == "sweep-partials" and args.arguments in (["dry-run"], ["apply"]):
+        return sweep_partials(args.path, args.arguments == ["apply"])
     else:
         parser.error("invalid command arguments")
     return 0

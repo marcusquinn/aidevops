@@ -58,8 +58,10 @@ def administration_files(admin, directory, linked, allow_merge=False):
             files.update(administration_files(admin, entry, linked, allow_merge))
         elif entry.is_file() and (admin_path_allowed(name) or (allow_merge and name in {'MERGE_HEAD', 'MERGE_MODE'})):
             files[name] = read_admin_bytes(entry, name).hex()
-        elif not linked and name == "branches" and entry.is_dir() and not any(entry.iterdir()):
-            # Stock Git templates may include this empty legacy directory.
+        elif name == "branches" and entry.is_dir() and not any(entry.iterdir()):
+            # Stock Git templates may include this empty legacy directory, and
+            # some Git versions also create it in linked admin dirs (GH#36607).
+            # It holds no state; a non-empty one remains an unknown entry.
             continue
         elif not linked and (name == "logs/refs" or name.split("/")[0] in
                              {"objects", "refs", "config", "description", "hooks", "info", "packed-refs"}):

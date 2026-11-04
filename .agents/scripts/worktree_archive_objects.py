@@ -19,6 +19,22 @@ from worktree_archive_auto_merge import (
 )
 
 
+PUBLISHED = 'published'
+
+
+def dependency_commit(manifest):
+    """Return the commit whose full graph the archive relies on, not carries.
+
+    GH#36607: a published archive records ``remote_branch_state`` ``published``
+    and omits the HEAD bundle because every commit since the base was already
+    reachable from a remote-tracking ref. Its dependency is then the published
+    head itself; every other archive still depends only on its exact base.
+    """
+    if manifest.get('remote_branch_state') == PUBLISHED:
+        return manifest['head_sha']
+    return manifest['base_sha']
+
+
 def require_independent_base_receiver(root, common, run_git):
     """Refuse shared stores and alternates before any base-object import."""
     admin = run_git(root, 'rev-parse', '--absolute-git-dir').strip()
