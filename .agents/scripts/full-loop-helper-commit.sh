@@ -156,6 +156,7 @@ _parse_commit_and_pr_args() {
 			allow_parent_close=1
 			index=$((index + 1))
 			;;
+		--keep-issue-open) keep_issue_open=1; index=$((index + 1)) ;; # GH#36598
 		--skip-hooks)
 			# Pass --no-verify to git push. Use for doc-only PRs when hooks
 			# have been manually verified clean. See GH#20138.
@@ -174,6 +175,23 @@ _parse_commit_and_pr_args() {
 			;;
 		esac
 	done
+	return 0
+}
+
+# GH#36598: --keep-issue-open links a long-running issue with `For #N` so merge
+# leaves it open and skips the issue status:in-review handoff. It is
+# interactive-only (a worker PR that leaves its dispatched issue open would be
+# redispatched) and contradicts parent-close and bookkeeping closing intent.
+_validate_keep_issue_open_request() {
+	[[ "$keep_issue_open" -eq 1 ]] || return 0
+	if [[ "$allow_parent_close" -eq 1 || "$completion_bookkeeping" -eq 1 ]]; then
+		print_error "--keep-issue-open cannot be combined with --allow-parent-close or --completion-bookkeeping"
+		return 1
+	fi
+	if [[ "$(detect_session_origin)" != "interactive" ]]; then
+		print_error "--keep-issue-open is interactive-only; worker PRs must resolve their dispatched issue"
+		return 1
+	fi
 	return 0
 }
 

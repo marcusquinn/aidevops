@@ -77,9 +77,11 @@ source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--skip-hooks] [--no-rebase]
+# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--skip-hooks] [--no-rebase]
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
 # --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
+# --keep-issue-open: interactive only; link with `For #N` (no closing keyword) and skip the
+#   issue status:in-review handoff so a long-running issue stays open after merge (GH#36598).
 # --skip-hooks: pass --no-verify to git push (bypasses pre-push hooks). Use for doc-only PRs
 #   after manually verifying no secrets/private-slugs in the diff. See GH#20138.
 # --no-rebase: explicit recovery mode after a failed rebase; requires clean git state and commits ahead of the detected base branch.
@@ -98,10 +100,11 @@ cmd_commit_and_pr() {
 	local completion_bookkeeping=0 bookkeeping_proof_pr="" bookkeeping_task_id=""
 	local replacement_pr="" replacement_reason=""
 	local -a extra_labels=()
-	local allow_parent_close=0
+	local allow_parent_close=0 keep_issue_open=0
 	local skip_hooks=0 skip_rebase=0
 
 	_parse_commit_and_pr_args "$@" || return 1
+	_validate_keep_issue_open_request || return 1
 
 	# Reject the final title before staging, rebasing or publishing anything.
 	if [[ -z "$pr_title" ]]; then
@@ -293,6 +296,10 @@ _commit_and_pr_prepare_metadata() {
 		planning_only=1
 		print_info "Planning-only diff — using 'For' keyword; issue stays dispatchable"
 	fi
+	if [[ "$keep_issue_open" -eq 1 ]]; then
+		closing_keyword="For"
+		print_info "--keep-issue-open — using 'For' keyword; issue #${issue_number} stays open after merge"
+	fi
 	local replacement_note=""
 	if [[ -n "$replacement_pr" ]]; then
 		replacement_note="This explicitly justified replacement preserves open PR #${replacement_pr}. Rationale: ${replacement_reason}"
@@ -437,7 +444,7 @@ _commit_and_pr_publish() {
 		_ensure_worker_pr_linkage "$pr_number" "$repo" "$issue_number" "$pr_body" || return 1
 	fi
 	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions" || return 1
-	if [[ "$planning_only" -eq 0 ]]; then
+	if [[ "$planning_only" -eq 0 && "$keep_issue_open" -eq 0 ]]; then
 		_label_issue_in_review "$issue_number" "$repo"
 	fi
 	_label_pr_in_review "$pr_number" "$repo"
