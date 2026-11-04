@@ -31,6 +31,10 @@ MIN_CHECK_SECONDS = 10
 DEADLINE = None  # time.monotonic() bound for the whole pass, or None.
 
 
+class Kept(Exception):
+    """Verification failed; the archive was restored to its public name."""
+
+
 class Deferred(Exception):
     """The pass budget cannot fit another check; resume next pass."""
 
@@ -93,6 +97,21 @@ def inspect(root, directory):
     return created, size, directory, identity(directory), raw
 
 
+def restore_claimed(parent_fd, name, claimed_fd, transaction, root_fd):
+    """Return an unverifiable archive to its public name; never replace anything.
+
+    If the name was taken meanwhile, leave the archive in its transaction.
+    """
+    try:
+        os.lstat(name, dir_fd=parent_fd)
+    except FileNotFoundError:
+        pass
+    else:
+        return
+    os.rename("archive", name, src_dir_fd=claimed_fd, dst_dir_fd=parent_fd)
+    os.rmdir(transaction, dir_fd=root_fd)
+
+
 def remove_verified(root, root_identity, entry, helper):
     """Anchor removal to no-follow directory descriptors, not mutable ancestor paths."""
     if not getattr(shutil.rmtree, "avoids_symlink_attacks", False):
@@ -132,12 +151,18 @@ def remove_verified(root, root_identity, entry, helper):
         try:
             if identity(claimed) != expected_identity:
                 raise ValueError("archive replaced while claiming")
-            verify(helper, claimed)
+            try:
+                verify(helper, claimed)
+            except RETENTION_ERRORS as error:
+                restore_claimed(parent_fd, parts[-1], claimed_fd, transaction, descriptors[0])
+                raise Kept(str(error)) from error
             if (not policy_unchanged(claimed, expected_pin) or
                     (claimed / "manifest.json").read_bytes() != expected_manifest):
                 raise ValueError("archive policy or manifest changed during verification")
             shutil.rmtree(claimed)
             os.rmdir(transaction, dir_fd=descriptors[0])
+        except Kept:
+            raise
         except Exception:
             print(f"retained-transaction\t{root / transaction}", file=sys.stderr)
             raise
@@ -171,6 +196,9 @@ def attempt(target, entry):
             producer_retention.remove_entry(target, entry, remove_verified)
         else:
             verify(target.helper, entry[2])
+    except Kept as error:
+        print(f"kept\t{entry[2]}\t{error}", file=sys.stderr)
+        return None
     except RETENTION_ERRORS as error:
         print(f"kept\t{entry[2]}\t{error}", file=sys.stderr)
         return False
@@ -195,13 +223,14 @@ def prune(target, entries, days, limit, producers=((), 0)):
     failed = False
     try:
         for entry in expired:
-            failed |= not attempt(target, entry)
+            failed |= attempt(target, entry) is False
         for entry in survivors:
             if survivor_total <= limit:
                 break
-            if attempt(target, entry):
+            outcome = attempt(target, entry)
+            if outcome:
                 survivor_total -= entry[1]
-            else:
+            elif outcome is False:
                 failed = True
     except Deferred as reason:
         print(f"deferred\t{reason}", file=sys.stderr)

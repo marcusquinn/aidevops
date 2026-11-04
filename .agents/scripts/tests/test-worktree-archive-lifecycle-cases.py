@@ -1424,6 +1424,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
                     (archive / "manifest.json").write_text("[]")
                 self.prune(limit="1")
                 self.assertTrue(archive.exists())
+                self.assertEqual(list(self.archives.glob(".prune-*")), [])
 
     def test_symlinked_bucket_never_deletes_external_archive(self):
         archive = self.archive()
@@ -1519,6 +1520,9 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
 
 
     def managed_fixture(self):
+        # Managed lifetimes are a Linux/systemd contract; macOS uses legacy guards.
+        if not (sys.platform.startswith("linux") and os.access("/proc/sys/kernel/random/boot_id", os.R_OK)):
+            self.skipTest("managed lifetimes need Linux with a readable boot id")
         database = self.root / "registry.db"
         self.env.update(WORKTREE_REGISTRY_DB=str(database),
                         WORKTREE_REGISTRY_DIR=str(self.root),
