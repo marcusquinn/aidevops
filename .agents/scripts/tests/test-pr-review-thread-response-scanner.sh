@@ -148,6 +148,7 @@ main_scan() {
 	test_protected_release_dispatch_is_skipped
 	test_release_label_is_rechecked_before_launch
 	test_scan_finds_unresolved_bot_thread
+	test_scan_skips_interactive_prs
 	test_scan_skips_draft_prs
 	test_scan_includes_outdated_unresolved_threads
 	test_scan_fails_closed_without_graphql_cost
