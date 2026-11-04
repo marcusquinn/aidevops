@@ -10,6 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.119] - 2026-11-04
+
+### Changed
+
+- Tests: observe failed-load ssh-agent cleanup (#36676)
+- Tests: assert kept report for the specific archive in prune test (GH#36662) (#36671)
+- Tests: assert complete OpenCode pin evidence (GH#36668) (#36675)
+- Tests: exercise three-line fetch diagnostic limit (#36672)
+- Performance: defer Codex fallback body processing (GH#36656) (#36657)
+- Maintenance: mark t18861 complete (pr:#36642 completed:2026-11-04) (#36644)
+- Maintenance: sync GitHub issue refs to TODO.md (#36645)
+- Tests: canonicalise macOS temp roots in profile README boundary tests (#36642)
+- GH#36628 fix(screen-time): measure Linux screen time from sampled human input activity
+
+### Fixed
+
+- drop hosted macOS CI leg; Bash 3.2 parse via pinned container and Mac pre-commit
+- workflow sync — detect stale NO-WORKFLOW floating callers and report push failure cause
+- fence worker pushes to own repo and exclude nested repos from checkpoints
+- skip PR numbers captured as closing-keyword linked issues
+- refetch and verify full published-head graph on restore (GH#36665) (#36674)
+- reject sync-only registration without jq (GH#36667) (#36677)
+- verify Droid installs and retry Bun failures via npm (#36678)
+- protect canonical exit recovery and isolate routine signing failures (#36660)
+- snapshot Codex fallback body before first fetch (GH#36661) (#36673)
+- fence runtime releases to owned dispatch claims (GH#36593)
+- require exact consolidated-spec marker in successor validator
+- bind lifecycle archives to validated directory (GH#36651) (#36652)
+- worktree archive suite portability and prune restore (GH#36613) (#36650)
+- keep review response workers off interactive PRs (#36649)
+- retain lifecycle journal headroom with archive-first compaction (GH#36636) (#36641)
+- published-worktree minimal archives, legacy preserve-v1 successor, linked branches dir, leaked-partial sweep (#36610)
+- record terminal-lease outbox row at ready transition so killed checkpoint workers are drained
+- complete OAuth image generation and size reporting (GH#36600) (#36643)
+- make three contract tests portable to macOS APFS (GH#36630) (#36639)
+- recover ChatGPT OAuth model rejection (GH#36623) (#36633)
+- portable jq chunking so hidden-unedited normalisation works on jq 1.8
+
 ## [3.39.118] - 2026-11-04
 
 ### Added
