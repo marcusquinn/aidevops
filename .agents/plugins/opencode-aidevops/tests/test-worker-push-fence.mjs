@@ -14,6 +14,9 @@ import { assertWorkerGitTargets } from "../worker-write-fence.mjs";
 import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
 
 const realGit = resolveTrustedExecutable("git");
+// Every signal isHeadless() (proxy-lifecycle.mjs) reads. GITHUB_ACTIONS is set
+// on CI runners, so clearing only AIDEVOPS_HEADLESS leaves CI headless (GH#36694).
+const HEADLESS_SIGNALS = ["FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS", "OPENCODE_HEADLESS", "GITHUB_ACTIONS"];
 
 test("headless workers push only task branches to their own repository", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-push-fence-"));
@@ -25,7 +28,7 @@ test("headless workers push only task branches to their own repository", () => {
     WORKER_REPO_SLUG: "owner/repo",
     AIDEVOPS_TEMP_DIR: join(root, "managed-tmp"),
   };
-  const previousHeadless = process.env.AIDEVOPS_HEADLESS;
+  const previousSignals = Object.fromEntries(HEADLESS_SIGNALS.map((name) => [name, process.env[name]]));
   try {
     execFileSync(realGit, ["init", "-q", "-b", "feature/test"], { cwd: repo });
     execFileSync(realGit, ["remote", "add", "origin", "https://github.com/owner/repo.git"], { cwd: repo });
@@ -47,11 +50,13 @@ test("headless workers push only task branches to their own repository", () => {
     assert.throws(() => check("git push missing HEAD:fix"), blocked);
     assert.throws(() => check(`cd ${repo} && git push other HEAD:fix`), blocked);
 
-    delete process.env.AIDEVOPS_HEADLESS;
+    for (const name of HEADLESS_SIGNALS) delete process.env[name];
     assert.doesNotThrow(() => check("git push other HEAD:fix"));
   } finally {
-    if (previousHeadless === undefined) delete process.env.AIDEVOPS_HEADLESS;
-    else process.env.AIDEVOPS_HEADLESS = previousHeadless;
+    for (const [name, value] of Object.entries(previousSignals)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });
