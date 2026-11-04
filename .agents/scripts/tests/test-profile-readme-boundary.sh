@@ -35,8 +35,13 @@ TEST_DIR=""
 # requires a canonical parent (state-parent-must-be-canonical), so resolve it.
 make_canonical_temp_dir() {
 	local raw_dir=""
+	local canonical_dir=""
 	raw_dir=$(mktemp -d) || return 1
-	(cd "$raw_dir" && pwd -P) || return 1
+	if ! canonical_dir=$(cd "$raw_dir" && pwd -P); then
+		rmdir -- "$raw_dir" || return 1
+		return 1
+	fi
+	printf '%s\n' "$canonical_dir"
 	return 0
 }
 
