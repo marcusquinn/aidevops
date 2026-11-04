@@ -797,6 +797,62 @@ test_exit_push_excludes_deferred_cleanup_marker() {
 	return 0
 }
 
+# GH#36608: a repository cloned inside the worktree must not become a gitlink
+# in the preservation commit; ordinary worker files are still preserved.
+test_exit_push_excludes_new_embedded_repository() {
+	# Bypass the production canonical-repository guard for this disposable fixture.
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
+	local case_dir="${TMPDIR_TEST}/embedded-repo"
+	local origin_dir="${case_dir}/origin.git"
+	local other_dir="${case_dir}/other.git"
+	local repo_dir="${case_dir}/repo"
+	mkdir -p "$case_dir"
+	git init --bare "$origin_dir" >/dev/null 2>&1
+	git init --bare "$other_dir" >/dev/null 2>&1
+	git clone "$origin_dir" "$repo_dir" >/dev/null 2>&1
+	git -C "$repo_dir" config user.email "worker@example.invalid"
+	git -C "$repo_dir" config user.name "Worker Test"
+	git -C "$repo_dir" config commit.gpgsign false
+	git -C "$repo_dir" checkout -b main >/dev/null 2>&1
+	printf 'base\n' >"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
+	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
+	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
+	git -C "$repo_dir" worktree add -b feature/embedded-repo "${case_dir}/worker" main >/dev/null 2>&1
+	repo_dir="${case_dir}/worker"
+	git clone "$other_dir" "${repo_dir}/other-repo" >/dev/null 2>&1
+	git -C "${repo_dir}/other-repo" config user.email "worker@example.invalid"
+	git -C "${repo_dir}/other-repo" config user.name "Worker Test"
+	git -C "${repo_dir}/other-repo" config commit.gpgsign false
+	printf 'other\n' >"${repo_dir}/other-repo/file.txt"
+	git -C "${repo_dir}/other-repo" add file.txt >/dev/null 2>&1
+	git -C "${repo_dir}/other-repo" commit -m "test: other repository" >/dev/null 2>&1
+	mkdir -p "${repo_dir}/.other-stage"
+	printf 'staged copy\n' >"${repo_dir}/.other-stage/file.txt"
+
+	_WORKER_WORKTREE_PATH="$repo_dir"
+	_WORKER_DIRTY_WORK_PRESERVED=0
+	_push_wip_commits_on_exit
+	local preserved="${_WORKER_DIRTY_WORK_PRESERVED:-0}"
+	unset _WORKER_WORKTREE_PATH _WORKER_DIRTY_WORK_PRESERVED
+
+	git -C "$repo_dir" fetch origin feature/embedded-repo >/dev/null 2>&1
+	local gitlink_in_commit="" stage_in_commit="" gitlink_in_index="" clone_present=0
+	gitlink_in_commit=$(git -C "$repo_dir" ls-tree origin/feature/embedded-repo -- other-repo 2>/dev/null || true)
+	stage_in_commit=$(git -C "$repo_dir" ls-tree -r --name-only origin/feature/embedded-repo -- .other-stage 2>/dev/null || true)
+	gitlink_in_index=$(git -C "$repo_dir" ls-files -s -- other-repo 2>/dev/null || true)
+	[[ -f "${repo_dir}/other-repo/file.txt" ]] && clone_present=1
+	if [[ "$preserved" == "1" && -z "$gitlink_in_commit" && -z "$gitlink_in_index" && \
+		"$stage_in_commit" == ".other-stage/file.txt" && "$clone_present" == "1" ]]; then
+		print_result "exit push excludes new embedded repository gitlinks" 0
+	else
+		print_result "exit push excludes new embedded repository gitlinks" 1 \
+			"preserved=${preserved} gitlink='${gitlink_in_commit}' index='${gitlink_in_index}' stage='${stage_in_commit}' clone=${clone_present}"
+	fi
+	unset -f git
+	return 0
+}
+
 test_exit_push_ignores_marker_only_dirty_state() {
 	# Bypass the production canonical-repository guard for this disposable fixture.
 	git() { "$REAL_GIT" "$@" || return 1; return 0; }
@@ -933,6 +989,7 @@ main() {
 	test_exit_push_skips_canonical_and_default_branch
 	test_exit_push_preserves_dirty_worktree
 	test_exit_push_excludes_deferred_cleanup_marker
+	test_exit_push_excludes_new_embedded_repository
 	test_exit_push_ignores_marker_only_dirty_state
 	test_secure_branch_commits_proves_durability
 

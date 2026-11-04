@@ -1460,6 +1460,37 @@ _hrff_stage_actionable_worker_changes() {
 
 	git -C "$work_dir" add -A -- . \
 		"$_HRFF_DEFERRED_CLEANUP_EXCLUDE_PATHSPEC" >/dev/null 2>&1 || return 1
+	_hrff_unstage_new_embedded_repositories "$work_dir"
+	return 0
+}
+
+#######################################
+# Keep repositories cloned inside the worktree out of preservation commits.
+#
+# GH#36608: `git add -A` records an embedded clone as a gitlink, which carried
+# another repository's checkout into this repository's checkpoint PR. Only
+# gitlinks already present in HEAD (real submodules) stay staged; new ones are
+# unstaged and left on disk for the local archive and cleanup paths.
+#
+# Args:
+#   $1 = worktree path
+#######################################
+_hrff_unstage_new_embedded_repositories() {
+	local work_dir="$1"
+	local entry="" mode="" entry_path=""
+
+	while IFS= read -r -d '' entry; do
+		mode="${entry%% *}"
+		[[ "$mode" == "160000" ]] || continue
+		entry_path="${entry#*$'\t'}"
+		[[ -n "$entry_path" ]] || continue
+		if [[ -n "$(git -C "$work_dir" ls-tree HEAD -- "$entry_path" 2>/dev/null)" ]]; then
+			continue
+		fi
+		# -f: a freshly staged gitlink differs from both HEAD and the work tree.
+		git -C "$work_dir" rm -q --cached -f -- "$entry_path" >/dev/null 2>&1 || true
+		print_info "[lifecycle] worker_exit_nested_repo_excluded path=${entry_path}"
+	done < <(git -C "$work_dir" ls-files -s -z 2>/dev/null)
 	return 0
 }
 
