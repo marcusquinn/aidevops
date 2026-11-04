@@ -43,7 +43,7 @@ job=$(jq -c '.jobs[0]' "${XDG_CONFIG_HOME}/aidevops/cron-jobs.json")
 	resolve_runner_route thinking anthropic
 	[[ "$RUNNER_ROUTE_TIER" == "thinking" ]]
 	[[ "$RUNNER_ROUTE_MODEL" == "anthropic/claude-opus-5-5" ]]
-	[[ "$RUNNER_ROUTE_CANDIDATE_INDEX" == "1" ]]
+	[[ "$RUNNER_ROUTE_CANDIDATE_INDEX" == "0" ]]
 	AIDEVOPS_DISPATCH_BACKEND=claude resolve_runner_route standard ""
 	[[ "$RUNNER_ROUTE_MODEL" == "anthropic/claude-sonnet-5-5" ]]
 )
