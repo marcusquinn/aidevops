@@ -104,19 +104,7 @@ cmd_commit_and_pr() {
 	local skip_hooks=0 skip_rebase=0
 
 	_parse_commit_and_pr_args "$@" || return 1
-	# GH#36598: --keep-issue-open is an interactive, non-closing link. A worker
-	# PR that leaves its dispatched issue open would be redispatched, and the
-	# flag contradicts the closing intent of parent-close and bookkeeping.
-	if [[ "$keep_issue_open" -eq 1 ]]; then
-		if [[ "$allow_parent_close" -eq 1 || "$completion_bookkeeping" -eq 1 ]]; then
-			print_error "--keep-issue-open cannot be combined with --allow-parent-close or --completion-bookkeeping"
-			return 1
-		fi
-		if [[ "$(detect_session_origin)" != "interactive" ]]; then
-			print_error "--keep-issue-open is interactive-only; worker PRs must resolve their dispatched issue"
-			return 1
-		fi
-	fi
+	_validate_keep_issue_open_request || return 1
 
 	# Reject the final title before staging, rebasing or publishing anything.
 	if [[ -z "$pr_title" ]]; then

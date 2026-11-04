@@ -53,6 +53,7 @@ source "${SCRIPTS_DIR}/full-loop-helper-subject.sh"
 source "${SCRIPTS_DIR}/full-loop-helper-risk.sh"
 
 eval "$(extract_function "$COMMIT_HELPER" _parse_commit_and_pr_args)"
+eval "$(extract_function "$COMMIT_HELPER" _validate_keep_issue_open_request)"
 eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_request)"
 eval "$(extract_function "$COMMIT_HELPER" _completion_bookkeeping_body_has_reference)"
 eval "$(extract_function "$COMMIT_HELPER" _completion_bookkeeping_body_has_closing_reference)"
