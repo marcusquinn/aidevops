@@ -1870,7 +1870,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18861 test: canonicalise macOS temp roots in profile README boundary tests (state-parent-must-be-canonical) #auto-dispatch #bug ref:GH#36637 pr:#36642 completed:2026-11-04
 
-- [ ] t18863 fix(screen-time): Linux README shows 0h before first sample and sampler not installed on incremental updates #bug #interactive ref:GH#36709 assignee:marcusquinn logged:2026-11-04 started:2026-11-04 -> [todo/tasks/t18863-brief.md]
+- [x] t18863 fix(screen-time): Linux README shows 0h before first sample and sampler not installed on incremental updates #bug #interactive ref:GH#36709 assignee:marcusquinn logged:2026-11-04 started:2026-11-04 -> [todo/tasks/t18863-brief.md] pr:#36713 completed:2026-11-04
 
 ## In Progress
 
