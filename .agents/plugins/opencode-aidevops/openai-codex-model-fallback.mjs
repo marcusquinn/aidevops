@@ -34,9 +34,12 @@ async function isModelRejection(response) {
 
 // Retry only a definite pre-generation model rejection, once, on the same
 // endpoint/account. Never retry SSE, transport, auth, quota or policy failures.
-export async function retryCodexModelRejection(response, input, init, body, send) {
+export async function retryCodexModelRejection(response, input, init, send) {
   const { extendRequestInit, headersFrom, isCodexBackendRequest, prepareOpenAIRequest, safeToken } = await import("./openai-codex-request.mjs");
-  if (!body || !isCodexBackendRequest(input) || !await isModelRejection(response)) return response;
+  if (!isCodexBackendRequest(input) || !await isModelRejection(response)) return response;
+  // Read and parse the original body only after a definite model rejection.
+  const body = await codexFallbackBody(input, init);
+  if (!body) return response;
   const headers = headersFrom(input, init);
   headers.delete("content-encoding");
   headers.delete("content-length");
