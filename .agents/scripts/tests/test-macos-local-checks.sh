@@ -20,6 +20,8 @@ git() {
 	case "$operation" in
 	diff) printf '%s\n' "$changed"; return "$diff_rc" ;;
 	rev-parse) printf '%s\n' test-head ;;
+	merge-base) printf '%s\n' test-base ;;
+	status) return 0 ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -36,6 +38,9 @@ gh() {
 	fi
 	if [[ "$args" == *'--json reviewRequests'* && "$review_rc" -eq 0 ]]; then
 		printf '%s\n' mac-user default-user
+	fi
+	if [[ "$args" == *'--json headRefOid'* ]]; then
+		jq -n --arg head "$(<"$WORK/head")" '{headRefOid: $head, baseRefOid: "test-base", body: "## Runtime Testing"}'
 	fi
 	return 0
 }
@@ -77,4 +82,22 @@ if macos_checks_route base 123 owner/repo; then exit 1; fi
 diff_rc=1
 if macos_checks_evidence bad-base; then exit 1; fi
 if macos_checks_route bad-base 123 owner/repo; then exit 1; fi
-printf '%s\n' 'PASS: sensitive/no-op detection, native failure, host override, maintainer override/fallback, review/assignment and fail-closed diff'
+
+# Simulate a push while the body-write helper runs, without real GitHub writes.
+bash() {
+	printf '%s\n' "$body_edit_head" >"$WORK/head"
+	return 0
+}
+diff_rc=0
+fake_host=Darwin
+body_edit_head=test-head
+printf '%s\n' test-head >"$WORK/head"
+rm -f "$WORK/calls"
+macos_checks_verify_pr 123 owner/repo
+command grep -q -- '--remove-label needs-macos-verification' "$WORK/calls"
+body_edit_head=new-head
+rm "$WORK/calls"
+if macos_checks_verify_pr 123 owner/repo; then exit 1; fi
+if command grep -q -- '--remove-label needs-macos-verification' "$WORK/calls"; then exit 1; fi
+[[ "$(<"$WORK/head")" == new-head ]]
+printf '%s\n' 'PASS: sensitive/no-op detection, native failure, host override, maintainer override/fallback, review/assignment, fail-closed diff and head-change label retention'

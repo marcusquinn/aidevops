@@ -120,6 +120,9 @@ macos_checks_verify_pr() {
 	helper_dir=$(dirname "${BASH_SOURCE[0]}")
 	bash "$helper_dir/gh-write-helper.sh" pr edit "$pr" --repo "$repo" --body-file "$body_file" || { rm -f "$body_file"; return 1; }
 	rm -f "$body_file"
+	# A push during the body edit invalidates the evidence; retain the label.
+	metadata=$(gh pr view "$pr" --repo "$repo" --json headRefOid) || return 1
+	[[ "$(jq -r .headRefOid <<<"$metadata")" == "$head" ]] || return 1
 	gh pr edit "$pr" --repo "$repo" --remove-label needs-macos-verification || return 1
 	return 0
 }
