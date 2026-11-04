@@ -471,6 +471,31 @@ validate_portable_stat() {
 	return $violations
 }
 
+# GH#36686: parse modified scripts with the macOS-shipped /bin/bash 3.2, which
+# launchd uses and which rejects constructs Bash 5 accepts (GH#19252). Runs
+# only where /bin/bash is really 3.x (every Mac); CI runs the same parse on
+# Ubuntu in a pinned bash:3.2 container. Syntax errors are bugs: absolute gate.
+validate_bash32_parse() {
+	local violations=0
+	local major=""
+	[[ -x /bin/bash ]] || return 0
+	major=$(/bin/bash -c 'printf "%s" "${BASH_VERSINFO[0]}"' 2>/dev/null || true)
+	[[ "$major" == "3" ]] || return 0
+
+	print_info "Validating /bin/bash 3.2 parse (absolute)..."
+	local file result
+	for file in "$@"; do
+		[[ -f "$file" ]] || continue
+		if ! result=$(/bin/bash -n "$file" 2>&1); then
+			print_error "Bash 3.2 cannot parse $file (macOS launchd runs scripts with /bin/bash 3.2):"
+			printf '%s\n' "$result" >&2
+			((++violations))
+		fi
+	done
+	[[ "$violations" -eq 0 ]] || print_info "Common cause: heredoc inside \$(). See .agents/reference/bash-compat.md"
+	return $violations
+}
+
 run_shellcheck() {
 	local violations=0
 
@@ -1244,6 +1269,9 @@ main_pre_commit() {
 	echo "" >&2
 
 	validate_portable_stat "${modified_files[@]}" || ((total_violations += $?))
+	echo "" >&2
+
+	validate_bash32_parse "${modified_files[@]}" || ((total_violations += $?))
 	echo "" >&2
 
 	# Final decision

@@ -257,4 +257,4 @@ echo -e "[boot]\nsystemd=true" | sudo tee /etc/wsl.conf
 
 ## CI/CD
 
-The GitHub Actions CI runs on both `ubuntu-latest` and `macos-latest` to catch platform regressions. See `.github/workflows/code-quality.yml`.
+Required CI runs on `ubuntu-latest`; macOS `/bin/bash` 3.2 parse coverage comes from a digest-pinned `bash:3.2` container in `.github/workflows/code-quality.yml` and from `pre-commit-hook.sh` on any Mac. Hosted macOS runners are not on the merge path (GH#36686); `.github/workflows/path-portability.yml` still runs an advisory macOS leg. macOS-only runtime tests run locally on macOS machines.
