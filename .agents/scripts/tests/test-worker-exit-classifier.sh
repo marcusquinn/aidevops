@@ -17,6 +17,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_SCRIPTS="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REAL_GIT=$(python3 -E -s -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_git import real_git; print(real_git())' "$AGENTS_SCRIPTS")
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -599,9 +600,68 @@ test_no_start_time_with_sessions() {
 	return 0
 }
 
+test_exit_push_skips_canonical_and_default_branch() {
+	# Exercise the actual predicate, not a mocked canonical/linked classification.
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
+	local case_dir="${TMPDIR_TEST}/canonical-develop"
+	local origin_dir="${case_dir}/origin.git"
+	local repo_dir="${case_dir}/repo"
+	mkdir -p "$case_dir"
+	git init --bare "$origin_dir" >/dev/null 2>&1
+	git clone "$origin_dir" "$repo_dir" >/dev/null 2>&1
+	git -C "$repo_dir" config user.email "worker@example.invalid"
+	git -C "$repo_dir" config user.name "Worker Test"
+	git -C "$repo_dir" config commit.gpgsign false
+	git -C "$repo_dir" checkout -b develop >/dev/null 2>&1
+	printf 'base\n' >"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt
+	git -C "$repo_dir" commit -m "test: seed develop" >/dev/null 2>&1
+	git -C "$repo_dir" push -u origin develop >/dev/null 2>&1
+	git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	local seed_head="" before_status="" after_status="" after_head="" remote_head=""
+	seed_head=$(git -C "$repo_dir" rev-parse HEAD)
+	printf 'dirty\n' >>"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt
+	printf 'untracked\n' >"${repo_dir}/new-file.txt"
+	before_status=$(git -C "$repo_dir" status --porcelain)
+	_WORKER_WORKTREE_PATH="$repo_dir"
+	_push_wip_commits_on_exit
+	after_head=$(git -C "$repo_dir" rev-parse HEAD)
+	after_status=$(git -C "$repo_dir" status --porcelain)
+	remote_head=$(git --git-dir="$origin_dir" rev-parse refs/heads/develop)
+	assert_eq "canonical develop keeps HEAD" "$after_head" "$seed_head"
+	assert_eq "canonical develop keeps staged and untracked changes" "$after_status" "$before_status"
+	assert_eq "canonical develop keeps remote head" "$remote_head" "$seed_head"
+
+	# A canonical checkout on a non-default branch is still never worker-owned.
+	git -C "$repo_dir" checkout -b feature/canonical >/dev/null 2>&1
+	_push_wip_commits_on_exit
+	after_head=$(git -C "$repo_dir" rev-parse HEAD)
+	after_status=$(git -C "$repo_dir" status --porcelain)
+	assert_eq "canonical feature keeps HEAD" "$after_head" "$seed_head"
+	assert_eq "canonical feature keeps dirty index" "$after_status" "$before_status"
+	local remote_branch=""
+	remote_branch=$(git --git-dir="$origin_dir" for-each-ref --format='%(refname)' refs/heads/feature/canonical)
+	assert_eq "canonical feature is not pushed" "$remote_branch" ""
+
+	# The default branch is protected even when it is in a linked worktree.
+	git -C "$repo_dir" worktree add "${case_dir}/linked" develop >/dev/null 2>&1
+	_WORKER_WORKTREE_PATH="${case_dir}/linked"
+	printf 'dirty\n' >>"${_WORKER_WORKTREE_PATH}/tracked.txt"
+	before_status=$(git -C "$_WORKER_WORKTREE_PATH" status --porcelain)
+	_push_wip_commits_on_exit
+	after_head=$(git -C "$_WORKER_WORKTREE_PATH" rev-parse HEAD)
+	after_status=$(git -C "$_WORKER_WORKTREE_PATH" status --porcelain)
+	assert_eq "linked develop keeps HEAD" "$after_head" "$seed_head"
+	assert_eq "linked develop keeps dirty state" "$after_status" "$before_status"
+	unset _WORKER_WORKTREE_PATH _WORKER_DIRTY_WORK_PRESERVED
+	unset -f git
+	return 0
+}
+
 test_exit_push_preserves_dirty_worktree() {
 	# Bypass the production canonical-repository guard for this disposable fixture.
-	git() { /usr/bin/git "$@"; }
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
 	local case_dir="${TMPDIR_TEST}/dirty-preserve"
 	local origin_dir="${case_dir}/origin.git"
 	local repo_dir="${case_dir}/repo"
@@ -611,12 +671,14 @@ test_exit_push_preserves_dirty_worktree() {
 	git -C "$repo_dir" config user.email "worker@example.invalid"
 	git -C "$repo_dir" config user.name "Worker Test"
 	git -C "$repo_dir" config commit.gpgsign false
-	git -C "$repo_dir" checkout -b main >/dev/null 2>&1
+	git -C "$repo_dir" checkout -b develop >/dev/null 2>&1
 	printf 'base\n' >"${repo_dir}/tracked.txt"
 	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
 	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
-	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
-	git -C "$repo_dir" checkout -b feature/dirty-preserve >/dev/null 2>&1
+	git -C "$repo_dir" push -u origin develop >/dev/null 2>&1
+	git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	git -C "$repo_dir" worktree add -b feature/dirty-preserve "${case_dir}/worker" develop >/dev/null 2>&1
+	repo_dir="${case_dir}/worker"
 	printf 'base\nchanged\n' >"${repo_dir}/tracked.txt"
 	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
 	printf 'changed after staging\n' >>"${repo_dir}/tracked.txt"
@@ -632,7 +694,7 @@ test_exit_push_preserves_dirty_worktree() {
 	local status=""
 	status=$(git -C "$repo_dir" status --porcelain 2>/dev/null || true)
 	local pushed_count=""
-	pushed_count=$(git -C "$repo_dir" rev-list --count origin/main..origin/feature/dirty-preserve 2>/dev/null || printf '0')
+	pushed_count=$(git -C "$repo_dir" rev-list --count origin/develop..origin/feature/dirty-preserve 2>/dev/null || printf '0')
 	local tracked_content=""
 	tracked_content=$(git -C "$repo_dir" show "origin/feature/dirty-preserve:tracked.txt" 2>/dev/null || true)
 	if [[ "$preserved" == "1" && -z "$status" && "$pushed_count" == "1" && "$tracked_content" == *"changed after staging"* ]]; then
@@ -647,7 +709,7 @@ test_exit_push_preserves_dirty_worktree() {
 
 test_exit_push_excludes_deferred_cleanup_marker() {
 	# Bypass the production canonical-repository guard for this disposable fixture.
-	git() { /usr/bin/git "$@"; }
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
 	local case_dir="${TMPDIR_TEST}/marker-and-work"
 	local origin_dir="${case_dir}/origin.git"
 	local repo_dir="${case_dir}/repo"
@@ -663,7 +725,8 @@ test_exit_push_excludes_deferred_cleanup_marker() {
 	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
 	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
 	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
-	git -C "$repo_dir" checkout -b feature/marker-and-work >/dev/null 2>&1
+	git -C "$repo_dir" worktree add -b feature/marker-and-work "${case_dir}/worker" main >/dev/null 2>&1
+	repo_dir="${case_dir}/worker"
 	mkdir -p "${repo_dir}/.agents"
 	printf 'base\nworker change\n' >"${repo_dir}/tracked.txt"
 	printf '12345\n' >"${repo_dir}/${marker_path}"
@@ -700,7 +763,7 @@ test_exit_push_excludes_deferred_cleanup_marker() {
 
 test_exit_push_ignores_marker_only_dirty_state() {
 	# Bypass the production canonical-repository guard for this disposable fixture.
-	git() { /usr/bin/git "$@"; }
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
 	local case_dir="${TMPDIR_TEST}/marker-only"
 	local origin_dir="${case_dir}/origin.git"
 	local repo_dir="${case_dir}/repo"
@@ -716,7 +779,8 @@ test_exit_push_ignores_marker_only_dirty_state() {
 	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
 	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
 	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
-	git -C "$repo_dir" checkout -b feature/marker-only >/dev/null 2>&1
+	git -C "$repo_dir" worktree add -b feature/marker-only "${case_dir}/worker" main >/dev/null 2>&1
+	repo_dir="${case_dir}/worker"
 	mkdir -p "${repo_dir}/.agents"
 	printf '12345\n' >"${repo_dir}/${marker_path}"
 	git -C "$repo_dir" add "$marker_path" >/dev/null 2>&1
@@ -748,7 +812,7 @@ test_exit_push_ignores_marker_only_dirty_state() {
 # branch, a verified recovery bundle, or else an explicit work_lost result.
 test_secure_branch_commits_proves_durability() {
 	# Bypass the production canonical-repository guard for this disposable fixture.
-	git() { /usr/bin/git "$@"; }
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
 	local case_dir="${TMPDIR_TEST}/durability"
 	local origin_dir="${case_dir}/origin.git"
 	local repo_dir="${case_dir}/repo"
@@ -830,6 +894,7 @@ main() {
 	test_classifier_failure_corrupt_db
 	test_no_start_time_empty_db
 	test_no_start_time_with_sessions
+	test_exit_push_skips_canonical_and_default_branch
 	test_exit_push_preserves_dirty_worktree
 	test_exit_push_excludes_deferred_cleanup_marker
 	test_exit_push_ignores_marker_only_dirty_state

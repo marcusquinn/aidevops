@@ -48,6 +48,8 @@ source "${_HRFF_SCRIPT_DIR}/terminal-blocker-circuit.sh"
 source "${_HRFF_SCRIPT_DIR}/fast-fail-release-policy.sh"
 # shellcheck source=headless-runtime-release-claim.sh
 source "${_HRFF_SCRIPT_DIR}/headless-runtime-release-claim.sh"
+# shellcheck source=aidevops-cli/aidevops-project-config-lib.sh
+source "${_HRFF_SCRIPT_DIR}/aidevops-cli/aidevops-project-config-lib.sh"
 unset _HRFF_SCRIPT_DIR
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 
@@ -1489,6 +1491,9 @@ _push_wip_commits_on_exit() {
 		return 0
 	fi
 
+	# Canonical checkouts are read-only mirrors, regardless of branch name.
+	_project_config_is_linked_worktree "$work_dir" || return 0
+
 	# Get the branch name — skip if detached HEAD or default branch
 	local branch_name=""
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 0
@@ -1497,6 +1502,20 @@ _push_wip_commits_on_exit() {
 		return 0
 		;;
 	esac
+
+	local default_ref=""
+	default_ref=$(git -C "$work_dir" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)
+	# Older clones may not have origin/HEAD. Only use an existing legacy base.
+	if [[ -z "$default_ref" ]]; then
+		if git -C "$work_dir" show-ref --verify --quiet refs/remotes/origin/main; then
+			default_ref="refs/remotes/origin/main"
+		elif git -C "$work_dir" show-ref --verify --quiet refs/remotes/origin/master; then
+			default_ref="refs/remotes/origin/master"
+		else
+			return 0
+		fi
+	fi
+	[[ "$branch_name" == "${default_ref#refs/remotes/origin/}" ]] && return 0
 
 	_hrff_unstage_deferred_cleanup_marker "$work_dir"
 	local dirty_status=""
@@ -1516,14 +1535,10 @@ _push_wip_commits_on_exit() {
 		fi
 	fi
 
-	# Count commits ahead of origin/main (or origin/master) — fail-open
+	# Count against the resolved default only; zero must not select another base.
 	local ahead_count=0
-	ahead_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
+	ahead_count=$(git -C "$work_dir" rev-list --count "${default_ref}..HEAD" 2>/dev/null || true)
 	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	if [[ "$ahead_count" -eq 0 ]]; then
-		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
-		[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	fi
 	if [[ "$ahead_count" -eq 0 ]]; then
 		return 0
 	fi

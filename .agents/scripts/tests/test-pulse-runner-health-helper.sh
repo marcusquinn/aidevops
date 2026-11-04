@@ -312,6 +312,33 @@ else
 fi
 _teardown_sandbox
 
+# --- Test 14: routine signing failure is audit-only, not issue-runner health ---
+_setup_sandbox
+_h record-outcome no_worker_process owner/repo#1 >/dev/null 2>&1
+for routine in routine-pulse routine-maintenance routine-pulse; do
+	_h record-outcome worker_signing_unavailable "$routine" >/dev/null 2>&1
+done
+routine_rc=0
+_h is-paused || routine_rc=$?
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+routine_entries=$(jq '[.last_outcomes[] | select(.issue | startswith("routine-"))] | length' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$routine_rc" -eq 1 && "$counter" -eq 1 && "$routine_entries" -eq 3 ]]; then
+	print_result "routine signing failures are audited without changing issue health" "PASS"
+else
+	print_result "routine signing failures are audited without changing issue health" "FAIL" \
+		"paused_rc=$routine_rc counter=$counter ledger_entries=$routine_entries"
+fi
+# GH#29920 remains intact even after the excluded routine failures.
+_h record-outcome worker_signing_unavailable owner/repo#2 >/dev/null 2>&1
+issue_rc=0
+_h is-paused || issue_rc=$?
+if [[ "$issue_rc" -eq 0 ]]; then
+	print_result "issue signing failure still trips immediately after routine outcomes" "PASS"
+else
+	print_result "issue signing failure still trips immediately after routine outcomes" "FAIL" "paused_rc=$issue_rc"
+fi
+_teardown_sandbox
+
 echo ""
 echo "Tests run: $TESTS_RUN, failed: $TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] && exit 0 || exit 1

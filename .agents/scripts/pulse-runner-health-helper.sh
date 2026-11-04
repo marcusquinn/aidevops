@@ -298,7 +298,7 @@ _rh_is_zero_attempt_signal() {
 
 #######################################
 # Resolve the trip threshold for a zero-attempt signal. Deterministic signing
-# preflight failure proves this runner cannot launch any worker, so one outcome
+# preflight failure in an issue worker proves this runner cannot launch it, so one outcome
 # must pause it immediately while healthy peers remain eligible.
 # Args: $1 = outcome signal
 # Outputs: positive integer threshold
@@ -358,6 +358,12 @@ cmd_record_outcome() {
 	now=$(_rh_now)
 	local is_zero=0
 	if _rh_is_zero_attempt_signal "$signal"; then is_zero=1; fi
+	# Routine launches can use a different checkout/signing context. Keep their
+	# failure in the audit ledger without incrementing OR resetting issue health.
+	local routine_signing=0
+	if [[ "$signal" == "worker_signing_unavailable" && "$issue" == routine-* ]]; then
+		routine_signing=1
+	fi
 
 	# Window expiry: if the rolling window has elapsed without tripping,
 	# zero out the counter and re-anchor the window. Done BEFORE applying
@@ -369,7 +375,9 @@ cmd_record_outcome() {
 
 	# Append outcome to ledger and update counter.
 	local new_counter="" signal_threshold=""
-	if [[ "$is_zero" -eq 1 ]]; then
+	if [[ "$routine_signing" -eq 1 ]]; then
+		: # Audit-only: do not change the issue-worker failure streak.
+	elif [[ "$is_zero" -eq 1 ]]; then
 		# Counter increments; the window may need to be re-anchored if it
 		# was idle through expiry above (already done) — otherwise keep it.
 		_rh_state_apply ".consecutive_zero_attempts += 1" || true
@@ -400,7 +408,7 @@ cmd_record_outcome() {
 	current_state=$(_rh_get_field '.circuit_breaker.state')
 	[[ -z "$current_state" ]] && current_state="closed"
 
-	if [[ "$is_zero" -eq 1 ]] \
+	if [[ "$is_zero" -eq 1 && "$routine_signing" -eq 0 ]] \
 		&& [[ "$current_state" == "closed" ]] \
 		&& [[ "$new_counter" -ge "$signal_threshold" ]]; then
 		_rh_trip_breaker "$issue" "signal=${signal} consecutive_zero_attempts=${new_counter}"
