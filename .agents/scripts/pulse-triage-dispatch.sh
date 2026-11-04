@@ -118,7 +118,7 @@ The validator must pass before running the signed creation command below. It che
 
    Capture the new issue number as \$NEW_NUM.
 
-4. **Close the parent #${parent_num}:**
+4. **Close every superseded parent.** Run all four commands below for #${parent_num}, then repeat them for every additional issue passed as \`--parent\` in step 3, substituting that issue number in every command (including dependency repointing). Do not close this consolidation task until every parent's handoff is complete:
 
 \`\`\`bash
 gh issue comment ${parent_num} --repo "${repo_slug}" \\

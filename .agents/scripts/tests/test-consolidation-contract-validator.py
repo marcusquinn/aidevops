@@ -111,9 +111,10 @@ class ContractTests(unittest.TestCase):
             successor = root / "successor.md"
             source.write_text(SOURCE, encoding="utf-8")
             other.write_text("requires-secrets: C\n", encoding="utf-8")
-            successor.write_text(SUCCESSOR + "\nrequires-secrets: C\n", encoding="utf-8")
+            both = MARKER.replace("#1", "#2") + "\n" + SUCCESSOR
+            successor.write_text(both + "\nrequires-secrets: C\n", encoding="utf-8")
             command = [sys.executable, str(SCRIPT), "--parent", "1", "--source", str(source),
-                       "--source", str(other), "--successor", str(successor)]
+                       "--parent", "2", "--source", str(other), "--successor", str(successor)]
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
             successor.write_text(SOURCE + "\nrequires-secrets: C\n", encoding="utf-8")
             stderr = io.StringIO()
@@ -126,6 +127,41 @@ class ContractTests(unittest.TestCase):
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 1)
             self.assertNotIn(str(root), result.stderr)
+
+    def test_cli_rejects_missing_extra_and_duplicate_parents(self):
+        temp_root = os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp"))
+        with tempfile.TemporaryDirectory(dir=temp_root) as temp:
+            root = Path(temp)
+            source = root / "source.md"
+            successor = root / "successor.md"
+            source.write_text(SOURCE, encoding="utf-8")
+            successor.write_text(SUCCESSOR, encoding="utf-8")
+            command = [sys.executable, str(SCRIPT), "--successor", str(successor)]
+            for parents, source_count in [([], 1), ([1], 2), ([1, 2], 1), ([1, 1], 2)]:
+                with self.subTest(parents=parents, source_count=source_count):
+                    args = command + [arg for parent in parents for arg in ("--parent", str(parent))]
+                    args += [arg for _ in range(source_count) for arg in ("--source", str(source))]
+                    result = subprocess.run(args, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("one unique issue number for each --source", result.stderr)
+
+    def test_cli_preserves_crlf_for_marker_check(self):
+        temp_root = os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp"))
+        with tempfile.TemporaryDirectory(dir=temp_root) as temp:
+            root = Path(temp)
+            source = root / "source.md"
+            successor = root / "successor.md"
+            source.write_bytes(SOURCE.replace("\n", "\r\n").encode("utf-8"))
+            successor.write_bytes(SUCCESSOR.replace("\n", "\r\n").encode("utf-8"))
+            command = [sys.executable, str(SCRIPT), "--parent", "1", "--source", str(source),
+                       "--successor", str(successor)]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("missing exact marker line", result.stderr)
+            self.assertNotIn("source 1:", result.stderr)
+            # A valid LF marker with matching CRLF contracts still passes.
+            successor.write_bytes((MARKER + "\n\n" + SOURCE.replace("\n", "\r\n")).encode("utf-8"))
+            self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
 
 
 if __name__ == "__main__":
