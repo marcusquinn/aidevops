@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Access and bundle Git objects without caller repository overrides."""
 
+import errno
 import os
 from pathlib import Path
 import re
@@ -38,17 +39,12 @@ def base_upload_pack():
                        '-c', 'pack.window=0', '-c', 'pack.threads=1', 'upload-pack'])
 
 
-def base_import_failure(error):
-    """Classify captured Git stderr without releasing paths, OIDs or raw text."""
-    stderr = error.stderr or b''
+def stderr_category(stderr):
+    """Map captured stderr to one fixed category; never return raw text."""
+    stderr = stderr or b''
     if isinstance(stderr, str):
         stderr = stderr.encode('utf-8', errors='replace')
-    stderr = stderr.lower()
-    packing = 'pack-objects-died' if b'pack-objects died' in stderr else 'git-failed'
-    detail = 'unclassified'
-    if ((b'promisor remote' in stderr and b'could not fetch' in stderr)
-            or b'missing promisor object' in stderr or b'missing promised object' in stderr):
-        return MISSING_PROMISOR_BASE
+    stderr = stderr.lower() if isinstance(stderr, bytes) else b''
     # Ordered patterns keep resource failures ahead of missing-object fallbacks.
     for pattern, category in (
         (rb'out of memory|malloc failed|cannot allocate memory', 'allocation-failed'),
@@ -62,8 +58,21 @@ def base_import_failure(error):
         (rb'did not send all necessary objects', 'transfer-failed'),
     ):
         if re.search(pattern, stderr):
-            detail = category
-            break
+            return category
+    return 'unclassified'
+
+
+def base_import_failure(error):
+    """Classify captured Git stderr without releasing paths, OIDs or raw text."""
+    stderr = error.stderr or b''
+    if isinstance(stderr, str):
+        stderr = stderr.encode('utf-8', errors='replace')
+    stderr = stderr.lower()
+    packing = 'pack-objects-died' if b'pack-objects died' in stderr else 'git-failed'
+    if ((b'promisor remote' in stderr and b'could not fetch' in stderr)
+            or b'missing promisor object' in stderr or b'missing promised object' in stderr):
+        return MISSING_PROMISOR_BASE
+    detail = stderr_category(stderr)
     code = error.returncode if -255 <= error.returncode <= 255 else 'unknown'
     return (f'producer:base-import-failed; stage=base-import; exit={code}; '
             f'stderr={packing}/{detail}; source and archive retained')
@@ -118,7 +127,44 @@ def producer_failure_reason(error):
         return ("producer:unsupported-metadata; permissions, ownership, ACLs, extended attributes "
                 "or hard links require separate preservation; source retained; "
                 "retrying will not resolve this policy refusal")
-    return str(error) if isinstance(error, ValueError) else "producer:evidence-unavailable"
+    if isinstance(error, ValueError):
+        return str(error)
+    return unavailable_reason(error)
+
+
+# GH#36564: fixed archive-helper refusals that are safe to name. The helper's
+# insufficient-capacity line carries only integers, so it is passed through.
+HELPER_CAUSES = (
+    ("Error: worktree changed during archive capture: ", "source-changed-during-capture"),
+    ("Error: worktree fingerprint unavailable", "fingerprint-unavailable"),
+    ("Error: cannot resolve base SHA", "base-unresolved"),
+    ("Error: archive capacity unavailable", "capacity-unavailable"),
+)
+CAPACITY_REFUSAL = re.compile(
+    r"Error: (producer:insufficient-capacity; estimate=[0-9]+; reserve=[0-9]+; free=[0-9]+; "
+    r"no archive written; source retained)")
+
+
+def unavailable_reason(error):
+    """Name the failure class without releasing paths, OIDs or raw stderr (GH#36564)."""
+    prefix = "producer:evidence-unavailable"
+    if isinstance(error, subprocess.CalledProcessError):
+        stderr = error.stderr
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        lines = stderr.rstrip().splitlines() if isinstance(stderr, str) else []
+        for line in reversed(lines):
+            capacity = CAPACITY_REFUSAL.fullmatch(line)
+            if capacity:
+                return capacity.group(1)
+        cause = next((category for line in lines for marker, category in HELPER_CAUSES
+                      if line.startswith(marker)), None) or "stderr/" + stderr_category(error.stderr)
+        code = error.returncode if isinstance(error.returncode, int) and -255 <= error.returncode <= 255 \
+            else "unknown"
+        return f"{prefix}; cause={cause}; exit={code}"
+    if isinstance(error, OSError):
+        return f"{prefix}; cause=os-error/{errno.errorcode.get(error.errno, 'unknown')}"
+    return f"{prefix}; cause=exception/{type(error).__name__}"
 
 
 def base_import_timeout():

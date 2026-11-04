@@ -255,6 +255,34 @@ PY
 	return 0
 }
 
+# GH#36564: a refused or failed capture must leave no archive bytes behind.
+test_failed_capture_leaves_no_archive() {
+	local paths canonical worktree root stderr_file rc=0
+	paths=$(setup_repo reclaim) || return 1
+	IFS=$'\t' read -r canonical worktree <<<"$paths"
+	root="$TEST_ROOT/reclaim-archives"
+	stderr_file="$TEST_ROOT/reclaim.stderr"
+	printf 'commit\n' >>"$worktree/file.txt"
+	git -C "$worktree" commit -qam local || return 1
+	printf 'untracked\n' >"$worktree/note.txt"
+	# Capacity: refuse before allocating anything.
+	if AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES=999999999999999999 bash "$HELPER" archive "$worktree" \
+		--repo owner/repo --issue 30 --reason failed-worker --base-branch main \
+		--output-root "$root" >/dev/null 2>"$stderr_file"; then rc=1; fi
+	grep -q 'producer:insufficient-capacity; estimate=[0-9]*; reserve=999999999999999999; free=[0-9]*; no archive written' "$stderr_file" || rc=1
+	[[ ! -e "$root" ]] || rc=1
+	# Failure after commits.bundle and untracked capture are written (the
+	# failure log is checked last): the partial directory is discarded.
+	if bash "$HELPER" archive "$worktree" \
+		--repo owner/repo --issue 31 --reason failed-worker --base-branch main \
+		--failure-log "$TEST_ROOT/missing-failure.log" \
+		--output-root "$root" >/dev/null 2>&1; then rc=1; fi
+	[[ -d "$root/owner__repo/31" && -z "$(ls -A "$root/owner__repo/31")" ]] || rc=1
+	[[ -z "$(find "$root" -type f -print -quit)" ]] || rc=1
+	result "refused and failed captures leave no archive bytes" "$rc"
+	return 0
+}
+
 test_invalid_arguments() {
 	local paths canonical worktree rc=0
 	paths=$(setup_repo invalid) || return 1
@@ -275,6 +303,7 @@ test_snapshot_protects_unsupported_content || result "snapshot fixture setup" 1
 test_verify_detects_tamper
 test_source_matches_detects_late_writes
 test_prune_modes
+test_failed_capture_leaves_no_archive || result "failed-capture fixture setup" 1
 test_invalid_arguments
 
 printf '%s tests, %s failures\n' "$TESTS_RUN" "$TESTS_FAILED"

@@ -62,6 +62,8 @@ worktree-archive-helper.sh prune --older-than 14d --max-total-size 20G \
 
 `--reason` accepts `failed-worker`, `post-pr-cleanup` or `unattributed-worktree`. Use `--unattributed` instead of `--issue` when no issue is proven. Untracked capture defaults to at most 10,000 paths and 1 GiB; override those bounds with `AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES` and `AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES`. `AIDEVOPS_WORKTREE_ARCHIVE_ROOT` changes the default root.
 
+Capacity and failed captures (GH#36564): before allocating, `archive` estimates the commit payload with `git rev-list --objects --disk-usage HEAD ^<base>`. If that estimate plus `AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES` (default 512 MiB) exceeds free space at the archive root, it refuses with `producer:insufficient-capacity; estimate=…; reserve=…; free=…; no archive written; source retained`. A capture that fails after allocation, including a late-writer fingerprint mismatch, removes its own unmanifested directory, so a refused cleanup leaves no archive bytes. Producer failures that are not policy refusals report `producer:evidence-unavailable; cause=<category>; exit=<code>`, where the category is a fixed name, not raw stderr.
+
 ## Archive layout
 
 The path is `<root>/<owner>__<repo>/<issue>/<UTC timestamp>/`:

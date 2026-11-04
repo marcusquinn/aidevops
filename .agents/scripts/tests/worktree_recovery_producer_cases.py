@@ -40,7 +40,23 @@ class ProducerCases:
         for stderr in (None, "", "private failure", "ValueError: " + messages[0] + " private-path",
                        "ValueError: " + messages[0] + "\nother failure", messages[0].encode()):
             error = subprocess.CalledProcessError(1, ["private-command"], stderr=stderr)
-            self.assertEqual(producer_engine.failure_reason(error), "producer:evidence-unavailable")
+            # GH#36564: the generic reason names a bounded cause, never raw text.
+            self.assertEqual(producer_engine.failure_reason(error),
+                             "producer:evidence-unavailable; cause=stderr/unclassified; exit=1")
+        for stderr, cause in (("private\nError: worktree changed during archive capture: /private/path",
+                               "source-changed-during-capture"),
+                              (b"private: No space left on device", "stderr/storage-full")):
+            error = subprocess.CalledProcessError(1, ["private-command"], stderr=stderr)
+            self.assertEqual(producer_engine.failure_reason(error),
+                             f"producer:evidence-unavailable; cause={cause}; exit=1")
+        capacity = ("producer:insufficient-capacity; estimate=10; reserve=20; free=5; "
+                    "no archive written; source retained")
+        error = subprocess.CalledProcessError(1, ["private-command"], stderr="private\nError: " + capacity)
+        self.assertEqual(producer_engine.failure_reason(error), capacity)
+        self.assertEqual(producer_engine.failure_reason(OSError(28, "private")),
+                         "producer:evidence-unavailable; cause=os-error/ENOSPC")
+        self.assertEqual(producer_engine.failure_reason(KeyError("private")),
+                         "producer:evidence-unavailable; cause=exception/KeyError")
         timeout_reason = producer_engine.failure_reason(subprocess.TimeoutExpired("private", 1))
         self.assertTrue(timeout_reason.startswith("producer:git-timeout;"))
         self.assertNotIn("private", timeout_reason)
@@ -145,7 +161,9 @@ class ProducerCases:
                     self.assertEqual(producer_engine.failure_reason(nested), message)
             for suffix in (' private', '\nprivate failure'):
                 nested = subprocess.CalledProcessError(1, ['private'], stderr=message + suffix)
-                self.assertEqual(producer_engine.failure_reason(nested), 'producer:evidence-unavailable')
+                reason = producer_engine.failure_reason(nested)
+                self.assertTrue(reason.startswith('producer:evidence-unavailable; cause=stderr/'))
+                self.assertNotIn('private', reason)
 
     def test_local_git_missing_object_diagnostic_uses_fixed_locale(self):
         import worktree_archive_git as archive_git
