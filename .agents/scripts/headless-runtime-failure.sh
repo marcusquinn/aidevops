@@ -1485,6 +1485,7 @@ _push_wip_commits_on_exit() {
 	# Escape hatch: WORKER_NO_EXIT_PUSH=1 disables the push (e.g. in tests)
 	[[ "${WORKER_NO_EXIT_PUSH:-0}" == "1" ]] && return 0
 	_WORKER_DIRTY_WORK_PRESERVED=0
+	_WORKER_BASE_UNRESOLVED=0
 
 	local work_dir="${_WORKER_WORKTREE_PATH:-}"
 	if [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
@@ -1534,7 +1535,10 @@ _push_wip_commits_on_exit() {
 	fi
 
 	# Missing base metadata must not skip local preservation, but cannot allow push.
-	[[ -n "$default_ref" ]] || return 0
+	if [[ -z "$default_ref" ]]; then
+		_WORKER_BASE_UNRESOLVED=1
+		return 0
+	fi
 	# Count against the resolved default only; zero must not select another base.
 	local ahead_count=0
 	ahead_count=$(git -C "$work_dir" rev-list --count "${default_ref}..HEAD" 2>/dev/null || true)
@@ -2078,6 +2082,8 @@ _recover_dirty_worker_pr() {
 	local branch_name=""
 
 	[[ -n "$work_dir" && -d "$work_dir" && -n "$repo_slug" ]] || return 1
+	# Local preservation without a known base must not publish or reuse a stale remote.
+	[[ "${_WORKER_BASE_UNRESOLVED:-0}" == "1" ]] && return 1
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	case "$branch_name" in
 	HEAD | main | master | "") return 1 ;;

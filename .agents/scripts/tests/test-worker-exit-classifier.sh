@@ -718,7 +718,27 @@ test_exit_push_preserves_dirty_worktree() {
 	assert_eq "missing default ref creates one preservation commit" "$local_after" "1"
 	remote_after=$(git --git-dir="$origin_dir" rev-parse refs/heads/feature/dirty-preserve)
 	assert_eq "missing default ref does not push" "$remote_after" "$remote_before"
-	unset _WORKER_WORKTREE_PATH _WORKER_DIRTY_WORK_PRESERVED
+	# Observe the recovery boundary before it can reuse a stale remote or push HEAD.
+	local DISPATCH_REPO_SLUG="owner/repo"
+	local recovery_calls=0 recovery_rc=0
+	_attempt_orphan_recovery_pr() { recovery_calls=$((recovery_calls + 1)); return 0; }
+	_recover_dirty_worker_pr "issue-42" || recovery_rc=$?
+	assert_eq "missing base rejects stale-remote recovery" "$recovery_rc" "1"
+	assert_eq "missing base never enters remote recovery" "$recovery_calls" "0"
+	git -C "$repo_dir" checkout -b feature/issue-42-local-only >/dev/null 2>&1
+	recovery_rc=0
+	_recover_dirty_worker_pr "issue-42" || recovery_rc=$?
+	assert_eq "missing base rejects local-only recovery" "$recovery_rc" "1"
+	assert_eq "local-only branch never enters remote recovery" "$recovery_calls" "0"
+	git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	_push_wip_commits_on_exit
+	assert_eq "resolved base clears recovery block" "${_WORKER_BASE_UNRESOLVED:-1}" "0"
+	recovery_rc=0
+	_recover_dirty_worker_pr "issue-42" || recovery_rc=$?
+	assert_eq "resolved base allows recovery" "$recovery_rc" "0"
+	assert_eq "resolved base reaches remote recovery" "$recovery_calls" "1"
+	unset -f _attempt_orphan_recovery_pr
+	unset _WORKER_WORKTREE_PATH _WORKER_DIRTY_WORK_PRESERVED _WORKER_BASE_UNRESOLVED
 	unset -f git
 	return 0
 }
