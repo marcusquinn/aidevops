@@ -36,6 +36,17 @@ MARKER = "_Supersedes #1 — this issue is the consolidated spec._"
 SUCCESSOR = f"{MARKER}\n\n{SOURCE}"
 
 
+def run_main(argv: list[str]) -> tuple[int, str]:
+    """Run the validator CLI in-process; return (exit code, stderr)."""
+    stderr = io.StringIO()
+    with mock.patch.object(sys, "argv", argv), redirect_stderr(stderr):
+        try:
+            code = VALIDATOR.main()
+        except SystemExit as exc:
+            code = exc.code
+    return code, stderr.getvalue()
+
+
 class ContractTests(unittest.TestCase):
     def test_preserved_contract_passes(self):
         self.assertEqual(VALIDATOR.validate([SOURCE], SUCCESSOR), [])
@@ -111,15 +122,21 @@ class ContractTests(unittest.TestCase):
             successor = root / "successor.md"
             source.write_text(SOURCE, encoding="utf-8")
             other.write_text("requires-secrets: C\n", encoding="utf-8")
-            successor.write_text(SUCCESSOR + "\nrequires-secrets: C\n", encoding="utf-8")
-            command = [sys.executable, str(SCRIPT), "--parent", "1", "--source", str(source),
-                       "--source", str(other), "--successor", str(successor)]
+            both = MARKER.replace("#1", "#2") + "\n" + SUCCESSOR + "\nrequires-secrets: C\n"
+            successor.write_text(both, encoding="utf-8")
+            command = [sys.executable, str(SCRIPT), "--parent", "1", "--parent", "2",
+                       "--source", str(source), "--source", str(other), "--successor", str(successor)]
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
+            self.assertEqual(run_main(command[1:3] + command[5:])[0], 2)
+            self.assertEqual(run_main(command[1:4] + command[2:4] + command[6:])[0], 2)
             successor.write_text(SOURCE + "\nrequires-secrets: C\n", encoding="utf-8")
-            stderr = io.StringIO()
-            with mock.patch.object(sys, "argv", command[1:]), redirect_stderr(stderr):
-                self.assertEqual(VALIDATOR.main(), 1)
-            self.assertIn(VALIDATOR.MARKER_EXAMPLE, stderr.getvalue())
+            code, stderr = run_main(command[1:])
+            self.assertEqual(code, 1)
+            self.assertIn(VALIDATOR.MARKER_EXAMPLE, stderr)
+            successor.write_bytes(both.replace("\n", "\r\n").encode("utf-8"))
+            code, stderr = run_main(command[1:])
+            self.assertEqual(code, 1)
+            self.assertIn("CRLF", stderr)
             successor.write_text(SUCCESSOR, encoding="utf-8")
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 1)
             other.unlink()
