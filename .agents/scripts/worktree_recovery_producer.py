@@ -143,10 +143,8 @@ def reservation(source, root):
         require(policy == "git-only", "producer:legacy-successor-policy; existing archive retained")
     else:
         require(policy == "git-only", "producer:obsolete-capture-policy; new archives use Git changes and untracked files")
-    if not os.path.lexists(directory / "journal.json"):
-        current = {"identity": observed, "capture_policy": policy}
-    else:
-        current = source_state(source, policy, fingerprint_schema)
+    # Persist content evidence before capture can leave a manifest-less partial.
+    current = source_state(source, policy, fingerprint_schema)
     return current, directory, output
 
 
@@ -158,6 +156,7 @@ def reserve(current, directory, output, caller, context):
         expected = dict(record["source"])
         actual = dict(current)
         if expected.get("capture_policy") == "git-only" and "snapshot" not in expected:
+            # Legacy journals remain resumable, but cannot authorize a partial sweep.
             actual.pop("snapshot", None)
         require(expected == actual, "producer:source-drift; existing archive retained")
         require(record["directory_inode"] == inode(directory) and record["output"] == str(output)

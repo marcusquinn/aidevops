@@ -146,8 +146,11 @@ Earlier versions could leave a manifest-less partial capture under
 `worktree-archive-helper.sh sweep-partials --dry-run|--apply [--output-root DIR]`
 is the one-time cleanup. Under each producer operation lock (busy locks are skipped,
 never waited on) it rechecks that the journal phase is `reserved` or `capturing`,
-the directory and output inodes match the journal, and the source still has its
-recorded identity and head. It then lists (dry run) or removes only exact-layout
+the directory and output inodes match the journal, and the source still matches
+its recorded identity and content fingerprint, including untracked files. New
+reservations persist this fingerprint before capture writes any payload. Journals
+without a fingerprint (or with a Git-only schema-2 snapshot) cannot authorize
+partial cleanup; their partials stay for review. It then lists (dry run) or removes only exact-layout
 `<owner>__<repo>/<issue>/<timestamp>/` directories with no `manifest.json` and no
 pin. Anything else stays for review. A retry then captures normally.
 New capture rejects `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` and the obsolete

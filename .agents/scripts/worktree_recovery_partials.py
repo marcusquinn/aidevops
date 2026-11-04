@@ -11,7 +11,6 @@ import stat
 import subprocess  # nosec B404 -- exception classification only
 import sys
 
-from worktree_archive_snapshot import git
 from worktree_lifetime_archive import inode, require
 from worktree_recovery_migration_state import load
 
@@ -37,15 +36,17 @@ def partial_captures(output):
 
 
 def source_intact(record):
-    """The live source still has its recorded identity (and head, when recorded)."""
-    from worktree_recovery_producer import identity
-    observed = record["source"]["identity"]
+    """Require recorded content evidence, including untracked files, before cleanup."""
+    from worktree_recovery_producer import source_state
+    saved = record["source"]
+    baseline = saved.get("snapshot", {})
+    policy = saved.get("capture_policy", "preserve-v1")
+    schemas = (3, 4) if policy == "git-only" else (1,)
+    if not isinstance(baseline, dict) or baseline.get("schema") not in schemas:
+        return False
     try:
-        source = Path(observed["path"])
-        if identity(source) != observed:
-            return False
-        head = record["source"].get("snapshot", {}).get("head")
-        return not head or git(source, "rev-parse", "--verify", "HEAD").strip().decode("ascii") == head
+        source = Path(saved["identity"]["path"])
+        return source_state(source, policy, baseline["schema"]) == saved
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
 
