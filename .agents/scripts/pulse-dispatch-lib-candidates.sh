@@ -1210,11 +1210,14 @@ _dispatch_capability_cooldown_record() {
 
 # Import worker-discovered gaps at the live candidate gate. Subsequent passes
 # use the existing pre-ranking cache filter, without repeating worker launches.
+# Optional $4 is the round's resolved login (GH#36616): reuse it so a dispatch
+# round spends one `gh api user` call, not one more per candidate.
 _dispatch_capability_cooldown_from_observation() {
 	local candidate="$1" issue="$2" repo="$3"
-	local self='' issue_json='' comments='' stamp='' now=''
+	local self="${4:-}" issue_json='' comments='' stamp='' now=''
 	declare -F terminal_blocker_runner_capability_observation_epoch >/dev/null || return 0
-	self=$(gh api user --jq '.login' 2>/dev/null) || return 0
+	[[ -n "$self" ]] || self=$(gh api user --jq '.login' 2>/dev/null) || return 0
+	[[ -n "$self" ]] || return 0
 	issue_json=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 0
 	# GH#35090: keep this login's own comments even when the read reports them
 	# as CONTRIBUTOR/NONE; otherwise the import never finds its observation.
@@ -1231,8 +1234,10 @@ _dispatch_capability_cooldown_from_observation() {
 
 # Dispatch-time check for candidates taken from a short-lived ranked snapshot
 # captured before the record was written. Returns 0 to skip.
+# Optional $5 is the round's resolved GitHub login, forwarded to avoid
+# re-resolving it per candidate (GH#36616).
 _dispatch_skip_for_capability_cooldown() {
-	local candidate="$1" issue="$2" repo="$3" repo_path="$4"
+	local candidate="$1" issue="$2" repo="$3" repo_path="$4" self_login="${5:-}"
 	local fields="" number=""
 	local updated='' classes='' fingerprint=''
 	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 ]] || return 1
@@ -1242,9 +1247,9 @@ _dispatch_skip_for_capability_cooldown() {
 	[[ "$number" == "$issue" && "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	fingerprint=$(_dispatch_capability_fingerprint "$updated" "$classes" \
 		"$(_dispatch_capability_config_fingerprint "$repo_path")") || return 1
-	if ! _dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint"; then
-		_dispatch_capability_cooldown_from_observation "$candidate" "$issue" "$repo"
-		_dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint" || return 1
+	if ! _dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint" "$self_login"; then
+		_dispatch_capability_cooldown_from_observation "$candidate" "$issue" "$repo" "$self_login"
+		_dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint" "$self_login" || return 1
 	fi
 	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 	echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — runner_capability_unmet cooldown active (requirements unchanged)" >>"$LOGFILE"
