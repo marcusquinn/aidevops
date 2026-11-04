@@ -172,6 +172,12 @@ class ContractTests(unittest.TestCase):
             # A valid LF marker with matching CRLF contracts still passes.
             successor.write_bytes((MARKER + "\n\n" + SOURCE.replace("\n", "\r\n")).encode("utf-8"))
             self.assertEqual(run_main(command[1:])[0], 0)
+            # Contract comparisons accept either direction of mixed line endings.
+            successor.write_bytes(SUCCESSOR.encode("utf-8"))
+            self.assertEqual(run_main(command[1:])[0], 0)
+            source.write_bytes(SOURCE.encode("utf-8"))
+            successor.write_bytes((MARKER + "\n\n" + SOURCE.replace("\n", "\r\n")).encode("utf-8"))
+            self.assertEqual(run_main(command[1:])[0], 0)
 
 
 if __name__ == "__main__":

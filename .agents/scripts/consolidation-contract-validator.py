@@ -96,7 +96,10 @@ def marker_errors(successor: str, parents: list[int] | None = None) -> list[str]
 def validate(sources: list[str], successor: str, parents: list[int] | None = None) -> list[str]:
     """Fail closed when the marker or a preserved dispatch contract is missing or narrowed."""
     errors = marker_errors(successor, parents)
+    # Contract text retains universal-newline semantics; only the marker is byte-exact.
+    successor = successor.replace("\r\n", "\n").replace("\r", "\n")
     for index, source in enumerate(sources, start=1):
+        source = source.replace("\r\n", "\n").replace("\r", "\n")
         findings = prerequisite_errors(source, successor) + scope_errors(source, successor)
         errors.extend(f"source {index}: {finding}" for finding in findings)
     return list(dict.fromkeys(errors))
@@ -114,7 +117,7 @@ def main() -> int:
     if len(args.parent) != len(args.source) or len(set(args.parent)) != len(args.parent):
         parser.error("--parent must contain one unique issue number for each --source")
     try:
-        # Preserve CR for the exact marker check and compare contracts on the same input.
+        # Preserve CR for the exact marker check; validate normalizes contract text only.
         errors = validate([path.read_bytes().decode("utf-8") for path in args.source],
                           args.successor.read_bytes().decode("utf-8"), args.parent)
     except (OSError, UnicodeError) as exc:
