@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,77 @@ from .enrollment import _git_directory
 from .filesystem import validate_private_path as _private
 from .process import ProcessIdentity
 from .retirement import _git, _id
+
+
+def require_idle_proc(path, proc=Path("/proc")):
+    """Linux same-UID cwd/fd census; disappearing tasks are not unreadable tasks."""
+    if not (proc / "self").exists():
+        raise ValueError("proc-observation-unavailable")
+    try:
+        for task in proc.iterdir():
+            if not task.name.isdecimal():
+                continue
+            try:
+                if task.stat().st_uid != os.geteuid():
+                    continue
+                references = [task / "cwd"] + list((task / "fd").iterdir())
+                for reference in references:
+                    try:
+                        target = Path(os.readlink(reference).removesuffix(" (deleted)"))
+                    except FileNotFoundError:
+                        continue
+                    if target == path or path in target.parents:
+                        raise ValueError("live-process-reference")
+            except FileNotFoundError:
+                continue
+    except OSError as error:
+        raise ValueError("proc-observation-unavailable") from error
+
+
+def reconstructible(item, repositories, adapter, open_prs):
+    """Independent remote-recoverable class, never inferred from writer history."""
+    path = Path(item["path"])
+    base = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR",
+                               Path.home() / "Git" / "_worktrees")).expanduser()
+    if (not base.is_absolute() or base.resolve() != base
+            or path.resolve(strict=True) != path or not path.is_relative_to(base)
+            or path == base):
+        raise ValueError("outside-managed-worktree-base")
+    patterns = ["preserved", "readonly", "recovery", "review"]
+    patterns.extend(filter(None, os.environ.get(
+        "AIDEVOPS_WORKTREE_PRESERVE_PATTERNS", "").lower().split(",")))
+    if any(pattern in path.name.lower() for pattern in patterns):
+        raise ValueError("preservation-name")
+    if item["modern"] or path.stat().st_uid != os.geteuid():
+        raise ValueError("managed-or-foreign-worktree")
+    admin = _git_directory(path)
+    common = _git("-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if common not in repositories or admin == Path(common):
+        raise ValueError("repository-out-of-scope")
+    if (admin / "locked").exists():
+        raise ValueError("git-worktree-locked")
+    require_ended(item, adapter, operator_confirmed=True)
+    if _git("-C", str(path), "status", "--porcelain", "--untracked-files=all",
+            "--ignored", "--ignore-submodules=none"):
+        raise ValueError("nonempty-worktree-state")
+    head = _git("-C", str(path), "rev-parse", "HEAD")
+    if not _git("--git-dir", common, "for-each-ref", "--format=%(refname)",
+                "--contains=" + head, "refs/remotes/"):
+        raise ValueError("head-not-on-remote")
+    branch = _git("-C", str(path), "rev-parse", "--symbolic-full-name", "HEAD")
+    if branch != "HEAD" and not branch.startswith("refs/heads/"):
+        raise ValueError("invalid-branch-ref")
+    slug = repositories[common][0]
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", slug):
+        raise ValueError("invalid-repository-slug")
+    for pr in open_prs(slug):
+        if (pr["head"]["sha"] == head
+                or (branch != "HEAD" and pr["head"]["ref"] == branch[11:])):
+            raise ValueError("open-pull-request")
+    require_idle_proc(path)
+    return {"source": str(path), "directory": _id(path), "admin": str(admin),
+            "admin_identity": _id(admin), "common": common, "head": head,
+            "branch": branch, "repo": slug}
 
 
 def queue(store, items):

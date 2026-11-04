@@ -21,6 +21,7 @@ from .enrollment import _git_directory
 from .filesystem import validate_private_path as _private
 from .legacy_discovery import discover
 from .legacy_inventory import advance, inspect, inventory, queue, require_ended
+from .legacy_inventory import reconstructible
 from .legacy_options import CleanupOptions, require_manual_confirmation, unrecorded
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
@@ -195,7 +196,12 @@ def process_item(store, item, repositories, adapter, options):
             outcome["status"] = "already-retired"
         else:
             if not pending:
-                inspect(item, repositories, adapter, time.time(), options)
+                try:
+                    inspect(item, repositories, adapter, time.time(), options)
+                except ValueError as error:
+                    if str(error) != "no-recorded-processes":
+                        raise
+                    return process_reconstructible(store, item, repositories, adapter, options)
             eligible = 1
             outcome["status"] = "pending-retry" if pending else "eligible"
             if options.apply:
@@ -207,6 +213,68 @@ def process_item(store, item, repositories, adapter, options):
         if isinstance(error, ObservationUnavailable):
             outcome["reason"] = str(error)
     return outcome, eligible, attempted
+
+
+def open_pull_requests(slug):
+    """All pages or no authority; never infer absence from a failed API call."""
+    result = subprocess.run(  # nosec B603 B607 # fixed gh argv, validated slug
+        ["gh", "api", "--paginate", "--slurp",
+         f"repos/{slug}/pulls?state=open&per_page=100"],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    pages = json.loads(result.stdout)
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise ValueError("invalid-open-pr-response")
+    return [pr for page in pages for pr in page]
+
+
+def process_reconstructible(store, item, repositories, adapter, options):
+    """Journal a non-forced removal; the first successful probe unlocks batching."""
+    operation = operation_id(store, item["path"])
+    outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
+    with _lock(store, operation), store.connection(write=True) as connection:
+        plan = reconstructible(item, repositories, adapter, open_pull_requests)
+        if not options.apply:
+            return outcome, 1, 0
+        probe = str(uuid5(UUID(store.installation_id()), "reconstructible-host-probe"))
+        verified = receipt(connection, probe, "verified")
+        # A previous incomplete test blocks batch mode, including after restart.
+        if verified is None and receipt(connection, probe, "plan") is not None:
+            raise ValueError("reconstructible-probe-verification-pending")
+        if verified is None:
+            checkpoint(store, connection, probe, "plan", plan)
+        checkpoint(store, connection, operation, "reconstructible-plan", plan)
+        # Refresh GitHub and /proc immediately before non-forced native removal.
+        current = reconstructible(item, repositories, adapter, open_pull_requests)
+        if current != plan:
+            raise ValueError("reconstructible-source-changed")
+        _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])
+        verify_reconstructible(plan, probe=verified is None)
+        checkpoint(store, connection, operation, "retired",
+                   dict(plan, type="reconstructible-worktree-retired", branch_preserved=True))
+        if verified is None:
+            checkpoint(store, connection, probe, "verified",
+                       dict(plan, type="reconstructible-host-probe-verified"))
+        outcome["status"] = "retired"
+    return outcome, 1, 1
+
+
+def verify_reconstructible(plan, *, probe):
+    if os.path.lexists(plan["source"]):
+        raise ValueError("reconstructible-source-still-present")
+    common, head, branch = plan["common"], plan["head"], plan["branch"]
+    _git("--git-dir", common, "cat-file", "-e", head + "^{commit}")
+    if branch != "HEAD" and _git("--git-dir", common, "rev-parse", branch) != head:
+        raise ValueError("reconstructible-branch-changed")
+    if probe:
+        # A fresh disposable checkout proves restoration without touching the branch.
+        with tempfile.TemporaryDirectory(prefix=".reconstructible-probe-",
+                                         dir=Path(plan["source"]).parent) as parent:
+            target = str(Path(parent) / "tree")
+            _git("--git-dir", common, "worktree", "add", "--detach", target, head)
+            if _git("-C", target, "rev-parse", "HEAD") != head:
+                raise ValueError("reconstructible-restore-mismatch")
+            _git("--git-dir", common, "worktree", "remove", target)
 
 
 def run(store, config, root, **arguments):
