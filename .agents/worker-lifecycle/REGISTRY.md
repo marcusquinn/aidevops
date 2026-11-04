@@ -108,7 +108,38 @@ evaluate extended ACLs or sandbox hostile same-user processes.
 - Failed passes are reported. A full journal prevents new events, but unchanged
   observations can still refresh scheduling metadata. Unmanaged observe-only execution continues;
   mandatory admitted execution is refused when registration cannot commit.
-  An evidence-preserving retention policy is needed for indefinite operation.
+  Archive-first compaction preserves evidence while recovering journal headroom.
+
+### Journal retention
+
+`compact` previews eligible events; `compact --apply` writes, fsyncs and verifies a
+new private immutable checksum archive before inserting replay-conflict digest
+tombstones and deleting journal rows in the writer transaction. Automatic
+compaction uses the same path at 90% capacity or below three-event admission
+headroom. Default retention is seven days, configurable with
+`AIDEVOPS_LIFECYCLE_RETENTION_SECONDS` (manual `--min-age-seconds` overrides it).
+Each pass selects at most 1,000 ended-run events plus 1,000 generation events.
+
+- Ended-run `register`, `bind`, `admit` and `observe` events are eligible after
+  retention when no bound peer still owns their generation. Run/binding projections
+  remain online; archived run replays cannot resurrect ended owners.
+- Generation `open-admission`, `close-admission`, `created-worktree`,
+  `retirement-removing` and `worktree-recovery-authorized` events are eligible only
+  after both the event and its `worktree-retired` receipt have aged past retention,
+  with no admission reservation (even closed) and no bound owner.
+- `worktree-retired`, `retirement-planned` and `wip-preserved` receipts remain
+  online: explicit retirement retries read the plan and preservation evidence
+  before the final receipt. Absence reconciliation receipts remain online too;
+  absence is not proof of retirement. Unretired/pending recovery events are kept.
+- Legacy archive/removal-plan events use their matching archive path, not a
+  generation ID. An aged `legacy-worktree-retired` receipt permits their retention
+  only when the source path has no admission reservation or bound owner. The final
+  legacy receipt remains online to fence repeated cleanup of replacement trees.
+- Exact archived generation-event replays return duplicates without appending;
+  conflicting payloads still raise `StoreConflict`. Unknown event types stay online.
+
+Archives, digest tombstones, projections and retained retry/final receipts still
+grow with history; this is journal headroom maintenance, not a total disk quota.
 
 `LifecycleRegistry` stores state in `registry.sqlite3` in `observe-only` mode.
 New stores use schema 2. Observation still accepts schema 1 without upgrading it;

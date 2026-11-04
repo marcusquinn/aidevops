@@ -167,6 +167,82 @@ class EventContract(unittest.TestCase):
                 self.store.compact(age=0, apply=True)
         self.assertEqual(self.store.summary(), before)
 
+    def generation_events(self, *, retired=True, admission=None, recent=False, legacy=False):
+        generation = str(uuid4())
+        source = f"/retired/{generation}"
+        kinds = (["legacy-worktree-archive", "legacy-worktree-removal-planned", "legacy-worktree-retired"]
+                 if legacy else ["open-admission", "close-admission", "created-worktree", "wip-preserved",
+                                 "retirement-planned", "retirement-removing",
+                                 "worktree-recovery-authorized", "worktree-retired"])
+        if not retired:
+            kinds = kinds[:-1]
+        events = [(str(uuid4()), dict(type=kind, source=source, archive=f"archive-{generation}",
+                                     **({} if legacy else {"generation_id": generation}))) for kind in kinds]
+        with self.store.connection(write=True, maintenance=False) as connection:
+            connection.execute("INSERT INTO generations VALUES (?,?)", (generation, source))
+            if admission:
+                connection.execute("INSERT INTO generation_admissions VALUES (?,?,?)",
+                                   (generation, source, admission))
+            connection.executemany("INSERT INTO events(event_id,payload,recorded_at) VALUES (?,?,?)",
+                                   [(key, encode(payload), "2000-01-01T00:00:00Z") for key, payload in events])
+            if recent:
+                connection.execute("UPDATE events SET recorded_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                                   "WHERE event_id=?", (events[-1][0],))
+        return generation, events
+
+    def test_retired_generation_retention_preview_archive_and_replay(self):
+        _, events = self.generation_events()
+        _, legacy = self.generation_events(legacy=True)
+        before = self.store.summary()
+        self.assertEqual(self.cli("compact")["eligible_events"], 7)
+        self.assertEqual(self.store.summary(), before)
+        with patch("worker_lifecycle.storage.os.fsync", side_effect=OSError("archive-unavailable")):
+            with self.assertRaises(OSError):
+                self.store.compact(apply=True)
+        self.assertEqual(self.store.summary(), before)
+        result = self.store.compact(apply=True)
+        self.assertEqual(result["archived_events"], 7)
+        document = json.loads((self.path / result["archive"]).read_text())
+        self.assertEqual(document["sha256"], hashlib.sha256(encode(document["evidence"]).encode()).hexdigest())
+        archived = {row["event_id"] for row in document["evidence"]["events"]}
+        retained = {key for key, payload in events + legacy if payload["type"] in {
+            "worktree-retired", "retirement-planned", "wip-preserved", "legacy-worktree-retired"}}
+        self.assertEqual(archived, {key for key, _ in events + legacy} - retained)
+        with self.store.connection(write=True, maintenance=False) as connection:
+            for key, payload in events + legacy:
+                if key in archived:
+                    self.assertTrue(self.store._event(connection, key, payload)[1])
+                    with self.assertRaisesRegex(StoreConflict, "event-id-payload-conflict"):
+                        self.store._event(connection, key, dict(payload, changed=True))
+            self.assertEqual({row[0] for row in connection.execute("SELECT event_id FROM events")}, retained)
+        self.assertEqual(self.store.compact()["eligible_events"], 0)
+
+    def test_unretired_pending_recovery_recent_and_live_generations_stay_online(self):
+        for legacy in (False, True):
+            self.generation_events(retired=False, legacy=legacy)
+            self.generation_events(admission="open", legacy=legacy)
+            self.generation_events(admission="closed", legacy=legacy)
+            self.generation_events(recent=True, legacy=legacy)
+            generation, _ = self.generation_events(legacy=legacy)
+            event = self.envelope(os.getpid())
+            with self.store.connection(write=True, maintenance=False) as connection:
+                connection.execute("UPDATE metadata SET max_events=1000")
+            ingest(self.store, json.dumps(event))
+            with self.store.connection(write=True, maintenance=False) as connection:
+                connection.execute("INSERT INTO bindings VALUES (?,?)", (event["run_id"], generation))
+        before = self.store.summary()
+        self.assertEqual(self.store.compact(apply=True)["archived_events"], 0)
+        self.assertEqual(self.store.summary(), before)
+
+    def test_generation_compaction_batch_is_bounded(self):
+        generation, _ = self.generation_events()
+        with self.store.connection(write=True, maintenance=False) as connection:
+            connection.executemany("INSERT INTO events(event_id,payload,recorded_at) VALUES (?,?,?)", [
+                (str(uuid4()), encode({"type": "open-admission", "generation_id": generation}),
+                 "2000-01-01T00:00:00Z") for _ in range(1000)])
+        self.assertEqual(self.store.compact(apply=True)["archived_events"], 1000)
+        self.assertEqual(self.store.compact(apply=True)["archived_events"], 5)
+
     def test_automatic_compaction_failure_is_soft_only_with_admission_headroom(self):
         for headroom in (3, 2):
             for retention in ("0", "invalid"):
