@@ -1726,6 +1726,55 @@ test_profile_model_bundle_scans_each_population_once() {
 	return 0
 }
 
+test_archive_capture_python39_zip_compatibility() {
+	local test_name="publication archive capture supports Python 3.9 zip and rejects incomplete records"
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
+	if python3 - "${SOURCE_HELPER%/*}" "$TEST_DIR" <<'PY'
+import json
+from pathlib import Path
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+import worktree_archive_deletions as capture
+
+# Model the Python 3.9 zip signature even on newer Linux CI interpreters.
+def legacy_zip(*iterables):
+    return zip(*iterables)
+
+root = Path(sys.argv[2])
+oid = "a" * 40
+raw = f":100644 000000 {oid} {'0' * 40} D\0deleted.txt\0".encode()
+with patch.object(capture, "zip", legacy_zip, create=True):
+    for name, payload in (("empty", b""), ("deleted", raw)):
+        archive = root / name
+        archive.mkdir()
+        with patch.object(capture, "git", side_effect=lambda *args: payload if "--raw" in args else b""):
+            capture.capture(root, archive)
+        assert (archive / "diff.patch").read_bytes() == b""
+        assert (archive / "staged.patch").read_bytes() == b""
+        if payload:
+            expected = [[b"deleted.txt".hex(), "100644", oid]]
+            assert json.loads((archive / capture.NAME).read_text()) == {
+                "staged": expected, "unstaged": expected}
+        else:
+            assert not (archive / capture.NAME).exists()
+    with patch.object(capture, "git", return_value=b"orphan-header\0"):
+        try:
+            capture.capture(root, root)
+        except ValueError as error:
+            assert str(error) == "incomplete deletion record"
+        else:
+            raise AssertionError("incomplete deletion record accepted")
+PY
+	then
+		print_result "$test_name" 0
+	else
+		print_result "$test_name" 1 "Python 3.9-compatible capture or malformed-record guard failed"
+	fi
+	return 0
+}
+
 main() {
 	local mode="${1:-all}"
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
@@ -1738,6 +1787,8 @@ main() {
 	export AIDEVOPS_LIFECYCLE_STATE_DIR="$SUITE_ROOT/lifecycle"
 	cd "$SUITE_ROOT" || return 1
 
+	test_archive_capture_python39_zip_compatibility
+	teardown
 	if [[ "$mode" != "--unit-only" ]]; then
 		test_chart_assets_publish_and_chart_only_changes_are_not_skipped
 		teardown
