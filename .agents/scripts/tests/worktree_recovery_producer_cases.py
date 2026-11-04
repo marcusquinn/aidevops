@@ -3,7 +3,8 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Producer cases run by the existing archive lifecycle suite and its fixture."""
 
-from contextlib import closing
+from contextlib import closing, redirect_stderr, redirect_stdout
+import io
 import json
 import os
 from pathlib import Path
@@ -901,6 +902,32 @@ class ProducerCases:
         self.assertEqual(again.stdout, b"")
         self.assertTrue((archive / "manifest.json").is_file())
         self.assertTrue(self.work.is_dir())
+
+    def test_partial_sweep_reports_removals_before_failure(self):
+        with patch.dict(os.environ, self.env):
+            current, directory, output = producer_engine.reservation(self.work, self.archives)
+            producer_engine.reserve(current, directory, output, "test.sh", "partial-failure")
+        partials = [output / "owner__repo" / "unattributed" / stamp
+                    for stamp in ("20260101T000000Z", "20260102T000000Z")]
+        for partial in partials:
+            partial.mkdir(parents=True, exist_ok=True)
+        remove = producer_engine.remove_partial
+
+        def fail_second(output_root, capture_dir):
+            if capture_dir == partials[1]:
+                raise OSError("simulated removal failure")
+            remove(output_root, capture_dir)
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, self.env), \
+                patch.object(producer_engine, "remove_partial", side_effect=fail_second), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            status = producer_engine.sweep_partials(self.archives, True)
+        self.assertEqual(status, 1)
+        self.assertEqual(stdout.getvalue(), f"removed\t{partials[0]}\n")
+        self.assertIn("retained:producer:evidence-unavailable", stderr.getvalue())
+        self.assertFalse(partials[0].exists())
+        self.assertTrue(partials[1].is_dir())
 
     def test_producer_never_resumes_legacy_preserve_reservation(self):
         """GH#36607: a saved preserve-v1 journal cannot re-arm its refusals."""

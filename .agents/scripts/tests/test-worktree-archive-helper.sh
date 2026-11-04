@@ -320,16 +320,18 @@ test_published_archive_has_no_bundle() {
 	bash "$HELPER" restore "$archive" --target "$target" >/dev/null || rc=1
 	[[ "$(git -C "$target" rev-parse HEAD)" == "$head_sha" ]] || rc=1
 	grep -q '^published$' "$target/file.txt" || rc=1
-	# Unpushed work keeps the base-relative bundle.
+	# Work reachable only from a non-origin remote keeps the base-relative bundle.
 	printf 'local only\n' >>"$worktree/file.txt"
 	git -C "$worktree" commit -qam unpushed || return 1
+	git -C "$canonical" remote add backup "$(git -C "$canonical" remote get-url origin)" || return 1
+	git -C "$worktree" update-ref refs/remotes/backup/feature/archive HEAD || return 1
 	archive=$(bash "$HELPER" archive "$worktree" --repo owner/repo --issue 41 \
 		--reason post-pr-cleanup --base-branch main --output-root "$root") || return 1
 	[[ -s "$archive/commits.bundle" ]] || rc=1
 	grep -q '"remote_branch_state": "unpublished"' "$archive/manifest.json" || rc=1
 	git -C "$worktree" reset -q --hard HEAD~1 || return 1
 	# Local verification gates removal: a published head that is no longer on
-	# any remote-tracking ref is refused rather than trusted.
+	# origin is refused even if another remote-tracking ref still contains it.
 	archive=$(bash "$HELPER" archive "$worktree" --repo owner/repo --issue 42 \
 		--reason post-pr-cleanup --base-branch main --output-root "$root") || return 1
 	git -C "$canonical" update-ref -d refs/remotes/origin/feature/archive || return 1

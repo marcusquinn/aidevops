@@ -428,7 +428,7 @@ PY
 }
 
 # GH#36607: classify whether HEAD's commits since the base already live on a
-# remote-tracking ref. "published" archives omit the HEAD bundle and record the
+# origin remote-tracking ref. "published" archives omit the HEAD bundle and record the
 # pushed head as their restore dependency; merge captures always keep their own
 # bundle, so they stay "unknown". Prints published|unpublished|unknown.
 archive_remote_state() {
@@ -438,7 +438,7 @@ archive_remote_state() {
 		printf 'unknown\n'
 		return 0
 	fi
-	unpublished=$(git -C "$worktree" rev-list --count "$head_sha" --not --remotes 2>/dev/null) || unpublished=""
+	unpublished=$(git -C "$worktree" rev-list --count "$head_sha" --not --remotes=origin 2>/dev/null) || unpublished=""
 	if [[ "$unpublished" == "0" ]]; then
 		printf 'published\n'
 	else
@@ -459,7 +459,7 @@ capture_archive_payload() {
 		# diff must not refresh the source index while capturing it.
 		python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" capture "$worktree" "$archive_dir" || return 1
 		commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
-		# A published head is already reachable from a remote: no bundle.
+		# A published head is already reachable from origin: no bundle.
 		if [[ "$commit_count" -gt 0 && "$remote_state" != "published" ]]; then
 			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 		fi

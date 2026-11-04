@@ -338,24 +338,23 @@ def remove_partial(output, capture_dir):
             break
 
 
-def sweep_transaction(root, directory, apply):
+def sweep_transaction(root, directory, apply, results):
     """Classify (and optionally remove) one reservation's partials under its lock."""
     record = load(directory / "journal.json", SCHEMA)
     if record.get("phase") not in PARTIAL_PHASES:
-        return []
+        return
     output = root / ".producer-archives" / directory.name
     require(record["directory_inode"] == inode(directory) and record["output"] == str(output)
             and output == output.resolve(strict=True) and record["output_inode"] == inode(output),
             "producer:reservation-changed")
     partials = partial_captures(output)
     if partials and not source_intact(record):
-        return [("retained:source-changed", path) for path in partials]
-    results = []
+        results.extend(("retained:source-changed", path) for path in partials)
+        return
     for path in partials:
         if apply:
             remove_partial(output, path)
         results.append(("removed" if apply else "would-remove", path))
-    return results
 
 
 def sweep_partials(root, apply):
@@ -378,9 +377,10 @@ def sweep_partials(root, apply):
         if (not re.fullmatch(r"[0-9a-f]{64}", directory.name) or directory.is_symlink()
                 or not directory.is_dir() or journal.is_symlink() or not journal.is_file()):
             continue
+        results = []
         try:
             with operation_lock(directory):
-                results = sweep_transaction(root, directory, apply)
+                sweep_transaction(root, directory, apply, results)
         except BlockingIOError:
             print(f"busy\t{directory}", file=sys.stderr)
             continue
@@ -389,8 +389,9 @@ def sweep_partials(root, apply):
             print(f"retained:{reason}\t{directory}", file=sys.stderr)
             status = 1
             continue
-        for outcome, path in results:
-            print(f"{outcome}\t{path}", file=sys.stdout if outcome in ("removed", "would-remove") else sys.stderr)
+        finally:
+            for outcome, path in results:
+                print(f"{outcome}\t{path}", file=sys.stdout if outcome in ("removed", "would-remove") else sys.stderr)
     return status
 
 

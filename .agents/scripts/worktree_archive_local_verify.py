@@ -96,13 +96,13 @@ def require_published_head(common, head):
 
     GH#36607: local verification gates source removal, so the omitted commits
     must still be complete in the retained store and reachable from a
-    remote-tracking ref; a dangling or partially pruned graph is refused.
+    origin remote-tracking ref; a dangling or partially pruned graph is refused.
     """
     graph = git(common, 'rev-list', '--objects', '--no-object-names', '--missing=print', head)
     if any(line.startswith(b'?') for line in graph.splitlines()):
         raise ValueError('archive-local:published-head-incomplete; source retained')
     if not git(common, 'for-each-ref', '--count=1', '--contains', head,
-               '--format=%(refname)', 'refs/remotes/').strip():
+               '--format=%(refname)', 'refs/remotes/origin/').strip():
         raise ValueError('archive-local:published-head-not-on-remote; source retained')
 
 
