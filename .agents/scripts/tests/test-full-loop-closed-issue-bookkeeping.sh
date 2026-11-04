@@ -53,6 +53,7 @@ source "${SCRIPTS_DIR}/full-loop-helper-subject.sh"
 source "${SCRIPTS_DIR}/full-loop-helper-risk.sh"
 
 eval "$(extract_function "$COMMIT_HELPER" _parse_commit_and_pr_args)"
+eval "$(extract_function "$COMMIT_HELPER" _validate_keep_issue_open_request)"
 eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_request)"
 eval "$(extract_function "$COMMIT_HELPER" _completion_bookkeeping_body_has_reference)"
 eval "$(extract_function "$COMMIT_HELPER" _completion_bookkeeping_body_has_closing_reference)"
@@ -342,6 +343,7 @@ _label_issue_in_review() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 1
+	record_call "issue-in-review"
 	return 0
 }
 
@@ -628,6 +630,64 @@ test_indented_completion() {
 	return 0
 }
 
+# GH#36598: --keep-issue-open links an open, non-parent issue without closing it.
+invoke_keep_open() {
+	cmd_commit_and_pr \
+		--issue 42 \
+		--message "fix: long-running increment" \
+		--summary "Increment for a recurring task" \
+		--testing "fixture" \
+		--risk-level low \
+		--testing-level self-assessed \
+		--keep-issue-open "$@"
+	return $?
+}
+
+test_keep_issue_open() {
+	reset_case
+	TEST_ISSUE_STATE="OPEN"
+	TEST_ISSUE_REASON=""
+	TEST_CHANGED_FILES="src/implementation.sh"
+	local rc=0
+	invoke_keep_open >/dev/null || rc=$?
+	if [[ "$rc" -eq 0 && "$(call_count create-pr)" -eq 1 && "$(call_count issue-in-review)" -eq 0 ]] &&
+		grep -qF 'For #42' "$CREATED_BODY_FILE" && ! grep -qF 'Resolves #42' "$CREATED_BODY_FILE"; then
+		pass "--keep-issue-open uses For #N and skips the issue in-review handoff"
+	else
+		fail "--keep-issue-open uses For #N and skips the issue in-review handoff" "rc=${rc} calls=$(<"$CALL_LOG")"
+	fi
+	reset_case
+	TEST_ISSUE_STATE="OPEN"
+	TEST_CHANGED_FILES="src/implementation.sh"
+	rc=0
+	invoke_default >/dev/null || rc=$?
+	if [[ "$rc" -eq 0 && "$(call_count issue-in-review)" -eq 1 ]] && grep -qF 'Resolves #42' "$CREATED_BODY_FILE"; then
+		pass "default open-issue PR still resolves and hands off the issue"
+	else
+		fail "default open-issue PR still resolves and hands off the issue" "rc=${rc}"
+	fi
+	local case_args=""
+	for case_args in worker --allow-parent-close --completion-bookkeeping; do
+		reset_case
+		TEST_ISSUE_STATE="OPEN"
+		TEST_CHANGED_FILES="src/implementation.sh"
+		rc=0
+		if [[ "$case_args" == "worker" ]]; then
+			TEST_SESSION_ORIGIN="worker"
+			invoke_keep_open >/dev/null || rc=$?
+		else
+			invoke_keep_open "$case_args" >/dev/null || rc=$?
+		fi
+		if [[ "$rc" -ne 0 && "$(call_count stage)" -eq 0 && "$(call_count create-pr)" -eq 0 ]]; then
+			pass "--keep-issue-open refuses ${case_args} before mutation"
+		else
+			fail "--keep-issue-open refuses ${case_args} before mutation" "rc=${rc}"
+		fi
+	done
+	return 0
+}
+
+test_keep_issue_open
 test_indented_completion
 test_completed_success
 test_not_planned_success

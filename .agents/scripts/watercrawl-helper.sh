@@ -64,7 +64,7 @@ fi
 
 # Common constants (fallback if shared-constants.sh unavailable)
 if [[ -z "${ERROR_UNKNOWN_COMMAND:-}" ]]; then
-	readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
+	readonly ERROR_UNKNOWN_COMMAND="Unknown command"
 fi
 readonly HELP_SHOW_MESSAGE="Show this help message"
 

@@ -10,6 +10,7 @@ SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "macos.py", "v
 ENTRYPOINT = b"from worker_lifecycle.validation import main\nraise SystemExit(main())\n"
 REGISTRY_SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "macos.py",
                     "storage.py", "events.py", "registry.py", "launch.py", "integration_validation.py",
+                    "journal.py", "cli_errors.py",
                     "launch_state.py", "upgrade.py", "archive_path.py", "filesystem.py",
                     "admission.py", "directory_handle.py", "cleanup_policy.py", "enrollment.py",
                     "cleanup_plan.py", "preservation.py", "session.py", "creation.py",
@@ -30,6 +31,7 @@ ARCHIVE_SOURCES = (
     "worktree-archive-helper.sh", "worktree_recovery_timing.py",
     "worktree_archive_administration.py", "worktree_archive_auto_merge.py",
     "worktree_archive_base_source.py", "worktree_archive_fingerprint.py",
+    "worktree_archive_deletions.py",
     "worktree_archive_filesystem.py", "worktree_archive_git.py",
     "worktree_archive_history.py", "worktree_archive_index.py",
     "worktree_archive_local_verify.py",

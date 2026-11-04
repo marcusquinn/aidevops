@@ -86,6 +86,8 @@ _preflight_launch_systemd_cleanup() {
 	local -a allowed_env_names=(
 		XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
 		AIDEVOPS_LOG_DIR AIDEVOPS_TEMP_DIR AIDEVOPS_WORKTREE_BASE_DIR
+		AIDEVOPS_WORKTREE_PRESERVE_PATTERNS AIDEVOPS_MAX_WORKTREES
+		AIDEVOPS_MIN_WORKTREE_FREE_KB AIDEVOPS_MIN_WORKTREE_FREE_PERCENT
 		AIDEVOPS_HEADLESS_METRICS_FILE AIDEVOPS_ORPHAN_TRASH_ROOT
 		AIDEVOPS_SKIP_INFRA_FAILURE_ESCALATION
 		AIDEVOPS_DIRTY_BACKUP_ROOT AIDEVOPS_DIRTY_BACKUP_RETENTION_DAYS
@@ -458,11 +460,13 @@ _preflight_label_maintenance() {
 # 724s against floor=600s enumeration=300s). The configured minimum stays a
 # lower bound. The dispatch reserve is ignored when that gate is off, its
 # estimator is not loaded, or it could never fit one cycle.
+# GH#36603: round admission also requires the pre-stage margin on top of the
+# floor, so the reserve includes it (0 when the margin helper is not loaded).
 # Stdout: seconds. Returns 1 when the configured minimum is invalid.
 _preflight_post_label_refill_required_seconds() {
 	local required="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 	local finalise="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
-	local cycle="${PULSE_STALE_THRESHOLD:-}" lock="${PULSE_LOCK_MAX_AGE_S:-1800}" enumeration="" reserve=0
+	local cycle="${PULSE_STALE_THRESHOLD:-}" lock="${PULSE_LOCK_MAX_AGE_S:-1800}" enumeration="" reserve=0 margin=0
 	[[ "$required" =~ ^[1-9][0-9]*$ ]] || return 1
 	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" && "$finalise" =~ ^[0-9]{1,5}$ &&
 		"$cycle" =~ ^[1-9][0-9]{0,8}$ && "$lock" =~ ^[1-9][0-9]{0,8}$ ]] &&
@@ -470,8 +474,12 @@ _preflight_post_label_refill_required_seconds() {
 		[[ "$floor" =~ ^[1-9][0-9]*$ ]] || floor=600
 		[[ "$lock" -lt "$cycle" ]] && cycle="$lock"
 		enumeration=$(_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_enumeration_expected_seconds) || enumeration=""
+		if declare -F _dispatch_prestage_margin_seconds >/dev/null 2>&1; then
+			margin=$(_dispatch_prestage_margin_seconds) || margin=0
+		fi
+		[[ "$margin" =~ ^[0-9]{1,5}$ ]] || margin=0
 		if [[ "${#floor}" -le 9 && "$enumeration" =~ ^[0-9]{1,5}$ ]]; then
-			reserve=$((10#$finalise + 10#$floor + 10#$enumeration))
+			reserve=$((10#$finalise + 10#$floor + 10#$margin + 10#$enumeration))
 			((reserve > required && reserve < cycle)) && required="$reserve"
 		fi
 	fi

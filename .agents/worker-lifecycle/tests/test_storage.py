@@ -1,6 +1,7 @@
 """Registry transaction contracts using private, disposable native SQLite stores."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 import json
 import os
@@ -13,6 +14,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
+from worker_lifecycle.filesystem import checked_directory
 from worker_lifecycle.process import ObservationUnavailable, ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.registry import reconcile
@@ -229,6 +231,35 @@ os._exit(72)
         self.store.observe(key(), self.run, fresh["version"], changed)
         self.assertEqual(self.store.summary()["events"], 3)
         self.assertEqual(self.store.summary()["runs"], {"bound": 1})
+
+    def test_compaction_uses_validated_directory_after_path_replacement(self):
+        self.register()
+        self.store.observe(key(), self.run, 1, ProcessObservation("ended", "pid-absent"))
+        moved = self.path.with_name("validated-state")
+        descriptors = []
+
+        @contextmanager
+        def replace_after_validation(path):
+            with checked_directory(path) as descriptor:
+                descriptors.append(descriptor)
+                path.rename(moved)
+                path.mkdir(mode=0o700)
+                try:
+                    yield descriptor
+                finally:
+                    # Restore before SQLite commits through its original pathname.
+                    path.rmdir()
+                    moved.rename(path)
+
+        with patch("worker_lifecycle.journal.checked_directory", replace_after_validation), \
+                patch("worker_lifecycle.journal.os.fsync", wraps=os.fsync) as sync:
+            result = self.store.compact(age=0, apply=True)
+            sync.assert_any_call(descriptors[0])
+        self.assertEqual(result["archived_events"], 2)
+        archive = self.path / result["archive"]
+        self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(len(json.loads(archive.read_text())["evidence"]["events"]), 2)
+        self.assertEqual(self.store.summary()["events"], 0)
 
     def test_writer_exception_rolls_back(self):
         with self.assertRaises(RuntimeError):

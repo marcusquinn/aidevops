@@ -44,6 +44,7 @@ import {
   zstdCompressorKind,
 } from "./openai-codex-request.mjs";
 import { parseRetryAfterValue } from "./provider-auth-pool-recovery.mjs";
+import { retryCodexModelRejection } from "./openai-codex-model-fallback.mjs";
 
 export { isOpenAITokenRefreshRequest } from "./openai-auth-refresh-recovery.mjs";
 export {
@@ -232,6 +233,11 @@ async function handleOpenAIProviderFetch({ client, originalFetch, input, init })
   const firstKind = firstInit === prepared.init ? "initial" : "preflight-rotate";
   try {
     ctx.response = await recordAttempt(ctx.attempts, firstKind, () => originalFetch(prepared.input, firstInit));
+    ctx.response = await retryCodexModelRejection(ctx.response, retryInput, extendRequestInit(init, {
+      headers: headersFrom(prepared.input, firstInit),
+    }), (retry, retryInit) => recordAttempt(ctx.attempts, "model-fallback", () => originalFetch(retry, retryInit)));
+    // A fallback is the one retry for this rejection; surface its outcome.
+    if (ctx.attempts.at(-1)?.kind === "model-fallback") return ctx.response;
     if (await isOpenAIUsageLimitResponse(ctx.response)) return await handleOpenAIUsageLimit(ctx);
     if (await isOpenAIAuthFailureResponse(ctx.response)) return await handleOpenAIAuthFailure(ctx);
     return ctx.response;

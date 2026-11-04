@@ -6,7 +6,6 @@
 import datetime
 from contextlib import closing
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -28,17 +27,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import worktree_lifetime_archive as lifecycle
 import worktree_lifecycle_status as lifecycle_status
 from worktree_recovery_producer_cases import ProducerCases
+from worktree_recovery_partial_cases import PartialCases
 from worktree_archive_merge_cases import MergeCases
 from worktree_archive_canonical_cases import CanonicalCases
 from worktree_archive_administration_cases import AdministrationCases
 from worktree_archive_metadata_cases import MetadataCases
+from worktree_archive_prune_cases import PruneCases
 from worktree_archive_unregistered_cases import UnregisteredCases
 
 HELPER = Path(__file__).resolve().parents[1] / "worktree-archive-helper.sh"
 
 
 class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, MergeCases,
-                     ProducerCases, MetadataCases):
+                     ProducerCases, PartialCases, MetadataCases, PruneCases):
     def setUp(self):
         self.addCleanup(os.umask, os.umask(0o022))
         self.temp = tempfile.TemporaryDirectory(prefix="archive-lifecycle-")
@@ -1278,46 +1279,6 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         return self.helper("prune", "--older-than", "14d", "--max-total-size", limit,
                            mode, "--output-root", self.archives)
 
-    @staticmethod
-    def prune_module():
-        spec = importlib.util.spec_from_file_location("archive_prune", HELPER.with_name("worktree_archive_prune.py"))
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
-    def test_pin_added_during_verification_preserves_claimed_archive(self):
-        archive = self.archive()
-        module = self.prune_module()
-        entry = module.inspect(self.archives, archive)
-        original_verify = module.verify
-
-        def pin_during_verify(helper, directory):
-            original_verify(helper, directory)
-            (directory / module.PIN).touch()
-
-        with patch.object(module, "verify", pin_during_verify):
-            with self.assertRaises(ValueError):
-                module.remove_verified(self.archives, module.identity(self.archives), entry, HELPER)
-        retained = list(self.archives.glob(".prune-*/archive"))
-        self.assertEqual(len(retained), 1)
-        self.assertTrue((retained[0] / module.PIN).exists())
-        self.helper("verify", retained[0])
-
-    def test_replacement_at_original_name_is_never_deleted(self):
-        archive = self.archive()
-        module = self.prune_module()
-        entry = module.inspect(self.archives, archive)
-        original_rename = os.rename
-
-        def replace_after_claim(*args, **kwargs):
-            original_rename(*args, **kwargs)
-            archive.mkdir()
-            (archive / "replacement-data").write_text("keep me")
-
-        with patch.object(module.os, "rename", replace_after_claim):
-            module.remove_verified(self.archives, module.identity(self.archives), entry, HELPER)
-        self.assertEqual((archive / "replacement-data").read_text(), "keep me")
-
     def test_restore_never_overwrites_or_creates_through_tracked_symlinks(self):
         outside = self.root / "outside"
         outside.mkdir()
@@ -1423,6 +1384,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
                     (archive / "manifest.json").write_text("[]")
                 self.prune(limit="1")
                 self.assertTrue(archive.exists())
+                self.assertEqual(list(self.archives.glob(".prune-*")), [])
 
     def test_symlinked_bucket_never_deletes_external_archive(self):
         archive = self.archive()
@@ -1518,6 +1480,9 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
 
 
     def managed_fixture(self):
+        # Managed lifetimes are a Linux/systemd contract; macOS uses legacy guards.
+        if not (sys.platform.startswith("linux") and os.access("/proc/sys/kernel/random/boot_id", os.R_OK)):
+            self.skipTest("managed lifetimes need Linux with a readable boot id")
         database = self.root / "registry.db"
         self.env.update(WORKTREE_REGISTRY_DB=str(database),
                         WORKTREE_REGISTRY_DIR=str(self.root),

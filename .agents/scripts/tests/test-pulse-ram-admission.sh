@@ -27,8 +27,9 @@ assert_equal() {
 }
 
 # Static guard: admission scripts must not read CPU load, CPU idle or core
-# counts, nor revive the deprecated CPU admission settings. Comment lines are
-# ignored so the policy can be documented in place.
+# counts, nor revive the deprecated CPU admission settings. Comment lines and
+# the bounded underfill diagnostic sampler are excluded: it only gates reporting,
+# never admission. The runtime assertions below still reject CPU admission probes.
 admission_scripts=(
 	pulse-capacity.sh
 	pulse-capacity-alloc.sh
@@ -40,7 +41,8 @@ admission_scripts=(
 )
 cpu_pattern='vm\.loadavg|/proc/loadavg|getloadavg|loadavg\(|iostat|hw\.logicalcpu|hw\.ncpu|(^|[^[:alnum:]_])nproc([^[:alnum:]_]|$)|_NPROCESSORS_ONLN|availableParallelism|os\.cpus|MAX_LOAD_PER_CORE|CPU_IDLE_ADMIT_PERCENT|max_load_per_core|cpu_idle_admit_percent|_pulse_cpu_'
 for script in "${admission_scripts[@]}"; do
-	matches=$(grep -nE "$cpu_pattern" "$SCRIPT_DIR/$script" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+	matches=$(awk '/^_underfill_host_sample\(\)/ {diagnostic=1} !diagnostic {print} diagnostic && /^}/ {diagnostic=0}' "$SCRIPT_DIR/$script" |
+		grep -nE "$cpu_pattern" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
 	if [[ -n "$matches" ]]; then
 		printf 'FAIL: %s reads CPU telemetry for admission (GH#35537 RAM-only policy):\n%s\n' "$script" "$matches" >&2
 		exit 1

@@ -320,13 +320,14 @@ _PULSE_EVENT_REFILL_ADMIT_DEADLINE=""
 #
 # Dispatch admission reads the existing cycle-budget variables through
 # _pulse_cycle_remaining_seconds (start + min(stale, lock_max) - now - reserve).
-# A round needs floor + enumeration seconds before enumeration, and every
-# stage timeout is clamped to the same remaining budget. A budget of
-# max + enumeration + floor + reserve therefore admits rounds only during the
-# first PULSE_EVENT_REFILL_MAX_SECONDS. Candidates start only while a full
-# floor remains and their stages are clamped to the remaining budget, so the
-# lock is released within that window plus one enumeration, one candidate
-# stage timeout and the finalise reserve (about 21.5 minutes by default).
+# A round needs floor + pre-stage margin (GH#36603) + enumeration seconds
+# before enumeration, and every stage timeout is clamped to the same remaining
+# budget. A budget of max + enumeration + floor + margin + reserve therefore
+# admits rounds only during the first PULSE_EVENT_REFILL_MAX_SECONDS.
+# Candidates start only while a full floor remains and their stages are
+# clamped to the remaining budget, so the lock is released within that window
+# plus one enumeration, the margin, one candidate stage timeout and the
+# finalise reserve (about 22.5 minutes by default).
 # Never raises the budget above the full-cycle ceiling.
 #
 # Env: PULSE_EVENT_REFILL_MAX_SECONDS (default 300) sets the admission window;
@@ -340,6 +341,7 @@ _pulse_event_refill_apply_budget() {
 	local lock_max="${PULSE_LOCK_MAX_AGE_S:-1800}"
 	local ceiling="${PULSE_STALE_THRESHOLD:-3600}"
 	local enumeration_seconds=300
+	local margin_seconds=0
 	local budget_seconds=0
 	local now_epoch=""
 	[[ "$max_seconds" =~ ^[1-9][0-9]*$ ]] || max_seconds=300
@@ -352,14 +354,18 @@ _pulse_event_refill_apply_budget() {
 		enumeration_seconds=$(_dispatch_enumeration_expected_seconds 2>/dev/null) || enumeration_seconds=300
 	fi
 	[[ "$enumeration_seconds" =~ ^[0-9]+$ ]] || enumeration_seconds=300
+	if declare -F _dispatch_prestage_margin_seconds >/dev/null 2>&1; then
+		margin_seconds=$(_dispatch_prestage_margin_seconds 2>/dev/null) || margin_seconds=0
+	fi
+	[[ "$margin_seconds" =~ ^[0-9]+$ ]] || margin_seconds=0
 	now_epoch=$(date +%s 2>/dev/null) || return 0
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 0
-	budget_seconds=$((max_seconds + enumeration_seconds + floor_seconds + reserve_seconds))
+	budget_seconds=$((max_seconds + enumeration_seconds + floor_seconds + margin_seconds + reserve_seconds))
 	((budget_seconds <= ceiling)) || budget_seconds="$ceiling"
 	PULSE_START_EPOCH="$now_epoch"
 	PULSE_STALE_THRESHOLD="$budget_seconds"
 	_PULSE_EVENT_REFILL_ADMIT_DEADLINE=$((now_epoch + max_seconds))
-	pulse_event_refill_log "action=budget_set max_seconds=${max_seconds} cycle_budget=${budget_seconds}s enumeration=${enumeration_seconds}s floor=${floor_seconds}s"
+	pulse_event_refill_log "action=budget_set max_seconds=${max_seconds} cycle_budget=${budget_seconds}s enumeration=${enumeration_seconds}s floor=${floor_seconds}s prestage_margin=${margin_seconds}s"
 	return 0
 }
 

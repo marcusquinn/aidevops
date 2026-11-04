@@ -47,11 +47,14 @@ _PCC_STALL_FUSE_MARKER="aidevops:stalled-checkpoint-fuse"
 # own `worker_draft_checkpoint` handoff ("exact-head continuation pending") and
 # `clean`/`worker_complete` exits that left the draft open: exit classifications
 # are not proof the draft is done, so a continuation worker inspects the exact
-# head and finishes, marks ready or records a concrete blocker. Other non-blocked
+# head and finishes, marks ready or records a concrete blocker. GH#36597 adds
+# `worker_noop_zero_output` and `worker_incomplete_exit`: neither records a worker
+# decision, so an unchanged head is a runtime stall under the same retry bounds.
+# Other non-blocked
 # reasons get one attention record (_pcc_completed_attention). A `blocked`
 # release is excluded unless its recovery line names the runner-local
 # capability class (GH#34758): that needs only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 # GH#36019: per-PR fuse across heads. A continuation that pushes a new head and
 # then releases again re-arms the per-head bound; this caps the total number of
 # continuation-eligible releases since the PR was created before attention.
@@ -129,7 +132,9 @@ _pcc_claim_revised_checkpoint() {
 	[[ "$(jq -r '.approval_id' <<<"$claim")" == "$PCC_REVISION_APPROVAL" ]] || return 1
 	AIDEVOPS_DISPATCH_LEASE_TOKEN=$(jq -er '.lease' <<<"$claim") || return 1
 	AIDEVOPS_PR_CHECKPOINT_SESSION="$session"
-	export AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_PR_CHECKPOINT_SESSION
+	AIDEVOPS_PR_CHECKPOINT_CLAIM_ID=$(jq -er '.claim_id // empty' <<<"$claim") || return 1
+	[[ "$AIDEVOPS_PR_CHECKPOINT_CLAIM_ID" =~ ^[1-9][0-9]*$ ]] || return 1
+	export AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_PR_CHECKPOINT_SESSION AIDEVOPS_PR_CHECKPOINT_CLAIM_ID
 	PCC_PREVIOUS_ASSIGNEE=$(jq -r '.previous_assignee' <<<"$claim") || return 1
 	PCC_ORIGINAL_STATUS=$(jq -r '.previous_status' <<<"$claim") || return 1
 	# The distributed claim is acquired before modifying assignment. The generic
@@ -693,8 +698,10 @@ _pcc_normalise_hidden_unedited() {
 	local raw="$1" ids="" chunk="" resp="" clean="[]" id=""
 	local query="query(\$ids: [ID!]!) { nodes(ids: \$ids) { ... on IssueComment { id lastEditedAt } } }"
 	local -a args=()
+	# GH#36622: portable 50-ID chunking; jq 1.8 removed the internal _nwise.
 	ids=$(jq -r '[flatten[] | select((.updated_at // .created_at) != .created_at and
-		((.node_id // empty) | test("^[A-Za-z0-9_=-]+$"))) | .node_id] | unique | _nwise(50) | join(" ")' \
+		((.node_id // empty) | test("^[A-Za-z0-9_=-]+$"))) | .node_id] | unique | . as $a |
+		range(0; length; 50) | $a[.:.+50] | join(" ")' \
 		<<<"$raw" 2>/dev/null) || ids=""
 	if [[ -z "$ids" ]]; then
 		printf '%s' "$raw"

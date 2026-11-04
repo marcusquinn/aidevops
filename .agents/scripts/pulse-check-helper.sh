@@ -183,6 +183,10 @@ _collect_report_json() {
 		pulse_health=$(jq -c 'if type == "object" then . else {} end' "$PULSE_HEALTH_FILE" 2>/dev/null || printf '{}')
 		current_state=$(printf '%s' "$current_state" | jq -c --argjson health "$pulse_health" '. + {pulse_health: $health}' 2>/dev/null || printf '%s' "$current_state")
 	fi
+	local underfill_file="${HOME}/.aidevops/cache/pulse-underfill.json" underfill='{}'
+	if [[ -f "$underfill_file" ]]; then
+		underfill=$(jq -c --argjson now "$(date +%s)" 'if .timestamp > ($now - 900) and .timestamp <= $now and .streak >= 3 then {runner, timestamp, streak, deficit, top, reasons, host, capacity} else {} end' "$underfill_file" 2>/dev/null || printf '{}')
+	fi
 	worker_summary=$(_run_json_helper '{}' "$WORKER_ACTIVITY_HELPER" summary --since "$SINCE" --json --no-pr-check)
 	worker_recent=$(_run_json_helper '{}' "$WORKER_ACTIVITY_HELPER" summary --since "$RECENT_SINCE" --json --no-pr-check)
 	api_budget=$(_run_json_helper '{}' "$PULSE_DIAGNOSE_HELPER" api-budget --json)
@@ -227,7 +231,8 @@ _collect_report_json() {
 		--argjson api "$api_budget" \
 		--argjson queue "$queue" \
 		--argjson delivery "$delivery" \
-		-f "$REPORT_FILTER"
+		-f "$REPORT_FILTER" |
+		jq --argjson underfill "$underfill" '.current_state.underfill_attribution = $underfill'
 	return 0
 }
 
@@ -254,6 +259,7 @@ _render_text_report() {
 		"- GraphQL: " + (.summary.graphql_budget_status // unknown),
 		"- REST transport admission: " + ((.summary.rest_admission // {state:"unknown"}) | tojson),
 		"- Current launch blockers: " + ((.current_state.top_pre_launch_blockers // []) | tojson),
+		"- Sustained underfill attribution: " + ((.current_state.underfill_attribution // {}) | tojson),
 		"- Secondary cooldown: " + (.summary.secondary_cooldown_state // unknown),
 		"- Runtime freshness: " + (.summary.runtime_freshness_status // unknown),
 		"- Runner health: " + (.summary.runner_health // unknown),

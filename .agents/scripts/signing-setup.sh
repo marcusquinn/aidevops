@@ -77,6 +77,18 @@ _headless_signing_key_loaded() {
 	return $?
 }
 
+# Stop an agent started by this invocation and drop its staged environment so
+# the previous agent.env, and its failure state, stays authoritative. A reused
+# agent (empty staged path) is never touched.
+_discard_new_signing_agent() {
+	local staged_env="$1"
+	[[ -n "$staged_env" ]] || return 0
+	ssh-agent -k >/dev/null 2>&1 || true
+	rm -f "$staged_env"
+	unset SSH_AUTH_SOCK SSH_AGENT_PID
+	return 0
+}
+
 # GH#33066: read one global key. Exit 1 from `git config --get` means unset;
 # any other failure (for example a command guard blocking the read) must not be
 # reported as "not set", or setup gets recommended for a configured machine.
@@ -348,13 +360,25 @@ cmd_agent_start() {
 		fi
 	fi
 
+	# A new agent's environment is staged in a temporary file and published as
+	# agent.env only after the headless key is confirmed loaded. Otherwise an
+	# empty agent would be persisted and later reported live (GH#36550).
+	local new_agent_env=""
 	if [[ "$agent_running" == "false" ]]; then
 		_print_info "Starting new ssh-agent..."
-		# Start agent and capture env vars
-		ssh-agent -s >"$SSH_AGENT_ENV"
-		chmod 600 "$SSH_AGENT_ENV"
+		mkdir -p "$(dirname "$SSH_AGENT_ENV")"
+		new_agent_env=$(mktemp "${SSH_AGENT_ENV}.XXXXXX") || {
+			_print_error "Could not create a temporary ssh-agent environment file"
+			return 1
+		}
+		chmod 600 "$new_agent_env"
+		if ! ssh-agent -s >"$new_agent_env"; then
+			rm -f "$new_agent_env"
+			_print_error "Could not start ssh-agent"
+			return 1
+		fi
 		# shellcheck source=/dev/null
-		. "$SSH_AGENT_ENV" >/dev/null 2>&1 || true
+		. "$new_agent_env" >/dev/null 2>&1 || true
 		_print_ok "ssh-agent started (PID: ${SSH_AGENT_PID:-unknown})"
 	else
 		_print_info "Reusing existing ssh-agent (PID: ${SSH_AGENT_PID:-unknown})"
@@ -364,11 +388,13 @@ cmd_agent_start() {
 	# fingerprint/comment, not the source path, so compare the exported public key.
 	if ! _headless_signing_key_loaded; then
 		if ! ssh-add "$SSH_KEY_HEADLESS" 2>/dev/null; then
+			_discard_new_signing_agent "$new_agent_env"
 			_print_error "Could not load headless signing key into ssh-agent (it may be encrypted or unreadable)"
 			_print_headless_signing_remediation
 			return 1
 		fi
 		if ! _headless_signing_key_loaded; then
+			_discard_new_signing_agent "$new_agent_env"
 			_print_error "Headless signing key is not present in ssh-agent after ssh-add"
 			_print_headless_signing_remediation
 			return 1
@@ -376,6 +402,12 @@ cmd_agent_start() {
 		_print_ok "Loaded signing key into ssh-agent: $SSH_KEY_HEADLESS"
 	else
 		_print_info "Signing key already loaded in ssh-agent"
+	fi
+
+	if [[ -n "$new_agent_env" ]] && ! mv -f "$new_agent_env" "$SSH_AGENT_ENV"; then
+		_discard_new_signing_agent "$new_agent_env"
+		_print_error "Could not persist ssh-agent environment to $SSH_AGENT_ENV"
+		return 1
 	fi
 
 	echo ""

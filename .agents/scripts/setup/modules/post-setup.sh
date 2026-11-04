@@ -205,6 +205,10 @@ setup_tabby() {
 	fi
 
 	print_info "Tabby terminal detected"
+	# Recovery markers otherwise leak into new and restored plain-shell tabs.
+	if declare -F setup_tabby_recovery_shell_guard >/dev/null; then
+		setup_tabby_recovery_shell_guard || true
+	fi
 
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
 		# Repair and validate the complete config before applying the narrower

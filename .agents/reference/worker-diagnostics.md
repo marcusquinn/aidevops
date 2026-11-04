@@ -1084,6 +1084,38 @@ runner infrastructure, recursive scope, or actual lint/type/test diagnostics.
 Keep heartbeat wrappers narrowly scoped or temporary unless the project already
 has a reusable CI helper.
 
+## Sustained underfill attribution (GH#36625)
+
+After three distinct Pulse cycles with at least 50% vacant slots, runnable work
+for at least 5% of slots, load below the core count and memory above the existing
+RAM reserve, Pulse emits `UNDERFILL_ATTRIBUTION runner=... deficit=... top=reason:count,...`.
+Load is diagnostic only: this does not change RAM-only worker admission.
+
+`pulse-check-helper.sh` includes the fresh attribution in its health summary and
+JSON `current_state.underfill_attribution`. The local cache is
+`~/.aidevops/cache/pulse-underfill.json`; it records blocker counts, headroom,
+disk free, and the raw/final target and explicit config-clamp source. Each sample
+counts the new log interval since the prior sample (up to 1 MiB), not historical
+failures from the whole log. Several recycler calls in one cycle count only once.
+A gap longer than 15 minutes resets the consecutive-cycle trigger.
+
+Remedies are data in `configs/underfill-remediation.conf`. Worktree pressure uses
+the existing isolated async cleanup launcher and its lock/cadence safeguards,
+outside the dispatch deadline. Permission, secret, pacing and checkpoint causes
+produce local advisories with diagnostic/recovery steps; no approval, safety cap
+or secret-store gate is relaxed. Checkpoints route to the existing pulse-check
+triage digest. The advisory channel is `~/.aidevops/advisories/underfill-*.advisory`,
+deduplicated per local runner account and cause for 24 hours. Deficit recovery
+below 50% clears the advisories and re-arms escalation. No GitHub comment stream
+or new ops issue is created. A full explicitly clamped pool is compared against
+detected per-runner RAM capacity to expose a potentially intentional config cap;
+the advisory never changes that setting automatically.
+
+Verify without dispatching or touching live cleanup state:
+`bash .agents/scripts/tests/test-pulse-underfill-attribution.sh`.
+On a live capped runner, check the health summary after three qualified cycles;
+do not create artificial worktree pressure on a production runner.
+
 ## Diagnostic Quick Reference
 
 | Symptom | Check | Likely cause |

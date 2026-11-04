@@ -55,7 +55,7 @@ _platform_changed_test() {
 	local path=""
 	while IFS= read -r path; do
 		case "$path" in
-		.agents/scripts/tests/* | .agents/tests/* | .agents/plugins/*/tests/* | tests/* | packages/*/tests/*)
+		.agents/scripts/tests/* | .agents/tests/* | .agents/plugins/*/tests/* | .agents/worker-lifecycle/tests/* | tests/* | packages/*/tests/*)
 			printf '%s\n' "$path"
 			return 0
 			;;

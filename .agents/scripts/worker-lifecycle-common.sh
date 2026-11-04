@@ -291,9 +291,11 @@ _emit_worker_runtime_event() {
 	worker.completed | worker.failed | worker.deferred)
 		if [[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ && -n "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" ]]; then
 			local lease_helper="${BASH_SOURCE[0]%/*}/dispatch-claim-helper.sh"
-			"$lease_helper" transition terminal "$WORKER_ISSUE_NUMBER" \
-				"${DISPATCH_REPO_SLUG:-$WORKER_REPO_SLUG}" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
-				"${AIDEVOPS_DISPATCH_LEASE_SESSION:-${_invoke_session_key:-issue-${WORKER_ISSUE_NUMBER}}}" 0 >/dev/null 2>&1 || true
+			# shellcheck source=./terminal-lease-recovery.sh
+			source "${BASH_SOURCE[0]%/*}/terminal-lease-recovery.sh"
+			_terminal_lease_emit_or_record "$WORKER_ISSUE_NUMBER" \
+				"${DISPATCH_REPO_SLUG:-$WORKER_REPO_SLUG}" \
+				"${AIDEVOPS_DISPATCH_LEASE_SESSION:-${_invoke_session_key:-issue-${WORKER_ISSUE_NUMBER}}}" "$lease_helper" || true
 		fi
 		;;
 	esac

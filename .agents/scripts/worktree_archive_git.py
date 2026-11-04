@@ -15,6 +15,7 @@ from worktree_archive_base_source import (
     MISSING_PROMISOR_BASE as MISSING_PROMISOR_BASE,
     authorized_base_source as authorized_base_source,
 )
+from worktree_archive_diagnostics import as_bytes, stderr_category, unavailable_reason
 
 __all__ = ['MISSING_PROMISOR_BASE', 'authorized_base_source']
 
@@ -40,30 +41,12 @@ def base_upload_pack():
 
 def base_import_failure(error):
     """Classify captured Git stderr without releasing paths, OIDs or raw text."""
-    stderr = error.stderr or b''
-    if isinstance(stderr, str):
-        stderr = stderr.encode('utf-8', errors='replace')
-    stderr = stderr.lower()
+    stderr = as_bytes(error.stderr)
     packing = 'pack-objects-died' if b'pack-objects died' in stderr else 'git-failed'
-    detail = 'unclassified'
     if ((b'promisor remote' in stderr and b'could not fetch' in stderr)
             or b'missing promisor object' in stderr or b'missing promised object' in stderr):
         return MISSING_PROMISOR_BASE
-    # Ordered patterns keep resource failures ahead of missing-object fallbacks.
-    for pattern, category in (
-        (rb'out of memory|malloc failed|cannot allocate memory', 'allocation-failed'),
-        (rb'no space left on device', 'storage-full'),
-        (rb'permission denied', 'permission-denied'),
-        (rb'unable to create thread|cannot create thread', 'thread-failed'),
-        (rb'missing blob|missing tree|missing commit|missing object|'
-         rb'bad object|bad tree object|bad commit object', 'missing-object'),
-        (rb'not our ref', 'object-unavailable-or-denied'),
-        (rb'(?:unable to read|could not read) (?:sha1 file )?[0-9a-f]{40,64}\b', 'missing-object'),
-        (rb'did not send all necessary objects', 'transfer-failed'),
-    ):
-        if re.search(pattern, stderr):
-            detail = category
-            break
+    detail = stderr_category(stderr)
     code = error.returncode if -255 <= error.returncode <= 255 else 'unknown'
     return (f'producer:base-import-failed; stage=base-import; exit={code}; '
             f'stderr={packing}/{detail}; source and archive retained')
@@ -118,7 +101,7 @@ def producer_failure_reason(error):
         return ("producer:unsupported-metadata; permissions, ownership, ACLs, extended attributes "
                 "or hard links require separate preservation; source retained; "
                 "retrying will not resolve this policy refusal")
-    return str(error) if isinstance(error, ValueError) else "producer:evidence-unavailable"
+    return str(error) if isinstance(error, ValueError) else unavailable_reason(error)
 
 
 def base_import_timeout():

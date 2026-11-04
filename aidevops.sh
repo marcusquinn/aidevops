@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.39.115
+# Version: 3.39.118
 
 set -euo pipefail
 
@@ -809,8 +809,21 @@ _repos_list() {
 _repos_add() {
 	local bootstrap_slug=""
 	local confirmation=""
+	local repo_path="."
+	local path_given=0
+	local sync_only=""
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local argument="$1"
+		case "$argument" in
+		help | -h | --help)
+			echo "Usage: aidevops repos add [path] [--sync-only] [--slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY]"
+			echo "  --sync-only  Register for explicit sync/cleanup without Pulse or recurring maintenance"
+			return 0
+			;;
+		--sync-only)
+			sync_only="true"
+			shift
+			;;
 		--slug)
 			bootstrap_slug="${2:-}"
 			shift 2
@@ -820,17 +833,22 @@ _repos_add() {
 			shift 2
 			;;
 		*)
-			print_error "Usage: aidevops repos add [--slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY]"
-			return 2
+			if [[ "$argument" == -* || "$path_given" -eq 1 ]]; then
+				print_error "Usage: aidevops repos add [path] [--sync-only] [--slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY]"
+				return 2
+			fi
+			repo_path="$argument"
+			path_given=1
+			shift
 			;;
 		esac
 	done
-	git rev-parse --is-inside-work-tree &>/dev/null || {
+	git -C "$repo_path" rev-parse --is-inside-work-tree &>/dev/null || {
 		print_error "Not in a git repository"
 		return 1
 	}
 	local project_root
-	project_root=$(git rev-parse --show-toplevel)
+	project_root=$(git -C "$repo_path" rev-parse --show-toplevel)
 	if [[ ! -f "$project_root/.aidevops.json" ]]; then
 		if [[ -z "$bootstrap_slug" || "$confirmation" != "REGISTER_CANONICAL_REPOSITORY" ]]; then
 			print_error "No .aidevops.json found - run 'aidevops init' or use the confirmed --slug bootstrap form"
@@ -855,7 +873,7 @@ _repos_add() {
 		version="unknown"
 		features=""
 	fi
-	register_repo "$project_root" "$version" "$features" "$bootstrap_slug"
+	register_repo "$project_root" "$version" "$features" "$bootstrap_slug" "$sync_only" || return 1
 	print_success "Registered $(basename "$project_root")"
 	return 0
 }
@@ -1057,7 +1075,9 @@ cmd_repos() {
 		echo ""
 		echo "Commands:"
 		echo "  list     List all registered projects (default)"
-		echo "  add      Register current project; confirmed --slug bootstraps config-free canonical repos"
+		echo "  add [path] [--sync-only]"
+		echo "           Register project; --sync-only disables Pulse and recurring maintenance"
+		echo "           Confirmed --slug bootstraps config-free canonical repos"
 		echo "  remove   Remove project from registry"
 		echo "  clean    Remove entries for non-existent projects"
 		echo "  migrate-layout <plan|apply|rollback|status>"
