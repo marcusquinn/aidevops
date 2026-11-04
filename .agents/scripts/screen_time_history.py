@@ -9,7 +9,22 @@ import math
 from screen_time_interval_common import WINDOWS, completed_day_window, interval_seconds, local_date
 
 
+def observed_since(collection):
+    """Epoch measurement began, for collectors that record it (Linux sampler)."""
+    value = collection.get("observed_since_epoch")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def since_coverage(since, start, end):
+    window_days = (end - start) / 86400
+    days = min(window_days, (end - max(start, since)) / 86400)
+    return round(days, 1), round(days / window_days * 100, 1)
+
+
 def coverage(collection, start, end):
+    since = observed_since(collection)
+    if since is not None:
+        return since_coverage(since, start, end) if since < end else (0.0, 0.0)
     timestamps = []
     for left, right in collection.get("intervals", []):
         if right > start and left < end:
@@ -29,12 +44,17 @@ def coverage(collection, start, end):
 def bounded_period_payload(collection, start, end, semantics="rolling-clock-window"):
     observed_days, coverage_pct = coverage(collection, start, end)
     status = collection.get("status", "unavailable")
+    reason = collection.get("reason", "unknown")
+    since = observed_since(collection)
+    if status != "unavailable" and since is not None and since >= end:
+        status, reason = "unavailable", "before-first-sample"
     hours = None if status == "unavailable" else round(interval_seconds(collection.get("intervals", []), start, end) / 3600, 1)
     return {
         "hours": hours,
         "status": status,
         "source": collection.get("source", "unknown"),
-        "reason": collection.get("reason", "unknown"),
+        "reason": reason,
+        "observed_since_epoch": since,
         "coverage_days": observed_days,
         "coverage_pct": coverage_pct,
         "freshness_hours": collection.get("freshness_hours"),
@@ -146,7 +166,8 @@ def estimated_year(periods, history, now, skipped):
         return dict(year, hours=round(estimate, 1), estimated=True, reason="calendar-span-extrapolation")
     month = periods["month"]
     if periods["year"]["status"] != "unavailable" and month["coverage_days"] > 0:
-        estimate = min(8760.0, (month["hours"] or 0) / month["coverage_days"] * 365)
+        # A first partial sampled day must not extrapolate a few hours to a year.
+        estimate = min(8760.0, (month["hours"] or 0) / max(1.0, month["coverage_days"]) * 365)
         return dict(month, hours=round(estimate, 1), estimated=True, reason="observed-calendar-coverage-extrapolation")
     return periods["year"]
 

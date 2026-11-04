@@ -364,7 +364,11 @@ EOF
 _generate_screen_time_vars() {
 	local screen_json="$1"
 	local values screen_today screen_week screen_month screen_year screen_status year_estimated screen_source
-	if ! values=$(printf '%s' "$screen_json" | jq -er --arg unavailable "$PROFILE_STATUS_UNAVAILABLE" '
+	local screen_detail screen_note none="none"
+	# screen_detail names why periods are unavailable (e.g. no sampler samples
+	# yet); screen_note dates the start of Linux input sampling inside the
+	# 28-day window so partial early periods are not read as low usage.
+	if ! values=$(printf '%s' "$screen_json" | jq -er --arg unavailable "$PROFILE_STATUS_UNAVAILABLE" --arg none "$none" --arg unknown unknown '
 		if type != "object" then error("screen payload must be an object") else . end |
 		[
 			(if .today_hours == null then $unavailable else ((.today_hours * 10 | round / 10 | tostring) + "h") end),
@@ -373,22 +377,30 @@ _generate_screen_time_vars() {
 			(if .year_hours == null then $unavailable else ((.year_hours | round | tostring) + "h") end),
 			([.periods?.day?.status // $unavailable, .periods?.week?.status // $unavailable, .periods?.month?.status // $unavailable, .periods?.year?.status // $unavailable] | unique | join(", ")),
 			(.periods?.year?.estimated // false),
-			(.periods?.month?.source // $unavailable)
+			(.periods?.month?.source // $unavailable),
+			(.periods | if type == "object" then [.[] | objects | select(.status == $unavailable) | .reason | strings | select(. != $unknown)] else [] end |
+				unique | if length > 0 then " (" + join(", ") + ")" else $none end),
+			(.periods?.month? // {} | if (.observed_since_epoch | type) == "number" and .observed_since_epoch > (.period_start_epoch // 0)
+				then " Input sampling began " + (.observed_since_epoch | floor | strflocaltime("%Y-%m-%d")) + "; earlier days are not counted."
+				else $none end)
 		] | @tsv
 	'); then
 		echo "Warning: screen-time payload is invalid; rendering unavailable values" >&2
-		printf -v values '%s\t%s\t%s\t%s\t%s\tfalse\t%s' \
+		printf -v values '%s\t%s\t%s\t%s\t%s\tfalse\t%s\t%s\t%s' \
 			"$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE" \
-			"$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE"
+			"$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE" "$none" "$none"
 	fi
-	IFS=$'\t' read -r screen_today screen_week screen_month screen_year screen_status year_estimated screen_source <<<"$values"
+	IFS=$'\t' read -r screen_today screen_week screen_month screen_year screen_status year_estimated screen_source screen_detail screen_note <<<"$values"
+	[[ "$screen_detail" == "$none" ]] && screen_detail=""
+	[[ "$screen_note" == "$none" ]] && screen_note=""
 	local year_prefix="" year_suffix=""
 	if [[ "$year_estimated" == "$PROFILE_BOOLEAN_TRUE" ]]; then
 		year_prefix="~"
 		year_suffix="*"
 	fi
-	printf 'screen_today=%q screen_week=%q screen_month=%q screen_year=%q screen_status=%q screen_source=%q year_prefix=%q year_suffix=%q\n' \
-		"$screen_today" "$screen_week" "$screen_month" "$screen_year" "$screen_status" "$screen_source" "$year_prefix" "$year_suffix"
+	printf 'screen_today=%q screen_week=%q screen_month=%q screen_year=%q screen_status=%q screen_source=%q year_prefix=%q year_suffix=%q screen_detail=%q screen_note=%q\n' \
+		"$screen_today" "$screen_week" "$screen_month" "$screen_year" "$screen_status" "$screen_source" "$year_prefix" "$year_suffix" \
+		"$screen_detail" "$screen_note"
 	return 0
 }
 
@@ -445,7 +457,7 @@ _generate_work_with_ai_table() {
 	local month_json="$4"
 	local year_json="$5"
 
-	local screen_today screen_week screen_month screen_year screen_status screen_source year_prefix year_suffix
+	local screen_today screen_week screen_month screen_year screen_status screen_source year_prefix year_suffix screen_detail screen_note
 	eval "$(_generate_screen_time_vars "$screen_json")"
 
 	# Extract and format session time variables for all periods
@@ -505,7 +517,7 @@ _generate_work_with_ai_table() {
 | Interactive sessions | ${f_day_int} | ${f_week_int} | ${f_month_int} | ${f_year_int} |
 | Worker sessions | ${f_day_wrk} | ${f_week_wrk} | ${f_month_wrk} | ${f_year_wrk} |
 
-_Screen time from ${screen_source}; collection status: ${screen_status}.$([ -n "$year_suffix" ] && echo " *365-day estimate uses observed calendar coverage.")_
+_Screen time from ${screen_source}; collection status: ${screen_status}${screen_detail}.${screen_note}$([ -n "$year_suffix" ] && echo " *365-day estimate uses observed calendar coverage.")_
 
 _Periods are completed local calendar days ending at midnight; today is excluded._
 

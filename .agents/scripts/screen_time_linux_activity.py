@@ -242,5 +242,8 @@ def activity_collection(directory, now):
         "observation_epochs": markers,
         "coverage_start_epoch": earliest,
         "coverage_end_epoch": latest,
+        # Before the first sample nothing was measured: periods ending earlier are
+        # unknown, not zero. Later sampler gaps mean the host was off or asleep.
+        "observed_since_epoch": earliest,
         "evidence": state["evidence"],
     }
