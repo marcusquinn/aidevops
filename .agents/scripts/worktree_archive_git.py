@@ -3,7 +3,6 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Access and bundle Git objects without caller repository overrides."""
 
-import errno
 import os
 from pathlib import Path
 import re
@@ -16,6 +15,7 @@ from worktree_archive_base_source import (
     MISSING_PROMISOR_BASE as MISSING_PROMISOR_BASE,
     authorized_base_source as authorized_base_source,
 )
+from worktree_archive_diagnostics import as_bytes, stderr_category, unavailable_reason
 
 __all__ = ['MISSING_PROMISOR_BASE', 'authorized_base_source']
 
@@ -39,35 +39,9 @@ def base_upload_pack():
                        '-c', 'pack.window=0', '-c', 'pack.threads=1', 'upload-pack'])
 
 
-def stderr_category(stderr):
-    """Map captured stderr to one fixed category; never return raw text."""
-    stderr = stderr or b''
-    if isinstance(stderr, str):
-        stderr = stderr.encode('utf-8', errors='replace')
-    stderr = stderr.lower() if isinstance(stderr, bytes) else b''
-    # Ordered patterns keep resource failures ahead of missing-object fallbacks.
-    for pattern, category in (
-        (rb'out of memory|malloc failed|cannot allocate memory', 'allocation-failed'),
-        (rb'no space left on device', 'storage-full'),
-        (rb'permission denied', 'permission-denied'),
-        (rb'unable to create thread|cannot create thread', 'thread-failed'),
-        (rb'missing blob|missing tree|missing commit|missing object|'
-         rb'bad object|bad tree object|bad commit object', 'missing-object'),
-        (rb'not our ref', 'object-unavailable-or-denied'),
-        (rb'(?:unable to read|could not read) (?:sha1 file )?[0-9a-f]{40,64}\b', 'missing-object'),
-        (rb'did not send all necessary objects', 'transfer-failed'),
-    ):
-        if re.search(pattern, stderr):
-            return category
-    return 'unclassified'
-
-
 def base_import_failure(error):
     """Classify captured Git stderr without releasing paths, OIDs or raw text."""
-    stderr = error.stderr or b''
-    if isinstance(stderr, str):
-        stderr = stderr.encode('utf-8', errors='replace')
-    stderr = stderr.lower()
+    stderr = as_bytes(error.stderr)
     packing = 'pack-objects-died' if b'pack-objects died' in stderr else 'git-failed'
     if ((b'promisor remote' in stderr and b'could not fetch' in stderr)
             or b'missing promisor object' in stderr or b'missing promised object' in stderr):
@@ -127,44 +101,7 @@ def producer_failure_reason(error):
         return ("producer:unsupported-metadata; permissions, ownership, ACLs, extended attributes "
                 "or hard links require separate preservation; source retained; "
                 "retrying will not resolve this policy refusal")
-    if isinstance(error, ValueError):
-        return str(error)
-    return unavailable_reason(error)
-
-
-# GH#36564: fixed archive-helper refusals that are safe to name. The helper's
-# insufficient-capacity line carries only integers, so it is passed through.
-HELPER_CAUSES = (
-    ("Error: worktree changed during archive capture: ", "source-changed-during-capture"),
-    ("Error: worktree fingerprint unavailable", "fingerprint-unavailable"),
-    ("Error: cannot resolve base SHA", "base-unresolved"),
-    ("Error: archive capacity unavailable", "capacity-unavailable"),
-)
-CAPACITY_REFUSAL = re.compile(
-    r"Error: (producer:insufficient-capacity; estimate=[0-9]+; reserve=[0-9]+; free=[0-9]+; "
-    r"no archive written; source retained)")
-
-
-def unavailable_reason(error):
-    """Name the failure class without releasing paths, OIDs or raw stderr (GH#36564)."""
-    prefix = "producer:evidence-unavailable"
-    if isinstance(error, subprocess.CalledProcessError):
-        stderr = error.stderr
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode("utf-8", errors="replace")
-        lines = stderr.rstrip().splitlines() if isinstance(stderr, str) else []
-        for line in reversed(lines):
-            capacity = CAPACITY_REFUSAL.fullmatch(line)
-            if capacity:
-                return capacity.group(1)
-        cause = next((category for line in lines for marker, category in HELPER_CAUSES
-                      if line.startswith(marker)), None) or "stderr/" + stderr_category(error.stderr)
-        code = error.returncode if isinstance(error.returncode, int) and -255 <= error.returncode <= 255 \
-            else "unknown"
-        return f"{prefix}; cause={cause}; exit={code}"
-    if isinstance(error, OSError):
-        return f"{prefix}; cause=os-error/{errno.errorcode.get(error.errno, 'unknown')}"
-    return f"{prefix}; cause=exception/{type(error).__name__}"
+    return str(error) if isinstance(error, ValueError) else unavailable_reason(error)
 
 
 def base_import_timeout():
