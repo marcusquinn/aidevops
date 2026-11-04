@@ -91,6 +91,7 @@ describe("GPT image OpenCode tool", () => {
     assert.match(output, /OAuth router model: gpt-6-sol/);
     assert.match(output, /generated\/test\.png/);
     assert.match(output, /Requested size: auto; native dimensions: 1x1/);
+    assert.match(output, /OAuth router model: gpt-6-sol/);
     assert.match(output, /Requested image model: provider-managed; provider-confirmed image model: unknown/);
     assert.doesNotMatch(output, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
@@ -162,17 +163,23 @@ describe("GPT image OpenCode tool", () => {
     assert.equal(calls, 0);
   });
 
-  test("surfaces OAuth and Platform API dimension mismatches without writing artifacts", async () => {
+  test("saves native OAuth output with a size warning but rejects API size mismatches", async () => {
     const root = await projectRoot();
+    let requestSize;
     const oauthTool = createTool({
       projectRoot: root,
       resolveOAuthAccount: async () => ({ email: "person@example.test", access: "oauth-test-token" }),
-      fetchImpl: async () => oauthSuccess(),
+      fetchImpl: async (_url, init) => {
+        requestSize = JSON.parse(init.body).tools[0].size;
+        return oauthSuccess(WEBP_BASE64);
+      },
     });
-    await assert.rejects(
-      oauthTool.execute({ prompt: "draw", out: "oauth.png", size: "1024x1024" }),
-      /returned 1x1 PNG for requested 1024x1024; no artifact was written/,
-    );
+    const output = await oauthTool.execute({ prompt: "draw", out: "oauth.webp", format: "webp", size: "1456x1088" });
+    assert.equal(requestSize, "1456x1088");
+    assert.match(output, /Requested size: 1456x1088; native dimensions: 1x1/);
+    assert.match(output, /Warning: OAuth size is best-effort; the provider returned 1x1 rather than 1456x1088/);
+    assert.match(output, /Saved native output without resizing/);
+    assert.deepEqual(await readFile(join(root, "oauth.webp")), Buffer.from(WEBP_BASE64, "base64"));
 
     const apiTool = createTool({
       projectRoot: root,
@@ -183,8 +190,21 @@ describe("GPT image OpenCode tool", () => {
       apiTool.execute({ prompt: "draw", out: "api.png", size: "1024x1024", auth: "api", account: "work" }),
       /returned 1x1 PNG for requested 1024x1024; no artifact was written/,
     );
-    await assert.rejects(access(join(root, "oauth.png")), /ENOENT/);
     await assert.rejects(access(join(root, "api.png")), /ENOENT/);
+  });
+
+  test("still rejects invalid native OAuth raster data with best-effort sizing", async () => {
+    const root = await projectRoot();
+    const tool = createTool({
+      projectRoot: root,
+      resolveOAuthAccount: async () => ({ email: "person@example.test", access: "oauth-test-token" }),
+      fetchImpl: async () => oauthSuccess(PNG_BASE64),
+    });
+    await assert.rejects(
+      tool.execute({ prompt: "draw", out: "invalid.webp", format: "webp", size: "1456x1088" }),
+      /invalid WebP/,
+    );
+    await assert.rejects(access(join(root, "invalid.webp")), /ENOENT/);
   });
 
   test("requests and writes a selected native WebP", async () => {
@@ -201,6 +221,18 @@ describe("GPT image OpenCode tool", () => {
     const output = await tool.execute({ prompt: "draw a test", out: "generated/test.webp", format: "webp" });
     assert.equal(requestBody.tools[0].output_format, "webp");
     assert.match(output, /generated\/test\.webp/);
+    assert.doesNotMatch(output, /Warning:/);
+  });
+
+  test("explains unaligned dimensions before authentication or network access", async () => {
+    const tool = createTool({
+      resolveOAuthAccount: async () => assert.fail("must validate size before authentication"),
+      fetchImpl: async () => assert.fail("must validate size before generation"),
+    });
+    await assert.rejects(
+      tool.execute({ prompt: "draw a test", out: "test.webp", format: "webp", size: "1448x1086" }),
+      /width and height must be multiples of 16/,
+    );
   });
 
   test("rejects format and extension mismatches before network access", async () => {
