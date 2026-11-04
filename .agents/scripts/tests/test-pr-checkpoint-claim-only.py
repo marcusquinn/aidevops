@@ -738,6 +738,43 @@ class TerminalLeaseOutboxTests(unittest.TestCase):
         self.assertEqual(len(self.recovery.rows(self.path)), 1)
         self.assertNotIn("opaque-fixture", self.path.read_text())
 
+    def run_worker(self, body):
+        # The child shell stands in for the worker process: its $$ is recorded.
+        device = pathlib.Path(self.temp.name) / "device-id"
+        device.write_text("dev\n")
+        command = ('source "$1/terminal-lease-recovery.sh"; '
+                   '_terminal_lease_record_ready 124 owner/repo "$2"; ' + body)
+        result = subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), self.session],  # nosec B603 — fixed offline fixture, absolute Bash
+                                cwd=self.temp.name, env={**os.environ, "AIDEVOPS_DEVICE_ID_FILE": str(device)},
+                                capture_output=True, text=True, check=False)
+        return result
+
+    def test_killed_worker_after_ready_is_drained_once(self):
+        # No exit hook runs: the ready-time row alone must drive recovery.
+        self.run_worker("kill -KILL $$")
+        row = self.recovery.rows(self.path)[0]
+        self.assertEqual(row["record_type"], "terminal_lease_pending")
+        self.assertIsNotNone(row["process_identity"])
+        self.assertTrue(self.recovery.worker_ended(row))
+        with mock.patch.object(self.recovery.time, "time", return_value=row["expires_at"] + 121), \
+             mock.patch.object(self.recovery, "executor_live", return_value=False), \
+             mock.patch.object(self.recovery, "issue_state", return_value="open"), \
+             mock.patch.object(self.recovery.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+            self.assertEqual(self.recovery.drain(), {"candidates": 1, "closed": 1, "blocked": 0})
+            self.assertEqual(self.recovery.drain()["candidates"], 0)
+        self.assertEqual(run.call_count, 1)
+
+    def test_successful_exit_after_ready_needs_no_drain(self):
+        result = self.run_worker('ok_post() { return 0; }; '
+                                 '_terminal_lease_emit_or_record 124 owner/repo "$2" ok_post')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        kinds = [row["record_type"] for row in self.recovery.rows(self.path)]
+        self.assertEqual(kinds, ["terminal_lease_pending", "terminal_lease_resolved"])
+        counts, run = self.drain()
+        self.assertEqual(counts["candidates"], 0)
+        run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,10 @@
 
 Native lifecycle identities prove only that the recording worker ended. No
 registry writes, published-event edits or lease credentials belong in this log.
+
+The worker records "pending" right after its ready transition (GH#36646), with
+its own process identity, so a killed worker is drained like a failed exit.
+A successful terminal post records "resolved"; a failed one reuses the row.
 """
 
 import os
@@ -42,8 +46,8 @@ def record(kind, repo, issue, session, pid):
     row = dict(zip(KEYS, (repo, int(issue), attempt, session, int(claim), device)))
     row.update(record_type=PREFIX + kind, ts=now)
     if kind == "pending":
-        # Conservative upper bound: the ready lease was posted before exit. The
-        # closer re-reads actual expiry/ordering, never trusting this as authority.
+        # Conservative upper bound: the ready lease was posted before this row.
+        # The closer re-reads actual expiry/ordering, never trusting this as authority.
         ttl = max(7200, int(os.environ.get("DISPATCH_READY_LEASE_TTL", "7200")),
                   int(os.environ.get("AIDEVOPS_DISPATCH_READY_LEASE_TTL", "7200")))
         row["expires_at"] = now + ttl
