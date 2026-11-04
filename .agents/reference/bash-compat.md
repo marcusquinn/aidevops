@@ -124,7 +124,7 @@ Three fixes, in order of preference:
 - **(b) RECOMMENDED — U+2019** (right single quotation mark, `’`). Minimum diff, typographically correct, parser-safe on bash 3.2 and 4.x. Visually identical to U+0027 in most fonts; readers won't notice. Preserves `${var}` expansion. This is the fix t3082 / PR #21852 applied.
 - **(c) Reword to avoid the apostrophe** — `it is`, `cannot`, `supervisor blind spot`. Zero parser interaction, no expansion tradeoff. Best when natural-language flow allows it.
 
-CI gate: the existing `ShellCheck (macos-latest)` job (the `cross-platform-shellcheck` runner) runs `/bin/bash -n` against bash 3.2 — the canonical detector. Local check: `/bin/bash -n script.sh` on any macOS.
+CI gate: the `ShellCheck (ubuntu-latest)` job (`cross-platform-shellcheck`) runs `bash -n` on every shell file in a digest-pinned `bash:3.2` container (3.2.57, the macOS `/bin/bash` release) — the canonical detector; no hosted macOS runner is needed (GH#36686). Local gate: `pre-commit-hook.sh` runs `/bin/bash -n` on modified shell files whenever `/bin/bash` is 3.x (every Mac). Manual check: `/bin/bash -n script.sh` on any macOS.
 
 ## Array passing across process boundaries
 

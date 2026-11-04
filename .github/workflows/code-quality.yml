@@ -116,22 +116,24 @@ jobs:
 
   # Cross-platform shellcheck: catches macOS-only assumptions in shell scripts
   # (t1748: Linux/WSL2 platform support)
+  # GH#36686: no hosted macOS leg. Hosted macOS capacity outages blocked every
+  # merge while the macOS leg was required, and its unique coverage is
+  # reproducible without a Mac: the Bash 3.2 parse runs below in a
+  # digest-pinned bash:3.2 container (3.2.57, the macOS /bin/bash release) and
+  # locally in pre-commit-hook.sh on any Mac. macOS-only runtime tests run
+  # locally on macOS maintainers' machines.
   cross-platform-shellcheck:
     name: ShellCheck (${{ matrix.os }})
     needs: detect-scope
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
       fail-fast: false
 
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-    - name: Install ShellCheck (macOS)
-      if: runner.os == 'macOS' && needs.detect-scope.outputs.shell == 'true'
-      run: brew install shellcheck
 
     - name: ShellCheck (cross-platform)
       if: needs.detect-scope.outputs.shell == 'true'
@@ -158,36 +160,43 @@ jobs:
         echo "${failed} script(s) failed ShellCheck on ${{ matrix.os }}"
         exit 1
 
-    - name: Bash 3.2 syntax validation (macOS native)
-      if: runner.os == 'macOS' && needs.detect-scope.outputs.shell == 'true'
+    - name: Bash 3.2 syntax validation (pinned bash:3.2 container)
+      if: needs.detect-scope.outputs.shell == 'true'
+      env:
+        # Official bash:3.2 image (3.2.57, same release as macOS /bin/bash),
+        # pinned by index digest. Verified to reject the GH#19252 construct
+        # with the same error as macOS /bin/bash while Bash 5 accepts it.
+        BASH32_IMAGE: bash:3.2@sha256:b6252c62fc86114f93f02104a486c71e6569371d95950ea7479a2ffd6b47f16a
       run: |
-        # GH#19252: The macOS-shipped /bin/bash (3.2) parser rejects constructs
+        # GH#19252: the macOS-shipped /bin/bash (3.2) parser rejects constructs
         # that Bash 5 accepts silently — most notably heredoc-inside-$() like
-        # var=$(cat <<EOF ... EOF). This step catches them BEFORE merge.
-        # /bin/bash -n is a parse-only check (no execution), so it's safe and fast.
-        echo "Running /bin/bash (3.2) syntax check on all shell scripts..."
+        # var=$(cat <<EOF ... EOF). bash -n is parse-only (no execution).
+        echo "Running Bash 3.2 syntax check on all shell scripts..."
         source .agents/scripts/lint-file-discovery.sh
         lint_shell_files
-        errors=0
-        while IFS= read -r file; do
-          [ -n "$file" ] || continue
-          # Use if-condition to prevent set -e (GH Actions default) from
-          # aborting the loop on the first syntax error (CodeRabbit #19276).
-          if ! result=$(/bin/bash -n "$file" 2>&1); then
-            echo "FAIL $file"
-            echo "$result"
-            errors=$((errors + 1))
-          fi
-        done <<< "$LINT_SH_FILES"
-        if [ "$errors" -gt 0 ]; then
-          echo ""
-          echo "::error::$errors script(s) have Bash 3.2 syntax errors."
-          echo "::error::macOS launchd invokes scripts via /bin/bash (3.2)."
-          echo "::error::Common cause: heredoc inside \$() — use quoted string assignment instead."
-          echo "::error::Reference: .agents/reference/bash-compat.md"
-          exit 1
+        report="${RUNNER_TEMP}/bash32-parse.txt"
+        # The loop runs inside the container under Bash 3.2 itself; the
+        # if-condition keeps one parse failure from aborting the loop.
+        if printf '%s\n' "$LINT_SH_FILES" | docker run --rm -i -v "$PWD:/w:ro" -w /w "$BASH32_IMAGE" \
+          bash -c 'errors=0
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              if ! out=$(bash -n "$f" 2>&1); then
+                echo "FAIL $f"; echo "$out"; errors=$((errors + 1))
+              fi
+            done
+            echo "errors=$errors"
+            [ "$errors" -eq 0 ]' > "$report" 2>&1; then
+          echo "All shell scripts pass Bash 3.2 syntax check."
+          exit 0
         fi
-        echo "All shell scripts pass /bin/bash (3.2) syntax check."
+        cat "$report"
+        echo ""
+        echo "::error::Shell scripts have Bash 3.2 syntax errors (or the bash:3.2 container failed; see above)."
+        echo "::error::macOS launchd invokes scripts via /bin/bash (3.2)."
+        echo "::error::Common cause: heredoc inside \$() — use quoted string assignment instead."
+        echo "::error::Reference: .agents/reference/bash-compat.md"
+        exit 1
 
     - name: Platform detection smoke test
       if: needs.detect-scope.outputs.shell == 'true'
@@ -195,10 +204,6 @@ jobs:
         echo "Testing platform-detect.sh on ${{ matrix.os }}..."
         bash .agents/scripts/platform-detect.sh
         echo "Platform detection: OK"
-
-    - name: Model replay verifier boundary (macOS)
-      if: runner.os == 'macOS' && needs.detect-scope.outputs.shell == 'true'
-      run: node .agents/scripts/tests/test-model-replay-benchmark.mjs
 
   model-replay-linux:
     # Ubuntu 24.04 hosted runners deny Bubblewrap's network-namespace setup
@@ -448,8 +453,8 @@ jobs:
         echo "✅ All JSON files valid"
 
     # GH#33182: no full-repository ShellCheck pass here. The identical
-    # `shellcheck -S error` gate over lint_shell_files runs once per OS in the
-    # cross-platform-shellcheck matrix (ShellCheck (macos-latest) is required).
+    # `shellcheck -S error` gate over lint_shell_files runs in the
+    # cross-platform-shellcheck job (ShellCheck (ubuntu-latest), GH#36686).
     # The former serial copy in this job took ~9 minutes and was the last
     # required check to finish on most PRs.
 
