@@ -40,7 +40,9 @@ def _git_locked(error: Exception) -> bool:
     raw = getattr(error, "stderr", None)
     stderr = (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw or "")).casefold()
     # Git appends arbitrary lock reasons after the primary lock diagnostic.
-    return bool(re.search(r"\bis locked\b|:locked\b", stderr.partition("\n")[0]))
+    diagnostic = stderr.partition("\n")[0]
+    lock_pattern = r"\bis locked\b|:locked\b|\bcannot (?:move|remove) a locked working tree\b"
+    return bool(re.search(lock_pattern, diagnostic))
 
 
 def _git_code(error: Exception) -> str:
