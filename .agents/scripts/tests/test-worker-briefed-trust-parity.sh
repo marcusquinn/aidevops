@@ -100,7 +100,8 @@ _pulse_is_trusted_issue_sync_pr() {
 
 expect_parity() {
 	local expected="$1" name="$2" deterministic=0 full_loop=0
-	_attempt_worker_briefed_auto_merge 100 owner/repo origin:worker false 42 || deterministic=$?
+	local linked_issue="${3-42}"
+	_attempt_worker_briefed_auto_merge 100 owner/repo origin:worker false "$linked_issue" || deterministic=$?
 	_merge_worker_briefed_trust_gate 100 owner/repo 1 || full_loop=$?
 	[[ "$deterministic" == "$expected" && "$full_loop" == "$expected" ]] || {
 		printf 'FAIL %s: deterministic=%s full-loop=%s\n' "$name" "$deterministic" "$full_loop" >&2
@@ -134,6 +135,15 @@ expect_parity 1 'closed non-closing reference denied'
 ISSUE_STATE=open
 ISSUE_LABELS='[{"name":"parent-task"}]'
 expect_parity 1 'non-closing parent reference denied'
+ISSUE_LABELS='[]'
+PR_BODY=$'Routine r004 scheduled content update\n\nRef #42'
+ISSUE_LABELS='[{"name":"routine-tracking"},{"name":"persistent"},{"name":"no-auto-dispatch"}]'
+expect_parity 0 'routine without a task issue allowed through maintainer tracking anchor'
+ISSUE_ASSOC=CONTRIBUTOR
+expect_parity 1 'routine tracking labels cannot authorize an untrusted anchor author'
+ISSUE_ASSOC=OWNER
+PR_BODY='Routine r004 scheduled content update; TODO.md SOP only'
+expect_parity 1 'routine entry without an anchor reference is not merge authority' ''
 ISSUE_LABELS='[]'
 PR_BODY='Resolves #42'
 ISSUE_ASSOC=CONTRIBUTOR
@@ -198,3 +208,43 @@ if _merge_worker_briefed_trust_gate 100 owner/repo 0 >/dev/null 2>&1; then
 	exit 1
 fi
 printf 'PASS existing exact-head Issue Sync exception retained; stale head denied\n'
+
+# Exercise the actual anchor creation path in a fresh shell (SCRIPT_DIR above is
+# readonly). Fixtures deny unexpected network calls, including label failures.
+bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'ANCHOR_TEST'
+set -euo pipefail
+source "$1/routine-log-helper.sh"
+FIXTURE_ROOT="$2"
+CRON_BASE="$FIXTURE_ROOT/cron"
+gh() {
+	local command="$1" endpoint="${2:-}"
+	case "$command:$endpoint" in
+	api:repos/owner/repo/labels/*) return 1 ;;
+	label:create) printf '%s\n' "$3" >>"$FIXTURE_ROOT/labels" ;;
+	*) printf 'Unexpected gh call: %s\n' "$*" >&2; return 1 ;;
+	esac
+	return 0
+}
+gh_create_issue() {
+	local args="$*" arg="" previous="" body_file=""
+	for arg in "$@"; do
+		[[ "$previous" != --body-file ]] || body_file="$arg"
+		previous="$arg"
+	done
+	[[ -f "$body_file" ]] || return 1
+	[[ "$args" == *'--label persistent'* && "$args" == *'--label no-auto-dispatch'* ]] || return 1
+	grep -q 'persistent tracking anchor' "$body_file" || return 1
+	printf 'https://github.com/owner/repo/issues/42\n'
+	return 0
+}
+cmd_create_issue r004 --repo owner/repo --title 'r004: Content update' >/dev/null
+[[ "$(_get_state_field r004 issue_number)" == 42 ]]
+[[ "$(wc -l <"$FIXTURE_ROOT/labels")" -eq 4 ]]
+printf 'PASS routine setup provisions labels and creates a persistent non-dispatchable anchor\n'
+gh() { return 1; }
+if _create_github_issue owner/repo 'r004: Content update' body >/dev/null 2>&1; then
+	printf 'FAIL label provisioning failure allowed issue creation\n' >&2
+	exit 1
+fi
+printf 'PASS label provisioning failure prevents anchor creation\n'
+ANCHOR_TEST

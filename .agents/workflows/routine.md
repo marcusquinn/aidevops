@@ -49,6 +49,23 @@ Pick or create a command that runs once for one target. Prefer deterministic hel
 /email-health-check --tenant client-a
 ```
 
+For a routine that produces PRs (including content PRs), provision one persistent
+tracking anchor during maintainer-led setup, before the first scheduled run:
+
+```bash
+routine-log-helper.sh create-issue r002 --repo owner/repo \
+  --title "r002: Monthly content calendar review" --schedule "monthly(1@09:00)" --type "agent:Content"
+```
+
+Use the returned issue number to write a literal standalone `Ref #N` line into
+the routine's nested TODO.md SOP and any separately scheduled `--prompt` or
+prompt file. Instruct each run to copy that line into its PR body. Do not leave
+`N` as a placeholder in the installed prompt. Keep the anchor open with
+`routine-tracking`, `persistent`, and `no-auto-dispatch` labels, without
+`parent-task`. See `.agents/reference/routines.md` → "Routine PR trust and tracking anchors"
+for trust requirements and migration of existing routines. Do not use `--admin`
+or remove `origin:worker` to work around a missing link.
+
 ### Step 3: Validate quality and safety
 
 Run ad hoc before scheduling through the canonical headless wrapper:

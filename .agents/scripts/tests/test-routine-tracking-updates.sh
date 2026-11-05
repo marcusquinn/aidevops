@@ -743,6 +743,15 @@ test_routine_issue_creation_includes_tracking_label() {
 	# shellcheck source=/dev/null
 	source "$ROUTINE_LOG_HELPER_SH" help >/dev/null
 
+	# Existing labels need no writes; never contact GitHub from this fixture.
+	gh() {
+		local command="$1" endpoint="${2:-}"
+		if [[ "$command" == api && "$endpoint" == repos/marcusquinn/aidevops/labels/* ]]; then
+			return 0
+		fi
+		return 1
+	}
+
 	gh_create_issue() {
 		printf '%q ' "$@" >"$create_log"
 		printf '%s\n' "https://github.com/marcusquinn/aidevops/issues/4242"
@@ -754,7 +763,9 @@ test_routine_issue_creation_includes_tracking_label() {
 	create_args=$(<"$create_log")
 	if [[ "$issue_number" != "4242" ]] ||
 		[[ "$create_args" != *"--label routines"* ]] ||
-		[[ "$create_args" != *"--label routine-tracking"* ]]; then
+		[[ "$create_args" != *"--label routine-tracking"* ]] ||
+		[[ "$create_args" != *"--label persistent"* ]] ||
+		[[ "$create_args" != *"--label no-auto-dispatch"* ]]; then
 		print_result "routine issue creation includes tracking labels" 1 \
 			"issue=${issue_number}; args=${create_args}"
 		return 0

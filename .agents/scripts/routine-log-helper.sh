@@ -402,6 +402,11 @@ _build_issue_body() {
 | Streak | ${streak_label} |
 | Total cost | \$${total_cost} |
 
+This is the persistent tracking anchor for routine \`${routine_id}\` in TODO.md,
+not a one-off implementation task. Keep it open. Routine PRs must reference this
+issue with a standalone \`Ref #N\` line (using this issue's number), never a
+closing keyword. The maintainer-authored routine SOP defines the work.
+
 ### Latest Period (${p_start} — ${p_end})
 ${p_successes}/${p_total} runs succeeded. Total cost: \$${p_cost}. Avg duration: ${p_avg_formatted}.
 
@@ -993,6 +998,23 @@ _parse_create_issue_args() {
 	return 0
 }
 
+# Provision tracking labels even in repositories that never ran routine logging.
+# Existing label metadata is left unchanged. API/creation failures fail closed.
+_ensure_tracking_labels() {
+	local repo_slug="$1"
+	local label=""
+	for label in routines routine-tracking persistent no-auto-dispatch; do
+		if ! gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null; then
+			if ! gh label create "$label" --repo "$repo_slug" --color BFD4F2 \
+				--description "Routine tracking lifecycle: ${label}" >/dev/null 2>&1; then
+				# Another setup may have created it concurrently.
+				gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null || return 1
+			fi
+		fi
+	done
+	return 0
+}
+
 # Create a GitHub issue and extract the issue number from the returned URL.
 # Args: repo_slug, title, body
 # Outputs the issue number to stdout. Returns 1 on failure.
@@ -1001,13 +1023,19 @@ _create_github_issue() {
 	local title="$2"
 	local body="$3"
 
-	local issue_url
+	_ensure_tracking_labels "$repo_slug" || return 1
+	local issue_url body_file
+	body_file=$(mktemp) || return 1
+	printf '%s\n' "$body" >"$body_file"
 	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
-	if ! issue_url=$(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" \
-		--label "routines" --label "routine-tracking" 2>&1); then
+	if ! issue_url=$(gh_create_issue --repo "$repo_slug" --title "$title" --body-file "$body_file" \
+		--label "routines" --label "routine-tracking" \
+		--label "persistent" --label "no-auto-dispatch" 2>&1); then
+		rm -f "$body_file"
 		_log_error "Failed to create issue: ${issue_url}"
 		return 1
 	fi
+	rm -f "$body_file"
 
 	local issue_number
 	issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
