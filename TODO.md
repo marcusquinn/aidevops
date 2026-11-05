@@ -1878,7 +1878,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18870 Record request method and endpoint class on REST quota attempt rows #auto-dispatch #feat ref:GH#36803 pr:#36812 completed:2026-11-05
 
-- [ ] t18871 Credit same-login CI quota spend across tokens and log every CI sample decision #auto-dispatch #feat ref:GH#36804
+- [x] t18871 Credit same-login CI quota spend across tokens and log every CI sample decision #auto-dispatch #feat ref:GH#36804 pr:#36815 completed:2026-11-05
 
 ## In Progress
 
