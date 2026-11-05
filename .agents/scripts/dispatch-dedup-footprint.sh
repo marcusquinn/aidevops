@@ -856,7 +856,7 @@ _footprint_coordinator_log() {
 }
 
 #######################################
-# GH#33293: determine whether a claimed `no-auto-dispatch` coordination
+# GH#33293/GH#36817: determine whether any claimed
 # issue has evidence of active implementation. Without evidence, such an
 # issue is a coordination container — like `parent-task` — and must not
 # reserve its declared Files Scope indefinitely just because a maintainer
@@ -869,6 +869,8 @@ _footprint_coordinator_log() {
 #   2. An open PR that either closes this issue (standard closing
 #      keywords) or whose branch name encodes the issue number, matching
 #      the aidevops worktree-branch convention (".../auto-...-gh<N>").
+#   3. An interactive-claim stamp with an existing worktree_path directory.
+#      Unreadable or malformed stamps retain the reservation (fail closed).
 #
 # Args: $1 = repo_slug, $2 = issue_number
 # Exit: 0 = evidence found (keep reserving); 1 = no evidence (skip, like
@@ -887,6 +889,19 @@ _footprint_claimed_coordinator_has_evidence() {
 			'select(.session_key == $key and (.status == "in-flight" or .status == "launched")) | .session_key' \
 			"$ledger_file" 2>/dev/null | sed -n '1p') || ledger_hit=""
 		[[ -n "$ledger_hit" ]] && return 0
+	fi
+
+	# Match interactive-session-helper.sh's stamp naming and JSON schema.
+	local stamp_file="${HOME}/.aidevops/.agent-workspace/interactive-claims/${repo_slug//\//-}-${issue_number}.json"
+	local stamp_worktree=""
+	if [[ -e "$stamp_file" || -L "$stamp_file" ]]; then
+		[[ -f "$stamp_file" && -r "$stamp_file" && ! -L "$stamp_file" ]] || return 0
+		stamp_worktree=$(jq -ers --arg slug "$repo_slug" --argjson issue "$issue_number" '
+			if length == 1 then .[0] else error("multiple stamps") end |
+			select(type == "object" and .slug == $slug and .issue == $issue) |
+			.worktree_path | select(type == "string" and length > 0)
+		' "$stamp_file" 2>/dev/null) || return 0
+		[[ -d "$stamp_worktree" ]] && return 0
 	fi
 
 	# Evidence 2 — an open PR linked to the issue (closing keyword in its
@@ -914,8 +929,8 @@ _footprint_claimed_coordinator_has_evidence() {
 # (GH#32977), so it is owned work even before the worker registers.
 # Parent-task issues are coordination containers, not worker
 # implementation claims, so their broad planning footprints do not block
-# worker-ready child dispatch. GH#33293: a claimed `no-auto-dispatch`
-# coordination issue is skipped the same way unless it carries evidence of
+# worker-ready child dispatch. GH#33293/GH#36817: any claimed
+# issue is skipped the same way unless it carries evidence of
 # active implementation (see _footprint_claimed_coordinator_has_evidence).
 #
 # Returns a newline-separated list of "file|issue_number" pairs.
@@ -951,7 +966,7 @@ _footprint_refresh_inflight_cache() {
 	local cache_data=""
 	local i=0
 	while [[ "$i" -lt "$issue_count" ]]; do
-		local num body is_parent_task is_no_auto_dispatch is_claimed paths
+		local num body is_parent_task is_claimed paths
 		num=$(printf '%s' "$all_inflight" | jq -r ".[$i].number // empty" 2>/dev/null)
 		body=$(printf '%s' "$all_inflight" | jq -r ".[$i].body // empty" 2>/dev/null)
 		is_parent_task=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"parent-task\")" 2>/dev/null) || is_parent_task="false"
@@ -960,12 +975,11 @@ _footprint_refresh_inflight_cache() {
 			continue
 		fi
 
-		# GH#33293: a claimed no-auto-dispatch coordination issue only
+		# GH#36817: any claimed issue only
 		# holds its footprint when there is evidence of active
 		# implementation; otherwise it is skipped like parent-task.
-		is_no_auto_dispatch=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"no-auto-dispatch\")" 2>/dev/null) || is_no_auto_dispatch="false"
 		is_claimed=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"status:claimed\")" 2>/dev/null) || is_claimed="false"
-		if [[ "$is_no_auto_dispatch" == "true" && "$is_claimed" == "true" ]] &&
+		if [[ "$is_claimed" == "true" ]] &&
 			[[ -n "$num" ]] && ! _footprint_claimed_coordinator_has_evidence "$repo_slug" "$num"; then
 			_footprint_coordinator_log "event=footprint_stale_coordinator issue=#${num} repo=${repo_slug}"
 			i=$((i + 1))

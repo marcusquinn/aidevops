@@ -403,6 +403,71 @@ else
 fi
 
 # =============================================================================
+# Test 11c — GH#36817: ordinary interactive claims need implementation evidence.
+# Exercise the dispatch overlap entry point, not just stamp parsing.
+# =============================================================================
+cat >"${COORD_BIN}/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+	printf '%s\n' "${MOCK_CLAIM_PRS:-[]}"
+elif [[ "$*" == *"--label status:claimed"* ]]; then
+	printf '%s\n' '[{"number":404,"body":"### Files Scope\n- `docs/interactive.md`","labels":[{"name":"status:claimed"},{"name":"origin:interactive"}]}]'
+else
+	printf '[]\n'
+fi
+MOCK_GH
+PATH="${COORD_BIN}:$PATH"
+LOGFILE="${TEST_ROOT}/claim-footprint.log"
+CLAIM_TEST_DIR="${HOME}/.aidevops/.agent-workspace/interactive-claims"
+mkdir -p "$CLAIM_TEST_DIR" "${TEST_ROOT}/live worktree"
+CLAIM_TEST_STAMP="${CLAIM_TEST_DIR}/test-repo-404.json"
+export AIDEVOPS_DISPATCH_LEDGER_DIR="${TEST_ROOT}/claim-ledger"
+mkdir -p "$AIDEVOPS_DISPATCH_LEDGER_DIR"
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
+interactive_body='### Files Scope
+- `docs/interactive.md`'
+for claim_case in absent unknown missing live branch ledger malformed wrong-type wrong-identity unreadable; do
+	expected_rc=0
+	export MOCK_CLAIM_PRS='[]'
+	rm -f "$CLAIM_TEST_STAMP" "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl"
+	case "$claim_case" in
+	absent) expected_rc=1 ;;
+	unknown | missing | live)
+		claim_worktree="unknown"
+		[[ "$claim_case" != "missing" ]] || claim_worktree="${TEST_ROOT}/removed-worktree"
+		[[ "$claim_case" != "live" ]] || claim_worktree="${TEST_ROOT}/live worktree"
+		jq -n --arg worktree "$claim_worktree" \
+			'{slug:"test/repo",issue:404,worktree_path:$worktree}' >"$CLAIM_TEST_STAMP"
+		[[ "$claim_case" == "live" ]] || expected_rc=1
+		;;
+	branch) export MOCK_CLAIM_PRS='[{"number":901,"headRefName":"feature/auto-gh404","body":""}]' ;;
+	ledger) printf '%s\n' '{"session_key":"issue-404","status":"in-flight"}' >"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" ;;
+	malformed) printf '%s\n' '{broken' >"$CLAIM_TEST_STAMP" ;;
+	wrong-type) printf '%s\n' '{"slug":"test/repo","issue":404,"worktree_path":42}' >"$CLAIM_TEST_STAMP" ;;
+	wrong-identity) printf '%s\n' '{"slug":"other/repo","issue":404,"worktree_path":"unknown"}' >"$CLAIM_TEST_STAMP" ;;
+	unreadable) ln -s "${TEST_ROOT}/unreadable-stamp" "$CLAIM_TEST_STAMP" ;;
+	esac
+	_FOOTPRINT_CACHE_REPO=""
+	_FOOTPRINT_CACHE_EPOCH=0
+	signal=""
+	overlap_rc=0
+	signal=$(_footprint_check_overlap "999" "test/repo" "$interactive_body") || overlap_rc=$?
+	if [[ "$overlap_rc" -eq "$expected_rc" ]]; then
+		print_result "interactive claim: ${claim_case} evidence gives overlap rc=${expected_rc}" 0
+	else
+		print_result "interactive claim: ${claim_case} evidence gives overlap rc=${expected_rc}" 1 "(rc=${overlap_rc}, signal=${signal})"
+	fi
+done
+if grep -q 'event=footprint_stale_coordinator issue=#404 repo=test/repo' "$LOGFILE"; then
+	print_result "interactive claim: stale reservation removal is logged" 0
+else
+	print_result "interactive claim: stale reservation removal is logged" 1
+fi
+rm -f "$CLAIM_TEST_STAMP" "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl"
+unset MOCK_CLAIM_PRS AIDEVOPS_DISPATCH_LEDGER_DIR
+PATH="$OLD_PATH"
+
+# =============================================================================
 # Test 12 — durable defer suppresses unchanged overlap across cycles
 # =============================================================================
 _FOOTPRINT_DEFER_STATE_DIR="${TEST_ROOT}/footprint-defers"
