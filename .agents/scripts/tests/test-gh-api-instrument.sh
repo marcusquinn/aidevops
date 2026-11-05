@@ -661,6 +661,67 @@ quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "
 assert_eq "reset-unknown costs stay separately labelled and cannot prove coverage" "1:1:null" \
 	"$(jq -r '[.missing_metadata_attempts,.same_credential_reset_unknown_cost,.accounted_fraction] | map(tostring) | join(":")' <<<"$quota_report")"
 
+# --- GH#36804: explicit saved login identities bridge tokens, not pools ------
+gh_clear_log
+quota_fixture 1 identity-base 4900 1 "$pool_a" 2000000000 100
+quota_fixture 123 identity-final 4895 1 "$pool_a" 2000000000 105
+ci_identity() {
+	local fingerprint="$1" login="$2" host="${3:-github.com}" pool="${4:-rest-core}"
+	jq -cn --arg fp "$fingerprint" --arg login "$login" --arg host "$host" --arg pool "$pool" \
+		'{event:"quota-ci-identity",auth_fingerprint:$fp,login:$login,host:$host,pool:$pool}' >>"$ci_fixture"
+	return 0
+}
+ci_decisions="$TMPDIR/ci-decisions.jsonl"
+: >"$ci_fixture"
+ci_sample "$pool_b" 2000000000 cross-token 101 103 2
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "reset alone never joins unrelated tokens" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+assert_eq "unmatched sample is audited" "unmatched_identity_or_reset" "$(jq -r '.reason' "$ci_decisions")"
+ci_identity "$pool_a" operator
+ci_identity "$pool_b" OPERATOR
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "saved same-login identities credit cross-token known costs" "2:0.6" \
+	"$(jq -r '[.attributed_ci_cost,.accounted_fraction] | join(":")' <<<"$quota_report")"
+assert_eq "every evidence row has one decision" "3" "$(jq -s 'length' "$ci_decisions")"
+assert_eq "credited decision explains cost" "credited:2" \
+	"$(jq -r 'select(.series) | .series[] | [.reason,.credited_cost] | join(":")' "$ci_decisions")"
+assert_eq "diagnostics contain no raw login or sample ID" "0" \
+	"$(jq -s '[.[] | tostring | select(test("operator|cross-token"; "i"))] | length' "$ci_decisions")"
+ci_identity "$pool_b" another-login
+ci_identity "$pool_b" operator
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "identity conflicts are sticky and cannot bridge tokens" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+for mismatch in login host pool; do
+	: >"$ci_fixture"
+	ci_sample "$pool_b" 2000000000 isolated 101 103 2
+	ci_identity "$pool_a" operator
+	case "$mismatch" in
+	login) ci_identity "$pool_b" other ;;
+	host) ci_identity "$pool_b" operator enterprise.example ;;
+	pool) ci_identity "$pool_b" operator github.com graphql ;;
+	esac
+	quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+	assert_eq "different $mismatch cannot establish shared quota identity" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+done
+: >"$ci_fixture"
+ci_identity "$pool_a" operator
+ci_identity "$pool_b" operator
+ci_sample "$pool_b" 2000000000 credited 101 103 2
+ci_sample "$pool_b" 2000000000 credited 101 103 2
+ci_sample "$pool_a" 2000000000 overlapping 102 103 1
+ci_sample "$pool_b" 2000000000 locally-covered 104 105 1
+ci_sample "$pool_b" 2000000000 outside-observation 99 100 1
+ci_sample "$pool_b" 2000000000 conflicting 100 101 1
+ci_sample "$pool_b" 2000000000 conflicting 100 102 2
+printf '%s\n' 'not JSON secret-must-not-leak' '{"event":"quota-ci-sample"}' >>"$ci_fixture"
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "cross-token overlap never counts twice" "2" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+assert_eq "all rows including malformed and conflicting copies are audited" "11" "$(jq -s 'length' "$ci_decisions")"
+assert_eq "duplicate and all conflicting copies are explained" "1:2:2" \
+	"$(jq -sr '[([.[] | select(.reason == "duplicate")] | length),([.[] | select(.reason == "conflicting_id")] | length),([.[] | select(.reason == "invalid_sample")] | length)] | join(":")' "$ci_decisions")"
+assert_eq "coverage decisions distinguish rejection and overlap" "credited:locally_covered:outside_observed_interval:overlapping_ci" \
+	"$(jq -sr '[.[] | .series[]? | .reason] | sort | join(":")' "$ci_decisions")"
+
 # --- Test 11: command arguments remain private and exit status is preserved --
 gh_clear_log
 gh_run_transport_attempt rest privacy-caller logical-private 1 0 -- true \
