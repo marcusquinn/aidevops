@@ -193,7 +193,7 @@ class InteractiveSubagentEscalator {
       tier,
       providerState,
       undefined,
-      this.context.resolveAvailability(),
+      this.availability(),
     );
     return model ? { model, tier } : null;
   }
@@ -257,13 +257,22 @@ class InteractiveSubagentEscalator {
     return this.completeEscalation(output, state);
   }
 
-  /** Retry a rejected child on connected candidates in its existing tier. */
+  availability() {
+    return this.context.resolveAvailability?.() || {};
+  }
+
+  /**
+   * GH#36698: after a definite pre-generation entitlement rejection, re-prompt
+   * the same child on the next connected candidate of its own tier, in routing
+   * table order and at most once per distinct candidate. Never substitutes a
+   * lower tier or a model outside the active routing table.
+   */
   async failoverTask(output, childID) {
     const rejected = this.lifecycle.takeEntitlementRejection(childID);
     const policy = this.context.policies.get(childID);
     if (!policy || policy.pinned || !policy.routedModel?.startsWith("openai/")
       || !rejected || (!toolFailed(output) && this.lifecycle.terminalEvidence(childID) !== "error")
-      || !isModelUnavailable(policy.routedModel, this.context.resolveAvailability().authSignature)) return null;
+      || !isModelUnavailable(policy.routedModel, this.availability().authSignature)) return null;
     if (this.sideEffects.get(childID)) {
       this.skippedForSideEffects(output);
       return null;
@@ -273,7 +282,8 @@ class InteractiveSubagentEscalator {
     if (!child.available || !providerState) return null;
     const routing = policy.armRouting || this.context.modelRouting;
     const requested = policy.routedModel;
-    const candidates = routingCandidates(routing, policy.effort);
+    const tier = policy.effort;
+    const candidates = routingCandidates(routing, tier);
     const start = candidates.indexOf(requested);
     if (start < 0) return null;
     const rejectedModels = [requested];
@@ -281,10 +291,17 @@ class InteractiveSubagentEscalator {
     for (const model of candidates.slice(start + 1)) {
       if (attempted.has(model)) continue;
       attempted.add(model);
-      const route = { tiers: { [policy.effort]: { models: [model] } } };
-      if (!selectConnectedRoutingCandidate(route, policy.effort, providerState, undefined, this.context.resolveAvailability())) continue;
-      console.error(`[aidevops] requested=${requested} rejected=${rejectedModels.join(",")} next=${model}`);
-      this.prepareRoute(policy, policy.effort, model);
+      // Already rejected for this auth inside the TTL: skip without a request.
+      if (isModelUnavailable(model, this.availability().authSignature)) {
+        rejectedModels.push(model);
+        continue;
+      }
+      const route = { tiers: { [tier]: { models: [model] } } };
+      if (!selectConnectedRoutingCandidate(route, tier, providerState, undefined, this.availability())) continue;
+      console.error(`[aidevops] entitlement failover tier=${tier} requested=${requested} rejected=${rejectedModels.join(",")} next=${model}`);
+      this.prepareRoute(policy, tier, model);
+      policy.reason = "entitlement_failover";
+      policy.escalated = false;
       let response;
       try {
         response = await this.promptNextTier(childID, child.session, model,
@@ -297,21 +314,22 @@ class InteractiveSubagentEscalator {
       if (!responseError(response) && !response?.data?.info?.error) {
         const text = responseText(response);
         if (!text) return null;
+        const failover = { tier, requested, rejected: [...rejectedModels], model };
         output.output = text;
-        output.metadata = { ...output.metadata, status: "completed" };
+        output.metadata = { ...output.metadata, status: "completed", aidevopsRoutingFailover: failover };
         this.lifecycle.takeEntitlementRejection(childID);
         this.lifecycle.rememberStatus(childID, "completed");
-        return { model };
+        return failover;
       }
       if (!this.lifecycle.takeEntitlementRejection(childID)) return null;
-      if (!isModelUnavailable(model, this.context.resolveAvailability().authSignature)) return null;
+      if (!isModelUnavailable(model, this.availability().authSignature)) return null;
       rejectedModels.push(model);
       if (this.sideEffects.get(childID)) {
         this.skippedForSideEffects(output);
         return null;
       }
     }
-    const message = `[aidevops] No available ${policy.effort} model: requested=${requested} rejected=${rejectedModels.join(",")}; check provider access or routing configuration.`;
+    const message = `[aidevops] No available ${tier} model: requested=${requested} rejected=${rejectedModels.join(",")}; check provider access or routing configuration.`;
     console.error(message);
     output.output = message;
     return null;

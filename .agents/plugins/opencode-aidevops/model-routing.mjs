@@ -137,7 +137,8 @@ export function selectConnectedRoutingCandidate(routing, tier, providerState, po
   );
 
   for (const candidate of routingCandidates(routing, tier)) {
-    if (isModelUnavailable(candidate, availability.authSignature)) continue;
+    // GH#36698: skip a model with a live entitlement rejection for this auth.
+    if (isModelUnavailable(candidate, availability?.authSignature)) continue;
     const { providerID, modelID } = routingModelIdentity(candidate);
     if (policy?.bound && !isLocalProvider(policy, providerID)) continue;
     const provider = providers.get(providerID);

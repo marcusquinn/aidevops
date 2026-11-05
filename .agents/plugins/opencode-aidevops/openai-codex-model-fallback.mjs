@@ -31,18 +31,18 @@ async function isModelRejection(response) {
   }
 }
 
-// Retry only a definite pre-generation model rejection, once, on the same
-// endpoint/account. Never retry SSE, transport, auth, quota or policy failures.
-export async function retryCodexModelRejection(response, input, init, send) {
+// Record a definite pre-generation model rejection for the request's OpenAI
+// auth and return the original response unchanged. Same-tier failover happens
+// at routing level (GH#36698), never by swapping in a hardcoded slug here.
+// SSE, transport, auth, quota and policy failures are neither recorded nor retried.
+export async function retryCodexModelRejection(response, input, init) {
   const { headersFrom, isCodexBackendRequest, safeToken } = await import("./openai-codex-request.mjs");
-  const { authSignatureFromHeaders, markModelUnavailable } = await import("./model-unavailability.mjs");
   if (!isCodexBackendRequest(input) || !await isModelRejection(response)) return response;
   // Read and parse the original body only after a definite model rejection.
   const original = await codexFallbackBody(input, init);
   if (!original) return response;
-  const headers = headersFrom(input, init);
-  const authSignature = authSignatureFromHeaders(headers);
-  markModelUnavailable(`openai/${original.model}`, authSignature);
-  console.error(`[aidevops] OpenAI provider: model unavailable requested=${safeToken(original.model)} auth=${safeToken(authSignature)}`);
+  const { authSignatureFromHeaders, markModelUnavailable } = await import("./model-unavailability.mjs");
+  markModelUnavailable(`openai/${original.model}`, authSignatureFromHeaders(headersFrom(input, init)));
+  console.error(`[aidevops] OpenAI provider: model unavailable for current auth requested=openai/${safeToken(original.model)}`);
   return response;
 }

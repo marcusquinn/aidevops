@@ -110,19 +110,26 @@ def emit(reason, provider_type, status, pattern):
     print("\t".join([reason, provider_type, status, "trusted_provider", pattern]))
 
 
+CODEX_ENTITLEMENT_TEXT = "is not supported when using codex with a chatgpt account"
+
+
+def structured_model_unavailable(record, details):
+    """GH#36698: a definite pre-generation entitlement rejection is model-scoped."""
+    if record["status"] not in (400, 404):
+        return False
+    try:
+        body = json.loads(record["body"])
+    except (ValueError, TypeError):
+        body = {}
+    error = body.get("error", body) if isinstance(body, dict) else {}
+    return (isinstance(error, dict) and error.get("code") == "model_not_found") or CODEX_ENTITLEMENT_TEXT in details
+
+
 def classify_structured(record):
     status = record["status"]
     details = f"{record['message']}\n{record['body']}".lower()
-    if status in (400, 404):
-        try:
-            body = json.loads(record["body"])
-        except (ValueError, TypeError):
-            body = {}
-        error = body.get("error", body) if isinstance(body, dict) else {}
-        if (isinstance(error, dict) and error.get("code") == "model_not_found") or (
-            "is not supported when using codex with a chatgpt account" in details
-        ):
-            return "model_unavailable", "model_unavailable", str(status), "structured_api_error|model_unavailable"
+    if structured_model_unavailable(record, details):
+        return "model_unavailable", "model_unavailable", str(status), "structured_api_error|model_unavailable"
     gateway_denied = status == 403 and (
         record["body_kind"] == "html" or any(token in details for token in ("gateway", "proxy"))
     )
@@ -142,7 +149,9 @@ def classify_plaintext(text):
         "insufficient_quota", "insufficient quota", "quota_exceeded", "quota exceeded",
         "exceeded your current quota", "credit_exhausted", "credit exhausted", "exhausted your credit",
     )
-    if any(token in text for token in quota):
+    if CODEX_ENTITLEMENT_TEXT in text:
+        result = "model_unavailable", "model_unavailable", "400", "trusted_model_unavailable|codex_entitlement"
+    elif any(token in text for token in quota):
         result = "quota_exceeded", "quota_exceeded", "429", "trusted_quota|insufficient_quota|quota_exceeded|credit_exhausted"
     elif any(token in text for token in ("rate limit", "rate_limit", "too many requests")) or re.search(r"\b429\b", text):
         result = "rate_limit", "rate_limit", "429", "trusted_rate_limit|429|too_many_requests"

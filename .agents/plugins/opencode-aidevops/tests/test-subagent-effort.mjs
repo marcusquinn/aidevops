@@ -608,6 +608,40 @@ test("interactive routing checks the current account rather than the last reject
   }
 });
 
+test("routing fails with the rejected same-tier models instead of a lower tier", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "routing-exhausted-"));
+  const previous = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = root;
+  mkdirSync(join(root, "opencode"));
+  writeFileSync(join(root, "opencode", "auth.json"), JSON.stringify({ openai: { type: "oauth", access: "token-x" } }));
+  const signature = authSignatureFromHeaders({ authorization: "Bearer token-x" });
+  t.after(() => {
+    if (previous === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = previous;
+    clearModelUnavailable("openai/sol", signature);
+    clearModelUnavailable("openai/terra", signature);
+    rmSync(root, { recursive: true, force: true });
+  });
+  const client = {
+    provider: { list: async () => ({ data: { connected: ["openai"], all: [
+      { id: "openai", models: { sol: { id: "sol" }, terra: { id: "terra" }, luna: { id: "luna" } } },
+    ] } }) },
+    session: { get: async ({ path }) => ({ data: { id: path.id, parentID: "parent", agent: "general" } }) },
+  };
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: { tiers: { simple: { models: ["openai/luna"] }, standard: { models: ["openai/sol", "openai/terra"] } } },
+    agentRoutingState: { tiers: new Map([["general", "standard"]]), pinned: new Set() },
+  });
+  markModelUnavailable("openai/sol", signature);
+  markModelUnavailable("openai/terra", signature);
+  const message = { sessionID: "child-exhausted", agent: "general" };
+  await assert.rejects(
+    hooks.chatMessage({}, { message, parts: [{ type: "text", text: "inspect" }] }),
+    /'standard' routing: requested=openai\/sol rejected=openai\/sol,openai\/terra/,
+  );
+  assert.equal(message.model, undefined);
+});
+
 test("opted-in general child uses its stable arm and records the parent decision", async () => {
   const { subagentArm } = await import("../subagent-ab.mjs");
   const arms = ["openai", "anthropic"].map((name) => ({ name, tiers: {

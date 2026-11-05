@@ -8,6 +8,7 @@ import {
   nextRoutingTier,
   selectConnectedRoutingCandidate,
 } from "./model-routing.mjs";
+import { isModelUnavailable } from "./model-unavailability.mjs";
 import { loadDelegatedDomainKnowledge } from "./agent-loader.mjs";
 import { SPECIALIST_ADVISOR, validateSpecialistRequest } from "./specialist-advisor.mjs";
 import { loadChildSessionWithParent, routeCreativeMessage } from "./subagent-parent-routing.mjs";
@@ -75,15 +76,23 @@ async function applyConnectedRoutingModel(context, route, message, policy) {
     return;
   }
   const routing = policy.armRouting || context.modelRouting;
+  const availability = context.resolveAvailability?.() || {};
   const routedModel = selectConnectedRoutingCandidate(
     routing,
     route.effort,
     providerState,
     undefined,
-    context.resolveAvailability(),
+    availability,
   );
   if (!routedModel) {
-    throw new Error(`[aidevops] No connected model is available for '${route.effort}' routing`);
+    // GH#36698: name same-tier models rejected for the current auth so the
+    // failure is actionable; never substitute a lower tier.
+    const candidates = routingCandidates(routing, route.effort);
+    const rejected = candidates.filter((candidate) => isModelUnavailable(candidate, availability.authSignature));
+    const detail = rejected.length
+      ? `: requested=${candidates[0]} rejected=${rejected.join(",")} (entitlement rejected for current auth; retried after expiry or re-login)`
+      : "";
+    throw new Error(`[aidevops] No connected model is available for '${route.effort}' routing${detail}`);
   }
   message.model = routingModelIdentity(routedModel);
   policy.routedModel = routedModel;
