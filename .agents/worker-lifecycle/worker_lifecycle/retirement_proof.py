@@ -39,39 +39,47 @@ def _matching_plan(
     return planned
 
 
+def _read_archive_events(store: LifecycleRegistry, name: str) -> list[dict]:
+    """Return events from one checksum-verified archive; untrusted yields []."""
+    try:
+        with checked_directory(store.directory) as directory_fd:
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+            with os.fdopen(descriptor, "rb") as stream:
+                document = json.load(stream)
+        evidence = document["evidence"]
+        digest = hashlib.sha256(encode(evidence).encode("utf-8")).hexdigest()
+        return list(evidence["events"]) if digest == document["sha256"] else []
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+
+def _admission_identity(row: dict, generation: str) -> tuple[str, str, str] | None:
+    """Return (event_id, recorded_at, payload) for a matching open-admission row."""
+    try:
+        payload = json.loads(row["payload"])
+        if payload.get("type") != "open-admission" or payload.get("generation_id") != generation:
+            return None
+        return row["event_id"], row["recorded_at"], row["payload"]
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
 def _archived_admissions(store: LifecycleRegistry, generation: str) -> list[str]:
     """Recover open-admission times from checksum-verified event archives.
 
-    Earlier compaction could archive the admission event. Duplicate archive
-    files (rollback leftovers) are collapsed by event identity; a conflicting
-    duplicate or unreadable archive is ignored as untrusted evidence.
+    Duplicate archive files (rollback leftovers) are collapsed by event
+    identity; a conflicting duplicate makes the evidence untrusted.
     """
     found: dict[str, tuple[str, str]] = {}
-    for name in sorted(os.listdir(store.directory)):
-        if not (name.startswith("events-archive-") and name.endswith(".json")):
-            continue
-        try:
-            with checked_directory(store.directory) as directory_fd:
-                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
-                with os.fdopen(descriptor, "rb") as stream:
-                    document = json.load(stream)
-            evidence = document["evidence"]
-            if hashlib.sha256(encode(evidence).encode("utf-8")).hexdigest() != document["sha256"]:
+    names = sorted(os.listdir(store.directory))
+    archives = [n for n in names if n.startswith("events-archive-") and n.endswith(".json")]
+    for name in archives:
+        for row in _read_archive_events(store, name):
+            match = _admission_identity(row, generation)
+            if match is None:
                 continue
-            events = evidence["events"]
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-        for row in events:
-            try:
-                payload = json.loads(row["payload"])
-                if (payload.get("type") != "open-admission"
-                        or payload.get("generation_id") != generation):
-                    continue
-                identity = (row["recorded_at"], row["payload"])
-                if found.setdefault(row["event_id"], identity) != identity:
-                    return []  # Same event identity, different content.
-            except (KeyError, TypeError, ValueError, AttributeError):
-                continue
+            if found.setdefault(match[0], match[1:]) != match[1:]:
+                return []
     return [recorded for recorded, _ in found.values()]
 
 
