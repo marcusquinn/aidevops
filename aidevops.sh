@@ -2135,6 +2135,7 @@ _main_dispatch() {
 	launch-worker | launch_worker) cmd_launch_worker "$@" ;;
 	check-workflows | workflows) _dispatch_helper "$check_workflows_helper" "$check_workflows_helper" "$@" ;;
 	sync-workflows) _dispatch_helper "sync-workflows-helper.sh" "sync-workflows-helper.sh" "$@" ;;
+	sync-dependabot) _dispatch_helper "dependabot-aidevops-exclusion-helper.sh" "dependabot-aidevops-exclusion-helper.sh" "$@" ;;
 	metrics) _dispatch_helper "repo-metrics-helper.sh" "repo-metrics-helper.sh" "$@" ;;
 	badges) _main_badges "$@" ;;
 	security) _cmd_security "$@" ;;
