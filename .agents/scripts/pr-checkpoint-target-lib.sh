@@ -21,6 +21,45 @@ _PR_CHECKPOINT_REVISION_VALIDATOR="${_PCTL_SCRIPT_DIR}/pr-checkpoint-revision.py
 source "${_PCTL_SCRIPT_DIR}/pr-checkpoint-automatic-lib.sh"
 unset _PCTL_SCRIPT_DIR
 
+# GH#36529: comment hygiene can bump REST updated_at without editing the body.
+# Share this proof across discovery, approval templates and claim admission.
+# Only an explicit GraphQL lastEditedAt:null permits normalization; missing,
+# malformed or unavailable metadata and real edits retain the strict edit fence.
+# Args: $1=flat comments or slurped pages JSON. Preserve the input shape.
+_pr_checkpoint_normalise_hidden_unedited() {
+	local raw="$1" ids="" chunk="" resp="" clean="[]" id=""
+	local query="query(\$ids: [ID!]!) { nodes(ids: \$ids) { ... on IssueComment { id lastEditedAt } } }"
+	local -a args=()
+	# GH#36622: portable 50-ID chunking; jq 1.8 removed the internal _nwise.
+	ids=$(jq -r '[flatten[] | select((.updated_at // .created_at) != .created_at and
+		((.node_id // empty) | test("^[A-Za-z0-9_=-]+$"))) | .node_id] | unique | . as $a |
+		range(0; length; 50) | $a[.:.+50] | join(" ")' \
+		<<<"$raw" 2>/dev/null) || ids=""
+	if [[ -z "$ids" ]]; then
+		printf '%s' "$raw"
+		return 0
+	fi
+	while IFS= read -r chunk; do
+		[[ -n "$chunk" ]] || continue
+		args=()
+		for id in $chunk; do
+			args+=(-f "ids[]=${id}")
+		done
+		resp=$(gh api graphql -f query="$query" "${args[@]}" 2>/dev/null) || continue
+		clean=$(jq -c --argjson prev "$clean" \
+			'$prev + [(.data.nodes // [])[] | objects |
+			select(.id != null and has("lastEditedAt") and .lastEditedAt == null) | .id]' \
+			<<<"$resp" 2>/dev/null) || continue
+	done <<<"$ids"
+	jq -c --argjson clean "$clean" '
+		def normalise:
+			if .node_id as $n | $n != null and ($clean | index($n)) != null
+			then .updated_at = .created_at else . end;
+		if (.[0] | type) == "array" then map(map(normalise)) else map(normalise) end
+	' <<<"$raw" 2>/dev/null || printf '%s' "$raw"
+	return 0
+}
+
 # Resolve each ambiguous API author once, including paginated comment snapshots.
 _pr_checkpoint_trusted_logins() {
 	local comments="$1" repo="$2" flat=""
@@ -174,6 +213,9 @@ _pr_checkpoint_revised_target() {
 	local approval="" linked_issue="" pr_number="" normalized_issue="" normalized_pr=""
 	local status_prefix="status:" blocked_status="status:blocked"
 	local trusted_logins=""
+	# Claim producers reread raw REST comments before and after consensus. Apply
+	# the same verified-unedited proof used by discovery at this shared boundary.
+	comments_json=$(_pr_checkpoint_normalise_hidden_unedited "$comments_json") || return 2
 	# 2 denotes unavailable metadata; callers must not diagnose consumed approval.
 	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments_json" "$repo_slug") || return 2
 	# Keep complete metadata off exec argv (GH#35632), including the potentially
