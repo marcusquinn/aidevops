@@ -20,80 +20,41 @@ function runProviderScript(prefix, script) {
   });
 }
 
-test("installed guard falls back once only for definite Codex model rejections", () => {
+test("installed guard records definite Codex model rejections without swapping workload models", () => {
   runProviderScript("openai-model-fallback-", String.raw`
     import assert from "node:assert/strict";
-    import { zstdDecompressSync } from "node:zlib";
-    const logs = [];
-    console.error = (...args) => logs.push(args.join(" "));
-    const codex = "https://chatgpt.com/backend-api/codex/responses";
-    const parse = JSON.parse;
-    const requestText = Request.prototype.text;
-    for (const scenario of [
-      { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, retry: true },
-      { url: codex, status: 400, payload: { detail: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account." }, retry: true, request: true },
-      { url: codex, status: 404, payload: { error: { code: "model_not_found" } }, retry: true, final: 429 },
-      { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, retry: true, inherited: true },
-      { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, retry: true, secondReject: true, retries: 2, final: 200, model: "gpt-5.6-sol" },
-      { url: "https://api.openai.com/v1/responses", status: 400, payload: { error: { code: "model_not_found" } } },
-      { url: codex, status: 403, payload: { error: { code: "permission_denied" } } },
-      { url: codex, status: 400, payload: { error: { code: "invalid_request_error" } } },
-      { url: codex, status: 200, payload: { error: { code: "model_not_found" } } },
-      { url: codex, status: 400, payload: { error: { code: "model_not_found" } }, model: "gpt-6-sol", retry: true, final: 200 },
-    ]) {
-      const calls = [];
-      const controller = new AbortController();
-      const original = { model: scenario.model || "gpt-6.1-sol", input: "private prompt", stream: true, store: false };
-      const serialized = JSON.stringify(original);
-      let bodyParses = 0;
-      let bodyReads = 0;
-      JSON.parse = (text, ...args) => {
-        if (text === serialized) bodyParses++;
-        return parse(text, ...args);
-      };
-      Request.prototype.text = function () {
-        bodyReads++;
-        return requestText.call(this);
-      };
-      const headers = { authorization: "Bearer test-secret", "chatgpt-account-id": "test-account", "content-type": "application/json" };
-      globalThis.fetch = async (input, init) => {
-        if (calls.length === 0) {
-          assert.equal(bodyParses, 1, "only request preparation parses the body before first fetch");
-          assert.equal(bodyReads, scenario.request ? 1 : 0, "fallback must not read Request bodies before rejection");
-        }
-        const h = new Headers(init?.headers ?? input.headers);
-        const raw = init?.body ?? await input.text();
-        const body = JSON.parse(h.get("content-encoding") === "zstd" ? zstdDecompressSync(raw).toString() : raw);
-        calls.push(body);
-        assert.equal(h.get("authorization"), headers.authorization);
-        assert.equal(h.get("chatgpt-account-id"), headers["chatgpt-account-id"]);
-        assert.equal(init?.signal ?? input.signal, controller.signal);
-        const normalized = new Request(input, init);
-        assert.equal(normalized.method, "POST");
-        assert.equal(normalized.credentials, "omit");
-        const rejected = calls.length === 1 || (scenario.secondReject && calls.length === 2);
-        return Response.json(rejected ? scenario.payload : { ok: true }, { status: rejected ? scenario.status : scenario.final || 200 });
-      };
-      const { installOpenAIProviderFetchRotation } = await import("./openai-provider-auth.mjs?fallback=" + Math.random());
-      installOpenAIProviderFetchRotation({});
-      const options = { method: "POST", headers, body: JSON.stringify(original), signal: controller.signal, credentials: "omit" };
-      const init = scenario.inherited ? Object.create(options) : options;
-      const response = scenario.request
-        ? await fetch(new Request(scenario.url, init), { signal: controller.signal })
-        : await fetch(scenario.url, init);
-      JSON.parse = parse;
-      Request.prototype.text = requestText;
-      assert.equal(calls.length, scenario.retry ? (scenario.retries ? scenario.retries + 1 : 2) : 1);
-      assert.deepEqual(calls[0], original);
-      if (scenario.retry) {
-        const firstFallback = original.model === "gpt-6-sol" ? "gpt-6.1-sol" : "gpt-6-sol";
-        assert.deepEqual(calls[1], { ...original, model: original.model === "gpt-5.6-sol" ? "gpt-6.1-sol" : firstFallback });
-        if (scenario.retries === 2) assert.deepEqual(calls[2], { ...original, model: "gpt-6-sol" });
-      }
-      assert.equal(response.status, scenario.retry ? scenario.final || 200 : scenario.status);
-    }
-    assert.ok(logs.some(line => line.includes("retrying with ChatGPT-supported model=gpt-6-sol")));
-    assert.ok(logs.every(line => !line.includes("private prompt") && !line.includes("test-secret") && !line.includes("test-account")));
+    const { installOpenAIProviderFetchRotation } = await import("./openai-provider-auth.mjs?fallback=" + Math.random());
+    const { isModelUnavailable, authSignatureFromHeaders } = await import("./model-unavailability.mjs");
+    const headers = { authorization: "Bearer test-secret", "chatgpt-account-id": "test-account", "content-type": "application/json" };
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(JSON.stringify({ error: { code: "model_not_found" }, detail: "preserve this body" }), {
+        status: 400,
+        headers: { "content-type": "application/json", "x-review": "keep" },
+      });
+    };
+    installOpenAIProviderFetchRotation({});
+    const original = { model: "gpt-6.1-sol", input: "private prompt", stream: true, store: false };
+    const response = await fetch("https://chatgpt.com/backend-api/codex/responses", {
+      method: "POST", headers, body: JSON.stringify(original), credentials: "omit",
+    });
+    assert.equal(calls, 1);
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get("x-review"), "keep");
+    assert.deepEqual(await response.json(), { error: { code: "model_not_found" }, detail: "preserve this body" });
+    assert.equal(isModelUnavailable("openai/gpt-6.1-sol", authSignatureFromHeaders(new Headers(headers))), true);
+
+    calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(JSON.stringify({ error: { code: "permission_denied" } }), { status: 403 });
+    };
+    const permission = await fetch("https://chatgpt.com/backend-api/codex/responses", {
+      method: "POST", headers, body: JSON.stringify(original), credentials: "omit",
+    });
+    assert.equal(calls, 1);
+    assert.equal(permission.status, 403);
   `);
 });
 

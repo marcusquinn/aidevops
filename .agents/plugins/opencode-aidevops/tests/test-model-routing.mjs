@@ -25,6 +25,7 @@ import {
   createCompactionCredentialCheck,
   createCompactionResidencyWarning,
 } from "../compaction-routing.mjs";
+import { authSignatureFromHeaders, clearModelUnavailable, isModelUnavailable, markModelUnavailable } from "../model-unavailability.mjs";
 
 test("a model serving several tiers resolves by observed variant", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));
@@ -168,6 +169,35 @@ test("connected provider state selects the first usable same-tier candidate", ()
   assert.equal(
     selectConnectedRoutingCandidate(routing, "standard", providerState),
     "anthropic/fallback",
+  );
+});
+
+test("routing skips a model rejected for the active auth signature", () => {
+  const routing = {
+    tiers: {
+      simple: { models: [] },
+      standard: { models: ["openai/rejected", "openai/next"] },
+      thinking: { models: [] },
+    },
+  };
+  const providerState = {
+    connected: ["openai"],
+    all: [{ id: "openai", models: { rejected: { id: "rejected" }, next: { id: "next" } } }],
+  };
+  const signature = authSignatureFromHeaders(new Headers({ authorization: "Bearer synthetic", "chatgpt-account-id": "acct" }));
+  const now = Date.now();
+  markModelUnavailable("openai/rejected", signature, { ttlMs: 100, now });
+  assert.equal(isModelUnavailable("openai/rejected", signature, now + 99), true);
+  assert.equal(isModelUnavailable("openai/rejected", signature, now + 100), false);
+  markModelUnavailable("openai/rejected", signature, { ttlMs: 100, now });
+  assert.equal(
+    selectConnectedRoutingCandidate(routing, "standard", providerState, undefined, { authSignature: signature }),
+    "openai/next",
+  );
+  clearModelUnavailable("openai/rejected", signature);
+  assert.equal(
+    selectConnectedRoutingCandidate(routing, "standard", providerState, undefined, { authSignature: signature }),
+    "openai/rejected",
   );
 });
 
