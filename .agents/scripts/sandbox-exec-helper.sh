@@ -343,6 +343,107 @@ PY
 # Sandbox Execution
 # =============================================================================
 
+# Identities already appended to the current snapshot file (" pid:start "),
+# so each descendant is written once instead of once per poll tick.
+_SANDBOX_SNAPSHOT_SEEN=" "
+_SANDBOX_SNAPSHOT_SEEN_FILE=""
+# Fields set by _sandbox_read_proc_stat and _sandbox_child_state.
+_SANDBOX_STAT_STATE=""
+_SANDBOX_STAT_PGID=""
+_SANDBOX_STAT_START=""
+_SANDBOX_CHILD_STATE=""
+
+# Read /proc/<pid>/stat with shell builtins only (no fork). Sets
+# _SANDBOX_STAT_STATE, _SANDBOX_STAT_PGID and _SANDBOX_STAT_START (field 22,
+# the same identity value _sandbox_get_proc_starttime returns on Linux).
+# Returns 1 when the process is gone or its stat is unreadable.
+# Arguments: $1 - PID
+_sandbox_read_proc_stat() {
+	local rps_pid="${1:-}"
+	local rps_line=""
+	local -a rps_fields=()
+
+	_SANDBOX_STAT_STATE=""
+	_SANDBOX_STAT_PGID=""
+	_SANDBOX_STAT_START=""
+	{ IFS= read -r rps_line <"/proc/${rps_pid}/stat"; } 2>/dev/null || return 1
+	# comm (field 2) may contain spaces and parentheses; drop through the last ") ".
+	read -r -a rps_fields <<<"${rps_line##*) }"
+	_SANDBOX_STAT_STATE="${rps_fields[0]:-}"
+	_SANDBOX_STAT_PGID="${rps_fields[2]:-}"
+	_SANDBOX_STAT_START="${rps_fields[19]:-}"
+	[[ -n "$_SANDBOX_STAT_STATE" ]] || return 1
+	return 0
+}
+
+# Set _SANDBOX_CHILD_STATE to the process state, or empty when it is gone.
+# Linux reads /proc without forking; other platforms use ps.
+# Arguments: $1 - PID
+_sandbox_child_state() {
+	local cs_pid="${1:-}"
+
+	_SANDBOX_CHILD_STATE=""
+	if [[ -d /proc/self ]]; then
+		_sandbox_read_proc_stat "$cs_pid" && _SANDBOX_CHILD_STATE="$_SANDBOX_STAT_STATE"
+		return 0
+	fi
+	_SANDBOX_CHILD_STATE="$(ps -o stat= -p "$cs_pid" 2>/dev/null | tr -d '[:space:]')" || true
+	return 0
+}
+
+# Append one descendant identity unless it is already in the snapshot.
+# Arguments: $1 - snapshot file, $2 - PID, $3 - PGID, $4 - start identity
+_sandbox_snapshot_record() {
+	local rec_file="$1"
+	local rec_pid="$2"
+	local rec_pgid="$3"
+	local rec_start="$4"
+
+	[[ -n "$rec_start" ]] || return 0
+	case "$_SANDBOX_SNAPSHOT_SEEN" in
+	*" ${rec_pid}:${rec_start} "*) return 0 ;;
+	esac
+	_SANDBOX_SNAPSHOT_SEEN="${_SANDBOX_SNAPSHOT_SEEN}${rec_pid}:${rec_start} "
+	printf '%s\t%s\t%s\n' "$rec_pid" "$rec_pgid" "$rec_start" >>"$rec_file"
+	return 0
+}
+
+# Linux: walk only the root's subtree through /proc/<pid>/task/<tid>/children
+# (CONFIG_PROC_CHILDREN) using builtins. The cost depends on the subtree, not
+# on how many processes run on the host (GH#36843).
+# Arguments: $1 - root PID, $2 - snapshot file
+_sandbox_snapshot_descendants_proc() {
+	local sp_file="$2"
+	local sp_queue="$1"
+	local sp_next=""
+	local sp_pid=""
+	local sp_child=""
+	local sp_children_file=""
+	local sp_line=""
+	local sp_depth=0
+
+	while [[ -n "$sp_queue" && "$sp_depth" -lt 64 ]]; do
+		sp_next=""
+		for sp_pid in $sp_queue; do
+			for sp_children_file in "/proc/${sp_pid}/task/"*/children; do
+				sp_line=""
+				{ IFS= read -r sp_line <"$sp_children_file"; } 2>/dev/null || true
+				[[ -n "$sp_line" ]] && sp_next="${sp_next} ${sp_line}"
+			done
+		done
+		sp_queue=""
+		for sp_child in $sp_next; do
+			[[ "$sp_child" =~ ^[0-9]+$ ]] || continue
+			_sandbox_read_proc_stat "$sp_child" || continue
+			[[ "$_SANDBOX_STAT_STATE" == "Z" ]] && continue
+			_sandbox_snapshot_record "$sp_file" "$sp_child" "$_SANDBOX_STAT_PGID" "$_SANDBOX_STAT_START"
+			sp_queue="${sp_queue} ${sp_child}"
+		done
+		sp_depth=$((sp_depth + 1))
+	done
+	return 0
+}
+
 # Record descendant identities while the original parent still owns them.
 # Entries are append-only because a detached descendant may be reparented before
 # the next sample. Cleanup revalidates every PID against its start token.
@@ -356,9 +457,18 @@ _sandbox_snapshot_descendants() {
 	local snapshot_pid=""
 	local snapshot_ppid=""
 	local snapshot_pgid=""
-	local snapshot_token=""
 
 	[[ "$snapshot_root_pid" =~ ^[0-9]+$ && -n "$snapshot_file" ]] || return 0
+	if [[ "$_SANDBOX_SNAPSHOT_SEEN_FILE" != "$snapshot_file" ]]; then
+		_SANDBOX_SNAPSHOT_SEEN=" "
+		_SANDBOX_SNAPSHOT_SEEN_FILE="$snapshot_file"
+	fi
+	if [[ -r "/proc/$$/task/$$/children" ]]; then
+		_sandbox_snapshot_descendants_proc "$snapshot_root_pid" "$snapshot_file"
+		return 0
+	fi
+
+	# Fallback (macOS, or no CONFIG_PROC_CHILDREN): walk the full process table.
 	snapshot_rows="$(ps -axo pid=,ppid=,pgid= 2>/dev/null)" || return 0
 	while [[ "$snapshot_changed" == true ]]; do
 		snapshot_changed=false
@@ -382,8 +492,8 @@ _sandbox_snapshot_descendants() {
 		[[ "$snapshot_pid" =~ ^[0-9]+$ && "$snapshot_pid" != "$snapshot_root_pid" ]] || continue
 		case "$snapshot_wanted" in
 		*" ${snapshot_pid} "*)
-			snapshot_token="$(_sandbox_get_proc_starttime "$snapshot_pid")"
-			[[ -n "$snapshot_token" ]] && printf '%s\t%s\t%s\n' "$snapshot_pid" "$snapshot_pgid" "$snapshot_token" >>"$snapshot_file"
+			_sandbox_snapshot_record "$snapshot_file" "$snapshot_pid" "$snapshot_pgid" \
+				"$(_sandbox_get_proc_starttime "$snapshot_pid")"
 			;;
 		esac
 	done <<<"$snapshot_rows"
@@ -599,8 +709,9 @@ _sandbox_poll_child() {
 	local poll_state=""
 
 	while kill -0 "$poll_child_pid" 2>/dev/null; do
-		poll_state="$(ps -o stat= -p "$poll_child_pid" 2>/dev/null | tr -d '[:space:]')" || true
-		# The child can disappear between kill -0 and ps (GH#33671).
+		_sandbox_child_state "$poll_child_pid"
+		poll_state="$_SANDBOX_CHILD_STATE"
+		# The child can disappear between kill -0 and the state read (GH#33671).
 		if [[ -z "$poll_state" || "$poll_state" == *Z* ]]; then
 			return 0
 		fi
