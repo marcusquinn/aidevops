@@ -15,6 +15,7 @@ import {
 } from "./model-routing-variant.mjs";
 import { activeLocalOnlyPolicy, isLocalProvider } from "./local-only-policy.mjs";
 import { providerHasUsableCredentials } from "./provider-credentials.mjs";
+import { isModelUnavailable } from "./model-unavailability.mjs";
 
 export { providerHasUsableCredentials };
 
@@ -127,27 +128,34 @@ export function routingModelIdentity(model) {
 // no local candidate yields "", which callers treat as no route (child
 // routing throws, escalation and browser delegation are skipped). The
 // chat.params egress gate still refuses any non-local current model.
-export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy()) {
-  const connected = new Set(Array.isArray(providerState?.connected) ? providerState.connected : []);
-  const providers = new Map(
-    (Array.isArray(providerState?.all) ? providerState.all : [])
-      .filter((provider) => provider?.id)
-      .map((provider) => [provider.id, provider]),
-  );
+function providerRegistersModel(provider, modelID) {
+  const models = provider.models && typeof provider.models === "object" ? provider.models : {};
+  return Object.entries(models).some(([key, value]) => key === modelID || value?.id === modelID);
+}
 
-  for (const candidate of routingCandidates(routing, tier)) {
-    const { providerID, modelID } = routingModelIdentity(candidate);
-    if (policy?.bound && !isLocalProvider(policy, providerID)) continue;
-    const provider = providers.get(providerID);
-    // Connected is not authenticated: skip credential-less config providers (GH#35762).
-    if (!provider || !connected.has(providerID) || !providerHasUsableCredentials(provider)) continue;
-    const models = provider.models && typeof provider.models === "object" ? provider.models : {};
-    const registered = Object.entries(models).some(
-      ([key, value]) => key === modelID || value?.id === modelID,
-    );
-    if (registered) return candidate;
-  }
-  return "";
+function candidateRoutable(candidate, scope) {
+  // GH#36698: skip a model with a live entitlement rejection for this auth.
+  if (isModelUnavailable(candidate, scope.authSignature)) return false;
+  const { providerID, modelID } = routingModelIdentity(candidate);
+  if (scope.policy?.bound && !isLocalProvider(scope.policy, providerID)) return false;
+  const provider = scope.providers.get(providerID);
+  // Connected is not authenticated: skip credential-less config providers (GH#35762).
+  if (!provider || !scope.connected.has(providerID) || !providerHasUsableCredentials(provider)) return false;
+  return providerRegistersModel(provider, modelID);
+}
+
+export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy(), availability = {}) {
+  const scope = {
+    authSignature: availability?.authSignature,
+    connected: new Set(Array.isArray(providerState?.connected) ? providerState.connected : []),
+    policy,
+    providers: new Map(
+      (Array.isArray(providerState?.all) ? providerState.all : [])
+        .filter((provider) => provider?.id)
+        .map((provider) => [provider.id, provider]),
+    ),
+  };
+  return routingCandidates(routing, tier).find((candidate) => candidateRoutable(candidate, scope)) || "";
 }
 
 export function routingPrimary(routing, tier) {
