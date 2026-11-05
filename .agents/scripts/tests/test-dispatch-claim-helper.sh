@@ -2194,6 +2194,43 @@ test_claim_winner_persisted_expiry() {
 	return 0
 }
 
+# GH#36771: slow consensus must renew a mostly-consumed winning lease before
+# handoff, never renew an expired one, and fail closed when renewal is denied.
+test_claim_handoff_lease_after_slow_consensus() {
+	local result=0
+	(
+		local implementation="" calls="" rc=0
+		implementation=$(awk '/^_ensure_claim_handoff_lease\(\) \{/,/^}$/ { print }' "$CLAIM_HELPER")
+		eval "$implementation"
+		DISPATCH_CLAIM_ORPHAN_GRACE=120
+		LEASE_PHASE_PRELAUNCH=prelaunch
+		_now_epoch() { printf '1000'; }
+		cmd_transition() { calls+="$*;"; return "${TRANSITION_RC:-0}"; }
+		# Ample remaining lease: no public renewal.
+		_ensure_claim_handoff_lease 42 owner/repo token 1100 2>/dev/null || return 1
+		[[ -z "$calls" ]] || return 1
+		# Legacy claim without expiry: unchanged.
+		_ensure_claim_handoff_lease 42 owner/repo token 0 2>/dev/null || return 1
+		[[ -z "$calls" ]] || return 1
+		# 12s left after a 78s final guard: renew once with the grace TTL.
+		_ensure_claim_handoff_lease 42 owner/repo token 1012 2>/dev/null || return 1
+		[[ "$calls" == "prelaunch 42 owner/repo token issue-42 120;" ]] || return 1
+		# Expired during consensus: never renewed or revived.
+		calls=""
+		_ensure_claim_handoff_lease 42 owner/repo token 999 2>/dev/null && return 1
+		[[ -z "$calls" ]] || return 1
+		# Denied renewal (owner/device/session/expiry checks) fails closed.
+		TRANSITION_RC=1
+		rc=0
+		_ensure_claim_handoff_lease 42 owner/repo token 1012 2>/dev/null || rc=$?
+		[[ "$rc" == 1 ]] || return 1
+		_ensure_claim_handoff_lease 42 owner/repo token not-a-number 2>/dev/null && return 1
+		return 0
+	) || result=1
+	print_result "slow consensus renews a mostly-consumed won lease and fails closed when expired" "$result"
+	return 0
+}
+
 #######################################
 # Main
 #######################################
@@ -2238,6 +2275,7 @@ main() {
 	test_help_exits_zero
 	test_check_and_claim_ceremony
 	test_claim_winner_persisted_expiry
+	test_claim_handoff_lease_after_slow_consensus
 	test_claim_missing_args
 	test_claim_non_numeric_issue
 	test_check_missing_args

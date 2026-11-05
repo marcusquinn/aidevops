@@ -1354,6 +1354,8 @@ _fetch_claims_until_own_visible() {
 #   4. If this runner's claim is the oldest active claim → won
 #   5. If another runner's claim is older → remove our losing claim and back off;
 #      record close-window contention only in runner logs.
+#   6. A winner whose lease was mostly consumed by slow consensus renews it
+#      once before handoff (GH#36771); an expired lease fails closed.
 #
 # Args:
 #   $1 = issue number
@@ -1434,6 +1436,54 @@ cmd_claim() {
 			return 1
 		fi
 	fi
+	local won_expires_at=""
+	won_expires_at=$(printf '%s' "$claims" | jq -r '.[0].lease_expires_at // 0' 2>/dev/null) || won_expires_at=""
+	if ! _dch_timed handoff_lease _ensure_claim_handoff_lease "$issue_number" "$repo_slug" "$nonce" "$won_expires_at"; then
+		echo "CLAIM_ERROR: winning lease cannot cover the launch handoff — blocking dispatch (fail-closed)" >&2
+		return 2
+	fi
+	return 0
+}
+
+#######################################
+# GH#36771: keep a won prelaunch lease valid across the dispatcher handoff.
+# The initial lease starts at claim POST, but the consensus window, visibility
+# re-reads and the post-consensus assignment guard all consume it before the
+# dispatcher's first renewal. Observed slow guards left about 12s of a 120s
+# lease at CLAIM_WON, so the first renewal ~19s later saw an expired lease.
+# When less than half the grace remains, renew once through cmd_transition
+# (owner, device, session, token and expiry checks unchanged). An expired
+# lease is never renewed or revived; any failure fails closed.
+# Args: $1 issue number, $2 repo slug, $3 lease token (our nonce),
+#       $4 persisted lease expiry epoch (0 = legacy claim without expiry)
+# Returns: 0 when the lease covers the handoff, 1 otherwise
+#######################################
+_ensure_claim_handoff_lease() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local lease_token="$3"
+	local lease_expires_at="$4"
+	local grace="$DISPATCH_CLAIM_ORPHAN_GRACE" now_epoch="" remaining=0
+	[[ "$lease_expires_at" =~ ^[0-9]+$ ]] || return 1
+	[[ "$lease_expires_at" -gt 0 ]] || return 0
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=120
+	now_epoch=$(_now_epoch)
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 1
+	remaining=$((lease_expires_at - now_epoch))
+	if [[ "$remaining" -lt 0 ]]; then
+		printf 'CLAIM_ERROR: lease_expired_before_handoff issue=#%s expired_s=%s\n' \
+			"$issue_number" "$((0 - remaining))" >&2
+		return 1
+	fi
+	[[ "$remaining" -lt "$((grace / 2))" ]] || return 0
+	if ! cmd_transition "$LEASE_PHASE_PRELAUNCH" "$issue_number" "$repo_slug" \
+		"$lease_token" "issue-${issue_number}" "$grace"; then
+		printf 'CLAIM_ERROR: handoff_lease_renewal_failed issue=#%s remaining_s=%s\n' \
+			"$issue_number" "$remaining" >&2
+		return 1
+	fi
+	printf 'CLAIM_LEASE_RENEWED: issue=#%s remaining_s=%s ttl_s=%s\n' \
+		"$issue_number" "$remaining" "$grace" >&2
 	return 0
 }
 
@@ -2037,7 +2087,8 @@ Usage:
 Environment:
   DISPATCH_CLAIM_WINDOW    Consensus window in seconds (default: 8)
   DISPATCH_CLAIM_MAX_AGE   Max age of claim comments in seconds (default: 1800 = 30 min)
-  DISPATCH_CLAIM_ORPHAN_GRACE  Claim-only pre-launch grace in seconds (default: 120)
+  DISPATCH_CLAIM_ORPHAN_GRACE  Claim-only pre-launch grace and initial lease in seconds
+                           (default: 120); a winner with under half left renews once
   DISPATCH_CLAIM_POST_ATTEMPTS  Claim comment POST attempts (default: 3)
   DISPATCH_CLAIM_POST_RETRY_DELAY  Seconds between claim POST attempts (default: 2)
 
