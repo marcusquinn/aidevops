@@ -1403,14 +1403,6 @@ _full_loop_verify_aidevops_release_deploy() {
 	return 0
 }
 
-_full_loop_verify_cleanup_audit() {
-	local removed_worktree="$1"
-	local cleanup_log="${AIDEVOPS_CLEANUP_LOG:-${HOME}/.aidevops/logs/cleanup_worktrees.log}"
-	[[ -f "$cleanup_log" ]] || return 1
-	grep -Fq "worktree-removed: ${removed_worktree} —" "$cleanup_log"
-	return $?
-}
-
 cmd_complete_after_cleanup() {
 	local pr_number="${1:-}"
 	local removed_worktree="${2:-}"
@@ -1428,10 +1420,6 @@ cmd_complete_after_cleanup() {
 		print_error "LIFECYCLE_STATE=CLEANUP_PENDING worktree=${removed_worktree}"
 		return 1
 	fi
-	_full_loop_verify_cleanup_audit "$removed_worktree" || {
-		print_error "Completion blocked: no removal audit evidence for ${removed_worktree}"
-		return 1
-	}
 	declare -F full_loop_mark_cleanup_cleaned_for_identity >/dev/null 2>&1 || {
 		print_error "Completion blocked: exact cleanup-receipt verifier is unavailable"
 		return 1

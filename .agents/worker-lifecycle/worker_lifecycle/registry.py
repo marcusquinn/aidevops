@@ -138,6 +138,13 @@ def argument_parser() -> argparse.ArgumentParser:
     enrolled_only.add_argument("--repos-config", required=True, type=Path)
     enrolled_only.add_argument("--output-root", required=True, type=Path)
     enrolled_only.add_argument("--confirm", action="store_true")
+    proof = commands.add_parser(
+        "verify-retirement", help="verify dated cleanup-receipt evidence; never delete",
+    )
+    proof.add_argument("--path", required=True, type=Path)
+    proof.add_argument("--repo", required=True)
+    proof.add_argument("--branch", required=True)
+    proof.add_argument("--receipt-created-at", required=True)
     for name in ("enroll", "resolve-generation"):
         enrollment = commands.add_parser(name, help="enroll or resolve a linked worktree; schema 2 required")
         enrollment.add_argument("--path", required=True, type=Path)
@@ -205,6 +212,12 @@ def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Ma
 
 
 def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation == "verify-retirement":
+        from .retirement_proof import verify_retirement
+
+        return verify_retirement(
+            store, args.path, args.repo, args.branch, args.receipt_created_at,
+        )
     if args.operation in {"compact", "raise-capacity"}:
         return (store.compact(age=args.min_age_seconds, apply=args.apply)
                 if args.operation == "compact"

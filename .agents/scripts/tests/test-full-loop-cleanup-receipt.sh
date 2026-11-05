@@ -598,6 +598,16 @@ printf 'PASS authorization-gap evidence remains detached from terminal cleanup r
 	"$TEST_GIT" -C "$marker_repo" commit -q -m seed
 	"$TEST_GIT" -C "$marker_repo" remote add origin git@github.com:example/repo.git
 	"$TEST_GIT" -C "$marker_repo" worktree add -q -b feature/marker "$marker_worktree"
+	# Enrollment is not deletion authority. The positive cleanup below uses
+	# explicit operator confirmation and verifies the real archive/receipt path.
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/marker-native-state"
+	lifecycle_entry="${SCRIPTS_DIR}/../worker-lifecycle/worker-registry.py"
+	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" init >/dev/null
+	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
+		enroll --path "$marker_worktree" >/dev/null
+	# Receipt timestamps have second precision; keep their enrollment ordering
+	# unambiguous instead of weakening the dated proof with a fuzzy time window.
+	sleep 1
 	# shellcheck source=../shared-constants.sh
 	source "${SCRIPT_DIR}/shared-constants.sh"
 	# shellcheck source=../full-loop-helper-merge.sh
@@ -699,14 +709,20 @@ printf 'PASS authorization-gap evidence remains detached from terminal cleanup r
 	[[ -d "$marker_worktree" ]]
 	"$TEST_GIT" -C "$marker_repo" worktree unlock "$marker_worktree"
 	export AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_ROOT}/marker-clean-archive"
-	if ! cmd_remove "$marker_worktree"; then
-		"$TEST_GIT" -C "$marker_worktree" status --short
-		printf 'FAIL finalized marker-only manual removal\n'
-		exit 1
-	fi
+	# No real network is required for this disposable repository's archive.
+	"$TEST_GIT" -C "$marker_repo" remote remove origin
+	jq -n --arg path "$marker_repo" \
+		'{initialized_repos:[{path:$path,slug:"example/repo"}]}' >"${TEST_ROOT}/marker-native-repos.json"
+	mkdir -p "${TEST_ROOT}/marker-native-archives"
+	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
+		retire-enrolled-only --path "$marker_worktree" --confirm \
+		--repos-config "${TEST_ROOT}/marker-native-repos.json" \
+		--output-root "${TEST_ROOT}/marker-native-archives" >/dev/null
 	[[ ! -e "$marker_worktree" ]]
+	[[ ! -f "$AIDEVOPS_CLEANUP_LOG" ]]
+	full_loop_mark_cleanup_cleaned_for_identity example/repo 106 "$marker_worktree"
 	jq -e '.resource_cleanup_state == "CLEANED" and .cleanup_lease.state == "released"' "$marker_receipt" >/dev/null
-	printf 'PASS finalized marker-only worktree removes without force and records durable cleanup\n'
+	printf 'PASS registry retirement archives the finalized tree and records cleanup without a legacy log\n'
 )
 
 # GH#33890: merge cleanup records a same-repository alias (local repair branch

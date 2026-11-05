@@ -1,0 +1,88 @@
+"""Verify completed retirement for a dated cleanup receipt; never retire a tree."""
+
+from datetime import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+
+from .retirement import _event, _event_id, _preserved
+from .storage import LifecycleRegistry, StoreConflict
+
+
+def _timestamp(value: str) -> datetime:
+    if not value.endswith("Z"):
+        raise ValueError("utc-receipt-timestamp-required")
+    return datetime.fromisoformat(value[:-1] + "+00:00")
+
+
+def verify_retirement(
+    store: LifecycleRegistry, path: Path, repository: str, branch: str,
+    receipt_created_at: str,
+) -> dict[str, object]:
+    """Bind a terminal journal event and verified archive to the receipt identity.
+
+    A missing directory alone is not evidence. A later enrollment cannot supply
+    proof for an older receipt, and a replacement or remaining admission denies
+    completion. Archive verification uses the existing preservation contract.
+    """
+    created = _timestamp(receipt_created_at)
+    if (not repository or not branch or not path.is_absolute()
+            or path.parent.resolve(strict=True) != path.parent
+            or os.path.lexists(path)):
+        raise StoreConflict("retirement-proof-path-or-identity-invalid")
+    with store.connection() as connection:
+        if connection.execute(
+            "SELECT 1 FROM generation_admissions WHERE path=?", (str(path),),
+        ).fetchone():
+            raise StoreConflict("retirement-proof-admission-remains")
+        generations = [row[0] for row in connection.execute(
+            "SELECT generation_id FROM generations WHERE path=?", (str(path),),
+        )]
+    candidates = []
+    for generation in generations:
+        planned = _event(store, _event_id(generation, "planned"))
+        retired = _event(store, _event_id(generation, "retired"))
+        if (planned is None or retired is None
+                or planned.get("type") != "retirement-planned"
+                or retired.get("type") != "worktree-retired"
+                or planned.get("generation_id") != generation
+                or retired.get("generation_id") != generation
+                or retired.get("preservation_id") != planned.get("preservation_id")
+                or planned.get("source") != str(path)
+                or planned.get("repo") != repository):
+            continue
+        with store.connection() as connection:
+            opened = connection.execute(
+                "SELECT recorded_at FROM events WHERE "
+                "json_extract(payload,'$.type')='open-admission' AND "
+                "json_extract(payload,'$.generation_id')=?", (generation,),
+            ).fetchall()
+            ended = connection.execute(
+                "SELECT recorded_at FROM events WHERE event_id=?",
+                (_event_id(generation, "retired"),),
+            ).fetchone()
+        if (len(opened) == 1 and ended is not None
+                and _timestamp(opened[0][0]) <= created <= _timestamp(ended[0])):
+            candidates.append((generation, planned))
+    if len(candidates) != 1:
+        raise StoreConflict("retirement-proof-missing-or-ambiguous")
+    generation, plan = candidates[0]
+    receipt = _preserved(store, plan, Path(plan["output_root"]))
+    manifest_bytes = (Path(receipt["archive"]) / "manifest.json").read_bytes()
+    manifest = json.loads(manifest_bytes)
+    if (hashlib.sha256(manifest_bytes).hexdigest() != receipt["manifest_sha256"]
+            or manifest.get("repo") != repository
+            or manifest.get("branch") != branch
+            or manifest.get("source_worktree") != str(path)
+            or os.path.lexists(path)):
+        raise StoreConflict("retirement-proof-archive-identity-changed")
+    with store.connection() as connection:
+        if connection.execute(
+            "SELECT 1 FROM generation_admissions WHERE path=?", (str(path),),
+        ).fetchone():
+            raise StoreConflict("retirement-proof-admission-remains")
+    return {
+        "status": "retirement-verified", "generation_id": generation,
+        "archive": receipt["archive"], "cleanup_authorized": False,
+    }

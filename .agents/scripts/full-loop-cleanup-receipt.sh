@@ -1590,9 +1590,9 @@ full_loop_mark_cleanup_receipt_cleaned() {
 	local worktree="$2"
 	local cleanup_log="${3:-${AIDEVOPS_CLEANUP_LOG:-${HOME}/.aidevops/logs/cleanup_worktrees.log}}"
 
-	[[ -f "$receipt_path" && -n "$worktree" && ! -e "$worktree" && -f "$cleanup_log" ]] || return 1
-	grep -Fq "worktree-removed: ${worktree} —" "$cleanup_log" || return 1
-	jq -e --arg worktree "$worktree" '.worktree == $worktree' "$receipt_path" >/dev/null 2>&1 || return 1
+	# shellcheck source=./full-loop-cleanup-evidence.sh
+	source "${BASH_SOURCE[0]%/*}/full-loop-cleanup-evidence.sh" || return 1
+	full_loop_verify_cleanup_evidence "$receipt_path" "$worktree" "$cleanup_log" || return 1
 	full_loop_transition_cleanup_receipt "$receipt_path" "$_FULL_LOOP_CLEANUP_CLEANED"
 	return $?
 }
