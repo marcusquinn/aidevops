@@ -154,6 +154,7 @@ jq -e --argjson owner_pid "$OWNER_PID" '
 	and .cleanup_lease.state == "pending"
 	and .owner.pid == $owner_pid
 	and (.owner.process_identity | length > 0)
+	and (.created_at | test("[.][0-9]{6}Z$"))
 ' "$receipt_one" >/dev/null
 full_loop_cleanup_owner_alive "$receipt_one"
 [[ "$_FULL_LOOP_CLEANUP_OWNER_PID" == "$OWNER_PID" ]]
@@ -333,6 +334,20 @@ newest_receipt=$(full_loop_write_cleanup_deferred example/repo 103 "${TEST_ROOT}
 selected_receipt=$(full_loop_cleanup_receipt_for_worktree "${TEST_ROOT}/worktree-one")
 [[ "$selected_receipt" == "$newest_receipt" ]]
 printf 'PASS reused worktree paths select the newest lifecycle receipt\n'
+
+# Legacy and precise receipts must sort chronologically in the same second.
+(
+	export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TEST_ROOT}/precision-receipts"
+	mkdir -p "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"
+	jq -n '{worktree:"precision",created_at:"2026-08-02T00:00:00Z"}' \
+		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/legacy.json"
+	jq -n '{worktree:"precision",created_at:"2026-08-02T00:00:00.500000Z"}' \
+		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json"
+	[[ "$(full_loop_cleanup_receipt_for_worktree precision)" == "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json" ]]
+	[[ "$(_full_loop_cleanup_receipt_for_worktree_unlocked_fallback precision)" == "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json" ]]
+	full_loop_cleanup_owner_lease_aged "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json"
+)
+printf 'PASS precise receipts retain chronological lookup and lease-age compatibility\n'
 
 migrated_receipt="${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/example_migrated-104.json"
 jq '.repository = "example/migrated" | .pr_number = 104
@@ -598,6 +613,13 @@ printf 'PASS authorization-gap evidence remains detached from terminal cleanup r
 	"$TEST_GIT" -C "$marker_repo" commit -q -m seed
 	"$TEST_GIT" -C "$marker_repo" remote add origin git@github.com:example/repo.git
 	"$TEST_GIT" -C "$marker_repo" worktree add -q -b feature/marker "$marker_worktree"
+	# Enrollment is not deletion authority. The positive cleanup below uses
+	# explicit operator confirmation and verifies the real archive/receipt path.
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/marker-native-state"
+	lifecycle_entry="${SCRIPTS_DIR}/../worker-lifecycle/worker-registry.py"
+	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" init >/dev/null
+	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
+		enroll --path "$marker_worktree" >/dev/null
 	# shellcheck source=../shared-constants.sh
 	source "${SCRIPT_DIR}/shared-constants.sh"
 	# shellcheck source=../full-loop-helper-merge.sh
@@ -699,14 +721,20 @@ printf 'PASS authorization-gap evidence remains detached from terminal cleanup r
 	[[ -d "$marker_worktree" ]]
 	"$TEST_GIT" -C "$marker_repo" worktree unlock "$marker_worktree"
 	export AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_ROOT}/marker-clean-archive"
-	if ! cmd_remove "$marker_worktree"; then
-		"$TEST_GIT" -C "$marker_worktree" status --short
-		printf 'FAIL finalized marker-only manual removal\n'
-		exit 1
-	fi
+	# No real network is required for this disposable repository's archive.
+	"$TEST_GIT" -C "$marker_repo" remote remove origin
+	jq -n --arg path "$marker_repo" \
+		'{initialized_repos:[{path:$path,slug:"example/repo"}]}' >"${TEST_ROOT}/marker-native-repos.json"
+	mkdir -p "${TEST_ROOT}/marker-native-archives"
+	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
+		retire-enrolled-only --path "$marker_worktree" --confirm \
+		--repos-config "${TEST_ROOT}/marker-native-repos.json" \
+		--output-root "${TEST_ROOT}/marker-native-archives" >/dev/null
 	[[ ! -e "$marker_worktree" ]]
+	[[ ! -f "$AIDEVOPS_CLEANUP_LOG" ]]
+	full_loop_mark_cleanup_cleaned_for_identity example/repo 106 "$marker_worktree"
 	jq -e '.resource_cleanup_state == "CLEANED" and .cleanup_lease.state == "released"' "$marker_receipt" >/dev/null
-	printf 'PASS finalized marker-only worktree removes without force and records durable cleanup\n'
+	printf 'PASS registry retirement archives the finalized tree and records cleanup without a legacy log\n'
 )
 
 # GH#33890: merge cleanup records a same-repository alias (local repair branch
