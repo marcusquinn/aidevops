@@ -4,6 +4,27 @@ from pathlib import Path
 import re
 import subprocess  # nosec B404 # classify exceptions, never execute error argv
 
+from .filesystem import FilesystemValidationError, filesystem_error_details
+from .refusal import failure_category
+
+
+def failure_details(error: Exception) -> dict:
+    """Report stable diagnostics, never raw argv, stdout or stderr."""
+    if isinstance(error, FilesystemValidationError):
+        details: dict = filesystem_error_details(error)
+    else:
+        details = {"reason": type(error).__name__}
+    if isinstance(error, ValueError) and re.fullmatch(r"[a-z][a-z0-9:_-]{0,159}", str(error)):
+        details["reason"] = str(error)
+    if isinstance(error, OSError) and error.errno is not None:
+        details["errno"] = error.errno
+    category = failure_category(error)
+    if category:
+        details["category"] = category
+    if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        details.update(command_failure(error))
+    return details
+
 
 def command_failure(
     error: "subprocess.CalledProcessError | subprocess.TimeoutExpired",

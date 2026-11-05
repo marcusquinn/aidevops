@@ -2,7 +2,7 @@
 
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .process import ObservationUnavailable
-from .refusal import refusal_code
+from .refusal import failure_category, refusal_code
 from .storage import StoreCapacity, StoreConflict
 
 
@@ -22,6 +22,9 @@ def error_details(error: Exception, operation: str) -> dict:
         detail["detail"] = str(error)[:200]
     # GH#36370/GH#36494: creation and targeted-retirement refusals carry a
     # stable code; `reason` stays unchanged.
+    category = failure_category(error)
+    if category:
+        detail["category"] = category
     code = refusal_code(error, operation)
     if code:
         detail.setdefault("detail", code)
