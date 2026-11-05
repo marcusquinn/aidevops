@@ -19,12 +19,16 @@ _MAX_ENTRIES = 1000
 _MAX_BYTES = 262144
 
 
+def _finite_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
+
+
 def _valid(key: object, value: object) -> bool:
-    return (isinstance(key, str) and isinstance(value, dict)
-            and isinstance(value.get("count"), int)
-            and isinstance(value.get("until"), (int, float))
-            and not isinstance(value.get("until"), bool)
-            and math.isfinite(value["until"]))
+    if not isinstance(key, str) or not isinstance(value, dict):
+        return False
+    return isinstance(value.get("count"), int) and _finite_number(value.get("until"))
 
 
 class CleanupQuarantine:

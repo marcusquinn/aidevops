@@ -411,7 +411,7 @@ class LegacyCleanupContract(unittest.TestCase):
         row = first["results"][0]
         self.assertTrue(row["quarantined"])
         self.assertEqual(row["command"], "worktree-archive-helper.sh verify-local")
-        self.assertEqual(row["stderr_class"], "remote-unreachable")
+        self.assertEqual(row["stderr_class"], "remote-access-failed")
         self.assertNotIn("token", json.dumps(first))
         # The quarantined generation no longer occupies the front of the run.
         self.assertEqual((second["quarantined"], second["examined"]), (1, 1))

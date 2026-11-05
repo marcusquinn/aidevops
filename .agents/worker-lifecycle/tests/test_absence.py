@@ -195,7 +195,7 @@ class FailureDiagnostics(unittest.TestCase):
             stderr=b"fatal: unable to access 'https://user:token@host/private.git'\n",
         )
         report = _failure_details(error)
-        self.assertEqual(report["stderr_class"], "remote-unreachable")
+        self.assertEqual(report["stderr_class"], "remote-access-failed")
         self.assertEqual(report["command"], "worktree-archive-helper.sh verify-local")
         self.assertNotIn("token", str(report))
         self.assertNotIn("private", str(report))
