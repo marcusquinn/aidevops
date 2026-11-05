@@ -480,19 +480,27 @@ _attempt_worker_briefed_auto_merge() {
 _merge_worker_briefed_trust_gate() (
 	local pr_number="$1" repo_slug="$2" has_admin="${3:-0}"
 	local LOGFILE="" verdict="" permission=""
-	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-trust.XXXXXX") || return 1
+	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-trust.XXXXXX") || {
+		print_error "Merge blocked by t2449: trust-gate log creation failed"
+		return 1
+	}
 	trap 'rm -f "$LOGFILE"' EXIT
 	# shellcheck disable=SC1091
-	source "${SCRIPT_DIR}/pulse-merge.sh" || return 1
+	source "${SCRIPT_DIR}/pulse-merge.sh" || {
+		print_error "Merge blocked by t2449: trust evaluator loading failed"
+		return 1
+	}
 	if verdict=$(worker_briefed_trust_verdict "$pr_number" "$repo_slug"); then
 		return 0
 	fi
+	local reason="${verdict#deny:}"
+	reason="${reason:-trust verdict unavailable}"
 	if ! _merge_is_headless_session && [[ "$has_admin" == "1" ]] &&
 		permission=$(gh api "repos/${repo_slug}" --jq '.permissions | (.admin or .maintain or .push)' 2>/dev/null) &&
 		[[ "$permission" == "true" ]]; then
-		print_warning "Explicit interactive --admin overrides t2449: ${verdict#deny:}"
+		print_warning "Explicit interactive --admin overrides t2449: ${reason}"
 		return 0
 	fi
-	print_error "Merge blocked by t2449: ${verdict#deny:}"
+	print_error "Merge blocked by t2449: ${reason}"
 	return 1
 )
