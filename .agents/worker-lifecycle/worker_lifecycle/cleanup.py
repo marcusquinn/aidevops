@@ -42,6 +42,7 @@ def _repository_entries(config: Path) -> list:
 
 
 def _repository_scope(entry: dict, *, explicit: bool = False) -> "tuple[str, str, str] | None":
+    """Return the repository scope tuple for a registry entry, or None when excluded."""
     if not all((
         explicit or entry.get("maintenance", True) is True,
         entry.get("local_only", False) is False,
@@ -82,6 +83,7 @@ def _repositories(config: Path, *, explicit: bool = False) -> dict[str, tuple[st
 
 
 def _position(store: LifecycleRegistry) -> str:
+    """Read the persisted cleanup position for the store."""
     path = store.directory / "cleanup-position"
     try:
         _private(path)
@@ -114,6 +116,7 @@ def _candidate(
     store: LifecycleRegistry, repositories: dict[str, tuple[str, str]],
     root: Path, generation: str, path: Path,
 ) -> dict[str, object]:
+    """Classify one worktree path as a cleanup candidate and return its result."""
     result: dict[str, object] = {
         "generation_id": generation, "status": "coverage-gap",
     }

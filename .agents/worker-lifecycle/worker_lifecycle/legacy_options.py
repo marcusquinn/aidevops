@@ -29,6 +29,7 @@ def queue(store, items):
 
 
 def advance(store, path):
+    """Atomically advance the persisted cleanup position."""
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
@@ -92,6 +93,7 @@ def require_manual_confirmation(receipts, confirmed):
 
 @dataclass(frozen=True)
 class CleanupOptions:
+    """Validated options for one legacy cleanup pass."""
     root: Path
     apply: bool = False
     min_age: float = 3600
@@ -100,6 +102,7 @@ class CleanupOptions:
     confirmed_paths: tuple[str, ...] = ()
 
     def __post_init__(self):
+        """Validate limits and confirmed paths."""
         if (not math.isfinite(self.min_age) or self.min_age < 0
                 or not 1 <= self.limit <= 1000 or not 0 < self.budget <= 900):
             raise ValueError("invalid-cleanup-limits")
@@ -110,6 +113,7 @@ class CleanupOptions:
             raise ValueError("canonical-confirmed-paths-required")
 
     def select(self, items):
+        """Return the items selected by confirmed paths, or all items when none are confirmed."""
         if not self.confirmed_paths:
             return items
         by_path = {item["path"]: item for item in items}

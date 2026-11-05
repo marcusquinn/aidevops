@@ -14,6 +14,7 @@ from .retirement import _git, _id
 
 
 def unchanged(connection, plan, adapter):
+    """Return True when the inventory row still matches the plan source."""
     current = next((item for item in inventory(connection)
                      if item["path"] == plan["source"]), None)
     confirmed = plan.get("operator_confirmed") is True
