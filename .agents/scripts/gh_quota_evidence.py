@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Validate saved quota evidence without attributing unknown request costs."""
 
+import json
 import re
 from collections import defaultdict
 
@@ -94,3 +95,86 @@ def ci_sample(sample, start, end):
             or before_reset != after_reset or not 0 < cost <= after_used - before_used):
         return None
     return (fp, before_reset, ident), (lo, hi, before_used, after_used, cost)
+
+
+def ci_identity(sample):
+    """Require explicit host and quota pool; a matching reset is not identity."""
+    fp = sample.get("auth_fingerprint", "")
+    fields = [sample.get(name) for name in ("host", "login", "pool")]
+    if not isinstance(fp, str) or not AUTH_PATTERN.fullmatch(fp):
+        raise ValueError("invalid identity fingerprint")
+    if any(not isinstance(value, str) or not value for value in fields):
+        raise ValueError("missing identity fields")
+    host, login, pool = fields
+    if not re.fullmatch(r"[a-zA-Z0-9.-]+", host) or pool != "rest-core":
+        raise ValueError("invalid identity scope")
+    if not re.fullmatch(r"[a-zA-Z0-9-]+", login):
+        raise ValueError("invalid login")
+    return fp, (host.lower(), login.lower(), pool)
+
+
+def parse_ci_row(sample, start, end):
+    """Return a reason code without returning any unvalidated input text."""
+    if not isinstance(sample, dict):
+        return None, "invalid_sample"
+    if sample.get("event") != "quota-ci-sample":
+        return None, "unsupported_event"
+    parsed = ci_sample(sample, 0, 10**20)
+    if parsed is None:
+        return None, "invalid_sample"
+    if not start <= parsed[1][0] <= parsed[1][1] <= end:
+        return None, "outside_window"
+    return parsed, "unmatched_identity_or_reset"
+
+
+def keep_ci_sample(samples, parsed, decision):
+    """Invalidate all copies of conflicting IDs, including earlier copies."""
+    key, value = parsed
+    if key not in samples:
+        samples[key] = (value, [decision])
+        return
+    previous, copies = samples[key]
+    decision["reason"] = "duplicate"
+    if previous != value or copies[0]["reason"] == "conflicting_id":
+        for copy in copies + [decision]:
+            copy["reason"] = "conflicting_id"
+    copies.append(decision)
+
+
+def read_ci(path, start, end):
+    """Keep a decision for every input row, never echoing raw saved evidence."""
+    samples, identities, decisions = {}, {}, []
+    if not path:
+        return samples, identities, decisions
+    with open(path, encoding="utf-8") as source:
+        for index, line in enumerate(source, 1):
+            decision = dict(event="quota-ci-decision", input_line=index,
+                            reason="invalid_sample")
+            decisions.append(decision)
+            try:
+                sample = json.loads(line)
+                if isinstance(sample, dict) and sample.get("event") == "quota-ci-identity":
+                    fp, identity = ci_identity(sample)
+                    if fp in identities and identities[fp] != identity:
+                        identity = None  # Conflict is sticky regardless of row order.
+                    identities[fp] = identity
+                    decision["reason"] = "identity_record"
+                    continue
+                parsed, decision["reason"] = parse_ci_row(sample, start, end)
+                if parsed is not None:
+                    keep_ci_sample(samples, parsed, decision)
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
+                continue
+    return samples, identities, decisions
+
+
+def matching_ci(samples, identities, fingerprint, reset):
+    """Join tokens only with an unambiguous saved host/login/pool mapping."""
+    identity = identities.get(fingerprint)
+    matched = []
+    for (fp, sample_reset, _), (value, copies) in samples.items():
+        if sample_reset != reset or copies[0]["reason"] == "conflicting_id":
+            continue
+        if fp == fingerprint or (identity is not None and identities.get(fp) == identity):
+            matched.append((value, copies[0]))
+    return matched
