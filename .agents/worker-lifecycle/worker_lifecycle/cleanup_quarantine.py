@@ -5,6 +5,7 @@ state degrades to "no quarantine", never to skipped safety checks.
 """
 
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -21,7 +22,9 @@ _MAX_BYTES = 262144
 def _valid(key: object, value: object) -> bool:
     return (isinstance(key, str) and isinstance(value, dict)
             and isinstance(value.get("count"), int)
-            and isinstance(value.get("until"), (int, float)))
+            and isinstance(value.get("until"), (int, float))
+            and not isinstance(value.get("until"), bool)
+            and math.isfinite(value["until"]))
 
 
 class CleanupQuarantine:
