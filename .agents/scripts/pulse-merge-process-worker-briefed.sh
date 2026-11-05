@@ -305,6 +305,63 @@ _worker_briefed_trust_check() {
 	local _true_status="true"
 	WORKER_BRIEFED_TRUST_REASON="linked issue metadata or link eligibility unavailable (t2449)"
 
+	_worker_briefed_pr_eligible "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" || return 1
+
+	# Reuse the issue API base path for author-association and NMR checks.
+	local _issue_api
+	_issue_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
+	# Fetch author_association and user.login in one API call (t3062 needs login).
+	local _issue_meta
+	_issue_meta=$(gh api "${_issue_api}" \
+		--jq 'select(.pull_request == null) | [.author_association // "", .user.login // ""] | @tsv' 2>/dev/null) || return 1
+	# Explicit body references must resolve to an actual local issue, not a PR
+	# sharing the repository number space or unavailable metadata.
+	[[ -n "${_issue_meta//[[:space:]]/}" ]] || return 1
+	local issue_author_assoc=""
+	local issue_author_login=""
+	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
+
+	# GH#33999: non-closing For/Ref links require an open, non-parent issue.
+	local _link_kind=""
+	_link_kind=$(_worker_briefed_link_kind "$pr_number" "$repo_slug" "$linked_issue" "$_issue_api") || return 1
+	local issue_author_permission=""
+	#aidevops:trust-boundary — reuse PR-author permission only for the same non-empty issue-author login.
+	if [[ -n "$precomputed_pr_author_permission" && -n "$precomputed_pr_author_login" && "$precomputed_pr_author_login" == "$issue_author_login" ]]; then
+		issue_author_permission="$precomputed_pr_author_permission"
+	fi
+
+	local _has_crypto="not-verified"
+	if _issue_has_verified_crypto_approval "$linked_issue" "$repo_slug"; then
+		_has_crypto="$_true_status"
+	fi
+
+	# Preserve the existing OWNER/MEMBER, live permission, allowlist, scoped
+	# canary and verified signature alternatives at this shared trust boundary.
+	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
+		if _issue_author_has_maintainer_authority "$repo_slug" "$issue_author_login" "$issue_author_permission"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via authenticated maintainer permission fallback (GH#24958)" >>"$LOGFILE"
+		elif _is_trusted_issue_author "$issue_author_login"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via trusted-issue-author allowlist (t3062)" >>"$LOGFILE"
+		elif _is_trusted_opencode_canary_issue_pr "$pr_number" "$repo_slug" "$_issue_api"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a scheduled OpenCode pin-canary brief and the diff stays in canary scope (GH#35752)" >>"$LOGFILE"
+		elif [[ "$_has_crypto" != "$_true_status" ]]; then
+			WORKER_BRIEFED_TRUST_REASON="linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)"
+			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — ${WORKER_BRIEFED_TRUST_REASON}" >>"$LOGFILE"
+			if [[ "$issue_author_login" == "github-actions[bot]" ]]; then
+				_worker_briefed_record_bot_decision "$linked_issue" "$repo_slug" ||
+					echo "[pulse-merge] could not record bot issue #${linked_issue} approval decision in ${repo_slug}; retry on next pass" >>"$LOGFILE"
+			fi
+			return 1
+		else
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} but cryptographic approval signature present, proceeding (t3052)" >>"$LOGFILE"
+		fi
+	fi
+	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, link=${_link_kind}, author_assoc=${issue_author_assoc}, crypto_approved=${_has_crypto}) (t2449/t3052)" >>"$LOGFILE"
+	return 0
+}
+
+_worker_briefed_pr_eligible() {
+	local pr_number="$1" repo_slug="$2" labels_str="$3" is_draft="$4" linked_issue="$5"
 	# Feature flag — when OFF, all origin:worker PRs fall back to manual merge
 	if [[ "${AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE:-1}" == "0" ]]; then
 		WORKER_BRIEFED_TRUST_REASON="AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=0 (t2449)"
@@ -333,69 +390,6 @@ _worker_briefed_trust_check() {
 		return 1
 	fi
 
-	# Reuse the issue API base path for author-association and NMR checks.
-	local _issue_api
-	_issue_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
-	# Fetch author_association and user.login in one API call (t3062 needs login).
-	local _issue_meta
-	_issue_meta=$(gh api "${_issue_api}" \
-		--jq 'select(.pull_request == null) | [.author_association // "", .user.login // ""] | @tsv' 2>/dev/null) || return 1
-	# Explicit body references must resolve to an actual local issue, not a PR
-	# sharing the repository number space or unavailable metadata.
-	[[ -n "${_issue_meta//[[:space:]]/}" ]] || return 1
-	local issue_author_assoc=""
-	local issue_author_login=""
-	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
-
-	# GH#33999: a PR with only a non-closing For/Ref reference may be associated
-	# with an issue that stays open for later phases. #aidevops:trust-boundary —
-	# that association is eligible only for an open, non-parent issue; all trust
-	# gates below still apply unchanged. Closing-keyword links are untouched.
-	local _link_kind=""
-	_link_kind=$(_worker_briefed_link_kind "$pr_number" "$repo_slug" "$linked_issue" "$_issue_api") || return 1
-	local issue_author_permission=""
-	#aidevops:trust-boundary — reuse PR-author permission only for the same non-empty issue-author login.
-	if [[ -n "$precomputed_pr_author_permission" && -n "$precomputed_pr_author_login" && "$precomputed_pr_author_login" == "$issue_author_login" ]]; then
-		issue_author_permission="$precomputed_pr_author_permission"
-	fi
-
-	local _not_true_status="not-verified"
-	local _has_crypto="$_not_true_status"
-	if _issue_has_verified_crypto_approval "$linked_issue" "$repo_slug"; then
-		_has_crypto="$_true_status"
-	fi
-
-	# Gate: linked issue authored by OWNER/MEMBER, OR login has authenticated
-	# maintainer-equivalent repo permission (GH#24958), OR login is in the
-	# trusted-issue-author allowlist (t3062), OR cryptographically approved
-	# by maintainer (t3052). The trust chain "maintainer SSH-signed
-	# an approval on the issue" is at least as strong as the OWNER/MEMBER
-	# author check — the maintainer personally vouched with their private key.
-	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
-		if _issue_author_has_maintainer_authority "$repo_slug" "$issue_author_login" "$issue_author_permission"; then
-			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via authenticated maintainer permission fallback (GH#24958)" >>"$LOGFILE"
-		elif _is_trusted_issue_author "$issue_author_login"; then
-			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via trusted-issue-author allowlist (t3062)" >>"$LOGFILE"
-		elif _is_trusted_opencode_canary_issue_pr "$pr_number" "$repo_slug" "$_issue_api"; then
-			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a scheduled OpenCode pin-canary brief and the diff stays in canary scope (GH#35752)" >>"$LOGFILE"
-		elif [[ "$_has_crypto" != "$_true_status" ]]; then
-			WORKER_BRIEFED_TRUST_REASON="linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)"
-			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — ${WORKER_BRIEFED_TRUST_REASON}" >>"$LOGFILE"
-			if [[ "$issue_author_login" == "github-actions[bot]" ]]; then
-				_worker_briefed_record_bot_decision "$linked_issue" "$repo_slug" ||
-					echo "[pulse-merge] could not record bot issue #${linked_issue} approval decision in ${repo_slug}; retry on next pass" >>"$LOGFILE"
-			fi
-			return 1
-		else
-			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} but cryptographic approval signature present, proceeding (t3052)" >>"$LOGFILE"
-		fi
-	fi
-
-	# Historical NMR/normalization comments are not current authority signals.
-	# Live issue-author authority above is sufficient; external authors still
-	# require verified cryptographic approval and live NMR remains blocked by the
-	# general merge gates.
-	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, link=${_link_kind}, author_assoc=${issue_author_assoc}, crypto_approved=${_has_crypto}) (t2449/t3052)" >>"$LOGFILE"
 	return 0
 }
 
