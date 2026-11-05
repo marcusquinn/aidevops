@@ -7,10 +7,13 @@ import subprocess
 import sys
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
 from tests import test_retirement as fixtures
 from worker_lifecycle import legacy_cleanup as cleanup
 from worker_lifecycle import legacy_inventory as inventory
+from worker_lifecycle.admission import AdmissionRegistry
+from worker_lifecycle.cleanup_plan import enrolled_only_event_id, prepare_cleanup
 from worker_lifecycle.legacy_options import CleanupOptions
 from worker_lifecycle.runtime import adapter_for
 
@@ -87,6 +90,69 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertTrue(any(row.get("type") == "reconstructible-worktree-retired"
                             and row["branch_preserved"] for row in receipts))
         self.assertTrue(any(row.get("type") == "reconstructible-host-probe-verified" for row in receipts))
+
+    def test_managed_retention_does_not_strand_a_safely_retireable_worktree(self):
+        # Operator authorization closes the never-owned generation atomically.
+        generation = self.reserve_managed()
+        AdmissionRegistry(self.store).authorize_enrolled_only(
+            enrolled_only_event_id(generation), generation)
+        result, _, attempted = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual(attempted, 1)
+        self.assertFalse(self.target.exists())
+        self.assertEqual(self.git("rev-parse", "feature"), self.head)
+
+    def reserve_managed(self):
+        generation = str(uuid4())
+        AdmissionRegistry(self.store).open_generation(str(uuid4()), generation, self.target)
+        with self.store.connection() as connection:
+            self.item = inventory.inventory(connection)[0]
+        return generation
+
+    def test_managed_open_empty_admission_is_retained_in_preview_and_apply(self):
+        self.reserve_managed()
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                self.options = CleanupOptions(self.output, apply=apply, min_age=0)
+                self.assert_retained("managed-admission-not-closed")
+
+    def test_managed_closed_empty_admission_needs_operator_authorization(self):
+        generation = self.reserve_managed()
+        AdmissionRegistry(self.store).close_generation(str(uuid4()), generation)
+        self.assert_retained("managed-operator-authorization-required")
+
+    def test_managed_detached_enrollment_does_not_prove_creation(self):
+        self.git("-C", str(self.target), "checkout", "--detach", "-q")
+        generation = self.reserve_managed()
+        AdmissionRegistry(self.store).authorize_enrolled_only(
+            enrolled_only_event_id(generation), generation)
+        self.assert_retained("managed-detached-creation-unverified")
+
+    def test_managed_detached_verified_creation_can_be_retired(self):
+        self.git("worktree", "remove", str(self.target))
+        fixtures.RetirementContract.create(self)
+        for name in ("work.txt", ".gitignore", "cache.ignored"):
+            (self.target / name).unlink()
+        prepared = prepare_cleanup(self.store, self.target)
+        self.assertTrue(prepared["creation_verified"])
+        self.assertEqual(prepared["admission"], "closed")
+        with self.store.connection() as connection:
+            self.item = inventory.inventory(connection)[0]
+        result, _, attempted = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual(attempted, 1)
+        self.assertFalse(self.target.exists())
+
+    def test_managed_takeover_keeps_every_safety_guard(self):
+        self.item.update(modern=True, unbound=False)
+        (self.target / "keep").write_text("untracked")
+        self.assert_retained("managed-by-current-cleanup")
+        (self.target / "keep").unlink()
+        self.prs.return_value = [{"head": {"ref": "feature", "sha": self.head}}]
+        self.assert_retained("managed-by-current-cleanup")
+        self.prs.return_value = []
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        self.assert_retained("managed-by-current-cleanup")
 
     def test_preview_is_read_only(self):
         self.options = CleanupOptions(self.output, apply=False, min_age=0)

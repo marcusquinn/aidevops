@@ -186,7 +186,19 @@ class FailureDiagnostics(unittest.TestCase):
         self.assertEqual(_failure_details(error), {
             "reason": "merge:unpreserved_fetch_head", "operation": "archive",
             "returncode": 1, "archive_failure": True,
+            "command": "worktree-archive-helper.sh archive",
         })
+
+    def test_stderr_class_is_fixed_vocabulary_never_free_text(self):
+        error = subprocess.CalledProcessError(
+            1, ["bash", "/helper/worktree-archive-helper.sh", "verify-local", "x"],
+            stderr=b"fatal: unable to access 'https://user:token@host/private.git'\n",
+        )
+        report = _failure_details(error)
+        self.assertEqual(report["stderr_class"], "remote-access-failed")
+        self.assertEqual(report["command"], "worktree-archive-helper.sh verify-local")
+        self.assertNotIn("token", str(report))
+        self.assertNotIn("private", str(report))
 
     def test_generic_failure_does_not_disclose_message_or_count_as_archive(self):
         for error in (subprocess.CalledProcessError(128, ["git", "private-argument"],
