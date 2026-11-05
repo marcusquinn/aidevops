@@ -69,6 +69,9 @@ source "${SCRIPT_DIR}/issue-open-pr-guard.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 
+# shellcheck source=./macos-local-checks.sh
+source "${SCRIPT_DIR}/macos-local-checks.sh"
+
 # --- cmd_commit_and_pr ---
 # The phase helpers below use Bash's dynamic scope to share the orchestrator's
 # local metadata. Keep them in this file so the workflow has a single owner.
@@ -266,6 +269,11 @@ _commit_and_pr_prepare_metadata() {
 	base_ref="origin/${base_branch}"
 	# Freeze the comparison once: upstream movement is not part of this PR.
 	comparison_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
+	local macos_evidence=""
+	macos_evidence=$(macos_checks_evidence "$comparison_base") || return 1
+	if [[ -n "$macos_evidence" ]]; then
+		summary_testing="${summary_testing}${summary_testing:+; }${macos_evidence}"
+	fi
 	files_changed=$(git diff --name-only "$comparison_base" HEAD) || return 1
 	files_changed=$(printf '%s' "$files_changed" | tr '\n' ',' | sed 's/,/, /g')
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base") || return 1
@@ -439,6 +447,9 @@ _commit_and_pr_publish() {
 	if [[ "$pr_only_scope" -eq 1 ]]; then
 		_apply_pr_only_hold "$pr_number" "$repo" || return 1
 	fi
+	local macos_base=""
+	macos_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
+	macos_checks_route "$macos_base" "$pr_number" "$repo" || return 1
 	# Recover from partial GraphQL writes before marking either side in review.
 	if [[ "$origin_label" == "origin:worker" ]]; then
 		_ensure_worker_pr_linkage "$pr_number" "$repo" "$issue_number" "$pr_body" || return 1

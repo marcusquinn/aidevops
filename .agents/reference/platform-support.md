@@ -257,4 +257,30 @@ echo -e "[boot]\nsystemd=true" | sudo tee /etc/wsl.conf
 
 ## CI/CD
 
-Required CI runs on `ubuntu-latest`; macOS `/bin/bash` 3.2 parse coverage comes from a digest-pinned `bash:3.2` container in `.github/workflows/code-quality.yml` and from `pre-commit-hook.sh` on any Mac. Hosted macOS runners are not on the merge path (GH#36686); `.github/workflows/path-portability.yml` still runs an advisory macOS leg. macOS-only runtime tests run locally on macOS machines.
+Required CI runs on `ubuntu-latest`; macOS `/bin/bash` 3.2 parse coverage comes from a digest-pinned `bash:3.2` container in `.github/workflows/code-quality.yml` and from `pre-commit-hook.sh` on any Mac. Hosted macOS runners are not on the merge path (GH#36686); PATH portability CI also runs only on Ubuntu.
+
+`commit-and-pr` runs `.agents/scripts/macos-local-checks.sh` for macOS-sensitive
+changes, including sandbox/model replay, platform detection and PATH portability.
+On Darwin it runs native platform assertions, the model replay benchmark and the
+former macOS PATH suites, recording results in the PR's Runtime Testing section.
+On other hosts it adds `needs-macos-verification` and requests review from the
+registered `macos_maintainer` (falling back to `maintainer`); assignment is used
+when review cannot be requested, including self-review. No sensitive diff means
+no label or request. Missing/ambiguous registration is reported, never guessed.
+
+The maintainer checks out the exact clean PR head on a Mac and runs:
+
+```bash
+bash .agents/scripts/macos-local-checks.sh verify-pr PR_NUMBER OWNER/REPO
+```
+
+This records native results in Runtime Testing and clears the label only after
+successful checks and an unchanged remote head. Fetch the PR base first if its
+object is unavailable locally. `macos-verification-refresh.yml` restores the
+handoff label on every later push to a sensitive PR, without executing PR code.
+Previous SHA-scoped Runtime Testing results remain historical evidence, not
+verification of the new head. A delayed event can conservatively restore the
+label after verification; rerun `verify-pr` for the current head in that case.
+`AIDEVOPS_MACOS_CHECKS_HOST=Linux` forces the
+handoff path for testing; it cannot manufacture a native pass on Linux. The
+label is a verification handoff, not a hosted runner or approval bypass.
