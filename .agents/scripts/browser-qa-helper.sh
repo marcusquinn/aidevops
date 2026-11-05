@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Browser QA Helper — Playwright-based visual testing for milestone validation (t1359)
-# Commands: run | screenshot | links | a11y | smoke | journey | help
+# Commands: run | screenshot | links | a11y | smoke | stability | transition | frames | journey | help
 # Integrates with mission milestone validation pipeline.
 # Uses Playwright (fastest) with fallback guidance for Stagehand (self-healing).
 #
@@ -42,6 +42,9 @@ source "${SCRIPT_DIR}/browser-qa-helper-tests.sh"
 
 # shellcheck source=./browser-qa-helper-transition.sh
 source "${SCRIPT_DIR}/browser-qa-helper-transition.sh"
+
+# shellcheck source=./browser-qa-helper-frames.sh
+source "${SCRIPT_DIR}/browser-qa-helper-frames.sh"
 
 # =============================================================================
 # Broken Link Detection
@@ -375,6 +378,7 @@ Commands:
   smoke        Check for console errors and basic rendering
   stability    Reload pages N times and verify DOM/network quiescence
   transition   Measure the source page during a held document navigation
+  frames       Record per-frame destination DOM states through load + settle
   journey      Opt-in authenticated read-only journey (--config FILE --environment NAME)
   help         Show this help message
 
@@ -410,6 +414,18 @@ Transition-specific Options:
   --storage-state FILE  Optional Playwright storage state (sensitive)
   --screencast        Save held-state frames (maximum dimension 1568px)
 
+Frames-specific Options:
+  --measure-file FILE Trusted synchronous function expression returning JSON (required)
+  --ready SELECTOR   Start sampling when this element exists (default: body)
+  --widths LIST      Fresh context per width (default: 1280; height: 900)
+  --cpu N            CPU throttling rate, 1-100 (default: 1)
+  --from URL         Warm visit before measured navigation and CPU throttling
+  --after-selector S Install sentinel after this element exists (default: body available)
+  --no-after         Disable sentinel, sample only before ResizeObservers
+  --transform-file F Trusted main-document HTML transform function
+  --settle-ms N      Record until load + N ms (default: 1000; maximum: 60000)
+  --output-dir DIR   Private evidence directory; frames.json must not already exist
+
 Examples:
   browser-qa-helper.sh run --url http://localhost:3000 --pages "/ /about /dashboard"
   browser-qa-helper.sh screenshot --url http://localhost:3000 --viewports desktop,tablet,mobile --max-dim 4000
@@ -444,6 +460,10 @@ HELP
 main() {
 	local command="${1:-help}"
 	shift || true
+	if [[ "$command" == "frames" && "${1:-}" == "--help" ]]; then
+		cmd_help
+		return 0
+	fi
 	if [[ "$command" != "help" && "$command" != "--help" && "$command" != "-h" ]]; then
 		check_playwright || return 1
 	fi
@@ -456,6 +476,7 @@ main() {
 	smoke) cmd_smoke "$@" ;;
 	stability) cmd_stability "$@" ;;
 	transition) cmd_transition "$@" ;;
+	frames) cmd_frames "$@" ;;
 	journey) cmd_journey "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)

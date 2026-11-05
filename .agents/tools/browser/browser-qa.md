@@ -81,6 +81,70 @@ Optional: `--storage-state FILE`, `--format json|markdown`. Measurements must be
 
 Routing blocks service workers and disables the HTTP cache; it can change prefetch/speculation behavior. Request logs expose observed prefetches, not proof that unobserved prerenders did not occur. No matching hold fails instead of silently measuring a committed destination. This is an opt-in active click, **not** the authenticated read-only journey guard: only use authorized test navigation. Reports, frames and storage state can contain sensitive URLs/content; keep evidence private. The command uses the shared Playwright runtime and installs nothing.
 
+### Frame-by-frame Load Recording
+
+`frames` records the destination document from the first animation frame where
+`--ready` exists until its `load` event + `--settle-ms`. Unlike `transition`, it
+captures layout changes during parsing, deferred script execution and font loading.
+It uses the shared Playwright runtime and installs nothing.
+
+Save a trusted, synchronous function expression as `measure.js` (not an ES module):
+
+```javascript
+() => {
+  const row = document.querySelector('#row');
+  return { height: row.getBoundingClientRect().height, fitted: row.classList.contains('fit') };
+}
+```
+
+```bash
+browser-qa-helper.sh frames --url http://localhost:3000 --measure-file measure.js \
+  --ready '#row' --widths 800,1280 --cpu 4 --settle-ms 1500 \
+  --after-selector '#layout-script' --format markdown --output-dir ./frame-evidence
+```
+
+Options:
+
+| Option | Behavior |
+|--------|----------|
+| `--url URL`, `--measure-file FILE` | Required HTTP(S) destination and regular file containing trusted operator measurement code returning JSON-able data. No promises or page-provided code. |
+| `--ready SELECTOR` | Start sampling when the element exists (default `body`); no visibility/actionability wait. |
+| `--widths LIST` | Comma-separated unique integer widths, 1–10000, at most 20 (default `1280`). Fresh isolated context per width, height 900. |
+| `--cpu N` | CDP CPU throttle, 1–100 (default 1), applied before measured navigation. |
+| `--from URL` | Visit this absolute HTTP(S) URL first in the same context, before throttling, to warm the HTTP cache. |
+| `--after-selector SELECTOR` | Install the ResizeObserver sentinel once this element exists and `body` is available. Without this flag install once `body` exists. Presence of a script element does **not** prove its code has executed. |
+| `--no-after` | Disable the sentinel; mutually exclusive with `--after-selector`. Use for an unmodified observer-error baseline. |
+| `--transform-file FILE` | Trusted regular file containing `(html) => html`, applied only to main-frame document requests. Can inline a deferred fix before deployment. Routing disables HTTP cache on the measured page and blocks service workers; this changes loading behavior. |
+| `--settle-ms N` | Milliseconds after the document's own load event (default 1000, range 0–60000). |
+| `--format json\|markdown` | Default JSON includes raw samples, runs and errors; Markdown prints consecutive-state runs, timing and frame/error counts. |
+| `--output-dir DIR` | Save raw JSON in `frames.json`; directory mode 0700, file 0600. Refuses to overwrite an existing report. URLs/content/errors are private evidence. |
+
+**Painted-state sampling caveat:** rAF runs before layout and ResizeObserver
+delivery. The optional sentinel is an invisible, absolutely positioned 1px-high
+element whose width alternates between 1px and 2px every frame. Its observer is
+created after the watched element exists, aiming to sample after the page's
+observers. Raw frames retain `before` (rAF) and, when delivered, `painted`
+(sentinel) samples. Runs prefer `painted`; early or missing callbacks are explicitly
+labeled `raf`, never asserted to be post-observer. Runs also include font status,
+and print `(before observers: …)` when the samples differ.
+
+Observer creation order is **not a guarantee** that all page observers have
+finished: depth-based delivery, later observers and callback mutations can change
+ordering. The sentinel itself changes depth handling and may hide ResizeObserver
+loop errors. Compare `--no-after` runs and inspect window error events (including
+ResizeObserver errors), console errors and page errors. These are reported
+separately; application errors do not automatically fail a successful capture.
+Measurement failures, zero samples, a missing sentinel capture, or the 100000-frame
+safety limit fail the command. Navigation is bounded to 30 seconds.
+
+Times are `performance.now()` milliseconds since navigation. N samples at rAF
+cadence provide evidence at rendering opportunities, **not compositor-exact paint
+timestamps or proof of every physical display update**. A single-frame run has
+equal start/end timestamps. Measurements must be read-only and cheap: layout
+reads and instrumentation can affect timing. Optional mid-parse streaming
+(`--split-at`/`--pause-ms`) is not implemented; use an authorized local fixture
+server that streams the HTML to investigate that case.
+
 ### Authenticated Read-only Journeys (Opt-in)
 
 Prefer a repository's existing E2E test when it already covers the authenticated path. Otherwise, `journey` runs a versioned JSON definition (`scripts/browser-qa-journey*.mjs`):
