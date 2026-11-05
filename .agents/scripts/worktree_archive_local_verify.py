@@ -137,6 +137,11 @@ def verify_local(archive, manifest):
         closure = git(scratch, 'rev-list', '--objects', '--no-object-names',
                       '--stdin', data=('\n'.join(roots) + '\n').encode())
         required = set(closure.splitlines())
+        # Explicit tree roots can traverse dependency-covered objects even with
+        # ^dependency. Only that exact retained graph may replace bundle payload.
+        if not required.issubset(archived) and not manifest.get('self_contained'):
+            covered = git(scratch, 'rev-list', '--objects', '--no-object-names', dependency)
+            required.difference_update(covered.splitlines())
         # Source alternates must not conceal an omitted unique commit/blob.
         if not required.issubset(archived):
             raise ValueError('archive-local:missing-unique-objects')
