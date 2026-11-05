@@ -327,6 +327,8 @@ _merge_report_admin_fallback_failure() {
 }
 
 _merge_is_headless_session() {
+	# Supervisor sweep must never inherit the interactive --admin exception.
+	[[ "${WORKER_SESSION_KEY:-}" != "supervisor-pulse" ]] || return 0
 	case "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${Claude_HEADLESS:-}${GITHUB_ACTIONS:-}" in
 	*true* | *1*) return 0 ;;
 	*) return 1 ;;
@@ -1960,6 +1962,12 @@ cmd_merge() {
 	fi
 
 	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
+
+	# t2449: use the deterministic worker-briefed linked-issue trust verdict
+	# before pre-merge checks or any native/admin merge transport.
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/pulse-merge-process-worker-briefed.sh" || return 1
+	_merge_worker_briefed_trust_gate "$pr_number" "$repo" "$has_admin" || return 1
 
 	# Gate: enforce review-bot-gate before merge.
 	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {

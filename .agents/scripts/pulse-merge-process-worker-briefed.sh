@@ -81,6 +81,7 @@ _PM_OPENCODE_CANARY_ALLOWED_FILES=".agents/scripts/opencode-pin-canary.sh
 .agents/plugins/opencode-aidevops/package-lock.json
 .agents/scripts/tests/test-opencode-pin-policy.sh
 .agents/scripts/tests/test-opencode-runtime-profile.sh"
+_PM_WORKFLOW_BOT_LOGIN="github-actions[bot]"
 _PM_OPENCODE_CANARY_MAX_FILES=20
 
 #######################################
@@ -140,7 +141,7 @@ _is_trusted_opencode_canary_issue_pr() {
 		--jq 'select(.pull_request == null) | [(.user.login // ""), (.user.type // ""), ([.labels[].name] | join(",")), (.title // "")] | @tsv' \
 		2>/dev/null) || return 1
 	IFS=$'\t' read -r login user_type labels title <<<"$issue_meta"
-	[[ "$login" == "github-actions[bot]" && "$user_type" == "Bot" ]] || return 1
+	[[ "$login" == "$_PM_WORKFLOW_BOT_LOGIN" && "$user_type" == "Bot" ]] || return 1
 	[[ "$title" =~ $re_title ]] || return 1
 	[[ ",${labels}," == *",origin:worker,"* ]] || return 1
 
@@ -294,7 +295,7 @@ _worker_briefed_link_kind() {
 #       $7=precomputed_pr_author_login(optional)
 # Returns: 0=all gates pass (eligible for auto-merge), 1=blocked
 #######################################
-_attempt_worker_briefed_auto_merge() {
+_worker_briefed_trust_check() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local labels_str="$3"
@@ -303,30 +304,9 @@ _attempt_worker_briefed_auto_merge() {
 	local precomputed_pr_author_permission="${6:-}"
 	local precomputed_pr_author_login="${7:-}"
 	local _true_status="true"
+	WORKER_BRIEFED_TRUST_REASON="linked issue metadata or link eligibility unavailable (t2449)"
 
-	# Feature flag — when OFF, all origin:worker PRs fall back to manual merge
-	if [[ "${AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE:-1}" == "0" ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: disabled by AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=0 for PR #${pr_number} in ${repo_slug} (t2449)" >>"$LOGFILE"
-		return 1
-	fi
-
-	# Gate: not a draft
-	if [[ "$is_draft" == "$_true_status" ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible (t2449)" >>"$LOGFILE"
-		return 1
-	fi
-
-	# Gate: no hold-for-review opt-out label
-	if [[ ",${labels_str}," == *",hold-for-review,"* ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — hold-for-review label (t2449)" >>"$LOGFILE"
-		return 1
-	fi
-
-	# Gate: must have a linked issue (the "brief" in "maintainer-briefed")
-	if [[ -z "$linked_issue" ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — no linked issue (t2449)" >>"$LOGFILE"
-		return 1
-	fi
+	_worker_briefed_pr_eligible "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" || return 1
 
 	# Reuse the issue API base path for author-association and NMR checks.
 	local _issue_api
@@ -342,10 +322,7 @@ _attempt_worker_briefed_auto_merge() {
 	local issue_author_login=""
 	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
 
-	# GH#33999: a PR with only a non-closing For/Ref reference may be associated
-	# with an issue that stays open for later phases. #aidevops:trust-boundary —
-	# that association is eligible only for an open, non-parent issue; all trust
-	# gates below still apply unchanged. Closing-keyword links are untouched.
+	# GH#33999: non-closing For/Ref links require an open, non-parent issue.
 	local _link_kind=""
 	_link_kind=$(_worker_briefed_link_kind "$pr_number" "$repo_slug" "$linked_issue" "$_issue_api") || return 1
 	local issue_author_permission=""
@@ -354,18 +331,13 @@ _attempt_worker_briefed_auto_merge() {
 		issue_author_permission="$precomputed_pr_author_permission"
 	fi
 
-	local _not_true_status="not-verified"
-	local _has_crypto="$_not_true_status"
+	local _has_crypto="not-verified"
 	if _issue_has_verified_crypto_approval "$linked_issue" "$repo_slug"; then
 		_has_crypto="$_true_status"
 	fi
 
-	# Gate: linked issue authored by OWNER/MEMBER, OR login has authenticated
-	# maintainer-equivalent repo permission (GH#24958), OR login is in the
-	# trusted-issue-author allowlist (t3062), OR cryptographically approved
-	# by maintainer (t3052). The trust chain "maintainer SSH-signed
-	# an approval on the issue" is at least as strong as the OWNER/MEMBER
-	# author check — the maintainer personally vouched with their private key.
+	# Preserve the existing OWNER/MEMBER, live permission, allowlist, scoped
+	# canary and verified signature alternatives at this shared trust boundary.
 	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
 		if _issue_author_has_maintainer_authority "$repo_slug" "$issue_author_login" "$issue_author_permission"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via authenticated maintainer permission fallback (GH#24958)" >>"$LOGFILE"
@@ -374,17 +346,161 @@ _attempt_worker_briefed_auto_merge() {
 		elif _is_trusted_opencode_canary_issue_pr "$pr_number" "$repo_slug" "$_issue_api"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a scheduled OpenCode pin-canary brief and the diff stays in canary scope (GH#35752)" >>"$LOGFILE"
 		elif [[ "$_has_crypto" != "$_true_status" ]]; then
-			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)" >>"$LOGFILE"
+			WORKER_BRIEFED_TRUST_REASON="linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)"
+			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — ${WORKER_BRIEFED_TRUST_REASON}" >>"$LOGFILE"
+			if [[ "$issue_author_login" == "$_PM_WORKFLOW_BOT_LOGIN" ]]; then
+				_worker_briefed_record_bot_decision "$linked_issue" "$repo_slug" ||
+					echo "[pulse-merge] could not record bot issue #${linked_issue} approval decision in ${repo_slug}; retry on next pass" >>"$LOGFILE"
+			fi
 			return 1
 		else
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} but cryptographic approval signature present, proceeding (t3052)" >>"$LOGFILE"
 		fi
 	fi
-
-	# Historical NMR/normalization comments are not current authority signals.
-	# Live issue-author authority above is sufficient; external authors still
-	# require verified cryptographic approval and live NMR remains blocked by the
-	# general merge gates.
 	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, link=${_link_kind}, author_assoc=${issue_author_assoc}, crypto_approved=${_has_crypto}) (t2449/t3052)" >>"$LOGFILE"
 	return 0
 }
+
+_worker_briefed_pr_eligible() {
+	local pr_number="$1" repo_slug="$2" labels_str="$3" is_draft="$4" linked_issue="$5"
+	# Feature flag — when OFF, all origin:worker PRs fall back to manual merge
+	if [[ "${AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE:-1}" == "0" ]]; then
+		WORKER_BRIEFED_TRUST_REASON="AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=0 (t2449)"
+		echo "[pulse-merge] worker-briefed auto-merge: disabled by AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=0 for PR #${pr_number} in ${repo_slug} (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Gate: not a draft
+	if [[ "$is_draft" == "$_true_status" ]]; then
+		WORKER_BRIEFED_TRUST_REASON="draft PR not eligible (t2449)"
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Gate: no hold-for-review opt-out label
+	if [[ ",${labels_str}," == *",hold-for-review,"* ]]; then
+		WORKER_BRIEFED_TRUST_REASON="hold-for-review label (t2449)"
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — hold-for-review label (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Gate: must have a linked issue (the "brief" in "maintainer-briefed")
+	if [[ -z "$linked_issue" ]]; then
+		WORKER_BRIEFED_TRUST_REASON="no linked issue (t2449)"
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — no linked issue (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	return 0
+}
+
+# Record the conservative outcome for workflow-bot issues, without trusting a
+# forgeable generator marker. A maintainer can approve through the existing
+# SSH-signature path; the scoped pin-canary exception above remains unchanged.
+_worker_briefed_record_bot_decision() {
+	local issue_number="$1" repo_slug="$2"
+	local marker="<!-- aidevops:worker-briefed-trust-decision:v1 -->"
+	local actor="" comments="" body_file="" candidate="" rc=0
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
+	# Installation tokens can write repository comments without a /user endpoint.
+	actor=$(gh api user --jq '.login' 2>/dev/null) || actor=""
+	comments=$(gh api --paginate --slurp "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
+	jq -e 'arrays | all(.[]; type == "array")' <<<"$comments" >/dev/null || return 1
+	#aidevops:trust-boundary — dedupe across authorized runners, but not arbitrary
+	# commenters pasting a marker. This record never grants merge authority.
+	while IFS= read -r candidate; do
+		[[ -n "$candidate" ]] || continue
+		if [[ "$candidate" == "$actor" || "$candidate" == "$_PM_WORKFLOW_BOT_LOGIN" ]] ||
+			_issue_author_has_maintainer_authority "$repo_slug" "$candidate"; then
+			return 0
+		fi
+	done < <(jq -r --arg marker "$marker" \
+		'.[][] | select((.body // "") | contains($marker)) | .user.login // empty' <<<"$comments")
+	body_file=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-decision.XXXXXX") || return 1
+	printf '%s\n\n%s\n' "$marker" \
+		"Automated merge is blocked by the linked-issue trust gate (t2449/t3052). This workflow-bot issue has no verified maintainer approval or applicable scoped trust exception. Next action (maintainer): run \`sudo aidevops approve issue ${issue_number}\` for ${repo_slug}. The next merge pass verifies the signature; all CI, review and hold gates still apply. Reference: pulse-merge-process-worker-briefed.sh, worker_briefed_trust_verdict." >"$body_file"
+	gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || rc=$?
+	rm -f "$body_file"
+	return "$rc"
+}
+
+# Shared t2449 verdict. Optional precomputed arguments use the deterministic
+# pass's metadata; the two-argument entry point resolves it with the same parser.
+# Prints only allow or deny:<reason>; returns nonzero on denial/API failure.
+worker_briefed_trust_verdict() {
+	local pr_number="$1" repo_slug="$2"
+	local labels_str="${3:-}" is_draft="${4:-}" linked_issue="${5:-}"
+	local WORKER_BRIEFED_TRUST_REASON="trust metadata unavailable (t2449)"
+	if [[ "$#" -eq 2 ]]; then
+		local pr_meta="" head_sha=""
+		pr_meta=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft,headRefOid) || {
+			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
+			return 1
+		}
+		# Missing/malformed label metadata is not evidence of a non-worker PR.
+		if ! jq -e 'type == "object" and (.labels | type == "array")
+			and all(.labels[]; .name | type == "string")
+			and (.isDraft | type == "boolean")' <<<"$pr_meta" >/dev/null 2>&1; then
+			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
+			return 1
+		fi
+		labels_str=$(jq -r '[.labels[].name] | join(",")' <<<"$pr_meta") || return 1
+		is_draft=$(jq -r '.isDraft' <<<"$pr_meta") || return 1
+		[[ ",${labels_str}," == *",origin:worker,"* ]] || { printf 'allow\n'; return 0; }
+		# The deterministic pass exempts verified exact-head Issue Sync / TODO
+		# handoff PRs before the worker-briefed gate. Preserve that narrow route;
+		# the shared predicate verifies bot identity, repo ownership and head.
+		head_sha=$(jq -r '.headRefOid // empty' <<<"$pr_meta") || return 1
+		if [[ -n "$head_sha" ]] && _pulse_is_trusted_issue_sync_pr "$pr_number" "$repo_slug" "$head_sha"; then
+			printf 'allow\n'
+			return 0
+		fi
+		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit) || {
+			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
+			return 1
+		}
+	fi
+	if _worker_briefed_trust_check "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" "${6:-}" "${7:-}"; then
+		printf 'allow\n'
+		return 0
+	fi
+	printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
+	return 1
+}
+
+_attempt_worker_briefed_auto_merge() {
+	worker_briefed_trust_verdict "$@" >/dev/null
+	return $?
+}
+
+# Full-loop adapter runs in a subshell: loading the deterministic parser and
+# its dependencies must not replace full-loop globals/functions. Both automated
+# and interactive entry points are checked; only explicit interactive --admin
+# with live maintainer authority may override this gate, never other gates.
+_merge_worker_briefed_trust_gate() (
+	local pr_number="$1" repo_slug="$2" has_admin="${3:-0}"
+	local LOGFILE="" verdict="" permission=""
+	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-trust.XXXXXX") || {
+		print_error "Merge blocked by t2449: trust-gate log creation failed"
+		return 1
+	}
+	trap 'rm -f "$LOGFILE"' EXIT
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/pulse-merge.sh" || {
+		print_error "Merge blocked by t2449: trust evaluator loading failed"
+		return 1
+	}
+	if verdict=$(worker_briefed_trust_verdict "$pr_number" "$repo_slug"); then
+		return 0
+	fi
+	local reason="${verdict#deny:}"
+	reason="${reason:-trust verdict unavailable}"
+	if ! _merge_is_headless_session && [[ "$has_admin" == "1" ]] &&
+		permission=$(gh api "repos/${repo_slug}" --jq '.permissions | (.admin or .maintain or .push)' 2>/dev/null) &&
+		[[ "$permission" == "true" ]]; then
+		print_warning "Explicit interactive --admin overrides t2449: ${reason}"
+		return 0
+	fi
+	print_error "Merge blocked by t2449: ${reason}"
+	return 1
+)

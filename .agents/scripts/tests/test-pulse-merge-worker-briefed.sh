@@ -194,6 +194,10 @@ define_helpers_under_test() {
 	' "$extract_from")
 	src_worker_briefed+=$'\n'$(awk '
 		/^_worker_briefed_link_kind\(\) \{/,/^\}$/ { print }
+		/^_worker_briefed_trust_check\(\) \{/,/^\}$/ { print }
+		/^_worker_briefed_pr_eligible\(\) \{/,/^\}$/ { print }
+		/^worker_briefed_trust_verdict\(\) \{/,/^\}$/ { print }
+		/^_worker_briefed_record_bot_decision\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	# GH#35752: scoped OpenCode pin-canary brief trust (constants + helpers).
 	src_worker_briefed+=$'\n'$(awk '

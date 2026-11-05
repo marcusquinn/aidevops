@@ -82,7 +82,7 @@ Data is in your prompt between `--- PRE-FETCHED STATE ---` markers or in the sta
 
 Most merging is handled by `merge_ready_prs_all_repos()` before the LLM session starts. Focus on edge cases: CI fix workers, `CHANGES_REQUESTED`, external contributor PRs, complex conflicts.
 
-`REVIEW_REQUIRED` is NOT a merge blocker for collaborator PRs with passing CI. Approve then merge:
+`REVIEW_REQUIRED` alone is NOT a merge blocker for collaborator PRs with passing CI and a passing linked-issue trust verdict. Never approve or merge a PR skipped by the deterministic t2449/t3052 gate, including through `--admin`. Route that denial as a decision instead. Workflow-bot issues without a scoped trust exception receive one deduplicated decision comment naming the maintainer's `sudo aidevops approve issue N` action; generator markers alone grant no authority. The merge helper enforces the same shared verdict for the supervisor and headless workers. After all trust gates pass, approve then merge:
 
 ```bash
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command approve-pr NUMBER SLUG AUTHOR

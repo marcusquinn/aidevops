@@ -3,18 +3,21 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 # GH#36174: exercise real merge gates with synthetic PR metadata, no network.
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../shared-gh-wrappers-safe-edit.sh
-source "${SCRIPT_DIR}/../shared-gh-wrappers-safe-edit.sh"
+source "${SCRIPT_DIR}/shared-gh-wrappers-safe-edit.sh"
+# Load before stubbing so cmd_merge's guarded source preserves the test double.
+# shellcheck source=../pulse-merge-process-worker-briefed.sh
+source "${SCRIPT_DIR}/pulse-merge-process-worker-briefed.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 LOGFILE="${TEST_ROOT}/pulse.log"
 FIXTURE="" ROUTES=0 REVIEWS=0 READ_FAIL=0 LAST_ERROR=""
 
 # Match the existing merge-pass harness: load only the function under test.
-eval "$(awk '/^_check_pr_merge_gates\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/../pulse-merge.sh")"
-eval "$(awk '/^_merge_check_closure_metadata\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/../full-loop-helper-merge.sh")"
-eval "$(awk '/^cmd_merge\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/../full-loop-helper-merge.sh")"
+eval "$(awk '/^_check_pr_merge_gates\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/pulse-merge.sh")"
+eval "$(awk '/^_merge_check_closure_metadata\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
+eval "$(awk '/^cmd_merge\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
 
 gh_pr_view() {
 	local read_command="${1:-}"
@@ -47,6 +50,8 @@ _merge_parse_command_args() {
 _merge_resolve_repo() { printf '%s' 'test/repo'; return 0; }
 _merge_handle_already_merged_provenance() { return 2; }
 _flm_gh_read() { gh_pr_view "$@"; return $?; }
+# Trust behavior is covered by test-worker-briefed-trust-parity.sh, not closure cases.
+_merge_worker_briefed_trust_gate() { return 0; }
 _merge_pre_merge_gate_with_admission_retry() { REVIEWS=$((REVIEWS + 1)); return 1; }
 _merge_report_pre_merge_gate_failure() { return 0; }
 
