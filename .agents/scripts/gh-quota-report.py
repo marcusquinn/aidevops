@@ -6,34 +6,8 @@
 import json
 import sys
 import time
-from collections import defaultdict
 
-from gh_quota_evidence import ci_sample, read_local
-
-
-def read_ci(path, start, end):
-    """Read operator-saved audit JSONL, rejecting conflicting sample IDs."""
-    series = defaultdict(list)
-    if not path:
-        return series
-    samples = {}
-    conflicted = set()
-    with open(path, encoding="utf-8") as source:
-        for line in source:
-            try:
-                parsed = ci_sample(json.loads(line), start, end)
-                if parsed is None:
-                    continue
-                key, value = parsed
-                if key in samples and samples[key] != value:
-                    conflicted.add(key)
-                samples[key] = value
-            except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
-                continue
-    for key, value in samples.items():
-        if key not in conflicted:
-            series[key[:2]].append(value)
-    return series
+from gh_quota_evidence import matching_ci, read_ci, read_local
 
 
 def local_coverage(rows):
@@ -68,7 +42,7 @@ def local_coverage(rows):
     return observed, local_ranges, metrics
 
 
-def ci_coverage(samples, observed, local_ranges):
+def ci_coverage(samples, observed, local_ranges, fingerprint, reset):
     """Credit only CI cost proven additional to possible local overlap."""
     if not observed:
         return None
@@ -78,18 +52,27 @@ def ci_coverage(samples, observed, local_ranges):
     upper = max(row[1] for row in observed)
     ci_cost = None
     ci_ranges = []
-    for lo, hi, before, after, cost in sorted(samples):
+    for value, decision in sorted(samples, key=lambda item: item[0]):
+        lo, hi, before, after, cost = value
+        result = dict(auth_fingerprint=fingerprint, reset_epoch=reset,
+                      reason="outside_observed_interval", credited_cost=0)
+        decision.setdefault("series", []).append(result)
+        decision["reason"] = "evaluated"
         if not (first <= lo <= hi <= last and lower <= before < after <= upper):
             continue
         # Overlapping audit intervals cannot prove independent spend twice.
         if any(before < right and after > left for left, right in ci_ranges):
+            result["reason"] = "overlapping_ci"
             continue
         ci_ranges.append((before, after))
         local_overlap = sum(max(0, min(after, right) - max(before, left))
                             for left, right in local_ranges)
         # Subtract overlap from known cost, not merely from interval capacity:
         # the probe itself might already be present in the local attempt log.
-        ci_cost = (ci_cost or 0) + max(cost - local_overlap, 0)
+        credited = max(cost - local_overlap, 0)
+        result.update(reason="credited" if credited else "locally_covered",
+                      credited_cost=credited)
+        ci_cost = (ci_cost or 0) + credited
     return ci_cost
 
 
@@ -103,13 +86,14 @@ def main():
         print("quota-report: local API log unavailable", file=sys.stderr)
         return 2
     try:
-        ci_series = read_ci(sys.argv[3], start, end)
+        ci_samples, identities, decisions = read_ci(sys.argv[3], start, end)
     except OSError:
         print("quota-report: CI evidence log unavailable", file=sys.stderr)
         return 2
     for (fingerprint, reset), rows in sorted(series.items()):
         observed, local_ranges, metrics = local_coverage(rows)
-        ci_cost = ci_coverage(ci_series[(fingerprint, reset)], observed, local_ranges)
+        samples = matching_ci(ci_samples, identities, fingerprint, reset)
+        ci_cost = ci_coverage(samples, observed, local_ranges, fingerprint, reset)
         used_delta, known = metrics["used_delta"], metrics["known_local_cost"]
         uncertain = metrics["unknown_cost_attempts"] or missing or conflicting
         report = dict(
@@ -130,6 +114,8 @@ def main():
     if not series:
         print(json.dumps(dict(event="quota-unattributed", status="insufficient-samples",
                               missing_metadata_attempts=missing)))
+    for decision in decisions:
+        print(json.dumps(decision, sort_keys=True), file=sys.stderr)
     return 0
 
 
