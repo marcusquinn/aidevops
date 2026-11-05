@@ -152,20 +152,30 @@ def read_ci(path, start, end):
                             reason="invalid_sample")
             decisions.append(decision)
             try:
-                sample = json.loads(line)
-                if isinstance(sample, dict) and sample.get("event") == "quota-ci-identity":
-                    fp, identity = ci_identity(sample)
-                    if fp in identities and identities[fp] != identity:
-                        identity = None  # Conflict is sticky regardless of row order.
-                    identities[fp] = identity
-                    decision["reason"] = "identity_record"
-                    continue
-                parsed, decision["reason"] = parse_ci_row(sample, start, end)
-                if parsed is not None:
-                    keep_ci_sample(samples, parsed, decision)
+                read_ci_row(line, start, end, samples, identities, decision)
             except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 continue
     return samples, identities, decisions
+
+
+def record_identity(identities, sample):
+    """Store one saved identity; a conflict stays invalid regardless of order."""
+    fp, identity = ci_identity(sample)
+    if fp in identities and identities[fp] != identity:
+        identity = None
+    identities[fp] = identity
+
+
+def read_ci_row(line, start, end, samples, identities, decision):
+    """Classify one saved row, recording only a reason code."""
+    sample = json.loads(line)
+    if isinstance(sample, dict) and sample.get("event") == "quota-ci-identity":
+        record_identity(identities, sample)
+        decision["reason"] = "identity_record"
+        return
+    parsed, decision["reason"] = parse_ci_row(sample, start, end)
+    if parsed is not None:
+        keep_ci_sample(samples, parsed, decision)
 
 
 def matching_ci(samples, identities, fingerprint, reset):

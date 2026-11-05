@@ -50,30 +50,39 @@ def ci_coverage(samples, observed, local_ranges, fingerprint, reset):
     last = max(row[0] for row in observed)
     lower = min(row[1] for row in observed)
     upper = max(row[1] for row in observed)
+    bounds = (first, last, lower, upper)
     ci_cost = None
     ci_ranges = []
     for value, decision in sorted(samples, key=lambda item: item[0]):
-        lo, hi, before, after, cost = value
         result = dict(auth_fingerprint=fingerprint, reset_epoch=reset,
                       reason="outside_observed_interval", credited_cost=0)
         decision.setdefault("series", []).append(result)
         decision["reason"] = "evaluated"
-        if not (first <= lo <= hi <= last and lower <= before < after <= upper):
-            continue
-        # Overlapping audit intervals cannot prove independent spend twice.
-        if any(before < right and after > left for left, right in ci_ranges):
-            result["reason"] = "overlapping_ci"
-            continue
-        ci_ranges.append((before, after))
-        local_overlap = sum(max(0, min(after, right) - max(before, left))
-                            for left, right in local_ranges)
-        # Subtract overlap from known cost, not merely from interval capacity:
-        # the probe itself might already be present in the local attempt log.
-        credited = max(cost - local_overlap, 0)
-        result.update(reason="credited" if credited else "locally_covered",
-                      credited_cost=credited)
-        ci_cost = (ci_cost or 0) + credited
+        credited = credit_sample(value, bounds, local_ranges, ci_ranges, result)
+        if credited is not None:
+            ci_cost = (ci_cost or 0) + credited
     return ci_cost
+
+
+def credit_sample(value, bounds, local_ranges, ci_ranges, result):
+    """Return credited cost for one sample, or None when it is not creditable."""
+    lo, hi, before, after, cost = value
+    first, last, lower, upper = bounds
+    if not (first <= lo <= hi <= last and lower <= before < after <= upper):
+        return None
+    # Overlapping audit intervals cannot prove independent spend twice.
+    if any(before < right and after > left for left, right in ci_ranges):
+        result["reason"] = "overlapping_ci"
+        return None
+    ci_ranges.append((before, after))
+    local_overlap = sum(max(0, min(after, right) - max(before, left))
+                        for left, right in local_ranges)
+    # Subtract overlap from known cost, not merely from interval capacity:
+    # the probe itself might already be present in the local attempt log.
+    credited = max(cost - local_overlap, 0)
+    result.update(reason="credited" if credited else "locally_covered",
+                  credited_cost=credited)
+    return credited
 
 
 def main():
