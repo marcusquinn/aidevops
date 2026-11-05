@@ -39,6 +39,52 @@ Ambiguity about scope or style is NOT Outcome C. Applying any review hold at iss
 
 A recovery gap in a fail-closed safety or audit path is NOT Outcome C when it can be closed without weakening the default. Use Outcome B and implement a recovery that stays rejected by default, is append-only, preserves original records, and requires an explicit per-record human acknowledgement carried in an already-trusted approval. Example: GH#36593 orphan releases now need `--acknowledge-unattributed`. The human then decides one concrete record, not an open policy question. This applies equally to interactive report authors: a report must not apply `hold-for-review` or `no-auto-dispatch` to its own issue to request this kind of decision.
 
+## PR-less completion contracts
+
+Issue generators must explicitly opt in through a marker in an OWNER/MEMBER
+issue body. Labels, a closed issue, or prose alone cannot waive the PR path.
+These contracts classify completion evidence; they grant no publication,
+credential, or approval authority.
+
+### Read-only reports
+
+Use `<!-- aidevops:completion-contract:report-only/v1 -->` for audits whose entire
+deliverable is an issue comment, not repository edits or external publication.
+An OWNER/MEMBER posts the verified report through the signed GitHub write wrapper,
+captures the returned comment URL, then edits **that same comment** to start with:
+
+```text
+<!-- aidevops:report-only-completion:v1 -->
+{"repository":"owner/repo","issue":123,"status":"reported","verified":true,"evidence_url":"<the returned URL of this comment>"}
+```
+
+Keep the actual report below those two lines and preserve the wrapper signature.
+Verify the report and receipt, then close the exact issue as completed. The closer
+must also have OWNER/MEMBER association demonstrated by a comment on that issue
+(normally the receipt itself). The classifier checks the URL against GitHub's
+comment ID, repository and issue; another comment's URL is not accepted.
+
+### Data-only publication
+
+Use `<!-- aidevops:completion-contract:data-only/v1 -->` only for separately
+authorized external publication. After viewing the user-facing result, an
+OWNER/MEMBER posts a comment beginning with:
+
+```text
+<!-- aidevops:data-only-completion:v1 -->
+{"repository":"owner/repo","issue":123,"status":"published","verified":true,"evidence_url":"<verified HTTPS user-facing result URL>"}
+```
+
+Close the issue only after publication and verification. Do not use publication
+semantics for a read-only report.
+
+Both paths require a clean non-default worktree, no local commits ahead of the
+live remote default, no divergent pushed branch, and no branch PR in any state.
+After accepting PR-less completion, the runtime adds `status:done`, removes other
+`status:*` labels and `auto-dispatch`, and preserves unrelated labels. A failed
+label write is retryable and is not cached as completion. Without the opt-in and
+trusted receipt, the normal PR requirements remain binding.
+
 ## Worker scope enforcement (t1894)
 
 Workers must only act on the specific issue/PR they were dispatched for.

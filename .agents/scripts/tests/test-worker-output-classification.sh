@@ -116,6 +116,7 @@ case "${1:-}" in
 	issue)
 		case "${2:-}" in
 			view) printf '%s\n' "${STUB_ISSUE_STATE:-OPEN}" ;;
+			edit) exit "${STUB_LABEL_RC:-0}" ;;
 			*) ;;
 		esac
 		;;
@@ -123,7 +124,7 @@ case "${1:-}" in
 		case "${2:-}" in
 			list)
 				case " $* " in
-					*"--state all --json number --jq length"*) printf '0\n' ;;
+					*"--state all --json number --jq length"*) printf '%s\n' "${STUB_BRANCH_PR_COUNT:-0}" ;;
 					*".[].number"*) printf '%s\n' "${STUB_PR_NUMBERS:-}" ;;
 					*"number,state,isDraft,mergedAt,headRefOid,labels,statusCheckRollup"*) printf '%s\n' "${STUB_PR_JSON:-[]}" ;;
 					*"--json number "*) printf '%s\n' "${STUB_SEARCH_JSON:-[]}" ;;
@@ -500,7 +501,7 @@ test_data_only_completion_requires_receipt_and_clean_branch() {
 	export STUB_DATA_ISSUE='{"state":"closed","author_association":"OWNER","body":"<!-- aidevops:completion-contract:data-only/v1 -->"}'
 	export STUB_DATA_COMMENTS='[{"author_association":"MEMBER","body":"<!-- aidevops:data-only-completion:v1 -->\n{\"repository\":\"owner/repo\",\"issue\":123,\"status\":\"published\",\"verified\":true,\"evidence_url\":\"https://example.org/result\"}"}]'
 	local result=""
-	if _worker_external_terminal_complete "issue-123" "$WORK_DIR" >/dev/null 2>&1; then result="complete"; fi
+	if ( _worker_external_terminal_complete "issue-123" "$WORK_DIR" ) >/dev/null 2>&1; then result="complete"; fi
 	[[ "$result" == "complete" ]] && \
 		print_result "trusted data-only receipt and clean branch complete without PR" 0 || \
 		print_result "trusted data-only receipt and clean branch complete without PR" 1
@@ -536,11 +537,65 @@ test_data_only_completion_requires_receipt_and_clean_branch() {
 	return 0
 }
 
+test_report_only_completion() {
+	make_repo_pair report-only || return 1
+	git -C "$WORK_DIR" checkout -q -b feature/report-only || return 1
+	local issue='{"state":"closed","state_reason":"completed","author_association":"OWNER","closed_by":{"login":"auditor"},"labels":[{"name":"auto-dispatch"},{"name":"status:in-progress"},{"name":"audit"}],"body":"<!-- aidevops:completion-contract:report-only/v1 -->"}'
+	local comments='[{"id":456,"html_url":"https://github.com/owner/repo/issues/123#issuecomment-456","user":{"login":"auditor"},"author_association":"MEMBER","body":"<!-- aidevops:report-only-completion:v1 -->\n{\"repository\":\"owner/repo\",\"issue\":123,\"status\":\"reported\",\"verified\":true,\"evidence_url\":\"https://github.com/owner/repo/issues/123#issuecomment-456\"}\n\nAudit report."}]'
+	local shape="" result="" expected="" log=""
+	export STUB_ISSUE_STATE=CLOSED STUB_PR_NUMBERS=''
+	export STUB_GH_LOG="${TEST_ROOT}/report-gh.log"
+	for shape in valid missing-marker untrusted-issue untrusted-receipt untrusted-closer wrong-url wrong-issue wrong-repo unverified published missing-receipt open not-completed dirty branch-pr label-failure; do
+		export STUB_DATA_ISSUE="$issue" STUB_DATA_COMMENTS="$comments"
+		export STUB_BRANCH_PR_COUNT=0 STUB_LABEL_RC=0
+		case "$shape" in
+			missing-marker) STUB_DATA_ISSUE=$(jq '.body = "Audit"' <<<"$issue") ;;
+			untrusted-issue) STUB_DATA_ISSUE=$(jq '.author_association = "COLLABORATOR"' <<<"$issue") ;;
+			untrusted-receipt) STUB_DATA_COMMENTS=$(jq '.[0].author_association = "COLLABORATOR"' <<<"$comments") ;;
+			untrusted-closer) STUB_DATA_ISSUE=$(jq '.closed_by.login = "outsider"' <<<"$issue") ;;
+			wrong-url) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("issuecomment-456"; "issuecomment-457")' <<<"$comments") ;;
+			wrong-issue) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("123"; "124")' <<<"$comments") ;;
+			wrong-repo) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("owner/repo"; "other/repo")' <<<"$comments") ;;
+			unverified) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("true"; "false")' <<<"$comments") ;;
+			published) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("reported"; "published")' <<<"$comments") ;;
+			missing-receipt) STUB_DATA_COMMENTS='[]' ;;
+			open) STUB_DATA_ISSUE=$(jq '.state = "open"' <<<"$issue") ;;
+			not-completed) STUB_DATA_ISSUE=$(jq '.state_reason = "not_planned"' <<<"$issue") ;;
+			dirty) printf 'unfinished\n' >"${WORK_DIR}/unfinished" ;;
+			branch-pr) STUB_BRANCH_PR_COUNT=1 ;;
+			label-failure) STUB_LABEL_RC=1 ;;
+		esac
+		: >"$STUB_GH_LOG"
+		# Isolate the attempt-local evidence cache between synthetic replays.
+		result=$(_worker_external_terminal_complete issue-123 "$WORK_DIR" 2>/dev/null && printf 'accepted') || true
+		expected=""
+		[[ "$shape" != valid ]] || expected=accepted
+		if [[ "$result" == *"$expected" && ( -n "$expected" || "$result" != *accepted* ) ]]; then
+			print_result "report-only replay: ${shape}" 0
+		else
+			print_result "report-only replay: ${shape}" 1 "$result"
+		fi
+		log=$(<"$STUB_GH_LOG")
+		if [[ "$shape" == valid ]]; then
+			if [[ "$log" == *'issue edit 123 --repo owner/repo --add-label status:done --remove-label auto-dispatch --remove-label status:in-progress'* && "$log" != *'--remove-label audit'* ]]; then
+				print_result "report-only normalizes lifecycle labels only" 0
+			else
+				print_result "report-only normalizes lifecycle labels only" 1 "$log"
+			fi
+		elif [[ "$shape" != label-failure && "$log" == *'issue edit '* ]]; then
+			print_result "rejected report must not change labels: ${shape}" 1
+		fi
+		[[ "$shape" != dirty ]] || rm "${WORK_DIR}/unfinished"
+	done
+	unset STUB_DATA_ISSUE STUB_DATA_COMMENTS STUB_ISSUE_STATE STUB_PR_NUMBERS STUB_GH_LOG STUB_BRANCH_PR_COUNT STUB_LABEL_RC
+	return 0
+}
+
 _assert_consolidation_terminal() {
 	local name="$1"
 	local expected_rc="$2"
 	local rc=0
-	_worker_external_terminal_complete "issue-123" "$WORK_DIR" >/dev/null 2>&1 || rc=1
+	( _worker_external_terminal_complete "issue-123" "$WORK_DIR" ) >/dev/null 2>&1 || rc=1
 	if [[ "$rc" -eq "$expected_rc" ]]; then
 		print_result "$name" 0
 	else
@@ -717,6 +772,7 @@ test_feature_branch_without_default_ref_returns_branch_orphan
 test_external_terminal_complete_uses_trailing_issue_digits
 test_external_terminal_complete_guards_before_github_calls
 test_data_only_completion_requires_receipt_and_clean_branch
+test_report_only_completion
 test_consolidation_completion_requires_linked_evidence
 test_dirty_feature_worktree_preserved
 test_develop_zero_diff_local_branch_returns_noop

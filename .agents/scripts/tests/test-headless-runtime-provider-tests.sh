@@ -287,6 +287,7 @@ test_scoped_delivery_terminal_reconciliation() {
 			_hrw_resolve_default_branch() { printf main; return 0; }
 			gh() {
 				case "$*" in
+				"issue edit 456 --repo owner/repo "*) return 0 ;;
 				"api repos/owner/repo/issues/456")
 					jq -cn --arg shape "$SCOPED_SHAPE" '{number:456,state:"closed",state_reason:"completed",
 						author_association:"COLLABORATOR",updated_at:"2026-10-25T12:00:00Z",
@@ -532,6 +533,7 @@ test_clean_exit_terminal_state_reconciliation() {
 					[[ "$shape" != "consolidation" ]] || return 1
 					printf '%s\n' '42'
 					;;
+				issue:edit) [[ "$target" == 456 ]] || return 1 ;;
 				pr:view)
 					[[ "$target" == "42" ]] || return 1
 					printf '{"state":"MERGED","mergedAt":"2026-10-05T00:00:00Z","closingIssuesReferences":[{"number":%s,"repository":{"name":"repo","owner":{"login":"%s"}}}]}\n' "$closing_number" "$closing_owner"
@@ -569,6 +571,7 @@ test_pr_less_terminal_proof_survives_finalization() {
 				printf '%s\n' '{"state":"closed","state_reason":"completed","author_association":"COLLABORATOR"}'
 				;;
 			pr:list) printf '%s\n' '42' ;;
+			issue:edit) return 0 ;;
 			pr:view)
 				printf '%s\n' '{"state":"MERGED","mergedAt":"2026-10-05T00:00:00Z","closingIssuesReferences":[{"number":456,"repository":{"name":"repo","owner":{"login":"owner"}}}]}'
 				;;
