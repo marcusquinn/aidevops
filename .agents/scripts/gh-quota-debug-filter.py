@@ -30,6 +30,7 @@ from gh_quota_debug_response import REQUEST_END, response_metadata
 
 
 def _request_ranges(lines: List[bytes]) -> List[Tuple[int, int]]:
+    """Find half-open private request ranges, including unterminated frames."""
     starts = [index for index, line in enumerate(lines) if REQUEST_START.match(line)]
     ranges: List[Tuple[int, int]] = []
     for position, start in enumerate(starts):
@@ -47,6 +48,7 @@ def _request_ranges(lines: List[bytes]) -> List[Tuple[int, int]]:
 
 
 def _completion_ranges(lines: List[bytes]) -> List[Tuple[int, int]]:
+    """Find half-open completion ranges while tracking pending request starts."""
     ranges: List[Tuple[int, int]] = []
     start: Optional[int] = None
     pending_requests = 0
@@ -66,6 +68,7 @@ def _completion_ranges(lines: List[bytes]) -> List[Tuple[int, int]]:
 
 
 def _duration(frame: List[bytes]) -> Optional[Tuple[float, bytes]]:
+    """Return the last completion's duration value and unit, or None."""
     for line in reversed(frame):
         match = REQUEST_END.match(line.rstrip(b"\r\n"))
         if not match:
@@ -75,6 +78,7 @@ def _duration(frame: List[bytes]) -> Optional[Tuple[float, bytes]]:
 
 
 def _duration_ms(frame: List[bytes]) -> Optional[int]:
+    """Convert a supported completion duration to nonnegative milliseconds."""
     duration = _duration(frame)
     if duration is None:
         return None
@@ -86,6 +90,7 @@ def _duration_ms(frame: List[bytes]) -> Optional[int]:
 
 
 def _write_sanitized_stderr() -> None:
+    """Suppress all captured stderr until native diagnostics can be allowlisted."""
     # Exact-capture mode deliberately enables GH_DEBUG. Framing proves which
     # bytes belong to private request/response blocks, but it cannot prove that
     # bytes outside those blocks are diagnostics rather than malformed private
@@ -144,6 +149,11 @@ def _request_metadata(frame: List[bytes]) -> Tuple[str, str]:
 
 
 def _transport_frames(lines: List[bytes], request_ranges: List[Tuple[int, int]]) -> list:
+    """Build sanitized transport records, excluding proven local cache hits.
+
+    Use unknown request labels when frame ownership is ambiguous and append
+    placeholder records for requests without matching completions.
+    """
     found = (_cache_request(lines[start:end]) for start, end in request_ranges)
     cache_requests = [request for request in found if request is not None]
     frames = []
@@ -167,6 +177,7 @@ def _transport_frames(lines: List[bytes], request_ranges: List[Tuple[int, int]])
 
 
 def _frame_row(frame_index: int, record: tuple) -> str:
+    """Format a sanitized frame as TSV, using x for absent field values."""
     status_count, response, response_cost, duration, request_metadata = record
     values = [
         "frame",
@@ -185,6 +196,11 @@ def _frame_row(frame_index: int, record: tuple) -> str:
 
 
 def main() -> int:
+    """Read one debug capture and emit sanitized frame rows or an invalid marker.
+
+    Return 2 for incorrect arguments, 1 for an unreadable capture, and 0 after
+    emitting the capture result. Captured stderr is never forwarded.
+    """
     if len(sys.argv) != 2:
         return 2
     try:
