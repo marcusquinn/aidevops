@@ -30,6 +30,7 @@
 readonly _HEADLESS_RUNTIME_FAILURE_LOADED=1
 
 _HRFF_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HRFF_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_SCRIPT_DIR="."
 if [[ -r "${_HRFF_SCRIPT_DIR}/lib/version.sh" ]]; then
 	# shellcheck source=lib/version.sh
 	source "${_HRFF_SCRIPT_DIR}/lib/version.sh"
@@ -103,8 +104,13 @@ _hrff_attempt_activity_count() {
 }
 
 _HRFF_RATELIMIT_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HRFF_RATELIMIT_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_RATELIMIT_DIR="."
 # shellcheck source=headless-runtime-failure-ratelimit.sh
-source "${_HRFF_RATELIMIT_DIR}/headless-runtime-failure-ratelimit.sh"
+if ! source "${_HRFF_RATELIMIT_DIR}/headless-runtime-failure-ratelimit.sh"; then
+	printf 'ERROR: failed to load rate-limit release module from %s\n' "$_HRFF_RATELIMIT_DIR" >&2
+	unset _HRFF_RATELIMIT_DIR
+	return 1 2>/dev/null || exit 1
+fi
 unset _HRFF_RATELIMIT_DIR
 
 #######################################
@@ -1941,6 +1947,7 @@ _recover_dirty_worker_pr() {
 }
 
 _HRFF_FASTFAIL_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HRFF_FASTFAIL_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_FASTFAIL_DIR="."
 # shellcheck source=headless-runtime-failure-fastfail.sh
 source "${_HRFF_FASTFAIL_DIR}/headless-runtime-failure-fastfail.sh"
 unset _HRFF_FASTFAIL_DIR
