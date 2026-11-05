@@ -166,6 +166,22 @@ each active child has scheduler coverage and preserve the existing update policy
 For the audit, safe rollout, verification, and targeted recovery procedure, read
 [WordPress multisite cron and automatic-update readiness](hostinger-wordpress-cron.md).
 
+### LiteSpeed page cache: purge scope on a shared account
+
+Every WordPress site on one account can share a single LiteSpeed cache. Purges reach different amounts of it. The scope below comes from LiteSpeed Cache 7.9.3's `Purge::_append_prefix()`:
+
+| Purge | Tags sent | Empties |
+|-------|-----------|---------|
+| Purge All on a single site (admin bar, `wp litespeed-purge all`) | the site's prefix | that site |
+| Network Admin Purge All on a multisite | each blog's prefix | that network |
+| **Empty Entire Cache**, and `wp litespeed-purge all` **on a multisite** (it sends `LSWCP_EMPTYCACHE`) | `*` | the whole cache, other sites on the account included |
+| `wp litespeed-purge blog <id>`, `url <url>`, `post_id <id>` | those tags | that subsite, page or post |
+
+- **During multisite development or deploys**, purge with `wp litespeed-purge blog <id>` for each changed subsite, or `url` for single pages. Do not use `all` or Empty Entire Cache unless every site on the account should go cold.
+- **Observed 2026-11-04/05**: home pages of separate single sites and of another network's main site were all uncached at the same moment. None of those sites had run a purge in its own WordPress, and their last cache fills were hours old. Repeated cold caches on one site can come from purges on another site on the account. Check other sites' build or deploy activity before blaming that site's cache warming.
+- **Diagnose** with response headers. `x-litespeed-cache: hit|miss` shows whether a page was served from the cache. On a cached page, `expires` minus the TTL gives when the copy was built. Sample several sites at once to separate an account-wide purge from a single site's TTL.
+- **Refilling**: a purge from outside a site runs none of its code, so `litespeed_purged_all` hooks and LiteSpeed Cache's crawler do not refill it. The crawler waits for its next interval. SEO Pro Stack 1.3.151+ **Keep pages cached** checks the home page every five minutes and refills after an outside purge.
+
 ### New WordPress sites: Hostinger default plugins
 
 On creation or first setup through hPanel, the Hostinger API, or an addon website, work over `ssh <alias>`, one site at a time (shared-account connection limits). Inventory installed plugins and all `hostinger*` plugin folders; report other matches without acting on them. Target only `hostinger-ai-assistant` (Hostinger AI) and `hostinger-easy-onboarding` (Hostinger Easy Onboarding); skip absent plugins on every run.
