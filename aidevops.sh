@@ -2105,6 +2105,17 @@ _main_early_help() {
 	return 1
 }
 
+# Fleet sync commands: managed caller workflows and the Dependabot exclusion
+# for aidevops reusable-workflow pins (GH#36723).
+_main_dispatch_sync() {
+	local command="$1"
+	shift
+	local helper="sync-workflows-helper.sh"
+	[[ "$command" == "sync-dependabot" ]] && helper="dependabot-aidevops-exclusion-helper.sh"
+	_dispatch_helper "$helper" "$helper" "$@"
+	return $?
+}
+
 _main_dispatch() {
 	local command="$1" check_workflows_helper="$2"
 	shift 2
@@ -2134,8 +2145,7 @@ _main_dispatch() {
 	schedule) _dispatch_helper "deferred-job-helper.sh" "deferred-job-helper.sh" "$@" ;;
 	launch-worker | launch_worker) cmd_launch_worker "$@" ;;
 	check-workflows | workflows) _dispatch_helper "$check_workflows_helper" "$check_workflows_helper" "$@" ;;
-	sync-workflows) _dispatch_helper "sync-workflows-helper.sh" "sync-workflows-helper.sh" "$@" ;;
-	sync-dependabot) _dispatch_helper "dependabot-aidevops-exclusion-helper.sh" "dependabot-aidevops-exclusion-helper.sh" "$@" ;;
+	sync-workflows | sync-dependabot) _main_dispatch_sync "$command" "$@" ;;
 	metrics) _dispatch_helper "repo-metrics-helper.sh" "repo-metrics-helper.sh" "$@" ;;
 	badges) _main_badges "$@" ;;
 	security) _cmd_security "$@" ;;
