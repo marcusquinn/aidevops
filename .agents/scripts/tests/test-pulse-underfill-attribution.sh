@@ -39,11 +39,12 @@ jq -e '.streak == 2' "$state" >/dev/null
 cycle three
 [[ -f "$advisory" ]]
 [[ $(rg -c UNDERFILL_ATTRIBUTION "$LOGFILE") == 1 ]]
-[[ $(wc -l <"$TEST_ROOT/cleanup-calls") == 1 ]]
+# wc pads with spaces on macOS; compare numerically.
+(($(wc -l <"$TEST_ROOT/cleanup-calls") == 1))
 jq -e '.streak == 3 and (.top | startswith("local_capacity_gate:")) and .host.cores == "24"' "$state" >/dev/null
 cycle four
 [[ $(rg -c UNDERFILL_ATTRIBUTION "$LOGFILE") == 1 ]]
-[[ $(wc -l <"$TEST_ROOT/cleanup-calls") == 1 ]]
+(($(wc -l <"$TEST_ROOT/cleanup-calls") == 1))
 cycle recovered 32 30
 [[ ! -f "$advisory" ]]
 jq -e '.streak == 0 and .escalated == {} and .top == ""' "$state" >/dev/null
@@ -79,6 +80,20 @@ cycle clamp-two 3 3
 cycle clamp-three 3 3
 jq -e '.deficit == 90 and (.reasons | any(.reason == "config_clamp"))' "$state" >/dev/null
 [[ -f "$HOME/.aidevops/advisories/underfill-config_clamp.advisory" ]]
+# Real cycles run ~25 minutes: a 1600s gap is still consecutive, a gap beyond
+# the window restarts the streak.
+rm -f "$HOME/.aidevops/cache/pulse-underfill-capacity.json"
+cycle long-one
+jq --argjson t "$(($(date +%s) - 1600))" '.timestamp = $t' "$state" >"$state.tmp" && mv "$state.tmp" "$state"
+before=$(jq '.streak' "$state")
+cycle long-two
+jq -e --argjson b "$before" '.streak == $b + 1' "$state" >/dev/null
+jq --argjson t "$(($(date +%s) - 6000))" '.timestamp = $t' "$state" >"$state.tmp" && mv "$state.tmp" "$state"
+cycle long-gap
+jq -e '.streak == 1' "$state" >/dev/null
+# The deterministic dispatch path must feed attribution, not only active refill.
+awk '/^dispatch_max\(\) \{/ {f=1} f && /^}/ {exit} f' "$SCRIPT_DIR/pulse-dispatch-engine.sh" | rg -q '_dispatch_attribute_round_underfill'
+awk '/^_dispatch_attribute_round_underfill\(\) \{/ {f=1} f && /^}/ {exit} f' "$SCRIPT_DIR/pulse-dispatch-engine.sh" | rg -q '_attribute_sustained_underfill'
 printf 'Dispatch blocked: waiting for a scoped signed maintainer permission grant\nDispatch blocked: secret store unlock expired\nDispatch blocked: GitHub pacing cooldown\nDispatch blocked: worktree capacity unavailable\n' >"$LOGFILE"
 _underfill_reason_tally 0 | jq -e 'length == 4 and any(.reason == "permission_gate") and any(.reason == "secret_gate") and any(.reason == "github_pacing") and any(.reason == "worktree_cap")' >/dev/null
 end=$(wc -c <"$LOGFILE")

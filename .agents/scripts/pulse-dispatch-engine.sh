@@ -752,15 +752,27 @@ dispatch_max() {
 	local dispatched_count=0 processed_count=0
 	_dispatch_execute_candidate_loop "$_dispatch_candidate_file" "$candidates_json" "$max_workers" "$active_workers" "$self_login" || return 1
 	rm -f "$_dispatch_candidate_file"
-	if [[ "$_dispatch_owns_benign_blocks_cycle" == "1" ]]; then
-		_dispatch_cleanup_benign_blocks_cycle
-	fi
+	[[ "$_dispatch_owns_benign_blocks_cycle" != "1" ]] || _dispatch_cleanup_benign_blocks_cycle
 
 	echo "[pulse-wrapper] Dispatch path=${_dispatch_path}: loop body finished — processed=${processed_count} dispatched=${dispatched_count} mode=$( ((_dispatch_max_parallel <= 1)) && echo serial || echo "parallel(${_dispatch_max_parallel})")" >>"$LOGFILE"
 	_dispatch_maybe_engage_throttle
+	_dispatch_attribute_round_underfill "$max_workers" "$((active_workers + dispatched_count))" "$candidate_count"
 
 	echo "[pulse-wrapper] Dispatch path=${_dispatch_path} complete: implementation_dispatched=${dispatched_count} triage_attempted=${triage_attempted} triage_infrastructure_failed=${triage_infrastructure_failed} processed=${processed_count}/${candidate_count} simultaneous_worker_slots_targeted=${available_slots}" >>"$LOGFILE"
 	echo "$dispatched_count"
+	return 0
+}
+
+#######################################
+# GH#36724: feed sustained-underfill attribution from the deterministic
+# dispatch path every cycle reaches; the active-refill recycler alone runs too
+# rarely. The same-cycle guard in _attribute_sustained_underfill dedupes.
+# Args: $1=final worker target, $2=active+dispatched workers, $3=ranked candidates
+#######################################
+_dispatch_attribute_round_underfill() {
+	local target="$1" active="$2" runnable="$3"
+	declare -F _attribute_sustained_underfill >/dev/null || return 0
+	_attribute_sustained_underfill "$target" "$active" "$runnable" || true
 	return 0
 }
 
@@ -1400,9 +1412,13 @@ _attribute_sustained_underfill() {
 			reasons=$(jq '. + [{reason:"config_clamp",count:1}] | sort_by([-.count,.reason])' <<<"$reasons")
 		fi
 	fi
+	# Consecutive-cycle window: real Pulse cycles run ~4-40 minutes, so a fixed
+	# 15-minute window reset the streak every cycle and never escalated.
+	local window="${UNDERFILL_ATTRIBUTION_STREAK_WINDOW_SECS:-5400}"
+	[[ "$window" =~ ^[1-9][0-9]*$ ]] || window=5400
 	if ((target > 0 && deficit >= 50 && runnable * 100 >= target * 5)) &&
 		awk -v c="$cores" -v l="$load" -v m="$memory" -v floor="${RAM_RESERVE_MB:-6144}" 'BEGIN {exit !(c>0 && l ~ /^[0-9.]+$/ && l<c && m>floor)}'; then
-		streak=$(jq -r --argjson now "$now" 'if (.timestamp // 0) > ($now - 900) then (.streak // 0) + 1 else 1 end' <<<"$previous")
+		streak=$(jq -r --argjson now "$now" --argjson window "$window" 'if (.timestamp // 0) > ($now - $window) then (.streak // 0) + 1 else 1 end' <<<"$previous")
 	fi
 	# Keep 24h dedupe stamps while pressure remains, including temporary lack of
 	# headroom/backlog. Only actual pool recovery re-arms a cause immediately.
