@@ -784,8 +784,10 @@ _hrw_pr_less_terminal_complete() {
 	_HRW_PR_LESS_REJECTION="issue_not_closed"
 	jq -e '.state == "closed"' <<<"$issue_json" >/dev/null 2>&1 || return 1
 	if _hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
+		_hrw_report_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_already_delivered_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json"; then
+		_hrw_pr_less_normalize_labels "$issue_number" "$repo_slug" "$issue_json" || return 1
 		# Scoped evidence is freshly regenerated, never replayed from this cache.
 		if [[ -z "$_HRW_SCOPED_DELIVERY_RECEIPT" ]]; then
 			_HRW_PR_LESS_VERIFIED_CONTEXT="$context"
@@ -794,6 +796,20 @@ _hrw_pr_less_terminal_complete() {
 		return 0
 	fi
 	return 1
+}
+
+# Reconcile only the verified closed task, preserving unrelated labels. Do not
+# cache success until this write succeeds, so a transient failure is retryable.
+_hrw_pr_less_normalize_labels() {
+	local issue_number="$1" repo_slug="$2" issue_json="$3"
+	local label=""
+	local -a args=(--add-label "status:done")
+	while IFS= read -r label; do
+		[[ -n "$label" ]] && args+=(--remove-label "$label")
+	done < <(jq -r '.labels[]?.name | select(. == "auto-dispatch" or (startswith("status:") and . != "status:done"))' <<<"$issue_json")
+	_HRW_PR_LESS_REJECTION="completion_labels_unavailable"
+	gh issue edit "$issue_number" --repo "$repo_slug" "${args[@]}" >/dev/null 2>&1 || return 1
+	return 0
 }
 
 # A different worker may have delivered the issue before this run. Require an
@@ -950,6 +966,38 @@ _hrw_data_only_terminal_complete() {
 	' <<<"$comments" >/dev/null 2>&1 || return 1
 	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
 	print_info "[lifecycle] worker_data_only_terminal complete session=${session_key} issue=${issue_number}"
+	return 0
+}
+
+# Reports are not publications. Bind the receipt to its own GitHub comment URL
+# and prove the closer's OWNER/MEMBER association using trusted comment metadata.
+_hrw_report_only_terminal_complete() {
+	local session_key="$1" work_dir="$2" issue_number="$3" repo_slug="$4" issue_json="$5"
+	local comments=""
+	local comments_endpoint=""
+	printf -v comments_endpoint 'repos/%s/issues/%s/comments?per_page=100' "$repo_slug" "$issue_number"
+	local trusted_def='def trusted: (.author_association // "") | test("^(OWNER|MEMBER)$");'
+	jq -e --arg closed closed --arg completed completed "${trusted_def}"'
+		.state == $closed and .state_reason == $completed and trusted
+		and ((.body // "") | contains("<!-- aidevops:completion-contract:report-only/v1 -->"))' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	comments=$(gh api --paginate "$comments_endpoint" 2>/dev/null) || return 1
+	jq -se --arg repo "$repo_slug" --argjson issue "$issue_number" \
+		--arg closer "$(jq -r '.closed_by.login // ""' <<<"$issue_json")" "${trusted_def}"'
+		[.[][]] as $comments
+		| ($closer != "" and any($comments[]; trusted and .user.login == $closer))
+		and any($comments[]; trusted
+			and ((.body // "") | startswith("<!-- aidevops:report-only-completion:v1 -->\n"))
+			and (.html_url as $url | .id as $id
+				| (try (.body | split("\n")[1] | fromjson) catch {}) as $r
+				| $r.repository == $repo and $r.issue == $issue
+				and $r.status == "reported" and $r.verified == true
+				and ($id | type == "number" and . > 0)
+				and $url == ("https://github.com/" + $repo + "/issues/" + ($issue | tostring) + "#issuecomment-" + ($id | tostring))
+				and $r.evidence_url == $url))
+	' <<<"$comments" >/dev/null 2>&1 || return 1
+	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	print_info "[lifecycle] worker_report_only_terminal complete session=${session_key} issue=${issue_number}"
 	return 0
 }
 
