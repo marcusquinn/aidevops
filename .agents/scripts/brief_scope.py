@@ -44,6 +44,12 @@ def section(lines, start):
 
 def existing_scope(lines, unfenced):
     scopes = [i for i, line in enumerate(lines) if HEADING.fullmatch(line)]
+    hidden = [line for line in unfenced.splitlines() if HEADING.fullmatch(line)]
+    if len(hidden) > len(scopes):
+        raise ValueError(
+            "Files Scope heading is hidden by an unclosed HTML comment "
+            "('<!--' without '-->'); close the comment or move it into a code fence"
+        )
     if [i for i, line in enumerate(lines) if SCOPE_LIKE.match(line)] != scopes:
         fail()
     for line in unfenced.splitlines():
