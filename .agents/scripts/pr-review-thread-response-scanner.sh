@@ -1615,6 +1615,23 @@ _prrts_prepare_dispatch_target() {
 	return 0
 }
 
+_prrts_launch_reserved_worker() {
+	local repo_slug="$1" pr_number="$2" worker_worktree_path="$3" session_key="$4" outcome_id="$5" reservation_file="$6"
+	local worker_pid="" detach_mode=""
+	shift 6
+	_prrts_launch_detached_worker "$repo_slug" "$pr_number" worker_pid detach_mode "$@"
+	if ! _prrts_activate_global_capacity "$reservation_file" "$worker_pid" "$session_key"; then
+		kill "$worker_pid" 2>/dev/null || true
+		_prrts_release_global_capacity "$reservation_file" "$$" || true
+		PRRTS_WORKTREE_FAILURE_REASON="global_worker_reservation_activation_failed"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not activate global worker reservation for pid=${worker_pid}"
+		return 1
+	fi
+	disown "$worker_pid" 2>/dev/null || true
+	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} in ${worker_worktree_path} session_key=${session_key} pid=${worker_pid} detach=${detach_mode} attempt_id=${outcome_id}"
+	return 0
+}
+
 _prrts_dispatch_worker() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1624,7 +1641,7 @@ _prrts_dispatch_worker() {
 	local head_ref="$8" head_oid="$9"
 	local outcome_id="${10}" now_epoch="${11}" attempt_count="${12}"
 	local maintainer_attention="${13}" infrastructure_failure_count="${14}" reservation_file="${15}"
-	local prompt_file="" session_key="" model="" worker_worktree_path="" worker_pid="" detach_mode="" outcome_file="" attempt_state_file=""
+	local prompt_file="" session_key="" model="" worker_worktree_path="" outcome_file="" attempt_state_file=""
 	local worker_task="" repair_linked_issue="" worker_login=""
 	local batch_fingerprint="" batch_thread_count="0"
 	local -a cmd worker_cmd
@@ -1708,16 +1725,8 @@ _prrts_dispatch_worker() {
 	# Persist the generation immediately before the detached worker becomes
 	# runnable, so immediate terminal callbacks cannot be overwritten.
 	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid" "$outcome_id" "$infrastructure_failure_count"
-	_prrts_launch_detached_worker "$repo_slug" "$pr_number" worker_pid detach_mode "${worker_cmd[@]}"
-	if ! _prrts_activate_global_capacity "$reservation_file" "$worker_pid" "$session_key"; then
-		kill "$worker_pid" 2>/dev/null || true
-		_prrts_release_global_capacity "$reservation_file" "$$" || true
-		PRRTS_WORKTREE_FAILURE_REASON="global_worker_reservation_activation_failed"
-		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not activate global worker reservation for pid=${worker_pid}"
-		return 1
-	fi
-	disown "$worker_pid" 2>/dev/null || true
-	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} in ${worker_worktree_path} session_key=${session_key} pid=${worker_pid} detach=${detach_mode} attempt_id=${outcome_id}"
+	_prrts_launch_reserved_worker "$repo_slug" "$pr_number" "$worker_worktree_path" "$session_key" \
+		"$outcome_id" "$reservation_file" "${worker_cmd[@]}" || return 1
 	return 0
 }
 
