@@ -284,15 +284,30 @@ _dispatch_first_wave_bounds() {
 }
 
 # GH#34331: return 0 when a first-wave census may stop polling repositories:
-# it holds candidates for every free slot, or its enumeration budget elapsed.
+# it holds fresh candidates for every free slot, or its enumeration budget elapsed.
+# Recent failed attempts alone must not hide unscanned fresh work (GH#36712).
 # Args: JSONL candidate file (one candidate per line), bounds from above
 _dispatch_first_wave_enumeration_done() {
 	local candidate_file="$1" bounds="$2" target=1 deadline=0 count=0
+	local stamps="" dir=""
 	read -r target deadline <<<"$bounds"
 	[[ "$target" =~ ^[0-9]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 0
+	(($(_dispatch_first_wave_now_s) >= deadline)) && return 0
 	count=$(wc -l <"$candidate_file" 2>/dev/null) || count=0
 	count="${count//[[:space:]]/}"
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	if ((count >= target)) && declare -F _dispatch_attempt_recency_stamps >/dev/null 2>&1 &&
+		((${_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS:-0} > 0)); then
+		dir=$(_dispatch_attempt_recency_dir)
+		stamps=$(_dispatch_attempt_recency_stamps "$dir" "$(date +%s)")
+		if [[ -n "$stamps" ]]; then
+			count=$(jq -s --arg stamps "$stamps" '
+				($stamps | split("\n") | map(split("\t")[0])) as $attempted |
+				map(select(("\((.repo_slug // "") | sub("/"; "--"))--\(.number // "")") as $key |
+					$attempted | index($key) | not)) | length
+			' "$candidate_file" 2>/dev/null) || count=0
+		fi
+	fi
 	((count >= target)) && return 0
 	(($(_dispatch_first_wave_now_s) >= deadline)) && return 0
 	return 1
@@ -462,6 +477,8 @@ _dispatch_order_idle_borrowing_candidates() {
 #######################################
 # Order one dispatch round: attempt-recency rotation (GH#34363) when the
 # candidate library is loaded, then the trusted review-debt fairness share.
+# The debt cap takes precedence even for fresh rank-0 review-debt work; the
+# recency share does not exempt candidates from the established debt policy.
 # Both are order-only; every candidate still passes its live gates.
 #
 # Arguments:
