@@ -16,6 +16,27 @@ placeholder-only template from `configs/site-inventory.json.txt`. It is local an
 uncommitted. Store credential *values* in the secret store. Inventory may hold only
 a credential variable name, account reference, and non-secret connection metadata.
 
+### Protected SSH connection metadata
+
+When SSH host, port, or username values belong in the secret store, use
+`ssh_host_env`, `ssh_port_env`, and `ssh_user_env` on the hosting account. Each
+holds an uppercase secret variable name, never a value or shell expression.
+Do not configure both a literal and a reference for the same field.
+
+`lookup` preserves these references without reading the secret backend.
+`readiness` checks declared references against `aidevops secret inventory`, the
+existing names-only metadata command. A missing reference, invalid metadata,
+backend error, or conflicting literal/reference remains a `gap`; absent freshness
+remains `stale`. No secret values are decrypted, injected, printed, or persisted.
+Older literal connection records do not require a secret-inventory query.
+
+`readiness_scope: "configuration_only"` explicitly limits a ready result: it
+does not prove backend unlockability, nonempty secret values, SSH-agent identity,
+connectivity, application health, login, permissions, or operation authorization.
+Verify those separately through the operation's approved process; never mark
+runtime checks complete from a names-only inventory result. Record what was
+actually verified when updating inventory/account freshness.
+
 ## Pre-change server backups
 
 Before changing a site, store server-side backups (settings JSON, database dumps,
