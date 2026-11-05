@@ -153,13 +153,15 @@ def sampled_live(period):
 
 
 def sampled_year(year):
-    days = year.get("coverage_days", 0) or 0
-    if days >= FULL_YEAR_SAMPLED_DAYS:
+    """Sampler years never fall through to history: when sampling began today the
+    live year stays unavailable (before-first-sample) instead of a history projection."""
+    days = year["coverage_days"]
+    if year["status"] == "unavailable" or days >= FULL_YEAR_SAMPLED_DAYS:
         return year
     if days < MIN_SAMPLED_DAYS_FOR_YEAR:
         # A 365x projection of a few sampled hours is noise, not an estimate.
         return dict(year, hours=None, status="unavailable", reason=f"fewer-than-{MIN_SAMPLED_DAYS_FOR_YEAR}-sampled-days")
-    estimate = min(8760.0, (year["hours"] or 0) / days * 365)
+    estimate = min(8760.0, year["hours"] / days * 365)
     return dict(year, hours=round(estimate, 1), estimated=True, reason="sampled-coverage-extrapolation")
 
 
@@ -183,16 +185,12 @@ def apply_short_history(periods, history, now, skipped):
 
 
 def estimated_year(periods, history, now, skipped):
-    if sampled_live(periods["year"]):
+    if periods["year"].get("observed_since_epoch") is not None:
         return sampled_year(periods["year"])
-    # Sampler collections keep the seven-day floor even when history fills in
-    # (for example when sampling began today and the live year is unavailable).
-    sampler = periods["year"].get("observed_since_epoch") is not None
-    min_history_days = MIN_SAMPLED_DAYS_FOR_YEAR if sampler else 1
     year = history_period(history, now, 365, skipped)
     if year and year.get("calendar_span_days", 0) >= 330:
         return year
-    if year and year.get("coverage_days", 0) >= min_history_days:
+    if year and year.get("coverage_days", 0) > 0:
         estimate = min(8760.0, year["hours"] / year["calendar_span_days"] * 365)
         return dict(year, hours=round(estimate, 1), estimated=True, reason="calendar-span-extrapolation")
     month = periods["month"]
