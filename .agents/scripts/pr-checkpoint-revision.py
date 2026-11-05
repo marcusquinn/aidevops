@@ -16,7 +16,8 @@ import sys
 
 from pr_checkpoint_events import (EVENTS, events, release_for, released_attempt_token,
                                   successors_valid, timestamp, trusted)
-from pr_checkpoint_history import explain_released_successor_history, released_successor_history
+from pr_checkpoint_history import (UNATTRIBUTED, explain_released_successor_history,
+                                   released_successor_history)
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
 
@@ -71,10 +72,13 @@ def history_approved(data, comments, approval, approval_id, closing):
     # (GH#35683) closures, must be acknowledged exactly as generated.
     if history is None or history != approval.get("released_successors", []):
         return False
-    historical_claims = {item["claim_id"] for item in history}
+    # GH#36593: an unattributed release has no claim; any token it names is
+    # still fenced so a live claim cannot reuse it.
+    historical_ids = {item.get("claim_id", item["release_id"]) for item in history}
     used_tokens = {f.get("lease_token") for c, _, f in
                     events(comments, approval["release_id"], approval_id, trusted_logins)
-                   if c["id"] in historical_claims}
+                   if c["id"] in historical_ids}
+    used_tokens.discard(None)
     used_tokens.add(closing[1])
     return not data.get("lease") or data["lease"] not in used_tokens
 
@@ -139,6 +143,28 @@ def rejection_diagnostic(context):
             f"episode_claim={claim} reason={reason}")
 
 
+def require_unattributed_acknowledgement(history, acknowledged):
+    """GH#36593: orphan releases need the maintainer to name each exact comment.
+
+    #aidevops:trust-boundary — automatic callers pass no acknowledgement, so
+    they can never approve an orphan. Missing, extra or mismatched IDs refuse.
+    """
+    orphans = sorted(item["release_id"] for item in history if item.get("outcome") == UNATTRIBUTED)
+    if not isinstance(acknowledged, list) or not all(
+            isinstance(item, int) and not isinstance(item, bool) for item in acknowledged):
+        raise ValueError("acknowledge_unattributed must list comment ids")
+    if sorted(acknowledged) == orphans:
+        return
+    if orphans:
+        ids = ",".join(str(item) for item in orphans)
+        raise ValueError(
+            f"history contains unattributed release comment(s) {ids} with unrecovered provenance; "
+            "no approval generated. Inspect them, then rerun approval-template with "
+            f"--acknowledge-unattributed={ids} to accept them explicitly")
+    raise ValueError("acknowledged comment ids are not unattributed releases in this history; "
+                     "no approval generated")
+
+
 def template(data):
     """Emit an approval line only when dispatch-approved could accept its release.
 
@@ -167,6 +193,7 @@ def template(data):
     if history is None:
         raise ValueError("intervening coordination is not fully released; no approval generated; "
                          + rejection_diagnostic(rejection))
+    require_unattributed_acknowledgement(history, data.get("acknowledge_unattributed", []))
     if history:
         approval["released_successors"] = history
     return PREFIX + json.dumps(approval)

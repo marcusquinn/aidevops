@@ -507,6 +507,9 @@ assert_eq 0 "$completion_status" "completion keeps closed-is-done for superseded
 SUCCESSOR_STATE="CLOSED" SUCCESSOR_REASON="COMPLETED"
 EDIT_COUNT=0 REREAD_LABELS="status:blocked"
 assert_eq 1 "$(run_reconcile)" "completed successor releases the superseded dependency"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+assert_eq 1 "$EDIT_COUNT" "stale sweep makes a dependant of a completed successor ready"
 NATIVE_EMPTY=true LIVE_REASON="NOT_PLANNED" SUCCESSOR_STATE="OPEN" SUCCESSOR_REASON=""
 EDIT_COUNT=0 REREAD_LABELS="status:blocked"
 assert_eq 0 "$(run_reconcile)" "declared superseded blocker with an open successor keeps the dependant blocked"
@@ -578,6 +581,7 @@ rm -f "$visited_log"
 REPOINT_LOG=$(mktemp)
 _run_repoint_case() (
 	local dependant="$1"
+	local mode="${2:-sweep}"
 	gh() {
 		local arg="" jq_filter="" path="" json=""
 		[[ "$1" == "api" ]] || return 1
@@ -601,6 +605,10 @@ _run_repoint_case() (
 			return 0
 		fi
 		case "$path" in
+		*/dependencies/blocking)
+			printf '30\n'
+			return 0
+			;;
 		*/dependencies/blocked_by)
 			if [[ "$*" == *"-X POST"* ]]; then
 				printf 'POST %s %s\n' "$path" "$*" >>"$REPOINT_LOG"
@@ -609,7 +617,10 @@ _run_repoint_case() (
 			printf '10\n'
 			return 0
 			;;
-		repos/owner/repo/issues/12) json='{"id":9912,"state":"open","body":""}' ;;
+		repos/owner/repo/issues/12)
+			json=$(jq -cn --arg state "$SUCCESSOR_STATE" --arg reason "$SUCCESSOR_REASON" \
+				'{id:9912,state:($state | ascii_downcase),state_reason:($reason | ascii_downcase),body:""}')
+			;;
 		repos/owner/repo/issues/*) json='{"id":9930,"state":"open","body":"Intro #10 text\nBlocked by: #10 and #7\n"}' ;;
 		*) return 1 ;;
 		esac
@@ -626,11 +637,16 @@ _run_repoint_case() (
 	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\n[[ "$2" == "--repo" ]] || [[ "$3" == "--repo" ]]; for a in "$@"; do [[ -f "$a" ]] && cat "$a" >>"%s"; done\nexit 0\n' "$REPOINT_LOG" "$REPOINT_LOG" >"${stub_dir}/write-helper"
 	chmod +x "${stub_dir}/write-helper"
 	DSR_GH_WRITE_HELPER="${stub_dir}/write-helper"
-	dsr_repoint_if_superseded owner/repo "$dependant"
-	local rc=$?
+	local rc=0
+	if [[ "$mode" == "consolidation" ]]; then
+		dsr_repoint_dependants_of owner/repo 10 12 || rc=$?
+	else
+		dsr_repoint_if_superseded owner/repo "$dependant" || rc=$?
+	fi
 	rm -rf "$stub_dir"
 	return "$rc"
 )
+SUCCESSOR_STATE="OPEN" SUCCESSOR_REASON=""
 : >"$REPOINT_LOG"
 _run_repoint_case 30 >/dev/null 2>&1
 assert_eq 1 "$(grep -c '^POST .*issue_id=9912' "$REPOINT_LOG")" "superseded-only dependant gains a native edge to the successor"
@@ -640,6 +656,20 @@ assert_eq 1 "$(grep -c 'superseded by #12' "$REPOINT_LOG")" "superseded-only dep
 : >"$REPOINT_LOG"
 _run_repoint_case 31 >/dev/null 2>&1
 assert_eq 0 "$(wc -c <"$REPOINT_LOG" | tr -d ' ')" "dependant with an open blocker is left alone"
+SUCCESSOR_STATE="CLOSED" SUCCESSOR_REASON="COMPLETED"
+: >"$REPOINT_LOG"
+_run_repoint_case 30 >/dev/null 2>&1
+assert_eq 1 "$(grep -c '^POST .*issue_id=9912' "$REPOINT_LOG")" "completed successor gains the dependant's native edge"
+assert_eq 1 "$(grep -c 'Blocked by: #12 and #7' "$REPOINT_LOG")" "completed successor replaces the original Blocked-by reference"
+: >"$REPOINT_LOG"
+_run_repoint_case 30 consolidation >/dev/null 2>&1
+assert_eq 1 "$(grep -c '^POST .*issue_id=9912' "$REPOINT_LOG")" "consolidation accepts a closed completed successor"
+SUCCESSOR_REASON="NOT_PLANNED"
+: >"$REPOINT_LOG"
+repoint_status=0
+_run_repoint_case 30 consolidation >/dev/null 2>&1 || repoint_status=$?
+assert_eq 1 "$repoint_status" "consolidation rejects a closed not-planned successor"
+assert_eq 0 "$(wc -c <"$REPOINT_LOG" | tr -d ' ')" "unresolved successor does not mutate dependants"
 rm -f "$REPOINT_LOG"
 
 if grep -q 'issues(first:100,states:' "${SCRIPTS_DIR}/dependency-event-reconciler.sh"; then

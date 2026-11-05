@@ -518,6 +518,30 @@ else
 	print_result "blocker recovery uses real lifecycle attempt identity and allowlisted actions" 1
 fi
 
+# GH#36760: the contract shared by normal, clean-room and fallback launches
+# requests a public-safe question; the rendered observation names that input.
+question_contract=$(_dlw_first_pass_completion_contract)
+if [[ "$question_contract" == *'TERMINAL_BLOCKER_QUESTION=<sanitized one-line question>'* &&
+	"$question_contract" == *'at most 500 characters'* &&
+	"$question_contract" == *'never include secrets'* ]]; then
+	print_result "worker contract requests a bounded public-safe input question" 0
+else
+	print_result "worker contract requests a bounded public-safe input question" 1
+fi
+blocker_fingerprint=$(_terminal_blocker_hash 'v2:input_required:maintainer')
+input_observation=$(PRIVACY_REPOS_CONFIG="$REPOS_JSON" \
+	AIDEVOPS_TERMINAL_BLOCKER_QUESTION='Which deployment region should be used?' \
+	terminal_blocker_observation_fragment 111111111111111111111111 "$blocker_fingerprint")
+missing_observation=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION='' \
+	terminal_blocker_observation_fragment 111111111111111111111111 "$blocker_fingerprint")
+if [[ "$input_observation" == *'Input requested: Which deployment region should be used?'* &&
+	"$missing_observation" == *"no sanitized question recorded; the originating runner's recovery supervisor must publish one"* &&
+	"$missing_observation" != *'Input requested:'* ]]; then
+	print_result "input blocker observation exposes the question or names supervisor recovery" 0
+else
+	print_result "input blocker observation exposes the question or names supervisor recovery" 1
+fi
+
 reset_gh_state
 printf '%s' '[[{"body":"terminal-blocker-circuit:retry","created_at":"2026-09-01T11:00:00Z","author_association":"NONE"}],[{"body":"trusted observation","created_at":"2026-09-01T10:00:00Z","author_association":"MEMBER"}]]' >"$GH_API_COMMENTS_RESPONSE"
 trusted_comments=$(terminal_blocker_fetch_trusted_comments 12345 owner/repo)

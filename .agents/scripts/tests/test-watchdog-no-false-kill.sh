@@ -658,6 +658,17 @@ PY
 			TESTS_FAILED=$((TESTS_FAILED + 1))
 			echo "${TEST_RED}FAIL${TEST_NC}: 24b. Network-active defer changed monitored output size (${network_initial_size} -> ${network_after_size})"
 		fi
+		# GH#36700: the per-attempt events file proves the watchdog ran and
+		# records why it deferred, for the wrapper's watchdog_summary.
+		if grep -q 'watchdog_monitoring' "${network_exit}.watchdog_events" 2>/dev/null &&
+			grep -q 'worker_stall_deferred.*reason=network_active.*hard_kill=0s' "${network_exit}.watchdog_events" 2>/dev/null; then
+			TESTS_RUN=$((TESTS_RUN + 1))
+			echo "${TEST_GREEN}PASS${TEST_NC}: 24c. Per-attempt events file records monitoring start and network_active deferral"
+		else
+			TESTS_RUN=$((TESTS_RUN + 1))
+			TESTS_FAILED=$((TESTS_FAILED + 1))
+			echo "${TEST_RED}FAIL${TEST_NC}: 24c. Per-attempt events file missing monitoring start or network_active deferral"
+		fi
 
 		kill "$network_watchdog_pid" 2>/dev/null || true
 		wait "$network_watchdog_pid" 2>/dev/null || true

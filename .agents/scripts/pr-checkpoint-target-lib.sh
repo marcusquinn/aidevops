@@ -17,6 +17,8 @@ source "${_PCTL_SCRIPT_DIR}/pr-closing-link-lib.sh"
 # shellcheck source=dispatch-claim-trust.sh
 source "${_PCTL_SCRIPT_DIR}/dispatch-claim-trust.sh"
 _PR_CHECKPOINT_REVISION_VALIDATOR="${_PCTL_SCRIPT_DIR}/pr-checkpoint-revision.py"
+# shellcheck source=pr-checkpoint-automatic-lib.sh
+source "${_PCTL_SCRIPT_DIR}/pr-checkpoint-automatic-lib.sh"
 unset _PCTL_SCRIPT_DIR
 
 # Resolve each ambiguous API author once, including paginated comment snapshots.
@@ -180,9 +182,11 @@ _pr_checkpoint_revised_target() {
 	approval=$(printf '%s\n' "$pr_json" "$issue_json" "$comments_json" "$trusted_logins" |
 		jq -se --arg repo "$repo_slug" \
 		--arg assignee "$assignee" --arg lease "$lease" --arg session "$session" --argjson claiming "$claiming" \
+		--arg prelaunch "${AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH:-0}" \
 		'select(length == 4 and (.[0] | type) == "object" and (.[1] | type) == "object" and
 			(.[2] | type) == "array" and (.[3] | type) == "array") |
-		{repo:$repo,pr:.[0],issue:.[1],comments:.[2],trusted_logins:.[3],assignee:$assignee,lease:$lease,session:$session,claiming:$claiming}' |
+		{repo:$repo,pr:.[0],issue:.[1],comments:.[2],trusted_logins:.[3],assignee:$assignee,lease:$lease,session:$session,
+		claiming:$claiming,require_prelaunch:($prelaunch == "1")}' |
 		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR") || return 1
 	local approval_actor="" permission=""
 	approval_actor=$(jq -er '.approval_actor' <<<"$approval") || return 1

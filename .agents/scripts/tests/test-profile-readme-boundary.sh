@@ -484,6 +484,8 @@ test_update_sweeps_prior_publication_worktrees() {
 	local fixture_remote="${TEST_DIR}/profile-remote.git" helper_dir="${TEST_DIR}/helper"
 	local refusing_helper="${TEST_DIR}/refusing-worktree-helper.sh" output_file="${TEST_DIR}/update-output"
 	local phase="" tree_a="" tree_b="" intent_dir="" remaining=""
+	local registry_dir="${fixture_home}/.aidevops/.agent-workspace"
+	local registry_db="${registry_dir}/worktree-registry.db"
 
 	mkdir -p "$helper_dir" "$fixture_home"
 	install_helper_with_libs "$helper_dir"
@@ -493,24 +495,50 @@ test_update_sweeps_prior_publication_worktrees() {
 	chmod +x "$refusing_helper"
 	intent_dir="$(git -C "$fixture_repo" rev-parse --path-format=absolute --git-common-dir)/aidevops-profile-publication-intents"
 
-	for phase in refused-a refused-b sweep; do
-		local worktree_helper="$refusing_helper" min_age=""
-		if [[ "$phase" == sweep ]]; then
+	for phase in refused-a refused-b sweep sweep-recheck; do
+		local worktree_helper="$refusing_helper" min_age="" run_output="$output_file"
+		if [[ "$phase" == sweep || "$phase" == sweep-recheck ]]; then
 			worktree_helper="${helper_dir}/worktree-helper.sh"
 			min_age=0
+		fi
+		if [[ "$phase" == sweep ]]; then
 			tree_b=$(profile_publication_trees "$fixture_repo" | grep -vxF -- "$tree_a" || true)
 			[[ -n "$tree_b" ]] && printf 'local edit\n' >"${tree_b}/unpublished-note"
 		fi
+		if [[ "$phase" == sweep-recheck ]]; then
+			# macOS and legacy-guard hosts quarantine a dead publisher's lease for
+			# WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES before the clean tree may retire
+			# (GH#36741). Linux managed leases release at once, so recheck only when
+			# the first sweep preserved the clean tree, aging that first observation
+			# as a later hourly run would.
+			[[ -e "$tree_a" ]] || continue
+			local dead_seen="" tree_a_sql="${tree_a//\'/\'\'}"
+			if ! dead_seen=$(sqlite3 "$registry_db" \
+				"SELECT COALESCE(owner_dead_seen_at, '') FROM worktree_owners WHERE worktree_path = '${tree_a_sql}';") ||
+				[[ -z "$dead_seen" ]]; then
+				print_helper_failure "$test_name" "clean earlier tree survived without a dead-owner observation (a=${tree_a##*/})" "$output_file"
+				return 0
+			fi
+			run_output="${TEST_DIR}/update-output-recheck"
+			if ! sqlite3 "$registry_db" \
+				"UPDATE worktree_owners SET owner_dead_seen_at = '2000-01-01T00:00:00Z' WHERE worktree_path = '${tree_a_sql}' AND COALESCE(owner_dead_seen_at, '') != '';"; then
+				print_helper_failure "$test_name" "could not age clean earlier tree's dead-owner observation" "$output_file"
+				return 0
+			fi
+		fi
 		HOME="$fixture_home" \
 			PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
+			WORKTREE_REGISTRY_DIR="$registry_dir" \
+			WORKTREE_REGISTRY_DB="$registry_db" \
 			AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
 			AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
 			AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/recovery" \
 			AIDEVOPS_PROFILE_WORKTREE_HELPER="$worktree_helper" \
 			AIDEVOPS_PROFILE_PUBLICATION_SWEEP_MIN_AGE_SECS="$min_age" \
-			bash "${helper_dir}/profile-readme-helper.sh" update >"$output_file" 2>&1 || true
+			bash "${helper_dir}/profile-readme-helper.sh" update >"$run_output" 2>&1 || true
 		[[ "$phase" == refused-a ]] && tree_a=$(profile_publication_trees "$fixture_repo")
 	done
+	[[ ! -f "${TEST_DIR}/update-output-recheck" ]] || cat "${TEST_DIR}/update-output-recheck" >>"$output_file"
 
 	remaining=$(profile_publication_trees "$fixture_repo")
 	if [[ -z "$tree_a" || -z "$tree_b" || "$tree_a" == *$'\n'* ]] ||
@@ -1726,6 +1754,55 @@ test_profile_model_bundle_scans_each_population_once() {
 	return 0
 }
 
+test_archive_capture_python39_zip_compatibility() {
+	local test_name="publication archive capture supports Python 3.9 zip and rejects incomplete records"
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
+	if python3 - "${SOURCE_HELPER%/*}" "$TEST_DIR" <<'PY'
+import json
+from pathlib import Path
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+import worktree_archive_deletions as capture
+
+# Model the Python 3.9 zip signature even on newer Linux CI interpreters.
+def legacy_zip(*iterables):
+    return zip(*iterables)
+
+root = Path(sys.argv[2])
+oid = "a" * 40
+raw = f":100644 000000 {oid} {'0' * 40} D\0deleted.txt\0".encode()
+with patch.object(capture, "zip", legacy_zip, create=True):
+    for name, payload in (("empty", b""), ("deleted", raw)):
+        archive = root / name
+        archive.mkdir()
+        with patch.object(capture, "git", side_effect=lambda *args: payload if "--raw" in args else b""):
+            capture.capture(root, archive)
+        assert (archive / "diff.patch").read_bytes() == b""
+        assert (archive / "staged.patch").read_bytes() == b""
+        if payload:
+            expected = [[b"deleted.txt".hex(), "100644", oid]]
+            assert json.loads((archive / capture.NAME).read_text()) == {
+                "staged": expected, "unstaged": expected}
+        else:
+            assert not (archive / capture.NAME).exists()
+    with patch.object(capture, "git", return_value=b"orphan-header\0"):
+        try:
+            capture.capture(root, root)
+        except ValueError as error:
+            assert str(error) == "incomplete deletion record"
+        else:
+            raise AssertionError("incomplete deletion record accepted")
+PY
+	then
+		print_result "$test_name" 0
+	else
+		print_result "$test_name" 1 "Python 3.9-compatible capture or malformed-record guard failed"
+	fi
+	return 0
+}
+
 main() {
 	local mode="${1:-all}"
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
@@ -1738,6 +1815,8 @@ main() {
 	export AIDEVOPS_LIFECYCLE_STATE_DIR="$SUITE_ROOT/lifecycle"
 	cd "$SUITE_ROOT" || return 1
 
+	test_archive_capture_python39_zip_compatibility
+	teardown
 	if [[ "$mode" != "--unit-only" ]]; then
 		test_chart_assets_publish_and_chart_only_changes_are_not_skipped
 		teardown

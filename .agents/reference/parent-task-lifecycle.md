@@ -69,6 +69,27 @@ Env override: `PARENT_DECOMPOSITION_ESCALATION_HOURS` (default 168). Capped at `
   changes the next child to `status:available`; the completing worker closes
   only its own issue and does not remove successor blockers or labels manually.
 
+## Child Link Contract (manual decomposition)
+
+Automatic parent close counts only machine-readable child evidence: the GitHub
+sub-issue graph, a `## Children` / `## Child issues` / `## Sub-tasks` section in
+the parent body or a trusted roadmap comment, or the narrow prose patterns
+above. A child that only says "Child A of #NNN", or a bare `- [ ] #NNN`
+checklist with no heading, is invisible. The hourly sub-issue backfill cannot
+recover it either: `_detect_parent_from_gh_state` reads only dotted task-ID
+titles, `Parent:` lines, and `Blocked by: tNNN` lines that name a parent-task.
+The parent then stays open after every child merges.
+
+When filing children by hand:
+
+- Create each child with `claim-task-id.sh --parent-issue <N>`. This writes a
+  `Parent: #N` body line and links the sub-issue. When using `gh_create_issue`
+  directly, include a literal `Parent: #N` line.
+- Put any roadmap comment under a `## Children` heading.
+- Verify with `aidevops parent-status <N>`: every child must be listed before
+  the decomposition is done. Repair missed links with the `addSubIssue` GraphQL
+  mutation (GH#36561).
+
 ## Sequential Phase Auto-File (t2740, enabled by default since t2787)
 
 The sequential phase auto-file mechanism reads phase declarations from the parent-task issue body and files the **next unfiled phase** as a child issue automatically once the prior phase's PR merges.

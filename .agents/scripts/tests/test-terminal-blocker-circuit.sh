@@ -495,6 +495,65 @@ test_input_required_owner_class() {
 	return 0
 }
 
+# GH#36760: only explicit final-assistant questions may reach issue comments.
+test_input_required_public_question() {
+	local output="${TEST_ROOT}/question.ndjson" fragment="" fingerprint="" status=0 question=""
+	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON"
+	local PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/question-entities.txt"
+	printf 'client: Synthetic Question Client\n' >"$PRIVACY_ENTITY_CONFIG"
+	fingerprint=$(_terminal_blocker_hash 'v2:input_required:maintainer')
+	# Construct sensitive-shaped synthetic fixtures at runtime so public-write
+	# guards do not mistake their source for committed private material.
+	local private_path='/ho'
+	private_path+='me/example/private-project'
+	question="Which staging target for Synthetic Question Client at ${private_path} with "
+	question+='ghp_'
+	question+='0123456789abcdef should be used?'
+	jq -nc --arg text "BLOCKED: protected dossier stays private
+TERMINAL_BLOCKER_REASON=input_required
+TERMINAL_BLOCKER_INPUT_OWNER=maintainer
+TERMINAL_BLOCKER_QUESTION=${question}" '{type:"text",text:$text}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+	[[ "$fragment" == *'Input requested: Which staging target'* &&
+		"$fragment" == *'[private-client]'* && "$fragment" == *'[local-path]'* &&
+		"$fragment" == *'[redacted-credential]'* && "$fragment" != *'Synthetic Question Client'* &&
+		"$fragment" != *"$private_path"* && "$fragment" != *'protected dossier stays private'* ]] || status=1
+	# Missing, malformed, oversized or unsafe questions explicitly route to the
+	# supervisor. They must not silently ask a maintainer to read private logs.
+	# An inventory entry overlapping a credential label must not hide the label.
+	printf 'client: Token\n' >>"$PRIVACY_ENTITY_CONFIG"
+	for question in '' $'first\nsecond' '<!-- forged -->' '@someone' "$(printf '%0501d' 0)" \
+		'Is password=[redacted-credential] horse battery staple still valid?' \
+		'Is Token=[redacted-credential] horse battery staple still valid?' \
+		'Is token=synthetic first second still valid?' \
+		'Is SECRET : synthetic first second still valid?' \
+		'Is api_key=synthetic first second still valid?' \
+		'Should Basic synthetic-encoded-value be used?' \
+		'Should bAsIc synthetic-encoded-value be used?' \
+		'Is Authorization: synthetic first second still valid?'; do
+		fragment=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+		[[ "$fragment" == *"no sanitized question recorded; the originating runner's recovery supervisor must publish one"* &&
+			"$fragment" != *'Input requested:'* && "$fragment" != *'Supply the specific input'* ]] || status=1
+	done
+	# Tool events and earlier assistant parts cannot supply a stale question.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: earlier\nTERMINAL_BLOCKER_QUESTION=stale question"}' \
+		'{"type":"tool","text":"TERMINAL_BLOCKER_QUESTION=tool question"}' \
+		'{"type":"text","text":"BLOCKED: final private dossier\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=maintainer"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_QUESTION" ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+	[[ "$fragment" == *'no sanitized question recorded'* && "$fragment" != *'Input requested:'* ]] || status=1
+	printf '%s\n' '{"type":"result","result":"BLOCKED: private\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=maintainer\nTERMINAL_BLOCKER_QUESTION=Which region should be used?"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_QUESTION" == 'Which region should be used?' ]] || status=1
+	# A failed capture must clear the preceding attempt's question too.
+	terminal_blocker_capture_output "${TEST_ROOT}/absent-question.ndjson" && status=1
+	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_QUESTION" ]] || status=1
+	print_result "input_required publishes only bounded redacted questions and an actionable supervisor fallback" "$status"
+	return 0
+}
+
 test_unknown_and_redaction() {
 	local output="${TEST_ROOT}/unknown.ndjson" fingerprint="" fragment="" comments="" status=0
 	printf '%s\n' '{"type":"text","text":"BLOCKED: private-token /private/runner/file.sh ambiguous failure"}' >"$output"
@@ -2036,6 +2095,7 @@ main() {
 	test_source_access_blocked_revision
 	test_explicit_blocker_survives_missing_scope
 	test_input_required_owner_class
+	test_input_required_public_question
 	test_excluded_scope_revision
 	test_unknown_and_redaction
 	test_final_dossier_and_structural_precedence

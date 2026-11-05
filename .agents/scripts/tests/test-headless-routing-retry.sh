@@ -187,7 +187,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 	[[ "$_capability_escalation_tier" == "standard" ]]
 	[[ "$_capability_escalation_model" == "openai/gpt-6.1-terra" ]]
 	[[ "$_capability_escalation_variant" == "medium" ]]
-	[[ "$(model_tier_candidate_index "$_capability_escalation_tier" "$_capability_escalation_model")" == "1" ]]
+	[[ "$(model_tier_candidate_index "$_capability_escalation_tier" "$_capability_escalation_model")" == "2" ]]
 )
 
 # Exercise the real result handler, preserving the session and model while
@@ -322,7 +322,7 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 	variant_override=$(resolve_headless_variant "$role" "$tier_override" "$selected_model")
 	_cmd_run_attempt_loop
 )
-[[ "$(<"$routing_capture")" == "standard|1|medium|openai/gpt-6.1-terra|medium" ]]
+[[ "$(<"$routing_capture")" == "standard|2|medium|openai/gpt-6.1-terra|medium" ]]
 
 (
 	attempt_exit=81

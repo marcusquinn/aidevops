@@ -197,9 +197,16 @@ test_framework_scope_and_approval_reason() {
 	local scope_lines=""
 	local body=""
 
-	scope_lines=$(_pulse_dependabot_intake_scope_lines "30038" "marcusquinn/aidevops" "head-current")
+	scope_lines=$(_pulse_dependabot_intake_scope_lines "30038" "marcusquinn/aidevops" "head-current" "policy-ineligible")
 	# shellcheck disable=SC2016 # Literal Markdown scope declaration.
 	[[ "$scope_lines" == *'- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'* ]] || return 1
+	# GH#36704: approval-only intakes must not claim the shared allowlist footprint.
+	body=$(_pulse_dependabot_intake_scope_lines "30038" "marcusquinn/aidevops" "head-current" "approval-required")
+	[[ "$body" != *'trusted-dependabot-updates.conf'* && "$body" == *'package.json'* ]] || {
+		printf 'FAIL approval-only scope omits the shared allowlist\n' >&2
+		return 1
+	}
+	printf 'PASS approval-only scope omits the shared allowlist\n'
 	body=$(_pulse_dependabot_intake_body "30038" "marcusquinn/aidevops" "head-current" "policy-ineligible" "marker" "$scope_lines")
 	[[ "$body" == *'.agents/scripts/trusted-dependabot-lib.sh'* ]] || return 1
 	[[ "$body" == *'update the narrow policy with evidence'* ]] || return 1
@@ -208,7 +215,9 @@ test_framework_scope_and_approval_reason() {
 	assert_file_contains "approval-only gate preserves allowlist" "${TEST_ROOT}/created-body" 'Do not change the allowlist'
 	assert_file_contains "approval-only gate names maintainer approval" "${TEST_ROOT}/created-body" 'sudo aidevops approve pr 30038 owner/repo'
 	assert_file_contains "approval-only gate names identical replacement" "${TEST_ROOT}/created-body" 'maintainer-authored replacement PR with the identical diff'
-	assert_file_contains "approval-only gate requires supersession" "${TEST_ROOT}/created-body" 'close the bot PR as superseded after verifying the replacement merged'
+	assert_file_contains "approval-only gate leaves supersession to pulse" "${TEST_ROOT}/created-body" 'Pulse closes the bot PR as superseded after the replacement merges'
+	# shellcheck disable=SC2016 # Literal Markdown code span.
+	assert_file_contains "intake forbids closing keywords for the source PR" "${TEST_ROOT}/created-body" 'refer to the source PR only as `Supersedes #30038`'
 	return 0
 }
 

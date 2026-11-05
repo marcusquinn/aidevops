@@ -1026,6 +1026,52 @@ test_priority_reservations() {
 	return 0
 }
 
+# GH#36722: under product reservations, fresh urgent work leads, then urgent
+# retries share the unreserved pool with fresh ordinary work; held product
+# slots are never lent to the retry backlog.
+test_priority_urgent_retry_backlog() {
+	local parallel="$1"
+	local candidate_file="" outcomes="" result="" products=0 total=0 n=""
+	# Keep the 60-second-old retry fixtures recent regardless of runner config.
+	local _DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=86400
+	local stamp_dir="${HOME}/.aidevops/cache/dispatch-attempt-recency"
+	candidate_file=$(mktemp)
+	outcomes=$(mktemp)
+	mkdir -p "$stamp_dir"
+	for n in 1 2 3 4; do
+		printf '%s\n' "$(($(date +%s) - 60))" >"${stamp_dir}/o--tooling--${n}"
+	done
+	jq -nc '
+		[range(1;5) | {number:., repo_slug:"o/tooling", repo_priority:"tooling", labels:["priority:high"]}] +
+		[range(5;7) | {number:., repo_slug:"o/tooling", repo_priority:"tooling", labels:[]}] +
+		[{number:7, repo_slug:"o/tooling", repo_priority:"tooling", labels:["priority:critical"]}] +
+		[range(1;3) | {number:., repo_slug:"o/product", repo_priority:"product", labels:[]}] | .[]
+	' >"$candidate_file"
+	# shellcheck disable=SC2317 # called through the real phase/dispatch loops
+	_dispatch_process_candidate() {
+		_DISPATCH_THROTTLE_CLEARED=0
+		_DISPATCH_CANDIDATE_ELIGIBILITY=success
+		return 0
+	}
+	result=$(_dispatch_priority_loop "$candidate_file" 5 test_user "$parallel" "$outcomes" 2 true)
+	read -r products _ < <(_dispatch_priority_product_outcomes "$outcomes")
+	total=$(_dispatch_max_count_outcomes "$outcomes")
+	local launched_ids="" retries=0 duplicate=0
+	launched_ids=$(awk -F'|' '$1 == "success" { repo=""; for(i=3;i<=NF;i++) if($i ~ /^repo=/) repo=substr($i,6); print repo "#" $2 }' "$outcomes" | sort | tr '\n' ' ')
+	retries=$(awk -F'|' '$1 == "success" && $3 == "repo=o/tooling" && $2 <= 4 { n++ } END { print n+0 }' "$outcomes")
+	duplicate=$(awk -F'|' '{ repo=""; for(i=3;i<=NF;i++) if($i ~ /^repo=/) repo=$i; if(seen[repo "|" $2]++) n++ } END { print n+0 }' "$outcomes")
+	if [[ "$products" == 2 && "$total" == 5 && "${result%% *}" == 5 && "$retries" == 1 && "$duplicate" == 0 &&
+		"$launched_ids" == *"o/tooling#7 "* && "$launched_ids" == *"o/tooling#5 "* ]]; then
+		print_result "priority_loop: urgent retry backlog parallel=${parallel} shares unreserved slots, holds product" 0
+	else
+		print_result "priority_loop: urgent retry backlog parallel=${parallel}" 1 \
+			"result=${result} product=${products} total=${total} retries=${retries} dup=${duplicate} launched=${launched_ids}"
+	fi
+	rm -rf "$stamp_dir"
+	rm -f "$candidate_file" "$outcomes"
+	return 0
+}
+
 test_priority_verified_occupancy() {
 	local REPOS_JSON="${TEST_ROOT}/priority-repos.json"
 	local AIDEVOPS_DISPATCH_LEDGER_DIR="${TEST_ROOT}/priority-ledger"
@@ -1324,6 +1370,8 @@ test_priority_reservations unknown 3 0 2
 test_priority_reservations empty 3 0 4
 test_priority_reservations incomplete 3 0 2
 test_priority_reservations urgent 3 0 4
+test_priority_urgent_retry_backlog 1
+test_priority_urgent_retry_backlog 3
 test_priority_verified_occupancy
 test_maintainer_gate_cache_records_only_deterministic_evidence
 test_parallel_loop_skips_cached_blocks_before_wave

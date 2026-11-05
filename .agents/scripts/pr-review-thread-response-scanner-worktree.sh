@@ -201,6 +201,15 @@ _prrts_checkpoint_session() {
 	return 0
 }
 
+_prrts_checkpoint_admission_mode() {
+	# Ordinary review repair is not a linked-issue checkpoint continuation.
+	return 0
+}
+
+_prrts_checkpoint_device() {
+	return 0
+}
+
 _prrts_worker_login() {
 	local pr_number="$1"
 	local worker_login=""

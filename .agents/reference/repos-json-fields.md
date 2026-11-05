@@ -17,6 +17,7 @@ Config file: `~/.config/aidevops/repos.json`. Structure: `{"initialized_repos": 
 | `badges` | bool | Missing/`true` = README badge block managed by `aidevops badges`. `false` = README is hand-maintained; `badges check` reports `OPTED-OUT` and `badges sync` never writes. Repos with a string `mirror_upstream` (`owner/repo`) are always treated as opted out (`MIRROR`); boolean `mirror_upstream` is a privacy marker only. |
 | `priority` | string | `"tooling"` (infrastructure), `"product"` (user-facing), `"profile"` (docs-only) |
 | `maintainer` | string | GitHub username. Auto-detected from `gh api user`; falls back to slug owner |
+| `macos_maintainer` | string | Optional GitHub login for native macOS verification; overrides `maintainer` for `needs-macos-verification` review/assignment routing. |
 | `role` | string | `"maintainer"` or `"contributor"`. Controls which pulse scanners run |
 | `init_scope` | string | `"minimal"`, `"standard"` (default), or `"public"`. Controls `aidevops init` scaffolding |
 | `has_interface` | bool | Explicit GUI/interface flag. `true` forces DESIGN.md scaffolding/backfill; `false` suppresses heuristic interface detection. |

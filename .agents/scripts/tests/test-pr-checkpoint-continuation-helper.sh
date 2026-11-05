@@ -47,8 +47,47 @@ if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123" ]]; then
 fi
 if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123/comments?per_page=100" ]]; then
 	[[ "${STUB_METADATA_FAILURE:-}" != comments ]] || exit 1
+	if [[ -n "${STUB_CLAIM_FILE:-}" ]]; then
+		own='[]'
+		if [[ -r "${STUB_CLAIM_FILE}.base" && "$(<"${STUB_CLAIM_FILE}.base")" == "${STUB_COMMENTS_JSON:-[]}" ]]; then
+			own="$(<"$STUB_CLAIM_FILE")"
+		fi
+		jq -nc --argjson base "${STUB_COMMENTS_JSON:-[]}" --argjson own "$own" '
+			[($base | flatten) + $own | map(.node_id //= ("fixture-" + (.id | tostring)))]'
+		exit $?
+	fi
 	printf '%s\n' "${STUB_COMMENTS_JSON:-[]}"
 	exit 0
+fi
+if [[ -n "${STUB_CLAIM_FILE:-}" ]]; then
+	if [[ "$1 $2" == "api user" ]]; then
+		printf '%s\n' "$STUB_AUTH_LOGIN"
+		exit 0
+	fi
+	if [[ "$1 $2" == "api graphql" ]]; then
+		for arg in "$@"; do
+			[[ "$arg" != ids\[\]=* ]] || printf '%s\n' "${arg#ids\[\]=}"
+		done | jq -Rsc '{data:{nodes:(split("\n") | map(select(length > 0) | {id:.,lastEditedAt:null}))}}'
+		exit 0
+	fi
+	if [[ "$1" == api && "$2" == repos/owner/repo/collaborators/*/permission ]]; then
+		printf 'write\n'
+		exit 0
+	fi
+	if [[ "$1 $2 $3 $4" == "api repos/owner/repo/issues/123/comments --method POST" &&
+		"$6" == *DISPATCH_* ]]; then
+		if [[ ! -r "${STUB_CLAIM_FILE}.base" || "$(<"${STUB_CLAIM_FILE}.base")" != "${STUB_COMMENTS_JSON:-[]}" ]]; then
+			printf '[]' >"$STUB_CLAIM_FILE"
+			printf '%s' "${STUB_COMMENTS_JSON:-[]}" >"${STUB_CLAIM_FILE}.base"
+		fi
+		jq --arg body "${6#body=}" --arg actor "$STUB_AUTH_LOGIN" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+			((map(.id) + [1000000]) | max + 1) as $id |
+			. + [{id:$id,node_id:("fixture-" + ($id | tostring)),body:$body,user:{login:$actor},
+			author_association:"MEMBER",created_at:$now}]' "$STUB_CLAIM_FILE" >"${STUB_CLAIM_FILE}.next"
+		mv "${STUB_CLAIM_FILE}.next" "$STUB_CLAIM_FILE"
+		jq -r 'last.id' "$STUB_CLAIM_FILE"
+		exit 0
+	fi
 fi
 if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123/comments" && "$3" == "--method" && "$4" == "POST" ]]; then
 	[[ -n "${STUB_POST_DIR:-}" ]] || exit 1
@@ -84,7 +123,7 @@ valid_issue_json() {
 	local labels="${1:-}"
 	local assignee="${2:-worker-bot}"
 	[[ -n "$labels" ]] || labels='[{"name":"status:in-review"}]'
-	printf '{"number":123,"state":"open","labels":%s,"assignees":[{"login":"%s"}]}\n' "$labels" "$assignee"
+	printf '{"number":123,"body":"Preserve checkpoint scope","state":"open","labels":%s,"assignees":[{"login":"%s"}]}\n' "$labels" "$assignee"
 	return 0
 }
 
@@ -452,12 +491,21 @@ STUB_COMMENTS_JSON='[]'
 
 DISPATCH_ARGS=""
 DISPATCH_RESULT=0
+export STUB_CLAIM_FILE="${TEST_ROOT}/claims.json" STUB_AUTH_LOGIN=worker-bot
+export DISPATCH_CLAIM_WINDOW=0 AIDEVOPS_TEST_MODE=1 AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS=1
+export AIDEVOPS_DEVICE_ID=checkpoint-fixture-device
+printf '[]' >"$STUB_CLAIM_FILE"
 _prrts_dispatch_guarded() {
 	local repo_slug="$1"
 	local pr_number="$3"
 	local head_ref="${11}"
 	local head_oid="${12}"
 	DISPATCH_ARGS="$*"
+	if [[ "$DISPATCH_RESULT" == "$PRRTS_RC_DISPATCH_DEFERRED" || "$DISPATCH_RESULT" == "$PRRTS_RC_MAINTAINER_ATTENTION" ]]; then
+		return "$DISPATCH_RESULT"
+	fi
+	printf '[]' >"$STUB_CLAIM_FILE"
+	export STUB_AUTH_LOGIN="$PCC_AUTHENTICATED_LOGIN"
 	_prrts_prelaunch_target_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid" || return 1
 	return "$DISPATCH_RESULT"
 }
@@ -599,6 +647,7 @@ PCC_AUTHENTICATED_LOGIN="worker-bot"
 PCC_CHECKPOINT_ASSIGNEE="worker-bot"
 PCC_ORIGINAL_STATUS="in-review"
 PCC_OWNERSHIP_TRANSFERRED=0
+PCC_CLAIM_ACQUIRED=0
 if [[ "$(_prrts_worker_task_id 42)" == "123" ]] &&
 	[[ "$(_prrts_worker_login 42)" == "worker-bot" ]] &&
 	_prrts_apply_expected_worktree_owner owner/repo 42 "${TEST_ROOT}/repo" \
@@ -701,6 +750,9 @@ PCC_EXPECTED_ASSIGNEE=stale-runner
 PCC_AUTHENTICATED_LOGIN=current-runner
 PCC_CHECKPOINT_ASSIGNEE=stale-runner
 PCC_OWNERSHIP_TRANSFERRED=0
+PCC_CLAIM_ACQUIRED=0
+STUB_AUTH_LOGIN=current-runner
+printf '[]' >"$STUB_CLAIM_FILE"
 LAUNCH_VERIFIED=0
 export DISPATCH_REPO_SLUG=unrelated/repository
 if _prrts_dispatch_worker owner/repo "${TEST_ROOT}/repo" 42 checkpoint 0 fixture preview \
@@ -738,10 +790,10 @@ else
 fi
 STUB_ISSUE_JSON="$(valid_issue_json '' 'current-runner')"
 STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' 'current-runner')"
-if run_checkpoint_preparation ''; then
-	print_result "worker preparation retains legacy same-runner author fallback" 0
+if ! run_checkpoint_preparation ''; then
+	print_result "worker preparation rejects unclaimed legacy same-runner continuation" 0
 else
-	print_result "worker preparation retains legacy same-runner author fallback" 1
+	print_result "worker preparation rejects unclaimed legacy same-runner continuation" 1
 fi
 
 # GH#33132: a worker that released as blocked after opening a draft must get
@@ -856,6 +908,57 @@ for rearm in head release; do
 		print_result "new ${rearm} re-arms blocked attention without ready lease" 1 "output=${output:-missing}"
 	fi
 done
+
+# t18869: an attended draft is re-checked each cycle; one new record per changed
+# template refusal reason, none when the reason is unchanged.
+test_refusal_reason_change() (
+	local STUB_POST_DIR="${TEST_ROOT}/posts-refusal" template_reason="" status=0 output="" body=""
+	export STUB_POST_DIR
+	mkdir -p "$STUB_POST_DIR"
+	_pcc_approval_template() {
+		[[ -n "$template_reason" ]] || { printf 'CHECKPOINT_CONTINUATION_APPROVED {}\n'; return 0; }
+		printf 'approval-template: intervening coordination is not fully released; rejected comment=9 event=CLAIM_RELEASED runner=worker-bot episode_claim=none reason=%s\n' "$template_reason" >&2
+		return 1
+	}
+	STUB_PR_JSON="$(valid_pr_json)"
+	STUB_COMMENTS_JSON="$(blocked_comments)"
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:* && "$(post_count)" == 1 ]] || status=1
+	body="$(<"${STUB_POST_DIR}/post-1")"
+	[[ "$body" != *"Diagnostic (metadata only):"* ]] || status=1
+	STUB_COMMENTS_JSON="$(jq --arg body "$body" '. + [[{id:22,author_association:"OWNER",user:{login:"pulse-runner"},body:$body}]]' <<<"$(blocked_comments)")"
+	# Unchanged (no refusal): exists, no repost.
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == 1 ]] || status=1
+	# New refusal reason: exactly one new record naming the command.
+	template_reason="transition_rejected"
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*refusal=transition_rejected && "$(post_count)" == 2 ]] || status=1
+	grep -Fq 'approval-template owner/repo 42 123 21 attempt:abc123' "${STUB_POST_DIR}/post-2" || status=1
+	body="$(<"${STUB_POST_DIR}/post-2")"
+	STUB_COMMENTS_JSON="$(jq --arg body "$body" '. + [[{id:23,author_association:"OWNER",user:{login:"pulse-runner"},body:$body}]]' <<<"$STUB_COMMENTS_JSON")"
+	# Same reason next cycle: no repost.
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == 2 ]] || status=1
+	# Reason changes again: one more record.
+	template_reason="unattributed_release"
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*refusal=unattributed_release && "$(post_count)" == 3 ]] || status=1
+	# A refusal already present at first publication must be visible, not only
+	# baselined in a hidden dedup marker.
+	STUB_COMMENTS_JSON="$(blocked_comments)"
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	body="$(<"${STUB_POST_DIR}/post-4")"
+	[[ "$body" == *"Diagnostic (metadata only): intervening coordination"* &&
+		"$body" == *"reason=unattributed_release"* ]] || status=1
+	[[ "$status" == 0 ]] || return 1
+	return 0
+)
+if test_refusal_reason_change; then
+	print_result "changed approval-template refusal reposts once; unchanged reason does not" 0
+else
+	print_result "changed approval-template refusal reposts once; unchanged reason does not" 1
+fi
 STUB_POST_DIR="${TEST_ROOT}/posts"
 STUB_PR_JSON="$(valid_pr_json)"
 
@@ -1080,7 +1183,7 @@ with_head_commit() {
 		'. + {commits:[{oid:"1111111111111111111111111111111111111111",committedDate:$date}]}'
 	return 0
 }
-RELEASED_ISSUE_JSON="$(jq -nc '{number:123,state:"open",labels:[{name:"status:available"}],assignees:[]}')"
+RELEASED_ISSUE_JSON="$(jq -nc '{number:123,body:"Preserve checkpoint scope",state:"open",labels:[{name:"status:available"}],assignees:[]}')"
 STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
 STUB_COMMENTS_JSON="$(expired_claim_comments)"
 STUB_PR_JSON="$(valid_pr_json 'Recovered dirty worktree.\nFor #123' "$TAKEOVER_LABELS" '[]' | with_head_commit)"
@@ -1218,6 +1321,7 @@ PCC_ALLOW_RELEASED=false
 for tried_runner in pulse-runner worker-bot; do
 	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
 	STUB_COMMENTS_JSON="$rearm_comments"
+	printf '[]' >"$STUB_CLAIM_FILE"
 	DISPATCH_ARGS=""
 	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 "$tried_runner" >"$output_file" || true
 	output="$(<"$output_file")"
@@ -1242,6 +1346,7 @@ else
 fi
 _PCC_ATTENTION_REARM_SECONDS=0
 STUB_COMMENTS_JSON="$rearm_comments"
+printf '[]' >"$STUB_CLAIM_FILE"
 DISPATCH_ARGS=""
 _pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
 output="$(<"$output_file")"
@@ -1343,6 +1448,7 @@ capability_comments() {
 }
 run_capability_sweep() {
 	local login="$1"
+	printf '[]' >"$STUB_CLAIM_FILE"
 	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
 	DISPATCH_ARGS=""
 	STATUS_CALLS=""
@@ -1435,10 +1541,10 @@ STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-progress"}]' current-ru
 STUB_COMMENTS_JSON="$(capability_comments)"
 PCC_HEAD_REF="worker/issue-123"
 PCC_HEAD_OID="$CAPABILITY_HEAD"
-if run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
-	print_result "worker fence accepts the capable successor after a capability release" 0
+if ! run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence requires a fresh claim after a capability release" 0
 else
-	print_result "worker fence accepts the capable successor after a capability release" 1
+	print_result "worker fence requires a fresh claim after a capability release" 1
 fi
 STUB_COMMENTS_JSON="$(capability_comments | jq -c 'map(map(.body |= sub("\n\nTerminal blocker: [^\n]*"; "")))')"
 if ! run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
@@ -1450,10 +1556,10 @@ fi
 # the capable successor; without it, interactive provenance still holds.
 STUB_COMMENTS_JSON="$(capability_comments)"
 STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-progress"},{"name":"auto-dispatch"},{"name":"origin:interactive"}]' current-runner)"
-if run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
-	print_result "worker fence accepts the capable successor on an auto-dispatch interactive-provenance issue" 0
+if ! run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
+	print_result "worker fence requires a claim despite auto-dispatch interactive provenance" 0
 else
-	print_result "worker fence accepts the capable successor on an auto-dispatch interactive-provenance issue" 1
+	print_result "worker fence requires a claim despite auto-dispatch interactive provenance" 1
 fi
 STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-progress"},{"name":"origin:interactive"}]' current-runner)"
 if ! run_checkpoint_preparation worker-bot >/dev/null 2>&1; then
@@ -1509,6 +1615,12 @@ if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-self-hold.py"; then
 	print_result "exact approval supersedes only the runner's own pre-approval draft hold" 0
 else
 	print_result "exact approval supersedes only the runner's own pre-approval draft hold" 1
+fi
+
+if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-unattributed.py"; then
+	print_result "unattributed releases require exact maintainer acknowledgement" 0
+else
+	print_result "unattributed releases require exact maintainer acknowledgement" 1
 fi
 
 if [[ "$TESTS_FAILED" -eq 0 ]]; then

@@ -6,6 +6,7 @@
 from pr_checkpoint_events import closes_released_attempt, events, fields, normalized_attempt, trusted
 from pr_checkpoint_never_ready import (CLAIM_ONLY, NEVER_READY_OUTCOMES,
                                        advance_never_ready_release, close_claim_only)
+from pr_checkpoint_unattributed import UNATTRIBUTED, unattributed_release
 
 
 def closed_claim(comment, line, f, seen):
@@ -97,14 +98,17 @@ def advance_closed_claim(state, comment, line, f):
 def advance_history(state, comment, line, f, seen):
     if state is None:
         started = closed_claim(comment, line, f, seen)
-        if started is not None:
-            started["expiries"] = [f.get("expires_at", "")]
-            started["device"] = f.get("device", "")
+        if started is None:
+            return unattributed_release(comment, line, f)
+        started["expiries"] = [f.get("expires_at", "")]
+        started["device"] = f.get("device", "")
         return started
     return state if advance_closed_claim(state, comment, line, f) else None
 
 
 def completed_episode(state):
+    if state.get("outcome") == UNATTRIBUTED:
+        return dict(state)
     if state.get("release_id") and not state.get("ready_id"):
         # Only the never-ready closers record a release without a ready lease.
         if state.get("outcome") not in NEVER_READY_OUTCOMES:

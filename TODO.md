@@ -1870,6 +1870,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18861 test: canonicalise macOS temp roots in profile README boundary tests (state-parent-must-be-canonical) #auto-dispatch #bug ref:GH#36637 pr:#36642 completed:2026-11-04
 
+- [x] t18863 fix(screen-time): Linux README shows 0h before first sample and sampler not installed on incremental updates #bug #interactive ref:GH#36709 assignee:marcusquinn pr:#36713 logged:2026-11-04 started:2026-11-04 -> [todo/tasks/t18863-brief.md] completed:2026-11-04
+
+- [x] t18865 fix(screen-time): Linux first partial sampled day shown as full coverage via history fallback; year extrapolated from under one day #bug #interactive ref:GH#36737 assignee:marcusquinn logged:2026-11-05 started:2026-11-05 -> [todo/tasks/t18865-brief.md] pr:#36740 completed:2026-11-05
+
+- [x] t18866 test: profile README publication sweep still preserves clean trees on macOS after #36721 #auto-dispatch #bug ref:GH#36741 logged:2026-11-05 -> [todo/tasks/t18866-brief.md] pr:#36745 completed:2026-11-05
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

@@ -149,6 +149,8 @@ It refuses to sync when the worktree's `HEAD` doesn't contain `origin/<default-b
 
 **Error diagnosis flow**: Enable `WP_DEBUG` → check `debug.log` → Query Monitor → `@localwp` for DB → `wp hook list` → `wp profile` or Code Profiler Pro.
 
+**Page cache on shared LiteSpeed hosting**: sites on one account share the LiteSpeed cache. On a multisite, `wp litespeed-purge all` sends Empty Entire Cache, which empties every site on the account. While developing or deploying, purge only what changed: `wp litespeed-purge blog <id>` or `url <url>`. When one site keeps going cold with no purge of its own, check whether another site on the account is being built or deployed before debugging its cache warming. If warming and purge delivery fail with `403` from LiteSpeed on a Cloudflare-proxied site, set LiteSpeed Cache's **Server IP** (same section, "Server's own requests behind Cloudflare"). Scope table and diagnosis: `services/hosting/hostinger.md` → "LiteSpeed page cache: purge scope on a shared account".
+
 ## WP-CLI Quick Reference
 
 **Scaffold**: `wp scaffold {theme|child-theme|plugin|post-type|block} name [--activate]`. **DB**: `wp db {export|import} backup.sql`, `wp search-replace 'old' 'new' --dry-run`, `wp db optimize && wp db check`. **Dev**: `wp shell`, `wp eval '...'`, `wp {post|user} generate --count=N`, `wp cache flush && wp transient delete --all`.

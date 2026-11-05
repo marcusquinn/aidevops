@@ -387,6 +387,11 @@ _invoke_opencode_start_monitors() {
 	[[ "$stall_timeout" =~ ^[0-9]+$ ]] || stall_timeout=600
 	local phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-180}"
 	[[ "$phase1_timeout" =~ ^[0-9]+$ ]] || phase1_timeout=180
+	# GH#36700: report the effective backstop and where deferral decisions are
+	# recorded, so an external per-attempt timeout can be compared with it.
+	local hard_kill_seconds="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
+	[[ "$hard_kill_seconds" =~ ^[0-9]+$ ]] || hard_kill_seconds=1500
+	local lifecycle_log="${WORKER_LIFECYCLE_LOG:-${HOME}/.aidevops/logs/pulse-dispatch.log}"
 	if [[ -x "$watchdog_script" ]]; then
 		nohup "$watchdog_script" \
 			--output-file "$output_file" --worker-pid "$worker_pid" \
@@ -395,7 +400,7 @@ _invoke_opencode_start_monitors() {
 			--stall-timeout "$stall_timeout" --phase1-timeout "$phase1_timeout" \
 			</dev/null >/dev/null 2>&1 &
 		watchdog_pid=$!
-		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${stall_timeout}s"
+		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${stall_timeout}s phase1=${phase1_timeout}s hard_kill=${hard_kill_seconds}s events=${exit_code_file}.watchdog_events lifecycle_log=${lifecycle_log}"
 	else
 		print_warning "[lifecycle] standalone watchdog not found at $watchdog_script — falling back to inline"
 		_run_activity_watchdog "$output_file" "$worker_pid" "$exit_code_file" "$_invoke_session_key" &
@@ -428,10 +433,26 @@ _invoke_opencode_cleanup_monitors() {
 		wait "$watchdog_pid" 2>/dev/null || true
 	fi
 	print_info "[lifecycle] watchdog_cleaned pid=$watchdog_pid"
+	_invoke_opencode_report_watchdog_events "${exit_code_file:-}"
 	if [[ -n "${_rl_monitor_pid:-}" ]]; then
 		kill "$_rl_monitor_pid" 2>/dev/null || true
 		wait "$_rl_monitor_pid" 2>/dev/null || true
 	fi
+	return 0
+}
+
+# GH#36700: summarise the standalone watchdog's per-attempt decisions in the
+# wrapper log once the watchdog has been reaped. Deferral reasons otherwise
+# exist only in the shared lifecycle log. Reporting only; never changes the
+# worker result.
+_invoke_opencode_report_watchdog_events() {
+	local exit_file="$1"
+	local events_file="${exit_file}.watchdog_events"
+	[[ -n "$exit_file" && -f "$events_file" ]] || return 0
+	local deferrals="0" last_event=""
+	deferrals=$(grep -c 'worker_stall_deferred' "$events_file" 2>/dev/null) || deferrals="0"
+	last_event=$(tail -n 1 "$events_file" 2>/dev/null) || last_event=""
+	print_info "[lifecycle] watchdog_summary deferrals=${deferrals} last_event=${last_event:-none}"
 	return 0
 }
 

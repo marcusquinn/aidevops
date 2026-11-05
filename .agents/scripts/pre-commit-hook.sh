@@ -485,8 +485,9 @@ validate_bash32_parse() {
 	print_info "Validating /bin/bash 3.2 parse (absolute)..."
 	local file result
 	for file in "$@"; do
-		[[ -f "$file" ]] || continue
-		if ! result=$(/bin/bash -n "$file" 2>&1); then
+		# Parse the index, not unstaged edits. Fail closed if blob retrieval
+		# fails: otherwise bash would accept the empty pipe as valid syntax.
+		if ! result=$(set -o pipefail; git show ":$file" 2>&1 | /bin/bash -n 2>&1); then
 			print_error "Bash 3.2 cannot parse $file (macOS launchd runs scripts with /bin/bash 3.2):"
 			printf '%s\n' "$result" >&2
 			((++violations))

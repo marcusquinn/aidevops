@@ -80,6 +80,7 @@ function openAIRequest(request, account, body) {
 function ensureProviderActivation(provider) {
   if (provider === "anthropic" && !process.env.ANTHROPIC_API_KEY) {
     process.env.ANTHROPIC_API_KEY = "aidevops-oauth-pool";
+    process.env.AIDEVOPS_ANTHROPIC_API_KEY_SOURCE = "oauth-pool"; // GH#36707
   }
   if (provider === "openai" && !process.env.OPENAI_API_KEY) {
     process.env.OPENAI_API_KEY = "aidevops-oauth-pool";

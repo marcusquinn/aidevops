@@ -17,7 +17,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from screen_time_interval_common import DAY, WINDOWS, local_date, local_midnight_epoch, safe_float, union_intervals
+from screen_time_interval_common import DAY, WINDOWS, completed_day_window, local_date, local_midnight_epoch, safe_float, union_intervals
 
 COLLECTOR = "linux-input-activity"
 LOG_NAME = "screen-activity.jsonl"
@@ -200,7 +200,9 @@ def day_markers(spans):
 def stored_spans(directory, state, now):
     """Return unioned (active, coverage) spans in the trailing year."""
     records = read_records(directory / LOG_NAME)
-    window = (now - WINDOWS["year"], now)
+    # Start at local midnight 365 days ago so the profile year's first day is whole.
+    year_start = completed_day_window(now, 365)[0]
+    window = (now - WINDOWS["year"] if year_start is None else min(year_start, now - WINDOWS["year"]), now)
     spans = {}
     for kind in ("active", "coverage"):
         current = state["open"] if kind == "active" else state["coverage"]
@@ -242,5 +244,8 @@ def activity_collection(directory, now):
         "observation_epochs": markers,
         "coverage_start_epoch": earliest,
         "coverage_end_epoch": latest,
+        # Before the first sample nothing was measured: periods ending earlier are
+        # unknown, not zero. Later sampler gaps mean the host was off or asleep.
+        "observed_since_epoch": earliest,
         "evidence": state["evidence"],
     }

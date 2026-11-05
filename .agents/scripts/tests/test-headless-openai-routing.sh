@@ -111,43 +111,24 @@ test_standard_alternatives_are_scoped() {
 	local routing_table="${SCRIPT_DIR}/../../configs/model-routing-table.json"
 	local models=""
 	models=$(jq -r '.tiers.standard.models[]' "$routing_table")
-	if printf '%s\n' "$models" | grep -qx 'zai-coding-plan/glm-5.2' &&
-		! printf '%s\n' "$models" | grep -qx 'zai/glm-5.2'; then
-		print_result "Standard tier includes coding-plan GLM-5.2 but excludes direct Z.AI" 0
+	if ! grep -q '^zai' <<<"$models"; then
+		print_result "Standard tier ships no Z.AI GLM candidate" 0
 		return 0
 	fi
-	print_result "Standard tier includes coding-plan GLM-5.2 but excludes direct Z.AI" 1
-	return 0
-}
-
-test_coding_plan_requires_provider_auth() {
-	printf '{"openai":{"type":"oauth","access":"test-openai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
-	local selected=""
-	selected=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=zai-coding-plan bash "$HELPER_SCRIPT" select --role worker --tier standard 2>/dev/null || true)
-	if [[ -n "$selected" ]]; then
-		print_result "Coding-plan GLM requires provider-specific auth" 1 "Unexpected model without coding-plan auth: ${selected}"
-		return 0
-	fi
-
-	printf '{"zai-coding-plan":{"type":"oauth","access":"test-zai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
-	selected=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=zai-coding-plan bash "$HELPER_SCRIPT" select --role worker --tier standard 2>/dev/null || true)
-	if [[ "$selected" == "zai-coding-plan/glm-5.2" ]]; then
-		print_result "Coding-plan GLM requires provider-specific auth" 0
-		return 0
-	fi
-	print_result "Coding-plan GLM requires provider-specific auth" 1 "Expected zai-coding-plan/glm-5.2, got ${selected:-<empty>}"
+	print_result "Standard tier ships no Z.AI GLM candidate" 1
 	return 0
 }
 
 test_entitlement_backoff_is_model_scoped() {
 	printf '{"openai":{"type":"oauth","access":"test-openai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
-	local failure="${TEST_ROOT}/entitlement.jsonl" reason status selected
+	local failure="${TEST_ROOT}/entitlement.jsonl" reason status selected standard
 	printf '%s\n' '{"type":"error","error":{"name":"APIError","data":{"statusCode":404,"responseBody":"{\"error\":{\"code\":\"model_not_found\"}}"}}}' >"$failure"
 	reason=$(python3 "${SCRIPT_DIR}/../headless-runtime-provider-classifier.py" "$failure" | cut -f1)
 	bash "$HELPER_SCRIPT" backoff set openai/gpt-6.1-sol "$reason" 3600
 	status=$(bash "$HELPER_SCRIPT" backoff status)
 	selected=$(select_model simple)
-	if [[ "$reason" == "model_unavailable" && "$status" == *"openai/gpt-6.1-sol|model_unavailable|"* && "$selected" == "openai/gpt-6-luna" ]]; then
+	standard=$(select_model standard)
+	if [[ "$reason" == "model_unavailable" && "$status" == *"openai/gpt-6.1-sol|model_unavailable|"* && "$selected" == "openai/gpt-6-luna" && "$standard" == "openai/gpt-6.1-terra" ]]; then
 		print_result "Entitlement rejection backs off only the rejected model" 0
 	else
 		print_result "Entitlement rejection backs off only the rejected model" 1
@@ -162,7 +143,6 @@ main_test() {
 	test_openai_allowlist_selects_thinking_tier_model
 	test_openai_allowlist_requires_openai_auth_entry
 	test_standard_alternatives_are_scoped
-	test_coding_plan_requires_provider_auth
 	test_entitlement_backoff_is_model_scoped
 	teardown_test_env
 

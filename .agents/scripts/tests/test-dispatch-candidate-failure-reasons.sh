@@ -60,6 +60,9 @@ assert_reason 'DISPATCH_BLOCK_REASON reason=missing_worker_context signal=brief_
 # GH#33332: terminal-blocker backoff is its own cacheable hold, not an active claim.
 assert_reason 'TERMINAL_BLOCKER_BACKOFF failures=2 retry_after=1788696900' 'terminal_blocker_backoff'
 assert_reason 'TERMINAL_BLOCKER_CIRCUIT task_revision=aaaaaaaaaaaaaaaaaaaaaaaa' 'terminal_blocker_circuit'
+# GH#36772: fleet holds are cacheable holds, never unclassified_signal.
+assert_reason 'TERMINAL_BLOCKER_FLEET_HOLD task_revision=aaaaaaaaaaaaaaaaaaaaaaaa probe=falsified wake=brief_or_retry' 'terminal_blocker_circuit'
+assert_reason 'TERMINAL_BLOCKER_FLEET_HOLD task_revision=aaaaaaaaaaaaaaaaaaaaaaaa wake=capability:bbbbbbbbbbbbbbbbbbbbbbbb' 'terminal_blocker_fleet_hold'
 assert_reason '' 'no_recent_log_evidence'
 assert_reason 'new blocker shape not yet classified' 'unclassified_signal'
 

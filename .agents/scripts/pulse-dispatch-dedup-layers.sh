@@ -41,8 +41,8 @@ _PULSE_DISPATCH_DEDUP_LAYERS_LOADED=1
 # Returns one of:
 #   "partial"  — open PR or remote branch references this issue
 #                (worker reached at least the worktree/PR stage)
-#   "no_work"  — no PR, no branch (worker died before producing any
-#                durable artifact — transient/infrastructure failure)
+#   "no_work"  — successful lookups found no PR or branch
+#   "unknown"  — lookup failed or returned invalid data; not failure evidence
 #
 # Arguments:
 #   $1 - issue_number
@@ -54,11 +54,11 @@ _classify_stale_recovery_crash_type() {
 	local repo_slug="$2"
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || {
-		printf 'no_work'
+		printf 'unknown'
 		return 0
 	}
 	[[ -n "$repo_slug" ]] || {
-		printf 'no_work'
+		printf 'unknown'
 		return 0
 	}
 
@@ -67,9 +67,10 @@ _classify_stale_recovery_crash_type() {
 	local _open_pr_count
 	_open_pr_count=$(gh_pr_list --repo "$repo_slug" --state open \
 		--search "#${issue_number} in:body" --limit 1 \
-		--json number --jq 'length' 2>/dev/null) || _open_pr_count=0
-	[[ "$_open_pr_count" =~ ^[0-9]+$ ]] || _open_pr_count=0
-	if [[ "$_open_pr_count" -gt 0 ]]; then
+		--json number --jq 'length' 2>/dev/null) || _open_pr_count=""
+	local lookup_unknown=0
+	[[ "$_open_pr_count" =~ ^[0-9]+$ ]] || lookup_unknown=1
+	if [[ "$_open_pr_count" =~ ^[0-9]+$ && "$_open_pr_count" -gt 0 ]]; then
 		printf 'partial'
 		return 0
 	fi
@@ -78,13 +79,23 @@ _classify_stale_recovery_crash_type() {
 	# number. Workers create branches like `bugfix/t1992-...`,
 	# `feature/auto-...-issue-18418`, or contain `gh-18418`. If we find
 	# anything, the worker reached the worktree-creation stage.
-	local _branch_count
-	_branch_count=$(gh api "repos/${repo_slug}/branches" --paginate \
-		--jq "[.[] | select(.name | test(\"(t|gh-?)${issue_number}([^0-9]|\$)\"))] | length" \
-		2>/dev/null) || _branch_count=0
-	[[ "$_branch_count" =~ ^[0-9]+$ ]] || _branch_count=0
-	if [[ "$_branch_count" -gt 0 ]]; then
+	local branches_json="" _branch_count=""
+	branches_json=$(gh api "repos/${repo_slug}/branches" --paginate --slurp \
+		2>/dev/null) || lookup_unknown=1
+	# Count once across all pages. Per-page --jq yields "0\n1", which the
+	# old numeric guard silently coerced to zero and fed into the no_work breaker.
+	_branch_count=$(printf '%s' "$branches_json" | jq -er --arg issue "$issue_number" '
+		if type == "array" and length > 0 and all(.[]; type == "array") then
+			[.[][] | if (.name | type) == "string" then . else error("invalid branch") end
+			| select(.name | test("(t|gh-?|issue-)" + $issue + "([^0-9]|$)"))] | length
+		else error("invalid branch pages") end
+	' 2>/dev/null) || lookup_unknown=1
+	if [[ "$_branch_count" =~ ^[0-9]+$ && "$_branch_count" -gt 0 ]]; then
 		printf 'partial'
+		return 0
+	fi
+	if [[ "$lookup_unknown" -eq 1 ]]; then
+		printf 'unknown'
 		return 0
 	fi
 
@@ -615,6 +626,10 @@ _dedup_layer6_assignee_and_stale() {
 			# instead of a bare "Reason: stale_timeout" with no signal.
 			local _stale_crash_type
 			_stale_crash_type=$(_classify_stale_recovery_crash_type "$issue_number" "$repo_slug")
+			if [[ "$_stale_crash_type" != "no_work" && "$_stale_crash_type" != "partial" ]]; then
+				echo "[pulse-wrapper] Dedup: stale recovery crash evidence unavailable for #${issue_number} in ${repo_slug} — skipping fast-fail record" >>"$LOGFILE"
+				return 1
+			fi
 			echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} crash_type=${_stale_crash_type} — recording fast-fail (t1927/t2042)" >>"$LOGFILE"
 			fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" "" "$_stale_crash_type" || true
 		fi

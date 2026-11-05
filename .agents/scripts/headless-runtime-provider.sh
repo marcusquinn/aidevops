@@ -111,8 +111,9 @@ get_auth_signature() {
 			auth_material="${auth_material}|status=${auth_status}|mtime=${auth_mtime}|env=missing"
 		fi
 		;;
-	opencode)
-		# Gateway models use OpenCode's OAuth session
+	opencode | opencode-go | zai-coding-plan)
+		# Gateway and OpenCode-managed subscription providers use auth.json;
+		# its mtime changes on re-auth, which clears stale backoff.
 		local auth_mtime
 		auth_mtime=$(file_mtime "$OPENCODE_AUTH_FILE")
 		auth_material="${auth_material}|mtime=${auth_mtime}"
@@ -149,8 +150,9 @@ provider_auth_available() {
 		fi
 		return 1
 		;;
-	zai-coding-plan)
-		# Z.AI Coding Plan is an OpenCode-managed subscription provider.
+	zai-coding-plan | opencode-go)
+		# OpenCode-managed subscription providers (Z.AI Coding Plan, OpenCode Go)
+		# need their own auth.json entry; never assume availability.
 		opencode_auth_has_provider "$provider"
 		return $?
 		;;
@@ -176,7 +178,9 @@ provider_static_auth_available() {
 	local provider="$1"
 	case "$provider" in
 	anthropic)
-		[[ -n "${ANTHROPIC_API_KEY:-}" ]]
+		# GH#36707: OpenCode plugins export the selected pool token as
+		# ANTHROPIC_API_KEY; an inheriting child has no independent capacity.
+		[[ -n "${ANTHROPIC_API_KEY:-}" && "${AIDEVOPS_ANTHROPIC_API_KEY_SOURCE:-}" != "oauth-pool" ]]
 		return $?
 		;;
 	openai)
@@ -234,8 +238,10 @@ opencode_auth_has_provider() {
 	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
 
 	[[ -f "$auth_file" ]] || return 1
+	# OAuth entries carry access/refresh; `opencode auth login` API keys are
+	# stored as {"type":"api","key":...}.
 	if command -v jq >/dev/null 2>&1; then
-		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ((.access // .refresh // .token // .apiKey // "") != "")' "$auth_file" >/dev/null 2>&1
+		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ((.access // .refresh // .token // .apiKey // .key // "") != "")' "$auth_file" >/dev/null 2>&1
 		return $?
 	fi
 	python3 - "$auth_file" "$provider" <<'PY' >/dev/null 2>&1
@@ -247,7 +253,7 @@ try:
 except Exception:
     sys.exit(1)
 entry = data.get(sys.argv[2])
-if isinstance(entry, dict) and any(entry.get(k) for k in ("access", "refresh", "token", "apiKey")):
+if isinstance(entry, dict) and any(entry.get(k) for k in ("access", "refresh", "token", "apiKey", "key")):
     sys.exit(0)
 sys.exit(1)
 PY

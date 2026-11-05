@@ -280,7 +280,7 @@ _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
-		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
@@ -336,7 +336,7 @@ _dispatch_negative_cache_reason() {
 	# hold is keyed to the owner generation rather than the issue revision.
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
 	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
-		"$reason" != zero_attempt_backoff &&
+		"$reason" != terminal_blocker_fleet_hold && "$reason" != zero_attempt_backoff &&
 		"$reason" != worker_draft_checkpoint_blocked &&
 		"$reason" != worker_draft_checkpoint_cooldown &&
 		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
@@ -373,9 +373,11 @@ _dispatch_negative_cache_reason() {
 		# unchanged updatedAt proves no edit, retry directive or new comment.
 		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
 		;;
-	terminal_blocker_backoff | zero_attempt_backoff)
+	terminal_blocker_backoff | zero_attempt_backoff | terminal_blocker_fleet_hold)
 		# GH#36214: the zero-attempt backoff is windowed and self-expiring like
 		# the unknown-blocker backoff; a reset comment bumps updatedAt at once.
+		# GH#36772: a fleet hold can wake on runner capability without an
+		# issue edit, so it keeps this short ceiling instead of the circuit's.
 		ttl="$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS"
 		;;
 	dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
@@ -1180,22 +1182,52 @@ _dispatch_run_priority_phase() {
 	return $?
 }
 
+# Snapshot runner-local attempt-recency keys once per round, before this round
+# stamps its own failed attempts, so phase membership stays stable. Fails open
+# to no retries (fresh-urgent-first partition) when the state is unavailable.
+# Stdout: one "<owner>--<repo>--<issue>" key per line
+_dispatch_priority_retry_keys() {
+	local dir="" now=""
+	declare -F _dispatch_attempt_recency_stamps >/dev/null 2>&1 || return 0
+	[[ "${_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS:-0}" =~ ^[1-9][0-9]*$ ]] || return 0
+	dir=$(_dispatch_attempt_recency_dir) || return 0
+	now=$(date +%s)
+	[[ -d "$dir" && "$now" =~ ^[0-9]+$ ]] || return 0
+	_dispatch_attempt_recency_stamps "$dir" "$now" | cut -f1
+	return 0
+}
+
 # Emit unattempted candidates in a selected phase, retaining ranking within it.
-# Args: original candidates JSONL, accumulated outcomes, phase
+# GH#36722: urgent retries leave the urgent phase and join the unreserved pool,
+# sharing attempts 3:1 with fresh ordinary work as in
+# _dispatch_order_attempt_recency_candidates; ordinary retries stay last.
+# Args: original candidates JSONL, accumulated outcomes, phase,
+#       optional retry-key file from _dispatch_priority_retry_keys
 _dispatch_priority_phase_candidates() {
-	local candidates="$1" outcomes="$2" phase="$3"
-	jq -sc --rawfile outcomes "$outcomes" --arg phase "$phase" --arg product "$_DISPATCH_PRIORITY_PRODUCT" \
-		--arg success "$_DISPATCH_OUTCOME_SUCCESS" --arg failed "$_DISPATCH_OUTCOME_FAILED" --arg deferred "$_DISPATCH_OUTCOME_DEFERRED" '
+	local candidates="$1" outcomes="$2" phase="$3" retry_keys="${4:-/dev/null}"
+	[[ -r "$retry_keys" ]] || retry_keys=/dev/null
+	jq -sc --rawfile outcomes "$outcomes" --rawfile retry_keys "$retry_keys" --arg phase "$phase" \
+		--arg product "$_DISPATCH_PRIORITY_PRODUCT" --arg success "$_DISPATCH_OUTCOME_SUCCESS" \
+		--arg failed "$_DISPATCH_OUTCOME_FAILED" --arg deferred "$_DISPATCH_OUTCOME_DEFERRED" '
 		def urgent: ((.labels // []) | map(.name? // .)) | any(. == "priority:critical" or . == "priority:high");
+		def stamp_key: "\((.repo_slug // "") | sub("/"; "--"))--\(.number // "")";
+		($retry_keys | split("\n") | map(select(length > 0) | {key: ., value: true}) | from_entries) as $retried |
+		def retry: $retried[stamp_key] == true;
 		($outcomes | split("\n") | map(split("|")) |
 		 map(select(.[0] == $success or .[0] == $failed or .[0] == $deferred) |
 			.[1] as $number | .[] | select(startswith("repo=")) | [ltrimstr("repo="), $number])) as $attempted |
-		.[] | . as $candidate |
-		select(any($attempted[]; . == [$candidate.repo_slug, ($candidate.number | tostring)]) | not) |
-		select(if $phase == "urgent" then urgent
-			elif $phase == $product then .repo_priority == $product and (urgent | not)
-			elif $phase == "ordinary" then .repo_priority != $product and (urgent | not)
-			else true end)
+		[.[] | . as $candidate |
+		 select(any($attempted[]; . == [$candidate.repo_slug, ($candidate.number | tostring)]) | not)] as $open |
+		if $phase == "urgent" then $open[] | select(urgent and (retry | not))
+		elif $phase == $product then $open[] | select(.repo_priority == $product and (urgent | not))
+		elif $phase == "ordinary" then
+			[$open[] | select(urgent and retry)] as $retries |
+			[$open[] | select(.repo_priority != $product and (urgent | not))] as $ordinary |
+			(([$retries | to_entries[] | {slot: ((.key / 3) | floor), stream: 1, i: .key, row: .value}] +
+			  [$ordinary | map(select(retry | not)) | to_entries[] | {slot: .key, stream: 0, i: .key, row: .value}]) |
+			 sort_by([.slot, .stream, .i]) | map(.row)) + ($ordinary | map(select(retry)))
+			| .[]
+		else $open[] end
 	' "$candidates"
 	return $?
 }
@@ -1226,8 +1258,11 @@ _dispatch_priority_reserved_pools() {
 	local ordinary=0 product_parallel=1 ordinary_parallel=1 product_pid="" ordinary_pid="" result=0
 	((reserved <= budget)) || reserved="$budget"
 	ordinary=$((budget - reserved))
-	_dispatch_priority_phase_candidates "$candidates" "$outcomes" product >"$phase_dir/product.candidates" || return 1
-	_dispatch_priority_phase_candidates "$candidates" "$outcomes" ordinary >"$phase_dir/ordinary.candidates" || return 1
+	# Urgent retries join only the unreserved pool: they never consume held slots.
+	_dispatch_priority_phase_candidates "$candidates" "$outcomes" product "$phase_dir/retry.keys" \
+		>"$phase_dir/product.candidates" || return 1
+	_dispatch_priority_phase_candidates "$candidates" "$outcomes" ordinary "$phase_dir/retry.keys" \
+		>"$phase_dir/ordinary.candidates" || return 1
 	: >"$phase_dir/product.outcomes"
 	: >"$phase_dir/ordinary.outcomes"
 	if ((parallel > 1 && reserved > 0 && ordinary > 0)) &&
@@ -1254,8 +1289,11 @@ _dispatch_priority_reserved_pools() {
 }
 
 # Fulfil product reservations using verified launches, then lend only proven slack.
-# Urgent work is exempt. Every phase retains the existing bounded concurrency and
-# API/resource/ownership gates; no candidate is attempted twice in a round.
+# Fresh urgent work is exempt and goes first. Urgent retries (attempted without
+# launch inside the recency window) share the unreserved pool 3:1 with fresh
+# ordinary work (GH#36722), so a blocked urgent backlog cannot starve it. Every
+# phase retains the existing bounded concurrency and API/resource/ownership
+# gates; no candidate is attempted twice in a round.
 # Args: candidates, budget, login, parallelism, outcomes, reserved product slots,
 #       complete product discovery (true/false)
 _dispatch_priority_loop() {
@@ -1264,6 +1302,7 @@ _dispatch_priority_loop() {
 	local phase_dir="" phase="" phase_budget=0 launched=0 processed=0 result=""
 	local phase_launched=0 phase_processed=0 product_launched=0 product_unknown=0 held=0
 	phase_dir=$(mktemp -d) || return 1
+	_dispatch_priority_retry_keys >"$phase_dir/retry.keys" || : >"$phase_dir/retry.keys"
 	for phase in urgent pools remainder; do
 		phase_budget=$((budget - launched))
 		((phase_budget > 0)) || break
@@ -1281,7 +1320,8 @@ _dispatch_priority_loop() {
 			launched=$(_dispatch_max_count_outcomes "$outcomes")
 			continue
 		fi
-		_dispatch_priority_phase_candidates "$candidates" "$outcomes" "$phase" >"$phase_dir/candidates" || {
+		_dispatch_priority_phase_candidates "$candidates" "$outcomes" "$phase" "$phase_dir/retry.keys" \
+			>"$phase_dir/candidates" || {
 			rm -rf "$phase_dir"; return 1;
 		}
 		if [[ "$phase" == remainder && "$held" -gt 0 ]]; then

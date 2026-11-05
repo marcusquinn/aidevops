@@ -9,7 +9,22 @@ import math
 from screen_time_interval_common import WINDOWS, completed_day_window, interval_seconds, local_date
 
 
+def observed_since(collection):
+    """Epoch measurement began, for collectors that record it (Linux sampler)."""
+    value = collection.get("observed_since_epoch")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def since_coverage(since, start, end):
+    window_days = (end - start) / 86400
+    days = min(window_days, (end - max(start, since)) / 86400)
+    return round(days, 1), round(days / window_days * 100, 1)
+
+
 def coverage(collection, start, end):
+    since = observed_since(collection)
+    if since is not None:
+        return since_coverage(since, start, end) if since < end else (0.0, 0.0)
     timestamps = []
     for left, right in collection.get("intervals", []):
         if right > start and left < end:
@@ -29,12 +44,17 @@ def coverage(collection, start, end):
 def bounded_period_payload(collection, start, end, semantics="rolling-clock-window"):
     observed_days, coverage_pct = coverage(collection, start, end)
     status = collection.get("status", "unavailable")
+    reason = collection.get("reason", "unknown")
+    since = observed_since(collection)
+    if status != "unavailable" and since is not None and since >= end:
+        status, reason = "unavailable", "before-first-sample"
     hours = None if status == "unavailable" else round(interval_seconds(collection.get("intervals", []), start, end) / 3600, 1)
     return {
         "hours": hours,
         "status": status,
         "source": collection.get("source", "unknown"),
-        "reason": collection.get("reason", "unknown"),
+        "reason": reason,
+        "observed_since_epoch": since,
         "coverage_days": observed_days,
         "coverage_pct": coverage_pct,
         "freshness_hours": collection.get("freshness_hours"),
@@ -118,10 +138,37 @@ def history_period(rows, now, days, skipped_rows=0):
     }
 
 
+MIN_SAMPLED_DAYS_FOR_YEAR = 7
+FULL_YEAR_SAMPLED_DAYS = 330
+
+
+def sampled_live(period):
+    """Live sampler periods (Linux) are authoritative while available.
+
+    Their history rows are derived from the same 400-day sampler log, and the
+    snapshot records a partial first sampled day as a whole observed day, so
+    history must not displace the fractional live coverage (GH#36737).
+    """
+    return period.get("observed_since_epoch") is not None and period.get("status") != "unavailable"
+
+
+def sampled_year(year):
+    """Sampler years never fall through to history: when sampling began today the
+    live year stays unavailable (before-first-sample) instead of a history projection."""
+    days = year["coverage_days"]
+    if year["status"] == "unavailable" or days >= FULL_YEAR_SAMPLED_DAYS:
+        return year
+    if days < MIN_SAMPLED_DAYS_FOR_YEAR:
+        # A 365x projection of a few sampled hours is noise, not an estimate.
+        return dict(year, hours=None, status="unavailable", reason=f"fewer-than-{MIN_SAMPLED_DAYS_FOR_YEAR}-sampled-days")
+    estimate = min(8760.0, year["hours"] / days * 365)
+    return dict(year, hours=round(estimate, 1), estimated=True, reason="sampled-coverage-extrapolation")
+
+
 def apply_short_history(periods, history, now, skipped):
     for name, days in (("day", 1), ("week", 7), ("month", 28)):
         fallback = history_period(history, now, days, skipped)
-        if not fallback:
+        if not fallback or sampled_live(periods[name]):
             continue
         live_coverage = periods[name].get("coverage_pct", 0) or 0
         permission_free_proxy = periods[name].get("source") == "macos-pmset-display-assertions"
@@ -138,6 +185,8 @@ def apply_short_history(periods, history, now, skipped):
 
 
 def estimated_year(periods, history, now, skipped):
+    if periods["year"].get("observed_since_epoch") is not None:
+        return sampled_year(periods["year"])
     year = history_period(history, now, 365, skipped)
     if year and year.get("calendar_span_days", 0) >= 330:
         return year
@@ -146,7 +195,7 @@ def estimated_year(periods, history, now, skipped):
         return dict(year, hours=round(estimate, 1), estimated=True, reason="calendar-span-extrapolation")
     month = periods["month"]
     if periods["year"]["status"] != "unavailable" and month["coverage_days"] > 0:
-        estimate = min(8760.0, (month["hours"] or 0) / month["coverage_days"] * 365)
+        estimate = min(8760.0, (month["hours"] or 0) / max(1.0, month["coverage_days"]) * 365)
         return dict(month, hours=round(estimate, 1), estimated=True, reason="observed-calendar-coverage-extrapolation")
     return periods["year"]
 

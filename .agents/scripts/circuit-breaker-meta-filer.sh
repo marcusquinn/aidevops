@@ -723,13 +723,19 @@ cmd_file() {
 # Stdout: original issue ref (owner/repo#number), or empty
 # Returns: 0 always (best-effort)
 #######################################
+# Shared issue read for body and lineage metadata checks.
+_cb_meta_read_issue() {
+	local meta_number="$1" repo_slug="$2" query="${3:-.body // \"\"}"
+	gh api "repos/${repo_slug}/issues/${meta_number}" --jq "$query" 2>/dev/null || return 1
+	return 0
+}
+
 _cb_meta_extract_original() {
 	local meta_number="$1"
 	local repo_slug="$2"
 
 	local body
-	body=$(gh api "repos/${repo_slug}/issues/${meta_number}" \
-		--jq '.body // ""' 2>/dev/null) || body=""
+	body=$(_cb_meta_read_issue "$meta_number" "$repo_slug") || body=""
 	[[ -z "$body" || "$body" == "null" ]] && return 0
 
 	# Match "- Original: owner/repo#NNN" — slug-aware so cross-repo metas
@@ -796,6 +802,64 @@ cmd_unblock_on_merge() {
 		return 1
 	fi
 
+	local meta_numbers="" number=""
+	meta_numbers=$(_cb_meta_unblock_lineage "$meta_number" "$repo_slug") || return 2
+	while IFS= read -r number; do
+		_cb_meta_unblock_one "$number" "$repo_slug" || return 2
+	done <<<"$meta_numbers"
+	return 0
+}
+
+# Resolve the consolidated meta's exact same-repo predecessor chain before any
+# mutations. Bound traversal and reject cycles; arbitrary prose references are
+# not authority to release blockers. Legacy metas without a header are unchanged.
+# Args: $1=meta number, $2=repo; output: validated meta numbers, newest first
+_cb_meta_unblock_lineage() {
+	local meta_number="$1" repo_slug="$2"
+	local current="$meta_number" body="" predecessor="" trusted=""
+	local numbers="$meta_number" seen=" $meta_number " depth=0
+	while [[ "$depth" -lt 20 ]]; do
+		body=$(_cb_meta_read_issue "$current" "$repo_slug") || return 1
+		predecessor=$(printf '%s' "$body" | jq -Rrs '
+			[split("\n")[] | capture("^_Supersedes #(?<n>[1-9][0-9]*)[ —].*_$")? | .n]
+			| if length == 0 then "" elif length == 1 then .[0] else error("ambiguous lineage") end
+		' 2>/dev/null) || return 1
+		if [[ -z "$predecessor" ]]; then
+			printf '%s\n' "$numbers"
+			return 0
+		fi
+		[[ "$seen" != *" $predecessor "* ]] || return 1
+		#aidevops:trust-boundary — only collaborator-authored breaker metas may
+		# authorize predecessor cleanup, and predecessors must already be closed.
+		# Validate the actual issue metadata, never body-supplied association text.
+		trusted=$(_cb_meta_trusted_state "$current" "$repo_slug") || return 1
+		[[ "$trusted" == "open" || "$trusted" == "closed" ]] || return 1
+		trusted=$(_cb_meta_trusted_state "$predecessor" "$repo_slug") || return 1
+		[[ "$trusted" == "closed" ]] || return 1
+		numbers+=$'\n'"$predecessor"
+		seen+="$predecessor "
+		current="$predecessor"
+		depth=$((depth + 1))
+	done
+	return 1
+}
+
+# Output the state only for a trusted breaker meta; missing/invalid metadata is
+# never authorization to release another issue's blocker.
+_cb_meta_trusted_state() {
+	local meta_number="$1" repo_slug="$2" state=""
+	state=$(_cb_meta_read_issue "$meta_number" "$repo_slug" '
+		select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+			and any(.labels[]?; .name == "circuit-breaker-meta")) | .state
+	') || return 1
+	printf '%s' "$state"
+	return 0
+}
+
+# Apply the existing unblock path separately to each validated meta number so
+# withheld originals are discovered by their actual (possibly predecessor) label.
+_cb_meta_unblock_one() {
+	local meta_number="$1" repo_slug="$2"
 	local original_ref
 	original_ref=$(_cb_meta_extract_original "$meta_number" "$repo_slug")
 	if [[ -z "$original_ref" ]]; then
@@ -828,8 +892,7 @@ _cb_meta_body_is_withheld() {
 	local repo_slug="$2"
 	local body=""
 
-	body=$(gh api "repos/${repo_slug}/issues/${meta_number}" \
-		--jq '.body // ""' 2>/dev/null) || return 1
+	body=$(_cb_meta_read_issue "$meta_number" "$repo_slug") || return 1
 	[[ "$body" == *"<!-- ${_CB_META_WITHHELD_MARKER} -->"* ]] && return 0
 	return 1
 }

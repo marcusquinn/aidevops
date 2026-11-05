@@ -168,11 +168,12 @@ dep_supersession_blocks() {
 }
 
 #######################################
-# Resolve the live (OPEN) end of a trusted "Superseded by #S" chain (GH#35130).
+# Resolve the OPEN or CLOSED/COMPLETED end of a trusted supersession chain.
 # Read-only; follows the same trust rule and hop limit as
-# dep_supersession_outstanding. Prints the open successor number.
+# dep_supersession_outstanding. The historical function name is retained for
+# callers; a completed successor is also a valid repoint target (GH#36782).
 # Args: $1 - repo slug, $2 - closed blocker number, $3 - its stateReason
-# Returns: 0 and prints the number when an open successor exists; 1 otherwise
+# Returns: 0 and prints the number for an open or completed successor; 1 otherwise
 #          (not superseded, chain unfinished, cycle, too long or unreadable).
 #######################################
 dep_supersession_open_successor() {
@@ -193,6 +194,10 @@ dep_supersession_open_successor() {
 			return 0
 		fi
 		[[ "$state" == "CLOSED" ]] || return 1
+		if [[ "$hops" -gt 0 && ("$reason" == "COMPLETED" || "$reason" == "completed") ]]; then
+			printf '%s\n' "$number"
+			return 0
+		fi
 		dep_supersession_reason_applies "$reason" || return 1
 		[[ "$successor" =~ ^[1-9][0-9]*$ ]] || return 1
 		seen="${seen}${number},"

@@ -280,16 +280,16 @@
     // The first available model in the list is used.
     "tiers": {
       "simple": {
-        "models": ["openai/gpt-6-luna", "anthropic/claude-haiku-5-5"],
-        "reasoning": { "openai/gpt-6-luna": "high", "anthropic/claude-haiku-5-5": "high" }
+        "models": ["anthropic/claude-haiku-5-5", "openai/gpt-6-luna"],
+        "reasoning": { "anthropic/claude-haiku-5-5": "high", "openai/gpt-6-luna": "high" }
       },
       "standard": {
-        "models": ["openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-5-5"],
-        "reasoning": { "openai/gpt-6.1-sol": "medium", "openai/gpt-6.1-terra": "medium", "anthropic/claude-sonnet-5-5": "medium" }
+        "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "opencode-go/deepseek-v4.1-flash"],
+        "reasoning": { "anthropic/claude-sonnet-5-5": "medium", "openai/gpt-6.1-sol": "medium", "openai/gpt-6.1-terra": "medium", "opencode-go/deepseek-v4.1-flash": "high" }
       },
       "thinking": {
-        "models": ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5"],
-        "reasoning": { "openai/gpt-6.1-sol": "medium", "anthropic/claude-opus-5-5": "high" }
+        "models": ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
+        "reasoning": { "anthropic/claude-opus-5-5": "high", "openai/gpt-6.1-sol": "medium" }
       }
     },
 
@@ -314,10 +314,10 @@
 
     // Fallback chain configuration for model-level failover.
     "fallback_chains": {
-      "simple":   ["openai/gpt-6-luna", "anthropic/claude-haiku-5-5"],
-      "standard": ["openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-5-5"],
-      "thinking": ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5"],
-      "default":  ["openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-5-5"]
+      "simple":   ["anthropic/claude-haiku-5-5", "openai/gpt-6-luna"],
+      "standard": ["anthropic/claude-sonnet-5-5", "openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "opencode-go/deepseek-v4.1-flash"],
+      "thinking": ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
+      "default":  ["anthropic/claude-sonnet-5-5", "openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "opencode-go/deepseek-v4.1-flash"]
     },
 
     // Fallback trigger configuration.

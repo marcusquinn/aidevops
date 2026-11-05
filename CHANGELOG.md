@@ -10,6 +10,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.127] - 2026-11-05
+
+### Added
+
+- wake path for aged hold-for-review issues and changed approval-template refusals (GH#36788) (#36789)
+
+### Changed
+
+- Documentation: note LocalWP db export socket flag
+
+### Fixed
+
+- require claimed admission for automatic checkpoint continuation
+
+## [3.39.126] - 2026-11-05
+
+### Added
+
+- reusable WordPress change-plan verification (#35603)
+
+### Changed
+
+- Documentation: hostinger origin refuses server's own requests via Cloudflare (GH#36783) (#36785)
+- Refactor: split rate-limit release circuit out of headless-runtime-failure.sh (GH#35101) (#36758)
+
+### Fixed
+
+- accept maintainer-acknowledged orphan releases as unattributed history (GH#36593)
+- bound retention apply and diagnose SQLite stages (#36778)
+- unify worker-briefed merge trust gate (GH#36769) (#36776)
+- renew mostly-consumed won lease before launch handoff (GH#36771) (#36779)
+- verify dependency-covered AUTO_MERGE objects
+- classify and cache TERMINAL_BLOCKER_FLEET_HOLD dispatch blocks (GH#36772) (#36777)
+- publish sanitized requested input (GH#36760) (#36761)
+- scope-check ignores inline-code HTML-comment opener and names unclosed comment cause (#36763)
+
+## [3.39.125] - 2026-11-05
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [3.39.124] - 2026-11-05
+
+### Changed
+
+- Maintenance: mark t18866 complete (pr:#36745 completed:2026-11-05) (#36748)
+- Tests: age dead-owner quarantine in profile sweep fixture for macOS (#36745)
+
+### Fixed
+
+- preserve legacy JS admission metadata in archives
+- plan capacity for selector fallback when preferred provider pool is exhausted
+
+## [3.39.123] - 2026-11-05
+
+### Changed
+
+- GH#36737 fix(screen-time): keep live Linux sampler coverage over history; no year projection under 7 sampled days
+
+### Fixed
+
+- fix-the-fixer classification no longer stales maintainer approvals
+- tell external contributors when their PR lacks a linked issue
+- underfill attribution must not treat CPU load as missing headroom
+
+## [3.39.122] - 2026-11-05
+
+### Changed
+
+- Maintenance: bump Hono to 4.13.14 (#36735)
+- Documentation: LiteSpeed shared-cache purge scope for WordPress dev and deploy
+- Maintenance: bump Secretlint preset to 13.1.0 (#36731)
+
+### Fixed
+
+- let maintainer-approved Dependabot PRs pass the final merge gate
+- share urgent retries with fresh ordinary work under product reservations (#36729)
+
+## [3.39.121] - 2026-11-05
+
+### Changed
+
+- Maintenance: preserve compatible Actions updates (#36719)
+- Maintenance: sync GitHub issue refs to TODO.md (#36717)
+- Maintenance: bump secretlint from 13.0.7 to 13.1.0 (supersedes #36578) (#36710)
+- GH#36709 fix(screen-time): Linux periods before first sample are unavailable, not 0h; install sampler for Linux profile README
+
+### Fixed
+
+- make underfill attribution fire on real cycle lengths and the dispatch_max path
+- detect OpenCode API-key auth entries (key field)
+- share retry attempts with fresh rank-0 work (GH#36712) (#36720)
+- record activity watchdog deferrals per attempt and report effective hard-kill cap
+
+## [3.39.120] - 2026-11-04
+
+### Added
+
+- add read-only image-library evidence (#36697)
+- compact retired generation journal events (GH#36690) (#36692)
+
+### Changed
+
+- Maintenance: bump Bun types to 1.4.4
+
+### Fixed
+
+- stop one Dependabot replacement PR from stalling the Dependabot queue
+- validate staged Bash syntax and correct CI scope docs (#36703)
+- report stranded held upstream findings (#36688)
+- clarify retirement lock recovery (#36680)
+- link local SEO child tasks to parent (GH#36679) (#36681)
+- isolate all headless signals in worker push-fence test
+
 ## [3.39.119] - 2026-11-04
 
 ### Changed

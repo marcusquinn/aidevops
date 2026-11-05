@@ -291,6 +291,35 @@ JSON
 	return 0
 }
 
+# GH#36707: an exhausted planning provider must not zero global capacity when
+# the worker selector would launch a healthy fallback provider.
+test_capacity_falls_back_from_exhausted_provider() {
+	local selector="${TEST_ROOT}/select-stub.sh" cooldown result pinned capacity_file
+	printf '#!/usr/bin/env bash\nprintf "openai/test-model\\n"\n' >"$selector"
+	cooldown=$((($(date +%s) + 3600) * 1000))
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=24
+	TEST_ACTIVE_WORKERS=0
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=0
+	PULSE_MODEL="anthropic/test-model"
+	PULSE_CAPACITY_SELECT_HELPER="$selector"
+	printf '{"anthropic":[{"status":"rate-limited","cooldownUntil":%s}],"openai":[{"status":"idle"}]}\n' "$cooldown" >"${HOME}/.aidevops/oauth-pool.json"
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	PULSE_DISPATCH_CAPACITY_PROVIDER="anthropic"
+	_dispatch_compute_capacity >"$capacity_file"
+	pinned=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	unset PULSE_CAPACITY_SELECT_HELPER PULSE_DISPATCH_CAPACITY_PROVIDER
+	if [[ "$result" == "24 0 24" && "$pinned" == "0 0 0" ]]; then
+		print_result "capacity: exhausted provider falls back to selector provider; explicit pin holds" 0
+	else
+		print_result "capacity: exhausted provider falls back to selector provider; explicit pin holds" 1 "fallback=${result} pinned=${pinned}"
+	fi
+	return 0
+}
+
 test_capacity_recent_service_interruptions_reduce_slots() {
 	reset_capacity_pressure_env
 	TEST_MAX_WORKERS=12
@@ -1044,6 +1073,7 @@ for test_name in \
 	test_capacity_uses_configured_provider_account_multiplier \
 	test_capacity_env_multiplier_overrides_config \
 	test_capacity_defaults_single_account_to_max_cap \
+	test_capacity_falls_back_from_exhausted_provider \
 	test_capacity_recent_service_interruptions_reduce_slots \
 	test_capacity_recent_progress_gets_runway_under_pressure \
 	test_capacity_clamps_provider_cap_below_active_to_zero_available \

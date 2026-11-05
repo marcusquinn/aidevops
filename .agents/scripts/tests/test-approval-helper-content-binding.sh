@@ -792,6 +792,18 @@ test_locked_issue_tier_backfill_continuity() {
 	jq '.labels |= map(select(.name != "tier:standard"))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	append_issue_timeline_event '{"id":4213,"node_id":"EV_4213","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"tier:standard"}}'
 	assert_verify "trusted tier removal remains stale" issue 41 STALE_APPROVAL 4
+
+	# The fix-the-fixer detector labels newly auto-dispatched issues right after
+	# approval; that observability classification must not stale the approval.
+	write_locked_issue_fixture
+	jq '.labels += [{id:12,node_id:"L_12",name:"fix-the-fixer"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4214,"node_id":"EV_4214","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"fix-the-fixer"}}'
+	assert_verify "trusted fix-the-fixer classification preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	jq '.labels += [{id:12,node_id:"L_12",name:"fix-the-fixer"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4215,"node_id":"EV_4215","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"fix-the-fixer"}}'
+	assert_verify "untrusted fix-the-fixer classification remains stale" issue 41 STALE_APPROVAL 4
 	return 0
 }
 

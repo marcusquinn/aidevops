@@ -40,6 +40,7 @@ import { buildRequestHeaders, transformRequestBody, addBetaQueryParam, transform
 async function applyTokenAndRetry(token, email, ctx) {
   ctx.requestHeaders.set("authorization", `Bearer ${token}`);
   process.env.ANTHROPIC_API_KEY = token;
+  process.env.AIDEVOPS_ANTHROPIC_API_KEY_SOURCE = "oauth-pool"; // GH#36707
   const sessionAccountEmail = activateAccount(email);
   const response = await fetch(ctx.requestInput, { ...ctx.requestInit, body: ctx.body, headers: ctx.requestHeaders });
   return { response, sessionAccountEmail };

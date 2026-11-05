@@ -1,8 +1,8 @@
 name: PATH portability
 
 # Exercises PATH-order, native-git and trusted-executable resolution on real
-# macOS and Ubuntu runners: tools must resolve through PATH (no FHS-only
-# absolute paths) without changing macOS launchd or Ubuntu behaviour.
+# Ubuntu runners: tools must resolve through PATH (no FHS-only absolute paths).
+# macOS coverage runs via .agents/scripts/macos-local-checks.sh, not hosted CI.
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
       fail-fast: false
 
     steps:
