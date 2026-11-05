@@ -158,6 +158,24 @@ def retire(store, item, repositories, adapter, options):
     return "retired"
 
 
+def take_over_managed(store, item, repositories, adapter, options):
+    """Retire a modern-generation worktree only when every safe-retirement guard holds.
+
+    Admission cleanup owns modern generations, but a clean, pushed, idle worktree it
+    never retires would otherwise stay `managed-by-current-cleanup` forever. The
+    remote-recoverable guards (clean including untracked, idle /proc census, unlocked,
+    HEAD on a remote ref, no open PR, non-forced removal, branch kept) decide; any
+    unmet guard keeps the original ownership reason. Admission later reconciles the
+    absent source through its existing source-absent path.
+    """
+    try:
+        reconstructible(item, repositories, adapter, open_pull_requests, managed=True)
+    except (ValueError, OSError, subprocess.SubprocessError, ObservationUnavailable):
+        raise ValueError("managed-by-current-cleanup") from None
+    return process_reconstructible(store, item, repositories, adapter, options,
+                                   managed=True)
+
+
 def process_item(store, item, repositories, adapter, options):
     outcome = {"path": item["path"]}
     eligible = attempted = 0
@@ -171,6 +189,8 @@ def process_item(store, item, repositories, adapter, options):
                 require_confirmation(connection, operation, confirmed)
         if done:
             outcome["status"] = "already-retired"
+        elif item["modern"]:
+            return take_over_managed(store, item, repositories, adapter, options)
         else:
             if not pending and requires_reconstructible(item, repositories, adapter, options):
                 return process_reconstructible(store, item, repositories, adapter, options)
@@ -227,25 +247,25 @@ def current_legacy_item(connection, item):
                  if row["path"] == item["path"]), item)
 
 
-def process_reconstructible(store, item, repositories, adapter, options):
+def process_reconstructible(store, item, repositories, adapter, options, managed=False):
     """Journal a non-forced removal; the first successful probe unlocks batching."""
     operation = operation_id(store, item["path"])
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
     if not options.apply:
-        reconstructible(item, repositories, adapter, open_pull_requests)
+        reconstructible(item, repositories, adapter, open_pull_requests, managed)
         return outcome, 1, 0
     probe = str(uuid5(UUID(store.installation_id()),
                       "reconstructible-host-probe:" + socket.gethostname()))
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         item = current_legacy_item(connection, item)
-        plan = reconstructible(item, repositories, adapter, open_pull_requests)
+        plan = reconstructible(item, repositories, adapter, open_pull_requests, managed)
         test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
         revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
         checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
         # Refresh GitHub and /proc immediately before non-forced native removal.
         current = reconstructible(current_legacy_item(connection, item),
-                                  repositories, adapter, open_pull_requests)
+                                  repositories, adapter, open_pull_requests, managed)
         if current != plan:
             raise ValueError("reconstructible-source-changed")
         _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])

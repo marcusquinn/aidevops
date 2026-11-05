@@ -20,9 +20,11 @@ def command_failure(
             or Path(command[1]).name != "worktree-archive-helper.sh"
             or command[2] not in {"archive", "verify-local", "source-matches"}):
         return details
-    details.update(operation=command[2], archive_failure=True)
-    # Only the helper's namespaced validation code is useful here. Drop paths,
-    # descriptions and all other stderr (which may contain sensitive Git URLs).
+    details.update(operation=command[2], archive_failure=True,
+                   command="worktree-archive-helper.sh " + command[2])
+    # Only the helper's namespaced validation code and a fixed stderr class are
+    # useful here. Drop paths, descriptions and all other stderr (which may
+    # contain sensitive Git URLs); free text is never copied.
     stderr = error.stderr or b""
     text = stderr[-8192:]
     if isinstance(text, bytes):
@@ -30,4 +32,21 @@ def command_failure(
     match = re.search(r"(?m)^ValueError: ((?:merge|git_admin):[a-z_]{1,64})(?::[^\n]*)?$", text)
     if match:
         details["reason"] = match[1]
+    for label, pattern in _STDERR_CLASSES:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            details["stderr_class"] = label
+            break
     return details
+
+
+# Fixed vocabulary: the emitted label is allowlisted, never the matched text.
+_STDERR_CLASSES = (
+    ("no-space", r"no space left on device"),
+    ("permission-denied", r"permission denied|operation not permitted"),
+    ("not-a-git-repository", r"not a git repository|not a valid git"),
+    ("remote-unreachable", r"could not resolve host|unable to access|connection (?:refused|timed out)"),
+    ("index-lock", r"index\.lock|unable to create '.*\.lock'"),
+    ("unmerged-or-dirty", r"unmerged|uncommitted|dirty|untracked"),
+    ("missing-object", r"bad object|missing (?:blob|tree|commit)|unable to read tree"),
+    ("not-found", r"no such file or directory"),
+)

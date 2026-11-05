@@ -88,6 +88,26 @@ class ReconstructibleContract(unittest.TestCase):
                             and row["branch_preserved"] for row in receipts))
         self.assertTrue(any(row.get("type") == "reconstructible-host-probe-verified" for row in receipts))
 
+    def test_managed_retention_does_not_strand_a_safely_retireable_worktree(self):
+        # A modern generation admission never retired: every safe guard holds.
+        self.item.update(modern=True, unbound=False)
+        result, _, attempted = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual(attempted, 1)
+        self.assertFalse(self.target.exists())
+        self.assertEqual(self.git("rev-parse", "feature"), self.head)
+
+    def test_managed_takeover_keeps_every_safety_guard(self):
+        self.item.update(modern=True, unbound=False)
+        (self.target / "keep").write_text("untracked")
+        self.assert_retained("managed-by-current-cleanup")
+        (self.target / "keep").unlink()
+        self.prs.return_value = [{"head": {"ref": "feature", "sha": self.head}}]
+        self.assert_retained("managed-by-current-cleanup")
+        self.prs.return_value = []
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        self.assert_retained("managed-by-current-cleanup")
+
     def test_preview_is_read_only(self):
         self.options = CleanupOptions(self.output, apply=False, min_age=0)
         before = set(self.store.directory.iterdir())

@@ -110,6 +110,58 @@ def _advance(store: LifecycleRegistry, generation: str) -> None:
             temporary.unlink(missing_ok=True)
 
 
+_QUARANTINE_BASE_SECONDS = 900
+_QUARANTINE_MAX_SECONDS = 86400
+_QUARANTINE_MAX_ENTRIES = 1000
+
+
+def _quarantine_load(store: LifecycleRegistry) -> dict:
+    """Read durable backoff state; it only delays attempts and grants no authority."""
+    path = store.directory / "cleanup-quarantine"
+    try:
+        _private(path)
+        if path.stat().st_size > 262144:
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError, OSError):
+        # Unreadable state degrades to no quarantine, never to skipped safety checks.
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {key: value for key, value in data.items()
+            if isinstance(key, str) and isinstance(value, dict)
+            and isinstance(value.get("count"), int)
+            and isinstance(value.get("until"), (int, float))}
+
+
+def _quarantine_save(store: LifecycleRegistry, entries: dict) -> None:
+    temporary = None
+    try:
+        # Keep the file bounded: retain the entries that expire last.
+        kept = dict(sorted(entries.items(), key=lambda pair: pair[1]["until"])
+                    [-_QUARANTINE_MAX_ENTRIES:])
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=store.directory,
+            prefix=".cleanup-quarantine-", delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(kept, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, store.directory / "cleanup-quarantine")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _quarantine_failure(entries: dict, generation: str, now: float) -> int:
+    """Exponential backoff for a repeatedly failing archive/verify-local candidate."""
+    count = int(entries.get(generation, {}).get("count", 0)) + 1
+    delay = min(_QUARANTINE_BASE_SECONDS * 2 ** min(count - 1, 10), _QUARANTINE_MAX_SECONDS)
+    entries[generation] = {"count": count, "until": now + delay}
+    return count
+
+
 def _failure_details(error: Exception) -> dict:
     """Report stable diagnostics, never raw argv, stdout or stderr."""
     if isinstance(error, FilesystemValidationError):
@@ -247,7 +299,20 @@ def cleanup_pass(
         deadline = time.monotonic() + budget_seconds
         create_archive_root(root)
         validate_archive_path(root)
-        for row in rows[:limit]:
+        # Candidates in backoff are skipped before the limit applies, so a few
+        # recurring archive/verify-local failures cannot occupy the front of every
+        # run and starve the remaining eligible generations.
+        quarantine, now = _quarantine_load(store), time.time()
+        report["quarantined"] = 0
+        selected = []
+        for row in rows:
+            held_until = quarantine.get(row["generation_id"], {}).get("until", 0)
+            if held_until > now:
+                report["quarantined"] += 1
+            else:
+                selected.append(row)
+        changed = False
+        for row in selected[:limit]:
             if time.monotonic() >= deadline:
                 break
             generation, path = identifier(row["generation_id"]), Path(row["path"])
@@ -262,6 +327,19 @@ def cleanup_pass(
                 result = {"generation_id": generation, "status": "unavailable",
                           **_failure_details(error)}
             result["path"] = str(path)
-            report["archive_failed"] += bool(result.get("archive_failure", False))
+            if result.get("archive_failure", False):
+                report["archive_failed"] += 1
+                result["quarantine_failures"] = _quarantine_failure(
+                    quarantine, row["generation_id"], time.time())
+                result["quarantined"] = True
+                changed = True
+            elif quarantine.pop(row["generation_id"], None) is not None:
+                changed = True
             report["results"].append(result)
+        if changed:
+            try:
+                _quarantine_save(store, quarantine)
+            except OSError:
+                # Backoff is advisory; a write failure must not hide the pass report.
+                report["quarantine_unavailable"] = True
     return report

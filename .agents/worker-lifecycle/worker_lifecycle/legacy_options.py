@@ -41,8 +41,12 @@ def advance(store, path):
             temporary.unlink(missing_ok=True)
 
 
-def reconstructible_path(item):
-    """Bound the remote-recoverable class to owned, unpreserved managed paths."""
+def reconstructible_path(item, managed=False):
+    """Bound the remote-recoverable class to owned, unpreserved managed paths.
+
+    `managed` admits a modern-generation path only for the takeover of a worktree
+    admission cleanup left stranded; every other guard here and in the caller applies.
+    """
     path = Path(item["path"])
     base = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR",
                                Path.home() / "Git" / "_worktrees")).expanduser()
@@ -56,7 +60,7 @@ def reconstructible_path(item):
         "AIDEVOPS_WORKTREE_PRESERVE_PATTERNS", "").lower().split(",")))
     if any(pattern in path.name.lower() for pattern in patterns):
         raise ValueError("preservation-name")
-    if item["modern"] or path.stat().st_uid != os.geteuid():
+    if (item["modern"] and not managed) or path.stat().st_uid != os.geteuid():
         raise ValueError("managed-or-foreign-worktree")
     return path
 

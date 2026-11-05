@@ -45,7 +45,7 @@ source "${_PULSE_CLEANUP_SCRIPT_DIR}/pulse-cleanup-worktree-removal-profile.sh"
 _cleanup_log_diagnostics() {
 	local result="$1"
 	local diagnostics=""
-	diagnostics=$(jq -c '[.results[] | select(.status == "unavailable" or (.status | startswith("source-absen")) or .operation != null or .errno != null)]' <<<"$result") || return 1
+	diagnostics=$(jq -c '[.results[] | select(.status == "unavailable" or (.status | startswith("source-absen")) or .operation != null or .errno != null or .quarantined == true)]' <<<"$result") || return 1
 	if [[ "$diagnostics" != '[]' ]]; then
 		printf '[pulse-wrapper] Cleanup diagnostics: %s\n' "$diagnostics" >>"$LOGFILE"
 	fi
@@ -79,7 +79,7 @@ _cleanup_observation_era_worktrees() {
 cleanup_worktrees() {
 	local cleanup_budget="${1:-120}"
 	local state_dir="" python="" result="" retired="" pass_budget=0
-	local failed="" archive_failed="" held="" reconciled=""
+	local failed="" archive_failed="" held="" reconciled="" quarantined=0
 	CLEANUP_WORKTREES_SKIPPED=1
 	CLEANUP_WORKTREES_REMOVED_COUNT=0
 	CLEANUP_WORKTREES_ARCHIVED_COUNT=0
@@ -108,12 +108,13 @@ cleanup_worktrees() {
 	held=$(jq -er '.held | numbers' <<<"$result") || return 0
 	reconciled=$(jq -er '.reconciled | numbers' <<<"$result") || return 0
 	archive_failed=$(jq -er '.archive_failed | numbers' <<<"$result") || return 0
+	quarantined=$(jq -er '(.quarantined // 0) | numbers' <<<"$result") || quarantined=0
 	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + retired))
 	CLEANUP_WORKTREES_ARCHIVED_COUNT="$CLEANUP_WORKTREES_REMOVED_COUNT"
 	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$((CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT + archive_failed))
 	_cleanup_log_diagnostics "$result" || return 0
 	CLEANUP_WORKTREES_SKIPPED=0
-	printf '[pulse-wrapper] Lifecycle cleanup: retired=%s failed=%s held=%s archive_failed=%s reconciled=%s\n' \
-		"$retired" "$failed" "$held" "$archive_failed" "$reconciled" >>"$LOGFILE"
+	printf '[pulse-wrapper] Lifecycle cleanup: retired=%s failed=%s held=%s archive_failed=%s reconciled=%s quarantined=%s\n' \
+		"$retired" "$failed" "$held" "$archive_failed" "$reconciled" "$quarantined" >>"$LOGFILE"
 	return 0
 }
