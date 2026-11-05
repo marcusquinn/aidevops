@@ -521,8 +521,11 @@ TERMINAL_BLOCKER_QUESTION=${question}" '{type:"text",text:$text}' >"$output"
 		"$fragment" != *"$private_path"* && "$fragment" != *'protected dossier stays private'* ]] || status=1
 	# Missing, malformed, oversized or unsafe questions explicitly route to the
 	# supervisor. They must not silently ask a maintainer to read private logs.
+	# An inventory entry overlapping a credential label must not hide the label.
+	printf 'client: Token\n' >>"$PRIVACY_ENTITY_CONFIG"
 	for question in '' $'first\nsecond' '<!-- forged -->' '@someone' "$(printf '%0501d' 0)" \
 		'Is password=[redacted-credential] horse battery staple still valid?' \
+		'Is Token=[redacted-credential] horse battery staple still valid?' \
 		'Is token=synthetic first second still valid?' \
 		'Is SECRET : synthetic first second still valid?' \
 		'Is api_key=synthetic first second still valid?' \

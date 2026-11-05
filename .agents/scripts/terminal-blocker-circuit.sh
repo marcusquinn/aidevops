@@ -885,6 +885,13 @@ terminal_blocker_observation_hold_active() {
 _terminal_blocker_public_question() {
 	local question="$1"
 	[[ -n "$question" && "${#question}" -le 500 ]] || return 1
+	# Inspect original labels: inventory entries can replace credential names.
+	# Reject the whole question because multi-word values have no safe boundary.
+	printf '%s' "$question" | python3 -c '
+import re, sys
+if re.search(r"(?i)\b(password|token|secret|api[_ -]?key|authorization)\s*[:=]", sys.stdin.read()):
+    raise SystemExit(1)
+' || return 1
 	# shellcheck source=shared-constants.sh
 	source "${BASH_SOURCE[0]%/*}/shared-constants.sh" || return 1
 	# shellcheck source=privacy-guard-helper.sh
@@ -900,8 +907,6 @@ text = sys.stdin.read()
 if not text.strip() or len(text) > 500 or any(ord(c) < 32 or ord(c) == 127 for c in text):
     raise SystemExit(1)
 if any(c in text for c in "<>`@") or "-----BEGIN" in text:
-    raise SystemExit(1)
-if re.search(r"(?i)\b(password|token|secret|api[_ -]?key|authorization)\s*[:=]", text):
     raise SystemExit(1)
 text = re.sub(r"(?i)\b(?:https?|ssh|file)://\S+", "[redacted-url]", text)
 text = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [redacted-value]", text)
