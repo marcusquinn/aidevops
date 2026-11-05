@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Synthetic, offline regressions: no GPG keyring, gopass or saved credential access."""
 import importlib.util
+import io
 import itertools
 import json
 import os
@@ -17,6 +18,11 @@ SPEC = importlib.util.spec_from_file_location(
     "credential_lease", Path(__file__).resolve().parents[1] / "credential_lease.py")
 lease = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(lease)
+CLI_SPEC = importlib.util.spec_from_file_location(
+    "credential_lease_cli", Path(__file__).resolve().parents[1] / "credential-lease-helper.py")
+cli = importlib.util.module_from_spec(CLI_SPEC)
+with patch.dict("sys.modules", {"credential_lease": lease}):
+    CLI_SPEC.loader.exec_module(cli)
 REAL_CRYPT = lease.crypt
 TEST_BASE = Path(os.environ.get("AIDEVOPS_TEMP_DIR",
                                str(Path.home() / ".aidevops/.agent-workspace/tmp")))
@@ -31,7 +37,7 @@ class LeaseTests(unittest.TestCase):
         self.run_id = str(uuid.uuid4())
         self.environment = patch.dict(os.environ, {"AIDEVOPS_TEMP_DIR": str(self.base)})
         self.environment.start()
-        self.values = {"LOCAL_VERIFY_PASSWORD": "synthetic-canary-not-a-credential"}
+        self.values = {"LOCAL_VERIFY_PASSWORD": uuid.uuid4().hex}
         self.recipient = "A" * 40
         self.envelope = None
 
@@ -123,7 +129,8 @@ class LeaseTests(unittest.TestCase):
 
     def test_child_is_scoped_and_output_is_not_forwarded(self):
         self.seal()
-        with patch.dict(os.environ, {"LOCAL_VERIFY_PASSWORD": "shadow", "BETA_TOKEN": "foreign"}):
+        with patch.dict(os.environ, {"LOCAL_VERIFY_PASSWORD": uuid.uuid4().hex,
+                                     "BETA_TOKEN": uuid.uuid4().hex}):
             with patch.object(lease, "open_values", return_value=self.values), \
                     patch.object(lease.subprocess, "Popen") as spawn, \
                     patch.object(lease.os, "waitid", return_value=object()), \
@@ -181,14 +188,95 @@ class LeaseTests(unittest.TestCase):
         child.wait.assert_called_once_with(timeout=5)
 
     def test_crypto_refuses_interactive_unlock_and_never_prints_backend_errors(self):
-        with patch.object(lease.subprocess, "run") as command:
+        with patch.object(lease, "executable", return_value="/synthetic/gpg"), \
+                patch.object(lease.subprocess, "run") as command:
             command.return_value.returncode = 0
             command.return_value.stdout = b"synthetic ciphertext"
             self.assertEqual(REAL_CRYPT(b"synthetic input", self.recipient), b"synthetic ciphertext")
         arguments = command.call_args.args[0]
+        self.assertEqual(arguments[0], "/synthetic/gpg")
         self.assertEqual(arguments[arguments.index("--pinentry-mode") + 1], "error")
         self.assertIn("--no-auto-key-retrieve", arguments)
         self.assertEqual(command.call_args.kwargs["stderr"], subprocess.DEVNULL)
+
+    def test_missing_executable_is_refused(self):
+        with patch.object(lease.shutil, "which", return_value=None):
+            with self.assertRaises(ValueError):
+                lease.executable("git")
+
+    def test_each_environment_value_precondition_is_enforced(self):
+        invalid = [{}, [], {"valid": "synthetic"}, {"VALUE": 1}, {"VALUE": ""},
+                   {"VALUE": "\0"}, {"PATH": "synthetic"}, {"PYTHONPATH": "synthetic"},
+                   {"VALUE": "x" * lease.LIMIT}]
+        for values in invalid:
+            with self.subTest(kind=type(values).__name__):
+                with self.assertRaises(ValueError):
+                    lease.validate_values(values)
+
+
+class CliTests(unittest.TestCase):
+    def invoke(self, arguments, data=b"{}"):
+        with patch.object(cli.sys, "argv", ["credential-lease-helper", *arguments]), \
+                patch.object(cli.sys, "stdin", io.TextIOWrapper(io.BytesIO(data))), \
+                patch.object(cli.sys, "stdout", io.StringIO()) as output:
+            code = cli.main()
+        return code, json.loads(output.getvalue())
+
+    def test_capabilities_are_read_only(self):
+        with patch.object(lease, "seal") as seal, patch.object(lease, "remove") as remove, \
+                patch.object(lease, "execute") as execute:
+            self.assertEqual(self.invoke(["capabilities"]), (0, lease.CAPABILITIES))
+        for backend in (seal, remove, execute):
+            backend.assert_not_called()
+
+    def test_modes_preserve_backend_arguments_and_result(self):
+        identity = ["--directory", "/synthetic/run", "--run-id", str(uuid.uuid4())]
+        cases = [("seal", [*identity, "--recipient", "A" * 40],
+                  ("/synthetic/run", identity[-1], "A" * 40, {})),
+                 ("remove", identity, ("/synthetic/run", identity[-1])),
+                 ("exec", [*identity, "--cwd", "/", "--budget-seconds", "3", "--", "synthetic-child"],
+                  ("/synthetic/run", identity[-1], ["synthetic-child"], "/", 3))]
+        result = {"status": "synthetic-backend-result"}
+        for mode, options, expected in cases:
+            backend_name = "execute" if mode == "exec" else mode
+            returned = (result, 7) if mode == "exec" else result
+            with self.subTest(mode=mode), patch.object(lease, backend_name, return_value=returned) as backend:
+                expected_code = 7 if mode == "exec" else 0
+                self.assertEqual(self.invoke([mode, *options]), (expected_code, result))
+                backend.assert_called_once_with(*expected)
+
+    def test_invalid_options_are_refused_before_any_backend(self):
+        identity = ["--directory", "/synthetic/run", "--run-id", str(uuid.uuid4())]
+        cases = [[], ["unknown"], ["capabilities", "--cwd", "/"],
+                 ["capabilities", "--", "synthetic-child"], ["seal", *identity],
+                 ["seal", *identity, "--recipient", "A" * 40, "--cwd", "/"],
+                 ["remove", "--directory", "/synthetic/run"],
+                 ["remove", *identity, "--recipient", "A" * 40],
+                 ["remove", *identity, "--cwd", "/"],
+                 ["remove", *identity, "--", "synthetic-child"], ["exec", *identity],
+                 ["exec", *identity, "--cwd", "/", "--recipient", "A" * 40]]
+        with patch.object(lease, "seal") as seal, patch.object(lease, "remove") as remove, \
+                patch.object(lease, "execute") as execute:
+            for arguments in cases:
+                with self.subTest(mode=arguments[:1]):
+                    self.assertEqual(self.invoke(arguments),
+                                     (1, {"status": "lease-refused", "version": lease.VERSION}))
+        for backend in (seal, remove, execute):
+            backend.assert_not_called()
+
+    def test_oversized_stdin_is_refused_without_sealing(self):
+        arguments = ["seal", "--directory", "/synthetic/run", "--run-id", str(uuid.uuid4()),
+                     "--recipient", "A" * 40]
+        with patch.object(lease, "seal") as seal:
+            self.assertEqual(self.invoke(arguments, b"x" * (lease.LIMIT + 1)),
+                             (1, {"status": "lease-refused", "version": lease.VERSION}))
+        seal.assert_not_called()
+
+    def test_backend_diagnostics_are_never_forwarded(self):
+        arguments = ["remove", "--directory", "/synthetic/run", "--run-id", str(uuid.uuid4())]
+        with patch.object(lease, "remove", side_effect=ValueError(uuid.uuid4().hex)):
+            self.assertEqual(self.invoke(arguments),
+                             (1, {"status": "lease-refused", "version": lease.VERSION}))
 
 
 if __name__ == "__main__":

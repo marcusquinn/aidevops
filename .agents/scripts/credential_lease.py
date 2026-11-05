@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import stat
 import subprocess
@@ -30,24 +31,33 @@ CAPABILITIES = {"version": VERSION, "encryptedOnly": True, "createOnly": True,
                  "ownedProcessGroup": True}
 
 
+def require(condition, reason):
+    """Enforce a precondition even when Python assertions are disabled."""
+    if not condition:
+        raise ValueError(reason)
+
+
+def executable(name):
+    path = shutil.which(name)
+    require(path, "executable")
+    return os.path.abspath(path)
+
+
 def canonical_run(value):
-    if str(uuid.UUID(value)) != value:
-        raise ValueError("run")
+    require(str(uuid.UUID(value)) == value, "run")
     return value
 
 
 def private_directory(path):
     path = Path(path)
-    if not path.is_absolute() or path != path.resolve():
-        raise ValueError("directory")
+    require(path.is_absolute(), "directory")
+    require(path == path.resolve(), "directory")
     for ancestor in (path, *path.parents):
-        if ancestor.is_symlink():
-            raise ValueError("directory")
+        require(not ancestor.is_symlink(), "directory")
     info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
-        raise ValueError("directory")
-    if stat.S_IMODE(info.st_mode) != 0o700:
-        raise ValueError("directory")
+    require(stat.S_ISDIR(info.st_mode), "directory")
+    require(info.st_uid == os.getuid(), "directory")
+    require(stat.S_IMODE(info.st_mode) == 0o700, "directory")
     return info
 
 
@@ -57,14 +67,15 @@ def validate_directory(directory):
     private_directory(base)
     directory = Path(directory)
     info = private_directory(directory)
-    if directory.parent != base or directory == base:
-        raise ValueError("directory")
+    require(directory.parent == base, "directory")
+    require(directory != base, "directory")
     # Even a private directory inside a checkout must never hold credentials.
-    result = subprocess.run(["git", "-C", str(directory), "rev-parse", "--git-dir"],
+    # Only a resolved local Git binary and constant inspection arguments; no shell.
+    result = subprocess.run(  # nosec B603 -- local executable, argv-only read-only inspection
+                            [executable("git"), "-C", str(directory), "rev-parse", "--git-dir"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             timeout=5, check=False)
-    if result.returncode == 0:
-        raise ValueError("directory")
+    require(result.returncode != 0, "directory")
     return directory, info
 
 
@@ -75,13 +86,13 @@ def locked(directory):
                          os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         lock_info = os.fstat(descriptor)
-        if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid()
-                or stat.S_IMODE(lock_info.st_mode) != 0o600 or lock_info.st_nlink != 1):
-            raise ValueError("lock")
+        require(stat.S_ISREG(lock_info.st_mode), "lock")
+        require(lock_info.st_uid == os.getuid(), "lock")
+        require(stat.S_IMODE(lock_info.st_mode) == 0o600, "lock")
+        require(lock_info.st_nlink == 1, "lock")
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         current = private_directory(directory)
-        if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
-            raise ValueError("directory")
+        require((current.st_dev, current.st_ino) == (info.st_dev, info.st_ino), "directory")
         yield directory, info
     finally:
         os.close(descriptor)
@@ -91,12 +102,13 @@ def read_private(path, limit=LIMIT * 4):
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         info = os.fstat(descriptor)
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > limit):
-            raise ValueError("file")
+        require(stat.S_ISREG(info.st_mode), "file")
+        require(info.st_uid == os.getuid(), "file")
+        require(stat.S_IMODE(info.st_mode) == 0o600, "file")
+        require(info.st_size <= limit, "file")
         data = os.read(descriptor, limit + 1)
-        if len(data) > limit or len(data) != info.st_size:
-            raise ValueError("file")
+        require(len(data) <= limit, "file")
+        require(len(data) == info.st_size, "file")
         return data, info
     finally:
         os.close(descriptor)
@@ -115,40 +127,40 @@ def exclusive_write(path, data):
 
 
 def validate_values(values):
-    if not isinstance(values, dict) or not 1 <= len(values) <= 16:
-        raise ValueError("values")
+    require(isinstance(values, dict), "values")
+    require(1 <= len(values) <= 16, "values")
     for name, value in values.items():
-        if (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", name)
-                or not isinstance(value, str) or not value or "\0" in value
-                or name in {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "ENV", "GNUPGHOME",
-                            "SHELLOPTS", "GCONV_PATH"}
-                or re.match(r"(?:LD_|DYLD_|NODE_|PYTHON|BASH_|AIDEVOPS_)", name)):
-            raise ValueError("values")
-    if len(json.dumps(values).encode()) > LIMIT:
-        raise ValueError("values")
+        require(re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", name), "values")
+        require(isinstance(value, str), "values")
+        require(value, "values")
+        require("\0" not in value, "values")
+        require(name not in {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "ENV", "GNUPGHOME",
+                             "SHELLOPTS", "GCONV_PATH"}, "values")
+        require(not re.match(r"(?:LD_|DYLD_|NODE_|PYTHON|BASH_|AIDEVOPS_)", name), "values")
+    require(len(json.dumps(values).encode()) <= LIMIT, "values")
     return values
 
 
 def crypt(data, recipient=None):
-    args = ["gpg", "--batch", "--no-tty", "--pinentry-mode", "error", "--no-auto-key-retrieve",
+    args = [executable("gpg"), "--batch", "--no-tty", "--pinentry-mode", "error", "--no-auto-key-retrieve",
             "--auto-key-locate", "clear"]
     args += ["--recipient", recipient, "--encrypt"] if recipient else ["--decrypt"]
     # Never generate/import keys, relax trust, or print GPG diagnostics.
-    result = subprocess.run(args, input=data, stdout=subprocess.PIPE,
+    result = subprocess.run(  # nosec B603 -- resolved GPG, fixed flags, validated recipient, no shell
+                            args, input=data, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, timeout=30, check=False)
-    if result.returncode or not result.stdout or len(result.stdout) > LIMIT * 4:
-        raise ValueError("crypto")
+    require(result.returncode == 0, "crypto")
+    require(result.stdout, "crypto")
+    require(len(result.stdout) <= LIMIT * 4, "crypto")
     return result.stdout
 
 
 def seal(directory, run_id, recipient, values):
     canonical_run(run_id)
-    if not re.fullmatch(r"(?:[A-F0-9]{40}|[A-F0-9]{64})", recipient):
-        raise ValueError("recipient")
+    require(re.fullmatch(r"(?:[A-F0-9]{40}|[A-F0-9]{64})", recipient), "recipient")
     validate_values(values)
     with locked(directory) as (root, owner):
-        if any(os.path.lexists(root / name) for name in (*FILES, RECEIPT)):
-            raise ValueError("collision")
+        require(not any(os.path.lexists(root / name) for name in (*FILES, RECEIPT)), "collision")
         envelope = json.dumps({"version": VERSION, "runId": run_id,
                                "recipient": recipient, "values": values}).encode()
         ciphertext = crypt(envelope, recipient)
@@ -173,13 +185,14 @@ def receipt_for(root, owner, run_id):
     receipt = json.loads(data)
     keys = {"version", "runId", "recipient", "directoryDevice", "directoryInode",
             "device", "inode", "sha256", "names"}
-    if (not isinstance(receipt, dict) or set(receipt) != keys
-            or receipt["version"] != VERSION or receipt["runId"] != run_id
-            or receipt["directoryDevice"] != owner.st_dev
-            or receipt["directoryInode"] != owner.st_ino
-            or not re.fullmatch(r"[a-f0-9]{64}", receipt["sha256"])
-            or not isinstance(receipt["names"], list)):
-        raise ValueError("receipt")
+    require(isinstance(receipt, dict), "receipt")
+    require(set(receipt) == keys, "receipt")
+    require(receipt["version"] == VERSION, "receipt")
+    require(receipt["runId"] == run_id, "receipt")
+    require(receipt["directoryDevice"] == owner.st_dev, "receipt")
+    require(receipt["directoryInode"] == owner.st_ino, "receipt")
+    require(re.fullmatch(r"[a-f0-9]{64}", receipt["sha256"]), "receipt")
+    require(isinstance(receipt["names"], list), "receipt")
     return receipt
 
 
@@ -192,17 +205,33 @@ def open_values(directory, run_id):
     with locked(directory) as (root, owner):
         receipt = receipt_for(root, owner, run_id)
         data, info = read_private(root / FILES[1])
-        if not matches(data, info, receipt):
-            raise ValueError("ownership")
+        require(matches(data, info, receipt), "ownership")
         envelope = json.loads(crypt(data))
-        if (set(envelope) != {"version", "runId", "recipient", "values"}
-                or envelope["version"] != VERSION or envelope["runId"] != run_id
-                or envelope["recipient"] != receipt["recipient"]):
-            raise ValueError("envelope")
+        require(set(envelope) == {"version", "runId", "recipient", "values"}, "envelope")
+        require(envelope["version"] == VERSION, "envelope")
+        require(envelope["runId"] == run_id, "envelope")
+        require(envelope["recipient"] == receipt["recipient"], "envelope")
         values = validate_values(envelope["values"])
-        if sorted(values) != receipt["names"]:
-            raise ValueError("envelope")
+        require(sorted(values) == receipt["names"], "envelope")
         return values
+
+
+def retire_ciphertext(root, name, receipt):
+    source, retired = root / name, root / FILES[2]
+    if not os.path.lexists(source):
+        return
+    if os.path.lexists(retired):
+        # A prior interrupted retirement was checked before any removal.
+        os.unlink(retired)
+    os.rename(source, retired)
+    data, info = read_private(retired)
+    if not matches(data, info, receipt):
+        # Restore without overwriting a concurrently installed object. A failed
+        # restoration leaves ciphertext at the known path for reconciliation.
+        os.link(retired, source, follow_symlinks=False)
+        os.unlink(retired)
+        raise ValueError("ownership")
+    os.unlink(retired)
 
 
 def remove(directory, run_id):
@@ -213,33 +242,15 @@ def remove(directory, run_id):
         for name in FILES:
             if os.path.lexists(root / name):
                 data, info = read_private(root / name)
-                if not matches(data, info, receipt):
-                    raise ValueError("ownership")
+                require(matches(data, info, receipt), "ownership")
         for name in FILES[:2]:
-            source, retired = root / name, root / FILES[2]
-            if not os.path.lexists(source):
-                continue
-            if os.path.lexists(retired):
-                # A prior interrupted retirement is checked above before removal.
-                os.unlink(retired)
-            os.rename(source, retired)
-            data, info = read_private(retired)
-            if not matches(data, info, receipt):
-                # Restore without overwriting a concurrently installed object.
-                # A failed restoration leaves the ciphertext at the known retired
-                # path for reconciliation; never delete mismatched material.
-                os.link(retired, source, follow_symlinks=False)
-                os.unlink(retired)
-                raise ValueError("ownership")
-            os.unlink(retired)
+            retire_ciphertext(root, name, receipt)
         retired = root / FILES[2]
         if os.path.lexists(retired):
             data, info = read_private(retired)
-            if not matches(data, info, receipt):
-                raise ValueError("ownership")
+            require(matches(data, info, receipt), "ownership")
             os.unlink(retired)
-        if any(os.path.lexists(root / name) for name in FILES):
-            raise ValueError("cleanup")
+        require(not any(os.path.lexists(root / name) for name in FILES), "cleanup")
     # Retain the immutable, non-secret receipt for idempotent recovery.
     return {"status": "removed", "version": VERSION}
 
@@ -278,16 +289,15 @@ def drain_child(child):
     deadline = time.monotonic() + 2
     while live_group_members(child.pid) and time.monotonic() < deadline:
         time.sleep(0.1)
-    if live_group_members(child.pid):
-        raise ValueError("descendants-unresolved")
+    require(not live_group_members(child.pid), "descendants-unresolved")
     return code
 
 
 def execute(directory, run_id, command, cwd, budget):
-    if not command or not 1 <= budget <= 3600:
-        raise ValueError("command")
-    if sys.platform != "linux" or sys.version_info < (3, 11):
-        raise ValueError("supervision-platform")
+    require(command, "command")
+    require(1 <= budget <= 3600, "command")
+    require(sys.platform == "linux", "supervision-platform")
+    require(sys.version_info >= (3, 11), "supervision-platform")
     values = open_values(directory, run_id)
     # No dotenv loading or ambient secret inheritance after scoped injection.
     environment = {key: os.environ[key] for key in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "AIDEVOPS_TEMP_DIR")
@@ -300,7 +310,10 @@ def execute(directory, run_id, command, cwd, budget):
     child = None
     stopped = False
     try:
-        child = subprocess.Popen(command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
+        # This API intentionally executes the trusted local caller's argv, never
+        # shell text; secret injection, output and process lifetime are confined.
+        child = subprocess.Popen(  # nosec B603 -- explicit local argv-only execution contract
+                                 command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  process_group=0)
         deadline = time.monotonic() + budget
