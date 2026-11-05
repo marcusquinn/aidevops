@@ -40,6 +40,8 @@ imported_from: external
 
 **Canonicalization:** All pages have canonical tags; self-referencing on unique pages; HTTP→HTTPS; www/non-www consistent; trailing slash consistent.
 
+**Site hygiene (required on every audit):** Run [Site Hygiene Sweep](site-hygiene-sweep.md) for published sample/duplicate pages, plugin settings pointing at duplicates, internal links through redirects, indexed utility pages, and schema-default regressions.
+
 ### Site Speed & Core Web Vitals
 
 | Metric | Target |
