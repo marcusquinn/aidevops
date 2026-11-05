@@ -92,7 +92,7 @@ teardown_test_env() {
 
 # Disposable fixture repositories bypass the production canonical-repository shim.
 _fixture_git() {
-	/usr/bin/git "$@"
+	command -p git "$@"
 	return $?
 }
 
@@ -104,6 +104,12 @@ gh_issue_list() {
 
 gh_create_issue() {
 	printf '%s\n' "$*" >"$GH_CREATE_ISSUE_LOG"
+	return 0
+}
+
+repo_allows_pulse_write_actions() {
+	local slug="$1"
+	[[ "$slug" == "test/repo" && "${GH_WRITE_ALLOWED:-true}" == "true" ]] || return 1
 	return 0
 }
 
@@ -145,8 +151,35 @@ case "$cmd" in
 		;;
 	issue)
 		if [[ "$subcmd" == "list" ]]; then
-			printf '%s\n' "${GH_ISSUE_LIST_JSON:-[]}"
+			if [[ "$args" == *'--label hold-for-review'* ]]; then
+				if [[ -f "${GH_ISSUE_LIST_LOG}.closed" ]]; then
+					printf '[]\n'
+				else
+					printf '%s\n' "${GH_SWEEP_ISSUES_JSON:-[]}"
+				fi
+			elif [[ "$args" == *'--jq length'* ]]; then
+				printf '%s\n' "${GH_SWEEP_ISSUES_JSON:-[]}" | jq length
+			else
+				printf '%s\n' "${GH_ISSUE_LIST_JSON:-[]}"
+			fi
 			exit 0
+		fi
+		if [[ "$subcmd" == "view" ]]; then
+			[[ "${GH_VIEW_FAIL:-false}" == "true" ]] && exit 1
+			if [[ -f "${GH_ISSUE_LIST_LOG}.commented" ]]; then
+				printf 'true\n'
+			else
+				printf 'false\n'
+			fi
+		fi
+		if [[ "$subcmd" == "comment" ]]; then
+			printf '%s\n' "${args//$'\n'/ }" >>"${GH_ISSUE_LIST_LOG}.writes"
+			: >"${GH_ISSUE_LIST_LOG}.commented"
+		fi
+		if [[ "$subcmd" == "close" ]]; then
+			[[ "${GH_CLOSE_FAIL:-false}" == "true" ]] && exit 1
+			printf '%s\n' "$args" >>"${GH_ISSUE_LIST_LOG}.writes"
+			: >"${GH_ISSUE_LIST_LOG}.closed"
 		fi
 		;;
 esac
@@ -391,6 +424,51 @@ test_llm_sweep_meta_review_is_not_measured_debt() {
 	return 0
 }
 
+test_recovered_sweep_cleanup() {
+	install_fake_gh_for_sweep
+	local scenario="" writes="" expected=""
+	for scenario in zero decreased throughput dispatched stalled unmarked denied retry unreadable dedup; do
+		rm -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" "${GH_ISSUE_LIST_LOG}.commented" "${GH_ISSUE_LIST_LOG}.closed"
+		: >"${GH_ISSUE_LIST_LOG}.writes"
+		printf '10\n' >"$COMPLEXITY_DEBT_COUNT_FILE"
+		export GH_OPEN_DEBT_COUNT=10 GH_RECENT_CLOSURES=0 GH_ISSUE_LIST_JSON='[]'
+		export GH_WRITE_ALLOWED=true GH_CLOSE_FAIL=false GH_VIEW_FAIL=false
+		export GH_SWEEP_ISSUES_JSON='[{"number":99,"body":"<!-- aidevops:generator=complexity-stall-sweep stall_hours=6 -->"}]'
+		expected=2
+		case "$scenario" in
+			zero) export GH_OPEN_DEBT_COUNT=0 ;;
+			decreased) export GH_OPEN_DEBT_COUNT=5 ;;
+			throughput) export GH_RECENT_CLOSURES=2 ;;
+			dispatched) export GH_ISSUE_LIST_JSON='[{"number":42,"title":"active debt","labels":[{"name":"status:in-review"}]}]' ;;
+			stalled) expected=0 ;;
+			unmarked) export GH_OPEN_DEBT_COUNT=0 GH_SWEEP_ISSUES_JSON='[{"number":99,"body":"Unrelated simplification debt stalled review"}]'; expected=0 ;;
+			denied) export GH_OPEN_DEBT_COUNT=0 GH_WRITE_ALLOWED=false; expected=0 ;;
+			retry) export GH_OPEN_DEBT_COUNT=0 GH_CLOSE_FAIL=true ;;
+			unreadable) export GH_OPEN_DEBT_COUNT=0 GH_VIEW_FAIL=true; expected=0 ;;
+			dedup) export GH_OPEN_DEBT_COUNT=0 ;;
+		esac
+		if [[ "$scenario" == "dedup" ]]; then
+			_complexity_run_llm_sweep "test/repo" "100000" "maintainer"
+		else
+			_complexity_llm_sweep_due "100000" "test/repo" || true
+		fi
+		# Retry after a failed close must reuse its rationale, not comment again.
+		export GH_CLOSE_FAIL=false
+		rm -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+		_complexity_llm_sweep_due "200000" "test/repo" || true
+		writes=$(wc -l <"${GH_ISSUE_LIST_LOG}.writes")
+		if [[ "$writes" -eq "$expected" ]] &&
+			{ [[ "$expected" -eq 0 ]] || grep -qF -- '--reason not planned' "${GH_ISSUE_LIST_LOG}.writes"; }; then
+			print_result "recovered stall review: ${scenario}" 0
+		else
+			print_result "recovered stall review: ${scenario}" 1 "expected ${expected} writes, got ${writes}"
+		fi
+	done
+	unset GH_OPEN_DEBT_COUNT GH_RECENT_CLOSURES GH_ISSUE_LIST_JSON GH_SWEEP_ISSUES_JSON
+	unset GH_WRITE_ALLOWED GH_CLOSE_FAIL GH_VIEW_FAIL
+	return 0
+}
+
 test_both_stall_issue_creators_use_meta_label() {
 	local old_inline_label="--label \"function-complexity-debt\" \$sweep_review_label --label \"tier:thinking\" --label \"worker-ready\""
 	local old_helper_label='--label "function-complexity-debt" --label "auto-dispatch" --label "tier:thinking" --label "worker-ready"'
@@ -506,6 +584,7 @@ main() {
 	test_llm_sweep_due_when_zero_recent_closures
 	test_llm_sweep_skips_when_all_debt_is_in_review
 	test_llm_sweep_meta_review_is_not_measured_debt
+	test_recovered_sweep_cleanup
 	test_both_stall_issue_creators_use_meta_label
 	test_recent_closures_defaults_empty_arithmetic_inputs
 	test_llm_sweep_unset_interval_does_not_trip_strict_mode
