@@ -119,12 +119,17 @@ test_primary_poll_disappearance_race() {
 	command sleep 30 &
 	target_pid=$!
 	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${target_pid}"
-	# Reproduce a target disappearing between kill -0 and ps.
-	ps() { return 1; }
-	_sandbox_poll_child 10800 "$target_pid" "${TEST_ROOT}/race.tsv" &
+	# Reproduce a target disappearing between kill -0 and the state read.
+	# The mock lives only in the background subshell.
+	(
+		_sandbox_child_state() {
+			_SANDBOX_CHILD_STATE=""
+			return 0
+		}
+		_sandbox_poll_child 10800 "$target_pid" "${TEST_ROOT}/race.tsv"
+	) &
 	poll_pid=$!
 	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${poll_pid}"
-	unset -f ps
 	if wait_for_process_exit "$poll_pid" && wait "$poll_pid"; then
 		record_result "primary poll exits on empty process state" 0
 	else
