@@ -1511,6 +1511,12 @@ else
 	print_result "exact approval supersedes only the runner's own pre-approval draft hold" 1
 fi
 
+if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-unattributed.py"; then
+	print_result "unattributed releases require exact maintainer acknowledgement" 0
+else
+	print_result "unattributed releases require exact maintainer acknowledgement" 1
+fi
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"
 	exit 0
