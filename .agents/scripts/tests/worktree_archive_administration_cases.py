@@ -22,7 +22,7 @@ class AdministrationCases:
             if merge:
                 self.start_conflicted_merge()
             archive = self.archive()
-            for name in ('aidevops/js-admission.json', 'aidevops-profile-publication.json'):
+            for name in ('aidevops/js-admission.json',):
                 with self.subTest(merge=merge, name=name):
                     record = admin / name
                     record.write_bytes(b'opaque historical record\n')

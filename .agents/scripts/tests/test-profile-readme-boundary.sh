@@ -394,8 +394,6 @@ test_update_recovers_dirty_profile_publication_worktree() {
 	local output_file="${TEST_DIR}/update-output"
 	local marker_evidence="${TEST_DIR}/marker-evidence"
 	local canonical_status_before=""
-	local retained_source=""
-	local retained_admin=""
 	local update_rc=0
 
 	mkdir -p "$helper_dir" "$fixture_home"
@@ -449,32 +447,21 @@ EOF
 		PROFILE_MARKER_EVIDENCE="$marker_evidence" \
 		PROFILE_RECOVERY_FIXTURE_MODE="$fixture_mode" \
 		bash "$helper_path" update >"$output_file" 2>&1 || update_rc=$?
-	# The injected helper leaves opaque publication metadata in Git's admin dir.
-	# Git-only capture must refuse that unpreserved state, retaining the source
-	# before writing a reservation journal or claiming an archive or removal.
+	# The injected helper supplies legacy evidence only. An archive and a sealed
+	# managed run cannot replace registry-authorized retirement of the source.
 	if [[ "$update_rc" -eq 0 ]]; then
 		print_helper_failure "$test_name" "legacy cleanup unexpectedly succeeded" "$output_file"
 		return 0
 	fi
 
-	retained_source=$(profile_publication_trees "$fixture_repo")
-	if [[ -z "$retained_source" || "$retained_source" == *$'\n'* ]]; then
-		print_helper_failure "$test_name" "expected exactly one retained publication worktree" "$output_file"
-		return 0
-	fi
-	retained_admin=$(git -C "$retained_source" rev-parse --path-format=absolute --git-dir) || return 1
 	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "2" ]] ||
-		! grep -qF 'git_admin:requires_preservation:aidevops-profile-publication.json' "$output_file" ||
-		compgen -G "$recovery_root/.producer-transactions/*/journal.json" >/dev/null ||
-		compgen -G "$recovery_root/.producer-archives/*/*" >/dev/null ||
-		[[ ! -f "$retained_source/README.md" ]] ||
-		[[ "$(cat "$retained_source/.profile-publication-fixture" 2>/dev/null)" != 'recoverable fixture state' ]] ||
-		! jq -e '.schema == "aidevops-profile-publication/v1" and .producer == "profile-readme"' \
-			"$retained_admin/aidevops-profile-publication.json" >/dev/null ||
+		[[ ! -d "$recovery_root" ]] ||
+		! jq -e '.phase == "archived" and .caller == "profile-readme-helper.sh" and .source_removal_outcome == "pending"' \
+			"$recovery_root"/.producer-transactions/*/journal.json >/dev/null ||
 		[[ "$(cat "$marker_evidence" 2>/dev/null)" != "verified" ]] ||
 		[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]] ||
 		[[ "$(cat "${fixture_repo}/unrelated-local-work")" != 'unrelated work must survive recovery' ]]; then
-		print_helper_failure "$test_name" "source or metadata missing, false archive/removal receipt, or canonical checkout changed" "$output_file"
+		print_helper_failure "$test_name" "source or archive missing, false removal receipt, or canonical checkout changed" "$output_file"
 		return 0
 	fi
 
