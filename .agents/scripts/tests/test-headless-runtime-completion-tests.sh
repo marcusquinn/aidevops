@@ -84,6 +84,7 @@ run_worker_no_output_classification_tests() {
 _pr_less_rejection_fixture_gh() {
 	local request="$*"
 	case "$request" in
+	"issue edit 456 --repo owner/repo "*) return 0 ;;
 	"api repos/owner/repo/issues/456")
 		[[ "$shape" != issue_api ]] || {
 			printf 'protected API detail\n' >&2
