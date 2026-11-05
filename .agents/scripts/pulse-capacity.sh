@@ -92,6 +92,43 @@ _pulse_capacity_fallback_provider() {
 }
 
 #######################################
+# Resolve the capacity-planning provider and its normalised account counts,
+# including auth-error refresh recovery and the GH#36707 exhausted-pool
+# fallback to the worker selector's provider.
+# Stdout: "<provider|-> <total> <available> <rate_limited> <auth_errors>".
+#######################################
+_pulse_capacity_resolve_provider_accounts() {
+	local provider="" total="" available="" limited="" auth_errors=""
+	local fallback="" fb_total="" fb_available="" fb_limited="" fb_auth_errors=""
+	provider=$(_pulse_capacity_selected_provider)
+	read -r total available limited auth_errors <<<"$(_pulse_capacity_provider_account_counts "$provider")"
+	[[ "$total" =~ ^[0-9]+$ ]] || total=0
+	[[ "$available" =~ ^-?[0-9]+$ ]] || available=-1
+	[[ "$limited" =~ ^[0-9]+$ ]] || limited=0
+	[[ "$auth_errors" =~ ^[0-9]+$ ]] || auth_errors=0
+	if _pulse_capacity_auth_error_recovery "$provider" "$total" "$available" "$auth_errors"; then
+		read -r total available limited auth_errors <<<"$(_pulse_capacity_provider_account_counts "$provider")"
+	fi
+	if ((available == 0)); then
+		fallback=$(_pulse_capacity_fallback_provider "$provider")
+		if [[ -n "$fallback" ]]; then
+			read -r fb_total fb_available fb_limited fb_auth_errors <<<"$(_pulse_capacity_provider_account_counts "$fallback")"
+			if [[ "$fb_available" =~ ^-?[0-9]+$ && "$fb_available" -ne 0 ]]; then
+				printf '[pulse-wrapper] Dispatch_capacity: provider_fallback from=%s to=%s reason=no_available_accounts from_rate_limited=%s from_auth_errors=%s\n' \
+					"$provider" "$fallback" "$limited" "$auth_errors" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+				[[ "$fb_total" =~ ^[0-9]+$ ]] || fb_total=0
+				[[ "$fb_limited" =~ ^[0-9]+$ ]] || fb_limited=0
+				[[ "$fb_auth_errors" =~ ^[0-9]+$ ]] || fb_auth_errors=0
+				provider="$fallback" total="$fb_total" available="$fb_available"
+				limited="$fb_limited" auth_errors="$fb_auth_errors"
+			fi
+		fi
+	fi
+	printf '%s %s %s %s %s\n' "${provider:--}" "$total" "$available" "$limited" "$auth_errors"
+	return 0
+}
+
+#######################################
 # Summarise provider account-pool availability without secrets.
 # Arguments:
 #   $1 - provider token
@@ -495,34 +532,8 @@ pulse_apply_provider_load_capacity_cap() {
 	fi
 
 	local provider="" account_total="" account_available="" account_limited="" account_auth_errors=""
-	provider=$(_pulse_capacity_selected_provider)
-	read -r account_total account_available account_limited account_auth_errors <<<"$(_pulse_capacity_provider_account_counts "$provider")"
-	[[ "$account_total" =~ ^[0-9]+$ ]] || account_total=0
-	[[ "$account_available" =~ ^-?[0-9]+$ ]] || account_available=-1
-	[[ "$account_limited" =~ ^[0-9]+$ ]] || account_limited=0
-	[[ "$account_auth_errors" =~ ^[0-9]+$ ]] || account_auth_errors=0
-	if _pulse_capacity_auth_error_recovery "$provider" "$account_total" "$account_available" "$account_auth_errors"; then
-		read -r account_total account_available account_limited account_auth_errors <<<"$(_pulse_capacity_provider_account_counts "$provider")"
-	fi
-	if ((account_available == 0)); then
-		local fallback_provider="" fb_total="" fb_available="" fb_limited="" fb_auth_errors=""
-		fallback_provider=$(_pulse_capacity_fallback_provider "$provider")
-		if [[ -n "$fallback_provider" ]]; then
-			read -r fb_total fb_available fb_limited fb_auth_errors <<<"$(_pulse_capacity_provider_account_counts "$fallback_provider")"
-			if [[ "$fb_available" =~ ^-?[0-9]+$ && "$fb_available" -ne 0 ]]; then
-				printf '[pulse-wrapper] Dispatch_capacity: provider_fallback from=%s to=%s reason=no_available_accounts from_rate_limited=%s from_auth_errors=%s\n' \
-					"$provider" "$fallback_provider" "$account_limited" "$account_auth_errors" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
-				[[ "$fb_total" =~ ^[0-9]+$ ]] || fb_total=0
-				[[ "$fb_limited" =~ ^[0-9]+$ ]] || fb_limited=0
-				[[ "$fb_auth_errors" =~ ^[0-9]+$ ]] || fb_auth_errors=0
-				provider="$fallback_provider"
-				account_total="$fb_total"
-				account_available="$fb_available"
-				account_limited="$fb_limited"
-				account_auth_errors="$fb_auth_errors"
-			fi
-		fi
-	fi
+	read -r provider account_total account_available account_limited account_auth_errors <<<"$(_pulse_capacity_resolve_provider_accounts)"
+	[[ "$provider" == "-" ]] && provider=""
 	local auth_error_only_cycles
 	auth_error_only_cycles=$(_pulse_capacity_auth_error_cycles "$provider" "$account_total" "$account_available" "$account_auth_errors")
 
