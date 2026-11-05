@@ -160,6 +160,83 @@ _complexity_recent_debt_closures() {
 	return 0
 }
 
+# Close one recovered review, preserving comment idempotency if closing fails.
+_complexity_close_recovered_review() {
+	local slug="$1"
+	local issue_number="$2"
+	local rationale="$3"
+	local commented=""
+	local marker="<!-- aidevops:complexity-stall-recovered -->"
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Complexity LLM sweep: invalid recovered stall review issue number — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if ! commented=$(gh issue view "$issue_number" --repo "$slug" --json comments \
+		--jq '[.comments[].body | contains("<!-- aidevops:complexity-stall-recovered -->")] | any' 2>/dev/null); then
+		echo "[pulse-wrapper] Complexity LLM sweep: comment lookup failed for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$commented" != "true" && "$commented" != "false" ]]; then
+		echo "[pulse-wrapper] Complexity LLM sweep: invalid comment lookup result for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	# #aidevops:trust-boundary — public comments do not prove write authority.
+	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Complexity LLM sweep: write-authority helper unavailable for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if ! repo_allows_pulse_write_actions "$slug"; then
+		echo "[pulse-wrapper] Complexity LLM sweep: write authority denied or unverified for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$commented" == "false" ]]; then
+		if ! gh issue comment "$issue_number" --repo "$slug" \
+			--body "${marker}
+
+${rationale} The stall premise recovered; closing this automated review as not planned." >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Complexity LLM sweep: comment failed for recovered stall review #${issue_number} — skipping close" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+	if ! gh issue close "$issue_number" --repo "$slug" --reason 'not planned' >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Complexity LLM sweep: close failed for recovered stall review #${issue_number} — will retry on next recovery check" >>"$LOGFILE"
+		return 0
+	fi
+	echo "[pulse-wrapper] Complexity LLM sweep: closed recovered stall review #${issue_number}" >>"$LOGFILE"
+	return 0
+}
+
+# Find held reviews by generator metadata, never by title alone.
+_complexity_close_recovered_sweeps() {
+	local slug="$1"
+	local rationale="$2"
+	local reviews="" numbers="" issue_number=""
+	reviews=$(gh_issue_list --repo "$slug" --state open --label hold-for-review \
+		--limit 500 --json number,body 2>/dev/null) || return 0
+	numbers=$(printf '%s' "$reviews" | jq -r '.[] |
+		select((.body // "") | test("<!--\\s*aidevops:generator=complexity-stall-sweep(\\s|-->)")) |
+		.number' 2>/dev/null) || return 0
+	while IFS= read -r issue_number; do
+		_complexity_close_recovered_review "$slug" "$issue_number" "$rationale"
+	done <<<"$numbers"
+	return 0
+}
+
+# Check the sweep window independently of live debt recovery.
+_complexity_sweep_interval_elapsed() {
+	local now_epoch="$1"
+	local sweep_interval="$2"
+	local last_sweep=0
+	if [[ -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" ]]; then
+		last_sweep=$(cat "$COMPLEXITY_LLM_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
+		[[ "$last_sweep" =~ ^[0-9]+$ ]] || last_sweep=0
+		if [[ $((now_epoch - last_sweep)) -lt "$sweep_interval" ]]; then
+			return 1
+		fi
+	fi
+	return 0
+}
+
 # Check if the daily LLM sweep is due and debt is stalled.
 # The LLM sweep fires when:
 #   1. COMPLEXITY_LLM_SWEEP_INTERVAL has elapsed since last sweep, AND
@@ -172,16 +249,7 @@ _complexity_llm_sweep_due() {
 	local aidevops_slug="${2:-}"
 	local sweep_interval="${COMPLEXITY_LLM_SWEEP_INTERVAL:-0}"
 
-	# Interval guard
-	if [[ -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" ]]; then
-		local last_sweep
-		last_sweep=$(cat "$COMPLEXITY_LLM_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
-		[[ "$last_sweep" =~ ^[0-9]+$ ]] || last_sweep=0
-		local elapsed=$((now_epoch - last_sweep))
-		if [[ "$elapsed" -lt "$sweep_interval" ]]; then
-			return 1
-		fi
-	fi
+	_complexity_sweep_interval_elapsed "$now_epoch" "$sweep_interval" || return 1
 
 	# Fetch current open debt count
 	local current_count=""
@@ -203,6 +271,7 @@ _complexity_llm_sweep_due() {
 	# No sweep needed when debt is already zero — nothing to act on (GH#17422)
 	if [[ "$current_count" -eq 0 ]]; then
 		echo "[pulse-wrapper] Complexity LLM sweep: debt is zero, no sweep required" >>"$LOGFILE"
+		_complexity_close_recovered_sweeps "$aidevops_slug" "No open function-complexity-debt issues remain."
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 1
 	fi
@@ -211,6 +280,7 @@ _complexity_llm_sweep_due() {
 	if [[ -n "$prev_count" && "$prev_count" =~ ^[0-9]+$ ]]; then
 		if [[ "$current_count" -lt "$prev_count" ]]; then
 			echo "[pulse-wrapper] Complexity LLM sweep: debt reduced (${prev_count} → ${current_count}) — sweep not needed" >>"$LOGFILE"
+			_complexity_close_recovered_sweeps "$aidevops_slug" "Open function-complexity-debt decreased from ${prev_count} to ${current_count}."
 			printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 			return 1
 		fi
@@ -224,6 +294,7 @@ _complexity_llm_sweep_due() {
 	[[ "$recent_closures" =~ ^[0-9]+$ ]] || recent_closures="0"
 	if [[ "$recent_closures" -gt 0 ]]; then
 		echo "[pulse-wrapper] Complexity LLM sweep: debt at ${current_count} but ${recent_closures} issue(s) closed in the last $((sweep_interval / 3600))h — active throughput, sweep not needed" >>"$LOGFILE"
+		_complexity_close_recovered_sweeps "$aidevops_slug" "Throughput resumed: ${recent_closures} function-complexity-debt issue(s) closed in the last $((sweep_interval / 3600))h."
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 1
 	fi
@@ -248,6 +319,7 @@ _complexity_llm_sweep_due() {
 	fi
 	if [[ "$actionable_count" =~ ^[0-9]+$ && "$dispatched_count" =~ ^[0-9]+$ && "$actionable_count" -gt 0 && "$dispatched_count" -ge "$actionable_count" ]]; then
 		echo "[pulse-wrapper] Complexity LLM sweep: all ${actionable_count} debt issues are dispatched — sweep not needed" >>"$LOGFILE"
+		_complexity_close_recovered_sweeps "$aidevops_slug" "All ${actionable_count} remaining function-complexity-debt issues are advancing through dispatch or review."
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 1
 	fi
@@ -256,14 +328,10 @@ _complexity_llm_sweep_due() {
 	return 0
 }
 
-# Run the daily LLM sweep: create a GitHub issue asking the LLM to review
-# why simplification debt is stalled and suggest approach adjustments.
-# Arguments: $1 - aidevops_slug, $2 - now_epoch, $3 - maintainer
-# Returns: 0 always (best-effort)
-_complexity_run_llm_sweep() {
+# Return success when an existing review suppresses creation.
+_complexity_sweep_already_open() {
 	local aidevops_slug="$1"
 	local now_epoch="$2"
-	local maintainer="$3"
 
 	# Dedup: check if an open sweep issue already exists (t1855).
 	# Both sweep code paths use different title patterns — check both. Stall
@@ -276,10 +344,25 @@ _complexity_run_llm_sweep() {
 		--json number --jq 'length' 2>/dev/null) || sweep_exists="0"
 	[[ "$sweep_exists" =~ ^[0-9]+$ ]] || sweep_exists="0"
 	if [[ "${sweep_exists:-0}" -gt 0 ]]; then
+		# Recheck live recovery before dedup suppresses another sweep. A still
+		# stalled premise never reaches the closure paths above.
+		_complexity_llm_sweep_due "$now_epoch" "$aidevops_slug" || true
 		echo "[pulse-wrapper] Complexity LLM sweep: skipping — open stall issue already exists" >>"$LOGFILE"
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 0
 	fi
+	return 1
+}
+
+# Run the daily LLM sweep: create a GitHub issue asking the LLM to review
+# why simplification debt is stalled and suggest approach adjustments.
+# Arguments: $1 - aidevops_slug, $2 - now_epoch, $3 - maintainer
+# Returns: 0 always (best-effort)
+_complexity_run_llm_sweep() {
+	local aidevops_slug="$1"
+	local now_epoch="$2"
+	local maintainer="$3"
+	_complexity_sweep_already_open "$aidevops_slug" "$now_epoch" && return 0
 
 	local current_count=""
 	if [[ -f "$COMPLEXITY_DEBT_COUNT_FILE" ]]; then
