@@ -87,11 +87,11 @@ class FailureCategory(unittest.TestCase):
                     execute.assert_not_called()
 
     def test_cleanup_and_cli_details_never_carry_message_text(self):
-        secret = "/private/path/SELECT secret FROM runs"
-        error = sqlite3.OperationalError("database is locked: " + secret)
+        private_message = "/private/path/SELECT private_column FROM runs"
+        error = sqlite3.OperationalError("database is locked: " + private_message)
         for details in (_failure_details(error), error_details(error, "cleanup")):
             self.assertEqual(details["category"], "contention")
-            self.assertNotIn("secret", repr(details))
+            self.assertNotIn(private_message, repr(details))
         self.assertEqual(error_details(error, "cleanup")["detail"], "database-locked")
 
     def test_live_lock_contention_is_refused_and_recovers(self):

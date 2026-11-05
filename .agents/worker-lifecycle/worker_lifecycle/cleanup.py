@@ -13,12 +13,10 @@ from uuid import UUID, uuid5
 from .absence import reconcile_absence
 from .archive_path import create_archive_root, validate_archive_path
 from .admission import AdmissionRegistry
-from .cleanup_failure import command_failure as _command_failure
+from .cleanup_failure import failure_details as _failure_details
 from .cleanup_plan import enrolled_only_event_id
 from .enrollment import GenerationEnrollment, _git_directory
-from .filesystem import FilesystemValidationError, filesystem_error_details
 from .filesystem import validate_private_path as _private
-from .refusal import failure_category
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
 from .storage import LifecycleRegistry, identifier
 
@@ -109,24 +107,6 @@ def _advance(store: LifecycleRegistry, generation: str) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-
-
-def _failure_details(error: Exception) -> dict:
-    """Report stable diagnostics, never raw argv, stdout or stderr."""
-    if isinstance(error, FilesystemValidationError):
-        details: dict = filesystem_error_details(error)
-    else:
-        details = {"reason": type(error).__name__}
-    if isinstance(error, ValueError) and re.fullmatch(r"[a-z][a-z0-9:_-]{0,159}", str(error)):
-        details["reason"] = str(error)
-    if isinstance(error, OSError) and error.errno is not None:
-        details["errno"] = error.errno
-    category = failure_category(error)
-    if category:
-        details["category"] = category
-    if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
-        details.update(_command_failure(error))
-    return details
 
 
 def _candidate(

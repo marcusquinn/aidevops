@@ -73,6 +73,14 @@ _ERRNO_CATEGORY = {
 }
 
 
+def _os_category(error: OSError) -> str | None:
+    if isinstance(error, BlockingIOError):
+        return "contention"
+    if isinstance(error, PermissionError):
+        return "permission"
+    return _ERRNO_CATEGORY.get(error.errno)
+
+
 def failure_category(error: BaseException) -> str | None:
     """Sanitized class of a registry failure: contention, schema, capacity or permission.
 
@@ -80,12 +88,8 @@ def failure_category(error: BaseException) -> str | None:
     """
     if isinstance(error, FilesystemValidationError) and isinstance(error.__cause__, OSError):
         return failure_category(error.__cause__)
-    if isinstance(error, BlockingIOError):
-        return "contention"
-    if isinstance(error, PermissionError):
-        return "permission"
-    if isinstance(error, OSError) and error.errno in _ERRNO_CATEGORY:
-        return _ERRNO_CATEGORY[error.errno]
+    if isinstance(error, OSError):
+        return _os_category(error)
     if not isinstance(error, (sqlite3.Error, ValueError)):
         return None
     message = str(error).casefold()
