@@ -54,11 +54,12 @@ cycle seven
 [[ $(rg -c UNDERFILL_ATTRIBUTION "$LOGFILE") == 2 ]]
 cycle no-work 32 0 0
 jq -e '.streak == 0' "$state" >/dev/null
-host_sample='24 24.0 99000 10000000'
+# CPU load is never a launch gate (t3558): a saturated shared host still
+# accumulates the streak so real launch gates surface.
+host_sample='24 48.0 99000 10000000'
 cycle busy-one
 cycle busy-two
-cycle busy-three
-jq -e '.streak == 0' "$state" >/dev/null
+jq -e '.streak == 2' "$state" >/dev/null
 host_sample='24 5.0 6000 10000000'
 cycle low-memory
 jq -e '.streak == 0' "$state" >/dev/null

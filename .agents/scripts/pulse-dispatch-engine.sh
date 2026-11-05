@@ -1416,8 +1416,11 @@ _attribute_sustained_underfill() {
 	# 15-minute window reset the streak every cycle and never escalated.
 	local window="${UNDERFILL_ATTRIBUTION_STREAK_WINDOW_SECS:-5400}"
 	[[ "$window" =~ ^[1-9][0-9]*$ ]] || window=5400
+	# GH#36738: headroom means RAM above the reserve. CPU load is never a launch
+	# gate (t3558), so a busy shared host must not hide real launch gates; load
+	# stays in the log line as a diagnostic only.
 	if ((target > 0 && deficit >= 50 && runnable * 100 >= target * 5)) &&
-		awk -v c="$cores" -v l="$load" -v m="$memory" -v floor="${RAM_RESERVE_MB:-6144}" 'BEGIN {exit !(c>0 && l ~ /^[0-9.]+$/ && l<c && m>floor)}'; then
+		awk -v m="$memory" -v floor="${RAM_RESERVE_MB:-6144}" 'BEGIN {exit !(m ~ /^[0-9]+$/ && m>floor)}'; then
 		streak=$(jq -r --argjson now "$now" --argjson window "$window" 'if (.timestamp // 0) > ($now - $window) then (.streak // 0) + 1 else 1 end' <<<"$previous")
 	fi
 	# Keep 24h dedupe stamps while pressure remains, including temporary lack of
