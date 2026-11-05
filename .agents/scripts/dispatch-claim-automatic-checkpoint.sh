@@ -32,7 +32,8 @@ cmd_claim_automatic_pr_checkpoint() {
 		_interactive_claim_fence_blocks_dispatch "$issue" "$repo"; then
 		return 1
 	fi
-	before=$(_dch_automatic_checkpoint_snapshot "$@") || return 1
+	local -a target=("$issue" "$repo" "$pr" "$head" "$ref" "$runner" "$session" "$owner" "$author" "$released")
+	before=$(_dch_automatic_checkpoint_snapshot "${target[@]}") || return 1
 	snapshot=$(jq -er '.snapshot' <<<"$before") || return 1
 	status=$(jq -er '.previous_status' <<<"$before") || return 1
 	nonce=$(_generate_nonce) || return 1
@@ -44,7 +45,7 @@ cmd_claim_automatic_pr_checkpoint() {
 	_resolve_claim_race_result "$issue" "$repo" "$runner" "$nonce" "$comment_id" "$claims" >/dev/null || return 1
 	# Re-read before any assignment transfer. Only the winning claim and its
 	# immutable admission snapshot may explain the changed comment history.
-	if ! after=$(_dch_automatic_checkpoint_snapshot "$@" "$nonce") ||
+	if ! after=$(_dch_automatic_checkpoint_snapshot "${target[@]}" "$nonce") ||
 		[[ "$(jq -r '.snapshot' <<<"$after")" != "$snapshot" ]] ||
 		{ declare -F _interactive_claim_fence_blocks_dispatch >/dev/null 2>&1 &&
 			_interactive_claim_fence_blocks_dispatch "$issue" "$repo"; }; then

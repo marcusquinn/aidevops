@@ -10,6 +10,7 @@ test discovery and all cases in the existing runner without circular imports.
 import copy
 import datetime as dt
 import json
+import subprocess  # nosec B404 — fixed offline fixture program only
 
 from pr_checkpoint_events import EVENTS
 
@@ -67,6 +68,36 @@ class RevisionEnvelopeCases:
 
 
 class AutomaticBindingCases:
+    def test_optional_claim_arguments_keep_nonce_position(self):
+        command = r'''
+set -euo pipefail
+source "$1/dispatch-claim-automatic-checkpoint.sh"
+shift
+_resolve_runner() { printf runner; return 0; }
+aidevops_can_manage_repo_issue_state() { return 0; }
+_dch_automatic_checkpoint_snapshot() {
+    [[ "$#" == 10 || "$#" == 11 ]] || return 1
+    [[ "${10}" == false || "${10}" == true ]] || return 1
+    if [[ "$#" == 11 ]]; then [[ "${11}" == testnonce ]] || return 1; fi
+    printf '%s' '{"snapshot":"same","previous_status":"in-review"}'
+    return 0
+}
+_generate_nonce() { printf testnonce; return 0; }
+_post_claim() { printf 123; return 0; }
+_now_utc() { printf 2026-11-05; return 0; }
+sleep() { return 0; }
+_fetch_claims() { printf '%s' '[{"nonce":"testnonce","lease_expires_at":123}]'; return 0; }
+_resolve_claim_race_result() { return 0; }
+_resolve_device_id() { printf fixture; return 0; }
+DISPATCH_CLAIM_WINDOW=0
+cmd_claim_automatic_pr_checkpoint 123 owner/repo 42 1111111111111111111111111111111111111111 worker/123 runner checkpoint-42 runner runner "$@"
+'''
+        for args in ([], ["false"], ["true"], ["false", "unexpected"]):
+            with self.subTest(args=args):
+                result = subprocess.run([self.bash, "-c", command, "test", str(self.scripts), *args],  # nosec B603
+                                        capture_output=True, text=True, timeout=10, check=False)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_snapshot_and_runtime_binding(self):
         data = self.claimed()
         self.assertEqual(self.admission.admission(data)["claim_id"], 4)

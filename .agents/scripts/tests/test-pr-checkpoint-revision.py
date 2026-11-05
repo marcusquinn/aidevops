@@ -519,6 +519,8 @@ class AutomaticAdmissionTests(AutomaticBindingCases, unittest.TestCase):
     admission = admission
     revision = revision
     comment = staticmethod(comment)
+    bash = BASH
+    scripts = SCRIPTS
 
     def test_revision_claim_rejects_ambiguous_mode(self):
         data = {"lease": "revision-claim", "session": "checkpoint-42", "assignee": "worker"}
