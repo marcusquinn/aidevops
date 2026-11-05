@@ -14,7 +14,30 @@ _gh_pr_body_negated_closing_ref() {
 	local pattern="(^|[^[:alnum:]_])${negation}${gap}${keyword}:?[[:space:]]+${ref}"
 	local stripped="" match="" backtick=$'\x60'
 	stripped=$(printf '%s\n' "$body_text" |
-		awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced' |
+		awk '
+			{
+				line = $0
+				sub(/^ ? ? ?/, "", line)
+				marker = substr(line, 1, 1)
+				run = 0
+				if (marker == "`" || marker == "~") {
+					while (substr(line, run + 1, 1) == marker) run++
+				}
+				suffix = substr(line, run + 1)
+				if (run >= 3) {
+					if (!fenced && (marker != "`" || index(suffix, "`") == 0)) {
+						fenced = 1
+						fence_marker = marker
+						fence_length = run
+						next
+					}
+					if (fenced && marker == fence_marker && run >= fence_length && suffix ~ /^[ \t]*$/) {
+						fenced = 0
+						next
+					}
+				}
+				if (!fenced) print
+			}' |
 		sed -E "s/${backtick}[^${backtick}]*${backtick}//g" |
 		tr '\n' ' ')
 	match=$(printf '%s\n' "$stripped" | grep -oiE "$pattern" | sed -n '1p') || true
@@ -25,7 +48,7 @@ _gh_pr_body_negated_closing_ref() {
 }
 
 _gh_validate_pr_closing_keywords() {
-	local arg="" pending="" body_text="" has_body=0 body_file=""
+	local arg="" pending="" body_text="" has_body=0 body_file="" has_body_file=0
 	for arg in "$@"; do
 		if [[ "$pending" == "body" ]]; then
 			body_text="$arg"
@@ -40,12 +63,17 @@ _gh_validate_pr_closing_keywords() {
 		--body | -b) has_body=1; body_text=""; pending="body" ;;
 		--body=*) has_body=1; body_text="${arg#--body=}" ;;
 		-b?*) has_body=1; body_text="${arg#-b}" ;;
-		--body-file | -F) pending="body-file" ;;
-		--body-file=*) body_file="${arg#--body-file=}" ;;
-		-F?*) body_file="${arg#-F}" ;;
+		--body-file | -F) has_body_file=1; pending="body-file" ;;
+		--body-file=*) has_body_file=1; body_file="${arg#--body-file=}" ;;
+		-F?*) has_body_file=1; body_file="${arg#-F}" ;;
 		*) ;;
 		esac
 	done
+	if [[ "$has_body" -eq 1 && "$has_body_file" -eq 1 ]]; then
+		_GH_EDIT_REJECTION_REASON="PR body cannot use --body and --body-file together"
+		printf '[SAFETY] %s. Use only one body source before writing.\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		return 1
+	fi
 	if [[ "$has_body" -eq 0 && -n "$body_file" ]]; then
 		if [[ ! -f "$body_file" || ! -r "$body_file" ]]; then
 			_GH_EDIT_REJECTION_REASON="PR body file cannot be inspected before writing"

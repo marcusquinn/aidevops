@@ -224,7 +224,7 @@ run_case "sudo gh auth recovery works through the aidevops gh shim" '
 	shim_dir="$fixture_root/shim"
 	native_dir="$fixture_root/native"
 	mkdir -p "$shim_dir" "$native_dir"
-	for module in gh gh-native-transport-lib.sh gh-api-guards-lib.sh gh-write-policy-lib.sh gh-api-instrument.sh gh-rest-pagination-lib.sh; do
+	for module in gh gh-native-transport-lib.sh gh-api-guards-lib.sh gh-write-policy-lib.sh gh-closing-reference-lib.sh gh-api-instrument.sh gh-rest-pagination-lib.sh; do
 		cp "$helper_dir/$module" "$shim_dir/$module"
 	done
 	chmod +x "$shim_dir/gh"
@@ -275,7 +275,7 @@ run_case "sudo gh auth diagnoses core exhaustion through the aidevops gh shim" '
 	shim_dir="$fixture_root/shim"
 	native_dir="$fixture_root/native"
 	mkdir -p "$shim_dir" "$native_dir"
-	for module in gh gh-native-transport-lib.sh gh-api-guards-lib.sh gh-write-policy-lib.sh gh-api-instrument.sh gh-rest-pagination-lib.sh; do
+	for module in gh gh-native-transport-lib.sh gh-api-guards-lib.sh gh-write-policy-lib.sh gh-closing-reference-lib.sh gh-api-instrument.sh gh-rest-pagination-lib.sh; do
 		cp "$helper_dir/$module" "$shim_dir/$module"
 	done
 	chmod +x "$shim_dir/gh"
