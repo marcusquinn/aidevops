@@ -29,6 +29,7 @@ def failure_details(error: Exception) -> dict:
 def command_failure(
     error: "subprocess.CalledProcessError | subprocess.TimeoutExpired",
 ) -> dict:
+    """Convert a subprocess failure into bounded, non-sensitive details."""
     details: dict = {"operation": "subprocess"}
     if isinstance(error, subprocess.CalledProcessError):
         details["returncode"] = error.returncode
