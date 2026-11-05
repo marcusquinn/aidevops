@@ -265,6 +265,37 @@ _enrichment_fetch_issue_data() {
 }
 
 #######################################
+# Emit issue data only when enrichment remains actionable.
+# Closed/reconciled entries are retired; unknown states remain retryable.
+_enrichment_fetch_actionable_issue_data() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_data="" issue_state=""
+
+	if _enrichment_should_skip_for_objective "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] Enrichment: skipping #${issue_number} in ${repo_slug}; reconciled outcome is non-failure" >>"$LOGFILE"
+		_ff_with_lock _ff_mark_enrichment_done "$issue_number" "$repo_slug" || true
+		return 1
+	fi
+	issue_data=$(_enrichment_fetch_issue_data "$issue_number" "$repo_slug")
+	issue_state=$(printf '%s' "$issue_data" | jq -r '.state // ""')
+	case "$issue_state" in
+	CLOSED)
+		echo "[pulse-wrapper] Enrichment: skipping #${issue_number}; issue closed (${repo_slug})" >>"$LOGFILE"
+		_ff_with_lock _ff_mark_enrichment_done "$issue_number" "$repo_slug" || true
+		return 1
+		;;
+	OPEN) ;;
+	*)
+		echo "[pulse-wrapper] Enrichment: deferring #${issue_number} in ${repo_slug}; issue state unavailable" >>"$LOGFILE"
+		return 1
+		;;
+	esac
+	printf '%s\n' "$issue_data"
+	return 0
+}
+
+#######################################
 # Build the enrichment analysis prompt and write it to a temp file
 #
 # Arguments:
@@ -543,28 +574,9 @@ dispatch_enrichment_workers() {
 		local parsed_key="" issue_number="" repo_slug=""
 		parsed_key=$(_enrichment_parse_fast_fail_key "$ff_key") || continue
 		IFS=$'\t' read -r issue_number repo_slug <<<"$parsed_key"
-		if _enrichment_should_skip_for_objective "$issue_number" "$repo_slug"; then
-			echo "[pulse-wrapper] Enrichment: skipping #${issue_number} in ${repo_slug}; reconciled outcome is non-failure" >>"$LOGFILE"
-			_ff_with_lock _ff_mark_enrichment_done "$issue_number" "$repo_slug" || true
-			continue
-		fi
-
 		# Confirm eligibility before model resolution or worker/worktree creation.
-		local issue_data="" issue_title="" issue_body="" issue_state="" prior_attempt=""
-		issue_data=$(_enrichment_fetch_issue_data "$issue_number" "$repo_slug")
-		issue_state=$(printf '%s' "$issue_data" | jq -r '.state // ""')
-		case "$issue_state" in
-		CLOSED)
-			echo "[pulse-wrapper] Enrichment: skipping #${issue_number}; issue closed (${repo_slug})" >>"$LOGFILE"
-			_ff_with_lock _ff_mark_enrichment_done "$issue_number" "$repo_slug" || true
-			continue
-			;;
-		OPEN) ;;
-		*)
-			echo "[pulse-wrapper] Enrichment: deferring #${issue_number} in ${repo_slug}; issue state unavailable" >>"$LOGFILE"
-			continue
-			;;
-		esac
+		local issue_data="" issue_title="" issue_body="" prior_attempt=""
+		issue_data=$(_enrichment_fetch_actionable_issue_data "$issue_number" "$repo_slug") || continue
 		if [[ -z "$resolved_model" ]]; then
 			resolved_model=$(_enrichment_resolve_model) || break
 		fi
