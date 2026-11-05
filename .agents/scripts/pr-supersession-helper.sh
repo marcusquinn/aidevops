@@ -5,10 +5,10 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+_PSH_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 
 # shellcheck source=shared-constants.sh
-[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+[[ -f "${_PSH_SCRIPT_DIR}/shared-constants.sh" ]] && source "${_PSH_SCRIPT_DIR}/shared-constants.sh"
 
 _psh_gh_read() {
 	local rc=0

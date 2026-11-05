@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=../full-loop-helper-merge.sh
 source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
+# Match the full-loop entrypoint's readonly directory before cold-loading Pulse.
+readonly SCRIPT_DIR
 # shellcheck source=../pulse-merge.sh
 source "${SCRIPT_DIR}/pulse-merge.sh"
 
