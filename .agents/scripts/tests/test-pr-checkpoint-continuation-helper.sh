@@ -873,6 +873,7 @@ test_refusal_reason_change() (
 	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
 	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:* && "$(post_count)" == 1 ]] || status=1
 	body="$(<"${STUB_POST_DIR}/post-1")"
+	[[ "$body" != *"Diagnostic (metadata only):"* ]] || status=1
 	STUB_COMMENTS_JSON="$(jq --arg body "$body" '. + [[{id:22,author_association:"OWNER",user:{login:"pulse-runner"},body:$body}]]' <<<"$(blocked_comments)")"
 	# Unchanged (no refusal): exists, no repost.
 	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
@@ -891,6 +892,13 @@ test_refusal_reason_change() (
 	template_reason="unattributed_release"
 	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
 	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*refusal=unattributed_release && "$(post_count)" == 3 ]] || status=1
+	# A refusal already present at first publication must be visible, not only
+	# baselined in a hidden dedup marker.
+	STUB_COMMENTS_JSON="$(blocked_comments)"
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	body="$(<"${STUB_POST_DIR}/post-4")"
+	[[ "$body" == *"Diagnostic (metadata only): intervening coordination"* &&
+		"$body" == *"reason=unattributed_release"* ]] || status=1
 	[[ "$status" == 0 ]] || return 1
 	return 0
 )

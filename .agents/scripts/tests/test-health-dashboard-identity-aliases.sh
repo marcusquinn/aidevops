@@ -583,6 +583,50 @@ else
 	fail "stale archive selects only other operators with old freshness markers" "selected=${stale_selected}"
 fi
 
+# Exercise the paginated REST shape, including a later-page oldest issue,
+# exact age filtering, PR exclusion and trusted recommendations on later pages.
+test_aged_holds() (
+	gh() {
+		local args="$*"
+		[[ "$args" == *"--paginate --slurp"* ]] || return 1
+		if [[ "$args" == *"/comments?"* ]]; then
+			jq -n '[[range(100) | {author_association:"OWNER",body:"Recommended path: old"}],
+				[{author_association:"MEMBER",body:"Recommended path: latest"},
+				 {author_association:"NONE",body:"Recommended path: untrusted"}]]'
+		else
+			jq -n 'def issue($n; $seconds): {number:$n,title:"held",html_url:("https://github.com/owner/repo/issues/" + ($n|tostring)),created_at:((now-$seconds)|floor|todateiso8601)};
+				[[range(1;101) | issue(.; 3*86400+3600+.*10)],
+				 [issue(101;3*86400+7200), (issue(102;9*86400) + {pull_request:{}}), issue(103;2*86400)]]'
+		fi
+		return 0
+	}
+	local result="" first=""
+	result=$(_health_aged_hold_section owner/repo)
+	[[ "$result" == *"days (101)"* && "$result" == *"91 more not shown"* ]] || return 1
+	first=$(printf '%s\n' "$result" | jq -Rs 'split("\n") | map(select(startswith("| 3d"))) | .[0]')
+	[[ "$first" == *"#101 held | latest"* && "$result" != *"untrusted"* ]] || return 1
+	# No API calls or aged section for contributor dashboards.
+	_health_aged_hold_section() { printf 'AGED_HOLD_SENTINEL'; return 0; }
+	local args=() i role
+	for ((i=0; i<34; i++)); do args+=(""); done
+	args[3]="owner/repo"
+	for role in contributor supervisor; do
+		args[26]="$role"
+		result=$(_build_health_issue_body "${args[@]}")
+		if [[ "$role" == contributor ]]; then
+			[[ "$result" != *"AGED_HOLD_SENTINEL"* ]] || return 1
+		else
+			[[ "$result" == *"AGED_HOLD_SENTINEL"* ]] || return 1
+		fi
+	done
+	return 0
+)
+if test_aged_holds; then
+	pass "aged holds paginate, sort exact ages, select latest trusted recommendation and respect role"
+else
+	fail "aged holds paginate, sort exact ages, select latest trusted recommendation and respect role"
+fi
+
 printf '\n== Summary ==\n'
 if ((TESTS_FAILED > 0)); then
 	printf '  %d failed of %d tests\n' "$TESTS_FAILED" "$TESTS_RUN"

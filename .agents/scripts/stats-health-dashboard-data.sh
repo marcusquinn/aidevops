@@ -789,7 +789,9 @@ _build_health_issue_body() {
 		rate_section_md=$(_format_worker_rate_section "$worker_success_rate_24h" "$worker_success_rate_7d" "$worker_total_runs_24h" "$worker_total_runs_7d")
 	fi
 	local optional_sections aged_holds_md=""
-	aged_holds_md=$(_health_aged_hold_section "$repo_slug" 2>/dev/null) || aged_holds_md=""
+	if [[ "$runner_role" == "supervisor" ]]; then
+		aged_holds_md=$(_health_aged_hold_section "$repo_slug" 2>/dev/null) || aged_holds_md=""
+	fi
 	optional_sections=$(_build_health_optional_sections "$runner_user" \
 		"$worker_section_title" "$worker_section_md" "$rate_section_md" \
 		"$person_stats_md" "$cross_repo_person_stats_md" \

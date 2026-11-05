@@ -1057,6 +1057,12 @@ _pcc_blocked_attention() {
 		IFS=$'\t' read -r refusal_token refusal_detail <<<"$refusal"
 		[[ "$refusal_token" =~ ^[a-z][a-z0-9_]*$ ]] || refusal_token="none"
 	fi
+	local refusal_notice=""
+	if [[ "$refusal_token" != none ]]; then
+		refusal_notice="The approval template currently refuses with \`${refusal_token}\`. Diagnostic (metadata only): ${refusal_detail}
+
+"
+	fi
 	approval_step="1. Resolve the blocker, usually by correcting this issue body, then publish the single line printed by
    \`pr-checkpoint-continuation-helper.sh approval-template ${repo} ${pr} ${issue} ${release_id} ${attempt_arg}\`
    Generate it after the body edit: the approval binds the corrected brief. Pulse then continues the exact head."
@@ -1075,7 +1081,7 @@ BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id}
 
 A worker released this issue as \`blocked\` and left draft PR #${pr} as a durable checkpoint. Ordinary redispatch stays held while the draft exists, and a blocked checkpoint is never continued without a revision-bound approval.
 
-Next action for the brief owner (write access required), one of:
+${refusal_notice}Next action for the brief owner (write access required), one of:
 
 ${approval_step}
 2. Close draft PR #${pr} to discard the checkpoint; ordinary dispatch then restarts from the current brief.
