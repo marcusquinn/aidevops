@@ -18,7 +18,7 @@ _MAX_ENTRIES = 1000
 _MAX_BYTES = 262144
 
 
-def _valid(key, value) -> bool:
+def _valid(key: object, value: object) -> bool:
     return (isinstance(key, str) and isinstance(value, dict)
             and isinstance(value.get("count"), int)
             and isinstance(value.get("until"), (int, float)))
