@@ -12,6 +12,35 @@ from worktree_archive_administration import administration_files
 
 
 class AdministrationCases:
+    def test_git_administration_git_only_refuses_nonempty_worktree_config(self):
+        from worktree_archive_index import git_index_state
+
+        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
+        config = admin / 'config.worktree'
+        self.git(self.repo, 'config', 'extensions.worktreeConfig', 'true')
+        config.write_bytes(b'')
+        (admin / 'codex-thread.json').write_text('fixture runtime record\n')
+        archive = self.archive()
+        reason = 'git_admin:requires_preservation:config.worktree'
+        for content in (b'[fixture]\n\tvalue = private\n', b'# private comment only\n'):
+            with self.subTest(content=content):
+                config.write_bytes(content)
+                with self.assertRaisesRegex(ValueError, f'^{re.escape(reason)}$'):
+                    git_index_state(self.work)
+                result = self.helper('archive', self.work, '--repo', 'fixture/repo',
+                                     '--issue', '99', '--reason', 'failed-worker',
+                                     '--base-branch', 'develop', '--output-root', self.archives,
+                                     check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(reason.encode(), result.stderr)
+                # A config added after capture cannot authorize source retirement.
+                self.assertNotEqual(self.helper('source-matches', archive, self.work,
+                                                check=False).returncode, 0)
+                self.assertTrue(self.work.is_dir())
+                self.assertEqual(config.read_bytes(), content)
+        config.unlink()
+        self.archive()  # A runtime marker without private config remains supported.
+
     def test_git_only_rejects_unpreserved_opaque_records(self):
         from worktree_archive_fingerprint import git_snapshot
         from worktree_archive_index import git_index_state

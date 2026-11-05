@@ -116,6 +116,11 @@ files. Git defines the inventory with `ls-files --others --exclude-standard`;
 ignored files and raw Git administration are excluded. `git-only` is the retained
 manifest policy name, not an alternative creation mode. There are no
 project-specific or directory-specific exclusions.
+Git-only capture refuses non-empty private `config.worktree` with
+`git_admin:requires_preservation:config.worktree`; its bytes are not represented
+by patches. Preserve that configuration separately before retiring the source.
+An empty or absent `config.worktree` does not block ordinary Git-only capture,
+including worktrees containing the disposable `codex-thread.json` runtime record.
 The shared repository must retain the recorded base. An empty delta needs no bundle.
 Unmerged and intent-to-add index entries fail closed because two patches cannot
 preserve their index state. Patch output explicitly overrides color and path-prefix
