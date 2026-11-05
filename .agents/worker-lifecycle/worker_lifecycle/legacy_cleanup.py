@@ -21,7 +21,7 @@ from .filesystem import validate_private_path as _private
 from .legacy_discovery import open_pull_requests, same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
-from .legacy_options import require_manual_confirmation, unrecorded
+from .legacy_options import require_manual_confirmation, require_managed_takeover, unrecorded
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
@@ -169,12 +169,9 @@ def take_over_managed(store, item, repositories, adapter, options):
     unmet guard keeps the original ownership reason. Admission later reconciles the
     absent source through its existing source-absent path.
     """
-    try:
-        reconstructible(item, repositories, adapter, open_pull_requests, managed=True)
-    except (ValueError, OSError, subprocess.SubprocessError, ObservationUnavailable):
-        raise ValueError("managed-by-current-cleanup") from None
-    return process_reconstructible(store, item, repositories, adapter, options,
-                                   managed=True)
+    require_managed_takeover(reconstructible, item, repositories, adapter,
+                             open_pull_requests, managed=True)
+    return process_reconstructible(store, item, repositories, adapter, options)
 
 
 def process_item(store, item, repositories, adapter, options):
@@ -192,9 +189,9 @@ def process_item(store, item, repositories, adapter, options):
             outcome["status"] = "already-retired"
         elif item["modern"]:
             return take_over_managed(store, item, repositories, adapter, options)
+        elif not pending and requires_reconstructible(item, repositories, adapter, options):
+            return process_reconstructible(store, item, repositories, adapter, options)
         else:
-            if not pending and requires_reconstructible(item, repositories, adapter, options):
-                return process_reconstructible(store, item, repositories, adapter, options)
             eligible = 1
             outcome["status"] = "pending-retry" if pending else "eligible"
             if options.apply:
@@ -286,8 +283,13 @@ def reconstructible_plan(store, connection, item, repositories, adapter, managed
     return plan
 
 
-def process_reconstructible(store, item, repositories, adapter, options, managed=False):
-    """Journal a non-forced removal; the first successful probe unlocks batching."""
+def process_reconstructible(store, item, repositories, adapter, options):
+    """Journal a non-forced removal; the first successful probe unlocks batching.
+
+    A modern generation reaches here only through `take_over_managed`, so its
+    `modern` flag selects the managed-takeover path guard for every recheck.
+    """
+    managed = bool(item["modern"])
     operation = operation_id(store, item["path"])
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
     if not options.apply:
