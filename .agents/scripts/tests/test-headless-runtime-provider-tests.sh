@@ -1725,17 +1725,17 @@ test_sandbox_passthrough_scopes_provider_env() {
 			build_sandbox_passthrough_csv "openai"
 	)
 
-	if [[ "$csv" == *"OPENAI_API_KEY"* ]] &&
-		[[ "$csv" != *"ANTHROPIC_API_KEY"* ]] &&
-		[[ "$csv" != *"GOOGLE_API_KEY"* ]] &&
-		[[ "$csv" == *"OPENCODE_BIN"* ]] &&
-		[[ "$csv" == *"OPENCODE_DB"* ]] &&
-		[[ "$csv" != *"AIDEVOPS_OPENCODE_SESSION_ID"* ]] &&
-		[[ "$csv" != *"OPENCODE_SESSION_ID"* ]] &&
-		[[ "$csv" != *"OPENCODE_PID"* ]] &&
-		[[ "$csv" != *"OPENCODE_RUN_ID"* ]] &&
-		[[ "$csv" != *"OPENCODE_PROCESS_ROLE"* ]] &&
-		[[ "$csv" != *"OPENCODE_SERVER_PASSWORD"* ]] &&
+	if [[ ",$csv," == *",OPENAI_API_KEY,"* ]] &&
+		[[ ",$csv," != *",ANTHROPIC_API_KEY,"* ]] &&
+		[[ ",$csv," != *",GOOGLE_API_KEY,"* ]] &&
+		[[ ",$csv," == *",OPENCODE_BIN,"* ]] &&
+		[[ ",$csv," == *",OPENCODE_DB,"* ]] &&
+		[[ ",$csv," != *",AIDEVOPS_OPENCODE_SESSION_ID,"* ]] &&
+		[[ ",$csv," != *",OPENCODE_SESSION_ID,"* ]] &&
+		[[ ",$csv," != *",OPENCODE_PID,"* ]] &&
+		[[ ",$csv," != *",OPENCODE_RUN_ID,"* ]] &&
+		[[ ",$csv," != *",OPENCODE_PROCESS_ROLE,"* ]] &&
+		[[ ",$csv," != *",OPENCODE_SERVER_PASSWORD,"* ]] &&
 		[[ ",$csv," != *",OPENCODE,"* ]]; then
 		print_result "sandbox passthrough scopes env to selected provider" 0
 		return 0
