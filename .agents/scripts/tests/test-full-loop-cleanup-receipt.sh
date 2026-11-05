@@ -154,6 +154,7 @@ jq -e --argjson owner_pid "$OWNER_PID" '
 	and .cleanup_lease.state == "pending"
 	and .owner.pid == $owner_pid
 	and (.owner.process_identity | length > 0)
+	and (.created_at | test("[.][0-9]{6}Z$"))
 ' "$receipt_one" >/dev/null
 full_loop_cleanup_owner_alive "$receipt_one"
 [[ "$_FULL_LOOP_CLEANUP_OWNER_PID" == "$OWNER_PID" ]]
@@ -333,6 +334,20 @@ newest_receipt=$(full_loop_write_cleanup_deferred example/repo 103 "${TEST_ROOT}
 selected_receipt=$(full_loop_cleanup_receipt_for_worktree "${TEST_ROOT}/worktree-one")
 [[ "$selected_receipt" == "$newest_receipt" ]]
 printf 'PASS reused worktree paths select the newest lifecycle receipt\n'
+
+# Legacy and precise receipts must sort chronologically in the same second.
+(
+	export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TEST_ROOT}/precision-receipts"
+	mkdir -p "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"
+	jq -n '{worktree:"precision",created_at:"2026-08-02T00:00:00Z"}' \
+		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/legacy.json"
+	jq -n '{worktree:"precision",created_at:"2026-08-02T00:00:00.500000Z"}' \
+		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json"
+	[[ "$(full_loop_cleanup_receipt_for_worktree precision)" == "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json" ]]
+	[[ "$(_full_loop_cleanup_receipt_for_worktree_unlocked_fallback precision)" == "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json" ]]
+	full_loop_cleanup_owner_lease_aged "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json"
+)
+printf 'PASS precise receipts retain chronological lookup and lease-age compatibility\n'
 
 migrated_receipt="${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/example_migrated-104.json"
 jq '.repository = "example/migrated" | .pr_number = 104
@@ -605,9 +620,6 @@ printf 'PASS authorization-gap evidence remains detached from terminal cleanup r
 	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" init >/dev/null
 	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
 		enroll --path "$marker_worktree" >/dev/null
-	# Receipt timestamps have second precision; keep their enrollment ordering
-	# unambiguous instead of weakening the dated proof with a fuzzy time window.
-	sleep 1
 	# shellcheck source=../shared-constants.sh
 	source "${SCRIPT_DIR}/shared-constants.sh"
 	# shellcheck source=../full-loop-helper-merge.sh

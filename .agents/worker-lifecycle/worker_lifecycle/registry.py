@@ -211,17 +211,24 @@ def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Ma
     raise ValueError("unsupported-cleanup-operation")
 
 
-def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+def _maintenance_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    """Dispatch read-only retirement proof and explicit registry maintenance."""
     if args.operation == "verify-retirement":
         from .retirement_proof import verify_retirement
 
-        return verify_retirement(
+        result = verify_retirement(
             store, args.path, args.repo, args.branch, args.receipt_created_at,
         )
-    if args.operation in {"compact", "raise-capacity"}:
-        return (store.compact(age=args.min_age_seconds, apply=args.apply)
-                if args.operation == "compact"
-                else store.raise_capacity(args.max_events, apply=args.apply))
+    elif args.operation == "compact":
+        result = store.compact(age=args.min_age_seconds, apply=args.apply)
+    else:
+        result = store.raise_capacity(args.max_events, apply=args.apply)
+    return result
+
+
+def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    if args.operation in {"verify-retirement", "compact", "raise-capacity"}:
+        return _maintenance_operation(store, args)
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only"}:

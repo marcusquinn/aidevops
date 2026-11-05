@@ -11,9 +11,31 @@ from .storage import LifecycleRegistry, StoreConflict
 
 
 def _timestamp(value: str) -> datetime:
+    """Parse UTC evidence without discarding admission or receipt precision."""
     if not value.endswith("Z"):
         raise ValueError("utc-receipt-timestamp-required")
     return datetime.fromisoformat(value[:-1] + "+00:00")
+
+
+def _matching_plan(
+    store: LifecycleRegistry, generation: str, path: Path, repository: str,
+) -> "dict | None":
+    """Match both terminal journal records before considering their dates."""
+    planned = _event(store, _event_id(generation, "planned"))
+    retired = _event(store, _event_id(generation, "retired"))
+    if planned is None or retired is None:
+        return None
+    if (planned.get("type") != "retirement-planned"
+            or retired.get("type") != "worktree-retired"):
+        return None
+    if (planned.get("generation_id") != generation
+            or retired.get("generation_id") != generation):
+        return None
+    if (retired.get("preservation_id") != planned.get("preservation_id")
+            or planned.get("source") != str(path)
+            or planned.get("repo") != repository):
+        return None
+    return planned
 
 
 def verify_retirement(
@@ -27,8 +49,8 @@ def verify_retirement(
     completion. Archive verification uses the existing preservation contract.
     """
     created = _timestamp(receipt_created_at)
-    if (not repository or not branch or not path.is_absolute()
-            or path.parent.resolve(strict=True) != path.parent
+    invalid_identity = not repository or not branch or not path.is_absolute()
+    if (invalid_identity or path.parent.resolve(strict=True) != path.parent
             or os.path.lexists(path)):
         raise StoreConflict("retirement-proof-path-or-identity-invalid")
     with store.connection() as connection:
@@ -41,16 +63,8 @@ def verify_retirement(
         )]
     candidates = []
     for generation in generations:
-        planned = _event(store, _event_id(generation, "planned"))
-        retired = _event(store, _event_id(generation, "retired"))
-        if (planned is None or retired is None
-                or planned.get("type") != "retirement-planned"
-                or retired.get("type") != "worktree-retired"
-                or planned.get("generation_id") != generation
-                or retired.get("generation_id") != generation
-                or retired.get("preservation_id") != planned.get("preservation_id")
-                or planned.get("source") != str(path)
-                or planned.get("repo") != repository):
+        planned = _matching_plan(store, generation, path, repository)
+        if planned is None:
             continue
         with store.connection() as connection:
             opened = connection.execute(
@@ -71,8 +85,9 @@ def verify_retirement(
     receipt = _preserved(store, plan, Path(plan["output_root"]))
     manifest_bytes = (Path(receipt["archive"]) / "manifest.json").read_bytes()
     manifest = json.loads(manifest_bytes)
-    if (hashlib.sha256(manifest_bytes).hexdigest() != receipt["manifest_sha256"]
-            or manifest.get("repo") != repository
+    if hashlib.sha256(manifest_bytes).hexdigest() != receipt["manifest_sha256"]:
+        raise StoreConflict("retirement-proof-archive-identity-changed")
+    if (manifest.get("repo") != repository
             or manifest.get("branch") != branch
             or manifest.get("source_worktree") != str(path)
             or os.path.lexists(path)):
