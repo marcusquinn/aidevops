@@ -12,6 +12,8 @@
 [[ -n "${_APPROVAL_HELPER_CONTINUITY_LOADED:-}" ]] && return 0
 _APPROVAL_HELPER_CONTINUITY_LOADED=1
 _APPROVAL_LABELED_EVENT="labeled"
+# Worker-observability classification (t3077); not scope-bearing.
+_APPROVAL_OBSERVABILITY_LABEL="fix-the-fixer"
 _APPROVAL_CONTINUITY_JSON_NUMBER="number"
 _APPROVAL_CONTINUITY_JSON_STRING="string"
 
@@ -102,10 +104,13 @@ _approval_continuity_lifecycle_change_allowed() {
 	# #aidevops:trust-boundary — deterministic tier backfill may only select a
 	# canonical workload tier. Status labels remain workflow metadata, but every
 	# resulting timeline mutation still requires authorization during replay.
+	# GH#36746: the fix-the-fixer classification only enables worker
+	# observability; it never widens scope or grants authority.
 	jq -e --argjson signed "$signed_lifecycle" --argjson self_hosting "$self_hosting" \
+		--arg observability "$_APPROVAL_OBSERVABILITY_LABEL" \
 		--argjson tiers '["tier:simple","tier:standard","tier:thinking"]' '
 		def tier_label: . as $label | $tiers | index($label) != null;
-		def allowed_label: . == "needs-maintainer-review" or . == "auto-dispatch" or . == "status:available" or . == "status:queued" or . == "status:claimed" or . == "status:in-progress" or . == "status:in-review" or . == "status:done" or . == "status:blocked" or tier_label;
+		def allowed_label: . == "needs-maintainer-review" or . == "auto-dispatch" or . == "status:available" or . == "status:queued" or . == "status:claimed" or . == "status:in-progress" or . == "status:in-review" or . == "status:done" or . == "status:blocked" or . == $observability or tier_label;
 		.lifecycle as $current |
 		($current.labels | map(.name)) as $current_labels |
 		($signed.labels | map(.name)) as $signed_labels |
@@ -336,6 +341,7 @@ _approval_verify_locked_issue_continuity() {
 		[[ -n "$event" ]] || continue
 		case "$event:$subject" in
 		renamed:title) [[ "$title_changed" -eq 1 ]] || return 1 ;;
+		labeled:"$_APPROVAL_OBSERVABILITY_LABEL" | unlabeled:"$_APPROVAL_OBSERVABILITY_LABEL") ;;
 		assigned:* | unassigned:* | labeled:needs-maintainer-review | unlabeled:needs-maintainer-review | labeled:auto-dispatch | unlabeled:auto-dispatch | labeled:status:available | unlabeled:status:available | labeled:status:queued | unlabeled:status:queued | labeled:status:claimed | unlabeled:status:claimed | labeled:status:in-progress | unlabeled:status:in-progress | labeled:status:in-review | unlabeled:status:in-review | labeled:status:done | unlabeled:status:done | labeled:status:blocked | unlabeled:status:blocked | labeled:tier:simple | unlabeled:tier:simple | labeled:tier:standard | unlabeled:tier:standard | labeled:tier:thinking | unlabeled:tier:thinking) ;;
 		*) return 1 ;;
 		esac
