@@ -164,6 +164,25 @@ These are the canonical drift tools for managed downstream repos. Use
 `check-workflows` when auditing, and `sync-workflows --apply` when you are ready
 to update caller YAMLs to the current framework template/pin.
 
+### Dependabot exclusion
+
+Exclude aidevops pins from downstream Dependabot `github-actions` updates.
+aidevops releases several times a day. For a SHA pin with a `# vX.Y.Z`
+comment, Dependabot opens a PR per release that bumps only `uses:`, leaving
+`with.aidevops_ref` behind (GH#36723). Advance pins with `sync-workflows
+--force-ref` instead. Each `github-actions` update entry carries:
+
+```yaml
+    ignore:
+      - dependency-name: "marcusquinn/aidevops*"
+```
+
+`aidevops sync-dependabot` (dry run) classifies every eligible registered
+repository; `--apply` opens one insert-only PR per repository that lacks the
+exclusion, through the GitHub API without touching local checkouts. Flow-style
+or ambiguous layouts report `UNSUPPORTED` for a manual edit. Other actions and
+ecosystems keep their schedule.
+
 `check-workflows` is a read-only audit of each registered local checkout. JSON
 rows include an `evidence` object with the local branch, known upstream,
 ahead/behind counts, and freshness state. Human output warns when a checkout is
