@@ -403,6 +403,10 @@ Unfinished operations and unknown admin entries remain unsupported: errors have
 the stable form `git_admin:unfinished_operation:NAME` or
 `git_admin:unknown_entry:PATH`. `index.lock` always fails with
 `git_admin:index_locked:index.lock`. Symlinks and split indexes also fail closed.
+Runtime records (`aidevops-permission-pending`, `aidevops-generation.json`,
+`codex-thread.json`) are regular-file session state, not Git state: capture skips
+them and restore never copies the source bytes, so a recovery cannot resume or
+impersonate the source session.
 Location-dependent `core.worktree` and config includes are rejected with
 `git_admin:location_dependent_config:KEY`, rather than activating source paths
 in an independent restore. Private symbolic refs targeting unrelated shared refs

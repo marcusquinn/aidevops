@@ -1882,6 +1882,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18872 sandbox-exec-helper: stop full-process-table polling in the worker wait loop (~0.2 core per wrapper) #bug ref:GH#36843 pr:#36846 completed:2026-11-05
 
+- [ ] t18873 Preserve or reject config.worktree in Git-only worktree archive capture #auto-dispatch #bug ref:GH#36857
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

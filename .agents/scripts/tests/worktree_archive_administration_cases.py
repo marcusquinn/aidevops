@@ -91,6 +91,9 @@ class AdministrationCases:
     def test_generation_marker_is_not_restored(self):
         self.check_runtime_marker('aidevops-generation.json')
 
+    def test_codex_thread_marker_is_not_restored(self):
+        self.check_runtime_marker('codex-thread.json')
+
     def check_runtime_marker(self, name):
         from worktree_archive_administration import administration
 
