@@ -76,7 +76,7 @@ _ever_nmr_cache_with_lock() {
 _ever_nmr_cache_get() {
 	local issue_num="$1"
 	local slug="$2"
-	local key now_epoch cache_json cache_value checked_at age
+	local key="" now_epoch="" cache_json="" cache_value="" checked_at="" age=""
 
 	key=$(_ever_nmr_cache_key "$issue_num" "$slug")
 	now_epoch=$(date +%s)
@@ -106,7 +106,7 @@ _ever_nmr_cache_set_locked() {
 	local issue_num="$1"
 	local slug="$2"
 	local cache_value="$3"
-	local state_dir cache_json key now_epoch tmp_file
+	local state_dir="" cache_json="" key="" now_epoch="" tmp_file=""
 
 	[[ "$cache_value" == "$NMR_CACHE_TRUE" || "$cache_value" == "$NMR_CACHE_FALSE" ]] || return 1
 
