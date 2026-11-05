@@ -484,6 +484,8 @@ test_update_sweeps_prior_publication_worktrees() {
 	local fixture_remote="${TEST_DIR}/profile-remote.git" helper_dir="${TEST_DIR}/helper"
 	local refusing_helper="${TEST_DIR}/refusing-worktree-helper.sh" output_file="${TEST_DIR}/update-output"
 	local phase="" tree_a="" tree_b="" intent_dir="" remaining=""
+	local registry_dir="${fixture_home}/.aidevops/.agent-workspace"
+	local registry_db="${registry_dir}/worktree-registry.db"
 
 	mkdir -p "$helper_dir" "$fixture_home"
 	install_helper_with_libs "$helper_dir"
@@ -510,13 +512,24 @@ test_update_sweeps_prior_publication_worktrees() {
 			# the first sweep preserved the clean tree, aging that first observation
 			# as a later hourly run would.
 			[[ -e "$tree_a" ]] || continue
+			local dead_seen="" tree_a_sql="${tree_a//\'/\'\'}"
+			if ! dead_seen=$(sqlite3 "$registry_db" \
+				"SELECT COALESCE(owner_dead_seen_at, '') FROM worktree_owners WHERE worktree_path = '${tree_a_sql}';") ||
+				[[ -z "$dead_seen" ]]; then
+				print_helper_failure "$test_name" "clean earlier tree survived without a dead-owner observation (a=${tree_a##*/})" "$output_file"
+				return 0
+			fi
 			run_output="${TEST_DIR}/update-output-recheck"
-			sqlite3 "${fixture_home}/.aidevops/.agent-workspace/worktree-registry.db" \
-				"UPDATE worktree_owners SET owner_dead_seen_at = '2000-01-01T00:00:00Z' WHERE COALESCE(owner_dead_seen_at, '') != '';" \
-				>/dev/null 2>&1 || true
+			if ! sqlite3 "$registry_db" \
+				"UPDATE worktree_owners SET owner_dead_seen_at = '2000-01-01T00:00:00Z' WHERE worktree_path = '${tree_a_sql}' AND COALESCE(owner_dead_seen_at, '') != '';"; then
+				print_helper_failure "$test_name" "could not age clean earlier tree's dead-owner observation" "$output_file"
+				return 0
+			fi
 		fi
 		HOME="$fixture_home" \
 			PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
+			WORKTREE_REGISTRY_DIR="$registry_dir" \
+			WORKTREE_REGISTRY_DB="$registry_db" \
 			AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
 			AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
 			AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/recovery" \
