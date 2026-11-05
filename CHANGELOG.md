@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.127] - 2026-11-05
+
+### Added
+
+- wake path for aged hold-for-review issues and changed approval-template refusals (GH#36788) (#36789)
+
+### Changed
+
+- Documentation: note LocalWP db export socket flag
+
+### Fixed
+
+- require claimed admission for automatic checkpoint continuation
+
 ## [3.39.126] - 2026-11-05
 
 ### Added
