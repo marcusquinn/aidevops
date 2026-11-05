@@ -722,6 +722,37 @@ assert_eq "duplicate and all conflicting copies are explained" "1:2:2" \
 assert_eq "coverage decisions distinguish rejection and overlap" "credited:locally_covered:outside_observed_interval:overlapping_ci" \
 	"$(jq -sr '[.[] | .series[]? | .reason] | sort | join(":")' "$ci_decisions")"
 
+# Conflicting saved IDs invalidate credit even across the report-window boundary.
+for copy_order in before after; do
+	: >"$ci_fixture"
+	ci_sample "$pool_a" 2000000000 window-conflict 101 103 2
+	python3 - "$ci_fixture" "$copy_order" <<'PY_WINDOW_CONFLICT'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+inside = path.read_text(encoding="utf-8")
+outside = json.loads(inside)
+outside.update(sample_start=0, sample_end=1)
+outside = json.dumps(outside) + "\n"
+path.write_text(outside + inside if sys.argv[2] == "before" else inside + outside,
+                encoding="utf-8")
+PY_WINDOW_CONFLICT
+	quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+	assert_eq "out-of-window conflict $copy_order in-window copy prevents CI credit" "null" \
+		"$(jq '.attributed_ci_cost' <<<"$quota_report")"
+	assert_eq "both conflicting copies are audited with outside copy $copy_order" "2" \
+		"$(jq -s '[.[] | select(.reason == "conflicting_id")] | length' "$ci_decisions")"
+done
+: >"$ci_fixture"
+printf '\377\n' >>"$ci_fixture"
+ci_sample "$pool_a" 2000000000 after-invalid-utf8 101 103 2
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "invalid UTF-8 does not prevent later valid CI credit" "2" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+assert_eq "invalid UTF-8 receives its own decision before the valid row" "invalid_sample:evaluated" \
+	"$(jq -sr '[.[].reason] | join(":")' "$ci_decisions")"
+
 # --- Test 11: command arguments remain private and exit status is preserved --
 gh_clear_log
 gh_run_transport_attempt rest privacy-caller logical-private 1 0 -- true \

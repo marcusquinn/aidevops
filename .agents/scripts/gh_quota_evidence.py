@@ -123,7 +123,7 @@ def parse_ci_row(sample, start, end):
     if parsed is None:
         return None, "invalid_sample"
     if not start <= parsed[1][0] <= parsed[1][1] <= end:
-        return None, "outside_window"
+        return parsed, "outside_window"
     return parsed, "unmatched_identity_or_reset"
 
 
@@ -146,13 +146,13 @@ def read_ci(path, start, end):
     samples, identities, decisions = {}, {}, []
     if not path:
         return samples, identities, decisions
-    with open(path, encoding="utf-8") as source:
+    with open(path, "rb") as source:
         for index, line in enumerate(source, 1):
             decision = dict(event="quota-ci-decision", input_line=index,
                             reason="invalid_sample")
             decisions.append(decision)
             try:
-                read_ci_row(line, start, end, samples, identities, decision)
+                read_ci_row(line.decode("utf-8"), start, end, samples, identities, decision)
             except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 continue
     return samples, identities, decisions
@@ -183,7 +183,8 @@ def matching_ci(samples, identities, fingerprint, reset):
     identity = identities.get(fingerprint)
     matched = []
     for (fp, sample_reset, _), (value, copies) in samples.items():
-        if sample_reset != reset or copies[0]["reason"] == "conflicting_id":
+        if (sample_reset != reset
+                or copies[0]["reason"] in ("conflicting_id", "outside_window")):
             continue
         if fp == fingerprint or (identity is not None and identities.get(fp) == identity):
             matched.append((value, copies[0]))
