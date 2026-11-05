@@ -591,6 +591,32 @@ test_prelaunch_renewal_is_monotonic_and_coalesced() {
 	return 0
 }
 
+# GH#36771: a slow consensus that consumes most of the initial lease renews it
+# once before handoff, so the dispatcher's first renewal still matches.
+test_slow_consensus_renews_won_lease_before_handoff() {
+	local root="${TMP_DIR}/slow-consensus" token="" initial_expiry="" renewed_expiry=""
+	create_mock_gh "$root"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		DISPATCH_CLAIM_WINDOW=4 DISPATCH_CLAIM_ORPHAN_GRACE=6 \
+		"$CLAIM" claim 56 owner/repo shared-login >"$root/claim.out" 2>"$root/claim.err" ||
+		fail "slow-consensus claim did not win: $(tr '\n' ' ' <"$root/claim.err")"
+	token=$(sed -n 's/.*lease_token=\([^ ]*\).*/\1/p' "$root/claim.out")
+	[[ -n "$token" ]] || fail "slow-consensus claim token missing"
+	grep -q '^CLAIM_LEASE_RENEWED: issue=#56 ' "$root/claim.err" ||
+		fail "slow-consensus winner did not renew its mostly-consumed lease"
+	initial_expiry=$(jq -sr '[.[] | select(.body | contains("DISPATCH_CLAIM nonce="))] | first.body | capture("expires_at=(?<value>[0-9]+)").value | tonumber' \
+		"$root/state/comments.jsonl")
+	renewed_expiry=$(jq -sr '[.[] | select(.body | contains("DISPATCH_LEASE phase=prelaunch"))] | last.body | capture("expires_at=(?<value>[0-9]+)").value | tonumber' \
+		"$root/state/comments.jsonl")
+	[[ "$renewed_expiry" -gt "$initial_expiry" ]] || fail "slow-consensus renewal did not extend expiry"
+	sleep 3
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		"$CLAIM" transition prelaunch 56 owner/repo "$token" issue-56 30 ||
+		fail "dispatcher renewal after slow consensus saw an unmatched lease"
+	pass "slow consensus renews the won lease once before dispatcher handoff"
+	return 0
+}
+
 expect_transition_denial() {
 	local root="$1" expected="$2" secret="$3"
 	shift 3
@@ -742,6 +768,7 @@ test_late_terminal_preserves_new_dispatch
 test_large_comment_history_avoids_argv_limits
 test_prelaunch_renewal_covers_slow_startup
 test_prelaunch_renewal_is_monotonic_and_coalesced
+test_slow_consensus_renews_won_lease_before_handoff
 test_transition_denials_are_attributed
 test_ready_handoff_release_retires_marked_dispatch
 test_invalid_device_not_public
