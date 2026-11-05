@@ -741,6 +741,11 @@ dispatch_max() {
 
 	echo "[pulse-wrapper] Dispatch path=${_dispatch_path}: loop body finished — processed=${processed_count} dispatched=${dispatched_count} mode=$( ((_dispatch_max_parallel <= 1)) && echo serial || echo "parallel(${_dispatch_max_parallel})")" >>"$LOGFILE"
 	_dispatch_maybe_engage_throttle
+	# GH#36625 follow-up: every cycle reaches this deterministic path; the
+	# active-refill recycler alone runs too rarely. Same-cycle guard dedupes.
+	if declare -F _attribute_sustained_underfill >/dev/null; then
+		_attribute_sustained_underfill "$max_workers" "$((active_workers + dispatched_count))" "$candidate_count" || true
+	fi
 
 	echo "[pulse-wrapper] Dispatch path=${_dispatch_path} complete: implementation_dispatched=${dispatched_count} triage_attempted=${triage_attempted} triage_infrastructure_failed=${triage_infrastructure_failed} processed=${processed_count}/${candidate_count} simultaneous_worker_slots_targeted=${available_slots}" >>"$LOGFILE"
 	echo "$dispatched_count"
@@ -1383,9 +1388,13 @@ _attribute_sustained_underfill() {
 			reasons=$(jq '. + [{reason:"config_clamp",count:1}] | sort_by([-.count,.reason])' <<<"$reasons")
 		fi
 	fi
+	# Consecutive-cycle window: real Pulse cycles run ~4-40 minutes, so a fixed
+	# 15-minute window reset the streak every cycle and never escalated.
+	local window="${UNDERFILL_ATTRIBUTION_STREAK_WINDOW_SECS:-5400}"
+	[[ "$window" =~ ^[1-9][0-9]*$ ]] || window=5400
 	if ((target > 0 && deficit >= 50 && runnable * 100 >= target * 5)) &&
 		awk -v c="$cores" -v l="$load" -v m="$memory" -v floor="${RAM_RESERVE_MB:-6144}" 'BEGIN {exit !(c>0 && l ~ /^[0-9.]+$/ && l<c && m>floor)}'; then
-		streak=$(jq -r --argjson now "$now" 'if (.timestamp // 0) > ($now - 900) then (.streak // 0) + 1 else 1 end' <<<"$previous")
+		streak=$(jq -r --argjson now "$now" --argjson window "$window" 'if (.timestamp // 0) > ($now - $window) then (.streak // 0) + 1 else 1 end' <<<"$previous")
 	fi
 	# Keep 24h dedupe stamps while pressure remains, including temporary lack of
 	# headroom/backlog. Only actual pool recovery re-arms a cause immediately.
