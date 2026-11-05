@@ -15,14 +15,14 @@ from pr_checkpoint_event_fields import (
 )
 
 # Preserve the public parsing API while keeping its implementation separate.
-__all__ = [
+__all__ = (
     "EVENTS", "TRUSTED", "author_trusted", "events", "fields",
     "normalized_attempt", "timestamp", "trusted", "ready_leases",
     "original_lease", "intervening_event_bound", "intervening_events_valid",
     "CHECKPOINT_RELEASE_REASONS", "checkpoint_release_fields", "release_for",
     "own_claim_matches", "own_renewal_matches", "released_attempt_token",
     "closes_released_attempt", "successors_valid",
-]
+)
 
 
 def ready_leases(comments, approval, release, trusted_logins=()):
