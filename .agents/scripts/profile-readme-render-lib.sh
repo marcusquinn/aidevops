@@ -381,7 +381,9 @@ _generate_screen_time_vars() {
 			(.periods | if type == "object" then [.[] | objects | select(.status == $unavailable) | .reason | strings | select(. != $unknown)] else [] end |
 				unique | if length > 0 then " (" + join(", ") + ")" else $none end),
 			(.periods?.month? // {} | if (.observed_since_epoch | type) == "number" and .observed_since_epoch > (.period_start_epoch // 0)
-				then " Input sampling began " + (.observed_since_epoch | floor | strflocaltime("%Y-%m-%d")) + "; earlier days are not counted."
+				then " Input sampling began " + (.observed_since_epoch | floor | strflocaltime("%Y-%m-%d")) +
+					((.coverage_days | numbers | " (" + tostring + " of 28 days sampled)") // "") +
+					"; earlier days are not counted."
 				else $none end)
 		] | @tsv
 	'); then

@@ -408,6 +408,11 @@ PY
 	snapshot_hours=$(jq -r --arg date "$yesterday" 'select(.date == $date and ((.collector // "") | startswith("linux-input-activity"))) | .screen_hours' "${observability}/screen-time.jsonl")
 	[[ "$snapshot_hours" == "1.2" ]] || fail "snapshot did not record the activity day beside legacy rows: ${snapshot_hours}"
 	[[ "$(linux_helper "$home" "$now" history)" == *"1 valid day(s)"* ]] || fail "Linux history counted legacy proxy rows"
+	# GH#36737: the snapshot's whole-day row must not displace partial live
+	# coverage, and under 7 sampled days there is no 365-day projection.
+	output=$(linux_helper "$home" "$now" profile-stats)
+	[[ "$(printf '%s' "$output" | jq -r '[.periods.month.source, .periods.month.coverage_days, (.periods.month.observed_since_epoch | type), .year_hours, .periods.year.reason] | map(tostring) | join(",")')" == "linux-input-activity:idle-cutoff-300s,0.6,number,null,fewer-than-7-sampled-days" ]] ||
+		fail "Linux snapshot history displaced live sampler coverage or projected a year: ${output}"
 	pass "Linux input activity clips idle and suspend gaps and ignores legacy proxy history"
 	return 0
 }
