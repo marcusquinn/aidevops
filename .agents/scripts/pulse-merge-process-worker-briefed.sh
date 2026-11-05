@@ -81,6 +81,7 @@ _PM_OPENCODE_CANARY_ALLOWED_FILES=".agents/scripts/opencode-pin-canary.sh
 .agents/plugins/opencode-aidevops/package-lock.json
 .agents/scripts/tests/test-opencode-pin-policy.sh
 .agents/scripts/tests/test-opencode-runtime-profile.sh"
+_PM_WORKFLOW_BOT_LOGIN="github-actions[bot]"
 _PM_OPENCODE_CANARY_MAX_FILES=20
 
 #######################################
@@ -140,7 +141,7 @@ _is_trusted_opencode_canary_issue_pr() {
 		--jq 'select(.pull_request == null) | [(.user.login // ""), (.user.type // ""), ([.labels[].name] | join(",")), (.title // "")] | @tsv' \
 		2>/dev/null) || return 1
 	IFS=$'\t' read -r login user_type labels title <<<"$issue_meta"
-	[[ "$login" == "github-actions[bot]" && "$user_type" == "Bot" ]] || return 1
+	[[ "$login" == "$_PM_WORKFLOW_BOT_LOGIN" && "$user_type" == "Bot" ]] || return 1
 	[[ "$title" =~ $re_title ]] || return 1
 	[[ ",${labels}," == *",origin:worker,"* ]] || return 1
 
@@ -347,7 +348,7 @@ _worker_briefed_trust_check() {
 		elif [[ "$_has_crypto" != "$_true_status" ]]; then
 			WORKER_BRIEFED_TRUST_REASON="linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)"
 			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — ${WORKER_BRIEFED_TRUST_REASON}" >>"$LOGFILE"
-			if [[ "$issue_author_login" == "github-actions[bot]" ]]; then
+			if [[ "$issue_author_login" == "$_PM_WORKFLOW_BOT_LOGIN" ]]; then
 				_worker_briefed_record_bot_decision "$linked_issue" "$repo_slug" ||
 					echo "[pulse-merge] could not record bot issue #${linked_issue} approval decision in ${repo_slug}; retry on next pass" >>"$LOGFILE"
 			fi
@@ -399,18 +400,22 @@ _worker_briefed_pr_eligible() {
 _worker_briefed_record_bot_decision() {
 	local issue_number="$1" repo_slug="$2"
 	local marker="<!-- aidevops:worker-briefed-trust-decision:v1 -->"
-	local actor="" comments="" body_file="" rc=0
+	local actor="" comments="" body_file="" candidate="" rc=0
 	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
-	actor=$(gh api user --jq '.login' 2>/dev/null) || return 1
-	[[ -n "$actor" ]] || return 1
+	# Installation tokens can write repository comments without a /user endpoint.
+	actor=$(gh api user --jq '.login' 2>/dev/null) || actor=""
 	comments=$(gh api --paginate --slurp "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
-	#aidevops:trust-boundary — only this authenticated writer's marker dedupes
-	# the decision; arbitrary issue commenters cannot suppress its next action.
-	if jq -e --arg marker "$marker" --arg actor "$actor" \
-		'any(.[][]; .user.login == $actor and ((.body // "") | contains($marker)))' <<<"$comments" >/dev/null; then
-		return 0
-	fi
-	jq -e 'type == "array" and all(.[]; type == "array")' <<<"$comments" >/dev/null || return 1
+	jq -e 'arrays | all(.[]; type == "array")' <<<"$comments" >/dev/null || return 1
+	#aidevops:trust-boundary — dedupe across authorized runners, but not arbitrary
+	# commenters pasting a marker. This record never grants merge authority.
+	while IFS= read -r candidate; do
+		[[ -n "$candidate" ]] || continue
+		if [[ "$candidate" == "$actor" || "$candidate" == "$_PM_WORKFLOW_BOT_LOGIN" ]] ||
+			_issue_author_has_maintainer_authority "$repo_slug" "$candidate"; then
+			return 0
+		fi
+	done < <(jq -r --arg marker "$marker" \
+		'.[][] | select((.body // "") | contains($marker)) | .user.login // empty' <<<"$comments")
 	body_file=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-decision.XXXXXX") || return 1
 	printf '%s\n\n%s\n' "$marker" \
 		"Automated merge is blocked by the linked-issue trust gate (t2449/t3052). This workflow-bot issue has no verified maintainer approval or applicable scoped trust exception. Next action (maintainer): run \`sudo aidevops approve issue ${issue_number}\` for ${repo_slug}. The next merge pass verifies the signature; all CI, review and hold gates still apply. Reference: pulse-merge-process-worker-briefed.sh, worker_briefed_trust_verdict." >"$body_file"
@@ -427,15 +432,29 @@ worker_briefed_trust_verdict() {
 	local labels_str="${3:-}" is_draft="${4:-}" linked_issue="${5:-}"
 	local WORKER_BRIEFED_TRUST_REASON="trust metadata unavailable (t2449)"
 	if [[ "$#" -eq 2 ]]; then
-		local pr_meta=""
-		pr_meta=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft \
-			--jq '[([.labels[].name] | join(",")), (.isDraft | tostring)] | @tsv') || {
+		local pr_meta="" head_sha=""
+		pr_meta=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft,headRefOid) || {
 			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
 			return 1
 		}
-		labels_str="${pr_meta%$'\t'*}"
-		is_draft="${pr_meta##*$'\t'}"
+		# Missing/malformed label metadata is not evidence of a non-worker PR.
+		if ! jq -e 'type == "object" and (.labels | type == "array")
+			and all(.labels[]; .name | type == "string")
+			and (.isDraft | type == "boolean")' <<<"$pr_meta" >/dev/null 2>&1; then
+			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
+			return 1
+		fi
+		labels_str=$(jq -r '[.labels[].name] | join(",")' <<<"$pr_meta") || return 1
+		is_draft=$(jq -r '.isDraft' <<<"$pr_meta") || return 1
 		[[ ",${labels_str}," == *",origin:worker,"* ]] || { printf 'allow\n'; return 0; }
+		# The deterministic pass exempts verified exact-head Issue Sync / TODO
+		# handoff PRs before the worker-briefed gate. Preserve that narrow route;
+		# the shared predicate verifies bot identity, repo ownership and head.
+		head_sha=$(jq -r '.headRefOid // empty' <<<"$pr_meta") || return 1
+		if [[ -n "$head_sha" ]] && _pulse_is_trusted_issue_sync_pr "$pr_number" "$repo_slug" "$head_sha"; then
+			printf 'allow\n'
+			return 0
+		fi
 		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit) || {
 			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
 			return 1
@@ -460,7 +479,9 @@ _attempt_worker_briefed_auto_merge() {
 # with live maintainer authority may override this gate, never other gates.
 _merge_worker_briefed_trust_gate() (
 	local pr_number="$1" repo_slug="$2" has_admin="${3:-0}"
-	local LOGFILE="/dev/stderr" verdict="" permission=""
+	local LOGFILE="" verdict="" permission=""
+	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-trust.XXXXXX") || return 1
+	trap 'rm -f "$LOGFILE"' EXIT
 	# shellcheck disable=SC1091
 	source "${SCRIPT_DIR}/pulse-merge.sh" || return 1
 	if verdict=$(worker_briefed_trust_verdict "$pr_number" "$repo_slug"); then
