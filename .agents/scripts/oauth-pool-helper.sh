@@ -94,7 +94,9 @@ GOOGLE_HEALTH_CHECK_URL="https://generativelanguage.googleapis.com/v1beta/models
 # The "(external, cli)" suffix is our addition — not sent by the real CLI.
 # FALLBACK: if UA filtering ever causes issues, try removing the suffix or
 # switching to an axios-style UA like "axios/1.7.9".
-CLAUDE_VERSION="2.1.80"
+# Keep this at or above the highest model gate the API enforces: Anthropic
+# rejects claude-opus-5-5 for clients below 2.1.280.
+CLAUDE_VERSION="2.1.280"
 # The offline diagnostic must not start a credential-bearing CLI even for version detection.
 if [[ "${1:-}" != "probe-rotation" ]] && command -v claude &>/dev/null; then
 	local_ver=$(claude --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
