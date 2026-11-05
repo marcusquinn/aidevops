@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.124] - 2026-11-05
+
+### Changed
+
+- Maintenance: mark t18866 complete (pr:#36745 completed:2026-11-05) (#36748)
+- Tests: age dead-owner quarantine in profile sweep fixture for macOS (#36745)
+
+### Fixed
+
+- preserve legacy JS admission metadata in archives
+- plan capacity for selector fallback when preferred provider pool is exhausted
+
 ## [3.39.123] - 2026-11-05
 
 ### Changed
