@@ -50,13 +50,13 @@ if ( is_multisite() || ! current_user_can( 'unfiltered_html' ) ) {
 }
 list( $action, $dir ) = $args;
 $file = $dir . '/fixture.json';
-function checked( $value ) {
+function wpcp_checked( $value ) {
     if ( is_wp_error( $value ) || false === $value ) {
         WP_CLI::error( is_wp_error( $value ) ? $value->get_error_message() : 'Fixture operation failed' );
     }
     return $value;
 }
-function save_json( $path, $value ) {
+function wpcp_save_json( $path, $value ) {
     if ( false === file_put_contents( $path, wp_json_encode( $value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . "\n" ) ) {
         WP_CLI::error( 'Cannot save fixture artifact' );
     }
@@ -66,21 +66,24 @@ if ( 'create' === $action ) {
     $token = 'wpcp-' . strtolower( wp_generate_password( 16, false, false ) );
     // Persist each created id immediately so a partial creation is recoverable.
     $data = array( 'token' => $token, 'post' => 0, 'slugs' => array(), 'complete' => false );
-    save_json( $file, $data );
+    wpcp_save_json( $file, $data );
     foreach ( array( 'a', 'b', 'unused' ) as $suffix ) {
         $slug = $token . '-' . $suffix;
-        $term = checked( wp_insert_term( $slug, 'category', array( 'slug' => $slug ) ) );
+        $term = wpcp_checked( wp_insert_term( $slug, 'category', array( 'slug' => $slug ) ) );
         $data['slugs'][] = $slug;
-        save_json( $file, $data );
-        checked( update_term_meta( $term['term_id'], 'wpcp_fixture', 'original' ) );
+        wpcp_save_json( $file, $data );
+        wpcp_checked( update_term_meta( $term['term_id'], 'wpcp_fixture', 'original' ) );
     }
-    $data['post'] = checked( wp_insert_post( array( 'post_title' => 'Fixture original', 'post_name' => $token,
-        'post_status' => 'draft', 'post_excerpt' => 'Original excerpt', 'post_content' => 'Original content' ), true ) );
-    save_json( $file, $data );
-    checked( wp_set_object_terms( $data['post'], array( $data['slugs'][0] ), 'category' ) );
-    checked( update_post_meta( $data['post'], 'wpcp_fixture', 'original' ) );
+    // Fixed dates: core re-dates a floating (zero GMT) draft on every update,
+    // which would make the strict starting-snapshot comparison impossible.
+    $data['post'] = wpcp_checked( wp_insert_post( array( 'post_title' => 'Fixture original', 'post_name' => $token,
+        'post_status' => 'draft', 'post_excerpt' => 'Original excerpt', 'post_content' => 'Original content',
+        'post_date' => '2001-02-03 04:05:06', 'post_date_gmt' => '2001-02-03 04:05:06' ), true ) );
+    wpcp_save_json( $file, $data );
+    wpcp_checked( wp_set_object_terms( $data['post'], array( $data['slugs'][0] ), 'category' ) );
+    wpcp_checked( update_post_meta( $data['post'], 'wpcp_fixture', 'original' ) );
     $data['complete'] = true;
-    save_json( $file, $data );
+    wpcp_save_json( $file, $data );
 }
 $data = json_decode( file_get_contents( $file ), true );
 if ( ! is_array( $data ) || ! preg_match( '/^wpcp-[a-z0-9]{16}$/D', $data['token'] ?? '' ) ) {
@@ -102,23 +105,24 @@ if ( 'cleanup' === $action ) {
     if ( $data['complete'] && ! file_exists( $dir . '/cleanup.started' ) ) {
         WP_CLI::error( 'Complete fixtures require a verified starting snapshot before cleanup' );
     }
-    foreach ( $terms as $term ) { checked( wp_delete_term( $term->term_id, 'category' ) ); }
-    if ( $post ) { checked( wp_delete_post( $post->ID, true ) ); }
+    foreach ( $terms as $term ) { wpcp_checked( wp_delete_term( $term->term_id, 'category' ) ); }
+    if ( $post ) { wpcp_checked( wp_delete_post( $post->ID, true ) ); }
     return;
 }
 if ( ! $post ) { WP_CLI::error( 'Fixture post is missing; inspect artifacts' ); }
 $snapshot = array( 'post' => array_intersect_key( (array) $post, array_flip( array(
     'post_title', 'post_name', 'post_status', 'post_excerpt', 'post_content', 'post_date', 'post_date_gmt' ) ) ),
     'meta' => get_post_meta( $post->ID, 'wpcp_fixture', false ),
-    'categories' => checked( wp_get_object_terms( $post->ID, 'category', array( 'fields' => 'slugs', 'orderby' => 'slug' ) ) ),
+    'categories' => wpcp_checked( wp_get_object_terms( $post->ID, 'category', array( 'fields' => 'slugs', 'orderby' => 'slug' ) ) ),
     'terms' => array() );
 foreach ( $terms as $term ) {
     $snapshot['terms'][] = array( 'slug' => $term->slug, 'name' => $term->name, 'description' => $term->description,
         'parent' => $term->parent, 'count' => $term->count, 'meta' => get_term_meta( $term->term_id, 'wpcp_fixture', false ) );
 }
-if ( 'create' === $action || 'snapshot' === $action ) { WP_CLI::line( wp_json_encode( $snapshot ) ); }
+// Plugins may print on post/term hooks; the marker isolates the snapshot.
+if ( 'create' === $action || 'snapshot' === $action ) { WP_CLI::line( 'WPCP_SNAPSHOT ' . wp_json_encode( $snapshot ) ); }
 if ( 'plan' === $action ) {
-    save_json( $dir . '/update.json', array( 'posts' => array( array( 'id' => $post->ID,
+    wpcp_save_json( $dir . '/update.json', array( 'posts' => array( array( 'id' => $post->ID,
         'post' => array( 'post_title' => array( 'Fixture original', 'Fixture changed & checked' ),
             'post_excerpt' => array( 'Original excerpt', 'Changed excerpt' ) ),
         'meta' => array( 'wpcp_fixture' => array( 'original', 'changed' ) ),
@@ -126,16 +130,30 @@ if ( 'plan' === $action ) {
         'terms' => array( array( 'taxonomy' => 'category', 'id' => $terms[1]->term_id,
             'term' => array( 'name' => array( $terms[1]->name, 'Changed & checked' ), 'description' => array( '', '<strong>Changed</strong>' ) ),
             'meta' => array( 'wpcp_fixture' => array( 'original', 'changed' ) ) ) ) ) );
-    save_json( $dir . '/delete.json', array( 'delete_terms' => array( array(
+    wpcp_save_json( $dir . '/delete.json', array( 'delete_terms' => array( array(
         'taxonomy' => 'category', 'id' => $terms[2]->term_id, 'slug' => $terms[2]->slug ) ) ) );
 }
 PHP
 	return 0
 }
 
+# Emit only the marked snapshot line; site plugins can print on post/term hooks.
+# Anything other than exactly one marked line is a failure, never an empty match.
+fixture_snapshot() {
+	local action="$1" output="" snapshot=""
+	output=$(fixture "$action") || return 1
+	snapshot=$(printf '%s\n' "$output" | sed -n 's/^WPCP_SNAPSHOT //p')
+	[[ -n "$snapshot" && "$snapshot" != *$'\n'* ]] || {
+		print_error "Fixture $action did not print exactly one snapshot"
+		return 1
+	}
+	printf '%s\n' "$snapshot"
+	return 0
+}
+
 verify_snapshot() {
 	local destination="$1"
-	fixture snapshot >"$destination" || return 1
+	fixture_snapshot snapshot >"$destination" || return 1
 	diff -u "$ARTIFACTS/starting.json" "$destination"
 	return $?
 }
@@ -193,7 +211,7 @@ compare_versions() {
 	printf '%s\n' "$(git -C "$repo" rev-parse "$BASE_REF")" >"$comparison/base-ref.txt"
 	run_round "$comparison/base" "$comparison/base-round" || return 1
 	run_round "$comparison/current" "$comparison/current-round" || return 1
-	# Normalise only volatile paths and term identity labels, never change counts,
+	# Normalise only volatile paths, term identity labels and plugin URL noise, never change counts,
 	# field values or statuses. Snapshots independently check restored term values.
 	python3 - "$comparison" <<'PY' || return 1
 import pathlib, re, sys
@@ -207,6 +225,9 @@ for version in ('base', 'current'):
             text = re.sub(r'(?m)^BACKUP: .*$', 'BACKUP: <BACKUP>', text)
             text = re.sub(r'\S*/before-[^\s]+\.json', '<BACKUP>', text)
             text = re.sub(r'(term category |as term |references to )\d+', r'\1<ID>', text)
+            # Site plugins (e.g. cache purgers) print bare URLs on save hooks;
+            # the planner never prints a bare-URL line.
+            text = re.sub(r'(?m)^https?://\S*\n', '', text)
             lines.append(f'== {plan} {phase} ==\n{text}')
     (root / f'{version}.normalised.log').write_text(''.join(lines))
 PY
@@ -356,7 +377,7 @@ dispatch_command() {
 		ARTIFACTS=$(mktemp -d "$root/wp-change-plan-differential.XXXXXX")
 		printf '%s\n' "$SITE_PATH" >"$ARTIFACTS/site-path.txt"
 		write_fixture_tool
-		fixture create >"$ARTIFACTS/starting.json" || {
+		fixture_snapshot create >"$ARTIFACTS/starting.json" || {
 			print_error "Partial fixture retained: $ARTIFACTS"
 			return 1
 		}
