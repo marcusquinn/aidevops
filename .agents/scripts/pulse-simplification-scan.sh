@@ -167,22 +167,41 @@ _complexity_close_recovered_review() {
 	local rationale="$3"
 	local commented=""
 	local marker="<!-- aidevops:complexity-stall-recovered -->"
-	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
-	commented=$(gh issue view "$issue_number" --repo "$slug" --json comments \
-		--jq '[.comments[].body | contains("<!-- aidevops:complexity-stall-recovered -->")] | any' 2>/dev/null) || return 0
-	[[ "$commented" == "true" || "$commented" == "false" ]] || return 0
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Complexity LLM sweep: invalid recovered stall review issue number — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if ! commented=$(gh issue view "$issue_number" --repo "$slug" --json comments \
+		--jq '[.comments[].body | contains("<!-- aidevops:complexity-stall-recovered -->")] | any' 2>/dev/null); then
+		echo "[pulse-wrapper] Complexity LLM sweep: comment lookup failed for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$commented" != "true" && "$commented" != "false" ]]; then
+		echo "[pulse-wrapper] Complexity LLM sweep: invalid comment lookup result for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
 	# #aidevops:trust-boundary — public comments do not prove write authority.
-	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 ||
-		! repo_allows_pulse_write_actions "$slug"; then
+	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Complexity LLM sweep: write-authority helper unavailable for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if ! repo_allows_pulse_write_actions "$slug"; then
+		echo "[pulse-wrapper] Complexity LLM sweep: write authority denied or unverified for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
 		return 0
 	fi
 	if [[ "$commented" == "false" ]]; then
-		gh issue comment "$issue_number" --repo "$slug" \
+		if ! gh issue comment "$issue_number" --repo "$slug" \
 			--body "${marker}
 
-${rationale} The stall premise recovered; closing this automated review as not planned." >/dev/null 2>&1 || return 0
+${rationale} The stall premise recovered; closing this automated review as not planned." >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Complexity LLM sweep: comment failed for recovered stall review #${issue_number} — skipping close" >>"$LOGFILE"
+			return 0
+		fi
 	fi
-	gh issue close "$issue_number" --repo "$slug" --reason 'not planned' >/dev/null 2>&1 || return 0
+	if ! gh issue close "$issue_number" --repo "$slug" --reason 'not planned' >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Complexity LLM sweep: close failed for recovered stall review #${issue_number} — will retry on next recovery check" >>"$LOGFILE"
+		return 0
+	fi
 	echo "[pulse-wrapper] Complexity LLM sweep: closed recovered stall review #${issue_number}" >>"$LOGFILE"
 	return 0
 }
