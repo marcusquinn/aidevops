@@ -1421,9 +1421,13 @@ cmd_claim() {
 		return 2
 	}
 
-	local race_rc=0
-	_resolve_claim_race_result "$issue_number" "$repo_slug" "$runner" "$nonce" "$comment_id" "$claims" || race_rc=$?
-	[[ "$race_rc" -eq 0 ]] || return "$race_rc"
+	local race_rc=0 race_output=""
+	# Publish the win only once the live assignment and lease checks pass.
+	race_output=$(_resolve_claim_race_result "$issue_number" "$repo_slug" "$runner" "$nonce" "$comment_id" "$claims") || race_rc=$?
+	if [[ "$race_rc" -ne 0 ]]; then
+		[[ -z "$race_output" ]] || printf '%s\n' "$race_output"
+		return "$race_rc"
+	fi
 
 	# The interactive owner can arrive during the consensus window after the
 	# pre-claim assignment guard. Revalidate the live assignment before handing
@@ -1442,6 +1446,7 @@ cmd_claim() {
 		echo "CLAIM_ERROR: winning lease cannot cover the launch handoff — blocking dispatch (fail-closed)" >&2
 		return 2
 	fi
+	printf '%s\n' "$race_output"
 	return 0
 }
 
@@ -1455,7 +1460,7 @@ cmd_claim() {
 # (owner, device, session, token and expiry checks unchanged). An expired
 # lease is never renewed or revived; any failure fails closed.
 # Args: $1 issue number, $2 repo slug, $3 lease token (our nonce),
-#       $4 persisted lease expiry epoch (0 = legacy claim without expiry)
+#       $4 persisted lease expiry epoch (must be positive for a new claim)
 # Returns: 0 when the lease covers the handoff, 1 otherwise
 #######################################
 _ensure_claim_handoff_lease() {
@@ -1465,7 +1470,7 @@ _ensure_claim_handoff_lease() {
 	local lease_expires_at="$4"
 	local grace="$DISPATCH_CLAIM_ORPHAN_GRACE" now_epoch="" remaining=0
 	[[ "$lease_expires_at" =~ ^[0-9]+$ ]] || return 1
-	[[ "$lease_expires_at" -gt 0 ]] || return 0
+	[[ "$lease_expires_at" -gt 0 ]] || return 1
 	[[ "$grace" =~ ^[0-9]+$ ]] || grace=120
 	now_epoch=$(_now_epoch)
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 1
