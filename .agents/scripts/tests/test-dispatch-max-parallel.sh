@@ -1032,6 +1032,8 @@ test_priority_reservations() {
 test_priority_urgent_retry_backlog() {
 	local parallel="$1"
 	local candidate_file="" outcomes="" result="" products=0 total=0 n=""
+	# Keep the 60-second-old retry fixtures recent regardless of runner config.
+	local _DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=86400
 	local stamp_dir="${HOME}/.aidevops/cache/dispatch-attempt-recency"
 	candidate_file=$(mktemp)
 	outcomes=$(mktemp)
