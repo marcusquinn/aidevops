@@ -15,6 +15,7 @@ import time
 from uuid import UUID, uuid4, uuid5
 
 from .cleanup import _failure_details
+from .cleanup_plan import _runs, enrolled_only_authorized
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .legacy_discovery import open_pull_requests, same_tree
@@ -244,7 +245,45 @@ def prepare_reconstructible_probe(store, connection, host, plan):
 
 def current_legacy_item(connection, item):
     return next((row for row in inventory(connection)
-                 if row["path"] == item["path"]), item)
+                  if row["path"] == item["path"]), item)
+
+
+def require_managed_authority(store, connection, item, plan):
+    """Closed admission is mandatory; recoverability never proves creation."""
+    if not item["generations"]:
+        raise ValueError("managed-admission-evidence-missing")
+    creation_verified = False
+    for generation in item["generations"]:
+        admission = connection.execute(
+            "SELECT state FROM generation_admissions WHERE generation_id=?",
+            (generation,),
+        ).fetchone()
+        if admission is None or admission["state"] != "closed":
+            raise ValueError("managed-admission-not-closed")
+        rows = _runs(store, generation)
+        if not rows:
+            if not enrolled_only_authorized(store, generation):
+                raise ValueError("managed-operator-authorization-required")
+        elif not all(row["admitted"] and row["state"] == "ended" for row in rows):
+            raise ValueError("managed-owner-evidence-incomplete")
+        event = connection.execute(
+            "SELECT payload FROM events WHERE event_id=?",
+            (str(uuid5(UUID(generation), "created-worktree")),),
+        ).fetchone()
+        creation = json.loads(event["payload"]) if event else None
+        creation_verified |= any(row["admitted"] and creation == {
+            "type": "created-worktree", "generation_id": generation,
+            "creator_run_id": row["run_id"], "path": item["path"],
+        } for row in rows)
+    if plan["branch"] == "HEAD" and not creation_verified:
+        raise ValueError("managed-detached-creation-unverified")
+
+
+def reconstructible_plan(store, connection, item, repositories, adapter, managed):
+    plan = reconstructible(item, repositories, adapter, open_pull_requests, managed)
+    if managed:
+        require_managed_authority(store, connection, item, plan)
+    return plan
 
 
 def process_reconstructible(store, item, repositories, adapter, options, managed=False):
@@ -252,20 +291,22 @@ def process_reconstructible(store, item, repositories, adapter, options, managed
     operation = operation_id(store, item["path"])
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
     if not options.apply:
-        reconstructible(item, repositories, adapter, open_pull_requests, managed)
+        with store.connection() as connection:
+            reconstructible_plan(store, connection, current_legacy_item(connection, item),
+                                 repositories, adapter, managed)
         return outcome, 1, 0
     probe = str(uuid5(UUID(store.installation_id()),
                       "reconstructible-host-probe:" + socket.gethostname()))
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         item = current_legacy_item(connection, item)
-        plan = reconstructible(item, repositories, adapter, open_pull_requests, managed)
+        plan = reconstructible_plan(store, connection, item, repositories, adapter, managed)
         test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
         revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
         checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
         # Refresh GitHub and /proc immediately before non-forced native removal.
-        current = reconstructible(current_legacy_item(connection, item),
-                                  repositories, adapter, open_pull_requests, managed)
+        current = reconstructible_plan(store, connection, current_legacy_item(connection, item),
+                                       repositories, adapter, managed)
         if current != plan:
             raise ValueError("reconstructible-source-changed")
         _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])
