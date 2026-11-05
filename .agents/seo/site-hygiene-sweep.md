@@ -27,7 +27,9 @@ Export every page, post, product and custom post type with: ID, type, status, sl
 | 7 | Missing or stale SEO metadata | No focus keyword, titles over 60 characters or keyword-stuffed, descriptions outside 120–160 characters, slug and title disagreeing, past promotions written as current offers | Rewrite from the page's real content; describe past promotions as past; never invent prices, guarantees or turnaround times |
 | 8 | Schema defaults | Post type default schema and what actually renders. **Verify after changing**: in Rank Math 1.0.281, setting the page default to `off` removed the whole JSON-LD graph (Organization, WebSite, WebPage) from pages | Change only with a before/after check of rendered `application/ld+json` |
 | 9 | Plugin modules for absent integrations | SEO plugin modules enabled for plugins that are not installed (BuddyPress, bbPress, Web Stories) | Disable after confirming the integration plugin is absent |
-| 10 | Temporary redirects | 302/307 redirects on long-lived paths | Ask the owner whether it is temporary; if not, make it 301 |
+| 10 | Temporary or masking redirects | 302/307 redirects on long-lived paths; redirects that hide a real published page (for example `/samples/` → a product while a samples page exists) | Ask the owner whether it is temporary; if not, make it 301 or deactivate it so the real page serves |
+| 11 | Raw shortcodes from removed themes/plugins | Fetch each published URL and flag visible `[av_…]`, `[layerslider…]`, `[ulp…]`, `[pm_…]` text. Skip builder-library endpoints that 301 | Plugin page with a rebuilt successor: draft and 301. Content page or product: convert to clean HTML preserving all copy, with a hash guard |
+| 12 | Published records that 404 | Custom post types listed in `post list` or the sitemap but returning 404 | Draft or 301 to the archive; confirm sitemap removal |
 
 ## Safety
 
