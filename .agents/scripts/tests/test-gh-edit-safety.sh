@@ -372,7 +372,10 @@ section "11. GH#33539 — negated closing keywords in PR bodies"
 
 for negated_body in "Do not close #123 from this PR" "Do not resolve #123" "Never fixes #123" \
 	"This PR doesn't fix owner/repo#123." "We won't close: #123 yet" \
-	"For #123. Merge records retry evidence only and must not close #123"; do
+	"For #123. Merge records retry evidence only and must not close #123" \
+	$'```\n~~~\n```\nDo not close #123' \
+	$'````\n```\n````\nDo not close #123' \
+	$'~~~\n~~~ example\n~~~\nDo not close #123'; do
 	_gh_validate_pr_closing_keywords --repo "test/repo" --body "$negated_body" 2>/dev/null
 	if [[ $? -eq 1 ]]; then
 		pass "rejects negated closing keyword: '${negated_body}'"
@@ -394,6 +397,18 @@ done
 
 NEG_BODY_FILE="${TEST_ROOT}/negated-pr-body.md"
 printf '## Summary\n\nPartial work. Do not close #123 from this PR.\n' >"$NEG_BODY_FILE"
+for body_source_form in long equals short; do
+	case "$body_source_form" in
+	long) body_source_args=(--body "Ref #123" --body-file "$NEG_BODY_FILE") ;;
+	equals) body_source_args=("--body-file=$NEG_BODY_FILE" "--body=Ref #123") ;;
+	short) body_source_args=(-bRef -F"$NEG_BODY_FILE") ;;
+	esac
+	if _gh_validate_pr_closing_keywords "${body_source_args[@]}" 2>/dev/null; then
+		fail "should reject simultaneous body sources ($body_source_form)"
+	else
+		pass "rejects simultaneous body sources ($body_source_form)"
+	fi
+done
 GH_CALLS=()
 gh_pr_edit_safe 456 --repo "test/repo" --body-file "$NEG_BODY_FILE" 2>/dev/null
 if [[ $? -eq 1 && ${#GH_CALLS[@]} -eq 0 ]]; then

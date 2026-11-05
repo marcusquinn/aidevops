@@ -1065,6 +1065,7 @@ cp "${PARENT_DIR}/gh-native-transport-lib.sh" "$SHIM_FIXTURE/gh-native-transport
 cp "${PARENT_DIR}/gh-api-guards-lib.sh" "$SHIM_FIXTURE/gh-api-guards-lib.sh"
 cp "${PARENT_DIR}/managed-label-provisioning-lib.sh" "$SHIM_FIXTURE/managed-label-provisioning-lib.sh"
 cp "${PARENT_DIR}/gh-write-policy-lib.sh" "$SHIM_FIXTURE/gh-write-policy-lib.sh"
+cp "${PARENT_DIR}/gh-closing-reference-lib.sh" "$SHIM_FIXTURE/gh-closing-reference-lib.sh"
 cp "${PARENT_DIR}/gh-api-instrument.sh" "$SHIM_FIXTURE/gh-api-instrument.sh"
 cp "${PARENT_DIR}/gh-rest-pagination-lib.sh" "$SHIM_FIXTURE/gh-rest-pagination-lib.sh"
 chmod +x "$SHIM_FIXTURE/gh"

@@ -1004,6 +1004,10 @@ while [[ $_i -lt ${#_modified_args[@]} ]]; do
 	_i=$((_i + 1))
 done
 
+if ! _shim_validate_pr_closing_keywords; then
+	exit 1
+fi
+
 # Open a pre-signed managed body on an inherited descriptor, then remove and
 # verify its only pathname before native gh starts the external write. This is
 # an explicit one-shot mode for public triage comments: callers must use the

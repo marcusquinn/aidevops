@@ -659,22 +659,8 @@ gh_issue_edit_safe() {
 # Output: first offending phrase on stdout
 # Exit: 0 found, 1 clean
 #######################################
-_gh_pr_body_negated_closing_ref() {
-	local body_text="$1"
-	local negation='(not|never|cannot|without|don[^[:space:]]{0,3}t|doesn[^[:space:]]{0,3}t|won[^[:space:]]{0,3}t|shouldn[^[:space:]]{0,3}t|can[^[:space:]]{0,3}t|mustn[^[:space:]]{0,3}t)'
-	local keyword='(close[sd]?|fix(e[sd])?|resolve[sd]?)'
-	local ref='(https?://[^[:space:]]+/(issues|pull)/[0-9]+|([[:alnum:]_.-]+/[[:alnum:]_.-]+)?#[0-9]+)'
-	local pattern="(^|[^[:alnum:]_])${negation}[[:space:]]+([[:alpha:]]+[[:space:]]+){0,3}${keyword}:?[[:space:]]+${ref}"
-	local stripped="" match="" backtick=$'\x60'
-	stripped=$(printf '%s\n' "$body_text" |
-		awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced' |
-		sed -E "s/${backtick}[^${backtick}]*${backtick}//g")
-	match=$(printf '%s\n' "$stripped" | grep -oiE "$pattern" | sed -n '1p') || true
-	[[ -n "$match" ]] || return 1
-	match="${match#"${match%%[![:space:]]*}"}"
-	printf '%s\n' "$match"
-	return 0
-}
+# shellcheck source=./gh-closing-reference-lib.sh
+source "${_SHARED_GH_WRAPPERS_SAFE_EDIT_DIR}/gh-closing-reference-lib.sh"
 
 # GH#36174: merge-time defence for creation-wrapper bypasses. This is a
 # read-only check: callers hold the PR and use their existing repair route.
@@ -796,37 +782,7 @@ sys.stdout.write("".join(result))
 # Args: the argument list passed to gh pr create/edit
 # Returns: 0 clean or no body, 1 rejected (stderr + _GH_EDIT_REJECTION_REASON)
 #######################################
-_gh_validate_pr_closing_keywords() {
-	local arg="" pending="" body_text="" has_body=0 body_file=""
-	for arg in "$@"; do
-		if [[ "$pending" == "body" ]]; then
-			body_text="$arg"
-			pending=""
-			continue
-		elif [[ "$pending" == "body-file" ]]; then
-			body_file="$arg"
-			pending=""
-			continue
-		fi
-		case "$arg" in
-		--body) has_body=1; body_text=""; pending="body" ;;
-		--body=*) has_body=1; body_text="${arg#--body=}" ;;
-		--body-file) pending="body-file" ;;
-		--body-file=*) body_file="${arg#--body-file=}" ;;
-		*) ;;
-		esac
-	done
-	if [[ "$has_body" -eq 0 && -n "$body_file" && -f "$body_file" && -r "$body_file" ]]; then
-		body_text=$(<"$body_file")
-	fi
-	[[ -n "$body_text" ]] || return 0
-	local offending=""
-	offending=$(_gh_pr_body_negated_closing_ref "$body_text") || return 0
-	_GH_EDIT_REJECTION_REASON="negated closing keyword '${offending}' — GitHub still treats it as a closing reference"
-	printf '[SAFETY] gh pr body rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
-	printf '[SAFETY] Use "Ref #N" or "For #N" with prose such as "The parent issue remains open."; never put a closing keyword next to an issue reference, even when negated.\n' >&2
-	return 1
-}
+# _gh_validate_pr_closing_keywords is shared with the PATH shim above.
 
 #######################################
 # gh_pr_edit_safe — drop-in replacement for gh pr edit.
