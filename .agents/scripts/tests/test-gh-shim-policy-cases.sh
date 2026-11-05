@@ -355,3 +355,14 @@ if "$SHIM_RUN" pr merge 987654 --repo owner/repo 2>"$TMP/closing.err" && [[ -s "
 else
 	_fail "default merge body remains native"
 fi
+
+for action in create edit merge; do
+	_reset_log
+	if "$SHIM_RUN" pr "$action" --repo owner/repo --body-file - <"$TMP/unsafe-closing.md" 2>"$TMP/closing.err"; then
+		_fail "pr $action rejects unchecked raw stdin" "unexpected success"
+	elif [[ ! -s "$STUB_GH_LOG" ]] && grep -q 'gh-write-helper.sh' "$TMP/closing.err"; then
+		_pass "pr $action rejects unchecked stdin with materialization guidance"
+	else
+		_fail "pr $action stdin rejection evidence"
+	fi
+done

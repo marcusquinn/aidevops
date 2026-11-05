@@ -221,6 +221,8 @@ GitHub ignores negation: wording such as `Do not close #N`, `Never fixes #N` or 
 
 `gh_create_pr`, `gh_pr_edit_safe`, and the PATH shim reject clearly negated closing references using the shared `_gh_validate_pr_closing_keywords`. The shim checks PR creation, description edits, and explicit `pr merge --body` / `--body-file` messages before transport, without rewriting text or changing valid positive resolutions. Code spans and fenced blocks remain excluded. Issue bodies and comments are not checked.
 
+Body files must be readable regular files. For streamed `--body-file -` input, use `gh-write-helper.sh`, which materializes stdin before validation; the raw shim rejects uninspectable inputs rather than consuming or forwarding them unchecked.
+
 The shim does not fetch or inspect GitHub's generated/default merge message when no explicit merge body is supplied, nor does this CLI guard cover direct REST/GraphQL mutations. An empty `closingIssuesReferences` collection describes issue links only: it is not proof that no other PR can be closed. Review PR descriptions and merge messages accordingly.
 
 ## Untrusted-body content directive immunity (#20978)

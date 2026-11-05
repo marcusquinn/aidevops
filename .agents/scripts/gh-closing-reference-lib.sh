@@ -46,7 +46,12 @@ _gh_validate_pr_closing_keywords() {
 		*) ;;
 		esac
 	done
-	if [[ "$has_body" -eq 0 && -n "$body_file" && -f "$body_file" && -r "$body_file" ]]; then
+	if [[ "$has_body" -eq 0 && -n "$body_file" ]]; then
+		if [[ ! -f "$body_file" || ! -r "$body_file" ]]; then
+			_GH_EDIT_REJECTION_REASON="PR body file cannot be inspected before writing"
+			printf '[SAFETY] %s. Materialize a readable body file, or use gh-write-helper.sh for --body-file - input.\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
 		body_text=$(<"$body_file")
 	fi
 	[[ -n "$body_text" ]] || return 0
