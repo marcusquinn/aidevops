@@ -1078,3 +1078,56 @@ _archive_stale_operator_dashboards() {
 	touch "$state_file" 2>/dev/null || true
 	return 0
 }
+
+#######################################
+# One sanitized line from the latest maintainer-side decision comment's
+# "Recommended path" (worker-discipline.md decision-ready comment). Only
+# OWNER/MEMBER/COLLABORATOR comments count; output keeps plain words and
+# punctuation only (no URLs, markup or pipes), at most 160 characters.
+# Args: $1=repo slug, $2=issue number
+# Output: one line (empty when no decision comment exists)
+#######################################
+_health_hold_recommendation() {
+	local repo_slug="$1" issue_number="$2" comments=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 0
+	jq -r '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+		| (.body // "") | capture("(?i)recommended path\\W*(?<t>[^\\n]*)")? | .t] | last // ""
+		| gsub("https?://[^ ]*"; "") | gsub("[^A-Za-z0-9 .,;:()/_-]"; "") | .[0:160]' <<<"$comments" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Aged maintainer-decision holds for the supervisor health issue: every open
+# `hold-for-review` issue older than HEALTH_HOLD_AGE_DAYS (default 3), oldest
+# first, bounded to 10 rows. Read-only: never removes a hold, approves or
+# dispatches. Empty output (no section) when nothing is aged.
+# Args: $1=repo slug
+# Output: markdown table (or nothing)
+#######################################
+_health_aged_hold_section() {
+	local repo_slug="$1"
+	local age_days="${HEALTH_HOLD_AGE_DAYS:-3}"
+	local max_rows=10 issues_json="" rows="" total=0 number age url title rec
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 0
+	[[ "$age_days" =~ ^[0-9]+$ ]] || age_days=3
+	issues_json=$(gh_issue_list --repo "$repo_slug" --label hold-for-review \
+		--state open --json number,title,url,createdAt --limit 100 2>/dev/null) || return 0
+	rows=$(jq -r --argjson days "$age_days" '
+		[.[] | select(.url | test("^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/issues/[0-9]+$"))
+			| {number, url, title: ((.title // "") | gsub("[^A-Za-z0-9 .,:()/_#-]"; "") | .[0:70] | if . == "" then "untitled" else . end),
+				age: (((now - (.createdAt | fromdateiso8601)) / 86400) | floor)}
+			| select(.age > $days)] | sort_by(-.age)
+		| ., length' <<<"${issues_json:-[]}" 2>/dev/null) || return 0
+	total=$(jq -s '.[1] // 0' <<<"$rows" 2>/dev/null) || return 0
+	[[ "$total" =~ ^[0-9]+$ && "$total" -gt 0 ]] || return 0
+	printf 'Maintainer decision holds older than %s days (%s). Surfacing grants nothing: the hold stays until a maintainer decides.\n\n' "$age_days" "$total"
+	printf '| Age | Issue | Recommended path | URL |\n| --- | --- | --- | --- |\n'
+	while IFS=$'\t' read -r number age title url; do
+		[[ "$number" =~ ^[1-9][0-9]*$ ]] || continue
+		rec=$(_health_hold_recommendation "$repo_slug" "$number")
+		printf '| %sd | #%s %s | %s | %s |\n' "$age" "$number" "$title" "${rec:-No decision comment yet}" "$url"
+	done < <(jq -rs '.[0][0:10][] | [.number, .age, .title, .url] | @tsv' <<<"$rows" 2>/dev/null)
+	[[ "$total" -le "$max_rows" ]] || printf '\n_%s more not shown._\n' "$((total - max_rows))"
+	return 0
+}

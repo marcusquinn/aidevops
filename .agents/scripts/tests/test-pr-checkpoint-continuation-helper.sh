@@ -856,6 +856,49 @@ for rearm in head release; do
 		print_result "new ${rearm} re-arms blocked attention without ready lease" 1 "output=${output:-missing}"
 	fi
 done
+
+# t18869: an attended draft is re-checked each cycle; one new record per changed
+# template refusal reason, none when the reason is unchanged.
+test_refusal_reason_change() (
+	local STUB_POST_DIR="${TEST_ROOT}/posts-refusal" template_reason="" status=0 output="" body=""
+	export STUB_POST_DIR
+	mkdir -p "$STUB_POST_DIR"
+	_pcc_approval_template() {
+		[[ -n "$template_reason" ]] || { printf 'CHECKPOINT_CONTINUATION_APPROVED {}\n'; return 0; }
+		printf 'approval-template: intervening coordination is not fully released; rejected comment=9 event=CLAIM_RELEASED runner=worker-bot episode_claim=none reason=%s\n' "$template_reason" >&2
+		return 1
+	}
+	STUB_PR_JSON="$(valid_pr_json)"
+	STUB_COMMENTS_JSON="$(blocked_comments)"
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:* && "$(post_count)" == 1 ]] || status=1
+	body="$(<"${STUB_POST_DIR}/post-1")"
+	STUB_COMMENTS_JSON="$(jq --arg body "$body" '. + [[{id:22,author_association:"OWNER",user:{login:"pulse-runner"},body:$body}]]' <<<"$(blocked_comments)")"
+	# Unchanged (no refusal): exists, no repost.
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == 1 ]] || status=1
+	# New refusal reason: exactly one new record naming the command.
+	template_reason="transition_rejected"
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*refusal=transition_rejected && "$(post_count)" == 2 ]] || status=1
+	grep -Fq 'approval-template owner/repo 42 123 21 attempt:abc123' "${STUB_POST_DIR}/post-2" || status=1
+	body="$(<"${STUB_POST_DIR}/post-2")"
+	STUB_COMMENTS_JSON="$(jq --arg body "$body" '. + [[{id:23,author_association:"OWNER",user:{login:"pulse-runner"},body:$body}]]' <<<"$STUB_COMMENTS_JSON")"
+	# Same reason next cycle: no repost.
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == 2 ]] || status=1
+	# Reason changes again: one more record.
+	template_reason="unattributed_release"
+	output=$(_pcc_blocked_attention owner/repo 123 42) || status=1
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*refusal=unattributed_release && "$(post_count)" == 3 ]] || status=1
+	[[ "$status" == 0 ]] || return 1
+	return 0
+)
+if test_refusal_reason_change; then
+	print_result "changed approval-template refusal reposts once; unchanged reason does not" 0
+else
+	print_result "changed approval-template refusal reposts once; unchanged reason does not" 1
+fi
 STUB_POST_DIR="${TEST_ROOT}/posts"
 STUB_PR_JSON="$(valid_pr_json)"
 
