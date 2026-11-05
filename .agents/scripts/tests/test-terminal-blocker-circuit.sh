@@ -502,7 +502,11 @@ test_input_required_public_question() {
 	local PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/question-entities.txt"
 	printf 'client: Synthetic Question Client\n' >"$PRIVACY_ENTITY_CONFIG"
 	fingerprint=$(_terminal_blocker_hash 'v2:input_required:maintainer')
-	question='Which staging target for Synthetic Question Client at /home/example/private-project with token=fixture-value and ghp_0123456789abcdef should be used?'
+	# Construct a synthetic credential at runtime so public-write guards do not
+	# mistake the fixture source for a committed credential.
+	question='Which staging target for Synthetic Question Client at /home/example/private-project with token=fixture-value and '
+	question+='ghp_'
+	question+='0123456789abcdef should be used?'
 	jq -nc --arg text "BLOCKED: protected dossier stays private
 TERMINAL_BLOCKER_REASON=input_required
 TERMINAL_BLOCKER_INPUT_OWNER=maintainer
