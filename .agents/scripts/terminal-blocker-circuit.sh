@@ -265,7 +265,14 @@ def emit(value):
     if (value != 'runner_capability_unmet' or len(rejected_names) > 32
             or not all(re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', n) for n in rejected_names)):
         rejected_names = []
+    # Only an explicitly public question from the final assistant report is
+    # eligible. Never promote the BLOCKED dossier or tool text to public prose.
+    questions = re.findall(r'^TERMINAL_BLOCKER_QUESTION=(.*)$', candidate, re.M)
+    question = questions[0] if value.startswith('input_required:') and len(questions) == 1 else ''
+    if not 0 < len(question) <= 500:
+        question = ''
     print(json.dumps({'reason': value, 'explicit_reason': bool(reasons),
+                     'question': question,
                      'missing_secrets': sorted(set(names)),
                      'rejected_secrets': sorted(set(rejected_names)), 'detail': candidate[:2000]}))
 
@@ -299,6 +306,7 @@ terminal_blocker_capture_output() {
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=""
 	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=""
 	AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
+	AIDEVOPS_TERMINAL_BLOCKER_QUESTION=""
 	[[ -f "$output_file" ]] || return 1
 	captured=$(_terminal_blocker_capture_json "$output_file" "$live_blocked" "$blocked_line_pattern") || captured=""
 	[[ -n "$captured" ]] || return 1
@@ -306,6 +314,7 @@ terminal_blocker_capture_output() {
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=$(printf '%s' "$captured" | jq -r '.explicit_reason') || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=$(jq -r '.missing_secrets[]' <<<"$captured") || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=$(jq -r '.rejected_secrets[]' <<<"$captured") || return 1
+	AIDEVOPS_TERMINAL_BLOCKER_QUESTION=$(jq -r '.question // ""' <<<"$captured") || return 1
 	[[ -n "$normalized" ]] || return 1
 	# Do not infer a missing heading from words such as "Files Scope excludes".
 	# Verify the structural condition independently against the issue itself.
@@ -871,12 +880,44 @@ terminal_blocker_observation_hold_active() {
 	return 0
 }
 
+# GH#36760: fail closed on malformed questions or unavailable privacy guards.
+# Call only through command substitution so sourced helpers stay isolated.
+_terminal_blocker_public_question() {
+	local question="$1"
+	[[ -n "$question" && "${#question}" -le 500 ]] || return 1
+	# shellcheck source=shared-constants.sh
+	source "${BASH_SOURCE[0]%/*}/shared-constants.sh" || return 1
+	# shellcheck source=privacy-guard-helper.sh
+	source "${BASH_SOURCE[0]%/*}/privacy-guard-helper.sh" || return 1
+	question=$(scrub_credentials "$question") || return 1
+	question=$(privacy_redact_public_text_from_inventory "$question") || return 1
+	privacy_scan_local_paths "$question" >/dev/null || return 1
+	# Bound before publication, reject controls/markup, and mask labelled values,
+	# URLs and remaining absolute paths (including non-home telemetry paths).
+	question=$(printf '%s' "$question" | python3 -c '
+import re, sys
+text = sys.stdin.read()
+if not text.strip() or len(text) > 500 or any(ord(c) < 32 or ord(c) == 127 for c in text):
+    raise SystemExit(1)
+if any(c in text for c in "<>`@") or "-----BEGIN" in text:
+    raise SystemExit(1)
+text = re.sub(r"(?i)\b(?:https?|ssh|file)://\S+", "[redacted-url]", text)
+text = re.sub(r"(?i)\b(password|token|secret|api[_ -]?key|authorization)(\s*[:=]\s*)(\S+)", r"\1\2[redacted-value]", text)
+text = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [redacted-value]", text)
+text = re.sub(r"(?<!\w)(?:/|~/|[A-Za-z]:\\)\S+", "[local-path]", text)
+print(text.strip(), end="")
+') || return 1
+	[[ -n "$question" ]] || return 1
+	printf '%s' "$question"
+	return 0
+}
+
 _terminal_blocker_recovery() {
 	local fingerprint="$1"
 	local release_mode="${2:-first}"
 	local requested_state="${3:-}"
 	local reason="" owner="" action="" attempt="" issue="${WORKER_ISSUE_NUMBER:-unknown}"
-	local projected_state="status:blocked"
+	local projected_state="status:blocked" question=""
 	reason=$(_terminal_blocker_reason "$fingerprint")
 	case "$reason" in
 	runner_capability_unmet)
@@ -917,7 +958,12 @@ _terminal_blocker_recovery() {
 		;;
 	input_required)
 		owner=$(_terminal_blocker_input_owner "$fingerprint") || owner="maintainer"
-		action='Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch. The recovery supervisor first decides anything AI can resolve within delegated authority.'
+		question=$(_terminal_blocker_public_question "${AIDEVOPS_TERMINAL_BLOCKER_QUESTION:-}") || question=""
+		if [[ -n "$question" ]]; then
+			action='Supply the requested input in the issue brief; a brief or dependency change re-arms dispatch. The recovery supervisor first decides anything AI can resolve within delegated authority.'
+		else
+			action="no sanitized question recorded; the originating runner's recovery supervisor must publish one. No maintainer action is possible until then."
+		fi
 		;;
 	*)
 		owner="worker-triage"
@@ -937,6 +983,7 @@ _terminal_blocker_recovery() {
 	attempt=$(_terminal_blocker_hash "${AIDEVOPS_ATTEMPT_ID:-${WORKER_SESSION_KEY:-unknown}}") || attempt="$_TBC_UNKNOWN"
 	printf 'Terminal blocker: reason=%s owner=%s task=%s attempt=%s.\nProjected state: %s.\nNext action: %s\nRaw evidence remains in protected worker telemetry.\n' \
 		"$reason" "$owner" "$issue" "$attempt" "$projected_state" "$action"
+	[[ -z "$question" ]] || printf 'Input requested: %s\n' "$question"
 	if [[ "$reason" == "unknown" && "${AIDEVOPS_TERMINAL_BLOCKER_TRIAGE:-}" =~ ^pending_work\ brief=[a-f0-9]{64}\ head=[a-f0-9]{40,64}$ ]]; then
 		printf 'CHECKPOINT_UNKNOWN_TRIAGE %s\n' "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE"
 	fi
