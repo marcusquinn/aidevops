@@ -190,6 +190,7 @@ cp "$SHIM" "$PATH_DIR/gh"
 cp "${SCRIPT_DIR}/gh-native-transport-lib.sh" "$PATH_DIR/gh-native-transport-lib.sh"
 cp "${SCRIPT_DIR}/gh-api-guards-lib.sh" "$PATH_DIR/gh-api-guards-lib.sh"
 cp "${SCRIPT_DIR}/gh-write-policy-lib.sh" "$PATH_DIR/gh-write-policy-lib.sh"
+cp "${SCRIPT_DIR}/gh-closing-reference-lib.sh" "$PATH_DIR/gh-closing-reference-lib.sh"
 chmod +x "$PATH_DIR/gh"
 
 # Co-locate the helper alongside the shim so the shim's helper-lookup finds it
