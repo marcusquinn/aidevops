@@ -34,7 +34,7 @@ async function isModelRejection(response) {
 // Retry only a definite pre-generation model rejection, once, on the same
 // endpoint/account. Never retry SSE, transport, auth, quota or policy failures.
 export async function retryCodexModelRejection(response, input, init, send) {
-  const { headersFrom, isCodexBackendRequest, safeToken } = await import("./openai-codex-request.mjs");
+  const { headersFrom, isCodexBackendRequest } = await import("./openai-codex-request.mjs");
   const { authSignatureFromHeaders, markModelUnavailable } = await import("./model-unavailability.mjs");
   if (!isCodexBackendRequest(input) || !await isModelRejection(response)) return response;
   // Read and parse the original body only after a definite model rejection.
@@ -43,6 +43,5 @@ export async function retryCodexModelRejection(response, input, init, send) {
   const headers = headersFrom(input, init);
   const authSignature = authSignatureFromHeaders(headers);
   markModelUnavailable(`openai/${original.model}`, authSignature);
-  console.error(`[aidevops] OpenAI provider: model unavailable requested=${safeToken(original.model)} auth=${safeToken(authSignature)}`);
   return response;
 }

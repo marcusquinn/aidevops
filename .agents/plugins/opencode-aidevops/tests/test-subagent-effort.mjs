@@ -608,6 +608,34 @@ test("interactive routing checks the current account rather than the last reject
   }
 });
 
+test("routing reports rejected candidates when no same-tier model remains", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "routing-exhausted-"));
+  const previous = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = root;
+  mkdirSync(join(root, "opencode"));
+  writeFileSync(join(root, "opencode", "auth.json"), JSON.stringify({ openai: { type: "oauth", access: "token", accountId: "account" } }));
+  const signature = authSignatureFromHeaders({ authorization: "Bearer token", "chatgpt-account-id": "account" });
+  markModelUnavailable("openai/sol", signature);
+  t.after(() => {
+    if (previous === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = previous;
+    clearModelUnavailable("openai/sol", signature);
+    rmSync(root, { recursive: true, force: true });
+  });
+  const client = {
+    provider: { list: async () => ({ data: { connected: ["openai"], all: [
+      { id: "openai", models: { sol: { id: "sol" } } },
+    ] } }) },
+    session: { get: async ({ path }) => ({ data: { id: path.id, parentID: "parent", agent: "general" } }) },
+  };
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: { tiers: { standard: { models: ["openai/sol"] } } },
+    agentRoutingState: { tiers: new Map([["general", "standard"]]), pinned: new Set() },
+  });
+  await assert.rejects(hooks.chatMessage({}, { message: { sessionID: "child", agent: "general" }, parts: [{ type: "text", text: "inspect" }] }),
+    /standard model: requested=openai\/sol rejected=openai\/sol/);
+});
+
 test("opted-in general child uses its stable arm and records the parent decision", async () => {
   const { subagentArm } = await import("../subagent-ab.mjs");
   const arms = ["openai", "anthropic"].map((name) => ({ name, tiers: {

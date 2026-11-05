@@ -41,6 +41,19 @@ fixture_dir=$(mktemp -d)
 trap 'rm -rf "$fixture_dir"' EXIT
 
 (
+	_run_should_retry=0
+	_run_failure_reason="model_unavailable"
+	_HRW_STATUS_FAIL="failed"
+	extract_provider() { printf '%s\n' "${1%%/*}"; }
+	choose_model() {
+		[[ "$3" == "standard" && "$4" == "exact-tier" ]] || return 1
+		printf '%s\n' "anthropic/secondary"
+	}
+	_cmd_run_prepare_retry worker session "" 1 3 openai/primary 1 standard
+	[[ "$cmd_run_action" == "switch" && "$cmd_run_next_model" == "anthropic/secondary" ]]
+)
+
+(
 	provider_auth_available() {
 		local provider_name="$1"
 		[[ "$provider_name" != "openai" ]] && return 0

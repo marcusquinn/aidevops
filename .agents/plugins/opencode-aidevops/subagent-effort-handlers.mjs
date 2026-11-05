@@ -14,6 +14,7 @@ import { loadChildSessionWithParent, routeCreativeMessage } from "./subagent-par
 import { BROWSER_AGENT, routeBrowserDelegate } from "./browser-delegate-routing.mjs";
 import { routeChatParams } from "./subagent-effort-params.mjs";
 import { subagentArm, armRouting, eligibleSubagentTrial } from "./subagent-ab.mjs";
+import { isModelUnavailable } from "./model-unavailability.mjs";
 
 const DOMAIN_KNOWLEDGE_MARKER = "\n\n[AIDEvOps canonical domain knowledge]";
 const DOMAIN_REQUIRED_FIELDS = ["task", "objective", "scope", "source", "decisions", "evidence", "output"];
@@ -75,14 +76,20 @@ async function applyConnectedRoutingModel(context, route, message, policy) {
     return;
   }
   const routing = policy.armRouting || context.modelRouting;
+  const availability = context.resolveAvailability();
   const routedModel = selectConnectedRoutingCandidate(
     routing,
     route.effort,
     providerState,
     undefined,
-    context.resolveAvailability(),
+    availability,
   );
   if (!routedModel) {
+    const candidates = routingCandidates(routing, route.effort);
+    const rejected = candidates.filter((model) => isModelUnavailable(model, availability.authSignature));
+    if (rejected.length) {
+      throw new Error(`[aidevops] No available ${route.effort} model: requested=${candidates[0]} rejected=${rejected.join(",")}; check provider access or routing configuration.`);
+    }
     throw new Error(`[aidevops] No connected model is available for '${route.effort}' routing`);
   }
   message.model = routingModelIdentity(routedModel);
