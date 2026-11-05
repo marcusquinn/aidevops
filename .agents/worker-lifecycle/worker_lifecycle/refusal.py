@@ -13,6 +13,8 @@ import re
 import sqlite3
 import subprocess  # nosec B404 # exception types only; no process is started here
 
+from .filesystem import FilesystemValidationError
+
 CREATION_OPERATIONS = frozenset({"create-worktree", "admit-session", "enroll"})
 RETIREMENT_OPERATIONS = frozenset({"cleanup-worktree", "retire-enrolled-only"})
 _REFUSAL_CODE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
@@ -60,7 +62,7 @@ def _sqlite_code(error: Exception) -> str:
 
 _CATEGORY_TERMS = (
     ("contention", ("locked", "busy")),
-    ("capacity", ("full", "too big", "capacity", "limit")),
+    ("capacity", ("full", "too big", "capacity", "journal-event-limit-reached")),
     ("permission", ("readonly", "read-only", "unable to open", "permission", "authorization")),
     ("schema", ("no such", "malformed", "not a database", "schema", "unsupported", "has no column")),
 )
@@ -76,6 +78,8 @@ def failure_category(error: BaseException) -> str | None:
 
     Only the fixed label is returned; message text, SQL and paths never leave here.
     """
+    if isinstance(error, FilesystemValidationError) and isinstance(error.__cause__, OSError):
+        return failure_category(error.__cause__)
     if isinstance(error, BlockingIOError):
         return "contention"
     if isinstance(error, PermissionError):

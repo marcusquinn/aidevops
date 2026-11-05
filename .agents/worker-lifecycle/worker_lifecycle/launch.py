@@ -20,7 +20,7 @@ from .launch_state import (
     require_unregistered as require_unregistered,
 )
 from .process import ObservationUnavailable
-from .refusal import failure_category
+from .refusal import failure_category, refusal_code
 from .runtime import adapter_for, require_ready
 from .storage import LifecycleRegistry
 
@@ -28,6 +28,12 @@ from .storage import LifecycleRegistry
 def _category(error: BaseException) -> str:
     label = failure_category(error)
     return f" category={label}" if label else ""
+
+
+def _reason(error: Exception, operation: str = "admit-session") -> str:
+    code = refusal_code(error, operation)
+    suffix = f" code={code}" if code else ""
+    return f"{type(error).__name__}{suffix}{_category(error)}"
 
 
 def record(state_dir: Path, worktree: Path, initialize: bool = False) -> str:
@@ -69,7 +75,7 @@ def main() -> int:
             require_unregistered(args.state_dir, args.worktree)
         except (ValueError, OSError, RuntimeError, sqlite3.Error,
                 subprocess.SubprocessError, ObservationUnavailable) as error:
-            print(f"[worker-lifecycle] admission-denied reason={type(error).__name__}{_category(error)}", file=sys.stderr)
+            print(f"[worker-lifecycle] admission-denied reason={_reason(error)}", file=sys.stderr)
             return 75
         return execute(command)
     if args.generation_id is not None:
@@ -88,7 +94,7 @@ def _run_observed(args: argparse.Namespace, command: list[str]) -> int:
         return 75
     except (ValueError, OSError, RuntimeError, sqlite3.Error,
             subprocess.SubprocessError, ObservationUnavailable) as error:
-        print(f"[worker-lifecycle] admission-denied reason={type(error).__name__}{_category(error)}", file=sys.stderr)
+        print(f"[worker-lifecycle] admission-denied reason={_reason(error)}", file=sys.stderr)
         return 75
     if enrollment is not None:
         generation, path = enrollment
@@ -101,7 +107,7 @@ def _run_observed(args: argparse.Namespace, command: list[str]) -> int:
         print(f"[worker-lifecycle] registered run={run_id} pid={os.getpid()}", file=sys.stderr)
     except (ValueError, OSError, RuntimeError, sqlite3.Error, ObservationUnavailable) as error:
         # Keep paths, command arguments and database contents out of logs.
-        print(f"[worker-lifecycle] observation-gap reason={type(error).__name__}{_category(error)}", file=sys.stderr)
+        print(f"[worker-lifecycle] observation-gap reason={_reason(error, 'observe')}", file=sys.stderr)
     return execute(command, session_id=run_id)
 
 
@@ -123,7 +129,7 @@ def run_admitted(state_dir: Path, worktree: Path, run_id: str, generation_id: st
             return execute(command, admitted=True, session_id=run_id)
     except (ValueError, OSError, RuntimeError, sqlite3.Error,
             subprocess.SubprocessError, ObservationUnavailable) as error:
-        print(f"[worker-lifecycle] admission-denied reason={type(error).__name__}{_category(error)}", file=sys.stderr)
+        print(f"[worker-lifecycle] admission-denied reason={_reason(error)}", file=sys.stderr)
         return 75
 
 

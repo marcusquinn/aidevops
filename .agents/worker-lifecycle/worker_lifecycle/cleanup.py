@@ -114,8 +114,9 @@ def _advance(store: LifecycleRegistry, generation: str) -> None:
 def _failure_details(error: Exception) -> dict:
     """Report stable diagnostics, never raw argv, stdout or stderr."""
     if isinstance(error, FilesystemValidationError):
-        return filesystem_error_details(error)
-    details: dict = {"reason": type(error).__name__}
+        details: dict = filesystem_error_details(error)
+    else:
+        details = {"reason": type(error).__name__}
     if isinstance(error, ValueError) and re.fullmatch(r"[a-z][a-z0-9:_-]{0,159}", str(error)):
         details["reason"] = str(error)
     if isinstance(error, OSError) and error.errno is not None:
