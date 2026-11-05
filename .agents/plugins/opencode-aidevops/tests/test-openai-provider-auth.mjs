@@ -35,6 +35,9 @@ test("installed guard records definite Codex model rejections without swapping w
       });
     };
     installOpenAIProviderFetchRotation({});
+    const logs = [];
+    const consoleError = console.error;
+    console.error = (...args) => logs.push(args.join(" "));
     const original = { model: "gpt-6.1-sol", input: "private prompt", stream: true, store: false };
     const response = await fetch("https://chatgpt.com/backend-api/codex/responses", {
       method: "POST", headers, body: JSON.stringify(original), credentials: "omit",
@@ -44,6 +47,12 @@ test("installed guard records definite Codex model rejections without swapping w
     assert.equal(response.headers.get("x-review"), "keep");
     assert.deepEqual(await response.json(), { error: { code: "model_not_found" }, detail: "preserve this body" });
     assert.equal(isModelUnavailable("openai/gpt-6.1-sol", authSignatureFromHeaders(new Headers(headers))), true);
+    console.error = consoleError;
+    const logged = logs.join("\n");
+    assert.match(logged, /model unavailable for current auth requested=openai\/gpt-6\.1-sol/);
+    for (const secret of ["test-secret", "test-account", "private prompt", authSignatureFromHeaders(new Headers(headers))]) {
+      assert.equal(logged.includes(secret), false);
+    }
 
     calls = 0;
     globalThis.fetch = async () => {

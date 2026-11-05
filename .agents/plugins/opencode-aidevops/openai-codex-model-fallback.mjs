@@ -35,7 +35,7 @@ async function isModelRejection(response) {
 // auth and return the original response unchanged. Same-tier failover happens
 // at routing level (GH#36698), never by swapping in a hardcoded slug here.
 // SSE, transport, auth, quota and policy failures are neither recorded nor retried.
-export async function retryCodexModelRejection(response, input, init) {
+export async function recordCodexModelRejection(response, input, init) {
   const { headersFrom, isCodexBackendRequest, safeToken } = await import("./openai-codex-request.mjs");
   if (!isCodexBackendRequest(input) || !await isModelRejection(response)) return response;
   // Read and parse the original body only after a definite model rejection.

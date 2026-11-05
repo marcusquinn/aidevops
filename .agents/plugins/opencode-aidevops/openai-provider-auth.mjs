@@ -44,7 +44,7 @@ import {
   zstdCompressorKind,
 } from "./openai-codex-request.mjs";
 import { parseRetryAfterValue } from "./provider-auth-pool-recovery.mjs";
-import { retryCodexModelRejection } from "./openai-codex-model-fallback.mjs";
+import { recordCodexModelRejection } from "./openai-codex-model-fallback.mjs";
 
 export { isOpenAITokenRefreshRequest } from "./openai-auth-refresh-recovery.mjs";
 export {
@@ -238,7 +238,7 @@ async function handleOpenAIProviderFetch({ client, originalFetch, input, init })
     ctx.response = await recordAttempt(ctx.attempts, firstKind, () => originalFetch(prepared.input, firstInit));
     // GH#36698: record a definite model rejection for same-tier routing
     // failover; the rejected response is returned unchanged.
-    ctx.response = await retryCodexModelRejection(ctx.response, retryInput, extendRequestInit(init, {
+    ctx.response = await recordCodexModelRejection(ctx.response, retryInput, extendRequestInit(init, {
       headers: headersFrom(prepared.input, firstInit),
       ...(originalBody === undefined ? {} : { body: originalBody }),
     }));

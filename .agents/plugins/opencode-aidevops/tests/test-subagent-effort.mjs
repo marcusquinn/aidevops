@@ -23,7 +23,7 @@ import {
 } from "../subagent-effort-escalation.mjs";
 import { SubagentLifecycleTracker, eventSessionID } from "../subagent-lifecycle-tracker.mjs";
 import { authSignatureFromHeaders, clearModelUnavailable, markModelUnavailable } from "../model-unavailability.mjs";
-import { retryCodexModelRejection } from "../openai-codex-model-fallback.mjs";
+import { recordCodexModelRejection } from "../openai-codex-model-fallback.mjs";
 
 const TIER_REASONING = {
   simple: { openai: "low" },
@@ -51,9 +51,8 @@ test("entitlement rejection retries the next connected model in the same tier", 
     ] }),
     resolveAvailability: () => ({ authSignature: signature }),
   };
-  await retryCodexModelRejection(Response.json({ error: { code: "model_not_found" } }, { status: 404 }),
-    "https://chatgpt.com/backend-api/codex/responses", { headers, body: JSON.stringify({ model: "sol" }) },
-    () => { throw new Error("request-level retries must not cross providers"); });
+  await recordCodexModelRejection(Response.json({ error: { code: "model_not_found" } }, { status: 404 }),
+    "https://chatgpt.com/backend-api/codex/responses", { headers, body: JSON.stringify({ model: "sol" }) });
   t.after(() => clearModelUnavailable("openai/sol", signature));
   const hooks = createInteractiveSubagentEscalator(context);
   hooks.beforeTool({ tool: "task", sessionID: "parent", callID: "call" }, {});
