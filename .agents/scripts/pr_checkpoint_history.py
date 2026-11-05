@@ -3,6 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Reconstruct fully released historical attempts without granting ownership."""
 
+import re
+
 from pr_checkpoint_events import closes_released_attempt, events, fields, normalized_attempt, trusted
 from pr_checkpoint_never_ready import (CLAIM_ONLY, NEVER_READY_OUTCOMES,
                                        advance_never_ready_release, close_claim_only)
@@ -94,17 +96,41 @@ def advance_closed_claim(state, comment, line, f):
     return advance_lease(state, comment, line, f)
 
 
+UNATTRIBUTED = "unattributed_release"
+
+
+def unattributed_release(comment, line, f):
+    """GH#36593: record a release that has no open episode to close.
+
+    #aidevops:trust-boundary — the caller already requires a trusted, unedited
+    comment. The entry opens and closes nothing, and it is not evidence of a
+    claim, lease, completion or absence of side effects. It is reported in
+    released_successors, so approval-template emits it only when a maintainer
+    names its exact comment ID, and dispatch-approved accepts only an approval
+    that lists it exactly. Releases inside an open episode keep their existing
+    closers and rejections.
+    """
+    reason = f.get("reason", "")
+    if not line.startswith("CLAIM_RELEASED ") or re.fullmatch(r"[a-z_]{1,64}", reason) is None:
+        return None
+    return {"runner": comment["user"]["login"], "release_id": comment["id"],
+            "outcome": UNATTRIBUTED, "reason": reason, "provenance": "unrecovered"}
+
+
 def advance_history(state, comment, line, f, seen):
     if state is None:
         started = closed_claim(comment, line, f, seen)
-        if started is not None:
-            started["expiries"] = [f.get("expires_at", "")]
-            started["device"] = f.get("device", "")
+        if started is None:
+            return unattributed_release(comment, line, f)
+        started["expiries"] = [f.get("expires_at", "")]
+        started["device"] = f.get("device", "")
         return started
     return state if advance_closed_claim(state, comment, line, f) else None
 
 
 def completed_episode(state):
+    if state.get("outcome") == UNATTRIBUTED:
+        return dict(state)
     if state.get("release_id") and not state.get("ready_id"):
         # Only the never-ready closers record a release without a ready lease.
         if state.get("outcome") not in NEVER_READY_OUTCOMES:
