@@ -589,6 +589,11 @@ test_aged_holds() (
 	gh() {
 		local args="$*"
 		[[ "$args" == *"--paginate --slurp"* ]] || return 1
+		[[ "$fetch_mode" != failed ]] || return 1
+		if [[ "$fetch_mode" == empty ]]; then
+			printf '[[]]\n'
+			return 0
+		fi
 		if [[ "$args" == *"/comments?"* ]]; then
 			jq -n '[[range(100) | {author_association:"OWNER",body:"Recommended path: old"}],
 				[{author_association:"MEMBER",body:"Recommended path: latest"},
@@ -600,11 +605,22 @@ test_aged_holds() (
 		fi
 		return 0
 	}
-	local result="" first=""
+	local result="" first="" fetch_mode="" rendered=""
 	result=$(_health_aged_hold_section owner/repo)
 	[[ "$result" == *"days (101)"* && "$result" == *"91 more not shown"* ]] || return 1
 	first=$(printf '%s\n' "$result" | jq -Rs 'split("\n") | map(select(startswith("| 3d"))) | .[0]')
 	[[ "$first" == *"#101 held | latest"* && "$result" != *"untrusted"* ]] || return 1
+	# Fetch failures must survive optional-section rendering; a healthy empty
+	# response must still omit the section entirely.
+	fetch_mode=failed
+	result=$(_health_aged_hold_section owner/repo) || return 1
+	rendered=$(_dashboard_optional_section "Maintainer decisions waiting" "$result")
+	[[ "$rendered" == *"### Maintainer decisions waiting"* &&
+		"$rendered" == *"issue fetch failed this cycle"* ]] || return 1
+	fetch_mode=empty
+	result=$(_health_aged_hold_section owner/repo) || return 1
+	rendered=$(_dashboard_optional_section "Maintainer decisions waiting" "$result")
+	[[ -z "$result" && -z "$rendered" ]] || return 1
 	# No API calls or aged section for contributor dashboards.
 	_health_aged_hold_section() { printf 'AGED_HOLD_SENTINEL'; return 0; }
 	local args=() i role

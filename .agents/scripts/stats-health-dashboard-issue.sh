@@ -1112,7 +1112,10 @@ _health_aged_hold_section() {
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 0
 	[[ "$age_days" =~ ^[0-9]+$ ]] || age_days=3
 	issues_json=$(gh api "repos/${repo_slug}/issues?labels=hold-for-review&state=open&per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 0
+		--paginate --slurp 2>/dev/null) || {
+		printf 'Maintainer decision holds are unavailable: the issue fetch failed this cycle. The next pulse will retry.\n'
+		return 0
+	}
 	rows=$(jq -r --argjson days "$age_days" '
 		[.[][] | select(has("pull_request") | not)
 			| {number, title, url: .html_url, createdAt: .created_at}
