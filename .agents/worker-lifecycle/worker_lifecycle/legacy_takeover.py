@@ -12,6 +12,7 @@ from .cleanup_plan import _runs, enrolled_only_authorized
 
 
 def _require_closed_admission(connection, generation):
+    """Raise unless the generation admission is closed."""
     admission = connection.execute(
         "SELECT state FROM generation_admissions WHERE generation_id=?",
         (generation,),
@@ -21,6 +22,7 @@ def _require_closed_admission(connection, generation):
 
 
 def _require_owner_evidence(store, generation):
+    """Raise unless owner runs have ended or the operator authorized takeover."""
     rows = _runs(store, generation)
     if not rows and not enrolled_only_authorized(store, generation):
         raise ValueError("managed-operator-authorization-required")
@@ -30,6 +32,7 @@ def _require_owner_evidence(store, generation):
 
 
 def _creation_verified(connection, generation, rows, path):
+    """Return True when worktree creation is recorded for the generation."""
     event = connection.execute(
         "SELECT payload FROM events WHERE event_id=?",
         (str(uuid5(UUID(generation), "created-worktree")),),

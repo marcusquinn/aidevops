@@ -20,12 +20,14 @@ _MAX_BYTES = 262144
 
 
 def _finite_number(value: object) -> bool:
+    """Return True for a finite non-boolean int or float."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     return math.isfinite(value)
 
 
 def _valid(key: object, value: object) -> bool:
+    """Return True when a quarantine entry has a string key and a well-formed value."""
     if not isinstance(key, str) or not isinstance(value, dict):
         return False
     return isinstance(value.get("count"), int) and _finite_number(value.get("until"))
@@ -35,12 +37,14 @@ class CleanupQuarantine:
     """Durable per-generation backoff, loaded once and saved once per pass."""
 
     def __init__(self, directory: Path):
+        """Load quarantine entries from the given store directory."""
         self.directory = Path(directory)
         self.path = self.directory / "cleanup-quarantine"
         self.entries = self._load()
         self.changed = False
 
     def _load(self) -> dict:
+        """Load valid entries from the private quarantine file, or an empty dict."""
         try:
             _private(self.path)
             if self.path.stat().st_size > _MAX_BYTES:
@@ -84,6 +88,7 @@ class CleanupQuarantine:
             report["quarantine_unavailable"] = True
 
     def _write(self) -> None:
+        """Persist the retained entries atomically."""
         temporary = None
         # Keep the file bounded: retain the entries that expire last.
         kept = dict(sorted(self.entries.items(), key=lambda pair: pair[1]["until"])

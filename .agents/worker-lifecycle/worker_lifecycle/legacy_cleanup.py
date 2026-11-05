@@ -28,14 +28,17 @@ from .retirement import _git, _id, _lock
 
 
 def event_id(operation, phase):
+    """Return the deterministic event ID for an operation phase."""
     return str(uuid5(UUID(operation), "legacy-" + phase))
 
 
 def operation_id(store, path):
+    """Return the deterministic operation ID for a legacy path."""
     return str(uuid5(UUID(store.installation_id()), "legacy-cleanup:" + path))
 
 
 def receipt(connection, operation, phase):
+    """Return the recorded payload for an operation phase, or None."""
     row = connection.execute("SELECT payload FROM events WHERE event_id=?",
                              (event_id(operation, phase),)).fetchone()
     return json.loads(row[0]) if row else None
@@ -57,6 +60,7 @@ def checkpoint(store, connection, operation, phase, payload):
 
 
 def archive_source(store, connection, operation, plan, adapter):
+    """Archive the legacy source, reusing a previous archive receipt when present."""
     root = Path(plan["output_root"])
     previous = receipt(connection, operation, "archive")
     if previous is None:
@@ -121,6 +125,7 @@ def finish(store, connection, operation, plan, adapter):
 
 
 def retire(store, item, repositories, adapter, options):
+    """Retire one legacy item under the operation lock."""
     operation = operation_id(store, item["path"])
     confirmed = item["path"] in options.confirmed_paths
     with _lock(store, operation), store.connection(write=True) as connection:
@@ -175,6 +180,7 @@ def take_over_managed(store, item, repositories, adapter, options):
 
 
 def process_item(store, item, repositories, adapter, options):
+    """Plan and, when applying, retire one legacy item and report the outcome."""
     outcome = {"path": item["path"]}
     eligible = attempted = 0
     try:
@@ -241,15 +247,18 @@ def prepare_reconstructible_probe(store, connection, host, plan):
 
 
 def current_legacy_item(connection, item):
+    """Return the current inventory row for an item, or the item itself."""
     return next((row for row in inventory(connection)
                   if row["path"] == item["path"]), item)
 
 
 def legacy_plan(store, connection, item, repositories, adapter):
+    """Build a reconstructible plan for a legacy item."""
     return reconstructible(item, repositories, adapter, open_pull_requests)
 
 
 def managed_plan(store, connection, item, repositories, adapter):
+    """Build a reconstructible plan for a managed item and require authority."""
     plan = reconstructible(item, repositories, adapter, open_pull_requests, managed=True)
     require_managed_authority(store, connection, item, plan)
     return plan
@@ -296,6 +305,7 @@ def process_reconstructible(store, item, repositories, adapter, options):
 
 
 def verify_reconstructible(plan, *, probe):
+    """Verify the removed source can be reconstructed from retained Git objects."""
     if os.path.lexists(plan["source"]):
         raise ValueError("reconstructible-source-still-present")
     common, head, branch = plan["common"], plan["head"], plan["branch"]
@@ -316,6 +326,7 @@ def verify_reconstructible(plan, *, probe):
 
 def run(store, config, root, **arguments):
     # Keep the existing API while separating bounded pass/report orchestration.
+    """Run a legacy cleanup pass, delegating to the bounded runner."""
     from .legacy_runner import run as run_pass
 
     return run_pass(store, config, root, **arguments)

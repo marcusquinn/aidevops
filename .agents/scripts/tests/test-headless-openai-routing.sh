@@ -169,6 +169,10 @@ test_entitlement_backoff_clears_on_auth_change() {
 	before=$(select_model standard)
 	# A re-login (new token) changes the auth signature and clears the record.
 	printf '{"openai":{"type":"oauth","access":"test-openai-access-relogin"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	# The signature uses whole-second mtime; force a distinct one so a rewrite in
+	# the same second cannot leave the signature unchanged (flaky on fast runs).
+	touch -d '2 minutes' "${HOME}/.local/share/opencode/auth.json" 2>/dev/null ||
+		touch -t "$(date -v+2M +%Y%m%d%H%M.%S 2>/dev/null)" "${HOME}/.local/share/opencode/auth.json" 2>/dev/null || true
 	after=$(select_model standard)
 	if [[ "$before" == "openai/gpt-6.1-terra" && "$after" == "openai/gpt-6.1-sol" ]]; then
 		print_result "Model backoff clears when the OpenAI auth changes" 0
