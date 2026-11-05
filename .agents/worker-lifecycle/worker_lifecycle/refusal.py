@@ -8,6 +8,7 @@ only the matched code is ever emitted, never the underlying message.
 from __future__ import annotations
 
 from collections.abc import Callable
+import errno
 import re
 import sqlite3
 import subprocess  # nosec B404 # exception types only; no process is started here
@@ -57,6 +58,36 @@ def _sqlite_code(error: Exception) -> str:
     return code or "sqlite-" + re.sub(r"(?<!^)(?=[A-Z])", "-", type(error).__name__).lower()
 
 
+_CATEGORY_TERMS = (
+    ("contention", ("locked", "busy")),
+    ("capacity", ("full", "too big", "capacity", "limit")),
+    ("permission", ("readonly", "read-only", "unable to open", "permission", "authorization")),
+    ("schema", ("no such", "malformed", "not a database", "schema", "unsupported", "has no column")),
+)
+_ERRNO_CATEGORY = {
+    errno.EAGAIN: "contention", errno.EBUSY: "contention", errno.ENOSPC: "capacity",
+    errno.EDQUOT: "capacity", errno.EACCES: "permission", errno.EPERM: "permission",
+    errno.EROFS: "permission",
+}
+
+
+def failure_category(error: BaseException) -> str | None:
+    """Sanitized class of a registry failure: contention, schema, capacity or permission.
+
+    Only the fixed label is returned; message text, SQL and paths never leave here.
+    """
+    if isinstance(error, BlockingIOError):
+        return "contention"
+    if isinstance(error, PermissionError):
+        return "permission"
+    if isinstance(error, OSError) and error.errno in _ERRNO_CATEGORY:
+        return _ERRNO_CATEGORY[error.errno]
+    if not isinstance(error, (sqlite3.Error, ValueError)):
+        return None
+    message = str(error).casefold()
+    return next((label for label, terms in _CATEGORY_TERMS if any(term in message for term in terms)), None)
+
+
 def _value_code(error: Exception) -> str | None:
     text = str(error)
     return text if _REFUSAL_CODE.fullmatch(text) else None
@@ -72,6 +103,9 @@ _HANDLERS: tuple[tuple[type[Exception], Callable[[Exception], str | None]], ...]
 
 def refusal_code(error: Exception, operation: str) -> str | None:
     """Stable cause of a creation-path refusal, or None outside creation operations."""
+    if isinstance(error, sqlite3.Error) and operation not in CREATION_OPERATIONS:
+        # GH#36794: cleanup/retire paths report the same stable SQLite code.
+        return _sqlite_code(error)
     if operation in RETIREMENT_OPERATIONS:
         # Never expose Git stderr: it may contain private paths or lock reasons.
         if isinstance(error, subprocess.CalledProcessError):

@@ -18,6 +18,7 @@ from .cleanup_plan import enrolled_only_event_id
 from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .filesystem import validate_private_path as _private
+from .refusal import failure_category
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
 from .storage import LifecycleRegistry, identifier
 
@@ -119,6 +120,9 @@ def _failure_details(error: Exception) -> dict:
         details["reason"] = str(error)
     if isinstance(error, OSError) and error.errno is not None:
         details["errno"] = error.errno
+    category = failure_category(error)
+    if category:
+        details["category"] = category
     if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
         details.update(_command_failure(error))
     return details
