@@ -55,6 +55,36 @@ class LocalArchiveVerification(unittest.TestCase):
         result = self.helper("verify-local", archive, check=False)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_auto_merge_can_reuse_objects_from_the_retained_dependency(self):
+        self.git(self.work, "update-ref", "refs/remotes/origin/published", "HEAD")
+        (self.work / "merge-only").write_text("must be archived\n")
+        self.git(self.work, "add", "merge-only")
+        tree = self.git(self.work, "write-tree").decode().strip()
+        self.git(self.work, "update-ref", "AUTO_MERGE", tree)
+        self.git(self.work, "read-tree", "HEAD")
+        (self.work / "merge-only").unlink()
+        archive = self.archive()
+        manifest = json.loads((archive / "manifest.json").read_text())
+        self.assertEqual(manifest["remote_branch_state"], "published")
+        self.helper("verify-local", archive)
+        restored, _ = self.restore(archive)
+        self.assertEqual(self.git(restored, "rev-parse", "AUTO_MERGE").decode().strip(),
+                         tree)
+
+    def test_source_objects_do_not_hide_missing_unique_auto_merge_tree(self):
+        self.git(self.work, "update-ref", "refs/remotes/origin/published", "HEAD")
+        (self.work / "merge-only").write_text("must be archived\n")
+        self.git(self.work, "add", "merge-only")
+        tree = self.git(self.work, "write-tree").decode().strip()
+        self.git(self.work, "update-ref", "AUTO_MERGE", tree)
+        self.git(self.work, "read-tree", "HEAD")
+        (self.work / "merge-only").unlink()
+        archive = self.archive()
+        (archive / "commits.bundle").unlink()
+        self.rewrite_inventory(archive, "commits.bundle", remove=True)
+        result = self.helper("verify-local", archive, check=False)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_corrupt_bundle_fails_even_with_updated_artifact_hash(self):
         archive = self.archive()
         bundle = archive / "commits.bundle"
