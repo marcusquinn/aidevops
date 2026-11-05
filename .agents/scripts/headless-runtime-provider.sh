@@ -178,7 +178,9 @@ provider_static_auth_available() {
 	local provider="$1"
 	case "$provider" in
 	anthropic)
-		[[ -n "${ANTHROPIC_API_KEY:-}" ]]
+		# GH#36707: OpenCode plugins export the selected pool token as
+		# ANTHROPIC_API_KEY; an inheriting child has no independent capacity.
+		[[ -n "${ANTHROPIC_API_KEY:-}" && "${AIDEVOPS_ANTHROPIC_API_KEY_SOURCE:-}" != "oauth-pool" ]]
 		return $?
 		;;
 	openai)

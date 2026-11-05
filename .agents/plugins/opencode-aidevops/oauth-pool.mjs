@@ -186,6 +186,9 @@ export async function selectOpenAIRequestAccount(email) {
 export async function injectPoolToken(client, skipEmail) {
   const account = await selectPoolAccount("anthropic", skipEmail);
   if (!account) return false;
+  // GH#36707: mark the env token as pool-derived so headless selection and
+  // pulse capacity do not treat it as independent static-key capacity.
+  process.env.AIDEVOPS_ANTHROPIC_API_KEY_SOURCE = "oauth-pool";
   process.env.ANTHROPIC_API_KEY = account.access;
   try {
     await client.auth.set({

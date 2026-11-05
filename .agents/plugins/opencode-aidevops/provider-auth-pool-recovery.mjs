@@ -124,6 +124,7 @@ export async function recoverFromExhaustion(client, auth, sessionAccountEmail) {
   const recovered = await waitForCooldownRecovery(client, "all", "exhaustion");
   if (recovered) {
     process.env.ANTHROPIC_API_KEY = recovered.token;
+    process.env.AIDEVOPS_ANTHROPIC_API_KEY_SOURCE = "oauth-pool"; // GH#36707
     activateAccount(recovered.email);
     return tokenResult(recovered);
   }
