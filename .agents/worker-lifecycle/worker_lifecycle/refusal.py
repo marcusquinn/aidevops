@@ -78,7 +78,7 @@ def _os_category(error: OSError) -> str | None:
         return "contention"
     if isinstance(error, PermissionError):
         return "permission"
-    return _ERRNO_CATEGORY.get(error.errno)
+    return _ERRNO_CATEGORY.get(error.errno) if error.errno is not None else None
 
 
 def failure_category(error: BaseException) -> str | None:
