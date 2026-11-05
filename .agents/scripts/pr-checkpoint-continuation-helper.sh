@@ -924,6 +924,101 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head, even
 }
 
 #######################################
+# Classify the current approval-template refusal for a blocked draft checkpoint.
+# Only a validator refusal ("approval-template: ..." on stderr) counts; a
+# transient gh/API failure is not a reason change. The diagnostic is metadata
+# only (validator output is already sanitized) and is re-filtered here.
+# Args: $1=repo, $2=pr, $3=issue, $4=release id, $5=attempt (attempt:<id>)
+# Output: reason_token<TAB>sanitized diagnostic (or "none<TAB>-")
+#######################################
+_pcc_refusal_token() {
+	local repo="$1" pr="$2" issue="$3" release_id="$4" attempt="$5"
+	local err="" token="none" detail="-"
+	[[ "$attempt" == attempt:* ]] || {
+		printf 'none\t-\n'
+		return 0
+	}
+	err=$(_pcc_approval_template "$repo" "$pr" "$issue" "$release_id" "$attempt" 2>&1 >/dev/null) && {
+		printf 'none\t-\n'
+		return 0
+	}
+	if [[ "$err" == "approval-template: "* ]]; then
+		detail="${err#approval-template: }"
+		detail="${detail//[^A-Za-z0-9 =_:.,;#\/-]/}"
+		detail="${detail:0:300}"
+		if [[ "$detail" =~ reason=([a-z][a-z0-9_]*) ]]; then
+			token="${BASH_REMATCH[1]}"
+		elif [[ "$detail" == "intervening coordination"* ]]; then
+			token="intervening_coordination"
+		elif [[ "$detail" == "release "* ]]; then
+			token="release_not_eligible"
+		else
+			token="template_refused"
+		fi
+	fi
+	[[ "$token" != none ]] || detail="-"
+	printf '%s\t%s\n' "$token" "$detail"
+	return 0
+}
+
+# Whether a trusted attention record already exists for this exact refusal.
+# Args: $1=comments JSON, $2=dedup key, $3=release id, $4=reason token,
+#       $5=trusted logins JSON
+_pcc_refusal_posted() {
+	local comments="$1" key="$2" release_id="$3" token="$4" trusted_logins="${5:-[]}"
+	local needle="${key} release=${release_id} refusal=${token} -->"
+	jq -e --arg needle "$needle" \
+		--argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
+		any(flatten[] | select(trusted_event); (.body // "") | contains($needle))
+	' <<<"$comments" >/dev/null
+	return $?
+}
+
+# Whether the release comment is a runner-capability release (GH#35788).
+_pcc_is_capability_release() {
+	local comments="$1" release_id="$2"
+	jq -e --argjson id "$release_id" --arg line "$_PCC_CAPABILITY_RELEASE_LINE" \
+		'any(flatten[]; .id == $id and ((.body // "") | split("\n") | any(startswith($line))))' <<<"$comments" >/dev/null
+	return $?
+}
+
+#######################################
+# Re-check approval-template for an already-attended blocked draft checkpoint
+# and post one new attention record when the refusal reason changes. Records are
+# deduplicated per head, release and refusal reason. Grants nothing: no labels,
+# approvals, holds or dispatch are touched.
+# Args: $1=repo, $2=issue, $3=pr, $4=head, $5=release id, $6=attempt,
+#       $7=dedup key, $8=comments JSON, $9=trusted logins JSON
+# Returns: 0 always when nothing to do or posted, 1 on post failure
+#######################################
+_pcc_refusal_recheck() {
+	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" attempt="$6"
+	local key="$7" comments="$8" trusted_logins="$9"
+	local result="" token="" detail="" record=""
+	_pcc_is_capability_release "$comments" "$release_id" && return 0
+	result=$(_pcc_refusal_token "$repo" "$pr" "$issue" "$release_id" "$attempt") || return 0
+	IFS=$'\t' read -r token detail <<<"$result"
+	[[ "$token" =~ ^[a-z][a-z0-9_]*$ && "$token" != none ]] || return 0
+	_pcc_refusal_posted "$comments" "$key" "$release_id" "$token" "$trusted_logins" && return 0
+	record="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- ${key} release=${release_id} refusal=${token} -->
+BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} refusal=${token}
+
+The approval template for draft PR #${pr} now refuses with \`${token}\`, so the earlier attention record's approval path no longer works. Diagnostic (metadata only): ${detail}
+
+Next action for the brief owner (write access required): resolve the refusal named above (for example acknowledge or remove the stray release it names), then regenerate and publish the approval line printed by:
+
+   \`pr-checkpoint-continuation-helper.sh approval-template ${repo} ${pr} ${issue} ${release_id} ${attempt}\`
+
+Alternatively close draft PR #${pr} to discard the checkpoint. This record grants no approval and dispatches nothing. Posted once per PR head, release and refusal reason.
+<!-- ops:end -->"
+	gh api "repos/${repo}/issues/${issue}/comments" --method POST --raw-field body="$record" >/dev/null || return 1
+	printf 'BLOCKED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s refusal=%s\n' \
+		"$pr" "$repo" "$head" "$release_id" "$token"
+	return 0
+}
+
+#######################################
 # Replace a silent WORKER_DRAFT_CHECKPOINT stall with one durable, actionable
 # record when the draft's worker released as `blocked` (GH#33132).
 #
@@ -944,6 +1039,7 @@ _pcc_blocked_attention() {
 	local pr_json="" head="" runner="" comments="" evidence="" key=""
 	local trusted_logins=""
 	local release_id="" attempt="" posted="" attempt_arg="" body="" successor="" approval_step=""
+	local recheck_out="" refusal="" refusal_token="none" refusal_detail=""
 	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue" =~ ^[1-9][0-9]*$ &&
 		"$pr" =~ ^[1-9][0-9]*$ ]] || return 2
 	pr_json=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,headRefOid,author) || return 1
@@ -971,11 +1067,33 @@ _pcc_blocked_attention() {
 		return 0
 	fi
 	if [[ "$posted" == "true" ]]; then
+		# Each cycle re-checks the template: a changed refusal reason gets one
+		# new record. Unpaired releases never had a template to refuse.
+		if [[ -n "$attempt" ]]; then
+			recheck_out=$(_pcc_refusal_recheck "$repo" "$issue" "$pr" "$head" "$release_id" "$attempt" \
+				"$key" "$comments" "$trusted_logins") || return 1
+			if [[ -n "$recheck_out" ]]; then
+				printf '%s\n' "$recheck_out"
+				return 0
+			fi
+		fi
 		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s issue=#%s\n' \
 			"$pr" "$repo" "$head" "$release_id" "$issue"
 		return 0
 	fi
 	attempt_arg="${attempt:-attempt:<ORIGINAL_ID>}"
+	# Baseline the current refusal in this record so only a later change re-posts.
+	if [[ -n "$attempt" ]] && ! _pcc_is_capability_release "$comments" "$release_id"; then
+		refusal=$(_pcc_refusal_token "$repo" "$pr" "$issue" "$release_id" "$attempt") || refusal=""
+		IFS=$'\t' read -r refusal_token refusal_detail <<<"$refusal"
+		[[ "$refusal_token" =~ ^[a-z][a-z0-9_]*$ ]] || refusal_token="none"
+	fi
+	local refusal_notice=""
+	if [[ "$refusal_token" != none ]]; then
+		refusal_notice="The approval template currently refuses with \`${refusal_token}\`. Diagnostic (metadata only): ${refusal_detail}
+
+"
+	fi
 	approval_step="1. Resolve the blocker, usually by correcting this issue body, then publish the single line printed by
    \`pr-checkpoint-continuation-helper.sh approval-template ${repo} ${pr} ${issue} ${release_id} ${attempt_arg}\`
    Generate it after the body edit: the approval binds the corrected brief. Pulse then continues the exact head."
@@ -989,11 +1107,12 @@ _pcc_blocked_attention() {
 	fi
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} release=${release_id} -->
+<!-- ${key} release=${release_id} refusal=${refusal_token} -->
 BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} attempt=${attempt:-unknown}
 
 A worker released this issue as \`blocked\` and left draft PR #${pr} as a durable checkpoint. Ordinary redispatch stays held while the draft exists, and a blocked checkpoint is never continued without a revision-bound approval.
 
-Next action for the brief owner (write access required), one of:
+${refusal_notice}Next action for the brief owner (write access required), one of:
 
 ${approval_step}
 2. Close draft PR #${pr} to discard the checkpoint; ordinary dispatch then restarts from the current brief.
@@ -1003,8 +1122,7 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and b
 	# GH#35788: capability releases already support guarded automatic continuation
 	# (GH#34758). Do not send a runner prerequisite failure back to the brief owner.
 	# GH#35932: comments are slurped pages; iterate comments, not pages.
-	if jq -e --argjson id "$release_id" --arg line "$_PCC_CAPABILITY_RELEASE_LINE" \
-		'any(flatten[]; .id == $id and ((.body // "") | split("\n") | any(startswith($line))))' <<<"$comments" >/dev/null; then
+	if _pcc_is_capability_release "$comments" "$release_id"; then
 		body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} release=${release_id} -->
 BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} attempt=${attempt:-unknown}
