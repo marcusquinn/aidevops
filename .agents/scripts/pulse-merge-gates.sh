@@ -514,6 +514,42 @@ _pulse_merge_live_state_gate() {
 	return 0
 }
 
+#######################################
+# Final-boundary merge authority for an authenticated Dependabot update.
+#
+# Dependabot PRs never carry a linked issue, so the generic external-PR rule
+# (linked-issue approval + PR approval) refused every maintainer-approved
+# Dependabot PR at the last gate. Exact-head bot identity, repository
+# ownership, commit authorship and dependency allowlisting establish the
+# update's provenance; current-head V2 maintainer merge authority replaces
+# issue-level development authority. Forks and other authors stay refused.
+#
+# Args: $1=PR number, $2=repo slug, $3=GraphQL author login,
+#       $4=current head SHA, $5=isCrossRepository
+# Returns: 0 when both checks pass for the exact head; 1 otherwise
+#######################################
+_pulse_merge_trusted_dependabot_final_authority() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_author="$3"
+	local current_head_sha="$4"
+	local is_fork="$5"
+
+	#aidevops:trust-boundary -- GH#17671 defence-in-depth: same-repository
+	# GitHub Bot provenance plus exact-head V2 merge authority, never either alone.
+	# The GraphQL metadata read already proved isCrossRepository is a boolean, and
+	# the trusted-Dependabot check independently re-verifies head ownership.
+	[[ "$is_fork" != "true" && "$pr_author" == "dependabot" && -n "$current_head_sha" ]] || return 1
+	declare -F _is_trusted_dependabot_update_pr >/dev/null 2>&1 || return 1
+	_is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "dependabot[bot]" "$current_head_sha" || return 1
+	if ! _external_pr_current_head_crypto_approved "$pr_number" "$repo_slug" "$current_head_sha"; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — verified Dependabot PR lacks V2 authority for current head ${current_head_sha:0:12}" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-merge] Verified Dependabot update with current-head maintainer V2 authority for PR #${pr_number} at ${current_head_sha:0:12}" >>"$LOGFILE"
+	return 0
+}
+
 _pulse_merge_admin_safety_check() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -597,6 +633,10 @@ _pulse_merge_admin_safety_check() {
 
 	# External / fork PR — require linked issue + crypto approval.
 	if [[ -z "$linked" ]]; then
+		if _pulse_merge_trusted_dependabot_final_authority "$pr_number" "$repo_slug" \
+			"$pr_author" "$current_head_sha" "$is_fork"; then
+			return 0
+		fi
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR has no linked issue (t2934)" >>"$LOGFILE"
 		return 1
 	fi

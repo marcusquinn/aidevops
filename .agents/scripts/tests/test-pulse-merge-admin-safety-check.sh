@@ -24,6 +24,8 @@
 #   I — unlabeled non-collaborator, no current PR authority                 → return 1
 #   J — cached positive review evidence, live outcome no longer permitted  → return 1
 #   K — stale cached evidence, refreshed exact-head positive evidence      → return 0
+#   V — verified same-repo Dependabot PR, no linked issue, current-head V2 → return 0;
+#       missing approval, unverified provenance, or fork                   → return 1
 #   M-Q — metadata and linked-issue lookup failures are logged              → return 1
 
 set -euo pipefail
@@ -76,7 +78,7 @@ set_fixture() {
 	local pr_approval_result="${5:-$issue_approval_result}"
 	local pr_author="${6:-}"
 	local pr_state="${7:-OPEN}" is_draft="${8:-false}" review_decision="${9:-null}" head_sha="${10:-head-current}"
-	rm -f "${TEST_ROOT}/issue-sync-trusted"
+	rm -f "${TEST_ROOT}/issue-sync-trusted" "${TEST_ROOT}/dependabot-trusted"
 	if [[ -z "$pr_author" ]]; then
 		if [[ "$labels_json" == *"external-contributor"* || "$is_cross_repo" == "true" ]]; then
 			pr_author="external-contributor"
@@ -235,6 +237,7 @@ define_helpers_under_test() {
 		/^_pulse_merge_classify_final_authority\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_admin_pr_json_graphql\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_live_state_gate\(\) \{/,/^}$/ { print }
+		/^_pulse_merge_trusted_dependabot_final_authority\(\) \{/,/^}$/ { print }
 		/^_external_pr_has_linked_issue\(\) \{/,/^}$/ { print }
 		/^_external_pr_linked_issue_crypto_approved\(\) \{/,/^}$/ { print }
 		/^_external_pr_current_head_crypto_approved\(\) \{/,/^}$/ { print }
@@ -260,11 +263,13 @@ define_helpers_under_test() {
 		local author="$1"
 		local repo_slug="$2"
 		[[ -n "$repo_slug" ]] || return 2
-		[[ "$author" == "external-contributor" || "$author" == "$ISSUE_SYNC_GRAPHQL_AUTHOR" ]] && return 1
+		[[ "$author" == "external-contributor" || "$author" == "$ISSUE_SYNC_GRAPHQL_AUTHOR" || "$author" == "dependabot" ]] && return 1
 		return 0
 	}
 	_is_trusted_dependabot_update_pr() {
-		return 1
+		printf '%s\n' "trusted-dependabot $*" >>"${GH_LOG:-/dev/null}"
+		[[ -f "${TEST_ROOT}/dependabot-trusted" && "${3:-}" == "dependabot[bot]" && "${4:-}" == "head-current" ]]
+		return $?
 	}
 	# shellcheck disable=SC1090
 	eval "$merge_src"
@@ -642,6 +647,41 @@ test_case_u_unverified_issue_sync_candidate_fails_closed() {
 	return 0
 }
 
+run_dependabot_case() {
+	local name="$1" is_fork="$2" trusted="$3" pr_approval="$4" expected_rc="$5" expected_log="$6"
+	: >"$LOGFILE"
+	: >"$GH_LOG"
+	set_fixture '[{"name":"dependencies"}]' "$is_fork" \
+		'Bumps hono from 4.13.13 to 4.13.14.' 'NOT_VERIFIED' "$pr_approval" dependabot
+	[[ "$trusted" == "trusted" ]] && touch "${TEST_ROOT}/dependabot-trusted"
+	local result=0
+	_pulse_merge_admin_safety_check "970" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq "$expected_rc" ]] && grep -qF "$expected_log" "$LOGFILE"; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "rc=${result}; calls=$(cat "$GH_LOG"); log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_v_dependabot_without_linked_issue() {
+	run_dependabot_case "Case V: approved verified Dependabot PR passes without linked issue" \
+		false trusted VERIFIED 0 "Verified Dependabot update with current-head maintainer V2 authority for PR #970"
+	if grep -qF 'approval-helper verify pr 970 owner/repo --expect-head head-current' "$GH_LOG" &&
+		! grep -qE 'approval-helper verify [0-9]+ ' "$GH_LOG"; then
+		print_result "Case V: Dependabot authority checks the exact PR head, not an issue" 0
+	else
+		print_result "Case V: Dependabot authority checks the exact PR head, not an issue" 1 "calls=$(cat "$GH_LOG")"
+	fi
+	run_dependabot_case "Case V2: verified Dependabot PR without current-head approval is refused" \
+		false trusted NO_APPROVAL 1 "verified Dependabot PR lacks V2 authority for current head"
+	run_dependabot_case "Case V3: approved but unverified Dependabot PR still needs a linked issue" \
+		false untrusted VERIFIED 1 "external/fork PR has no linked issue"
+	run_dependabot_case "Case V4: approved fork PR authored as dependabot still needs a linked issue" \
+		true trusted VERIFIED 1 "external/fork PR has no linked issue"
+	return 0
+}
+
 test_case_j_final_gate_rejects_stale_cached_review_evidence() {
 	: >"$LOGFILE"
 	set_fixture '[{"name":"bug"}]' 'false' \
@@ -954,6 +994,7 @@ main() {
 	test_case_t_trusted_issue_sync_is_internal
 	test_case_t2_trusted_account_issue_sync_is_internal
 	test_case_u_unverified_issue_sync_candidate_fails_closed
+	test_case_v_dependabot_without_linked_issue
 	test_case_j_final_gate_rejects_stale_cached_review_evidence
 	test_case_k_final_gate_refreshes_current_review_evidence
 	test_case_l_collaborator_linked_issue_nmr_blocks_final_gate
