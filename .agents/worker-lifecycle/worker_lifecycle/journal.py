@@ -101,7 +101,7 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
         "AND julianday(recorded_at)<=julianday('now',?) GROUP BY kind,generation_id,archive) "
         "SELECT e.* FROM events e WHERE julianday(e.recorded_at)<=julianday('now',?) "
         "AND ((json_extract(e.payload,'$.type') IN "
-        "('open-admission','close-admission','created-worktree','retirement-removing',"
+        "('close-admission','created-worktree','retirement-removing',"
         "'worktree-recovery-authorized') AND EXISTS ("
         "SELECT 1 FROM generations g JOIN retired ON retired.generation_id=g.generation_id "
         "WHERE g.generation_id=json_extract(e.payload,'$.generation_id') "

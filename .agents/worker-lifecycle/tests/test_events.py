@@ -195,19 +195,20 @@ class EventContract(unittest.TestCase):
         _, events = self.generation_events()
         _, legacy = self.generation_events(legacy=True)
         before = self.store.summary()
-        self.assertEqual(self.cli("compact")["eligible_events"], 7)
+        self.assertEqual(self.cli("compact")["eligible_events"], 6)
         self.assertEqual(self.store.summary(), before)
         with patch("worker_lifecycle.storage.os.fsync", side_effect=OSError("archive-unavailable")):
             with self.assertRaises(OSError):
                 self.store.compact(apply=True)
         self.assertEqual(self.store.summary(), before)
         result = self.store.compact(apply=True)
-        self.assertEqual(result["archived_events"], 7)
+        self.assertEqual(result["archived_events"], 6)
         document = json.loads((self.path / result["archive"]).read_text())
         self.assertEqual(document["sha256"], hashlib.sha256(encode(document["evidence"]).encode()).hexdigest())
         archived = {row["event_id"] for row in document["evidence"]["events"]}
         retained = {key for key, payload in events + legacy if payload["type"] in {
-            "worktree-retired", "retirement-planned", "wip-preserved", "legacy-worktree-retired"}}
+            "open-admission", "worktree-retired", "retirement-planned", "wip-preserved",
+            "legacy-worktree-retired"}}
         self.assertEqual(archived, {key for key, _ in events + legacy} - retained)
         with self.store.connection(write=True, maintenance=False) as connection:
             for key, payload in events + legacy:
@@ -243,10 +244,10 @@ class EventContract(unittest.TestCase):
         generation, _ = self.generation_events()
         with self.store.connection(write=True, maintenance=False) as connection:
             connection.executemany("INSERT INTO events(event_id,payload,recorded_at) VALUES (?,?,?)", [
-                (str(uuid4()), encode({"type": "open-admission", "generation_id": generation}),
+                (str(uuid4()), encode({"type": "close-admission", "generation_id": generation}),
                  "2000-01-01T00:00:00Z") for _ in range(1000)])
         self.assertEqual(self.store.compact(apply=True)["archived_events"], 1000)
-        self.assertEqual(self.store.compact(apply=True)["archived_events"], 5)
+        self.assertEqual(self.store.compact(apply=True)["archived_events"], 4)
 
     def test_schema_one_generation_compaction_without_admissions_table(self):
         self.generation_events(legacy=True)
