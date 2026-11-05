@@ -735,20 +735,27 @@ dispatch_max() {
 	local dispatched_count=0 processed_count=0
 	_dispatch_execute_candidate_loop "$_dispatch_candidate_file" "$candidates_json" "$max_workers" "$active_workers" "$self_login" || return 1
 	rm -f "$_dispatch_candidate_file"
-	if [[ "$_dispatch_owns_benign_blocks_cycle" == "1" ]]; then
-		_dispatch_cleanup_benign_blocks_cycle
-	fi
+	[[ "$_dispatch_owns_benign_blocks_cycle" != "1" ]] || _dispatch_cleanup_benign_blocks_cycle
 
 	echo "[pulse-wrapper] Dispatch path=${_dispatch_path}: loop body finished — processed=${processed_count} dispatched=${dispatched_count} mode=$( ((_dispatch_max_parallel <= 1)) && echo serial || echo "parallel(${_dispatch_max_parallel})")" >>"$LOGFILE"
 	_dispatch_maybe_engage_throttle
-	# GH#36625 follow-up: every cycle reaches this deterministic path; the
-	# active-refill recycler alone runs too rarely. Same-cycle guard dedupes.
-	if declare -F _attribute_sustained_underfill >/dev/null; then
-		_attribute_sustained_underfill "$max_workers" "$((active_workers + dispatched_count))" "$candidate_count" || true
-	fi
+	_dispatch_attribute_round_underfill "$max_workers" "$((active_workers + dispatched_count))" "$candidate_count"
 
 	echo "[pulse-wrapper] Dispatch path=${_dispatch_path} complete: implementation_dispatched=${dispatched_count} triage_attempted=${triage_attempted} triage_infrastructure_failed=${triage_infrastructure_failed} processed=${processed_count}/${candidate_count} simultaneous_worker_slots_targeted=${available_slots}" >>"$LOGFILE"
 	echo "$dispatched_count"
+	return 0
+}
+
+#######################################
+# GH#36724: feed sustained-underfill attribution from the deterministic
+# dispatch path every cycle reaches; the active-refill recycler alone runs too
+# rarely. The same-cycle guard in _attribute_sustained_underfill dedupes.
+# Args: $1=final worker target, $2=active+dispatched workers, $3=ranked candidates
+#######################################
+_dispatch_attribute_round_underfill() {
+	local target="$1" active="$2" runnable="$3"
+	declare -F _attribute_sustained_underfill >/dev/null || return 0
+	_attribute_sustained_underfill "$target" "$active" "$runnable" || true
 	return 0
 }
 

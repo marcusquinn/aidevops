@@ -92,7 +92,8 @@ jq --argjson t "$(($(date +%s) - 6000))" '.timestamp = $t' "$state" >"$state.tmp
 cycle long-gap
 jq -e '.streak == 1' "$state" >/dev/null
 # The deterministic dispatch path must feed attribution, not only active refill.
-awk '/^dispatch_max\(\) \{/ {f=1} f && /^}/ {exit} f' "$SCRIPT_DIR/pulse-dispatch-engine.sh" | rg -q '_attribute_sustained_underfill'
+awk '/^dispatch_max\(\) \{/ {f=1} f && /^}/ {exit} f' "$SCRIPT_DIR/pulse-dispatch-engine.sh" | rg -q '_dispatch_attribute_round_underfill'
+awk '/^_dispatch_attribute_round_underfill\(\) \{/ {f=1} f && /^}/ {exit} f' "$SCRIPT_DIR/pulse-dispatch-engine.sh" | rg -q '_attribute_sustained_underfill'
 printf 'Dispatch blocked: waiting for a scoped signed maintainer permission grant\nDispatch blocked: secret store unlock expired\nDispatch blocked: GitHub pacing cooldown\nDispatch blocked: worktree capacity unavailable\n' >"$LOGFILE"
 _underfill_reason_tally 0 | jq -e 'length == 4 and any(.reason == "permission_gate") and any(.reason == "secret_gate") and any(.reason == "github_pacing") and any(.reason == "worktree_cap")' >/dev/null
 end=$(wc -c <"$LOGFILE")
