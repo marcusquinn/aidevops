@@ -133,6 +133,50 @@ executes and fails still records a failure. Missing scripts outside
 behavior does not verify host identity: a copy installed on another host will
 run there too. Do not install duplicate adapters for single-writer routines.
 
+## Routine PR trust and tracking anchors
+
+A routine may publish repository changes through a PR without a new task issue
+per run. An `origin:worker` PR still needs a verifiable maintainer brief: the
+t2449 worker-briefed trust gate does not accept a routine ID or a TODO.md link
+alone. Use one persistent tracking issue per PR-producing routine instead of
+adding a special merge exemption.
+
+During maintainer-led `/routine` setup, run:
+
+```bash
+routine-log-helper.sh create-issue r004 --repo owner/repo \
+  --title "r004: Nightly repo triage" --schedule "cron(15 2 * * *)" --type "agent:Build+"
+```
+
+The helper provisions missing labels and creates an anchor labelled `routines`,
+`routine-tracking`, `persistent`, and `no-auto-dispatch`; its stdout is the issue
+number. The latter two labels record the durable tracking-only purpose: keep it
+open and never dispatch it as an implementation task. Do not add `parent-task`.
+Existing local tracking state is reused, so verify that its repository and open
+issue number are correct before installing the SOP. Existing anchors need these
+labels applied during migration; closed anchors must be reopened or replaced by
+the maintainer, not silently reused as merge authority.
+
+Write the actual standalone `Ref #N` line into the maintainer-authored routine
+SOP nested under its TODO.md entry and into any scheduler prompt/prompt file.
+Every generated PR must copy that line into its body. Use `Ref`, not `Resolves`,
+`Fixes`, or `Closes`: a successful run must not close the recurring anchor.
+Keep the anchor focused on tracking the routine rather than describing a partial
+implementation or a child-task checklist that triggers partial-closeout handling.
+
+The normal GH#17671 boundary remains binding: the linked anchor's author must
+pass the existing OWNER/MEMBER, live maintainer permission, trusted-author, or
+verified cryptographic approval checks. A `routine-tracking` label is not proof
+of authority. A missing link, closed anchor, `parent-task` anchor, untrusted
+author, or failed metadata lookup still denies worker-briefed admission. All
+other CI, review, approval and branch-protection gates remain unchanged; never
+remove `origin:worker` or use `--admin` to bypass them.
+
+Validate the generated PR body and run `full-loop-helper.sh pre-merge-gate N
+owner/repo` before attempting the normal guarded merge. Existing routines can
+adopt this convention by creating/reusing a maintainer-authored anchor and
+updating their persisted SOP/prompt once; no new issue is required each run.
+
 ## Scheduler ownership
 
 Enabled `repeat:` routines in registered repositories are normally evaluated by
