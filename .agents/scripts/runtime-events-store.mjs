@@ -112,8 +112,8 @@ function queryJsonRows(sql, { executeSync = sqliteExecSync } = {}) {
   return Array.isArray(rows) ? rows : [];
 }
 
-function runtimeEventSchemaReady() {
-  const columns = new Set(queryJsonRows("PRAGMA table_info('runtime_events');").map((row) => row.name));
+function runtimeEventSchemaReady(executeSync = sqliteExecSync) {
+  const columns = new Set(queryJsonRows("PRAGMA table_info('runtime_events');", { executeSync }).map((row) => row.name));
   const requiredColumns = [
     "envelope_version", "event_id", "event_type", "correlation_id", "causation_id",
     "subject_id", "session_id", "worker_id", "parent_worker_id", "root_worker_id",
@@ -129,7 +129,7 @@ function runtimeEventSchemaReady() {
       'runtime_event_archives', 'idx_runtime_events_subject_state_version',
       'idx_runtime_events_worker_lineage'
     );
-  `);
+  `, { executeSync });
   const names = new Set(objects.map((row) => row.name));
   return [
     "runtime_events_reject_update", "runtime_events_reject_delete",
@@ -139,38 +139,38 @@ function runtimeEventSchemaReady() {
   ].every((name) => names.has(name));
 }
 
-function addWorkerLineageColumns() {
-  const columns = new Set(queryJsonRows("PRAGMA table_info('runtime_events');").map((row) => row.name));
+function addWorkerLineageColumns(executeSync) {
+  const columns = new Set(queryJsonRows("PRAGMA table_info('runtime_events');", { executeSync }).map((row) => row.name));
   let migrated = true;
   for (const column of ["parent_worker_id", "root_worker_id"]) {
-    if (!columns.has(column) && sqliteExecSync(`ALTER TABLE runtime_events ADD COLUMN ${column} TEXT;`, 15000) === null) {
+    if (!columns.has(column) && executeSync(`ALTER TABLE runtime_events ADD COLUMN ${column} TEXT;`, 15000) === null) {
       migrated = false;
     }
   }
   return migrated;
 }
 
-function migrateRuntimeEventSchema() {
-  let migrated = sqliteExecSync(RUNTIME_EVENTS_SCHEMA_SQL, 15000) !== null;
-  if (migrated) migrated = addWorkerLineageColumns();
+function migrateRuntimeEventSchema(executeSync) {
+  let migrated = executeSync(RUNTIME_EVENTS_SCHEMA_SQL, 15000) !== null;
+  if (migrated) migrated = addWorkerLineageColumns(executeSync);
   if (migrated) {
-    migrated = sqliteExecSync(
+    migrated = executeSync(
       "CREATE INDEX IF NOT EXISTS idx_runtime_events_worker_lineage " +
       "ON runtime_events(root_worker_id, parent_worker_id, worker_id, id);",
       15000,
     ) !== null;
   }
-  return migrated && runtimeEventSchemaReady();
+  return migrated && runtimeEventSchemaReady(executeSync);
 }
 
 /** Initialise the runtime-event table and migrate the two worker-lineage columns. */
-export function initialiseRuntimeEventStore(dbPath = resolveRuntimeEventsDbPath()) {
+export function initialiseRuntimeEventStore(dbPath = resolveRuntimeEventsDbPath(), { executeSync = sqliteExecSync } = {}) {
   let initialized = false;
   try {
     const canonicalDbPath = canonicalizeSqliteDbPath(dbPath);
     mkdirSync(dirname(canonicalDbPath), { recursive: true });
     setDbPath(canonicalDbPath);
-    initialized = runtimeEventSchemaReady() || migrateRuntimeEventSchema();
+    initialized = runtimeEventSchemaReady(executeSync) || migrateRuntimeEventSchema(executeSync);
   } catch {
     initialized = false;
   }
