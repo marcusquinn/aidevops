@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 
 from .retirement import _event, _event_id, _preserved
-from .storage import LifecycleRegistry, StoreConflict
+from .filesystem import checked_directory
+from .storage import LifecycleRegistry, StoreConflict, encode
 
 
 def _timestamp(value: str) -> datetime:
@@ -36,6 +37,42 @@ def _matching_plan(
             or planned.get("repo") != repository):
         return None
     return planned
+
+
+def _archived_admissions(store: LifecycleRegistry, generation: str) -> list[str]:
+    """Recover open-admission times from checksum-verified event archives.
+
+    Earlier compaction could archive the admission event. Duplicate archive
+    files (rollback leftovers) are collapsed by event identity; a conflicting
+    duplicate or unreadable archive is ignored as untrusted evidence.
+    """
+    found: dict[str, tuple[str, str]] = {}
+    for name in sorted(os.listdir(store.directory)):
+        if not (name.startswith("events-archive-") and name.endswith(".json")):
+            continue
+        try:
+            with checked_directory(store.directory) as directory_fd:
+                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+                with os.fdopen(descriptor, "rb") as stream:
+                    document = json.load(stream)
+            evidence = document["evidence"]
+            if hashlib.sha256(encode(evidence).encode("utf-8")).hexdigest() != document["sha256"]:
+                continue
+            events = evidence["events"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        for row in events:
+            try:
+                payload = json.loads(row["payload"])
+                if (payload.get("type") != "open-admission"
+                        or payload.get("generation_id") != generation):
+                    continue
+                identity = (row["recorded_at"], row["payload"])
+                if found.setdefault(row["event_id"], identity) != identity:
+                    return []  # Same event identity, different content.
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+    return [recorded for recorded, _ in found.values()]
 
 
 def verify_retirement(
@@ -72,12 +109,13 @@ def verify_retirement(
                 "json_extract(payload,'$.type')='open-admission' AND "
                 "json_extract(payload,'$.generation_id')=?", (generation,),
             ).fetchall()
+            opened = [row[0] for row in opened] or _archived_admissions(store, generation)
             ended = connection.execute(
                 "SELECT recorded_at FROM events WHERE event_id=?",
                 (_event_id(generation, "retired"),),
             ).fetchone()
         if (len(opened) == 1 and ended is not None
-                and _timestamp(opened[0][0]) <= created <= _timestamp(ended[0])):
+                and _timestamp(opened[0]) <= created <= _timestamp(ended[0])):
             candidates.append((generation, planned))
     if len(candidates) != 1:
         raise StoreConflict("retirement-proof-missing-or-ambiguous")
