@@ -529,6 +529,8 @@ TERMINAL_BLOCKER_QUESTION=${question}" '{type:"text",text:$text}' >"$output"
 		'Is token=synthetic first second still valid?' \
 		'Is SECRET : synthetic first second still valid?' \
 		'Is api_key=synthetic first second still valid?' \
+		'Should Basic synthetic-encoded-value be used?' \
+		'Should bAsIc synthetic-encoded-value be used?' \
 		'Is Authorization: synthetic first second still valid?'; do
 		fragment=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
 		[[ "$fragment" == *"no sanitized question recorded; the originating runner's recovery supervisor must publish one"* &&

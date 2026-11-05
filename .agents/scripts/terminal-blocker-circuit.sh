@@ -889,7 +889,10 @@ _terminal_blocker_public_question() {
 	# Reject the whole question because multi-word values have no safe boundary.
 	printf '%s' "$question" | python3 -c '
 import re, sys
-if re.search(r"(?i)\b(password|token|secret|api[_ -]?key|authorization)\s*[:=]", sys.stdin.read()):
+text = sys.stdin.read()
+if re.search(r"(?i)\b(password|token|secret|api[_ -]?key|authorization)\s*[:=]", text):
+    raise SystemExit(1)
+if re.search(r"(?i)\bbasic\s+\S+", text):
     raise SystemExit(1)
 ' || return 1
 	# shellcheck source=shared-constants.sh
