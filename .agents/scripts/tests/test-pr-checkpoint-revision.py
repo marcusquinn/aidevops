@@ -272,14 +272,18 @@ class RevisionTests(RevisionEnvelopeCases, unittest.TestCase):
             self.assertNotEqual(run({**data, **overrides}), 0, case)
 
     def test_claim_handoff_prelaunch_ready_and_rollback(self):
-        # (unassigned, fixture builder, generated approval, minimized historical claim)
-        cases = ((False, fixture, False, False), (True, fixture, False, False),
-                 (True, released_successor_fixture, True, False),
-                 (False, completed_release_fixture, True, False), (True, completed_release_fixture, True, False),
-                 (False, unlabelled_blocked_fixture, False, False), (True, unlabelled_blocked_fixture, False, False),
-                 (True, released_successor_fixture, True, True))
-        for unassigned, build, approve, minimized in cases:
-            with self.subTest(unassigned=unassigned, fixture=build.__name__, minimized=minimized), tempfile.TemporaryDirectory() as root:
+        # REST hygiene changes updated_at, not the body. The real claim
+        # subprocess must verify GraphQL lastEditedAt for historical claim 4.
+        minimized = {4: {"updated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                         "lastEditedAt": None}}
+        # (unassigned, fixture builder, generated approval, per-comment metadata)
+        cases = ((False, fixture, False, {}), (True, fixture, False, {}),
+                 (True, released_successor_fixture, True, {}),
+                 (False, completed_release_fixture, True, {}), (True, completed_release_fixture, True, {}),
+                 (False, unlabelled_blocked_fixture, False, {}), (True, unlabelled_blocked_fixture, False, {}),
+                 (True, released_successor_fixture, True, minimized))
+        for unassigned, build, approve, comment_edits in cases:
+            with self.subTest(unassigned=unassigned, fixture=build.__name__, minimized=bool(comment_edits)), tempfile.TemporaryDirectory() as root:
                 data = build()
                 if approve:
                     line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
@@ -322,12 +326,7 @@ class RevisionTests(RevisionEnvelopeCases, unittest.TestCase):
                     data["issue"]["labels"][1] = {"name": {"status:in-review": "status:available"}.get(status, status)}
                 for c in data["comments"]:
                     c["created_at"] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                if minimized:
-                    # REST hygiene changes updated_at, not the body. The real
-                    # claim subprocess must verify GraphQL lastEditedAt too.
-                    historical_claim = next(c for c in data["comments"] if c["id"] == 4)
-                    historical_claim["updated_at"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    historical_claim["lastEditedAt"] = None
+                    c.update(comment_edits.get(c["id"], {}))
                 state = pathlib.Path(root) / "state.json"
                 state.write_text(json.dumps(data))
                 gh = pathlib.Path(root) / "gh"
