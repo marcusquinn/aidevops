@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.121] - 2026-11-05
+
+### Changed
+
+- Maintenance: preserve compatible Actions updates (#36719)
+- Maintenance: sync GitHub issue refs to TODO.md (#36717)
+- Maintenance: bump secretlint from 13.0.7 to 13.1.0 (supersedes #36578) (#36710)
+- GH#36709 fix(screen-time): Linux periods before first sample are unavailable, not 0h; install sampler for Linux profile README
+
+### Fixed
+
+- make underfill attribution fire on real cycle lengths and the dispatch_max path
+- detect OpenCode API-key auth entries (key field)
+- share retry attempts with fresh rank-0 work (GH#36712) (#36720)
+- record activity watchdog deferrals per attempt and report effective hard-kill cap
+
 ## [3.39.120] - 2026-11-04
 
 ### Added
