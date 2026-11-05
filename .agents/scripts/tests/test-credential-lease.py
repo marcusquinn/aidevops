@@ -124,14 +124,17 @@ class LeaseTests(unittest.TestCase):
         self.envelope = json.dumps(payload).encode()
         with self.assertRaises(ValueError):
             lease.open_values(self.root, self.run_id)
-        with self.assertRaises(ValueError):
-            lease.validate_values({"LD_PRELOAD": "synthetic"})
+        for name in ("LD_PRELOAD", "GIT_SSH_COMMAND", "GIT_CONFIG_COUNT", "PERL5OPT", "RUBYOPT"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                lease.validate_values({name: "synthetic"})
 
     def test_child_is_scoped_and_output_is_not_forwarded(self):
         self.seal()
         with patch.dict(os.environ, {"LOCAL_VERIFY_PASSWORD": uuid.uuid4().hex,
                                      "BETA_TOKEN": uuid.uuid4().hex}):
-            with patch.object(lease, "open_values", return_value=self.values), \
+            # Supervision is mocked, so the Linux-only gate is simulated on any host.
+            with patch.object(lease.sys, "platform", "linux"), \
+                    patch.object(lease, "open_values", return_value=self.values), \
                     patch.object(lease.subprocess, "Popen") as spawn, \
                     patch.object(lease.os, "waitid", return_value=object()), \
                     patch.object(lease, "drain_child", return_value=0):
@@ -147,7 +150,8 @@ class LeaseTests(unittest.TestCase):
 
     def test_child_timeout_terminates_before_failure(self):
         self.seal()
-        with patch.object(lease, "open_values", return_value=self.values), \
+        with patch.object(lease.sys, "platform", "linux"), \
+                patch.object(lease, "open_values", return_value=self.values), \
                 patch.object(lease.subprocess, "Popen") as spawn, \
                 patch.object(lease.os, "waitid", return_value=None), \
                 patch.object(lease.time, "monotonic", side_effect=[0, 2]), \
@@ -156,6 +160,23 @@ class LeaseTests(unittest.TestCase):
         drain.assert_called_once_with(spawn.return_value)
         self.assertEqual((result["status"], code), ("child-interrupted", 1))
 
+    def test_repeated_stop_request_never_aborts_group_drain(self):
+        previous = lease.signal.getsignal(lease.signal.SIGTERM)
+
+        def stop_during_drain(_child):
+            # Deliver SIGTERM through the installed handler mid-drain.
+            lease.signal.getsignal(lease.signal.SIGTERM)(lease.signal.SIGTERM, None)
+            return 0
+
+        with patch.object(lease.sys, "platform", "linux"), \
+                patch.object(lease, "open_values", return_value=self.values), \
+                patch.object(lease.subprocess, "Popen"), \
+                patch.object(lease.os, "waitid", return_value=object()), \
+                patch.object(lease, "drain_child", side_effect=stop_during_drain) as drain:
+            result, code = lease.execute(self.root, self.run_id, ["synthetic-child"], "/", 1)
+        drain.assert_called_once()
+        self.assertEqual((result["status"], code), ("child-interrupted", 1))
+        self.assertIs(lease.signal.getsignal(lease.signal.SIGTERM), previous)
 
     def test_process_group_is_signalled_before_leader_is_reaped(self):
         from unittest.mock import Mock

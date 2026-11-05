@@ -33,7 +33,9 @@ Symlinks and broad/public directories are refused.
   credentials and dotenv sources are not inherited by the launcher. The child
   must not load dotenv after injection. Its stdin, stdout and stderr are disabled;
   the API emits only fixed outcome classifications. Do not use it for a command
-  requiring stdin or raw logs. Reserved environment execution hooks are refused.
+  requiring stdin or raw logs. Common loader, interpreter, shell and Git
+  execution-hook names are refused; that denylist is not exhaustive, so seal
+  only the names the reviewed command expects.
 - `remove --directory <directory> --run-id <uuid>` checks directory identity,
   run, device/inode and ciphertext digest. Removal requires no decryption/key
   unlock. It retains the non-secret receipt and is idempotent after confirmed
@@ -58,7 +60,9 @@ at the documented `credential-lease.retired.gpg` path and refuses cleanup.
 Execution requires Linux and Python 3.11 or later. The launcher assigns its child
 an owned process group (not a detached session), retains the unreaped leader to
 pin that identity, and drains the group on success, timeout or interruption before
-reporting the outcome. Remaining live group members cause refusal. Reviewed
+reporting the outcome. SIGTERM/SIGINT received while the child runs stop it as
+an interruption; repeated signals during the drain are recorded, never allowed
+to abort it. Remaining live group members cause refusal. Reviewed
 commands must not daemonize, start another session, or escape that group.
 
 Run `exec` only within an existing bounded owner with independent resource

@@ -29,6 +29,14 @@ RECEIPT = "credential-lease.json"
 CAPABILITIES = {"version": VERSION, "encryptedOnly": True, "createOnly": True,
                  "conditionalRemoval": True, "plaintextFiles": False,
                  "ownedProcessGroup": True}
+# Common loader, interpreter, shell and Git execution hooks. Not exhaustive:
+# seal only the names the reviewed child command actually expects.
+RESERVED_NAMES = frozenset({
+    "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "ENV", "GNUPGHOME", "SHELLOPTS",
+    "GCONV_PATH", "IFS", "PS4", "PROMPT_COMMAND", "GIT_SSH", "GIT_SSH_COMMAND",
+    "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EXTERNAL_DIFF", "GIT_EXEC_PATH",
+    "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS"})
+RESERVED_PREFIXES = r"(?:LD_|DYLD_|NODE_|PYTHON|BASH_|AIDEVOPS_|GIT_CONFIG|PERL5|RUBY)"
 
 
 def require(condition, reason):
@@ -134,9 +142,8 @@ def validate_values(values):
         require(isinstance(value, str), "values")
         require(value, "values")
         require("\0" not in value, "values")
-        require(name not in {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "ENV", "GNUPGHOME",
-                             "SHELLOPTS", "GCONV_PATH"}, "values")
-        require(not re.match(r"(?:LD_|DYLD_|NODE_|PYTHON|BASH_|AIDEVOPS_)", name), "values")
+        require(name not in RESERVED_NAMES, "values")
+        require(not re.match(RESERVED_PREFIXES, name), "values")
     require(len(json.dumps(values).encode()) <= LIMIT, "values")
     return values
 
@@ -303,10 +310,14 @@ def execute(directory, run_id, command, cwd, budget):
     environment = {key: os.environ[key] for key in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "AIDEVOPS_TEMP_DIR")
                    if key in os.environ}
     environment.update(values)
-    def interrupted(_number, _frame):
-        raise KeyboardInterrupt
+    received = []
 
-    previous = signal.signal(signal.SIGTERM, interrupted)
+    def record(number, _frame):
+        # Record stop requests instead of raising, so a repeated SIGTERM/SIGINT
+        # can never abort the owned-group drain and strand secret-bearing children.
+        received.append(number)
+
+    previous = {number: signal.signal(number, record) for number in (signal.SIGTERM, signal.SIGINT)}
     child = None
     stopped = False
     try:
@@ -317,21 +328,19 @@ def execute(directory, run_id, command, cwd, budget):
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  process_group=0)
         deadline = time.monotonic() + budget
-        try:
-            while os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
-                if time.monotonic() >= deadline:
-                    stopped = True
-                    break
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            stopped = True
+        while os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+            if received or time.monotonic() >= deadline:
+                stopped = True
+                break
+            time.sleep(0.1)
     finally:
         try:
             if child is not None:
                 returncode = drain_child(child)
         finally:
-            signal.signal(signal.SIGTERM, previous)
-    if stopped:
+            for number, handler in previous.items():
+                signal.signal(number, handler)
+    if stopped or received:
         return {"status": "child-interrupted", "version": VERSION}, 1
     return {"status": "child-passed" if returncode == 0 else "child-failed",
             "version": VERSION}, 0 if returncode == 0 else 1
