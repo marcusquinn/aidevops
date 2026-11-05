@@ -2,10 +2,11 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Validate saved quota evidence without attributing unknown request costs."""
 
+import json
 import re
 from collections import defaultdict
 
-AUTH_PATTERN = re.compile(r"[a-f0-9]{64}")
+from gh_quota_ci_rows import AUTH_PATTERN, ci_identity, keep_ci_sample, parse_ci_row
 
 
 def number(value):
@@ -73,24 +74,46 @@ def read_local(path, start, end):
     return series, reset_unknown, missing, duplicates, conflicting
 
 
-def ci_sample(sample, start, end):
-    """Validate independently known request costs, never shared-counter deltas."""
-    if sample.get("event") != "quota-ci-sample":
-        return None
-    fp = sample["auth_fingerprint"]
-    ident = sample["sample_id"]
-    if (not isinstance(fp, str) or not isinstance(ident, str)
-            or not ident or not AUTH_PATTERN.fullmatch(fp)):
-        return None
-    before, after = sample["before"], sample["after"]
-    before_used, after_used = before["used"], after["used"]
-    before_reset, after_reset = before["reset"], after["reset"]
-    lo, hi = sample["sample_start"], sample["sample_end"]
-    cost = sample["known_api_requests"]
-    numbers = (lo, hi, cost, before_used, after_used, before_reset, after_reset)
-    if any(type(n) is not int or n < 0 for n in numbers):
-        return None
-    if (not start <= lo <= hi <= end or before_reset <= 0
-            or before_reset != after_reset or not 0 < cost <= after_used - before_used):
-        return None
-    return (fp, before_reset, ident), (lo, hi, before_used, after_used, cost)
+def read_ci(path, start, end):
+    """Keep a decision for every input row, never echoing raw saved evidence."""
+    samples, identities, decisions = {}, {}, []
+    if not path:
+        return samples, identities, decisions
+    with open(path, "rb") as source:
+        for index, line in enumerate(source, 1):
+            decision = dict(event="quota-ci-decision", input_line=index,
+                            reason="invalid_sample")
+            decisions.append(decision)
+            try:
+                sample = json.loads(line.decode("utf-8"))
+                if isinstance(sample, dict) and sample.get("event") == "quota-ci-identity":
+                    record_identity(identities, sample)
+                    decision["reason"] = "identity_record"
+                    continue
+                parsed, decision["reason"] = parse_ci_row(sample, start, end)
+                if parsed is not None:
+                    keep_ci_sample(samples, parsed, decision)
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
+                continue
+    return samples, identities, decisions
+
+
+def record_identity(identities, sample):
+    """Store one saved identity; a conflict stays invalid regardless of order."""
+    fp, identity = ci_identity(sample)
+    if fp in identities and identities[fp] != identity:
+        identity = None
+    identities[fp] = identity
+
+
+def matching_ci(samples, identities, fingerprint, reset):
+    """Join tokens only with an unambiguous saved host/login/pool mapping."""
+    identity = identities.get(fingerprint)
+    matched = []
+    for (fp, sample_reset, _), (value, copies) in samples.items():
+        if (sample_reset != reset
+                or copies[0]["reason"] in ("conflicting_id", "outside_window")):
+            continue
+        if fp == fingerprint or (identity is not None and identities.get(fp) == identity):
+            matched.append((value, copies[0]))
+    return matched
