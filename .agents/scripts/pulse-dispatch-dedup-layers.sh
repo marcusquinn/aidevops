@@ -79,7 +79,7 @@ _classify_stale_recovery_crash_type() {
 	# number. Workers create branches like `bugfix/t1992-...`,
 	# `feature/auto-...-issue-18418`, or contain `gh-18418`. If we find
 	# anything, the worker reached the worktree-creation stage.
-	local branches_json _branch_count
+	local branches_json="" _branch_count=""
 	branches_json=$(gh api "repos/${repo_slug}/branches" --paginate --slurp \
 		2>/dev/null) || lookup_unknown=1
 	# Count once across all pages. Per-page --jq yields "0\n1", which the
