@@ -11,7 +11,7 @@ import sys
 
 
 def comment(number, body, author="worker", association="COLLABORATOR"):
-    return {"id": number, "body": body, "user": {"login": author},
+    return {"id": number, "node_id": "fixture-" + str(number), "body": body, "user": {"login": author},
             "author_association": association, "created_at": "2026-09-05T12:00:00Z"}
 
 
@@ -33,7 +33,7 @@ def comments_request(args, data, state):
         print(json.dumps([data["comments"]] if "--slurp" in args else data["comments"]))
         return
     body = next(a[5:] for a in args if a.startswith("body="))
-    number = max(c["id"] for c in data["comments"]) + 1
+    number = max((c["id"] for c in data["comments"]), default=0) + 1
     added = comment(number, body, "next-worker")
     added["created_at"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data["comments"].append(added)
@@ -43,6 +43,12 @@ def comments_request(args, data, state):
 
 
 def read_response(args, data):
+    if args[:2] == ["api", "graphql"]:
+        requested = [arg[6:] for arg in args if arg.startswith("ids[]=")]
+        print(json.dumps({"data": {"nodes": [
+            {"id": c["node_id"], "lastEditedAt": c.get("lastEditedAt")}
+            for c in data["comments"] if c.get("node_id") in requested]}}))
+        return
     responses = {
         "api user": "next-worker" if "--jq" in args else json.dumps({"login": "next-worker"}),
         "api repos/owner/repo/collaborators/maintainer/permission": "write",

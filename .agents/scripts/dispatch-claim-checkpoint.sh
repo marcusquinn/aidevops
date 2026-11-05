@@ -36,7 +36,7 @@ cmd_claim_pr_checkpoint() {
 	approval_id=$(jq -r '.approval_id' <<<"$approval") || return 1
 	nonce=$(_generate_nonce) || return 1
 	comment_id=$(_post_claim "$issue" "$repo" "$runner" "$nonce" "$(_now_utc)" \
-		"checkpoint_approval=${approval_id}" "$session") || return 1
+		"checkpoint_mode=revision checkpoint_approval=${approval_id}" "$session") || return 1
 	sleep "$DISPATCH_CLAIM_WINDOW"
 	claims=$(_fetch_claims "$issue" "$repo" "$runner") || return 1
 	if ! race_output=$(_resolve_claim_race_result "$issue" "$repo" "$runner" "$nonce" "$comment_id" "$claims"); then
@@ -55,8 +55,8 @@ cmd_claim_pr_checkpoint() {
 	# (transition prelaunch) before the claim-only orphan grace expires.
 	expires_at=$(jq -r --arg n "$nonce" '[.[] | select(.nonce == $n)][0].lease_expires_at // 0' <<<"$claims") || expires_at=0
 	[[ "$expires_at" =~ ^[0-9]+$ ]] || expires_at=0
-	jq --arg lease "$nonce" --arg session "$session" --argjson expires "$expires_at" --argjson claim_id "$comment_id" \
-		'{lease:$lease,session:$session,claim_id:$claim_id,approval_id,previous_assignee,previous_status,prelaunch_expires_at:$expires}' <<<"$approval"
+	jq --arg lease "$nonce" --arg session "$session" --arg device "$(_resolve_device_id)" --argjson expires "$expires_at" --argjson claim_id "$comment_id" \
+		'{lease:$lease,session:$session,device:$device,claim_id:$claim_id,approval_id,previous_assignee,previous_status,prelaunch_expires_at:$expires}' <<<"$approval"
 	return 0
 }
 
