@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess  # nosec B404 # fixed creator program in disposable repositories
 import sys
@@ -274,8 +275,11 @@ class RetirementContract(unittest.TestCase):
             "pr_number": 1, "resource_cleanup_state": "CLEANUP_DEFERRED",
         }))
         scripts = Path(__file__).resolve().parents[2] / "scripts"
+        bash = shutil.which("bash")
+        if bash is None:
+            raise FileNotFoundError("bash is required for the cleanup receipt bridge")
         subprocess.run(  # nosec B603 # real consumer, disposable registry and archive
-            ["bash", "-c", 'source "$1/full-loop-cleanup-receipt.sh"; '
+            [bash, "-c", 'source "$1/full-loop-cleanup-receipt.sh"; '
              'full_loop_mark_cleanup_cleaned_for_identity fixture/repository 1 "$2" "$3"',
              "fixture", str(scripts), str(self.target),
              str(self.root / "missing-removal.log")],
