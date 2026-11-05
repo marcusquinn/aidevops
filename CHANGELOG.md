@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.122] - 2026-11-05
+
+### Changed
+
+- Maintenance: bump Hono to 4.13.14 (#36735)
+- Documentation: LiteSpeed shared-cache purge scope for WordPress dev and deploy
+- Maintenance: bump Secretlint preset to 13.1.0 (#36731)
+
+### Fixed
+
+- let maintainer-approved Dependabot PRs pass the final merge gate
+- share urgent retries with fresh ordinary work under product reservations (#36729)
+
 ## [3.39.121] - 2026-11-05
 
 ### Changed
