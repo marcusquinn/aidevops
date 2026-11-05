@@ -236,8 +236,10 @@ opencode_auth_has_provider() {
 	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
 
 	[[ -f "$auth_file" ]] || return 1
+	# OAuth entries carry access/refresh; `opencode auth login` API keys are
+	# stored as {"type":"api","key":...}.
 	if command -v jq >/dev/null 2>&1; then
-		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ((.access // .refresh // .token // .apiKey // "") != "")' "$auth_file" >/dev/null 2>&1
+		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ((.access // .refresh // .token // .apiKey // .key // "") != "")' "$auth_file" >/dev/null 2>&1
 		return $?
 	fi
 	python3 - "$auth_file" "$provider" <<'PY' >/dev/null 2>&1
@@ -249,7 +251,7 @@ try:
 except Exception:
     sys.exit(1)
 entry = data.get(sys.argv[2])
-if isinstance(entry, dict) and any(entry.get(k) for k in ("access", "refresh", "token", "apiKey")):
+if isinstance(entry, dict) and any(entry.get(k) for k in ("access", "refresh", "token", "apiKey", "key")):
     sys.exit(0)
 sys.exit(1)
 PY

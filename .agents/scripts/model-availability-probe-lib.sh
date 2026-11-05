@@ -716,8 +716,10 @@ _probe_opencode_subscription_provider() {
 	local quiet="$2"
 	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
 
+	# OpenCode stores OAuth as access/refresh and `opencode auth login` API keys
+	# as {"type":"api","key":...}; accept either shape.
 	if [[ -f "$auth_file" ]] && command -v jq >/dev/null 2>&1 && \
-		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ((.access // .refresh // .token // .apiKey // "") != "")' "$auth_file" >/dev/null 2>&1; then
+		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ((.access // .refresh // .token // .apiKey // .key // "") != "")' "$auth_file" >/dev/null 2>&1; then
 		_record_health "$provider" "healthy" 200 0 "" 0
 		[[ "$quiet" != "true" ]] && print_success "$provider: authenticated through OpenCode"
 		return 0
