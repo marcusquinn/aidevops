@@ -79,6 +79,8 @@ async function applyConnectedRoutingModel(context, route, message, policy) {
     routing,
     route.effort,
     providerState,
+    undefined,
+    context.resolveAvailability(),
   );
   if (!routedModel) {
     throw new Error(`[aidevops] No connected model is available for '${route.effort}' routing`);

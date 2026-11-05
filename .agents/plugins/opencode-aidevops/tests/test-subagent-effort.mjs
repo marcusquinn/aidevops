@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerDelegatedDomainProfiles } from "../config-agent-profiles.mjs";
@@ -19,14 +19,101 @@ import {
 import {
   appendCapabilityEscalationContract,
   capabilityEscalationEvidence,
+  createInteractiveSubagentEscalator,
 } from "../subagent-effort-escalation.mjs";
 import { SubagentLifecycleTracker, eventSessionID } from "../subagent-lifecycle-tracker.mjs";
+import { authSignatureFromHeaders, clearModelUnavailable, markModelUnavailable } from "../model-unavailability.mjs";
+import { retryCodexModelRejection } from "../openai-codex-model-fallback.mjs";
 
 const TIER_REASONING = {
   simple: { openai: "low" },
   standard: { openai: "max" },
   thinking: { openai: "xhigh" },
 };
+
+test("entitlement rejection retries the next connected model in the same tier", async (t) => {
+  const prompts = [];
+  const headers = { authorization: "Bearer test-failover", "chatgpt-account-id": "test-account" };
+  const signature = authSignatureFromHeaders(headers);
+  const policy = { effort: "standard", routedModel: "openai/sol", attempt: 1 };
+  const routing = { tiers: { standard: { models: ["openai/sol", "anthropic/sonnet"] }, simple: { models: ["openai/luna"] } } };
+  const context = {
+    modelRouting: routing,
+    policies: new Map([["child", policy]]),
+    client: { session: { prompt: async (request) => {
+      prompts.push(request);
+      return { data: { parts: [{ type: "text", text: "result" }] } };
+    } } },
+    getSession: async () => ({ id: "child", parentID: "parent" }),
+    resolveProviderState: async () => ({ connected: ["openai", "anthropic"], all: [
+      { id: "openai", models: { sol: { id: "sol" }, luna: { id: "luna" } } },
+      { id: "anthropic", models: { sonnet: { id: "sonnet" } } },
+    ] }),
+    resolveAvailability: () => ({ authSignature: signature }),
+  };
+  await retryCodexModelRejection(Response.json({ error: { code: "model_not_found" } }, { status: 404 }),
+    "https://chatgpt.com/backend-api/codex/responses", { headers, body: JSON.stringify({ model: "sol" }) },
+    () => { throw new Error("request-level retries must not cross providers"); });
+  t.after(() => clearModelUnavailable("openai/sol", signature));
+  const hooks = createInteractiveSubagentEscalator(context);
+  hooks.beforeTool({ tool: "task", sessionID: "parent", callID: "call" }, {});
+  hooks.handleEvent({ event: { type: "session.error", properties: { sessionID: "child", error: {
+    name: "APIError", data: { statusCode: 404, responseBody: '{"error":{"code":"model_not_found"}}' },
+  } } } });
+  const output = { output: "failed", metadata: { sessionId: "child", status: "error" } };
+  await hooks.afterTool({ tool: "task", sessionID: "parent", callID: "call" }, output);
+  assert.deepEqual(prompts.map((request) => request.body.model), [{ providerID: "anthropic", modelID: "sonnet" }]);
+  assert.equal(output.output, "result");
+  assert.equal(output.metadata.status, "completed");
+});
+
+test("exhausted same-tier candidates report rejection without a lower-tier retry", async (t) => {
+  let hooks;
+  const prompts = [];
+  const errorEvent = () => ({ event: { type: "session.error", properties: { sessionID: "child", error: {
+    name: "APIError", data: { statusCode: 404, responseBody: '{"error":{"code":"model_not_found"}}' },
+  } } } });
+  const context = {
+    modelRouting: { tiers: { standard: { models: ["openai/first", "openai/second", "openai/second"] }, simple: { models: ["openai/luna"] } } },
+    policies: new Map([["child", { effort: "standard", routedModel: "openai/first", attempt: 1 }]]),
+    client: { session: { prompt: async (request) => {
+      prompts.push(request.body.model.modelID);
+      markModelUnavailable("openai/second", "test-exhaustion");
+      hooks.handleEvent(errorEvent());
+      return { error: { name: "APIError" } };
+    } } },
+    getSession: async () => ({ id: "child", parentID: "parent" }),
+    resolveProviderState: async () => ({ connected: ["openai"], all: [{ id: "openai", models: {
+      first: { id: "first" }, second: { id: "second" }, luna: { id: "luna" },
+    } }] }),
+    resolveAvailability: () => ({ authSignature: "test-exhaustion" }),
+  };
+  markModelUnavailable("openai/first", "test-exhaustion");
+  t.after(() => {
+    clearModelUnavailable("openai/first", "test-exhaustion");
+    clearModelUnavailable("openai/second", "test-exhaustion");
+  });
+  hooks = createInteractiveSubagentEscalator(context);
+  hooks.beforeTool({ tool: "task", sessionID: "parent", callID: "call" }, {});
+  hooks.handleEvent(errorEvent());
+  const output = { output: "failed", metadata: { sessionId: "child", status: "error" } };
+  await hooks.afterTool({ tool: "task", sessionID: "parent", callID: "call" }, output);
+  assert.deepEqual(prompts, ["second"]);
+  assert.match(output.output, /standard.*requested=openai\/first rejected=openai\/first,openai\/second/);
+  assert.equal(output.metadata.status, "error");
+});
+
+test("only definite model rejections become failover evidence", () => {
+  const lifecycle = new SubagentLifecycleTracker();
+  for (const error of [
+    { name: "APIError", data: { statusCode: 401, responseBody: '{"error":{"code":"model_not_found"}}' } },
+    { name: "APIError", data: { statusCode: 404, responseBody: '{"error":{"code":"other"}}' } },
+    { name: "OtherError", data: { statusCode: 404, responseBody: '{"error":{"code":"model_not_found"}}' } },
+  ]) {
+    lifecycle.handleEvent({ type: "session.error", properties: { sessionID: "child", error } });
+    assert.equal(lifecycle.takeEntitlementRejection("child"), false);
+  }
+});
 
 test("missing and legacy indexes cannot recursively register leaf profiles", () => {
   assert.deepEqual(loadAgentIndex(".agents", () => ""), []);
@@ -485,6 +572,40 @@ test("interactive routing selects an authenticated same-tier fallback", async ()
 
   await hooks.chatMessage({}, output);
   assert.deepEqual(output.message.model, { providerID: "anthropic", modelID: "sonnet" });
+});
+
+test("interactive routing checks the current account rather than the last rejected account", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "routing-auth-"));
+  const previous = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = root;
+  mkdirSync(join(root, "opencode"));
+  const signature = authSignatureFromHeaders({ authorization: "Bearer token-a", "chatgpt-account-id": "a" });
+  t.after(() => {
+    if (previous === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = previous;
+    clearModelUnavailable("openai/terra", signature);
+    rmSync(root, { recursive: true, force: true });
+  });
+  const setAuth = (access, accountId) => writeFileSync(join(root, "opencode", "auth.json"),
+    JSON.stringify({ openai: { type: "oauth", access, accountId } }));
+  const client = {
+    provider: { list: async () => ({ data: { connected: ["openai", "anthropic"], all: [
+      { id: "openai", models: { terra: { id: "terra" } } },
+      { id: "anthropic", models: { sonnet: { id: "sonnet" } } },
+    ] } }) },
+    session: { get: async ({ path }) => ({ data: { id: path.id, parentID: "parent", agent: "general" } }) },
+  };
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: { tiers: { standard: { models: ["openai/terra", "anthropic/sonnet"] } } },
+    agentRoutingState: { tiers: new Map([["general", "standard"]]), pinned: new Set() },
+  });
+  markModelUnavailable("openai/terra", signature);
+  for (const [access, accountId, expected] of [["token-a", "a", "anthropic"], ["token-b", "b", "openai"]]) {
+    setAuth(access, accountId);
+    const message = { sessionID: `child-${accountId}`, agent: "general" };
+    await hooks.chatMessage({}, { message, parts: [{ type: "text", text: "inspect" }] });
+    assert.equal(message.model.providerID, expected);
+  }
 });
 
 test("opted-in general child uses its stable arm and records the parent decision", async () => {

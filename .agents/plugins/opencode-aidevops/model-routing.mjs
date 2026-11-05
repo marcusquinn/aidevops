@@ -15,6 +15,7 @@ import {
 } from "./model-routing-variant.mjs";
 import { activeLocalOnlyPolicy, isLocalProvider } from "./local-only-policy.mjs";
 import { providerHasUsableCredentials } from "./provider-credentials.mjs";
+import { isModelUnavailable } from "./model-unavailability.mjs";
 
 export { providerHasUsableCredentials };
 
@@ -127,7 +128,7 @@ export function routingModelIdentity(model) {
 // no local candidate yields "", which callers treat as no route (child
 // routing throws, escalation and browser delegation are skipped). The
 // chat.params egress gate still refuses any non-local current model.
-export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy()) {
+export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy(), availability = {}) {
   const connected = new Set(Array.isArray(providerState?.connected) ? providerState.connected : []);
   const providers = new Map(
     (Array.isArray(providerState?.all) ? providerState.all : [])
@@ -136,6 +137,7 @@ export function selectConnectedRoutingCandidate(routing, tier, providerState, po
   );
 
   for (const candidate of routingCandidates(routing, tier)) {
+    if (isModelUnavailable(candidate, availability.authSignature)) continue;
     const { providerID, modelID } = routingModelIdentity(candidate);
     if (policy?.bound && !isLocalProvider(policy, providerID)) continue;
     const provider = providers.get(providerID);

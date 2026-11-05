@@ -4,10 +4,12 @@
 import {
   nextRoutingTier,
   routingCandidateIndex,
+  routingCandidates,
   routingModelIdentity,
   selectConnectedRoutingCandidate,
 } from "./model-routing.mjs";
 import { ON_DEMAND_TOOL } from "./on-demand-tools.mjs";
+import { isModelUnavailable } from "./model-unavailability.mjs";
 import { SubagentLifecycleTracker } from "./subagent-lifecycle-tracker.mjs";
 import {
   ESCALATION_PROMPT,
@@ -138,10 +140,10 @@ class InteractiveSubagentEscalator {
     policy.createdAt = Date.now();
   }
 
-  async promptNextTier(childID, childSession, model) {
+  async promptNextTier(childID, childSession, model, prompt = ESCALATION_PROMPT) {
     const body = {
       model: routingModelIdentity(model),
-      parts: [{ type: "text", text: ESCALATION_PROMPT, synthetic: true }],
+      parts: [{ type: "text", text: prompt, synthetic: true }],
     };
     if (childSession?.agent) body.agent = childSession.agent;
     return this.context.client.session.prompt({ path: { id: childID }, body });
@@ -190,6 +192,8 @@ class InteractiveSubagentEscalator {
       routing,
       tier,
       providerState,
+      undefined,
+      this.context.resolveAvailability(),
     );
     return model ? { model, tier } : null;
   }
@@ -253,6 +257,66 @@ class InteractiveSubagentEscalator {
     return this.completeEscalation(output, state);
   }
 
+  /** Retry a rejected child on connected candidates in its existing tier. */
+  async failoverTask(output, childID) {
+    const rejected = this.lifecycle.takeEntitlementRejection(childID);
+    const policy = this.context.policies.get(childID);
+    if (!policy || policy.pinned || !policy.routedModel?.startsWith("openai/")
+      || !rejected || (!toolFailed(output) && this.lifecycle.terminalEvidence(childID) !== "error")
+      || !isModelUnavailable(policy.routedModel, this.context.resolveAvailability().authSignature)) return null;
+    if (this.sideEffects.get(childID)) {
+      this.skippedForSideEffects(output);
+      return null;
+    }
+    const child = await this.loadChildSession(childID);
+    const providerState = await this.context.resolveProviderState();
+    if (!child.available || !providerState) return null;
+    const routing = policy.armRouting || this.context.modelRouting;
+    const requested = policy.routedModel;
+    const candidates = routingCandidates(routing, policy.effort);
+    const start = candidates.indexOf(requested);
+    if (start < 0) return null;
+    const rejectedModels = [requested];
+    const attempted = new Set(rejectedModels);
+    for (const model of candidates.slice(start + 1)) {
+      if (attempted.has(model)) continue;
+      attempted.add(model);
+      const route = { tiers: { [policy.effort]: { models: [model] } } };
+      if (!selectConnectedRoutingCandidate(route, policy.effort, providerState, undefined, this.context.resolveAvailability())) continue;
+      console.error(`[aidevops] requested=${requested} rejected=${rejectedModels.join(",")} next=${model}`);
+      this.prepareRoute(policy, policy.effort, model);
+      let response;
+      try {
+        response = await this.promptNextTier(childID, child.session, model,
+          "Continue the original task in this session. The previous model was unavailable before generation.");
+      } catch {
+        return null;
+      } finally {
+        policy.awaitingEscalationPrompt = false;
+      }
+      if (!responseError(response) && !response?.data?.info?.error) {
+        const text = responseText(response);
+        if (!text) return null;
+        output.output = text;
+        output.metadata = { ...output.metadata, status: "completed" };
+        this.lifecycle.takeEntitlementRejection(childID);
+        this.lifecycle.rememberStatus(childID, "completed");
+        return { model };
+      }
+      if (!this.lifecycle.takeEntitlementRejection(childID)) return null;
+      if (!isModelUnavailable(model, this.context.resolveAvailability().authSignature)) return null;
+      rejectedModels.push(model);
+      if (this.sideEffects.get(childID)) {
+        this.skippedForSideEffects(output);
+        return null;
+      }
+    }
+    const message = `[aidevops] No available ${policy.effort} model: requested=${requested} rejected=${rejectedModels.join(",")}; check provider access or routing configuration.`;
+    console.error(message);
+    output.output = message;
+    return null;
+  }
+
   async afterTool(input, output) {
     if (!TASK_TOOLS.has(safeToolName(input?.tool)) || !this.trackingEnabled()) return null;
     const identity = this.lifecycle.takeChildIdentity(input, output);
@@ -276,7 +340,9 @@ class InteractiveSubagentEscalator {
       };
     }
     try {
-      return this.enabled() ? await this.escalateTask(output, identity.childID) : null;
+      if (!this.enabled()) return null;
+      const failover = await this.failoverTask(output, identity.childID);
+      return failover || await this.escalateTask(output, identity.childID);
     } finally {
       this.recordHostOutcome(input, output, identity);
       if (identity.childID) this.sideEffects.delete(identity.childID);
