@@ -901,6 +901,8 @@ if not text.strip() or len(text) > 500 or any(ord(c) < 32 or ord(c) == 127 for c
     raise SystemExit(1)
 if any(c in text for c in "<>`@") or "-----BEGIN" in text:
     raise SystemExit(1)
+if re.search(r"(?i)\b(password|token|secret|api[_ -]?key|authorization)\s*[:=]", text):
+    raise SystemExit(1)
 text = re.sub(r"(?i)\b(?:https?|ssh|file)://\S+", "[redacted-url]", text)
 text = re.sub(r"(?i)\b(password|token|secret|api[_ -]?key|authorization)(\s*[:=]\s*)(\S+)", r"\1\2[redacted-value]", text)
 text = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [redacted-value]", text)
