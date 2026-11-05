@@ -45,10 +45,11 @@ dsr_repoint_dependant() {
 	state=$(printf '%s' "$issue_json" | jq -r '.state // ""') || return 1
 	[[ "$state" == "$DSR_STATE_OPEN" ]] || return 0
 	body=$(printf '%s' "$issue_json" | jq -r '.body // ""') || return 1
-	edges=$(gh api "repos/${repo}/issues/${dependant}/dependencies/blocked_by" --jq '.[].number' 2>/dev/null) || return 1
-	if ! printf '%s\n' "$edges" | grep -qx "$succ"; then
-		succ_id=$(gh api "repos/${repo}/issues/${succ}" --jq '.id' 2>/dev/null) || return 1
-		[[ "$succ_id" =~ ^[0-9]+$ ]] || return 1
+	# Compare global issue IDs: a same-number blocker from another repo must not match.
+	edges=$(gh api "repos/${repo}/issues/${dependant}/dependencies/blocked_by" --jq '.[].id' 2>/dev/null) || return 1
+	succ_id=$(gh api "repos/${repo}/issues/${succ}" --jq '.id' 2>/dev/null) || return 1
+	[[ "$succ_id" =~ ^[0-9]+$ ]] || return 1
+	if ! grep -qx "$succ_id" <<<"$edges"; then
 		gh api -X POST "repos/${repo}/issues/${dependant}/dependencies/blocked_by" -F "issue_id=${succ_id}" >/dev/null 2>&1 || return 1
 		changed=true
 	fi
