@@ -86,6 +86,7 @@ def build(output: Path, suite: str = "process") -> None:
 
 
 def main() -> int:
+    """Build the single-file lifecycle bundle from the command line."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="new .pyz filename; existing files are never overwritten")
     parser.add_argument("--suite", choices=("process", "registry"), default="process")

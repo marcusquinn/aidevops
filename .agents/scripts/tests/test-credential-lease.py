@@ -30,6 +30,7 @@ TEST_BASE = Path(os.environ.get("AIDEVOPS_TEMP_DIR",
 
 class LeaseTests(unittest.TestCase):
     def setUp(self):
+        TEST_BASE.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="lease-unit-", dir=TEST_BASE)
         self.base = Path(self.temporary.name)
         self.root = self.base / "run"
