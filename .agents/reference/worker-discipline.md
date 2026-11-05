@@ -37,6 +37,8 @@ Outcome A against a merged prerequisite PR (`For`/`Ref` the parent) is not an im
 
 Ambiguity about scope or style is NOT Outcome C. Applying any review hold at issue creation time merely to punt analysis to a human is forbidden. Reasoning responsibility applies here too: you do the thinking.
 
+A recovery gap in a fail-closed safety or audit path is NOT Outcome C when it can be closed without weakening the default. Use Outcome B and implement a recovery that stays rejected by default, is append-only, preserves original records, and requires an explicit per-record human acknowledgement carried in an already-trusted approval. Example: GH#36593 orphan releases now need `--acknowledge-unattributed`. The human then decides one concrete record, not an open policy question. This applies equally to interactive report authors: a report must not apply `hold-for-review` or `no-auto-dispatch` to its own issue to request this kind of decision.
+
 ## Worker scope enforcement (t1894)
 
 Workers must only act on the specific issue/PR they were dispatched for.

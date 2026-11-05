@@ -248,7 +248,7 @@ _pcc_usage() {
 	name="$(basename "$0")"
 	printf 'Usage: %s dispatch <repo_slug> <repo_path> <pr_number> <linked_issue> <current_assignee> <authenticated_login>\n' "$name"
 	printf '       %s dispatch-approved <repo_slug> <repo_path> <linked_issue> <authenticated_login>\n' "$name"
-	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id>\n' "$name"
+	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id> [--acknowledge-unattributed=ID[,ID]]\n' "$name"
 	printf '       %s blocked-attention <repo_slug> <linked_issue> <draft_pr_number>\n' "$name"
 	printf '       %s dispatch-stalled <repo_slug> <repo_path> <linked_issue> <draft_pr_number> <authenticated_login>\n' "$name"
 	return 0
@@ -756,9 +756,16 @@ _pcc_dispatch_approved() {
 
 _pcc_approval_template() {
 	local repo="$1" pr="$2" issue="$3" release_id="$4" attempt="$5" pr_json="" issue_json="" comments=""
+	local acknowledge="${6:-}" acknowledged="[]"
 	local trusted_logins=""
 	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr" =~ ^[1-9][0-9]*$ &&
 		"$issue" =~ ^[1-9][0-9]*$ && "$release_id" =~ ^[1-9][0-9]*$ && "$attempt" == attempt:* ]] || return 2
+	# GH#36593: only an operator naming exact orphan release comment IDs lets
+	# the template list them; automatic callers never pass this argument.
+	if [[ -n "$acknowledge" ]]; then
+		[[ "$acknowledge" =~ ^--acknowledge-unattributed=[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || return 2
+		acknowledged="[${acknowledge#--acknowledge-unattributed=}]"
+	fi
 	pr_json=$(gh pr view "$pr" --repo "$repo" --json number,headRefOid,headRefName,author) || return 1
 	issue_json=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	# GH#33997: the validator refuses releases dispatch-approved would reject.
@@ -766,7 +773,8 @@ _pcc_approval_template() {
 	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
 	printf '%s' "$comments" | jq --arg repo "$repo" --argjson pr "$pr_json" --argjson issue "$issue_json" \
 		--argjson release_id "$release_id" --arg attempt "$attempt" --argjson trusted_logins "$trusted_logins" \
-		'{repo:$repo,pr:$pr,issue:$issue,release_id:$release_id,attempt:$attempt,comments:.,trusted_logins:$trusted_logins}' |
+		--argjson acknowledged "$acknowledged" \
+		'{repo:$repo,pr:$pr,issue:$issue,release_id:$release_id,attempt:$attempt,comments:.,trusted_logins:$trusted_logins,acknowledge_unattributed:$acknowledged}' |
 		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR" template
 	return $?
 }
@@ -1509,7 +1517,7 @@ main() {
 		return $?
 		;;
 	approval-template)
-		_pcc_approval_template "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
+		_pcc_approval_template "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
 		return $?
 		;;
 	blocked-attention)

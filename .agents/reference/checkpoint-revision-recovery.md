@@ -204,7 +204,8 @@ claim path. Tokens are not copied into the approval.
 
 Publish a new generated approval rather than editing an old one. Approvals
 without the historical list do not authorize skipping intervening attempts.
-Open or overlapping attempts, an unmatched release or terminal lease, interactive
+Open or overlapping attempts, an unmatched release or terminal lease (except an
+explicitly acknowledged release with no open episode, below), interactive
 ownership, edited evidence and any new unrelated coordination after approval
 still reject continuation. A fully released attempt that occurs after approval
 requires a fresh assessment and approval; expiry alone is never closure evidence.
@@ -266,6 +267,28 @@ in `unbound_release_ids`, which the new approval must explicitly acknowledge.
 The exact expired owner abort is still required; edited or foreign diagnostics,
 identity-bearing releases, a second diagnostic, and ready/launch/renewal events
 after the diagnostic remain rejecting cases. No published evidence is removed.
+
+### Releases with no open episode (GH#36593)
+
+A trusted, unedited `CLAIM_RELEASED` can follow fully closed attempts with no
+claim of its own (for example a runtime release posted before releases were
+fenced to owned claims). Its writer provenance is usually unrecoverable from
+coordination records. By default `approval-template` refuses it and names the
+comment IDs. After inspecting them, the maintainer accepts them explicitly:
+
+```bash
+pr-checkpoint-continuation-helper.sh approval-template REPO PR ISSUE RELEASE_ID attempt:ID --acknowledge-unattributed=COMMENT_ID[,COMMENT_ID]
+```
+
+The list must match the orphan releases exactly; missing, extra or other IDs
+refuse. Each becomes a `released_successors` entry with
+`outcome: unattributed_release` and `provenance: unrecovered`, which the
+published approval must list exactly. The entry opens and closes no episode.
+It is not evidence of a claim, lease, completion or absence of side effects,
+and any token it names stays fenced from reuse. Releases inside an open
+episode, edited or untrusted comments, and malformed reasons still reject.
+Automatic approval paths never pass the acknowledgement. Releases are no
+longer published without an owned claim (`headless-runtime-release-claim.sh`).
 
 ### Ready leases that expired without a release (GH#36544)
 
