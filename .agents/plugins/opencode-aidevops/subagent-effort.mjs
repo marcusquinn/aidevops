@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { existsSync, readFileSync } from "fs";
+import { readCurrentOpenAIAuth } from "./oauth-pool.mjs";
+import { openAIAuthSignature } from "./model-unavailability.mjs";
 import { withUnambiguousProviderFallbacks } from "./model-routing-reasoning.mjs";
 import { createSubagentEffortHandlers } from "./subagent-effort-handlers.mjs";
 import { loadSubagentTrial } from "./subagent-ab.mjs";
@@ -217,6 +219,13 @@ export function createSubagentEffortHooks(client, options = {}) {
     onRoutingDecision,
     onSubagentOutcome: options.onSubagentOutcome,
     resolveProviderState,
+    // GH#36698: read the current OpenAI auth on every decision so a re-login
+    // stops matching model rejections recorded for the previous token.
+    resolveAvailability: () => {
+      const auth = readCurrentOpenAIAuth();
+      if (auth?.type !== "oauth" || !auth.access) return {};
+      return { authSignature: openAIAuthSignature(auth.access) };
+    },
     clampReasoningVariant,
     extractVariant,
     getParentRoute,
