@@ -493,13 +493,27 @@ test_update_sweeps_prior_publication_worktrees() {
 	chmod +x "$refusing_helper"
 	intent_dir="$(git -C "$fixture_repo" rev-parse --path-format=absolute --git-common-dir)/aidevops-profile-publication-intents"
 
-	for phase in refused-a refused-b sweep; do
-		local worktree_helper="$refusing_helper" min_age=""
-		if [[ "$phase" == sweep ]]; then
+	for phase in refused-a refused-b sweep sweep-recheck; do
+		local worktree_helper="$refusing_helper" min_age="" run_output="$output_file"
+		if [[ "$phase" == sweep || "$phase" == sweep-recheck ]]; then
 			worktree_helper="${helper_dir}/worktree-helper.sh"
 			min_age=0
+		fi
+		if [[ "$phase" == sweep ]]; then
 			tree_b=$(profile_publication_trees "$fixture_repo" | grep -vxF -- "$tree_a" || true)
 			[[ -n "$tree_b" ]] && printf 'local edit\n' >"${tree_b}/unpublished-note"
+		fi
+		if [[ "$phase" == sweep-recheck ]]; then
+			# macOS and legacy-guard hosts quarantine a dead publisher's lease for
+			# WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES before the clean tree may retire
+			# (GH#36741). Linux managed leases release at once, so recheck only when
+			# the first sweep preserved the clean tree, aging that first observation
+			# as a later hourly run would.
+			[[ -e "$tree_a" ]] || continue
+			run_output="${TEST_DIR}/update-output-recheck"
+			sqlite3 "${fixture_home}/.aidevops/.agent-workspace/worktree-registry.db" \
+				"UPDATE worktree_owners SET owner_dead_seen_at = '2000-01-01T00:00:00Z' WHERE COALESCE(owner_dead_seen_at, '') != '';" \
+				>/dev/null 2>&1 || true
 		fi
 		HOME="$fixture_home" \
 			PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
@@ -508,9 +522,10 @@ test_update_sweeps_prior_publication_worktrees() {
 			AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/recovery" \
 			AIDEVOPS_PROFILE_WORKTREE_HELPER="$worktree_helper" \
 			AIDEVOPS_PROFILE_PUBLICATION_SWEEP_MIN_AGE_SECS="$min_age" \
-			bash "${helper_dir}/profile-readme-helper.sh" update >"$output_file" 2>&1 || true
+			bash "${helper_dir}/profile-readme-helper.sh" update >"$run_output" 2>&1 || true
 		[[ "$phase" == refused-a ]] && tree_a=$(profile_publication_trees "$fixture_repo")
 	done
+	[[ ! -f "${TEST_DIR}/update-output-recheck" ]] || cat "${TEST_DIR}/update-output-recheck" >>"$output_file"
 
 	remaining=$(profile_publication_trees "$fixture_repo")
 	if [[ -z "$tree_a" || -z "$tree_b" || "$tree_a" == *$'\n'* ]] ||
