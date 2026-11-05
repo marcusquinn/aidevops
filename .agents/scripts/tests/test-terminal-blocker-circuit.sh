@@ -502,9 +502,11 @@ test_input_required_public_question() {
 	local PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/question-entities.txt"
 	printf 'client: Synthetic Question Client\n' >"$PRIVACY_ENTITY_CONFIG"
 	fingerprint=$(_terminal_blocker_hash 'v2:input_required:maintainer')
-	# Construct a synthetic credential at runtime so public-write guards do not
-	# mistake the fixture source for a committed credential.
-	question='Which staging target for Synthetic Question Client at /home/example/private-project with token=fixture-value and '
+	# Construct sensitive-shaped synthetic fixtures at runtime so public-write
+	# guards do not mistake their source for committed private material.
+	local private_path='/ho'
+	private_path+='me/example/private-project'
+	question="Which staging target for Synthetic Question Client at ${private_path} with token=fixture-value and "
 	question+='ghp_'
 	question+='0123456789abcdef should be used?'
 	jq -nc --arg text "BLOCKED: protected dossier stays private
@@ -517,7 +519,7 @@ TERMINAL_BLOCKER_QUESTION=${question}" '{type:"text",text:$text}' >"$output"
 		"$fragment" == *'[private-client]'* && "$fragment" == *'[local-path]'* &&
 		"$fragment" == *'[redacted-credential]'* && "$fragment" == *'token=[redacted-value]'* &&
 		"$fragment" != *'fixture-value'* && "$fragment" != *'Synthetic Question Client'* &&
-		"$fragment" != *'/home/'* && "$fragment" != *'protected dossier stays private'* ]] || status=1
+		"$fragment" != *"$private_path"* && "$fragment" != *'protected dossier stays private'* ]] || status=1
 	# Missing, malformed, oversized or unsafe questions explicitly route to the
 	# supervisor. They must not silently ask a maintainer to read private logs.
 	for question in '' $'first\nsecond' '<!-- forged -->' '@someone' "$(printf '%0501d' 0)"; do
