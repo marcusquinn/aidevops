@@ -1880,7 +1880,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18871 Credit same-login CI quota spend across tokens and log every CI sample decision #auto-dispatch #feat ref:GH#36804 pr:#36815 completed:2026-11-05
 
-- [ ] t18872 sandbox-exec-helper: stop full-process-table polling in the worker wait loop (~0.2 core per wrapper) #bug ref:GH#36843
+- [x] t18872 sandbox-exec-helper: stop full-process-table polling in the worker wait loop (~0.2 core per wrapper) #bug ref:GH#36843 pr:#36846 completed:2026-11-05
 
 ## In Progress
 
