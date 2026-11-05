@@ -406,10 +406,20 @@ and revalidation provide safety, not one long transaction. This is local-host, n
 ## Registry-driven cleanup pass
 
 `worker-registry.py cleanup` selects registered generations from the lifecycle
-database, not filesystem age, PR status or legacy ownership records. Required
+database, not filesystem age or legacy ownership records. Required
 arguments are `--repos-config` and `--output-root`; `--budget-seconds` and `--limit`
 bound the pass. The time budget stops admission of further candidates, not an
 already-running filesystem operation; the caller retains its hard watchdog.
+
+Before a new retirement plan, the pass applies one fail-closed PR hold (GH#36851):
+a tree whose branch name or HEAD commit matches an open PR in the configured slug
+is held with reason `open-pull-request`, and a failed or malformed PR lookup holds
+it with `pull-request-state-unavailable`. Holds are not failures and do not enter
+quarantine. The lookup is one paginated call per slug per pass. Checkouts without
+a configured remote have no pushed branch to protect and skip the lookup. An
+already-planned retirement always resumes, and the operator-targeted
+`cleanup-worktree`, `retire-worktree` and `retire-enrolled-only` commands keep
+their explicit-intent semantics.
 
 Repository configuration defines scope only. Entries with `maintenance: false`
 or `local_only: true` are excluded. Missing or detached canonical checkouts do not

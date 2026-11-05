@@ -1,12 +1,13 @@
 """Read-only discovery for the temporary cleanup; paths grant no authority."""
 
 from functools import partial
-import json
 import os
 from pathlib import Path
 import subprocess  # nosec B404 # exception classification only
 
 from .enrollment import _git_directory
+# Re-exported for legacy callers; the permanent registry pass shares it (GH#36851).
+from .pull_requests import open_pull_requests as open_pull_requests
 from .retirement import _git, _id
 
 
@@ -15,26 +16,6 @@ def same_tree(path, plan):
     if (_id(path) != plan["directory"] or _git_directory(path) != admin
             or _id(admin) != plan["admin_identity"]):
         raise ValueError("worktree-replaced")
-
-
-def open_pull_requests(slug):
-    """All pages or no authority; never infer absence from a failed API call."""
-    result = subprocess.run(  # nosec B603 B607 # fixed gh argv, validated slug
-        ["gh", "api", "--paginate", "--slurp",
-         f"repos/{slug}/pulls?state=open&per_page=100"],
-        check=True, capture_output=True, text=True, timeout=60,
-    )
-    pages = json.loads(result.stdout)
-    if (not isinstance(pages, list) or not pages
-            or any(not isinstance(page, list) for page in pages)):
-        raise ValueError("invalid-open-pr-response")
-    prs = [pr for page in pages for pr in page]
-    for pr in prs:
-        if (not isinstance(pr, dict) or not isinstance(pr.get("head"), dict)
-                or not isinstance(pr["head"].get("ref"), str)
-                or not isinstance(pr["head"].get("sha"), str)):
-            raise ValueError("invalid-open-pr-response")
-    return prs
 
 
 def _registered(common: str) -> list[str]:

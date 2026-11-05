@@ -18,6 +18,7 @@ from .cleanup_plan import enrolled_only_event_id
 from .cleanup_quarantine import CleanupQuarantine
 from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import validate_private_path as _private
+from .pull_requests import OpenPullRequestCache
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
 from .storage import LifecycleRegistry, identifier
 
@@ -115,8 +116,14 @@ def _advance(store: LifecycleRegistry, generation: str) -> None:
 def _candidate(
     store: LifecycleRegistry, repositories: dict[str, tuple[str, str]],
     root: Path, generation: str, path: Path,
+    pull_requests: "OpenPullRequestCache | None" = None,
 ) -> dict[str, object]:
-    """Classify one worktree path as a cleanup candidate and return its result."""
+    """Classify one worktree path as a cleanup candidate and return its result.
+
+    With ``pull_requests`` (the automatic pass), a tree whose branch or HEAD has
+    an open PR, or whose PR state cannot be read, is held before any mutation.
+    An already-planned retirement always resumes.
+    """
     result: dict[str, object] = {
         "generation_id": generation, "status": "coverage-gap",
     }
@@ -140,6 +147,10 @@ def _candidate(
     slug, base = repositories[common]
     if plan is not None:
         slug, base, root = plan["repo"], plan["base"], Path(plan["output_root"])
+    elif pull_requests is not None:
+        reason = pull_requests.hold_reason(path, slug)
+        if reason is not None:
+            return dict(result, status="held", reason=reason)
     return retire_worktree(
         store, path, generation,
         ArchiveTarget(slug, base, root, recover=creation is None),
@@ -212,8 +223,10 @@ def cleanup_pass(
 ) -> dict:
     """Budget between operations; the caller owns the hard watchdog.
 
-    No filesystem census, PR/age policy, branch removal or broad Git pruning.
-    A legacy/enrolled-only generation remains ineligible for retirement.
+    No filesystem census, age policy, branch removal or broad Git pruning.
+    One fail-closed PR hold applies: an open PR on the tree's branch or HEAD, or
+    unreadable PR state, keeps the tree (GH#36851). A legacy/enrolled-only
+    generation remains ineligible for retirement.
     """
     if not 1 <= limit <= 1000 or not 0 < budget_seconds <= 900:
         raise ValueError("invalid-cleanup-budget")
@@ -237,6 +250,7 @@ def cleanup_pass(
         create_archive_root(root)
         validate_archive_path(root)
         quarantine = CleanupQuarantine(store.directory)
+        pull_requests = OpenPullRequestCache()
         selected, report["quarantined"] = quarantine.partition(rows)
         for row in selected[:limit]:
             if time.monotonic() >= deadline:
@@ -245,7 +259,8 @@ def cleanup_pass(
             _advance(store, generation)
             report["examined"] += 1
             try:
-                result = _candidate(store, repositories, root, generation, path)
+                result = _candidate(store, repositories, root, generation, path,
+                                    pull_requests)
                 counter = {"retired": "retired", "source-absent-reconciled": "reconciled"}
                 report[counter.get(str(result["status"]), "held")] += 1
             except (ValueError, OSError, subprocess.SubprocessError) as error:

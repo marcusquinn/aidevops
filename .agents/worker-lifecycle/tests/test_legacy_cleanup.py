@@ -392,7 +392,7 @@ class LegacyCleanupContract(unittest.TestCase):
         failing = min(generations)
         seen = []
 
-        def candidate(store, repositories, root, generation, path):
+        def candidate(store, repositories, root, generation, path, pull_requests=None):
             seen.append(generation)
             if generation == failing:
                 raise subprocess.CalledProcessError(
