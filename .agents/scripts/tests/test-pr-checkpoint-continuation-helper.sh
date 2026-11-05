@@ -241,17 +241,25 @@ test_hidden_unedited_fence() (
 	pages='[[{"id":1,"node_id":"IC_hidden","created_at":"2026-11-02T00:00:00Z","updated_at":"2026-11-02T00:02:00Z","body":"DISPATCH_CLAIM x"},{"id":2,"node_id":"IC_edited","created_at":"2026-11-02T00:00:00Z","updated_at":"2026-11-02T00:02:00Z","body":"DISPATCH_CLAIM y"},{"id":3,"node_id":"IC_plain","created_at":"2026-11-02T00:00:00Z","updated_at":"2026-11-02T00:00:00Z","body":"z"}]]'
 	gh() {
 		[[ "$mode" != fail ]] || return 1
-		printf '{"data":{"nodes":[{"id":"IC_hidden","lastEditedAt":null},{"id":"IC_edited","lastEditedAt":"2026-11-02T00:02:00Z"}]}}\n'
+		if [[ "$mode" == missing_field ]]; then
+			printf '{"data":{"nodes":[{"id":"IC_hidden"}]}}\n'
+		else
+			printf '{"data":{"nodes":[{"id":"IC_hidden","lastEditedAt":null},{"id":"IC_edited","lastEditedAt":"2026-11-02T00:02:00Z"}]}}\n'
+		fi
 		return 0
 	}
 	mode=ok
-	out=$(_pcc_normalise_hidden_unedited "$pages")
+	out=$(_pr_checkpoint_normalise_hidden_unedited "$pages")
 	jq -e "${_PCC_JQ_RELEASE_DEFS}"'
 		[flatten[] | select(unedited) | .id] == [1,3]' <<<"$out" >/dev/null || status=1
-	mode=fail
-	out=$(_pcc_normalise_hidden_unedited "$pages")
-	jq -e "${_PCC_JQ_RELEASE_DEFS}"'
-		[flatten[] | select(unedited) | .id] == [3]' <<<"$out" >/dev/null || status=1
+	# The shared predicate also accepts flat metadata snapshots.
+	out=$(_pr_checkpoint_normalise_hidden_unedited "$(jq -c 'flatten' <<<"$pages")")
+	jq -e '[.[] | select(.updated_at == .created_at) | .id] == [1,3]' <<<"$out" >/dev/null || status=1
+	for mode in fail missing_field; do
+		out=$(_pr_checkpoint_normalise_hidden_unedited "$pages")
+		jq -e "${_PCC_JQ_RELEASE_DEFS}"'
+			[flatten[] | select(unedited) | .id] == [3]' <<<"$out" >/dev/null || status=1
+	done
 	[[ "$status" == 0 ]] || return 1
 	return 0
 )

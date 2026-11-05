@@ -1000,6 +1000,9 @@ _worker_canary_soft_bypass_authorized() {
 	local role="$1"
 	local authorized_reason="${AIDEVOPS_WORKER_CANARY_SOFT_BYPASS_REASON:-}"
 	[[ "$role" == "$HEADLESS_ROLE_WORKER" ]] || return 1
+	# GH#36698: model_unavailable is soft only at the dispatcher, whose canary
+	# backs off the rejected model before this worker reselects. A worker whose
+	# own canary model is rejected must exit rather than run on that model.
 	case "$authorized_reason" in
 		inconclusive | overload | provider_error | rate_limit | timeout | transient) ;;
 		*) return 1 ;;

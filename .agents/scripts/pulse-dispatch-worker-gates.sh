@@ -242,8 +242,11 @@ _dlw_canary_last_failure_reason() {
 
 _dlw_canary_failure_is_soft() {
 	local reason="$1"
+	# GH#36698: model_unavailable stays soft (as the provider_error it was
+	# previously classified as); the canary records a model-only backoff, so
+	# the worker selector moves to the next same-tier candidate.
 	case "$reason" in
-		inconclusive | overload | provider_error | rate_limit | timeout | transient)
+		inconclusive | overload | provider_error | rate_limit | timeout | transient | model_unavailable)
 			return 0
 			;;
 	esac
