@@ -596,9 +596,9 @@ _ghqa_capture_cleanup() {
 _ghqa_capture_frames_valid() {
 	local parsed="$1"
 	local expected_frames="$2"
-	local kind frame_index status_count status resource used remaining reset elapsed response_cost
+	local kind frame_index status_count status resource used remaining reset elapsed response_cost request_method endpoint_class
 	local rows=0
-	while IFS=$'\t' read -r kind frame_index status_count status resource used remaining reset elapsed response_cost; do
+	while IFS=$'\t' read -r kind frame_index status_count status resource used remaining reset elapsed response_cost request_method endpoint_class; do
 		[[ "$kind" == frame ]] || continue
 		rows=$((rows + 1))
 		[[ "$frame_index" =~ ^[1-9][0-9]*$ && "$status_count" == 1 ]] || return 1
@@ -607,7 +607,7 @@ _ghqa_capture_frames_valid() {
 		for value in "$used" "$remaining" "$reset" "$elapsed"; do
 			[[ "$value" =~ ^[0-9]+$ ]] || return 1
 		done
-		[[ -z "$response_cost" || "$response_cost" =~ ^[0-9]+$ ]] || return 1
+		[[ -z "$response_cost" || "$response_cost" == x || "$response_cost" =~ ^[0-9]+$ ]] || return 1
 	done <<<"$parsed"
 	[[ "$rows" -eq "$expected_frames" && "$rows" -gt 0 ]]
 	return $?
@@ -674,6 +674,7 @@ _ghqa_write_complete_frames() {
 	local parsed="$6"
 	shift 6
 	local kind="" frame_index="" status_count="" status="" resource="" used="" remaining="" reset="" elapsed="" response_cost=""
+	local request_method="" endpoint_class=""
 	local frame_total=0 path="" pool="" page="" outcome="" quota_cost="" exact_success_cost="" decision=""
 	local invalidate_state=0
 	# Capture the sample time while holding the credential lock. Appending after
@@ -686,7 +687,7 @@ _ghqa_write_complete_frames() {
 	if [[ "$command_rc" -eq 0 && "$frame_total" -eq 1 ]]; then
 		exact_success_cost=$(_ghqa_exact_success_cost "$original_path" "${@:2}" 2>/dev/null || true)
 	fi
-	while IFS=$'\t' read -r kind frame_index status_count status resource used remaining reset elapsed response_cost; do
+	while IFS=$'\t' read -r kind frame_index status_count status resource used remaining reset elapsed response_cost request_method endpoint_class; do
 		[[ "$kind" == frame ]] || continue
 		path=$(_ghqa_path_for_resource "$original_path" "$resource")
 		pool=$(_ghqa_pool_for_resource "$resource")
@@ -725,9 +726,9 @@ _ghqa_write_complete_frames() {
 		# costs, so the next response can prove or reject continuity.
 		_ghqa_state_update "$state_file" "$resource" "$used" "$reset" 2>/dev/null || true
 		decision="${AIDEVOPS_GH_ROUTE_DECISION:-${pool}-selected}"
-		printf 'attempt\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		printf 'attempt\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"$path" "$page" "$outcome" "$status" "$elapsed" "$quota_cost" \
-			"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" >>"$result_file"
+			"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" "${request_method:-unknown}" "${endpoint_class:-unknown}" >>"$result_file"
 	done <<<"$parsed"
 	[[ "$invalidate_state" -eq 0 ]] || rm -f -- "$state_file" 2>/dev/null || true
 	return 0
@@ -741,6 +742,7 @@ _ghqa_write_incomplete_frames() {
 	local parsed="$5"
 	local elapsed_ms="$6"
 	local line="" kind="" frame_index="" status_count="" status="" resource="" used="" remaining="" reset="" ignored=""
+	local response_cost="" request_method="" endpoint_class=""
 	local page="" frame_elapsed="" pool="" decision="" sampled_at=""
 	local frame_total=0 rows=0 outcome=success
 	[[ "$command_rc" -eq 0 ]] || outcome=error
@@ -749,7 +751,7 @@ _ghqa_write_incomplete_frames() {
 	pool=$(_gh_default_pool "$original_path")
 	decision="${AIDEVOPS_GH_ROUTE_DECISION:-${pool}-selected}"
 	while IFS= read -r line; do
-		IFS=$'\t' read -r kind frame_index status_count status resource used remaining reset ignored <<<"$line"
+		IFS=$'\t' read -r kind frame_index status_count status resource used remaining reset ignored response_cost request_method endpoint_class <<<"$line"
 		[[ "$kind" == frame && "$frame_index" =~ ^[1-9][0-9]*$ ]] || continue
 		page=$(_ghqa_frame_page "$original_page" "$frame_index" "$frame_total") || continue
 		# Only aggregate process latency is available for incomplete frames. Own it
@@ -766,9 +768,9 @@ _ghqa_write_incomplete_frames() {
 		[[ "$remaining" =~ ^[0-9]+$ ]] || remaining=x
 		[[ "$reset" =~ ^[1-9][0-9]*$ ]] || reset=x
 		[[ "$used" =~ ^[0-9]+$ ]] || used=x
-		printf 'attempt\t%s\t%s\t%s\t%s\t%s\tx\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		printf 'attempt\t%s\t%s\t%s\t%s\t%s\tx\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"$(_ghqa_path_for_resource "$original_path" "$resource")" "$page" "$outcome" "$status" "$frame_elapsed" \
-			"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" >>"$result_file"
+			"$pool" "$decision" "$remaining" "$reset" "$sampled_at" "$used" "${request_method:-unknown}" "${endpoint_class:-unknown}" >>"$result_file"
 		rows=$((rows + 1))
 	done <<<"$parsed"
 	[[ "$rows" -gt 0 ]]
@@ -849,14 +851,14 @@ _ghqa_record_result_file() {
 	local caller="$2"
 	local logical_id="$3"
 	local retry="$4"
-	local kind path page outcome status elapsed quota pool decision budget reset sampled_at used
+	local kind path page outcome status elapsed quota pool decision budget reset sampled_at used request_method endpoint_class
 	local attempts=0
-	while IFS=$'\t' read -r kind path page outcome status elapsed quota pool decision budget reset sampled_at used; do
+	while IFS=$'\t' read -r kind path page outcome status elapsed quota pool decision budget reset sampled_at used request_method endpoint_class; do
 		[[ "$kind" == attempt ]] || continue
 		attempts=$((attempts + 1))
 		gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
 			"$status" "$elapsed" "$quota" "${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "$decision" "$budget" \
-			"${AIDEVOPS_GH_AUTH_FINGERPRINT:-}" "$reset" "$sampled_at" "$used"
+			"${AIDEVOPS_GH_AUTH_FINGERPRINT:-}" "$reset" "$sampled_at" "$used" "$request_method" "$endpoint_class"
 	done <"$result_file"
 	# An exact capture path that observed malformed debug output writes an opaque
 	# row above. An empty result is valid only when gh made no HTTP request.

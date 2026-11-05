@@ -115,6 +115,16 @@ headers: a delta above one cannot distinguish the operation from another client.
 Partial attribution does not relax the benchmark's zero-unknown-cost
 comparability gate.
 
+Exact-capture v2 rows append `request_method` (column 23) and `endpoint_class`
+(column 24) after the cumulative used counter; existing columns and quota-cost
+semantics are unchanged. Methods are standard uppercase HTTP verbs. Endpoint
+classes are static labels such as `repos-issues`, `repos-pulls`, `repos-actions`,
+`repos-commits`, `repos-checks`, `search`, `users`, and `rate-limit`, not raw paths.
+Other repository routes use `repos-other`; other roots use `other`. Neither
+repository names, IDs, query strings nor payloads are retained. Overlapping or
+unterminated request streams, opaque capture and legacy callers use `unknown`.
+Readers must continue accepting older rows without these optional columns.
+
 ### Pinning Pulse during controlled windows
 
 Framework releases may continue during a long observation, but Pulse must not

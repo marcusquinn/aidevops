@@ -761,6 +761,73 @@ assert_eq "partial frame with no reset preserves used without inventing reset" \
 assert_eq "both partial-frame costs remain unknown" "2" \
 	"$(awk -F '\t' '$17 == "" { n++ } END { print n+0 }' "$AIDEVOPS_GH_API_LOG")"
 
+# Request labels travel from private debug capture through the real row writers.
+request_debug="$TMPDIR/request-labels.debug"
+python3 - "$request_debug" <<'PY_REQUEST_LABELS'
+import sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(
+    "* Request at 2026-11-05 12:00:00 +0000\n"
+    "> PATCH /repos/private-owner/private-repo/issues/123?token=private-value HTTP/1.1\n"
+    "> Authorization: private-value\n"
+    "< HTTP/1.1 200 OK\n"
+    "< X-Ratelimit-Resource: core\n"
+    "< X-Ratelimit-Used: 1\n"
+    "< X-Ratelimit-Remaining: 4999\n"
+    "< X-Ratelimit-Reset: 1800000000\n"
+    "* Request took 1ms\n"
+)
+PY_REQUEST_LABELS
+request_parsed=$(python3 "$PARENT_DIR/gh-quota-debug-filter.py" "$request_debug")
+assert_eq "debug parser emits only bounded request labels" "PATCH:repos-issues" \
+	"$(printf '%s\n' "$request_parsed" | awk -F '\t' '$1 == "frame" {print $11 ":" $12}')"
+assert_eq "request metadata does not invalidate complete response" "0" \
+	"$(
+		_ghqa_capture_frames_valid "$request_parsed" 1
+		printf '%s' "$?"
+	)"
+request_result="$TMPDIR/request-labels.result"
+_ghqa_write_complete_frames "$request_result" "$exact_success_state" rest 1 0 "$request_parsed" gh api repos/example/example/issues
+gh_clear_log
+_ghqa_record_result_file "$request_result" request-labels logical-labels 0
+assert_eq "complete attempt retains method and endpoint class" "PATCH:repos-issues" \
+	"$(awk -F '\t' 'NR == 1 {print $23 ":" $24}' "$AIDEVOPS_GH_API_LOG")"
+request_partial="$TMPDIR/request-partial.result"
+_ghqa_write_incomplete_frames "$request_partial" rest 1 1 "$request_parsed" 1
+_ghqa_record_result_file "$request_partial" request-partial logical-partial-labels 0
+assert_eq "incomplete attempt retains labels without claiming cost" ":PATCH:repos-issues" \
+	"$(awk -F '\t' 'NR == 2 {print $17 ":" $23 ":" $24}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest unsafe-labels unsafe-labels unsafe-labels 1 0 success 200 1 1 gh-pat rest-core selected 99 "" "" "" "" "private-method" "/repos/private-owner/private-repo"
+assert_eq "append boundary rejects arbitrary request text" "unknown:unknown" \
+	"$(awk -F '\t' 'NR == 3 {print $23 ":" $24}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "private request text never reaches attempt rows" "0" \
+	"$(awk '/private-owner|private-repo|private-value|private-method/ {n++} END {print n+0}' "$AIDEVOPS_GH_API_LOG")"
+python3 - "$PARENT_DIR" "$request_debug" <<'PY_REQUEST_AMBIGUITY'
+import runpy
+import subprocess
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+parser = str(Path(sys.argv[1]) / "gh-quota-debug-filter.py")
+_request_metadata = runpy.run_path(parser)["_request_metadata"]
+start = b"* Request at 2026-11-05 12:00:00 +0000\n"
+request = b"> GET /repos/secret/secret/actions/runs/123?secret=value HTTP/2.0\n"
+assert _request_metadata([start, request]) == ("GET", "repos-actions")
+assert _request_metadata([start, start, request]) == ("unknown", "unknown")
+assert _request_metadata([request]) == ("unknown", "unknown")
+assert _request_metadata([start, b"> SECRET /secret HTTP/1.1\n"]) == ("unknown", "unknown")
+end = b"* Request took 1ms\n"
+for stream in (
+    start + request + start + request + end + start + request + end + end,
+    start + request,
+):
+    Path(sys.argv[2]).write_bytes(stream)
+    output = subprocess.check_output([sys.executable, parser, sys.argv[2]], text=True)
+    rows = [line.split("\t") for line in output.splitlines() if line.startswith("frame\t")]
+    assert rows and all(row[10:] == ["unknown", "unknown"] for row in rows)
+PY_REQUEST_AMBIGUITY
+assert_eq "ambiguous and unsupported request lines stay unknown" "0" "$?"
+
 # --- Test 11d: successful native multi-frame REST costs are exact -----------
 native_multi_result="$TMPDIR/native-multi.result"
 native_multi_state="$TMPDIR/native-multi.state"
