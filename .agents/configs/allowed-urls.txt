@@ -183,6 +183,7 @@ cdn.jsdelivr.net
 challenges.cloudflare.com
 chat.googleapis.com
 chat.whatsapp.com
+chatgpt.com
 checklistdesign.com
 chrome.google.com
 chromedevtools.github.io

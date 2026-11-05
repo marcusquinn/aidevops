@@ -471,6 +471,7 @@ PY
 		# t1835: Reduced rate_limit fallback from 900s to 60s
 		case "$reason" in
 		rate_limit) retry_seconds=60 ;;
+		model_unavailable) retry_seconds=3600 ;;
 		auth_error) retry_seconds=3600 ;;
 		*) retry_seconds=300 ;;
 		esac

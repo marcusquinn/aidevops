@@ -14,6 +14,19 @@ const TERMINAL_SESSION_STATES = new Set([
   "aborted", "cancelled", "canceled", "completed", "deleted", "end_turn", "error", "idle", "stop",
 ]);
 
+/** Identify a definite pre-generation model rejection from an API error. */
+function isEntitlementError(error) {
+  if (error?.name !== "APIError" || ![400, 404].includes(Number(error.data?.statusCode))) return false;
+  const body = String(error.data?.responseBody || "");
+  try {
+    const parsed = JSON.parse(body);
+    if ((parsed?.error || parsed)?.code === "model_not_found") return true;
+  } catch {
+    // Some provider errors contain only a message.
+  }
+  return `${error.data?.message || ""} ${body}`.includes("is not supported when using Codex with a ChatGPT account");
+}
+
 function capMap(map, maximum = MAX_SESSION_STATES) {
   while (map.size > maximum) map.delete(map.keys().next().value);
 }
@@ -109,6 +122,10 @@ export class SubagentLifecycleTracker {
       this.rememberStatus(sessionID, "idle");
     } else if (event.type === "session.error") {
       this.rememberStatus(sessionID, "error");
+      if (sessionID && isEntitlementError(event.properties?.error)) {
+        const previous = this.sessions.get(sessionID);
+        this.sessions.set(sessionID, { ...previous, entitlementRejected: true });
+      }
     } else if (event.type === "session.deleted") {
       this.rememberStatus(sessionID, "deleted");
     } else if (event.type === "message.updated") {
@@ -158,5 +175,13 @@ export class SubagentLifecycleTracker {
 
   observedSession(childID) {
     return Boolean(this.sessions.get(childID)?.observed);
+  }
+
+  /** Consume the last model rejection observed for a child. */
+  takeEntitlementRejection(childID) {
+    const state = this.sessions.get(childID);
+    if (!state?.entitlementRejected) return false;
+    state.entitlementRejected = false;
+    return true;
   }
 }
