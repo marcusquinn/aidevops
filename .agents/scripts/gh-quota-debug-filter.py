@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -93,6 +94,96 @@ def _write_sanitized_stderr() -> None:
     return
 
 
+UNKNOWN_METADATA = ("unknown", "unknown")
+REQUEST_LINE = re.compile(
+    rb"> (GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) (/[^\s]*) HTTP/[0-9.]+\r?\n?"
+)
+ROOT_CLASSES = {
+    b"rate_limit": "rate-limit",
+    b"graphql": "graphql",
+    b"search": "search",
+    b"user": "users",
+    b"users": "users",
+    b"orgs": "orgs",
+    b"notifications": "notifications",
+    b"installation": "installation",
+}
+REPO_CLASSES = {
+    b"issues": "repos-issues",
+    b"pulls": "repos-pulls",
+    b"actions": "repos-actions",
+    b"commits": "repos-commits",
+    b"git": "repos-git",
+    b"contents": "repos-contents",
+    b"releases": "repos-releases",
+    b"check-runs": "repos-checks",
+    b"check-suites": "repos-checks",
+    b"statuses": "repos-statuses",
+}
+
+
+def _endpoint_class(target: bytes) -> str:
+    """Map a request target to a static label; the target itself is discarded."""
+    parts = target.split(b"?", 1)[0].split(b"#", 1)[0].strip(b"/").split(b"/")
+    if parts[0] != b"repos":
+        return ROOT_CLASSES.get(parts[0], "other")
+    if len(parts) <= 3:
+        return "repos-other"
+    return REPO_CLASSES.get(parts[3], "repos-other")
+
+
+def _request_metadata(frame: List[bytes]) -> Tuple[str, str]:
+    """Keep only allowlisted labels; never retain a path or request argument."""
+    requests = [line for line in frame if line.startswith(b"> ") and b" HTTP/" in line]
+    starts = sum(bool(REQUEST_START.match(line)) for line in frame)
+    # Interleaved starts/completions cannot prove response ownership.
+    match = REQUEST_LINE.fullmatch(requests[0]) if starts == 1 and len(requests) == 1 else None
+    if match is None:
+        return UNKNOWN_METADATA
+    return match.group(1).decode("ascii"), _endpoint_class(match.group(2))
+
+
+def _transport_frames(lines: List[bytes], request_ranges: List[Tuple[int, int]]) -> list:
+    found = (_cache_request(lines[start:end]) for start, end in request_ranges)
+    cache_requests = [request for request in found if request is not None]
+    frames = []
+    completion_ranges = _completion_ranges(lines)
+    # Any overlapping or unterminated request makes stream ownership
+    # ambiguous, including a later start before an earlier response ends.
+    owned = request_ranges == completion_ranges
+    for start, end in completion_ranges:
+        frame = lines[start:end]
+        status_count, response, response_cost = response_metadata(frame)
+        duration = _duration_ms(frame)
+        if status_count == 1 and duration is not None and _consume_proven_cache_hit(
+            response, cache_requests
+        ):
+            continue
+        metadata = _request_metadata(frame) if owned else UNKNOWN_METADATA
+        frames.append((status_count, response, response_cost, duration, metadata))
+    for _ in range(max(0, len(request_ranges) - len(completion_ranges))):
+        frames.append((0, {}, None, None, UNKNOWN_METADATA))
+    return frames
+
+
+def _frame_row(frame_index: int, record: tuple) -> str:
+    status_count, response, response_cost, duration, request_metadata = record
+    values = [
+        "frame",
+        str(frame_index),
+        str(status_count),
+        response.get("status", ""),
+        response.get("resource", ""),
+        response.get("used", ""),
+        response.get("remaining", ""),
+        response.get("reset", ""),
+        "" if duration is None else str(duration),
+        "" if response_cost is None else str(response_cost),
+        *request_metadata,
+    ]
+    return "\t".join(value or "x" for value in values)
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         return 2
@@ -109,40 +200,10 @@ def main() -> int:
         # suppressed and mark capture invalid rather than claiming no request.
         print("v1\tinvalid")
         return 0
-    cache_requests = []
-    for start, end in request_ranges:
-        request = _cache_request(lines[start:end])
-        if request is not None:
-            cache_requests.append(request)
-    transport_frames = []
-    completion_ranges = _completion_ranges(lines)
-    for start, end in completion_ranges:
-        frame = lines[start:end]
-        status_count, response, response_cost = response_metadata(frame)
-        duration = _duration_ms(frame)
-        if status_count == 1 and duration is not None and _consume_proven_cache_hit(
-            response, cache_requests
-        ):
-            continue
-        transport_frames.append((status_count, response, response_cost, duration))
-    for _ in range(max(0, len(request_ranges) - len(completion_ranges))):
-        transport_frames.append((0, {}, None, None))
-    print(f"v1\t{len(transport_frames)}")
-    for frame_index, record in enumerate(transport_frames, start=1):
-        status_count, response, response_cost, duration = record
-        values = [
-            "frame",
-            str(frame_index),
-            str(status_count),
-            response.get("status", ""),
-            response.get("resource", ""),
-            response.get("used", ""),
-            response.get("remaining", ""),
-            response.get("reset", ""),
-            "" if duration is None else str(duration),
-            "" if response_cost is None else str(response_cost),
-        ]
-        print("\t".join(values))
+    frames = _transport_frames(lines, request_ranges)
+    print(f"v1\t{len(frames)}")
+    for frame_index, record in enumerate(frames, start=1):
+        print(_frame_row(frame_index, record))
     return 0
 
 
