@@ -324,6 +324,7 @@ cp "$REPO_DIR/.agents/scripts/gh-native-transport-lib.sh" "$TMP/scripts/gh-nativ
 cp "$REPO_DIR/.agents/scripts/gh-api-guards-lib.sh" "$TMP/scripts/gh-api-guards-lib.sh"
 cp "$REPO_DIR/.agents/scripts/managed-label-provisioning-lib.sh" "$TMP/scripts/managed-label-provisioning-lib.sh"
 cp "$REPO_DIR/.agents/scripts/gh-write-policy-lib.sh" "$TMP/scripts/gh-write-policy-lib.sh"
+cp "$REPO_DIR/.agents/scripts/gh-closing-reference-lib.sh" "$TMP/scripts/gh-closing-reference-lib.sh"
 cp "$REPO_DIR/.agents/scripts/gh-api-instrument.sh" "$TMP/scripts/gh-api-instrument.sh"
 cp "$REPO_DIR/.agents/scripts/gh-quota-attribution-lib.sh" "$TMP/scripts/gh-quota-attribution-lib.sh"
 cp "$REPO_DIR/.agents/scripts/gh-rest-pagination-lib.sh" "$TMP/scripts/gh-rest-pagination-lib.sh"

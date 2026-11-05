@@ -217,9 +217,11 @@ Do NOT respond to a `FILE_NOT_FOUND` block by debugging temp-file paths, file co
 
 ## Negated closing keywords in PR bodies (GH#33539)
 
-GitHub ignores negation: `Do not close #123`, `Never fixes #123` or `doesn't resolve owner/repo#123` in a PR body still lands in `closingIssuesReferences`, and merging closes the issue. For partial or parent work, write `Ref #123` or `For #123` plus prose such as "The parent issue remains open." Never put a closing keyword (`close[sd]`, `fix(es|ed)`, `resolve[sd]`) next to an issue reference, even when negated. A completed leaf keeps `Resolves #123`.
+GitHub ignores negation: wording such as `Do not close #N`, `Never fixes #N` or `doesn't resolve OWNER/REPO#N` can still close the referenced issue or PR when merged (these are non-live placeholders). Comma-delimited lists between the negation and closing verb do not make it safe. For partial or parent work, write `Ref #N` or `For #N` plus "The referenced PR or issue remains open." A completed leaf keeps a positive `Resolves #N` reference.
 
-`gh_create_pr` and `gh_pr_edit_safe` (and `gh-write-helper.sh pr create|edit`) reject such bodies before any GitHub mutation (`_gh_validate_pr_closing_keywords`). Code spans and fenced blocks are ignored. Issue bodies and comments are not checked, because they never feed closing references.
+`gh_create_pr`, `gh_pr_edit_safe`, and the PATH shim reject clearly negated closing references using the shared `_gh_validate_pr_closing_keywords`. The shim checks PR creation, description edits, and explicit `pr merge --body` / `--body-file` messages before transport, without rewriting text or changing valid positive resolutions. Code spans and fenced blocks remain excluded. Issue bodies and comments are not checked.
+
+The shim does not fetch or inspect GitHub's generated/default merge message when no explicit merge body is supplied, nor does this CLI guard cover direct REST/GraphQL mutations. An empty `closingIssuesReferences` collection describes issue links only: it is not proof that no other PR can be closed. Review PR descriptions and merge messages accordingly.
 
 ## Untrusted-body content directive immunity (#20978)
 

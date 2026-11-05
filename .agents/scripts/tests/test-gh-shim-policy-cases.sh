@@ -304,3 +304,54 @@ if _argv_has_pair "-f" "labels[]=no-auto-dispatch" &&
 else
 	_fail "REST dispatch conflict normalization" "argv: $(_read_argv) err: $(cat "$TMP/dispatch-rest.err" 2>/dev/null || true)"
 fi
+
+# GH#36797: synthetic references only; all writes terminate at the stub.
+echo "Test: negated PR closing references across CLI body paths"
+for action in create edit merge; do
+	for unsafe in 'Do not close #987654' \
+		'This tooling PR does not publish, deploy, or close owner/repo#987654.' \
+		'This PR never fixes https://github.com/example/fixture/pull/987654' \
+		$'This PR must not publish, deploy, or\nresolve #987654'; do
+		printf '%s\n' "$unsafe" >"$TMP/unsafe-closing.md"
+		cp "$TMP/unsafe-closing.md" "$TMP/unsafe-closing.original"
+		for form in inline equals file file_equals short short_file; do
+			case "$form" in
+			inline) closing_args=(--body "$unsafe") ;;
+			equals) closing_args=("--body=$unsafe") ;;
+			file) closing_args=(--body-file "$TMP/unsafe-closing.md") ;;
+			file_equals) closing_args=("--body-file=$TMP/unsafe-closing.md") ;;
+			short) closing_args=(-b "$unsafe") ;;
+			short_file) closing_args=(-F "$TMP/unsafe-closing.md") ;;
+			esac
+			_reset_log
+			if "$SHIM_RUN" pr "$action" --repo owner/repo "${closing_args[@]}" 2>"$TMP/closing.err"; then
+				_fail "pr $action $form rejects negated closure" "unexpected success"
+			elif [[ ! -s "$STUB_GH_LOG" ]] &&
+				grep -q 'remains open' "$TMP/closing.err" &&
+				! grep -q '987654' "$TMP/closing.err" &&
+				cmp -s "$TMP/unsafe-closing.md" "$TMP/unsafe-closing.original"; then
+				_pass "pr $action $form blocks before transport without leaking or mutating body"
+			else
+				_fail "pr $action $form rejection evidence" "transport, guidance, privacy, or immutability mismatch"
+			fi
+		done
+	done
+	for safe in 'Resolves #987654' 'Ref #987654. The PR remains open.' \
+		'Not a deployment. Fixes #987654' 'Do not deploy; resolves #987654' \
+		"Example: \`Do not close #987654\`" $'```\nNever closes #987654\n```'; do
+		_reset_log
+		if "$SHIM_RUN" pr "$action" --repo owner/repo --body "$safe" 2>"$TMP/closing.err" &&
+			[[ -s "$STUB_GH_LOG" ]]; then
+			_pass "pr $action preserves positive resolution or non-closing mention"
+		else
+			_fail "pr $action safe body" "$safe"
+		fi
+	done
+done
+
+_reset_log
+if "$SHIM_RUN" pr merge 987654 --repo owner/repo 2>"$TMP/closing.err" && [[ -s "$STUB_GH_LOG" ]]; then
+	_pass "default merge body remains native (not inspected by this guard)"
+else
+	_fail "default merge body remains native"
+fi
