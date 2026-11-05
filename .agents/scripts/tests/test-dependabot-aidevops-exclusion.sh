@@ -236,7 +236,7 @@ updates:
     schedule: {interval: weekly}
     ignore: [{dependency-name: "actions/cache"}]
 EOF
-assert_eq "flow: classify" "UNSUPPORTED:flow-style-ignore" "$(_classify "$tmp_dir/flow.yml")"
+assert_eq "flow: classify" "UNSUPPORTED:ignore-not-block-list" "$(_classify "$tmp_dir/flow.yml")"
 rc=0
 python3 "$TRANSFORM" patch <"$tmp_dir/flow.yml" >/dev/null 2>&1 || rc=$?
 assert_eq "flow: patch exit" "5" "$rc"
