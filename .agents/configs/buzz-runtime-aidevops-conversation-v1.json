@@ -1,9 +1,0 @@
-{
-  "args": [],
-  "command": "aidevops-buzz-acp",
-  "env": {},
-  "id": "aidevops-conversation-v1",
-  "installHint": "Installed and updated by aidevops.",
-  "installInstructionsUrl": "https://aidevops.sh/docs",
-  "label": "Aidevops Restricted Conversation V1"
-}
