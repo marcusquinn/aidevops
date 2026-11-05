@@ -3,7 +3,6 @@
 
 /** Verified partition/archive maintenance for append-only runtime evidence. */
 
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -27,20 +26,19 @@ import {
 import { runRetentionCommand } from "./runtime-events-retention-cli.mjs";
 import { buildRuntimeEventRetentionInventory } from "./runtime-events-retention-inventory.mjs";
 import { runRuntimeEventMaintenance } from "./runtime-events-retention-maintenance.mjs";
+import { isProtectedRuntimeEvent } from "./runtime-events-retention-policy.mjs";
 import { verifyArchiveArtifacts } from "./runtime-events-retention-verification.mjs";
+import { retentionStages, sqlite, sqliteRows } from "./runtime-events-retention-sqlite.mjs";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
+
+export { isProtectedRuntimeEvent };
 
 export const RUNTIME_EVENT_ARCHIVE_SCHEMA_VERSION = 1;
 export const RUNTIME_EVENT_ACTIVE_DAYS_DEFAULT = 30;
 export const RUNTIME_EVENT_ARCHIVE_MAX_ROWS_DEFAULT = 5000;
 export const RUNTIME_EVENT_MAINTENANCE_MAX_PARTITIONS_DEFAULT = 20;
 export const RUNTIME_EVENT_MAINTENANCE_MAX_DURATION_SECONDS_DEFAULT = 120;
-const SQLITE_OUTPUT_MAX_BYTES = 256 * 1024 * 1024;
 
-const ERROR_STATUS = new Set([
-  "blocked", "cancelled", "denied", "error", "failed", "rejected", "timed_out", "timeout",
-]);
-const PROTECTED_EVENT_TYPE = /^(audit|deploy|full-loop|objective|permission|release|security|session|subagent|worker)\.|(^|\.)(blocked|cancelled|completed|denied|error|failed|rejected|started|stopped|terminated|timeout)(\.|$)/;
 const EVENT_COLUMNS = [
   "id", "envelope_version", "occurred_at", "event_id", "event_type", "correlation_id",
   "causation_id", "subject_id", "session_id", "worker_id", "parent_worker_id",
@@ -95,86 +93,6 @@ function normalizedMaxRows(value) {
     throw new TypeError("archive max rows must be an integer from 1 to 100000");
   }
   return parsed;
-}
-
-function sqlite(dbPath, sql, { json = false, readonly = false, timeoutMs = 30000 } = {}) {
-  // Leave time for SQLite to report contention and roll back before the process
-  // watchdog fires. Every connection shares the remaining maintenance budget.
-  const busyMs = Math.max(1, Math.min(15000, timeoutMs - Math.min(1000, timeoutMs / 2)));
-  const args = ["-cmd", `.timeout ${Math.floor(busyMs)}`];
-  if (json) args.push("-json");
-  if (readonly) args.push("-readonly");
-  args.push(dbPath);
-  return execFileSync("sqlite3", args, {
-    encoding: "utf8",
-    input: sql,
-    // A full archive batch returns up to max-rows events with 16 KiB payloads
-    // as escaped JSON, far beyond Node's 1 MiB default (ENOBUFS).
-    maxBuffer: SQLITE_OUTPUT_MAX_BYTES,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: timeoutMs,
-  }).trim();
-}
-
-function retentionStages(options) {
-  const budget = options.sqliteBudgetMs;
-  if (budget !== undefined && (!Number.isSafeInteger(budget) || budget < 1 || budget > 3600000)) {
-    throw new TypeError("SQLite budget must be an integer from 1 to 3600000 milliseconds");
-  }
-  const deadline = budget === undefined ? Infinity : performance.now() + budget;
-  let partitionId;
-  return {
-    setPartition: (value) => { partitionId = value; },
-    run(stage, action) {
-      const started = performance.now();
-      try {
-        const remaining = Math.ceil(deadline - started);
-        if (remaining <= 0) throw Object.assign(new Error(), { code: "ETIMEDOUT" });
-        return action(Math.min(30000, remaining));
-      } catch (error) {
-        if (error?.retentionStage) throw error;
-        const kind = error?.code === "ETIMEDOUT" ? "timeout"
-          : /database is (locked|busy)|SQLITE_BUSY|SQLITE_LOCKED/i.test(String(error?.stderr || ""))
-            ? "busy" : "failed";
-        // Never interpolate child stderr, SQL, payloads or filesystem paths.
-        // A killed writer may already have committed: retries must reselect and
-        // verify artifacts rather than deleting them or assuming zero changes.
-        const label = stage === "persist_archive" ? "archive partition verification failed" : "retention stage failed";
-        throw Object.assign(new Error(`${label}: stage=${stage} kind=${kind} elapsed_ms=${Math.round(performance.now() - started)}` +
-          (partitionId ? ` partition_id=${partitionId}` : "") +
-          " commit_state=unknown recovery=retry_verified_retention"), { retentionStage: stage });
-      }
-    },
-  };
-}
-
-function sqliteRows(dbPath, sql, options = {}) {
-  const output = sqlite(dbPath, sql, { ...options, json: true });
-  if (!output) return [];
-  const parsed = JSON.parse(output);
-  return Array.isArray(parsed) ? parsed : [];
-}
-
-function parsedPayload(row) {
-  try {
-    const payload = JSON.parse(row.payload_json || "{}");
-    return payload && typeof payload === "object" ? payload : {};
-  } catch {
-    return {};
-  }
-}
-
-/** True when a row belongs to the minimum terminal/error/lifecycle/security/audit envelope. */
-export function isProtectedRuntimeEvent(row) {
-  if (row?.state_version !== null && row?.state_version !== undefined) return true;
-  const eventType = String(row?.event_type || "").toLowerCase();
-  if (PROTECTED_EVENT_TYPE.test(eventType)) return true;
-  const payload = parsedPayload(row);
-  if (payload.success === false || payload.error_type ||
-      (payload.exit_code !== undefined && Number(payload.exit_code) !== 0)) {
-    return true;
-  }
-  return ERROR_STATUS.has(String(payload.status || "").toLowerCase());
 }
 
 function normalizedEventRow(row) {
