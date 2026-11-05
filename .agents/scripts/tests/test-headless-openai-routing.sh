@@ -139,6 +139,22 @@ test_coding_plan_requires_provider_auth() {
 	return 0
 }
 
+test_entitlement_backoff_is_model_scoped() {
+	printf '{"openai":{"type":"oauth","access":"test-openai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	local failure="${TEST_ROOT}/entitlement.jsonl" reason status selected
+	printf '%s\n' '{"type":"error","error":{"name":"APIError","data":{"statusCode":404,"responseBody":"{\"error\":{\"code\":\"model_not_found\"}}"}}}' >"$failure"
+	reason=$(python3 "${SCRIPT_DIR}/../headless-runtime-provider-classifier.py" "$failure" | cut -f1)
+	bash "$HELPER_SCRIPT" backoff set openai/gpt-6.1-sol "$reason" 3600
+	status=$(bash "$HELPER_SCRIPT" backoff status)
+	selected=$(select_model simple)
+	if [[ "$reason" == "model_unavailable" && "$status" == *"openai/gpt-6.1-sol|model_unavailable|"* && "$selected" == "openai/gpt-6-luna" ]]; then
+		print_result "Entitlement rejection backs off only the rejected model" 0
+	else
+		print_result "Entitlement rejection backs off only the rejected model" 1
+	fi
+	return 0
+}
+
 main_test() {
 	setup_test_env
 	test_openai_allowlist_selects_standard_tier_model
@@ -147,6 +163,7 @@ main_test() {
 	test_openai_allowlist_requires_openai_auth_entry
 	test_standard_alternatives_are_scoped
 	test_coding_plan_requires_provider_auth
+	test_entitlement_backoff_is_model_scoped
 	teardown_test_env
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

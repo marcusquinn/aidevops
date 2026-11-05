@@ -2,6 +2,9 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { existsSync, readFileSync } from "fs";
+import { readCurrentOpenAIAuth } from "./oauth-pool.mjs";
+import { extractOpenAIAccountId } from "./oauth-pool-callback.mjs";
+import { authSignatureFromHeaders } from "./model-unavailability.mjs";
 import { withUnambiguousProviderFallbacks } from "./model-routing-reasoning.mjs";
 import { createSubagentEffortHandlers } from "./subagent-effort-handlers.mjs";
 import { loadSubagentTrial } from "./subagent-ab.mjs";
@@ -217,6 +220,14 @@ export function createSubagentEffortHooks(client, options = {}) {
     onRoutingDecision,
     onSubagentOutcome: options.onSubagentOutcome,
     resolveProviderState,
+    resolveAvailability: () => {
+      const auth = readCurrentOpenAIAuth();
+      if (auth?.type !== "oauth" || !auth.access) return {};
+      return { authSignature: authSignatureFromHeaders({
+        authorization: `Bearer ${auth.access}`,
+        "chatgpt-account-id": auth.accountId || extractOpenAIAccountId(auth.access),
+      }) };
+    },
     clampReasoningVariant,
     extractVariant,
     getParentRoute,

@@ -11,9 +11,9 @@ export const BROWSER_AGENT = "playwright";
 const BROWSER_MODEL = "openai/gpt-6-luna";
 const BROWSER_SOL_FALLBACK = "openai/gpt-6.1-sol";
 
-function connectedModel(providerState, model, tier = "simple") {
+function connectedModel(providerState, model, tier = "simple", availability = {}) {
   if (!providerState) return "";
-  return selectConnectedRoutingCandidate({ tiers: { [tier]: { models: [model] } } }, tier, providerState);
+  return selectConnectedRoutingCandidate({ tiers: { [tier]: { models: [model] } } }, tier, providerState, undefined, availability);
 }
 
 export async function routeBrowserDelegate(context, childSession, message, policy) {
@@ -21,7 +21,8 @@ export async function routeBrowserDelegate(context, childSession, message, polic
   // Respect local routing overrides that remove Luna and explicit agent pins.
   if (!routingCandidates(context.modelRouting, "simple").includes(BROWSER_MODEL)) return false;
   const providerState = await context.resolveProviderState();
-  const luna = connectedModel(providerState, BROWSER_MODEL);
+  const availability = context.resolveAvailability?.() || {};
+  const luna = connectedModel(providerState, BROWSER_MODEL, "simple", availability);
   if (luna) {
     message.model = routingModelIdentity(luna);
     policy.routedModel = luna;
@@ -29,13 +30,13 @@ export async function routeBrowserDelegate(context, childSession, message, polic
     policy.reason = "browser_delegate";
   } else {
     const sol = routingCandidates(context.modelRouting, "thinking").includes(BROWSER_SOL_FALLBACK)
-      ? connectedModel(providerState, BROWSER_SOL_FALLBACK, "thinking") : "";
+      ? connectedModel(providerState, BROWSER_SOL_FALLBACK, "thinking", availability) : "";
     const parent = sol ? null : await context.getParentRoute(context.client, childSession);
     const fallback = sol || parent?.model;
     if (!fallback || (!sol && !parent?.variant)) {
       throw new Error("[aidevops] Browser delegate and parent model/effort unavailable");
     }
-    if (!sol && providerState && !connectedModel(providerState, fallback)) {
+    if (!sol && providerState && !connectedModel(providerState, fallback, "simple", availability)) {
       throw new Error("[aidevops] Parent browser fallback is not connected");
     }
     message.model = routingModelIdentity(fallback);

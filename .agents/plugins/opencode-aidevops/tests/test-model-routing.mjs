@@ -187,6 +187,9 @@ test("routing skips a model rejected for the active auth signature", () => {
   const signature = authSignatureFromHeaders(new Headers({ authorization: "Bearer synthetic", "chatgpt-account-id": "acct" }));
   const now = Date.now();
   markModelUnavailable("openai/rejected", signature, { ttlMs: 100, now });
+  const otherSignature = authSignatureFromHeaders(new Headers({ authorization: "Bearer other", "chatgpt-account-id": "other" }));
+  assert.equal(isModelUnavailable("openai/rejected"), false);
+  assert.equal(selectConnectedRoutingCandidate(routing, "standard", providerState, undefined, { authSignature: otherSignature }), "openai/rejected");
   assert.equal(isModelUnavailable("openai/rejected", signature, now + 99), true);
   assert.equal(isModelUnavailable("openai/rejected", signature, now + 100), false);
   markModelUnavailable("openai/rejected", signature, { ttlMs: 100, now });

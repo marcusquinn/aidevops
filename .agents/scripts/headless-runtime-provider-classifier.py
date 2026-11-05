@@ -113,6 +113,16 @@ def emit(reason, provider_type, status, pattern):
 def classify_structured(record):
     status = record["status"]
     details = f"{record['message']}\n{record['body']}".lower()
+    if status in (400, 404):
+        try:
+            body = json.loads(record["body"])
+        except (ValueError, TypeError):
+            body = {}
+        error = body.get("error", body) if isinstance(body, dict) else {}
+        if (isinstance(error, dict) and error.get("code") == "model_not_found") or (
+            "is not supported when using codex with a chatgpt account" in details
+        ):
+            return "model_unavailable", "model_unavailable", str(status), "structured_api_error|model_unavailable"
     gateway_denied = status == 403 and (
         record["body_kind"] == "html" or any(token in details for token in ("gateway", "proxy"))
     )
