@@ -1009,7 +1009,11 @@ _ff_mark_enrichment_done() {
 	local updated_state
 	updated_state=$(printf '%s' "$state" | jq \
 		--arg k "$key" \
-		'if .[$k] then .[$k].enrichment_needed = false | .[$k].enrichment_done = true else . end' \
+		--arg legacy_key "${issue_number}:${repo_slug}" \
+		'reduce [$k, $legacy_key][] as $entry (. ;
+			if .[$entry] then
+				.[$entry].enrichment_needed = false | .[$entry].enrichment_done = true
+			else . end)' \
 		2>/dev/null) || return 0
 
 	_ff_save "$updated_state"
