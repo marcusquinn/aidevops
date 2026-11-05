@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.126] - 2026-11-05
+
+### Added
+
+- reusable WordPress change-plan verification (#35603)
+
+### Changed
+
+- Documentation: hostinger origin refuses server's own requests via Cloudflare (GH#36783) (#36785)
+- Refactor: split rate-limit release circuit out of headless-runtime-failure.sh (GH#35101) (#36758)
+
+### Fixed
+
+- accept maintainer-acknowledged orphan releases as unattributed history (GH#36593)
+- bound retention apply and diagnose SQLite stages (#36778)
+- unify worker-briefed merge trust gate (GH#36769) (#36776)
+- renew mostly-consumed won lease before launch handoff (GH#36771) (#36779)
+- verify dependency-covered AUTO_MERGE objects
+- classify and cache TERMINAL_BLOCKER_FLEET_HOLD dispatch blocks (GH#36772) (#36777)
+- publish sanitized requested input (GH#36760) (#36761)
+- scope-check ignores inline-code HTML-comment opener and names unclosed comment cause (#36763)
+
 ## [3.39.125] - 2026-11-05
 
 ### Changed
