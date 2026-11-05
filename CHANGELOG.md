@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.123] - 2026-11-05
+
+### Changed
+
+- GH#36737 fix(screen-time): keep live Linux sampler coverage over history; no year projection under 7 sampled days
+
+### Fixed
+
+- fix-the-fixer classification no longer stales maintainer approvals
+- tell external contributors when their PR lacks a linked issue
+- underfill attribution must not treat CPU load as missing headroom
+
 ## [3.39.122] - 2026-11-05
 
 ### Changed
