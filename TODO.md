@@ -1874,6 +1874,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18865 fix(screen-time): Linux first partial sampled day shown as full coverage via history fallback; year extrapolated from under one day #bug #interactive ref:GH#36737 assignee:marcusquinn logged:2026-11-05 started:2026-11-05 -> [todo/tasks/t18865-brief.md]
 
+- [ ] t18866 test: profile README publication sweep still preserves clean trees on macOS after #36721 #auto-dispatch #bug ref:GH#36741 logged:2026-11-05 -> [todo/tasks/t18866-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
