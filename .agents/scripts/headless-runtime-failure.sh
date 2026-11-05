@@ -107,7 +107,7 @@ _HRFF_RATELIMIT_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_HRFF_RATELIMIT_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_RATELIMIT_DIR="."
 # shellcheck source=headless-runtime-failure-ratelimit.sh
 if ! source "${_HRFF_RATELIMIT_DIR}/headless-runtime-failure-ratelimit.sh"; then
-	printf 'ERROR: failed to load rate-limit release module from %s\n' "$_HRFF_RATELIMIT_DIR" >&2
+	printf 'ERROR: failed to load %s/headless-runtime-failure-ratelimit.sh\n' "$_HRFF_RATELIMIT_DIR" >&2
 	unset _HRFF_RATELIMIT_DIR
 	return 1 2>/dev/null || exit 1
 fi
