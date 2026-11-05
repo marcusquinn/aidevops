@@ -14,6 +14,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from tests import test_retirement as fixtures
+from worker_lifecycle import cleanup as admission_cleanup
 from worker_lifecycle import legacy_cleanup as legacy
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.archive_path import validate_archive_path
@@ -377,6 +378,47 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(sum(row["path"] == str(moved) for row in report["results"]), 1)
         row = next(row for row in report["results"] if row["path"] == str(moved))
         self.assertEqual(row["reason"], "process-alive")
+
+    def test_repeated_archive_failure_is_quarantined_without_starving_others(self):
+        self.output.mkdir(mode=0o755, exist_ok=True)
+        self.output.chmod(0o755)
+        generations = {}
+        for name in ("a", "b", "c"):
+            path = self.scan_root / name
+            path.mkdir()
+            generation = str(uuid4())
+            AdmissionRegistry(self.store).open_generation(str(uuid4()), generation, path)
+            generations[generation] = path
+        failing = min(generations)
+        seen = []
+
+        def candidate(store, repositories, root, generation, path):
+            seen.append(generation)
+            if generation == failing:
+                raise subprocess.CalledProcessError(
+                    1, ["bash", "/helper/worktree-archive-helper.sh", "verify-local", "x"],
+                    stderr=b"fatal: unable to access 'https://user:token@host/private.git'\n")
+            return {"generation_id": generation, "status": "held"}
+
+        with patch.object(admission_cleanup, "_candidate", side_effect=candidate):
+            first = admission_cleanup.cleanup_pass(
+                self.store, self.config, self.output, limit=1)
+            second = admission_cleanup.cleanup_pass(
+                self.store, self.config, self.output, limit=1)
+            third = admission_cleanup.cleanup_pass(
+                self.store, self.config, self.output, limit=2)
+        self.assertEqual((first["archive_failed"], first["failed"]), (1, 1))
+        row = first["results"][0]
+        self.assertTrue(row["quarantined"])
+        self.assertEqual(row["command"], "worktree-archive-helper.sh verify-local")
+        self.assertEqual(row["stderr_class"], "remote-access-failed")
+        self.assertNotIn("token", json.dumps(first))
+        # The quarantined generation no longer occupies the front of the run.
+        self.assertEqual((second["quarantined"], second["examined"]), (1, 1))
+        self.assertNotEqual(second["results"][0]["generation_id"], failing)
+        self.assertEqual(third["quarantined"], 1)
+        self.assertEqual(seen.count(failing), 1)
+        self.assertEqual(len(set(seen) - {failing}), 2)
 
     def test_modern_generation_is_not_legacy(self):
         self.stop_owner()

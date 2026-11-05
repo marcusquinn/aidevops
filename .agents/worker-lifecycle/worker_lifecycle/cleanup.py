@@ -15,6 +15,7 @@ from .archive_path import create_archive_root, validate_archive_path
 from .admission import AdmissionRegistry
 from .cleanup_failure import failure_details as _failure_details
 from .cleanup_plan import enrolled_only_event_id
+from .cleanup_quarantine import CleanupQuarantine
 from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import validate_private_path as _private
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
@@ -232,7 +233,9 @@ def cleanup_pass(
         deadline = time.monotonic() + budget_seconds
         create_archive_root(root)
         validate_archive_path(root)
-        for row in rows[:limit]:
+        quarantine = CleanupQuarantine(store.directory)
+        selected, report["quarantined"] = quarantine.partition(rows)
+        for row in selected[:limit]:
             if time.monotonic() >= deadline:
                 break
             generation, path = identifier(row["generation_id"]), Path(row["path"])
@@ -248,5 +251,7 @@ def cleanup_pass(
                           **_failure_details(error)}
             result["path"] = str(path)
             report["archive_failed"] += bool(result.get("archive_failure", False))
+            quarantine.record(row["generation_id"], result)
             report["results"].append(result)
+        quarantine.save(report)
     return report

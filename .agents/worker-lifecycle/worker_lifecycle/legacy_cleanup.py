@@ -20,7 +20,8 @@ from .filesystem import validate_private_path as _private
 from .legacy_discovery import open_pull_requests, same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
-from .legacy_options import require_manual_confirmation, unrecorded
+from .legacy_options import require_manual_confirmation, require_managed_takeover, unrecorded
+from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
@@ -158,6 +159,21 @@ def retire(store, item, repositories, adapter, options):
     return "retired"
 
 
+def take_over_managed(store, item, repositories, adapter, options):
+    """Retire a modern-generation worktree only when every safe-retirement guard holds.
+
+    Admission cleanup owns modern generations, but a clean, pushed, idle worktree it
+    never retires would otherwise stay `managed-by-current-cleanup` forever. The
+    remote-recoverable guards (clean including untracked, idle /proc census, unlocked,
+    HEAD on a remote ref, no open PR, non-forced removal, branch kept) decide; any
+    unmet guard keeps the original ownership reason. Admission later reconciles the
+    absent source through its existing source-absent path.
+    """
+    require_managed_takeover(reconstructible, item, repositories, adapter,
+                             open_pull_requests, managed=True)
+    return process_reconstructible(store, item, repositories, adapter, options)
+
+
 def process_item(store, item, repositories, adapter, options):
     outcome = {"path": item["path"]}
     eligible = attempted = 0
@@ -171,9 +187,11 @@ def process_item(store, item, repositories, adapter, options):
                 require_confirmation(connection, operation, confirmed)
         if done:
             outcome["status"] = "already-retired"
+        elif item["modern"]:
+            return take_over_managed(store, item, repositories, adapter, options)
+        elif not pending and requires_reconstructible(item, repositories, adapter, options):
+            return process_reconstructible(store, item, repositories, adapter, options)
         else:
-            if not pending and requires_reconstructible(item, repositories, adapter, options):
-                return process_reconstructible(store, item, repositories, adapter, options)
             eligible = 1
             outcome["status"] = "pending-retry" if pending else "eligible"
             if options.apply:
@@ -224,28 +242,46 @@ def prepare_reconstructible_probe(store, connection, host, plan):
 
 def current_legacy_item(connection, item):
     return next((row for row in inventory(connection)
-                 if row["path"] == item["path"]), item)
+                  if row["path"] == item["path"]), item)
+
+
+def legacy_plan(store, connection, item, repositories, adapter):
+    return reconstructible(item, repositories, adapter, open_pull_requests)
+
+
+def managed_plan(store, connection, item, repositories, adapter):
+    plan = reconstructible(item, repositories, adapter, open_pull_requests, managed=True)
+    require_managed_authority(store, connection, item, plan)
+    return plan
 
 
 def process_reconstructible(store, item, repositories, adapter, options):
-    """Journal a non-forced removal; the first successful probe unlocks batching."""
+    """Journal a non-forced removal; the first successful probe unlocks batching.
+
+    A modern generation reaches here only through `take_over_managed`. Its flag is
+    read once from the caller's item, so every recheck keeps the managed path guard
+    and authority evidence even if the refreshed inventory row differs.
+    """
+    reconstructible_plan = managed_plan if item["modern"] else legacy_plan
     operation = operation_id(store, item["path"])
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
     if not options.apply:
-        reconstructible(item, repositories, adapter, open_pull_requests)
+        with store.connection() as connection:
+            reconstructible_plan(store, connection, current_legacy_item(connection, item),
+                                 repositories, adapter)
         return outcome, 1, 0
     probe = str(uuid5(UUID(store.installation_id()),
                       "reconstructible-host-probe:" + socket.gethostname()))
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         item = current_legacy_item(connection, item)
-        plan = reconstructible(item, repositories, adapter, open_pull_requests)
+        plan = reconstructible_plan(store, connection, item, repositories, adapter)
         test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
         revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
         checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
         # Refresh GitHub and /proc immediately before non-forced native removal.
-        current = reconstructible(current_legacy_item(connection, item),
-                                  repositories, adapter, open_pull_requests)
+        current = reconstructible_plan(store, connection, current_legacy_item(connection, item),
+                                       repositories, adapter)
         if current != plan:
             raise ValueError("reconstructible-source-changed")
         _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])

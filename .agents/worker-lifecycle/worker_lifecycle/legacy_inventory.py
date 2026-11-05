@@ -39,9 +39,9 @@ def requires_reconstructible(item, repositories, adapter, options):
     return False
 
 
-def reconstructible(item, repositories, adapter, open_prs):
+def reconstructible(item, repositories, adapter, open_prs, managed=False):
     """Independent remote-recoverable class, never inferred from writer history."""
-    path = reconstructible_path(item)
+    path = reconstructible_path(item, managed)
     admin = _git_directory(path)
     common = _git("-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir")
     if common not in repositories or admin == Path(common):
