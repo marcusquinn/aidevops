@@ -123,6 +123,11 @@ _hrw_verify_dispatch_ownership() {
 		local target_rc=0
 		if [[ -n "$repair_linked_issue" ]]; then
 			local expected_assignee="${AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE:-}"
+			if [[ ! "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" =~ ^(automatic|revision)$ ||
+				-z "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" || -z "${AIDEVOPS_PR_CHECKPOINT_SESSION:-}" ]]; then
+				_hrw_ownership_log error "incomplete claimed checkpoint admission contract"
+				return 1
+			fi
 			if [[ -n "$repair_ownership_mode" ]]; then
 				_hrw_ownership_log error "conflicting PR checkpoint ownership mode issue=${issue_number} pr=${repair_pr_number} mode=${repair_ownership_mode}"
 				return 1
@@ -282,7 +287,7 @@ _hrw_prepare_role_context() {
 		unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH \
 			WORKER_GITHUB_LOGIN WORKER_SESSION_KEY AIDEVOPS_WORKER_GITHUB_LOGIN \
 			DISPATCH_REPO_SLUG AIDEVOPS_DISPATCH_LEASE_TOKEN \
-			AIDEVOPS_PR_CHECKPOINT_SESSION AIDEVOPS_PR_CHECKPOINT_AUTHOR \
+			AIDEVOPS_PR_CHECKPOINT_SESSION AIDEVOPS_PR_CHECKPOINT_AUTHOR AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE \
 			AIDEVOPS_DISPATCH_LEASE_DEVICE AIDEVOPS_DISPATCH_LEASE_SESSION AIDEVOPS_ATTEMPT_ID \
 			AIDEVOPS_PARENT_WORKER_ID AIDEVOPS_ROOT_WORKER_ID AIDEVOPS_WORKER_ID \
 			AIDEVOPS_PERMISSION_GRANT_FILE AIDEVOPS_PERMISSION_REQUEST_ID \

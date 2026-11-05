@@ -1637,11 +1637,19 @@ _prrts_dispatch_worker() {
 	# The checkpoint fence may transfer the issue to this runner. Do not export
 	# the pre-transfer login captured before worktree preparation.
 	worker_login=$(_prrts_worker_login "$pr_number") || return 1
-	local checkpoint_author=""
+	local checkpoint_author="" checkpoint_mode="" checkpoint_lease="" checkpoint_session="" checkpoint_device=""
 	checkpoint_author=$(_prrts_checkpoint_author) || return 1
 	worker_task=$(_prrts_worker_task_id "$pr_number") || worker_task=""
 	repair_linked_issue=$(_prrts_repair_linked_issue "$pr_number") || repair_linked_issue=""
 	[[ -n "$worker_task" ]] || return 1
+	checkpoint_mode=$(_prrts_checkpoint_admission_mode) || return 1
+	checkpoint_lease=$(_prrts_checkpoint_lease) || return 1
+	checkpoint_session=$(_prrts_checkpoint_session) || return 1
+	checkpoint_device=$(_prrts_checkpoint_device) || return 1
+	if [[ -n "$repair_linked_issue" ]]; then
+		[[ "$checkpoint_mode" =~ ^(automatic|revision)$ && -n "$checkpoint_lease" &&
+			-n "$checkpoint_session" && -n "$checkpoint_device" ]] || return 1
+	fi
 	prompt_file="$(_prrts_write_prompt_file "$repo_slug" "$worker_worktree_path" "$pr_number" "$title" "$batch_thread_count" "$batch_fingerprint" "$preview")"
 	session_key="$(_prrts_session_key "$repo_slug" "$pr_number")"
 	outcome_file="$(_prrts_outcome_file "$repo_slug" "$pr_number")"
@@ -1678,8 +1686,11 @@ _prrts_dispatch_worker() {
 		"AIDEVOPS_PR_REPAIR_LINKED_ISSUE=${repair_linked_issue}"
 		"AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE=${worker_login}"
 		"AIDEVOPS_PR_CHECKPOINT_AUTHOR=${checkpoint_author}"
-		"AIDEVOPS_DISPATCH_LEASE_TOKEN=$(_prrts_checkpoint_lease)"
-		"AIDEVOPS_PR_CHECKPOINT_SESSION=$(_prrts_checkpoint_session)"
+		"AIDEVOPS_DISPATCH_LEASE_TOKEN=${checkpoint_lease}"
+		"AIDEVOPS_DISPATCH_LEASE_SESSION=${checkpoint_session}"
+		"AIDEVOPS_DISPATCH_LEASE_DEVICE=${checkpoint_device}"
+		"AIDEVOPS_PR_CHECKPOINT_SESSION=${checkpoint_session}"
+		"AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE=${checkpoint_mode}"
 		"AIDEVOPS_PR_REPAIR_HEAD_SHA=${head_oid}"
 		"AIDEVOPS_PR_REPAIR_HEAD_REF=${head_ref}"
 		"AIDEVOPS_HEADLESS_OUTCOME_FILE=${outcome_file}"
@@ -1691,6 +1702,9 @@ _prrts_dispatch_worker() {
 	# Recheck after worktree preparation: a release label may have been added
 	# since the initial dispatch gate. Propagate failure to release capacity.
 	_prrts_release_dispatch_gate "$repo_slug" "$pr_number" "$head_ref" dispatch || return $?
+	if [[ -n "$repair_linked_issue" ]]; then
+		_prrts_prelaunch_target_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid" || return 1
+	fi
 	# Persist the generation immediately before the detached worker becomes
 	# runnable, so immediate terminal callbacks cannot be overwritten.
 	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid" "$outcome_id" "$infrastructure_failure_count"

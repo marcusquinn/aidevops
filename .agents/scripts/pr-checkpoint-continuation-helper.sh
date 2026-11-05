@@ -110,38 +110,72 @@ _PCC_JQ_RELEASE_DEFS='
 '
 
 _prrts_checkpoint_lease() {
-	if [[ "$PCC_REVISION_APPROVAL" != 0 ]]; then
+	if [[ "${PCC_CLAIM_ACQUIRED:-0}" == 1 ]]; then
 		printf '%s' "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}"
 	fi
 	return 0
 }
 
 _prrts_checkpoint_session() {
-	if [[ "$PCC_REVISION_APPROVAL" != 0 ]]; then
+	if [[ "${PCC_CLAIM_ACQUIRED:-0}" == 1 ]]; then
 		printf '%s' "${AIDEVOPS_PR_CHECKPOINT_SESSION:-}"
+	fi
+	return 0
+}
+
+_prrts_checkpoint_admission_mode() {
+	[[ "${PCC_CLAIM_ACQUIRED:-0}" == 1 ]] || return 1
+	printf '%s' "$AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE"
+	return 0
+}
+
+_prrts_checkpoint_device() {
+	if [[ "${PCC_CLAIM_ACQUIRED:-0}" == 1 ]]; then
+		printf '%s' "$AIDEVOPS_DISPATCH_LEASE_DEVICE"
 	fi
 	return 0
 }
 
 _pcc_claim_revised_checkpoint() {
 	local repo="$1" pr="$2" ref="$3" head="$4"
-	local claim="" session="" helper="${SCRIPT_DIR}/dispatch-claim-helper.sh"
+	_pcc_claim_checkpoint "$repo" "$pr" "$ref" "$head" revision
+	return $?
+}
+
+_pcc_claim_checkpoint() {
+	local repo="$1" pr="$2" ref="$3" head="$4" mode="$5"
+	local claim="" session="" helper="${SCRIPT_DIR}/dispatch-claim-helper.sh" previous_owner="$PCC_EXPECTED_ASSIGNEE"
 	session=$(_pcc_session_key "$repo" "$pr") || return 1
-	claim=$("$helper" claim-pr-checkpoint "$PCC_LINKED_ISSUE" "$repo" "$pr" "$head" "$ref" \
-		"$PCC_AUTHENTICATED_LOGIN" "$session") || return 1
-	[[ "$(jq -r '.approval_id' <<<"$claim")" == "$PCC_REVISION_APPROVAL" ]] || return 1
+	if [[ "$mode" == revision ]]; then
+		claim=$("$helper" claim-pr-checkpoint "$PCC_LINKED_ISSUE" "$repo" "$pr" "$head" "$ref" \
+			"$PCC_AUTHENTICATED_LOGIN" "$session") || return 1
+		[[ "$(jq -r '.approval_id' <<<"$claim")" == "$PCC_REVISION_APPROVAL" ]] || return 1
+	elif [[ "$mode" == automatic && "$PCC_REVISION_APPROVAL" == 0 ]]; then
+		[[ "$PCC_ALLOW_RELEASED" != true ]] || previous_owner=""
+		claim=$("$helper" claim-automatic-pr-checkpoint "$PCC_LINKED_ISSUE" "$repo" "$pr" "$head" "$ref" \
+			"$PCC_AUTHENTICATED_LOGIN" "$session" "$previous_owner" "$PCC_CHECKPOINT_ASSIGNEE" \
+			"$PCC_ALLOW_RELEASED") || return 1
+	else
+		return 1
+	fi
 	AIDEVOPS_DISPATCH_LEASE_TOKEN=$(jq -er '.lease' <<<"$claim") || return 1
 	AIDEVOPS_PR_CHECKPOINT_SESSION="$session"
 	AIDEVOPS_PR_CHECKPOINT_CLAIM_ID=$(jq -er '.claim_id // empty' <<<"$claim") || return 1
 	[[ "$AIDEVOPS_PR_CHECKPOINT_CLAIM_ID" =~ ^[1-9][0-9]*$ ]] || return 1
 	export AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_PR_CHECKPOINT_SESSION AIDEVOPS_PR_CHECKPOINT_CLAIM_ID
+	AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE="$mode"
+	export AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE
+	AIDEVOPS_DISPATCH_LEASE_DEVICE=$(jq -er '.device | strings | select(length > 0)' <<<"$claim") || return 1
+	AIDEVOPS_DISPATCH_LEASE_SESSION="$session"
+	export AIDEVOPS_DISPATCH_LEASE_DEVICE AIDEVOPS_DISPATCH_LEASE_SESSION
+	PCC_CLAIM_ACQUIRED=1
 	PCC_PREVIOUS_ASSIGNEE=$(jq -r '.previous_assignee' <<<"$claim") || return 1
 	PCC_ORIGINAL_STATUS=$(jq -r '.previous_status' <<<"$claim") || return 1
 	# The distributed claim is acquired before modifying assignment. The generic
 	# assignment guard is unchanged and no synthetic release marker is posted.
 	local -a owner_args=(--add-assignee "$PCC_AUTHENTICATED_LOGIN")
-	if [[ "$PCC_EXPECTED_ASSIGNEE" != "$PCC_AUTHENTICATED_LOGIN" ]]; then
-		owner_args+=(--remove-assignee "$PCC_EXPECTED_ASSIGNEE")
+	if [[ -n "$PCC_PREVIOUS_ASSIGNEE" && "$PCC_PREVIOUS_ASSIGNEE" != "$PCC_AUTHENTICATED_LOGIN" ]]; then
+		owner_args+=(--remove-assignee "$PCC_PREVIOUS_ASSIGNEE")
 	fi
 	PCC_OWNERSHIP_TRANSFERRED=1
 	set_issue_status "$PCC_LINKED_ISSUE" "$repo" in-progress "${owner_args[@]}" >/dev/null || return 1
@@ -198,6 +232,13 @@ _prrts_prelaunch_target_fence() {
 	local expected_assignee="${PCC_EXPECTED_ASSIGNEE:-$PCC_ISSUE_ASSIGNEE}"
 	local authenticated_login="${PCC_AUTHENTICATED_LOGIN:-$PCC_ISSUE_ASSIGNEE}"
 
+	if [[ "${PCC_CLAIM_ACQUIRED:-0}" == 1 ]]; then
+		[[ -n "$(_prrts_checkpoint_lease)" && -n "$(_prrts_checkpoint_session)" ]] || return 1
+		_prrts_checkpoint_admission_mode >/dev/null || return 1
+		"${SCRIPT_DIR}/dispatch-claim-helper.sh" verify-pr-checkpoint-target "$pr_number" "$repo_slug" \
+			"$head_oid" "$head_ref" "$PCC_LINKED_ISSUE" "$authenticated_login" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null
+		return $?
+	fi
 	target_row=$(_pcc_target_row "$repo_slug" "$pr_number" "$PCC_LINKED_ISSUE" \
 		"$expected_assignee" "$PCC_CHECKPOINT_ASSIGNEE") || {
 		PRRTS_WORKTREE_FAILURE_REASON="pr_checkpoint_eligibility_changed_before_launch"
@@ -218,29 +259,8 @@ _prrts_prelaunch_target_fence() {
 		_pcc_claim_revised_checkpoint "$repo_slug" "$pr_number" "$head_ref" "$head_oid"
 		return $?
 	fi
-	if [[ "$expected_assignee" != "$authenticated_login" || "$PCC_ALLOW_RELEASED" == true ]]; then
-		_pcc_transfer_issue_ownership "$PCC_LINKED_ISSUE" "$repo_slug" \
-			"$expected_assignee" "$authenticated_login" || {
-			PRRTS_WORKTREE_FAILURE_REASON="pr_checkpoint_assignee_transfer_failed"
-			return 1
-		}
-		PCC_OWNERSHIP_TRANSFERRED=1
-		target_row=$(_pcc_target_row "$repo_slug" "$pr_number" "$PCC_LINKED_ISSUE" \
-			"$authenticated_login" "$PCC_CHECKPOINT_ASSIGNEE") || {
-			_pcc_restore_transferred_ownership "$repo_slug" "$pr_number" || true
-			PRRTS_WORKTREE_FAILURE_REASON="pr_checkpoint_post_transfer_eligibility_changed"
-			return 1
-		}
-		IFS=$'\t' read -r title live_head_ref live_head_oid author _ live_issue_assignee approval_id _ <<<"$target_row"
-		if [[ "$live_head_ref" != "$head_ref" || "$live_head_oid" != "$head_oid" ||
-			"$live_issue_assignee" != "$authenticated_login" ]]; then
-			_pcc_restore_transferred_ownership "$repo_slug" "$pr_number" || true
-			PRRTS_WORKTREE_FAILURE_REASON="pr_checkpoint_post_transfer_target_changed"
-			return 1
-		fi
-		PCC_ISSUE_ASSIGNEE="$authenticated_login"
-	fi
-	return 0
+	_pcc_claim_checkpoint "$repo_slug" "$pr_number" "$head_ref" "$head_oid" automatic
+	return $?
 }
 
 _pcc_usage() {
@@ -544,11 +564,12 @@ _pcc_restore_transferred_ownership() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	[[ "$PCC_OWNERSHIP_TRANSFERRED" -eq 1 ]] || return 0
-	if [[ "$PCC_REVISION_APPROVAL" != 0 ]]; then
+	if [[ "${PCC_CLAIM_ACQUIRED:-0}" == 1 ]]; then
 		local helper="${SCRIPT_DIR}/dispatch-claim-helper.sh"
-		# Compensate only while the exact approval and our live lease still own
+		# Compensate only while the exact admission and our live lease still own
 		# the target. A changed head, human claim or replacement owner stops writes.
-		"$helper" verify-pr-checkpoint-target "$pr_number" "$repo_slug" "$PCC_HEAD_OID" "$PCC_HEAD_REF" \
+		AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH=1 \
+			"$helper" verify-pr-checkpoint-target "$pr_number" "$repo_slug" "$PCC_HEAD_OID" "$PCC_HEAD_REF" \
 			"$PCC_LINKED_ISSUE" "$PCC_AUTHENTICATED_LOGIN" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null || return 1
 		local -a restore_args=()
 		[[ -z "$PCC_PREVIOUS_ASSIGNEE" ]] || restore_args+=(--add-assignee "$PCC_PREVIOUS_ASSIGNEE")
@@ -559,6 +580,7 @@ _pcc_restore_transferred_ownership() {
 		"$helper" transition terminal "$PCC_LINKED_ISSUE" "$repo_slug" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
 			"$AIDEVOPS_PR_CHECKPOINT_SESSION" >/dev/null || return 1
 		PCC_OWNERSHIP_TRANSFERRED=0
+		PCC_ISSUE_ASSIGNEE="$PCC_PREVIOUS_ASSIGNEE"
 		return 0
 	fi
 	if _pcc_restore_issue_ownership "$PCC_LINKED_ISSUE" "$repo_slug" \
@@ -623,6 +645,7 @@ _pcc_dispatch() {
 	PCC_LINKED_ISSUE="$linked_issue"
 	PCC_ORIGINAL_STATUS="$issue_status"
 	PCC_OWNERSHIP_TRANSFERRED=0
+	PCC_CLAIM_ACQUIRED=0
 	if [[ "$PCC_REVISION_APPROVAL" != 0 ]]; then
 		# Exact revision validation preserves the PR author while authenticating
 		# the releasing runner. Transfer only the owner returned by that fence.

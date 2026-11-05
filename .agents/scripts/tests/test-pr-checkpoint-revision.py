@@ -23,7 +23,7 @@ if not BASH or not pathlib.Path(BASH).is_absolute():
     raise RuntimeError("An absolute path to the installed Bash runtime is required")
 sys.path.insert(0, str(SCRIPTS))
 from checkpoint_github_fixture import comment
-from pr_checkpoint_events import EVENTS
+from pr_checkpoint_events import EVENTS, fields, own_claim_matches
 import integration_recovery as recovery
 
 
@@ -35,6 +35,7 @@ def load(name, filename):
 
 
 revision = load("revision", "pr-checkpoint-revision.py")
+admission = load("admission", "pr_checkpoint_admission.py")
 queue = load("queue", "pulse-check-queue-scan.py")
 
 
@@ -373,6 +374,7 @@ class RevisionTests(unittest.TestCase):
                 env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
                        "CHECKPOINT_TEST_FILE": str(pathlib.Path(__file__).with_name("checkpoint_github_fixture.py")), "CHECKPOINT_TEST_STATE": str(state),
                        "CHECKPOINT_TEST_APPROVAL": str(approval_id),
+                       "CHECKPOINT_TEST_READY": str(build is fixture and not unassigned).lower(),
                        # Do not renew this fixture's lease under the invoking
                        # headless worker's real dispatch session.
                        "AIDEVOPS_DISPATCH_LEASE_SESSION": "",
@@ -395,9 +397,15 @@ export DISPATCH_REPO_SLUG=owner/repo
 export AIDEVOPS_PR_REPAIR_NUMBER=42 AIDEVOPS_PR_REPAIR_LINKED_ISSUE=123 AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE=next-worker
 export AIDEVOPS_PR_CHECKPOINT_AUTHOR=worker AIDEVOPS_PR_REPAIR_HEAD_SHA="$PCC_HEAD_OID" AIDEVOPS_PR_REPAIR_HEAD_REF="$PCC_HEAD_REF"
 _hrw_renew_dispatch_prelaunch_lease "$AIDEVOPS_PR_CHECKPOINT_SESSION"
-"$1/dispatch-claim-helper.sh" transition ready 123 owner/repo "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$AIDEVOPS_PR_CHECKPOINT_SESSION"
 _hrw_verify_dispatch_ownership 123 owner/repo
-_pcc_restore_transferred_ownership owner/repo 42
+if [[ "$CHECKPOINT_TEST_READY" == true ]]; then
+    "$1/dispatch-claim-helper.sh" transition ready 123 owner/repo "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+    _hrw_verify_dispatch_ownership 123 owner/repo
+    if _pcc_restore_transferred_ownership owner/repo 42; then exit 98; fi
+    "$1/dispatch-claim-helper.sh" transition terminal 123 owner/repo "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+else
+    _pcc_restore_transferred_ownership owner/repo 42
+fi
 if "$1/dispatch-claim-helper.sh" claim-pr-checkpoint 123 owner/repo 42 "$PCC_HEAD_OID" "$PCC_HEAD_REF" next-worker "$AIDEVOPS_PR_CHECKPOINT_SESSION"; then exit 99; fi
 '''
                 # The shell program is a fixed test literal, with only the trusted scripts directory as data.
@@ -405,8 +413,12 @@ if "$1/dispatch-claim-helper.sh" claim-pr-checkpoint 123 owner/repo 42 "$PCC_HEA
                                         capture_output=True, text=True, timeout=60, check=False)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 restored = json.loads(state.read_text())["issue"]
-                self.assertEqual(restored["assignees"], data["issue"]["assignees"])
-                self.assertEqual(restored["labels"], data["issue"]["labels"])
+                if build is fixture and not unassigned:
+                    self.assertEqual(restored["assignees"], [{"login": "next-worker"}])
+                    self.assertIn({"name": "status:in-progress"}, restored["labels"])
+                else:
+                    self.assertEqual(restored["assignees"], data["issue"]["assignees"])
+                    self.assertEqual(restored["labels"], data["issue"]["labels"])
 
 
 def released_successor_fixture():
@@ -546,6 +558,163 @@ class ReleasedSuccessorTests(unittest.TestCase):
                 "next-worker"))
             with self.subTest(token=token), self.assertRaises(ValueError):
                 revision.validate(data)
+
+
+class AutomaticAdmissionTests(unittest.TestCase):
+    def test_revision_claim_rejects_ambiguous_mode(self):
+        data = {"lease": "revision-claim", "session": "checkpoint-42", "assignee": "worker"}
+        line = ("DISPATCH_CLAIM nonce=revision-claim lease_token=revision-claim runner=worker "
+                "session=checkpoint-42 checkpoint_approval=3")
+        claim = comment(4, line)
+        self.assertTrue(own_claim_matches(data, 3, claim, line, fields(line)))
+        for mode in ("revision", "automatic", "unknown"):
+            candidate = line + " checkpoint_mode=" + mode
+            self.assertEqual(own_claim_matches(data, 3, claim, candidate, fields(candidate)), mode == "revision")
+
+    def claimed(self):
+        data = fixture()
+        data.update(comments=[], session="checkpoint-42", device="test-device", claiming=True)
+        snapshot = admission.admission(data)["snapshot"]
+        claim = comment(4, "DISPATCH_CLAIM nonce=automatic lease_token=automatic runner=worker "
+                        "session=checkpoint-42 device=test-device phase=prelaunch expires_at=1788616800 "
+                        "checkpoint_mode=automatic checkpoint_owner=worker checkpoint_status=in-review "
+                        "checkpoint_snapshot=" + snapshot)
+        claim["_release_body_unedited"] = True
+        data.update(comments=[claim], lease="automatic")
+        return data
+
+    def test_snapshot_and_runtime_binding(self):
+        data = self.claimed()
+        self.assertEqual(admission.admission(data)["claim_id"], 4)
+        for field, value in (("device", "foreign"), ("session", "foreign"), ("now", 1788616801)):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                admission.admission({**data, field: value})
+        for key, value in (("headRefOid", "2" * 40), ("headRefName", "other")):
+            changed = copy.deepcopy(data)
+            changed["pr"][key] = value
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                admission.admission(changed)
+        changed = copy.deepcopy(data)
+        changed["issue"]["body"] += " revised"
+        with self.assertRaises(ValueError):
+            admission.admission(changed)
+        data["claiming"] = False
+        with self.assertRaises(ValueError):
+            admission.admission(data)
+        data["issue"]["labels"][1]["name"] = "status:in-progress"
+        self.assertEqual(admission.admission(data)["claim_id"], 4)
+
+    def test_later_coordination_and_edit_evidence(self):
+        for event in EVENTS:
+            data = self.claimed()
+            later = comment(5, event + "foreign", "other")
+            later["_release_body_unedited"] = True
+            data["comments"].append(later)
+            with self.subTest(event=event), self.assertRaises(ValueError):
+                admission.admission(data)
+        for evidence in (False, None):
+            data = self.claimed()
+            data["comments"][0]["_release_body_unedited"] = evidence
+            with self.subTest(evidence=evidence), self.assertRaises(ValueError):
+                admission.admission(data)
+
+    def test_recorded_revision_never_downgrades_to_automatic(self):
+        for association in ("OWNER", "MEMBER", "NONE", "CONTRIBUTOR"):
+            data = self.claimed()
+            data["trusted_logins"] = ["maintainer"]
+            data["comments"].append(comment(5, revision.PREFIX + "expired-or-invalid", "maintainer", association))
+            with self.subTest(association=association), self.assertRaises(ValueError):
+                admission.admission(data)
+
+    def test_ready_attempt_requires_exact_runtime_identity(self):
+        data = self.claimed()
+        data.update(claiming=False, attempt="runtime-one")
+        data["issue"]["labels"][1]["name"] = "status:in-progress"
+        ready = comment(5, "DISPATCH_LEASE phase=ready lease_token=automatic session=checkpoint-42 "
+                        "device=test-device attempt_id=runtime-one expires_at=1788616800")
+        ready["_release_body_unedited"] = True
+        data["comments"].append(ready)
+        self.assertEqual(admission.admission(data)["claim_id"], 4)
+        for attempt in ("runtime-two", "", "unknown"):
+            with self.subTest(attempt=attempt), self.assertRaises(ValueError):
+                admission.admission({**data, "attempt": attempt})
+        with self.assertRaises(ValueError):
+            admission.admission({**data, "require_prelaunch": True})
+
+    def test_automatic_handoff_runtime_and_failed_launch_cleanup(self):
+        for unassigned, capability, ready in ((False, False, False), (True, False, False),
+                                             (True, True, False), (False, False, True)):
+            with self.subTest(unassigned=unassigned, capability=capability, ready=ready), tempfile.TemporaryDirectory() as root:
+                data = fixture()
+                data["issue"]["labels"].append({"name": "auto-dispatch"})
+                data["pr"]["title"] = "Preserved automatic checkpoint"
+                data["comments"] = data["comments"][:2]
+                reason = ("blocked runner=worker\n\nTerminal blocker: reason=runner_capability_unmet missing=test"
+                          if capability else "worker_draft_checkpoint runner=worker")
+                data["comments"][1]["body"] = "CLAIM_RELEASED reason=" + reason
+                if unassigned:
+                    data["issue"]["assignees"] = []
+                    data["issue"]["labels"][1]["name"] = "status:available"
+                for c in data["comments"]:
+                    c["created_at"] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                state = pathlib.Path(root) / "state.json"
+                state.write_text(json.dumps(data))
+                gh = pathlib.Path(root) / "gh"
+                gh.write_text('#!/usr/bin/env bash\nexec python3 "$CHECKPOINT_TEST_FILE" --gh "$@"\n')
+                gh.chmod(0o700)
+                env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
+                       "CHECKPOINT_TEST_FILE": str(pathlib.Path(__file__).with_name("checkpoint_github_fixture.py")),
+                       "CHECKPOINT_TEST_STATE": str(state), "AIDEVOPS_TEST_MODE": "1",
+                       "CHECKPOINT_TEST_RELEASED": str(unassigned).lower(),
+                       "CHECKPOINT_TEST_READY": str(ready).lower(), "AIDEVOPS_ATTEMPT_ID": "automatic-fixture",
+                       "AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS": "1", "DISPATCH_CLAIM_WINDOW": "0",
+                       "AIDEVOPS_DEVICE_ID": "test-device", "AIDEVOPS_DISPATCH_LEASE_SESSION": "unrelated-parent-session"}
+                command = r'''
+set -euo pipefail
+source "$1/pr-checkpoint-continuation-helper.sh"
+source "$1/headless-runtime-worker-prepare.sh"
+set_issue_status() { python3 "$CHECKPOINT_TEST_FILE" --set-issue "$@"; }
+_prrts_dispatch_guarded() { return 0; }
+PCC_ALLOW_RELEASED="$CHECKPOINT_TEST_RELEASED"
+_pcc_dispatch owner/repo "$HOME" 42 123 worker next-worker
+[[ "$PCC_REVISION_APPROVAL" == 0 ]]
+_prrts_prelaunch_target_fence owner/repo 42 "$PCC_HEAD_REF" "$PCC_HEAD_OID"
+[[ "$AIDEVOPS_DISPATCH_LEASE_SESSION" == "$AIDEVOPS_PR_CHECKPOINT_SESSION" && "$AIDEVOPS_DISPATCH_LEASE_DEVICE" == test-device ]]
+export WORKER_ISSUE_NUMBER=123 WORKER_REPO_SLUG=owner/repo WORKER_GITHUB_LOGIN=next-worker
+export DISPATCH_REPO_SLUG=owner/repo
+export AIDEVOPS_PR_REPAIR_NUMBER=42 AIDEVOPS_PR_REPAIR_LINKED_ISSUE=123 AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE=next-worker
+export AIDEVOPS_PR_CHECKPOINT_AUTHOR=worker AIDEVOPS_PR_REPAIR_HEAD_SHA="$PCC_HEAD_OID" AIDEVOPS_PR_REPAIR_HEAD_REF="$PCC_HEAD_REF"
+_hrw_verify_dispatch_ownership
+# Explicit revision admission cannot become a metadata-only legacy check.
+if env -u AIDEVOPS_PR_CHECKPOINT_SESSION AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE=revision \
+    "$1/dispatch-claim-helper.sh" verify-pr-checkpoint-target 42 owner/repo "$PCC_HEAD_OID" "$PCC_HEAD_REF" 123 next-worker worker; then exit 97; fi
+# A repeated producer fence verifies the same claim rather than minting another.
+_prrts_prelaunch_target_fence owner/repo 42 "$PCC_HEAD_REF" "$PCC_HEAD_OID"
+if [[ "$CHECKPOINT_TEST_READY" == true ]]; then
+    "$1/dispatch-claim-helper.sh" transition ready 123 owner/repo "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+    _hrw_verify_dispatch_ownership
+    # Once ready, a producer must not roll back an attempt that may be running.
+    if _pcc_restore_transferred_ownership owner/repo 42; then exit 98; fi
+    "$1/dispatch-claim-helper.sh" transition terminal 123 owner/repo "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+else
+    _pcc_restore_transferred_ownership owner/repo 42
+fi
+if _hrw_verify_dispatch_ownership; then exit 99; fi
+'''
+                result = subprocess.run([BASH, "-c", command, "test", str(SCRIPTS)], env=env,  # nosec B603
+                                        capture_output=True, text=True, timeout=60, check=False)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                saved = json.loads(state.read_text())
+                if ready:
+                    self.assertEqual(saved["issue"]["assignees"], [{"login": "next-worker"}])
+                    self.assertIn({"name": "status:in-progress"}, saved["issue"]["labels"])
+                else:
+                    self.assertEqual(saved["issue"]["assignees"], data["issue"]["assignees"])
+                    self.assertCountEqual(saved["issue"]["labels"], data["issue"]["labels"])
+                claims = [c for c in saved["comments"] if "DISPATCH_CLAIM " in c["body"]]
+                self.assertEqual(len(claims), 1)
+                self.assertIn("checkpoint_mode=automatic", claims[0]["body"])
+                self.assertNotIn("CHECKPOINT_CONTINUATION_APPROVED", json.dumps(saved))
 
 
 class ProgressTests(unittest.TestCase):

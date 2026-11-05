@@ -7,11 +7,12 @@
 # GraphQL evidence never authorizes a coordination write or state projection.
 _hrff_release_comment_edits() {
 	local raw="$1" ids="" chunk="" id="" response="" clean="[]"
+	local pattern="${2:-(?m)^(DISPATCH_CLAIM|DISPATCH_LEASE|CLAIM_RELEASED) }"
 	local query="query(\$ids: [ID!]!) { nodes(ids: \$ids) { ... on IssueComment { id lastEditedAt } } }"
 	local -a args=()
-	ids=$(jq -r '[.[][] | select((.body // "") | test("(?m)^(DISPATCH_CLAIM|DISPATCH_LEASE|CLAIM_RELEASED) ")) |
+	ids=$(jq -r --arg pattern "$pattern" '[.[][] | select((.body // "") | test($pattern)) |
 		select((.node_id // "") | test("^[A-Za-z0-9_=-]+$")) |
-		.node_id] | unique | _nwise(50) | join(" ")' <<<"$raw" 2>/dev/null) || return 1
+		.node_id] | unique | . as $ids | range(0; length; 50) | $ids[.:.+50] | join(" ")' <<<"$raw" 2>/dev/null) || return 1
 	while IFS= read -r chunk; do
 		[[ -n "$chunk" ]] || continue
 		args=()

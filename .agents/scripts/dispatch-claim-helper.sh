@@ -43,6 +43,8 @@ _DCH_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 source "${_DCH_SCRIPT_DIR}/pr-checkpoint-target-lib.sh"
 # shellcheck source=dispatch-claim-checkpoint.sh
 source "${_DCH_SCRIPT_DIR}/dispatch-claim-checkpoint.sh"
+# shellcheck source=dispatch-claim-automatic-checkpoint.sh
+source "${_DCH_SCRIPT_DIR}/dispatch-claim-automatic-checkpoint.sh"
 # shellcheck source=dispatch-claim-trust.sh
 source "${_DCH_SCRIPT_DIR}/dispatch-claim-trust.sh"
 unset _DCH_SCRIPT_DIR
@@ -1620,6 +1622,15 @@ cmd_verify_pr_checkpoint_target() {
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 2
 	fi
+	if [[ "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == automatic ]]; then
+		_dch_verify_automatic_checkpoint "$repo_slug" "$pr_json" "$issue_json" "$pr_number" \
+			"$linked_issue" "$expected_head_sha" "$expected_head_ref" "$expected_assignee" "$checkpoint_author"
+		return $?
+	fi
+	case "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-revision}" in revision | "") ;; *) return 1 ;; esac
+	if [[ "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
+		[[ -n "${AIDEVOPS_PR_CHECKPOINT_SESSION:-}" && -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]] || return 1
+	fi
 	if [[ -n "${AIDEVOPS_PR_CHECKPOINT_SESSION:-}" ]]; then
 		[[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]] || return 1
 		checkpoint_comments=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" --paginate --slurp) || return 2
@@ -2092,6 +2103,9 @@ main() {
 		;;
 	claim-pr-checkpoint)
 		cmd_claim_pr_checkpoint "$@"
+		;;
+	claim-automatic-pr-checkpoint)
+		cmd_claim_automatic_pr_checkpoint "$@"
 		;;
 	abort-pr-checkpoint-claim)
 		cmd_abort_pr_checkpoint_claim "$@"

@@ -126,6 +126,7 @@ def own_claim_matches(data, approval_id, comment, line, f):
                 "checkpoint_approval": str(approval_id), "session": data.get("session"),
                 "runner": data.get("assignee")}
     return all((bool(data.get("lease")), line.startswith("DISPATCH_CLAIM "),
+                f.get("checkpoint_mode", "revision") == "revision",
                 all(f.get(key) == value for key, value in expected.items()),
                 data.get("assignee") == comment["user"]["login"]))
 
@@ -164,6 +165,8 @@ def successors_valid(data, comments, release_id, approval_id, now):
         if claim is None and own_claim_matches(data, approval_id, comment, line, f):
             claim = f
         elif own_renewal_matches(claim, comment, line, f):
+            if data.get("require_prelaunch") and f.get("phase") != "prelaunch":
+                return False
             claim = {**claim, **f}
         else:
             return False
