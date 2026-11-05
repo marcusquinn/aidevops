@@ -600,6 +600,8 @@ _gh_append_v2() {
 	local auth_fingerprint="${2:-}"
 	local reset_epoch="${3:-}"
 	local quota_used="${4:-}"
+	local request_method="${5:-unknown}"
+	local endpoint_class="${6:-unknown}"
 	local ts=""
 	local record=""
 	local auth_reason=""
@@ -634,10 +636,17 @@ _gh_append_v2() {
 	[[ "$auth_fingerprint" =~ ^[a-f0-9]{64}$ ]] || auth_fingerprint=""
 	reset_epoch=$(_gh_safe_number "$reset_epoch")
 	quota_used=$(_gh_safe_number "$quota_used")
-	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+	# These fields are strict enums, not generic text: reject URLs/argv even if a
+	# caller bypasses the debug filter. Existing v2 columns remain unchanged.
+	case "$request_method" in GET | HEAD | POST | PUT | PATCH | DELETE | OPTIONS) ;; *) request_method=unknown ;; esac
+	case "$endpoint_class" in
+	rate-limit | graphql | search | users | orgs | notifications | installation | other | repos-issues | repos-pulls | repos-actions | repos-commits | repos-git | repos-contents | repos-releases | repos-checks | repos-statuses | repos-other) ;;
+	*) endpoint_class=unknown ;;
+	esac
+	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
 		"$ts" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" "$budget_remaining" \
 		"$event_kind" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" "$http_status" "$elapsed_ms" "$quota_cost" \
-		"$auth_reason" "$auth_consumer" "$auth_fingerprint" "$reset_epoch" "$quota_used"
+		"$auth_reason" "$auth_consumer" "$auth_fingerprint" "$reset_epoch" "$quota_used" "$request_method" "$endpoint_class"
 	_gh_append_record "$record"
 	return 0
 }
@@ -749,6 +758,8 @@ gh_record_attempt() {
 	local reset_epoch="${3:-}"
 	local recorded_at="${4:-}"
 	local quota_used="${5:-}"
+	local request_method="${6:-unknown}"
+	local endpoint_class="${7:-unknown}"
 	[[ -n "$logical_id" ]] || logical_id=$(gh_new_logical_id)
 	[[ -n "$attempt_id" ]] || attempt_id=$(gh_new_attempt_id "$logical_id")
 	[[ -n "$page" ]] || page=1
@@ -762,7 +773,7 @@ gh_record_attempt() {
 	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
 	_gh_append_v2 attempt "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" \
 		"$budget_remaining" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" \
-		"$http_status" "$elapsed_ms" "$quota_cost" "$recorded_at" "$auth_fingerprint" "$reset_epoch" "$quota_used"
+		"$http_status" "$elapsed_ms" "$quota_cost" "$recorded_at" "$auth_fingerprint" "$reset_epoch" "$quota_used" "$request_method" "$endpoint_class"
 	return 0
 }
 

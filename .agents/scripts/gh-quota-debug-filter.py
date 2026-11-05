@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -93,6 +94,47 @@ def _write_sanitized_stderr() -> None:
     return
 
 
+def _request_metadata(frame: List[bytes]) -> Tuple[str, str]:
+    """Keep only allowlisted labels; never retain a path or request argument."""
+    requests = [line for line in frame if line.startswith(b"> ") and b" HTTP/" in line]
+    # Interleaved starts/completions cannot prove response ownership.
+    if sum(bool(REQUEST_START.match(line)) for line in frame) != 1 or len(requests) != 1:
+        return "unknown", "unknown"
+    match = re.fullmatch(
+        rb"> (GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) (/[^\s]*) HTTP/[0-9.]+\r?\n?",
+        requests[0],
+    )
+    if match is None:
+        return "unknown", "unknown"
+    method = match.group(1).decode("ascii")
+    parts = match.group(2).split(b"?", 1)[0].split(b"#", 1)[0].strip(b"/").split(b"/")
+    roots = {
+        b"rate_limit": "rate-limit",
+        b"graphql": "graphql",
+        b"search": "search",
+        b"user": "users",
+        b"users": "users",
+        b"orgs": "orgs",
+        b"notifications": "notifications",
+        b"installation": "installation",
+    }
+    if parts[0] != b"repos":
+        return method, roots.get(parts[0], "other")
+    families = {
+        b"issues": "repos-issues",
+        b"pulls": "repos-pulls",
+        b"actions": "repos-actions",
+        b"commits": "repos-commits",
+        b"git": "repos-git",
+        b"contents": "repos-contents",
+        b"releases": "repos-releases",
+        b"check-runs": "repos-checks",
+        b"check-suites": "repos-checks",
+        b"statuses": "repos-statuses",
+    }
+    return method, families.get(parts[3], "repos-other") if len(parts) > 3 else "repos-other"
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         return 2
@@ -124,12 +166,19 @@ def main() -> int:
             response, cache_requests
         ):
             continue
-        transport_frames.append((status_count, response, response_cost, duration))
+        # Any overlapping or unterminated request makes stream ownership
+        # ambiguous, including a later start before an earlier response ends.
+        metadata = (
+            _request_metadata(frame)
+            if request_ranges == completion_ranges
+            else ("unknown", "unknown")
+        )
+        transport_frames.append((status_count, response, response_cost, duration, metadata))
     for _ in range(max(0, len(request_ranges) - len(completion_ranges))):
-        transport_frames.append((0, {}, None, None))
+        transport_frames.append((0, {}, None, None, ("unknown", "unknown")))
     print(f"v1\t{len(transport_frames)}")
     for frame_index, record in enumerate(transport_frames, start=1):
-        status_count, response, response_cost, duration = record
+        status_count, response, response_cost, duration, request_metadata = record
         values = [
             "frame",
             str(frame_index),
@@ -141,8 +190,9 @@ def main() -> int:
             response.get("reset", ""),
             "" if duration is None else str(duration),
             "" if response_cost is None else str(response_cost),
+            *request_metadata,
         ]
-        print("\t".join(values))
+        print("\t".join(value or "x" for value in values))
     return 0
 
 
