@@ -344,7 +344,14 @@ wp post delete $(wp post list --post_type=post --post_status=auto-draft --format
 # Cache
 wp cache flush
 wp rewrite flush
+
+# LiteSpeed page cache: prefer the narrowest purge
+wp litespeed-purge url https://example.com/page/
+wp litespeed-purge blog 3          # one multisite subsite
+wp litespeed-purge all             # single site: that site; MULTISITE: Empty Entire Cache (*)
 ```
+
+On a multisite, `wp litespeed-purge all` empties the whole LiteSpeed cache. On shared hosting that includes every other site on the account. Use `blog <id>` per changed subsite in deploy and development loops. Scope table: `services/hosting/hostinger.md` → "LiteSpeed page cache: purge scope on a shared account".
 
 ## Multisite
 
