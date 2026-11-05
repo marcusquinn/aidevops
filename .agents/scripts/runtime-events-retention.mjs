@@ -97,7 +97,10 @@ function normalizedMaxRows(value) {
 }
 
 function sqlite(dbPath, sql, { json = false, readonly = false, timeoutMs = 30000 } = {}) {
-  const args = ["-cmd", ".timeout 15000"];
+  // Leave time for SQLite to report contention and roll back before the process
+  // watchdog fires. Every connection shares the remaining maintenance budget.
+  const busyMs = Math.max(1, Math.min(15000, timeoutMs - Math.min(1000, timeoutMs / 2)));
+  const args = ["-cmd", `.timeout ${Math.floor(busyMs)}`];
   if (json) args.push("-json");
   if (readonly) args.push("-readonly");
   args.push(dbPath);
@@ -110,6 +113,38 @@ function sqlite(dbPath, sql, { json = false, readonly = false, timeoutMs = 30000
     stdio: ["pipe", "pipe", "pipe"],
     timeout: timeoutMs,
   }).trim();
+}
+
+function retentionStages(options) {
+  const budget = options.sqliteBudgetMs;
+  if (budget !== undefined && (!Number.isSafeInteger(budget) || budget < 1 || budget > 3600000)) {
+    throw new TypeError("SQLite budget must be an integer from 1 to 3600000 milliseconds");
+  }
+  const deadline = budget === undefined ? Infinity : performance.now() + budget;
+  let partitionId;
+  return {
+    setPartition: (value) => { partitionId = value; },
+    run(stage, action) {
+      const started = performance.now();
+      try {
+        const remaining = Math.ceil(deadline - started);
+        if (remaining <= 0) throw Object.assign(new Error(), { code: "ETIMEDOUT" });
+        return action(Math.min(30000, remaining));
+      } catch (error) {
+        if (error?.retentionStage) throw error;
+        const kind = error?.code === "ETIMEDOUT" ? "timeout"
+          : /database is (locked|busy)|SQLITE_BUSY|SQLITE_LOCKED/i.test(String(error?.stderr || ""))
+            ? "busy" : "failed";
+        // Never interpolate child stderr, SQL, payloads or filesystem paths.
+        // A killed writer may already have committed: retries must reselect and
+        // verify artifacts rather than deleting them or assuming zero changes.
+        const label = stage === "persist_archive" ? "archive partition verification failed" : "retention stage failed";
+        throw Object.assign(new Error(`${label}: stage=${stage} kind=${kind} elapsed_ms=${Math.round(performance.now() - started)}` +
+          (partitionId ? ` partition_id=${partitionId}` : "") +
+          " commit_state=unknown recovery=retry_verified_retention"), { retentionStage: stage });
+      }
+    },
+  };
 }
 
 function sqliteRows(dbPath, sql, options = {}) {
@@ -268,13 +303,13 @@ function persistPartition(archiveDir, partition) {
   return { archivePath, manifest: verified.manifest, manifestPath };
 }
 
-function candidateRows(dbPath, cutoffAt, maxRows, { readonly = false } = {}) {
+function candidateRows(dbPath, cutoffAt, maxRows, { readonly = false, timeoutMs } = {}) {
   return sqliteRows(dbPath, `
     SELECT ${EVENT_COLUMNS.join(", ")}
     FROM runtime_events
     WHERE occurred_at < ${sqlEscape(cutoffAt)} AND state_version IS NULL
     ORDER BY id ASC LIMIT ${maxRows};
-  `, { readonly });
+  `, { readonly, timeoutMs });
 }
 
 function archiveManifestInsertSql(manifest) {
@@ -294,9 +329,10 @@ function archiveManifestInsertSql(manifest) {
   );`;
 }
 
-function pruneVerifiedSource(dbPath, manifest) {
-  const predicate = `id <= ${manifest.source_last_id} AND occurred_at < ${sqlEscape(manifest.cutoff_at)} AND state_version IS NULL`;
-  sqlite(dbPath, `.bail on
+function pruneVerifiedSource(dbPath, manifest, stages) {
+  // Bound all three scans to this partition, not every older protected state row.
+  const predicate = `id BETWEEN ${manifest.source_first_id} AND ${manifest.source_last_id} AND occurred_at < ${sqlEscape(manifest.cutoff_at)} AND state_version IS NULL`;
+  stages.run("prune_source", (timeoutMs) => sqlite(dbPath, `.bail on
 BEGIN IMMEDIATE;
 CREATE TEMP TABLE runtime_retention_assert(ok INTEGER NOT NULL CHECK(ok = 1));
 INSERT INTO runtime_retention_assert VALUES ((
@@ -316,13 +352,13 @@ BEGIN
 END;
 ${archiveManifestInsertSql(manifest)}
 COMMIT;
-`);
-  const remaining = Number(sqlite(dbPath, `SELECT COUNT(*) FROM runtime_events WHERE ${predicate};`) || 0);
-  const manifestRows = Number(sqlite(dbPath, `
+`, { timeoutMs }));
+  const remaining = Number(stages.run("verify_source", (timeoutMs) => sqlite(dbPath, `SELECT COUNT(*) FROM runtime_events WHERE ${predicate};`, { timeoutMs })) || 0);
+  const manifestRows = Number(stages.run("verify_manifest", (timeoutMs) => sqlite(dbPath, `
     SELECT COUNT(*) FROM runtime_event_archives
     WHERE partition_id = ${sqlEscape(manifest.partition_id)}
       AND archive_sha256 = ${sqlEscape(manifest.archive_sha256)};
-  `) || 0);
+  `, { timeoutMs })) || 0);
   if (remaining !== 0 || manifestRows !== 1) throw new Error("archive commit verification failed");
 }
 
@@ -332,6 +368,7 @@ export function archiveRuntimeEvents(options = {}) {
   const archiveDir = normalizedArchiveDir(options.archiveDir, dbPath);
   const cutoffAt = normalizedCutoff(options.cutoff, options);
   const maxRows = normalizedMaxRows(options.maxRows);
+  const stages = retentionStages(options);
   if (!existsSync(dbPath)) {
     return Object.freeze({
       applied: false,
@@ -341,10 +378,24 @@ export function archiveRuntimeEvents(options = {}) {
       status: "database_missing",
     });
   }
-  if (options.apply && !initialiseRuntimeEventStore(dbPath)) {
-    throw new Error("runtime-event store is unavailable");
+  if (options.apply) {
+    stages.run("initialise_store", (timeoutMs) => {
+      let failure;
+      const initialized = initialiseRuntimeEventStore(dbPath, {
+        executeSync: (sql) => {
+          try {
+            // Recompute the remaining budget for each initialization query.
+            return stages.run("initialise_sqlite", (remaining) => sqlite(dbPath, sql, { timeoutMs: Math.min(timeoutMs, remaining) }));
+          } catch (error) {
+            failure = error;
+            throw error;
+          }
+        },
+      });
+      if (!initialized) throw failure || new Error("runtime-event store is unavailable");
+    });
   }
-  const selectedRows = candidateRows(dbPath, cutoffAt, maxRows + 1, { readonly: !options.apply });
+  const selectedRows = stages.run("select_candidates", (timeoutMs) => candidateRows(dbPath, cutoffAt, maxRows + 1, { readonly: !options.apply, timeoutMs }));
   const moreCandidates = selectedRows.length > maxRows;
   const rows = selectedRows.slice(0, maxRows);
   if (rows.length === 0) {
@@ -369,11 +420,12 @@ export function archiveRuntimeEvents(options = {}) {
   };
   if (!options.apply) return Object.freeze(result);
 
-  const persisted = persistPartition(archiveDir, partition);
+  stages.setPartition(partition.header.partition_id);
+  const persisted = stages.run("persist_archive", () => persistPartition(archiveDir, partition));
   if (options.simulateInterruption === "after_archive") {
     throw new Error("simulated interruption after verified archive");
   }
-  pruneVerifiedSource(dbPath, persisted.manifest);
+  pruneVerifiedSource(dbPath, persisted.manifest, stages);
   return Object.freeze({
     ...result,
     applied: true,
