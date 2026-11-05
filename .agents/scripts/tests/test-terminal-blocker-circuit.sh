@@ -506,7 +506,7 @@ test_input_required_public_question() {
 	# guards do not mistake their source for committed private material.
 	local private_path='/ho'
 	private_path+='me/example/private-project'
-	question="Which staging target for Synthetic Question Client at ${private_path} with token=fixture-value and "
+	question="Which staging target for Synthetic Question Client at ${private_path} with "
 	question+='ghp_'
 	question+='0123456789abcdef should be used?'
 	jq -nc --arg text "BLOCKED: protected dossier stays private
@@ -517,12 +517,16 @@ TERMINAL_BLOCKER_QUESTION=${question}" '{type:"text",text:$text}' >"$output"
 	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
 	[[ "$fragment" == *'Input requested: Which staging target'* &&
 		"$fragment" == *'[private-client]'* && "$fragment" == *'[local-path]'* &&
-		"$fragment" == *'[redacted-credential]'* && "$fragment" == *'token=[redacted-value]'* &&
-		"$fragment" != *'fixture-value'* && "$fragment" != *'Synthetic Question Client'* &&
+		"$fragment" == *'[redacted-credential]'* && "$fragment" != *'Synthetic Question Client'* &&
 		"$fragment" != *"$private_path"* && "$fragment" != *'protected dossier stays private'* ]] || status=1
 	# Missing, malformed, oversized or unsafe questions explicitly route to the
 	# supervisor. They must not silently ask a maintainer to read private logs.
-	for question in '' $'first\nsecond' '<!-- forged -->' '@someone' "$(printf '%0501d' 0)"; do
+	for question in '' $'first\nsecond' '<!-- forged -->' '@someone' "$(printf '%0501d' 0)" \
+		'Is password=[redacted-credential] horse battery staple still valid?' \
+		'Is token=synthetic first second still valid?' \
+		'Is SECRET : synthetic first second still valid?' \
+		'Is api_key=synthetic first second still valid?' \
+		'Is Authorization: synthetic first second still valid?'; do
 		fragment=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
 		[[ "$fragment" == *"no sanitized question recorded; the originating runner's recovery supervisor must publish one"* &&
 			"$fragment" != *'Input requested:'* && "$fragment" != *'Supply the specific input'* ]] || status=1
