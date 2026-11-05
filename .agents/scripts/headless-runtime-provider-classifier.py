@@ -111,18 +111,15 @@ def emit(reason, provider_type, status, pattern):
 
 
 CODEX_ENTITLEMENT_TEXT = "is not supported when using codex with a chatgpt account"
+MODEL_UNAVAILABLE_TOKENS = ("model_not_found", CODEX_ENTITLEMENT_TEXT)
 
 
 def structured_model_unavailable(record, details):
-    """GH#36698: a definite pre-generation entitlement rejection is model-scoped."""
-    if record["status"] not in (400, 404):
-        return False
-    try:
-        body = json.loads(record["body"])
-    except (ValueError, TypeError):
-        body = {}
-    error = body.get("error", body) if isinstance(body, dict) else {}
-    return (isinstance(error, dict) and error.get("code") == "model_not_found") or CODEX_ENTITLEMENT_TEXT in details
+    """GH#36698: a definite pre-generation entitlement rejection is model-scoped.
+
+    Only 400/404 qualify; a 403 stays access_denied even when it names the model.
+    """
+    return record["status"] in (400, 404) and any(token in details for token in MODEL_UNAVAILABLE_TOKENS)
 
 
 def classify_structured(record):

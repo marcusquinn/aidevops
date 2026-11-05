@@ -4,12 +4,11 @@
 import {
   nextRoutingTier,
   routingCandidateIndex,
-  routingCandidates,
   routingModelIdentity,
   selectConnectedRoutingCandidate,
 } from "./model-routing.mjs";
 import { ON_DEMAND_TOOL } from "./on-demand-tools.mjs";
-import { isModelUnavailable } from "./model-unavailability.mjs";
+import { failoverTask as entitlementFailover } from "./subagent-entitlement-failover.mjs";
 import { SubagentLifecycleTracker } from "./subagent-lifecycle-tracker.mjs";
 import {
   ESCALATION_PROMPT,
@@ -261,78 +260,9 @@ class InteractiveSubagentEscalator {
     return this.context.resolveAvailability?.() || {};
   }
 
-  /**
-   * GH#36698: after a definite pre-generation entitlement rejection, re-prompt
-   * the same child on the next connected candidate of its own tier, in routing
-   * table order and at most once per distinct candidate. Never substitutes a
-   * lower tier or a model outside the active routing table.
-   */
-  async failoverTask(output, childID) {
-    const rejected = this.lifecycle.takeEntitlementRejection(childID);
-    const policy = this.context.policies.get(childID);
-    if (!policy || policy.pinned || !policy.routedModel?.startsWith("openai/")
-      || !rejected || (!toolFailed(output) && this.lifecycle.terminalEvidence(childID) !== "error")
-      || !isModelUnavailable(policy.routedModel, this.availability().authSignature)) return null;
-    if (this.sideEffects.get(childID)) {
-      this.skippedForSideEffects(output);
-      return null;
-    }
-    const child = await this.loadChildSession(childID);
-    const providerState = await this.context.resolveProviderState();
-    if (!child.available || !providerState) return null;
-    const routing = policy.armRouting || this.context.modelRouting;
-    const requested = policy.routedModel;
-    const tier = policy.effort;
-    const candidates = routingCandidates(routing, tier);
-    const start = candidates.indexOf(requested);
-    if (start < 0) return null;
-    const rejectedModels = [requested];
-    const attempted = new Set(rejectedModels);
-    for (const model of candidates.slice(start + 1)) {
-      if (attempted.has(model)) continue;
-      attempted.add(model);
-      // Already rejected for this auth inside the TTL: skip without a request.
-      if (isModelUnavailable(model, this.availability().authSignature)) {
-        rejectedModels.push(model);
-        continue;
-      }
-      const route = { tiers: { [tier]: { models: [model] } } };
-      if (!selectConnectedRoutingCandidate(route, tier, providerState, undefined, this.availability())) continue;
-      console.error(`[aidevops] entitlement failover tier=${tier} requested=${requested} rejected=${rejectedModels.join(",")} next=${model}`);
-      this.prepareRoute(policy, tier, model);
-      policy.reason = "entitlement_failover";
-      policy.escalated = false;
-      let response;
-      try {
-        response = await this.promptNextTier(childID, child.session, model,
-          "Continue the original task in this session. The previous model was unavailable before generation.");
-      } catch {
-        return null;
-      } finally {
-        policy.awaitingEscalationPrompt = false;
-      }
-      if (!responseError(response) && !response?.data?.info?.error) {
-        const text = responseText(response);
-        if (!text) return null;
-        const failover = { tier, requested, rejected: [...rejectedModels], model };
-        output.output = text;
-        output.metadata = { ...output.metadata, status: "completed", aidevopsRoutingFailover: failover };
-        this.lifecycle.takeEntitlementRejection(childID);
-        this.lifecycle.rememberStatus(childID, "completed");
-        return failover;
-      }
-      if (!this.lifecycle.takeEntitlementRejection(childID)) return null;
-      if (!isModelUnavailable(model, this.availability().authSignature)) return null;
-      rejectedModels.push(model);
-      if (this.sideEffects.get(childID)) {
-        this.skippedForSideEffects(output);
-        return null;
-      }
-    }
-    const message = `[aidevops] No available ${tier} model: requested=${requested} rejected=${rejectedModels.join(",")}; check provider access or routing configuration.`;
-    console.error(message);
-    output.output = message;
-    return null;
+  /** GH#36698: same-tier entitlement failover; see subagent-entitlement-failover.mjs. */
+  failoverTask(output, childID) {
+    return entitlementFailover(this, output, childID);
   }
 
   async afterTool(input, output) {
