@@ -203,6 +203,21 @@ _complexity_close_recovered_sweeps() {
 	return 0
 }
 
+# Check the sweep window independently of live debt recovery.
+_complexity_sweep_interval_elapsed() {
+	local now_epoch="$1"
+	local sweep_interval="$2"
+	local last_sweep=0
+	if [[ -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" ]]; then
+		last_sweep=$(cat "$COMPLEXITY_LLM_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
+		[[ "$last_sweep" =~ ^[0-9]+$ ]] || last_sweep=0
+		if [[ $((now_epoch - last_sweep)) -lt "$sweep_interval" ]]; then
+			return 1
+		fi
+	fi
+	return 0
+}
+
 # Check if the daily LLM sweep is due and debt is stalled.
 # The LLM sweep fires when:
 #   1. COMPLEXITY_LLM_SWEEP_INTERVAL has elapsed since last sweep, AND
@@ -215,16 +230,7 @@ _complexity_llm_sweep_due() {
 	local aidevops_slug="${2:-}"
 	local sweep_interval="${COMPLEXITY_LLM_SWEEP_INTERVAL:-0}"
 
-	# Interval guard
-	if [[ -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" ]]; then
-		local last_sweep
-		last_sweep=$(cat "$COMPLEXITY_LLM_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
-		[[ "$last_sweep" =~ ^[0-9]+$ ]] || last_sweep=0
-		local elapsed=$((now_epoch - last_sweep))
-		if [[ "$elapsed" -lt "$sweep_interval" ]]; then
-			return 1
-		fi
-	fi
+	_complexity_sweep_interval_elapsed "$now_epoch" "$sweep_interval" || return 1
 
 	# Fetch current open debt count
 	local current_count=""
@@ -303,14 +309,10 @@ _complexity_llm_sweep_due() {
 	return 0
 }
 
-# Run the daily LLM sweep: create a GitHub issue asking the LLM to review
-# why simplification debt is stalled and suggest approach adjustments.
-# Arguments: $1 - aidevops_slug, $2 - now_epoch, $3 - maintainer
-# Returns: 0 always (best-effort)
-_complexity_run_llm_sweep() {
+# Return success when an existing review suppresses creation.
+_complexity_sweep_already_open() {
 	local aidevops_slug="$1"
 	local now_epoch="$2"
-	local maintainer="$3"
 
 	# Dedup: check if an open sweep issue already exists (t1855).
 	# Both sweep code paths use different title patterns — check both. Stall
@@ -330,6 +332,18 @@ _complexity_run_llm_sweep() {
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 0
 	fi
+	return 1
+}
+
+# Run the daily LLM sweep: create a GitHub issue asking the LLM to review
+# why simplification debt is stalled and suggest approach adjustments.
+# Arguments: $1 - aidevops_slug, $2 - now_epoch, $3 - maintainer
+# Returns: 0 always (best-effort)
+_complexity_run_llm_sweep() {
+	local aidevops_slug="$1"
+	local now_epoch="$2"
+	local maintainer="$3"
+	_complexity_sweep_already_open "$aidevops_slug" "$now_epoch" && return 0
 
 	local current_count=""
 	if [[ -f "$COMPLEXITY_DEBT_COUNT_FILE" ]]; then
