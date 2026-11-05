@@ -49,7 +49,7 @@ dsr_repoint_dependant() {
 	edges=$(gh api "repos/${repo}/issues/${dependant}/dependencies/blocked_by" --jq '.[].id' 2>/dev/null) || return 1
 	succ_id=$(gh api "repos/${repo}/issues/${succ}" --jq '.id' 2>/dev/null) || return 1
 	[[ "$succ_id" =~ ^[0-9]+$ ]] || return 1
-	if ! printf '%s\n' "$edges" | grep -qx "$succ_id"; then
+	if ! grep -qx "$succ_id" <<<"$edges"; then
 		gh api -X POST "repos/${repo}/issues/${dependant}/dependencies/blocked_by" -F "issue_id=${succ_id}" >/dev/null 2>&1 || return 1
 		changed=true
 	fi
