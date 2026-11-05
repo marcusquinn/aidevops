@@ -1,5 +1,7 @@
 """Verify completed retirement for a dated cleanup receipt; never retire a tree."""
 
+from __future__ import annotations
+
 from datetime import datetime
 import hashlib
 import json
