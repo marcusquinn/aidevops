@@ -898,7 +898,7 @@ worktree_owner_session_has_newer_claim() {
 	local newer=""
 
 	[[ "$owner_pid" =~ ^[0-9]+$ && -n "$owner_session" ]] || return 1
-	[[ "$since_utc" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+	[[ "$since_utc" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,6})?Z$ ]] || return 1
 	process_start=$(_wt_process_start_token_for_pid "$owner_pid") || return 1
 	command -v sqlite3 >/dev/null 2>&1 || return 1
 	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 1
@@ -910,7 +910,7 @@ worktree_owner_session_has_newer_claim() {
 		  AND owner_pid = ${owner_pid}
 		  AND owner_session = '$(_wt_sql_escape "$owner_session")'
 		  AND COALESCE(owner_process_start, '') = '$(_wt_sql_escape "$process_start")'
-		  AND created_at > '$(_wt_sql_escape "$since_utc")'
+		  AND rtrim(created_at, 'Z') > rtrim('$(_wt_sql_escape "$since_utc")', 'Z')
 		LIMIT 1;
 	" 2>/dev/null) || return 1
 	[[ "$newer" == "1" ]] || return 1

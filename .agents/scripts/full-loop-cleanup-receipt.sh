@@ -640,7 +640,8 @@ full_loop_write_cleanup_deferred() {
 		_full_loop_cleanup_fail "receipt-mismatch"
 		return 1
 	fi
-	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || {
+	# Admission events retain microseconds; do not backdate a same-second receipt.
+	now=$(python3 -E -s -B -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"))') || {
 		_full_loop_receipt_lock_release
 		_full_loop_cleanup_fail "$_FULL_LOOP_REASON_WRITE_FAILED"
 		return 1
@@ -694,7 +695,7 @@ _full_loop_cleanup_receipt_for_worktree_unlocked_fallback() {
 			.worktree == $worktree
 			and ((.receipt_disposition.state // "") != $superseded)
 		' "$receipt_path" >/dev/null 2>&1; then
-			candidate_created_at=$(jq -r '.created_at // empty' "$receipt_path" 2>/dev/null || true)
+			candidate_created_at=$(jq -r '(.created_at // "") | rtrimstr("Z")' "$receipt_path" 2>/dev/null || true)
 			candidate_is_migrated=0
 			jq -e --arg string_type "$_FULL_LOOP_RECEIPT_JSON_STRING_TYPE" \
 				'.migration.from_repository | type == $string_type and length > 0' \
@@ -736,7 +737,7 @@ _full_loop_cleanup_receipt_for_worktree_unlocked() {
 			| select((.receipt_disposition.state // "") != $superseded)
 			| {
 				path: input_filename,
-				created_at: (.created_at // ""),
+				created_at: ((.created_at // "") | rtrimstr("Z")),
 				is_migrated: (
 					if (((.migration.from_repository? // null) | type) == $string_type
 						and ((.migration.from_repository? // "") | length) > 0)
@@ -1151,8 +1152,10 @@ full_loop_cleanup_owner_lease_aged() {
 	[[ -f "$receipt_path" ]] || return 1
 	age_seconds=$(jq -r '
 		(.created_at // .updated_at // "") as $stamp
-		| if ($stamp | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
-		  then (now - ($stamp | fromdateiso8601)) | floor
+		| if ($stamp | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,6})?Z$"))
+		  then ($stamp | capture("^(?<whole>[^.Z]+)([.](?<fraction>[0-9]+))?Z$")) as $parts
+		    | (now - (($parts.whole + "Z" | fromdateiso8601)
+		      + ("0." + ($parts.fraction // "0") | tonumber))) | floor
 		  else empty end
 	' "$receipt_path" 2>/dev/null) || return 1
 	[[ "$age_seconds" =~ ^[0-9]+$ ]] || return 1
@@ -1590,9 +1593,9 @@ full_loop_mark_cleanup_receipt_cleaned() {
 	local worktree="$2"
 	local cleanup_log="${3:-${AIDEVOPS_CLEANUP_LOG:-${HOME}/.aidevops/logs/cleanup_worktrees.log}}"
 
-	[[ -f "$receipt_path" && -n "$worktree" && ! -e "$worktree" && -f "$cleanup_log" ]] || return 1
-	grep -Fq "worktree-removed: ${worktree} —" "$cleanup_log" || return 1
-	jq -e --arg worktree "$worktree" '.worktree == $worktree' "$receipt_path" >/dev/null 2>&1 || return 1
+	# shellcheck source=./full-loop-cleanup-evidence.sh
+	source "${BASH_SOURCE[0]%/*}/full-loop-cleanup-evidence.sh" || return 1
+	full_loop_verify_cleanup_evidence "$receipt_path" "$worktree" "$cleanup_log" || return 1
 	full_loop_transition_cleanup_receipt "$receipt_path" "$_FULL_LOOP_CLEANUP_CLEANED"
 	return $?
 }

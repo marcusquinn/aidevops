@@ -1,9 +1,11 @@
 """Exercise retirement only in disposable repositories, using the real backend."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess  # nosec B404 # fixed creator program in disposable repositories
 import sys
@@ -20,6 +22,7 @@ from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import MARKER, GenerationEnrollment
 from worker_lifecycle.preservation import _helper
 from worker_lifecycle.refusal import refusal_code
+from worker_lifecycle.retirement_proof import verify_retirement
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.storage import LifecycleRegistry, StoreConflict
 
@@ -245,6 +248,7 @@ class RetirementContract(unittest.TestCase):
         (self.target / "README.md").write_text("staged change")
         retirement._git("-C", str(self.target), "add", "README.md")
         GenerationEnrollment(self.store).resolve(self.target, create=True)
+        created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         preview = self.enrolled_only(False)
         self.assertEqual(preview["status"], "enrolled-only-preview")
         self.assertTrue(self.target.exists())
@@ -257,6 +261,50 @@ class RetirementContract(unittest.TestCase):
         with self.store.connection() as connection:
             self.assertIsNone(connection.execute(
                 "SELECT 1 FROM generation_admissions").fetchone())
+        proof = verify_retirement(
+            self.store, self.target, "fixture/repository", "chore/probe", created_at,
+        )
+        self.assertEqual(proof["status"], "retirement-verified")
+        self.assertFalse(proof["cleanup_authorized"])
+        receipts = self.root / "receipts"
+        receipts.mkdir(mode=0o700)
+        receipt = receipts / "fixture_repository-1.json"
+        receipt.write_text(json.dumps({
+            "worktree": str(self.target), "repository": "fixture/repository",
+            "branch": "chore/probe", "created_at": created_at,
+            "pr_number": 1, "resource_cleanup_state": "CLEANUP_DEFERRED",
+        }))
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        bash = shutil.which("bash")
+        if bash is None:
+            raise FileNotFoundError("bash is required for the cleanup receipt bridge")
+        subprocess.run(  # nosec B603 # real consumer, disposable registry and archive
+            [bash, "-c", 'source "$1/full-loop-cleanup-receipt.sh"; '
+             'full_loop_mark_cleanup_cleaned_for_identity fixture/repository 1 "$2" "$3"',
+             "fixture", str(scripts), str(self.target),
+             str(self.root / "missing-removal.log")],
+            env={**os.environ, "AIDEVOPS_LIFECYCLE_STATE_DIR": str(self.store.directory),
+                 "AIDEVOPS_FULL_LOOP_CLEANUP_DIR": str(receipts)},
+            check=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(json.loads(receipt.read_text())["resource_cleanup_state"], "CLEANED")
+        for repository, branch, timestamp in (
+            ("other/repository", "chore/probe", created_at),
+            ("fixture/repository", "other-branch", created_at),
+            ("fixture/repository", "chore/probe", "2000-01-01T00:00:00Z"),
+            ("fixture/repository", "chore/probe", "9999-01-01T00:00:00Z"),
+        ):
+            with self.subTest(repository=repository, branch=branch, timestamp=timestamp):
+                with self.assertRaises(StoreConflict):
+                    verify_retirement(self.store, self.target, repository, branch, timestamp)
+        self.target.symlink_to(self.root / "missing-replacement", target_is_directory=True)
+        with self.assertRaises(StoreConflict):
+            verify_retirement(self.store, self.target, "fixture/repository", "chore/probe", created_at)
+        self.target.unlink()
+        manifest = Path(result["archive"]) / "manifest.json"
+        manifest.write_text(manifest.read_text() + "\n")
+        with self.assertRaises(StoreConflict):
+            verify_retirement(self.store, self.target, "fixture/repository", "chore/probe", created_at)
 
     def test_enrolled_only_refuses_any_admitted_run(self):
         self.create()
