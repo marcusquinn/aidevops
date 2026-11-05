@@ -1242,6 +1242,18 @@ _classify_runtime_dispatch_blocker_reason() {
 			printf 'terminal_blocker_backoff\n'
 			return 0
 			;;
+		*terminal_blocker_fleet_hold*probe=falsified*)
+			# GH#36772: a falsified fleet hold wakes only on a brief revision or
+			# a trusted retry comment; both bump updatedAt, like the circuit.
+			printf 'terminal_blocker_circuit\n'
+			return 0
+			;;
+		*terminal_blocker_fleet_hold*)
+			# GH#36772: a capability wake is runner-local and leaves updatedAt
+			# unchanged, so pulse caches this hold only for the short TTL.
+			printf 'terminal_blocker_fleet_hold\n'
+			return 0
+			;;
 		*runner_capability_unmet*)
 			# GH#33743: runner-local capability deferral, retried after cooldown.
 			printf 'runner_capability_unmet\n'
