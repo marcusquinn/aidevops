@@ -56,6 +56,10 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     oid = auto_merge(root)
     if oid is not None:
         result['auto_merge'] = oid
+    # GH#36883: bind preserved runtime-local config so source-matches blocks
+    # retirement when it appears, changes or disappears after capture.
+    from worktree_archive_runtime_config import fingerprint_fields
+    result.update(fingerprint_fields(root, admin))
     if include_untracked:
         paths = sorted(filter(None, git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")))
         size = sum((root / os.fsdecode(raw)).lstat().st_size for raw in paths)

@@ -464,6 +464,8 @@ capture_archive_payload() {
 			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 		fi
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
+		# GH#36883: runtime-local config.worktree bytes are kept, never restored.
+		python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" capture "$worktree" "$archive_dir" || return 1
 	fi
 	capture_untracked "$worktree" "$archive_dir" || return 1
 	if [[ -n "$failure_log" ]]; then
@@ -601,6 +603,10 @@ archive_worktree() {
 		die "worktree changed during archive capture: $worktree"
 		return 1
 	fi
+	python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" bind "$archive_dir" "$fingerprint_after" || {
+		discard_failed_archive "$archive_dir"
+		return 1
+	}
 	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" 0 0 0 1 || {
 		discard_failed_archive "$archive_dir"
 		return 1
@@ -654,6 +660,8 @@ if manifest.get('merge_policy') == 'structured-v1':
 if manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
     mandatory.add('auto-merge-v1.json')
     allowed.add('auto-merge-v1.json')
+from worktree_archive_runtime_config import inventory as runtime_config  # GH#36883
+mandatory |= runtime_config(archive, manifest, capture_policy); allowed |= mandatory
 if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') == 2:
     allowed.discard('untracked.tar.gz')
     if (archive / 'untracked-files.txt').stat().st_size:
@@ -861,6 +869,7 @@ restore_archive() {
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" || return 1
 	fi
 	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-restore "$target" "$archive_dir" || return 1
+	python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" restore-note "$archive_dir" || return 1
 	printf '%s\n' "$target"
 	return 0
 }
