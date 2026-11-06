@@ -1396,6 +1396,12 @@ _pcc_post_stall_attention() {
 		fuse_marker=$'\n'"<!-- ${_PCC_STALL_FUSE_MARKER} pr=${pr} -->"
 		posted_scope="Posted once per PR."
 	fi
+	if [[ "$note" == "$_PCC_APPROVAL_VALIDATION_NOTE" ]]; then
+		# A historical approval still fences the legacy route, even after a
+		# head change or expiry. Neither an aged record nor a push bypasses it.
+		scope="for draft PR #${pr} at head \`${head}\`. The revision-approval route owns scheduling; neither a new head nor an aged attention record re-arms automatic continuation"
+		push_step="2. Revalidate the existing revision approval after retrying unavailable metadata or permission checks. If it expired or no longer matches the head or brief, generate a fresh approval with \`pr-checkpoint-continuation-helper.sh approval-template\` and publish the generated approval as a new issue comment."
+	fi
 	local body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} release=${release_id} -->${fuse_marker}
 STALLED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} reason=${reason} stalls=${stalls}
