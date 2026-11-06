@@ -1014,9 +1014,6 @@ _merge_execute() {
 	_merge_run_bounded_write "$pr_number" "$repo" "$match_head_sha" \
 		gh pr merge "$pr_number" --repo "$repo" "$merge_method" ${merge_flags[@]+"${merge_flags[@]}"} || _merge_rc=$?
 	_merge_out="$_MERGE_WRITE_OUTPUT"
-	if [[ $_merge_rc -ne 0 ]]; then
-		_merge_report_already_merged_at_head "$pr_number" "$repo" "$match_head_sha" && return 0
-	fi
 	if [[ $_merge_rc -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$_merge_out" "full-loop PR #${pr_number} in ${repo}" ""; then
 		local _merge_retry_out="" _merge_original_out="$_merge_out"
 		print_info "gh pr merge returned 401 while live gh auth succeeds; quarantined stale gh cache entries and retrying once..."
