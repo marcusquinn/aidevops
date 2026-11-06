@@ -515,6 +515,11 @@ Commands:
                                  --admin and --auto are mutually exclusive at the
                                  gh CLI level; if both are given, --admin wins and
                                   --auto is dropped (GH#19310).
+                [--override-review-bot-gate="REASON"]
+                                 Interactive maintainer only (GH#36901): admin-merge
+                                 when review-bot-gate is the sole failing required
+                                 check and the PR approval verifies. Reason 20+ chars;
+                                 audit-logged and recorded on the PR after merge.
   record-no-release <PR> [REPO]  Verify merged evidence and record release:not-requested.
   record-deployment <PR> <RUN_ID> <WORKFLOW.yml> <DEPLOYED_SHA> [REPO]
                                   Verify an existing tagless maintained-app deployment.
@@ -559,6 +564,9 @@ _run_foreground() {
 main() {
 	local command="${1:-help}"
 	shift || true
+	#aidevops:trust-boundary GH#36901 -- the review-bot-gate override is set only
+	# by cmd_merge from its explicit flag, never inherited from the environment.
+	_FULL_LOOP_RBG_OVERRIDE_REASON=""
 	# Command help is an introspection request, not an operation. Handle it
 	# before dispatch so probes such as `start --help` cannot create loop state.
 	case "${1:-}" in

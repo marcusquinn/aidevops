@@ -106,12 +106,14 @@ load_functions() {
 	extract_function _merge_describe_flags
 	extract_function _merge_rest_fallback
 	extract_function _merge_revalidate_transport_authority
+	extract_function _merge_verify_rbg_override_approval
 	extract_function _merge_execute
 	extract_function cmd_commit_and_pr
 	extract_function _parse_commit_and_pr_args
 	extract_function _validate_keep_issue_open_request
 	extract_function _compose_pr_title
 	extract_function _derive_pr_title_prefix
+	extract_readiness_function _full_loop_rbg_override_active
 	extract_readiness_function cmd_pre_merge_gate
 	extract_readiness_function _full_loop_report_external_authority_preflight
 	# shellcheck source=/dev/null

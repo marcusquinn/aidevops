@@ -339,6 +339,39 @@ _full_loop_query_capability_checks() {
 	return 0
 }
 
+#aidevops:trust-boundary GH#36901 -- the review-bot-gate maintainer override is
+# active only when cmd_merge parsed an explicit interactive flag. main() clears
+# any inherited value, and an undeclared headless probe fails closed.
+_full_loop_rbg_override_active() {
+	[[ -n "${_FULL_LOOP_RBG_OVERRIDE_REASON:-}" ]] || return 1
+	declare -F _merge_is_headless_session >/dev/null 2>&1 || return 1
+	_merge_is_headless_session && return 1
+	return 0
+}
+
+# Succeeds only when every non-passing required check is a terminal
+# review-bot-gate failure. Pending, missing or any other failing check blocks.
+_full_loop_non_passing_only_review_bot_gate() {
+	local non_passing="$1"
+	printf '%s' "$non_passing" | jq -e '
+		type == "array" and length > 0 and
+		all(.[]; (.name == "review-bot-gate" or .name == "gate / review-bot-gate") and (.bucket // "") == "fail")
+	' >/dev/null 2>&1
+	return $?
+}
+
+# Accepts the non-passing set only under an active override whose sole failure
+# is review-bot-gate; records the override as the success evidence.
+_full_loop_accept_rbg_override() {
+	local pr_number="$1" non_passing="$2"
+	_full_loop_rbg_override_active || return 1
+	_full_loop_non_passing_only_review_bot_gate "$non_passing" || return 1
+	print_warning "PR #${pr_number}: terminal review-bot-gate failure accepted by maintainer override (GH#36901): ${_FULL_LOOP_RBG_OVERRIDE_REASON}"
+	FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="review-bot-gate-maintainer-override"
+	FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="required checks passed except review-bot-gate (maintainer override)"
+	return 0
+}
+
 _full_loop_verify_pr_readiness() {
 	local pr_number="$1"
 	local repo="$2"
@@ -391,6 +424,7 @@ _full_loop_verify_pr_readiness() {
 	# GitHub accepts completed SKIPPED checks for non-applicable required gates.
 	# Do not admit other skipping states or infer completion from the bucket alone.
 	non_passing=$(printf '%s' "$required_checks" | jq -c '[.[] | select(((.bucket == "pass") or (.bucket == "skipping" and .state == "SKIPPED")) | not)]')
+	_full_loop_accept_rbg_override "$pr_number" "$non_passing" && non_passing='[]'
 	if [[ "$(printf '%s' "$non_passing" | jq 'length')" -gt 0 ]]; then
 		if printf '%s' "$non_passing" | jq -e --arg pending "$_FULL_LOOP_CHECK_PENDING" 'all(.[]; (.bucket // "") == $pending)' >/dev/null 2>&1; then
 			FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_PENDING"
@@ -492,6 +526,13 @@ cmd_pre_merge_gate() {
 		print_success "Review bot gate: ${rbg_status} — safe to merge PR #${pr_number}"
 		;;
 	*)
+		#aidevops:trust-boundary GH#36901 -- only the explicit interactive
+		# maintainer override continues; external authority still runs below.
+		if _full_loop_rbg_override_active; then
+			print_warning "Review bot gate: ${rbg_status:-FAILED} — continuing under maintainer override (GH#36901) for PR #${pr_number}"
+			_full_loop_report_external_authority_preflight "$pr_number" "$repo"
+			return $?
+		fi
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="review-bot"
 		print_error "Review bot gate: ${rbg_status:-FAILED} — do NOT merge PR #${pr_number}"
 		printf '%s\n' "$rbg_result" | tail -5

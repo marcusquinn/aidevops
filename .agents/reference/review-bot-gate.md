@@ -137,7 +137,9 @@ The review add-on check runs after the `origin:interactive` (t2411) and
   field remains external and fail-closed.
 - **External contributors**: advisory, rate-limit, and skip outcomes remain
   fail-closed; completed review evidence is required in addition to independent
-  maintainer/cryptographic authority.
+  maintainer/cryptographic authority. When no bot reviews the exact head, an
+  interactive maintainer may use the audited `--override-review-bot-gate`
+  merge (`auto-merge.md` "Interactive Admin Merge Authority", GH#36901).
 
 The helper is still evaluated and audited on every merge path; advisory is an
 explicit successful policy outcome, not a bypass. Draft, `hold-for-review`, human
