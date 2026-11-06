@@ -1327,6 +1327,24 @@ _clean_select_merge_type() {
 	return 1
 }
 
+# Capacity recovery is narrower than routine/manual cleanup: no abandoned
+# dirty WIP, closed-issue archival, or remote-deleted-only inference.
+_clean_capacity_candidate_allowed() {
+	local wt_path="$1" wt_branch="$2" default_br="$3" merged_prs="$4" open_prs="$5"
+	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 0
+	[[ -z "${_WT_CLEAN_PR_PROOF_UNKNOWN_REASONS:-}" ]] || return 1
+	_clean_branch_list_contains_exact "$wt_branch" "$open_prs" && return 1
+	_clean_worktree_index_is_readable "$wt_path" "$wt_branch" "capacity-recovery" || return 1
+	worktree_has_changes "$wt_path" && return 1
+	_clean_terminal_owner_blocks_cleanup "$wt_path" && return 1
+	_branch_has_active_interactive_claim "$wt_path" "$wt_branch" && return 1
+	if ! _clean_branch_list_contains_exact "$wt_branch" "$merged_prs" &&
+		! git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null; then
+		return 1
+	fi
+	return 0
+}
+
 # Determine if a worktree entry is merged, and print it if so.
 # Args: $1=wt_path, $2=wt_branch, $3=default_branch, $4=remote_state_unknown,
 #       $5=merged_pr_branches, $6=open_pr_branches, $7=force_merged,
@@ -1350,19 +1368,7 @@ _clean_classify_worktree() {
 	_WT_CLEAN_LAST_AUDIT_CONTEXT=""
 	_WT_CLEAN_LAST_PRESERVE_BRANCH="$_WT_CLEAN_BOOL_FALSE"
 
-	# Capacity recovery is narrower than routine/manual cleanup: no abandoned
-	# dirty WIP, closed-issue archival, or remote-deleted-only inference.
-	if [[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]]; then
-		[[ -z "${_WT_CLEAN_PR_PROOF_UNKNOWN_REASONS:-}" ]] || return 0
-		_clean_branch_list_contains_exact "$wt_branch" "$open_prs" && return 0
-		worktree_has_changes "$wt_path" && return 0
-		_clean_terminal_owner_blocks_cleanup "$wt_path" && return 0
-		_branch_has_active_interactive_claim "$wt_path" "$wt_branch" && return 0
-		if ! _clean_branch_list_contains_exact "$wt_branch" "$merged_prs" &&
-			! git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null; then
-			return 0
-		fi
-	fi
+	_clean_capacity_candidate_allowed "$wt_path" "$wt_branch" "$default_br" "$merged_prs" "$open_prs" || return 0
 
 	if _clean_protected_contains "$wt_path" &&
 		! _clean_branch_has_terminal_pr_proof "$wt_branch" "$merged_prs" "$closed_prs"; then
