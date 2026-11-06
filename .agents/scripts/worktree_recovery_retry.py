@@ -39,6 +39,7 @@ REVISION_FILES = (
     "worktree_archive_index.py", "worktree_archive_state.py", "worktree_archive_history.py",
     "worktree_archive_objects.py", "worktree_archive_auto_merge.py", "worktree_archive_merge_capture.py",
     "worktree_archive_merge_restore.py", "worktree_archive_merge_objects.py",
+    "worktree_archive_runtime_config.py",
 )
 TRANSIENT = {
     "compaction:deadline", "migration:insufficient-capacity", "migration:no-space",
