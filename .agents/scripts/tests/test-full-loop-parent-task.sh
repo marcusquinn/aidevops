@@ -254,6 +254,7 @@ LOGFILE="${TEST_ROOT}/pulse.log"
 for checkpoint_summary in \
 	'For #42. For #99.' \
 	$'For #42\nFor #99' \
+	$'For: #42\nrEf: #99' \
 	'Partial data checkpoint only. For #42; do not close the issue on merge. Ref #99'; do
 	pr_body=$(_build_pr_body "42" "$checkpoint_summary" "diff reviewed" "guide.md" "" "For")
 	checkpoint_body="$pr_body"
@@ -267,15 +268,15 @@ for checkpoint_summary in \
 	fi
 done
 
-pr_body=$(_build_pr_body "42" "For #42. For #99." "diff reviewed" "guide.md" "" "For" "" "" "" \
+pr_body=$(_build_pr_body "42" "For #42. For #99." $'diff reviewed\nRef #99\nRef: #100' "guide.md" "" "For" "" "" "" \
 	'Ref #99' $'Ref #100\nRef #99')
 checkpoint_body="$pr_body"
 if [[ "$(printf '%s\n' "$pr_body" | grep -c '^Ref #99$')" -eq 1 &&
 	"$(printf '%s\n' "$pr_body" | grep -c '^Ref #100$')" -eq 1 &&
 	"$(_extract_pr_work_issue 77 owner/repo explicit)" == "42" ]]; then
-	print_result "Related issues are deduplicated across summary, audit and decisions" 0
+	print_result "Related issues are deduplicated across summary, testing, audit and decisions" 0
 else
-	print_result "Related issues are deduplicated across summary, audit and decisions" 1 "$pr_body"
+	print_result "Related issues are deduplicated across summary, testing, audit and decisions" 1 "$pr_body"
 fi
 
 pr_body=$(_build_pr_body "42" 'Partial checkpoint only. For #42; keep open.' "diff reviewed" "guide.md" "" "For")

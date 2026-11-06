@@ -1220,12 +1220,12 @@ _build_pr_body() {
 	local testing_level=""
 	local related="" related_numbers=" "
 	local field="" text="" reference="" reference_number="" prefix=""
-	local reference_pattern='(^|[^[:alnum:]_])([Ff][Oo][Rr]|[Rr][Ee][Ff])[[:space:]]+#([0-9]+)'
+	local reference_pattern='(^|[^[:alnum:]_])([Ff][Oo][Rr]|[Rr][Ee][Ff])[:[:space:]]+#([0-9]+)'
 
 	# GH#36864: prose must not introduce a second explicit work identity.
 	# Keep the dispatched declaration below authoritative, even when summaries
 	# contain same-line, multiline or prose-prefixed child/umbrella references.
-	for field in summary_what replacement_note decisions; do
+	for field in summary_what summary_testing replacement_note decisions; do
 		text="${!field}"
 		while [[ "$text" =~ $reference_pattern ]]; do
 			reference="${BASH_REMATCH[0]}"
