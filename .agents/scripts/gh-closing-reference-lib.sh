@@ -60,6 +60,7 @@ _gh_validate_pr_closing_keywords() {
 			continue
 		fi
 		case "$arg" in
+		--help) return 0 ;;
 		--body | -b) has_body=1; body_text=""; pending="body" ;;
 		--body=*) has_body=1; body_text="${arg#--body=}" ;;
 		-b?*) has_body=1; body_text="${arg#-b}" ;;
@@ -82,7 +83,10 @@ _gh_validate_pr_closing_keywords() {
 		fi
 		body_text=$(<"$body_file")
 	fi
-	[[ -n "$body_text" ]] || return 0
+	if [[ -z "$body_text" ]]; then
+		# A create must provide inspectable text; metadata-only edits need none.
+		[[ "${_GH_PR_IDENTITY_ORIGIN:-}" == "origin:worker" ]] || return 0
+	fi
 	if ! _gh_pr_body_negated_closing_ref "$body_text" >/dev/null; then
 		_gh_validate_pr_worker_identity "$body_text" "$@"
 		return $?
@@ -92,6 +96,34 @@ _gh_validate_pr_closing_keywords() {
 	printf '[SAFETY] gh pr body rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
 	printf '[SAFETY] Use "Ref #N" or "For #N" and state "The referenced PR or issue remains open." Negation does not neutralize closing keywords.\n' >&2
 	return 1
+}
+
+# Preserve Pulse closing-target selection, including its PR-reference exception.
+_gh_pr_body_closing_issues() {
+	local body_text="$1"
+	printf '%s' "$body_text" \
+		| grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' \
+		| grep -oE '[0-9]+' | sort -u || true
+	return 0
+}
+
+_gh_drop_closing_pull_request_refs() {
+	local repo_slug="$1" candidates="$2"
+	local candidate="" issue_json="" kept="" newline=$'\n'
+	while IFS= read -r candidate; do
+		[[ -n "$candidate" ]] || continue
+		issue_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/issues/${candidate}" 2>/dev/null) || issue_json=""
+		if [[ -n "$issue_json" ]] && printf '%s' "$issue_json" \
+			| jq -e --argjson n "$candidate" '.number == $n and .pull_request != null' >/dev/null 2>&1; then
+			if [[ -n "${LOGFILE:-}" ]]; then
+				printf '[pulse-wrapper] _extract_linked_issue: ignoring closing reference #%s in %s — it is a pull request, not an issue (GH#36704)\n' "$candidate" "$repo_slug" >>"$LOGFILE"
+			fi
+			continue
+		fi
+		kept="${kept:+${kept}${newline}}${candidate}"
+	done <<<"$candidates"
+	printf '%s' "$kept"
+	return 0
 }
 
 # Shared with Pulse explicit association. Output is empty, one issue, or a
@@ -154,24 +186,51 @@ _gh_validate_pr_worker_identity() {
 	local body_text="$1"
 	shift
 	local origin="${_GH_PR_IDENTITY_ORIGIN:-}" labels="" repo="" number="" issues=""
+	local worker_origin="origin:worker"
 	if [[ "$origin" == "edit" ]]; then
 		repo=$(_gh_extract_repo_from_args "$@")
-		number=$(_gh_extract_number_from_args "$@")
-		if ! labels=$(gh_pr_view "$number" --repo "$repo" --json labels --jq '[.labels[].name]' 2>/dev/null) ||
+		local arg="" pending="" adding_worker=0
+		local -a view_args=()
+		for arg in "$@"; do
+			if [[ -n "$pending" ]]; then
+				if [[ "$pending" == "label" && ",${arg}," == *",origin:worker,"* ]]; then
+					adding_worker=1
+				fi
+				pending=""
+				continue
+			fi
+			case "$arg" in
+			--add-label) pending="label" ;;
+			--add-label=*) [[ ",${arg#*=}," != *",origin:worker,"* ]] || adding_worker=1 ;;
+			--repo | -R | --body | -b | --body-file | -F | --title | -t | --base | -B | --milestone | -m | --remove-label | --add-assignee | --remove-assignee | --add-reviewer | --remove-reviewer | --add-project | --remove-project) pending="value" ;;
+			-*) ;;
+			*) [[ -n "$number" ]] || number="$arg" ;;
+			esac
+		done
+		[[ -z "$number" ]] || view_args+=("$number")
+		[[ -z "$repo" ]] || view_args+=(--repo "$repo")
+		if ! labels=$(gh_pr_view "${view_args[@]}" --json labels --jq '[.labels[].name]' 2>/dev/null) ||
 			! printf '%s' "$labels" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
 			_GH_EDIT_REJECTION_REASON="PR origin labels unavailable before body edit"
 			printf '[SAFETY] %s; retry when PR metadata is readable.\n' "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
-		printf '%s' "$labels" | jq -e 'index("origin:worker") != null' >/dev/null || return 0
-	elif [[ "$origin" != "origin:worker" ]]; then
+		if [[ "$adding_worker" -eq 0 ]]; then
+			printf '%s' "$labels" | jq -e --arg origin "$worker_origin" 'index($origin) != null' >/dev/null || return 0
+		fi
+	elif [[ "$origin" != "$worker_origin" ]]; then
 		return 0
 	fi
-	# Native closing declarations retain their existing authoritative selection.
-	if printf '%s' "$body_text" | grep -qiE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+'; then
-		return 0
+	# Native closing declarations retain their existing authoritative selection;
+	# ambiguous closing targets must not fall back to a For/Ref declaration.
+	issues=$(_gh_pr_body_closing_issues "$body_text")
+	if [[ "$issues" == *$'\n'* ]]; then
+		[[ -n "$repo" ]] || repo=$(_gh_extract_repo_from_args "$@")
+		issues=$(_gh_drop_closing_pull_request_refs "$repo" "$issues")
 	fi
-	issues=$(_gh_pr_body_explicit_issues "$body_text") || return 1
+	if [[ -z "$issues" ]]; then
+		issues=$(_gh_pr_body_explicit_issues "$body_text") || return 1
+	fi
 	if [[ -z "$issues" || "$issues" == *$'\n'* || "$issues" == "ambiguous" ]]; then
 		_GH_EDIT_REJECTION_REASON="worker PR body has ambiguous or missing explicit issue identity"
 		# shellcheck disable=SC2016 # Literal Markdown code spans, not commands.

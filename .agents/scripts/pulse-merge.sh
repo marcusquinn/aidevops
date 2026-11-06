@@ -1741,9 +1741,7 @@ _extract_linked_issue() {
 	# The body keyword is AUTHORITATIVE. A project-specific GH#NNN title prefix
 	# must not override or contradict a single native closing target. (t2108)
 	local body_issues="" body_issue=""
-	body_issues=$(printf '%s' "$pr_body" \
-		| grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' \
-		| grep -oE '[0-9]+' | sort -u) || body_issues=""
+	body_issues=$(_gh_pr_body_closing_issues "$pr_body") || body_issues=""
 
 	# No closing keyword in the body → return empty. The PR is intentionally
 	# not closing any issue (planning-only PR, multi-PR roadmap, "For #NNN"
@@ -1779,19 +1777,8 @@ _extract_linked_issue() {
 _drop_closing_pull_request_refs() {
 	local repo_slug="$1"
 	local candidates="$2"
-	local candidate="" issue_json="" kept="" newline=$'\n'
-	while IFS= read -r candidate; do
-		[[ -n "$candidate" ]] || continue
-		issue_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/issues/${candidate}" 2>/dev/null) || issue_json=""
-		if [[ -n "$issue_json" ]] && printf '%s' "$issue_json" \
-			| jq -e --argjson n "$candidate" '.number == $n and .pull_request != null' >/dev/null 2>&1; then
-			echo "[pulse-wrapper] _extract_linked_issue: ignoring closing reference #${candidate} in ${repo_slug} — it is a pull request, not an issue (GH#36704)" >>"$LOGFILE"
-			continue
-		fi
-		kept="${kept:+${kept}${newline}}${candidate}"
-	done <<<"$candidates"
-	printf '%s' "$kept"
-	return 0
+	_gh_drop_closing_pull_request_refs "$repo_slug" "$candidates"
+	return $?
 }
 
 #######################################

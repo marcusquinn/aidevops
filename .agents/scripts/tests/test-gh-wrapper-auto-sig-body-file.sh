@@ -46,6 +46,10 @@ MOCK_BIN_DIR="${TEST_ROOT}/mockbin"
 mkdir -p "$MOCK_BIN_DIR"
 cat >"${MOCK_BIN_DIR}/gh" <<'MOCK'
 #!/usr/bin/env bash
+if [[ "$*" == *'--json labels'* ]]; then
+	printf '%s\n' '["origin:worker"]'
+	exit 0
+fi
 for arg in "$@"; do
 	printf '<%s>\n' "$arg" >>"${GH_ARGV_RECORD_FILE}"
 done
@@ -119,7 +123,7 @@ count_captured_signatures() {
 assert_body_file_signed() {
 	local name="$1" command_name="$2"
 	local body_file="${TEST_ROOT}/${command_name}.md"
-	printf '## Summary\n\nBody\n' >"$body_file"
+	printf 'For #42\n\n## Summary\n\nBody\n' >"$body_file"
 	reset_capture
 	if [[ "$command_name" == "pr-create" ]]; then
 		gh_create_pr --repo o/r --title "Fix body-file signing" --body-file "$body_file" >/dev/null 2>&1
@@ -136,7 +140,7 @@ assert_body_file_signed() {
 
 assert_pr_edit_body_file_signed() {
 	local body_file="${TEST_ROOT}/pr-edit.md"
-	printf '## Edited summary\n\nBody\n' >"$body_file"
+	printf 'For #42\n\n## Edited summary\n\nBody\n' >"$body_file"
 	reset_capture
 	gh_pr_edit_safe 1 --repo o/r --body-file "$body_file" >/dev/null 2>&1
 	if [[ "$(count_captured_signatures)" == "1" ]] && ! grep -q '<!-- aidevops:sig -->' "$body_file"; then
@@ -166,7 +170,7 @@ assert_signed_relative_body_file_normalized() {
 	local body_name="already-signed-relative.md"
 	local body_file="${TEST_ROOT}/${rel_dir}/${body_name}"
 	mkdir -p "${TEST_ROOT}/${rel_dir}"
-	printf '## Summary\n\nBody\n\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) existing\n' >"$body_file"
+	printf 'For #42\n\n## Summary\n\nBody\n\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) existing\n' >"$body_file"
 	reset_capture
 	(
 		cd "$TEST_ROOT" || exit 1
@@ -298,7 +302,7 @@ assert_close_comment_signed_once() {
 assert_home_body_file_normalized() {
 	local form="$1"
 	local body_file="${HOME}/.aidevops/body with spaces.md"
-	printf '## Summary\n\nHome body\n' >"$body_file"
+	printf 'For #42\n\n## Summary\n\nHome body\n' >"$body_file"
 	reset_capture
 	local rc=0
 	if [[ "$form" == "equals" ]]; then

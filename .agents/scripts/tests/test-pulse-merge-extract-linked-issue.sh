@@ -413,6 +413,69 @@ test_worker_write_identity() {
 	return 0
 }
 
+test_worker_write_wrappers() {
+	local result=0
+	# Isolate the real write entrypoints and their normal body-file processing.
+	# Only external metadata, signatures, audit storage and transport are stubbed.
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh"
+		gh_record_call() { return 0; }
+		_gh_edit_audit_rejection() { return 0; }
+		_ensure_origin_labels_for_args() { return 0; }
+		_gh_guard_public_write_args() { return 0; }
+		_gh_wrapper_auto_sig() { _GH_WRAPPER_SIG_MODIFIED_ARGS=("$@"); return 0; }
+		_gh_create_pr_enforce_origin_postcondition() { return 0; }
+		_gh_audit_fetch_pr_state_json() { return 0; }
+		_gh_audit_record_op() { return 0; }
+		session_origin_label() { printf 'origin:worker'; return 0; }
+		local fixture_labels='["origin:worker"]' fail_labels=0 writes=0 body="" rc=0
+		gh_pr_view() {
+			[[ "$fail_labels" -eq 0 ]] || return 1
+			printf '%s' "$fixture_labels"
+			return 0
+		}
+		gh() {
+			local resource="$1" operation="$2"
+			if [[ "$resource" == "pr" && ( "$operation" == "create" || "$operation" == "edit" ) ]]; then
+				printf '%s\n' "$operation" >>"${TEST_ROOT}/writes"
+			fi
+			return 0
+		}
+		: >"${TEST_ROOT}/writes"
+		for body in $'For #42\nFor #43' 'For #42. For #43.' 'For #42. Ref #43 and #44.' 'Checkpoint For #42; do not close the issue.'; do
+			printf '%s\n' "$body" >"${TEST_ROOT}/worker-body"
+			rc=0
+			gh_create_pr --repo owner/repo --title 'Checkpoint identity' --body-file "${TEST_ROOT}/worker-body" >/dev/null 2>&1 || rc=$?
+			[[ "$rc" -eq 1 ]] || exit 1
+			rc=0
+			gh_pr_edit_safe --repo owner/repo 1 --body-file "${TEST_ROOT}/worker-body" >/dev/null 2>&1 || rc=$?
+			[[ "$rc" -eq 1 ]] || exit 1
+		done
+		[[ ! -s "${TEST_ROOT}/writes" ]] || exit 1
+		printf '%s\n' 'For #42' '' '## Related' 'Ref #43' >"${TEST_ROOT}/worker-body"
+		gh_create_pr --repo owner/repo --title 'Checkpoint identity' --body-file "${TEST_ROOT}/worker-body" >/dev/null || exit 1
+		gh_pr_edit_safe 1 --repo owner/repo --body-file "${TEST_ROOT}/worker-body" || exit 1
+		writes=$(wc -l <"${TEST_ROOT}/writes")
+		[[ "$writes" -eq 2 ]] || exit 1
+		fail_labels=1
+		rc=0
+		gh_pr_edit_safe 1 --repo owner/repo --body 'For #42' >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 1 ]] || exit 1
+		# Metadata-only edits do not need body identity or a new label read.
+		gh_pr_edit_safe 1 --repo owner/repo --title 'Updated checkpoint' || exit 1
+		fail_labels=0
+		fixture_labels='["origin:interactive"]'
+		gh_pr_edit_safe 1 --repo owner/repo --body 'Checkpoint For #42' || exit 1
+		rc=0
+		gh_pr_edit_safe 1 --repo owner/repo --add-label origin:worker --body 'Checkpoint For #42' >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 1 ]] || exit 1
+		exit 0
+	) || result=$?
+	print_result "real create/edit wrappers enforce worker identity before writes and preserve metadata/interactive edits" "$result"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -433,6 +496,7 @@ main() {
 	test_metadata_failure_returns_empty
 	test_explicit_merge_association
 	test_worker_write_identity
+	test_worker_write_wrappers
 	test_merge_gate_association_is_not_closure
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

@@ -314,7 +314,7 @@ _rest_should_fallback() { return 1; }
 session_origin_label() { printf 'origin:worker'; return 0; }
 detect_session_origin() { printf 'worker'; return 0; }
 _gh_wrapper_auto_sig() { _GH_WRAPPER_SIG_MODIFIED_ARGS=(\"\$@\"); return 0; }
-gh_create_pr --repo owner/repo --title 'zsh smoke' --body 'body'
+gh_create_pr --repo owner/repo --title 'zsh smoke' --body 'For #42'
 " 2>&1) || true
 	if [[ "$zsh_pr_out" == *"https://github.com/owner/repo/pull/1"* && \
 	      "$zsh_pr_out" != *"_save_cleanup_scope"* && \
