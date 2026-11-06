@@ -13,6 +13,8 @@ MERGE_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge.sh"
 source "${SCRIPT_DIR}/../full-loop-helper-subject.sh"
 # Authority gates moved from full-loop-helper-merge.sh to this module (GH#30748).
 MERGE_AUTHORITY_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge-authority.sh"
+# REST fallback and transport revalidation moved to this module (GH#36968).
+MERGE_TRANSPORT_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge-transport.sh"
 READINESS_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-readiness.sh"
 TEST_ROOT="$(mktemp -d -t full-loop-merge-authority.XXXXXX)"
 EXTRACTED="${TEST_ROOT}/functions.sh"
@@ -64,7 +66,7 @@ extract_function() {
       index($0, fn "() {") == 1 { capture = 1 }
       capture { print }
       capture && $0 == "}" { exit }
-    ' "$MERGE_SCRIPT" "$MERGE_AUTHORITY_SCRIPT" "${SCRIPT_DIR}/../full-loop-helper.sh" "${SCRIPT_DIR}/../full-loop-helper-commit.sh" >>"$EXTRACTED"
+    ' "$MERGE_SCRIPT" "$MERGE_AUTHORITY_SCRIPT" "$MERGE_TRANSPORT_SCRIPT" "${SCRIPT_DIR}/../full-loop-helper.sh" "${SCRIPT_DIR}/../full-loop-helper-commit.sh" >>"$EXTRACTED"
 	return 0
 }
 
