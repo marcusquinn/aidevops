@@ -355,6 +355,38 @@ terminal). The closure grants nothing: a new generated approval must list it in
 `released_successors`. A lost device cannot use this path; that history stays
 blocked pending a reviewed decision.
 
+### Released ready attempts with a missing terminal lease
+
+A ready attempt can post its own `CLAIM_RELEASED` and lose the terminal-lease
+post. Its release alone does not close the historical episode: approval generation
+still rejects it with `reason=open_at_end`. The default expired-ready closer and
+automatic outbox drain deliberately continue rejecting ordinary releases.
+
+After verifying that the executor has stopped, the claim owner may explicitly
+complete this exact gap on the same authenticated account, device and session:
+
+```bash
+dispatch-claim-helper.sh close-expired-pr-checkpoint-lease ISSUE OWNER/REPO CLAIM_COMMENT_ID SESSION --complete-released
+```
+
+This mode requires one trusted, unedited, fully bound `blocked`, `clean` or
+`worker_complete` release after the ready lease. The release must name the same
+claim ID, nonce, token, device, session and runner; an explicit attempt ID must
+match. All observed lease/launch attempts must match the ready attempt. Missing
+identity, unknown or unelapsed expiry, another attempt, intervening renewal,
+duplicate release, an existing terminal lease or a live local executor refuses.
+Shutdown and the complete history are checked again immediately before posting.
+
+Only a new current `DISPATCH_LEASE phase=terminal ... expires_at=0` is appended.
+The original release is not duplicated, relabelled or edited, and no historical
+record is fabricated. The operator supplies a claim comment ID, never a token.
+An interrupted post can be retried after rereading the timeline; a terminal event
+already present refuses without another write. This closes coordination only,
+not execution effects: publication status remains unknown until reconciled.
+Generate and publish a fresh revision-bound approval preserving the entire
+closed episode before any continuation. Existing head/brief, permission, expiry
+and fresh fenced-claim requirements remain unchanged.
+
 ### Claims released as blocked before ready (GH#35683)
 
 A later claim can end at prelaunch with the runner's own
