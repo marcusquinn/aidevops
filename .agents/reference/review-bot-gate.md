@@ -86,6 +86,20 @@ that label while reusing reviewer enumeration and dismissal mechanics.
   explicit `wait` or `strict` policies remain fail-closed.
 - When many PRs are rate-limited simultaneously, use `request-retry` on the highest-priority PRs first. Stagger retries to avoid re-triggering rate limits.
 
+### External PR review-limit recovery (GH#36900)
+
+After independent author, issue, and approval gates pass, Pulse requests a review
+retry when an external PR has valid current-head `WAITING` evidence. It verifies
+managed-repository write authority and rechecks that the PR is open, non-draft,
+not held for review, and still on the observed head before calling the shared
+`request-retry` command. That command owns bot-notice detection and idempotency;
+historical-review and per-head retry handling is tracked by GH#36899.
+
+Requesting review never clears the gate in the same invocation. Subsequent bot
+events or Pulse passes must observe successful review evidence normally. Missing,
+malformed, API-error, head-drift, and trusted-author outcomes do not request this
+external recovery. No labels, approvals, commit statuses, or branches are changed.
+
 ## Additive suggestion decision tree
 
 When a review bot comments with a suggestion that isn't a correctness issue in the PR's own code:
