@@ -139,6 +139,31 @@ _expect "unknown repo cursor uses original order" "test/a#1 test/a#2 test/a#3 te
 printf 'test/b\t99\t0\n' >"$CURSOR"
 _expect "closed cursor issue restarts its repo" "test/b#4 test/b#5 test/a#1 test/a#2 test/a#3" "$(_run_pass 0)"
 
+# Repairs can consume the entire cooperative budget before the issue loop.
+# Retain the saved issue and give issues priority on the following pass.
+_repair_pending_planning_publications() {
+	[[ "${REPAIR_KILL:-0}" -eq 0 ]] || exit 99
+	SECONDS=$((SECONDS + 1000))
+	return 0
+}
+rm -f "${CURSOR}.issues-first"
+printf 'test/a\t2\t1\n' >"$CURSOR"
+_expect "expensive repair yields before issues" "" "$(_run_pass 50)"
+_expect "repair yield preserves issue and attempts" "test/a,2,1" "$(_cursor)"
+_expect "issues get priority after expensive repair" "test/a#2" "$(_run_pass 50)"
+_expect "issue-priority pass advances cursor" "test/a,3,0" "$(_cursor)"
+_expect "repairs retain a turn on subsequent passes" "" "$(_run_pass 50)"
+_expect "second repair yield preserves advanced cursor" "test/a,3,0" "$(_cursor)"
+_expect "issues keep advancing across short cycles" "test/a#3" "$(_run_pass 50)"
+
+rm -f "${CURSOR}.issues-first"
+printf 'test/a\t2\t0\n' >"$CURSOR"
+kill_status=0
+( REPAIR_KILL=1 RECONCILE_TIME_BUDGET_SECS=50 reconcile_issues_single_pass ) >/dev/null 2>&1 || kill_status=$?
+_expect "repair interruption is reproduced" "99" "$kill_status"
+_expect "repair interruption retains saved issue" "test/a,2,0" "$(_cursor)"
+_expect "interrupted repair still yields next pass to issues" "test/a#2" "$(_run_pass 50)"
+
 echo ""
 echo "Results: ${pass} passed, ${fail} failed"
 [[ "$fail" -eq 0 ]] || exit 1
