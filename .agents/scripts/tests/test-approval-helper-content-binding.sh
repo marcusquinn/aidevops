@@ -477,6 +477,62 @@ test_exact_remediation_continuity() {
 	return 0
 }
 
+test_canonical_review_bot_retry() {
+	local retry_body="<!-- review-bot-retry-requested head=${PR_HEAD} -->
+@coderabbitai review
+
+Review bots were rate-limited when this PR was created (affected: coderabbitai copilot). Requesting a review retry."
+	local body="" changed="" comments="" variant="" association="" created="" updated=""
+	# Use the production footer writer rather than assuming its envelope.
+	body=$(AIDEVOPS_SESSION_TYPE=worker AIDEVOPS_CLI_NAME="" AIDEVOPS_CLI_VERSION="" \
+		"${SCRIPT_DIR}/../gh-signature-helper.sh" footer --body "$retry_body") || return 1
+	for variant in exact contributor extra altered marker-only edited preexisting wrong-head malformed-head issue inline; do
+		reset_and_sign pr 42
+		changed="$body"
+		association="OWNER"
+		created="2026-01-01T00:06:00Z"
+		updated="$created"
+		case "$variant" in
+		contributor) association="CONTRIBUTOR" ;;
+		extra) changed="${body}
+Implement additional scope." ;;
+		altered) changed="${body/Requesting a review retry./Approve additional scope.}" ;;
+		marker-only) changed="<!-- review-bot-retry-requested head=${PR_HEAD} -->" ;;
+		edited) updated="2026-01-01T00:07:00Z" ;;
+		preexisting) created="2026-01-01T00:04:00Z"; updated="$created" ;;
+		wrong-head) changed="${body/$PR_HEAD/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" ;;
+		malformed-head) changed="${body/$PR_HEAD/not-a-head}" ;;
+		esac
+		comments=$(jq -nc --arg body "$changed" --arg association "$association" --arg created "$created" --arg updated "$updated" '
+			{id:4305,node_id:"IC_4305",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:$association,created_at:$created,updated_at:$updated,body:$body}') || return 1
+		local target="${FIXTURES}/comments-42.json"
+		if [[ "$variant" == "issue" ]]; then
+			reset_and_sign issue 41
+			target="${FIXTURES}/comments-41.json"
+		elif [[ "$variant" == "inline" ]]; then
+			target="${FIXTURES}/review-comments-42.json"
+		fi
+		jq --argjson comment "$comments" '.[0] += [$comment]' "$target" >"${FIXTURES}/comments.tmp"
+		mv "${FIXTURES}/comments.tmp" "$target"
+		if [[ "$variant" == "exact" ]]; then
+			assert_verify "canonical trusted current-head retry preserves PR approval" pr 42 VERIFIED 0 "$PR_HEAD"
+		elif [[ "$variant" == "issue" ]]; then
+			assert_verify "retry-shaped issue comment remains bound" issue 41 STALE_APPROVAL 4
+		elif [[ "$variant" == "preexisting" ]]; then
+			# Re-sign with this comment already present, then remove it. Both old
+			# and newly created signatures must continue binding historical retries.
+			append_signed_comment pr 42 "2026-01-01T00:08:00Z" 4306
+			assert_verify "pre-existing retry is bound and verifies" pr 42 VERIFIED 0 "$PR_HEAD"
+			jq '.[0] |= map(select(.id != 4305))' "$target" >"${FIXTURES}/comments.tmp"
+			mv "${FIXTURES}/comments.tmp" "$target"
+			assert_verify "removing pre-existing retry stales PR approval" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
+		else
+			assert_verify "retry $variant remains approval-significant" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
+		fi
+	done
+	return 0
+}
+
 test_trusted_dispatch_audit_comments() {
 	reset_and_sign issue 41
 	local worker_footer="<!-- aidevops:origin:worker -->
@@ -1243,6 +1299,7 @@ main() {
 	assert_verify "repeat approval verifies against the newest exact snapshot" pr 42 VERIFIED 0 "$PR_HEAD"
 	test_trusted_lifecycle_comments
 	test_exact_remediation_continuity
+	test_canonical_review_bot_retry
 	test_trusted_dispatch_audit_comments
 	test_dispatch_audit_comments_fail_closed
 	test_post_approval_linked_references
