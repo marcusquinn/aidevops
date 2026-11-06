@@ -679,6 +679,10 @@ _preflight_ownership_reconcile() {
 	prefetch_contribution_watch
 	_log_substage_timing "substage:ownership_reconcile/prefetch_contribution_watch" "$_ss0" 0
 
+	# GH#36908: live intake has its own timeout, before the cache/cursor pass
+	# starts its internal 360-second budget. A stale snapshot cannot hide intake.
+	run_stage_with_timeout "reconcile_new_external_issues" 60 reconcile_new_external_issues || true
+
 	# t2776: single-pass reconcile — iterates the issue list ONCE per repo and
 	# applies all five reconcile checks in sub-stage order (close-merged-PR,
 	# stale-done, open-with-merged-PR, parent-task, labelless backfill).
