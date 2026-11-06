@@ -6,8 +6,6 @@ from pathlib import Path
 import subprocess  # nosec B404 # exception classification only
 
 from .enrollment import _git_directory
-# Re-exported for legacy callers; the permanent registry pass shares it (GH#36851).
-from .pull_requests import open_pull_requests as open_pull_requests
 from .retirement import _git, _id
 
 

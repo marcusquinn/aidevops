@@ -17,12 +17,13 @@ from uuid import UUID, uuid4, uuid5
 from .cleanup import _failure_details
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
-from .legacy_discovery import open_pull_requests, same_tree
+from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import require_manual_confirmation, require_managed_takeover, unrecorded
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
+from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
 
