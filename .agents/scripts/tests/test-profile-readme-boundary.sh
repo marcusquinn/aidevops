@@ -105,6 +105,7 @@ install_helper_with_libs() {
 		"${SOURCE_HELPER%/*}/../worker-lifecycle/worker-launch.py" "$lifecycle_dir/" || return 1
 	cp -R "${SOURCE_HELPER%/*}/../worker-lifecycle/worker_lifecycle" "$lifecycle_dir/" || return 1
 	cp "${SOURCE_HELPER%/*}/audit-worktree-removal-helper.sh" \
+		"${SOURCE_HELPER%/*}/audit-worktree-removal-recovery.sh" \
 		"${SOURCE_HELPER%/*}/shared-sqlite-backup.sh" \
 		"${SOURCE_HELPER%/*}/portable-stat.sh" \
 		"${SOURCE_HELPER%/*}/screen-time-interval-engine.py" \
