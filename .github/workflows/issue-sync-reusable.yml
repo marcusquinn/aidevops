@@ -1364,6 +1364,7 @@ jobs:
             declare -A CHILD_COMPLETED=()
             CLOSED_CHILD_COUNT=0
             REMAINING_CHILD_COUNT=0
+            UNFILED_PHASE_COUNT=0
             REMAINING_ITEMS=""
             REMAINING_ITEM_COUNT=0
             CHILD_PATTERN='^[[:space:]]*- \[ \][[:space:]]+#([0-9]+)([[:space:]]|$)'
@@ -1379,6 +1380,9 @@ jobs:
                   continue
                 fi
                 REMAINING_CHILD_COUNT=$((REMAINING_CHILD_COUNT + 1))
+              elif [[ "$ITEM" =~ [Pp]hase[[:space:]]+[0-9]+ ]]; then
+                # Phase entry without a child reference (unfiled phase)
+                UNFILED_PHASE_COUNT=$((UNFILED_PHASE_COUNT + 1))
               fi
               REMAINING_ITEM_COUNT=$((REMAINING_ITEM_COUNT + 1))
               if [[ "$REMAINING_ITEM_COUNT" -le 10 ]]; then
@@ -1449,8 +1453,9 @@ jobs:
             NEXT_STEP="file the next phase child issue (see decomposition plan in this issue's body)."
             if [[ "$CLOSED_CHILD_COUNT" -gt 0 ]]; then
               DONE_PROGRESS+=" (${CLOSED_CHILD_COUNT} by closed child issue)"
-              # Reconcile only when no unfiled (child-less) phase remains
-              if [[ "$REMAINING_CHILD_COUNT" -eq 0 && "$REMAINING_ITEM_COUNT" -eq 0 ]]; then
+              # Reconcile when no child-linked or unfiled phase remains
+              # (only acceptance criteria are left unchecked)
+              if [[ "$REMAINING_CHILD_COUNT" -eq 0 && "$UNFILED_PHASE_COUNT" -eq 0 ]]; then
                 NEXT_STEP="reconcile the parent acceptance criteria."
               fi
             fi
