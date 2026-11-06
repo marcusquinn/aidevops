@@ -1205,8 +1205,48 @@ test_squash_subject_contract() (
 	return 0
 )
 
+# GH#36874: commit pages travel on stdin, never through an argv-sized argument.
+test_squash_subject_commit_pages() (
+	local pages="" actual="" actual_rc=0
+	local title='GH#36874: preserve large commit histories'
+	_flm_gh_read() {
+		if [[ "$*" == *'--json title'* ]]; then
+			jq -n --arg title "$title" '{title: $title}'
+		else
+			printf '%s\n' "$pages"
+		fi
+		return 0
+	}
+	pages=$(jq -cn '
+		[range(3) | [range(100) |
+			{sha: (tostring), commit: {message: ("fix: large history\n" + ("x" * 8192))}}]]')
+	[[ "${#pages}" -gt 2097152 ]] || return 1
+	actual=$(_merge_resolve_squash_subject 900 owner/repo) || actual_rc=$?
+	if [[ "$actual_rc" -eq 0 && "$actual" == 'GH#36874: fix: preserve large commit histories' ]]; then
+		print_result "squash subject accepts >2 MB paginated metadata and infers type" 0
+	else
+		print_result "squash subject accepts >2 MB paginated metadata and infers type" 1
+	fi
+	for pages in '[]' '[[]]' '[{}]' 'null' \
+		'[[{"commit":{"message":"fix: missing sha"}}]]' \
+		'[[{"sha":"abc","commit":{}}]]' \
+		'[[{"sha":"","commit":{"message":"fix: empty sha"}}]]' \
+		'[[{"sha":"abc","commit":{"message":42}}]]'; do
+		actual_rc=0
+		actual=$(_merge_resolve_squash_subject 900 owner/repo 2>&1) || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 && "$actual" == *'Invalid PR #900 commit metadata for squash-subject validation'* ]]; then
+			print_result "squash subject rejects malformed commit evidence: ${pages}" 0
+		else
+			print_result "squash subject rejects malformed commit evidence: ${pages}" 1
+		fi
+	done
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
+	return 0
+)
+
 main() {
 	load_functions
+	test_squash_subject_commit_pages || return 1
 	test_squash_subject_contract || return 1
 	test_slow_gate_admission_reads
 	test_trusted_issue_sync_authority
