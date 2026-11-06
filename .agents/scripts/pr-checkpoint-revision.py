@@ -16,8 +16,9 @@ import sys
 
 from pr_checkpoint_events import (EVENTS, events, release_for, released_attempt_token,
                                   successors_valid, timestamp, trusted)
-from pr_checkpoint_history import (TERMINAL_WITHOUT_RELEASE, UNATTRIBUTED, explain_released_successor_history,
-                                   released_successor_history)
+from pr_checkpoint_episodes import TERMINAL_WITHOUT_RELEASE
+from pr_checkpoint_history import explain_reviewed_successor_history
+from pr_checkpoint_unattributed import UNATTRIBUTED
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
 
@@ -71,8 +72,10 @@ def history_approved(data, comments, approval, approval_id, closing):
     terminal_ids = [item["terminal_id"] for item in proposed
                     if item.get("outcome") == TERMINAL_WITHOUT_RELEASE]
     approval_comment = next(c for c in comments if c["id"] == approval_id)
-    history = released_successor_history(comments, approval["release_id"], approval_id, closing,
-        trusted_logins, acknowledgement_ids(terminal_ids), timestamp(approval_comment["created_at"]))
+    history, _ = explain_reviewed_successor_history(
+        comments, (approval["release_id"], approval_id), closing,
+        {"trusted_logins": trusted_logins, "terminal_ids": acknowledgement_ids(terminal_ids),
+         "before": timestamp(approval_comment["created_at"])})
     # Every entry, including claim_only_no_worker and blocked_before_ready
     # (GH#35683) closures, must be acknowledged exactly as generated.
     if history is None or history != approval.get("released_successors", []):
@@ -203,8 +206,9 @@ def template(data):
     closing = (release["user"]["login"], released_attempt_token(comments, approval, release, trusted_logins))
     terminal_ids = acknowledgement_ids(data.get("acknowledge_terminal_without_release", []))
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
-    history, rejection = explain_released_successor_history(
-        comments, release["id"], float("inf"), closing, trusted_logins, terminal_ids, now)
+    history, rejection = explain_reviewed_successor_history(
+        comments, (release["id"], float("inf")), closing,
+        {"trusted_logins": trusted_logins, "terminal_ids": terminal_ids, "before": now})
     if history is None:
         raise ValueError("intervening coordination is not fully released; no approval generated; "
                           + rejection_diagnostic(rejection))

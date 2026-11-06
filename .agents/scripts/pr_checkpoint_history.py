@@ -6,12 +6,11 @@
 import hashlib
 import json
 
-from pr_checkpoint_events import closes_released_attempt, events, fields, normalized_attempt, timestamp, trusted
-from pr_checkpoint_never_ready import (CLAIM_ONLY, NEVER_READY_OUTCOMES,
+from pr_checkpoint_events import closes_released_attempt, events, fields, normalized_attempt, trusted
+from pr_checkpoint_episodes import acknowledged_terminal, completed_episode
+from pr_checkpoint_never_ready import (CLAIM_ONLY,
                                        advance_never_ready_release, close_claim_only)
-from pr_checkpoint_unattributed import UNATTRIBUTED, unattributed_release
-
-TERMINAL_WITHOUT_RELEASE = "terminal_without_release"
+from pr_checkpoint_unattributed import unattributed_release
 
 
 def closed_claim(comment, line, f, seen):
@@ -79,35 +78,6 @@ def advance_lease(state, comment, line, f):
     return True
 
 
-def acknowledged_terminal(state, comment, line, f, terminal_ids, before):
-    """Record a reviewed historical anomaly, never synthesize a release.
-
-    #aidevops:trust-boundary — only explicit exact-ID revision approval may
-    reconcile this shape. A terminal record or elapsed lease alone grants nothing.
-    """
-    if state is None or comment["id"] not in terminal_ids:
-        return None
-    expiries = state.get("expiries", [])
-    valid_expiries = expiries and all(isinstance(value, str) and value.isascii()
-        and value.isdigit() and int(value) > 0 for value in expiries)
-    if not all((line.startswith("DISPATCH_LEASE "), not state.get("release_id"),
-                not state.get("unbound_release_ids"), bool(state.get("ready_id")),
-                comment["user"]["login"] == state["runner"],
-                f.get("phase") == "terminal", f.get("expires_at") == "0",
-                f.get("lease_token") == state["token"], f.get("session") == state["session"],
-                normalized_attempt(f.get("attempt_id")) == state.get("attempt"),
-                bool(state.get("device")), state.get("device_bound", False),
-                f.get("device") == state.get("device"), bool(valid_expiries))):
-        return None
-    if max(int(value) for value in expiries) >= before or timestamp(comment["created_at"]) > before:
-        return None
-    if not state["claim_id"] < state["ready_id"] < comment["id"]:
-        return None
-    episode = {key: state[key] for key in ("runner", "attempt", "claim_id", "ready_id")}
-    return {**episode, "terminal_id": comment["id"], "outcome": TERMINAL_WITHOUT_RELEASE,
-            "release_provenance": "missing", "execution_status": "unrecovered"}
-
-
 def advance_release(state, comment, line, f):
     verdict = advance_never_ready_release(state, comment, line, f)
     return close_release(state, comment, f) if verdict is None else verdict
@@ -142,46 +112,28 @@ def advance_history(state, comment, line, f, seen):
     return state if advance_closed_claim(state, comment, line, f) else None
 
 
-def completed_episode(state):
-    if state.get("outcome") == UNATTRIBUTED:
-        return dict(state)
-    if state.get("release_id") and not state.get("ready_id"):
-        # Only the never-ready closers record a release without a ready lease.
-        if state.get("outcome") not in NEVER_READY_OUTCOMES:
-            raise ValueError("never-ready historical release has no recognised outcome")
-        if not state["claim_id"] < state["release_id"] or any(
-                not state["claim_id"] < diagnostic < state["release_id"]
-                for diagnostic in state.get("unbound_release_ids", [])):
-            raise ValueError("historical coordination ids are not strictly ordered")
-        episode = {key: state[key] for key in ("runner", "claim_id", "release_id")}
-        return {**episode, "outcome": state["outcome"],
-                **({"unbound_release_ids": state["unbound_release_ids"]}
-                   if state.get("unbound_release_ids") else {}),
-                **({"attempt": state["attempt"]} if state.get("attempt") else {})}
-    if not state.get("terminal_id"):
-        return None
-    if not (state["claim_id"] < state["ready_id"] < state["release_id"] < state["terminal_id"]):
-        raise ValueError("historical coordination ids are not strictly ordered")
-    return {key: state[key] for key in (
-        "runner", "attempt", "claim_id", "ready_id", "release_id", "terminal_id")}
-
-
-def released_successor_history(comments, release_id, approval_id, released_lease, trusted_logins=(),
-                               terminal_ids=(), before=0):
+def released_successor_history(comments, release_id, approval_id, released_lease, trusted_logins=()):
     """Preserve the history-or-None contract for existing acceptance callers."""
     history, _ = explain_released_successor_history(
-        comments, release_id, approval_id, released_lease, trusted_logins, terminal_ids, before)
+        comments, release_id, approval_id, released_lease, trusted_logins)
     return history
 
 
-def explain_released_successor_history(comments, release_id, approval_id, released_lease, trusted_logins=(),
-                                       terminal_ids=(), before=0):
+def explain_released_successor_history(comments, release_id, approval_id, released_lease, trusted_logins=()):
+    """Describe released history without enabling terminal-anomaly recovery."""
+    return explain_reviewed_successor_history(
+        comments, (release_id, approval_id), released_lease, {"trusted_logins": trusted_logins})
+
+
+def explain_reviewed_successor_history(comments, bounds, released_lease, review):
     """Describe only fully closed, non-overlapping attempts preceding an approval.
 
     #aidevops:trust-boundary — historical closure needs explicit revision approval;
     elapsed time or a release message alone never grants continuation authority.
     Return (history, rejection context); diagnostics never affect acceptance.
     """
+    release_id, approval_id = bounds
+    trusted_logins = review.get("trusted_logins", ())
     history, state, episode_records = [], None, []
     seen = {released_lease[1]} if released_lease else set()
     for comment, line, f in events(comments, release_id, approval_id, trusted_logins):
@@ -191,7 +143,7 @@ def explain_released_successor_history(comments, release_id, approval_id, releas
             continue
         episode_records.append((comment["id"], comment["created_at"],
                                 comment["user"]["login"], comment["body"]))
-        reconciled = acknowledged_terminal(state, comment, line, f, terminal_ids, before)
+        reconciled = acknowledged_terminal(state, (comment, line, f), review)
         if reconciled is not None:
             # Bind every observed episode record, including intermediate renewals;
             # publish only the fingerprint, never the underlying lease credentials.
