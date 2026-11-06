@@ -1882,7 +1882,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18872 sandbox-exec-helper: stop full-process-table polling in the worker wait loop (~0.2 core per wrapper) #bug ref:GH#36843 pr:#36846 completed:2026-11-05
 
-- [ ] t18873 Preserve or reject config.worktree in Git-only worktree archive capture #auto-dispatch #bug ref:GH#36857
+- [x] t18873 Preserve or reject config.worktree in Git-only worktree archive capture #auto-dispatch #bug ref:GH#36857 pr:#36859 completed:2026-11-06
 
 ## In Progress
 
