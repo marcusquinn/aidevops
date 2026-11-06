@@ -14,6 +14,8 @@ set -euo pipefail
 
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 MERGE_FILE="${SCRIPT_DIR_TEST}/../pulse-merge.sh"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${SCRIPT_DIR_TEST}/../gh-closing-reference-lib.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0

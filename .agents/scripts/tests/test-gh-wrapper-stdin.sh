@@ -31,6 +31,9 @@ fail() {
 
 export AIDEVOPS_TEMP_DIR="${TMP}/bodies"
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE=1
+# Match the interactive provenance returned by this suite's transport fixtures,
+# independently of whether the test runner itself is a dispatched worker.
+export AIDEVOPS_SESSION_ORIGIN=interactive
 mkdir -p "$AIDEVOPS_TEMP_DIR"
 CAPTURED_BODY="${TMP}/captured-body.md"
 CAPTURED_MODE="${TMP}/captured-mode.txt"

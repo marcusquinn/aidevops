@@ -807,6 +807,7 @@ gh_pr_edit_safe() {
 		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
+	local _GH_PR_IDENTITY_ORIGIN="edit"
 	if ! _gh_validate_pr_closing_keywords "$@"; then
 		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1

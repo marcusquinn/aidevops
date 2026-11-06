@@ -25,6 +25,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 #   _interactive_pr_is_stale + _interactive_pr_trigger_handover → pulse-merge-conflict.sh
 #   _extract_linked_issue                                        → pulse-merge.sh (still)
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
 CONFLICT_SCRIPT="${SCRIPT_DIR}/../pulse-merge-conflict.sh"
 
 readonly TEST_RED='\033[0;31m'
