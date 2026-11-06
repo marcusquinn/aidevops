@@ -122,6 +122,16 @@ fence accepts it, except for the terminal-blocker classes (`blocked`,
 `status:blocked`, brief holds and protected labels are preserved, and
 `WORKER_DRAFT_CHECKPOINT` keeps blocking ordinary redispatch.
 
+Once an issue has a trusted `CHECKPOINT_CONTINUATION_APPROVED` record, the
+revision-approval route owns scheduling, even if that record has expired or binds
+an older head. A push or an aged attention record does not reopen the legacy
+automatic continuation route. If revision target validation fails, the stall
+attention record offers no new-head or age-based re-arm promise: retry unavailable
+metadata/permission checks first. If the approval expired or the head/brief changed,
+generate a fresh approval with `pr-checkpoint-continuation-helper.sh approval-template`
+and publish it as a new issue comment, as described below. An unexpired exact-head
+approval still requires the full revision validation and fenced claim.
+
 ### Drafts blocked by pre-v3.39.89 release projections (GH#36028)
 
 Runners before v3.39.89 projected `status:blocked` after a continuable release,
