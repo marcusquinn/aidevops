@@ -109,6 +109,16 @@ def verify(archive, manifest):
     return keys
 
 
+def inventory(archive, manifest, capture_policy):
+    """Archive inventory names this policy requires; exits like verify_archive."""
+    if capture_policy != "git-only":
+        return set()  # Other policies never list the artifact, so it stays unknown.
+    try:
+        return {NAME} if verify(archive, manifest) else set()
+    except (OSError, ValueError) as error:
+        raise SystemExit(str(error) if isinstance(error, ValueError) else "missing config.worktree artifact") from None
+
+
 def restored_view(snapshot):
     """The fingerprint a faithful restore must reproduce: runtime config is omitted."""
     return {key: value for key, value in snapshot.items() if key not in (SHA_FIELD, KEYS_FIELD)}
