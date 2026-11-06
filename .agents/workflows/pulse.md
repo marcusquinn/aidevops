@@ -228,7 +228,7 @@ For repos where `repo_allows_pulse_write_actions SLUG` fails (role=`contributor`
 
 3. **Workflow file guard.** `check_workflow_merge_guard` from `pulse-wrapper.sh`.
 
-4. **Review add-on.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on `PASS`, `PASS_ADVISORY`, or `PASS_RATE_LIMITED`. `WAITING` is reserved for explicit strict/wait policy or the external-contributor trust boundary.
+4. **Review add-on.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on `PASS`, `PASS_ADVISORY`, or `PASS_RATE_LIMITED`. `WAITING` is reserved for explicit strict/wait policy (GH#36931).
 
 5. **Unresolved review suggestions.** Check with `gh api "repos/SLUG/pulls/NUMBER/comments"`. If actionable, dispatch a fix worker (label `needs-review-fixes`).
 

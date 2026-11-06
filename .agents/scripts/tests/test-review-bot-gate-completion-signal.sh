@@ -340,13 +340,14 @@ test_infra_rate_limit_passes_trusted_default_policy() {
 	return 0
 }
 
-test_infra_rate_limit_blocks_external_author() {
+test_infra_rate_limit_external_author_advisory() {
+	# GH#36931: review add-ons are advisory for every author.
 	local output
 	output=$(classify_infra_rate_limit "CONTRIBUTOR" "testorg/otherrepo")
-	if [[ "$output" == "INFRA_RATE_LIMITED" ]]; then
-		print_result "API exhaustion fails closed for external authors" 0
+	if [[ "$output" == "PASS_ADVISORY" ]]; then
+		print_result "API exhaustion delegates to advisory default for external authors" 0
 	else
-		print_result "API exhaustion fails closed for external authors" 1 "output=${output}"
+		print_result "API exhaustion delegates to advisory default for external authors" 1 "output=${output}"
 	fi
 	return 0
 }
@@ -786,8 +787,7 @@ test_issue_sync_bot_metadata_mismatches_fail_closed() {
 	for filter in "${mismatch_filters[@]}"; do
 		candidate=$(jq -c "$filter" <<<"$pr_metadata")
 		association=$(_resolve_pr_author_association 123 'testorg/otherrepo' "$candidate")
-		if [[ "$association" != "CONTRIBUTOR" ]] ||
-			! REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
+		if [[ "$association" != "CONTRIBUTOR" ]]; then
 			failures="${failures}${filter}; "
 		fi
 	done
@@ -849,28 +849,30 @@ test_trusted_retired_tool_policy_does_not_require_completed_review() {
 	return 0
 }
 
-test_external_default_requires_completed_review() {
-	if REVIEW_GATE_AUTHOR_ASSOCIATION=CONTRIBUTOR _review_gate_requires_completed_review 'testorg/otherrepo'; then
-		print_result "external author preserves completed-review trust boundary" 0
+test_external_default_is_advisory_strict_still_applies() {
+	# GH#36931: external authors follow the repository policy, not a forced wait.
+	if ! REVIEW_GATE_AUTHOR_ASSOCIATION=CONTRIBUTOR _review_gate_requires_completed_review 'testorg/otherrepo' &&
+		REVIEW_GATE_AUTHOR_ASSOCIATION=CONTRIBUTOR _review_gate_requires_completed_review 'testorg/strictrepo'; then
+		print_result "external author is advisory by default and strict when the repo opts in" 0
 	else
-		print_result "external author preserves completed-review trust boundary" 1
+		print_result "external author is advisory by default and strict when the repo opts in" 1
 	fi
 	return 0
 }
 
-test_untrusted_association_matrix_requires_completed_review() {
+test_untrusted_association_matrix_is_advisory() {
 	local association=""
 	local failures=""
 	for association in CONTRIBUTOR NONE FIRST_TIMER FIRST_TIME_CONTRIBUTOR FUTURE_ENUM ""; do
-		if ! REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
+		if REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
 			failures="${failures}${association:-<empty>} "
 		fi
 	done
 	if [[ -z "$failures" ]]; then
-		print_result "external, unknown, and empty associations fail closed" 0
+		print_result "external, unknown, and empty associations use the advisory default" 0
 	else
-		print_result "external, unknown, and empty associations fail closed" 1 \
-			"unexpected advisory associations: ${failures}"
+		print_result "external, unknown, and empty associations use the advisory default" 1 \
+			"unexpected waiting associations: ${failures}"
 	fi
 	return 0
 }
@@ -883,8 +885,7 @@ test_malformed_metadata_and_rest_failure_fail_closed() {
 	local association=""
 	association=$(_resolve_pr_author_association 123 'testorg/otherrepo' '{malformed-json')
 	unset -f gh
-	if [[ -z "$association" ]] &&
-		REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
+	if [[ -z "$association" ]]; then
 		print_result "malformed metadata plus REST failure remains unknown" 0
 	else
 		print_result "malformed metadata plus REST failure remains unknown" 1 \
@@ -1299,7 +1300,7 @@ test_do_check_blocks_non_review_states_in_strict_mode() {
 	return 0
 }
 
-test_do_check_blocks_external_non_review_states() {
+test_do_check_external_non_review_states_advisory() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() {
 		printf '%s\n' 'coderabbitai'
@@ -1320,10 +1321,10 @@ test_do_check_blocks_external_non_review_states() {
 		status=$?
 	fi
 
-	if [[ "$status" -eq 1 && "$output" == "WAITING" ]]; then
-		print_result "do_check preserves external-author review trust boundary" 0
+	if [[ "$status" -eq 0 && "$output" == "PASS_ADVISORY" ]]; then
+		print_result "do_check applies advisory default to external-author non-review states" 0
 	else
-		print_result "do_check preserves external-author review trust boundary" 1 \
+		print_result "do_check applies advisory default to external-author non-review states" 1 \
 			"status=${status} output=${output}"
 	fi
 	return 0
@@ -1457,7 +1458,7 @@ test_do_check_fetches_success_status_contexts_once() {
 	return 0
 }
 
-test_status_json_denies_external_rate_limit_grace() {
+test_status_json_permits_external_rate_limit_grace() {
 	do_check() {
 		printf 'PASS_RATE_LIMITED\n'
 		return 0
@@ -1468,10 +1469,10 @@ test_status_json_denies_external_rate_limit_grace() {
 	}
 	local output=""
 	output=$(do_status_json 123 'testorg/otherrepo')
-	if jq -e '.schema == "aidevops.review-gate-evidence/v1" and .status == "PASS_RATE_LIMITED" and .author.class == "external" and .permitted == false and .merge_gate == "blocked"' <<<"$output" >/dev/null; then
-		print_result "status-json denies external rate-limit grace" 0
+	if jq -e '.schema == "aidevops.review-gate-evidence/v1" and .status == "PASS_RATE_LIMITED" and .author.class == "external" and .permitted == true and .reason == "external_rate_limit_grace" and .merge_gate == "clear"' <<<"$output" >/dev/null; then
+		print_result "status-json permits external rate-limit grace" 0
 	else
-		print_result "status-json denies external rate-limit grace" 1 "output=${output}"
+		print_result "status-json permits external rate-limit grace" 1 "output=${output}"
 	fi
 	return 0
 }
@@ -1495,7 +1496,7 @@ test_status_json_allows_trusted_advisory_default() {
 	return 0
 }
 
-test_status_json_denies_external_advisory_default() {
+test_status_json_permits_external_advisory_default() {
 	do_check() {
 		printf 'PASS_ADVISORY\n'
 		return 0
@@ -1506,10 +1507,10 @@ test_status_json_denies_external_advisory_default() {
 	}
 	local output=""
 	output=$(do_status_json 123 'testorg/otherrepo')
-	if jq -e '.status == "PASS_ADVISORY" and .author.class == "external" and .permitted == false and .reason == "external_advisory_denied" and .merge_gate == "blocked"' <<<"$output" >/dev/null; then
-		print_result "status-json denies external advisory outcome" 0
+	if jq -e '.status == "PASS_ADVISORY" and .author.class == "external" and .permitted == true and .reason == "external_advisory_default" and .merge_gate == "clear"' <<<"$output" >/dev/null; then
+		print_result "status-json permits external advisory outcome" 0
 	else
-		print_result "status-json denies external advisory outcome" 1 "output=${output}"
+		print_result "status-json permits external advisory outcome" 1 "output=${output}"
 	fi
 	return 0
 }
@@ -1707,16 +1708,16 @@ run_completion_requirement_tests() {
 	test_issue_sync_bot_check_uses_advisory_default
 	test_trusted_strict_repo_requires_completed_review
 	test_trusted_retired_tool_policy_does_not_require_completed_review
-	test_external_default_requires_completed_review
-	test_untrusted_association_matrix_requires_completed_review
+	test_external_default_is_advisory_strict_still_applies
+	test_untrusted_association_matrix_is_advisory
 	test_malformed_metadata_and_rest_failure_fail_closed
 	return 0
 }
 
 run_status_json_tests() {
-	test_status_json_denies_external_rate_limit_grace
+	test_status_json_permits_external_rate_limit_grace
 	test_status_json_allows_trusted_advisory_default
-	test_status_json_denies_external_advisory_default
+	test_status_json_permits_external_advisory_default
 	test_status_json_allows_trusted_skip
 	test_status_json_denies_skip_removed_during_decision
 	test_status_json_fails_closed_without_pr_metadata
@@ -1752,7 +1753,7 @@ main() {
 	test_self_caller_uses_pr_head_helper_ref
 	test_callers_expose_explicit_ci_strict_opt_in
 	test_infra_rate_limit_passes_trusted_default_policy
-	test_infra_rate_limit_blocks_external_author
+	test_infra_rate_limit_external_author_advisory
 	test_infra_rate_limit_blocks_explicit_wait_or_strict_policy
 	test_infra_rate_limit_ignores_retired_tool_policy
 	test_is_rate_limit_only_matches_rate_limit
@@ -1812,7 +1813,7 @@ main() {
 	test_do_check_passes_true_rate_limit_only
 	test_do_check_advises_non_rate_limit_non_review_states_by_default
 	test_do_check_blocks_non_review_states_in_strict_mode
-	test_do_check_blocks_external_non_review_states
+	test_do_check_external_non_review_states_advisory
 	test_do_check_advises_when_no_bots_are_present
 	test_do_check_accepts_non_review_with_success_status
 	test_do_check_fetches_success_status_contexts_once

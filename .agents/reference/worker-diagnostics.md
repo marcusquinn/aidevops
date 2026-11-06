@@ -1266,7 +1266,7 @@ When workers are failing systemically:
 5. **Watchdog**: `ps aux | grep watchdog` — are watchdog processes surviving?
 6. **Pulse log**: `tail -30 ~/.aidevops/logs/pulse.log` — dedup blocked? backoff? claim errors?
 7. **Issue comments**: check for `CLAIM_RELEASED` / `DISPATCH_CLAIM` comment loops
-8. **Review add-on**: `review-bot-gate-helper.sh check <PR>` — default no-response is `PASS_ADVISORY`; `WAITING` means explicit strict/wait policy or the external-contributor trust boundary is blocking
+8. **Review add-on**: `review-bot-gate-helper.sh check <PR>` — default no-response is `PASS_ADVISORY`; `WAITING` means explicit strict/wait policy is blocking (GH#36931)
 
 ## Pre-Dispatch Eligibility Gate (t2424)
 
