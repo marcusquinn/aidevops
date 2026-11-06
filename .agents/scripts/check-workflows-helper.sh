@@ -13,6 +13,7 @@
 #   - loc-badge.yml          (template: loc-badge-caller.yml)
 #   - linked-issue-check.yml (template: linked-issue-check-caller.yml, GH#28844)
 #   - release-verify.yml     (template: release-verify-caller.yml)
+#   - issue-triage-gate.yml  (template: issue-triage-gate-caller.yml, GH#36905)
 #
 # Classifies each (repo × workflow) as:
 #
@@ -84,6 +85,7 @@ fi
 # GH#20727: review-bot-gate added.
 # GH#21154: maintainer-gate added (layer-1 defense-in-depth propagation).
 # GH#28844: linked-issue-check added (external contribution visibility).
+# GH#36905: issue-triage-gate added (creation-time external issue trust labels).
 readonly _KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-reusable.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-reusable.yml:review-bot-gate-caller.yml"
@@ -91,6 +93,7 @@ readonly _KNOWN_WORKFLOWS=(
 	"loc-badge.yml:loc-badge-reusable.yml:loc-badge-caller.yml"
 	"linked-issue-check.yml:linked-issue-check-reusable.yml:linked-issue-check-caller.yml"
 	"release-verify.yml:release-verify-reusable.yml:release-verify-caller.yml"
+	"issue-triage-gate.yml:issue-triage-gate-reusable.yml:issue-triage-gate-caller.yml"
 )
 
 # Versioned inventory of framework-owned paths superseded by reusable callers.

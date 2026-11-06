@@ -14,6 +14,7 @@
 #   - review-bot-gate.yml    (template: review-bot-gate-caller.yml, GH#20727)
 #   - maintainer-gate.yml    (template: maintainer-gate-caller.yml, GH#21154)
 #   - linked-issue-check.yml (template: linked-issue-check-caller.yml, GH#28844)
+#   - issue-triage-gate.yml  (template: issue-triage-gate-caller.yml, GH#36905)
 #
 # Default mode is --dry-run. Pass --apply to actually write, commit, push, and
 # open a PR in each target repo.
@@ -85,6 +86,7 @@ readonly METRICS_WORKFLOW_NAME="loc-badge"
 # GH#21154: maintainer-gate added (layer-1 defense-in-depth propagation).
 # GH#21877: loc-badge added (runner input parity).
 # GH#28844: linked-issue-check added (external contribution visibility).
+# GH#36905: issue-triage-gate added (creation-time external issue trust labels).
 readonly _SYNC_KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-caller.yml"
@@ -92,6 +94,7 @@ readonly _SYNC_KNOWN_WORKFLOWS=(
 	"loc-badge.yml:loc-badge-caller.yml"
 	"linked-issue-check.yml:linked-issue-check-caller.yml"
 	"release-verify.yml:release-verify-caller.yml"
+	"issue-triage-gate.yml:issue-triage-gate-caller.yml"
 )
 
 # Output mode constants.
@@ -427,8 +430,8 @@ sync-workflows-helper.sh — resync drifted framework workflows (t2779, GH#20649
 
 Reads classifications from check-workflows-helper.sh and, per repo × workflow,
 installs or refreshes the canonical caller template. Managed workflows include
-issue-sync.yml, review-bot-gate.yml, maintainer-gate.yml, loc-badge.yml, and
-linked-issue-check.yml.
+issue-sync.yml, review-bot-gate.yml, maintainer-gate.yml, loc-badge.yml,
+linked-issue-check.yml, release-verify.yml, and issue-triage-gate.yml.
 
 Default is --dry-run. Pass --apply to write, commit, push, and open PRs.
 
@@ -548,7 +551,7 @@ _extract_ref_pin() {
 _workflow_fetches_framework_helpers() {
 	local _workflow_name="$1"
 	case "$_workflow_name" in
-	issue-sync | review-bot-gate | loc-badge) return 0 ;;
+	issue-sync | review-bot-gate | loc-badge | issue-triage-gate) return 0 ;;
 	*) return 1 ;;
 	esac
 }

@@ -184,9 +184,12 @@ _check_nmr_approval_gate() {
 #######################################
 # GH#22399: Fail-closed external issue author gate.
 #
-# GitHub Actions issue-triage-gate.yml applies needs-maintainer-review to
-# non-collaborator issues, but Actions can sit queued while the pulse keeps
-# dispatching. This gate repeats the trust-boundary check in the dispatch path
+# Creation-time labels are best-effort: repos that installed the managed
+# issue-triage-gate.yml caller (GH#36905) get needs-maintainer-review +
+# external-contributor from Actions, other repos only from pulse reconcile
+# (stage 0b and the new-external-issue sweep), and Actions can sit queued or be
+# disabled while the pulse keeps dispatching. Labels may therefore be missing
+# at launch time. This gate repeats the trust-boundary check in the dispatch path
 # immediately before worker launch. OWNER/MEMBER, write-authorized collaborators,
 # and bot-created issues keep the fast path. External, read/triage collaborator,
 # or unknown authors must carry a valid cryptographic approval; otherwise the

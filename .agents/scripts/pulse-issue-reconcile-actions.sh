@@ -382,6 +382,7 @@ _PIR_PARENT_TRUST_STALE_APPROVED_CLOSE=stale-approved-terminal-close
 _PIR_PARENT_TRUST_BASIS="$_PIR_PARENT_TRUST_TRUSTED"
 _PIR_EXTERNAL_GATE_VERIFICATION=""
 _PIR_APPROVAL_STALE=STALE_APPROVAL
+_PIR_EXTERNAL_CONTRIBUTOR_LABEL=external-contributor
 
 _parent_comments_api_path() {
 	local slug="$1" parent_num="$2"
@@ -1102,6 +1103,48 @@ _pir_log_external_issue_author_metadata_miss() {
 }
 
 #######################################
+# Stage 0 helper (GH#36905): an issue that already carries NMR (for example
+# from an issue form template) but lacks external-contributor would otherwise
+# never get the provenance label, because stage 0b returns before the authority
+# check and blocks stage 5. Apply it when the authority check returns 1, the
+# same rule stage 5 uses. Unknown association or lookup failure changes nothing.
+#
+# Args: $1=slug, $2=issue number, $3=labels CSV, $4=association, $5=login
+# Returns: 0 always (stage 0b still blocks the remaining stages)
+#######################################
+_pir_backfill_external_contributor_label() {
+	local slug="$1"
+	local issue_num="$2"
+	local labels_csv="$3"
+	local author_association="$4"
+	local author_login="$5"
+
+	local ext_label="$_PIR_EXTERNAL_CONTRIBUTOR_LABEL"
+	if _pir_labels_csv_contains "$labels_csv" "$ext_label"; then
+		return 0
+	fi
+	[[ -n "$author_association" && -n "$author_login" ]] || return 0
+	declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1 || return 0
+	local authority_rc=0
+	_gh_actor_has_repo_write_authority "$slug" "$author_login" "$author_association" || authority_rc=$?
+	[[ "$authority_rc" -eq 1 ]] || return 0
+
+	local edit_rc=0
+	# shellcheck source=protected-label-guard.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
+	protected_label_edit "$issue_num" "$slug" \
+		"provenance; association=${author_association}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" \
+		"$_PIR_ADD_LABEL_FLAG" "$ext_label" >/dev/null || edit_rc=$?
+	if [[ "$edit_rc" -eq 0 ]]; then
+		_PIR_EXTERNAL_GATE_MUTATED=1
+		echo "[pulse-wrapper] External issue trust reconcile: applied ${ext_label} to #${issue_num} in ${slug}" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] External issue trust reconcile: ${ext_label} backfill failed for #${issue_num} in ${slug}" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
 # Stage 0 action: repair a missing NMR gate from cached author metadata and
 # prevent later reconciliation stages from acting on unapproved external input.
 # Verified approvals and write-authorized collaborators continue normally.
@@ -1119,6 +1162,8 @@ _action_reconcile_external_issue_gate() {
 	_PIR_EXTERNAL_GATE_VERIFICATION=""
 
 	if _pir_labels_csv_contains "$labels_csv" "$_PIR_NMR_LABEL"; then
+		_pir_backfill_external_contributor_label "$slug" "$issue_num" "$labels_csv" \
+			"$author_association" "$author_login"
 		return 0
 	fi
 	if [[ -z "$author_association" ]]; then
@@ -1167,8 +1212,8 @@ _action_reconcile_external_issue_gate() {
 	fi
 
 	local -a edit_args=("$_PIR_ADD_LABEL_FLAG" "$_PIR_NMR_LABEL")
-	if ! _pir_labels_csv_contains "$labels_csv" "external-contributor"; then
-		edit_args+=("$_PIR_ADD_LABEL_FLAG" "external-contributor")
+	if ! _pir_labels_csv_contains "$labels_csv" "$_PIR_EXTERNAL_CONTRIBUTOR_LABEL"; then
+		edit_args+=("$_PIR_ADD_LABEL_FLAG" "$_PIR_EXTERNAL_CONTRIBUTOR_LABEL")
 	fi
 	if _pir_labels_csv_contains "$labels_csv" "$_PIR_AUTO_DISPATCH_LABEL"; then
 		edit_args+=("$_PIR_REMOVE_LABEL_FLAG" "$_PIR_AUTO_DISPATCH_LABEL")

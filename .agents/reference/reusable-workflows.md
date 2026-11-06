@@ -28,6 +28,14 @@ The reusable pattern solves all three at once:
 | `issue-sync.yml` | `issue-sync-reusable.yml` | `issue-sync-caller.yml` | t2770 (PR #20662) |
 | `review-bot-gate.yml` | `review-bot-gate-reusable.yml` | `review-bot-gate-caller.yml` | GH#20727 |
 | `maintainer-gate.yml` | `maintainer-gate-reusable.yml` | `maintainer-gate-caller.yml` | GH#21154 |
+| `issue-triage-gate.yml` | `issue-triage-gate-reusable.yml` | `issue-triage-gate-caller.yml` | GH#36905 |
+
+`issue-triage-gate` runs on `issues: [opened, reopened]` and applies
+`needs-maintainer-review` + `external-contributor` to issues from authors
+without write access at creation time. Its redirect-link scanner is fetched
+from `aidevops_repository` at `aidevops_ref` (kept equal to the `uses:` ref),
+never from the caller repository. Pulse stage 0b remains the fallback for repos
+without the caller.
 
 ## Architecture
 
