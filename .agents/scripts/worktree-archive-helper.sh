@@ -464,6 +464,8 @@ capture_archive_payload() {
 			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 		fi
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
+		# GH#36883: runtime-local config.worktree bytes are kept, never restored.
+		python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" capture "$worktree" "$archive_dir" || return 1
 	fi
 	capture_untracked "$worktree" "$archive_dir" || return 1
 	if [[ -n "$failure_log" ]]; then
@@ -654,6 +656,10 @@ if manifest.get('merge_policy') == 'structured-v1':
 if manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
     mandatory.add('auto-merge-v1.json')
     allowed.add('auto-merge-v1.json')
+from worktree_archive_runtime_config import NAME as runtime_config, SHA_FIELD as runtime_config_sha
+if capture_policy == 'git-only' and runtime_config_sha in manifest.get('source_fingerprint', {}):
+    mandatory.add(runtime_config)
+    allowed.add(runtime_config)
 if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') == 2:
     allowed.discard('untracked.tar.gz')
     if (archive / 'untracked-files.txt').stat().st_size:
@@ -675,6 +681,11 @@ for artifact in manifest['artifacts']:
         raise SystemExit("missing or unsafe artifact: " + artifact['name'])
     if path.stat().st_size != artifact["size"] or hashlib.sha256(path.read_bytes()).hexdigest() != artifact["sha256"]:
         raise SystemExit("artifact integrity mismatch: " + artifact['name'])
+from worktree_archive_runtime_config import verify as verify_runtime_config
+try:
+    verify_runtime_config(archive, manifest)
+except ValueError as error:
+    raise SystemExit(str(error)) from None
 if sys.argv[4] == 'structural':
     # Retention identity check: proves a compact archive (never a full recovery
     # copy) without importing base objects; restorability is irrelevant to expiry.
@@ -861,6 +872,7 @@ restore_archive() {
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" || return 1
 	fi
 	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-restore "$target" "$archive_dir" || return 1
+	python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" restore-note "$archive_dir" || return 1
 	printf '%s\n' "$target"
 	return 0
 }

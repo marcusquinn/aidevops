@@ -66,7 +66,10 @@ def git_index_state(path, head=None):
     # preservation. Structured merges returned above preserve required ORIG_HEAD.
     state = administration(root, admin=admin)
     if state['files'].get('config.worktree'):
-        raise ValueError('git_admin:requires_preservation:config.worktree')
+        # GH#36883: only known runtime-local keys are preserved (as bytes, never
+        # restored); unknown, mixed or comment-only configuration is refused.
+        from worktree_archive_runtime_config import classify
+        classify(root, admin)
     if (admin / 'SQUASH_MSG').exists():
         raise ValueError('uncommitted squash draft requires separate preservation')
     supported_history(root, admin, require_reachable_history=False)

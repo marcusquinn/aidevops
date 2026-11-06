@@ -116,9 +116,19 @@ files. Git defines the inventory with `ls-files --others --exclude-standard`;
 ignored files and raw Git administration are excluded. `git-only` is the retained
 manifest policy name, not an alternative creation mode. There are no
 project-specific or directory-specific exclusions.
-Git-only capture refuses non-empty private `config.worktree` with
-`git_admin:requires_preservation:config.worktree`; its bytes are not represented
-by patches. Preserve that configuration separately before retiring the source.
+A non-empty `config.worktree` whose every key is a known runtime-local binding
+(currently `codex.localenvironmentconfigpath`) is kept as exact bytes in the 0600
+`worktree-config-v1` artifact (GH#36883). The source fingerprint records its
+SHA-256 and key names (`config_worktree_sha256`, `config_worktree_keys`), never
+values, so `source-matches` refuses retirement if it appears, changes or
+disappears after capture; verification re-checks the bytes and keys. Restore
+never writes it or changes `extensions.worktreeConfig`: a restored worktree must
+not rebind to the source runtime. Restore reports the omitted key names, and the
+canonical restore receipt records them as `omitted_runtime_config`. Any other
+key, mixed keys, or comment-only or unparsable content still fails with
+`git_admin:requires_preservation:config.worktree`; a symlink is refused (by Git
+or as `git_admin:symlink:config.worktree`); a pending merge keeps its refusal.
+Each refusal retains the source.
 An empty or absent `config.worktree` does not block ordinary Git-only capture,
 including worktrees containing the disposable `codex-thread.json` runtime record.
 The shared repository must retain the recorded base. An empty delta needs no bundle.
