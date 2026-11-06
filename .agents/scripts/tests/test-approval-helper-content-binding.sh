@@ -486,6 +486,7 @@ Review bots were rate-limited when this PR was created (affected: coderabbitai c
 	# Use the production footer writer rather than assuming its envelope.
 	body=$(AIDEVOPS_SESSION_TYPE=worker AIDEVOPS_CLI_NAME="" AIDEVOPS_CLI_VERSION="" \
 		"${SCRIPT_DIR}/../gh-signature-helper.sh" footer --body "$retry_body") || return 1
+	body="${retry_body}${body}"
 	for variant in exact contributor extra altered marker-only edited preexisting wrong-head malformed-head issue inline; do
 		reset_and_sign pr 42
 		changed="$body"

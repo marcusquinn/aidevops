@@ -73,6 +73,33 @@ JQ
 	return 0
 }
 
+_approval_snapshot_v2_comment_filters() {
+	cat <<'JQ'
+		def trusted_association:
+			. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
+		def aidevops_worker_footer:
+			"(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[A-Za-z0-9._+-]+ [^\\n]+\\n?";
+		def human_user: .user.type == "User";
+		def conversation_source: $source == "conversation";
+		def canonical_review_bot_retry:
+			(conversation_source and ($head | test("^[0-9a-fA-F]{40}$")))
+			and test(
+				"^<!-- review-bot-retry-requested head=" + $head + " -->\\n@coderabbitai review\\n\\n" +
+				"Review bots were rate-limited when this PR was created \\(affected: (?:coderabbitai|augment-code|augmentcode|copilot|gemini-code-assist)(?: (?:coderabbitai|augment-code|augmentcode|copilot|gemini-code-assist))*\\)\\. Requesting a review retry\\." + aidevops_worker_footer + "$"
+			);
+		# #aidevops:trust-boundary — only a complete current-head PR retry
+		# from a trusted human, posted unedited after signing, is operational.
+		# Historical retries stay bound; markers alone never carry authority.
+		def approval_significant_retry:
+			(human_user
+			and ((.author_association // $empty) | trusted_association)
+			and ($cutoff != $empty) and ((.created_at // $empty) > $cutoff)
+			and ((.updated_at // .created_at) == .created_at)
+			and ((.body // $empty) | canonical_review_bot_retry)) | not;
+JQ
+	return 0
+}
+
 _approval_snapshot_v2_comments_json() {
 	local pages_json="$1"
 	local excluded_comment_id="${2:-}"
@@ -89,18 +116,7 @@ _approval_snapshot_v2_comments_json() {
 	# excluding arbitrary marker comments would let an external contributor hide
 	# later drift by copying the marker into an unsigned comment.
 	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" --arg head "$pr_head" "$(_approval_snapshot_v2_comment_identity)"'
-		def trusted_association:
-			. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
-		def human_user: .user.type == "User";
-		def conversation_source: $source == "conversation";
-		def aidevops_worker_footer:
-			"(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[A-Za-z0-9._+-]+ [^\\n]+\\n?";
-		def canonical_review_bot_retry:
-			(conversation_source and ($head | test("^[0-9a-fA-F]{40}$")))
-			and test(
-				"^<!-- review-bot-retry-requested head=" + $head + " -->\\n@coderabbitai review\\n\\n" +
-				"Review bots were rate-limited when this PR was created \\(affected: (?:coderabbitai|augment-code|augmentcode|copilot|gemini-code-assist)(?: (?:coderabbitai|augment-code|augmentcode|copilot|gemini-code-assist))*\\)\\. Requesting a review retry\\." + aidevops_worker_footer + "$"
-			);
+		'"$(_approval_snapshot_v2_comment_filters)"'
 		def canonical_ever_nmr_remediation:
 			("<!-- ever-nmr-remediation -->\n> Label `needs-maintainer-review` was removed, but the `ever-NMR` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:\n>\n> ```\n> sudo aidevops approve issue " + $number + " " + $repo + "\n> ```\n>\n> This gate cannot be bypassed by label manipulation (security design — see `reference/auto-merge.md` NMR section).") as $body
 			| (conversation_source and $number != "" and $repo != "")
@@ -137,16 +153,7 @@ _approval_snapshot_v2_comments_json() {
 		else [.[][]?
 		| select((.id | tostring) != $excluded)
 		| select((.user.type // $empty) != "Bot")
-		| select((
-			# #aidevops:trust-boundary — only a complete current-head PR retry
-			# from a trusted human, posted unedited after signing, is operational.
-			# Historical retries stay bound; markers alone never carry authority.
-			human_user
-			and ((.author_association // $empty) | trusted_association)
-			and ($cutoff != $empty) and ((.created_at // $empty) > $cutoff)
-			and ((.updated_at // .created_at) == .created_at)
-			and ((.body // $empty) | canonical_review_bot_retry)
-		) | not)
+		| select(approval_significant_retry)
 		| select((
 			((.author_association // $empty) | trusted_association)
 			and ((.body // $empty) | startswith("<!-- aidevops-signed-approval -->\n<!-- stale-recovery-tick:0 (reset: auto-approved by maintainer — "))
