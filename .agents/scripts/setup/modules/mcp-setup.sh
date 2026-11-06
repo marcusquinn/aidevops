@@ -982,6 +982,10 @@ _setup_google_analytics_mcp_detect_creds() {
 		creds_path="$gsc_creds"
 		project_id=$(jq -r '.project_id // .quota_project_id // empty' "$gsc_creds" 2>/dev/null)
 		print_success "Found GSC credentials - sharing with Google Analytics MCP" >&2
+		# Authorized-user ADC files do not record granted scopes, so warn rather than verify.
+		if [[ "$(jq -r '.type // empty' "$gsc_creds" 2>/dev/null)" == "authorized_user" ]]; then
+			print_warning "User ADC may lack the Analytics scope; if calls fail, re-run: gcloud auth application-default login --scopes=https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform" >&2
+		fi
 		if [[ -n "$project_id" ]]; then
 			enable_mcp="true"
 			print_info "Project: $project_id" >&2
@@ -1017,6 +1021,26 @@ _setup_google_analytics_mcp_update_existing() {
 			print_warning "Failed to update Google Analytics MCP config"
 		fi
 	else
+		# Refresh a stale credential path without changing other settings.
+		if [[ -n "$creds_path" ]]; then
+			local current_creds
+			current_creds=$(jq -r --arg mcp_key "$_SETUP_GOOGLE_ANALYTICS_MCP_KEY" \
+				'.mcp[$mcp_key].environment.GOOGLE_APPLICATION_CREDENTIALS // empty' "$opencode_config" 2>/dev/null)
+			if [[ "$current_creds" != "$creds_path" ]]; then
+				local tmp_config
+				tmp_config=$(mktemp)
+				trap 'rm -f "${tmp_config:-}"' RETURN
+				if jq --arg creds "$creds_path" --arg mcp_key "$_SETUP_GOOGLE_ANALYTICS_MCP_KEY" \
+					'.mcp[$mcp_key].environment.GOOGLE_APPLICATION_CREDENTIALS = $creds' \
+					"$opencode_config" >"$tmp_config" 2>/dev/null; then
+					mv "$tmp_config" "$opencode_config"
+					print_success "Updated Google Analytics MCP credential path to detected ADC"
+					return 0
+				fi
+				rm -f "$tmp_config"
+				print_warning "Failed to refresh Google Analytics MCP credential path"
+			fi
+		fi
 		print_info "Google Analytics MCP already configured in OpenCode"
 	fi
 	return 0
