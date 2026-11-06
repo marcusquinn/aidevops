@@ -73,14 +73,14 @@ mkdir -p "$AIDEVOPS_TEMP_DIR"
 export LOGFILE="${TMP}/test-pulse.log"
 export SCRIPT_DIR="$TMP"
 export PULSE_STATS_FILE="${TMP}/pulse-stats.json"
+# Fake legacy trees must not read the operator's lifecycle registry/config.
+export AIDEVOPS_LIFECYCLE_STATE_DIR="${TMP}/absent-lifecycle"
 # These legacy fixtures have a readable registry with no managed enrollment.
 export WORKTREE_REGISTRY_DB="${TMP}/registry.db"
 python3 -c 'import sqlite3, sys; db = sqlite3.connect(sys.argv[1]); db.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, task_id TEXT, owner_session TEXT)"); db.close()' "$WORKTREE_REGISTRY_DB"
-cp "${SCRIPTS_DIR}/worktree-managed-lifetime.py" "${TMP}/worktree-managed-lifetime.py"
-# The registry CLI imports its sibling lifetime modules from its own directory.
-for _lifetime_module in idle launch proof owner reconcile; do
-	cp "${SCRIPTS_DIR}/worktree_lifetime_${_lifetime_module}.py" "${TMP}/worktree_lifetime_${_lifetime_module}.py"
-done
+# Python resolves the linked helper's real sibling modules. A partial module
+# copy silently breaks imports whenever the helper gains another dependency.
+ln -s "${SCRIPTS_DIR}/worktree-managed-lifetime.py" "${TMP}/worktree-managed-lifetime.py"
 
 # Seed pulse-stats.json with minimal valid structure
 printf '{"counters":{}}\n' >"$PULSE_STATS_FILE"
