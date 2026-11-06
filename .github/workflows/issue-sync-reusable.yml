@@ -1449,7 +1449,8 @@ jobs:
             NEXT_STEP="file the next phase child issue (see decomposition plan in this issue's body)."
             if [[ "$CLOSED_CHILD_COUNT" -gt 0 ]]; then
               DONE_PROGRESS+=" (${CLOSED_CHILD_COUNT} by closed child issue)"
-              if [[ "$REMAINING_CHILD_COUNT" -eq 0 ]]; then
+              # Reconcile only when no unfiled (child-less) phase remains
+              if [[ "$REMAINING_CHILD_COUNT" -eq 0 && "$REMAINING_ITEM_COUNT" -eq 0 ]]; then
                 NEXT_STEP="reconcile the parent acceptance criteria."
               fi
             fi
