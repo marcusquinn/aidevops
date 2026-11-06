@@ -785,6 +785,15 @@ _pulse_merge_final_trust_gate() {
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_REVIEW_GATE"
 		return 1
 	fi
+	# GH#36922: re-run the worker-briefed verdict pinned to the exact head being
+	# merged, so a planning-checkpoint classification of another head is void.
+	if declare -F worker_briefed_trust_verdict >/dev/null 2>&1; then
+		WORKER_BRIEFED_EXPECTED_HEAD="$expected_head_sha" \
+			worker_briefed_trust_verdict "$pr_number" "$repo_slug" >/dev/null || {
+			_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_MERGE_AUTHORITY"
+			return 1
+		}
+	fi
 	_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$expected_head_sha" || return 1
 	return 0
 }

@@ -259,6 +259,11 @@ _worker_briefed_pr_is_planning_checkpoint() {
 	# fail closed if it moved (a push between reads could swap in other files).
 	head_before=$(gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.head.sha // ""' 2>/dev/null) || return 2
 	[[ "$head_before" =~ ^[0-9a-f]{40}$ ]] || return 2
+	# Pulse pins the head it will merge; a different head (even one that later
+	# reverts) must not reuse a verdict classified for another commit.
+	if [[ -n "${WORKER_BRIEFED_EXPECTED_HEAD:-}" && "$head_before" != "$WORKER_BRIEFED_EXPECTED_HEAD" ]]; then
+		return 2
+	fi
 	files_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" 2>/dev/null) || return 2
 	head_after=$(gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.head.sha // ""' 2>/dev/null) || return 2
 	[[ "$head_after" == "$head_before" ]] || return 2
