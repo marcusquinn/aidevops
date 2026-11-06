@@ -81,6 +81,7 @@ assert_contains ".github/workflows/bounty-spam-auto-close.yml" "author_associati
 assert_contains ".github/workflows/bounty-spam-auto-close.yml" '#aidevops:trust-boundary GH#17671/GH#28567' "bounty detector trust check carries boundary marker"
 assert_not_contains ".github/workflows/bounty-spam-auto-close.yml" 'PR_TITLE|task ID prefix|\^t\[0-9\]|\^GH#\[0-9\]' "bounty detector gives tNNN and GH#NNN titles no trust"
 
+assert_contains ".github/workflows/review-bot-gate.yml" 'head.repo.full_name == github.repository' "fork PRs run main's helper, not their own head revision (t18881)"
 assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'classify-infra-rate-limit' "review gate classifies API exhaustion from immutable trust evidence"
 assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'RESULT.*PASS_ADVISORY' "trusted advisory default defers unavailable review API"
 assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'SKIP overridden: external-contributor PRs cannot use the skip label' "external authors cannot use the skip-label outcome"
