@@ -223,14 +223,10 @@ classify_infra_rate_limit() {
 	local repo_slug="$2"
 	local rate_limit_behavior completion_behavior repos_json strict_tool_override="$RBG_FALSE"
 
-	#aidevops:trust-boundary
-	case "$author_association" in
-	OWNER | MEMBER | COLLABORATOR) ;;
-	*)
-		printf '%s\n' "INFRA_RATE_LIMITED"
-		return 0
-		;;
-	esac
+	# GH#36931: add-on review is advisory for every author. External-PR trust is
+	# exact-head maintainer crypto approval (pulse + full-loop), not bot review.
+	# The association argument is retained for CLI compatibility.
+	: "$author_association"
 
 	rate_limit_behavior=$(_get_rate_limit_behavior "$repo_slug" "")
 	completion_behavior=$(_get_completion_behavior "$repo_slug" "")
@@ -332,21 +328,15 @@ _get_completion_behavior() {
 }
 
 _review_gate_requires_completed_review() {
-	# Add-on review is advisory by default. Explicit strict completion is the
-	# single opt-in that turns missing/incomplete provider evidence into a merge
-	# wait. Preserve the GH#17671 external-contributor defence independently of
-	# user preference: untrusted/unknown authors still require review evidence.
+	# Add-on review is advisory by default for every author (GH#36931): review
+	# bots feed follow-up issues and never hold merge progress. Explicit strict
+	# completion is the single opt-in that turns missing/incomplete provider
+	# evidence into a merge wait. External-contributor trust (GH#17671) is
+	# enforced by exact-head maintainer crypto approval in pulse and full-loop.
 	local repo_slug="$1"
-	local author_association="${REVIEW_GATE_AUTHOR_ASSOCIATION:-}"
 	local behavior=""
 	local repos_json="${HOME}/.config/aidevops/repos.json"
 	local strict_tool_override="$RBG_FALSE"
-
-	#aidevops:trust-boundary
-	case "$author_association" in
-	OWNER | MEMBER | COLLABORATOR) ;;
-	*) return 0 ;;
-	esac
 
 	behavior=$(_get_completion_behavior "$repo_slug" "")
 	[[ "$behavior" == "$RBG_COMPLETION_STRICT" ]] && return 0
@@ -370,7 +360,7 @@ _emit_advisory_or_wait() {
 	if _review_gate_requires_completed_review "$repo_slug"; then
 		echo "WAITING"
 		echo "${detail}" >&2
-		echo "Review completion is required by explicit strict policy or the external-contributor trust boundary." >&2
+		echo "Review completion is required by explicit strict policy." >&2
 		return 1
 	fi
 
@@ -1900,9 +1890,10 @@ do_status_json() {
 	OWNER | MEMBER | COLLABORATOR) author_class="$RBG_AUTHOR_CLASS_TRUSTED" ;;
 	esac
 
-	# #aidevops:trust-boundary — SKIP, advisory completion, and rate-limit grace are trusted-author
-	# policy outcomes. External contributors require a real PASS; malformed or
-	# metadata-less evidence can never authorize an advisory merge decision.
+	# #aidevops:trust-boundary — SKIP is a trusted-author label outcome. Advisory
+	# completion and rate-limit grace apply to every author (GH#36931): external
+	# merge authority is exact-head maintainer crypto approval, enforced outside
+	# this gate. Malformed or metadata-less evidence never authorizes a decision.
 	case "$output" in
 	"$status_pass")
 		if [[ "$head_stable" == "true" && -n "$author_login" ]]; then
@@ -1919,19 +1910,15 @@ do_status_json() {
 		fi
 		;;
 	P[A]SS_RATE_LIMITED)
-		if [[ "$author_class" == "$RBG_AUTHOR_CLASS_TRUSTED" && "$head_stable" == "true" ]]; then
+		if [[ "$head_stable" == "true" ]]; then
 			permitted="true"
-			reason="trusted_rate_limit_grace"
-		else
-			reason="external_rate_limit_grace_denied"
+			reason="${author_class}_rate_limit_grace"
 		fi
 		;;
 	P[A]SS_ADVISORY)
-		if [[ "$author_class" == "$RBG_AUTHOR_CLASS_TRUSTED" && "$head_stable" == "true" ]]; then
+		if [[ "$head_stable" == "true" ]]; then
 			permitted="true"
-			reason="trusted_advisory_default"
-		else
-			reason="external_advisory_denied"
+			reason="${author_class}_advisory_default"
 		fi
 		;;
 	esac

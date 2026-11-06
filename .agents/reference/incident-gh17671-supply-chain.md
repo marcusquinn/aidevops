@@ -35,7 +35,7 @@ The PR was approved with a message asserting collaborator status it had never ve
 - **PR #17877** (`hotfix/protect-pr-nmr-label`): made the `needs-maintainer-review` label survive the pulse's automated label cleanup, so a maintainer applying it to a suspicious PR could not be silently overridden by the next pulse cycle.
 - **t1958** (`maintainer-gate.yml` Check 0): added a hard gate at the workflow layer that fails the maintainer gate when a PR has no linked issue AND the PR author is not a collaborator. This is the primary surface that closed the live exploit.
 - **`_check_pr_merge_gates` line ~1060** (in `pulse-merge.sh`): added an upstream call to `_is_collaborator_author "$pr_author" "$repo_slug"` before invoking `approve_collaborator_pr`. Closes the gap at the merge-cycle layer regardless of what the workflow surface does.
-- **External-contributor exclusions** (`review-bot-gate.yml`, `.coderabbit.yaml`): rate-limit grace and prioritised review pathways are now strictly disabled for non-collaborator authors, so reviews from those PRs cannot accidentally feed back into the auto-merge cascade.
+- **External-contributor exclusions** (`review-bot-gate.yml`, `.coderabbit.yaml`): rate-limit grace and prioritised review pathways are now strictly disabled for non-collaborator authors, so reviews from those PRs cannot accidentally feed back into the auto-merge cascade. (Superseded for the review-bot gate by GH#36931, below; the skip-label denial remains.)
 - **t2933 (this doc):** added a function-level guard inside `approve_collaborator_pr` itself. The function now refuses to call `gh pr review --approve` when its `$pr_author` argument is not a collaborator, regardless of whether any upstream gate happened to perform the same check. Pinned by `.agents/scripts/tests/test-pulse-merge-approve-collaborator-guard.sh`.
 
 ## Root cause
@@ -55,7 +55,7 @@ External PR opens
 maintainer-gate.yml Check 0 ──── fail if (no linked issue) AND (author not collaborator)
        │
        ▼
-review-bot-gate.yml ──────────── external-contributor exclusion blocks rate-limit grace
+review-bot-gate.yml ──────────── external authors cannot use skip-review-gate (bot review advisory, GH#36931)
        │
        ▼
 _check_pr_merge_gates ────────── _is_collaborator_author on PR author (line ~1060)
@@ -87,6 +87,14 @@ Both now call `_has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$head_
 - A non-collaborator PR with NO crypto approval is still blocked at every layer — Case P (CONTRIBUTOR + no crypto = refuse) is pinned in `test-pulse-merge-approve-collaborator-guard.sh`.
 - The V2 payload is SSH-signed with a root-private key workers cannot access and binds current PR content/head; marker presence alone has no authority.
 - The bypass is additive (OR condition), not substitutive — it opens a path for explicitly-approved contributor work without weakening the existing collaborator-only path.
+
+## GH#36931 Update — Review Bots Are Advisory for Every Author (November 2026)
+
+External PR #36845 stayed blocked for about 18 hours with a verified exact-head maintainer approval. CodeRabbit had reached its organisation-wide review limit, and the review-bot gate forced external authors to `strict`/`wait`. The `enforce_admins` branch protection then blocked every merge path.
+
+Maintainer policy: review bots supply findings for follow-up issues and never hold merge progress. The review-bot gate now applies the repository's configured completion and rate-limit policy to every author. The external exclusion keeps only the skip-label denial.
+
+This removes no authority. Bot review is not a trust signal, because a bot's review of attacker code does not show maintainer consent. The other three layers are unchanged, and each is still sufficient on its own: maintainer-gate Check 0, `_check_pr_merge_gates`, and `approve_collaborator_pr`. An external merge also still needs an exact-head V2 crypto approval in both Pulse and full-loop. Case P still holds: a CONTRIBUTOR PR with no crypto approval is refused. A repository that wants bot review as a hard gate sets `review_gate.completion_behavior: strict`, and that applies to all authors.
 
 ## Test pinning
 
