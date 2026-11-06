@@ -25,6 +25,8 @@ BUZZ_JSON_TYPE_STRING="string"
 BUZZ_STATE_SCHEMA_V1="aidevops-buzz-opencode-acp-fix/v1"
 BUZZ_STATE_SCHEMA_V2="aidevops-buzz-opencode-acp-fix/v2"
 BUZZ_PLATFORM_DARWIN="Darwin"
+BUZZ_ID_LEGACY="xyz.block.buzz.app"
+BUZZ_ID_DESKTOP="xyz.block.buzz.desktop"
 BUZZ_LOCK_HELD=0
 BUZZ_QUIET=false
 BUZZ_LAST_BACKUP=""
@@ -68,6 +70,52 @@ _buzz_app_version() {
 		/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null
 		return $?
 	fi
+	return 1
+}
+
+_buzz_app_identifier() {
+	if [[ -n "${AIDEVOPS_BUZZ_IDENTIFIER_OVERRIDE:-}" ]]; then
+		printf '%s\n' "$AIDEVOPS_BUZZ_IDENTIFIER_OVERRIDE"
+		return 0
+	fi
+	local plist="${BUZZ_APP_PATH}/Contents/Info.plist"
+	[[ -f "$plist" && ! -L "$plist" ]] || return 1
+	if command -v defaults >/dev/null 2>&1; then
+		defaults read "$plist" CFBundleIdentifier 2>/dev/null
+		return $?
+	fi
+	if [[ -x /usr/libexec/PlistBuddy ]]; then
+		/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist" 2>/dev/null
+		return $?
+	fi
+	return 1
+}
+
+# Prints "legacy", "desktop" or "unknown". Unreadable identifiers are unknown (fail closed: no writes).
+_buzz_generation() {
+	local id=""
+	id=$(_buzz_app_identifier) || {
+		printf 'unknown\n'
+		return 0
+	}
+	case "$id" in
+	"$BUZZ_ID_LEGACY") printf 'legacy\n' ;;
+	"$BUZZ_ID_DESKTOP") printf 'desktop\n' ;;
+	*) printf 'unknown\n' ;;
+	esac
+	return 0
+}
+
+# Returns 0 when legacy remediation may proceed; otherwise logs why and returns 1.
+_buzz_legacy_gate() {
+	local version="$1"
+	local generation=""
+	generation=$(_buzz_generation)
+	case "$generation" in
+	legacy) return 0 ;;
+	desktop) _buzz_info "Buzz Desktop ${version} (block/buzz-app): legacy remediation not applicable; no changes needed" ;;
+	*) _buzz_info "Unrecognised Buzz Desktop identifier; no changes needed" ;;
+	esac
 	return 1
 }
 
@@ -351,6 +399,7 @@ cmd_apply() {
 		_buzz_info "Buzz Desktop is not installed; no changes needed"
 		return 0
 	}
+	_buzz_legacy_gate "$version" || return 0
 	[[ -f "$BUZZ_STATE_FILE" ]] && {
 		_buzz_info "Buzz OpenCode ACP compatibility fix is already managed by aidevops"
 		return 0
@@ -633,6 +682,17 @@ cmd_status() {
 		printf 'Buzz Desktop compatibility: Buzz not installed\n'
 		return 0
 	}
+	case "$(_buzz_generation)" in
+	legacy) ;;
+	desktop)
+		printf 'Buzz Desktop %s (block/buzz-app): legacy remediation not applicable\n' "$version"
+		return 0
+		;;
+	*)
+		printf 'Buzz Desktop %s: unrecognised Buzz Desktop identifier; legacy remediation not applicable\n' "$version"
+		return 0
+		;;
+	esac
 	if [[ -f "$BUZZ_STATE_FILE" ]]; then
 		_buzz_validate_store || return 1
 		_buzz_validate_state || return 1
@@ -669,6 +729,7 @@ cmd_reconcile() {
 		_buzz_info "Buzz Desktop is not installed; no changes needed"
 		return 0
 	}
+	_buzz_legacy_gate "$version" || return 0
 	_buzz_validate_store || return 1
 	_buzz_validate_wrapper || return 1
 	_buzz_validate_state || return 1
