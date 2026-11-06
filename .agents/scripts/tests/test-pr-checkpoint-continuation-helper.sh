@@ -332,6 +332,10 @@ test_revision_attention_guidance() (
 	if _pr_checkpoint_issue_metadata_is_eligible "$STUB_ISSUE_JSON" 123 worker-bot "$comments" worker-bot; then
 		return 1
 	fi
+	# Capture an attention POST without contacting GitHub.
+	# Args: api, endpoint, --method, POST, -f, body=<attention record>.
+	# Output: write the body to the enclosing test's post_file for assertions.
+	# Returns: 1 for an unexpected call shape, 0 after capturing the body.
 	gh() {
 		[[ "$1" == api && "$3" == --method && "$4" == POST ]] || return 1
 		printf '%s' "${6#body=}" >"$post_file"
