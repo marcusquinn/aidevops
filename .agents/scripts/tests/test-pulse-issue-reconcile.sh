@@ -638,9 +638,11 @@ test_single_pass_wired_in_engine() {
 # legacy multi-stage parent reconciler remains unscheduled.
 # ---------------------------------------------------------------------------
 test_recent_parent_repair_reachable_from_single_pass() {
-	local single_pass_body=""
+	local single_pass_body="" repair_body=""
 	single_pass_body=$(sed -n '/^reconcile_issues_single_pass()/,/^}/p' "$RECONCILE_SH")
-	if printf '%s\n' "$single_pass_body" | grep -q '_repair_recently_closed_parents_cycle' \
+	repair_body=$(sed -n '/^_pir_reconcile_cycle_repairs()/,/^}/p' "$RECONCILE_SH")
+	if printf '%s\n' "$single_pass_body" | grep -q '_pir_reconcile_cycle_repairs' \
+		&& printf '%s\n' "$repair_body" | grep -q '_repair_recently_closed_parents_cycle' \
 		&& printf '%s\n' "$single_pass_body" | grep -q 'cpt_max_reopens=5' \
 		&& printf '%s\n' "$single_pass_body" | grep -q 'cpt_max_repair_repo_scans=10' \
 		&& printf '%s\n' "$single_pass_body" | grep -q 'cpt_max_repair_candidates=10'; then
