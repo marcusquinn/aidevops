@@ -424,6 +424,46 @@ _worktree_pressure_present() {
 	return 1
 }
 
+# The lifecycle registry does not inventory old interactive sessions. Reuse the
+# clean proof/lease path under this same async lock, never in dispatch admission.
+# The cursor and hard shared budget bound slow archive/removal work across runs.
+_recover_interactive_capacity() {
+	local helper="${SCRIPT_DIR}/worktree-helper.sh"
+	local cursor="${LOG_DIR}/cleanup_worktrees.capacity-repo"
+	local max_count="${AIDEVOPS_MAX_WORKTREES:-200}"
+	local repo="" saved="" start=0 offset=0 index=0 count=0 after=0 rc=0
+	local deadline=$((SECONDS + 120)) remaining=0
+	local repos=()
+	[[ -x "$helper" ]] && declare -F timeout_sec >/dev/null 2>&1 || return 0
+	[[ "$max_count" =~ ^[1-9][0-9]*$ ]] || max_count=200
+	[[ ! -f "$cursor" ]] || IFS= read -r saved <"$cursor" || true
+	while IFS= read -r repo; do
+		[[ -d "$repo" ]] || continue
+		repos+=("$repo")
+		[[ "$repo" != "$saved" ]] || start=${#repos[@]}
+	done < <(_missing_metadata_repo_paths)
+	for ((offset = 0; offset < ${#repos[@]}; offset++)); do
+		remaining=$((deadline - SECONDS))
+		[[ "$remaining" -gt 0 ]] || break
+		index=$(((start + offset) % ${#repos[@]}))
+		repo="${repos[$index]}"
+		printf '%s\n' "$repo" >"$cursor" || return 1
+		count=$(git -C "$repo" worktree list --porcelain | awk '/^worktree / {n++} END {print n+0}') || continue
+		[[ $((count * 100)) -ge $((max_count * 80)) ]] || continue
+		rc=0
+		# --capacity never forces dirty trees or admits closed-issue-only proof.
+		(cd "$repo" && timeout_sec "$remaining" bash "$helper" clean --auto --capacity) >>"$LOGFILE" 2>&1 || rc=$?
+		after=$(git -C "$repo" worktree list --porcelain | awk '/^worktree / {n++} END {print n+0}') || after="$count"
+		printf '[cleanup-worktrees-async] interactive-capacity before=%s after=%s cap=%s rc=%s repo=%s\n' \
+			"$count" "$after" "$max_count" "$rc" "$repo" >>"$LOGFILE"
+		if [[ "$after" -ge "$max_count" && "$after" -ge "$count" ]]; then
+			printf '[cleanup-worktrees-async] capacity-stuck: gate closed, zero safe removals (no candidates, guarded or budget exhausted); repo=%s count=%s cap=%s rc=%s\n' \
+				"$repo" "$after" "$max_count" "$rc" >>"$LOGFILE"
+		fi
+	done
+	return 0
+}
+
 main() {
 	local mode="${1:-normal}"
 	local repo="${2:-}"
@@ -492,6 +532,7 @@ main() {
 	log_first_line=$(wc -l <"$LOGFILE" | tr -d '[:space:]') || log_first_line=0
 	cleanup_worktrees || rc=$?
 	if [[ "$mode" != "--lifecycle-only" ]]; then
+		_recover_interactive_capacity
 		_prune_dirty_worktree_backups
 	fi
 
