@@ -1023,6 +1023,65 @@ _changed_applicable_paths() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# _renamed_applicable_pairs <base_sha> <head_sha> <working_tree>
+#
+# Print "old<TAB>new" for each rename between base and head (or base and the
+# working tree when <working_tree>=1) whose destination is applicable. Git's
+# default -M similarity (50%) applies, so renamed-and-edited files keep their
+# identity exactly like in-place edits. `git diff --name-only` reports only the
+# destination of a rename; without this map the base snapshot has no file at
+# that path and every existing violation in a moved file looks new (GH#36897).
+# Paths containing a tab or newline cannot be represented in the TSV scan
+# output and are skipped. An unstaged plain `mv` appears as delete+untracked
+# and is not detected; `git mv` and committed renames are.
+# ---------------------------------------------------------------------------
+_renamed_applicable_pairs() {
+	local _base_sha="$1"
+	local _head_sha="$2"
+	local _working_tree="$3"
+	local _status _old _new
+	local _nl='
+'
+	local _tab
+	_tab=$(printf '\t')
+	local -a _range=("$_base_sha")
+	[ "$_working_tree" -eq 1 ] || _range+=("$_head_sha")
+
+	while IFS= read -r -d '' _status; do
+		IFS= read -r -d '' _old || break
+		IFS= read -r -d '' _new || break
+		case "$_status" in
+		R*) ;;
+		*) continue ;;
+		esac
+		case "${_old}${_new}" in
+		*"$_nl"* | *"$_tab"*) continue ;;
+		esac
+		[[ "$_new" =~ $COMPLEXITY_APPLICABLE_EXTENSION_REGEX ]] || continue
+		printf '%s\t%s\n' "$_old" "$_new"
+	done < <(git diff -z -M --name-status --diff-filter=R "${_range[@]}" -- 2>/dev/null || true)
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _remap_scan_paths <scan-file> <rename-map-file>
+#
+# Rewrite column 1 of <scan-file> from rename sources to destinations using
+# <rename-map-file> ("old<TAB>new" rows) so base violations keep their identity
+# after a move. Rename sources are deleted at head, so no path collides.
+# ---------------------------------------------------------------------------
+_remap_scan_paths() {
+	local _scan="$1"
+	local _map="$2"
+	[ -s "$_scan" ] && [ -s "$_map" ] || return 0
+	local _tmp="${_scan}.remap"
+	awk -F '\t' -v OFS='\t' 'NR==FNR { m[$1]=$2; next } ($1 in m) { $1=m[$1] } { print }' \
+		"$_map" "$_scan" >"$_tmp" || return 1
+	mv "$_tmp" "$_scan" || return 1
+	return 0
+}
+
 # _check_regression <base_sha> <head_sha> <output_md> <allow_increase> [<metric>]
 # Scan base+head via snapshots, compute diff, optionally write report.
 # Exits 0 (no regression), 1 (regression), or 2 (error).
@@ -1070,14 +1129,29 @@ _check_regression() {
 	local _base_scan="$TMP_DIR/base.tsv"
 	local _head_scan="$TMP_DIR/head.tsv"
 	local _new_file="$TMP_DIR/new-violations.tsv"
+	local _rename_map="$TMP_DIR/renames.tsv"
+
+	# Renamed files are scanned at their base path and remapped to the head
+	# path, so a move carries existing violations over instead of making them
+	# look new (GH#36897).
+	local _base_paths="$_changed_source"
+	_renamed_applicable_pairs "$_base_sha" "$_head_sha" "$_working_tree" >"$_rename_map"
+	if [ -s "$_rename_map" ]; then
+		_base_paths=$({
+			printf '%s\n' "$_changed_source"
+			cut -f1 "$_rename_map"
+		} | sort -u)
+		log "[$_metric] $(wc -l <"$_rename_map" | tr -d ' ') renamed file(s) compared against their base path"
+	fi
 
 	BASE_WORKTREE="$TMP_DIR/base-snapshot"
 	log "[$_metric] materializing changed files at base ${_base_sha:0:7}"
-	if ! _materialize_ref_paths "$_base_sha" "$BASE_WORKTREE" "$_changed_source" 2>/dev/null; then
+	if ! _materialize_ref_paths "$_base_sha" "$BASE_WORKTREE" "$_base_paths" 2>/dev/null; then
 		die "failed to materialize base snapshot for $_base_sha"
 	fi
 	log "[$_metric] scanning base (${_base_sha:0:7})"
-	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric" "$_changed_source"
+	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric" "$_base_paths"
+	_remap_scan_paths "$_base_scan" "$_rename_map" || die "failed to remap renamed base paths"
 
 	if [ "$_working_tree" -eq 1 ]; then
 		log "[$_metric] scanning current working tree"
