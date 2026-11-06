@@ -189,10 +189,9 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" && "\$*" == *"--json state,me
 		# GH#36966: do not expose a completed admin merge before its write.
 		if [[ -f "${TEST_ROOT}/logs/admin-write-attempted.txt" ]]; then
 			echo '{"state":"MERGED","mergedAt":"2026-08-24T00:00:00Z","mergeCommit":{"oid":"merged123sha"},"headRefOid":"abc123headsha"}'
-		else
-			echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null,"headRefOid":"abc123headsha"}'
+			exit 0
 		fi
-		exit 0 ;;
+		echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null,"headRefOid":"abc123headsha"}'; exit 0 ;;
 	fallback-timeout-open | primary-timeout-policy-open) echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null,"headRefOid":"abc123headsha"}'; exit 0 ;;
 	esac
 fi
