@@ -295,14 +295,22 @@ _commit_and_pr_prepare_metadata() {
 	elif [[ "$origin_label" == "origin:worker" && "$completion_bookkeeping" -eq 0 ]]; then
 		closing_keyword=$(_review_repair_closing_keyword "$issue_number" "$repo") || return 1
 	fi
+	local parent_for_link=0
 	if [[ "$allow_parent_close" -eq 0 ]] && _issue_has_parent_task_label "$issue_number" "$repo"; then
 		closing_keyword="For"
+		parent_for_link=1
 		print_info "Issue #${issue_number} has parent-task label — using 'For' keyword (t2242)"
 	fi
 	if [[ "$allow_parent_close" -eq 0 ]] && _diff_is_planning_only "$comparison_base"; then
 		closing_keyword="For"
 		planning_only=1
 		print_info "Planning-only diff — using 'For' keyword; issue stays dispatchable"
+	fi
+	# GH#36922: guarded worker merges accept `For #parent` only for planning
+	# checkpoints (TODO.md/todo markdown). Surface the contract at PR creation
+	# instead of leaving a later opaque merge refusal.
+	if [[ "$parent_for_link" -eq 1 && "$planning_only" -eq 0 ]]; then
+		print_warning "Parent-task #${issue_number} link with non-planning changes: guarded worker merge accepts 'For #${issue_number}' only for TODO.md/todo markdown checkpoints; link a child phase issue or use --allow-parent-close for the final phase"
 	fi
 	if [[ "$keep_issue_open" -eq 1 ]]; then
 		closing_keyword="For"

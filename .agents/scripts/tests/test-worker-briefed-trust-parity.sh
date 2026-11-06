@@ -34,6 +34,8 @@ USER_API_FAIL=0
 PR_API_FAIL=0
 WRITER_LOGIN=runner
 SYNC_HEAD=""
+PR_FILES='[{"filename":".agents/scripts/example.sh","status":"modified"}]'
+PR_FILES_API_FAIL=0
 
 # No network calls: any unexpected gh request fails rather than reaching GitHub.
 gh() {
@@ -53,6 +55,10 @@ gh() {
 		payload="[$payload]"
 		;;
 	*/collaborators/*/permission) payload=$(jq -n --arg p "$ISSUE_PERMISSION" '{permission:$p}') ;;
+	repos/owner/repo/pulls/100/files*)
+		[[ "$PR_FILES_API_FAIL" == 0 ]] || return 1
+		payload="$PR_FILES"
+		;;
 	repos/owner/repo/issues/42)
 		payload=$(jq -n --arg assoc "$ISSUE_ASSOC" --arg login "$ISSUE_LOGIN" --arg state "$ISSUE_STATE" \
 			--argjson labels "$ISSUE_LABELS" \
@@ -135,6 +141,22 @@ expect_parity 1 'closed non-closing reference denied'
 ISSUE_STATE=open
 ISSUE_LABELS='[{"name":"parent-task"}]'
 expect_parity 1 'non-closing parent reference denied'
+_merge_worker_briefed_trust_gate 100 owner/repo 0 >"${TEST_ROOT}/parent-code.log" 2>&1 || true
+grep -q 'only eligible for a planning checkpoint' "${TEST_ROOT}/parent-code.log"
+printf 'PASS parent code diff refusal names the planning-checkpoint policy\n'
+# GH#36922: planning checkpoints for an open parent use the same guarded route.
+PR_FILES='[{"filename":"TODO.md","status":"modified"},{"filename":"todo/tasks/t1-brief.md","status":"added"}]'
+expect_parity 0 'trusted parent planning checkpoint allowed'
+ISSUE_ASSOC=CONTRIBUTOR
+expect_parity 1 'untrusted parent planning checkpoint denied'
+ISSUE_ASSOC=OWNER
+PR_FILES_API_FAIL=1
+expect_parity 1 'parent planning file metadata failure denied'
+_merge_worker_briefed_trust_gate 100 owner/repo 0 >"${TEST_ROOT}/parent-meta.log" 2>&1 || true
+grep -q 'linked issue metadata unavailable: PR #100 file list' "${TEST_ROOT}/parent-meta.log"
+printf 'PASS metadata failure is distinct from parent-link policy refusal\n'
+PR_FILES_API_FAIL=0
+PR_FILES='[{"filename":".agents/scripts/example.sh","status":"modified"}]'
 ISSUE_LABELS='[]'
 PR_BODY=$'Routine r004 scheduled content update\n\nRef #42'
 ISSUE_LABELS='[{"name":"routine-tracking"},{"name":"persistent"},{"name":"no-auto-dispatch"}]'

@@ -19,6 +19,7 @@
 #   - _is_trusted_opencode_canary_issue_pr    — canary brief + scope check
 #   - _issue_author_has_maintainer_authority  — collaborator permission check
 #   - _issue_has_verified_crypto_approval     — approval-helper.sh verify
+#   - _worker_briefed_pr_is_planning_checkpoint — planning-only diff (GH#36922)
 #   - _worker_briefed_link_kind               — closing vs For/Ref link (GH#33999)
 #   - _attempt_worker_briefed_auto_merge      — gate entry point (t2449)
 #
@@ -229,37 +230,106 @@ _issue_has_verified_crypto_approval() {
 	return $?
 }
 
+# Planning checkpoints may change at most this many files. GitHub returns at
+# most 100 files per page, so any count at or below this bound is a complete
+# file list; larger or truncated lists fail closed (GH#36922).
+_PM_PLANNING_CHECKPOINT_MAX_FILES=50
+
 #######################################
-# Classify how a worker PR links its issue (GH#33999). Prints "closing" for a
-# closing-keyword link (unchanged behaviour). For a For/Ref-only association
-# #aidevops:trust-boundary — the issue must be open and not parent-task; prints
-# "non-closing reference". Never writes a closing keyword.
+# Check whether a PR diff is a planning checkpoint (GH#36922): a non-empty,
+# complete file list where every path, including both sides of a rename, is
+# TODO.md or markdown under todo/. Mirrors the producer classifier
+# full-loop-helper.sh::_diff_is_planning_only, which links such PRs with
+# `For #N` so the issue stays open.
+#
+#aidevops:trust-boundary — this only narrows which non-closing parent-task
+# links reach the unchanged issue-author trust chain. API errors, malformed
+# payloads, oversized/truncated file lists and any non-planning path fail closed.
+#
+# Args: $1=pr_number, $2=repo_slug
+# Returns: 0=planning checkpoint, 1=not a planning checkpoint,
+#          2=file metadata unavailable or malformed
+#######################################
+_worker_briefed_pr_is_planning_checkpoint() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local files_json="" file_count="" paths="" path=""
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 2
+	files_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" 2>/dev/null) || return 2
+	# `arrays` emits nothing for non-array payloads, so the integer check fails closed.
+	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 2
+	[[ "$file_count" =~ ^[0-9]+$ ]] || return 2
+	[[ "$file_count" -gt 0 && "$file_count" -le "$_PM_PLANNING_CHECKPOINT_MAX_FILES" ]] || return 1
+	paths=$(printf '%s' "$files_json" | jq -r '.[] | (.filename // ""), (.previous_filename // empty)' 2>/dev/null) || return 2
+	while IFS= read -r path; do
+		case "$path" in
+		TODO.md | todo/*.md) ;;
+		*) return 1 ;;
+		esac
+	done <<<"$paths"
+	return 0
+}
+
+#######################################
+# Classify how a worker PR links its issue (GH#33999). Sets
+# WORKER_BRIEFED_LINK_KIND to "closing" for a closing-keyword link (unchanged
+# behaviour). For a For/Ref-only association
+# #aidevops:trust-boundary — the issue must be open; a parent-task issue is
+# eligible only for a planning checkpoint diff (GH#36922), which keeps the
+# parent open and never dispatches it. Sets "non-closing reference" or
+# "non-closing parent planning checkpoint". Never writes a closing keyword.
+# On refusal, sets WORKER_BRIEFED_TRUST_REASON to a stable diagnostic that
+# distinguishes metadata failure from link-policy refusal. Call directly, not
+# in a command substitution, so both variables reach the caller.
 # Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=issue API path
-# Returns: 0=eligible link kind printed, 1=ineligible or lookup failure
+# Returns: 0=eligible link kind set, 1=ineligible or lookup failure
 #######################################
 _worker_briefed_link_kind() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local linked_issue="$3"
 	local issue_api="$4"
-	local closing_issue="" state_labels="" issue_state="" issue_labels=""
-	closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 1
+	local closing_issue="" state_labels="" issue_state="" issue_labels="" planning_rc=0
+	WORKER_BRIEFED_LINK_KIND=""
+	if ! closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null); then
+		WORKER_BRIEFED_TRUST_REASON="linked issue metadata unavailable: PR closing-reference lookup failed (t2449)"
+		return 1
+	fi
 	if [[ -n "$closing_issue" ]]; then
-		printf '%s' "closing"
+		WORKER_BRIEFED_LINK_KIND="closing"
 		return 0
 	fi
-	state_labels=$(gh api "${issue_api}" --jq '[.state // "", ([.labels[].name] | join(","))] | @tsv' 2>/dev/null) || return 1
+	if ! state_labels=$(gh api "${issue_api}" --jq '[.state // "", ([.labels[].name] | join(","))] | @tsv' 2>/dev/null) ||
+		[[ "$state_labels" != *$'\t'* ]]; then
+		WORKER_BRIEFED_TRUST_REASON="linked issue metadata unavailable: issue #${linked_issue} state/labels lookup failed (t2449)"
+		return 1
+	fi
 	issue_state="${state_labels%%$'\t'*}"
 	issue_labels="${state_labels#*$'\t'}"
 	if [[ "$issue_state" != "open" ]]; then
+		WORKER_BRIEFED_TRUST_REASON="non-closing reference to issue #${linked_issue} which is not open (GH#33999)"
 		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to issue #${linked_issue} which is not open (GH#33999)" >>"$LOGFILE"
 		return 1
 	fi
 	if [[ "$issue_labels" =~ (^|,)parent-task(,|$) ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to parent-task issue #${linked_issue} (GH#33999)" >>"$LOGFILE"
+		_worker_briefed_pr_is_planning_checkpoint "$pr_number" "$repo_slug" || planning_rc=$?
+		case "$planning_rc" in
+		0)
+			WORKER_BRIEFED_LINK_KIND="non-closing parent planning checkpoint"
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — non-closing reference to parent-task issue #${linked_issue} is a planning checkpoint (TODO.md/todo markdown only); parent stays open (GH#36922)" >>"$LOGFILE"
+			return 0
+			;;
+		1)
+			WORKER_BRIEFED_TRUST_REASON="non-closing reference to parent-task issue #${linked_issue} is only eligible for a planning checkpoint (TODO.md or todo/**/*.md, at most ${_PM_PLANNING_CHECKPOINT_MAX_FILES} files); link a child phase issue or use the final-phase closing route (GH#33999/GH#36922)"
+			;;
+		*)
+			WORKER_BRIEFED_TRUST_REASON="linked issue metadata unavailable: PR #${pr_number} file list lookup failed for parent-task planning check (GH#36922)"
+			;;
+		esac
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — ${WORKER_BRIEFED_TRUST_REASON}" >>"$LOGFILE"
 		return 1
 	fi
-	printf '%s' "non-closing reference"
+	WORKER_BRIEFED_LINK_KIND="non-closing reference"
 	return 0
 }
 
@@ -304,7 +374,7 @@ _worker_briefed_trust_check() {
 	local precomputed_pr_author_permission="${6:-}"
 	local precomputed_pr_author_login="${7:-}"
 	local _true_status="true"
-	WORKER_BRIEFED_TRUST_REASON="linked issue metadata or link eligibility unavailable (t2449)"
+	WORKER_BRIEFED_TRUST_REASON="linked issue metadata unavailable (t2449)"
 
 	_worker_briefed_pr_eligible "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" || return 1
 
@@ -313,18 +383,25 @@ _worker_briefed_trust_check() {
 	_issue_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
 	# Fetch author_association and user.login in one API call (t3062 needs login).
 	local _issue_meta
+	WORKER_BRIEFED_TRUST_REASON="linked issue metadata unavailable: issue #${linked_issue} author lookup failed (t2449)"
 	_issue_meta=$(gh api "${_issue_api}" \
 		--jq 'select(.pull_request == null) | [.author_association // "", .user.login // ""] | @tsv' 2>/dev/null) || return 1
 	# Explicit body references must resolve to an actual local issue, not a PR
 	# sharing the repository number space or unavailable metadata.
-	[[ -n "${_issue_meta//[[:space:]]/}" ]] || return 1
+	if [[ -z "${_issue_meta//[[:space:]]/}" ]]; then
+		WORKER_BRIEFED_TRUST_REASON="linked reference #${linked_issue} is not an issue or has no author metadata (t2449)"
+		return 1
+	fi
 	local issue_author_assoc=""
 	local issue_author_login=""
 	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
 
-	# GH#33999: non-closing For/Ref links require an open, non-parent issue.
-	local _link_kind=""
-	_link_kind=$(_worker_briefed_link_kind "$pr_number" "$repo_slug" "$linked_issue" "$_issue_api") || return 1
+	# GH#33999: non-closing For/Ref links require an open issue; GH#36922:
+	# parent-task issues additionally require a planning checkpoint diff.
+	# Called directly so its stable refusal reason reaches the verdict.
+	local WORKER_BRIEFED_LINK_KIND=""
+	_worker_briefed_link_kind "$pr_number" "$repo_slug" "$linked_issue" "$_issue_api" || return 1
+	local _link_kind="$WORKER_BRIEFED_LINK_KIND"
 	local issue_author_permission=""
 	#aidevops:trust-boundary — reuse PR-author permission only for the same non-empty issue-author login.
 	if [[ -n "$precomputed_pr_author_permission" && -n "$precomputed_pr_author_login" && "$precomputed_pr_author_login" == "$issue_author_login" ]]; then
