@@ -264,7 +264,7 @@ test_webmaster_gcloud_and_missing() {
 	setup
 	cat >"$TEST_DIR/bin/gcloud" <<'EOF'
 #!/usr/bin/env bash
-[[ "$*" == 'auth application-default print-access-token' ]] || exit 1
+[[ "$*" == 'auth application-default print-access-token --scopes=https://www.googleapis.com/auth/webmasters.readonly' ]] || exit 1
 printf '%s\n' 'gsc-gcloud-value'
 EOF
 	chmod +x "$TEST_DIR/bin/gcloud"
