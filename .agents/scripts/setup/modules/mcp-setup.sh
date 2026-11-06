@@ -955,11 +955,15 @@ setup_seo_mcps() {
 	fi
 
 	# GSC uses MCP (OAuth2 complexity warrants it)
-	local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
+	# shellcheck source=../../gsc-auth-lib.sh
+	source "${INSTALL_DIR}/.agents/scripts/gsc-auth-lib.sh"
+	local gsc_creds
+	gsc_creds=$(gsc_adc_credential_file)
 	if [[ -f "$gsc_creds" ]]; then
 		print_success "Google Search Console credentials configured"
 	else
-		print_info "GSC: Create service account JSON at $gsc_creds"
+		print_info "GSC: Configure keyless ADC: gcloud auth application-default login --impersonate-service-account=SERVICE_ACCOUNT_EMAIL"
+		print_info "  Or provide service account JSON via GOOGLE_APPLICATION_CREDENTIALS or ~/.config/aidevops/gsc-credentials.json"
 		print_info "  See: ~/.aidevops/agents/seo/google-search-console.md"
 	fi
 
@@ -976,11 +980,13 @@ _setup_google_analytics_mcp_detect_creds() {
 
 	if [[ -f "$gsc_creds" ]]; then
 		creds_path="$gsc_creds"
-		project_id=$(jq -r '.project_id // empty' "$gsc_creds" 2>/dev/null)
+		project_id=$(jq -r '.project_id // .quota_project_id // empty' "$gsc_creds" 2>/dev/null)
+		print_success "Found GSC credentials - sharing with Google Analytics MCP" >&2
 		if [[ -n "$project_id" ]]; then
 			enable_mcp="true"
-			print_success "Found GSC credentials - sharing with Google Analytics MCP"
-			print_info "Project: $project_id"
+			print_info "Project: $project_id" >&2
+		else
+			print_info "Set GOOGLE_PROJECT_ID in opencode.json, then enable Google Analytics MCP" >&2
 		fi
 	fi
 
@@ -1042,9 +1048,12 @@ _setup_google_analytics_mcp_add_new() {
 		mv "$tmp_config" "$opencode_config"
 		if [[ "$enable_mcp" == "true" ]]; then
 			print_success "Added Google Analytics MCP to OpenCode (enabled with GSC credentials)"
+		elif [[ -n "$creds_path" ]]; then
+			print_success "Added Google Analytics MCP to OpenCode (disabled - set GOOGLE_PROJECT_ID to enable)"
 		else
 			print_success "Added Google Analytics MCP to OpenCode (disabled - no credentials found)"
-			print_info "To enable: Create service account JSON at $gsc_creds"
+			print_info "To enable: gcloud auth application-default login --impersonate-service-account=SERVICE_ACCOUNT_EMAIL"
+			print_info "Or provide service account JSON at ${gsc_creds:-$HOME/.config/aidevops/gsc-credentials.json}"
 		fi
 		print_info "Or use the google-analytics subagent which enables it automatically"
 	else
@@ -1074,7 +1083,10 @@ _setup_google_analytics_mcp_write_config() {
 }
 
 setup_google_analytics_mcp() {
-	local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
+	# shellcheck source=../../gsc-auth-lib.sh
+	source "${INSTALL_DIR}/.agents/scripts/gsc-auth-lib.sh"
+	local gsc_creds
+	gsc_creds=$(gsc_adc_credential_file)
 
 	# Check prerequisites before announcing setup (GH#5240)
 	local opencode_config
@@ -1099,7 +1111,7 @@ setup_google_analytics_mcp() {
 	# Prerequisites met — proceed with setup
 	print_info "Setting up Google Analytics MCP..."
 
-	# Auto-detect credentials from shared GSC service account
+	# Auto-detect shared GSC credentials, including gcloud keyless ADC
 	local creds_output
 	creds_output=$(_setup_google_analytics_mcp_detect_creds "$gsc_creds")
 	local creds_path project_id enable_mcp
@@ -1113,7 +1125,7 @@ setup_google_analytics_mcp() {
 	# Show setup instructions
 	print_info "Google Analytics MCP setup:"
 	print_info "  1. Enable Google Analytics Admin & Data APIs in Google Cloud Console"
-	print_info "  2. Configure ADC: gcloud auth application-default login --scopes https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform"
+	print_info "  2. Configure keyless ADC: gcloud auth application-default login --impersonate-service-account=SERVICE_ACCOUNT_EMAIL --scopes https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform"
 	print_info "  3. Update GOOGLE_APPLICATION_CREDENTIALS path in opencode.json"
 	print_info "  4. Set GOOGLE_PROJECT_ID in opencode.json"
 	print_info "Documentation: ~/.aidevops/agents/services/analytics/google-analytics.md"
