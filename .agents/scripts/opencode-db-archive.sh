@@ -1143,7 +1143,7 @@ cmd_archive() {
 	if [[ "$preflight_rc" -ne 0 ]]; then
 		return "$preflight_rc"
 	fi
-	_archive_prepare_candidates
+	_archive_prepare_candidates || return $?
 	if ((total_eligible == 0)); then
 		print_success "No sessions match the archive retention target."
 		((dry_run)) && return 0
@@ -1383,7 +1383,8 @@ _archive_move_candidates() {
 	trap '_archive_cleanup' EXIT
 	trap '_archive_interrupt 130' INT
 	trap '_archive_interrupt 143' TERM
-	_archive_run_batches
+	# main captures command status with ||, so do not rely on errexit here.
+	_archive_run_batches || return $?
 	_archive_finish
 	return $?
 }
@@ -1433,7 +1434,7 @@ _archive_run_batches() {
 		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | tr '\n' ',' | sed 's/,$//')
 		_archive_write_batch "$in_clause" || return 1
 		archived_total=$((archived_total + batch_count))
-		_archive_report_batch
+		_archive_report_batch || return 1
 	done
 	return 0
 }
