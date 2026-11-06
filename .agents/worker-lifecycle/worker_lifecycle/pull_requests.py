@@ -7,13 +7,38 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import subprocess  # nosec B404 # fixed gh argv, validated slug
 
 from .retirement import _git
 
 
-def open_pull_requests(slug):
-    """All pages or no authority; never infer absence from a failed API call."""
+def pull_request_repositories(slug: str) -> list[str]:
+    """Include the fork's parent and source, where upstream PRs are listed."""
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", slug, flags=re.ASCII):
+        raise ValueError("invalid-repository-slug")
+    result = subprocess.run(  # nosec B603 B607 # fixed gh argv, validated slug
+        ["gh", "api", f"repos/{slug}"],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    metadata = json.loads(result.stdout)
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("fork"), bool):
+        raise ValueError("invalid-repository-response")
+    repositories = [slug]
+    if metadata["fork"]:
+        for key in ("parent", "source"):
+            repository = metadata.get(key)
+            name = repository.get("full_name") if isinstance(repository, dict) else None
+            if (not isinstance(name, str)
+                    or not re.fullmatch(r"[\w.-]+/[\w.-]+", name, flags=re.ASCII)):
+                raise ValueError("invalid-repository-response")
+            if name.lower() not in {item.lower() for item in repositories}:
+                repositories.append(name)
+    return repositories
+
+
+def _repository_pull_requests(slug: str) -> list:
+    """Require all pages from one validated repository."""
     result = subprocess.run(  # nosec B603 B607 # fixed gh argv, validated slug
         ["gh", "api", "--paginate", "--slurp",
          f"repos/{slug}/pulls?state=open&per_page=100"],
@@ -32,6 +57,12 @@ def open_pull_requests(slug):
     return prs
 
 
+def open_pull_requests(slug):
+    """All fork/upstream pages or no authority; errors never prove absence."""
+    return [pr for repository in pull_request_repositories(slug)
+            for pr in _repository_pull_requests(repository)]
+
+
 def matches_open_pull_request(prs: list, head: str, branch: str) -> bool:
     """Match by exact head commit, or by branch name for an attached HEAD."""
     name = branch.removeprefix("refs/heads/") if branch.startswith("refs/heads/") else ""
@@ -47,7 +78,7 @@ def worktree_identity(path: Path) -> tuple[str, str]:
 
 
 class OpenPullRequestCache:
-    """One paginated lookup per repository slug per cleanup pass."""
+    """One complete fork/upstream lookup per configured slug per cleanup pass."""
 
     def __init__(self, lookup=None):
         # Resolve at construction so a patched module function is honoured.
