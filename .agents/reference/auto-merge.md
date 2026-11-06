@@ -65,6 +65,15 @@ This is bypassing stale/redundant automation state, not bypassing maintainer pol
 
 `full-loop-helper.sh merge --auto` applies the same rule for interactive sessions: if native auto-merge is already blocked only by review-required branch policy or GitHub self-approval rules, the helper verifies the PR is non-draft, has no `CHANGES_REQUESTED`, has no pending/failing checks, and has no linked issue still carrying `needs-maintainer-review`; then it falls through to `--admin` automatically. Headless workers do not take this fallback.
 
+**Stuck review-bot-gate override (GH#36901).** For an external/fork PR, the review add-on gate needs a completed bot review of the exact head. If the bot never reviews it (for example after its review limit), the maintainer may explicitly authorise `full-loop-helper.sh merge <PR> <repo> --override-review-bot-gate="<reason, 20+ chars>"`. The override:
+
+- is refused in headless sessions, and is never set from the environment;
+- accepts only terminal `review-bot-gate` failures, so every other required check must pass;
+- re-runs `approval-helper.sh verify pr` immediately before the merge, and the transport still enforces exact-head external authority;
+- merges with `--admin --match-head-commit`, then posts the audit comment, writes a `security.event` audit entry and adds `admin-merge`.
+
+Do not comment on the PR between approval and merge: any non-bot comment stales the PR approval snapshot. Direct `gh pr merge` stays forbidden by command policy.
+
 ### Interactive PR-Drain Mode
 
 Use `pr-drain-helper.sh <owner/repo>` when the goal is maintainer-directed backlog clearing rather than broad baseline cleanup. The helper is read-only by default: it lists open PRs, checks same-repo/non-draft metadata, asks `review-bot-gate-helper.sh status-json` for a machine-readable bot-gate result, inspects merge/conflict state, separates configured baseline-red checks from PR-specific failures, and prints the next command for each PR.
