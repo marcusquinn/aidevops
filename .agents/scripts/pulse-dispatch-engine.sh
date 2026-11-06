@@ -966,7 +966,7 @@ _should_run_llm_supervisor() {
 	if [[ "$snap_age" -ge "$PULSE_LLM_STALL_THRESHOLD" ]]; then
 		# A paused dispatch backlog cannot progress. Keep non-stall supervisor
 		# work eligible, and fail open when the shared health gate is unavailable.
-		if declare -F _pulse_dispatch_runner_health_paused >/dev/null 2>&1 && _pulse_dispatch_runner_health_paused; then
+		if declare -F _pulse_dispatch_runner_health_paused >/dev/null 2>&1 && RUNNER_HEALTH_BREAKER_RESUME_AFTER_UPDATE=false _pulse_dispatch_runner_health_paused; then
 			echo "[pulse-wrapper] LLM supervisor: stall trigger suppressed — runner-health breaker paused (t2897)" >>"$LOGFILE"
 			return 1
 		fi
