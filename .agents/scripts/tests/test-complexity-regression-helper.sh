@@ -19,6 +19,7 @@
 #   13. bash32-compat stable:        pre-existing nameref unchanged → exit 0 (t2171)
 #   18. rename carry-over:           git mv keeps existing violations; new file blocks (GH#36897)
 #   19. working-tree git mv:         staged rename keeps existing file-size violation (GH#36897)
+#   20. edited bash32 rename:        existing count carries over; increased count blocks (GH#36928)
 
 set -euo pipefail
 
@@ -758,6 +759,53 @@ test_rename_carries_existing_violations() {
 	return 0
 }
 
+test_edited_rename_carries_bash32_count() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	local _base_sha="" _rc_stable=0 _rc_added=0 _renames=""
+	_init_rename_repo "$_repo"
+	printf 'declare -A existing_config\n' >>"$_repo/docs/a/tool.sh"
+	git -C "$_repo" add docs/a/tool.sh
+	git -C "$_repo" commit -q -m "base: existing bash32 violation"
+	_base_sha=$(git -C "$_repo" rev-parse HEAD)
+
+	git -C "$_repo" mv docs/a/tool.sh docs/a/renamed.sh
+	printf '# Harmless edit alongside the rename\n' >>"$_repo/docs/a/renamed.sh"
+	git -C "$_repo" add docs/a/renamed.sh
+	git -C "$_repo" commit -q -m "head: rename and edit shell script"
+	_renames=$(git -C "$_repo" diff --name-status -M "$_base_sha" HEAD)
+	if printf '%s\n' "$_renames" | grep -Eq '^R[0-9]+[[:space:]]+docs/a/tool\.sh[[:space:]]+docs/a/renamed\.sh$' &&
+		! printf '%s\n' "$_renames" | grep -q '^R100'; then
+		print_result "bash32 rename: Git detects an edited rename" 0
+	else
+		print_result "bash32 rename: Git detects an edited rename" 1 "got $_renames"
+	fi
+
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric bash32-compat) \
+		>/dev/null 2>&1 || _rc_stable=$?
+	if [ "$_rc_stable" -eq 0 ]; then
+		print_result "bash32 rename: existing count carries over after an edit" 0
+	else
+		print_result "bash32 rename: existing count carries over after an edit" 1 \
+			"expected exit 0, got $_rc_stable"
+	fi
+
+	# Increase the same pattern's count, not a different violation identity.
+	printf 'declare -A additional_config\n' >>"$_repo/docs/a/renamed.sh"
+	git -C "$_repo" add docs/a/renamed.sh
+	git -C "$_repo" commit -q -m "head: add another associative array"
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric bash32-compat) \
+		>/dev/null 2>&1 || _rc_added=$?
+	if [ "$_rc_added" -eq 1 ]; then
+		print_result "bash32 rename: increased count of the same pattern blocks" 0
+	else
+		print_result "bash32 rename: increased count of the same pattern blocks" 1 \
+			"expected exit 1, got $_rc_added"
+	fi
+	teardown
+	return 0
+}
+
 test_working_tree_git_mv_carries_violation() {
 	setup
 	local _repo="$TEST_ROOT/repo"
@@ -805,6 +853,7 @@ test_diff_scoped_skip_no_sh_changes
 test_diff_scoped_ruby_change_is_applicable
 test_working_tree_101_line_function_blocks
 test_rename_carries_existing_violations
+test_edited_rename_carries_bash32_count
 test_working_tree_git_mv_carries_violation
 
 printf '\n'
