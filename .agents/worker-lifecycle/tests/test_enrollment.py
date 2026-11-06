@@ -67,7 +67,7 @@ class EnrollmentContract(unittest.TestCase):
                if not name.startswith(("GIT_", "AIDEVOPS_", "WORKTREE_"))}
         env.update(AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory),
                    WORKTREE_REGISTRY_DB=str(ownership), LOGFILE=os.devnull)
-        bash = shutil.which("bash", path=env.get("PATH"))
+        bash = shutil.which("bash")
         if bash is None:
             self.fail("Bash is required for dispatcher integration")
 

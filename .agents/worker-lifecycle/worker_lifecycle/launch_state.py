@@ -116,7 +116,7 @@ def reuse_status(state_dir: Path, worktree: Path) -> dict[str, object]:
     else:
         try:
             enrolled_generation(state_dir, worktree, False)
-        except AdmissionClosed:
+        except AdmissionClosed as error:
             store = LifecycleRegistry(state_dir)
             generation = GenerationEnrollment(store).inspect(worktree)
             with store.connection() as connection:
@@ -125,6 +125,6 @@ def reuse_status(state_dir: Path, worktree: Path) -> dict[str, object]:
                     (generation, str(worktree)),
                 ).fetchone()
             if row is None or row["state"] != "closed":
-                raise AdmissionClosed("reuse-admission-evidence-unavailable")
+                raise AdmissionClosed("reuse-admission-evidence-unavailable") from error
             return {"reuse": "sealed", "cleanup_authorized": False}
     return {"reuse": "eligible", "cleanup_authorized": False}
