@@ -180,6 +180,58 @@ _test_preserved_repo_freshness() (
 )
 assert_true "per-repo freshness and reducer diagnostics" _test_preserved_repo_freshness
 
+# A deadline-limited rebuild must retain completed repos and resume past them,
+# even while the partial checkpoint's file mtime is inside the normal cache TTL.
+_test_interrupted_graph_rebuild() (
+	local initial_fail="$fail"
+	export HOME="${TMP_ROOT}/resume-home"
+	mkdir -p "${HOME}/.config/aidevops"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/one","pulse":true},{"slug":"owner/two","pulse":true}]}' >"${HOME}/.config/aidevops/repos.json"
+	local DEP_GRAPH_CACHE_FILE="${TMP_ROOT}/resume-cache.json" DEP_GRAPH_CACHE_TTL_SECS=100
+	local PULSE_DEP_GRAPH_FORCE_REBUILD=1 PULSE_STAGE_DEADLINE_EPOCH=1040
+	local clock="${TMP_ROOT}/clock" calls="${TMP_ROOT}/build-calls" rc=0
+	printf '1000\n' >"$clock"
+	: >"$calls"
+	printf '%s\n' '{"repos":{"owner/two":{"built_at":25,"open_issues":[2]},"owner/disabled":{"built_at":1}}}' >"$DEP_GRAPH_CACHE_FILE"
+	date() {
+		if [[ "$*" == +%s ]]; then
+			printf '%s\n' "$(<"$clock")"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	_dep_graph_build_repo_data() {
+		local slug="$1"
+		printf '%s\n' "$slug" >>"$calls"
+		[[ "$slug" != owner/one ]] || printf '1030\n' >"$clock"
+		printf '%s\n' '{"open_issues":[],"task_to_issue":{},"blocked_by":{},"defer_flags":{}}'
+		return 0
+	}
+	build_dependency_graph_cache || rc=$?
+	assert_eq "deadline yields retryable rebuild" 124 "$rc"
+	assert_eq "first completed repo is durably checkpointed" 1000 "$(jq -r '.repos["owner/one"].built_at' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "unvisited repo retains its stale timestamp" 25 "$(jq -r '.repos["owner/two"].built_at' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "partial rebuild is not marked complete" false "$(jq -r '.rebuild_complete' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "disabled repos are not restored from old cache" false "$(jq -r '.repos | has("owner/disabled")' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "checkpoint mtime does not revive unvisited stale repo" false "$(_blocked_by_load_cache owner/two | jq -r '.use_cache')"
+	unset PULSE_DEP_GRAPH_FORCE_REBUILD
+	PULSE_STAGE_DEADLINE_EPOCH=1200
+	rc=0
+	build_dependency_graph_cache || rc=$?
+	assert_eq "fresh partial checkpoint resumes without force flag" 0 "$rc"
+	assert_eq "oldest unvisited repo precedes completed repo" 'owner/one,owner/two,owner/one' "$(paste -sd, "$calls")"
+	assert_eq "full pass marks rebuild complete" true "$(jq -r '.rebuild_complete' "$DEP_GRAPH_CACHE_FILE")"
+	local before=""
+	before=$(<"$DEP_GRAPH_CACHE_FILE")
+	_dep_graph_checkpoint_write "$DEP_GRAPH_CACHE_FILE" invalid false 2>/dev/null && \
+		assert_eq "invalid graph cannot replace checkpoint" failure success
+	assert_eq "failed write preserves previous checkpoint" "$before" "$(<"$DEP_GRAPH_CACHE_FILE")"
+	[[ "$fail" -eq "$initial_fail" ]] || return 1
+	return 0
+)
+assert_true "graph rebuild resumes after a housekeeping deadline" _test_interrupted_graph_rebuild
+
 entry='{"task_ids":["t10"],"issue_nums":["11"]}'
 assert_true "closed roadmap predecessors resolve" \
 	_refresh_all_blockers_resolved "$entry" '{"t10":10}' '[10,11]' '[10,11,20]'

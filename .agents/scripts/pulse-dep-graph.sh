@@ -42,6 +42,8 @@ source "${_pulse_dep_graph_dir}/issue-hold-marker-lib.sh"
 source "${_pulse_dep_graph_dir}/dependency-supersession-lib.sh"
 # shellcheck source=./terminal-blocker-circuit.sh
 source "${_pulse_dep_graph_dir}/terminal-blocker-circuit.sh"
+# shellcheck source=./pulse-dep-graph-checkpoint.sh
+source "${_pulse_dep_graph_dir}/pulse-dep-graph-checkpoint.sh"
 DEP_GRAPH_REDUCE_FILTER="${PULSE_DEP_GRAPH_REDUCE_FILTER:-${_pulse_dep_graph_dir}/pulse-dep-graph-reduce.jq}"
 DEP_GRAPH_BRIEF_PARSER_AWK="${_pulse_dep_graph_dir}/brief-readiness-parser.awk"
 DEP_GRAPH_BLOCKED_BY_VALUE_AWK="${_pulse_dep_graph_dir}/blocked-by-value.awk"
@@ -340,7 +342,7 @@ build_dependency_graph_cache() {
 	if [[ -f "$cache_file" && "${PULSE_DEP_GRAPH_FORCE_REBUILD:-0}" != "1" ]]; then
 		local cache_age
 		cache_age=$(($(date +%s) - $(date -r "$cache_file" +%s 2>/dev/null || echo 0)))
-		if [[ "$cache_age" -lt "$ttl_secs" ]]; then
+		if [[ "$cache_age" -lt "$ttl_secs" ]] && jq -e '.rebuild_complete != false' "$cache_file" >/dev/null 2>&1; then
 			echo "[pulse-wrapper] dep-graph-cache: cache fresh (${cache_age}s < ${ttl_secs}s TTL), skipping rebuild" >>"$LOGFILE"
 			return 0
 		fi
@@ -363,13 +365,15 @@ build_dependency_graph_cache() {
 
 	# Build the graph JSON incrementally
 	local graph_json="" old_graph_json=""
-	graph_json=$(printf '{"built_at":"%s","repos":{}}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
 	if [[ -f "$cache_file" ]]; then
 		old_graph_json=$(<"$cache_file") || old_graph_json=""
 	fi
+	graph_json=$(_dep_graph_checkpoint_seed "$old_graph_json" "$repos_json" "$(date -u +%Y-%m-%dT%H:%M:%SZ)") || return 1
+	repos_json=$(_dep_graph_checkpoint_order "$repos_json" "$graph_json") || return 1
 
 	while IFS= read -r repo_entry; do
 		[[ -n "$repo_entry" ]] || continue
+		_dep_graph_checkpoint_budget_allows || return 124
 		local slug
 		slug=$(printf '%s' "$repo_entry" | jq -r '.slug // empty' 2>/dev/null)
 		[[ -n "$slug" ]] || continue
@@ -394,20 +398,11 @@ build_dependency_graph_cache() {
 		# Merge repo data into graph
 		graph_json=$(printf '%s' "$graph_json" |
 			jq --arg slug "$slug" --argjson rd "$repo_data" \
-				'.repos[$slug] = $rd' 2>/dev/null) || true
+				'.repos[$slug] = $rd' 2>/dev/null) || return 1
+		_dep_graph_checkpoint_write "$cache_file" "$graph_json" false || return 1
 	done <<<"$repos_json"
 
-	# Atomically write cache (write to tmp then mv). GH#33246: the async
-	# housekeeping catch-up and the in-cycle stage share the pulse PID, so a
-	# `.tmp.$$` name could collide; mktemp gives each writer its own sibling.
-	local tmp_file=""
-	mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
-	tmp_file=$(mktemp "${cache_file}.tmp.XXXXXX" 2>/dev/null) || tmp_file="${cache_file}.tmp.${BASHPID:-$$}"
-	if printf '%s\n' "$graph_json" >"$tmp_file"; then
-		mv "$tmp_file" "$cache_file" || rm -f "$tmp_file"
-	else
-		rm -f "$tmp_file"
-	fi
+	_dep_graph_checkpoint_write "$cache_file" "$graph_json" true || return 1
 
 	local build_end="" build_dur=""
 	build_end=$(date +%s)
