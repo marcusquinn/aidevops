@@ -139,8 +139,10 @@ node "$COORDINATOR" lease-finish --owner-id hol-later-owner --repository-id repo
 
 # Malformed lease attempt counts must not abort before checkout validation.
 # Exhaust each fixture immediately so it cannot interfere with later leases.
+attempt_case=0
 for attempt in null '""' '"invalid"' 0 -1 '"08"' '"1+1"' 1 2; do
-	operation_id="invalid-attempt-${attempt}"
+	attempt_case=$((attempt_case + 1))
+	operation_id="invalid-attempt-${attempt_case}"
 	node "$COORDINATOR" publication-intent --operation-id "$operation_id" --task-id "$task_id" \
 		--repository-id "$operation_id" --repository-path "${TEST_ROOT}/missing-worktree" \
 		--max-attempts 1 --payload '{"paths":["TODO.md"]}' >/dev/null
