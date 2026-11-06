@@ -597,6 +597,235 @@ _check_no_init_repos() {
 }
 
 #######################################
+# Drift check #4 — required trust workflows (GH#36907).
+# Installs each REQUIRED_TRUST_WORKFLOWS entry on public, pulse-enabled,
+# maintainer-role repos that classify as NO-WORKFLOW, via a tracking issue
+# plus sync-workflows-helper.sh --apply --install-missing. Idempotent:
+# sync-workflows-helper.sh skips repos with an open sync PR, the tracking
+# issue is looked up before creation, and attempts are rate-limited in state.
+#######################################
+readonly REQUIRED_TRUST_WORKFLOWS=("issue-triage-gate")
+readonly TRUST_WORKFLOW_ISSUE_TITLE="chore: install aidevops issue triage gate"
+readonly TRUST_VISIBILITY_TTL_SECONDS=604800
+readonly TRUST_ATTEMPT_INTERVAL_SECONDS=72000
+
+#######################################
+# Read one value from the keeper state file (empty when absent).
+# Args: $1 — jq filter
+#######################################
+_trust_state_get() {
+	local filter="$1"
+	[[ -f "$STATE_FILE" ]] || return 0
+	jq -r "$filter // empty" "$STATE_FILE" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Set a numeric value under a state map key.
+# Args: $1 — map name, $2 — key (slug or slug|workflow), $3 — value
+#######################################
+_trust_state_set() {
+	local map="$1"
+	local key="$2"
+	local value="$3"
+	local tmp_state
+	tmp_state=$(mktemp)
+	if [[ -f "$STATE_FILE" ]]; then
+		jq --arg map "$map" --arg key "$key" --argjson value "$value" \
+			'.[$map] = ((.[$map] // {}) + {($key): $value})' "$STATE_FILE" >"$tmp_state" 2>/dev/null &&
+			mv "$tmp_state" "$STATE_FILE"
+	else
+		jq -n --arg map "$map" --arg key "$key" --argjson value "$value" \
+			'{($map): {($key): $value}}' >"$tmp_state" 2>/dev/null &&
+			mv "$tmp_state" "$STATE_FILE"
+	fi
+	rm -f "$tmp_state"
+	return 0
+}
+
+#######################################
+# Echo "public", "private" or "unknown" for a slug. Cached weekly in state.
+# Args: $1 — slug, $2 — dry_run flag (dry run never writes the cache)
+#######################################
+_trust_repo_visibility() {
+	local slug="$1"
+	local dry_run="$2"
+	local now cached_at cached_vis
+	now=$(date +%s)
+	cached_at=$(_trust_state_get ".visibility_checked[\"$slug\"]")
+	cached_vis=$(_trust_state_get ".visibility[\"$slug\"]")
+	if [[ -n "$cached_at" && -n "$cached_vis" ]] && [[ "$cached_at" =~ ^[0-9]+$ ]] &&
+		((now - cached_at < TRUST_VISIBILITY_TTL_SECONDS)); then
+		echo "$cached_vis"
+		return 0
+	fi
+	local private vis
+	private=$(gh api "repos/${slug}" --jq '.private' 2>/dev/null || true)
+	case "$private" in
+	false) vis="public" ;;
+	true) vis="private" ;;
+	*)
+		echo "unknown"
+		return 0
+		;;
+	esac
+	if [[ "$dry_run" != "1" ]]; then
+		local vis_json
+		vis_json=$(jq -n --arg v "$vis" '$v')
+		_trust_state_set "visibility_checked" "$slug" "$now"
+		# visibility values are strings; store via a dedicated jq update
+		local tmp_state
+		tmp_state=$(mktemp)
+		jq --arg key "$slug" --argjson v "$vis_json" \
+			'.visibility = ((.visibility // {}) + {($key): $v})' "$STATE_FILE" >"$tmp_state" 2>/dev/null &&
+			mv "$tmp_state" "$STATE_FILE"
+		rm -f "$tmp_state"
+	fi
+	echo "$vis"
+	return 0
+}
+
+#######################################
+# Find or create the single tracking issue for a rollout.
+# Echoes the issue number on stdout; returns 1 on failure.
+# Args: $1 — slug
+#######################################
+_trust_ensure_tracking_issue() {
+	local slug="$1"
+	local existing
+	existing=$(gh issue list --repo "$slug" --state open --search "\"${TRUST_WORKFLOW_ISSUE_TITLE}\" in:title" \
+		--json number,title --jq "[.[] | select(.title == \"${TRUST_WORKFLOW_ISSUE_TITLE}\")] | first | .number // empty" 2>/dev/null || true)
+	if [[ "$existing" =~ ^[0-9]+$ ]]; then
+		echo "$existing"
+		return 0
+	fi
+	local body_file out number
+	body_file=$(mktemp)
+	cat >"$body_file" <<'EOF'
+Automated rollout by the aidevops repo health keeper (r914): install the issue triage gate caller workflow so external issue authors get trust labels at creation time.
+
+Closed by the sync PR (`Resolves` link). No manual step is required.
+
+Files: `.github/workflows/issue-triage-gate.yml` (rendered from `issue-triage-gate-caller.yml`).
+Reference: `.agents/scripts/sync-workflows-helper.sh --apply --install-missing --workflow issue-triage-gate`.
+Verification: `gh api repos/<slug>/contents/.github/workflows/issue-triage-gate.yml` succeeds after merge.
+EOF
+	out=$(AIDEVOPS_SESSION_ORIGIN=worker gh_create_issue --repo "$slug" \
+		--title "$TRUST_WORKFLOW_ISSUE_TITLE" --body-file "$body_file" --label "origin:worker" 2>&1) || {
+		rm -f "$body_file"
+		log_warn "trust-workflows: $slug — could not create tracking issue: ${out}"
+		return 1
+	}
+	rm -f "$body_file"
+	number=$(printf '%s\n' "$out" | grep -oE '/issues/[0-9]+' | tail -1 | grep -oE '[0-9]+' || true)
+	[[ "$number" =~ ^[0-9]+$ ]] || {
+		log_warn "trust-workflows: $slug — tracking issue number not parsed from wrapper output"
+		return 1
+	}
+	echo "$number"
+	return 0
+}
+
+#######################################
+# Install one required workflow on one repo.
+# Echoes: installed-pr | present | skipped | failed
+# Args: $1 slug, $2 workflow, $3 dry_run
+#######################################
+_trust_install_one() {
+	local slug="$1"
+	local workflow="$2"
+	local dry_run="$3"
+	local check_helper="${SCRIPT_DIR}/check-workflows-helper.sh"
+	local sync_helper="${SCRIPT_DIR}/sync-workflows-helper.sh"
+	local class
+	class=$("$check_helper" --json --repo "$slug" --workflow "$workflow" 2>/dev/null |
+		jq -r 'select(.workflow == "'"$workflow"'") | .classification' 2>/dev/null | head -n 1 || true)
+	if [[ "$class" != "NO-WORKFLOW" ]]; then
+		echo present
+		return 0
+	fi
+
+	local now last
+	now=$(date +%s)
+	last=$(_trust_state_get ".trust_workflow_attempted[\"${slug}|${workflow}\"]")
+	if [[ "$last" =~ ^[0-9]+$ ]] && ((now - last < TRUST_ATTEMPT_INTERVAL_SECONDS)); then
+		log_info "trust-workflows: $slug — $workflow attempted recently, skipping (rate limit)"
+		echo skipped
+		return 0
+	fi
+	if [[ "$dry_run" == "1" ]]; then
+		log_info "trust-workflows (dry-run): $slug — would install $workflow"
+		echo installed-pr
+		return 0
+	fi
+	_trust_state_set "trust_workflow_attempted" "${slug}|${workflow}" "$now"
+
+	local issue_number
+	if ! issue_number=$(_trust_ensure_tracking_issue "$slug"); then
+		echo failed
+		return 0
+	fi
+	local sync_out
+	if ! sync_out=$("$sync_helper" --apply --install-missing --workflow "$workflow" \
+		--repo "$slug" --issue "$issue_number" 2>&1); then
+		if printf '%s' "$sync_out" | grep -qiE 'workflow.*scope|refusing to allow.*workflow'; then
+			log_warn "trust-workflows: $slug — blocked: token lacks 'workflow' scope (run gh auth refresh -s workflow)"
+		else
+			log_warn "trust-workflows: $slug — sync-workflows-helper failed for $workflow"
+		fi
+		echo failed
+		return 0
+	fi
+	log_info "trust-workflows: $slug — $workflow sync PR opened or already open (issue #${issue_number})"
+	echo installed-pr
+	return 0
+}
+
+_check_required_trust_workflows() {
+	local dry_run="$1"
+	_R914_TRUST_INSTALLED=0
+	_R914_TRUST_PRESENT=0
+	_R914_TRUST_SKIPPED=0
+	_R914_TRUST_FAILED=0
+
+	if ! command -v gh >/dev/null 2>&1; then
+		log_warn "trust-workflows: gh not installed — skipping"
+		return 0
+	fi
+
+	local slugs_raw slug vis workflow outcome
+	slugs_raw=$(jq -r '
+		.initialized_repos[]? |
+		select(.pulse == true and .maintenance != false and (.local_only // false) != true
+			and ((.role // "maintainer") == "maintainer")) |
+		.slug // empty
+	' "$CONFIG_FILE" 2>/dev/null || true)
+
+	{
+		while IFS= read -r slug; do
+			[[ -z "$slug" ]] && continue
+			vis=$(_trust_repo_visibility "$slug" "$dry_run")
+			if [[ "$vis" != "public" ]]; then
+				[[ "$vis" == "unknown" ]] && log_warn "trust-workflows: $slug — visibility unknown, skipped"
+				_R914_TRUST_SKIPPED=$((_R914_TRUST_SKIPPED + 1))
+				continue
+			fi
+			for workflow in "${REQUIRED_TRUST_WORKFLOWS[@]}"; do
+				outcome=$(_trust_install_one "$slug" "$workflow" "$dry_run")
+				case "$outcome" in
+				installed-pr) _R914_TRUST_INSTALLED=$((_R914_TRUST_INSTALLED + 1)) ;;
+				present) _R914_TRUST_PRESENT=$((_R914_TRUST_PRESENT + 1)) ;;
+				skipped) _R914_TRUST_SKIPPED=$((_R914_TRUST_SKIPPED + 1)) ;;
+				*) _R914_TRUST_FAILED=$((_R914_TRUST_FAILED + 1)) ;;
+				esac
+			done
+		done
+	} <<<"$slugs_raw"
+	log_info "trust-workflows: ${_R914_TRUST_INSTALLED} installed-pr, ${_R914_TRUST_PRESENT} present, ${_R914_TRUST_SKIPPED} skipped(private), ${_R914_TRUST_FAILED} failed"
+	return 0
+}
+
+#######################################
 # Read current framework version from VERSION file.
 # Echoes version on stdout, empty string if unavailable.
 #######################################
@@ -657,6 +886,7 @@ cmd_check() {
 	_check_version_bumps "$current_version" "$dry_run"
 	_check_missing_folders
 	_check_no_init_repos
+	_check_required_trust_workflows "$dry_run"
 
 	log_info "r914 complete: ${_R914_BUMPED} bumped, ${_R914_BUMP_SKIPPED} bump-skipped, ${_R914_BUMP_FAILED} bump-failed, ${_R914_REGISTERED_CONFIG_MISSING} registered-config-missing, ${_R914_MISSING_FOLDER} missing-folder, ${_R914_NO_INIT} no-init"
 	update_state "$_R914_BUMPED" "$_R914_BUMP_SKIPPED" "$_R914_BUMP_FAILED" "$_R914_REGISTERED_CONFIG_MISSING" "$_R914_MISSING_FOLDER" "$_R914_NO_INIT"
