@@ -290,6 +290,44 @@ episode, edited or untrusted comments, and malformed reasons still reject.
 Automatic approval paths never pass the acknowledgement. Releases are no
 longer published without an owned claim (`headless-runtime-release-claim.sh`).
 
+### Terminal lease with a missing release
+
+A historical checkpoint attempt may have a claim, ready lease and terminal lease
+but no preceding `CLAIM_RELEASED`. It is **not** a fully released attempt. The
+default history validator still rejects it; neither a terminal record, lease
+expiry, an assignment reset nor absence of a process establishes takeover authority.
+
+After separately verifying executor shutdown/fencing and current ownership, an
+authorized maintainer may explicitly accept this exact audit gap when generating
+a new revision-bound approval:
+
+```bash
+pr-checkpoint-continuation-helper.sh approval-template REPO PR ISSUE RELEASE_ID attempt:ID --acknowledge-terminal-without-release=TERMINAL_COMMENT_ID[,TERMINAL_COMMENT_ID]
+```
+
+This is a manual recovery decision, not an automatic retry or proof of safe
+execution. The command requires trusted, unedited, sequential claim/ready/terminal
+records with matching actor, device, session, token and attempt. Every recorded
+claim/renewal expiry must be known, positive and elapsed before approval; the
+terminal must have `expires_at=0`. Missing ready evidence, overlapping claims,
+foreign/edited evidence and extra/mismatched acknowledgement IDs reject.
+
+The generated `released_successors` entry has `outcome: terminal_without_release`,
+`release_provenance: missing` and `execution_status: unrecovered`, plus the exact
+claim, ready and terminal IDs and an `evidence_sha256` binding all episode records
+(including intermediate renewals). Only the digest is emitted, not lease secrets.
+It contains no synthetic `release_id`; no original comment is edited or created
+by template generation. Revalidation reconstructs that exact entry at the approval
+timestamp and fences its historical token from reuse.
+
+This flag can be combined with `--acknowledge-unattributed` for separately reviewed
+later orphan releases. It does **not** acknowledge later interactive claims or
+other live/open ownership: those still reject and need their own supported
+handoff. Automatic approval paths pass neither flag. Approval publication still
+requires current write authority, exact head/ref/brief binding and 24-hour expiry;
+continuation still requires the existing fresh fenced claim. Execution/write
+effects remain unknown until separately reconciled; never replay consumed work.
+
 ### Ready leases that expired without a release (GH#36544)
 
 A continuation attempt can post its ready lease and then exit without a
