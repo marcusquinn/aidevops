@@ -332,7 +332,8 @@ _dep_graph_build_repo_data() {
 #   }
 # }
 #
-# Returns: 0 always (non-fatal — cache miss falls back to live API)
+# Returns: 0 on completion/no-op, 124 on a resumable deadline yield, 1 on
+# checkpoint failure. Cache misses continue to fall back to the live API.
 #######################################
 build_dependency_graph_cache() {
 	local cache_file="$DEP_GRAPH_CACHE_FILE"
