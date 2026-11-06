@@ -1082,6 +1082,45 @@ _remap_scan_paths() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# _scan_base_with_renames <base_sha> <head_sha> <working_tree> <metric>
+#                         <changed_source> <base_scan>
+#
+# Materialize and scan the base snapshot into <base_scan>, sets BASE_WORKTREE.
+# Renamed files are scanned at their base path and remapped to the head path,
+# so a move carries existing violations over instead of making them look new
+# (GH#36897). Requires _init_tmp_dir.
+# ---------------------------------------------------------------------------
+_scan_base_with_renames() {
+	local _base_sha="$1"
+	local _head_sha="$2"
+	local _working_tree="$3"
+	local _metric="$4"
+	local _changed_source="$5"
+	local _base_scan="$6"
+	local _rename_map="$TMP_DIR/renames.tsv"
+	local _base_paths="$_changed_source"
+
+	_renamed_applicable_pairs "$_base_sha" "$_head_sha" "$_working_tree" >"$_rename_map"
+	if [ -s "$_rename_map" ]; then
+		_base_paths=$({
+			printf '%s\n' "$_changed_source"
+			cut -f1 "$_rename_map"
+		} | sort -u)
+		log "[$_metric] $(wc -l <"$_rename_map" | tr -d ' ') renamed file(s) compared against their base path"
+	fi
+
+	BASE_WORKTREE="$TMP_DIR/base-snapshot"
+	log "[$_metric] materializing changed files at base ${_base_sha:0:7}"
+	if ! _materialize_ref_paths "$_base_sha" "$BASE_WORKTREE" "$_base_paths" 2>/dev/null; then
+		die "failed to materialize base snapshot for $_base_sha"
+	fi
+	log "[$_metric] scanning base (${_base_sha:0:7})"
+	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric" "$_base_paths"
+	_remap_scan_paths "$_base_scan" "$_rename_map" || die "failed to remap renamed base paths"
+	return 0
+}
+
 # _check_regression <base_sha> <head_sha> <output_md> <allow_increase> [<metric>]
 # Scan base+head via snapshots, compute diff, optionally write report.
 # Exits 0 (no regression), 1 (regression), or 2 (error).
@@ -1129,29 +1168,9 @@ _check_regression() {
 	local _base_scan="$TMP_DIR/base.tsv"
 	local _head_scan="$TMP_DIR/head.tsv"
 	local _new_file="$TMP_DIR/new-violations.tsv"
-	local _rename_map="$TMP_DIR/renames.tsv"
 
-	# Renamed files are scanned at their base path and remapped to the head
-	# path, so a move carries existing violations over instead of making them
-	# look new (GH#36897).
-	local _base_paths="$_changed_source"
-	_renamed_applicable_pairs "$_base_sha" "$_head_sha" "$_working_tree" >"$_rename_map"
-	if [ -s "$_rename_map" ]; then
-		_base_paths=$({
-			printf '%s\n' "$_changed_source"
-			cut -f1 "$_rename_map"
-		} | sort -u)
-		log "[$_metric] $(wc -l <"$_rename_map" | tr -d ' ') renamed file(s) compared against their base path"
-	fi
-
-	BASE_WORKTREE="$TMP_DIR/base-snapshot"
-	log "[$_metric] materializing changed files at base ${_base_sha:0:7}"
-	if ! _materialize_ref_paths "$_base_sha" "$BASE_WORKTREE" "$_base_paths" 2>/dev/null; then
-		die "failed to materialize base snapshot for $_base_sha"
-	fi
-	log "[$_metric] scanning base (${_base_sha:0:7})"
-	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric" "$_base_paths"
-	_remap_scan_paths "$_base_scan" "$_rename_map" || die "failed to remap renamed base paths"
+	_scan_base_with_renames "$_base_sha" "$_head_sha" "$_working_tree" \
+		"$_metric" "$_changed_source" "$_base_scan"
 
 	if [ "$_working_tree" -eq 1 ]; then
 		log "[$_metric] scanning current working tree"
