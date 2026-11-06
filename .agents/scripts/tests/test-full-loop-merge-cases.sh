@@ -146,6 +146,7 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 		"$mode" == "fallback-timeout-merged" || "$mode" == "fallback-timeout-open" ]]; then
 		if [[ "\$_gh_has_admin" -eq 1 ]]; then
 			if [[ "$mode" == "fallback-timeout-merged" || "$mode" == "fallback-timeout-open" ]]; then
+				touch "${TEST_ROOT}/logs/admin-write-attempted.txt"
 				exit 124
 			fi
 			if [[ "$mode" == "fallback-native-review" || "$mode" == "auto-review-required-admin-block" ]]; then
@@ -184,7 +185,14 @@ fi
 
 if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" && "\$*" == *"--json state,mergedAt,mergeCommit"* ]]; then
 	case "$mode" in
-	fallback-timeout-merged) echo '{"state":"MERGED","mergedAt":"2026-08-24T00:00:00Z","mergeCommit":{"oid":"merged123sha"},"headRefOid":"abc123headsha"}'; exit 0 ;;
+	fallback-timeout-merged)
+		# GH#36966: do not expose a completed admin merge before its write.
+		if [[ -f "${TEST_ROOT}/logs/admin-write-attempted.txt" ]]; then
+			echo '{"state":"MERGED","mergedAt":"2026-08-24T00:00:00Z","mergeCommit":{"oid":"merged123sha"},"headRefOid":"abc123headsha"}'
+		else
+			echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null,"headRefOid":"abc123headsha"}'
+		fi
+		exit 0 ;;
 	fallback-timeout-open | primary-timeout-policy-open) echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null,"headRefOid":"abc123headsha"}'; exit 0 ;;
 	esac
 fi
