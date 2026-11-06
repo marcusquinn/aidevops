@@ -725,7 +725,9 @@ _hrw_own_merged_terminal_complete() {
 		and .worktree == $worktree and .branch == $branch and .owner.session == $session
 		and (.owner.pid | type == "number" and . > 0)
 		and (.owner.process_identity | type == $string_type and length > 0)
-		and (.created_at | fromdateiso8601) >= $started
+		# Cleanup receipts use Python ISO timestamps with fractional seconds;
+		# jq fromdateiso8601 accepts only whole-second UTC timestamps.
+		and (.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $started
 		and .executor_completion_state == "COMPLETE"
 		and (.resource_cleanup_state == $deferred or .resource_cleanup_state == $leased)
 		and (.release_status == "not-requested" or .release_status == "published" or .release_status == "superseded")
