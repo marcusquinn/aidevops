@@ -1160,12 +1160,16 @@ _action_reconcile_external_issue_gate() {
 	if [[ "$verification" == "VERIFIED" ]]; then
 		return 1
 	fi
-	if [[ -n "$verification" && "$verification" != "NO_APPROVAL" ]]; then
+	# An empty/error response is not evidence that approval is absent.
+	if [[ "$verification" != "NO_APPROVAL" ]]; then
 		echo "[pulse-wrapper] External issue trust reconcile: blocked #${issue_num} in ${slug}; approval verification=${verification}, labels unchanged" >>"$LOGFILE"
 		return 0
 	fi
 
 	local -a edit_args=("$_PIR_ADD_LABEL_FLAG" "$_PIR_NMR_LABEL")
+	if ! _pir_labels_csv_contains "$labels_csv" "external-contributor"; then
+		edit_args+=("$_PIR_ADD_LABEL_FLAG" "external-contributor")
+	fi
 	if _pir_labels_csv_contains "$labels_csv" "$_PIR_AUTO_DISPATCH_LABEL"; then
 		edit_args+=("$_PIR_REMOVE_LABEL_FLAG" "$_PIR_AUTO_DISPATCH_LABEL")
 	fi

@@ -238,6 +238,8 @@ source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-normalize.sh"
 # shellcheck source=./pulse-issue-reconcile-actions.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-actions.sh"
+# shellcheck source=./pulse-new-external-issues.sh
+source "${_PIR_SCRIPT_DIR}/pulse-new-external-issues.sh"
 # shellcheck source=./pulse-issue-reconcile-parent.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-parent.sh"
