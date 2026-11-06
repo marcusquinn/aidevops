@@ -20,8 +20,9 @@ defaults to `~/.config/aidevops/tabby-hosts.json`. Alternatively, copy the gener
 `configs/tabby-hosts.example.json` from the installed agents tree. Keep real
 connection details in private OpenSSH configuration; do not put real endpoints,
 usernames, keys, or authentication logs in project files or reports. No command
-installs packages or changes SSH host verification/authentication. All hosts
-default to enabled.
+installs packages or weakens SSH host-key verification. Selecting an identity file
+for a managed alias can change which keys SSH offers, but never changes key
+material. All hosts default to enabled.
 
 ```bash
 aidevops tabby sessions doctor
@@ -74,8 +75,10 @@ New SSH aliases live in `~/.ssh/aidevops.conf`, referenced by a leading `Include
 in `~/.ssh/config`. The generated file contains ownership metadata and is edited
 only through these commands; external modifications cause SSH writes to fail
 closed. Existing user-owned alias blocks (including matching patterns and local
-Includes) are never edited or adopted. Global `Host *` defaults remain supported;
-dynamic Includes and conflicting aliases require manual configuration. Register
+Includes) are never edited or adopted. Global `Host *` and `Match all` defaults
+remain supported. Conditional `Match` rules are not evaluated or executed during
+SSH ownership checks: SSH changes refuse them, including rules found in Includes.
+Dynamic Includes and conflicting aliases also require manual configuration. Register
 user-owned aliases without SSH options, then use inventory-only updates. Legacy
 inventory SSH overrides must be migrated manually before managing an alias.
 An already-managed alias can be registered by another host ID without SSH options;
@@ -86,7 +89,8 @@ configuration files. New/replaced files and timestamped backups are private (060
 Backups are stored outside SSH Include globs under
 `~/.local/state/aidevops/tabby-host-config/backups/`; each write reports its backup
 path. Permanent `.aidevops-tabby-hosts.lock` files serialize cooperating
-writers; do not delete them while commands run. Individual file replacements are
+writers. A busy lock fails immediately with a retry message, rather than waiting
+indefinitely; do not delete lock files while commands run. Individual file replacements are
 atomic, but the multi-file operation is not: failed writes attempt rollback and
 report an incomplete rollback explicitly. Backups are retained privately. The
 managed Include and empty managed file remain after the last alias is removed.

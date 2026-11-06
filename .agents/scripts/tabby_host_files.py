@@ -63,7 +63,10 @@ def apply(changes, dry_run):
             info = os.fstat(fd)
             if info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
                 raise SessionError("Host configuration lock must be private and owned")
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise SessionError("Host configuration is busy; retry after the other writer finishes") from None
         apply_locked(changes)
 
 

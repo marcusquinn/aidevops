@@ -546,7 +546,7 @@ class HostManagementTests(unittest.TestCase):
 
     def test_shell_launcher_and_existing_global_scope(self):
         self.ssh.parent.mkdir()
-        original = b"User baseline\nHost unrelated\n  HostName original.invalid\n"
+        original = b"Match all\n  User baseline\nHost unrelated\n  HostName original.invalid\n"
         self.ssh.write_bytes(original)
         self.ssh.chmod(0o600)
         launcher = Path(__file__).resolve().parents[1] / "tabby-session-helper.sh"
@@ -563,6 +563,47 @@ class HostManagementTests(unittest.TestCase):
                                 capture_output=True, text=True, check=True)
         self.assertIn("hostname original.invalid\n", result.stdout)
         self.assertIn("user baseline\n", result.stdout)
+
+    def test_conditional_match_rules_are_refused_without_mutation(self):
+        self.ssh.parent.mkdir()
+        included = self.ssh.parent / "conditional.conf"
+        for rule in ("originalhost alpha", "host alpha", 'exec "false"'):
+            for via_include in (False, True):
+                with self.subTest(rule=rule, via_include=via_include):
+                    content = ("Match " + rule + "\n  HostName original.invalid\n").encode()
+                    included.write_bytes(content)
+                    included.chmod(0o600)
+                    original = b"Include conditional.conf\n" if via_include else content
+                    self.ssh.write_bytes(original)
+                    self.ssh.chmod(0o600)
+                    with self.assertRaisesRegex(config.SessionError, "Conditional SSH Match"):
+                        self.add()
+                    self.assertEqual(self.ssh.read_bytes(), original)
+                    self.assertEqual(included.read_bytes(), content)
+                    self.assertFalse(self.managed.exists())
+                    self.assertFalse(self.inventory.exists())
+
+    def test_busy_lock_fails_without_changing_configuration(self):
+        self.add()
+        original = self.inventory.read_bytes()
+        lock = self.inventory.parent / ".aidevops-tabby-hosts.lock"
+        with lock.open("rb") as held:
+            host_files.fcntl.flock(held, host_files.fcntl.LOCK_EX | host_files.fcntl.LOCK_NB)
+            with self.assertRaisesRegex(config.SessionError, "configuration is busy"):
+                self.run_host("update", "alpha", "--title-prefix", "A")
+        self.assertEqual(self.inventory.read_bytes(), original)
+        self.run_host("update", "alpha", "--title-prefix", "A")
+
+    def test_inventory_metadata_survives_host_edits(self):
+        self.inventory.parent.mkdir()
+        data = {"version": 1, "hosts": [], "$schema": "local-schema", "notes": {"owner": "operator"}}
+        self.inventory.write_text(json.dumps(data))
+        self.inventory.chmod(0o600)
+        self.add()
+        self.run_host("update", "alpha", "--title-prefix", "A")
+        self.assertEqual([h["id"] for h in config.load_hosts(self.inventory)], ["alpha"])
+        self.run_host("remove", "alpha", "--ssh")
+        self.assertEqual(json.loads(self.inventory.read_bytes()), data)
 
 
 class LegacyAndRelayTests(unittest.TestCase):

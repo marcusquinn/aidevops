@@ -42,7 +42,9 @@ def inventory(raw):
         data = json.loads(raw)
     except (ValueError, UnicodeError):
         raise SessionError("Cannot parse host inventory") from None
-    if not isinstance(data, dict) or set(data) != {"version", "hosts"}:
+    if not isinstance(data, dict):
+        raise SessionError("Expected version 1 host inventory")
+    if "version" not in data or "hosts" not in data:
         raise SessionError("Expected version 1 host inventory")
     if type(data["version"]) is not int or data["version"] != 1:
         raise SessionError("Expected version 1 host inventory")

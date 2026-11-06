@@ -62,6 +62,10 @@ def conflicts(path, alias, managed, seen=None):
     if raw is None:
         return False
     for key, values in directives(raw):
+        # Conditional rules may depend on canonicalization, the new endpoint,
+        # or exec output. Do not execute or guess them when taking ownership.
+        if key == "match" and [v.lower() for v in values] != ["all"]:
+            raise SessionError("Conditional SSH Match blocks require manual configuration; refusing SSH changes")
         if key == "host" and matches_host(values, alias):
             return True
         if key == "include" and any(conflicts(p, alias, managed, seen) for p in included_paths(values)):
