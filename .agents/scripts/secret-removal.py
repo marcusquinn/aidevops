@@ -44,7 +44,7 @@ def remove_plaintext(path, names):
     return 0
 
 
-def warnings(name):
+def warnings(name, skip_dependents=False):
     import credential_inventory_dependents as dependents
     import credential_inventory_names as names
     import credential_inventory_store as store
@@ -52,6 +52,8 @@ def warnings(name):
     data = store.load()
     if name in data['credentials']:
         print(f'registry: {name} is still described in the credential registry')
+    if skip_dependents:
+        return 0
     related = names.related_names(data, name)
     result = dependents.find_dependents(related)
     count = len(result['literal'])
@@ -76,8 +78,9 @@ def main(argv):
     command, args = (argv[0], argv[1:]) if argv else ('', [])
     if command == 'plaintext' and len(args) >= 2 and all(NAME.fullmatch(n) for n in args[1:]):
         return remove_plaintext(args[0], set(args[1:]))
-    if command == 'warnings' and len(args) == 1 and NAME.fullmatch(args[0]):
-        return warnings(args[0])
+    if command == 'warnings' and args and NAME.fullmatch(args[0]):
+        if args[1:] in ([], ['--skip-dependents']):
+            return warnings(args[0], skip_dependents=bool(args[1:]))
     if command == 'registry' and args and all(NAME.fullmatch(n) for n in args):
         return remove_registry(args)
     print('Usage: secret-removal.py plaintext FILE NAME... | warnings NAME | registry NAME...', file=sys.stderr)

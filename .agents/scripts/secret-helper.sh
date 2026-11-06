@@ -1185,6 +1185,7 @@ run_secret_removal() {
 # Parse `rm` arguments into globals RM_YES and RM_NAMES (normalised, deduplicated).
 parse_rm_args() {
 	RM_YES=false
+	RM_SKIP_DEPENDENTS=false
 	RM_NAMES=()
 	local arg=""
 	local name=""
@@ -1192,6 +1193,10 @@ parse_rm_args() {
 		case "$arg" in
 		--yes | -y)
 			RM_YES=true
+			continue
+			;;
+		--skip-dependents)
+			RM_SKIP_DEPENDENTS=true
 			continue
 			;;
 		-*)
@@ -1210,7 +1215,7 @@ parse_rm_args() {
 		esac
 	done
 	if [[ ${#RM_NAMES[@]} -eq 0 ]]; then
-		print_error "Usage: aidevops secret rm NAME [NAME...] [--yes]" >&2
+		print_error "Usage: aidevops secret rm NAME [NAME...] [--yes] [--skip-dependents]" >&2
 		return 1
 	fi
 	return 0
@@ -1221,6 +1226,7 @@ parse_rm_args() {
 cmd_rm() {
 	local -a RM_NAMES=()
 	local RM_YES=false
+	local RM_SKIP_DEPENDENTS=false
 	parse_rm_args "$@" || return 1
 
 	local name="" source_name="" missing=0
@@ -1238,8 +1244,16 @@ cmd_rm() {
 	[[ "$missing" -eq 0 ]] || return 1
 
 	local registry_names=() warning_line="" warning_output=""
+	local -a warning_options=()
+	if [[ "$RM_SKIP_DEPENDENTS" == true ]]; then
+		warning_options+=(--skip-dependents)
+		print_warning "Dependents scan skipped by request; references have not been checked"
+	fi
 	for name in "${RM_NAMES[@]}"; do
-		warning_output=$(run_secret_removal warnings "$name" 2>/dev/null) || warning_output=""
+		if ! warning_output=$(run_secret_removal warnings "$name" ${warning_options[@]+"${warning_options[@]}"}); then
+			print_error "Unable to check removal metadata for $name; nothing removed" >&2
+			return 1
+		fi
 		while IFS= read -r warning_line; do
 			[[ -n "$warning_line" ]] || continue
 			print_warning "$name: ${warning_line#*: }"
