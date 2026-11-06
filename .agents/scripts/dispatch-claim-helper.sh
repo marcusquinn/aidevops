@@ -2089,11 +2089,14 @@ Usage:
     Exit 1 = draft, linkage, labels, issue state, assignment, or head changed
     Exit 2 = contract or metadata unavailable/invalid (fail closed)
 
-  dispatch-claim-helper.sh close-expired-pr-checkpoint-lease <issue-number> <repo-slug> <claim-comment-id> <session>
+  dispatch-claim-helper.sh close-expired-pr-checkpoint-lease <issue-number> <repo-slug> <claim-comment-id> <session> [--complete-released]
     Close your own checkpoint attempt whose ready lease expired with no release
     or terminal lease (GH#36544). Same account, device and session only; refuses
     a live lease, unknown expiry, later coordination or a live local executor.
-    Exit 0 = release and terminal lease appended
+    --complete-released explicitly completes one fully identity-bound blocked,
+    clean or worker_complete release by appending only its missing terminal lease.
+    Default behavior and automatic outbox recovery do not accept those releases.
+    Exit 0 = missing release/terminal events appended; no existing event changed
     Exit 1 = denied (PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=...)
     Exit 2 = invalid arguments
 
