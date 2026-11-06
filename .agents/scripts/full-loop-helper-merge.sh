@@ -274,6 +274,7 @@ _merge_try_interactive_admin_auto_fallback() {
 	local squash_subject="${6:-}"
 	local merge_body_file="${7:-}"
 
+	_merge_report_already_merged_at_head "$pr_number" "$repo" "$expected_head_sha" && return 0
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo" ]] || return 1
 	! _merge_is_headless_session || return 1
 	_merge_output_is_review_policy_block "$merge_output" || return 1
@@ -911,6 +912,7 @@ _merge_try_review_only_admin_fallback() {
 	local pr_number="$1" repo="$2" merge_method="$3" match_head_sha="$4"
 	local squash_subject="$5" merge_body_file="$6" merge_output="$7"
 	local review_block=0
+	_merge_report_already_merged_at_head "$pr_number" "$repo" "$match_head_sha" && return 0
 	if grep -qE 'At least [0-9]+ approving review' <<<"$merge_output"; then
 		review_block=1
 	elif grep -qE 'base branch policy prohibits' <<<"$merge_output" &&

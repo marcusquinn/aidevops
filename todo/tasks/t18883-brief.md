@@ -1,0 +1,144 @@
+<!-- aidevops:brief-schema=v2 -->
+# t18883: Plan and prototype a buzz-aidevops Desktop plugin
+
+## Pre-flight (auto-populated by briefing workflow)
+
+- [x] Memory recall: `buzz plugin aidevops integration plan` → 0 hits
+- [x] Discovery pass: no existing Buzz plugin in this repo; related shipped work t18195 (GH#29498), t18205 (GH#29637), t18222 (GH#29831); open t18879 (GH#36926)
+- [x] File refs verified: `.agents/scripts/buzz-desktop-helper.sh`, `.agents/tools/ai-assistants/buzz-team-interface.md`, `.agents/reference/team-interface-buzz-provisioning.md`, `.agents/plugins/opencode-aidevops/` present at HEAD
+- [x] Tier: `tier:thinking` — new integration surface with a trust boundary (unsandboxed plugin + owner-reviewed host grants)
+- [x] Seeded draft PR decision recorded: skipped — phase 0 is an interactive spike whose result decides the layout
+
+## Origin
+
+- **Created:** 2026-11-06
+- **Session:** opencode:interactive (block/buzz-app team_create live test)
+- **Created by:** ai-interactive
+- **Conversation context:** While testing block/buzz-app#2880 in a debug Desktop build, the owner noticed the new Buzz Desktop (block/buzz-app) supports plugins and asked for a buzz-aidevops plugin to cover our setup and enhancement needs. The owner chose "write the plan and brief now; prototype after the team_create test".
+
+## What
+
+A single aidevops-owned Buzz Desktop plugin, shipped from this repository and recommended (never force-installed) by `aidevops buzz` setup, that replaces ad-hoc Desktop state edits with supported plugin extension points:
+
+1. **Phase 0 (spike, interactive):** minimal `manifest.json` + `plugin.js` with one Settings card ("aidevops") that shows `aidevops buzz status` output through one declared, artifact-pinned host command. Install it into a debug Desktop build by Settings → Plugins → Git import, and record what works.
+2. **Phase 1 (distribution):** `buzz-desktop-helper.sh` writes `managed-plugins.json` for the installed (`xyz.block.buzz.desktop`) and, when present, development (`xyz.block.buzz.desktop.dev`) app data folders, pinned to a release tag and full commit. Atomic temp-file + rename; restore after "erase local data"; never touch the legacy `xyz.block.buzz.app` store.
+3. **Phase 2 (agent tools, read-only first):** `aidevops_*` tools via `ctx.agents.addTool` — e.g. `aidevops_status`, `aidevops_task_lookup` (TODO.md / brief lookup for the bound repo). Each tool runs a declared command; no shell, no credentials in arguments or output.
+4. **Phase 3 (channel setup):** evaluate channel templates and a plugin `sidebarSections` contribution for the aidevops channel layout (Teams / Git Repos / Projects / Forums groups, starting Canvas text), after the open questions below are answered.
+
+## Why
+
+- Today aidevops reaches Buzz Desktop through legacy store mutation (t18195) and an external adapter (t18205/t18222). The new Desktop treats the legacy store as a one-time import source (see t18879), so that path is ending.
+- Plugins are the supported extension surface: Settings cards, pages, panels, agent tools, notifications, and owner-reviewed host commands. `managed-plugins.json` lets setup recommend the plugin without silent installation.
+
+## Tier
+
+**Selected tier:** `tier:thinking`
+
+**Tier rationale:** Unsandboxed plugin code runs with the owner's session; host grants, artifact pinning and tool schemas are a security boundary and an upstream-compatibility decision.
+
+## PR Conventions
+
+Parent-style plan: phase PRs use `For #<this issue>` until the final phase, which uses `Resolves #<this issue>`.
+
+## How (Approach)
+
+### Verified plugin facts (block/buzz-app `docs/plugin-authoring-guide.md`, `docs/managed-plugins.md`, `docs/plugin-architecture.md`)
+
+- One `plugin.js` ES module (`inject`, `apply(ctx)`), no runtime imports, classic `ctx.react.createElement`; module top level must be pure; activation must finish in 10 s; every timer/listener needs `ctx.effect` cleanup.
+- Extension points: `pages`, `panels`, `settingsCards`, optional `sidebarSections` (rows `{ id, label, icon?, badge?, count?, status? }`), `conversation`, `agents.addTool` (`name` `/^[a-z][a-z0-9_]{0,63}$/`, plugin-prefixed), `shortcuts`, `navigation`, `notifications`, `browser`, `host`.
+- `manifest.host`: at most 16 commands/processes/origins/hooks; bare program names; `runCommand` has a 5 s deadline and 4096-byte default output (max 1 MiB); `artifact: { path, sha256 }` pins exact bytes; changing `manifest.host` requires owner re-approval.
+- `managed-plugins.json` v1: `{ version: 1, source, plugins: [{ id, repository, reference, commit, path? }] }`, ≤256 KiB, unknown fields are errors, recommends only.
+- Unverified: whether a plugin can add a new agent harness (agent types appear built in). Do not plan on it.
+
+### Files to Modify
+
+- NEW: `.agents/plugins/buzz-aidevops/manifest.json` — plugin id `sh.aidevops.buzz` (confirm id rules in phase 0), `apiVersion: 1`, minimal `host.commands`.
+- NEW: `.agents/plugins/buzz-aidevops/plugin.js` — Settings card first; model on the guide's `settingsCards` example.
+- NEW: `.agents/plugins/buzz-aidevops/README.md` — install, grants, rollback.
+- EDIT: `.agents/scripts/buzz-desktop-helper.sh` — phase 1 `managed-plugins.json` writer beside `cmd_status` (`:675`) / `cmd_reconcile` (`:718`).
+- EDIT: `.agents/tests/test-buzz-desktop-helper.sh` — phase 1 fixtures (isolated HOME, atomic write, schema validity, legacy store untouched).
+- EDIT: `.agents/tools/ai-assistants/buzz-team-interface.md` — pointer to the plugin.
+
+### Complete Write Surface
+
+- **Callers/readers:** Buzz Desktop reads `managed-plugins.json` and the Git-imported plugin; `setup.sh`/`aidevops.sh` call the helper.
+- **Writers/mutation paths:** only the helper writes `managed-plugins.json`; nothing writes Desktop localStorage, keychain, or agent stores.
+- **Existing verification/tests:** `.agents/tests/test-buzz-desktop-helper.sh`.
+- **Schemas/config:** plugin `manifest.json`; `managed-plugins.json` v1.
+- **Generated/deployed mirrors:** `setup.sh` deploys `.agents/` to `~/.aidevops/agents/`; the plugin is installed from the Git repository at a pinned commit, not from the deployed copy.
+- **Migrations/backfills:** N/A — new surface.
+- **Cleanup/rollback paths:** helper removes only the entry it wrote; owner uninstalls in Settings → Plugins.
+
+### Implementation Steps
+
+1. Phase 0 after block/buzz-app#2880's live test passes: build the spike in a linked worktree, push a branch, Git-import it into the debug Desktop (`xyz.block.buzz.desktop.dev`), screenshot the review dialog and card, record findings in this brief.
+2. Phase 1: managed-plugins writer + fixtures; release-tag pinning.
+3. Phase 2: read-only agent tools; restart-impact note (changing tool schema restarts agent sessions).
+4. Phase 3: decide channel-template / sidebar approach from the open questions.
+
+### Hazards and Compatibility
+
+- **Trust:** plugins are trusted and unsandboxed. Keep grants minimal; pin command artifacts by SHA-256; never pass secrets through tool args, output, or Canvas.
+- **Compatibility:** plugin API is `apiVersion: 1`, pre-1.0 app; re-verify docs at each phase.
+- **Legacy:** never write `xyz.block.buzz.app` state (t18879 boundary).
+- **Idempotency:** policy writer is idempotent and atomic.
+
+### Verification Before Dispatch
+
+```bash
+bash .agents/tests/test-buzz-desktop-helper.sh
+shellcheck .agents/scripts/buzz-desktop-helper.sh .agents/tests/test-buzz-desktop-helper.sh
+.agents/scripts/linters-local.sh --diff
+```
+
+- **Runtime evidence:** Settings → Plugins review dialog lists exactly the declared grants; the card renders `aidevops buzz status`; uninstall leaves no residue.
+
+### Scope Boundaries
+
+**Hard boundaries:** no silent install; no writes to Desktop localStorage, keychain or agent stores; no credential handling; no live Cloudron changes.
+
+**Dispatch hold:** `no-auto-dispatch` — every phase needs the owner's in-app plugin review (a human UI action) and phase 0 is owned by the interactive session that filed this.
+
+**AI brief owner:** marcusquinn interactive session that filed this task.
+
+**Recovery:** preserve the current PR and use the structured runtime request and Pulse intake in `reference/worker-discipline.md` when local recovery is unsafe.
+
+### Files Scope
+
+- `.agents/plugins/buzz-aidevops/manifest.json`
+- `.agents/plugins/buzz-aidevops/plugin.js`
+- `.agents/plugins/buzz-aidevops/README.md`
+- `.agents/scripts/buzz-desktop-helper.sh`
+- `.agents/tests/test-buzz-desktop-helper.sh`
+- `.agents/tools/ai-assistants/buzz-team-interface.md`
+
+## Acceptance Criteria
+
+- [ ] Phase 0: spike installs via Git import in a debug Desktop, its review dialog shows only the declared grants, and the Settings card renders `aidevops buzz status`; findings recorded here.
+- [ ] Phase 1: helper writes a valid `managed-plugins.json` (schema v1, pinned commit) atomically for each present new-Desktop identifier; legacy store byte-identical; fixtures pass.
+- [ ] Phase 2: read-only `aidevops_*` tools callable by a local agent; no secret in args/output.
+- [ ] Phase 3: decision recorded for channel templates and sidebar presentation, with upstream issues linked where the plugin API cannot cover it.
+
+## Context & Decisions
+
+- Open question (owner): the request "cover anything that …" was cut off; confirm the remaining scope.
+- Open question (owner): channel templates in this build are local-only (`buzz.channel-templates.v1` in Desktop localStorage: name, agents, teams, starting Canvas ≤24 KiB; block/buzz-app `src/features/channel-templates/local.ts`); file import/export exists for agents (`.agent.json`/`.agent.png`) and team import from old Buzz, not for templates. Confirm where the template import/export was seen.
+- Open question (owner): "channel icons no longer show in the left sidebar". New sidebar rows show only `#`/lock/chat glyphs (`src/features/channels/channel-icon.ts`); the old app had a Discord-style community rail (`desktop/src/features/sidebar/ui/CommunityRail.tsx` in block/buzz) and a forum glyph, replaced by the bottom community picker. Confirm which icons are meant before filing upstream.
+- Rejected: writing Desktop localStorage from the plugin to seed templates — not a contract.
+- Rejected: adding an OpenCode harness through the plugin — agent types are built in; track upstream block/buzz-app#2432 instead.
+
+## Relevant Files
+
+- `.agents/scripts/buzz-desktop-helper.sh:14,392,642,675,718`
+- `.agents/tools/ai-assistants/buzz-team-interface.md`
+- `.agents/reference/team-interface-buzz-provisioning.md`
+- `todo/tasks/t18879-brief.md`
+
+## Dependencies
+
+- block/buzz-app#2880 live test (phase 0 starts after it).
+- t18879 (new-Desktop detection) for phase 1 identifier gating.
+
+## Estimate Breakdown
+
+~10h: phase 0 2h, phase 1 3h, phase 2 3h, phase 3 2h.

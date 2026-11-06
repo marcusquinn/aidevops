@@ -25,6 +25,15 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-11-06] buzz-aidevops Desktop plugin
+
+**Status:** Planning; phase 0 spike starts after block/buzz-app#2880's live test.
+**Task:** t18883 — [brief](tasks/t18883-brief.md), GH#36976.
+**Sequence:** phase 0 Settings-card spike → phase 1 `managed-plugins.json` recommendation from `buzz-desktop-helper.sh` → phase 2 read-only `aidevops_*` agent tools → phase 3 channel templates / sidebar decision.
+**Estimate:** ~10h (ai:7h test:2h read:1h).
+**Decision:** Use Buzz Desktop's supported plugin surface (owner-reviewed host grants, recommend-only policy file) instead of Desktop state edits. Never write the legacy `xyz.block.buzz.app` store (t18879). Owner install review keeps it `no-auto-dispatch`.
+**Open questions:** completion of the owner's "cover anything that …" scope; where channel-template import/export was seen; which sidebar icons are missing.
+
 ### [2026-09-10] Evidence-based model effort and delegation optimisation
 
 **Status:** Planned; five dependency-ordered auto-dispatch leaves.
