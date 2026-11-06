@@ -1159,10 +1159,10 @@ test_isolated_runs_do_not_attach_to_ambient_server() {
 			local role="$HEADLESS_ROLE_WORKER"
 			local AIDEVOPS_HEADLESS_AUTH_ISOLATION=1 AIDEVOPS_OPENCODE_PROFILE=v1
 			case "$mode" in
-			default-worker) unset AIDEVOPS_HEADLESS_AUTH_ISOLATION ;;
-			isolated-pulse) role=pulse ;;
-			legacy-worker) AIDEVOPS_HEADLESS_AUTH_ISOLATION=0 ;;
-			legacy-v2) AIDEVOPS_HEADLESS_AUTH_ISOLATION=0; AIDEVOPS_OPENCODE_PROFILE=v2 ;;
+			(default-worker) unset AIDEVOPS_HEADLESS_AUTH_ISOLATION ;;
+			(isolated-pulse) role=pulse ;;
+			(legacy-worker) AIDEVOPS_HEADLESS_AUTH_ISOLATION=0 ;;
+			(legacy-v2) AIDEVOPS_HEADLESS_AUTH_ISOLATION=0; AIDEVOPS_OPENCODE_PROFILE=v2 ;;
 			esac
 			_detect_opencode_server() {
 				printf 'probed\n' >"$probe"
