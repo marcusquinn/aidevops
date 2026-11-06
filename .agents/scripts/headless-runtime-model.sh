@@ -596,12 +596,14 @@ _build_run_cmd() {
 	if [[ -n "$variant_override" && "$opencode_profile" != "v2" ]]; then
 		printf '%s\0' --variant "$variant_override"
 	fi
-	# GH#17829: Attach persistent runs to an existing opencode server if one is
-	# detected. Ephemeral roles must retain their isolated runtime boundary.
-	# Without this, `opencode run` tries to start an embedded server that
-	# conflicts with the user's `opencode serve`, causing "Session not found".
+	# GH#17829 compatibility applies only when runtime isolation is explicitly
+	# disabled. An ambient server cannot see sessions seeded into a worker's
+	# isolated DB and would also bypass its provider-scoped authentication.
+	# Isolated v1 runs start their own server on the CLI's default random port;
+	# ephemeral roles and v2 likewise retain their independent runtime boundary.
 	local _server_info=""
-	if [[ "$opencode_profile" != "v2" ]] && ! _headless_run_is_ephemeral "${role:-}" && _server_info=$(_detect_opencode_server); then
+	if [[ "$opencode_profile" != "v2" && "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" != "1" ]] &&
+		! _headless_run_is_ephemeral "${role:-}" && _server_info=$(_detect_opencode_server); then
 		local _server_url _server_pass
 		_server_url=$(echo "$_server_info" | head -1)
 		_server_pass=$(echo "$_server_info" | tail -1)

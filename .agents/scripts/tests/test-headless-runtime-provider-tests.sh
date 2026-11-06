@@ -1151,6 +1151,45 @@ test_model_replay_never_attaches_to_ambient_server() {
 	return 0
 }
 
+test_isolated_runs_do_not_attach_to_ambient_server() {
+	local mode="" command_text="" probe=""
+	for mode in default-worker isolated-worker isolated-pulse legacy-worker legacy-v2; do
+		probe="${TEST_ROOT}/ambient-server-${mode}"
+		command_text=$(
+			local role="$HEADLESS_ROLE_WORKER"
+			local AIDEVOPS_HEADLESS_AUTH_ISOLATION=1 AIDEVOPS_OPENCODE_PROFILE=v1
+			case "$mode" in
+			default-worker) unset AIDEVOPS_HEADLESS_AUTH_ISOLATION ;;
+			isolated-pulse) role=pulse ;;
+			legacy-worker) AIDEVOPS_HEADLESS_AUTH_ISOLATION=0 ;;
+			legacy-v2) AIDEVOPS_HEADLESS_AUTH_ISOLATION=0; AIDEVOPS_OPENCODE_PROFILE=v2 ;;
+			esac
+			_detect_opencode_server() {
+				printf 'probed\n' >"$probe"
+				printf '%s\n%s\n' "http://localhost:4096" "test-only-password"
+				return 0
+			}
+			while IFS= read -r -d '' argument; do
+				printf '<%s>' "$argument"
+			done < <(_build_run_cmd "openai/replay-fixture" "$TEST_ROOT" "prompt" \
+				"Isolation contract" "" "build" "ses_fixture")
+		)
+		if [[ "$mode" == legacy-worker ]]; then
+			if [[ "$command_text" == *"--attach"* && -f "$probe" ]]; then
+				print_result "explicit non-isolated v1 worker retains server compatibility" 0
+			else
+				print_result "explicit non-isolated v1 worker retains server compatibility" 1
+			fi
+		elif [[ "$command_text" != *"--attach"* && "$command_text" != *"--password"* &&
+			"$command_text" == *"<--session><ses_fixture>"* && ! -f "$probe" ]]; then
+			print_result "${mode} keeps seeded session inside its own runtime" 0
+		else
+			print_result "${mode} keeps seeded session inside its own runtime" 1
+		fi
+	done
+	return 0
+}
+
 test_metric_path_overrides_and_replay_usage_fields() {
 	local override_root="${TEST_ROOT}/metric-overrides"
 	local runtime_metrics="${override_root}/runtime.jsonl"
