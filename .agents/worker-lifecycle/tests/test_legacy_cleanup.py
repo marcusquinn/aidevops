@@ -16,12 +16,139 @@ from uuid import uuid4
 from tests import test_retirement as fixtures
 from worker_lifecycle import cleanup as admission_cleanup
 from worker_lifecycle import legacy_cleanup as legacy
+from worker_lifecycle import legacy_proc
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.archive_path import validate_archive_path
 from worker_lifecycle.enrollment import _git_directory
 from worker_lifecycle.filesystem import FilesystemValidationError
 from worker_lifecycle.process import ObservationUnavailable, ProcessObservation
 from worker_lifecycle.runtime import adapter_for
+
+
+class LegacyProcContract(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.target = self.root / "worktree"
+        self.target.mkdir()
+        (self.target / ".git").write_text("gitdir: fixture")
+        self.proc = self.root / "proc"
+        self.task = self.proc / "123" / "task" / "123"
+        (self.task / "fd").mkdir(parents=True)
+        (self.proc / "self").mkdir()
+        (self.task / "cwd").symlink_to(self.root, target_is_directory=True)
+        self.boot = int(time.time()) - 1000
+        (self.proc / "stat").write_text(f"cpu 1 2 3\nbtime {self.boot}\n")
+        self.write_task()
+        clock = patch.object(legacy_proc.os, "sysconf", return_value=100)
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def write_task(self, name="ssh-agent", ticks="100", uid=None, state="S"):
+        uid = os.geteuid() if uid is None else uid
+        (self.task / "status").write_text(
+            f"Name:\t{name}\nState:\t{state}\nUid:\t{uid} {uid} {uid} {uid}\n")
+        (self.task / "stat").write_text(
+            "123 (comm with ) and spaces) S " + "0 " * 18 + ticks + " 0\n")
+
+    def census(self, denied="cwd"):
+        readlink, iterdir = os.readlink, Path.iterdir
+
+        def read_reference(path, *args, **kwargs):
+            if denied == "cwd" and path == self.task / "cwd":
+                raise PermissionError("non-dumpable fixture")
+            return readlink(path, *args, **kwargs)
+
+        def list_directory(path):
+            if denied == "fd" and path == self.task / "fd":
+                raise PermissionError("non-dumpable fixture")
+            return iterdir(path)
+
+        with patch.object(legacy_proc.os, "readlink", side_effect=read_reference), \
+                patch.object(Path, "iterdir", list_directory):
+            legacy_proc.require_idle_proc(self.target, self.proc)
+
+    def test_predating_allowlisted_daemons_and_fd_denial_are_counted(self):
+        for name in legacy_proc.NON_HOLDER_DAEMONS:
+            for denied in ("cwd", "fd"):
+                with self.subTest(name=name, denied=denied):
+                    self.write_task(name=name)
+                    with legacy_proc.collect_proc_observations() as counts:
+                        self.census(denied)
+                    self.assertEqual(counts["skipped_nondumpable"], 1)
+        with legacy_proc.collect_proc_observations() as counts:
+            self.assertEqual(counts["skipped_nondumpable"], 0)
+
+    def test_unknown_recent_and_invalid_start_tasks_fail_closed(self):
+        cases = (("worker", "100"), ("ssh-agent", "200000"),
+                 ("ssh-agent", "invalid"), ("ssh-agent", "-1"))
+        for name, ticks in cases:
+            for denied in ("cwd", "fd"):
+                with self.subTest(name=name, ticks=ticks, denied=denied):
+                    self.write_task(name=name, ticks=ticks)
+                    with legacy_proc.collect_proc_observations() as counts:
+                        with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                            self.census(denied)
+                    self.assertEqual(counts["skipped_nondumpable"], 0)
+
+    def test_missing_clock_and_worktree_evidence_fail_closed(self):
+        for path in (self.task / "stat", self.proc / "stat", self.target / ".git"):
+            with self.subTest(path=path):
+                saved = path.read_bytes()
+                path.unlink()
+                try:
+                    with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                        self.census()
+                finally:
+                    path.write_bytes(saved)
+        for invalid in ("cpu 0\n", "btime invalid\n", "btime -1\n"):
+            (self.proc / "stat").write_text(invalid)
+            with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                self.census()
+
+    def test_subsecond_creation_boundary_is_not_exempted(self):
+        # An equal/nearby start cannot be proven older at /proc's resolution.
+        (self.proc / "stat").write_text(
+            f"btime {int((self.target / '.git').stat().st_ctime)}\n")
+        self.write_task(ticks="0")
+        with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+            self.census()
+
+    def test_invalid_tick_frequency_fails_closed(self):
+        with patch.object(legacy_proc.os, "sysconf", return_value=0):
+            with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                self.census()
+
+    def test_foreign_and_dead_tasks_keep_existing_skip_behavior(self):
+        for uid, state in ((os.geteuid() + 1, "S"), (os.geteuid(), "Z")):
+            self.write_task(name="worker", uid=uid, state=state)
+            with legacy_proc.collect_proc_observations() as counts:
+                self.census()
+            self.assertEqual(counts["skipped_nondumpable"], 0)
+
+    def test_readable_allowlisted_task_still_cannot_hold_tree(self):
+        (self.task / "cwd").unlink()
+        (self.task / "cwd").symlink_to(self.target, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "live-process-reference"):
+            self.census("none")
+        (self.task / "cwd").unlink()
+        (self.task / "cwd").symlink_to(self.root, target_is_directory=True)
+        (self.task / "fd" / "3").symlink_to(self.target / ".git")
+        with self.assertRaisesRegex(ValueError, "live-process-reference"):
+            self.census("none")
+
+    def test_unreadable_status_does_not_use_daemon_exception(self):
+        read_text = Path.read_text
+
+        def read(path, *args, **kwargs):
+            if path == self.task / "status":
+                raise PermissionError("status unavailable")
+            return read_text(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", read):
+            with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                self.census()
 
 
 class ArchiveRootContract(unittest.TestCase):
@@ -565,3 +692,4 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertFalse(self.target.exists())
         self.assertIn("Observation-era cleanup: retired=1",
                       (self.root / "pulse.log").read_text())
+        self.assertIn("skipped_nondumpable=0", (self.root / "pulse.log").read_text())
