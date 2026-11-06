@@ -1,5 +1,7 @@
 """Bounded registry-driven cleanup; repository configuration selects scope only."""
 
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path

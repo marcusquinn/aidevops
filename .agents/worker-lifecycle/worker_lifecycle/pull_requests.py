@@ -3,6 +3,8 @@
 A failed or malformed API response never proves absence: callers must hold.
 """
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
 import subprocess  # nosec B404 # fixed gh argv, validated slug
