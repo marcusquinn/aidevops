@@ -1249,17 +1249,18 @@ cmd_rm() {
 		warning_options+=(--skip-dependents)
 		print_warning "Dependents scan skipped by request; references have not been checked"
 	fi
-	for name in "${RM_NAMES[@]}"; do
-		if ! warning_output=$(run_secret_removal warnings "$name" ${warning_options[@]+"${warning_options[@]}"}); then
-			print_error "Unable to check removal metadata for $name; nothing removed" >&2
-			return 1
+	if ! warning_output=$(run_secret_removal warnings "${RM_NAMES[@]}" ${warning_options[@]+"${warning_options[@]}"}); then
+		print_error "Unable to check removal metadata; nothing removed" >&2
+		return 1
+	fi
+	while IFS= read -r warning_line; do
+		[[ -n "$warning_line" ]] || continue
+		print_warning "${warning_line#*: }"
+		if [[ "$warning_line" == registry:* ]]; then
+			name=${warning_line#registry: }
+			registry_names+=("${name%% *}")
 		fi
-		while IFS= read -r warning_line; do
-			[[ -n "$warning_line" ]] || continue
-			print_warning "$name: ${warning_line#*: }"
-			[[ "$warning_line" == registry:* ]] && registry_names+=("$name")
-		done <<<"$warning_output"
-	done
+	done <<<"$warning_output"
 
 	local answer=""
 	if [[ "$RM_YES" != true ]]; then
@@ -1870,6 +1871,7 @@ cmd_help() {
 	echo "  check <NAME>                      Resolve by name; exit status only, no output"
 	echo "  rm <NAME> [NAME...] [--yes]       Remove from gopass + active plaintext store, then"
 	echo "                                    read back with check (alias: remove, delete)"
+	echo "    --skip-dependents                Skip reference scan only (after checking references)"
 	echo "  list                              List secret names (never values)"
 	echo "  inventory                         Names-only structured local inventory"
 	echo "  audit-credentials                 Names-only JSON Lines hygiene audit (offline)"
@@ -1887,6 +1889,7 @@ cmd_help() {
 	echo "  resolve PROVIDER                  Print default name (exit 3 none, 4 undeclared)"
 	echo "  validate                          Check the credential registry file"
 	echo "  dependents NAME [--json]          What uses NAME (+aliases) before rename/rotation"
+	echo "                                    Scan budget: 5s; timeout reports incomplete coverage"
 	echo "  verify cloudflare [NAME...]       Read-only provider check; caches accounts/zones"
 	echo "  verify aws [ACCESS_KEY_ID_NAME...] Read-only STS check; prints account and ARN only"
 	echo "  drift [--json]                    Offline expiry/overlap/ownership/freshness report"

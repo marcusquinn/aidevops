@@ -144,15 +144,23 @@ def find_dependents(names: list[str], home: Path | None = None) -> dict[str, Any
     home = home or Path.home()
     print(f"Scanning dependents (up to {SCAN_TIMEOUT}s)...", file=sys.stderr, flush=True)
     command = [sys.executable, str(Path(__file__).resolve()), str(home), *names]
-    with subprocess.Popen(  # nosec B603 -- current interpreter, fixed script, argv only
+    process = subprocess.Popen(  # nosec B603 -- current interpreter, fixed script, argv only
         command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         text=True, start_new_session=True,
-    ) as process:
+    )
+    try:
         try:
             output, _ = process.communicate(timeout=SCAN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.communicate()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            # Do not wait indefinitely for an escaped pipe holder or kernel I/O.
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
             reason = "whole scan timeout"
         else:
             try:
@@ -161,6 +169,9 @@ def find_dependents(names: list[str], home: Path | None = None) -> dict[str, Any
             except ValueError:
                 pass
             reason = "scan failed"
+    finally:
+        if process.stdout is not None:
+            process.stdout.close()
     report = Report(names)
     report.add("scan", "local sources", [], reason)
     return report.result()

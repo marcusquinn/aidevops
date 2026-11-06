@@ -8,6 +8,7 @@ import shutil
 # Isolated runtime tests execute repository helpers with argv-only calls.
 import subprocess  # nosec B404
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -106,6 +107,67 @@ class SecretRemovalTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('registry', result.stdout + result.stderr)
         self.assertNotIn('GP_ONE', json.loads(registry.read_text())['credentials'])
+
+    def stall_discovery(self):
+        repo = self.home / 'repo'
+        repo.mkdir()
+        (self.creds.parent / 'repos.json').write_text(json.dumps({
+            'initialized_repos': [{'path': str(repo), 'slug': 'fixture'}],
+        }))
+        git = self.home / 'bin/git'
+        git.write_text('#!/usr/bin/env python3\nimport time\ntime.sleep(60)\n')
+        git.chmod(0o700)
+
+    def test_dependents_discovery_has_whole_scan_deadline_and_clean_json(self):
+        self.stall_discovery()
+        start = time.monotonic()
+        result = self.secret('dependents', 'GP_ONE', '--json')
+        self.assertLess(time.monotonic() - start, 10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Scanning dependents', result.stderr)
+        report = json.loads(result.stdout)
+        self.assertFalse(report['complete'])
+        self.assertEqual(report['skipped'][0]['reason'], 'whole scan timeout')
+
+    def test_batch_removal_uses_one_scan_budget(self):
+        self.stall_discovery()
+        start = time.monotonic()
+        result = self.secret('rm', 'GP_ONE', 'GP_TWO', '--yes')
+        self.assertLess(time.monotonic() - start, 10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.count('Scanning dependents'), 1)
+        self.assertIn('scan incomplete', result.stderr)
+        self.assertNotEqual(self.check('GP_ONE'), 0)
+        self.assertNotEqual(self.check('GP_TWO'), 0)
+
+    def test_skip_scan_preserves_registry_cleanup(self):
+        self.stall_discovery()
+        recorded = self.secret('record', 'GP_ONE', '--provider', 'acme')
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        start = time.monotonic()
+        result = self.secret('rm', 'GP_ONE', '--yes', '--skip-dependents')
+        self.assertLess(time.monotonic() - start, 5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('Scanning dependents', result.stderr)
+        self.assertIn('scan skipped', result.stderr)
+        registry = self.creds.parent / 'credential-inventory.json'
+        self.assertNotIn('GP_ONE', json.loads(registry.read_text())['credentials'])
+        self.assertNotEqual(self.check('GP_ONE'), 0)
+
+    def test_skip_scan_does_not_imply_confirmation(self):
+        result = self.secret('rm', 'GP_ONE', '--skip-dependents')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Confirmation required', result.stderr)
+        self.assertEqual(self.check('GP_ONE'), 0)
+
+    def test_dependents_finds_literal_reference_without_values(self):
+        config = self.creds.parent / 'reference.conf'
+        config.write_text('GP_ONE=synthetic-private-content\n')
+        result = self.secret('dependents', 'GP_ONE', '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(any(hit['path'] == str(config) for hit in report['literal']))
+        self.assertNotIn('synthetic-private-content', result.stdout + result.stderr)
 
 
 if __name__ == '__main__':
