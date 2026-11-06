@@ -481,6 +481,20 @@ JS
 	return 0
 }
 
+test_frames_arguments() {
+	local result=0 output
+	output=$(cmd_frames --help) || result=1
+	[[ "$output" == *"Frames-specific Options"* ]] || result=1
+	if cmd_frames >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --url >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --url http://localhost --measure-file "$SCRIPT_DIR" >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --url http://localhost --measure-file "$HELPER" --format invalid >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --url http://localhost --measure-file "$HELPER" --no-after --after-selector body >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --unknown value >/dev/null 2>&1; then result=1; fi
+	print_result "frames: help and argument validation" "$result"
+	return 0
+}
+
 main() {
 	# Source after function declarations so helper functions are available here.
 	# main() in helper is guarded and will not auto-run when sourced.
@@ -507,6 +521,7 @@ main() {
 	test_stability_unknown_option_rejected
 	test_journey_requires_config_and_environment
 	test_journey_runner_syntax
+	test_frames_arguments
 	test_stability_script_generation
 	test_generated_page_urls
 	test_format_stability_markdown_stable
