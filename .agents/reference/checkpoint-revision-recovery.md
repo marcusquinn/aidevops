@@ -201,6 +201,36 @@ the prefixed form. Before claim transfer, the issue must be unassigned or assign
 to the authenticated releasing runner, not an unrelated current owner. The exact
 PR-author binding remains unchanged when that runner differs from the author.
 
+### Read-only diagnostics requiring newer tooling
+
+Preserve the draft when observations require newer immutable tooling. Issue prose cannot
+grant auxiliary-worktree access; the brief owner must opt into a diagnostic-only contract:
+
+```bash
+pr-checkpoint-continuation-helper.sh approval-template OWNER/REPO PR ISSUE RELEASE_COMMENT_ID attempt:ORIGINAL_ID --diagnostic-tooling-commit=FULL_COMMIT_ID
+```
+
+The trusted, unedited approval's `diagnostic_tooling_commit` accepts only a full lowercase
+40- or 64-character commit ID; ordinary approvals remain checkpoint-only. Pulse and
+`dispatch-approved` carry it through fresh revision validation. Before claim/launch the
+dispatcher requires that exact local commit object in the target repository; missing
+source stops without fetching/substitution. All brief, head, permission, ownership and
+history fences remain. No hosted access, authentication or terminal-lease repair is granted.
+
+The contract admits exactly one fresh, separately owned linked tooling worktree in the same
+repository through the supported helper with that immutable base; never take over or reuse
+another session's checkout. Verify linked-repository identity, clean tracked source, exact
+HEAD and worker session/task ownership before execution and again immediately before any
+authorized credential-bearing invocation. Capacity, provisioning, ownership and source refusals stop.
+
+Run only the separately authorized read-only observation: no source edits,
+commit/push/ready/merge or business writes. Keep the brief's locks, authentication
+budget, evidence privacy and cleanup requirements. Report sanitized results and
+unknowns, then use `mark-blocked` for remaining original acceptance or safety blockers;
+diagnostic success is not enrichment completion. This dedicated prompt replaces
+generic full-loop augmentation, not runtime security/ownership/lease enforcement.
+Normal runner release/teardown owns coordination; selecting this option starts no browser or historical repair.
+
 ### Intervening attempts that have fully released
 
 Later attempts do not silently invalidate a preserved checkpoint forever, but
