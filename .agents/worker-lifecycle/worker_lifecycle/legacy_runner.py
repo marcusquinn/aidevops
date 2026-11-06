@@ -9,6 +9,7 @@ from .legacy_cleanup import process_item
 from .legacy_discovery import discover
 from .legacy_inventory import inventory
 from .legacy_options import CleanupOptions, advance, queue
+from .legacy_proc import collect_proc_observations
 from .runtime import adapter_for, require_ready
 
 
@@ -31,6 +32,7 @@ def run(store, config, root, **arguments):
         "status": "legacy-cleanup", "apply": options.apply, "paths": len(items),
         "generations": sum(len(i["generations"]) for i in items),
         "retired": 0, "eligible": 0, "attempted": 0, "results": [],
+        "skipped_nondumpable": 0,
         "discovery_errors": discovery_errors,
         "operator_confirmed_paths": list(options.confirmed_paths),
     }
@@ -41,9 +43,11 @@ def run(store, config, root, **arguments):
             break
         if options.apply:
             advance(store, item["path"])
-        outcome, eligible, attempted = process_item(
-            store, item, repositories, adapter, options,
-        )
+        with collect_proc_observations() as observations:
+            outcome, eligible, attempted = process_item(
+                store, item, repositories, adapter, options,
+            )
+        report["skipped_nondumpable"] += observations["skipped_nondumpable"]
         report["eligible"] += eligible
         report["attempted"] += attempted
         report["retired"] += outcome["status"] == "retired"

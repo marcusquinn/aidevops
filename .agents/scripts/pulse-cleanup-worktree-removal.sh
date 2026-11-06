@@ -56,7 +56,7 @@ _cleanup_observation_era_worktrees() {
 	local state_dir="$1"
 	local python="$2"
 	local budget="$3"
-	local result="" retired="" retained=""
+	local result="" retired="" retained="" skipped_nondumpable=""
 	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worker-legacy-cleanup.py" \
 		--state-dir "$state_dir" --repos-config "${HOME}/.config/aidevops/repos.json" \
 		--output-root "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}" \
@@ -65,13 +65,14 @@ _cleanup_observation_era_worktrees() {
 		return 0
 	fi
 	retired=$(jq -er '.retired | numbers' <<<"$result") || return 0
+	skipped_nondumpable=$(jq -er '.skipped_nondumpable // 0 | numbers' <<<"$result") || return 0
 	retained=$(jq -c '[.results[] | select(.status == "retained")] | group_by(.reason) | map({reason: .[0].reason, count: length})' <<<"$result") || return 0
 	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$(jq -er '.archive_failed | numbers' <<<"$result") || return 0
 	_cleanup_log_diagnostics "$result" || return 0
 	CLEANUP_WORKTREES_REMOVED_COUNT="$retired"
 	CLEANUP_WORKTREES_ARCHIVED_COUNT="$retired"
 	# Only the admission pass may acknowledge completion of the scheduled run.
-	printf '[pulse-wrapper] Observation-era cleanup: retired=%s retained=%s\n' "$retired" "$retained" >>"$LOGFILE"
+	printf '[pulse-wrapper] Observation-era cleanup: retired=%s retained=%s skipped_nondumpable=%s\n' "$retired" "$retained" "$skipped_nondumpable" >>"$LOGFILE"
 	return 0
 }
 
