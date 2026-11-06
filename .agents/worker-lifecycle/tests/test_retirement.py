@@ -126,6 +126,79 @@ class RetirementContract(unittest.TestCase):
         self.assertEqual(self.retire(), result)
         self.assertEqual((self.target / "replacement").read_text(), "keep")
 
+    def codex_config(self):
+        """Install runtime-local configuration in the disposable worktree."""
+        self.git("config", "extensions.worktreeConfig", "true")
+        admin = retirement._git("-C", str(self.target), "rev-parse", "--absolute-git-dir")
+        config = Path(admin) / "config.worktree"
+        config.write_bytes(b'[codex]\n\tlocalEnvironmentConfigPath = /fixture/environment.toml\n')
+        return config
+
+    def test_codex_config_retirement_preserves_bytes_without_restoring_config(self):
+        """Retire through the real backend while retaining omitted config bytes."""
+        self.create()
+        config = self.codex_config()
+        content = config.read_bytes()
+        result = self.retire()
+        self.assertEqual(result["status"], "retired")
+        self.assertFalse(self.target.exists())
+        self.assertFalse(config.exists())
+        self.assertNotIn(f"worktree {self.target}\n", self.git("worktree", "list", "--porcelain"))
+        archive = Path(result["archive"])
+        self.assertEqual((archive / "worktree-config-v1").read_bytes(), content)
+        _helper("verify", str(archive))
+        restored = self.root / "codex-restored"
+        _helper("restore", str(archive), "--target", str(restored), "--verification-copy")
+        admin = retirement._git("-C", str(restored), "rev-parse", "--absolute-git-dir")
+        self.assertFalse((Path(admin) / "config.worktree").exists())
+        self.assertEqual((restored / "work.txt").read_text(), "unfinished result")
+
+    def test_codex_config_does_not_authorize_unowned_retirement(self):
+        """Runtime config must not bypass the existing ownership requirement."""
+        self.git("worktree", "add", "--detach", str(self.target))
+        GenerationEnrollment(self.store).resolve(self.target, create=True)
+        config = self.codex_config()
+        content = config.read_bytes()
+        self.assertEqual(self.retire()["status"], "coverage-gap")
+        self.assertTrue(self.target.is_dir())
+        self.assertEqual(config.read_bytes(), content)
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_codex_config_preservation_failure_keeps_source(self):
+        """Mixed runtime and unknown keys fail closed before source removal."""
+        self.create()
+        config = self.codex_config()
+        content = config.read_bytes() + b'[fixture]\n\tprivate = keep\n'
+        config.write_bytes(content)
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
+            self.retire()
+        self.assertIn("git_admin:requires_preservation:config.worktree", str(caught.exception.stderr))
+        self.assertTrue(self.target.is_dir())
+        self.assertEqual(config.read_bytes(), content)
+        self.assertEqual((self.target / "work.txt").read_text(), "unfinished result")
+
+    def test_codex_config_drift_before_relocation_keeps_source(self):
+        """Changed config invalidates preservation proof at the retirement boundary."""
+        self.create()
+        config = self.codex_config()
+        original = config.read_bytes()
+        changed = original.replace(b'environment', b'other')
+        finish = retirement._finish
+
+        def changed_source(*arguments):
+            """Inject a config write after capture and before relocation."""
+            config.write_bytes(changed)
+            return finish(*arguments)
+
+        with patch.object(retirement, "_finish", side_effect=changed_source):
+            with self.assertRaisesRegex(StoreConflict, "source-changed-before-relocation"):
+                self.retire()
+        self.assertTrue(self.target.is_dir())
+        self.assertEqual(config.read_bytes(), changed)
+        self.assertEqual((self.target / "work.txt").read_text(), "unfinished result")
+        archive = next(self.output.rglob("worktree-config-v1"))
+        self.assertEqual(archive.read_bytes(), original)
+
     def test_resume_after_move_preserves_public_replacement(self):
         self.create()
         self.interrupt_after_move()
