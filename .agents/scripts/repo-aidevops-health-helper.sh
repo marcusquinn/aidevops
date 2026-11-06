@@ -710,8 +710,10 @@ Files: `.github/workflows/issue-triage-gate.yml` (rendered from `issue-triage-ga
 Reference: `.agents/scripts/sync-workflows-helper.sh --apply --install-missing --workflow issue-triage-gate`.
 Verification: `gh api repos/<slug>/contents/.github/workflows/issue-triage-gate.yml` succeeds after merge.
 EOF
+	# Origin is derived by the wrapper from AIDEVOPS_SESSION_ORIGIN (origin:worker);
+	# an explicit --label would bypass its absent-label fallback (GH#35954).
 	out=$(AIDEVOPS_SESSION_ORIGIN=worker gh_create_issue --repo "$slug" \
-		--title "$TRUST_WORKFLOW_ISSUE_TITLE" --body-file "$body_file" --label "origin:worker" 2>&1) || {
+		--title "$TRUST_WORKFLOW_ISSUE_TITLE" --body-file "$body_file" 2>&1) || {
 		rm -f "$body_file"
 		log_warn "trust-workflows: $slug — could not create tracking issue: ${out}"
 		return 1
@@ -739,7 +741,12 @@ _trust_install_one() {
 	local sync_helper="${SCRIPT_DIR}/sync-workflows-helper.sh"
 	local class
 	class=$("$check_helper" --json --repo "$slug" --workflow "$workflow" 2>/dev/null |
-		jq -r 'select(.workflow == "'"$workflow"'") | .classification' 2>/dev/null | sed -n '1p' || true)
+		jq -r 'select(.workflow == "'"$workflow"'") | .classification // empty' 2>/dev/null | sed -n '1p' || true)
+	if [[ -z "$class" ]]; then
+		log_warn "trust-workflows: $slug — no classification returned for $workflow"
+		echo failed
+		return 0
+	fi
 	if [[ "$class" != "NO-WORKFLOW" ]]; then
 		echo present
 		return 0
@@ -760,6 +767,14 @@ _trust_install_one() {
 	fi
 	_trust_state_set "trust_workflow_attempted" "${slug}|${workflow}" "$now"
 
+	local archived
+	archived=$(gh api "repos/${slug}" --jq '.archived' 2>/dev/null || true)
+	if [[ "$archived" == "true" ]]; then
+		log_info "trust-workflows: $slug — archived, skipping $workflow"
+		echo skipped
+		return 0
+	fi
+
 	local issue_number
 	if ! issue_number=$(_trust_ensure_tracking_issue "$slug"); then
 		echo failed
@@ -771,13 +786,44 @@ _trust_install_one() {
 		if grep -qiE 'workflow.*scope|refusing to allow.*workflow' <<<"$sync_out"; then
 			log_warn "trust-workflows: $slug — blocked: token lacks 'workflow' scope (run gh auth refresh -s workflow)"
 		else
-			log_warn "trust-workflows: $slug — sync-workflows-helper failed for $workflow"
+			log_warn "trust-workflows: $slug — sync-workflows-helper failed for $workflow: $(printf '%s' "$sync_out" | tail -n 3 | tr '\n\t' '  ')"
 		fi
 		echo failed
 		return 0
 	fi
-	log_info "trust-workflows: $slug — $workflow sync PR opened or already open (issue #${issue_number})"
-	echo installed-pr
+	# Result rows are TSV: slug<TAB>status<TAB>APPLIED|SKIPPED|FAILED<TAB>detail
+	if grep -qE $'\t''APPLIED'$'\t' <<<"$sync_out"; then
+		log_info "trust-workflows: $slug — $workflow sync PR opened (issue #${issue_number})"
+		echo installed-pr
+		return 0
+	fi
+	if grep -qE $'\t''FAILED'$'\t' <<<"$sync_out"; then
+		log_warn "trust-workflows: $slug — $workflow sync reported failure: $(printf '%s' "$sync_out" | tail -n 3 | tr '\n\t' '  ')"
+		echo failed
+		return 0
+	fi
+	log_info "trust-workflows: $slug — $workflow sync made no PR: $(printf '%s' "$sync_out" | grep -E $'\t''SKIPPED'$'\t' | tail -n 1 | tr '\t' ' ')"
+	echo skipped
+	return 0
+}
+
+#######################################
+# Persist the last trust-workflow counts so `status` can show them.
+# Args: $1 installed-pr, $2 present, $3 skipped, $4 failed
+#######################################
+_trust_state_record_counts() {
+	local installed="$1"
+	local present="$2"
+	local skipped="$3"
+	local failed="$4"
+	[[ -f "$STATE_FILE" ]] || return 0
+	local tmp_state
+	tmp_state=$(mktemp)
+	jq --argjson i "$installed" --argjson p "$present" --argjson s "$skipped" --argjson f "$failed" \
+		'.last_trust_workflows = {installed_pr: $i, present: $p, skipped: $s, failed: $f}' \
+		"$STATE_FILE" >"$tmp_state" 2>/dev/null &&
+		mv "$tmp_state" "$STATE_FILE"
+	rm -f "$tmp_state"
 	return 0
 }
 
@@ -891,7 +937,10 @@ cmd_check() {
 	log_info "r914 complete: ${_R914_BUMPED} bumped, ${_R914_BUMP_SKIPPED} bump-skipped, ${_R914_BUMP_FAILED} bump-failed, ${_R914_REGISTERED_CONFIG_MISSING} registered-config-missing, ${_R914_MISSING_FOLDER} missing-folder, ${_R914_NO_INIT} no-init"
 	update_state "$_R914_BUMPED" "$_R914_BUMP_SKIPPED" "$_R914_BUMP_FAILED" "$_R914_REGISTERED_CONFIG_MISSING" "$_R914_MISSING_FOLDER" "$_R914_NO_INIT"
 
-	[[ $_R914_BUMP_FAILED -gt 0 ]] && return 1
+	log_info "r914 trust-workflows summary: ${_R914_TRUST_INSTALLED} installed-pr, ${_R914_TRUST_PRESENT} present, ${_R914_TRUST_SKIPPED} skipped, ${_R914_TRUST_FAILED} failed"
+	_trust_state_record_counts "$_R914_TRUST_INSTALLED" "$_R914_TRUST_PRESENT" "$_R914_TRUST_SKIPPED" "$_R914_TRUST_FAILED"
+
+	[[ $_R914_BUMP_FAILED -gt 0 || $_R914_TRUST_FAILED -gt 0 ]] && return 1
 	return 0
 }
 
@@ -1396,6 +1445,9 @@ cmd_status() {
 		echo "  Last result:  ${last_bumped} bumped, ${last_bump_skipped} bump-skipped, ${last_bump_failed} bump-failed"
 		echo "                ${last_registered_config_missing} registered-config-missing, ${last_missing_folder} missing-folder, ${last_no_init} no-init"
 		echo "  Lifetime:     ${total_bumped} total bumped, ${total_failed} total failed"
+		local trust_counts
+		trust_counts=$(jq -r '.last_trust_workflows // empty | "\(.installed_pr) installed-pr, \(.present) present, \(.skipped) skipped, \(.failed) failed"' "$STATE_FILE" 2>/dev/null || true)
+		[[ -n "$trust_counts" ]] && echo "  Trust wf:     ${trust_counts}"
 	fi
 	_status_repo_sync_drift
 	_status_missing_scheduler_programs "$backend"
