@@ -22,6 +22,11 @@ name: Review Bot Gate
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # GH#36961: fork PR runs get a read-only token and cannot post the required
+  # review-bot-gate status. pull_request_target evaluates fork PRs in base
+  # context; the gate checks out only aidevops scripts at main, never PR code.
+  pull_request_target:
+    types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
@@ -45,7 +50,14 @@ jobs:
     # Retired Gemini actors remain only for historical/reinstall compatibility.
     if: >
       (
-        github.event_name == 'pull_request' ||
+        (
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        ) ||
+        (
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        ) ||
         (
           (
             github.event_name == 'pull_request_review' ||
@@ -77,11 +89,11 @@ jobs:
       group: review-bot-gate-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
     uses: ./.github/workflows/review-bot-gate-reusable.yml
-    # Self-modifying gate PRs must exercise their own helper revision. Without
-    # this, the reusable workflow fetches main and cannot validate a new helper
-    # command until after the PR that needs that command has merged.
+    # Same-repository self-modifying gate PRs exercise their own helper revision.
+    # Fork PRs always run the base repository's main helper so a fork cannot
+    # supply its own gate logic and main-branch policy fixes reach open PRs.
     with:
-      aidevops_ref: ${{ github.event.pull_request.head.sha || 'main' }}
+      aidevops_ref: ${{ (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.sha) || 'main' }}
       # Explicit CI opt-in: set this Actions variable to strict when required.
       completion_behavior: ${{ vars.AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR || 'fast' }}
     secrets: inherit

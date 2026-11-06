@@ -64,7 +64,7 @@ def reconstructible(item, repositories, adapter, open_prs, managed=False):
     slug = repositories[common][0]
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", slug):
         raise ValueError("invalid-repository-slug")
-    if matches_open_pull_request(open_prs(slug), head, branch):
+    if matches_open_pull_request(open_prs(slug), head, branch, slug):
         raise ValueError("open-pull-request")
     require_idle_proc(path)
     return {"source": str(path), "directory": _id(path), "admin": str(admin),

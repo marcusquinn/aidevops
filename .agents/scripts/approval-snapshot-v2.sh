@@ -73,6 +73,33 @@ JQ
 	return 0
 }
 
+_approval_snapshot_v2_comment_filters() {
+	cat <<'JQ'
+		def trusted_association:
+			. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
+		def aidevops_worker_footer:
+			"(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[A-Za-z0-9._+-]+ [^\\n]+\\n?";
+		def human_user: .user.type == "User";
+		def conversation_source: $source == "conversation";
+		def canonical_review_bot_retry:
+			(conversation_source and ($head | test("^[0-9a-fA-F]{40}$")))
+			and test(
+				"^<!-- review-bot-retry-requested head=" + $head + " -->\\n@coderabbitai review\\n\\n" +
+				"Review bots were rate-limited when this PR was created \\(affected: (?:coderabbitai|augment-code|augmentcode|copilot|gemini-code-assist)(?: (?:coderabbitai|augment-code|augmentcode|copilot|gemini-code-assist))*\\)\\. Requesting a review retry\\." + aidevops_worker_footer + "$"
+			);
+		# #aidevops:trust-boundary — only a complete current-head PR retry
+		# from a trusted human, posted unedited after signing, is operational.
+		# Historical retries stay bound; markers alone never carry authority.
+		def approval_significant_retry:
+			(human_user
+			and ((.author_association // $empty) | trusted_association)
+			and ($cutoff != $empty) and ((.created_at // $empty) > $cutoff)
+			and ((.updated_at // .created_at) == .created_at)
+			and ((.body // $empty) | canonical_review_bot_retry)) | not;
+JQ
+	return 0
+}
+
 _approval_snapshot_v2_comments_json() {
 	local pages_json="$1"
 	local excluded_comment_id="${2:-}"
@@ -80,6 +107,7 @@ _approval_snapshot_v2_comments_json() {
 	local issued_at_cutoff="${4:-}"
 	local target_number="${5:-}" target_repo="${6:-}"
 	local selection="${7:-snapshot}"
+	local pr_head="${8:-}"
 	local empty_string=""
 
 	# #aidevops:trust-boundary — exclude the exact approval comment whose
@@ -87,14 +115,11 @@ _approval_snapshot_v2_comments_json() {
 	# audit written after verification. Marker text is attacker-controlled:
 	# excluding arbitrary marker comments would let an external contributor hide
 	# later drift by copying the marker into an unsigned comment.
-	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" "$(_approval_snapshot_v2_comment_identity)"'
-		def trusted_association:
-			. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
-		def aidevops_worker_footer:
-			"(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[A-Za-z0-9._+-]+ [^\\n]+\\n?";
+	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" --arg head "$pr_head" "$(_approval_snapshot_v2_comment_identity)"'
+		'"$(_approval_snapshot_v2_comment_filters)"'
 		def canonical_ever_nmr_remediation:
 			("<!-- ever-nmr-remediation -->\n> Label `needs-maintainer-review` was removed, but the `ever-NMR` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:\n>\n> ```\n> sudo aidevops approve issue " + $number + " " + $repo + "\n> ```\n>\n> This gate cannot be bypassed by label manipulation (security design — see `reference/auto-merge.md` NMR section).") as $body
-			| ($source == "conversation" and $number != "" and $repo != "")
+			| (conversation_source and $number != "" and $repo != "")
 			and startswith($body)
 			and (.[$body | length:] | test("^(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[0-9]+\\.[0-9]+\\.[0-9]+ automated scan\\.\\n?$"));
 		# aidevops:trust-boundary — accept the renamed deterministic audit text
@@ -120,7 +145,7 @@ _approval_snapshot_v2_comments_json() {
 				"^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n<!-- no-work-escalation-skip -->\\n## Tier Escalation Skipped: Infrastructure Failure \\(no_work\\)\\n\\n\\*\\*Trigger:\\*\\* [0-9]+ worker failure\\(s\\) classified as `no_work` — the worker exited during setup without reading any target files\\.\\n\\*\\*Action:\\*\\* Tier escalation \\*\\*skipped\\*\\*\\. The issue stays at its current tier so the next retry can succeed cheaply once the infrastructure issue resolves\\.\\n\\*\\*Reason:\\*\\* [A-Za-z0-9._:-]+\\n\\n\\*\\*Why no cascade:\\*\\* `no_work` means the worker never produced reliable implementation evidence — it crashed during runtime setup \\(FD exhaustion, plugin init failure, branch naming race, auth refresh race\\) or stale-recovery falsely concluded no progress\\. A more expensive model cannot fix an infrastructure problem it never reached\\. Cascading to `tier:thinking` would waste capacity on a problem the mapped standard or simple model can handle once the infrastructure clears\\.\\n\\nAfter [0-9]+ consecutive `no_work` failures the per-issue no_work circuit breaker \\(t2769\\) applies `status:blocked` and files a machine-recoverable root-cause meta-issue\\.\\n\\n_Automated by `escalate_issue_tier\\(\\)` no_work skip \\(t2387\\) in worker-lifecycle-common\\.sh_\\n<!-- ops:end -->" + aidevops_worker_footer + "$"
 			);
 		if $selection == "self-hosting-audit" then
-			[.[][]? | select(.user.type == "User")
+			[.[][]? | select(human_user)
 			| select((.author_association // $empty) | trusted_association)
 			| select($cutoff != $empty and .created_at > $cutoff and (.updated_at // .created_at) == .created_at)
 			| select((.body // $empty) | canonical_self_hosting_override)
@@ -128,6 +153,7 @@ _approval_snapshot_v2_comments_json() {
 		else [.[][]?
 		| select((.id | tostring) != $excluded)
 		| select((.user.type // $empty) != "Bot")
+		| select(approval_significant_retry)
 		| select((
 			((.author_association // $empty) | trusted_association)
 			and ((.body // $empty) | startswith("<!-- aidevops-signed-approval -->\n<!-- stale-recovery-tick:0 (reset: auto-approved by maintainer — "))
@@ -386,6 +412,7 @@ approval_snapshot_v2_build() (
 	local issue_lifecycle_profile="${7:-$APPROVAL_SNAPSHOT_PROFILE_CURRENT}"
 	local issue_json="" comments_pages="" comments_json="" timeline_pages="" linked_references_json="" normalized_slug=""
 	local issue_lifecycle_json=""
+	local pr_json="" pr_head=""
 	local empty_string=""
 	local temp_dir=""
 
@@ -398,12 +425,15 @@ approval_snapshot_v2_build() (
 	printf '%s' "$issue_json" | jq -e --arg object "$APPROVAL_JSON_OBJECT" 'type == $object and (.id != null) and (.node_id != null)' >/dev/null 2>&1 || return 1
 	if [[ "$target_type" == "pr" ]]; then
 		printf '%s' "$issue_json" | jq -e 'has("pull_request")' >/dev/null 2>&1 || return 1
+		pr_json=$(gh api "repos/${slug}/pulls/${target_number}" 2>/dev/null) || return 1
+		printf '%s' "$pr_json" | jq -e --arg empty "$empty_string" --arg object "$APPROVAL_JSON_OBJECT" 'type == $object and (.id != null) and (.node_id != null) and ((.head.sha // $empty) != $empty) and ((.base.ref // $empty) != $empty)' >/dev/null 2>&1 || return 1
+		pr_head=$(jq -r '.head.sha' <<<"$pr_json") || return 1
 	else
 		printf '%s' "$issue_json" | jq -e 'has("pull_request") | not' >/dev/null 2>&1 || return 1
 	fi
 
 	comments_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/comments?per_page=100") || return 1
-	comments_json=$(_approval_snapshot_v2_comments_json "$comments_pages" "$excluded_comment_id" "conversation" "$issued_at_cutoff" "$target_number" "$slug") || return 1
+	comments_json=$(_approval_snapshot_v2_comments_json "$comments_pages" "$excluded_comment_id" "conversation" "$issued_at_cutoff" "$target_number" "$slug" "snapshot" "$pr_head") || return 1
 	timeline_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/timeline?per_page=100") || return 1
 	linked_references_json=$(_approval_snapshot_v2_linked_references_json "$timeline_pages" "$issued_at_cutoff" "$source_timestamp_profile" "$normalized_slug") || return 1
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" && "$issue_lifecycle_profile" == "$APPROVAL_SNAPSHOT_PROFILE_CURRENT" ]]; then
@@ -451,9 +481,7 @@ approval_snapshot_v2_build() (
 		return $?
 	fi
 
-	local pr_json="" review_comment_pages="" review_comments_json="" review_pages="" reviews_json=""
-	pr_json=$(gh api "repos/${slug}/pulls/${target_number}" 2>/dev/null) || return 1
-	printf '%s' "$pr_json" | jq -e --arg empty "$empty_string" --arg object "$APPROVAL_JSON_OBJECT" 'type == $object and (.id != null) and (.node_id != null) and ((.head.sha // $empty) != $empty) and ((.base.ref // $empty) != $empty)' >/dev/null 2>&1 || return 1
+	local review_comment_pages="" review_comments_json="" review_pages="" reviews_json=""
 	review_comment_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/pulls/${target_number}/comments?per_page=100") || return 1
 	review_comments_json=$(_approval_snapshot_v2_comments_json "$review_comment_pages" "" "review" "$issued_at_cutoff") || return 1
 	review_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/pulls/${target_number}/reviews?per_page=100") || return 1

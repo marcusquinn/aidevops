@@ -79,9 +79,32 @@ class ForkPullRequestContract(unittest.TestCase):
 
     def test_upstream_branch_holds_when_local_head_has_advanced(self):
         self.responses["repos/upstream/project/pulls?state=open&per_page=100"] = [
-            [{"head": {"sha": "old-sha", "ref": "topic"}}],
+            [{"head": {"sha": "old-sha", "ref": "topic",
+                       "repo": {"full_name": "Contributor/Fork"}}}],
         ]
         self.assertEqual(self.hold()[0], "open-pull-request")
+
+    def test_other_fork_branch_does_not_hold(self):
+        self.responses["repos/upstream/project/pulls?state=open&per_page=100"] = [
+            [{"head": {"sha": "other-sha", "ref": "topic",
+                       "repo": {"full_name": "other/fork"}}}],
+        ]
+        self.assertIsNone(self.hold()[0])
+
+    def test_other_fork_exact_sha_still_holds(self):
+        self.responses["repos/upstream/project/pulls?state=open&per_page=100"] = [
+            [{"head": {"sha": self.head, "ref": "topic",
+                       "repo": {"full_name": "other/fork"}}}],
+        ]
+        self.assertEqual(self.hold()[0], "open-pull-request")
+
+    def test_missing_or_deleted_head_repository_cannot_match_branch(self):
+        for repository in (None, {}, {"full_name": None}):
+            with self.subTest(repository=repository):
+                self.responses["repos/upstream/project/pulls?state=open&per_page=100"] = [
+                    [{"head": {"sha": "old-sha", "ref": "topic", "repo": repository}}],
+                ]
+                self.assertIsNone(self.hold()[0])
 
     def test_distinct_source_is_checked(self):
         self.metadata["source"] = {"full_name": "original/project"}
