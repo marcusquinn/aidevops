@@ -659,6 +659,8 @@ _pm_gate_review_bot() {
 		return 0
 	fi
 	echo "[pulse-wrapper] Review bot gate: ${rbg_status:-${PULSE_UNKNOWN_STATE}} for PR #${pr_number} in ${repo_slug} — missing or unpermitted current-head evidence; skipping merge" >>"$LOGFILE"
+	# Recovery only requests review; this invocation must still refuse merge.
+	_pulse_recover_external_review "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "$rbg_result" "$rbg_helper" || true
 	return 1
 }
 
