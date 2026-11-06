@@ -5,6 +5,14 @@
 
 _generate_frames_script() {
 	local script_file="$1"
+	_generate_frames_setup "$script_file"
+	_generate_frames_capture "$script_file"
+	_generate_frames_report "$script_file"
+	return 0
+}
+
+_generate_frames_setup() {
+	local script_file="$1"
 	cat >"$script_file" <<'SCRIPT'
 import { readFile, mkdir, chmod, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -66,6 +74,13 @@ try {
       const cdp = await context.newCDPSession(page);
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: cpu });
       const key = `__aidevopsFrames_${randomUUID().replaceAll('-', '')}`;
+SCRIPT
+	return 0
+}
+
+_generate_frames_capture() {
+	local script_file="$1"
+	cat >>"$script_file" <<'SCRIPT'
       await page.addInitScript(({ key, ready, afterSelector, noAfter, measureSource, settleMs }) => {
         if (window !== window.top) return;
         const data = { samples: [], windowErrors: [], measurementErrors: [], done: false,
@@ -119,6 +134,13 @@ try {
       await page.goto(url, { waitUntil: 'load', timeout: 30000 });
       await page.waitForFunction(key => window[key]?.done, key, { timeout: settleMs + 30000 });
       const capture = await page.evaluate(key => window[key], key);
+SCRIPT
+	return 0
+}
+
+_generate_frames_report() {
+	local script_file="$1"
+	cat >>"$script_file" <<'SCRIPT'
       const problems = [...routingErrors, ...capture.measurementErrors];
       if (!capture.samples.length) problems.push('No frames captured: check --ready and --settle-ms');
       if (noAfter !== 'true' && !capture.samples.some(frame => frame.painted))
