@@ -106,11 +106,21 @@ _WT_ID_BRANCH=""
 # Recoverable-archive functions live in a sibling library (GH#36924).
 _wtar_lib_path="${BASH_SOURCE[0]%/*}"
 [[ "$_wtar_lib_path" == "${BASH_SOURCE[0]}" ]] && _wtar_lib_path="."
-_WTAR_LIB_DIR="$(cd "$_wtar_lib_path" && pwd)"
+if ! _WTAR_LIB_DIR="$(cd "$_wtar_lib_path" && pwd)"; then
+	printf '[audit-worktree-removal-helper] ERROR: cannot resolve library directory: %s\n' \
+		"$_wtar_lib_path" >&2
+	unset _wtar_lib_path _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED
+	return 1
+fi
 unset _wtar_lib_path
 # shellcheck source=./audit-worktree-removal-recovery.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime
-source "${_WTAR_LIB_DIR}/audit-worktree-removal-recovery.sh"
+if ! source "${_WTAR_LIB_DIR}/audit-worktree-removal-recovery.sh"; then
+	printf '[audit-worktree-removal-helper] ERROR: cannot source recovery library: %s\n' \
+		"${_WTAR_LIB_DIR}/audit-worktree-removal-recovery.sh" >&2
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED _AUDIT_WORKTREE_REMOVAL_RECOVERY_LIB_LOADED
+	return 1
+fi
 
 
 # =============================================================================
