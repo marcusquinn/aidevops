@@ -1652,6 +1652,7 @@ EOF
 	if output=$(
 		PATH="${fake_bin_dir}:$PATH" \
 			HOME="${canary_root}/home" \
+			AIDEVOPS_OPENCODE_PROFILE=v1 \
 			OPENCODE_BIN="${fake_bin_dir}/opencode" \
 			OPENCODE_DB="${canary_root}/opencode.db" \
 			AIDEVOPS_OPENCODE_SESSION_ID="ses_parent" \
