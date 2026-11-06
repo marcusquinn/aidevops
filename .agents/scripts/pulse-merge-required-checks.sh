@@ -331,7 +331,9 @@ _required_contexts_for_default_branch_uncached() {
 	if [[ "$protection_rc" -ne 0 ]]; then
 		_pmrc_emit_local_deferral "$protection_resp"
 		local classic_unavailable_reason=""
-		if grep -qi 'HTTP 404\|Not Found' <<<"$protection_resp"; then
+		# GH#36866: transport layers may drop gh's stderr "(HTTP 404)" line and
+		# leave only the JSON body, so also accept the body's own 404 markers.
+		if grep -qiE 'HTTP 404|Not Found|Branch not protected|"status"[[:space:]]*:[[:space:]]*"?404"?' <<<"$protection_resp"; then
 			classic_unavailable_reason="HTTP 404"
 		elif _pmrc_private_plan_feature_unavailable "$protection_resp"; then
 			classic_unavailable_reason="private-plan unavailable (HTTP 403)"
