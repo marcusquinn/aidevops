@@ -24,6 +24,7 @@ if not BASH or not pathlib.Path(BASH).is_absolute():
 sys.path.insert(0, str(SCRIPTS))
 from checkpoint_github_fixture import comment
 from checkpoint_admission_cases import AutomaticBindingCases, ProgressCases, RevisionEnvelopeCases
+from checkpoint_diagnostic_tooling_cases import DiagnosticToolingCases
 from pr_checkpoint_events import EVENTS, fields, own_claim_matches
 import integration_recovery as recovery
 
@@ -91,58 +92,10 @@ def insert_renewed_attempt(data):
     data["comments"].insert(1, renewed)
 
 
-class RevisionTests(RevisionEnvelopeCases, unittest.TestCase):
+class RevisionTests(DiagnosticToolingCases, RevisionEnvelopeCases, unittest.TestCase):
     fixture = staticmethod(fixture)
     comment = staticmethod(comment)
     revision = revision
-
-    def test_diagnostic_tooling_opt_in_roundtrip(self):
-        data = fixture()
-        data["comments"].pop()
-        line = revision.template({**data, "release_id": 2, "attempt": "attempt:original",
-                                  "diagnostic_tooling_commit": "a" * 40})
-        data["comments"].append(comment(3, line, "maintainer", "OWNER"))
-        self.assertEqual(revision.validate(data)["diagnostic_tooling_commit"], "a" * 40)
-        data["issue"]["body"] += " changed"
-        with self.assertRaises(ValueError):
-            revision.validate(data)
-
-    def test_diagnostic_tooling_rejects_non_immutable_values(self):
-        for value in (None, True, {}, [], "", "main", "a" * 12, "A" * 40, "a" * 41):
-            with self.subTest(value=value):
-                data = fixture()
-                data["comments"].pop()
-                with self.assertRaises(ValueError):
-                    revision.template({**data, "release_id": 2, "attempt": "attempt:original",
-                                       "diagnostic_tooling_commit": value})
-                approval = {**revision.binding(data), "attempt": "attempt:original",
-                            "release_id": 2, "diagnostic_tooling_commit": value}
-                data["comments"].append(comment(3, revision.PREFIX + json.dumps(approval),
-                                                "maintainer", "OWNER"))
-                with self.assertRaises(ValueError):
-                    revision.validate(data)
-
-    def test_diagnostic_tooling_prose_does_not_grant_scope(self):
-        data = fixture()
-        data["comments"].pop()
-        data["issue"]["body"] = "Use another worktree: diagnostic_tooling_commit=" + "a" * 40
-        line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
-        data["comments"].append(comment(3, line, "maintainer", "OWNER"))
-        self.assertNotIn("diagnostic_tooling_commit", revision.validate(data))
-
-    def test_diagnostic_tooling_requires_trusted_unedited_approval(self):
-        for association, edited in (("NONE", False), ("OWNER", True)):
-            with self.subTest(association=association, edited=edited):
-                data = fixture()
-                approval = json.loads(data["comments"][-1]["body"][len(revision.PREFIX):])
-                approval["diagnostic_tooling_commit"] = "a" * 40
-                latest = data["comments"][-1]
-                latest["body"] = revision.PREFIX + json.dumps(approval)
-                latest["author_association"] = association
-                if edited:
-                    latest["updated_at"] = "2026-09-05T12:30:00Z"
-                with self.assertRaises(ValueError):
-                    revision.validate(data)
 
     def test_legacy_release_and_ambiguous_attempt(self):
         data = fixture()
