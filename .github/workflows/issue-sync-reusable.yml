@@ -1380,7 +1380,7 @@ jobs:
                   continue
                 fi
                 REMAINING_CHILD_COUNT=$((REMAINING_CHILD_COUNT + 1))
-              elif [[ "$ITEM" =~ [Pp]hase[[:space:]]+[0-9]+ ]]; then
+              elif [[ "$ITEM" =~ ^[[:space:]]*-[[:space:]]\[[[:space:]]\][[:space:]]+(\*\*)?[Pp]hase[[:space:]]+[0-9]+ ]]; then
                 # Phase entry without a child reference (unfiled phase)
                 UNFILED_PHASE_COUNT=$((UNFILED_PHASE_COUNT + 1))
               fi
