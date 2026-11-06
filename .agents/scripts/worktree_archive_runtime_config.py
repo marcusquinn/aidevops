@@ -132,6 +132,12 @@ def main(argv):
     if len(argv) == 3 and argv[0] == "capture":
         capture(Path(argv[1]), Path(argv[2]).resolve())
         return 0
+    if len(argv) == 3 and argv[0] == "bind":
+        import json
+        # An A->B->A rewrite during capture leaves equal fingerprints around a
+        # stale artifact; bind the captured bytes to the final fingerprint.
+        verify(Path(argv[1]), {"source_fingerprint": json.loads(argv[2])})
+        return 0
     if len(argv) == 2 and argv[0] == "restore-note":
         import json
         manifest = json.loads((Path(argv[1]) / "manifest.json").read_text(encoding="utf-8"))
@@ -140,8 +146,8 @@ def main(argv):
             print("restore: omitted runtime-local config.worktree keys (bytes kept in "
                   f"{NAME}): {', '.join(keys)}", file=sys.stderr)
         return 0
-    print("usage: worktree_archive_runtime_config.py capture WORKTREE ARCHIVE | restore-note ARCHIVE",
-          file=sys.stderr)
+    print("usage: worktree_archive_runtime_config.py capture WORKTREE ARCHIVE | bind ARCHIVE FINGERPRINT_JSON"
+          " | restore-note ARCHIVE", file=sys.stderr)
     return 2
 
 

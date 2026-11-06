@@ -603,6 +603,10 @@ archive_worktree() {
 		die "worktree changed during archive capture: $worktree"
 		return 1
 	fi
+	python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" bind "$archive_dir" "$fingerprint_after" || {
+		discard_failed_archive "$archive_dir"
+		return 1
+	}
 	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" 0 0 0 1 || {
 		discard_failed_archive "$archive_dir"
 		return 1
