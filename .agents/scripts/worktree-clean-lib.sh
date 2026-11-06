@@ -628,12 +628,22 @@ _clean_list_worktree_branches() {
 	local porcelain=""
 	local line=""
 	local branch=""
+	local count=0
 
-	porcelain=$(git worktree list --porcelain 2>/dev/null) || return 1
+	if [[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]]; then
+		# Prefetch only this rotating batch, not every historical branch before
+		# the first removal. This leaves the bounded pass time to make progress.
+		porcelain=$(_clean_removal_inventory) || return 1
+	else
+		porcelain=$(git worktree list --porcelain 2>/dev/null) || return 1
+	fi
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^branch\ refs/heads/(.+)$ ]]; then
 			branch="${BASH_REMATCH[1]}"
-			[[ "$branch" == "$default_br" ]] || printf '%s\n' "$branch"
+			[[ "$branch" != "$default_br" ]] || continue
+			printf '%s\n' "$branch"
+			count=$((count + 1))
+			if [[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true && "$count" -ge 20 ]]; then break; fi
 		fi
 	done <<<"$porcelain"
 	return 0
@@ -2019,7 +2029,7 @@ cmd_clean() {
 	if ! main_worktree_path=$(_clean_preflight_main_worktree); then
 		return 1
 	fi
-	if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
+	if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]] && declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
 		full_loop_reconcile_cleanup_receipts
 	fi
 	if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]]; then
@@ -2088,7 +2098,7 @@ cmd_clean() {
 		# Second pass: remove merged worktrees
 		local cleanup_status=0
 		_clean_remove_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged" "$closed_pr_branches" || cleanup_status=$?
-		if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
+		if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]] && declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
 			full_loop_reconcile_cleanup_receipts
 		fi
 		if [[ "$cleanup_status" -ne 0 ]]; then
