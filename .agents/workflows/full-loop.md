@@ -237,6 +237,8 @@ Explicit `--title` task prefixes are validated before push against TODO/linked-i
 
 **Non-closing link (GH#36598):** for an interactive PR on a long-running, non-parent issue that must stay open after merge, add `--keep-issue-open`. The body uses `For #NNN`, merge leaves the issue open, and the issue `status:in-review` handoff is skipped. Workers, `--allow-parent-close`, and `--completion-bookkeeping` refuse it. Parent-task and planning-only diffs already use `For` automatically.
 
+**Worker checkpoint identity (GH#36864):** emit exactly one standalone `For #<dispatched-issue>` line for non-closing work; never prefix it with checkpoint prose. Parent/consolidated umbrella references belong under `## Related` as `Ref #<parent>`, not beside the work declaration or in another primary section. `commit-and-pr` moves local `For`/`Ref` references supplied in summaries, replacement notes and decisions into that secondary section, retaining neutral `issue #N` mentions in prose. This does not change closing-keyword selection or relax the merge parser/trust gates.
+
 External contributions use the target's fork/branch, PR template, title, issue-linking, and review conventions from `workflows/pr.md`; do not add aidevops labels, merge summaries, signatures, or issue-closing automation.
 
 **Self-modifying helper fixes:** If this PR edits `full-loop-helper.sh` or its sourced helper libraries, run the committed worktree helper explicitly for merge verification instead of resolving `full-loop-helper.sh` from PATH. Commit first, then use `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"` so the merge path exercises the code that will ship, not the deployed helper copy.
