@@ -29,6 +29,13 @@ def report(host, session, status, detail=""):
     print("{}\t{}\t{}{}".format(host["id"], session["name"], status, "\t" + detail if detail else ""), flush=True)
 
 
+def describe_session(context, session, legacy):
+    status = legacy_state(legacy, session, context.sessions) or observe(
+        context.args.state_dir, state_key(context.endpoint_id, session), context.clients, session["sid"])
+    report(context.host, session, status, "dry-run" if context.args.dry_run else "")
+    return "skipped" if status.startswith("legacy") else status
+
+
 def launch_argv(context, session, key, token):
     # Tabby 1.0.236 array option; no shell fragments, even for paths with spaces.
     script = str(Path(__file__).with_name("tabby_sessions.py").absolute())
