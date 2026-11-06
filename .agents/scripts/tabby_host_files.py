@@ -67,25 +67,40 @@ def apply(changes, dry_run):
         apply_locked(changes)
 
 
+def preserve_backups(changes):
+    for path, old, _new in changes:
+        if snapshot(path) != old:
+            raise SessionError("Configuration changed concurrently; retry")
+        if old is None:
+            continue
+        # Keep backups outside .ssh so Include globs cannot load them.
+        directory = Path.home() / ".local/state/aidevops/tabby-host-config/backups"
+        digest = hashlib.sha256(str(path).encode()).hexdigest()[:16]
+        backup = directory / (digest + "-" + str(time.time_ns()) + ".backup")
+        snapshot(backup)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(old)
+            stream.flush()
+            os.fsync(stream.fileno())
+        print("Backup: " + str(backup))
+
+
+def rollback(applied):
+    for path, old, new in reversed(applied):
+        if snapshot(path) != new:
+            raise SessionError("Configuration changed during rollback")
+        if old is None:
+            path.unlink()
+        else:
+            replace(path, old)
+
+
 def apply_locked(changes):
     applied = []
     try:
-        for path, old, _new in changes:
-            if snapshot(path) != old:
-                raise SessionError("Configuration changed concurrently; retry")
-            if old is not None:
-                # Keep backups outside .ssh so Include globs cannot load them.
-                directory = Path.home() / ".local/state/aidevops/tabby-host-config/backups"
-                digest = hashlib.sha256(str(path).encode()).hexdigest()[:16]
-                backup = directory / (digest + "-" + str(time.time_ns()) + ".backup")
-                snapshot(backup)
-                directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-                fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(fd, "wb") as stream:
-                    stream.write(old)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                print("Backup: " + str(backup))
+        preserve_backups(changes)
         for path, old, new in changes:
             if snapshot(path) != old:
                 raise SessionError("Configuration changed concurrently; retry")
@@ -93,13 +108,7 @@ def apply_locked(changes):
             applied.append((path, old, new))
     except (OSError, SessionError):
         try:
-            for path, old, new in reversed(applied):
-                if snapshot(path) != new:
-                    raise SessionError("Configuration changed during rollback")
-                if old is None:
-                    path.unlink()
-                else:
-                    replace(path, old)
+            rollback(applied)
         except (OSError, SessionError):
             raise SessionError("Partial configuration update; rollback incomplete; inspect private backups") from None
         raise SessionError("Configuration update failed; file contents restored; private backups retained") from None

@@ -435,7 +435,8 @@ class HostManagementTests(unittest.TestCase):
         self.assertIn("alpha\talpha\toc-\tenabled", self.run_host("list"))
         self.assertIn('"titlePrefix": "alpha"', self.run_host("show", "alpha"))
         self.run_host("update", "alpha", "--hostname", "updated.invalid", "--title-prefix", "A", "--disabled")
-        result = subprocess.run(["ssh", "-G", "-F", str(self.ssh), "alpha"], capture_output=True, text=True, check=True)
+        result = subprocess.run(  # nosec B603 - resolved executable; isolated config and fixed read-only probe
+            [config.required_executable("ssh"), "-G", "-F", str(self.ssh), "alpha"], capture_output=True, text=True, check=True)
         self.assertIn("hostname updated.invalid\n", result.stdout)
         self.assertIn("user generic\n", result.stdout)
         self.assertIn("port 2222\n", result.stdout)
@@ -536,7 +537,8 @@ class HostManagementTests(unittest.TestCase):
         key = self.root / "key with spaces"
         key.touch()
         self.run_host("add", "alpha", "--hostname", "::1", "--identity-file", str(key))
-        result = subprocess.run(["ssh", "-G", "-F", str(self.ssh), "alpha"], capture_output=True, text=True, check=True)
+        result = subprocess.run(  # nosec B603 - resolved executable; isolated config and fixed read-only probe
+            [config.required_executable("ssh"), "-G", "-F", str(self.ssh), "alpha"], capture_output=True, text=True, check=True)
         self.assertIn("hostname ::1\n", result.stdout)
         self.assertIn("identityfile " + str(key) + "\n", result.stdout)
         key.unlink()
@@ -549,13 +551,15 @@ class HostManagementTests(unittest.TestCase):
         self.ssh.chmod(0o600)
         launcher = Path(__file__).resolve().parents[1] / "tabby-session-helper.sh"
         environment = dict(os.environ, HOME=str(self.root), AIDEVOPS_TABBY_HOSTS=str(self.inventory))
-        result = subprocess.run(["bash", str(launcher), "host", "add", "alpha",
+        result = subprocess.run(  # nosec B603 - resolved shell; repository launcher and isolated HOME
+                                [config.required_executable("bash"), str(launcher), "host", "add", "alpha",
                                  "--hostname", "server.invalid", "--user", "generic",
                                  "--allow-temporary-config"], env=environment,
                                 capture_output=True, text=True, check=True)
         self.assertIn("Will add host alpha", result.stdout)
         self.assertTrue(self.ssh.read_bytes().endswith(original))
-        result = subprocess.run(["ssh", "-G", "-F", str(self.ssh), "unrelated"],
+        result = subprocess.run(  # nosec B603 - resolved executable; isolated config and fixed read-only probe
+                                [config.required_executable("ssh"), "-G", "-F", str(self.ssh), "unrelated"],
                                 capture_output=True, text=True, check=True)
         self.assertIn("hostname original.invalid\n", result.stdout)
         self.assertIn("user baseline\n", result.stdout)

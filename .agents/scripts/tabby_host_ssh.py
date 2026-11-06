@@ -2,15 +2,11 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Strictly owned OpenSSH alias file, separate from user-owned Host blocks."""
 
-import fnmatch
-import glob
 import ipaddress
 import json
 import re
-import shlex
 from pathlib import Path
 
-from tabby_host_files import snapshot
 from tabby_session_config import SessionError, identifier
 
 HEADER = "# aidevops-managed SSH aliases; edit with aidevops tabby sessions host\n"
@@ -69,50 +65,3 @@ def load(raw):
         return aliases
     except (ValueError, IndexError, AttributeError, TypeError, SessionError):
         raise SessionError("Managed SSH file was edited externally; refusing to overwrite it") from None
-
-
-def conflicts(path, alias, managed, seen=None):
-    """Follow local Includes without running commands; preserve unmanaged blocks."""
-    seen = set() if seen is None else seen
-    if path == managed or path in seen:
-        return False
-    if len(seen) > 100:
-        raise SessionError("Too many SSH Includes to check safely")
-    seen.add(path)
-    raw = snapshot(path)
-    if raw is None:
-        return False
-    try:
-        lines = raw.decode().splitlines()
-        for line in lines:
-            tokens = shlex.split(line, comments=True)
-            if not tokens:
-                continue
-            # Accept both OpenSSH 'Key value' and 'Key=value' syntax.
-            if "=" in tokens[0]:
-                key, value = tokens[0].split("=", 1)
-                tokens = [key, value, *tokens[1:]]
-            key = tokens[0].lower()
-            values = tokens[1:]
-            if values and values[0] == "=":
-                values = values[1:]
-            elif values and values[0].startswith("="):
-                values = [values[0][1:], *values[1:]]
-            if key == "host":
-                positives = [p for p in values if not p.startswith("!")]
-                excluded = any(fnmatch.fnmatchcase(alias.lower(), p[1:].lower()) for p in values if p.startswith("!"))
-                if not excluded and any(p != "*" and fnmatch.fnmatchcase(alias.lower(), p.lower()) for p in positives):
-                    return True
-            if key == "include":
-                for value in values:
-                    if "%" in value or "$" in value:
-                        raise SessionError("Dynamic SSH Includes require manual configuration; refusing SSH changes")
-                    pattern = Path(value).expanduser()
-                    if not pattern.is_absolute():
-                        pattern = Path.home() / ".ssh" / pattern
-                    for match in glob.glob(str(pattern)):
-                        if conflicts(Path(match).absolute(), alias, managed, seen):
-                            return True
-    except (UnicodeError, ValueError):
-        raise SessionError("Cannot safely parse existing SSH configuration") from None
-    return False
