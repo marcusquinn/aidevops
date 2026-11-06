@@ -1890,7 +1890,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18876 fix(review-bot-gate): recover external PRs stuck after CodeRabbit review limit #auto-dispatch #bug ref:GH#36900
 
-- [ ] t18877 feat(full-loop): audited maintainer override to admin-merge past a stuck review-bot-gate #auto-dispatch #feat ref:GH#36901
+- [x] t18877 feat(full-loop): audited maintainer override to admin-merge past a stuck review-bot-gate #auto-dispatch #feat ref:GH#36901 pr:#36910 completed:2026-11-06
 
 - [ ] t18878 fix(approval): canonical review-bot retry comment must not stale PR approvals #auto-dispatch #bug ref:GH#36902
 
