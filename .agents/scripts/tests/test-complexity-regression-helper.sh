@@ -774,8 +774,8 @@ test_edited_rename_carries_bash32_count() {
 	git -C "$_repo" add docs/a/renamed.sh
 	git -C "$_repo" commit -q -m "head: rename and edit shell script"
 	_renames=$(git -C "$_repo" diff --name-status -M "$_base_sha" HEAD)
-	if printf '%s\n' "$_renames" | grep -Eq '^R[0-9]+[[:space:]]+docs/a/tool\.sh[[:space:]]+docs/a/renamed\.sh$' &&
-		! printf '%s\n' "$_renames" | grep -q '^R100'; then
+	if printf '%s\n' "$_renames" | grep -E '^R[0-9]+[[:space:]]+docs/a/tool\.sh[[:space:]]+docs/a/renamed\.sh$' >/dev/null &&
+		! printf '%s\n' "$_renames" | grep '^R100' >/dev/null; then
 		print_result "bash32 rename: Git detects an edited rename" 0
 	else
 		print_result "bash32 rename: Git detects an edited rename" 1 "got $_renames"
