@@ -241,6 +241,51 @@ else
 		"(body did not contain 'Resolves #55555')"
 fi
 
+# GH#36864: exercise generated bodies through the unchanged explicit parser.
+eval "$(sed -n '/^_extract_pr_work_issue()/,/^}/p' "${TEST_SCRIPTS_DIR}/pulse-merge.sh")"
+_extract_linked_issue() {
+	return 0
+}
+gh_pr_view() {
+	printf '%s\n' "$checkpoint_body"
+	return 0
+}
+LOGFILE="${TEST_ROOT}/pulse.log"
+for checkpoint_summary in \
+	'For #42. For #99.' \
+	$'For #42\nFor #99' \
+	'Partial data checkpoint only. For #42; do not close the issue on merge. Ref #99'; do
+	pr_body=$(_build_pr_body "42" "$checkpoint_summary" "diff reviewed" "guide.md" "" "For")
+	checkpoint_body="$pr_body"
+	if [[ "$(printf '%s\n' "$pr_body" | grep -c '^For #42$')" -eq 1 &&
+		"$(printf '%s\n' "$pr_body" | grep -c '^Ref #99$')" -eq 1 &&
+		"$pr_body" == *$'## Related\n\nRef #99'* &&
+		"$(_extract_pr_work_issue 77 owner/repo explicit)" == "42" ]]; then
+		print_result "Checkpoint child/umbrella body has unique explicit child identity" 0
+	else
+		print_result "Checkpoint child/umbrella body has unique explicit child identity" 1 "$pr_body"
+	fi
+done
+
+pr_body=$(_build_pr_body "42" "For #42. For #99." "diff reviewed" "guide.md" "" "For" "" "" "" \
+	'Ref #99' $'Ref #100\nRef #99')
+checkpoint_body="$pr_body"
+if [[ "$(printf '%s\n' "$pr_body" | grep -c '^Ref #99$')" -eq 1 &&
+	"$(printf '%s\n' "$pr_body" | grep -c '^Ref #100$')" -eq 1 &&
+	"$(_extract_pr_work_issue 77 owner/repo explicit)" == "42" ]]; then
+	print_result "Related issues are deduplicated across summary, audit and decisions" 0
+else
+	print_result "Related issues are deduplicated across summary, audit and decisions" 1 "$pr_body"
+fi
+
+pr_body=$(_build_pr_body "42" 'Partial checkpoint only. For #42; keep open.' "diff reviewed" "guide.md" "" "For")
+checkpoint_body="$pr_body"
+if [[ "$pr_body" != *'## Related'* && "$(_extract_pr_work_issue 77 owner/repo explicit)" == "42" ]]; then
+	print_result "Prose-prefixed child alone gets a standalone declaration without Related" 0
+else
+	print_result "Prose-prefixed child alone gets a standalone declaration without Related" 1 "$pr_body"
+fi
+
 export PATH="$OLD_PATH"
 
 # =============================================================================
