@@ -377,12 +377,14 @@ for actor in supported_actors:
     ])
 
 
-def evaluate(event_name, actor, is_pr, reply_id):
+def evaluate(event_name, actor, is_pr, reply_id, fork=False):
     candidate = expression
     candidate = re.sub(r"\bnull\b", "None", candidate)
     replacements = {
         "github.event.comment.in_reply_to_id": repr(reply_id),
         "github.event.issue.pull_request": repr(is_pr),
+        "github.event.pull_request.head.repo.full_name": repr("fork/repo" if fork else "owner/repo"),
+        "github.repository": repr("owner/repo"),
         "github.event_name": repr(event_name),
         "github.actor": repr(actor),
         "&&": "and",
@@ -390,7 +392,7 @@ def evaluate(event_name, actor, is_pr, reply_id):
     }
     for source, target in replacements.items():
         candidate = candidate.replace(source, target)
-    if re.search(r"[^A-Za-z0-9_\s\[\]'\"().=-]", candidate):
+    if re.search(r"[^A-Za-z0-9_\s\[\]'\"().=!/-]", candidate):
         raise ValueError(f"unsupported eligibility token: {candidate}")
     return bool(eval(candidate, {"__builtins__": {}}, {}))
 
@@ -399,6 +401,22 @@ for fixture in fixtures:
     actual = evaluate(*fixture[:4])
     if actual is not fixture[4]:
         print(f"FAIL: eligibility fixture {fixture[:4]} => {actual}, expected {fixture[4]}")
+        sys.exit(1)
+
+# GH#36961: exactly one PR evaluator per push. Same-repository PRs use
+# pull_request; fork PRs use pull_request_target (base-context token that can
+# post the required status; the gate checks out only main's aidevops scripts).
+fork_fixtures = [
+    ("pull_request", "human", True, None, False, True),
+    ("pull_request", "human", True, None, True, False),
+    ("pull_request_target", "human", True, None, True, True),
+    ("pull_request_target", "human", True, None, False, False),
+    ("issue_comment", "coderabbitai[bot]", True, None, True, True),
+]
+for fixture in fork_fixtures:
+    actual = evaluate(*fixture[:5])
+    if actual is not fixture[5]:
+        print(f"FAIL: fork eligibility fixture {fixture[:5]} => {actual}, expected {fixture[5]}")
         sys.exit(1)
 
 # GitHub permits one active and one pending run per concurrency group. Simulate
