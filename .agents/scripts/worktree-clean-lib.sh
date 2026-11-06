@@ -1791,6 +1791,16 @@ _clean_removal_inventory() {
 # Args: $1=default_branch, $2=main_worktree_path, $3=remote_state_unknown,
 #       $4=merged_pr_branches, $5=open_pr_branches, $6=force_merged,
 #       $7=closed_pr_branches
+_clean_capacity_checkpoint() {
+	local wt_path="$1"
+	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 0
+	[[ "$capacity_attempted" -lt 20 ]] || return 1
+	# Write ahead so a slow/interrupted removal cannot starve later trees.
+	printf '%s\n' "$wt_path" >"$_WT_CLEAN_CAPACITY_CURSOR" || return 1
+	capacity_attempted=$((capacity_attempted + 1))
+	return 0
+}
+
 _clean_remove_merged() {
 	local default_br="$1"
 	local main_wt_path="$2"
@@ -1812,12 +1822,7 @@ _clean_remove_merged() {
 			worktree_branch="${BASH_REMATCH[1]}"
 		elif [[ -z "$line" ]]; then
 			if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_br" ]] && [[ "$worktree_path" != "$main_wt_path" ]]; then
-				if [[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]]; then
-					[[ "$capacity_attempted" -lt 20 ]] || break
-					# Write ahead so a slow/interrupted removal cannot starve later trees.
-					printf '%s\n' "$worktree_path" >"$_WT_CLEAN_CAPACITY_CURSOR" || return 1
-					capacity_attempted=$((capacity_attempted + 1))
-				fi
+				_clean_capacity_checkpoint "$worktree_path" || break
 				if _clean_protected_contains "$worktree_path" &&
 					! _clean_branch_has_terminal_pr_proof "$worktree_branch" "$merged_prs" "$closed_prs"; then
 					log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_PROTECTED_PASS" "$_WT_CLEAN_MODE_SKIPPED" \
@@ -1951,11 +1956,7 @@ _clean_reclaim_branch_cleanup_transports() {
 	return 0
 }
 
-cmd_clean() {
-	local auto_mode=false
-	local force_merged=false
-	local _WT_CLEAN_CAPACITY_MODE=false
-	local _WT_CLEAN_CAPACITY_CURSOR=""
+_clean_parse_options() {
 	while [[ $# -gt 0 ]]; do
 		case "${1:-}" in
 		--auto) auto_mode=true ;;
@@ -1969,6 +1970,15 @@ cmd_clean() {
 		[[ "$auto_mode" == true && "$force_merged" == false ]] || return 1
 		_WT_CLEAN_CAPACITY_CURSOR="$(git rev-parse --git-common-dir)/aidevops-capacity-clean.cursor"
 	fi
+	return 0
+}
+
+cmd_clean() {
+	local auto_mode=false
+	local force_merged=false
+	local _WT_CLEAN_CAPACITY_MODE=false
+	local _WT_CLEAN_CAPACITY_CURSOR=""
+	_clean_parse_options "$@" || return 1
 
 	# t2559: run the combined L1+L2+L3 preflight. On any refusal, bail before
 	# touching filesystem state. This is the primary defence against the
@@ -1980,7 +1990,9 @@ cmd_clean() {
 	if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
 		full_loop_reconcile_cleanup_receipts
 	fi
-	_clean_reclaim_branch_cleanup_transports "$main_worktree_path"
+	if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]]; then
+		_clean_reclaim_branch_cleanup_transports "$main_worktree_path"
+	fi
 
 	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}" >&2
 	echo "" >&2
