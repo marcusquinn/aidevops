@@ -240,7 +240,10 @@ class ReconstructibleContract(unittest.TestCase):
     def test_open_pr_by_branch_or_sha_remains(self):
         for branch, head in [("feature", "0" * 40), ("another", self.head)]:
             with self.subTest(branch=branch):
-                self.prs.return_value = [{"head": {"ref": branch, "sha": head}}]
+                self.prs.return_value = [{"head": {
+                    "ref": branch, "sha": head,
+                    "repo": {"full_name": "fixture/repository"},
+                }}]
                 self.assert_retained("open-pull-request")
 
     def test_preservation_names_and_custom_patterns_remain(self):
