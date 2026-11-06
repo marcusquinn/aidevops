@@ -126,13 +126,24 @@ class SecretRemovalTests(unittest.TestCase):
         git.chmod(0o700)
 
     def stalled_git_running(self, pid):
-        # ps works on Linux and macOS; an unreaped zombie has already exited.
+        # kill(0) authoritatively reports a missing PID; ps only refines zombies.
+        # A ps failure (e.g. BusyBox rejecting -p) is unknown state: treat as running.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
         ps = shutil.which('ps')
         if ps is None:
-            raise RuntimeError('These lifecycle checks require ps')
+            return True
         result = subprocess.run([ps, '-o', 'stat=', '-p', str(pid)],  # nosec B603
                                 capture_output=True, text=True, timeout=2)
-        return bool(result.stdout.strip()) and not result.stdout.strip().startswith('Z')
+        state = result.stdout.strip()
+        if result.returncode != 0 and not state:
+            # procps exits 1 for a missing PID with no stderr; any stderr is a ps error.
+            return bool(result.stderr.strip())
+        return bool(state) and not state.startswith('Z')
 
     def cleanup_stalled_git(self):
         if self.git_pid_file.exists():
