@@ -83,10 +83,100 @@ _gh_validate_pr_closing_keywords() {
 		body_text=$(<"$body_file")
 	fi
 	[[ -n "$body_text" ]] || return 0
-	_gh_pr_body_negated_closing_ref "$body_text" >/dev/null || return 0
+	if ! _gh_pr_body_negated_closing_ref "$body_text" >/dev/null; then
+		_gh_validate_pr_worker_identity "$body_text" "$@"
+		return $?
+	fi
 	# Do not echo the author's body: it has not passed the privacy scan yet.
 	_GH_EDIT_REJECTION_REASON="negated closing keyword — GitHub still treats it as a closing reference"
 	printf '[SAFETY] gh pr body rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
 	printf '[SAFETY] Use "Ref #N" or "For #N" and state "The referenced PR or issue remains open." Negation does not neutralize closing keywords.\n' >&2
 	return 1
+}
+
+# Shared with Pulse explicit association. Output is empty, one issue, or a
+# sorted ambiguous candidate set (including the sentinel "ambiguous").
+_gh_pr_body_explicit_issues() {
+	local body_text="$1"
+	printf '%s\n' "$body_text" | awk '
+		/^[[:space:]]*(```|~~~)/ {
+			fence_line = $0
+			sub(/^[[:space:]]*/, "", fence_line)
+			match(fence_line, /^(`+|~+)/)
+			fence_run = substr(fence_line, 1, RLENGTH)
+			if (!fence) {
+				fence = 1
+				fence_marker = substr(fence_run, 1, 1)
+				fence_length = length(fence_run)
+			} else if (substr(fence_run, 1, 1) == fence_marker && length(fence_run) >= fence_length &&
+				substr(fence_line, length(fence_run) + 1) ~ /^[[:space:]]*$/) {
+				fence = 0
+			}
+			next
+		}
+		fence { next }
+		/<!--/ { comment = 1 }
+		comment { if ($0 ~ /-->/) comment = 0; next }
+		/^[[:space:]]*#/ {
+			section = tolower($0)
+			sub(/^[[:space:]]*/, "", section)
+			match(section, /^#+/)
+			depth = RLENGTH
+			if (secondary && depth <= secondary) secondary = 0
+			if (section ~ /(remaining|follow.?up|related|next steps)/) secondary = depth
+			next
+		}
+		secondary || /^[[:space:]]*>/ || /^([ ]{4}|\t)/ { next }
+		{
+			line = tolower($0)
+			if (line !~ /^[[:space:]]*(for|ref)[:[:space:]]+#[1-9][0-9]*([^[:alnum:]_]|$)/) next
+			sub(/^[[:space:]]*(for|ref)[:[:space:]]+#/, "", line)
+			issue = line
+			sub(/[^0-9].*$/, "", issue)
+			sub(/^[0-9]+/, "", line)
+			# Later context is not a task; another declaration or clause target is.
+			clause = line
+			rest = ""
+			if (match(line, /[.;!?]([[:space:]]|$)/)) {
+				clause = substr(line, 1, RSTART - 1)
+				rest = substr(line, RSTART)
+			}
+			if (clause ~ /#[0-9]/ || rest ~ /[^[:alnum:]_](for|ref)[:[:space:]]+#[0-9]/) print "ambiguous"
+			print issue
+		}
+	' | sort -u
+	return $?
+}
+
+# Called only for an inspected body, never a title/label-only edit. The origin
+# is dynamically scoped by the create/edit entrypoints, not inferred from prose.
+_gh_validate_pr_worker_identity() {
+	local body_text="$1"
+	shift
+	local origin="${_GH_PR_IDENTITY_ORIGIN:-}" labels="" repo="" number="" issues=""
+	if [[ "$origin" == "edit" ]]; then
+		repo=$(_gh_extract_repo_from_args "$@")
+		number=$(_gh_extract_number_from_args "$@")
+		if ! labels=$(gh_pr_view "$number" --repo "$repo" --json labels --jq '[.labels[].name]' 2>/dev/null) ||
+			! printf '%s' "$labels" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
+			_GH_EDIT_REJECTION_REASON="PR origin labels unavailable before body edit"
+			printf '[SAFETY] %s; retry when PR metadata is readable.\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+		printf '%s' "$labels" | jq -e 'index("origin:worker") != null' >/dev/null || return 0
+	elif [[ "$origin" != "origin:worker" ]]; then
+		return 0
+	fi
+	# Native closing declarations retain their existing authoritative selection.
+	if printf '%s' "$body_text" | grep -qiE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+'; then
+		return 0
+	fi
+	issues=$(_gh_pr_body_explicit_issues "$body_text") || return 1
+	if [[ -z "$issues" || "$issues" == *$'\n'* || "$issues" == "ambiguous" ]]; then
+		_GH_EDIT_REJECTION_REASON="worker PR body has ambiguous or missing explicit issue identity"
+		# shellcheck disable=SC2016 # Literal Markdown code spans, not commands.
+		printf '[SAFETY] %s; keep one standalone `For #N` line; move other references under `## Related`.\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		return 1
+	fi
+	return 0
 }

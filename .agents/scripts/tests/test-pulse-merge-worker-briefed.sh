@@ -36,6 +36,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
 WORKER_BRIEFED_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process-worker-briefed.sh"
 
 readonly TEST_RED='\033[0;31m'

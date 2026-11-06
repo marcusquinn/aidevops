@@ -20,6 +20,8 @@
 set -uo pipefail
 
 TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${TEST_SCRIPTS_DIR}/gh-closing-reference-lib.sh"
 
 TEST_RED=$'\033[0;31m'
 TEST_GREEN=$'\033[0;32m'

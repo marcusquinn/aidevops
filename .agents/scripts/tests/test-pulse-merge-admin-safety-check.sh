@@ -36,6 +36,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # _pulse_merge_admin_safety_check) were moved to pulse-merge-gates.sh by
 # GH#21595, t3030.
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
 GATES_SCRIPT="${SCRIPT_DIR}/../pulse-merge-gates.sh"
 # shellcheck source=../pulse-merge-required-checks.sh
 source "${SCRIPT_DIR}/../pulse-merge-required-checks.sh"

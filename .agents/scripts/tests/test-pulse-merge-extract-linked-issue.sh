@@ -37,6 +37,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
 
 readonly TEST_RED=$'\033[0;31m'
 readonly TEST_GREEN=$'\033[0;32m'
@@ -381,6 +383,36 @@ test_merge_gate_association_is_not_closure() {
 	return 0
 }
 
+test_worker_write_identity() {
+	local _GH_PR_IDENTITY_ORIGIN="origin:worker" body="" rc=0
+	local _GH_EDIT_REJECTION_REASON=""
+	for body in $'For #42\nFor #43' 'For #42. For #43.' 'For #42. Ref #43 and #44.' 'Checkpoint For #42; do not close the issue.' 'No linked issue.'; do
+		rc=0
+		_gh_validate_pr_closing_keywords --body "$body" 2>"${TEST_ROOT}/rejection" || rc=$?
+		# shellcheck disable=SC2016 # Match literal Markdown code spans.
+		if [[ "$rc" == 1 ]] && grep -Fq 'keep one standalone `For #N` line; move other references under `## Related`' "${TEST_ROOT}/rejection"; then
+			print_result "worker write rejects ${body}" 0
+		else
+			print_result "worker write rejects ${body}" 1
+		fi
+	done
+	for body in $'For #42\n\n## Related\nRef #43\nRef #44' $'Ref: #42\n## Remaining work\nFor #43'; do
+		rc=0
+		_gh_validate_pr_closing_keywords --body "$body" || rc=$?
+		print_result "worker write accepts secondary references" "$rc"
+		export TEST_PR_BODY="$body"
+		assert_association "42" 0 "accepted worker body has exactly one explicit merge identity"
+	done
+	rc=0
+	_gh_validate_pr_closing_keywords --body 'Resolves #42' || rc=$?
+	print_result "worker write preserves native closing declarations" "$rc"
+	_GH_PR_IDENTITY_ORIGIN="origin:interactive"
+	rc=0
+	_gh_validate_pr_closing_keywords --body $'For #42\nFor #43' || rc=$?
+	print_result "interactive bodies retain existing behavior" "$rc"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -400,6 +432,7 @@ main() {
 	test_cross_repo_closing_reference_returns_empty
 	test_metadata_failure_returns_empty
 	test_explicit_merge_association
+	test_worker_write_identity
 	test_merge_gate_association_is_not_closure
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

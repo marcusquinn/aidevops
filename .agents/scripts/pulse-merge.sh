@@ -263,6 +263,8 @@ _pulse_merge_ready_pr_json_fields() {
 # full-loop-helper.sh can call it after a successful PR merge. SCRIPT_DIR may not be set
 # when this module is sourced by pulse-wrapper.sh; resolve from BASH_SOURCE.
 _PULSE_MERGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./gh-closing-reference-lib.sh
+source "${_PULSE_MERGE_DIR}/gh-closing-reference-lib.sh"
 source "${_PULSE_MERGE_DIR}/shared-claim-lifecycle.sh"
 
 # Final duplicate-implementation fence for live interactive issue owners.
@@ -1815,55 +1817,7 @@ _extract_pr_work_issue() {
 	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
 	if [[ "$mode" == "explicit" ]]; then
 		local explicit_issues=""
-		explicit_issues=$(printf '%s\n' "$pr_body" | awk '
-			/^[[:space:]]*(```|~~~)/ {
-				fence_line = $0
-				sub(/^[[:space:]]*/, "", fence_line)
-				match(fence_line, /^(`+|~+)/)
-				fence_run = substr(fence_line, 1, RLENGTH)
-				if (!fence) {
-					fence = 1
-					fence_marker = substr(fence_run, 1, 1)
-					fence_length = length(fence_run)
-				} else if (substr(fence_run, 1, 1) == fence_marker && length(fence_run) >= fence_length &&
-					substr(fence_line, length(fence_run) + 1) ~ /^[[:space:]]*$/) {
-					fence = 0
-				}
-				next
-			}
-			fence { next }
-			/<!--/ { comment = 1 }
-			comment { if ($0 ~ /-->/) comment = 0; next }
-			/^[[:space:]]*#/ {
-				section = tolower($0)
-				sub(/^[[:space:]]*/, "", section)
-				match(section, /^#+/)
-				depth = RLENGTH
-				if (secondary && depth <= secondary) secondary = 0
-				if (section ~ /(remaining|follow.?up|related|next steps)/) secondary = depth
-				next
-			}
-			secondary || /^[[:space:]]*>/ || /^([ ]{4}|\t)/ { next }
-			{
-				line = tolower($0)
-				if (line !~ /^[[:space:]]*(for|ref)[:[:space:]]+#[1-9][0-9]*([^[:alnum:]_]|$)/) next
-				sub(/^[[:space:]]*(for|ref)[:[:space:]]+#/, "", line)
-				issue = line
-				sub(/[^0-9].*$/, "", issue)
-				sub(/^[0-9]+/, "", line)
-				# Targets end at the first sentence terminator. Another #N in that
-				# clause ("For #42 and #43") or a later same-line For/Ref is not a
-				# unique task; later context ("PR #41") is ignored, as on its own line.
-				clause = line
-				rest = ""
-				if (match(line, /[.;!?]([[:space:]]|$)/)) {
-					clause = substr(line, 1, RSTART - 1)
-					rest = substr(line, RSTART)
-				}
-				if (clause ~ /#[0-9]/ || rest ~ /[^[:alnum:]_](for|ref)[:[:space:]]+#[0-9]/) print "ambiguous"
-				print issue
-			}
-		' | sort -u) || return 1
+		explicit_issues=$(_gh_pr_body_explicit_issues "$pr_body") || return 1
 		if [[ "$explicit_issues" == *$'\n'* || "$explicit_issues" == "ambiguous" ]]; then
 			echo "[pulse-wrapper] _extract_pr_work_issue: PR #${pr_number} in ${repo_slug} has ambiguous explicit issue identities — no merge association" >>"$LOGFILE"
 			return 1
