@@ -95,7 +95,7 @@ def doctor(args, hosts):
 def parser():
     config, state = paths()
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("action", choices=("new", "restore", "list", "doctor", "_attach"))
+    result.add_argument("action", choices=("new", "restore", "list", "doctor", "host", "_attach"))
     result.add_argument("host", nargs="?")
     result.add_argument("--dry-run", action="store_true", help="read remote inventory; create no sessions/reservations/tabs")
     result.add_argument("--remote", action="store_true", help="doctor: explicitly probe remote tmux (read-only)")
@@ -107,6 +107,10 @@ def parser():
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "host":
+        from tabby_session_hosts import main as host_main
+        return host_main(argv[1:])
     args = parser().parse_args(argv)
     args.config = str(Path(args.config).absolute())
     args.state_dir = str(Path(args.state_dir).absolute())

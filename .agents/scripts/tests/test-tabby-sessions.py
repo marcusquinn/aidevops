@@ -27,6 +27,8 @@ import tabby_session_state as state
 import tabby_session_terminal as terminal
 import tabby_session_transport as transport
 import tabby_sessions as app
+import tabby_session_hosts as host_app
+import tabby_host_files as host_files
 
 
 def host(name="alpha", **kwargs):
@@ -402,6 +404,161 @@ class OrchestrationTests(unittest.TestCase):
             with self.assertRaises(config.SessionError):
                 app.attach(args, host(), [host()])
             connect.assert_not_called()
+
+
+class HostManagementTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.inventory = self.root / "config/hosts.json"
+        self.ssh = self.root / ".ssh/config"
+        self.managed = self.root / ".ssh/aidevops.conf"
+        self.home = mock.patch("pathlib.Path.home", return_value=self.root)
+        self.home.start()
+        self.addCleanup(self.home.stop)
+
+    def run_host(self, *args, allow_temp=True):
+        arguments = ["host", *args, "--config", str(self.inventory)]
+        if allow_temp:
+            arguments.append("--allow-temporary-config")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(app.main(arguments), 0)
+        return output.getvalue()
+
+    def add(self, name="alpha", *args):
+        return self.run_host("add", name, "--hostname", "server.invalid", *args)
+
+    def test_cli_crud_and_effective_ssh(self):
+        self.add("alpha", "--user", "generic", "--port", "2222")
+        self.assertIn("alpha\talpha\toc-\tenabled", self.run_host("list"))
+        self.assertIn('"titlePrefix": "alpha"', self.run_host("show", "alpha"))
+        self.run_host("update", "alpha", "--hostname", "updated.invalid", "--title-prefix", "A", "--disabled")
+        result = subprocess.run(["ssh", "-G", "-F", str(self.ssh), "alpha"], capture_output=True, text=True, check=True)
+        self.assertIn("hostname updated.invalid\n", result.stdout)
+        self.assertIn("user generic\n", result.stdout)
+        self.assertIn("port 2222\n", result.stdout)
+        self.assertIn("disabled", self.run_host("list"))
+        self.run_host("remove", "alpha")
+        self.assertIn(b"Host alpha", self.managed.read_bytes())
+        self.assertEqual(json.loads(self.inventory.read_bytes())["hosts"], [])
+        for path in (self.inventory, self.ssh, self.managed):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        backups = self.root / ".local/state/aidevops/tabby-host-config/backups"
+        self.assertTrue(list(backups.glob("*.backup")))
+
+    def test_dry_run_creates_nothing_and_temporary_target_is_explicit(self):
+        with self.assertRaisesRegex(config.SessionError, "temporary inventory"):
+            self.run_host("add", "alpha", "--hostname", "server.invalid", allow_temp=False)
+        self.add("alpha", "--dry-run")
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_existing_alias_registration_and_user_owned_protection(self):
+        self.ssh.parent.mkdir()
+        original = b"Host alpha\n  HostName existing.invalid\n"
+        self.ssh.write_bytes(original)
+        self.ssh.chmod(0o600)
+        with mock.patch.object(host_app, "endpoint", return_value="resolved") as resolve:
+            self.run_host("add", "alpha")
+            resolve.assert_called_once()
+        self.assertFalse(self.managed.exists())
+        self.run_host("update", "alpha", "--session-prefix", "work-")
+        for args in (("update", "alpha", "--hostname", "other.invalid"),
+                     ("remove", "alpha", "--ssh")):
+            with self.assertRaisesRegex(config.SessionError, "user-owned"):
+                self.run_host(*args)
+        self.assertEqual(self.ssh.read_bytes(), original)
+
+    def test_conflicting_include_alias_and_managed_edit_are_refused(self):
+        self.ssh.parent.mkdir()
+        extra = self.ssh.parent / "custom.conf"
+        extra.write_text("Host=alpha\n  HostName existing.invalid\n")
+        self.ssh.write_text("Include custom.conf\n")
+        extra.chmod(0o600)
+        self.ssh.chmod(0o600)
+        with self.assertRaisesRegex(config.SessionError, "user-owned"):
+            self.add()
+        self.assertFalse(self.inventory.exists())
+        self.add("beta")
+        self.managed.write_bytes(self.managed.read_bytes() + b"# manual change\n")
+        with self.assertRaisesRegex(config.SessionError, "edited externally"):
+            self.run_host("remove", "beta", "--ssh")
+
+    def test_remove_ssh_and_shared_reference_guard(self):
+        self.add()
+        with mock.patch.object(host_app, "endpoint", return_value="resolved"):
+            self.run_host("add", "other", "--ssh-host", "alpha")
+        with self.assertRaisesRegex(config.SessionError, "referenced"):
+            self.run_host("remove", "alpha", "--ssh")
+        self.run_host("remove", "other")
+        self.run_host("remove", "alpha", "--ssh")
+        self.assertNotIn(b"Host alpha", self.managed.read_bytes())
+
+    def test_validation_symlinks_and_injection(self):
+        for args in (("--title-prefix", ""), ("--hostname", "x\nProxyCommand evil"), ("--port", "0")):
+            with self.assertRaises(config.SessionError):
+                self.add("alpha", *args)
+        self.assertFalse(self.inventory.exists())
+        other = self.root / "other"
+        other.mkdir()
+        self.inventory.parent.symlink_to(other, target_is_directory=True)
+        with self.assertRaisesRegex(config.SessionError, "symlinks"):
+            self.add()
+
+    def test_partial_failure_restores_prior_file_contents(self):
+        self.add()
+        old_inventory = self.inventory.read_bytes()
+        old_managed = self.managed.read_bytes()
+        original_replace = host_files.replace
+
+        def fail_inventory_once(path, content):
+            if path == self.inventory:
+                raise OSError("synthetic failure")
+            original_replace(path, content)
+
+        with mock.patch.object(host_files, "replace", side_effect=fail_inventory_once):
+            with self.assertRaisesRegex(config.SessionError, "contents restored"):
+                self.run_host("update", "alpha", "--hostname", "other.invalid", "--title-prefix", "A")
+        self.assertEqual(self.inventory.read_bytes(), old_inventory)
+        self.assertEqual(self.managed.read_bytes(), old_managed)
+
+    def test_add_never_changes_existing_managed_alias(self):
+        self.add()
+        old = self.managed.read_bytes()
+        with self.assertRaisesRegex(config.SessionError, "already managed"):
+            self.run_host("add", "other", "--ssh-host", "alpha", "--hostname", "other.invalid")
+        with self.assertRaisesRegex(config.SessionError, "casing"):
+            self.add("ALPHA")
+        self.assertEqual(self.managed.read_bytes(), old)
+
+    def test_identity_spaces_ipv6_and_missing_key_removal(self):
+        key = self.root / "key with spaces"
+        key.touch()
+        self.run_host("add", "alpha", "--hostname", "::1", "--identity-file", str(key))
+        result = subprocess.run(["ssh", "-G", "-F", str(self.ssh), "alpha"], capture_output=True, text=True, check=True)
+        self.assertIn("hostname ::1\n", result.stdout)
+        self.assertIn("identityfile " + str(key) + "\n", result.stdout)
+        key.unlink()
+        self.run_host("remove", "alpha", "--ssh")
+
+    def test_shell_launcher_and_existing_global_scope(self):
+        self.ssh.parent.mkdir()
+        original = b"User baseline\nHost unrelated\n  HostName original.invalid\n"
+        self.ssh.write_bytes(original)
+        self.ssh.chmod(0o600)
+        launcher = Path(__file__).resolve().parents[1] / "tabby-session-helper.sh"
+        environment = dict(os.environ, HOME=str(self.root), AIDEVOPS_TABBY_HOSTS=str(self.inventory))
+        result = subprocess.run(["bash", str(launcher), "host", "add", "alpha",
+                                 "--hostname", "server.invalid", "--user", "generic",
+                                 "--allow-temporary-config"], env=environment,
+                                capture_output=True, text=True, check=True)
+        self.assertIn("Will add host alpha", result.stdout)
+        self.assertTrue(self.ssh.read_bytes().endswith(original))
+        result = subprocess.run(["ssh", "-G", "-F", str(self.ssh), "unrelated"],
+                                capture_output=True, text=True, check=True)
+        self.assertIn("hostname original.invalid\n", result.stdout)
+        self.assertIn("user baseline\n", result.stdout)
 
 
 class LegacyAndRelayTests(unittest.TestCase):
