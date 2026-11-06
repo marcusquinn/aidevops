@@ -438,7 +438,7 @@ ownership_deadline_trace() {
 	invalid) PULSE_STAGE_DEADLINE_EPOCH=invalid ;;
 	expired) PULSE_STAGE_DEADLINE_EPOCH=999 ;;
 	requested) requested=200 ;;
-	prefetch_exhausted | reconcile_exhausted) requested=10 ;;
+	prefetch_exhausted | intake_exhausted) requested=10 ;;
 	esac
 	date() {
 		printf '1000\n'
@@ -456,6 +456,7 @@ ownership_deadline_trace() {
 	run_stage_with_timeout() {
 		local stage_name="$1" timeout_seconds="$2"
 		case "$stage_name" in
+		reconcile_new_external_issues) printf 'i:%s;' "$timeout_seconds" ;;
 		reconcile_issues_single_pass) printf 'r:%s;' "$timeout_seconds" ;;
 		normalize_active_issue_assignments)
 			printf 'n:%s;' "$timeout_seconds"
@@ -474,18 +475,18 @@ ownership_deadline_trace() {
 
 assert_ownership_deadline_contract() {
 	local mode actual="" expected=""
-	for mode in clamped recovery standalone async invalid expired requested prefetch_exhausted reconcile_exhausted normalize_deferred normalize_failed; do
+	for mode in clamped recovery standalone async invalid expired requested prefetch_exhausted intake_exhausted normalize_deferred normalize_failed; do
 		TESTS_RUN=$((TESTS_RUN + 1))
 		case "$mode" in
-		clamped | async) expected="r:316;n:60;rc:0;" ;;
-		recovery) expected="r:124;n:60;rc:0;" ;;
-		standalone | invalid) expected="r:380;n:212;rc:0;" ;;
+		clamped | async) expected="i:60;r:256;n:60;rc:0;" ;;
+		recovery) expected="i:60;r:64;n:60;rc:0;" ;;
+		standalone | invalid) expected="i:60;r:380;n:152;rc:0;" ;;
 		expired) expected="rc:124;" ;;
-		requested) expected="r:132;n:60;rc:0;" ;;
+		requested) expected="i:60;r:72;n:60;rc:0;" ;;
 		prefetch_exhausted) expected="rc:124;" ;;
-		reconcile_exhausted) expected="r:8;rc:124;" ;;
-		normalize_deferred) expected="r:316;n:60;rc:124;" ;;
-		normalize_failed) expected="r:316;n:60;rc:1;" ;;
+		intake_exhausted) expected="i:8;rc:124;" ;;
+		normalize_deferred) expected="i:60;r:256;n:60;rc:124;" ;;
+		normalize_failed) expected="i:60;r:256;n:60;rc:1;" ;;
 		esac
 		# Keep case statements outside command substitution for Bash 3.2.
 		actual=$(ownership_deadline_trace "$mode")
