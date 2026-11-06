@@ -67,10 +67,13 @@ class EnrollmentContract(unittest.TestCase):
                if not name.startswith(("GIT_", "AIDEVOPS_", "WORKTREE_"))}
         env.update(AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory),
                    WORKTREE_REGISTRY_DB=str(ownership), LOGFILE=os.devnull)
+        bash = shutil.which("bash", path=env.get("PATH"))
+        if bash is None:
+            self.fail("Bash is required for dispatcher integration")
 
         def select():
             return subprocess.run(  # nosec B603 # fixed selector command in owned disposable fixtures
-                ["bash", "-c", 'source "$1"; _dlw_select_issue_worktree "$2" 101 owner/repo; '
+                [bash, "-c", 'source "$1"; _dlw_select_issue_worktree "$2" 101 owner/repo; '
                  'rc=$?; printf "%s:%s:%s" "$rc" "$_DLW_REUSE_REFUSAL" "$_DLW_REUSE_PATH"',
                  "fixture", str(scripts / "pulse-dispatch-worker-systemd.sh"), str(self.repo)],
                 env=env, check=True, capture_output=True, text=True, timeout=15,
