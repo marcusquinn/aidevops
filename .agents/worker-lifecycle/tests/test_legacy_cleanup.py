@@ -400,7 +400,8 @@ class LegacyCleanupContract(unittest.TestCase):
                     stderr=b"fatal: unable to access 'https://user:token@host/private.git'\n")
             return {"generation_id": generation, "status": "held"}
 
-        with patch.object(admission_cleanup, "_candidate", side_effect=candidate):
+        with patch.object(admission_cleanup, "_candidate", side_effect=candidate), \
+                patch.object(admission_cleanup, "_pull_request_hold", return_value=None):
             first = admission_cleanup.cleanup_pass(
                 self.store, self.config, self.output, limit=1)
             second = admission_cleanup.cleanup_pass(

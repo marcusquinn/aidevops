@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from worker_lifecycle import retirement
+from worker_lifecycle import pull_requests, retirement
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
 from worker_lifecycle.cleanup import cleanup_pass, cleanup_worktree, retire_enrolled_only
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id
@@ -632,6 +632,47 @@ class RetirementContract(unittest.TestCase):
         result = cleanup_pass(self.store, self.cleanup_config(), self.output)
         self.assertEqual((result["retired"], result["failed"]), (1, 0))
         self.assertEqual((self.target / "replacement").read_text(), "keep")
+
+    def open_pr_fixture(self):
+        self.create()
+        self.git("remote", "add", "origin", "https://example.invalid/fixture/repository.git")
+        head = retirement._git("-C", str(self.target), "rev-parse", "HEAD")
+        return [{"number": 1, "head": {"ref": "unrelated", "sha": head}}]
+
+    def test_cleanup_pass_holds_tree_with_open_pull_request(self):
+        prs = self.open_pr_fixture()
+        config = self.cleanup_config()
+        with patch.object(pull_requests, "open_pull_requests", return_value=prs) as lookup:
+            report = cleanup_pass(self.store, config, self.output)
+        self.assertEqual((report["retired"], report["held"], report["failed"]), (0, 1, 0))
+        self.assertEqual(report["results"][0]["reason"], "open-pull-request")
+        lookup.assert_called_once_with("fixture/repository")
+        self.assertTrue((self.target / "work.txt").exists())
+        self.assertEqual(list(self.output.iterdir()), [])
+        # Once the PR is no longer open, normal retirement proceeds.
+        with patch.object(pull_requests, "open_pull_requests", return_value=[]):
+            report = cleanup_pass(self.store, config, self.output)
+        self.assertEqual(report["retired"], 1)
+        self.assertFalse(self.target.exists())
+
+    def test_cleanup_pass_holds_when_pull_request_state_unavailable(self):
+        self.open_pr_fixture()
+        failure = subprocess.CalledProcessError(1, ["gh", "api"])
+        with patch.object(pull_requests, "open_pull_requests", side_effect=failure):
+            report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        result = report["results"][0]
+        self.assertEqual((report["held"], report["failed"]), (1, 0))
+        self.assertEqual(result["reason"], "pull-request-state-unavailable")
+        self.assertNotIn("quarantined", result)
+        self.assertTrue(self.target.exists())
+
+    def test_cleanup_pass_resumes_planned_retirement_despite_open_pull_request(self):
+        prs = self.open_pr_fixture()
+        self.interrupt_after_move()
+        with patch.object(pull_requests, "open_pull_requests", return_value=prs) as lookup:
+            report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        self.assertEqual((report["retired"], report["failed"]), (1, 0))
+        lookup.assert_not_called()
 
     def test_explicit_cleanup_accepts_registered_quiet_repository(self):
         self.create()

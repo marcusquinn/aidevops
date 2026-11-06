@@ -1,5 +1,7 @@
 """Bounded registry-driven cleanup; repository configuration selects scope only."""
 
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path
@@ -18,6 +20,7 @@ from .cleanup_plan import enrolled_only_event_id
 from .cleanup_quarantine import CleanupQuarantine
 from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import validate_private_path as _private
+from .pull_requests import OpenPullRequestCache
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
 from .storage import LifecycleRegistry, identifier
 
@@ -110,6 +113,33 @@ def _advance(store: LifecycleRegistry, generation: str) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def _pull_request_hold(
+    store: LifecycleRegistry, repositories: dict[str, tuple[str, str]],
+    generation: str, path: Path, pull_requests: OpenPullRequestCache,
+) -> str | None:
+    """Return the automatic pass's fail-closed PR hold reason (GH#36851).
+
+    A tree whose branch or HEAD has an open PR, or whose PR state cannot be
+    read, is held before any mutation. An already-planned retirement always
+    resumes, an absent source is left to reconciliation, and unmanaged
+    repositories stay out of scope, so none of those are held here. Guards run
+    in `_candidate` order, so a changed generation still fails, never holds.
+    """
+    if _event(store, _event_id(generation, "planned")) is not None:
+        return None
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return None
+    if GenerationEnrollment(store).inspect(path) != generation:
+        raise ValueError("cleanup-generation-changed")
+    common = _git("-C", str(path), "rev-parse",
+                  "--path-format=absolute", "--git-common-dir")
+    if common not in repositories:
+        return None
+    return pull_requests.hold_reason(path, repositories[common][0])
 
 
 def _candidate(
@@ -212,8 +242,10 @@ def cleanup_pass(
 ) -> dict:
     """Budget between operations; the caller owns the hard watchdog.
 
-    No filesystem census, PR/age policy, branch removal or broad Git pruning.
-    A legacy/enrolled-only generation remains ineligible for retirement.
+    No filesystem census, age policy, branch removal or broad Git pruning.
+    One fail-closed PR hold applies: an open PR on the tree's branch or HEAD, or
+    unreadable PR state, keeps the tree (GH#36851). A legacy/enrolled-only
+    generation remains ineligible for retirement.
     """
     if not 1 <= limit <= 1000 or not 0 < budget_seconds <= 900:
         raise ValueError("invalid-cleanup-budget")
@@ -237,6 +269,7 @@ def cleanup_pass(
         create_archive_root(root)
         validate_archive_path(root)
         quarantine = CleanupQuarantine(store.directory)
+        pull_requests = OpenPullRequestCache()
         selected, report["quarantined"] = quarantine.partition(rows)
         for row in selected[:limit]:
             if time.monotonic() >= deadline:
@@ -245,7 +278,11 @@ def cleanup_pass(
             _advance(store, generation)
             report["examined"] += 1
             try:
-                result = _candidate(store, repositories, root, generation, path)
+                reason = _pull_request_hold(store, repositories, generation, path,
+                                            pull_requests)
+                result = (_candidate(store, repositories, root, generation, path)
+                          if reason is None else
+                          {"generation_id": generation, "status": "held", "reason": reason})
                 counter = {"retired": "retired", "source-absent-reconciled": "reconciled"}
                 report[counter.get(str(result["status"]), "held")] += 1
             except (ValueError, OSError, subprocess.SubprocessError) as error:

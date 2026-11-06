@@ -10,6 +10,7 @@ from pathlib import Path
 from .enrollment import _git_directory
 from .legacy_options import reconstructible_path, unrecorded
 from .legacy_proc import require_ended, require_idle_proc
+from .pull_requests import matches_open_pull_request
 from .retirement import _git, _id
 
 
@@ -63,10 +64,8 @@ def reconstructible(item, repositories, adapter, open_prs, managed=False):
     slug = repositories[common][0]
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", slug):
         raise ValueError("invalid-repository-slug")
-    for pr in open_prs(slug):
-        if (pr["head"]["sha"] == head
-                or (branch != "HEAD" and pr["head"]["ref"] == branch[11:])):
-            raise ValueError("open-pull-request")
+    if matches_open_pull_request(open_prs(slug), head, branch):
+        raise ValueError("open-pull-request")
     require_idle_proc(path)
     return {"source": str(path), "directory": _id(path), "admin": str(admin),
             "admin_identity": _id(admin), "common": common, "head": head,
