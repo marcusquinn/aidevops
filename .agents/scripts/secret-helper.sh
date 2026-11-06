@@ -1185,6 +1185,7 @@ run_secret_removal() {
 # Parse `rm` arguments into globals RM_YES and RM_NAMES (normalised, deduplicated).
 parse_rm_args() {
 	RM_YES=false
+	RM_SKIP_DEPENDENTS=false
 	RM_NAMES=()
 	local arg=""
 	local name=""
@@ -1192,6 +1193,10 @@ parse_rm_args() {
 		case "$arg" in
 		--yes | -y)
 			RM_YES=true
+			continue
+			;;
+		--skip-dependents)
+			RM_SKIP_DEPENDENTS=true
 			continue
 			;;
 		-*)
@@ -1210,7 +1215,7 @@ parse_rm_args() {
 		esac
 	done
 	if [[ ${#RM_NAMES[@]} -eq 0 ]]; then
-		print_error "Usage: aidevops secret rm NAME [NAME...] [--yes]" >&2
+		print_error "Usage: aidevops secret rm NAME [NAME...] [--yes] [--skip-dependents]" >&2
 		return 1
 	fi
 	return 0
@@ -1221,6 +1226,7 @@ parse_rm_args() {
 cmd_rm() {
 	local -a RM_NAMES=()
 	local RM_YES=false
+	local RM_SKIP_DEPENDENTS=false
 	parse_rm_args "$@" || return 1
 
 	local name="" source_name="" missing=0
@@ -1238,14 +1244,23 @@ cmd_rm() {
 	[[ "$missing" -eq 0 ]] || return 1
 
 	local registry_names=() warning_line="" warning_output=""
-	for name in "${RM_NAMES[@]}"; do
-		warning_output=$(run_secret_removal warnings "$name" 2>/dev/null) || warning_output=""
-		while IFS= read -r warning_line; do
-			[[ -n "$warning_line" ]] || continue
-			print_warning "$name: ${warning_line#*: }"
-			[[ "$warning_line" == registry:* ]] && registry_names+=("$name")
-		done <<<"$warning_output"
-	done
+	local -a warning_options=()
+	if [[ "$RM_SKIP_DEPENDENTS" == true ]]; then
+		warning_options+=(--skip-dependents)
+		print_warning "Dependents scan skipped by request; references have not been checked"
+	fi
+	if ! warning_output=$(run_secret_removal warnings "${RM_NAMES[@]}" ${warning_options[@]+"${warning_options[@]}"}); then
+		print_error "Unable to check removal metadata; nothing removed" >&2
+		return 1
+	fi
+	while IFS= read -r warning_line; do
+		[[ -n "$warning_line" ]] || continue
+		print_warning "${warning_line#*: }"
+		if [[ "$warning_line" == registry:* ]]; then
+			name=${warning_line#registry: }
+			registry_names+=("${name%% *}")
+		fi
+	done <<<"$warning_output"
 
 	local answer=""
 	if [[ "$RM_YES" != true ]]; then
@@ -1856,6 +1871,7 @@ cmd_help() {
 	echo "  check <NAME>                      Resolve by name; exit status only, no output"
 	echo "  rm <NAME> [NAME...] [--yes]       Remove from gopass + active plaintext store, then"
 	echo "                                    read back with check (alias: remove, delete)"
+	echo "    --skip-dependents                Skip reference scan only (after checking references)"
 	echo "  list                              List secret names (never values)"
 	echo "  inventory                         Names-only structured local inventory"
 	echo "  audit-credentials                 Names-only JSON Lines hygiene audit (offline)"
@@ -1873,6 +1889,7 @@ cmd_help() {
 	echo "  resolve PROVIDER                  Print default name (exit 3 none, 4 undeclared)"
 	echo "  validate                          Check the credential registry file"
 	echo "  dependents NAME [--json]          What uses NAME (+aliases) before rename/rotation"
+	echo "                                    Scan budget: 5s; timeout reports incomplete coverage"
 	echo "  verify cloudflare [NAME...]       Read-only provider check; caches accounts/zones"
 	echo "  verify aws [ACCESS_KEY_ID_NAME...] Read-only STS check; prints account and ARN only"
 	echo "  drift [--json]                    Offline expiry/overlap/ownership/freshness report"
