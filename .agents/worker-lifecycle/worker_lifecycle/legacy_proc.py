@@ -1,5 +1,7 @@
 """Fail-closed process checks for observation-era worktree retirement."""
 
+from __future__ import annotations
+
 from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
