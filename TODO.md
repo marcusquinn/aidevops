@@ -1898,7 +1898,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18880 review-bot-gate advisory for all authors; review bots never block merges #bug ref:GH#36931 pr:#36949 completed:2026-11-06
 
-- [ ] t18881 review-bot-gate: fork PRs must run main's helper, not their own head revision #auto-dispatch #bug ref:GH#36954 -> [todo/tasks/t18881-brief.md]
+- [x] t18881 review-bot-gate: fork PRs must run main's helper, not their own head revision #auto-dispatch #bug ref:GH#36954 pr:#36956 completed:2026-11-06 -> [todo/tasks/t18881-brief.md]
 
 ## In Progress
 
