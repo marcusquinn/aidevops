@@ -1699,7 +1699,25 @@ cmd_merge() {
 	# before pre-merge checks or any native/admin merge transport.
 	# shellcheck disable=SC1091
 	source "${SCRIPT_DIR}/pulse-merge-process-worker-briefed.sh" || return 1
-	_merge_worker_briefed_trust_gate "$pr_number" "$repo" "$has_admin" || return 1
+	# GH#36922: a planning-checkpoint verdict is valid for one head only; pin it
+	# via FULL_LOOP_EXPECTED_PR_HEAD_SHA so a later push is refused at merge.
+	local _planning_head_file="" _planning_head=""
+	_planning_head_file=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-head.XXXXXX") || return 1
+	WORKER_BRIEFED_PLANNING_HEAD_FILE="$_planning_head_file" \
+		_merge_worker_briefed_trust_gate "$pr_number" "$repo" "$has_admin" || {
+		rm -f "$_planning_head_file"
+		return 1
+	}
+	_planning_head=$(tr -d '[:space:]' <"$_planning_head_file")
+	rm -f "$_planning_head_file"
+	if [[ -n "$_planning_head" ]]; then
+		if [[ -n "${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}" && "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" != "$_planning_head" ]]; then
+			print_error "Merge blocked by GH#36922: PR head moved since planning-checkpoint check"
+			return 1
+		fi
+		FULL_LOOP_EXPECTED_PR_HEAD_SHA="$_planning_head"
+		export FULL_LOOP_EXPECTED_PR_HEAD_SHA
+	fi
 
 	# Gate: enforce review-bot-gate before merge.
 	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {

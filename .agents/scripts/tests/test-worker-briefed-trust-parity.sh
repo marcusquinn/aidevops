@@ -59,6 +59,9 @@ gh() {
 		[[ "$PR_FILES_API_FAIL" == 0 ]] || return 1
 		payload="$PR_FILES"
 		;;
+	repos/owner/repo/pulls/100)
+		payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
+		;;
 	repos/owner/repo/issues/42)
 		payload=$(jq -n --arg assoc "$ISSUE_ASSOC" --arg login "$ISSUE_LOGIN" --arg state "$ISSUE_STATE" \
 			--argjson labels "$ISSUE_LABELS" \

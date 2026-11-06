@@ -253,9 +253,15 @@ _PM_PLANNING_CHECKPOINT_MAX_FILES=50
 _worker_briefed_pr_is_planning_checkpoint() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local files_json="" file_count="" paths="" path=""
+	local files_json="" file_count="" paths="" path="" head_before="" head_after=""
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 2
+	# Bind the verdict to one head: read it before and after the file list and
+	# fail closed if it moved (a push between reads could swap in other files).
+	head_before=$(gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.head.sha // ""' 2>/dev/null) || return 2
+	[[ "$head_before" =~ ^[0-9a-f]{40}$ ]] || return 2
 	files_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" 2>/dev/null) || return 2
+	head_after=$(gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.head.sha // ""' 2>/dev/null) || return 2
+	[[ "$head_after" == "$head_before" ]] || return 2
 	# `arrays` emits nothing for non-array payloads, so the integer check fails closed.
 	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 2
 	[[ "$file_count" =~ ^[0-9]+$ ]] || return 2
@@ -267,6 +273,11 @@ _worker_briefed_pr_is_planning_checkpoint() {
 		*) return 1 ;;
 		esac
 	done <<<"$paths"
+	# Publish the verified head so the merge transport can pin it
+	# (--match-head-commit); a later push then cannot reuse this verdict.
+	if [[ -n "${WORKER_BRIEFED_PLANNING_HEAD_FILE:-}" ]]; then
+		printf '%s\n' "$head_before" >"$WORKER_BRIEFED_PLANNING_HEAD_FILE" || return 2
+	fi
 	return 0
 }
 
