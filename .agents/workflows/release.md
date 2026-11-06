@@ -109,10 +109,11 @@ finalizes its own lifecycle. Reuse existing routing/outcome telemetry for actual
 model, attempts, escalation and cost per verified release; include parent
 integration and repair cost, and label unavailable cost data rather than guessing.
 When publication succeeds but `terminal_receipt` is null, report **published;
-deployment deferred**, never "Release complete". A validated runtime containing
-the exact tag can be finalised by `aidevops release reconcile <source-PR>` after
-auto-update or `aidevops update`. Explicit reconciliation is lower risk than
-triggering publication-state mutations during a runtime bundle swap.
+deployment deferred**, never "Release complete". Do not hand convergence to the
+user or wait for auto-update: in the same session the primary runs
+`aidevops update` as a bounded operation, then `aidevops release reconcile
+<source-PR>`, and reports the terminal receipt. Explicit reconciliation is lower
+risk than triggering publication-state mutations during a runtime bundle swap.
 
 ## Canonical release entry point
 
