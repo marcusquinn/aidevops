@@ -5,6 +5,7 @@
 import json
 import os
 import shutil
+import signal
 # Isolated runtime tests execute repository helpers with argv-only calls.
 import subprocess  # nosec B404
 import tempfile
@@ -114,14 +115,48 @@ class SecretRemovalTests(unittest.TestCase):
         (self.creds.parent / 'repos.json').write_text(json.dumps({
             'initialized_repos': [{'path': str(repo), 'slug': 'fixture'}],
         }))
+        self.git_pid_file = self.home / 'git.pid'
+        self.env['FIXTURE_GIT_PID'] = str(self.git_pid_file)
+        self.addCleanup(self.cleanup_stalled_git)
         git = self.home / 'bin/git'
-        git.write_text('#!/usr/bin/env python3\nimport time\ntime.sleep(60)\n')
+        git.write_text('#!/usr/bin/env python3\nimport os, time\n'
+                       'from pathlib import Path\n'
+                       'Path(os.environ["FIXTURE_GIT_PID"]).write_text(str(os.getpid()))\n'
+                       'time.sleep(60)\n')
         git.chmod(0o700)
+
+    def stalled_git_running(self, pid):
+        # ps works on Linux and macOS; an unreaped zombie has already exited.
+        ps = shutil.which('ps')
+        if ps is None:
+            raise RuntimeError('These lifecycle checks require ps')
+        result = subprocess.run([ps, '-o', 'stat=', '-p', str(pid)],  # nosec B603
+                                capture_output=True, text=True, timeout=2)
+        return bool(result.stdout.strip()) and not result.stdout.strip().startswith('Z')
+
+    def cleanup_stalled_git(self):
+        if self.git_pid_file.exists():
+            pid = int(self.git_pid_file.read_text())
+            if self.stalled_git_running(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def assert_stalled_git_exited(self):
+        self.assertTrue(self.git_pid_file.exists(), 'Fake git never started')
+        pid = int(self.git_pid_file.read_text())
+        deadline = time.monotonic() + 2
+        while self.stalled_git_running(pid):
+            if time.monotonic() >= deadline:
+                self.fail('Fake git survived the dependency scan timeout')
+            time.sleep(0.05)
 
     def test_dependents_discovery_has_whole_scan_deadline_and_clean_json(self):
         self.stall_discovery()
         start = time.monotonic()
         result = self.secret('dependents', 'GP_ONE', '--json')
+        self.assert_stalled_git_exited()
         self.assertLess(time.monotonic() - start, 10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Scanning dependents', result.stderr)
@@ -133,6 +168,7 @@ class SecretRemovalTests(unittest.TestCase):
         self.stall_discovery()
         start = time.monotonic()
         result = self.secret('rm', 'GP_ONE', 'GP_TWO', '--yes')
+        self.assert_stalled_git_exited()
         self.assertLess(time.monotonic() - start, 10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr.count('Scanning dependents'), 1)
