@@ -44,21 +44,25 @@ def remove_plaintext(path, names):
     return 0
 
 
-def warnings(name):
+def warnings(targets, skip_dependents=False):
     import credential_inventory_dependents as dependents
     import credential_inventory_names as names
     import credential_inventory_store as store
 
     data = store.load()
-    if name in data['credentials']:
-        print(f'registry: {name} is still described in the credential registry')
-    related = names.related_names(data, name)
+    for name in targets:
+        if name in data['credentials']:
+            print(f'registry: {name} is still described in the credential registry')
+    if skip_dependents:
+        return 0
+    related = list(dict.fromkeys(alias for name in targets for alias in names.related_names(data, name)))
     result = dependents.find_dependents(related)
     count = len(result['literal'])
+    label = ', '.join(targets)
     if count:
-        print(f'dependents: {count} literal reference(s) to {name}; see: aidevops secret dependents {name}')
-    elif not result['complete']:
-        print(f'dependents: scan incomplete for {name}; see: aidevops secret dependents {name}')
+        print(f'dependents: {count} literal reference(s) to {label}; inspect with: aidevops secret dependents NAME')
+    if not result['complete']:
+        print(f'dependents: scan incomplete for {label}; inspect with: aidevops secret dependents NAME')
     return 0
 
 
@@ -76,11 +80,14 @@ def main(argv):
     command, args = (argv[0], argv[1:]) if argv else ('', [])
     if command == 'plaintext' and len(args) >= 2 and all(NAME.fullmatch(n) for n in args[1:]):
         return remove_plaintext(args[0], set(args[1:]))
-    if command == 'warnings' and len(args) == 1 and NAME.fullmatch(args[0]):
-        return warnings(args[0])
+    if command == 'warnings':
+        skip = args[-1:] == ['--skip-dependents']
+        targets = args[:-1] if skip else args
+        if targets and all(NAME.fullmatch(name) for name in targets):
+            return warnings(targets, skip_dependents=skip)
     if command == 'registry' and args and all(NAME.fullmatch(n) for n in args):
         return remove_registry(args)
-    print('Usage: secret-removal.py plaintext FILE NAME... | warnings NAME | registry NAME...', file=sys.stderr)
+    print('Usage: secret-removal.py plaintext FILE NAME... | warnings NAME... [--skip-dependents] | registry NAME...', file=sys.stderr)
     return 2
 
 

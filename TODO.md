@@ -1880,6 +1880,22 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18871 Credit same-login CI quota spend across tokens and log every CI sample decision #auto-dispatch #feat ref:GH#36804 pr:#36815 completed:2026-11-05
 
+- [x] t18872 sandbox-exec-helper: stop full-process-table polling in the worker wait loop (~0.2 core per wrapper) #bug ref:GH#36843 pr:#36846 completed:2026-11-05
+
+- [x] t18873 Preserve or reject config.worktree in Git-only worktree archive capture #auto-dispatch #bug ref:GH#36857 pr:#36859 completed:2026-11-06
+
+- [x] t18874 Worker-lifecycle PR hold must see open PRs from a configured fork into its upstream #auto-dispatch #bug ref:GH#36863 pr:#36867 completed:2026-11-06
+
+- [ ] t18875 fix(review-bot-gate): request-retry ignores superseded-head reviews and retries per head #auto-dispatch #bug ref:GH#36899
+
+- [ ] t18876 fix(review-bot-gate): recover external PRs stuck after CodeRabbit review limit #auto-dispatch #bug ref:GH#36900
+
+- [ ] t18877 feat(full-loop): audited maintainer override to admin-merge past a stuck review-bot-gate #auto-dispatch #feat ref:GH#36901
+
+- [ ] t18878 fix(approval): canonical review-bot retry comment must not stale PR approvals #auto-dispatch #bug ref:GH#36902
+
+- [ ] t18879 Verify Buzz Desktop helper against block/buzz-app Desktop #auto-dispatch #bug #interactive tier:standard ~2h ref:GH#36926 logged:2026-11-06 -> [todo/tasks/t18879-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

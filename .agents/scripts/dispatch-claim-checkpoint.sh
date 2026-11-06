@@ -130,32 +130,42 @@ cmd_abort_pr_checkpoint_claim() {
 DCH_EXPIRED_READY_REASON="expired_ready_lease_reconciled"
 
 # GH#36544: select the caller's own unedited checkpoint claim whose ready lease
-# expired without any release or terminal lease. Prints
+# expired without a terminal lease. Ordinary releases require explicit opt-in. Prints
 # `claim_id<TAB>token<TAB>attempt<TAB>open|released`, or one `deny:<reason>`.
-# `released` means this command's own recovery release already exists and only
-# the terminal lease is missing (an interrupted earlier run).
+# `released` means an accepted release exists and only the terminal is missing.
 _dch_expired_ready_claim() {
 	local comments="$1" runner="$2" claim_id="$3" session="$4" device="$5" now="$6"
+	local complete_released="${7:-false}"
 	jq -r --arg runner "$runner" --argjson claim_id "$claim_id" --arg session "$session" \
-		--arg device "$device" --argjson now "$now" --arg reason "$DCH_EXPIRED_READY_REASON" '
+		--arg device "$device" --argjson now "$now" --arg reason "$DCH_EXPIRED_READY_REASON" \
+		--argjson complete_released "$complete_released" '
 		def fields: [scan("(?:^|\\s)([a-z_]+)=([^\\s]+)") | {key: .[0], value: .[1]}] | from_entries;
 		def own: .user.login == $runner and (.updated_at // .created_at) == .created_at
 			and (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"));
 		def event: test("(^|\n)(DISPATCH_CLAIM |DISPATCH_LEASE |CLAIM_RELEASED |Dispatching worker)");
 		def lines($prefix): split("\n")[] | select(startswith($prefix));
+		def releases: lines("CLAIM_RELEASED ");
 		def norm: if . == null or . == "" or . == "attempt:" or . == "unknown" then ""
 			elif startswith("attempt:") then . else "attempt:" + . end;
 		def deny($reason): "deny:" + $reason;
+		def identity_mismatch: deny("identity_mismatch");
 		def bound($token): any(.body | split("\n")[] | fields | (.lease_token, .nonce); . == $token);
-		def recovery: own and (.body | [lines("CLAIM_RELEASED ") | fields
+		def recovery: own and (.body | [releases | fields
 			| select(.reason == $reason and .claim_id == ($claim_id | tostring))] | length == 1);
+		# Explicit recovery never accepts an identity-less or ambiguous ordinary release.
+		def ordinary_release($token; $attempt): own and (.body | [releases] | length == 1)
+			and (.body | releases | fields
+			| (.reason | IN("blocked", "clean", "worker_complete")) and .runner == $runner
+			and .claim_id == ($claim_id | tostring) and .nonce == $token and .lease_token == $token
+			and .device == $device and .session == $session
+			and ((.attempt_id // $attempt) | norm) == $attempt);
 		[.[][]] as $all
 		| [$all[] | select(.id == $claim_id)] as $matches
 		| [$matches[].body | lines("DISPATCH_CLAIM ") | fields] as $cf
 		| if ($matches | length) != 1 or ($cf | length) != 1 then deny("claim_unmatched")
 		else $matches[0] as $c | $cf[0] as $f | ($f.lease_token // "") as $token
 		| if ($c | own | not) or $f.runner != $runner or $token == "" or $f.nonce != $token
-			or $f.session != $session or $f.device != $device then deny("identity_mismatch")
+			or $f.session != $session or $f.device != $device then identity_mismatch
 		elif ($f.checkpoint_approval // "") == "" then deny("not_checkpoint_claim")
 		else [$all[] | select(.id > $claim_id and (.body | event))] as $later
 		| [$later[] | select(bound($token))] as $mine
@@ -163,26 +173,37 @@ _dch_expired_ready_claim() {
 		| [$mine[].body | lines("DISPATCH_LEASE ") | fields] as $leases
 		| [$leases[] | select(.phase == "ready")] as $ready
 		| ($ready | last // {} | .attempt_id | norm) as $attempt
+		| (if $complete_released then [$mine[] | select(ordinary_release($token; $attempt))]
+			else [] end) as $ordinary
+		| ($recoveries + $ordinary) as $closers
 		| [$f, $leases[] | .expires_at // ""] as $expiries
 		| if any($later[]; (bound($token) | not) and (recovery | not)) then deny("later_coordination")
 		elif any($mine[]; own | not) or any($leases[]; .lease_token != $token or .session != $session
 			or .device != $device or (.phase | IN("prelaunch", "ready", "terminal") | not))
-			then deny("identity_mismatch")
+			then identity_mismatch
 		elif any($leases[]; .phase == "terminal") then deny("already_terminal")
-		# Only one recovery release from this command, after every lease and for the
-		# same attempt, may already exist; any other release closed the attempt.
-		elif any($mine[]; .body | test("(^|\n)CLAIM_RELEASED ")) or ($recoveries | length) > 1
-			or (($recoveries | length) == 1 and (($recoveries[0].id < ($mine | map(.id) | max))
-				or ([$recoveries[0].body | lines("CLAIM_RELEASED ") | fields | .attempt_id | norm][0]
-					!= $attempt)))
+		# Default behavior stays strict. Explicit mode permits one fully bound
+		# ordinary release, after all the episode events, without replacing it.
+		elif ([$mine[] | select(.body | test("(^|\n)CLAIM_RELEASED "))] | length) != ($ordinary | length)
+			or ($closers | length) > 1
+			or (($closers | length) == 1 and ($closers[0].id <=
+				([$mine[] | select(.id != $closers[0].id) | .id] | max // $claim_id)))
 			then deny("already_released")
+		elif ($recoveries | length) == 1 and
+			([$recoveries[0].body | releases | fields | .attempt_id | norm][0] != $attempt)
+			then deny("already_released")
+		elif $complete_released and ($closers | length) == 0 then deny("not_released")
+		elif $complete_released and (any($leases[]; (.attempt_id | norm) != $attempt)
+			or any($mine[] | select(.body | test("(^|\n)Dispatching worker")); .body | fields
+				| .session != $session or .device != $device or (.attempt_id | norm) != $attempt))
+			then identity_mismatch
 		elif ($ready | length) == 0 then deny("not_ready")
 		elif $attempt == "" then deny("attempt_unknown")
 		# Unknown expiry is never treated as elapsed; the lease predicate keeps it active.
 		elif any($expiries[]; test("^[1-9][0-9]*$") | not) then deny("expiry_unknown")
 		elif ($expiries | map(tonumber) | max) >= $now then deny("lease_live")
 		else [($c.id | tostring), $token, $attempt,
-			(if ($recoveries | length) == 1 then "released" else "open" end)] | @tsv
+			(if ($closers | length) == 1 then "released" else "open" end)] | @tsv
 		end end end' <<<"$comments"
 	return $?
 }
@@ -202,9 +223,10 @@ _dch_session_has_live_executor() {
 
 _dch_expired_ready_decision() {
 	local issue="$1" repo="$2" runner="$3" claim_id="$4" session="$5" comments=""
+	local complete_released="${6:-false}"
 	comments=$(_dch_issue_comments "$issue" "$repo") || return 1
 	_dch_expired_ready_claim "$comments" "$runner" "$claim_id" "$session" \
-		"$(_resolve_device_id)" "$(_now_epoch)"
+		"$(_resolve_device_id)" "$(_now_epoch)" "$complete_released"
 	return $?
 }
 
@@ -222,9 +244,18 @@ ${line}
 # process still runs that session. It appends one release and one terminal
 # lease; published events are never edited. The closed attempt grants nothing:
 # continuation still needs a fresh approval whose released_successors binds it.
+# Explicit --complete-released accepts only a fully bound supported release and
+# appends its missing terminal, never a replacement release or approval.
 cmd_close_expired_pr_checkpoint_lease() {
 	local issue="${1:-}" repo="${2:-}" claim_id="${3:-}" session="${4:-}"
 	local runner="" result="" token="" attempt="" state="" device=""
+	local option="${5:-}" complete_released="false"
+	[[ $# -le 5 ]] || return 2
+	case "$option" in
+	"") ;;
+	--complete-released) complete_released="true" ;;
+	*) return 2 ;;
+	esac
 	[[ "$issue" =~ ^[1-9][0-9]*$ && "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
 		"$claim_id" =~ ^[1-9][0-9]*$ && "$session" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
 	runner=$(_resolve_runner "") || return 1
@@ -235,7 +266,7 @@ cmd_close_expired_pr_checkpoint_lease() {
 		return 1
 	fi
 	device=$(_resolve_device_id) || return 1
-	result=$(_dch_expired_ready_decision "$issue" "$repo" "$runner" "$claim_id" "$session") || return 1
+	result=$(_dch_expired_ready_decision "$issue" "$repo" "$runner" "$claim_id" "$session" "$complete_released") || return 1
 	if [[ "$result" == deny:* || -z "$result" ]]; then
 		printf 'PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=%s\n' "${result#deny:}" >&2
 		return 1
@@ -243,12 +274,21 @@ cmd_close_expired_pr_checkpoint_lease() {
 	IFS=$'\t' read -r _ token attempt state <<<"$result"
 	if [[ "$state" == open ]]; then
 		_dch_post_issue_event "$issue" "$repo" "CLAIM_RELEASED reason=${DCH_EXPIRED_READY_REASON} runner=${runner} ts=$(_now_utc) claim_id=${claim_id} attempt_id=${attempt} device=${device} session=${session}" || return 1
-		# Re-read at the write boundary: only this command's release may follow.
-		result=$(_dch_expired_ready_decision "$issue" "$repo" "$runner" "$claim_id" "$session") || return 1
-		if [[ "$result" != "${claim_id}"$'\t'*$'\t'released ]]; then
-			printf 'PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=%s\n' "${result#deny:}" >&2
-			return 1
-		fi
+	fi
+	# Recheck shutdown and the same complete identity at the final write boundary,
+	# including when an ordinary release already existed before this invocation.
+	if _dch_session_has_live_executor "$session"; then
+		printf 'PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=executor_live\n' >&2
+		return 1
+	fi
+	result=$(_dch_expired_ready_decision "$issue" "$repo" "$runner" "$claim_id" "$session" "$complete_released") || return 1
+	if [[ "$result" == deny:* ]]; then
+		printf 'PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=%s\n' "${result#deny:}" >&2
+		return 1
+	fi
+	if [[ "$result" != "${claim_id}"$'\t'"${token}"$'\t'"${attempt}"$'\t'released ]]; then
+		printf 'PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=history_changed\n' >&2
+		return 1
 	fi
 	_dch_post_issue_event "$issue" "$repo" "DISPATCH_LEASE phase=terminal lease_token=${token} device=${device} session=${session} expires_at=0 ts=$(_now_utc) attempt_id=${attempt}" || return 1
 	printf 'PR_CHECKPOINT_LEASE_CLOSED claim_id=%s attempt=%s\n' "$claim_id" "$attempt"

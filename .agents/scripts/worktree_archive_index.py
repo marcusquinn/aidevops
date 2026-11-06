@@ -64,7 +64,12 @@ def git_index_state(path, head=None):
     # Git-only preserves current HEAD, not abandoned reflog/previous-HEAD history.
     # Unknown administration, unique drafts and interrupted operations still need
     # preservation. Structured merges returned above preserve required ORIG_HEAD.
-    administration(root, admin=admin)
+    state = administration(root, admin=admin)
+    if state['files'].get('config.worktree'):
+        # GH#36883: only known runtime-local keys are preserved (as bytes, never
+        # restored); unknown, mixed or comment-only configuration is refused.
+        from worktree_archive_runtime_config import classify
+        classify(root, admin)
     if (admin / 'SQUASH_MSG').exists():
         raise ValueError('uncommitted squash draft requires separate preservation')
     supported_history(root, admin, require_reachable_history=False)

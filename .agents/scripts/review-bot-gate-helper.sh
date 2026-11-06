@@ -223,14 +223,10 @@ classify_infra_rate_limit() {
 	local repo_slug="$2"
 	local rate_limit_behavior completion_behavior repos_json strict_tool_override="$RBG_FALSE"
 
-	#aidevops:trust-boundary
-	case "$author_association" in
-	OWNER | MEMBER | COLLABORATOR) ;;
-	*)
-		printf '%s\n' "INFRA_RATE_LIMITED"
-		return 0
-		;;
-	esac
+	# GH#36931: add-on review is advisory for every author. External-PR trust is
+	# exact-head maintainer crypto approval (pulse + full-loop), not bot review.
+	# The association argument is retained for CLI compatibility.
+	: "$author_association"
 
 	rate_limit_behavior=$(_get_rate_limit_behavior "$repo_slug" "")
 	completion_behavior=$(_get_completion_behavior "$repo_slug" "")
@@ -332,21 +328,15 @@ _get_completion_behavior() {
 }
 
 _review_gate_requires_completed_review() {
-	# Add-on review is advisory by default. Explicit strict completion is the
-	# single opt-in that turns missing/incomplete provider evidence into a merge
-	# wait. Preserve the GH#17671 external-contributor defence independently of
-	# user preference: untrusted/unknown authors still require review evidence.
+	# Add-on review is advisory by default for every author (GH#36931): review
+	# bots feed follow-up issues and never hold merge progress. Explicit strict
+	# completion is the single opt-in that turns missing/incomplete provider
+	# evidence into a merge wait. External-contributor trust (GH#17671) is
+	# enforced by exact-head maintainer crypto approval in pulse and full-loop.
 	local repo_slug="$1"
-	local author_association="${REVIEW_GATE_AUTHOR_ASSOCIATION:-}"
 	local behavior=""
 	local repos_json="${HOME}/.config/aidevops/repos.json"
 	local strict_tool_override="$RBG_FALSE"
-
-	#aidevops:trust-boundary
-	case "$author_association" in
-	OWNER | MEMBER | COLLABORATOR) ;;
-	*) return 0 ;;
-	esac
 
 	behavior=$(_get_completion_behavior "$repo_slug" "")
 	[[ "$behavior" == "$RBG_COMPLETION_STRICT" ]] && return 0
@@ -370,7 +360,7 @@ _emit_advisory_or_wait() {
 	if _review_gate_requires_completed_review "$repo_slug"; then
 		echo "WAITING"
 		echo "${detail}" >&2
-		echo "Review completion is required by explicit strict policy or the external-contributor trust boundary." >&2
+		echo "Review completion is required by explicit strict policy." >&2
 		return 1
 	fi
 
@@ -1900,9 +1890,10 @@ do_status_json() {
 	OWNER | MEMBER | COLLABORATOR) author_class="$RBG_AUTHOR_CLASS_TRUSTED" ;;
 	esac
 
-	# #aidevops:trust-boundary — SKIP, advisory completion, and rate-limit grace are trusted-author
-	# policy outcomes. External contributors require a real PASS; malformed or
-	# metadata-less evidence can never authorize an advisory merge decision.
+	# #aidevops:trust-boundary — SKIP is a trusted-author label outcome. Advisory
+	# completion and rate-limit grace apply to every author (GH#36931): external
+	# merge authority is exact-head maintainer crypto approval, enforced outside
+	# this gate. Malformed or metadata-less evidence never authorizes a decision.
 	case "$output" in
 	"$status_pass")
 		if [[ "$head_stable" == "true" && -n "$author_login" ]]; then
@@ -1919,19 +1910,15 @@ do_status_json() {
 		fi
 		;;
 	P[A]SS_RATE_LIMITED)
-		if [[ "$author_class" == "$RBG_AUTHOR_CLASS_TRUSTED" && "$head_stable" == "true" ]]; then
+		if [[ "$head_stable" == "true" ]]; then
 			permitted="true"
-			reason="trusted_rate_limit_grace"
-		else
-			reason="external_rate_limit_grace_denied"
+			reason="${author_class}_rate_limit_grace"
 		fi
 		;;
 	P[A]SS_ADVISORY)
-		if [[ "$author_class" == "$RBG_AUTHOR_CLASS_TRUSTED" && "$head_stable" == "true" ]]; then
+		if [[ "$head_stable" == "true" ]]; then
 			permitted="true"
-			reason="trusted_advisory_default"
-		else
-			reason="external_advisory_denied"
+			reason="${author_class}_advisory_default"
 		fi
 		;;
 	esac
@@ -2081,29 +2068,31 @@ do_list() {
 }
 
 has_formal_reviews() {
-	# Check if the PR has at least one formal GitHub review (any state).
+	# Superseded reviews must not suppress recovery for the current head.
 	local pr_number="$1"
 	local repo="$2"
+	local head_sha="$3"
 
-	local count
-	count=$(gh pr view "$pr_number" --repo "$repo" \
-		--json reviews --jq '.reviews | length' || echo "0")
-	if [[ "$count" -gt 0 ]]; then
+	# Emit matches rather than per-page counts: direct queries are paginated.
+	local matching_reviews
+	matching_reviews=$(_rbg_query_evidence_collection "$pr_number" "$repo" reviews \
+		".[] | select(.commit_id == \"${head_sha}\") | .commit_id") || return 2
+	if [[ -n "$matching_reviews" ]]; then
 		return 0
 	fi
 	return 1
 }
 
 has_retry_comment() {
-	# Check if we already posted a review retry request on this PR.
-	# Looks for our specific marker comment to ensure idempotency.
+	# Legacy PR-wide markers cannot identify the head they requested.
 	local pr_number="$1"
 	local repo="$2"
+	local head_sha="$3"
 
-	local marker="<!-- review-bot-retry-requested -->"
+	local marker="<!-- review-bot-retry-requested head=${head_sha} -->"
 	local comments
 	comments=$(_rbg_query_evidence_collection "$pr_number" "$repo" issue-comments \
-		'.[].body' || echo "")
+		'.[].body') || return 2
 	if echo "$comments" | grep -qF "$marker"; then
 		return 0
 	fi
@@ -2144,18 +2133,34 @@ do_request_retry() {
 	local pr_number="$1"
 	local repo="$2"
 
-	# If formal reviews already exist, nothing to do
-	if has_formal_reviews "$pr_number" "$repo"; then
+	# Always resolve the live head, not a caller's possibly stale expected head.
+	local head_sha
+	head_sha=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null) || return 2
+	if [[ ! "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+		echo "ERROR: Cannot resolve current PR head for retry." >&2
+		return 2
+	fi
+	local REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha"
+	local evidence_rc=0
+
+	# Only formal reviews of this exact head suppress a retry.
+	if has_formal_reviews "$pr_number" "$repo" "$head_sha"; then
 		echo "HAS_REVIEWS"
-		echo "PR already has formal reviews — no retry needed." >&2
+		echo "PR current head already has formal reviews — no retry needed." >&2
 		return 0
+	else
+		evidence_rc=$?
+		[[ "$evidence_rc" -eq 1 ]] || return 2
 	fi
 
 	# If we already requested a retry, don't spam
-	if has_retry_comment "$pr_number" "$repo"; then
+	if has_retry_comment "$pr_number" "$repo" "$head_sha"; then
 		echo "ALREADY_REQUESTED"
-		echo "Retry already requested on PR #${pr_number} — waiting for bot response." >&2
+		echo "Retry already requested on PR #${pr_number} head ${head_sha} — waiting for bot response." >&2
 		return 0
+	else
+		evidence_rc=$?
+		[[ "$evidence_rc" -eq 1 ]] || return 2
 	fi
 
 	# Check if any bots posted rate-limit notices
@@ -2170,7 +2175,7 @@ do_request_retry() {
 
 	# Post retry request with idempotency marker
 	local comment_body
-	comment_body="<!-- review-bot-retry-requested -->
+	comment_body="<!-- review-bot-retry-requested head=${head_sha} -->
 @coderabbitai review
 
 Review bots were rate-limited when this PR was created (affected: ${rate_limited_bots% }). Requesting a review retry."
@@ -2187,7 +2192,7 @@ Review bots were rate-limited when this PR was created (affected: ${rate_limited
 }
 
 do_batch_retry() {
-	# GH#3932: Process all open PRs with 0 formal reviews, request retries
+	# GH#3932: Process open PRs lacking current-head reviews, request retries
 	# for rate-limited ones. Staggers requests with a delay between each to
 	# avoid re-triggering CodeRabbit's hourly rate limit.
 	#
@@ -2197,15 +2202,14 @@ do_batch_retry() {
 
 	echo "Scanning open PRs in ${repo} for rate-limited reviews..." >&2
 
-	# Get all open PRs with 0 formal reviews
+	# Historical reviews must not exclude a PR; request-retry checks its live head.
 	local pr_numbers
 	pr_numbers=$(gh pr list --repo "$repo" --state open --limit 100 \
-		--json number,reviews \
-		--jq '[.[] | select((.reviews | length) == 0)] | .[].number' || echo "")
+		--json number --jq '.[].number' || echo "")
 
 	if [[ -z "$pr_numbers" ]]; then
 		echo "NO_ACTION"
-		echo "No open PRs with 0 formal reviews found." >&2
+		echo "No open PRs found." >&2
 		return 0
 	fi
 

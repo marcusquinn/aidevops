@@ -23,7 +23,10 @@ OPERATIONS = {"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG"}
 # Runtime requests and generation identity are not Git state or grants to restore.
 # A restored worktree must enroll a new generation, never inherit the source UUID.
-RUNTIME_ADMIN_FILES = frozenset({"aidevops-permission-pending", "aidevops-generation.json"})
+# Codex records its session thread in codex-thread.json (GH#36854); a restore
+# must not resume or impersonate the source session.
+RUNTIME_ADMIN_FILES = frozenset({"aidevops-permission-pending", "aidevops-generation.json",
+                                 "codex-thread.json"})
 IGNORED_ADMIN_FILES = {False: RUNTIME_ADMIN_FILES,
                       True: RUNTIME_ADMIN_FILES | {"commondir", "gitdir"}}
 

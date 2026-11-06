@@ -376,7 +376,7 @@ cmd_help() {
 	echo "  tabby-helper.sh status     Show profile and pending reconciliation status"
 	echo "  tabby-helper.sh zshrc      Deprecated no-op (TABBY_AUTORUN is unused)"
 	echo "  tabby-helper.sh fix-shell  Ensure default local profile uses /bin/zsh (macOS)"
-	printf '%s\n' "  tabby-helper.sh sessions   Remote tmux tabs: new/restore/list/doctor (--help)"
+	printf '%s\n' "  tabby-helper.sh sessions   Remote tmux tabs: new/restore/list/doctor/host (--help)"
 	echo "  tabby-helper.sh help       Show this help"
 	echo ""
 	echo "Profiles are created with:"

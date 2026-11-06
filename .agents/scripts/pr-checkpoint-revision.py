@@ -16,8 +16,9 @@ import sys
 
 from pr_checkpoint_events import (EVENTS, events, release_for, released_attempt_token,
                                   successors_valid, timestamp, trusted)
-from pr_checkpoint_history import (UNATTRIBUTED, explain_released_successor_history,
-                                   released_successor_history)
+from pr_checkpoint_episodes import TERMINAL_WITHOUT_RELEASE
+from pr_checkpoint_history import explain_reviewed_successor_history
+from pr_checkpoint_unattributed import UNATTRIBUTED
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
 
@@ -67,14 +68,21 @@ def approved_comment(data, comment, now):
 
 def history_approved(data, comments, approval, approval_id, closing):
     trusted_logins = data.get("trusted_logins", ())
-    history = released_successor_history(comments, approval["release_id"], approval_id, closing, trusted_logins)
+    proposed = approval.get("released_successors", [])
+    terminal_ids = [item["terminal_id"] for item in proposed
+                    if item.get("outcome") == TERMINAL_WITHOUT_RELEASE]
+    approval_comment = next(c for c in comments if c["id"] == approval_id)
+    history, _ = explain_reviewed_successor_history(
+        comments, (approval["release_id"], approval_id), closing,
+        {"trusted_logins": trusted_logins, "terminal_ids": acknowledgement_ids(terminal_ids),
+         "before": timestamp(approval_comment["created_at"])})
     # Every entry, including claim_only_no_worker and blocked_before_ready
     # (GH#35683) closures, must be acknowledged exactly as generated.
     if history is None or history != approval.get("released_successors", []):
         return False
     # GH#36593: an unattributed release has no claim; any token it names is
     # still fenced so a live claim cannot reuse it.
-    historical_ids = {item.get("claim_id", item["release_id"]) for item in history}
+    historical_ids = {item["claim_id"] if "claim_id" in item else item["release_id"] for item in history}
     used_tokens = {f.get("lease_token") for c, _, f in
                     events(comments, approval["release_id"], approval_id, trusted_logins)
                    if c["id"] in historical_ids}
@@ -162,7 +170,15 @@ def require_unattributed_acknowledgement(history, acknowledged):
             "no approval generated. Inspect them, then rerun approval-template with "
             f"--acknowledge-unattributed={ids} to accept them explicitly")
     raise ValueError("acknowledged comment ids are not unattributed releases in this history; "
-                     "no approval generated")
+                      "no approval generated")
+
+
+def acknowledgement_ids(value):
+    """Reject loose, duplicate or non-comment identifiers before enabling recovery."""
+    if (not isinstance(value, list) or any(type(item) is not int or item <= 0 for item in value)
+            or len(set(value)) != len(value)):
+        raise ValueError("terminal-without-release acknowledgement must list unique positive comment ids")
+    return value
 
 
 def template(data):
@@ -188,11 +204,17 @@ def template(data):
             f"release closing {approval['attempt']} with its poster's ready lease; dispatch-approved would "
             "reject this approval, so none was generated")
     closing = (release["user"]["login"], released_attempt_token(comments, approval, release, trusted_logins))
-    history, rejection = explain_released_successor_history(
-        comments, release["id"], float("inf"), closing, trusted_logins)
+    terminal_ids = acknowledgement_ids(data.get("acknowledge_terminal_without_release", []))
+    now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
+    history, rejection = explain_reviewed_successor_history(
+        comments, (release["id"], float("inf")), closing,
+        {"trusted_logins": trusted_logins, "terminal_ids": terminal_ids, "before": now})
     if history is None:
         raise ValueError("intervening coordination is not fully released; no approval generated; "
-                         + rejection_diagnostic(rejection))
+                          + rejection_diagnostic(rejection))
+    if sorted(terminal_ids) != sorted(item["terminal_id"] for item in history
+                                     if item.get("outcome") == TERMINAL_WITHOUT_RELEASE):
+        raise ValueError("acknowledged terminal ids do not match terminal-without-release episodes")
     require_unattributed_acknowledgement(history, data.get("acknowledge_unattributed", []))
     if history:
         approval["released_successors"] = history

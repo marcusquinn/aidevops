@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from worker_lifecycle import retirement
+from worker_lifecycle import pull_requests, retirement
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
 from worker_lifecycle.cleanup import cleanup_pass, cleanup_worktree, retire_enrolled_only
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id
@@ -125,6 +125,79 @@ class RetirementContract(unittest.TestCase):
         (self.target / "replacement").write_text("keep")
         self.assertEqual(self.retire(), result)
         self.assertEqual((self.target / "replacement").read_text(), "keep")
+
+    def codex_config(self):
+        """Install runtime-local configuration in the disposable worktree."""
+        self.git("config", "extensions.worktreeConfig", "true")
+        admin = retirement._git("-C", str(self.target), "rev-parse", "--absolute-git-dir")
+        config = Path(admin) / "config.worktree"
+        config.write_bytes(b'[codex]\n\tlocalEnvironmentConfigPath = /fixture/environment.toml\n')
+        return config
+
+    def test_codex_config_retirement_preserves_bytes_without_restoring_config(self):
+        """Retire through the real backend while retaining omitted config bytes."""
+        self.create()
+        config = self.codex_config()
+        content = config.read_bytes()
+        result = self.retire()
+        self.assertEqual(result["status"], "retired")
+        self.assertFalse(self.target.exists())
+        self.assertFalse(config.exists())
+        self.assertNotIn(f"worktree {self.target}\n", self.git("worktree", "list", "--porcelain"))
+        archive = Path(result["archive"])
+        self.assertEqual((archive / "worktree-config-v1").read_bytes(), content)
+        _helper("verify", str(archive))
+        restored = self.root / "codex-restored"
+        _helper("restore", str(archive), "--target", str(restored), "--verification-copy")
+        admin = retirement._git("-C", str(restored), "rev-parse", "--absolute-git-dir")
+        self.assertFalse((Path(admin) / "config.worktree").exists())
+        self.assertEqual((restored / "work.txt").read_text(), "unfinished result")
+
+    def test_codex_config_does_not_authorize_unowned_retirement(self):
+        """Runtime config must not bypass the existing ownership requirement."""
+        self.git("worktree", "add", "--detach", str(self.target))
+        GenerationEnrollment(self.store).resolve(self.target, create=True)
+        config = self.codex_config()
+        content = config.read_bytes()
+        self.assertEqual(self.retire()["status"], "coverage-gap")
+        self.assertTrue(self.target.is_dir())
+        self.assertEqual(config.read_bytes(), content)
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_codex_config_preservation_failure_keeps_source(self):
+        """Mixed runtime and unknown keys fail closed before source removal."""
+        self.create()
+        config = self.codex_config()
+        content = config.read_bytes() + b'[fixture]\n\tprivate = keep\n'
+        config.write_bytes(content)
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
+            self.retire()
+        self.assertIn("git_admin:requires_preservation:config.worktree", str(caught.exception.stderr))
+        self.assertTrue(self.target.is_dir())
+        self.assertEqual(config.read_bytes(), content)
+        self.assertEqual((self.target / "work.txt").read_text(), "unfinished result")
+
+    def test_codex_config_drift_before_relocation_keeps_source(self):
+        """Changed config invalidates preservation proof at the retirement boundary."""
+        self.create()
+        config = self.codex_config()
+        original = config.read_bytes()
+        changed = original.replace(b'environment', b'other')
+        finish = retirement._finish
+
+        def changed_source(*arguments):
+            """Inject a config write after capture and before relocation."""
+            config.write_bytes(changed)
+            return finish(*arguments)
+
+        with patch.object(retirement, "_finish", side_effect=changed_source):
+            with self.assertRaisesRegex(StoreConflict, "source-changed-before-relocation"):
+                self.retire()
+        self.assertTrue(self.target.is_dir())
+        self.assertEqual(config.read_bytes(), changed)
+        self.assertEqual((self.target / "work.txt").read_text(), "unfinished result")
+        archive = next(self.output.rglob("worktree-config-v1"))
+        self.assertEqual(archive.read_bytes(), original)
 
     def test_resume_after_move_preserves_public_replacement(self):
         self.create()
@@ -632,6 +705,47 @@ class RetirementContract(unittest.TestCase):
         result = cleanup_pass(self.store, self.cleanup_config(), self.output)
         self.assertEqual((result["retired"], result["failed"]), (1, 0))
         self.assertEqual((self.target / "replacement").read_text(), "keep")
+
+    def open_pr_fixture(self):
+        self.create()
+        self.git("remote", "add", "origin", "https://example.invalid/fixture/repository.git")
+        head = retirement._git("-C", str(self.target), "rev-parse", "HEAD")
+        return [{"number": 1, "head": {"ref": "unrelated", "sha": head}}]
+
+    def test_cleanup_pass_holds_tree_with_open_pull_request(self):
+        prs = self.open_pr_fixture()
+        config = self.cleanup_config()
+        with patch.object(pull_requests, "open_pull_requests", return_value=prs) as lookup:
+            report = cleanup_pass(self.store, config, self.output)
+        self.assertEqual((report["retired"], report["held"], report["failed"]), (0, 1, 0))
+        self.assertEqual(report["results"][0]["reason"], "open-pull-request")
+        lookup.assert_called_once_with("fixture/repository")
+        self.assertTrue((self.target / "work.txt").exists())
+        self.assertEqual(list(self.output.iterdir()), [])
+        # Once the PR is no longer open, normal retirement proceeds.
+        with patch.object(pull_requests, "open_pull_requests", return_value=[]):
+            report = cleanup_pass(self.store, config, self.output)
+        self.assertEqual(report["retired"], 1)
+        self.assertFalse(self.target.exists())
+
+    def test_cleanup_pass_holds_when_pull_request_state_unavailable(self):
+        self.open_pr_fixture()
+        failure = subprocess.CalledProcessError(1, ["gh", "api"])
+        with patch.object(pull_requests, "open_pull_requests", side_effect=failure):
+            report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        result = report["results"][0]
+        self.assertEqual((report["held"], report["failed"]), (1, 0))
+        self.assertEqual(result["reason"], "pull-request-state-unavailable")
+        self.assertNotIn("quarantined", result)
+        self.assertTrue(self.target.exists())
+
+    def test_cleanup_pass_resumes_planned_retirement_despite_open_pull_request(self):
+        prs = self.open_pr_fixture()
+        self.interrupt_after_move()
+        with patch.object(pull_requests, "open_pull_requests", return_value=prs) as lookup:
+            report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        self.assertEqual((report["retired"], report["failed"]), (1, 0))
+        lookup.assert_not_called()
 
     def test_explicit_cleanup_accepts_registered_quiet_repository(self):
         self.create()

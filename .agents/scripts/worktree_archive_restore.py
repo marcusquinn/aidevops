@@ -186,6 +186,10 @@ class RestorationProof(UnsealedRecovery):
                    "archive_digest": self.archive_digest, "manifest_sha256": record["manifest_sha256"],
                    "source": record["source"], "base": self.manifest["base_sha"],
                    "capture_schema": self.manifest["schema"], "policy": "git-only"}
+        from worktree_archive_runtime_config import omitted_keys, restored_view
+        if omitted_keys(self.manifest):
+            # GH#36883: archived runtime-local config is evidence, not restored state.
+            receipt["omitted_runtime_config"] = omitted_keys(self.manifest)
         record["canonical_restore"] = receipt
         save(record)
         common = Path(self.manifest["source_git_common_dir"])
@@ -210,7 +214,8 @@ class RestorationProof(UnsealedRecovery):
                 "restore-proof:creation-identity-changed")
         with phase("compare-restoration"):
             from worktree_archive_snapshot import git_snapshot
-            require(git_snapshot(target) == record["source"]["snapshot"], "restore-proof:state-mismatch")
+            require(git_snapshot(target) == restored_view(record["source"]["snapshot"]),
+                    "restore-proof:state-mismatch")
         require(inode(self.archive) == self.archive_inode and fingerprint(self.archive) == self.archive_digest,
                 "restore-proof:archive-changed")
         with phase("dependency-seal"):
@@ -330,8 +335,9 @@ class RestorationProof(UnsealedRecovery):
                         "restore-proof:target-changed")
                 if not receipt.get("uncompared"):
                     from worktree_archive_snapshot import git_snapshot
+                    from worktree_archive_runtime_config import restored_view
                     from worktree_recovery_retirement_transaction import fingerprint
-                    require(git_snapshot(target) == receipt["source"]["snapshot"]
+                    require(git_snapshot(target) == restored_view(receipt["source"]["snapshot"])
                             and fingerprint(target) == receipt["target_digest"], "restore-proof:scratch-drift")
                 # The canonical linked-removal exception verifies the checkout
                 # top-level as well as the common dir; -C <common> has no top-level.

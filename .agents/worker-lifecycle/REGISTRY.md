@@ -123,7 +123,9 @@ Each pass selects at most 1,000 ended-run events plus 1,000 generation events.
 - Ended-run `register`, `bind`, `admit` and `observe` events are eligible after
   retention when no bound peer still owns their generation. Run/binding projections
   remain online; archived run replays cannot resurrect ended owners.
-- Generation `open-admission`, `close-admission`, `created-worktree`,
+- `open-admission` events stay online as immutable admission-time evidence for
+  cleanup-receipt retirement proof (`retirement_proof.py`).
+- Generation `close-admission`, `created-worktree`,
   `retirement-removing` and `worktree-recovery-authorized` events are eligible only
   after both the event and its `worktree-retired` receipt have aged past retention,
   with no admission reservation (even closed) and no bound owner.

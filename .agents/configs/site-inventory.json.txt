@@ -11,6 +11,14 @@
       "ssh_user": "u123456789",
       "credential_env": "HOSTINGER_SHARED_SSH_PASSWORD",
       "last_verified": "2026-01-01T00:00:00Z"
+    },
+    "private-ssh-account": {
+      "provider": "example-hosting-provider",
+      "account_ref": "private-ssh-account",
+      "ssh_host_env": "EXAMPLE_SSH_HOST",
+      "ssh_port_env": "EXAMPLE_SSH_PORT",
+      "ssh_user_env": "EXAMPLE_SSH_USER",
+      "last_verified": "2026-01-01T00:00:00Z"
     }
   },
   "dns_accounts": {

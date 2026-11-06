@@ -356,6 +356,32 @@ _merge_authority_metadata_valid() {
 	return 0
 }
 
+# Reuse Pulse's preference resolution rather than letting a supervisor bypass
+# the deterministic pass through another merge transport (GH#36847).
+_merge_interactive_preference_clear() {
+	local pr_number="$1"
+	local repo="$2"
+	local labels_csv="$3"
+	[[ ",${labels_csv}," == *",origin:interactive,"* ]] || return 0
+	if ! _merge_is_headless_session; then
+		if ! declare -F detect_session_origin >/dev/null 2>&1 ||
+			[[ "$(detect_session_origin)" != "worker" ]]; then
+			return 0
+		fi
+	fi
+
+	#aidevops:trust-boundary -- headless callers have no human merge authority.
+	# Pulse's logging destination may not exist in standalone full-loop sessions.
+	local LOGFILE="/dev/null"
+	# shellcheck source=./pulse-merge-author-checks.sh
+	source "${SCRIPT_DIR}/pulse-merge-author-checks.sh" || return 1
+	if ! _interactive_pr_auto_merge_allowed "$pr_number" "$repo" "$labels_csv"; then
+		print_error "Merge blocked by GH#23238 interactive manual-merge preference: PR #${pr_number} requires allow-auto-merge or a repository/global opt-in"
+		return 1
+	fi
+	return 0
+}
+
 _merge_collect_external_authority_gaps() {
 	local pr_number="$1"
 	local repo="$2"
@@ -398,6 +424,7 @@ _merge_collect_external_authority_gaps() {
 	fi
 
 	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" "$repo" "$current_head_sha" || return 1
+	_merge_interactive_preference_clear "$pr_number" "$repo" "$labels_csv" || return 1
 
 	#aidevops:trust-boundary -- repository-generated Issue Sync and Dependabot
 	# PRs may lack collaborator permission. Both narrow predicates bind immutable

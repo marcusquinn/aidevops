@@ -374,6 +374,9 @@ _setup_own_merged_evidence() {
 		created_at:"2026-10-25T12:02:00Z",executor_completion_state:"COMPLETE",
 		resource_cleanup_state:$deferred,release_status:"not-requested"}
 		| if $shape == "stale_receipt" then .created_at = "2026-10-24T12:00:00Z"
+		elif $shape == "fractional_receipt" then .created_at = "2026-10-25T12:02:00.813577Z"
+		elif $shape == "stale_fractional_receipt" then .created_at = "2026-10-24T12:00:00.813577Z"
+		elif $shape == "invalid_receipt_date" then .created_at = "not-a-date"
 		elif $shape == "foreign_session" then .owner.session = "ses_foreign"
 		elif $shape == "foreign_receipt" then .repository = "other/repo"
 		elif $shape == "receipt_branch" then .branch = "other"
@@ -398,7 +401,7 @@ _setup_own_merged_evidence() {
 
 test_own_merged_terminal_reconciliation() {
 	local shape="" result=0
-	for shape in squash issue leased published superseded open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent; do
+	for shape in squash issue leased published superseded fractional_receipt stale_fractional_receipt invalid_receipt_date open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent; do
 		if ! (
 			local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG="owner/repo"
 			local AIDEVOPS_ATTEMPT_ID="attempt:synthetic" AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
@@ -435,7 +438,7 @@ test_own_merged_terminal_reconciliation() {
 			printf '%s\n' '{"type":"tool_result","text":"bounded wrapper completed"}' \
 				'{"type":"text","sessionID":"ses_own_merged","text":"Delivered, merged, synchronized and finalized guarded cleanup."}' >"$output_file"
 			case "$shape" in
-			squash | leased | published | superseded) expected=0 ;;
+			squash | leased | published | superseded | fractional_receipt) expected=0 ;;
 			issue) expected=0; session_key="issue-456" ;;
 			missing_session) printf '{"type":"text","text":"Delivered."}\n' >"$output_file" ;;
 			synthetic) printf '{"type":"text","part":{"synthetic":true,"text":"FULL_LOOP_COMPLETE"}}\n' >>"$output_file" ;;

@@ -268,7 +268,7 @@ _pcc_usage() {
 	name="$(basename "$0")"
 	printf 'Usage: %s dispatch <repo_slug> <repo_path> <pr_number> <linked_issue> <current_assignee> <authenticated_login>\n' "$name"
 	printf '       %s dispatch-approved <repo_slug> <repo_path> <linked_issue> <authenticated_login>\n' "$name"
-	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id> [--acknowledge-unattributed=ID[,ID]]\n' "$name"
+	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id> [--acknowledge-unattributed=ID[,ID]] [--acknowledge-terminal-without-release=ID[,ID]]\n' "$name"
 	printf '       %s blocked-attention <repo_slug> <linked_issue> <draft_pr_number>\n' "$name"
 	printf '       %s dispatch-stalled <repo_slug> <repo_path> <linked_issue> <draft_pr_number> <authenticated_login>\n' "$name"
 	return 0
@@ -742,16 +742,22 @@ _pcc_dispatch_approved() {
 
 _pcc_approval_template() {
 	local repo="$1" pr="$2" issue="$3" release_id="$4" attempt="$5" pr_json="" issue_json="" comments=""
-	local acknowledge="${6:-}" acknowledged="[]"
+	local option="" acknowledged="[]" terminal_acknowledged="[]"
 	local trusted_logins=""
 	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr" =~ ^[1-9][0-9]*$ &&
 		"$issue" =~ ^[1-9][0-9]*$ && "$release_id" =~ ^[1-9][0-9]*$ && "$attempt" == attempt:* ]] || return 2
-	# GH#36593: only an operator naming exact orphan release comment IDs lets
-	# the template list them; automatic callers never pass this argument.
-	if [[ -n "$acknowledge" ]]; then
-		[[ "$acknowledge" =~ ^--acknowledge-unattributed=[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || return 2
-		acknowledged="[${acknowledge#--acknowledge-unattributed=}]"
-	fi
+	# Explicit operators only; automatic callers supply neither acknowledgement.
+	shift 5
+	for option in "$@"; do
+		[[ -n "$option" ]] || continue
+		if [[ "$option" =~ ^--acknowledge-unattributed=[1-9][0-9]*(,[1-9][0-9]*)*$ && "$acknowledged" == "[]" ]]; then
+			acknowledged="[${option#--acknowledge-unattributed=}]"
+		elif [[ "$option" =~ ^--acknowledge-terminal-without-release=[1-9][0-9]*(,[1-9][0-9]*)*$ && "$terminal_acknowledged" == "[]" ]]; then
+			terminal_acknowledged="[${option#--acknowledge-terminal-without-release=}]"
+		else
+			return 2
+		fi
+	done
 	pr_json=$(gh pr view "$pr" --repo "$repo" --json number,headRefOid,headRefName,author) || return 1
 	issue_json=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	# GH#33997: the validator refuses releases dispatch-approved would reject.
@@ -759,8 +765,8 @@ _pcc_approval_template() {
 	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
 	printf '%s' "$comments" | jq --arg repo "$repo" --argjson pr "$pr_json" --argjson issue "$issue_json" \
 		--argjson release_id "$release_id" --arg attempt "$attempt" --argjson trusted_logins "$trusted_logins" \
-		--argjson acknowledged "$acknowledged" \
-		'{repo:$repo,pr:$pr,issue:$issue,release_id:$release_id,attempt:$attempt,comments:.,trusted_logins:$trusted_logins,acknowledge_unattributed:$acknowledged}' |
+		--argjson acknowledged "$acknowledged" --argjson terminal_acknowledged "$terminal_acknowledged" \
+		'{repo:$repo,pr:$pr,issue:$issue,release_id:$release_id,attempt:$attempt,comments:.,trusted_logins:$trusted_logins,acknowledge_unattributed:$acknowledged,acknowledge_terminal_without_release:$terminal_acknowledged}' |
 		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR" template
 	return $?
 }
@@ -1390,6 +1396,12 @@ _pcc_post_stall_attention() {
 		fuse_marker=$'\n'"<!-- ${_PCC_STALL_FUSE_MARKER} pr=${pr} -->"
 		posted_scope="Posted once per PR."
 	fi
+	if [[ "$note" == "$_PCC_APPROVAL_VALIDATION_NOTE" ]]; then
+		# A historical approval still fences the legacy route, even after a
+		# head change or expiry. Neither an aged record nor a push bypasses it.
+		scope="for draft PR #${pr} at head \`${head}\`. The revision-approval route owns scheduling; neither a new head nor an aged attention record re-arms automatic continuation"
+		push_step="2. Revalidate the existing revision approval after retrying unavailable metadata or permission checks. If it expired or no longer matches the head or brief, generate a fresh approval with \`pr-checkpoint-continuation-helper.sh approval-template\` and publish the generated approval as a new issue comment."
+	fi
 	local body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} release=${release_id} -->${fuse_marker}
 STALLED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} reason=${reason} stalls=${stalls}
@@ -1621,7 +1633,7 @@ main() {
 		return $?
 		;;
 	approval-template)
-		_pcc_approval_template "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
+		_pcc_approval_template "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${@:7}"
 		return $?
 		;;
 	blocked-attention)

@@ -95,6 +95,8 @@ load_functions() {
 	extract_function _merge_parent_task_open_children_clear
 	extract_function _apply_pr_only_hold
 	extract_function _merge_authority_metadata_valid
+	extract_function _merge_is_headless_session
+	extract_function _merge_interactive_preference_clear
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
@@ -104,11 +106,14 @@ load_functions() {
 	extract_function _merge_describe_flags
 	extract_function _merge_rest_fallback
 	extract_function _merge_revalidate_transport_authority
+	extract_function _merge_verify_rbg_override_approval
 	extract_function _merge_execute
 	extract_function cmd_commit_and_pr
 	extract_function _parse_commit_and_pr_args
+	extract_function _validate_keep_issue_open_request
 	extract_function _compose_pr_title
 	extract_function _derive_pr_title_prefix
+	extract_readiness_function _full_loop_rbg_override_active
 	extract_readiness_function cmd_pre_merge_gate
 	extract_readiness_function _full_loop_report_external_authority_preflight
 	# shellcheck source=/dev/null
@@ -463,6 +468,40 @@ test_trusted_dependabot_authority() {
 	fi
 	return 0
 }
+
+test_interactive_merge_preference() (
+	local SCRIPT_DIR
+	SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
+	reset_fixture
+	unset WORKER_SESSION_KEY Claude_HEADLESS GITHUB_ACTIONS
+	# Isolate preferences from the runner while exercising the real Pulse policy.
+	local REPOS_JSON="${TEST_ROOT}/absent-repos.json"
+	local AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=false
+	set_pr_fixture maintainer '[{"name":"origin:interactive"}]' false '[]' ''
+	expect_guard_result "human-owned interactive merge remains unchanged" 0
+	FULL_LOOP_HEADLESS=true
+	expect_guard_result "headless interactive PR requires manual merge" 1
+	local output=""
+	output=$(_merge_guard_admin_merge_maintainer_review 900 owner/repo head-current 2>&1) || true
+	if [[ "$output" == *"Merge blocked by GH#23238 interactive manual-merge preference"* ]]; then
+		print_result "manual preference refusal names GH#23238" 0
+	else
+		print_result "manual preference refusal names GH#23238" 1 "$output"
+	fi
+	unset FULL_LOOP_HEADLESS
+	WORKER_SESSION_KEY=supervisor-pulse
+	expect_guard_result "supervisor cannot bypass interactive preference" 1
+	set_pr_fixture maintainer '[{"name":"origin:interactive"},{"name":"allow-auto-merge"}]' false '[]' ''
+	expect_guard_result "explicit auto-merge label permits headless merge" 0
+	set_pr_fixture maintainer '[{"name":"origin:interactive"}]' false '[]' ''
+	AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=true
+	expect_guard_result "configured opt-in permits headless merge" 0
+	AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=false
+	set_pr_fixture maintainer '[]' false '[]' ''
+	expect_guard_result "worker-origin merge remains unchanged" 0
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
+	return 0
+)
 
 test_authority_guard() {
 	reset_fixture
@@ -1168,12 +1207,53 @@ test_squash_subject_contract() (
 	return 0
 )
 
+# GH#36874: commit pages travel on stdin, never through an argv-sized argument.
+test_squash_subject_commit_pages() (
+	local pages="" actual="" actual_rc=0
+	local title='GH#36874: preserve large commit histories'
+	_flm_gh_read() {
+		if [[ "$*" == *'--json title'* ]]; then
+			jq -n --arg title "$title" '{title: $title}'
+		else
+			printf '%s\n' "$pages"
+		fi
+		return 0
+	}
+	pages=$(jq -cn '
+		[range(3) | [range(100) |
+			{sha: (tostring), commit: {message: ("fix: large history\n" + ("x" * 8192))}}]]')
+	[[ "${#pages}" -gt 2097152 ]] || return 1
+	actual=$(_merge_resolve_squash_subject 900 owner/repo) || actual_rc=$?
+	if [[ "$actual_rc" -eq 0 && "$actual" == 'GH#36874: fix: preserve large commit histories' ]]; then
+		print_result "squash subject accepts >2 MB paginated metadata and infers type" 0
+	else
+		print_result "squash subject accepts >2 MB paginated metadata and infers type" 1
+	fi
+	for pages in '[]' '[[]]' '[{}]' 'null' \
+		'[[{"commit":{"message":"fix: missing sha"}}]]' \
+		'[[{"sha":"abc","commit":{}}]]' \
+		'[[{"sha":"","commit":{"message":"fix: empty sha"}}]]' \
+		'[[{"sha":"abc","commit":{"message":42}}]]'; do
+		actual_rc=0
+		actual=$(_merge_resolve_squash_subject 900 owner/repo 2>&1) || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 && "$actual" == *'Invalid PR #900 commit metadata for squash-subject validation'* ]]; then
+			print_result "squash subject rejects malformed commit evidence: ${pages}" 0
+		else
+			print_result "squash subject rejects malformed commit evidence: ${pages}" 1
+		fi
+	done
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
+	return 0
+)
+
 main() {
 	load_functions
+	test_squash_subject_commit_pages || return 1
 	test_squash_subject_contract || return 1
 	test_slow_gate_admission_reads
 	test_trusted_issue_sync_authority
 	test_trusted_dependabot_authority
+	test_interactive_merge_preference || return 1
 	test_authority_guard
 	test_cross_repo_closing_references
 	test_hold_for_review_guard

@@ -10,6 +10,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.129] - 2026-11-06
+
+### Changed
+
+- Documentation: hostinger LiteSpeed reCAPTCHA protection can refuse all visitors (GH#36872) (#36873)
+- Maintenance: mark t18874 complete (pr:#36867 completed:2026-11-06) (#36870)
+- Maintenance: sync GitHub issue refs to TODO.md (#36871)
+
+### Fixed
+
+- carry existing complexity violations across git renames
+- preserve runtime-local config.worktree bytes without restoring them
+- bound removal dependency scans (GH#36894) (#36896)
+- count completed children in parent phase nudges (#36891)
+- recover released attempts missing terminal leases
+- clarify revision-approved checkpoint recovery (GH#36887) (#36888)
+- suppress stalled supervisor while runner health is paused (GH#36885) (#36886)
+- reconcile acknowledged terminal-without-release history
+- stream squash-subject commit pages on stdin (GH#36874) (#36875)
+- keep checkpoint parent references secondary (GH#36864) (#36868)
+- classify body-only classic-protection 404 for ruleset-only repos (GH#36866) (#36869)
+
+## [3.39.128] - 2026-11-06
+
+### Added
+
+- add per-frame browser load recorder (GH#36856) (#36860)
+- credit same-login CI quota spend across tokens (t18871) (#36815)
+- add encrypted run-scoped credential leases
+- record method and endpoint class on quota attempts (t18870) (#36812)
+
+### Changed
+
+- Maintenance: mark t18873 complete (pr:#36859 completed:2026-11-06) (#36861)
+- Maintenance: sync GitHub issue refs to TODO.md (#36862)
+- Maintenance: mark t18872 complete (pr:#36846 completed:2026-11-05) (#36849)
+- Maintenance: sync GitHub issue refs to TODO.md (#36850)
+- Maintenance: mark t18871 complete (pr:#36815 completed:2026-11-05) (#36839)
+- Documentation: complete quota debug filter docstrings (GH#36821) (#36838)
+- Maintenance: sync GitHub issue refs to TODO.md (#36840)
+- Documentation: add docstrings to functions touched by PR 36801 (#36833)
+- Maintenance: mark t18870 complete (pr:#36812 completed:2026-11-05) (#36813)
+- Maintenance: sync GitHub issue refs to TODO.md (#36814)
+
+### Fixed
+
+- refuse Git-only capture of private worktree config (#36859)
+- retain open-admission evidence for retirement proof (#36848)
+- enforce interactive merge preference in headless full-loop (GH#36847) (#36852)
+- walk only the child's /proc subtree in the sandbox poll loop (t18872)
+- support SSH secret references in site readiness
+- raise claude-cli UA fallback to 2.1.280 so claude-opus-5-5 is usable without the Claude CLI
+- compare dependency edge IDs in supersession repoint (GH#36826) (#36834)
+- accept trusted read-only report completion (#36837)
+- create lease test temp base before TemporaryDirectory (GH#36830) (#36836)
+- require implementation evidence for claimed footprints (GH#36817) (#36835)
+- skip enrichment workers for closed issues (#36831)
+- make auth-change backoff test independent of mtime resolution (GH#36823) (#36832)
+- provision persistent tracking anchors for routine PRs (GH#36816) (#36819)
+- verify registry retirement for cleanup receipts
+- take over stranded managed worktrees and quarantine repeated archive failures (#36801)
+- match exact sandbox passthrough env names
+- share verified-unedited proof with checkpoint claims
+- classify lifecycle registry failures as contention/schema/capacity/permission (GH#36794) (#36800)
+
 ## [3.39.127] - 2026-11-05
 
 ### Added

@@ -1,5 +1,7 @@
 """Verify completed retirement for a dated cleanup receipt; never retire a tree."""
 
+from __future__ import annotations
+
 from datetime import datetime
 import hashlib
 import json
@@ -7,7 +9,8 @@ import os
 from pathlib import Path
 
 from .retirement import _event, _event_id, _preserved
-from .storage import LifecycleRegistry, StoreConflict
+from .filesystem import checked_directory
+from .storage import LifecycleRegistry, StoreConflict, encode
 
 
 def _timestamp(value: str) -> datetime:
@@ -36,6 +39,50 @@ def _matching_plan(
             or planned.get("repo") != repository):
         return None
     return planned
+
+
+def _read_archive_events(store: LifecycleRegistry, name: str) -> list[dict]:
+    """Return events from one checksum-verified archive; untrusted yields []."""
+    try:
+        with checked_directory(store.directory) as directory_fd:
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+            with os.fdopen(descriptor, "rb") as stream:
+                document = json.load(stream)
+        evidence = document["evidence"]
+        digest = hashlib.sha256(encode(evidence).encode("utf-8")).hexdigest()
+        return list(evidence["events"]) if digest == document["sha256"] else []
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+
+def _admission_identity(row: dict, generation: str) -> tuple[str, str, str] | None:
+    """Return (event_id, recorded_at, payload) for a matching open-admission row."""
+    try:
+        payload = json.loads(row["payload"])
+        if payload.get("type") != "open-admission" or payload.get("generation_id") != generation:
+            return None
+        return row["event_id"], row["recorded_at"], row["payload"]
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def _archived_admissions(store: LifecycleRegistry, generation: str) -> list[str]:
+    """Recover open-admission times from checksum-verified event archives.
+
+    Duplicate archive files (rollback leftovers) are collapsed by event
+    identity; a conflicting duplicate makes the evidence untrusted.
+    """
+    found: dict[str, tuple[str, str]] = {}
+    names = sorted(os.listdir(store.directory))
+    archives = [n for n in names if n.startswith("events-archive-") and n.endswith(".json")]
+    for name in archives:
+        for row in _read_archive_events(store, name):
+            match = _admission_identity(row, generation)
+            if match is None:
+                continue
+            if found.setdefault(match[0], match[1:]) != match[1:]:
+                return []
+    return [recorded for recorded, _ in found.values()]
 
 
 def verify_retirement(
@@ -72,12 +119,13 @@ def verify_retirement(
                 "json_extract(payload,'$.type')='open-admission' AND "
                 "json_extract(payload,'$.generation_id')=?", (generation,),
             ).fetchall()
+            opened = [row[0] for row in opened] or _archived_admissions(store, generation)
             ended = connection.execute(
                 "SELECT recorded_at FROM events WHERE event_id=?",
                 (_event_id(generation, "retired"),),
             ).fetchone()
         if (len(opened) == 1 and ended is not None
-                and _timestamp(opened[0][0]) <= created <= _timestamp(ended[0])):
+                and _timestamp(opened[0]) <= created <= _timestamp(ended[0])):
             candidates.append((generation, planned))
     if len(candidates) != 1:
         raise StoreConflict("retirement-proof-missing-or-ambiguous")

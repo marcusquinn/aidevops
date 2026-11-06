@@ -121,6 +121,22 @@ _publication_process_lease() {
 	branch_name=$(jq -r '.batch[0].branchName' <<<"$lease")
 	attempt=$(jq -r '.batch[0].attemptCount' <<<"$lease")
 	paths=$(jq -r '[.batch[].payload.paths[]?] | unique | .[]' <<<"$lease")
+	# Only positive decimal counts may enter shell arithmetic (not null or octal).
+	[[ "$attempt" =~ ^[1-9][0-9]*$ ]] || attempt=1
+	retry_after=$((2 ** (attempt - 1)))
+	[[ $retry_after -le $PUBLICATION_MAX_BACKOFF ]] || retry_after="$PUBLICATION_MAX_BACKOFF"
+
+	# Restored queue entries may name a different runner's ephemeral checkout.
+	# Only the current job's repository identity authorizes its path override.
+	if [[ -n "${REPOSITORY_PATH:-}" && -n "${REPOSITORY_ID:-}" &&
+		"$(jq -r '.repositoryId' <<<"$lease")" == "$REPOSITORY_ID" ]]; then
+		repo_path="$REPOSITORY_PATH"
+	fi
+	if [[ ! -d "$repo_path" ]] || ! git -C "$repo_path" rev-parse --show-toplevel >/dev/null 2>&1; then
+		evidence=$(_publication_evidence "repository_worktree_unavailable" "")
+		_publication_finish "$lease" "$owner_id" retryable "$evidence" "$retry_after" || return 1
+		return 0
+	fi
 
 	PLANNING_PUBLISH_RESULT=""
 	PLANNING_PUBLICATION_ID=""
@@ -163,8 +179,6 @@ _publication_process_lease() {
 		_publication_finish "$lease" "$owner_id" published "$evidence" || return 1
 		return 0
 	fi
-	retry_after=$((2 ** (attempt - 1)))
-	[[ $retry_after -le $PUBLICATION_MAX_BACKOFF ]] || retry_after="$PUBLICATION_MAX_BACKOFF"
 	evidence=$(_publication_evidence "retryable_rc_${rc}" "$PLANNING_PUBLICATION_ID")
 	_publication_finish "$lease" "$owner_id" retryable "$evidence" "$retry_after" || return 1
 	return 0

@@ -17,6 +17,9 @@
 #   11. file-size ignores code/readme: oversized .sh + README.md → exit 0
 #   12. bash32-compat clean-to-new:  new associative-array declaration → exit 1 (t2171)
 #   13. bash32-compat stable:        pre-existing nameref unchanged → exit 0 (t2171)
+#   18. rename carry-over:           git mv keeps existing violations; new file blocks (GH#36897)
+#   19. working-tree git mv:         staged rename keeps existing file-size violation (GH#36897)
+#   20. edited bash32 rename:        existing count carries over; increased count blocks (GH#36928)
 
 set -euo pipefail
 
@@ -701,6 +704,129 @@ test_working_tree_101_line_function_blocks() {
 }
 
 # ---------------------------------------------------------------------------
+# Rename carry-over (GH#36897): a `git mv` of a file with an existing
+# violation keeps that violation's identity; a genuinely new oversized file in
+# the same range still blocks.
+# ---------------------------------------------------------------------------
+_init_rename_repo() {
+	local _repo="$1"
+	mkdir -p "$_repo/docs/a"
+	git -C "$_repo" init -q
+	git -C "$_repo" config user.email "test@test.local"
+	git -C "$_repo" config user.name "Test"
+	git -C "$_repo" config commit.gpgsign false
+	local _i=0
+	: >"$_repo/docs/a/x.md"
+	while [ "$_i" -lt 600 ]; do
+		printf 'line %d\n' "$_i" >>"$_repo/docs/a/x.md"
+		_i=$((_i + 1))
+	done
+	printf '#!/usr/bin/env bash\n' >"$_repo/docs/a/tool.sh"
+	make_sh_function "$_repo/docs/a/tool.sh" "big_existing" 105
+	git -C "$_repo" add -A
+	git -C "$_repo" commit -q -m "base: existing violations"
+	return 0
+}
+
+test_rename_carries_existing_violations() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	local _base_sha="" _rc_md=0 _rc_fn=0 _rc_new=0
+	_init_rename_repo "$_repo"
+	_base_sha=$(git -C "$_repo" rev-parse HEAD)
+	git -C "$_repo" mv docs/a docs/b
+	git -C "$_repo" commit -q -m "head: move docs"
+
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric file-size) \
+		>/dev/null 2>&1 || _rc_md=$?
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric function-complexity) \
+		>/dev/null 2>&1 || _rc_fn=$?
+
+	# A new oversized file alongside the move must still block.
+	cp "$_repo/docs/b/x.md" "$_repo/docs/b/new.md"
+	git -C "$_repo" add docs/b/new.md
+	git -C "$_repo" commit -q -m "head: add new oversized doc"
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric file-size) \
+		>/dev/null 2>&1 || _rc_new=$?
+
+	if [ "$_rc_md" -eq 0 ] && [ "$_rc_fn" -eq 0 ] && [ "$_rc_new" -eq 1 ]; then
+		print_result "rename: moved violations carried over; new oversized file still blocks" 0
+	else
+		print_result "rename: moved violations carried over; new oversized file still blocks" 1 \
+			"expected file-size 0, function-complexity 0, new-file 1; got $_rc_md, $_rc_fn, $_rc_new"
+	fi
+	teardown
+	return 0
+}
+
+test_edited_rename_carries_bash32_count() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	local _base_sha="" _rc_stable=0 _rc_added=0 _renames=""
+	_init_rename_repo "$_repo"
+	printf 'declare -A existing_config\n' >>"$_repo/docs/a/tool.sh"
+	git -C "$_repo" add docs/a/tool.sh
+	git -C "$_repo" commit -q -m "base: existing bash32 violation"
+	_base_sha=$(git -C "$_repo" rev-parse HEAD)
+
+	git -C "$_repo" mv docs/a/tool.sh docs/a/renamed.sh
+	printf '# Harmless edit alongside the rename\n' >>"$_repo/docs/a/renamed.sh"
+	git -C "$_repo" add docs/a/renamed.sh
+	git -C "$_repo" commit -q -m "head: rename and edit shell script"
+	_renames=$(git -C "$_repo" diff --name-status -M "$_base_sha" HEAD)
+	if printf '%s\n' "$_renames" | grep -E '^R[0-9]+[[:space:]]+docs/a/tool\.sh[[:space:]]+docs/a/renamed\.sh$' >/dev/null &&
+		! printf '%s\n' "$_renames" | grep '^R100' >/dev/null; then
+		print_result "bash32 rename: Git detects an edited rename" 0
+	else
+		print_result "bash32 rename: Git detects an edited rename" 1 "got $_renames"
+	fi
+
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric bash32-compat) \
+		>/dev/null 2>&1 || _rc_stable=$?
+	if [ "$_rc_stable" -eq 0 ]; then
+		print_result "bash32 rename: existing count carries over after an edit" 0
+	else
+		print_result "bash32 rename: existing count carries over after an edit" 1 \
+			"expected exit 0, got $_rc_stable"
+	fi
+
+	# Increase the same pattern's count, not a different violation identity.
+	printf 'declare -A additional_config\n' >>"$_repo/docs/a/renamed.sh"
+	git -C "$_repo" add docs/a/renamed.sh
+	git -C "$_repo" commit -q -m "head: add another associative array"
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric bash32-compat) \
+		>/dev/null 2>&1 || _rc_added=$?
+	if [ "$_rc_added" -eq 1 ]; then
+		print_result "bash32 rename: increased count of the same pattern blocks" 0
+	else
+		print_result "bash32 rename: increased count of the same pattern blocks" 1 \
+			"expected exit 1, got $_rc_added"
+	fi
+	teardown
+	return 0
+}
+
+test_working_tree_git_mv_carries_violation() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	local _base_sha="" _rc=0
+	_init_rename_repo "$_repo"
+	_base_sha=$(git -C "$_repo" rev-parse HEAD)
+	git -C "$_repo" mv docs/a/x.md docs/moved.md
+
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --working-tree \
+		--metric file-size) >/dev/null 2>&1 || _rc=$?
+	if [ "$_rc" -eq 0 ]; then
+		print_result "rename: working-tree git mv carries existing file-size violation" 0
+	else
+		print_result "rename: working-tree git mv carries existing file-size violation" 1 \
+			"expected exit 0, got exit $_rc"
+	fi
+	teardown
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -726,6 +852,9 @@ test_diff_scoped_timing
 test_diff_scoped_skip_no_sh_changes
 test_diff_scoped_ruby_change_is_applicable
 test_working_tree_101_line_function_blocks
+test_rename_carries_existing_violations
+test_edited_rename_carries_bash32_count
+test_working_tree_git_mv_carries_violation
 
 printf '\n'
 if [ "$TESTS_FAILED" -eq 0 ]; then

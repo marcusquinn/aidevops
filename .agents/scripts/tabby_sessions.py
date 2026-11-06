@@ -13,10 +13,10 @@ if sys.version_info < (3, 9):
     sys.exit("Python 3.9+ is required; no packages will be installed")
 
 from tabby_session_config import SessionError, endpoint, equivalent_aliases, load_hosts
-from tabby_session_launch import LaunchContext, check_tabby, observe, report, request, tabby_executable
-from tabby_session_legacy import legacy_state, local_legacy
+from tabby_session_launch import LaunchContext, check_tabby, describe_session, report, request, tabby_executable
+from tabby_session_legacy import local_legacy
 from tabby_session_remote import create, inventory
-from tabby_session_state import state_directory, state_key
+from tabby_session_state import state_directory
 from tabby_session_transport import attach
 
 
@@ -24,13 +24,6 @@ def paths():
     config = os.environ.get("AIDEVOPS_TABBY_HOSTS", str(Path.home() / ".config/aidevops/tabby-hosts.json"))
     state = os.environ.get("AIDEVOPS_TABBY_STATE_DIR", str(Path.home() / ".local/state/aidevops/tabby-sessions"))
     return str(Path(config).absolute()), str(Path(state).absolute())
-
-
-def describe_session(context, session, legacy):
-    status = legacy_state(legacy, session, context.sessions) or observe(
-        context.args.state_dir, state_key(context.endpoint_id, session), context.clients, session["sid"])
-    report(context.host, session, status, "dry-run" if context.args.dry_run else "")
-    return "skipped" if status.startswith("legacy") else status
 
 
 def host_action(args, host, hosts, binary):
@@ -95,7 +88,7 @@ def doctor(args, hosts):
 def parser():
     config, state = paths()
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("action", choices=("new", "restore", "list", "doctor", "_attach"))
+    result.add_argument("action", choices=("new", "restore", "list", "doctor", "host", "_attach"))
     result.add_argument("host", nargs="?")
     result.add_argument("--dry-run", action="store_true", help="read remote inventory; create no sessions/reservations/tabs")
     result.add_argument("--remote", action="store_true", help="doctor: explicitly probe remote tmux (read-only)")
@@ -107,6 +100,10 @@ def parser():
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "host":
+        from tabby_session_hosts import main as host_main
+        return host_main(argv[1:])
     args = parser().parse_args(argv)
     args.config = str(Path(args.config).absolute())
     args.state_dir = str(Path(args.state_dir).absolute())

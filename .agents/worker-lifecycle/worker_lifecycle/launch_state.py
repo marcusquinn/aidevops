@@ -101,3 +101,30 @@ def require_unregistered(state_dir: Path, worktree: Path) -> None:
         return
     if _has_generation_marker(worktree):
         raise AdmissionClosed("excluded-workload-on-marked-generation")
+
+
+def reuse_status(state_dir: Path, worktree: Path) -> dict[str, object]:
+    """Preflight reuse without enrolling, reopening, or granting launch admission.
+
+    The managed-lifetime registry cannot establish lifecycle admission. Keep the
+    launcher's own resolution as the authority, including its legacy handling.
+    A refused lookup is only called sealed after validating the physical marker
+    and observing the matching closed admission; all other gaps stay errors.
+    """
+    if not state_dir.exists() and not state_dir.is_symlink():
+        require_unregistered(state_dir, worktree)
+    else:
+        try:
+            enrolled_generation(state_dir, worktree, False)
+        except AdmissionClosed as error:
+            store = LifecycleRegistry(state_dir)
+            generation = GenerationEnrollment(store).inspect(worktree)
+            with store.connection() as connection:
+                row = connection.execute(
+                    "SELECT state FROM generation_admissions WHERE generation_id=? AND path=?",
+                    (generation, str(worktree)),
+                ).fetchone()
+            if row is None or row["state"] != "closed":
+                raise AdmissionClosed("reuse-admission-evidence-unavailable") from error
+            return {"reuse": "sealed", "cleanup_authorized": False}
+    return {"reuse": "eligible", "cleanup_authorized": False}

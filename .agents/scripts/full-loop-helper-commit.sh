@@ -1218,6 +1218,27 @@ _build_pr_body() {
 	local decisions="${11:-}"
 	local runtime_risk=""
 	local testing_level=""
+	local related="" related_numbers=" "
+	local field="" text="" reference="" reference_number="" prefix=""
+	local reference_pattern='(^|[^[:alnum:]_])([Ff][Oo][Rr]|[Rr][Ee][Ff])[:[:space:]]+#([0-9]+)'
+
+	# GH#36864: prose must not introduce a second explicit work identity.
+	# Keep the dispatched declaration below authoritative, even when summaries
+	# contain same-line, multiline or prose-prefixed child/umbrella references.
+	for field in summary_what summary_testing replacement_note decisions; do
+		text="${!field}"
+		while [[ "$text" =~ $reference_pattern ]]; do
+			reference="${BASH_REMATCH[0]}"
+			prefix="${BASH_REMATCH[1]}"
+			reference_number="${BASH_REMATCH[3]}"
+			text="${text/"$reference"/"${prefix}issue #${reference_number}"}"
+			if [[ "$reference_number" != "$issue_number" && "$related_numbers" != *" ${reference_number} "* ]]; then
+				related_numbers+="${reference_number} "
+				related+="Ref #${reference_number}"$'\n'
+			fi
+		done
+		printf -v "$field" '%s' "$text"
+	done
 
 	runtime_risk=$(_derive_runtime_risk "$requested_risk" "$files_changed" "$summary_what" "$base_ref") || return 1
 	testing_level=$(_resolve_runtime_testing_level "$runtime_risk" "$requested_testing_level" "$summary_testing") || return 1
@@ -1246,6 +1267,10 @@ ${decisions}
 
 ${closing_keyword} #${issue_number}
 
+${related:+## Related
+
+${related}
+}
 ${sig_footer}"
 	return 0
 }

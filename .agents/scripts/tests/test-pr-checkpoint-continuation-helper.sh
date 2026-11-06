@@ -305,6 +305,63 @@ for metadata_failure in pr issue comments; do
 done
 unset STUB_METADATA_FAILURE
 STUB_ISSUE_JSON="$(valid_issue_json)"
+
+# GH#36887: keep revision scheduling fenced, but never promise that a push or
+# the attention age will bypass a historical approval. Full exact-envelope
+# validation of current approvals is exercised by test-pr-checkpoint-revision.py.
+test_revision_attention_guidance() (
+	local approval_case="$1"
+	local head="1111111111111111111111111111111111111111"
+	local approval_head="$head" created_at="" comments="" body=""
+	local post_file="${TEST_ROOT}/revision-attention-${approval_case}"
+	created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	case "$approval_case" in
+	older_head) approval_head="2222222222222222222222222222222222222222" ;;
+	expired_older_head)
+		approval_head="2222222222222222222222222222222222222222"
+		created_at="2020-01-01T00:00:00Z"
+		;;
+	esac
+	comments=$(jq -nc --arg head "$approval_head" --arg created "$created_at" '[{
+		id:77,author_association:"OWNER",user:{login:"maintainer"},created_at:$created,updated_at:$created,
+		body:("CHECKPOINT_CONTINUATION_APPROVED " + ({repo:"owner/repo",issue:123,pr:42,head:$head} | tojson))
+	}]')
+	_pcc_comments_have_revision_approval "$comments" '["maintainer"]' || return 1
+	# The real metadata predicate must still reject legacy scheduling, including
+	# an unexpired current-head approval; dispatch-approved owns that route.
+	if _pr_checkpoint_issue_metadata_is_eligible "$STUB_ISSUE_JSON" 123 worker-bot "$comments" worker-bot; then
+		return 1
+	fi
+	# Capture an attention POST without contacting GitHub.
+	# Args: api, endpoint, --method, POST, -f, body=<attention record>.
+	# Output: write the body to the enclosing test's post_file for assertions.
+	# Returns: 1 for an unexpected call shape, 0 after capturing the body.
+	gh() {
+		[[ "$1" == api && "$3" == --method && "$4" == POST ]] || return 1
+		printf '%s' "${6#body=}" >"$post_file"
+		return 0
+	}
+	_pcc_approved_revision_attention owner/repo 123 42 "$head" 31 clean 0 key false >/dev/null || return 1
+	body="$(<"$post_file")"
+	[[ "$body" == *'approval-template'* && "$body" == *'publish the generated approval as a new issue comment'* &&
+		"$body" == *'Retry when those checks are available'* &&
+		"$body" == *'does not prove that the approval was consumed'* &&
+		"$body" != *'Push a corrected commit'* && "$body" != *'a new head re-arms'* &&
+		"$body" != *'each runner that has not tried this head gets one'* ]] || return 1
+	# Ordinary, approval-free attention retains its useful automatic recovery.
+	_pcc_post_stall_attention owner/repo 123 42 "$head" 31 clean 2 key >/dev/null || return 1
+	body="$(<"$post_file")"
+	[[ "$body" == *'a new head re-arms one automatic continuation'* ]] || return 1
+	return 0
+)
+for approval_case in older_head expired_older_head current_head; do
+	if test_revision_attention_guidance "$approval_case"; then
+		print_result "$approval_case revision attention offers fresh approval without automatic re-arm promises" 0
+	else
+		print_result "$approval_case revision attention offers fresh approval without automatic re-arm promises" 1
+	fi
+done
+
 if [[ "$_PCC_APPROVAL_VALIDATION_NOTE" == *'does not prove that the approval was consumed'* &&
 	"$_PCC_APPROVAL_VALIDATION_NOTE" == *'Retry when those checks are available'* ]]; then
 	print_result "revision attention does not diagnose consumption from validation failure" 0

@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Administration validation cases using the archive lifecycle test suite."""
 
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -11,7 +12,108 @@ import tempfile
 from worktree_archive_administration import administration_files
 
 
+CODEX_CONFIG = b'[codex]\n\tlocalEnvironmentConfigPath = /fixture/environment.toml\n'
+
+
 class AdministrationCases:
+    def test_git_administration_git_only_refuses_nonempty_worktree_config(self):
+        from worktree_archive_index import git_index_state
+
+        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
+        config = admin / 'config.worktree'
+        self.git(self.repo, 'config', 'extensions.worktreeConfig', 'true')
+        config.write_bytes(b'')
+        (admin / 'codex-thread.json').write_text('fixture runtime record\n')
+        archive = self.archive()
+        reason = 'git_admin:requires_preservation:config.worktree'
+        # GH#36883: only an all-runtime-local key set is supported; unknown,
+        # mixed and comment-only configuration stay refused.
+        for content in (b'[fixture]\n\tvalue = private\n', b'# private comment only\n',
+                        CODEX_CONFIG + b'[fixture]\n\tvalue = private\n'):
+            with self.subTest(content=content):
+                config.write_bytes(content)
+                with self.assertRaisesRegex(ValueError, f'^{re.escape(reason)}$'):
+                    git_index_state(self.work)
+                result = self.helper('archive', self.work, '--repo', 'fixture/repo',
+                                     '--issue', '99', '--reason', 'failed-worker',
+                                     '--base-branch', 'develop', '--output-root', self.archives,
+                                     check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(reason.encode(), result.stderr)
+                # A config added after capture cannot authorize source retirement.
+                self.assertNotEqual(self.helper('source-matches', archive, self.work,
+                                                check=False).returncode, 0)
+                self.assertTrue(self.work.is_dir())
+                self.assertEqual(config.read_bytes(), content)
+        config.unlink()
+        # A symlinked config is refused (by Git itself or git_admin:symlink).
+        config.symlink_to(admin / 'HEAD')
+        self.assertNotEqual(self.helper('archive', self.work, '--repo', 'fixture/repo',
+                                        '--issue', '99', '--reason', 'failed-worker',
+                                        '--base-branch', 'develop', '--output-root', self.archives,
+                                        check=False).returncode, 0)
+        self.assertTrue(config.is_symlink())
+        config.unlink()
+        self.archive()  # A runtime marker without private config remains supported.
+
+    def test_runtime_local_worktree_config_is_preserved_not_restored(self):
+        from worktree_archive_runtime_config import NAME
+
+        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
+        config = admin / 'config.worktree'
+        self.git(self.repo, 'config', 'extensions.worktreeConfig', 'true')
+        config.write_bytes(CODEX_CONFIG)
+        (self.work / 'mixed.txt').write_bytes(b'preserved working change\n')
+        archive = self.archive()
+        manifest = json.loads((archive / 'manifest.json').read_text())
+        saved = manifest['source_fingerprint']
+        self.assertEqual(saved['config_worktree_keys'], ['codex.localenvironmentconfigpath'])
+        self.assertNotIn(b'/fixture/environment.toml', (archive / 'manifest.json').read_bytes())
+        self.assertEqual((archive / NAME).read_bytes(), CODEX_CONFIG)
+        self.assertEqual((archive / NAME).stat().st_mode & 0o777, 0o600)
+        self.helper('verify', archive)
+        self.helper('source-matches', archive, self.work)
+        target = self.root / 'runtime-config-restore'
+        restored = self.helper('restore', archive, '--target', target)
+        self.assertIn(b'codex.localenvironmentconfigpath', restored.stderr)
+        self.assertNotIn(b'/fixture/environment.toml', restored.stderr)
+        restored_admin = Path(self.git(target, 'rev-parse', '--absolute-git-dir').decode().strip())
+        self.assertFalse((restored_admin / 'config.worktree').exists())
+        self.assertEqual((target / 'mixed.txt').read_bytes(), b'preserved working change\n')
+        proof, record = self.canonical_proof(archive)
+        proof.check()
+        self.assertEqual(record['canonical_restore']['state'], 'cleaned')
+        self.assertEqual(record['canonical_restore']['omitted_runtime_config'],
+                         ['codex.localenvironmentconfigpath'])
+        self.assertEqual(config.read_bytes(), CODEX_CONFIG)
+        # Drift: changed or removed configuration blocks source retirement.
+        for drift in (CODEX_CONFIG.replace(b'environment', b'other'), None):
+            with self.subTest(drift=drift):
+                if drift is None:
+                    config.unlink()
+                else:
+                    config.write_bytes(drift)
+                self.assertNotEqual(self.helper('source-matches', archive, self.work,
+                                                check=False).returncode, 0)
+        config.write_bytes(CODEX_CONFIG)
+        self.helper('source-matches', archive, self.work)
+        # Tamper: a consistent manifest cannot launder a non-runtime key.
+        tampered = CODEX_CONFIG + b'[fixture]\n\tvalue = private\n'
+        (archive / NAME).write_bytes(tampered)
+        for item in manifest['artifacts']:
+            if item['name'] == NAME:
+                item.update(size=len(tampered), sha256=hashlib.sha256(tampered).hexdigest())
+        manifest['source_fingerprint']['config_worktree_sha256'] = hashlib.sha256(tampered).hexdigest()
+        (archive / 'manifest.json').write_text(json.dumps(manifest))
+        result = self.helper('verify', archive, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'config_worktree_artifact_mismatch', result.stderr)
+        # A config added after a config-free capture also blocks retirement.
+        config.unlink()
+        clean = self.archive()
+        config.write_bytes(CODEX_CONFIG)
+        self.assertNotEqual(self.helper('source-matches', clean, self.work, check=False).returncode, 0)
+
     def test_git_only_rejects_unpreserved_opaque_records(self):
         from worktree_archive_fingerprint import git_snapshot
         from worktree_archive_index import git_index_state
@@ -90,6 +192,9 @@ class AdministrationCases:
 
     def test_generation_marker_is_not_restored(self):
         self.check_runtime_marker('aidevops-generation.json')
+
+    def test_codex_thread_marker_is_not_restored(self):
+        self.check_runtime_marker('codex-thread.json')
 
     def check_runtime_marker(self, name):
         from worktree_archive_administration import administration

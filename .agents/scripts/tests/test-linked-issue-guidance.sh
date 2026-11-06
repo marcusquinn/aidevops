@@ -83,7 +83,8 @@ assert_not_contains ".github/workflows/bounty-spam-auto-close.yml" 'PR_TITLE|tas
 
 assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'classify-infra-rate-limit' "review gate classifies API exhaustion from immutable trust evidence"
 assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'RESULT.*PASS_ADVISORY' "trusted advisory default defers unavailable review API"
-assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'SKIP\|PASS_ADVISORY\|PASS_RATE_LIMITED' "external authors cannot use advisory review outcomes"
+assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'SKIP overridden: external-contributor PRs cannot use the skip label' "external authors cannot use the skip-label outcome"
+assert_not_contains ".github/workflows/review-bot-gate-reusable.yml" 'REVIEW_GATE_COMPLETION_BEHAVIOR=strict' "external authors are not forced to wait on review bots (GH#36931)"
 assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'Unexpected review helper result' "malformed review helper output fails closed"
 assert_contains ".github/workflows/review-bot-gate-reusable.yml" "result != 'INFRA_RATE_LIMITED'" "review gate avoids follow-up API label lookup during exhaustion"
 assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'skipping immediate status retry' "review gate avoids retry loop during exhaustion"

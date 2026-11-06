@@ -263,6 +263,8 @@ _pulse_merge_ready_pr_json_fields() {
 # full-loop-helper.sh can call it after a successful PR merge. SCRIPT_DIR may not be set
 # when this module is sourced by pulse-wrapper.sh; resolve from BASH_SOURCE.
 _PULSE_MERGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./gh-closing-reference-lib.sh
+source "${_PULSE_MERGE_DIR}/gh-closing-reference-lib.sh"
 source "${_PULSE_MERGE_DIR}/shared-claim-lifecycle.sh"
 
 # Final duplicate-implementation fence for live interactive issue owners.
@@ -657,6 +659,8 @@ _pm_gate_review_bot() {
 		return 0
 	fi
 	echo "[pulse-wrapper] Review bot gate: ${rbg_status:-${PULSE_UNKNOWN_STATE}} for PR #${pr_number} in ${repo_slug} — missing or unpermitted current-head evidence; skipping merge" >>"$LOGFILE"
+	# Recovery only requests review; this invocation must still refuse merge.
+	_pulse_recover_external_review "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "$rbg_result" "$rbg_helper" || true
 	return 1
 }
 
@@ -1739,9 +1743,7 @@ _extract_linked_issue() {
 	# The body keyword is AUTHORITATIVE. A project-specific GH#NNN title prefix
 	# must not override or contradict a single native closing target. (t2108)
 	local body_issues="" body_issue=""
-	body_issues=$(printf '%s' "$pr_body" \
-		| grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' \
-		| grep -oE '[0-9]+' | sort -u) || body_issues=""
+	body_issues=$(_gh_pr_body_closing_issues "$pr_body") || body_issues=""
 
 	# No closing keyword in the body → return empty. The PR is intentionally
 	# not closing any issue (planning-only PR, multi-PR roadmap, "For #NNN"
@@ -1777,19 +1779,8 @@ _extract_linked_issue() {
 _drop_closing_pull_request_refs() {
 	local repo_slug="$1"
 	local candidates="$2"
-	local candidate="" issue_json="" kept="" newline=$'\n'
-	while IFS= read -r candidate; do
-		[[ -n "$candidate" ]] || continue
-		issue_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/issues/${candidate}" 2>/dev/null) || issue_json=""
-		if [[ -n "$issue_json" ]] && printf '%s' "$issue_json" \
-			| jq -e --argjson n "$candidate" '.number == $n and .pull_request != null' >/dev/null 2>&1; then
-			echo "[pulse-wrapper] _extract_linked_issue: ignoring closing reference #${candidate} in ${repo_slug} — it is a pull request, not an issue (GH#36704)" >>"$LOGFILE"
-			continue
-		fi
-		kept="${kept:+${kept}${newline}}${candidate}"
-	done <<<"$candidates"
-	printf '%s' "$kept"
-	return 0
+	_gh_drop_closing_pull_request_refs "$repo_slug" "$candidates"
+	return $?
 }
 
 #######################################
@@ -1815,55 +1806,7 @@ _extract_pr_work_issue() {
 	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
 	if [[ "$mode" == "explicit" ]]; then
 		local explicit_issues=""
-		explicit_issues=$(printf '%s\n' "$pr_body" | awk '
-			/^[[:space:]]*(```|~~~)/ {
-				fence_line = $0
-				sub(/^[[:space:]]*/, "", fence_line)
-				match(fence_line, /^(`+|~+)/)
-				fence_run = substr(fence_line, 1, RLENGTH)
-				if (!fence) {
-					fence = 1
-					fence_marker = substr(fence_run, 1, 1)
-					fence_length = length(fence_run)
-				} else if (substr(fence_run, 1, 1) == fence_marker && length(fence_run) >= fence_length &&
-					substr(fence_line, length(fence_run) + 1) ~ /^[[:space:]]*$/) {
-					fence = 0
-				}
-				next
-			}
-			fence { next }
-			/<!--/ { comment = 1 }
-			comment { if ($0 ~ /-->/) comment = 0; next }
-			/^[[:space:]]*#/ {
-				section = tolower($0)
-				sub(/^[[:space:]]*/, "", section)
-				match(section, /^#+/)
-				depth = RLENGTH
-				if (secondary && depth <= secondary) secondary = 0
-				if (section ~ /(remaining|follow.?up|related|next steps)/) secondary = depth
-				next
-			}
-			secondary || /^[[:space:]]*>/ || /^([ ]{4}|\t)/ { next }
-			{
-				line = tolower($0)
-				if (line !~ /^[[:space:]]*(for|ref)[:[:space:]]+#[1-9][0-9]*([^[:alnum:]_]|$)/) next
-				sub(/^[[:space:]]*(for|ref)[:[:space:]]+#/, "", line)
-				issue = line
-				sub(/[^0-9].*$/, "", issue)
-				sub(/^[0-9]+/, "", line)
-				# Targets end at the first sentence terminator. Another #N in that
-				# clause ("For #42 and #43") or a later same-line For/Ref is not a
-				# unique task; later context ("PR #41") is ignored, as on its own line.
-				clause = line
-				rest = ""
-				if (match(line, /[.;!?]([[:space:]]|$)/)) {
-					clause = substr(line, 1, RSTART - 1)
-					rest = substr(line, RSTART)
-				}
-				if (clause ~ /#[0-9]/ || rest ~ /[^[:alnum:]_](for|ref)[:[:space:]]+#[0-9]/) print "ambiguous"
-				print issue
-			}
-		' | sort -u) || return 1
+		explicit_issues=$(_gh_pr_body_explicit_issues "$pr_body") || return 1
 		if [[ "$explicit_issues" == *$'\n'* || "$explicit_issues" == "ambiguous" ]]; then
 			echo "[pulse-wrapper] _extract_pr_work_issue: PR #${pr_number} in ${repo_slug} has ambiguous explicit issue identities — no merge association" >>"$LOGFILE"
 			return 1

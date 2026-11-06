@@ -5,9 +5,11 @@
 import json
 import os
 import shutil
+import signal
 # Isolated runtime tests execute repository helpers with argv-only calls.
 import subprocess  # nosec B404
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -106,6 +108,113 @@ class SecretRemovalTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('registry', result.stdout + result.stderr)
         self.assertNotIn('GP_ONE', json.loads(registry.read_text())['credentials'])
+
+    def stall_discovery(self):
+        repo = self.home / 'repo'
+        repo.mkdir()
+        (self.creds.parent / 'repos.json').write_text(json.dumps({
+            'initialized_repos': [{'path': str(repo), 'slug': 'fixture'}],
+        }))
+        self.git_pid_file = self.home / 'git.pid'
+        self.env['FIXTURE_GIT_PID'] = str(self.git_pid_file)
+        self.addCleanup(self.cleanup_stalled_git)
+        git = self.home / 'bin/git'
+        git.write_text('#!/usr/bin/env python3\nimport os, time\n'
+                       'from pathlib import Path\n'
+                       'Path(os.environ["FIXTURE_GIT_PID"]).write_text(str(os.getpid()))\n'
+                       'time.sleep(60)\n')
+        git.chmod(0o700)
+
+    def stalled_git_running(self, pid):
+        # kill(0) authoritatively reports a missing PID; ps only refines zombies.
+        # A ps failure (e.g. BusyBox rejecting -p) is unknown state: treat as running.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        ps = shutil.which('ps')
+        if ps is None:
+            return True
+        result = subprocess.run([ps, '-o', 'stat=', '-p', str(pid)],  # nosec B603
+                                capture_output=True, text=True, timeout=2)
+        state = result.stdout.strip()
+        if result.returncode != 0 and not state:
+            # procps exits 1 for a missing PID with no stderr; any stderr is a ps error.
+            return bool(result.stderr.strip())
+        return bool(state) and not state.startswith('Z')
+
+    def cleanup_stalled_git(self):
+        if self.git_pid_file.exists():
+            pid = int(self.git_pid_file.read_text())
+            if self.stalled_git_running(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def assert_stalled_git_exited(self):
+        self.assertTrue(self.git_pid_file.exists(), 'Fake git never started')
+        pid = int(self.git_pid_file.read_text())
+        deadline = time.monotonic() + 2
+        while self.stalled_git_running(pid):
+            if time.monotonic() >= deadline:
+                self.fail('Fake git survived the dependency scan timeout')
+            time.sleep(0.05)
+
+    def test_dependents_discovery_has_whole_scan_deadline_and_clean_json(self):
+        self.stall_discovery()
+        start = time.monotonic()
+        result = self.secret('dependents', 'GP_ONE', '--json')
+        self.assert_stalled_git_exited()
+        self.assertLess(time.monotonic() - start, 10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Scanning dependents', result.stderr)
+        report = json.loads(result.stdout)
+        self.assertFalse(report['complete'])
+        self.assertEqual(report['skipped'][0]['reason'], 'whole scan timeout')
+
+    def test_batch_removal_uses_one_scan_budget(self):
+        self.stall_discovery()
+        start = time.monotonic()
+        result = self.secret('rm', 'GP_ONE', 'GP_TWO', '--yes')
+        self.assert_stalled_git_exited()
+        self.assertLess(time.monotonic() - start, 10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.count('Scanning dependents'), 1)
+        self.assertIn('scan incomplete', result.stderr)
+        self.assertNotEqual(self.check('GP_ONE'), 0)
+        self.assertNotEqual(self.check('GP_TWO'), 0)
+
+    def test_skip_scan_preserves_registry_cleanup(self):
+        self.stall_discovery()
+        recorded = self.secret('record', 'GP_ONE', '--provider', 'acme')
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        start = time.monotonic()
+        result = self.secret('rm', 'GP_ONE', '--yes', '--skip-dependents')
+        self.assertLess(time.monotonic() - start, 5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('Scanning dependents', result.stderr)
+        self.assertIn('scan skipped', result.stderr)
+        registry = self.creds.parent / 'credential-inventory.json'
+        self.assertNotIn('GP_ONE', json.loads(registry.read_text())['credentials'])
+        self.assertNotEqual(self.check('GP_ONE'), 0)
+
+    def test_skip_scan_does_not_imply_confirmation(self):
+        result = self.secret('rm', 'GP_ONE', '--skip-dependents')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Confirmation required', result.stderr)
+        self.assertEqual(self.check('GP_ONE'), 0)
+
+    def test_dependents_finds_literal_reference_without_values(self):
+        config = self.creds.parent / 'reference.conf'
+        config.write_text('GP_ONE=synthetic-private-content\n')
+        result = self.secret('dependents', 'GP_ONE', '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(any(hit['path'] == str(config) for hit in report['literal']))
+        self.assertNotIn('synthetic-private-content', result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

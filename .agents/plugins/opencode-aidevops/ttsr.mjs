@@ -262,7 +262,7 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, op
     "If the user launched the session with an initial message, the greeting is only a required prefix: execute or fully answer that message in the SAME assistant turn. A task request already authorises task work. Never emit a greeting-only response or stop after acknowledging, restating, promising, or asking the user to say continue. Call the appropriate tools immediately, before visible text if necessary, unless genuinely blocked.",
     "Do not claim that tool access is unavailable without first attempting an appropriate configured tool and reporting concrete failure evidence.",
     "If the initial message is only a greeting/salutation, do not add any additional salutations, greetings, introductory questions, or equivalent help prompts after the exact greeting. Never repeat the greeting after the first assistant turn.",
-    "Do not include startup status or advisory messages in chat; the OpenCode toast/sidebar already shows them. If asked about aidevops updates, direct the user to run `aidevops update` in a terminal.",
+    "Do not include startup status or advisory messages in chat; the OpenCode toast/sidebar already shows them. The no-update-check rule covers this greeting only: when a task, release or user request needs the deployed runtime refreshed, run `aidevops update` yourself as a bounded operation (then `aidevops release reconcile <source-PR>` for a deferred release) instead of handing it to the user.",
   ].join("\n");
 }
 

@@ -116,6 +116,16 @@ files. Git defines the inventory with `ls-files --others --exclude-standard`;
 ignored files and raw Git administration are excluded. `git-only` is the retained
 manifest policy name, not an alternative creation mode. There are no
 project-specific or directory-specific exclusions.
+GH#36883: a `config.worktree` whose keys are all runtime-local (currently only
+`codex.localenvironmentconfigpath`) is kept as exact bytes in the 0600
+`worktree-config-v1` artifact and fingerprinted by SHA-256 and key names, never
+values, so drift blocks `source-matches`. Restore never writes it or changes
+`extensions.worktreeConfig`; it reports the omitted keys (receipt field
+`omitted_runtime_config`). Other, mixed or comment-only content, symlinks and
+pending merges still fail with `git_admin:requires_preservation:config.worktree`
+or an equivalent refusal, and the source is retained.
+An empty or absent `config.worktree` does not block ordinary Git-only capture,
+including worktrees containing the disposable `codex-thread.json` runtime record.
 The shared repository must retain the recorded base. An empty delta needs no bundle.
 Unmerged and intent-to-add index entries fail closed because two patches cannot
 preserve their index state. Patch output explicitly overrides color and path-prefix
@@ -403,6 +413,10 @@ Unfinished operations and unknown admin entries remain unsupported: errors have
 the stable form `git_admin:unfinished_operation:NAME` or
 `git_admin:unknown_entry:PATH`. `index.lock` always fails with
 `git_admin:index_locked:index.lock`. Symlinks and split indexes also fail closed.
+Runtime records (`aidevops-permission-pending`, `aidevops-generation.json`,
+`codex-thread.json`) are regular-file session state, not Git state: capture skips
+them and restore never copies the source bytes, so a recovery cannot resume or
+impersonate the source session.
 Location-dependent `core.worktree` and config includes are rejected with
 `git_admin:location_dependent_config:KEY`, rather than activating source paths
 in an independent restore. Private symbolic refs targeting unrelated shared refs

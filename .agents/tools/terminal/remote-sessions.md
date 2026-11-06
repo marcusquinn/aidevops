@@ -14,12 +14,15 @@ starting OpenCode automatically. Existing `tabby sync`, `status`, `zshrc`, and
 
 ## Setup and commands
 
-Copy the generic `configs/tabby-hosts.example.json` from the installed agents
-tree to `~/.config/aidevops/tabby-hosts.json`. Keep all real connection details in
-your private OpenSSH configuration. Configure `dev-alpha` and `dev-beta` aliases
-on each laptop; do not put real endpoints, usernames, keys, or authentication
-logs in project files or reports. No command installs packages or changes SSH
-host verification/authentication. All hosts default to enabled.
+Register an existing SSH alias with `aidevops tabby sessions host add dev-alpha`,
+or create an aidevops-managed alias using the host commands below. The inventory
+defaults to `~/.config/aidevops/tabby-hosts.json`. Alternatively, copy the generic
+`configs/tabby-hosts.example.json` from the installed agents tree. Keep real
+connection details in private OpenSSH configuration; do not put real endpoints,
+usernames, keys, or authentication logs in project files or reports. No command
+installs packages or weakens SSH host-key verification. Selecting an identity file
+for a managed alias can change which keys SSH offers, but never changes key
+material. All hosts default to enabled.
 
 ```bash
 aidevops tabby sessions doctor
@@ -29,6 +32,75 @@ aidevops tabby sessions restore
 aidevops tabby sessions restore beta --dry-run
 aidevops tabby sessions list
 ```
+
+### Managing configured hosts
+
+```bash
+# Register an existing alias; no remote connection.
+aidevops tabby sessions host add alpha --ssh-host dev-alpha
+
+# Create an SSH alias and register it (replace these generic values).
+aidevops tabby sessions host add beta --hostname server.example.invalid \
+  --user developer --port 22 --identity-file ~/.ssh/id_ed25519
+
+aidevops tabby sessions host list
+aidevops tabby sessions host show beta
+aidevops tabby sessions host update beta --session-prefix oc- --title-prefix B
+aidevops tabby sessions host update beta --hostname replacement.example.invalid
+aidevops tabby sessions host update beta --disabled
+aidevops tabby sessions host update beta --enabled --connect-interval 5 --restore-order 20
+
+# Keep the SSH alias, or explicitly remove the managed SSH alias too.
+aidevops tabby sessions host remove alpha
+aidevops tabby sessions host remove beta --ssh --dry-run
+```
+
+`sessions list` lists remote tmux sessions. `sessions host list/show` inspect
+local inventory, including disabled hosts; they do not launch Tabby. `add`
+creates an inventory when needed and defaults to prefix `oc-`, title prefix equal
+to the host ID, and a five-second launch interval. Empty title prefixes are invalid.
+`update` changes only supplied fields. `--ssh-host` is add-only; remove and add
+the inventory entry to change its alias mapping. Registration of an existing
+alias checks local `ssh -G` resolution; this is not proof of network reachability
+or authentication, and existing OpenSSH `Match exec` rules still apply.
+
+Host commands print the selected inventory path. `--config` overrides
+`AIDEVOPS_TABBY_HOSTS`, which overrides the default. Writes to temporary inventory
+paths are refused: unset a stale smoke-test override or pass a durable `--config`.
+`--allow-temporary-config` is an explicit testing escape hatch. Every modifying
+host command supports `--dry-run`, which creates no files, directories, backups,
+locks, tabs, or sessions.
+
+New SSH aliases live in `~/.ssh/aidevops.conf`, referenced by a leading `Include`
+in `~/.ssh/config`. The generated file contains ownership metadata and is edited
+only through these commands; external modifications cause SSH writes to fail
+closed. Existing user-owned alias blocks (including matching patterns and local
+Includes) are never edited or adopted. Global `Host *` and `Match all` defaults
+remain supported. Conditional `Match` rules are not evaluated or executed during
+SSH ownership checks: SSH changes refuse them, including rules found in Includes.
+Dynamic Includes and conflicting aliases also require manual configuration. Register
+user-owned aliases without SSH options, then use inventory-only updates. Legacy
+inventory SSH overrides must be migrated manually before managing an alias.
+An already-managed alias can be registered by another host ID without SSH options;
+`add` with SSH options refuses to overwrite it. Use `update` for intentional changes.
+
+Writes reject symlink paths, hardlinked/non-owned files, and group/world-writable
+configuration files. New/replaced files and timestamped backups are private (0600).
+Backups are stored outside SSH Include globs under
+`~/.local/state/aidevops/tabby-host-config/backups/`; each write reports its backup
+path. Permanent `.aidevops-tabby-hosts.lock` files serialize cooperating
+writers. A busy lock fails immediately with a retry message, rather than waiting
+indefinitely; do not delete lock files while commands run. Individual file replacements are
+atomic, but the multi-file operation is not: failed writes attempt rollback and
+report an incomplete rollback explicitly. Backups are retained privately. The
+managed Include and empty managed file remain after the last alias is removed.
+
+`remove` changes only inventory unless `--ssh` is supplied. SSH deletion requires
+an aidevops-managed alias without another reference in the selected inventory;
+other inventory files cannot be checked automatically. No operation deletes keys,
+known-host entries, attachment leases, remote sessions, or tabs. Endpoint updates
+leave existing tabs on the original endpoint: use fresh `list`/`restore` afterward.
+These commands do not remove Tabby's Run/Cancel confirmation.
 
 Requirements: Python 3.9+ (standard library only), OpenSSH with `-G`, local `ps`,
 Tabby with the repeated `run --command=<argument>` array interface, and remote

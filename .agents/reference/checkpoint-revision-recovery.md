@@ -122,6 +122,16 @@ fence accepts it, except for the terminal-blocker classes (`blocked`,
 `status:blocked`, brief holds and protected labels are preserved, and
 `WORKER_DRAFT_CHECKPOINT` keeps blocking ordinary redispatch.
 
+Once an issue has a trusted `CHECKPOINT_CONTINUATION_APPROVED` record, the
+revision-approval route owns scheduling, even if that record has expired or binds
+an older head. A push or an aged attention record does not reopen the legacy
+automatic continuation route. If revision target validation fails, the stall
+attention record offers no new-head or age-based re-arm promise: retry unavailable
+metadata/permission checks first. If the approval expired or the head/brief changed,
+generate a fresh approval with `pr-checkpoint-continuation-helper.sh approval-template`
+and publish it as a new issue comment, as described below. An unexpired exact-head
+approval still requires the full revision validation and fenced claim.
+
 ### Drafts blocked by pre-v3.39.89 release projections (GH#36028)
 
 Runners before v3.39.89 projected `status:blocked` after a continuable release,
@@ -290,6 +300,44 @@ episode, edited or untrusted comments, and malformed reasons still reject.
 Automatic approval paths never pass the acknowledgement. Releases are no
 longer published without an owned claim (`headless-runtime-release-claim.sh`).
 
+### Terminal lease with a missing release
+
+A historical checkpoint attempt may have a claim, ready lease and terminal lease
+but no preceding `CLAIM_RELEASED`. It is **not** a fully released attempt. The
+default history validator still rejects it; neither a terminal record, lease
+expiry, an assignment reset nor absence of a process establishes takeover authority.
+
+After separately verifying executor shutdown/fencing and current ownership, an
+authorized maintainer may explicitly accept this exact audit gap when generating
+a new revision-bound approval:
+
+```bash
+pr-checkpoint-continuation-helper.sh approval-template REPO PR ISSUE RELEASE_ID attempt:ID --acknowledge-terminal-without-release=TERMINAL_COMMENT_ID[,TERMINAL_COMMENT_ID]
+```
+
+This is a manual recovery decision, not an automatic retry or proof of safe
+execution. The command requires trusted, unedited, sequential claim/ready/terminal
+records with matching actor, device, session, token and attempt. Every recorded
+claim/renewal expiry must be known, positive and elapsed before approval; the
+terminal must have `expires_at=0`. Missing ready evidence, overlapping claims,
+foreign/edited evidence and extra/mismatched acknowledgement IDs reject.
+
+The generated `released_successors` entry has `outcome: terminal_without_release`,
+`release_provenance: missing` and `execution_status: unrecovered`, plus the exact
+claim, ready and terminal IDs and an `evidence_sha256` binding all episode records
+(including intermediate renewals). Only the digest is emitted, not lease secrets.
+It contains no synthetic `release_id`; no original comment is edited or created
+by template generation. Revalidation reconstructs that exact entry at the approval
+timestamp and fences its historical token from reuse.
+
+This flag can be combined with `--acknowledge-unattributed` for separately reviewed
+later orphan releases. It does **not** acknowledge later interactive claims or
+other live/open ownership: those still reject and need their own supported
+handoff. Automatic approval paths pass neither flag. Approval publication still
+requires current write authority, exact head/ref/brief binding and 24-hour expiry;
+continuation still requires the existing fresh fenced claim. Execution/write
+effects remain unknown until separately reconciled; never replay consumed work.
+
 ### Ready leases that expired without a release (GH#36544)
 
 A continuation attempt can post its ready lease and then exit without a
@@ -316,6 +364,38 @@ History then records an ordinary closed episode (claim, ready, release,
 terminal). The closure grants nothing: a new generated approval must list it in
 `released_successors`. A lost device cannot use this path; that history stays
 blocked pending a reviewed decision.
+
+### Released ready attempts with a missing terminal lease
+
+A ready attempt can post its own `CLAIM_RELEASED` and lose the terminal-lease
+post. Its release alone does not close the historical episode: approval generation
+still rejects it with `reason=open_at_end`. The default expired-ready closer and
+automatic outbox drain deliberately continue rejecting ordinary releases.
+
+After verifying that the executor has stopped, the claim owner may explicitly
+complete this exact gap on the same authenticated account, device and session:
+
+```bash
+dispatch-claim-helper.sh close-expired-pr-checkpoint-lease ISSUE OWNER/REPO CLAIM_COMMENT_ID SESSION --complete-released
+```
+
+This mode requires one trusted, unedited, fully bound `blocked`, `clean` or
+`worker_complete` release after the ready lease. The release must name the same
+claim ID, nonce, token, device, session and runner; an explicit attempt ID must
+match. All observed lease/launch attempts must match the ready attempt. Missing
+identity, unknown or unelapsed expiry, another attempt, intervening renewal,
+duplicate release, an existing terminal lease or a live local executor refuses.
+Shutdown and the complete history are checked again immediately before posting.
+
+Only a new current `DISPATCH_LEASE phase=terminal ... expires_at=0` is appended.
+The original release is not duplicated, relabelled or edited, and no historical
+record is fabricated. The operator supplies a claim comment ID, never a token.
+An interrupted post can be retried after rereading the timeline; a terminal event
+already present refuses without another write. This closes coordination only,
+not execution effects: publication status remains unknown until reconciled.
+Generate and publish a fresh revision-bound approval preserving the entire
+closed episode before any continuation. Existing head/brief, permission, expiry
+and fresh fenced-claim requirements remain unchanged.
 
 ### Claims released as blocked before ready (GH#35683)
 

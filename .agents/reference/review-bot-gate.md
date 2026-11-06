@@ -23,17 +23,21 @@ legacy field. The retained identity filters make a future restoration reversible
 Repositories with an exceptional sensitivity requirement may explicitly opt into
 review-before-merge with `review_gate.completion_behavior: strict`. Strict is
 never the framework default. Mirror strict CI intent with the repository Actions
-variable `AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR=strict`. The GH#17671
-external-contributor trust boundary remains fail-closed independently.
+variable `AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR=strict`.
+
+Review bots never hold merge progress by default, for any author (GH#36931).
+Their findings become follow-up issues. The GH#17671 external-contributor trust
+boundary is exact-head maintainer cryptographic approval, enforced by Pulse and
+full-loop before every merge transport, not by waiting for a bot review.
 
 ## Enforcement Layers
 
 1. **CI**: `.github/workflows/review-bot-gate.yml` may remain a required compatibility
    status, but default missing/late review emits `PASS_ADVISORY` and succeeds. It
-   blocks for missing completion only under explicit strict policy or the external
-   trust boundary.
+   blocks for missing completion only under explicit strict policy.
 2. **Pulse merge path**: `review-bot-gate-helper.sh status-json` supplies typed,
-   exact-head evidence. `PASS_ADVISORY` is valid only for trusted authors.
+   exact-head evidence. `PASS_ADVISORY` is valid for every author on a stable
+   head; `SKIP` (label) is valid only for trusted authors.
 3. **Worker merge path**: `full-loop-helper.sh merge` accepts the same default
    advisory outcome after required CI succeeds.
 4. **Branch protection**: a required `review-bot-gate` context is compatible with
@@ -74,17 +78,31 @@ that label while reusing reviewer enumeration and dismissal mechanics.
 
 - Before merging, run `review-bot-gate-helper.sh check <PR_NUMBER>` to collect
   available feedback. Default no-response output is `PASS_ADVISORY`, not `WAITING`.
-- `WAITING` means the repository explicitly selected strict/wait behavior or the
-  external-contributor trust boundary applies.
+- `WAITING` means the repository explicitly selected strict/wait behavior.
 - `skip-review-gate` remains an auditable internal exception for strict setups;
   default advisory repositories do not need it.
 - ALWAYS read bot reviews that are available before merging. Address critical/security findings; note non-critical suggestions for follow-up.
 - `PASS_ADVISORY` means no completed add-on review was required under the permanent
   default. `PASS_RATE_LIMITED` is the narrower true-rate-limit outcome. Both
-  delegate late feedback to the post-merge scanner for trusted exact-head PRs.
-  API-exhausted runs do not retry immediately. External/unknown authors and
-  explicit `wait` or `strict` policies remain fail-closed.
+  delegate late feedback to the post-merge scanner for exact-head PRs from any
+  author. API-exhausted runs do not retry immediately. Explicit `wait` or
+  `strict` policies remain fail-closed.
 - When many PRs are rate-limited simultaneously, use `request-retry` on the highest-priority PRs first. Stagger retries to avoid re-triggering rate limits.
+
+### External PR review-limit recovery (GH#36900)
+
+Only strict/wait repositories can leave an external PR `WAITING`. There, after
+independent author, issue, and approval gates pass, Pulse requests a review
+retry when the PR has valid current-head `WAITING` evidence. It verifies
+managed-repository write authority and rechecks that the PR is open, non-draft,
+not held for review, and still on the observed head before calling the shared
+`request-retry` command. That command owns bot-notice detection and idempotency;
+historical-review and per-head retry handling is tracked by GH#36899.
+
+Requesting review never clears the gate in the same invocation. Subsequent bot
+events or Pulse passes must observe successful review evidence normally. Missing,
+malformed, API-error, head-drift, and trusted-author outcomes do not request this
+external recovery. No labels, approvals, commit statuses, or branches are changed.
 
 ## Additive suggestion decision tree
 
@@ -135,9 +153,10 @@ The review add-on check runs after the `origin:interactive` (t2411) and
   to that head and verifies the response; full-loop refreshes mutable authority
   before every retry or fallback merge transport. Any missing or mismatched
   field remains external and fail-closed.
-- **External contributors**: advisory, rate-limit, and skip outcomes remain
-  fail-closed; completed review evidence is required in addition to independent
-  maintainer/cryptographic authority.
+- **External contributors**: advisory and rate-limit outcomes pass like any
+  other author (GH#36931); the skip label is denied. Merge still requires the
+  approved linked issue plus V2 maintainer approval of the exact current head,
+  re-verified immediately before every merge transport.
 
 The helper is still evaluated and audited on every merge path; advisory is an
 explicit successful policy outcome, not a bypass. Draft, `hold-for-review`, human

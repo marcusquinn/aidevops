@@ -62,15 +62,17 @@ The wrapper already fetched all open PRs and issues. Data is in your prompt betw
 
 **Most merging is handled deterministically by `merge_ready_prs_all_repos()` in pulse-wrapper.sh** before the LLM session starts. Focus on edge cases: PRs needing CI fix workers, `CHANGES_REQUESTED`, external contributor PRs, complex merge conflicts.
 
-For remaining collaborator PRs where CI passes: `REVIEW_REQUIRED` is NOT a merge blocker. Approve then merge:
+For remaining collaborator PRs where CI passes, first apply every pre-merge check below. Never merge an `origin:interactive` PR that the deterministic pass skipped under the GH#23238 manual-merge preference. Do not add `allow-auto-merge` or change preferences to bypass that decision. Explicit trusted PR-body text withholding merge authority (for example "No merge is authorized" or "no automatic merge") is a hold even if the PR is ready and green; do not approve or merge it until the trusted owner lifts the hold.
+
+For otherwise eligible PRs, `REVIEW_REQUIRED` alone is not a merge blocker; use the guarded approval/merge path without bypassing required approvals:
 
 ```bash
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command approve-pr NUMBER SLUG AUTHOR
 full-loop-helper.sh merge NUMBER SLUG --squash
 ```
 
-**Merge criteria:** CI all PASS (or NONE/PENDING) + author is collaborator → approve and merge.
-`CHANGES_REQUESTED` → dispatch fix worker. `APPROVED` → merge directly.
+**Merge criteria:** CI all PASS (or NONE/PENDING) + collaborator author + all policy/authority gates clear → attempt the guarded merge path.
+`CHANGES_REQUESTED` → dispatch fix worker. `APPROVED` does not override a policy or authority hold.
 Check external contributor gate before ANY approve/merge (see Pre-merge checks below).
 
 ### 3.5. Triage reviews for needs-maintainer-review issues (DETERMINISTIC — handled by shell)
@@ -226,13 +228,14 @@ For repos where `repo_allows_pulse_write_actions SLUG` fails (role=`contributor`
 
 3. **Workflow file guard.** `check_workflow_merge_guard` from `pulse-wrapper.sh`.
 
-4. **Review add-on.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on `PASS`, `PASS_ADVISORY`, or `PASS_RATE_LIMITED`. `WAITING` is reserved for explicit strict/wait policy or the external-contributor trust boundary.
+4. **Review add-on.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on `PASS`, `PASS_ADVISORY`, or `PASS_RATE_LIMITED`. `WAITING` is reserved for explicit strict/wait policy (GH#36931).
 
 5. **Unresolved review suggestions.** Check with `gh api "repos/SLUG/pulls/NUMBER/comments"`. If actionable, dispatch a fix worker (label `needs-review-fixes`).
 
 ### PR triage
 
-- **Green CI + collaborator** → `approve_collaborator_pr` then `full-loop-helper.sh merge NUMBER SLUG --squash`
+- **GH#23238 manual-merge preference / explicit trusted PR-body merge hold** → skip, even with green CI or approval; never override the deterministic pass
+- **Green CI + collaborator + all pre-merge gates clear** → `approve_collaborator_pr` then `full-loop-helper.sh merge NUMBER SLUG --squash`
 - **Green CI + strict-policy `WAITING` on bots** → skip; run `request-retry` only when a true rate-limit notice makes a retry useful
 - **Failing CI** → check if systemic (same check fails on 3+ PRs → file workflow issue). If per-PR, dispatch fix worker.
 - **Open 6+ hours with no recent commits** → comment, consider closing and re-filing

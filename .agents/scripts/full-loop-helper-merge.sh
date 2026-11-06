@@ -1010,10 +1010,12 @@ _merge_resolve_squash_subject() {
 		return 1
 	}
 	# Incomplete/malformed evidence must not silently become an untyped history.
-	pr_json=$(jq -en --arg title "$subject" --argjson pages "$commit_pages" '
+	# Commit messages can exceed argv limits; keep the unbounded pages on stdin.
+	pr_json=$(jq -e --arg title "$subject" '
 		def is_array: [arrays] | length == 1;
 		def is_string: type == "string";
-		if ($pages | is_array | not) or ($pages | length) == 0
+		. as $pages
+		| if ($pages | is_array | not) or ($pages | length) == 0
 			or any($pages[]; is_array | not) then
 			error("invalid PR commit pages")
 		else [$pages[][]] as $commits
@@ -1024,7 +1026,7 @@ _merge_resolve_squash_subject() {
 			else {title: $title, commits: [$commits[] |
 				{messageHeadline: (.commit.message | split("\n")[0])}]}
 			end
-		end') || {
+		end' <<<"$commit_pages") || {
 		print_error "Invalid PR #${pr_number} commit metadata for squash-subject validation"
 		return 1
 	}
@@ -1338,6 +1340,7 @@ _merge_execute() {
 	local has_admin="$4" has_auto="$5" squash_subject=""
 	local merge_body_file="${6:-}"
 	_merge_check_admin_capability "$pr_number" "$repo" "$has_admin" || return 1
+	_merge_verify_rbg_override_approval "$pr_number" "$repo" || return 1
 	squash_subject=$(_merge_resolve_subject_for_method "$pr_number" "$repo" "$merge_method") || return 1
 	local merge_flags=()
 	[[ "$has_admin" -eq 1 ]] && merge_flags+=("--admin")
@@ -1694,6 +1697,7 @@ _merge_parse_command_args() {
 	FULL_LOOP_MERGE_PARSED_ADMIN=0
 	FULL_LOOP_MERGE_PARSED_AUTO=0
 	FULL_LOOP_MERGE_PARSED_BODY_FILE=""
+	FULL_LOOP_MERGE_PARSED_RBG_OVERRIDE_REASON=""
 	local arg=""
 	while [[ $# -gt 0 ]]; do
 		arg="$1"
@@ -1701,6 +1705,17 @@ _merge_parse_command_args() {
 		case "$arg" in
 		--squash | --merge | --rebase)
 			FULL_LOOP_MERGE_PARSED_METHOD="$arg"
+			;;
+		--override-review-bot-gate=*)
+			if [[ -n "$FULL_LOOP_MERGE_PARSED_RBG_OVERRIDE_REASON" || -z "${arg#--override-review-bot-gate=}" ]]; then
+				print_error "--override-review-bot-gate=REASON requires exactly one non-empty reason"
+				return 1
+			fi
+			FULL_LOOP_MERGE_PARSED_RBG_OVERRIDE_REASON="${arg#--override-review-bot-gate=}"
+			;;
+		--override-review-bot-gate)
+			print_error "Use --override-review-bot-gate=\"<reason, 20+ characters>\""
+			return 1
 			;;
 		--admin)
 			FULL_LOOP_MERGE_PARSED_ADMIN=1
@@ -1740,6 +1755,7 @@ _merge_parse_command_args() {
 		print_error "Merge body file must be a readable regular file: ${FULL_LOOP_MERGE_PARSED_BODY_FILE}"
 		return 1
 	fi
+	_merge_prepare_rbg_override "$FULL_LOOP_MERGE_PARSED_RBG_OVERRIDE_REASON" || return 1
 	return 0
 }
 
@@ -1909,6 +1925,84 @@ _merge_release_lane_check() {
 	return 0
 }
 
+# --- Review-bot-gate maintainer override (GH#36901) ---
+
+_FULL_LOOP_RBG_OVERRIDE_MIN_REASON_CHARS=20
+
+#aidevops:trust-boundary GH#36901 -- an explicit interactive maintainer may
+# admin-merge past a stuck review-bot-gate. Headless sessions, short reasons and
+# --auto are refused. Every other required check, the external/fork authority
+# gate and exact-head binding stay enforced; the PR approval is re-verified
+# immediately before the merge write.
+_merge_prepare_rbg_override() {
+	local reason="$1"
+	_FULL_LOOP_RBG_OVERRIDE_REASON=""
+	[[ -n "$reason" ]] || return 0
+	if _merge_is_headless_session; then
+		print_error "--override-review-bot-gate is interactive-only; headless sessions must wait for review evidence"
+		return 1
+	fi
+	if [[ "${#reason}" -lt "$_FULL_LOOP_RBG_OVERRIDE_MIN_REASON_CHARS" ]]; then
+		print_error "--override-review-bot-gate reason must be at least ${_FULL_LOOP_RBG_OVERRIDE_MIN_REASON_CHARS} characters"
+		return 1
+	fi
+	_FULL_LOOP_RBG_OVERRIDE_REASON="$reason"
+	# The override merges now with --admin; it never queues auto-merge.
+	FULL_LOOP_MERGE_PARSED_ADMIN=1
+	FULL_LOOP_MERGE_PARSED_AUTO=0
+	return 0
+}
+
+# Requires a cryptographic maintainer approval of the PR that still verifies.
+_merge_verify_rbg_override_approval() {
+	local pr_number="$1" repo="$2"
+	local verdict=""
+	[[ -n "${_FULL_LOOP_RBG_OVERRIDE_REASON:-}" ]] || return 0
+	verdict=$("${SCRIPT_DIR}/approval-helper.sh" verify pr "$pr_number" "$repo" 2>/dev/null | tail -1) || verdict=""
+	if [[ "$verdict" != "VERIFIED" ]]; then
+		print_error "Review-bot-gate override refused: PR #${pr_number} approval is ${verdict:-unverifiable}; run: sudo aidevops approve pr ${pr_number} ${repo}"
+		return 1
+	fi
+	print_info "Review-bot-gate override: PR #${pr_number} maintainer approval VERIFIED"
+	return 0
+}
+
+# Post-merge audit trail. Posting earlier would stale the PR approval snapshot.
+_merge_record_rbg_override() {
+	local pr_number="$1" repo="$2" merge_sha="$3"
+	local head_sha="${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-unknown}"
+	local reason="$_FULL_LOOP_RBG_OVERRIDE_REASON"
+	local sig_footer="" body=""
+	sig_footer=$(gh-signature-helper.sh footer --model "${AIDEVOPS_MODEL:-unknown}" 2>/dev/null) || sig_footer=""
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+## Review-bot-gate maintainer override (GH#36901)
+
+An interactive maintainer session merged this PR with \`--admin\` while \`review-bot-gate\` was failing. All other required checks passed, and the maintainer approval verified at head \`${head_sha}\`.
+
+**Reason:** ${reason}
+**Merge commit:** \`${merge_sha}\`
+<!-- ops:end -->
+${sig_footer}"
+	if gh_pr_comment "$pr_number" --repo "$repo" --body "$body" >/dev/null 2>&1; then
+		print_info "Review-bot-gate override comment posted on PR #${pr_number}"
+	else
+		print_warning "Failed to post review-bot-gate override comment on PR #${pr_number}"
+	fi
+	"${SCRIPT_DIR}/audit-log-helper.sh" log security.event \
+		"review-bot-gate maintainer override: PR #${pr_number} in ${repo} head ${head_sha} merge ${merge_sha}" \
+		--detail "reason=${reason}" 2>/dev/null || print_warning "Audit log entry for review-bot-gate override failed"
+	gh pr edit "$pr_number" --repo "$repo" --add-label "admin-merge" >/dev/null 2>&1 || true
+	return 0
+}
+
+# Best-effort post-merge records; never change the merge outcome.
+_merge_record_post_merge_audits() {
+	local pr_number="$1" repo="$2" merge_sha="$3"
+	[[ -z "${_FULL_LOOP_RBG_OVERRIDE_REASON:-}" ]] || _merge_record_rbg_override "$pr_number" "$repo" "$merge_sha"
+	_merge_record_qlty_billing_skips "$pr_number" "$repo"
+	return 0
+}
+
 # GH#36174: enforce the creation-time closure invariant for existing PRs too.
 _merge_check_closure_metadata() {
 	local pr_number="$1" repo="$2"
@@ -1927,7 +2021,7 @@ _merge_check_closure_metadata() {
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
-		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--body-file PATH]"
+		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--body-file PATH] [--override-review-bot-gate=REASON]"
 		return 1
 	fi
 	shift
@@ -2014,7 +2108,7 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
-	_merge_record_qlty_billing_skips "$pr_number" "$repo"
+	_merge_record_post_merge_audits "$pr_number" "$repo" "$FULL_LOOP_MERGE_SHA"
 	_merge_sync_canonical_then_reconcile "$pr_number" "$repo" "$_canonical_dir"
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
 		_full_loop_record_phase "postflight" "$pr_number" || return 1

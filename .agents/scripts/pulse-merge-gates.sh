@@ -49,6 +49,43 @@ source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/trusted-dependabot-lib.sh"
 
 # --- Functions ---
 
+_pulse_recover_external_review() {
+	local pr_number="$1" repo_slug="$2" pr_author="$3" expected_head_sha="$4"
+	local evidence="$5" review_helper="$6" live_pr="" retry_result=""
+	# Called only after independent author, issue, and approval gates. Never
+	# convert an unavailable/malformed review decision into permission to write.
+	#aidevops:trust-boundary -- retries cannot relax external review requirements.
+	[[ -n "$expected_head_sha" && -n "$pr_author" ]] || return 1
+	jq -e --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" \
+		--arg pr "$pr_number" --arg head "$expected_head_sha" --arg author "$pr_author" '
+		.schema == $schema and .repo == $repo and (.pr | tostring) == $pr
+		and .head_sha == $head and .author.login == $author
+		and .author.class == "external"
+		and (.author.association == "CONTRIBUTOR" or .author.association == "FIRST_TIME_CONTRIBUTOR"
+			or .author.association == "FIRST_TIMER" or .author.association == "NONE")
+		and .status == "WAITING" and .exit_code == 1
+		and .permitted == false and .state == "waiting" and .merge_gate == "blocked"
+		and .reason == "outcome_not_permitted"
+	' <<<"$evidence" >/dev/null 2>&1 || return 1
+	_pulse_repo_allows_pr_gate_writes "$repo_slug" "review-limit recovery" || return 1
+	live_pr=$(_pmg_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}") || return 1
+	jq -e --arg head "$expected_head_sha" --arg author "$pr_author" '
+		.state == "open" and .draft == false and .head.sha == $head and .user.login == $author
+		and all(.labels[]?; .name != "hold-for-review")
+	' <<<"$live_pr" >/dev/null 2>&1 || return 1
+	# The shared command owns bot-notice detection and retry idempotency. No
+	# branch push, label exception, status override, or approval mutation here.
+	retry_result=$(bash "$review_helper" request-retry "$pr_number" "$repo_slug" 2>/dev/null) || return 1
+	case "$retry_result" in
+	REQUESTED)
+		echo "[pulse-wrapper] Review limit recovery: requested review for external PR #${pr_number} in ${repo_slug}; merge remains blocked" >>"$LOGFILE"
+		;;
+	ALREADY_REQUESTED | NO_ACTION | HAS_REVIEWS) ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
 _pmg_gh_read() {
 	local rc=0
 	if declare -F _gh_with_timeout >/dev/null 2>&1; then

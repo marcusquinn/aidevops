@@ -195,7 +195,7 @@ Output a brief summary of total actions taken across all cycles (past tense).
 1. **External contributor gate.** `check_external_contributor_pr` / `check_permission_failure_pr` from `pulse-wrapper.sh`. NEVER auto-merge external PRs.
 2. **Maintainer review gate.** If ANY linked issue has `needs-maintainer-review`, do NOT merge.
 3. **Workflow file guard.** `check_workflow_merge_guard` from `pulse-wrapper.sh`.
-4. **Review add-on.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on `PASS`, `PASS_ADVISORY`, or `PASS_RATE_LIMITED`. `WAITING` is reserved for explicit strict/wait policy or the external-contributor trust boundary.
+4. **Review add-on.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on `PASS`, `PASS_ADVISORY`, or `PASS_RATE_LIMITED`. `WAITING` is reserved for explicit strict/wait policy (GH#36931).
 5. **Unresolved review suggestions.** Check with `gh api "repos/SLUG/pulls/NUMBER/comments"`. If actionable, dispatch a fix worker (label `needs-review-fixes`).
 
 ### PR triage
