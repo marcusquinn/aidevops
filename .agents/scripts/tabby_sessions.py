@@ -13,10 +13,10 @@ if sys.version_info < (3, 9):
     sys.exit("Python 3.9+ is required; no packages will be installed")
 
 from tabby_session_config import SessionError, endpoint, equivalent_aliases, load_hosts
-from tabby_session_launch import LaunchContext, check_tabby, observe, report, request, tabby_executable
-from tabby_session_legacy import legacy_state, local_legacy
+from tabby_session_launch import LaunchContext, check_tabby, describe_session, report, request, tabby_executable
+from tabby_session_legacy import local_legacy
 from tabby_session_remote import create, inventory
-from tabby_session_state import state_directory, state_key
+from tabby_session_state import state_directory
 from tabby_session_transport import attach
 
 
@@ -24,13 +24,6 @@ def paths():
     config = os.environ.get("AIDEVOPS_TABBY_HOSTS", str(Path.home() / ".config/aidevops/tabby-hosts.json"))
     state = os.environ.get("AIDEVOPS_TABBY_STATE_DIR", str(Path.home() / ".local/state/aidevops/tabby-sessions"))
     return str(Path(config).absolute()), str(Path(state).absolute())
-
-
-def describe_session(context, session, legacy):
-    status = legacy_state(legacy, session, context.sessions) or observe(
-        context.args.state_dir, state_key(context.endpoint_id, session), context.clients, session["sid"])
-    report(context.host, session, status, "dry-run" if context.args.dry_run else "")
-    return "skipped" if status.startswith("legacy") else status
 
 
 def host_action(args, host, hosts, binary):

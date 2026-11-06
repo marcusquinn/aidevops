@@ -344,7 +344,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_launch_failure_preserves_session_and_bounded_pending(self):
         with mock.patch.object(launch.subprocess, "run", side_effect=subprocess.TimeoutExpired("tabby", 20)), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(launch.request(self.context(), session(), set()), "failed")
-        self.assertEqual(app.observe(self.state_path, state.state_key("endpoint", session()), set(), "$1"), "pending")
+        self.assertEqual(launch.observe(self.state_path, state.state_key("endpoint", session()), set(), "$1"), "pending")
 
     def run_main(self, args, inventory_effect):
         output, errors = io.StringIO(), io.StringIO()
