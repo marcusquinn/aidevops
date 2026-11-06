@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.130] - 2026-11-06
+
+### Added
+
+- add host inventory and managed SSH alias commands
+
+### Changed
+
+- Documentation: document revision attention test stub (GH#36932) (#36952)
+- Refactor: split recoverable-archive functions out of audit-worktree-removal-helper.sh (#36941)
+- Tests: verify timed-out discovery descendants exit (GH#36929) (#36945)
+- Tests: cover bash32 counts across edited renames (#36946)
+- Tests: cover Codex configuration retirement safety (GH#36930) (#36947)
+
+### Fixed
+
+- refuse lifecycle-closed worktree reuse
+- retire legacy worktrees past predating nondumpable daemons (#36942)
+- detect keyless ADC in Google MCP setup (GH#36925) (#36936)
+- scope review retry recovery to current PR head (#36918)
+- harden live intake pagination and budget handling (#36914)
+- request external PR recovery in Pulse (GH#36900) (#36919)
+- GSC helpers fall back to gcloud default ADC with scoped tokens
+- accept fractional cleanup receipt timestamps
+
 ## [3.39.129] - 2026-11-06
 
 ### Changed
