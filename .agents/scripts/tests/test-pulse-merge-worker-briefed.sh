@@ -93,12 +93,8 @@ setup_test_env() {
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
 _all_args=("$@")
 
-# PR files API (GH#36922 parent planning-checkpoint check)
-if [[ "$*" == *"repos/"*"/pulls/"*"/files"* ]]; then
-	[[ -f "${TEST_ROOT}/pr-files.json" ]] || exit 1
-	cat "${TEST_ROOT}/pr-files.json"
-	exit 0
-fi
+# PR files API (GH#36922); a missing fixture simulates an API failure.
+[[ "$*" == *"repos/"*"/pulls/"*"/files"* ]] && { cat "${TEST_ROOT}/pr-files.json" 2>/dev/null; exit $?; }
 
 # Issue API (author_association check)
 if [[ "$*" == *"repos/"*"/issues/"* ]] && [[ "$*" != *"/comments"* ]] && [[ "$*" != *"/labels"* ]]; then
