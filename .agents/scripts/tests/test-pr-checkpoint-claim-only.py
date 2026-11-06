@@ -471,13 +471,12 @@ RECOVERY = ("CLAIM_RELEASED reason=expired_ready_lease_reconciled runner=worker 
             "attempt_id=attempt:raw-1 device=dev session=s1")
 
 
-def ready_decision(data, now=200, runner="worker", device="dev", claim_id=4,
-                   complete_released=False):
+def ready_decision(data, now=200, runner="worker", device="dev", complete_released=False):
     command = ('source "$1/dispatch-claim-checkpoint.sh"; '
                '_dch_expired_ready_claim "$2" "$3" "$6" s1 "$4" "$5" "$7"')
     # Fixed Bash source; JSON and identities are positional data only.
     return subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), json.dumps(data),  # nosec B603
-                           runner, device, str(now), str(claim_id), str(complete_released).lower()],
+                           runner, device, str(now), "4", str(complete_released).lower()],
                           capture_output=True, text=True, check=False).stdout.strip()
 
 
@@ -500,7 +499,7 @@ class ExpiredReadyPredicateTests(unittest.TestCase):
             "unknown_ready_expiry": (ready_pages(ready_expiry=""), {}),
             "runner": (ready_pages(), {"runner": "other"}),
             "device": (ready_pages(), {"device": "other"}),
-            "claim_id": (ready_pages(), {"claim_id": 5}),
+            "claim_id": ([[{**ready_pages()[0][0], "id": 9}, *ready_pages()[0][1:]]], {}),
             "author": (ready_pages(claim_author="other"), {}),
             "generic_claim": (ready_pages(approval=""), {}),
             "never_ready": ([ready_pages()[0][:2]], {}),
