@@ -1010,10 +1010,12 @@ _merge_resolve_squash_subject() {
 		return 1
 	}
 	# Incomplete/malformed evidence must not silently become an untyped history.
-	pr_json=$(jq -en --arg title "$subject" --argjson pages "$commit_pages" '
+	# Commit messages can exceed argv limits; keep the unbounded pages on stdin.
+	pr_json=$(jq -e --arg title "$subject" '
 		def is_array: [arrays] | length == 1;
 		def is_string: type == "string";
-		if ($pages | is_array | not) or ($pages | length) == 0
+		. as $pages
+		| if ($pages | is_array | not) or ($pages | length) == 0
 			or any($pages[]; is_array | not) then
 			error("invalid PR commit pages")
 		else [$pages[][]] as $commits
@@ -1024,7 +1026,7 @@ _merge_resolve_squash_subject() {
 			else {title: $title, commits: [$commits[] |
 				{messageHeadline: (.commit.message | split("\n")[0])}]}
 			end
-		end') || {
+		end' <<<"$commit_pages") || {
 		print_error "Invalid PR #${pr_number} commit metadata for squash-subject validation"
 		return 1
 	}
