@@ -15,7 +15,8 @@ from .retirement import _git
 
 def pull_request_repositories(slug: str) -> list[str]:
     """Include the fork's parent and source, where upstream PRs are listed."""
-    if not re.fullmatch(r"[\w.-]+/[\w.-]+", slug, flags=re.ASCII):
+    if (not re.fullmatch(r"[\w.-]+/[\w.-]+", slug, flags=re.ASCII)
+            or any(part in (".", "..") for part in slug.split("/"))):
         raise ValueError("invalid-repository-slug")
     result = subprocess.run(  # nosec B603 B607 # fixed gh argv, validated slug
         ["gh", "api", f"repos/{slug}"],
@@ -30,7 +31,8 @@ def pull_request_repositories(slug: str) -> list[str]:
             repository = metadata.get(key)
             name = repository.get("full_name") if isinstance(repository, dict) else None
             if (not isinstance(name, str)
-                    or not re.fullmatch(r"[\w.-]+/[\w.-]+", name, flags=re.ASCII)):
+                    or not re.fullmatch(r"[\w.-]+/[\w.-]+", name, flags=re.ASCII)
+                    or any(part in (".", "..") for part in name.split("/"))):
                 raise ValueError("invalid-repository-response")
             if name.lower() not in {item.lower() for item in repositories}:
                 repositories.append(name)

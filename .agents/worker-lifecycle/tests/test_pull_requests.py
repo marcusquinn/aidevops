@@ -105,7 +105,8 @@ class ForkPullRequestContract(unittest.TestCase):
         cases = [
             ("repos/contributor/fork", {}),
             ("repos/contributor/fork", {"fork": True}),
-            ("repos/contributor/fork", {"fork": True, "parent": {"full_name": "../bad"}}),
+            ("repos/contributor/fork", {"fork": True, "parent": {"full_name": "../bad"},
+                                       "source": {"full_name": "upstream/project"}}),
             ("repos/contributor/fork", subprocess.CalledProcessError(1, ["gh", "api"])),
             ("repos/upstream/project/pulls?state=open&per_page=100", []),
             ("repos/upstream/project/pulls?state=open&per_page=100", [[{}]]),
