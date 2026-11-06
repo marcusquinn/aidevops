@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.129] - 2026-11-06
+
+### Changed
+
+- Documentation: hostinger LiteSpeed reCAPTCHA protection can refuse all visitors (GH#36872) (#36873)
+- Maintenance: mark t18874 complete (pr:#36867 completed:2026-11-06) (#36870)
+- Maintenance: sync GitHub issue refs to TODO.md (#36871)
+
+### Fixed
+
+- carry existing complexity violations across git renames
+- preserve runtime-local config.worktree bytes without restoring them
+- bound removal dependency scans (GH#36894) (#36896)
+- count completed children in parent phase nudges (#36891)
+- recover released attempts missing terminal leases
+- clarify revision-approved checkpoint recovery (GH#36887) (#36888)
+- suppress stalled supervisor while runner health is paused (GH#36885) (#36886)
+- reconcile acknowledged terminal-without-release history
+- stream squash-subject commit pages on stdin (GH#36874) (#36875)
+- keep checkpoint parent references secondary (GH#36864) (#36868)
+- classify body-only classic-protection 404 for ruleset-only repos (GH#36866) (#36869)
+
 ## [3.39.128] - 2026-11-06
 
 ### Added
