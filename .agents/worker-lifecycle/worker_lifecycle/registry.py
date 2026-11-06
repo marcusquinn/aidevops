@@ -63,6 +63,8 @@ def argument_parser() -> argparse.ArgumentParser:
     initialize = commands.add_parser("init", help="create a NEW private directory/store after readiness")
     initialize.add_argument("--max-events", type=int, default=DEFAULT_MAX_EVENTS)
     commands.add_parser("status", help="report aggregate registry state")
+    reuse = commands.add_parser("reuse-status", help="read-only worktree reuse preflight; never admits launch")
+    reuse.add_argument("--path", required=True, type=Path)
     compact = commands.add_parser("compact", help="preview archive-first retention (at most 1000 events per batch)")
     compact.add_argument("--min-age-seconds", type=int, default=None,
                          help="default: AIDEVOPS_LIFECYCLE_RETENTION_SECONDS or 86400")
@@ -259,6 +261,10 @@ def main() -> int:
             result = LifecycleRegistry.initialize(args.state_dir, max_events=args.max_events).summary()
         elif args.operation == "upgrade":
             result = upgrade_registry(LifecycleRegistry(args.state_dir), args.backup_dir)
+        elif args.operation == "reuse-status":
+            from .launch_state import reuse_status
+
+            result = reuse_status(args.state_dir, args.path)
         else:
             if (args.operation in ("enroll", "admit-session", "create-worktree")
                     and args.initialize):

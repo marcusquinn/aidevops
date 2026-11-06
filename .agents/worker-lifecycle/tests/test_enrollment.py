@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import struct
 import subprocess  # nosec B404 # owned Git and native processes in disposable fixtures
 import sys
@@ -55,6 +56,50 @@ class EnrollmentContract(unittest.TestCase):
     def test_retirement_of_never_enrolled_tree_names_legacy_case(self):
         with self.assertRaisesRegex(ValueError, "^not-enrolled$"):
             self.enrollment.inspect_retirement(self.tree)
+
+    def test_dispatch_reuse_checks_lifecycle_before_legacy_match(self):
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        ownership = self.root / "ownership.db"
+        with sqlite3.connect(ownership) as connection:
+            connection.execute("CREATE TABLE worktree_owners (worktree_path TEXT)")
+        self.git("-C", str(self.tree), "checkout", "-qb", "gh-101")
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith(("GIT_", "AIDEVOPS_", "WORKTREE_"))}
+        env.update(AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory),
+                   WORKTREE_REGISTRY_DB=str(ownership), LOGFILE=os.devnull)
+        bash = shutil.which("bash")
+        if bash is None:
+            self.fail("Bash is required for dispatcher integration")
+
+        def select():
+            return subprocess.run(  # nosec B603 # fixed selector command in owned disposable fixtures
+                [bash, "-c", 'source "$1"; _dlw_select_issue_worktree "$2" 101 owner/repo; '
+                 'rc=$?; printf "%s:%s:%s" "$rc" "$_DLW_REUSE_REFUSAL" "$_DLW_REUSE_PATH"',
+                 "fixture", str(scripts / "pulse-dispatch-worker-systemd.sh"), str(self.repo)],
+                env=env, check=True, capture_output=True, text=True, timeout=15,
+            ).stdout
+
+        self.assertEqual(select(), f"0::{self.tree}")  # Genuine legacy tree.
+        absent = self.root / "absent-state"
+        env["AIDEVOPS_LIFECYCLE_STATE_DIR"] = str(absent)
+        self.assertEqual(select(), f"0::{self.tree}")
+        self.assertFalse(absent.exists())
+        env["AIDEVOPS_LIFECYCLE_STATE_DIR"] = str(self.store.directory)
+        generation = self.enrollment.resolve(self.tree, create=True)
+        before = self.store.summary()
+        self.assertEqual(select(), f"0::{self.tree}")
+        self.assertEqual(self.store.summary(), before)
+        env["AIDEVOPS_LIFECYCLE_STATE_DIR"] = str(absent)
+        self.assertEqual(select(), "2:worktree_reuse_evidence_unavailable:")
+        self.assertFalse(absent.exists())
+        env["AIDEVOPS_LIFECYCLE_STATE_DIR"] = str(self.store.directory)
+        AdmissionRegistry(self.store).close_generation(str(uuid4()), generation)
+        before = self.store.summary()
+        self.assertEqual(select(), "2:worktree_reuse_sealed_generation:")
+        self.assertEqual(self.store.summary(), before)
+        self.marker.unlink()
+        self.assertEqual(select(), "2:worktree_reuse_evidence_unavailable:")
+        self.assertEqual(self.store.summary(), before)
 
     def test_retirement_of_enrolled_tree_with_lost_marker_is_not_legacy(self):
         self.enrollment.resolve(self.tree, create=True)

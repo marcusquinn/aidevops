@@ -66,7 +66,21 @@ _dlw_managed_creation_env() {
 # evidence is unavailable: the caller must refuse, not guess.
 _dlw_classify_reuse_candidate() {
 	local wt_path="$1" issue_number="$2" repo_slug="$3"
-	local helper="" output="" rc=0
+	local helper="" output="" rc=0 state_dir="" lifecycle=""
+	# GH#36920: managed/legacy matching uses a different registry. Preflight
+	# lifecycle admission before ownership transfer; launch must still recheck.
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${_DLW_SYSTEMD_MODULE_DIR}/worker-lifecycle-state.sh" || return 1
+	state_dir=$(worker_lifecycle_state_dir) || return 1
+	[[ -n "$state_dir" ]] || return 1
+	lifecycle=$(python3 -E -s -B "${_DLW_SYSTEMD_MODULE_DIR}/../worker-lifecycle/worker-registry.py" \
+		--state-dir "$state_dir" reuse-status --path "$wt_path" 2>/dev/null) || return 1
+	lifecycle=$(jq -er '.reuse' <<<"$lifecycle") || return 1
+	case "$lifecycle" in
+	sealed) printf 'sealed\n'; return 0 ;;
+	eligible) ;;
+	*) return 1 ;;
+	esac
 	helper=$(_dlw_lifetime_helper)
 	output=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" match "$wt_path" "$issue_number" ${repo_slug:+"$repo_slug"} 2>/dev/null) || rc=$?
 	case "$rc" in
