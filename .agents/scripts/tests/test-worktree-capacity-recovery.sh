@@ -15,12 +15,13 @@ mkdir -p "$HOME/.config/aidevops" "$ROOT/scripts" "$ROOT/repo"
 git -C "$ROOT/repo" init -q -b main
 git -C "$ROOT/repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm initial --allow-empty
 git -C "$ROOT/repo" update-ref refs/remotes/origin/main HEAD
-for branch in contained squash dirty open live unproven hidden-open unknown fresh; do
+for branch in contained squash dirty open live unproven hidden-open unknown fresh reused; do
 	git -C "$ROOT/repo" worktree add -qb "$branch" "$ROOT/$branch"
 done
 printf 'preserve\n' >"$ROOT/dirty/wip"
 git -C "$ROOT/squash" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm squash --allow-empty
 git -C "$ROOT/unproven" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm unproven --allow-empty
+git -C "$ROOT/reused" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm reused --allow-empty
 printf '{"owner":{"pid":%s,"session":"fixture"},"aged":true}\n' "$$" >"$ROOT/squash.receipt"
 printf '{"owner":{"pid":%s,"session":"fixture"},"aged":false}\n' "$$" >"$ROOT/live.receipt"
 jq -n --arg path "$ROOT/repo" '{initialized_repos:[{path:$path}]}' >"$HOME/.config/aidevops/repos.json"
@@ -52,13 +53,17 @@ _clean_preflight_main_worktree() { printf '%s\n' "$FIXTURE_ROOT/repo"; return 0;
 full_loop_reconcile_cleanup_receipts() { return 0; }
 get_default_branch() { printf 'main\n'; return 0; }
 _clean_fetch_remotes() { printf 'false\n'; return 0; }
-_clean_build_merged_pr_branches() { printf 'squash\n'; return 0; }
+_clean_build_merged_pr_branches() { printf 'squash\nreused\n'; return 0; }
 _clean_build_exact_merged_pr_branches() { return 0; }
 _clean_build_open_pr_branches() { printf 'open\n'; return 0; }
 _clean_build_closed_pr_branches() { return 0; }
 _clean_repo_slug() { printf 'fixture/recovery\n'; return 0; }
 gh_pr_list() {
-	local head="${4:-}"
+	local head="${4:-}" state="${6:-}"
+	if [[ "$state" == merged ]]; then
+		if [[ "$head" == reused ]]; then git rev-parse origin/main; else git rev-parse "refs/heads/$head"; fi
+		return 0
+	fi
 	case "$head" in
 	unknown) return 1 ;;
 	hidden-open | hold-*) printf '1\n' ;;
@@ -112,30 +117,30 @@ eval "$(extract_gate_function _dispatch_worktree_capacity_gate)"
 _dispatch_launch_pressure_cleanup() { return 0; }
 LOGFILE="$ROOT/gate.log"
 _PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN='^[0-9]+$'
-if _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 9; then exit 1; fi
+if _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 10; then exit 1; fi
 
 # Launch from outside the repo so the managed-repository inventory is exercised.
 (
 	cd "$ROOT"
-	env AIDEVOPS_MAX_WORKTREES=9 CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0 \
+	env AIDEVOPS_MAX_WORKTREES=10 CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0 \
 		bash "$ROOT/scripts/cleanup-worktrees-async-helper.sh"
 )
 [[ ! -d "$ROOT/contained" && ! -d "$ROOT/squash" ]]
 [[ -f "$ROOT/dirty/wip" && -d "$ROOT/open" && -d "$ROOT/live" && -d "$ROOT/unproven" ]]
 [[ -s "$ROOT/expiry" ]]
 count=$(git -C "$ROOT/repo" worktree list --porcelain | rg -c '^worktree ')
-[[ "$count" -eq 8 ]]
-_dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 9
-[[ -d "$ROOT/hidden-open" && -d "$ROOT/unknown" && -d "$ROOT/fresh" ]]
+[[ "$count" -eq 9 ]]
+_dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 10
+[[ -d "$ROOT/hidden-open" && -d "$ROOT/unknown" && -d "$ROOT/fresh" && -d "$ROOT/reused" ]]
 printf 'PASS async pass reclaims contained and merged/expired trees; dirty/open/live/unproven preserved\n'
 printf 'PASS dispatch gate reopens; exact open-PR, unavailable proof and fresh pre-work remain protected\n'
 
 # With no safe trees left, pressure must be observable and dispatch stay closed.
 (
 	cd "$ROOT"
-	env AIDEVOPS_MAX_WORKTREES=8 bash "$ROOT/scripts/cleanup-worktrees-async-helper.sh"
+	env AIDEVOPS_MAX_WORKTREES=9 bash "$ROOT/scripts/cleanup-worktrees-async-helper.sh"
 )
-if _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 8; then exit 1; fi
+if _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 9; then exit 1; fi
 rg -q 'capacity-stuck: gate closed, zero safe removals' "$HOME/.aidevops/logs/cleanup_worktrees.log"
 printf 'PASS closed gate with zero safe candidates produces capacity-stuck diagnostic\n'
 

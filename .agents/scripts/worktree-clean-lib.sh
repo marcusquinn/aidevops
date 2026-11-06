@@ -1337,6 +1337,16 @@ _clean_select_merge_type() {
 	return 1
 }
 
+# Do not let an old merged PR authorize deletion of new commits on a reused
+# branch. The pressure path requires the exact PR head or default containment.
+_clean_capacity_merged_head_matches() {
+	local wt_branch="$1" repo_slug="$2" head_sha="" merged_head=""
+	head_sha=$(_clean_branch_head "$wt_branch") || return 1
+	merged_head=$(gh_pr_list --repo "$repo_slug" --head "$wt_branch" --state merged --limit 1 --json headRefOid --jq '.[0].headRefOid // empty' 2>/dev/null) || return 1
+	[[ -n "$merged_head" && "$merged_head" == "$head_sha" ]] || return 1
+	return 0
+}
+
 # Capacity recovery is narrower than routine/manual cleanup: no abandoned
 # dirty WIP, closed-issue archival, or remote-deleted-only inference.
 _clean_capacity_candidate_allowed() {
@@ -1358,6 +1368,8 @@ _clean_capacity_candidate_allowed() {
 	if ! _clean_branch_list_contains_exact "$wt_branch" "$merged_prs"; then
 		_skip_cleanup_for_grace_period "$wt_path" "$wt_branch" && return 1
 		git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null || return 1
+	elif ! git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null; then
+		_clean_capacity_merged_head_matches "$wt_branch" "$repo_slug" || return 1
 	fi
 	return 0
 }
