@@ -137,6 +137,21 @@ hol_later=$(node "$COORDINATOR" lease-next --owner-id hol-later-owner --lease-se
 node "$COORDINATOR" lease-finish --owner-id hol-later-owner --repository-id repo-hol \
 	--fencing-token "$(jq -r '.fencingToken' <<<"$hol_later")" --status terminal --evidence '{"failure":"fixture-cleanup"}' >/dev/null
 
+# Malformed lease attempt counts must not abort before checkout validation.
+# Exhaust each fixture immediately so it cannot interfere with later leases.
+attempt_case=0
+for attempt in null '""' '"invalid"' 0 -1 '"08"' '"1+1"' 1 2; do
+	attempt_case=$((attempt_case + 1))
+	operation_id="invalid-attempt-${attempt_case}"
+	node "$COORDINATOR" publication-intent --operation-id "$operation_id" --task-id "$task_id" \
+		--repository-id "$operation_id" --repository-path "${TEST_ROOT}/missing-worktree" \
+		--max-attempts 1 --payload '{"paths":["TODO.md"]}' >/dev/null
+	lease=$(node "$COORDINATOR" lease-next --owner-id attempt-owner --lease-seconds 30 --max-active 4)
+	lease=$(jq -c --argjson attempt "$attempt" '.batch[0].attemptCount = $attempt' <<<"$lease")
+	bash -c 'source "$1" metrics >/dev/null; _publication_process_lease "$2" attempt-owner' bash "$WORKER" "$lease"
+	[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT json_extract(evidence_json,'$.result') FROM terminal_evidence WHERE operation_id='$operation_id';")" == "repository_worktree_unavailable" ]]
+done
+
 # End-to-end worker publication records the exact pushed commit, and an owner
 # made stale immediately before push cannot mutate the remote.
 git_root="${TEST_ROOT}/git"

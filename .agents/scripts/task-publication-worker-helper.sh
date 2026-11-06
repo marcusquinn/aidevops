@@ -121,6 +121,8 @@ _publication_process_lease() {
 	branch_name=$(jq -r '.batch[0].branchName' <<<"$lease")
 	attempt=$(jq -r '.batch[0].attemptCount' <<<"$lease")
 	paths=$(jq -r '[.batch[].payload.paths[]?] | unique | .[]' <<<"$lease")
+	# Only positive decimal counts may enter shell arithmetic (not null or octal).
+	[[ "$attempt" =~ ^[1-9][0-9]*$ ]] || attempt=1
 	retry_after=$((2 ** (attempt - 1)))
 	[[ $retry_after -le $PUBLICATION_MAX_BACKOFF ]] || retry_after="$PUBLICATION_MAX_BACKOFF"
 
