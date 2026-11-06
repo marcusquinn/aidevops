@@ -107,6 +107,8 @@ load_functions() {
 	extract_function _merge_resolve_subject_for_method
 	extract_function _merge_describe_flags
 	extract_function _merge_rest_fallback
+	extract_function _merge_pr_merged_at_head
+	extract_function _merge_report_already_merged_at_head
 	extract_function _merge_revalidate_transport_authority
 	extract_function _merge_verify_rbg_override_approval
 	extract_function _merge_execute
@@ -1059,6 +1061,94 @@ test_secondary_merge_transports_refresh_authority() {
 	return 0
 }
 
+# GH#36966: the write lands but its transport reports failure, while the review
+# snapshot remains OPEN and the closed issue would fail the next authority check.
+test_completed_merge_before_stale_authority() (
+	local scenario="" actual_rc=0 output="" expected_rc=0
+	extract_function _merge_run_bounded_write
+	extract_function _merge_reconcile_timed_out_write
+	extract_function _merge_try_review_only_admin_fallback
+	extract_function _merge_try_interactive_admin_auto_fallback
+	# shellcheck source=/dev/null
+	source "$EXTRACTED"
+	_merge_guard_admin_merge_maintainer_review() {
+		_merge_guard_admin_merge_maintainer_review_for_mode_test "$@"
+		return $?
+	}
+	gh() {
+		local command="${1:-}" subcommand="${2:-}"
+		if [[ "$command" == pr && "$subcommand" == merge ]]; then
+			printf '%s\n' "$*" >>"$MERGE_CALLS"
+			printf 'HTTP 401: Bad credentials after accepted mutation\n'
+			return 1
+		fi
+		if [[ "$command" == pr && "$subcommand" == view ]]; then
+			if [[ "$*" == *'--json title'* ]]; then
+				printf '%s\n' '{"title":"fix: reconcile accepted merge"}'
+			else
+				printf '%s\n' '{"state":"OPEN","headRefOid":"head-current"}'
+			fi
+			return 0
+		fi
+		if [[ "$command" == api && "$subcommand" == *'/commits?per_page=100' ]]; then
+			printf '%s\n' '[[{"sha":"head-current","commit":{"message":"fix: reconcile accepted merge"}}]]'
+			return 0
+		fi
+		if [[ "$command" == api && "$subcommand" == repos/owner/repo/pulls/900 && -s "$MERGE_CALLS" ]]; then
+			case "$scenario" in
+			unreadable) return 1 ;;
+			other-head) printf '%s\n' '{"merged":true,"merged_at":"2026-11-06","merge_commit_sha":"merged-oid","head":{"sha":"other"}}' ;;
+			open | closed) printf '{"merged":false,"state":"%s","head":{"sha":"head-current"}}\n' "$scenario" ;;
+			*) printf '%s\n' '{"merged":true,"merged_at":"2026-11-06","merge_commit_sha":"merged-oid","head":{"sha":"head-current"}}' ;;
+			esac
+			return 0
+		fi
+		return 1
+	}
+	gh_merge_remediate_stale_auth_cache() {
+		return 0
+	}
+	AUTHORITY_GUARD_PASS=1
+	AUTHORITY_GUARD_FAIL_ON_CALL=2
+	for scenario in merged other-head open closed unreadable; do
+		: >"$MERGE_CALLS"
+		: >"$GUARD_CALLS"
+		actual_rc=0
+		output=$(_merge_execute 900 owner/repo --squash 0 0 2>&1) || actual_rc=$?
+		expected_rc=1
+		[[ "$scenario" != merged ]] || expected_rc=0
+		if [[ "$actual_rc" -eq "$expected_rc" && "$(wc -l <"$MERGE_CALLS")" -eq 1 ]] &&
+			{ [[ "$scenario" != merged ]] ||
+				[[ "$(wc -l <"$GUARD_CALLS")" -eq 1 && "$output" == *'already merged at verified head'* ]]; }; then
+			print_result "accepted write with stale OPEN review and stale linked authority: $scenario" 0
+		else
+			print_result "accepted write with stale OPEN review and stale linked authority: $scenario" 1 "$output"
+		fi
+	done
+	# Exercise each secondary entry directly: a previous write has completed,
+	# so even a now-revoked authority must never be consulted or replayed.
+	scenario=merged
+	local fallback=""
+	for fallback in rest review-admin interactive-admin; do
+		: >"$GUARD_CALLS"
+		AUTHORITY_GUARD_PASS=0
+		actual_rc=0
+		case "$fallback" in
+		rest) output=$(_merge_rest_fallback 900 owner/repo --squash head-current 2>&1) || actual_rc=$? ;;
+		review-admin) output=$(_merge_try_review_only_admin_fallback 900 owner/repo --squash head-current '' '' 'At least 1 approving review' 2>&1) || actual_rc=$? ;;
+		interactive-admin) output=$(_merge_try_interactive_admin_auto_fallback 900 owner/repo --squash 'review required' head-current 2>&1) || actual_rc=$? ;;
+		esac
+		if [[ "$actual_rc" -eq 0 && ! -s "$GUARD_CALLS" && "$(wc -l <"$MERGE_CALLS")" -eq 1 &&
+			"$output" == *'already merged at verified head'* ]]; then
+			print_result "completed exact-head merge before $fallback authority revalidation" 0
+		else
+			print_result "completed exact-head merge before $fallback authority revalidation" 1 "$output"
+		fi
+	done
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
+	return 0
+)
+
 # Load the real shared read path in a subshell so authority fixtures retain their
 # local stubs. Advance SECONDS rather than sleeping through a healthy slow gate.
 test_slow_gate_admission_reads() {
@@ -1266,6 +1356,7 @@ main() {
 	test_pre_merge_authority_check_failure
 	test_all_merge_modes_use_guard
 	test_secondary_merge_transports_refresh_authority
+	test_completed_merge_before_stale_authority || return 1
 	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?

@@ -152,6 +152,10 @@ _merge_rest_fallback() {
 	local rest_method="${merge_method#--}"
 	local rest_out="" rest_rc=0
 
+	# GH#36966: the previous transport may have committed before reporting an
+	# error. Reconcile before revalidating authority on an auto-closed issue.
+	_merge_report_already_merged_at_head "$pr_number" "$repo" "$expected_head_sha" && return 0
+
 	if [[ -z "$expected_head_sha" ]]; then
 		print_error "REST merge fallback unavailable: PR head SHA was not verified before merge"
 		return 1
@@ -186,6 +190,7 @@ _merge_rest_fallback() {
 		return 0
 	fi
 
+	_merge_report_already_merged_at_head "$pr_number" "$repo" "$expected_head_sha" && return 0
 	print_error "REST merge fallback failed for PR #${pr_number}"
 	return 1
 }
@@ -330,12 +335,12 @@ _merge_pr_merged_at_head() {
 	local pr_number="$1"
 	local repo="$2"
 	local expected_head_sha="$3"
-	local pr_json=""
+	local pr_json="" read_rc=0 merge_oid=""
 
 	[[ -n "$expected_head_sha" ]] || return 1
 	pr_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" \
-		--json state,mergedAt,mergeCommit,headRefOid) || return 2
-	printf '%s\n' "$pr_json" | jq -er --arg head "$expected_head_sha" '
+		--json state,mergedAt,mergeCommit,headRefOid) || read_rc=$?
+	merge_oid=$(printf '%s\n' "$pr_json" | jq -er --arg head "$expected_head_sha" '
 		select(
 			((.state // "") | ascii_downcase) == "merged"
 			and (.mergedAt // null) != null
@@ -343,6 +348,22 @@ _merge_pr_merged_at_head() {
 			and (.headRefOid // null) == $head
 		)
 		| .mergeCommit.oid
+	' 2>/dev/null) && {
+		printf '%s\n' "$merge_oid"
+		return 0
+	}
+	# GH#36966: the review read adapter can still show OPEN after GitHub has
+	# merged and closed the linked issue. Use the REST merge record before
+	# treating stale approval as a failed mutation; never accept another head.
+	pr_json=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" \
+		-H 'Cache-Control: no-cache') || {
+		[[ "$read_rc" -eq 0 ]] || return 2
+		return 1
+	}
+	printf '%s\n' "$pr_json" | jq -er --arg head "$expected_head_sha" '
+		select(.merged == true and .merged_at != null
+			and .merge_commit_sha != null and .head.sha == $head)
+		| .merge_commit_sha
 	' 2>/dev/null || return 1
 	return 0
 }
@@ -357,7 +378,7 @@ _merge_report_already_merged_at_head() {
 	local merge_oid=""
 
 	merge_oid=$(_merge_pr_merged_at_head "$pr_number" "$repo" "$expected_head_sha") || return 1
-	print_success "PR #${pr_number} already merged at verified head ${expected_head_sha} (merge ${merge_oid}); no write issued"
+	print_success "PR #${pr_number} already merged at verified head ${expected_head_sha} (merge ${merge_oid}); no further write issued"
 	return 0
 }
 
@@ -397,6 +418,9 @@ _merge_run_bounded_write() {
 	else
 		write_rc=$?
 	fi
+	# A nonzero transport result is not proof that the mutation failed. Return
+	# success to the normal post-merge lifecycle without replaying the write.
+	_merge_report_already_merged_at_head "$pr_number" "$repo" "$expected_head_sha" && return 0
 	[[ "$write_rc" -eq 124 ]] || return "$write_rc"
 	_merge_reconcile_timed_out_write "$pr_number" "$repo" "$expected_head_sha" || {
 		_MERGE_WRITE_OUTPUT=""
