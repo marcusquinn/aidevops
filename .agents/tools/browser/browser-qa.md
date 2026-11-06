@@ -88,6 +88,10 @@ Routing blocks service workers and disables the HTTP cache; it can change prefet
 captures layout changes during parsing, deferred script execution and font loading.
 It uses the shared Playwright runtime and installs nothing.
 
+Every capture blocks service workers, including the warm visit and runs without
+`--transform-file`. This can change content and cache behavior on pages controlled
+by a service worker.
+
 Save a trusted, synchronous function expression as `measure.js` (not an ES module):
 
 ```javascript
@@ -114,10 +118,10 @@ Options:
 | `--from URL` | Visit this absolute HTTP(S) URL first in the same context, before throttling, to warm the HTTP cache. |
 | `--after-selector SELECTOR` | Install the ResizeObserver sentinel once this element exists and `body` is available. Without this flag install once `body` exists. Presence of a script element does **not** prove its code has executed. |
 | `--no-after` | Disable the sentinel; mutually exclusive with `--after-selector`. Use for an unmodified observer-error baseline. |
-| `--transform-file FILE` | Trusted regular file containing `(html) => html`, applied only to main-frame document requests. Can inline a deferred fix before deployment. Routing disables HTTP cache on the measured page and blocks service workers; this changes loading behavior. |
+| `--transform-file FILE` | Trusted regular file containing `(html) => html`, applied only to main-frame document requests. Can inline a deferred fix before deployment. Routing disables HTTP cache on the measured page; this changes loading behavior. |
 | `--settle-ms N` | Milliseconds after the document's own load event (default 1000, range 0–60000). |
 | `--format json\|markdown` | Default JSON includes raw samples, runs and errors; Markdown prints consecutive-state runs, timing and frame/error counts. |
-| `--output-dir DIR` | Save raw JSON in `frames.json`; directory mode 0700, file 0600. Refuses to overwrite an existing report. URLs/content/errors are private evidence. |
+| `--output-dir DIR` | Save raw JSON in `frames.json`; new directories use mode 0700, existing directory permissions are preserved, file mode 0600. Rejects an existing report before capture and refuses to overwrite it at write time. URLs/content/errors are private evidence. |
 
 **Painted-state sampling caveat:** rAF runs before layout and ResizeObserver
 delivery. The optional sentinel is an invisible, absolutely positioned 1px-high

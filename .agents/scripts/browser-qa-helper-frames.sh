@@ -14,7 +14,7 @@ _generate_frames_script() {
 _generate_frames_setup() {
 	local script_file="$1"
 	cat >"$script_file" <<'SCRIPT'
-import { readFile, mkdir, chmod, writeFile } from 'node:fs/promises';
+import { readFile, mkdir, lstat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -40,11 +40,18 @@ const functionSource = async file => {
 };
 const measureSource = await functionSource(measureFile);
 const transform = transformFile ? (0, eval)(`(${await functionSource(transformFile)}\n)`) : null;
+const report = { url, from: from || null, cpu, settleMs, sentinel: noAfter !== 'true', widths: [] };
+if (outputDir) {
+  const target = path.join(outputDir, 'frames.json');
+  let existing;
+  try { existing = await lstat(target); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (existing) throw new Error(`${target} already exists; choose a new --output-dir`);
+}
 const imported = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = imported.chromium ? imported : imported.default;
 const browser = await chromium.launch({ headless: true,
   ...(process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE ? { executablePath: process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE } : {}) });
-const report = { url, from: from || null, cpu, settleMs, sentinel: noAfter !== 'true', widths: [] };
 try {
   for (const width of widths) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
@@ -131,8 +138,13 @@ _generate_frames_capture() {
         };
         frameId = requestAnimationFrame(tick);
       }, { key, ready, afterSelector, noAfter: noAfter === 'true', measureSource, settleMs });
-      await page.goto(url, { waitUntil: 'load', timeout: 30000 });
-      await page.waitForFunction(key => window[key]?.done, key, { timeout: settleMs + 30000 });
+      try {
+        await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+        await page.waitForFunction(key => window[key]?.done, key, { timeout: settleMs + 30000 });
+      } catch (error) {
+        if (!routingErrors.length) throw error;
+        throw new Error(`${error.message}; transform errors: ${routingErrors.join('; ')}`, { cause: error });
+      }
       const capture = await page.evaluate(key => window[key], key);
 SCRIPT
 	return 0
@@ -166,8 +178,8 @@ _generate_frames_report() {
   report.ok = report.widths.every(item => !item.problems.length);
   const json = JSON.stringify(report, null, 2);
   if (outputDir) {
+    // mkdir's mode affects only newly created directories; preserve existing permissions.
     await mkdir(outputDir, { recursive: true, mode: 0o700 });
-    await chmod(outputDir, 0o700);
     // Refuse to overwrite prior evidence or follow an existing report symlink.
     await writeFile(path.join(outputDir, 'frames.json'), json + '\n', { mode: 0o600, flag: 'wx' });
   }
