@@ -65,11 +65,18 @@ def open_pull_requests(slug):
             for pr in _repository_pull_requests(repository)]
 
 
-def matches_open_pull_request(prs: list, head: str, branch: str) -> bool:
-    """Match by exact head commit, or by branch name for an attached HEAD."""
+def matches_open_pull_request(prs: list, head: str, branch: str, slug: str) -> bool:
+    """Match exact commits anywhere, or attached branches in the configured repo."""
     name = branch.removeprefix("refs/heads/") if branch.startswith("refs/heads/") else ""
-    return any(pr["head"]["sha"] == head or bool(name and pr["head"]["ref"] == name)
-               for pr in prs)
+    for pr in prs:
+        if pr["head"]["sha"] == head:
+            return True
+        repository = pr["head"].get("repo")
+        full_name = repository.get("full_name") if isinstance(repository, dict) else None
+        if (name and pr["head"]["ref"] == name and isinstance(full_name, str)
+                and full_name.lower() == slug.lower()):
+            return True
+    return False
 
 
 def worktree_identity(path: Path) -> tuple[str, str]:
@@ -103,6 +110,6 @@ class OpenPullRequestCache:
         prs = self.results[slug]
         if prs is None:
             return "pull-request-state-unavailable"
-        if matches_open_pull_request(prs, head, branch):
+        if matches_open_pull_request(prs, head, branch, slug):
             return "open-pull-request"
         return None
