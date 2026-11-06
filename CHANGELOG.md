@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.131] - 2026-11-06
+
+### Added
+
+- site hygiene sweep for every SEO audit
+
+### Changed
+
+- Maintenance: add t18881; t18877, t18880 → done (#36960)
+
+### Fixed
+
+- qualify PR branch holds by head repository (#36957)
+- preserve approvals across canonical review retries (t18878, GH#36902) (#36958)
+- review-bot-gate fork PRs run main's helper (#36956)
+
 ## [3.39.130] - 2026-11-06
 
 ### Added
