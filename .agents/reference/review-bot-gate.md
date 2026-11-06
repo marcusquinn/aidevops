@@ -34,7 +34,10 @@ full-loop before every merge transport, not by waiting for a bot review.
 
 1. **CI**: `.github/workflows/review-bot-gate.yml` may remain a required compatibility
    status, but default missing/late review emits `PASS_ADVISORY` and succeeds. It
-   blocks for missing completion only under explicit strict policy.
+   blocks for missing completion only under explicit strict policy. Same-repository
+   PRs are evaluated on `pull_request`. Fork PRs are evaluated on `pull_request_target`,
+   because fork `pull_request` tokens cannot post the status (GH#36961). The fork run
+   checks out only `main`'s aidevops scripts, never PR code (GH#36954).
 2. **Pulse merge path**: `review-bot-gate-helper.sh status-json` supplies typed,
    exact-head evidence. `PASS_ADVISORY` is valid for every author on a stable
    head; `SKIP` (label) is valid only for trusted authors.
