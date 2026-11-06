@@ -277,18 +277,27 @@ _maintain_compact_archives() {
 
 # Print the current repo plus every repos.json repository path, once each.
 _missing_metadata_repo_paths() {
+	local capacity_only="${1:-false}"
 	local repos_json="${HOME:+${HOME}/.config/aidevops/repos.json}"
 	local repo_path=""
 	local seen=$'\n'
 
 	{
-		git rev-parse --show-toplevel 2>/dev/null || true
+		if [[ "$capacity_only" == true ]]; then
+			timeout_sec 5 git rev-parse --show-toplevel 2>/dev/null || true
+		else
+			git rev-parse --show-toplevel 2>/dev/null || true
+		fi
 		if [[ -n "$repos_json" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
 			jq -r '.initialized_repos[]? | .path // empty' "$repos_json" 2>/dev/null || true
 		fi
 	} | while IFS= read -r repo_path; do
 		[[ -n "$repo_path" && "$seen" != *$'\n'"${repo_path}"$'\n'* ]] || continue
 		seen="${seen}${repo_path}"$'\n'
+		if [[ "$capacity_only" == true && -f "$repos_json" ]] &&
+			jq -e --arg path "$repo_path" '.initialized_repos[]? | select(.path == $path and .local_only == true)' "$repos_json" >/dev/null 2>&1; then
+			continue
+		fi
 		printf '%s\n' "$repo_path"
 	done
 	return 0
@@ -431,29 +440,39 @@ _recover_interactive_capacity() {
 	local helper="${SCRIPT_DIR}/worktree-helper.sh"
 	local cursor="${LOG_DIR}/cleanup_worktrees.capacity-repo"
 	local max_count="${AIDEVOPS_MAX_WORKTREES:-200}"
-	local repo="" saved="" start=0 offset=0 index=0 count=0 after=0 rc=0
+	local repo="" saved="" start=0 offset=0 index=0 count=0 after=0 rc=0 listing=""
 	local deadline=$((SECONDS + 120)) remaining=0
 	local repos=()
 	[[ -x "$helper" ]] && declare -F timeout_sec >/dev/null 2>&1 || return 0
+	[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 ]] || return 0
 	[[ "$max_count" =~ ^[1-9][0-9]*$ ]] || max_count=200
 	[[ ! -f "$cursor" ]] || IFS= read -r saved <"$cursor" || true
 	while IFS= read -r repo; do
 		[[ -d "$repo" ]] || continue
 		repos+=("$repo")
 		[[ "$repo" != "$saved" ]] || start=${#repos[@]}
-	done < <(_missing_metadata_repo_paths)
+	done < <(_missing_metadata_repo_paths true)
 	for ((offset = 0; offset < ${#repos[@]}; offset++)); do
 		remaining=$((deadline - SECONDS))
 		[[ "$remaining" -gt 0 ]] || break
 		index=$(((start + offset) % ${#repos[@]}))
 		repo="${repos[$index]}"
 		printf '%s\n' "$repo" >"$cursor" || return 1
-		count=$(git -C "$repo" worktree list --porcelain | awk '/^worktree / {n++} END {print n+0}') || continue
+		listing=$(timeout_sec "$remaining" git -C "$repo" worktree list --porcelain) || continue
+		count=$(awk '/^worktree / {n++} END {print n+0}' <<<"$listing")
 		[[ $((count * 100)) -ge $((max_count * 80)) ]] || continue
+		remaining=$((deadline - SECONDS))
+		[[ "$remaining" -gt 0 ]] || break
 		rc=0
 		# --capacity never forces dirty trees or admits closed-issue-only proof.
 		(cd "$repo" && timeout_sec "$remaining" bash "$helper" clean --auto --capacity) >>"$LOGFILE" 2>&1 || rc=$?
-		after=$(git -C "$repo" worktree list --porcelain | awk '/^worktree / {n++} END {print n+0}') || after="$count"
+		remaining=$((deadline - SECONDS))
+		if [[ "$remaining" -le 0 ]]; then
+			printf '[cleanup-worktrees-async] interactive-capacity budget exhausted; progress unverified repo=%s rc=%s\n' "$repo" "$rc" >>"$LOGFILE"
+			break
+		fi
+		listing=$(timeout_sec "$remaining" git -C "$repo" worktree list --porcelain) || continue
+		after=$(awk '/^worktree / {n++} END {print n+0}' <<<"$listing")
 		printf '[cleanup-worktrees-async] interactive-capacity before=%s after=%s cap=%s rc=%s repo=%s\n' \
 			"$count" "$after" "$max_count" "$rc" "$repo" >>"$LOGFILE"
 		if [[ "$after" -ge "$max_count" && "$after" -ge "$count" ]]; then

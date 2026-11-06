@@ -1334,14 +1334,37 @@ _clean_capacity_candidate_allowed() {
 	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 0
 	[[ -z "${_WT_CLEAN_PR_PROOF_UNKNOWN_REASONS:-}" ]] || return 1
 	_clean_branch_list_contains_exact "$wt_branch" "$open_prs" && return 1
+	# The summary list is capped. An exact query also protects branches with
+	# open PRs beyond that page, and fails closed when GitHub is unavailable.
+	local repo_slug="" open_count=""
+	repo_slug=$(_clean_repo_slug) || return 1
+	open_count=$(gh_pr_list --repo "$repo_slug" --head "$wt_branch" --state open --limit 1 --json number --jq 'length' 2>/dev/null) || return 1
+	[[ "$open_count" == 0 ]] || return 1
 	_clean_worktree_index_is_readable "$wt_path" "$wt_branch" "capacity-recovery" || return 1
 	worktree_has_changes "$wt_path" && return 1
 	_clean_terminal_owner_blocks_cleanup "$wt_path" && return 1
+	_skip_cleanup_for_current_worktree "$wt_path" "$wt_branch" && return 1
 	_branch_has_active_interactive_claim "$wt_path" "$wt_branch" && return 1
-	if ! _clean_branch_list_contains_exact "$wt_branch" "$merged_prs" &&
-		! git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null; then
-		return 1
+	if ! _clean_branch_list_contains_exact "$wt_branch" "$merged_prs"; then
+		_skip_cleanup_for_grace_period "$wt_path" "$wt_branch" && return 1
+		git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null || return 1
 	fi
+	return 0
+}
+
+# Containment is sufficient for this pressure-only path, unlike the manual
+# zero-ahead heuristic. All owner, clean-tree, open-PR and removal guards remain.
+_clean_classify_capacity_worktree() {
+	local wt_path="$1" wt_branch="$2" default_br="$3" merged_prs="$4" open_prs="$5"
+	_clean_capacity_candidate_allowed "$wt_path" "$wt_branch" "$default_br" "$merged_prs" "$open_prs" || return 1
+	local proof="$_WT_CLEAN_PROOF_REMOTE_TRACKING_RESULT"
+	_WT_CLEAN_LAST_MERGE_TYPE="$_WT_CLEAN_TYPE_REMOTE_TRACKING_MERGED"
+	if _clean_branch_list_contains_exact "$wt_branch" "$merged_prs"; then
+		_WT_CLEAN_LAST_MERGE_TYPE="$_WT_CLEAN_TYPE_SQUASH_MERGED_PR"
+		proof="$_WT_CLEAN_PROOF_GH_MERGED_PR"
+	fi
+	_WT_CLEAN_LAST_AUDIT_CONTEXT=$(_clean_branch_merge_proof_context "$wt_branch" "$default_br" "$(_clean_branch_head "$wt_branch")" "$proof")
+	printf '%s\t%s\n' "$_WT_CLEAN_LAST_MERGE_TYPE" "$_WT_CLEAN_LAST_AUDIT_CONTEXT"
 	return 0
 }
 
@@ -1368,7 +1391,10 @@ _clean_classify_worktree() {
 	_WT_CLEAN_LAST_AUDIT_CONTEXT=""
 	_WT_CLEAN_LAST_PRESERVE_BRANCH="$_WT_CLEAN_BOOL_FALSE"
 
-	_clean_capacity_candidate_allowed "$wt_path" "$wt_branch" "$default_br" "$merged_prs" "$open_prs" || return 0
+	if [[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]]; then
+		_clean_classify_capacity_worktree "$wt_path" "$wt_branch" "$default_br" "$merged_prs" "$open_prs" || true
+		return 0
+	fi
 
 	if _clean_protected_contains "$wt_path" &&
 		! _clean_branch_has_terminal_pr_proof "$wt_branch" "$merged_prs" "$closed_prs"; then
