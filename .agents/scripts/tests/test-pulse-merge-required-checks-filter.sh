@@ -246,6 +246,9 @@ if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 	classic404_*)
 		if [[ "${MOCK_CLASSIC_PRIVATE_PLAN:-false}" == true ]]; then
 			printf '%s\n' 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2
+		elif [[ "${MOCK_CLASSIC_BODY_ONLY:-false}" == true ]]; then
+			# GH#36866: transport dropped stderr; only the JSON body remains.
+			printf '%s\n' '{"message":"Branch not protected","status":"404"}'
 		else
 			printf '%s\n' 'gh: HTTP 404: Not Found' >&2
 		fi
@@ -1114,6 +1117,19 @@ test_classic_settings_404_branch_evidence() {
 		fi
 	done
 	unset MOCK_CLASSIC_PRIVATE_PLAN
+	export MOCK_CLASSIC_BODY_ONLY=true
+	for mode in pass unprotected; do
+		export MOCK_GH_MODE="classic404_${mode}"
+		rc=0
+		contexts=$(_required_contexts_for_default_branch "owner/repo") || rc=$?
+		if [[ "$mode" == pass && "$rc" -eq 0 && "$contexts" == $'required-a\nrequired-b' ]] ||
+			[[ "$mode" == unprotected && "$rc" -eq 0 && -z "$contexts" ]]; then
+			print_result "body-only 404 (stderr dropped) classified for ${mode} (GH#36866)" 0
+		else
+			print_result "body-only 404 (stderr dropped) classified for ${mode} (GH#36866)" 1
+		fi
+	done
+	unset MOCK_CLASSIC_BODY_ONLY
 	return 0
 }
 
