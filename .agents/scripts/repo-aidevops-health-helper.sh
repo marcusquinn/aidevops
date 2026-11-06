@@ -739,7 +739,7 @@ _trust_install_one() {
 	local sync_helper="${SCRIPT_DIR}/sync-workflows-helper.sh"
 	local class
 	class=$("$check_helper" --json --repo "$slug" --workflow "$workflow" 2>/dev/null |
-		jq -r 'select(.workflow == "'"$workflow"'") | .classification' 2>/dev/null | head -n 1 || true)
+		jq -r 'select(.workflow == "'"$workflow"'") | .classification' 2>/dev/null | sed -n '1p' || true)
 	if [[ "$class" != "NO-WORKFLOW" ]]; then
 		echo present
 		return 0
@@ -768,7 +768,7 @@ _trust_install_one() {
 	local sync_out
 	if ! sync_out=$("$sync_helper" --apply --install-missing --workflow "$workflow" \
 		--repo "$slug" --issue "$issue_number" 2>&1); then
-		if printf '%s' "$sync_out" | grep -qiE 'workflow.*scope|refusing to allow.*workflow'; then
+		if grep -qiE 'workflow.*scope|refusing to allow.*workflow' <<<"$sync_out"; then
 			log_warn "trust-workflows: $slug — blocked: token lacks 'workflow' scope (run gh auth refresh -s workflow)"
 		else
 			log_warn "trust-workflows: $slug — sync-workflows-helper failed for $workflow"
