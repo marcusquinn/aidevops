@@ -198,6 +198,7 @@ guarded_graphql_sources=(
 	"${REPO_ROOT}/.agents/scripts/full-loop-helper-merge-authority.sh"
 	"${REPO_ROOT}/.agents/scripts/full-loop-helper-merge-prospective.sh"
 	"${REPO_ROOT}/.agents/scripts/full-loop-helper-merge-cleanup.sh"
+	"${REPO_ROOT}/.agents/scripts/full-loop-helper-merge-transport.sh"
 	"${REPO_ROOT}/.agents/scripts/post-merge-review-scanner.sh"
 	"${REPO_ROOT}/.agents/scripts/pulse-nmr-approval.sh"
 )
