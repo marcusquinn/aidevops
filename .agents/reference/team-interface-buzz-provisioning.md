@@ -79,6 +79,13 @@ system `LocalHostName`; for example, `Marcus-MacBook-Pro-01` produces
 override. The interactive runtime requires the same current or overridden host
 slug and fails closed if a copied or stale snapshot name points at another host.
 
+Several Macs can join one community. Before provisioning each additional Mac,
+give it a distinct `LocalHostName` (System Settings > General > Sharing > Local
+hostname, or `sudo scutil --set LocalHostName Marcus-MacBook-Pro-02`), then
+check it with `scutil --get LocalHostName`. Identical model names would
+otherwise produce clashing agent names; numbering (`-01`, `-02`) keeps every
+mention unambiguous.
+
 Each member carries only its bounded description, a portable inline SVG avatar,
 a reviewed logical runtime requirement, and a pointer containing
 the deployment-relative `agents:<filename>` source, exact source digest, and
