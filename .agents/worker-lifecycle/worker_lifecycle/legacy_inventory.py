@@ -41,8 +41,13 @@ def requires_reconstructible(item, repositories, adapter, options):
     return False
 
 
-def reconstructible(item, repositories, adapter, open_prs, managed=False, min_age=0):
-    """Independent remote-recoverable class, never inferred from writer history."""
+def reconstructible(item, repositories, adapter, open_prs, managed_min_age=None):
+    """Independent remote-recoverable class, never inferred from writer history.
+
+    `managed_min_age` (seconds) selects the managed-takeover class and its idle floor;
+    `None` keeps the observation-era class, whose age is checked by `inspect`.
+    """
+    managed = managed_min_age is not None
     path = reconstructible_path(item, managed)
     admin = _git_directory(path)
     common = _git("-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -51,7 +56,7 @@ def reconstructible(item, repositories, adapter, open_prs, managed=False, min_ag
     if (admin / "locked").exists():
         raise ValueError("git-worktree-locked")
     if managed:
-        require_age(item, path, admin, time.time(), min_age)
+        require_age(item, path, admin, time.time(), managed_min_age)
     require_ended(item, adapter, operator_confirmed=True)
     # GH#36626 requires clean tracked and untracked state. Ignored files are
     # regenerable local artefacts, discarded like ordinary cleanup (CLEANUP.md).

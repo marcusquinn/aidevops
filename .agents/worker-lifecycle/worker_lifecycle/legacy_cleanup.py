@@ -5,7 +5,6 @@ Current-generation cleanup is unchanged. Remove this module after the backlog.
 """
 
 import json
-from functools import partial
 import os
 from pathlib import Path
 import sqlite3
@@ -15,13 +14,13 @@ import tempfile
 import time
 from uuid import UUID, uuid4, uuid5
 
-from .cleanup import _failure_details
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
-from .legacy_options import require_manual_confirmation, require_managed_takeover, unrecorded
+from .legacy_options import require_manual_confirmation, require_managed_takeover
+from .legacy_options import retained_outcome, unrecorded
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
@@ -177,7 +176,7 @@ def take_over_managed(store, item, repositories, adapter, options):
     absent source through its existing source-absent path.
     """
     require_managed_takeover(reconstructible, item, repositories, adapter,
-                             open_pull_requests, managed=True, min_age=options.min_age)
+                             open_pull_requests, managed_min_age=options.min_age)
     return process_reconstructible(store, item, repositories, adapter, options)
 
 
@@ -210,12 +209,8 @@ def process_item(store, item, repositories, adapter, options):
                 attempted = 1
                 outcome["status"] = retire(store, item, repositories, adapter, options)
     except (ValueError, OSError, sqlite3.Error, ObservationUnavailable,
-             subprocess.SubprocessError) as error:
-        outcome.update(status="retained", **_failure_details(error))
-        if item["modern"]:
-            outcome["ownership"] = "managed-by-current-cleanup"
-        if isinstance(error, ObservationUnavailable):
-            outcome["reason"] = str(error)
+            subprocess.SubprocessError) as error:
+        outcome.update(retained_outcome(item, error))
     return outcome, eligible, attempted
 
 
@@ -265,12 +260,14 @@ def legacy_plan(store, connection, item, repositories, adapter):
     return reconstructible(item, repositories, adapter, open_pull_requests)
 
 
-def managed_plan(store, connection, item, repositories, adapter, *, min_age=0):
-    """Build a reconstructible plan for a managed item and require authority."""
-    plan = reconstructible(item, repositories, adapter, open_pull_requests,
-                           managed=True, min_age=min_age)
-    require_managed_authority(store, connection, item, plan)
-    return plan
+def managed_planner(min_age):
+    """Return a plan builder for managed items with the idle floor and authority."""
+    def managed_plan(store, connection, item, repositories, adapter):
+        plan = reconstructible(item, repositories, adapter, open_pull_requests,
+                               managed_min_age=min_age)
+        require_managed_authority(store, connection, item, plan)
+        return plan
+    return managed_plan
 
 
 def process_reconstructible(store, item, repositories, adapter, options):
@@ -280,7 +277,7 @@ def process_reconstructible(store, item, repositories, adapter, options):
     read once from the caller's item, so every recheck keeps the managed path guard
     and authority evidence even if the refreshed inventory row differs.
     """
-    reconstructible_plan = (partial(managed_plan, min_age=options.min_age)
+    reconstructible_plan = (managed_planner(options.min_age)
                             if item["modern"] else legacy_plan)
     operation = operation_id(store, item["path"])
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
