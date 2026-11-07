@@ -241,7 +241,7 @@ opencode_auth_has_provider() {
 	# OAuth entries carry access/refresh; `opencode auth login` API keys are
 	# stored as {"type":"api","key":...}.
 	if command -v jq >/dev/null 2>&1; then
-		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ((.access // .refresh // .token // .apiKey // .key // "") != "")' "$auth_file" >/dev/null 2>&1
+		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ([.access, .refresh, .token, .apiKey, .key] | any(. != null and . != false and . != ""))' "$auth_file" >/dev/null 2>&1
 		return $?
 	fi
 	python3 - "$auth_file" "$provider" <<'PY' >/dev/null 2>&1
