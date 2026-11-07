@@ -3,7 +3,7 @@
 
 // Home-relative toolchain roots workers may read (never write) without a
 // maintainer. Extend deliberately; the broker's forbidden pattern still applies.
-const READ_ONLY_ROOTS = ["~/.nvm"];
+const READ_ONLY_ROOTS = ["~/.nvm", "~/.local/bin"];
 const READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "list"]);
 
 function normalizeAbsolute(value) {
