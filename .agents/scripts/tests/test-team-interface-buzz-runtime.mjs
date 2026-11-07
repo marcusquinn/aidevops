@@ -195,6 +195,14 @@ try {
     deployedOpenCodeModules,
     path.join(deployedPluginDirectory, "node_modules"),
   );
+  // setup.sh links custom/ and draft/ to stable user state (GH#34088).
+  const userStateRoot = path.join(fixtureRoot, "user-agents");
+  const customRouting = path.join(userStateRoot, "custom/configs/model-routing-table.json");
+  fs.mkdirSync(path.dirname(customRouting), {recursive: true, mode: 0o700});
+  fs.mkdirSync(path.join(userStateRoot, "draft"), {recursive: true, mode: 0o700});
+  fs.writeFileSync(customRouting, "{\"tiers\":{}}\n");
+  fs.symlinkSync(path.join(userStateRoot, "custom"), path.join(deployedAgentsDirectory, "custom"));
+  fs.symlinkSync(path.join(userStateRoot, "draft"), path.join(deployedAgentsDirectory, "draft"));
   const deployedMaterialization = requireSuccess(spawnSync("python3", [
     "-c",
     [
@@ -224,6 +232,14 @@ try {
     false,
     "generated deployed dependency symlink was copied into the immutable anchor",
   );
+  const anchoredCustom = path.join(deployedRuntimeAnchor, "agents/custom");
+  assert.equal(fs.lstatSync(anchoredCustom).isSymbolicLink(), false, "custom/ link was copied as a link");
+  assert.equal(
+    fs.readFileSync(path.join(anchoredCustom, "configs/model-routing-table.json"), "utf8"),
+    "{\"tiers\":{}}\n",
+    "custom routing override was not snapshotted into the anchor",
+  );
+  assert.equal(fs.lstatSync(path.join(deployedRuntimeAnchor, "agents/draft")).isDirectory(), true);
   requireSuccess(
     runHelper(["verify-anchor", "--root", deployedRuntimeAnchor, "--runtime", "interactive"], {
       env: {...process.env, HOME: fixtureHome},
