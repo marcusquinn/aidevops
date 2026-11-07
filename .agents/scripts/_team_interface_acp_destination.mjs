@@ -12,6 +12,7 @@ const DIRECT_GREETING_REPLY = "Hi! What would you like to work on?";
 // trust checks below apply unchanged to both formats.
 const TAGGED_CONTEXT = /^<context>\r?\n([\s\S]*)\r?\n<\/context>\s*$/u;
 const TAGGED_EVENT = /^<buzz-event type="([^"\r\n<>]*)">\r?\n([\s\S]*)\r?\n<\/buzz-event>\s*$/u;
+const TAGGED_EVENTS = /^<(buzz-events|new-message-arrived-while-you-were-working|new-request-supersedes-previous)(?: count="(\d+)")?>\r?\n([\s\S]*)\r?\n<\/\1>\s*$/u;
 
 function normalizeBlock(text) {
   const context = text.match(TAGGED_CONTEXT);
@@ -84,17 +85,32 @@ function trustedReplyInstructions(eventLines, contentIndex, tagsIndex) {
 function collectEventBlocks(blocks, contextIndex, contextLines) {
   const eventMarker = contextLines.indexOf("[Event]");
   const eventBlocks = [];
+  let eventGroups = eventMarker >= 0 ? 1 : 0;
   let invalidOrder = false;
   if (eventMarker >= 0) {
     eventBlocks.push({lines: contextLines.slice(eventMarker + 1), structured: false});
   }
   for (const [index, block] of blocks.entries()) {
     if (block.startsWith("[Buzz event:")) {
+      eventGroups += 1;
       invalidOrder ||= index <= contextIndex;
       eventBlocks.push({lines: block.split(/\r?\n/u), structured: true});
+    } else {
+      const batch = block.match(TAGGED_EVENTS);
+      if (!batch) continue;
+      eventGroups += 1;
+      invalidOrder ||= index <= contextIndex;
+      const parts = batch[3].split(/^--- Event (\d+) \([^\r\n]*\) ---\r?$/mu);
+      if (parts[0].trim() || parts.length < 3 || (batch[2] && Number(batch[2]) !== (parts.length - 1) / 2)) {
+        return null;
+      }
+      for (let part = 1; part < parts.length; part += 2) {
+        if (Number(parts[part]) !== (part + 1) / 2) return null;
+        eventBlocks.push({lines: parts[part + 1].split(/\r?\n/u), structured: true, requireChannel: true});
+      }
     }
   }
-  return invalidOrder ? null : {eventBlocks, eventMarker};
+  return invalidOrder || eventGroups !== 1 ? null : {eventBlocks, eventMarker};
 }
 
 function parseContext(message) {
@@ -108,7 +124,7 @@ function parseContext(message) {
   const contextIndex = contextIndexes[0];
   const contextLines = blocks[contextIndex].split(/\r?\n/u);
   const collected = collectEventBlocks(blocks, contextIndex, contextLines);
-  if (!collected || collected.eventBlocks.length !== 1) {
+  if (!collected || collected.eventBlocks.length === 0) {
     return null;
   }
   const contextHeader = collected.eventMarker < 0
@@ -118,7 +134,7 @@ function parseContext(message) {
   const channel = channelLines.length === 1
     ? channelLines[0].match(new RegExp(`^Channel: [^\\r\\n]* \\(#(${UUID_PATTERN})\\)$`, "i"))
     : null;
-  return channel ? {channel: channel[1], eventBlock: collected.eventBlocks[0]} : null;
+  return channel ? {channel: channel[1], eventBlocks: collected.eventBlocks} : null;
 }
 
 function eventIndexes(eventLines) {
@@ -146,7 +162,7 @@ function parseEventIdentity(eventLines, contentIndex) {
 }
 
 function parseEvent(eventBlock, expectedChannel) {
-  const {lines: eventLines, structured} = eventBlock;
+  const {lines: eventLines, structured, requireChannel} = eventBlock;
   const indexes = eventIndexes(eventLines);
   const validStructure = !structured ||
     (indexes.content.length === 1 && indexes.tags.length === 1 &&
@@ -157,7 +173,7 @@ function parseEvent(eventBlock, expectedChannel) {
   const contentIndex = indexes.content[0] ?? -1;
   const tagsIndex = indexes.tags.at(-1) ?? -1;
   const identity = parseEventIdentity(eventLines, contentIndex);
-  const channelMatches = identity.channelLineCount <= 1 &&
+  const channelMatches = (!requireChannel || identity.channelLineCount === 1) && identity.channelLineCount <= 1 &&
     (identity.channelLineCount === 0 || identity.channel?.[1] === expectedChannel);
   if (!identity.eventId || !channelMatches) {
     return null;
@@ -173,7 +189,8 @@ function parseEvent(eventBlock, expectedChannel) {
 
 export function trustedReplyDestination(message) {
   const context = parseContext(message);
-  const replyTo = context ? parseEvent(context.eventBlock, context.channel) : null;
+  const replies = context?.eventBlocks.map((event) => parseEvent(event, context.channel));
+  const replyTo = replies?.every(Boolean) ? replies.at(-1) : null;
   if (!context || !replyTo) {
     return null;
   }
