@@ -245,6 +245,8 @@ _dispatch_maintainer_gate_from_lines() {
 
 # Read only the local complete PR snapshot: cooldown enumeration must not add
 # per-candidate network reads. Missing/stale evidence fails open to dispatch.
+# The key is head SHA plus sorted PR labels, so a label change (e.g. removing
+# no-takeover) invalidates the cooldown without PR comment churn doing so.
 _dispatch_checkpoint_pr_head() {
 	local repo="$1" pr="$2" snapshot=""
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
@@ -253,8 +255,9 @@ _dispatch_checkpoint_pr_head() {
 		select(.complete == true) |
 		select((now - (.timestamp | fromdateiso8601)) >= 0 and
 			(now - (.timestamp | fromdateiso8601)) < 900) |
-		.items[] | select(.number == $pr) | .headRefOid |
-		select(type == "string" and length > 0)
+		.items[] | select(.number == $pr) |
+		select((.headRefOid | type) == "string" and (.headRefOid | length) > 0) |
+		.headRefOid + "_" + ([.labels[]? | (.name? // .) | select(type == "string") | gsub("[\\t\\n\\r]"; " ")] | sort | join(","))
 	' <<<"$snapshot" 2>/dev/null
 	return $?
 }
