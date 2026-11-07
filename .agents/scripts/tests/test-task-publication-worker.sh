@@ -138,18 +138,33 @@ node "$COORDINATOR" lease-finish --owner-id hol-later-owner --repository-id repo
 	--fencing-token "$(jq -r '.fencingToken' <<<"$hol_later")" --status terminal --evidence '{"failure":"fixture-cleanup"}' >/dev/null
 
 # Malformed lease attempt counts must not abort before checkout validation.
-# Exhaust each fixture immediately so it cannot interfere with later leases.
+# Fixtures stay retryable so the requested and scheduled delays are observable;
+# each is made terminal after assertion so it cannot interfere with later leases.
 attempt_case=0
-for attempt in null '""' '"invalid"' 0 -1 '"08"' '"1+1"' 1 2; do
+for attempt_spec in 'null:1' '"":1' '"invalid":1' '0:1' '-1:1' '"08":1' '"1+1":1' '1:1' '2:2'; do
+	attempt="${attempt_spec%:*}"
+	expected_delay="${attempt_spec##*:}"
 	attempt_case=$((attempt_case + 1))
 	operation_id="invalid-attempt-${attempt_case}"
+	delay_log="${TEST_ROOT}/requested-delay-${attempt_case}"
 	node "$COORDINATOR" publication-intent --operation-id "$operation_id" --task-id "$task_id" \
 		--repository-id "$operation_id" --repository-path "${TEST_ROOT}/missing-worktree" \
-		--max-attempts 1 --payload '{"paths":["TODO.md"]}' >/dev/null
+		--max-attempts 3 --payload '{"paths":["TODO.md"]}' >/dev/null
 	lease=$(node "$COORDINATOR" lease-next --owner-id attempt-owner --lease-seconds 30 --max-active 4)
 	lease=$(jq -c --argjson attempt "$attempt" '.batch[0].attemptCount = $attempt' <<<"$lease")
-	bash -c 'source "$1" metrics >/dev/null; _publication_process_lease "$2" attempt-owner' bash "$WORKER" "$lease"
-	[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT json_extract(evidence_json,'$.result') FROM terminal_evidence WHERE operation_id='$operation_id';")" == "repository_worktree_unavailable" ]]
+	started_at=$(date +%s)
+	bash -c 'source "$1" metrics >/dev/null
+		eval "_orig_$(declare -f _publication_finish)"
+		delay_file="$3"
+		_publication_finish() { printf "%s\n" "${5:-0}" >"$delay_file"; _orig__publication_finish "$@"; }
+		_publication_process_lease "$2" attempt-owner' bash "$WORKER" "$lease" "$delay_log"
+	finished_at=$(date +%s)
+	[[ "$(<"$delay_log")" == "$expected_delay" ]]
+	[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT i.status FROM publication_intents i WHERE i.operation_id='$operation_id';")" == "retryable" ]]
+	available_at=$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT q.available_at FROM publication_queue q JOIN publication_intents i USING(intent_id) WHERE i.operation_id='$operation_id';")
+	[[ "$available_at" -ge $((started_at + expected_delay)) && "$available_at" -le $((finished_at + expected_delay)) ]]
+	[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT json_extract(evidence_json,'$.result') FROM publication_attempts WHERE intent_id=(SELECT intent_id FROM publication_intents WHERE operation_id='$operation_id') ORDER BY rowid DESC LIMIT 1;")" == "repository_worktree_unavailable" ]]
+	sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "UPDATE publication_intents SET status='terminal' WHERE operation_id='$operation_id';"
 done
 
 # End-to-end worker publication records the exact pushed commit, and an owner
