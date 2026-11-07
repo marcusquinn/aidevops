@@ -24,6 +24,12 @@ from _team_interface_buzz_runtime_install import (
 )
 from _team_interface_buzz_runtime_io import RuntimeError, atomic_write, canonical_payload
 from _team_interface_buzz_runtime_prepare import prepare_runtime
+from _team_interface_buzz_runtime_prune import (
+    configured_app_data_dirs,
+    prune_command,
+    prune_runtime_anchors,
+    runtime_anchor_lock,
+)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -194,12 +200,17 @@ def parse_args(argv=None):
     verify = commands.add_parser("verify-anchor", help="verify an existing immutable runtime anchor")
     verify.add_argument("--root", required=True)
     verify.add_argument("--runtime", choices=tuple(RUNTIME_PROFILES), default="interactive")
+    prune = commands.add_parser("prune", help="move unused runtime anchors to Trash")
+    prune.add_argument("--runtime", choices=tuple(RUNTIME_PROFILES), default="interactive")
+    prune.add_argument("--app-data-dir", action="append", default=[])
+    prune.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
 
-def main(argv=None):
-    """Run one runtime management action."""
-    args = parse_args(argv)
+def anchor_command(args):
+    """Handle anchor preparation, verification and cleanup without project lookup."""
+    if args.command == "prune":
+        return prune_command(args, runtime_profile(args.runtime))
     if args.command == "prepare":
         agents_dir = Path(os.path.expanduser(args.agents_dir)).resolve()
         output_dir = Path(os.path.expanduser(args.output_dir))
@@ -213,6 +224,26 @@ def main(argv=None):
             raise RuntimeError("Buzz runtime anchor root must be absolute")
         validate_existing_pinned_runtime(root, runtime_profile(args.runtime))
         return 0
+    raise RuntimeError("unknown Buzz runtime anchor action")
+
+
+def install_and_prune(project_root, app_data_dir, replace, profile):
+    """Serialize installation and optional cleanup without failing a completed install."""
+    with runtime_anchor_lock():
+        result = install_manifest(project_root, app_data_dir, replace, profile)
+        try:
+            directories = configured_app_data_dirs([app_data_dir])
+            prune_runtime_anchors(profile, directories)
+        except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+            print(f"Buzz runtime installed; cleanup skipped: {error}", file=sys.stderr)
+    return result
+
+
+def main(argv=None):
+    """Run one runtime management action."""
+    args = parse_args(argv)
+    if args.command in {"prune", "prepare", "verify-anchor"}:
+        return anchor_command(args)
     project_root = registered_project_root(args.project_root, args.repos)
     profile = runtime_profile(args.runtime)
     if args.command == "manifest":
@@ -229,7 +260,7 @@ def main(argv=None):
     )
     if not app_data_dir.is_absolute():
         raise RuntimeError("Buzz app-data directory must be absolute")
-    target, backup = install_manifest(project_root, app_data_dir, args.replace, profile)
+    target, backup = install_and_prune(project_root, app_data_dir, args.replace, profile)
     print(f"Installed {profile['id']} at {target}")
     if backup:
         print(f"Previous manifest backed up at {backup}")
