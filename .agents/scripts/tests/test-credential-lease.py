@@ -268,7 +268,7 @@ class LeaseTests(unittest.TestCase):
     def test_owned_execution_selects_only_requested_values_and_explicit_configuration(self):
         self.values["UNRELATED_TOKEN"] = uuid.uuid4().hex
         configuration = {"DATABASE_URL": "synthetic-owned-database", "NODE_ENV": "development"}
-        with patch.dict(os.environ, {"UNRELATED_TOKEN": "ambient-canary", "NODE_OPTIONS": "hook-canary"}):
+        with patch.dict(os.environ, {"UNRELATED_TOKEN": uuid.uuid4().hex, "NODE_OPTIONS": "hook-canary"}):
             result, call, checks = self.owned_execution(configuration=configuration)
         self.assertEqual(result, ({"status": "owned-child-result", "version": 1,
                                    "result": {"outcome": "matching"}, "exitCode": 0}, 0))
