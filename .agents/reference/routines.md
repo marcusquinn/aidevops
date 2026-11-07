@@ -98,11 +98,15 @@ Use `run:` for scripts, exports, health checks. Use `agent:` when judgment or su
 
 Agent routines and other `headless-runtime-helper.sh run` callers keep the
 activity watchdog's liveness deferrals: a quiet worker with an open API socket,
-CPU activity or CI-wait text is killed only at `WORKER_STALL_HARD_KILL_SECONDS`
-(default 1500s). Keep any outer per-attempt limit (`timeout(1)`, systemd
-`TimeoutStartSec`) above that cap, or lower the cap in the routine's
-environment. Otherwise the outer limit fires first and leaves only the wrapper's
-`activity_watchdog_started` pointers to the deferral record (GH#36700; see
+CPU activity or CI-wait text is killed only by the `WORKER_STALL_HARD_KILL_SECONDS`
+cap (default 1500s; `0` disables it). The cap is checked only when a stall is
+confirmed, and each deferral resets the stall timer, so the kill lands at the
+first confirmed stall after the cap: one more `WORKER_STALL_TIMEOUT` window
+(default 600s) plus poll overhead at most, up to about 2100s with defaults. Keep
+any outer per-attempt limit (`timeout(1)`, systemd `TimeoutStartSec`) above
+cap + stall timeout + margin, or lower the cap in the routine's environment.
+Otherwise the outer limit fires first and leaves only the shared lifecycle log's
+`worker_stall_deferred` events as the deferral record (GH#36700; see
 [worker diagnostics](worker-diagnostics.md#activity-watchdog-v36126-fixed-v36140)).
 
 Script routines inherit Pulse's `SSH_AUTH_SOCK` from `~/.ssh/agent.env`, which holds

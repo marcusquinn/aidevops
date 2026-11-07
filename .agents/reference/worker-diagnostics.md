@@ -449,11 +449,18 @@ lifecycle log (`WORKER_LIFECYCLE_LOG`, default
 `~/.aidevops/logs/pulse-dispatch.log`) and in the per-attempt
 `<exit-code-file>.watchdog_events` file, which also starts with a
 `watchdog_monitoring` line proving the watchdog ran. The wrapper log names both
-paths in `activity_watchdog_started` and prints `watchdog_summary` after the
-worker exits. A deferred worker is killed only at `WORKER_STALL_HARD_KILL_SECONDS`
-(default 1500s, `hard_kill_cap_active`). An external per-attempt timeout
-(`timeout(1)`, systemd `TimeoutStartSec`) shorter than that cap ends the worker
-first; raise the external timeout or lower the cap for that runner.
+paths in `activity_watchdog_started` and prints `watchdog_summary` (deferral
+count and last event only) after the worker exits. The `.watchdog_events`
+sidecar is temporary: normal attempt cleanup deletes it, so for post-run
+diagnosis use the shared lifecycle log, which keeps `worker_stall_deferred` and
+`worker_killed` events. A deferred worker is killed only by the
+`WORKER_STALL_HARD_KILL_SECONDS` cap (default 1500s, `hard_kill_cap_active`;
+`0` disables it). The cap is checked only at a confirmed stall and each deferral
+resets the stall timer, so the kill can land up to one more
+`WORKER_STALL_TIMEOUT` window (default 600s) plus poll overhead after the cap,
+up to about 2100s with defaults. An external per-attempt timeout (`timeout(1)`,
+systemd `TimeoutStartSec`) shorter than cap + stall timeout + margin can end the
+worker first; raise the external timeout or lower the cap for that runner.
 
 ```bash
 rg 'worker_stall_deferred|worker_killed' ~/.aidevops/logs/pulse-dispatch.log | tail -20
@@ -1145,7 +1152,7 @@ do not create artificial worktree pressure on a production runner.
 | Workers dispatch but produce 0 bytes | Version check, `opencode --version` | Wrong OpenCode version, auth failure |
 | PRs created but not merged | `pulse-diagnose-helper.sh pr <PR> --repo <owner/repo>` and `gh pr checks <PR> --repo <owner/repo> --watch=false` | Review bot gate, required-check failure/pending, mergeability, or branch-protection state |
 | Claim/release loop | Comment history on issue | Stale claims, guard rejections — recreate issue with clean context |
-| Watchdog doesn't fire | `ps aux \| grep watchdog`; `rg worker_stall_deferred ~/.aidevops/logs/pulse-dispatch.log`; wrapper `watchdog_summary` | Liveness deferral (`network_active`/`cpu_active`/`ci_wait`) until the hard cap, an external timeout shorter than the cap, or the watchdog process died (no `watchdog_monitoring` event) |
+| Watchdog doesn't fire | `ps aux \| grep watchdog`; `rg worker_stall_deferred ~/.aidevops/logs/pulse-dispatch.log`; wrapper `watchdog_summary` | Liveness deferral (`network_active`/`cpu_active`/`ci_wait`) until the hard cap, an external timeout shorter than the cap plus one stall window, or the watchdog process died |
 | `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on multiple issues | `grep "no active worker process" ~/.aidevops/logs/pulse-wrapper.log` | Cluster failure on one runner — retries at same tier (no cascade escalation, t2815); check system load |
 | `CLAIM_RELEASED reason=stale_assignment_reset` while the worker still ran | `rg "Stale assignment (reset\|skip)" ~/.aidevops/logs/pulse-wrapper.log`; compare the release `device=` with the dispatch marker's `device=` | Stale sweep judged the dispatch local. Same-login dispatches from another device use the cross-runner `WORKER_MAX_RUNTIME` expiry (GH#35218); a mismatch here means the device ID is unset or shared between hosts |
 | Few workers despite a full queue | `pulse-stage-timings.log` stages at `600`/exit `124`; `dispatch-stages.tsv` per-stage averages; `rg -o "DISPATCH_BLOCK_REASON reason=[a-z_]+" pulse.log \| sort \| uniq -c`; `pulse-watchdog.log` "pulse dead for"; `auto-update.log` "Requesting Pulse restart" count | Slow preflight or routine stage ahead of dispatch, costly late rejections, or redeploys killing in-flight cycles (GH#32633) |
