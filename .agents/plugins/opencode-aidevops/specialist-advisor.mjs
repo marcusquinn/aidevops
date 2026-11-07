@@ -3,7 +3,8 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { routingProfile } from "./model-routing.mjs";
+import { routingCandidates, routingModelIdentity, routingProfile, routingTierForModel, routingVariant, selectConnectedRoutingCandidate } from "./model-routing.mjs";
+import { isModelUnavailable } from "./model-unavailability.mjs";
 
 export const SPECIALIST_ADVISOR = "specialist-advisor";
 
@@ -61,4 +62,56 @@ export function applyDailyDriverDefaults(config, routing) {
       profile.variant = route.variant;
     }
   }
+}
+
+export function primaryRoutingExhausted(state) {
+  return new Error(`[aidevops] No available ${state.tier} model after rejection of ${state.requested}. Re-authenticate or change the model routing configuration.`);
+}
+
+// Same candidate walk as child entitlement recovery: only later, connected
+// candidates in this tier; the selector also enforces auth TTL and local-only.
+export async function nextPrimaryRoutingCandidate(context, state) {
+  const models = routingCandidates(context.modelRouting, state.tier);
+  const start = models.indexOf(state.model);
+  if (start < 0) return "";
+  const remaining = [...new Set(models.slice(start + 1))];
+  const providerState = await context.resolveProviderState();
+  if (!providerState) return null; // Failed lookup is not exhaustion.
+  return selectConnectedRoutingCandidate(
+    { tiers: { [state.tier]: { models: remaining } } }, state.tier,
+    providerState, undefined, context.resolveAvailability(),
+  );
+}
+
+async function knownPrimarySession(context, sessionID) {
+  try {
+    const session = await context.getSession(context.client, sessionID);
+    return session?.id === sessionID && !session.parentID;
+  } catch {
+    return false; // Unknown ancestry must never compete with child recovery.
+  }
+}
+
+// Defaults and recovery share this module; explicit models outside the table
+// remain owned by the user, but a cached definite rejection still fails fast.
+export async function resolvePrimaryRoute(context, input, message) {
+  const sessionID = message.sessionID || input.sessionID;
+  if (!sessionID || !await knownPrimarySession(context, sessionID)) return null;
+  const model = context.modelIdentity(message.model || input.model);
+  const tier = routingTierForModel(context.modelRouting, model, message.variant);
+  const rejected = isModelUnavailable(model, context.resolveAvailability().authSignature);
+  if (!tier) {
+    if (rejected) throw new Error(`[aidevops] Rejected model ${model} has no routing tier. Re-authenticate or change the model routing configuration.`);
+    return null;
+  }
+  const route = { sessionID, model, tier, requested: model, agent: message.agent };
+  if (rejected) {
+    const next = await nextPrimaryRoutingCandidate(context, route);
+    if (next === null) return route; // Provider lookup failed: keep requested model.
+    route.model = next;
+    if (!route.model) throw primaryRoutingExhausted(route);
+    message.model = routingModelIdentity(route.model);
+    message.variant = routingVariant(context.modelRouting, tier, route.model) || undefined;
+  }
+  return route;
 }

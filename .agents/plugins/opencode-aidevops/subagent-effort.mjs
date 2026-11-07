@@ -3,6 +3,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { readCurrentOpenAIAuth } from "./oauth-pool.mjs";
+import { createPrimaryEntitlementFailover } from "./primary-entitlement-failover.mjs";
 import { openAIAuthSignature } from "./model-unavailability.mjs";
 import { withUnambiguousProviderFallbacks } from "./model-routing-reasoning.mjs";
 import { createSubagentEffortHandlers } from "./subagent-effort-handlers.mjs";
@@ -244,5 +245,21 @@ export function createSubagentEffortHooks(client, options = {}) {
     qualityLog: options.qualityLog,
     onSubagentOutcome: options.onSubagentOutcome,
   });
-  return { ...handlers, ...escalator };
+  const primary = createPrimaryEntitlementFailover({ ...context, qualityLog: options.qualityLog }, options);
+  return {
+    ...handlers,
+    ...escalator,
+    chatMessage: async (input, output) => {
+      await handlers.chatMessage(input, output);
+      await primary.chatMessage(input, output);
+    },
+    chatParams: async (input, output) => {
+      await handlers.chatParams(input, output);
+      primary.chatParams(input);
+    },
+    handleEvent: async (input) => {
+      escalator.handleEvent(input);
+      await primary.handleEvent(input);
+    },
+  };
 }
