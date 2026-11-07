@@ -319,8 +319,12 @@ _dedup_layer4_pr_evidence() {
 			if [[ "$dedup_helper_output" == WORKER_DRAFT_CHECKPOINT:* ]]; then
 				if _dispatch_stalled_checkpoint_continuation "$issue_number" "$repo_slug" \
 					"$dedup_helper_output" "${self_login:-}"; then
+					# The continuation helper verifies released/expired ownership;
+					# preserve that distinction through the outer dedup classifier.
+					printf 'stale_draft_checkpoint: %s\n' "$dedup_helper_output"
 					return 0
 				fi
+				printf '%s\n' "$dedup_helper_output"
 				_dispatch_blocked_checkpoint_attention "$issue_number" "$repo_slug" "$dedup_helper_output"
 				return 2
 			fi

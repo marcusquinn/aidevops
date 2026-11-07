@@ -1324,6 +1324,14 @@ _classify_intake_dispatch_blocker_reason() {
 _classify_claim_dispatch_blocker_reason() {
 	local lower_signal="$1"
 	case "$lower_signal" in
+		stale_draft_checkpoint:*)
+			printf 'stale_draft_checkpoint\n'
+			return 0
+			;;
+		worker_draft_checkpoint:*)
+			printf 'worker_draft_checkpoint_blocked\n'
+			return 0
+			;;
 		*worker*already*running* | *live_worker=true* | *process_evidence=live*)
 			printf 'dedup_active_claim_live_owner\n'
 			return 0

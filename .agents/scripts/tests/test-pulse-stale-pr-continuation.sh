@@ -389,8 +389,8 @@ self_login="runner"
 rm -f "$ROUTE_ARGS_FILE" "${ROUTE_ARGS_FILE}.stalled"
 : >"$LOGFILE"
 LAYER4_RC=0
-_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture" >/dev/null || LAYER4_RC=$?
-if [[ "$LAYER4_RC" -eq 0 && ! -f "$ROUTE_ARGS_FILE" &&
+LAYER4_OUTPUT=$(_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture") || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 0 && "$LAYER4_OUTPUT" == stale_draft_checkpoint:* && ! -f "$ROUTE_ARGS_FILE" &&
 	"$(<"${ROUTE_ARGS_FILE}.stalled")" == "dispatch-stalled owner/repo ${TEST_ROOT}/repo 29507 29519 runner" ]] &&
 	grep -q 'STALE_PR_CONTINUATION: issue #29507 in owner/repo — PR #29519' "$LOGFILE" &&
 	grep -q 'routed stall-released worker draft PR #29519 for issue #29507' "$LOGFILE"; then
@@ -401,8 +401,9 @@ fi
 export STUB_STALLED_RESULT=1
 rm -f "$ROUTE_ARGS_FILE"
 LAYER4_RC=0
-_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture" >/dev/null || LAYER4_RC=$?
-if [[ "$LAYER4_RC" -eq 2 && "$(<"$ROUTE_ARGS_FILE")" == "blocked-attention owner/repo 29507 29519" ]]; then
+LAYER4_OUTPUT=$(_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture") || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 2 && "$LAYER4_OUTPUT" == WORKER_DRAFT_CHECKPOINT:* &&
+	"$(<"$ROUTE_ARGS_FILE")" == "blocked-attention owner/repo 29507 29519" ]]; then
 	print_result "declined stall route falls back to blocked attention and still blocks" 0
 else
 	print_result "declined stall route falls back to blocked attention and still blocks" 1
