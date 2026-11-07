@@ -483,8 +483,8 @@ PY
 	return 0
 }
 
-# GH#36564: reserve the maximum untracked payload as well as the estimated Git
-# payload before allocating. Estimation failure (old Git) is not a refusal.
+# GH#36564: reserve the maximum untracked payload, tracked patches and estimated
+# Git payload before allocating. Commit estimation failure (old Git) is not a refusal.
 # Python decimal integers avoid Bash octal parsing and signed overflow.
 archive_capacity_check() {
 	local worktree="$1" output_root="$2" head_sha="$3" base_sha="$4" remote_state="${5:-unknown}"
@@ -495,11 +495,15 @@ archive_capacity_check() {
 	else
 		estimate=$(git -C "$worktree" rev-list --objects --disk-usage "$head_sha" "^${base_sha}" 2>/dev/null) || estimate=0
 	fi
-	python3 - "$output_root" "$estimate" "$reserve" "$MAX_UNTRACKED_BYTES" <<'PY'
+	python3 - "$output_root" "$estimate" "$reserve" "$MAX_UNTRACKED_BYTES" "$worktree" "$SCRIPT_DIR" <<'PY'
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
+
+sys.path.insert(0, sys.argv[6])
+from worktree_archive_deletions import OPTIONS
 
 def decimal(value):
     if not re.fullmatch(r"[0-9]+", value):
@@ -507,11 +511,18 @@ def decimal(value):
     return int(value, 10)
 
 try:
-    estimate, reserve, untracked = map(decimal, sys.argv[2:])
+    estimate, reserve, untracked = map(decimal, sys.argv[2:5])
     path = pathlib.Path(sys.argv[1]).absolute()
     while not path.exists():
         path = path.parent
     free = decimal(str(shutil.disk_usage(path).free))
+    for flags in (("--cached",), ()):
+        command = ("git", "-C", sys.argv[5], "diff", *flags, *OPTIONS, "--diff-filter=d")
+        with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
+            for chunk in iter(lambda: process.stdout.read(65536), b""):
+                estimate += len(chunk)
+            if process.wait() != 0:
+                raise ValueError("patch estimate failed")
 except (OSError, ValueError):
     raise SystemExit("Error: archive capacity unavailable") from None
 estimate += untracked
