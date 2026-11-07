@@ -1033,7 +1033,22 @@ _dispatch_preclaim_brief_scope_verdict() {
 	# implementation brief; untrusted authors must stay on the normal review path.
 	_brief_scope_block="untrusted_author"
 	author=$(printf '%s' "$issue_meta_json" | jq -r '.author.login // ""') || return 1
-	_brief_scope_author_trusted "$repo_slug" "$author" || return 1
+	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || body_hash=""
+	if ! _brief_scope_author_trusted "$repo_slug" "$author"; then
+		# GH#37052: skip re-verification of an unchanged untrusted body.
+		if [[ -n "$body_hash" ]] && _brief_scope_untrusted_deferred "$repo_slug" "$issue_number" "$body_hash"; then
+			return 1
+		fi
+		# GH#37052: a verified signed approval bound to the current body digest
+		# authorises worker-owned scope discovery without rewriting the body.
+		# #aidevops:trust-boundary
+		if _brief_scope_worker_discovery_enabled && _brief_scope_signed_approval_valid "$repo_slug" "$issue_number"; then
+			echo "[dispatch_with_dedup] Brief #${issue_number} in ${repo_slug} has no canonical Files Scope; signed maintainer approval verified; dispatching with worker-owned scope discovery (GH#33243, GH#37052)" >>"${LOGFILE:-/dev/null}"
+			return 0
+		fi
+		[[ -z "$body_hash" ]] || _brief_scope_untrusted_record "$repo_slug" "$issue_number" "$body_hash"
+		return 1
+	fi
 	# GH#32689: explicit Files to Modify declarations normalize to the exact
 	# canonical scope; rewrite once and dispatch next cycle instead of holding.
 	_brief_scope_block="self_heal_rewritten"
