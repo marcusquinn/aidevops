@@ -29,9 +29,9 @@ TEST_PR_HEAD_SHA=""
 # shellcheck source=./test-pulse-merge-ci-repair-routing-mocks.sh
 # shellcheck disable=SC1091 # Sibling module resolved at runtime via SCRIPT_DIR.
 source "${SCRIPT_DIR}/test-pulse-merge-ci-repair-routing-mocks.sh"
-# shellcheck source=./test-pulse-merge-ci-repair-routing-suite.sh
+# shellcheck source=./test-pulse-merge-ci-repair-routing-cases.sh
 # shellcheck disable=SC1091 # Sibling module resolved at runtime via SCRIPT_DIR.
-source "${SCRIPT_DIR}/test-pulse-merge-ci-repair-routing-suite.sh"
+source "${SCRIPT_DIR}/test-pulse-merge-ci-repair-routing-cases.sh"
 
 main() {
 	test_red_pr_passes_gates_before_repair_route

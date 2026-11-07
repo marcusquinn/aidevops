@@ -4,9 +4,17 @@
 #
 # Shared CI repair routing fixtures and regression cases.
 # Sourced by test-pulse-merge-ci-repair-routing.sh after the mock routes module.
+# The -cases.sh suffix excludes this sourced module from CI suite discovery.
 
-[[ -n "${_PULSE_MERGE_CI_REPAIR_SUITE_LOADED:-}" ]] && return 0
-_PULSE_MERGE_CI_REPAIR_SUITE_LOADED=1
+[[ -n "${_PULSE_MERGE_CI_REPAIR_CASES_LOADED:-}" ]] && return 0
+_PULSE_MERGE_CI_REPAIR_CASES_LOADED=1
+
+if [[ -z "${SCRIPT_DIR:-}" ]]; then
+	_lib_path="${BASH_SOURCE[0]%/*}"
+	[[ "$_lib_path" == "${BASH_SOURCE[0]}" ]] && _lib_path="."
+	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
+	unset _lib_path
+fi
 
 print_result() {
 	local test_name="$1"
