@@ -49,8 +49,9 @@ export function createRootSessionGreetingGate({
   return async function shouldInjectRootSessionGreeting(input) {
     const sessionID = input?.sessionID;
     if (!sessionID) return false;
-    if (isHeadless()) return skip(sessionID, "headless environment");
-    if (isAcpServer() && env.AIDEVOPS_PLUGIN_SESSION_GREETING !== "1") return skip(sessionID, "acp-server");
+    const headless = isHeadless();
+    const acpServer = isAcpServer() && env.AIDEVOPS_PLUGIN_SESSION_GREETING !== "1";
+    if (headless || acpServer) return skip(sessionID, headless ? "headless environment" : "acp-server");
     if (typeof getSession !== "function") return skip(sessionID, "no session lookup");
     try {
       return await resolveRoot(sessionID);
