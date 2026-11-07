@@ -366,7 +366,11 @@ cmd_test() {
 
 	check_cloudron_cli || return 1
 
-	log_info "Running validation checklist..."
+	log_info "Scripted live-install QA (PASS/FAIL checks, safe cleanup):"
+	echo "  cloudron-app-qa-helper.sh help"
+	echo "  cloudron-app-qa-helper.sh run <location>-test --server <cloudron-host> --image <ref>"
+	echo ""
+	log_info "Manual fallback checklist..."
 	echo ""
 	echo "Manual Validation Checklist:"
 	echo "============================"
