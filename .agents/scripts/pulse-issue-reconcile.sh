@@ -1717,6 +1717,17 @@ _pir_finish_reconcile_cycle() {
 	return 0
 }
 
+_pir_reconcile_cycle_repairs() {
+	local repos_json="$1"
+	_repair_pending_planning_publications "$repos_json"
+	if declare -F _repair_recently_closed_parents_cycle >/dev/null 2>&1; then
+		_repair_recently_closed_parents_cycle "$repos_json" "$cpt_max_reopens" \
+			"$cpt_max_repair_repo_scans" "$cpt_max_repair_candidates"
+		cpt_total_reopened="$_PIR_RECENT_PARENT_CYCLE_REOPENED"
+	fi
+	return 0
+}
+
 # t2984/GH#21380: the 360s budget leaves room for normalization (55-109s)
 # within the 600s ownership-stage timeout. Budget=0 disables it. Each call
 # owns fresh timestamps, caps and counters; helpers mutate these locals through
@@ -1750,17 +1761,16 @@ reconcile_issues_single_pass() {
 	local _t2984_start_ts=$SECONDS _t2984_budget=0 _t2984_aborted=0
 	_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-360}"
 	[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=360
-	_repair_pending_planning_publications "$repos_json"
-
-	# Closed-parent cursor repair precedes open issues, with separate scan caps.
-	if declare -F _repair_recently_closed_parents_cycle >/dev/null 2>&1; then
-		_repair_recently_closed_parents_cycle "$repos_json" "$cpt_max_reopens" \
-			"$cpt_max_repair_repo_scans" "$cpt_max_repair_candidates"
-		cpt_total_reopened="$_PIR_RECENT_PARENT_CYCLE_REOPENED"
-	fi
 	# GH#34299: resume where the previous aborted or killed pass stopped.
 	local _sp_cursor_file="" _sp_cursor_slug="" _sp_cursor_issue="" _sp_cursor_attempts=0
 	_pir_sp_cursor_load
+	# Persist the next priority before repair work can exhaust the watchdog.
+	# Alternation guarantees open issues a turn even when repairs use a full pass.
+	local _sp_issues_first=0
+	if [[ "$_t2984_budget" -gt 0 ]] && _pir_sp_issues_first; then
+		_sp_issues_first=1
+	fi
+	[[ "$_sp_issues_first" -eq 1 ]] || _pir_reconcile_cycle_repairs "$repos_json"
 	local _sp_slugs=""
 	_sp_slugs=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 	local slug=""
@@ -1770,7 +1780,8 @@ reconcile_issues_single_pass() {
 		if [[ "$_t2984_budget" -gt 0 ]]; then
 			if [[ $((SECONDS - _t2984_start_ts)) -ge "$_t2984_budget" ]]; then
 				_t2984_aborted=1
-				_pir_sp_cursor_write "$slug" "" 0
+				# Repairs may consume the budget before the saved issue is reached.
+				[[ "$slug" == "${_sp_cursor_slug:-}" ]] || _pir_sp_cursor_write "$slug" "" 0
 				break
 			fi
 		fi
@@ -1780,6 +1791,9 @@ reconcile_issues_single_pass() {
 		[[ "$_t2984_aborted" -eq 1 ]] && break
 	done < <(_pir_sp_rotate_slugs "$_sp_slugs")
 	[[ "$_t2984_aborted" -eq 1 ]] || _pir_sp_cursor_clear
+	if [[ "$_sp_issues_first" -eq 1 && "$_t2984_aborted" -eq 0 ]]; then
+		_pir_reconcile_cycle_repairs "$repos_json"
+	fi
 	_pir_finish_reconcile_cycle
 	return 0
 }

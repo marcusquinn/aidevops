@@ -705,6 +705,16 @@ _preflight_ownership_reconcile() {
 			reconcile_budget=$((remaining - normalize_floor))
 		fi
 		[[ "$reconcile_budget" -le 380 ]] || reconcile_budget=380
+		# A clamped ownership stage can give this child far less than its
+		# default 360s cooperative budget. Stop at its resume cursor before the
+		# watchdog kills it, preserving the same 20s allowance as 380s/360s.
+		local RECONCILE_TIME_BUDGET_SECS="${RECONCILE_TIME_BUDGET_SECS:-360}"
+		[[ "$RECONCILE_TIME_BUDGET_SECS" =~ ^[0-9]+$ ]] || RECONCILE_TIME_BUDGET_SECS=360
+		local cooperative_budget=$((reconcile_budget - 20))
+		[[ "$cooperative_budget" -gt 0 ]] || cooperative_budget=1
+		if [[ "$RECONCILE_TIME_BUDGET_SECS" -eq 0 || "$RECONCILE_TIME_BUDGET_SECS" -gt "$cooperative_budget" ]]; then
+			RECONCILE_TIME_BUDGET_SECS="$cooperative_budget"
+		fi
 		run_stage_with_timeout "reconcile_issues_single_pass" "$reconcile_budget" reconcile_issues_single_pass || true
 	fi
 

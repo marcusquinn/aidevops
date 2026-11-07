@@ -87,6 +87,22 @@ _pir_sp_cursor_clear() {
 }
 
 #######################################
+# Alternate priority for budgeted passes before any potentially slow work.
+# A killed repair-first pass leaves the next pass reserved for open issues.
+# Missing/unwritable state fails toward issues, never repeated repair starvation.
+# Returns: 0=issues first, 1=repairs first
+#######################################
+_pir_sp_issues_first() {
+	local marker="${_sp_cursor_file}.issues-first"
+	if [[ -e "$marker" ]]; then
+		rm -f "$marker" 2>/dev/null || true
+		return 0
+	fi
+	printf 'issues\n' >"$marker" 2>/dev/null || return 0
+	return 1
+}
+
+#######################################
 # Rotate a newline-separated slug list so it starts at the cursor slug.
 # Unknown or empty cursor slug → original order.
 # Args: $1=newline-separated slugs

@@ -1020,7 +1020,10 @@ _start_activated_runtime() {
 	fi
 	_pulse_require_script || return $?
 	_pulse_launch_unmanaged
-	if active_pid=$(_pulse_find_active_runtime_pid_since ""); then
+	# Linux/nohup starts can publish their bundle lease after the initial
+	# launch grace, just like launchd. Reuse its bounded exact-runtime proof
+	# rather than reporting failure after a single early visibility check.
+	if active_pid=$(_pulse_wait_for_launchd_runtime ""); then
 		_pl_ok "Pulse is running from the activated bundle (PID ${active_pid})"
 		return 0
 	fi

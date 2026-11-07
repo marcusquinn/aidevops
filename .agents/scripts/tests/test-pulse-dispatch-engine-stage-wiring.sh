@@ -425,8 +425,12 @@ ownership_deadline_trace() {
 	source "$PREFLIGHT_LIB"
 	LOGFILE="/dev/null" PULSE_STAGE_DEADLINE_EPOCH=1384
 	AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=1 AIDEVOPS_PULSE_NORMALIZE_FLOOR_S=60
+	RECONCILE_TIME_BUDGET_SECS=360
 	case "$mode" in
 	recovery) starved=1 ;;
+	short_budget) RECONCILE_TIME_BUDGET_SECS=15 ;;
+	unlimited_budget) RECONCILE_TIME_BUDGET_SECS=0 ;;
+	invalid_budget) RECONCILE_TIME_BUDGET_SECS=invalid ;;
 	standalone)
 		unset PULSE_STAGE_DEADLINE_EPOCH
 		starved=1
@@ -457,7 +461,7 @@ ownership_deadline_trace() {
 		local stage_name="$1" timeout_seconds="$2"
 		case "$stage_name" in
 		reconcile_new_external_issues) printf 'i:%s;' "$timeout_seconds" ;;
-		reconcile_issues_single_pass) printf 'r:%s;' "$timeout_seconds" ;;
+		reconcile_issues_single_pass) printf 'r:%s:b:%s;' "$timeout_seconds" "$RECONCILE_TIME_BUDGET_SECS" ;;
 		normalize_active_issue_assignments)
 			printf 'n:%s;' "$timeout_seconds"
 			[[ "$mode" != normalize_deferred ]] || return 124
@@ -475,18 +479,19 @@ ownership_deadline_trace() {
 
 assert_ownership_deadline_contract() {
 	local mode actual="" expected=""
-	for mode in clamped recovery standalone async invalid expired requested prefetch_exhausted intake_exhausted normalize_deferred normalize_failed; do
+	for mode in clamped recovery standalone async invalid expired requested prefetch_exhausted intake_exhausted normalize_deferred normalize_failed short_budget unlimited_budget invalid_budget; do
 		TESTS_RUN=$((TESTS_RUN + 1))
 		case "$mode" in
-		clamped | async) expected="i:60;r:256;n:60;rc:0;" ;;
-		recovery) expected="i:60;r:64;n:60;rc:0;" ;;
-		standalone | invalid) expected="i:60;r:380;n:152;rc:0;" ;;
+		clamped | async | unlimited_budget | invalid_budget) expected="i:60;r:256:b:236;n:60;rc:0;" ;;
+		recovery) expected="i:60;r:64:b:44;n:60;rc:0;" ;;
+		standalone | invalid) expected="i:60;r:380:b:360;n:152;rc:0;" ;;
 		expired) expected="rc:124;" ;;
-		requested) expected="i:60;r:72;n:60;rc:0;" ;;
+		requested) expected="i:60;r:72:b:52;n:60;rc:0;" ;;
 		prefetch_exhausted) expected="rc:124;" ;;
 		intake_exhausted) expected="i:8;rc:124;" ;;
-		normalize_deferred) expected="i:60;r:256;n:60;rc:124;" ;;
-		normalize_failed) expected="i:60;r:256;n:60;rc:1;" ;;
+		normalize_deferred) expected="i:60;r:256:b:236;n:60;rc:124;" ;;
+		normalize_failed) expected="i:60;r:256:b:236;n:60;rc:1;" ;;
+		short_budget) expected="i:60;r:256:b:15;n:60;rc:0;" ;;
 		esac
 		# Keep case statements outside command substitution for Bash 3.2.
 		actual=$(ownership_deadline_trace "$mode")

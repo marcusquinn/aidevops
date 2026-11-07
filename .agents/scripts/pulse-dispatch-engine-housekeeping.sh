@@ -118,6 +118,11 @@ _pulse_blocker_refresh_starved() {
 	# Pending work survives failures and signals independently of that mtime.
 	[[ -f "$(_pulse_post_dispatch_housekeeping_statefile).blocker-refresh-pending" ]] && return 0
 	[[ -f "$cache_file" ]] || return 0
+	# A yielded in-cycle build freshens mtime without visiting every repository.
+	# Its checkpoint still needs catch-up, even without a pending lane marker.
+	if jq -e '.rebuild_complete == false' "$cache_file" >/dev/null 2>&1; then
+		return 0
+	fi
 	local now="" mtime=""
 	now=$(date +%s 2>/dev/null) || return 1
 	mtime=$(date -r "$cache_file" +%s 2>/dev/null) || return 0

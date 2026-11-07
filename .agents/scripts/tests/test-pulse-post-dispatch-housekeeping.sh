@@ -348,6 +348,17 @@ test_housekeeping_blocker_refresh_catchup() {
 		failmsg="${failmsg} | fresh cache ran catch-up: ${got}"
 	fi
 
+	printf '{"rebuild_complete":false}\n' >"$DEP_GRAPH_CACHE_FILE"
+	if ! _pulse_blocker_refresh_starved; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | fresh incomplete checkpoint suppressed catch-up"
+	fi
+	printf '{"rebuild_complete":true}\n' >"$DEP_GRAPH_CACHE_FILE"
+	if _pulse_blocker_refresh_starved; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | fresh completed checkpoint requested catch-up"
+	fi
+
 	: >"$STAGE_LOG"
 	rm -f "$DEP_GRAPH_CACHE_FILE"
 	AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=0 _pulse_run_post_dispatch_housekeeping_stages 7
