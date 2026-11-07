@@ -66,7 +66,8 @@ pdfinfo)
 			}
 		}
 	' "$input")
-	[[ "$dimensions" =~ ^[0-9]+x[0-9]+$ ]] || dimensions="612x792"
+	[[ "$dimensions" =~ ^[0-9.]+x[0-9.]+$ ]] || dimensions=$(fixture_field DIMENSIONS "$input")
+	[[ "$dimensions" =~ ^[0-9.]+x[0-9.]+$ ]] || dimensions="612x792"
 	width="${dimensions%x*}"
 	height="${dimensions#*x}"
 	printf 'Pages: %s\n' "$pages"
