@@ -1222,7 +1222,7 @@ _dispatch_priority_phase_candidates() {
 		[.[] | . as $candidate |
 		 select(any($attempted[]; . == [$candidate.repo_slug, ($candidate.number | tostring)]) | not)] as $open |
 		if $phase == "urgent" then $open[] | select(urgent and (retry | not))
-		elif $phase == $product then $open[] | select(.repo_priority == $product and (urgent | not))
+		elif $phase == $product then $open[] | select(.repo_priority == $product and (urgent | not) and (retry | not))
 		elif $phase == "ordinary" then
 			[$open[] | select(urgent and retry)] as $retries |
 			[$open[] | select(.repo_priority != $product and (urgent | not))] as $ordinary |

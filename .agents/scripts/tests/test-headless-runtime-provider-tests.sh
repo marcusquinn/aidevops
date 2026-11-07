@@ -482,6 +482,8 @@ test_own_merged_terminal_reconciliation() {
 				;;
 			same_second)
 				expected=0
+				# 1792929660.9s truncates to 2026-10-25T12:01:00Z, matching
+				# the default mergedAt in _setup_own_merged_evidence.
 				AIDEVOPS_ATTEMPT_STARTED_AT=1792929660900000000
 				;;
 			missing_session) printf '{"type":"text","text":"Delivered."}\n' >"$output_file" ;;

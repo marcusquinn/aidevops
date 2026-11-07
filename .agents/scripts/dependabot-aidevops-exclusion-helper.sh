@@ -196,7 +196,8 @@ _write_pr_body() {
 # Create branch, commit the patched config, and open a ready PR.
 _apply_repo() {
 	local slug="$1" branch="$2" config_path="$3" blob_sha="$4" patched_file="$5" body_file="$6"
-	local existing="" base_sha="" content_b64="" pr_url=""
+	local existing="" base_sha="" content_b64="" pr_url="" commit_result="" commit_sha="" head_sha=""
+	local err_file="${body_file}.pr-error" diagnostic=""
 	existing=$(gh pr list --repo "$slug" --head "$DAE_BRANCH" --state open \
 		--json url --jq '.[0].url // empty' 2>/dev/null) || existing=""
 	if [[ -n "$existing" ]]; then
@@ -217,21 +218,40 @@ _apply_repo() {
 		return 1
 	}
 	content_b64=$(base64 <"$patched_file" | tr -d '\n')
-	if ! gh api -X PUT "repos/${slug}/contents/${config_path}" -f "message=${DAE_TITLE}" \
-		-f "content=${content_b64}" -f "sha=${blob_sha}" -f "branch=${DAE_BRANCH}" >/dev/null 2>&1; then
+	if ! commit_result=$(gh api -X PUT "repos/${slug}/contents/${config_path}" -f "message=${DAE_TITLE}" \
+		-f "content=${content_b64}" -f "sha=${blob_sha}" -f "branch=${DAE_BRANCH}" 2>/dev/null); then
 		gh api -X DELETE "repos/${slug}/git/refs/heads/${DAE_BRANCH}" >/dev/null 2>&1 || true
 		printf 'commit failed; branch removed'
 		return 1
 	fi
+	commit_sha=$(jq -r '.commit.sha // empty' <<<"$commit_result")
 	if ! declare -F gh_create_pr >/dev/null 2>&1; then
 		printf 'gh_create_pr unavailable; branch %s pushed without PR' "$DAE_BRANCH"
 		return 1
 	fi
-	pr_url=$(AIDEVOPS_PR_CREATE_READY=1 gh_create_pr --repo "$slug" --title "$DAE_TITLE" \
-		--body-file "$body_file" --head "$DAE_BRANCH" --base "$branch" 2>/dev/null) || {
-		printf 'PR creation failed; branch %s pushed' "$DAE_BRANCH"
-		return 1
-	}
+	if ! pr_url=$(AIDEVOPS_PR_CREATE_READY=1 gh_create_pr --repo "$slug" --title "$DAE_TITLE" \
+		--body-file "$body_file" --head "$DAE_BRANCH" --base "$branch" 2>"$err_file"); then
+		diagnostic=$(<"$err_file")
+		if ! existing=$(gh pr list --repo "$slug" --head "$DAE_BRANCH" --state open \
+			--json url --jq '.[0].url // empty' 2>/dev/null); then
+			printf 'PR creation failed; branch %s pushed; PR lookup failed: %s' "$DAE_BRANCH" "$diagnostic"
+			return 1
+		fi
+		if [[ -n "$existing" ]]; then
+			printf '%s' "$existing"
+			return 0
+		fi
+		head_sha=$(gh api "repos/${slug}/git/ref/heads/${DAE_BRANCH}" --jq '.object.sha' 2>/dev/null) || head_sha=""
+		if [[ ! "$commit_sha" =~ ^[0-9a-f]{40}$ || "$head_sha" != "$commit_sha" ]]; then
+			printf 'PR creation failed; branch %s pushed; head not verified: %s' "$DAE_BRANCH" "$diagnostic"
+			return 1
+		fi
+		if ! pr_url=$(AIDEVOPS_PR_CREATE_READY=1 gh_create_pr --repo "$slug" --title "$DAE_TITLE" \
+			--body-file "$body_file" --head "$DAE_BRANCH" --base "$branch" 2>"$err_file"); then
+			printf 'PR creation failed; branch %s pushed: %s; retry: %s' "$DAE_BRANCH" "$diagnostic" "$(<"$err_file")"
+			return 1
+		fi
+	fi
 	printf '%s' "$(printf '%s' "$pr_url" | tail -n 1)"
 	return 0
 }
