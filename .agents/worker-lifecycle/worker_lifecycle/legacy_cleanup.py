@@ -281,8 +281,8 @@ def interrupted_probe(store, connection, item):
     previous = latest_probe_plan(connection, host)
     return bool(
         previous and previous["plan"]["source"] == item["path"]
-        and receipt(connection, host, "verified") is None
-        and receipt(connection, operation_id(store, item["path"]), "retired") is None)
+        and (receipt(connection, host, "verified") is None
+             or receipt(connection, operation_id(store, item["path"]), "retired") is None))
 
 
 def recover_interrupted_probe(store, item, apply):
@@ -298,11 +298,26 @@ def recover_interrupted_probe(store, item, apply):
             prepare_reconstructible_probe(store, connection, host, None)
 
 
+def record_probe_recovery(store, connection, host, original):
+    """Write missing recovery receipts, retired first so a failure stays retryable."""
+    operation = operation_id(store, original["source"])
+    if receipt(connection, operation, "retired") is None:
+        checkpoint(store, connection, operation, "retired",
+                   dict(original, type="reconstructible-worktree-retired",
+                        branch_preserved=True))
+    if receipt(connection, host, "verified") is None:
+        checkpoint(store, connection, host, "verified",
+                   dict(original, type="reconstructible-host-probe-verified"))
+
+
 def prepare_reconstructible_probe(store, connection, host, plan):
     """Recover removed probes; cancel unremoved attempts only by native identity."""
-    if receipt(connection, host, "verified") is not None:
-        return False
     previous = latest_probe_plan(connection, host)
+    if receipt(connection, host, "verified") is not None:
+        # Repair a partial recovery: verified committed but retired missing.
+        if plan is None and previous and not os.path.lexists(previous["plan"]["source"]):
+            record_probe_recovery(store, connection, host, previous["plan"])
+        return False
     if previous:
         original = previous["plan"]
         if not os.path.lexists(original["source"]):
@@ -310,11 +325,7 @@ def prepare_reconstructible_probe(store, connection, host, plan):
                 verify_reconstructible(original, probe=True)
             except (ValueError, OSError, subprocess.SubprocessError) as error:
                 raise ValueError("reconstructible-probe-verification-pending") from error
-            checkpoint(store, connection, host, "verified",
-                       dict(original, type="reconstructible-host-probe-verified"))
-            checkpoint(store, connection, operation_id(store, original["source"]),
-                       "retired", dict(original, type="reconstructible-worktree-retired",
-                                       branch_preserved=True))
+            record_probe_recovery(store, connection, host, original)
             return False
         # An intact original worktree/admin proves removal never completed.
         # A replacement or unresolved missing source must not unlock batching.
