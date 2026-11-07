@@ -52,7 +52,7 @@ import { createTools, tool } from "./tools.mjs";
 import { createSchemaGatedTools } from "./tool-schema.mjs";
 import { createTtsrHooks, isPluginGreetingEnabled } from "./ttsr.mjs";
 import { createRootSessionGreetingGate } from "./root-session-greeting-gate.mjs";
-import { isHeadless } from "./proxy-lifecycle.mjs";
+import { isAcpServer, isHeadless } from "./proxy-lifecycle.mjs";
 import { createV2McpRuntime } from "./v2-mcp-adapter.mjs";
 import {
   loadV2PrimaryProfiles,
@@ -406,6 +406,7 @@ export async function setupAidevopsV2(ctx) {
     const shouldInjectGreeting = createRootSessionGreetingGate({
       getSession: (sessionID) => ctx.session.get({ sessionID }),
       isHeadless,
+      isAcpServer,
       log: qualityLog,
     });
     const greetingEnabled = () => isPluginGreetingEnabled(process.env, true);

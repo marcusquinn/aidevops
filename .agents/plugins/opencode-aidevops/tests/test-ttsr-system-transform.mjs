@@ -8,6 +8,8 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { CLAUDE_CODE_IDENTITY, createTtsrHooks, isPluginGreetingEnabled } from "../ttsr.mjs";
+import { isAcpServer } from "../proxy-lifecycle.mjs";
+import { createRootSessionGreetingGate } from "../root-session-greeting-gate.mjs";
 
 function hooks(overrides = {}) {
   return createTtsrHooks({
@@ -28,6 +30,50 @@ function wrapper(name) {
 }
 
 describe("TTSR system transform", () => {
+  test("detects the ACP subcommand without matching executable or project paths", () => {
+    assert.equal(isAcpServer(["bun", "/$bunfs/root/src/index.js", "acp"]), true);
+    assert.equal(isAcpServer(["opencode", "/app/index.js", "acp", "--port", "3000"]), true);
+    for (const argv of [["opencode", "/app/index.js"], ["bun", "/acp/index.js", "/projects/acp"], ["bun", "acp"]]) {
+      assert.equal(isAcpServer(argv), false);
+    }
+  });
+
+  test("skips only the ACP greeting, logging once per session and preserving explicit overrides", async () => {
+    for (const acp of [false, true]) {
+      for (const override of [undefined, "0", "1"]) {
+        const env = override === undefined ? {} : { AIDEVOPS_PLUGIN_SESSION_GREETING: override };
+        const logs = [];
+        const shouldInjectGreeting = createRootSessionGreetingGate({
+          getSession: async (sessionID) => ({ parentID: sessionID === "child" ? "root" : undefined }),
+          isAcpServer: () => acp,
+          env,
+          log: (level, message) => logs.push([level, message]),
+        });
+        const { systemTransformHook } = hooks({
+          shouldInjectGreeting,
+          greetingEnabled: () => isPluginGreetingEnabled(env),
+        });
+        for (let request = 0; request < 2; request++) {
+          const system = ["Agent prompt."];
+          await systemTransformHook({ sessionID: "root", model: { providerID: "openai" } }, { system });
+          assert.equal(system.some((text) => text.includes("Session-start greeting order")),
+            override !== "0" && (!acp || override === "1"));
+          assert.ok(system.some((text) => text.startsWith("## Intent Tracing")));
+          assert.ok(system.some((text) => text.startsWith("## aidevops Quality Rules")));
+        }
+        assert.deepEqual(logs, acp && override === undefined
+          ? [["INFO", "Session greeting skipped for root: acp-server"]] : []);
+        assert.equal(await shouldInjectGreeting({ sessionID: "child" }), false, "override never enables child greetings");
+      }
+    }
+    const headless = createRootSessionGreetingGate({
+      isHeadless: () => true,
+      isAcpServer: () => true,
+      env: { AIDEVOPS_PLUGIN_SESSION_GREETING: "1" },
+    });
+    assert.equal(await headless({ sessionID: "root" }), false, "override never enables headless greetings");
+  });
+
   test("mutates the runtime-owned system array in place (OpenCode 1 ignores reassignment)", async () => {
     const { systemTransformHook } = hooks({ greetingEnabled: () => false });
     const catalogue = `Agent prompt.\n<available_skills>\n${["seo", "review", "release"].map(wrapper).join("\n")}\n</available_skills>`;

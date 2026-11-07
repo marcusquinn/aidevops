@@ -123,7 +123,7 @@ import { installOpenAIProviderFetchRotation } from "./openai-provider-auth.mjs";
 import { startCursorProxy, ensureCursorProxyServer } from "./cursor-proxy.mjs";
 import { startGoogleProxy, ensureGoogleProxyServer } from "./google-proxy.mjs";
 import { startClaudeProxy } from "./claude-proxy.mjs";
-import { isHeadless } from "./proxy-lifecycle.mjs";
+import { isAcpServer, isHeadless } from "./proxy-lifecycle.mjs";
 import { pluginHealthProbeRequested, recordPluginHealthStage } from "./plugin-health.mjs";
 import { annotateTurnTimesSafely } from "./turn-time-annotation.mjs";
 
@@ -527,6 +527,7 @@ export async function AidevopsPlugin({ directory, client }) {
   const shouldInjectGreeting = createRootSessionGreetingGate({
     getSession: openCodeV1SessionLookup(client),
     isHeadless,
+    isAcpServer,
     log: qualityLog,
   });
   const permissionBroker = createPermissionBroker({ client, isHeadless });
