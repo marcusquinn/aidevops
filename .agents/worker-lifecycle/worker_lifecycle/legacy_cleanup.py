@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import sqlite3
-import socket
 import subprocess  # nosec B404 # exception classification; helpers execute fixed argv
 import tempfile
 import time
@@ -23,28 +22,13 @@ from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import require_manual_confirmation, require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
+from .legacy_probe import checkpoint, host_probe, interrupted_probe
+from .legacy_probe import latest_probe_plan, operation_id, receipt, record_probe_recovery
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
-
-
-def event_id(operation, phase):
-    """Return the deterministic event ID for an operation phase."""
-    return str(uuid5(UUID(operation), "legacy-" + phase))
-
-
-def operation_id(store, path):
-    """Return the deterministic operation ID for a legacy path."""
-    return str(uuid5(UUID(store.installation_id()), "legacy-cleanup:" + path))
-
-
-def receipt(connection, operation, phase):
-    """Return the recorded payload for an operation phase, or None."""
-    row = connection.execute("SELECT payload FROM events WHERE event_id=?",
-                             (event_id(operation, phase),)).fetchone()
-    return json.loads(row[0]) if row else None
 
 
 def require_confirmation(connection, operation, confirmed):
@@ -53,13 +37,6 @@ def require_confirmation(connection, operation, confirmed):
         (receipt(connection, operation, phase) for phase in ("archive", "plan")),
         confirmed,
     )
-
-
-def checkpoint(store, connection, operation, phase, payload):
-    """Persist before destructive steps, then reacquire the admission writer lock."""
-    store._event(connection, event_id(operation, phase), payload)
-    connection.commit()
-    connection.execute("BEGIN IMMEDIATE")
 
 
 @contextmanager
@@ -259,32 +236,6 @@ def process_item(store, item, repositories, adapter, options):
     return outcome, eligible, attempted
 
 
-def host_probe(store):
-    """Return the stable per-host reconstructible probe operation id."""
-    return str(uuid5(UUID(store.installation_id()),
-                     "reconstructible-host-probe:" + socket.gethostname()))
-
-
-def latest_probe_plan(connection, host):
-    """Return the newest journaled host probe plan payload, or None."""
-    row = connection.execute(
-        "SELECT payload FROM events WHERE json_extract(payload,'$.type')=? "
-        "AND json_extract(payload,'$.host')=? ORDER BY sequence DESC LIMIT 1",
-        ("reconstructible-host-probe-plan", host),
-    ).fetchone()
-    return json.loads(row[0]) if row else None
-
-
-def interrupted_probe(store, connection, item):
-    """True when this absent source is an unverified, unretired host probe."""
-    host = host_probe(store)
-    previous = latest_probe_plan(connection, host)
-    return bool(
-        previous and previous["plan"]["source"] == item["path"]
-        and (receipt(connection, host, "verified") is None
-             or receipt(connection, operation_id(store, item["path"]), "retired") is None))
-
-
 def recover_interrupted_probe(store, item, apply):
     """Recover an interrupted probe removal; preview reports verification pending."""
     host = host_probe(store)
@@ -296,18 +247,6 @@ def recover_interrupted_probe(store, item, apply):
     with _lock(store, host), store.connection(write=True) as connection:
         if interrupted_probe(store, connection, item):
             prepare_reconstructible_probe(store, connection, host, None)
-
-
-def record_probe_recovery(store, connection, host, original):
-    """Write missing recovery receipts, retired first so a failure stays retryable."""
-    operation = operation_id(store, original["source"])
-    if receipt(connection, operation, "retired") is None:
-        checkpoint(store, connection, operation, "retired",
-                   dict(original, type="reconstructible-worktree-retired",
-                        branch_preserved=True))
-    if receipt(connection, host, "verified") is None:
-        checkpoint(store, connection, host, "verified",
-                   dict(original, type="reconstructible-host-probe-verified"))
 
 
 def prepare_reconstructible_probe(store, connection, host, plan):
