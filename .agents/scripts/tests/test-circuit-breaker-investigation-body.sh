@@ -80,10 +80,16 @@ Ref #1"
 _cb_file_investigation_task o/r 1 3 "o/r#2" worker_spawn_failed >/dev/null 2>&1
 rc=$?
 captured=$(<"$BODY_FILE")
-[[ $rc -eq 0 && "$captured" == *"## What"* && "$captured" == *"Ref #1"* ]]
-check "body with ## What and Ref #<trip> reaches gh_create_issue" $?
-[[ -z "$EDIT_LOG" ]]
-check "intact body leaves auto-dispatch untouched" $?
+if [[ $rc -eq 0 && "$captured" == *"## What"* && "$captured" == *"Ref #1"* ]]; then
+	check "body with ## What and Ref #<trip> reaches gh_create_issue" 0
+else
+	check "body with ## What and Ref #<trip> reaches gh_create_issue" 1
+fi
+if [[ -z "$EDIT_LOG" ]]; then
+	check "intact body leaves auto-dispatch untouched" 0
+else
+	check "intact body leaves auto-dispatch untouched" 1
+fi
 
 # Scenario 2: empty composition fails closed.
 : >"$CALLS_FILE"
@@ -93,8 +99,11 @@ _cb_build_investigation_body() {
 }
 _cb_file_investigation_task o/r 1 3 "o/r#2" worker_spawn_failed >/dev/null 2>&1
 rc=$?
-[[ $rc -ne 0 && ! -s "$CALLS_FILE" ]]
-check "empty body composition does not create an issue" $?
+if [[ $rc -ne 0 && ! -s "$CALLS_FILE" ]]; then
+	check "empty body composition does not create an issue" 0
+else
+	check "empty body composition does not create an issue" 1
+fi
 
 # Scenario 3: created issue lost its body downstream.
 eval "$ORIG_BUILDER"
@@ -102,16 +111,22 @@ EDIT_LOG=""
 GH_API_BODY="<!-- aidevops:sig -->"
 _cb_file_investigation_task o/r 1 3 "o/r#2" worker_spawn_failed >/dev/null 2>&1
 rc=$?
-[[ $rc -ne 0 && "$EDIT_LOG" == *"--remove-label auto-dispatch"* ]]
-check "bodyless created issue has auto-dispatch withdrawn" $?
+if [[ $rc -ne 0 && "$EDIT_LOG" == *"--remove-label auto-dispatch"* ]]; then
+	check "bodyless created issue has auto-dispatch withdrawn" 0
+else
+	check "bodyless created issue has auto-dispatch withdrawn" 1
+fi
 
 # Scenario 4: successful API call returning an empty body counts as lost.
 EDIT_LOG=""
 GH_API_BODY=""
 _cb_file_investigation_task o/r 1 3 "o/r#2" worker_spawn_failed >/dev/null 2>&1
 rc=$?
-[[ $rc -ne 0 && "$EDIT_LOG" == *"--remove-label auto-dispatch"* ]]
-check "empty API body has auto-dispatch withdrawn" $?
+if [[ $rc -ne 0 && "$EDIT_LOG" == *"--remove-label auto-dispatch"* ]]; then
+	check "empty API body has auto-dispatch withdrawn" 0
+else
+	check "empty API body has auto-dispatch withdrawn" 1
+fi
 
 echo "Total:  $TESTS_RUN"
 echo "Failed: $TESTS_FAILED"
