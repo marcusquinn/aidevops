@@ -1419,7 +1419,11 @@ _pmp_stage_required_checks() {
 			else
 				drift_classification_unavailable=1
 				# The ledger accepts hexadecimal signatures, not literal sentinels.
-				drift_signature=$(printf 'classification-unavailable\n' | shasum -a 256 | cut -d ' ' -f 1) || return 1
+				if ! drift_signature=$(printf 'classification-unavailable\n' | shasum -a 256 | cut -d ' ' -f 1) || [[ -z "$drift_signature" ]]; then
+					echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift signature hashing (shasum) failed while classification unavailable; deferring without rebase or CI fix-worker routing (GH#37066)" >>"$LOGFILE"
+					[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}branch_protection_s" "$_branch_protection_start"
+					return 1
+				fi
 				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift context classification unavailable (required-context/head/REST parse failure); allowing one rebase" >>"$LOGFILE"
 			fi
 			if [[ -n "$drift_signature" ]] && _ci_drift_ledger_should_skip "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$drift_signature" "$drift_classification_unavailable"; then
