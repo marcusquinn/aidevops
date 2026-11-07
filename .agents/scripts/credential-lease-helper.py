@@ -8,6 +8,9 @@ import sys
 
 import credential_lease as lease
 
+OWNED_OPTIONS = ("select", "owner_pid", "owner_started", "contract",
+                 "contract_sha256", "configuration_fd")
+
 
 def refuse_arguments(_message):
     raise ValueError("arguments")
@@ -16,7 +19,9 @@ def refuse_arguments(_message):
 def validate_options(args, command, required=(), forbidden=()):
     lease.require(all(getattr(args, name) for name in required), "arguments")
     lease.require(not any(getattr(args, name) for name in forbidden), "arguments")
-    lease.require(args.mode == "exec" or not command, "arguments")
+    lease.require(args.mode in {"exec", "exec-owned"} or not command, "arguments")
+    if args.mode != "exec-owned":
+        lease.require(not any(getattr(args, name) is not None for name in OWNED_OPTIONS), "arguments")
 
 
 def capabilities_command(args, command):
@@ -41,22 +46,38 @@ def exec_command(args, command):
     return lease.execute(args.directory, args.run_id, command, args.cwd, args.budget_seconds)
 
 
+def exec_owned_command(args, command):
+    validate_options(args, command, ("directory", "run_id", "cwd", *OWNED_OPTIONS), ("recipient",))
+    lease.require(args.configuration_fd == 3, "arguments")
+    return lease.execute_owned(args.directory, args.run_id, command, args.cwd,
+                               args.budget_seconds, args.select, args.owner_pid,
+                               args.owner_started, args.contract, args.contract_sha256,
+                               args.configuration_fd)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.error = refuse_arguments
-    parser.add_argument("mode", choices=["capabilities", "seal", "exec", "remove"])
+    parser.add_argument("mode", choices=["capabilities", "seal", "exec", "exec-owned", "remove"])
     parser.add_argument("--directory")
     parser.add_argument("--run-id")
     parser.add_argument("--recipient")
     parser.add_argument("--cwd")
     parser.add_argument("--budget-seconds", type=int, default=1200)
+    parser.add_argument("--select", action="append")
+    parser.add_argument("--owner-pid", type=int)
+    parser.add_argument("--owner-started")
+    parser.add_argument("--contract")
+    parser.add_argument("--contract-sha256")
+    parser.add_argument("--configuration-fd", type=int)
     argv = sys.argv[1:]
     separator = argv.index("--") if "--" in argv else len(argv)
     command = argv[separator + 1:]
     try:
         args = parser.parse_args(argv[:separator])
         handlers = {"capabilities": capabilities_command, "seal": seal_command,
-                    "remove": remove_command, "exec": exec_command}
+                     "remove": remove_command, "exec": exec_command,
+                     "exec-owned": exec_owned_command}
         result, code = handlers[args.mode](args, command)
     except (Exception, KeyboardInterrupt):  # noqa: BLE001 - errors can contain decrypted values
         result, code = {"status": "lease-refused", "version": lease.VERSION}, 1

@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import shutil
 import signal
 import stat
@@ -28,7 +29,7 @@ FILES = ("credential-lease.pending.gpg", "credential-lease.gpg",
 RECEIPT = "credential-lease.json"
 CAPABILITIES = {"version": VERSION, "encryptedOnly": True, "createOnly": True,
                  "conditionalRemoval": True, "plaintextFiles": False,
-                 "ownedProcessGroup": True}
+                 "ownedProcessGroup": True, "scopedOwnedExecution": True}
 # Common loader, interpreter, shell and Git execution hooks. Not exhaustive:
 # seal only the names the reviewed child command actually expects.
 RESERVED_NAMES = frozenset({
@@ -344,3 +345,207 @@ def execute(directory, run_id, command, cwd, budget):
         return {"status": "child-interrupted", "version": VERSION}, 1
     return {"status": "child-passed" if returncode == 0 else "child-failed",
             "version": VERSION}, 0 if returncode == 0 else 1
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result, "duplicate-key")
+        result[key] = value
+    return result
+
+
+def _closed_json(data):
+    return json.loads(data, object_pairs_hook=_unique_object)
+
+
+def _process_identity(pid):
+    path = Path("/proc") / str(pid)
+    require(path.stat().st_uid == os.getuid(), "process-owner")
+    fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+    require(fields[0] not in {"Z", "X"}, "process-stopped")
+    return {"parent": int(fields[1]), "group": int(fields[2]), "started": fields[19]}
+
+
+def assert_owned_ancestor(pid, started):
+    """Verify a live same-user ancestor/group, not an authorization or drain receipt."""
+    require(sys.platform == "linux", "supervision-platform")
+    require(type(pid) is int and pid > 1 and pid != os.getpid(), "process-owner")
+    require(isinstance(started, str) and re.fullmatch(r"[0-9]+", started), "process-owner")
+    require(os.getpgrp() == pid, "process-group")
+    current = os.getpid()
+    for _ in range(64):
+        identity = _process_identity(current)
+        require(identity["group"] == pid, "process-group")
+        if current == pid:
+            require(identity["started"] == started, "process-reused")
+            return
+        require(identity["parent"] > 1 and identity["parent"] != current, "process-ancestor")
+        current = identity["parent"]
+    raise ValueError("process-ancestor")
+
+
+def _execution_contract(directory, run_id, path, digest):
+    """Pin a private, non-secret set of exact outputs; never learn labels from stdout."""
+    require(re.fullmatch(r"[a-f0-9]{64}", digest), "contract")
+    with locked(directory) as (root, owner):
+        receipt_for(root, owner, run_id)
+        path = Path(path)
+        require(path.is_absolute() and path.parent == root and path == path.resolve(), "contract")
+        data, info = read_private(path, LIMIT)
+        require(info.st_nlink == 1, "contract")
+        require(hashlib.sha256(data).hexdigest() == digest, "contract")
+    contract = _closed_json(data)
+    require(isinstance(contract, dict) and set(contract) == {
+        "version", "configurationNames", "results"}, "contract")
+    require(type(contract["version"]) is int and contract["version"] == 1, "contract")
+    names = contract["configurationNames"]
+    require(isinstance(names, list) and len(names) <= 16, "contract")
+    require(all(isinstance(name, str) for name in names) and len(set(names)) == len(names), "contract")
+    for name in names:
+        if name != "NODE_ENV":
+            validate_values({name: "contract-placeholder"})
+    results = contract["results"]
+    require(isinstance(results, list) and 1 <= len(results) <= 64, "contract")
+    for entry in results:
+        require(isinstance(entry, dict) and set(entry) == {"exitCode", "value"}, "contract")
+        require(type(entry["exitCode"]) is int and 0 <= entry["exitCode"] <= 255, "contract")
+        value = entry["value"]
+        require(isinstance(value, dict) and 1 <= len(value) <= 8, "contract")
+        for key, literal in value.items():
+            require(re.fullmatch(r"[a-z][A-Za-z0-9]{0,63}", key), "contract")
+            require(type(literal) is bool or
+                    (type(literal) is int and 0 <= literal <= 9007199254740991) or
+                    (isinstance(literal, str) and
+                     re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", literal)), "contract")
+    return contract
+
+
+def _read_configuration(descriptor, names):
+    """A bounded memory pipe, never argv, dotenv, a plaintext file or ambient lookup."""
+    require(type(descriptor) is int and descriptor >= 3, "configuration")
+    mode = os.fstat(descriptor).st_mode
+    require(stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode), "configuration")
+    data = bytearray()
+    deadline = time.monotonic() + 5
+    try:
+        os.set_blocking(descriptor, False)
+        while True:
+            remaining = deadline - time.monotonic()
+            require(remaining > 0 and select.select([descriptor], [], [], remaining)[0], "configuration")
+            try:
+                part = os.read(descriptor, min(4096, LIMIT + 1 - len(data)))
+            except BlockingIOError:
+                continue  # Another reader cannot turn readiness into an unbounded read.
+            if not part:
+                break
+            data.extend(part)
+            require(len(data) <= LIMIT, "configuration")
+    finally:
+        os.close(descriptor)
+    values = _closed_json(data)
+    require(isinstance(values, dict) and set(values) == set(names), "configuration")
+    for name, value in values.items():
+        if name == "NODE_ENV":
+            require(value in ("development", "test"), "configuration")
+        else:
+            validate_values({name: value})
+    return values
+
+
+def _stop_direct_child(child):
+    # The unreaped direct PID remains pinned. The caller's owner drains the GROUP.
+    child.terminate()
+    try:
+        child.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait(timeout=5)
+
+
+def _owned_child_output(command, cwd, environment, budget, received):
+    child = None
+    finished = False
+    data = bytearray()
+    try:
+        child = subprocess.Popen(  # nosec B603 -- reviewed argv, no shell or new process group
+            command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        require(os.getpgid(child.pid) == os.getpgrp(), "child-process-group")
+        os.set_blocking(child.stdout.fileno(), False)
+        deadline = time.monotonic() + budget
+        eof = False
+        while not received and time.monotonic() < deadline:
+            if not eof and select.select([child.stdout], [], [], 0.05)[0]:
+                part = os.read(child.stdout.fileno(), 4096)
+                eof = not part
+                data.extend(part)
+                if len(data) > LIMIT:
+                    break
+            elif eof:
+                time.sleep(0.05)
+            # Do not reap a PID we might still have to signal on timeout/overflow.
+            exited = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            if eof and exited is not None:
+                require(os.getpgid(child.pid) == os.getpgrp(), "child-process-group")
+                code = child.wait(timeout=5)
+                finished = True
+                return bytes(data), code
+        return None, None
+    finally:
+        if child is not None:
+            try:
+                if not finished:
+                    _stop_direct_child(child)
+            finally:
+                child.stdout.close()
+
+
+def execute_owned(directory, run_id, command, cwd, budget, names,
+                  owner_pid, owner_started, contract_path, contract_digest, configuration_fd):
+    """Reinject inside an existing bounded owner; never create/claim another group."""
+    require(command and 1 <= budget <= 3600, "command")
+    require(sys.version_info >= (3, 11), "supervision-platform")
+    assert_owned_ancestor(owner_pid, owner_started)
+    require(isinstance(names, list) and 1 <= len(names) <= 16, "names")
+    require(all(isinstance(name, str) for name in names) and len(set(names)) == len(names), "names")
+    for name in names:
+        validate_values({name: "selected-name-placeholder"})
+    contract = _execution_contract(directory, run_id, contract_path, contract_digest)
+    require(not set(names).intersection(contract["configurationNames"]), "configuration")
+    configuration = _read_configuration(configuration_fd, contract["configurationNames"])
+    received = []
+
+    def record(number, _frame):
+        received.append(number)
+
+    previous = {number: signal.signal(number, record) for number in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        values = open_values(directory, run_id)
+        require(set(names).issubset(values), "names")
+        assert_owned_ancestor(owner_pid, owner_started)
+        if received:
+            return {"status": "owned-child-unverified", "version": VERSION}, 1
+        environment = {key: os.environ[key] for key in
+                       ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "AIDEVOPS_TEMP_DIR")
+                       if key in os.environ}
+        environment.update(configuration)
+        environment.update({name: values[name] for name in names})
+        data, code = _owned_child_output(command, cwd, environment, budget, received)
+        if data is not None and not received:
+            try:
+                result = _closed_json(data)
+                # Compare canonical JSON, not Python's True == 1 equality.
+                encoded = json.dumps(result, sort_keys=True, separators=(",", ":"))
+                for allowed in contract["results"]:
+                    expected = json.dumps(allowed["value"], sort_keys=True, separators=(",", ":"))
+                    if code == allowed["exitCode"] and encoded == expected:
+                        assert_owned_ancestor(owner_pid, owner_started)
+                        return {"status": "owned-child-result", "version": VERSION,
+                                "result": allowed["value"], "exitCode": code}, 0
+            except (ValueError, TypeError, UnicodeError):
+                pass  # Never forward output, parse errors, or decoder context.
+        return {"status": "owned-child-unverified", "version": VERSION}, 1
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)

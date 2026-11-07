@@ -3,12 +3,14 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Synthetic, offline regressions: no GPG keyring, gopass or saved credential access."""
 import importlib.util
+import hashlib
 import io
 import itertools
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -235,6 +237,168 @@ class LeaseTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     lease.validate_values(values)
 
+    def owned_contract(self, names=None, results=None):
+        contract = {"version": 1, "configurationNames": names or [],
+                    "results": results or [{"exitCode": 0, "value": {"outcome": "matching"}}]}
+        data = json.dumps(contract).encode()
+        path = self.root / "result-contract.json"
+        lease.exclusive_write(path, data)
+        return str(path), hashlib.sha256(data).hexdigest()
+
+    def owned_execution(self, output=b'{"outcome":"matching"}', code=0, configuration=None):
+        configuration = configuration or {}
+        path, digest = self.owned_contract(names=list(configuration))
+        self.seal()
+        with patch.object(lease, "assert_owned_ancestor") as owner, \
+                patch.object(lease, "_read_configuration", return_value=configuration), \
+                patch.object(lease, "_owned_child_output", return_value=(output, code)) as child:
+            result = lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
+                                         ["LOCAL_VERIFY_PASSWORD"], 123, "456", path, digest, 3)
+        return result, child.call_args, owner.call_count
+
+    def test_owned_execution_selects_only_requested_values_and_explicit_configuration(self):
+        self.values["UNRELATED_TOKEN"] = uuid.uuid4().hex
+        configuration = {"DATABASE_URL": "synthetic-owned-database", "NODE_ENV": "development"}
+        with patch.dict(os.environ, {"UNRELATED_TOKEN": "ambient-canary", "NODE_OPTIONS": "hook-canary"}):
+            result, call, checks = self.owned_execution(configuration=configuration)
+        self.assertEqual(result, ({"status": "owned-child-result", "version": 1,
+                                   "result": {"outcome": "matching"}, "exitCode": 0}, 0))
+        env = call.args[2]
+        self.assertEqual(env["LOCAL_VERIFY_PASSWORD"], self.values["LOCAL_VERIFY_PASSWORD"])
+        self.assertEqual(env["DATABASE_URL"], configuration["DATABASE_URL"])
+        self.assertNotIn("UNRELATED_TOKEN", env)
+        self.assertNotIn("NODE_OPTIONS", env)
+        self.assertEqual(checks, 3)
+
+    def test_owned_execution_never_forwards_unknown_or_augmented_output(self):
+        samples = [b"raw-sql-parameter-canary", b'{"outcome":"matching","email":"canary"}',
+                   b'{"outcome":"matching","outcome":"matching"}',
+                   b'{"outcome":"matching"} trailing', b'[]', b'\xff']
+        for sample in samples:
+            # Each attempt has its own private contract and synthetic capsule.
+            with self.subTest(kind=sample[:1]):
+                result, _, _ = self.owned_execution(sample)
+                self.assertEqual(result, ({"status": "owned-child-unverified", "version": 1}, 1))
+                lease.remove(self.root, self.run_id)
+                for path in self.root.iterdir():
+                    path.unlink()
+
+    def test_owned_execution_rejects_exit_mismatch_and_uncertain_transport(self):
+        result, _, _ = self.owned_execution(code=1)
+        self.assertEqual(result, ({"status": "owned-child-unverified", "version": 1}, 1))
+
+    def test_owned_execution_owner_refusal_precedes_decryption(self):
+        with patch.object(lease, "assert_owned_ancestor", side_effect=ValueError("owner")), \
+                patch.object(lease, "open_values") as decrypt:
+            with self.assertRaises(ValueError):
+                lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
+                                    ["LOCAL_VERIFY_PASSWORD"], 123, "456", "unused", "unused", 3)
+        decrypt.assert_not_called()
+
+    def test_owned_execution_rejects_duplicate_selection_before_decryption(self):
+        with patch.object(lease, "assert_owned_ancestor"), patch.object(lease, "open_values") as decrypt:
+            with self.assertRaises(ValueError):
+                lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
+                                    ["VALUE", "VALUE"], 123, "456", "unused", "unused", 3)
+        decrypt.assert_not_called()
+
+    def test_contract_digest_and_private_file_are_enforced(self):
+        path, digest = self.owned_contract()
+        self.seal()
+        with self.assertRaises(ValueError):
+            lease._execution_contract(self.root, self.run_id, path, "0" * 64)
+        Path(path).chmod(0o644)
+        with self.assertRaises(ValueError):
+            lease._execution_contract(self.root, self.run_id, path, digest)
+
+    def test_configuration_cannot_shadow_selected_credentials(self):
+        path, digest = self.owned_contract(names=["LOCAL_VERIFY_PASSWORD"])
+        self.seal()
+        with patch.object(lease, "assert_owned_ancestor"), patch.object(lease, "open_values") as decrypt:
+            with self.assertRaises(ValueError):
+                lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
+                                    ["LOCAL_VERIFY_PASSWORD"], 123, "456", path, digest, 3)
+        decrypt.assert_not_called()
+
+    def test_configuration_pipe_is_memory_only_exact_and_loader_safe(self):
+        cases = [(b'{"NODE_ENV":"development"}', ["NODE_ENV"], True),
+                 (b'{"NODE_ENV":"production"}', ["NODE_ENV"], False),
+                 (b'{"NODE_OPTIONS":"hook-canary"}', ["NODE_OPTIONS"], False),
+                 (b'{"VALUE":"first","VALUE":"second"}', ["VALUE"], False),
+                 (b'{"EXTRA":"canary"}', [], False)]
+        for data, names, valid in cases:
+            read, write = os.pipe()
+            os.write(write, data)
+            os.close(write)
+            if valid:
+                self.assertEqual(lease._read_configuration(read, names), {"NODE_ENV": "development"})
+            else:
+                with self.assertRaises(ValueError):
+                    lease._read_configuration(read, names)
+
+    def test_owned_ancestor_requires_matching_live_kernel_identity_and_group(self):
+        identities = {27: {"parent": 30, "group": 42, "started": "100"},
+                      30: {"parent": 42, "group": 42, "started": "99"},
+                      42: {"parent": 5, "group": 42, "started": "98"}}
+        with patch.object(lease.sys, "platform", "linux"), \
+                patch.object(lease.os, "getpid", return_value=27), \
+                patch.object(lease.os, "getpgrp", return_value=42), \
+                patch.object(lease, "_process_identity", side_effect=identities.__getitem__):
+            lease.assert_owned_ancestor(42, "98")
+            with self.assertRaises(ValueError):
+                lease.assert_owned_ancestor(42, "97")
+            with self.assertRaises(ValueError):
+                lease.assert_owned_ancestor(30, "99")
+
+    @unittest.skipUnless(sys.platform == "linux" and sys.version_info >= (3, 11), "Linux owner protocol")
+    def test_owned_child_remains_in_existing_group_and_bounds_output_and_time(self):
+        environment = {"PATH": os.environ["PATH"]}
+        # Only synthetic interpreter children, never GPG or application commands.
+        data, code = lease._owned_child_output(
+            [sys.executable, "-c", "import json,os; print(json.dumps({'group':os.getpgrp()}))"],
+            "/", environment, 2, [])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(data)["group"], os.getpgrp())
+        self.assertEqual(lease._owned_child_output(
+            [sys.executable, "-c", "import os; os.write(1,b'x'*70000)"],
+            "/", environment, 2, []), (None, None))
+        self.assertEqual(lease._owned_child_output(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            "/", environment, 0.05, []), (None, None))
+
+    def test_stop_during_owned_result_transport_never_becomes_success(self):
+        path, digest = self.owned_contract()
+        self.seal()
+        previous = lease.signal.getsignal(lease.signal.SIGTERM)
+
+        def interrupted_output(*_arguments):
+            lease.signal.getsignal(lease.signal.SIGTERM)(lease.signal.SIGTERM, None)
+            return b'{"outcome":"matching"}', 0
+
+        with patch.object(lease, "assert_owned_ancestor"), \
+                patch.object(lease, "_read_configuration", return_value={}), \
+                patch.object(lease, "_owned_child_output", side_effect=interrupted_output):
+            result = lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
+                                         ["LOCAL_VERIFY_PASSWORD"], 123, "456", path, digest, 3)
+        self.assertEqual(result, ({"status": "owned-child-unverified", "version": 1}, 1))
+        self.assertIs(lease.signal.getsignal(lease.signal.SIGTERM), previous)
+
+    def test_contract_rejects_loader_configuration_before_decryption(self):
+        path, digest = self.owned_contract(names=["NODE_OPTIONS"])
+        self.seal()
+        with patch.object(lease, "assert_owned_ancestor"), patch.object(lease, "open_values") as decrypt:
+            with self.assertRaises(ValueError):
+                lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
+                                    ["LOCAL_VERIFY_PASSWORD"], 123, "456", path, digest, 3)
+        decrypt.assert_not_called()
+
+    def test_contract_refuses_hardlinks(self):
+        path, digest = self.owned_contract()
+        self.seal()
+        os.link(path, self.root / "extra-contract-link")
+        with self.assertRaises(ValueError):
+            lease._execution_contract(self.root, self.run_id, path, digest)
+
 
 class CliTests(unittest.TestCase):
     def invoke(self, arguments, data=b"{}"):
@@ -298,7 +462,31 @@ class CliTests(unittest.TestCase):
         arguments = ["remove", "--directory", "/synthetic/run", "--run-id", str(uuid.uuid4())]
         with patch.object(lease, "remove", side_effect=ValueError(uuid.uuid4().hex)):
             self.assertEqual(self.invoke(arguments),
+                              (1, {"status": "lease-refused", "version": lease.VERSION}))
+
+    def test_owned_execution_options_are_not_accepted_by_legacy_modes(self):
+        with patch.object(lease, "execute_owned") as owned:
+            self.assertEqual(self.invoke(["capabilities", "--owner-pid", "123"]),
                              (1, {"status": "lease-refused", "version": lease.VERSION}))
+            self.assertEqual(self.invoke(["exec-owned", "--configuration-fd", "0"]),
+                             (1, {"status": "lease-refused", "version": lease.VERSION}))
+        owned.assert_not_called()
+
+    def test_owned_mode_preserves_scoped_arguments_and_sanitizes_backend_errors(self):
+        run_id = str(uuid.uuid4())
+        arguments = ["exec-owned", "--directory", "/synthetic/run", "--run-id", run_id,
+                     "--cwd", "/", "--budget-seconds", "3", "--select", "FIRST_VALUE",
+                     "--select", "SECOND_VALUE", "--owner-pid", "123", "--owner-started", "456",
+                     "--contract", "/synthetic/run/result.json", "--contract-sha256", "a" * 64,
+                     "--configuration-fd", "3", "--", "synthetic-child"]
+        result = {"status": "owned-child-unverified", "version": 1}
+        with patch.object(lease, "execute_owned", return_value=(result, 1)) as owned:
+            self.assertEqual(self.invoke(arguments), (1, result))
+        owned.assert_called_once_with("/synthetic/run", run_id, ["synthetic-child"], "/", 3,
+                                      ["FIRST_VALUE", "SECOND_VALUE"], 123, "456",
+                                      "/synthetic/run/result.json", "a" * 64, 3)
+        with patch.object(lease, "execute_owned", side_effect=ValueError("raw-sql-canary")):
+            self.assertEqual(self.invoke(arguments), (1, {"status": "lease-refused", "version": 1}))
 
 
 if __name__ == "__main__":

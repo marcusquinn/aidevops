@@ -48,6 +48,76 @@ the GPG keyring remains the security boundary; the run UUID is ownership metadat
 not a bearer credential. Do not share private directories or race them with
 manual file edits. Operations serialize on the same per-directory advisory lock.
 
+### Scoped reinjection within an existing owner
+
+The additive version-1 capability `scopedOwnedExecution: true` enables
+`exec-owned`. Existing `seal`, `exec` and `remove` contracts are unchanged. An old
+helper without this capability must refuse integration, never fall back to saved
+credentials, inherited password values or an undocumented decryption function.
+
+`exec-owned` is for a reviewed command already running beneath a bounded owner:
+
+```text
+exec-owned --directory <lease-directory> --run-id <uuid> --cwd <checkout>
+  --budget-seconds <1..3600> --select <credential-name> [--select <credential-name>]
+  --owner-pid <live-group-leader> --owner-started <kernel-start-ticks>
+  --contract <private-result-contract.json> --contract-sha256 <reviewed-digest>
+  --configuration-fd 3 -- <reviewed-command-and-arguments>
+```
+
+The owner must be a live same-user ancestor, its PID must equal the current
+process group, and its kernel start time must match. These checks run before
+decryption, before child creation and before accepting a result. They reject a
+detached stage, unrelated/reused PID or changed group. They do **not** establish
+supervisor ownership or grant account-operation authority: the caller must have
+an independently bounded owner and verified group-drain/resource-cleanup path.
+
+The helper injects only explicitly selected capsule names. A digest-pinned,
+owner-only contract in the lease directory declares `configurationNames` and a
+finite list of exact permitted results. The caller supplies the approved
+configuration values as a bounded JSON object over pipe/socket descriptor 3;
+never use a file, argv or an environment dump. The keys must exactly match the
+declaration and must not overlap selected credentials. Execution hooks remain
+forbidden. `NODE_ENV` is a special configuration-only value restricted to
+`development` or `test`; it is never read implicitly from the ambient environment.
+Except for the original minimal locale/path/home allowlist, no ambient values
+survive. Load and validate configuration before this call; the child must not
+reload dotenv after injection.
+
+An example **non-secret** contract is:
+
+```json
+{
+  "version": 1,
+  "configurationNames": ["NODE_ENV", "DATABASE_URL"],
+  "results": [
+    { "exitCode": 0, "value": { "outcome": "matching" } },
+    { "exitCode": 1, "value": { "outcome": "mismatch" } }
+  ]
+}
+```
+
+Templates must contain fixed outcome labels, booleans and exact nonnegative
+counts only. Never include emails, IDs, hashes, passwords, SQL parameters,
+database URLs or raw errors. There is no wildcard string or integer range and
+no dynamic schema learned from output. At most 64 exact exit/result combinations
+are accepted; JSON types, all keys and exit status must match. Unknown fields,
+duplicate keys, extra text, oversized output or an unexpected exit fail closed.
+Only the already-reviewed template is returned, not the child's raw payload:
+`{ "status": "owned-child-result", "version": 1, "result": <template>,
+"exitCode": <declared-code> }`. Transport success exits zero even when the
+declared application outcome exits nonzero; callers must check both the wrapper
+and the embedded result/exit pair.
+
+No group/session is created. Child stdin and stderr are disabled; bounded stdout
+is inspected only in memory. Timeout, overflow or interruption stops/reaps the
+direct child and returns `owned-child-unverified`; the existing owner still owns
+all descendant-group cleanup. Neither a result nor an unverified outcome is a
+group-drain receipt. After a mutating command, **any** missing, refused or
+unverified result can be uncertain: preserve the attempt/ownership records and
+never automatically retry a reset. Application authorization, locking,
+one-shot attempts and committed readback remain application responsibilities.
+
 ## Failure and recovery
 
 An interrupted seal can leave pending ciphertext. If its immutable receipt is
@@ -57,7 +127,7 @@ review, never clean by prefix. A changed object during retirement is restored
 without overwriting another object; failed restoration leaves encrypted material
 at the documented `credential-lease.retired.gpg` path and refuses cleanup.
 
-Execution requires Linux and Python 3.11 or later. The launcher assigns its child
+Execution requires Linux and Python 3.11 or later. The `exec` launcher assigns its child
 an owned process group (not a detached session), retains the unreaped leader to
 pin that identity, and drains the group on success, timeout or interruption before
 reporting the outcome. SIGTERM/SIGINT received while the child runs stop it as
@@ -71,7 +141,7 @@ listener or Docker cleanup. SIGKILL/host loss requires the caller's receipt-scop
 Acceptance and resource/credential cleanup are separate outcomes. A failed or
 uncertain cleanup can never become a successful run merely because a child exits.
 
-Offline regression command (synthetic ciphertext and mocked GPG/children only):
+Offline regression command (synthetic ciphertext, mocked GPG and synthetic children only):
 
 ```bash
 python3 .agents/scripts/tests/test-credential-lease.py
