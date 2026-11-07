@@ -5,6 +5,7 @@ Current-generation cleanup is unchanged. Remove this module after the backlog.
 """
 
 from contextlib import contextmanager
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -62,18 +63,40 @@ def checkpoint(store, connection, operation, phase, payload):
 
 
 @contextmanager
-def archive_io(connection):
-    """Release the global writer only for non-destructive archive operations.
+def writer_released(connection):
+    """Release the global writer only for non-destructive archive or network work.
 
     The caller retains its operation lock and must revalidate registry writers
     after reacquisition. Native source move/removal never runs in this scope.
     Body failures propagate unchanged through the outer transaction's rollback.
-    Only successful archive work reacquires the writer; failure to reacquire
-    still aborts the next phase.
+    Only successful work reacquires the writer; failure to reacquire still
+    aborts the next phase.
     """
     connection.commit()
     yield
     connection.execute("BEGIN IMMEDIATE")
+
+
+def released_pull_requests(connection, slug):
+    """Open-PR lookup that never holds the registry writer across the network.
+
+    GitHub state is not serialized by the registry. A plan built with this
+    lookup is only journaled; removal requires a refreshed plan whose local,
+    registry and /proc checks all run under the reacquired writer (GH#36921).
+    """
+    with writer_released(connection):
+        return open_pull_requests(slug)
+
+
+def prefetched_pull_requests(connection, slug):
+    """Fetch the journaled plan's slug without the writer; serve only that result.
+
+    `plan["repo"]` is part of the compared plan, so a refreshed plan for any other
+    repository never equals the journaled plan and removal is refused.
+    """
+    with writer_released(connection):
+        prs = open_pull_requests(slug)
+    return lambda _requested: prs
 
 
 def archive_source(store, connection, operation, plan, adapter):
@@ -82,7 +105,7 @@ def archive_source(store, connection, operation, plan, adapter):
     previous = receipt(connection, operation, "archive")
     if previous is None:
         path = Path(plan["source"])
-        with archive_io(connection):
+        with writer_released(connection):
             archive = _helper(
                 "archive", str(path), "--repo", plan["repo"], "--unattributed",
                 "--reason", "unattributed-worktree", "--base-branch", plan["base"],
@@ -102,7 +125,7 @@ def archive_source(store, connection, operation, plan, adapter):
     if previous["output_root"] != str(root):
         raise ValueError("archive-root-changed")
     unchanged(connection, previous, adapter)
-    with archive_io(connection):
+    with writer_released(connection):
         manifest = verify_preservation(
             Path(previous["archive"]), root, previous["snapshot"],
         )
@@ -121,7 +144,7 @@ def finish(store, connection, operation, plan, adapter):
             or _id(container) != plan["container_identity"]):
         raise ValueError("retirement-container-changed")
     _private(container, directory=True)
-    with archive_io(connection):
+    with writer_released(connection):
         verify_preservation(Path(plan["archive"]), root, plan["snapshot"])
     unchanged(connection, plan, adapter)
     if not os.path.lexists(target):
@@ -275,49 +298,48 @@ def current_legacy_item(connection, item):
                   if row["path"] == item["path"]), item)
 
 
-def legacy_plan(store, connection, item, repositories, adapter):
-    """Build a reconstructible plan for a legacy item."""
-    return reconstructible(item, repositories, adapter, open_pull_requests)
+def plan_reconstructible(store, connection, item, inspect_source, open_prs):
+    """Refresh the inventory row, build its plan and require managed authority.
 
-
-def managed_planner(min_age):
-    """Return a plan builder for managed items with the idle floor and authority."""
-    def managed_plan(store, connection, item, repositories, adapter):
-        plan = reconstructible(item, repositories, adapter, open_pull_requests,
-                               managed_min_age=min_age)
-        require_managed_authority(store, connection, item, plan)
-        return plan
-    return managed_plan
+    The managed flag is read from the caller's item, never the refreshed row, so
+    every recheck keeps the managed path guard, idle floor and authority evidence.
+    """
+    current = current_legacy_item(connection, item)
+    plan = inspect_source(current, open_prs=open_prs)
+    if item["modern"]:
+        require_managed_authority(store, connection, current, plan)
+    return plan
 
 
 def process_reconstructible(store, item, repositories, adapter, options):
     """Journal a non-forced removal; the first successful probe unlocks batching.
 
-    A modern generation reaches here only through `take_over_managed`. Its flag is
-    read once from the caller's item, so every recheck keeps the managed path guard
-    and authority evidence even if the refreshed inventory row differs.
+    A modern generation reaches here only through `take_over_managed`.
     """
-    reconstructible_plan = (managed_planner(options.min_age)
-                            if item["modern"] else legacy_plan)
+    # `None` keeps the observation-era class; managed items get the idle floor.
+    inspect_source = partial(reconstructible, repositories=repositories, adapter=adapter,
+                             managed_min_age=options.min_age if item["modern"] else None)
+    reconstructible_plan = partial(plan_reconstructible, store, item=item,
+                                   inspect_source=inspect_source)
     operation = operation_id(store, item["path"])
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
     if not options.apply:
         with store.connection() as connection:
-            reconstructible_plan(store, connection, current_legacy_item(connection, item),
-                                 repositories, adapter)
+            reconstructible_plan(connection, open_prs=open_pull_requests)
         return outcome, 1, 0
     probe = str(uuid5(UUID(store.installation_id()),
                       "reconstructible-host-probe:" + socket.gethostname()))
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
-        item = current_legacy_item(connection, item)
-        plan = reconstructible_plan(store, connection, item, repositories, adapter)
+        # GitHub lookups release the writer (GH#36921); this plan is only journaled.
+        plan = reconstructible_plan(connection, open_prs=partial(released_pull_requests, connection))
         test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
         revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
         checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
-        # Refresh GitHub and /proc immediately before non-forced native removal.
-        current = reconstructible_plan(store, connection, current_legacy_item(connection, item),
-                                       repositories, adapter)
+        # Fetch GitHub without the writer, then refresh every registry, Git and
+        # /proc check under the reacquired writer immediately before removal.
+        current = reconstructible_plan(
+            connection, open_prs=prefetched_pull_requests(connection, plan["repo"]))
         if current != plan:
             raise ValueError("reconstructible-source-changed")
         _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])

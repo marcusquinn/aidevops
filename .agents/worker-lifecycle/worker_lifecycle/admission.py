@@ -6,12 +6,73 @@ admission and must not be counted as covered. Closing never authorizes cleanup.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+import os
 from pathlib import Path
 import sqlite3
+import time
+from typing import TypeVar
 from uuid import UUID, uuid5
 
 from .process import ProcessIdentity
+from .refusal import failure_category
 from .storage import LifecycleRegistry, SCHEMA, StoreConflict, encode, identifier
+
+# Bounded wait for a transiently busy registry writer (GH#36921). Each attempt
+# also waits up to the store's busy timeout, so total wait stays below
+# deadline + one busy timeout. Persistent contention still denies the launch.
+CONTENTION_DEADLINE_SECONDS = 30.0
+_CONTENTION_PAUSE_SECONDS = (0.1, 0.2, 0.5, 1.0)
+_Result = TypeVar("_Result")
+
+
+def contention_deadline() -> float:
+    """Operator-tunable admission wait; 0 restores a single attempt, never fail-open."""
+    try:
+        value = float(os.environ.get("AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS",
+                                     CONTENTION_DEADLINE_SECONDS))
+    except ValueError:
+        value = -1.0
+    if not 0 <= value <= 300:  # Also rejects NaN.
+        raise ValueError("invalid-admission-wait")
+    return value
+
+
+@dataclass(frozen=True)
+class ContentionWait:
+    """Bounded writer-contention retry policy; clock and sleep are injectable."""
+
+    deadline: float = CONTENTION_DEADLINE_SECONDS
+    on_retry: Callable[[int, Exception], None] | None = None
+    clock: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], None] = time.sleep
+
+
+def within_contention_deadline(attempt: Callable[[], _Result],
+                               wait: ContentionWait | None = None) -> _Result:
+    """Run one transaction, retrying only writer contention until a bounded deadline.
+
+    For admission, a busy writer rolls back the whole transaction, so no attempt
+    commits partially. Each retry repeats the open-generation check under the
+    writer; an attempt that committed before a lost acknowledgement replays as
+    False, never as a second execution authority. Every other refusal, and
+    contention past the deadline, propagates so the caller denies launch.
+    """
+    wait = wait or ContentionWait()
+    limit = wait.clock() + wait.deadline
+    retries = 0
+    while True:
+        try:
+            return attempt()
+        except sqlite3.OperationalError as error:
+            pause = _CONTENTION_PAUSE_SECONDS[min(retries, len(_CONTENTION_PAUSE_SECONDS) - 1)]
+            if failure_category(error) != "contention" or wait.clock() + pause >= limit:
+                raise
+            retries += 1
+            if wait.on_retry is not None:
+                wait.on_retry(retries, error)
+        wait.sleep(pause)
 
 
 class AdmissionClosed(StoreConflict):

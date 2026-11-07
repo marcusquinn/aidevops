@@ -261,7 +261,7 @@ class LegacyCleanupContract(unittest.TestCase):
         arguments.update(options)
         return legacy.run(self.store, self.config, self.output, **arguments)
 
-    def test_archive_io_preserves_body_errors_while_another_writer_is_busy(self):
+    def test_writer_release_preserves_body_errors_while_another_writer_is_busy(self):
         """Archive failures and interrupts escape unchanged without reacquiring a writer."""
         errors = (ValueError("archive-fingerprint-missing"),
                   subprocess.CalledProcessError(1, ["fixture-archive"]), KeyboardInterrupt())
@@ -271,7 +271,7 @@ class LegacyCleanupContract(unittest.TestCase):
                 try:
                     with self.assertRaises(type(error)) as raised:
                         with self.store.connection(write=True) as connection:
-                            with legacy.archive_io(connection):
+                            with legacy.writer_released(connection):
                                 blocker.execute("BEGIN IMMEDIATE")
                                 raise error
                     self.assertIs(raised.exception, error)

@@ -7,9 +7,13 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
-from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
+from worker_lifecycle.admission import (
+    AdmissionClosed, AdmissionRegistry, ContentionWait, contention_deadline,
+    within_contention_deadline,
+)
 from worker_lifecycle.process import ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.storage import LifecycleRegistry, StoreCapacity, StoreConflict
@@ -106,6 +110,89 @@ class AdmissionContract(unittest.TestCase):
                 self.gate.admit(run, self.identity, self.generation, str(self.root))
             with self.assertRaisesRegex(StoreConflict, "event-id-payload-conflict"):
                 self.gate.open_generation(self.open_event, str(uuid4()), self.root)
+
+    def blocked(self):
+        """An independent connection holding the registry writer."""
+        blocker = self.store._connect()
+        blocker.execute("BEGIN IMMEDIATE")
+        self.addCleanup(blocker.close)
+        return blocker
+
+    def admit_waiting(self, run, **wait):
+        """Admit through the bounded contention wait used by the launcher."""
+        return within_contention_deadline(
+            lambda: self.gate.admit(run, self.identity, self.generation), ContentionWait(**wait))
+
+    def test_transient_contention_recovers_within_deadline(self):
+        """GH#36921: a writer released before the deadline admits exactly once."""
+        blocker, run, retries = self.blocked(), str(uuid4()), []
+        admitted = self.admit_waiting(
+            run, deadline=10,
+            on_retry=lambda attempt, error: retries.append((attempt, str(error))),
+            sleep=lambda _pause: blocker.rollback())
+        self.assertTrue(admitted)
+        self.assertEqual(retries, [(1, "database is locked")])
+        self.assertEqual(self.store.summary()["bindings"], 1)
+        self.assertFalse(self.admit_waiting(run))
+
+    def test_persistent_contention_fails_closed_at_deadline(self):
+        """Contention outlasting the deadline denies without any partial admission."""
+        self.blocked()
+        before, pauses = self.store.summary(), []
+        with self.assertRaisesRegex(sqlite3.OperationalError, "database is locked"):
+            self.admit_waiting(str(uuid4()), deadline=0.5, sleep=pauses.append)
+        self.assertEqual(pauses, [])
+        self.assertEqual(before, self.store.summary())
+
+    def test_generation_closed_during_contention_never_admits(self):
+        """Every retry rechecks the gate under the writer; a racing close wins."""
+        blocker = self.blocked()
+
+        def close(_pause):
+            blocker.execute("UPDATE generation_admissions SET state='closed' WHERE generation_id=?",
+                            (self.generation,))
+            blocker.commit()
+
+        with self.assertRaises(AdmissionClosed):
+            self.admit_waiting(str(uuid4()), deadline=10, sleep=close)
+        self.assertEqual(self.store.summary()["bindings"], 0)
+
+    def test_lost_acknowledgement_retry_is_never_execution_authority(self):
+        """A committed attempt reported as busy replays as False on retry."""
+        run, native, calls = str(uuid4()), self.gate.admit, []
+
+        def committed_then_busy(*arguments):
+            calls.append(native(*arguments))
+            if len(calls) == 1:
+                raise sqlite3.OperationalError("database is locked")
+            return calls[-1]
+
+        self.gate.admit = committed_then_busy
+        self.assertFalse(self.admit_waiting(run, deadline=10, sleep=lambda _pause: None))
+        self.assertEqual(calls, [True, False])
+        self.assertEqual(self.store.summary()["bindings"], 1)
+
+    def test_non_contention_database_errors_are_not_retried(self):
+        """Only the contention category waits; other SQLite failures deny at once."""
+        pauses = []
+
+        def failing(*_arguments):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        self.gate.admit = failing
+        with self.assertRaisesRegex(sqlite3.OperationalError, "disk I/O error"):
+            self.admit_waiting(str(uuid4()), deadline=10, sleep=pauses.append)
+        self.assertEqual(pauses, [])
+
+    def test_admission_wait_configuration_is_bounded(self):
+        """Invalid or unbounded waits are rejected rather than silently applied."""
+        for value, expected in (("0", 0.0), ("12.5", 12.5)):
+            with patch.dict(os.environ, {"AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS": value}):
+                self.assertEqual(contention_deadline(), expected)
+        for value in ("-1", "301", "nan", "inf", "soon"):
+            with patch.dict(os.environ, {"AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS": value}):
+                with self.assertRaisesRegex(ValueError, "invalid-admission-wait"):
+                    contention_deadline()
 
     def test_capacity_failure_rolls_back_admission_and_registration(self):
         with self.store.connection(write=True) as connection:

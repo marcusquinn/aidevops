@@ -328,16 +328,78 @@ class ReconstructibleContract(unittest.TestCase):
         with patch.object(inventory, "require_idle_proc", side_effect=census):
             self.assert_retained("live-process-reference")
 
+    def test_github_lookups_do_not_block_unrelated_admission(self):
+        """GH#36921: both open-PR lookups run without the registry writer."""
+        other = self.root / "admission-target"
+        other.mkdir()
+        generation = str(uuid4())
+        admissions = AdmissionRegistry(self.store)
+        admissions.open_generation(str(uuid4()), generation, other)
+        identity = self.adapter.capture(os.getpid())
+        admitted = []
+
+        def lookup(slug):
+            """A second real SQLite connection admits while GitHub is queried."""
+            admitted.append(admissions.admit(str(uuid4()), identity, generation, str(other)))
+            return []
+
+        self.prs.side_effect = lookup
+        result, _, attempted = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual((attempted, admitted), (1, [True, True]))
+        self.assertFalse(self.target.exists())
+
+    def test_registration_during_final_lookup_blocks_removal(self):
+        """Every registry check reruns under the reacquired writer before removal."""
+        generation = str(uuid4())
+        identity = self.adapter.capture(os.getpid())
+
+        def lookup(slug):
+            """Admit a live owner for the source during the refresh lookup."""
+            if self.prs.call_count == 2:
+                admissions = AdmissionRegistry(self.store)
+                admissions.open_generation(str(uuid4()), generation, self.target)
+                self.assertTrue(admissions.admit(str(uuid4()), identity, generation))
+            return []
+
+        self.prs.side_effect = lookup
+        self.assert_retained("managed-or-foreign-worktree")
+        with self.store.connection() as connection:
+            row = connection.execute("SELECT state FROM generation_admissions "
+                                     "WHERE generation_id=?", (generation,)).fetchone()
+        self.assertEqual(row["state"], "open")
+
+    def test_writer_reacquisition_failure_after_lookup_retains_source(self):
+        """A writer busy after the lookup aborts before removal; a later pass retires."""
+        blocker = self.store._connect()
+        self.addCleanup(blocker.close)
+
+        def lookup(slug):
+            if self.prs.call_count == 2:
+                blocker.execute("BEGIN IMMEDIATE")
+            return []
+
+        self.prs.side_effect = lookup
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retained", result)
+        self.assertEqual(result.get("category"), "contention", result)
+        self.assertTrue(self.target.exists())
+        blocker.rollback()
+        self.prs.side_effect = None
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertFalse(self.target.exists())
+
     def test_unremoved_probe_can_retry_after_head_changes(self):
         native = cleanup.reconstructible
         calls = 0
 
-        def changed(*args):
+        def changed(*args, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise ValueError("live-process-reference")
-            return native(*args)
+            return native(*args, **kwargs)
 
         with patch.object(cleanup, "reconstructible", side_effect=changed):
             self.assert_retained("live-process-reference")
