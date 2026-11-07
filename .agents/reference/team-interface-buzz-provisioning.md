@@ -230,6 +230,8 @@ To roll back, quit Buzz, restore that private store backup to Buzz's
 `~/.aidevops/buzz-backups/aidevops-interactive-v1.<timestamp>.json` manifest to
 `custom_harnesses/aidevops-interactive-v1.json`; keep both files mode 600. Restore
 both together so the stored digests agree with the previous immutable anchor.
+After pruning, first restore the old anchor from Trash to its original path;
+manifest and store backups alone do not contain the runtime files.
 
 Installation snapshots the complete agents tree, required local Node validator
 dependencies, the exact installed OpenCode plugin/SDK/Zod closure, and sanitized
@@ -241,6 +243,29 @@ retaining normal interactive commands, agents, non-secret MCP definitions, and
 model routing. Credential-shaped provider fields plus MCP environment and header
 containers are removed before hashing or copying. A real ACP `session/prompt`
 canary verifies tool-schema resolution rather than stopping after startup.
+
+Successful installs prune unused sibling anchors to Trash using `trash` or
+`gio trash`, logging each move. The just-installed manifest protects its anchor.
+All `custom_harnesses/*.json` references in macOS `xyz.block.buzz.*` app-data
+directories (including development bundles), the selected app-data directory,
+and `AIDEVOPS_BUZZ_APP_DATA_DIR` are retained, as are anchors referenced by running
+processes. CLI installs and pruning share a nonblocking lock. Unreadable or invalid
+manifests and unavailable process checks refuse cleanup. Missing/failing Trash
+tools retain the anchor; there is no permanent-delete fallback and a cleanup
+failure does not undo a successful install.
+
+Inspect or prune independently (no project registration is needed):
+
+```bash
+python3 ~/.aidevops/agents/scripts/team-interface-buzz-runtime.py prune --dry-run
+python3 ~/.aidevops/agents/scripts/team-interface-buzz-runtime.py prune
+```
+
+On non-macOS hosts, set `AIDEVOPS_BUZZ_APP_DATA_DIR` or pass `--app-data-dir DIR`.
+Repeat `--app-data-dir` to protect additional non-default app-data directories;
+include every such location before pruning. Symlinks, staging directories and
+directories without a recognized anchor name and marker are never pruned.
+Use `verify-anchor --root /absolute/path/to/anchor` after restoring from Trash.
 
 After restarting Buzz, verify that **Aidevops Full Interactive V1** is ready before
 manually starting any imported member. The pinned `aidevops-buzz-acp-interactive`
