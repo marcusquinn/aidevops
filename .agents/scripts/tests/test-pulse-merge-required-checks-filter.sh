@@ -249,6 +249,16 @@ if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 		elif [[ "${MOCK_CLASSIC_BODY_ONLY:-false}" == true ]]; then
 			# GH#36866: transport dropped stderr; only the JSON body remains.
 			printf '%s\n' '{"message":"Branch not protected","status":"404"}'
+		elif [[ "${MOCK_CLASSIC_REAL_404:-false}" == true ]]; then
+			# GH#37026: native gh shape — JSON body on stdout, status on stderr.
+			printf '%s' '{"message":"Branch not protected","documentation_url":"https://docs.github.com/rest","status":"404"}'
+			printf '%s\n' 'gh: Branch not protected (HTTP 404)' >&2
+		elif [[ "${MOCK_CLASSIC_UNCLASSIFIED:-false}" == true ]]; then
+			# GH#37026: a transport layer failed without any 404 marker.
+			printf '%s\n' 'gh: mock transport failure' >&2
+		elif [[ "${MOCK_CLASSIC_DEFERRED:-false}" == true ]]; then
+			printf '%s\n' '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=unknown reason="mock"' >&2
+			exit 75
 		else
 			printf '%s\n' 'gh: HTTP 404: Not Found' >&2
 		fi
@@ -1133,6 +1143,82 @@ test_classic_settings_404_branch_evidence() {
 	return 0
 }
 
+# GH#37026: run _required_contexts_for_default_branch twice through the real
+# _gh_with_timeout transport (cooldown preflight, capture, replay, cooldown
+# recording) instead of the bare-command fallback in _pmrc_gh_read. A second
+# call exposes any cooldown or admission state recorded by the first.
+_required_contexts_via_real_transport_twice() {
+	local flag="$1"
+	local mode="$2"
+	(
+		export HOME="${TEST_ROOT}/transport-home"
+		mkdir -p "$HOME"
+		export "${flag}=true"
+		export MOCK_GH_MODE="$mode"
+		# The boot/recovery read ramp depends on host uptime; keep it
+		# deterministic. Cooldown preflight and recording stay active.
+		export AIDEVOPS_GH_READ_RAMP_ENABLED=0
+		unset AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh"
+		# shellcheck source=../shared-gh-wrappers.sh
+		source "${SCRIPT_DIR}/../shared-gh-wrappers.sh"
+		declare -F _gh_with_timeout >/dev/null 2>&1 || exit 3
+		local call="" rc=0 contexts=""
+		for call in 1 2; do
+			rc=0
+			contexts=$(_required_contexts_for_default_branch "owner/repo" 2>/dev/null) || rc=$?
+			printf 'call%s rc=%s contexts=%s;' "$call" "$rc" "$(printf '%s' "$contexts" | tr '\n' ',')"
+		done
+	)
+	return $?
+}
+
+test_classic_settings_failure_through_real_transport() {
+	local flag="" mode="" expected_call="" actual="" protection_reads=0
+	for flag in MOCK_CLASSIC_REAL_404 MOCK_CLASSIC_UNCLASSIFIED; do
+		for mode in pass unprotected unknown; do
+			: >"$LOGFILE"
+			: >"$GH_CALL_LOG"
+			case "$mode" in
+			pass) expected_call="rc=0 contexts=required-a,required-b" ;;
+			unprotected) expected_call="rc=0 contexts=" ;;
+			*) expected_call="rc=1 contexts=" ;;
+			esac
+			actual=$(_required_contexts_via_real_transport_twice "$flag" "classic404_${mode}") || actual="subshell-failed rc=$?"
+			protection_reads=$(grep -c 'protection/required_status_checks' "$GH_CALL_LOG" || true)
+			if [[ "$actual" == "call1 ${expected_call};call2 ${expected_call};" && "$protection_reads" -eq 2 ]]; then
+				print_result "real transport ${flag#MOCK_CLASSIC_} ${mode}: classic failure resolves via branch metadata twice (GH#37026)" 0
+			else
+				print_result "real transport ${flag#MOCK_CLASSIC_} ${mode}: classic failure resolves via branch metadata twice (GH#37026)" 1 \
+					"got '${actual}' protection_reads=${protection_reads}"
+			fi
+		done
+	done
+	: >"$LOGFILE"
+	_required_contexts_via_real_transport_twice MOCK_CLASSIC_UNCLASSIFIED classic404_unprotected >/dev/null || true
+	assert_log_contains "branch metadata resolved classic requirements (GH#37026)" \
+		"unclassified classic failure records branch-metadata recovery"
+	if grep -q "branch protection API failed" "$LOGFILE"; then
+		print_result "recovered classic failure is not logged as API failure" 1
+	else
+		print_result "recovered classic failure is not logged as API failure" 0
+	fi
+
+	: >"$LOGFILE"
+	: >"$GH_CALL_LOG"
+	actual=$(_required_contexts_via_real_transport_twice MOCK_CLASSIC_DEFERRED classic404_pass) || actual="subshell-failed"
+	if [[ "$actual" == "call1 rc=1 contexts=;call2 rc=1 contexts=;" ]] &&
+		! grep -q 'branches/main$' "$GH_CALL_LOG" &&
+		grep -q "branch protection read deferred locally" "$LOGFILE" &&
+		! grep -q "branch protection API failed" "$LOGFILE"; then
+		print_result "local deferral fails closed as a deferral without extra reads (GH#37026)" 0
+	else
+		print_result "local deferral fails closed as a deferral without extra reads (GH#37026)" 1 "got '${actual}'"
+	fi
+	return 0
+}
+
 test_gh_api_error_fails_closed() {
 	# gh exits 1 → the function MUST return 1 (fail-closed). A bubbling
 	# gh error must never auto-merge when --admin would bypass branch
@@ -1193,6 +1279,7 @@ main() {
 	test_rulesets_private_plan_unavailable_resolves_empty
 	test_rulesets_generic_forbidden_fails_closed
 	test_classic_settings_404_branch_evidence
+	test_classic_settings_failure_through_real_transport
 	test_gh_api_error_fails_closed
 	test_required_checks_gh_reads_are_timeout_wrapped
 	test_empty_required_stale_maintainer_gate_fallback_allows_merge
