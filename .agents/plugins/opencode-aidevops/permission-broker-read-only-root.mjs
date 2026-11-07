@@ -14,7 +14,7 @@ function normalizeAbsolute(value) {
 
 // Resolve symlinks (including through the nearest existing ancestor for absent
 // paths). Returns "" when resolution fails, so callers deny.
-function resolveReal(value) {
+export function resolveReal(value) {
   const base = value.replace(/\/\*{1,2}$/, "");
   if (/[*?\[\]{}]/.test(base)) return "";
   let existing = base;

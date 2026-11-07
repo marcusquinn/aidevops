@@ -218,6 +218,15 @@ test("headless workers auto-allow read-only toolchain roots but never writes or 
   await ask("local-bin-symlink", "read", [`${root}/.local/bin/*`]);
   assert.equal(replies.at(-1).body.response, "reject");
 
+  mkdirSync(join(root, ".ssh"), { recursive: true });
+  writeFileSync(join(root, ".ssh", "id_rsa"), "x");
+  symlinkSync(join(root, ".ssh", "id_rsa"), join(root, "outside-secret", "link"));
+  rmSync(requestFile, { force: true });
+  await ask("local-bin-ssh-link", "read", [`${root}/.local/bin/link`]);
+  assert.equal(replies.at(-1).body.response, "reject");
+  assert.match(readFileSync(requestFile, "utf8"), /"grantable": false/);
+  assert.doesNotMatch(readFileSync(requestFile, "utf8"), /"grantable": true/);
+
   await ask("nvm-write", "write", [`${root}/.nvm/*`]);
   assert.equal(replies.at(-1).body.response, "reject");
   assert.equal(existsSync(requestFile), true);
