@@ -210,6 +210,13 @@ test("headless workers auto-allow read-only toolchain roots but never writes or 
     patterns: [`${root}/.local/bin/*`], tool: { callID: "local-bin-auth" },
   } } });
   assert.equal(replies.at(-1).body.response, "reject");
+  assert.match(readFileSync(requestFile, "utf8"), /"grantable": false/);
+
+  mkdirSync(join(root, "outside-secret"), { recursive: true });
+  mkdirSync(join(root, ".local"), { recursive: true });
+  symlinkSync(join(root, "outside-secret"), join(root, ".local", "bin"));
+  await ask("local-bin-symlink", "read", [`${root}/.local/bin/*`]);
+  assert.equal(replies.at(-1).body.response, "reject");
 
   await ask("nvm-write", "write", [`${root}/.nvm/*`]);
   assert.equal(replies.at(-1).body.response, "reject");
