@@ -179,6 +179,54 @@ test("headless workers auto-allow read-only toolchain roots but never writes or 
   assert.equal(existsSync(requestFile), false);
   assert.match(readFileSync(blockerLog, "utf8"), /permission_read_only_root_allowed/);
 
+  await ask("local-bin-read", "read", [`${root}/.local/bin/*`]);
+  assert.equal(replies.at(-1).body.response, "once");
+  assert.equal(existsSync(requestFile), false);
+  assert.doesNotMatch(readFileSync(blockerLog, "utf8"), /permission_request_captured|permission_required/);
+
+  broker.recordToolCall({ tool: "read", callID: "local-bin-legacy" }, { args: {} });
+  const localBinOutput = { status: "ask" };
+  broker.permissionAsk({ type: "external_directory", pattern: `${root}/.local/bin/*`, callID: "local-bin-legacy" }, localBinOutput);
+  assert.equal(localBinOutput.status, "allow");
+  assert.equal(existsSync(requestFile), false);
+
+  for (const tool of ["write", "edit", "bash"]) {
+    await ask(`local-bin-${tool}`, tool, [`${root}/.local/bin/*`]);
+    assert.equal(replies.at(-1).body.response, "reject");
+  }
+  for (const [id, pattern] of [
+    ["credential", `${root}/.local/bin/.env`],
+    ["escape", `${root}/.local/bin/../share/*`],
+    ["prefix", `${root}/.local/bin-other/*`],
+    ["mixed", `${root}/outside/*`],
+  ]) {
+    await ask(`local-bin-${id}`, "read", [`${root}/.local/bin/*`, pattern]);
+    assert.equal(replies.at(-1).body.response, "reject");
+  }
+
+  broker.recordToolCall({ tool: "read", callID: "local-bin-auth" }, { args: { filePath: `${root}/.local/bin/auth.json` } });
+  await broker.handleEvent({ event: { type: "permission.asked", properties: {
+    id: "local-bin-auth", sessionID: "session-nvm", permission: "external_directory",
+    patterns: [`${root}/.local/bin/*`], tool: { callID: "local-bin-auth" },
+  } } });
+  assert.equal(replies.at(-1).body.response, "reject");
+  assert.match(readFileSync(requestFile, "utf8"), /"grantable": false/);
+
+  mkdirSync(join(root, "outside-secret"), { recursive: true });
+  mkdirSync(join(root, ".local"), { recursive: true });
+  symlinkSync(join(root, "outside-secret"), join(root, ".local", "bin"));
+  await ask("local-bin-symlink", "read", [`${root}/.local/bin/*`]);
+  assert.equal(replies.at(-1).body.response, "reject");
+
+  mkdirSync(join(root, ".ssh"), { recursive: true });
+  writeFileSync(join(root, ".ssh", "id_rsa"), "x");
+  symlinkSync(join(root, ".ssh", "id_rsa"), join(root, "outside-secret", "link"));
+  rmSync(requestFile, { force: true });
+  await ask("local-bin-ssh-link", "read", [`${root}/.local/bin/link`]);
+  assert.equal(replies.at(-1).body.response, "reject");
+  assert.match(readFileSync(requestFile, "utf8"), /"grantable": false/);
+  assert.doesNotMatch(readFileSync(requestFile, "utf8"), /"grantable": true/);
+
   await ask("nvm-write", "write", [`${root}/.nvm/*`]);
   assert.equal(replies.at(-1).body.response, "reject");
   assert.equal(existsSync(requestFile), true);
