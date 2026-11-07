@@ -66,7 +66,9 @@ export function isHeadless() {
  * @returns {boolean}
  */
 export function isAcpServer(argv = process.argv) {
-  return argv.slice(2).includes("acp");
+  // The selected subcommand is the first positional; `opencode run acp` passes
+  // "acp" as a message argument and must not match.
+  return argv.slice(2).find((arg) => !arg.startsWith("-")) === "acp";
 }
 
 // ---------------------------------------------------------------------------

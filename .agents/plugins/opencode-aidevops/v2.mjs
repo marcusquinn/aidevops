@@ -406,7 +406,8 @@ export async function setupAidevopsV2(ctx) {
     const shouldInjectGreeting = createRootSessionGreetingGate({
       getSession: (sessionID) => ctx.session.get({ sessionID }),
       isHeadless,
-      isAcpServer,
+      // V2 ACP runs a private `serve` process (no `acp` argv) that inherits OPENCODE_CLIENT=acp.
+      isAcpServer: () => process.env.OPENCODE_CLIENT === "acp" || isAcpServer(),
       log: qualityLog,
     });
     const greetingEnabled = () => isPluginGreetingEnabled(process.env, true);

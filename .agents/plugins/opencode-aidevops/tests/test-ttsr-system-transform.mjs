@@ -33,7 +33,7 @@ describe("TTSR system transform", () => {
   test("detects the ACP subcommand without matching executable or project paths", () => {
     assert.equal(isAcpServer(["bun", "/$bunfs/root/src/index.js", "acp"]), true);
     assert.equal(isAcpServer(["opencode", "/app/index.js", "acp", "--port", "3000"]), true);
-    for (const argv of [["opencode", "/app/index.js"], ["bun", "/acp/index.js", "/projects/acp"], ["bun", "acp"]]) {
+    for (const argv of [["opencode", "/app/index.js"], ["bun", "/acp/index.js", "/projects/acp"], ["bun", "acp"], ["opencode", "/app/index.js", "run", "acp"]]) {
       assert.equal(isAcpServer(argv), false);
     }
   });
