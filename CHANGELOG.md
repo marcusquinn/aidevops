@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.134] - 2026-11-07
+
+### Changed
+
+- Documentation: explain bounded operation secret access (GH#37122) (#37130)
+- Documentation: distinct LocalHostName for multi-Mac Buzz agents
+- Documentation: GH#37107 document watchdog hard-kill margin and temporary events sidecar (#37120)
+
+### Fixed
+
+- repoint stale Buzz interactive overrides (#37142)
+- check issue author repository permissions (#37140)
+- skip Linux proc test on other platforms (#37139)
+- account for tracked patches in archive capacity (#37133)
+- treat deeply nested child output as unverified (GH#37117) (#37129)
+- recover Dependabot PR creation (#37110)
+- exclude product retries from reserved slots (GH#37103) (#37111)
+- check each OpenCode auth field independently so empty legacy fields don't hide key (#37114)
+
 ## [3.39.133] - 2026-11-07
 
 ### Added
