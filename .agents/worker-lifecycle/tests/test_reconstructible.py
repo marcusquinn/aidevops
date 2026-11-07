@@ -160,6 +160,9 @@ class ReconstructibleContract(unittest.TestCase):
         fixtures.RetirementContract.create(self)
         for name in ("work.txt", ".gitignore", "cache.ignored"):
             (self.target / name).unlink()
+        prepared = prepare_cleanup(self.store, self.target)
+        self.assertTrue(prepared["creation_verified"])
+        self.assertEqual(prepared["admission"], "closed")
         config = self.root / "repos.json"
         config.write_text(json.dumps({"initialized_repos": [
             {"path": str(self.repo), "slug": "fixture/repository"}]}))
