@@ -351,7 +351,10 @@ _relationship_skip_completed_legacy_row() {
 	local ref value
 	_warn_padded_task_line "$task_line"
 	[[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[x\] ]] || return 1
-	[[ "$task_id" =~ ^t[0-9]{1,18}(\.[0-9]{1,18}){0,8}$ ]] || return 1
+	# Alpha segments (t038.36a) are accepted here, as the row extractor in
+	# _relationship_declared_edges does; the guards below still fail closed when
+	# the historical ID touches active work (GH#37003).
+	[[ "$task_id" =~ ^t[0-9]{1,18}(\.[0-9a-z]{1,18}){0,8}$ ]] || return 1
 	[[ "$_RELATIONSHIP_ACTIVE_REFS" != *"|${task_id}|"* ]] || {
 		print_error "Active dependency references historical noncanonical task ID ${task_id}; migrate that reference without aliasing task IDs"
 		return 1
