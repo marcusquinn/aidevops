@@ -64,7 +64,7 @@ class AdmittedLaunchContract(unittest.TestCase):
     def test_transient_writer_contention_recovers_and_executes_once(self):
         """GH#36921: a writer held past the busy timeout delays, not denies, admission."""
         self.hold_writer(3)
-        result = self.launch()
+        result = self.launch(env={"AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS": "30"})
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertEqual(self.marker.read_text(), "yes")
         self.assertIn("admission-retry reason=OperationalError code=database-locked "
@@ -83,7 +83,7 @@ class AdmittedLaunchContract(unittest.TestCase):
     def test_generation_closed_while_waiting_never_executes(self):
         """A close committed by the contending writer wins over the waiting admission."""
         self.hold_writer(3, close=True)
-        self.assert_denied(self.launch())
+        self.assert_denied(self.launch(env={"AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS": "30"}))
         self.assertEqual(self.store.summary()["bindings"], 0)
 
     def assert_denied(self, result):
