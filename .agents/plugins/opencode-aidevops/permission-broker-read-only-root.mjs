@@ -33,35 +33,60 @@ function resolveReal(value) {
   return "";
 }
 
+function toPatternList(raw) {
+  const input = raw?.patterns ?? raw?.pattern;
+  if (Array.isArray(input)) return input;
+  return input == null ? [] : [input];
+}
+
+function within(value, list) {
+  return list.some((root) => value === root || value.startsWith(`${root}/`));
+}
+
+function hasParentSegment(value) {
+  return value.split("/").includes("..");
+}
+
+// Directory-wide patterns (e.g. ~/.local/bin/*) must not approve a forbidden target.
+// Returns the resolved target ("" when none) or null to deny.
+function resolveTarget(context, raw, callID, forbiddenPattern) {
+  const target = normalizeAbsolute(context.toolCalls.get(callID)?.target
+    || raw?.metadata?.filepath || raw?.metadata?.path);
+  if (!target) return "";
+  if (forbiddenPattern.test(target) || hasParentSegment(target)) return null;
+  const realTarget = resolveReal(target);
+  if (!realTarget || forbiddenPattern.test(realTarget)) return null;
+  return realTarget;
+}
+
+function buildRoots(homeValue) {
+  const home = normalizeAbsolute(homeValue);
+  const roots = READ_ONLY_ROOTS.map((root) => normalizeAbsolute(root.startsWith("~/") ? `${home}/${root.slice(2)}` : root));
+  // Resolve only the home prefix: a symlinked root itself must not widen access.
+  const realHome = resolveReal(home) || home;
+  const realRoots = roots.map((root) => (root.startsWith(`${home}/`) ? `${realHome}${root.slice(home.length)}` : root));
+  return { roots, realRoots };
+}
+
+function patternAllowed(pattern, rootSet, realTarget, forbiddenPattern) {
+  const value = normalizeAbsolute(pattern);
+  if (!value || forbiddenPattern.test(value) || hasParentSegment(value)) return false;
+  if (!within(value, rootSet.roots)) return false;
+  // Symlink destination must stay inside an authorized root and be allowed.
+  const real = resolveReal(value);
+  if (!real || forbiddenPattern.test(real) || !within(real, rootSet.realRoots)) return false;
+  return !realTarget || within(realTarget, rootSet.realRoots);
+}
+
 export function isReadOnlyRootRead(context, raw, forbiddenPattern) {
   const permission = raw?.permission || raw?.type || "";
   const callID = raw?.tool?.callID || raw?.callID || "";
   if (permission !== "external_directory") return false;
   if (!READ_ONLY_TOOLS.has(context.toolCalls.get(callID)?.tool)) return false;
-  // Directory-wide patterns (e.g. ~/.local/bin/*) must not approve a forbidden target.
-  const target = normalizeAbsolute(context.toolCalls.get(callID)?.target
-    || raw?.metadata?.filepath || raw?.metadata?.path);
-  if (target && (forbiddenPattern.test(target) || target.split("/").includes(".."))) return false;
-  const realTarget = target ? resolveReal(target) : "";
-  if (target && (!realTarget || forbiddenPattern.test(realTarget))) return false;
-  const input = raw?.patterns ?? raw?.pattern;
-  const patterns = Array.isArray(input) ? input : input == null ? [] : [input];
+  const realTarget = resolveTarget(context, raw, callID, forbiddenPattern);
+  if (realTarget === null) return false;
+  const patterns = toPatternList(raw);
   if (patterns.length === 0 || patterns.length > 20) return false;
-  const home = normalizeAbsolute(context.home);
-  const roots = READ_ONLY_ROOTS.map((root) => normalizeAbsolute(root.startsWith("~/") ? `${home}/${root.slice(2)}` : root));
-  // Resolve only the home prefix: a symlinked root itself must not widen access.
-  const realHome = resolveReal(home) || home;
-  const realRoots = roots.map((root) => (root.startsWith(`${home}/`) ? `${realHome}${root.slice(home.length)}` : root));
-  const within = (value, list) => list.some((root) => value === root || value.startsWith(`${root}/`));
-  return patterns.every((pattern) => {
-    const value = normalizeAbsolute(pattern);
-    if (!value || forbiddenPattern.test(value)) return false;
-    if (value.split("/").includes("..")) return false;
-    if (!within(value, roots)) return false;
-    // Symlink destination must stay inside an authorized root and be allowed.
-    const real = resolveReal(value);
-    if (!real || forbiddenPattern.test(real)) return false;
-    if (!within(real, realRoots)) return false;
-    return !realTarget || within(realTarget, realRoots);
-  });
+  const rootSet = buildRoots(context.home);
+  return patterns.every((pattern) => patternAllowed(pattern, rootSet, realTarget, forbiddenPattern));
 }
