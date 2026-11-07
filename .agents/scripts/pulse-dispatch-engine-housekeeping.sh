@@ -166,6 +166,48 @@ _pulse_run_blocker_refresh_catchup() {
 }
 
 #######################################
+# Give overdue synchronous blocker recovery a bounded admission opportunity.
+#
+# Linux synchronous housekeeping otherwise starts after dispatch passes which
+# can spend the entire non-reserved cycle budget. Merely moving recovery ahead
+# of optional scans cannot prevent that starvation. Only stale/pending recovery
+# runs here; fresh-cache and async cycles retain their dispatch-first ordering.
+# The shared watchdog still protects the main-dispatch reserve and all nested
+# API-budget gates. The whole attempt is capped at 180s, not 180s per step.
+#
+# Args: $1 - stage timeout ceiling
+# Returns 0 always; recovery failure must not block dispatch.
+#######################################
+_pulse_run_pre_dispatch_blocker_refresh() {
+	local stage_timeout="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	[[ "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:-1}" != "1" ]] || return 0
+	_pulse_blocker_refresh_starved || return 0
+	[[ "$stage_timeout" =~ ^[1-9][0-9]{0,8}$ ]] || stage_timeout=180
+	[[ "$stage_timeout" -le 180 ]] || stage_timeout=180
+	run_stage_with_timeout "preflight_blocker_refresh_catchup" "$stage_timeout" \
+		_pulse_run_locked_blocker_refresh_catchup "$stage_timeout" || true
+	return 0
+}
+
+#######################################
+# Reuse the housekeeping lock for the bounded pre-dispatch recovery attempt.
+# A watchdog-killed runner leaves a dead-owner lock for existing stale-lock
+# reclamation; the pending marker is kept until every recovery step succeeds.
+#
+# Args: $1 - per-stage timeout ceiling (also bounded by the outer watchdog)
+# Returns the catch-up status, or 0 when another runner owns the lock.
+#######################################
+_pulse_run_locked_blocker_refresh_catchup() {
+	local stage_timeout="$1"
+	local lockdir="" stage_rc=0
+	lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
+	_pulse_acquire_post_dispatch_housekeeping_lock "$lockdir" || return 0
+	_pulse_run_blocker_refresh_catchup "$stage_timeout" || stage_rc=$?
+	_pulse_release_post_dispatch_housekeeping_lock "$lockdir"
+	return "$stage_rc"
+}
+
+#######################################
 # Return the post-dispatch housekeeping stage-progress state file path.
 #
 # Lives next to (not inside) the lock directory so a stale-lock reclaim, which
