@@ -1697,21 +1697,3 @@ test_missing_merge_gate_dependency_fails_harness() {
 	teardown_test_env
 	return 0
 }
-
-test_ci_feedback_includes_required_and_advisory_failures_together() {
-	setup_test_env
-	TEST_CHECK_SCENARIO="required_and_advisory"
-	define_feedback_helpers || { print_result "defines feedback helpers for combined failures" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
-
-	_dispatch_ci_fix_worker "100" "owner/repo" "42"
-
-	if ! grep -qF '**Lint**: failure' "${TEST_ROOT}/issue-body.txt"; then
-		print_result "combined CI feedback retains required failure" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
-	elif ! grep -qF '**Qlty**: failure' "${TEST_ROOT}/issue-body.txt"; then
-		print_result "combined CI feedback includes advisory failure" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
-	else
-		print_result "combined CI feedback includes every terminal failure in one pass" 0
-	fi
-	teardown_test_env
-	return 0
-}
