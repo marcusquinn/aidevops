@@ -22,6 +22,7 @@ MANIFEST = '.aidevops-task-temp.json'
 class CleanupTests(unittest.TestCase):
     def setUp(self):
         base = os.environ.get('AIDEVOPS_TEMP_DIR', str(Path.home() / '.aidevops/.agent-workspace/tmp'))
+        os.makedirs(base, mode=0o700, exist_ok=True)
         self.base = Path(tempfile.mkdtemp(prefix='cleanup-test-', dir=base))
         self.root = self.base / 'tmp'
         self.root.mkdir(mode=0o700)

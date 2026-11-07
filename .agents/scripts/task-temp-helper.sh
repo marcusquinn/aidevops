@@ -45,6 +45,18 @@ def identity(pid):
         return 'unknown'
 
 
+def private_group(gid):
+    """True only for the caller's own group with no other members or primary-group users."""
+    try:
+        import grp
+        import pwd
+        if gid != os.getgid() or grp.getgrgid(gid).gr_mem not in ([], [pwd.getpwuid(os.getuid()).pw_name]):
+            return False
+        return all(entry.pw_gid != gid or entry.pw_uid == os.getuid() for entry in pwd.getpwall())
+    except (ImportError, KeyError, OSError):
+        return False
+
+
 def safe_root(root, create=False):
     if not root.is_absolute() or root.name != 'tmp' or str(root) == '/tmp':
         raise ValueError('scratch root must be an absolute dedicated */tmp directory')
@@ -55,7 +67,10 @@ def safe_root(root, create=False):
             info = part.stat()
             if info.st_uid not in (0, os.getuid()):
                 raise ValueError('foreign-owned scratch ancestor')
-            if info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX:
+            if info.st_mode & 0o002 and not info.st_mode & stat.S_ISVTX:
+                raise ValueError('writable scratch ancestor')
+            if (info.st_mode & 0o020 and not info.st_mode & stat.S_ISVTX
+                    and not (info.st_uid == os.getuid() and private_group(info.st_gid))):
                 raise ValueError('writable scratch ancestor')
     if create:
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -68,9 +83,12 @@ def manifest(path):
         info = os.fstat(source.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_size > 16384:
             raise ValueError('owner manifest must be a small regular file')
-        data = json.loads(source.read(16385))
+        try:
+            data = json.loads(source.read(16385))
+        except RecursionError:
+            raise ValueError('owner manifest nesting too deep')
     if (not isinstance(data, dict) or data.get('schema') != 1
-            or type(data.get('pid')) is not int or data['pid'] <= 0
+            or type(data.get('pid')) is not int or not 0 < data['pid'] <= 2**31 - 1
             or not isinstance(data.get('start'), str) or not data['start']
             or type(data.get('created')) is not int or type(data.get('expires')) is not int
             or data['expires'] < data['created']):
@@ -169,7 +187,7 @@ def cleanup(args, root):
         candidates.sort(key=lambda item: item[0], reverse=True)
     log_dir = Path(os.environ.get('AIDEVOPS_LOG_DIR', str(Path.home() / '.aidevops/logs')))
     log_dir.mkdir(parents=True, exist_ok=True)
-    reclaimed = scanned = 0
+    reclaimed = scanned = failed = 0
     with (log_dir / 'system-cleanup.log').open('a') as log:
         for offset in range(0, len(candidates), args.batch_size):
             if time.monotonic() >= deadline:
@@ -204,10 +222,15 @@ def cleanup(args, root):
                         break
                     except (OSError, ValueError, TypeError):
                         continue
-                    if path.is_dir():
-                        shutil.rmtree(path)
-                    else:
-                        path.unlink()
+                    try:
+                        if path.is_dir() and not path.is_symlink():
+                            shutil.rmtree(path)
+                        else:
+                            path.unlink()
+                    except OSError as error:
+                        failed += 1
+                        log.write(f'Failed to delete: {path}: {error}\n')
+                        continue  # Retain and retry next pass; keep reclaiming the rest.
                     reclaimed += 1
                     log.write(f'Deleted: {path}\n')
             elif batch:
@@ -224,13 +247,15 @@ def cleanup(args, root):
                     exhausted = True
                     break
                 if result.returncode:
-                    raise ValueError('trash batch failed; remaining entries retained')
+                    failed += len(batch)
+                    log.write(f'Failed to trash batch of {len(batch)}; entries retained\n')
+                    continue
                 reclaimed += len(batch)
                 for path in batch:
                     log.write(f'Trashed: {path}\n')
     print(f'[system-cleanup] mode={"force" if args.force else "dry-run"} eligible={scanned} '
           f'trashed={reclaimed if not delete else 0} deleted={reclaimed if delete else 0} '
-          f'pressure={int(pressure)} elapsed_s={int(time.monotonic() - started)} '
+          f'failed={failed} pressure={int(pressure)} elapsed_s={int(time.monotonic() - started)} '
           f'budget_s={args.max_seconds} budget_exhausted={int(exhausted)}')
 
 
@@ -269,7 +294,13 @@ try:
             raise ValueError('invalid cleanup budget or batch size')
         cleanup(args, root)
     else:
-        print('Usage: task-temp-helper.sh create TASK [--max-age 24h] [--owner-pid PID]')
+        usage = ('Usage: task-temp-helper.sh create TASK [--max-age 24h] [--owner-pid PID]\n'
+                 '       task-temp-helper.sh cleanup [--force|--dry-run] [--max-seconds N] [--batch-size N]')
+        if command in ('help', '-h', '--help'):
+            print(usage)
+        else:
+            print(f'[task-temp] unknown command: {command}\n{usage}', file=sys.stderr)
+            sys.exit(2)
 except (OSError, ValueError, TypeError) as error:
     print(f'[task-temp] {error}', file=sys.stderr)
     sys.exit(1)
