@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 grep -v '^main "\$@"' "${SCRIPT_DIR}/../review-bot-gate-helper.sh" >"${TEST_ROOT}/helper.sh"
+_RBG_SCRIPT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=/dev/null
 source "${TEST_ROOT}/helper.sh"
 
