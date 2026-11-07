@@ -671,8 +671,23 @@ _worker_external_terminal_complete() {
 # the default tip. Keep this separate from the stricter PR-less contract.
 # A finalized guarded receipt binds delivery to this session and attempt window.
 _hrw_own_merged_terminal_complete() {
+	local session_key="$1" work_dir="$2"
+	_hrw_merged_terminal_complete "$session_key" "$work_dir" own
+	return $?
+}
+
+# GH#37098: a read-only continuation may finish verification after an earlier
+# attempt merged this exact head. This is delivery evidence, not merge ownership.
+_hrw_continued_merged_terminal_complete() {
+	local session_key="$1" work_dir="$2"
+	_hrw_merged_terminal_complete "$session_key" "$work_dir" continuation
+	return $?
+}
+
+_hrw_merged_terminal_complete() {
 	local session_key="$1"
 	local work_dir="$2"
+	local mode="$3"
 	local runtime_session="${discovered_session:-${_HRW_OWN_MERGED_RUNTIME_SESSION:-}}"
 	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
 	local issue_number branch head dirty context started
@@ -687,7 +702,7 @@ _hrw_own_merged_terminal_complete() {
 	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
 	dirty=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
 	[[ -n "$branch" && "$head" =~ ^[0-9a-f]{40}$ && -z "$dirty" ]] || return 1
-	context="${session_key}|${repo_slug}|${issue_number}|${AIDEVOPS_ATTEMPT_ID}|${AIDEVOPS_ATTEMPT_STARTED_AT}|${runtime_session}|${work_dir}|${branch}|${head}"
+	context="${mode}|${session_key}|${repo_slug}|${issue_number}|${AIDEVOPS_ATTEMPT_ID}|${AIDEVOPS_ATTEMPT_STARTED_AT}|${runtime_session}|${work_dir}|${branch}|${head}"
 	# Reuse only in-process proof for the identical attempt and clean head. A
 	# later API outage must not erase verified delivery during finalization.
 	[[ "$context" == "${_HRW_OWN_MERGED_VERIFIED_CONTEXT:-}" ]] && return 0
@@ -707,15 +722,23 @@ _hrw_own_merged_terminal_complete() {
 		--json number,state,mergedAt,mergeCommit,headRefOid,headRefName,headRepository,headRepositoryOwner,closingIssuesReferences 2>/dev/null) || return 1
 	jq -e --argjson pr "$pr_number" --argjson issue "$issue_number" \
 		--arg repo "$repo_slug" --arg branch "$branch" --arg head "$head" \
-		--arg separator / --arg string_type string --argjson started "$started" '
+		--arg separator / --arg string_type string --argjson started "$started" --arg mode "$mode" '
 		.number == $pr and .state == "MERGED"
-		and (.mergedAt | fromdateiso8601) >= $started
+		and ((.mergedAt | fromdateiso8601) as $merged
+			| if $mode == "own" then $merged >= $started else $merged < $started end)
 		and (.mergeCommit.oid | type == $string_type and test("^[0-9a-f]{40}$"))
 		and .headRefOid == $head and .headRefName == $branch
 		and ([.headRepositoryOwner.login, .headRepository.name] | join($separator) | ascii_downcase) == ($repo | ascii_downcase)
 		and any(.closingIssuesReferences[]?; .number == $issue
 			and ([.repository.owner.login, .repository.name] | join($separator) | ascii_downcase) == ($repo | ascii_downcase))
 	' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	# Own-attempt receipts must be fresh for this attempt. For a continuation,
+	# retain the same runtime owner's finalized receipt, fresh for the actual
+	# merge; revalidate live issue/PR/head evidence in every new attempt. Never
+	# rewrite that historical receipt or attribute its merge to this attempt.
+	if [[ "$mode" == continuation ]]; then
+		started=$(jq -r '.mergedAt | fromdateiso8601' <<<"$pr_json") || return 1
+	fi
 	receipt=$(_full_loop_cleanup_receipt_path "$repo_slug" "$pr_number") || return 1
 	[[ -f "$receipt" && ! -L "$receipt" ]] || return 1
 	jq -e --arg repo "$repo_slug" --argjson pr "$pr_number" --arg worktree "$work_dir" \
@@ -734,7 +757,7 @@ _hrw_own_merged_terminal_complete() {
 	' "$receipt" >/dev/null 2>&1 || return 1
 	_HRW_OWN_MERGED_VERIFIED_CONTEXT="$context"
 	_HRW_OWN_MERGED_RUNTIME_SESSION="$runtime_session"
-	print_info "[lifecycle] worker_own_merged complete session=${session_key} attempt=${AIDEVOPS_ATTEMPT_ID} issue=${issue_number} pr=${pr_number} head=${head}"
+	print_info "[lifecycle] worker_merged_${mode} complete session=${session_key} attempt=${AIDEVOPS_ATTEMPT_ID} issue=${issue_number} pr=${pr_number} head=${head}"
 	return 0
 }
 
@@ -742,6 +765,7 @@ _hrw_terminal_objective_complete() {
 	local session_key="$1"
 	local work_dir="$2"
 	_hrw_own_merged_terminal_complete "$session_key" "$work_dir" && return 0
+	_hrw_continued_merged_terminal_complete "$session_key" "$work_dir" && return 0
 	_hrw_pr_less_terminal_complete "$session_key" "$work_dir" \
 		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}" && return 0
 	return 1

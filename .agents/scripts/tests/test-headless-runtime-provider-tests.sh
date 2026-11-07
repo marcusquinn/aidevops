@@ -401,10 +401,18 @@ _setup_own_merged_evidence() {
 
 test_own_merged_terminal_reconciliation() {
 	local shape="" result=0
-	for shape in squash issue leased published superseded fractional_receipt stale_fractional_receipt invalid_receipt_date open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent; do
+	for shape in squash issue leased published superseded fractional_receipt stale_fractional_receipt invalid_receipt_date open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent continuation_squash continuation_issue continuation_fractional_receipt continuation_stale_receipt continuation_stale_fractional_receipt continuation_invalid_receipt_date continuation_foreign_session continuation_foreign_receipt continuation_receipt_branch continuation_receipt_pr continuation_receipt_worktree continuation_receipt_owner continuation_receipt_pid continuation_cleanup_failed continuation_unfinalized continuation_release_pending continuation_missing_receipt continuation_dirty continuation_ahead continuation_unrelated continuation_cross_repo continuation_foreign_head continuation_head_mismatch continuation_branch_mismatch continuation_open continuation_unmerged continuation_api_failure continuation_missing_session; do
 		if ! (
 			local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG="owner/repo"
 			local AIDEVOPS_ATTEMPT_ID="attempt:synthetic" AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
+			local expected_pattern="verified_own_merged_objective" continued=0
+			if [[ "$shape" == continuation_* ]]; then
+				shape="${shape#continuation_}"
+				continued=1
+				AIDEVOPS_ATTEMPT_ID="attempt:continuation"
+				AIDEVOPS_ATTEMPT_STARTED_AT=1793016000000000000
+				expected_pattern="verified_prior_merged_objective"
+			fi
 			local work_dir="${TEST_ROOT}/own-merged-${shape}" branch="" head=""
 			local pr_file="${TEST_ROOT}/own-pr.json" receipt_file="${TEST_ROOT}/own-receipt.json"
 			local output_file="${TEST_ROOT}/own-output.jsonl" api_available=1 rc=0 expected=77
@@ -416,6 +424,12 @@ test_own_merged_terminal_reconciliation() {
 			branch=$(git -C "$work_dir" branch --show-current)
 			head=$(git -C "$work_dir" rev-parse HEAD)
 			_setup_own_merged_evidence "$shape"
+			if [[ "$shape" == ahead ]]; then
+				# Clean but genuinely unpublished work beyond the delivered head.
+				touch "${work_dir}/unpublished.txt"
+				git -C "$work_dir" add unpublished.txt
+				git -C "$work_dir" commit -qm unpublished
+			fi
 			_hrw_pr_less_terminal_complete() { return 1; }
 			_full_loop_cleanup_receipt_path() { printf '%s' "$receipt_file"; return 0; }
 			gh_pr_list() { jq -s '.' "$pr_file"; return 0; }
@@ -440,6 +454,7 @@ test_own_merged_terminal_reconciliation() {
 			case "$shape" in
 			squash | leased | published | superseded | fractional_receipt) expected=0 ;;
 			issue) expected=0; session_key="issue-456" ;;
+			stale_merge) expected=0; expected_pattern="verified_prior_merged_objective" ;;
 			missing_session) printf '{"type":"text","text":"Delivered."}\n' >"$output_file" ;;
 			synthetic) printf '{"type":"text","part":{"synthetic":true,"text":"FULL_LOOP_COMPLETE"}}\n' >>"$output_file" ;;
 			tool) printf '{"type":"tool_result","text":"FULL_LOOP_COMPLETE"}\n' >>"$output_file" ;;
@@ -447,7 +462,12 @@ test_own_merged_terminal_reconciliation() {
 			_handle_run_result 0 "$output_file" worker openai "$session_key" openai/gpt-5.5 "$work_dir" || rc=$?
 			[[ "$rc" == "$expected" ]] || exit 1
 			if [[ "$expected" == 0 ]]; then
-				[[ "$_run_result_label" == success && "$_run_classification_pattern" == verified_own_merged_objective && -z "$_run_failure_reason" ]] || exit 1
+				[[ "$_run_result_label" == success && "$_run_classification_pattern" == "$expected_pattern" && -z "$_run_failure_reason" ]] || exit 1
+				if [[ "$continued" == 1 || "$shape" == stale_merge ]]; then
+					[[ "$_run_classification_source" == merged_pr_continuation_evidence ]] || exit 1
+					# Delivery by a prior attempt must never become own-merge proof.
+					if _hrw_own_merged_terminal_complete "$session_key" "$work_dir"; then exit 1; fi
+				fi
 				# Finalization has no dynamically scoped discovered_session and may
 				# see an API outage. It must retain this exact attempt's proof.
 				api_available=0
@@ -457,10 +477,10 @@ test_own_merged_terminal_reconciliation() {
 				_hrw_finish_success_run "$session_key" "$work_dir" || exit 1
 				[[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]] || exit 1
 				touch "${work_dir}/new-edit"
-				if _hrw_own_merged_terminal_complete "$session_key" "$work_dir"; then exit 1; fi
+				if _hrw_terminal_objective_complete "$session_key" "$work_dir"; then exit 1; fi
 				rm "${work_dir}/new-edit"
 				AIDEVOPS_ATTEMPT_ID="attempt:next"
-				if _hrw_own_merged_terminal_complete "$session_key" "$work_dir"; then exit 1; fi
+				if _hrw_terminal_objective_complete "$session_key" "$work_dir"; then exit 1; fi
 			else
 				[[ "$_run_result_label" == premature_exit ]] || exit 1
 			fi
