@@ -858,6 +858,12 @@ _hrff_project_post_release_state() {
 				|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
 		fi
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+		# A draft may have merged between checkpoint classification and release.
+		# Reconcile only after projection/unassignment; the shared guard requires
+		# available state and proves that NO open PR still owns the issue.
+		# shellcheck source=pulse-merge-partial-continuation.sh
+		source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh"
+		_pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1 || true
 		print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
 		return 0
 	fi

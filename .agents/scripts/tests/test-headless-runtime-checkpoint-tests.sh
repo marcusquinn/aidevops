@@ -1136,7 +1136,50 @@ test_post_pr_handoff_validates_dispatch_identity() {
 	return 0
 }
 
+test_draft_release_after_partial_merge_restores_dispatch() {
+	local result=""
+	result=$(
+		# shellcheck source=../pulse-merge-partial-continuation.sh
+		source "${SCRIPT_DIR}/pulse-merge-partial-continuation.sh"
+		local open_prs='[[]]'
+		local dispatch_count=0
+		_pmpc_gh_read() {
+			# Avoid case terminators inside $(): Bash 3.2 misparses them here.
+			if [[ "$*" == *'/comments?'* ]]; then
+				printf '%s' '[[{"author_association":"MEMBER","created_at":"2026-11-07T00:00:00Z","body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=runner1"}]]'
+			elif [[ "$*" == *'/pulls?'* ]]; then
+				printf '%s' "$open_prs"
+			else
+				printf '%s' '{"state":"open","labels":[{"name":"status:available"},{"name":"origin:interactive"}],"assignees":[]}'
+			fi
+			return 0
+		}
+		clear_active_status_on_release() { printf 'projection=%s\n' "$*"; return 0; }
+		_unlock_issue_after_dispatch_release() { return 0; }
+		set_issue_status() {
+			[[ "$*" == '99999 owner/repo available --add-label auto-dispatch' ]] || return 1
+			dispatch_count=$((dispatch_count + 1))
+			return 0
+		}
+		gh_issue_comment() { return 0; }
+		print_info() { return 0; }
+		_hrff_project_post_release_state 99999 owner/repo runner1 worker_draft_checkpoint
+		printf 'dispatch=%s\n' "$dispatch_count"
+		# An actual open draft must retain exact-head continuation, not redispatch.
+		open_prs='[[{"number":123,"body":"For #99999","draft":true}]]'
+		_hrff_project_post_release_state 99999 owner/repo runner1 worker_draft_checkpoint
+		printf 'open-draft=%s\n' "$dispatch_count"
+	)
+	if [[ "$result" == *dispatch=1* && "$result" == *open-draft=1* ]]; then
+		print_result "late draft release restores available dispatch after partial merge but preserves open draft" 0
+	else
+		print_result "late draft release restores available dispatch after partial merge but preserves open draft" 1 "$result"
+	fi
+	return 0
+}
+
 test_pr_checkpoint_lifecycle_cases() {
+	test_draft_release_after_partial_merge_restores_dispatch
 	test_post_pr_handoff_detects_open_pending_pr
 	test_post_pr_handoff_detects_open_pending_pr manual-cli-99999-1700000000
 	test_post_pr_handoff_validates_dispatch_identity

@@ -1592,7 +1592,8 @@ _ddh_release_stale_recovery() {
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
 	printf '%s' "$issue_json" | jq -e '
 		.state == "open"
-		and ([.labels[].name] | index("status:blocked") != null)
+		and ([.labels[].name | select(startswith("status:"))]
+			| . == ["status:blocked"] or . == ["status:available"])
 		and ([.labels[].name] | all(
 			. != "no-auto-dispatch"
 			and . != "hold-for-review"

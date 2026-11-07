@@ -558,7 +558,8 @@ else
 	print_result "Maintainer release resets only prior ticks" 1
 fi
 
-release_result=$(bash -c '
+for initial_state in blocked available; do
+	release_result=$(GH_TEST_STATE="$initial_state" bash -c '
 	source "$1" help >/dev/null
 	gh() {
 		case "$2" in
@@ -567,21 +568,22 @@ release_result=$(bash -c '
 		*/comments) printf "%s\n" '\''[[{"created_at":"2026-01-01T00:00:02Z","body":"<!-- stale-recovery-tick:escalated -->"}]]'\'' ;;
 		*/issues/99999)
 			if [[ "${GH_TEST_STATE:-blocked}" == available ]]; then
-				printf "%s\n" '\''{"state":"open","labels":[{"name":"status:available"},{"name":"auto-dispatch"}],"assignees":[]}'\''
+				printf "%s\n" "{\"state\":\"open\",\"labels\":[{\"name\":\"status:available\"}${GH_TEST_DISPATCH:-}],\"assignees\":[]}"
 			else
 				printf "%s\n" '\''{"state":"open","labels":[{"name":"status:blocked"}],"assignees":[]}'\''
 			fi ;;
 		esac
 	}
 	gh_issue_comment() { printf "COMMENT\n" >&2; return 0; }
-	set_issue_status() { printf "STATUS\n" >&2; GH_TEST_STATE=available; return 0; }
+	set_issue_status() { printf "STATUS\n" >&2; GH_TEST_STATE=available; GH_TEST_DISPATCH=",{\"name\":\"auto-dispatch\"}"; return 0; }
 	_ddh_release_stale_recovery 99999 owner/repo reviewed
 ' bash "${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" 2>&1)
-if [[ "$release_result" == *COMMENT* && "$release_result" == *STATUS* ]]; then
-	print_result "Reviewed release posts audit marker before label change" 0
-else
-	print_result "Reviewed release posts audit marker before label change" 1 "$release_result"
-fi
+	if [[ "$release_result" == *COMMENT* && "$release_result" == *STATUS* ]]; then
+		print_result "Reviewed release from ${initial_state} posts audit marker before label change" 0
+	else
+		print_result "Reviewed release from ${initial_state} posts audit marker before label change" 1 "$release_result"
+	fi
+done
 
 # =============================================================================
 # Summary

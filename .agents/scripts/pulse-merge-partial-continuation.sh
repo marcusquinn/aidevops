@@ -491,7 +491,62 @@ _pm_restore_partial_continuation() {
 	return 0
 }
 
-# GH#34432: revisit one bounded page of in-review issues on the existing
+# GH#37043: restore stranded available worker issues, including late draft
+# releases after a partial merged. An open PR (draft or ready), uncertain reads,
+# active ownership or any independent recovery hold must prevent this repair.
+# $3 is set only by the runtime immediately after its own persisted release;
+# issue authorship need not be worker-origin for that owned release.
+_pmpc_restore_available_dispatch() {
+	local repo_slug="$1" issue_num="$2" released_worker="${3:-0}"
+	local issue_json="" history_json="" safe="" current_epoch="" body=""
+	issue_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 1
+	printf '%s' "$issue_json" | jq -e --arg released "$released_worker" --arg array array --arg dispatch auto-dispatch '
+		[.labels[].name] as $labels
+		| .state == "open" and .pull_request == null
+		and (.assignees | type == $array and length == 0)
+		and ([$labels[] | select(startswith("status:"))] == ["status:available"])
+		and ($released == "1" or ($labels | index("origin:worker")) != null)
+		and ($labels | all(. != $dispatch and . != "no-auto-dispatch"
+			and . != "parent-task" and . != "hold-for-review" and . != "lockdown"
+			and . != "needs-maintainer-review" and . != "needs-maintainer-permissions"
+			and . != "persistent"))
+	' >/dev/null 2>&1 || return 1
+	history_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	current_epoch=$(date +%s) || return 1
+	# Escalated tasks use release-stale-recovery, which verifies live maintainer
+	# permission and restores the label itself. Do not infer that authority from
+	# comment association or a copied release marker in this automatic repair.
+	safe=$(printf '%s' "$history_json" | jq -r --argjson now "$current_epoch" \
+		--arg pattern "$_PMPC_EVENT_PATTERN" "${_PMPC_COMMENTS_JQ_DEFS}"'
+		[comments[] | select(trusted)] | sort_by(.created_at, .id) as $trusted
+		| [$trusted[] | select((.body // "") | test($pattern))] | last as $owner
+		| if any($trusted[]; (.body // "") | test("cost-circuit-breaker:fired|worker-recovery-loop:blocked|dispatch-circuit-breaker:worker_recovery_loop|stale-recovery-tick:escalated")) then false
+		elif $owner == null then true
+		elif ($owner.body | test("(?m)^CLAIM_RELEASED reason=worker_ownership_lost")) then false
+		elif ($owner.body | test("(?m)^CLAIM_RELEASED reason=blocked")) then false
+		elif ($owner.body | test("(?m)^CLAIM_RELEASED reason=|^DISPATCH_LEASE phase=terminal ")) then true
+		elif ($owner.body | test("(?m)^DISPATCH_LEASE phase=")) then
+			[($owner.body | split("\n")[] | select(startswith("DISPATCH_LEASE phase="))
+				| capture("(^| )expires_at=(?<expiry>[0-9]+)([ \\r]|$)") | .expiry | tonumber)] as $expiries
+			| ($expiries | length) == 1 and $expiries[0] < ($now - 900)
+		else false end
+	' 2>/dev/null) || return 1
+	[[ "$safe" == true ]] || return 1
+	_pmpc_other_open_pr_owns_issue "$repo_slug" "$issue_num" 0 && return 1
+	set_issue_status "$issue_num" "$repo_slug" available --add-label auto-dispatch >/dev/null 2>&1 || return 1
+	body="<!-- ops:start -->
+<!-- aidevops:ops kind=available-dispatch-recovery -->
+Restored auto-dispatch on this unassigned available worker issue after verifying no open linked PR, live owner or recovery circuit hold. Existing dispatch, approval and dependency guards remain in force.
+<!-- ops:end -->"
+	gh_issue_comment "$issue_num" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || {
+		printf '[pulse-wrapper] Available dispatch recovery: #%s restored but audit write failed\n' "$issue_num" >>"$LOGFILE"
+		return 1
+	}
+	return 0
+}
+
+# GH#34432: revisit one bounded page of open issues on the existing
 # per-repo stale-blocked cadence. Persist the next page and pending issue IDs
 # before processing so a killed/slow issue cannot starve the page suffix.
 # Full pages stay due next cycle;
@@ -522,7 +577,7 @@ _pm_reconcile_partial_continuations() {
 	now_epoch=$(date +%s) || return 1
 	[[ "$now_epoch" -lt "$deadline" ]] || return 3
 	if [[ -z "$issues" ]]; then
-		issues_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=status%3Ain-review&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
+		issues_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
 		issues=$(printf '%s' "$issues_json" | jq -r '
 		if type != "array" or any(.[]; (.number | type) != "number") then error("unreadable issues")
 		else .[] | select(.pull_request == null) | .number end
@@ -546,6 +601,7 @@ _pm_reconcile_partial_continuations() {
 			remaining=""
 		fi
 		printf '%s\n%s\n' "$next_page" "$remaining" >"$cursor" || return 1
+		_pmpc_restore_available_dispatch "$repo_slug" "$issue_num" || true
 		# Timeline cross-references carry merged_at. Select the newest merged
 		# PR, not an older eligible partial hidden by a later closing delivery.
 		timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
