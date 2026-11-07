@@ -353,9 +353,10 @@ test_scoped_delivery_terminal_reconciliation() {
 # Synthetic external evidence for GH#35629; no API calls or original sessions.
 _setup_own_merged_evidence() {
 	local shape="$1"
-	jq -cn --arg head "$head" --arg branch "$branch" --arg shape "$shape" '
+	jq -cn --arg head "$head" --arg branch "$branch" --arg shape "$shape" \
+		--arg merge "${merge_head:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" '
 		{number:42,state:"MERGED",mergedAt:"2026-10-25T12:01:00Z",
-		mergeCommit:{oid:("b" * 40)},headRefOid:$head,headRefName:$branch,
+		mergeCommit:{oid:$merge},headRefOid:$head,headRefName:$branch,
 		headRepository:{name:"repo",nameWithOwner:"owner/repo"},headRepositoryOwner:{login:"owner",name:"Synthetic Owner"},
 		closingIssuesReferences:[{number:456,repository:{name:"repo",owner:{login:"owner"}}}]}
 		| if $shape == "unmerged" then .state = "OPEN" | .mergedAt = null
@@ -401,10 +402,11 @@ _setup_own_merged_evidence() {
 
 test_own_merged_terminal_reconciliation() {
 	local shape="" result=0
-	for shape in squash issue leased published superseded fractional_receipt stale_fractional_receipt invalid_receipt_date open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent continuation_squash continuation_issue continuation_fractional_receipt continuation_stale_receipt continuation_stale_fractional_receipt continuation_invalid_receipt_date continuation_foreign_session continuation_foreign_receipt continuation_receipt_branch continuation_receipt_pr continuation_receipt_worktree continuation_receipt_owner continuation_receipt_pid continuation_cleanup_failed continuation_unfinalized continuation_release_pending continuation_missing_receipt continuation_dirty continuation_ahead continuation_unrelated continuation_cross_repo continuation_foreign_head continuation_head_mismatch continuation_branch_mismatch continuation_open continuation_unmerged continuation_api_failure continuation_missing_session; do
+	for shape in squash issue leased published superseded fractional_receipt stale_fractional_receipt invalid_receipt_date open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent continuation_squash continuation_issue continuation_fractional_receipt continuation_stale_receipt continuation_stale_fractional_receipt continuation_invalid_receipt_date continuation_foreign_session continuation_foreign_receipt continuation_receipt_branch continuation_receipt_pr continuation_receipt_worktree continuation_receipt_owner continuation_receipt_pid continuation_cleanup_failed continuation_unfinalized continuation_release_pending continuation_missing_receipt continuation_dirty continuation_ahead continuation_remote_ahead continuation_unrelated continuation_cross_repo continuation_foreign_head continuation_head_mismatch continuation_branch_mismatch continuation_open continuation_unmerged continuation_api_failure continuation_missing_session continuation_same_second; do
 		if ! (
 			local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG="owner/repo"
 			local AIDEVOPS_ATTEMPT_ID="attempt:synthetic" AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
+			local work_dir="${TEST_ROOT}/own-merged-${shape}" branch="" head="" merge_head=""
 			local expected_pattern="verified_own_merged_objective" continued=0
 			if [[ "$shape" == continuation_* ]]; then
 				shape="${shape#continuation_}"
@@ -413,7 +415,6 @@ test_own_merged_terminal_reconciliation() {
 				AIDEVOPS_ATTEMPT_STARTED_AT=1793016000000000000
 				expected_pattern="verified_prior_merged_objective"
 			fi
-			local work_dir="${TEST_ROOT}/own-merged-${shape}" branch="" head=""
 			local pr_file="${TEST_ROOT}/own-pr.json" receipt_file="${TEST_ROOT}/own-receipt.json"
 			local output_file="${TEST_ROOT}/own-output.jsonl" api_available=1 rc=0 expected=77
 			local session_key="manual-cli-456-1792929600"
@@ -423,12 +424,23 @@ test_own_merged_terminal_reconciliation() {
 			work_dir=$(cd "$work_dir" && pwd -P) || exit 1
 			branch=$(git -C "$work_dir" branch --show-current)
 			head=$(git -C "$work_dir" rev-parse HEAD)
+			if [[ "$continued" == 1 && "$shape" == squash ]]; then
+				# Publish a real squash: the delivered head is not an ancestor of
+				# default, but its tree and the merged PR's head are published.
+				merge_head=$(git -C "$work_dir" commit-tree "HEAD^{tree}" -p origin/main -m squash)
+				git -C "$work_dir" push -q origin "${merge_head}:refs/heads/main" "$branch"
+				[[ "$(git -C "$work_dir" rev-list --count "${merge_head}..${head}")" != 0 ]] || exit 1
+			fi
 			_setup_own_merged_evidence "$shape"
-			if [[ "$shape" == ahead ]]; then
+			if [[ "$shape" == ahead || "$shape" == remote_ahead ]]; then
 				# Clean but genuinely unpublished work beyond the delivered head.
 				touch "${work_dir}/unpublished.txt"
 				git -C "$work_dir" add unpublished.txt
 				git -C "$work_dir" commit -qm unpublished
+				if [[ "$shape" == remote_ahead ]]; then
+					git -C "$work_dir" push -q origin "$branch"
+					git -C "$work_dir" checkout -q -B "$branch" "$head"
+				fi
 			fi
 			_hrw_pr_less_terminal_complete() { return 1; }
 			_full_loop_cleanup_receipt_path() { printf '%s' "$receipt_file"; return 0; }
@@ -451,10 +463,14 @@ test_own_merged_terminal_reconciliation() {
 			}
 			printf '%s\n' '{"type":"tool_result","text":"bounded wrapper completed"}' \
 				'{"type":"text","sessionID":"ses_own_merged","text":"Delivered, merged, synchronized and finalized guarded cleanup."}' >"$output_file"
+			if [[ "$continued" == 1 ]]; then
+				printf '%s\n' '{"type":"text","sessionID":"ses_own_merged","text":"Verified the prior merged delivery and closed the issue. No new changes."}' >"$output_file"
+			fi
 			case "$shape" in
 			squash | leased | published | superseded | fractional_receipt) expected=0 ;;
 			issue) expected=0; session_key="issue-456" ;;
 			stale_merge) expected=0; expected_pattern="verified_prior_merged_objective" ;;
+			same_second) expected=0; AIDEVOPS_ATTEMPT_STARTED_AT=1792929660900000000 ;;
 			missing_session) printf '{"type":"text","text":"Delivered."}\n' >"$output_file" ;;
 			synthetic) printf '{"type":"text","part":{"synthetic":true,"text":"FULL_LOOP_COMPLETE"}}\n' >>"$output_file" ;;
 			tool) printf '{"type":"tool_result","text":"FULL_LOOP_COMPLETE"}\n' >>"$output_file" ;;

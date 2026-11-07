@@ -702,6 +702,10 @@ _hrw_merged_terminal_complete() {
 	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
 	dirty=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
 	[[ -n "$branch" && "$head" =~ ^[0-9a-f]{40}$ && -z "$dirty" ]] || return 1
+	# A clean checkout at the delivered head cannot hide newer remote-only work.
+	local remote_branch=""
+	remote_branch=$(git -C "$work_dir" ls-remote origin "refs/heads/${branch}" 2>/dev/null) || return 1
+	[[ -z "$remote_branch" || "${remote_branch%%[[:space:]]*}" == "$head" ]] || return 1
 	context="${mode}|${session_key}|${repo_slug}|${issue_number}|${AIDEVOPS_ATTEMPT_ID}|${AIDEVOPS_ATTEMPT_STARTED_AT}|${runtime_session}|${work_dir}|${branch}|${head}"
 	# Reuse only in-process proof for the identical attempt and clean head. A
 	# later API outage must not erase verified delivery during finalization.
@@ -725,7 +729,9 @@ _hrw_merged_terminal_complete() {
 		--arg separator / --arg string_type string --argjson started "$started" --arg mode "$mode" '
 		.number == $pr and .state == "MERGED"
 		and ((.mergedAt | fromdateiso8601) as $merged
-			| if $mode == "own" then $merged >= $started else $merged < $started end)
+			# GitHub timestamps have whole-second precision: equality cannot
+			# establish own-attempt ordering, so classify it as continuation.
+			| if $mode == "own" then $merged > $started else $merged <= $started end)
 		and (.mergeCommit.oid | type == $string_type and test("^[0-9a-f]{40}$"))
 		and .headRefOid == $head and .headRefName == $branch
 		and ([.headRepositoryOwner.login, .headRepository.name] | join($separator) | ascii_downcase) == ($repo | ascii_downcase)
