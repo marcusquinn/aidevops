@@ -1886,15 +1886,15 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18874 Worker-lifecycle PR hold must see open PRs from a configured fork into its upstream #auto-dispatch #bug ref:GH#36863 pr:#36867 completed:2026-11-06
 
-- [ ] t18875 fix(review-bot-gate): request-retry ignores superseded-head reviews and retries per head #auto-dispatch #bug ref:GH#36899
+- [x] t18875 fix(review-bot-gate): request-retry ignores superseded-head reviews and retries per head #auto-dispatch #bug ref:GH#36899 pr:#36918 completed:2026-11-06
 
-- [ ] t18876 fix(review-bot-gate): recover external PRs stuck after CodeRabbit review limit #auto-dispatch #bug ref:GH#36900
+- [x] t18876 fix(review-bot-gate): recover external PRs stuck after CodeRabbit review limit #auto-dispatch #bug ref:GH#36900 pr:#36919 completed:2026-11-06
 
 - [x] t18877 feat(full-loop): audited maintainer override to admin-merge past a stuck review-bot-gate #auto-dispatch #feat ref:GH#36901 pr:#36910 completed:2026-11-06
 
-- [ ] t18878 fix(approval): canonical review-bot retry comment must not stale PR approvals #auto-dispatch #bug ref:GH#36902
+- [x] t18878 fix(approval): canonical review-bot retry comment must not stale PR approvals #auto-dispatch #bug ref:GH#36902 pr:#36958 completed:2026-11-06
 
-- [ ] t18879 Verify Buzz Desktop helper against block/buzz-app Desktop #auto-dispatch #bug #interactive tier:standard ~2h ref:GH#36926 logged:2026-11-06 -> [todo/tasks/t18879-brief.md]
+- [x] t18879 Verify Buzz Desktop helper against block/buzz-app Desktop #auto-dispatch #bug #interactive tier:standard ~2h ref:GH#36926 logged:2026-11-06 -> [todo/tasks/t18879-brief.md] pr:#36972 completed:2026-11-06
 
 - [x] t18880 review-bot-gate advisory for all authors; review bots never block merges #bug ref:GH#36931 pr:#36949 completed:2026-11-06
 
@@ -1903,7 +1903,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18882 review-bot-gate: fork PRs need a base-context status writer (pull_request_target) #bug ref:GH#36961 pr:#36962 completed:2026-11-06 -> [todo/tasks/t18882-brief.md]
 - [ ] t18883 Plan and prototype a buzz-aidevops Desktop plugin #feat #interactive #no-auto-dispatch tier:thinking ~10h ref:GH#36976 logged:2026-11-06 -> [todo/tasks/t18883-brief.md]
 
-- [ ] t18884 Skip the aidevops session greeting when OpenCode runs as an ACP server #auto-dispatch #feat ref:GH#36983
+- [x] t18884 Skip the aidevops session greeting when OpenCode runs as an ACP server #auto-dispatch #feat ref:GH#36983 pr:#36987 completed:2026-11-07
 
 ## In Progress
 
