@@ -6,6 +6,7 @@
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -63,6 +64,38 @@ def backup_existing(path, runtime_id):
     return backup
 
 
+def repoint_stale_overrides(app_data_dir, runtime_id, pinned, store_backup):
+    """Repoint only exact commands belonging to older anchors of this runtime."""
+    from _team_interface_buzz_runtime_digest_refresh import read_store
+    from _team_interface_buzz_runtime_io import canonical_payload
+
+    path = app_data_dir / "agents" / "managed-agents.json"
+    store = read_store(path)
+    if store is None:
+        return
+    parent = Path.home() / ".aidevops" / "buzz-runtimes" / runtime_id
+    command = str(pinned / "agents" / "bin" / "aidevops-buzz-acp-interactive")
+    pattern = re.compile(
+        re.escape(str(parent))
+        + r"/(?:v2-)?[a-f0-9]{16}-[a-f0-9]{16}/agents/bin/aidevops-buzz-acp-interactive\Z"
+    )
+    changed = []
+    for record in store:
+        old = record.get("agent_command_override")
+        if isinstance(old, str) and old != command and pattern.fullmatch(old):
+            record["agent_command_override"] = command
+            name = record.get("name")
+            changed.append(name if isinstance(name, str) else "(unnamed)")
+    if changed:
+        if store_backup is None:
+            store_backup = backup_existing(path, "managed-agents")
+            print(f"Buzz managed agents backup: {store_backup}")
+        atomic_write(path, canonical_payload(store))
+    print(f"Buzz stale interactive overrides repointed: {len(changed)}")
+    for name in changed:
+        print(f"  {name}")
+
+
 def install_payload(app_data_dir, runtime_id, payload, replace, pinned):
     """Refresh eligible pointers before replacing a stopped Buzz runtime manifest."""
     # Imported lazily because digest refresh reuses this module's backup primitive.
@@ -85,7 +118,9 @@ def install_payload(app_data_dir, runtime_id, payload, replace, pinned):
             # Manifest replacement still needs a store snapshot for documented rollback.
             store_path = app_data_dir / "agents" / "managed-agents.json"
             if store_path.is_file() and not store_path.is_symlink():
-                print(f"Buzz managed agents backup: {backup_existing(store_path, 'managed-agents')}")
+                store_backup = backup_existing(store_path, "managed-agents")
+                print(f"Buzz managed agents backup: {store_backup}")
+        repoint_stale_overrides(app_data_dir, runtime_id, pinned, store_backup)
     if not unchanged:
         atomic_write(target, payload)
     return target, backup
