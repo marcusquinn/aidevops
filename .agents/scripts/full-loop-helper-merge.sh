@@ -1643,6 +1643,29 @@ _merge_record_post_merge_audits() {
 	return 0
 }
 
+# GH#36922: a planning-checkpoint verdict is valid for one head only; pin it
+# via FULL_LOOP_EXPECTED_PR_HEAD_SHA so a later push is refused at merge.
+_merge_worker_briefed_gate_pinned() {
+	local pr_number="$1" repo="$2" has_admin="$3"
+	local head_file="" pinned_head=""
+	head_file=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-head.XXXXXX") || return 1
+	WORKER_BRIEFED_PLANNING_HEAD_FILE="$head_file" \
+		_merge_worker_briefed_trust_gate "$pr_number" "$repo" "$has_admin" || {
+		rm -f "$head_file"
+		return 1
+	}
+	pinned_head=$(tr -d '[:space:]' <"$head_file")
+	rm -f "$head_file"
+	[[ -n "$pinned_head" ]] || return 0
+	if [[ -n "${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}" && "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" != "$pinned_head" ]]; then
+		print_error "Merge blocked by GH#36922: PR head moved since planning-checkpoint check"
+		return 1
+	fi
+	FULL_LOOP_EXPECTED_PR_HEAD_SHA="$pinned_head"
+	export FULL_LOOP_EXPECTED_PR_HEAD_SHA
+	return 0
+}
+
 # GH#36174: enforce the creation-time closure invariant for existing PRs too.
 _merge_check_closure_metadata() {
 	local pr_number="$1" repo="$2"
@@ -1701,7 +1724,7 @@ cmd_merge() {
 	# before pre-merge checks or any native/admin merge transport.
 	# shellcheck disable=SC1091
 	source "${SCRIPT_DIR}/pulse-merge-process-worker-briefed.sh" || return 1
-	_merge_worker_briefed_trust_gate "$pr_number" "$repo" "$has_admin" || return 1
+	_merge_worker_briefed_gate_pinned "$pr_number" "$repo" "$has_admin" || return 1
 
 	# Gate: enforce review-bot-gate before merge.
 	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {

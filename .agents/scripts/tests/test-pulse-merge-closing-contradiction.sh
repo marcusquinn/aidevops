@@ -52,6 +52,7 @@ _merge_handle_already_merged_provenance() { return 2; }
 _flm_gh_read() { gh_pr_view "$@"; return $?; }
 # Trust behavior is covered by test-worker-briefed-trust-parity.sh, not closure cases.
 _merge_worker_briefed_trust_gate() { return 0; }
+_merge_worker_briefed_gate_pinned() { return 0; }
 _merge_pre_merge_gate_with_admission_retry() { REVIEWS=$((REVIEWS + 1)); return 1; }
 _merge_report_pre_merge_gate_failure() { return 0; }
 

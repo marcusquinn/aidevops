@@ -93,6 +93,11 @@ setup_test_env() {
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
 _all_args=("$@")
 
+# PR files API (GH#36922); a missing fixture simulates an API failure.
+[[ "$*" == *"repos/"*"/pulls/"*"/files"* ]] && { cat "${TEST_ROOT}/pr-files.json" 2>/dev/null; exit $?; }
+# PR head SHA read (bound before/after the file list)
+[[ "$*" == *"repos/"*"/pulls/"[0-9]* && "$*" == *"head.sha"* ]] && { printf '%s\n' "${MOCK_PR_HEAD_SHA:-0123456789abcdef0123456789abcdef01234567}"; exit 0; }
+
 # Issue API (author_association check)
 if [[ "$*" == *"repos/"*"/issues/"* ]] && [[ "$*" != *"/comments"* ]] && [[ "$*" != *"/labels"* ]]; then
 	_jq_filter=""
@@ -195,6 +200,8 @@ define_helpers_under_test() {
 		/^_attempt_worker_briefed_auto_merge\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	src_worker_briefed+=$'\n'$(awk '
+		/^_PM_PLANNING_CHECKPOINT_MAX_FILES=/ { print }
+		/^_worker_briefed_pr_is_planning_checkpoint\(\) \{/,/^\}$/ { print }
 		/^_worker_briefed_link_kind\(\) \{/,/^\}$/ { print }
 		/^_worker_briefed_trust_check\(\) \{/,/^\}$/ { print }
 		/^_worker_briefed_pr_eligible\(\) \{/,/^\}$/ { print }
@@ -964,6 +971,59 @@ test_non_closing_reference_gates() {
 	return 0
 }
 
+# GH#36922: a non-closing parent-task link is eligible only for a planning
+# checkpoint diff, still needs the issue-author trust chain, and refusals keep
+# metadata failure distinct from link-policy refusal.
+_parent_checkpoint_verdict() {
+	local verdict="" rc=0
+	verdict=$(worker_briefed_trust_verdict "100" "owner/repo" "origin:worker" "false" "42") || rc=$?
+	printf '%s|%s' "$rc" "$verdict"
+	return 0
+}
+
+test_parent_planning_checkpoint_gates() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+	TEST_CLOSING_ISSUE=""
+	local parent_issue='{"author_association":"OWNER","state":"open","labels":[{"name":"parent-task"}]}'
+	local ok="" code="" rename="" untrusted="" missing="" malformed="" empty="" logged=1
+	printf '%s' "$parent_issue" >"${TEST_ROOT}/issue.json"
+	printf '[{"filename":"TODO.md","status":"modified"},{"filename":"todo/tasks/t1-brief.md","status":"added"}]' >"${TEST_ROOT}/pr-files.json"
+	ok=$(_parent_checkpoint_verdict)
+	grep -q 'link=non-closing parent planning checkpoint' "$LOGFILE" && logged=0
+	printf '[{"filename":"TODO.md","status":"modified"},{"filename":".agents/scripts/x.sh","status":"modified"}]' >"${TEST_ROOT}/pr-files.json"
+	code=$(_parent_checkpoint_verdict)
+	printf '[{"filename":"todo/plan.md","previous_filename":"todo/data.json","status":"renamed"}]' >"${TEST_ROOT}/pr-files.json"
+	rename=$(_parent_checkpoint_verdict)
+	printf '[]' >"${TEST_ROOT}/pr-files.json"
+	empty=$(_parent_checkpoint_verdict)
+	printf '{"message":"oops"}' >"${TEST_ROOT}/pr-files.json"
+	malformed=$(_parent_checkpoint_verdict)
+	rm -f "${TEST_ROOT}/pr-files.json"
+	missing=$(_parent_checkpoint_verdict)
+	printf '[{"filename":"TODO.md","status":"modified"}]' >"${TEST_ROOT}/pr-files.json"
+	printf '{"author_association":"CONTRIBUTOR","state":"open","labels":[{"name":"parent-task"}]}' >"${TEST_ROOT}/issue.json"
+	untrusted=$(_parent_checkpoint_verdict)
+	unset TEST_CLOSING_ISSUE
+
+	local failures=""
+	[[ "$ok" == "0|allow" && "$logged" == "0" ]] || failures+=" ok=${ok}"
+	[[ "$code" == "1|deny:"*"only eligible for a planning checkpoint"* ]] || failures+=" code=${code}"
+	[[ "$rename" == "1|deny:"*"only eligible for a planning checkpoint"* ]] || failures+=" rename=${rename}"
+	[[ "$empty" == "1|deny:"*"only eligible for a planning checkpoint"* ]] || failures+=" empty=${empty}"
+	[[ "$malformed" == "1|deny:linked issue metadata unavailable:"*"file list"* ]] || failures+=" malformed=${malformed}"
+	[[ "$missing" == "1|deny:linked issue metadata unavailable:"*"file list"* ]] || failures+=" missing=${missing}"
+	[[ "$untrusted" == "1|deny:"*"not OWNER/MEMBER"* ]] || failures+=" untrusted=${untrusted}"
+	if [[ -z "$failures" ]]; then
+		print_result "parent planning checkpoint: trusted planning diff passes; code/rename/untrusted denied; metadata failure distinct (GH#36922)" 0
+	else
+		print_result "parent planning checkpoint: trusted planning diff passes; code/rename/untrusted denied; metadata failure distinct (GH#36922)" 1 "$failures"
+	fi
+	teardown_test_env
+	return 0
+}
+
 # =============================================================================
 # Run all cases
 # =============================================================================
@@ -998,6 +1058,7 @@ main() {
 	test_reference_to_pr_is_not_a_worker_brief
 	test_partial_worker_association_reaches_authority_gate
 	test_non_closing_reference_gates
+	test_parent_planning_checkpoint_gates
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
