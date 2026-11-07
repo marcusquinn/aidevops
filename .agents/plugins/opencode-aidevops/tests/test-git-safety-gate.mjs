@@ -326,32 +326,27 @@ test("uses the plugin repository directory when mutation tools omit workdir", as
       { args: { patchText: linkedPatch } },
     ));
 
-    for (const command of [`git -C "${linked}" add README.md`, `git -C "${linked}" -C . add README.md`]) {
-      await assert.rejects(() => hooks.toolExecuteBefore(
-        { tool: "bash", sessionID: "different-owner" },
+    // Read-only inspection of another tree admits no owner (GH#37022), so a closed
+    // generation does not refuse it and the inspector cannot block retirement;
+    // writes, config overrides and output-writing flags still require admission.
+    const refused = /lifecycle owner admission/;
+    for (const [command, otherSession] of [
+      [`git -C "${linked}" add README.md`, refused],
+      [`git -C "${linked}" -C . add README.md`, refused],
+      [`git -c core.fsmonitor=x -C "${linked}" status`, refused],
+      [`git -C "${linked}" log --output=out.txt`, refused],
+      [`git -C "${linked}" branch --list --set-upstream-to=x`, refused],
+      [`git -C "${linked}" status`, /^admitted$/],
+      [`git -C "${linked}" worktree list`, /^admitted$/],
+      [`git -C "${linked}" branch --list`, /^admitted$/],
+      [`git --no-pager -C "${linked}" log -1`, /^admitted$/],
+    ]) {
+      const outcome = (sessionID) => hooks.toolExecuteBefore(
+        { tool: "bash", sessionID },
         { args: { workdir: repo, command } },
-      ), /lifecycle owner admission/);
-      await assert.doesNotReject(() => hooks.toolExecuteBefore(
-        { tool: "bash", sessionID: "fixture-owner" },
-        { args: { workdir: repo, command } },
-      ));
-    }
-    // Read-only inspection of another tree admits no owner (GH#37022), so a
-    // closed generation does not refuse it and the inspector cannot block retirement.
-    for (const command of [`git -C "${linked}" status`, `git -C "${linked}" worktree list`,
-      `git -C "${linked}" branch --list`, `git --no-pager -C "${linked}" log -1`]) {
-      await assert.doesNotReject(() => hooks.toolExecuteBefore(
-        { tool: "bash", sessionID: "different-owner" },
-        { args: { workdir: repo, command } },
-      ), command);
-    }
-    for (const command of [`git -c core.fsmonitor=x -C "${linked}" status`,
-      `git -C "${linked}" log --output=out.txt`, `git -C "${linked}" branch --list --set-upstream-to=x`,
-      `git -C "${linked}" worktree remove x`]) {
-      await assert.rejects(() => hooks.toolExecuteBefore(
-        { tool: "bash", sessionID: "different-owner" },
-        { args: { workdir: repo, command } },
-      ), /lifecycle owner admission/, command);
+      ).then(() => "admitted", String);
+      assert.match(await outcome("different-owner"), otherSession, command);
+      assert.equal(await outcome("fixture-owner"), "admitted", command);
     }
     await assert.rejects(() => hooks.toolExecuteBefore(
       { tool: "bash", sessionID: "fixture-owner" },

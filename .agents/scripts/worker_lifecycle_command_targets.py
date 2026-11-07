@@ -46,20 +46,26 @@ def _read_only_prefix(prefix):
     return True
 
 
+def _branch_lists_only(rest):
+    """`git branch --list|-l|--show-current` with no mutating flag anywhere."""
+    return (rest[:1] != [] and rest[0] in BRANCH_LIST_FLAGS
+            and not any(arg.split("=", 1)[0] in BRANCH_MUTATING_FLAGS for arg in rest))
+
+
+# Verbs whose read-only status depends on their subcommand or flags.
+SUBCOMMAND_CHECKS = {
+    "worktree": lambda rest: rest[:1] == ["list"],
+    "branch": _branch_lists_only,
+}
+
+
 def is_read_only_invocation(prefix, verb, rest):
     """True only for a closed set of inspection commands that write no tree."""
-    if not _read_only_prefix(prefix):
+    writes_output = any(arg == "-o" or arg.startswith("--output") for arg in rest)
+    if writes_output or not _read_only_prefix(prefix):
         return False
-    if any(arg == "-o" or arg.startswith("--output") for arg in rest):
-        return False
-    if verb in READ_ONLY_VERBS:
-        return True
-    if verb == "worktree":
-        return bool(rest) and rest[0] == "list"
-    if verb == "branch":
-        return (bool(rest) and rest[0] in BRANCH_LIST_FLAGS
-                and not any(arg.split("=", 1)[0] in BRANCH_MUTATING_FLAGS for arg in rest))
-    return False
+    check = SUBCOMMAND_CHECKS.get(verb)
+    return verb in READ_ONLY_VERBS or bool(check and check(rest))
 
 
 def expand_repository_options(prefix):
