@@ -359,14 +359,26 @@ _count_repeated_literals() {
 	return 0
 }
 
-# Same pipeline but prints the top-3 "count: literal" display form.
+# Same pipeline, printing "  <count>x: <literal>" display lines from stdin.
 # Applies the same sed pre-strip as _count_repeated_literals so that display
 # output matches the counter — no phantom truncated literals like `4x: "`.
+# The whole literal is printed, including inner spaces (GH#36999).
+#
+# Modes (first argument):
+#   top (default)    — the first three repeated literals (pre-existing debt view)
+#   all              — every repeated literal
+#   new <baseline>   — only literals not already repeated >=3x in <baseline>,
+#                      i.e. the ones that make the ratchet block (GH#36999).
+#                      Compared on literal text, so a pre-existing literal
+#                      whose count grew is not reported as new.
 _show_repeated_literals() {
+	local mode="${1:-top}"
+	local baseline="${2:-}"
 	local _ext_literal='"[^"]{4,}"'
 	local _ext_numeric='^"[0-9]+\.?[0-9]*"$'
 	local _ext_varref='^"\$'
-	grep -v '^[[:space:]]*#' |
+	local listing
+	listing=$(grep -v '^[[:space:]]*#' |
 		sed -E '
 			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
 			s/"\$\{[^}]*\}"//g
@@ -376,7 +388,21 @@ _show_repeated_literals() {
 		grep -oE "$_ext_literal" |
 		grep -vE "$_ext_numeric" |
 		grep -vE "$_ext_varref" |
-		sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
+		sort | uniq -c |
+		awk '$1 >= 3 { n = $1; sub(/^[[:space:]]*[0-9]+[[:space:]]/, ""); print "  " n "x: " $0 }') ||
+		listing="" # grep exits 1 on no match; under pipefail that means none, not an error
+	[[ -n "$listing" ]] || return 0
+	case "$mode" in
+	all) printf '%s\n' "$listing" ;;
+	new)
+		printf '%s\n' "$listing" | awk '
+			NR == FNR { sub(/^ *[0-9]+x: /, ""); seen[$0] = 1; next }
+			{ literal = $0; sub(/^ *[0-9]+x: /, "", literal) }
+			literal != "" && !(literal in seen) { print }
+		' <(printf '%s\n' "$baseline" | _show_repeated_literals all) -
+		;;
+	*) printf '%s\n' "$listing" | head -3 ;;
+	esac
 	return 0
 }
 
@@ -415,7 +441,8 @@ validate_string_literals() {
 			if ((staged_repeated > head_repeated)); then
 				# NEW repeated literals introduced by this commit — ratchet blocks.
 				print_error "NEW repeated string literals in $file (new: $((staged_repeated - head_repeated)), pre-existing: $head_repeated)"
-				<"$file" _show_repeated_literals
+				# Name the offending literals, not the file's top 3 (GH#36999).
+				<"$file" _show_repeated_literals new "$head_content"
 				((++violations))
 			elif ((staged_repeated > 0)); then
 				# Pre-existing debt — advisory only, never blocks. Test fixtures
