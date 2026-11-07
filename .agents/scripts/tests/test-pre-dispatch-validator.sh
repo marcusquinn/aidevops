@@ -1172,6 +1172,46 @@ test_brief_scope_worker_discovery() {
 	return 0
 }
 
+# GH#37052: external author + verified signed approval dispatches with worker
+# scope discovery; no approval or a stale digest stays untrusted_author rc=1.
+test_brief_scope_signed_approval_external() {
+	local rc=0 tmp="" fake_helper=""
+	tmp=$(mktemp -d) || return 1
+	fake_helper="${tmp}/approval-helper.sh"
+	# shellcheck disable=SC2016 # literal fake-helper source, expanded when it runs
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "${FAKE_APPROVAL_RESULT:-NO_APPROVAL}"\n[[ "${FAKE_APPROVAL_RESULT:-}" == "VERIFIED" ]]\n' >"$fake_helper"
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-dispatch-core.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
+		LOGFILE="${tmp}/log"
+		export AIDEVOPS_TEMP_DIR="${tmp}/state"
+		export BRIEF_SCOPE_APPROVAL_HELPER="$fake_helper"
+		unset AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY
+		gh() { printf 'read\n'; return 0; }
+		repo_allows_pulse_write_actions() { return 0; }
+		local meta='{"author":{"login":"outsider"},"labels":[{"name":"auto-dispatch"},{"name":"external-contributor"}],"body":"## What\nUnscoped external brief"}'
+		export PULSE_BRIEF_SCOPE_UNTRUSTED_DEFER_SECS=0
+		FAKE_APPROVAL_RESULT=NO_APPROVAL _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" && exit 1
+		FAKE_APPROVAL_RESULT=STALE_APPROVAL _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" && exit 2
+		FAKE_APPROVAL_RESULT=VERIFIED _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" || exit 3
+		rg -q "signed maintainer approval verified" "$LOGFILE" || exit 4
+		# An unchanged untrusted body is deferred within the TTL (no re-verification).
+		export PULSE_BRIEF_SCOPE_UNTRUSTED_DEFER_SECS=600
+		FAKE_APPROVAL_RESULT=NO_APPROVAL _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" && exit 5
+		FAKE_APPROVAL_RESULT=VERIFIED _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" && exit 6
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "signed-approved external briefs dispatch for worker scope discovery" 0
+	else
+		print_result "signed-approved external briefs dispatch for worker scope discovery" 1 "rc=${rc}"
+	fi
+	rm -rf "$tmp"
+	return 0
+}
+
 test_brief_hold_release_is_body_bound() {
 	local rc=0
 	(
@@ -1610,6 +1650,7 @@ main() {
 	test_preclaim_hold_once
 	test_brief_scope_self_heal_and_release
 	test_brief_scope_worker_discovery
+	test_brief_scope_signed_approval_external
 	test_brief_hold_release_is_body_bound
 	test_zero_progress_meta_recovered_blocks_dispatch
 	test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write

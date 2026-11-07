@@ -134,6 +134,12 @@ class ForkPullRequestContract(unittest.TestCase):
             ("repos/upstream/project/pulls?state=open&per_page=100", []),
             ("repos/upstream/project/pulls?state=open&per_page=100", [[{}]]),
             ("repos/upstream/project/pulls?state=open&per_page=100",
+             [[{"head": {"ref": "", "sha": "other-sha"}}]]),
+            ("repos/upstream/project/pulls?state=open&per_page=100",
+             [[{"head": {"ref": "other-branch", "sha": ""}}]]),
+            ("repos/upstream/project/pulls?state=open&per_page=100",
+             [[{"head": {"ref": "", "sha": ""}}]]),
+            ("repos/upstream/project/pulls?state=open&per_page=100",
              subprocess.TimeoutExpired(["gh", "api"], 60)),
         ]
         for endpoint, response in cases:
