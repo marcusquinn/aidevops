@@ -200,7 +200,19 @@ async function handleOpenAIAuthFailure(ctx) {
     patchAccount("openai", current.email, { accountId: requestAccountId });
   }
   console.error(`[aidevops] OpenAI provider: rejected token for ${currentEmail} — forcing one refresh`);
-  const previousAccess = current.access;
+  const requestToken = extractBearerToken(input, init);
+  if (current.previousAccess && requestToken === current.previousAccess && current.access !== requestToken) {
+    // Already refreshed but not adopted: retry adoption before another refresh.
+    if (await applyOpenAIPoolAccount(client, current)) {
+      patchAccount("openai", current.email, { previousAccess: null });
+      const adoptedResponse = await retryOpenAIRequest(ctx, current, "auth-adopt");
+      if (await isOpenAIAuthFailureResponse(adoptedResponse)) {
+        markRejectedTokenFailure("openai", current);
+      }
+      return adoptedResponse;
+    }
+  }
+  const previousAccess = requestToken || current.access;
   const refreshedAccess = await forceRefreshOpenAIToken(current);
   if (refreshedAccess) {
     if (!await applyOpenAIPoolAccount(client, current)) {
