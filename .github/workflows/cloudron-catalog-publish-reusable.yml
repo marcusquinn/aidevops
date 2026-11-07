@@ -65,6 +65,20 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/cloudron-cli" --ignore-scripts --no-audit --no-fund "cloudron@$CLI_VERSION"
           test "$(jq -r '.packages["node_modules/cloudron"].integrity' "$RUNNER_TEMP/cloudron-cli/package-lock.json")" = "$CLI_INTEGRITY"
           echo "$RUNNER_TEMP/cloudron-cli/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Install pinned ShellCheck
+        env:
+          SHELLCHECK_VERSION: "0.11.0"
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          set -euo pipefail
+          archive="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/$archive"
+          echo "${SHELLCHECK_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/shellcheck-bin"
+          install -m 0755 "$RUNNER_TEMP/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" "$RUNNER_TEMP/shellcheck-bin/shellcheck"
+          echo "$RUNNER_TEMP/shellcheck-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/shellcheck-bin/shellcheck" --version
       - name: Static and package-specific checks
         env:
           PACKAGE_CHECKS: ${{ inputs.package_checks }}
@@ -72,6 +86,7 @@ jobs:
           set -euo pipefail
           test -f Dockerfile
           jq -e '.manifestVersion == 2 and (.version | type == "string")' CloudronManifest.json
+          shellcheck --version
           git ls-files -z -- '*.sh' | xargs -0 -r shellcheck
           if [[ -n "$PACKAGE_CHECKS" ]]; then bash -euo pipefail -c "$PACKAGE_CHECKS"; fi
           git diff --exit-code

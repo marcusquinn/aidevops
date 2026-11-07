@@ -400,6 +400,17 @@ beside the catalog does not close this gap because the same compromised host can
 replace both. Full workflow and verification pattern:
 `reference/release-artifact-provenance.md`.
 
+Operators verifying an image published through the reusable workflow must name
+that workflow as signer. The certificate's signer workflow lives in the aidevops
+repository, not the package repository, so bare `--repo` (which assumes a
+same-repo signer) fails with `verifying with issuer "sigstore.dev"`:
+
+```bash
+gh attestation verify oci://<image@digest> --repo <owner>/<package-repo> \
+  --signer-workflow marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml \
+  --source-ref refs/heads/main [--source-digest <merge sha>] [--signer-digest <pinned aidevops sha>]
+```
+
 ## Distribution
 
 - **Dashboard**: add `CloudronVersions.json` URL under Community apps in dashboard settings — updates appear automatically
