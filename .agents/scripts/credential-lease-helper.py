@@ -49,10 +49,11 @@ def exec_command(args, command):
 def exec_owned_command(args, command):
     validate_options(args, command, ("directory", "run_id", "cwd", *OWNED_OPTIONS), ("recipient",))
     lease.require(args.configuration_fd == 3, "arguments")
-    return lease.execute_owned(args.directory, args.run_id, command, args.cwd,
-                               args.budget_seconds, args.select, args.owner_pid,
-                               args.owner_started, args.contract, args.contract_sha256,
-                               args.configuration_fd)
+    return lease.execute_owned(args.directory, args.run_id, command, {
+        "cwd": args.cwd, "budget": args.budget_seconds, "names": args.select,
+        "ownerPid": args.owner_pid, "ownerStarted": args.owner_started,
+        "contract": args.contract, "contractDigest": args.contract_sha256,
+        "configurationFd": args.configuration_fd})
 
 
 def main():

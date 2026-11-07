@@ -16,6 +16,9 @@ import unittest
 from unittest.mock import patch
 import uuid
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+owned = importlib.import_module("credential_lease_owned")
+
 SPEC = importlib.util.spec_from_file_location(
     "credential_lease", Path(__file__).resolve().parents[1] / "credential_lease.py")
 lease = importlib.util.module_from_spec(SPEC)
@@ -245,6 +248,12 @@ class LeaseTests(unittest.TestCase):
         lease.exclusive_write(path, data)
         return str(path), hashlib.sha256(data).hexdigest()
 
+    def owned_options(self, path="unused", digest="unused", names=None):
+        return {"cwd": "/", "budget": 1,
+                "names": names if names is not None else ["LOCAL_VERIFY_PASSWORD"],
+                "ownerPid": 123, "ownerStarted": "456", "contract": path,
+                "contractDigest": digest, "configurationFd": 3}
+
     def owned_execution(self, output=b'{"outcome":"matching"}', code=0, configuration=None):
         configuration = configuration or {}
         path, digest = self.owned_contract(names=list(configuration))
@@ -252,8 +261,8 @@ class LeaseTests(unittest.TestCase):
         with patch.object(lease, "assert_owned_ancestor") as owner, \
                 patch.object(lease, "_read_configuration", return_value=configuration), \
                 patch.object(lease, "_owned_child_output", return_value=(output, code)) as child:
-            result = lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
-                                         ["LOCAL_VERIFY_PASSWORD"], 123, "456", path, digest, 3)
+            result = lease.execute_owned(self.root, self.run_id, ["synthetic-child"],
+                                         self.owned_options(path, digest))
         return result, child.call_args, owner.call_count
 
     def test_owned_execution_selects_only_requested_values_and_explicit_configuration(self):
@@ -291,15 +300,14 @@ class LeaseTests(unittest.TestCase):
         with patch.object(lease, "assert_owned_ancestor", side_effect=ValueError("owner")), \
                 patch.object(lease, "open_values") as decrypt:
             with self.assertRaises(ValueError):
-                lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
-                                    ["LOCAL_VERIFY_PASSWORD"], 123, "456", "unused", "unused", 3)
+                lease.execute_owned(self.root, self.run_id, ["synthetic-child"], self.owned_options())
         decrypt.assert_not_called()
 
     def test_owned_execution_rejects_duplicate_selection_before_decryption(self):
         with patch.object(lease, "assert_owned_ancestor"), patch.object(lease, "open_values") as decrypt:
             with self.assertRaises(ValueError):
-                lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
-                                    ["VALUE", "VALUE"], 123, "456", "unused", "unused", 3)
+                lease.execute_owned(self.root, self.run_id, ["synthetic-child"],
+                                    self.owned_options(names=["VALUE", "VALUE"]))
         decrypt.assert_not_called()
 
     def test_contract_digest_and_private_file_are_enforced(self):
@@ -316,8 +324,8 @@ class LeaseTests(unittest.TestCase):
         self.seal()
         with patch.object(lease, "assert_owned_ancestor"), patch.object(lease, "open_values") as decrypt:
             with self.assertRaises(ValueError):
-                lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
-                                    ["LOCAL_VERIFY_PASSWORD"], 123, "456", path, digest, 3)
+                lease.execute_owned(self.root, self.run_id, ["synthetic-child"],
+                                    self.owned_options(path, digest))
         decrypt.assert_not_called()
 
     def test_configuration_pipe_is_memory_only_exact_and_loader_safe(self):
@@ -343,7 +351,7 @@ class LeaseTests(unittest.TestCase):
         with patch.object(lease.sys, "platform", "linux"), \
                 patch.object(lease.os, "getpid", return_value=27), \
                 patch.object(lease.os, "getpgrp", return_value=42), \
-                patch.object(lease, "_process_identity", side_effect=identities.__getitem__):
+                patch.object(owned, "_process_identity", side_effect=identities.__getitem__):
             lease.assert_owned_ancestor(42, "98")
             with self.assertRaises(ValueError):
                 lease.assert_owned_ancestor(42, "97")
@@ -378,8 +386,8 @@ class LeaseTests(unittest.TestCase):
         with patch.object(lease, "assert_owned_ancestor"), \
                 patch.object(lease, "_read_configuration", return_value={}), \
                 patch.object(lease, "_owned_child_output", side_effect=interrupted_output):
-            result = lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
-                                         ["LOCAL_VERIFY_PASSWORD"], 123, "456", path, digest, 3)
+            result = lease.execute_owned(self.root, self.run_id, ["synthetic-child"],
+                                         self.owned_options(path, digest))
         self.assertEqual(result, ({"status": "owned-child-unverified", "version": 1}, 1))
         self.assertIs(lease.signal.getsignal(lease.signal.SIGTERM), previous)
 
@@ -388,8 +396,8 @@ class LeaseTests(unittest.TestCase):
         self.seal()
         with patch.object(lease, "assert_owned_ancestor"), patch.object(lease, "open_values") as decrypt:
             with self.assertRaises(ValueError):
-                lease.execute_owned(self.root, self.run_id, ["synthetic-child"], "/", 1,
-                                    ["LOCAL_VERIFY_PASSWORD"], 123, "456", path, digest, 3)
+                lease.execute_owned(self.root, self.run_id, ["synthetic-child"],
+                                    self.owned_options(path, digest))
         decrypt.assert_not_called()
 
     def test_contract_refuses_hardlinks(self):
@@ -482,9 +490,10 @@ class CliTests(unittest.TestCase):
         result = {"status": "owned-child-unverified", "version": 1}
         with patch.object(lease, "execute_owned", return_value=(result, 1)) as owned:
             self.assertEqual(self.invoke(arguments), (1, result))
-        owned.assert_called_once_with("/synthetic/run", run_id, ["synthetic-child"], "/", 3,
-                                      ["FIRST_VALUE", "SECOND_VALUE"], 123, "456",
-                                      "/synthetic/run/result.json", "a" * 64, 3)
+        owned.assert_called_once_with("/synthetic/run", run_id, ["synthetic-child"], {
+            "cwd": "/", "budget": 3, "names": ["FIRST_VALUE", "SECOND_VALUE"],
+            "ownerPid": 123, "ownerStarted": "456", "contract": "/synthetic/run/result.json",
+            "contractDigest": "a" * 64, "configurationFd": 3})
         with patch.object(lease, "execute_owned", side_effect=ValueError("raw-sql-canary")):
             self.assertEqual(self.invoke(arguments), (1, {"status": "lease-refused", "version": 1}))
 

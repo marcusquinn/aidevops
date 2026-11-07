@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path
 import re
-import select
 import shutil
 import signal
 import stat
@@ -22,28 +21,18 @@ import sys
 import time
 import uuid
 
+from credential_lease_owned import assert_owned_ancestor, owned_child_output as _owned_child_output
+from credential_lease_protocol import (
+    LIMIT, closed_json as _closed_json, read_configuration as _read_configuration,
+    require, validate_contract, validate_values)
+
 VERSION = 1
-LIMIT = 65536
 FILES = ("credential-lease.pending.gpg", "credential-lease.gpg",
          "credential-lease.retired.gpg")
 RECEIPT = "credential-lease.json"
 CAPABILITIES = {"version": VERSION, "encryptedOnly": True, "createOnly": True,
                  "conditionalRemoval": True, "plaintextFiles": False,
                  "ownedProcessGroup": True, "scopedOwnedExecution": True}
-# Common loader, interpreter, shell and Git execution hooks. Not exhaustive:
-# seal only the names the reviewed child command actually expects.
-RESERVED_NAMES = frozenset({
-    "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "ENV", "GNUPGHOME", "SHELLOPTS",
-    "GCONV_PATH", "IFS", "PS4", "PROMPT_COMMAND", "GIT_SSH", "GIT_SSH_COMMAND",
-    "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EXTERNAL_DIFF", "GIT_EXEC_PATH",
-    "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS"})
-RESERVED_PREFIXES = r"(?:LD_|DYLD_|NODE_|PYTHON|BASH_|AIDEVOPS_|GIT_CONFIG|PERL5|RUBY)"
-
-
-def require(condition, reason):
-    """Enforce a precondition even when Python assertions are disabled."""
-    if not condition:
-        raise ValueError(reason)
 
 
 def executable(name):
@@ -133,20 +122,6 @@ def exclusive_write(path, data):
         return os.fstat(descriptor)
     finally:
         os.close(descriptor)
-
-
-def validate_values(values):
-    require(isinstance(values, dict), "values")
-    require(1 <= len(values) <= 16, "values")
-    for name, value in values.items():
-        require(re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", name), "values")
-        require(isinstance(value, str), "values")
-        require(value, "values")
-        require("\0" not in value, "values")
-        require(name not in RESERVED_NAMES, "values")
-        require(not re.match(RESERVED_PREFIXES, name), "values")
-    require(len(json.dumps(values).encode()) <= LIMIT, "values")
-    return values
 
 
 def crypt(data, recipient=None):
@@ -347,44 +322,6 @@ def execute(directory, run_id, command, cwd, budget):
             "version": VERSION}, 0 if returncode == 0 else 1
 
 
-def _unique_object(pairs):
-    result = {}
-    for key, value in pairs:
-        require(key not in result, "duplicate-key")
-        result[key] = value
-    return result
-
-
-def _closed_json(data):
-    return json.loads(data, object_pairs_hook=_unique_object)
-
-
-def _process_identity(pid):
-    path = Path("/proc") / str(pid)
-    require(path.stat().st_uid == os.getuid(), "process-owner")
-    fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
-    require(fields[0] not in {"Z", "X"}, "process-stopped")
-    return {"parent": int(fields[1]), "group": int(fields[2]), "started": fields[19]}
-
-
-def assert_owned_ancestor(pid, started):
-    """Verify a live same-user ancestor/group, not an authorization or drain receipt."""
-    require(sys.platform == "linux", "supervision-platform")
-    require(type(pid) is int and pid > 1 and pid != os.getpid(), "process-owner")
-    require(isinstance(started, str) and re.fullmatch(r"[0-9]+", started), "process-owner")
-    require(os.getpgrp() == pid, "process-group")
-    current = os.getpid()
-    for _ in range(64):
-        identity = _process_identity(current)
-        require(identity["group"] == pid, "process-group")
-        if current == pid:
-            require(identity["started"] == started, "process-reused")
-            return
-        require(identity["parent"] > 1 and identity["parent"] != current, "process-ancestor")
-        current = identity["parent"]
-    raise ValueError("process-ancestor")
-
-
 def _execution_contract(directory, run_id, path, digest):
     """Pin a private, non-secret set of exact outputs; never learn labels from stdout."""
     require(re.fullmatch(r"[a-f0-9]{64}", digest), "contract")
@@ -395,115 +332,15 @@ def _execution_contract(directory, run_id, path, digest):
         data, info = read_private(path, LIMIT)
         require(info.st_nlink == 1, "contract")
         require(hashlib.sha256(data).hexdigest() == digest, "contract")
-    contract = _closed_json(data)
-    require(isinstance(contract, dict) and set(contract) == {
-        "version", "configurationNames", "results"}, "contract")
-    require(type(contract["version"]) is int and contract["version"] == 1, "contract")
-    names = contract["configurationNames"]
-    require(isinstance(names, list) and len(names) <= 16, "contract")
-    require(all(isinstance(name, str) for name in names) and len(set(names)) == len(names), "contract")
-    for name in names:
-        if name != "NODE_ENV":
-            validate_values({name: "contract-placeholder"})
-    results = contract["results"]
-    require(isinstance(results, list) and 1 <= len(results) <= 64, "contract")
-    for entry in results:
-        require(isinstance(entry, dict) and set(entry) == {"exitCode", "value"}, "contract")
-        require(type(entry["exitCode"]) is int and 0 <= entry["exitCode"] <= 255, "contract")
-        value = entry["value"]
-        require(isinstance(value, dict) and 1 <= len(value) <= 8, "contract")
-        for key, literal in value.items():
-            require(re.fullmatch(r"[a-z][A-Za-z0-9]{0,63}", key), "contract")
-            require(type(literal) is bool or
-                    (type(literal) is int and 0 <= literal <= 9007199254740991) or
-                    (isinstance(literal, str) and
-                     re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", literal)), "contract")
-    return contract
+    return validate_contract(_closed_json(data))
 
 
-def _read_configuration(descriptor, names):
-    """A bounded memory pipe, never argv, dotenv, a plaintext file or ambient lookup."""
-    require(type(descriptor) is int and descriptor >= 3, "configuration")
-    mode = os.fstat(descriptor).st_mode
-    require(stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode), "configuration")
-    data = bytearray()
-    deadline = time.monotonic() + 5
-    try:
-        os.set_blocking(descriptor, False)
-        while True:
-            remaining = deadline - time.monotonic()
-            require(remaining > 0 and select.select([descriptor], [], [], remaining)[0], "configuration")
-            try:
-                part = os.read(descriptor, min(4096, LIMIT + 1 - len(data)))
-            except BlockingIOError:
-                continue  # Another reader cannot turn readiness into an unbounded read.
-            if not part:
-                break
-            data.extend(part)
-            require(len(data) <= LIMIT, "configuration")
-    finally:
-        os.close(descriptor)
-    values = _closed_json(data)
-    require(isinstance(values, dict) and set(values) == set(names), "configuration")
-    for name, value in values.items():
-        if name == "NODE_ENV":
-            require(value in ("development", "test"), "configuration")
-        else:
-            validate_values({name: value})
-    return values
-
-
-def _stop_direct_child(child):
-    # The unreaped direct PID remains pinned. The caller's owner drains the GROUP.
-    child.terminate()
-    try:
-        child.wait(timeout=1)
-    except subprocess.TimeoutExpired:
-        child.kill()
-        child.wait(timeout=5)
-
-
-def _owned_child_output(command, cwd, environment, budget, received):
-    child = None
-    finished = False
-    data = bytearray()
-    try:
-        child = subprocess.Popen(  # nosec B603 -- reviewed argv, no shell or new process group
-            command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        require(os.getpgid(child.pid) == os.getpgrp(), "child-process-group")
-        os.set_blocking(child.stdout.fileno(), False)
-        deadline = time.monotonic() + budget
-        eof = False
-        while not received and time.monotonic() < deadline:
-            if not eof and select.select([child.stdout], [], [], 0.05)[0]:
-                part = os.read(child.stdout.fileno(), 4096)
-                eof = not part
-                data.extend(part)
-                if len(data) > LIMIT:
-                    break
-            elif eof:
-                time.sleep(0.05)
-            # Do not reap a PID we might still have to signal on timeout/overflow.
-            exited = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-            if eof and exited is not None:
-                require(os.getpgid(child.pid) == os.getpgrp(), "child-process-group")
-                code = child.wait(timeout=5)
-                finished = True
-                return bytes(data), code
-        return None, None
-    finally:
-        if child is not None:
-            try:
-                if not finished:
-                    _stop_direct_child(child)
-            finally:
-                child.stdout.close()
-
-
-def execute_owned(directory, run_id, command, cwd, budget, names,
-                  owner_pid, owner_started, contract_path, contract_digest, configuration_fd):
+def execute_owned(directory, run_id, command, options):
     """Reinject inside an existing bounded owner; never create/claim another group."""
+    cwd, budget, names = options["cwd"], options["budget"], options["names"]
+    owner_pid, owner_started = options["ownerPid"], options["ownerStarted"]
+    contract_path, contract_digest = options["contract"], options["contractDigest"]
+    configuration_fd = options["configurationFd"]
     require(command and 1 <= budget <= 3600, "command")
     require(sys.version_info >= (3, 11), "supervision-platform")
     assert_owned_ancestor(owner_pid, owner_started)

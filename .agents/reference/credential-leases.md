@@ -84,6 +84,15 @@ Except for the original minimal locale/path/home allowlist, no ambient values
 survive. Load and validate configuration before this call; the child must not
 reload dotenv after injection.
 
+Ship the launcher together with `credential_lease.py`,
+`credential_lease_owned.py` and `credential_lease_protocol.py` from the same
+reviewed revision. Source attestations must cover all four files, including the
+transitive imports; pinning only the launcher and core module is insufficient.
+The protocol module contains closed-data validation; the owned-process module
+contains ancestor checks and bounded direct-child transport, without decryption.
+This internal split and structured execution request do not change CLI options,
+capabilities, result templates or the existing owner's cleanup responsibility.
+
 An example **non-secret** contract is:
 
 ```json
