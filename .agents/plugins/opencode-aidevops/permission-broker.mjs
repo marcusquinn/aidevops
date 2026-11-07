@@ -36,14 +36,15 @@ export function sanitizePermissionText(value, options = {}) {
   return sanitized.slice(0, options.maxLength || MAX_PATTERN_LENGTH);
 }
 
-function classifyRisk(permission, patterns, tool) {
+function classifyRisk(permission, patterns, tool, target = "") {
   const combined = patterns.join("\n");
   let risk;
   if (!PATTERN_CAPABLE_PERMISSIONS.has(permission)) {
     risk = { level: "critical", grantable: false, reason: "permission cannot be represented as an exact OpenCode pattern rule" };
   } else if (patterns.length === 0) {
     risk = { level: "critical", grantable: false, reason: "request omitted an exact permission pattern" };
-  } else if (patterns.some((pattern) => FORBIDDEN_PATTERN.test(pattern))) {
+  } else if (patterns.some((pattern) => FORBIDDEN_PATTERN.test(pattern))
+    || (typeof target === "string" && FORBIDDEN_PATTERN.test(target))) {
     risk = { level: "critical", grantable: false, reason: "sensitive credential or signing-key location" };
   } else if (["bash", "edit", "write"].includes(tool) || ["bash", "edit"].includes(permission)) {
     risk = { level: "high", grantable: true, reason: "capability can modify or execute content" };
@@ -159,7 +160,7 @@ function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath,
     patterns,
     tool,
     intent: sanitizePermissionText(toolContext.intent || raw?.metadata?.description || raw?.title || "", { ...options, maxLength: MAX_INTENT_LENGTH }),
-    risk: classifyRisk(permission, patterns, tool),
+    risk: classifyRisk(permission, patterns, tool, toolContext.target || raw?.metadata?.filepath || raw?.metadata?.path || ""),
     opencode: {
       request_id: sanitizePermissionText(raw?.id || "", { ...options, maxLength: 100 }),
       session_id: sanitizePermissionText(raw?.sessionID || "", { ...options, maxLength: 100 }),
