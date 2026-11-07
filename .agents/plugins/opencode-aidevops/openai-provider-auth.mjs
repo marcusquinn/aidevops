@@ -125,7 +125,11 @@ export function extractBearerToken(input, init) {
 
 export function resolveOpenAIAccount(accessToken) {
   const accounts = getAccounts("openai");
-  if (accessToken) return accounts.find((account) => account.access === accessToken) ?? null;
+  if (accessToken) {
+    return accounts.find((account) => account.access === accessToken)
+      ?? accounts.find((account) => account.previousAccess === accessToken)
+      ?? null;
+  }
   return [...accounts].sort((a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0))[0] ?? null;
 }
 
@@ -196,9 +200,15 @@ async function handleOpenAIAuthFailure(ctx) {
     patchAccount("openai", current.email, { accountId: requestAccountId });
   }
   console.error(`[aidevops] OpenAI provider: rejected token for ${currentEmail} — forcing one refresh`);
+  const previousAccess = current.access;
   const refreshedAccess = await forceRefreshOpenAIToken(current);
   if (refreshedAccess) {
-    if (!await applyOpenAIPoolAccount(client, current)) return response;
+    if (!await applyOpenAIPoolAccount(client, current)) {
+      // Keep the provider's old bearer resolvable so a later request can retry adoption.
+      patchAccount("openai", current.email, { previousAccess });
+      return response;
+    }
+    patchAccount("openai", current.email, { previousAccess: null });
     const retryResponse = await retryOpenAIRequest(ctx, current, "auth-refresh");
     if (await isOpenAIAuthFailureResponse(retryResponse)) {
       markRejectedTokenFailure("openai", current);
