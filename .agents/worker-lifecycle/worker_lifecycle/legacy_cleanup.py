@@ -240,6 +240,8 @@ def process_item(store, item, repositories, adapter, options):
         elif not pending and not os.path.lexists(item["path"]):
             # No removal or preservation is claimed. Admission cleanup separately
             # reconciles absent generations using its existing identity guards.
+            # An interrupted host-probe removal is recovered or reported first.
+            recover_interrupted_probe(store, item, options.apply)
             outcome["status"] = "already-absent"
         elif item["modern"]:
             return take_over_managed(store, item, repositories, adapter, options)
@@ -257,17 +259,51 @@ def process_item(store, item, repositories, adapter, options):
     return outcome, eligible, attempted
 
 
-def prepare_reconstructible_probe(store, connection, host, plan):
-    """Recover removed probes; cancel unremoved attempts only by native identity."""
-    if receipt(connection, host, "verified") is not None:
-        return False
+def host_probe(store):
+    """Return the stable per-host reconstructible probe operation id."""
+    return str(uuid5(UUID(store.installation_id()),
+                     "reconstructible-host-probe:" + socket.gethostname()))
+
+
+def latest_probe_plan(connection, host):
+    """Return the newest journaled host probe plan payload, or None."""
     row = connection.execute(
         "SELECT payload FROM events WHERE json_extract(payload,'$.type')=? "
         "AND json_extract(payload,'$.host')=? ORDER BY sequence DESC LIMIT 1",
         ("reconstructible-host-probe-plan", host),
     ).fetchone()
-    if row:
-        previous = json.loads(row[0])
+    return json.loads(row[0]) if row else None
+
+
+def interrupted_probe(store, connection, item):
+    """True when this absent source is an unverified, unretired host probe."""
+    host = host_probe(store)
+    previous = latest_probe_plan(connection, host)
+    return bool(
+        previous and previous["plan"]["source"] == item["path"]
+        and receipt(connection, host, "verified") is None
+        and receipt(connection, operation_id(store, item["path"]), "retired") is None)
+
+
+def recover_interrupted_probe(store, item, apply):
+    """Recover an interrupted probe removal; preview reports verification pending."""
+    host = host_probe(store)
+    with store.connection() as connection:
+        if not interrupted_probe(store, connection, item):
+            return
+    if not apply:
+        raise ValueError("reconstructible-probe-verification-pending")
+    with _lock(store, host), store.connection(write=True) as connection:
+        if interrupted_probe(store, connection, item):
+            prepare_reconstructible_probe(store, connection, host, None)
+
+
+def prepare_reconstructible_probe(store, connection, host, plan):
+    """Recover removed probes; cancel unremoved attempts only by native identity."""
+    if receipt(connection, host, "verified") is not None:
+        return False
+    previous = latest_probe_plan(connection, host)
+    if previous:
         original = previous["plan"]
         if not os.path.lexists(original["source"]):
             try:
@@ -327,8 +363,7 @@ def process_reconstructible(store, item, repositories, adapter, options):
         with store.connection() as connection:
             reconstructible_plan(connection, open_prs=open_pull_requests)
         return outcome, 1, 0
-    probe = str(uuid5(UUID(store.installation_id()),
-                      "reconstructible-host-probe:" + socket.gethostname()))
+    probe = host_probe(store)
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         # GitHub lookups release the writer (GH#36921); this plan is only journaled.

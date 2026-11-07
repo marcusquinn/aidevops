@@ -410,6 +410,19 @@ class ReconstructibleContract(unittest.TestCase):
         result, _, _ = self.retire()
         self.assertEqual(result["status"], "retired", result)
 
+    def test_interrupted_probe_removal_is_not_reported_already_absent(self):
+        with patch.object(cleanup, "verify_reconstructible", side_effect=ValueError("probe-failed")):
+            self.retire()
+        self.assertFalse(self.target.exists())
+        self.options = CleanupOptions(self.output, apply=False, min_age=0)
+        result, _, _ = self.retire()
+        self.assertEqual(result["reason"], "reconstructible-probe-verification-pending", result)
+        self.options = CleanupOptions(self.output, apply=True, min_age=0)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "already-absent", result)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "already-retired", result)
+
     def test_failed_first_probe_blocks_batch(self):
         with patch.object(cleanup, "verify_reconstructible", side_effect=ValueError("probe-failed")):
             result, _, _ = self.retire()
