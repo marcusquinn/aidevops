@@ -305,6 +305,135 @@ _required_contexts_from_rulesets_for_default_branch() {
 }
 
 #######################################
+# Extract a bounded HTTP status hint from captured gh diagnostics. Only the
+# three-digit status is returned so logs never carry response bodies.
+#
+# Args: $1=captured stdout+stderr of a failed read
+# Stdout: status code, or "none"
+#######################################
+_pmrc_http_status_hint() {
+	local response="$1"
+	local status="none"
+	if [[ "$response" =~ \(HTTP\ ([1-5][0-9][0-9])\) ]]; then
+		status="${BASH_REMATCH[1]}"
+	elif [[ "$response" =~ HTTP(/[0-9.]+)?[[:space:]:]+([1-5][0-9][0-9]) ]]; then
+		status="${BASH_REMATCH[2]}"
+	elif [[ "$response" =~ \"status\"[[:space:]]*:[[:space:]]*\"?([1-5][0-9][0-9]) ]]; then
+		status="${BASH_REMATCH[1]}"
+	fi
+	printf '%s' "$status"
+	return 0
+}
+
+#######################################
+# Resolve classic requirements from the readable branch metadata endpoint after
+# the classic settings read failed. Settings may be hidden from a collaborator
+# even on a protected branch, and rulesets alone cannot prove classic
+# requirements are absent (GH#34965). The branch read is independent evidence:
+# any non-authoritative shape fails closed.
+#
+# Args: $1=repo_slug, $2=default_branch, $3=classified (1|0),
+#       $4=sanitized failure detail for unclassified settings failures
+# Stdout: compact classic requirements JSON ({contexts:[...]} / {checks:[...]})
+# Returns: 0=resolved, 1=unresolved (caller fails closed)
+#######################################
+_pmrc_classic_requirements_from_branch_metadata() {
+	local repo_slug="$1"
+	local default_branch="$2"
+	local classified="$3"
+	local failure_detail="$4"
+	local branch_resp="" requirements=""
+	local unresolved_prefix="branch protection API failed for ${repo_slug} (${failure_detail}) and"
+	local unresolved_suffix="caller will fail closed (t2922, GH#37026)"
+	if [[ "$classified" == 1 ]]; then
+		unresolved_prefix="branch metadata"
+		unresolved_suffix="caller will fail closed (GH#34965)"
+	fi
+
+	branch_resp=$(_pmrc_gh_read gh api "repos/${repo_slug}/branches/${default_branch}" 2>&1) || {
+		_pmrc_emit_local_deferral "$branch_resp"
+		if [[ "$classified" == 1 ]]; then
+			aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch metadata unavailable for ${repo_slug} — ${unresolved_suffix}"
+		else
+			aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: ${unresolved_prefix} branch metadata unavailable — ${unresolved_suffix}"
+		fi
+		return 1
+	}
+	requirements=$(printf '%s' "$branch_resp" | jq -ce \
+		--arg array "$PMRC_JSON_ARRAY" --arg obj "$PMRC_JSON_OBJECT" --arg string "$PMRC_JSON_STRING" '
+		if type != $obj then error("invalid branch")
+		elif .protected == false then {contexts: []}
+		elif .protected == true then
+			.protection.required_status_checks |
+			if type == $obj and
+				((.contexts | type == $array) or (.checks | type == $array)) and
+				(.contexts == null or (.contexts | type == $array and all(.[]; type == $string and length > 0))) and
+				(.checks == null or (.checks | type == $array and all(.[]; type == $obj and (.context | type == $string and length > 0))))
+			then . else error("unknown classic requirements") end
+		else error("unknown protection state") end
+	' 2>/dev/null) || {
+		if [[ "$classified" == 1 ]]; then
+			aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch metadata cannot resolve classic requirements for ${repo_slug} — ${unresolved_suffix}"
+		else
+			aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: ${unresolved_prefix} branch metadata cannot resolve classic requirements — ${unresolved_suffix}"
+		fi
+		return 1
+	}
+	if [[ "$classified" != 1 ]]; then
+		aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch protection settings read failed for ${repo_slug} (${failure_detail}); branch metadata resolved classic requirements (GH#37026)"
+	fi
+	printf '%s\n' "$requirements"
+	return 0
+}
+
+#######################################
+# Classify a failed classic settings read and recover classic requirements from
+# branch metadata when that is safe.
+#
+# Local admission/cooldown deferrals (exit 75) and timeouts (exit 124) never
+# reached a classifiable HTTP response: log them as deferrals and spend no
+# further read. Every other failure falls back to branch metadata. GH#37026:
+# the production transport stack can return exit 1 without the 404 markers
+# GH#36866 matched, so the fallback must not depend on matching error text.
+#
+# Args: $1=repo_slug, $2=default_branch, $3=settings read exit code,
+#       $4=captured stdout+stderr of the settings read
+# Stdout: compact classic requirements JSON
+# Returns: 0=resolved, 1=unresolved (caller fails closed)
+#######################################
+_pmrc_classic_requirements_after_settings_failure() {
+	local repo_slug="$1"
+	local default_branch="$2"
+	local protection_rc="$3"
+	local protection_resp="$4"
+	local http_status="" classified=0
+
+	_pmrc_emit_local_deferral "$protection_resp"
+	http_status=$(_pmrc_http_status_hint "$protection_resp")
+	case "$protection_rc" in
+	75)
+		aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch protection read deferred locally for ${repo_slug} (exit 75, no HTTP response) — caller will fail closed until the next cycle (GH#37026)"
+		return 1
+		;;
+	124)
+		aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch protection read timed out for ${repo_slug} (exit 124) — caller will fail closed until the next cycle (GH#37026)"
+		return 1
+		;;
+	esac
+
+	# GH#36866: accept the JSON body's own 404 markers as well as gh's stderr.
+	if [[ "$http_status" == 404 ]] ||
+		grep -qiE 'HTTP 404|Not Found|Branch not protected' <<<"$protection_resp"; then
+		classified=1
+	elif _pmrc_private_plan_feature_unavailable "$protection_resp"; then
+		classified=1
+	fi
+	_pmrc_classic_requirements_from_branch_metadata "$repo_slug" "$default_branch" "$classified" \
+		"exit ${protection_rc}, http_status=${http_status}"
+	return $?
+}
+
+#######################################
 # Resolve required status check contexts for a repository's default branch from
 # classic branch protection plus active matching repository rulesets.
 #
@@ -329,44 +458,8 @@ _required_contexts_for_default_branch_uncached() {
 		"repos/${repo_slug}/branches/${default_branch}/protection/required_status_checks" \
 		2>&1) || protection_rc=$?
 	if [[ "$protection_rc" -ne 0 ]]; then
-		_pmrc_emit_local_deferral "$protection_resp"
-		local classic_unavailable_reason=""
-		# GH#36866: transport layers may drop gh's stderr "(HTTP 404)" line and
-		# leave only the JSON body, so also accept the body's own 404 markers.
-		if grep -qiE 'HTTP 404|Not Found|Branch not protected|"status"[[:space:]]*:[[:space:]]*"?404"?' <<<"$protection_resp"; then
-			classic_unavailable_reason="HTTP 404"
-		elif _pmrc_private_plan_feature_unavailable "$protection_resp"; then
-			classic_unavailable_reason="private-plan unavailable (HTTP 403)"
-		fi
-		if [[ -n "$classic_unavailable_reason" ]]; then
-			# Settings may be hidden from a collaborator even on a protected branch.
-			# Rulesets alone cannot prove classic requirements are absent (GH#34965).
-			local branch_resp=""
-			branch_resp=$(_pmrc_gh_read gh api "repos/${repo_slug}/branches/${default_branch}" 2>&1) || {
-				_pmrc_emit_local_deferral "$branch_resp"
-				aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch metadata unavailable for ${repo_slug} — caller will fail closed (GH#34965)"
-				return 1
-			}
-			protection_resp=$(printf '%s' "$branch_resp" | jq -ce \
-				--arg array "$PMRC_JSON_ARRAY" --arg obj "$PMRC_JSON_OBJECT" --arg string "$PMRC_JSON_STRING" '
-				if type != $obj then error("invalid branch")
-				elif .protected == false then {contexts: []}
-				elif .protected == true then
-					.protection.required_status_checks |
-					if type == $obj and
-						((.contexts | type == $array) or (.checks | type == $array)) and
-						(.contexts == null or (.contexts | type == $array and all(.[]; type == $string and length > 0))) and
-						(.checks == null or (.checks | type == $array and all(.[]; type == $obj and (.context | type == $string and length > 0))))
-					then . else error("unknown classic requirements") end
-				else error("unknown protection state") end
-			' 2>/dev/null) || {
-				aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch metadata cannot resolve classic requirements for ${repo_slug} — caller will fail closed (GH#34965)"
-				return 1
-			}
-		else
-			aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch protection API failed for ${repo_slug} (exit ${protection_rc}) — caller will fail closed (t2922)"
-			return 1
-		fi
+		protection_resp=$(_pmrc_classic_requirements_after_settings_failure \
+			"$repo_slug" "$default_branch" "$protection_rc" "$protection_resp") || return 1
 	fi
 
 	local classic_contexts="" ruleset_contexts=""
