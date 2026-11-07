@@ -70,7 +70,7 @@
 
   "chatgpt_oauth_restrictions": {
     "_comment": "OpenCode ChatGPT OAuth (Codex auth) supports fewer models than the /v1/models cache lists. These model IDs return HTTP 400 ('not supported when using Codex with a ChatGPT account') or HTTP 404 ('Model not found') at inference time despite appearing in the models cache. model-availability-probe-lib.sh enforces this denylist before marking cache-positive models as available. gpt-5.6-sol-pro passed a live OAuth smoke test on 2026-07-10 but remains excluded from worker routing because OpenAI publishes no Sol Pro API price or comparative benchmark. Historical source: GH#21990 smoke tests (2026-04-30).",
-    "openai_unsupported": ["gpt-5.5-pro", "gpt-5.4-pro", "gpt-5.2-pro", "o3-pro"]
+    "openai_unsupported": ["gpt-5.5-pro", "gpt-5.4-pro", "gpt-5.2-pro", "o3-pro", "gpt-6.1-sol", "gpt-6-astra"]
   },
 
   "settings": {

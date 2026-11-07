@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import {
   loadModelRouting,
+  mergeModelRouting,
   nextRoutingTier,
   routingProfile,
   routingTierForModel,
@@ -26,6 +27,28 @@ import {
   createCompactionResidencyWarning,
 } from "../compaction-routing.mjs";
 import { authSignatureFromHeaders, clearModelUnavailable, isModelUnavailable, markModelUnavailable } from "../model-unavailability.mjs";
+
+test("ChatGPT OAuth restrictions survive overlays and do not restrict API keys", () => {
+  const shipped = loadModelRouting([new URL("../../../configs/model-routing-table.json", import.meta.url)]);
+  const routing = mergeModelRouting(shipped, { tiers: { standard: { models: [
+    "openai/gpt-6.1-sol", "anthropic/claude-sonnet-5-5",
+  ] } } });
+  const providerState = { connected: ["openai", "anthropic"], all: [
+    { id: "openai", models: { "gpt-6.1-sol": { id: "gpt-6.1-sol" } } },
+    { id: "anthropic", models: { "claude-sonnet-5-5": { id: "claude-sonnet-5-5" } } },
+  ] };
+  assert.ok(routing.chatgptOAuthUnsupported.includes("gpt-6-astra"));
+  assert.equal(selectConnectedRoutingCandidate(routing, "standard", providerState, undefined,
+    { openAIAuthType: "oauth" }), "anthropic/claude-sonnet-5-5");
+  assert.equal(selectConnectedRoutingCandidate(routing, "standard", providerState, undefined,
+    { openAIAuthType: "api" }), "openai/gpt-6.1-sol");
+  const openAIOnly = { ...providerState, connected: ["openai"] };
+  assert.equal(selectConnectedRoutingCandidate(routing, "standard", openAIOnly, undefined,
+    { openAIAuthType: "oauth" }), "");
+  const overridden = mergeModelRouting(routing, { chatgpt_oauth_restrictions: { openai_unsupported: [] } });
+  assert.equal(selectConnectedRoutingCandidate(overridden, "standard", openAIOnly, undefined,
+    { openAIAuthType: "oauth" }), "openai/gpt-6.1-sol");
+});
 
 test("a model serving several tiers resolves by observed variant", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));
