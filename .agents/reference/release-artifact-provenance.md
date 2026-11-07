@@ -88,6 +88,10 @@ expected ref.
       --source-ref refs/heads/main
 ```
 
+When signing goes through a reusable (`workflow_call`) workflow, the signer
+workflow is in the reusable workflow's repository: `--signer-workflow` must name
+that repository, and bare `--repo <caller-repo>` fails.
+
 Authenticate to the registry when verification requires it. Verify the digest
 subject, not the release tag. Keep `push-to-registry: true` when operators need
 to retrieve the attestation with the OCI artifact.
