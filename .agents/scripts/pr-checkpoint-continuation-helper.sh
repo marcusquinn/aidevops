@@ -778,6 +778,7 @@ _pcc_approval_template() {
 		elif [[ "$option" =~ ^--diagnostic-tooling-commit=([0-9a-f]{40}|[0-9a-f]{64})$ && -z "$tooling_commit" ]]; then
 			tooling_commit="${option#--diagnostic-tooling-commit=}"
 		else
+			printf 'approval-template: unsupported, duplicate or malformed option\n' >&2
 			return 2
 		fi
 	done
