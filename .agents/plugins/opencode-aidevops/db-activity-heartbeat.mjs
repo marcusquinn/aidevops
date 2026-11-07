@@ -9,11 +9,13 @@
 // listed here. Metadata only: session IDs, counts and timestamps.
 
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { readFile, readdir, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { ACTIVE_SESSION_STATES, sessionIDFrom } from "./session-turn-state.mjs";
+import { processStartToken } from "./process-liveness.mjs";
 
 const MAX_TRACKED_SESSIONS = 64;
 const DEFAULT_THROTTLE_MS = 30_000;
@@ -83,6 +85,7 @@ class DbActivityHeartbeat {
   constructor(options = {}) {
     this.dir = options.dir || defaultActivityDir(options.env);
     this.pid = options.pid ?? process.pid;
+    this.startToken = processStartToken(this.pid);
     this.instance = options.instance || randomUUID().slice(0, 8);
     this.now = options.now || (() => Date.now());
     this.throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
@@ -107,6 +110,7 @@ class DbActivityHeartbeat {
   snapshot() {
     return {
       pid: this.pid,
+      process_start_token: this.startToken,
       instance: this.instance,
       busy_sessions: this.busy.size,
       last_activity_epoch: Math.floor(this.lastActivityAt / 1000),
@@ -199,10 +203,47 @@ export function createDbActivityHeartbeat(options = {}) {
   return new DbActivityHeartbeat(options);
 }
 
+// Unknown liveness or identity is not proof of staleness. Legacy files for a
+// live PID are retained because they have no identity to compare.
+async function pruneStaleHeartbeats(dir, ownFile) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const match = /^(\d+)-[A-Za-z0-9_-]+\.json$/.exec(entry.name);
+    if (!entry.isFile() || !match) continue;
+    const pid = Number(match[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    const file = join(dir, entry.name);
+    if (file === ownFile) continue;
+    try {
+      let dead = false;
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        dead = error.code === "ESRCH";
+      }
+      if (!dead) {
+        const data = JSON.parse(await readFile(file, "utf8"));
+        const current = processStartToken(pid);
+        dead = typeof data.process_start_token === "string" && !!data.process_start_token
+          && !!current && current !== data.process_start_token;
+      }
+      if (dead) await unlink(file);
+    } catch {
+      // Files may disappear, be unreadable, or contain incomplete legacy data.
+    }
+  }
+}
+
 /** Install the process-wide heartbeat once and remove it on normal exit. */
 export function installDbActivityHeartbeat(options = {}) {
   const heartbeat = createDbActivityHeartbeat(options);
   heartbeat.write();
+  void pruneStaleHeartbeats(heartbeat.dir, heartbeat.file);
   process.once("exit", () => heartbeat.remove());
   return heartbeat;
 }
