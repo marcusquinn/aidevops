@@ -29,6 +29,7 @@ import tabby_session_transport as transport
 import tabby_sessions as app
 import tabby_session_hosts as host_app
 import tabby_host_files as host_files
+import tabby_host_ssh_scan as ssh_scan
 
 
 def host(name="alpha", **kwargs):
@@ -417,6 +418,10 @@ class HostManagementTests(unittest.TestCase):
         self.home = mock.patch("pathlib.Path.home", return_value=self.root)
         self.home.start()
         self.addCleanup(self.home.stop)
+        self.system_ssh = self.root / "etc/ssh/ssh_config"
+        system = mock.patch.object(host_app, "SYSTEM_SSH_CONFIG", self.system_ssh)
+        system.start()
+        self.addCleanup(system.stop)
 
     def run_host(self, *args, allow_temp=True):
         arguments = ["host", *args, "--config", str(self.inventory)]
@@ -496,6 +501,86 @@ class HostManagementTests(unittest.TestCase):
         self.run_host("remove", "alpha", "--ssh")
         self.assertNotIn(b"Host alpha", self.managed.read_bytes())
 
+    def test_root_owned_include_is_scanned_but_not_a_write_target(self):
+        self.ssh.parent.mkdir()
+        included = self.ssh.parent / "root.conf"
+        self.ssh.write_text("Include root.conf\n")
+        self.ssh.chmod(0o600)
+        included.write_text("Host unrelated\n  HostName existing.invalid\n")
+        included.chmod(0o644)
+        original_stat = Path.stat
+
+        def root_owned(path, *args, **kwargs):
+            info = original_stat(path, *args, **kwargs)
+            if path == included:
+                fields = list(info)
+                fields[4] = 0
+                return os.stat_result(fields)
+            return info
+
+        with mock.patch.object(Path, "stat", root_owned), mock.patch.object(os, "getuid", return_value=12345):
+            self.assertFalse(ssh_scan.conflicts(included, "alpha", self.managed))
+            with self.assertRaisesRegex(config.SessionError, "owned regular file"):
+                host_files.snapshot(included)
+        with mock.patch.object(Path, "stat", root_owned):
+            self.add()
+            included.write_text("Host beta\n  HostName existing.invalid\n")
+            with self.assertRaisesRegex(config.SessionError, "user-owned"):
+                self.add("beta")
+
+    def test_system_alias_and_nested_relative_includes_prevent_mutation(self):
+        self.system_ssh.parent.mkdir(parents=True)
+        included = self.system_ssh.parent / "conf.d"
+        included.mkdir()
+        nested = included / "alias.conf"
+        for content in ("Host alpha\n  HostName existing.invalid\n",
+                        "Include conf.d/*.conf\n"):
+            with self.subTest(content=content):
+                self.system_ssh.write_text(content)
+                self.system_ssh.chmod(0o644)
+                nested.write_text("Include nested.conf\n")
+                nested.chmod(0o644)
+                target = self.system_ssh.parent / "nested.conf"
+                target.write_text("Host alpha\n  HostName existing.invalid\n")
+                target.chmod(0o644)
+                with self.assertRaisesRegex(config.SessionError, "system SSH configuration"):
+                    self.add()
+                self.assertFalse(self.inventory.exists())
+                self.assertFalse(self.ssh.exists())
+                self.assertFalse(self.managed.exists())
+                self.assertEqual(self.system_ssh.read_text(), content)
+
+    def test_system_global_defaults_and_unrelated_alias_are_allowed(self):
+        self.system_ssh.parent.mkdir(parents=True)
+        original = "Host *\n  User baseline\nHost unrelated\n  HostName existing.invalid\n"
+        self.system_ssh.write_text(original)
+        self.system_ssh.chmod(0o644)
+        self.add()
+        self.assertEqual(self.system_ssh.read_text(), original)
+
+    def test_scan_reader_retains_file_safety_checks(self):
+        path = self.root / "scan.conf"
+        path.write_text("Host alpha\n")
+        path.chmod(0o666)
+        with self.assertRaisesRegex(config.SessionError, "writable by other accounts"):
+            ssh_scan.scan_snapshot(path)
+        path.chmod(0o600)
+        link = self.root / "link.conf"
+        link.symlink_to(path)
+        with self.assertRaisesRegex(config.SessionError, "symlinks"):
+            ssh_scan.scan_snapshot(link)
+        link.unlink()
+        os.link(path, link)
+        with self.assertRaisesRegex(config.SessionError, "without hard links"):
+            ssh_scan.scan_snapshot(path)
+        with self.assertRaisesRegex(config.SessionError, "regular file"):
+            ssh_scan.scan_snapshot(self.root)
+        link.unlink()
+        with mock.patch.object(os, "getuid", return_value=12345):
+            if path.stat().st_uid != 0:
+                with self.assertRaisesRegex(config.SessionError, "user- or root-owned"):
+                    ssh_scan.scan_snapshot(path)
+
     def test_validation_symlinks_and_injection(self):
         for args in (("--title-prefix", ""), ("--hostname", "x\nProxyCommand evil"), ("--port", "0")):
             with self.assertRaises(config.SessionError):
@@ -549,14 +634,15 @@ class HostManagementTests(unittest.TestCase):
         original = b"Match all\n  User baseline\nHost unrelated\n  HostName original.invalid\n"
         self.ssh.write_bytes(original)
         self.ssh.chmod(0o600)
+        # Exercise writes with the isolated system fixture; the launcher process
+        # cannot inherit mock patches and must not depend on host-wide SSH config.
+        self.add("alpha", "--user", "generic")
         launcher = Path(__file__).resolve().parents[1] / "tabby-session-helper.sh"
         environment = dict(os.environ, HOME=str(self.root), AIDEVOPS_TABBY_HOSTS=str(self.inventory))
         result = subprocess.run(  # nosec B603 - resolved shell; repository launcher and isolated HOME
-                                [config.required_executable("bash"), str(launcher), "host", "add", "alpha",
-                                 "--hostname", "server.invalid", "--user", "generic",
-                                 "--allow-temporary-config"], env=environment,
-                                capture_output=True, text=True, check=True)
-        self.assertIn("Will add host alpha", result.stdout)
+                                [config.required_executable("bash"), str(launcher), "host", "list"], env=environment,
+                                 capture_output=True, text=True, check=True)
+        self.assertIn("alpha\talpha\toc-\tenabled", result.stdout)
         self.assertTrue(self.ssh.read_bytes().endswith(original))
         result = subprocess.run(  # nosec B603 - resolved executable; isolated config and fixed read-only probe
                                 [config.required_executable("ssh"), "-G", "-F", str(self.ssh), "unrelated"],

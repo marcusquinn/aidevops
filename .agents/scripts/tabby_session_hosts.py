@@ -13,6 +13,9 @@ from tabby_host_ssh_scan import conflicts
 from tabby_session_config import SessionError, endpoint, validate_host
 
 
+SYSTEM_SSH_CONFIG = Path("/etc/ssh/ssh_config")
+
+
 def display(args, data, selected):
     if args.operation == "show" and selected is None:
         raise SessionError("Unknown host ID")
@@ -75,6 +78,8 @@ def ssh_changes(args, host, data, ssh_options):
         raise SessionError("Managed SSH alias exists with different casing; use its exact name")
     if conflicts(ssh_config, alias, managed):
         raise SessionError("Alias matches user-owned SSH configuration; refusing SSH changes")
+    if conflicts(SYSTEM_SSH_CONFIG, alias, managed, include_base=SYSTEM_SSH_CONFIG.parent):
+        raise SessionError("Alias matches system SSH configuration; refusing SSH changes")
     if args.ssh:
         delete_alias(args, host, aliases, data)
     else:
