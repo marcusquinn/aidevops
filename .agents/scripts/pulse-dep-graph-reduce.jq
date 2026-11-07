@@ -97,8 +97,13 @@ def blocker_text:
 # Twins of issue-hold-marker-lib.sh: do not reuse dependency visible_text,
 # whose fence/comment ordering and Markdown handling have different semantics.
 def hold_normalized_line:
-  reduce range(0; 8) as $unused (.;
-    sub("^([[:space:]]+|>[[:space:]]*|([-+*]|[0-9]+[.)])[[:space:]]+|\\[[ xX]\\][[:space:]]+|#{1,6}[[:space:]]+|\\*\\*|__|\\*|_)"; ""));
+  def strip_prefix($remaining):
+    if $remaining == 0 then .
+    else . as $before
+      | sub("^([[:space:]]+|>[[:space:]]*|([-+*]|[0-9]+[.)])[[:space:]]+|\\[[ xX]\\][[:space:]]+|#{1,6}[[:space:]]+|\\*\\*|__|\\*|_)"; "")
+      | if . == $before then . else strip_prefix($remaining - 1) end
+    end;
+  strip_prefix(8);
 
 def hold_fence:
   (try capture("^(?<marker>`{3,}|~{3,})(?<rest>.*)$") catch null) // null;
@@ -119,9 +124,10 @@ def hold_strip_comments:
 def operational_hold:
   reduce (split("\n")[]) as $line (
     {fence: "", comment: false, held: false};
-    ($line | hold_normalized_line | hold_fence) as $candidate
-    | if .held then .
+    if .held then .
       elif .fence != "" then
+        ($line | hold_normalized_line | hold_fence) as $candidate
+        |
         if $candidate != null and $candidate.marker[0:1] == .fence[0:1]
           and ($candidate.marker | length) >= (.fence | length)
           and ($candidate.rest | test("^[[:space:]]*$")) then .fence = "" else . end
