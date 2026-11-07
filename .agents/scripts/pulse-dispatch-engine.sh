@@ -1131,6 +1131,9 @@ source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-engine-housekeeping.
 #######################################
 apply_dispatch_max() {
 	local dependency_normalization_mode="${1:-normalize}"
+	# GH#37051: this is the work the housekeeping reserve protects. Its
+	# candidates retain their normal floor, timeout and live admission gates.
+	local _PULSE_MAIN_DISPATCH_RESERVE_S=0
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Dispatch_max skipped: stop flag present" >>"$LOGFILE"
 		return 0

@@ -1355,6 +1355,9 @@ _pulse_run_deterministic_pipeline() {
 			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max || true
 		fi
 	fi
+	# Main dispatch has had its turn (including stop/breaker/quota gates).
+	# Later maintenance can use the normal finalisation-only budget again.
+	_PULSE_MAIN_DISPATCH_RESERVE_S=0
 
 	# GH#19949: Canonical-repo fast-forward + stale worktree sweep.
 	# Cadence-gated (~30 min) — the function's internal cadence check skips
@@ -1722,6 +1725,14 @@ main() {
 	# worker launch at the emergency floor.
 	_pulse_set_graphql_budget_priority
 	_pulse_set_rest_core_budget_priority
+	# GH#37051: protect the full main-dispatch round before any optional
+	# preflight/pipeline stage can spend it. The watchdog takes the maximum
+	# of this and a stage's own reserve; nested stages never add it twice.
+	# Leave 60s for watchdog teardown and transitions into enumeration.
+	local _PULSE_MAIN_DISPATCH_RESERVE_S=0
+	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" ]]; then
+		_PULSE_MAIN_DISPATCH_RESERVE_S=$(($(_pulse_dispatch_reserved_finalise_seconds) + 60))
+	fi
 	local _cycle_dispatch_before
 	_cycle_dispatch_before=$(_pulse_capture_dispatch_total)
 	_PULSE_CYCLE_DISPATCH_BEFORE="$_cycle_dispatch_before"
