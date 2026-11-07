@@ -632,7 +632,7 @@ is_non_review_comment() {
 	local body="$1"
 
 	for pattern in "${NON_REVIEW_PATTERNS[@]}"; do
-		if echo "$body" | grep -qi "$pattern"; then
+		if grep -qi "$pattern" <<<"$body"; then
 			return 0
 		fi
 	done
@@ -887,7 +887,7 @@ check_for_skip_label() {
 			--json labels -q '.labels[].name' || echo "")
 	fi
 
-	if echo "$labels" | grep -q "$SKIP_LABEL"; then
+	if grep -q "$SKIP_LABEL" <<<"$labels"; then
 		return 0
 	fi
 	return 1
@@ -899,7 +899,7 @@ match_known_bots() {
 	local missing_bots=""
 
 	for bot in "${KNOWN_BOTS[@]}"; do
-		if echo "$all_commenters" | grep -qi "$bot"; then
+		if grep -qi "$bot" <<<"$all_commenters"; then
 			found_bots="${found_bots}${bot} "
 		else
 			missing_bots="${missing_bots}${bot} "
@@ -922,7 +922,7 @@ _collect_review_gate_bot_states() {
 
 	local bot notice_category notice_rc
 	for bot in "${KNOWN_BOTS[@]}"; do
-		if echo "$all_commenters" | grep -qi "$bot"; then
+		if grep -qi "$bot" <<<"$all_commenters"; then
 			# Bot commented — but is it a real review or a non-review notice?
 			if bot_has_real_review "$pr_number" "$repo" "$bot" "$prepared_status_contexts" true; then
 				REVIEW_GATE_FOUND_BOTS="${REVIEW_GATE_FOUND_BOTS}${bot} "
@@ -1142,7 +1142,7 @@ do_list() {
 	# from "non-review-only" (rate-limit / failure / skip notice).
 	local state
 	for bot in "${KNOWN_BOTS[@]}"; do
-		if echo "$all_commenters" | grep -qi "$bot"; then
+		if grep -qi "$bot" <<<"$all_commenters"; then
 			state=$(_classify_bot_state "$pr_number" "$repo" "$bot")
 			case "$state" in
 			real-review)
@@ -1198,7 +1198,7 @@ has_retry_comment() {
 	local comments
 	comments=$(_rbg_query_evidence_collection "$pr_number" "$repo" issue-comments \
 		'.[].body') || return 2
-	if echo "$comments" | grep -qF "$marker"; then
+	if grep -qF "$marker" <<<"$comments"; then
 		return 0
 	fi
 	return 1
@@ -1219,7 +1219,7 @@ find_rate_limited_bots() {
 	local rate_limited=""
 	local bot
 	for bot in "${KNOWN_BOTS[@]}"; do
-		if echo "$all_commenters" | grep -qi "$bot"; then
+		if grep -qi "$bot" <<<"$all_commenters"; then
 			if ! bot_has_real_review "$pr_number" "$repo" "$bot"; then
 				rate_limited="${rate_limited}${bot} "
 			fi
