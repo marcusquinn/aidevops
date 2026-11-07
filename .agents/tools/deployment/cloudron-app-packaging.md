@@ -469,42 +469,24 @@ and `jq`. Attach the output to release evidence for each package update.
 
 ### Qualifying a package on a live install
 
-`.agents/scripts/cloudron-app-qa-helper.sh` scripts the generic checks on a
-disposable Cloudron install. Every command takes `--server <cloudron-host>`
-(the CLI's default server, the first in `~/.cloudron.json`, is never used), and
-locations must look disposable (`*-test`, `*-qa`, `*-clone`) unless
-`--force-location`.
+`cloudron-app-qa-helper.sh help` lists every subcommand. Each takes
+`--server <cloudron-host>` (the CLI default server is never used); locations
+must look disposable (`*-test`, `*-qa`, `*-clone`) unless `--force-location`.
 
 ```bash
-H=cloudron-app-qa-helper.sh
-$H install myapp-test --server my.example.com --image REGISTRY/IMAGE:TAG
-$H health myapp-test --server my.example.com            # TLS, HTTP/2, healthCheckPath
-$H mailbox create qa@example.com --server my.example.com  # also: delete | list
-$H upload-probe --url https://myapp-test.example.com/upload --field file \
-  --sizes 20M,30M --limit 25M [--allow-502]
+H=cloudron-app-qa-helper.sh; S="--server my.example.com"
+$H install myapp-test $S --image REGISTRY/IMAGE:TAG   # or --versions-url / --build
+$H health myapp-test $S; $H mailbox create qa@example.com $S; $H memory myapp-test $S
+$H upload-probe --url https://myapp-test.example.com/upload --sizes 20M,30M --limit 25M
 $H oauth-probe --url https://myapp-test.example.com --resource-path /mcp --adapter a.mjs
 $H realtime --url https://myapp-test.example.com --adapter a.mjs --idle 330
-$H restart-persist|backup-clone|update|memory myapp-test --server my.example.com
-$H cleanup myapp-test --server my.example.com
-$H run myapp-test --server my.example.com --image REF   # core checks + cleanup on exit
+$H restart-persist myapp-test $S; $H backup-clone myapp-test $S; $H update myapp-test $S; $H cleanup myapp-test $S   # `run` = core checks + cleanup on exit
 ```
 
-Output is `PASS:`/`FAIL:` lines; exit is non-zero on any failure. Tokens, setup
-links, mail bodies and query strings are never printed (`mailbox list` shows
-only Date/To/Subject and link host+path). Scratch and 0700 browser profiles live
-under `${AIDEVOPS_TEMP_DIR}`, and `cleanup` removes the apps, clone, QA mailbox,
-profiles and scratch directory. `oauth-probe` checks RFC 9728/8414 metadata, the
-401 `resource_metadata` challenge, RFC 7591 registration and S256 PKCE with the
-loopback redirect intercepted in Playwright (`resource=` on exchange), then MCP
-`initialize`/`tools/list`, revoke and 401 afterwards; it needs an adapter for
-consent sign-in. Playwright comes from the framework runtime
-(`node ~/.aidevops/agents/scripts/playwright-runtime.mjs install`).
-
-Adapter interface (`--adapter path/to/adapter.mjs`, ES module): `login(page, role)`
-(role `a`, `b` or `admin`), optional `realtime(pageA, pageB)` (A sends, resolves
-when B sees it; the harness logs WebSocket open/close, times it and repeats after
-the idle wait to catch proxy idle timeouts), `coedit(pageA, pageB)` and
-`consent(page)`.
+Output is `PASS:`/`FAIL:` lines; exit is non-zero on failure. Tokens, setup links,
+mail bodies and query strings are never printed. `cleanup` removes apps, clone,
+QA mailbox, 0700 profiles and scratch. Adapter (ES module): `login(page, role)`,
+optional `realtime(pageA, pageB)`, `coedit(pageA, pageB)`, `consent(page)`.
 
 ## Publishing
 

@@ -43,7 +43,8 @@ QA_OPT_ADAPTER=""
 QA_OPT_RESOLVE=""
 QA_OPT_IDLE="330"
 QA_OPT_SSH_HOST=""
-QA_OPT_BOXDATA="/home/yellowtent/boxdata"
+readonly QA_BOX_USER="yellowtent"
+QA_OPT_BOXDATA="/home/${QA_BOX_USER}/boxdata"
 
 # --- output helpers ---------------------------------------------------------
 
