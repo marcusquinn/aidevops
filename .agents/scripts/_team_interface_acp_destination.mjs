@@ -5,6 +5,26 @@ const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const EVENT_ID_PATTERN = "[0-9a-f]{64}";
 const DIRECT_GREETING_REPLY = "Hi! What would you like to work on?";
 
+// Buzz >= 0.5.28 wraps prompt sections in tags (`<context>…</context>`,
+// `<buzz-event type="…">…</buzz-event>`); earlier releases used bracket
+// headers (`[Context]`, `[Buzz event: …]`). A tagged section is accepted only
+// when it spans the whole prompt block, then mapped to the bracket form so the
+// trust checks below apply unchanged to both formats.
+const TAGGED_CONTEXT = /^<context>\r?\n([\s\S]*)\r?\n<\/context>\s*$/u;
+const TAGGED_EVENT = /^<buzz-event type="([^"\r\n<>]*)">\r?\n([\s\S]*)\r?\n<\/buzz-event>\s*$/u;
+
+function normalizeBlock(text) {
+  const context = text.match(TAGGED_CONTEXT);
+  if (context) {
+    return `[Context]\n${context[1]}`;
+  }
+  const event = text.match(TAGGED_EVENT);
+  if (event) {
+    return `[Buzz event: ${event[1]}]\n${event[2]}`;
+  }
+  return text;
+}
+
 function promptBlocks(message) {
   const prompt = message?.params?.prompt;
   if (!Array.isArray(prompt)) {
@@ -12,24 +32,20 @@ function promptBlocks(message) {
   }
   return prompt
     .filter((block) => block && typeof block === "object" && typeof block.text === "string")
-    .map((block) => block.text);
+    .map((block) => normalizeBlock(block.text));
 }
 
 function isDirectGreeting(message) {
-  const prompt = message?.params?.prompt;
-  if (!Array.isArray(prompt)) {
+  const blocks = promptBlocks(message);
+  if (!blocks) {
     return false;
   }
-  const contextBlock = prompt.find(
-    (block) => typeof block?.text === "string" && block.text.startsWith("[Context]"),
-  );
-  const eventBlock = [...prompt].reverse().find(
-    (block) => typeof block?.text === "string" && block.text.startsWith("[Buzz event:"),
-  );
-  if (!contextBlock?.text.match(/^Scope: dm$/im) || !eventBlock) {
+  const contextBlock = blocks.find((block) => block.startsWith("[Context]"));
+  const eventBlock = [...blocks].reverse().find((block) => block.startsWith("[Buzz event:"));
+  if (!contextBlock?.match(/^Scope: dm$/im) || !eventBlock) {
     return false;
   }
-  const eventLines = eventBlock.text.split(/\r?\n/u);
+  const eventLines = eventBlock.split(/\r?\n/u);
   const contentIndex = eventLines.findIndex((line) => line.startsWith("Content: "));
   const tagsIndex = eventLines.findLastIndex((line) => line.startsWith("Tags: "));
   if (contentIndex < 0 || tagsIndex !== contentIndex + 1) {
