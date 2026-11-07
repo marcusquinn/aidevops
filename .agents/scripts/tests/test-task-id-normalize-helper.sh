@@ -103,10 +103,63 @@ EOF
 	return 0
 }
 
+# GH#37003: seed a tracked padded brief.
+seed_padded_brief() {
+	local repo="$1"
+	mkdir -p "${repo}/todo/tasks"
+	printf 'What: legacy\n' >"${repo}/todo/tasks/t038.21-brief.md"
+	git -C "$repo" add todo/tasks/t038.21-brief.md
+	return 0
+}
+
+test_brief_continuation_line_is_rewritten() {
+	local repo output
+	repo=$(new_repo brief_line)
+	seed_padded_brief "$repo"
+	printf '%s\n' '- [ ] t038.21 Legacy task ref:GH#1' '  BRIEF: todo/tasks/t038.21-brief.md' \
+		'  Note: t038.21 prose stays unless on a task row' >"${repo}/TODO.md"
+	output=$(bash "$HELPER" --repo "$repo" --advisory)
+	[[ "$output" == warning:* ]] || fail "advisory did not warn before --apply: ${output}"
+	bash "$HELPER" --repo "$repo" --apply >/dev/null || fail "--apply refused a brief continuation line"
+	grep -qxF -- '  BRIEF: todo/tasks/t38.21-brief.md' "${repo}/TODO.md" ||
+		fail "indented BRIEF: line still points at the padded brief: $(<"${repo}/TODO.md")"
+	grep -qxF -- '  Note: t038.21 prose stays unless on a task row' "${repo}/TODO.md" ||
+		fail "task ID in a non-task line was rewritten"
+	[[ -f "${repo}/todo/tasks/t38.21-brief.md" ]] || fail "padded brief was not renamed"
+	return 0
+}
+
+test_archived_brief_reference_refuses() {
+	local repo output rc=0
+	repo=$(new_repo brief_archived)
+	seed_padded_brief "$repo"
+	printf '%s\n' '- [ ] t50 Current task' '## Archived' '- [x] t038.21 Old task' \
+		'  BRIEF: todo/tasks/t038.21-brief.md' >"${repo}/TODO.md"
+	output=$(bash "$HELPER" --repo "$repo" --dry-run 2>&1) || rc=$?
+	[[ "$rc" -ne 0 && "$output" == *"dangling brief reference in TODO.md: todo/tasks/t038.21-brief.md"* ]] ||
+		fail "dry-run did not refuse an archived reference to a renamed brief: rc=${rc} ${output}"
+	[[ -f "${repo}/todo/tasks/t038.21-brief.md" ]] || fail "refused run renamed the brief"
+	return 0
+}
+
+test_alpha_suffixed_id_is_manual() {
+	local repo output
+	repo=$(new_repo alpha)
+	printf '%s\n' '- [x] t038.36a Alpha legacy blocked-by:t038.33' '- [x] t038.33 Numeric legacy' >"${repo}/TODO.md"
+	output=$(bash "$HELPER" --repo "$repo" --dry-run)
+	[[ "$output" == *"MANUAL: TODO.md: t038.36a "* ]] || fail "alpha-suffixed padded ID not reported as MANUAL: ${output}"
+	[[ "$output" == *"-> - [x] t038.36a Alpha legacy blocked-by:t38.33"* ]] ||
+		fail "alpha ID was rewritten or its numeric reference was not: ${output}"
+	return 0
+}
+
 test_commented_examples_are_inactive
 test_compound_ranges_normalize_as_unit
 test_range_member_conflict_refused
 test_apply_preserves_comments_and_toon
+test_brief_continuation_line_is_rewritten
+test_archived_brief_reference_refuses
+test_alpha_suffixed_id_is_manual
 
 if [[ "$FAILURES" -gt 0 ]]; then
 	printf '%s task-id-normalize test(s) failed\n' "$FAILURES" >&2
