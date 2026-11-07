@@ -743,7 +743,11 @@ _df_gain_clears_strong_original() {
 	local original_json="$3"
 
 	if _df_original_is_strong "$original_json"; then
-		[[ $((improvement * 100)) -ge $((original_score * _DF_STRONG_ORIGINAL_GAIN_PERCENT)) ]] || return 1
+		# Cap the required gain at what a corrected page can reach (max score 130).
+		local required=$((original_score * _DF_STRONG_ORIGINAL_GAIN_PERCENT))
+		local reachable=$(((130 - original_score) * 100))
+		[[ "$reachable" -lt "$required" ]] && required="$reachable"
+		[[ $((improvement * 100)) -ge "$required" ]] || return 1
 	fi
 	return 0
 }
@@ -821,7 +825,8 @@ _df_process_suspect_page() {
 		flip-horizontal | flip-vertical) classification="mirrored" ;;
 		rotate-*) classification="rotated" ;;
 		esac
-	elif _df_original_is_strong "${_DF_TMP_DIR}/candidates/${page_id}.original.json"; then
+	elif _df_original_is_strong "${_DF_TMP_DIR}/candidates/${page_id}.original.json" && \
+		[[ "$(jq -r '.evidence_sufficient' "${_DF_TMP_DIR}/candidates/${page_id}.original.json")" == true ]]; then
 		# Strong upright original with only a marginal alternative score: keep it.
 		selected_prefix="${_DF_TMP_DIR}/candidates/${page_id}.original"
 		classification="normal"
