@@ -4,8 +4,13 @@ Receipts use the existing event journal; no new tables. Remove with legacy_clean
 """
 
 import json
+import os
+from pathlib import Path
 import socket
+import tempfile
 from uuid import UUID, uuid5
+
+from .retirement import _git
 
 
 def event_id(operation, phase):
@@ -67,4 +72,24 @@ def record_probe_recovery(store, connection, host, original):
                         branch_preserved=True))
     if receipt(connection, host, "verified") is None:
         checkpoint(store, connection, host, "verified",
-                   dict(original, type="reconstructible-host-probe-verified"))
+                    dict(original, type="reconstructible-host-probe-verified"))
+
+
+def verify_reconstructible(plan, *, probe):
+    """Verify the removed source can be reconstructed from retained Git objects."""
+    if os.path.lexists(plan["source"]):
+        raise ValueError("reconstructible-source-still-present")
+    common, head, branch = plan["common"], plan["head"], plan["branch"]
+    _git("--git-dir", common, "cat-file", "-e", head + "^{commit}")
+    if branch != "HEAD" and _git("--git-dir", common, "rev-parse", branch) != head:
+        raise ValueError("reconstructible-branch-changed")
+    if probe:
+        # A fresh disposable checkout proves restoration without touching the branch.
+        parent = Path(tempfile.mkdtemp(prefix=".reconstructible-probe-",
+                                      dir=Path(plan["source"]).parent))
+        target = str(parent / "tree")
+        _git("--git-dir", common, "worktree", "add", "--detach", target, head)
+        if _git("-C", target, "rev-parse", "HEAD") != head:
+            raise ValueError("reconstructible-restore-mismatch")
+        _git("--git-dir", common, "worktree", "remove", target)
+        parent.rmdir()

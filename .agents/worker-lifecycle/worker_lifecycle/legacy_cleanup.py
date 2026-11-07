@@ -24,6 +24,7 @@ from .legacy_options import require_manual_confirmation, require_managed_takeove
 from .legacy_options import retained_outcome, unrecorded
 from .legacy_probe import checkpoint, host_probe, interrupted_probe
 from .legacy_probe import latest_probe_plan, operation_id, receipt, record_probe_recovery
+from .legacy_probe import verify_reconstructible
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
@@ -336,26 +337,6 @@ def process_reconstructible(store, item, repositories, adapter, options):
                        dict(plan, type="reconstructible-host-probe-verified"))
         outcome["status"] = "retired"
     return outcome, 1, 1
-
-
-def verify_reconstructible(plan, *, probe):
-    """Verify the removed source can be reconstructed from retained Git objects."""
-    if os.path.lexists(plan["source"]):
-        raise ValueError("reconstructible-source-still-present")
-    common, head, branch = plan["common"], plan["head"], plan["branch"]
-    _git("--git-dir", common, "cat-file", "-e", head + "^{commit}")
-    if branch != "HEAD" and _git("--git-dir", common, "rev-parse", branch) != head:
-        raise ValueError("reconstructible-branch-changed")
-    if probe:
-        # A fresh disposable checkout proves restoration without touching the branch.
-        parent = Path(tempfile.mkdtemp(prefix=".reconstructible-probe-",
-                                      dir=Path(plan["source"]).parent))
-        target = str(parent / "tree")
-        _git("--git-dir", common, "worktree", "add", "--detach", target, head)
-        if _git("-C", target, "rev-parse", "HEAD") != head:
-            raise ValueError("reconstructible-restore-mismatch")
-        _git("--git-dir", common, "worktree", "remove", target)
-        parent.rmdir()
 
 
 def run(store, config, root, **arguments):
