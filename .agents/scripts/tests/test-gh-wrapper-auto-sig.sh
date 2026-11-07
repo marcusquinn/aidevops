@@ -394,6 +394,31 @@ gh_pr_comment 19999 --repo "owner/repo" --body "test" || rc=$?
 assert_eq "exit code 42 propagated from gh through gh_pr_comment" "42" "$rc"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Test 13 (GH#36978): origin marker appears exactly once after signing
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 13 (GH#36978): body with a standalone origin marker keeps one marker"
+cat >"${TMPDIR_TEST}/gh-signature-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '\n<!-- aidevops:origin:interactive -->\n<!-- aidevops:sig -->\n---\nstub footer.\n'
+exit 0
+STUB
+chmod +x "${TMPDIR_TEST}/gh-signature-helper.sh"
+marker_body=$'Body text\n\n<!-- aidevops:origin:interactive -->\n'
+_gh_wrapper_auto_sig --repo "owner/repo" --body "$marker_body"
+body_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[3]}"
+marker_count=$(grep -Fxc '<!-- aidevops:origin:interactive -->' <<<"$body_val" || true)
+assert_eq "--body keeps exactly one origin marker" "1" "$marker_count"
+assert_contains "--body keeps original content" "Body text" "$body_val"
+
+marker_file="${TMPDIR_TEST}/marker-body.md"
+printf '%s' "$marker_body" >"$marker_file"
+_gh_wrapper_auto_sig --repo "owner/repo" --body-file "$marker_file"
+signed_file="${_GH_WRAPPER_SIG_MODIFIED_ARGS[3]}"
+marker_count=$(grep -Fxc '<!-- aidevops:origin:interactive -->' "$signed_file" || true)
+assert_eq "--body-file keeps exactly one origin marker" "1" "$marker_count"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
