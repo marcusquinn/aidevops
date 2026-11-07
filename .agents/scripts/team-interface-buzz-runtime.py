@@ -17,6 +17,7 @@ from _team_interface_buzz_runtime_anchor import (
     materialize_pinned_runtime,
     validate_existing_pinned_runtime,
 )
+from _team_interface_buzz_runtime_digest_refresh import refresh_source_digests
 from _team_interface_buzz_runtime_install import (
     backup_existing,
     buzz_is_running,
@@ -172,14 +173,19 @@ def install_manifest(project_root, app_data_dir, replace, profile):
     pinned = materialize_pinned_runtime(profile) if runtime_id == "aidevops-interactive-v1" else None
     payload = canonical_payload(materialized_manifest(project_root, profile, pinned))
     backup = None
+    unchanged = False
     if target.exists() or target.is_symlink():
         if target.is_symlink() or not target.is_file():
             raise RuntimeError("existing Buzz runtime path is not a regular file")
-        if target.read_bytes() == payload:
-            return target, None
-        if not replace:
+        unchanged = target.read_bytes() == payload
+        if not unchanged and not replace:
             raise RuntimeError("Buzz runtime already exists with different content; inspect it or pass --replace")
-        backup = backup_existing(target, runtime_id)
+        if not unchanged:
+            backup = backup_existing(target, runtime_id)
+    if pinned is not None:
+        refresh_source_digests(app_data_dir, pinned / "agents")
+    if unchanged:
+        return target, None
     atomic_write(target, payload)
     return target, backup
 
