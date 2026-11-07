@@ -203,21 +203,25 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def main(argv=None):
-    """Run one runtime management action."""
-    args = parse_args(argv)
+def prune_command(args):
+    """Validate explicit app-data locations before standalone pruning."""
+    directories = [Path(os.path.expanduser(value)) for value in args.app_data_dir]
+    configured = os.environ.get("AIDEVOPS_BUZZ_APP_DATA_DIR")
+    if configured:
+        directories.append(Path(os.path.expanduser(configured)))
+    if any(not directory.is_absolute() for directory in directories):
+        raise RuntimeError("Buzz app-data directories must be absolute")
+    if sys.platform != "darwin" and not directories:
+        raise RuntimeError("set AIDEVOPS_BUZZ_APP_DATA_DIR or pass --app-data-dir")
+    with runtime_anchor_lock():
+        prune_runtime_anchors(runtime_profile(args.runtime), directories, args.dry_run)
+    return 0
+
+
+def anchor_command(args):
+    """Handle anchor preparation, verification and cleanup without project lookup."""
     if args.command == "prune":
-        directories = [Path(os.path.expanduser(value)) for value in args.app_data_dir]
-        configured = os.environ.get("AIDEVOPS_BUZZ_APP_DATA_DIR")
-        if configured:
-            directories.append(Path(os.path.expanduser(configured)))
-        if any(not directory.is_absolute() for directory in directories):
-            raise RuntimeError("Buzz app-data directories must be absolute")
-        if sys.platform != "darwin" and not directories:
-            raise RuntimeError("set AIDEVOPS_BUZZ_APP_DATA_DIR or pass --app-data-dir")
-        with runtime_anchor_lock():
-            prune_runtime_anchors(runtime_profile(args.runtime), directories, args.dry_run)
-        return 0
+        return prune_command(args)
     if args.command == "prepare":
         agents_dir = Path(os.path.expanduser(args.agents_dir)).resolve()
         output_dir = Path(os.path.expanduser(args.output_dir))
@@ -231,6 +235,32 @@ def main(argv=None):
             raise RuntimeError("Buzz runtime anchor root must be absolute")
         validate_existing_pinned_runtime(root, runtime_profile(args.runtime))
         return 0
+    raise RuntimeError("unknown Buzz runtime anchor action")
+
+
+def install_and_prune(project_root, app_data_dir, replace, profile):
+    """Serialize installation and optional cleanup without failing a completed install."""
+    with runtime_anchor_lock():
+        result = install_manifest(project_root, app_data_dir, replace, profile)
+        try:
+            directories = [app_data_dir]
+            configured = os.environ.get("AIDEVOPS_BUZZ_APP_DATA_DIR")
+            if configured:
+                directory = Path(os.path.expanduser(configured))
+                if not directory.is_absolute():
+                    raise RuntimeError("AIDEVOPS_BUZZ_APP_DATA_DIR must be absolute")
+                directories.append(directory)
+            prune_runtime_anchors(profile, directories)
+        except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+            print(f"Buzz runtime installed; cleanup skipped: {error}", file=sys.stderr)
+    return result
+
+
+def main(argv=None):
+    """Run one runtime management action."""
+    args = parse_args(argv)
+    if args.command in {"prune", "prepare", "verify-anchor"}:
+        return anchor_command(args)
     project_root = registered_project_root(args.project_root, args.repos)
     profile = runtime_profile(args.runtime)
     if args.command == "manifest":
@@ -247,16 +277,7 @@ def main(argv=None):
     )
     if not app_data_dir.is_absolute():
         raise RuntimeError("Buzz app-data directory must be absolute")
-    with runtime_anchor_lock():
-        target, backup = install_manifest(project_root, app_data_dir, args.replace, profile)
-        try:
-            directories = [app_data_dir]
-            configured = os.environ.get("AIDEVOPS_BUZZ_APP_DATA_DIR")
-            if configured:
-                directories.append(Path(os.path.expanduser(configured)))
-            prune_runtime_anchors(profile, directories)
-        except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
-            print(f"Buzz runtime installed; cleanup skipped: {error}", file=sys.stderr)
+    target, backup = install_and_prune(project_root, app_data_dir, args.replace, profile)
     print(f"Installed {profile['id']} at {target}")
     if backup:
         print(f"Previous manifest backed up at {backup}")
