@@ -292,11 +292,13 @@ test_string_literals_new_file_with_debt_blocks() {
 	local stderr_out ret=0
 	stderr_out=$(validate_string_literals "offender.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -gt 0 ] && echo "$stderr_out" | grep -q 'NEW repeated string literals'; then
+	# Empty baseline: the block must still name the literals (GH#36999).
+	if [ "$ret" -gt 0 ] && grep -q 'NEW repeated string literals' <<<"$stderr_out" &&
+		grep -qF '3x: "assertion one matches"' <<<"$stderr_out"; then
 		print_result "string_literals: NEW file with debt BLOCKS" 0
 	else
 		print_result "string_literals: NEW file with debt BLOCKS" 1 \
-			"expected exit>0 + 'NEW' error for new file, got exit=$ret output=[$stderr_out]"
+			"expected exit>0 + 'NEW' error naming the literal for new file, got exit=$ret output=[$stderr_out]"
 	fi
 	return 0
 }
@@ -325,8 +327,8 @@ test_string_literals_block_names_new_literal() {
 	local out ret=0
 	out=$(validate_string_literals "offender.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -gt 0 ] && echo "$out" | grep -qF '3x: "zz brand new literal"' &&
-		! echo "$out" | grep -qF '"aa first old literal"'; then
+	if [ "$ret" -gt 0 ] && grep -qF '3x: "zz brand new literal"' <<<"$out" &&
+		! grep -qF '"aa first old literal"' <<<"$out"; then
 		print_result "string_literals: block names the new literal in full (GH#36999)" 0
 	else
 		print_result "string_literals: block names the new literal in full (GH#36999)" 1 \

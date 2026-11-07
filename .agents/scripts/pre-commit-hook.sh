@@ -395,13 +395,15 @@ _show_repeated_literals() {
 	case "$mode" in
 	all) printf '%s\n' "$listing" ;;
 	new)
-		printf '%s\n' "$listing" | awk '
-			NR == FNR { sub(/^ *[0-9]+x: /, ""); seen[$0] = 1; next }
+		# phase= assignments, not NR==FNR: an empty baseline (new file) must
+		# not make the current listing look like the baseline.
+		awk '
+			phase == "base" { sub(/^ *[0-9]+x: /, ""); seen[$0] = 1; next }
 			{ literal = $0; sub(/^ *[0-9]+x: /, "", literal) }
 			literal != "" && !(literal in seen) { print }
-		' <(printf '%s\n' "$baseline" | _show_repeated_literals all) -
+		' phase=base <(printf '%s\n' "$baseline" | _show_repeated_literals all) phase=cur - <<<"$listing"
 		;;
-	*) printf '%s\n' "$listing" | head -3 ;;
+	*) head -3 <<<"$listing" ;;
 	esac
 	return 0
 }
