@@ -478,15 +478,16 @@ H=cloudron-app-qa-helper.sh; S="--server my.example.com"
 $H install myapp-test $S --image REGISTRY/IMAGE:TAG   # or --versions-url / --build
 $H health myapp-test $S; $H mailbox create qa@example.com $S; $H memory myapp-test $S
 $H upload-probe --url https://myapp-test.example.com/upload --sizes 20M,30M --limit 25M
-$H oauth-probe --url https://myapp-test.example.com --resource-path /mcp --adapter a.mjs
-$H realtime --url https://myapp-test.example.com --adapter a.mjs --idle 330
+$H oauth-probe --url https://myapp-test.example.com --resource-path /mcp --adapter a.mjs $S
+$H realtime --url https://myapp-test.example.com --adapter a.mjs --idle 330 $S
 $H restart-persist myapp-test $S; $H backup-clone myapp-test $S; $H update myapp-test $S; $H cleanup myapp-test $S   # `run` = core checks + cleanup on exit
 ```
 
 Output is `PASS:`/`FAIL:` lines; exit is non-zero on failure. Tokens, setup links,
 mail bodies and query strings are never printed. `cleanup` removes apps, clone,
-QA mailbox, 0700 profiles and scratch. Adapter (ES module): `login(page, role)`,
-optional `realtime(pageA, pageB)`, `coedit(pageA, pageB)`, `consent(page)`.
+QA mailbox, 0700 profiles and scratch. Adapter (ES module): `login(page, role)`;
+`realtime(pageA, pageB)` is required for the realtime probe; `coedit(pageA, pageB)`
+and `consent(page)` are optional.
 
 ## Publishing
 

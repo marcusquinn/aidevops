@@ -23,6 +23,10 @@ installErrorHandlers();
 const args = parseArgs(process.argv.slice(2));
 const base = String(args['base-url'] || '');
 const idleSeconds = Number(args.idle === undefined || args.idle === true ? 330 : args.idle);
+if (!Number.isFinite(idleSeconds) || idleSeconds < 0) {
+  fail('--idle must be a finite, non-negative number');
+  process.exit(2);
+}
 
 function watchSockets(page, label) {
   page.on('websocket', (ws) => {

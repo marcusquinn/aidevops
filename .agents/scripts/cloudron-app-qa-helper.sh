@@ -264,6 +264,9 @@ api() {
 		return 1
 	fi
 	local args=(-sS --max-time 60 -X "$method" -K - -H 'Content-Type: application/json')
+	if [[ "${QA_API_STATUS:-0}" -eq 1 ]]; then
+		args+=(-w $'\n%{http_code}')
+	fi
 	if [[ -n "$body" ]]; then
 		args+=(--data "$body")
 	fi
@@ -272,10 +275,41 @@ api() {
 	return $?
 }
 
+# api_code METHOD PATH [BODY] - print only the HTTP status; non-zero when curl failed.
+qa_api_code() {
+	local out rc=0
+	out="$(QA_API_STATUS=1 api "$@" 2>/dev/null)" || rc=$?
+	out="${out##*$'\n'}"
+	if ! [[ "$out" =~ ^[0-9]{3}$ ]]; then
+		out="000"
+		[[ "$rc" -ne 0 ]] || rc=1
+	fi
+	printf '%s\n' "$out"
+	return "$rc"
+}
+
+# Resolve one app by its subdomain (API field "location" on older Cloudron, "subdomain"
+# on newer). Apps sharing a subdomain across domains are ambiguous: emit nothing then.
 qa_app_json() {
 	local location="$1"
-	api GET /api/v1/apps | jq -c --arg l "$location" '[.apps[]? | select(.location == $l)][0] // empty'
+	api GET /api/v1/apps | jq -c --arg l "$location" \
+		'[.apps[]? | select((.location // .subdomain) == $l)] | if length == 1 then .[0] else empty end' 2>/dev/null
 	return 0
+}
+
+# Exit 0 = exists, 1 = absent, 2 = lookup failed.
+qa_app_exists() {
+	local location="$1"
+	local listing
+	listing="$(api GET /api/v1/apps 2>/dev/null)" || return 2
+	if ! printf '%s' "$listing" | jq -e '.apps | type == "array"' >/dev/null 2>&1; then
+		return 2
+	fi
+	if printf '%s' "$listing" | jq -e --arg l "$location" \
+		'any(.apps[]; (.location // .subdomain) == $l)' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
 }
 
 qa_cloudron_ready() {
@@ -291,22 +325,35 @@ qa_uninstall_app() {
 	local location="$1"
 	if cl uninstall --app "$location" >/dev/null 2>&1; then
 		qa_info "uninstalled ${location}"
-	else
-		qa_info "no app at ${location} (already removed)"
+		return 0
 	fi
-	return 0
+	local exists=0
+	qa_app_exists "$location" || exists=$?
+	if [[ "$exists" -eq 1 ]]; then
+		qa_info "no app at ${location} (already removed)"
+		return 0
+	fi
+	qa_fail "uninstall ${location} failed (state retained for retry)"
+	return 1
 }
 
+# Returns 1 when any entry could not be cleaned; failed entries stay in the state file.
 qa_cleanup_state() {
-	local kind value
+	local kind value rc=0
 	[[ -f "${QA_SCRATCH}/state" ]] || return 0
 	while read -r kind value; do
 		case "$kind" in
-		app) qa_uninstall_app "$value" ;;
-		mailbox) qa_mailbox_delete "$value" || true ;;
+		app)
+			if qa_uninstall_app "$value"; then
+				qa_state_remove app "$value"
+			else
+				rc=1
+			fi
+			;;
+		mailbox) qa_mailbox_delete "$value" || rc=1 ;;
 		esac
 	done <"${QA_SCRATCH}/state"
-	return 0
+	return "$rc"
 }
 
 qa_cleanup() {
@@ -314,7 +361,10 @@ qa_cleanup() {
 		return 0
 	fi
 	QA_CLEANUP_ARMED=0
-	qa_cleanup_state
+	if ! qa_cleanup_state; then
+		qa_info "cleanup incomplete - state kept in ${QA_SCRATCH}; re-run: cleanup --server ${QA_SERVER}"
+		return 1
+	fi
 	if [[ -n "$QA_SCRATCH" && -d "$QA_SCRATCH" ]]; then
 		rm -rf "$QA_SCRATCH"
 	fi
@@ -332,8 +382,11 @@ cmd_cleanup() {
 		qa_state_add app "${location}-clone"
 	done
 	QA_CLEANUP_ARMED=1
-	qa_cleanup
-	qa_pass "cleanup finished"
+	if qa_cleanup; then
+		qa_pass "cleanup finished"
+	else
+		qa_fail "cleanup incomplete"
+	fi
 	return 0
 }
 
@@ -353,14 +406,30 @@ cmd_install() {
 		qa_die "install needs exactly one of --versions-url URL | --image REF | --build"
 		return 1
 	fi
-	qa_state_add app "$location"
+	# Never adopt (and later uninstall) an app this invocation did not create.
+	local exists=0
+	qa_app_exists "$location" || exists=$?
+	if [[ "$exists" -eq 0 ]]; then
+		qa_die "App ${location} already exists on ${QA_SERVER} - refusing to install over it"
+		return 1
+	elif [[ "$exists" -ne 1 ]]; then
+		qa_die "Could not list apps on ${QA_SERVER} to check ${location}"
+		return 1
+	fi
 	local rc=0
-	if [[ -n "$QA_OPT_VERSIONS_URL" ]]; then
-		cl install --location "$location" --versions-url "$QA_OPT_VERSIONS_URL" >/dev/null || rc=$?
-	elif [[ -n "$QA_OPT_IMAGE" ]]; then
-		cl install --location "$location" --image "$QA_OPT_IMAGE" >/dev/null || rc=$?
-	else
-		cl build >/dev/null && cl install --location "$location" >/dev/null || rc=$?
+	if [[ "$QA_OPT_BUILD" -eq 1 ]]; then
+		cl build >/dev/null || rc=$?
+	fi
+	if [[ "$rc" -eq 0 ]]; then
+		# Track before install so a partial install is still cleaned up.
+		qa_state_add app "$location"
+		if [[ -n "$QA_OPT_VERSIONS_URL" ]]; then
+			cl install --location "$location" --versions-url "$QA_OPT_VERSIONS_URL" >/dev/null || rc=$?
+		elif [[ -n "$QA_OPT_IMAGE" ]]; then
+			cl install --location "$location" --image "$QA_OPT_IMAGE" >/dev/null || rc=$?
+		else
+			cl install --location "$location" >/dev/null || rc=$?
+		fi
 	fi
 	if [[ "$rc" -eq 0 ]]; then
 		qa_pass "install ${location}"
@@ -448,14 +517,14 @@ qa_mailbox_create() {
 	local body
 	body="$(jq -cn --arg n "$name" --arg o "$owner" \
 		'{name:$n, ownerId:$o, ownerType:"user", active:true, storageQuota:0, messagesQuota:0, enablePop3:false}')"
-	local status
-	status="$(api POST "/api/v1/mail/${domain}/mailboxes" "$body" | jq -r 'if .message then .message else "ok" end' 2>/dev/null || true)"
-	if [[ "$status" == "ok" || -z "$status" ]]; then
+	local code rc=0
+	code="$(qa_api_code POST "/api/v1/mail/${domain}/mailboxes" "$body")" || rc=$?
+	if [[ "$rc" -eq 0 && "$code" =~ ^2[0-9][0-9]$ ]]; then
 		qa_state_add mailbox "$address"
 		qa_pass "mailbox create ${address}"
 		return 0
 	fi
-	qa_fail "mailbox create ${address}: ${status}"
+	qa_fail "mailbox create ${address}: HTTP ${code} (curl exit ${rc})"
 	return 1
 }
 
@@ -463,10 +532,16 @@ qa_mailbox_delete() {
 	local address="$1"
 	local name="${address%@*}"
 	local domain="${address#*@}"
-	api DELETE "/api/v1/mail/${domain}/mailboxes/${name}" '{"deleteMails":true}' >/dev/null 2>&1 || true
-	qa_state_remove mailbox "$address"
-	qa_pass "mailbox delete ${address}"
-	return 0
+	local code rc=0
+	code="$(qa_api_code DELETE "/api/v1/mail/${domain}/mailboxes/${name}" '{"deleteMails":true}')" || rc=$?
+	# 404 means it is already gone; anything else non-2xx keeps the state entry for retry.
+	if [[ "$rc" -eq 0 && ( "$code" =~ ^2[0-9][0-9]$ || "$code" == "404" ) ]]; then
+		qa_state_remove mailbox "$address"
+		qa_pass "mailbox delete ${address}"
+		return 0
+	fi
+	qa_fail "mailbox delete ${address}: HTTP ${code} (curl exit ${rc}); state retained"
+	return 1
 }
 
 # Print only Date/To/Subject and link host+path (query strings stripped).
@@ -481,9 +556,18 @@ qa_mailbox_list() {
 		return 1
 	fi
 	# Remote side emits only whitelisted header lines and URLs; bodies are never read here.
-	ssh -o BatchMode=yes "root@${host}" \
-		"for f in ${dir}/new/* ${dir}/cur/*; do [ -f \"\$f\" ] || continue; echo '--'; grep -m3 -iE '^(Date|To|Subject):' \"\$f\"; grep -oE 'https?://[^ \"<>]+' \"\$f\" | head -5 | sed 's/^/LINK: /'; done" 2>/dev/null |
-		qa_redact
+	local out
+	if ! out="$(ssh -o BatchMode=yes "root@${host}" \
+		"for f in ${dir}/new/* ${dir}/cur/*; do [ -f \"\$f\" ] || continue; echo '--'; grep -m3 -iE '^(Date|To|Subject):' \"\$f\"; grep -oE 'https?://[^ \"<>]+' \"\$f\" | sed -n '1,5p' | sed 's/^/LINK: /'; done" 2>/dev/null)"; then
+		qa_fail "mailbox list ${address}: ssh to ${host} failed"
+		return 1
+	fi
+	if [[ -z "$out" ]]; then
+		qa_info "mailbox list ${address}: no messages"
+	else
+		printf '%s\n' "$out" | qa_redact
+		qa_pass "mailbox list ${address}"
+	fi
 	return 0
 }
 
@@ -498,8 +582,8 @@ cmd_mailbox() {
 	fi
 	case "$action" in
 	create) qa_mailbox_create "$address" || true ;;
-	delete) qa_mailbox_delete "$address" ;;
-	list) qa_mailbox_list "$address" ;;
+	delete) qa_mailbox_delete "$address" || true ;;
+	list) qa_mailbox_list "$address" || true ;;
 	*)
 		qa_die "Unknown mailbox action: ${action}"
 		return 1
@@ -625,12 +709,25 @@ cmd_backup_clone() {
 		qa_fail "backup list: no backup id found"
 		return 0
 	fi
-	qa_state_add app "$clone"
+	# Only track a clone this invocation creates; never adopt a pre-existing app.
+	local exists=0
+	qa_app_exists "$clone" || exists=$?
+	if [[ "$exists" -ne 1 ]]; then
+		qa_fail "clone ${clone}: target already exists or app lookup failed - not cloning"
+		return 0
+	fi
 	if cl clone --app "$location" --backup "$backup_id" --location "$clone" >/dev/null 2>&1; then
+		qa_state_add app "$clone"
 		qa_pass "clone ${location} -> ${clone}"
 		qa_health_check "$clone" "clone health" || true
 	else
 		qa_fail "clone ${location} -> ${clone}"
+		# A failed clone can leave a partial app behind; track it for cleanup.
+		exists=0
+		qa_app_exists "$clone" || exists=$?
+		if [[ "$exists" -eq 0 ]]; then
+			qa_state_add app "$clone"
+		fi
 	fi
 	return 0
 }
@@ -739,6 +836,8 @@ cmd_run() {
 		cmd_backup_clone "$location" "${common[@]}" || true
 		cmd_memory "$location" "${common[@]}" || true
 	fi
+	# Explicit cleanup so failures count toward the exit status; the trap covers signals/aborts.
+	qa_cleanup || true
 	return 0
 }
 
