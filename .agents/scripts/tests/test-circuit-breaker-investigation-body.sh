@@ -105,6 +105,14 @@ rc=$?
 [[ $rc -ne 0 && "$EDIT_LOG" == *"--remove-label auto-dispatch"* ]]
 check "bodyless created issue has auto-dispatch withdrawn" $?
 
+# Scenario 4: successful API call returning an empty body counts as lost.
+EDIT_LOG=""
+GH_API_BODY=""
+_cb_file_investigation_task o/r 1 3 "o/r#2" worker_spawn_failed >/dev/null 2>&1
+rc=$?
+[[ $rc -ne 0 && "$EDIT_LOG" == *"--remove-label auto-dispatch"* ]]
+check "empty API body has auto-dispatch withdrawn" $?
+
 echo "Total:  $TESTS_RUN"
 echo "Failed: $TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]

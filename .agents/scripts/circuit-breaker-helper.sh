@@ -670,6 +670,12 @@ _cb_build_investigation_body() {
 	local last_task_id="$3"
 	local last_failure_reason="$4"
 	local threshold="${CIRCUIT_BREAKER_THRESHOLD:-3}"
+	# Hostnames may embed private machine/user names; issues can be public,
+	# so include the hostname only on explicit operator opt-in.
+	local runner_label="redacted (set CB_INCLUDE_HOSTNAME=true to include)"
+	if [[ "${CB_INCLUDE_HOSTNAME:-}" == "true" ]]; then
+		runner_label=$(hostname 2>/dev/null || echo unknown)
+	fi
 
 	printf '%s\n' "## What
 
@@ -691,7 +697,7 @@ Investigate the root cause of supervisor circuit-breaker trip Ref #${trip_issue_
 - **Last failure reason:** \`${last_failure_reason}\`
 - **Consecutive failures:** ${failure_count}
 - **Threshold:** ${threshold}
-- **Tripping runner:** \`$(hostname 2>/dev/null || echo unknown)\` (logs below live on this host only)
+- **Tripping runner:** \`${runner_label}\` (logs below live on the tripping host only)
 
 ### Logs to inspect
 
@@ -823,12 +829,13 @@ _cb_verify_investigation_body() {
 
 	local created_body=""
 	created_body=$(gh api "repos/${repo_slug}/issues/${issue_num}" --jq '.body // ""' 2>/dev/null) || return 0
-	[[ -n "$created_body" ]] || return 0
 	if [[ "$created_body" == *"## What"* ]] && [[ "$created_body" == *"Ref #${trip_issue_num}"* ]]; then
 		return 0
 	fi
 	_cb_log_warn "investigation issue #${issue_num} lost its body; removing auto-dispatch"
-	gh issue edit "$issue_num" --repo "$repo_slug" --remove-label "auto-dispatch" >/dev/null 2>&1 || true # aidevops-allow: raw-gh-wrapper
+	if ! gh issue edit "$issue_num" --repo "$repo_slug" --remove-label "auto-dispatch" >/dev/null 2>&1; then # aidevops-allow: raw-gh-wrapper
+		_cb_log_warn "failed to remove auto-dispatch from issue #${issue_num}; remove it manually"
+	fi
 	return 1
 }
 
