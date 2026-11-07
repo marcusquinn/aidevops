@@ -974,10 +974,12 @@ _list_profile_admin_orgs() {
 		return 0
 	fi
 	if ! memberships_json=$(gh api "user/memberships/orgs?state=active&per_page=100" --paginate 2>/dev/null); then
-		echo "Warning: GitHub API failed while listing organisation memberships" >&2
+		echo "Warning: GitHub API failed while listing organisation memberships (the gh token needs the read:org scope)" >&2
 		return 1
 	fi
-	if ! printf '%s\n' "$memberships_json" | jq -er -s '
+	# No -e: zero admin organisations is a valid empty result; malformed input
+	# still exits non-zero through error("malformed").
+	if ! printf '%s\n' "$memberships_json" | jq -r -s '
 		if ([.[] | arrays] | length) == length
 			and ([.[][] | objects | select(([.organization.login, .role | strings] | length) == 2)]
 				| length) == ([.[][]] | length)
