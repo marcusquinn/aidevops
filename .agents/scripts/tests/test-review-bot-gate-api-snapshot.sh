@@ -39,6 +39,7 @@ print_result() {
 load_helper_functions() {
 	local source_copy="${TEST_ROOT}/review-bot-gate-helper.sh"
 	grep -v '^main "\$@"' "$HELPER_SCRIPT" >"$source_copy"
+	_RBG_SCRIPT_DIR="$(cd "$(dirname "$HELPER_SCRIPT")" && pwd)"
 	# shellcheck disable=SC1090
 	source "$source_copy"
 	return 0

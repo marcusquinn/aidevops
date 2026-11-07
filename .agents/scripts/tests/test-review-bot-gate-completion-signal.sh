@@ -157,6 +157,7 @@ load_helper_functions() {
 	tmpfile=$(mktemp)
 	# Drop the final main invocation line using grep for robustness.
 	grep -v '^main "\$@"' "$HELPER_SCRIPT" >"$tmpfile"
+	_RBG_SCRIPT_DIR="$(cd "$(dirname "$HELPER_SCRIPT")" && pwd)"
 	# shellcheck disable=SC1090
 	source "$tmpfile"
 	rm -f "$tmpfile"
