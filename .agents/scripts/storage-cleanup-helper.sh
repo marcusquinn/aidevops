@@ -86,7 +86,7 @@ _sc_store_paths() {
 _sc_store_cleaner() {
 	local store="$1"
 	case "$store" in
-	tmp) printf '%s\n' "system-cleanup.sh: entries older than ${AIDEVOPS_TMP_RETENTION_DAYS:-7} days move to Trash" ;;
+	tmp) printf '%s\n' "system-cleanup.sh: ownerless task scratch or ${AIDEVOPS_TMP_RETENTION_DAYS:-7}-day inactive entries; Trash (Linux pressure: delete)" ;;
 	worktrees) printf '%s\n' "cleanup-worktrees-async-helper.sh: merged/closed worktrees, guarded removal" ;;
 	artefacts) printf '%s\n' "worktree-artefact-reclaim.sh: ignored build output in worktrees idle ${AIDEVOPS_WORKTREE_IDLE_DAYS:-14}+ days moves to Trash" ;;
 	opencode) printf '%s\n' "opencode-db-maintenance-helper.sh auto: VACUUM, isolated DBs, layout backups" ;;

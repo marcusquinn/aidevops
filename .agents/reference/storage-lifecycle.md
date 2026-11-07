@@ -56,6 +56,33 @@ most protective class wins.
 Age, count, or byte thresholds are soft limits: they select candidates only.
 Reference, lease, recovery, and audit checks remain hard vetoes.
 
+## Task scratch directories
+
+Project tooling and large verification harnesses must create task bases with
+`bash task-temp-helper.sh create TASK --max-age 24h --owner-pid "$OWNER_PID"`.
+Use the long-lived task/session PID, not a short-lived command-substitution shell.
+The helper prints a private 0700 directory under
+`${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}` and records the owner
+PID, process generation, task/session, creation time and expiry. This is ordinary
+scratch, not a replacement for `sensitive-temp-helper.sh`'s private hierarchy.
+Keep durable small receipts (for example `report.json`) outside the disposable
+task base; do not retain source exports, dependency trees or builds there.
+
+`system-cleanup.sh` defaults to dry-run; `--force` reclaims ownerless task bases
+on its next pass, without waiting seven days. Live ownership is a hard veto,
+including after the soft max-age deadline and under pressure. Unknown process
+identity or malformed task manifests fail closed. Unmanaged entries retain the
+seven-day inactivity policy; old legacy locks/leases no longer protect forever,
+while recognised live owner manifests still veto cleanup. Checkpoints, locks,
+pulse and repository-campaigns remain excluded.
+
+Below 10% free space (override `AIDEVOPS_TMP_MIN_FREE_PERCENT`) or
+`AIDEVOPS_TMP_MIN_FREE_GB` free GiB (default 0), eligible entries are processed
+largest first. Linux deletes them to actually free space; otherwise cleanup uses
+Trash. Neither threshold authorises deleting live or unidentified managed data.
+The scheduled pulse and `aidevops cleanup tmp --apply` share this policy and emit
+one summary line, with per-entry details in `system-cleanup.log`.
+
 ## Initial Store Inventory
 
 | Store | Owner | Primary classes | Existing authority | Required next contract |
