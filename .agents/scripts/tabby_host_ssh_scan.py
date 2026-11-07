@@ -63,7 +63,7 @@ def included_paths(values, include_base):
         pattern = Path(value).expanduser()
         if not pattern.is_absolute():
             pattern = include_base / pattern
-        for match in glob.glob(str(pattern)):
+        for match in sorted(glob.glob(str(pattern))):
             yield Path(match).absolute()
 
 
