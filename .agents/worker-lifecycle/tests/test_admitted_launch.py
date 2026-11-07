@@ -28,17 +28,63 @@ class AdmittedLaunchContract(unittest.TestCase):
         self.gate.open_generation(str(uuid4()), self.generation, self.root)
         self.marker = self.root / "executed"
 
-    def launch(self, *, state=None, generation=None, run=None, cwd=None, worktree=None, extra=()):
+    def launch(self, *, state=None, generation=None, run=None, cwd=None, worktree=None, extra=(),
+               env=None):
         return subprocess.run(  # nosec B603 # fixed interpreter and fixture program, argv only
             [sys.executable, "-E", "-s", "-B", str(ENTRY),
              "--state-dir", str(state or self.store.directory),
              "--worktree", str(worktree or self.root),
              "--generation-id", generation or self.generation,
              "--run-id", run or str(uuid4()), *extra, "--", sys.executable, "-c",
-             "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('yes'); print('native-output'); sys.exit(23)",
+             "import pathlib,sys; p=pathlib.Path(sys.argv[1]); "
+             "p.write_text(p.read_text()+'yes' if p.exists() else 'yes'); "
+             "print('native-output'); sys.exit(23)",
              str(self.marker)],
             cwd=cwd or self.root, capture_output=True, text=True, timeout=10,
+            env=None if env is None else dict(os.environ, **env),
         )
+
+    def hold_writer(self, seconds, *, close=False):
+        """A separate process holds the registry writer, optionally closing the gate."""
+        program = (
+            "import sqlite3,sys,time; c=sqlite3.connect(sys.argv[1], isolation_level=None); "
+            "c.execute('BEGIN IMMEDIATE'); print('held', flush=True); time.sleep(float(sys.argv[2])); "
+            "sys.argv[3] and c.execute(\"UPDATE generation_admissions SET state='closed' "
+            "WHERE generation_id=?\", (sys.argv[3],)); c.commit()"
+        )
+        holder = subprocess.Popen(  # nosec B603 # fixed interpreter and fixture program
+            [sys.executable, "-E", "-s", "-B", "-c", program, str(self.store.path),
+             str(seconds), self.generation if close else ""],
+            stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.stdout.close)
+        self.addCleanup(holder.wait, 30)
+        self.assertEqual(holder.stdout.readline(), "held\n")
+        return holder
+
+    def test_transient_writer_contention_recovers_and_executes_once(self):
+        """GH#36921: a writer held past the busy timeout delays, not denies, admission."""
+        self.hold_writer(3)
+        result = self.launch()
+        self.assertEqual(result.returncode, 23, result.stderr)
+        self.assertEqual(self.marker.read_text(), "yes")
+        self.assertIn("admission-retry reason=OperationalError code=database-locked "
+                      "category=contention attempt=1", result.stderr)
+        self.assertEqual(self.store.summary()["bindings"], 1)
+
+    def test_persistent_writer_contention_fails_closed(self):
+        """Contention outlasting the bounded wait denies with a sanitized reason."""
+        self.hold_writer(4)
+        result = self.launch(env={"AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS": "1"})
+        self.assert_denied(result)
+        self.assertIn("admission-denied reason=OperationalError code=database-locked "
+                      "category=contention", result.stderr)
+        self.assertNotIn(str(self.root), result.stderr)
+
+    def test_generation_closed_while_waiting_never_executes(self):
+        """A close committed by the contending writer wins over the waiting admission."""
+        self.hold_writer(3, close=True)
+        self.assert_denied(self.launch())
+        self.assertEqual(self.store.summary()["bindings"], 0)
 
     def assert_denied(self, result):
         self.assertEqual(result.returncode, 75, result.stderr)

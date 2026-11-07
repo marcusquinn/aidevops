@@ -62,18 +62,43 @@ def checkpoint(store, connection, operation, phase, payload):
 
 
 @contextmanager
-def archive_io(connection):
-    """Release the global writer only for non-destructive archive operations.
+def writer_released(connection):
+    """Release the global writer only for non-destructive archive or network work.
 
     The caller retains its operation lock and must revalidate registry writers
     after reacquisition. Native source move/removal never runs in this scope.
     Body failures propagate unchanged through the outer transaction's rollback.
-    Only successful archive work reacquires the writer; failure to reacquire
-    still aborts the next phase.
+    Only successful work reacquires the writer; failure to reacquire still
+    aborts the next phase.
     """
     connection.commit()
     yield
     connection.execute("BEGIN IMMEDIATE")
+
+
+def released_pull_requests(connection):
+    """Open-PR lookup that never holds the registry writer across the network.
+
+    GitHub state is not serialized by the registry. A plan built with this
+    lookup is only journaled; removal requires a refreshed plan whose local,
+    registry and /proc checks all run under the reacquired writer (GH#36921).
+    """
+    def lookup(slug):
+        with writer_released(connection):
+            return open_pull_requests(slug)
+    return lookup
+
+
+def prefetched_pull_requests(connection, slug):
+    """Fetch one slug without the writer; return a lookup bound to that result."""
+    with writer_released(connection):
+        prs = open_pull_requests(slug)
+
+    def lookup(requested):
+        if requested != slug:
+            raise ValueError("reconstructible-source-changed")
+        return prs
+    return lookup
 
 
 def archive_source(store, connection, operation, plan, adapter):
@@ -82,7 +107,7 @@ def archive_source(store, connection, operation, plan, adapter):
     previous = receipt(connection, operation, "archive")
     if previous is None:
         path = Path(plan["source"])
-        with archive_io(connection):
+        with writer_released(connection):
             archive = _helper(
                 "archive", str(path), "--repo", plan["repo"], "--unattributed",
                 "--reason", "unattributed-worktree", "--base-branch", plan["base"],
@@ -102,7 +127,7 @@ def archive_source(store, connection, operation, plan, adapter):
     if previous["output_root"] != str(root):
         raise ValueError("archive-root-changed")
     unchanged(connection, previous, adapter)
-    with archive_io(connection):
+    with writer_released(connection):
         manifest = verify_preservation(
             Path(previous["archive"]), root, previous["snapshot"],
         )
@@ -121,7 +146,7 @@ def finish(store, connection, operation, plan, adapter):
             or _id(container) != plan["container_identity"]):
         raise ValueError("retirement-container-changed")
     _private(container, directory=True)
-    with archive_io(connection):
+    with writer_released(connection):
         verify_preservation(Path(plan["archive"]), root, plan["snapshot"])
     unchanged(connection, plan, adapter)
     if not os.path.lexists(target):
@@ -273,14 +298,14 @@ def current_legacy_item(connection, item):
                   if row["path"] == item["path"]), item)
 
 
-def legacy_plan(store, connection, item, repositories, adapter):
+def legacy_plan(store, connection, item, repositories, adapter, open_prs):
     """Build a reconstructible plan for a legacy item."""
-    return reconstructible(item, repositories, adapter, open_pull_requests)
+    return reconstructible(item, repositories, adapter, open_prs)
 
 
-def managed_plan(store, connection, item, repositories, adapter):
+def managed_plan(store, connection, item, repositories, adapter, open_prs):
     """Build a reconstructible plan for a managed item and require authority."""
-    plan = reconstructible(item, repositories, adapter, open_pull_requests, managed=True)
+    plan = reconstructible(item, repositories, adapter, open_prs, managed=True)
     require_managed_authority(store, connection, item, plan)
     return plan
 
@@ -298,20 +323,24 @@ def process_reconstructible(store, item, repositories, adapter, options):
     if not options.apply:
         with store.connection() as connection:
             reconstructible_plan(store, connection, current_legacy_item(connection, item),
-                                 repositories, adapter)
+                                 repositories, adapter, open_pull_requests)
         return outcome, 1, 0
     probe = str(uuid5(UUID(store.installation_id()),
                       "reconstructible-host-probe:" + socket.gethostname()))
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         item = current_legacy_item(connection, item)
-        plan = reconstructible_plan(store, connection, item, repositories, adapter)
+        # GitHub lookups release the writer (GH#36921); this plan is only journaled.
+        plan = reconstructible_plan(store, connection, item, repositories, adapter,
+                                    released_pull_requests(connection))
         test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
         revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
         checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
-        # Refresh GitHub and /proc immediately before non-forced native removal.
+        # Fetch GitHub without the writer, then refresh every registry, Git and
+        # /proc check under the reacquired writer immediately before removal.
+        open_prs = prefetched_pull_requests(connection, plan["repo"])
         current = reconstructible_plan(store, connection, current_legacy_item(connection, item),
-                                       repositories, adapter)
+                                       repositories, adapter, open_prs)
         if current != plan:
             raise ValueError("reconstructible-source-changed")
         _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])

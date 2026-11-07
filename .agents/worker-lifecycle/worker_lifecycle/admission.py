@@ -6,12 +6,34 @@ admission and must not be counted as covered. Closing never authorizes cleanup.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import os
 from pathlib import Path
 import sqlite3
+import time
 from uuid import UUID, uuid5
 
 from .process import ProcessIdentity
+from .refusal import failure_category
 from .storage import LifecycleRegistry, SCHEMA, StoreConflict, encode, identifier
+
+# Bounded wait for a transiently busy registry writer (GH#36921). Each attempt
+# also waits up to the store's busy timeout, so total wait stays below
+# deadline + one busy timeout. Persistent contention still denies the launch.
+CONTENTION_DEADLINE_SECONDS = 30.0
+_CONTENTION_PAUSE_SECONDS = (0.1, 0.2, 0.5, 1.0)
+
+
+def contention_deadline() -> float:
+    """Operator-tunable admission wait; 0 restores a single attempt, never fail-open."""
+    try:
+        value = float(os.environ.get("AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS",
+                                     CONTENTION_DEADLINE_SECONDS))
+    except ValueError:
+        value = -1.0
+    if not 0 <= value <= 300:  # Also rejects NaN.
+        raise ValueError("invalid-admission-wait")
+    return value
 
 
 class AdmissionClosed(StoreConflict):
@@ -103,6 +125,36 @@ class AdmissionRegistry:
             self.store._register(connection, str(uuid5(namespace, "register")), run_id, identity)
             self.store._bind(connection, str(uuid5(namespace, "bind")), run_id, generation_id, generation["path"])
             return True
+
+    def admit_within_deadline(
+        self, run_id: str, identity: ProcessIdentity, generation_id: str,
+        expected_path: str | None = None, *,
+        deadline: float = CONTENTION_DEADLINE_SECONDS,
+        on_retry: Callable[[int, Exception], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> bool:
+        """`admit`, retrying only writer contention until a bounded deadline.
+
+        A busy writer rolls back the whole transaction, so no attempt commits
+        partially. Each retry repeats the open-generation check under the writer;
+        an attempt that committed before a lost acknowledgement replays as False,
+        never as a second execution authority. Every other refusal, and
+        contention past the deadline, propagates so the caller denies launch.
+        """
+        limit = clock() + deadline
+        attempt = 0
+        while True:
+            try:
+                return self.admit(run_id, identity, generation_id, expected_path)
+            except sqlite3.OperationalError as error:
+                pause = _CONTENTION_PAUSE_SECONDS[min(attempt, len(_CONTENTION_PAUSE_SECONDS) - 1)]
+                if failure_category(error) != "contention" or clock() + pause >= limit:
+                    raise
+                attempt += 1
+                if on_retry is not None:
+                    on_retry(attempt, error)
+            sleep(pause)
 
     def authorize_enrolled_only(self, event_id: str, generation_id: str) -> None:
         """Operator-confirmed: close admission for a generation with no owner ever.
