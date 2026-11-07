@@ -41,8 +41,13 @@ def requires_reconstructible(item, repositories, adapter, options):
     return False
 
 
-def reconstructible(item, repositories, adapter, open_prs, managed=False):
-    """Independent remote-recoverable class, never inferred from writer history."""
+def reconstructible(item, repositories, adapter, open_prs, managed_min_age=None):
+    """Independent remote-recoverable class, never inferred from writer history.
+
+    `managed_min_age` (seconds) selects the managed-takeover class and its idle floor;
+    `None` keeps the observation-era class, whose age is checked by `inspect`.
+    """
+    managed = managed_min_age is not None
     path = reconstructible_path(item, managed)
     admin = _git_directory(path)
     common = _git("-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -50,6 +55,8 @@ def reconstructible(item, repositories, adapter, open_prs, managed=False):
         raise ValueError("repository-out-of-scope")
     if (admin / "locked").exists():
         raise ValueError("git-worktree-locked")
+    if managed:
+        require_age(item, path, admin, time.time(), managed_min_age)
     require_ended(item, adapter, operator_confirmed=True)
     # GH#36626 requires clean tracked and untracked state. Ignored files are
     # regenerable local artefacts, discarded like ordinary cleanup (CLEANUP.md).
@@ -110,6 +117,19 @@ def inventory(connection):
     return sorted(paths.values(), key=lambda item: (item["last_event"], item["path"]))
 
 
+def require_age(item, path, admin, now, min_age):
+    """Require inactivity since the latest registry, directory, HEAD or index change."""
+    latest = max(item["last_event"], path.stat().st_mtime,
+                 (admin / "HEAD").stat().st_mtime)
+    try:
+        latest = max(latest, (admin / "index").stat().st_mtime)
+    except FileNotFoundError:
+        # Git permits an absent index, for example after add --no-checkout.
+        pass
+    if now - latest < min_age:
+        raise ValueError("too-recent")
+
+
 def inspect(item, repositories, adapter, now, options):
     """Age selects candidates; native identities are rechecked, never PID alone."""
     path = Path(item["path"])
@@ -131,16 +151,7 @@ def inspect(item, repositories, adapter, now, options):
         raise ValueError("repository-out-of-scope")
     if (admin / "locked").exists():
         raise ValueError("git-worktree-locked")
-    latest = max(item["last_event"], path.stat().st_mtime,
-                 (admin / "HEAD").stat().st_mtime)
-    try:
-        latest = max(latest, (admin / "index").stat().st_mtime)
-    except FileNotFoundError:
-        # Git permits an absent index, for example after add --no-checkout.
-        # Archive verification still validates the actual index/working state.
-        pass
-    if now - latest < options.min_age:
-        raise ValueError("too-recent")
+    require_age(item, path, admin, now, options.min_age)
     require_ended(item, adapter,
                   operator_confirmed=item["path"] in options.confirmed_paths)
     return {"source": str(path), "directory": _id(path), "admin": str(admin),

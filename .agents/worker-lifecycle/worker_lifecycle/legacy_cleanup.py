@@ -16,13 +16,13 @@ import tempfile
 import time
 from uuid import UUID, uuid4, uuid5
 
-from .cleanup import _failure_details
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
-from .legacy_options import require_manual_confirmation, require_managed_takeover, unrecorded
+from .legacy_options import require_manual_confirmation, require_managed_takeover
+from .legacy_options import retained_outcome, unrecorded
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
@@ -215,11 +215,11 @@ def take_over_managed(store, item, repositories, adapter, options):
     never retires would otherwise stay `managed-by-current-cleanup` forever. The
     remote-recoverable guards (clean including untracked, idle /proc census, unlocked,
     HEAD on a remote ref, no open PR, non-forced removal, branch kept) decide; any
-    unmet guard keeps the original ownership reason. Admission later reconciles the
+    unmet guard reports its concrete reason. Admission later reconciles the
     absent source through its existing source-absent path.
     """
     require_managed_takeover(reconstructible, item, repositories, adapter,
-                             open_pull_requests, managed=True)
+                             open_pull_requests, managed_min_age=options.min_age)
     return process_reconstructible(store, item, repositories, adapter, options)
 
 
@@ -237,6 +237,10 @@ def process_item(store, item, repositories, adapter, options):
                 require_confirmation(connection, operation, confirmed)
         if done:
             outcome["status"] = "already-retired"
+        elif not pending and not os.path.lexists(item["path"]):
+            # No removal or preservation is claimed. Admission cleanup separately
+            # reconciles absent generations using its existing identity guards.
+            outcome["status"] = "already-absent"
         elif item["modern"]:
             return take_over_managed(store, item, repositories, adapter, options)
         elif not pending and requires_reconstructible(item, repositories, adapter, options):
@@ -249,9 +253,7 @@ def process_item(store, item, repositories, adapter, options):
                 outcome["status"] = retire(store, item, repositories, adapter, options)
     except (ValueError, OSError, sqlite3.Error, ObservationUnavailable,
             subprocess.SubprocessError) as error:
-        outcome.update(status="retained", **_failure_details(error))
-        if isinstance(error, ObservationUnavailable):
-            outcome["reason"] = str(error)
+        outcome.update(retained_outcome(item, error))
     return outcome, eligible, attempted
 
 
@@ -300,10 +302,10 @@ def plan_reconstructible(store, connection, item, inspect_source, open_prs):
     """Refresh the inventory row, build its plan and require managed authority.
 
     The managed flag is read from the caller's item, never the refreshed row, so
-    every recheck keeps the managed path guard and authority evidence.
+    every recheck keeps the managed path guard, idle floor and authority evidence.
     """
     current = current_legacy_item(connection, item)
-    plan = inspect_source(current, open_prs=open_prs, managed=item["modern"])
+    plan = inspect_source(current, open_prs=open_prs)
     if item["modern"]:
         require_managed_authority(store, connection, current, plan)
     return plan
@@ -314,7 +316,9 @@ def process_reconstructible(store, item, repositories, adapter, options):
 
     A modern generation reaches here only through `take_over_managed`.
     """
-    inspect_source = partial(reconstructible, repositories=repositories, adapter=adapter)
+    # `None` keeps the observation-era class; managed items get the idle floor.
+    inspect_source = partial(reconstructible, repositories=repositories, adapter=adapter,
+                             managed_min_age=options.min_age if item["modern"] else None)
     reconstructible_plan = partial(plan_reconstructible, store, item=item,
                                    inspect_source=inspect_source)
     operation = operation_id(store, item["path"])

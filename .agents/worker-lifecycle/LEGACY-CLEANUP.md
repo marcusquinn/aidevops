@@ -17,7 +17,8 @@ historical rows into `generation_admissions`.
    directories receive explicit inspection results, not silent omission.
 2. Select old linked worktrees within the configured maintenance repositories.
    The default age is one hour since the latest recorded event or worktree/HEAD/index
-   modification. Current admission-controlled generations are left to normal cleanup.
+    modification. Modern generations may use the guarded reconstructible takeover
+    described below; their configured age threshold still applies.
 3. Recheck every recorded process using the native Linux/macOS identity adapter.
    Alive or unknown results retain the directory. A cached `ended` row or a missing
    PID alone is insufficient. There is no global process-cwd scan or descendant census.
@@ -48,8 +49,14 @@ writers are not inferred from cwd, age or Git state.
 
 Unrecorded/unbound legacy worktrees can retire without writer history only when
 their complete content is remote-recoverable and current liveness is observable.
-This class is independent of the ordinary legacy age threshold. It does not
-adopt current-generation admissions or operator-confirmed archive operations.
+For legacy sources this class is independent of the ordinary legacy age threshold.
+Modern takeover still requires the configured age threshold, closed admission and
+complete ended owner evidence (or existing explicit enrolled-only authorization).
+Detached modern sources additionally require verified creation evidence. These
+authority checks are not waived for clean or pushed sources, and no
+`--confirm-legacy-path` is needed for a modern source whose guards already hold.
+An interrupted operator-confirmed archive operation still requires confirmation;
+automatic cleanup cannot inherit that permission.
 It requires a canonical owned linked worktree beneath the managed base, no Git
 lock, and an empty Git status including untracked files and submodule state.
 Ignored files (dependency trees, caches, build output) do not retain the source;
@@ -98,6 +105,12 @@ hard termination. The temporary pass attempts at most 25 worktrees per invocatio
 A private `legacy-cleanup-position` cursor in the existing state directory prevents
 one failing candidate from starving the remaining backlog. It grants no deletion
 authority and is not a database.
+The limit counts attempted retirements, not examined entries; retained entries do
+not consume it. Preview does not advance the cursor. Each retained modern result
+reports its concrete guard in `reason` and retains the ownership classification in
+`ownership: managed-by-current-cleanup`. Missing paths without a pending archive
+plan report `already-absent`, without claiming removal or preservation; normal
+admission cleanup owns registry absence reconciliation.
 
 Preview (no filesystem or registry writes):
 
