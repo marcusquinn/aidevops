@@ -14,6 +14,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from urllib.parse import unquote, urlsplit
 
 from _team_interface_buzz_runtime_agents import copy_pinned_agents
 from _team_interface_buzz_runtime_config import (
@@ -73,23 +74,45 @@ def runtime_anchor_lock():
         os.close(descriptor)
 
 
+def manifest_strings(value):
+    """Yield decoded strings without losing Unicode or escaped path characters."""
+    if isinstance(value, str):
+        yield value
+        path_value = unquote(urlsplit(value).path) if value.startswith("file:") else value
+        path = Path(os.path.expanduser(path_value))
+        if path.is_absolute():
+            # Protect aliases as well as canonical manifest paths. Resolution errors
+            # propagate so a symlink loop or inaccessible component refuses pruning.
+            yield str(path.resolve())
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from manifest_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from manifest_strings(item)
+
+
 def harness_references(app_data_dirs):
     """Read all harnesses, including installed and development macOS bundles."""
-    support = Path.home() / "Library" / "Application Support"
+    support = require_safe_directory_chain(Path.home() / "Library" / "Application Support")
     directories = set(app_data_dirs)
     if support.exists():
-        directories.update(support.glob("xyz.block.buzz.*"))
+        directories.update(
+            entry for entry in support.iterdir() if entry.name.startswith("xyz.block.buzz.")
+        )
     references = []
     for directory in directories:
         harnesses = require_safe_directory_chain(directory / "custom_harnesses")
         if not harnesses.exists():
             continue
-        for manifest in harnesses.glob("*.json"):
+        for manifest in harnesses.iterdir():
+            if manifest.suffix != ".json":
+                continue
             metadata = manifest.lstat()
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 64 * 1024:
                 raise RuntimeError("cannot safely read Buzz harness references; pruning refused")
-            # Re-serialize parsed JSON so escaped path separators cannot hide a reference.
-            references.append(json.dumps(json.loads(manifest.read_text(encoding="utf-8"))))
+            references.extend(manifest_strings(json.loads(manifest.read_text(encoding="utf-8"))))
     return references
 
 
@@ -122,6 +145,26 @@ def trash_runtime_anchor(root):
     raise RuntimeError("no working Trash command (trash or gio); anchor retained")
 
 
+def recognized_runtime_anchor(root, profile):
+    """Restrict cleanup to owned real directories with a matching anchor marker."""
+    if not re.fullmatch(r"v[0-9]+-[0-9a-f]{16}-[0-9a-f]{16}", root.name):
+        return False
+    metadata = root.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+        return False
+    require_safe_directory_chain(root)
+    marker = root / PINNED_RUNTIME_MARKER
+    if marker.is_symlink() or not marker.is_file() or marker.stat().st_size > 64 * 1024:
+        return False
+    value = json.loads(marker.read_text(encoding="utf-8"))
+    return valid_runtime_marker(value, profile["id"], int(root.name.split("-")[0][1:]))
+
+
+def anchor_is_in_use(root, references):
+    """Protect literal decoded manifest paths and process command references."""
+    return any(str(root) in reference for reference in references) or anchor_is_running(root)
+
+
 def prune_runtime_anchors(profile, app_data_dirs, dry_run=False):
     """Trash only recognized, unreferenced, idle siblings while holding the CLI lock."""
     parent = require_safe_directory_chain(
@@ -134,19 +177,9 @@ def prune_runtime_anchors(profile, app_data_dirs, dry_run=False):
     references = harness_references(app_data_dirs)
     candidates = []
     for root in sorted(parent.iterdir()):
-        if not re.fullmatch(r"v[0-9]+-[0-9a-f]{16}-[0-9a-f]{16}", root.name):
+        if not recognized_runtime_anchor(root, profile):
             continue
-        metadata = root.lstat()
-        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
-            continue
-        require_safe_directory_chain(root)
-        marker = root / PINNED_RUNTIME_MARKER
-        if marker.is_symlink() or not marker.is_file() or marker.stat().st_size > 64 * 1024:
-            continue
-        value = json.loads(marker.read_text(encoding="utf-8"))
-        if not valid_runtime_marker(value, profile["id"], int(root.name.split("-")[0][1:])):
-            continue
-        if any(str(root) in reference for reference in references) or anchor_is_running(root):
+        if anchor_is_in_use(root, references):
             continue
         candidates.append(root)
     for root in candidates:
@@ -155,7 +188,7 @@ def prune_runtime_anchors(profile, app_data_dirs, dry_run=False):
         else:
             # Recheck immediately before the move; processes may start during inventory.
             references = harness_references(app_data_dirs)
-            if any(str(root) in reference for reference in references) or anchor_is_running(root):
+            if anchor_is_in_use(root, references):
                 continue
             trash_runtime_anchor(root)
             print(f"Trashed unused Buzz runtime anchor: {root}")
