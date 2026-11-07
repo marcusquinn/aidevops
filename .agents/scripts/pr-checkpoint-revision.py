@@ -184,8 +184,8 @@ def require_unattributed_acknowledgement(history, acknowledged):
 
 def acknowledgement_ids(value):
     """Reject loose, duplicate or non-comment identifiers before enabling recovery."""
-    if not (isinstance(value, list) and all(type(item) is int and item > 0 for item in value)
-            and len(set(value)) == len(value)):
+    if (not isinstance(value, list) or any(type(item) is not int or item <= 0 for item in value)
+            or len(set(value)) != len(value)):
         raise ValueError("terminal-without-release acknowledgement must list unique positive comment ids")
     return value
 
