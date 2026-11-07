@@ -347,7 +347,7 @@ check_string_literals() {
 			local new_strings=$((repeated_strings - baseline_strings))
 			((violations += new_strings))
 			print_error "$file has $new_strings new repeated string literal(s) (baseline: $baseline_strings, current: $repeated_strings)"
-			_linters_show_repeated_literals <"$file"
+			_linters_show_repeated_literals new "$base_content" <"$file"
 		elif ((repeated_strings > 0)); then
 			((debt_files += 1))
 			print_warning "$file has $repeated_strings pre-existing repeated string literal(s) (not blocking)"
@@ -379,8 +379,15 @@ _linters_count_repeated_literals() {
 	return 0
 }
 
+# Prints "  <count>x: <literal>" lines from stdin, with the whole literal text.
+# Modes mirror pre-commit-hook.sh _show_repeated_literals (GH#36999):
+# top (default, first three), all, or new <baseline> — only literals not
+# already repeated >=3x in the baseline, compared on literal text.
 _linters_show_repeated_literals() {
-	grep -v '^[[:space:]]*#' |
+	local mode="${1:-top}"
+	local baseline="${2:-}"
+	local listing
+	listing=$(grep -v '^[[:space:]]*#' |
 		sed -E '
 			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
 			s/"\$\{[^}]*\}"//g
@@ -390,7 +397,23 @@ _linters_show_repeated_literals() {
 		grep -oE '"[^"]{4,}"' |
 		grep -vE '^"[0-9]+\.?[0-9]*"$' |
 		grep -vE '^"\$' |
-		sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
+		sort | uniq -c |
+		awk '$1 >= 3 { n = $1; sub(/^[[:space:]]*[0-9]+[[:space:]]/, ""); print "  " n "x: " $0 }') ||
+		listing="" # grep exits 1 on no match; under pipefail that means none, not an error
+	[[ -n "$listing" ]] || return 0
+	case "$mode" in
+	all) printf '%s\n' "$listing" ;;
+	new)
+		# phase= assignments, not NR==FNR: an empty baseline (new file) must
+		# not make the current listing look like the baseline.
+		awk '
+			phase == "base" { sub(/^ *[0-9]+x: /, ""); seen[$0] = 1; next }
+			{ literal = $0; sub(/^ *[0-9]+x: /, "", literal) }
+			literal != "" && !(literal in seen) { print }
+		' phase=base <(printf '%s\n' "$baseline" | _linters_show_repeated_literals all) phase=cur - <<<"$listing"
+		;;
+	*) head -3 <<<"$listing" ;;
+	esac
 	return 0
 }
 
