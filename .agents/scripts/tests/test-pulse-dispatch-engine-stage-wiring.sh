@@ -501,7 +501,7 @@ assert_ownership_deadline_contract() {
 }
 
 assert_stage_cycle_budget_contract() {
-	local test_root="" actual="" expected="clamp:1;defer:124;optout:1;unset:1;"
+	local test_root="" actual="" expected="reserved:67;protected:124;dispatch:600;released:600;clamp:1;defer:124;optout:1;unset:1;"
 	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-stage-cycle-XXXXXX") || return 1
 	TESTS_RUN=$((TESTS_RUN + 1))
 	actual=$(
@@ -510,6 +510,18 @@ assert_stage_cycle_budget_contract() {
 			PULSE_START_EPOCH=1000 PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1800
 			date() { [[ "${1:-}" == '+%s' ]] && printf '%s\n' "$TEST_EPOCH"; }
 			stage_probe() { printf 'run\n' >>"$EVENTS"; return 0; }
+			# A many-repo scan needs 483s + 600s floor + 60s prestage
+			# margin + 90s finalisation, plus the 60s teardown allowance.
+			_PULSE_MAIN_DISPATCH_RESERVE_S=1293 TEST_EPOCH=1440
+			printf 'reserved:%s;' "$(_pulse_stage_cycle_timeout build_dependency_graph_cache 600)"
+			TEST_EPOCH=1500
+			local protected_rc=0
+			run_stage_with_timeout cache_prime 300 stage_probe || protected_rc=$?
+			printf 'protected:%s;' "$protected_rc"
+			[[ ! -f "$EVENTS" ]] || exit 1
+			printf 'dispatch:%s;' "$(_PULSE_MAIN_DISPATCH_RESERVE_S=0 _pulse_stage_cycle_timeout dispatch_candidate_1 600)"
+			_PULSE_MAIN_DISPATCH_RESERVE_S=0
+			printf 'released:%s;' "$(_pulse_stage_cycle_timeout auto_decomposer_scanner 600)"
 			TEST_EPOCH=2500
 			run_stage_with_timeout clamped 600 stage_probe || true
 			[[ "$(<"$EVENTS")" == run ]] && printf 'clamp:1;'
