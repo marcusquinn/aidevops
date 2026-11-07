@@ -35,7 +35,8 @@ historical rows into `generation_admissions`.
    pathname that might have been reused.
 
 The existing SQLite writer transaction serializes registration changes during
-archive/removal operations. After committing a checkpoint and reacquiring it, the
+native move/removal. Non-destructive archive capture and verification release it.
+After committing a checkpoint or releasing the writer and reacquiring it, the
 script checks the bindings and native identities again. This transition uses
 **recorded processes**, not a claim that historical observation proves complete
 writer coverage. As with the managed lifecycle contract, independent unregistered
@@ -65,9 +66,11 @@ including threads surviving a dead leader. An unreadable or still-live thread
 with missing observations fails closed. A vanished task/closed fd is distinguished
 from unavailable observations. Other operating systems retain these candidates.
 
-Under the existing registry writer transaction, eligibility, GitHub PR absence
-and the process census are checked again immediately before native
-`git worktree remove` **without `--force`**. Branches are never deleted. The event
+GitHub PR lookups release the registry writer, because SQLite does not serialize
+GitHub state and a lookup can outlast the admission busy timeout (GH#36921).
+Under the reacquired registry writer, eligibility, the fetched GitHub PR absence,
+registered writers and the process census are checked again immediately before
+native `git worktree remove` **without `--force`**. Branches are never deleted. The event
 journal records the exact plan before deletion and a
 `reconstructible-worktree-retired` receipt after verifying directory absence,
 commit presence and the unchanged branch ref. Results identify the class; receipts

@@ -307,7 +307,13 @@ its initial binding together. A binding error, capacity failure or crash before
 commit leaves neither event nor projection from that attempt. Database lock waits
 are bounded (2 seconds per connection), but startup
 latency is not zero. Initialization retries have a 2-second deadline checked between
-attempts; an in-flight SQLite wait can extend that deadline. No scheduler or persistent
+attempts; an in-flight SQLite wait can extend that deadline. Admission to a
+reserved generation retries only writer contention (`database-locked`) for up to
+30 seconds, `AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS` (0-300; invalid values deny).
+Each retry is the complete idempotent admission transaction: a closed generation
+still denies, and a committed earlier attempt replays without executing again.
+Each retry logs `admission-retry`; contention past the deadline exits 75 as before
+(GH#36921). No scheduler or persistent
 global environment is installed. Set `AIDEVOPS_LIFECYCLE_DISABLED=1` to disable launch
 observation and Pulse reconciliation; preserve the store. This is not permission
 to run on enrolled worktrees without admission. Observation on unregistered paths
