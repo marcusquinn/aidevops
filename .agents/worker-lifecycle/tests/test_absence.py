@@ -85,9 +85,10 @@ class AbsenceContract(unittest.TestCase):
     def test_live_tree_reference_prevents_admission_closure(self):
         self.create()
         self.generation = GenerationEnrollment(self.store).inspect(self.target)
-        with patch("worker_lifecycle.cleanup.require_idle_proc",
-                   side_effect=ValueError("live-process-reference")):
+        with patch("worker_lifecycle.retirement.require_idle_processes",
+                   side_effect=ValueError("live-process-reference")) as guard:
             report = self.cleanup()
+        guard.assert_called()
         self.assertEqual(report["results"][0]["reason"], "live-process-reference")
         with self.store.connection() as connection:
             state = connection.execute(

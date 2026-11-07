@@ -291,6 +291,9 @@ def retire_worktree(
     with _lock(store, generation):
         plan = _event(store, _event_id(generation, "planned"))
         if plan is None:
+            # Census before prepare closes admission permanently; the
+            # relocation guard still re-checks after the plan is recorded.
+            require_idle_processes(path)
             prepared = prepare_retirement(store, path, generation, archive.recover)
             if prepared["status"] != "registered-runs-ended":
                 return prepared
