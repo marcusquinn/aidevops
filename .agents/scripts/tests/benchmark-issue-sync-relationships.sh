@@ -105,4 +105,105 @@ if ! _dependency_cycle_should_skip_edge t901 t902 901 902 "$history_todo"; then
 	exit 1
 fi
 printf 'PASS: history-heavy graph built once and preserved cycle checks\n'
+
+# GH#37006: the pre-fix builder ran parse_task_line (~72 processes) on every
+# dependency-bearing row. Keep it here as the parity reference for the
+# in-process extractor; both must accept, skip and reject the same rows.
+reference_declared_edges() {
+	local todo_file="$1"
+	local task_line="" task_id="" parsed="" key="" value="" stripped=""
+	local blocked_by="" blocks="" dep_task_id="" saved_ifs=""
+	stripped=$(strip_code_fences <"$todo_file") || return 1
+	_relationship_active_ids_and_refs "$stripped" || return 1
+	while IFS= read -r task_line; do
+		[[ "$task_line" == *"blocked-by:"* || "$task_line" == *"blocks:"* ]] || continue
+		[[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[.\][[:space:]]+(t[0-9]+(\.[0-9a-z]+)*)[[:space:]] ]] || continue
+		task_id="${BASH_REMATCH[1]}"
+		if ! task_identity_validate "$task_id"; then
+			_relationship_skip_completed_legacy_row "$task_line" "$task_id" || return 1
+			continue
+		fi
+		if ! parsed=$(parse_task_line "$task_line"); then
+			_relationship_report_parse_failure "$task_line" "$task_id" || return 1
+			continue
+		fi
+		blocked_by=""
+		blocks=""
+		while IFS='=' read -r key value; do
+			case "$key" in
+			blocked_by) blocked_by="$value" ;;
+			blocks) blocks="$value" ;;
+			esac
+		done <<<"$parsed"
+		saved_ifs="$IFS"
+		IFS=','
+		for dep_task_id in $blocked_by; do
+			[[ -n "$dep_task_id" && "$dep_task_id" != "$task_id" ]] || continue
+			printf '%s|%s\n' "$task_id" "$dep_task_id"
+		done
+		for dep_task_id in $blocks; do
+			[[ -n "$dep_task_id" && "$dep_task_id" != "$task_id" ]] || continue
+			printf '%s|%s\n' "$dep_task_id" "$task_id"
+		done
+		IFS="$saved_ifs"
+	done <<<"$stripped"
+	return 0
+}
+
+compare_builders() {
+	local label="$1"
+	local todo_file="$2"
+	local new_rc=0 reference_rc=0 new_edges="" reference_edges=""
+	new_edges=$(_relationship_declared_edges "$todo_file" 2>/dev/null | sort) || new_rc=$?
+	reference_edges=$(reference_declared_edges "$todo_file" 2>/dev/null | sort) || reference_rc=$?
+	[[ "$new_rc" -eq "$reference_rc" && "$new_edges" == "$reference_edges" ]] || {
+		printf 'FAIL: %s: in-process builder diverged (rc %d vs %d)\nnew:\n%s\nreference:\n%s\n' \
+			"$label" "$new_rc" "$reference_rc" "$new_edges" "$reference_edges" >&2
+		exit 1
+	}
+	return 0
+}
+
+parity_todo="${BENCHMARK_DIR}/parity-todo.md"
+printf '%s\n' \
+	'- [x] t1 done blocked-by:t2,GH#5,#6 blocks:t3 ref:GH#1' \
+	'- [>] t2 started blocks:t4 parent:GH#9' \
+	'- [-] t3 declined blocked-by:t2 parent:t1' \
+	'  - [ ] t4.1 open child blocked-by:t4 blocks:t4.1 ref:GH#41' \
+	'- [x] t5 completed with bad list blocked-by:t1,,t2' \
+	'- [x] t6 completed with duplicate parent blocked-by:t1 parent:t1 parent:t2' \
+	'- [x] t7 completed with bad dependency blocks:t7.x' \
+	'- [x] t007.3 completed padded history blocked-by:t1' \
+	'- [?] t8 odd checkbox completed:2026-01-01 blocks:t1' \
+	'- [ ] tox0000000000000000000000000-12 namespaced row blocked-by:t1' \
+	'- [ ] to0abcdefghjkmnpqrstvwxyz012-3 namespaced row blocked-by:t1,to0abcdefghjkmnpqrstvwxyz012-4' \
+	'```' '- [ ] t9 fenced example blocked-by:t1' '```' >"$parity_todo"
+compare_builders "mixed edge cases" "$parity_todo"
+for bad_row in '- [ ] t10 open bad list blocked-by:t1,,t2' '- [ ] t11 open padded dep blocked-by:t001' \
+	'- [ ] t12 open duplicate parent blocked-by:t1 parent:t1 parent:t2' '- [?] t13 odd open blocks:t1'; do
+	printf '%s\n' '- [ ] t1 base ref:GH#1' "$bad_row" >"${BENCHMARK_DIR}/fail-closed-todo.md"
+	compare_builders "fail-closed: ${bad_row}" "${BENCHMARK_DIR}/fail-closed-todo.md"
+done
+printf 'PASS: in-process dependency extractor matches parse_task_line on accept, skip and reject\n'
+
+# 1,000 completed rows that carry dependencies: the case the history fixture
+# above never exercised. The pre-fix builder needed ~72k processes here.
+dependency_history_todo="${BENCHMARK_DIR}/dependency-history-todo.md"
+for ((node = 2; node <= 1001; node++)); do
+	printf '%s\n' "- [x] t${node} completed history blocked-by:t$((node - 1)) blocks:t$((node + 1000)) ref:GH#${node}"
+done >"$dependency_history_todo"
+build_started=$(date +%s)
+dependency_edges=$(_relationship_declared_edges "$dependency_history_todo")
+build_seconds=$(($(date +%s) - build_started))
+dependency_edge_count=$(printf '%s\n' "$dependency_edges" | awk 'NF { count++ } END { print count + 0 }')
+[[ "$dependency_edge_count" -eq 2000 && "$dependency_edges" == *$'t1001|t1000\n'* &&
+	"$dependency_edges" == *'t2001|t1001'* ]] || {
+	printf 'FAIL: dependency-bearing history lost edges (count=%s)\n' "$dependency_edge_count" >&2
+	exit 1
+}
+[[ "$build_seconds" -lt 10 ]] || {
+	printf 'FAIL: 1000 dependency-bearing history rows took %ss to build (budget 10s)\n' "$build_seconds" >&2
+	exit 1
+}
+printf 'PASS: 1000 dependency-bearing history rows built in %ss (edges=%s)\n' "$build_seconds" "$dependency_edge_count"
 printf 'PASS: 800-task relationship benchmark captured resources and progress\n'
