@@ -4,6 +4,7 @@ No new tables or fabricated admissions. Receipts use the existing event journal.
 Current-generation cleanup is unchanged. Remove this module after the backlog.
 """
 
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -60,23 +61,39 @@ def checkpoint(store, connection, operation, phase, payload):
     connection.execute("BEGIN IMMEDIATE")
 
 
+@contextmanager
+def archive_io(connection):
+    """Release the global writer only for non-destructive archive operations.
+
+    The caller retains its operation lock and must revalidate registry writers
+    after reacquisition. Native source move/removal never runs in this scope.
+    Body failures propagate unchanged through the outer transaction's rollback.
+    Only successful archive work reacquires the writer; failure to reacquire
+    still aborts the next phase.
+    """
+    connection.commit()
+    yield
+    connection.execute("BEGIN IMMEDIATE")
+
+
 def archive_source(store, connection, operation, plan, adapter):
     """Archive the legacy source, reusing a previous archive receipt when present."""
     root = Path(plan["output_root"])
     previous = receipt(connection, operation, "archive")
     if previous is None:
         path = Path(plan["source"])
-        archive = _helper(
-            "archive", str(path), "--repo", plan["repo"], "--unattributed",
-            "--reason", "unattributed-worktree", "--base-branch", plan["base"],
-            "--output-root", str(root),
-        )
-        # Capture already compares before/after snapshots. Bind the receipt to
-        # that captured state; finish independently rechecks the actual source.
-        manifest = json.loads((Path(archive) / "manifest.json").read_bytes())
-        snapshot = manifest.get("source_fingerprint")
-        if not isinstance(snapshot, dict):
-            raise ValueError("archive-fingerprint-missing")
+        with archive_io(connection):
+            archive = _helper(
+                "archive", str(path), "--repo", plan["repo"], "--unattributed",
+                "--reason", "unattributed-worktree", "--base-branch", plan["base"],
+                "--output-root", str(root),
+            )
+            # Capture compares before/after snapshots; bind to captured state.
+            manifest = json.loads((Path(archive) / "manifest.json").read_bytes())
+            snapshot = manifest.get("source_fingerprint")
+            if not isinstance(snapshot, dict):
+                raise ValueError("archive-fingerprint-missing")
+        unchanged(connection, plan, adapter)
         previous = dict(plan, type="legacy-worktree-archive", archive=archive,
                         snapshot=snapshot, output_root=str(root))
         checkpoint(store, connection, operation, "archive", previous)
@@ -85,9 +102,11 @@ def archive_source(store, connection, operation, plan, adapter):
     if previous["output_root"] != str(root):
         raise ValueError("archive-root-changed")
     unchanged(connection, previous, adapter)
-    manifest = verify_preservation(
-        Path(previous["archive"]), root, previous["snapshot"],
-    )
+    with archive_io(connection):
+        manifest = verify_preservation(
+            Path(previous["archive"]), root, previous["snapshot"],
+        )
+    unchanged(connection, previous, adapter)
     _retain_base(Path(plan["source"]), operation, manifest["base_sha"])
     return previous
 
@@ -102,7 +121,8 @@ def finish(store, connection, operation, plan, adapter):
             or _id(container) != plan["container_identity"]):
         raise ValueError("retirement-container-changed")
     _private(container, directory=True)
-    verify_preservation(Path(plan["archive"]), root, plan["snapshot"])
+    with archive_io(connection):
+        verify_preservation(Path(plan["archive"]), root, plan["snapshot"])
     unchanged(connection, plan, adapter)
     if not os.path.lexists(target):
         if not os.path.lexists(plan["admin"]):
