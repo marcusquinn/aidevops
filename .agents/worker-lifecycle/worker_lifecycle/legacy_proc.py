@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 import os
 from pathlib import Path
+import platform
+import subprocess  # nosec B404 # fixed native observation command, no shell
 
 from .process import ProcessIdentity
 
@@ -35,6 +37,59 @@ def require_ended(item, adapter, *, operator_confirmed=False):
             raise ValueError("process-" + observed.status)
     if not operator_confirmed and (not item["runs"] or item["unbound"]):
         raise ValueError("no-recorded-processes")
+
+
+def require_idle_processes(path: Path) -> None:
+    """Require a usable native census at the tree's current removal location."""
+    system = platform.system()
+    if system == "Linux":
+        require_idle_proc(path)
+    elif system == "Darwin":
+        require_idle_macos(path)
+    else:
+        raise ValueError("proc-observation-unavailable")
+
+
+def require_idle_macos(path: Path) -> None:
+    """Inspect owned processes' cwd/open files using macOS's native lsof."""
+    try:
+        observed = subprocess.run(  # nosec B603 # fixed system binary and argv
+            ["/usr/sbin/lsof", "-nP", "-a", "-u", str(os.geteuid()), "-F0pfn"],
+            capture_output=True, check=False, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError("proc-observation-unavailable") from error
+    if observed.returncode != 0 or observed.stderr:
+        raise ValueError("proc-observation-unavailable")
+    # NUL-delimited names preserve spaces and newlines. lsof adds a newline
+    # between process/file records, not inside their fields.
+    current_pid = None
+    descriptor = b""
+    seen: set[int] = set()
+    cwd_seen: set[int] = set()
+    for field in observed.stdout.split(b"\0"):
+        field = field.removeprefix(b"\n")
+        if not field:
+            continue
+        if field[:1] == b"p":
+            if not field[1:].isdigit():
+                raise ValueError("proc-observation-unavailable")
+            current_pid = int(field[1:])
+            seen.add(current_pid)
+            descriptor = b""
+        elif field[:1] == b"f":
+            descriptor = field[1:]
+        elif field[:1] == b"n":
+            name = Path(os.fsdecode(field[1:]))
+            if current_pid is None:
+                raise ValueError("proc-observation-unavailable")
+            if descriptor == b"cwd" and name.is_absolute():
+                cwd_seen.add(current_pid)
+            if name == path or path in name.parents:
+                raise ValueError("live-process-reference")
+    # A successful but empty/partial census is not evidence of idleness.
+    if os.getpid() not in seen or seen != cwd_seen:
+        raise ValueError("proc-observation-unavailable")
 
 
 def require_idle_proc(path, proc=Path("/proc")):

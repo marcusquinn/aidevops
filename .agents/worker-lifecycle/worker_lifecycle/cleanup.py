@@ -19,7 +19,6 @@ from .cleanup_plan import enrolled_only_event_id
 from .cleanup_quarantine import CleanupQuarantine
 from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import validate_private_path as _private
-from .legacy_proc import require_idle_proc
 from .permissions import FilePolicy, read_owned_file
 from .pull_requests import OpenPullRequestCache
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
@@ -166,10 +165,6 @@ def _candidate(
     slug, base = repositories[common]
     if plan is not None:
         slug, base, root = plan["repo"], plan["base"], Path(plan["output_root"])
-    else:
-        # Closing an otherwise quiescent admission must not strand an unrelated
-        # live process in the tree. An unavailable census fails closed.
-        require_idle_proc(path)
     return retire_worktree(
         store, path, generation,
         ArchiveTarget(slug, base, root, recover=creation is None),

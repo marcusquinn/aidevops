@@ -23,6 +23,7 @@ from .archive_path import validate_archive_path
 from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
+from .legacy_proc import require_idle_processes
 from .enrollment import (
     MARKER, _directory_inode, _git_directory, _read_marker,
 )
@@ -156,6 +157,8 @@ def _new_plan(
 def _relocate_source(
     store: LifecycleRegistry, path: Path, plan: dict, receipt: dict,
 ) -> None:
+    # Check before opening our own directory handle, including on plan retries.
+    require_idle_processes(path)
     with DirectoryHandle(path) as original:
         prepared = prepare_cleanup(store, path)
         if (prepared["generation_id"] != plan["generation_id"]
@@ -179,6 +182,8 @@ def _remove_private(
 ) -> None:
     target, admin = Path(plan["container"]) / "tree", Path(plan["git_directory"])
     generation = plan["generation_id"]
+    # Never census a replacement at the public path after private relocation.
+    require_idle_processes(target)
     with DirectoryHandle(target) as tree, DirectoryHandle(admin) as metadata:
         marker = {
             "format": 2, "installation_id": store.installation_id(),
