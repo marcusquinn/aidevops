@@ -47,7 +47,7 @@ def buzz_is_running():
 
 
 def backup_existing(path, runtime_id):
-    """Copy an existing runtime manifest into private aidevops rollback storage."""
+    """Copy an existing manifest or agent store into private rollback storage."""
     if not path.exists():
         return None
     backup_dir = Path.home() / ".aidevops" / "buzz-backups"
@@ -61,3 +61,31 @@ def backup_existing(path, runtime_id):
     backup = backup_dir / f"{runtime_id}.{timestamp}.json"
     atomic_write(backup, path.read_bytes())
     return backup
+
+
+def install_payload(app_data_dir, runtime_id, payload, replace, pinned):
+    """Refresh eligible pointers before replacing a stopped Buzz runtime manifest."""
+    # Imported lazily because digest refresh reuses this module's backup primitive.
+    from _team_interface_buzz_runtime_digest_refresh import refresh_source_digests
+
+    target = app_data_dir / "custom_harnesses" / f"{runtime_id}.json"
+    backup = None
+    unchanged = False
+    if target.exists() or target.is_symlink():
+        if target.is_symlink() or not target.is_file():
+            raise RuntimeError("existing Buzz runtime path is not a regular file")
+        unchanged = target.read_bytes() == payload
+        if not unchanged and not replace:
+            raise RuntimeError("Buzz runtime already exists with different content; inspect it or pass --replace")
+        if not unchanged:
+            backup = backup_existing(target, runtime_id)
+    if pinned is not None:
+        store_backup = refresh_source_digests(app_data_dir, pinned / "agents")
+        if store_backup is None and not unchanged:
+            # Manifest replacement still needs a store snapshot for documented rollback.
+            store_path = app_data_dir / "agents" / "managed-agents.json"
+            if store_path.is_file() and not store_path.is_symlink():
+                print(f"Buzz managed agents backup: {backup_existing(store_path, 'managed-agents')}")
+    if not unchanged:
+        atomic_write(target, payload)
+    return target, backup

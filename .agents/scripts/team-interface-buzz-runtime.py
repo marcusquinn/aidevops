@@ -18,9 +18,9 @@ from _team_interface_buzz_runtime_anchor import (
     validate_existing_pinned_runtime,
 )
 from _team_interface_buzz_runtime_install import (
-    backup_existing,
     buzz_is_running,
     default_app_data_dir,
+    install_payload,
 )
 from _team_interface_buzz_runtime_io import RuntimeError, atomic_write, canonical_payload
 from _team_interface_buzz_runtime_prepare import prepare_runtime
@@ -168,20 +168,9 @@ def install_manifest(project_root, app_data_dir, replace, profile):
     if buzz_is_running():
         raise RuntimeError("quit Buzz before installing or replacing its custom runtime manifest")
     runtime_id = profile["id"]
-    target = app_data_dir / "custom_harnesses" / f"{runtime_id}.json"
     pinned = materialize_pinned_runtime(profile) if runtime_id == "aidevops-interactive-v1" else None
     payload = canonical_payload(materialized_manifest(project_root, profile, pinned))
-    backup = None
-    if target.exists() or target.is_symlink():
-        if target.is_symlink() or not target.is_file():
-            raise RuntimeError("existing Buzz runtime path is not a regular file")
-        if target.read_bytes() == payload:
-            return target, None
-        if not replace:
-            raise RuntimeError("Buzz runtime already exists with different content; inspect it or pass --replace")
-        backup = backup_existing(target, runtime_id)
-    atomic_write(target, payload)
-    return target, backup
+    return install_payload(app_data_dir, runtime_id, payload, replace, pinned)
 
 
 def parse_args(argv=None):

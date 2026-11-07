@@ -214,6 +214,23 @@ app-data location is known and non-default. Installation is idempotent, refuses 
 different existing definition, and accepts `--replace` only while Buzz is stopped;
 replacement first writes a private rollback copy to `~/.aidevops/buzz-backups/`.
 
+Reinstalling the interactive runtime also refreshes imported agents' source
+digests in place, preserving Buzz identities, DMs and threads. With Buzz stopped,
+the installer matches this host's roster against the new anchor and changes only
+the digest line of otherwise exact canonical pointer prompts. Locally edited
+prompts are skipped and reported; launch-time source verification remains strict.
+Before changing the store or replacing the manifest, it saves the original
+`agents/managed-agents.json` as
+`~/.aidevops/buzz-backups/managed-agents.<timestamp>.json` (mode 600). Output lists
+only matched agent names and old/new 12-character digest prefixes, not store fields.
+An unchanged reinstall does not rewrite or back up the store again.
+
+To roll back, quit Buzz, restore that private store backup to Buzz's
+`agents/managed-agents.json`, and restore the matching
+`~/.aidevops/buzz-backups/aidevops-interactive-v1.<timestamp>.json` manifest to
+`custom_harnesses/aidevops-interactive-v1.json`; keep both files mode 600. Restore
+both together so the stored digests agree with the previous immutable anchor.
+
 Installation snapshots the complete agents tree, required local Node validator
 dependencies, the exact installed OpenCode plugin/SDK/Zod closure, and sanitized
 normal OpenCode config into an immutable owner-only anchor under
