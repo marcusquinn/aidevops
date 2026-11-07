@@ -406,6 +406,11 @@ _merge_reconcile_timed_out_write() {
 	return 1
 }
 
+# Run one bounded merge write and reconcile errors against the verified head.
+# Args: pr_number repo expected_head_sha command [command_args...]
+# Sets _MERGE_WRITE_OUTPUT to the captured transport output, clearing it when
+# timeout reconciliation fails. Returns 0 for a successful write or proven
+# exact-head merge; otherwise returns the write status or 1 for an unproven timeout.
 _merge_run_bounded_write() {
 	local pr_number="$1"
 	local repo="$2"
