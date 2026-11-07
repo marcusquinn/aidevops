@@ -380,7 +380,7 @@ def execute_owned(directory, run_id, command, options):
                         assert_owned_ancestor(owner_pid, owner_started)
                         return {"status": "owned-child-result", "version": VERSION,
                                 "result": allowed["value"], "exitCode": code}, 0
-            except (ValueError, TypeError, UnicodeError):
+            except (ValueError, TypeError, UnicodeError, RecursionError):
                 pass  # Never forward output, parse errors, or decoder context.
         return {"status": "owned-child-unverified", "version": VERSION}, 1
     finally:
