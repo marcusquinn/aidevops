@@ -225,7 +225,7 @@ export function createSubagentEffortHooks(client, options = {}) {
     resolveAvailability: () => {
       const auth = readCurrentOpenAIAuth();
       if (auth?.type !== "oauth" || !auth.access) return {};
-      return { authSignature: openAIAuthSignature(auth.access) };
+      return { authSignature: openAIAuthSignature(auth.access), openAIAuthType: auth.type };
     },
     clampReasoningVariant,
     extractVariant,

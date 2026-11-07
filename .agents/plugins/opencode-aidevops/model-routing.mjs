@@ -52,6 +52,8 @@ export function normalizeModelRouting(value = {}) {
   return {
     tiers,
     escalationOrder,
+    chatgptOAuthUnsupported: (Array.isArray(value?.chatgpt_oauth_restrictions?.openai_unsupported)
+      ? value.chatgpt_oauth_restrictions.openai_unsupported : []).filter((model) => typeof model === "string"),
     specialistAdvisor: normalizeSpecialistAdvisor(value.specialist_advisor),
     interactiveDefault: normalizeInteractiveDefault(value.interactive_default),
     minimumReasoning: reasoningFloor(value?.settings?.minimum_reasoning),
@@ -76,6 +78,9 @@ function mergeTier(baseTier, tierOverride) {
 
 export function mergeModelRouting(base, override = {}) {
   const merged = normalizeModelRouting();
+  merged.chatgptOAuthUnsupported = Object.hasOwn(override?.chatgpt_oauth_restrictions || {}, "openai_unsupported")
+    ? normalizeModelRouting(override).chatgptOAuthUnsupported
+    : [...(base?.chatgptOAuthUnsupported || [])];
   merged.minimumReasoning = reasoningFloor(override?.settings?.minimum_reasoning ?? base?.minimumReasoning);
   merged.compactionReasoning = compactionReasoning(
     override?.settings?.compaction_reasoning ?? base?.compactionReasoning,
@@ -137,6 +142,8 @@ function candidateRoutable(candidate, scope) {
   // GH#36698: skip a model with a live entitlement rejection for this auth.
   if (isModelUnavailable(candidate, scope.authSignature)) return false;
   const { providerID, modelID } = routingModelIdentity(candidate);
+  if (providerID === "openai" && scope.openAIAuthType === "oauth"
+    && scope.chatgptOAuthUnsupported.includes(modelID)) return false;
   if (scope.policy?.bound && !isLocalProvider(scope.policy, providerID)) return false;
   const provider = scope.providers.get(providerID);
   // Connected is not authenticated: skip credential-less config providers (GH#35762).
@@ -147,6 +154,8 @@ function candidateRoutable(candidate, scope) {
 export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy(), availability = {}) {
   const scope = {
     authSignature: availability?.authSignature,
+    openAIAuthType: availability?.openAIAuthType,
+    chatgptOAuthUnsupported: routing?.chatgptOAuthUnsupported || [],
     connected: new Set(Array.isArray(providerState?.connected) ? providerState.connected : []),
     policy,
     providers: new Map(

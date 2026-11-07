@@ -255,6 +255,14 @@ restart; unsupported runtimes must not pretend it exists. Honour local-only,
 provider and billing constraints before delegating. A missing/disabled profile is
 unavailable; never silently switch providers or start an external worker instead.
 Existing user model/variant pins and custom routing remain explicit overrides.
+Native Task routing checks the routing table's `chatgpt_oauth_restrictions`
+against the active OpenAI auth type before accepting catalog-listed models.
+Research uses only available same-tier candidates; if none remain it reports no
+route. The pinned specialist is checked separately: an unavailable account/model
+reports `Specialist advisory route unavailable` before inference, without changing
+providers, purchasing an alternative, or treating self-review as independent review.
+These ChatGPT restrictions do not apply to API-key authentication. Restart OpenCode
+after deploying routing/plugin updates; already-running sessions retain loaded code.
 Advice cannot supply authority, consent, taste or values, inaccessible context,
 unknown secrets, publication or destructive-operation permission, or acceptance of
 an irreversible commitment. Ask or stop at those human-exclusive boundaries, and

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -111,12 +113,26 @@ test("specialist request requires evidence and an explicit escalation reason", (
   assert.throws(() => validateSpecialistRequest("null"), /requires objective/);
 });
 
-test("Sol parent can explicitly request Astra advice in interactive and headless hooks", async () => {
+test("Sol parent can explicitly request Astra advice in interactive and headless hooks", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "advisor-auth-"));
+  const previous = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = root;
+  t.after(() => {
+    if (previous === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = previous;
+    rmSync(root, { recursive: true, force: true });
+  });
+  mkdirSync(join(root, "opencode"));
+  const authPath = join(root, "opencode", "auth.json");
+  const providers = { connected: ["openai"], all: [{ id: "openai", models: {
+    "gpt-6-astra": { id: "gpt-6-astra" }, "gpt-6.1-sol": { id: "gpt-6.1-sol" },
+  } }] };
   for (const isHeadless of [false, true]) {
+    writeFileSync(authPath, JSON.stringify({ openai: { type: "api", key: "test-only" } }));
     const state = { tiers: new Map(), pinned: new Set() };
     const config = { agent: {} };
     registerAgents(config, agentsDir, routing, state);
-    const client = { session: {
+    const client = { provider: { list: async () => ({ data: providers }) }, session: {
       get: async ({ path }) => ({ data: path.id === "child"
         ? { id: "child", parentID: "parent" }
         : { id: "parent", model: { providerID: "openai", modelID: "gpt-5.6-sol" }, variant: "medium" } }),
@@ -135,6 +151,15 @@ test("Sol parent can explicitly request Astra advice in interactive and headless
     const params = { options: {} };
     await hooks.chatParams({ message: output.message, provider: { id: "openai" }, model: { id: "gpt-6-astra" } }, params);
     assert.equal(params.options.reasoningEffort, "medium");
+    writeFileSync(authPath, JSON.stringify({ openai: { type: "oauth", access: "test-only" } }));
+    await assert.rejects(hooks.chatMessage({}, output), /Specialist advisory route unavailable.*No automatic substitute/);
+    assert.equal(output.message.model.modelID, "gpt-6-astra");
+    const research = { message: { sessionID: "child", agent: "research-only" },
+      parts: [{ type: "text", text: "[effort:standard] Read README.md and return its first heading" }] };
+    await assert.rejects(hooks.chatMessage({}, research), /No connected model is available/);
+    writeFileSync(authPath, JSON.stringify({ openai: { type: "api", key: "test-only" } }));
+    await hooks.chatMessage({}, research);
+    assert.equal(research.message.model.modelID, "gpt-6.1-sol");
     output.parts[0].text = "Use Astra for no stated reason";
     await assert.rejects(hooks.chatMessage({}, output), /JSON evidence envelope/);
   }
