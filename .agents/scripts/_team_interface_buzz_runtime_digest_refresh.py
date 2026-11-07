@@ -60,9 +60,8 @@ def refresh_record(record, expected):
     """Change only one digest after checking all other prompt bytes exactly."""
     name = record.get("name")
     prompt = record.get("system_prompt")
-    if not isinstance(name, str) or name not in expected:
-        return False, None
-    if not isinstance(prompt, str) or not prompt.startswith("Aidevops canonical source:"):
+    if (not isinstance(name, str) or name not in expected
+            or not isinstance(prompt, str) or not prompt.startswith("Aidevops canonical source:")):
         return False, None
     matches = list(DIGEST_LINE.finditer(prompt))
     canonical = expected[name]
@@ -74,10 +73,12 @@ def refresh_record(record, expected):
     updated = prompt[:old_digest.start()] + new_digest.group() + prompt[old_digest.end():]
     if updated != canonical:
         return False, skipped
-    if updated == prompt:
-        return False, None
-    record["system_prompt"] = updated
-    return True, f"{name}: {old_digest.group(1)[:12]} -> {new_digest.group(1)[:12]}"
+    changed = updated != prompt
+    summary = None
+    if changed:
+        record["system_prompt"] = updated
+        summary = f"{name}: {old_digest.group(1)[:12]} -> {new_digest.group(1)[:12]}"
+    return changed, summary
 
 
 def refresh_source_digests(app_data_dir, agents_dir):
