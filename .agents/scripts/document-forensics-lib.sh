@@ -743,11 +743,9 @@ _df_gain_clears_strong_original() {
 	local original_json="$3"
 
 	if _df_original_is_strong "$original_json"; then
-		# Cap the required gain at what a corrected page can reach (max score 130).
-		local required=$((original_score * _DF_STRONG_ORIGINAL_GAIN_PERCENT))
-		local reachable=$(((130 - original_score) * 100))
-		[[ "$reachable" -lt "$required" ]] && required="$reachable"
-		[[ $((improvement * 100)) -ge "$required" ]] || return 1
+		# Intentionally not capped at the score ceiling: a strong original
+		# (high confidence, many words) near the ceiling is not overridden by score alone.
+		[[ $((improvement * 100)) -ge $((original_score * _DF_STRONG_ORIGINAL_GAIN_PERCENT)) ]] || return 1
 	fi
 	return 0
 }
