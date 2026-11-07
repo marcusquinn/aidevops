@@ -685,7 +685,15 @@ jobs:
       env:
         PYTHONDONTWRITEBYTECODE: '1'
         PYTHONPATH: .agents/worker-lifecycle
-      run: python3 -B -m unittest discover -s .agents/worker-lifecycle/tests -v
+      run: |
+        # The real /proc census fails closed on unreadable same-UID tasks.
+        # Keep runner-owned non-dumpable services outside the fixture UID;
+        # do not weaken the production guard or run the contracts as root.
+        sudo useradd --create-home --shell /bin/bash lifecycle-contract
+        sudo -H -u lifecycle-contract env \
+          PATH="$PATH" PYTHONDONTWRITEBYTECODE="$PYTHONDONTWRITEBYTECODE" \
+          PYTHONPATH="$PYTHONPATH" \
+          python3 -B -m unittest discover -s .agents/worker-lifecycle/tests -v
 
     - name: Git Safety Guard Regression Suite (GH#36433)
       env:
