@@ -370,7 +370,7 @@ _RT_HEADLESS_SUPPORT=(
 # Used by session-count-helper.sh to exclude headless workers from interactive counts.
 # Empty string means "no headless mode" (all instances are interactive).
 _RT_HEADLESS_CMDLINE_PATTERN=(
-	"\\.opencode run "         # opencode — headless via "run" subcommand
+	"^([^[:space:]]*/)?[.]?opencode[[:space:]]+(run|serve)([[:space:]]|$)" # opencode — non-interactive subcommands
 	"claude (-p|--print|run) " # claude-code — headless via -p, --print, or run
 	"codex exec "              # codex — only exec is headless
 	""                         # cursor — no headless mode
@@ -391,7 +391,7 @@ _RT_HEADLESS_CMDLINE_PATTERN=(
 # "f" = pgrep -f (full command line match, for runtimes whose binary
 #       name differs from the process pattern, e.g., opencode runs as .opencode)
 _RT_PGREP_MODE=(
-	"f" # opencode — binary is .opencode in PATH, needs -f
+	"f" # opencode — match either executable spelling and optional path
 	"x" # claude-code — exact match on "claude"
 	"x" # codex
 	"f" # cursor — match Cursor.app in cmdline
@@ -410,7 +410,7 @@ _RT_PGREP_MODE=(
 # --- pgrep search pattern (what to pass to pgrep) ---
 # May differ from _RT_PROCESS_PATTERN when pgrep mode is "f" (full cmdline).
 _RT_PGREP_PATTERN=(
-	"\\.opencode"  # opencode — binary is .opencode
+	"^([^[:space:]]*/)?[.]?opencode([[:space:]]|$)" # opencode executable, not launcher scripts
 	"claude"       # claude-code
 	"codex"        # codex
 	"Cursor\\.app" # cursor
