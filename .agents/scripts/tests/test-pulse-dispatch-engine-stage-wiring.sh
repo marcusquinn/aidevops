@@ -501,7 +501,7 @@ assert_ownership_deadline_contract() {
 }
 
 assert_stage_cycle_budget_contract() {
-	local test_root="" actual="" expected="reserved:67;protected:124;dispatch:600;released:600;clamp:1;defer:124;optout:1;unset:1;"
+	local test_root="" actual="" expected="reserved:67;nested:67;maximum:60;protected:124;admission:0;dispatch:600;released:600;clamp:1;defer:124;optout:1;unset:1;"
 	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-stage-cycle-XXXXXX") || return 1
 	TESTS_RUN=$((TESTS_RUN + 1))
 	actual=$(
@@ -514,11 +514,21 @@ assert_stage_cycle_budget_contract() {
 			# margin + 90s finalisation, plus the 60s teardown allowance.
 			_PULSE_MAIN_DISPATCH_RESERVE_S=1293 TEST_EPOCH=1440
 			printf 'reserved:%s;' "$(_pulse_stage_cycle_timeout build_dependency_graph_cache 600)"
+			nested_probe() { printf 'nested:%s;' "$(_pulse_stage_cycle_timeout inner 600)"; return 0; }
+			run_stage_with_timeout preflight_cleanup_and_ledger 600 nested_probe || true
+			printf 'maximum:%s;' "$(AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S=1300 _pulse_stage_cycle_timeout prefetch_state 600)"
 			TEST_EPOCH=1500
 			local protected_rc=0
 			run_stage_with_timeout cache_prime 300 stage_probe || protected_rc=$?
 			printf 'protected:%s;' "$protected_rc"
 			[[ ! -f "$EVENTS" ]] || exit 1
+			# The actual round-admission gate still admits a full main census.
+			# shellcheck source=../pulse-dispatch-lib-candidates.sh
+			source "$DISPATCH_CANDIDATES_LIB"
+			_dispatch_enumeration_expected_seconds() { printf '483\n'; return 0; }
+			protected_rc=0
+			_dispatch_cycle_budget_admits_round Dispatch_max before || protected_rc=$?
+			printf 'admission:%s;' "$protected_rc"
 			printf 'dispatch:%s;' "$(_PULSE_MAIN_DISPATCH_RESERVE_S=0 _pulse_stage_cycle_timeout dispatch_candidate_1 600)"
 			_PULSE_MAIN_DISPATCH_RESERVE_S=0
 			printf 'released:%s;' "$(_pulse_stage_cycle_timeout auto_decomposer_scanner 600)"
