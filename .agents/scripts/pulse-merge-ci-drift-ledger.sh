@@ -6,6 +6,7 @@
 
 _ci_drift_ledger_should_skip() {
 	local repo_slug="$1" pr_number="$2" head="$3" signature="$4"
+	local same_head_only="${5:-0}"
 	local ledger="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-$HOME/.aidevops/.agent-workspace/tmp/headless-runtime}/ci-drift-ledger.tsv"
 	local ttl="${PULSE_CI_DRIFT_LEDGER_TTL_S:-604800}" now=""
 	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=604800
@@ -16,9 +17,10 @@ _ci_drift_ledger_should_skip() {
 		echo "[pulse-merge] CI-drift ledger unreadable or corrupt; allowing one rebase" >>"$LOGFILE"
 		return 1
 	fi
-	if awk -F '\t' -v key="${repo_slug}#${pr_number}" -v sig="$signature" -v head="$head" -v now="$now" -v ttl="$ttl" '
+	# Known failures survive a rebase; unavailable classification is head-scoped.
+	if awk -F '\t' -v key="${repo_slug}#${pr_number}" -v sig="$signature" -v head="$head" -v same_head_only="$same_head_only" -v now="$now" -v ttl="$ttl" '
 		BEGIN { key_col=1; sig_col=2; head_col=3; time_col=4 }
-		$key_col == key && $sig_col == sig && $head_col != head && $time_col <= now && now - $time_col <= ttl { found=1 }
+		$key_col == key && $sig_col == sig && (same_head_only == 1 ? $head_col == head : $head_col != head) && $time_col <= now && now - $time_col <= ttl { found=1 }
 		END { exit !found }' "$ledger"; then
 		return 0
 	fi

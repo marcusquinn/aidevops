@@ -37,6 +37,7 @@ main() {
 	test_red_pr_passes_gates_before_repair_route
 	test_rebase_success_defers_ci_repair_route
 	test_ci_drift_ledger_routing
+	test_ci_drift_unavailable_classification
 	test_ci_drift_context_names
 	test_converged_changes_requested_prefers_strict_rebase_before_ci_repair
 	test_converged_changes_requested_routes_terminal_ci_after_rebase_noop

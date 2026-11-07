@@ -557,6 +557,46 @@ test_ci_drift_ledger_routing() {
 	return 0
 }
 
+test_ci_drift_unavailable_classification() {
+	local rebase_rc=0 stage_rc=0
+	for rebase_rc in 0 1; do
+		setup_test_env
+		define_process_helper || return 1
+		local pr_number=100 repo_slug="owner/repo" pr_labels="origin:worker"
+		local timing_prefix="" pr_head_ref_oid="unknown-head" pr_base_ref_name="main"
+		local linked_issue=42 pr_updated_at="" pr_author="worker-bot" pr_obj="{}"
+		DRIFT_NAMES_RC=1
+		REBASE_RETRY_RC="$rebase_rc"
+		_pmp_stage_required_checks || true
+		stage_rc=0
+		_pmp_stage_required_checks || stage_rc=$?
+		if [[ "$REBASE_RETRY_CALLS" != 1 || "$ROUTE_CALLS" != 0 || "$stage_rc" != 1 ]]; then
+			print_result "unavailable classification bounds same-head attempts (rebase rc=${rebase_rc})" 1 "rebase=${REBASE_RETRY_CALLS}, route=${ROUTE_CALLS}, rc=${stage_rc}"
+		elif ! grep -q 'deferring without rebase or CI fix-worker routing' "$LOGFILE"; then
+			print_result "unavailable classification bounds same-head attempts (rebase rc=${rebase_rc})" 1 "missing skip diagnostic"
+		else
+			print_result "unavailable classification bounds same-head attempts (rebase rc=${rebase_rc})" 0
+		fi
+		pr_head_ref_oid="changed-head"
+		_pmp_stage_required_checks || true
+		if [[ "$REBASE_RETRY_CALLS" != 2 || "$ROUTE_CALLS" != 0 ]]; then
+			print_result "unavailable classification allows a changed head (rebase rc=${rebase_rc})" 1 "rebase=${REBASE_RETRY_CALLS}, route=${ROUTE_CALLS}"
+		else
+			print_result "unavailable classification allows a changed head (rebase rc=${rebase_rc})" 0
+		fi
+		DRIFT_NAMES_RC=0
+		REBASE_RETRY_RC=1
+		_pmp_stage_required_checks || true
+		if [[ "$REBASE_RETRY_CALLS" != 3 || "$ROUTE_CALLS" != 1 ]]; then
+			print_result "recovered classification routes known failures (rebase rc=${rebase_rc})" 1 "rebase=${REBASE_RETRY_CALLS}, route=${ROUTE_CALLS}"
+		else
+			print_result "recovered classification routes known failures (rebase rc=${rebase_rc})" 0
+		fi
+		teardown_test_env
+	done
+	return 0
+}
+
 test_ci_drift_context_names() {
 	setup_test_env
 	local fn_src="" names=""
