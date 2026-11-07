@@ -575,6 +575,13 @@ _todo_commit_planning_worktree() {
 	_TODO_PLANNING_PR_COMMIT="$commit_sha"
 	git -C "$repo_path" update-ref "refs/aidevops/planning/${publication_id}" "$commit_sha" || return 1
 
+	local push_error_file push_error
+	push_error_file=$(mktemp -t aidevops-planning-push-error.XXXXXX 2>/dev/null) || push_error_file=""
+	[[ -n "$push_error_file" ]] || {
+		printf '[todo_commit_push] Planning PR fallback failed: cannot allocate push diagnostic capture.\n' >&2
+		return 1
+	}
+
 	#aidevops:trust-boundary
 	# GH#34459: the planning worktree is a fresh, dependency-free checkout of
 	# origin/<default>, so the repo-verify pre-push guard (format/lint/typecheck)
@@ -583,10 +590,16 @@ _todo_commit_planning_worktree() {
 	# the planning PR still runs CI, so skip only repo-verify for this one
 	# command; the privacy, credential, complexity, scope and duplicate-TODO
 	# guards still run.
-	AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$worktree_path" push origin "HEAD:refs/heads/${branch_name}" >/dev/null 2>>"$log_target" || {
+	AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$worktree_path" push origin "HEAD:refs/heads/${branch_name}" >/dev/null 2>"$push_error_file" || {
+		push_error=$(<"$push_error_file") || push_error=""
+		rm -f "$push_error_file"
+		[[ -z "$push_error" ]] || printf '%s\n' "$push_error" >&2
+		[[ -z "$push_error" ]] || printf '%s\n' "$push_error" >>"$log_target"
 		printf '%s\n' "[todo_commit_push] Planning PR fallback failed: branch push failed" >>"$log_target"
 		return 1
 	}
+	cat "$push_error_file" >>"$log_target"
+	rm -f "$push_error_file"
 	return 0
 }
 
@@ -675,8 +688,9 @@ _todo_finalize_planning_pr() {
 		printf 'AIDEVOPS_PLANNING_RECOVERY_PR_STATE=%s\n' "$pr_state" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_SOURCE_STATE=%s\n' "$source_state" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_WORKTREE_STATE=%s\n' "$cleanup_state" >&2
-		printf '[todo_commit_push] Retry with the same planning snapshot; publication %s reuses branch %s instead of creating a duplicate.\n' \
+		printf '[todo_commit_push] For transient failures, retry with the same planning snapshot; publication %s reuses branch %s instead of creating a duplicate.\n' \
 			"$publication_id" "${_TODO_PLANNING_PR_BRANCH:-unknown}" >&2
+		printf '[todo_commit_push] A pre-push content block requires fixing the reported content before retrying. A guard failure that is not a content block (for example, an inventory enumeration or scan failure) can be retried after the reported environment problem is resolved.\n' >&2
 		if [[ "$log_target" != "/dev/null" ]]; then
 			printf '%s\n' "[todo_commit_push] Recovery publication=${publication_id} branch=${_TODO_PLANNING_PR_BRANCH:-} commit=${_TODO_PLANNING_PR_COMMIT:-} remote=${remote_state} pr=${pr_state} source=${source_state} worktree=${cleanup_state}" >>"$log_target"
 		fi
