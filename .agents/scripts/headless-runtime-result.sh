@@ -183,6 +183,12 @@ _run_result_terminal_completion_confirmed() {
 		_run_classification_pattern="verified_own_merged_objective"
 		return 0
 	fi
+	if _hrw_continued_merged_terminal_complete "$session_key" "${work_dir:-}"; then
+		_run_failure_reason=""
+		_run_classification_source="merged_pr_continuation_evidence"
+		_run_classification_pattern="verified_prior_merged_objective"
+		return 0
+	fi
 	output_has_completion_signal "$output_file" && return 0
 	if _hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
 		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
