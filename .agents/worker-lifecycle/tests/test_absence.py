@@ -82,6 +82,20 @@ class AbsenceContract(unittest.TestCase):
         self.assertEqual(report["results"][0]["status"], "waiting-for-runs")
         self.assertTrue(self.reserved())
 
+    def test_live_tree_reference_prevents_admission_closure(self):
+        self.create()
+        self.generation = GenerationEnrollment(self.store).inspect(self.target)
+        with patch("worker_lifecycle.cleanup.require_idle_proc",
+                   side_effect=ValueError("live-process-reference")):
+            report = self.cleanup()
+        self.assertEqual(report["results"][0]["reason"], "live-process-reference")
+        with self.store.connection() as connection:
+            state = connection.execute(
+                "SELECT state FROM generation_admissions WHERE generation_id=?",
+                (self.generation,),
+            ).fetchone()[0]
+        self.assertEqual(state, "open")
+
     def test_unknown_owner_prevents_reconciliation(self):
         self.missing()
 

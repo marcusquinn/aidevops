@@ -36,6 +36,19 @@ class AdmissionContract(unittest.TestCase):
         self.assertTrue(self.gate.admit(run, self.identity, self.generation))
         self.assertEqual(self.gate.close_generation(str(uuid4()), self.generation), (run,))
 
+    def test_quiescent_close_requires_every_bound_run_to_end(self):
+        runs = (str(uuid4()), str(uuid4()))
+        for run in runs:
+            self.gate.admit(run, self.identity, self.generation)
+        self.store.observe(str(uuid4()), runs[0], 2, ProcessObservation("ended", "pid-absent"))
+        with self.assertRaisesRegex(StoreConflict, "generation-not-quiescent"):
+            self.gate.close_generation(str(uuid4()), self.generation, expected_ended_runs=runs)
+        self.store.observe(str(uuid4()), runs[1], 2, ProcessObservation("ended", "pid-absent"))
+        self.assertEqual(self.gate.close_generation(
+            str(uuid4()), self.generation, expected_ended_runs=runs), ())
+        with self.assertRaises(AdmissionClosed):
+            self.gate.admit(str(uuid4()), self.identity, self.generation)
+
     def test_close_before_admission_refuses_without_partial_event(self):
         self.gate.close_generation(str(uuid4()), self.generation)
         before = self.store.summary()
