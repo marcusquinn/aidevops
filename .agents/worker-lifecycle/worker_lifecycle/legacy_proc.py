@@ -63,33 +63,42 @@ def require_idle_macos(path: Path) -> None:
         raise ValueError("proc-observation-unavailable")
     # NUL-delimited names preserve spaces and newlines. lsof adds a newline
     # between process/file records, not inside their fields.
+    seen, cwd_seen = _scan_lsof(path, observed.stdout)
+    # A successful but empty/partial census is not evidence of idleness.
+    if os.getpid() not in seen or seen != cwd_seen:
+        raise ValueError("proc-observation-unavailable")
+
+
+def _scan_lsof(path: Path, output: bytes) -> tuple[set[int], set[int]]:
+    """Return observed pids and pids with an absolute cwd; reject live references."""
     current_pid = None
     descriptor = b""
     seen: set[int] = set()
     cwd_seen: set[int] = set()
-    for field in observed.stdout.split(b"\0"):
-        field = field.removeprefix(b"\n")
-        if not field:
-            continue
-        if field[:1] == b"p":
-            if not field[1:].isdigit():
-                raise ValueError("proc-observation-unavailable")
-            current_pid = int(field[1:])
+    for raw in output.split(b"\0"):
+        field = raw.removeprefix(b"\n")
+        kind, value = field[:1], field[1:]
+        if kind == b"p":
+            current_pid = _lsof_pid(value)
             seen.add(current_pid)
             descriptor = b""
-        elif field[:1] == b"f":
-            descriptor = field[1:]
-        elif field[:1] == b"n":
-            name = Path(os.fsdecode(field[1:]))
+        elif kind == b"f":
+            descriptor = value
+        elif kind == b"n":
             if current_pid is None:
                 raise ValueError("proc-observation-unavailable")
+            name = Path(os.fsdecode(value))
             if descriptor == b"cwd" and name.is_absolute():
                 cwd_seen.add(current_pid)
             if name == path or path in name.parents:
                 raise ValueError("live-process-reference")
-    # A successful but empty/partial census is not evidence of idleness.
-    if os.getpid() not in seen or seen != cwd_seen:
+    return seen, cwd_seen
+
+
+def _lsof_pid(value: bytes) -> int:
+    if not value.isdigit():
         raise ValueError("proc-observation-unavailable")
+    return int(value)
 
 
 def require_idle_proc(path, proc=Path("/proc")):

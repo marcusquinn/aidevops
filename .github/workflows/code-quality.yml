@@ -507,7 +507,14 @@ jobs:
     - name: Profile README Contributions Fail-Closed Guard
       run: |
         echo "Running profile README contributions fail-closed regression guard..."
-        bash .agents/scripts/tests/test-profile-readme-contributions-fail-closed.sh
+        # The real /proc census fails closed on unreadable same-UID tasks, so
+        # run outside the runner UID (see Worker Lifecycle contract step).
+        sudo useradd --create-home --shell /bin/bash profile-contract
+        dir="$GITHUB_WORKSPACE"
+        while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
+        sudo -H -u profile-contract env PATH="$PATH" \
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
+          bash "$GITHUB_WORKSPACE/.agents/scripts/tests/test-profile-readme-contributions-fail-closed.sh"
         echo "Profile README contributions fail-closed guard passed"
 
     - name: Stats Functions Characterization (t2044)
@@ -690,10 +697,14 @@ jobs:
         # Keep runner-owned non-dumpable services outside the fixture UID;
         # do not weaken the production guard or run the contracts as root.
         sudo useradd --create-home --shell /bin/bash lifecycle-contract
+        # Runner home directories are not traversable by other users.
+        dir="$GITHUB_WORKSPACE"
+        while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
         sudo -H -u lifecycle-contract env \
           PATH="$PATH" PYTHONDONTWRITEBYTECODE="$PYTHONDONTWRITEBYTECODE" \
-          PYTHONPATH="$PYTHONPATH" \
-          python3 -B -m unittest discover -s .agents/worker-lifecycle/tests -v
+          PYTHONPATH="$GITHUB_WORKSPACE/$PYTHONPATH" \
+          python3 -B -m unittest discover \
+          -s "$GITHUB_WORKSPACE/.agents/worker-lifecycle/tests" -v
 
     - name: Git Safety Guard Regression Suite (GH#36433)
       env:
