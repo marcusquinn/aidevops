@@ -43,11 +43,16 @@ check_git_repo() {
 
 # Check if there are planning file changes
 has_planning_changes() {
-	# Check both staged and unstaged changes
-	if git diff --name-only HEAD 2>/dev/null | grep -qE "$PLANNING_PATTERNS"; then
+	# Check both staged and unstaged changes. --no-renames lists a rename's
+	# source as well as its destination (GH#37002). Capture before matching so
+	# an early-exiting grep cannot SIGPIPE the writer under pipefail.
+	local changed_paths=""
+	changed_paths=$(git diff --no-renames --name-only HEAD 2>/dev/null || true)
+	if grep -qE "$PLANNING_PATTERNS" <<<"$changed_paths"; then
 		return 0
 	fi
-	if git diff --name-only --cached 2>/dev/null | grep -qE "$PLANNING_PATTERNS"; then
+	changed_paths=$(git diff --no-renames --name-only --cached 2>/dev/null || true)
+	if grep -qE "$PLANNING_PATTERNS" <<<"$changed_paths"; then
 		return 0
 	fi
 	# Also check untracked files in todo/
@@ -63,11 +68,11 @@ list_planning_changes() {
 
 	# Staged changes
 	local staged
-	staged=$(git diff --name-only --cached 2>/dev/null | grep -E "$PLANNING_PATTERNS" || true)
+	staged=$(git diff --no-renames --name-only --cached 2>/dev/null | grep -E "$PLANNING_PATTERNS" || true)
 
 	# Unstaged changes
 	local unstaged
-	unstaged=$(git diff --name-only 2>/dev/null | grep -E "$PLANNING_PATTERNS" || true)
+	unstaged=$(git diff --no-renames --name-only 2>/dev/null | grep -E "$PLANNING_PATTERNS" || true)
 
 	# Untracked
 	local untracked

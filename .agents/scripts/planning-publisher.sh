@@ -80,9 +80,11 @@ _planning_publish_path_allowed() {
 
 _planning_publish_changed_paths() {
 	local repo_path="$1"
+	# --no-renames: a staged rename must yield its source delete as well as its
+	# destination add, or the published tree keeps both files (GH#37002).
 	{
-		_planning_git -C "$repo_path" diff --name-only HEAD -- TODO.md todo/ 2>/dev/null || true
-		_planning_git -C "$repo_path" diff --name-only --cached -- TODO.md todo/ 2>/dev/null || true
+		_planning_git -C "$repo_path" diff --no-renames --name-only HEAD -- TODO.md todo/ 2>/dev/null || true
+		_planning_git -C "$repo_path" diff --no-renames --name-only --cached -- TODO.md todo/ 2>/dev/null || true
 		_planning_git -C "$repo_path" ls-files --others --exclude-standard -- TODO.md todo/ 2>/dev/null || true
 	} | LC_ALL=C sort -u | grep -v '^$' || true
 	return 0
@@ -569,7 +571,7 @@ _planning_publish_verify_index() {
 	while IFS= read -r changed_path; do
 		[[ -n "$changed_path" ]] || continue
 		_planning_publish_path_allowed "$changed_path" || return 1
-	done < <(GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" diff --cached --name-only "$parent_sha")
+	done < <(GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" diff --cached --no-renames --name-only "$parent_sha")
 	while IFS=$'\t' read -r operation origin_sha local_sha expected_sha path; do
 		if [[ "$expected_sha" != "-" ]]; then
 			staged_sha=$(GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" rev-parse ":${path}" 2>/dev/null) || return 1
