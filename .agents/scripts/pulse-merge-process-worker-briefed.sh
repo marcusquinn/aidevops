@@ -307,7 +307,12 @@ _worker_briefed_link_kind() {
 	local issue_api="$4"
 	local closing_issue="" state_labels="" issue_state="" issue_labels="" planning_rc=0
 	WORKER_BRIEFED_LINK_KIND=""
-	if ! closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null); then
+	if [[ "${WORKER_BRIEFED_BODY_AVAILABLE:-0}" == 1 ]]; then
+		if ! closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" "$WORKER_BRIEFED_BODY" 2>/dev/null); then
+			WORKER_BRIEFED_TRUST_REASON="linked issue metadata unavailable: PR closing-reference lookup failed (t2449)"
+			return 1
+		fi
+	elif ! closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null); then
 		WORKER_BRIEFED_TRUST_REASON="linked issue metadata unavailable: PR closing-reference lookup failed (t2449)"
 		return 1
 	fi
@@ -524,6 +529,7 @@ worker_briefed_trust_verdict() {
 	local pr_number="$1" repo_slug="$2"
 	local labels_str="${3:-}" is_draft="${4:-}" linked_issue="${5:-}"
 	local WORKER_BRIEFED_TRUST_REASON="trust metadata unavailable (t2449)"
+	local WORKER_BRIEFED_BODY_AVAILABLE=0 WORKER_BRIEFED_BODY=""
 	if [[ "$#" -eq 2 ]]; then
 		local pr_meta="" head_sha="" pr_body=""
 		pr_meta=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft,headRefOid,body) || {
@@ -549,6 +555,8 @@ worker_briefed_trust_verdict() {
 			return 0
 		fi
 		pr_body=$(jq -r '.body' <<<"$pr_meta") || return 1
+		WORKER_BRIEFED_BODY="$pr_body"
+		WORKER_BRIEFED_BODY_AVAILABLE=1
 		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body") || {
 			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
 			return 1
