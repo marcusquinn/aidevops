@@ -19,9 +19,8 @@ from _team_interface_buzz_runtime_prepare import load_module
 DIGEST_LINE = re.compile(r"^Expected source digest: sha256:([a-f0-9]{64})$", re.MULTILINE)
 
 
-def refresh_source_digests(app_data_dir, agents_dir):
-    """Back up and atomically update eligible records without exposing store data."""
-    path = app_data_dir / "agents" / "managed-agents.json"
+def read_store(path):
+    """Read the existing private store, failing closed on unexpected shapes."""
     require_safe_directory_chain(path.parent)
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise RuntimeError("Buzz managed agents store must be a regular non-symlink file")
@@ -33,7 +32,11 @@ def refresh_source_digests(app_data_dir, agents_dir):
         raise RuntimeError("Buzz managed agents store is unavailable or invalid") from error
     if not isinstance(store, list) or any(not isinstance(record, dict) for record in store):
         raise RuntimeError("Buzz managed agents store must be an array of records")
+    return store
 
+
+def anchored_prompts(agents_dir):
+    """Build this host's expected prompts from the new immutable agents tree."""
     scripts = agents_dir / "scripts"
     roster_module = load_module(
         "buzz_refresh_roster", scripts / "team-interface-agent-roster.py",
@@ -50,34 +53,46 @@ def refresh_source_digests(app_data_dir, agents_dir):
         if name in expected:
             raise RuntimeError("anchored roster contains duplicate Buzz display names")
         expected[name] = snapshot.member_system_prompt(member)
+    return expected
 
-    summaries = []
-    changed = False
-    for record in store:
-        name = record.get("name")
-        prompt = record.get("system_prompt")
-        if not isinstance(name, str) or name not in expected:
-            continue
-        if not isinstance(prompt, str) or not prompt.startswith("Aidevops canonical source:"):
-            continue
-        matches = list(DIGEST_LINE.finditer(prompt))
-        canonical = expected[name]
-        new_digest = DIGEST_LINE.search(canonical)
-        if len(matches) != 1 or new_digest is None:
-            summaries.append(f"{name}: skipped (non-digest prompt differs)")
-            continue
-        old_digest = matches[0]
-        updated = prompt[:old_digest.start()] + new_digest.group() + prompt[old_digest.end():]
-        if updated != canonical:
-            summaries.append(f"{name}: skipped (non-digest prompt differs)")
-        elif updated != prompt:
-            record["system_prompt"] = updated
-            changed = True
-            summaries.append(f"{name}: {old_digest.group(1)[:12]} -> {new_digest.group(1)[:12]}")
 
+def refresh_record(record, expected):
+    """Change only one digest after checking all other prompt bytes exactly."""
+    name = record.get("name")
+    prompt = record.get("system_prompt")
+    if not isinstance(name, str) or name not in expected:
+        return False, None
+    if not isinstance(prompt, str) or not prompt.startswith("Aidevops canonical source:"):
+        return False, None
+    matches = list(DIGEST_LINE.finditer(prompt))
+    canonical = expected[name]
+    new_digest = DIGEST_LINE.search(canonical)
+    skipped = f"{name}: skipped (non-digest prompt differs)"
+    if len(matches) != 1 or new_digest is None:
+        return False, skipped
+    old_digest = matches[0]
+    updated = prompt[:old_digest.start()] + new_digest.group() + prompt[old_digest.end():]
+    if updated != canonical:
+        return False, skipped
+    if updated == prompt:
+        return False, None
+    record["system_prompt"] = updated
+    return True, f"{name}: {old_digest.group(1)[:12]} -> {new_digest.group(1)[:12]}"
+
+
+def refresh_source_digests(app_data_dir, agents_dir):
+    """Back up and atomically update eligible records without exposing store data."""
+    path = app_data_dir / "agents" / "managed-agents.json"
+    store = read_store(path)
+    if store is None:
+        return
+    expected = anchored_prompts(agents_dir)
+    results = [refresh_record(record, expected) for record in store]
+    changed = any(updated for updated, _ in results)
     if changed:
         backup = backup_existing(path, "managed-agents")
         atomic_write(path, canonical_payload(store))
         print(f"Buzz managed agents backup: {backup}")
-    for summary in summaries:
-        print(summary)
+    for _, summary in results:
+        if summary:
+            print(summary)
