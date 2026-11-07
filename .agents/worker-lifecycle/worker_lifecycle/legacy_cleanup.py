@@ -67,13 +67,13 @@ def archive_io(connection):
 
     The caller retains its operation lock and must revalidate registry writers
     after reacquisition. Native source move/removal never runs in this scope.
-    Reacquisition failures propagate; they never authorize the next phase.
+    Body failures propagate unchanged through the outer transaction's rollback.
+    Only successful archive work reacquires the writer; failure to reacquire
+    still aborts the next phase.
     """
     connection.commit()
-    try:
-        yield
-    finally:
-        connection.execute("BEGIN IMMEDIATE")
+    yield
+    connection.execute("BEGIN IMMEDIATE")
 
 
 def archive_source(store, connection, operation, plan, adapter):
