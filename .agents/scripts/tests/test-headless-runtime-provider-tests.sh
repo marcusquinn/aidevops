@@ -400,6 +400,29 @@ _setup_own_merged_evidence() {
 	return 0
 }
 
+_setup_merged_continuation_git() {
+	local shape="$1" continued="$2" work_dir="$3" branch="$4" head="$5"
+	if [[ "$continued" == 1 && "$shape" == squash ]]; then
+		# Publish a real squash: the delivered head is not an ancestor of
+		# default, but its tree and the merged PR's head are published.
+		# Set the caller's merge_head for the synthetic GitHub PR evidence.
+		merge_head=$(git -C "$work_dir" commit-tree "HEAD^{tree}" -p origin/main -m squash) || return 1
+		git -C "$work_dir" push -q origin "${merge_head}:refs/heads/main" "$branch" || return 1
+		[[ "$(git -C "$work_dir" rev-list --count "${merge_head}..${head}")" != 0 ]] || return 1
+	fi
+	if [[ "$shape" == ahead || "$shape" == remote_ahead ]]; then
+		# Clean but genuinely unpublished work beyond the delivered head.
+		touch "${work_dir}/unpublished.txt"
+		git -C "$work_dir" add unpublished.txt || return 1
+		git -C "$work_dir" commit -qm unpublished || return 1
+		if [[ "$shape" == remote_ahead ]]; then
+			git -C "$work_dir" push -q origin "$branch" || return 1
+			git -C "$work_dir" checkout -q -B "$branch" "$head" || return 1
+		fi
+	fi
+	return 0
+}
+
 test_own_merged_terminal_reconciliation() {
 	local shape="" result=0
 	for shape in squash issue leased published superseded fractional_receipt stale_fractional_receipt invalid_receipt_date open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent continuation_squash continuation_issue continuation_fractional_receipt continuation_stale_receipt continuation_stale_fractional_receipt continuation_invalid_receipt_date continuation_foreign_session continuation_foreign_receipt continuation_receipt_branch continuation_receipt_pr continuation_receipt_worktree continuation_receipt_owner continuation_receipt_pid continuation_cleanup_failed continuation_unfinalized continuation_release_pending continuation_missing_receipt continuation_dirty continuation_ahead continuation_remote_ahead continuation_unrelated continuation_cross_repo continuation_foreign_head continuation_head_mismatch continuation_branch_mismatch continuation_open continuation_unmerged continuation_api_failure continuation_missing_session continuation_same_second; do
@@ -424,24 +447,8 @@ test_own_merged_terminal_reconciliation() {
 			work_dir=$(cd "$work_dir" && pwd -P) || exit 1
 			branch=$(git -C "$work_dir" branch --show-current)
 			head=$(git -C "$work_dir" rev-parse HEAD)
-			if [[ "$continued" == 1 && "$shape" == squash ]]; then
-				# Publish a real squash: the delivered head is not an ancestor of
-				# default, but its tree and the merged PR's head are published.
-				merge_head=$(git -C "$work_dir" commit-tree "HEAD^{tree}" -p origin/main -m squash)
-				git -C "$work_dir" push -q origin "${merge_head}:refs/heads/main" "$branch"
-				[[ "$(git -C "$work_dir" rev-list --count "${merge_head}..${head}")" != 0 ]] || exit 1
-			fi
+			_setup_merged_continuation_git "$shape" "$continued" "$work_dir" "$branch" "$head" || exit 1
 			_setup_own_merged_evidence "$shape"
-			if [[ "$shape" == ahead || "$shape" == remote_ahead ]]; then
-				# Clean but genuinely unpublished work beyond the delivered head.
-				touch "${work_dir}/unpublished.txt"
-				git -C "$work_dir" add unpublished.txt
-				git -C "$work_dir" commit -qm unpublished
-				if [[ "$shape" == remote_ahead ]]; then
-					git -C "$work_dir" push -q origin "$branch"
-					git -C "$work_dir" checkout -q -B "$branch" "$head"
-				fi
-			fi
 			_hrw_pr_less_terminal_complete() { return 1; }
 			_full_loop_cleanup_receipt_path() { printf '%s' "$receipt_file"; return 0; }
 			gh_pr_list() { jq -s '.' "$pr_file"; return 0; }
