@@ -5,11 +5,9 @@ import json
 import math
 import os
 from pathlib import Path
-import subprocess  # nosec B404 # exception classification only; nothing is executed here
 import tempfile
 
 from .filesystem import validate_private_path as _private
-from .process import ObservationUnavailable
 
 
 def queue(store, items):
@@ -69,11 +67,8 @@ def reconstructible_path(item, managed=False):
 
 
 def require_managed_takeover(check, *arguments, **keywords):
-    """Run the takeover precheck; any unmet guard keeps the original ownership reason."""
-    try:
-        check(*arguments, **keywords)
-    except (ValueError, OSError, subprocess.SubprocessError, ObservationUnavailable):
-        raise ValueError("managed-by-current-cleanup") from None
+    """Run the takeover precheck without hiding its concrete retention reason."""
+    return check(*arguments, **keywords)
 
 
 def unrecorded(path):

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -146,13 +147,62 @@ class ReconstructibleContract(unittest.TestCase):
     def test_managed_takeover_keeps_every_safety_guard(self):
         self.item.update(modern=True, unbound=False)
         (self.target / "keep").write_text("untracked")
-        self.assert_retained("managed-by-current-cleanup")
+        self.assert_retained("nonempty-worktree-state")
         (self.target / "keep").unlink()
         self.prs.return_value = [{"head": {"ref": "feature", "sha": self.head}}]
-        self.assert_retained("managed-by-current-cleanup")
+        self.assert_retained("open-pull-request")
         self.prs.return_value = []
         self.git("update-ref", "-d", "refs/remotes/origin/main")
-        self.assert_retained("managed-by-current-cleanup")
+        self.assert_retained("head-not-on-remote")
+
+    def test_automatic_modern_pass_retires_old_verified_creation_without_confirmation(self):
+        self.git("worktree", "remove", str(self.target))
+        fixtures.RetirementContract.create(self)
+        for name in ("work.txt", ".gitignore", "cache.ignored"):
+            (self.target / name).unlink()
+        config = self.root / "repos.json"
+        config.write_text(json.dumps({"initialized_repos": [
+            {"path": str(self.repo), "slug": "fixture/repository"}]}))
+        future = time.time() + 7200
+        with patch.object(inventory.time, "time", return_value=future):
+            preview = cleanup.run(self.store, config, self.output, min_age=3600)
+            self.assertEqual(preview["eligible"], 1, preview)
+            self.assertTrue(self.target.exists())
+            report = cleanup.run(self.store, config, self.output, apply=True, min_age=3600)
+        self.assertEqual(report["operator_confirmed_paths"], [])
+        self.assertEqual(report["retired"], 1, report)
+        self.assertFalse(self.target.exists())
+        with self.store.connection() as connection:
+            operation = cleanup.operation_id(self.store, str(self.target))
+            receipt = cleanup.receipt(connection, operation, "retired")
+        self.assertEqual(receipt["type"], "reconstructible-worktree-retired")
+        self.assertTrue(receipt["branch_preserved"])
+
+    def test_modern_age_guard_applies_in_preview_and_apply(self):
+        generation = self.reserve_managed()
+        AdmissionRegistry(self.store).authorize_enrolled_only(
+            enrolled_only_event_id(generation), generation)
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                self.options = CleanupOptions(self.output, apply=apply, min_age=3600)
+                self.assert_retained("too-recent")
+
+    def test_modern_preview_reports_concrete_guard_and_ownership(self):
+        self.reserve_managed()
+        self.options = CleanupOptions(self.output, min_age=0)
+        self.task(self.target)
+        result, _, attempted = self.retire()
+        self.assertEqual(result["reason"], "live-process-reference", result)
+        self.assertEqual(result["ownership"], "managed-by-current-cleanup")
+        self.assertEqual(attempted, 0)
+        self.assertTrue(self.target.exists())
+
+    def test_absent_modern_without_runs_is_not_a_takeover_failure(self):
+        self.reserve_managed()
+        self.git("worktree", "remove", str(self.target))
+        result, eligible, attempted = self.retire()
+        self.assertEqual(result["status"], "already-absent", result)
+        self.assertEqual((eligible, attempted), (0, 0))
 
     def test_preview_is_read_only(self):
         self.options = CleanupOptions(self.output, apply=False, min_age=0)
