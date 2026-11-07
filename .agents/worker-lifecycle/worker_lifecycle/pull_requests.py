@@ -54,7 +54,9 @@ def _repository_pull_requests(slug: str) -> list:
     for pr in prs:
         if (not isinstance(pr, dict) or not isinstance(pr.get("head"), dict)
                 or not isinstance(pr["head"].get("ref"), str)
-                or not isinstance(pr["head"].get("sha"), str)):
+                or not pr["head"]["ref"]
+                or not isinstance(pr["head"].get("sha"), str)
+                or not pr["head"]["sha"]):
             raise ValueError("invalid-open-pr-response")
     return prs
 
