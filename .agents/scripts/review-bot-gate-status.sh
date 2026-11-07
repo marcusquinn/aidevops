@@ -117,6 +117,26 @@ _rbg_author_has_write_permission() {
 	return 1
 }
 
+# Print the author class: REST association first, then live permission lookup.
+# #aidevops:trust-boundary — private org members appear as CONTRIBUTOR.
+_rbg_author_class() {
+	local repo="$1"
+	local author_login="$2"
+	local author_association="$3"
+	case "$author_association" in
+	OWNER | MEMBER | COLLABORATOR)
+		printf '%s\n' "$RBG_AUTHOR_CLASS_TRUSTED"
+		return 0
+		;;
+	esac
+	if [[ -n "$author_login" ]] && _rbg_author_has_write_permission "$repo" "$author_login"; then
+		printf '%s\n' "$RBG_AUTHOR_CLASS_TRUSTED"
+		return 0
+	fi
+	printf 'external\n'
+	return 0
+}
+
 do_status_json() {
 	local pr_number="$1"
 	local repo="$2"
@@ -142,15 +162,7 @@ do_status_json() {
 		head_stable="$RBG_TRUE"
 	fi
 	jq -e --arg label "$SKIP_LABEL" '[.labels[]?.name] | index($label) != null' <<<"$pr_json" >/dev/null 2>&1 && skip_label_present_after="$RBG_TRUE"
-	case "$author_association" in
-	OWNER | MEMBER | COLLABORATOR) author_class="$RBG_AUTHOR_CLASS_TRUSTED" ;;
-	*)
-		# #aidevops:trust-boundary — private org members appear as CONTRIBUTOR.
-		if [[ -n "$author_login" ]] && _rbg_author_has_write_permission "$repo" "$author_login"; then
-			author_class="$RBG_AUTHOR_CLASS_TRUSTED"
-		fi
-		;;
-	esac
+	author_class=$(_rbg_author_class "$repo" "$author_login" "$author_association")
 
 	# #aidevops:trust-boundary — SKIP is a trusted-author label outcome. Advisory
 	# completion and rate-limit grace apply to every author (GH#36931): external
