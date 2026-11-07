@@ -11,7 +11,7 @@ ENTRYPOINT = b"from worker_lifecycle.validation import main\nraise SystemExit(ma
 REGISTRY_SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "macos.py",
                     "storage.py", "events.py", "registry.py", "launch.py", "integration_validation.py",
                     "journal.py", "cli_errors.py",
-                    "launch_state.py", "upgrade.py", "archive_path.py", "filesystem.py",
+                    "launch_state.py", "upgrade.py", "archive_path.py", "filesystem.py", "permissions.py",
                     "admission.py", "directory_handle.py", "cleanup_policy.py", "enrollment.py",
                     "cleanup_plan.py", "preservation.py", "session.py", "creation.py",
                     "retirement.py", "recovery.py", "absence.py", "cleanup.py", "bundle.py",

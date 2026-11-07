@@ -14,11 +14,13 @@ from uuid import UUID, uuid4, uuid5
 
 from .admission import AdmissionClosed, AdmissionRegistry
 from .directory_handle import DirectoryHandle
-from .filesystem import read_owned_file, shared_writable
+from .permissions import FilePolicy, read_owned_file, shared_writable
 from .storage import LifecycleRegistry, StoreConflict, encode, identifier
 
 
 MARKER = "aidevops-generation.json"
+MARKER_POLICY = FilePolicy("generation-marker-must-be-private-owned-file", max_size=4096,
+                           private=True, single_link=False)
 
 
 def _git_directory(path: Path) -> Path:
@@ -71,10 +73,7 @@ def _marker_identity(value: dict) -> dict:
 
 
 def _read_marker(path: Path) -> dict:
-    value = json.loads(read_owned_file(
-        path, reason="generation-marker-must-be-private-owned-file", max_size=4096,
-        private=True, single_link=False,
-    ))
+    value = json.loads(read_owned_file(path, MARKER_POLICY))
     if not isinstance(value, dict) or not isinstance(value.get("generation_id"), str):
         raise ValueError("invalid-generation-marker")
     identifier(value["generation_id"])

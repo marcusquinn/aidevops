@@ -18,20 +18,19 @@ from .cleanup_failure import failure_details as _failure_details
 from .cleanup_plan import enrolled_only_event_id
 from .cleanup_quarantine import CleanupQuarantine
 from .enrollment import GenerationEnrollment, _git_directory
-from .filesystem import read_owned_file, validate_private_path as _private
+from .filesystem import validate_private_path as _private
+from .permissions import FilePolicy, read_owned_file
 from .pull_requests import OpenPullRequestCache
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
 from .storage import LifecycleRegistry, identifier
 
+# Group write is accepted only for the owner's user-private group (umask 002).
+REPOSITORY_CONFIG = FilePolicy("unsafe-repository-config", max_size=1048576, private=False)
+
 
 def _repository_entries(config: Path) -> list:
-    """Read a bounded operator-owned configuration without following links.
-
-    Group write is accepted only for the owner's user-private group (umask 002).
-    """
-    configuration = json.loads(read_owned_file(
-        config, reason="unsafe-repository-config", max_size=1048576, private=False,
-    ).decode("utf-8"))
+    """Read a bounded operator-owned configuration without following links."""
+    configuration = json.loads(read_owned_file(config, REPOSITORY_CONFIG).decode("utf-8"))
     if not isinstance(configuration, dict):
         raise ValueError("invalid-repository-config")
     entries = configuration.get("initialized_repos")

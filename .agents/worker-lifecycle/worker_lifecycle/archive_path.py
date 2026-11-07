@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .filesystem import FilesystemValidationError, checked_directory, is_private_mode
+from .filesystem import FilesystemValidationError, checked_directory
+from .permissions import is_private_mode
 
 
 def create_archive_root(root: Path) -> None:

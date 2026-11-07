@@ -1,34 +1,23 @@
-"""Read-only POSIX path checks and controlled local diagnostic fields.
+"""Read-only POSIX path-chain checks and controlled local diagnostic fields.
 
-Same-UID processes and administrators remain trusted. Group write is accepted
-only where no other principal can use it: the owner's user-private group, or
-below an owned directory that other principals cannot search. Both exceptions
-require a Linux directory without an extended access ACL; otherwise extended
-ACL models are not evaluated. Other write is never accepted. Never chmod or
-create paths.
+Mode-bit rules live in `permissions.py`. Path chains additionally accept group
+write below an owned directory that other principals cannot search (again only
+without an extended access ACL). Never chmod or create paths.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-import errno
-import grp
 import os
 from pathlib import Path
-import pwd
 import stat
-import sys
 
+from . import permissions
+from .permissions import FilesystemValidationError
 
-class FilesystemValidationError(ValueError):
-    """A fixed reason code with separate operator-local filesystem context."""
-
-    def __init__(self, reason: str, path: Path, *, violation: str = ""):
-        super().__init__(reason)
-        self.reason = reason
-        self.path = path
-        self.violation = violation
+__all__ = ["FilesystemValidationError", "checked_directory", "filesystem_error_details",
+           "validate_private_path"]
 
 
 def filesystem_error_details(error: FilesystemValidationError) -> dict[str, object]:
@@ -44,107 +33,10 @@ def filesystem_error_details(error: FilesystemValidationError) -> dict[str, obje
     return details
 
 
-def user_private_group(gid: int) -> bool:
-    """True when gid is the owner's primary group and no other account is in it.
-
-    umask 002 with user-private groups (the Ubuntu/Debian `USERGROUPS_ENAB`
-    default) yields group-writable directories that only the owner can write.
-    Shared or unknown groups stay untrusted. The group must also carry the
-    owner's login name: NSS sources with enumeration disabled (e.g. SSSD) can
-    omit accounts from getpwall(), so a shared primary group such as `users`
-    is never accepted on member enumeration alone.
-    """
-    try:
-        owner = pwd.getpwuid(os.getuid())
-        group = grp.getgrgid(gid)
-    except KeyError:
-        return False
-    if gid != owner.pw_gid or group.gr_name != owner.pw_name:
-        return False
-    if any(member != owner.pw_name for member in group.gr_mem):
-        return False
-    return all(entry.pw_gid != gid or entry.pw_uid == owner.pw_uid for entry in pwd.getpwall())
-
-
-def no_extended_access_acl(directory: Path | int) -> bool:
-    """Allow mode-bit exceptions only without a Linux access ACL (file or directory).
-
-    With a POSIX ACL, group mode bits describe the mask, not just the owning
-    group's rights. Reject all extended access ACLs rather than trusting named
-    entries. Other platforms retain the original no-group-write restriction.
-    """
-    if sys.platform != "linux":
-        return False
-    try:
-        os.getxattr(directory, "system.posix_acl_access")
-    except OSError as error:
-        # Only a supported query reporting an absent ACL qualifies. ENOTSUP
-        # can hide another ACL model (e.g. NFSv4), not prove the absence of ACLs.
-        # Fail closed even on ACL-less filesystems rather than guess their model.
-        return error.errno == errno.ENODATA
-    return False
-
-
-# Shared permission predicates. Every lifecycle mode-bit decision goes through
-# these so the user-private-group (Ubuntu umask 002) rule exists exactly once.
-
-def is_private_mode(info: os.stat_result) -> bool:
-    """No group or other permission bits at all (0600/0700 style)."""
-    return not info.st_mode & 0o077
-
-
-def group_write_is_private(target: Path | int, info: os.stat_result) -> bool:
-    """Group write that only the owner can use: owned, user-private group, no ACL."""
-    return (info.st_uid == os.getuid() and user_private_group(info.st_gid)
-            and no_extended_access_acl(target))
-
-
-def shared_writable(target: Path | int, info: os.stat_result) -> bool:
-    """True when a principal other than the owner could write ``target``.
-
-    Other write always counts; group write counts unless it is private.
-    """
-    if info.st_mode & 0o002:
-        return True
-    return bool(info.st_mode & 0o020) and not group_write_is_private(target, info)
-
-
-def read_owned_file(
-    path: Path, *, reason: str, max_size: int, private: bool, single_link: bool = True,
-) -> bytes:
-    """Read a bounded regular file owned by the current user, never following links.
-
-    ``private`` requires no group/other bits; otherwise only shared write is
-    refused. Any violation raises ``FilesystemValidationError(reason)`` so callers
-    keep their stable reason codes.
-    """
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(descriptor, "rb") as stream:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode):
-            violation = "wrong-type"
-        elif info.st_uid != os.getuid():
-            violation = "wrong-owner"
-        elif single_link and info.st_nlink != 1:
-            violation = "multiple-links"
-        elif info.st_size > max_size:
-            violation = "too-large"
-        elif private and not is_private_mode(info):
-            violation = "not-private"
-        elif not private and shared_writable(descriptor, info):
-            violation = "shared-writable"
-        else:
-            data = stream.read(max_size + 1)
-            if len(data) <= max_size:
-                return data
-            violation = "too-large"
-    raise FilesystemValidationError(reason, path, violation=violation)
-
-
 def _seals_descendants(descriptor: int, info: os.stat_result) -> bool:
     """An owned directory nobody else can search hides its descendants' group bits."""
     return (info.st_uid == os.getuid() and not info.st_mode & 0o011
-            and no_extended_access_acl(descriptor))
+            and permissions.no_extended_access_acl(descriptor))
 
 
 def _check_directory(
@@ -167,8 +59,8 @@ def _check_directory(
 
 def _group_write_is_private(descriptor: int, info: os.stat_result, sealed: bool) -> bool:
     if sealed:
-        return no_extended_access_acl(descriptor)
-    return group_write_is_private(descriptor, info)
+        return permissions.no_extended_access_acl(descriptor)
+    return permissions.group_write_is_private(descriptor, info)
 
 
 def _check_path_scope(path: Path, owned_root: Path | None) -> None:
@@ -239,7 +131,7 @@ def validate_private_path(path: Path, *, directory: bool = False) -> None:
         violation = "wrong-type"
     elif info.st_uid != os.getuid():
         violation = "wrong-owner"
-    elif not is_private_mode(info):
+    elif not permissions.is_private_mode(info):
         violation = "not-private"
     else:
         return

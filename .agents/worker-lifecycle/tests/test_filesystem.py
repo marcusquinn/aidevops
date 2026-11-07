@@ -14,9 +14,12 @@ from worker_lifecycle.archive_path import create_archive_root, validate_archive_
 from worker_lifecycle.cleanup import _failure_details
 from worker_lifecycle.filesystem import (
     FilesystemValidationError, _seals_descendants, checked_directory, filesystem_error_details,
-    read_owned_file, validate_private_path,
+    validate_private_path,
 )
+from worker_lifecycle.permissions import FilePolicy, read_owned_file
 from worker_lifecycle.storage import LifecycleRegistry, _private
+
+PERMISSIONS = "worker_lifecycle.permissions."
 
 
 class FilesystemContract(unittest.TestCase):
@@ -109,9 +112,9 @@ class FilesystemContract(unittest.TestCase):
         cases = ((False, True, False), (True, False, False), (True, True, True))
         for private_group, no_acl, accepted in cases:
             with self.subTest(private_group=private_group, no_acl=no_acl):
-                with patch(module + "user_private_group", return_value=private_group), \
+                with patch(PERMISSIONS + "user_private_group", return_value=private_group), \
                         patch(module + "_seals_descendants", side_effect=seals), \
-                        patch(module + "no_extended_access_acl", return_value=no_acl):
+                        patch(PERMISSIONS + "no_extended_access_acl", return_value=no_acl):
                     if accepted:
                         validate_archive_path(archives)
                     else:
@@ -119,17 +122,17 @@ class FilesystemContract(unittest.TestCase):
                                                     "archive-path-externally-writable"):
                             validate_archive_path(archives)
         self.root.chmod(0o700)  # unsearchable owned ancestor seals group bits below
-        with patch(module + "user_private_group", return_value=False), \
-                patch(module + "no_extended_access_acl", return_value=True):
+        with patch(PERMISSIONS + "user_private_group", return_value=False), \
+                patch(PERMISSIONS + "no_extended_access_acl", return_value=True):
             validate_archive_path(archives)
             archives.chmod(0o777)
             with self.assertRaisesRegex(FilesystemValidationError,
                                         "archive-path-externally-writable"):
                 validate_archive_path(archives)
         archives.chmod(0o775)
-        with patch(module + "user_private_group", return_value=False), \
+        with patch(PERMISSIONS + "user_private_group", return_value=False), \
                 patch(module + "_seals_descendants", return_value=True), \
-                patch(module + "no_extended_access_acl", return_value=False):
+                patch(PERMISSIONS + "no_extended_access_acl", return_value=False):
             with self.assertRaisesRegex(FilesystemValidationError,
                                         "archive-path-externally-writable"):
                 validate_archive_path(archives)
@@ -138,18 +141,17 @@ class FilesystemContract(unittest.TestCase):
     def test_read_owned_file_accepts_only_private_group_write(self):
         config = self.root / "repos.json"
         config.write_bytes(b"{}")
-        module = "worker_lifecycle.filesystem."
 
         def read(**options):
-            return read_owned_file(config, reason="fixture-reason", max_size=16, **options)
+            return read_owned_file(config, FilePolicy("fixture-reason", max_size=16, **options))
 
         config.chmod(0o664)  # Ubuntu user-private group under umask 002
         cases = ((True, True, None), (False, True, "shared-writable"),
                  (True, False, "shared-writable"))
         for private_group, no_acl, violation in cases:
             with self.subTest(private_group=private_group, no_acl=no_acl), \
-                    patch(module + "user_private_group", return_value=private_group), \
-                    patch(module + "no_extended_access_acl", return_value=no_acl):
+                    patch(PERMISSIONS + "user_private_group", return_value=private_group), \
+                    patch(PERMISSIONS + "no_extended_access_acl", return_value=no_acl):
                 if violation is None:
                     self.assertEqual(read(private=False), b"{}")
                 else:
@@ -157,8 +159,8 @@ class FilesystemContract(unittest.TestCase):
                         read(private=False)
                     self.assertEqual((str(raised.exception), raised.exception.violation),
                                      ("fixture-reason", violation))
-        with patch(module + "user_private_group", return_value=True), \
-                patch(module + "no_extended_access_acl", return_value=True):
+        with patch(PERMISSIONS + "user_private_group", return_value=True), \
+                patch(PERMISSIONS + "no_extended_access_acl", return_value=True):
             for mode, private, violation in ((0o666, False, "shared-writable"),
                                              (0o640, True, "not-private")):
                 config.chmod(mode)
