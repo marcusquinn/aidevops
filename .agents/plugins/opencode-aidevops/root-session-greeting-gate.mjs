@@ -15,10 +15,18 @@ const ROOT_LOOKUP_CACHE_LIMIT = 256;
  * @param {object} deps
  * @param {(sessionID: string) => Promise<{ parentID?: string } | undefined>} deps.getSession
  * @param {() => boolean} [deps.isHeadless]
+ * @param {() => boolean} [deps.isAcpServer]
+ * @param {object} [deps.env] - greeting override; does not bypass child/headless gates
  * @param {(level: string, message: string) => void} [deps.log]
  * @returns {(input: { sessionID?: string }) => Promise<boolean>}
  */
-export function createRootSessionGreetingGate({ getSession, isHeadless = () => false, log = () => {} } = {}) {
+export function createRootSessionGreetingGate({
+  getSession,
+  isHeadless = () => false,
+  isAcpServer = () => false,
+  env = process.env,
+  log = () => {},
+} = {}) {
   const loggedSessions = new Set();
   const rootBySession = new Map();
   const skip = (sessionID, reason) => {
@@ -41,7 +49,9 @@ export function createRootSessionGreetingGate({ getSession, isHeadless = () => f
   return async function shouldInjectRootSessionGreeting(input) {
     const sessionID = input?.sessionID;
     if (!sessionID) return false;
-    if (isHeadless()) return skip(sessionID, "headless environment");
+    const headless = isHeadless();
+    const acpServer = isAcpServer() && env.AIDEVOPS_PLUGIN_SESSION_GREETING !== "1";
+    if (headless || acpServer) return skip(sessionID, headless ? "headless environment" : "acp-server");
     if (typeof getSession !== "function") return skip(sessionID, "no session lookup");
     try {
       return await resolveRoot(sessionID);
