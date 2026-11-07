@@ -178,6 +178,33 @@ else
 fi
 
 # =============================================================================
+# Test 5b (GH#36978): footer carries the single origin marker
+# =============================================================================
+echo ""
+echo "Test 5b: body-file with a standalone origin marker keeps one marker"
+stub_sig_backup="$TMP/gh-signature-helper.sh.bak"
+cp "$TMP/scripts/gh-signature-helper.sh" "$stub_sig_backup"
+cat >"$TMP/scripts/gh-signature-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '\n<!-- aidevops:origin:interactive -->\n<!-- aidevops:sig -->\n---\nstub footer\n'
+EOF
+chmod +x "$TMP/scripts/gh-signature-helper.sh"
+origin_file="$TMP/origin-marker.md"
+printf 'body text\n\n<!-- aidevops:origin:interactive -->\n' >"$origin_file"
+_reset_log
+"$SHIM_RUN" issue comment 791 --repo owner/repo --body-file "$origin_file" 2>/dev/null
+argv=$(_read_argv)
+resolved_body_file=$(printf '%s\n' "$argv" | awk 'prev { print; exit } $0 == "--body-file" { prev=1 }')
+origin_count=$(grep -Fxc '<!-- aidevops:origin:interactive -->' "$resolved_body_file" 2>/dev/null || true)
+if [[ "$origin_count" == "1" ]] && grep -q "body text" "$resolved_body_file"; then
+	_pass "origin marker appears exactly once after shim signing"
+else
+	_fail "origin marker deduplication" "count=$origin_count argv: $argv"
+fi
+cp "$stub_sig_backup" "$TMP/scripts/gh-signature-helper.sh"
+chmod +x "$TMP/scripts/gh-signature-helper.sh"
+
+# =============================================================================
 # Test 5a: managed ephemeral body is unlinked before native transport
 # =============================================================================
 echo ""
