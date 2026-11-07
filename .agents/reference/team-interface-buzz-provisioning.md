@@ -232,6 +232,11 @@ Before changing the store or replacing the manifest, it saves the original
 only matched agent names and old/new 12-character digest prefixes, not store fields.
 An unchanged reinstall does not rewrite or back up the store again.
 
+Installation also repoints exact interactive command overrides from older anchors
+of the same runtime to the new anchor, with a private store backup before the
+change. Other commands are untouched. `aidevops buzz status` reports the number
+of stale interactive overrides against the installed manifest before reinstall.
+
 To roll back, quit Buzz, restore that private store backup to Buzz's
 `agents/managed-agents.json`, and restore the matching
 `~/.aidevops/buzz-backups/aidevops-interactive-v1.<timestamp>.json` manifest to
