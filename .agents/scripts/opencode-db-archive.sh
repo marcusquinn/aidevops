@@ -1167,6 +1167,14 @@ _archive_parse_options() {
 		local option="$1"
 		local option_value="${2:-}"
 		case "$option" in
+		--retention-days | --interactive-retention-days | --worker-retention-days | --keep-sessions | --archive-event-retention-days | --max-duration-seconds)
+			if [[ $# -lt 2 ]]; then
+				print_error "Option requires a value: $option"
+				return 1
+			fi
+			;;
+		esac
+		case "$option" in
 		--retention-days)
 			retention_days="$option_value"
 			worker_retention_days="$option_value"
