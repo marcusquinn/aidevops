@@ -1748,14 +1748,17 @@ process_pr() {
 # Cross-repository references use owner/repo#NNN and do not match the local #NNN
 # shape below.
 #
-# Args: $1=PR number, $2=repo slug
+# Args: $1=PR number, $2=repo slug, $3=optional already-fetched body
 # Returns: issue number on stdout, or empty if none found
 #######################################
 _extract_linked_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local supplied_body="${3-}"
 	local pr_body=""
-	if ! pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null); then
+	if [[ "$#" -ge 3 ]]; then
+		pr_body="$supplied_body"
+	elif ! pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null); then
 		echo "[pulse-wrapper] _extract_linked_issue: PR #${pr_number} in ${repo_slug} body metadata unavailable — no routing target" >>"$LOGFILE"
 		return 1
 	fi
@@ -1814,21 +1817,29 @@ _drop_closing_pull_request_refs() {
 # not fall back. Otherwise require one distinct local For/Ref or title identity.
 # Mode explicit is for merge association: no title inference, only standalone
 # local For/Ref declarations outside code/quotes and secondary-work sections.
-# Args: $1=PR number, $2=repo slug, $3=mode (repair(default) or explicit)
+# Args: $1=PR number, $2=repo slug, $3=mode, $4=optional fetched body
 #######################################
 _extract_pr_work_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local mode="${3:-repair}"
+	local supplied_body="${4-}"
 	local closing_issue="" pr_body="" pr_title=""
 	[[ "$repo_slug" =~ ^[^/]+/[^/]+$ ]] || return 1
 	[[ "$mode" == "repair" || "$mode" == "explicit" ]] || return 1
-	closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
+	if [[ "$#" -ge 4 ]]; then
+		pr_body="$supplied_body"
+		closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" "$pr_body") || return 1
+	else
+		closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
+	fi
 	if [[ -n "$closing_issue" ]]; then
 		printf '%s' "$closing_issue"
 		return 0
 	fi
-	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	if [[ "$#" -lt 4 ]]; then
+		pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	fi
 	if [[ "$mode" == "explicit" ]]; then
 		local explicit_issues=""
 		explicit_issues=$(_gh_pr_body_explicit_issues "$pr_body") || return 1

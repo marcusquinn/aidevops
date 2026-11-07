@@ -525,15 +525,15 @@ worker_briefed_trust_verdict() {
 	local labels_str="${3:-}" is_draft="${4:-}" linked_issue="${5:-}"
 	local WORKER_BRIEFED_TRUST_REASON="trust metadata unavailable (t2449)"
 	if [[ "$#" -eq 2 ]]; then
-		local pr_meta="" head_sha=""
-		pr_meta=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft,headRefOid) || {
+		local pr_meta="" head_sha="" pr_body=""
+		pr_meta=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft,headRefOid,body) || {
 			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
 			return 1
 		}
 		# Missing/malformed label metadata is not evidence of a non-worker PR.
 		if ! jq -e 'type == "object" and (.labels | type == "array")
 			and all(.labels[]; .name | type == "string")
-			and (.isDraft | type == "boolean")' <<<"$pr_meta" >/dev/null 2>&1; then
+			and (.isDraft | type == "boolean") and (.body | type == "string")' <<<"$pr_meta" >/dev/null 2>&1; then
 			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
 			return 1
 		fi
@@ -548,7 +548,8 @@ worker_briefed_trust_verdict() {
 			printf 'allow\n'
 			return 0
 		fi
-		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit) || {
+		pr_body=$(jq -r '.body' <<<"$pr_meta") || return 1
+		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body") || {
 			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
 			return 1
 		}
