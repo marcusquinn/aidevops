@@ -1144,11 +1144,14 @@ test_draft_release_after_partial_merge_restores_dispatch() {
 		local open_prs='[[]]'
 		local dispatch_count=0
 		_pmpc_gh_read() {
-			case "$*" in
-			*'/comments?'*) printf '%s' '[[{"author_association":"MEMBER","created_at":"2026-11-07T00:00:00Z","body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=runner1"}]]' ;;
-			*'/pulls?'*) printf '%s' "$open_prs" ;;
-			*) printf '%s' '{"state":"open","labels":[{"name":"status:available"},{"name":"origin:interactive"}],"assignees":[]}' ;;
-			esac
+			# Avoid case terminators inside $(): Bash 3.2 misparses them here.
+			if [[ "$*" == *'/comments?'* ]]; then
+				printf '%s' '[[{"author_association":"MEMBER","created_at":"2026-11-07T00:00:00Z","body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=runner1"}]]'
+			elif [[ "$*" == *'/pulls?'* ]]; then
+				printf '%s' "$open_prs"
+			else
+				printf '%s' '{"state":"open","labels":[{"name":"status:available"},{"name":"origin:interactive"}],"assignees":[]}'
+			fi
 			return 0
 		}
 		clear_active_status_on_release() { printf 'projection=%s\n' "$*"; return 0; }
