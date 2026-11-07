@@ -690,7 +690,7 @@ _todo_finalize_planning_pr() {
 		printf 'AIDEVOPS_PLANNING_RECOVERY_WORKTREE_STATE=%s\n' "$cleanup_state" >&2
 		printf '[todo_commit_push] For transient failures, retry with the same planning snapshot; publication %s reuses branch %s instead of creating a duplicate.\n' \
 			"$publication_id" "${_TODO_PLANNING_PR_BRANCH:-unknown}" >&2
-		printf '[todo_commit_push] A pre-push guard block requires fixing the reported content before retrying; an unchanged snapshot will remain blocked.\n' >&2
+		printf '[todo_commit_push] A pre-push content block requires fixing the reported content before retrying. A guard failure that is not a content block (for example, an inventory enumeration or scan failure) can be retried after the reported environment problem is resolved.\n' >&2
 		if [[ "$log_target" != "/dev/null" ]]; then
 			printf '%s\n' "[todo_commit_push] Recovery publication=${publication_id} branch=${_TODO_PLANNING_PR_BRANCH:-} commit=${_TODO_PLANNING_PR_COMMIT:-} remote=${remote_state} pr=${pr_state} source=${source_state} worktree=${cleanup_state}" >>"$log_target"
 		fi
