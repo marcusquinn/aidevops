@@ -363,6 +363,104 @@ test_ambiguous_task_mapping_fails_before_push() {
 	return 0
 }
 
+# GH#37002: seed padded legacy rows (no ref:GH#, one duplicated) plus a padded
+# brief, then stage a task-id-normalize style rewrite with a `git mv`.
+seed_padded_legacy_rows() {
+	local work_dir="$1"
+	local second_row="$2"
+	printf -- '- [x] t038.21 Old completed task #bug\n- [x] t038.21 Duplicate history row\n%s\n' \
+		"$second_row" >>"${work_dir}/TODO.md"
+	printf 'What: legacy brief\n' >"${work_dir}/todo/tasks/t038.21-brief.md"
+	git -C "$work_dir" add TODO.md todo/ &&
+		git -C "$work_dir" commit -m "plan: seed legacy rows" >/dev/null 2>&1 &&
+		git -C "$work_dir" push origin fixture-default >/dev/null 2>&1 || return 1
+	return 0
+}
+
+normalize_padded_legacy_rows() {
+	local work_dir="$1"
+	local second_row="$2"
+	printf '# Tasks\n\n- [x] t38.21 Old completed task #bug\n- [x] t38.21 Duplicate history row\n%s\n' \
+		"$second_row" >"${work_dir}/TODO.md"
+	git -C "$work_dir" mv todo/tasks/t038.21-brief.md todo/tasks/t38.21-brief.md || return 1
+	git -C "$work_dir" add TODO.md || return 1
+	return 0
+}
+
+run_forced_pr_fallback() {
+	local tmpdir="$1"
+	local work_dir="$2"
+	local message="$3"
+	(cd "$work_dir" && PATH="${tmpdir}/bin:$PATH" \
+		GH_STUB_LOG="${tmpdir}/gh.log" GH_STUB_BODY="${tmpdir}/body" \
+		GH_STUB_HEAD="${tmpdir}/head" GH_STUB_TITLE="${tmpdir}/title" \
+		AIDEVOPS_PLANNING_FORCE_PR_FALLBACK=1 AIDEVOPS_PLANNING_PR_REPO_SLUG="example/repo" \
+		"$PLANNING_HELPER" "$message" 2>&1)
+	return $?
+}
+
+test_padding_normalization_publishes_rename_without_manifest() {
+	local name="padding-only normalization publishes rename deletions with an empty manifest (GH#37002)"
+	local tmpdir work_dir output rc head_branch tree body status
+	tmpdir=$(mktemp -d) || {
+		fail "$name" "mktemp failed"
+		return 0
+	}
+	write_fake_gh "${tmpdir}/bin" || return 0
+	work_dir=$(setup_repo "$tmpdir" false) || return 0
+	seed_padded_legacy_rows "$work_dir" '- [x] t038.22 Second legacy row' &&
+		normalize_padded_legacy_rows "$work_dir" '- [x] t38.22 Second legacy row' || {
+		fail "$name" "fixture setup failed"
+		rm -rf "$tmpdir"
+		return 0
+	}
+	: >"${tmpdir}/gh.log"
+	rc=0
+	output=$(run_forced_pr_fallback "$tmpdir" "$work_dir" "plan: normalize legacy task IDs") || rc=$?
+	head_branch=$(cat "${tmpdir}/head" 2>/dev/null || true)
+	tree=$(git --git-dir="${tmpdir}/remote.git" ls-tree -r --name-only "refs/heads/${head_branch}" -- todo/tasks 2>/dev/null || true)
+	body=$(cat "${tmpdir}/body" 2>/dev/null || true)
+	status=$(git -C "$work_dir" status --short)
+	if [[ "$rc" -eq 0 && "$output" == *"AIDEVOPS_PLANNING_COMMIT_RESULT=pr"* &&
+		"$tree" == "todo/tasks/t38.21-brief.md" && "$body" != *"aidevops:planning-task:v1"* &&
+		-z "$status" ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=$rc tree=[$tree] status=[$status] output=$output body=$body"
+	fi
+	rm -rf "$tmpdir"
+	return 0
+}
+
+test_normalization_with_state_change_still_requires_mapping() {
+	local name="renamed row whose status also changes still requires ref:GH# mapping (GH#37002)"
+	local tmpdir work_dir output rc remote_refs
+	tmpdir=$(mktemp -d) || {
+		fail "$name" "mktemp failed"
+		return 0
+	}
+	write_fake_gh "${tmpdir}/bin" || return 0
+	work_dir=$(setup_repo "$tmpdir" false) || return 0
+	seed_padded_legacy_rows "$work_dir" '- [ ] t038.22 Open legacy row' &&
+		normalize_padded_legacy_rows "$work_dir" '- [x] t38.22 Open legacy row' || {
+		fail "$name" "fixture setup failed"
+		rm -rf "$tmpdir"
+		return 0
+	}
+	: >"${tmpdir}/gh.log"
+	rc=0
+	output=$(run_forced_pr_fallback "$tmpdir" "$work_dir" "plan: normalize and complete") || rc=$?
+	remote_refs=$(git --git-dir="${tmpdir}/remote.git" for-each-ref --format='%(refname)' refs/heads/planning/)
+	if [[ "$rc" -ne 0 && -z "$remote_refs" &&
+		"$output" == *"cannot safely map t38.22: expected one same-repository ref:GH#NNN field"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=$rc refs=$remote_refs output=$output"
+	fi
+	rm -rf "$tmpdir"
+	return 0
+}
+
 test_post_push_failure_is_recoverable_and_idempotent() {
 	local name="post-push PR failure reports recovery, cleans worktree, and reuses branch"
 	local tmpdir fake_bin work_dir fail_once output_first output_second rc_first rc_second
@@ -700,6 +798,8 @@ main() {
 	test_protected_default_creates_planning_pr
 	test_multi_task_manifest_is_deterministic
 	test_ambiguous_task_mapping_fails_before_push
+	test_padding_normalization_publishes_rename_without_manifest
+	test_normalization_with_state_change_still_requires_mapping
 	test_post_push_failure_is_recoverable_and_idempotent
 	test_unprotected_default_keeps_direct_push
 	test_protected_default_from_linked_branch_creates_planning_pr

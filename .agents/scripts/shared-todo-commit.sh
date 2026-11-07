@@ -247,15 +247,88 @@ _todo_safe_planning_path() {
 _todo_changed_planning_files() {
 	local repo_path="$1"
 	local files="$2"
+	# --no-renames: a staged rename yields its source delete plus its destination
+	# add, so the planning worktree deletes the source (GH#37002).
 	{
 		# shellcheck disable=SC2086 # files is the legacy space-delimited API.
-		git -C "$repo_path" diff --name-only HEAD -- $files 2>/dev/null || true
+		git -C "$repo_path" diff --no-renames --name-only HEAD -- $files 2>/dev/null || true
 		# shellcheck disable=SC2086 # files is the legacy space-delimited API.
-		git -C "$repo_path" diff --name-only --cached -- $files 2>/dev/null || true
+		git -C "$repo_path" diff --no-renames --name-only --cached -- $files 2>/dev/null || true
 		# shellcheck disable=SC2086 # files is the legacy space-delimited API.
 		git -C "$repo_path" ls-files --others --exclude-standard -- $files 2>/dev/null || true
 	} | sort -u | grep -E '^(TODO\.md|todo/)' || true
 	return 0
+}
+
+# Strip zero padding from every t<digits>(.<digits>)* token (t038.021 -> t38.21).
+# Applied to both sides of a comparison, so only padding differences cancel.
+_TODO_UNPAD_TASK_IDS_AWK='
+function unpad_task_ids(s,   out, token, parts, count, index_, segment, rebuilt) {
+	out = ""
+	while (match(s, /t[0-9]+(\.[0-9]+)*/)) {
+		token = substr(s, RSTART + 1, RLENGTH - 1)
+		count = split(token, parts, ".")
+		rebuilt = ""
+		for (index_ = 1; index_ <= count; index_++) {
+			segment = parts[index_]
+			sub(/^0+/, "", segment)
+			if (segment == "") segment = "0"
+			rebuilt = rebuilt (index_ > 1 ? "." : "") segment
+		}
+		out = out substr(s, 1, RSTART - 1) "t" rebuilt
+		s = substr(s, RSTART + RLENGTH)
+	}
+	return out s
+}'
+
+# Task IDs of added/changed TODO.md task rows. A row whose only change is the
+# zero padding of task IDs (task-id-normalize-helper.sh output) is metadata,
+# not a task publication, and is omitted (GH#37002). Any other difference —
+# checkbox, ref, text — keeps the row in the manifest.
+_todo_changed_task_row_ids() {
+	local repo_path="$1"
+	git -C "$repo_path" diff --no-ext-diff --no-renames --unified=0 HEAD -- TODO.md 2>/dev/null |
+		awk "${_TODO_UNPAD_TASK_IDS_AWK}"'
+			/^@@/ { in_hunk = 1; next }
+			!in_hunk { next }
+			/^-/ { removed[unpad_task_ids(substr($0, 2))]++; next }
+			/^\+/ { added[++added_count] = substr($0, 2) }
+			END {
+				for (row = 1; row <= added_count; row++) {
+					line = added[row]
+					if (!match(line, /^[[:space:]]*- \[[^]]\][[:space:]]+t[1-9][0-9]*(\.[1-9][0-9]*)*/)) continue
+					id = substr(line, RSTART, RLENGTH)
+					normalized = unpad_task_ids(line)
+					# Same row modulo ID padding: one removed row pairs with one added row.
+					if (removed[normalized] > 0) { removed[normalized]--; continue }
+					sub(/^[[:space:]]*- \[[^]]\][[:space:]]+/, "", id)
+					print id
+				}
+			}'
+	return 0
+}
+
+# True when brief <rel_path> is a byte-identical rename of a padded brief
+# that this change deletes (todo/tasks/t038.21-brief.md -> t38.21-brief.md).
+_todo_brief_is_padding_rename() {
+	local repo_path="$1"
+	local rel_path="$2"
+	local changed_files="$3"
+	local candidate="" candidate_id="" task_id="" target_blob="" source_blob=""
+	task_id="${rel_path##*/}"
+	task_id="${task_id%-brief.md}"
+	[[ -f "${repo_path}/${rel_path}" ]] || return 1
+	target_blob=$(git -C "$repo_path" hash-object -- "$rel_path" 2>/dev/null) || return 1
+	while IFS= read -r candidate; do
+		[[ "$candidate" == todo/tasks/t*-brief.md && "$candidate" != "$rel_path" ]] || continue
+		[[ ! -e "${repo_path}/${candidate}" ]] || continue
+		candidate_id="${candidate##*/}"
+		candidate_id="${candidate_id%-brief.md}"
+		[[ "$(printf '%s\n' "$candidate_id" | awk "${_TODO_UNPAD_TASK_IDS_AWK}"' { print unpad_task_ids($0) }')" == "$task_id" ]] || continue
+		source_blob=$(git -C "$repo_path" rev-parse --verify --quiet "HEAD:${candidate}" 2>/dev/null) || continue
+		[[ "$source_blob" == "$target_blob" ]] && return 0
+	done <<<"$changed_files"
+	return 1
 }
 
 _todo_changed_task_ids() {
@@ -264,14 +337,15 @@ _todo_changed_task_ids() {
 	local rel_path=""
 	local task_id=""
 	{
-		git -C "$repo_path" diff --no-ext-diff --unified=0 HEAD -- TODO.md 2>/dev/null |
-			sed -nE 's/^\+[[:space:]]*- \[[^]]\][[:space:]]+(t[1-9][0-9]*(\.[1-9][0-9]*)*).*/\1/p'
+		_todo_changed_task_row_ids "$repo_path"
 		while IFS= read -r rel_path; do
 			case "$rel_path" in
 			todo/tasks/t*-brief.md)
 				task_id="${rel_path##*/}"
 				task_id="${task_id%-brief.md}"
-				[[ "$task_id" =~ ^t[1-9][0-9]*(\.[1-9][0-9]*)*$ ]] && printf '%s\n' "$task_id"
+				[[ "$task_id" =~ ^t[1-9][0-9]*(\.[1-9][0-9]*)*$ ]] || continue
+				_todo_brief_is_padding_rename "$repo_path" "$rel_path" "$changed_files" && continue
+				printf '%s\n' "$task_id"
 				;;
 			esac
 		done <<<"$changed_files"
@@ -366,8 +440,11 @@ _todo_clean_source_planning_changes() {
 	while IFS= read -r rel_path; do
 		[[ -n "$rel_path" ]] || continue
 		_todo_safe_planning_path "$rel_path" || continue
-		if git -C "$repo_path" ls-files --error-unmatch -- "$rel_path" >/dev/null 2>&1; then
-			git -C "$repo_path" reset -q HEAD -- "$rel_path" >/dev/null 2>&1 || true
+		# Restore from HEAD, not the index: a staged rename removes its source
+		# from the index (HEAD still has it) and stages a destination that HEAD
+		# lacks (GH#37002).
+		git -C "$repo_path" reset -q HEAD -- "$rel_path" >/dev/null 2>&1 || true
+		if git -C "$repo_path" cat-file -e "HEAD:${rel_path}" 2>/dev/null; then
 			git -C "$repo_path" checkout -q -- "$rel_path" >/dev/null 2>&1 || return 1
 		else
 			rm -f "${repo_path}/${rel_path}" || return 1
