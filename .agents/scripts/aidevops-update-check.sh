@@ -479,6 +479,21 @@ _check_contribution_watch() {
 }
 
 # -----------------------------------------------------------------------------
+# _in_isolated_runtime_session: true inside a pinned Buzz/team-interface runtime.
+# Those sessions export per-process XDG_CONFIG_HOME/XDG_DATA_HOME that point at
+# an immutable runtime anchor or session shard. A background setup.sh inherits
+# them and rewrites the anchor's opencode.json (plugin entry → live deploy), so
+# the anchor fails content verification on its next start. The host's own
+# auto-update daemon redeploys from a clean environment instead.
+# -----------------------------------------------------------------------------
+_in_isolated_runtime_session() {
+	if [[ -n "${AIDEVOPS_REMOTE_RUNTIME_ANCHOR:-}" || "${AIDEVOPS_REMOTE_INTERFACE:-}" == "1" || -n "${AIDEVOPS_TEAM_INTERFACE_OVERLAY:-}" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# -----------------------------------------------------------------------------
 # _check_hotfix_available: poll for hotfix-v* tags newer than the deployed version.
 # Uses a shorter interval (5 minutes) than the regular update check (~24h).
 # Reads auto_hotfix_accept from ~/.aidevops/configs/auto-hotfix.conf.
@@ -493,6 +508,11 @@ _hotfix_auto_apply() {
 	local auto_restart_pulse="$3"
 	local framework_repo="${AIDEVOPS_FRAMEWORK_REPO:-$HOME/Git/aidevops}"
 	local setup_script="${framework_repo}/setup.sh"
+
+	if _in_isolated_runtime_session; then
+		echo "Hotfix v${hotfix_version} available — deferred to the host auto-update (isolated runtime session)"
+		return 0
+	fi
 
 	echo "Hotfix v${hotfix_version} available — auto-applying (auto_hotfix_accept=true)..."
 
@@ -686,7 +706,13 @@ _check_script_drift() {
 		return 0
 	fi
 
-	# Framework code drift detected.
+	# Framework code drift detected. Pinned runtimes must not redeploy: their
+	# inherited per-process config paths would become setup's write target.
+	if _in_isolated_runtime_session; then
+		echo ""
+		return 0
+	fi
+
 	# setup.sh --stage ai-session applies changed deploy stages first; the setup
 	# mode falls back to full non-interactive setup when it cannot prove safety.
 	local setup_script="$framework_repo/setup.sh"
