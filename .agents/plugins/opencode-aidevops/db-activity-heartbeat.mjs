@@ -205,6 +205,38 @@ export function createDbActivityHeartbeat(options = {}) {
 
 // Unknown liveness or identity is not proof of staleness. Legacy files for a
 // live PID are retained because they have no identity to compare.
+function isProcessGone(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === "ESRCH";
+  }
+}
+
+async function hasReusedPid(file, pid) {
+  const data = JSON.parse(await readFile(file, "utf8"));
+  const recorded = data.process_start_token;
+  if (!recorded || typeof recorded !== "string") return false;
+  const current = processStartToken(pid);
+  return Boolean(current) && current !== recorded;
+}
+
+function heartbeatPid(entry) {
+  const match = /^(\d+)-[A-Za-z0-9_-]+\.json$/.exec(entry.name);
+  if (!entry.isFile() || !match) return 0;
+  const pid = Number(match[1]);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : 0;
+}
+
+async function pruneStaleHeartbeat(file, pid) {
+  try {
+    if (isProcessGone(pid) || (await hasReusedPid(file, pid))) await unlink(file);
+  } catch {
+    // Files may disappear, be unreadable, or contain incomplete legacy data.
+  }
+}
+
 async function pruneStaleHeartbeats(dir, ownFile) {
   let entries;
   try {
@@ -213,29 +245,9 @@ async function pruneStaleHeartbeats(dir, ownFile) {
     return;
   }
   for (const entry of entries) {
-    const match = /^(\d+)-[A-Za-z0-9_-]+\.json$/.exec(entry.name);
-    if (!entry.isFile() || !match) continue;
-    const pid = Number(match[1]);
-    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    const pid = heartbeatPid(entry);
     const file = join(dir, entry.name);
-    if (file === ownFile) continue;
-    try {
-      let dead = false;
-      try {
-        process.kill(pid, 0);
-      } catch (error) {
-        dead = error.code === "ESRCH";
-      }
-      if (!dead) {
-        const data = JSON.parse(await readFile(file, "utf8"));
-        const current = processStartToken(pid);
-        dead = typeof data.process_start_token === "string" && !!data.process_start_token
-          && !!current && current !== data.process_start_token;
-      }
-      if (dead) await unlink(file);
-    } catch {
-      // Files may disappear, be unreadable, or contain incomplete legacy data.
-    }
+    if (pid && file !== ownFile) await pruneStaleHeartbeat(file, pid);
   }
 }
 
