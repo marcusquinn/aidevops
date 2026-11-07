@@ -204,6 +204,13 @@ test("headless workers auto-allow read-only toolchain roots but never writes or 
     assert.equal(replies.at(-1).body.response, "reject");
   }
 
+  broker.recordToolCall({ tool: "read", callID: "local-bin-auth" }, { args: { filePath: `${root}/.local/bin/auth.json` } });
+  await broker.handleEvent({ event: { type: "permission.asked", properties: {
+    id: "local-bin-auth", sessionID: "session-nvm", permission: "external_directory",
+    patterns: [`${root}/.local/bin/*`], tool: { callID: "local-bin-auth" },
+  } } });
+  assert.equal(replies.at(-1).body.response, "reject");
+
   await ask("nvm-write", "write", [`${root}/.nvm/*`]);
   assert.equal(replies.at(-1).body.response, "reject");
   assert.equal(existsSync(requestFile), true);

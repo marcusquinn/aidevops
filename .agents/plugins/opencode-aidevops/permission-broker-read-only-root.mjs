@@ -15,6 +15,10 @@ export function isReadOnlyRootRead(context, raw, forbiddenPattern) {
   const callID = raw?.tool?.callID || raw?.callID || "";
   if (permission !== "external_directory") return false;
   if (!READ_ONLY_TOOLS.has(context.toolCalls.get(callID)?.tool)) return false;
+  // Directory-wide patterns (e.g. ~/.local/bin/*) must not approve a forbidden target.
+  const target = normalizeAbsolute(context.toolCalls.get(callID)?.target
+    || raw?.metadata?.filepath || raw?.metadata?.path);
+  if (target && (forbiddenPattern.test(target) || target.split("/").includes(".."))) return false;
   const input = raw?.patterns ?? raw?.pattern;
   const patterns = Array.isArray(input) ? input : input == null ? [] : [input];
   if (patterns.length === 0 || patterns.length > 20) return false;
