@@ -48,7 +48,13 @@ Parent-style plan: phase PRs use `For #<this issue>` until the final phase, whic
 - Extension points: `pages`, `panels`, `settingsCards`, optional `sidebarSections` (rows `{ id, label, icon?, badge?, count?, status? }`), `conversation`, `agents.addTool` (`name` `/^[a-z][a-z0-9_]{0,63}$/`, plugin-prefixed), `shortcuts`, `navigation`, `notifications`, `browser`, `host`.
 - `manifest.host`: at most 16 commands/processes/origins/hooks; bare program names; `runCommand` has a 5 s deadline and 4096-byte default output (max 1 MiB); `artifact: { path, sha256 }` pins exact bytes; changing `manifest.host` requires owner re-approval.
 - `managed-plugins.json` v1: `{ version: 1, source, plugins: [{ id, repository, reference, commit, path? }] }`, ≤256 KiB, unknown fields are errors, recommends only.
-- Unverified: whether a plugin can add a new agent harness (agent types appear built in). Do not plan on it.
+- Agent types are plugin-registered: `ctx.agents.register` (`src/features/agents/service.ts:1070`, implementation `:2134-2166`); type ids match `^[a-z0-9][a-z0-9._-]*$`; `dispatchHook` only allows hooks under the plugin's own type prefix (`:1539-1559`). The built-in Claude/Codex/Goose/OpenCode harnesses are bundled plugins using this API. Not yet exercised from a third-party plugin.
+
+### OpenCode harness findings (block/buzz-app#2432 at `157bde8ee`, tested 2026-11-07)
+
+- Bundled plugin `buzz.opencode`, `enabledByDefault: false`; the Harness list shows OpenCode only after Settings → Plugins enables it.
+- A DM to an OpenCode agent replied as `build-plus`, model `anthropic/claude-opus-5-5`, aidevops v3.39.131, cwd `~/.buzz` (workspace unset). The Finder-launched app found Homebrew `opencode` through the login-shell PATH (`src-tauri/src/host_command.rs`).
+- Buzz `Config` has model, effort, instructions, workspace and scope only; every agent gets the machine's `default_agent`. `opencode acp` already reports `configOptions` `mode` (select, 17 aidevops primary agents, current `Build+`). Upstream request with the proposed change (`OPENCODE.select` → `configure("mode", …)`): block/buzz-app#2432 comment 6699412527.
 
 ### Files to Modify
 
@@ -71,7 +77,7 @@ Parent-style plan: phase PRs use `For #<this issue>` until the final phase, whic
 
 ### Implementation Steps
 
-1. Phase 0 after block/buzz-app#2880's live test passes: build the spike in a linked worktree, push a branch, Git-import it into the debug Desktop (`xyz.block.buzz.desktop.dev`), screenshot the review dialog and card, record findings in this brief.
+1. Phase 0 (team_create live test passed): build the spike in a linked worktree, push a branch, Git-import it into the debug Desktop (`xyz.block.buzz.desktop.dev`), screenshot the review dialog and card, record findings in this brief.
 2. Phase 1: managed-plugins writer + fixtures; release-tag pinning.
 3. Phase 2: read-only agent tools; restart-impact note (changing tool schema restarts agent sessions).
 4. Phase 3: decide channel-template / sidebar approach from the open questions.
@@ -121,11 +127,11 @@ shellcheck .agents/scripts/buzz-desktop-helper.sh .agents/tests/test-buzz-deskto
 
 ## Context & Decisions
 
-- Open question (owner): the request "cover anything that …" was cut off; confirm the remaining scope.
-- Open question (owner): channel templates in this build are local-only (`buzz.channel-templates.v1` in Desktop localStorage: name, agents, teams, starting Canvas ≤24 KiB; block/buzz-app `src/features/channel-templates/local.ts`); file import/export exists for agents (`.agent.json`/`.agent.png`) and team import from old Buzz, not for templates. Confirm where the template import/export was seen.
-- Open question (owner): "channel icons no longer show in the left sidebar". New sidebar rows show only `#`/lock/chat glyphs (`src/features/channels/channel-icon.ts`); the old app had a Discord-style community rail (`desktop/src/features/sidebar/ui/CommunityRail.tsx` in block/buzz) and a forum glyph, replaced by the bottom community picker. Confirm which icons are meant before filing upstream.
+- Owner scope (2026-11-06): run the aidevops primary agents on each computer with Buzz installed, named `<agent>-<host>` (for example `build-plus-marcus-macbook-pro-01`) so a request shows which agent and computer it addresses. Delivery path: OpenCode harness (#2432) plus a per-agent `mode` selection upstream; the plugin's role is setup and status, not a second harness.
+- Owner asks filed upstream: per-channel default agent (no @mention needed), block/buzz-app#2923; community rail back in the left sidebar, block/buzz-app#2922. ("Channel icons" meant the community rail.)
+- Channel templates in this build are local-only (`buzz.channel-templates.v1` in Desktop localStorage: name, agents, teams, starting Canvas ≤24 KiB; `src/features/channel-templates/local.ts`). Settings → Channel templates offers "New template" only; there is no template import/export (`docs/agents.md:1443`). Phase 3 must work within that or request export upstream.
 - Rejected: writing Desktop localStorage from the plugin to seed templates — not a contract.
-- Rejected: adding an OpenCode harness through the plugin — agent types are built in; track upstream block/buzz-app#2432 instead.
+- Rejected for now: shipping our own OpenCode harness in the plugin — #2432 covers it; revisit only if #2432 stalls or rejects `mode` selection.
 
 ## Relevant Files
 
@@ -136,7 +142,8 @@ shellcheck .agents/scripts/buzz-desktop-helper.sh .agents/tests/test-buzz-deskto
 
 ## Dependencies
 
-- block/buzz-app#2880 live test (phase 0 starts after it).
+- block/buzz-app#2930 (team_create; replaces #2880, closed when its base merged): live test passed 2026-11-06, so phase 0 is unblocked.
+- block/buzz-app#2432 (OpenCode harness) and its per-agent `mode` selection, for the per-computer agent layout.
 - t18879 (new-Desktop detection) for phase 1 identifier gating.
 
 ## Estimate Breakdown
