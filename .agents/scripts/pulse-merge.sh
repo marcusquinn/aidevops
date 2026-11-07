@@ -1396,7 +1396,7 @@ _pmp_stage_review_and_gates() {
 
 _pmp_stage_required_checks() {
 	local required_labels="$pr_labels" ci_route_rc=0
-	local drift_names="" drift_signature="" drift_skip=0
+	local drift_names="" drift_signature="" drift_skip=0 drift_classification_unavailable=0
 	[[ -n "$timing_prefix" ]] && _branch_protection_start=$(_pmp_now_epoch)
 	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author" "$pr_head_ref_oid" \
@@ -1417,9 +1417,16 @@ _pmp_stage_required_checks() {
 					drift_signature=$(printf '%s\n' "$drift_names" | shasum -a 256 | cut -d ' ' -f 1) || drift_signature=""
 				fi
 			else
+				drift_classification_unavailable=1
+				# The ledger accepts hexadecimal signatures, not literal sentinels.
+				drift_signature=$(printf 'classification-unavailable\n' | shasum -a 256 | cut -d ' ' -f 1) || return 1
 				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift context classification unavailable (required-context/head/REST parse failure); allowing one rebase" >>"$LOGFILE"
 			fi
-			if [[ -n "$drift_signature" ]] && _ci_drift_ledger_should_skip "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$drift_signature"; then
+			if [[ -n "$drift_signature" ]] && _ci_drift_ledger_should_skip "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$drift_signature" "$drift_classification_unavailable"; then
+				if [[ "$drift_classification_unavailable" -eq 1 ]]; then
+					echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift rebase already tried for this head while classification unavailable; deferring without rebase or CI fix-worker routing" >>"$LOGFILE"
+					return 1
+				fi
 				drift_skip=1
 				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift rebase already tried for the same failing required contexts (${drift_names//$'\n'/, }); routing to CI fix-worker" >>"$LOGFILE"
 			fi
@@ -1428,6 +1435,11 @@ _pmp_stage_required_checks() {
 					_ci_drift_ledger_record "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$drift_signature" || echo "[pulse-merge] CI-drift ledger write failed for PR #${pr_number}" >>"$LOGFILE"
 				fi
 				[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}branch_protection_s" "$_branch_protection_start"
+				return 1
+			fi
+			if [[ "$drift_classification_unavailable" -eq 1 ]]; then
+				_ci_drift_ledger_record "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$drift_signature" || echo "[pulse-merge] CI-drift ledger write failed for PR #${pr_number}" >>"$LOGFILE"
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift rebase unsuccessful while classification unavailable; deferring without CI fix-worker routing" >>"$LOGFILE"
 				return 1
 			fi
 			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" "$pr_labels" "" "$pr_updated_at" "$pr_head_ref_oid" || ci_route_rc=$?

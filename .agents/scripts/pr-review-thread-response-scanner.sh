@@ -1632,6 +1632,11 @@ _prrts_launch_reserved_worker() {
 	return 0
 }
 
+_prrts_append_headless_contract() {
+	printf '%s' "${AIDEVOPS_HEADLESS_APPEND_CONTRACT:-1}"
+	return 0
+}
+
 _prrts_dispatch_worker() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1692,6 +1697,7 @@ _prrts_dispatch_worker() {
 		"WORKER_WORKTREE_PATH=${worker_worktree_path}"
 		"GITHUB_REPOSITORY=${repo_slug}"
 		"WORKER_NO_EXIT_PUSH=1"
+		"AIDEVOPS_HEADLESS_APPEND_CONTRACT=$(_prrts_append_headless_contract)"
 		"AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE=${PRRTS_WORKTREE_TRANSFER_MODE}"
 		"AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=${PRRTS_WORKTREE_EXPECTED_OWNER_PID}"
 		"AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION=${PRRTS_WORKTREE_EXPECTED_OWNER_SESSION}"

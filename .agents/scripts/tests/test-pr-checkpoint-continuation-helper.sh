@@ -138,6 +138,66 @@ STUB_ISSUE_JSON="$(valid_issue_json)"
 STUB_COMMENTS_JSON='[]'
 export STUB_PR_JSON STUB_ISSUE_JSON STUB_COMMENTS_JSON
 
+test_diagnostic_tooling_profile() (
+	local repo="${TEST_ROOT}/tooling-repo" commit="" prompt_file="" content="" row="" status=0
+	local AIDEVOPS_HEADLESS_APPEND_CONTRACT=1
+	git init --quiet "$repo" || return 1
+	git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid \
+		commit --quiet --allow-empty -m fixture || return 1
+	commit=$(git -C "$repo" rev-parse HEAD) || return 1
+	_pcc_validate_diagnostic_tooling "$repo" "$commit" || return 1
+	_pcc_validate_diagnostic_tooling "$repo" "" || return 1
+	! _pcc_validate_diagnostic_tooling "$repo" main || return 1
+	! _pcc_validate_diagnostic_tooling "$repo" "${commit:0:12}" || return 1
+	! _pcc_validate_diagnostic_tooling "$repo" "ffffffffffffffffffffffffffffffffffffffff" || return 1
+	PCC_DIAGNOSTIC_TOOLING_COMMIT="$commit"
+	PCC_REVISION_APPROVAL=500
+	PCC_LINKED_ISSUE=123
+	[[ "$(_prrts_append_headless_contract)" == 0 ]] || return 1
+	prompt_file=$(_prrts_write_prompt_file owner/repo "$repo" 42 title 0 fingerprint preview) || return 1
+	content=$(<"$prompt_file")
+	[[ "$content" == *"--base ${commit}"* && "$content" == *"separately owned"* &&
+		"$content" == *"Do not reuse"* && "$content" == *"NO hosted access"* &&
+		"$content" == *"Do not use mark-complete"* && "$content" != *"Commit the continuation"* ]] || return 1
+	PCC_REVISION_APPROVAL=0
+	! _prrts_write_prompt_file owner/repo "$repo" 42 title 0 fingerprint preview || return 1
+	PCC_DIAGNOSTIC_TOOLING_COMMIT=""
+	[[ "$(_prrts_append_headless_contract)" == 1 ]] || return 1
+	prompt_file=$(_prrts_write_prompt_file owner/repo "$repo" 42 title 0 fingerprint preview) || return 1
+	[[ "$(<"$prompt_file")" == *"Work only in the supplied linked worktree"* ]] || return 1
+	STUB_PR_JSON=$(valid_pr_json)
+	STUB_ISSUE_JSON=$(valid_issue_json '[{"name":"status:available"}]')
+	_pr_checkpoint_revised_target() {
+		printf '{"issue":123,"pr":42,"runner":"worker-bot","approval_id":500,"diagnostic_tooling_commit":"%s"}' "$commit"
+		return 0
+	}
+	row=$(_pcc_target_row owner/repo 42 123 worker-bot worker-bot) || return 1
+	[[ "$row" == *$'\t'"$commit" ]] || return 1
+	_pcc_live_checkpoint_author() {
+		printf 'worker-bot'
+		return 0
+	}
+	_prrts_retry_continuation_blocker() { return 0; }
+	_prrts_dispatch_guarded() {
+		printf 'unexpected worker launch\n' >&2
+		return 99
+	}
+	_pcc_target_row() {
+		printf 'title\tworker/123\t%s\tworker-bot\tavailable\tworker-bot\t500\tclosing\t0\t%s\n' \
+			"$commit" "ffffffffffffffffffffffffffffffffffffffff"
+		return 0
+	}
+	_pcc_dispatch owner/repo "$repo" 42 123 worker-bot worker-bot >/dev/null 2>&1 || status=$?
+	[[ "$status" == 1 ]] || return 1
+	return 0
+)
+
+if test_diagnostic_tooling_profile; then
+	print_result "approval-bound diagnostic tooling preserves default scope and refuses missing source before launch" 0
+else
+	print_result "approval-bound diagnostic tooling preserves default scope and refuses missing source before launch" 1
+fi
+
 test_unknown_pending_policy() (
 	local root="${TEST_ROOT}/unknown-policy" head="1111111111111111111111111111111111111111"
 	local comments="" body_hash="" status=0 test_permission="write" metadata="" brief="" STUB_TEMPLATE_FAIL=false
