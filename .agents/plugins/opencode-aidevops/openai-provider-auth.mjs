@@ -211,8 +211,10 @@ async function handleOpenAIAuthFailure(ctx) {
       }
       return adoptedResponse;
     }
+    // Adoption failed again: keep previousAccess so a later request can retry.
+    return response;
   }
-  const previousAccess = requestToken || current.access;
+  const previousAccess = requestToken || current.previousAccess || current.access;
   const refreshedAccess = await forceRefreshOpenAIToken(current);
   if (refreshedAccess) {
     if (!await applyOpenAIPoolAccount(client, current)) {
