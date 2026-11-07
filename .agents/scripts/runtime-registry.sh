@@ -370,7 +370,7 @@ _RT_HEADLESS_SUPPORT=(
 # Used by session-count-helper.sh to exclude headless workers from interactive counts.
 # Empty string means "no headless mode" (all instances are interactive).
 _RT_HEADLESS_CMDLINE_PATTERN=(
-	"^([^[:space:]]*/)?[.]?opencode[[:space:]]+((--print-logs|--pure|--log-level=[^[:space:]]+|--log-level[[:space:]]+[^[:space:]]+)[[:space:]]+)*(run|serve|web|acp)([[:space:]]|$)" # opencode — non-interactive subcommands (after optional global flags)
+	"^([^[:space:]]*/)?[.]?opencode[[:space:]]+((--print-logs|--pure|--log-level=[^[:space:]]+|--log-level[[:space:]]+[^[:space:]]+)[[:space:]]+)*(run|serve|web|acp|pr|github[[:space:]]+run)([[:space:]]|$)" # opencode — non-interactive subcommands (after optional global flags)
 	"claude (-p|--print|run) " # claude-code — headless via -p, --print, or run
 	"codex exec "              # codex — only exec is headless
 	""                         # cursor — no headless mode
