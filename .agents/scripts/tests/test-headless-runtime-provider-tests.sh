@@ -476,8 +476,14 @@ test_own_merged_terminal_reconciliation() {
 			case "$shape" in
 			squash | leased | published | superseded | fractional_receipt) expected=0 ;;
 			issue) expected=0; session_key="issue-456" ;;
-			stale_merge) expected=0; expected_pattern="verified_prior_merged_objective" ;;
-			same_second) expected=0; AIDEVOPS_ATTEMPT_STARTED_AT=1792929660900000000 ;;
+			stale_merge)
+				expected=0
+				expected_pattern="verified_prior_merged_objective"
+				;;
+			same_second)
+				expected=0
+				AIDEVOPS_ATTEMPT_STARTED_AT=1792929660900000000
+				;;
 			missing_session) printf '{"type":"text","text":"Delivered."}\n' >"$output_file" ;;
 			synthetic) printf '{"type":"text","part":{"synthetic":true,"text":"FULL_LOOP_COMPLETE"}}\n' >>"$output_file" ;;
 			tool) printf '{"type":"tool_result","text":"FULL_LOOP_COMPLETE"}\n' >>"$output_file" ;;
