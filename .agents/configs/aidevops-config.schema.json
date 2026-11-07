@@ -541,6 +541,12 @@
       "type": "object",
       "description": "Worktree archive candidacy and compact-archive retention. Thresholds are hours of confirmed idle; they never bypass owner, open-PR, process, lock, marker or archive-verification guards.",
       "properties": {
+        "worktree_recovery_root": {
+          "type": "string",
+          "pattern": "^(/[^\\r\\n]*)?$",
+          "default": "",
+          "description": "Optional absolute physical root for async legacy recovery compaction. Empty keeps the platform default. Symlink and identity guards remain enforced. Env overrides: AIDEVOPS_WORKTREE_TRASH_ROOT, AIDEVOPS_ORPHAN_TRASH_ROOT"
+        },
         "worktree_archive_retention_mode": {
           "type": "string",
           "enum": ["off", "dry-run", "apply"],

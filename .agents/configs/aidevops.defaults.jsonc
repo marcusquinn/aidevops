@@ -452,6 +452,11 @@
   // owner, open-PR, process, lock, preservation-marker or archive-verification
   // guards. Minimum 24; smaller or malformed values use the shipped default.
   "storage": {
+    // Optional absolute physical root for async legacy recovery compaction.
+    // Empty uses the existing default; symlinks are not adopted automatically.
+    // Env overrides: AIDEVOPS_WORKTREE_TRASH_ROOT, AIDEVOPS_ORPHAN_TRASH_ROOT
+    "worktree_recovery_root": "",
+
     // Compact-archive expiry: "dry-run" reports only, "apply" deletes expired
     // archives, "off" disables the pass.
     // Env override: AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE
