@@ -257,6 +257,7 @@ class ReconstructibleContract(unittest.TestCase):
         (task / "fd" / "9").symlink_to(self.target / "file")
         self.assert_retained("live-process-reference")
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux /proc process observation")
     def test_real_live_process_cwd_and_fd_are_observed(self):
         (self.target / "file").write_text("keep")
         program = "import os,time; os.open('file',os.O_RDONLY); time.sleep(300)"
