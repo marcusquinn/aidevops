@@ -11,7 +11,21 @@ output of `aidevops buzz status` for this computer.
 1. Buzz Desktop → **Settings → Plugins → Manage plugins → Add**.
 2. Under "Add from folder", choose **Browse** and pick this folder. Use Browse
    rather than drag and drop: a dropped folder is copied and can't be reloaded.
-3. Review the host access and select **Install plugin**.
+   In the file picker, press **Cmd+Shift+G**, paste the folder path, press
+   Return, then select the folder itself (not a file inside it).
+3. Review the host access and select **Install plugin**. The review should list
+   only `aidevops buzz status`.
+4. Open **Settings → aidevops** to see the card.
+
+Folder paths:
+
+| Source | Path |
+|--------|------|
+| Installed by `aidevops update` / `setup.sh` | `~/.aidevops/agents/plugins/buzz-aidevops` |
+| aidevops repo checkout | `<repo>/.agents/plugins/buzz-aidevops` |
+
+Prefer the installed path: it is refreshed on each `aidevops update`, so
+**Reload** in Manage plugins picks up new versions.
 
 ## Host access
 
