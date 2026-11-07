@@ -44,7 +44,8 @@ QA_OPT_RESOLVE=""
 QA_OPT_IDLE="330"
 QA_OPT_SSH_HOST=""
 readonly QA_BOX_USER="yellowtent"
-QA_OPT_BOXDATA="/home/${QA_BOX_USER}/boxdata"
+# Cloudron's default box data directory on the server (remote path, not local).
+QA_OPT_BOXDATA="$(printf '/%s/%s/%s' home "$QA_BOX_USER" boxdata)"
 
 # --- output helpers ---------------------------------------------------------
 
