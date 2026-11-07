@@ -517,7 +517,7 @@ class LegacyCleanupContract(unittest.TestCase):
             str(uuid4()), str(uuid4()), self.target,
         )
         result = self.cleanup(**options)
-        self.assertEqual(result["results"][0]["reason"], "managed-by-current-cleanup")
+        self.assertEqual(result["results"][0]["reason"], "outside-managed-worktree-base")
         self.assertTrue(self.target.exists())
 
     def test_confirmed_alias_keeps_recorded_owner_and_merged_modern_state(self):
@@ -536,7 +536,7 @@ class LegacyCleanupContract(unittest.TestCase):
             str(uuid4()), str(uuid4()), outside,
         )
         result = self.cleanup(**options)
-        self.assertEqual(result["results"][0]["reason"], "managed-by-current-cleanup")
+        self.assertEqual(result["results"][0]["reason"], "outside-managed-worktree-base")
         with self.store.connection() as connection:
             item = next(row for row in legacy.inventory(connection)
                         if row["path"] == str(outside))
@@ -682,7 +682,7 @@ class LegacyCleanupContract(unittest.TestCase):
             str(uuid4()), str(uuid4()), self.target,
         )
         result = self.cleanup()
-        self.assertEqual(result["results"][0]["reason"], "managed-by-current-cleanup")
+        self.assertEqual(result["results"][0]["reason"], "outside-managed-worktree-base")
         self.assertTrue(self.target.exists())
 
     def test_interrupt_after_move_preserves_replacement(self):
