@@ -485,9 +485,8 @@ $H restart-persist myapp-test $S; $H backup-clone myapp-test $S; $H update myapp
 
 Output is `PASS:`/`FAIL:` lines; exit is non-zero on failure. Tokens, setup links,
 mail bodies and query strings are never printed. `cleanup` removes apps, clone,
-QA mailbox, 0700 profiles and scratch. Adapter (ES module): `login(page, role)`;
-`realtime(pageA, pageB)` is required for the realtime probe; `coedit(pageA, pageB)`
-and `consent(page)` are optional.
+QA mailbox, 0700 profiles and scratch. Adapter (ES module): `login(page, role)`,
+`realtime(pageA, pageB)` (required for realtime); optional `coedit`, `consent(page)`.
 
 ## Publishing
 
