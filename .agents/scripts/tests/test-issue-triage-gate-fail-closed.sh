@@ -27,6 +27,48 @@ check_pattern() {
 	return 0
 }
 
+check_permission_behavior() {
+	local workflow="$1"
+	if node - "$workflow" <<'NODE'
+const fs = require('fs');
+const source = fs.readFileSync(process.argv[2], 'utf8').split('          script: |\n')[1];
+if (!source) throw new Error('workflow script not found');
+const script = source.split('\n').map(line => line.startsWith('            ') ? line.slice(12) : line).join('\n');
+const run = new (Object.getPrototypeOf(async function () {}).constructor)('context', 'github', 'core', script);
+
+async function scenario(association, permission, expectedTrusted, options = {}) {
+  const labels = [];
+  let lookups = 0;
+  const context = {repo: {owner: 'owner', repo: 'repo'}, payload: {
+    action: 'opened', issue: {number: 1, user: {login: 'author', type: 'User'},
+      author_association: association, labels: [], body: ''}
+  }};
+  const github = {request: async () => {
+    lookups++;
+    if (options.error) throw new Error('unavailable');
+    return {data: {permission}};
+  }, rest: {issues: {addLabels: async request => labels.push(...request.labels),
+    createComment: async () => {}, removeLabel: async () => {}}}};
+  await run(context, github, {warning: () => {}, error: () => {}});
+  if (lookups !== 1 || labels.includes('needs-maintainer-review') === expectedTrusted ||
+      labels.includes('external-contributor') === expectedTrusted) {
+    throw new Error(`unexpected result for ${association}/${permission}: ${lookups} lookups, ${labels}`);
+  }
+}
+(async () => {
+  await scenario('CONTRIBUTOR', 'admin', true);
+  await scenario('NONE', 'read', false);
+  await scenario('FIRST_TIME_CONTRIBUTOR', 'none', false);
+  await scenario('COLLABORATOR', null, false, {error: true});
+  console.log('PASS live permission lookup and fail-closed triage behavior');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+NODE
+	then
+		return 0
+	fi
+	return 1
+}
+
 main() {
 	local first_add="" first_create="" persistent_guard="" trusted_cleanup=""
 	first_add=$(grep -n 'await github\.rest\.issues\.addLabels' "$WORKFLOW" | head -1 | cut -d: -f1)
@@ -75,6 +117,10 @@ main() {
 		"unproven external worker labels are still stripped"
 	check_pattern "collaborators/\{username\}/permission" \
 		"collaborator authority uses the repository permission endpoint"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if ! check_permission_behavior "$WORKFLOW"; then
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
 	check_pattern "Run trusted-author cleanup first" \
 		"persistent bypass documents trusted cleanup ordering"
 	check_pattern "if \(!issueLabels\.has\(label\)\)" \

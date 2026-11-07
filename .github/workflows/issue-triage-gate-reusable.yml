@@ -115,8 +115,9 @@ jobs:
             );
             const reportedOrigin = originMatch ? `origin:${originMatch[1]}` : null;
 
-            // OWNER/MEMBER are authoritative associations. COLLABORATOR can
-            // represent read/triage access, so require a live write-level lookup.
+            // OWNER/MEMBER are authoritative associations. Other associations
+            // may conceal write access (for example private org membership), so
+            // require a live write-level lookup rather than relying on association.
             // Repository-installed bots are trusted automation authors, but still
             // run through stale-NMR cleanup below instead of returning early.
             // An explicit external-contributor label records external source
@@ -125,8 +126,10 @@ jobs:
             const hasExternalAuthoritySource = issueLabels.has('external-contributor');
             let authorIsTrusted = !hasExternalAuthoritySource &&
               (issue.user.type === 'Bot' || trustedRoles.includes(association));
-            if (!hasExternalAuthoritySource && !authorIsTrusted && association === 'COLLABORATOR') {
+            // #aidevops:trust-boundary — lookup errors leave the author untrusted.
+            if (!hasExternalAuthoritySource && !authorIsTrusted) {
               try {
+                console.log(`Checking repository permission for ${author} with association ${association}`);
                 const permissionResponse = await github.request(
                   'GET /repos/{owner}/{repo}/collaborators/{username}/permission',
                   {
