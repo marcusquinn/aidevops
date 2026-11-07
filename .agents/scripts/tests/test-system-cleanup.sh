@@ -198,6 +198,58 @@ class CleanupTests(unittest.TestCase):
         self.assertIn('budget_exhausted=1', result)
         self.assertTrue(path.exists())
 
+    def test_failed_partial_batch_uses_gio(self):
+        paths = [self.create(f'fallback-{n}') for n in range(3)]
+        self.stop_owner()
+        (self.base / 'bin/trash').write_text(
+            '#!/usr/bin/env python3\nimport os,shutil,sys\n'
+            'shutil.move(sys.argv[1], os.path.join(os.environ["TEST_TRASH"],os.path.basename(sys.argv[1])))\n'
+            'sys.exit(1)\n')
+        gio = self.base / 'bin/gio'
+        gio.write_text('#!/usr/bin/env python3\nimport os,shutil,sys\n'
+                       'assert sys.argv[1] == "trash"\n'
+                       'for p in sys.argv[2:]:\n'
+                       ' shutil.move(p, os.path.join(os.environ["TEST_TRASH"],os.path.basename(p)))\n')
+        gio.chmod(0o700)
+        result = self.cleanup('--force', '--max-seconds', '2')
+        self.assertIn('trashed=3', result)
+        self.assertIn('failed=0', result)
+        self.assertTrue(all((self.base / 'trash' / path.name).exists() for path in paths))
+
+    def test_failed_batches_retry_individually_and_retain_failure(self):
+        paths = [self.create(name) for name in ('good', 'blocked')]
+        self.stop_owner()
+        (self.base / 'bin/trash').write_text(
+            '#!/usr/bin/env python3\nimport os,shutil,sys\n'
+            'if len(sys.argv) != 2 or "blocked" in sys.argv[1]: sys.exit(1)\n'
+            'shutil.move(sys.argv[1], os.path.join(os.environ["TEST_TRASH"],os.path.basename(sys.argv[1])))\n')
+        gio = self.base / 'bin/gio'
+        gio.write_text('#!/usr/bin/env python3\nimport sys\nsys.exit(1)\n')
+        gio.chmod(0o700)
+        result = self.cleanup('--force', '--max-seconds', '2')
+        self.assertIn('trashed=1', result)
+        self.assertIn('failed=1', result)
+        self.assertFalse(paths[0].exists())
+        self.assertTrue(paths[1].exists())
+
+    def test_fallback_rechecks_live_owner(self):
+        path = self.create('revived')
+        (path / MANIFEST).rename(self.base / 'live-owner.json')
+        self.old(path)
+        (self.base / 'bin/trash').write_text(
+            '#!/usr/bin/env python3\nimport os,shutil,sys\n'
+            'shutil.copy(os.environ["TEST_LIVE_OWNER"], os.path.join(sys.argv[1], ".aidevops-task-temp.json"))\n'
+            'sys.exit(1)\n')
+        self.env['TEST_LIVE_OWNER'] = str(self.base / 'live-owner.json')
+        gio = self.base / 'bin/gio'
+        gio.write_text('#!/usr/bin/env python3\nimport os\n'
+                       'open(os.environ["TEST_GIO_CALLED"], "w").close()\n')
+        gio.chmod(0o700)
+        self.env['TEST_GIO_CALLED'] = str(self.base / 'gio-called')
+        self.cleanup('--force', '--max-seconds', '2')
+        self.assertTrue(path.exists())
+        self.assertFalse((self.base / 'gio-called').exists())
+
 
 unittest.main(verbosity=2)
 PY

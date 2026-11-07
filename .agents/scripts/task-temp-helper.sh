@@ -234,25 +234,48 @@ def cleanup(args, root):
                     reclaimed += 1
                     log.write(f'Deleted: {path}\n')
             elif batch:
-                backend = ['trash'] if shutil.which('trash') else ['gio', 'trash'] if shutil.which('gio') else None
-                if backend is None:
+                backends = [command for command in (['trash'], ['gio', 'trash']) if shutil.which(command[0])]
+                if not backends:
                     raise ValueError('no trash backend available; entries retained')
-                if time.monotonic() >= deadline:
-                    exhausted = True
-                    break
-                remaining = deadline - time.monotonic() if args.max_seconds else None
-                try:
-                    result = subprocess.run([*backend, *map(str, batch)], capture_output=True, timeout=remaining)
-                except subprocess.TimeoutExpired:
-                    exhausted = True
-                    break
-                if result.returncode:
-                    failed += len(batch)
-                    log.write(f'Failed to trash batch of {len(batch)}; entries retained\n')
-                    continue
-                reclaimed += len(batch)
-                for path in batch:
-                    log.write(f'Trashed: {path}\n')
+                pending = set(batch)
+                # Try each backend in bulk, then isolate entries that poison a batch.
+                attempts = [(backend, batch) for backend in backends]
+                attempts.extend((backend, [path]) for path in batch for backend in backends)
+                for backend, paths in attempts:
+                    retry = []
+                    try:
+                        for path in paths:
+                            if path in pending:
+                                if eligible(path, cutoff, deadline):
+                                    retry.append(path)
+                                else:
+                                    pending.discard(path)
+                        check_deadline(deadline)
+                    except TimeoutError:
+                        exhausted = True
+                        break
+                    except (OSError, ValueError, TypeError):
+                        continue  # Cannot prove inactivity: retain the entry.
+                    if not retry:
+                        continue
+                    remaining = deadline - time.monotonic() if args.max_seconds else None
+                    try:
+                        subprocess.run([*backend, *map(str, retry)], capture_output=True, timeout=remaining)
+                    except subprocess.TimeoutExpired:
+                        exhausted = True
+                    except OSError:
+                        pass  # An unusable backend must not prevent fallback.
+                    # Failed batches can still move some entries; never retry/count those twice.
+                    for path in retry:
+                        if not os.path.lexists(path):
+                            pending.discard(path)
+                            reclaimed += 1
+                            log.write(f'Trashed: {path}\n')
+                    if exhausted or not pending:
+                        break
+                failed += len(pending)
+                if pending:
+                    log.write(f'Failed to trash {len(pending)} entries; entries retained\n')
     print(f'[system-cleanup] mode={"force" if args.force else "dry-run"} eligible={scanned} '
           f'trashed={reclaimed if not delete else 0} deleted={reclaimed if delete else 0} '
           f'failed={failed} pressure={int(pressure)} elapsed_s={int(time.monotonic() - started)} '
