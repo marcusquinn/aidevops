@@ -791,6 +791,14 @@ qa_run_node() {
 	return 0
 }
 
+# Remove browser profiles (session cookies/tokens) after standalone probes.
+qa_remove_scratch() {
+	if [[ -n "$QA_SCRATCH" && -d "$QA_SCRATCH" ]]; then
+		rm -rf "$QA_SCRATCH"
+	fi
+	return 0
+}
+
 cmd_oauth_probe() {
 	qa_parse_args "$@" || return 1
 	[[ "$QA_OPT_URL" =~ ^https:// ]] || { qa_die "oauth-probe requires --url https://<app>"; return 1; }
@@ -800,6 +808,7 @@ cmd_oauth_probe() {
 	[[ -n "$QA_OPT_ADAPTER" ]] && nargs+=(--adapter "$QA_OPT_ADAPTER")
 	[[ -n "$QA_OPT_RESOLVE" ]] && nargs+=(--resolve "$QA_OPT_RESOLVE")
 	qa_run_node oauth-probe.mjs "${nargs[@]}"
+	qa_remove_scratch
 	return 0
 }
 
@@ -812,6 +821,7 @@ cmd_realtime() {
 	local nargs=(--base-url "$QA_OPT_URL" --adapter "$QA_OPT_ADAPTER" --scratch "$QA_SCRATCH" --idle "$QA_OPT_IDLE")
 	[[ -n "$QA_OPT_RESOLVE" ]] && nargs+=(--resolve "$QA_OPT_RESOLVE")
 	qa_run_node realtime-probe.mjs "${nargs[@]}"
+	qa_remove_scratch
 	return 0
 }
 

@@ -13,7 +13,7 @@ let failures = 0;
 /** Redact one-time tokens, setup links and long opaque strings from text. */
 export function redact(input) {
   return String(input ?? '')
-    .replace(/([?&](?:token|code|state|access_token|refresh_token)=)[^&\s"'<>]+/gi, '$1[redacted]')
+    .replace(/([?&#](?:token|code|state|access_token|refresh_token)=)[^&\s"'<>]+/gi, '$1[redacted]')
     .replace(/(\/(?:setup|recovery|invite|join|reset)[^\s"'<>?]*)/gi, (m) => m.split('/').slice(0, 2).join('/') + '/[redacted]')
     .replace(/[A-Za-z0-9_\-.~+/=]{32,}/g, '[redacted]');
 }
@@ -51,6 +51,11 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (!arg.startsWith('--')) continue;
+    const eq = arg.indexOf('=');
+    if (eq > 2) {
+      out[arg.slice(2, eq)] = arg.slice(eq + 1);
+      continue;
+    }
     const key = arg.slice(2);
     const next = argv[i + 1];
     if (next === undefined || next.startsWith('--')) {
@@ -71,8 +76,11 @@ export async function launchProfile(profileDir, { resolve, headless = true } = {
   const args = [];
   if (resolve) {
     // resolve: "host=ip" -> --host-resolver-rules for subdomains local DNS lacks.
-    const [host, ip] = String(resolve).split('=');
-    if (host && ip) args.push(`--host-resolver-rules=MAP ${host} ${ip}`);
+    const text = String(resolve);
+    const eq = text.indexOf('=');
+    const host = eq > 0 ? text.slice(0, eq) : '';
+    const ip = eq > 0 ? text.slice(eq + 1) : '';
+    if (/^[A-Za-z0-9.*-]+$/.test(host) && /^[0-9A-Fa-f:.]+$/.test(ip)) args.push(`--host-resolver-rules=MAP ${host} ${ip}`);
   }
   const executablePath = resolvePlaywrightBrowserExecutable(runtime) || undefined;
   return runtime.chromium.launchPersistentContext(profileDir, { headless, executablePath, args });

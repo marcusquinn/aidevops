@@ -20,12 +20,19 @@ import {
 installErrorHandlers();
 const args = parseArgs(process.argv.slice(2));
 const base = String(args['base-url'] || '').replace(/\/$/, '');
-const resourcePath = args['resource-path'] === true ? '/mcp' : args['resource-path'] || '/mcp';
+const rawPath = args['resource-path'] === true ? '/mcp' : args['resource-path'] || '/mcp';
+const resourcePath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+if (base && !/^https:\/\//i.test(base)) {
+  console.log('FAIL: --base-url must be https://');
+  process.exit(2);
+}
+const FETCH_TIMEOUT_MS = 30000;
+const timedFetch = (url, init = {}) => fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 const loopback = 'http://127.0.0.1:53682/callback';
 const b64url = (buf) => buf.toString('base64url');
 
 async function getJson(url, init) {
-  const res = await fetch(url, init);
+  const res = await timedFetch(url, init);
   let body = null;
   try { body = await res.json(); } catch { body = null; }
   return { res, body };
@@ -45,7 +52,7 @@ async function discover() {
 }
 
 async function checkUnauthenticated() {
-  const res = await fetch(`${base}${resourcePath}`, {
+  const res = await timedFetch(`${base}${resourcePath}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
@@ -116,7 +123,7 @@ async function exchange(meta, clientId, grant) {
 }
 
 async function mcpCall(token, method, id, params = {}) {
-  const res = await fetch(`${base}${resourcePath}`, {
+  const res = await timedFetch(`${base}${resourcePath}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json', accept: 'application/json, text/event-stream',
@@ -138,7 +145,7 @@ async function mcpRoundTrip(token) {
 
 async function revoke(meta, clientId, token) {
   const endpoint = meta.revocation_endpoint || `${base}/oauth/revoke`;
-  const res = await fetch(endpoint, {
+  const res = await timedFetch(endpoint, {
     method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ token, client_id: clientId }),
   });
