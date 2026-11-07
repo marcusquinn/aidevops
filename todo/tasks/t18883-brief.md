@@ -55,6 +55,8 @@ Parent-style plan: phase PRs use `For #<this issue>` until the final phase, whic
 - Bundled plugin `buzz.opencode`, `enabledByDefault: false`; the Harness list shows OpenCode only after Settings → Plugins enables it.
 - A DM to an OpenCode agent replied as `build-plus`, model `anthropic/claude-opus-5-5`, aidevops v3.39.131, cwd `~/.buzz` (workspace unset). The Finder-launched app found Homebrew `opencode` through the login-shell PATH (`src-tauri/src/host_command.rs`).
 - Buzz `Config` has model, effort, instructions, workspace and scope only; every agent gets the machine's `default_agent`. `opencode acp` already reports `configOptions` `mode` (select, 17 aidevops primary agents, current `Build+`). Upstream request with the proposed change (`OPENCODE.select` → `configure("mode", …)`): block/buzz-app#2432 comment 6699412527.
+- Implemented in casassg/buzz-app#1 (into `gerardc/opencode-plugin`, head `30a304ca`, ready for review 2026-11-07): `Config.mode`, mode set before model, New agent picker plus Workspace field, OpenCode Settings tab, blank/relative workspace falls back to `~/.buzz`. Live test in a debug bundle: an agent created as "Business" answered as `business`; one with its Workspace set to a repository folder under `~/` ran there. Per-computer agents are therefore a UI setup (`<agent>-<host>`, OpenCode agent, workspace) once #2432 and this land; the plugin only needs to guide or verify it.
+- With the OpenCode harness the aidevops interactive greeting still opens each first reply; tracked in t18884 (GH#36983).
 
 ### Files to Modify
 
