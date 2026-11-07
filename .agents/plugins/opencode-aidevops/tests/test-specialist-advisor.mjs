@@ -113,6 +113,24 @@ test("specialist request requires evidence and an explicit escalation reason", (
   assert.throws(() => validateSpecialistRequest("null"), /requires objective/);
 });
 
+test("unreadable provider state reports a read failure without substituting the specialist", async () => {
+  const state = { tiers: new Map(), pinned: new Set() };
+  registerAgents({ agent: {} }, agentsDir, routing, state);
+  for (const client of [{}, { provider: { list: async () => { throw new Error("offline"); } } }]) {
+    const hooks = createSubagentEffortHooks(client, {
+      modelRouting: routing, agentRoutingState: state,
+    });
+    const output = {
+      message: { sessionID: "child", agent: "specialist-advisor",
+        model: { providerID: "openai", modelID: "gpt-6-astra" } },
+      parts: [{ type: "text", text: envelope }],
+    };
+    await assert.rejects(hooks.chatMessage({}, output),
+      /Specialist advisory route unavailable: unable to read provider state for openai\/gpt-6-astra.*No automatic substitute/);
+    assert.equal(output.message.model.modelID, "gpt-6-astra");
+  }
+});
+
 test("Sol parent can explicitly request Astra advice in interactive and headless hooks", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "advisor-auth-"));
   const previous = process.env.XDG_DATA_HOME;

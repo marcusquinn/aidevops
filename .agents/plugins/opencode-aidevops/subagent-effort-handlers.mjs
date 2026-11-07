@@ -110,8 +110,12 @@ async function checkSpecialistAvailability(context, policy) {
   if (policy.reason !== "specialist_advice") return;
   const model = context.agentRoutingState.specialistAdvisor.model;
   const routing = { ...context.modelRouting, tiers: { thinking: { models: [model] } } };
+  const providerState = await context.resolveProviderState();
+  if (!providerState) {
+    throw new Error(`[aidevops] Specialist advisory route unavailable: unable to read provider state for ${model}. No automatic substitute is authorized; retain the evidence and use the declared blocker or user-escalation path.`);
+  }
   const available = selectConnectedRoutingCandidate(
-    routing, "thinking", await context.resolveProviderState(), undefined,
+    routing, "thinking", providerState, undefined,
     context.resolveAvailability?.() || {},
   );
   if (!available) {
