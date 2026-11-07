@@ -109,8 +109,14 @@ _rbg_author_has_write_permission() {
 			[[ -f "${lib_dir}/${lib}" ]] && source "${lib_dir}/${lib}"
 		done
 	fi
-	declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1 || return 1
-	_gh_collaborator_permission_lookup "$repo" "$author_login" perm 2>/dev/null || return 1
+	if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+		printf '[review-bot-gate] collaborator permission helper unavailable; author treated as external\n' >&2
+		return 1
+	fi
+	if ! _gh_collaborator_permission_lookup "$repo" "$author_login" perm 2>/dev/null; then
+		printf '[review-bot-gate] collaborator permission lookup failed (reason=%s); author treated as external\n' "${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}" >&2
+		return 1
+	fi
 	case "$perm" in
 	admin | maintain | write) return 0 ;;
 	esac
