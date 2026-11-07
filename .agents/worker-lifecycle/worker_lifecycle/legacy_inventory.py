@@ -51,8 +51,10 @@ def reconstructible(item, repositories, adapter, open_prs, managed=False):
     if (admin / "locked").exists():
         raise ValueError("git-worktree-locked")
     require_ended(item, adapter, operator_confirmed=True)
+    # GH#36626 requires clean tracked and untracked state. Ignored files are
+    # regenerable local artefacts, discarded like ordinary cleanup (CLEANUP.md).
     if _git("-C", str(path), "status", "--porcelain", "--untracked-files=all",
-            "--ignored", "--ignore-submodules=none"):
+            "--ignore-submodules=none"):
         raise ValueError("nonempty-worktree-state")
     head = _git("-C", str(path), "rev-parse", "HEAD")
     if not _git("--git-dir", common, "for-each-ref", "--format=%(refname)",

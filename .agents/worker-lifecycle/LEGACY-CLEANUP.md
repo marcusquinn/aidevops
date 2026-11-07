@@ -50,8 +50,10 @@ their complete content is remote-recoverable and current liveness is observable.
 This class is independent of the ordinary legacy age threshold. It does not
 adopt current-generation admissions or operator-confirmed archive operations.
 It requires a canonical owned linked worktree beneath the managed base, no Git
-lock, and an empty Git status including untracked **and ignored** files and
-submodule state. HEAD must be contained in a remote-tracking ref. All pages of
+lock, and an empty Git status including untracked files and submodule state.
+Ignored files (dependency trees, caches, build output) do not retain the source;
+non-forced removal discards them, as in ordinary cleanup. HEAD must be contained
+in a remote-tracking ref. All pages of
 GitHub open PRs must be fetched successfully; either a matching branch or head
 SHA retains the source. API failures never prove PR absence.
 

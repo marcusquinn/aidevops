@@ -171,11 +171,18 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertEqual(result["status"], "retained", result)
         self.assertTrue(self.target.exists())
 
-    def test_untracked_and_ignored_files_remain(self):
+    def test_untracked_files_remain(self):
         (self.target / "keep").write_text("untracked")
         self.assert_retained("nonempty-worktree-state")
-        (self.target / ".gitignore").write_text("keep\n")
-        self.assert_retained("nonempty-worktree-state")
+
+    def test_ignored_files_do_not_retain(self):
+        (Path(self.common) / "info").mkdir(exist_ok=True)
+        (Path(self.common) / "info" / "exclude").write_text("cache/\n")
+        (self.target / "cache").mkdir()
+        (self.target / "cache" / "artefact").write_text("ignored")
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertFalse(self.target.exists())
 
     def test_dirty_tracked_file_remains(self):
         (self.target / "file").write_text("committed")
