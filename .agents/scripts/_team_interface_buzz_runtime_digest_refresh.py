@@ -8,7 +8,7 @@ import re
 
 from _team_interface_buzz_runtime_install import backup_existing
 from _team_interface_buzz_runtime_io import (
-    RuntimeError,
+    RuntimeError as BuzzRuntimeError,
     atomic_write,
     canonical_payload,
     require_safe_directory_chain,
@@ -23,15 +23,15 @@ def read_store(path):
     """Read the existing private store, failing closed on unexpected shapes."""
     require_safe_directory_chain(path.parent)
     if path.is_symlink() or (path.exists() and not path.is_file()):
-        raise RuntimeError("Buzz managed agents store must be a regular non-symlink file")
+        raise BuzzRuntimeError("Buzz managed agents store must be a regular non-symlink file")
     if not path.exists():
         return
     try:
         store = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise RuntimeError("Buzz managed agents store is unavailable or invalid") from error
+        raise BuzzRuntimeError("Buzz managed agents store is unavailable or invalid") from error
     if not isinstance(store, list) or any(not isinstance(record, dict) for record in store):
-        raise RuntimeError("Buzz managed agents store must be an array of records")
+        raise BuzzRuntimeError("Buzz managed agents store must be an array of records")
     return store
 
 
@@ -51,7 +51,7 @@ def anchored_prompts(agents_dir):
     for member in roster_module.build_roster(agents_dir)["agents"]:
         name = snapshot.buzz_display_name(member, host)
         if name in expected:
-            raise RuntimeError("anchored roster contains duplicate Buzz display names")
+            raise BuzzRuntimeError("anchored roster contains duplicate Buzz display names")
         expected[name] = snapshot.member_system_prompt(member)
     return expected
 
@@ -86,10 +86,11 @@ def refresh_source_digests(app_data_dir, agents_dir):
     path = app_data_dir / "agents" / "managed-agents.json"
     store = read_store(path)
     if store is None:
-        return
+        return None
     expected = anchored_prompts(agents_dir)
     results = [refresh_record(record, expected) for record in store]
     changed = any(updated for updated, _ in results)
+    backup = None
     if changed:
         backup = backup_existing(path, "managed-agents")
         atomic_write(path, canonical_payload(store))
@@ -97,3 +98,4 @@ def refresh_source_digests(app_data_dir, agents_dir):
     for _, summary in results:
         if summary:
             print(summary)
+    return backup

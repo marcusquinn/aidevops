@@ -80,7 +80,12 @@ def install_payload(app_data_dir, runtime_id, payload, replace, pinned):
         if not unchanged:
             backup = backup_existing(target, runtime_id)
     if pinned is not None:
-        refresh_source_digests(app_data_dir, pinned / "agents")
+        store_backup = refresh_source_digests(app_data_dir, pinned / "agents")
+        if store_backup is None and not unchanged:
+            # Manifest replacement still needs a store snapshot for documented rollback.
+            store_path = app_data_dir / "agents" / "managed-agents.json"
+            if store_path.is_file() and not store_path.is_symlink():
+                print(f"Buzz managed agents backup: {backup_existing(store_path, 'managed-agents')}")
     if not unchanged:
         atomic_write(target, payload)
     return target, backup
