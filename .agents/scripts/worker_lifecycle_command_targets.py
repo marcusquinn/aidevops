@@ -16,6 +16,50 @@ REPOSITORY_OPTIONS = {"-C", "--git-dir", "--work-tree"}
 # shlex drops quote provenance, so any quoted or escaped tilde in the raw
 # command keeps every target literal, exactly as the shell would pass it.
 QUOTED_TILDE_MARKERS = ("'~", '"~', "\\~")
+# Read-only inspection of a `-C/--git-dir/--work-tree` target admits no owner
+# (GH#37022): admission precedes a worktree write, and an inspecting session
+# must not become the live owner that blocks its own retirement. The allowlist
+# is closed; any other verb, global option, or output-writing flag admits.
+# #aidevops:trust-boundary — the tool workdir target is always admitted.
+READ_ONLY_VERBS = {"status", "log", "diff", "show", "rev-parse", "ls-files", "for-each-ref"}
+READ_ONLY_PREFIX_FLAGS = {"--no-pager", "--no-optional-locks", "-P"}
+BRANCH_LIST_FLAGS = {"--list", "-l", "--show-current"}
+BRANCH_MUTATING_FLAGS = {
+    "-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy",
+    "-f", "--force", "-u", "--set-upstream-to", "--unset-upstream",
+    "--edit-description", "-t", "--track", "--no-track",
+}
+
+
+def _read_only_prefix(prefix):
+    """Only repository selectors and pager/lock flags; `-c` etc. still admit."""
+    index = 0
+    while index < len(prefix):
+        option = prefix[index]
+        if option in REPOSITORY_OPTIONS:
+            index += 2
+            continue
+        if option.startswith(("--git-dir=", "--work-tree=")) or option in READ_ONLY_PREFIX_FLAGS:
+            index += 1
+            continue
+        return False
+    return True
+
+
+def is_read_only_invocation(prefix, verb, rest):
+    """True only for a closed set of inspection commands that write no tree."""
+    if not _read_only_prefix(prefix):
+        return False
+    if any(arg == "-o" or arg.startswith("--output") for arg in rest):
+        return False
+    if verb in READ_ONLY_VERBS:
+        return True
+    if verb == "worktree":
+        return bool(rest) and rest[0] == "list"
+    if verb == "branch":
+        return (bool(rest) and rest[0] in BRANCH_LIST_FLAGS
+                and not any(arg.split("=", 1)[0] in BRANCH_MUTATING_FLAGS for arg in rest))
+    return False
 
 
 def expand_repository_options(prefix):
@@ -54,8 +98,8 @@ def command_targets(cwd, command, argv_json, git_directory):
     for argv, shell_expands_tilde in command_invocations(command, argv_json):
         if not argv or Path(argv[0]).name != "git":
             continue
-        prefix, effective, verb, _ = split_invocation(argv[1:], str(cwd))
-        if not prefix or not verb:
+        prefix, effective, verb, rest = split_invocation(argv[1:], str(cwd))
+        if not prefix or not verb or is_read_only_invocation(prefix, verb, rest):
             continue
         # The runtime shell expands unquoted `git -C ~/repo`; resolve the same target.
         if shell_expands_tilde:

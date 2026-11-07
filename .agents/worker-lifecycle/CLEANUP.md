@@ -258,7 +258,13 @@ The registry CLI provides two non-destructive operations:
 - `prepare-cleanup --path PATH` validates the physical generation and reconciles
   its registered runs. Empty registrations and
   observation-only bindings report `coverage-gap`; active or unknown runs report
-  `waiting-for-runs`. These outcomes leave open admission open, so preparation
+  `waiting-for-runs`. When every unfinished run's native identity is an
+  ancestor of the invoking command, the result adds `detail: waiting-for-caller`
+  so the refusal names the caller as the owner (GH#37022). The run still blocks
+  retirement, because one runtime process can serve several sessions. Read-only
+  `git -C/--git-dir/--work-tree` inspection (`status`, `log`, `diff`, `show`,
+  `rev-parse`, `ls-files`, `for-each-ref`, `worktree list`, `branch --list`) of a
+  tree other than the tool workdir admits no owner. These outcomes leave open admission open, so preparation
   cannot strand a newly created worktree before its first launch. Once all runs
   are ended, closure rechecks their exact set in the admission transaction;
   a racing new owner reports `retry-required` without closing admission.

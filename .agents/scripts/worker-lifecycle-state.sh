@@ -172,6 +172,9 @@ _worker_lifecycle_refusal_next_step() {
 	waiting-for-runs)
 		printf '[worker-lifecycle] next: a registered owner is still running or unconfirmed; retry after it exits (Pulse cleanup retries automatically).\n' >&2
 		;;
+	waiting-for-caller)
+		printf '[worker-lifecycle] next: this session is the registered owner of the worktree because it ran commands or edits there, so it cannot retire the tree itself. Retirement completes after this session exits (Pulse cleanup retries automatically), or from a session that never worked in it; --force cannot override ownership.\n' >&2
+		;;
 	outside-maintenance-scope)
 		printf '[worker-lifecycle] next: explicit retirement requires a registered, non-local_only repository with a valid canonical path and slug. Register the canonical checkout with aidevops repos add <path>, then set pulse: false, maintenance: false in ~/.config/aidevops/repos.json to keep automatic maintenance disabled; retry removal.\n' >&2
 		;;
