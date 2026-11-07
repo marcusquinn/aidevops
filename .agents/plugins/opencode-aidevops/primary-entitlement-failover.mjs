@@ -90,7 +90,10 @@ class PrimaryEntitlementFailover {
       let retry = true;
       while (retry && this.unavailable(state.model)) {
         const model = await nextPrimaryRoutingCandidate(this.context, state);
-        if (model) {
+        if (model === null) {
+          this.context.qualityLog?.("WARN", "[aidevops] Primary entitlement recovery skipped: provider lookup failed");
+          retry = false;
+        } else if (model) {
           state.model = model;
           retry = await this.prompt(sessionID, state);
         } else {

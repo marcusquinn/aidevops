@@ -75,9 +75,11 @@ export async function nextPrimaryRoutingCandidate(context, state) {
   const start = models.indexOf(state.model);
   if (start < 0) return "";
   const remaining = [...new Set(models.slice(start + 1))];
+  const providerState = await context.resolveProviderState();
+  if (!providerState) return null; // Failed lookup is not exhaustion.
   return selectConnectedRoutingCandidate(
     { tiers: { [state.tier]: { models: remaining } } }, state.tier,
-    await context.resolveProviderState(), undefined, context.resolveAvailability(),
+    providerState, undefined, context.resolveAvailability(),
   );
 }
 
@@ -104,7 +106,9 @@ export async function resolvePrimaryRoute(context, input, message) {
   }
   const route = { sessionID, model, tier, requested: model, agent: message.agent };
   if (rejected) {
-    route.model = await nextPrimaryRoutingCandidate(context, route);
+    const next = await nextPrimaryRoutingCandidate(context, route);
+    if (next === null) return route; // Provider lookup failed: keep requested model.
+    route.model = next;
     if (!route.model) throw primaryRoutingExhausted(route);
     message.model = routingModelIdentity(route.model);
     message.variant = routingVariant(context.modelRouting, tier, route.model) || undefined;

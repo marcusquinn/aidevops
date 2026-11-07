@@ -149,11 +149,12 @@ test("GH#37005 primary recovery excludes children, headless, non-entitlement and
 
 test("GH#37005 duplicate client turns cannot request the rejected model during recovery", async (t) => {
   let f;
+  const observed = {};
   f = primaryFailoverFixture(t, { prompt: async (request) => {
-    await assert.rejects(f.hooks.chatMessage({}, f.output()), /already in progress/);
+    observed.duplicate = await f.hooks.chatMessage({}, f.output()).then(() => null, (error) => error);
     const continuation = { message: { sessionID: "root", model: request.body.model }, parts: request.body.parts };
     await f.hooks.chatMessage({}, continuation);
-    assert.equal(continuation.message.model.modelID, "second");
+    observed.model = continuation.message.model.modelID;
     await f.send("session.idle");
     return { data: { parts: [{ type: "text", text: "done" }] } };
   } });
@@ -161,6 +162,8 @@ test("GH#37005 duplicate client turns cannot request the rejected model during r
   f.reject();
   await f.finish();
   assert.equal(f.prompts.length, 1);
+  assert.match(observed.duplicate?.message ?? "", /already in progress/);
+  assert.equal(observed.model, "second");
 });
 
 test("GH#37005 internal/out-of-table requests clear stale primary recovery", async (t) => {
