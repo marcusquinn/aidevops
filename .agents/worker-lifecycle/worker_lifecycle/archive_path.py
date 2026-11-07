@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .filesystem import FilesystemValidationError, checked_directory
+from .filesystem import FilesystemValidationError, checked_directory, is_private_mode
 
 
 def create_archive_root(root: Path) -> None:
@@ -31,7 +31,7 @@ def validate_archive_path(root: Path, archive: Path | None = None) -> None:
         raise FilesystemValidationError("invalid-archive-path", target)
     try:
         with checked_directory(target, owned_root=root) as descriptor:
-            if archive is not None and os.fstat(descriptor).st_mode & 0o077:
+            if archive is not None and not is_private_mode(os.fstat(descriptor)):
                 raise FilesystemValidationError("archive-directory-not-private", target)
     except FilesystemValidationError as error:
         reason = error.reason.replace("filesystem", "archive", 1)

@@ -14,20 +14,11 @@ from uuid import UUID, uuid4, uuid5
 
 from .admission import AdmissionClosed, AdmissionRegistry
 from .directory_handle import DirectoryHandle
-from .filesystem import no_extended_access_acl, user_private_group
+from .filesystem import read_owned_file, shared_writable
 from .storage import LifecycleRegistry, StoreConflict, encode, identifier
 
 
 MARKER = "aidevops-generation.json"
-
-
-def _user_private_group(gid: int) -> bool:
-    """Git admin directories follow the process umask; see filesystem helper."""
-    return user_private_group(gid)
-
-
-def _no_extended_access_acl(directory: Path) -> bool:
-    return no_extended_access_acl(directory)
 
 
 def _git_directory(path: Path) -> Path:
@@ -48,10 +39,9 @@ def _git_directory(path: Path) -> Path:
     directory = Path(os.fsdecode(result.stdout.removesuffix(b"\n")))
     if not directory.is_absolute() or directory.resolve(strict=True) != directory:
         raise ValueError("canonical-git-directory-required")
+    # Git admin directories follow the process umask (user-private groups: 002).
     info = directory.stat()
-    if (info.st_uid != os.getuid() or info.st_mode & 0o002
-            or (info.st_mode & 0o020 and not (
-                _user_private_group(info.st_gid) and _no_extended_access_acl(directory)))):
+    if info.st_uid != os.getuid() or shared_writable(directory, info):
         raise ValueError("git-directory-must-be-owned-and-not-shared-writable")
     with (directory / "gitdir").open("rb") as stream:
         target = stream.read(4097)
@@ -81,13 +71,10 @@ def _marker_identity(value: dict) -> dict:
 
 
 def _read_marker(path: Path) -> dict:
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(descriptor, "rb") as stream:
-        info = os.fstat(stream.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or info.st_mode & 0o077 or info.st_size > 4096):
-            raise ValueError("generation-marker-must-be-private-owned-file")
-        value = json.loads(stream.read(4097))
+    value = json.loads(read_owned_file(
+        path, reason="generation-marker-must-be-private-owned-file", max_size=4096,
+        private=True, single_link=False,
+    ))
     if not isinstance(value, dict) or not isinstance(value.get("generation_id"), str):
         raise ValueError("invalid-generation-marker")
     identifier(value["generation_id"])

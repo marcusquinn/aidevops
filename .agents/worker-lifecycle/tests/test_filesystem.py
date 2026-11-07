@@ -14,7 +14,7 @@ from worker_lifecycle.archive_path import create_archive_root, validate_archive_
 from worker_lifecycle.cleanup import _failure_details
 from worker_lifecycle.filesystem import (
     FilesystemValidationError, _seals_descendants, checked_directory, filesystem_error_details,
-    validate_private_path,
+    read_owned_file, validate_private_path,
 )
 from worker_lifecycle.storage import LifecycleRegistry, _private
 
@@ -134,6 +134,48 @@ class FilesystemContract(unittest.TestCase):
                                         "archive-path-externally-writable"):
                 validate_archive_path(archives)
         self.assertEqual(archives.parent.stat().st_mode & 0o777, 0o775)
+
+    def test_read_owned_file_accepts_only_private_group_write(self):
+        config = self.root / "repos.json"
+        config.write_bytes(b"{}")
+        module = "worker_lifecycle.filesystem."
+
+        def read(**options):
+            return read_owned_file(config, reason="fixture-reason", max_size=16, **options)
+
+        config.chmod(0o664)  # Ubuntu user-private group under umask 002
+        cases = ((True, True, None), (False, True, "shared-writable"),
+                 (True, False, "shared-writable"))
+        for private_group, no_acl, violation in cases:
+            with self.subTest(private_group=private_group, no_acl=no_acl), \
+                    patch(module + "user_private_group", return_value=private_group), \
+                    patch(module + "no_extended_access_acl", return_value=no_acl):
+                if violation is None:
+                    self.assertEqual(read(private=False), b"{}")
+                else:
+                    with self.assertRaises(FilesystemValidationError) as raised:
+                        read(private=False)
+                    self.assertEqual((str(raised.exception), raised.exception.violation),
+                                     ("fixture-reason", violation))
+        with patch(module + "user_private_group", return_value=True), \
+                patch(module + "no_extended_access_acl", return_value=True):
+            for mode, private, violation in ((0o666, False, "shared-writable"),
+                                             (0o640, True, "not-private")):
+                config.chmod(mode)
+                with self.assertRaises(FilesystemValidationError) as raised:
+                    read(private=private)
+                self.assertEqual(raised.exception.violation, violation)
+        config.chmod(0o600)
+        self.assertEqual(read(private=True), b"{}")
+        os.link(config, self.root / "alias")
+        with self.assertRaises(FilesystemValidationError) as raised:
+            read(private=True)
+        self.assertEqual(raised.exception.violation, "multiple-links")
+        self.assertEqual(read(private=True, single_link=False), b"{}")
+        config.write_bytes(b"x" * 17)
+        with self.assertRaises(FilesystemValidationError) as raised:
+            read(private=True, single_link=False)
+        self.assertEqual(raised.exception.violation, "too-large")
 
     def test_archive_root_creation_ignores_group_writable_umask(self):
         existing = self.root / "existing"
