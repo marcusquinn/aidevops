@@ -162,7 +162,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Maintenance: mark t18866 complete (pr:#36745 completed:2026-11-05) (#36748)
 - Tests: age dead-owner quarantine in profile sweep fixture for macOS (#36745)
 
 ### Fixed
