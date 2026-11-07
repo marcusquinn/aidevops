@@ -691,6 +691,7 @@ Investigate the root cause of supervisor circuit-breaker trip Ref #${trip_issue_
 - **Last failure reason:** \`${last_failure_reason}\`
 - **Consecutive failures:** ${failure_count}
 - **Threshold:** ${threshold}
+- **Tripping runner:** \`$(hostname 2>/dev/null || echo unknown)\` (logs below live on this host only)
 
 ### Logs to inspect
 
@@ -768,7 +769,15 @@ _cb_file_investigation_task() {
 	local body
 	body=$(_cb_build_investigation_body \
 		"$trip_issue_num" "$failure_count" \
-		"$last_task_id" "$last_failure_reason")
+		"$last_task_id" "$last_failure_reason") || body=""
+
+	# GH#37053: fail closed. An empty or truncated body must never become an
+	# auto-dispatch issue (the worker would get no brief and no trip reference).
+	if [[ -z "${body//[[:space:]]/}" ]] ||
+		[[ "$body" != *"## What"* ]] || [[ "$body" != *"Ref #${trip_issue_num}"* ]]; then
+		_cb_log_warn "investigation body composition failed for trip #${trip_issue_num}; not filing auto-dispatch issue"
+		return 1
+	fi
 
 	# Append signature footer to the investigation body. The gh wrapper also
 	# auto-injects when invoked via PATH, but appending here keeps the body
@@ -794,7 +803,33 @@ _cb_file_investigation_task() {
 		return 1
 	}
 	_cb_log_info "filed investigation task: $investigation_url"
+	_cb_verify_investigation_body "$repo_slug" "$investigation_url" "$trip_issue_num" || return 1
 	return 0
+}
+
+# GH#37053: confirm the created investigation issue kept its body. If a
+# downstream layer dropped it, withdraw auto-dispatch so no worker is launched
+# against an empty brief. Best-effort: an unreadable body is not treated as
+# a failure (no evidence of loss).
+# Args: $1 repo_slug, $2 issue url, $3 trip_issue_num
+# Returns: 0 body intact or unverifiable; 1 body lost (dispatch withdrawn)
+_cb_verify_investigation_body() {
+	local repo_slug="$1"
+	local issue_url="$2"
+	local trip_issue_num="$3"
+	local issue_num="${issue_url##*/}"
+	issue_num="${issue_num%%[[:space:]]*}"
+	[[ "$issue_num" =~ ^[0-9]+$ ]] || return 0
+
+	local created_body=""
+	created_body=$(gh api "repos/${repo_slug}/issues/${issue_num}" --jq '.body // ""' 2>/dev/null) || return 0
+	[[ -n "$created_body" ]] || return 0
+	if [[ "$created_body" == *"## What"* ]] && [[ "$created_body" == *"Ref #${trip_issue_num}"* ]]; then
+		return 0
+	fi
+	_cb_log_warn "investigation issue #${issue_num} lost its body; removing auto-dispatch"
+	gh issue edit "$issue_num" --repo "$repo_slug" --remove-label "auto-dispatch" >/dev/null 2>&1 || true # aidevops-allow: raw-gh-wrapper
+	return 1
 }
 
 _cb_create_or_update_issue() {
