@@ -1671,7 +1671,7 @@ _dispatch_record_nonzero_dispatch_result() {
 		_dispatch_mark_benign_blocked_candidate "$issue_number" "$repo_slug" "$failure_reason"
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) blocked:${failure_reason} benign dispatch block" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_blocked_${failure_reason}"
-		if [[ "$failure_reason" == dedup_active_claim ]] && _dispatch_checkpoint_cooldown_eligible "$recent_lines"; then
+		if [[ "$failure_reason" == dedup_active_claim || "$failure_reason" == worker_draft_checkpoint_blocked ]] && _dispatch_checkpoint_cooldown_eligible "$recent_lines"; then
 			local checkpoint_pr="" checkpoint_pattern='WORKER_DRAFT_CHECKPOINT: draft PR #([1-9][0-9]*)'
 			if [[ "$recent_lines" =~ $checkpoint_pattern ]]; then
 				checkpoint_pr="${BASH_REMATCH[1]}"

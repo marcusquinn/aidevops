@@ -1107,8 +1107,8 @@ STUB_POST_DIR="${TEST_ROOT}/posts"
 # GH#33850: releases by another trusted runner must reach an attention outcome
 # through the existing Pulse entrypoint, without dispatching. GH#36019: that
 # now covers every reason dispatch-stalled cannot continue (clean and
-# worker_complete moved to the bounded exact-head continuation below).
-for completed_reason in capability_limit worker_failed; do
+# worker_complete and capability_limit moved to bounded exact-head continuation).
+for completed_reason in worker_failed unknown_exit; do
 	STUB_COMMENTS_JSON="$(closing_lease_comments worker-bot closing-lease | jq --arg reason "$completed_reason" '
 		map(map(if .id == 21 then .body = ("CLAIM_RELEASED reason=" + $reason + " runner=pulse-runner") |
 			.user.login = "pulse-runner" else . end))')"
@@ -1128,9 +1128,9 @@ for completed_reason in capability_limit worker_failed; do
 	else
 		print_result "${completed_reason} attention is actionable without forging approval or ownership" 1
 	fi
-	STUB_COMMENTS_JSON="$(jq --arg body "$completed_body" '. + [[
+	STUB_COMMENTS_JSON="$(jq --arg body "$completed_body" --arg reason "$completed_reason" '. + [[
 		{id:25,author_association:"OWNER",user:{login:"pulse-runner"},body:$body},
-		{id:26,author_association:"OWNER",user:{login:"pulse-runner"},body:"CLAIM_RELEASED reason=capability_limit runner=pulse-runner"}
+		{id:26,author_association:"OWNER",user:{login:"pulse-runner"},body:("CLAIM_RELEASED reason=" + $reason + " runner=pulse-runner")}
 	]]' <<<"$STUB_COMMENTS_JSON")"
 	if output=$(_pcc_blocked_attention owner/repo 123 42) &&
 		[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == "$((before_posts + 1))" ]]; then
@@ -1140,7 +1140,7 @@ for completed_reason in capability_limit worker_failed; do
 	fi
 	new_head="2222222222222222222222222222222222222222"
 	if evidence=$(_pcc_completed_release_evidence "$STUB_COMMENTS_JSON" "aidevops:blocked-checkpoint-attention pr=42 head=${new_head}") &&
-		[[ "$evidence" == $'26\tcapability_limit\tfalse' ]]; then
+		[[ "$evidence" == $'26\t'"${completed_reason}"$'\tfalse' ]]; then
 		print_result "new head re-arms ${completed_reason} attention" 0
 	else
 		print_result "new head re-arms ${completed_reason} attention" 1
@@ -1291,7 +1291,7 @@ PCC_LINK_KIND="closing"
 # completed exits that left the draft open.
 # GH#36597: zero-output and incomplete exits are runtime stalls, not decisions.
 export STUB_POST_DIR="${TEST_ROOT}/posts"
-for release_reason in stale_assignment_reset worker_ownership_lost worker_draft_checkpoint worker_noop_zero_output worker_incomplete_exit clean worker_complete; do
+for release_reason in stale_assignment_reset worker_ownership_lost worker_draft_checkpoint worker_noop_zero_output worker_incomplete_exit capability_limit clean worker_complete; do
 	STUB_COMMENTS_JSON="$(stall_comments stall-lease | jq -c --arg reason "$release_reason" '
 		map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=" + $reason) else . end))')"
 	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"

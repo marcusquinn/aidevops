@@ -127,6 +127,11 @@ STALLED_CHECKPOINT_CONTINUATION_SKIPPED'
 _dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
 _dispatch_cache_confirmed_block "$candidate" 34526 example/repo
 [[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_cooldown ]]
+rm -f "$cache"
+ATTEMPT_REASON=worker_draft_checkpoint_blocked
+_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_cooldown ]]
+ATTEMPT_REASON=dedup_active_claim
 for cycle in 1 2; do
 	[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" == '[]' ]]
 done
