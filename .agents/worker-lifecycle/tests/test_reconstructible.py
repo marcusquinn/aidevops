@@ -13,6 +13,7 @@ from uuid import uuid4
 from tests import test_retirement as fixtures
 from worker_lifecycle import legacy_cleanup as cleanup
 from worker_lifecycle import legacy_inventory as inventory
+from worker_lifecycle import legacy_probe as probe
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id, prepare_cleanup
 from worker_lifecycle.legacy_options import CleanupOptions
@@ -77,7 +78,8 @@ class ReconstructibleContract(unittest.TestCase):
 
     def test_removal_is_nonforced_preserves_branch_and_writes_receipt(self):
         native = cleanup._git
-        with patch.object(cleanup, "_git", wraps=native) as calls:
+        with patch.object(cleanup, "_git", wraps=native) as calls, \
+                patch.object(probe, "_git", calls):
             result, _, attempted = self.retire()
         self.assertEqual(result["status"], "retired", result)
         self.assertEqual(attempted, 1)
@@ -410,6 +412,19 @@ class ReconstructibleContract(unittest.TestCase):
         self.git("update-ref", "refs/remotes/origin/feature", self.head)
         result, _, _ = self.retire()
         self.assertEqual(result["status"], "retired", result)
+
+    def test_interrupted_probe_removal_is_not_reported_already_absent(self):
+        with patch.object(cleanup, "verify_reconstructible", side_effect=ValueError("probe-failed")):
+            self.retire()
+        self.assertFalse(self.target.exists())
+        self.options = CleanupOptions(self.output, apply=False, min_age=0)
+        result, _, _ = self.retire()
+        self.assertEqual(result["reason"], "reconstructible-probe-verification-pending", result)
+        self.options = CleanupOptions(self.output, apply=True, min_age=0)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "already-absent", result)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "already-retired", result)
 
     def test_failed_first_probe_blocks_batch(self):
         with patch.object(cleanup, "verify_reconstructible", side_effect=ValueError("probe-failed")):

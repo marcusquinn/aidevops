@@ -672,6 +672,22 @@ cmd_rollback() {
 	return 0
 }
 
+_buzz_report_stale_interactive_overrides() {
+	local manifest="${BUZZ_STORE_PATH%/agents/managed-agents.json}/custom_harnesses/aidevops-interactive-v1.json"
+	local parent="${HOME}/.aidevops/buzz-runtimes/aidevops-interactive-v1/"
+	[[ -f "$BUZZ_STORE_PATH" && ! -L "$BUZZ_STORE_PATH" && -f "$manifest" && ! -L "$manifest" ]] || return 0
+	local live=""
+	live=$(jq -er --arg string_type "$BUZZ_JSON_TYPE_STRING" '.command | select(type == $string_type)' "$manifest") || return 1
+	local count=""
+	count=$(jq -er --arg parent "$parent" --arg live "$live" --arg string_type "$BUZZ_JSON_TYPE_STRING" '
+		[.[] | .agent_command_override | select(type == $string_type and . != $live)
+		 | select(startswith($parent)) | .[($parent | length):]
+		 | select(test("^(v2-)?[a-f0-9]{16}-[a-f0-9]{16}/agents/bin/aidevops-buzz-acp-interactive$"))] | length
+	' "$BUZZ_STORE_PATH") || return 1
+	printf 'Buzz interactive runtime: %s stale override(s)\n' "$count"
+	return 0
+}
+
 cmd_status() {
 	if [[ "$(_buzz_platform)" != "$BUZZ_PLATFORM_DARWIN" ]]; then
 		printf 'Buzz Desktop compatibility: not applicable\n'
@@ -682,6 +698,7 @@ cmd_status() {
 		printf 'Buzz Desktop compatibility: Buzz not installed\n'
 		return 0
 	}
+	_buzz_report_stale_interactive_overrides || return 1
 	case "$(_buzz_generation)" in
 	legacy) ;;
 	desktop)

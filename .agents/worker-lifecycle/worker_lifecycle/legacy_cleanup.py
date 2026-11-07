@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import sqlite3
-import socket
 import subprocess  # nosec B404 # exception classification; helpers execute fixed argv
 import tempfile
 import time
@@ -23,28 +22,14 @@ from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import require_manual_confirmation, require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
+from .legacy_probe import checkpoint, host_probe, interrupted_probe
+from .legacy_probe import latest_probe_plan, operation_id, receipt, record_probe_recovery
+from .legacy_probe import verify_reconstructible
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
-
-
-def event_id(operation, phase):
-    """Return the deterministic event ID for an operation phase."""
-    return str(uuid5(UUID(operation), "legacy-" + phase))
-
-
-def operation_id(store, path):
-    """Return the deterministic operation ID for a legacy path."""
-    return str(uuid5(UUID(store.installation_id()), "legacy-cleanup:" + path))
-
-
-def receipt(connection, operation, phase):
-    """Return the recorded payload for an operation phase, or None."""
-    row = connection.execute("SELECT payload FROM events WHERE event_id=?",
-                             (event_id(operation, phase),)).fetchone()
-    return json.loads(row[0]) if row else None
 
 
 def require_confirmation(connection, operation, confirmed):
@@ -53,13 +38,6 @@ def require_confirmation(connection, operation, confirmed):
         (receipt(connection, operation, phase) for phase in ("archive", "plan")),
         confirmed,
     )
-
-
-def checkpoint(store, connection, operation, phase, payload):
-    """Persist before destructive steps, then reacquire the admission writer lock."""
-    store._event(connection, event_id(operation, phase), payload)
-    connection.commit()
-    connection.execute("BEGIN IMMEDIATE")
 
 
 @contextmanager
@@ -240,6 +218,8 @@ def process_item(store, item, repositories, adapter, options):
         elif not pending and not os.path.lexists(item["path"]):
             # No removal or preservation is claimed. Admission cleanup separately
             # reconciles absent generations using its existing identity guards.
+            # An interrupted host-probe removal is recovered or reported first.
+            recover_interrupted_probe(store, item, options.apply)
             outcome["status"] = "already-absent"
         elif item["modern"]:
             return take_over_managed(store, item, repositories, adapter, options)
@@ -257,28 +237,35 @@ def process_item(store, item, repositories, adapter, options):
     return outcome, eligible, attempted
 
 
+def recover_interrupted_probe(store, item, apply):
+    """Recover an interrupted probe removal; preview reports verification pending."""
+    host = host_probe(store)
+    with store.connection() as connection:
+        if not interrupted_probe(store, connection, item):
+            return
+    if not apply:
+        raise ValueError("reconstructible-probe-verification-pending")
+    with _lock(store, host), store.connection(write=True) as connection:
+        if interrupted_probe(store, connection, item):
+            prepare_reconstructible_probe(store, connection, host, None)
+
+
 def prepare_reconstructible_probe(store, connection, host, plan):
     """Recover removed probes; cancel unremoved attempts only by native identity."""
+    previous = latest_probe_plan(connection, host)
     if receipt(connection, host, "verified") is not None:
+        # Repair a partial recovery: verified committed but retired missing.
+        if plan is None and previous and not os.path.lexists(previous["plan"]["source"]):
+            record_probe_recovery(store, connection, host, previous["plan"])
         return False
-    row = connection.execute(
-        "SELECT payload FROM events WHERE json_extract(payload,'$.type')=? "
-        "AND json_extract(payload,'$.host')=? ORDER BY sequence DESC LIMIT 1",
-        ("reconstructible-host-probe-plan", host),
-    ).fetchone()
-    if row:
-        previous = json.loads(row[0])
+    if previous:
         original = previous["plan"]
         if not os.path.lexists(original["source"]):
             try:
                 verify_reconstructible(original, probe=True)
             except (ValueError, OSError, subprocess.SubprocessError) as error:
                 raise ValueError("reconstructible-probe-verification-pending") from error
-            checkpoint(store, connection, host, "verified",
-                       dict(original, type="reconstructible-host-probe-verified"))
-            checkpoint(store, connection, operation_id(store, original["source"]),
-                       "retired", dict(original, type="reconstructible-worktree-retired",
-                                       branch_preserved=True))
+            record_probe_recovery(store, connection, host, original)
             return False
         # An intact original worktree/admin proves removal never completed.
         # A replacement or unresolved missing source must not unlock batching.
@@ -327,8 +314,7 @@ def process_reconstructible(store, item, repositories, adapter, options):
         with store.connection() as connection:
             reconstructible_plan(connection, open_prs=open_pull_requests)
         return outcome, 1, 0
-    probe = str(uuid5(UUID(store.installation_id()),
-                      "reconstructible-host-probe:" + socket.gethostname()))
+    probe = host_probe(store)
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         # GitHub lookups release the writer (GH#36921); this plan is only journaled.
@@ -351,26 +337,6 @@ def process_reconstructible(store, item, repositories, adapter, options):
                        dict(plan, type="reconstructible-host-probe-verified"))
         outcome["status"] = "retired"
     return outcome, 1, 1
-
-
-def verify_reconstructible(plan, *, probe):
-    """Verify the removed source can be reconstructed from retained Git objects."""
-    if os.path.lexists(plan["source"]):
-        raise ValueError("reconstructible-source-still-present")
-    common, head, branch = plan["common"], plan["head"], plan["branch"]
-    _git("--git-dir", common, "cat-file", "-e", head + "^{commit}")
-    if branch != "HEAD" and _git("--git-dir", common, "rev-parse", branch) != head:
-        raise ValueError("reconstructible-branch-changed")
-    if probe:
-        # A fresh disposable checkout proves restoration without touching the branch.
-        parent = Path(tempfile.mkdtemp(prefix=".reconstructible-probe-",
-                                      dir=Path(plan["source"]).parent))
-        target = str(parent / "tree")
-        _git("--git-dir", common, "worktree", "add", "--detach", target, head)
-        if _git("-C", target, "rev-parse", "HEAD") != head:
-            raise ValueError("reconstructible-restore-mismatch")
-        _git("--git-dir", common, "worktree", "remove", target)
-        parent.rmdir()
 
 
 def run(store, config, root, **arguments):
