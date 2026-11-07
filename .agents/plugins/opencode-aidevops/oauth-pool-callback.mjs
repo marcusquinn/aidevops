@@ -131,7 +131,11 @@ export async function saveAccountAndInject(opts) {
     google: "Token injected as GOOGLE_OAUTH_ACCESS_TOKEN.",
   };
   console.error(`[aidevops] OAuth pool: Account added successfully. ${INSTR[provider] || ""}`);
-  await injectFn(client);
+  const injected = await injectFn(client);
+  if (provider === "openai" && injected === false) {
+    console.error("[aidevops] OAuth pool: account saved but provider auth adoption failed");
+    return { type: "failed" };
+  }
   return { type: "success", ...tokenData, ...successExtras };
 }
 
