@@ -32,13 +32,18 @@ def buzz_is_running():
         return True
     if override in {"false", "0"} or sys.platform != "darwin":
         return False
-    result = subprocess.run(  # nosec B603 -- absolute executable and fixed argv
-        ["/usr/bin/pgrep", "-x", "Buzz"],
-        check=False,
-        capture_output=True,
-        timeout=5,
-    )
-    return result.returncode == 0
+    # Buzz Desktop 0.5.x runs as buzz-desktop; development bundles run as Buzz.
+    # Mirrors _buzz_is_running in buzz-desktop-helper.sh.
+    for process_name in ("Buzz", "buzz-desktop"):
+        result = subprocess.run(  # nosec B603 -- absolute executable and fixed argv
+            ["/usr/bin/pgrep", "-x", process_name],
+            check=False,
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return True
+    return False
 
 
 def backup_existing(path, runtime_id):
