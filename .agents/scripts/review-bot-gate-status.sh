@@ -90,6 +90,33 @@ _rbg_snapshot_author_association() {
 	return 0
 }
 
+# Live collaborator-permission fallback for private org members, whom the REST
+# author_association reports as CONTRIBUTOR (GH#37009; siblings GH#34644,
+# GH#35622). Returns 0 (trusted) only for admin|maintain|write; any lookup
+# failure, unknown permission or missing argument fails closed.
+# #aidevops:trust-boundary — login/labels/runner identity never grant trust;
+# only the live permission API does.
+_rbg_author_has_write_permission() {
+	local repo="$1"
+	local author_login="$2"
+	local perm=""
+	[[ -n "$repo" && -n "$author_login" ]] || return 1
+	if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+		local lib_dir="${_RBG_SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}"
+		local lib=""
+		for lib in github-app-auth-helper.sh shared-gh-wrappers-rest-fallback.sh shared-gh-collaborator-permission.sh; do
+			# shellcheck disable=SC1090  # resolved at runtime
+			[[ -f "${lib_dir}/${lib}" ]] && source "${lib_dir}/${lib}"
+		done
+	fi
+	declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1 || return 1
+	_gh_collaborator_permission_lookup "$repo" "$author_login" perm 2>/dev/null || return 1
+	case "$perm" in
+	admin | maintain | write) return 0 ;;
+	esac
+	return 1
+}
+
 do_status_json() {
 	local pr_number="$1"
 	local repo="$2"
@@ -117,6 +144,12 @@ do_status_json() {
 	jq -e --arg label "$SKIP_LABEL" '[.labels[]?.name] | index($label) != null' <<<"$pr_json" >/dev/null 2>&1 && skip_label_present_after="$RBG_TRUE"
 	case "$author_association" in
 	OWNER | MEMBER | COLLABORATOR) author_class="$RBG_AUTHOR_CLASS_TRUSTED" ;;
+	*)
+		# #aidevops:trust-boundary — private org members appear as CONTRIBUTOR.
+		if [[ -n "$author_login" ]] && _rbg_author_has_write_permission "$repo" "$author_login"; then
+			author_class="$RBG_AUTHOR_CLASS_TRUSTED"
+		fi
+		;;
 	esac
 
 	# #aidevops:trust-boundary — SKIP is a trusted-author label outcome. Advisory
