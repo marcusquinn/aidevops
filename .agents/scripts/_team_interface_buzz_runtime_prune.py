@@ -11,12 +11,12 @@ from pathlib import Path
 import re
 import shutil
 import stat
-import subprocess
+import subprocess  # nosec B404 - fixed argv, no shell
 import sys
 
 from _team_interface_buzz_runtime_anchor import PINNED_RUNTIME_MARKER
 from _team_interface_buzz_runtime_io import (
-    RuntimeError,
+    RuntimeError as BuzzRuntimeError,
     require_safe_directory_chain,
     valid_runtime_marker,
 )
@@ -34,11 +34,11 @@ def runtime_anchor_lock():
     try:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
-            raise RuntimeError("Buzz runtime cleanup lock is unsafe")
+            raise BuzzRuntimeError("Buzz runtime cleanup lock is unsafe")
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            raise RuntimeError("another Buzz runtime install or prune is active") from error
+            raise BuzzRuntimeError("another Buzz runtime install or prune is active") from error
         yield
     finally:
         os.close(descriptor)
@@ -48,13 +48,13 @@ def anchor_is_running(root):
     """Fail closed unless pgrep proves no process command references this anchor."""
     pgrep = shutil.which("pgrep")
     if not pgrep:
-        raise RuntimeError("pgrep is required to prove Buzz runtime anchors are unused")
+        raise BuzzRuntimeError("pgrep is required to prove Buzz runtime anchors are unused")
     result = subprocess.run(  # nosec B603 -- resolved executable and escaped literal path
         [pgrep, "-f", re.escape(str(root))],
         check=False, capture_output=True, timeout=VALIDATION_TIMEOUT_SECONDS,
     )
     if result.returncode not in (0, 1):
-        raise RuntimeError("Buzz runtime process check failed; pruning refused")
+        raise BuzzRuntimeError("Buzz runtime process check failed; pruning refused")
     return result.returncode == 0
 
 
@@ -70,7 +70,7 @@ def trash_runtime_anchor(root):
         )
         if result.returncode == 0:
             return
-    raise RuntimeError("no working Trash command (trash or gio); anchor retained")
+    raise BuzzRuntimeError("no working Trash command (trash or gio); anchor retained")
 
 
 def recognized_runtime_anchor(root, profile):
@@ -129,7 +129,7 @@ def configured_app_data_dirs(values):
     if configured:
         directories.append(Path(os.path.expanduser(configured)))
     if any(not directory.is_absolute() for directory in directories):
-        raise RuntimeError("Buzz app-data directories must be absolute")
+        raise BuzzRuntimeError("Buzz app-data directories must be absolute")
     return directories
 
 
@@ -137,7 +137,7 @@ def prune_command(args, profile):
     """Validate explicit app-data locations before standalone pruning."""
     directories = configured_app_data_dirs(args.app_data_dir)
     if sys.platform != "darwin" and not directories:
-        raise RuntimeError("set AIDEVOPS_BUZZ_APP_DATA_DIR or pass --app-data-dir")
+        raise BuzzRuntimeError("set AIDEVOPS_BUZZ_APP_DATA_DIR or pass --app-data-dir")
     with runtime_anchor_lock():
         prune_runtime_anchors(profile, directories, args.dry_run)
     return 0

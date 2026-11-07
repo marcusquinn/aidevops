@@ -9,7 +9,7 @@ from pathlib import Path
 import stat
 from urllib.parse import unquote, urlsplit
 
-from _team_interface_buzz_runtime_io import RuntimeError, require_safe_directory_chain
+from _team_interface_buzz_runtime_io import RuntimeError as BuzzRuntimeError, require_safe_directory_chain
 
 
 def manifest_strings(value):
@@ -21,7 +21,12 @@ def manifest_strings(value):
         if path.is_absolute():
             # Protect aliases as well as canonical manifest paths. Resolution errors
             # propagate so a symlink loop or inaccessible component refuses pruning.
-            yield str(path.resolve())
+            try:
+                yield str(path.resolve())
+            except RuntimeError as error:  # builtin: symlink loop on Python <= 3.12
+                raise BuzzRuntimeError(
+                    "cannot safely resolve Buzz harness reference; pruning refused"
+                ) from error
     elif isinstance(value, dict):
         for key, item in value.items():
             yield key
@@ -49,6 +54,6 @@ def harness_references(app_data_dirs):
                 continue
             metadata = manifest.lstat()
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 64 * 1024:
-                raise RuntimeError("cannot safely read Buzz harness references; pruning refused")
+                raise BuzzRuntimeError("cannot safely read Buzz harness references; pruning refused")
             references.extend(manifest_strings(json.loads(manifest.read_text(encoding="utf-8"))))
     return references
