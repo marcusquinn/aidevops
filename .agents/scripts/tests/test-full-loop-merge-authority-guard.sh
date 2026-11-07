@@ -1075,6 +1075,9 @@ test_completed_merge_before_stale_authority() (
 		_merge_guard_admin_merge_maintainer_review_for_mode_test "$@"
 		return $?
 	}
+	# Simulate an accepted write followed by a transport error and stale PR reads.
+	# Args: gh command arguments. Records merge writes in MERGE_CALLS and emits
+	# scenario-specific REST evidence; returns 1 for failed writes or unknown reads.
 	gh() {
 		local command="${1:-}" subcommand="${2:-}"
 		if [[ "$command" == pr && "$subcommand" == merge ]]; then

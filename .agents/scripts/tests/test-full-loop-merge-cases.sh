@@ -97,6 +97,10 @@ teardown_test_env() {
 	return 0
 }
 
+# Write the gh fixture's logging, merge-write, and merge-state response handlers.
+# Args: mode (fixture scenario). Uses TEST_ROOT for the generated executable and
+# logs; completed timeout merges become visible only after the admin write.
+# Returns the status of writing the fixture header; later helpers append handlers.
 write_gh_stub_header() {
 	local mode="$1"
 
