@@ -957,33 +957,88 @@ _generate_initial_contributions() {
 	return 0
 }
 
-# --- Generate the owned public Projects list ---
+# --- List organisations the profile user administers ---
+# GitHub records no repository creator, so organisation admin is the proxy for
+# "my organisation". Membership data is only visible to the authenticated user;
+# a different profile user gets no organisations rather than someone else's.
+# API failures and malformed responses return 1 so callers fail closed.
+_list_profile_admin_orgs() {
+	local gh_user="$1"
+	local auth_login=""
+	local memberships_json=""
+	if ! auth_login=$(gh api user --jq '.login' 2>/dev/null) || [[ -z "$auth_login" ]]; then
+		echo "Warning: GitHub API failed while resolving the authenticated user" >&2
+		return 1
+	fi
+	if [[ "$(printf '%s' "$auth_login" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$gh_user" | tr '[:upper:]' '[:lower:]')" ]]; then
+		return 0
+	fi
+	if ! memberships_json=$(gh api "user/memberships/orgs?state=active&per_page=100" --paginate 2>/dev/null); then
+		echo "Warning: GitHub API failed while listing organisation memberships (the gh token needs the read:org scope)" >&2
+		return 1
+	fi
+	# No -e: zero admin organisations is a valid empty result; malformed input
+	# still exits non-zero through error("malformed").
+	if ! printf '%s\n' "$memberships_json" | jq -r -s '
+		if ([.[] | arrays] | length) == length
+			and ([.[][] | objects | select(([.organization.login, .role | strings] | length) == 2)]
+				| length) == ([.[][]] | length)
+		then [.[][] | select(.role == "admin" and (.state // "active") == "active")
+			| .organization.login | select(test("^[A-Za-z0-9-]+$"))] | unique | .[]
+		else error("malformed") end
+	' 2>/dev/null; then
+		echo "Warning: malformed GitHub API response for organisation memberships" >&2
+		return 1
+	fi
+	return 0
+}
+
+# --- Generate the public Projects list ---
 # One sanitized Markdown line per public, non-fork, non-archived repository
-# owned by the user, excluding the profile repository itself. Ordered by stars,
-# then name, so new repositories appear without hand edits. API failures and
-# malformed responses fail closed so the existing block is preserved.
+# owned by the user or by an organisation the user administers, excluding the
+# profile repository and organisation .github profile repositories. Sorted
+# alphabetically by repository name; organisation repositories name their
+# organisation after the link. API failures and malformed responses fail closed
+# so the existing block is preserved.
 _generate_projects() {
 	local gh_user="$1"
 	local repos_json=""
+	local org_logins=""
+	local org_login=""
+	local org_json=""
 	local projects=""
 
 	if ! repos_json=$(gh api "users/${gh_user}/repos?per_page=100&type=owner" --paginate 2>/dev/null); then
 		echo "Warning: GitHub API failed while listing profile projects" >&2
 		return 1
 	fi
-	# users/{user}/repos returns public repositories only; the private filter is
-	# defence in depth so a private name can never reach the public profile.
+	org_logins=$(_list_profile_admin_orgs "$gh_user") || return 1
+	while IFS= read -r org_login; do
+		[[ -n "$org_login" ]] || continue
+		if ! org_json=$(gh api "orgs/${org_login}/repos?type=public&per_page=100" --paginate 2>/dev/null); then
+			echo "Warning: GitHub API failed while listing organisation projects" >&2
+			return 1
+		fi
+		repos_json="${repos_json}"$'\n'"${org_json}"
+	done <<<"$org_logins"
+	# Both endpoints are public-only; the private filter is defence in depth so
+	# a private name can never reach the public profile.
 	if ! projects=$(printf '%s\n' "$repos_json" | jq -er -s --arg user "$gh_user" '
-		if length > 0 and all(.[]; type == "array" and all(.[];
-			type == "object" and ([.name, .html_url | strings] | length) == 2
+		($user | ascii_downcase) as $me
+		| if length > 0 and all(.[]; type == "array" and all(.[];
+			type == "object" and ([.name, .html_url, .owner.login | strings] | length) == 3
 			and (.fork | type) == "boolean"))
 		then
 			[.[][]
 			 | select(.fork == false and (.archived // false) == false and (.private // false) == false)
-			 | select((.name | ascii_downcase) != ($user | ascii_downcase))
-			 | select(.html_url | test("^https://github[.]com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"))]
-			| sort_by([-(.stargazers_count // 0), (.name | ascii_downcase)])
-			| map("- **[\(.name | gsub("[^A-Za-z0-9._-]"; ""))](\(.html_url))** -- \(
+			 | (.owner.login | ascii_downcase != $me) as $is_org
+			 | select(if $is_org then .name != ".github" else (.name | ascii_downcase) != $me end)
+			 | select(.html_url | test("^https://github[.]com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"))
+			 | . + {is_org: $is_org}]
+			| unique_by(.html_url | ascii_downcase)
+			| sort_by([(.name | ascii_downcase), (.owner.login | ascii_downcase)])
+			| map("- **[\(.name | gsub("[^A-Za-z0-9._-]"; ""))](\(.html_url))**\(
+				if .is_org then " (\(.owner.login | gsub("[^A-Za-z0-9-]"; "")))" else "" end) -- \(
 				(.description // "") | gsub("[\\t\\n\\r]"; " ") | gsub("[\\[\\]()`<>]"; "")
 				| if . == "" then "No description" else . end)")
 			| join("\n")
