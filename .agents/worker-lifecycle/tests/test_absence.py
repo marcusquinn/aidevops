@@ -124,6 +124,17 @@ class AbsenceContract(unittest.TestCase):
         self.assertEqual(report["results"][0]["status"], "source-absence-unconfirmed")
         self.assertTrue(self.reserved())
 
+    def test_missing_parent_unbound_reservation_is_reconciled_once(self):
+        self.target = self.root / "parent" / "worktree"
+        self.target.parent.mkdir()
+        self.missing(created=False)
+        self.target.parent.rmdir()
+        report = self.cleanup()
+        self.assertEqual(report["results"][0]["status"], "source-absent-reconciled")
+        self.assertEqual(report["results"][0]["reason"], "parent-missing")
+        self.assertFalse(self.reserved())
+        self.assertEqual(self.cleanup()["examined"], 0)
+
     def test_replacement_before_commit_is_retained(self):
         self.missing()
         native = absence._commit_absence

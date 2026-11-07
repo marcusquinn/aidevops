@@ -70,7 +70,8 @@ def reconcile_absence(store: LifecycleRegistry, path: Path, generation: str) -> 
     """Fence retirement and admission; retain immutable history and all Git data.
 
     Empty reservations can finish only without a creation receipt. Owners must
-    be admitted and ended. A missing parent is not proof of source disappearance.
+    be admitted and ended. A missing parent is accepted only for an unbound,
+    never-created reservation, without claiming preservation.
     """
     result = {"generation_id": generation, "cleanup_authorized": False}
     with _lock(store, generation):
@@ -89,7 +90,7 @@ def _reconcile_source(store: LifecycleRegistry, path: Path, generation: str) -> 
     try:
         parent = DirectoryHandle(path.parent)
     except FileNotFoundError:
-        return dict(result, status="source-absence-unconfirmed", reason="parent-missing")
+        return _reconcile_missing_parent(store, path, generation)
     with parent:
         if not _absent(path):
             return dict(result, status="retry-required")
@@ -106,3 +107,31 @@ def _reconcile_source(store: LifecycleRegistry, path: Path, generation: str) -> 
         # Serialize the snapshot validation, journal and admission release together.
         with store.connection(write=True) as connection:
             return _commit_absence(connection, path, generation, rows, parent)
+
+
+def _reconcile_missing_parent(store: LifecycleRegistry, path: Path, generation: str) -> dict:
+    """Release only an unowned reservation, atomically fenced against admission."""
+    result = {"generation_id": generation, "cleanup_authorized": False}
+    with store.connection(write=True) as connection:
+        admission = connection.execute(
+            "SELECT path FROM generation_admissions WHERE generation_id=?", (generation,),
+        ).fetchone()
+        if admission is None or admission["path"] != str(path):
+            return dict(result, status="retry-required")
+        bound = connection.execute(
+            "SELECT 1 FROM bindings WHERE generation_id=?", (generation,),
+        ).fetchone()
+        creation = connection.execute(
+            "SELECT 1 FROM events WHERE event_id=?",
+            (str(uuid5(UUID(generation), "created-worktree")),),
+        ).fetchone()
+        if bound or creation or not _absent(path.parent):
+            return dict(result, status="source-absence-unconfirmed", reason="parent-missing")
+        evidence = dict(
+            result, type="worktree-absence-reconciled", status="source-absent-reconciled",
+            path=str(path), reason="parent-missing", outcome="creation-unconfirmed",
+            preservation="unverified", registered_runs=[],
+        )
+        LifecycleRegistry._event(connection, _event_id(generation, "absence-reconciled"), evidence)
+        connection.execute("DELETE FROM generation_admissions WHERE generation_id=?", (generation,))
+        return evidence
