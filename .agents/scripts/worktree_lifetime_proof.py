@@ -51,6 +51,10 @@ def proof(record, source_inode, *, fresh):
         snapshot = launch.get("quiescence", {})
         require(snapshot.get("InvocationID") == launch["invocation"] and bool(launch["invocation"]),
                 "invalid receipt invocation")
+        if snapshot.get("group") == owner_lifetime.PREVIOUS_BOOT_GROUP:
+            require(owner_lifetime.previous_boot_receipt_valid(launch, snapshot),
+                    "invalid previous-boot receipt")
+            continue
         require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "receipt has pending work")
         require(snapshot.get("ExitType") == "cgroup" and snapshot.get("RemainAfterExit") == "yes"
                 and snapshot.get("Restart") == "no", "invalid receipt lifetime contract")

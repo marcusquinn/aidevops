@@ -57,8 +57,36 @@ def unit_snapshot(unit):
     return snapshot
 
 
+BOOT_PATTERN = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+PREVIOUS_BOOT_GROUP = "previous-boot-ended"
+
+
+def valid_boot_id(value):
+    return isinstance(value, str) and re.fullmatch(BOOT_PATTERN, value) is not None
+
+
+def previous_boot_receipt_valid(launch, receipt):
+    """A reboot terminates every process of the recorded boot, so a bound
+    invocation whose boot has ended is quiescent without live unit evidence."""
+    return (isinstance(receipt, dict) and receipt.get("group") == PREVIOUS_BOOT_GROUP and
+            valid_boot_id(launch.get("boot_id")) and valid_boot_id(receipt.get("observed_boot")) and
+            receipt["observed_boot"] != launch["boot_id"] and bool(launch.get("invocation")) and
+            receipt.get("InvocationID") == launch["invocation"])
+
+
 def drain_unit(launch, boot_reader=boot_id, snapshot_reader=unit_snapshot):
-    require(launch["boot_id"] == boot_reader(), "boot generation unavailable")
+    current_boot = boot_reader()
+    if launch["boot_id"] != current_boot:
+        # Unit names, invocations and cgroup paths are not stable across boots,
+        # so never sample them; the ended boot is itself the descendant proof.
+        require(valid_boot_id(current_boot) and valid_boot_id(launch["boot_id"]),
+                "boot generation unavailable")
+        require(bool(launch.get("invocation")), "unresolved previous-boot admission")
+        receipt = {"group": PREVIOUS_BOOT_GROUP, "observed_boot": current_boot,
+                   "InvocationID": launch["invocation"], "observed_at": time.time()}
+        require(boot_reader() == current_boot, "boot changed during observation")
+        launch["quiescence"] = receipt
+        return
     snapshot = snapshot_reader(launch["unit"])
     require(snapshot.get("InvocationID") == launch["invocation"], "invocation changed")
     require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "unit still has work")

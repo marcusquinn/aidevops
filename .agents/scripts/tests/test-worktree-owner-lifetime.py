@@ -338,12 +338,32 @@ class OwnerEvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 owner.register(db, "/fixture", 1, "first")
 
-    def test_reboot_and_changed_invocation_refuse(self):
+    def test_changed_invocation_and_unverifiable_boot_refuse(self):
         launch = {"boot_id": "old", "unit": "aidevops-worker-fixture", "invocation": "first"}
         with self.assertRaises(ValueError):
             owner.drain_unit(launch, lambda: "new", lambda _: {})
         with self.assertRaises(ValueError):
             owner.drain_unit(launch, lambda: "old", lambda _: {"InvocationID": "second"})
+
+    def test_ended_boot_drains_without_unit_evidence(self):
+        old, new = "1c11018b-6bde-48ad-b729-90b4b8d36b45", "04f36445-ad8c-48fd-a4c8-0bb20313fe18"
+        launch = {"boot_id": old, "unit": "aidevops-worker-fixture", "invocation": "a" * 32,
+                  "cgroup": "/stale.service"}
+        def unreachable(_):
+            raise AssertionError("previous-boot unit evidence must not be sampled")
+        owner.drain_unit(launch, lambda: new, unreachable)
+        receipt = launch["quiescence"]
+        self.assertEqual(receipt["group"], owner.PREVIOUS_BOOT_GROUP)
+        self.assertTrue(owner.previous_boot_receipt_valid(launch, receipt))
+        record = {"state": "sealed", "sealed_at": time.time(), "identity": {"source_inode": "1:2"},
+                  "launches": [launch]}
+        proof.proof(record, "1:2", fresh=False)
+        forged = dict(launch, quiescence=dict(receipt, observed_boot=old))
+        with self.assertRaises(ValueError):
+            proof.proof(dict(record, launches=[forged]), "1:2", fresh=False)
+        unbound = {"boot_id": old, "unit": "aidevops-worker-fixture", "invocation": None}
+        with self.assertRaises(ValueError):
+            owner.drain_unit(unbound, lambda: new, unreachable)
 
     def test_live_descendants_refuse_even_after_parent_exit(self):
         launch = {"boot_id": "boot", "unit": "aidevops-worker-fixture", "invocation": "first"}
