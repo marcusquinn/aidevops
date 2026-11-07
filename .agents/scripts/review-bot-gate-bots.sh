@@ -27,7 +27,7 @@ is_rate_limit_only_comment() {
 	local body="$1"
 
 	for pattern in "${RATE_LIMIT_PATTERNS[@]}"; do
-		if echo "$body" | grep -qi "$pattern"; then
+		if grep -qi "$pattern" <<<"$body"; then
 			return 0
 		fi
 	done
