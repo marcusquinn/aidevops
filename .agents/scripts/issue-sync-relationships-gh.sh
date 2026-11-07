@@ -395,10 +395,31 @@ _relationship_report_parse_failure() {
 	return 1
 }
 
+# The two parse_task_line fields the graph needs, extracted in-process
+# (GH#37006): parse_task_line costs ~72 processes per row, which on a large
+# ledger exhausted the relationship deadline before any edge was synced. Uses
+# the same fork-free cores as parse_task_line, so a row is accepted or rejected
+# (checkbox and task ID, both dependency lists, single valid parent:) exactly
+# as parse_task_line would.
+_RELATIONSHIP_ROW_BLOCKED_BY=""
+_RELATIONSHIP_ROW_BLOCKS=""
+_relationship_row_dependencies() {
+	local task_line="$1"
+	_RELATIONSHIP_ROW_BLOCKED_BY=""
+	_RELATIONSHIP_ROW_BLOCKS=""
+	_task_id_from_todo_line_core "$task_line" || return 1
+	_task_dependency_value_core "$task_line" blocked-by || return 1
+	_RELATIONSHIP_ROW_BLOCKED_BY="$_TASK_DEPENDENCY_LIST"
+	_task_dependency_value_core "$task_line" blocks || return 1
+	_RELATIONSHIP_ROW_BLOCKS="$_TASK_DEPENDENCY_LIST"
+	_task_parent_value_core "$task_line" || return 1
+	return 0
+}
+
 # Emit declared task dependency edges as blocked-task|blocking-task pairs.
 _relationship_declared_edges() {
 	local todo_file="$1"
-	local task_line="" task_id="" parsed="" key="" value="" stripped=""
+	local task_line="" task_id="" stripped=""
 	local blocked_by="" blocks="" dep_task_id="" saved_ifs=""
 	stripped=$(strip_code_fences <"$todo_file") || return 1
 	_relationship_active_ids_and_refs "$stripped" || return 1
@@ -406,22 +427,16 @@ _relationship_declared_edges() {
 		[[ "$task_line" == *"blocked-by:"* || "$task_line" == *"blocks:"* ]] || continue
 		[[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[.\][[:space:]]+(t[0-9]+(\.[0-9a-z]+)*)[[:space:]] ]] || continue
 		task_id="${BASH_REMATCH[1]}"
-		if ! task_identity_validate "$task_id"; then
+		if ! task_identity_is_valid "$task_id"; then
 			_relationship_skip_completed_legacy_row "$task_line" "$task_id" || return 1
 			continue
 		fi
-		if ! parsed=$(parse_task_line "$task_line"); then
+		if ! _relationship_row_dependencies "$task_line"; then
 			_relationship_report_parse_failure "$task_line" "$task_id" || return 1
 			continue
 		fi
-		blocked_by=""
-		blocks=""
-		while IFS='=' read -r key value; do
-			case "$key" in
-			blocked_by) blocked_by="$value" ;;
-			blocks) blocks="$value" ;;
-			esac
-		done <<<"$parsed"
+		blocked_by="$_RELATIONSHIP_ROW_BLOCKED_BY"
+		blocks="$_RELATIONSHIP_ROW_BLOCKS"
 		saved_ifs="$IFS"
 		IFS=','
 		for dep_task_id in $blocked_by; do
