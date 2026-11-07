@@ -1715,7 +1715,10 @@ _run_preflight_stages() {
 		calculate_max_workers || true
 	# Mechanical release precedes dispatch and never depends on supervisor
 	# eligibility, daily cadence, failure cooldown or degraded prefetch.
-	_pulse_rearm_blocker_holds || true
+	_pulse_rearm_blocker_holds "$(date +%s)" || true
+	# Overdue synchronous recovery needs admission before dispatch can spend
+	# the cycle budget. The bounded attempt retains the main-dispatch reserve.
+	_pulse_run_pre_dispatch_blocker_refresh "$_pflt_timeout"
 	# t3054: dispatch passes do NOT use run_stage_with_timeout. Unlike other
 	# preflight stages (single-step operations), each wraps apply_dispatch_max,
 	# which iterates N candidates that are each
