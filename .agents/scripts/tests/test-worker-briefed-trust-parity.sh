@@ -32,6 +32,7 @@ PR_LABELS='[{"name":"origin:worker"}]'
 CRYPTO_APPROVED=0
 USER_API_FAIL=0
 PR_API_FAIL=0
+PR_BODY_ONLY_FAIL=0
 WRITER_LOGIN=runner
 SYNC_HEAD=""
 PR_FILES='[{"filename":".agents/scripts/example.sh","status":"modified"}]'
@@ -81,6 +82,7 @@ gh_pr_view() {
 		[[ "$previous" != "--jq" ]] || filter="$arg"
 		previous="$arg"
 	done
+	[[ "$PR_BODY_ONLY_FAIL" != 1 || -z "$filter" ]] || return 1
 	payload=$(jq -n --arg body "$PR_BODY" --argjson labels "$PR_LABELS" '{body:$body,labels:$labels,isDraft:false,headRefOid:"fixture-head"}')
 	if [[ -n "$filter" ]]; then jq -r "$filter" <<<"$payload"; else printf '%s\n' "$payload"; fi
 	return 0
@@ -129,6 +131,13 @@ unset WORKER_SESSION_KEY
 FULL_LOOP_HEADLESS=true
 ISSUE_ASSOC=OWNER
 expect_parity 0 'owner issue allowed'
+PR_BODY_ONLY_FAIL=1
+[[ "$(worker_briefed_trust_verdict 100 owner/repo)" == allow ]]
+PR_BODY='For #42'
+[[ "$(worker_briefed_trust_verdict 100 owner/repo)" == allow ]]
+printf 'PASS closing and explicit references use the same metadata body without a second body read\n'
+PR_BODY_ONLY_FAIL=0
+PR_BODY='Resolves #42'
 ISSUE_ASSOC=COLLABORATOR
 ISSUE_PERMISSION="write"
 expect_parity 0 'live write authority allowed'
