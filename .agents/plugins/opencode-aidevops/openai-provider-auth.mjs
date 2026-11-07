@@ -198,7 +198,7 @@ async function handleOpenAIAuthFailure(ctx) {
   console.error(`[aidevops] OpenAI provider: rejected token for ${currentEmail} — forcing one refresh`);
   const refreshedAccess = await forceRefreshOpenAIToken(current);
   if (refreshedAccess) {
-    await applyOpenAIPoolAccount(client, current);
+    if (!await applyOpenAIPoolAccount(client, current)) return response;
     const retryResponse = await retryOpenAIRequest(ctx, current, "auth-refresh");
     if (await isOpenAIAuthFailureResponse(retryResponse)) {
       markRejectedTokenFailure("openai", current);
