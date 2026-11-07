@@ -155,6 +155,8 @@ It refuses to sync when the worktree's `HEAD` doesn't contain `origin/<default-b
 
 **Scaffold**: `wp scaffold {theme|child-theme|plugin|post-type|block} name [--activate]`. **DB**: `wp db {export|import} backup.sql`, `wp search-replace 'old' 'new' --dry-run`, `wp db optimize && wp db check`. **Dev**: `wp shell`, `wp eval '...'`, `wp {post|user} generate --count=N`, `wp cache flush && wp transient delete --all`.
 
+**Slug-exists guards** (before creating or cloning a page or CPT): `get_posts( array( 'name' => $slug ) )` defaults to `post_type => 'post'` and `post_status => 'publish'`, so it never matches a page or a draft, and the guard silently passes (WordPress then saves `slug-2`). Pass the real `post_type` (`'page'` or the CPT) and `'post_status' => 'any'`, use `get_page_by_path( $path, OBJECT, 'page' )` (full `parent/child` path for child pages), query `$wpdb->posts` by `post_name` and `post_type`, or run `wp post list --post_type=page --name=<slug> --post_status=any --format=ids`. `'any'` excludes trash, but a trashed post's slug gets a `__trashed` suffix, so it does not block reuse.
+
 ## Testing
 
 Run already configured checks when applicable: **PHPUnit** `wp-env run tests-cli phpunit` or `vendor/bin/phpunit`; **E2E** `npx --no-install playwright test` or `npx --no-install cypress run`; **Security** `./.agents/scripts/secretlint-helper.sh scan`. For routine feature/fix work, verify first through the real LocalWP/wp-env flow and `debug.log`. Do not install PHPUnit, Playwright, Cypress, or new test infrastructure without explicit user approval.
