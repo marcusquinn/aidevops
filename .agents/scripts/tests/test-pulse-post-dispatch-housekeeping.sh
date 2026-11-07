@@ -597,7 +597,7 @@ test_blocker_catchup_resumes_pending_recovery() {
 			_pulse_housekeeping_mark_stage_done "blocker_refresh_catchup" "$state_file"
 			build_dependency_graph_cache() {
 				[[ -f "$pending_file" ]] || return 1
-				printf '{}\n' >"$DEP_GRAPH_CACHE_FILE"
+				jq -n --argjson now "$(date +%s)" '{repos:{"owner/repo":{built_at:$now}}}' >"$DEP_GRAPH_CACHE_FILE"
 				return 0
 			}
 			_pulse_run_budget_priority_stage_with_timeout() {
@@ -622,11 +622,52 @@ test_blocker_catchup_resumes_pending_recovery() {
 			install_stage_stubs
 			_pulse_run_post_dispatch_housekeeping_stages 7
 			got=$(_catchup_stages)
-			[[ "$got" == "ownership_reconcile dep_graph:1 blocked_refresh brief_hold_release " ]] || failures=$((failures + 1))
-			[[ ! -e "$pending_file" && ! -e "$state_file" ]] || failures=$((failures + 1))
+			if [[ "$failed_stage" == "refresh_blocked_status_from_graph" ]]; then
+				[[ "$got" == "ownership_reconcile blocked_refresh brief_hold_release " ]] || failures=$((failures + 1))
+			else
+				[[ "$got" == "ownership_reconcile brief_hold_release " ]] || failures=$((failures + 1))
+			fi
+			[[ ! -e "$pending_file" && ! -e "${pending_file}.stages" && ! -e "$state_file" ]] || failures=$((failures + 1))
 			print_result "catch-up retries ${mode} at ${failed_stage} with a fresh cache" "$failures" "$got"
 			teardown_test_env
 		done
+	done
+	return 0
+}
+
+test_blocker_catchup_invalidates_inner_checkpoints() {
+	local mode
+	for mode in missing malformed empty legacy mixed_stale future expired disabled; do
+		setup_test_env
+		local failures=0 pending_file progress_file got=""
+		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/graph.json"
+		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+		local AIDEVOPS_PULSE_HOUSEKEEPING_RESUME_WINDOW_S=1800
+		pending_file="$(_pulse_post_dispatch_housekeeping_statefile).blocker-refresh-pending"
+		progress_file="${pending_file}.stages"
+		touch "$pending_file"
+		_pulse_housekeeping_mark_stage_done "build_dependency_graph_cache" "$progress_file"
+		_pulse_housekeeping_mark_stage_done "refresh_blocked_status_from_graph" "$progress_file"
+		jq -n --argjson now "$(date +%s)" '{repos:{fresh:{built_at:$now}}}' >"$DEP_GRAPH_CACHE_FILE"
+		case "$mode" in
+		missing) rm -f "$DEP_GRAPH_CACHE_FILE" ;;
+		malformed) printf 'invalid\n' >"$DEP_GRAPH_CACHE_FILE" ;;
+		empty) printf '{"repos":{}}\n' >"$DEP_GRAPH_CACHE_FILE" ;;
+		legacy) printf '{"repos":{"legacy":{}}}\n' >"$DEP_GRAPH_CACHE_FILE" ;;
+		mixed_stale) jq -n --argjson now "$(date +%s)" '{repos:{fresh:{built_at:$now},stale:{built_at:1}}}' >"$DEP_GRAPH_CACHE_FILE" ;;
+		future) jq -n --argjson now "$(date +%s)" '{repos:{future:{built_at:($now+3600)}}}' >"$DEP_GRAPH_CACHE_FILE" ;;
+		expired)
+			printf 'build_dependency_graph_cache=1\n' >"$progress_file"
+			_pulse_housekeeping_mark_stage_done "refresh_blocked_status_from_graph" "$progress_file"
+			;;
+		disabled) AIDEVOPS_PULSE_HOUSEKEEPING_RESUME_WINDOW_S=0 ;;
+		esac
+		_pulse_run_blocker_refresh_catchup 7
+		got=$(_catchup_stages)
+		[[ "$got" == "dep_graph:1 blocked_refresh brief_hold_release " ]] || failures=$((failures + 1))
+		[[ ! -e "$pending_file" && ! -e "$progress_file" ]] || failures=$((failures + 1))
+		print_result "catch-up invalidates ${mode} inner checkpoints" "$failures" "$got"
+		teardown_test_env
 	done
 	return 0
 }
@@ -757,6 +798,7 @@ main() {
 	test_housekeeping_retries_incomplete_stages
 	test_blocker_catchup_checkpoint_rechecks_cache
 	test_blocker_catchup_resumes_pending_recovery
+	test_blocker_catchup_invalidates_inner_checkpoints
 	test_blocker_catchup_stops_after_failed_prerequisite
 	test_pre_dispatch_blocker_refresh_admission
 	test_pre_dispatch_blocker_refresh_cycle_reserve
