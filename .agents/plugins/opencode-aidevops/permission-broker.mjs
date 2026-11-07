@@ -8,7 +8,7 @@ import { homedir } from "os";
 import { recordPermissionBlocker } from "./permission-broker-blocker-log.mjs";
 import { isManagedToolOutputRead } from "./permission-broker-tool-output.mjs";
 import { impossibleExternalRead as classifyImpossibleRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
-import { isReadOnlyRootRead, resolveReal as resolveRealPath } from "./permission-broker-read-only-root.mjs";
+import { isReadOnlyRootRead, resolvedRiskTargets } from "./permission-broker-read-only-root.mjs";
 
 const REQUEST_SCHEMA = "aidevops-permission-capture/v1";
 const MAX_PATTERN_LENGTH = 500;
@@ -36,15 +36,14 @@ export function sanitizePermissionText(value, options = {}) {
   return sanitized.slice(0, options.maxLength || MAX_PATTERN_LENGTH);
 }
 
-function classifyRisk(permission, patterns, tool, target = "") {
+function classifyRisk(permission, patterns, tool, targets = []) {
   const combined = patterns.join("\n");
   let risk;
   if (!PATTERN_CAPABLE_PERMISSIONS.has(permission)) {
     risk = { level: "critical", grantable: false, reason: "permission cannot be represented as an exact OpenCode pattern rule" };
   } else if (patterns.length === 0) {
     risk = { level: "critical", grantable: false, reason: "request omitted an exact permission pattern" };
-  } else if (patterns.some((pattern) => FORBIDDEN_PATTERN.test(pattern))
-    || [].concat(target).some((item) => typeof item === "string" && FORBIDDEN_PATTERN.test(item))) {
+  } else if ([...patterns, ...targets].some((pattern) => FORBIDDEN_PATTERN.test(pattern))) {
     risk = { level: "critical", grantable: false, reason: "sensitive credential or signing-key location" };
   } else if (["bash", "edit", "write"].includes(tool) || ["bash", "edit"].includes(permission)) {
     risk = { level: "high", grantable: true, reason: "capability can modify or execute content" };
@@ -146,20 +145,6 @@ function recordReadOnlyRootAllow(context, raw) {
   });
 }
 
-// Lexical and symlink-resolved forms of the recorded target and raw patterns, so
-// a link to a credential location is classified non-grantable.
-function resolvedRiskTargets(raw, toolContext) {
-  const source = raw?.patterns ?? raw?.pattern;
-  const patterns = Array.isArray(source) ? source : source == null ? [] : [source];
-  const items = [toolContext.target || raw?.metadata?.filepath || raw?.metadata?.path || "", ...patterns]
-    .filter((item) => typeof item === "string" && item);
-  return items.flatMap((item) => {
-    const lexical = item.replaceAll("\\", "/");
-    const real = resolveRealPath(lexical);
-    return real ? [lexical, real] : [lexical];
-  });
-}
-
 function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, raw) {
   const requestFile = process.env.AIDEVOPS_PERMISSION_REQUEST_FILE || "";
   const callID = raw?.tool?.callID || raw?.callID || "";
@@ -174,7 +159,7 @@ function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath,
     patterns,
     tool,
     intent: sanitizePermissionText(toolContext.intent || raw?.metadata?.description || raw?.title || "", { ...options, maxLength: MAX_INTENT_LENGTH }),
-    risk: classifyRisk(permission, patterns, tool, resolvedRiskTargets(raw, toolContext)),
+    risk: classifyRisk(permission, patterns, tool, resolvedRiskTargets(raw, toolContext.target)),
     opencode: {
       request_id: sanitizePermissionText(raw?.id || "", { ...options, maxLength: 100 }),
       session_id: sanitizePermissionText(raw?.sessionID || "", { ...options, maxLength: 100 }),

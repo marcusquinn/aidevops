@@ -33,6 +33,20 @@ export function resolveReal(value) {
   return "";
 }
 
+// Lexical and symlink-resolved forms of the recorded target and raw patterns, so
+// a link to a credential location is classified non-grantable.
+export function resolvedRiskTargets(raw, target) {
+  const source = raw?.patterns ?? raw?.pattern;
+  const patterns = Array.isArray(source) ? source : source == null ? [] : [source];
+  const items = [target || raw?.metadata?.filepath || raw?.metadata?.path || "", ...patterns]
+    .filter((item) => typeof item === "string" && item);
+  return items.flatMap((item) => {
+    const lexical = item.replaceAll("\\", "/");
+    const real = resolveReal(lexical);
+    return real ? [lexical, real] : [lexical];
+  });
+}
+
 function toPatternList(raw) {
   const input = raw?.patterns ?? raw?.pattern;
   if (Array.isArray(input)) return input;
