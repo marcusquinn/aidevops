@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.133] - 2026-11-07
+
+### Added
+
+- support scoped owned lease execution
+
+### Changed
+
+- Documentation: warn that get_posts(name=>slug) misses pages in slug-exists guards
+- Documentation: clarify local clipboard destination paths (#37092)
+
+### Fixed
+
+- admit overdue blocker recovery before dispatch
+- bounded admission contention wait; release writer during PR lookups (#37099)
+- recognize verified prior-merge continuations (#37100)
+- report modern takeover guards and enforce idle age
+- accept Buzz 0.5.28 tagged prompt sections in ACP reply routing
+- use consistent PR body for worker trust gate (#37095)
+- release writer lock during archive I/O
+
 ## [3.39.132] - 2026-11-07
 
 ### Added
