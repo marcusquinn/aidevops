@@ -182,22 +182,10 @@ def require_unattributed_acknowledgement(history, acknowledged):
                       "no approval generated")
 
 
-def _unique_positive_ints(value):
-    if not isinstance(value, list):
-        return False
-    for item in value:
-        if isinstance(item, bool):
-            return False
-        if not isinstance(item, int):
-            return False
-        if item <= 0:
-            return False
-    return len(set(value)) == len(value)
-
-
 def acknowledgement_ids(value):
     """Reject loose, duplicate or non-comment identifiers before enabling recovery."""
-    if not _unique_positive_ints(value):
+    if not (isinstance(value, list) and all(type(item) is int and item > 0 for item in value)
+            and len(set(value)) == len(value)):
         raise ValueError("terminal-without-release acknowledgement must list unique positive comment ids")
     return value
 
