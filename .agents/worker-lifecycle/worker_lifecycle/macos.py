@@ -88,6 +88,17 @@ class MacOSProcesses:
             raise ObservationUnavailable("invalid-process-metadata")
         return f"{info.start_seconds}:{info.start_microseconds}", info.status, info.uid
 
+    def parent(self, pid: int) -> int:
+        """Return this user's process's parent PID; diagnosis only, never authority."""
+        if type(pid) is not int or not 0 < pid <= 2**31 - 1:  # pylint: disable=unidiomatic-typecheck  # Reject bool
+            raise ValueError("invalid-pid")
+        info = BSDInfo()
+        c.set_errno(0)
+        count = self._pidinfo(pid, 3, 1, c.byref(info), c.sizeof(info))
+        if count != c.sizeof(info) or info.pid != pid or info.uid != os.geteuid():
+            raise ObservationUnavailable("process-parent-unavailable")
+        return int(info.ppid)
+
     def capture(self, pid: int) -> ProcessIdentity:
         if type(pid) is not int or not 0 < pid <= 2**31 - 1:  # pylint: disable=unidiomatic-typecheck  # Reject bool
             raise ValueError("invalid-pid")

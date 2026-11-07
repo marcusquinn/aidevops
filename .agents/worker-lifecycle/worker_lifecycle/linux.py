@@ -63,6 +63,22 @@ class LinuxProcesses:
             raise ObservationUnavailable("process-changed-during-sample")
         return generation, second_state, second.st_uid
 
+    @staticmethod
+    def parent(pid: int) -> int:
+        """Return this user's process's parent PID; diagnosis only, never authority."""
+        if type(pid) is not int or not 0 < pid <= 2**31 - 1:  # pylint: disable=unidiomatic-typecheck  # Reject bool
+            raise ValueError("invalid-pid")
+        try:
+            root = Path(f"/proc/{pid}")
+            if root.stat().st_uid != os.getuid():
+                raise ObservationUnavailable("process-parent-unavailable")
+            fields = (root / "stat").read_text().rsplit(")", 1)[1].split()
+            if len(fields) < 2 or not fields[1].isascii() or not fields[1].isdigit():
+                raise ObservationUnavailable("process-parent-unavailable")
+            return int(fields[1])
+        except (OSError, IndexError) as error:
+            raise ObservationUnavailable("process-parent-unavailable") from error
+
     def capture(self, pid: int) -> ProcessIdentity:
         if type(pid) is not int or not 0 < pid <= 2**31 - 1:  # pylint: disable=unidiomatic-typecheck  # Reject bool
             raise ValueError("invalid-pid")
