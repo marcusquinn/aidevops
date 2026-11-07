@@ -11,7 +11,10 @@ import subprocess  # nosec B404 # exception type only; Git execution is audited 
 import sys
 from uuid import uuid4
 
-from .admission import AdmissionClosed, AdmissionRegistry, contention_deadline
+from .admission import (
+    AdmissionClosed, AdmissionRegistry, ContentionWait, contention_deadline,
+    within_contention_deadline,
+)
 from .directory_handle import DirectoryHandle
 from .enrollment import GenerationEnrollment
 from .launch_state import (
@@ -129,9 +132,10 @@ def run_admitted(state_dir: Path, worktree: Path, run_id: str, generation_id: st
             require_ready(adapter)
             identity = adapter.capture(os.getpid())
             # Transient writer contention waits within a bound; it never fails open.
-            if not AdmissionRegistry(store).admit_within_deadline(
-                    run_id, identity, generation_id, str(worktree),
-                    deadline=contention_deadline(), on_retry=_contention_retry):
+            gate = AdmissionRegistry(store)
+            if not within_contention_deadline(
+                    lambda: gate.admit(run_id, identity, generation_id, str(worktree)),
+                    ContentionWait(contention_deadline(), _contention_retry)):
                 raise AdmissionClosed("replay-is-not-execution-authority")
             if not handle.matches_path():
                 raise ValueError("directory-changed-before-exec")

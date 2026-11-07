@@ -10,7 +10,10 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry, contention_deadline
+from worker_lifecycle.admission import (
+    AdmissionClosed, AdmissionRegistry, ContentionWait, contention_deadline,
+    within_contention_deadline,
+)
 from worker_lifecycle.process import ProcessObservation
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.storage import LifecycleRegistry, StoreCapacity, StoreConflict
@@ -115,25 +118,29 @@ class AdmissionContract(unittest.TestCase):
         self.addCleanup(blocker.close)
         return blocker
 
+    def admit_waiting(self, run, **wait):
+        """Admit through the bounded contention wait used by the launcher."""
+        return within_contention_deadline(
+            lambda: self.gate.admit(run, self.identity, self.generation), ContentionWait(**wait))
+
     def test_transient_contention_recovers_within_deadline(self):
         """GH#36921: a writer released before the deadline admits exactly once."""
         blocker, run, retries = self.blocked(), str(uuid4()), []
-        admitted = self.gate.admit_within_deadline(
-            run, self.identity, self.generation, deadline=10,
+        admitted = self.admit_waiting(
+            run, deadline=10,
             on_retry=lambda attempt, error: retries.append((attempt, str(error))),
             sleep=lambda _pause: blocker.rollback())
         self.assertTrue(admitted)
         self.assertEqual(retries, [(1, "database is locked")])
         self.assertEqual(self.store.summary()["bindings"], 1)
-        self.assertFalse(self.gate.admit_within_deadline(run, self.identity, self.generation))
+        self.assertFalse(self.admit_waiting(run))
 
     def test_persistent_contention_fails_closed_at_deadline(self):
         """Contention outlasting the deadline denies without any partial admission."""
         self.blocked()
         before, pauses = self.store.summary(), []
         with self.assertRaisesRegex(sqlite3.OperationalError, "database is locked"):
-            self.gate.admit_within_deadline(str(uuid4()), self.identity, self.generation,
-                                            deadline=0.5, sleep=pauses.append)
+            self.admit_waiting(str(uuid4()), deadline=0.5, sleep=pauses.append)
         self.assertEqual(pauses, [])
         self.assertEqual(before, self.store.summary())
 
@@ -147,8 +154,7 @@ class AdmissionContract(unittest.TestCase):
             blocker.commit()
 
         with self.assertRaises(AdmissionClosed):
-            self.gate.admit_within_deadline(str(uuid4()), self.identity, self.generation,
-                                            deadline=10, sleep=close)
+            self.admit_waiting(str(uuid4()), deadline=10, sleep=close)
         self.assertEqual(self.store.summary()["bindings"], 0)
 
     def test_lost_acknowledgement_retry_is_never_execution_authority(self):
@@ -162,8 +168,7 @@ class AdmissionContract(unittest.TestCase):
             return calls[-1]
 
         self.gate.admit = committed_then_busy
-        self.assertFalse(self.gate.admit_within_deadline(run, self.identity, self.generation,
-                                                         deadline=10, sleep=lambda _pause: None))
+        self.assertFalse(self.admit_waiting(run, deadline=10, sleep=lambda _pause: None))
         self.assertEqual(calls, [True, False])
         self.assertEqual(self.store.summary()["bindings"], 1)
 
@@ -176,8 +181,7 @@ class AdmissionContract(unittest.TestCase):
 
         self.gate.admit = failing
         with self.assertRaisesRegex(sqlite3.OperationalError, "disk I/O error"):
-            self.gate.admit_within_deadline(str(uuid4()), self.identity, self.generation,
-                                            deadline=10, sleep=pauses.append)
+            self.admit_waiting(str(uuid4()), deadline=10, sleep=pauses.append)
         self.assertEqual(pauses, [])
 
     def test_admission_wait_configuration_is_bounded(self):

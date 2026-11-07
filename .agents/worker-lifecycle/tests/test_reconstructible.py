@@ -341,12 +341,12 @@ class ReconstructibleContract(unittest.TestCase):
         native = cleanup.reconstructible
         calls = 0
 
-        def changed(*args):
+        def changed(*args, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise ValueError("live-process-reference")
-            return native(*args)
+            return native(*args, **kwargs)
 
         with patch.object(cleanup, "reconstructible", side_effect=changed):
             self.assert_retained("live-process-reference")
