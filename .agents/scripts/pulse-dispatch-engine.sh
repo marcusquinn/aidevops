@@ -10,11 +10,12 @@
 # This module is sourced by pulse-wrapper.sh. Depends on shared-constants.sh
 # and worker-lifecycle-common.sh being sourced first by the orchestrator.
 #
-# Focused submodules (GH#36027):
+# Focused submodules (GH#36027, GH#37242):
 #   pulse-dispatch-engine-launch.sh       — launch validation and failure reasons
 #   pulse-dispatch-engine-housekeeping.sh — locks, resumable stages, async launch
-# Candidate ranking, dispatch orchestration, supervisor gates and preflight
-# remain here; existing callers continue to source only this entrypoint.
+#   pulse-dispatch-engine-supervisor.sh   — supervisor cadence and blocker recovery
+# Candidate ranking, dispatch orchestration and preflight remain here;
+# existing callers continue to source only this entrypoint.
 #
 # Public functions in this module (in source order):
 #   - check_worker_launch

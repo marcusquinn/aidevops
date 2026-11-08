@@ -43,9 +43,9 @@ required_functions = {
     ".agents/scripts/pulse-canonical-maintenance.sh": ["_canonical_fast_forward"],
     ".agents/scripts/pulse-dep-graph.sh": ["build_dependency_graph_cache"],
     ".agents/scripts/pulse-dispatch-engine.sh": [
-        "_should_run_llm_supervisor",
         "_dispatch_repository_rows",
     ],
+    ".agents/scripts/pulse-dispatch-engine-supervisor.sh": ["_should_run_llm_supervisor"],
     ".agents/scripts/pulse-fix-the-fixer-detector.sh": ["cmd_run"],
     ".agents/scripts/pulse-issue-reconcile-normalize.sh": ["_normalize_label_invariants"],
     ".agents/scripts/pulse-issue-reconcile-parent.sh": ["reconcile_completed_parent_tasks"],
