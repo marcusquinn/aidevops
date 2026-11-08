@@ -23,7 +23,7 @@ from _team_interface_buzz_runtime_install import (
     install_payload,
 )
 from _team_interface_buzz_runtime_io import RuntimeError, atomic_write, canonical_payload
-from _team_interface_buzz_runtime_prepare import prepare_runtime
+from _team_interface_buzz_runtime_prepare import prepare_desktop_runtime, prepare_runtime
 from _team_interface_buzz_runtime_prune import (
     configured_app_data_dirs,
     prune_command,
@@ -197,6 +197,15 @@ def parse_args(argv=None):
     prepare = commands.add_parser("prepare", help="prepare private inputs for one trusted launch")
     prepare.add_argument("--agents-dir", required=True)
     prepare.add_argument("--output-dir", required=True)
+    desktop = commands.add_parser(
+        "prepare-desktop",
+        help="prepare private inputs for an agent the Buzz aidevops plugin launches",
+    )
+    desktop.add_argument("--agents-dir", required=True)
+    desktop.add_argument("--output-dir", required=True)
+    desktop.add_argument("--member", required=True)
+    desktop.add_argument("--project-root", required=True)
+    desktop.add_argument("--repos", default="~/.config/aidevops/repos.json")
     verify = commands.add_parser("verify-anchor", help="verify an existing immutable runtime anchor")
     verify.add_argument("--root", required=True)
     verify.add_argument("--runtime", choices=tuple(RUNTIME_PROFILES), default="interactive")
@@ -245,6 +254,14 @@ def main(argv=None):
     if args.command in {"prune", "prepare", "verify-anchor"}:
         return anchor_command(args)
     project_root = registered_project_root(args.project_root, args.repos)
+    if args.command == "prepare-desktop":
+        agents_dir = Path(os.path.expanduser(args.agents_dir)).resolve()
+        output_dir = Path(os.path.expanduser(args.output_dir))
+        if not agents_dir.is_dir():
+            raise RuntimeError("canonical agents directory is unavailable")
+        prepare_desktop_runtime(agents_dir, output_dir, args.member)
+        atomic_write(output_dir / "project-root.txt", f"{project_root}\n".encode("utf-8"))
+        return 0
     profile = runtime_profile(args.runtime)
     if args.command == "manifest":
         payload = canonical_payload(materialized_manifest(project_root, profile))
