@@ -5,7 +5,7 @@
 
 ## Status and ownership
 
-- Created: 2026-11-07. Status: Phases 0–2 built (t18886, GH#37149, PR #37165) and released in v3.39.136. Messaging was verified live on 2026-11-08 (`opencode serve`), and the owner tested it with two new sessions the same day. Toast and sidebar were not confirmed separately. OpenCode 2 support: t18888 (PR #37179). Phase 3 and coordination follow-ups: t18891–t18897 (below).
+- Created: 2026-11-07. Status: Phases 0–2 built (t18886, GH#37149, PR #37165) and released in v3.39.136. Messaging was verified live on 2026-11-08 (`opencode serve`), and the owner tested it with two new sessions the same day. Toast and sidebar were not confirmed separately. OpenCode 2 support: t18888 (PR #37179). Phase 3 and coordination follow-ups: t18891–t18898 (below).
 - Scope: OpenCode → OpenCode sessions on one machine. Claude Code and other runtimes are out of scope.
 - Built interactively in the planning session (full-loop), not by worker dispatch.
 - Related captures found during review: GH#37145 (session count misses OpenCode TUI processes; fixed by PR #37148), GH#37146 (stale OpenCode activity heartbeats are never pruned; fixed by PR #37147).
@@ -212,7 +212,7 @@ Owner requirement: aidevops must also be usable from chat apps. Current state (v
 | --- | --- | --- |
 | Matrix (`matrix-bot.mjs.template`) | `!ai` → creates a fresh session on an OpenCode server (`POST /session`, `/session/{id}/message`) per room+actor, or `runner-helper.sh`; entity-aware context via `entity-helper.sh`/`memory.db` | No |
 | SimpleX (`simplex-bot/`) | Bun bot spawns aidevops CLI/`runner-helper.sh`; `/run` needs approval | No |
-| Buzz (`team-interface-buzz*`, t18883/GH#36976) | Read-only adapter; restricted `opencode acp` conversation overlays | No |
+| Buzz (`team-interface-buzz*`, t18883/GH#36976) | Read-only adapter; restricted `opencode acp` conversation overlays (no bus); remote-interactive `opencode acp` agents run the full plugin and, by code reading, already join the bus with local-session defaults (t18898 verifies and fixes) | Probably, unverified |
 | `mail-helper-transport.sh` SimpleX/Matrix relay | Reads `spool/simplex/*.envelope`; no live producer found | No |
 
 The bus gives every gateway one contract instead of three bespoke paths:
@@ -231,8 +231,9 @@ Phases 1–2 proved the bus (released in v3.39.136; owner test with two live ses
 | t18892 | Channel bindings (`bind`/`unbind`/`channel:` targets) and per-task `launch` on `opencode serve` | t18891 |
 | t18893 | Matrix bot adapter: room commands, bound rooms, outbox relay | t18892 |
 | t18894 | SimpleX bot adapter: replaces the `/sessions` and `/ask` scaffolds | t18892 |
+| t18898 | Buzz-hosted (remote-interactive) agents as bus endpoints: `interface`/`agent` presence labels, `chat:` sender origin so they never wake local sessions, no wakes into them | t18891 |
 
-Buzz is not filed yet: its adapter needs t18883 phase 2 (read-only `aidevops_*` tools), which is owner-gated. When that lands, presence `list` (redacted) is the natural first tool, followed by `ask` through t18891's ingest.
+Buzz needs no separate gateway for the agent itself: a Buzz agent is an OpenCode ACP session, so it uses `aidevops_sessions` directly once t18898 makes its defaults safe. Posting bus replies or notices into a Buzz channel, and listing sessions from Buzz without an agent turn, stay with the Buzz plugin under t18883 (owner-gated).
 
 ## Coordination follow-ups
 
@@ -251,7 +252,7 @@ Owner turn on 2026-11-08: sessions should help with releases and with "avoiding 
 | 0. Runtime spike | On OpenCode v1.19.5 verify: `promptAsync` with synthetic part wakes an idle root session from a plugin; behaviour when busy; `chat.message` synthetic part persists and is visible to the model; `tool.execute.after` appended text persists; `fs.watch` reliability on macOS; plugin runs inside `opencode serve` (desktop) sessions | ~2h | Notes in this file; go/no-go per channel |
 | 1. Presence | Presence writer in plugin; liveness + sweep shared with GH#37146; `aidevops sessions list/show`; tool `list`/`show` | ~1d | `aidevops sessions list` shows every open TUI/desktop session with correct repo/branch/state; dead sessions vanish |
 | 2. Messaging | Inbox, `send/ask/reply/inbox/notify-when-idle`, three delivery channels, toast, limits, retention, compaction note for pending asks (alongside the dead `getMailboxState`, which Phase 4 removes), `reference/session-bus.md` | ~1.5d | Two live sessions exchange ask/reply with one idle; busy delivery appears in the next tool result; loop and rate limits verified |
-| 3. Chat gateways | Contract above + Matrix, SimpleX adapters (t18891–t18894); Buzz after t18883 phase 2 | ~3d | Each task's live self-test on a scratch bus |
+| 3. Chat gateways | Contract above + Matrix, SimpleX adapters (t18891–t18894); Buzz-hosted agents (t18898); Buzz channel relay after t18883 phase 2 | ~3.5d | Each task's live self-test on a scratch bus |
 | 4. Mailbox retirement | Remove or redirect `mail-helper*.sh`, `loop-common.sh` status reports, `runner-helper.sh`/`cron-dispatch.sh` callers, `reference/mailbox.md` | ~0.5d | **Needs explicit owner approval**; not part of this build |
 
 Total for Phases 0–2: ~3 days (ai:2d test:0.5d read:0.5d).
@@ -297,4 +298,5 @@ OpenCode 2 support (t18888, GH#37157): `session-bus-v2.mjs` adapts the V2 plugin
 - **2026-11-08 — OpenCode 2 channels** (t18888, agent decision from the 2.0.18 host): the V2 server plugin context has `session.get` and `session.synthetic` but no `promptAsync`, `status` or toast. Turn delivery appends to the `prompt` hook's text (V2 has no synthetic user-message parts); wakes insert a synthetic message with `resume: true`, which keeps wake text out of the Prompts sidebar; the woken turn takes its hop count from `session.execution.started`, because synthetic input skips the prompt hook. Status comes from `session.execution.*` events. No toast in V2.
 - **2026-11-08 — Subagents are not bus endpoints** (agent decision, answering the owner's "can subagents message back & forth, too?"): a subagent's tool calls act for its root session and replies go to the root. Child sessions are short-lived and cannot be woken mid-run, and the Task prompt and result already connect parent and child. t18897 adds a bounded `ask` wait instead, which gives a subagent a full round trip without child presence.
 - **2026-11-08 — Follow-ups filed for self-tested worker delivery** (owner: "log todos/issues for whatever can be developed and self-tested"): t18891–t18897. Live homeserver and SimpleX-profile checks are recorded as post-merge checks because they need the owner's accounts.
+- **2026-11-08 — Buzz-hosted agents first, channel relay later** (agent decision, answering the owner's "capture: ok, should that have an issue?"): a remote-interactive Buzz agent is a full OpenCode ACP root session. The restricted profile returns before the bus (`index.mjs:366-368`); the remote-interactive one does not, `acp` is messageable and HOME is unchanged. A bus wake into it would run a turn the Buzz plugin did not start (`buzz-aidevops/plugin.js:324-332`), and its sends would carry `opencode` origin. t18898 makes those defaults safe and is self-testable with a scratch-bus ACP process, so it is filed for auto-dispatch after t18891. Only the channel relay waits for t18883.
 - **Deferred — old mailbox retirement** (Phase 4; owner: "decide later"). `mail-helper*.sh` and its callers stay untouched.
