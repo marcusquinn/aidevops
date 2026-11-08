@@ -129,6 +129,7 @@ class PassPullRequests:
     """
 
     def __init__(self):
+        """Start a new pass with no cached pull-request observations."""
         self.results: dict[str, list | Exception] = {}
 
     def get(self, slug: str, lookup: Callable[[str], list]) -> list:
@@ -146,6 +147,7 @@ class PassPullRequests:
         return self._value(slug)
 
     def _value(self, slug: str) -> list:
+        """Return the cached result or surface a cached lookup failure."""
         result = self.results[slug]
         if isinstance(result, Exception):
             raise ValueError("pull-request-state-unavailable") from result
