@@ -164,7 +164,7 @@ Every body line is prefixed with `>` and a space, so message text cannot forge a
 
 ### Sidebar "Messages" section
 
-Owner request: a "Messages" section in the right sidebar, under "Prompts". This build ships it for OpenCode 1.x (`v1-tui/tui.tsx`, slot order 60, after Prompts at 50) through `tui-messages.mjs`. OpenCode 2 is a follow-up: the V2 server plugin (`v2.mjs`) does not run the bus yet, so a V2 sidebar would never show traffic. The TUI reads the current root session's bus files directly, with no server round trip, every 5s. It shows the latest 6 messages, newest first: `← handle: text` for received, `→ handle: text` for sent, `•` while undelivered. The header collapses like Prompts. The section is hidden when the session has no traffic. Disable it with `AIDEVOPS_TUI_MESSAGES=false`. Toasts are the only notification (owner answer 2): no bell or OS notification.
+Owner request: a "Messages" section in the right sidebar, under "Prompts". This build ships it for OpenCode 1.x (`v1-tui/tui.tsx`, slot order 60, after Prompts at 50) through `tui-messages.mjs`. OpenCode 2 (t18888, GH#37157) registers the same section with `api.ui.slot` on `sidebar.content`, after the Prompts slot is ready; `v2.mjs` runs the bus, so it shows V2 traffic. The TUI reads the current root session's bus files directly, with no server round trip, every 5s. It shows the latest 6 messages, newest first: `← handle: text` for received, `→ handle: text` for sent, `•` while undelivered. The header collapses like Prompts. The section is hidden when the session has no traffic. Disable it with `AIDEVOPS_TUI_MESSAGES=false`. Toasts are the only notification (owner answer 2): no bell or OS notification.
 
 ### Origin, outbox and chat-gateway wiring
 
@@ -252,7 +252,7 @@ Total for Phases 0–2: ~3 days (ai:2d test:0.5d read:0.5d).
 | `.agents/plugins/opencode-aidevops/tests/test-session-bus.mjs` (new) | Deterministic coverage: target resolution, limits, claim-once, framing, wake budget |
 | `.agents/reference/session-bus.md` (new) | Docs |
 
-Follow-up (not in this build): OpenCode 2 support (t18888, GH#37157). Run the bus from `v2.mjs` and add the sidebar section to `v2-plugin/tui.mjs`.
+OpenCode 2 support (t18888, GH#37157): `session-bus-v2.mjs` adapts the V2 plugin surface (client, `{ type, data }` events, `prompt` hook, `session.synthetic` wakes) onto the same runtime; `v2.mjs` wires it, and `tui-messages.mjs` `setupMessagesSlot` adds the sidebar section to `v2-plugin/tui.mjs` after Prompts. Coverage: `tests/test-session-bus-v2.mjs`.
 
 ## Verification plan
 
@@ -273,6 +273,7 @@ Follow-up (not in this build): OpenCode 2 support (t18888, GH#37157). Run the bu
 - **2026-11-07 — Keep chat-app wiring in mind** (owner turn 3): origin field, outbox, channel binding and per-task launch contract above. Gateways stay in Phase 3.
 - **2026-11-07 — No `.agents/AGENTS.md` line:** the file is at its byte ratchet; the tool description carries the rule.
 - **2026-11-08 — 5s poll, no `fs.watch`** (agent decision during build): one `readdir` per inbox every 5s costs little, and a poll cannot miss an event the way a watcher can.
-- **2026-11-08 — OpenCode 2 sidebar deferred** (agent decision during build; owner to confirm): the V2 server plugin does not run the bus, so a V2 Messages section would always be empty. Follow-up: t18888 (GH#37157).
+- **2026-11-08 — OpenCode 2 sidebar deferred** (agent decision during build; owner to confirm): the V2 server plugin does not run the bus, so a V2 Messages section would always be empty. Follow-up: t18888 (GH#37157), now built.
 - **2026-11-08 — `reply` only answers asks** (live-test fix), so replies cannot set off further replies.
+- **2026-11-08 — OpenCode 2 channels** (t18888, agent decision from the 2.0.18 host): the V2 server plugin context has `session.get` and `session.synthetic` but no `promptAsync`, `status` or toast. Turn delivery appends to the `prompt` hook's text (V2 has no synthetic user-message parts); wakes insert a synthetic message with `resume: true`, which keeps wake text out of the Prompts sidebar; the woken turn takes its hop count from `session.execution.started`, because synthetic input skips the prompt hook. Status comes from `session.execution.*` events. No toast in V2.
 - **Deferred — old mailbox retirement** (Phase 4; owner: "decide later"). `mail-helper*.sh` and its callers stay untouched.

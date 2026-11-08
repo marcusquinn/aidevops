@@ -175,6 +175,16 @@ class SessionBus {
     }
   }
 
+  /**
+   * A turn began without chat.message: an OpenCode 2 wake inserts a synthetic
+   * message, which never passes the prompt hook. Carry the wake's hop count
+   * into that turn, as chatMessage does for a V1 promptAsync wake (t18888).
+   */
+  turnStarted(sessionID) {
+    const state = this.sessions.get(sessionID);
+    if (state?.wakePending) rememberTurn(state, {}, this.now());
+  }
+
   /** Busy delivery for root sessions; returns the number of messages appended. */
   toolAfter(input, output) {
     if (!this.messageable || !this.tree.isKnownRoot(input?.sessionID)) return 0;

@@ -35,6 +35,7 @@ import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
 import { releasePreEditSessionOwnership } from "./pre-edit-check-process.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
+import { createV2SessionBusHooks } from "./session-bus-v2.mjs";
 import { createSessionModelStore, createShellEnvHook } from "./shell-env.mjs";
 import {
   appendConversationSystemContext,
@@ -300,10 +301,14 @@ export function defineAidevopsV2Adapter(setup) {
   return { id: "aidevops", setup };
 }
 
-async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat }) {
+async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus }) {
   await stopEvents?.().catch(() => {});
   // GH#35898: a disposed instance must not leave a stale idle heartbeat.
   dbActivityHeartbeat?.remove();
+  // t18888: stop polling and withdraw this instance's presence records.
+  try {
+    sessionBus?.dispose();
+  } catch { /* best-effort cleanup */ }
   try {
     boundedOperationManager?.dispose();
   } catch { /* best-effort cleanup */ }
@@ -355,6 +360,7 @@ export async function setupAidevopsV2(ctx) {
   let boundedOperationManager;
   let stopEvents;
   let dbActivityHeartbeat;
+  let sessionBus;
   try {
     await mcpRuntime.initialize();
     const client = createCompatibilityClient(ctx, mcpRuntime.client);
@@ -363,6 +369,14 @@ export async function setupAidevopsV2(ctx) {
       scriptsDir: SCRIPTS_DIR,
       recordOutput: createOutputSandboxRecorder(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
       readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
+    });
+    // t18888: same session bus as V1 (presence, delivery, wakes); messaging
+    // only in TUI/serve/ACP processes. qualityLog is defined below, so bind lazily.
+    sessionBus = createV2SessionBusHooks({
+      ctx,
+      directory,
+      headless: isHeadless(),
+      log: (level, message) => qualityLog(level, message),
     });
     const baseTools = createSchemaGatedTools(tool, () => {
       const tools = createTools(SCRIPTS_DIR, run, {
@@ -378,6 +392,7 @@ export async function setupAidevopsV2(ctx) {
         boundedOperationManager,
       });
       tools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+      sessionBus.addTool(tools, tool);
       return tools;
     });
 
@@ -472,6 +487,8 @@ export async function setupAidevopsV2(ctx) {
     }));
     await register(registrations, ctx.tool.hook("execute.after", async (event) => {
       const output = legacyToolOutput(event.result || {});
+      // t18888: before quality hooks, so output scrubbing also covers peer messages.
+      sessionBus.toolAfter(event, output);
       await toolExecuteAfter(v1HookInput(event), output);
       if (event.status === "completed") applyLegacyToolOutput(event.result, output);
     }));
@@ -487,6 +504,9 @@ export async function setupAidevopsV2(ctx) {
     });
     await register(registrations, ctx.session.hook("prompt", async (event) => {
       compactionReplay.recordPrompt(event);
+      // t18888: after the verbatim record, deliver pending session-bus messages
+      // with this turn (V2 has no synthetic user-message parts).
+      await sessionBus.prompt(event);
     }));
     // Released 2.0.3 dispatches these hooks separately on the base transcript.
     // Keep framework transformations identical before adding compaction's tail.
@@ -553,6 +573,7 @@ export async function setupAidevopsV2(ctx) {
         permissionBroker.handleEvent(input),
         providerErrorHandler(input),
         Promise.resolve().then(() => heartbeat.handleEvent(input)),
+        sessionBus.handleEvent(input),
       ]);
     });
     recordPluginHealthStage("factory_initialized", {
@@ -562,10 +583,10 @@ export async function setupAidevopsV2(ctx) {
     });
 
     return async () => {
-      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat });
+      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus });
     };
   } catch (error) {
-    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat });
+    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus });
     throw error;
   }
 }
