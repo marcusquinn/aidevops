@@ -11,6 +11,7 @@ GIT_SHIM="${SCRIPTS_DIR}/git"
 TEST_ROOT="${PWD}/.agents/tmp/test-remote-branch-cleanup.$$"
 export WORKTREE_REGISTRY_DIR="$TEST_ROOT/registry"
 export WORKTREE_REGISTRY_DB="$WORKTREE_REGISTRY_DIR/owners.db"
+export AIDEVOPS_LIFECYCLE_STATE_DIR="$TEST_ROOT/lifecycle-state"
 # Every scan now fetches through a linked transport (GH#36601); keep those
 # transports inside the fixture instead of the user's worktree base.
 export AIDEVOPS_WORKTREE_BASE_DIR="$TEST_ROOT/worktrees"

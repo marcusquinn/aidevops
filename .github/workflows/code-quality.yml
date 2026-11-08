@@ -507,7 +507,31 @@ jobs:
     - name: Profile README Contributions Fail-Closed Guard
       run: |
         echo "Running profile README contributions fail-closed regression guard..."
-        bash .agents/scripts/tests/test-profile-readme-contributions-fail-closed.sh
+        # The real /proc census fails closed on unreadable same-UID tasks, so
+        # run outside the runner UID (see Worker Lifecycle contract step).
+        sudo useradd --create-home --shell /bin/bash profile-contract
+        dir="$GITHUB_WORKSPACE"
+        while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
+        # Fixture cleanup needs a registered managed-run owner, which needs the
+        # user's systemd manager AND the separate D-Bus user-session socket.
+        # Linger starts the manager but does not provide/activate the bus units.
+        sudo apt-get update -qq
+        sudo apt-get install -y dbus-user-session
+        sudo loginctl enable-linger profile-contract
+        uid="$(id -u profile-contract)"
+        sudo systemctl start "user@${uid}.service"
+        sudo -H -u profile-contract env XDG_RUNTIME_DIR="/run/user/$uid" \
+          systemctl --user start dbus.socket
+        for _ in $(seq 1 30); do
+          sudo test -S "/run/user/$uid/bus" && break
+          sleep 1
+        done
+        sudo test -S "/run/user/$uid/bus" || { echo "::error::user session bus unavailable for profile-contract"; exit 1; }
+        sudo -H -u profile-contract env PATH="$PATH" \
+          XDG_RUNTIME_DIR="/run/user/$uid" \
+          DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
+          bash "$GITHUB_WORKSPACE/.agents/scripts/tests/test-profile-readme-contributions-fail-closed.sh"
         echo "Profile README contributions fail-closed guard passed"
 
     - name: Stats Functions Characterization (t2044)
@@ -685,7 +709,19 @@ jobs:
       env:
         PYTHONDONTWRITEBYTECODE: '1'
         PYTHONPATH: .agents/worker-lifecycle
-      run: python3 -B -m unittest discover -s .agents/worker-lifecycle/tests -v
+      run: |
+        # The real /proc census fails closed on unreadable same-UID tasks.
+        # Keep runner-owned non-dumpable services outside the fixture UID;
+        # do not weaken the production guard or run the contracts as root.
+        sudo useradd --create-home --shell /bin/bash lifecycle-contract
+        # Runner home directories are not traversable by other users.
+        dir="$GITHUB_WORKSPACE"
+        while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
+        sudo -H -u lifecycle-contract env \
+          PATH="$PATH" PYTHONDONTWRITEBYTECODE="$PYTHONDONTWRITEBYTECODE" \
+          PYTHONPATH="$GITHUB_WORKSPACE/$PYTHONPATH" \
+          python3 -B -m unittest discover \
+          -s "$GITHUB_WORKSPACE/.agents/worker-lifecycle/tests" -v
 
     - name: Git Safety Guard Regression Suite (GH#36433)
       env:

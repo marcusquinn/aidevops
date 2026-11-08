@@ -207,6 +207,41 @@ class RetirementContract(unittest.TestCase):
         self.assertEqual(self.retire()["status"], "retired")
         self.assertEqual((self.target / "replacement").read_text(), "keep")
 
+    def test_resume_plan_rechecks_live_source(self):
+        self.create()
+        with patch.object(retirement, "_finish", side_effect=OSError("interrupted")):
+            with self.assertRaisesRegex(OSError, "interrupted"):
+                self.retire()
+        previous = Path.cwd()
+        try:
+            os.chdir(self.target)
+            with self.assertRaisesRegex(ValueError, "live-process-reference"):
+                self.retire()
+            self.assertTrue(self.target.is_dir())
+        finally:
+            os.chdir(previous)
+        self.assertEqual(self.retire()["status"], "retired")
+
+    def test_resume_move_rechecks_private_tree_not_public_replacement(self):
+        self.create()
+        self.interrupt_after_move()
+        plan = retirement._event(
+            self.store, retirement._event_id(self.generation, "planned"),
+        )
+        private = Path(plan["container"]) / "tree"
+        previous = Path.cwd()
+        try:
+            os.chdir(private)
+            with self.assertRaisesRegex(ValueError, "live-process-reference"):
+                self.retire()
+            self.assertTrue(private.is_dir())
+            self.target.mkdir()
+            os.chdir(self.target)
+            self.assertEqual(self.retire()["status"], "retired")
+            self.assertTrue(self.target.is_dir())
+        finally:
+            os.chdir(previous)
+
     def test_git_lock_blocks_retirement_until_unlocked(self):
         self.create()
         self.git("worktree", "lock", str(self.target))

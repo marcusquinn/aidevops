@@ -82,6 +82,21 @@ class AbsenceContract(unittest.TestCase):
         self.assertEqual(report["results"][0]["status"], "waiting-for-runs")
         self.assertTrue(self.reserved())
 
+    def test_live_tree_reference_prevents_admission_closure(self):
+        self.create()
+        self.generation = GenerationEnrollment(self.store).inspect(self.target)
+        with patch("worker_lifecycle.retirement.require_idle_processes",
+                   side_effect=ValueError("live-process-reference")) as guard:
+            report = self.cleanup()
+        guard.assert_called()
+        self.assertEqual(report["results"][0]["reason"], "live-process-reference")
+        with self.store.connection() as connection:
+            state = connection.execute(
+                "SELECT state FROM generation_admissions WHERE generation_id=?",
+                (self.generation,),
+            ).fetchone()[0]
+        self.assertEqual(state, "open")
+
     def test_unknown_owner_prevents_reconciliation(self):
         self.missing()
 
@@ -123,6 +138,17 @@ class AbsenceContract(unittest.TestCase):
         report = self.cleanup()
         self.assertEqual(report["results"][0]["status"], "source-absence-unconfirmed")
         self.assertTrue(self.reserved())
+
+    def test_missing_parent_unbound_reservation_is_reconciled_once(self):
+        self.target = self.root / "parent" / "worktree"
+        self.target.parent.mkdir()
+        self.missing(created=False)
+        self.target.parent.rmdir()
+        report = self.cleanup()
+        self.assertEqual(report["results"][0]["status"], "source-absent-reconciled")
+        self.assertEqual(report["results"][0]["reason"], "parent-missing")
+        self.assertFalse(self.reserved())
+        self.assertEqual(self.cleanup()["examined"], 0)
 
     def test_replacement_before_commit_is_retained(self):
         self.missing()
