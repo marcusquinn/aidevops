@@ -55,7 +55,12 @@ def writer_released(connection):
     connection.execute("BEGIN IMMEDIATE")
 
 
-def released_pull_requests(connection, slug):
+def pass_pull_requests(options):
+    """Pass-memoised open-PR lookup for prechecks and journaled plans (GH#37181)."""
+    return partial(options.pull_requests.get, lookup=open_pull_requests)
+
+
+def released_pull_requests(connection, options, slug):
     """Open-PR lookup that never holds the registry writer across the network.
 
     GitHub state is not serialized by the registry. A plan built with this
@@ -63,17 +68,18 @@ def released_pull_requests(connection, slug):
     registry and /proc checks all run under the reacquired writer (GH#36921).
     """
     with writer_released(connection):
-        return open_pull_requests(slug)
+        return pass_pull_requests(options)(slug)
 
 
-def prefetched_pull_requests(connection, slug):
-    """Fetch the journaled plan's slug without the writer; serve only that result.
+def prefetched_pull_requests(connection, options, slug):
+    """Freshly fetch the journaled plan's slug without the writer; serve only that.
 
     `plan["repo"]` is part of the compared plan, so a refreshed plan for any other
-    repository never equals the journaled plan and removal is refused.
+    repository never equals the journaled plan and removal is refused. This lookup
+    is never served from the pass memo, so removal rests on current GitHub state.
     """
     with writer_released(connection):
-        prs = open_pull_requests(slug)
+        prs = options.pull_requests.refresh(slug, open_pull_requests)
     return lambda _requested: prs
 
 
@@ -197,7 +203,7 @@ def take_over_managed(store, item, repositories, adapter, options):
     absent source through its existing source-absent path.
     """
     require_managed_takeover(reconstructible, item, repositories, adapter,
-                             open_pull_requests, managed_min_age=options.min_age)
+                             pass_pull_requests(options), managed_min_age=options.min_age)
     return process_reconstructible(store, item, repositories, adapter, options)
 
 
@@ -312,20 +318,21 @@ def process_reconstructible(store, item, repositories, adapter, options):
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
     if not options.apply:
         with store.connection() as connection:
-            reconstructible_plan(connection, open_prs=open_pull_requests)
+            reconstructible_plan(connection, open_prs=pass_pull_requests(options))
         return outcome, 1, 0
     probe = host_probe(store)
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         # GitHub lookups release the writer (GH#36921); this plan is only journaled.
-        plan = reconstructible_plan(connection, open_prs=partial(released_pull_requests, connection))
+        plan = reconstructible_plan(
+            connection, open_prs=partial(released_pull_requests, connection, options))
         test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
         revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
         checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
         # Fetch GitHub without the writer, then refresh every registry, Git and
         # /proc check under the reacquired writer immediately before removal.
         current = reconstructible_plan(
-            connection, open_prs=prefetched_pull_requests(connection, plan["repo"]))
+            connection, open_prs=prefetched_pull_requests(connection, options, plan["repo"]))
         if current != plan:
             raise ValueError("reconstructible-source-changed")
         _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])

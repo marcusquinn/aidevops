@@ -226,6 +226,40 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertEqual(result["status"], "retained", result)
         self.assertTrue(self.target.exists())
 
+    def second_target(self):
+        target = self.base / "repository-second"
+        self.git("worktree", "add", "-q", "-b", "second", str(target))
+        self.git("update-ref", "refs/remotes/origin/second", self.head)
+        self.target = target
+        self.item = dict(self.item, path=str(target))
+
+    def test_takeover_precheck_and_plan_share_one_lookup_removal_refreshes(self):
+        """GH#37181: one memoised lookup per slug per pass; removal stays fresh."""
+        generation = self.reserve_managed()
+        AdmissionRegistry(self.store).authorize_enrolled_only(
+            enrolled_only_event_id(generation), generation)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual(self.prs.call_count, 2)  # precheck+plan, pre-removal refresh
+        self.item = dict(self.item, modern=False, generations=set(), runs={}, unbound=True)
+        self.second_target()
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual(self.prs.call_count, 3)  # only the second removal's refresh
+
+    def test_deferred_lookup_is_concrete_and_not_retried_in_pass(self):
+        """A `gh` governor deferral (exit 75) holds every item without more calls."""
+        self.prs.side_effect = subprocess.CalledProcessError(75, ["gh", "api"])
+        self.assert_retained("pull-request-state-unavailable")
+        self.second_target()
+        self.assert_retained("pull-request-state-unavailable")
+        self.assertEqual(self.prs.call_count, 1)
+        # A new pass looks up again rather than inheriting the failure.
+        self.prs.side_effect = None
+        self.options = CleanupOptions(self.output, apply=True, min_age=0)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+
     def test_untracked_files_remain(self):
         (self.target / "keep").write_text("untracked")
         self.assert_retained("nonempty-worktree-state")
