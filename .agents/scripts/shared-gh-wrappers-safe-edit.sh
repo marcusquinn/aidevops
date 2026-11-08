@@ -129,34 +129,6 @@ _gh_extract_number_from_args() {
 }
 
 #######################################
-# Extract the --repo value from a gh arg list.
-# Output: "owner/repo" on stdout, or empty if not present.
-#######################################
-_gh_extract_repo_from_args() {
-	local i=0
-	local -a args=("$@")
-	while [[ $i -lt ${#args[@]} ]]; do
-		case "${args[i]}" in
-		--repo | -R)
-			if [[ -n "${args[i + 1]:-}" && "${args[i + 1]}" != -* ]]; then
-				echo "${args[i + 1]}"
-			else
-				echo ""
-			fi
-			return 0
-			;;
-		--repo=*)
-			echo "${args[i]#--repo=}"
-			return 0
-			;;
-		esac
-		i=$((i + 1))
-	done
-	echo ""
-	return 0
-}
-
-#######################################
 # Fetch issue state as JSON for the audit log.
 # Non-blocking: returns an explicitly unavailable snapshot on any failure so a
 # read outage can never masquerade as a destructive edit.
