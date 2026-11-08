@@ -70,6 +70,7 @@ import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
 import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
 import { stampCommandPrompt } from "./tui-prompts.mjs";
 import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
+import { createSessionBusHooks } from "./session-bus-plugin.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
 import { createNativeDesktopFocusGuard } from "./native-desktop-focus-guard.mjs";
@@ -438,6 +439,16 @@ export async function AidevopsPlugin({ directory, client }) {
     readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
   });
   process.once("exit", () => boundedOperationManager.dispose());
+  // t18886: presence for every root session; messaging only in interactive
+  // TUI/serve/ACP processes. Headless workers publish read-only presence.
+  // The loggers are defined below, so they are bound lazily.
+  const sessionBus = createSessionBusHooks({
+    client,
+    directory,
+    headless: isHeadless(),
+    onError: (label, err) => debugEventError(label, err),
+    log: (level, message) => qualityLog(level, message),
+  });
   const baseTools = createSchemaGatedTools(tool, () => {
     const tools = createTools(SCRIPTS_DIR, run, {
       aidevopsRun: runChecked,
@@ -454,6 +465,7 @@ export async function AidevopsPlugin({ directory, client }) {
       boundedOperationManager,
     });
     tools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+    sessionBus.addTool(tools, tool);
     // GH#32592: V1 sends every tool schema on every request, so rarely used
     // tools sit behind one compact dispatcher. V2's Code Mode already defers them.
     moveToolsOnDemand(tools, tool);
@@ -723,8 +735,13 @@ export async function AidevopsPlugin({ directory, client }) {
     tool: baseTools,
     "tool.definition": adaptToolDefinition,
 
-    // Record routed request identity and select parent-safe child effort.
-    "chat.message": subagentEffortHooks.chatMessage,
+    // Record routed request identity and select parent-safe child effort,
+    // then deliver pending session-bus messages on the user turn (t18886).
+    "chat.message": async (input, output) => {
+      const result = await subagentEffortHooks.chatMessage(input, output);
+      await sessionBus.chatMessage(input, output);
+      return result;
+    },
     "chat.params": async (input, output) => {
       // GH#34125: first, so a bound session never reaches the provider stream
       // (parent turns, subagents, compaction and resumed sessions alike).
@@ -772,6 +789,8 @@ export async function AidevopsPlugin({ directory, client }) {
       sessionStallRecovery.afterTool(input, output);
       await cancellationReceipt.afterTool(input, output);
       await subagentEffortHooks.afterTool(input, output);
+      // Before quality hooks, so output scrubbing also covers peer messages.
+      sessionBus.toolAfter(input, output);
       return toolExecuteAfter(input, output);
     },
 
@@ -813,6 +832,7 @@ export async function AidevopsPlugin({ directory, client }) {
         Promise.resolve(sessionStallRecovery.handleEvent(input)),
         sessionTurnDiagnostics.handleEvent(input).catch((err) => debugEventError("turn diagnostics", err)),
         Promise.resolve().then(() => dbActivityHeartbeat.handleEvent(input)).catch((err) => debugEventError("db activity heartbeat", err)),
+        sessionBus.handleEvent(input),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
       ]);
     },

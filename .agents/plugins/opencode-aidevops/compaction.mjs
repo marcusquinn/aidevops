@@ -8,6 +8,11 @@ import { execFileSync, execSync } from "child_process";
 import { createHash } from "crypto";
 import { isAbsolute, join, resolve } from "path";
 
+import { getSessionBusState } from "./session-bus-compaction.mjs";
+
+// t18886: existing callers import the session-bus note from this module.
+export { getSessionBusState };
+
 const CAMPAIGN_CHECKPOINT_MAX_BYTES = 512 * 1024;
 const CAMPAIGN_CATEGORY_LIMIT = 10;
 const CAMPAIGN_SCHEMA_VERSION = 1;
@@ -392,12 +397,12 @@ export function compactionSummaryRules(host = "opencode1") {
 /**
  * Compaction hook — inject aidevops context into compaction summary.
  * @param {object} deps - { workspaceDir, scriptsDir, campaignTempRoot? }
- * @param {object} _input - { sessionID }
+ * @param {object} input - { sessionID }
  * @param {object} output - { context: string[], prompt?: string }
  * @param {string} directory - Working directory
  * @param {object} [options] - { host: "opencode1" | "opencode2" }
  */
-export async function compactingHook(deps, _input, output, directory, options = {}) {
+export async function compactingHook(deps, input, output, directory, options = {}) {
   const { workspaceDir, scriptsDir, campaignTempRoot } = deps;
   const host = options.host === "opencode2" ? "opencode2" : "opencode1";
 
@@ -409,6 +414,7 @@ export async function compactingHook(deps, _input, output, directory, options = 
     getRelevantMemories(scriptsDir, directory),
     getGitContext(directory),
     getMailboxState(scriptsDir),
+    getSessionBusState(input?.sessionID, deps.sessionBusRoot),
   ].filter(Boolean);
 
   output.context.push(

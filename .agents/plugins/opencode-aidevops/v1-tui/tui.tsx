@@ -17,6 +17,7 @@ import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { homedir } from "node:os";
 import { createVersionReader, formatVersionLabel } from "../v2-plugin/tui.mjs";
 import { extractPromptRows, isPromptsEnabled, openPromptsTimeline } from "../tui-prompts.mjs";
+import { isMessagesEnabled, MESSAGES_POLL_MS, messageRows, rootSessionID } from "../tui-messages.mjs";
 
 export const AIDEVOPS_V1_TUI_PLUGIN_ID = "aidevops-tui";
 const VERSION_POLL_MS = 5000;
@@ -48,6 +49,36 @@ function PromptsView(props: { api: TuiPluginApi; sessionID: string }) {
         <Show when={open()}>
           <For each={rows()}>
             {(row) => <text fg={theme().text} wrapMode="none" onMouseUp={timeline}>{row.text}</text>}
+          </For>
+        </Show>
+      </box>
+    </Show>
+  );
+}
+
+// t18886: session-bus traffic for the root session, refreshed by `tick`.
+function MessagesView(props: { api: TuiPluginApi; sessionID: string; tick: () => number }) {
+  const [open, setOpen] = createSignal(true);
+  const theme = () => props.api.theme.current;
+  const rows = createMemo(() => {
+    props.tick();
+    const root = rootSessionID((id: string) => props.api.state.session.get(id), props.sessionID);
+    return messageRows(root);
+  });
+  return (
+    <Show when={rows().length > 0}>
+      <box>
+        <box flexDirection="row">
+          <text fg={theme().text} onMouseDown={() => setOpen((value) => !value)}>
+            <b>{open() ? "▼ Messages" : "▶ Messages"}</b>
+          </text>
+          <Show when={!open()}>
+            <text fg={theme().textMuted}> ({rows().length})</text>
+          </Show>
+        </box>
+        <Show when={open()}>
+          <For each={rows()}>
+            {(row) => <text fg={row.pending ? theme().text : theme().textMuted} wrapMode="none">{row.text}</text>}
           </For>
         </Show>
       </box>
@@ -219,6 +250,22 @@ const tui: TuiPlugin = async (api) => {
       slots: {
         sidebar_content(_ctx, props) {
           return <PromptsView api={api} sessionID={props.session_id} />;
+        },
+      },
+    });
+  }
+
+  if (isMessagesEnabled()) {
+    const [tick, setTick] = createSignal(0);
+    const messagesTimer = setInterval(() => setTick((value) => value + 1), MESSAGES_POLL_MS);
+    messagesTimer.unref?.();
+    api.lifecycle.onDispose(() => clearInterval(messagesTimer));
+    // Under Prompts (50), ahead of the built-in sections (100-500).
+    api.slots.register({
+      order: 60,
+      slots: {
+        sidebar_content(_ctx, props) {
+          return <MessagesView api={api} sessionID={props.session_id} tick={tick} />;
         },
       },
     });
