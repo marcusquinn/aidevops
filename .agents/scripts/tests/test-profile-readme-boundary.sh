@@ -93,8 +93,9 @@ install_helper_with_libs() {
 	local helper_path="${helper_dir}/profile-readme-helper.sh"
 	cp "${SOURCE_HELPER}" "${helper_path}"
 	chmod +x "${helper_path}"
-	cp "${SOURCE_DATA_LIB}" "${helper_dir}/profile-readme-data-lib.sh"
-	cp "${SOURCE_RENDER_LIB}" "${helper_dir}/profile-readme-render-lib.sh"
+	# Copy the profile-readme module family as a unit so helper splits cannot
+	# leave the isolated fixture without a sourced sub-library.
+	cp "${SOURCE_HELPER%/*}"/profile-readme-*-lib.sh "${helper_dir}/" || return 1
 	cp "${SOURCE_HELPER%/*}/profile-contribution-chart.py" "${helper_dir}/profile-contribution-chart.py"
 	cp "${SOURCE_HELPER%/*}/profile_contribution_data.py" "${helper_dir}/profile_contribution_data.py"
 	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh shared-worktree-create.sh worker-lifecycle-state.sh gh-closing-reference-lib.sh || return 1
