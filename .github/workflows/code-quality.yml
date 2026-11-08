@@ -512,7 +512,18 @@ jobs:
         sudo useradd --create-home --shell /bin/bash profile-contract
         dir="$GITHUB_WORKSPACE"
         while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
+        # Fixture cleanup needs a registered managed-run owner, which needs the
+        # user's systemd manager and session bus: start it via linger.
+        sudo loginctl enable-linger profile-contract
+        uid="$(id -u profile-contract)"
+        for _ in $(seq 1 30); do
+          [ -S "/run/user/$uid/bus" ] && break
+          sleep 1
+        done
+        [ -S "/run/user/$uid/bus" ] || { echo "::error::user session bus unavailable for profile-contract"; exit 1; }
         sudo -H -u profile-contract env PATH="$PATH" \
+          XDG_RUNTIME_DIR="/run/user/$uid" \
+          DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
           GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
           bash "$GITHUB_WORKSPACE/.agents/scripts/tests/test-profile-readme-contributions-fail-closed.sh"
         echo "Profile README contributions fail-closed guard passed"

@@ -6,7 +6,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from worker_lifecycle import legacy_proc, retirement
+from worker_lifecycle import legacy_proc, legacy_proc_macos, retirement
 
 
 class RetirementProcesses(unittest.TestCase):
@@ -30,8 +30,8 @@ class RetirementProcesses(unittest.TestCase):
 
     def observe(self, output, *, code=0, stderr=b""):
         result = subprocess.CompletedProcess([], code, output, stderr)
-        with patch.object(legacy_proc.subprocess, "run", return_value=result):
-            legacy_proc.require_idle_macos(Path("/work/tree with\nnewline"))
+        with patch.object(legacy_proc_macos.subprocess, "run", return_value=result):
+            legacy_proc_macos.require_idle_macos(Path("/work/tree with\nnewline"))
 
     def census(self, name=b"/outside"):
         return (b"p" + str(os.getpid()).encode() + b"\0\nfcwd\0n/elsewhere\0\n"
@@ -59,9 +59,9 @@ class RetirementProcesses(unittest.TestCase):
                     self.observe(output, code=code, stderr=stderr)
 
     def test_macos_unavailable_binary_fails_closed(self):
-        with patch.object(legacy_proc.subprocess, "run", side_effect=FileNotFoundError):
+        with patch.object(legacy_proc_macos.subprocess, "run", side_effect=FileNotFoundError):
             with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
-                legacy_proc.require_idle_macos(Path("/work/tree"))
+                legacy_proc_macos.require_idle_macos(Path("/work/tree"))
 
     def test_native_dispatch(self):
         path = Path("/work/tree")
