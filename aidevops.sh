@@ -1312,6 +1312,7 @@ _help_commands() {
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
 	echo "  tabby <cmd>        Manage Tabby profiles (sync/status) and remote tmux tabs (sessions)"
 	echo "  buzz <cmd>         Manage Buzz Desktop OpenCode ACP compatibility"
+	echo "  opencode-browse [cmd] Drive your own browser via OpenCode browse (status/pair/install/doctor)"
 	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
 	echo "  detect             Find and register aidevops projects"
 	echo "  uninstall          Remove aidevops from your system"
@@ -2211,6 +2212,7 @@ _main_dispatch() {
 	email) _cmd_email "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
+	opencode-browse) _dispatch_helper "opencode-browse-helper.sh" "opencode-browse-helper.sh" "${@:-status}" ;;
 	buzz) _dispatch_helper "buzz-desktop-helper.sh" "buzz-desktop-helper.sh" "$@" ;;
 	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;
 	parent-status | ps) _dispatch_helper "parent-status-helper.sh" "parent-status-helper.sh" "$@" ;;
