@@ -26,6 +26,8 @@ _ddpr_gh_read() {
 
 _DDPR_LOOKUP_RC_RESPONSE_INVALID=13
 _DDPR_LOOKUP_RC_COMMIT_PERMISSION=77
+# Distinct from cache miss (1): keychain locked, so no gh read may run (GH#37232).
+_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE=3
 _DDPR_LOOKUP_RESULT_UNCERTAIN="PR_LOOKUP_RESULT=uncertain"
 _DDPR_LOOKUP_SCOPE_TASK_ID_TITLE="task_id_title"
 _DDPR_LOOKUP_SCOPE_OPEN_COMMITS="open_commits"
@@ -46,7 +48,7 @@ _ddpr_commit_denial_cache() {
 		if [[ -r "${_ddpr_dir}/background-keychain-helper.sh" ]]; then
 			# shellcheck source=./background-keychain-helper.sh
 			source "${_ddpr_dir}/background-keychain-helper.sh"
-			background_keychain_gh_ready "dispatch-dedup-pr" || return 1
+			background_keychain_gh_ready "dispatch-dedup-pr" || return "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE"
 		fi
 		token=$(gh auth token 2>/dev/null) || token=""
 	fi
@@ -501,7 +503,9 @@ _ddpr_graphql_open_commits() {
 	local page_count=0 max_pages="${AIDEVOPS_DEDUP_COMMIT_MAX_PAGES:-10}"
 	[[ "$max_pages" =~ ^[1-9][0-9]*$ && "$max_pages" -le 20 ]] || max_pages=10
 	[[ -n "$owner" && -n "$repo" && "$repo_slug" == */* && "$repo" != */* ]] || return 1
-	if _ddpr_commit_denial_cache check "$repo_slug"; then
+	local cache_rc=0
+	_ddpr_commit_denial_cache check "$repo_slug" || cache_rc=$?
+	if [[ "$cache_rc" -eq 0 || "$cache_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
 		return "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
 	fi
 
@@ -1073,7 +1077,9 @@ has_open_pr() {
 
 	# A repository-wide evidence denial applies to every candidate, not just the
 	# issue that discovered it. Do not repeat any admission scan during cooldown.
-	if _ddpr_commit_denial_cache check "$repo_slug"; then
+	local denial_rc=0
+	_ddpr_commit_denial_cache check "$repo_slug" || denial_rc=$?
+	if [[ "$denial_rc" -eq 0 || "$denial_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
 		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
 		return 0
 	fi

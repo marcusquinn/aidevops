@@ -1591,12 +1591,15 @@ _dsi_validate_dispatch_target() {
 _dsi_guard_cached_commit_denial() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	if (
+	local cache_rc=0
+	(
 		# shellcheck source=./dispatch-dedup-pr.sh
 		# shellcheck disable=SC1091
 		source "${_DSI_SCRIPT_DIR}/dispatch-dedup-pr.sh"
 		_ddpr_commit_denial_cache check "$repo_slug"
-	); then
+	) || cache_rc=$?
+	# 0 = cached denial; 3 = keychain unavailable (no safe gh read) -> uncertain
+	if [[ "$cache_rc" -eq 0 || "$cache_rc" -eq 3 ]]; then
 		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
 			'PR_LOOKUP_RESULT=uncertain reason=commit_permission_denied scope=open_commits' 0 || true
 		return 75
