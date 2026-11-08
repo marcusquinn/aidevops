@@ -39,7 +39,7 @@ sudo. The aidevops command policy blocks multiline commands, redirection and
 | Question | Evidence |
 |----------|----------|
 | Who logged in, and when? | `last -30`; `log show --start "<time>" --end "<time>" --predicate 'process == "loginwindow"'` |
-| Was the password rejected or changed? | Same window with `process == "opendirectoryd"`, `"authd"`, `"securityd"`; `MKBUnlockDevice` errors; `dscl . -read /Users/<user> accountPolicyData` (`passwordLastSetTime`, `failedLoginCount`) |
+| Was the password rejected or changed? | Same window with `process == "opendirectoryd"`, `"authd"`, `"securityd"`; `MKBUnlockDevice` errors; `dscl . -read` of the user's record, key `accountPolicyData` (`passwordLastSetTime`, `failedLoginCount`) |
 | Did the Mac sleep, wake or reboot? | `pmset -g log` (filter for Wake, Sleep and Shutdown entries); `uptime`; `last reboot` |
 | Was anyone connected remotely? | `screensharingd`, `sshd` and ARD entries in `log show`; `lsof -nP -iTCP -sTCP:LISTEN` for ports 22, 5900 and 3283 |
 | Which remote-access agents exist? | `launchctl list`, `/Library/LaunchDaemons`, `/Library/LaunchAgents`, `~/Library/LaunchAgents`; look for TeamViewer, AnyDesk, Splashtop, Acronis/Remotix (`com.nulana.rxagentmac`), ConnectWise, LogMeIn |
