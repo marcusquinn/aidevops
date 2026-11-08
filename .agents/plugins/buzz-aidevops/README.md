@@ -42,9 +42,12 @@ path, so later updates never reach it. After an update that adds host access,
 Buzz asks you to review it again.
 
 **One-time migration** if you installed from the old path: open **Settings →
-Plugins → Manage plugins → aidevops → Update plugin** and choose
-`~/.aidevops/plugins/buzz-aidevops`. Adding it again fails with "Already
-installed"; only the plugin's own Update control can replace its source.
+Plugins → Manage plugins → aidevops**, choose **⋯ → remove**, then **Add** and
+choose `~/.aidevops/plugins/buzz-aidevops` (in the macOS folder picker, press
+⌘⇧G and paste the path). Buzz has no control to change an installed plugin's
+source folder: its **Update** button appears only after the saved folder
+changes, and adding the plugin again without removing it fails with "Already
+installed".
 
 ## Create an aidevops agent
 
@@ -60,8 +63,13 @@ installed"; only the plugin's own Update control can replace its source.
    works in its own linked worktree (`<repo>-buzz-<computer>-<agent>` in the
    aidevops worktree folder), never in the folder itself.
 4. Leave **aidevops agent** empty to use the Buzz agent's name, or enter the
-   per-computer name when the Buzz agent has a different one. A name made for
-   another computer is refused.
+   per-computer name when the Buzz agent has a different one (for example a
+   test agent named `aidevops-test`). A name that is not an aidevops agent, or
+   was made for another computer, is refused.
+
+To change these later, open **Agents**, choose the agent, and edit the fields
+on its **Identity** tab, then press **Save**. Buzz shows the plugin's settings
+there; the agent's own **Settings** tab only has Buzz's details.
 5. Mention the agent, or DM it. Only your own messages (or ones you attested)
    start a turn; Buzz enforces that before the plugin sees them.
 

@@ -67,7 +67,8 @@ function settings(raw) {
 }
 
 function projectProblem(project) {
-  if (!project) return "Set this agent's project folder in its aidevops settings tab.";
+  if (!project)
+    return "Set a project folder: open Agents, choose this agent, then on its Identity tab fill in Project folder and press Save.";
   if (!project.startsWith("/") && !project.startsWith("~/"))
     return "The project folder must be a full path, or start with ~/.";
   return "";
@@ -577,6 +578,19 @@ class Runner {
 
 const fieldStyle = { display: "grid", gap: "var(--space-1, 4px)" };
 const hintStyle = { color: "var(--text-secondary)", margin: 0 };
+const labelStyle = { fontWeight: 600 };
+// Buzz resets form controls, so bare inputs render as plain text; give them a
+// visible box using Buzz's own tokens.
+const inputStyle = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "8px 12px",
+  border: "1px solid var(--border-prominent, var(--border-standard, #555))",
+  borderRadius: "var(--radius-control, 8px)",
+  background: "var(--surface-inset, transparent)",
+  color: "var(--text-standard, inherit)",
+  font: "inherit",
+};
 
 function statusBody(h, state) {
   if (state.status === "loading") return h("p", null, "Reading aidevops status…");
@@ -624,11 +638,12 @@ function fields(h, { value, onChange, disabled, agentName }) {
     h(
       "label",
       { style: fieldStyle },
-      h("span", null, "Project folder"),
+      h("span", { style: labelStyle }, "Project folder"),
       h("input", {
         type: "text",
+        style: inputStyle,
         value: value.project ?? "",
-        placeholder: "Full path to a registered repository",
+        placeholder: "e.g. /path/to/your/repo",
         disabled,
         spellCheck: false,
         onChange: set("project"),
@@ -636,17 +651,18 @@ function fields(h, { value, onChange, disabled, agentName }) {
       h(
         "p",
         { style: hintStyle },
-        "A repository registered with aidevops. The agent works in its own linked worktree of it, never in the folder itself.",
+        "Required. Full path (or ~/ path) to a repository registered with aidevops. The agent works in its own linked worktree of it, never in the folder itself.",
       ),
     ),
     h(
       "label",
       { style: fieldStyle },
-      h("span", null, "aidevops agent"),
+      h("span", { style: labelStyle }, "aidevops agent"),
       h("input", {
         type: "text",
+        style: inputStyle,
         value: value.member ?? "",
-        placeholder: agentName || "aidevops-<this computer>",
+        placeholder: "e.g. aidevops-<this computer>",
         disabled,
         spellCheck: false,
         onChange: set("member"),
@@ -654,16 +670,21 @@ function fields(h, { value, onChange, disabled, agentName }) {
       h(
         "p",
         { style: hintStyle },
-        "Which aidevops agent runs, named for this computer, such as aidevops-marcus-macbook-pro-01 or build-plus-marcus-macbook-pro-01. Leave empty to use this Buzz agent's name; naming the Buzz agent the same shows people which agent and computer they are addressing.",
+        `Which aidevops agent runs, named for this computer, such as aidevops-marcus-macbook-pro-01 or build-plus-marcus-macbook-pro-01. Leave empty to use this Buzz agent's name${agentName ? ` (${agentName})` : ""}, which only works when it matches an aidevops agent.`,
       ),
     ),
     h(
       "label",
       { style: fieldStyle },
-      h("span", null, "Conversation"),
+      h("span", { style: labelStyle }, "Conversation"),
       h(
         "select",
-        { value: value.scope === "channel" ? "channel" : "thread", disabled, onChange: set("scope") },
+        {
+          style: inputStyle,
+          value: value.scope === "channel" ? "channel" : "thread",
+          disabled,
+          onChange: set("scope"),
+        },
         h("option", { value: "thread" }, "Each thread is its own session"),
         h("option", { value: "channel" }, "One session per channel"),
       ),
