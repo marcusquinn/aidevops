@@ -31,12 +31,20 @@ Folder paths:
 
 | Source | Path |
 |--------|------|
-| Installed by `aidevops update` / `setup.sh` | `~/.aidevops/agents/plugins/buzz-aidevops` |
+| Installed by `aidevops update` / `setup.sh` (stable) | `~/.aidevops/plugins/buzz-aidevops` |
 | aidevops repo checkout | `<repo>/.agents/plugins/buzz-aidevops` |
 
-Prefer the installed path: it is refreshed on each `aidevops update`, so
-**Reload** in Manage plugins picks up new versions. After an update that adds
-host access, Buzz asks you to review it again.
+Use the stable path. It is a real folder (not a symlink) that `aidevops update`
+refreshes in place, so Buzz's folder watcher picks up new versions within
+seconds. Do not add the plugin from `~/.aidevops/agents/plugins/...`: that
+path resolves into a versioned runtime bundle, and Buzz saves the versioned
+path, so later updates never reach it. After an update that adds host access,
+Buzz asks you to review it again.
+
+**One-time migration** if you installed from the old path: open **Settings →
+Plugins → Manage plugins → aidevops → Update plugin** and choose
+`~/.aidevops/plugins/buzz-aidevops`. Adding it again fails with "Already
+installed"; only the plugin's own Update control can replace its source.
 
 ## Create an aidevops agent
 

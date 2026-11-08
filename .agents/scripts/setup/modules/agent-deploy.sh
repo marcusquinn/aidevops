@@ -1142,6 +1142,48 @@ _restart_opencode_v2_service_after_deploy() {
 	return 0
 }
 
+# _deploy_stable_buzz_plugin source_dir [dest_dir]
+# Buzz saves the folder it was added from and watches it for changes. The
+# ~/.aidevops/agents symlink resolves into a versioned runtime bundle, so Buzz
+# would watch a frozen bundle. Mirror the plugin into a real, non-versioned
+# folder, replacing each file with an atomic same-directory rename.
+_deploy_stable_buzz_plugin() {
+	local source_dir="$1"
+	local dest_dir="${2:-$HOME/.aidevops/plugins/buzz-aidevops}"
+	local plugin_src="$source_dir/plugins/buzz-aidevops"
+	local src_file="" name="" tmp_file="" existing=""
+
+	[[ -d "$plugin_src" ]] || return 0
+	# A symlinked destination would resolve back into a versioned bundle.
+	if [[ -L "$dest_dir" ]]; then
+		rm -f "$dest_dir" || return 1
+	fi
+	mkdir -p "$dest_dir" || return 1
+
+	for src_file in "$plugin_src"/*; do
+		[[ -f "$src_file" && ! -L "$src_file" ]] || continue
+		name="${src_file##*/}"
+		if [[ -f "$dest_dir/$name" && ! -L "$dest_dir/$name" ]] && cmp -s "$src_file" "$dest_dir/$name"; then
+			continue
+		fi
+		tmp_file=$(mktemp "$dest_dir/.${name}.XXXXXX") || return 1
+		if ! cp "$src_file" "$tmp_file" || ! chmod 644 "$tmp_file" || ! mv -f "$tmp_file" "$dest_dir/$name"; then
+			rm -f "$tmp_file"
+			return 1
+		fi
+	done
+
+	# Remove files no longer shipped by the plugin.
+	for existing in "$dest_dir"/*; do
+		[[ -e "$existing" || -L "$existing" ]] || continue
+		name="${existing##*/}"
+		if [[ ! -f "$plugin_src/$name" || -L "$plugin_src/$name" ]]; then
+			rm -rf "$existing" || return 1
+		fi
+	done
+	return 0
+}
+
 deploy_aidevops_agents() {
 	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
 
@@ -1171,6 +1213,8 @@ deploy_aidevops_agents() {
 	}
 
 	print_success "Deployed agents to $target_dir"
+	_deploy_stable_buzz_plugin "$source_dir" ||
+		print_warning "Failed to update stable Buzz plugin folder (~/.aidevops/plugins/buzz-aidevops)"
 	_install_canonical_git_guard_shim "$target_dir" || return 1
 	_sync_agent_bin_shims "$target_dir" || return 1
 
