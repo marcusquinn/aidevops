@@ -41,6 +41,7 @@ export function v1SessionInfo(info) {
   return { ...info, directory: info.directory || info.location?.directory || "" };
 }
 
+/** Join the text parts of a V1 wake request, ignoring non-text parts. */
 function wakeText(body) {
   const parts = Array.isArray(body?.parts) ? body.parts : [];
   return parts.map((part) => (typeof part?.text === "string" ? part.text : "")).filter(Boolean).join("\n\n");
@@ -89,6 +90,7 @@ export function normalizeV2BusEvent(event) {
   return result;
 }
 
+/** Preserve normalized session information when a V2 lifecycle event includes it. */
 function sessionInfoEvent(type, data, sessionID) {
   const info = v1SessionInfo(data.info);
   return { type, properties: info ? { sessionID, info } : { sessionID } };
@@ -125,6 +127,7 @@ export function createV2SessionBusHooks({ ctx, directory, headless = false, log 
     toolAfter(event, output) {
       if (event?.status === "completed") hooks.toolAfter({ sessionID: event.sessionID, tool: event.tool }, output);
     },
+    /** Translate V2 events and update root metadata and turn state before dispatch. */
     handleEvent(input) {
       const event = input?.event;
       const normalized = normalizeV2BusEvent(event);
@@ -136,6 +139,7 @@ export function createV2SessionBusHooks({ ctx, directory, headless = false, log 
       if (event.type === "session.execution.started") bus.turnStarted(sessionID);
       return hooks.handleEvent({ event: normalized });
     },
+    /** Release bus resources without allowing cleanup errors to escape. */
     dispose() {
       try {
         bus.dispose();
