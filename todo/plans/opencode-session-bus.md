@@ -241,14 +241,14 @@ Total for Phases 0–2: ~3 days (ai:2d test:0.5d read:0.5d).
 
 | File | Change |
 | --- | --- |
-| `.agents/plugins/opencode-aidevops/session-bus-store.mjs` (new) | Files, liveness, presence read/write, inbox, limits, outbox; shared by plugin, CLI and TUI |
-| `.agents/plugins/opencode-aidevops/session-bus.mjs` (new) | Plugin runtime: presence writer, 5s poll, delivery channels, wakes, toasts |
+| `.agents/plugins/opencode-aidevops/session-bus-store.mjs` (new) | Store import surface (re-exports only), shared by plugin, CLI and TUI. Concerns: `session-bus-files.mjs` (layout, limits, atomic JSON, retention), `session-bus-presence-store.mjs` (presence, liveness), `session-bus-targets.mjs` (target resolution), `session-bus-messages.mjs` (send, reply), `session-bus-inbox.mjs` (claims, traffic, subscriptions, outbox), `session-bus-format.mjs` (rows, framing) |
+| `.agents/plugins/opencode-aidevops/session-bus.mjs` (new) | Plugin runtime coordinator. Concerns: `session-bus-presence.mjs` (process kind, git facts, presence writer), `session-bus-identity.mjs` (root/subagent tree), `session-bus-events.mjs` (per-session state), `session-bus-delivery.mjs` (tool/turn/wake channels, 5s poll), `session-bus-client.mjs` (OpenCode client calls, toasts) |
 | `.agents/plugins/opencode-aidevops/session-bus-tool.mjs` (new) | `aidevops_sessions` tool |
-| `.agents/plugins/opencode-aidevops/session-bus-cli.mjs` (new) + `.agents/scripts/session-bus-helper.sh` (new) + `aidevops.sh` dispatch | CLI |
+| `.agents/plugins/opencode-aidevops/session-bus-cli.mjs` + `session-bus-cli-commands.mjs` (new) + `.agents/scripts/session-bus-helper.sh` (new) + `aidevops.sh` dispatch | CLI |
 | `.agents/plugins/opencode-aidevops/tui-messages.mjs` (new), `v1-tui/tui.tsx` | Sidebar Messages section (OpenCode 1.x) |
-| `.agents/plugins/opencode-aidevops/index.mjs` | Wire event handler, `chat.message`, `tool.execute.after`, tool registration |
-| `.agents/plugins/opencode-aidevops/compaction.mjs` | Add the pending-ask summary; `getMailboxState` stays until Phase 4 |
-| `.agents/scripts/setup/modules/agent-deploy.sh` | Add `tui-messages.mjs` and `session-bus-store.mjs` (loaded by the V1 TUI, like `tui-prompts.mjs`) to the core-plugin freshness list |
+| `.agents/plugins/opencode-aidevops/session-bus-plugin.mjs` (new), `index.mjs` | Wire event handler, `chat.message`, `tool.execute.after`, tool registration |
+| `.agents/plugins/opencode-aidevops/session-bus-compaction.mjs` (new), `compaction.mjs` | Add the pending-ask summary; `getMailboxState` stays until Phase 4 |
+| `.agents/scripts/setup/modules/agent-deploy.sh` | Add `tui-messages.mjs` and the session-bus modules (the V1 TUI loads the store, like `tui-prompts.mjs`) to the core-plugin freshness list |
 | `.agents/plugins/opencode-aidevops/tests/test-session-bus.mjs` (new) | Deterministic coverage: target resolution, limits, claim-once, framing, wake budget |
 | `.agents/reference/session-bus.md` (new) | Docs |
 

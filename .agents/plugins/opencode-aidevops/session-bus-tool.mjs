@@ -119,6 +119,16 @@ function notifyAction(root, sender, args) {
   return `You will get one idle notice when ${record.handle} next goes idle (now ${record.status}).`;
 }
 
+// Actions that act as the caller's root session; `show` needs no sender.
+const SENDER_ACTIONS = {
+  list: ({ root, sender }) => listAction(root, sender),
+  send: ({ root, sender, args }) => sendAction(root, sender, args, "info"),
+  ask: ({ root, sender, args }) => sendAction(root, sender, args, "ask"),
+  reply: ({ root, sender, args }) => replyAction(root, sender, args),
+  inbox: ({ root, bus, sender }) => inboxAction(root, bus, sender),
+  "notify-when-idle": ({ root, sender, args }) => notifyAction(root, sender, args),
+};
+
 export function createSessionBusTool(tool, bus) {
   const z = tool.schema;
   return tool({
@@ -130,18 +140,10 @@ export function createSessionBusTool(tool, bus) {
       re: z.string().optional(),
     },
     async execute(args, context) {
-      const root = bus.root;
-      if (args.action === "show") return showAction(root, args);
+      if (args.action === "show") return showAction(bus.root, args);
+      if (!Object.hasOwn(SENDER_ACTIONS, args.action)) throw new Error(`unknown action: ${args.action}`);
       const sender = await bus.sender(context);
-      switch (args.action) {
-        case "list": return listAction(root, sender);
-        case "send": return sendAction(root, sender, args, "info");
-        case "ask": return sendAction(root, sender, args, "ask");
-        case "reply": return replyAction(root, sender, args);
-        case "inbox": return inboxAction(root, bus, sender);
-        case "notify-when-idle": return notifyAction(root, sender, args);
-        default: throw new Error(`unknown action: ${args.action}`);
-      }
+      return SENDER_ACTIONS[args.action]({ root: bus.root, bus, sender, args });
     },
   });
 }

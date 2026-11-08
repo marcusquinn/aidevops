@@ -22,7 +22,7 @@ Agents repeatedly ask the user to relay messages between parallel OpenCode sessi
 ## How (as built)
 
 - Storage under `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESSION_BUS_DIR`): `presence/`, `inbox/<session>/` with `delivered/`, `sent/<sender>/`, `subs/<session>/`, `outbox/<app>/`. Atomic temp+rename writes. Liveness is pid plus process start time, implemented in `session-bus-store.mjs`.
-- Modules in `.agents/plugins/opencode-aidevops/`: `session-bus-store.mjs` (storage, resolution, limits, framing), `session-bus.mjs` (presence and delivery runtime, 5s poll), `session-bus-tool.mjs` (tool), `session-bus-cli.mjs` (CLI), `tui-messages.mjs` (sidebar rows). Wired in `index.mjs` (events, `chat.message`, `tool.execute.after`, tool registration) and `compaction.mjs` (open asks).
+- Modules in `.agents/plugins/opencode-aidevops/`: `session-bus-store.mjs` (storage, resolution, limits, framing; re-exports `session-bus-{files,presence-store,targets,messages,inbox,format}.mjs`), `session-bus.mjs` (presence and delivery runtime, 5s poll; uses `session-bus-{presence,identity,events,delivery,client}.mjs`), `session-bus-tool.mjs` (tool), `session-bus-cli.mjs` + `session-bus-cli-commands.mjs` (CLI), `tui-messages.mjs` (sidebar rows). Wired in `index.mjs` via `session-bus-plugin.mjs` (events, `chat.message`, `tool.execute.after`, tool registration) and `compaction.mjs` via `session-bus-compaction.mjs` (open asks). The split keeps each new file under the Qlty smell thresholds that the regression gate enforces.
 - CLI: `aidevops sessions …` → `_main_dispatch_opencode_tools` in `aidevops.sh` → `.agents/scripts/session-bus-helper.sh` → `session-bus-cli.mjs`.
 - Chat origin: `--origin chat:<app>:<channel>` (the brief's draft said `external:<name>`).
 - Docs: `.agents/reference/session-bus.md`, Messages note in `.agents/tools/opencode/opencode.md`. No `.agents/AGENTS.md` pointer: the file is at its 24,000-byte ratchet, and the tool description carries the "do not ask the user to relay" rule.
@@ -32,8 +32,22 @@ Agents repeatedly ask the user to relay messages between parallel OpenCode sessi
 
 - `.agents/plugins/opencode-aidevops/compaction.mjs`
 - `.agents/plugins/opencode-aidevops/index.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-cli-commands.mjs`
 - `.agents/plugins/opencode-aidevops/session-bus-cli.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-client.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-compaction.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-delivery.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-events.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-files.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-format.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-identity.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-inbox.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-messages.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-plugin.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-presence-store.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-presence.mjs`
 - `.agents/plugins/opencode-aidevops/session-bus-store.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-targets.mjs`
 - `.agents/plugins/opencode-aidevops/session-bus-tool.mjs`
 - `.agents/plugins/opencode-aidevops/session-bus.mjs`
 - `.agents/plugins/opencode-aidevops/tests/test-session-bus.mjs`

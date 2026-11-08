@@ -70,9 +70,7 @@ import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
 import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
 import { stampCommandPrompt } from "./tui-prompts.mjs";
 import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
-import { createSessionBus, processKind } from "./session-bus.mjs";
-import { createSessionBusTool } from "./session-bus-tool.mjs";
-import { isWorkerContext } from "./process-start-identity.mjs";
+import { createSessionBusHooks } from "./session-bus-plugin.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
 import { createNativeDesktopFocusGuard } from "./native-desktop-focus-guard.mjs";
@@ -443,10 +441,13 @@ export async function AidevopsPlugin({ directory, client }) {
   process.once("exit", () => boundedOperationManager.dispose());
   // t18886: presence for every root session; messaging only in interactive
   // TUI/serve/ACP processes. Headless workers publish read-only presence.
-  const sessionBus = createSessionBus({
+  // The loggers are defined below, so they are bound lazily.
+  const sessionBus = createSessionBusHooks({
     client,
     directory,
-    kind: processKind(process.argv, { headless: isHeadless() || isWorkerContext() }),
+    headless: isHeadless(),
+    onError: (label, err) => debugEventError(label, err),
+    log: (level, message) => qualityLog(level, message),
   });
   const baseTools = createSchemaGatedTools(tool, () => {
     const tools = createTools(SCRIPTS_DIR, run, {
@@ -464,7 +465,7 @@ export async function AidevopsPlugin({ directory, client }) {
       boundedOperationManager,
     });
     tools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
-    if (sessionBus.messageable) tools.aidevops_sessions = createSessionBusTool(tool, sessionBus);
+    sessionBus.addTool(tools, tool);
     // GH#32592: V1 sends every tool schema on every request, so rarely used
     // tools sit behind one compact dispatcher. V2's Code Mode already defers them.
     moveToolsOnDemand(tools, tool);
@@ -738,7 +739,7 @@ export async function AidevopsPlugin({ directory, client }) {
     // then deliver pending session-bus messages on the user turn (t18886).
     "chat.message": async (input, output) => {
       const result = await subagentEffortHooks.chatMessage(input, output);
-      await sessionBus.chatMessage(input, output).catch((err) => debugEventError("session bus chat.message", err));
+      await sessionBus.chatMessage(input, output);
       return result;
     },
     "chat.params": async (input, output) => {
@@ -789,11 +790,7 @@ export async function AidevopsPlugin({ directory, client }) {
       await cancellationReceipt.afterTool(input, output);
       await subagentEffortHooks.afterTool(input, output);
       // Before quality hooks, so output scrubbing also covers peer messages.
-      try {
-        sessionBus.toolAfter(input, output);
-      } catch (err) {
-        qualityLog("WARN", `[session-bus] tool delivery skipped: ${err?.message ?? err}`);
-      }
+      sessionBus.toolAfter(input, output);
       return toolExecuteAfter(input, output);
     },
 
@@ -835,7 +832,7 @@ export async function AidevopsPlugin({ directory, client }) {
         Promise.resolve(sessionStallRecovery.handleEvent(input)),
         sessionTurnDiagnostics.handleEvent(input).catch((err) => debugEventError("turn diagnostics", err)),
         Promise.resolve().then(() => dbActivityHeartbeat.handleEvent(input)).catch((err) => debugEventError("db activity heartbeat", err)),
-        sessionBus.handleEvent(input).catch((err) => debugEventError("session bus", err)),
+        sessionBus.handleEvent(input),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
       ]);
     },
