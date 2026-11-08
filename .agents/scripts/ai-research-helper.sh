@@ -24,6 +24,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=vault-data-policy-helper.sh
 source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+# Reuse the runtime's static/OpenCode auth and pool-health checks without loading
+# the headless launcher (which initializes signing and worker state).
+# shellcheck source=headless-runtime-provider.sh
+source "${SCRIPT_DIR}/headless-runtime-provider.sh"
 
 set -euo pipefail
 
@@ -63,6 +67,43 @@ resolve_opencode_variant() {
 	*) echo "" ;;
 	esac
 	return 0
+}
+
+# Auto tiers follow routing-table order, but only among usable providers.
+# Explicit models/overrides retain their requested identity; explicit runtime
+# providers continue to use resolve_opencode_model_id without auto selection.
+resolve_auto_opencode_model_id() {
+	local name="${1:-simple}"
+	if [[ -n "${AIDEVOPS_AI_RESEARCH_OPENCODE_MODEL:-}" ]]; then
+		printf '%s\n' "$AIDEVOPS_AI_RESEARCH_OPENCODE_MODEL"
+		return 0
+	fi
+	case "$name" in
+	simple | standard | thinking) ;;
+	*) resolve_opencode_model_id "$name"; return $? ;;
+	esac
+	local backoffs="" candidate="" provider="" key="" reason="" retry_after="" updated=""
+	local blocked=false now=""
+	backoffs=$("${SCRIPT_DIR}/headless-runtime-helper.sh" backoff status 2>/dev/null) || backoffs=""
+	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	while IFS= read -r candidate; do
+		provider="${candidate%%/*}"
+		blocked=false
+		while IFS='|' read -r key reason retry_after updated; do
+			if [[ ( "$key" == "$provider" || "$key" == "$candidate" ) && "$reason" == "auth_error" ]] &&
+				[[ -z "$retry_after" || "$retry_after" > "$now" ]]; then
+				blocked=true
+				break
+			fi
+		done <<<"$backoffs"
+		[[ "$blocked" == false ]] || continue
+		provider_oauth_pool_available "$provider" || continue
+		if provider_auth_available "$provider" || resolve_oauth_pool_token "$provider" >/dev/null; then
+			model_tier_candidate_for_provider "$name" "$provider"
+			return $?
+		fi
+	done < <(model_tier_candidates "$name")
+	return 1
 }
 
 provider_key_var() {
@@ -335,6 +376,18 @@ _log_opencode_failure() {
 	return 0
 }
 
+# Only credential failures authorize auto's one direct-API retry. In particular,
+# vault denials, timeouts, rate limits and general runtime errors do not.
+opencode_auth_failure() {
+	local raw_output="$1"
+	local detail=""
+	detail=$(extract_opencode_error "$raw_output" | tr '[:upper:]' '[:lower:]') || return 1
+	case "$detail" in
+	*"api key is missing"* | *"missing api key"* | *"no api key"* | *"invalid api key"* | *"invalid x-api-key"* | *"authenticationerror"* | *"authentication_error"* | *"unauthorized"* | *"invalid access token"* | *"token expired"* | *"token has expired"* | *"providerautherror"*) return 0 ;;
+	esac
+	return 1
+}
+
 call_anthropic() {
 	local prompt="$1"
 	local model_name="${2:-simple}"
@@ -425,11 +478,13 @@ call_opencode() {
 	if [[ -n "$timeout_cmd" ]]; then
 		raw=$(cd "$run_dir" && AIDEVOPS_HEADLESS=1 $timeout_cmd opencode run --format json -m "$model_id" "${variant_args[@]}" "$wrapped_prompt" 2>&1) || {
 			_log_opencode_failure "OpenCode AI research call failed" "$model_id" "$raw"
+			opencode_auth_failure "$raw" && return 2
 			return 1
 		}
 	else
 		raw=$(cd "$run_dir" && AIDEVOPS_HEADLESS=1 opencode run --format json -m "$model_id" "${variant_args[@]}" "$wrapped_prompt" 2>&1) || {
 			_log_opencode_failure "OpenCode AI research call failed" "$model_id" "$raw"
+			opencode_auth_failure "$raw" && return 2
 			return 1
 		}
 	fi
@@ -437,6 +492,7 @@ call_opencode() {
 	text=$(extract_opencode_text "$raw") || text=""
 	if [[ -z "$text" ]]; then
 		_log_opencode_failure "Empty response from OpenCode AI research provider" "$model_id" "$raw"
+		opencode_auth_failure "$raw" && return 2
 		return 1
 	fi
 
@@ -461,8 +517,12 @@ call_ai() {
 		;;
 	auto)
 		if command -v opencode &>/dev/null; then
-			call_opencode "$prompt" "$model" "$max_tokens"
-			return $?
+			local auto_model="" rc=0
+			if auto_model=$(resolve_auto_opencode_model_id "$model"); then
+				AIDEVOPS_AI_RESEARCH_OPENCODE_MODEL="$auto_model" call_opencode "$prompt" "$model" "$max_tokens" || rc=$?
+				[[ "$rc" -eq 0 ]] && return 0
+				[[ "$rc" -eq 2 ]] || return "$rc"
+			fi
 		fi
 		call_anthropic "$prompt" "$model" "$max_tokens"
 		return $?
