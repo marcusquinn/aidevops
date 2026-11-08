@@ -827,7 +827,7 @@ gh_pr_edit_safe() {
 	local _num _repo _before _after
 	_num="$(_gh_extract_number_from_args "$@")"
 	_repo="$(_gh_extract_repo_from_args "$@")"
-	_before="$(_gh_audit_fetch_pr_state_json "$_num" "$_repo")"
+	_before="$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 _gh_audit_fetch_pr_state_json "$_num" "$_repo")"
 	gh pr edit "$@"
 	local _exit=$?
 	if [[ "$_exit" -eq 0 ]] && command -v _rest_pr_view_cache_invalidate >/dev/null 2>&1; then
