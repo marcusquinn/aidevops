@@ -227,6 +227,7 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertTrue(self.target.exists())
 
     def second_target(self):
+        """Switch the fixture to a second remotely reconstructible worktree."""
         target = self.base / "repository-second"
         self.git("worktree", "add", "-q", "-b", "second", str(target))
         self.git("update-ref", "refs/remotes/origin/second", self.head)
