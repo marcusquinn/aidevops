@@ -258,7 +258,7 @@ cloudron debug --disable # exit debug mode
 ## Build Methods
 
 - **On-server (default)**: `cloudron install` and `cloudron update` upload source and build on the server. No local Docker required; simplest workflow, but it uses server CPU/RAM.
-- **Registry builder**: `cloudron builder login` and `cloudron builder build` build and push via a [Container registry](https://docs.cloudron.io/packages/container-registry/) app; install or update using the resulting image.
+- **Registry builder**: `cloudron builder login` and `cloudron builder build` build and push via a [Container registry](https://docs.cloudron.io/packages/container-registry/) app (requires a Cloudron 10 host); install or update using the resulting image. Without a Cloudron 10 registry (e.g. Cloudron 9.1), build and push with Docker (`docker build` / `docker push`) to a registry you control, then install or update with that image.
 
 Use `cloudron builder reset` to clear the remembered repository. The old `cloudron build` commands no longer exist in the current CLI; check the installed builder's help for supported flags.
 

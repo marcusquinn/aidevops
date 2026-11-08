@@ -45,7 +45,7 @@ tools:
 npm install -g cloudron   # once installed, aidevops update-tools and auto-update keep it current
 cloudron login my.cloudron.example && cloudron init
 cloudron install --location testapp  # on-server build
-cloudron update --app testapp        # iterate
+cloudron update --app testapp        # iterate; a previously built image may be reused instead of edited source, so select an on-server build or rebuild and pass the new image explicitly
 cloudron logs -f --app testapp
 cloudron exec --app testapp   # shell into container
 cloudron debug --app testapp  # pause app, writable fs

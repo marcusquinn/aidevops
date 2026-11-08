@@ -87,7 +87,7 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 | Type | `serve-sim type "text" [-d udid]` | Also supports `--stdin` and `--file <path>` |
 | Recent event log | `serve-sim event-log [-d udid] [-n count] [-j]` | Reads recent simulator actions from a running `serve-sim` server; use `-j` for structured agent output |
 | Toggle software keyboard | Press `Cmd+K` in the preview | Mirrors Simulator's software keyboard toggle without changing hardware-keyboard state |
-| Reload React Native/Expo bundle | Press `R`, `Cmd+R`, or use Reload in the preview | Current versions request a targeted Metro reload and fall back to an `R` tap; `R` still types in focused text fields |
+| Reload React Native/Expo bundle | Press `R`, `Cmd+R`, or use Reload in the preview | Current versions request a targeted Metro reload and fall back to an `R` tap; `R` still types in focused text fields. If Metro does not answer `getpeers`, upstream broadcasts the reload, so other connected apps without inspector sessions may also reload and lose in-memory state; targeting is not guaranteed |
 | Rotate | `serve-sim rotate landscape_left [-d udid]` | portrait, portrait_upside_down, landscape_left, landscape_right |
 | Memory warning | `serve-sim memory-warning [-d udid]` | Simulator memory-pressure test |
 | CoreAnimation | `serve-sim ca-debug slow-animations on [-d udid]` | blended, copies, misaligned, offscreen, slow-animations |
