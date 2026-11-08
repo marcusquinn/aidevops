@@ -934,7 +934,7 @@ _tbr_project_rearm() {
 	# Reconcile a failed receipt write after a successful projection without
 	# projecting availability twice on the next pass.
 	if printf '%s' "$issue_json" | jq -e --arg blocked status:blocked 'any(.labels[]; .name == $blocked)' >/dev/null; then
-		set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || return 2
+		_TBR_VERIFIED_REARM="${repo}#${issue}" set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || return 2
 	fi
 	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" "$extra" || return 2
 	return 0

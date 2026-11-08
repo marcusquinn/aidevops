@@ -790,6 +790,25 @@ _verify_issue_status_convergence() {
 #   set_issue_status 18444 owner/repo blocked \
 #       --add-label "hold-for-review"
 #######################################
+# A blocked issue may only be released after its trusted circuit is inactive.
+# Fail closed on unreadable issue or comment history; retry on the next cycle.
+_status_terminal_circuit_blocks_release() {
+	local issue_num="$1" repo_slug="$2"
+	local issue_json="" comments_json="" library="${BASH_SOURCE[0]%/*}/terminal-blocker-circuit.sh"
+	local array_type="array"
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 0
+	jq -e --arg array "$array_type" '(.labels | type) == $array' <<<"$issue_json" >/dev/null 2>&1 || return 0
+	jq -e 'any(.labels[]; .name == "status:blocked")' <<<"$issue_json" >/dev/null || return 1
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 0
+	comments_json=$(jq -ce --arg array "$array_type" 'if type != $array or any(.[]; type != $array) then error("invalid comments") else flatten end' <<<"$comments_json") || return 0
+	if ! declare -F terminal_blocker_circuit_active >/dev/null 2>&1; then
+		# shellcheck source=terminal-blocker-circuit.sh
+		source "$library" || return 0
+	fi
+	terminal_blocker_circuit_active "$comments_json" "$issue_json" "$repo_slug" "$issue_num" "" >/dev/null
+	return $?
+}
+
 set_issue_status() {
 	gh_record_call rest set_issue_status 2>/dev/null || true
 	local issue_num="$1"
@@ -818,6 +837,11 @@ set_issue_status() {
 				"$new_status" "${ISSUE_STATUS_LABELS[*]}" >&2
 			return 2
 		fi
+	fi
+	if [[ "$new_status" == available && "${_TBR_VERIFIED_REARM:-}" != "$repo_slug#$issue_num" ]] &&
+		_status_terminal_circuit_blocks_release "$issue_num" "$repo_slug"; then
+		printf 'set_issue_status: preserving terminal circuit on %s#%s\n' "$repo_slug" "$issue_num" >&2
+		return 1
 	fi
 
 	# Ensure labels exist (cached per-process per-repo so this is cheap).

@@ -489,7 +489,10 @@ _should_defer_auto_unblock() {
 	local recent_bodies="" comments_json=""
 	comments_json=$(set -o pipefail; gh api \
 		"repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" --paginate --slurp 2>/dev/null |
-		jq -c 'if (type == "array" and ((.[0]? | type) == "array")) then add else . end') || comments_json='[]'
+		jq -ce 'if type != "array" or any(.[]; type != "array") then error("invalid comments") else flatten end') || {
+		printf 'comments-unavailable\n'
+		return 0
+	}
 	if terminal_blocker_has_current_hold "$comments_json"; then
 		printf 'comment-marker\n'
 		return 0
