@@ -37,6 +37,11 @@ _PREFLIGHT_CLEANUP_SYSTEMD_UNIT_SEQUENCE=0
 # Bound both lookups: dscl itself may hang during the outage. No process scans.
 _preflight_macos_user_lookup_ok() {
 	[[ "$(uname -s)" == "Darwin" ]] || return 0
+	if ! declare -F timeout_sec >/dev/null; then
+		# Independently sourced routine callers also need the portable timeout.
+		# shellcheck source=./shared-constants.sh
+		source "${BASH_SOURCE[0]%/*}/shared-constants.sh" || return 1
+	fi
 	local name="" record_type="/Users"
 	name=$(timeout_sec 3 id -un 2>/dev/null) || return 1
 	[[ -n "$name" && ! "$name" =~ ^[0-9]+$ ]] || return 1
@@ -45,34 +50,53 @@ _preflight_macos_user_lookup_ok() {
 }
 
 # One WARN per rejected invocation; one persistent advisory also holds the last
-# notification attempt. Reserve it under a short mkdir lock before notifying so
+# notification attempt. Reserve it under a kernel file lock before notifying so
 # simultaneous routine/pulse ticks cannot duplicate notifications. Fail closed
 # on unwritable state, but never turn a skipped cycle into a scheduler error.
 _preflight_macos_user_lookup_gate() {
 	_preflight_macos_user_lookup_ok && return 0
 	local message="macOS cannot look up your user account; restart the Mac before entering your password at the lock screen"
 	printf '[pulse-wrapper] WARN: %s; skipping cycle\n' "$message" >>"${LOGFILE:-/dev/stderr}" || true
+	_preflight_macos_user_lookup_advisory "$message" || true
+	return 1
+}
+
+# macOS ships Perl with flock; no extra lock files, stale PID recovery, or Bash
+# 4-only descriptors. The kernel releases the lock even on process termination.
+_preflight_macos_user_lookup_advisory() {
+	local message="$1"
 	local dir="${HOME}/.aidevops/advisories"
 	local marker="$dir/macos-user-lookup.advisory"
-	local now="" last=0
-	now=$(date +%s)
 	mkdir -p "$dir" 2>/dev/null || return 1
-	mkdir "${marker}.lock" 2>/dev/null || return 1
-	if [[ -f "$marker" ]]; then
-		IFS= read -r last <"$marker" || last=0
-	fi
-	[[ "$last" =~ ^[0-9]+$ ]] || last=0
-	local notify=0
-	if ((now - last >= 3600)); then
-		if printf '%s\n%s\n' "$now" "$message" >"$marker"; then
-			notify=1
-		fi
-	fi
-	rmdir "${marker}.lock" 2>/dev/null || true
-	if [[ "$notify" == "1" ]]; then
-		timeout_sec 3 osascript -e "display notification \"$message\" with title \"AI DevOps\"" >/dev/null 2>&1 || true
-	fi
-	return 1
+	timeout_sec 5 perl -MFcntl=:DEFAULT,:flock -e '
+		my ($path, $message) = @ARGV;
+		sysopen(my $fh, $path, O_RDWR | O_CREAT, 0600) or exit 0;
+		flock($fh, LOCK_EX | LOCK_NB) or exit 0;
+		my $last = <$fh> // 0;
+		chomp $last;
+		$last = 0 unless $last =~ /^\d+$/;
+		exit 0 if time - $last < 3600;
+		sub stamp {
+			seek($fh, 0, 0) or exit 0;
+			truncate($fh, 0) or exit 0;
+			my $text = time . "\n$message\n";
+			syswrite($fh, $text) == length($text) or exit 0;
+		}
+		stamp();
+		my $pid = fork();
+		exit 0 unless defined $pid;
+		if ($pid == 0) {
+			exec "osascript", "-e", "display notification \"$message\" with title \"AI DevOps\"";
+			exit 0;
+		}
+		local $SIG{ALRM} = sub { kill "KILL", $pid; };
+		alarm 3;
+		my $waited = waitpid($pid, 0);
+		alarm 0;
+		waitpid($pid, 0) if $waited == -1;
+		stamp();
+	' "$marker" "$message" >/dev/null 2>&1 || true
+	return 0
 }
 
 # -----------------------------------------------------------------------------

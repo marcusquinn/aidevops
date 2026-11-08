@@ -32,7 +32,7 @@ stub('osascript', 'printf "notify:%s\\n" "$*" >> "$TEST_CALLS"; exit "${TEST_NOT
 env = dict(os.environ, HOME=str(home), LOGFILE=str(log), TEST_CALLS=str(calls),
            PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
            TEST_OS='Darwin', TEST_LOGIN='501')
-prefix = 'source "$1/shared-constants.sh"; source "$1/pulse-dispatch-preflight-lib.sh"; '
+prefix = 'source "$1/pulse-dispatch-preflight-lib.sh"; '
 
 def run(code, **settings):
     result = subprocess.run(['bash', '-euc', prefix + code, 'test', str(scripts)],
@@ -72,13 +72,21 @@ run(function('pulse-dispatch-engine.sh', '_run_preflight_stages') + '; ! _run_pr
 run(function('pulse-routines.sh', 'evaluate_routines') + '; evaluate_routines')
 assert calls.read_text().count('notify:') == 1
 
+# Concurrent invocations share one reservation without creating lock files.
+marker = markers[0]
+stub('osascript', 'printf "notify:%s\\n" "$*" >> "$TEST_CALLS"; sleep 1')
+marker.write_text('0\n')
+run('( ' + main + '; main ) & ( ' + main + '; main ) & wait')
+assert calls.read_text().count('notify:') == 2
+assert list(marker.parent.iterdir()) == [marker]
+stub('osascript', 'printf "notify:%s\\n" "$*" >> "$TEST_CALLS"; exit "${TEST_NOTIFY_RC:-0}"')
+
 # Expire the marker; failed and missing desktop notification tools are harmless
 # and reserve the same hourly throttle as a successful attempt.
-marker = markers[0]
 marker.write_text('0\n')
 run(main + '; main', TEST_NOTIFY_RC='1')
 run(main + '; main')
-assert calls.read_text().count('notify:') == 2
+assert calls.read_text().count('notify:') == 3
 marker.write_text('0\n')
 (bin_dir / 'osascript').unlink()
 run(main + '; main')
