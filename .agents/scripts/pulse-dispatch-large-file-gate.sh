@@ -842,9 +842,8 @@ _large_file_gate_create_debt_issue() {
 		fi
 		# The file remains oversized. Reopen the durable per-path issue instead
 		# of creating a successor that can feed an unbounded dispatch loop.
-		if _large_file_gate_reopen_debt_issue "$_existing" "$lf_path" "$repo_slug"; then
-			printf '#%s (reopened)' "$_existing"
-		fi
+		# The helper emits the reopened reference on success.
+		_large_file_gate_reopen_debt_issue "$_existing" "$lf_path" "$repo_slug" || true
 		return 0
 	fi
 
@@ -866,6 +865,7 @@ _large_file_gate_refresh_debt_comment() {
 	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
 		--paginate --slurp) || return 1
 	# Only repair framework gate comments from trusted repository writers.
+	# aidevops:trust-boundary
 	# Inspect the debt line, not unrelated #NNN references elsewhere in the body.
 	comment_id=$(printf '%s' "$comments" | jq -r '
 		flatten | .[]
@@ -873,15 +873,18 @@ _large_file_gate_refresh_debt_comment() {
 		| select((.body // "") | startswith("## Large File Simplification Gate"))
 		| select((.body | split("\n") | map(select(startswith("**Simplification issues:**"))) | join("\n"))
 			| (test("#[0-9]+") | not) or contains("pending"))
-		| .id' ) || return 1
+		| .id') || return 1
 	# Multiple legacy comments may exist; never pass multiple IDs to PATCH.
 	local id
 	while IFS= read -r id; do
 		[[ "$id" =~ ^[0-9]+$ ]] || continue
 		updated_body=$(printf '%s' "$comments" | jq -r --arg id "$id" --arg refs "$debt_refs" '
 			flatten | .[] | select((.id | tostring) == $id) | .body
+			| select((split("\n") | map(select(startswith("**Simplification issues:**"))) | join("\n"))
+				!= "**Simplification issues:** " + $refs)
 			| split("\n") | map(if startswith("**Simplification issues:**")
 				then "**Simplification issues:** " + $refs else . end) | join("\n")') || return 1
+		[[ -n "$updated_body" ]] || continue
 		body_file=$(mktemp) || return 1
 		printf '%s' "$updated_body" >"$body_file"
 		if ! gh api "repos/${repo_slug}/issues/comments/${id}" --method PATCH \
