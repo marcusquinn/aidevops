@@ -246,7 +246,7 @@ For interactive maintainer review, complete the full checklist and post the stru
 
 1. Verify checkout freshness and report provenance.
 2. Complete duplicate, temporal, root-cause, safety, and dispatchability checks.
-3. For an issue, check approval first with `approval-helper.sh verify issue <number> <owner/repo>` before applying non-lifecycle labels. If already approved or approval state is uncertain, list missing non-lifecycle labels as recommendations without applying them. Otherwise apply every recommended non-lifecycle label, including `bug` and `enhancement`, before presenting or running the approval command. After signing, apply only lifecycle/tier labels accepted by approval continuity. A later non-lifecycle label event can permanently stale approval even if removed.
+3. For an issue, check approval first with `approval-helper.sh verify issue <number> <owner/repo>`. In `--report-only` mode, never change labels; list recommendations only. If already approved, list missing non-lifecycle labels without applying them. If verification is uncertain (e.g. `API_ERROR`), apply nothing and withhold the approval command until verification succeeds. Otherwise apply every recommended non-lifecycle label, including `bug` and `enhancement`, before presenting or running the approval command. After signing, apply only lifecycle/tier labels accepted by approval continuity. A later non-lifecycle label event can permanently stale approval even if removed.
 4. Post the review using the format below so the decision has durable evidence.
 5. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it.
 
@@ -318,7 +318,7 @@ accept one exact `APPROVE`; never mix repositories or include non-Approve target
 - Complexity: Low (`tier:simple`) / Medium (`tier:standard`) / High (`tier:thinking`)
 - **Recommendation**: APPROVE / REQUEST CHANGES / DECLINE
 - **PR disposition**: MERGE / REPAIR / REPLACE / CLOSE / NOT APPLICABLE — [owner and immediate next action]
-- **Labels**: [e.g., `tier:simple`, `bug`, `status:available` — check issue approval first; if approved or uncertain, list missing non-lifecycle labels without applying them; otherwise apply them before presenting the approval command. Apply only continuity-accepted lifecycle/tier labels after signing]
+- **Labels**: [e.g., `tier:simple`, `bug`, `status:available` — check issue approval first; in report-only mode or if approved, list missing non-lifecycle labels without applying them; if uncertain, withhold the approval command; otherwise apply them before presenting the approval command. Apply only continuity-accepted lifecycle/tier labels after signing]
 - **Implementation guidance**: [key steps, production-facing verification, and any focused coverage justified by `reference/ci-gate-policy.md`]
 
 ### Dispatchability Assessment
