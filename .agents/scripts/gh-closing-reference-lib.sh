@@ -3,6 +3,28 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Shared PR-description and explicit merge-message validation (GH#36797).
 
+# Used by both the standalone gh shim and the safe-edit wrappers.
+_gh_extract_repo_from_args() {
+	local i=0
+	local -a args=("$@")
+	while [[ $i -lt ${#args[@]} ]]; do
+		case "${args[i]}" in
+		--repo | -R)
+			if [[ -n "${args[i + 1]:-}" && "${args[i + 1]}" != -* ]]; then
+				printf '%s\n' "${args[i + 1]}"
+			fi
+			return 0
+			;;
+		--repo=*)
+			printf '%s\n' "${args[i]#--repo=}"
+			return 0
+			;;
+		esac
+		i=$((i + 1))
+	done
+	return 0
+}
+
 _gh_pr_body_negated_closing_ref() {
 	local body_text="$1"
 	local negation='(not|never|cannot|without|don[^[:space:]]{0,3}t|doesn[^[:space:]]{0,3}t|won[^[:space:]]{0,3}t|shouldn[^[:space:]]{0,3}t|can[^[:space:]]{0,3}t|mustn[^[:space:]]{0,3}t)'

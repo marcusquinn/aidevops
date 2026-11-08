@@ -450,6 +450,23 @@ source "${SCRIPT_DIR}/test-gh-shim-policy-cases.sh"
 # shellcheck source=./test-gh-shim-transport-cases.sh
 source "${SCRIPT_DIR}/test-gh-shim-transport-cases.sh"
 
+# The shim sources the closing-reference library without the safe-edit module.
+# An explicit repo must reach the identity metadata lookup on body edits.
+if (
+	source "${REPO_DIR}/.agents/scripts/gh-closing-reference-lib.sh"
+	gh_pr_view() {
+		[[ "$*" == '42 --repo owner/repo --json labels --jq [.labels[].name]' ]] || return 1
+		printf '%s\n' '["origin:worker"]'
+		return 0
+	}
+	_GH_PR_IDENTITY_ORIGIN=edit
+	_gh_validate_pr_closing_keywords 42 --repo owner/repo --body 'For #123'
+); then
+	_pass "standalone PR body validation passes explicit repo to identity lookup"
+else
+	_fail "standalone PR body validation passes explicit repo to identity lookup"
+fi
+
 # =============================================================================
 # Summary
 # =============================================================================
