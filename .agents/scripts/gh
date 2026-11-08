@@ -1006,13 +1006,34 @@ done
 
 # Raw worker PR writes must use the same identity guard as managed writes.
 # Metadata-only edits remain valid without an inspectable body.
-if [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == pr:create ]] && _shim_is_headless_automation; then
-	_GH_PR_IDENTITY_ORIGIN="origin:worker"
-elif [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == pr:edit ]] && _shim_is_headless_automation; then
+if [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == pr:create ]]; then
+	if _shim_is_headless_automation; then
+		_GH_PR_IDENTITY_ORIGIN="origin:worker"
+	else
+		_identity_prev=""
+		for _identity_arg in "${_modified_args[@]:2}"; do
+			if [[ "$_identity_arg" == --label=* && ",${_identity_arg#*=}," == *",origin:worker,"* ]]; then
+				_GH_PR_IDENTITY_ORIGIN="origin:worker"
+			elif [[ "$_identity_prev" == "--label" || "$_identity_prev" == "-l" ]] && [[ ",${_identity_arg}," == *",origin:worker,"* ]]; then
+				_GH_PR_IDENTITY_ORIGIN="origin:worker"
+			fi
+			_identity_prev="$_identity_arg"
+		done
+	fi
+elif [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == pr:edit ]]; then
+	if ! declare -F gh_pr_view >/dev/null 2>&1; then
+		# Shim has no wrapper library; read PR labels via the native binary.
+		gh_pr_view() {
+			"$REAL_GH" pr view "$@"
+			return $?
+		}
+	fi
+	# Resolve origin from existing PR labels: interactive PRs are not treated as
+	# worker PRs, and worker PRs are guarded regardless of body marker.
 	for _identity_arg in "${_modified_args[@]:2}"; do
 		case "$_identity_arg" in
 		--body | --body=* | -b | -b?* | --body-file | --body-file=* | -F | -F?*)
-			_GH_PR_IDENTITY_ORIGIN="origin:worker"
+			_GH_PR_IDENTITY_ORIGIN="edit"
 			break
 			;;
 		esac
