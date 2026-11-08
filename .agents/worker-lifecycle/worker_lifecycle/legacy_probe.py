@@ -7,9 +7,11 @@ import json
 import os
 from pathlib import Path
 import socket
+import subprocess
 import tempfile
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
+from .legacy_discovery import same_tree
 from .retirement import _git
 
 
@@ -50,7 +52,12 @@ def latest_probe_plan(connection, host):
         "AND json_extract(payload,'$.host')=? ORDER BY sequence DESC LIMIT 1",
         ("reconstructible-host-probe-plan", host),
     ).fetchone()
-    return json.loads(row[0]) if row else None
+    if not row:
+        return None
+    plan = json.loads(row[0])
+    if not isinstance(plan.get("plan"), dict) or receipt(connection, plan["attempt"], "cancelled"):
+        return None
+    return plan
 
 
 def interrupted_probe(store, connection, item):
@@ -73,6 +80,34 @@ def record_probe_recovery(store, connection, host, original):
     if receipt(connection, host, "verified") is None:
         checkpoint(store, connection, host, "verified",
                     dict(original, type="reconstructible-host-probe-verified"))
+
+
+def prepare_reconstructible_probe(store, connection, host, plan, verify):
+    """Recover or cancel the previous attempt before starting a new probe."""
+    previous = latest_probe_plan(connection, host)
+    if receipt(connection, host, "verified") is not None:
+        if plan is None and previous and not os.path.lexists(previous["plan"]["source"]):
+            record_probe_recovery(store, connection, host, previous["plan"])
+        return False
+    if previous:
+        original = previous["plan"]
+        if not os.path.lexists(original["source"]):
+            try:
+                verify(original, probe=True)
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
+                raise ValueError("reconstructible-probe-verification-pending") from error
+            record_probe_recovery(store, connection, host, original)
+            return False
+        same_tree(Path(original["source"]), original)
+        checkpoint(store, connection, previous["attempt"], "cancelled",
+                   {"type": "reconstructible-host-probe-cancelled", "host": host})
+    if plan is None:
+        return False
+    attempt = str(uuid4())
+    checkpoint(store, connection, attempt, "plan",
+               {"type": "reconstructible-host-probe-plan", "host": host,
+                "attempt": attempt, "plan": plan})
+    return True
 
 
 def verify_reconstructible(plan, *, probe):

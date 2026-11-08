@@ -461,6 +461,34 @@ class ReconstructibleContract(unittest.TestCase):
         result, _, _ = self.retire()
         self.assertEqual(result["status"], "already-retired", result)
 
+    def test_recovery_cancels_restored_source_without_null_plan(self):
+        native = cleanup.reconstructible
+        with patch.object(cleanup, "reconstructible", side_effect=[
+                native(self.item, repositories=self.repositories, adapter=self.adapter,
+                       open_prs=lambda slug: []), ValueError("live-process-reference")]):
+            self.assert_retained("live-process-reference")
+        host = probe.host_probe(self.store)
+        # Simulate the source returning between the absence check and locked recovery.
+        cleanup.recover_interrupted_probe(self.store, self.item, True)
+        with self.store.connection() as connection:
+            self.assertIsNone(probe.latest_probe_plan(connection, host))
+            plans = [json.loads(row[0]) for row in connection.execute(
+                "SELECT payload FROM events WHERE json_extract(payload,'$.type')=?",
+                ("reconstructible-host-probe-plan",))]
+        self.assertEqual(len(plans), 1)
+        self.assertIsInstance(plans[0]["plan"], dict)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+
+    def test_legacy_null_probe_plan_does_not_block_new_probe(self):
+        host, attempt = probe.host_probe(self.store), str(uuid4())
+        with self.store.connection(write=True) as connection:
+            probe.checkpoint(self.store, connection, attempt, "plan",
+                             {"type": "reconstructible-host-probe-plan", "host": host,
+                              "attempt": attempt, "plan": None})
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+
     def test_failed_first_probe_blocks_batch(self):
         with patch.object(cleanup, "verify_reconstructible", side_effect=ValueError("probe-failed")):
             result, _, _ = self.retire()

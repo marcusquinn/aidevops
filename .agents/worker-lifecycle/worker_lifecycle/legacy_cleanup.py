@@ -13,7 +13,7 @@ import sqlite3
 import subprocess  # nosec B404 # exception classification; helpers execute fixed argv
 import tempfile
 import time
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid5
 
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
@@ -23,7 +23,7 @@ from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import require_manual_confirmation, require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
 from .legacy_probe import checkpoint, host_probe, interrupted_probe
-from .legacy_probe import latest_probe_plan, operation_id, receipt, record_probe_recovery
+from .legacy_probe import operation_id, prepare_reconstructible_probe, receipt
 from .legacy_probe import verify_reconstructible
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
@@ -253,36 +253,7 @@ def recover_interrupted_probe(store, item, apply):
         raise ValueError("reconstructible-probe-verification-pending")
     with _lock(store, host), store.connection(write=True) as connection:
         if interrupted_probe(store, connection, item):
-            prepare_reconstructible_probe(store, connection, host, None)
-
-
-def prepare_reconstructible_probe(store, connection, host, plan):
-    """Recover removed probes; cancel unremoved attempts only by native identity."""
-    previous = latest_probe_plan(connection, host)
-    if receipt(connection, host, "verified") is not None:
-        # Repair a partial recovery: verified committed but retired missing.
-        if plan is None and previous and not os.path.lexists(previous["plan"]["source"]):
-            record_probe_recovery(store, connection, host, previous["plan"])
-        return False
-    if previous:
-        original = previous["plan"]
-        if not os.path.lexists(original["source"]):
-            try:
-                verify_reconstructible(original, probe=True)
-            except (ValueError, OSError, subprocess.SubprocessError) as error:
-                raise ValueError("reconstructible-probe-verification-pending") from error
-            record_probe_recovery(store, connection, host, original)
-            return False
-        # An intact original worktree/admin proves removal never completed.
-        # A replacement or unresolved missing source must not unlock batching.
-        same_tree(Path(original["source"]), original)
-        checkpoint(store, connection, previous["attempt"], "cancelled",
-                   {"type": "reconstructible-host-probe-cancelled", "host": host})
-    attempt = str(uuid4())
-    checkpoint(store, connection, attempt, "plan",
-               {"type": "reconstructible-host-probe-plan", "host": host,
-                "attempt": attempt, "plan": plan})
-    return True
+            prepare_reconstructible_probe(store, connection, host, None, verify_reconstructible)
 
 
 def current_legacy_item(connection, item):
@@ -326,7 +297,8 @@ def process_reconstructible(store, item, repositories, adapter, options):
         # GitHub lookups release the writer (GH#36921); this plan is only journaled.
         plan = reconstructible_plan(
             connection, open_prs=partial(released_pull_requests, connection, options))
-        test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
+        test_removal = prepare_reconstructible_probe(store, connection, probe, plan,
+                                                     verify_reconstructible)
         revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
         checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
         # Fetch GitHub without the writer, then refresh every registry, Git and
