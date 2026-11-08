@@ -1071,6 +1071,21 @@ _has_open_pr_check_superseded_issue_pr() {
 #   evidence reason, or sanitized PR_LOOKUP_RESULT=uncertain diagnostics
 # CALLERS: For issue closing, verify mergedAt after this returns 0.
 #######################################
+# Map the denial-cache check to a lookup rc: 1 = no denial (proceed),
+# keychain-unavailable or commit-permission rc = uncertain.
+_ddpr_denial_lookup_rc() {
+	local repo_slug="$1"
+	local cache_rc=0
+	_ddpr_commit_denial_cache check "$repo_slug" || cache_rc=$?
+	if [[ "$cache_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
+		return "$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE"
+	fi
+	if [[ "$cache_rc" -eq 0 ]]; then
+		return "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
+	fi
+	return 1
+}
+
 has_open_pr() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1083,13 +1098,9 @@ has_open_pr() {
 	# A repository-wide evidence denial applies to every candidate, not just the
 	# issue that discovered it. Do not repeat any admission scan during cooldown.
 	local denial_rc=0
-	_ddpr_commit_denial_cache check "$repo_slug" || denial_rc=$?
-	if [[ "$denial_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
-		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE"
-		return 0
-	fi
-	if [[ "$denial_rc" -eq 0 ]]; then
-		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
+	_ddpr_denial_lookup_rc "$repo_slug" || denial_rc=$?
+	if [[ "$denial_rc" -ne 1 ]]; then
+		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$denial_rc"
 		return 0
 	fi
 
