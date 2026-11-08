@@ -5,7 +5,7 @@
 
 ## Status and ownership
 
-- Created: 2026-11-07. Status: Phases 0–2 built; messaging verified live on 2026-11-08 (`opencode serve`). The toast display and the V1 sidebar Messages section still need a check in a V1 TUI session (see Live verification). PR for t18886 (GH#37149).
+- Created: 2026-11-07. Status: Phases 0–2 built (t18886, GH#37149, PR #37165) and released in v3.39.136. Messaging was verified live on 2026-11-08 (`opencode serve`), and the owner tested it with two new sessions the same day. Toast and sidebar were not confirmed separately. OpenCode 2 support: t18888 (PR #37179). Phase 3 and coordination follow-ups: t18891–t18897 (below).
 - Scope: OpenCode → OpenCode sessions on one machine. Claude Code and other runtimes are out of scope.
 - Built interactively in the planning session (full-loop), not by worker dispatch.
 - Related captures found during review: GH#37145 (session count misses OpenCode TUI processes; fixed by PR #37148), GH#37146 (stale OpenCode activity heartbeats are never pruned; fixed by PR #37147).
@@ -223,7 +223,26 @@ The bus gives every gateway one contract instead of three bespoke paths:
 4. **Replies back:** a session replying to a chat-origin ask writes to `session-bus/outbox/<gateway>/`; the gateway polls its outbox and posts to the room/contact, applying its existing leak detection (SimpleX `leak-detector.ts`) before sending.
 5. **Thin adapters:** Matrix bot, SimpleX bot and the Buzz plugin each add a small adapter over this contract; their existing "start a new session" paths remain for new work.
 
-This becomes its own plan after Phases 1–2 prove the bus. Coordinate the Buzz side with t18883 phase 2 (read-only `aidevops_*` tools), where presence `list` is a natural first tool.
+Phases 1–2 proved the bus (released in v3.39.136; owner test with two live sessions on 2026-11-08). Phase 3 is split into tasks:
+
+| Task | Scope | Depends on |
+| --- | --- | --- |
+| t18891 | Chat ingest: prompt-guard scan, verified `--actor`, opt-in owner wakes, `list --redact` (steps 2–3 above) | — |
+| t18892 | Channel bindings (`bind`/`unbind`/`channel:` targets) and per-task `launch` on `opencode serve` | t18891 |
+| t18893 | Matrix bot adapter: room commands, bound rooms, outbox relay | t18892 |
+| t18894 | SimpleX bot adapter: replaces the `/sessions` and `/ask` scaffolds | t18892 |
+
+Buzz is not filed yet: its adapter needs t18883 phase 2 (read-only `aidevops_*` tools), which is owner-gated. When that lands, presence `list` (redacted) is the natural first tool, followed by `ask` through t18891's ingest.
+
+## Coordination follow-ups
+
+Owner turn on 2026-11-08: sessions should help with releases and with "avoiding working on the same things in competing ways".
+
+| Task | Scope |
+| --- | --- |
+| t18895 | `aidevops sessions who <target>`; live sessions in `prework-discovery-helper.sh` and `interactive-session-helper.sh claim`; one overlap notice per session pair when two sessions share an issue, PR, branch or worktree |
+| t18896 | Release lanes record an advisory owner session; held-lane refusals name it with an `ask` hint; `watch-release` notices on finalize and on a dead executor |
+| t18897 | `ask` with a bounded wait, so a subagent (or a script) gets the reply in the same call; `via subagent` attribution. Subagents stay out of presence |
 
 ## Phases
 
@@ -232,7 +251,7 @@ This becomes its own plan after Phases 1–2 prove the bus. Coordinate the Buzz 
 | 0. Runtime spike | On OpenCode v1.19.5 verify: `promptAsync` with synthetic part wakes an idle root session from a plugin; behaviour when busy; `chat.message` synthetic part persists and is visible to the model; `tool.execute.after` appended text persists; `fs.watch` reliability on macOS; plugin runs inside `opencode serve` (desktop) sessions | ~2h | Notes in this file; go/no-go per channel |
 | 1. Presence | Presence writer in plugin; liveness + sweep shared with GH#37146; `aidevops sessions list/show`; tool `list`/`show` | ~1d | `aidevops sessions list` shows every open TUI/desktop session with correct repo/branch/state; dead sessions vanish |
 | 2. Messaging | Inbox, `send/ask/reply/inbox/notify-when-idle`, three delivery channels, toast, limits, retention, compaction note for pending asks (alongside the dead `getMailboxState`, which Phase 4 removes), `reference/session-bus.md` | ~1.5d | Two live sessions exchange ask/reply with one idle; busy delivery appears in the next tool result; loop and rate limits verified |
-| 3. Chat gateways | Separate plan: contract above + Matrix, SimpleX, Buzz adapters | later | Separate plan |
+| 3. Chat gateways | Contract above + Matrix, SimpleX adapters (t18891–t18894); Buzz after t18883 phase 2 | ~3d | Each task's live self-test on a scratch bus |
 | 4. Mailbox retirement | Remove or redirect `mail-helper*.sh`, `loop-common.sh` status reports, `runner-helper.sh`/`cron-dispatch.sh` callers, `reference/mailbox.md` | ~0.5d | **Needs explicit owner approval**; not part of this build |
 
 Total for Phases 0–2: ~3 days (ai:2d test:0.5d read:0.5d).
@@ -276,4 +295,6 @@ OpenCode 2 support (t18888, GH#37157): `session-bus-v2.mjs` adapts the V2 plugin
 - **2026-11-08 — OpenCode 2 sidebar deferred** (agent decision during build; owner to confirm): the V2 server plugin does not run the bus, so a V2 Messages section would always be empty. Follow-up: t18888 (GH#37157), now built.
 - **2026-11-08 — `reply` only answers asks** (live-test fix), so replies cannot set off further replies.
 - **2026-11-08 — OpenCode 2 channels** (t18888, agent decision from the 2.0.18 host): the V2 server plugin context has `session.get` and `session.synthetic` but no `promptAsync`, `status` or toast. Turn delivery appends to the `prompt` hook's text (V2 has no synthetic user-message parts); wakes insert a synthetic message with `resume: true`, which keeps wake text out of the Prompts sidebar; the woken turn takes its hop count from `session.execution.started`, because synthetic input skips the prompt hook. Status comes from `session.execution.*` events. No toast in V2.
+- **2026-11-08 — Subagents are not bus endpoints** (agent decision, answering the owner's "can subagents message back & forth, too?"): a subagent's tool calls act for its root session and replies go to the root. Child sessions are short-lived and cannot be woken mid-run, and the Task prompt and result already connect parent and child. t18897 adds a bounded `ask` wait instead, which gives a subagent a full round trip without child presence.
+- **2026-11-08 — Follow-ups filed for self-tested worker delivery** (owner: "log todos/issues for whatever can be developed and self-tested"): t18891–t18897. Live homeserver and SimpleX-profile checks are recorded as post-merge checks because they need the owner's accounts.
 - **Deferred — old mailbox retirement** (Phase 4; owner: "decide later"). `mail-helper*.sh` and its callers stay untouched.
