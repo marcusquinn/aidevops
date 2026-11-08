@@ -272,6 +272,10 @@ Use `/timeline` or `<leader>g` to open **Jump to message**, choose a prompt, and
 
 Optional navigation bindings in `tui.json` are `messages_last_user`, `messages_previous`, and `messages_next` (V1), or `session.message.user.previous` and `session.message.user.next` (V2). These are unbound by default; aidevops does not change user keybinds. Restart the TUI after changing bindings, environment settings, or plugins.
 
+### Messages between sessions
+
+Live OpenCode 1.x sessions on this machine can list each other and exchange short messages through the `aidevops_sessions` tool and `aidevops sessions` in a shell. A **Messages** sidebar section under **Prompts** shows the session's latest 6 messages: `←` received, `→` sent, `•` not yet delivered. It is hidden when there is no traffic; set `AIDEVOPS_TUI_MESSAGES=false` to turn it off. Each arrival also shows a toast. Details: `reference/session-bus.md`.
+
 ### Workflow Order
 
 | Phase | Agents | Execution |

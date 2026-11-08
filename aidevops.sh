@@ -1291,6 +1291,7 @@ _help_commands() {
 	echo "                              Use <runtime> --help or --list-agents for launch options"
 	echo "  opencode-desktop   Launch/install OpenCode Desktop with aidevops DB isolation"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
+	echo "  sessions [cmd]     Live OpenCode sessions: list/show/send/ask/inbox/outbox/prune (bare: list)"
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
 	echo "  circuit-breaker    Supervisor circuit breaker (status/reset/check/trip) (alias: cb)"
 	echo "  issue <cmd>        Interactive issue ownership (claim/release/status/scan-stale)"
@@ -2116,6 +2117,20 @@ _main_dispatch_sync() {
 	return $?
 }
 
+# OpenCode database, desktop, sandbox and session-bus commands.
+_main_dispatch_opencode_tools() {
+	local command="$1"
+	shift
+	case "$command" in
+	opencode-db | oc-db) _dispatch_helper "opencode-db-maintenance-helper.sh" "opencode-db-maintenance-helper.sh" "$@" ;;
+	opencode-desktop | oc-desktop) _dispatch_helper "opencode-launcher-helper.sh" "opencode-launcher-helper.sh" desktop "$@" ;;
+	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
+	sessions | session-bus) _dispatch_helper "session-bus-helper.sh" "session-bus-helper.sh" "$@" ;;
+	*) return 1 ;;
+	esac
+	return $?
+}
+
 _main_dispatch() {
 	local command="$1" check_workflows_helper="$2"
 	shift 2
@@ -2159,11 +2174,9 @@ _main_dispatch() {
 	cleanup) _main_dispatch_cleanup "$@" ;;
 	client-format) _cmd_client_format "$@" ;;
 	github-app-auth | github-app | gh-auth) _dispatch_helper "github-app-auth-helper.sh" "github-app-auth-helper.sh" "$@" ;;
-	opencode-db | oc-db) _dispatch_helper "opencode-db-maintenance-helper.sh" "opencode-db-maintenance-helper.sh" "$@" ;;
+	opencode-db | oc-db | opencode-desktop | oc-desktop | opencode-sandbox | oc-sandbox | sessions | session-bus) _main_dispatch_opencode_tools "$command" "$@" ;;
 	opencode | oc | codex | claude | claude-code | cursor | cursor-agent | droid | gemini | gemini-cli | continue | cn | kilo | kiro | kiro-cli | aider | amp | kimi | qwen | windsurf)
 		_dispatch_helper "runtime-launcher-helper.sh" "runtime-launcher-helper.sh" "$command" "$@" ;;
-	opencode-desktop | oc-desktop) _dispatch_helper "opencode-launcher-helper.sh" "opencode-launcher-helper.sh" desktop "$@" ;;
-	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;
 	source-access | source_access) _dispatch_helper "source-access-helper.sh" "source-access-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
