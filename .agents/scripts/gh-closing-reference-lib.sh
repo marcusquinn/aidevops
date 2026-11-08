@@ -85,7 +85,13 @@ _gh_validate_pr_closing_keywords() {
 	fi
 	if [[ -z "$body_text" ]]; then
 		# A create must provide inspectable text; metadata-only edits need none.
-		[[ "${_GH_PR_IDENTITY_ORIGIN:-}" == "origin:worker" ]] || return 0
+		# An edit that explicitly supplies a (possibly empty) body is validated
+		# against PR labels; one with no body source is metadata-only.
+		if [[ "${_GH_PR_IDENTITY_ORIGIN:-}" == "edit" ]]; then
+			[[ "$has_body" -eq 1 || "$has_body_file" -eq 1 ]] || return 0
+		else
+			[[ "${_GH_PR_IDENTITY_ORIGIN:-}" == "origin:worker" ]] || return 0
+		fi
 	fi
 	if ! _gh_pr_body_negated_closing_ref "$body_text" >/dev/null; then
 		_gh_validate_pr_worker_identity "$body_text" "$@"

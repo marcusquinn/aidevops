@@ -1014,6 +1014,8 @@ if [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == pr:create ]]; then
 		for _identity_arg in "${_modified_args[@]:2}"; do
 			if [[ "$_identity_arg" == --label=* && ",${_identity_arg#*=}," == *",origin:worker,"* ]]; then
 				_GH_PR_IDENTITY_ORIGIN="origin:worker"
+			elif [[ "$_identity_arg" == -l?* && "$_identity_arg" != --* && ",${_identity_arg#-l}," == *",origin:worker,"* ]]; then
+				_GH_PR_IDENTITY_ORIGIN="origin:worker"
 			elif [[ "$_identity_prev" == "--label" || "$_identity_prev" == "-l" ]] && [[ ",${_identity_arg}," == *",origin:worker,"* ]]; then
 				_GH_PR_IDENTITY_ORIGIN="origin:worker"
 			fi
