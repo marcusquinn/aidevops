@@ -2193,11 +2193,8 @@ _main_dispatch() {
 	issue) _dispatch_helper "interactive-session-helper.sh" "interactive-session-helper.sh" "$@" ;;
 	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
 	contributions | contrib) _main_dispatch_contributions "$@" ;;
-	inbox)
-		# Bare `aidevops inbox` defaults to status (most common use).
-		[[ $# -eq 0 ]] && set -- status
-		_dispatch_helper "inbox-helper.sh" "inbox-helper.sh" "$@"
-		;;
+	# Bare `aidevops inbox` / `aidevops opencode-browse` default to status.
+	inbox) _dispatch_helper "inbox-helper.sh" "inbox-helper.sh" "${@:-status}" ;;
 	case | cases)
 		# Bare `aidevops case` defaults to list (most common use).
 		[[ $# -eq 0 ]] && set -- list
