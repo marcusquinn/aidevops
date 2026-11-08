@@ -15,5 +15,5 @@
 | `capabilities` | string array | Extra Linux capabilities: `net_admin`, `mlock`, `ping`, `vaapi` |
 | `runtimeDirs` | string array | Writable subdirs of `/app/code` — not backed up, not persisted across updates |
 | `persistentDirs` | string array | Writable dirs persisted across updates but excluded from filesystem backup. Use with `backupCommand`. Requires `minBoxVersion: 9.1.0` |
-| `backupCommand` | string | Command run at backup to dump persistent data into `/app/data`. Requires `minBoxVersion: 9.1.0` |
-| `restoreCommand` | string | Command run at restore to populate `persistentDirs` from `/app/data`. Requires `minBoxVersion: 9.1.0` |
+| `backupCommand` | string | Runs while the app is running to dump persistent data into `/app/data`; shares its network namespace, so `localhost` works. Requires `minBoxVersion: 9.1.0` |
+| `restoreCommand` | string | Runs before the app container starts to populate `persistentDirs` from `/app/data`; the app is not running and `localhost` cannot reach it. Requires `minBoxVersion: 9.1.0` |

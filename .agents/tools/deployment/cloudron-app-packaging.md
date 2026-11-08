@@ -44,12 +44,14 @@ tools:
 ```bash
 npm install -g cloudron   # once installed, aidevops update-tools and auto-update keep it current
 cloudron login my.cloudron.example && cloudron init
-cloudron build && cloudron install --location testapp
-cloudron build && cloudron update --app testapp  # iterate
+cloudron install --location testapp  # on-server build
+cloudron update --app testapp        # iterate
 cloudron logs -f --app testapp
 cloudron exec --app testapp   # shell into container
 cloudron debug --app testapp  # pause app, writable fs
 ```
+
+For registry builds, use `cloudron builder login` and `cloudron builder build` before install or update. The current CLI no longer provides `cloudron build`; inspect the installed builder's help before use.
 
 <!-- AI-CONTEXT-END -->
 
