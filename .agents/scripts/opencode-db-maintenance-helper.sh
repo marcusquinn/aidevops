@@ -1128,7 +1128,9 @@ _maintain_write_state() {
 
 	mkdir -p "$STATE_DIR"
 	# A completed maintain ends any run of holder-blocked auto skips.
-	rm -f "$AUTO_SKIPS_FILE" 2>/dev/null || true
+	if [[ "$step_failures" -eq 0 && "$vacuum_deferred" != true ]]; then
+		rm -f "$AUTO_SKIPS_FILE" 2>/dev/null || true
+	fi
 	cat >"$STATE_FILE" <<EOF
 {
   "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
