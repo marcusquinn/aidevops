@@ -46,6 +46,7 @@ _profile_update_lock_dir() {
 	return 0
 }
 
+# Print the lock directory's ($1) modification epoch, or zero if unavailable.
 _profile_lock_mtime() {
 	local lock_dir="$1"
 	local modified=""
@@ -55,6 +56,7 @@ _profile_lock_mtime() {
 	return 0
 }
 
+# Print the first owner-record line for lock directory $1, if present.
 _profile_lock_owner() {
 	local lock_dir="$1"
 	local owner_line=""
@@ -65,6 +67,8 @@ _profile_lock_owner() {
 	return 0
 }
 
+# Acquire the refresh lock, recovering stale owners only after revalidation.
+# Return 0 on acquisition, 2 for benign contention, or 1 for a setup error.
 _acquire_profile_update_lock() {
 	local lock_dir token now
 	lock_dir=$(_profile_update_lock_dir)
@@ -119,6 +123,8 @@ _acquire_profile_update_lock() {
 	return 0
 }
 
+# Release only the lock matching this process's saved ownership token.
+# Return 1 rather than removing a lock whose owner has changed.
 _release_profile_update_lock() {
 	local lock_dir
 	lock_dir=$(_profile_update_lock_dir)
@@ -137,11 +143,14 @@ _release_profile_update_lock() {
 	return 0
 }
 
+# Print the configured worktree helper path, defaulting to the bundled helper.
 _profile_publication_worktree_helper() {
 	printf '%s\n' "${AIDEVOPS_PROFILE_WORKTREE_HELPER:-${SCRIPT_DIR}/worktree-helper.sh}"
 	return 0
 }
 
+# Register or unregister ($1) worktree $2 in an isolated registry subprocess.
+# Registration accepts optional owner PID ($3) and session ($4); return its status.
 _profile_publication_registry_update() {
 	local operation="$1"
 	local worktree_path="$2"
@@ -162,6 +171,8 @@ _profile_publication_registry_update() {
 	)
 }
 
+# Print the durable intent path for canonical repo $1 and publication tree $2.
+# Reject worktree names outside the profile-publication naming convention.
 _profile_publication_intent_path() {
 	local canonical_repo="$1"
 	local worktree_path="$2"
@@ -175,6 +186,8 @@ _profile_publication_intent_path() {
 	return 0
 }
 
+# Atomically record publication tree $1 and canonical repo $2 before creation.
+# Save the intent path in global state; fail rather than overwrite an intent.
 _profile_write_publication_intent() {
 	local worktree_path="$1"
 	local canonical_repo="$2"
@@ -220,6 +233,7 @@ _profile_write_publication_intent() {
 	return 0
 }
 
+# Remove this run's intent and clear its saved path; reject symlinks/non-files.
 _profile_remove_publication_intent() {
 	local intent_path="${PROFILE_PUBLICATION_INTENT_PATH:-}"
 	[[ -n "$intent_path" ]] || return 0
@@ -231,6 +245,7 @@ _profile_remove_publication_intent() {
 	return 0
 }
 
+# Clear in-memory publication paths and snapshots without changing files.
 _profile_clear_publication_state() {
 	PROFILE_PUBLICATION_WORKTREE=""
 	PROFILE_PUBLICATION_CANONICAL_REPO=""
@@ -262,6 +277,8 @@ _profile_git_probe() {
 	return 1
 }
 
+# Atomically write a private provenance marker for tree $1 and canonical repo $2.
+# Return non-zero if repository resolution or marker publication fails.
 _profile_write_publication_marker() {
 	local worktree_path="$1"
 	local canonical_repo="$2"
@@ -306,6 +323,8 @@ _profile_write_publication_marker() {
 	return 0
 }
 
+# Return 0 only when the registry finds no other active owner of worktree $1.
+# Query in a subprocess to avoid changing the publication helper's globals.
 _profile_publication_worktree_has_no_active_owner() {
 	local worktree_path="$1"
 	local cleanup_owner_pid="$$"
@@ -357,6 +376,8 @@ _profile_publication_worktree_shape_is_safe() {
 	return 0
 }
 
+# Allow recovery of current tree $1 only with safe shape, unchanged canonical
+# HEAD/status snapshots and no other active owner; return 1 on any mismatch.
 _profile_publication_worktree_recovery_is_safe() {
 	local worktree_path="$1"
 	local canonical_head=""
@@ -427,6 +448,9 @@ _archive_and_remove_profile_publication_worktree() {
 	return 0
 }
 
+# Retire the current publication tree through guarded removal or archival.
+# Defer inside managed runs; retain recovery state if tree retirement fails (return 1).
+# Registry and intent cleanup errors are ignored; state is cleared on success.
 _cleanup_profile_publication_worktree() {
 	if [[ -z "$PROFILE_PUBLICATION_WORKTREE" ]]; then
 		return 0
@@ -630,12 +654,15 @@ _profile_sweep_prior_publication_worktrees() {
 	return 0
 }
 
+# Best-effort EXIT cleanup: retire the publication tree, then release the lock.
 _profile_update_exit_cleanup() {
 	_cleanup_profile_publication_worktree || true
 	_release_profile_update_lock || true
 	return 0
 }
 
+# Reuse an inherited lock or acquire one and install EXIT cleanup.
+# Propagate acquisition status (2 for benign contention, 1 for setup failure).
 _ensure_profile_update_lock() {
 	if [[ "${AIDEVOPS_PROFILE_UPDATE_LOCK_HELD:-0}" == "1" ]]; then
 		return 0
@@ -659,6 +686,8 @@ _profile_default_branch() {
 	return 0
 }
 
+# Return 0 only if canonical repo $1 has no tracked changes or unpushed commits.
+# Untracked files are permitted; unverifiable state fails closed.
 _profile_assert_canonical_clean() {
 	local canonical_repo="$1"
 	local status_output=""
@@ -684,6 +713,9 @@ _profile_assert_canonical_clean() {
 	return 0
 }
 
+# Run publication command $1 (remaining args forwarded) in a detached worktree.
+# Track provenance and cleanup, verify the canonical snapshot is unchanged,
+# and return the inner command's status unless setup or safety checks fail.
 _profile_run_in_worktree() {
 	local publication_command="$1"
 	shift
