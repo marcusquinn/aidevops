@@ -1006,6 +1006,9 @@ _update_push_with_recovery() {
 	return 0
 }
 
+# Refresh contributions for README $1 when due, honoring dry-run flag $2.
+# Defer publication to the caller and set PROFILE_CONTRIBUTIONS_REFRESHED on
+# success; failures warn without blocking the surrounding stats refresh.
 _profile_refresh_daily_contributions() {
 	local readme_path="$1"
 	local dry_run="$2"

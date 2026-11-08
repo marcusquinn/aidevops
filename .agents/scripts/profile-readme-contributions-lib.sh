@@ -339,11 +339,14 @@ _record_contributions_update() {
 	return 0
 }
 
+# Print the cache path that records a contributions commit awaiting publication.
 _contributions_pending_push_file() {
 	printf '%s\n' "${HOME}/.aidevops/cache/contributions-pending-push"
 	return 0
 }
 
+# Record HEAD from the profile repository ($1) for a later push retry.
+# Return non-zero if the cache directory or commit record cannot be written.
 _record_pending_contributions_push() {
 	local profile_repo="$1"
 	local pending_file
@@ -353,6 +356,7 @@ _record_pending_contributions_push() {
 	return $?
 }
 
+# Remove the pending-push record after publication; missing records are harmless.
 _clear_pending_contributions_push() {
 	local pending_file
 	pending_file=$(_contributions_pending_push_file)
