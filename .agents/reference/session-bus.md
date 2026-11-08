@@ -51,7 +51,7 @@ Each plugin process polls its root sessions' inboxes every 5 seconds and deliver
 
 The TUI shows a toast on arrival. The right sidebar shows a **Messages** section under **Prompts**: the latest 6 messages, `← handle: text` received, `→ handle: text` sent, `•` while undelivered. It is hidden when the session has no traffic. Disable it with `AIDEVOPS_TUI_MESSAGES=false`.
 
-Delivery claims a message by renaming it into `delivered/`, so exactly one process delivers it. A failed wake returns the message to the inbox; a crash between the claim and the delivery does not redeliver it. A session that is not running keeps its messages for 7 days; they are delivered when it resumes in any OpenCode process.
+Delivery claims a message by renaming it into `delivered/` before delivering it, so only one process can claim it. A failed wake returns the message to the inbox; a crash between the claim and the delivery does not redeliver it. A session that is not running keeps its messages for 7 days; they are delivered when it resumes in any OpenCode process.
 
 ## Trust and limits
 

@@ -87,14 +87,14 @@ Everything lives under `~/.aidevops/.agent-workspace/state/session-bus/` (mode 7
 session-bus/
   presence/<sessionID>.json          # one per live root session, written by its owning process
   inbox/<sessionID>/<ts>-<msgID>.json  # pending messages, one file each
-  inbox/<sessionID>/delivered/...    # moved here after delivery; pruned after 7 days
+  inbox/<sessionID>/delivered/...    # moved here when claimed, before delivery; pruned after 7 days
   sent/<sessionID>/<ts>-<msgID>.json   # sender's copy: rate limit, sidebar, pending-ask summary
   subs/<sessionID>/<subscriberID>.json # notify-when-idle subscriptions (one-shot)
   outbox/<app>/<msgID>.json          # replies to chat-origin messages, for gateways (Phase 3)
   bindings/<app>/<channel>.json      # channel → session (Phase 3; reserved, not written yet)
 ```
 
-- Delivery claims a message by renaming it into `delivered/`. Exactly one process wins the rename, so two processes holding the same session cannot both deliver it.
+- Delivery claims a message by renaming it into `delivered/` before delivering it. Only one process wins the rename, so two processes holding the same session cannot both claim it.
 
 - All writes are temp-file + `rename` (atomic on the same filesystem), the same pattern as `db-activity-heartbeat.mjs` `write()`.
 - Message IDs are random. Delivery is at most once: the claim happens before the channel runs, and only a reported wake failure returns the message to the inbox. A crash between the claim and the delivery leaves the message in `delivered/`, and it is not redelivered.
