@@ -88,6 +88,25 @@ if grep -qF "config --global user.signingkey ${TEST_HOME}/.ssh/id_ed25519_signin
 	exit 1
 fi
 
+# GH#37169: headless-first setup and key rotation retain both signing roles.
+ssh-keygen -t ed25519 -N '' -q -f "${TEST_HOME}/.ssh/id_ed25519"
+interactive_key=$(<"${TEST_HOME}/.ssh/id_ed25519.pub")
+signers="${TEST_HOME}/.ssh/allowed_signers"
+HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" "${SCRIPT_DIR}/signing-setup.sh" setup >/dev/null
+grep -qxF "aidevops-test@example.invalid $PUBLIC_KEY" "$signers"
+grep -qxF "aidevops-test@example.invalid $interactive_key" "$signers"
+HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" "${SCRIPT_DIR}/signing-setup.sh" setup >/dev/null
+[[ $(grep -cxF "aidevops-test@example.invalid $interactive_key" "$signers") == 1 ]]
+ssh-keygen -t ed25519 -N '' -C aidevops-headless-signing -q -f "${TEST_ROOT}/rotated"
+cp "${TEST_ROOT}/rotated.pub" "${TEST_HOME}/.ssh/id_ed25519_signing.pub"
+rotated_key=$(<"${TEST_HOME}/.ssh/id_ed25519_signing.pub")
+AIDEVOPS_SIGNING_TEST_PUBLIC_KEY="$rotated_key" HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" "${SCRIPT_DIR}/signing-setup.sh" headless-setup >/dev/null
+AIDEVOPS_SIGNING_TEST_PUBLIC_KEY="$rotated_key" HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" "${SCRIPT_DIR}/signing-setup.sh" headless-setup >/dev/null
+grep -qxF "aidevops-test@example.invalid $interactive_key" "$signers"
+[[ $(grep -cxF "aidevops-test@example.invalid $rotated_key" "$signers") == 1 ]]
+# Restore the original key for the existing agent tests.
+printf '%s\n' "$PUBLIC_KEY" >"${TEST_HOME}/.ssh/id_ed25519_signing.pub"
+
 : >"$CALL_LOG"
 agent_output=$(HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" \
 	"${SCRIPT_DIR}/signing-setup.sh" agent-start)

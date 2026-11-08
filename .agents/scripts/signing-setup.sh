@@ -212,15 +212,15 @@ cmd_setup() {
 	# Create allowed_signers file for verification
 	local key_content
 	key_content=$(cat "$ssh_key")
-	if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]] || ! grep -q "$git_email" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
-		echo "$git_email $key_content" >>"$ALLOWED_SIGNERS_FILE"
-		_print_ok "Added $git_email to $ALLOWED_SIGNERS_FILE"
+	if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]] || ! grep -qxF -- "$git_email $key_content" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
+		echo "$git_email $key_content" >>"$ALLOWED_SIGNERS_FILE" || return 1
+		_print_ok "Added $git_email interactive signing key to $ALLOWED_SIGNERS_FILE"
 	else
-		_print_info "Email already in allowed_signers file"
+		_print_info "Interactive signing key already in allowed_signers file"
 	fi
 
 	# Also add the aidevops trusted key so users can verify framework updates
-	if ! grep -q "$TRUSTED_EMAIL" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
+	if ! grep -qF "$TRUSTED_EMAIL" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
 		echo "$TRUSTED_EMAIL $TRUSTED_KEY" >>"$ALLOWED_SIGNERS_FILE"
 		_print_ok "Added aidevops maintainer key to allowed_signers"
 	fi
@@ -290,22 +290,13 @@ cmd_headless_setup() {
 	# Add to allowed_signers
 	local key_content
 	key_content=$(cat "$SSH_KEY_HEADLESS_PUB")
-	if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]] || ! grep -qF "$git_email" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
-		echo "$git_email $key_content" >>"$ALLOWED_SIGNERS_FILE"
-		_print_ok "Added $git_email to $ALLOWED_SIGNERS_FILE"
+	if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]] || ! grep -qxF -- "$git_email $key_content" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
+		# Preserve all existing keys: a comment cannot safely identify ownership of
+		# an older key, and old signatures may still need verification after rotation.
+		echo "$git_email $key_content" >>"$ALLOWED_SIGNERS_FILE" || return 1
+		_print_ok "Updated $git_email entry in $ALLOWED_SIGNERS_FILE"
 	else
-		# Update entry if key changed (replace old line for this email)
-		if ! grep -qF "$key_content" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
-			# Remove old entry and add new one
-			local tmp_file
-			tmp_file=$(mktemp)
-			grep -vF "$git_email" "$ALLOWED_SIGNERS_FILE" >"$tmp_file" 2>/dev/null || true
-			echo "$git_email $key_content" >>"$tmp_file"
-			mv "$tmp_file" "$ALLOWED_SIGNERS_FILE"
-			_print_ok "Updated $git_email entry in $ALLOWED_SIGNERS_FILE"
-		else
-			_print_info "Email already in allowed_signers with correct key"
-		fi
+		_print_info "Email already in allowed_signers with correct key"
 	fi
 
 	# Also add the aidevops trusted key so users can verify framework updates
@@ -327,8 +318,8 @@ cmd_headless_setup() {
 	echo "  1. Upload the signing key to GitHub (as a SIGNING key, not auth key):"
 	echo "     Settings > SSH and GPG keys > New SSH signing key"
 	echo "     Key: $(cat "$SSH_KEY_HEADLESS_PUB")"
-	echo "  2. Add agent-start to your shell profile or cron environment:"
-	echo "     aidevops signing agent-start"
+	echo "  2. Pulse and the headless runtime restore stale agents automatically; no shell hook is required."
+	echo "     To restore immediately: aidevops signing agent-start"
 	echo "  3. Verify both key roles: aidevops signing check"
 	echo "  4. Guide: ~/.aidevops/agents/reference/git-signing.md"
 	return 0
