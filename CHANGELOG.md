@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.135] - 2026-11-08
+
+### Changed
+
+- Refactor: split profile README helper below the large-file limit (#37154)
+
+### Fixed
+
+- scan public diff before validators (#37168)
+- exclude dead processes from bounded operation receipts (#37166)
+- guard raw worker PR identity (#37161)
+- restore index test fixture dependencies (#37164)
+- refresh worker trust PR metadata (#37156)
+- detect OpenCode interactive processes (#37148)
+- prune stale activity heartbeats (#37147)
+- recover interrupted reconstructible probe before reporting already-absent (#37131)
+
 ## [3.39.134] - 2026-11-07
 
 ### Changed
