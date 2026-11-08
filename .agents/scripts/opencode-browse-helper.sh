@@ -27,12 +27,15 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly BROWSE_INSTALL_URL="https://opencode.ai/browse/install"
 readonly BROWSE_STORE_URL="https://chromewebstore.google.com/detail/mfnicocicmmlkpjnaffgihfjhdgjkdjg"
 readonly BROWSE_AIDEVOPS_ROOT="${HOME}/.aidevops/"
+# User-facing entry point (aidevops.sh dispatches here; bare command = status).
+readonly BROWSE_CLI="aidevops opencode-browse"
 
 show_help() {
 	cat <<'EOF'
 OpenCode browse helper — drive the user's own Chromium-family browser
 
 Usage:
+  aidevops opencode-browse [command] [args]   (no command = status)
   opencode-browse-helper.sh <command> [args]
 
 Commands:
@@ -52,9 +55,11 @@ Commands:
   help                   Show this help
 
 Examples:
-  opencode-browse-helper.sh install
-  opencode-browse-helper.sh run -- execute --rm 'await page.goto("https://example.com"); return await page.title()'
-  opencode-browse-helper.sh run -- session new github --allow-origin github.com
+  aidevops opencode-browse install
+  aidevops opencode-browse pair            # add another browser, e.g. Chrome
+  aidevops opencode-browse pair --list
+  aidevops opencode-browse run -- execute --rm 'await page.goto("https://example.com"); return await page.title()'
+  aidevops opencode-browse run -- session new github --allow-origin github.com
 
 Extension: https://chromewebstore.google.com/detail/mfnicocicmmlkpjnaffgihfjhdgjkdjg
 Docs: ~/.aidevops/agents/tools/browser/opencode-browse.md
@@ -121,7 +126,7 @@ stabilise_browse_env() {
 
 require_browse() {
 	if ! browse_bin >/dev/null; then
-		print_error "browse CLI is not installed. Run: opencode-browse-helper.sh install"
+		print_error "browse CLI is not installed. Run: ${BROWSE_CLI} install"
 		return 1
 	fi
 	return 0
@@ -262,11 +267,11 @@ cmd_install() {
 
 	# Pairing needs a person and a browser; never fail the install over it.
 	if is_headless_runtime; then
-		print_info "Headless runtime: skipped pairing. Pair later from a terminal: opencode-browse-helper.sh pair"
+		print_info "Headless runtime: skipped pairing. Pair later from a terminal: ${BROWSE_CLI} pair"
 		return 0
 	fi
 	if ! run_browse_setup ${setup_args[@]+"${setup_args[@]}"}; then
-		print_warning "browse is installed but not paired yet. Add the extension, then run: opencode-browse-helper.sh pair"
+		print_warning "browse is installed but not paired yet. Add the extension, then run: ${BROWSE_CLI} pair"
 		print_info "Extension: ${BROWSE_STORE_URL}"
 	fi
 	return 0
@@ -318,7 +323,7 @@ cmd_run() {
 cmd_status() {
 	local bin=""
 	if ! bin="$(browse_bin)"; then
-		print_info "browse CLI: not installed (opencode-browse-helper.sh install)"
+		print_info "browse CLI: not installed (${BROWSE_CLI} install)"
 		cmd_detect >/dev/null || print_info "No supported Chromium-family browser found"
 		return 1
 	fi

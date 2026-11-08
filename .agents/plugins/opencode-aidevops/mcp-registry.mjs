@@ -531,7 +531,7 @@ export function getMcpRegistry() {
         "browse acts in the user's own signed-in browser: use it only when the user asks to use their browser, tabs or logged-in session; otherwise return: use @playwright instead.",
         "Create a named session scoped to the task's origins before acting; never read or act on tabs the user did not lend, and keep the user's tabs open.",
         "Ask the user before submitting forms, purchases, messages, deletes or account changes, and hand control back for logins, passkeys and CAPTCHAs.",
-        "If the extension is not connected, return the output of ~/.aidevops/agents/scripts/opencode-browse-helper.sh status instead of retrying.",
+        "If the extension is not connected, return the output of aidevops opencode-browse status and the pairing command aidevops opencode-browse pair instead of retrying.",
         UNTRUSTED_OUTPUT_GUIDANCE,
       ],
       modelTier: "standard",

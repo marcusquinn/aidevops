@@ -1312,6 +1312,7 @@ _help_commands() {
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
 	echo "  tabby <cmd>        Manage Tabby profiles (sync/status) and remote tmux tabs (sessions)"
 	echo "  buzz <cmd>         Manage Buzz Desktop OpenCode ACP compatibility"
+	echo "  opencode-browse [cmd] Drive your own browser via OpenCode browse (status/pair/install/doctor)"
 	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
 	echo "  detect             Find and register aidevops projects"
 	echo "  uninstall          Remove aidevops from your system"
@@ -2192,11 +2193,8 @@ _main_dispatch() {
 	issue) _dispatch_helper "interactive-session-helper.sh" "interactive-session-helper.sh" "$@" ;;
 	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
 	contributions | contrib) _main_dispatch_contributions "$@" ;;
-	inbox)
-		# Bare `aidevops inbox` defaults to status (most common use).
-		[[ $# -eq 0 ]] && set -- status
-		_dispatch_helper "inbox-helper.sh" "inbox-helper.sh" "$@"
-		;;
+	# Bare `aidevops inbox` / `aidevops opencode-browse` default to status.
+	inbox) _dispatch_helper "inbox-helper.sh" "inbox-helper.sh" "${@:-status}" ;;
 	case | cases)
 		# Bare `aidevops case` defaults to list (most common use).
 		[[ $# -eq 0 ]] && set -- list
@@ -2211,6 +2209,7 @@ _main_dispatch() {
 	email) _cmd_email "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
+	opencode-browse) _dispatch_helper "opencode-browse-helper.sh" "opencode-browse-helper.sh" "${@:-status}" ;;
 	buzz) _dispatch_helper "buzz-desktop-helper.sh" "buzz-desktop-helper.sh" "$@" ;;
 	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;
 	parent-status | ps) _dispatch_helper "parent-status-helper.sh" "parent-status-helper.sh" "$@" ;;

@@ -456,7 +456,7 @@ setup_opencode_browse() {
 		return 0
 	fi
 	if bash "$helper" installed; then
-		print_success "OpenCode browse installed (self-updating; status: opencode-browse-helper.sh status)"
+		print_success "OpenCode browse installed (self-updating; status/pair: aidevops opencode-browse)"
 		return 0
 	fi
 	if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" ]]; then
@@ -474,7 +474,7 @@ setup_opencode_browse() {
 	local install_browse=""
 	setup_prompt install_browse "Install OpenCode browse CLI? [Y/n]: " "Y"
 	if [[ ! "$install_browse" =~ ^[Yy]?$ ]]; then
-		print_info "Skipped OpenCode browse. Install later: bash ~/.aidevops/agents/scripts/opencode-browse-helper.sh install"
+		print_info "Skipped OpenCode browse. Install later: aidevops opencode-browse install"
 		return 0
 	fi
 
@@ -484,7 +484,7 @@ setup_opencode_browse() {
 	fi
 	if ! bash "$helper" install ${browse_args[@]+"${browse_args[@]}"}; then
 		print_warning "OpenCode browse installation failed"
-		print_info "Run manually: bash ~/.aidevops/agents/scripts/opencode-browse-helper.sh install"
+		print_info "Run manually: aidevops opencode-browse install"
 	fi
 	return 0
 }

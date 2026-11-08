@@ -1907,11 +1907,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18886 OpenCode session bus: presence and session-to-session messages #feat ref:GH#37149 -> [todo/tasks/t18886-brief.md] pr:#37165 completed:2026-11-08
 
-- [ ] t18887 feat: OpenCode browse support (install via setup/update, lazy MCP, routing docs) #feat #interactive ref:GH#37155 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 -> [todo/tasks/t18887-brief.md]
+- [x] t18887 feat: OpenCode browse support (install via setup/update, lazy MCP, routing docs) #feat #interactive ref:GH#37155 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 pr:#37167 completed:2026-11-08 -> [todo/tasks/t18887-brief.md]
 
 - [ ] t18888 OpenCode 2 support for the session bus: run the bus from v2.mjs and add the sidebar Messages section #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37157 logged:2026-11-08 blocked-by:t18886 -> [todo/tasks/t18888-brief.md]
 
 - [ ] t18889 test fixtures: copy gh-closing-reference-lib.sh into subagent-index and manifest-index temp trees #auto-dispatch #bug ref:GH#37162 logged:2026-11-08 -> [todo/tasks/t18889-brief.md]
+
+- [ ] t18890 feat: aidevops opencode-browse CLI command #feat #interactive ref:GH#37170 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 -> [todo/tasks/t18890-brief.md]
 
 ## In Progress
 
