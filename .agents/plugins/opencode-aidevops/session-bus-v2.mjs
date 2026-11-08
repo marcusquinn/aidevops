@@ -137,7 +137,9 @@ export function createV2SessionBusHooks({ ctx, directory, headless = false, log 
       return hooks.handleEvent({ event: normalized });
     },
     dispose() {
-      bus.dispose();
+      try {
+        bus.dispose();
+      } catch { /* best-effort cleanup */ }
     },
   };
 }

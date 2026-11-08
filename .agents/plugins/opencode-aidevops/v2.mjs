@@ -306,11 +306,10 @@ async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRunti
   // GH#35898: a disposed instance must not leave a stale idle heartbeat.
   dbActivityHeartbeat?.remove();
   // t18888: stop polling and withdraw this instance's presence records.
-  for (const disposable of [sessionBus, boundedOperationManager]) {
-    try {
-      disposable?.dispose();
-    } catch { /* best-effort cleanup */ }
-  }
+  sessionBus?.dispose();
+  try {
+    boundedOperationManager?.dispose();
+  } catch { /* best-effort cleanup */ }
   await mcpRuntime?.dispose().catch(() => {});
   for (const registration of registrations.reverse()) {
     await registration.dispose().catch(() => {});
