@@ -555,6 +555,56 @@ test_update_sweeps_prior_publication_worktrees() {
 	return 0
 }
 
+# GH#37159: a retained backlog must not starve refresh. Recovery is bounded by
+# count and examined trees; the run still completes and leaves the rest protected.
+test_update_bounds_recovery_with_retained_backlog() {
+	local test_name="profile update bounds recovery per run with a retained backlog"
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
+	local fixture_home="${TEST_DIR}/home" fixture_repo="${TEST_DIR}/profile-repo"
+	local fixture_remote="${TEST_DIR}/profile-remote.git" helper_dir="${TEST_DIR}/helper"
+	local refusing_helper="${TEST_DIR}/refusing-worktree-helper.sh" output_file="${TEST_DIR}/update-output"
+	local registry_dir="${fixture_home}/.aidevops/.agent-workspace"
+	local registry_db="${registry_dir}/worktree-registry.db"
+	local run=0 before=0 after=0 status=0 worktree_helper="" min_age="" cap=""
+
+	mkdir -p "$helper_dir" "$fixture_home"
+	install_helper_with_libs "$helper_dir"
+	write_stub_dependencies "$helper_dir"
+	create_profile_repo_fixture "$fixture_home" "$fixture_repo" "$fixture_remote"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"$refusing_helper"
+	chmod +x "$refusing_helper"
+
+	for run in 1 2 3 4 5; do
+		worktree_helper="$refusing_helper" min_age="" cap=""
+		if [[ "$run" -eq 5 ]]; then
+			worktree_helper="${helper_dir}/worktree-helper.sh" min_age=0 cap=1
+		fi
+		[[ "$run" -ne 5 ]] || before=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
+		status=0
+		HOME="$fixture_home" \
+			PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
+			WORKTREE_REGISTRY_DIR="$registry_dir" \
+			WORKTREE_REGISTRY_DB="$registry_db" \
+			AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
+			AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
+			AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/recovery" \
+			AIDEVOPS_PROFILE_WORKTREE_HELPER="$worktree_helper" \
+			AIDEVOPS_PROFILE_PUBLICATION_SWEEP_MIN_AGE_SECS="$min_age" \
+			AIDEVOPS_PROFILE_PUBLICATION_SWEEP_CAP="$cap" \
+			bash "${helper_dir}/profile-readme-helper.sh" update >"$output_file" 2>&1 || status=$?
+	done
+	after=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
+
+	if [[ "$before" -lt 4 ]] || [[ "$after" -lt $((before - 1)) ]] ||
+		! grep -q 'Profile publication sweep: bound reached' "$output_file" ||
+		grep -q 'could not create profile publication worktree' "$output_file"; then
+		print_helper_failure "$test_name" "expected bounded recovery with retained backlog (before=${before} after=${after} status=${status})" "$output_file"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
 test_update_dry_run_is_canonical_safe() {
 	local test_name="profile update dry-run leaves canonical checkout and remote unchanged"
 	TEST_DIR=$(make_canonical_temp_dir) || return 1
@@ -1829,6 +1879,7 @@ main() {
 		test_update_recovers_dirty_profile_publication_worktree 0600
 		teardown
 		test_update_sweeps_prior_publication_worktrees
+		test_update_bounds_recovery_with_retained_backlog
 		teardown
 		test_update_dry_run_is_canonical_safe
 		teardown
