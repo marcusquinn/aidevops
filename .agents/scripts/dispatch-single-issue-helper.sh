@@ -1625,6 +1625,14 @@ _dsi_guard_keychain_ready() {
 			source "${_DSI_SCRIPT_DIR}/background-keychain-helper.sh"
 			background_keychain_gh_ready "dispatch-single-issue"
 		) || ready_rc=$?
+	elif [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+		# Fail closed on macOS (or unknown OS) when readiness cannot be checked.
+		local host_os=""
+		host_os=$(uname -s 2>/dev/null) || host_os=""
+		if [[ -z "$host_os" || "$host_os" == "Darwin" || -n "${AIDEVOPS_KEYCHAIN_FORCE_STATE:-}" ]]; then
+			_dsi_warn "background-keychain-helper.sh unreadable; cannot check keychain readiness"
+			ready_rc=1
+		fi
 	fi
 	if [[ "$ready_rc" -ne 0 ]]; then
 		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
