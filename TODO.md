@@ -1909,11 +1909,25 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18887 feat: OpenCode browse support (install via setup/update, lazy MCP, routing docs) #feat #interactive ref:GH#37155 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 pr:#37167 completed:2026-11-08 -> [todo/tasks/t18887-brief.md]
 
-- [ ] t18888 OpenCode 2 support for the session bus: run the bus from v2.mjs and add the sidebar Messages section #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37157 logged:2026-11-08 blocked-by:t18886 -> [todo/tasks/t18888-brief.md]
+- [x] t18888 OpenCode 2 support for the session bus: run the bus from v2.mjs and add the sidebar Messages section #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37157 logged:2026-11-08 blocked-by:t18886 pr:#37179 completed:2026-11-08 -> [todo/tasks/t18888-brief.md]
 
 - [ ] t18889 test fixtures: copy gh-closing-reference-lib.sh into subagent-index and manifest-index temp trees #auto-dispatch #bug ref:GH#37162 logged:2026-11-08 -> [todo/tasks/t18889-brief.md]
 
 - [ ] t18890 feat: aidevops opencode-browse CLI command #feat #interactive ref:GH#37170 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 -> [todo/tasks/t18890-brief.md]
+
+- [ ] t18891 Session bus chat ingest: scan, verified actor, opt-in owner wakes and redacted listing #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37244 logged:2026-11-08 -> [todo/tasks/t18891-brief.md]
+
+- [ ] t18892 Session bus channel bindings and per-task session launch on opencode serve #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37245 logged:2026-11-08 blocked-by:t18891 -> [todo/tasks/t18892-brief.md]
+
+- [ ] t18893 Matrix bot adapter for the session bus: room commands, bound rooms and outbox relay #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37246 logged:2026-11-08 blocked-by:t18892 -> [todo/tasks/t18893-brief.md]
+
+- [ ] t18894 SimpleX bot adapter for the session bus: replace the /sessions and /ask scaffolds #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37247 logged:2026-11-08 blocked-by:t18892 -> [todo/tasks/t18894-brief.md]
+
+- [ ] t18895 Session bus coordination: who is working on what, and overlap warnings before work starts #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37248 logged:2026-11-08 -> [todo/tasks/t18895-brief.md]
+
+- [ ] t18896 Release coordination over the session bus: lane owner session, held-lane hints and release notices #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37249 logged:2026-11-08 -> [todo/tasks/t18896-brief.md]
+
+- [ ] t18897 Session bus ask with bounded wait, so subagents and scripts get the reply in the same call #feat #interactive #auto-dispatch tier:standard ~4h ref:GH#37250 logged:2026-11-08 -> [todo/tasks/t18897-brief.md]
 
 ## In Progress
 
