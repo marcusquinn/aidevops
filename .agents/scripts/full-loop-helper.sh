@@ -171,12 +171,12 @@ cmd_commit_and_pr() {
 	# If any exist on the branch, replace the branch range with one final commit
 	# before validators inspect HEAD and before rebase/push can publish it.
 	_finalize_wip_history "$commit_message" || return 1
+	_commit_and_pr_privacy_scan || return 1
 	# t2842: project-aware validators (auto-fix format/lint, fail-closed typecheck).
 	# Inserted between commit and push so amends apply to the same commit
 	# the worker just made, and so failures abort BEFORE we push broken code.
 	_run_project_validators "$skip_hooks" || return 1
 	_rebase_for_push "$branch" "$skip_rebase" || return 1
-
 	local files_changed=""
 	local closing_keyword="Resolves"
 	local planning_only=0
