@@ -131,6 +131,36 @@ else
 		"got rc=$rc"
 fi
 
+# --- Test 6: diagnose preserves null fields and surfaces a blocked pause ---
+status_text=$("$HEALTH_HELPER" status)
+diagnose_text=$("$HEALTH_HELPER" diagnose)
+status_json=$("$HEALTH_HELPER" status --json)
+diagnose_json=$("$HEALTH_HELPER" diagnose --json)
+if [[ "$status_text" == *'last update run:     never (n/a)'* && "$status_text" == *'reason:              integration test trip'* ]] \
+	&& [[ "$diagnose_text" == *'last update:         n/a'* && "$diagnose_text" == *'reason:              integration test trip'* ]] \
+	&& jq -e '.circuit_breaker.last_update_outcome == null and .circuit_breaker.reason == "integration test trip"' <<<"$status_json" >/dev/null \
+	&& jq -e '.last_update_outcome == null and .reason == "integration test trip" and .finding == "PAUSED_NO_UPDATE" and (.advice | contains("pulse-runner-health-helper.sh resume"))' <<<"$diagnose_json" >/dev/null; then
+	print_result "status and diagnose preserve null update and pause reason" "PASS"
+else
+	print_result "status and diagnose preserve null update and pause reason" "FAIL"
+fi
+
+# A fixed historical timestamp is portable across GNU and BSD date.
+jq '.circuit_breaker.tripped_at = "2000-01-01T00:00:00Z" | .window_started_at = null' "$RUNNER_HEALTH_STATE_FILE" >"$SANDBOX/aged.json"
+mv "$SANDBOX/aged.json" "$RUNNER_HEALTH_STATE_FILE"
+diagnose_json=$(RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS=24 "$HEALTH_HELPER" diagnose --json)
+if jq -e '.finding == "STUCK_TRIPPED" and .last_update_outcome == null and .reason == "integration test trip" and (.advice | contains("pulse-runner-health-helper.sh resume"))' <<<"$diagnose_json" >/dev/null; then
+	print_result "aged no-update pause requires review and resume" "PASS"
+else
+	print_result "aged no-update pause requires review and resume" "FAIL"
+fi
+diagnose_json=$(RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS=1000000 "$HEALTH_HELPER" diagnose --json)
+if jq -e '.finding == "PAUSED_NO_UPDATE"' <<<"$diagnose_json" >/dev/null; then
+	print_result "configured pause age controls escalation" "PASS"
+else
+	print_result "configured pause age controls escalation" "FAIL"
+fi
+
 # Cleanup.
 rm -rf "$SANDBOX"
 export HOME="$HOME_BACKUP"
