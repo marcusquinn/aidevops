@@ -159,6 +159,15 @@ INNER_EOF
 echo "Nix regression: logical profiles, aliases, quoting, and safe replacement"
 (
 	source_extracted
+	# Discovery probes /opt/homebrew/bin before PATH; treat host binaries
+	# outside the sandbox (logical or physical path) as ephemeral so a
+	# Homebrew OpenCode cannot win.
+	sandbox_physical=$(cd "$SANDBOX" && pwd -P)
+	_setup_opencode_binary_is_ephemeral() {
+		local bin="$1"
+		[[ "$bin" == "$SANDBOX/"* || "$bin" == "$sandbox_physical/"* ]] && return 1
+		return 0
+	}
 	export HOME="$SANDBOX/nix home"
 	store="$HOME/store generation \$literal \"quoted\""
 	profile="$HOME/.nix-profile/bin/opencode"

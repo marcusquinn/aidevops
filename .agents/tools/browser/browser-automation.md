@@ -34,7 +34,7 @@ Default Playwright automation to a fresh, isolated **headless Brave** browser wh
 - **headed-hidden**: a real headed browser with every window minimised, for sites that challenge or render differently in headless mode while the user keeps working. On macOS, focus returns to the previous app when the browser takes it.
 - **headed**: a visible separate window, only when the user must see or assist with the flow (for example, a passkey, MFA, or visual guidance), or when the task itself requires a visible browser.
 
-Selection details, including `AIDEVOPS_PLAYWRIGHT_HEADED`, are in `playwright.md` "Window modes". Microsoft's Playwright Extension is an interactive-only exception when an available user explicitly needs selected tabs from their existing Chrome/Edge/Chromium. Playwright-launched browsers announce automation (`navigator.webdriver`, `--enable-automation`), so social platforms such as X block them. When the user asks to "use my logged-in tab", say in one turn that the everyday tab cannot be driven, then offer `chromium-debug-use-helper.sh launch <url>`: a plain-process Brave on a dedicated profile with one manual login, attached through CDP (`chromium-debug-use.md`). Do not try the extension with Brave, AppleScript JavaScript, or cookie extraction first. Prefer ARIA snapshots over screenshots (50-200 tokens vs ~1K); see `playwright.md` for runtime overrides.
+Selection details, including `AIDEVOPS_PLAYWRIGHT_HEADED`, are in `playwright.md` "Window modes". Microsoft's Playwright Extension is an interactive-only exception when an available user explicitly needs selected tabs from their existing Chrome/Edge/Chromium. Playwright-launched browsers announce automation (`navigator.webdriver`, `--enable-automation`), so social platforms such as X block them. When the user asks to "use my browser" or "use my logged-in tab" in an interactive session and `opencode-browse-helper.sh status` shows the extension connected, use the `@opencode-browse` agent: OpenCode browse drives the everyday Chrome, Edge, Brave, Arc, Vivaldi or Chromium through its extension in a task-scoped session (`opencode-browse.md`). Never use browse in headless or worker runtimes, or for work Playwright can do in isolation. Without a paired browse, say in one turn that the everyday tab cannot be driven, then offer `opencode-browse-helper.sh install` or `chromium-debug-use-helper.sh launch <url>`: a plain-process Brave on a dedicated profile with one manual login, attached through CDP (`chromium-debug-use.md`). Do not try the extension with Brave, AppleScript JavaScript, or cookie extraction first. Prefer ARIA snapshots over screenshots (50-200 tokens vs ~1K); see `playwright.md` for runtime overrides.
 
 For repeatable browser operations or web data mining that should learn, optimize,
 persist profile state, or graduate into reusable private workflows, start with
@@ -49,9 +49,12 @@ EXTRACT?
 AUTOMATE?
   Password manager/extensions:
     User present + current browser required → Playwright Extension | Unlock once → dev-browser | Programmatic → standalone Playwright + Bitwarden CLI
+  User's own browser / everyday logged-in tab (interactive only):
+    → browse installed + extension connected → @opencode-browse (opencode-browse.md); any Chromium-family browser, incl. Brave
+    → not paired → offer opencode-browse-helper.sh install, else the dedicated-profile route below
   User's logged-in session / user-assisted login on a bot-defended site (X, social):
     → chromium-debug-use-helper.sh launch (dedicated profile, plain process) + connectOverCDP; launch-stop when done
-    Everyday already-open tab: not drivable over CDP; Chrome/Edge/Chromium selected tabs → Playwright Extension (not Brave)
+    Everyday already-open tab: not drivable over CDP; use browse above, or Chrome/Edge/Chromium selected tabs → Playwright Extension (not Brave)
   Live Chromium session: inspect state first → chromium-debug-use | Repeatable isolated flow → standalone Playwright (headless Brave preferred) / dev-browser
   Parallel sessions: speed → Playwright | CLI → playwright-cli/agent-browser --session
   Persistent login: with extensions → dev-browser | without → playwright-cli/storageState

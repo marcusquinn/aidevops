@@ -85,7 +85,7 @@ tools/autoresearch/,tools/autoresearch subagents,autoresearch
 tools/autoresearch/autoresearch/,tools/autoresearch/autoresearch subagents,agent-optimization|completion|logging|loop
 tools/browser/,tools/browser subagents,agent-browser|anti-detect-browser|auto-browse-subagents|auto-browse|browser-automation|browser-benchmark-scripts-01-playwright|browser-benchmark-scripts-02-dev-browser|browser-benchmark-scripts-03-agent-browser|browser-benchmark-scripts-04-crawl4ai|browser-benchmark-scripts-05-stagehand|browser-benchmark-scripts-06-visual-verification|browser-benchmark-scripts|browser-benchmark|browser-profiles|browser-qa|browser-use|chrome-devtools|chrome-webstore-release|chromium-debug-use|crawl4ai-integration|crawl4ai-resources|crawl4ai-usage|crawl4ai|curl-copy|dev-browser|extension-dev
 tools/browser/extension-dev/,tools/browser/extension-dev subagents,development|publishing|testing
-tools/browser/,tools/browser subagents,fingerprint-profiles|pagespeed|peekaboo|playwright-cli|playwright-emulation|playwright|playwriter|proxy-integration|skyvern|stagehand-examples|stagehand-python|stagehand|stealth-patches|sweet-cookie|watercrawl
+tools/browser/,tools/browser subagents,fingerprint-profiles|opencode-browse|pagespeed|peekaboo|playwright-cli|playwright-emulation|playwright|playwriter|proxy-integration|skyvern|stagehand-examples|stagehand-python|stagehand|stealth-patches|sweet-cookie|watercrawl
 tools/build-agent/,tools/build-agent subagents,agent-review|agent-testing|build-agent|node-helpers
 tools/build-mcp/,tools/build-mcp subagents,aidevops-plugin|api-wrapper
 tools/build-mcp/api-wrapper/,tools/build-mcp/api-wrapper subagents,patterns
@@ -147,9 +147,10 @@ workflows/brief/,workflows/brief subagents,routing|templates|tier-simple|tier-st
 workflows/,workflows subagents,browser-qa|budget-analysis|bug-fixing|campaign-growth|changelog|code-audit-remote|code-simplifier|compare-models-free|compare-models|conversation-starter|creative-production|cross-review|dashboard|define|error-feedback|feature-development|findings-to-tasks|full-loop|git-workflow|graduate-memories|humanise|init-routines|ip-check|list-todo|list-verify|local-permissions-check|log-issue-aidevops|marketing-actions|marketing-decisions|memory-audit|memory-log|milestone-validation|mission-orchestrator|mission|model-replay|models-pool-check|multi-repo-workspace|new-task|optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|optimize-tiers|patterns|performance|plans|postflight-loop|postflight|pr-loop|pr|pre-edit|preflight|public-launch-checklist|pulse-check|pulse-sweep|pulse|readme-create-update|readme|recall|release|remember|review-issue-pr|review|route|routine|runners-check|runners|save-todo|session-analysis|session-manager|session-review|show-plan|skills|sql-migrations|strategic-review|tech-stack|triage-review|ui-verification|vault-fleet|vault-setup|venv-health|version-bump|wiki-update|wordpress-local-clone|worktree-cleanup|worktree
 -->
 
-<!--TOON:mcp_servers[18]{name,url,auth,subagent,purpose}:
+<!--TOON:mcp_servers[19]{name,url,auth,subagent,purpose}:
 chrome-devtools,npx chrome-devtools-mcp@latest,none,tools/browser/chrome-devtools.md,Browser automation debugging and performance analysis
 playwright,npx -y @playwright/mcp@0.0.79 --headless --isolated,none,tools/browser/playwright.md,Cross-browser testing and automation
+browse,opencode-browse-helper.sh mcp (OpenCode browse CLI),extension-pairing,tools/browser/opencode-browse.md,Drive the user's own signed-in Chromium-family browser (interactive only)
 cloudflare-api,https://mcp.cloudflare.com/mcp,oauth,tools/api/cloudflare-mcp.md,Workers D1 KV R2 Pages AI Gateway via OAuth
 openapi-search,https://openapi-mcp.openapisearch.com/mcp,none,tools/context/openapi-search.md,Search and explore any OpenAPI spec — semantic search across 3000+ public APIs
 context7,npx @upstash/context7-mcp@latest,none,tools/context/context7.md,Real-time library documentation for development
