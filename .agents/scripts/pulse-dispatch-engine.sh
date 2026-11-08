@@ -13,8 +13,8 @@
 # Focused submodules (GH#36027, GH#37242):
 #   pulse-dispatch-engine-launch.sh       — launch validation and failure reasons
 #   pulse-dispatch-engine-housekeeping.sh — locks, resumable stages, async launch
-#   pulse-dispatch-engine-supervisor.sh   — supervisor cadence and blocker recovery
-# Candidate ranking, dispatch orchestration and preflight remain here;
+#   pulse-dispatch-engine-supervisor.sh   — supervisor state, recovery, launch pacing
+# Candidate ranking, dispatch orchestration, supervisor gate and preflight remain here;
 # existing callers continue to source only this entrypoint.
 #
 # Public functions in this module (in source order):
@@ -777,106 +777,111 @@ _dispatch_attribute_round_underfill() {
 	return 0
 }
 
-#######################################
-# t3015: Returns 0 (true) if the dispatch loop should take the floor path
-# (forced-serial, "test the waters" semantics) rather than the max path
-# (parallel saturation). Two triggers:
-#   1. Adaptive throttle file present at $_DISPATCH_THROTTLE_FILE — runtime is
-#      degraded (recent worker launch failures), so we want serial dispatch
-#      to verify the runtime is healthy before saturating again.
-#   2. _DISPATCH_FORCE_FLOOR=1 set by an explicit dispatch_floor() caller —
-#      lets diagnostic / single-shot callers force the slow-and-careful path
-#      without modifying the throttle file.
-#
-# Returns 1 (false) otherwise — the default max path dispatches in parallel.
-#
-# Caller contract: $_DISPATCH_THROTTLE_FILE must be set before this function
-# is called. dispatch_max() sets it just before checking; dispatch_floor()
-# inherits via export.
-#######################################
-_dispatch_should_use_floor_path() {
-	[[ -n "${_DISPATCH_FORCE_FLOOR:-}" ]] && return 0
-	[[ -f "${_DISPATCH_THROTTLE_FILE:-${HOME}/.aidevops/logs/dispatch-throttle}" ]] && return 0
-	return 1
-}
-
-#######################################
-# t3015: Public entry point for the forced-serial dispatch path.
-#
-# Thin wrapper around dispatch_max() that sets _DISPATCH_FORCE_FLOOR=1 so the
-# orchestrator delegates to the serial (`floor`) loop regardless of whether the
-# adaptive throttle file is present. Use this when an external caller wants
-# the slow-and-careful "one at a time, verify it lands" behaviour — e.g. a
-# diagnostic harness, a single-issue dispatch test, or a regression escape
-# hatch for operators who want to bypass the parallel max loop without
-# manually creating a throttle file.
-#
-# Pre-t3015 the only way to get serial behaviour was DISPATCH_MAX_PARALLEL=1,
-# which is a runtime tuning knob, not a public API. dispatch_floor() is the
-# named API for "force serial regardless of tuning".
-#
-# Arguments / return value: forwarded as-is to dispatch_max().
-#######################################
-dispatch_floor() {
-	_DISPATCH_FORCE_FLOOR=1 dispatch_max "$@"
-}
-
-# Supervisor scheduling and blocker recovery share the same cadence state.
+# Supervisor state, blocker recovery and launch pacing share cadence helpers.
 # shellcheck source=./pulse-dispatch-engine-supervisor.sh
 # shellcheck disable=SC1091  # sub-library resolved from this module's path
 source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-engine-supervisor.sh"
 
-#######################################
-# Compute and apply an adaptive launch-settle wait (t1887).
-#
-# Scales the wait from 0s (0 dispatches) to PULSE_LAUNCH_GRACE_SECONDS
-# (PULSE_LAUNCH_SETTLE_BATCH_MAX or more dispatches) using linear
-# interpolation. This avoids the static 35s wait when no workers were
-# launched, saving ~35s per idle cycle.
-#
-# Formula: wait = ceil(dispatched / batch_max * grace_max)
-# Examples (grace_max=35, batch_max=5):
-#   0 dispatches → 0s
-#   1 dispatch   → 7s
-#   2 dispatches → 14s
-#   3 dispatches → 21s
-#   4 dispatches → 28s
-#   5+ dispatches → 35s
-#
-# Arguments:
-#   $1 - dispatched_count (integer, number of workers just launched)
-#   $2 - context label for log (e.g. "dispatch_max", "recycle loop")
-#######################################
-_adaptive_launch_settle_wait() {
-	local dispatched_count="${1:-0}"
-	local context_label="${2:-dispatch}"
+_should_run_llm_supervisor() {
+	local now_epoch
+	now_epoch=$(date +%s)
 
-	[[ "$dispatched_count" =~ ^[0-9]+$ ]] || dispatched_count=0
-	if [[ "$dispatched_count" -eq 0 ]]; then
-		echo "[pulse-wrapper] Adaptive settle wait (${context_label}): 0 dispatches — skipping wait" >>"$LOGFILE"
+	# 1. Daily sweep: only a successful daily sweep advances its cadence.
+	# last_llm_run_epoch remains as the legacy success timestamp for older installs;
+	# last_llm_attempt_epoch is separate so failed runs do not suppress retries for
+	# a full daily interval.
+	local last_llm_success_epoch="" last_llm_attempt_epoch=""
+	last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
+	if [[ "$last_llm_success_epoch" -eq 0 ]]; then
+		last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_run_epoch")
+	fi
+	last_llm_attempt_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_attempt_epoch")
+
+	local last_daily_epoch="" last_success_mode=""
+	last_daily_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_daily_sweep_success_epoch")
+	if [[ "$last_daily_epoch" -eq 0 && -f "${PULSE_DIR}/last_llm_success_mode" ]]; then
+		IFS= read -r last_success_mode <"${PULSE_DIR}/last_llm_success_mode" || true
+		# Migrate only positively identified daily completion evidence. A recent
+		# stall/first-run success must not postpone an unobserved daily sweep.
+		if [[ "$last_success_mode" == "daily_sweep" ]]; then
+			last_daily_epoch="$last_llm_success_epoch"
+		fi
+	fi
+	local llm_age=$((now_epoch - last_daily_epoch))
+	if [[ "$llm_age" -ge "$PULSE_LLM_DAILY_INTERVAL" ]]; then
+		if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_llm_success_epoch" "$last_llm_attempt_epoch"; then
+			return 1
+		fi
+		echo "[pulse-wrapper] LLM supervisor: daily sweep due (last run ${llm_age}s ago)" >>"$LOGFILE"
+		_pulse_write_trigger_mode "daily_sweep" || return 1
 		return 0
 	fi
 
-	local grace_max="$PULSE_LAUNCH_GRACE_SECONDS"
-	local batch_max="$PULSE_LAUNCH_SETTLE_BATCH_MAX"
-	[[ "$grace_max" =~ ^[0-9]+$ ]] || grace_max=35
-	[[ "$batch_max" =~ ^[0-9]+$ ]] || batch_max=5
-	[[ "$batch_max" -lt 1 ]] && batch_max=1
-
-	# Clamp dispatched_count to batch_max ceiling
-	local clamped="$dispatched_count"
-	if [[ "$clamped" -gt "$batch_max" ]]; then
-		clamped="$batch_max"
+	# 1b. t18514: circuit-held issues owned by this runner need the AI brief
+	# owner. Rate-limit the (GitHub-verified) pending count by interval.
+	if _pulse_blocker_recovery_due "$now_epoch" "$last_llm_success_epoch" "$last_llm_attempt_epoch"; then
+		return 0
 	fi
 
-	# Linear interpolation: ceil(clamped / batch_max * grace_max)
-	# Integer arithmetic: (clamped * grace_max + batch_max - 1) / batch_max
-	local wait_seconds=$(((clamped * grace_max + batch_max - 1) / batch_max))
-	[[ "$wait_seconds" -gt "$grace_max" ]] && wait_seconds="$grace_max"
+	# 2. Backlog stall: check if issue+PR count has changed
+	local snapshot_file="${PULSE_DIR}/backlog_snapshot.txt"
+	if [[ ! -f "$snapshot_file" ]]; then
+		# First run — take snapshot and run LLM
+		_update_backlog_snapshot "$now_epoch"
+		echo "[pulse-wrapper] LLM supervisor: first run (no snapshot)" >>"$LOGFILE"
+		_pulse_write_trigger_mode "first_run" || return 1
+		return 0
+	fi
 
-	echo "[pulse-wrapper] Adaptive settle wait (${context_label}): ${dispatched_count} dispatch(es) → waiting ${wait_seconds}s (max ${grace_max}s at ${batch_max}+ dispatches)" >>"$LOGFILE"
-	sleep "$wait_seconds"
-	return 0
+	local snap_epoch snap_issues snap_prs
+	read -r snap_epoch snap_issues snap_prs <"$snapshot_file" 2>/dev/null || snap_epoch=0
+	[[ "$snap_epoch" =~ ^[0-9]+$ ]] || snap_epoch=0
+	[[ "$snap_issues" =~ ^[0-9]+$ ]] || snap_issues=0
+	[[ "$snap_prs" =~ ^[0-9]+$ ]] || snap_prs=0
+
+	# Get current counts (fast — single API call per repo, cached in prefetch)
+	# t1890: exclude persistent/supervisor/contributor issues from stall detection.
+	# These management issues never close, so including them inflates the count
+	# and makes the backlog appear stalled even when all actionable work is done.
+	local current_issues=0 current_prs=0
+	while IFS='|' read -r slug _; do
+		[[ -n "$slug" ]] || continue
+		local ic pc
+		ic=$(gh_issue_list --repo "$slug" --state open --json number,labels --limit 500 \
+			--jq '[.[] | select(.labels | map(.name) | (index("persistent")) | not)] | length' 2>/dev/null) || ic=0
+		pc=$(gh_pr_list --repo "$slug" --state open --json number --jq 'length' --limit 200 2>/dev/null) || pc=0
+		[[ "$ic" =~ ^[0-9]+$ ]] || ic=0
+		[[ "$pc" =~ ^[0-9]+$ ]] || pc=0
+		current_issues=$((current_issues + ic))
+		current_prs=$((current_prs + pc))
+	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$REPOS_JSON" 2>/dev/null)
+
+	local snap_age=$((now_epoch - snap_epoch))
+	local total_before=$((snap_issues + snap_prs))
+	local total_now=$((current_issues + current_prs))
+
+	# Backlog is progressing — update snapshot, skip LLM
+	if [[ "$total_now" -lt "$total_before" ]]; then
+		_update_backlog_snapshot "$now_epoch" "$current_issues" "$current_prs"
+		return 1
+	fi
+
+	# Backlog unchanged — check if stalled long enough
+	if [[ "$snap_age" -ge "$PULSE_LLM_STALL_THRESHOLD" ]]; then
+		# A paused dispatch backlog cannot progress. Keep non-stall supervisor
+		# work eligible, and fail open when the shared health gate is unavailable.
+		if declare -F _pulse_dispatch_runner_health_paused >/dev/null 2>&1 && RUNNER_HEALTH_BREAKER_RESUME_AFTER_UPDATE=false _pulse_dispatch_runner_health_paused; then
+			echo "[pulse-wrapper] LLM supervisor: stall trigger suppressed — runner-health breaker paused (t2897)" >>"$LOGFILE"
+			return 1
+		fi
+		echo "[pulse-wrapper] LLM supervisor: backlog stalled for ${snap_age}s (issues=${current_issues} prs=${current_prs}, unchanged from ${snap_issues}+${snap_prs})" >>"$LOGFILE"
+		_update_backlog_snapshot "$now_epoch" "$current_issues" "$current_prs"
+		_pulse_write_trigger_mode "stall" || return 1
+		return 0
+	fi
+
+	# Stalled but not long enough yet
+	return 1
 }
 
 #######################################
