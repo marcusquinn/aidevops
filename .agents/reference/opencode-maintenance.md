@@ -142,16 +142,7 @@ All thresholds overrideable via environment variables:
 | `OPENCODE_DB_MAINTENANCE_MINUTE` | `0` | Scheduled local minute for the weekly routine |
 | `OPENCODE_DB_MAINTENANCE_MODE` | `auto` | `auto` or disruptive `maintenance-window` scheduler mode |
 
-### Always-on hosts
-
-`auto` refuses to run while any opencode process holds the DB, so on a host
-that is never idle VACUUM is unreachable. Each holder-blocked run still exits 0
-but records a skip in `auto-skips.json` (state dir). After
-`AUTO_SKIP_ESCALATION_COUNT` consecutive skips with free pages above
-`VACUUM_FREELIST_THRESHOLD`, `notice` and the `aidevops cleanup opencode`
-preview report the reclaimable bytes and name
-`maintenance-window --force-opencode`. Always-on hosts should set
-`OPENCODE_DB_MAINTENANCE_MODE=maintenance-window`; `auto` never forces.
+Always-on hosts: `auto` never forces past holders, so VACUUM is unreachable; use `OPENCODE_DB_MAINTENANCE_MODE=maintenance-window`.
 
 Example: force VACUUM on every run regardless of fragmentation:
 
