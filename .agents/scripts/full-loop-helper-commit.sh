@@ -69,6 +69,39 @@ source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-subject.sh"
 # shellcheck disable=SC1091
 source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-risk.sh"
 
+# Check the committed public diff before running expensive validators. The
+# pre-push hook remains authoritative for the actual ref being pushed.
+_commit_and_pr_privacy_scan() {
+	local remote_url="" base_branch="" entities_file="" hits="" scan_rc=0
+	remote_url=$(git remote get-url --push origin 2>/dev/null) || return 1
+	# shellcheck source=./privacy-guard-helper.sh
+	# shellcheck disable=SC1091
+	source "${_FULL_LOOP_COMMIT_DIR}/privacy-guard-helper.sh"
+	if ! privacy_is_target_public "$remote_url"; then
+		return 0
+	fi
+	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	entities_file=$(mktemp) || return 1
+	if ! privacy_enumerate_private_entities "$entities_file"; then
+		rm -f "$entities_file"
+		privacy_log ERROR "could not enumerate private entity inventory — failing closed"
+		return 1
+	fi
+	print_info "[privacy-guard] Scanning public diff before validators..."
+	hits=$(privacy_scan_public_diff "refs/remotes/origin/${base_branch}" HEAD "$entities_file") || scan_rc=$?
+	rm -f "$entities_file"
+	if [[ "$scan_rc" -eq 1 && -n "$hits" ]]; then
+		printf '\n[privacy-guard][BLOCK] Push to origin contains private references in public-repo content:\n\n%s\n\n' "$hits" >&2
+		printf '  Remove the private material from the committed content and amend/rewrite the commit before pushing.\n\n' >&2
+		return 1
+	fi
+	if [[ "$scan_rc" -ne 0 ]]; then
+		privacy_log ERROR "private-entity scan failed (rc=${scan_rc}) — failing closed; no verified findings"
+		return 1
+	fi
+	return 0
+}
+
 # --- Argument Parsing ---
 
 # Parse commit-and-pr arguments into caller-scoped variables.
