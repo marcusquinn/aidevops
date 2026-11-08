@@ -34,8 +34,10 @@ setup_sandbox() {
 	export TEST_ROOT
 	export HOME="${TEST_ROOT}/home"
 	export AIDEVOPS_MODEL_ROUTING_TABLE="${REPO_ROOT}/.agents/configs/model-routing-table.json"
+	export AIDEVOPS_AI_RESEARCH_OPENCODE_DIR="$TEST_ROOT"
+	export AIDEVOPS_HEADLESS_RUNTIME_DIR="${TEST_ROOT}/runtime"
 	mkdir -p "${HOME}/.aidevops/cache" "${TEST_ROOT}/bin"
-	unset ANTHROPIC_API_KEY || true
+	unset ANTHROPIC_API_KEY OPENAI_API_KEY AIDEVOPS_AI_RESEARCH_OPENCODE_MODEL || true
 	printf '#!/usr/bin/env bash\nexit 1\n' >"${TEST_ROOT}/bin/gopass"
 	chmod +x "${TEST_ROOT}/bin/gopass"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
@@ -319,6 +321,101 @@ test_detector_rc2_records_cooldown() {
 	return 0
 }
 
+test_auto_routing_and_fallback() {
+	local future_ms=$((($(date +%s) + 3600) * 1000))
+	local output="" rc=0 expected=""
+	write_pool "test-routing-token" "$future_ms"
+	write_curl_capture_stub
+	cat >"${TEST_ROOT}/bin/opencode" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"${TEST_ROOT}/opencode.args"
+case "${TEST_OPENCODE_RESULT:-ok}" in
+auth) printf '%s\n' '{"type":"error","error":{"data":{"message":"OpenAI API key is missing"}}}'; exit 1 ;;
+auth-zero) printf '%s\n' '{"type":"error","error":{"name":"AuthenticationError"}}'; exit 0 ;;
+error) printf '%s\n' '{"type":"error","error":{"data":{"message":"rate limit exceeded"}}}'; exit 1 ;;
+esac
+printf '%s\n' '{"type":"text","part":{"type":"text","text":"OK"}}'
+STUB
+	chmod +x "${TEST_ROOT}/bin/opencode"
+	output=$(call_ai auto "Reply OK" simple 5) || rc=$?
+	expected=$(model_tier_candidate_for_provider simple anthropic)
+	if [[ "$rc" -eq 0 && "$output" == "OK" ]] && grep -Fxq "$expected" "${TEST_ROOT}/opencode.args"; then
+		record_result "auto selects routing-table Anthropic model with Anthropic-only pool" 0
+	else
+		record_result "auto selects routing-table Anthropic model with Anthropic-only pool" 1
+	fi
+
+	export OPENAI_API_KEY="test-routing-key"
+	"${REPO_ROOT}/.agents/scripts/headless-runtime-helper.sh" backoff set anthropic auth_error 3600
+	rc=0
+	output=$(call_ai auto "Reply OK" simple 5) || rc=$?
+	expected=$(model_tier_candidate_for_provider simple openai)
+	if [[ "$rc" -eq 0 && "$output" == "OK" ]] && grep -Fxq "$expected" "${TEST_ROOT}/opencode.args"; then
+		record_result "auto skips provider in auth-error backoff" 0
+	else
+		record_result "auto skips provider in auth-error backoff" 1
+	fi
+	unset OPENAI_API_KEY
+	rm -f "${TEST_ROOT}/opencode.args" "${TEST_ROOT}/curl.args"
+	rc=0
+	output=$(call_ai auto "Reply OK" simple 5 2>/dev/null) || rc=$?
+	if [[ "$rc" -eq 2 && ! -f "${TEST_ROOT}/opencode.args" && ! -f "${TEST_ROOT}/curl.args" ]]; then
+		record_result "exhausted auto routing does not bypass Anthropic auth backoff" 0
+	else
+		record_result "exhausted auto routing does not bypass Anthropic auth backoff" 1
+	fi
+	"${REPO_ROOT}/.agents/scripts/headless-runtime-helper.sh" backoff clear anthropic
+	if research_auth_backoff_active anthropic "$expected" 'anthropic|auth_error|2000-01-01T00:00:00Z|'; then
+		record_result "expired auth backoff permits retry" 1
+	else
+		record_result "expired auth backoff permits retry" 0
+	fi
+
+	local result="" provider=""
+	for result in auth auth-zero error; do
+		for provider in auto opencode openai; do
+			rm -f "${TEST_ROOT}/curl.args"
+			rc=0
+			output=$(TEST_OPENCODE_RESULT="$result" call_ai "$provider" "Reply OK" simple 5 2>/dev/null) || rc=$?
+			if [[ "$provider" == auto && "$result" != error ]]; then
+				if [[ "$rc" -eq 0 && "$output" == OK && -f "${TEST_ROOT}/curl.args" ]]; then
+					record_result "auto retries Anthropic after $result credential failure" 0
+				else
+					record_result "auto retries Anthropic after $result credential failure" 1 "rc=$rc"
+				fi
+			elif [[ "$rc" -ne 0 && ! -f "${TEST_ROOT}/curl.args" ]]; then
+				record_result "$provider does not retry $result failure" 0
+			else
+				record_result "$provider does not retry $result failure" 1 "rc=$rc"
+			fi
+		done
+	done
+
+	# Exercise the real caller and both transport gates without an external call.
+	# Denying either the primary or retry model must prevent that transport spawn.
+	local deny=""
+	for deny in primary fallback; do
+		rm -f "${TEST_ROOT}/opencode.args" "${TEST_ROOT}/curl.args" "${TEST_ROOT}/vault.calls"
+		rc=0
+		(
+			vault_runtime_policy_check() {
+				local model="$1"
+				printf '%s\n' "$model" >>"${TEST_ROOT}/vault.calls"
+				[[ "$deny" == fallback && ! -f "${TEST_ROOT}/opencode.args" ]] && return 0
+				return 1
+			}
+			TEST_OPENCODE_RESULT=auth call_ai auto "Reply OK" simple 5
+		) >/dev/null 2>&1 || rc=$?
+		if [[ "$rc" -ne 0 && ! -f "${TEST_ROOT}/curl.args" ]] &&
+			[[ "$deny" == fallback || ! -f "${TEST_ROOT}/opencode.args" ]]; then
+			record_result "vault denial blocks $deny spawn without bypass" 0
+		else
+			record_result "vault denial blocks $deny spawn without bypass" 1
+		fi
+	done
+	return 0
+}
+
 main() {
 	REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 	setup_sandbox
@@ -327,6 +424,7 @@ main() {
 	test_anthropic_credential_header_shapes
 	test_auto_provider_prefers_opencode
 	test_opencode_tier_models
+	test_auto_routing_and_fallback
 	test_detector_rc2_records_cooldown
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

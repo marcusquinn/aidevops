@@ -69,6 +69,24 @@ resolve_opencode_variant() {
 	return 0
 }
 
+research_auth_backoff_active() {
+	local provider="$1"
+	local model="$2"
+	local backoffs="${3:-}"
+	local key="" reason="" retry_after="" now=""
+	if [[ $# -lt 3 ]]; then
+		backoffs=$("${SCRIPT_DIR}/headless-runtime-helper.sh" backoff status 2>/dev/null) || backoffs=""
+	fi
+	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	while IFS='|' read -r key reason retry_after _; do
+		if [[ ( "$key" == "$provider" || "$key" == "$model" ) && "$reason" == "auth_error" ]] &&
+			[[ -z "$retry_after" || "$retry_after" > "$now" ]]; then
+			return 0
+		fi
+	done <<<"$backoffs"
+	return 1
+}
+
 # Auto tiers follow routing-table order, but only among usable providers.
 # Explicit models/overrides retain their requested identity; explicit runtime
 # providers continue to use resolve_opencode_model_id without auto selection.
@@ -82,21 +100,11 @@ resolve_auto_opencode_model_id() {
 	simple | standard | thinking) ;;
 	*) resolve_opencode_model_id "$name"; return $? ;;
 	esac
-	local backoffs="" candidate="" provider="" key="" reason="" retry_after="" updated=""
-	local blocked=false now=""
+	local backoffs="" candidate="" provider=""
 	backoffs=$("${SCRIPT_DIR}/headless-runtime-helper.sh" backoff status 2>/dev/null) || backoffs=""
-	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 	while IFS= read -r candidate; do
 		provider="${candidate%%/*}"
-		blocked=false
-		while IFS='|' read -r key reason retry_after updated; do
-			if [[ ( "$key" == "$provider" || "$key" == "$candidate" ) && "$reason" == "auth_error" ]] &&
-				[[ -z "$retry_after" || "$retry_after" > "$now" ]]; then
-				blocked=true
-				break
-			fi
-		done <<<"$backoffs"
-		[[ "$blocked" == false ]] || continue
+		research_auth_backoff_active "$provider" "$candidate" "$backoffs" && continue
 		provider_oauth_pool_available "$provider" || continue
 		if provider_auth_available "$provider" || resolve_oauth_pool_token "$provider" >/dev/null; then
 			model_tier_candidate_for_provider "$name" "$provider"
@@ -523,6 +531,10 @@ call_ai() {
 				[[ "$rc" -eq 0 ]] && return 0
 				[[ "$rc" -eq 2 ]] || return "$rc"
 			fi
+		fi
+		if research_auth_backoff_active anthropic "anthropic/$(resolve_model_id "$model")"; then
+			log_error "Anthropic research fallback is in auth-error backoff"
+			return 2
 		fi
 		call_anthropic "$prompt" "$model" "$max_tokens"
 		return $?
