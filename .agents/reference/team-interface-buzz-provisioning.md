@@ -49,6 +49,16 @@ CLI sequence, access-channel requirement, and disclosure checks are defined in
 
 ## Generate and inspect
 
+Several Macs can join one community. Before generating a snapshot for each Mac,
+give it a distinct `LocalHostName` (System Settings > General > Sharing > Local
+hostname, or `sudo scutil --set LocalHostName Marcus-MacBook-Pro-02`), then
+check it with `scutil --get LocalHostName`. Identical hostnames would otherwise
+produce clashing agent names; numbering (`-01`, `-02`) keeps mentions unambiguous.
+If using `AIDEVOPS_BUZZ_HOST_SLUG` or `--host-slug`, use a distinct normalized
+slug for each Mac instead: overrides take precedence over `LocalHostName`. The
+interactive runtime must resolve the same slug as generation; set the environment
+override for the runtime when generation used `--host-slug`.
+
 Generate a mode-0600 snapshot in the user-facing Downloads folder:
 
 ```bash
@@ -78,13 +88,6 @@ system `LocalHostName`; for example, `Marcus-MacBook-Pro-01` produces
 `seo-marcus-macbook-pro-01`. Use `--host-slug NAME` only for an explicit stable
 override. The interactive runtime requires the same current or overridden host
 slug and fails closed if a copied or stale snapshot name points at another host.
-
-Several Macs can join one community. Before provisioning each additional Mac,
-give it a distinct `LocalHostName` (System Settings > General > Sharing > Local
-hostname, or `sudo scutil --set LocalHostName Marcus-MacBook-Pro-02`), then
-check it with `scutil --get LocalHostName`. Identical model names would
-otherwise produce clashing agent names; numbering (`-01`, `-02`) keeps every
-mention unambiguous.
 
 Each member carries only its bounded description, a portable inline SVG avatar,
 a reviewed logical runtime requirement, and a pointer containing
