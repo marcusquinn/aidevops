@@ -526,7 +526,7 @@ _profile_sweep_ordered_intents() {
 			tail_part+=("$candidate")
 		else
 			head_part+=("$candidate")
-			[[ -n "$cursor" && "$(basename "$candidate")" == "$cursor" ]] && seen=1
+			[[ -n "$cursor" && "${candidate##*/}" == "$cursor" ]] && seen=1
 		fi
 	done
 	if [[ "$seen" -eq 1 ]]; then

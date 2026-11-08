@@ -574,12 +574,12 @@ test_update_bounds_recovery_with_retained_backlog() {
 	printf '#!/usr/bin/env bash\nexit 1\n' >"$refusing_helper"
 	chmod +x "$refusing_helper"
 
-	for run in 1 2 3 4 5; do
+	for run in 1 2 3 4 5 6 7 8 9 10 11 12; do
 		worktree_helper="$refusing_helper" min_age="" cap=""
-		if [[ "$run" -eq 5 ]]; then
+		if [[ "$run" -eq 12 ]]; then
 			worktree_helper="${helper_dir}/worktree-helper.sh" min_age=0 cap=1
 		fi
-		[[ "$run" -ne 5 ]] || before=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
+		[[ "$run" -ne 12 ]] || before=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
 		status=0
 		HOME="$fixture_home" \
 			PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
@@ -595,7 +595,7 @@ test_update_bounds_recovery_with_retained_backlog() {
 	done
 	after=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
 
-	if [[ "$status" -ne 0 ]] || [[ "$before" -lt 4 ]] || [[ "$after" -lt $((before - 1)) ]] ||
+	if [[ "$status" -ne 0 ]] || [[ "$before" -lt 11 ]] || [[ "$after" -lt $((before - 1)) ]] ||
 		! grep -q 'Profile publication sweep: bound reached' "$output_file" ||
 		grep -q 'could not create profile publication worktree' "$output_file"; then
 		print_helper_failure "$test_name" "expected bounded recovery with retained backlog (before=${before} after=${after} status=${status})" "$output_file"
