@@ -119,14 +119,13 @@ class Acp {
   }
 
   static async start(spawn, args, onUpdate) {
-    let acp;
-    const early = [];
-    const earlyErrors = [];
+    // Output can arrive before the client exists; keep it until then.
+    const early = { acp: undefined, out: [], errors: [] };
     const process = await spawn("acp", {
       args,
       env: ENV,
-      onStdout: (data) => (acp ? acp.read(data) : early.push(data)),
-      onStderr: (data) => (acp ? acp.readError(data) : earlyErrors.push(data)),
+      onStdout: (data) => (early.acp ? early.acp.read(data) : early.out.push(data)),
+      onStderr: (data) => (early.acp ? early.acp.readError(data) : early.errors.push(data)),
     }).catch((error) => {
       throw /os error 2|no such file|not found/i.test(errorMessage(error))
         ? new Error(
@@ -134,9 +133,10 @@ class Acp {
           )
         : error;
     });
-    acp = new Acp(process, onUpdate);
-    for (const data of earlyErrors) acp.readError(data);
-    for (const data of early) acp.read(data);
+    const acp = new Acp(process, onUpdate);
+    early.acp = acp;
+    for (const data of early.errors) acp.readError(data);
+    for (const data of early.out) acp.read(data);
     let init;
     try {
       init = await acp.request(
