@@ -268,6 +268,6 @@ test("V2 Messages registers under Prompts, shows root-session rows and honours t
 });
 
 function fakeSchema() {
-  const chain = () => ({ optional: chain });
-  return { enum: chain, string: chain };
+  const chain = () => ({ optional: chain, int: chain, min: chain, max: chain });
+  return { enum: chain, string: chain, number: chain };
 }

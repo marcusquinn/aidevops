@@ -41,12 +41,16 @@ const POLL_MS = 5000;
 const SWEEP_DELAY_MS = 3000;
 const MAX_TRACKED = 64;
 const BUS_TOOL = "aidevops_sessions";
+const MAX_WAITS = 2;
 
 class SessionBus {
   constructor({ client, directory = "", root = store.busRoot(), kind = "tui", now = () => Date.now(), timers = globalThis, git } = {}) {
     Object.assign(this, { client, directory, root, kind, now, timers });
     this.messageable = store.MESSAGEABLE_KINDS.includes(kind);
     this.sessions = new Map();
+    // ask ID -> root session whose waiting tool call will claim the reply (t18897)
+    this.awaitingReplies = new Map();
+    this.waitPollMs = 1000;
     this.tree = new SessionTree({ client, onRootInfo: (info) => this.updateRootInfo(info) });
     this.toasts = new ArrivalToasts(client);
     const gitInfo = new GitInfoCache({ now, git, onChange: (changed) => this.republish(changed) });
@@ -197,8 +201,26 @@ class SessionBus {
   // -------------------------------------------------------------------------
 
   claimPending(sessionID, limit = store.LIMITS.deliverPerBatch, entries = null) {
-    const candidates = entries || store.pendingMessages(this.root, sessionID).slice(0, limit);
+    const candidates = this.unreserved(entries || store.pendingMessages(this.root, sessionID)).slice(0, entries ? undefined : limit);
     return candidates.filter((entry) => store.claimMessage(this.root, sessionID, entry));
+  }
+
+  /** Drop replies a waiting `ask` call has reserved (t18897); the waiter claims them. */
+  unreserved(entries) {
+    if (this.awaitingReplies.size === 0) return entries;
+    return entries.filter((entry) => !(entry.message.re && this.awaitingReplies.has(entry.message.re)));
+  }
+
+  /** Reserve the reply to `askID` for a waiting tool call. At most 2 waits per root session. */
+  assertWaitSlot(sessionID) {
+    const active = [...this.awaitingReplies.values()].filter((owner) => owner === sessionID).length;
+    if (active >= MAX_WAITS) throw new Error(`at most ${MAX_WAITS} concurrent waits per session; wait for one to finish`);
+  }
+
+  reserveReply(sessionID, askID) {
+    this.assertWaitSlot(sessionID);
+    this.awaitingReplies.set(askID, sessionID);
+    return () => this.awaitingReplies.delete(askID);
   }
 
   async onIdle(sessionID) {
@@ -227,7 +249,7 @@ class SessionBus {
   // Tool support
   // -------------------------------------------------------------------------
 
-  fromFor(sessionID) {
+  fromFor(sessionID, via = null) {
     const record = this.record(this.state(sessionID));
     return {
       session_id: sessionID,
@@ -235,6 +257,7 @@ class SessionBus {
       repo: record.repo,
       branch: record.branch,
       origin: "opencode",
+      ...(via ? { via } : {}),
     };
   }
 
@@ -244,7 +267,12 @@ class SessionBus {
     if (!sessionID) throw new Error("aidevops_sessions could not resolve this session's root session");
     const state = this.state(sessionID);
     if (!state.lastWriteMs) this.writePresence(state);
-    return { sessionID, from: this.fromFor(sessionID), hops: state.turnHops, record: this.record(state) };
+    // A subagent acts as its root; the recipient sees the subagent as advisory `via`.
+    const callerID = context?.sessionID;
+    const via = callerID && callerID !== sessionID && store.isSafeId(callerID)
+      ? { session_id: callerID, agent: String(context.agent || "").slice(0, 80) }
+      : null;
+    return { sessionID, from: this.fromFor(sessionID, via), hops: state.turnHops, record: this.record(state) };
   }
 }
 

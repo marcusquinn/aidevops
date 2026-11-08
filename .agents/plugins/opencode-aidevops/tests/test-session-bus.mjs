@@ -273,13 +273,19 @@ test("wakes respect the hourly budget, hop limit and failure rollback", async ()
   assert.equal(wakes, store.LIMITS.wakesPerHour);
 });
 
+const fakeSchema = {
+  enum: () => ({}),
+  string: () => ({ optional: () => ({}) }),
+  number: () => ({ int: () => ({ min: () => ({ max: () => ({ optional: () => ({}) }) }) }) }),
+};
+
 test("tool resolves the sender from context and supports list, ask, reply and idle notices", async () => {
   const client = fakeClient({
     ses_rootC1: { id: "ses_rootC1", title: "Issue #7: tool", directory: root },
   });
   const bus = busFor(client);
   const fakeTool = (definition) => definition;
-  fakeTool.schema = { enum: () => ({}), string: () => ({ optional: () => ({}) }) };
+  fakeTool.schema = fakeSchema;
   const sessionsTool = createSessionBusTool(fakeTool, bus);
   await bus.handleEvent({ event: { type: "session.created", properties: { info: { id: "ses_rootC1", title: "Issue #7: tool", directory: root } } } });
   livePresence("ses_otherD", { handle: "repo-other", status: "busy" });
@@ -330,4 +336,122 @@ test("CLI lists sessions and sends from a shell; TUI rows follow the root sessio
   assert.match(rows[0].text, /^• ← shell:me: are you/);
   const sessions = { child: { parentID: "parent" }, parent: {} };
   assert.equal(rootSessionID((id) => sessions[id], "child"), "parent");
+});
+
+// t18897: ask with a bounded wait
+const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function nextPending(sessionID) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const [entry] = store.pendingMessages(root, sessionID);
+    if (entry) return entry.message;
+    await tick(5);
+  }
+  throw new Error(`no pending message for ${sessionID}`);
+}
+
+async function waitFixture() {
+  const client = fakeClient({
+    ses_rootW1: { id: "ses_rootW1", title: "Issue #9: wait", directory: root },
+    ses_childW: { id: "ses_childW", parentID: "ses_rootW1", directory: root },
+  });
+  const bus = busFor(client);
+  bus.waitPollMs = 10;
+  const fakeTool = (definition) => definition;
+  fakeTool.schema = fakeSchema;
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id: "ses_rootW1", title: "Issue #9: wait", directory: root } } } });
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id: "ses_childW", parentID: "ses_rootW1" } } } });
+  livePresence("ses_peerW2", { handle: "repo-peer", status: "busy" });
+  return { bus, tool: createSessionBusTool(fakeTool, bus) };
+}
+
+const reply = (ask, text = "pong", from = peer("ses_peerW2", { handle: "repo-peer" })) =>
+  store.sendReply(root, { from, original: ask, text }).message;
+
+test("ask with wait_seconds returns the reply in the same call and the root never sees it again", async () => {
+  const { bus, tool } = await waitFixture();
+  const call = tool.execute({ action: "ask", to: "repo-peer", text: "ping?", wait_seconds: 5 }, { sessionID: "ses_childW", agent: "explore" });
+  const ask = await nextPending("ses_peerW2");
+  assert.equal(bus.awaitingReplies.get(ask.id), "ses_rootW1");
+  const answer = reply(ask);
+  assert.deepEqual(bus.claimPending("ses_rootW1"), [], "reserved reply is not claimed by the root while waiting");
+  const result = await call;
+  assert.match(result, /Reply received:[\s\S]*> pong/);
+  assert.match(result, new RegExp(`Reply ${answer.id}`));
+  assert.equal(bus.awaitingReplies.size, 0);
+  assert.equal(store.pendingMessages(root, "ses_rootW1").length, 0);
+  assert.deepEqual(bus.claimPending("ses_rootW1"), []);
+});
+
+test("a timed-out wait returns the ask ID and later replies use normal delivery; non-matching replies are not claimed", async () => {
+  const { bus, tool } = await waitFixture();
+  const call = tool.execute({ action: "ask", to: "repo-peer", text: "ping?", wait_seconds: 1 }, { sessionID: "ses_rootW1" });
+  const ask = await nextPending("ses_peerW2");
+  const other = store.sendMessage(root, { from: peer("ses_rootW1"), to: "ses_peerW2", type: "ask", text: "unrelated" });
+  reply(other, "other answer");
+  const result = await call;
+  assert.match(result, new RegExp(`No reply within 1s; ask ID ${ask.id}`));
+  assert.equal(bus.awaitingReplies.size, 0, "reservation released");
+  const delivered = bus.claimPending("ses_rootW1");
+  assert.equal(delivered.length, 1, "the non-matching reply was left for normal delivery");
+  assert.equal(delivered[0].message.re, other.id);
+  reply(ask, "late");
+  assert.equal(bus.claimPending("ses_rootW1")[0].message.text, "late");
+});
+
+test("aborting a wait ends it and releases the reservation", async () => {
+  const { bus, tool } = await waitFixture();
+  const controller = new AbortController();
+  const call = tool.execute({ action: "ask", to: "repo-peer", text: "ping?", wait_seconds: 60 }, { sessionID: "ses_rootW1", abort: controller.signal });
+  const ask = await nextPending("ses_peerW2");
+  assert.equal(bus.awaitingReplies.size, 1);
+  controller.abort();
+  assert.match(await call, new RegExp(`Wait cancelled; ask ID ${ask.id}`));
+  assert.equal(bus.awaitingReplies.size, 0);
+});
+
+test("a third concurrent wait in one root session is refused", async () => {
+  const { bus, tool } = await waitFixture();
+  const controller = new AbortController();
+  const context = { sessionID: "ses_rootW1", abort: controller.signal };
+  const calls = [1, 2].map(() => tool.execute({ action: "ask", to: "repo-peer", text: "q", wait_seconds: 60 }, context));
+  for (let attempt = 0; attempt < 200 && bus.awaitingReplies.size < 2; attempt += 1) await tick(5);
+  assert.equal(bus.awaitingReplies.size, 2);
+  const before = store.pendingMessages(root, "ses_peerW2").length;
+  await assert.rejects(tool.execute({ action: "ask", to: "repo-peer", text: "q3", wait_seconds: 60 }, context), /at most 2 concurrent waits/);
+  assert.equal(store.pendingMessages(root, "ses_peerW2").length, before, "the refused wait sends nothing");
+  await assert.rejects(tool.execute({ action: "send", to: "repo-peer", text: "x", wait_seconds: 5 }, context), /only valid with action `ask`/);
+  controller.abort();
+  await Promise.all(calls);
+  assert.equal(bus.awaitingReplies.size, 0);
+});
+
+test("a subagent's message is attributed to its root with an advisory via", async () => {
+  const { tool } = await waitFixture();
+  await tool.execute({ action: "send", to: "repo-peer", text: "from child" }, { sessionID: "ses_childW", agent: "explore" });
+  await tool.execute({ action: "send", to: "repo-peer", text: "from root" }, { sessionID: "ses_rootW1" });
+  const [fromChild, fromRoot] = store.pendingMessages(root, "ses_peerW2").map((entry) => entry.message);
+  assert.equal(fromChild.from.session_id, "ses_rootW1");
+  assert.deepEqual(fromChild.from.via, { session_id: "ses_childW", agent: "explore" });
+  assert.match(store.frameMessage(fromChild), /from OpenCode session \S+ \(via subagent explore\) \(/);
+  assert.equal(fromRoot.from.via, undefined);
+  assert.doesNotMatch(store.frameMessage(fromRoot), /via subagent/);
+});
+
+test("CLI ask --wait prints the reply, acknowledges it, and exits 2 on timeout", async () => {
+  livePresence("ses_cliP01", { handle: "repo-cli" });
+  const output = [];
+  const out = { write: (text) => output.push(text) };
+  const call = cliMain(["ask", "repo-cli", "ping?", "--wait", "5"], { env: { USER: "me" }, out, root });
+  const ask = await nextPending("ses_cliP01");
+  reply(ask, "pong", peer("ses_cliP01", { handle: "repo-cli" }));
+  assert.equal(await call, 0);
+  assert.match(output.join(""), /> pong/);
+  assert.deepEqual(store.readOutbox(root, "cli"), []);
+
+  output.length = 0;
+  assert.equal(await cliMain(["ask", "repo-cli", "again?", "--wait", "1"], { env: { USER: "me" }, out, root }), 2);
+  assert.match(output.join(""), /No reply within 1s; ask msg_\w+/);
+  assert.throws(() => cliMain(["ask", "repo-cli", "x", "--wait", "500"], { env: {}, out, root }), /--wait must be/);
+  assert.throws(() => cliMain(["send", "repo-cli", "x", "--wait", "3"], { env: {}, out, root }), /only valid with ask/);
 });

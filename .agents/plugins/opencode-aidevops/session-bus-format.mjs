@@ -71,7 +71,8 @@ function frameSource(from) {
   if (chat) return `external chat (${chat.app}, channel ${chat.channel}, sender unverified)`;
   const where = [from.repo, from.branch].filter(Boolean).join("@") || "unknown repo";
   const shell = from.origin === "cli" ? ", sent from a shell" : "";
-  return `OpenCode session ${from.handle || "?"} (${where}, ${from.session_id || "no session"}${shell})`;
+  const via = from.via?.agent ? ` (via subagent ${from.via.agent})` : from.via ? " (via subagent)" : "";
+  return `OpenCode session ${from.handle || "?"}${via} (${where}, ${from.session_id || "no session"}${shell})`;
 }
 
 /** Framed delivery text. The body is quoted line by line so it cannot pose as the frame. */
