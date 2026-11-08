@@ -74,6 +74,9 @@ export PRIVACY_GH_BIN=gh
 gh() {
 	# Record what was called for assertions
 	GH_CALLS+=("$*")
+	if [[ "$*" == "pr edit "* && "${TEST_PR_EDIT_FAIL:-0}" == 1 ]]; then
+		return 1
+	fi
 	if [[ "$*" == "api repos/test/repo --jq .private | tostring" ]]; then
 		printf 'false\n'
 		return 0
@@ -442,6 +445,27 @@ if [[ "${_GH_EDIT_REJECTION_REASON:-}" != *"closing keyword"* ]]; then
 else
 	fail "issue body edits should not be subject to the PR closing-keyword check" "reason: ${_GH_EDIT_REJECTION_REASON}"
 fi
+
+# Successful edits invalidate only the matching REST cache entry; failures retain it.
+export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${TEST_ROOT}/pr-cache"
+mkdir -p "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"
+printf '{}' >"${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}/test_repo__456.json"
+printf '{}' >"${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}/test_repo__457.json"
+gh_pr_edit_safe 456 --repo test/repo --title 'Updated title' >/dev/null 2>&1
+if [[ $? -eq 0 && ! -e "${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}/test_repo__456.json" && -e "${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}/test_repo__457.json" ]]; then
+	pass 'successful PR edit invalidates only its REST cache entry'
+else
+	fail 'successful PR edit should invalidate only its REST cache entry'
+fi
+printf '{}' >"${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}/test_repo__456.json"
+TEST_PR_EDIT_FAIL=1
+gh_pr_edit_safe 456 --repo test/repo --title 'Updated title' >/dev/null 2>&1
+if [[ $? -ne 0 && -e "${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}/test_repo__456.json" ]]; then
+	pass 'failed PR edit preserves its REST cache entry'
+else
+	fail 'failed PR edit should preserve its REST cache entry'
+fi
+unset TEST_PR_EDIT_FAIL
 
 # ── Summary ──
 

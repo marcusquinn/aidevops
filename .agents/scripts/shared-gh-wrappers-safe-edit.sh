@@ -821,6 +821,9 @@ gh_pr_edit_safe() {
 	_before="$(_gh_audit_fetch_pr_state_json "$_num" "$_repo")"
 	gh pr edit "$@"
 	local _exit=$?
+	if [[ "$_exit" -eq 0 ]] && command -v _rest_pr_view_cache_invalidate >/dev/null 2>&1; then
+		_rest_pr_view_cache_invalidate "$_repo" "$_num" || true
+	fi
 	_after="$(_gh_audit_fetch_pr_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "pr_edit" "$_repo" "$_num" "$_before" "$_after" \
 		"${BASH_SOURCE[1]:-}" "${FUNCNAME[1]:-}" "${BASH_LINENO[0]:-0}"

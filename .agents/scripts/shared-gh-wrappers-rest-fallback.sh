@@ -133,6 +133,15 @@ _rest_pr_view_cache_path() {
 	return 0
 }
 
+# Invalidate only an unambiguous repo/number key after a successful mutation.
+_rest_pr_view_cache_invalidate() {
+	local repo="$1" num="$2" path=""
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$num" =~ ^[0-9]+$ ]] || return 1
+	path=$(_rest_pr_view_cache_path "$repo" "$num") || return 1
+	rm -f -- "$path" || return 1
+	return 0
+}
+
 #######################################
 # Emit a cached/raw REST PR object using gh-pr-view-compatible projection args.
 # Args: $1=raw_json $2=json_fields $3=jq_expr
