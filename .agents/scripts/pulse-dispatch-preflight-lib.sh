@@ -33,6 +33,48 @@ _PREFLIGHT_CLEANUP_SYSTEMD_UNIT_SEQUENCE=0
 
 # --- Preflight helper functions (extracted) ---
 
+# Local Directory Services can stop resolving the logged-in account (GH#37260).
+# Bound both lookups: dscl itself may hang during the outage. No process scans.
+_preflight_macos_user_lookup_ok() {
+	[[ "$(uname -s)" == "Darwin" ]] || return 0
+	local name=""
+	name=$(timeout_sec 3 id -un 2>/dev/null) || return 1
+	[[ -n "$name" && ! "$name" =~ ^[0-9]+$ ]] || return 1
+	timeout_sec 3 dscl . -read "/Users/$name" UniqueID >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# One WARN per rejected invocation; one persistent advisory also holds the last
+# notification attempt. Reserve it under a short mkdir lock before notifying so
+# simultaneous routine/pulse ticks cannot duplicate notifications. Fail closed
+# on unwritable state, but never turn a skipped cycle into a scheduler error.
+_preflight_macos_user_lookup_gate() {
+	_preflight_macos_user_lookup_ok && return 0
+	local message="macOS cannot look up your user account; restart the Mac before entering your password at the lock screen"
+	printf '[pulse-wrapper] WARN: %s; skipping cycle\n' "$message" >>"${LOGFILE:-/dev/stderr}" || true
+	local dir="${HOME}/.aidevops/advisories"
+	local marker="$dir/macos-user-lookup.advisory"
+	local now="" last=0
+	now=$(date +%s)
+	mkdir -p "$dir" 2>/dev/null || return 1
+	mkdir "${marker}.lock" 2>/dev/null || return 1
+	if [[ -f "$marker" ]]; then
+		IFS= read -r last <"$marker" || last=0
+	fi
+	[[ "$last" =~ ^[0-9]+$ ]] || last=0
+	local notify=0
+	if ((now - last >= 3600)); then
+		if printf '%s\n%s\n' "$now" "$message" >"$marker"; then
+			notify=1
+		fi
+	fi
+	rmdir "${marker}.lock" 2>/dev/null || true
+	if [[ "$notify" == "1" ]]; then
+		timeout_sec 3 osascript -e "display notification \"$message\" with title \"AI DevOps\"" >/dev/null 2>&1 || true
+	fi
+	return 1
+}
+
 # -----------------------------------------------------------------------------
 # Helpers for _run_preflight_stages (GH#18656)
 # -----------------------------------------------------------------------------

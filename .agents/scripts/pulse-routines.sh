@@ -1256,6 +1256,11 @@ _evaluate_issue_archive_routine() {
 # ([x] lines with repeat: fields), checks if due, and dispatches.
 #######################################
 evaluate_routines() {
+	# This entry point also runs outside the wrapper's full-cycle preflight.
+	# shellcheck source=./pulse-dispatch-preflight-lib.sh
+	source "${BASH_SOURCE[0]%/*}/pulse-dispatch-preflight-lib.sh"
+	_preflight_macos_user_lookup_gate || return 0
+
 	local publication_worker="${SCRIPT_DIR}/task-publication-worker-helper.sh"
 	local run_publication=1
 	# Busy-lock passes (GH#35349) run every scheduler tick; they evaluate

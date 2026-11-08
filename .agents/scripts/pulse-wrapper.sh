@@ -1310,6 +1310,9 @@ main() {
 	# inherit the env var.
 	export AIDEVOPS_HEADLESS=true
 
+	# Before refill-only, busy-lock routines, lifecycle work or dispatch.
+	_preflight_macos_user_lookup_gate || return 0
+
 	# t3033: capture script path and load-time mtime for post-cycle self-respawn.
 	# If the source file changes during a cycle (e.g. aidevops update / setup.sh),
 	# we exec at cycle end so the next iteration runs fresh code without waiting
