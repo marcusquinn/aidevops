@@ -796,7 +796,7 @@ _status_terminal_circuit_blocks_release() {
 	local issue_num="$1" repo_slug="$2"
 	local issue_json="" comments_json="" library="${BASH_SOURCE[0]%/*}/terminal-blocker-circuit.sh"
 	local array_type="array"
-	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 0
+	issue_json=$(gh api "/repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 0
 	jq -e --arg array "$array_type" '(.labels | type) == $array' <<<"$issue_json" >/dev/null 2>&1 || return 0
 	jq -e 'any(.labels[]; .name == "status:blocked")' <<<"$issue_json" >/dev/null || return 1
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 0

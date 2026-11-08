@@ -233,13 +233,13 @@ test_dispatch_hold_revalidates_revision() {
 	terminal_blocker_circuit_active "$comments" '{"title":"Fix scope","body":"Files Scope: b.sh"}' \
 		"owner/repo" 42 "$TEST_ROOT" >/dev/null && changed_status=1
 	TEST_DEPENDENCIES="unavailable"
-	terminal_blocker_circuit_active "$comments" "$issue_json" "owner/repo" 42 "$TEST_ROOT" >/dev/null && ambiguous_status=1
+	terminal_blocker_circuit_active "$comments" "$issue_json" "owner/repo" 42 "$TEST_ROOT" >/dev/null || ambiguous_status=1
 	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
 	local status=1
 	if [[ "$same_status" -eq 0 && "$changed_status" -eq 0 && "$ambiguous_status" -eq 0 ]]; then
 		status=0
 	fi
-	print_result "dispatch hold is cross-runner durable but fails open on changed or ambiguous identity" "$status"
+	print_result "dispatch hold re-arms on changed identity but holds on unavailable revision" "$status"
 	return 0
 }
 

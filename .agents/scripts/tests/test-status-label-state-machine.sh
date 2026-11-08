@@ -368,6 +368,7 @@ test_queued_transition() {
 #######################################
 test_available_with_extra_flags() {
 	_reset_state
+	export STUB_ISSUE_JSON='{"labels":[{"name":"status:queued"}],"assignees":[]}'
 	set_issue_status 42 "owner/repo" "available" \
 		--remove-assignee "stale-worker" || {
 		print_result "available+extra returns 0" 1 "(exit=$?)"
