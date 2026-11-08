@@ -19,6 +19,7 @@ _PIR_STATUS_AVAILABLE="status:available"
 _PIR_PERSISTENT_LABEL="persistent"
 _PIR_TRIAGE_FAILED_LABEL="triage-failed"
 AUTHORITY_RC=1
+GH_EDIT_RC=0
 GH_EDIT_LOG="$TEST_ROOT/edit.log"
 LIVE_ISSUE_JSON=""
 LIVE_FALLBACK_LOG="$TEST_ROOT/live-fallback.log"
@@ -42,7 +43,7 @@ _gh_actor_has_repo_write_authority() {
 
 gh_issue_edit_safe() {
 	printf '%s\n' "$*" >>"$GH_EDIT_LOG"
-	return 0
+	return "$GH_EDIT_RC"
 }
 
 gh() {
@@ -131,6 +132,21 @@ test_nmr_present_external_contributor_backfill() {
 	else
 		record "NMR-held external issue gains external-contributor" 1
 	fi
+
+	GH_EDIT_RC=1
+	: >"$GH_EDIT_LOG"
+	: >"$LOGFILE"
+	rc=0
+	_action_reconcile_external_issue_gate owner/repo 36905 \
+		"needs-maintainer-review" NONE reporter || rc=$?
+	if [[ "$rc" -eq 0 && "$_PIR_EXTERNAL_GATE_MUTATED" -eq 0 ]] \
+		&& grep -q -- '--add-label external-contributor' "$GH_EDIT_LOG" \
+		&& grep -qF 'external-contributor backfill failed for #36905 in owner/repo' "$LOGFILE"; then
+		record "failed external-contributor backfill leaves NMR gate blocked without mutation" 0
+	else
+		record "failed external-contributor backfill leaves NMR gate blocked without mutation" 1
+	fi
+	GH_EDIT_RC=0
 
 	: >"$GH_EDIT_LOG"
 	rc=0

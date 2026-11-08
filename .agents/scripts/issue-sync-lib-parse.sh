@@ -172,18 +172,32 @@ _warn_padded_task_line() {
 	return 0
 }
 
-_task_id_from_todo_line() {
+# Fork-free cores (GH#37006): each *_core sets one result variable and returns
+# the status of its stdout wrapper, so hot loops such as the relationship graph
+# and parse_task_line share one set of rules without a subshell per field.
+_TASK_LINE_ID=""
+_TASK_DEPENDENCY_LIST=""
+_TASK_PARENT_ID=""
+
+_task_id_from_todo_line_core() {
 	local line="$1"
-	local candidate=""
 	local todo_line_re='^[[:space:]]*-[[:space:]]+\[[[:space:]x>-]\][[:space:]]+([^[:space:]]+)'
+	_TASK_LINE_ID=""
 	if [[ "$line" =~ $todo_line_re ]]; then
-		candidate="${BASH_REMATCH[1]}"
+		_TASK_LINE_ID="${BASH_REMATCH[1]}"
 	fi
-	if ! task_identity_validate "$candidate"; then
+	if ! task_identity_is_valid "$_TASK_LINE_ID"; then
+		_TASK_LINE_ID=""
 		_warn_padded_task_line "$line"
 		return 1
 	fi
-	printf '%s\n' "$candidate"
+	return 0
+}
+
+_task_id_from_todo_line() {
+	local line="$1"
+	_task_id_from_todo_line_core "$line" || return 1
+	printf '%s\n' "$_TASK_LINE_ID"
 	return 0
 }
 
@@ -267,11 +281,11 @@ _task_id_from_issue_title() {
 	return $?
 }
 
-_task_dependency_value() {
+_task_dependency_value_core() {
 	local line="$1"
 	local key="$2"
-	local value=""
-	local dependency="" task_dependencies=""
+	local value="" dependency="" remaining=""
+	_TASK_DEPENDENCY_LIST=""
 	case "$key" in
 	blocked-by | blocks) ;;
 	*) return 1 ;;
@@ -284,28 +298,40 @@ _task_dependency_value() {
 	# mixed lists, but do not reject a task for an issue-first dependency.
 	# Validate the complete list first so malformed separators still fail.
 	[[ "$value" != ,* && "$value" != *, && "$value" != *,,* ]] || return 1
-	while IFS= read -r dependency; do
+	remaining="${value},"
+	while [[ -n "$remaining" ]]; do
+		dependency="${remaining%%,*}"
+		remaining="${remaining#*,}"
 		if [[ "$dependency" =~ ^(GH)?#[1-9][0-9]*$ ]]; then
 			printf '%s\n' "warning: ${key}:${dependency} has no task ID; ignoring native relationship metadata" >&2
 			continue
 		fi
-		if ! task_identity_validate "$dependency"; then
+		if ! task_identity_is_valid "$dependency"; then
+			_TASK_DEPENDENCY_LIST=""
 			_warn_padded_task_line "$line"
 			return 1
 		fi
-		task_dependencies="${task_dependencies:+${task_dependencies},}${dependency}"
-	done < <(printf '%s\n' "$value" | tr ',' '\n')
-	[[ -n "$task_dependencies" ]] || return 0
-	task_identity_parse_list "$task_dependencies" >/dev/null || return 1
-	printf '%s\n' "$task_dependencies"
+		_TASK_DEPENDENCY_LIST="${_TASK_DEPENDENCY_LIST:+${_TASK_DEPENDENCY_LIST},}${dependency}"
+	done
 	return 0
 }
 
-_task_parent_value() {
+_task_dependency_value() {
+	local line="$1"
+	local key="$2"
+	_task_dependency_value_core "$line" "$key" || return 1
+	[[ -n "$_TASK_DEPENDENCY_LIST" ]] || return 0
+	task_identity_parse_list "$_TASK_DEPENDENCY_LIST" >/dev/null || return 1
+	printf '%s\n' "$_TASK_DEPENDENCY_LIST"
+	return 0
+}
+
+_task_parent_value_core() {
 	local line="$1"
 	local value=""
 	local matched=""
 	local remainder=""
+	_TASK_PARENT_ID=""
 	if [[ "$line" =~ (^|[[:space:]])parent:([^[:space:]]+) ]]; then
 		matched="${BASH_REMATCH[0]}"
 		value="${BASH_REMATCH[2]}"
@@ -319,11 +345,19 @@ _task_parent_value() {
 		printf '%s\n' "warning: parent:${value} has no task ID; ignoring parent hierarchy metadata" >&2
 		return 0
 	fi
-	if ! task_identity_validate "$value"; then
+	if ! task_identity_is_valid "$value"; then
 		_warn_padded_task_line "$line"
 		return 1
 	fi
-	printf '%s\n' "$value"
+	_TASK_PARENT_ID="$value"
+	return 0
+}
+
+_task_parent_value() {
+	local line="$1"
+	_task_parent_value_core "$line" || return 1
+	[[ -n "$_TASK_PARENT_ID" ]] || return 0
+	printf '%s\n' "$_TASK_PARENT_ID"
 	return 0
 }
 

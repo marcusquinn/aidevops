@@ -29,7 +29,7 @@ EAGER_MCPS = set()
 
 # On-demand (enabled: False): remain disabled until an explicit runtime connector
 LAZY_MCPS = {
-    'MCP_DOCKER', 'ahrefs', 'amazon-order-history',
+    'MCP_DOCKER', 'ahrefs', 'amazon-order-history', 'browse',
     'chrome-devtools', 'claude-code-mcp', 'context7', 'dataforseo',
     'google-analytics-mcp', 'grep_app', 'gsc', 'ios-simulator', 'localwp',
     'macos-automator', 'mobile-mcp', 'openapi-search', 'outscraper', 'playwriter', 'quickfile',

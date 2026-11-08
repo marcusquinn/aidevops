@@ -35,7 +35,16 @@ def approval_matches(data, approval, comment, now):
     attempt = approval.get("attempt")
     return all((all(approval.get(key) == value for key, value in binding(data).items()),
                 0 <= now - timestamp(comment["created_at"]) <= 86400,
+                diagnostic_tooling_valid(approval),
                 isinstance(attempt, str) and attempt.startswith("attempt:")))
+
+
+def diagnostic_tooling_valid(approval):
+    """Only a typed, immutable opt-in in the trusted approval grants this scope."""
+    if "diagnostic_tooling_commit" not in approval:
+        return True
+    commit = approval["diagnostic_tooling_commit"]
+    return isinstance(commit, str) and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit) is not None
 
 
 def blocked_lifecycle(issue):
@@ -189,6 +198,11 @@ def template(data):
     a trusted approval comment also disables the legacy continuation path.
     """
     approval = {**binding(data), "release_id": data["release_id"], "attempt": data["attempt"]}
+    #aidevops:trust-boundary — no issue prose or default policy enables this opt-in.
+    if "diagnostic_tooling_commit" in data:
+        if not diagnostic_tooling_valid(data):
+            raise ValueError("diagnostic_tooling_commit must be a full lowercase commit id")
+        approval["diagnostic_tooling_commit"] = data["diagnostic_tooling_commit"]
     if blocked_lifecycle(data["issue"]):
         # This field is emitted only for a blocked approval-time lifecycle.
         updated = data["issue"]["updated_at"]

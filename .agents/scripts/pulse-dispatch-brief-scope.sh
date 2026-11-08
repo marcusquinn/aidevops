@@ -19,6 +19,8 @@
 # Functions in this module (in source order):
 #   - _brief_scope_log_block
 #   - _brief_scope_author_trusted
+#   - _brief_scope_signed_approval_valid
+#   - _brief_scope_untrusted_state_file / _deferred / _record
 #   - _brief_scope_worker_discovery_enabled
 #   - _brief_scope_passes
 #   - _brief_scope_normalized_body
@@ -66,6 +68,64 @@ _brief_scope_author_trusted() {
 	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
 	declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 || return 1
 	repo_allows_pulse_write_actions "$repo_slug" || return 1
+	return 0
+}
+
+# GH#37052: an external author's brief that carries a verified signed maintainer
+# approval is trusted for worker-owned scope discovery. approval-helper.sh
+# verify binds the signature to the CURRENT body/title digests, so an unsigned,
+# forged or stale-digest approval returns non-zero. The body is never rewritten
+# here (that would invalidate the digest); the worker records the scope itself.
+# #aidevops:trust-boundary
+_brief_scope_signed_approval_valid() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local helper="${BRIEF_SCOPE_APPROVAL_HELPER:-${_BRIEF_SCOPE_SCRIPT_DIR}/approval-helper.sh}"
+	local result=""
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	[[ -f "$helper" ]] || return 1
+	declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 || return 1
+	repo_allows_pulse_write_actions "$repo_slug" || return 1
+	result=$(bash "$helper" verify "$issue_number" "$repo_slug" 2>/dev/null) || return 1
+	[[ "$result" == "VERIFIED" ]] || return 1
+	return 0
+}
+
+# GH#37052: unchanged untrusted bodies are not re-evaluated every pass. The
+# marker records the body hash; any body edit changes the hash and re-arms the
+# check. TTL (default 900s) bounds how long a freshly posted approval waits.
+_brief_scope_untrusted_state_file() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/brief-scope-untrusted"
+	printf '%s/%s-%s\n' "$dir" "${repo_slug//\//_}" "$issue_number"
+	return 0
+}
+
+# Returns 0 when this exact body was already found untrusted within the TTL.
+_brief_scope_untrusted_deferred() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local body_hash="$3"
+	local ttl="${PULSE_BRIEF_SCOPE_UNTRUSTED_DEFER_SECS:-900}"
+	local file="" recorded_hash="" recorded_at="" now=0
+	file=$(_brief_scope_untrusted_state_file "$repo_slug" "$issue_number")
+	[[ -f "$file" ]] || return 1
+	IFS=' ' read -r recorded_hash recorded_at <"$file" || return 1
+	[[ "$recorded_hash" == "$body_hash" && "$recorded_at" =~ ^[0-9]+$ ]] || return 1
+	now=$(date +%s)
+	[[ $((now - recorded_at)) -lt "$ttl" ]] || return 1
+	return 0
+}
+
+_brief_scope_untrusted_record() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local body_hash="$3"
+	local file=""
+	file=$(_brief_scope_untrusted_state_file "$repo_slug" "$issue_number")
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	printf '%s %s\n' "$body_hash" "$(date +%s)" >"$file" 2>/dev/null || true
 	return 0
 }
 

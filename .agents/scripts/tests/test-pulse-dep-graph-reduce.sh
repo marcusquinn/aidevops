@@ -67,7 +67,9 @@ hold_cases=$(jq -cn '[
   [false, "human_unblock_required"],
   [true, "Do-not-dispatch"],
   [true, "ON   HOLD: human"],
-  [true, "Defer\tuntil: next cycle"]
+  [true, "Defer\tuntil: next cycle"],
+  [true, "****************On hold: eight normalization prefixes"],
+  [false, "******************On hold: nine normalization prefixes"]
 ]')
 hold_fixture=$(jq -cn --argjson cases "$hold_cases" '
   [{number: 1, title: "t1: resolved predecessor", body: "", labels: [], state: "CLOSED"}]

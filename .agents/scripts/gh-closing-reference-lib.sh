@@ -85,7 +85,13 @@ _gh_validate_pr_closing_keywords() {
 	fi
 	if [[ -z "$body_text" ]]; then
 		# A create must provide inspectable text; metadata-only edits need none.
-		[[ "${_GH_PR_IDENTITY_ORIGIN:-}" == "origin:worker" ]] || return 0
+		# An edit that explicitly supplies a (possibly empty) body is validated
+		# against PR labels; one with no body source is metadata-only.
+		if [[ "${_GH_PR_IDENTITY_ORIGIN:-}" == "edit" ]]; then
+			[[ "$has_body" -eq 1 || "$has_body_file" -eq 1 ]] || return 0
+		else
+			[[ "${_GH_PR_IDENTITY_ORIGIN:-}" == "origin:worker" ]] || return 0
+		fi
 	fi
 	if ! _gh_pr_body_negated_closing_ref "$body_text" >/dev/null; then
 		_gh_validate_pr_worker_identity "$body_text" "$@"
@@ -187,6 +193,10 @@ _gh_validate_pr_worker_identity() {
 	shift
 	local origin="${_GH_PR_IDENTITY_ORIGIN:-}" labels="" repo="" number="" issues=""
 	local worker_origin="origin:worker"
+	# Raw shim writes can declare their origin in the body before labels exist.
+	if [[ -z "$origin" && "$body_text" == *'<!-- aidevops:origin:worker -->'* ]]; then
+		origin="$worker_origin"
+	fi
 	if [[ "$origin" == "edit" ]]; then
 		repo=$(_gh_extract_repo_from_args "$@")
 		local arg="" pending="" adding_worker=0

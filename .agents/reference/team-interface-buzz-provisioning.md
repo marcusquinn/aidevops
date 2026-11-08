@@ -79,6 +79,13 @@ system `LocalHostName`; for example, `Marcus-MacBook-Pro-01` produces
 override. The interactive runtime requires the same current or overridden host
 slug and fails closed if a copied or stale snapshot name points at another host.
 
+Several Macs can join one community. Before provisioning each additional Mac,
+give it a distinct `LocalHostName` (System Settings > General > Sharing > Local
+hostname, or `sudo scutil --set LocalHostName Marcus-MacBook-Pro-02`), then
+check it with `scutil --get LocalHostName`. Identical model names would
+otherwise produce clashing agent names; numbering (`-01`, `-02`) keeps every
+mention unambiguous.
+
 Each member carries only its bounded description, a portable inline SVG avatar,
 a reviewed logical runtime requirement, and a pointer containing
 the deployment-relative `agents:<filename>` source, exact source digest, and
@@ -214,6 +221,30 @@ app-data location is known and non-default. Installation is idempotent, refuses 
 different existing definition, and accepts `--replace` only while Buzz is stopped;
 replacement first writes a private rollback copy to `~/.aidevops/buzz-backups/`.
 
+Reinstalling the interactive runtime also refreshes imported agents' source
+digests in place, preserving Buzz identities, DMs and threads. With Buzz stopped,
+the installer matches this host's roster against the new anchor and changes only
+the digest line of otherwise exact canonical pointer prompts. Locally edited
+prompts are skipped and reported; launch-time source verification remains strict.
+Before changing the store or replacing the manifest, it saves the original
+`agents/managed-agents.json` as
+`~/.aidevops/buzz-backups/managed-agents.<timestamp>.json` (mode 600). Output lists
+only matched agent names and old/new 12-character digest prefixes, not store fields.
+An unchanged reinstall does not rewrite or back up the store again.
+
+Installation also repoints exact interactive command overrides from older anchors
+of the same runtime to the new anchor, with a private store backup before the
+change. Other commands are untouched. `aidevops buzz status` reports the number
+of stale interactive overrides against the installed manifest before reinstall.
+
+To roll back, quit Buzz, restore that private store backup to Buzz's
+`agents/managed-agents.json`, and restore the matching
+`~/.aidevops/buzz-backups/aidevops-interactive-v1.<timestamp>.json` manifest to
+`custom_harnesses/aidevops-interactive-v1.json`; keep both files mode 600. Restore
+both together so the stored digests agree with the previous immutable anchor.
+After pruning, first restore the old anchor from Trash to its original path;
+manifest and store backups alone do not contain the runtime files.
+
 Installation snapshots the complete agents tree, required local Node validator
 dependencies, the exact installed OpenCode plugin/SDK/Zod closure, and sanitized
 normal OpenCode config into an immutable owner-only anchor under
@@ -224,6 +255,29 @@ retaining normal interactive commands, agents, non-secret MCP definitions, and
 model routing. Credential-shaped provider fields plus MCP environment and header
 containers are removed before hashing or copying. A real ACP `session/prompt`
 canary verifies tool-schema resolution rather than stopping after startup.
+
+Successful installs prune unused sibling anchors to Trash using `trash` or
+`gio trash`, logging each move. The just-installed manifest protects its anchor.
+All `custom_harnesses/*.json` references in macOS `xyz.block.buzz.*` app-data
+directories (including development bundles), the selected app-data directory,
+and `AIDEVOPS_BUZZ_APP_DATA_DIR` are retained, as are anchors referenced by running
+processes. CLI installs and pruning share a nonblocking lock. Unreadable or invalid
+manifests and unavailable process checks refuse cleanup. Missing/failing Trash
+tools retain the anchor; there is no permanent-delete fallback and a cleanup
+failure does not undo a successful install.
+
+Inspect or prune independently (no project registration is needed):
+
+```bash
+python3 ~/.aidevops/agents/scripts/team-interface-buzz-runtime.py prune --dry-run
+python3 ~/.aidevops/agents/scripts/team-interface-buzz-runtime.py prune
+```
+
+On non-macOS hosts, set `AIDEVOPS_BUZZ_APP_DATA_DIR` or pass `--app-data-dir DIR`.
+Repeat `--app-data-dir` to protect additional non-default app-data directories;
+include every such location before pruning. Symlinks, staging directories and
+directories without a recognized anchor name and marker are never pruned.
+Use `verify-anchor --root /absolute/path/to/anchor` after restoring from Trash.
 
 After restarting Buzz, verify that **Aidevops Full Interactive V1** is ready before
 manually starting any imported member. The pinned `aidevops-buzz-acp-interactive`

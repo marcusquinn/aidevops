@@ -261,6 +261,134 @@ class LegacyCleanupContract(unittest.TestCase):
         arguments.update(options)
         return legacy.run(self.store, self.config, self.output, **arguments)
 
+    def test_writer_release_preserves_body_errors_while_another_writer_is_busy(self):
+        """Archive failures and interrupts escape unchanged without reacquiring a writer."""
+        errors = (ValueError("archive-fingerprint-missing"),
+                  subprocess.CalledProcessError(1, ["fixture-archive"]), KeyboardInterrupt())
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                blocker = self.store._connect()
+                try:
+                    with self.assertRaises(type(error)) as raised:
+                        with self.store.connection(write=True) as connection:
+                            with legacy.writer_released(connection):
+                                blocker.execute("BEGIN IMMEDIATE")
+                                raise error
+                    self.assertIs(raised.exception, error)
+                    self.assertTrue(self.target.exists())
+                finally:
+                    blocker.rollback()
+                    blocker.close()
+
+    def test_archive_capture_does_not_block_unrelated_admission(self):
+        """Archive capture and verification allow independent admission with replay safety."""
+        self.stop_owner()
+        other = self.root / "admission-target"
+        other.mkdir()
+        generation, run = str(uuid4()), str(uuid4())
+        admissions = AdmissionRegistry(self.store)
+        admissions.open_generation(str(uuid4()), generation, other)
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        helper = legacy._helper
+        verify = legacy.verify_preservation
+        acknowledged = []
+        verification_runs = []
+
+        def during_capture(*arguments):
+            """Admit an unrelated run while the real capture helper executes."""
+            if arguments[0] == "archive":
+                # A second real SQLite connection competes with cleanup's writer.
+                acknowledged.append(admissions.admit(run, identity, generation, str(other)))
+            return helper(*arguments)
+
+        def during_verification(*arguments):
+            """Exercise fresh admission during both archive-verification stages."""
+            candidate = str(uuid4())
+            self.assertTrue(admissions.admit(candidate, identity, generation, str(other)))
+            verification_runs.append(candidate)
+            return verify(*arguments)
+
+        with patch.object(legacy, "_helper", side_effect=during_capture), \
+                patch.object(legacy, "verify_preservation", side_effect=during_verification):
+            result = self.cleanup()
+        self.assertEqual(acknowledged, [True], result)
+        self.assertEqual(len(verification_runs), 2)
+        self.assertEqual(result["retired"], 1, result)
+        self.assertFalse(admissions.admit(run, identity, generation, str(other)))
+
+    def test_archive_capture_rechecks_new_writer_before_removal(self):
+        """Enrollment during capture prevents the cleanup source from being removed."""
+        self.stop_owner()
+        generation = str(uuid4())
+        helper = legacy._helper
+
+        def during_capture(*arguments):
+            """Enroll the source before the capture returns to writer revalidation."""
+            if arguments[0] == "archive":
+                AdmissionRegistry(self.store).open_generation(str(uuid4()), generation, self.target)
+            return helper(*arguments)
+
+        with patch.object(legacy, "_helper", side_effect=during_capture):
+            result = self.cleanup()
+        self.assertEqual(result["retired"], 0, result)
+        self.assertTrue(self.target.exists())
+        self.assertIn("registered-writers-changed", json.dumps(result))
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT state FROM generation_admissions WHERE generation_id=?", (generation,),
+            ).fetchone()
+        self.assertEqual(row["state"], "open")
+
+    def test_finish_verification_rechecks_new_writer_before_move(self):
+        """Enrollment during final verification stops cleanup before native movement."""
+        self.stop_owner()
+        generation = str(uuid4())
+        verify = legacy.verify_preservation
+        calls = []
+
+        def during_verification(*arguments):
+            """Introduce a new source enrollment during the second verification call."""
+            calls.append(True)
+            if len(calls) == 2:
+                AdmissionRegistry(self.store).open_generation(str(uuid4()), generation, self.target)
+            return verify(*arguments)
+
+        with patch.object(legacy, "verify_preservation", side_effect=during_verification):
+            result = self.cleanup()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["retired"], 0, result)
+        self.assertTrue(self.target.exists())
+        self.assertIn("registered-writers-changed", json.dumps(result))
+
+    def test_archive_writer_reacquisition_failure_retains_source_and_retries(self):
+        """Failed writer reacquisition records no retirement and permits a safe retry."""
+        self.stop_owner()
+        helper = legacy._helper
+        blocker = self.store._connect()
+
+        def block_after_capture(*arguments):
+            """Keep an independent writer busy after the capture has succeeded."""
+            archive = helper(*arguments)
+            if arguments[0] == "archive":
+                blocker.execute("BEGIN IMMEDIATE")
+            return archive
+
+        try:
+            with patch.object(legacy, "_helper", side_effect=block_after_capture):
+                result = self.cleanup()
+            self.assertEqual(result["retired"], 0, result)
+            self.assertTrue(self.target.exists())
+            self.assertIn('"category": "contention"', json.dumps(result))
+            with self.store.connection() as connection:
+                operation = legacy.operation_id(self.store, str(self.target))
+                for phase in ("archive", "plan", "retired"):
+                    self.assertIsNone(legacy.receipt(connection, operation, phase))
+        finally:
+            blocker.rollback()
+            blocker.close()
+        retried = self.cleanup()
+        self.assertEqual(retried["retired"], 1, retried)
+
     def test_archive_remove_retry_and_ignored_exclusion(self):
         self.stop_owner()
         self.output.mkdir(mode=0o755, exist_ok=True)
@@ -389,7 +517,7 @@ class LegacyCleanupContract(unittest.TestCase):
             str(uuid4()), str(uuid4()), self.target,
         )
         result = self.cleanup(**options)
-        self.assertEqual(result["results"][0]["reason"], "managed-by-current-cleanup")
+        self.assertEqual(result["results"][0]["reason"], "outside-managed-worktree-base")
         self.assertTrue(self.target.exists())
 
     def test_confirmed_alias_keeps_recorded_owner_and_merged_modern_state(self):
@@ -408,7 +536,7 @@ class LegacyCleanupContract(unittest.TestCase):
             str(uuid4()), str(uuid4()), outside,
         )
         result = self.cleanup(**options)
-        self.assertEqual(result["results"][0]["reason"], "managed-by-current-cleanup")
+        self.assertEqual(result["results"][0]["reason"], "outside-managed-worktree-base")
         with self.store.connection() as connection:
             item = next(row for row in legacy.inventory(connection)
                         if row["path"] == str(outside))
@@ -554,7 +682,7 @@ class LegacyCleanupContract(unittest.TestCase):
             str(uuid4()), str(uuid4()), self.target,
         )
         result = self.cleanup()
-        self.assertEqual(result["results"][0]["reason"], "managed-by-current-cleanup")
+        self.assertEqual(result["results"][0]["reason"], "outside-managed-worktree-base")
         self.assertTrue(self.target.exists())
 
     def test_interrupt_after_move_preserves_replacement(self):
@@ -605,19 +733,25 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(result["retired"], 0, result)
         self.assertEqual((self.target / "new-work").read_text(), "keep")
 
-    def test_archive_holds_existing_registration_writer_lock(self):
+    def test_native_move_and_removal_hold_registration_writer_lock(self):
+        """Destructive native operations continue to exclude other registry writers."""
         self.stop_owner()
-        helper = legacy._helper
+        git = legacy._git
+        guarded = []
 
         def checked(*arguments):
-            with closing(sqlite3.connect(self.store.path, timeout=0.01)) as other:
-                with self.assertRaises(sqlite3.OperationalError):
-                    other.execute("BEGIN IMMEDIATE")
-            return helper(*arguments)
+            """Probe writer exclusion immediately before native move and removal."""
+            if len(arguments) > 3 and arguments[2] == "worktree" and arguments[3] in ("move", "remove"):
+                with closing(sqlite3.connect(self.store.path, timeout=0.01)) as other:
+                    with self.assertRaises(sqlite3.OperationalError):
+                        other.execute("BEGIN IMMEDIATE")
+                guarded.append(arguments[3])
+            return git(*arguments)
 
-        with patch.object(legacy, "_helper", side_effect=checked):
+        with patch.object(legacy, "_git", side_effect=checked):
             result = self.cleanup()
         self.assertEqual(result["retired"], 1, result)
+        self.assertEqual(guarded, ["move", "remove"])
 
     def test_unknown_process_is_retained(self):
         adapter = adapter_for(self.store.installation_id())

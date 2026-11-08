@@ -76,6 +76,9 @@ a lifecycle transition occurs; omit it for an immediate snapshot. The start
 action returns after the owned process spawns, so the primary session remains
 available for progress reports and scoped cancellation.
 
+Do not assume bounded operations inherit session secrets: wrap the command as
+`aidevops secret NAME -- <argv>`, and never put a secret value in argv.
+
 `budget_seconds` defaults to 900 seconds; explicitly setting it to `0` also
 selects that default. Other values are clamped at start to
 0.01–86,400 seconds (24 hours); `budget_ms` in the receipt is the effective
@@ -99,6 +102,7 @@ slice through the same native tool with action `output`, the receipt's
 `operation_id`, and optional `output_offset`/`output_limit` values. Retrieval is
 terminal-only, limited to 500 lines per call, and revalidates session ownership;
 callers cannot use a bare output ID to bypass the operation generation.
+`output_offset` is 1-based; zero is rejected.
 
 Cancellation is restricted to the runtime session that started the operation
 and signals only the retained detached process group. The implementation is an

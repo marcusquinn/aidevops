@@ -664,6 +664,88 @@ test_blocker_catchup_stops_after_failed_prerequisite() {
 	return 0
 }
 
+test_pre_dispatch_blocker_refresh_admission() {
+	local mode
+	for mode in missing pending fresh async disabled locked; do
+		setup_test_env
+		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/graph.json"
+		local AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0
+		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+		local lockdir="" pending_file="" failures=0 expected=0
+		lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
+		pending_file="$(_pulse_post_dispatch_housekeeping_statefile).blocker-refresh-pending"
+		case "$mode" in
+		missing) expected=1 ;;
+		pending)
+			touch "$DEP_GRAPH_CACHE_FILE" "$pending_file"
+			expected=1
+			;;
+		fresh) touch "$DEP_GRAPH_CACHE_FILE" ;;
+		async) AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=1 ;;
+		disabled) AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=0 ;;
+		locked) _pulse_acquire_post_dispatch_housekeeping_lock "$lockdir" ;;
+		esac
+		_pulse_run_pre_dispatch_blocker_refresh 600
+		if [[ "$expected" -eq 1 ]]; then
+			grep -q '^stage:preflight_blocker_refresh_catchup:180$' "$STAGE_LOG" || failures=$((failures + 1))
+			grep -q '^dep_graph:1$' "$STAGE_LOG" || failures=$((failures + 1))
+			grep -q '^blocked_refresh$' "$STAGE_LOG" || failures=$((failures + 1))
+			grep -q '^brief_hold_release$' "$STAGE_LOG" || failures=$((failures + 1))
+			[[ ! -e "$pending_file" && ! -d "$lockdir" ]] || failures=$((failures + 1))
+		else
+			if grep -q '^dep_graph:' "$STAGE_LOG"; then failures=$((failures + 1)); fi
+			if [[ "$mode" == "locked" ]]; then
+				[[ -d "$lockdir" ]] || failures=$((failures + 1))
+			else
+				[[ ! -s "$STAGE_LOG" ]] || failures=$((failures + 1))
+			fi
+		fi
+		if grep -Eq '^(ownership_reconcile|post_merge|auto_decomposer|dedup_cleanup)$' "$STAGE_LOG"; then
+			failures=$((failures + 1))
+		fi
+		print_result "pre-dispatch recovery admission: ${mode}" "$failures"
+		teardown_test_env
+	done
+	return 0
+}
+
+test_pre_dispatch_blocker_refresh_cycle_reserve() {
+	setup_test_env
+	local failures=0
+	# Use the production watchdog and clock inside a subshell; all maintenance
+	# commands remain the existing local stage stubs, with no GitHub operations.
+	if ! (
+		unset _PULSE_WATCHDOG_LOADED
+		# shellcheck disable=SC1091
+		source "${REPO_ROOT}/.agents/scripts/pulse-watchdog.sh"
+		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/graph.json"
+		local AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0
+		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+		local AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=1
+		local PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1800
+		local _PULSE_MAIN_DISPATCH_RESERVE_S=900
+		local PULSE_START_EPOCH="" now=""
+		now=$(date +%s)
+		# Reproduce late admission: dispatch already spent the available slice.
+		PULSE_START_EPOCH=$((now - 1100))
+		_pulse_run_pre_dispatch_blocker_refresh 600
+		[[ ! -s "$STAGE_LOG" ]] || exit 1
+		grep -q 'Stage deferred: preflight_blocker_refresh_catchup cycle budget exhausted' "$LOGFILE" || exit 1
+		# The same work is admitted early without changing or disabling reserves.
+		PULSE_START_EPOCH="$now"
+		_pulse_run_pre_dispatch_blocker_refresh 600
+		grep -q '^dep_graph:1$' "$STAGE_LOG" || exit 1
+		grep -q '^brief_hold_release$' "$STAGE_LOG" || exit 1
+		grep -q 'Stage start: preflight_blocker_refresh_catchup (timeout 180s)' "$LOGFILE" || exit 1
+		[[ "$_PULSE_MAIN_DISPATCH_RESERVE_S" == "900" && "$AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP" == "1" ]] || exit 1
+	); then
+		failures=1
+	fi
+	print_result "pre-dispatch recovery retains production cycle and main-dispatch reserve" "$failures"
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_sync_housekeeping_runs_all_stages
 	test_async_housekeeping_returns_before_slow_stage
@@ -676,6 +758,8 @@ main() {
 	test_blocker_catchup_checkpoint_rechecks_cache
 	test_blocker_catchup_resumes_pending_recovery
 	test_blocker_catchup_stops_after_failed_prerequisite
+	test_pre_dispatch_blocker_refresh_admission
+	test_pre_dispatch_blocker_refresh_cycle_reserve
 	test_async_housekeeping_logs_termination
 
 	printf '\n============================================\n'

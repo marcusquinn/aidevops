@@ -61,25 +61,68 @@ _dlw_managed_creation_env() {
 	return 0
 }
 
+# Echo a lifecycle diagnostic field only when it is a short token. Anything
+# else (paths, spaces, free text) becomes "redacted"; absent becomes "none".
+_dlw_safe_diag_token() {
+	local value="$1"
+	if [[ -z "$value" ]]; then
+		printf 'none\n'
+	elif [[ ${#value} -le 80 && "$value" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+		printf '%s\n' "$value"
+	else
+		printf 'redacted\n'
+	fi
+	return 0
+}
+
+# Log why reuse-status could not classify a candidate without exposing paths.
+# Only controlled fields of the CLI error JSON are logged, never raw JSON or
+# stderr; a missing or unparsable payload (e.g. Python startup failure) logs
+# the caller's generic fallback reason.
+_dlw_log_reuse_status_failure() {
+	local issue_number="$1" rc="$2" payload="$3" fallback="$4"
+	local reason="" category="" detail="" fields=""
+	if [[ -n "$payload" ]] && fields=$(jq -er '[.reason // "", .category // "", .detail // ""] | map(tostring) | join("\u001f")' <<<"$payload" 2>/dev/null); then
+		IFS=$'\037' read -r reason category detail <<<"$fields"
+	fi
+	[[ -n "$reason" ]] || reason="$fallback"
+	reason=$(_dlw_safe_diag_token "$reason")
+	category=$(_dlw_safe_diag_token "$category")
+	detail=$(_dlw_safe_diag_token "$detail")
+	echo "[dispatch_worker_launch] reuse_status_unavailable issue=#${issue_number} rc=${rc} reason=${reason} category=${category} detail=${detail}" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
 # Classify one branch-nominated candidate. Echoes "managed <generation>",
 # "legacy", "sealed" or nothing (different enrolled task). Returns 1 when
 # evidence is unavailable: the caller must refuse, not guess.
 _dlw_classify_reuse_candidate() {
 	local wt_path="$1" issue_number="$2" repo_slug="$3"
-	local helper="" output="" rc=0 state_dir="" lifecycle=""
+	local helper="" output="" rc=0 state_dir="" lifecycle="" reuse=""
 	# GH#36920: managed/legacy matching uses a different registry. Preflight
 	# lifecycle admission before ownership transfer; launch must still recheck.
 	# shellcheck source=./worker-lifecycle-state.sh
-	source "${_DLW_SYSTEMD_MODULE_DIR}/worker-lifecycle-state.sh" || return 1
-	state_dir=$(worker_lifecycle_state_dir) || return 1
-	[[ -n "$state_dir" ]] || return 1
+	if ! source "${_DLW_SYSTEMD_MODULE_DIR}/worker-lifecycle-state.sh" ||
+		! state_dir=$(worker_lifecycle_state_dir) || [[ -z "$state_dir" ]]; then
+		_dlw_log_reuse_status_failure "$issue_number" 1 "" "lifecycle_state_dir_unavailable"
+		return 1
+	fi
+	# GH#37028: on failure the CLI prints path-safe error JSON on stdout (exit
+	# 2); log its controlled fields. No JSON means Python itself failed.
 	lifecycle=$(python3 -E -s -B "${_DLW_SYSTEMD_MODULE_DIR}/../worker-lifecycle/worker-registry.py" \
-		--state-dir "$state_dir" reuse-status --path "$wt_path" 2>/dev/null) || return 1
-	lifecycle=$(jq -er '.reuse' <<<"$lifecycle") || return 1
-	case "$lifecycle" in
+		--state-dir "$state_dir" reuse-status --path "$wt_path" 2>/dev/null) || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		_dlw_log_reuse_status_failure "$issue_number" "$rc" "$lifecycle" "reuse_status_no_diagnostic"
+		return 1
+	fi
+	reuse=$(jq -er '.reuse' <<<"$lifecycle" 2>/dev/null) || reuse=""
+	case "$reuse" in
 	sealed) printf 'sealed\n'; return 0 ;;
 	eligible) ;;
-	*) return 1 ;;
+	*)
+		_dlw_log_reuse_status_failure "$issue_number" 0 "" "reuse_status_unrecognized"
+		return 1
+		;;
 	esac
 	helper=$(_dlw_lifetime_helper)
 	output=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" match "$wt_path" "$issue_number" ${repo_slug:+"$repo_slug"} 2>/dev/null) || rc=$?

@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import re
-import stat
 import subprocess  # nosec B404 # classify helper exceptions, never execute error argv
 import tempfile
 import time
@@ -20,22 +19,18 @@ from .cleanup_plan import enrolled_only_event_id
 from .cleanup_quarantine import CleanupQuarantine
 from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import validate_private_path as _private
+from .permissions import FilePolicy, read_owned_file
 from .pull_requests import OpenPullRequestCache
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
 from .storage import LifecycleRegistry, identifier
 
+# Group write is accepted only for the owner's user-private group (umask 002).
+REPOSITORY_CONFIG = FilePolicy("unsafe-repository-config", max_size=1048576, private=False)
+
 
 def _repository_entries(config: Path) -> list:
     """Read a bounded operator-owned configuration without following links."""
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-    with os.fdopen(os.open(config, flags), "r", encoding="utf-8") as stream:
-        info = os.fstat(stream.fileno())
-        if info.st_size > 1048576:
-            raise ValueError("unsafe-repository-config")
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                or info.st_mode & 0o022 or info.st_nlink != 1):
-            raise ValueError("unsafe-repository-config")
-        configuration = json.load(stream)
+    configuration = json.loads(read_owned_file(config, REPOSITORY_CONFIG).decode("utf-8"))
     if not isinstance(configuration, dict):
         raise ValueError("invalid-repository-config")
     entries = configuration.get("initialized_repos")

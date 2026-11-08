@@ -24,6 +24,7 @@ if not BASH or not pathlib.Path(BASH).is_absolute():
 sys.path.insert(0, str(SCRIPTS))
 from checkpoint_github_fixture import comment
 from checkpoint_admission_cases import AutomaticBindingCases, ProgressCases, RevisionEnvelopeCases
+from checkpoint_diagnostic_tooling_cases import DiagnosticToolingCases
 from pr_checkpoint_events import EVENTS, fields, own_claim_matches
 import integration_recovery as recovery
 
@@ -91,7 +92,7 @@ def insert_renewed_attempt(data):
     data["comments"].insert(1, renewed)
 
 
-class RevisionTests(RevisionEnvelopeCases, unittest.TestCase):
+class RevisionTests(DiagnosticToolingCases, RevisionEnvelopeCases, unittest.TestCase):
     fixture = staticmethod(fixture)
     comment = staticmethod(comment)
     revision = revision

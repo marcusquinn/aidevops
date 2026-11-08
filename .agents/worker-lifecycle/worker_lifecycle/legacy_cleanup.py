@@ -4,45 +4,32 @@ No new tables or fabricated admissions. Receipts use the existing event journal.
 Current-generation cleanup is unchanged. Remove this module after the backlog.
 """
 
+from contextlib import contextmanager
+from functools import partial
 import json
 import os
 from pathlib import Path
 import sqlite3
-import socket
 import subprocess  # nosec B404 # exception classification; helpers execute fixed argv
 import tempfile
 import time
 from uuid import UUID, uuid4, uuid5
 
-from .cleanup import _failure_details
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
-from .legacy_options import require_manual_confirmation, require_managed_takeover, unrecorded
+from .legacy_options import require_manual_confirmation, require_managed_takeover
+from .legacy_options import retained_outcome, unrecorded
+from .legacy_probe import checkpoint, host_probe, interrupted_probe
+from .legacy_probe import latest_probe_plan, operation_id, receipt, record_probe_recovery
+from .legacy_probe import verify_reconstructible
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
-
-
-def event_id(operation, phase):
-    """Return the deterministic event ID for an operation phase."""
-    return str(uuid5(UUID(operation), "legacy-" + phase))
-
-
-def operation_id(store, path):
-    """Return the deterministic operation ID for a legacy path."""
-    return str(uuid5(UUID(store.installation_id()), "legacy-cleanup:" + path))
-
-
-def receipt(connection, operation, phase):
-    """Return the recorded payload for an operation phase, or None."""
-    row = connection.execute("SELECT payload FROM events WHERE event_id=?",
-                             (event_id(operation, phase),)).fetchone()
-    return json.loads(row[0]) if row else None
 
 
 def require_confirmation(connection, operation, confirmed):
@@ -53,11 +40,41 @@ def require_confirmation(connection, operation, confirmed):
     )
 
 
-def checkpoint(store, connection, operation, phase, payload):
-    """Persist before destructive steps, then reacquire the admission writer lock."""
-    store._event(connection, event_id(operation, phase), payload)
+@contextmanager
+def writer_released(connection):
+    """Release the global writer only for non-destructive archive or network work.
+
+    The caller retains its operation lock and must revalidate registry writers
+    after reacquisition. Native source move/removal never runs in this scope.
+    Body failures propagate unchanged through the outer transaction's rollback.
+    Only successful work reacquires the writer; failure to reacquire still
+    aborts the next phase.
+    """
     connection.commit()
+    yield
     connection.execute("BEGIN IMMEDIATE")
+
+
+def released_pull_requests(connection, slug):
+    """Open-PR lookup that never holds the registry writer across the network.
+
+    GitHub state is not serialized by the registry. A plan built with this
+    lookup is only journaled; removal requires a refreshed plan whose local,
+    registry and /proc checks all run under the reacquired writer (GH#36921).
+    """
+    with writer_released(connection):
+        return open_pull_requests(slug)
+
+
+def prefetched_pull_requests(connection, slug):
+    """Fetch the journaled plan's slug without the writer; serve only that result.
+
+    `plan["repo"]` is part of the compared plan, so a refreshed plan for any other
+    repository never equals the journaled plan and removal is refused.
+    """
+    with writer_released(connection):
+        prs = open_pull_requests(slug)
+    return lambda _requested: prs
 
 
 def archive_source(store, connection, operation, plan, adapter):
@@ -66,17 +83,18 @@ def archive_source(store, connection, operation, plan, adapter):
     previous = receipt(connection, operation, "archive")
     if previous is None:
         path = Path(plan["source"])
-        archive = _helper(
-            "archive", str(path), "--repo", plan["repo"], "--unattributed",
-            "--reason", "unattributed-worktree", "--base-branch", plan["base"],
-            "--output-root", str(root),
-        )
-        # Capture already compares before/after snapshots. Bind the receipt to
-        # that captured state; finish independently rechecks the actual source.
-        manifest = json.loads((Path(archive) / "manifest.json").read_bytes())
-        snapshot = manifest.get("source_fingerprint")
-        if not isinstance(snapshot, dict):
-            raise ValueError("archive-fingerprint-missing")
+        with writer_released(connection):
+            archive = _helper(
+                "archive", str(path), "--repo", plan["repo"], "--unattributed",
+                "--reason", "unattributed-worktree", "--base-branch", plan["base"],
+                "--output-root", str(root),
+            )
+            # Capture compares before/after snapshots; bind to captured state.
+            manifest = json.loads((Path(archive) / "manifest.json").read_bytes())
+            snapshot = manifest.get("source_fingerprint")
+            if not isinstance(snapshot, dict):
+                raise ValueError("archive-fingerprint-missing")
+        unchanged(connection, plan, adapter)
         previous = dict(plan, type="legacy-worktree-archive", archive=archive,
                         snapshot=snapshot, output_root=str(root))
         checkpoint(store, connection, operation, "archive", previous)
@@ -85,9 +103,11 @@ def archive_source(store, connection, operation, plan, adapter):
     if previous["output_root"] != str(root):
         raise ValueError("archive-root-changed")
     unchanged(connection, previous, adapter)
-    manifest = verify_preservation(
-        Path(previous["archive"]), root, previous["snapshot"],
-    )
+    with writer_released(connection):
+        manifest = verify_preservation(
+            Path(previous["archive"]), root, previous["snapshot"],
+        )
+    unchanged(connection, previous, adapter)
     _retain_base(Path(plan["source"]), operation, manifest["base_sha"])
     return previous
 
@@ -102,7 +122,8 @@ def finish(store, connection, operation, plan, adapter):
             or _id(container) != plan["container_identity"]):
         raise ValueError("retirement-container-changed")
     _private(container, directory=True)
-    verify_preservation(Path(plan["archive"]), root, plan["snapshot"])
+    with writer_released(connection):
+        verify_preservation(Path(plan["archive"]), root, plan["snapshot"])
     unchanged(connection, plan, adapter)
     if not os.path.lexists(target):
         if not os.path.lexists(plan["admin"]):
@@ -172,11 +193,11 @@ def take_over_managed(store, item, repositories, adapter, options):
     never retires would otherwise stay `managed-by-current-cleanup` forever. The
     remote-recoverable guards (clean including untracked, idle /proc census, unlocked,
     HEAD on a remote ref, no open PR, non-forced removal, branch kept) decide; any
-    unmet guard keeps the original ownership reason. Admission later reconciles the
+    unmet guard reports its concrete reason. Admission later reconciles the
     absent source through its existing source-absent path.
     """
     require_managed_takeover(reconstructible, item, repositories, adapter,
-                             open_pull_requests, managed=True)
+                             open_pull_requests, managed_min_age=options.min_age)
     return process_reconstructible(store, item, repositories, adapter, options)
 
 
@@ -194,6 +215,12 @@ def process_item(store, item, repositories, adapter, options):
                 require_confirmation(connection, operation, confirmed)
         if done:
             outcome["status"] = "already-retired"
+        elif not pending and not os.path.lexists(item["path"]):
+            # No removal or preservation is claimed. Admission cleanup separately
+            # reconciles absent generations using its existing identity guards.
+            # An interrupted host-probe removal is recovered or reported first.
+            recover_interrupted_probe(store, item, options.apply)
+            outcome["status"] = "already-absent"
         elif item["modern"]:
             return take_over_managed(store, item, repositories, adapter, options)
         elif not pending and requires_reconstructible(item, repositories, adapter, options):
@@ -206,34 +233,39 @@ def process_item(store, item, repositories, adapter, options):
                 outcome["status"] = retire(store, item, repositories, adapter, options)
     except (ValueError, OSError, sqlite3.Error, ObservationUnavailable,
             subprocess.SubprocessError) as error:
-        outcome.update(status="retained", **_failure_details(error))
-        if isinstance(error, ObservationUnavailable):
-            outcome["reason"] = str(error)
+        outcome.update(retained_outcome(item, error))
     return outcome, eligible, attempted
+
+
+def recover_interrupted_probe(store, item, apply):
+    """Recover an interrupted probe removal; preview reports verification pending."""
+    host = host_probe(store)
+    with store.connection() as connection:
+        if not interrupted_probe(store, connection, item):
+            return
+    if not apply:
+        raise ValueError("reconstructible-probe-verification-pending")
+    with _lock(store, host), store.connection(write=True) as connection:
+        if interrupted_probe(store, connection, item):
+            prepare_reconstructible_probe(store, connection, host, None)
 
 
 def prepare_reconstructible_probe(store, connection, host, plan):
     """Recover removed probes; cancel unremoved attempts only by native identity."""
+    previous = latest_probe_plan(connection, host)
     if receipt(connection, host, "verified") is not None:
+        # Repair a partial recovery: verified committed but retired missing.
+        if plan is None and previous and not os.path.lexists(previous["plan"]["source"]):
+            record_probe_recovery(store, connection, host, previous["plan"])
         return False
-    row = connection.execute(
-        "SELECT payload FROM events WHERE json_extract(payload,'$.type')=? "
-        "AND json_extract(payload,'$.host')=? ORDER BY sequence DESC LIMIT 1",
-        ("reconstructible-host-probe-plan", host),
-    ).fetchone()
-    if row:
-        previous = json.loads(row[0])
+    if previous:
         original = previous["plan"]
         if not os.path.lexists(original["source"]):
             try:
                 verify_reconstructible(original, probe=True)
             except (ValueError, OSError, subprocess.SubprocessError) as error:
                 raise ValueError("reconstructible-probe-verification-pending") from error
-            checkpoint(store, connection, host, "verified",
-                       dict(original, type="reconstructible-host-probe-verified"))
-            checkpoint(store, connection, operation_id(store, original["source"]),
-                       "retired", dict(original, type="reconstructible-worktree-retired",
-                                       branch_preserved=True))
+            record_probe_recovery(store, connection, host, original)
             return False
         # An intact original worktree/admin proves removal never completed.
         # A replacement or unresolved missing source must not unlock batching.
@@ -253,45 +285,47 @@ def current_legacy_item(connection, item):
                   if row["path"] == item["path"]), item)
 
 
-def legacy_plan(store, connection, item, repositories, adapter):
-    """Build a reconstructible plan for a legacy item."""
-    return reconstructible(item, repositories, adapter, open_pull_requests)
+def plan_reconstructible(store, connection, item, inspect_source, open_prs):
+    """Refresh the inventory row, build its plan and require managed authority.
 
-
-def managed_plan(store, connection, item, repositories, adapter):
-    """Build a reconstructible plan for a managed item and require authority."""
-    plan = reconstructible(item, repositories, adapter, open_pull_requests, managed=True)
-    require_managed_authority(store, connection, item, plan)
+    The managed flag is read from the caller's item, never the refreshed row, so
+    every recheck keeps the managed path guard, idle floor and authority evidence.
+    """
+    current = current_legacy_item(connection, item)
+    plan = inspect_source(current, open_prs=open_prs)
+    if item["modern"]:
+        require_managed_authority(store, connection, current, plan)
     return plan
 
 
 def process_reconstructible(store, item, repositories, adapter, options):
     """Journal a non-forced removal; the first successful probe unlocks batching.
 
-    A modern generation reaches here only through `take_over_managed`. Its flag is
-    read once from the caller's item, so every recheck keeps the managed path guard
-    and authority evidence even if the refreshed inventory row differs.
+    A modern generation reaches here only through `take_over_managed`.
     """
-    reconstructible_plan = managed_plan if item["modern"] else legacy_plan
+    # `None` keeps the observation-era class; managed items get the idle floor.
+    inspect_source = partial(reconstructible, repositories=repositories, adapter=adapter,
+                             managed_min_age=options.min_age if item["modern"] else None)
+    reconstructible_plan = partial(plan_reconstructible, store, item=item,
+                                   inspect_source=inspect_source)
     operation = operation_id(store, item["path"])
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
     if not options.apply:
         with store.connection() as connection:
-            reconstructible_plan(store, connection, current_legacy_item(connection, item),
-                                 repositories, adapter)
+            reconstructible_plan(connection, open_prs=open_pull_requests)
         return outcome, 1, 0
-    probe = str(uuid5(UUID(store.installation_id()),
-                      "reconstructible-host-probe:" + socket.gethostname()))
+    probe = host_probe(store)
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
-        item = current_legacy_item(connection, item)
-        plan = reconstructible_plan(store, connection, item, repositories, adapter)
+        # GitHub lookups release the writer (GH#36921); this plan is only journaled.
+        plan = reconstructible_plan(connection, open_prs=partial(released_pull_requests, connection))
         test_removal = prepare_reconstructible_probe(store, connection, probe, plan)
         revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
         checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
-        # Refresh GitHub and /proc immediately before non-forced native removal.
-        current = reconstructible_plan(store, connection, current_legacy_item(connection, item),
-                                       repositories, adapter)
+        # Fetch GitHub without the writer, then refresh every registry, Git and
+        # /proc check under the reacquired writer immediately before removal.
+        current = reconstructible_plan(
+            connection, open_prs=prefetched_pull_requests(connection, plan["repo"]))
         if current != plan:
             raise ValueError("reconstructible-source-changed")
         _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])
@@ -303,26 +337,6 @@ def process_reconstructible(store, item, repositories, adapter, options):
                        dict(plan, type="reconstructible-host-probe-verified"))
         outcome["status"] = "retired"
     return outcome, 1, 1
-
-
-def verify_reconstructible(plan, *, probe):
-    """Verify the removed source can be reconstructed from retained Git objects."""
-    if os.path.lexists(plan["source"]):
-        raise ValueError("reconstructible-source-still-present")
-    common, head, branch = plan["common"], plan["head"], plan["branch"]
-    _git("--git-dir", common, "cat-file", "-e", head + "^{commit}")
-    if branch != "HEAD" and _git("--git-dir", common, "rev-parse", branch) != head:
-        raise ValueError("reconstructible-branch-changed")
-    if probe:
-        # A fresh disposable checkout proves restoration without touching the branch.
-        parent = Path(tempfile.mkdtemp(prefix=".reconstructible-probe-",
-                                      dir=Path(plan["source"]).parent))
-        target = str(parent / "tree")
-        _git("--git-dir", common, "worktree", "add", "--detach", target, head)
-        if _git("-C", target, "rev-parse", "HEAD") != head:
-            raise ValueError("reconstructible-restore-mismatch")
-        _git("--git-dir", common, "worktree", "remove", target)
-        parent.rmdir()
 
 
 def run(store, config, root, **arguments):

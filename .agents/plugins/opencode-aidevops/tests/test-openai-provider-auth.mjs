@@ -607,6 +607,42 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
   runProviderScript("aidevops-openai-rotation-", script);
 });
 
+test("failed OpenAI auth adoption does not rotate requests or environment", () => {
+  runProviderScript("openai-auth-adoption-", String.raw`
+    import assert from "node:assert/strict";
+    import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+    import { join } from "node:path";
+    const dir = join(process.env.HOME, ".aidevops");
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, "oauth-pool.json");
+    const old = { email: "old@example.com", access: "old-token", refresh: "old-refresh", expires: Date.now() + 3600000, status: "active" };
+    const next = { email: "next@example.com", access: "next-token", refresh: "next-refresh", expires: Date.now() + 3600000, status: "idle" };
+    writeFileSync(path, JSON.stringify({ openai: [old, next] }));
+    process.env.OPENAI_API_KEY = "original";
+    delete process.env.AIDEVOPS_OPENAI_API_KEY_SOURCE;
+    const { applyOpenAIPoolAccount, injectOpenAIPoolToken } = await import("./oauth-pool.mjs");
+    for (const set of [async () => { throw new Error("failed"); }, async () => ({ error: { message: "failed" } })]) {
+      assert.equal(await applyOpenAIPoolAccount({ auth: { set } }, next), false);
+      assert.equal(await injectOpenAIPoolToken({ auth: { set } }), false);
+      assert.equal(process.env.OPENAI_API_KEY, "original");
+      assert.equal(process.env.AIDEVOPS_OPENAI_API_KEY_SOURCE, undefined);
+      assert.equal(JSON.parse(readFileSync(path)).openai[1].status, "idle");
+    }
+    const calls = [];
+    globalThis.fetch = async (input, init) => {
+      calls.push(new Headers(init.headers).get("authorization"));
+      return new Response(JSON.stringify({ error: { code: "insufficient_quota" } }), { status: 429 });
+    };
+    const { installOpenAIProviderFetchRotation } = await import("./openai-provider-auth.mjs");
+    installOpenAIProviderFetchRotation({ auth: { set: async () => { throw new Error("failed"); } } });
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST", headers: { authorization: "Bearer old-token" }, body: "{}",
+    });
+    assert.equal(response.status, 429);
+    assert.deepEqual(calls, ["Bearer old-token"]);
+  `);
+});
+
 test("OpenAI startup injection honors current auth availability", async () => {
   const script = String.raw`
     import assert from "node:assert/strict";

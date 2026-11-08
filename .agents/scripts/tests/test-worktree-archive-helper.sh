@@ -298,6 +298,30 @@ test_failed_capture_leaves_no_archive() {
 	return 0
 }
 
+test_tracked_patch_capacity() {
+	local paths canonical worktree root reserve phase rc=0
+	paths=$(setup_repo patch-capacity) || return 1
+	IFS=$'\t' read -r canonical worktree <<<"$paths"
+	root="$TEST_ROOT/patch-capacity-archives"
+	for phase in staged unstaged; do
+		python3 - "$worktree/file.txt" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text() + "tracked change\n" * 10000)
+PY
+		if [[ "$phase" == staged ]]; then git -C "$worktree" add file.txt || return 1; fi
+		reserve=$(python3 -c 'import shutil, sys; print(max(0, shutil.disk_usage(sys.argv[1]).free - 4096))' "$TEST_ROOT") || return 1
+		if AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES="$reserve" AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES=0 \
+			bash "$HELPER" archive "$worktree" --repo owner/repo --issue 32 --reason failed-worker \
+			--base-branch main --output-root "$root" >/dev/null 2>"$TEST_ROOT/patch-capacity.stderr"; then rc=1; fi
+		grep -q 'producer:insufficient-capacity;' "$TEST_ROOT/patch-capacity.stderr" || rc=1
+		[[ ! -e "$root" ]] || rc=1
+		git -C "$worktree" reset -q --hard HEAD || return 1
+	done
+	result "staged and unstaged patches count toward archive capacity" "$rc"
+	return 0
+}
+
 # GH#36607: a merged/pushed worktree's commits are already on the remote. The
 # archive omits the HEAD bundle, records the published head and still restores.
 test_published_archive_has_no_bundle() {
@@ -361,6 +385,7 @@ test_verify_detects_tamper
 test_source_matches_detects_late_writes
 test_prune_modes
 test_failed_capture_leaves_no_archive || result "failed-capture fixture setup" 1
+test_tracked_patch_capacity || result "tracked-patch capacity fixture setup" 1
 test_published_archive_has_no_bundle || result "published-archive fixture setup" 1
 test_invalid_arguments
 

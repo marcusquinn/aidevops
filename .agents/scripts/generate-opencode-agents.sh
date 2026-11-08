@@ -247,6 +247,9 @@ _get_extra_tools() {
 	chrome-devtools)
 		extra_tools=$'  chrome-devtools_*: true'
 		;;
+	opencode-browse)
+		extra_tools=$'  browse_*: true'
+		;;
 	cloudflare-mcp)
 		extra_tools=$'  cloudflare-api_*: true'
 		;;

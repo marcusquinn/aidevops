@@ -1,9 +1,31 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
+import {collectEventBlocks} from "./_team_interface_acp_events.mjs";
+
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const EVENT_ID_PATTERN = "[0-9a-f]{64}";
 const DIRECT_GREETING_REPLY = "Hi! What would you like to work on?";
+
+// Buzz >= 0.5.28 wraps prompt sections in tags (`<context>…</context>`,
+// `<buzz-event type="…">…</buzz-event>`); earlier releases used bracket
+// headers (`[Context]`, `[Buzz event: …]`). A tagged section is accepted only
+// when it spans the whole prompt block, then mapped to the bracket form so the
+// trust checks below apply unchanged to both formats.
+const TAGGED_CONTEXT = /^<context>\r?\n([\s\S]*)\r?\n<\/context>\s*$/u;
+const TAGGED_EVENT = /^<buzz-event type="([^"\r\n<>]*)">\r?\n([\s\S]*)\r?\n<\/buzz-event>\s*$/u;
+
+function normalizeBlock(text) {
+  const context = text.match(TAGGED_CONTEXT);
+  if (context) {
+    return `[Context]\n${context[1]}`;
+  }
+  const event = text.match(TAGGED_EVENT);
+  if (event) {
+    return `[Buzz event: ${event[1]}]\n${event[2]}`;
+  }
+  return text;
+}
 
 function promptBlocks(message) {
   const prompt = message?.params?.prompt;
@@ -12,24 +34,20 @@ function promptBlocks(message) {
   }
   return prompt
     .filter((block) => block && typeof block === "object" && typeof block.text === "string")
-    .map((block) => block.text);
+    .map((block) => normalizeBlock(block.text));
 }
 
 function isDirectGreeting(message) {
-  const prompt = message?.params?.prompt;
-  if (!Array.isArray(prompt)) {
+  const blocks = promptBlocks(message);
+  if (!blocks) {
     return false;
   }
-  const contextBlock = prompt.find(
-    (block) => typeof block?.text === "string" && block.text.startsWith("[Context]"),
-  );
-  const eventBlock = [...prompt].reverse().find(
-    (block) => typeof block?.text === "string" && block.text.startsWith("[Buzz event:"),
-  );
-  if (!contextBlock?.text.match(/^Scope: dm$/im) || !eventBlock) {
+  const contextBlock = blocks.find((block) => block.startsWith("[Context]"));
+  const eventBlock = [...blocks].reverse().find((block) => block.startsWith("[Buzz event:"));
+  if (!contextBlock?.match(/^Scope: dm$/im) || !eventBlock) {
     return false;
   }
-  const eventLines = eventBlock.text.split(/\r?\n/u);
+  const eventLines = eventBlock.split(/\r?\n/u);
   const contentIndex = eventLines.findIndex((line) => line.startsWith("Content: "));
   const tagsIndex = eventLines.findLastIndex((line) => line.startsWith("Tags: "));
   if (contentIndex < 0 || tagsIndex !== contentIndex + 1) {
@@ -65,22 +83,6 @@ function trustedReplyInstructions(eventLines, contentIndex, tagsIndex) {
   return instructions.length <= 1 ? instructions : null;
 }
 
-function collectEventBlocks(blocks, contextIndex, contextLines) {
-  const eventMarker = contextLines.indexOf("[Event]");
-  const eventBlocks = [];
-  let invalidOrder = false;
-  if (eventMarker >= 0) {
-    eventBlocks.push({lines: contextLines.slice(eventMarker + 1), structured: false});
-  }
-  for (const [index, block] of blocks.entries()) {
-    if (block.startsWith("[Buzz event:")) {
-      invalidOrder ||= index <= contextIndex;
-      eventBlocks.push({lines: block.split(/\r?\n/u), structured: true});
-    }
-  }
-  return invalidOrder ? null : {eventBlocks, eventMarker};
-}
-
 function parseContext(message) {
   const blocks = promptBlocks(message);
   const contextIndexes = blocks
@@ -92,7 +94,7 @@ function parseContext(message) {
   const contextIndex = contextIndexes[0];
   const contextLines = blocks[contextIndex].split(/\r?\n/u);
   const collected = collectEventBlocks(blocks, contextIndex, contextLines);
-  if (!collected || collected.eventBlocks.length !== 1) {
+  if (!collected || collected.eventBlocks.length === 0) {
     return null;
   }
   const contextHeader = collected.eventMarker < 0
@@ -102,7 +104,7 @@ function parseContext(message) {
   const channel = channelLines.length === 1
     ? channelLines[0].match(new RegExp(`^Channel: [^\\r\\n]* \\(#(${UUID_PATTERN})\\)$`, "i"))
     : null;
-  return channel ? {channel: channel[1], eventBlock: collected.eventBlocks[0]} : null;
+  return channel ? {channel: channel[1], eventBlocks: collected.eventBlocks} : null;
 }
 
 function eventIndexes(eventLines) {
@@ -130,7 +132,7 @@ function parseEventIdentity(eventLines, contentIndex) {
 }
 
 function parseEvent(eventBlock, expectedChannel) {
-  const {lines: eventLines, structured} = eventBlock;
+  const {lines: eventLines, structured, requireChannel} = eventBlock;
   const indexes = eventIndexes(eventLines);
   const validStructure = !structured ||
     (indexes.content.length === 1 && indexes.tags.length === 1 &&
@@ -141,7 +143,7 @@ function parseEvent(eventBlock, expectedChannel) {
   const contentIndex = indexes.content[0] ?? -1;
   const tagsIndex = indexes.tags.at(-1) ?? -1;
   const identity = parseEventIdentity(eventLines, contentIndex);
-  const channelMatches = identity.channelLineCount <= 1 &&
+  const channelMatches = (!requireChannel || identity.channelLineCount === 1) && identity.channelLineCount <= 1 &&
     (identity.channelLineCount === 0 || identity.channel?.[1] === expectedChannel);
   if (!identity.eventId || !channelMatches) {
     return null;
@@ -157,7 +159,8 @@ function parseEvent(eventBlock, expectedChannel) {
 
 export function trustedReplyDestination(message) {
   const context = parseContext(message);
-  const replyTo = context ? parseEvent(context.eventBlock, context.channel) : null;
+  const replies = context?.eventBlocks.map((event) => parseEvent(event, context.channel));
+  const replyTo = replies?.every(Boolean) ? replies.at(-1) : null;
   if (!context || !replyTo) {
     return null;
   }

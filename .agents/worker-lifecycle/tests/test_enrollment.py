@@ -216,7 +216,7 @@ class EnrollmentContract(unittest.TestCase):
     def test_unsupported_posix_acl_query_does_not_prove_no_acl(self):
         directory = self.marker.parent
         directory.chmod(0o770)
-        with patch("worker_lifecycle.enrollment._user_private_group", return_value=True):
+        with patch("worker_lifecycle.permissions.user_private_group", return_value=True):
             with patch("os.getxattr", side_effect=OSError(errno.ENOTSUP, "unsupported")):
                 with self.assertRaisesRegex(ValueError, "not-shared-writable"):
                     _git_directory(self.tree)
@@ -230,7 +230,7 @@ class EnrollmentContract(unittest.TestCase):
     def test_private_group_write_requires_absent_access_acl(self):
         directory = self.marker.parent
         directory.chmod(0o770)
-        with patch("worker_lifecycle.enrollment._user_private_group", return_value=True):
+        with patch("worker_lifecycle.permissions.user_private_group", return_value=True):
             self.assertEqual(_git_directory(self.tree), directory)
             with patch("os.getxattr", side_effect=OSError(errno.EACCES, "denied")):
                 with self.assertRaisesRegex(ValueError, "not-shared-writable"):
@@ -754,6 +754,33 @@ class EnrollmentContract(unittest.TestCase):
         self.assertFalse(report["cleanup_authorized"])
         self.assertEqual(report["admission"], "open")
         self.assertEqual(self.enrollment.resolve(self.tree), generation)
+        # The owner is not an ancestor of itself, so in-process preparation
+        # stays anonymous; a cleanup command it launches names it (GH#37022).
+        self.assertNotIn("detail", report)
+        entry = Path(__file__).resolve().parents[1] / "worker-registry.py"
+        command = [sys.executable, "-E", "-s", "-B", str(entry), "--state-dir",
+                   str(self.store.directory), "prepare-cleanup", "--path", str(self.tree)]
+        child = subprocess.run(  # nosec B603 # fixed CLI, isolated store and worktree
+            command, capture_output=True, text=True, timeout=30, check=True,
+        )
+        caller = json.loads(child.stdout)
+        self.assertEqual((caller["status"], caller.get("detail")), ("waiting-for-runs", "waiting-for-caller"))
+        self.assertEqual(caller["admission"], "open")
+        # A live owner that is not the caller's ancestor still blocks anonymously.
+        with subprocess.Popen(  # nosec B603 # owned sleeper, terminated below
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+        ) as sibling:
+            try:
+                other = adapter_for(self.store.installation_id()).capture(sibling.pid)
+                AdmissionRegistry(self.store).admit(str(uuid4()), other, generation)
+                mixed = json.loads(subprocess.run(  # nosec B603 # fixed CLI, isolated store
+                    command, capture_output=True, text=True, timeout=30, check=True,
+                ).stdout)
+            finally:
+                sibling.kill()
+        self.assertEqual(mixed["status"], "waiting-for-runs")
+        self.assertEqual(mixed["unfinished_runs"], 2)
+        self.assertNotIn("detail", mixed)
 
     def test_cleanup_does_not_promote_observation_bindings_to_admitted_runs(self):
         generation = self.enrollment.resolve(self.tree, create=True)

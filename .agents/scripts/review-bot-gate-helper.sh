@@ -76,7 +76,9 @@ set -euo pipefail
 # t2393: source shared-constants.sh for the gh_pr_comment wrapper (sig footer).
 # Non-fatal: if the file is missing (e.g. deployed layout drift), fall through
 # to raw `gh pr comment`.
-_RBG_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# GH#37011: a caller sourcing a relocated copy may preset _RBG_SCRIPT_DIR so the
+# sibling review-bot-gate-*.sh modules still resolve.
+_RBG_SCRIPT_DIR="${_RBG_SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}"
 # shellcheck source=/dev/null
 [[ -r "${_RBG_SCRIPT_DIR}/shared-constants.sh" ]] && source "${_RBG_SCRIPT_DIR}/shared-constants.sh" || true
 
@@ -97,6 +99,7 @@ REVIEW_GATE_STATUS_PASS="$(printf 'P%s' 'ASS')"
 RBG_PASS_ADVISORY="PASS_ADVISORY"
 RBG_PASS_RATE_LIMITED="PASS_RATE_LIMITED"
 RBG_FALSE="false"
+RBG_TRUE="true"
 RBG_COMPLETION_STRICT="strict"
 RBG_CODERABBIT_LOGIN="coderabbitai[bot]"
 RBG_CODERABBIT_STATUS_CONTEXT="coderabbit"
@@ -535,46 +538,20 @@ get_pr_age_seconds() {
 	return 0
 }
 
-_rbg_evidence_endpoint() {
-	local pr_number="$1"
-	local repo="$2"
-	local source="$3"
-
-	case "$source" in
-	reviews) printf 'repos/%s/pulls/%s/reviews\n' "$repo" "$pr_number" ;;
-	issue-comments) printf 'repos/%s/issues/%s/comments\n' "$repo" "$pr_number" ;;
-	review-comments) printf 'repos/%s/pulls/%s/comments\n' "$repo" "$pr_number" ;;
-	*) return 1 ;;
-	esac
-	return 0
-}
-
-_rbg_reset_evidence_snapshot() {
-	_RBG_EVIDENCE_SNAPSHOT_KEY=""
-	_RBG_EVIDENCE_REVIEWS_JSON="[]"
-	_RBG_EVIDENCE_ISSUE_COMMENTS_JSON="[]"
-	_RBG_EVIDENCE_REVIEW_COMMENTS_JSON="[]"
-	_RBG_EVIDENCE_SNAPSHOT_READY=0
-	return 0
-}
-
-_rbg_fetch_evidence_collection() {
-	local pr_number="$1"
-	local repo="$2"
-	local source="$3"
-	local endpoint=""
-	local paginated_endpoint=""
-	local records_json=""
-
-	endpoint=$(_rbg_evidence_endpoint "$pr_number" "$repo" "$source") || return 1
-	paginated_endpoint="${endpoint}?per_page=100"
-	if ! records_json=$(gh api "$paginated_endpoint" --paginate | jq -sce \
-		'[.[] | if type == "array" then .[] else error("review evidence page must be an array") end]'); then
-		return 1
-	fi
-	printf '%s\n' "$records_json"
-	return 0
-}
+# GH#37011: function groups live in sibling modules (reference/large-file-split.md).
+# Functions resolve at call time, so sourcing here is safe after the constants above.
+# shellcheck source=./review-bot-gate-evidence.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _RBG_SCRIPT_DIR
+source "${_RBG_SCRIPT_DIR}/review-bot-gate-evidence.sh"
+# shellcheck source=./review-bot-gate-bots.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _RBG_SCRIPT_DIR
+source "${_RBG_SCRIPT_DIR}/review-bot-gate-bots.sh"
+# shellcheck source=./review-bot-gate-trust.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _RBG_SCRIPT_DIR
+source "${_RBG_SCRIPT_DIR}/review-bot-gate-trust.sh"
+# shellcheck source=./review-bot-gate-status.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _RBG_SCRIPT_DIR
+source "${_RBG_SCRIPT_DIR}/review-bot-gate-status.sh"
 
 _rbg_pr_reconciliation_snapshot() {
 	local pr_number="$1"
@@ -621,231 +598,6 @@ _rbg_changes_requested_reviews() {
 	return 0
 }
 
-_rbg_coderabbit_status_is_terminal_success() {
-	local repo="$1"
-	local head_sha="$2"
-	local status_json=""
-
-	status_json=$(gh api "repos/${repo}/commits/${head_sha}/status?per_page=100" 2>/dev/null) || return 1
-	#aidevops:trust-boundary — accept only the exact CodeRabbit context on this immutable head.
-	printf '%s\n' "$status_json" | jq -e \
-		--arg context "$RBG_CODERABBIT_STATUS_CONTEXT" \
-		--arg login "$RBG_CODERABBIT_LOGIN" '
-		[.statuses[]? | select(((.context // "") | ascii_downcase) == $context)] as $matches
-		| ($matches | length) > 0
-		and all($matches[];
-			((.state // "") | ascii_downcase) == "success"
-			and (.creator == null or (
-				(.creator.login // "") == $login
-				and (.creator.type // "") == "Bot"
-			))
-		)
-	' >/dev/null 2>&1 || return 1
-	return 0
-}
-
-_rbg_exact_head_clean_coderabbit_evidence() {
-	local pr_number="$1"
-	local repo="$2"
-	local head_sha="$3"
-	local reviews_json="$4"
-	local comments_json=""
-	local latest_stale_at=""
-	local completion_marker=""
-	local evidence_id=""
-
-	latest_stale_at=$(printf '%s\n' "$reviews_json" | jq -er '[.[].submitted_at | select(. != "")] | max // empty') || return 1
-	comments_json=$(_rbg_fetch_evidence_collection "$pr_number" "$repo" issue-comments) || return 1
-	completion_marker="Re-review of exact head \`${head_sha}\` complete — **no blocking findings**."
-	#aidevops:trust-boundary — prose is evidence only from the exact GitHub bot identity with both deterministic markers.
-	evidence_id=$(printf '%s\n' "$comments_json" | jq -er \
-		--arg login "$RBG_CODERABBIT_LOGIN" \
-		--arg addressed "$RBG_CODERABBIT_ADDRESSED_MARKER" \
-		--arg completion "$completion_marker" \
-		--arg after "$latest_stale_at" '
-		[.[] | select(
-			(.user.login // "") == $login
-			and (.user.type // "") == "Bot"
-			and (.created_at // "") > $after
-			and ((.body // "") | contains($addressed))
-			and ((.body // "") | contains($completion))
-		) | .id] | first // empty
-	') || return 1
-	[[ -n "$evidence_id" ]] || return 1
-	printf '%s\n' "$evidence_id"
-	return 0
-}
-
-_rbg_dismiss_coderabbit_reviews() {
-	local mode="$1"
-	local pr_number="$2"
-	local repo="$3"
-	local head_sha="$4"
-	local reviews_json="$5"
-	local records=""
-	local review_id=""
-	local stale_sha=""
-	local snapshot=""
-	local snapshot_head=""
-	local snapshot_state=""
-	local message=""
-	local pull_endpoint=""
-
-	printf -v pull_endpoint 'repos/%s/pulls/%s' "$repo" "$pr_number"
-	records=$(printf '%s\n' "$reviews_json" | jq -er '.[] | [(.id | tostring),.commit_id] | @tsv') || return 1
-	while IFS=$'\t' read -r review_id stale_sha; do
-		[[ "$review_id" =~ ^[0-9]+$ ]] || return 1
-		snapshot=$(_rbg_pr_reconciliation_snapshot "$pr_number" "$repo") || return 1
-		snapshot_head=$(printf '%s\n' "$snapshot" | jq -r '.head')
-		snapshot_state=$(printf '%s\n' "$snapshot" | jq -r '.state | ascii_downcase')
-		[[ "$snapshot_state" == "open" && "$snapshot_head" == "$head_sha" ]] || {
-			printf 'ERROR: PR #%s head drifted before CodeRabbit review %s dismissal\n' "$pr_number" "$review_id" >&2
-			return 1
-		}
-		if [[ "$mode" == "$RBG_RECONCILE_MODE_NITS" ]]; then
-			message="Auto-dismissed: coderabbit-nits-ok label applied by maintainer (PR #${pr_number})"
-		elif [[ "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]]; then
-			#aidevops:trust-boundary — revalidate authorization on the final pre-write snapshot.
-			_rbg_advisory_author_trusted "$snapshot" || return 1
-			message="Auto-dismissed advisory CodeRabbit review on trusted-author PR #${pr_number}; findings remain available to the post-merge scanner."
-		else
-			message="Auto-dismissed superseded CodeRabbit review ${review_id}: stale head ${stale_sha}; clean exact-head re-review confirmed at ${head_sha}."
-		fi
-		gh api -X PUT "${pull_endpoint}/reviews/${review_id}/dismissals" \
-			-f message="$message" >/dev/null 2>&1 || return 1
-		printf 'dismissed CodeRabbit review %s: stale head %s; current head %s\n' "$review_id" "${stale_sha:-unknown}" "$head_sha" >&2
-	done <<<"$records"
-	return 0
-}
-
-_rbg_advisory_author_trusted() {
-	local snapshot="$1"
-	local association=""
-	association=$(printf '%s\n' "$snapshot" | jq -er '.association | ascii_upcase') || return 1
-	case "$association" in OWNER | MEMBER | COLLABORATOR) ;; *) return 1 ;; esac
-	printf '%s\n' "$snapshot" | jq -e '.labels_valid == true and all(.labels[]; . != "external-contributor")' >/dev/null 2>&1 || return 1
-	return 0
-}
-
-do_reconcile_coderabbit_reviews() {
-	local mode="$1"
-	local pr_number="$2"
-	local repo="$3"
-	local expected_head="${4:-}"
-	local snapshot=""
-	local head_sha=""
-	local state=""
-	local association=""
-	local reviews_json=""
-	local fresh_reviews_json=""
-	local review_count=0
-	local post_json=""
-
-	[[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" || "$mode" == "$RBG_RECONCILE_MODE_NITS" \
-		|| "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]] || return 2
-	snapshot=$(_rbg_pr_reconciliation_snapshot "$pr_number" "$repo") || return 1
-	head_sha=$(printf '%s\n' "$snapshot" | jq -r '.head')
-	state=$(printf '%s\n' "$snapshot" | jq -r '.state | ascii_downcase')
-	[[ "$state" == "open" && "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
-	[[ -z "$expected_head" || "$expected_head" == "$head_sha" ]] || return 1
-	if [[ "$mode" == "$RBG_RECONCILE_MODE_NITS" ]]; then
-		#aidevops:trust-boundary — the cosmetic override is inert without its explicit maintainer label.
-		printf '%s\n' "$snapshot" | jq -e --arg label "$RBG_CODERABBIT_NITS_LABEL" \
-			'any(.labels[]?; . == $label)' >/dev/null 2>&1 || return 1
-	fi
-	if [[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" ]]; then
-		association=$(printf '%s\n' "$snapshot" | jq -r '.association | ascii_upcase')
-		case "$association" in OWNER | MEMBER | COLLABORATOR) ;; *) return 1 ;; esac
-	fi
-	if [[ "$mode" == "$RBG_RECONCILE_MODE_ADVISORY" ]]; then
-		#aidevops:trust-boundary — automatic reconciliation is restricted to trusted PR authors.
-		_rbg_advisory_author_trusted "$snapshot" || return 1
-	fi
-
-	reviews_json=$(_rbg_changes_requested_reviews "$pr_number" "$repo") || return 1
-	review_count=$(printf '%s\n' "$reviews_json" | jq 'length') || return 1
-	if [[ "$review_count" -eq 0 ]]; then
-		[[ "$mode" == "$RBG_RECONCILE_MODE_NITS" ]] && return 0
-		return 1
-	fi
-	#aidevops:trust-boundary — never dismiss a human, lookalike, or malformed reviewer identity.
-	printf '%s\n' "$reviews_json" | jq -e --arg login "$RBG_CODERABBIT_LOGIN" '
-		all(.[]; (.id | type) == "number" and .login == $login and .user_type == "Bot")
-	' >/dev/null 2>&1 || return 1
-
-	if [[ "$mode" == "$RBG_RECONCILE_MODE_SUPERSEDED" ]]; then
-		printf '%s\n' "$reviews_json" | jq -e --arg head "$head_sha" '
-			all(.[]; (.commit_id | test("^[0-9a-fA-F]{40}$")) and .commit_id != $head and .submitted_at != "")
-		' >/dev/null 2>&1 || return 1
-		_rbg_exact_head_clean_coderabbit_evidence "$pr_number" "$repo" "$head_sha" "$reviews_json" >/dev/null || return 1
-		_rbg_coderabbit_status_is_terminal_success "$repo" "$head_sha" || return 1
-	fi
-
-	fresh_reviews_json=$(_rbg_changes_requested_reviews "$pr_number" "$repo") || return 1
-	[[ "$(printf '%s\n' "$reviews_json" | jq -cS .)" == "$(printf '%s\n' "$fresh_reviews_json" | jq -cS .)" ]] || return 1
-	_rbg_dismiss_coderabbit_reviews "$mode" "$pr_number" "$repo" "$head_sha" "$reviews_json" || return 1
-	post_json=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,reviewDecision 2>/dev/null) || return 1
-	printf '%s\n' "$post_json" | jq -e --arg head "$head_sha" '
-		(.headRefOid // "") == $head and has("reviewDecision")
-		and (.reviewDecision == null or .reviewDecision == "" or .reviewDecision == "APPROVED" or .reviewDecision == "REVIEW_REQUIRED")
-	' >/dev/null 2>&1 || return 1
-	printf 'RECONCILED_CODERABBIT_REVIEW head=%s reviews=%s mode=%s\n' "$head_sha" "$review_count" "$mode"
-	return 0
-}
-
-_rbg_prepare_evidence_snapshot() {
-	local pr_number="$1"
-	local repo="$2"
-	local reviews_json=""
-	local issue_comments_json=""
-	local review_comments_json=""
-
-	reviews_json=$(_rbg_fetch_evidence_collection "$pr_number" "$repo" reviews) || return $?
-	issue_comments_json=$(_rbg_fetch_evidence_collection "$pr_number" "$repo" issue-comments) || return $?
-	review_comments_json=$(_rbg_fetch_evidence_collection "$pr_number" "$repo" review-comments) || return $?
-
-	_RBG_EVIDENCE_REVIEWS_JSON="$reviews_json"
-	_RBG_EVIDENCE_ISSUE_COMMENTS_JSON="$issue_comments_json"
-	_RBG_EVIDENCE_REVIEW_COMMENTS_JSON="$review_comments_json"
-	_RBG_EVIDENCE_SNAPSHOT_KEY="${repo}#${pr_number}"
-	_RBG_EVIDENCE_SNAPSHOT_READY=1
-	return 0
-}
-
-_rbg_evidence_snapshot_matches() {
-	local pr_number="$1"
-	local repo="$2"
-	if [[ "$_RBG_EVIDENCE_SNAPSHOT_READY" == "1" && "$_RBG_EVIDENCE_SNAPSHOT_KEY" == "${repo}#${pr_number}" ]]; then
-		return 0
-	fi
-	return 1
-}
-
-_rbg_query_evidence_collection() {
-	local pr_number="$1"
-	local repo="$2"
-	local source="$3"
-	local jq_filter="$4"
-	local records_json=""
-	local endpoint=""
-
-	if [[ "${REVIEW_GATE_EVIDENCE_SNAPSHOT_DISABLE:-0}" != "1" ]] &&
-		_rbg_evidence_snapshot_matches "$pr_number" "$repo"; then
-		case "$source" in
-		reviews) records_json="$_RBG_EVIDENCE_REVIEWS_JSON" ;;
-		issue-comments) records_json="$_RBG_EVIDENCE_ISSUE_COMMENTS_JSON" ;;
-		review-comments) records_json="$_RBG_EVIDENCE_REVIEW_COMMENTS_JSON" ;;
-		*) return 1 ;;
-		esac
-		printf '%s\n' "$records_json" | jq -r "$jq_filter"
-		return $?
-	fi
-
-	endpoint=$(_rbg_evidence_endpoint "$pr_number" "$repo" "$source") || return 1
-	gh api "$endpoint" --paginate --jq "$jq_filter"
-	return $?
-}
-
 get_all_bot_commenters() {
 	local pr_number="$1"
 	local repo="$2"
@@ -880,7 +632,7 @@ is_non_review_comment() {
 	local body="$1"
 
 	for pattern in "${NON_REVIEW_PATTERNS[@]}"; do
-		if echo "$body" | grep -qi "$pattern"; then
+		if grep -qi "$pattern" <<<"$body"; then
 			return 0
 		fi
 	done
@@ -937,353 +689,6 @@ do_event_check() {
 	esac
 
 	printf 'NOT_APPLICABLE\n'
-	return 1
-}
-
-# t2799: Check if a comment body matches a rate-limit-specific pattern only
-# (not the broader non-review set). Use when the caller cares specifically
-# about capacity-constrained bots that may retry later.
-is_rate_limit_only_comment() {
-	local body="$1"
-
-	for pattern in "${RATE_LIMIT_PATTERNS[@]}"; do
-		if echo "$body" | grep -qi "$pattern"; then
-			return 0
-		fi
-	done
-	return 1
-}
-
-bot_body_base64_jq_filter() {
-	local bot_login="$1"
-
-	printf '%s%s%s\n' \
-		'.[] | select(.user.login | ascii_downcase | test("' \
-		"$bot_login" \
-		'")) | (.body // "" | @base64)'
-	return 0
-}
-
-bot_has_rate_limit_notice() {
-	# Return success only when the bot posted a true rate-limit/quota notice.
-	# Broader non-review states ("Review failed", "Review skipped", closed
-	# during review) must keep blocking instead of entering PASS_RATE_LIMITED.
-	local pr_number="$1"
-	local repo="$2"
-	local bot_login="$3"
-
-	local jq_filter
-	jq_filter=$(bot_body_base64_jq_filter "$bot_login")
-
-	local sources=(reviews issue-comments review-comments)
-	local source records encoded body
-	for source in "${sources[@]}"; do
-		records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter" || echo "")
-		[[ -z "$records" ]] && continue
-		while IFS= read -r encoded; do
-			[[ -z "$encoded" ]] && continue
-			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
-			[[ -z "$body" ]] && continue
-			if is_rate_limit_only_comment "$body"; then
-				return 0
-			fi
-		done <<<"$records"
-	done
-	return 1
-}
-
-bot_has_non_rate_limit_non_review_notice() {
-	# Return success when the bot posted a known non-review notice that is not a
-	# true rate-limit/quota notice. This takes precedence over older rate-limit
-	# notices from the same bot so failed/skipped states keep blocking.
-	local pr_number="$1"
-	local repo="$2"
-	local bot_login="$3"
-
-	local jq_filter
-	jq_filter=$(bot_body_base64_jq_filter "$bot_login")
-
-	local sources=(reviews issue-comments review-comments)
-	local source records encoded body
-	for source in "${sources[@]}"; do
-		records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter" || echo "")
-		[[ -z "$records" ]] && continue
-		while IFS= read -r encoded; do
-			[[ -z "$encoded" ]] && continue
-			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
-			[[ -z "$body" ]] && continue
-			if is_non_review_comment "$body" && ! is_rate_limit_only_comment "$body"; then
-				return 0
-			fi
-		done <<<"$records"
-	done
-	return 1
-}
-
-bot_get_notice_category() {
-	# Classify a bot's non-review notice state in one pass over the three GitHub
-	# comment sources. Non-rate-limit notices take precedence over rate-limit
-	# notices from the same bot, even when an older rate-limit notice appears
-	# first in another stream.
-	local pr_number="$1"
-	local repo="$2"
-	local bot_login="$3"
-
-	local jq_filter
-	jq_filter=$(bot_body_base64_jq_filter "$bot_login")
-
-	local category="none"
-	local sources=(reviews issue-comments review-comments)
-	local source records rc encoded body
-	for source in "${sources[@]}"; do
-		if records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter"); then
-			:
-		else
-			rc=$?
-			return "$rc"
-		fi
-		[[ -z "$records" ]] && continue
-		while IFS= read -r encoded; do
-			[[ -z "$encoded" ]] && continue
-			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
-			[[ -z "$body" ]] && continue
-			if is_non_review_comment "$body" && ! is_rate_limit_only_comment "$body"; then
-				echo "non-rate-limit"
-				return 0
-			fi
-			if is_rate_limit_only_comment "$body"; then
-				category="rate-limit"
-			fi
-		done <<<"$records"
-	done
-
-	echo "$category"
-	return 0
-}
-
-bot_has_real_review() {
-	# t2139 (GH#19251): Check if a bot has posted at least one comment that
-	# is BOTH (a) not a known non-review notice AND (b) "settled" — meaning
-	# the comment has been edited (updated_at > created_at + min_lag) or is
-	# old enough that the bot would have edited by now (now - created_at >=
-	# min_lag). The age check is critical to defeat CodeRabbit's two-phase
-	# posting pattern, where Phase 1 is a placeholder posted at ~14s and
-	# Phase 2 is the edited final review at ~90-120s.
-	#
-	# Checks all three comment sources (reviews, issue comments, review
-	# comments). Returns 0 if a real, settled review exists, 1 otherwise.
-	local pr_number="$1"
-	local repo="$2"
-	local bot_login="$3"
-	local success_status_contexts="${4-}"
-	local success_status_contexts_prepared="${5:-false}"
-	local expected_head_sha="${REVIEW_GATE_EXPECTED_HEAD_SHA:-}"
-	local has_success_status_contexts="$RBG_FALSE"
-	[[ $# -ge 4 ]] && has_success_status_contexts="true"
-
-	local min_lag
-	# repo here is "owner/name" — same shape as repos.json slug.
-	min_lag=$(_get_min_edit_lag "$repo" "$bot_login")
-
-	# Build a jq filter that selects comments by this bot (case-insensitive)
-	# and emits a TSV record of created_at \t updated_at \t base64(body).
-	# Reviews lack updated_at on some endpoints; default to created_at via //.
-	local jq_filter
-	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\"))"
-	if [[ -n "$expected_head_sha" ]]; then
-		# Typed merge evidence must identify the reviewed commit. Conversation
-		# comments have no commit_id and therefore cannot prove current-head review.
-		jq_filter="${jq_filter} | select((.commit_id // .original_commit_id // \"\") == \"${expected_head_sha}\")"
-	fi
-	jq_filter="${jq_filter} | [(.created_at // .submitted_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
-
-	local sources=(reviews issue-comments review-comments)
-	local source records created_at updated_at encoded body
-	for source in "${sources[@]}"; do
-		records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter" || echo "")
-		[[ -z "$records" ]] && continue
-		while IFS=$'\t' read -r created_at updated_at encoded; do
-			[[ -z "$encoded" ]] && continue
-			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
-			[[ -z "$body" ]] && continue
-			# Phase 1: must not be a known non-review notice.
-			if is_non_review_comment "$body"; then
-				continue
-			fi
-			# Phase 2: must be settled. If not, this is likely a placeholder
-			# (e.g., CodeRabbit Phase 1) — wait for it to settle before
-			# classifying as a real review. Pass bot_login so two-phase bots
-			# require edit-observed settlement (GH#20550).
-			if ! _comment_is_settled "$created_at" "$updated_at" "$min_lag" "$bot_login"; then
-				continue
-			fi
-			# GH#23066: Strict completion is an opt-in local/repo preference.
-			# #aidevops:trust-boundary — a two-phase bot's edited comment is not
-			# trusted as terminal completion unless the bot's own status/check has
-			# reached success. Default fast mode intentionally preserves throughput.
-			if _requires_success_status_completion "$repo" "$bot_login"; then
-				if [[ "$has_success_status_contexts" == "true" ]]; then
-					bot_has_success_status "$pr_number" "$repo" "$bot_login" "$success_status_contexts" "$success_status_contexts_prepared" || {
-						echo "Strict completion: ${bot_login} settled comment lacks SUCCESS status/check" >&2
-						continue
-					}
-				else
-					bot_has_success_status "$pr_number" "$repo" "$bot_login" || {
-						echo "Strict completion: ${bot_login} settled comment lacks SUCCESS status/check" >&2
-						continue
-					}
-				fi
-			fi
-			return 0
-		done <<<"$records"
-	done
-
-	# No comment from this bot passed both filters.
-	return 1
-}
-
-_prepare_success_status_contexts() {
-	# Normalize once for callers that match multiple bots against the same
-	# status payload. Input shape: first line head SHA, remaining lines contexts.
-	local status_contexts="$1"
-
-	if [[ -z "$status_contexts" ]]; then
-		return 1
-	fi
-
-	local head_sha statuses statuses_lower
-	head_sha=$(printf '%s\n' "$status_contexts" | sed -n '1p')
-	statuses=$(printf '%s\n' "$status_contexts" | sed '1d')
-	if [[ -z "$head_sha" || -z "$statuses" ]]; then
-		return 1
-	fi
-
-	statuses_lower=$(printf '%s\n' "$statuses" | tr '[:upper:]' '[:lower:]')
-	printf '%s\n%s\n' "$head_sha" "$statuses_lower"
-	return 0
-}
-
-_get_success_status_contexts() {
-	# GH#3005: When bots are rate-limited in comments but still post a formal
-	# GitHub status check, treat the PR as reviewed.
-	# GH#3007: The status context name may differ from the bot login.
-	local pr_number="$1"
-	local repo="$2"
-
-	# status-json already resolves and later revalidates the expected head. Reuse
-	# that typed value instead of spending another GraphQL request on the same SHA.
-	local head_sha="${REVIEW_GATE_EXPECTED_HEAD_SHA:-}"
-	if [[ -z "$head_sha" ]]; then
-		head_sha=$(gh pr view "$pr_number" --repo "$repo" \
-			--json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
-	fi
-	if [[ -z "$head_sha" ]]; then
-		# GH#4361: GraphQL rate-limited — fall back to REST API.
-		head_sha=$(gh api "repos/${repo}/pulls/${pr_number}" \
-			--jq '.head.sha' 2>/dev/null || echo "")
-	fi
-	if [[ -z "$head_sha" ]]; then
-		return 1
-	fi
-
-	# Get the combined status (singular endpoint = latest per-context state)
-	# and check-runs unconditionally, then merge both streams.
-	# GH#3007: /status (singular) returns the latest state per context,
-	# avoiding stale-success matches from /statuses (plural, full history).
-	# Pagination ensures we don't miss contexts when >30 statuses exist.
-	local statuses check_runs
-	statuses=$(gh api "repos/${repo}/commits/${head_sha}/status?per_page=100" \
-		--paginate --jq '.statuses[] | select(.state == "success") | .context' ||
-		echo "")
-	check_runs=$(gh api "repos/${repo}/commits/${head_sha}/check-runs?per_page=100" \
-		--paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' ||
-		echo "")
-	statuses=$(printf '%s\n%s\n' "$statuses" "$check_runs" | grep -v '^$' || true)
-
-	if [[ -z "$statuses" ]]; then
-		return 1
-	fi
-
-	printf '%s\n' "${head_sha}" "$statuses"
-	return 0
-}
-
-_status_contexts_match_bot() {
-	# GH#3007: Match bidirectionally — the status context may be a prefix
-	# of the bot login (e.g., "coderabbit" vs "coderabbitai") or vice versa.
-	# Input shape: first line is head SHA, remaining lines are success contexts.
-	local bot_login="$1"
-	local status_contexts="$2"
-	local contexts_are_prepared="${3:-false}"
-
-	if [[ -z "$status_contexts" ]]; then
-		return 1
-	fi
-	if [[ "$contexts_are_prepared" != "true" ]]; then
-		status_contexts=$(_prepare_success_status_contexts "$status_contexts") || return 1
-	fi
-
-	local head_sha statuses
-	head_sha=$(printf '%s\n' "$status_contexts" | sed -n '1p')
-	statuses=$(printf '%s\n' "$status_contexts" | sed '1d')
-	if [[ -z "$head_sha" || -z "$statuses" ]]; then
-		return 1
-	fi
-
-	local bot_base ctx
-	bot_base=$(printf '%s\n' "$bot_login" | tr '[:upper:]' '[:lower:]')
-	while IFS= read -r ctx; do
-		[[ -z "$ctx" ]] && continue
-		# Bidirectional prefix match: either string starts with the other
-		if [[ "$bot_base" == "$ctx"* ]] || [[ "$ctx" == "$bot_base"* ]]; then
-			echo "Bot '${bot_login}' has SUCCESS status check on commit ${head_sha:0:8} (context: '${ctx}')" >&2
-			return 0
-		fi
-	done <<<"$statuses"
-	return 1
-}
-
-bot_has_success_status() {
-	local pr_number="$1"
-	local repo="$2"
-	local bot_login="$3"
-	local status_contexts="${4-}"
-	local contexts_are_prepared="${5:-false}"
-
-	if [[ $# -lt 4 ]]; then
-		status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
-		contexts_are_prepared="$RBG_FALSE"
-	fi
-	[[ -z "$status_contexts" ]] && return 1
-	_status_contexts_match_bot "$bot_login" "$status_contexts" "$contexts_are_prepared" && return 0
-	return 1
-}
-
-any_bot_has_success_status() {
-	local pr_number="$1"
-	local repo="$2"
-	local status_contexts="${3-}"
-	local contexts_are_prepared="${4:-false}"
-
-	if [[ $# -lt 3 ]]; then
-		status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
-		contexts_are_prepared="$RBG_FALSE"
-	fi
-	[[ -z "$status_contexts" ]] && return 1
-
-	local prepared_contexts
-	if [[ "$contexts_are_prepared" == "true" ]]; then
-		prepared_contexts="$status_contexts"
-	else
-		prepared_contexts=$(_prepare_success_status_contexts "$status_contexts") || return 1
-	fi
-
-	local bot
-	for bot in "${KNOWN_BOTS[@]}"; do
-		if _status_contexts_match_bot "$bot" "$prepared_contexts" true; then
-			return 0
-		fi
-	done
 	return 1
 }
 
@@ -1388,80 +793,6 @@ _rbg_is_pulse_todo_handoff_pr_metadata() {
 # set may also contain newly added todo/tasks/tNNN-brief.md captures written by
 # stale-publication repair (GH#34149); edits, deletions, renames and any other
 # path stay untrusted. Returns 0 trusted, 1 untrusted, 2 API failure.
-_rbg_account_todo_only_live_evidence() {
-	local pr_number="$1"
-	local repo="$2"
-	local pr_metadata_json="$3"
-	local allow_added_briefs="${4:-0}"
-	local author_login=""
-	local permission=""
-	local changed_files=""
-
-	author_login=$(jq -r '.user.login // empty' <<<"$pr_metadata_json" 2>/dev/null) || return 1
-	[[ "$author_login" =~ ^[A-Za-z0-9-]+$ ]] || return 1
-
-	permission=$(gh api "repos/${repo}/collaborators/${author_login}/permission" \
-		--jq '.permission // empty') || return 2
-	case "$permission" in
-	admin | maintain | write) ;;
-	*) return 1 ;;
-	esac
-
-	if [[ "$allow_added_briefs" == "1" ]]; then
-		#aidevops:trust-boundary -- GH#34149: TODO.md must change, and every
-		# other file must be a newly added brief capture under todo/tasks/.
-		changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files?per_page=100" \
-			--jq '.[] | [.filename, .status] | @tsv') || return 2
-		_rbg_todo_with_added_briefs_only "$changed_files" || return 1
-		return 0
-	fi
-	changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files?per_page=100" \
-		--jq '.[].filename') || return 2
-	[[ "$changed_files" == "TODO.md" ]] || return 1
-	return 0
-}
-
-# Input: "<filename>\t<status>" lines. Exactly one TODO.md modification plus
-# zero or more added todo/tasks/tNNN-brief.md files; anything else fails.
-_rbg_todo_with_added_briefs_only() {
-	local changed_files="$1"
-	local filename="" status="" todo_seen=0
-	[[ -n "$changed_files" ]] || return 1
-	while IFS=$'\t' read -r filename status; do
-		if [[ "$filename" == "TODO.md" && "$status" == "modified" && "$todo_seen" -eq 0 ]]; then
-			todo_seen=1
-			continue
-		fi
-		[[ "$status" == "added" && "$filename" =~ ^todo/tasks/t[0-9]+(\.[0-9]+)*-brief\.md$ ]] || return 1
-	done <<<"$changed_files"
-	[[ "$todo_seen" -eq 1 ]] || return 1
-	return 0
-}
-
-_rbg_is_trusted_account_issue_sync_pr() {
-	local pr_number="$1"
-	local repo="$2"
-	local pr_metadata_json="$3"
-	local expected_head_sha="$4"
-	local evidence_rc=0
-
-	_rbg_is_account_issue_sync_pr_metadata "$repo" "$pr_metadata_json" "$expected_head_sha" || return 1
-	_rbg_account_todo_only_live_evidence "$pr_number" "$repo" "$pr_metadata_json" || evidence_rc=$?
-	return "$evidence_rc"
-}
-
-_rbg_is_trusted_pulse_todo_handoff_pr() {
-	local pr_number="$1"
-	local repo="$2"
-	local pr_metadata_json="$3"
-	local expected_head_sha="$4"
-	local evidence_rc=0
-
-	_rbg_is_pulse_todo_handoff_pr_metadata "$repo" "$pr_metadata_json" "$expected_head_sha" || return 1
-	_rbg_account_todo_only_live_evidence "$pr_number" "$repo" "$pr_metadata_json" 1 || evidence_rc=$?
-	return "$evidence_rc"
-}
-
 do_is_trusted_issue_sync_pr() {
 	local pr_number="$1"
 	local repo="$2"
@@ -1556,7 +887,7 @@ check_for_skip_label() {
 			--json labels -q '.labels[].name' || echo "")
 	fi
 
-	if echo "$labels" | grep -q "$SKIP_LABEL"; then
+	if grep -q "$SKIP_LABEL" <<<"$labels"; then
 		return 0
 	fi
 	return 1
@@ -1568,7 +899,7 @@ match_known_bots() {
 	local missing_bots=""
 
 	for bot in "${KNOWN_BOTS[@]}"; do
-		if echo "$all_commenters" | grep -qi "$bot"; then
+		if grep -qi "$bot" <<<"$all_commenters"; then
 			found_bots="${found_bots}${bot} "
 		else
 			missing_bots="${missing_bots}${bot} "
@@ -1591,7 +922,7 @@ _collect_review_gate_bot_states() {
 
 	local bot notice_category notice_rc
 	for bot in "${KNOWN_BOTS[@]}"; do
-		if echo "$all_commenters" | grep -qi "$bot"; then
+		if grep -qi "$bot" <<<"$all_commenters"; then
 			# Bot commented — but is it a real review or a non-review notice?
 			if bot_has_real_review "$pr_number" "$repo" "$bot" "$prepared_status_contexts" true; then
 				REVIEW_GATE_FOUND_BOTS="${REVIEW_GATE_FOUND_BOTS}${bot} "
@@ -1791,232 +1122,6 @@ do_wait() {
 	return 1
 }
 
-# Fetch a genuine PR metadata snapshot and retry one locally deferred or timed
-# out read. Never substitutes an earlier snapshot: exhausted retrieval remains
-# unavailable so current-head authorization fails closed.
-_rbg_status_pr_snapshot() {
-	local pr_api="$1"
-	local phase="$2"
-	local response="" rc=0
-	local retry_delay="${RBG_STATUS_SNAPSHOT_RETRY_DELAY_SECONDS:-1}"
-	local retry_timeout="${RBG_STATUS_SNAPSHOT_RETRY_TIMEOUT_SECONDS:-10}"
-
-	response=$(gh api "$pr_api" 2>/dev/null) || rc=$?
-	if [[ "$rc" -eq 0 && -n "$response" ]]; then
-		printf '%s\n' "$response"
-		return 0
-	fi
-
-	# The governed gh transport reports local-admission deferral as 75 and
-	# bounded read timeout as 124. A successful empty response is also not a
-	# usable observation and receives the same single recovery attempt.
-	if [[ "$rc" -ne 0 && "$rc" -ne 75 && "$rc" -ne 124 ]]; then
-		printf '[review-bot-gate] %s PR snapshot transport failure (rc=%s); gate remains blocked\n' "$phase" "$rc" >&2
-		return "$rc"
-	fi
-	[[ "$retry_delay" =~ ^[0-5]$ ]] || retry_delay=1
-	[[ "$retry_timeout" =~ ^[0-9]+$ && "$retry_timeout" -ge 1 && "$retry_timeout" -le 30 ]] || retry_timeout=10
-	printf '[review-bot-gate] %s PR snapshot unavailable (rc=%s); retrying once\n' "$phase" "$rc" >&2
-	[[ "$retry_delay" -eq 0 ]] || sleep "$retry_delay"
-
-	rc=0
-	response=$(AIDEVOPS_GH_READ_TIMEOUT="$retry_timeout" gh api "$pr_api" 2>/dev/null) || rc=$?
-	if [[ "$rc" -eq 0 && -n "$response" ]]; then
-		printf '%s\n' "$response"
-		return 0
-	fi
-	[[ "$rc" -ne 0 ]] || rc=75
-	printf '[review-bot-gate] %s PR snapshot unavailable after bounded retry (rc=%s); gate remains blocked\n' "$phase" "$rc" >&2
-	return "$rc"
-}
-
-_rbg_status_failure_reason() {
-	local reason="$1"
-	local permitted="$2"
-	local snapshot_before_rc="$3"
-	local snapshot_after_rc="$4"
-	local head_sha_before="$5"
-	local head_sha="$6"
-
-	if [[ "$permitted" == "true" ]]; then
-		printf '%s\n' "$reason"
-	elif [[ "$snapshot_before_rc" -ne 0 || -z "$head_sha_before" ]]; then
-		printf 'initial_snapshot_unavailable\n'
-	elif [[ "$snapshot_after_rc" -ne 0 || -z "$head_sha" ]]; then
-		printf 'post_decision_snapshot_unavailable\n'
-	elif [[ "$head_sha_before" != "$head_sha" ]]; then
-		printf 'head_changed_during_decision\n'
-	else
-		printf '%s\n' "$reason"
-	fi
-	return 0
-}
-
-_rbg_snapshot_author_association() {
-	local pr_number="$1"
-	local repo="$2"
-	local pr_json="$3"
-	[[ -n "$pr_json" ]] || return 0
-	_resolve_pr_author_association "$pr_number" "$repo" "$pr_json"
-	return 0
-}
-
-do_status_json() {
-	local pr_number="$1"
-	local repo="$2"
-	local output="" rc=0 state="waiting" blocked_prefix="bloc" status_pass="" pr_api=""
-	local merge_gate="" snapshot_before_rc=0 snapshot_after_rc=0
-	local pr_json_before="" pr_json="" head_sha_before="" head_sha="" author_login="" author_association_before="" author_association="" author_class="external"
-	local head_stable="$RBG_FALSE" skip_label_present_after="$RBG_FALSE" permitted="$RBG_FALSE" reason="outcome_not_permitted"
-	merge_gate="${blocked_prefix}ked"
-	status_pass=$(printf 'P%s' 'ASS')
-
-	pr_api=$(printf 'repos/%s/pulls/%s' "$repo" "$pr_number")
-	pr_json_before=$(_rbg_status_pr_snapshot "$pr_api" "initial") || snapshot_before_rc=$?
-	head_sha_before=$(jq -r '.head.sha // ""' <<<"$pr_json_before" 2>/dev/null) || head_sha_before=""
-	author_association_before=$(_rbg_snapshot_author_association "$pr_number" "$repo" "$pr_json_before")
-	output=$(REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha_before" REVIEW_GATE_AUTHOR_ASSOCIATION="$author_association_before" do_check "$pr_number" "$repo" "$pr_json_before" 2>/dev/null) || rc=$?
-	pr_json=$(_rbg_status_pr_snapshot "$pr_api" "post-decision") || snapshot_after_rc=$?
-	if [[ -n "$pr_json" ]]; then
-		head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || head_sha=""
-		author_login=$(jq -r '.user.login // ""' <<<"$pr_json" 2>/dev/null) || author_login=""
-	fi
-	author_association=$(_rbg_snapshot_author_association "$pr_number" "$repo" "$pr_json")
-	if [[ -n "$head_sha_before" && "$head_sha_before" == "$head_sha" ]]; then
-		head_stable="true"
-	fi
-	jq -e --arg label "$SKIP_LABEL" '[.labels[]?.name] | index($label) != null' <<<"$pr_json" >/dev/null 2>&1 && skip_label_present_after="true"
-	case "$author_association" in
-	OWNER | MEMBER | COLLABORATOR) author_class="$RBG_AUTHOR_CLASS_TRUSTED" ;;
-	esac
-
-	# #aidevops:trust-boundary — SKIP is a trusted-author label outcome. Advisory
-	# completion and rate-limit grace apply to every author (GH#36931): external
-	# merge authority is exact-head maintainer crypto approval, enforced outside
-	# this gate. Malformed or metadata-less evidence never authorizes a decision.
-	case "$output" in
-	"$status_pass")
-		if [[ "$head_stable" == "true" && -n "$author_login" ]]; then
-			permitted="true"
-			reason="live_review_pass"
-		fi
-		;;
-	SKIP)
-		if [[ "$author_class" == "$RBG_AUTHOR_CLASS_TRUSTED" && "$head_stable" == "true" && "$skip_label_present_after" == "true" ]]; then
-			permitted="true"
-			reason="trusted_skip"
-		else
-			reason="external_skip_denied"
-		fi
-		;;
-	P[A]SS_RATE_LIMITED)
-		if [[ "$head_stable" == "true" ]]; then
-			permitted="true"
-			reason="${author_class}_rate_limit_grace"
-		fi
-		;;
-	P[A]SS_ADVISORY)
-		if [[ "$head_stable" == "true" ]]; then
-			permitted="true"
-			reason="${author_class}_advisory_default"
-		fi
-		;;
-	esac
-
-	# Policy outcomes cannot override missing or changed current-head evidence.
-	reason=$(_rbg_status_failure_reason "$reason" "$permitted" "$snapshot_before_rc" "$snapshot_after_rc" "$head_sha_before" "$head_sha")
-
-	case "$output:$permitted" in
-	"$status_pass:true" | P[A]SS_ADVISORY:true | P[A]SS_RATE_LIMITED:true | SKIP:true)
-		state="pass"
-		merge_gate="clear"
-		;;
-	WAITING:*)
-		state="waiting"
-		merge_gate="${blocked_prefix}ked"
-		;;
-	*)
-		state="err""or"
-		merge_gate="${blocked_prefix}ked"
-		[[ "$rc" -eq 0 ]] && rc=2
-		;;
-	esac
-
-	jq -nc \
-		--arg pr "$pr_number" \
-		--arg repo "$repo" \
-		--arg status "${output:-ERROR}" \
-		--arg head_sha "$head_sha" \
-		--arg author_login "$author_login" \
-		--arg author_association "$author_association" \
-		--arg author_class "$author_class" \
-		--argjson permitted "$permitted" \
-		--arg reason "$reason" \
-		--arg state "$state" \
-		--arg merge_gate "$merge_gate" \
-		--argjson exit_code "$rc" \
-		'{schema:"aidevops.review-gate-evidence/v1",pr:$pr,repo:$repo,head_sha:$head_sha,status:$status,author:{login:$author_login,association:$author_association,class:$author_class},permitted:$permitted,reason:$reason,state:$state,merge_gate:$merge_gate,exit_code:$exit_code}'
-	return 0
-}
-
-_classify_bot_state() {
-	# t2139: Distinguish "placeholder/not-yet-settled" from "rate-limited"
-	# vs "real-review". Returns one of:
-	#   real-review         — bot has a real, settled review
-	#   not-yet             — bot has comment(s) that are not non-review notices
-	#                         but are still in the placeholder window (Phase 1)
-	#   non-review-only     — every bot comment matched a NON_REVIEW_PATTERNS entry
-	#                         (rate-limited, "Review failed", "Review skipped", etc.)
-	#   no-comments         — bot has commented per get_all_bot_commenters but
-	#                         no comments are visible via the typed endpoints
-	#                         (rare race; treat as non-review-only)
-	local pr_number="$1"
-	local repo="$2"
-	local bot_login="$3"
-
-	local min_lag
-	min_lag=$(_get_min_edit_lag "$repo" "$bot_login")
-
-	local jq_filter
-	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | [(.created_at // .submitted_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
-
-	local saw_any=0 saw_non_review=0 saw_placeholder=0
-	local sources=(reviews issue-comments review-comments)
-	local source records created_at updated_at encoded body
-	for source in "${sources[@]}"; do
-		records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter" || echo "")
-		[[ -z "$records" ]] && continue
-		while IFS=$'\t' read -r created_at updated_at encoded; do
-			[[ -z "$encoded" ]] && continue
-			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
-			[[ -z "$body" ]] && continue
-			saw_any=1
-			if is_non_review_comment "$body"; then
-				saw_non_review=1
-				continue
-			fi
-			# Pass bot_login so two-phase bots require edit-observed settlement
-			# (GH#20550 — age alone is not sufficient for coderabbitai etc.).
-			if _comment_is_settled "$created_at" "$updated_at" "$min_lag" "$bot_login"; then
-				echo "real-review"
-				return 0
-			fi
-			saw_placeholder=1
-		done <<<"$records"
-	done
-
-	if [[ "$saw_placeholder" -eq 1 ]]; then
-		echo "not-yet"
-	elif [[ "$saw_non_review" -eq 1 ]]; then
-		echo "non-review-only"
-	elif [[ "$saw_any" -eq 0 ]]; then
-		echo "no-comments"
-	else
-		echo "non-review-only"
-	fi
-	return 0
-}
-
 do_list() {
 	local pr_number="$1"
 	local repo="$2"
@@ -2037,7 +1142,7 @@ do_list() {
 	# from "non-review-only" (rate-limit / failure / skip notice).
 	local state
 	for bot in "${KNOWN_BOTS[@]}"; do
-		if echo "$all_commenters" | grep -qi "$bot"; then
+		if grep -qi "$bot" <<<"$all_commenters"; then
 			state=$(_classify_bot_state "$pr_number" "$repo" "$bot")
 			case "$state" in
 			real-review)
@@ -2093,7 +1198,7 @@ has_retry_comment() {
 	local comments
 	comments=$(_rbg_query_evidence_collection "$pr_number" "$repo" issue-comments \
 		'.[].body') || return 2
-	if echo "$comments" | grep -qF "$marker"; then
+	if grep -qF "$marker" <<<"$comments"; then
 		return 0
 	fi
 	return 1
@@ -2114,7 +1219,7 @@ find_rate_limited_bots() {
 	local rate_limited=""
 	local bot
 	for bot in "${KNOWN_BOTS[@]}"; do
-		if echo "$all_commenters" | grep -qi "$bot"; then
+		if grep -qi "$bot" <<<"$all_commenters"; then
 			if ! bot_has_real_review "$pr_number" "$repo" "$bot"; then
 				rate_limited="${rate_limited}${bot} "
 			fi

@@ -52,10 +52,12 @@ def _repository_pull_requests(slug: str) -> list:
         raise ValueError("invalid-open-pr-response")
     prs = [pr for page in pages for pr in page]
     for pr in prs:
-        if (not isinstance(pr, dict) or not isinstance(pr.get("head"), dict)
-                or not isinstance(pr["head"].get("ref"), str)
-                or not isinstance(pr["head"].get("sha"), str)):
+        if not isinstance(pr, dict) or not isinstance(pr.get("head"), dict):
             raise ValueError("invalid-open-pr-response")
+        for field in ("ref", "sha"):
+            value = pr["head"].get(field)
+            if not isinstance(value, str) or not value:
+                raise ValueError("invalid-open-pr-response")
     return prs
 
 

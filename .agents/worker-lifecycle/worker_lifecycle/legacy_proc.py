@@ -7,7 +7,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 import os
 from pathlib import Path
+import platform
 
+from .legacy_proc_macos import require_idle_macos
 from .process import ProcessIdentity
 
 
@@ -35,6 +37,17 @@ def require_ended(item, adapter, *, operator_confirmed=False):
             raise ValueError("process-" + observed.status)
     if not operator_confirmed and (not item["runs"] or item["unbound"]):
         raise ValueError("no-recorded-processes")
+
+
+def require_idle_processes(path: Path) -> None:
+    """Require a usable native census at the tree's current removal location."""
+    system = platform.system()
+    if system == "Linux":
+        require_idle_proc(path)
+    elif system == "Darwin":
+        require_idle_macos(path)
+    else:
+        raise ValueError("proc-observation-unavailable")
 
 
 def require_idle_proc(path, proc=Path("/proc")):

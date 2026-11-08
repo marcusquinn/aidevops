@@ -326,15 +326,27 @@ test("uses the plugin repository directory when mutation tools omit workdir", as
       { args: { patchText: linkedPatch } },
     ));
 
-    for (const command of [`git -C "${linked}" status`, `git -C "${linked}" -C . status`]) {
-      await assert.rejects(() => hooks.toolExecuteBefore(
-        { tool: "bash", sessionID: "different-owner" },
+    // Read-only inspection of another tree admits no owner (GH#37022), so a closed
+    // generation does not refuse it and the inspector cannot block retirement;
+    // writes, config overrides and output-writing flags still require admission.
+    const refused = /lifecycle owner admission/;
+    for (const [command, otherSession] of [
+      [`git -C "${linked}" add README.md`, refused],
+      [`git -C "${linked}" -C . add README.md`, refused],
+      [`git -c core.fsmonitor=x -C "${linked}" status`, refused],
+      [`git -C "${linked}" log --output=out.txt`, refused],
+      [`git -C "${linked}" branch --list --set-upstream-to=x`, refused],
+      [`git -C "${linked}" status`, /^admitted$/],
+      [`git -C "${linked}" worktree list`, /^admitted$/],
+      [`git -C "${linked}" branch --list`, /^admitted$/],
+      [`git --no-pager -C "${linked}" log -1`, /^admitted$/],
+    ]) {
+      const outcome = (sessionID) => hooks.toolExecuteBefore(
+        { tool: "bash", sessionID },
         { args: { workdir: repo, command } },
-      ), /lifecycle owner admission/);
-      await assert.doesNotReject(() => hooks.toolExecuteBefore(
-        { tool: "bash", sessionID: "fixture-owner" },
-        { args: { workdir: repo, command } },
-      ));
+      ).then(() => "admitted", String);
+      assert.match(await outcome("different-owner"), otherSession, command);
+      assert.equal(await outcome("fixture-owner"), "admitted", command);
     }
     await assert.rejects(() => hooks.toolExecuteBefore(
       { tool: "bash", sessionID: "fixture-owner" },
@@ -342,7 +354,7 @@ test("uses the plugin repository directory when mutation tools omit workdir", as
     ), /directory-changing shell builtins are unsupported/);
     await assert.rejects(() => hooks.toolExecuteBefore(
       { tool: "aidevops_bounded_operation", sessionID: "different-owner" },
-      { args: { action: "start", cwd: repo, command: [realGit, "-C", linked, "status"] } },
+      { args: { action: "start", cwd: repo, command: [realGit, "-C", linked, "add", "README.md"] } },
     ), /lifecycle owner admission/);
 
     // An exec-based Claude hook observes this same native runtime parent.
@@ -406,18 +418,21 @@ test("admits tools without an inherited runtime identity (GH#36430)", async () =
     assert.deepEqual(runHelper(["--cwd", realpathSync(linked), "--runtime-pid", "", "--session-id", "x"]),
       { status: "unavailable", reason: "runtime-owner-unresolved" });
     // The shell expands `git -C ~/repo`; admission resolves the same target.
+    // Write verbs: read-only inspection targets are not resolved (GH#37022).
     const home = { ...process.env, HOME: realpathSync(root) };
     assert.equal(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x",
-      "--command", "git -C ~/repo status"], home).status, "not-applicable");
+      "--command", "git -C ~/repo commit -m x"], home).status, "not-applicable");
     assert.deepEqual(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x",
-      "--command", "git -C ~/missing status"], home), { status: "unavailable", reason: "git-target-unavailable" });
+      "--command", "git -C ~/missing commit -m x"], home), { status: "unavailable", reason: "git-target-unavailable" });
+    assert.equal(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x",
+      "--command", `git -C "${realpathSync(linked)}" status`]).status, "not-applicable");
     // Quoted tildes, exec argv and `--git-dir=~/x` reach Git literally; admission must not expand them.
     const literal = { status: "unavailable", reason: "git-target-unavailable" };
     for (const declared of [
-      ["--command", "git -C '~/repo' status"],
-      ["--command", 'git -C "~/repo" status'],
-      ["--argv-json", JSON.stringify(["git", "-C", "~/repo", "status"])],
-      ["--command", "git --git-dir=~/repo/.git status"],
+      ["--command", "git -C '~/repo' commit -m x"],
+      ["--command", 'git -C "~/repo" commit -m x'],
+      ["--argv-json", JSON.stringify(["git", "-C", "~/repo", "commit", "-m", "x"])],
+      ["--command", "git --git-dir=~/repo/.git commit -m x"],
     ]) {
       assert.deepEqual(runHelper(["--cwd", realpathSync(root), "--runtime-pid", "", "--session-id", "x",
         ...declared], home), literal, declared.join(" "));

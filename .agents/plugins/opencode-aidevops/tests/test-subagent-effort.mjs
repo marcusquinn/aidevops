@@ -24,12 +24,164 @@ import {
 import { SubagentLifecycleTracker, eventSessionID } from "../subagent-lifecycle-tracker.mjs";
 import { authSignatureFromHeaders, clearModelUnavailable, markModelUnavailable } from "../model-unavailability.mjs";
 import { recordCodexModelRejection } from "../openai-codex-model-fallback.mjs";
+import { createPrimaryEntitlementFailover } from "../primary-entitlement-failover.mjs";
 
 const TIER_REASONING = {
   simple: { openai: "low" },
   standard: { openai: "max" },
   thinking: { openai: "xhigh" },
 };
+
+let primaryFixtureSequence = 0;
+function primaryFailoverFixture(t, options = {}) {
+  const prompts = [];
+  const logs = [];
+  const toasts = [];
+  const headers = { authorization: `Bearer primary-fixture-${++primaryFixtureSequence}` };
+  const signature = authSignatureFromHeaders(headers);
+  const models = ["openai/first", "openai/second", "anthropic/sonnet"];
+  let authSignature = signature;
+  const error = { name: "APIError", data: { statusCode: 400,
+    message: "The 'first' model is not supported when using Codex with a ChatGPT account." } };
+  const context = {
+    modelRouting: { tiers: {
+      standard: { models: options.models || models, reasoning: { openai: "medium", anthropic: "high" } },
+      simple: { models: ["openai/luna"] },
+    } },
+    getSession: async () => ({ id: "root", ...options.session }),
+    modelIdentity: (model) => `${model?.providerID || ""}/${model?.modelID || ""}`,
+    resolveAvailability: () => ({ authSignature }),
+    resolveProviderState: async () => ({ connected: options.connected || ["openai", "anthropic"], all: [
+      { id: "openai", models: { first: { id: "first" }, second: { id: "second" }, luna: { id: "luna" } } },
+      { id: "anthropic", models: { sonnet: { id: "sonnet" } } },
+    ] }),
+    qualityLog: (_level, message) => logs.push(message),
+    client: { tui: { showToast: async (request) => toasts.push(request.body.message) }, session: { prompt: async (request) => {
+      prompts.push(request);
+      return options.prompt ? options.prompt(request, signature) : { data: { parts: [{ type: "text", text: "done" }] } };
+    } } },
+  };
+  const hooks = createPrimaryEntitlementFailover(context, { isHeadless: () => options.headless || false });
+  const output = () => ({ message: { sessionID: "root", agent: "Build+", model: { providerID: "openai", modelID: "first" } },
+    parts: [{ type: "text", text: "hello" }] });
+  const send = (type, properties = {}) => hooks.handleEvent({ event: { type, properties: { sessionID: "root", ...properties } } });
+  const reject = (model = "openai/first") => markModelUnavailable(model, signature);
+  const finish = async (failure = error) => {
+    await send("session.error", { error: failure });
+    // The processor emits idle before completing its assistant. This idle must
+    // not race a new prompt into the still-running original loop.
+    await send("session.idle");
+    assert.equal(prompts.length, 0);
+    await send("message.updated", { info: { id: "failed", sessionID: "root", role: "assistant", time: { completed: 1 } } });
+    await send("session.idle");
+  };
+  t.after(() => models.forEach((model) => clearModelUnavailable(model, signature)));
+  return { hooks, prompts, logs, toasts, headers, output, send, reject, error, finish, changeAuth: () => { authSignature = `${signature}-new`; } };
+}
+
+test("GH#37005 primary rejection continues the same session and skips rejected models within TTL", async (t) => {
+  const f = primaryFailoverFixture(t);
+  await f.hooks.chatMessage({}, f.output());
+  f.hooks.chatParams({ sessionID: "root", model: { providerID: "openai", id: "first" } });
+  // User parts are not generated assistant output and must not suppress recovery.
+  await f.send("message.part.updated", { part: { type: "text", messageID: "user", text: "hello" } });
+  await recordCodexModelRejection(Response.json({ error: { message: f.error.data.message } }, { status: 400 }),
+    "https://chatgpt.com/backend-api/codex/responses", { headers: f.headers, body: JSON.stringify({ model: "first" }) });
+  await f.finish();
+  assert.equal(f.prompts.length, 1);
+  assert.equal(f.prompts[0].path.id, "root");
+  assert.deepEqual(f.prompts[0].body.model, { providerID: "openai", modelID: "second" });
+  assert.equal(f.prompts[0].body.variant, "medium");
+  const next = f.output();
+  await f.hooks.chatMessage({}, next);
+  assert.equal(next.message.model.modelID, "second");
+  f.changeAuth();
+  const reauthenticated = f.output();
+  await f.hooks.chatMessage({}, reauthenticated);
+  assert.equal(reauthenticated.message.model.modelID, "first");
+});
+
+test("GH#37005 primary candidate walk is bounded, deduplicated and never lowers tier", async (t) => {
+  let f;
+  f = primaryFailoverFixture(t, { models: ["openai/first", "openai/second", "openai/second"],
+    prompt: async () => {
+      f.reject("openai/second");
+      // The SDK can deliver the error event while the recovery prompt is pending.
+      await f.send("session.error", { error: f.error });
+      return { data: { info: { error: f.error } } };
+    } });
+  await f.hooks.chatMessage({}, f.output());
+  f.reject();
+  await f.finish();
+  await f.send("session.error", { error: f.error });
+  assert.deepEqual(f.prompts.map((p) => p.body.model.modelID), ["second"]);
+  assert.equal(f.logs.length, 1);
+  assert.match(f.logs[0], /standard.*openai\/first.*Re-authenticate.*routing/);
+  assert.deepEqual(f.toasts, f.logs);
+  await assert.rejects(f.hooks.chatMessage({}, f.output()), /No available standard model/);
+});
+
+test("GH#37005 primary fallback skips disconnected and cached candidates", async (t) => {
+  const f = primaryFailoverFixture(t, { connected: ["anthropic"] });
+  await f.hooks.chatMessage({}, f.output());
+  f.reject();
+  f.reject("openai/second");
+  await f.finish();
+  assert.deepEqual(f.prompts.map((p) => p.body.model), [{ providerID: "anthropic", modelID: "sonnet" }]);
+  assert.equal(f.prompts[0].body.variant, "high");
+});
+
+test("GH#37005 primary recovery excludes children, headless, non-entitlement and generated turns", async (t) => {
+  for (const options of [{ session: { parentID: "parent" } }, { headless: true }, {}, { generated: true }]) {
+    const f = primaryFailoverFixture(t, options);
+    await f.hooks.chatMessage({}, f.output());
+    f.reject();
+    if (options.generated) {
+      await f.send("message.updated", { info: { id: "assistant", sessionID: "root", role: "assistant" } });
+      await f.send("message.part.updated", { part: { messageID: "assistant", type: "tool" } });
+    }
+    await f.finish(Object.keys(options).length ? f.error : {
+      name: "APIError", data: { statusCode: 401, message: f.error.data.message },
+    });
+    assert.equal(f.prompts.length, 0);
+  }
+});
+
+test("GH#37005 duplicate client turns cannot request the rejected model during recovery", async (t) => {
+  let f;
+  const observed = {};
+  f = primaryFailoverFixture(t, { prompt: async (request) => {
+    observed.duplicate = await f.hooks.chatMessage({}, f.output()).then(() => null, (error) => error);
+    const continuation = { message: { sessionID: "root", model: request.body.model }, parts: request.body.parts };
+    await f.hooks.chatMessage({}, continuation);
+    observed.model = continuation.message.model.modelID;
+    await f.send("session.idle");
+    return { data: { parts: [{ type: "text", text: "done" }] } };
+  } });
+  await f.hooks.chatMessage({}, f.output());
+  f.reject();
+  await f.finish();
+  assert.equal(f.prompts.length, 1);
+  assert.match(observed.duplicate?.message ?? "", /already in progress/);
+  assert.equal(observed.model, "second");
+});
+
+test("GH#37005 internal/out-of-table requests clear stale primary recovery", async (t) => {
+  for (const internal of [true, false]) {
+    const f = primaryFailoverFixture(t);
+    await f.hooks.chatMessage({}, f.output());
+    if (internal) {
+      f.hooks.chatParams({ sessionID: "root", model: { providerID: "openai", id: "luna" } });
+    } else {
+      const manual = f.output();
+      manual.message.model.modelID = "unlisted";
+      await f.hooks.chatMessage({}, manual);
+    }
+    f.reject();
+    await f.finish();
+    assert.equal(f.prompts.length, 0);
+  }
+});
 
 test("entitlement rejection retries the next connected model in the same tier", async (t) => {
   const prompts = [];

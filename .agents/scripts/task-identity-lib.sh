@@ -93,6 +93,17 @@ task_identity_validate() {
 	return 1
 }
 
+# Fork-free equivalent of task_identity_validate for hot loops (GH#37006).
+# Accepts exactly what task_identity_parse accepts and leaves the parsed
+# fields alone, but overwrites BASH_REMATCH: capture matches before calling.
+task_identity_is_valid() {
+	local input="${1:-}"
+	if [[ -n "$input" && "${#input}" -le "$TASK_IDENTITY_MAX_BYTES" && "$input" =~ $TASK_IDENTITY_ANY_ERE ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # Migration/diagnostic only: never accept padded IDs as canonical aliases.
 task_identity_unpad_legacy() {
 	local input="${1:-}"

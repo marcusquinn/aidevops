@@ -10,6 +10,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.134] - 2026-11-07
+
+### Changed
+
+- Documentation: explain bounded operation secret access (GH#37122) (#37130)
+- Documentation: distinct LocalHostName for multi-Mac Buzz agents
+- Documentation: GH#37107 document watchdog hard-kill margin and temporary events sidecar (#37120)
+
+### Fixed
+
+- repoint stale Buzz interactive overrides (#37142)
+- check issue author repository permissions (#37140)
+- skip Linux proc test on other platforms (#37139)
+- account for tracked patches in archive capacity (#37133)
+- treat deeply nested child output as unverified (GH#37117) (#37129)
+- recover Dependabot PR creation (#37110)
+- exclude product retries from reserved slots (GH#37103) (#37111)
+- check each OpenCode auth field independently so empty legacy fields don't hide key (#37114)
+
+## [3.39.133] - 2026-11-07
+
+### Added
+
+- support scoped owned lease execution
+
+### Changed
+
+- Documentation: warn that get_posts(name=>slug) misses pages in slug-exists guards
+- Documentation: clarify local clipboard destination paths (#37092)
+
+### Fixed
+
+- admit overdue blocker recovery before dispatch
+- bounded admission contention wait; release writer during PR lookups (#37099)
+- recognize verified prior-merge continuations (#37100)
+- report modern takeover guards and enforce idle age
+- accept Buzz 0.5.28 tagged prompt sections in ACP reply routing
+- use consistent PR body for worker trust gate (#37095)
+- release writer lock during archive I/O
+
+## [3.39.132] - 2026-11-07
+
+### Added
+
+- add cloudron-app-qa-helper.sh live-install QA (#36989)
+- install issue triage gate automatically via r914 keeper (GH#36907) (#36974)
+
+### Changed
+
+- Tests: assert publication retry delay for attempt-count cases (#37023)
+- Tests: verify review gate selects both checkout refs (GH#37017) (#37020)
+- Tests: cover failed external-contributor backfill (GH#37015) (#37021)
+- Refactor: extract full-loop merge transport module (GH#36968) (#36969)
+
+### Fixed
+
+- read-only git inspection admits no worktree owner; refusal names the caller
+- document forensics vertical flips, dimension tolerance, strong-original guard (#37082)
+- relationship graph extracts dependencies in-process
+- task-id normalize rewrites BRIEF refs and reports alpha IDs; graph skips completed alpha rows
+- planning publish deletes rename sources and skips padding-only manifest rows
+- string-literal ratchet names the new repeated literals
+- skip greeting redeploy inside pinned Buzz runtimes
+- sort SSH include matches (#37073)
+- remove dormant CI feedback case (#37072)
+- clarify invalid approval options (#37062)
+- log and account shasum failure in CI-drift deferral (GH#37066) (#37067)
+- allow read-only local binary roots (GH#37058) (#37064)
+- remove task bookkeeping entry (#37065)
+- dispatch signed-approved external issues without Files Scope with worker discovery (#37063)
+- reject empty PR head evidence (GH#37046) (#37054)
+- admit approval-bound diagnostic tooling (#36939)
+- bound unavailable-classification rebases per head (#37039)
+- log path-free reuse-status failure diagnostics (#37030)
+- protect system SSH aliases and scan root-owned includes (#37031)
+- recover classic required contexts from branch metadata on any settings read failure (GH#37026) (#37032)
+- reconstructible retirement must not retain ignored files
+- classify private org members as trusted via live permission lookup (#37024)
+- surface branch push guard diagnostics (#37000)
+- diagnose missing archive option values (GH#36934) (#36990)
+- continue released draft checkpoints (#36982)
+- pin ShellCheck in catalog preflight; document reusable-workflow attestation verify (#36988)
+- keep a single origin marker when signing PR/issue bodies (#36981)
+- guarded merge route for parent-task planning checkpoints (GH#36922) (#36975)
+- reconcile accepted merges before authority retries (#36973)
+- ship issue triage gate as reusable workflow for managed repos (#36970)
+
 ## [3.39.131] - 2026-11-06
 
 ### Added
@@ -162,7 +249,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Maintenance: mark t18866 complete (pr:#36745 completed:2026-11-05) (#36748)
 - Tests: age dead-owner quarantine in profile sweep fixture for macOS (#36745)
 
 ### Fixed

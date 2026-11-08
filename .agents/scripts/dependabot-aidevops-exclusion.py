@@ -49,6 +49,10 @@ class Unsupported(ValueError):
     """Raised when the layout cannot be patched without guessing."""
 
 
+class NoActions(Exception):
+    """Raised when no github-actions update entry exists."""
+
+
 def _indent(line: str) -> int:
     return len(line) - len(line.lstrip(" "))
 
@@ -159,7 +163,7 @@ def _plan_item(lines: list[str], item: tuple[int, int, int]) -> tuple[int, list[
 
 
 def plan(text: str) -> list[tuple[int, list[str]]]:
-    """Return insertion plans; empty means excluded. Raises Unsupported/LookupError."""
+    """Return insertion plans; empty means excluded. Raises Unsupported/NoActions."""
     if "\t" in text:
         raise Unsupported("tab-indentation")
     lines = text.splitlines()
@@ -168,14 +172,14 @@ def plan(text: str) -> list[tuple[int, list[str]]]:
         if any(_ECOSYSTEM_RE.match(key) for _, key in _key_lines(lines, item))
     ]
     if not actions:
-        raise LookupError("no-actions")
+        raise NoActions("no-actions")
     return [p for p in (_plan_item(lines, item) for item in actions) if p is not None]
 
 
 def classify(text: str) -> str:
     try:
         return "MISSING" if plan(text) else "EXCLUDED"
-    except LookupError:
+    except NoActions:
         return "NO-ACTIONS"
     except Unsupported as exc:
         return f"UNSUPPORTED:{exc}"

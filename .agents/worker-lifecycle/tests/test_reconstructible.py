@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -12,6 +13,7 @@ from uuid import uuid4
 from tests import test_retirement as fixtures
 from worker_lifecycle import legacy_cleanup as cleanup
 from worker_lifecycle import legacy_inventory as inventory
+from worker_lifecycle import legacy_probe as probe
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id, prepare_cleanup
 from worker_lifecycle.legacy_options import CleanupOptions
@@ -76,7 +78,8 @@ class ReconstructibleContract(unittest.TestCase):
 
     def test_removal_is_nonforced_preserves_branch_and_writes_receipt(self):
         native = cleanup._git
-        with patch.object(cleanup, "_git", wraps=native) as calls:
+        with patch.object(cleanup, "_git", wraps=native) as calls, \
+                patch.object(probe, "_git", calls):
             result, _, attempted = self.retire()
         self.assertEqual(result["status"], "retired", result)
         self.assertEqual(attempted, 1)
@@ -146,13 +149,65 @@ class ReconstructibleContract(unittest.TestCase):
     def test_managed_takeover_keeps_every_safety_guard(self):
         self.item.update(modern=True, unbound=False)
         (self.target / "keep").write_text("untracked")
-        self.assert_retained("managed-by-current-cleanup")
+        self.assert_retained("nonempty-worktree-state")
         (self.target / "keep").unlink()
         self.prs.return_value = [{"head": {"ref": "feature", "sha": self.head}}]
-        self.assert_retained("managed-by-current-cleanup")
+        self.assert_retained("open-pull-request")
         self.prs.return_value = []
         self.git("update-ref", "-d", "refs/remotes/origin/main")
-        self.assert_retained("managed-by-current-cleanup")
+        self.assert_retained("head-not-on-remote")
+
+    def test_automatic_modern_pass_retires_old_verified_creation_without_confirmation(self):
+        self.git("worktree", "remove", str(self.target))
+        fixtures.RetirementContract.create(self)
+        for name in ("work.txt", ".gitignore", "cache.ignored"):
+            (self.target / name).unlink()
+        prepared = prepare_cleanup(self.store, self.target)
+        self.assertTrue(prepared["creation_verified"])
+        self.assertEqual(prepared["admission"], "closed")
+        config = self.root / "repos.json"
+        config.write_text(json.dumps({"initialized_repos": [
+            {"path": str(self.repo), "slug": "fixture/repository"}]}))
+        future = time.time() + 7200
+        with patch.object(inventory.time, "time", return_value=future):
+            preview = cleanup.run(self.store, config, self.output, min_age=3600)
+            self.assertEqual(preview["eligible"], 1, preview)
+            self.assertTrue(self.target.exists())
+            report = cleanup.run(self.store, config, self.output, apply=True, min_age=3600)
+        self.assertEqual(report["operator_confirmed_paths"], [])
+        self.assertEqual(report["retired"], 1, report)
+        self.assertFalse(self.target.exists())
+        with self.store.connection() as connection:
+            operation = cleanup.operation_id(self.store, str(self.target))
+            receipt = cleanup.receipt(connection, operation, "retired")
+        self.assertEqual(receipt["type"], "reconstructible-worktree-retired")
+        self.assertTrue(receipt["branch_preserved"])
+
+    def test_modern_age_guard_applies_in_preview_and_apply(self):
+        generation = self.reserve_managed()
+        AdmissionRegistry(self.store).authorize_enrolled_only(
+            enrolled_only_event_id(generation), generation)
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                self.options = CleanupOptions(self.output, apply=apply, min_age=3600)
+                self.assert_retained("too-recent")
+
+    def test_modern_preview_reports_concrete_guard_and_ownership(self):
+        self.reserve_managed()
+        self.options = CleanupOptions(self.output, min_age=0)
+        self.task(self.target)
+        result, _, attempted = self.retire()
+        self.assertEqual(result["reason"], "live-process-reference", result)
+        self.assertEqual(result["ownership"], "managed-by-current-cleanup")
+        self.assertEqual(attempted, 0)
+        self.assertTrue(self.target.exists())
+
+    def test_absent_modern_without_runs_is_not_a_takeover_failure(self):
+        self.reserve_managed()
+        self.git("worktree", "remove", str(self.target))
+        result, eligible, attempted = self.retire()
+        self.assertEqual(result["status"], "already-absent", result)
+        self.assertEqual((eligible, attempted), (0, 0))
 
     def test_preview_is_read_only(self):
         self.options = CleanupOptions(self.output, apply=False, min_age=0)
@@ -171,11 +226,18 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertEqual(result["status"], "retained", result)
         self.assertTrue(self.target.exists())
 
-    def test_untracked_and_ignored_files_remain(self):
+    def test_untracked_files_remain(self):
         (self.target / "keep").write_text("untracked")
         self.assert_retained("nonempty-worktree-state")
-        (self.target / ".gitignore").write_text("keep\n")
-        self.assert_retained("nonempty-worktree-state")
+
+    def test_ignored_files_do_not_retain(self):
+        (Path(self.common) / "info").mkdir(exist_ok=True)
+        (Path(self.common) / "info" / "exclude").write_text("cache/\n")
+        (self.target / "cache").mkdir()
+        (self.target / "cache" / "artefact").write_text("ignored")
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertFalse(self.target.exists())
 
     def test_dirty_tracked_file_remains(self):
         (self.target / "file").write_text("committed")
@@ -197,6 +259,7 @@ class ReconstructibleContract(unittest.TestCase):
         (task / "fd" / "9").symlink_to(self.target / "file")
         self.assert_retained("live-process-reference")
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux /proc process observation")
     def test_real_live_process_cwd_and_fd_are_observed(self):
         (self.target / "file").write_text("keep")
         program = "import os,time; os.open('file',os.O_RDONLY); time.sleep(300)"
@@ -268,16 +331,78 @@ class ReconstructibleContract(unittest.TestCase):
         with patch.object(inventory, "require_idle_proc", side_effect=census):
             self.assert_retained("live-process-reference")
 
+    def test_github_lookups_do_not_block_unrelated_admission(self):
+        """GH#36921: both open-PR lookups run without the registry writer."""
+        other = self.root / "admission-target"
+        other.mkdir()
+        generation = str(uuid4())
+        admissions = AdmissionRegistry(self.store)
+        admissions.open_generation(str(uuid4()), generation, other)
+        identity = self.adapter.capture(os.getpid())
+        admitted = []
+
+        def lookup(slug):
+            """A second real SQLite connection admits while GitHub is queried."""
+            admitted.append(admissions.admit(str(uuid4()), identity, generation, str(other)))
+            return []
+
+        self.prs.side_effect = lookup
+        result, _, attempted = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual((attempted, admitted), (1, [True, True]))
+        self.assertFalse(self.target.exists())
+
+    def test_registration_during_final_lookup_blocks_removal(self):
+        """Every registry check reruns under the reacquired writer before removal."""
+        generation = str(uuid4())
+        identity = self.adapter.capture(os.getpid())
+
+        def lookup(slug):
+            """Admit a live owner for the source during the refresh lookup."""
+            if self.prs.call_count == 2:
+                admissions = AdmissionRegistry(self.store)
+                admissions.open_generation(str(uuid4()), generation, self.target)
+                self.assertTrue(admissions.admit(str(uuid4()), identity, generation))
+            return []
+
+        self.prs.side_effect = lookup
+        self.assert_retained("managed-or-foreign-worktree")
+        with self.store.connection() as connection:
+            row = connection.execute("SELECT state FROM generation_admissions "
+                                     "WHERE generation_id=?", (generation,)).fetchone()
+        self.assertEqual(row["state"], "open")
+
+    def test_writer_reacquisition_failure_after_lookup_retains_source(self):
+        """A writer busy after the lookup aborts before removal; a later pass retires."""
+        blocker = self.store._connect()
+        self.addCleanup(blocker.close)
+
+        def lookup(slug):
+            if self.prs.call_count == 2:
+                blocker.execute("BEGIN IMMEDIATE")
+            return []
+
+        self.prs.side_effect = lookup
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retained", result)
+        self.assertEqual(result.get("category"), "contention", result)
+        self.assertTrue(self.target.exists())
+        blocker.rollback()
+        self.prs.side_effect = None
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertFalse(self.target.exists())
+
     def test_unremoved_probe_can_retry_after_head_changes(self):
         native = cleanup.reconstructible
         calls = 0
 
-        def changed(*args):
+        def changed(*args, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise ValueError("live-process-reference")
-            return native(*args)
+            return native(*args, **kwargs)
 
         with patch.object(cleanup, "reconstructible", side_effect=changed):
             self.assert_retained("live-process-reference")
@@ -287,6 +412,19 @@ class ReconstructibleContract(unittest.TestCase):
         self.git("update-ref", "refs/remotes/origin/feature", self.head)
         result, _, _ = self.retire()
         self.assertEqual(result["status"], "retired", result)
+
+    def test_interrupted_probe_removal_is_not_reported_already_absent(self):
+        with patch.object(cleanup, "verify_reconstructible", side_effect=ValueError("probe-failed")):
+            self.retire()
+        self.assertFalse(self.target.exists())
+        self.options = CleanupOptions(self.output, apply=False, min_age=0)
+        result, _, _ = self.retire()
+        self.assertEqual(result["reason"], "reconstructible-probe-verification-pending", result)
+        self.options = CleanupOptions(self.output, apply=True, min_age=0)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "already-absent", result)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "already-retired", result)
 
     def test_failed_first_probe_blocks_batch(self):
         with patch.object(cleanup, "verify_reconstructible", side_effect=ValueError("probe-failed")):

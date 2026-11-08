@@ -645,6 +645,32 @@ test_lagging_head_validates_only_planning_paths() {
 	return 0
 }
 
+test_staged_rename_publishes_source_deletion() {
+	local name="staged brief rename publishes the source deletion (GH#37002)"
+	local root="" repo="" tree=""
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	printf 'legacy brief\n' >"${repo}/todo/tasks/t038.21-brief.md"
+	git -C "$repo" add todo/tasks/t038.21-brief.md
+	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
+		git -C "$repo" commit -m "seed brief" >/dev/null
+	git -C "$repo" push origin main >/dev/null 2>&1
+	git -C "$repo" mv todo/tasks/t038.21-brief.md todo/tasks/t38.21-brief.md
+	run_publish "$repo" || {
+		fail "$name" publish
+		rm -rf "$root"
+		return 0
+	}
+	tree=$(git --git-dir="${root}/remote.git" ls-tree -r --name-only main -- todo/tasks)
+	if [[ "$tree" == "todo/tasks/t38.21-brief.md" ]]; then pass "$name"; else fail "$name" "tree=[$tree]"; fi
+	rm -rf "$root"
+	return 0
+}
+
 test_contention_replay_and_conflict() {
 	local name="replays unrelated contention"
 	local root="" repo="" hook="" rc=0
@@ -1229,6 +1255,7 @@ main() {
 	test_validation_failure_pushes_nothing
 	test_privacy_validation_by_target_visibility
 	test_lagging_head_validates_only_planning_paths
+	test_staged_rename_publishes_source_deletion
 	test_contention_replay_and_conflict
 	test_crash_replay_is_single_publication
 	test_same_path_contention_is_retryable

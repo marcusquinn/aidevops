@@ -17,7 +17,8 @@ historical rows into `generation_admissions`.
    directories receive explicit inspection results, not silent omission.
 2. Select old linked worktrees within the configured maintenance repositories.
    The default age is one hour since the latest recorded event or worktree/HEAD/index
-   modification. Current admission-controlled generations are left to normal cleanup.
+    modification. Modern generations may use the guarded reconstructible takeover
+    described below; their configured age threshold still applies.
 3. Recheck every recorded process using the native Linux/macOS identity adapter.
    Alive or unknown results retain the directory. A cached `ended` row or a missing
    PID alone is insufficient. There is no global process-cwd scan or descendant census.
@@ -35,7 +36,8 @@ historical rows into `generation_admissions`.
    pathname that might have been reused.
 
 The existing SQLite writer transaction serializes registration changes during
-archive/removal operations. After committing a checkpoint and reacquiring it, the
+native move/removal. Non-destructive archive capture and verification release it.
+After committing a checkpoint or releasing the writer and reacquiring it, the
 script checks the bindings and native identities again. This transition uses
 **recorded processes**, not a claim that historical observation proves complete
 writer coverage. As with the managed lifecycle contract, independent unregistered
@@ -47,11 +49,19 @@ writers are not inferred from cwd, age or Git state.
 
 Unrecorded/unbound legacy worktrees can retire without writer history only when
 their complete content is remote-recoverable and current liveness is observable.
-This class is independent of the ordinary legacy age threshold. It does not
-adopt current-generation admissions or operator-confirmed archive operations.
+For legacy sources this class is independent of the ordinary legacy age threshold.
+Modern takeover still requires the configured age threshold, closed admission and
+complete ended owner evidence (or existing explicit enrolled-only authorization).
+Detached modern sources additionally require verified creation evidence. These
+authority checks are not waived for clean or pushed sources, and no
+`--confirm-legacy-path` is needed for a modern source whose guards already hold.
+An interrupted operator-confirmed archive operation still requires confirmation;
+automatic cleanup cannot inherit that permission.
 It requires a canonical owned linked worktree beneath the managed base, no Git
-lock, and an empty Git status including untracked **and ignored** files and
-submodule state. HEAD must be contained in a remote-tracking ref. All pages of
+lock, and an empty Git status including untracked files and submodule state.
+Ignored files (dependency trees, caches, build output) do not retain the source;
+non-forced removal discards them, as in ordinary cleanup. HEAD must be contained
+in a remote-tracking ref. All pages of
 GitHub open PRs must be fetched successfully; either a matching branch or head
 SHA retains the source. API failures never prove PR absence.
 
@@ -63,9 +73,11 @@ including threads surviving a dead leader. An unreadable or still-live thread
 with missing observations fails closed. A vanished task/closed fd is distinguished
 from unavailable observations. Other operating systems retain these candidates.
 
-Under the existing registry writer transaction, eligibility, GitHub PR absence
-and the process census are checked again immediately before native
-`git worktree remove` **without `--force`**. Branches are never deleted. The event
+GitHub PR lookups release the registry writer, because SQLite does not serialize
+GitHub state and a lookup can outlast the admission busy timeout (GH#36921).
+Under the reacquired registry writer, eligibility, the fetched GitHub PR absence,
+registered writers and the process census are checked again immediately before
+native `git worktree remove` **without `--force`**. Branches are never deleted. The event
 journal records the exact plan before deletion and a
 `reconstructible-worktree-retired` receipt after verifying directory absence,
 commit presence and the unchanged branch ref. Results identify the class; receipts
@@ -93,6 +105,12 @@ hard termination. The temporary pass attempts at most 25 worktrees per invocatio
 A private `legacy-cleanup-position` cursor in the existing state directory prevents
 one failing candidate from starving the remaining backlog. It grants no deletion
 authority and is not a database.
+The limit counts attempted retirements, not examined entries; retained entries do
+not consume it. Preview does not advance the cursor. Each retained modern result
+reports its concrete guard in `reason` and retains the ownership classification in
+`ownership: managed-by-current-cleanup`. Missing paths without a pending archive
+plan report `already-absent`, without claiming removal or preservation; normal
+admission cleanup owns registry absence reconciliation.
 
 Preview (no filesystem or registry writes):
 

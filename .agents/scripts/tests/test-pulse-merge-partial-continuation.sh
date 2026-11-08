@@ -923,6 +923,68 @@ test_periodic_pass() {
 	return 0
 }
 
+test_available_dispatch_recovery() {
+	local label="" marker=""
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:available,origin:worker' '')
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_TIMELINE='[[]]'
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "sweep-restored available issue regains dispatch without merged timeline"
+	if grep -q 'kind=available-dispatch-recovery' "$COMMENT_LOG"; then
+		pass "available dispatch recovery records audit"
+	else
+		fail "available dispatch recovery records audit"
+	fi
+	for label in auto-dispatch no-auto-dispatch parent-task hold-for-review lockdown needs-maintainer-review needs-maintainer-permissions persistent status:in-progress; do
+		reset_case
+		TEST_ISSUE_JSON=$(issue_json "status:available,origin:worker,${label}" '')
+		_pmpc_restore_available_dispatch "$SLUG" 501 || true
+		assert_no_write "available recovery preserves ${label}"
+	done
+	for marker in 'cost-circuit-breaker:fired' 'worker-recovery-loop:blocked' 'dispatch-circuit-breaker:worker_recovery_loop' 'stale-recovery-tick:escalated' 'DISPATCH_CLAIM runner=runner2' 'DISPATCH_LEASE phase=ready expires_at=2000001000' 'CLAIM_RELEASED reason=worker_ownership_lost' 'CLAIM_RELEASED reason=blocked'; do
+		reset_case
+		TEST_ISSUE_JSON=$(issue_json 'status:available,origin:worker' '')
+		TEST_COMMENTS_JSON=$(pages "$(comment 3 MEMBER runner1 "$marker")")
+		_pmpc_restore_available_dispatch "$SLUG" 501 || true
+		assert_no_write "available recovery preserves ${marker}"
+	done
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:available,origin:worker' '')
+	TEST_COMMENTS_JSON=$(pages "$(comment 2 MEMBER runner1 '<!-- stale-recovery-tick:escalated -->')" \
+		"$(comment 3 MEMBER runner1 '<!-- stale-recovery-release:verified -->')")
+	_pmpc_restore_available_dispatch "$SLUG" 501 || true
+	assert_no_write "automatic recovery cannot infer maintainer permission from a copied release marker"
+	TEST_COMMENTS_JSON='[[{"body":"unreadable coordination metadata"}]]'
+	_pmpc_restore_available_dispatch "$SLUG" 501 || true
+	assert_no_write "available recovery fails closed on unreadable comments"
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:available,origin:worker' '')
+	TEST_OPEN_PRS='[{"number":901,"body":"For #501","draft":true}]'
+	_pmpc_restore_available_dispatch "$SLUG" 501 || true
+	assert_no_write "available recovery preserves open draft"
+	TEST_OPEN_PRS='[{"number":901,"body":"Resolves #501","draft":false}]'
+	_pmpc_restore_available_dispatch "$SLUG" 501 || true
+	assert_no_write "available recovery preserves ready PR"
+	TEST_OPEN_PRS_RC=1
+	_pmpc_restore_available_dispatch "$SLUG" 501 || true
+	assert_no_write "available recovery fails closed on PR read failure"
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:available,origin:worker' runner2)
+	_pmpc_restore_available_dispatch "$SLUG" 501 || true
+	assert_no_write "available recovery preserves assigned issue"
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:available,origin:interactive' '')
+	_pmpc_restore_available_dispatch "$SLUG" 501 || true
+	assert_no_write "periodic available recovery requires worker origin"
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:available,origin:worker' '')
+	TEST_COMMENTS_JSON=$(pages "$(comment 2 MEMBER runner1 'DISPATCH_LEASE phase=ready expires_at=1999990000')")
+	_pmpc_restore_available_dispatch "$SLUG" 501
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "available recovery accepts expired lease"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -968,6 +1030,7 @@ main() {
 	test_unparsed_closing_reference_is_noop
 	test_expired_lease_recovery
 	test_periodic_pass
+	test_available_dispatch_recovery
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

@@ -248,6 +248,9 @@ _get_subagent_extra_tools() {
 	playwriter)
 		printf '%s\n' '  playwriter_*: true'
 		;;
+	opencode-browse)
+		printf '%s\n' '  browse_*: true'
+		;;
 	shadcn)
 		printf '%s\n' '  shadcn_*: true' '  write: true' '  edit: true'
 		;;

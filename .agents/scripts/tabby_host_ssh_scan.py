@@ -1,14 +1,31 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Conservative read-only discovery of conflicting user-owned SSH aliases."""
+"""Conservative read-only discovery of conflicting unmanaged SSH aliases."""
 
 import fnmatch
 import glob
+import os
 import shlex
+import stat
 from pathlib import Path
 
-from tabby_host_files import snapshot
 from tabby_session_config import SessionError
+
+
+def scan_snapshot(path):
+    """Read user- or root-owned config without relaxing write-target checks."""
+    for parent in (path, *path.parents):
+        if parent.is_symlink():
+            raise SessionError("Configuration paths must not contain symlinks")
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()) or info.st_nlink != 1:
+        raise SessionError("SSH configuration must be a user- or root-owned regular file without hard links")
+    if info.st_mode & 0o022:
+        raise SessionError("Configuration must not be writable by other accounts")
+    return path.read_bytes()
 
 
 def directives(raw):
@@ -39,26 +56,27 @@ def matches_host(values, alias):
     return not excluded and any(p != "*" and fnmatch.fnmatchcase(alias, p.lower()) for p in positives)
 
 
-def included_paths(values):
+def included_paths(values, include_base):
     for value in values:
         if "%" in value or "$" in value:
             raise SessionError("Dynamic SSH Includes require manual configuration; refusing SSH changes")
         pattern = Path(value).expanduser()
         if not pattern.is_absolute():
-            pattern = Path.home() / ".ssh" / pattern
-        for match in glob.glob(str(pattern)):
+            pattern = include_base / pattern
+        for match in sorted(glob.glob(str(pattern))):
             yield Path(match).absolute()
 
 
-def conflicts(path, alias, managed, seen=None):
+def conflicts(path, alias, managed, seen=None, include_base=None):
     """Follow local Includes without running commands; preserve unmanaged blocks."""
     seen = set() if seen is None else seen
+    include_base = Path.home() / ".ssh" if include_base is None else include_base
     if path == managed or path in seen:
         return False
     if len(seen) > 100:
         raise SessionError("Too many SSH Includes to check safely")
     seen.add(path)
-    raw = snapshot(path)
+    raw = scan_snapshot(path)
     if raw is None:
         return False
     for key, values in directives(raw):
@@ -68,6 +86,7 @@ def conflicts(path, alias, managed, seen=None):
             raise SessionError("Conditional SSH Match blocks require manual configuration; refusing SSH changes")
         if key == "host" and matches_host(values, alias):
             return True
-        if key == "include" and any(conflicts(p, alias, managed, seen) for p in included_paths(values)):
+        if key == "include" and any(conflicts(p, alias, managed, seen, include_base)
+                                    for p in included_paths(values, include_base)):
             return True
     return False

@@ -432,6 +432,7 @@ tag-only packages still require separate explicit operator publication authority
 | DB connection fails | Verify addon in manifest; `cloudron exec --app testapp` → `env \| grep CLOUDRON` |
 | Health check fails | `curl -v http://localhost:8000/health` — verify app listens on httpPort |
 | Memory exceeded | Increase `memoryLimit`; check for leaks; optimize worker counts |
+| 502 instead of 413 on an oversized upload | nginx with `proxy_request_buffering off` hits `writev() failed (32: Broken pipe)` when the app rejects the body early and closes the connection. `proxy_request_buffering on` only reduces it (live test: 413 twice, 502 once in three tries) and adds disk I/O. Accept 502 for streamed uploads and document it; probe with `cloudron-app-qa-helper.sh upload-probe --allow-502` |
 
 ## Validation Checklist
 
@@ -465,6 +466,27 @@ and DERP, exiting non-zero on failure. Containers and the `qa` user's nodes are
 removed on exit. Override the server CLI with
 `--server-cmd 'ssh host headscale'` for non-Cloudron servers. Needs `docker`
 and `jq`. Attach the output to release evidence for each package update.
+
+### Qualifying a package on a live install
+
+`cloudron-app-qa-helper.sh help` lists every subcommand. Each takes
+`--server <cloudron-host>` (the CLI default server is never used); locations
+must look disposable (`*-test`, `*-qa`, `*-clone`) unless `--force-location`.
+
+```bash
+H=cloudron-app-qa-helper.sh; S="--server my.example.com"
+$H install myapp-test $S --image REGISTRY/IMAGE:TAG   # or --versions-url / --build
+$H health myapp-test $S; $H mailbox create qa@example.com $S; $H memory myapp-test $S
+$H upload-probe --url https://myapp-test.example.com/upload --sizes 20M,30M --limit 25M
+$H oauth-probe --url https://myapp-test.example.com --resource-path /mcp --adapter a.mjs $S
+$H realtime --url https://myapp-test.example.com --adapter a.mjs --idle 330 $S
+$H restart-persist myapp-test $S; $H backup-clone myapp-test $S; $H update myapp-test $S; $H cleanup myapp-test $S   # `run` = core checks + cleanup on exit
+```
+
+Output is `PASS:`/`FAIL:` lines; exit is non-zero on failure. Tokens, setup links,
+mail bodies and query strings are never printed. `cleanup` removes apps, clone,
+QA mailbox, 0700 profiles and scratch. Adapter (ES module): `login(page, role)`,
+`realtime(pageA, pageB)` (required for realtime); optional `coedit`, `consent(page)`.
 
 ## Publishing
 

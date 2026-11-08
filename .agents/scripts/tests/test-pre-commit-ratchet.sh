@@ -292,11 +292,47 @@ test_string_literals_new_file_with_debt_blocks() {
 	local stderr_out ret=0
 	stderr_out=$(validate_string_literals "offender.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -gt 0 ] && echo "$stderr_out" | grep -q 'NEW repeated string literals'; then
+	# Empty baseline: the block must still name the literals (GH#36999).
+	if [ "$ret" -gt 0 ] && grep -q 'NEW repeated string literals' <<<"$stderr_out" &&
+		grep -qF '3x: "assertion one matches"' <<<"$stderr_out"; then
 		print_result "string_literals: NEW file with debt BLOCKS" 0
 	else
 		print_result "string_literals: NEW file with debt BLOCKS" 1 \
-			"expected exit>0 + 'NEW' error for new file, got exit=$ret output=[$stderr_out]"
+			"expected exit>0 + 'NEW' error naming the literal for new file, got exit=$ret output=[$stderr_out]"
+	fi
+	return 0
+}
+
+# GH#36999: the blocking message names the NEW literals (in full, including
+# inner spaces), not the file's first three. The base already has more than
+# three repeated literals that sort before the new one, and one pre-existing
+# literal grows from 3x to 4x — it must not be reported as new.
+STRING_LITERAL_WIDE_BASE='#!/usr/bin/env bash
+a1="aa first old literal"; a2="aa first old literal"; a3="aa first old literal"
+b1="bb second old literal"; b2="bb second old literal"; b3="bb second old literal"
+c1="cc third old literal"; c2="cc third old literal"; c3="cc third old literal"
+d1="dd fourth old literal"; d2="dd fourth old literal"; d3="dd fourth old literal"
+'
+
+STRING_LITERAL_WIDE_MORE="${STRING_LITERAL_WIDE_BASE}a4=\"aa first old literal\"
+z1=\"zz brand new literal\"; z2=\"zz brand new literal\"; z3=\"zz brand new literal\"
+"
+
+test_string_literals_block_names_new_literal() {
+	init_repo "strlit_names_new"
+	commit_base "offender.sh" "$STRING_LITERAL_WIDE_BASE"
+	stage_change "offender.sh" "$STRING_LITERAL_WIDE_MORE"
+
+	source_hook_helpers
+	local out ret=0
+	out=$(validate_string_literals "offender.sh" 2>&1) || ret=$?
+
+	if [ "$ret" -gt 0 ] && grep -qF '3x: "zz brand new literal"' <<<"$out" &&
+		! grep -qF '"aa first old literal"' <<<"$out"; then
+		print_result "string_literals: block names the new literal in full (GH#36999)" 0
+	else
+		print_result "string_literals: block names the new literal in full (GH#36999)" 1 \
+			"expected exit>0 naming only \"zz brand new literal\", got exit=$ret output=[$out]"
 	fi
 	return 0
 }
@@ -453,6 +489,7 @@ main() {
 	test_string_literals_preexisting_pass
 	test_string_literals_new_literal_blocks
 	test_string_literals_new_file_with_debt_blocks
+	test_string_literals_block_names_new_literal
 	test_return_statements_preexisting_pass
 	test_return_statements_new_missing_blocks
 	test_positional_params_preexisting_pass

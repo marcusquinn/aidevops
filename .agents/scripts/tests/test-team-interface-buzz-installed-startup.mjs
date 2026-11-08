@@ -125,6 +125,7 @@ try {
   const workDirectory = path.join(fixtureRoot, "work");
   const worktreeBase = path.join(fixtureRoot, "worktrees");
   const reposPath = path.join(fixtureRoot, "repos.json");
+  fixtureEnvironment.AIDEVOPS_LIFECYCLE_STATE_DIR = path.join(fixtureRoot, "lifecycle-state");
   for (const directory of [
     appDataDirectory,
     callerDirectory,

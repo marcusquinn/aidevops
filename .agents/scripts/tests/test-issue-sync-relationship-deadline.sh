@@ -99,6 +99,21 @@ fi
 grep -q 'blocks active task t8' "${TMP_DIR}/legacy.err" || fail "historical blocks marker lacked specific diagnostic"
 pass "completed legacy blocks declaration to active task fails closed"
 
+# GH#37003: a completed alpha-suffixed legacy row is skipped like numeric history.
+cat >"${TMP_DIR}/legacy-TODO.md" <<'LEGACY_EOF'
+- [x] t038.36a Completed alpha child blocked-by:t038.33 ref:GH#106 completed:2026-01-03
+- [ ] t7 Canonical blocker ref:GH#103
+- [ ] t8 Canonical dependent blocked-by:t7 ref:GH#104
+LEGACY_EOF
+_relationship_prepare_edge_snapshot "${TMP_DIR}/legacy-TODO.md" 0 || fail "completed alpha-suffixed row aborted graph preparation"
+[[ "$_RELATIONSHIP_EDGE_CACHE" == 't8|t7' ]] || fail "alpha history dropped active edges: $_RELATIONSHIP_EDGE_CACHE"
+printf '%s\n' '- [ ] t9 Active dependent blocked-by:t038.36a ref:GH#105' >>"${TMP_DIR}/legacy-TODO.md"
+if _relationship_prepare_edge_snapshot "${TMP_DIR}/legacy-TODO.md" 0 2>"${TMP_DIR}/legacy.err"; then
+	fail "active dependency on an alpha-suffixed ID was silently omitted"
+fi
+grep -q 'historical noncanonical task ID t038.36a' "${TMP_DIR}/legacy.err" || fail "active alpha reference lacked specific diagnostic"
+pass "completed alpha-suffixed history is skipped; active references fail closed"
+
 _cache_issue_sync_repository_id example/repo REPO_NODE
 cached_repository_id=$(resolve_repository_node_id example/repo)
 [[ "$cached_repository_id" == "REPO_NODE" ]] || fail "repository identity was not reused within the invocation"

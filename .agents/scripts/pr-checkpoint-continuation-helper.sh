@@ -17,6 +17,8 @@ PR_REVIEW_THREAD_RESPONSE_WORKER_TITLE_SUFFIX="draft checkpoint continuation"
 source "${SCRIPT_DIR}/pr-review-thread-response-scanner.sh"
 # shellcheck source=pr-checkpoint-target-lib.sh
 source "${SCRIPT_DIR}/pr-checkpoint-target-lib.sh"
+# shellcheck source=pr-checkpoint-diagnostic-tooling.sh
+source "${SCRIPT_DIR}/pr-checkpoint-diagnostic-tooling.sh"
 
 PCC_LINKED_ISSUE=""
 PCC_HEAD_REF=""
@@ -31,6 +33,7 @@ PCC_ORIGINAL_STATUS=""
 PCC_OWNERSHIP_TRANSFERRED=0
 PCC_REVISION_APPROVAL=0
 PCC_PREVIOUS_ASSIGNEE=""
+PCC_DIAGNOSTIC_TOOLING_COMMIT=""
 # GH#34008: "for" when the target links its issue only through the
 # orphan-recovery `For #N` line; the worker must add a closing link before ready.
 PCC_LINK_KIND="closing"
@@ -270,7 +273,7 @@ _pcc_usage() {
 	name="$(basename "$0")"
 	printf 'Usage: %s dispatch <repo_slug> <repo_path> <pr_number> <linked_issue> <current_assignee> <authenticated_login>\n' "$name"
 	printf '       %s dispatch-approved <repo_slug> <repo_path> <linked_issue> <authenticated_login>\n' "$name"
-	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id> [--acknowledge-unattributed=ID[,ID]] [--acknowledge-terminal-without-release=ID[,ID]]\n' "$name"
+	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id> [--acknowledge-unattributed=ID[,ID]] [--acknowledge-terminal-without-release=ID[,ID]] [--diagnostic-tooling-commit=SHA]\n' "$name"
 	printf '       %s blocked-attention <repo_slug> <linked_issue> <draft_pr_number>\n' "$name"
 	printf '       %s dispatch-stalled <repo_slug> <repo_path> <linked_issue> <draft_pr_number> <authenticated_login>\n' "$name"
 	return 0
@@ -341,6 +344,12 @@ _prrts_write_prompt_file() {
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
 	safe_title="$(_prrts_prompt_metadata_line "$title" 300)"
 	prompt_file="${STATE_DIR}/${safe_slug}-${pr_number}-prompt.md"
+	if [[ -n "$PCC_DIAGNOSTIC_TOOLING_COMMIT" ]]; then
+		[[ "$PCC_REVISION_APPROVAL" =~ ^[1-9][0-9]*$ ]] || return 1
+		_pcc_write_diagnostic_prompt "$prompt_file" "$repo_slug" "$pr_number" "$worktree_path" || return 1
+		printf '%s\n' "$prompt_file"
+		return 0
+	fi
 	cat >"$prompt_file" <<PROMPT_EOF
 # STALE WORKER DRAFT CONTINUATION — BOUNDED WORKER
 
@@ -431,7 +440,7 @@ _pcc_target_row() {
 	local issue_assignee=""
 	local issue_status=""
 	local validation_rc=0
-	local approval="" approval_id=0 comments="[]" link_kind="" rejection="" self_hold=0
+	local approval="" approval_id=0 comments="[]" link_kind="" rejection="" self_hold=0 tooling_commit=""
 	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json number,state,title,body,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,closingIssuesReferences 2>/dev/null) || {
 		_pcc_target_rejected pr_metadata_unavailable
@@ -475,6 +484,7 @@ _pcc_target_row() {
 		approval_id=$(jq -r '.approval_id' <<<"$approval") || return 1
 		# GH#36138: the approval answered the runner's own draft hold.
 		self_hold=$(jq -r 'if .self_hold_superseded == true then 1 else 0 end' <<<"$approval") || return 1
+		tooling_commit=$(jq -r '.diagnostic_tooling_commit // ""' <<<"$approval") || return 1
 	fi
 	issue_assignee=$(printf '%s' "$issue_json" | jq -er \
 		--arg fallback "$expected_assignee" '.assignees[0].login // $fallback | select(type == "string" and length > 0)' 2>/dev/null) || return 1
@@ -491,7 +501,9 @@ _pcc_target_row() {
 	# before ready.
 	link_kind="closing"
 	_pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue" || link_kind="for"
-	printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$target_row" "$issue_status" "$issue_assignee" "$approval_id" "$link_kind" "$self_hold"
+	printf '%s\t%s\t%s\t%s\t%s\t%s' "$target_row" "$issue_status" "$issue_assignee" "$approval_id" "$link_kind" "$self_hold"
+	[[ -z "$tooling_commit" ]] || printf '\t%s' "$tooling_commit"
+	printf '\n'
 	return 0
 }
 
@@ -641,7 +653,7 @@ _pcc_dispatch() {
 		return 1
 	}
 	local self_hold_superseded=0
-	IFS=$'\t' read -r title PCC_HEAD_REF PCC_HEAD_OID author issue_status PCC_ISSUE_ASSIGNEE PCC_REVISION_APPROVAL PCC_LINK_KIND self_hold_superseded <<<"$target_row"
+	IFS=$'\t' read -r title PCC_HEAD_REF PCC_HEAD_OID author issue_status PCC_ISSUE_ASSIGNEE PCC_REVISION_APPROVAL PCC_LINK_KIND self_hold_superseded PCC_DIAGNOSTIC_TOOLING_COMMIT <<<"$target_row"
 	PCC_REVISION_APPROVAL="${PCC_REVISION_APPROVAL:-0}"
 	PCC_LINK_KIND="${PCC_LINK_KIND:-closing}"
 	PCC_LINKED_ISSUE="$linked_issue"
@@ -656,8 +668,15 @@ _pcc_dispatch() {
 	fi
 	[[ -n "$PCC_HEAD_REF" && "$PCC_HEAD_OID" =~ ^[0-9a-fA-F]{40,64}$ &&
 		"$PCC_ISSUE_ASSIGNEE" == "$expected_assignee" ]] || return 1
+	if ! _pcc_validate_diagnostic_tooling "$repo_path" "$PCC_DIAGNOSTIC_TOOLING_COMMIT"; then
+		printf 'PR_CHECKPOINT_CONTINUATION_BLOCKED: diagnostic tooling commit unavailable or invalid\n' >&2
+		return 1
+	fi
 	now_epoch=$(date +%s)
 	fingerprint="draft-checkpoint:${PCC_HEAD_OID}:contract-4:${PCC_REVISION_APPROVAL}"
+	if [[ -n "$PCC_DIAGNOSTIC_TOOLING_COMMIT" ]]; then
+		fingerprint="draft-checkpoint:${PCC_HEAD_OID}:contract-5:${PCC_REVISION_APPROVAL}:diagnostic-${PCC_DIAGNOSTIC_TOOLING_COMMIT}"
+	fi
 	_prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "0" \
 		"$fingerprint" "stale worker draft continuation" "$now_epoch" "$PRRTS_BOOL_FALSE" \
 		"continue-pr" "$PCC_HEAD_REF" "$PCC_HEAD_OID" "$author" || dispatch_rc=$?
@@ -744,7 +763,7 @@ _pcc_dispatch_approved() {
 
 _pcc_approval_template() {
 	local repo="$1" pr="$2" issue="$3" release_id="$4" attempt="$5" pr_json="" issue_json="" comments=""
-	local option="" acknowledged="[]" terminal_acknowledged="[]"
+	local option="" acknowledged="[]" terminal_acknowledged="[]" tooling_commit=""
 	local trusted_logins=""
 	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr" =~ ^[1-9][0-9]*$ &&
 		"$issue" =~ ^[1-9][0-9]*$ && "$release_id" =~ ^[1-9][0-9]*$ && "$attempt" == attempt:* ]] || return 2
@@ -756,7 +775,10 @@ _pcc_approval_template() {
 			acknowledged="[${option#--acknowledge-unattributed=}]"
 		elif [[ "$option" =~ ^--acknowledge-terminal-without-release=[1-9][0-9]*(,[1-9][0-9]*)*$ && "$terminal_acknowledged" == "[]" ]]; then
 			terminal_acknowledged="[${option#--acknowledge-terminal-without-release=}]"
+		elif [[ "$option" =~ ^--diagnostic-tooling-commit=([0-9a-f]{40}|[0-9a-f]{64})$ && -z "$tooling_commit" ]]; then
+			tooling_commit="${option#--diagnostic-tooling-commit=}"
 		else
+			printf 'approval-template: unsupported, duplicate or malformed option\n' >&2
 			return 2
 		fi
 	done
@@ -768,7 +790,9 @@ _pcc_approval_template() {
 	printf '%s' "$comments" | jq --arg repo "$repo" --argjson pr "$pr_json" --argjson issue "$issue_json" \
 		--argjson release_id "$release_id" --arg attempt "$attempt" --argjson trusted_logins "$trusted_logins" \
 		--argjson acknowledged "$acknowledged" --argjson terminal_acknowledged "$terminal_acknowledged" \
-		'{repo:$repo,pr:$pr,issue:$issue,release_id:$release_id,attempt:$attempt,comments:.,trusted_logins:$trusted_logins,acknowledge_unattributed:$acknowledged,acknowledge_terminal_without_release:$terminal_acknowledged}' |
+		--arg tooling_commit "$tooling_commit" \
+		'{repo:$repo,pr:$pr,issue:$issue,release_id:$release_id,attempt:$attempt,comments:.,trusted_logins:$trusted_logins,acknowledge_unattributed:$acknowledged,acknowledge_terminal_without_release:$terminal_acknowledged} +
+		 (if $tooling_commit == "" then {} else {diagnostic_tooling_commit:$tooling_commit} end)' |
 		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR" template
 	return $?
 }

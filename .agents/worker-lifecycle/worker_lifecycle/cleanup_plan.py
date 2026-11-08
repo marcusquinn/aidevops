@@ -1,15 +1,18 @@
 """Prepare registered runs for cleanup; never archive, remove or infer writers."""
 
 import json
+import os
 from pathlib import Path
 import time
 from uuid import UUID, uuid4, uuid5
 
 from .admission import AdmissionRegistry
 from .enrollment import GenerationEnrollment
-from .process import ProcessAdapter, ProcessIdentity
+from .process import ObservationUnavailable, ProcessAdapter, ProcessIdentity
 from .runtime import adapter_for, require_ready
 from .storage import LifecycleRegistry, StoreConflict
+
+ANCESTOR_LIMIT = 64
 
 
 def _is_admitted(payload: object, row: dict, generation: str) -> bool:
@@ -82,8 +85,49 @@ def _refresh_runs(
             store.observe(str(uuid4()), row["run_id"], row["version"], observation)
 
 
+def _caller_ancestors(adapter: ProcessAdapter) -> set[ProcessIdentity]:
+    """Native identities of the invoking process's ancestors (GH#37022).
+
+    Starts at the parent: the runtime that owns a session is always an ancestor
+    of the cleanup command, never the command itself. A process this user
+    cannot observe ends the walk, so the set is a subset, never a guess.
+    """
+    parent = getattr(adapter, "parent", None)
+    identities: set[ProcessIdentity] = set()
+    if parent is None:
+        return identities
+    pid = os.getppid()
+    for _ in range(ANCESTOR_LIMIT):
+        if pid <= 1:
+            break
+        try:
+            identities.add(adapter.capture(pid))
+            pid = parent(pid)
+        except (ObservationUnavailable, ValueError, OSError):
+            break
+    return identities
+
+
+def _caller_owns_all(rows: list[dict], adapter: ProcessAdapter) -> bool:
+    """True when every unfinished run is this command's own ancestor runtime.
+
+    #aidevops:trust-boundary — diagnosis only. One runtime PID can serve several
+    sessions, so a caller-owned run still blocks retirement; this only lets the
+    refusal name the caller instead of an anonymous owner.
+    """
+    ancestors = _caller_ancestors(adapter)
+    if not ancestors:
+        return False
+    try:
+        identities = [ProcessIdentity.from_dict(json.loads(row["identity"])) for row in rows]
+    except (ValueError, TypeError):
+        return False
+    return all(identity in ancestors for identity in identities)
+
+
 def _close_quiescent(
     store: LifecycleRegistry, path: Path, generation: str, result: dict[str, object],
+    adapter: ProcessAdapter,
 ) -> dict[str, object]:
     enrollment = GenerationEnrollment(store)
     rows = _runs(store, generation)
@@ -92,9 +136,12 @@ def _close_quiescent(
     if not rows or not all(row["admitted"] for row in rows):
         return result
     result["registered_runs"] = len(rows)
-    result["unfinished_runs"] = sum(row["state"] != "ended" for row in rows)
-    if result["unfinished_runs"]:
+    unfinished = [row for row in rows if row["state"] != "ended"]
+    result["unfinished_runs"] = len(unfinished)
+    if unfinished:
         result["status"] = "waiting-for-runs"
+        if _caller_owns_all(unfinished, adapter):
+            result["detail"] = "waiting-for-caller"
         return result
     try:
         AdmissionRegistry(store).close_generation(
@@ -162,4 +209,4 @@ def prepare_cleanup(store: LifecycleRegistry, path: Path) -> dict[str, object]:
     except StoreConflict:
         result["status"] = "retry-required"
         return result
-    return _close_quiescent(store, path, generation, result)
+    return _close_quiescent(store, path, generation, result, adapter)

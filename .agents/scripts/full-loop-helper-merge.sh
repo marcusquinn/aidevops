@@ -265,6 +265,12 @@ _merge_pr_ready_for_interactive_admin_bypass() {
 	return $?
 }
 
+# Recover an interactive auto-merge review-policy block after fresh gate checks.
+# Args: pr_number repo merge_method merge_output expected_head_sha
+#       [squash_subject] [merge_body_file]
+# Returns 0 for an already-completed exact-head merge or an accepted admin write;
+# returns 1 when ineligible or unsuccessful. Headless sessions cannot issue this
+# fallback write, and live authority and readiness checks remain mandatory.
 _merge_try_interactive_admin_auto_fallback() {
 	local pr_number="$1"
 	local repo="$2"

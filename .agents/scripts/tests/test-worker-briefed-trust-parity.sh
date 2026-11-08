@@ -32,6 +32,7 @@ PR_LABELS='[{"name":"origin:worker"}]'
 CRYPTO_APPROVED=0
 USER_API_FAIL=0
 PR_API_FAIL=0
+PR_BODY_ONLY_FAIL=0
 WRITER_LOGIN=runner
 SYNC_HEAD=""
 PR_FILES='[{"filename":".agents/scripts/example.sh","status":"modified"}]'
@@ -75,13 +76,17 @@ gh() {
 }
 
 gh_pr_view() {
-	local arg="" previous="" filter="" payload=""
+	local arg="" previous="" filter="" payload="" body="$PR_BODY"
 	[[ "$PR_API_FAIL" == 0 ]] || return 1
+	if [[ "${TEST_STALE_CACHE:-0}" == 1 && "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" != 1 ]]; then
+		body=$'Resolves #42\nResolves #43'
+	fi
 	for arg in "$@"; do
 		[[ "$previous" != "--jq" ]] || filter="$arg"
 		previous="$arg"
 	done
-	payload=$(jq -n --arg body "$PR_BODY" --argjson labels "$PR_LABELS" '{body:$body,labels:$labels,isDraft:false,headRefOid:"fixture-head"}')
+	[[ "$PR_BODY_ONLY_FAIL" != 1 || -z "$filter" ]] || return 1
+	payload=$(jq -n --arg body "$body" --argjson labels "$PR_LABELS" '{body:$body,labels:$labels,isDraft:false,headRefOid:"fixture-head"}')
 	if [[ -n "$filter" ]]; then jq -r "$filter" <<<"$payload"; else printf '%s\n' "$payload"; fi
 	return 0
 }
@@ -129,6 +134,18 @@ unset WORKER_SESSION_KEY
 FULL_LOOP_HEADLESS=true
 ISSUE_ASSOC=OWNER
 expect_parity 0 'owner issue allowed'
+TEST_STALE_CACHE=1
+[[ "$(worker_briefed_trust_verdict 100 owner/repo)" == deny:* ]]
+_merge_worker_briefed_trust_gate 100 owner/repo 0
+unset TEST_STALE_CACHE
+printf 'PASS full-loop trust gate bypasses stale ambiguous PR body\n'
+PR_BODY_ONLY_FAIL=1
+[[ "$(worker_briefed_trust_verdict 100 owner/repo)" == allow ]]
+PR_BODY='For #42'
+[[ "$(worker_briefed_trust_verdict 100 owner/repo)" == allow ]]
+printf 'PASS closing and explicit references use the same metadata body without a second body read\n'
+PR_BODY_ONLY_FAIL=0
+PR_BODY='Resolves #42'
 ISSUE_ASSOC=COLLABORATOR
 ISSUE_PERMISSION="write"
 expect_parity 0 'live write authority allowed'

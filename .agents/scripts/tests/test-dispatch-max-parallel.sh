@@ -1041,10 +1041,14 @@ test_priority_urgent_retry_backlog() {
 	for n in 1 2 3 4; do
 		printf '%s\n' "$(($(date +%s) - 60))" >"${stamp_dir}/o--tooling--${n}"
 	done
+	# GH#37103: a nonurgent product retry must not take a reserved slot
+	# ahead of fresh product work, even when it ranks first in that stream.
+	printf '%s\n' "$(($(date +%s) - 60))" >"${stamp_dir}/o--product--3"
 	jq -nc '
 		[range(1;5) | {number:., repo_slug:"o/tooling", repo_priority:"tooling", labels:["priority:high"]}] +
 		[range(5;7) | {number:., repo_slug:"o/tooling", repo_priority:"tooling", labels:[]}] +
 		[{number:7, repo_slug:"o/tooling", repo_priority:"tooling", labels:["priority:critical"]}] +
+		[{number:3, repo_slug:"o/product", repo_priority:"product", labels:[]}] +
 		[range(1;3) | {number:., repo_slug:"o/product", repo_priority:"product", labels:[]}] | .[]
 	' >"$candidate_file"
 	# shellcheck disable=SC2317 # called through the real phase/dispatch loops
@@ -1061,6 +1065,7 @@ test_priority_urgent_retry_backlog() {
 	retries=$(awk -F'|' '$1 == "success" && $3 == "repo=o/tooling" && $2 <= 4 { n++ } END { print n+0 }' "$outcomes")
 	duplicate=$(awk -F'|' '{ repo=""; for(i=3;i<=NF;i++) if($i ~ /^repo=/) repo=$i; if(seen[repo "|" $2]++) n++ } END { print n+0 }' "$outcomes")
 	if [[ "$products" == 2 && "$total" == 5 && "${result%% *}" == 5 && "$retries" == 1 && "$duplicate" == 0 &&
+		"$launched_ids" != *"o/product#3 "* &&
 		"$launched_ids" == *"o/tooling#7 "* && "$launched_ids" == *"o/tooling#5 "* ]]; then
 		print_result "priority_loop: urgent retry backlog parallel=${parallel} shares unreserved slots, holds product" 0
 	else

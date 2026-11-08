@@ -255,15 +255,16 @@ for terminal absence reconciliation.
 
 The registry CLI provides two non-destructive operations:
 
-- `prepare-cleanup --path PATH` validates the physical generation and reconciles
-  its registered runs. Empty registrations and
-  observation-only bindings report `coverage-gap`; active or unknown runs report
-  `waiting-for-runs`. These outcomes leave open admission open, so preparation
-  cannot strand a newly created worktree before its first launch. Once all runs
-  are ended, closure rechecks their exact set in the admission transaction;
-  a racing new owner reports `retry-required` without closing admission.
-  Successful closure is permanent. `registered-runs-ended` describes registered runs,
-  not coverage of unregistered writers or permission to remove anything.
+- `prepare-cleanup --path PATH` validates the physical generation and reconciles its registered runs.
+  Empty registrations and observation-only bindings report `coverage-gap`; active or unknown runs report
+  `waiting-for-runs`, adding `detail: waiting-for-caller` when every unfinished run is an ancestor of the
+  invoking command (still blocking: one runtime process can serve several sessions; GH#37022). Read-only
+  git inspection of another tree (`READ_ONLY_VERBS` in `worker_lifecycle_command_targets.py`) admits no
+  owner. These outcomes leave open admission open, so preparation cannot strand a newly created worktree
+  before its first launch. Once all runs are ended, closure rechecks their exact set in the admission
+  transaction; a racing new owner reports `retry-required` without closing admission. Successful closure
+  is permanent. `registered-runs-ended` describes registered runs, not coverage of unregistered writers or
+  permission to remove anything.
 - `preserve-wip --path PATH --repo OWNER/REPO --base-branch BRANCH --output-root DIR`
   performs preparation, creates a WIP archive and verifies its captured payloads
   against the source fingerprint and retained base. `DIR` must already exist,
