@@ -572,6 +572,20 @@ next_task_id() {
 	return "$claim_rc"
 }
 
+# List planning paths committed on the current branch but absent from the
+# remote default branch (e.g. WIP-committed briefs), one per line.
+list_committed_unpublished_planning() {
+	local repo_root="$1"
+	local default_branch="$2"
+	local current_branch="" base=""
+	current_branch=$(git -C "$repo_root" symbolic-ref --short -q HEAD 2>/dev/null || true)
+	[[ "$current_branch" != "$default_branch" ]] || return 0
+	base=$(git -C "$repo_root" merge-base HEAD "origin/${default_branch}" 2>/dev/null || true)
+	[[ -n "$base" ]] || return 0
+	git -C "$repo_root" diff --no-renames --name-only "$base" HEAD -- TODO.md todo/ 2>/dev/null || true
+	return 0
+}
+
 # Main commit function
 # Publishes from a temporary index and retries bounded fast-forward contention.
 commit_planning_files() {
@@ -581,6 +595,18 @@ commit_planning_files() {
 
 	# Check for changes
 	if ! has_planning_changes; then
+		local ahead_root="" ahead_branch="" ahead_paths=""
+		ahead_root=$(git rev-parse --show-toplevel)
+		ahead_branch=$(_todo_default_branch "$ahead_root")
+		ahead_paths=$(list_committed_unpublished_planning "$ahead_root" "$ahead_branch")
+		if [[ -n "$ahead_paths" ]]; then
+			log_error "Planning files are committed on this branch but not on origin/${ahead_branch}; this helper only publishes uncommitted changes:"
+			while IFS= read -r ahead_file; do
+				printf '  - %s\n' "$ahead_file" >&2
+			done <<<"$ahead_paths"
+			log_error "Recover: git reset --soft \$(git merge-base HEAD origin/${ahead_branch}) then rerun this helper"
+			return 1
+		fi
 		log_info "No planning file changes to commit"
 		return 0
 	fi
