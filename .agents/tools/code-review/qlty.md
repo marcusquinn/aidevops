@@ -146,6 +146,15 @@ Qlty results, not another analyzer's totals, to verify the change. The lowest
 flagged count observed in PR #34954 was 50; this is evidence from that run, not a
 universal threshold guarantee.
 
+### Required gate after a ratchet override
+
+After a maintainer adds `ratchet-bump`, the required `Qlty Regression Gate`
+re-evaluates on the next `opened`, `synchronize`, or `reopened` PR event. Push
+the next commit, or close and reopen the PR, to trigger it. Rerunning the failed
+job is not enough: it uses the original event payload without the new label.
+A passing `refresh / Qlty Regression Gate` is a separate check and does not
+satisfy the required `Qlty Regression Gate` context.
+
 | Problem | Fix |
 |---------|-----|
 | Token not found | `setup-local-api-keys.sh list` |
