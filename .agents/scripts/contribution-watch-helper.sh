@@ -695,6 +695,13 @@ _scan_process_notifications() {
 				updated="$latest_time"
 			elif [[ "$reason" == "comment" && "$number" =~ ^[0-9]+$ ]]; then
 				continue
+			elif [[ "$reason" == "mention" ]]; then
+				# Issue-body mention without a human comment: keep it visible on first
+				# sight, but never advance last_any_comment from notification updated_at
+				# (later bot comments bump it and are not human replies).
+				local known_any
+				known_any=$(echo "$_SCAN_STATE" | jq -r --arg key "$item_key" '.items[$key].last_any_comment // ""')
+				[[ -n "$known_any" ]] && continue
 			fi
 
 			if [[ "$latest_author" == "$username" || "$latest_is_aidevops" == "true" ]]; then
@@ -741,7 +748,8 @@ _scan_backfill_fetch_latest_comment() {
 	if ! issue_comments=$(gh api --paginate "repos/${repo_slug}/issues/${number}/comments" \
 		--jq '[.[] | {author: .user.login, created: .created_at, body: (.body // "")}]' 2>/dev/null); then
 		_log_warn "Backfill issue comments API failed for ${repo_slug}#${number}"
-		issue_comments="[]"
+		# Required request failed: print nothing so callers keep cached data.
+		return 0
 	fi
 
 	local pr_review_comments="[]"
@@ -751,6 +759,7 @@ _scan_backfill_fetch_latest_comment() {
 		tracked_type=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].type // "issue"')
 		if [[ "$tracked_type" == "pr" ]]; then
 			_log_warn "Backfill PR review comments API failed for ${repo_slug}#${number}"
+			return 0
 		fi
 		pr_review_comments="[]"
 	fi
@@ -1185,6 +1194,8 @@ _status_refresh_item() {
 
 	local meta author created is_aidevops
 	meta=$(_scan_backfill_fetch_latest_comment "$repo_slug" "$number" "$key")
+	# Request failure is not an empty result: keep cached data and stay eligible.
+	[[ -n "$meta" ]] || return 0
 	if [[ -n "$meta" ]]; then
 		author=$(echo "$meta" | jq -r '.author // ""')
 		created=$(echo "$meta" | jq -r '.created // ""')
@@ -1199,11 +1210,14 @@ _status_refresh_item() {
 			fi
 		fi
 	fi
+	# Record the activity level refreshed so unchanged items yield to others.
+	_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg k "$key" '.items[$k].refreshed_at = (.items[$k].last_any_comment // "")')
 	_scan_set_item_state "$key"
 	return 0
 }
 
-# Refresh up to STATUS_REFRESH_CAP candidate items that lack recorded state.
+# Refresh up to STATUS_REFRESH_CAP candidate items that lack recorded state, or
+# that have state but no owner-comment data and new activity since last refresh.
 # Operates on and persists _SCAN_STATE.
 _status_refresh_legacy() {
 	local username="$1"
@@ -1211,7 +1225,7 @@ _status_refresh_legacy() {
 	[[ -n "$username" ]] || return 0
 
 	local keys
-	keys=$(echo "$_SCAN_STATE" | jq -r "[.items | to_entries[] | select((.value.state // \"\") == \"\") | ${NEEDS_REPLY_JQ} | .key] | .[0:${STATUS_REFRESH_CAP}][]" 2>/dev/null) || keys=""
+	keys=$(echo "$_SCAN_STATE" | jq -r "[.items | to_entries[] | select((.value.state // \"\") == \"\" or ((.value.last_our_comment // \"\") == \"\" and (.value.refreshed_at // \"\") < (.value.last_any_comment // \"\"))) | ${NEEDS_REPLY_JQ} | .key] | .[0:${STATUS_REFRESH_CAP}][]" 2>/dev/null) || keys=""
 	[[ -n "$keys" ]] || return 0
 
 	local key
