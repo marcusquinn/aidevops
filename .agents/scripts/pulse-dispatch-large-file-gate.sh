@@ -861,7 +861,7 @@ _large_file_gate_refresh_debt_comment() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local debt_refs="$3"
-	local comments comment_id updated_body body_file
+	local comments="" comment_id="" updated_body="" body_file=""
 	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
 		--paginate --slurp) || return 1
 	# Only repair framework gate comments from trusted repository writers.
