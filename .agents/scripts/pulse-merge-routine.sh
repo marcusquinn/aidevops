@@ -308,6 +308,13 @@ _pmr_rest_core_progress_allows_run() {
 
 _pmr_require_gh_auth() {
 	local token=""
+	# GH#37232: never let `gh auth token` open a macOS keychain dialog from launchd.
+	# shellcheck source=./background-keychain-helper.sh
+	source "${SCRIPT_DIR}/background-keychain-helper.sh"
+	if ! background_keychain_gh_ready "pulse-merge-routine"; then
+		_pmr_log WARN "macOS keychain locked or gh item missing; skipping merge cycle without prompting (re-check backoff 10m, GH#37232)"
+		return 1
+	fi
 	if ! token=$(gh auth token 2>/dev/null) || [[ -z "$token" ]]; then
 		_pmr_log ERROR "GitHub authentication unavailable; aborting merge routine before API access to prevent unauthenticated requests"
 		printf '%s\n' 'pulse-merge-routine: GitHub authentication unavailable; refusing unauthenticated API access' >&2

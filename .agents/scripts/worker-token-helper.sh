@@ -317,6 +317,14 @@ create_delegated_token() {
 	local permissions="$2"
 	local ttl="$3"
 
+	# GH#37232: avoid a macOS keychain GUI prompt when the keychain is locked
+	# shellcheck source=./background-keychain-helper.sh
+	source "${SCRIPT_DIR}/background-keychain-helper.sh"
+	if ! background_keychain_gh_ready "worker-token-helper"; then
+		log_token "WARN" "Keychain locked or gh item missing; skipping gh auth token"
+		return 1
+	fi
+
 	# Get the current gh auth token
 	local current_token
 	current_token=$(gh auth token 2>/dev/null) || {

@@ -40,6 +40,14 @@ _ddpr_commit_denial_cache() {
 	local cache_dir="${AIDEVOPS_DDPR_PERMISSION_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/work/dispatch-pr-permissions}"
 	local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}" key="" file="" denied_at="" now=""
 	if [[ -z "$token" ]]; then
+		# GH#37232: skip the keychain read when it would open a GUI dialog.
+		local _ddpr_dir
+		_ddpr_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+		if [[ -r "${_ddpr_dir}/background-keychain-helper.sh" ]]; then
+			# shellcheck source=./background-keychain-helper.sh
+			source "${_ddpr_dir}/background-keychain-helper.sh"
+			background_keychain_gh_ready "dispatch-dedup-pr" || return 1
+		fi
 		token=$(gh auth token 2>/dev/null) || token=""
 	fi
 	key=$(printf '%s\n' "$repo_slug" "${GH_HOST:-github.com}" "${GH_CONFIG_DIR:-}" \
