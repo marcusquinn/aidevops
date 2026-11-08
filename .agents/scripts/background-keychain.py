@@ -22,12 +22,12 @@ def main() -> int:
     try:
         sec = ctypes.CDLL(path)
         ref = ctypes.c_void_p()
-        if sec.SecKeychainCopyDefault(ctypes.byref(ref)) != 0 or not ref.value:
-            return 1
-        status = ctypes.c_uint32(0)
-        if sec.SecKeychainGetStatus(ref, ctypes.byref(status)) != 0:
-            return 1
-        return 0 if status.value & K_SEC_UNLOCK_STATE_STATUS else 1
+        result = 1
+        if sec.SecKeychainCopyDefault(ctypes.byref(ref)) == 0 and ref.value:
+            status = ctypes.c_uint32(0)
+            if sec.SecKeychainGetStatus(ref, ctypes.byref(status)) == 0:
+                result = 0 if status.value & K_SEC_UNLOCK_STATE_STATUS else 1
+        return result
     except (OSError, AttributeError):
         return 2
 
