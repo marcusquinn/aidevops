@@ -1004,9 +1004,24 @@ while [[ $_i -lt ${#_modified_args[@]} ]]; do
 	_i=$((_i + 1))
 done
 
+# Raw worker PR writes must use the same identity guard as managed writes.
+# Metadata-only edits remain valid without an inspectable body.
+if [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == pr:create ]] && _shim_is_headless_automation; then
+	_GH_PR_IDENTITY_ORIGIN="origin:worker"
+elif [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == pr:edit ]] && _shim_is_headless_automation; then
+	for _identity_arg in "${_modified_args[@]:2}"; do
+		case "$_identity_arg" in
+		--body | --body=* | -b | -b?* | --body-file | --body-file=* | -F | -F?*)
+			_GH_PR_IDENTITY_ORIGIN="origin:worker"
+			break
+			;;
+		esac
+	done
+fi
 if ! _shim_validate_pr_closing_keywords; then
 	exit 1
 fi
+unset _GH_PR_IDENTITY_ORIGIN
 
 # Open a pre-signed managed body on an inherited descriptor, then remove and
 # verify its only pathname before native gh starts the external write. This is

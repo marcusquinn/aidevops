@@ -187,6 +187,10 @@ _gh_validate_pr_worker_identity() {
 	shift
 	local origin="${_GH_PR_IDENTITY_ORIGIN:-}" labels="" repo="" number="" issues=""
 	local worker_origin="origin:worker"
+	# Raw shim writes can declare their origin in the body before labels exist.
+	if [[ -z "$origin" && "$body_text" == *'<!-- aidevops:origin:worker -->'* ]]; then
+		origin="$worker_origin"
+	fi
 	if [[ "$origin" == "edit" ]]; then
 		repo=$(_gh_extract_repo_from_args "$@")
 		local arg="" pending="" adding_worker=0
