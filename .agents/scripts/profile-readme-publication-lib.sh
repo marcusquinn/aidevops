@@ -449,7 +449,8 @@ _archive_and_remove_profile_publication_worktree() {
 }
 
 # Retire the current publication tree through guarded removal or archival.
-# Defer inside managed runs; retain recovery state and return 1 on failure.
+# Defer inside managed runs; retain recovery state if tree retirement fails (return 1).
+# Registry and intent cleanup errors are ignored; state is cleared on success.
 _cleanup_profile_publication_worktree() {
 	if [[ -z "$PROFILE_PUBLICATION_WORKTREE" ]]; then
 		return 0
