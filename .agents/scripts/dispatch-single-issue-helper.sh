@@ -1502,6 +1502,8 @@ _dsi_write_recovery_checkpoint() {
 	if [[ "$trigger" == *"reason=commit_permission_denied"* ]]; then
 		recovery_owner="human"
 		resume_condition="human-owned permission repair or capability context change; otherwise guarded recheck after the 900-second repository cooldown; commit evidence must remain complete"
+	elif [[ "$trigger" == *"reason=keychain_unavailable"* ]]; then
+		resume_condition="restore readiness helper readability and unlock or repair keychain/gh credentials as needed, or supply GH_TOKEN/GITHUB_TOKEN securely; guarded recheck after AIDEVOPS_KEYCHAIN_BACKOFF_SECS (default 600 seconds) when a marker is active"
 	fi
 
 	[[ -n "$_DSI_ARG_MODEL" ]] && resume_args+=(--model "$_DSI_ARG_MODEL")
