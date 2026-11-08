@@ -37,10 +37,10 @@ _PREFLIGHT_CLEANUP_SYSTEMD_UNIT_SEQUENCE=0
 # Bound both lookups: dscl itself may hang during the outage. No process scans.
 _preflight_macos_user_lookup_ok() {
 	[[ "$(uname -s)" == "Darwin" ]] || return 0
-	local name=""
+	local name="" record_type="/Users"
 	name=$(timeout_sec 3 id -un 2>/dev/null) || return 1
 	[[ -n "$name" && ! "$name" =~ ^[0-9]+$ ]] || return 1
-	timeout_sec 3 dscl . -read "/Users/$name" UniqueID >/dev/null 2>&1 || return 1
+	timeout_sec 3 dscl . -read "${record_type}/$name" UniqueID >/dev/null 2>&1 || return 1
 	return 0
 }
 

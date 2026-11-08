@@ -14,8 +14,8 @@ Reference for diagnosing headless worker failures. Workers are OpenCode instance
 ## macOS user lookup outage: restart, do not retry
 
 If `id -un` prints a numeric UID (for example `501`), tools report
-`No user exists for uid`, or `dscl . -read /Users/<login> UniqueID` fails for
-the current account, stop retrying operations and polling for recovery.
+`No user exists for uid`, or Directory Services cannot read the current
+account's `UniqueID`, stop retrying operations and polling for recovery.
 Checkpoint the session locally (Git/SSH may already be unusable), then tell
 the user to restart the Mac. Pulse and scheduled routine evaluation skip work
 while this check fails; `~/.aidevops/advisories/macos-user-lookup.advisory`
