@@ -788,7 +788,8 @@ _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
 #
 # Arguments: lf_path, parent_issue, repo_slug, repo_path
 # Stdout: "#NNN (existing)" or "#NNN (new)" or
-#         "#NNN (recently-closed — continuation)" on success; empty on failure
+#         "#NNN (reopened)", "#NNN (recently-closed — continuation)", or
+#         "pending (lookup deferred)"; empty on other failures
 # Exit: 0 always (non-fatal; failure is logged)
 #######################################
 _large_file_gate_create_debt_issue() {
@@ -806,6 +807,7 @@ _large_file_gate_create_debt_issue() {
 	_existing_combined=$(_large_file_gate_find_existing_debt_issue "$repo_slug" "$lf_path") || _lookup_rc=$?
 	if [[ "$_lookup_rc" -eq 2 ]]; then
 		echo "[pulse-wrapper] file-size-debt dedup lookup failed for ${lf_path} (parent #${parent_issue}); deferring filing to next cycle (t2995)" >>"$LOGFILE"
+		printf 'pending (lookup deferred)'
 		return 0
 	fi
 	if [[ -n "$_existing_combined" && "$_existing_combined" == *:* ]]; then
@@ -840,11 +842,58 @@ _large_file_gate_create_debt_issue() {
 		fi
 		# The file remains oversized. Reopen the durable per-path issue instead
 		# of creating a successor that can feed an unbounded dispatch loop.
+		# The helper emits the reopened reference on success.
 		_large_file_gate_reopen_debt_issue "$_existing" "$lf_path" "$repo_slug" || true
 		return 0
 	fi
 
 	_large_file_gate_file_new_debt_issue "$lf_path" "$parent_issue" "$repo_slug" ""
+	return 0
+}
+
+#######################################
+# Repair an unresolved gate comment during forced re-evaluation. Preserve
+# the original body/footer and edit only its debt references. Fail closed
+# on comment lookup errors; the next re-evaluation can retry safely.
+# Arguments: issue_number, repo_slug, debt_refs
+#######################################
+_large_file_gate_refresh_debt_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local debt_refs="$3"
+	local comments="" comment_id="" updated_body="" body_file=""
+	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
+		--paginate --slurp) || return 1
+	# Only repair framework gate comments from trusted repository writers.
+	# aidevops:trust-boundary
+	# Inspect the debt line, not unrelated #NNN references elsewhere in the body.
+	comment_id=$(printf '%s' "$comments" | jq -r '
+		flatten | .[]
+		| select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+		| select((.body // "") | startswith("## Large File Simplification Gate"))
+		| select((.body | split("\n") | map(select(startswith("**Simplification issues:**"))) | join("\n"))
+			| (test("#[0-9]+") | not) or contains("pending"))
+		| .id') || return 1
+	# Multiple legacy comments may exist; never pass multiple IDs to PATCH.
+	local id
+	while IFS= read -r id; do
+		[[ "$id" =~ ^[0-9]+$ ]] || continue
+		updated_body=$(printf '%s' "$comments" | jq -r --arg id "$id" --arg refs "$debt_refs" '
+			flatten | .[] | select((.id | tostring) == $id) | .body
+			| select((split("\n") | map(select(startswith("**Simplification issues:**"))) | join("\n"))
+				!= "**Simplification issues:** " + $refs)
+			| split("\n") | map(if startswith("**Simplification issues:**")
+				then "**Simplification issues:** " + $refs else . end) | join("\n")') || return 1
+		[[ -n "$updated_body" ]] || continue
+		body_file=$(mktemp) || return 1
+		printf '%s' "$updated_body" >"$body_file"
+		if ! gh api "repos/${repo_slug}/issues/comments/${id}" --method PATCH \
+			-F "body=@${body_file}" >/dev/null; then
+			rm -f "$body_file"
+			return 1
+		fi
+		rm -f "$body_file"
+	done <<<"$comment_id"
 	return 0
 }
 
@@ -863,6 +912,7 @@ _large_file_gate_create_debt_issue() {
 #   $3 - large_files_display ("path (N lines), " comma-trailed display string)
 #   $4 - large_file_paths (newline-separated paths, may contain \n escapes)
 #   $5 - repo_path (filesystem path to repo for wc -l verification, optional)
+#   $6 - force_recheck (optional; refresh unresolved debt references)
 #######################################
 _large_file_gate_apply() {
 	local issue_number="$1"
@@ -870,6 +920,7 @@ _large_file_gate_apply() {
 	local large_files_display="$3"
 	local large_file_paths="$4"
 	local repo_path="${5:-}"
+	local force_recheck="${6:-false}"
 
 	# Add label to hold dispatch
 	gh label create "needs-simplification" \
@@ -890,9 +941,7 @@ _large_file_gate_apply() {
 	while IFS= read -r _lf_path; do
 		[[ -z "$_lf_path" ]] && continue
 		_debt_ref=$(_large_file_gate_create_debt_issue "$_lf_path" "$issue_number" "$repo_slug" "$repo_path")
-		if [[ -n "$_debt_ref" ]]; then
-			_created_issues="${_created_issues}${_debt_ref}, "
-		fi
+		_created_issues="${_created_issues}${_debt_ref:-pending (link unavailable)}, "
 	done < <(printf '%b' "$large_file_paths")
 
 	_created_issues="${_created_issues%, }"
@@ -907,6 +956,11 @@ Workers dispatched against large files spend most of their context budget readin
 **Status:** Held from dispatch until simplification completes. The \`needs-simplification\` label will be removed automatically when the target file(s) are below threshold.
 
 _Automated by \`_issue_targets_large_files()\` in pulse-wrapper.sh_"
+
+	if [[ "$force_recheck" == "true" ]]; then
+		_large_file_gate_refresh_debt_comment "$issue_number" "$repo_slug" \
+			"${_created_issues:-pending (link unavailable)}" || return 0
+	fi
 
 	_gh_idempotent_comment "$issue_number" "$repo_slug" \
 		"## Large File Simplification Gate" "$simplification_body"
@@ -1254,7 +1308,7 @@ _issue_targets_large_files() {
 	if [[ "$_LFG_FOUND_LARGE" == "true" ]]; then
 		# t2164: thread repo_path through so _large_file_gate_create_debt_issue
 		# can verify recently-closed continuations actually reduced the file size.
-		_large_file_gate_apply "$issue_number" "$repo_slug" "$_LFG_LARGE_FILES" "$_LFG_LARGE_FILE_PATHS" "$repo_path"
+		_large_file_gate_apply "$issue_number" "$repo_slug" "$_LFG_LARGE_FILES" "$_LFG_LARGE_FILE_PATHS" "$repo_path" "$force_recheck"
 		return 0
 	fi
 
