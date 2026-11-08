@@ -80,14 +80,15 @@ function beginWake(state, claimed, now) {
 
 // A failed wake returns its messages and budget, then waits before the next
 // attempt (30s, doubling to 15min), so a persistent fault such as a rejected
-// model does not retry and warn on every poll.
-function rollbackWake(bus, sessionID, state, claimed, now) {
+// model does not retry and warn on every poll. The wait counts from when the
+// failure is seen, so a slow failing prompt still gets the full delay.
+function rollbackWake(bus, sessionID, state, claimed) {
   for (const entry of claimed) store.unclaimMessage(bus.root, sessionID, entry);
   state.wakePending = false;
   state.wakeTimes.pop();
   state.status = "unknown";
   state.wakeFailures += 1;
-  state.wakeRetryAt = now + Math.min(WAKE_RETRY_MS * 2 ** (state.wakeFailures - 1), WAKE_RETRY_MAX_MS);
+  state.wakeRetryAt = bus.now() + Math.min(WAKE_RETRY_MS * 2 ** (state.wakeFailures - 1), WAKE_RETRY_MAX_MS);
 }
 
 /** Wake an idle session with its pending messages. True once OpenCode accepts the prompt. */
@@ -99,7 +100,7 @@ export async function deliverToIdle(bus, sessionID, state, pending = store.pendi
   beginWake(state, claimed, now);
   const failure = await promptSession(bus.client, sessionID, wakeBody(state, claimed));
   if (failure) {
-    rollbackWake(bus, sessionID, state, claimed, now);
+    rollbackWake(bus, sessionID, state, claimed);
     warn("wake", failure);
     return false;
   }
