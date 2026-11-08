@@ -88,11 +88,22 @@ def blocker_value_line:
         end
     end;
 
+def possible_line_marker($pattern):
+  # A marker either exists literally or is joined by same-line comments.
+  # Multiline comments preserve line boundaries in both production parsers.
+  # This is only a conservative prefilter: fences, prefixes and real comment
+  # state remain the responsibility of the unchanged line parsers below.
+  if test($pattern; "i") then true
+  elif contains("<!--") then gsub("<!--[^\n]*?-->"; "") | test($pattern; "i")
+  else false end;
+
 def blocker_text:
-  visible_text | gsub("\r"; "") | split("\n")
-  | map(select(test("^[[:space:]]*([-*+][[:space:]]+)?(\\*\\*)?blocked[- ]by(\\*\\*)?[[:space:]]*:"; "i"))
-    | sub("^[[:space:]]*([-*+][[:space:]]+)?"; "") | blocker_value_line)
-  | join("\n");
+  if (gsub("\r"; "") | possible_line_marker("blocked[- ]by")) then
+    visible_text | gsub("\r"; "") | split("\n")
+    | map(select(test("^[[:space:]]*([-*+][[:space:]]+)?(\\*\\*)?blocked[- ]by(\\*\\*)?[[:space:]]*:"; "i"))
+      | sub("^[[:space:]]*([-*+][[:space:]]+)?"; "") | blocker_value_line)
+    | join("\n")
+  else "" end;
 
 # Twins of issue-hold-marker-lib.sh: do not reuse dependency visible_text,
 # whose fence/comment ordering and Markdown handling have different semantics.
@@ -122,6 +133,7 @@ def hold_strip_comments:
   end;
 
 def operational_hold:
+  if possible_line_marker("defer[[:space:]]+until|do[-[:space:]]+not[-[:space:]]+dispatch|on[-[:space:]]+hold|hold[[:space:]]+for|paused") then
   reduce (split("\n")[]) as $line (
     {fence: "", comment: false, held: false};
     if .held then .
@@ -140,7 +152,8 @@ def operational_hold:
           elif ($normalized | startswith("|") or endswith("|") or ([scan("\\|")] | length) >= 2) then .
           else .held = ($normalized | test("^(defer[[:space:]]+until|do[-[:space:]]+not[-[:space:]]+dispatch|on[-[:space:]]+hold|hold[[:space:]]+for|paused)([[:space:]:]|$)"; "i")) end
       end
-  ) | .held;
+  ) | .held
+  else false end;
 
 def defer_marker:
   contains("HUMAN_UNBLOCK_REQUIRED") or operational_hold;

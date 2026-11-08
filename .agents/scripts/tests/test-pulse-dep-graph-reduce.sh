@@ -23,7 +23,11 @@ fixture='[
   {"number":"invalid","title":"t9: ignored","body":"blocked-by:t1","labels":[],"state":"OPEN"},
   {"number":10,"title":"t10: closed hold","body":"on hold","labels":[],"state":"CLOSED"},
   {"number":11,"title":"t1: duplicate task mapping","body":"blocked-by:#2,#2","labels":[],"state":"OPEN"},
-  {"number":12,"title":"t12: adjacent brief paths","body":"blocked-by:todo/tasks/t1-brief.md,todo/tasks/t2.1-brief.md","labels":[],"state":"OPEN"}
+  {"number":12,"title":"t12: adjacent brief paths","body":"blocked-by:todo/tasks/t1-brief.md,todo/tasks/t2.1-brief.md","labels":[],"state":"OPEN"},
+  {"number":13,"title":"t13: comment joins field","body":"blo<!-- hidden -->cked-by:#1","labels":[],"state":"OPEN"},
+  {"number":14,"title":"t14: carriage return joins field","body":"blo\rcked-by:#1","labels":[],"state":"OPEN"},
+  {"number":15,"title":"t15: uppercase field","body":"BLOCKED BY: #1","labels":[],"state":"OPEN"},
+  {"number":16,"title":"t16: ordinary body","body":"A normal task description.\nImplementation details.\nVerification details.","labels":[{"name":"blocked-by:#1"}],"state":"OPEN"}
 ]'
 
 reference=$(_dep_graph_build_repo_data_reference "$fixture" | jq -S -c .)
@@ -54,6 +58,10 @@ hold_cases=$(jq -cn '[
   [false, "<!-- On hold: hidden -->"],
   [false, "<!--\nPaused: hidden\n--> ordinary prose"],
   [true, "<!-- hidden -->On <!-- hidden -->hold: actual"],
+  [true, "Pa<!-- hidden -->used: actual"],
+  [true, "De<!-- hidden -->fer until approved"],
+  [true, "Do not dis<!-- hidden -->patch"],
+  [true, "Pauſed: Unicode case folding"],
   [true, "<!-- hidden\n--> Hold for approval"],
   [true, "<!-- ``` -->\nPaused: commented fence is not an opener\n```"],
   [false, "```\n<!--\n```\nOrdinary prose"],

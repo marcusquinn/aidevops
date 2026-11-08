@@ -143,25 +143,36 @@ _pulse_run_blocker_refresh_catchup() {
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
 	_pulse_blocker_refresh_starved || return 0
 	declare -F build_dependency_graph_cache >/dev/null 2>&1 || return 0
-	local pending_file=""
+	local pending_file="" progress_file="" graph_stage="build_dependency_graph_cache"
 	pending_file="$(_pulse_post_dispatch_housekeeping_statefile).blocker-refresh-pending"
+	progress_file="${pending_file}.stages"
 	# Persist before any cache write; do not start work we cannot resume safely.
 	touch "$pending_file" || return 1
+	# Keep completed inner stages across the outer 180s watchdog. Repeating a
+	# costly successful rebuild on every retry can starve downstream recovery.
+	# Check actual per-repo freshness, not just a newly written cache's mtime:
+	# failed fetches can preserve older repo data in an otherwise fresh file.
+	if [[ -f "$progress_file" ]] &&
+		{ ! _pulse_housekeeping_stage_recently_done "$graph_stage" "$progress_file" >/dev/null || ! jq -e \
+			--argjson max_age "$((${DEP_GRAPH_CACHE_TTL_SECS:-300} * 2))" '
+		now as $now | (.repos | length) > 0 and all(.repos[];
+			(.built_at | type) == "number" and .built_at > 0
+			and .built_at <= $now and $now - .built_at < $max_age)
+	' "${DEP_GRAPH_CACHE_FILE:-}" >/dev/null 2>&1; }; then
+		rm -f "$progress_file" || return 1
+	fi
 	echo "[pulse-wrapper] Blocker refresh catch-up: dependency graph cache stale, missing or recovery pending — running starved stages (GH#33246)" >>"$LOGFILE"
-	PULSE_DEP_GRAPH_FORCE_REBUILD=1 _pulse_run_budget_priority_stage_with_timeout "build_dependency_graph_cache" "$stage_timeout" \
-		build_dependency_graph_cache || return 1
-	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "0" ]] || return 1
+	PULSE_DEP_GRAPH_FORCE_REBUILD=1 _pulse_run_resumable_housekeeping_stage "$graph_stage" "$progress_file" \
+		_pulse_run_budget_priority_stage_with_timeout "$graph_stage" "$stage_timeout" build_dependency_graph_cache || return 1
 	if declare -F refresh_blocked_status_from_graph >/dev/null 2>&1; then
-		_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$stage_timeout" \
-			refresh_blocked_status_from_graph || return 1
-		[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "0" ]] || return 1
+		_pulse_run_resumable_housekeeping_stage "refresh_blocked_status_from_graph" "$progress_file" \
+			_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$stage_timeout" refresh_blocked_status_from_graph || return 1
 	fi
 	if declare -F release_repaired_brief_holds >/dev/null 2>&1; then
-		_pulse_run_budget_priority_stage_with_timeout "release_repaired_brief_holds" "$stage_timeout" \
-			release_repaired_brief_holds || return 1
-		[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "0" ]] || return 1
+		_pulse_run_resumable_housekeeping_stage "release_repaired_brief_holds" "$progress_file" \
+			_pulse_run_budget_priority_stage_with_timeout "release_repaired_brief_holds" "$stage_timeout" release_repaired_brief_holds || return 1
 	fi
-	rm -f "$pending_file" || return 1
+	rm -f "$pending_file" "$progress_file" || return 1
 	return 0
 }
 
