@@ -754,7 +754,7 @@ function SettingsTab({ React, agent, save }) {
   const problem = projectProblem(settings(draft).project);
   const store = () => {
     setState({ status: "saving" });
-    save({ ...(agent.config ?? {}), ...draft }).then(
+    save({ ...agent.config, ...draft }).then(
       () => setState({ status: "saved" }),
       (error) => setState({ status: "failed", detail: errorMessage(error) }),
     );
