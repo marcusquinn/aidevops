@@ -23,8 +23,15 @@ url="https://github.com/qltysh/qlty/releases/download/v${version}/${asset}"
 }
 download_dir=$(mktemp -d "${RUNNER_TEMP}/qlty-download.XXXXXXXX")
 trap 'rm -rf "$download_dir"' EXIT
-curl --fail --location --silent --show-error --retry 2 --connect-timeout 10 --max-time 120 \
-	"$url" --output "${download_dir}/${asset}"
+if ! curl --fail --location --silent --show-error --retry 2 --connect-timeout 10 --max-time 120 \
+	"$url" --output "${download_dir}/${asset}"; then
+	# Same v0.643.0 asset via the API when the browser download endpoint returns 5xx.
+	printf 'Qlty release download failed; trying pinned GitHub release asset API\n' >&2
+	curl --fail --location --silent --show-error --retry 2 --connect-timeout 10 --max-time 120 \
+		--header 'Accept: application/octet-stream' \
+		'https://api.github.com/repos/qltysh/qlty/releases/assets/524443373' \
+		--output "${download_dir}/${asset}"
+fi
 printf '%s  %s\n' "$digest" "${download_dir}/${asset}" | sha256sum --check --status || {
 	printf 'Qlty release digest mismatch\n' >&2
 	exit 1
