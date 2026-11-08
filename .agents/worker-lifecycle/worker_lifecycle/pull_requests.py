@@ -5,6 +5,7 @@ A failed or malformed API response never proves absence: callers must hold.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from pathlib import Path
 import re
@@ -130,13 +131,13 @@ class PassPullRequests:
     def __init__(self):
         self.results: dict[str, list | Exception] = {}
 
-    def get(self, slug: str, lookup) -> list:
+    def get(self, slug: str, lookup: Callable[[str], list]) -> list:
         """Return the pass result for `slug`, looking it up once."""
         if slug not in self.results:
             return self.refresh(slug, lookup)
         return self._value(slug)
 
-    def refresh(self, slug: str, lookup) -> list:
+    def refresh(self, slug: str, lookup: Callable[[str], list]) -> list:
         """Look `slug` up again and remember the outcome for the pass."""
         try:
             self.results[slug] = lookup(slug)
