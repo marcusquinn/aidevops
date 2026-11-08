@@ -513,10 +513,15 @@ jobs:
         dir="$GITHUB_WORKSPACE"
         while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
         # Fixture cleanup needs a registered managed-run owner, which needs the
-        # user's systemd manager and session bus: start it via linger.
+        # user's systemd manager AND the separate D-Bus user-session socket.
+        # Linger starts the manager but does not provide/activate the bus units.
+        sudo apt-get update -qq
+        sudo apt-get install -y dbus-user-session
         sudo loginctl enable-linger profile-contract
         uid="$(id -u profile-contract)"
         sudo systemctl start "user@${uid}.service"
+        sudo -H -u profile-contract env XDG_RUNTIME_DIR="/run/user/$uid" \
+          systemctl --user start dbus.socket
         for _ in $(seq 1 30); do
           [ -S "/run/user/$uid/bus" ] && break
           sleep 1
