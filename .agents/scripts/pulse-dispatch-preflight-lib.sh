@@ -196,6 +196,47 @@ _preflight_start_merge_first() {
 }
 
 #######################################
+# Start the isolated async cleanup helpers (GH#37218). Launching is cheap and
+# never consumes the pulse cycle budget, so it runs before early dispatch and
+# outside any budgeted stage: a long first wave must not defer
+# preflight_cleanup_and_ledger and starve worktree cleanup. Each helper keeps
+# its own single-runner lock and cadence gate. Missing helpers are skipped;
+# their synchronous fallbacks stay in _preflight_cleanup_and_ledger.
+#
+# Sets _PULSE_ASYNC_CLEANUPS_STARTED=1 in the caller shell so the later
+# cleanup stage does not launch the same helpers twice in one cycle.
+#######################################
+_preflight_start_async_cleanups() {
+	local logs_dir="${HOME}/.aidevops/logs"
+	_PULSE_ASYNC_CLEANUPS_STARTED=1
+	# GH#20554/GH#29292: worktree cleanup (20+ worktrees × 2-5s gh API calls)
+	# runs in a transient user service on systemd so the parent pulse
+	# TimeoutStartSec cannot kill it. Cadence: CLEANUP_WORKTREES_ASYNC_CADENCE_MIN.
+	# Progress and last-run timestamp: ~/.aidevops/logs/cleanup_worktrees.*
+	local worktrees_helper="${SCRIPT_DIR}/cleanup-worktrees-async-helper.sh"
+	if [[ -x "$worktrees_helper" ]]; then
+		_preflight_launch_async_cleanup "$worktrees_helper" \
+			"${logs_dir}/cleanup_worktrees.log" "worktrees" || true
+	fi
+	# GH#21997/GH#29292: stash auditing uses the same isolated launcher.
+	# Progress: ~/.aidevops/logs/cleanup_stashes.*
+	local stashes_helper="${SCRIPT_DIR}/cleanup-stashes-async-helper.sh"
+	if [[ -x "$stashes_helper" ]]; then
+		_preflight_launch_async_cleanup "$stashes_helper" \
+			"${logs_dir}/cleanup_stashes.log" "stashes" || true
+	fi
+	# GH#22415/GH#29292: remote branch cleanup stays dry-run by default and
+	# skips when GitHub API budget is below the configured floor.
+	# Progress: ~/.aidevops/logs/cleanup_remote_branches.*
+	local remote_branches_helper="${SCRIPT_DIR}/cleanup-remote-branches-async-helper.sh"
+	if [[ -x "$remote_branches_helper" ]]; then
+		_preflight_launch_async_cleanup "$remote_branches_helper" \
+			"${logs_dir}/cleanup_remote_branches.log" "remote-branches" || true
+	fi
+	return 0
+}
+
+#######################################
 # Cleanup + zombie reap + ledger maintenance. Runs before worker counting
 # so count_active_workers sees accurate slot availability.
 #######################################
@@ -217,41 +258,19 @@ _preflight_cleanup_and_ledger() {
 		[[ "$_temp_cleanup_timeout" =~ ^[0-9]+$ ]] || _temp_cleanup_timeout=60
 		run_stage_with_timeout "cleanup_stale_temp_worktrees" "$_temp_cleanup_timeout" cleanup_stale_temp_worktrees || true
 	fi
-	# GH#20554/GH#29292: Worktree cleanup is moved to an async background job so
-	# a slow cleanup (20+ worktrees × 2-5s gh API calls each) never blocks the
-	# pulse cycle. On systemd it runs in a transient user service so the parent
-	# pulse TimeoutStartSec cannot kill it. The helper retains its single-runner
-	# lock and cadence gate (CLEANUP_WORKTREES_ASYNC_CADENCE_MIN, default 10 min).
-	# Progress and last-run timestamp: ~/.aidevops/logs/cleanup_worktrees.*
-	local _cleanup_async_helper="${SCRIPT_DIR}/cleanup-worktrees-async-helper.sh"
-	if [[ -x "$_cleanup_async_helper" ]]; then
-		_preflight_launch_async_cleanup "$_cleanup_async_helper" \
-			"${HOME}/.aidevops/logs/cleanup_worktrees.log" "worktrees"
-	else
-		# Fallback: synchronous with short timeout (old GH#18979 behaviour)
+	# GH#37218: async worktree/stash/remote-branch helpers normally start from
+	# _run_preflight_stages before early dispatch, outside the cycle budget.
+	# Standalone callers (or a cycle that has not started them) launch here.
+	if [[ "${_PULSE_ASYNC_CLEANUPS_STARTED:-0}" != "1" ]]; then
+		_preflight_start_async_cleanups || true
+	fi
+	# Fallbacks for missing async helpers stay synchronous and budgeted.
+	if [[ ! -x "${SCRIPT_DIR}/cleanup-worktrees-async-helper.sh" ]]; then
+		# Old GH#18979 behaviour: synchronous with a short timeout.
 		run_stage_with_timeout "cleanup_worktrees" 60 cleanup_worktrees 60 || true
 	fi
-	# GH#21997/GH#29292: Stash cleanup uses the same isolated async launcher so
-	# slow auditing cannot stall preflight or share the parent pulse lifetime.
-	# The helper retains its single-runner lock and cadence gate.
-	# Progress: ~/.aidevops/logs/cleanup_stashes.*
-	local _cleanup_stashes_async_helper="${SCRIPT_DIR}/cleanup-stashes-async-helper.sh"
-	if [[ -x "$_cleanup_stashes_async_helper" ]]; then
-		_preflight_launch_async_cleanup "$_cleanup_stashes_async_helper" \
-			"${HOME}/.aidevops/logs/cleanup_stashes.log" "stashes"
-	else
-		# Fallback: synchronous with the standard pre-run stage timeout.
+	if [[ ! -x "${SCRIPT_DIR}/cleanup-stashes-async-helper.sh" ]]; then
 		run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
-	fi
-	# GH#22415/GH#29292: Remote branch cleanup uses the isolated async launcher so
-	# cross-repo audits do not block preflight or share the parent pulse lifetime.
-	# The helper remains dry-run by default, retains its lock/cadence gate, and
-	# skips when GitHub API budget is below the configured floor.
-	# Progress: ~/.aidevops/logs/cleanup_remote_branches.*
-	local _cleanup_remote_branches_async_helper="${SCRIPT_DIR}/cleanup-remote-branches-async-helper.sh"
-	if [[ -x "$_cleanup_remote_branches_async_helper" ]]; then
-		_preflight_launch_async_cleanup "$_cleanup_remote_branches_async_helper" \
-			"${HOME}/.aidevops/logs/cleanup_remote_branches.log" "remote-branches"
 	fi
 
 	# GH#25136: OpenCode DB archive/VACUUM is heavy SQLite maintenance, not

@@ -1708,6 +1708,11 @@ _run_preflight_stages() {
 	# dispatch. It runs asynchronously while cleanup/capacity stages proceed;
 	# dispatch never waits for merge, CI, review, or GitHub latency.
 	_preflight_start_merge_first || true
+	# GH#37218: async cleanup launches cost no cycle budget. Start them before
+	# early dispatch so a long first wave cannot defer them with the budgeted
+	# preflight_cleanup_and_ledger stage (worktrees piled up for hours).
+	_PULSE_ASYNC_CLEANUPS_STARTED=0
+	_preflight_start_async_cleanups || true
 	# GH#33647: host capacity is local. Cross-repository allocations and
 	# cleanup/reaping can be paced for minutes; neither belongs ahead of the
 	# first implementation wave. Launch still performs all live safety gates.
