@@ -95,7 +95,7 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 | Permissions | `serve-sim permissions` | Manage app permissions with the upstream parser |
 | Camera injection | `serve-sim camera <bundle-id> --file <path>` | Also supports placeholder/webcam sources, `camera switch`, `camera mirror`, `camera status`, `--list-webcams`, and `--stop-webcam` |
 | Diagnose streaming | `serve-sim doctor [-d udid]` | Collects redacted diagnostics from a running server |
-| Record screen | `serve-sim record [-d udid]` | Native-resolution MP4; recording stops at 30 minutes |
+| Record screen | `serve-sim record [-d udid]` | Native-resolution MP4; recording stops at 30 minutes; rotation leaves later footage sideways and a screen-size change can freeze the rest of the video, so stop and start a new recording after either |
 
 Host shell execution and `.ipa` installation require explicit `--allow-exec` on current upstream. Keep it off by default: a raw TCP forward can make remote clients appear local, and app installation does not require the separate exec token. Only enable it on a port inaccessible to untrusted clients. Verify installed version and `--help` before relying on these newer controls.
 

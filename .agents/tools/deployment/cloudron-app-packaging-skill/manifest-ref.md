@@ -66,7 +66,7 @@ The `containerPort` is the port inside the container. `defaultValue` is the sugg
 | `capabilities` | string array | Extra Linux capabilities: `net_admin`, `mlock`, `ping`, `vaapi` |
 | `runtimeDirs` | string array | Writable subdirs of `/app/code` (not backed up, not persisted across updates) |
 | `persistentDirs` | string array | Writable dirs persisted across updates but not in filesystem backup. Use with `backupCommand`. Requires `minBoxVersion: 9.1.0` |
-| `backupCommand` | string | Shell command run during backup (app must be running) to dump persistent data into `/app/data`. It shares the app network namespace, so `localhost` works. Requires `minBoxVersion: 9.1.0` |
+| `backupCommand` | string | Shell command run during backup (app must be running) to dump persistent data into `/app/data`. Requires `minBoxVersion: 9.1.0`. Cloudron 9.1.7 and 9.2.0 run it in a separate network namespace, so reaching the app via `localhost` can fail; use `minBoxVersion: 10.0.0` or later if the command needs `localhost` |
 | `restoreCommand` | string | Shell command run during restore before the app container starts to populate `persistentDirs` from `/app/data`. The app is not running, so `localhost` cannot be used. Requires `minBoxVersion: 9.1.0` |
 
 ## Post-install
