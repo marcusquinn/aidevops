@@ -1788,8 +1788,8 @@ _main_check_unregistered() {
 	local unregistered
 	unregistered=$(detect_unregistered_repo 2>/dev/null) || true
 	if [[ -n "$unregistered" && "$command" != "detect" && "$command" != "repos" ]]; then
-		echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add"
-		echo ""
+		echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add" >&2
+		echo "" >&2
 	fi
 	return 0
 }
