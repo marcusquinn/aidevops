@@ -595,7 +595,7 @@ test_update_bounds_recovery_with_retained_backlog() {
 	done
 	after=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
 
-	if [[ "$before" -lt 4 ]] || [[ "$after" -lt $((before - 1)) ]] ||
+	if [[ "$status" -ne 0 ]] || [[ "$before" -lt 4 ]] || [[ "$after" -lt $((before - 1)) ]] ||
 		! grep -q 'Profile publication sweep: bound reached' "$output_file" ||
 		grep -q 'could not create profile publication worktree' "$output_file"; then
 		print_helper_failure "$test_name" "expected bounded recovery with retained backlog (before=${before} after=${after} status=${status})" "$output_file"
@@ -1879,6 +1879,7 @@ main() {
 		test_update_recovers_dirty_profile_publication_worktree 0600
 		teardown
 		test_update_sweeps_prior_publication_worktrees
+		teardown
 		test_update_bounds_recovery_with_retained_backlog
 		teardown
 		test_update_dry_run_is_canonical_safe

@@ -529,6 +529,13 @@ _profile_sweep_prior_publication_worktrees() {
 	local deadline=0
 	local examined=0
 	local max_examined=0
+	local cursor_file=""
+	local cursor=""
+	local last_name=""
+	local ordered=()
+	local rotated=()
+	local candidate=""
+	local seen_cursor=0
 
 	common_dir=$(git -C "$canonical_repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
 	intent_dir="${common_dir}/aidevops-profile-publication-intents"
@@ -543,7 +550,32 @@ _profile_sweep_prior_publication_worktrees() {
 	max_examined=$((cap * 3))
 	now_epoch=$(date +%s)
 	deadline=$((now_epoch + budget))
-	for intent_path in "$intent_dir"/*.json; do
+	# Resume after the last examined intent (wrapping) so retained trees that
+	# sort first cannot starve later ones across bounded runs.
+	cursor_file="${common_dir}/aidevops-profile-publication-sweep-cursor"
+	if [[ -f "$cursor_file" && ! -L "$cursor_file" ]]; then
+		cursor=$(head -n 1 "$cursor_file" 2>/dev/null || true)
+	fi
+	for candidate in "$intent_dir"/*.json; do
+		ordered+=("$candidate")
+	done
+	if [[ -n "$cursor" ]]; then
+		for candidate in "${ordered[@]}"; do
+			if [[ "$seen_cursor" -eq 1 ]]; then
+				rotated+=("$candidate")
+			elif [[ "$(basename "$candidate")" == "$cursor" ]]; then
+				seen_cursor=1
+			fi
+		done
+		if [[ "$seen_cursor" -eq 1 ]]; then
+			for candidate in "${ordered[@]}"; do
+				rotated+=("$candidate")
+				[[ "$(basename "$candidate")" == "$cursor" ]] && break
+			done
+			ordered=("${rotated[@]}")
+		fi
+	fi
+	for intent_path in "${ordered[@]}"; do
 		[[ -f "$intent_path" && ! -L "$intent_path" ]] || continue
 		if [[ "$examined" -ge "$max_examined" || "$(date +%s)" -ge "$deadline" ]]; then
 			printf 'Profile publication sweep: bound reached (examined=%s budget=%ss); remaining trees deferred\n' \
@@ -567,6 +599,7 @@ _profile_sweep_prior_publication_worktrees() {
 		[[ -d "$worktree_path" ]] || continue
 		[[ "$now_epoch" -ge "$created_epoch" && $((now_epoch - created_epoch)) -ge "$min_age" ]] || continue
 		examined=$((examined + 1))
+		last_name=$(basename "$intent_path")
 		if [[ "$attempts" -ge "$cap" ]] ||
 			! _profile_publication_prior_worktree_is_safe "$worktree_path" "$canonical_repo" "$worktree_base"; then
 			preserved=$((preserved + 1))
@@ -580,6 +613,9 @@ _profile_sweep_prior_publication_worktrees() {
 			preserved=$((preserved + 1))
 		fi
 	done
+	if [[ -n "$last_name" && ! -L "$cursor_file" ]]; then
+		printf '%s\n' "$last_name" >"$cursor_file" 2>/dev/null || true
+	fi
 	if [[ "$retired" -gt 0 || "$preserved" -gt 0 ]]; then
 		printf 'Profile publication sweep: retired %s earlier worktree(s); %s preserved for guarded recovery\n' \
 			"$retired" "$preserved" >&2
