@@ -39,7 +39,7 @@ tools:
 
 **File Structure**: `CloudronManifest.json`, `Dockerfile`, `start.sh`, `logo.png` (256×256). Independently distributed packages also keep `CloudronVersions.json`, a Cloudron-format changelog, a publishing runbook, keyless image/catalog provenance, and at least one privacy-reviewed screenshot or 3:1 hero; follow `cloudron-app-publishing-skill.md`.
 
-**CLI Workflow**:
+**CLI Workflow**: For registry builds, use `cloudron builder login` and `cloudron builder build` before install or update. The current CLI no longer provides `cloudron build`; inspect the installed builder's help before use.
 
 ```bash
 npm install -g cloudron   # once installed, aidevops update-tools and auto-update keep it current
@@ -50,8 +50,6 @@ cloudron logs -f --app testapp
 cloudron exec --app testapp   # shell into container
 cloudron debug --app testapp  # pause app, writable fs
 ```
-
-For registry builds, use `cloudron builder login` and `cloudron builder build` before install or update. The current CLI no longer provides `cloudron build`; inspect the installed builder's help before use.
 
 <!-- AI-CONTEXT-END -->
 
