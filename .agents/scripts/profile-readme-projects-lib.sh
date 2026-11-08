@@ -47,11 +47,15 @@ _list_profile_admin_orgs() {
 	# No -e: zero admin organisations is a valid empty result; malformed input
 	# still exits non-zero through error("malformed").
 	if ! printf '%s\n' "$memberships_json" | jq -r -s '
-		if ([.[] | arrays] | length) == length
-			and ([.[][] | objects | select(([.organization.login, .role | strings] | length) == 2)]
-				| length) == ([.[][]] | length)
-		then [.[][] | select(.role == "admin" and (.state // "active") == "active")
-			| .organization.login | select(test("^[A-Za-z0-9-]+$"))] | unique | .[]
+		if length > 0 and all(.[]; type == "array" and all(.[];
+			type == "object"
+			and ([.organization.login, .role | strings] | length) == 2
+			and (.state == "active" or .state == "pending")
+			and (if .role == "admin" then
+				(.organization.login | test("^[A-Za-z0-9-]+$"))
+			else true end)))
+		then [.[][] | select(.role == "admin" and .state == "active")
+			| .organization.login] | unique | .[]
 		else error("malformed") end
 	' 2>/dev/null; then
 		echo "Warning: malformed GitHub API response for organisation memberships" >&2
