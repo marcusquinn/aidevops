@@ -246,14 +246,11 @@ For interactive maintainer review, complete the full checklist and post the stru
 
 1. Verify checkout freshness and report provenance.
 2. Complete duplicate, temporal, root-cause, safety, and dispatchability checks.
-3. Apply every recommended non-lifecycle label, including type labels such as `bug` and `enhancement`, before presenting or running the approval command.
+3. Apply every recommended non-lifecycle label, including `bug` and `enhancement`, before presenting or running the approval command. After signing, apply only lifecycle/tier labels accepted by approval continuity. A later non-lifecycle label event can permanently stale approval even if removed.
 4. Post the review using the format below so the decision has durable evidence.
 5. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it.
 
-After signing, apply only lifecycle/tier labels accepted by approval continuity. A non-lifecycle label event after signing can permanently stale the approval even if the label is removed; verify the current approval rather than assuming removal restores it.
-
-Before claiming approval is missing or asking the maintainer to approve again,
-query the authoritative current state with
+Before claiming approval is missing or asking the maintainer to approve again, query the authoritative current state with
 `approval-helper.sh verify issue <number> <owner/repo>`. Never infer approval
 state from local `sudo` availability, an earlier label snapshot, or a failed
 attempt to invoke the signing command. Write-authorized comments after approval on a locked issue do not stale it (`reference/auto-merge.md`).
