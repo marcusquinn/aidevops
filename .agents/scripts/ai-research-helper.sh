@@ -31,6 +31,11 @@ source "${SCRIPT_DIR}/headless-runtime-provider.sh"
 
 set -euo pipefail
 
+# Provider helpers expect these runtime constants; default them when the
+# headless launcher is not loaded (nounset-safe).
+OPENCODE_AUTH_FILE="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+OPENCODE_BIN_DEFAULT="${OPENCODE_BIN_DEFAULT:-${OPENCODE_BIN:-opencode}}"
+
 LOG_PREFIX="AI-RESEARCH"
 HAIKU_MODEL_ID="claude-haiku-5-5"
 TEXT_BLOCK_TYPE="text"
@@ -73,14 +78,21 @@ research_auth_backoff_active() {
 	local provider="$1"
 	local model="$2"
 	local backoffs="${3:-}"
-	local key="" reason="" retry_after="" now=""
+	local key="" reason="" retry_after="" updated_at="" stored_sig="" current_sig="" now=""
 	if [[ $# -lt 3 ]]; then
 		backoffs=$("${SCRIPT_DIR}/headless-runtime-helper.sh" backoff status 2>/dev/null) || backoffs=""
 	fi
 	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-	while IFS='|' read -r key reason retry_after _; do
+	while IFS='|' read -r key reason retry_after updated_at stored_sig; do
 		if [[ ( "$key" == "$provider" || "$key" == "$model" ) && "$reason" == "auth_error" ]] &&
 			[[ -z "$retry_after" || "$retry_after" > "$now" ]]; then
+			# Credentials changed since the backoff was recorded: treat as recovered.
+			if [[ -n "$stored_sig" ]]; then
+				current_sig=$(get_auth_signature "$provider" 2>/dev/null) || current_sig=""
+				if [[ -n "$current_sig" && "$current_sig" != "$stored_sig" ]]; then
+					continue
+				fi
+			fi
 			return 0
 		fi
 	done <<<"$backoffs"

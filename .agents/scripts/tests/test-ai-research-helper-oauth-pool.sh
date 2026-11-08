@@ -328,6 +328,7 @@ test_auto_routing_and_fallback() {
 	write_curl_capture_stub
 	cat >"${TEST_ROOT}/bin/opencode" <<'STUB'
 #!/usr/bin/env bash
+[[ "${1:-}" == "auth" ]] && { printf "%s\n" "stub-auth-status"; exit 0; }
 printf '%s\n' "$@" >"${TEST_ROOT}/opencode.args"
 case "${TEST_OPENCODE_RESULT:-ok}" in
 auth) printf '%s\n' '{"type":"error","error":{"data":{"message":"OpenAI API key is missing"}}}'; exit 1 ;;
