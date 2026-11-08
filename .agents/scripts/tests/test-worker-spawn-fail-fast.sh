@@ -83,6 +83,9 @@ _dlw_exec_detached() {
 	return 1
 }
 
+# Keep the real availability probe for the GH#37171 diagnostics cases below.
+REAL_AVAILABLE_DEF=$(declare -f _dlw_systemd_user_service_available)
+
 # Exercise the real systemd backend's non-zero submission path, including a
 # manager query that exits 4 but still reports LoadState=not-found.
 _dlw_systemd_user_service_available() {
@@ -98,6 +101,11 @@ systemctl() {
 	systemd_absent) printf 'not-found\n'; return 4 ;;
 	systemd_lost_reply) printf 'loaded\n'; return 0 ;;
 	systemd_unreachable) return 1 ;;
+	systemd_probe_fail)
+		printf 'Version=255\n'
+		printf 'Failed to connect to bus: Connection timed out <x>\nsecond line\n' >&2
+		return 1
+		;;
 	esac
 	return 1
 }
@@ -176,6 +184,38 @@ for mode in systemd_lost_reply systemd_unreachable; do
 		fail "$mode retains ownership without fallback or breaker failure" "rc=$RUN_RC cb='$RUN_CB'"
 	fi
 done
+
+# --- GH#37171: the pre-submission probe names its failure cause ---
+eval "$REAL_AVAILABLE_DEF"
+uname() {
+	printf 'Linux\n'
+	return 0
+}
+
+: >"$LOGFILE"
+XDG_RUNTIME_DIR="/run/user/0" run_spawn systemd_probe_fail 0
+unavailable_line=$(grep 'selected systemd backend unavailable for #36390' "$LOGFILE" || true)
+if [[ "$RUN_RC" -eq 1 && -n "$RUN_CB" ]] &&
+	[[ "$unavailable_line" == *"reason=manager_probe_failed rc=1 stderr=Failed_to_connect_to_bus:_Connection_timed_out__x_ "* ]] &&
+	[[ "$unavailable_line" != *"second"* && "$unavailable_line" != *"/run/user"* ]] &&
+	[[ "$unavailable_line" == *"xdg_runtime_dir_set=yes"* ]] &&
+	grep -q 'classification=backend_unavailable reason=manager_probe_failed' "$RUN_LOG"; then
+	pass "failed manager probe logs manager_probe_failed with sanitized stderr"
+else
+	fail "failed manager probe logs manager_probe_failed with sanitized stderr" \
+		"rc=$RUN_RC line='$unavailable_line'"
+fi
+
+: >"$LOGFILE"
+AIDEVOPS_WORKER_BACKEND=detached run_spawn systemd_detached_override 0
+unavailable_line=$(grep 'selected systemd backend unavailable for #36390' "$LOGFILE" || true)
+if [[ "$RUN_RC" -eq 1 && "$unavailable_line" == *"reason=env_detached "* ]] &&
+	grep -q 'classification=backend_unavailable reason=env_detached' "$RUN_LOG"; then
+	pass "AIDEVOPS_WORKER_BACKEND=detached override is named as the cause"
+else
+	fail "AIDEVOPS_WORKER_BACKEND=detached override is named as the cause" \
+		"rc=$RUN_RC line='$unavailable_line'"
+fi
 
 printf '\n%s\n' "--- Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ---"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

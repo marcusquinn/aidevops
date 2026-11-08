@@ -217,17 +217,68 @@ _dlw_select_worker_backend() {
 # timers, long-lived children therefore remain visible as leftovers after the
 # oneshot exits (GH#23073). A transient user service gives each worker an
 # intentional lifecycle owner outside aidevops-supervisor-pulse.service.
+#
+# On failure, _DLW_SYSTEMD_UNAVAILABLE_REASON names the probe that failed
+# (GH#37171) so the launch error line carries an actionable cause. Callers
+# running this in a subshell simply do not observe the value.
 _dlw_systemd_user_service_available() {
-	[[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "detached" ]] && return 1
-	if [[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "auto" && "${AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE:-0}" == "1" ]]; then
+	_DLW_SYSTEMD_UNAVAILABLE_REASON=""
+	if [[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "detached" ]]; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="env_detached"
 		return 1
 	fi
-	[[ "$(uname -s 2>/dev/null || printf '%s' unknown)" == "Linux" ]] || return 1
-	command -v systemd-run >/dev/null 2>&1 || return 1
-	command -v systemctl >/dev/null 2>&1 || return 1
+	if [[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "auto" && "${AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE:-0}" == "1" ]]; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="env_skip"
+		return 1
+	fi
+	if [[ "$(uname -s 2>/dev/null || printf '%s' unknown)" != "Linux" ]]; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="not_linux"
+		return 1
+	fi
+	if ! command -v systemd-run >/dev/null 2>&1; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="missing_systemd_run"
+		return 1
+	fi
+	if ! command -v systemctl >/dev/null 2>&1; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="missing_systemctl"
+		return 1
+	fi
 	# A degraded manager can still launch services; status conflates unrelated
 	# failed units with bus availability. Query the manager itself instead.
-	systemctl --user show --property=Version --value >/dev/null 2>&1 || return 1
+	# Keep stderr (bus connection/timeout messages) for diagnostics only.
+	local probe_err="" probe_rc=0
+	probe_err=$(systemctl --user show --property=Version --value 2>&1 >/dev/null) || probe_rc=$?
+	if [[ "$probe_rc" -ne 0 ]]; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="manager_probe_failed rc=${probe_rc} stderr=$(_dlw_systemd_sanitize_probe_text "$probe_err")"
+		return 1
+	fi
+	return 0
+}
+
+# Reduce probe stderr to one bounded, log-safe token: first line only, home
+# directory masked, characters outside a conservative set replaced, and at
+# most 160 characters. Empty input prints "none".
+_dlw_systemd_sanitize_probe_text() {
+	local text="${1:-}"
+	text="${text%%$'\n'*}"
+	text="${text%$'\r'}"
+	if [[ -n "${HOME:-}" ]]; then
+		text="${text//"$HOME"/'~'}"
+	fi
+	text="${text//[^A-Za-z0-9 ._:,~\/()=-]/_}"
+	text="${text// /_}"
+	text="${text:0:160}"
+	[[ -n "$text" ]] || text="none"
+	printf '%s' "$text"
+	return 0
+}
+
+# Print set/unset booleans for the session-bus environment; never values.
+_dlw_systemd_bus_env_summary() {
+	local xdg_set="no" dbus_set="no"
+	[[ -z "${XDG_RUNTIME_DIR+x}" ]] || xdg_set="yes"
+	[[ -z "${DBUS_SESSION_BUS_ADDRESS+x}" ]] || dbus_set="yes"
+	printf 'xdg_runtime_dir_set=%s dbus_session_bus_address_set=%s' "$xdg_set" "$dbus_set"
 	return 0
 }
 
@@ -458,7 +509,13 @@ _dlw_launch_systemd_worker() {
 	shift 2
 	local state_file="${worker_log}.systemd-launch" worker_pid="" systemd_rc=0
 	if ! _dlw_systemd_user_service_available; then
-		echo "[dispatch_worker_launch] ERROR: selected systemd backend unavailable for #${issue_number}; detached fallback suppressed" >>"$LOGFILE"
+		# Mirror _dlw_handle_systemd_launch_failure's classification line for
+		# the pre-submission probe so the cause is visible (GH#37171).
+		local unavailable_reason="${_DLW_SYSTEMD_UNAVAILABLE_REASON:-unknown}" bus_env=""
+		bus_env=$(_dlw_systemd_bus_env_summary)
+		printf '[systemd-launch] classification=backend_unavailable reason=%s %s\n' \
+			"$unavailable_reason" "$bus_env" >>"$worker_log" 2>/dev/null || true
+		echo "[dispatch_worker_launch] ERROR: selected systemd backend unavailable for #${issue_number} (reason=${unavailable_reason} ${bus_env}); detached fallback suppressed" >>"$LOGFILE"
 		return 1
 	fi
 	if worker_pid=$(_DLW_SYSTEMD_STATE_FILE="$state_file" _dlw_exec_systemd_user_service "aidevops-worker" "$worker_log" "$issue_number" "$@"); then
