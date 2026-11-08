@@ -72,7 +72,7 @@ cmd_backoff() {
 	shift || true
 	case "$action" in
 	status)
-		db_query "SELECT provider || '|' || reason || '|' || retry_after || '|' || updated_at FROM provider_backoff ORDER BY provider;"
+		db_query "SELECT provider || '|' || reason || '|' || retry_after || '|' || updated_at || '|' || auth_signature FROM provider_backoff ORDER BY provider;"
 		return 0
 		;;
 	clear)
