@@ -811,7 +811,23 @@ export function getOnDemandMcpAgents() {
 }
 
 /**
- * Check if an MCP entry should be skipped (wrong platform, missing binary).
+ * True when the current runtime must not use this MCP at all: interactive-only
+ * MCPs in headless/worker runtimes, or managed-workspace MCPs without one.
+ */
+function runtimeExcludesMcp(mcp, runtime) {
+  if (mcp.interactiveOnly && headlessPlaywrightRuntime()) return true;
+  return Boolean(mcp.requiresManagedWorkspace && !runtime?.workspaces?.[mcp.name]);
+}
+
+/** Disable an MCP's tools and any inherited config entry in place. */
+function disableMcpInConfig(mcp, config) {
+  if (mcp.toolPattern) config.tools[mcp.toolPattern] = false;
+  if (config.mcp[mcp.name]) config.mcp[mcp.name].enabled = false;
+}
+
+/**
+ * Check if an MCP entry should be skipped (wrong platform, runtime exclusion,
+ * missing binary).
  * @param {object} mcp - MCP registry entry
  * @param {object} config - OpenCode Config object (mutable)
  * @param {object} runtime - Per-plugin MCP runtime metadata
@@ -820,15 +836,8 @@ export function getOnDemandMcpAgents() {
 function shouldSkipMcp(mcp, config, runtime) {
   if (mcp.macOnly && !IS_MACOS) return true;
 
-  if (mcp.interactiveOnly && headlessPlaywrightRuntime()) {
-    if (mcp.toolPattern) config.tools[mcp.toolPattern] = false;
-    if (config.mcp[mcp.name]) config.mcp[mcp.name].enabled = false;
-    return true;
-  }
-
-  if (mcp.requiresManagedWorkspace && !runtime?.workspaces?.[mcp.name]) {
-    if (mcp.toolPattern) config.tools[mcp.toolPattern] = false;
-    if (config.mcp[mcp.name]) config.mcp[mcp.name].enabled = false;
+  if (runtimeExcludesMcp(mcp, runtime)) {
+    disableMcpInConfig(mcp, config);
     return true;
   }
 
