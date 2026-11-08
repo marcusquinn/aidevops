@@ -30,6 +30,29 @@ const PLAYWRIGHT_HEADED_HIDDEN_INIT = fileURLToPath(
   new URL("../../scripts/playwright-headed-hidden-init.cjs", import.meta.url),
 );
 
+// GH#37155: OpenCode browse runs behind a helper that restores the user's real
+// XDG roots (one shared relay token) and refuses headless/worker runtimes.
+const OPENCODE_BROWSE_HELPER = fileURLToPath(
+  new URL("../../scripts/opencode-browse-helper.sh", import.meta.url),
+);
+
+/**
+ * Resolve the browse CLI the same way opencode-browse-helper.sh does: the
+ * installer's bin dir first, then a bare name for the PATH lookup.
+ * @returns {string}
+ */
+function opencodeBrowseBinary() {
+  const xdgBin = process.env.XDG_BIN_HOME || "";
+  const binDir = isAbsolute(xdgBin) ? xdgBin : join(homedir(), ".local", "bin");
+  const candidate = join(binDir, "browse");
+  try {
+    accessSync(candidate, constants.X_OK);
+    return candidate;
+  } catch {
+    return "browse";
+  }
+}
+
 const MCP_ROOTS_FILTER = fileURLToPath(
   new URL("../../scripts/mcp-roots-filter.mjs", import.meta.url),
 );
@@ -242,6 +265,7 @@ function getPkgRunner() {
  *   - timeout: optional per-tool timeout in ms for generated local entries
  *   - requiresBinary: optional binary name that must exist for local MCPs
  *   - macOnly: optional flag for macOS-only MCPs
+ *   - interactiveOnly: optional flag; skipped in headless/worker runtimes
  *   - description: human-readable description for logging
  *
  * @returns {Array<object>}
@@ -493,6 +517,27 @@ export function getMcpRegistry() {
       requiresManagedWorkspace: true,
       alwaysOverwrite: true,
       description: "Default browser automation: Playwright (NOT Playwriter), headless, headed or headed-hidden",
+    },
+    {
+      name: "browse",
+      type: "local",
+      command: ["bash", OPENCODE_BROWSE_HELPER, "mcp"],
+      eager: false,
+      toolPattern: "browse_*",
+      globallyEnabled: false,
+      activationAgent: "opencode-browse",
+      agentSource: ["tools", "browser", "opencode-browse.md"],
+      activationGuidance: [
+        "browse acts in the user's own signed-in browser: use it only when the user asks to use their browser, tabs or logged-in session; otherwise return: use @playwright instead.",
+        "Create a named session scoped to the task's origins before acting; never read or act on tabs the user did not lend, and keep the user's tabs open.",
+        "Ask the user before submitting forms, purchases, messages, deletes or account changes, and hand control back for logins, passkeys and CAPTCHAs.",
+        "If the extension is not connected, return the output of ~/.aidevops/agents/scripts/opencode-browse-helper.sh status instead of retrying.",
+        UNTRUSTED_OUTPUT_GUIDANCE,
+      ],
+      modelTier: "standard",
+      requiresBinary: opencodeBrowseBinary(),
+      interactiveOnly: true,
+      description: "OpenCode browse: drive the user's own signed-in Chromium-family browser (extension-paired); interactive only",
     },
     {
       name: "gsc",
@@ -774,6 +819,12 @@ export function getOnDemandMcpAgents() {
  */
 function shouldSkipMcp(mcp, config, runtime) {
   if (mcp.macOnly && !IS_MACOS) return true;
+
+  if (mcp.interactiveOnly && headlessPlaywrightRuntime()) {
+    if (mcp.toolPattern) config.tools[mcp.toolPattern] = false;
+    if (config.mcp[mcp.name]) config.mcp[mcp.name].enabled = false;
+    return true;
+  }
 
   if (mcp.requiresManagedWorkspace && !runtime?.workspaces?.[mcp.name]) {
     if (mcp.toolPattern) config.tools[mcp.toolPattern] = false;

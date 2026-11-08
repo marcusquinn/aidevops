@@ -17,6 +17,7 @@ const IS_MACOS = platform() === "darwin";
 const AGENT_MCP_TOOLS = {
   // Browser / automation
   "chrome-devtools": ["chrome-devtools_*"],
+  "opencode-browse": ["browse_*"],
   playwright: ["playwright_*"],
   playwriter: ["playwriter_*"],
   "macos-automator": IS_MACOS ? ["macos-automator_*"] : [],

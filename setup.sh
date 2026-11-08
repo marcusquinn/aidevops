@@ -1686,6 +1686,8 @@ _setup_run_non_interactive() {
 	_time_step "disable_ondemand_mcps" disable_ondemand_mcps
 	# Update-if-installed only; never installs Nostr VPN (GH#23846).
 	_time_step "setup_nostr_vpn" _setup_run_noncritical_stage_bounded "Nostr VPN update check" "${AIDEVOPS_SETUP_NOSTR_VPN_TIMEOUT:-120}" setup_nostr_vpn
+	# Install-if-missing for supported browsers; browse self-updates (GH#37155).
+	_time_step "setup_opencode_browse" _setup_run_noncritical_stage_bounded "OpenCode browse setup" "${AIDEVOPS_SETUP_OPENCODE_BROWSE_TIMEOUT:-120}" setup_opencode_browse
 	# Scaffold personal routines repo if not already present (idempotent).
 	# Creates local git repo + private GitHub remote for personal repo only.
 	# Org repos require explicit: aidevops init-routines --org <name>
