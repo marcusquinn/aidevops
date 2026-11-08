@@ -2,11 +2,12 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createDbActivityHeartbeat } from "../db-activity-heartbeat.mjs";
+import { createDbActivityHeartbeat, installDbActivityHeartbeat } from "../db-activity-heartbeat.mjs";
+import { processStartToken } from "../process-liveness.mjs";
 
 function event(type, properties = {}) {
   return { event: { type, properties } };
@@ -135,6 +136,38 @@ test("remove deletes the heartbeat file", () => {
     f.heartbeat.remove();
     assert.ok(!existsSync(f.heartbeat.file));
   } finally {
+    f.cleanup();
+  }
+});
+
+test("startup prunes dead and recycled PIDs but preserves live and unknown identities", async () => {
+  const f = fixture();
+  const token = processStartToken(process.pid);
+  assert.ok(token);
+  const file = (name) => join(f.dir, name);
+  const dead = file("2147483647-dead.json");
+  const stale = file(`${process.pid}-stale.json`);
+  const live = file(`${process.pid}-live.json`);
+  const legacy = file(`${process.pid}-legacy.json`);
+  const malformed = file(`${process.pid}-malformed.json`);
+  writeFileSync(dead, "{}");
+  writeFileSync(stale, JSON.stringify({ process_start_token: `${token}-old` }));
+  writeFileSync(live, JSON.stringify({ process_start_token: token }));
+  writeFileSync(legacy, "{}");
+  writeFileSync(malformed, "{");
+  const heartbeat = installDbActivityHeartbeat({ dir: f.dir, instance: "own" });
+  try {
+    for (let i = 0; i < 100 && (existsSync(dead) || existsSync(stale)); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(existsSync(dead), false);
+    assert.equal(existsSync(stale), false);
+    assert.equal(existsSync(live), true);
+    assert.equal(existsSync(legacy), true);
+    assert.equal(existsSync(malformed), true);
+    assert.equal(JSON.parse(readFileSync(heartbeat.file, "utf8")).process_start_token, token);
+  } finally {
+    heartbeat.remove();
     f.cleanup();
   }
 });
