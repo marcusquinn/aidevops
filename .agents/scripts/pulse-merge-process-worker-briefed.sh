@@ -592,7 +592,8 @@ _merge_worker_briefed_trust_gate() (
 		print_error "Merge blocked by t2449: trust evaluator loading failed"
 		return 1
 	}
-	if verdict=$(worker_briefed_trust_verdict "$pr_number" "$repo_slug"); then
+	# Trust decisions must observe edits made since a cross-cycle cache was warmed.
+	if verdict=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 worker_briefed_trust_verdict "$pr_number" "$repo_slug"); then
 		return 0
 	fi
 	local reason="${verdict#deny:}"
