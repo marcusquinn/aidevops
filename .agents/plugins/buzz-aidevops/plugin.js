@@ -67,7 +67,7 @@ function settings(raw) {
 function projectProblem(project) {
   if (!project) return "Set this agent's project folder in its aidevops settings tab.";
   if (!project.startsWith("/") && !project.startsWith("~/"))
-    return "The project folder must be a full path, such as ~/Git/my-repo.";
+    return "The project folder must be a full path, or start with ~/.";
   return "";
 }
 
@@ -661,7 +661,7 @@ export function apply(ctx) {
         h("input", {
           type: "text",
           value: value.project ?? "",
-          placeholder: "~/Git/my-repo",
+          placeholder: "Full path to a registered repository",
           disabled,
           spellCheck: false,
           onChange: set("project"),

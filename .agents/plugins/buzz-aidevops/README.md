@@ -47,10 +47,10 @@ host access, Buzz asks you to review it again.
    `<agent>-<LocalHostName>`. Each Mac needs a distinct `LocalHostName`
    (`scutil --get LocalHostName`); see
    `.agents/reference/team-interface-buzz-provisioning.md`.
-3. Set **Project folder** to a repository registered with aidevops, such as
-   `~/Git/aidevops`. The agent works in its own linked worktree
-   (`~/Git/_worktrees/<repo>-buzz-<computer>-<agent>`), never in the folder
-   itself.
+3. Set **Project folder** to the folder of a repository registered with
+   aidevops (`repos.json`): a full path, or one starting with `~/`. The agent
+   works in its own linked worktree (`<repo>-buzz-<computer>-<agent>` in the
+   aidevops worktree folder), never in the folder itself.
 4. Leave **aidevops agent** empty to use the Buzz agent's name, or enter the
    per-computer name when the Buzz agent has a different one. A name made for
    another computer is refused.
@@ -104,7 +104,7 @@ that runs, and it differs per install, so a shipped manifest can't carry it.
 ## Remove
 
 Settings → Plugins → aidevops → Remove. aidevops agents stop with it. Their
-worktrees stay under `~/Git/_worktrees/` for normal worktree cleanup.
+worktrees stay in the aidevops worktree folder for normal worktree cleanup.
 
 ## Checks
 
