@@ -27,7 +27,7 @@ tools:
 - **Project pin**: `asc init --app-id <id>` (saves `.asc/project.json`, auto-used by all commands)
 - **Verify**: `asc auth check` | **Multi-account**: `asc auth use <name>`
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
-- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.2 adds Resolution Center rejection details and attachment downloads through cookie-authenticated iris APIs; reviewed through `030c463` — the post-release change only stabilizes upstream affordance-registry tests and does not alter CLI behavior)
+- **GitHub**: https://github.com/tddworks/asc-cli (Apache-2.0, Swift; reviewed through v0.18.9). Recent releases add individual API keys, product-version submission, pricing, experiments and asset-library workflows. Verify installed command help before use.
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
 - **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (Product Page Optimization plus first-time product submission and app pricing/availability guidance; reviewed through `debe0d23f1fd`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (23 workflow skills for the separate community CLI, checked at `3b567352099e`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
