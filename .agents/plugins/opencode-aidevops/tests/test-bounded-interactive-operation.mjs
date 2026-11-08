@@ -14,6 +14,7 @@ import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, terminal }
 import { terminationCases } from "./bounded-operation-termination-cases.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
 import {
+  createProcessTreeTracker,
   parseProcessSnapshot,
   recordOwnedDescendants,
   verifiedNestedTargets,
@@ -448,6 +449,17 @@ describe("bounded interactive operations", () => {
     tracked.set(102, { pgid: 102, started: "Sun Oct  4 03:00:02 2026" });
     recordOwnedDescendants(reparented, 100, tracked);
     assert.deepEqual(verifiedNestedTargets(reparented, tracked, 100).sort(), [102, 104]);
+  });
+
+  test("process inventory excludes its own ps from survivor counts", () => {
+    const entries = parseProcessSnapshot([
+      "100 1 100 S Sun Oct  4 03:00:00 2026",
+      "101 100 100 R Sun Oct  4 03:00:01 2026",
+    ].join("\n"));
+    const tracker = createProcessTreeTracker(100, () => ({ entries, psPid: 101 }));
+    const snapshot = tracker.track();
+    assert.equal(tracker.ownGroupMembers(snapshot), 1);
+    assert.deepEqual(tracker.ownGroupTargets(snapshot), []);
   });
 
   test("a launcher cannot report success without supervisor command evidence", async () => {
