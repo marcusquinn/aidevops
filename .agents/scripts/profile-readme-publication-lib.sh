@@ -241,6 +241,27 @@ _profile_clear_publication_state() {
 	return 0
 }
 
+# Bounded retry for read-only git probes that can transiently time out under
+# canonical Git guards. Args: $1=repo, then git arguments. Prints stdout.
+_profile_git_probe() {
+	local repo="$1"
+	shift
+	local attempts="${AIDEVOPS_PROFILE_GIT_PROBE_ATTEMPTS:-3}"
+	local attempt=0
+	local output=""
+
+	[[ "$attempts" =~ ^[1-9]$ ]] || attempts=3
+	while [[ "$attempt" -lt "$attempts" ]]; do
+		if output=$(git -C "$repo" "$@" 2>/dev/null) && [[ -n "$output" ]]; then
+			printf '%s\n' "$output"
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		[[ "$attempt" -ge "$attempts" ]] || sleep 1
+	done
+	return 1
+}
+
 _profile_write_publication_marker() {
 	local worktree_path="$1"
 	local canonical_repo="$2"
@@ -252,9 +273,14 @@ _profile_write_publication_marker() {
 	local marker_tmp=""
 
 	resolved_worktree_path=$(cd "$worktree_path" 2>/dev/null && pwd -P) || return 1
-	git_dir=$(git -C "$resolved_worktree_path" rev-parse --path-format=absolute --git-dir) || return 1
-	common_dir=$(git -C "$canonical_repo" rev-parse --path-format=absolute --git-common-dir) || return 1
-	canonical_head=$(git -C "$canonical_repo" rev-parse HEAD) || return 1
+	git_dir=$(_profile_git_probe "$resolved_worktree_path" rev-parse --path-format=absolute --git-dir) || return 1
+	common_dir=$(_profile_git_probe "$canonical_repo" rev-parse --path-format=absolute --git-common-dir) || return 1
+	# Prefer the head captured at run start so a slow canonical probe cannot
+	# leave an intent without a marker; fall back to a bounded probe.
+	canonical_head="${PROFILE_PUBLICATION_CANONICAL_HEAD:-}"
+	if [[ -z "$canonical_head" ]]; then
+		canonical_head=$(_profile_git_probe "$canonical_repo" rev-parse HEAD) || return 1
+	fi
 	marker_path="${git_dir}/aidevops-profile-publication.json"
 	marker_tmp="${marker_path}.$$"
 	jq -n \
@@ -479,6 +505,37 @@ _profile_retire_prior_publication_worktree() {
 	return 0
 }
 
+# Print intent paths starting after the persisted cursor name, wrapping around.
+# Args: $1=intent dir, $2=cursor file.
+_profile_sweep_ordered_intents() {
+	local intent_dir="$1"
+	local cursor_file="$2"
+	local cursor=""
+	local candidate=""
+	local all=()
+	local tail_part=()
+	local head_part=()
+
+	if [[ -f "$cursor_file" && ! -L "$cursor_file" ]]; then
+		cursor=$(head -n 1 "$cursor_file" 2>/dev/null || true)
+	fi
+	for candidate in "$intent_dir"/*.json; do
+		all+=("$candidate")
+		# The cursor is a filename boundary even if retirement deleted its file.
+		if [[ -n "$cursor" && "${candidate##*/}" > "$cursor" ]]; then
+			tail_part+=("$candidate")
+		else
+			head_part+=("$candidate")
+		fi
+	done
+	if [[ -n "$cursor" ]]; then
+		printf '%s\n' ${tail_part[@]+"${tail_part[@]}"} ${head_part[@]+"${head_part[@]}"}
+	else
+		printf '%s\n' "${all[@]}"
+	fi
+	return 0
+}
+
 # GH#36543: a failed retirement used to leak its tree permanently because only
 # the current run's tree was ever cleaned. Before creating a new tree, retry
 # earlier ones named by the producer's durable intents. Never blocks publication.
@@ -499,6 +556,14 @@ _profile_sweep_prior_publication_worktrees() {
 	local attempts=0
 	local retired=0
 	local preserved=0
+	local budget=0
+	local deadline=0
+	local examined=0
+	local max_examined=0
+	local cursor_file=""
+	local last_name=""
+	local ordered=()
+	local candidate=""
 
 	common_dir=$(git -C "$canonical_repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
 	intent_dir="${common_dir}/aidevops-profile-publication-intents"
@@ -507,9 +572,23 @@ _profile_sweep_prior_publication_worktrees() {
 	# callback from racing this sweep; hourly runs still clear the previous tree.
 	min_age=$(_profile_publication_sweep_setting "${AIDEVOPS_PROFILE_PUBLICATION_SWEEP_MIN_AGE_SECS:-}" 1800 0 604800)
 	cap=$(_profile_publication_sweep_setting "${AIDEVOPS_PROFILE_PUBLICATION_SWEEP_CAP:-}" 10 1 100)
+	# Bound recovery by time and by examined trees so a large backlog never holds
+	# the overlap lock or starves the refresh; the remainder waits for next run.
+	budget=$(_profile_publication_sweep_setting "${AIDEVOPS_PROFILE_PUBLICATION_SWEEP_BUDGET_SECS:-}" 120 1 3600)
+	max_examined=$((cap * 3))
 	now_epoch=$(date +%s)
-	for intent_path in "$intent_dir"/*.json; do
+	deadline=$((now_epoch + budget))
+	cursor_file="${common_dir}/aidevops-profile-publication-sweep-cursor"
+	while IFS= read -r candidate; do
+		ordered+=("$candidate")
+	done < <(_profile_sweep_ordered_intents "$intent_dir" "$cursor_file")
+	for intent_path in "${ordered[@]}"; do
 		[[ -f "$intent_path" && ! -L "$intent_path" ]] || continue
+		if [[ "$examined" -ge "$max_examined" || "$(date +%s)" -ge "$deadline" ]]; then
+			printf 'Profile publication sweep: bound reached (examined=%s budget=%ss); remaining trees deferred\n' \
+				"$examined" "$budget" >&2
+			break
+		fi
 		intent_values=$(jq -er --arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" \
 			--arg schema "$PROFILE_PUBLICATION_INTENT_SCHEMA" '
 			select(.schema == $schema)
@@ -526,6 +605,8 @@ _profile_sweep_prior_publication_worktrees() {
 		# Intents whose tree is gone stay with Pulse's dated stale-intent cleanup.
 		[[ -d "$worktree_path" ]] || continue
 		[[ "$now_epoch" -ge "$created_epoch" && $((now_epoch - created_epoch)) -ge "$min_age" ]] || continue
+		examined=$((examined + 1))
+		last_name=$(basename "$intent_path")
 		if [[ "$attempts" -ge "$cap" ]] ||
 			! _profile_publication_prior_worktree_is_safe "$worktree_path" "$canonical_repo" "$worktree_base"; then
 			preserved=$((preserved + 1))
@@ -539,6 +620,9 @@ _profile_sweep_prior_publication_worktrees() {
 			preserved=$((preserved + 1))
 		fi
 	done
+	if [[ -n "$last_name" && ! -L "$cursor_file" ]]; then
+		printf '%s\n' "$last_name" >"$cursor_file" 2>/dev/null || true
+	fi
 	if [[ "$retired" -gt 0 || "$preserved" -gt 0 ]]; then
 		printf 'Profile publication sweep: retired %s earlier worktree(s); %s preserved for guarded recovery\n' \
 			"$retired" "$preserved" >&2
@@ -643,7 +727,11 @@ _profile_run_in_worktree() {
 		AIDEVOPS_WORKTREE_CREATE_TASK="$PROFILE_PUBLICATION_REGISTRY_TASK" \
 		worktree_create_registered "$canonical_repo" "$worktree_path" "$canonical_head_before" --detach >/dev/null; then
 		echo "Error: could not create profile publication worktree" >&2
-		# A failed registration may leave a tree. Keep its intent for recovery.
+		# A failed registration may leave a tree. Try guarded cleanup now so
+		# it is not retained unenrolled; otherwise keep its intent for recovery.
+		if [[ -e "$worktree_path" ]]; then
+			_cleanup_profile_publication_worktree || true
+		fi
 		if [[ ! -e "$worktree_path" ]]; then
 			_profile_remove_publication_intent || true
 			_profile_clear_publication_state
