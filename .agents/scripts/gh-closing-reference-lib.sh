@@ -19,6 +19,10 @@ _gh_extract_repo_from_args() {
 			printf '%s\n' "${args[i]#--repo=}"
 			return 0
 			;;
+		-R?*)
+			printf '%s\n' "${args[i]#-R}"
+			return 0
+			;;
 		esac
 		i=$((i + 1))
 	done
