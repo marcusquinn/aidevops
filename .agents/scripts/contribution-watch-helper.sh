@@ -1230,7 +1230,7 @@ _status_print_inbox() {
 	rows=$(echo "$_SCAN_STATE" | jq -r "[.items | to_entries[] | ${NEEDS_REPLY_JQ}] | sort_by(.value.last_any_comment) | reverse
 		| [length, (.[0:${STATUS_DISPLAY_CAP}] | map([.key, (.value.type // \"issue\"), (.value.role // \"commenter\"), (.value.title // \"unknown\"), .value.last_any_comment] | @tsv))] | .[0], .[1][]" 2>/dev/null) || rows=""
 
-	_STATUS_NEEDS_REPLY=$(echo "$rows" | head -n 1)
+	_STATUS_NEEDS_REPLY="${rows%%$'\n'*}"
 	_STATUS_NEEDS_REPLY="${_STATUS_NEEDS_REPLY:-0}"
 	_STATUS_FOUND_NEEDING=false
 	[[ "$_STATUS_NEEDS_REPLY" -gt 0 ]] && _STATUS_FOUND_NEEDING=true
