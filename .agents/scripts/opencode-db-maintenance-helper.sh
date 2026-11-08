@@ -106,11 +106,13 @@ readonly MAINTENANCE_WINDOW_MODE="maintenance-window"
 readonly SQLITE_QUICK_CHECK="PRAGMA quick_check;"
 readonly PRAGMA_PAGE_COUNT="page_count"
 readonly PRAGMA_FREELIST_COUNT="freelist_count"
+readonly PRAGMA_PAGE_SIZE="page_size"
 readonly SESSION_PARENT_ID_COLUMN="parent_id"
 readonly SESSION_PROJECT_ID_COLUMN="project_id"
 
 readonly STATE_DIR="${OPENCODE_MAINTENANCE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/work/opencode-maintenance}"
 readonly STATE_FILE="${STATE_DIR}/last-run.json"
+readonly AUTO_SKIPS_FILE="${STATE_DIR}/auto-skips.json"
 readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 
 # Thresholds — overrideable via env for advanced users.
@@ -121,6 +123,10 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 : "${FORCE_VACUUM_SIZE_MB:=500}"
 : "${AUTO_MIN_SECONDS_BETWEEN:=518400}"
 : "${WAL_LARGE_THRESHOLD_MB:=500}"
+# AUTO_SKIP_ESCALATION_COUNT: consecutive holder-blocked `auto` skips before
+# notice/cleanup advise maintenance-window (default 3).
+: "${AUTO_SKIP_ESCALATION_COUNT:=3}"
+[[ "$AUTO_SKIP_ESCALATION_COUNT" =~ ^[0-9]+$ ]] && AUTO_SKIP_ESCALATION_COUNT=$((10#$AUTO_SKIP_ESCALATION_COUNT)) || AUTO_SKIP_ESCALATION_COUNT=3
 [[ "$FORCE_VACUUM_SIZE_MB" =~ ^[0-9]+$ ]] && FORCE_VACUUM_SIZE_MB=$((10#$FORCE_VACUUM_SIZE_MB)) || FORCE_VACUUM_SIZE_MB=500
 [[ "$AUTO_MIN_SECONDS_BETWEEN" =~ ^[0-9]+$ ]] && AUTO_MIN_SECONDS_BETWEEN=$((10#$AUTO_MIN_SECONDS_BETWEEN)) || AUTO_MIN_SECONDS_BETWEEN=518400
 [[ "$WAL_LARGE_THRESHOLD_MB" =~ ^[0-9]+$ ]] && WAL_LARGE_THRESHOLD_MB=$((10#$WAL_LARGE_THRESHOLD_MB)) || WAL_LARGE_THRESHOLD_MB=500
@@ -329,6 +335,103 @@ _freelist_exceeds_threshold() {
 		return 0
 	fi
 	return 1
+}
+
+# _auto_skip_count — consecutive holder-blocked auto skips (missing file = 0)
+_auto_skip_count() {
+	local value=""
+	if [[ -f "$AUTO_SKIPS_FILE" ]]; then
+		if command -v jq >/dev/null 2>&1; then
+			value=$(jq -r '.consecutive // empty' "$AUTO_SKIPS_FILE" 2>/dev/null || true)
+		else
+			value=$(sed -n 's/^[[:space:]]*"consecutive"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' "$AUTO_SKIPS_FILE" 2>/dev/null | awk 'NR == 1 {print; exit}' || true)
+		fi
+	fi
+	[[ "$value" =~ ^[0-9]+$ ]] || value=0
+	printf '%s\n' "$((10#$value))"
+	return 0
+}
+
+# _auto_skip_record <holders> — append one holder-blocked skip (best-effort).
+# Atomic temp+mv; an unwritable STATE_DIR logs and never fails the scheduled run.
+_auto_skip_record() {
+	local holders="$1"
+	local count page_count="" freelist_count="" page_size="" tmp
+	[[ "$holders" =~ ^[0-9]+$ ]] || holders=0
+	count=$(($(_auto_skip_count) + 1))
+	if _sqlite_available && [[ -f "$OPENCODE_DB" ]]; then
+		page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
+		freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
+		page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
+	fi
+	[[ "$page_count" =~ ^[0-9]+$ ]] || page_count=0
+	[[ "$freelist_count" =~ ^[0-9]+$ ]] || freelist_count=0
+	[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=0
+	if ! mkdir -p "$STATE_DIR" 2>/dev/null || ! tmp=$(mktemp "${STATE_DIR}/auto-skips.XXXXXX" 2>/dev/null); then
+		_log WARN "auto: cannot record skip (state dir unwritable)"
+		return 0
+	fi
+	{
+		cat >"$tmp" <<EOF
+{
+  "consecutive": $count,
+  "recorded_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "holders": $holders,
+  "page_count": $page_count,
+  "freelist_count": $freelist_count,
+  "page_size": $page_size
+}
+EOF
+	} 2>/dev/null &&
+		mv -f "$tmp" "$AUTO_SKIPS_FILE" 2>/dev/null || {
+		rm -f "$tmp" 2>/dev/null || true
+		_log WARN "auto: cannot record skip (write failed)"
+	}
+	return 0
+}
+
+# _auto_skip_advisory — print one advisory line and return 0 when consecutive
+# holder-blocked skips reached AUTO_SKIP_ESCALATION_COUNT and free pages exceed
+# VACUUM_FREELIST_THRESHOLD; return 1 (silent) otherwise, including no state.
+_auto_skip_advisory() {
+	local skips page_count freelist_count page_size reclaim_bytes
+	skips=$(_auto_skip_count)
+	[[ "$skips" -ge "$AUTO_SKIP_ESCALATION_COUNT" && "$skips" -gt 0 ]] || return 1
+	_sqlite_available && [[ -f "$OPENCODE_DB" ]] || return 1
+	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
+	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
+	page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
+	[[ "$page_size" =~ ^[0-9]+$ ]] || return 1
+	_freelist_exceeds_threshold "$freelist_count" "$page_count" || return 1
+	reclaim_bytes=$((10#$freelist_count * 10#$page_size))
+	printf '[OPENCODE MAINTENANCE] %s consecutive scheduled runs skipped (opencode running); ~%s MB reclaimable free pages in %s. Run aidevops opencode-db maintenance-window --force-opencode to reclaim.\n' \
+		"$skips" "$((reclaim_bytes / 1048576))" "$OPENCODE_DB"
+	return 0
+}
+
+# Subcommand: reclaimable — per-DB free-page estimate (consumed by aidevops cleanup).
+cmd_reclaimable() {
+	if [[ "${OPENCODE_MAINTENANCE_SINGLE_DB:-0}" != 1 ]]; then
+		local db state_dir
+		while IFS= read -r -d '' db; do
+			state_dir="$STATE_DIR"
+			if [[ ! "$db" -ef "$OPENCODE_DB" ]]; then state_dir="${db%/*}/aidevops-maintenance"; fi
+			OPENCODE_DB_PATH="$db" OPENCODE_MAINTENANCE_SINGLE_DB=1 \
+				OPENCODE_MAINTENANCE_STATE_DIR="$state_dir" \
+				bash "${BASH_SOURCE[0]}" reclaimable || true
+		done < <(opencode_db_inventory "$OPENCODE_DB")
+		return 0
+	fi
+	_opencode_installed && _sqlite_available && [[ -f "$OPENCODE_DB" ]] || return 0
+	local page_count freelist_count page_size
+	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
+	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
+	page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
+	[[ "$page_count" =~ ^[0-9]+$ && "$freelist_count" =~ ^[0-9]+$ && "$page_size" =~ ^[0-9]+$ ]] || return 0
+	printf 'Reclaimable free pages: %s MB of %s MB in %s\n' \
+		"$((10#$freelist_count * 10#$page_size / 1048576))" "$((10#$page_count * 10#$page_size / 1048576))" "$OPENCODE_DB"
+	_auto_skip_advisory || true
+	return 0
 }
 
 # _wal_checkpoint_probe <db>
@@ -768,7 +871,7 @@ cmd_report() {
 
 	local page_count page_size freelist_count
 	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
-	page_size=$(_pragma "$OPENCODE_DB" "page_size")
+	page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
 	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
 	if [[ ! "$page_count" =~ ^[0-9]+$ || ! "$freelist_count" =~ ^[0-9]+$ || ! "$page_size" =~ ^[0-9]+$ ]]; then
 		print_error "Unable to read SQLite page counts or page size from $OPENCODE_DB"; return 1
@@ -1024,6 +1127,10 @@ _maintain_write_state() {
 	fi
 
 	mkdir -p "$STATE_DIR"
+	# A completed maintain ends any run of holder-blocked auto skips.
+	if [[ "$step_failures" -eq 0 && "$vacuum_deferred" != true ]]; then
+		rm -f "$AUTO_SKIPS_FILE" 2>/dev/null || true
+	fi
 	cat >"$STATE_FILE" <<EOF
 {
   "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
@@ -1425,6 +1532,7 @@ cmd_auto() {
 	cmd_maintain --auto || rc=$?
 	if [[ "$rc" -eq 2 ]]; then
 		_log INFO "auto: skipped — opencode active"
+		_auto_skip_record "$(_opencode_process_count)"
 		return 0
 	fi
 	return "$rc"
@@ -1640,6 +1748,11 @@ cmd_notice() {
 		return 0
 	fi
 
+	# Repeated holder-blocked auto skips with reclaimable free pages: actionable.
+	if _auto_skip_advisory; then
+		return 0
+	fi
+
 	local now last_ts age db_bytes wal_bytes db_mb wal_mb due=false reason="" compact_notice=false
 	now=$(date +%s)
 	last_ts=$(_state_mtime_epoch "$STATE_FILE")
@@ -1802,6 +1915,7 @@ main() {
 	uninstall) cmd_uninstall "$@" ;;
 	status) cmd_status "$@" ;;
 	notice) cmd_notice "$@" ;;
+	reclaimable) cmd_reclaimable "$@" ;;
 	sessions | find-session | find-sessions) cmd_sessions "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
