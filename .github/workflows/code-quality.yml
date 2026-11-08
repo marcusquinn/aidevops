@@ -516,6 +516,7 @@ jobs:
         # user's systemd manager and session bus: start it via linger.
         sudo loginctl enable-linger profile-contract
         uid="$(id -u profile-contract)"
+        sudo systemctl start "user@${uid}.service"
         for _ in $(seq 1 30); do
           [ -S "/run/user/$uid/bus" ] && break
           sleep 1
