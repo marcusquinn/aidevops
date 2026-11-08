@@ -15,6 +15,8 @@
 #                  isolated DBs, superseded layout-migration backups)
 #   observability  observability-helper.sh retention-maintenance (verified
 #                  archive partitions)
+#   trash          todo-sync-trash-retention.sh (trashed TODO-sync clones in
+#                  ~/.Trash past the age cutoff or newest-N cap; GH#37214)
 #
 # Usage:
 #   storage-cleanup-helper.sh [report]            Sizes and owning cleaners (read-only)
@@ -37,7 +39,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=./worktree-paths.sh
 source "${SCRIPT_DIR}/worktree-paths.sh"
 
-readonly SC_STORES="tmp worktrees artefacts opencode observability"
+readonly SC_STORES="tmp worktrees artefacts opencode observability trash"
 readonly SC_SCHEDULE_NAME="storage-hygiene"
 readonly SC_APPLY="apply" SC_DRY_RUN="dry-run"
 SC_SIZE_TIMEOUT="${STORAGE_CLEANUP_SIZE_TIMEOUT:-30}"
@@ -78,6 +80,7 @@ _sc_store_paths() {
 			"${workspace}/work/repo-layout-migrations"
 		;;
 	observability) printf '%s\n' "${workspace}/observability" ;;
+	trash) ;; # Only owned buckets inside ~/.Trash; sized by _sc_trash_kb.
 	*) return 1 ;;
 	esac
 	return 0
@@ -91,6 +94,7 @@ _sc_store_cleaner() {
 	artefacts) printf '%s\n' "worktree-artefact-reclaim.sh: ignored build output in worktrees idle ${AIDEVOPS_WORKTREE_IDLE_DAYS:-14}+ days moves to Trash" ;;
 	opencode) printf '%s\n' "opencode-db-maintenance-helper.sh auto: VACUUM, isolated DBs, layout backups" ;;
 	observability) printf '%s\n' "observability-helper.sh retention-maintenance: verified archives" ;;
+	trash) printf '%s\n' "todo-sync-trash-retention.sh: TODO-sync buckets older than ${TODO_SYNC_TRASH_RETENTION_DAYS:-3}d or beyond newest ${TODO_SYNC_TRASH_MAX_COUNT:-5}" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -124,6 +128,17 @@ _sc_store_kb() {
 		total=$((total + kb))
 	done < <(_sc_store_paths "$store")
 	printf '%s\n' "$total"
+	return 0
+}
+
+# Prints KiB held by owned TODO-sync trash buckets (not the whole ~/.Trash).
+_sc_trash_kb() {
+	local out="" total_kib=""
+	out=$(timeout_sec "$SC_SIZE_TIMEOUT" bash "${SCRIPT_DIR}/todo-sync-trash-retention.sh" report 2>/dev/null) || return 1
+	total_kib="${out##*kib=}"
+	total_kib="${total_kib%%[[:space:]]*}"
+	[[ "$total_kib" =~ ^[0-9]+$ ]] || return 1
+	printf '%s\n' "$total_kib"
 	return 0
 }
 
@@ -176,6 +191,13 @@ cmd_report() {
 		if [[ "$store" == "artefacts" ]]; then
 			# Counted inside worktrees; eligibility needs the bounded preview.
 			size="(in wt)"
+		elif [[ "$store" == "trash" ]]; then
+			if kb=$(_sc_trash_kb); then
+				size=$(_sc_human_kb "$kb")
+			else
+				size="?"
+				timed_out=1
+			fi
 		elif kb=$(_sc_store_kb "$store"); then
 			size=$(_sc_human_kb "$kb")
 		else
@@ -235,6 +257,16 @@ _sc_preview_opencode_retention() {
 	return "$rc"
 }
 
+# Report TODO-sync trash buckets (dry-run prune) plus the orphan-cleanup class,
+# which shares ~/.Trash but is only reported: it may hold unique work.
+_sc_preview_trash() {
+	local rc=0
+	bash "${SCRIPT_DIR}/todo-sync-trash-retention.sh" prune || rc=$?
+	bash "${SCRIPT_DIR}/todo-sync-trash-retention.sh" orphan-report || true
+	printf 'Apply permanently deletes only the TODO-sync buckets listed above.\n'
+	return "$rc"
+}
+
 _sc_dry_run_store() {
 	local store="$1" rc=0
 	case "$store" in
@@ -255,6 +287,7 @@ _sc_dry_run_store() {
 		bash "${SCRIPT_DIR}/observability-helper.sh" retention-maintenance --dry-run \
 			--max-partitions 20 --max-duration-seconds 120 || rc=$?
 		;;
+	trash) _sc_preview_trash || rc=$? ;;
 	*) return 1 ;;
 	esac
 	return "$rc"
@@ -282,6 +315,7 @@ _sc_apply_store() {
 		bash "${SCRIPT_DIR}/observability-helper.sh" retention-maintenance --apply \
 			--max-partitions 20 --max-duration-seconds 120 || rc=$?
 		;;
+	trash) bash "${SCRIPT_DIR}/todo-sync-trash-retention.sh" prune --apply || rc=$? ;;
 	*) return 1 ;;
 	esac
 	return "$rc"
