@@ -159,6 +159,15 @@ INNER_EOF
 echo "Nix regression: logical profiles, aliases, quoting, and safe replacement"
 (
 	source_extracted
+	# Discovery probes /opt/homebrew/bin before PATH; treat host binaries
+	# outside the sandbox (logical or physical path) as ephemeral so a
+	# Homebrew OpenCode cannot win.
+	sandbox_physical=$(cd "$SANDBOX" && pwd -P)
+	_setup_opencode_binary_is_ephemeral() {
+		local bin="$1"
+		[[ "$bin" == "$SANDBOX/"* || "$bin" == "$sandbox_physical/"* ]] && return 1
+		return 0
+	}
 	export HOME="$SANDBOX/nix home"
 	store="$HOME/store generation \$literal \"quoted\""
 	profile="$HOME/.nix-profile/bin/opencode"
@@ -178,17 +187,6 @@ EOF
 	ln -s "$store" "$HOME/.nix-profile"
 	_setup_write_opencode_v1_shim "$shim" "/missing/opencode" ""
 	chmod +x "$shim"
-	# Hermetic discovery: tool-install.sh checks host roots such as
-	# /opt/homebrew/bin before PATH, so a host OpenCode would win. Treat every
-	# path outside the sandbox (logical or `pwd -P` physical) as unusable.
-	sandbox_physical=$(cd "$SANDBOX" && pwd -P)
-	_setup_opencode_binary_is_ephemeral() {
-		local bin="$1"
-		case "$bin" in
-		"$SANDBOX"/* | "$sandbox_physical"/*) return 1 ;;
-		*) return 0 ;;
-		esac
-	}
 	# Profile dirs are found only because they are on PATH: no built-in roots.
 	export PATH="$HOME/.local/bin:/usr/bin:/bin"
 	printf 'no-path-profile=%s\n' "$(_setup_find_valid_opencode_binary 2>/dev/null || true)"

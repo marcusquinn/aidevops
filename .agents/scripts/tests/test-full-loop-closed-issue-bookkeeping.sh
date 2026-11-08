@@ -69,6 +69,18 @@ eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_prepare_metadata)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_check_readiness)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_publish)"
 
+_commit_and_pr_privacy_scan() {
+	return 0
+}
+
+macos_checks_evidence() {
+	return 0
+}
+
+macos_checks_route() {
+	return 0
+}
+
 _FULL_LOOP_TRUE="true"
 FULL_LOOP_COMPLETION_BOOKKEEPING_AUDIT=""
 FULL_LOOP_COMPLETION_BOOKKEEPING_FILES=""

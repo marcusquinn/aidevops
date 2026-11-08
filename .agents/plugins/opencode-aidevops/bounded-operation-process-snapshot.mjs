@@ -7,8 +7,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 export function parseProcessSnapshot(text) {
   const entries = [];
   for (const line of String(text).split(/\r?\n/)) {
-    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S.*)$/);
-    if (match) entries.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), started: match[4] });
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S.*)$/);
+    if (match && !match[4].startsWith("Z")) entries.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), started: match[5] });
   }
   return entries;
 }
@@ -38,7 +38,7 @@ function linuxSnapshot() {
 export function processSnapshot() {
   try {
     if (process.platform === "linux") return linuxSnapshot();
-    const result = spawnSync("ps", ["-ax", "-o", "pid=,ppid=,pgid=,lstart="], {
+    const result = spawnSync("ps", ["-ax", "-o", "pid=,ppid=,pgid=,stat=,lstart="], {
       detached: true, encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, timeout: 1000,
     });
     return result.status === 0 ? { entries: parseProcessSnapshot(result.stdout), psPid: result.pid } : null;

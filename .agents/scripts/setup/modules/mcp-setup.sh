@@ -443,6 +443,52 @@ _setup_browser_tools_playwright() {
 	return 0
 }
 
+# OpenCode browse (GH#37155): drives the user's own Chromium-family browser via
+# the browse extension. Installs only when missing and a supported browser is
+# present; browse self-updates afterwards, so updates never reopen pairing.
+setup_opencode_browse() {
+	local helper="${INSTALL_DIR:-.}/.agents/scripts/opencode-browse-helper.sh"
+	[[ -f "$helper" ]] || helper="$HOME/.aidevops/agents/scripts/opencode-browse-helper.sh"
+	[[ -f "$helper" ]] || return 0
+
+	if [[ "${AIDEVOPS_OPENCODE_BROWSE:-1}" == "0" ]]; then
+		print_info "OpenCode browse: skipped (AIDEVOPS_OPENCODE_BROWSE=0)"
+		return 0
+	fi
+	if bash "$helper" installed; then
+		print_success "OpenCode browse installed (self-updating; status: opencode-browse-helper.sh status)"
+		return 0
+	fi
+	if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" ]]; then
+		return 0
+	fi
+
+	local browsers=""
+	if ! browsers=$(bash "$helper" detect 2>/dev/null); then
+		print_info "OpenCode browse: no supported Chromium-family browser found; skipping"
+		return 0
+	fi
+	browsers=$(printf '%s\n' "$browsers" | cut -f1 | paste -sd ',' - | sed 's/,/, /g')
+	print_info "OpenCode browse lets agents use your own browser tabs (found: ${browsers})"
+
+	local install_browse=""
+	setup_prompt install_browse "Install OpenCode browse CLI? [Y/n]: " "Y"
+	if [[ ! "$install_browse" =~ ^[Yy]?$ ]]; then
+		print_info "Skipped OpenCode browse. Install later: bash ~/.aidevops/agents/scripts/opencode-browse-helper.sh install"
+		return 0
+	fi
+
+	local -a browse_args=()
+	if [[ "${NON_INTERACTIVE:-false}" == "true" ]] || [[ ! -t 0 ]]; then
+		browse_args=(--no-wait)
+	fi
+	if ! bash "$helper" install ${browse_args[@]+"${browse_args[@]}"}; then
+		print_warning "OpenCode browse installation failed"
+		print_info "Run manually: bash ~/.aidevops/agents/scripts/opencode-browse-helper.sh install"
+	fi
+	return 0
+}
+
 setup_browser_tools() {
 	print_info "Setting up browser automation tools..."
 
@@ -471,6 +517,9 @@ setup_browser_tools() {
 
 	# Playwright MCP (cross-browser testing automation)
 	[[ "$has_node" == "true" ]] && _setup_browser_tools_playwright
+
+	# OpenCode browse (the user's own browser, extension-paired)
+	setup_opencode_browse
 
 	if [[ "$has_node" == "true" ]]; then
 		print_info "Interactive-only existing tabs: https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm"
