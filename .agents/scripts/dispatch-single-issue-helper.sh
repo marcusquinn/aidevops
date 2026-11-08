@@ -1599,9 +1599,36 @@ _dsi_guard_cached_commit_denial() {
 		_ddpr_commit_denial_cache check "$repo_slug"
 	) || cache_rc=$?
 	# 0 = cached denial; 3 = keychain unavailable (no safe gh read) -> uncertain
-	if [[ "$cache_rc" -eq 0 || "$cache_rc" -eq 3 ]]; then
+	if [[ "$cache_rc" -eq 3 ]]; then
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
+			'PR_LOOKUP_RESULT=uncertain reason=keychain_unavailable scope=open_commits' 0 || true
+		return 75
+	fi
+	if [[ "$cache_rc" -eq 0 ]]; then
 		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
 			'PR_LOOKUP_RESULT=uncertain reason=commit_permission_denied scope=open_commits' 0 || true
+		return 75
+	fi
+	return 0
+}
+
+# GH#37232: check keychain readiness before any gh metadata read, so a locked
+# macOS keychain cannot prompt or fail validation. Returns 75 (uncertain).
+_dsi_guard_keychain_ready() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local ready_rc=0
+	if [[ -r "${_DSI_SCRIPT_DIR}/background-keychain-helper.sh" ]]; then
+		(
+			# shellcheck source=./background-keychain-helper.sh
+			# shellcheck disable=SC1091
+			source "${_DSI_SCRIPT_DIR}/background-keychain-helper.sh"
+			background_keychain_gh_ready "dispatch-single-issue"
+		) || ready_rc=$?
+	fi
+	if [[ "$ready_rc" -ne 0 ]]; then
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
+			'PR_LOOKUP_RESULT=uncertain reason=keychain_unavailable scope=dispatch_metadata' 0 || true
 		return 75
 	fi
 	return 0
@@ -1652,6 +1679,7 @@ cmd_dispatch() {
 	fi
 
 	# Step 1-2: validate + load + parent-task gate
+	_dsi_guard_keychain_ready "$issue_number" "$repo_slug" || return $?
 	_dsi_validate_dispatch_target "$issue_number" "$repo_slug" || return 1
 	_dsi_guard_cached_commit_denial "$issue_number" "$repo_slug" || return $?
 

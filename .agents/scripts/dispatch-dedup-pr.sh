@@ -28,6 +28,7 @@ _DDPR_LOOKUP_RC_RESPONSE_INVALID=13
 _DDPR_LOOKUP_RC_COMMIT_PERMISSION=77
 # Distinct from cache miss (1): keychain locked, so no gh read may run (GH#37232).
 _DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE=3
+_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE=78
 _DDPR_LOOKUP_RESULT_UNCERTAIN="PR_LOOKUP_RESULT=uncertain"
 _DDPR_LOOKUP_SCOPE_TASK_ID_TITLE="task_id_title"
 _DDPR_LOOKUP_SCOPE_OPEN_COMMITS="open_commits"
@@ -154,7 +155,7 @@ _ddpr_bounded_gh_read() {
 		fi
 		# Exit 75 is a local budget/cooldown refusal. Retrying it would add
 		# pressure without obtaining new evidence.
-		[[ "$rc" -eq 75 || "$rc" -eq "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION" ]] && return "$rc"
+		[[ "$rc" -eq 75 || "$rc" -eq "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION" || "$rc" -eq "$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE" ]] && return "$rc"
 		if [[ "$attempt" -lt "$max_attempts" && "$retry_delay" -gt 0 ]]; then
 			sleep "$retry_delay"
 		fi
@@ -167,6 +168,7 @@ _ddpr_lookup_failure_reason() {
 	local rc="$1"
 	case "$rc" in
 	"$_DDPR_LOOKUP_RC_COMMIT_PERMISSION") printf 'commit_permission_denied' ;;
+	"$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE") printf 'keychain_unavailable' ;;
 	75) printf 'local_budget_or_cooldown' ;;
 	124) printf 'timeout' ;;
 	"$_DDPR_LOOKUP_RC_RESPONSE_INVALID") printf 'response_validation_failed' ;;
@@ -505,7 +507,10 @@ _ddpr_graphql_open_commits() {
 	[[ -n "$owner" && -n "$repo" && "$repo_slug" == */* && "$repo" != */* ]] || return 1
 	local cache_rc=0
 	_ddpr_commit_denial_cache check "$repo_slug" || cache_rc=$?
-	if [[ "$cache_rc" -eq 0 || "$cache_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
+	if [[ "$cache_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
+		return "$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE"
+	fi
+	if [[ "$cache_rc" -eq 0 ]]; then
 		return "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
 	fi
 
@@ -1079,7 +1084,11 @@ has_open_pr() {
 	# issue that discovered it. Do not repeat any admission scan during cooldown.
 	local denial_rc=0
 	_ddpr_commit_denial_cache check "$repo_slug" || denial_rc=$?
-	if [[ "$denial_rc" -eq 0 || "$denial_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
+	if [[ "$denial_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
+		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE"
+		return 0
+	fi
+	if [[ "$denial_rc" -eq 0 ]]; then
 		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
 		return 0
 	fi
