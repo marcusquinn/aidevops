@@ -18,12 +18,23 @@ Tool `aidevops_sessions` (interactive TUI, `serve` and ACP processes only):
 | `list` | — | Up to 20 live sessions: handle, repo, branch, issue/PR, busy/idle, current task. Same-repo sessions first. |
 | `show` | `to` | One session in detail. |
 | `send` | `to`, `text` | Info message. Delivered at the recipient's next tool result, or at its next turn if it is idle. Never wakes it. |
-| `ask` | `to`, `text` | Question. Wakes an idle recipient. The reply arrives in the asking session. |
+| `ask` | `to`, `text`, optional `wait_seconds` (1–120) | Question. Wakes an idle recipient. The reply arrives in the asking session, or in this call's result when `wait_seconds` is set. |
 | `reply` | `re`, `text` | Answer an `ask` this session received (`re` = its message ID). |
 | `inbox` | — | Claims pending messages now, then lists unanswered asks and recent traffic. |
 | `notify-when-idle` | `to` | One idle notice when a busy session next goes idle. |
 
 `to` accepts a session ID, handle, `#<issue>`, `PR#<n>`, repo name or worktree path. Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
+
+### Subagents and waiting for a reply
+
+A subagent's `aidevops_sessions` call acts for its root session. Subagents have no presence, are never message targets, and receive no delivery, so a plain `ask` reply lands in the root's inbox after the subagent has finished. Recipients see a subagent's message as `from <root-handle> (via subagent <agent>)`; `via` is advisory and the sender identity is still the root session.
+
+Use `ask` with `wait_seconds` when a subagent (or any tool call) needs one fact from another live session before it continues:
+
+- The call sends the ask, then polls once per second for the reply whose `re` is that ask and returns it, framed, in its own result. The root session does not receive it a second time.
+- While the wait is active, the root's busy and idle delivery skip that one reply (an in-memory reservation); other messages are unaffected. The reservation ends when the call returns, times out or is aborted.
+- On timeout the result gives the ask ID, and the reply arrives later through normal delivery. Cancelling the tool call ends the wait.
+- At most 2 waits per root session at once; a third is refused before anything is sent. Waits add no sends or wakes beyond the ask itself.
 
 ## Use from a shell
 
@@ -32,6 +43,7 @@ aidevops sessions list [--all] [--json]       # interactive sessions; --all adds
 aidevops sessions show '#123'
 aidevops sessions send <target> "text"        # or --text-file <path>, or - for stdin
 aidevops sessions ask <target> "question"
+aidevops sessions ask <target> "question" --wait 60  # prints the reply and acknowledges it in outbox/cli (exit 0); exit 2 on timeout, printing the ask ID
 aidevops sessions inbox [<session-id>]        # read-only view
 aidevops sessions outbox cli [--ack <msg-id>] # replies to asks sent from a shell
 aidevops sessions prune                       # dead presence, messages older than 7 days

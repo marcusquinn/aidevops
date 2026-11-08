@@ -78,9 +78,38 @@ function replyHint(type, from) {
   return ` Read the reply with: aidevops sessions outbox ${store.parseChatOrigin(from.origin)?.app || "cli"}`;
 }
 
-export function sendCommand({ root, options, out, env }, type) {
+const WAIT_POLL_MS = 1000;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// t18897: poll the outbox for the reply to `askID`, acknowledge it, print it.
+// Returns 0 with the reply, or 2 on timeout. A waiting sender is sessionless,
+// so the reply is always written to outbox/<app>.
+async function waitForOutboxReply({ root, out, options }, askID, app) {
+  const deadline = Date.now() + options.wait * 1000;
+  const pollMs = options.waitPollMs || WAIT_POLL_MS;
+  for (;;) {
+    const reply = store.readOutbox(root, app).find((message) => message.re === askID);
+    if (reply) {
+      store.ackOutbox(root, app, reply.id);
+      print(out, options.json ? reply : store.frameMessage(reply), options.json);
+      return 0;
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+  }
+  print(out, `No reply within ${options.wait}s; ask ${askID}. Read it later with: aidevops sessions outbox ${app}`, false);
+  return 2;
+}
+
+/** Sends a message. Returns undefined, or a Promise of the exit code when `--wait` is used. */
+export function sendCommand(context, type) {
+  const { root, options, out, env } = context;
   const [, target, ...words] = options.positional;
-  const from = senderFrom(root, options.origin, env);
+  if (options.wait && type !== "ask") throw new Error("--wait is only valid with ask");
+  // A waiting sender has no session, so the reply lands in outbox/<app>.
+  const from = options.wait && !options.origin
+    ? { session_id: "", handle: `shell:${env.USER || "user"}`, repo: "", branch: "", origin: "cli" }
+    : senderFrom(root, options.origin, env);
   const resolved = messageableTarget(root, target, from);
   const message = store.sendMessage(root, {
     from,
@@ -89,7 +118,9 @@ export function sendCommand({ root, options, out, env }, type) {
     type,
     text: readText(options, words),
   });
-  return print(out, `Sent ${type} ${message.id} to ${resolved.record?.handle || resolved.sessionID}.${replyHint(type, from)}`, false);
+  print(out, `Sent ${type} ${message.id} to ${resolved.record?.handle || resolved.sessionID}.${replyHint(type, from)}`, false);
+  if (!options.wait) return undefined;
+  return waitForOutboxReply(context, message.id, store.parseChatOrigin(from.origin)?.app || "cli");
 }
 
 function trafficLine({ direction, pending, message }) {

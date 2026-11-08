@@ -69,8 +69,14 @@ function checkRate(root, from, now) {
   }
 }
 
+function viaFields(via) {
+  if (!isSafeId(via?.session_id)) return {};
+  return { via: { session_id: via.session_id, agent: clip(via.agent, 80) } };
+}
+
 function senderFields(from) {
   return {
+    ...viaFields(from?.via),
     session_id: isSafeId(from?.session_id) ? from.session_id : "",
     handle: clip(from?.handle, 80),
     repo: clip(from?.repo, 120),

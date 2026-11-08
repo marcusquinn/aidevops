@@ -26,7 +26,7 @@ const USAGE = `Usage: aidevops sessions <command> [options]
   list [--all] [--json]              Live OpenCode sessions (interactive by default)
   show <target> [--json]             One session's presence record
   send <target> <text…>              Info message; waits for the recipient's next tool result or turn
-  ask <target> <text…>               Question; may wake an idle session
+  ask <target> <text…> [--wait <s>]  Question; may wake an idle session. --wait 1-120 prints the reply (exit 0) or exits 2 on timeout
   inbox [<session-id>] [--json]      Recent traffic for a session (read-only; default: this session)
   outbox <app> [--json] [--ack <id>] Replies for a sender with no session (cli or a chat gateway)
   prune                              Remove dead presence and messages older than 7 days
@@ -36,17 +36,23 @@ Message text: positional words, --text-file <path>, or - for stdin (max ${store.
 Targets: session ID, handle, #issue, PR#n, repo, or worktree path.`;
 
 const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "-h": "help", "--help": "help" };
-const VALUE_FLAGS = { "--text-file": "textFile", "--origin": "origin", "--ack": "ack" };
+const VALUE_FLAGS = { "--text-file": "textFile", "--origin": "origin", "--ack": "ack", "--wait": "wait" };
+
+function parseWait(value) {
+  const seconds = Number(value);
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > 120) throw new Error("--wait must be a whole number of seconds from 1 to 120");
+  return seconds;
+}
 
 export function parseArgs(argv) {
-  const options = { positional: [], json: false, all: false, textFile: "", origin: "", ack: "" };
+  const options = { positional: [], json: false, all: false, textFile: "", origin: "", ack: "", wait: 0 };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (Object.hasOwn(BOOLEAN_FLAGS, arg)) options[BOOLEAN_FLAGS[arg]] = true;
     else if (Object.hasOwn(VALUE_FLAGS, arg)) {
       index += 1;
       if (index >= argv.length) throw new Error(`${arg} requires a value`);
-      options[VALUE_FLAGS[arg]] = argv[index];
+      options[VALUE_FLAGS[arg]] = arg === "--wait" ? parseWait(argv[index]) : argv[index];
     } else options.positional.push(arg);
   }
   return options;
@@ -70,8 +76,9 @@ export function main(argv = process.argv.slice(2), { env = process.env, out = pr
     return 0;
   }
   if (!Object.hasOwn(COMMANDS, command)) throw new Error(`unknown command: ${command}\n\n${USAGE}`);
-  COMMANDS[command]({ root, options, out, env });
-  return 0;
+  const pending = COMMANDS[command]({ root, options, out, env });
+  // `ask --wait` returns a Promise of the exit code (0 reply, 2 timeout).
+  return pending && typeof pending.then === "function" ? pending : 0;
 }
 
 function invokedDirectly() {
@@ -86,7 +93,7 @@ function invokedDirectly() {
 
 if (invokedDirectly()) {
   try {
-    process.exitCode = main();
+    process.exitCode = await main();
   } catch (error) {
     process.stderr.write(`aidevops sessions: ${error?.message ?? error}\n`);
     process.exitCode = 1;

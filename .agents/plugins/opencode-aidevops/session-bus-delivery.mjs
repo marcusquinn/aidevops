@@ -92,8 +92,10 @@ function rollbackWake(bus, sessionID, state, claimed) {
 }
 
 /** Wake an idle session with its pending messages. True once OpenCode accepts the prompt. */
-export async function deliverToIdle(bus, sessionID, state, pending = store.pendingMessages(bus.root, sessionID)) {
+export async function deliverToIdle(bus, sessionID, state, allPending = store.pendingMessages(bus.root, sessionID)) {
   const now = bus.now();
+  // A reply reserved by a waiting ask call (t18897) neither wakes nor is delivered here.
+  const pending = bus.unreserved(allPending);
   if (!canWake(bus, state, pending, now)) return false;
   const claimed = bus.claimPending(sessionID, store.LIMITS.deliverPerBatch, wakeBatch(pending));
   if (claimed.length === 0) return false;
@@ -149,7 +151,7 @@ async function refreshUnknownStatus(bus, sessionID, state, live) {
 }
 
 async function pollSession(bus, sessionID, state, live) {
-  const pending = store.pendingMessages(bus.root, sessionID);
+  const pending = bus.unreserved(store.pendingMessages(bus.root, sessionID));
   if (pending.length === 0) return;
   void bus.toasts.announce(state.handle, pending);
   if (state.status === "unknown") await refreshUnknownStatus(bus, sessionID, state, live);
