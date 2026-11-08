@@ -5,7 +5,7 @@
 
 ## Status and ownership
 
-- Created: 2026-11-07. Status: Phases 0–2 built and verified live on 2026-11-08; PR for t18886 (GH#37149).
+- Created: 2026-11-07. Status: Phases 0–2 built; messaging verified live on 2026-11-08 (`opencode serve`). The toast display and the V1 sidebar Messages section still need a check in a V1 TUI session (see Live verification). PR for t18886 (GH#37149).
 - Scope: OpenCode → OpenCode sessions on one machine. Claude Code and other runtimes are out of scope.
 - Built interactively in the planning session (full-loop), not by worker dispatch.
 - Related captures found during review: GH#37145 (session count misses OpenCode TUI processes; fixed by PR #37148), GH#37146 (stale OpenCode activity heartbeats are never pruned; fixed by PR #37147).
@@ -97,7 +97,7 @@ session-bus/
 - Delivery claims a message by renaming it into `delivered/`. Exactly one process wins the rename, so two processes holding the same session cannot both deliver it.
 
 - All writes are temp-file + `rename` (atomic on the same filesystem), the same pattern as `db-activity-heartbeat.mjs` `write()`.
-- Message IDs are random; delivery is at-least-once with dedupe by ID in the recipient.
+- Message IDs are random. Delivery is at most once: the claim happens before the channel runs, and only a reported wake failure returns the message to the inbox. A crash between the claim and the delivery leaves the message in `delivered/`, and it is not redelivered.
 - No SQLite: one writer per presence file, one directory per inbox, and `rename` gives the atomicity we need without lock contention across ~25 processes.
 
 ### Presence record
@@ -191,7 +191,7 @@ Chat-app wiring kept open for Phase 3 (owner turn 3: long-running sessions per c
 - Rate limits: a sender may send at most 10 messages per minute; an inbox holds at most 50 pending messages (sender gets an error beyond that).
 - Headless workers (`opencode run`, `kind: headless`) are listed read-only and reject `send`/`ask`.
 - Same-user, same-machine trust boundary (filesystem permissions 700/600). No network listener is added.
-- Retention: delivered and undeliverable messages are pruned after 7 days; presence records disappear with their process.
+- Retention: messages older than 7 days are pruned once at plugin startup and by `aidevops sessions prune`. A long-running process does not prune on a timer, so files can outlive 7 days until the next startup or prune. Presence records disappear with their process.
 
 ### Context, storage and reliability costs
 
@@ -202,7 +202,7 @@ Chat-app wiring kept open for Phase 3 (owner turn 3: long-running sessions per c
 | Context per message | ≤2,000 chars (~500 tokens) + ~80-token frame, persisted once | cap |
 | `list` | ≤20 rows, ~500 tokens | cap |
 | CPU/IO | one 5s inbox `readdir` per process; presence writes ≤1 per 10s | throttle |
-| Reliability | atomic rename; at-least-once + ID dedupe; offline recipient ⇒ sender told at send time and message kept 7 days; process crash ⇒ undelivered files remain and are delivered when the session resumes in any process | design |
+| Reliability | atomic rename; at-most-once claim-then-deliver (a failed wake returns the message; a crash after the claim does not redeliver it); offline recipient ⇒ sender told at send time and message kept at least 7 days; process crash ⇒ unclaimed files remain and are delivered when the session resumes in any process | design |
 
 ## Chat-app gateways (SimpleX, Matrix, Buzz) — design only
 
@@ -218,9 +218,9 @@ Owner requirement: aidevops must also be usable from chat apps. Current state (v
 The bus gives every gateway one contract instead of three bespoke paths:
 
 1. **Read (cheap, no LLM):** `aidevops sessions list --json` answers "what is running / what is session X doing" directly from presence. Safe default for a verified owner identity; titles, repos and branches can be private, so group rooms get redacted rows.
-2. **Send:** `aidevops sessions send --to <target> --origin chat:<app>:<entity-id> --text-file <path>`. Chat-origin messages are a distinct trust profile (`team-interface-trust.md`): actor identity, content provenance, attachment risk and requested capability are evaluated separately; content is scanned with `prompt-guard-helper.sh scan`; delivery framing says "from chat user …, unverified/verified" and carries no owner authority.
+2. **Send:** `aidevops sessions send <target> --origin chat:<app>:<entity-id> --text-file <path>` for information, or `aidevops sessions ask <target> …` with the same flags when the gateway expects a reply (`reply` answers only asks). Chat-origin messages are a distinct trust profile (`team-interface-trust.md`): actor identity, content provenance, attachment risk and requested capability are evaluated separately; content is scanned with `prompt-guard-helper.sh scan`; delivery framing says "from chat user …, unverified/verified" and carries no owner authority.
 3. **Wake policy:** chat messages never wake a session unless the actor is a verified owner entity (`entity-helper.sh` `--verified` channel link) **and** the target session has opted in. Even then the capability is conversation only.
-4. **Replies back:** a session replying to a chat-origin message writes to `session-bus/outbox/<gateway>/`; the gateway polls its outbox and posts to the room/contact, applying its existing leak detection (SimpleX `leak-detector.ts`) before sending.
+4. **Replies back:** a session replying to a chat-origin ask writes to `session-bus/outbox/<gateway>/`; the gateway polls its outbox and posts to the room/contact, applying its existing leak detection (SimpleX `leak-detector.ts`) before sending.
 5. **Thin adapters:** Matrix bot, SimpleX bot and the Buzz plugin each add a small adapter over this contract; their existing "start a new session" paths remain for new work.
 
 This becomes its own plan after Phases 1–2 prove the bus. Coordinate the Buzz side with t18883 phase 2 (read-only `aidevops_*` tools), where presence `list` is a natural first tool.
