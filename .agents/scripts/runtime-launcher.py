@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import sys
@@ -103,11 +104,29 @@ def kimi_args(prompt, dry_run):
     return ["--agent-file", config_path]
 
 
+def opencode_supports_run_agent_flag():
+    """GH#<local>: OpenCode v2+ TUI rejects --agent; only `opencode run` accepts it.
+
+    Returns True only for the legacy interactive `--agent` syntax (pre-2.0),
+    detected from the installed CLI's top-level help output.
+    """
+    try:
+        import subprocess
+        result = subprocess.run(["opencode", "--help"], capture_output=True,
+                                text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    help_text = f"{result.stdout}\n{result.stderr}"
+    # Legacy versions showed a top-level --agent flag in `opencode --help`.
+    return bool(re.search(r"^ +--agent\b", help_text, re.MULTILINE))
+
+
 def agent_args(runtime, agent, source, prompt, dry_run):
     adapters = {
         "codex": ["-c", "developer_instructions=" + json.dumps(prompt)],
         "claude-code": ["--append-system-prompt", prompt],
-        "opencode": ["--agent", "Build+" if agent == "build-plus" else
+        "opencode": [] if not opencode_supports_run_agent_flag() else
+                    ["--agent", "Build+" if agent == "build-plus" else
                      "AI-DevOps" if agent == "framework" else "SEO" if agent == "seo" else agent.title()],
         "cursor": [prompt], "droid": [prompt], "kiro": [prompt],
         "gemini-cli": ["--prompt-interactive", prompt],

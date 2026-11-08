@@ -114,7 +114,9 @@ class RuntimeLauncherTest(unittest.TestCase):
                 self.assertEqual(execute.call_args.args[0][-2:], [mode, "--dry-run"])
                 self.assertNotIn("--auto", execute.call_args.args[0])
         data = self.record("opencode", "seo", "--shared-db")
-        self.assertEqual(data["argv"], ["--auto", "--agent", "SEO"])
+        # OpenCode v2+ interactive TUI rejects --agent; the launcher omits it
+        # and the agent is selected inside the TUI. See runtime-launcher.py.
+        self.assertEqual(data["argv"], ["--auto"])
 
     def test_registry_coverage(self):
         script = 'source "$1"; printf "%s\\n" "${_RT_IDS[@]}"'
