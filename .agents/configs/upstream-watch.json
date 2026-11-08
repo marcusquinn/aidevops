@@ -19,7 +19,9 @@
       "slug": "tddworks/asc-cli-skills",
       "description": "Official agent skills for the asc CLI — per-command-group reference with flags, output schemas, error tables",
       "relevance": "27 skills covering auth, builds, TestFlight, IAP, subscriptions, code signing, reports, Game Center, Xcode Cloud. New skills extend agent capabilities.",
-      "affects": [".agents/tools/mobile/app-store-connect.md"],
+      "affects": [
+        ".agents/tools/mobile/app-store-connect.md"
+      ],
       "default_branch": "main",
       "added_at": "2026-03-21"
     },
@@ -102,7 +104,7 @@
         ".agents/tools/deployment/cloudron-app-publishing-skill.md",
         ".agents/tools/deployment/cloudron-server-ops-skill.md"
       ],
-      "last_seen_commit": "b247b124d168730051186aa63afad87c0c1f5a52",
+      "last_seen_commit": "e8dfc1f6570d4571242e2bc6f7edde8864cda802",
       "added_at": "2026-03-19"
     },
     {
@@ -115,7 +117,7 @@
       "affects": [
         ".agents/tools/deployment/cloudron-app-packaging.md"
       ],
-      "last_seen_commit": "ad446c4136a7c7ed5af5f8cdb4e71bb9ec70db3a",
+      "last_seen_commit": "a07cbb4991078fb8b377c5e54c715b8a3157877a",
       "added_at": "2026-03-19"
     }
   ]
