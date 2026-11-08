@@ -512,7 +512,6 @@ _profile_sweep_ordered_intents() {
 	local cursor_file="$2"
 	local cursor=""
 	local candidate=""
-	local seen=0
 	local all=()
 	local tail_part=()
 	local head_part=()
@@ -522,15 +521,15 @@ _profile_sweep_ordered_intents() {
 	fi
 	for candidate in "$intent_dir"/*.json; do
 		all+=("$candidate")
-		if [[ "$seen" -eq 1 ]]; then
+		# The cursor is a filename boundary even if retirement deleted its file.
+		if [[ -n "$cursor" && "${candidate##*/}" > "$cursor" ]]; then
 			tail_part+=("$candidate")
 		else
 			head_part+=("$candidate")
-			[[ -n "$cursor" && "${candidate##*/}" == "$cursor" ]] && seen=1
 		fi
 	done
-	if [[ "$seen" -eq 1 ]]; then
-		printf '%s\n' ${tail_part[@]+"${tail_part[@]}"} "${head_part[@]}"
+	if [[ -n "$cursor" ]]; then
+		printf '%s\n' ${tail_part[@]+"${tail_part[@]}"} ${head_part[@]+"${head_part[@]}"}
 	else
 		printf '%s\n' "${all[@]}"
 	fi

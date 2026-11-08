@@ -565,7 +565,7 @@ test_update_bounds_recovery_with_retained_backlog() {
 	local refusing_helper="${TEST_DIR}/refusing-worktree-helper.sh" output_file="${TEST_DIR}/update-output"
 	local registry_dir="${fixture_home}/.aidevops/.agent-workspace"
 	local registry_db="${registry_dir}/worktree-registry.db"
-	local run=0 before=0 after=0 status=0 worktree_helper="" min_age="" cap=""
+	local run=0 before=0 after=0 status=0 worktree_helper="" min_age="" cap="" remote_before="" remote_after=""
 
 	mkdir -p "$helper_dir" "$fixture_home"
 	install_helper_with_libs "$helper_dir"
@@ -579,7 +579,11 @@ test_update_bounds_recovery_with_retained_backlog() {
 		if [[ "$run" -eq 12 ]]; then
 			worktree_helper="${helper_dir}/worktree-helper.sh" min_age=0 cap=1
 		fi
-		[[ "$run" -ne 12 ]] || before=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
+		if [[ "$run" -eq 12 ]]; then
+			before=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
+			remote_before=$(git -C "$fixture_remote" rev-parse main)
+			sed -i.bak 's/"today_hours":1.0/"today_hours":7.5/' "${helper_dir}/screen-time-helper.sh"
+		fi
 		status=0
 		HOME="$fixture_home" \
 			PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
@@ -594,8 +598,9 @@ test_update_bounds_recovery_with_retained_backlog() {
 			bash "${helper_dir}/profile-readme-helper.sh" update >"$output_file" 2>&1 || status=$?
 	done
 	after=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
+	remote_after=$(git -C "$fixture_remote" rev-parse main)
 
-	if [[ "$status" -ne 0 ]] || [[ "$before" -lt 11 ]] || [[ "$after" -lt $((before - 1)) ]] ||
+	if [[ "$status" -ne 0 ]] || [[ "$remote_before" == "$remote_after" ]] || [[ "$before" -lt 11 ]] || [[ "$after" -lt $((before - 1)) ]] ||
 		! grep -q 'Profile publication sweep: bound reached' "$output_file" ||
 		grep -q 'could not create profile publication worktree' "$output_file"; then
 		print_helper_failure "$test_name" "expected bounded recovery with retained backlog (before=${before} after=${after} status=${status})" "$output_file"
