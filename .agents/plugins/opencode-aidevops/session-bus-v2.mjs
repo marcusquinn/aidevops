@@ -75,21 +75,23 @@ export function createV2SessionBusClient(ctx) {
 /** V2 `{ type, data }` event -> V1 `{ type, properties }`, or null when the bus ignores it. */
 export function normalizeV2BusEvent(event) {
   const type = event?.type;
-  if (typeof type !== "string") return null;
-  if (event.properties || !event.data || typeof event.data !== "object") return event;
-  const data = event.data;
+  const passthrough = Boolean(event?.properties) || !event?.data || typeof event.data !== "object";
+  const data = passthrough ? {} : event.data;
   const sessionID = String(data.sessionID || data.info?.id || "");
-  if (type === "session.execution.started") {
-    return { type: "session.status", properties: { sessionID, status: { type: "busy" } } };
-  }
-  if (IDLE_EVENTS.has(type)) return { type: "session.idle", properties: { sessionID } };
-  if (type === "session.created" || type === "session.updated") {
-    const info = v1SessionInfo(data.info);
-    return { type, properties: info ? { sessionID, info } : { sessionID } };
-  }
-  if (type === "session.renamed") return { type: "session.updated", properties: { sessionID } };
-  if (ACTIVITY_EVENTS.has(type)) return { type: "message.updated", properties: { sessionID } };
-  return { type, properties: data };
+  let result = { type, properties: data };
+  if (typeof type !== "string") result = null;
+  else if (passthrough) result = event;
+  else if (type === "session.execution.started") result = { type: "session.status", properties: { sessionID, status: { type: "busy" } } };
+  else if (IDLE_EVENTS.has(type)) result = { type: "session.idle", properties: { sessionID } };
+  else if (type === "session.created" || type === "session.updated") result = sessionInfoEvent(type, data, sessionID);
+  else if (type === "session.renamed") result = { type: "session.updated", properties: { sessionID } };
+  else if (ACTIVITY_EVENTS.has(type)) result = { type: "message.updated", properties: { sessionID } };
+  return result;
+}
+
+function sessionInfoEvent(type, data, sessionID) {
+  const info = v1SessionInfo(data.info);
+  return { type, properties: info ? { sessionID, info } : { sessionID } };
 }
 
 /**
