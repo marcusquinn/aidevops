@@ -713,7 +713,7 @@ _rh_count_log_no_worker_events() {
 #   $4 = tripped age in hours (integer or empty)
 #   $5 = last_update_outcome ("ran" | "failed" | "helper_missing" | "")
 #   $6 = update/deploy health ("healthy" | "")
-# Stdout: one of HEALTHY | BUILDING | WIRING_GAP | TRIGGER_MISSED | RECOVERABLE_TRIPPED | STUCK_TRIPPED
+# Stdout: HEALTHY | BUILDING | WIRING_GAP | TRIGGER_MISSED | RECOVERABLE_TRIPPED | STUCK_TRIPPED | PAUSED_NO_UPDATE | TRIPPED
 #######################################
 _rh_classify_diagnose() {
 	local recorded="${1:-0}"
@@ -723,6 +723,8 @@ _rh_classify_diagnose() {
 	local update_outcome="${5:-}"
 	local update_health="${6:-}"
 	local threshold="${RUNNER_HEALTH_FAILURE_THRESHOLD:-10}"
+	local pause_hours="${RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS:-24}"
+	[[ "$pause_hours" =~ ^[0-9]+$ ]] || pause_hours=24
 
 	# Guard: numeric coercion. Empty/non-numeric inputs treated as zero.
 	[[ "$recorded" =~ ^[0-9]+$ ]] || recorded=0
@@ -736,17 +738,22 @@ _rh_classify_diagnose() {
 			printf 'RECOVERABLE_TRIPPED\n'
 			return 0
 		fi
-		# STUCK_TRIPPED: tripped >24h AND update never succeeded. The breaker
-		# fired but the synchronous `aidevops update` failed, so resume hook
-		# can't fire. Operator must manually resume after fixing the install.
-		if [[ "$tripped_age_h" =~ ^[0-9]+$ ]] && [[ "$tripped_age_h" -gt 24 ]] \
+		# No update may mean an operator pause or an interrupted automatic trip;
+		# the persisted state does not distinguish these cases.
+		if [[ -z "$update_outcome" || "$update_outcome" == "never" ]]; then
+			if [[ "$tripped_age_h" =~ ^[0-9]+$ ]] && [[ "$tripped_age_h" -gt "$pause_hours" ]]; then
+				printf 'STUCK_TRIPPED\n'
+			else
+				printf 'PAUSED_NO_UPDATE\n'
+			fi
+			return 0
+		fi
+		if [[ "$tripped_age_h" =~ ^[0-9]+$ ]] && [[ "$tripped_age_h" -gt "$pause_hours" ]] \
 			&& [[ "$update_outcome" == "failed" || "$update_outcome" == "helper_missing" ]]; then
 			printf 'STUCK_TRIPPED\n'
 			return 0
 		fi
-		# Tripped but recent or not yet verified healthy: the breaker is doing
-		# its job. Map to BUILDING for transient state rather than manual action.
-		printf 'BUILDING\n'
+		printf 'TRIPPED\n'
 		return 0
 	fi
 
@@ -780,6 +787,8 @@ _rh_diagnose_advice() {
 	HEALTHY) printf 'no action — runner is healthy\n' ;;
 	BUILDING) printf 'monitor — counter is collecting evidence within the rolling window\n' ;;
 	RECOVERABLE_TRIPPED) printf 'auto-resume ready — next pulse pause check will clear the breaker after verified successful update/deploy\n' ;;
+	PAUSED_NO_UPDATE) printf 'dispatch paused (manual pause or interrupted update); review the reason and use pulse-runner-health-helper.sh resume --reason "<text>" when safe\n' ;;
+	TRIPPED) printf 'dispatch blocked — inspect update and deployment health; use pulse-runner-health-helper.sh resume --reason "<text>" when safe\n' ;;
 	WIRING_GAP)
 		printf 'check that pulse-cleanup.sh::_record_runner_health_zero_attempt is being called from recover_failed_launch_state — the log shows events the counter never saw\n'
 		;;
@@ -787,7 +796,7 @@ _rh_diagnose_advice() {
 		printf 'breaker did NOT trip at threshold — inspect _rh_trip_breaker call site and is_zero_attempt_signal predicate\n'
 		;;
 	STUCK_TRIPPED)
-		printf 'manual resume required: pulse-runner-health-helper.sh resume --reason "<text>" after fixing the underlying install/auth/network issue\n'
+		printf 'dispatch paused beyond the configured window; review the pause or update failure and use pulse-runner-health-helper.sh resume --reason "<text>" when safe\n'
 		;;
 	*) printf 'unknown finding\n' ;;
 	esac
@@ -795,32 +804,20 @@ _rh_diagnose_advice() {
 }
 
 #######################################
-# Read all state fields needed by diagnose in one jq pass. Result is
-# returned via name-ref out-parameters (bash 4.3+ via declare -n). Falls
-# back to per-field reads when declare -n is unavailable. Tab-separated
-# output makes the read split deterministic regardless of value contents.
+# Read state through the same accessor as status, preserving empty fields
+# and arbitrary reason text without shell word-splitting.
 # Args (out, by name): state recorded window_started tripped_at update_outcome reason
 #######################################
 _rh_diagnose_read_state() {
 	local _state_var="$1" _recorded_var="$2" _window_var="$3"
 	local _tripped_var="$4" _update_var="$5" _reason_var="$6"
 	local _state="" _recorded="" _window="" _tripped="" _update="" _reason=""
-	if [[ -f "$RUNNER_HEALTH_STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
-		# Single jq pass: emit tab-separated values for atomic split.
-		# `// ""` collapses null to empty so read doesn't choke.
-		local row
-		row=$(jq -r '.circuit_breaker as $cb | [
-				($cb.state // ""),
-				(.consecutive_zero_attempts // 0 | tostring),
-				(.window_started_at // ""),
-				($cb.tripped_at // ""),
-				($cb.last_update_outcome // ""),
-				($cb.reason // "")
-			] | @tsv' <"$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || true)
-		if [[ -n "$row" ]]; then
-			IFS=$'\t' read -r _state _recorded _window _tripped _update _reason <<<"$row"
-		fi
-	fi
+	_state=$(_rh_get_field '.circuit_breaker.state')
+	_recorded=$(_rh_get_field '.consecutive_zero_attempts')
+	_window=$(_rh_get_field '.window_started_at')
+	_tripped=$(_rh_get_field '.circuit_breaker.tripped_at')
+	_update=$(_rh_get_field '.circuit_breaker.last_update_outcome')
+	_reason=$(_rh_get_field '.circuit_breaker.reason')
 	# Use printf -v + eval so we don't require declare -n (bash 3.2 safe).
 	printf -v "$_state_var" '%s' "$_state"
 	printf -v "$_recorded_var" '%s' "$_recorded"
@@ -851,9 +848,7 @@ cmd_diagnose() {
 		esac
 	done
 
-	# Read all state fields in one jq pass. Cuts six literal jq paths down
-	# to one and matches the existing _rh_state_apply / _rh_get_field
-	# convention. Empty bundle when the state file or jq is unavailable.
+	# Match the status accessor, including its empty-field handling.
 	local state="" recorded="" window_started="" tripped_at=""
 	local update_outcome="" reason=""
 	_rh_diagnose_read_state state recorded window_started tripped_at \
@@ -990,8 +985,9 @@ USAGE:
 
 DIAGNOSE FINDINGS (categories surfaced for operator action):
   HEALTHY          — counter at zero, no recent zero-attempt events.
-  BUILDING         — counter > 0 and matches log evidence (or breaker
-                     recently tripped and not yet verified); no action needed.
+  BUILDING         — counter > 0 and matches log evidence; no action needed.
+  PAUSED_NO_UPDATE — dispatch paused without an update; review before resume.
+  TRIPPED          — dispatch blocked, update recovery not yet verified.
   RECOVERABLE_TRIPPED
                    — breaker is tripped, update ran, and deployed artifacts
                      match the local repo; the next pause check auto-resumes.
