@@ -42,7 +42,8 @@ Commands:
   install [--no-wait]    Download the checksum-verified browse CLI (official installer,
                          binary only), then pair it without editing agent configs or PATH.
                          --no-wait prints pairing steps instead of waiting for the browser
-  pair                   Pair (or re-pair) the browser extension with this computer
+  pair [browse pair args] Pair (or re-pair) a browser with a one-time code; also
+                         --list, --revoke <browser>, --wait-seconds <N>
   status                 Show CLI, relay, extension and session state
   doctor                 Run browse doctor
   mcp                    Run the browse MCP server over stdio (stable env; interactive only)
@@ -271,10 +272,18 @@ cmd_install() {
 	return 0
 }
 
+# Re-pair, list or revoke via `browse pair` (one-time code; args pass through,
+# e.g. --list, --revoke <browser>, --wait-seconds N). First-run extension
+# detection and store hand-off stay in cmd_install via run_browse_setup.
 cmd_pair() {
 	require_browse || return 1
 	refuse_headless "pairing" || return 1
-	run_browse_setup "$@"
+	local bin=""
+	bin="$(browse_bin)" || return 1
+	(
+		stabilise_browse_env
+		"$bin" pair "$@"
+	)
 	return $?
 }
 
