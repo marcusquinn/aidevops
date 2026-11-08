@@ -134,7 +134,8 @@ export WRAPPER_LOGFILE="${TMP}/pulse.log"
 export LOGFILE="$WRAPPER_LOGFILE"
 export SCRIPT_DIR="$fixture_scripts"
 export AIDEVOPS_TEMP_DIR="${TMP}/automation"
-export AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true
+export AIDEVOPS_PLANNING_VALIDATOR
+AIDEVOPS_PLANNING_VALIDATOR=$(type -P true) || fail "true executable is unavailable"
 export GIT_AUTHOR_NAME=Test
 export GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=Test
@@ -354,7 +355,7 @@ printf '%s\n' 'human canonical dirt C' >>"$repo_c/TODO.md"
 snapshot_c=$(canonical_snapshot "$repo_c")
 remote_c_before=$(git --git-dir="$remote_c" rev-parse main)
 publication_rc=0
-AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK=/usr/bin/false \
+AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$(type -P false)" \
 	sync_todo_refs_for_repo owner/repo-c "$repo_c" || publication_rc=$?
 [[ "$publication_rc" -eq 1 ]] || fail "publication failure was swallowed"
 [[ $(canonical_snapshot "$repo_c") == "$snapshot_c" ]] || fail "failed publication changed canonical checkout"
