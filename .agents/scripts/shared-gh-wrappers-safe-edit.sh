@@ -104,8 +104,17 @@ _gh_edit_audit_rejection() {
 #######################################
 _gh_extract_number_from_args() {
 	local arg
+	local skip_next=0
 	for arg in "$@"; do
+		if [[ "$skip_next" -eq 1 ]]; then
+			skip_next=0
+			continue
+		fi
 		case "$arg" in
+		--repo | -R | --title | -t | --body | -b | --body-file | -F | --base | -B | --milestone | -m | --add-label | --remove-label | --add-assignee | --remove-assignee | --add-reviewer | --remove-reviewer | --add-project | --remove-project | --label | -l | --assignee | -a | --comment | -c | --reason | -r)
+			# Separate-value flag: its value is not the positional number.
+			skip_next=1
+			;;
 		-*)
 			continue
 			;;
@@ -824,7 +833,7 @@ gh_pr_edit_safe() {
 	if [[ "$_exit" -eq 0 ]] && command -v _rest_pr_view_cache_invalidate >/dev/null 2>&1; then
 		_rest_pr_view_cache_invalidate "$_repo" "$_num" || true
 	fi
-	_after="$(_gh_audit_fetch_pr_state_json "$_num" "$_repo")"
+	_after="$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 _gh_audit_fetch_pr_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "pr_edit" "$_repo" "$_num" "$_before" "$_after" \
 		"${BASH_SOURCE[1]:-}" "${FUNCNAME[1]:-}" "${BASH_LINENO[0]:-0}"
 	return "$_exit"
