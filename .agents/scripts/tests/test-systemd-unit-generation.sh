@@ -560,9 +560,14 @@ test_cleanup_helpers_use_transient_systemd_units() {
 	merge_first_source=$(declare -f _preflight_start_merge_first)
 	[[ "$merge_first_source" == *"nohup"* ]] || rc=1
 	[[ "$merge_first_source" != *"_preflight_launch_async_cleanup"* ]] || rc=1
-	cleanup_source=$(declare -f _preflight_cleanup_and_ledger)
+	# GH#37218: launches live in the unbudgeted starter; the cleanup stage only
+	# delegates to it when the cycle has not started the helpers yet.
+	cleanup_source=$(declare -f _preflight_start_async_cleanups)
 	launch_call_count=$(printf '%s\n' "$cleanup_source" | grep -c '_preflight_launch_async_cleanup')
 	[[ "$launch_call_count" == "3" && "$cleanup_source" != *"nohup"* ]] || rc=1
+	cleanup_source=$(declare -f _preflight_cleanup_and_ledger)
+	[[ "$cleanup_source" == *"_preflight_start_async_cleanups"* && "$cleanup_source" != *"nohup"* ]] || rc=1
+	[[ "$cleanup_source" != *"_preflight_launch_async_cleanup "* ]] || rc=1
 
 	rm -rf "$tmpdir"
 	print_result "cleanup helpers use isolated transient units with an environment allowlist" "$rc"

@@ -111,6 +111,13 @@ pulse_rest_core_priority_allows_next() {
 	return 1
 }
 _preflight_start_merge_first() { return 0; }
+# GH#37218: the real launcher selection runs; only process spawning is isolated.
+_preflight_launch_async_cleanup() {
+	local helper="$1" log_file="$2" cleanup_name="$3"
+	: "$helper" "$log_file"
+	printf 'async:%s\n' "$cleanup_name" >>"$EVENTS"
+	return 0
+}
 # GH#36026 preflight stage: keep hermetic (no PULSE_DIR stamp, no live rearm helper).
 _pulse_rearm_blocker_holds() { return 0; }
 calculate_max_workers() { printf 'host-capacity\n' >>"$EVENTS"; return 0; }
@@ -150,7 +157,8 @@ scan_events() {
 
 _run_preflight_stages
 actual=$(tr '\n' ';' <"$EVENTS")
-[[ "$actual" == "host-capacity;$(scan_events 1 20)launch;cleanup;host-capacity;" ]] || {
+async_events='async:worktrees;async:stashes;async:remote-branches;'
+[[ "$actual" == "${async_events}host-capacity;$(scan_events 1 20)launch;cleanup;host-capacity;" ]] || {
 	printf 'FAIL first-wave ordering: %s\n' "$actual" >&2
 	exit 1
 }
@@ -161,6 +169,34 @@ actual=$(tr '\n' ';' <"$EVENTS")
 [[ "$(<"${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds")" == 2476 ]]
 [[ "$(<"${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds-first-wave")" == 300 ]]
 printf 'PASS first wave registers dispatch before paced housekeeping; timing/snapshot scope stays isolated\n'
+
+# GH#37218: an early dispatch that spends the whole cycle budget defers the
+# budgeted cleanup stage, yet the async cleanup helpers were already started.
+(
+	printf '0\n' >"$CLOCK"
+	: >"$EVENTS"
+	# Use the production deferral gate while keeping the fixture clock/timings.
+	fixture_stubs=$(declare -f _pulse_cycle_remaining_seconds _log_substage_timing)
+	# shellcheck source=../pulse-watchdog.sh
+	source "${SCRIPT_DIR}/pulse-watchdog.sh"
+	eval "$fixture_stubs"
+	_preflight_early_dispatch() { printf 'long-dispatch\n' >>"$EVENTS"; advance_clock 1800; return 0; }
+	run_stage_with_timeout() {
+		local stage="$1" timeout="$2"
+		shift 2
+		_pulse_stage_cycle_timeout "$stage" "$timeout" >/dev/null || return $?
+		"$@"
+		return $?
+	}
+	_run_preflight_stages
+	starved=$(tr '\n' ';' <"$EVENTS")
+	[[ "$starved" == "${async_events}host-capacity;long-dispatch;" ]] || {
+		printf 'FAIL budget-starved cycle skipped async cleanup: %s\n' "$starved" >&2
+		exit 1
+	}
+	grep -qF 'Stage deferred: preflight_cleanup_and_ledger cycle budget exhausted' "$LOGFILE"
+)
+printf 'PASS async cleanup helpers start even when early dispatch exhausts the cycle budget\n'
 
 # The later global scan remains complete and keeps all repositories eligible.
 : >"$EVENTS"
