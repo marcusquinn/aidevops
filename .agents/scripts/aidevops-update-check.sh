@@ -465,8 +465,10 @@ _check_contribution_watch() {
 	local cw_count
 	cw_count=$(jq -r --arg user "$cw_username" '
 		[.items | to_entries[] |
+		 select((.value.last_any_comment // "") != "") |
 		 select(.value.last_any_comment > (.value.last_our_comment // "")) |
-		 select(.value.last_notified == "" or .value.last_any_comment > .value.last_notified)
+		 select((.value.state // "") != "closed" or .value.last_any_comment > (.value.closed_at // "")) |
+		 select(.value.last_any_comment > (.value.last_seen // ""))
 		] | length
 	' "$cw_state" 2>/dev/null) || cw_count=0
 
