@@ -10,6 +10,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.136] - 2026-11-08
+
+### Added
+
+- OpenCode 2 support for the session bus (#37179)
+- OpenCode session bus for presence and session-to-session messages (t18886)
+
+### Changed
+
+- Documentation: extend slug-exists guard guidance (GH#37219) (#37223)
+- Documentation: document profile README helper functions (GH#37188) (#37199)
+- Documentation: clarify Buzz host setup before generation (#37195)
+- Documentation: clarify V2 session bus event handling (#37194)
+
+### Fixed
+
+- resume bounded blocker recovery stages
+- expire archived events independently (#37228)
+- start async worktree cleanup before early dispatch (GH#37218) (#37226)
+- bound trashed TODO-sync workspaces and report them in cleanup (GH#37214) (#37216)
+- surface holder-blocked opencode auto skips and reclaimable pages (GH#37203) (#37208)
+- bound profile publication recovery by count and time (GH#37159) (#37184)
+- avoid null probe plans after cancellation (#37196)
+- reject malformed profile organisation memberships (#37198)
+- document pull request cache helpers (#37192)
+- preserve browse recovery and MCP output (#37193)
+- memoise takeover open-PR lookups per pass; report gh deferral
+- preserve signing keys in allowed signers (#37183)
+- share repository extraction with gh shim (#37180)
+- keep new external replies visible in contribution watch inbox (GH#37174) (#37177)
+- name the failing systemd backend probe in launch errors (GH#37171) (#37176)
+
 ## [3.39.135] - 2026-11-08
 
 ### Changed
