@@ -276,8 +276,8 @@ _dlw_systemd_sanitize_probe_text() {
 # Print set/unset booleans for the session-bus environment; never values.
 _dlw_systemd_bus_env_summary() {
 	local xdg_set="no" dbus_set="no"
-	[[ -z "${XDG_RUNTIME_DIR:-}" ]] || xdg_set="yes"
-	[[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || dbus_set="yes"
+	[[ -z "${XDG_RUNTIME_DIR+x}" ]] || xdg_set="yes"
+	[[ -z "${DBUS_SESSION_BUS_ADDRESS+x}" ]] || dbus_set="yes"
 	printf 'xdg_runtime_dir_set=%s dbus_session_bus_address_set=%s' "$xdg_set" "$dbus_set"
 	return 0
 }
