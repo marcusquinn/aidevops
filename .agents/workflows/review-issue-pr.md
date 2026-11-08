@@ -246,8 +246,11 @@ For interactive maintainer review, complete the full checklist and post the stru
 
 1. Verify checkout freshness and report provenance.
 2. Complete duplicate, temporal, root-cause, safety, and dispatchability checks.
-3. Post the review using the format below so the decision has durable evidence.
-4. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it.
+3. Apply every recommended non-lifecycle label, including type labels such as `bug` and `enhancement`, before presenting or running the approval command.
+4. Post the review using the format below so the decision has durable evidence.
+5. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it.
+
+After signing, apply only lifecycle/tier labels accepted by approval continuity. A non-lifecycle label event after signing can permanently stale the approval even if the label is removed; verify the current approval rather than assuming removal restores it.
 
 Before claiming approval is missing or asking the maintainer to approve again,
 query the authoritative current state with
@@ -318,7 +321,7 @@ accept one exact `APPROVE`; never mix repositories or include non-Approve target
 - Complexity: Low (`tier:simple`) / Medium (`tier:standard`) / High (`tier:thinking`)
 - **Recommendation**: APPROVE / REQUEST CHANGES / DECLINE
 - **PR disposition**: MERGE / REPAIR / REPLACE / CLOSE / NOT APPLICABLE — [owner and immediate next action]
-- **Labels**: [e.g., `tier:simple`, `bug`, `status:available`]
+- **Labels**: [e.g., `tier:simple`, `bug`, `status:available` — apply non-lifecycle labels such as `bug` before presenting the approval command; only continuity-accepted lifecycle/tier labels afterwards]
 - **Implementation guidance**: [key steps, production-facing verification, and any focused coverage justified by `reference/ci-gate-policy.md`]
 
 ### Dispatchability Assessment
