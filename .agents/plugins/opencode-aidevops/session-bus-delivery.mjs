@@ -11,9 +11,11 @@
 
 import * as store from "./session-bus-store.mjs";
 import { canPrompt, liveStatuses, promptSession, showToast, warn } from "./session-bus-client.mjs";
-import { setStatus } from "./session-bus-events.mjs";
+import { setStatus, statusFromType } from "./session-bus-events.mjs";
 
 const HOUR_MS = 60 * 60 * 1000;
+const WAKE_RETRY_MS = 30 * 1000;
+const WAKE_RETRY_MAX_MS = 15 * 60 * 1000;
 const WAKE_TYPES = new Set(["ask", "reply", "idle-notice"]);
 
 export function isWakeEligible(message) {
@@ -51,8 +53,8 @@ function hasWakeBudget(state, now) {
 }
 
 function canWake(bus, state, pending, now) {
-  if (state.status !== "idle" || !pending.some(eligibleEntry)) return false;
-  return hasWakeBudget(state, now) && canPrompt(bus.client);
+  if (state.status !== "idle" || now < state.wakeRetryAt) return false;
+  return pending.some(eligibleEntry) && hasWakeBudget(state, now) && canPrompt(bus.client);
 }
 
 // The oldest batch, unless it holds nothing that may wake the session.
@@ -76,11 +78,16 @@ function beginWake(state, claimed, now) {
   state.wakeTimes.push(now);
 }
 
-function rollbackWake(bus, sessionID, state, claimed) {
+// A failed wake returns its messages and budget, then waits before the next
+// attempt (30s, doubling to 15min), so a persistent fault such as a rejected
+// model does not retry and warn on every poll.
+function rollbackWake(bus, sessionID, state, claimed, now) {
   for (const entry of claimed) store.unclaimMessage(bus.root, sessionID, entry);
   state.wakePending = false;
   state.wakeTimes.pop();
   state.status = "unknown";
+  state.wakeFailures += 1;
+  state.wakeRetryAt = now + Math.min(WAKE_RETRY_MS * 2 ** (state.wakeFailures - 1), WAKE_RETRY_MAX_MS);
 }
 
 /** Wake an idle session with its pending messages. True once OpenCode accepts the prompt. */
@@ -92,10 +99,12 @@ export async function deliverToIdle(bus, sessionID, state, pending = store.pendi
   beginWake(state, claimed, now);
   const failure = await promptSession(bus.client, sessionID, wakeBody(state, claimed));
   if (failure) {
-    rollbackWake(bus, sessionID, state, claimed);
+    rollbackWake(bus, sessionID, state, claimed, now);
     warn("wake", failure);
     return false;
   }
+  state.wakeFailures = 0;
+  state.wakeRetryAt = 0;
   const first = claimed[0].message;
   await showToast(bus.client, `Woke ${state.handle || "session"}`, `${first.from?.handle || "peer"}: ${store.messagePreview(first, 100)}`);
   return true;
@@ -134,7 +143,8 @@ export function sendIdleNotices(bus, sessionID, state) {
 
 async function refreshUnknownStatus(bus, sessionID, state, live) {
   if (live.statuses === undefined) live.statuses = await liveStatuses(bus.client);
-  if (live.statuses) setStatus(state, live.statuses[sessionID]?.type === "busy" ? "busy" : "idle");
+  // A session absent from the status map is treated as idle.
+  if (live.statuses) setStatus(state, statusFromType(live.statuses[sessionID]?.type || "idle"));
 }
 
 async function pollSession(bus, sessionID, state, live) {

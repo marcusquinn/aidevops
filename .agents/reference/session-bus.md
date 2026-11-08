@@ -73,10 +73,10 @@ Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESS
 | `subs/<session>/` | Idle-notice subscriptions. |
 | `outbox/<app>/` | Replies for senders without a session (`cli`, chat gateways). |
 
-Liveness is checked by pid plus process start time, so a reused pid does not keep a dead session listed.
+Liveness is checked by pid plus process start time, so a reused pid does not keep a dead session listed. If `ps` cannot read the start time, a record with a live pid is kept rather than deleted.
 
 ## Troubleshooting
 
 - A session is missing from `list`: it runs an older plugin (restart it after `aidevops update`), or it is headless (`list --all`).
-- An ask did not wake an idle session: check its wake budget (6 per hour) and the message's hop count; it is delivered at the next turn instead.
+- An ask did not wake an idle session: check its wake budget (6 per hour) and the message's hop count; it is delivered at the next turn instead. After a failed wake (`session-bus wake:` on stderr), the next attempt waits 30 seconds, doubling up to 15 minutes until a wake succeeds.
 - Compaction keeps open asks: the compaction context lists asks this session still has to answer and asks it is waiting on.

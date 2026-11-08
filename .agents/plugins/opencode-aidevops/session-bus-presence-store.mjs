@@ -116,17 +116,26 @@ function presenceRecords(root, sweep) {
   return records;
 }
 
+// Dead means the PID is gone, or `ps` reports a different start token (the
+// PID was reused). A live PID with no token (`ps` failed, timed out or lacks
+// `lstart`) proves nothing, so it falls back to PID liveness and is kept.
+function isLiveRecord(record, tokens) {
+  if (!isLivePid(record.pid)) return false;
+  const token = tokens.get(record.pid);
+  return !token || token === record.start_token;
+}
+
 /**
- * Live presence records. A record counts only while its PID runs with the
- * recorded start token, so a recycled PID never revives a dead session.
- * `sweep` deletes dead records; only the plugin startup and the CLI use it.
+ * Live presence records. A recycled PID never revives a dead session while
+ * `ps` can read start times. `sweep` deletes dead records; only the plugin
+ * startup and the CLI use it.
  */
 export function readPresence(root, { sweep = false, tokens: tokenFn = startTokens } = {}) {
   const records = presenceRecords(root, sweep);
   const tokens = tokenFn(records.map((record) => record.pid));
   const live = [];
   for (const record of records) {
-    if (record.start_token && tokens.get(record.pid) === record.start_token) live.push(record);
+    if (isLiveRecord(record, tokens)) live.push(record);
     else if (sweep) removePresence(root, record.session_id);
   }
   return live;

@@ -5,16 +5,22 @@
 // OpenCode events and turns that change it. Pure functions: callers decide
 // when to publish presence.
 
+/**
+ * OpenCode session status type -> bus status. `retry` is a turn still in
+ * progress, so it counts as busy; unknown types return "" (no change).
+ */
+export function statusFromType(type) {
+  const value = String(type || "").toLowerCase();
+  if (value === "busy" || value === "retry") return "busy";
+  return value === "idle" ? "idle" : "";
+}
+
 const STATUS_FROM_EVENT = {
   "session.idle": () => "idle",
   "permission.asked": () => "permission",
   "permission.updated": () => "permission",
   "permission.replied": () => "busy",
-  "session.status": (props) => {
-    const type = String(props.status?.type || "").toLowerCase();
-    if (type === "busy" || type === "retry") return "busy";
-    return type === "idle" ? "idle" : "";
-  },
+  "session.status": (props) => statusFromType(props.status?.type),
 };
 
 const SESSION_INFO_EVENTS = new Set(["session.created", "session.updated"]);
@@ -38,6 +44,8 @@ export function newSessionState(sessionID, directory, now) {
     wakePending: false,
     wakeHops: 0,
     wakeTimes: [],
+    wakeFailures: 0,
+    wakeRetryAt: 0,
     lastWriteMs: 0,
     writeTimer: null,
     written: "",

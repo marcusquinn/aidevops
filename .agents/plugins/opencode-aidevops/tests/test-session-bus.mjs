@@ -45,8 +45,9 @@ test("presence lists only live process generations and sweeps dead records", () 
   store.writePresence(root, { ...livePresence("ses_recy01"), start_token: "ps:recycled" });
   assert.deepEqual(store.readPresence(root).map((record) => record.session_id), ["ses_live01"]);
   store.readPresence(root, { sweep: true });
-  assert.deepEqual(store.readPresence(root, { tokens: () => new Map() }), []);
-  livePresence("ses_live01");
+  // No start token for a live PID (ps failed) is not proof of death.
+  const noTokens = { sweep: true, tokens: () => new Map() };
+  assert.deepEqual(store.readPresence(root, noTokens).map((record) => record.session_id), ["ses_live01"]);
   assert.equal(store.readPresence(root).length, 1);
 });
 
@@ -245,10 +246,18 @@ test("wakes respect the hourly budget, hop limit and failure rollback", async ()
   assert.equal(client.calls.prompts.length, 0, "hop 3 never wakes");
   store.pendingMessages(root, "ses_rootB1").forEach((entry) => store.claimMessage(root, "ses_rootB1", entry));
 
-  client.session.promptAsync = async () => ({ error: { name: "BadRequest" } });
+  let failures = 0;
+  client.session.promptAsync = async () => {
+    failures += 1;
+    return { error: { name: "BadRequest" } };
+  };
   store.sendMessage(root, { from: peer("ses_peer06"), to: "ses_rootB1", type: "ask", text: "retry me" });
   await bus.tick();
   assert.equal(store.pendingMessages(root, "ses_rootB1").length, 1, "failed wake returns the message");
+  await bus.tick();
+  assert.equal(failures, 1, "a failed wake waits before retrying");
+  const clock = bus.now;
+  bus.now = () => clock() + 60_000;
 
   let wakes = 0;
   client.session.promptAsync = async () => {

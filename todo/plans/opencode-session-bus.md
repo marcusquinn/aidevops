@@ -114,7 +114,7 @@ Written by the plugin in the OpenCode process that owns the session (TUI, `openc
 
 - Sources: `session.created/updated` (title), `session.status`/`session.idle` (state, reusing `session-turn-state.mjs`), `todo.updated` (first `in_progress` todo), tool context `directory`/`worktree` plus `git rev-parse` once per directory change (branch), issue/PR parsed from the title prefix that `session-rename` already maintains.
 - Write throttled: on state change immediately, otherwise at most every 10s; remove on `session.deleted` and process `exit`.
-- Liveness: readers ignore records whose `pid` is dead or whose `start_token` (process start time from `ps -o lstart=`, read for all pids in one call) does not match, and `list` sweeps those records. `session-bus-store.mjs` implements this itself rather than through `process-liveness.mjs`. GH#37146 was fixed separately inside `db-activity-heartbeat.mjs` (PR #37147).
+- Liveness: readers ignore records whose `pid` is dead or whose `start_token` (process start time from `ps -o lstart=`, read for all pids in one call) does not match, and `list` sweeps those records. If `ps` gives no token for a live pid (it failed, timed out or lacks `lstart`), the record is kept on pid liveness alone rather than deleted. `session-bus-store.mjs` implements this itself rather than through `process-liveness.mjs`. GH#37146 was fixed separately inside `db-activity-heartbeat.mjs` (PR #37147).
 - Child (subagent) sessions are not published; messages go to the root session.
 - Handles: `<repo-basename>-<issue>` when an issue is linked, else `<repo-basename>-<short-id>`; titles are matched too. Handles are a convenience, not identity.
 
