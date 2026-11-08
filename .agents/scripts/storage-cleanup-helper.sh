@@ -248,6 +248,7 @@ _sc_dry_run_store() {
 		printf 'Superseded/expired layout-migration backups (dry run):\n'
 		bash "${SCRIPT_DIR}/repo-layout-migrate-helper.sh" prune || rc=$?
 		_sc_preview_opencode_retention || rc=$?
+		bash "${SCRIPT_DIR}/opencode-db-maintenance-helper.sh" reclaimable || true
 		printf 'Apply also checkpoints/optimizes each idle OpenCode DB (throttled to weekly).\n'
 		;;
 	observability)
