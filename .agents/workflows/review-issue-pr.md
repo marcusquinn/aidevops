@@ -246,11 +246,11 @@ For interactive maintainer review, complete the full checklist and post the stru
 
 1. Verify checkout freshness and report provenance.
 2. Complete duplicate, temporal, root-cause, safety, and dispatchability checks.
-3. Post the review using the format below so the decision has durable evidence.
-4. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it.
+3. For an issue, check approval first with `approval-helper.sh verify issue <number> <owner/repo>`. In `--report-only` mode, never change labels; list recommendations only, and for an unsigned issue withhold the approval command while recommended non-lifecycle labels remain unapplied. If already approved, list missing non-lifecycle labels without applying them. If verification is uncertain (e.g. `API_ERROR`), apply nothing and withhold the approval command until verification succeeds. Otherwise apply every recommended non-lifecycle label, including `bug` and `enhancement`, before presenting or running the approval command. After signing, apply only lifecycle/tier labels accepted by approval continuity. A later non-lifecycle label event can permanently stale approval even if removed.
+4. Post the review using the format below so the decision has durable evidence.
+5. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it.
 
-Before claiming approval is missing or asking the maintainer to approve again,
-query the authoritative current state with
+Before claiming approval is missing or asking the maintainer to approve again, query the authoritative current state with
 `approval-helper.sh verify issue <number> <owner/repo>`. Never infer approval
 state from local `sudo` availability, an earlier label snapshot, or a failed
 attempt to invoke the signing command. Write-authorized comments after approval on a locked issue do not stale it (`reference/auto-merge.md`).
@@ -318,7 +318,7 @@ accept one exact `APPROVE`; never mix repositories or include non-Approve target
 - Complexity: Low (`tier:simple`) / Medium (`tier:standard`) / High (`tier:thinking`)
 - **Recommendation**: APPROVE / REQUEST CHANGES / DECLINE
 - **PR disposition**: MERGE / REPAIR / REPLACE / CLOSE / NOT APPLICABLE — [owner and immediate next action]
-- **Labels**: [e.g., `tier:simple`, `bug`, `status:available`]
+- **Labels**: [e.g., `tier:simple`, `bug`, `status:available` — check issue approval first; in report-only mode or if approved, list missing non-lifecycle labels without applying them (report-only on an unsigned issue also withholds the approval command until they are applied); if uncertain, withhold the approval command; otherwise apply them before presenting the approval command. Apply only continuity-accepted lifecycle/tier labels after signing]
 - **Implementation guidance**: [key steps, production-facing verification, and any focused coverage justified by `reference/ci-gate-policy.md`]
 
 ### Dispatchability Assessment
