@@ -106,7 +106,9 @@ def prepare_runtime(agents_dir, output_dir):
         secrets.token_hex(16),
     )
     owner = os.environ.get("BUZZ_ACP_AGENT_OWNER", "buzz-owner")
-    write_runtime_inputs(output_dir, roster, agent, host_slug, owner, scope, relay_url)
+    write_runtime_inputs(
+        output_dir, roster, (agent, host_slug), runtime_context(owner, scope, relay_url)
+    )
 
 
 def prepare_desktop_runtime(agents_dir, output_dir, display_name):
@@ -125,12 +127,17 @@ def prepare_desktop_runtime(agents_dir, output_dir, display_name):
     host_slug = snapshot_module.resolve_host_slug()
     agent = select_agent(roster, display_name, snapshot_module, host_slug)
     scope = hash_ref("buzz-desktop-plugin", display_name, secrets.token_hex(16))
-    write_runtime_inputs(output_dir, roster, agent, host_slug, "buzz-owner", scope, "buzz-desktop")
+    write_runtime_inputs(
+        output_dir,
+        roster,
+        (agent, host_slug),
+        runtime_context("buzz-owner", scope, "buzz-desktop"),
+    )
 
 
-def write_runtime_inputs(output_dir, roster, agent, host_slug, owner, scope, relay_url):
-    """Write the private roster, context and selection files one launch reads."""
-    context = {
+def runtime_context(owner, scope, relay_url):
+    """Return the bounded, non-reversible context one launch reads."""
+    return {
         "actor_ref": f"actor:{hash_ref(owner, scope)}",
         "app_team_ref": "app-team:ai-devops",
         "community_ref": f"community:{hash_ref(relay_url)}",
@@ -139,6 +146,14 @@ def write_runtime_inputs(output_dir, roster, agent, host_slug, owner, scope, rel
         "provider_ref": "provider:buzz",
         "trust_ref": "trust:buzz-owner-only",
     }
+
+
+def write_runtime_inputs(output_dir, roster, selection, context):
+    """Write the private roster, context and selection files one launch reads.
+
+    ``selection`` is the ``(agent, host_slug)`` pair from ``select_agent``.
+    """
+    agent, host_slug = selection
     atomic_write(output_dir / "roster.json", canonical_payload(roster))
     atomic_write(output_dir / "context.json", canonical_payload(context))
     atomic_write(output_dir / "agent-id.txt", f"{agent['agent_id']}\n".encode("utf-8"))

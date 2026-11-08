@@ -26,6 +26,8 @@ const IDLE_STOP_MS = 30 * 60_000;
 const STDERR_LIMIT = 4_000;
 const WRITTEN_LIMIT = 64_000;
 const REPLY_LIMIT = 16_000;
+/** Terminal colour codes in OpenCode's stderr (ESC [ … m). */
+const ANSI_SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 /** Never inherited by the launcher: no Buzz identity, and none of the
  * OpenCode overrides the aidevops remote-interactive launcher refuses. */
 const ENV = {
@@ -166,7 +168,7 @@ class Acp {
 
   lastError() {
     const lines = this.stderr.trim().split("\n");
-    return lines[lines.length - 1].replace(/\u001b\[[0-9;]*m/g, "").trim();
+    return lines[lines.length - 1].replace(ANSI_SGR, "").trim();
   }
 
   request(method, params, timeout) {
@@ -267,171 +269,104 @@ class Acp {
   }
 }
 
-export function apply(ctx) {
-  const React = ctx.react;
-  const h = React.createElement;
+// ---- Phase 1: aidevops agent runtime ----------------------------------------
 
-  // ---- Phase 0: Settings status card --------------------------------------
+function newRuntime(key) {
+  return {
+    key,
+    launch: "",
+    acp: undefined,
+    server: undefined,
+    sessions: new Map(),
+    byId: new Map(),
+    active: undefined,
+    handle: undefined,
+    queue: Promise.resolve(),
+    idle: undefined,
+  };
+}
 
-  /** Runs the declared status command; null means it failed or was refused. */
-  async function readStatus() {
-    const output = await ctx.host.runCommand("buzz-status");
-    return typeof output === "string" ? output.trim() : null;
+function forgetSessions(runtime) {
+  runtime.sessions.clear();
+  runtime.byId.clear();
+}
+
+function scheduleIdleStop(runtime) {
+  clearTimeout(runtime.idle);
+  runtime.idle = setTimeout(() => {
+    const acp = runtime.acp;
+    if (!acp || runtime.active) return;
+    runtime.acp = undefined;
+    forgetSessions(runtime);
+    void acp.stop();
+  }, IDLE_STOP_MS);
+}
+
+/** Keeps the text the agent writes until it calls a Buzz tool that answers. */
+function keepText(session, text) {
+  if (session.acted || typeof text !== "string") return;
+  session.written = (session.written + text).slice(0, WRITTEN_LIMIT);
+}
+
+/** Shows the running turn's progress as Buzz steps. */
+function showStep(session, kind, update) {
+  const step = session.delivery?.step;
+  if (!step) return;
+  if (kind === "tool_call" && typeof update.title === "string") {
+    step(update.title.slice(0, 80));
+  } else if (kind === "agent_message_chunk" && session.lastStep !== "reply") {
+    session.lastStep = "reply";
+    step("Writing reply");
+  }
+}
+
+/** Records one ACP `session/update`. */
+function recordUpdate(runtime, params) {
+  const session = runtime.byId.get(String(params.sessionId));
+  const update = params.update;
+  if (!session || !update || typeof update !== "object") return;
+  session.updates += 1;
+  const kind = update.sessionUpdate;
+  if (kind === "agent_message_chunk") keepText(session, update.content?.text);
+  if (runtime.active === session) showStep(session, kind, update);
+}
+
+/** Whether a Buzz tools call answered where people see it. */
+function answeredPeople(message, answer) {
+  if (message.method !== "tools/call") return false;
+  if (!ANSWERS.has(String(message.params?.name))) return false;
+  return !answer?.error && !answer?.result?.isError;
+}
+
+function resetTurn(session) {
+  session.acted = false;
+  session.written = "";
+  session.updates = 0;
+  session.lastStep = "";
+}
+
+/** Asks OpenCode to stop the agent's running turn for this delivery. */
+function interrupt(runtime, control) {
+  control.stopped = true;
+  const session = control.session;
+  if (session && runtime.active === session)
+    runtime.acp?.notify("session/cancel", { sessionId: session.id });
+}
+
+/** Runs aidevops agents: one runtime per agent (membership key) with its
+ * process, its one shared Buzz tools server and its sessions, one per
+ * conversation. A job is one delivery: `{ delivery, conversation, config,
+ * control }`. */
+class Runner {
+  constructor(host, kit) {
+    this.host = host;
+    this.kit = kit;
+    this.runtimes = new Map();
   }
 
-  function StatusCard() {
-    const [state, setState] = React.useState({ status: "loading" });
-
-    const refresh = React.useCallback(() => {
-      let current = true;
-      setState({ status: "loading" });
-      readStatus().then(
-        (text) => {
-          if (!current) return;
-          setState(
-            text === null
-              ? { status: "failed" }
-              : { status: "ready", text, at: new Date() },
-          );
-        },
-        (error) => {
-          if (!current) return;
-          setState({ status: "failed", detail: errorMessage(error) });
-        },
-      );
-      return () => {
-        current = false;
-      };
-    }, []);
-
-    React.useEffect(() => refresh(), [refresh]);
-
-    let body;
-    if (state.status === "loading") {
-      body = h("p", null, "Reading aidevops status…");
-    } else if (state.status === "failed") {
-      body = h(
-        "div",
-        { role: "alert" },
-        h("p", null, "Could not read aidevops status."),
-        h(
-          "p",
-          { style: { color: "var(--text-secondary)" } },
-          state.detail ||
-            "Check that `aidevops` is installed and on your login shell PATH, then run `aidevops buzz status` in a terminal. The command must finish within 5 seconds.",
-        ),
-      );
-    } else {
-      body = h(
-        "div",
-        null,
-        h(
-          "pre",
-          {
-            style: {
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              margin: 0,
-              fontFamily: "var(--font-mono, monospace)",
-            },
-          },
-          state.text || "(no output)",
-        ),
-        h(
-          "p",
-          { style: { color: "var(--text-secondary)" } },
-          `Checked ${state.at.toLocaleTimeString()}`,
-        ),
-      );
-    }
-
-    return h(
-      "section",
-      {
-        className: "ui-card",
-        style: {
-          padding: "var(--space-panel-inset)",
-          display: "grid",
-          gap: "var(--space-2)",
-          width: "100%",
-        },
-      },
-      h("h2", null, "Buzz setup on this computer"),
-      body,
-      h(
-        "div",
-        null,
-        h(
-          "button",
-          {
-            type: "button",
-            disabled: state.status === "loading",
-            onClick: () => refresh(),
-          },
-          "Refresh",
-        ),
-      ),
-    );
-  }
-
-  ctx.settingsCards.register({
-    id: "status",
-    title: "aidevops",
-    component: StatusCard,
-  });
-
-  // ---- Phase 1: aidevops agent type ---------------------------------------
-
-  const kit = ctx.agents.harness;
-  /** One runtime per agent (membership key): its process, its one shared
-   * Buzz tools server and its sessions, one per conversation. */
-  const runtimes = new Map();
-
-  function runtimeFor(key) {
-    let runtime = runtimes.get(key);
-    if (!runtime) {
-      runtime = {
-        key,
-        launch: "",
-        acp: undefined,
-        server: undefined,
-        sessions: new Map(),
-        byId: new Map(),
-        active: undefined,
-        handle: undefined,
-        queue: Promise.resolve(),
-        idle: undefined,
-      };
-      runtimes.set(key, runtime);
-    }
-    return runtime;
-  }
-
-  function forgetSessions(runtime) {
-    runtime.sessions.clear();
-    runtime.byId.clear();
-  }
-
-  function onUpdate(runtime, params) {
-    const session = runtime.byId.get(String(params.sessionId));
-    const update = params.update;
-    if (!session || !update || typeof update !== "object") return;
-    session.updates += 1;
-    const kind = update.sessionUpdate;
-    if (kind === "agent_message_chunk" && !session.acted) {
-      const text = update.content?.text;
-      if (typeof text === "string")
-        session.written = (session.written + text).slice(0, WRITTEN_LIMIT);
-    }
-    if (runtime.active !== session) return;
-    const step = session.delivery?.step;
-    if (!step) return;
-    if (kind === "tool_call" && typeof update.title === "string")
-      step(update.title.slice(0, 80));
-    else if (kind === "agent_message_chunk" && session.lastStep !== "reply") {
-      session.lastStep = "reply";
-      step("Writing reply");
-    }
+  runtimeFor(key) {
+    if (!this.runtimes.has(key)) this.runtimes.set(key, newRuntime(key));
+    return this.runtimes.get(key);
   }
 
   /** Answers one Buzz tools MCP message. OpenCode registers MCP servers per
@@ -439,12 +374,11 @@ export function apply(ctx) {
    * goes to the session OpenCode names (`ai.opencode/sessionID`, OpenCode
    * 2.x) or else to the one turn the agent is running (turns run one at a
    * time per agent). */
-  async function answerMcp(runtime, message) {
-    const { id, method, params } = message ?? {};
+  async answerMcp(runtime, message) {
+    const { id, params } = message ?? {};
     if (id === undefined || id === null) return undefined;
     const named = params?._meta?.["ai.opencode/sessionID"];
-    const session =
-      (typeof named === "string" && runtime.byId.get(named)) || runtime.active;
+    const session = (typeof named === "string" && runtime.byId.get(named)) || runtime.active;
     const handle = session?.handle ?? runtime.handle;
     if (!handle)
       return {
@@ -452,25 +386,17 @@ export function apply(ctx) {
         id,
         error: { code: -32603, message: "This aidevops agent has not started a turn" },
       };
-    const answer = await kit.tools(handle, session?.conversation)(message);
-    if (
-      session &&
-      method === "tools/call" &&
-      ANSWERS.has(String(params?.name)) &&
-      !answer?.error &&
-      !answer?.result?.isError
-    )
-      session.acted = true;
+    const answer = await this.kit.tools(handle, session?.conversation)(message);
+    if (session && answeredPeople(message, answer)) session.acted = true;
     return answer;
   }
 
-  async function ensureServer(runtime) {
+  async ensureServer(runtime) {
     if (runtime.server) return runtime.server;
-    if (!ctx.host.serveMcp) throw new Error("aidevops agents run only in the desktop app");
-    const server = await ctx.host.serveMcp(
-      (message) => answerMcp(runtime, message),
-      { sharedSession: true },
-    );
+    if (!this.host.serveMcp) throw new Error("aidevops agents run only in the desktop app");
+    const server = await this.host.serveMcp((message) => this.answerMcp(runtime, message), {
+      sharedSession: true,
+    });
     runtime.server = server;
     void server.closed.then(() => {
       if (runtime.server !== server) return;
@@ -480,17 +406,17 @@ export function apply(ctx) {
     return server;
   }
 
-  async function ensureAcp(runtime, config) {
+  async ensureAcp(runtime, config) {
     const launch = JSON.stringify([config.member, config.project]);
     if (runtime.acp?.alive && runtime.launch === launch) return runtime.acp;
     if (runtime.acp) await runtime.acp.stop();
     forgetSessions(runtime);
     runtime.acp = undefined;
-    if (!ctx.host.spawn) throw new Error("aidevops agents run only in the desktop app");
+    if (!this.host.spawn) throw new Error("aidevops agents run only in the desktop app");
     const acp = await Acp.start(
-      ctx.host.spawn.bind(ctx.host),
+      this.host.spawn.bind(this.host),
       ["--member", config.member, "--project", config.project],
-      (params) => onUpdate(runtime, params),
+      (params) => recordUpdate(runtime, params),
     );
     runtime.acp = acp;
     runtime.launch = launch;
@@ -502,9 +428,10 @@ export function apply(ctx) {
     return acp;
   }
 
-  async function openSession(runtime, acp, delivery, conversation, config) {
-    const server = await ensureServer(runtime);
-    const system = await kit.systemPrompt(delivery, {
+  async openSession(runtime, acp, job) {
+    const { delivery, conversation, config } = job;
+    const server = await this.ensureServer(runtime);
+    const system = await this.kit.systemPrompt(delivery, {
       scope: config.scope,
       cwd: config.project,
       instructions: "",
@@ -543,20 +470,26 @@ export function apply(ctx) {
     return session;
   }
 
+  /** The agent's session for this conversation, opened when it has none. */
+  async sessionFor(runtime, job) {
+    const acp = await this.ensureAcp(runtime, job.config);
+    const session =
+      runtime.sessions.get(job.conversation.key) ?? (await this.openSession(runtime, acp, job));
+    session.conversation = job.conversation;
+    session.handle = job.delivery.agent;
+    session.delivery = job.delivery;
+    return { acp, session };
+  }
+
   /** Runs one turn; the runtime's queue makes it the agent's only turn. */
-  async function turn(runtime, delivery, conversation, config, control) {
+  async turn(runtime, job) {
+    const { delivery, conversation, control } = job;
     clearTimeout(runtime.idle);
     if (delivery.current?.() === false || control.stopped)
       return { ok: true, stopped: control.stopped };
     runtime.handle = delivery.agent;
-    const acp = await ensureAcp(runtime, config);
-    const session =
-      runtime.sessions.get(conversation.key) ??
-      (await openSession(runtime, acp, delivery, conversation, config));
-    session.conversation = conversation;
-    session.handle = delivery.agent;
-    session.delivery = delivery;
-    const prompt = await kit.turnPrompt(
+    const { acp, session } = await this.sessionFor(runtime, job);
+    const prompt = await this.kit.turnPrompt(
       delivery,
       conversation,
       session.cursor ? { cursor: session.cursor } : undefined,
@@ -565,10 +498,7 @@ export function apply(ctx) {
       prompt.restore();
       return { ok: true, stopped: true };
     }
-    session.acted = false;
-    session.written = "";
-    session.updates = 0;
-    session.lastStep = "";
+    resetTurn(session);
     runtime.active = session;
     control.session = session;
     const lead = session.lead;
@@ -589,160 +519,281 @@ export function apply(ctx) {
     }
     session.lead = "";
     session.cursor = prompt.cursor;
+    return this.finish(job, session, answer);
+  }
+
+  /** The turn's result once OpenCode answered `session/prompt`; posts the
+   * agent's written reply when it did not answer with a Buzz tool. */
+  async finish(job, session, answer) {
     if (answer?.stopReason === "cancelled") return { ok: true, stopped: true };
     const text = replyText(session.written);
-    if (!session.acted && text) await kit.reply(delivery.agent, conversation, text);
+    if (!session.acted && text) await this.kit.reply(job.delivery.agent, job.conversation, text);
     if (answer?.stopReason === "refusal")
       return { ok: false, error: "The model refused the request" };
     return { ok: true };
   }
 
-  function scheduleIdleStop(runtime) {
-    clearTimeout(runtime.idle);
-    runtime.idle = setTimeout(() => {
-      const acp = runtime.acp;
-      if (!acp || runtime.active) return;
-      runtime.acp = undefined;
-      forgetSessions(runtime);
-      void acp.stop();
-    }, IDLE_STOP_MS);
+  async fail(job, error) {
+    const message = errorMessage(error);
+    await this.kit
+      .reply(job.delivery.agent, job.conversation, `I couldn't finish that: ${message}`, {
+        notifyOwner: true,
+      })
+      .catch(() => undefined);
+    return { ok: false, error: message };
   }
 
-  async function run(delivery) {
+  async run(delivery) {
     const config = settings(delivery.config);
-    const conversation = await kit.conversation(delivery, config.scope);
+    const conversation = await this.kit.conversation(delivery, config.scope);
     if (!conversation) {
       delivery.ignored?.();
       return;
     }
     const agent = delivery.agent;
-    const resolved = { ...config, member: config.member || agent.name };
-    const runtime = runtimeFor(agent.key);
-    const control = { stopped: false, session: undefined };
-    const problem = projectProblem(resolved.project);
+    const job = {
+      delivery,
+      conversation,
+      config: { ...config, member: config.member || agent.name },
+      control: { stopped: false, session: undefined },
+    };
+    const runtime = this.runtimeFor(agent.key);
+    const problem = projectProblem(job.config.project);
     const work = runtime.queue.then(() => {
       if (problem) throw new Error(problem);
-      return turn(runtime, delivery, conversation, resolved, control);
+      return this.turn(runtime, job);
     });
-    const done = work.catch(async (error) => {
-      const message = errorMessage(error);
-      await kit
-        .reply(agent, conversation, `I couldn't finish that: ${message}`, { notifyOwner: true })
-        .catch(() => undefined);
-      return { ok: false, error: message };
-    });
+    const done = work.catch((error) => this.fail(job, error));
     runtime.queue = done.then(
       () => scheduleIdleStop(runtime),
       () => scheduleIdleStop(runtime),
     );
     delivery.workingUntil(done);
-    delivery.interruptible?.(async () => {
-      control.stopped = true;
-      const session = control.session;
-      if (session && runtime.active === session)
-        runtime.acp?.notify("session/cancel", { sessionId: session.id });
-    });
+    delivery.interruptible?.(async () => interrupt(runtime, job.control));
   }
+}
 
-  // ---- Agent settings ------------------------------------------------------
+// ---- Settings UI ------------------------------------------------------------
 
-  const fieldStyle = { display: "grid", gap: "var(--space-1, 4px)" };
-  const hintStyle = { color: "var(--text-secondary)", margin: 0 };
+const fieldStyle = { display: "grid", gap: "var(--space-1, 4px)" };
+const hintStyle = { color: "var(--text-secondary)", margin: 0 };
 
-  function Fields({ value, onChange, disabled, agentName }) {
-    const set = (field) => (event) => onChange({ ...value, [field]: event.target.value });
+function statusBody(h, state) {
+  if (state.status === "loading") return h("p", null, "Reading aidevops status…");
+  if (state.status === "failed")
     return h(
       "div",
-      { style: { display: "grid", gap: "var(--space-3, 12px)" } },
+      { role: "alert" },
+      h("p", null, "Could not read aidevops status."),
       h(
-        "label",
-        { style: fieldStyle },
-        h("span", null, "Project folder"),
-        h("input", {
-          type: "text",
-          value: value.project ?? "",
-          placeholder: "Full path to a registered repository",
-          disabled,
-          spellCheck: false,
-          onChange: set("project"),
-        }),
-        h(
-          "p",
-          { style: hintStyle },
-          "A repository registered with aidevops. The agent works in its own linked worktree of it, never in the folder itself.",
-        ),
-      ),
-      h(
-        "label",
-        { style: fieldStyle },
-        h("span", null, "aidevops agent"),
-        h("input", {
-          type: "text",
-          value: value.member ?? "",
-          placeholder: agentName || "aidevops-<this computer>",
-          disabled,
-          spellCheck: false,
-          onChange: set("member"),
-        }),
-        h(
-          "p",
-          { style: hintStyle },
-          "Which aidevops agent runs, named for this computer, such as aidevops-marcus-macbook-pro-01 or build-plus-marcus-macbook-pro-01. Leave empty to use this Buzz agent's name; naming the Buzz agent the same shows people which agent and computer they are addressing.",
-        ),
-      ),
-      h(
-        "label",
-        { style: fieldStyle },
-        h("span", null, "Conversation"),
-        h(
-          "select",
-          { value: value.scope === "channel" ? "channel" : "thread", disabled, onChange: set("scope") },
-          h("option", { value: "thread" }, "Each thread is its own session"),
-          h("option", { value: "channel" }, "One session per channel"),
-        ),
+        "p",
+        { style: { color: "var(--text-secondary)" } },
+        state.detail ||
+          "Check that `aidevops` is installed and on your login shell PATH, then run `aidevops buzz status` in a terminal. The command must finish within 5 seconds.",
       ),
     );
-  }
+  return h(
+    "div",
+    null,
+    h(
+      "pre",
+      {
+        style: {
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+          margin: 0,
+          fontFamily: "var(--font-mono, monospace)",
+        },
+      },
+      state.text || "(no output)",
+    ),
+    h(
+      "p",
+      { style: { color: "var(--text-secondary)" } },
+      `Checked ${state.at.toLocaleTimeString()}`,
+    ),
+  );
+}
 
-  function Create({ config, onChange, disabled }) {
-    return h(Fields, { value: config ?? {}, onChange, disabled });
-  }
-
-  function SettingsTab({ agent, save }) {
-    const [draft, setDraft] = React.useState(agent.config ?? {});
-    const [state, setState] = React.useState({ status: "idle" });
-    React.useEffect(() => setDraft(agent.config ?? {}), [agent.config]);
-    const problem = projectProblem(settings(draft).project);
-    const store = () => {
-      setState({ status: "saving" });
-      save({ ...(agent.config ?? {}), ...draft }).then(
-        () => setState({ status: "saved" }),
-        (error) => setState({ status: "failed", detail: errorMessage(error) }),
-      );
-    };
-    return h(
-      "section",
-      { style: { display: "grid", gap: "var(--space-3, 12px)" } },
-      h(Fields, {
-        value: draft,
-        onChange: setDraft,
-        disabled: state.status === "saving",
-        agentName: agent.name,
+/** The agent's settings fields; used when creating it and in its tab. */
+function fields(h, { value, onChange, disabled, agentName }) {
+  const set = (field) => (event) => onChange({ ...value, [field]: event.target.value });
+  return h(
+    "div",
+    { style: { display: "grid", gap: "var(--space-3, 12px)" } },
+    h(
+      "label",
+      { style: fieldStyle },
+      h("span", null, "Project folder"),
+      h("input", {
+        type: "text",
+        value: value.project ?? "",
+        placeholder: "Full path to a registered repository",
+        disabled,
+        spellCheck: false,
+        onChange: set("project"),
       }),
-      problem ? h("p", { role: "alert", style: hintStyle }, problem) : null,
       h(
-        "div",
-        null,
-        h(
-          "button",
-          { type: "button", disabled: state.status === "saving", onClick: store },
-          state.status === "saving" ? "Saving…" : "Save",
-        ),
-        state.status === "saved" ? h("span", { style: hintStyle }, " Saved. The next message starts a fresh aidevops process.") : null,
-        state.status === "failed" ? h("span", { role: "alert" }, ` ${state.detail}`) : null,
+        "p",
+        { style: hintStyle },
+        "A repository registered with aidevops. The agent works in its own linked worktree of it, never in the folder itself.",
       ),
+    ),
+    h(
+      "label",
+      { style: fieldStyle },
+      h("span", null, "aidevops agent"),
+      h("input", {
+        type: "text",
+        value: value.member ?? "",
+        placeholder: agentName || "aidevops-<this computer>",
+        disabled,
+        spellCheck: false,
+        onChange: set("member"),
+      }),
+      h(
+        "p",
+        { style: hintStyle },
+        "Which aidevops agent runs, named for this computer, such as aidevops-marcus-macbook-pro-01 or build-plus-marcus-macbook-pro-01. Leave empty to use this Buzz agent's name; naming the Buzz agent the same shows people which agent and computer they are addressing.",
+      ),
+    ),
+    h(
+      "label",
+      { style: fieldStyle },
+      h("span", null, "Conversation"),
+      h(
+        "select",
+        { value: value.scope === "channel" ? "channel" : "thread", disabled, onChange: set("scope") },
+        h("option", { value: "thread" }, "Each thread is its own session"),
+        h("option", { value: "channel" }, "One session per channel"),
+      ),
+    ),
+  );
+}
+
+/** The settings tab's save button and its outcome. */
+function saveRow(h, state, store) {
+  const saving = state.status === "saving";
+  let note = null;
+  if (state.status === "saved")
+    note = h("span", { style: hintStyle }, " Saved. The next message starts a fresh aidevops process.");
+  else if (state.status === "failed") note = h("span", { role: "alert" }, ` ${state.detail}`);
+  return h(
+    "div",
+    null,
+    h("button", { type: "button", disabled: saving, onClick: store }, saving ? "Saving…" : "Save"),
+    note,
+  );
+}
+
+/** Runs the declared status command; null means it failed or was refused. */
+async function readStatus(host) {
+  const output = await host.runCommand("buzz-status");
+  return typeof output === "string" ? output.trim() : null;
+}
+
+/** Phase 0: the Settings card with this computer's `aidevops buzz status`. */
+function StatusCard({ React, host }) {
+  const h = React.createElement;
+  const [state, setState] = React.useState({ status: "loading" });
+
+  const refresh = React.useCallback(() => {
+    let current = true;
+    setState({ status: "loading" });
+    readStatus(host).then(
+      (text) => {
+        if (!current) return;
+        setState(text === null ? { status: "failed" } : { status: "ready", text, at: new Date() });
+      },
+      (error) => {
+        if (current) setState({ status: "failed", detail: errorMessage(error) });
+      },
     );
-  }
+    return () => {
+      current = false;
+    };
+  }, [host]);
+
+  React.useEffect(() => refresh(), [refresh]);
+
+  return h(
+    "section",
+    {
+      className: "ui-card",
+      style: {
+        padding: "var(--space-panel-inset)",
+        display: "grid",
+        gap: "var(--space-2)",
+        width: "100%",
+      },
+    },
+    h("h2", null, "Buzz setup on this computer"),
+    statusBody(h, state),
+    h(
+      "div",
+      null,
+      h(
+        "button",
+        {
+          type: "button",
+          disabled: state.status === "loading",
+          onClick: () => refresh(),
+        },
+        "Refresh",
+      ),
+    ),
+  );
+}
+
+/** The aidevops tab in an aidevops agent's settings. */
+function SettingsTab({ React, agent, save }) {
+  const h = React.createElement;
+  const [draft, setDraft] = React.useState(agent.config ?? {});
+  const [state, setState] = React.useState({ status: "idle" });
+  React.useEffect(() => setDraft(agent.config ?? {}), [agent.config]);
+  const problem = projectProblem(settings(draft).project);
+  const store = () => {
+    setState({ status: "saving" });
+    save({ ...(agent.config ?? {}), ...draft }).then(
+      () => setState({ status: "saved" }),
+      (error) => setState({ status: "failed", detail: errorMessage(error) }),
+    );
+  };
+  return h(
+    "section",
+    { style: { display: "grid", gap: "var(--space-3, 12px)" } },
+    fields(h, {
+      value: draft,
+      onChange: setDraft,
+      disabled: state.status === "saving",
+      agentName: agent.name,
+    }),
+    problem ? h("p", { role: "alert", style: hintStyle }, problem) : null,
+    saveRow(h, state, store),
+  );
+}
+
+function summary(agent) {
+  const config = settings(agent.config);
+  return config.project ? `aidevops · ${basename(config.project)}` : "aidevops · no project set";
+}
+
+export function apply(ctx) {
+  const React = ctx.react;
+  const h = React.createElement;
+  const host = ctx.host;
+
+  // ---- Phase 0: Settings status card --------------------------------------
+
+  ctx.settingsCards.register({
+    id: "status",
+    title: "aidevops",
+    component: (props) => h(StatusCard, { ...props, React, host }),
+  });
+
+  // ---- Phase 1: aidevops agent type ---------------------------------------
+
+  const runner = new Runner(host, ctx.agents.harness);
 
   ctx.agents.register({
     id: TYPE_ID,
@@ -750,13 +801,18 @@ export function apply(ctx) {
     description:
       "aidevops agents in OpenCode on this computer, each in its own worktree of a registered project.",
     defaults: () => ({ config: { member: "", project: "", scope: "thread" } }),
-    summary: (agent) => {
-      const config = settings(agent.config);
-      return config.project ? `aidevops · ${basename(config.project)}` : "aidevops · no project set";
-    },
-    Create,
-    tabs: [{ id: "aidevops", title: "aidevops", role: "settings", component: SettingsTab }],
+    summary,
+    Create: ({ config, onChange, disabled }) =>
+      fields(h, { value: config ?? {}, onChange, disabled }),
+    tabs: [
+      {
+        id: "aidevops",
+        title: "aidevops",
+        role: "settings",
+        component: (props) => h(SettingsTab, { ...props, React }),
+      },
+    ],
     timeoutMs: 30 * 60_000,
-    run,
+    run: (delivery) => runner.run(delivery),
   });
 }
