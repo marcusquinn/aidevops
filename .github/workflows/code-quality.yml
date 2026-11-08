@@ -523,10 +523,10 @@ jobs:
         sudo -H -u profile-contract env XDG_RUNTIME_DIR="/run/user/$uid" \
           systemctl --user start dbus.socket
         for _ in $(seq 1 30); do
-          [ -S "/run/user/$uid/bus" ] && break
+          sudo test -S "/run/user/$uid/bus" && break
           sleep 1
         done
-        [ -S "/run/user/$uid/bus" ] || { echo "::error::user session bus unavailable for profile-contract"; exit 1; }
+        sudo test -S "/run/user/$uid/bus" || { echo "::error::user session bus unavailable for profile-contract"; exit 1; }
         sudo -H -u profile-contract env PATH="$PATH" \
           XDG_RUNTIME_DIR="/run/user/$uid" \
           DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
