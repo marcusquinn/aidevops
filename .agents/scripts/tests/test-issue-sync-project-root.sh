@@ -15,8 +15,13 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
 # Fixture repositories are intentionally isolated under TMP. Use native Git so
 # the production canonical-worktree shim does not classify them as service
 # mirrors during local verification.
+export TEST_NATIVE_GIT
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
 git() {
-	/usr/bin/git "$@"
+	"$TEST_NATIVE_GIT" "$@"
 	return $?
 }
 
@@ -278,20 +283,20 @@ grep -q 'status=protected_branch_pr_pending repo=owner/repo-handoff pr=' "$WRAPP
 protected_branch=$(git --git-dir="$remote_handoff" for-each-ref --format='%(refname:short)' 'refs/heads/aidevops/pulse-todo-*')
 [[ -n "$protected_branch" ]] || fail "protected handoff branch did not survive workspace cleanup"
 protected_merge="${TMP}/protected-merge"
-/usr/bin/git clone --quiet "$remote_handoff" "$protected_merge"
-/usr/bin/git -C "$protected_merge" config user.email test@example.com
-/usr/bin/git -C "$protected_merge" config user.name Test
+"$TEST_NATIVE_GIT" clone --quiet "$remote_handoff" "$protected_merge"
+"$TEST_NATIVE_GIT" -C "$protected_merge" config user.email test@example.com
+"$TEST_NATIVE_GIT" -C "$protected_merge" config user.name Test
 printf '%s\n' 'unrelated upstream advance' >"${protected_merge}/README.md"
-/usr/bin/git -C "$protected_merge" add README.md
-/usr/bin/git -C "$protected_merge" commit --quiet -m advance-unrelated
-/usr/bin/git -C "$protected_merge" push --quiet origin main
+"$TEST_NATIVE_GIT" -C "$protected_merge" add README.md
+"$TEST_NATIVE_GIT" -C "$protected_merge" commit --quiet -m advance-unrelated
+"$TEST_NATIVE_GIT" -C "$protected_merge" push --quiet origin main
 protected_rc=0
 sync_todo_refs_for_repo owner/repo-handoff "$repo_handoff" >/dev/null || protected_rc=$?
 [[ "$protected_rc" -eq 4 && $(wc -l <"$TEST_PROTECTED_PUSHES") -eq 1 ]] ||
 	fail "default-branch advance created a duplicate handoff"
-/usr/bin/git -C "$protected_merge" fetch --quiet origin "$protected_branch"
-/usr/bin/git -C "$protected_merge" merge --quiet --no-edit "origin/${protected_branch}" || fail "protected PR fixture could not merge"
-/usr/bin/git -C "$protected_merge" push --quiet origin main
+"$TEST_NATIVE_GIT" -C "$protected_merge" fetch --quiet origin "$protected_branch"
+"$TEST_NATIVE_GIT" -C "$protected_merge" merge --quiet --no-edit "origin/${protected_branch}" || fail "protected PR fixture could not merge"
+"$TEST_NATIVE_GIT" -C "$protected_merge" push --quiet origin main
 sync_todo_refs_for_repo owner/repo-handoff "$repo_handoff" >/dev/null || fail "post-merge TODO sync did not converge"
 git --git-dir="$remote_handoff" show main:TODO.md | grep -q 'ref:GH#301' || fail "merged PR did not publish TODO state"
 [[ $(wc -l <"$TEST_PROTECTED_PUSHES") -eq 1 ]] || fail "post-merge cycle retried protected push"
@@ -312,7 +317,7 @@ git() {
 		printf 'credential %s rejected; detail=%0600d\n' "$TEST_CLONE_TOKEN" 0 >&2
 		return 128
 	fi
-	/usr/bin/git "$@"
+	"$TEST_NATIVE_GIT" "$@"
 	return $?
 }
 clone_failure_rc=0
@@ -374,7 +379,7 @@ if [[ "${3:-}" == "push" ]]; then
 	printf '%s\n' 'remote: - Changes must be made through a pull request.' >&2
 	exit 1
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 FIXTURE
 chmod +x "$protected_git"
 protected_refresh_repo_definition=$(declare -f _pulse_refresh_repo)
@@ -460,7 +465,7 @@ git() {
 			return 0
 		fi
 	done
-	/usr/bin/git "$@"
+	"$TEST_NATIVE_GIT" "$@"
 	return $?
 }
 _pulse_refresh_repo() {
@@ -647,11 +652,11 @@ chmod +x "${auth_root}/inherited-helper" "${auth_root}/bin/gh"
 repo_auth="${TMP}/repo-auth"
 remote_auth="${TMP}/remote-auth.git"
 setup_sync_repo "$repo_auth" "$remote_auth"
-/usr/bin/git -C "$repo_auth" remote set-url origin git@github.com:owner/repo-auth.git
+"$TEST_NATIVE_GIT" -C "$repo_auth" remote set-url origin git@github.com:owner/repo-auth.git
 auth_global="${auth_root}/global.gitconfig"
-/usr/bin/git config --file "$auth_global" credential.helper "${auth_root}/inherited-helper"
-/usr/bin/git config --file "$auth_global" credential.https://github.com.helper "${auth_root}/inherited-helper"
-/usr/bin/git config --file "$auth_global" "url.file://${remote_auth}.insteadOf" \
+"$TEST_NATIVE_GIT" config --file "$auth_global" credential.helper "${auth_root}/inherited-helper"
+"$TEST_NATIVE_GIT" config --file "$auth_global" credential.https://github.com.helper "${auth_root}/inherited-helper"
+"$TEST_NATIVE_GIT" config --file "$auth_global" "url.file://${remote_auth}.insteadOf" \
 	https://github.com/owner/repo-auth.git
 auth_previous_path="$PATH"
 unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_ASKPASS SSH_ASKPASS
@@ -662,14 +667,14 @@ export PATH="${auth_root}/bin:${PATH}"
 # outside the fixture is visible (for example a developer checkout's local
 # credential.helper=osxkeychain).
 auth_visible_helpers=$(cd "$auth_no_repo" && GIT_CEILING_DIRECTORIES="$auth_root" \
-	/usr/bin/git config --get-regexp '^credential\..*helper$' || true)
+	"$TEST_NATIVE_GIT" config --get-regexp '^credential\..*helper$' || true)
 while read -r auth_helper_key auth_helper_value; do
 	[[ -n "$auth_helper_key" ]] || continue
 	[[ "$auth_helper_value" == "${auth_root}/"* ]] ||
 		fail "non-fixture credential helper visible to auth test: ${auth_helper_key}"
 done <<<"$auth_visible_helpers"
 # The fixture remote must resolve locally so no request leaves the host.
-[[ $(/usr/bin/git config --get "url.file://${remote_auth}.insteadOf") == \
+[[ $("$TEST_NATIVE_GIT" config --get "url.file://${remote_auth}.insteadOf") == \
 	https://github.com/owner/repo-auth.git ]] || fail "auth fixture global config is not in effect"
 
 _test_github_credential_roundtrip() {
@@ -681,10 +686,10 @@ _test_github_credential_roundtrip() {
 		return 1
 	fi
 	credential=$(cd "$auth_no_repo" && GIT_CEILING_DIRECTORIES="$auth_root" GIT_TERMINAL_PROMPT=0 \
-		/usr/bin/git credential fill <<<"$(printf 'protocol=https\nhost=github.com\npath=%s\n' \
+		"$TEST_NATIVE_GIT" credential fill <<<"$(printf 'protocol=https\nhost=github.com\npath=%s\n' \
 			"${remote_url#https://github.com/}")") || return 1
 	(cd "$auth_no_repo" && GIT_CEILING_DIRECTORIES="$auth_root" GIT_TERMINAL_PROMPT=0 \
-		/usr/bin/git credential approve <<<"${credential}") || return 1
+		"$TEST_NATIVE_GIT" credential approve <<<"${credential}") || return 1
 	return 0
 }
 auth_original_git_definition=$(declare -f git)
@@ -704,14 +709,14 @@ git() {
 	case "$subcommand" in
 	clone | fetch | ls-remote | push)
 		if [[ -z "$target" && -n "$repo_dir" ]]; then
-			target=$(/usr/bin/git -C "$repo_dir" remote get-url origin 2>/dev/null || true)
+			target=$("$TEST_NATIVE_GIT" -C "$repo_dir" remote get-url origin 2>/dev/null || true)
 		fi
 		if [[ "$target" == https://github.com/* ]]; then
 			_test_github_credential_roundtrip "$target" || return 128
 		fi
 		;;
 	esac
-	/usr/bin/git "$@"
+	"$TEST_NATIVE_GIT" "$@"
 	return $?
 }
 
@@ -761,7 +766,7 @@ fi
 (
 	_ptsw_isolate_github_git_auth || exit 1
 	cd "$auth_no_repo" || exit 1
-	GIT_CEILING_DIRECTORIES="$auth_root" /usr/bin/git credential fill \
+	GIT_CEILING_DIRECTORIES="$auth_root" "$TEST_NATIVE_GIT" credential fill \
 		<<<"$(printf 'protocol=https\nhost=example.invalid\npath=o/r.git\n')" >/dev/null
 ) || fail "non-GitHub credential lookup failed under isolation"
 if ! grep -qx get "$TEST_INHERITED_LOG" || [[ -s "$TEST_GH_LOG" ]]; then
