@@ -1905,7 +1905,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18884 Skip the aidevops session greeting when OpenCode runs as an ACP server #auto-dispatch #feat ref:GH#36983
 
-- [ ] t18886 OpenCode session bus: presence and session-to-session messages #feat ref:GH#37149 -> [todo/tasks/t18886-brief.md]
+- [x] t18886 OpenCode session bus: presence and session-to-session messages #feat ref:GH#37149 -> [todo/tasks/t18886-brief.md] pr:#37165 completed:2026-11-08
 
 - [ ] t18887 feat: OpenCode browse support (install via setup/update, lazy MCP, routing docs) #feat #interactive ref:GH#37155 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 -> [todo/tasks/t18887-brief.md]
 
