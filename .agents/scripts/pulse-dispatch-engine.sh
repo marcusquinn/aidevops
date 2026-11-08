@@ -1217,7 +1217,12 @@ _attribute_sustained_underfill() {
 	else
 		rm -f "${HOME}/.aidevops/advisories/underfill-"*.advisory
 	fi
-	runner=$(id -un)
+	runner=$(id -un 2>/dev/null) || runner=""
+	if [[ -z "$runner" || "$runner" =~ ^[0-9]+$ ]]; then
+		runner="${USER:-${LOGNAME:-}}"
+	fi
+	# Never attribute runner remediation to a UID, even if the environment is bad.
+	[[ -n "$runner" && ! "$runner" =~ ^[0-9]+$ ]] || return 0
 	summary=""
 	if ((streak >= 3)); then
 		[[ "$(jq 'length' <<<"$reasons")" != 0 ]] || reasons='[{"reason":"unattributed","count":1}]'
@@ -1469,6 +1474,8 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 #          1 if prefetch failed (abort cycle)
 #######################################
 _run_preflight_stages() {
+	_preflight_macos_user_lookup_gate || return 1
+
 	# t1425, t1482: Write SETUP sentinel during pre-flight stages.
 	echo "SETUP:$$" >"$PIDFILE"
 

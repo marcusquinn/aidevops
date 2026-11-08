@@ -51,6 +51,9 @@ source "${BASH_SOURCE[0]%/*}/systemd-scope-launch.sh" || true
 # script routines keep the inherited signing configuration.
 # shellcheck source=./headless-signing-lib.sh
 source "${BASH_SOURCE[0]%/*}/headless-signing-lib.sh" || true
+# Shared host-health gate for independently invoked routine evaluation.
+# shellcheck source=./pulse-dispatch-preflight-lib.sh
+source "${BASH_SOURCE[0]%/*}/pulse-dispatch-preflight-lib.sh" || return 1
 _PULSE_ROUTINES_LOADED=1
 _ROUTINE_STATUS_SUCCESS="success"
 _ROUTINE_STATUS_FAILURE="failure"
@@ -1256,6 +1259,7 @@ _evaluate_issue_archive_routine() {
 # ([x] lines with repeat: fields), checks if due, and dispatches.
 #######################################
 evaluate_routines() {
+	_preflight_macos_user_lookup_gate || return 0
 	local publication_worker="${SCRIPT_DIR}/task-publication-worker-helper.sh"
 	local run_publication=1
 	# Busy-lock passes (GH#35349) run every scheduler tick; they evaluate
