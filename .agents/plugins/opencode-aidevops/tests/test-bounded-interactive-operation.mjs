@@ -416,11 +416,12 @@ describe("bounded interactive operations", () => {
 
   test("descendant attribution requires a matching process start identity", () => {
     const snapshot = parseProcessSnapshot([
-      "100 1 100 Sun Oct  4 03:00:00 2026",
-      "101 100 100 Sun Oct  4 03:00:01 2026",
-      "102 101 102 Sun Oct  4 03:00:02 2026",
-      "103 1 102 Sun Oct  4 03:00:02 2026",
-      "200 1 200 Sun Oct  4 03:00:03 2026",
+      "100 1 100 S Sun Oct  4 03:00:00 2026",
+      "101 100 100 S Sun Oct  4 03:00:01 2026",
+      "102 101 102 S Sun Oct  4 03:00:02 2026",
+      "103 1 102 S Sun Oct  4 03:00:02 2026",
+      "200 1 200 S Sun Oct  4 03:00:03 2026",
+      "201 100 100 Z+ Sun Oct  4 03:00:03 2026",
       "garbage",
     ].join("\n"));
     assert.equal(snapshot.length, 5);
@@ -430,18 +431,18 @@ describe("bounded interactive operations", () => {
     // 102 exited and its PID was reused by an unrelated process; 103 is a
     // reparented member only attributable through a verified recorded parent.
     const later = parseProcessSnapshot([
-      "100 1 100 Sun Oct  4 03:00:00 2026",
-      "102 1 102 Sun Oct  4 03:09:59 2026",
-      "103 1 102 Sun Oct  4 03:00:02 2026",
-      "200 1 200 Sun Oct  4 03:00:03 2026",
+      "100 1 100 S Sun Oct  4 03:00:00 2026",
+      "102 1 102 S Sun Oct  4 03:09:59 2026",
+      "103 1 102 S Sun Oct  4 03:00:02 2026",
+      "200 1 200 S Sun Oct  4 03:00:03 2026",
     ].join("\n"));
     recordOwnedDescendants(later, 100, owned);
     assert.deepEqual(verifiedNestedTargets(later, owned, 100), [], "a reused PID must never be signalled");
     const reparented = parseProcessSnapshot([
-      "100 1 100 Sun Oct  4 03:00:00 2026",
-      "102 1 102 Sun Oct  4 03:00:02 2026",
-      "104 102 102 Sun Oct  4 03:00:05 2026",
-      "200 1 200 Sun Oct  4 03:00:03 2026",
+      "100 1 100 S Sun Oct  4 03:00:00 2026",
+      "102 1 102 S Sun Oct  4 03:00:02 2026",
+      "104 102 102 S Sun Oct  4 03:00:05 2026",
+      "200 1 200 S Sun Oct  4 03:00:03 2026",
     ].join("\n"));
     const tracked = new Map(owned);
     tracked.set(102, { pgid: 102, started: "Sun Oct  4 03:00:02 2026" });
