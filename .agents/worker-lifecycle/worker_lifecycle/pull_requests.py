@@ -115,3 +115,37 @@ class OpenPullRequestCache:
         if matches_open_pull_request(prs, head, branch, slug):
             return "open-pull-request"
         return None
+
+
+class PassPullRequests:
+    """Per-pass open-PR memo for the observation-era cleanup (GH#37181).
+
+    Prechecks and journaled plans reuse one lookup per slug; `refresh` always
+    queries again for the check immediately before removal. A failed lookup,
+    including a `gh` governor deferral (exit 75), is remembered for the rest of
+    the pass so it is not retried per item. It never proves absence: callers
+    see `pull-request-state-unavailable` and hold.
+    """
+
+    def __init__(self):
+        self.results: dict[str, list | Exception] = {}
+
+    def get(self, slug: str, lookup) -> list:
+        """Return the pass result for `slug`, looking it up once."""
+        if slug not in self.results:
+            return self.refresh(slug, lookup)
+        return self._value(slug)
+
+    def refresh(self, slug: str, lookup) -> list:
+        """Look `slug` up again and remember the outcome for the pass."""
+        try:
+            self.results[slug] = lookup(slug)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            self.results[slug] = error
+        return self._value(slug)
+
+    def _value(self, slug: str) -> list:
+        result = self.results[slug]
+        if isinstance(result, Exception):
+            raise ValueError("pull-request-state-unavailable") from result
+        return result

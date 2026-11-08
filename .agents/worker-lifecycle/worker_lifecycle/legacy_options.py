@@ -1,6 +1,6 @@
 """Selection and limits for the temporary legacy cleanup operation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import math
 import os
@@ -10,6 +10,7 @@ import tempfile
 from .cleanup_failure import failure_details
 from .filesystem import validate_private_path as _private
 from .process import ObservationUnavailable
+from .pull_requests import PassPullRequests
 
 
 def queue(store, items):
@@ -107,6 +108,9 @@ class CleanupOptions:
     limit: int = 25
     budget: float = 120
     confirmed_paths: tuple[str, ...] = ()
+    # Per-pass lookup memo (GH#37181); grants no authority and is never compared.
+    pull_requests: PassPullRequests = field(
+        default_factory=PassPullRequests, compare=False, repr=False)
 
     def __post_init__(self):
         """Validate limits and confirmed paths."""
