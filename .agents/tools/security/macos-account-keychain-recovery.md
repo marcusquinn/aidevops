@@ -92,8 +92,12 @@ Order of preference:
 
 1. **Old password known:** unlock the set-aside file and move it back, or
    export items with Keychain Access. To restore it as the login keychain,
-   quit apps, swap the files with a dated backup of the current
-   `login.keychain-db`, restart, and let login rekey it.
+   first make its password match the current login password: the user runs
+   `security set-keychain-password <copy>` and types the old, then the new,
+   password. Login does not rekey a keychain whose password differs; it
+   prompts, and may reset the keychain if the prompt fails. Then quit apps,
+   swap the files with a dated backup of the current `login.keychain-db`,
+   restart, and confirm it unlocks at login without a prompt.
 2. **Older copy with a known password:** a Time Machine backup, a local APFS
    snapshot, or the previous Mac's `~/Library/Keychains/login.keychain-db`.
    - Local snapshots: `tmutil listlocalsnapshots /`; mount read-only with
@@ -101,6 +105,13 @@ Order of preference:
      need sudo), copy the file, then `umount <empty-dir>`.
    - Snapshots are deleted automatically within about 24 hours. Copy what you
      need early.
+   - Recent macOS login keychains can also depend on per-device key material
+     outside the file (unified logs show a derived-entropy unlock path backed
+     by root-only `/var/db/SystemKeys`). In the incident behind this guide, a
+     copy from the previous Mac still opened with its password. If a copy
+     refuses a password the user is sure of, retest it as `login.keychain-db`
+     (section 3) and treat a further failure as unknown, not as proof of a
+     wrong password.
 3. **Header graft (advanced):** a keychain password change rewraps the same
    database key; items are not re-encrypted. If an older copy of the same
    keychain opens with a known password, its header can unlock a newer copy's
