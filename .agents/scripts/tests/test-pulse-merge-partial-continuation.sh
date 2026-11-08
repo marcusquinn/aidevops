@@ -63,6 +63,7 @@ reset_case() {
 	TEST_PR_LABELS="origin:worker,tier:standard"
 	TEST_PR_JSON=$(pr_json true runner1)
 	TEST_PR_RC=0
+	TEST_PERMISSION=write
 	TEST_COMMENT_RC=0
 	TEST_COMMENT_FAILS=0
 	TEST_COMMENTS_AFTER_ATTEMPT=""
@@ -233,6 +234,10 @@ gh() {
 		printf '%s' "$TEST_PR_JSON"
 		return 0
 	fi
+	if [[ "${1:-}" == "api" && "${2:-}" == "repos/${SLUG}/collaborators/runner1/permission" ]]; then
+		printf '%s' "$TEST_PERMISSION"
+		return 0
+	fi
 	if [[ "${1:-}" == "api" && "${2:-}" == "repos/${SLUG}/issues/501/comments"* ]]; then
 		# Models a comment write that errored client-side but landed server-side.
 		if [[ -n "$TEST_COMMENTS_AFTER_ATTEMPT" && -s "$COMMENT_ATTEMPTS" ]]; then
@@ -337,6 +342,25 @@ assert_log_contains() {
 }
 
 # --- cases ---
+test_unlabeled_worker_provenance() {
+	reset_case
+	TEST_PR_LABELS="tier:standard"
+	TEST_PR_JSON=$(printf '%s' "$TEST_PR_JSON" | jq '. + {body: "<!-- aidevops:origin:worker -->", head: {ref: "feature/auto-20261108-155943-gh501"}}')
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" "unlabeled trusted worker returns to queue"
+	reset_case
+	TEST_PR_LABELS="tier:standard"
+	TEST_PR_JSON=$(printf '%s' "$TEST_PR_JSON" | jq '. + {body: "<!-- aidevops:origin:worker -->", head: {ref: "feature/auto-20261108-155943-gh501"}}')
+	TEST_PERMISSION=read
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "untrusted worker marker cannot release issue"
+	TEST_PERMISSION=write
+	TEST_PR_JSON=$(printf '%s' "$TEST_PR_JSON" | jq '.head.ref = "feature/other"')
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "worker marker without worker branch cannot release issue"
+	return 0
+}
+
 test_eligible_leaf_returns_to_queue() {
 	reset_case
 	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker,tier:standard"
@@ -991,6 +1015,7 @@ main() {
 	# shellcheck source=../pulse-merge-partial-continuation.sh
 	source "$MODULE_FILE"
 
+	test_unlabeled_worker_provenance
 	test_eligible_leaf_returns_to_queue
 	test_parent_tracker_skips_auto_dispatch
 	test_terminal_lease_proves_finished_run
