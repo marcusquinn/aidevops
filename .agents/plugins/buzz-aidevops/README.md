@@ -6,6 +6,12 @@
 Phase 0 of t18883. Adds an **aidevops** card under Buzz Settings that shows the
 output of `aidevops buzz status` for this computer.
 
+Needs a Buzz Desktop build with plugins: the `block/buzz-app` desktop preview
+releases (0.7.0 previews, tested on `v0.7.0-preview.254.1`). Stable Buzz 0.5.x
+has no plugin support. The preview uses its own data folder
+(`xyz.block.buzz.desktop`), so it can be installed beside 0.5.x as
+`/Applications/Buzz Preview.app`.
+
 ## Install (owner action)
 
 1. Buzz Desktop → **Settings → Plugins → Manage plugins → Add**.
