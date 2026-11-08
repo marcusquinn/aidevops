@@ -1299,7 +1299,10 @@ terminal_blocker_circuit_active() {
 	fingerprint=$(printf '%s' "$circuit" | jq -r '.body | capture("<!-- aidevops:terminal-blocker-circuit revision=[a-f0-9]{24} blocker=(?<id>[a-f0-9]{24}) -->").id' 2>/dev/null) || return 1
 	reason=$(_terminal_blocker_reason "$fingerprint")
 	[[ "$reason" != "$_TBC_UNKNOWN" ]] || return 1
-	current_revision=$(terminal_blocker_task_revision "$issue_json" "$repo_slug" "$issue_number" "$repo_path" "$reason") || return 1
+	current_revision=$(terminal_blocker_task_revision "$issue_json" "$repo_slug" "$issue_number" "$repo_path" "$reason") || {
+		printf 'TERMINAL_BLOCKER_CIRCUIT_HOLD reason=revision_unavailable issue=%s\n' "$issue_number" >&2
+		return 0
+	}
 	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=${current_revision} blocker=${fingerprint}") || circuit=""
 	[[ -n "$circuit" ]] || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
