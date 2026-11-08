@@ -68,7 +68,7 @@ _preflight_macos_user_lookup_advisory() {
 	local dir="${HOME}/.aidevops/advisories"
 	local marker="$dir/macos-user-lookup.advisory"
 	mkdir -p "$dir" 2>/dev/null || return 1
-	timeout_sec 5 perl -MFcntl=:DEFAULT,:flock -e '
+	timeout_sec 5 perl -MFcntl=:DEFAULT,:flock - "$marker" "$message" >/dev/null 2>&1 <<'PERL' || true
 		my ($path, $message) = @ARGV;
 		sysopen(my $fh, $path, O_RDWR | O_CREAT, 0600) or exit 0;
 		flock($fh, LOCK_EX | LOCK_NB) or exit 0;
@@ -95,7 +95,7 @@ _preflight_macos_user_lookup_advisory() {
 		alarm 0;
 		waitpid($pid, 0) if $waited == -1;
 		stamp();
-	' "$marker" "$message" >/dev/null 2>&1 || true
+PERL
 	return 0
 }
 
