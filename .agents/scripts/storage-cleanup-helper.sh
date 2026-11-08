@@ -279,6 +279,8 @@ _sc_dry_run_store() {
 	opencode)
 		printf 'Superseded/expired layout-migration backups (dry run):\n'
 		bash "${SCRIPT_DIR}/repo-layout-migrate-helper.sh" prune || rc=$?
+		printf 'Archived event retention (conversation history preserved):\n'
+		bash "${SCRIPT_DIR}/opencode-db-archive.sh" archive-all --events-only --dry-run || rc=$?
 		_sc_preview_opencode_retention || rc=$?
 		bash "${SCRIPT_DIR}/opencode-db-maintenance-helper.sh" reclaimable || true
 		printf 'Apply also checkpoints/optimizes each idle OpenCode DB (throttled to weekly).\n'
@@ -310,7 +312,10 @@ _sc_apply_store() {
 		_sc_last_worktree_outcome
 		;;
 	artefacts) bash "${SCRIPT_DIR}/worktree-artefact-reclaim.sh" --force --max-seconds "$SC_ARTEFACT_MAX_SECONDS" || rc=$? ;;
-	opencode) bash "${SCRIPT_DIR}/opencode-db-maintenance-helper.sh" auto || rc=$? ;;
+	opencode)
+		bash "${SCRIPT_DIR}/opencode-db-archive.sh" archive-all --events-only --apply || rc=$?
+		bash "${SCRIPT_DIR}/opencode-db-maintenance-helper.sh" auto || rc=$?
+		;;
 	observability)
 		bash "${SCRIPT_DIR}/observability-helper.sh" retention-maintenance --apply \
 			--max-partitions 20 --max-duration-seconds 120 || rc=$?

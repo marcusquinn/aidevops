@@ -938,20 +938,32 @@ else
 	_fail "isolated event move mismatch: $out"
 fi
 transcript_before=$(sqlite3 "$isolated_archive" 'SELECT (SELECT COUNT(*) FROM session) || (SELECT COUNT(*) FROM message) || (SELECT COUNT(*) FROM part);')
+mock_active_only="${SANDBOX}/mock-active-only"
+# The argument is expanded by the generated holder command, not this script.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'case "$2" in */opencode.db) printf "4242\n" ;; esac' >"$mock_active_only"
+chmod +x "$mock_active_only"
 out=$(OPENCODE_DB_PATH="$isolated_db" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
-	"$HELPER" archive --dry-run --archive-event-retention-days 1 2>&1)
+	OPENCODE_DB_HOLDER_COMMAND="$mock_active_only" "$HELPER" archive --events-only --dry-run --archive-event-retention-days 1 2>&1)
 if [[ "$out" == *"would expire 1 archived events"* && "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 1 ]]; then
 	_pass "archived event expiry dry run never deletes rows with no active candidates"
 else
 	_fail "event expiry preview mismatch: $out"
 fi
 out=$(OPENCODE_DB_PATH="$isolated_db" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
-	"$HELPER" archive --apply --archive-event-retention-days 1 2>&1)
+	OPENCODE_DB_HOLDER_COMMAND="$mock_active_only" "$HELPER" archive --apply --archive-event-retention-days 1 2>&1) || true
 transcript_after=$(sqlite3 "$isolated_archive" 'SELECT (SELECT COUNT(*) FROM session) || (SELECT COUNT(*) FROM message) || (SELECT COUNT(*) FROM part);')
-if [[ "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 0 && "$transcript_before" == "$transcript_after" ]]; then
-	_pass "opt-in archived event expiry preserves session/message/part rows"
+if [[ "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 0 && "$transcript_before" == "$transcript_after" && "$out" == *"expired 1 events"* && "$out" == *"hold the active DB open"* && "$(sqlite3 "$isolated_archive" 'PRAGMA quick_check;')" == ok ]]; then
+	_pass "archived event expiry proceeds with active holder and preserves transcripts"
 else
 	_fail "event expiry transcript mismatch: $out"
+fi
+out=$(OPENCODE_DB_PATH="$isolated_db" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_HOLDER_COMMAND="$mock_active_only" "$HELPER" archive --events-only --apply --archive-event-retention-days 1 2>&1)
+if [[ "$out" == *"expired 0 events"* ]]; then
+	_pass "archived event expiry is idempotent"
+else
+	_fail "event expiry repeat mismatch: $out"
 fi
 
 # A persisted old-shape archive must migrate before a new-shape copy, and
