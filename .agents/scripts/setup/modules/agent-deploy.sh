@@ -1869,7 +1869,9 @@ _deploy_stable_buzz_plugin() {
 	for existing in "$dest_dir"/*; do
 		[[ -e "$existing" || -L "$existing" ]] || continue
 		name="${existing##*/}"
-		[[ -f "$plugin_src/$name" && ! -L "$plugin_src/$name" ]] || rm -rf "$existing"
+		if [[ ! -f "$plugin_src/$name" || -L "$plugin_src/$name" ]]; then
+			rm -rf "$existing" || return 1
+		fi
 	done
 	return 0
 }
