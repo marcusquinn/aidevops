@@ -1087,29 +1087,32 @@ _archive_expire_events() {
 		print_error "Archive event expiry refused — active and archive DB are the same file"
 		return 1
 	fi
-	local holders cutoff count start now
+	local holders cutoff count start now total=0 bytes=0
 	holders=$(_db_holder_count "$ARCHIVE_DB")
 	if [[ "$holders" == "$OPENCODE_DB_STATE_UNKNOWN" || "$holders" -gt 0 ]]; then
 		print_warning "Archive event expiry deferred — archive holder state is active or unknown"
 		return 2
 	fi
 	_wal_is_stable "$ARCHIVE_DB" || return 2
-	opencode_archive_schema_supported "$ARCHIVE_DB" required || return 3
 	_sqlite_has_table "$ARCHIVE_DB" event || return 0
+	opencode_archive_schema_supported "$ARCHIVE_DB" required || return 3
 	cutoff=$(($(date +%s) * 1000 - days * 86400000))
 	if ((dry_run)); then
 		count=$(sqlite3 -readonly "$ARCHIVE_DB" "SELECT COUNT(*) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE time_updated < $cutoff);") || return 1
-		print_info "DRY RUN — would expire $count archived events (inactive ${days}+ days)"
+		bytes=$(sqlite3 -readonly "$ARCHIVE_DB" "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE time_updated < $cutoff);") || return 1
+		print_info "DRY RUN — would expire $count archived events (inactive ${days}+ days), $(format_bytes "$bytes") payload"
+		print_info "Freed pages are reused; file size falls only after VACUUM."
 		return 0
 	fi
 	start=$(date +%s)
 	while true; do
 		count=$(sqlite3 -cmd '.timeout 5000' "$ARCHIVE_DB" "DELETE FROM event WHERE rowid IN (SELECT e.rowid FROM event e JOIN session s ON s.id=e.aggregate_id WHERE s.time_updated < $cutoff LIMIT $ARCHIVE_BATCH_SIZE); SELECT changes();") || return 1
+		total=$((total + count))
 		[[ "$count" -gt 0 ]] || break
 		now=$(date +%s)
 		if ((max_duration > 0 && now - start >= max_duration)); then break; fi
 	done
-	print_info "Archived event expiry pass complete (inactive ${days}+ days); transcripts preserved"
+	print_info "Archived event expiry pass complete: expired $total events (inactive ${days}+ days); transcripts preserved; freed pages are reused until VACUUM"
 	return 0
 }
 
@@ -1125,7 +1128,8 @@ cmd_archive() {
 	local keep_enabled=0
 	local dry_run=0
 	local max_duration="$DEFAULT_MAX_DURATION"
-	local event_retention_days="${OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS:-0}"
+	local event_retention_days="${OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS:-$DEFAULT_WORKER_RETENTION_DAYS}"
+	local events_only=0
 
 	# Phase helpers share only these command-local settings/results via Bash's
 	# dynamic scope. Batch SQL and counters have their own narrower owner below.
@@ -1138,6 +1142,8 @@ cmd_archive() {
 		_archive_with_deadline "$max_duration" "${original_args[@]}"
 		return $?
 	fi
+	_archive_expire_events "$event_retention_days" "$dry_run" "$max_duration" || return $?
+	((events_only)) && return 0
 	local preflight_rc=0
 	_archive_mutation_preflight || preflight_rc=$?
 	if [[ "$preflight_rc" -ne 0 ]]; then
@@ -1208,6 +1214,10 @@ _archive_parse_options() {
 			dry_run=0
 			shift
 			;;
+		--events-only)
+			events_only=1
+			shift
+			;;
 		--archive-event-retention-days)
 			event_retention_days="$option_value"
 			[[ $# -ge 2 ]] || return 1
@@ -1274,8 +1284,6 @@ _archive_prepare_candidates() {
 	fi
 	print_info "Active DB: $ACTIVE_DB"
 	print_info "Archive DB: $ARCHIVE_DB"
-	_archive_expire_events "$event_retention_days" "$dry_run" "$max_duration" || return $?
-
 	# Get active worker sessions to exclude
 	local active_sessions
 	active_sessions=$(get_active_worker_sessions)
@@ -1769,8 +1777,9 @@ ARCHIVE OPTIONS (split retention by session origin):
   --dry-run                 Show what would be archived without doing it
   --apply                   Explicitly apply changes (also the legacy default)
   --archive-event-retention-days N  Expire archived event rows for sessions inactive N days
-                            (default 0: disabled). Keeps session/message/part.
+                            (default 7; 0 disables). Keeps session/message/part/todo.
                             Runs before moving sessions; freed pages are reused.
+  --events-only             Expire archive events without moving active sessions
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
 
 RESTORE OPTIONS:
@@ -1796,7 +1805,7 @@ ENVIRONMENT:
   OPENCODE_DB_ARCHIVE_WORKER_RETENTION_DAYS       Default for --worker-retention-days (7)
   OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS  Default for --interactive-retention-days (90)
   OPENCODE_DB_HEADLESS_LEDGER  Headless ledger DB (default: headless-runtime/state.db)
-  OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS  Optional archived event expiry, default 0
+  OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS  Archived event expiry, default 7; 0 disables
                             archive-all always uses an archive beside each active DB;
                             max-duration-seconds applies per DB, not to the inventory.
 
