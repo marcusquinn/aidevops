@@ -845,6 +845,29 @@ test("CLI ask --wait prints the reply, acknowledges it, and exits 2 on timeout",
   assert.throws(() => cliMain(["send", "repo-cli", "x", "--wait", "3"], { env: {}, out, root }), /only valid with ask/);
 });
 
+test("release-only options remain message text for send and ask", () => {
+  const out = { write() {} };
+  for (const [command, id] of [["send", "ses_text01"], ["ask", "ses_text02"]]) {
+    cliMain([command, id, "Please use", "--recovery", "aidevops release reconcile 42", "--event", "failed"], { env: {}, out, root });
+    assert.equal(store.pendingMessages(root, id)[0].message.text, "Please use --recovery aidevops release reconcile 42 --event failed");
+  }
+});
+
+test("release fan-out reaches all watchers and owner across repeated events", () => {
+  for (let index = 0; index < 12; index += 1) {
+    const id = `ses_fan${String(index).padStart(3, "0")}`;
+    livePresence(id);
+    releaseWatch.addReleaseWatch(root, "owner/repo", peer(id));
+  }
+  for (let index = 0; index < 12; index += 1) {
+    const result = releaseWatch.notifyRelease(root, { repo: "owner/repo", sourcePr: "42", event: "failed", ownerSession: "ses_owner99" });
+    assert.equal(result.sent.length, 13);
+    assert.deepEqual(result.failed, []);
+  }
+  assert.equal(store.pendingMessages(root, "ses_owner99").length, 12);
+  assert.equal(isWakeEligible(store.pendingMessages(root, "ses_owner99")[0].message, true), false);
+});
+
 test("release watches fan out one non-waking info notice per event and dead-executor markers send once (t18896)", async () => {
   livePresence("ses_watchR1", { handle: "repo-watch" });
   livePresence("ses_ownerR1", { handle: "repo-owner" });

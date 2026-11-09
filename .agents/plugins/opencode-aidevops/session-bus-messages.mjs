@@ -86,10 +86,10 @@ function senderFields(from) {
   };
 }
 
-function buildMessage(root, { from, to, toHandle = "", type, text, re = "", hops = 0, now = Date.now() }) {
+function buildMessage(root, { from, to, toHandle = "", type, text, re = "", hops = 0, now = Date.now() }, releaseNotice = false) {
   validateRoute({ from, to, type });
   const body = validBody(text);
-  checkRate(root, from, now);
+  if (!releaseNotice) checkRate(root, from, now);
   return {
     v: BUS_VERSION,
     id: newMessageId(),
@@ -109,11 +109,21 @@ function buildMessage(root, { from, to, toHandle = "", type, text, re = "", hops
  * Throws on any limit or validation failure, so the caller can surface it.
  */
 export function sendMessage(root, options) {
+  return writeMessage(root, options, false);
+}
+
+// Internal advisory fan-out: fixed sender and info type, still subject to inbox limits.
+export function sendReleaseNotice(root, { to, toHandle, text, now }) {
+  const from = { session_id: "", handle: "release-lane", repo: "", branch: "", origin: "cli:release-lane" };
+  return writeMessage(root, { from, to, toHandle, type: "info", text, now }, true);
+}
+
+function writeMessage(root, options, releaseNotice) {
   if (!isSafeId(options?.to)) throw new Error("invalid recipient session ID");
   if (pendingCount(root, options.to) >= LIMITS.inboxPending) {
     throw new Error(`recipient inbox is full (${LIMITS.inboxPending} undelivered messages); try later`);
   }
-  const message = buildMessage(root, options);
+  const message = buildMessage(root, options, releaseNotice);
   const name = messageFileName(message);
   writeJsonAtomic(join(inboxDir(root, message.to), name), message);
   writeJsonAtomic(join(sentDir(root, senderKey(message.from)), name), message);

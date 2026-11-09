@@ -42,13 +42,25 @@ _release_lane_notices_enabled() {
 	return $?
 }
 
-# Run the session-bus CLI with a hard wall-clock bound. Without a timeout
-# command the bus is skipped, so the release path never waits on it.
+# Run the session-bus CLI with a hard wall-clock bound, including on macOS.
 _release_lane_session_bus() {
 	local helper="${_AIDEVOPS_RELEASE_LANE_LIB_DIR}/session-bus-helper.sh"
 	local timeout_cmd=""
 	[[ -f "$helper" ]] || return 1
-	timeout_cmd=$(command -v timeout || command -v gtimeout) || return 1
+	timeout_cmd=$(command -v timeout || command -v gtimeout) || timeout_cmd=""
+	if [[ -z "$timeout_cmd" ]]; then
+		python3 -I -c '
+import os, signal, subprocess, sys
+process = subprocess.Popen(["bash", *sys.argv[2:]], stdin=subprocess.DEVNULL, start_new_session=True)
+try:
+    sys.exit(process.wait(timeout=int(sys.argv[1])))
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+    sys.exit(124)
+' "$_AIDEVOPS_RELEASE_NOTICE_TIMEOUT_SECONDS" "$helper" "$@"
+		return $?
+	fi
 	# TERM one second before the budget, then KILL, so the total stays within it.
 	"$timeout_cmd" -k 1 "$((_AIDEVOPS_RELEASE_NOTICE_TIMEOUT_SECONDS - 1))" bash "$helper" "$@" </dev/null
 	return $?
