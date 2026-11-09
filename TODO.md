@@ -1977,6 +1977,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18930 fix(full-loop): release a finished interactive session's worktree ownership at the complete handoff so Pulse can retire merged trees while the app runs #auto-dispatch #bug blocked-by:t18929 ref:GH#37448 -> [todo/tasks/t18930-brief.md]
 
+- [ ] t18932 fix(screen-time): stale macOS source renders 0h instead of unavailable for unobserved periods #auto-dispatch #bug ref:GH#37467 logged:2026-11-09 -> [todo/tasks/t18932-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
