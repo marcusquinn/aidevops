@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.151] - 2026-11-09
+
+### Added
+
+- let a session relinquish its own run so explicit removal of its finished tree succeeds
+
+### Fixed
+
+- preserve loop identity during postflight (#37454)
+- fail closed when keychain probe fails (#37455)
+- normalize line endings before REQUEST_START match in gh_quota_debug_request (GH#37440) (#37451)
+- honour breaker bypass in relay gate and guard exit notices (#37453)
+- use bool-excluding isinstance for removal boundary check (#37441)
+
 ## [3.39.150] - 2026-11-09
 
 ### Changed

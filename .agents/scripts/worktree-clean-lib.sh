@@ -122,9 +122,10 @@ _clean_legacy_marker_matches_process_generation() {
 }
 
 # GH#32528: Decide whether a live deferred owner's post-merge lease has expired
-# because it aged out or its session registered a newer worktree. On expiry,
-# release only the exact post-merge registry contract written by
-# full-loop-helper.sh merge; any other live registry owner still blocks.
+# because its session relinquished the tree at `complete` (GH#37448), it aged
+# out, or its session registered a newer worktree. On expiry, release only the
+# exact post-merge registry contract written by full-loop-helper.sh merge; any
+# other live registry owner, and every registry retirement check, still blocks.
 # Returns 0 when expired, 1 when the owner keeps the worktree.
 _clean_deferred_owner_lease_expired() {
 	local wt_path="$1"
@@ -140,7 +141,10 @@ _clean_deferred_owner_lease_expired() {
 	IFS=$'\t' read -r owner_pid owner_session deferred_at <<<"$owner_record"
 	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
 
-	if declare -F full_loop_cleanup_owner_lease_aged >/dev/null 2>&1 &&
+	if declare -F full_loop_cleanup_owner_relinquished >/dev/null 2>&1 &&
+		full_loop_cleanup_owner_relinquished "$receipt_path"; then
+		reason="session-relinquished"
+	elif declare -F full_loop_cleanup_owner_lease_aged >/dev/null 2>&1 &&
 		full_loop_cleanup_owner_lease_aged "$receipt_path"; then
 		reason="lease-aged"
 	elif [[ -n "$owner_session" && "$owner_session" != "${_FULL_LOOP_OWNER_SESSION_FALLBACK:-full-loop-lifecycle}" ]] &&

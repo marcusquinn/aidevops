@@ -862,6 +862,34 @@ class EnrollmentContract(unittest.TestCase):
         # Nothing left to relinquish, so no second retry is requested.
         self.assertEqual(gate(caller, WORKER_LIFECYCLE_RELINQUISH_CALLER="1"), 1)
 
+    def test_complete_handoff_relinquishes_only_its_own_session(self):
+        """GH#37448: the full-loop complete handoff ends this session's run once."""
+        admit_session(self.store, self.tree, os.getpid(), "completing-session")
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        bash = shutil.which("bash")
+        if bash is None:
+            self.fail("Bash is required for the complete handoff integration")
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith(("GIT_", "AIDEVOPS_", "WORKER_LIFECYCLE_"))}
+        env.update(AIDEVOPS_LIFECYCLE_RUNTIME_PID=str(os.getpid()),
+                   AIDEVOPS_LIFECYCLE_SESSION_ID="completing-session",
+                   AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.store.directory))
+
+        def handoff(**extra):
+            done = subprocess.run(  # nosec B603 # fixed handoff command in owned disposable fixtures
+                [bash, "-c", 'source "$1"; worker_lifecycle_relinquish_session "$2"',
+                 "fixture", str(scripts / "worker-lifecycle-state.sh"), str(self.tree)],
+                env=dict(env, **extra), capture_output=True, text=True, timeout=30,
+            )
+            return done.returncode, done.stdout.strip()
+
+        self.assertEqual(handoff(AIDEVOPS_LIFECYCLE_DISABLED="1"), (1, ""))
+        self.assertEqual(handoff(AIDEVOPS_LIFECYCLE_SESSION_ID="sibling-session"), (0, "not-owner"))
+        self.assertEqual(self.store.summary()["runs"], {"bound": 1})
+        self.assertEqual(handoff(), (0, "relinquished"))
+        self.assertEqual(self.store.summary()["runs"], {"ended": 1})
+        self.assertEqual(handoff(), (0, "already-ended"))
+
     def test_cleanup_does_not_promote_observation_bindings_to_admitted_runs(self):
         generation = self.enrollment.resolve(self.tree, create=True)
         run = str(uuid4())
