@@ -620,6 +620,11 @@ _hrff_handle_terminal_blocker_release() {
 			print_warning "Could not persist runner-local rejected-secret cooldown"
 	fi
 	_hrff_prepare_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" "$release_reason"
+	# A classified replay must not degrade to a dispatchable unrecorded exit.
+	if [[ "${_HRRR_REPLAY:-0}" == 1 && -n "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}" &&
+		-z "${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}" && -z "${_HRFF_TERMINAL_BLOCKER_EVIDENCE:-}" ]]; then
+		return 11
+	fi
 	_hrff_apply_terminal_permission_hold "$issue_number" "$repo_slug" || return 11
 	case "${_HRFF_TERMINAL_BLOCKER_MODE:-normal}" in
 	circuit)

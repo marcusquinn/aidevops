@@ -6,8 +6,11 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
-ROOT=$(mktemp -d) || exit 1
-trap 'rm -rf "$ROOT"' EXIT
+ROOT="${RETRY_TEST_ROOT:-}"
+if [[ -z "$ROOT" ]]; then
+	ROOT=$(mktemp -d) || exit 1
+	trap 'rm -rf "$ROOT"' EXIT
+fi
 export AIDEVOPS_CLAIM_RELEASE_RETRY_DIR="${ROOT}/retry"
 export AIDEVOPS_DISPATCH_LEASE_TOKEN="tok" AIDEVOPS_DISPATCH_LEASE_DEVICE="dev"
 export AIDEVOPS_DISPATCH_LEASE_SESSION="issue-42" WORKER_ISSUE_NUMBER=42 DISPATCH_REPO_SLUG="o/r"
@@ -43,6 +46,34 @@ age_rows() {
 
 # shellcheck source=../headless-runtime-failure.sh
 source "${SCRIPT_DIR}/headless-runtime-failure.sh" 2>/dev/null || true
+
+if [[ "${1:-}" == real-* ]]; then
+	_hrff_release_issue_number() { printf '42\n'; return 0; }
+	_hrff_release_repo_state_is_managed() { return 0; }
+	_hrff_resolve_release_runner_login() { printf 'runner\n'; return 0; }
+	_hrff_check_release_claim() { _HRFF_RELEASE_CLAIM_OWNED="${TEST_OWNED:-1}"; _HRFF_RELEASE_CLAIM_ID=123; return 0; }
+	_hrff_blocked_release_persisted() { return 1; }
+	_hrff_project_post_release_state() { printf '%s\n' "$4" >>"${ROOT}/projection"; return 0; }
+	_hrff_enqueue_observation_recovery() { return 0; }
+	gh_issue_edit_safe() { return 0; }
+	gh() { printf '%s\n' '{"title":"test","body":"scope"}'; return 0; }
+	terminal_blocker_fetch_trusted_comments() { printf '[]\n'; return 0; }
+	_terminal_blocker_dependency_signature() { printf '[]\n'; return 0; }
+	_hrff_post_claim_released_comment() {
+		[[ "${ADMISSION:-0}" == 1 ]] || return 1
+		printf '%s\n' "$3" >>"${ROOT}/published"
+		return 0
+	}
+	if [[ "$1" == real-record ]]; then
+		export AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$ROOT"
+		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash "v2:${TEST_REASON}")
+		export AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+		_release_dispatch_claim issue-42 blocked 1 1 || true
+	else
+		_hrrr_drain
+	fi
+	exit 0
+fi
 
 : >"${ROOT}/writes"
 ATTEMPT_RC=1
@@ -109,6 +140,39 @@ for f in "$AIDEVOPS_CLAIM_RELEASE_RETRY_DIR"/*.json; do jq '.created = 1 | .next
 _hrrr_drain >/dev/null
 check "expired row dropped" "$(rows)" "0"
 check "expired no write" "$(writes)" "0"
+
+# 7. Blocker context survives serialization; malformed and legacy rows fail closed.
+export AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$ROOT"
+export AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:permission_required')
+_release_dispatch_claim issue-42 blocked 1 1
+age_rows
+f=$(_hrrr_path o/r 42 issue-42)
+blocker_path="" fingerprint="" missing_secrets=""
+_hrrr_read_blocker "$f" blocked
+check "classified fingerprint restored" "$fingerprint" "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+check "classified path restored" "$blocker_path" "$ROOT"
+jq 'del(.blocker)' "$f" >"${f}.t" && mv "${f}.t" "$f"
+_hrrr_drain >/dev/null
+check "legacy blocker retained" "$(rows)" "1"
+check "legacy blocker not replayed" "$(writes)" "0"
+
+# Exercise the actual release attempt in separate recording and drain shells.
+rm -f "$f"
+for test_reason in permission_required source_access_blocked runner_capability_unmet; do
+	RETRY_TEST_ROOT="$ROOT" TEST_REASON="$test_reason" bash "$0" real-record
+	age_rows
+	RETRY_TEST_ROOT="$ROOT" ADMISSION=1 bash "$0" real-drain >/dev/null
+	check "real replay ${test_reason} removed" "$(rows)" "0"
+	check "real replay ${test_reason} marker" "$(rg -c "reason=${test_reason}" "${ROOT}/published")" "1"
+	RETRY_TEST_ROOT="$ROOT" ADMISSION=1 bash "$0" real-drain >/dev/null
+	check "real replay ${test_reason} no duplicate" "$(rg -c "reason=${test_reason}" "${ROOT}/published")" "1"
+	: >"${ROOT}/published"
+done
+RETRY_TEST_ROOT="$ROOT" TEST_REASON=permission_required bash "$0" real-record
+age_rows
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_OWNED=0 bash "$0" real-drain >/dev/null
+check "changed owner no write" "$(wc -c <"${ROOT}/published" | tr -d ' ')" "0"
 
 printf 'pass=%s fail=%s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
