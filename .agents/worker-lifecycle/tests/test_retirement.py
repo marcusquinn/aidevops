@@ -706,6 +706,38 @@ class RetirementContract(unittest.TestCase):
         private = Path(plan["container"]) / "tree"
         self.assertEqual((private / ".gitignore").read_text(), "late\n")
 
+    def test_partial_remove_resumes_after_git_deleted_its_link(self):
+        self.create()
+        self.interrupt_removal(lambda tree: (tree / ".git").unlink())
+        report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        self.assertEqual((report["retired"], report["failed"]), (1, 0), report)
+        self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+
+    def test_partial_remove_keeps_data_written_before_removal_was_journaled(self):
+        self.create()
+        record = retirement._record
+
+        def late(store, generation, phase, data):
+            if phase == "removing":
+                plan = retirement._event(store, retirement._event_id(generation, "planned"))
+                (Path(plan["container"]) / "tree" / ".gitignore").write_text("late\n")
+            record(store, generation, phase, data)
+
+        with patch.object(retirement, "_record", side_effect=late):
+            self.interrupt_removal()
+        with self.assertRaisesRegex(ValueError, "interrupted-removal-content-changed"):
+            self.retire()
+
+    def test_failed_resume_backs_off_instead_of_holding_the_slot(self):
+        self.create()
+        self.interrupt_removal(lambda tree: (tree / ".gitignore").write_text("late\n"))
+        config = self.cleanup_config()
+        report = cleanup_pass(self.store, config, self.output)
+        self.assertEqual(report["failed"], 1, report)
+        self.assertTrue(report["results"][0]["quarantined"], report)
+        report = cleanup_pass(self.store, config, self.output)
+        self.assertEqual((report["examined"], report["quarantined"]), (0, 1), report)
+
     def cleanup_config(self, **settings):
         config = self.root / "repos.json"
         config.write_text(json.dumps({"initialized_repos": [{

@@ -745,6 +745,28 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertIn("interrupted-removal-content-changed", json.dumps(result["results"]))
         self.assertEqual((private / ".gitignore").read_text(), "late\n")
 
+    def test_interrupted_removal_resumes_after_git_deleted_its_link(self):
+        self.interrupt_removal(lambda tree: (tree / ".git").unlink())
+        result = self.cleanup()
+        self.assertEqual(result["retired"], 1, result)
+        self.assertEqual(list(self.root.glob(".legacy-retire-*")), [])
+
+    def test_write_before_removal_was_journaled_retains_private_tree(self):
+        native = legacy.checkpoint
+
+        def late(store, connection, operation, phase, payload):
+            if phase == "removing":
+                tree = next(self.root.glob(".legacy-retire-*/tree"))
+                (tree / ".gitignore").write_text("late\n")
+            native(store, connection, operation, phase, payload)
+
+        with patch.object(legacy, "checkpoint", side_effect=late):
+            private = self.interrupt_removal()
+        result = self.cleanup()
+        self.assertEqual(result["retired"], 0, result)
+        self.assertIn("interrupted-removal-content-changed", json.dumps(result["results"]))
+        self.assertEqual((private / ".gitignore").read_text(), "late\n")
+
     def test_archive_failure_retains_source(self):
         self.stop_owner()
         with patch.object(legacy, "_helper", side_effect=subprocess.SubprocessError):

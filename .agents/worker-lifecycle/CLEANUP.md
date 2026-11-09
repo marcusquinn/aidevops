@@ -318,10 +318,12 @@ retained. No repository-wide repair or unrelated metadata pruning runs. Git lock
 removal uses only the single force needed for archived dirty state. Ignored files are discarded with the worktree, never archived.
 
 Native removal has its own 300-second limit for multi-GB trees. A removal interrupted after its journaled start resumes
-instead of stranding the private tree (GH#37326): identity, marker, handles and the idle census are re-checked, and no
-Git-visible path that still exists may have changed (inode ctime) after the start, else it fails closed as
-`interrupted-removal-content-changed`. Admission cleanup resumes one such removal per pass without moving its cursor;
-the legacy backlog pass journals the same start checkpoint.
+instead of stranding the private tree (GH#37326): identity, marker, handles and the idle census are re-checked, a `.git`
+link Git already deleted is restored from the plan-bound administration backlink, and no Git-visible path that still
+exists may have changed (inode ctime) after the boundary journaled from before the final snapshot check (less one second
+of clock slack; older journals use plan time), else it fails closed as `interrupted-removal-content-changed`. Admission
+cleanup resumes one such removal per pass without moving its cursor; one that does not retire backs off like an archive
+failure. The legacy backlog pass journals the same start checkpoint and boundary.
 
 `tests/test_retirement.py` exercises real Git/CLI interruption and name reuse in disposable
 repositories; it does not qualify production scheduling or existing worktrees.

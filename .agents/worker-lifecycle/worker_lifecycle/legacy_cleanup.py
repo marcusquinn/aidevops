@@ -17,7 +17,8 @@ from uuid import UUID, uuid5
 
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
-from .interrupted_removal import removal_started, require_deletion_only
+from .interrupted_removal import BOUNDARY, removal_started, require_deletion_only
+from .interrupted_removal import restore_git_link, validation_boundary
 from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
@@ -120,6 +121,14 @@ def archive_source(store, connection, operation, plan, adapter):
     return previous
 
 
+def _restore_link(target, plan):
+    """Bind tree and administration to the plan before restoring a deleted `.git`."""
+    admin = Path(plan["admin"])
+    if _id(target) != plan["directory"] or _id(admin) != plan["admin_identity"]:
+        raise ValueError("worktree-replaced")
+    restore_git_link(target, admin)
+
+
 def finish(store, connection, operation, plan, adapter):
     """Only the journaled private pathname is ever passed to native removal."""
     root = Path(plan["output_root"])
@@ -148,14 +157,18 @@ def finish(store, connection, operation, plan, adapter):
         # Census before opening our own handle on the private tree.
         require_idle_processes(target)
     with DirectoryHandle(target):
+        if started is not None:
+            _restore_link(target, plan)
         same_tree(target, plan)
         unchanged(connection, plan, adapter)
         if started is None:
+            boundary = validation_boundary()
             if _snapshot(target) != plan["snapshot"]:
                 raise ValueError("relocated-source-changed")
             # Journal removal start so an interrupted delete can resume (GH#37326).
             checkpoint(store, connection, operation, "removing",
-                       {"type": "legacy-worktree-removing", "archive": plan["archive"]})
+                       {"type": "legacy-worktree-removing", "archive": plan["archive"],
+                        BOUNDARY: boundary})
             unchanged(connection, plan, adapter)
         else:
             require_deletion_only(target, started, _git)

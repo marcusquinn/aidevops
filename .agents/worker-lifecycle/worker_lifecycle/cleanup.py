@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess  # nosec B404 # classify helper exceptions, never execute error argv
 import tempfile
 import time
@@ -237,6 +238,20 @@ def retire_enrolled_only(
     return _candidate(store, repositories, root, generation, path)
 
 
+def _journaled_removals(connection: sqlite3.Connection, rows: list[dict]) -> set[str]:
+    """Return closed generations whose native removal start is journaled."""
+    return {row["generation_id"] for row in rows
+            if row["state"] == "closed" and connection.execute(
+                "SELECT 1 FROM events WHERE event_id=?",
+                (_event_id(row["generation_id"], "removing"),),
+            ).fetchone()}
+
+
+def _resume_failed(row: dict, result: dict) -> bool:
+    """A resume that did not retire backs off and yields the slot to the next one."""
+    return bool(row.get("resume", False)) and result["status"] != "retired"
+
+
 def cleanup_pass(
     store: LifecycleRegistry, config: Path, root: Path,
     limit: int = 25, budget_seconds: float = 120,
@@ -264,17 +279,17 @@ def cleanup_pass(
                 "SELECT generation_id,path,state FROM generation_admissions "
                 "ORDER BY generation_id",
             )]
+            journaled = _journaled_removals(connection, rows)
         after = _position(store)
         rows.sort(key=lambda row: (row["generation_id"] <= after, row["generation_id"]))
-        # Reclaim one interrupted native removal before the rotation (GH#37326).
-        rows = resume_first(rows, lambda generation: _event(
-            store, _event_id(generation, "removing")) is not None)
         deadline = time.monotonic() + budget_seconds
         create_archive_root(root)
         validate_archive_path(root)
         quarantine = CleanupQuarantine(store.directory)
         pull_requests = OpenPullRequestCache()
         selected, report["quarantined"] = quarantine.partition(rows)
+        # Reclaim one interrupted native removal before the rotation (GH#37326).
+        selected = resume_first(selected, journaled.__contains__)
         for row in selected[:limit]:
             if time.monotonic() >= deadline:
                 break
@@ -295,7 +310,7 @@ def cleanup_pass(
                           **_failure_details(error)}
             result["path"] = str(path)
             report["archive_failed"] += bool(result.get("archive_failure", False))
-            quarantine.record(row["generation_id"], result)
+            quarantine.record(row["generation_id"], result, _resume_failed(row, result))
             report["results"].append(result)
         quarantine.save(report)
     return report
