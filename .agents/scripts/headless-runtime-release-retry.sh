@@ -54,8 +54,7 @@ _hrrr_record() {
 	local lease_session="${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}"
 	local blocker_path="${AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH:-}"
 	local blocker_fingerprint="${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}"
-	local missing_secrets=false
-	[[ -z "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]] || missing_secrets=true
+	local missing_secrets="${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}"
 	local dir="" path="" tmp="" now=""
 
 	[[ "${_HRRR_REPLAY:-0}" != 1 ]] || return 0
@@ -76,7 +75,7 @@ _hrrr_record() {
 			--arg session_key "$session_key" --arg reason "$reason" \
 			--arg exit_code "$exit_code_arg" --arg session_count "$session_count_arg" \
 			--arg token "$token" --arg device "$device" --arg lease_session "$lease_session" \
-			--arg blocker_path "$blocker_path" --arg fingerprint "$blocker_fingerprint" --argjson missing_secrets "$missing_secrets" \
+			--arg blocker_path "$blocker_path" --arg fingerprint "$blocker_fingerprint" --arg missing_secrets "$missing_secrets" \
 			--arg attempt "${AIDEVOPS_ATTEMPT_ID:-}" --argjson pid "$$" --argjson now "$now" \
 			'{schema: 1, repo: $repo, issue: $issue, session_key: $session_key, reason: $reason,
 			  exit: $exit_code, session_count: $session_count, lease_token: $token,
@@ -110,18 +109,18 @@ _hrrr_clear() {
 # Populate the caller's dynamically scoped blocker fields only from this row.
 _hrrr_read_blocker() {
 	local path="$1" reason="$2"
+	local binding="" expected=""
+	[[ -f "${path}.binding" ]] || return 1
+	IFS= read -r expected <"${path}.binding" || return 1
+	binding=$(_hrrr_binding "$path") || return 1
+	[[ "$binding" == "$expected" ]] || return 1
 	[[ "$reason" == blocked || "$reason" == push_policy_timeout || "$reason" == network_policy_timeout ]] || return 0
-	jq -e '.blocker | type == "object" and (.path | type == "string") and (.fingerprint | type == "string") and (.missing_secrets | type == "boolean")' "$path" >/dev/null 2>&1 || return 1
+	jq -e '.blocker | type == "object" and ([.path, .fingerprint, .missing_secrets] | all(type == "string"))' "$path" >/dev/null 2>&1 || return 1
 	blocker_path=$(jq -r '.blocker.path' "$path") || return 1
 	fingerprint=$(jq -r '.blocker.fingerprint' "$path") || return 1
 	missing_secrets=$(jq -r '.blocker.missing_secrets' "$path") || return 1
 	if [[ -n "$blocker_path" || -n "$fingerprint" ]]; then
 		[[ -d "$blocker_path" && "$fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 1
-		local binding="" expected=""
-		[[ -f "${path}.binding" ]] || return 1
-		IFS= read -r expected <"${path}.binding" || return 1
-		binding=$(_hrrr_binding "$path") || return 1
-		[[ "$binding" == "$expected" ]] || return 1
 		if [[ "$(_terminal_blocker_reason "$fingerprint")" == unknown ]]; then
 			[[ "$fingerprint" == "$(_terminal_blocker_hash 'v2:unknown')" ]] || return 1
 		fi
@@ -151,10 +150,16 @@ _hrrr_process_row() {
 	fi
 	# Legacy blocked rows cannot distinguish a generic exit from a lost
 	# classification. Never replay them as dispatchable without that evidence.
-	_hrrr_read_blocker "$path" "$reason" || return 2
+	_hrrr_read_blocker "$path" "$reason" || {
+		print_warning "[lifecycle] claim_release_retry_unverifiable issue=${issue}; retaining evidence"
+		return 2
+	}
 	# Expired or exhausted evidence yields to the ordinary active-worker TTL.
 	if ((now - created > _HRRR_MAX_AGE_SECS || attempts >= _HRRR_MAX_ATTEMPTS)); then
-		[[ -z "$fingerprint" ]] || return 2
+		if [[ -n "$fingerprint" ]]; then
+			print_warning "[lifecycle] claim_release_retry_exhausted issue=${issue}; retaining classified evidence"
+			return 2
+		fi
 		print_warning "[lifecycle] claim_release_retry_expired issue=${issue}"
 		rm -f "$path"
 		rm -f "${path}.binding"
@@ -172,8 +177,7 @@ _hrrr_process_row() {
 		export AIDEVOPS_DISPATCH_LEASE_SESSION="$lease_session" AIDEVOPS_ATTEMPT_ID="$attempt_id"
 		# Never inherit another worker's blocker context from Pulse.
 		export AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$blocker_path" AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$fingerprint"
-		export AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS="" AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
-		[[ "$missing_secrets" != true ]] || export AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=recorded
+		export AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS="$missing_secrets" AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
 		# Bounded and budget-aware: one post attempt, no authority sleeps.
 		export AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS="" AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS=1
 		_hrff_release_dispatch_claim_attempt "$session_key" "$reason" "$exit_code" "$session_count"
