@@ -2,8 +2,9 @@
 
 ## Status and authority
 
-All launchers, including Pulse and interactive launchers, supply registration facts,
-not separate safety rules. Only the new registry and native OS adapter supply lifecycle
+Launchers that register, including Pulse and interactive launchers, supply registration facts,
+not separate safety rules. Coverage is incomplete: private or disabled workloads remain
+unobserved and standalone commands are outside the registered-writer contract. Only the new registry and native OS adapter supply lifecycle
 evidence; legacy registries, dispatch ledgers and old owner statuses cannot fill gaps
 or authorize operations. Git/filesystem evidence proves content, not process liveness.
 
