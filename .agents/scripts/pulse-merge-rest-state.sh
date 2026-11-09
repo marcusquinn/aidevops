@@ -86,7 +86,8 @@ _pmp_refresh_unknown_mergeable_state_into() {
 	_pmp_normalize_mergeable_state_into refreshed_mergeable "$current_mergeable"
 
 	if [[ "$refreshed_mergeable" == "UNKNOWN" || -z "$refreshed_mergeable" ]]; then
-		refreshed_mergeable=$(AIDEVOPS_GH_REST_FIRST_READS=1 AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 \
+		# STRICT: the REST single-PR read triggers mergeability computation (GH#37368).
+		refreshed_mergeable=$(AIDEVOPS_GH_REST_FIRST_READS=1 AIDEVOPS_GH_REST_FIRST_STRICT=1 AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 \
 			gh_pr_view "$pr_number" --repo "$repo_slug" --json mergeable --jq '.mergeable // ""')
 		refresh_exit=$?
 		[[ $refresh_exit -eq 0 && -n "$refreshed_mergeable" ]] || refreshed_mergeable="UNKNOWN"
