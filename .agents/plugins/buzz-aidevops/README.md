@@ -35,8 +35,7 @@ Folder paths:
 | aidevops repo checkout | `<repo>/.agents/plugins/buzz-aidevops` |
 
 Use the stable path. It is a real folder (not a symlink) that `aidevops update`
-refreshes in place, so Buzz's folder watcher picks up new versions within
-seconds. Do not add the plugin from `~/.aidevops/agents/plugins/...`: that
+refreshes in place. Do not add the plugin from `~/.aidevops/agents/plugins/...`: that
 path resolves into a versioned runtime bundle, and Buzz saves the versioned
 path, so later updates never reach it. After an update that adds host access,
 Buzz asks you to review it again.
@@ -48,6 +47,18 @@ choose `~/.aidevops/plugins/buzz-aidevops` (in the macOS folder picker, press
 source folder: its **Update** button appears only after the saved folder
 changes, and adding the plugin again without removing it fails with "Already
 installed".
+
+## Updating
+
+The Settings → aidevops card shows the loaded plugin version. After
+`aidevops update` deploys a newer version, refresh the card to see its update
+notice. Open **Settings → Plugins → Manage plugins → aidevops**, press
+**Update**, and review the requested access. A copy installed before this
+notice existed cannot show it: update it manually once this way, and later
+versions will announce themselves. Buzz checks the folder for changes
+only while that plugin's detail panel is open and visible; it does not update
+the loaded plugin automatically. Bump `PLUGIN_VERSION` in `plugin.js` when
+changing plugin files, not for unchanged deployments.
 
 ## Create an aidevops agent
 

@@ -689,6 +689,20 @@ _buzz_report_stale_interactive_overrides() {
 }
 
 cmd_status() {
+	local plugin_file="${HOME}/.aidevops/plugins/buzz-aidevops/plugin.js"
+	local plugin_version="not deployed"
+	local line=""
+	local version_pattern='^const PLUGIN_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)";$'
+	if [[ -f "$plugin_file" && -r "$plugin_file" ]]; then
+		plugin_version="unknown (no PLUGIN_VERSION)"
+		while IFS= read -r line; do
+			if [[ "$line" =~ $version_pattern ]]; then
+				plugin_version="${BASH_REMATCH[1]}"
+				break
+			fi
+		done <"$plugin_file"
+	fi
+	printf 'Buzz plugin deployed: %s\n' "$plugin_version"
 	if [[ "$(_buzz_platform)" != "$BUZZ_PLATFORM_DARWIN" ]]; then
 		printf 'Buzz Desktop compatibility: not applicable\n'
 		return 0
