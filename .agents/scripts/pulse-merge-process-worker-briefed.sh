@@ -205,7 +205,8 @@ _is_trusted_starter_sync_issue_pr() {
 	[[ "$title" == "$required_title" ]] || return 1
 	[[ ",${labels}," == *",starter-sync,"* ]] || return 1
 
-	local base_sha scope_list files_json file_count path
+	local base_sha="" scope_list="" files_json=""
+	local file_count='' path=''
 	local pr_api="repos/${repo_slug}/pulls"
 	pr_api+="/${pr_number}"
 	base_sha=$(gh api "$pr_api" --jq '.base.sha // ""' 2>/dev/null) || return 1
