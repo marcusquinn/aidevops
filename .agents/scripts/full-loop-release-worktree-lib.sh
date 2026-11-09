@@ -61,7 +61,10 @@ _full_loop_release_remove_worktree() {
 # GH#37424: the worktree-exclusions backfill (setup/update) creates the empty
 # Spotlight marker inside existing trees, which also bumps the root's mtime.
 # Counting either made every release tree look active after each sweep, so
-# idleness is judged by entries below the root other than that marker.
+# idleness is judged by entries below the root other than that marker. Only
+# the empty regular file at the root is the marker: a non-empty file, a
+# directory, a symlink or a nested entry with that name is task data and
+# still counts. Scanning from the root keeps the path out of find patterns.
 # Args: $1=tree path, $2=optional find -maxdepth (default: whole tree)
 # Returns: 0 when a qualifying entry changed within 30 minutes or the scan
 #          failed (fail closed: unknown means active); 1 when idle.
@@ -70,11 +73,11 @@ _full_loop_release_tree_recently_active() {
 	local max_depth="${2:-}"
 	local match=""
 	if [[ -n "$max_depth" ]]; then
-		match=$(find "$tree_path" -mindepth 1 -maxdepth "$max_depth" -mmin -30 \
-			! -name .metadata_never_index -print -quit 2>/dev/null) || return 0
+		match=$(cd -- "$tree_path" 2>/dev/null && find . -mindepth 1 -maxdepth "$max_depth" -mmin -30 \
+			! \( -path ./.metadata_never_index -type f -empty \) -print -quit 2>/dev/null) || return 0
 	else
-		match=$(find "$tree_path" -mindepth 1 -mmin -30 \
-			! -name .metadata_never_index -print -quit 2>/dev/null) || return 0
+		match=$(cd -- "$tree_path" 2>/dev/null && find . -mindepth 1 -mmin -30 \
+			! \( -path ./.metadata_never_index -type f -empty \) -print -quit 2>/dev/null) || return 0
 	fi
 	[[ -n "$match" ]] && return 0
 	return 1
