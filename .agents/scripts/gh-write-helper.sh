@@ -94,6 +94,11 @@ _issue_edit_signed() {
 	_gh_wrapper_enter_cleanup_scope
 	_gh_wrapper_normalize_stdin_body_file "$@" || return 1
 	set -- "${_GH_WRAPPER_BODY_FILE_ARGS[@]}"
+	# Signing must not turn an empty/stub body into substantive edit content.
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh issue edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 	gh_issue_edit_safe "$@"
