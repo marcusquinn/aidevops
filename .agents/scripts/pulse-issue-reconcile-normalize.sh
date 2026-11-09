@@ -204,9 +204,18 @@ _fetch_label_invariant_rows() {
 	# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion).
 	# This fetch needs createdAt which is not in the prefetch cache, so the cache cannot
 	# serve it — gh_issue_list is used directly (not the cache path).
-	local issues_json
-	issues_json=$(gh_issue_list --repo "$slug" --state open \
-		--json number,labels,createdAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json=""
+	local issues_json="" _listing_rc=0
+	if declare -F _normalize_repo_listing >/dev/null 2>&1; then
+		issues_json=$(_normalize_repo_listing "$slug") || _listing_rc=$?
+	else
+		_listing_rc=2
+	fi
+	if [[ "$_listing_rc" -eq 2 ]]; then
+		issues_json=$(gh_issue_list --repo "$slug" --state open \
+			--json number,labels,createdAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json=""
+	elif [[ "$_listing_rc" -ne 0 ]]; then
+		issues_json=""
+	fi
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 1
 
 	# has_any_status counts ALL status:* labels (core + exception) so the
