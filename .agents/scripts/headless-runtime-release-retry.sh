@@ -34,6 +34,16 @@ _hrrr_path() {
 	return 0
 }
 
+# Digest immutable claim and observation fields, excluding retry bookkeeping.
+# The private sidecar detects row replacement, not a hostile same-user writer.
+_hrrr_binding() {
+	local path="$1" value=""
+	value=$(jq -cer '[.repo, .issue, .session_key, .reason, .exit, .session_count,
+		.lease_token, .lease_device, .lease_session, .attempt_id, .blocker]' "$path") || return 1
+	_terminal_blocker_hash "$value" || return 1
+	return 0
+}
+
 # Args: $1 session_key, $2 reason, $3 exit_code, $4 session_count.
 # Non-fatal: failing to persist evidence never changes the release result.
 _hrrr_record() {
@@ -44,8 +54,7 @@ _hrrr_record() {
 	local lease_session="${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}"
 	local blocker_path="${AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH:-}"
 	local blocker_fingerprint="${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}"
-	local missing_secrets=false
-	[[ -z "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]] || missing_secrets=true
+	local missing_secrets="${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}"
 	local dir="" path="" tmp="" now=""
 
 	[[ "${_HRRR_REPLAY:-0}" != 1 ]] || return 0
@@ -66,13 +75,14 @@ _hrrr_record() {
 			--arg session_key "$session_key" --arg reason "$reason" \
 			--arg exit_code "$exit_code_arg" --arg session_count "$session_count_arg" \
 			--arg token "$token" --arg device "$device" --arg lease_session "$lease_session" \
-			--arg blocker_path "$blocker_path" --arg fingerprint "$blocker_fingerprint" --argjson missing_secrets "$missing_secrets" \
+			--arg blocker_path "$blocker_path" --arg fingerprint "$blocker_fingerprint" --arg missing_secrets "$missing_secrets" \
 			--arg attempt "${AIDEVOPS_ATTEMPT_ID:-}" --argjson pid "$$" --argjson now "$now" \
 			'{schema: 1, repo: $repo, issue: $issue, session_key: $session_key, reason: $reason,
 			  exit: $exit_code, session_count: $session_count, lease_token: $token,
 			  lease_device: $device, lease_session: $lease_session, attempt_id: $attempt,
 			  blocker: {path: $blocker_path, fingerprint: $fingerprint, missing_secrets: $missing_secrets},
 			  pid: $pid, created: $now, next_after: ($now + 60), attempts: 0}' >"$tmp" &&
+			_hrrr_binding "$tmp" >"${path}.binding" && chmod 600 "${path}.binding" &&
 			mv -f "$tmp" "$path"; then
 			exit 0
 		fi
@@ -92,14 +102,20 @@ _hrrr_clear() {
 	[[ "${_HRRR_REPLAY:-0}" != 1 ]] || return 0
 	path=$(_hrrr_path "$repo_slug" "$issue_number" "$session_key")
 	[[ ! -f "$path" ]] || rm -f "$path"
+	rm -f "${path}.binding"
 	return 0
 }
 
 # Populate the caller's dynamically scoped blocker fields only from this row.
 _hrrr_read_blocker() {
 	local path="$1" reason="$2"
+	local binding="" expected=""
+	[[ -f "${path}.binding" ]] || return 1
+	IFS= read -r expected <"${path}.binding" || return 1
+	binding=$(_hrrr_binding "$path") || return 1
+	[[ "$binding" == "$expected" ]] || return 1
 	[[ "$reason" == blocked || "$reason" == push_policy_timeout || "$reason" == network_policy_timeout ]] || return 0
-	jq -e '.blocker | type == "object" and (.path | type == "string") and (.fingerprint | type == "string") and (.missing_secrets | type == "boolean")' "$path" >/dev/null 2>&1 || return 1
+	jq -e '.blocker | type == "object" and ([.path, .fingerprint, .missing_secrets] | all(type == "string"))' "$path" >/dev/null 2>&1 || return 1
 	blocker_path=$(jq -r '.blocker.path' "$path") || return 1
 	fingerprint=$(jq -r '.blocker.fingerprint' "$path") || return 1
 	missing_secrets=$(jq -r '.blocker.missing_secrets' "$path") || return 1
@@ -134,12 +150,19 @@ _hrrr_process_row() {
 	fi
 	# Legacy blocked rows cannot distinguish a generic exit from a lost
 	# classification. Never replay them as dispatchable without that evidence.
-	_hrrr_read_blocker "$path" "$reason" || return 2
+	_hrrr_read_blocker "$path" "$reason" || {
+		print_warning "[lifecycle] claim_release_retry_unverifiable issue=${issue}; retaining evidence"
+		return 2
+	}
 	# Expired or exhausted evidence yields to the ordinary active-worker TTL.
 	if ((now - created > _HRRR_MAX_AGE_SECS || attempts >= _HRRR_MAX_ATTEMPTS)); then
-		[[ -z "$fingerprint" ]] || return 2
+		if [[ -n "$fingerprint" ]]; then
+			print_warning "[lifecycle] claim_release_retry_exhausted issue=${issue}; retaining classified evidence"
+			return 2
+		fi
 		print_warning "[lifecycle] claim_release_retry_expired issue=${issue}"
 		rm -f "$path"
+		rm -f "${path}.binding"
 		return 0
 	fi
 	((now >= next_after)) || return 2
@@ -154,8 +177,7 @@ _hrrr_process_row() {
 		export AIDEVOPS_DISPATCH_LEASE_SESSION="$lease_session" AIDEVOPS_ATTEMPT_ID="$attempt_id"
 		# Never inherit another worker's blocker context from Pulse.
 		export AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$blocker_path" AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$fingerprint"
-		export AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS="" AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
-		[[ "$missing_secrets" != true ]] || export AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=recorded
+		export AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS="$missing_secrets" AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
 		# Bounded and budget-aware: one post attempt, no authority sleeps.
 		export AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS="" AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS=1
 		_hrff_release_dispatch_claim_attempt "$session_key" "$reason" "$exit_code" "$session_count"
@@ -163,6 +185,7 @@ _hrrr_process_row() {
 	if [[ "$rc" -eq 0 ]]; then
 		print_info "[lifecycle] claim_release_retry_resolved issue=${issue}"
 		rm -f "$path"
+		rm -f "${path}.binding"
 		return 0
 	fi
 	local backoff=$((300 * (1 << (attempts > 3 ? 3 : attempts))))

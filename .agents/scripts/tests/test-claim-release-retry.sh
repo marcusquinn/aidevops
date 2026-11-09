@@ -53,10 +53,11 @@ if [[ "${1:-}" == real-* ]]; then
 	_hrff_resolve_release_runner_login() { printf 'runner\n'; return 0; }
 	_hrff_check_release_claim() { _HRFF_RELEASE_CLAIM_OWNED="${TEST_OWNED:-1}"; _HRFF_RELEASE_CLAIM_ID=123; return 0; }
 	_hrff_blocked_release_persisted() { return 1; }
-	_hrff_project_post_release_state() { printf '%s\n' "$4" >>"${ROOT}/projection"; return 0; }
 	_hrff_enqueue_observation_recovery() { return 0; }
-	gh_issue_edit_safe() { return 0; }
-	gh() { printf '%s\n' '{"title":"test","body":"scope"}'; return 0; }
+	_unlock_issue_after_dispatch_release() { return 0; }
+	clear_active_status_on_release() { printf '%s\n' "$4" >>"${ROOT}/projection"; return 0; }
+	gh_issue_edit_safe() { [[ " $* " != *" --add-label status:blocked "* ]] || printf 'blocked\n' >>"${ROOT}/projection"; return 0; }
+	gh() { printf '%s\n' '{"title":"test","body":"scope","state":"open","labels":[],"assignees":[]}'; return 0; }
 	terminal_blocker_fetch_trusted_comments() { printf '[]\n'; return 0; }
 	_terminal_blocker_dependency_signature() { printf '[]\n'; return 0; }
 	_hrff_post_claim_released_comment() {
@@ -152,6 +153,10 @@ blocker_path="" fingerprint="" missing_secrets=""
 _hrrr_read_blocker "$f" blocked
 check "classified fingerprint restored" "$fingerprint" "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
 check "classified path restored" "$blocker_path" "$ROOT"
+jq '.blocker.fingerprint = "000000000000000000000000"' "$f" >"${f}.t" && mv "${f}.t" "$f"
+_hrrr_drain >/dev/null
+check "changed observation retained" "$(rows)" "1"
+check "changed observation not replayed" "$(writes)" "0"
 jq 'del(.blocker)' "$f" >"${f}.t" && mv "${f}.t" "$f"
 _hrrr_drain >/dev/null
 check "legacy blocker retained" "$(rows)" "1"
@@ -159,12 +164,20 @@ check "legacy blocker not replayed" "$(writes)" "0"
 
 # Exercise the actual release attempt in separate recording and drain shells.
 rm -f "$f"
-for test_reason in permission_required source_access_blocked runner_capability_unmet; do
-	RETRY_TEST_ROOT="$ROOT" TEST_REASON="$test_reason" bash "$0" real-record
+for test_case in permission_required source_access_blocked runner_capability_unmet runner_capability_no_secret; do
+	test_reason="$test_case" expected=blocked missing=""
+	if [[ "$test_case" == runner_capability_no_secret ]]; then
+		test_reason=runner_capability_unmet expected=available
+	elif [[ "$test_case" == runner_capability_unmet ]]; then
+		missing=TEST_SECRET
+	fi
+	: >"${ROOT}/projection"
+	RETRY_TEST_ROOT="$ROOT" TEST_REASON="$test_reason" AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS="$missing" bash "$0" real-record
 	age_rows
 	RETRY_TEST_ROOT="$ROOT" ADMISSION=1 bash "$0" real-drain >/dev/null
 	check "real replay ${test_reason} removed" "$(rows)" "0"
 	check "real replay ${test_reason} marker" "$(rg -c "reason=${test_reason}" "${ROOT}/published")" "1"
+	check "real replay ${test_case} projection" "$(<"${ROOT}/projection")" "$expected"
 	RETRY_TEST_ROOT="$ROOT" ADMISSION=1 bash "$0" real-drain >/dev/null
 	check "real replay ${test_reason} no duplicate" "$(rg -c "reason=${test_reason}" "${ROOT}/published")" "1"
 	: >"${ROOT}/published"
