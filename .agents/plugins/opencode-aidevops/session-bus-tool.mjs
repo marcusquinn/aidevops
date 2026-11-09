@@ -30,7 +30,7 @@ function requireText(args) {
 }
 
 function resolveOrThrow(root, to, selfID) {
-  const resolved = store.resolveTarget(store.readPresence(root), to, selfID);
+  const resolved = store.resolveTarget(store.readPresence(root), to, selfID, { root });
   if (resolved.error) {
     const candidates = (resolved.candidates || []).map((record) => `- ${store.formatPresenceRow(record)}`);
     throw new Error([resolved.error, ...candidates].join("\n"));
