@@ -28,6 +28,8 @@ Evidence (maintainer Mac, local TZ +0000):
 
 - `.agents/scripts/screen_time_macos.py`
 - `.agents/scripts/screen_time_macos_pmset.py`
+- `.agents/scripts/screen_time_sources.py` (new: per-platform source selection and the Knowledge/pmset union, kept out of the engine for its Qlty file-complexity budget)
 - `.agents/scripts/screen-time-interval-engine.py`
 - `.agents/scripts/screen-time-helper.sh`
 - `.agents/scripts/tests/test-screen-time-helper.sh`
+- `.agents/scripts/tests/test-profile-readme-boundary.sh` (deployed-module copy list)

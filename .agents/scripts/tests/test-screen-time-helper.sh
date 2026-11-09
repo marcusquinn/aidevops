@@ -590,6 +590,7 @@ test_screen_engine_sibling_modules_deploy_together() {
 		"${SCRIPTS_DIR}/screen_time_macos_pmset.py" \
 		"${SCRIPTS_DIR}/screen_time_linux.py" \
 		"${SCRIPTS_DIR}/screen_time_linux_activity.py" \
+		"${SCRIPTS_DIR}/screen_time_sources.py" \
 		"${SCRIPTS_DIR}/screen_time_history.py" "$deploy_dir/"
 	local output
 	output=$(python3 "${deploy_dir}/screen-time-interval-engine.py" history-summary --os-type Unsupported)

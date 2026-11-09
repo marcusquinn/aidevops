@@ -13,12 +13,11 @@ import time
 from pathlib import Path
 
 from screen_time_history import period_payload, profile_payload, read_history
-from screen_time_interval_common import DAY, WINDOWS, interval_seconds, local_date, local_day_bounds, union_intervals
-from screen_time_linux import linux_collection, linux_sample
+from screen_time_interval_common import DAY, interval_seconds, local_date, local_day_bounds
+from screen_time_linux import linux_sample
 from screen_time_linux_activity import COLLECTOR as LINUX_COLLECTOR
-from screen_time_macos import macos_collection
 from screen_time_macos_apps import macos_app_stats
-from screen_time_macos_pmset import pmset_collection
+from screen_time_sources import display_collection
 
 COLLECTION_COMMANDS = ("profile", "query", "date", "earliest", "collector")
 DIRECT_COMMANDS = ("apps", "next-date", "history-summary", "history-dates", "revisable-dates", "sample")
@@ -62,39 +61,8 @@ def history_collector(args):
     return LINUX_COLLECTOR if args.os_type == "Linux" else None
 
 
-def merge_display_sources(knowledge, pmset, now):
-    """Union a readable Knowledge source with pmset display assertions.
-
-    Both observe display-on time, but neither is complete alone: the backlit
-    stream can stop for days while pmset keeps only about a week (GH#37492).
-    """
-    if knowledge.get("status") == "unavailable":
-        return pmset
-    if pmset.get("status") == "unavailable":
-        return knowledge
-    latest = max(knowledge["latest_epoch"], pmset["latest_epoch"])
-    freshness = max(0.0, (now - latest) / 3600)
-    return dict(
-        knowledge,
-        source=f"{knowledge['source']}+{pmset['source']}",
-        intervals=union_intervals(knowledge["intervals"] + pmset["intervals"], now - WINDOWS["year"], now),
-        observations=knowledge.get("observations", 0) + pmset.get("observations", 0),
-        latest_epoch=latest,
-        earliest_epoch=min(knowledge["earliest_epoch"], pmset["earliest_epoch"]),
-        observation_epochs=knowledge.get("observation_epochs", []) + pmset.get("observation_epochs", []),
-        coverage_start_epoch=min(knowledge["coverage_start_epoch"], pmset["coverage_start_epoch"]),
-        coverage_end_epoch=max(knowledge["coverage_end_epoch"], pmset["coverage_end_epoch"]),
-        freshness_hours=round(freshness, 1),
-        status="stale" if freshness > 72 else "ok",
-    )
-
-
 def collect(args):
-    if args.os_type == "Darwin":
-        return merge_display_sources(macos_collection(Path(args.db), args.now), pmset_collection(args.now), args.now)
-    if args.os_type == "Linux":
-        return linux_collection(args.now, activity_dir(args))
-    return {"status": "unavailable", "source": "unsupported-platform", "reason": args.os_type, "intervals": []}
+    return display_collection(args.os_type, args.db, args.now, activity_dir(args))
 
 
 def accepted_history(args):
@@ -118,10 +86,8 @@ def revisable_dates(args):
     """Print ``date hours`` for recorded days a snapshot may still raise."""
     today = local_date(args.now)
     rows = accepted_history(args)[0]
-    for offset in range(REVISABLE_DAYS, 0, -1):
-        date = today - dt.timedelta(days=offset)
-        if date in rows:
-            print(f"{date.isoformat()} {rows[date][0]}")
+    recent = (today - dt.timedelta(days=offset) for offset in range(REVISABLE_DAYS, 0, -1))
+    sys.stdout.write("".join(f"{date.isoformat()} {rows[date][0]}\n" for date in recent if date in rows))
 
 
 def date_hours(collection, args):
