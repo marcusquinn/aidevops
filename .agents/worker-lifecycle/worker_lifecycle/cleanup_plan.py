@@ -85,7 +85,7 @@ def _refresh_runs(
             store.observe(str(uuid4()), row["run_id"], row["version"], observation)
 
 
-def _caller_ancestors(adapter: ProcessAdapter) -> set[ProcessIdentity]:
+def caller_ancestors(adapter: ProcessAdapter) -> set[ProcessIdentity]:
     """Native identities of the invoking process's ancestors (GH#37022).
 
     Starts at the parent: the runtime that owns a session is always an ancestor
@@ -113,9 +113,10 @@ def _caller_owns_all(rows: list[dict], adapter: ProcessAdapter) -> bool:
 
     #aidevops:trust-boundary — diagnosis only. One runtime PID can serve several
     sessions, so a caller-owned run still blocks retirement; this only lets the
-    refusal name the caller instead of an anonymous owner.
+    refusal name the caller instead of an anonymous owner. The owning session
+    may end its own run with relinquish-session (GH#37432).
     """
-    ancestors = _caller_ancestors(adapter)
+    ancestors = caller_ancestors(adapter)
     if not ancestors:
         return False
     try:

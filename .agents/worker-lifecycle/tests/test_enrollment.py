@@ -24,7 +24,7 @@ from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import GenerationEnrollment, MARKER, _git_directory
 from worker_lifecycle.registry import main
 from worker_lifecycle.runtime import adapter_for
-from worker_lifecycle.session import admit_session
+from worker_lifecycle.session import admit_session, relinquish_session
 from worker_lifecycle.storage import LifecycleRegistry, StoreConflict
 
 
@@ -781,6 +781,86 @@ class EnrollmentContract(unittest.TestCase):
         self.assertEqual(mixed["status"], "waiting-for-runs")
         self.assertEqual(mixed["unfinished_runs"], 2)
         self.assertNotIn("detail", mixed)
+
+    def relinquish(self, session_id, pid=None):
+        """Run the CLI as a child, so this test process is the caller's ancestor."""
+        entry = Path(__file__).resolve().parents[1] / "worker-registry.py"
+        completed = subprocess.run(  # nosec B603 # fixed CLI, isolated store and worktree
+            [sys.executable, "-E", "-s", "-B", str(entry), "--state-dir",
+             str(self.store.directory), "relinquish-session", "--path", str(self.tree),
+             "--pid", str(pid or os.getpid()), "--session-id", session_id],
+            capture_output=True, text=True, timeout=30,
+        )
+        return completed.returncode, json.loads(completed.stdout)
+
+    def test_session_relinquishes_only_its_own_run(self):
+        """GH#37432: one runtime serves several sessions; each ends only its own run."""
+        owner = admit_session(self.store, self.tree, os.getpid(), "owning-session")
+        admit_session(self.store, self.tree, os.getpid(), "sibling-session")
+        self.assertEqual(self.relinquish("unrelated-session")[1]["status"], "not-owner")
+        self.assertEqual(self.store.summary()["runs"], {"bound": 2})
+        code, report = self.relinquish("owning-session")
+        self.assertEqual((code, report["status"]), (0, "relinquished"))
+        self.assertEqual(report["run_id"], owner["run_id"])
+        self.assertFalse(report["cleanup_authorized"])
+        self.assertEqual(self.relinquish("owning-session")[1]["status"], "already-ended")
+        with self.assertRaisesRegex(AdmissionClosed, "^session-owner-already-ended$"):
+            admit_session(self.store, self.tree, os.getpid(), "owning-session")
+        waiting = prepare_cleanup(self.store, self.tree)
+        self.assertEqual((waiting["status"], waiting["unfinished_runs"]), ("waiting-for-runs", 1))
+        self.assertEqual(waiting["admission"], "open")
+        self.assertEqual(self.relinquish("sibling-session")[1]["status"], "relinquished")
+        ended = prepare_cleanup(self.store, self.tree)
+        self.assertEqual((ended["status"], ended["admission"]), ("registered-runs-ended", "closed"))
+
+    def test_relinquish_requires_the_caller_runtime(self):
+        """A live runtime that is not the caller's ancestor keeps its run."""
+        with subprocess.Popen(  # nosec B603 # owned sleeper, terminated below
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+        ) as sibling:
+            try:
+                admit_session(self.store, self.tree, sibling.pid, "foreign-session")
+                code, report = self.relinquish("foreign-session", pid=sibling.pid)
+            finally:
+                sibling.kill()
+        self.assertEqual((code, report["reason"]), (2, "relinquish-owner-not-caller"))
+        self.assertEqual(self.store.summary()["runs"], {"bound": 1})
+        # In process, the runtime is the caller itself, never its own ancestor.
+        admit_session(self.store, self.tree, os.getpid(), "in-process-session")
+        with self.assertRaisesRegex(StoreConflict, "^relinquish-owner-not-caller$"):
+            relinquish_session(self.store, self.tree, os.getpid(), "in-process-session")
+        self.assertEqual(self.store.summary()["runs"], {"bound": 2})
+
+    def test_explicit_removal_relinquishes_only_on_waiting_for_caller(self):
+        """The shell gate needs the opt-in, a declared session and the caller detail."""
+        admit_session(self.store, self.tree, os.getpid(), "removing-session")
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        entry = Path(__file__).resolve().parents[1] / "worker-registry.py"
+        bash = shutil.which("bash")
+        if bash is None:
+            self.fail("Bash is required for the removal gate integration")
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith(("GIT_", "AIDEVOPS_", "WORKER_LIFECYCLE_"))}
+        env.update(AIDEVOPS_LIFECYCLE_RUNTIME_PID=str(os.getpid()),
+                   AIDEVOPS_LIFECYCLE_SESSION_ID="removing-session")
+        caller = json.dumps({"status": "waiting-for-runs", "detail": "waiting-for-caller"})
+
+        def gate(result, **extra):
+            return subprocess.run(  # nosec B603 # fixed gate command in owned disposable fixtures
+                [bash, "-c", 'source "$1"; _worker_lifecycle_relinquish_caller "$2" "$3" "$4" "$5" "$6"',
+                 "fixture", str(scripts / "worker-lifecycle-state.sh"), result,
+                 sys.executable, str(entry), str(self.store.directory), str(self.tree)],
+                env=dict(env, **extra), capture_output=True, text=True, timeout=30,
+            ).returncode
+
+        self.assertEqual(gate(caller), 1)  # No opt-in: Pulse and release cleanup.
+        anonymous = json.dumps({"status": "waiting-for-runs"})
+        self.assertEqual(gate(anonymous, WORKER_LIFECYCLE_RELINQUISH_CALLER="1"), 1)
+        self.assertEqual(self.store.summary()["runs"], {"bound": 1})
+        self.assertEqual(gate(caller, WORKER_LIFECYCLE_RELINQUISH_CALLER="1"), 0)
+        self.assertEqual(self.store.summary()["runs"], {"ended": 1})
+        # Nothing left to relinquish, so no second retry is requested.
+        self.assertEqual(gate(caller, WORKER_LIFECYCLE_RELINQUISH_CALLER="1"), 1)
 
     def test_cleanup_does_not_promote_observation_bindings_to_admitted_runs(self):
         generation = self.enrollment.resolve(self.tree, create=True)

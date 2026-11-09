@@ -256,7 +256,13 @@ The registry CLI provides two non-destructive operations:
 - `prepare-cleanup --path PATH` validates the physical generation and reconciles its registered runs.
   Empty registrations and observation-only bindings report `coverage-gap`; active or unknown runs report
   `waiting-for-runs`, adding `detail: waiting-for-caller` when every unfinished run is an ancestor of the
-  invoking command (still blocking: one runtime process can serve several sessions; GH#37022). Read-only
+  invoking command (still blocking: one runtime process can serve several sessions; GH#37022).
+  `relinquish-session --path PATH --pid PID --session-id ID` lets the owning session end only its own run:
+  the PID must be an ancestor of the command, and the session ID selects one run of that runtime
+  (`relinquished`, `already-ended` or `not-owner`). Ending is permanent, so later admission of that session
+  refuses with `session-owner-already-ended`; it never closes admission, archives or removes. Explicit
+  `worktree-helper.sh remove` opts in through `WORKER_LIFECYCLE_RELINQUISH_CALLER=1`, relinquishing only
+  on `waiting-for-caller` and retrying retirement once; Pulse and release cleanup do not (GH#37432). Read-only
   git inspection of another tree (`READ_ONLY_VERBS` in `worker_lifecycle_command_targets.py`) admits no
   owner. These outcomes leave open admission open, so preparation cannot strand a newly created worktree
   before its first launch. Once all runs are ended, closure rechecks their exact set in the admission
