@@ -58,6 +58,29 @@ _full_loop_release_remove_worktree() {
 	return 0
 }
 
+# GH#37365: this executor owns its tag checkouts until it exits, so lifecycle
+# retirement refuses a mid-run reset (waiting-for-caller). The reset retains
+# the tree for post-exit retirement; re-preparing the same PID-named path
+# re-points that retained tree instead of requiring its removal. Only a linked
+# tree of this repository with no tracked, untracked or ignored changes moves.
+# Args: $1=repo root, $2=retained worktree path, $3=target commit
+_full_loop_release_repoint_tag_worktree() {
+	local repo_root="$1"
+	local wt_path="$2"
+	local target_commit="$3"
+	local wt_common="" repo_common="" dirty_state="" head_commit=""
+	[[ -f "$wt_path/.git" && ! -L "$wt_path" ]] || return 1
+	wt_common=$(cd -- "$wt_path" && cd -- "$(git rev-parse --git-common-dir)" && pwd -P) || return 1
+	repo_common=$(cd -- "$repo_root" && cd -- "$(git rev-parse --git-common-dir)" && pwd -P) || return 1
+	[[ "$wt_common" == "$repo_common" ]] || return 1
+	dirty_state=$(git -C "$wt_path" status --porcelain --ignored) || return 1
+	[[ -z "$dirty_state" ]] || return 1
+	git -C "$wt_path" checkout --quiet --detach "$target_commit" || return 1
+	head_commit=$(git -C "$wt_path" rev-parse HEAD) || return 1
+	[[ "$head_commit" == "$target_commit" ]] || return 1
+	return 0
+}
+
 # GH#37339: reconcile tag checkouts and preparation checkouts leak when the
 # creating process is SIGKILLed (the EXIT trap never runs), and detached trees
 # are invisible to capacity cleanup. Reap those whose owner PID is dead and that
