@@ -100,9 +100,11 @@ Order of preference:
    the old copy will not contain them. Include WireGuard tunnel configurations
    and their options (section 5). Quit dependent apps and temporarily suppress
    their login items and background launchers. Keep a dated backup of the
-   current `login.keychain-db`, then swap the files and restart. Restore the
-   preserved items before re-enabling automatic launches or reopening
-   dependent apps, and confirm the login keychain unlocks without a prompt.
+    current `login.keychain-db`, then swap the files and restart. After the
+    restart, confirm the login keychain unlocks without a prompt. Open
+    WireGuard only to import the preserved configurations (section 5); keep
+    other dependent apps and automatic launches paused until all preserved
+    items are restored.
 2. **Older copy with a known password:** a Time Machine backup, a local APFS
    snapshot, or the previous Mac's `~/Library/Keychains/login.keychain-db`.
    - Local snapshots: `tmutil listlocalsnapshots /`; mount read-only with
