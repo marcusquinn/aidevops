@@ -50,6 +50,23 @@ def resume_first(rows: list[dict], journaled: Callable[[str], bool]) -> list[dic
     return rows
 
 
+def journaled_removals(
+    connection: sqlite3.Connection, rows: list[dict],
+    event_id: Callable[[str, str], str],
+) -> set[str]:
+    """Return closed generations whose native removal start is journaled."""
+    return {row["generation_id"] for row in rows
+            if row["state"] == "closed" and connection.execute(
+                "SELECT 1 FROM events WHERE event_id=?",
+                (event_id(row["generation_id"], "removing"),),
+            ).fetchone()}
+
+
+def resume_failed(row: dict, result: dict) -> bool:
+    """A resume that did not retire backs off and yields the slot to the next one."""
+    return bool(row.get("resume", False)) and result["status"] != "retired"
+
+
 def require_removable(
     target: Path, started: int | None, unchanged: Callable[[], bool],
     git: Callable[..., str],

@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import re
-import sqlite3
 import subprocess  # nosec B404 # classify helper exceptions, never execute error argv
 import tempfile
 import time
@@ -20,7 +19,7 @@ from .cleanup_plan import enrolled_only_event_id
 from .cleanup_quarantine import CleanupQuarantine
 from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import validate_private_path as _private
-from .interrupted_removal import resume_first
+from .interrupted_removal import journaled_removals, resume_failed, resume_first
 from .permissions import FilePolicy, read_owned_file
 from .pull_requests import OpenPullRequestCache
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
@@ -238,20 +237,6 @@ def retire_enrolled_only(
     return _candidate(store, repositories, root, generation, path)
 
 
-def _journaled_removals(connection: sqlite3.Connection, rows: list[dict]) -> set[str]:
-    """Return closed generations whose native removal start is journaled."""
-    return {row["generation_id"] for row in rows
-            if row["state"] == "closed" and connection.execute(
-                "SELECT 1 FROM events WHERE event_id=?",
-                (_event_id(row["generation_id"], "removing"),),
-            ).fetchone()}
-
-
-def _resume_failed(row: dict, result: dict) -> bool:
-    """A resume that did not retire backs off and yields the slot to the next one."""
-    return bool(row.get("resume", False)) and result["status"] != "retired"
-
-
 def cleanup_pass(
     store: LifecycleRegistry, config: Path, root: Path,
     limit: int = 25, budget_seconds: float = 120,
@@ -279,7 +264,7 @@ def cleanup_pass(
                 "SELECT generation_id,path,state FROM generation_admissions "
                 "ORDER BY generation_id",
             )]
-            journaled = _journaled_removals(connection, rows)
+            journaled = journaled_removals(connection, rows, _event_id)
         after = _position(store)
         rows.sort(key=lambda row: (row["generation_id"] <= after, row["generation_id"]))
         deadline = time.monotonic() + budget_seconds
@@ -310,7 +295,7 @@ def cleanup_pass(
                           **_failure_details(error)}
             result["path"] = str(path)
             report["archive_failed"] += bool(result.get("archive_failure", False))
-            quarantine.record(row["generation_id"], result, _resume_failed(row, result))
+            quarantine.record(row["generation_id"], result, resume_failed(row, result))
             report["results"].append(result)
         quarantine.save(report)
     return report

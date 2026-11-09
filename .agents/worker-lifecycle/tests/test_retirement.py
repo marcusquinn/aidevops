@@ -10,11 +10,12 @@ import sqlite3
 import subprocess  # nosec B404 # fixed creator program in disposable repositories
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from worker_lifecycle import pull_requests, retirement
+from worker_lifecycle import interrupted_removal, pull_requests, retirement
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
 from worker_lifecycle.cleanup import cleanup_pass, cleanup_worktree, retire_enrolled_only
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id
@@ -25,6 +26,15 @@ from worker_lifecycle.refusal import refusal_code
 from worker_lifecycle.retirement_proof import verify_retirement
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.storage import LifecycleRegistry, StoreConflict
+
+
+def age_past_clock_slack():
+    """Let fixture content predate the backdated deletion-only boundary.
+
+    The boundary sits one clock slack before the snapshot check (GH#37326), so
+    content a fast runner wrote inside that window would count as a late change.
+    """
+    time.sleep(interrupted_removal.CLOCK_SLACK_NS / 1e9)
 
 
 class RetirementContract(unittest.TestCase):
@@ -669,6 +679,7 @@ class RetirementContract(unittest.TestCase):
 
     def interrupt_removal(self, late=None):
         """Delete part of the private tree, then fail as a timed-out native removal."""
+        age_past_clock_slack()
         native = retirement._git
 
         def interrupted(*arguments):

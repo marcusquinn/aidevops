@@ -715,6 +715,7 @@ class LegacyCleanupContract(unittest.TestCase):
     def interrupt_removal(self, late=None):
         """Delete part of the private tree, then fail as a timed-out native removal."""
         self.stop_owner()
+        fixtures.age_past_clock_slack()
         native = legacy._git
 
         def interrupted(*arguments):
