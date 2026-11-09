@@ -990,6 +990,16 @@ assert_order \
 	'run_stage_with_timeout "reap_orphan_workers"' \
 	'_pulse_run_optional_stage_with_timeout "stale_queued_runs"' \
 	"$WRAPPER"
+assert_order \
+	"11e2: t18905 worker bus relay runs after orphan reaping, before the merge pass" \
+	'run_stage_with_timeout "reap_orphan_workers"' \
+	'_pulse_run_optional_stage_with_timeout "worker_bus_relay"' \
+	"$WRAPPER"
+assert_order \
+	"11e3: t18905 worker bus relay runs before the long merge pass" \
+	'_pulse_run_optional_stage_with_timeout "worker_bus_relay"' \
+	'_pulse_run_budget_priority_stage_with_timeout "deterministic_merge_pass"' \
+	"$WRAPPER"
 assert_grep \
 	"11f: degraded prefetch skips only the STATE_FILE-reading LLM supervisor" \
 	'_PULSE_PREFETCH_DEGRADED:-0\}" == "1"' \

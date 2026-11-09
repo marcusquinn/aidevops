@@ -106,8 +106,14 @@
 - `.agents/plugins/opencode-aidevops/index.mjs`
 - `.agents/plugins/opencode-aidevops/v2.mjs`
 - `.agents/plugins/opencode-aidevops/tests/test-session-bus.mjs`
+- `.agents/plugins/opencode-aidevops/tests/test-session-bus-v2.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-presence-store.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-compaction.mjs`
 - `.agents/scripts/worker-bus-relay-helper.sh`
 - `.agents/scripts/pulse-wrapper.sh`
+- `.agents/scripts/pulse-budget-priority.sh` (classify `worker_bus_relay` as deferrable)
+- `.agents/scripts/tests/test-pulse-graphql-budget-priority.sh`
+- `.agents/scripts/tests/test-pulse-dispatch-engine-stage-wiring.sh`
 - `.agents/reference/session-bus.md`
 - `todo/plans/opencode-session-bus.md`
 - `todo/tasks/t18905-brief.md`
@@ -120,8 +126,8 @@ npm test --prefix .agents/plugins/opencode-aidevops
 shellcheck .agents/scripts/worker-bus-relay-helper.sh .agents/scripts/pulse-wrapper.sh
 ```
 
-- **Runtime evidence:** scratch `AIDEVOPS_SESSION_BUS_DIR`; start `opencode run` with worker env in a scratch repo; `aidevops sessions send` to it; confirm the framed message appears after its next tool result and that `aidevops sessions reply` from its shell reaches `outbox/cli`.
-- **Surface mapping:** unit tests cover messageability, no-wake, frame guidance, CLI reply and `--sender`, presence fields and idle notices; the relay is exercised with stubbed `gh` and bus CLI in a scratch state directory; the live `opencode run` covers real delivery.
+- **Runtime evidence:** scratch `AIDEVOPS_SESSION_BUS_DIR`; start `opencode run` with worker env in a scratch repo; `aidevops sessions send` to it; confirm the framed message appears after its next tool result and that `aidevops sessions reply` from its shell reaches the asker: the asker's inbox when the ask came from a session, `outbox/cli` when it came from a sessionless shell (`ask --wait`).
+- **Surface mapping:** unit tests cover messageability, no-wake, frame guidance, CLI reply and `--sender`, presence fields and idle notices; the relay is exercised against live GitHub reads with a seeded worker record in a scratch bus and state directory (baseline, label change, no repeat); the live `opencode run` covers real delivery.
 
 ### Scope Boundaries
 

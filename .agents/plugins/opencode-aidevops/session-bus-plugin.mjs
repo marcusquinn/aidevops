@@ -23,8 +23,10 @@ export function remoteBusContext(conversation) {
 }
 
 /**
- * Presence for every root session; messaging only in interactive TUI, serve
- * and ACP processes. Headless workers publish read-only presence.
+ * Presence for every root session. Interactive TUI, serve and ACP processes
+ * get the tool and wakes. t18905: headless workers receive messages at tool
+ * results and turns, with no tool (no schema cost) and no wakes; they answer
+ * from their shell with `aidevops sessions reply`. CLI processes are read-only.
  * @param {object} options - { client, directory, headless, remote ({ agent, context } for a remote-interactive process, t18898), onError(label, err), log(level, message) }
  */
 export function createSessionBusHooks({ client, directory, headless = false, remote = null, onError = () => {}, log = () => {} }) {
@@ -36,13 +38,21 @@ export function createSessionBusHooks({ client, directory, headless = false, rem
   });
   return {
     bus,
-    /** Register aidevops_sessions where this process can message. */
+    /** Register aidevops_sessions in interactive processes only. */
     addTool(tools, tool) {
-      if (bus.messageable) tools.aidevops_sessions = createSessionBusTool(tool, bus);
+      if (bus.messageable && bus.wakeable) tools.aidevops_sessions = createSessionBusTool(tool, bus);
     },
     /** Deliver pending messages on the user turn. */
     chatMessage: (input, output) =>
       bus.chatMessage(input, output).catch((error) => onError("session bus chat.message", error)),
+    /** Publish the running tool (throttled with other presence writes). */
+    toolBefore(input) {
+      try {
+        bus.toolBefore(input);
+      } catch (error) {
+        log("WARN", `[session-bus] tool presence skipped: ${error?.message ?? error}`);
+      }
+    },
     /** Deliver pending messages after a tool result; before output scrubbing. */
     toolAfter(input, output) {
       try {

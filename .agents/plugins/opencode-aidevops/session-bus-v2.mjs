@@ -98,8 +98,9 @@ function sessionInfoEvent(type, data, sessionID) {
 
 /**
  * Session-bus hooks for the V2 server plugin. Same process kinds as V1:
- * TUI, serve and ACP processes are messageable; headless and CLI processes
- * publish read-only presence and get no tool.
+ * TUI, serve and ACP processes get the tool and wakes; headless workers
+ * receive at tool results and prompts without a tool or wakes (t18905); CLI
+ * processes publish read-only presence.
  * @param {object} options - { ctx, directory, headless, log(level, message) }
  */
 export function createV2SessionBusHooks({ ctx, directory, headless = false, remote = null, log = () => {} }) {
@@ -124,9 +125,15 @@ export function createV2SessionBusHooks({ ctx, directory, headless = false, remo
       const text = (output.parts || []).map((part) => part.text).filter(Boolean).join("\n\n");
       if (text) prompt.text = prompt.text ? `${prompt.text}\n\n${text}` : text;
     },
-    /** `tool` hook `execute.after` on the legacy output view; completed results only. */
+    /** `tool` hook `execute.before`: publish the running tool (t18905). */
+    toolBefore(event) {
+      hooks.toolBefore({ sessionID: event?.sessionID, tool: event?.tool });
+    },
+    /** `tool` hook `execute.after` on the legacy output view; completed results only carry messages. */
     toolAfter(event, output) {
-      if (event?.status === "completed") hooks.toolAfter({ sessionID: event.sessionID, tool: event.tool }, output);
+      const input = { sessionID: event?.sessionID, tool: event?.tool };
+      if (event?.status === "completed") hooks.toolAfter(input, output);
+      else hooks.toolAfter(input, null);
     },
     /** Translate V2 events and update root metadata and turn state before dispatch. */
     handleEvent(input) {

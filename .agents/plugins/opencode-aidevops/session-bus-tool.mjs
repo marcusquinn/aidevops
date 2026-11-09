@@ -13,7 +13,7 @@ const MAX_WAIT_SECONDS = 120;
 const DESCRIPTION = [
   "See and message other live OpenCode sessions on this machine; use this instead of asking the user to relay messages or check another session.",
   "list/show: repo, branch, issue/PR, busy/idle and current task.",
-  "send: info, delivered at the recipient's next tool result or turn.",
+  "send: info, delivered at the recipient's next tool result or turn (pulse workers too; they are never woken).",
   "ask: a question that may wake an idle session; the reply arrives here, or in this result with wait_seconds (1-120).",
   "reply: answer a received ask (re = its msg ID). inbox: your messages.",
   "notify-when-idle: one notice when a busy session goes idle.",
@@ -36,6 +36,10 @@ function resolveOrThrow(root, to, selfID) {
 
 function deliveryNote(type, record) {
   if (!record) return "That session is not running. The message is kept for 7 days and delivered when the session resumes in any OpenCode process.";
+  if (store.isWorker(record)) {
+    const answer = type === "ask" ? " It answers from its shell; the reply arrives in this session." : "";
+    return `${record.handle} is a pulse worker (${record.status}); it sees the message at its next tool result and is never woken.${answer}`;
+  }
   if (record.status === "busy" || record.status === "permission") {
     return `${record.handle} is ${record.status}; it sees the message at its next tool result.`;
   }
@@ -62,11 +66,14 @@ function showAction(root, args) {
   const { record } = resolveOrThrow(root, args.to, "");
   if (!record) throw new Error("that session is not running");
   const traffic = store.recentTraffic(root, record.session_id, { limit: 3 }).length;
+  const worker = record.worker;
   return [
     store.formatPresenceRow(record),
     `kind: ${record.kind}${store.isMessageable(record) ? "" : " (read-only)"}`,
     `worktree: ${record.worktree || record.directory || "?"}`,
     `issue: ${record.issue ?? "-"} · pr: ${record.pr ?? "-"} · recent bus messages: ${traffic}`,
+    ...(worker ? [`worker: ${worker.repo}#${worker.issue}${worker.tier ? ` · tier ${worker.tier}` : ""} · started ${store.ago(worker.started_epoch)}`] : []),
+    ...(record.tool?.name ? [`running: ${record.tool.name} since ${store.ago(record.tool.since_epoch)}`] : []),
   ].join("\n");
 }
 
@@ -174,6 +181,7 @@ function notifyAction(root, sender, args) {
   if (!record) throw new Error("that session is not running");
   if (record.status === "idle") return `${record.handle} is already idle.`;
   store.addIdleSubscription(root, record.session_id, { session_id: sender.sessionID, handle: sender.from.handle });
+  if (record.kind === "headless") return `You will get one notice when worker ${record.handle} finishes its run or exits (now ${record.status}).`;
   return `You will get one idle notice when ${record.handle} next goes idle (now ${record.status}).`;
 }
 

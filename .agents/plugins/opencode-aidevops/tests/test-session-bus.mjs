@@ -468,6 +468,62 @@ test("CLI lists sessions and sends from a shell; TUI rows follow the root sessio
   assert.equal(rootSessionID((id) => sessions[id], "child"), "parent");
 });
 
+test("workers take labelled shell sends at tool results, reply from their shell and notify on exit (t18905)", async () => {
+  const info = { id: "ses_workT1", title: "Issue #55: fix", directory: root };
+  const worker = createSessionBus({
+    client: fakeClient({ ses_workT1: info }), directory: root, root, kind: "headless", start: false, git: async () => ({ stdout: "" }),
+    env: { WORKER_ISSUE_NUMBER: "55", WORKER_REPO_SLUG: "owner/repo", AIDEVOPS_ATTEMPT_STARTED_AT: "1762660000123456789" },
+  });
+  await worker.handleEvent({ event: { type: "session.created", properties: { info } } });
+  const [record] = store.readPresence(root);
+  assert.equal(store.isWorker(record), true);
+  assert.equal(record.worker.started_epoch, 1762660000);
+  assert.match(record.handle, /-55-worker$/, "distinct from an interactive session on the same issue");
+  livePresence("ses_intrT1", { handle: "repo-55", issue: 55 });
+
+  const output = [];
+  const out = { write: (text) => output.push(text) };
+  cliMain(["list"], { env: {}, out, root });
+  assert.match(output.join(""), /repo-55 ·[\s\S]*-55-worker \[worker\]/, "interactive sessions list before workers");
+
+  // --sender is sessionless even inside a session shell, with its own rate key.
+  cliMain(["send", record.handle, "issue", "closed", "--sender", "pulse"], { env: { OPENCODE_SESSION_ID: "ses_intrT1" }, out, root });
+  const [{ message: info1 }] = store.pendingMessages(root, "ses_workT1");
+  assert.equal(info1.from.origin, "cli:pulse");
+  assert.equal(info1.from.session_id, "");
+  assert.equal(store.countRecentSends(root, "cli-pulse"), 1);
+  assert.throws(() => cliMain(["send", record.handle, "x", "--sender", "Bad Label"], { env: {}, out, root }), /--sender/);
+  assert.throws(() => cliMain(["send", record.handle, "x", "--sender", "pulse", "--origin", "chat:matrix:!r"], { env: {}, out, root }), /not both/);
+  const toolOutput = { output: "ran" };
+  assert.equal(worker.toolAfter({ sessionID: "ses_workT1", tool: "bash" }, toolOutput), 1);
+  assert.match(toolOutput.output, /a shell on this machine \(sender pulse, no session\)/);
+  assert.equal(await worker.deliverToIdle("ses_workT1", worker.state("ses_workT1")), false, "workers are never woken");
+
+  // An ask is answered from the worker's shell as the worker session.
+  const ask = store.sendMessage(root, { from: peer("ses_intrT1", { handle: "repo-55" }), to: "ses_workT1", type: "ask", text: "which approach?", hops: 1 });
+  const askOutput = { output: "ran" };
+  worker.toolAfter({ sessionID: "ses_workT1", tool: "bash" }, askOutput);
+  assert.match(askOutput.output, new RegExp(`aidevops sessions reply ${ask.id}`));
+  output.length = 0;
+  cliMain(["reply", ask.id, "retry", "with", "backoff"], { env: { OPENCODE_SESSION_ID: "ses_workT1" }, out, root });
+  assert.match(output.join(""), /Sent reply msg_\w+ to repo-55\./);
+  const [{ message: answer }] = store.pendingMessages(root, "ses_intrT1");
+  assert.equal(answer.type, "reply");
+  assert.equal(answer.re, ask.id);
+  assert.equal(answer.from.session_id, "ses_workT1");
+  assert.equal(answer.hops, 2);
+  assert.throws(() => cliMain(["reply", ask.id, "again"], { env: {}, out, root }), /OpenCode session's shell/);
+  assert.throws(() => cliMain(["reply", "msg_nope", "x"], { env: { OPENCODE_SESSION_ID: "ses_workT1" }, out, root }), /msg ID of an ask/);
+
+  // A subscriber still waiting when the worker exits gets one notice naming its issue.
+  store.addIdleSubscription(root, "ses_workT1", { session_id: "ses_intrT1", handle: "repo-55" });
+  worker.dispose();
+  const notices = store.pendingMessages(root, "ses_intrT1").filter((entry) => entry.message.type === "idle-notice");
+  assert.equal(notices.length, 1);
+  assert.match(notices[0].message.text, /^Worker \S+-55-worker for owner\/repo#55 exited[\s\S]*gh issue view 55 --repo owner\/repo/);
+  assert.equal(store.readPresence(root).some((row) => row.session_id === "ses_workT1"), false);
+});
+
 // t18897: ask with a bounded wait
 const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

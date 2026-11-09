@@ -39,7 +39,21 @@ function shellSender(root, env) {
   };
 }
 
-const senderFrom = (root, origin, env) => (origin ? chatSender(origin) : shellSender(root, env));
+// t18905: a named sessionless sender, such as the pulse relay. The label is
+// attribution only (same-user shells are equally trusted); it also gives the
+// sender its own rate-limit key, cli-<label>.
+const SENDER_LABEL = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+function labelledSender(label) {
+  if (!SENDER_LABEL.test(String(label || ""))) throw new Error("--sender must be 1-32 lowercase letters, digits or dashes");
+  return { session_id: "", handle: label, repo: "", branch: "", origin: `cli:${label}` };
+}
+
+function senderFrom(root, options, env) {
+  if (options.origin && options.sender) throw new Error("use --origin or --sender, not both");
+  if (options.origin) return chatSender(options.origin);
+  return options.sender ? labelledSender(options.sender) : shellSender(root, env);
+}
 
 export function print(out, value, json) {
   out.write(`${json ? JSON.stringify(value, null, 2) : value}\n`);
@@ -57,7 +71,7 @@ export function listCommand({ root, options, out }) {
   if (options.json) return print(out, records, true);
   const hidden = all.length - records.length;
   const lines = records.map((record) => store.formatPresenceRow(record));
-  if (lines.length === 0) lines.push("No live interactive OpenCode sessions.");
+  if (lines.length === 0) lines.push("No live messageable OpenCode sessions.");
   if (hidden > 0) lines.push(`(${hidden} headless/read-only session(s) hidden; use --all)`);
   return print(out, lines.join("\n"), false);
 }
@@ -112,9 +126,9 @@ export function sendCommand(context, type) {
   const [, target, ...words] = options.positional;
   if (options.wait && type !== "ask") throw new Error("--wait is only valid with ask");
   // A waiting sender has no session, so the reply lands in outbox/<app>.
-  const from = options.wait && !options.origin
+  const from = options.wait && !options.origin && !options.sender
     ? { session_id: "", handle: `shell:${env.USER || "user"}`, repo: "", branch: "", origin: "cli" }
-    : senderFrom(root, options.origin, env);
+    : senderFrom(root, options, env);
   const resolved = messageableTarget(root, target, from);
   const text = store.validBody(readText(options, words));
   if (options.origin) from.trust = chatTrust(options.origin, options.actor, text, env);
@@ -128,6 +142,25 @@ export function sendCommand(context, type) {
   print(out, `Sent ${type} ${message.id} to ${resolved.record?.handle || resolved.sessionID}.${replyHint(type, from)}`, false);
   if (!options.wait) return undefined;
   return waitForOutboxReply(context, message.id, store.parseChatOrigin(from.origin)?.app || "cli");
+}
+
+/**
+ * t18905: answer an ask from a session's own shell. Workers have no
+ * aidevops_sessions tool, so their framed asks point here. The sender is the
+ * session in the shell environment, never an argument.
+ */
+export function replyCommand({ root, options, out, env }) {
+  if (options.origin || options.sender || options.wait) throw new Error("reply takes no --origin, --sender or --wait; it answers as this session");
+  const [, messageID, ...words] = options.positional;
+  const sessionID = envSessionID(env);
+  if (!store.isSafeId(sessionID)) throw new Error("reply runs in an OpenCode session's shell; it answers an ask that session received");
+  const original = store.findReceived(root, sessionID, String(messageID || "").trim());
+  if (original?.type !== "ask") throw new Error("reply needs the msg ID of an ask this session received");
+  const text = store.validBody(readText(options, words));
+  const hops = (Number.isSafeInteger(original.hops) ? original.hops : 0) + 1;
+  const { message, outbox } = store.sendReply(root, { from: shellSender(root, env), original, text, hops });
+  const target = outbox ? `the ${outbox} outbox for ${original.from?.handle || outbox}` : original.from?.handle || original.from?.session_id;
+  return print(out, `Sent reply ${message.id} to ${target}.`, false);
 }
 
 function trafficLine({ direction, pending, message }) {

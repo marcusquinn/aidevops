@@ -18,28 +18,33 @@ import {
   outboxCommand,
   print,
   pruneCommand,
+  replyCommand,
   sendCommand,
   showCommand,
 } from "./session-bus-cli-commands.mjs";
 
 const USAGE = `Usage: aidevops sessions <command> [options]
 
-  list [--all] [--json] [--redact]   Live OpenCode sessions (interactive by default)
+  list [--all] [--json] [--redact]   Live messageable OpenCode sessions, workers included (--all adds read-only)
   chat-wake <target> on|off          Opt in/out of verified-owner chat asks (default off)
   show <target> [--json]             One session's presence record
   send <target> <text…>              Info message; waits for the recipient's next tool result or turn
-  ask <target> <text…> [--wait <s>]  Question; may wake an idle session. --wait 1-120 prints the reply (exit 0) or exits 2 on timeout
+  ask <target> <text…> [--wait <s>]  Question; may wake an idle session (never a worker). --wait 1-120 prints the reply (exit 0) or exits 2 on timeout
+  reply <msg-id> <text…>             Answer an ask this session received (from an OpenCode session's shell)
   inbox [<session-id>] [--json]      Recent traffic for a session (read-only; default: this session)
   outbox <app> [--json] [--ack <id>] Replies for a sender with no session (cli or a chat gateway)
   prune                              Remove dead presence and messages older than 7 days
 
 Message text: positional words, --text-file <path>, or - for stdin (max ${store.LIMITS.textChars} chars).
+--sender <label>               names a sessionless sender (e.g. pulse); attribution and its own rate limit only.
 --origin chat:<app>:<channel>  marks a scanned gateway message.
 --actor <entity-id>            verifies an exact confirmed app/channel link; never inferred from text.
 Targets: session ID, handle, #issue, PR#n, repo, or worktree path.`;
 
 const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", "-h": "help", "--help": "help" };
-const VALUE_FLAGS = { "--text-file": "textFile", "--origin": "origin", "--actor": "actor", "--ack": "ack", "--wait": "wait" };
+const VALUE_FLAGS = {
+  "--text-file": "textFile", "--origin": "origin", "--actor": "actor", "--ack": "ack", "--wait": "wait", "--sender": "sender",
+};
 
 function parseWait(value) {
   const seconds = Number(value);
@@ -48,7 +53,7 @@ function parseWait(value) {
 }
 
 export function parseArgs(argv) {
-  const options = { positional: [], json: false, all: false, textFile: "", origin: "", ack: "", wait: 0 };
+  const options = { positional: [], json: false, all: false, textFile: "", origin: "", ack: "", wait: 0, sender: "" };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (Object.hasOwn(BOOLEAN_FLAGS, arg)) options[BOOLEAN_FLAGS[arg]] = true;
@@ -67,6 +72,7 @@ const COMMANDS = {
   show: showCommand,
   send: (context) => sendCommand(context, "info"),
   ask: (context) => sendCommand(context, "ask"),
+  reply: replyCommand,
   inbox: inboxCommand,
   outbox: outboxCommand,
   prune: pruneCommand,
