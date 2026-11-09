@@ -1280,6 +1280,19 @@ terminal_blocker_fleet_hold_active() {
 	return 0
 }
 
+# True when terminal_blocker_task_revision binds this reason to the default-branch
+# head of a local checkout. Keep in sync with its reason branches.
+_terminal_blocker_revision_needs_checkout() {
+	local reason="$1"
+	case "$reason" in
+	"$_TBC_PERMISSION_REQUIRED" | external_trigger_pending | input_required | files_scope_excluded | \
+		"$_TBC_RUNNER_CAPABILITY" | "$_TBC_MISSING_SCOPE" | "$_TBC_SOURCE_ACCESS" | "$_TBC_UNKNOWN")
+		return 1
+		;;
+	esac
+	return 0
+}
+
 terminal_blocker_circuit_active() {
 	local comments_json="$1"
 	local issue_json="$2"
@@ -1299,7 +1312,22 @@ terminal_blocker_circuit_active() {
 	fingerprint=$(printf '%s' "$circuit" | jq -r '.body | capture("<!-- aidevops:terminal-blocker-circuit revision=[a-f0-9]{24} blocker=(?<id>[a-f0-9]{24}) -->").id' 2>/dev/null) || return 1
 	reason=$(_terminal_blocker_reason "$fingerprint")
 	[[ "$reason" != "$_TBC_UNKNOWN" ]] || return 1
-	current_revision=$(terminal_blocker_task_revision "$issue_json" "$repo_slug" "$issue_number" "$repo_path" "$reason") || return 1
+	current_revision=$(terminal_blocker_task_revision "$issue_json" "$repo_slug" "$issue_number" "$repo_path" "$reason") || {
+		# GH#37200: an existing circuit whose revision cannot be computed
+		# (GraphQL outage, budget shortfall) stays held; the pulse retries next
+		# cycle. A caller without a checkout (the status wrapper) cannot evaluate
+		# default-branch-bound reasons, so those keep the prior fail-open result.
+		if [[ -z "$repo_path" ]] && _terminal_blocker_revision_needs_checkout "$reason"; then
+			return 1
+		fi
+		# A trusted maintainer retry still re-arms the latest circuit.
+		retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
+		if _terminal_blocker_retry_after "$retry" "$circuit"; then
+			return 1
+		fi
+		printf 'TERMINAL_BLOCKER_CIRCUIT_HOLD reason=revision_unavailable issue=%s\n' "$issue_number" >&2
+		return 0
+	}
 	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=${current_revision} blocker=${fingerprint}") || circuit=""
 	[[ -n "$circuit" ]] || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
