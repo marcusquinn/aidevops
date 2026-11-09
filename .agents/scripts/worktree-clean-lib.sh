@@ -2091,6 +2091,13 @@ cmd_clean() {
 	# Prune all remotes, not just origin (GH#3797)
 	local remote_state_unknown
 	remote_state_unknown=$(_clean_fetch_remotes)
+	# Refresh only the remote-existence cache: prune may have removed branches.
+	# _WT_CLEAN_PUSHED_BRANCHES keeps the pre-fetch pushed-branch evidence.
+	if [[ "$_WT_CLEAN_REMOTE_BRANCH_CACHE_READY" == "true" ]]; then
+		if ! _WT_CLEAN_REMOTE_BRANCHES=$(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/ 2>/dev/null); then
+			remote_state_unknown=true
+		fi
+	fi
 
 	# Build PR branch lists for squash-merge detection and open-PR safety check.
 	# NOTE: bash 3.2 (macOS default) lacks declare -A — do NOT use associative arrays.
