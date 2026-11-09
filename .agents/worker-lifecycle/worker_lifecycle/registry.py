@@ -180,14 +180,11 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
             store, WorktreeSpec(args.repo, args.path, args.ref, tuple(options)),
             args.pid, args.session_id,
         )
-    if args.operation == "admit-session":
-        from .session import admit_session
+    if args.operation in {"admit-session", "relinquish-session"}:
+        from .session import admit_session, relinquish_session
 
-        return admit_session(store, args.path, args.pid, args.session_id)
-    if args.operation == "relinquish-session":
-        from .session import relinquish_session
-
-        return relinquish_session(store, args.path, args.pid, args.session_id)
+        session_operation = admit_session if args.operation == "admit-session" else relinquish_session
+        return session_operation(store, args.path, args.pid, args.session_id)
     if args.operation == "preserve-wip":
         from .preservation import preserve_wip
 
