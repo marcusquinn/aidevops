@@ -74,8 +74,13 @@ _full_loop_release_reap_stale_release_worktrees() {
 		[[ -z "$pr" || -z "$protected_pr" || "$pr" != "$protected_pr" ]] || continue
 		[[ -z "$version" || -z "$protected_version" || "$version" != "$protected_version" ]] || continue
 		kill -0 "$owner_pid" 2>/dev/null && continue
-		idle_match=$(find "$stale_path" -maxdepth 0 -mmin +30 2>/dev/null || true)
-		[[ -n "$idle_match" ]] || continue
+		# Any entry modified within 30 minutes (nested files included) means active.
+		idle_match=$(find "$stale_path" -mmin -30 -print -quit 2>/dev/null || true)
+		[[ -z "$idle_match" ]] || continue
+		# Preserve trees with tracked or untracked changes; never rely on force.
+		if [[ -n "$(git -C "$stale_path" status --porcelain 2>/dev/null || true)" ]]; then
+			continue
+		fi
 		attempts=$((attempts + 1))
 		_full_loop_release_remove_worktree "$stale_path" "$reason" || true
 	done

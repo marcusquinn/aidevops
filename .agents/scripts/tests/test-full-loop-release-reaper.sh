@@ -35,7 +35,7 @@ check() {
 }
 
 removed() {
-	[[ -f "$REMOVED_LOG" ]] && rg -q -- "^$1 $2\$" "$REMOVED_LOG" && echo true || echo false
+	[[ -f "$REMOVED_LOG" ]] && grep -qxF -- "$1 $2" "$REMOVED_LOG" && echo true || echo false
 	return 0
 }
 
@@ -54,6 +54,13 @@ DEAD_PID=$!
 wait "$DEAD_PID" || true
 LIVE_PID=$$
 
+age_path() {
+	local ts
+	ts=$(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M)
+	touch -t "$ts" "$1"
+	return 0
+}
+
 BASE="$ROOT/worktrees"
 mkdir -p "$BASE"
 make_tree() {
@@ -61,7 +68,10 @@ make_tree() {
 	local age="${2:-old}"
 	mkdir -p "$BASE/$name"
 	printf 'gitdir: x\n' >"$BASE/$name/.git"
-	[[ "$age" == "old" ]] && touch -d '2 hours ago' "$BASE/$name"
+	if [[ "$age" == "old" ]]; then
+		age_path "$BASE/$name/.git"
+		age_path "$BASE/$name"
+	fi
 	return 0
 }
 
@@ -90,7 +100,7 @@ mkdir -p "$BASE/aidevops-release-505-${DEAD_PID}"
 mkdir -p "$ROOT/elsewhere"
 printf 'gitdir: x\n' >"$ROOT/elsewhere/.git"
 ln -s "$ROOT/elsewhere" "$BASE/aidevops-release-506-${DEAD_PID}"
-touch -d '2 hours ago' "$BASE/aidevops-release-505-${DEAD_PID}"
+age_path "$BASE/aidevops-release-505-${DEAD_PID}"
 _full_loop_release_reap_stale_release_worktrees "$BASE" "" "" "" 10
 check "keeps live, young, foreign, symlink, no .git" "$([[ "$(count_removed)" == 0 ]] && echo true || echo false)"
 
@@ -141,7 +151,7 @@ make_tree "aidevops-release-reconcile-3.41.0-${DEAD_PID}"
 STUB_LANE_RC=0
 STUB_LANE_JSON='{"active":true,"source_pr":801,"tag":"v3.41.0","executor":{"pid":1}}'
 _full_loop_release_reap_with_lane owner/repo 10
-check "active lane keeps its trees" "$([[ "$(count_removed)" == 1 ]] && removed "aidevops-release-802-${DEAD_PID}" release-preparation-stale | rg -q true && echo true || echo false)"
+check "active lane keeps its trees" "$([[ "$(count_removed)" == 1 ]] && [[ "$(removed "aidevops-release-802-${DEAD_PID}" release-preparation-stale)" == true ]] && echo true || echo false)"
 reset_case
 make_tree "aidevops-release-803-${DEAD_PID}"
 STUB_LANE_JSON='{"active":false,"source_pr":803,"tag":null,"executor":{"pid":1}}'

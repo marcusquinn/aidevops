@@ -895,10 +895,16 @@ _full_loop_release_cmd_reap_stale() {
 			limit="${reap_args[$((idx + 1))]:-}"
 			idx=$((idx + 2))
 			;;
-		*) return 1 ;;
+		*)
+			_full_loop_release_usage >&2
+			return 1
+			;;
 		esac
 	done
-	[[ "$limit" =~ ^[0-9]+$ ]] || return 1
+	[[ "$limit" =~ ^[0-9]+$ ]] || {
+		_full_loop_release_usage >&2
+		return 1
+	}
 	_full_loop_release_bind_repo_context || return 1
 	reap_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
 	_full_loop_release_reap_with_lane "$reap_repo" "$limit"
