@@ -2,13 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { CommandRouter } from "./router";
 import { busCommand, chatRef, relayOutbox, type BusRunner } from "./session-bus";
 import type { CommandContext } from "./types";
 
 const result = (output = "", success = true) => ({ output, success, error: "", exitCode: success ? 0 : 1, durationMs: 0 });
 function context(group = false): CommandContext {
+  const rawText = "/ask target --test $(touch bad)";
+  const parsed = new CommandRouter().parse(rawText);
+  if (!parsed) throw new Error("Expected a slash command");
   return {
-    command: "ask", args: ["target", "--test", "$(touch bad)"], rawText: "/ask target --test $(touch bad)",
+    ...parsed, rawText,
     chatItem: { chatItem: { content: { type: "rcvMsgContent", msgContent: { type: "text" } } } },
     ...(group ? { group: { groupId: 7, localDisplayName: "g", groupProfile: { displayName: "g" } } } : { contact: { contactId: 42, localDisplayName: "c", profile: { displayName: "c" } } }),
     reply: async () => {},
@@ -16,6 +20,13 @@ function context(group = false): CommandContext {
 }
 
 describe("session bus bridge", () => {
+  test("parses incoming command arguments across spaces and tabs", () => {
+    const router = new CommandRouter();
+    expect(router.parse("/ask target --plain hello")).toEqual({ command: "ask", args: ["target", "--plain", "hello"] });
+    expect(router.parse("/send\ttarget\t--plain")).toEqual({ command: "send", args: ["target", "--plain"] });
+    expect(router.parse("/sessions")).toEqual({ command: "sessions", args: [] });
+  });
+
   test("passes text in a private file, never as options", async () => {
     const root = join(process.env.AIDEVOPS_TEMP_DIR ?? join(homedir(), ".aidevops/.agent-workspace/tmp"), `simplex-test-${process.pid}`);
     await mkdir(root, { recursive: true });
