@@ -449,6 +449,30 @@ _gh_wrapper_auto_sig_close_comment() {
 	return 0
 }
 
+# Update the shared argv array for an inline body without duplicating provenance.
+_gh_wrapper_auto_sig_inline() {
+	local sig_helper="$1" body_val="$2" body_idx="$3" is_eq_form="$4"
+	local sig_footer
+	if grep -Fqx '<!-- aidevops:sig -->' <<<"$body_val"; then
+		# A signature alone does not preserve the origin provenance.
+		grep -Eq '^<!-- aidevops:origin:(interactive|worker) -->$' <<<"$body_val" && return 0
+		sig_footer=$'\n'"<!-- aidevops:$(session_origin_label) -->"
+	else
+		sig_footer=$("$sig_helper" footer --body "$body_val" 2>/dev/null || echo "")
+	fi
+	[[ -z "$sig_footer" ]] && return 0
+	local new_body="${body_val}${sig_footer}"
+	if [[ "$sig_footer" == *'<!-- aidevops:origin:'* ]]; then
+		new_body="$(printf '%s\n' "$body_val" | _gh_wrapper_strip_origin_marker_lines)${sig_footer}"
+	fi
+	if [[ "$is_eq_form" -eq 1 ]]; then
+		_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx]="--body=${new_body}"
+	else
+		_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx + 1]="$new_body"
+	fi
+	return 0
+}
+
 _gh_wrapper_auto_sig() {
 	_GH_WRAPPER_SIG_MODIFIED_ARGS=("$@")
 	local sig_helper
@@ -492,24 +516,7 @@ _gh_wrapper_auto_sig() {
 
 	# Handle --body case
 	if [[ $body_idx -ge 0 && -n "$body_val" ]]; then
-		local sig_footer
-		if grep -Fqx '<!-- aidevops:sig -->' <<<"$body_val"; then
-			# A signature alone does not preserve the origin provenance.
-			grep -Eq '^<!-- aidevops:origin:(interactive|worker) -->$' <<<"$body_val" && return 0
-			sig_footer=$'\n'"<!-- aidevops:$(session_origin_label) -->"
-		else
-			sig_footer=$("$sig_helper" footer --body "$body_val" 2>/dev/null || echo "")
-		fi
-		[[ -z "$sig_footer" ]] && return 0
-		local new_body="${body_val}${sig_footer}"
-		if [[ "$sig_footer" == *'<!-- aidevops:origin:'* ]]; then
-			new_body="$(printf '%s\n' "$body_val" | _gh_wrapper_strip_origin_marker_lines)${sig_footer}"
-		fi
-		if [[ "$is_eq_form" -eq 1 ]]; then
-			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx]="--body=${new_body}"
-		else
-			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx + 1]="$new_body"
-		fi
+		_gh_wrapper_auto_sig_inline "$sig_helper" "$body_val" "$body_idx" "$is_eq_form"
 		return 0
 	fi
 
