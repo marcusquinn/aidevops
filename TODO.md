@@ -1971,11 +1971,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18927 fix(runner-health): keep a zero-attempt streak across window expiry so slow-failing runners trip the breaker #auto-dispatch #bug ref:GH#37403
 
-- [ ] t18928 fix(release): reaper starves dead-owner reconcile trees and Spotlight marker resets idle #bug ref:GH#37424
+- [x] t18928 fix(release): reaper starves dead-owner reconcile trees and Spotlight marker resets idle #bug ref:GH#37424 pr:#37427 completed:2026-11-09
 
-- [ ] t18929 fix(lifecycle): let a session relinquish its own run so long-lived OpenCode processes stop pinning finished worktrees #bug ref:GH#37432 -> [todo/tasks/t18929-brief.md]
+- [x] t18929 fix(lifecycle): let a session relinquish its own run so long-lived OpenCode processes stop pinning finished worktrees #bug ref:GH#37432 -> [todo/tasks/t18929-brief.md] pr:#37449 completed:2026-11-09
 
-- [ ] t18930 fix(full-loop): release a finished interactive session's worktree ownership at the complete handoff so Pulse can retire merged trees while the app runs #auto-dispatch #bug blocked-by:t18929 ref:GH#37448 -> [todo/tasks/t18930-brief.md]
+- [x] t18930 fix(full-loop): release a finished interactive session's worktree ownership at the complete handoff so Pulse can retire merged trees while the app runs #auto-dispatch #bug blocked-by:t18929 ref:GH#37448 -> [todo/tasks/t18930-brief.md] pr:#37473 completed:2026-11-09
 
 - [ ] t18932 fix(screen-time): stale macOS source renders 0h instead of unavailable for unobserved periods #auto-dispatch #bug ref:GH#37467 logged:2026-11-09 -> [todo/tasks/t18932-brief.md]
 
