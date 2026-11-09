@@ -114,7 +114,8 @@ _full_loop_release_prepare_control_worktree() {
 	return 0
 }
 
-if [[ "${1:-}" != "sources" && -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
+if [[ "${1:-}" != "sources" && "${1:-}" != "reap-stale" && -d "$REPO_ROOT/.git" ]] &&
+	! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
 	printf 'Cannot prepare a linked release control worktree.\n' >&2
 	exit 1
 fi
@@ -356,6 +357,11 @@ Usage:
   aidevops release refresh-aggregate STALE_AGGREGATION_PR
   aidevops release recover-aggregate SOURCE_PR --tag TAG --expected-sources PR[,PR...] [--aggregate-commit SHA]
   aidevops release authorization-gap SOURCE_PR --tag TAG --expected-sources PR@SHA[,PR@SHA...] --reason TEXT
+  aidevops release reap-stale [LIMIT]
+
+`reap-stale` removes up to LIMIT (default 50) dead, idle preparation and
+reconcile worktrees outside the active lane; each release start reaps up to
+AIDEVOPS_RELEASE_REAP_LIMIT (default 20).
 
 Release publication is provenance-bound and normally unattended. `status` and
 `sources` are read-only. `sources` prints the verified source manifest as JSON
@@ -787,6 +793,8 @@ _full_loop_release_start_new() {
 	# Before history recovery or any lane write, prove this host can produce a
 	# GitHub-verifiable signature. Existing-tag reconciliation does not use this path.
 	release_signing_preflight "$REPO_ROOT" || return 1
+	# GH#37339: drain leaked preparation/reconcile trees; never blocks a release.
+	_full_loop_release_reap_with_lane "$repo" "${AIDEVOPS_RELEASE_REAP_LIMIT:-20}" || true
 	_FULL_LOOP_RESERVED_RECOVERY_COMPLETED=false
 	_FULL_LOOP_RESERVED_RECOVERY_FAILED_PREPUBLICATION=false
 	_full_loop_release_ensure_full_history || return 1
@@ -881,6 +889,21 @@ _full_loop_release_cmd_authorization_gap() {
 	return $?
 }
 
+_full_loop_release_cmd_reap_stale() {
+	local reap_limit="$1"
+	local tag_name="$2"
+	local gap_reason="$3"
+	local reap_repo=""
+	[[ "$reap_limit" =~ ^[0-9]+$ && -z "$tag_name" && -z "$gap_reason" ]] || {
+		_full_loop_release_usage >&2
+		return 1
+	}
+	_full_loop_release_bind_repo_context || return 1
+	reap_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
+	_full_loop_release_reap_with_lane "$reap_repo" "$reap_limit"
+	return $?
+}
+
 main() {
 	local release_type="${1:-patch}"
 	local source_pr="${2:-}"
@@ -931,6 +954,10 @@ main() {
 		;;
 	sources)
 		_full_loop_release_preview_sources "$source_pr" "$tag_name" "$gap_reason" "$expected_sources"
+		return $?
+		;;
+	reap-stale)
+		_full_loop_release_cmd_reap_stale "${source_pr:-50}" "$tag_name" "$gap_reason"
 		return $?
 		;;
 	status | reconcile | recover-reservation)
