@@ -727,6 +727,57 @@ _normalize_repo_listing() {
 	return 0
 }
 
+#######################################
+# Listing for _normalize_reassign_self: the shared per-run listing, or (when no
+# run is active, e.g. a direct call) a per-pass fetch. Prints JSON; returns 1
+# on failure (logged).
+#######################################
+_normalize_reassign_fetch() {
+	local slug="$1"
+	local rc=0 json="" err_file="" err_msg=""
+	json=$(_normalize_repo_listing "$slug") || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		printf '%s' "$json"
+		return 0
+	fi
+	[[ "$rc" -eq 2 ]] || return 1
+	err_file=$(mktemp)
+	# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion)
+	json=$(gh_issue_list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$err_file") || json=""
+	if [[ -z "$json" || "$json" == "null" ]]; then
+		err_msg=$(cat "$err_file" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+		rm -f "$err_file"
+		return 1
+	fi
+	rm -f "$err_file"
+	printf '%s' "$json"
+	return 0
+}
+
+#######################################
+# Listing for _normalize_unassign_stampless_interactive: issues assigned to the
+# runner with origin:interactive. Shared per-run listing filtered client-side,
+# or a filtered per-pass fetch when no run is active. Prints JSON ("" on
+# failure). Always returns 0.
+#######################################
+_normalize_stampless_fetch() {
+	local slug="$1"
+	local runner_user="$2"
+	local rc=0 json=""
+	json=$(_normalize_repo_listing "$slug") || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		# t2773: gh_issue_list wrapper (REST fallback on rate-limit exhaustion).
+		gh_issue_list --repo "$slug" --assignee "$runner_user" --label origin:interactive \
+			--state open --json number,updatedAt,labels \
+			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null || true
+	elif [[ "$rc" -eq 0 ]]; then
+		printf '%s' "$json" | jq -c --arg u "$runner_user" \
+			'[.[] | select((.assignees // [] | map(.login) | index($u)) and (.labels // [] | map(.name) | index("origin:interactive")))]' 2>/dev/null || true
+	fi
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -741,25 +792,8 @@ _normalize_reassign_self() {
 		local _repo_start=$SECONDS _repo_gh_calls=0
 		local _repo_timing="substage:normalize/reassign_self/repo:${slug//\//-}:direct_gh_calls="
 
-		local issue_rows="" issue_rows_json="" issue_rows_err=""
-		local _listing_rc=0
-		issue_rows_json=$(_normalize_repo_listing "$slug") || _listing_rc=$?
-		if [[ "$_listing_rc" -eq 2 ]]; then
-			# No shared run listing active (direct call): fetch per pass.
-			issue_rows_err=$(mktemp)
-			# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion)
-			_repo_gh_calls=$((_repo_gh_calls + 1))
-			issue_rows_json=$(gh_issue_list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$issue_rows_err") || issue_rows_json=""
-			if [[ -z "$issue_rows_json" || "$issue_rows_json" == "null" ]]; then
-				local _issue_rows_err_msg
-				_issue_rows_err_msg=$(cat "$issue_rows_err" 2>/dev/null || echo "unknown error")
-				echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${_issue_rows_err_msg}" >>"$LOGFILE"
-				rm -f "$issue_rows_err"
-				_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 1
-				continue
-			fi
-			rm -f "$issue_rows_err"
-		elif [[ "$_listing_rc" -ne 0 ]]; then
+		local issue_rows_json=""
+		if ! issue_rows_json=$(_normalize_reassign_fetch "$slug"); then
 			_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 1
 			continue
 		fi
@@ -924,25 +958,10 @@ _normalize_unassign_stampless_interactive() {
 			continue
 		fi
 
-		# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion).
-		# This fetch is assignee-filtered, so it cannot use the prefetch cache
-		# (which holds all open issues without per-assignee partitioning).
-		local json="" _listing_rc=0
-		json=$(_normalize_repo_listing "$slug") || _listing_rc=$?
-		if [[ "$_listing_rc" -eq 2 ]]; then
-			json=$(gh_issue_list --repo "$slug" \
-				--assignee "$runner_user" \
-				--label origin:interactive \
-				--state open \
-				--json number,updatedAt,labels \
-				--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || json=""
-		elif [[ "$_listing_rc" -eq 0 ]]; then
-			# Shared listing is unfiltered: apply the assignee + label filters here.
-			json=$(printf '%s' "$json" | jq -c --arg u "$runner_user" \
-				'[.[] | select((.assignees // [] | map(.login) | index($u)) and (.labels // [] | map(.name) | index("origin:interactive")))]' 2>/dev/null) || json=""
-		else
-			json=""
-		fi
+		# Live (non-cache) listing: shared per-run listing filtered to the
+		# runner's origin:interactive issues (see _normalize_stampless_fetch).
+		local json
+		json=$(_normalize_stampless_fetch "$slug" "$runner_user")
 		[[ -n "$json" && "$json" != "null" ]] || continue
 
 		# GH#20048: filter out non-task issues (routine-tracking, supervisor, etc.)
