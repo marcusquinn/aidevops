@@ -89,6 +89,11 @@ assert_contains "unavailable observer" "$continuation_one" "unavailable (no read
 assert_not_contains "repo one continuation" "$continuation_one" "SIBLING_REPO_SCOPED_NOTE"
 
 (cd "$repo_one" && "$HELPER" auto-save --task t1 >/dev/null)
+autosave_load="$(cd "$repo_one" && "$HELPER" load 2>&1)"
+assert_contains "auto-save unavailable batch" "$autosave_load" "unavailable (no read-only batch observer)"
+if rg -n -i '^[^#]*(pulse-wrapper|pulse-lifecycle)' "$HELPER" >/dev/null; then
+	fail "checkpoint helper has an executable Pulse launch path"
+fi
 for args in 'list --active' '--dry-run list' 'unexpected'; do
 	# Deliberate splitting exercises separate command-line arguments.
 	# shellcheck disable=SC2086

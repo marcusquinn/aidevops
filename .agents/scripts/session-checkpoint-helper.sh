@@ -872,9 +872,9 @@ cmd_auto_save() {
 	local worktree
 	worktree="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
 
-	# Pulse does not expose a read-only batch ID observer. Leave this optional
-	# field empty rather than starting the lifecycle launcher during a save.
-	local batch=""
+	# Pulse does not expose a read-only batch ID observer. Record that the
+	# observer was unavailable rather than starting the lifecycle launcher.
+	local batch="unavailable (no read-only batch observer)"
 
 	# Auto-detect next tasks from TODO.md if not provided
 	if [[ -z "$next_tasks" ]]; then
