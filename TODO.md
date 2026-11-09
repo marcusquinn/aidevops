@@ -1943,6 +1943,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18909 fix(lifecycle): reconstructible worktree retirement uses Linux-only /proc census on macOS Pulse hosts #bug ref:GH#37321
 
+- [ ] t18910 fix(lifecycle): resume interrupted native worktree removal so stranded retirements finish #bug #framework ref:GH#37326
+
 - [ ] t18911 fix(pulse): run the worker bus relay outside the cycle budget; it has never run since t18905 shipped #bug #framework ref:GH#37327
 
 - [ ] t18912 fix(cleanup): scale lifecycle cleanup budget under worktree capacity pressure so retirement keeps up and dispatch reopens #bug #framework ref:GH#37330

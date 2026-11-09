@@ -19,6 +19,7 @@ from .cleanup_plan import enrolled_only_event_id
 from .cleanup_quarantine import CleanupQuarantine
 from .enrollment import GenerationEnrollment, _git_directory
 from .filesystem import validate_private_path as _private
+from .interrupted_removal import resume_first
 from .permissions import FilePolicy, read_owned_file
 from .pull_requests import OpenPullRequestCache
 from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
@@ -92,8 +93,13 @@ def _position(store: LifecycleRegistry) -> str:
     return identifier(path.read_text(encoding="ascii").strip())
 
 
-def _advance(store: LifecycleRegistry, generation: str) -> None:
-    """Persist scheduling position before work; this file never grants authority."""
+def _advance(store: LifecycleRegistry, row: dict) -> None:
+    """Persist scheduling position before work; this file never grants authority.
+
+    A resumed interrupted removal runs ahead of the rotation and keeps the cursor.
+    """
+    if row.get("resume"):
+        return
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -101,7 +107,7 @@ def _advance(store: LifecycleRegistry, generation: str) -> None:
             prefix=".cleanup-position-", delete=False,
         ) as stream:
             temporary = Path(stream.name)
-            stream.write(generation + "\n")
+            stream.write(identifier(row["generation_id"]) + "\n")
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, store.directory / "cleanup-position")
@@ -255,11 +261,14 @@ def cleanup_pass(
         repositories = _repositories(config)
         with store.connection() as connection:
             rows = [dict(row) for row in connection.execute(
-                "SELECT generation_id,path FROM generation_admissions "
+                "SELECT generation_id,path,state FROM generation_admissions "
                 "ORDER BY generation_id",
             )]
         after = _position(store)
         rows.sort(key=lambda row: (row["generation_id"] <= after, row["generation_id"]))
+        # Reclaim one interrupted native removal before the rotation (GH#37326).
+        rows = resume_first(rows, lambda generation: _event(
+            store, _event_id(generation, "removing")) is not None)
         deadline = time.monotonic() + budget_seconds
         create_archive_root(root)
         validate_archive_path(root)
@@ -270,7 +279,7 @@ def cleanup_pass(
             if time.monotonic() >= deadline:
                 break
             generation, path = identifier(row["generation_id"]), Path(row["path"])
-            _advance(store, generation)
+            _advance(store, row)
             report["examined"] += 1
             try:
                 reason = _pull_request_hold(store, repositories, generation, path,

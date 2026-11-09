@@ -297,34 +297,31 @@ a **specified generation**, not whichever resource currently occupies a pathname
 python3 -E -s -B /absolute/path/to/worker-registry.py --state-dir /absolute/private/state retire-worktree --path /absolute/canonical/worktree --generation-id GENERATION_UUID --repo OWNER/REPO --base-branch main --output-root /absolute/private/archives
 ```
 
-This unscheduled destructive command requires controlled creation, ended admitted
-owners, closed admission and verified Git-only preservation, not enrollment alone.
-It neither consults legacy ownership nor deletes branches.
+This unscheduled destructive command requires controlled creation, ended admitted owners, closed admission and
+verified Git-only preservation, not enrollment alone. It neither consults legacy ownership nor deletes branches.
 
-Configured `cleanup`/`cleanup-worktree` additionally recover missing creation receipts
-only after all bound runs are admitted and ended, and admission is closed.
-`worktree-recovery-authorized` binds the physical directory, Git administration and
-exact run set; it never fabricates `created-worktree`. The same archive, source-recheck,
-relocation and retry protections apply. Empty/observation-only registrations,
-live/unknown runs and invalid existing creation receipts remain held.
+Configured `cleanup`/`cleanup-worktree` additionally recover missing creation receipts only after all bound runs
+are admitted and ended, and admission is closed. `worktree-recovery-authorized` binds the physical directory, Git
+administration and exact run set; it never fabricates `created-worktree`. The same archive, source-recheck, relocation
+and retry protections apply. Empty/observation-only registrations, live/unknown runs and invalid existing creation receipts remain held.
 
-The executor journals intent, then claims a private sibling via native `git worktree move`.
-Metadata/content must match before native removal; never target the public name.
-Per-generation OS locks serialize controllers without SQLite writer transactions
-across filesystem work. Archives/base pins remain.
+The executor journals intent, then claims a private sibling via native `git worktree move`. Metadata/content must match
+before native removal; never target the public name. Per-generation OS locks serialize controllers without SQLite writer
+transactions across filesystem work. Archives/base pins remain. Explicit helpers inherit the lock descriptor, so after controller
+death no other controller acquires it until surviving helpers close it (kernel descriptor lifetime, not process discovery).
 
-Explicit helpers inherit the lock descriptor, so after controller death no other controller
-acquires it until surviving helpers close it (kernel descriptor lifetime, not process discovery).
+Retry the same command/generation after interruption: relocation tolerates public-name reuse and completed removal
+tolerates lost acknowledgements. Completion releases the path reservation; old-UUID retries never target a new generation.
 
-Retry the same command/generation after interruption: relocation tolerates public-name
-reuse and completed removal tolerates lost acknowledgements. Completion releases the
-path reservation; old-UUID retries never target a new generation.
+Incomplete Git updates, changed archives/private trees or uncertain outcomes stop with journal, archive and surviving data
+retained. No repository-wide repair or unrelated metadata pruning runs. Git locks remain effective: relocation is not forced;
+removal uses only the single force needed for archived dirty state. Ignored files are discarded with the worktree, never archived.
 
-Incomplete Git updates, changed archives/private trees, partial removal or uncertain
-outcomes stop with journal, archive and surviving data retained. No repository-wide
-repair or unrelated metadata pruning runs. Git locks remain effective: relocation is
-not forced; removal uses only the single force needed for archived dirty state.
-Ignored files are deliberately discarded with the worktree, never archived.
+Native removal has its own 300-second limit for multi-GB trees. A removal interrupted after its journaled start resumes
+instead of stranding the private tree (GH#37326): identity, marker, handles and the idle census are re-checked, and no
+Git-visible path that still exists may have changed (inode ctime) after the start, else it fails closed as
+`interrupted-removal-content-changed`. Admission cleanup resumes one such removal per pass without moving its cursor;
+the legacy backlog pass journals the same start checkpoint.
 
 `tests/test_retirement.py` exercises real Git/CLI interruption and name reuse in disposable
 repositories; it does not qualify production scheduling or existing worktrees.

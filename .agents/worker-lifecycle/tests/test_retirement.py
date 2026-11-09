@@ -667,26 +667,44 @@ class RetirementContract(unittest.TestCase):
         private = Path(plan["container"]) / "tree"
         self.assertEqual((private / "work.txt").read_text(), "unfinished result")
 
-    def test_partial_remove_keeps_remaining_data(self):
-        self.create()
+    def interrupt_removal(self, late=None):
+        """Delete part of the private tree, then fail as a timed-out native removal."""
         native = retirement._git
 
         def interrupted(*arguments):
             if "remove" in arguments:
                 (Path(arguments[-1]) / "work.txt").unlink()
+                if late is not None:
+                    late(Path(arguments[-1]))
                 raise OSError("fixture interruption during removal")
             return native(*arguments)
 
         with patch.object(retirement, "_git", side_effect=interrupted):
             with self.assertRaisesRegex(OSError, "fixture interruption"):
                 self.retire()
-        with self.assertRaisesRegex(StoreConflict, "private-worktree-changed"):
+
+    def test_partial_remove_resumes_when_only_deletions_followed(self):
+        self.create()
+        self.interrupt_removal()
+        report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        self.assertEqual((report["retired"], report["failed"]), (1, 0), report)
+        self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+        self.assertNotIn(".lifecycle-retire-", self.git("worktree", "list", "--porcelain"))
+        restored = self.root / "restored"
+        _helper("restore", report["results"][0]["archive"], "--target", str(restored),
+                "--verification-copy")
+        self.assertEqual((restored / "work.txt").read_text(), "unfinished result")
+
+    def test_partial_remove_keeps_data_written_after_removal_began(self):
+        self.create()
+        self.interrupt_removal(lambda tree: (tree / ".gitignore").write_text("late\n"))
+        with self.assertRaisesRegex(ValueError, "interrupted-removal-content-changed"):
             self.retire()
         plan = retirement._event(
             self.store, retirement._event_id(self.generation, "planned"),
         )
         private = Path(plan["container"]) / "tree"
-        self.assertTrue((private / ".gitignore").exists())
+        self.assertEqual((private / ".gitignore").read_text(), "late\n")
 
     def cleanup_config(self, **settings):
         config = self.root / "repos.json"

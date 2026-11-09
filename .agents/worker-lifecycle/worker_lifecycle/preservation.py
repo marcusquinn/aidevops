@@ -1,5 +1,7 @@
 """Verify a WIP archive for a closed generation without removing the source."""
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -35,7 +37,8 @@ def inherit_operation_lock(descriptor: int) -> Iterator[None]:
         _OPERATION_LOCKS.reset(token)
 
 
-def _run(command: list[str]) -> str:
+def _run(command: list[str], timeout: float | None = None) -> str:
+    limit = _HELPER_TIMEOUT if timeout is None else timeout
     environment = {
         name: value for name, value in os.environ.items()
         if not name.startswith("GIT_")
@@ -54,13 +57,13 @@ def _run(command: list[str]) -> str:
         pass_fds=_OPERATION_LOCKS.get(), umask=0o077, start_new_session=True,
     ) as process:
         try:
-            stdout, stderr = process.communicate(timeout=_HELPER_TIMEOUT)
+            stdout, stderr = process.communicate(timeout=limit)
         except BaseException as error:
             _terminate_group(process)
             stdout, stderr = process.communicate()
             if isinstance(error, subprocess.TimeoutExpired):
                 raise subprocess.TimeoutExpired(
-                    command, _HELPER_TIMEOUT, output=stdout, stderr=stderr) from None
+                    command, limit, output=stdout, stderr=stderr) from None
             raise
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)

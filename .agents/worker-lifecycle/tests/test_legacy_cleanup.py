@@ -712,6 +712,39 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(result["retired"], 1, result)
         self.assertEqual((self.target / "replacement").read_text(), "keep")
 
+    def interrupt_removal(self, late=None):
+        """Delete part of the private tree, then fail as a timed-out native removal."""
+        self.stop_owner()
+        native = legacy._git
+
+        def interrupted(*arguments):
+            if "remove" in arguments:
+                (Path(arguments[-1]) / "work.txt").unlink()
+                if late is not None:
+                    late(Path(arguments[-1]))
+                raise OSError("fixture interruption during removal")
+            return native(*arguments)
+
+        with patch.object(legacy, "_git", side_effect=interrupted):
+            result = self.cleanup()
+        self.assertEqual(result["retired"], 0, result)
+        return next(self.root.glob(".legacy-retire-*/tree"))
+
+    def test_interrupted_removal_resumes_with_deletions_only(self):
+        self.interrupt_removal()
+        result = self.cleanup()
+        self.assertEqual(result["retired"], 1, result)
+        self.assertEqual(list(self.root.glob(".legacy-retire-*")), [])
+        self.assertNotIn(".legacy-retire-", self.git("worktree", "list", "--porcelain"))
+
+    def test_write_after_removal_began_retains_private_tree(self):
+        private = self.interrupt_removal(
+            lambda tree: (tree / ".gitignore").write_text("late\n"))
+        result = self.cleanup()
+        self.assertEqual(result["retired"], 0, result)
+        self.assertIn("interrupted-removal-content-changed", json.dumps(result["results"]))
+        self.assertEqual((private / ".gitignore").read_text(), "late\n")
+
     def test_archive_failure_retains_source(self):
         self.stop_owner()
         with patch.object(legacy, "_helper", side_effect=subprocess.SubprocessError):

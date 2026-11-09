@@ -17,13 +17,15 @@ from uuid import UUID, uuid5
 
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
+from .interrupted_removal import removal_started, require_deletion_only
 from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import require_manual_confirmation, require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
-from .legacy_probe import checkpoint, host_probe, interrupted_probe
+from .legacy_probe import checkpoint, event_id, host_probe, interrupted_probe
 from .legacy_probe import operation_id, prepare_reconstructible_probe, receipt
+from .legacy_proc import require_idle_processes
 from .legacy_probe import verify_reconstructible
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
@@ -141,11 +143,22 @@ def finish(store, connection, operation, plan, adapter):
         if _snapshot(source) != plan["snapshot"]:
             raise ValueError("source-changed")
         _git("--git-dir", plan["common"], "worktree", "move", str(source), str(target))
+    started = removal_started(connection, event_id(operation, "removing"))
+    if started is not None:
+        # Census before opening our own handle on the private tree.
+        require_idle_processes(target)
     with DirectoryHandle(target):
         same_tree(target, plan)
         unchanged(connection, plan, adapter)
-        if _snapshot(target) != plan["snapshot"]:
-            raise ValueError("relocated-source-changed")
+        if started is None:
+            if _snapshot(target) != plan["snapshot"]:
+                raise ValueError("relocated-source-changed")
+            # Journal removal start so an interrupted delete can resume (GH#37326).
+            checkpoint(store, connection, operation, "removing",
+                       {"type": "legacy-worktree-removing", "archive": plan["archive"]})
+            unchanged(connection, plan, adapter)
+        else:
+            require_deletion_only(target, started, _git)
         _git("--git-dir", plan["common"], "worktree", "remove", "--force", str(target))
     checkpoint(store, connection, operation, "retired",
                {"type": "legacy-worktree-retired", "archive": plan["archive"]})

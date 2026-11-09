@@ -36,6 +36,20 @@ def _directories(root: Path) -> list[str]:
         return []
 
 
+_CONTAINERS = (".lifecycle-retire-", ".legacy-retire-")
+
+
+def _retirement_container(path: str) -> bool:
+    """True for a private retirement container or the tree inside it.
+
+    Each belongs to an in-flight retirement that resumes through its own
+    journal; as a discovered candidate it is only noise (GH#37326).
+    """
+    candidate = Path(path)
+    return any(name.startswith(_CONTAINERS)
+               for name in (candidate.name, candidate.parent.name))
+
+
 def discover(items, repositories):
     """Union Git registrations, central directories and historical registry paths.
 
@@ -55,7 +69,7 @@ def discover(items, repositories):
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             errors.append({"path": source, "reason": type(error).__name__})
             continue
-        for path in found:
+        for path in filter(lambda found_path: not _retirement_container(found_path), found):
             paths.setdefault(path, {
                 "path": path, "generations": set(), "runs": {}, "last_event": 0,
                 "modern": False, "unbound": True,
