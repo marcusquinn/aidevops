@@ -15,6 +15,7 @@ import tempfile
 import time
 from uuid import UUID, uuid5
 
+from .cleanup_plan import prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import BOUNDARY, removal_started, require_deletion_only
@@ -230,7 +231,23 @@ def take_over_managed(store, item, repositories, adapter, options):
     """
     require_managed_takeover(reconstructible, item, repositories, adapter,
                              pass_pull_requests(options), managed_min_age=options.min_age)
+    if options.apply:
+        close_quiescent_admission(store, item)
     return process_reconstructible(store, item, repositories, adapter, options)
+
+
+def close_quiescent_admission(store, item):
+    """Close a stranded admission once every bound run has ended (GH#37101 cause 2).
+
+    Uses the admission pass's own primitive, which re-samples bound runs and
+    closes only when every run is admitted and ended. Unenrolled, changed, empty
+    or unfinished generations stay open, so the authority check that follows
+    still reports `managed-admission-not-closed`. Never called in preview.
+    """
+    try:
+        prepare_cleanup(store, Path(item["path"]))
+    except (ValueError, OSError, sqlite3.Error, ObservationUnavailable):
+        return
 
 
 def process_item(store, item, repositories, adapter, options):
