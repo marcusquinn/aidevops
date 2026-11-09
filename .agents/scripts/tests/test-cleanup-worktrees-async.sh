@@ -98,6 +98,11 @@ config_get() {
 	printf '%s\n' "${MOCK_RETENTION_CONFIG_MODE:-$fallback}"
 	return 0
 }
+# Non-zero means the cap is under pressure (GH#37330 budget selection).
+aidevops_worktree_capacity_check() {
+	[[ "${MOCK_PRESSURE:-0}" == 1 ]] && return 1
+	return 0
+}
 STUB
 
 	# Stub pulse-cleanup.sh — defines mock cleanup_worktrees.
@@ -136,6 +141,7 @@ STUB
 cleanup_worktrees() {
 	printf 'CLEANUP\n' >>"${lifecycle_file}"
 	printf 'MOCK_RAN\n' >>"${mock_ran_file}"
+	printf '%s\n' "\${1:-unset}" >>"${TEST_DIR}/cleanup-budget"
 	return 0
 }
 STUB
@@ -222,17 +228,19 @@ STUB
 		helper_path_prefix="${stub_dir}:${PATH}"
 	fi
 
+	# Run from TEST_DIR: the pressure probe counts the current repository's
+	# worktrees, and a host checkout over the cap must not bypass cadence here.
 	if [[ "${RUN_HELPER_UNSET_HOME:-0}" -eq 1 ]]; then
-		env -u HOME \
+		(cd "$TEST_DIR" && env -u HOME \
 			PATH="$helper_path_prefix" \
 			AIDEVOPS_LOG_DIR="${AIDEVOPS_LOG_DIR:-${TEST_DIR}/custom-logs}" \
 			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
-			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null || true
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null) || true
 	else
-		env HOME="$TEST_DIR" \
+		(cd "$TEST_DIR" && env HOME="$TEST_DIR" \
 			PATH="$helper_path_prefix" \
 			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
-			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null || true
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null) || true
 	fi
 	return 0
 }
@@ -782,6 +790,35 @@ PY
 	return 0
 }
 
+# GH#37330: capacity pressure scales the cleanup_worktrees budget outside
+# --lifecycle-only; routine runs keep 120 s and invalid overrides fall back.
+_budget_after_run() {
+	local budget_file="${TEST_DIR}/cleanup-budget"
+	rm -f "$budget_file" "${TEST_DIR}/.aidevops/logs/cleanup_worktrees.last-run"
+	run_helper_in_isolation "$@" >/dev/null
+	cat "$budget_file" 2>/dev/null || printf 'missing\n'
+	return 0
+}
+
+test_cleanup_budget_scales_under_pressure() {
+	local log="${TEST_DIR}/.aidevops/logs/cleanup_worktrees.log"
+	local routine="" pressured="" lifecycle="" invalid="" override=""
+	routine=$(MOCK_PRESSURE=0 _budget_after_run)
+	pressured=$(MOCK_PRESSURE=1 _budget_after_run)
+	lifecycle=$(MOCK_PRESSURE=1 _budget_after_run --lifecycle-only)
+	invalid=$(MOCK_PRESSURE=1 CLEANUP_WORKTREES_PRESSURE_BUDGET=abc _budget_after_run)
+	override=$(MOCK_PRESSURE=1 CLEANUP_WORKTREES_PRESSURE_BUDGET=300 _budget_after_run)
+	if [[ "$routine" == 120 && "$pressured" == 900 && "$lifecycle" == 120 &&
+		"$invalid" == 900 && "$override" == 300 ]] &&
+		grep -q 'cleanup budget=900 reason=capacity-pressure' "$log"; then
+		print_result "budget: pressure scales cleanup_worktrees outside lifecycle-only" 0
+	else
+		print_result "budget: pressure scales cleanup_worktrees outside lifecycle-only" 1 \
+			"routine=${routine} pressured=${pressured} lifecycle=${lifecycle} invalid=${invalid} override=${override}"
+	fi
+	return 0
+}
+
 test_capacity_mode_is_scoped_and_locked() {
 	local logs="${TEST_DIR}/.aidevops/logs" rc=0
 	git init -q "${TEST_DIR}/repo"
@@ -889,7 +926,8 @@ main() {
 	for test_case in test_missing_metadata_prune_runs_after_success \
 		test_missing_metadata_prune_runs_when_cleanup_skipped \
 		test_compact_retention_policy test_compact_retention_defaults_config_and_failure \
-		test_lifecycle_only_never_expires_recovery test_capacity_mode_is_scoped_and_locked; do
+		test_lifecycle_only_never_expires_recovery test_capacity_mode_is_scoped_and_locked \
+		test_cleanup_budget_scales_under_pressure; do
 		teardown
 		setup
 		"$test_case"
