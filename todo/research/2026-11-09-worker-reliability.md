@@ -64,7 +64,46 @@ PR #37343's terminal `ShellCheck (ubuntu-latest)` failure was actually its Bash
 `test-pulse-lifecycle-helper.sh` failed at line 1590. Replacing that mock branch
 with equivalent `if`/`elif` checks passes the same digest-pinned Bash 3.2 image
 used by CI, local ShellCheck, modern Bash syntax, and all 82 lifecycle assertions.
-This verification is local until the repair is published and CI reruns.
+Published as `ff49bf6de`; its CI finished with no failed checks observed.
+
+## Review-worker cgroup repair
+
+The review scanner launched workers with `setsid nohup`, which changes session
+and process-group ownership but does not leave the parent systemd cgroup. The
+host's merge unit is `Type=oneshot` with `KillMode=control-group`. Its journal
+records cycle completion at 13:38:33 UTC, close to the incomplete attempt above.
+This demonstrates an unsafe launch topology; it does not identify the exact
+signal sender or prove this was that attempt's sole termination cause.
+
+The scanner now delegates launch to `pr-review-thread-response-launch.sh`, which
+reuses `systemd-scope-launch.sh` when the user manager is available. It preserves
+PID-based capacity activation, existing ownership fences, and the non-systemd
+detached path. A scope launch is attempted once: failure or unconfirmed scope
+membership never triggers a duplicate detached launch. If scope admission is
+unavailable inside a managed unit, launch fails closed.
+
+Verification: all four new launch assertions pass (confirmed scope, unconfirmed
+scope without duplicate fallback, failed scope without duplicate fallback, and
+managed-unit refusal). A bounded live probe returned `systemd_scope`, confirming
+actual cgroup membership through the shared launcher on this host. The modified
+launch module and dispatch tests parse under the CI-pinned Bash 3.2 image;
+ShellCheck and whitespace checks pass.
+
+The full scanner suite reports 114 assertions, three failures. Unmodified
+upstream reports 110 assertions and the same three failures on this host:
+
+- `dispatch bootstraps and removes a linked fetch context`
+- `new head SHA resets repeated-fingerprint escalation attempts`
+- `dispatch-pr preserves indeterminate young lock for age fallback`
+
+These require separate diagnosis in the scanner worktree/lock helpers and
+existing fixture modules. Preserve unknown-owner refusal; do not relax the
+ownership or Git-context checks to make the tests pass.
+
+At 15:05 UTC the runtime was current and Pulse had a heartbeat age of 19 seconds,
+but zero active workers and four consecutive no-progress cycles. The sampled
+prelaunch blocker was `dedup_active_claim_unverified`. Cgroup repair verification
+is not sustained-delivery evidence; check fresh state before any dispatch retry.
 
 ## Cleanup follow-up evidence and verification
 

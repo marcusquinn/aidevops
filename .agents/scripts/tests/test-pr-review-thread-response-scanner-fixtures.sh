@@ -335,7 +335,12 @@ SETSID_STUB
 printf 'nohup %s\n' "$*" >>"${DETACH_LAUNCH_LOG}"
 exec "$@"
 NOHUP_STUB
-	chmod +x "${TEST_ROOT}/bin/setsid" "${TEST_ROOT}/bin/nohup"
+	# Never let fixture workers contact the host's real systemd user manager.
+	cat >"${TEST_ROOT}/bin/systemctl" <<'SYSTEMCTL_STUB'
+#!/usr/bin/env bash
+exit 1
+SYSTEMCTL_STUB
+	chmod +x "${TEST_ROOT}/bin/setsid" "${TEST_ROOT}/bin/nohup" "${TEST_ROOT}/bin/systemctl"
 	return 0
 }
 
@@ -452,6 +457,7 @@ DIRTY_BACKUP_STUB
 }
 
 setup_test_env() {
+	unset INVOCATION_ID # Fixture workers do not belong to the host's service.
 	unset STUB_PR_LIST STUB_PR_VIEW STUB_THREADS_MODE STUB_HANG_SECONDS STUB_GRAPHQL_COST_MODE STUB_PR_REPOSITORY_MODE STUB_REMOTE_HEAD STUB_GH_LOGIN
 	unset STUB_GH_REST_FAIL STUB_GH_GRAPHQL_FAIL STUB_GH_GRAPHQL_LOGIN
 	unset STUB_PULL_HEAD_OID STUB_PULL_STATE STUB_PULL_DRAFT STUB_REVIEWS_RESPONSE STUB_REREVIEW_REQUEST_FAIL
