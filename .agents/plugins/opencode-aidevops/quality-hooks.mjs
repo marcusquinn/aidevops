@@ -50,7 +50,7 @@ import {
 } from "./quality-hooks-git-safety.mjs";
 import { validateBashWorkingDirectory } from "./quality-hooks-workdir.mjs";
 import {
-  displayRedactionNote,
+  appendDisplayRedactionNote,
   PEM_REDACTION_TOKEN,
   REDACTION_TOKEN,
   scrubCredentials,
@@ -383,13 +383,6 @@ function scrubObservedToolOutput(ctx, log, toolName, output) {
   return registered.count + count;
 }
 
-/** GH#37382: tell the model that visible placeholders are display redactions. */
-function appendDisplayRedactionNote(output, redactionCount) {
-  if (redactionCount <= 0 || typeof output.output !== "string") return;
-  if (!output.output.includes(REDACTION_TOKEN) && !output.output.includes(PEM_REDACTION_TOKEN)) return;
-  output.output = `${output.output}\n\n${displayRedactionNote(redactionCount)}`;
-}
-
 function trackObservedToolEffects(ctx, log, toolName, input, output) {
   const continuationResult = ctx.continuationGuard?.afterTool(input, output);
   if (continuationResult?.replan) {
@@ -445,7 +438,8 @@ async function handleToolAfter(ctx, log, scriptsDir, input, output) {
 
   const intentRecord = consumeIntentRecord(input.callID || "");
   appendDockerAdvisory(input, output);
-  appendDisplayRedactionNote(output, redactionCount);
+  // GH#37382: tell the model that visible placeholders are display redactions.
+  appendDisplayRedactionNote(output, redactionCount, [REDACTION_TOKEN, PEM_REDACTION_TOKEN]);
   // t2184: durationMs is null when the callID wasn't paired (for example,
   // a hook race on plugin reload); recordToolCall emits SQL NULL.
   recordToolCall(input, output, intentRecord?.intent, durationMs, intentRecord?.source);

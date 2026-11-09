@@ -149,18 +149,23 @@ def is_value_field_name(name: str) -> bool:
 
 # GH#37382: unquoted code expressions and prose after a sensitive label are not
 # literals. Quoted, bracketed, URL, PEM and token-prefix values are never
-# exempted, and no entropy threshold applies (GH#35829). Mirror of
-# isCodeOrProseValue in .agents/plugins/opencode-aidevops/quality-hooks-output-scrub.mjs.
+# exempted, and no entropy threshold applies (GH#35829). Unspaced dotenv/shell
+# NAME=value keeps only the keyword and Markdown-emphasis exemptions. Mirror of
+# .agents/plugins/opencode-aidevops/display-redaction.mjs.
 LITERAL_START = re.compile(r"^[\"'(\[<]")
 ARROW_FOLLOWS = re.compile(r"^\s*=>")
-NON_LITERAL_KEYWORDS = {"async", "await", "false", "function", "lambda", "new", "nil", "true", "typeof", "yield"}
-TYPE_ANNOTATION_NAMES = {
-    "any", "array", "bool", "boolean", "bytes", "dict", "float", "int", "list", "number", "object", "optional",
-    "promise", "record", "str", "string", "unknown",
-}
-CALL_EXPRESSION = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(", re.ASCII)
-ENV_REFERENCE = re.compile(r"^(?:process\.env|import\.meta\.env|os\.environ|ENV)(?:[.\[]|$)")
-EMPHASIS_ONLY = re.compile(r"^[*_]+$")
+_KEYWORD_OR_EMPHASIS = r"(?i:async|await|false|function|lambda|new|nil|true|typeof|yield)$|[*_]+$"
+UNSPACED_NON_LITERAL = re.compile(rf"^(?:{_KEYWORD_OR_EMPHASIS})")
+SPACED_NON_LITERAL = re.compile(
+    rf"^(?:{_KEYWORD_OR_EMPHASIS}"
+    r"|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\("
+    r"|(?:process\.env|import\.meta\.env|os\.environ|ENV)(?:[.\[]|$))",
+    re.ASCII,
+)
+TYPE_ANNOTATION = re.compile(
+    r"^(?i:any|array|bool|boolean|bytes|dict|float|int|list|number|object|optional|promise|record|str|string|unknown)"
+    r"(?:[\[<.]|$)"
+)
 CONSTANT_REFERENCE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 PROSE_WORD = re.compile(r"^[A-Za-z][a-z]{0,19}$")
 PROSE_STOP_WORDS = {
@@ -186,6 +191,19 @@ def is_prose_label_value(value: str, following: str) -> bool:
     return any(word.lower() in PROSE_STOP_WORDS for word in words)
 
 
+def is_type_annotation(value: str, _following: str) -> bool:
+    """Return whether a colon value names a type, as in `password: str`."""
+    return bool(TYPE_ANNOTATION.match(value))
+
+
+def is_constant_statement(value: str, following: str) -> bool:
+    """Return whether an assignment copies a named constant, as in `x = NAME_TOKEN;`."""
+    return bool(CONSTANT_REFERENCE.match(value)) and following.startswith(";")
+
+
+OPERATOR_RULES = {":": (is_type_annotation, is_prose_label_value), "=": (is_constant_statement,)}
+
+
 def is_code_or_prose_value(separator: str, value: str, following: str) -> bool:
     """Return whether an unquoted value after a sensitive name is code or prose."""
     if ARROW_FOLLOWS.match(following):
@@ -193,18 +211,10 @@ def is_code_or_prose_value(separator: str, value: str, following: str) -> bool:
     if LITERAL_START.match(value):
         return False
     operator = separator.strip()
-    # dotenv/shell `NAME=value` and `name:value` have no spacing; only keywords
-    # and Markdown emphasis (`**Password:**`) are non-literal there.
     if separator == operator:
-        return value.lower() in NON_LITERAL_KEYWORDS or bool(EMPHASIS_ONLY.match(value))
-    head = re.split(r"[\[<.]", value, maxsplit=1)[0].lower()
-    return (
-        value.lower() in NON_LITERAL_KEYWORDS
-        or bool(CALL_EXPRESSION.match(value) or ENV_REFERENCE.match(value) or EMPHASIS_ONLY.match(value))
-        or (operator == ":" and head in TYPE_ANNOTATION_NAMES)
-        or (operator == "=" and bool(CONSTANT_REFERENCE.match(value)) and following.startswith(";"))
-        or (operator == ":" and is_prose_label_value(value, following))
-    )
+        return bool(UNSPACED_NON_LITERAL.match(value))
+    rules = OPERATOR_RULES.get(operator, ())
+    return bool(SPACED_NON_LITERAL.match(value)) or any(rule(value, following) for rule in rules)
 
 
 def redact_named_assignment(match: re.Match) -> str:
