@@ -34,6 +34,19 @@ _normalize_stale_close_pending_checkpoint_leases() {
 	return 0
 }
 
+# GH#37344: replay terminal claim releases that GitHub admission deferred. The
+# consumer revalidates authority, claim, owner and worker liveness per row and
+# is bounded per cycle; deferral keeps the private retry row for a later pass.
+_normalize_deferred_claim_releases() {
+	local helper="${BASH_SOURCE[0]%/*}/headless-runtime-release-retry.sh"
+	local summary=""
+	[[ -x "$helper" ]] || return 0
+	summary=$(timeout 120 "$helper" drain 2>/dev/null) || return 0
+	[[ "$summary" == "candidates=0 resolved=0 retained=0" ]] ||
+		printf '[pulse-wrapper] Deferred claim releases: %s\n' "$summary" >>"$LOGFILE"
+	return 0
+}
+
 #######################################
 # (Phase 12 helper) Reset a single stale issue's labels and assignee.
 #
