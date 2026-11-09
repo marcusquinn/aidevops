@@ -10,6 +10,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import time
 from uuid import uuid4
 
 from canonical_write_policy_paths import classify_location
@@ -41,6 +42,11 @@ SAFE_REASONS = {
     "session-owner-already-ended",
     "generation-changed-during-session-admission",
 }
+# GH#37346: concurrent pulse, cleanup and worker writers can hold the WAL write
+# lock past the store's 2 s busy timeout. Admission replay is idempotent, so
+# retry that contention briefly; worst case (3 x 2 s + 1 s) stays inside the
+# plugin's 10 s helper timeout. Any other failure still refuses immediately.
+STORE_CONTENTION_RETRY_DELAYS = (0.25, 0.75)
 
 
 def runtime_pid(value):
@@ -103,6 +109,26 @@ def admit_targets(cwd, targets, pid, session_id):
     return "admitted"
 
 
+def store_contended(error):
+    """Return True only for transient SQLite lock or busy contention."""
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    text = str(error).lower()
+    return "locked" in text or "busy" in text
+
+
+def admit_targets_with_retry(cwd, targets, pid, session_id):
+    """Replay idempotent admission across brief store contention only."""
+    for delay in (*STORE_CONTENTION_RETRY_DELAYS, None):
+        try:
+            return admit_targets(cwd, targets, pid, session_id)
+        except sqlite3.OperationalError as error:
+            if delay is None or not store_contended(error):
+                raise
+            time.sleep(delay)
+    raise RuntimeError("store-contention-retry-exhausted")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cwd", type=Path, required=True)
@@ -122,7 +148,7 @@ def main():
                     args.cwd, args.command, args.argv_json, _git_directory,
                 ),
             ]
-        status = admit_targets(
+        status = admit_targets_with_retry(
             args.cwd, targets, runtime_pid(args.runtime_pid), args.session_id,
         )
     except (ValueError, OSError, RuntimeError, sqlite3.Error,
