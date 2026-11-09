@@ -95,10 +95,10 @@ _full_loop_release_repoint_tag_worktree() {
 	local target_commit="$3"
 	local wt_common="" repo_common="" dirty_state="" head_commit=""
 	[[ -f "$wt_path/.git" && ! -L "$wt_path" ]] || return 1
-	wt_common=$(cd -- "$wt_path" && cd -- "$(git rev-parse --git-common-dir)" && pwd -P) || return 1
-	repo_common=$(cd -- "$repo_root" && cd -- "$(git rev-parse --git-common-dir)" && pwd -P) || return 1
+	wt_common=$(cd -- "$wt_path" && cd -- "$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git rev-parse --git-common-dir)" && pwd -P) || return 1
+	repo_common=$(cd -- "$repo_root" && cd -- "$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git rev-parse --git-common-dir)" && pwd -P) || return 1
 	[[ "$wt_common" == "$repo_common" ]] || return 1
-	dirty_state=$(git -C "$wt_path" status --porcelain --ignored) || return 1
+	dirty_state=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$wt_path" status --porcelain --ignored) || return 1
 	[[ -z "$dirty_state" ]] || return 1
 	git -C "$wt_path" checkout --quiet --detach "$target_commit" || return 1
 	head_commit=$(git -C "$wt_path" rev-parse HEAD) || return 1
@@ -111,7 +111,9 @@ _full_loop_release_repoint_tag_worktree() {
 # are invisible to capacity cleanup. Reap those whose owner PID is dead and that
 # have been idle 30+ minutes, except the active release lane's own trees.
 # Args: $1=worktree base, $2=protected PID, $3=protected source PR,
-#       $4=protected tag version (no leading v), $5=max removal attempts
+#       $4=protected tag version (no leading v), $5=max removal attempts,
+#       $6=repo root: only linked trees of that repository are candidates
+#       (empty = every repository, for callers with no repository context)
 # Every removal is non-force through _full_loop_release_remove_worktree.
 # GH#37424: candidates are visited newest-first (reverse name order: reconcile
 # tag trees, then higher preparation PR numbers). Ascending order let legacy
@@ -123,12 +125,18 @@ _full_loop_release_reap_stale_release_worktrees() {
 	local protected_pr="${3:-}"
 	local protected_version="${4:-}"
 	local limit="${5:-10}"
+	local repo_root="${6:-}"
+	local repo_common="" wt_common=""
 	local stale_path="" name="" owner_pid="" reason="" dirty_state=""
 	local pr="" version="" attempts=0 index=0
 	local candidates=()
 
 	[[ "$limit" =~ ^[0-9]+$ ]] || return 1
 	[[ -d "$worktree_base" ]] || return 0
+	if [[ -n "$repo_root" ]]; then
+		# GH#37433: an unresolvable repository identity reaps nothing.
+		repo_common=$(cd -- "$repo_root" && cd -- "$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git rev-parse --git-common-dir)" && pwd -P) || return 0
+	fi
 	# Without nullglob an empty base yields the literal pattern, which the
 	# directory test below skips, so the array is never empty.
 	candidates=("$worktree_base"/aidevops-release-*)
@@ -157,11 +165,15 @@ _full_loop_release_reap_stale_release_worktrees() {
 		[[ -z "$pr" || -z "$protected_pr" || "$pr" != "$protected_pr" ]] || continue
 		[[ -z "$version" || -z "$protected_version" || "$version" != "$protected_version" ]] || continue
 		kill -0 "$owner_pid" 2>/dev/null && continue
+		if [[ -n "$repo_common" ]]; then
+			wt_common=$(cd -- "$stale_path" && cd -- "$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git rev-parse --git-common-dir)" && pwd -P) || continue
+			[[ "$wt_common" == "$repo_common" ]] || continue
+		fi
 		# Any entry modified within 30 minutes (nested files included) means active.
 		# A failed scan or status probe proves nothing, so the tree is kept.
 		_full_loop_release_tree_recently_active "$stale_path" && continue
 		# Preserve trees with tracked or untracked changes; never rely on force.
-		dirty_state=$(git -C "$stale_path" status --porcelain 2>/dev/null) || continue
+		dirty_state=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$stale_path" status --porcelain 2>/dev/null) || continue
 		[[ -z "$dirty_state" ]] || continue
 		attempts=$((attempts + 1))
 		_full_loop_release_remove_worktree "$stale_path" "$reason" || true
@@ -169,6 +181,8 @@ _full_loop_release_reap_stale_release_worktrees() {
 	return 0
 }
 
+# Candidates are limited to linked worktrees of ${REPO_ROOT}, the repository
+# whose lane is read; a missing REPO_ROOT reaps nothing (GH#37433).
 # Args: $1=repo slug, $2=max removal attempts
 # No lane (rc 2) or an inactive lane protects nothing; any other read failure
 # reaps nothing so an unreadable lane can never expose its own trees.
@@ -177,8 +191,10 @@ _full_loop_release_reap_with_lane() {
 	local limit="${2:-10}"
 	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
 	local read_rc=0
+	local repo_root="${REPO_ROOT:-}"
 	local protected_pid="" protected_pr="" protected_version=""
 
+	[[ -n "$repo_root" ]] || return 0
 	release_lane_read "$repo" || read_rc=$?
 	case "$read_rc" in
 	0)
@@ -195,6 +211,6 @@ _full_loop_release_reap_with_lane() {
 	*) return 0 ;;
 	esac
 	_full_loop_release_reap_stale_release_worktrees "$worktree_base" "$protected_pid" \
-		"$protected_pr" "$protected_version" "$limit"
+		"$protected_pr" "$protected_version" "$limit" "$repo_root"
 	return 0
 }
