@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.138] - 2026-11-09
+
+### Added
+
+- add aidevops status --quick fast path (GH#37293) (#37296)
+- scoped trust for github-actions[bot] starter-sync issues in worker-briefed auto-merge (#37290)
+- t18898 session bus for Buzz-hosted agents (#37285)
+
+### Fixed
+
+- origin-block check and per-client model for LiteSpeed 403 refusals
+- add stats health dashboard recovery lane (GH#37283) (#37287)
+
 ## [3.39.137] - 2026-11-09
 
 ### Added
