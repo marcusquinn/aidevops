@@ -31,6 +31,11 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$_FULL_LOOP_COMMIT_DIR"
 fi
 
+# shellcheck source=./review-thread-gate-lib.sh
+source "${_FULL_LOOP_COMMIT_DIR}/review-thread-gate-lib.sh"
+
+_FULL_LOOP_BLOCKER_REVIEW_BOT="review-bot"
+
 # --- Pre-Merge Gate ---
 
 # Pre-merge gate (GH#17541) — deterministic enforcement of review-bot-gate
@@ -506,7 +511,7 @@ cmd_pre_merge_gate() {
 
 	local rbg_helper=""
 	if ! rbg_helper=$(_full_loop_review_bot_gate_helper_path); then
-		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="review-bot"
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_BLOCKER_REVIEW_BOT"
 		print_error "review-bot-gate-helper.sh not found — refusing an unreviewed merge"
 		return 1
 	fi
@@ -533,12 +538,25 @@ cmd_pre_merge_gate() {
 			_full_loop_report_external_authority_preflight "$pr_number" "$repo"
 			return $?
 		fi
-		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="review-bot"
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_BLOCKER_REVIEW_BOT"
 		print_error "Review bot gate: ${rbg_status:-FAILED} — do NOT merge PR #${pr_number}"
 		printf '%s\n' "$rbg_result" | tail -5
 		return 1
 		;;
 	esac
+
+	# GH#27137: same unresolved review-bot thread gate as the pulse merge pass.
+	local thread_count="" thread_msg=""
+	if ! thread_count=$(review_thread_gate_unresolved_bot_count "$repo" "$pr_number"); then
+		thread_msg="Merge blocked: unable to verify review-bot threads for PR #${pr_number} (GH#27137)"
+	elif [[ "$thread_count" -gt 0 ]]; then
+		thread_msg="Merge blocked: ${thread_count} unresolved review-bot thread(s) (GH#27137) on PR #${pr_number}; resolve or classify them first"
+	fi
+	if [[ -n "$thread_msg" ]]; then
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_BLOCKER_REVIEW_BOT"
+		print_error "$thread_msg"
+		return 1
+	fi
 
 	_full_loop_report_external_authority_preflight "$pr_number" "$repo"
 	return $?
