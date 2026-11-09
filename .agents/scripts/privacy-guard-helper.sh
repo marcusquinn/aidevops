@@ -170,19 +170,32 @@ privacy_is_target_public() {
 _privacy_cache_write() {
 	local slug="$1"
 	local private="$2"
-	local now
+	local now tmp
 	now=$(date +%s)
 
 	mkdir -p "$(dirname "$PRIVACY_CACHE_FILE")" 2>/dev/null || true
-	if [[ ! -f "$PRIVACY_CACHE_FILE" ]]; then
-		printf '{}\n' >"$PRIVACY_CACHE_FILE"
+	tmp=$(mktemp "${PRIVACY_CACHE_FILE}.XXXXXX" 2>/dev/null) || return 0
+	# shellcheck disable=SC2016 # jq variables must reach jq literally.
+	local -a jq_args=(--arg slug "$slug" --arg private "$private" --argjson now "$now"
+		'.[$slug] = {private: ($private == "true"), checked_at: $now}')
+	# t18917: a sudo-run caller can leave the cache root-owned (unreadable) or
+	# it can be corrupt; either way the merge fails and the cache would never
+	# recover. Rebuild from an empty object instead. The mv below replaces an
+	# unreadable file because the cache directory is user-owned.
+	if ! { [[ -r "$PRIVACY_CACHE_FILE" ]] && jq "${jq_args[@]}" "$PRIVACY_CACHE_FILE" >"$tmp" 2>/dev/null; }; then
+		if ! printf '{}\n' | jq "${jq_args[@]}" >"$tmp" 2>/dev/null; then
+			rm -f "$tmp"
+			return 0
+		fi
 	fi
-
-	local tmp
-	tmp=$(mktemp "${PRIVACY_CACHE_FILE}.XXXXXX")
-	jq --arg slug "$slug" --arg private "$private" --argjson now "$now" \
-		'.[$slug] = {private: ($private == "true"), checked_at: $now}' \
-		"$PRIVACY_CACHE_FILE" >"$tmp" 2>/dev/null && mv "$tmp" "$PRIVACY_CACHE_FILE" || rm -f "$tmp"
+	if ! mv -f "$tmp" "$PRIVACY_CACHE_FILE" 2>/dev/null; then
+		rm -f "$tmp"
+		return 0
+	fi
+	# Hand a sudo-written cache back to the real user (approval-helper.sh pattern).
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		chown "$SUDO_USER" "$PRIVACY_CACHE_FILE" 2>/dev/null || true
+	fi
 	return 0
 }
 
