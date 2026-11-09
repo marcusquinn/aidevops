@@ -8,6 +8,10 @@ export function parseBusCommand(text, prefix = "!ai") {
     if (text.startsWith(prefix) && text.slice(prefix.length).trim()) return { type: "ai", text: text.slice(prefix.length).trim() };
     return null;
   }
+  return parseExplicitCommand(match);
+}
+
+function parseExplicitCommand(match) {
   const [, type, rest = ""] = match;
   if (type === "sessions" || type === "unbind") return { type, invalid: Boolean(rest.trim()) };
   if (type === "launch") {
@@ -18,14 +22,28 @@ export function parseBusCommand(text, prefix = "!ai") {
   return { type, target: parts?.[1] || "", text: parts?.[2] || "" };
 }
 
-export function busArgsFor(command, { roomId, actorEntityId, redact = false }) {
+function validateBusCommand(command) {
   const { type, target, text, title } = command;
+  if (command.invalid) throw new Error("Invalid session bus command");
+  if (["ask", "send", "bind"].includes(type)) validateBusTarget(target);
+  if (["ask", "send", "ai", "launch"].includes(type) && !text) throw new Error("Invalid session bus command");
+  if (type === "bind" && text) throw new Error("Invalid session bus command");
+  if (type === "launch" && !title) throw new Error("Invalid session bus command");
+}
+
+function validateBusTarget(target) {
+  if (!target || target.startsWith("-")) throw new Error("Invalid session bus command");
+}
+
+export function busArgsFor(command, { roomId, actorEntityId, redact = false }) {
   if (!actorEntityId) throw new Error("No resolved entity for this Matrix user");
-  if (command.invalid || (["ask", "send", "bind"].includes(type) && (!target || target.startsWith("-"))) ||
-      (["ask", "send", "ai", "launch"].includes(type) && !text) || (type === "bind" && text) || (type === "launch" && !title)) {
-    throw new Error("Invalid session bus command");
-  }
+  validateBusCommand(command);
   const common = ["--origin", `chat:matrix:${roomId}`, "--actor", actorEntityId, "--json"];
+  const args = commandArgsFor(command, roomId, redact);
+  return { args: [...args, ...common], input: command.text || "" };
+}
+
+function commandArgsFor({ type, target, title }, roomId, redact) {
   let args;
   switch (type) {
     case "sessions": args = ["list", ...(redact ? ["--redact"] : [])]; break;
@@ -36,7 +54,7 @@ export function busArgsFor(command, { roomId, actorEntityId, redact = false }) {
     case "launch": args = ["launch", "--bind", `matrix:${roomId}`, "--title", title, "-"]; break;
     default: throw new Error("Unknown session bus command");
   }
-  return { args: [...args, ...common], input: text || "" };
+  return args;
 }
 
 export async function relayOutbox({ runCli, sendText }) {
