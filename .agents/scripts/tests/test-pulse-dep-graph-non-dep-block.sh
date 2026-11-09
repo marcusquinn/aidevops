@@ -158,11 +158,15 @@ cat >"$STUB_DIR/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GH_STUB_CALLS:-/dev/null}"
 # Canned response is whatever lives in $GH_STUB_COMMENTS.
-# If unset or file missing, return empty so the helper fail-opens.
+# If unset or file missing, return the real --paginate --slurp shape for an
+# issue with no comments. GH_STUB_FAIL simulates an API outage.
+if [[ -n "${GH_STUB_FAIL:-}" ]]; then
+	exit 1
+fi
 if [[ "${GH_STUB_COMMENTS:-}" && -f "${GH_STUB_COMMENTS}" ]]; then
 	cat "${GH_STUB_COMMENTS}"
 else
-	printf ''
+	printf '[[]]\n'
 fi
 STUB
 chmod +x "$STUB_DIR/gh"
@@ -187,6 +191,12 @@ assert_eq 'body defer flag triggers defer' 'body-defer' "$got"
 unset GH_STUB_COMMENTS
 got=$(_should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
 assert_eq 'clean body and empty comments → unblock' '__no_defer__' "$got"
+
+# Scenario 2b (GH#37200): an unreadable comment history cannot prove the
+# absence of a terminal-blocker hold, so the refresh defers instead of
+# silently relabelling the issue available.
+got=$(GH_STUB_FAIL=1 _should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
+assert_eq 'comment fetch failure defers unblock' 'comments-unavailable' "$got"
 
 # Scenario 3: body defer flag false, comment contains **BLOCKED** → defer
 export GH_STUB_COMMENTS="$STUB_DIR/blocked-comment.json"
