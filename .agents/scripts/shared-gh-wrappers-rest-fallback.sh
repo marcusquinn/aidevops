@@ -404,10 +404,41 @@ _rest_args_have_search() {
 # equivalent read calls even while GraphQL is healthy. This is not a lower
 # synthetic budget; it shares traffic across GitHub's native REST and GraphQL
 # pools so GraphQL remains available for GraphQL-only operations.
+# GH#37368: sharing must not spend the last REST calls, which writes and
+# REST-only endpoints need, on reads GraphQL can serve. When REST core is spent
+# and GraphQL keeps headroom, decline so the caller's native path (with its own
+# GraphQL-low REST fallback) serves the read. AIDEVOPS_GH_REST_FIRST_STRICT=1
+# keeps REST for reads whose REST semantics matter (mergeability refresh).
 #######################################
 _rest_read_first_enabled() {
-	[[ "${AIDEVOPS_GH_REST_FIRST_READS:-0}" == "1" ]] && return 0
-	return 1
+	[[ "${AIDEVOPS_GH_REST_FIRST_READS:-0}" == "1" ]] || return 1
+	[[ "${AIDEVOPS_GH_REST_FIRST_STRICT:-0}" == "1" ]] && return 0
+	_rest_first_core_exhausted && return 1
+	return 0
+}
+
+#######################################
+# Return 0 when the shared rate snapshot shows REST core at or below
+# AIDEVOPS_GH_REST_FIRST_CORE_FLOOR (default 1000, above the pulse REST reserve
+# soft cap; 0 disables) before its reset, while GraphQL remains above the REST
+# fallback threshold. Reads the TTL-bounded snapshot only and never probes
+# rate_limit. Missing, stale or malformed evidence returns 1 (keep REST-first).
+#######################################
+_rest_first_core_exhausted() {
+	local floor="${AIDEVOPS_GH_REST_FIRST_CORE_FLOOR:-1000}"
+	local ttl="${AIDEVOPS_GH_REST_FIRST_POOL_TTL:-300}"
+	local rate_json="" fields="" core="" core_reset="" graphql="" now=""
+	[[ "$floor" =~ ^[0-9]+$ && "$floor" -gt 0 ]] || return 1
+	[[ "$ttl" =~ ^[1-9][0-9]*$ ]] || ttl=300
+	declare -F gh_request_state_rate_get >/dev/null 2>&1 || return 1
+	rate_json=$(gh_request_state_rate_get normal "$ttl" 2>/dev/null) || return 1
+	fields=$(printf '%s' "$rate_json" | jq -r '[.resources.core.remaining, .resources.core.reset, .resources.graphql.remaining] | map(tostring) | join(" ")' 2>/dev/null) || return 1
+	read -r core core_reset graphql <<<"$fields"
+	[[ "$core" =~ ^[0-9]+$ && "$core_reset" =~ ^[0-9]+$ && "$graphql" =~ ^[0-9]+$ ]] || return 1
+	now=$(date +%s) || return 1
+	[[ "$now" -lt "$core_reset" && "$core" -le "$floor" ]] || return 1
+	[[ "$graphql" -gt "$_GH_REST_FALLBACK_THRESHOLD" ]] || return 1
+	return 0
 }
 
 #######################################
