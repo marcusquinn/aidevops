@@ -26,7 +26,7 @@ Tool `aidevops_sessions` (interactive TUI, `serve` and ACP processes only):
 | `watch-release` | `to` (`owner/repo`), optional `text: "off"` | Release-lane notices for 7 days; see [Release notices](#release-notices-t18896). |
 | `chat-wake` | `text: "on"` or `"off"` | Persist owner-chat wake opt-in for this caller's root session only; `to` is rejected. |
 
-`to` accepts a session ID, handle, `#<issue>`, `PR#<n>`, repo name or worktree path. Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
+`to` accepts a session ID, handle, `#<issue>`, `PR#<n>`, repo name, worktree path or `channel:<app>:<channel>` (a binding; see below). Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
 
 ### Subagents and waiting for a reply
 
@@ -53,11 +53,30 @@ aidevops sessions reply <msg-id> "answer"     # from an OpenCode session's shell
 aidevops sessions send <target> --sender pulse --text-file <path>  # named sessionless sender (origin cli:pulse)
 aidevops sessions inbox [<session-id>]        # read-only view
 aidevops sessions outbox cli [--ack <msg-id>] # replies to asks sent from a shell
-aidevops sessions prune                       # dead presence, messages older than 7 days
+aidevops sessions prune                       # dead presence, messages older than 7 days, stale bindings
 aidevops sessions watch-release owner/repo [--off]  # from an OpenCode session's shell; release-lane notices
+aidevops sessions bind <app> <channel> <target> [--actor <id>] [--server <url>]
+aidevops sessions unbind <app> <channel>
+aidevops sessions bindings [--app <app>] [--json]
+aidevops sessions launch --bind <app>:<channel> --title "Issue #N: …" --actor <entity-id> \
+  [--server http://127.0.0.1:4096] [--directory <abs-path>] --text-file <path>
 ```
 
 Inside an OpenCode shell, `AIDEVOPS_OPENCODE_SESSION_ID` makes the shell the sender, so replies return to that session. Outside one, the sender is `shell:<user>` and replies go to `outbox/cli/`. `--sender <label>` (1–32 lowercase letters, digits or dashes) names a sessionless sender: origin `cli:<label>`, its own 10-per-minute rate key, and the same trust as any same-user shell. The label is attribution, not authority.
+
+Exit codes: 0 ok; 1 error or refusal; 2 `ask --wait` timeout; 3 a `channel:` target's bound session is not live; 4 `launch` created a session but could not bind, opt in or ask.
+
+### Channel bindings and launch (t18892)
+
+Gateways call these instead of keeping their own room → session maps.
+
+- `bind` writes `bindings/<app>/<channel>.json` (`{ v: 1, app, channel, session_id, actor, server, created_at, updated_at }`). The target is resolved once, at bind time. Binding the same session again is a no-op; a different session replaces it (last atomic write wins; `bindings --json` shows the winner with a computed `live` flag).
+- `<app>` and `<channel>` follow the chat-origin rules (`[a-z0-9-]{1,32}`, `[A-Za-z0-9._:@!#+=-]{1,128}`). A leading `.`, `..` anywhere, `/` or an empty part is rejected.
+- Any `send`, `ask` or `show` target may be `channel:<app>:<channel>`. It resolves only through the binding and only to a live session. If the bound session is not live, the command exits 3 and says so; it never picks another session and never queues for the dead one. The `aidevops_sessions` tool accepts the same targets.
+- `launch` first checks that `--actor` is the verified owner for `chat:<app>:<channel>` (the t18891 rules; the task text is scanned too). Anything else is refused before any server call. It then calls `POST <server>/session` with `{ title }` (and `?directory=` when `--directory` is set; without it the session uses the server's own directory). After the server returns a session ID it writes the binding, sets `chat-wake on` for that session, and sends the text as a chat-origin `ask` from the owner. The server's plugin lists and wakes it like any other session; the reply lands in `outbox/<app>/`.
+- `--server` defaults to `http://127.0.0.1:4096`. Plain `http` is accepted only for `localhost`, `127.0.0.1` and `[::1]`; any other host must use `https`. URLs with credentials, a query or a fragment are refused, and so is any redirect from the server. The bus is local files, so the server must run on this host (a remote `opencode serve` needs its own gateway there).
+- Failures: a server error or unreachable server creates nothing (exit 1), so a retry is safe. If bind, opt-in or ask fails after creation, `launch` prints the session ID and exits 4 (`--json`: `session_id`, `failed_step`). The binding is left in place, so `send channel:…` reaches the session on retry; otherwise delete the session on the server.
+- A `serve` process inherits the starting shell's environment. Started from a headless worker shell (`AIDEVOPS_WORKER_ID`, `*_HEADLESS`), its sessions publish read-only `headless` presence and cannot be messaged.
 
 ## Delivery
 
@@ -264,6 +283,7 @@ Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESS
 | `chat-wake/<session>.json` | Atomic persistent owner-chat wake setting, default off; pruned after retention when presence is absent. |
 | `overlaps/<hash>.json` | One marker per sent overlap notice (sender, recipient, shared key); pruned after 7 days. |
 | `release-watch/<owner@repo>/<session>.json` | Release-lane watch per root session, keyed by repo (unlike `subs/`); removed on expiry (7 days) or when presence is gone. `notices/` holds sent-once markers, pruned after 7 days. |
+| `bindings/<app>/<channel>.json` | Chat channel → session binding (t18892). Pruned when the session has had no presence, no pending message and no delivered message for the retention period; a rebind that races the prune is kept. |
 
 Liveness is checked by pid plus process start time, so a reused pid does not keep a dead session listed. If `ps` cannot read the start time, a record with a live pid is kept rather than deleted.
 

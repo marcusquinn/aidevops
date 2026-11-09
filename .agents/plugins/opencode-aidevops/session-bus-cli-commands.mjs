@@ -13,7 +13,7 @@ export function print(out, value, json) {
   out.write(`${json ? JSON.stringify(value, null, 2) : value}\n`);
 }
 
-const printLines = (out, lines, empty) => print(out, lines.length > 0 ? lines.join("\n") : empty, false);
+export const printLines = (out, lines, empty) => print(out, lines.length > 0 ? lines.join("\n") : empty, false);
 
 export function listCommand({ root, options, out }) {
   const all = store.sortPresence(store.readPresence(root, { sweep: true }));
@@ -48,15 +48,25 @@ export function whoCommand({ root, options, out, err, env }) {
 }
 
 export function showCommand({ root, options, out }) {
-  const resolved = store.resolveTarget(store.readPresence(root), options.positional[1], "");
-  if (resolved.error) throw new Error(resolved.error);
+  const resolved = resolvedOrThrow(store.resolveTarget(store.readPresence(root), options.positional[1], "", { root }));
   if (!resolved.record) throw new Error("that session is not running");
   return print(out, options.json ? resolved.record : store.formatPresenceRow(resolved.record), options.json);
 }
 
+/** Exit code for a `channel:` target whose bound session is not live (t18892). */
+export const NOT_LIVE_EXIT = 3;
+
+export function exitError(message, exitCode) {
+  return Object.assign(new Error(message), { exitCode });
+}
+
+export function resolvedOrThrow(resolved) {
+  if (resolved.error) throw resolved.notLive ? exitError(resolved.error, NOT_LIVE_EXIT) : new Error(resolved.error);
+  return resolved;
+}
+
 function messageableTarget(root, target, from) {
-  const resolved = store.resolveTarget(store.readPresence(root), target, from.session_id);
-  if (resolved.error) throw new Error(resolved.error);
+  const resolved = resolvedOrThrow(store.resolveTarget(store.readPresence(root), target, from.session_id, { root }));
   if (resolved.record && !store.isMessageable(resolved.record)) {
     throw new Error(`${resolved.record.handle} is a ${resolved.record.kind} session and cannot be messaged`);
   }

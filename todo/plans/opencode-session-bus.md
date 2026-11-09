@@ -91,7 +91,7 @@ session-bus/
   sent/<sessionID>/<ts>-<msgID>.json   # sender's copy: rate limit, sidebar, pending-ask summary
   subs/<sessionID>/<subscriberID>.json # notify-when-idle subscriptions (one-shot)
   outbox/<app>/<msgID>.json          # replies to chat-origin messages, for gateways (Phase 3)
-  bindings/<app>/<channel>.json      # channel → session (Phase 3; reserved, not written yet)
+  bindings/<app>/<channel>.json      # channel → session (t18892: bind/unbind/launch)
 ```
 
 - Delivery claims a message by renaming it into `delivered/` before delivering it. Only one process wins the rename, so two processes holding the same session cannot both claim it.
@@ -246,6 +246,39 @@ Phases 1–2 proved the bus (released in v3.39.136; owner test with two live ses
 | t18893 | Matrix bot adapter: room commands, bound rooms, outbox relay | t18892 |
 | t18894 | SimpleX bot adapter: replaces the `/sessions` and `/ask` scaffolds | t18892 |
 | t18898 | Buzz-hosted (remote-interactive) agents as bus endpoints: `interface`/`agent` presence labels, `chat:` sender origin so they never wake local sessions, no wakes into them | t18891 |
+
+t18892 status (2026-11-09, GH#37245): built. `bind`, `unbind`, `bindings [--app] [--json]`,
+`channel:<app>:<channel>` targets (exit 3 when the bound session is not live, never
+retargeted) and `launch`. Commands, exit codes and failure handling:
+`reference/session-bus.md` "Channel bindings and launch".
+
+- Server API (OpenCode 1.19.5, `GET /doc` on a scratch `opencode serve`): `POST /session`
+  takes a body of `{ parentID?, title?, agent?, model?, metadata?, permission?, workspaceID? }`
+  and optional `directory` and `workspace` query parameters. `launch --directory` sends
+  `?directory=`; without it the session uses the server's own directory.
+  `DELETE /session/{sessionID}` removes a session.
+- Live self-test (2026-11-09, OpenCode 1.19.5): scratch bus, isolated entity DB with a
+  verified `matrix:@owner:example.org` link, `opencode serve` on a loopback port with the
+  v3.39.137 plugin and the configured model. Without `AIDEVOPS_SESSION_BUS_OWNER_ENTITY_ID`,
+  `launch` was refused and the server session list was unchanged. With it, `launch` created
+  `Issue #37245: …`. The session appeared in `aidevops sessions list` as an idle `serve`
+  session and woke on the task ask. It answered with `aidevops_sessions reply`, and the
+  reply (`pong`, `channel: @owner:example.org`) appeared in `outbox matrix --json`.
+  `send channel:matrix:@owner:example.org` reached the same inbox. After
+  `DELETE /session/{id}`, the same send exited 3 through `session-bus-helper.sh`.
+- Found during the live run: a `serve` started from a headless worker shell inherits
+  `AIDEVOPS_WORKER_ID`/`*_HEADLESS`, so its sessions publish read-only `headless`
+  presence. The self-test server must be started without those variables (documented in
+  the reference).
+- Rework onto main after t18895/t18896/t18905 (PR #37300 conflicted): the binding/launch CLI
+  handlers moved to `session-bus-cli-bindings.mjs`, and binding retention moved to
+  `session-bus-bindings.mjs` (`pruneBus` in the store barrel composes `pruneBusFiles` with
+  `pruneBindings`), clearing the Qlty file- and function-complexity findings. Prune now moves a
+  stale binding aside and links it back if a rebind raced it; `launch` refuses redirects.
+  Live re-check (OpenCode CLI 1.18.34 `serve`, scratch bus and entity DB): refusal created no
+  session; `launch` created, bound and woke the session, the `pong` reply reached
+  `outbox matrix`, `send channel:…` reached the rebound session's inbox, and after
+  `DELETE /session/{id}` the send exited 3.
 
 t18898 status (2026-11-09, GH#37264): implemented and unit-tested (`tests/test-session-bus.mjs`: labelled presence, `chat:` origin, fallbacks, no wake, local regression). Step 1 live ACP check: the installed-startup canary could not run on the worker runner (`spawnSync /usr/bin/git ENOENT`), so the presence premise rests on code reading (`acp` is a messageable kind; the remote-interactive profile reaches `createSessionBusHooks`) and CI. A live scratch-bus ACP run remains an owner check.
 

@@ -100,12 +100,14 @@ export const outboxDir = (root, app) => join(root, "outbox", app);
 // t18896: release watches are keyed by repository, unlike subs/ (keyed by the watched session).
 export const releaseWatchDir = (root, repoKey) => join(root, "release-watch", repoKey);
 export const releaseNoticeDir = (root, repoKey) => join(releaseWatchDir(root, repoKey), "notices");
+export const bindingsDir = (root) => join(root, "bindings");
 
 // ---------------------------------------------------------------------------
 // Retention
 // ---------------------------------------------------------------------------
 
-function pruneTemp(file) {
+/** Remove a temp file left by an interrupted atomic write, once it is an hour old. */
+export function pruneTemp(file) {
   try {
     if (statSync(file).mtimeMs < Date.now() - TMP_MAX_AGE_MS) rmSync(file, { force: true });
   } catch {
@@ -157,8 +159,13 @@ function pruneReleaseWatches(root, now, cutoff) {
   }
 }
 
-/** Remove messages past retention from every inbox, delivered/ and sent/ directory, old overlap markers and release watches. */
-export function pruneBus(root, now = Date.now()) {
+/**
+ * Remove messages past retention from every inbox, delivered/ and sent/
+ * directory, old overlap markers, release watches and stale chat-wake
+ * settings. Returns the number of messages and markers removed. Callers use
+ * pruneBus from session-bus-store.mjs, which also prunes t18892 bindings.
+ */
+export function pruneBusFiles(root, now = Date.now()) {
   const cutoff = now - LIMITS.retentionMs;
   const removed = { count: 0 };
   for (const sessionID of listDir(join(root, "inbox"))) {
