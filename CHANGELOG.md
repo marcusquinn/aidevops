@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.149] - 2026-11-09
+
+### Changed
+
+- Documentation: review Native SDK v0.11.1 (#37392)
+
+### Fixed
+
+- bound unchanged draft checkpoint hints (GH#37394) (#37396)
+- close quiescent admission in the observation-era managed takeover
+- run the worker bus relay on the worker-watchdog 2-minute cadence
+
 ## [3.39.148] - 2026-11-09
 
 ### Changed
