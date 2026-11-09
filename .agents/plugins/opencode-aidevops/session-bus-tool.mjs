@@ -39,6 +39,7 @@ function deliveryNote(type, record) {
   if (record.status === "busy" || record.status === "permission") {
     return `${record.handle} is ${record.status}; it sees the message at its next tool result.`;
   }
+  if (type === "ask" && record.interface) return `${record.handle} is ${record.status}; ${store.viaLabel(record)}, so the question does not wake it. This session is driven from ${record.interface}; it answers on its next chat turn.`;
   if (type === "ask") return `${record.handle} is ${record.status}; the question wakes it (at most ${store.LIMITS.wakesPerHour} wakes per hour). Its reply arrives in this session.`;
   return `${record.handle} is ${record.status}; info messages wait for its next turn.`;
 }

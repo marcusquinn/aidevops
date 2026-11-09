@@ -70,7 +70,7 @@ import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
 import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
 import { stampCommandPrompt } from "./tui-prompts.mjs";
 import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
-import { createSessionBusHooks } from "./session-bus-plugin.mjs";
+import { createSessionBusHooks, remoteBusContext } from "./session-bus-plugin.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
 import { createNativeDesktopFocusGuard } from "./native-desktop-focus-guard.mjs";
@@ -446,6 +446,7 @@ export async function AidevopsPlugin({ directory, client }) {
     client,
     directory,
     headless: isHeadless(),
+    remote: remoteBusContext(conversation),
     onError: (label, err) => debugEventError(label, err),
     log: (level, message) => qualityLog(level, message),
   });

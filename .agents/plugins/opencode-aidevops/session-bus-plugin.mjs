@@ -8,16 +8,30 @@
 import { isWorkerContext } from "./process-start-identity.mjs";
 import { createSessionBus, processKind } from "./session-bus.mjs";
 import { createSessionBusTool } from "./session-bus-tool.mjs";
+import { isRemoteInteractiveConversation } from "./team-interface-context.mjs";
+
+/**
+ * t18898: the remote-hosted context for the bus, or null for a local process.
+ * #aidevops:trust-boundary: derived only from the verified launch overlay.
+ * A remote-interactive overlay always yields an object, so unreadable context
+ * still gets the remote origin and no wakes.
+ */
+export function remoteBusContext(conversation) {
+  if (!isRemoteInteractiveConversation(conversation)) return null;
+  const overlay = conversation.overlay;
+  return { agent: overlay?.agent?.agent_id, context: overlay?.context };
+}
 
 /**
  * Presence for every root session; messaging only in interactive TUI, serve
  * and ACP processes. Headless workers publish read-only presence.
- * @param {object} options - { client, directory, headless, onError(label, err), log(level, message) }
+ * @param {object} options - { client, directory, headless, remote ({ agent, context } for a remote-interactive process, t18898), onError(label, err), log(level, message) }
  */
-export function createSessionBusHooks({ client, directory, headless = false, onError = () => {}, log = () => {} }) {
+export function createSessionBusHooks({ client, directory, headless = false, remote = null, onError = () => {}, log = () => {} }) {
   const bus = createSessionBus({
     client,
     directory,
+    remote,
     kind: processKind(process.argv, { headless: headless || isWorkerContext() }),
   });
   return {

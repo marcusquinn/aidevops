@@ -57,6 +57,8 @@ function hasWakeBudget(state, now) {
 }
 
 function canWake(bus, state, pending, now, chatWake) {
+  // #aidevops:trust-boundary t18898: a turn the chat app did not start has no channel to answer in.
+  if (bus.remote) return false;
   if (state.status !== "idle" || now < state.wakeRetryAt) return false;
   return pending.some(eligibleEntry(chatWake)) && hasWakeBudget(state, now) && canPrompt(bus.client);
 }
