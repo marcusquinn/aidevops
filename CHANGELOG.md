@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.152] - 2026-11-09
+
+### Changed
+
+- Maintenance: add t18929 and t18930 briefs (worktree ownership relinquish)
+
+### Fixed
+
+- update STUCK_TRIPPED help text to match classifier (GH#37459) (#37464)
+- log starter-sync scope refusals (#37472)
+- scope stale worktree reaping to lane repository (#37447)
+- preserve release lane notices and message text (#37444)
+- validate combined brief dispatch scope (#37460)
+
 ## [3.39.151] - 2026-11-09
 
 ### Added
