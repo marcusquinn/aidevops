@@ -79,6 +79,10 @@ How a turn runs:
   seconds). It stops after 30 minutes without a turn.
 - Each thread is one OpenCode session, or each channel with **One session per
   channel**.
+- For "what version are you running?", agents should run `aidevops --version`
+  (instant) or `aidevops status --quick` (offline, seconds). Plain
+  `aidevops status` is the full report and can take over a minute on a large
+  OpenCode database.
 - Turns run one at a time per agent. A message sent during a turn waits, then
   runs with everything the agent has not seen yet.
 - The agent replies with Buzz's `send` tool. If it only writes text, the plugin
