@@ -3,6 +3,22 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 # Pure reset-aware scheduling hints. Request admission owns actual quota spend.
 
+# Optional pulse work must leave a fixed worker reserve, independently of the
+# adaptive maintainer/progress floor. This is a scheduling hint, not admission.
+gh_budget_worker_reserve_allows() {
+	local remaining="${1:-${AIDEVOPS_PULSE_REST_CORE_BUDGET_REMAINING:-}}"
+	local limit="${2:-${AIDEVOPS_PULSE_REST_CORE_BUDGET_LIMIT:-}}"
+	local percent="${AIDEVOPS_PULSE_WORKER_RESERVE_PERCENT:-20}"
+	[[ "$percent" =~ ^[0-9]{1,2}$ && "$percent" -le 90 ]] || percent=20
+	# Unknown evidence is left to the existing fail-closed quota policy.
+	[[ "$remaining" =~ ^[0-9]{1,9}$ && "$limit" =~ ^[1-9][0-9]{0,8}$ ]] || return 0
+	if [[ "$remaining" -le "$(((limit * percent + 99) / 100))" ]]; then
+		printf '[pulse-budget] Deferring optional REST work at worker reserve (%s/%s, reserve=%s%%)\n' "$remaining" "$limit" "$percent" >&2
+		return 1
+	fi
+	return 0
+}
+
 gh_budget_window_threshold() {
 	local cap="$1"
 	local reset="$2"

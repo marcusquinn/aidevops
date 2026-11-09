@@ -182,6 +182,9 @@ _pmp_rest_reviews_json() {
 
 	max_pages=$(_pmrs_review_max_pages)
 	while [[ "$page" -le "$max_pages" ]]; do
+		if declare -F gh_budget_worker_reserve_allows >/dev/null 2>&1; then
+			gh_budget_worker_reserve_allows || return 1
+		fi
 		endpoint="repos/${repo_slug}/pulls/${pr_number}/reviews?per_page=100&page=${page}"
 		page_json=$(AIDEVOPS_GH_PAGE_NUMBER="$page" \
 			AIDEVOPS_GH_ROUTE_DECISION="pulse-review-explicit-page" \
@@ -288,13 +291,63 @@ _pmp_refresh_native_auto_review_into() {
 # Resolve unknown review states before classification or eligibility decisions.
 # Args: $1=repo slug, $2=PR JSON array
 #######################################
+_pmrs_review_cache() {
+	local action="$1" repo_slug="$2" number="$3" head="$4" updated="$5" decision="${6:-}"
+	# This cache is enrichment only. Final native-auto reconciliation deliberately
+	# uses uncached review pages. Missing metadata always forces a fresh read.
+	[[ -n "$head" && -n "$updated" ]] || return 1
+	PMRS_CACHE_REPO="$repo_slug" PMRS_CACHE_NUMBER="$number" PMRS_CACHE_HEAD="$head" \
+		PMRS_CACHE_UPDATED="$updated" PMRS_CACHE_DECISION="$decision" \
+		python3 - "$action" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+import tempfile
+import time
+
+root = Path(os.environ.get("AIDEVOPS_PULSE_REVIEW_CACHE_DIR", str(Path.home() / ".aidevops/logs/pulse-review-cache")))
+try:
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    mode = root.lstat()
+    if not stat.S_ISDIR(mode.st_mode) or mode.st_uid != os.getuid() or mode.st_mode & 0o077:
+        sys.exit(1)
+    key = hashlib.sha256(json.dumps([os.environ.get("GH_HOST", "github.com"),
+        os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", ""),
+        *[os.environ["PMRS_CACHE_" + name] for name in ("REPO", "NUMBER", "HEAD", "UPDATED")]]).encode()).hexdigest()
+    path = root / (key + ".json")
+    allowed = "NONE CHANGES_REQUESTED OBSERVED_APPROVED".split()
+    if sys.argv[1] == "get":
+        mode = path.lstat()
+        if not stat.S_ISREG(mode.st_mode) or mode.st_uid != os.getuid() or mode.st_mode & 0o077:
+            sys.exit(1)
+        row = json.loads(path.read_text())
+        if not 0 <= time.time() - row["at"] < 300 or row["decision"] not in allowed:
+            sys.exit(1)
+        print(row["decision"])
+    else:
+        decision = os.environ["PMRS_CACHE_DECISION"]
+        if decision not in allowed:
+            sys.exit(1)
+        fd, temporary = tempfile.mkstemp(dir=root)
+        with os.fdopen(fd, "w") as stream:
+            json.dump({"at": time.time(), "decision": decision}, stream)
+        os.replace(temporary, path)
+except (OSError, ValueError, KeyError, TypeError):
+    sys.exit(1)
+PY
+	return $?
+}
+
 _pmp_enrich_prs_with_review_decisions() {
 	local repo_slug="$1"
 	local pr_json="$2"
 	local enriched_json="$pr_json"
 	local pr_rows=""
 	local _US=$'\x1f'
-	local index="" number="" review_decision=""
+	local index="" number="" review_decision="" head="" updated=""
 
 	if [[ -z "$repo_slug" ]]; then
 		printf '%s' "$pr_json"
@@ -307,18 +360,22 @@ _pmp_enrich_prs_with_review_decisions() {
 			(if ((.value | has("number") | not) or .value.number == null or (.value.number | tostring | length) == 0)
 			 then "" else (.value.number | tostring) end),
 			(if ((.value | has("reviewDecision") | not) or .value.reviewDecision == null or (.value.reviewDecision | tostring | length) == 0)
-			 then "UNKNOWN" else .value.reviewDecision end)
+			 then "UNKNOWN" else .value.reviewDecision end),
+			(.value.headRefOid // ""), (.value.updatedAt // "")
 		] | join("\u001f")
 		end' 2>/dev/null) || {
 		printf '%s' "$pr_json"
 		return 0
 	}
 
-	while IFS="$_US" read -r index number review_decision; do
+	while IFS="$_US" read -r index number review_decision head updated; do
 		[[ -n "$index" ]] || continue
 		_pmp_normalize_review_decision_into review_decision "$review_decision"
 		if [[ "$number" =~ ^[0-9]+$ ]] && _pmp_review_decision_is_unknown "$review_decision"; then
-			_pmp_refresh_unknown_review_decision_into review_decision "$number" "$repo_slug" "$review_decision"
+			if ! review_decision=$(_pmrs_review_cache get "$repo_slug" "$number" "$head" "$updated"); then
+				_pmp_refresh_unknown_review_decision_into review_decision "$number" "$repo_slug" UNKNOWN
+				_pmrs_review_cache put "$repo_slug" "$number" "$head" "$updated" "$review_decision" || true
+			fi
 			enriched_json=$(printf '%s' "$enriched_json" | jq --argjson index "$index" --arg review "$review_decision" '.[$index].reviewDecision = $review' 2>/dev/null) || {
 				printf '%s' "$pr_json"
 				return 0

@@ -443,6 +443,8 @@ _gh_current_user_allows_repo_write() {
 	local repo_slug="$1"
 	local current_user=""
 	local current_permission=""
+	local host="${GH_HOST:-github.com}" credential="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+	local fingerprint="" user_key="" permission_key=""
 
 	AIDEVOPS_GH_WRITE_PERMISSION_USER=""
 	AIDEVOPS_GH_WRITE_PERMISSION_LEVEL="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
@@ -455,10 +457,26 @@ _gh_current_user_allows_repo_write() {
 		return 1
 	fi
 
-	# #aidevops:trust-boundary — do not cache this lookup. Long-running pulse
-	# sessions can rotate GH_TOKEN/OAuth accounts between writes; a stale owner
-	# login would authorize a later non-collaborator token.
-	current_user=$(gh api user --jq '.login // ""') || current_user=""
+	# #aidevops:trust-boundary — key only by the actual credential, never login.
+	# Resolve keychain auth again on every guard and pin the exact same credential
+	# for both reads. Rotation therefore cannot reuse another token's authority.
+	[[ -n "$credential" ]] || credential=$(gh auth token --hostname "$host" 2>/dev/null) || credential=""
+	if [[ -n "$credential" ]]; then
+		fingerprint=$(printf '%s\0%s' "$host" "$credential" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())') || fingerprint=""
+	fi
+	if [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]]; then
+		user_key="_GH_WRITE_USER_${fingerprint}"
+		current_user="${!user_key:-}"
+		permission_key=$(printf '%s\0%s' "$fingerprint" "$repo_slug" | python3 -c 'import hashlib,sys; print("_GH_WRITE_PERMISSION_" + hashlib.sha256(sys.stdin.buffer.read()).hexdigest())') || permission_key=""
+	fi
+	if [[ -z "$current_user" ]]; then
+		if [[ -n "$credential" ]]; then
+			current_user=$(GH_HOST="$host" GH_TOKEN="$credential" gh api user --jq '.login // ""') || current_user=""
+		else
+			current_user=$(gh api user --jq '.login // ""') || current_user=""
+		fi
+		[[ -z "$user_key" || -z "$current_user" ]] || printf -v "$user_key" '%s' "$current_user"
+	fi
 	AIDEVOPS_GH_WRITE_PERMISSION_USER="$current_user"
 	export AIDEVOPS_GH_WRITE_PERMISSION_USER
 	if [[ -z "$current_user" ]]; then
@@ -467,12 +485,14 @@ _gh_current_user_allows_repo_write() {
 		return 1
 	fi
 
-	if ! _gh_collaborator_permission_lookup "$repo_slug" "$current_user" current_permission; then
+	[[ -z "$permission_key" ]] || current_permission="${!permission_key:-}"
+	if [[ -z "$current_permission" ]] && ! GH_HOST="$host" GH_TOKEN="$credential" _gh_collaborator_permission_lookup "$repo_slug" "$current_user" current_permission; then
 		AIDEVOPS_GH_WRITE_PERMISSION_LEVEL="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
 		AIDEVOPS_GH_WRITE_PERMISSION_REASON="permission-lookup-failed:${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE}"
 		export AIDEVOPS_GH_WRITE_PERMISSION_LEVEL AIDEVOPS_GH_WRITE_PERMISSION_REASON
 		return 1
 	fi
+	[[ -z "$permission_key" ]] || printf -v "$permission_key" '%s' "$current_permission"
 
 	AIDEVOPS_GH_WRITE_PERMISSION_LEVEL="$current_permission"
 	export AIDEVOPS_GH_WRITE_PERMISSION_LEVEL
