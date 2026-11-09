@@ -94,6 +94,7 @@ export const deliveredDir = (root, sessionID) => join(inboxDir(root, sessionID),
 export const sentDir = (root, senderKey) => join(root, "sent", senderKey);
 export const subsDir = (root, sessionID) => join(root, "subs", sessionID);
 export const outboxDir = (root, app) => join(root, "outbox", app);
+export const bindingsDir = (root) => join(root, "bindings");
 
 // ---------------------------------------------------------------------------
 // Retention
@@ -118,7 +119,46 @@ function pruneFiles(dir, cutoff, removed) {
   }
 }
 
-/** Remove messages past retention from every inbox, delivered/ and sent/ directory. */
+// t18892: the newest sign of life for a bound session: a presence file, or
+// its latest pending or delivered message (both are kept for retention).
+function sessionActivity(root, sessionID) {
+  if (readJson(join(presenceDir(root), `${sessionID}.json`))) return Infinity;
+  const times = [...messageFiles(inboxDir(root, sessionID)), ...messageFiles(deliveredDir(root, sessionID))].map(fileTime);
+  return times.length > 0 ? Math.max(...times) : 0;
+}
+
+/**
+ * Remove bindings whose session has had no presence and no pending messages
+ * for the retention period. Returns the number removed.
+ */
+export function pruneBindings(root, cutoff) {
+  let removed = 0;
+  for (const app of listDir(bindingsDir(root))) {
+    for (const name of listDir(join(bindingsDir(root), app))) {
+      const file = join(bindingsDir(root), app, name);
+      if (name.endsWith(".tmp")) {
+        pruneTemp(file);
+        continue;
+      }
+      const binding = name.endsWith(".json") ? readJson(file) : null;
+      if (!isSafeId(binding?.session_id)) continue;
+      const updated = Date.parse(binding.updated_at);
+      const pending = messageFiles(inboxDir(root, binding.session_id)).length > 0;
+      const lastSeen = Math.max(Number.isFinite(updated) ? updated : 0, sessionActivity(root, binding.session_id));
+      if (!pending && lastSeen < cutoff) {
+        rmSync(file, { force: true });
+        removed += 1;
+      }
+    }
+  }
+  return removed;
+}
+
+/**
+ * Remove messages past retention from every inbox, delivered/ and sent/
+ * directory, stale chat-wake settings and stale bindings. Returns the number of
+ * messages removed.
+ */
 export function pruneBus(root, now = Date.now()) {
   const cutoff = now - LIMITS.retentionMs;
   const removed = { count: 0 };
@@ -135,5 +175,6 @@ export function pruneBus(root, now = Date.now()) {
     const stale = !Number.isFinite(setting?.updated_ms) || setting.updated_ms < cutoff;
     if (!readJson(join(presenceDir(root), name)) && stale) rmSync(file, { force: true });
   }
+  pruneBindings(root, cutoff);
   return removed.count;
 }

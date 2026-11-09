@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 
 import * as store from "./session-bus-store.mjs";
 import { chatTrust } from "./session-bus-chat-trust.mjs";
+import { launchCommand, validServerUrl } from "./session-bus-launch.mjs";
 
 function readText(options, words) {
   if (options.textFile) return readFileSync(options.textFile, "utf8");
@@ -63,15 +64,25 @@ export function listCommand({ root, options, out }) {
 }
 
 export function showCommand({ root, options, out }) {
-  const resolved = store.resolveTarget(store.readPresence(root), options.positional[1], "");
-  if (resolved.error) throw new Error(resolved.error);
+  const resolved = resolvedOrThrow(store.resolveTarget(store.readPresence(root), options.positional[1], "", { root }));
   if (!resolved.record) throw new Error("that session is not running");
   return print(out, options.json ? resolved.record : store.formatPresenceRow(resolved.record), options.json);
 }
 
+/** Exit code for a `channel:` target whose bound session is not live (t18892). */
+export const NOT_LIVE_EXIT = 3;
+
+export function exitError(message, exitCode) {
+  return Object.assign(new Error(message), { exitCode });
+}
+
+function resolvedOrThrow(resolved) {
+  if (resolved.error) throw resolved.notLive ? exitError(resolved.error, NOT_LIVE_EXIT) : new Error(resolved.error);
+  return resolved;
+}
+
 function messageableTarget(root, target, from) {
-  const resolved = store.resolveTarget(store.readPresence(root), target, from.session_id);
-  if (resolved.error) throw new Error(resolved.error);
+  const resolved = resolvedOrThrow(store.resolveTarget(store.readPresence(root), target, from.session_id, { root }));
   if (resolved.record && !store.isMessageable(resolved.record)) {
     throw new Error(`${resolved.record.handle} is a ${resolved.record.kind} session and cannot be messaged`);
   }
@@ -155,6 +166,55 @@ export function outboxCommand({ root, options, out }) {
   const lines = messages.map((message) =>
     `${message.id} re ${message.re} from ${message.from?.handle}: ${store.messagePreview(message, 160)}`);
   return printLines(out, lines, "Outbox empty.");
+}
+
+// ---------------------------------------------------------------------------
+// t18892: channel bindings and per-task launch
+// ---------------------------------------------------------------------------
+
+/** `bind <app> <channel> <target>`: the target is resolved once, now. */
+export function bindCommand({ root, options, out }) {
+  const [, app, channel, target] = options.positional;
+  const chat = store.validChannel(app, channel);
+  if (!target) throw new Error("bind needs <app> <channel> <target>");
+  if (store.isChannelTarget(target)) throw new Error("bind a channel to a session, not to another channel");
+  const resolved = resolvedOrThrow(store.resolveTarget(store.readPresence(root), target, "", { root }));
+  const sessionID = resolved.record?.session_id || resolved.sessionID;
+  const server = options.server ? validServerUrl(options.server) : "";
+  const { record, previous, changed } = store.writeBinding(root, {
+    app: chat.app, channel: chat.channel, sessionID, actor: options.actor, server,
+  });
+  if (options.json) return print(out, record, true);
+  const label = store.channelLabel(chat);
+  if (!changed) return print(out, `${label} is already bound to ${sessionID}.`, false);
+  const replaced = previous ? ` (was ${previous.session_id})` : "";
+  const offline = resolved.record ? "" : " That session is not live; sends exit 3 until it is.";
+  return print(out, `Bound ${label} to ${resolved.record?.handle || sessionID}${replaced}.${offline}`, false);
+}
+
+export function unbindCommand({ root, options, out }) {
+  const [, app, channel] = options.positional;
+  const chat = store.validChannel(app, channel);
+  const removed = store.removeBinding(root, chat.app, chat.channel);
+  return print(out, `${removed ? "Unbound" : "No binding for"} ${store.channelLabel(chat)}.`, false);
+}
+
+export function bindingsCommand({ root, options, out }) {
+  const live = new Map(store.readPresence(root).map((record) => [record.session_id, record]));
+  const rows = store.listBindings(root, { app: options.app }).map((record) => ({ ...record, live: live.has(record.session_id) }));
+  if (options.json) return print(out, rows, true);
+  const lines = rows.map((row) => {
+    const peer = live.get(row.session_id);
+    const state = peer ? `live ${peer.handle}` : "not live";
+    return `${store.channelLabel(row)} → ${row.session_id} (${state})${row.server ? ` on ${row.server}` : ""}`;
+  });
+  return printLines(out, lines, "No channel bindings.");
+}
+
+/** Returns a Promise of the exit code (0 launched, 4 partial failure). */
+export function launchSessionCommand(context) {
+  const [, ...words] = context.options.positional;
+  return launchCommand(context, readText(context.options, words));
 }
 
 export function pruneCommand({ root, out }) {

@@ -2,12 +2,20 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 // t18886/GH#37149: resolve a session-bus `to` argument (session ID, handle,
-// #issue, PR#n, worktree, repo or title words) to one live presence record.
+// #issue, PR#n, worktree, repo, title words, or a t18892 channel binding) to
+// one live presence record.
 
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
-import { isSafeId } from "./session-bus-files.mjs";
+import { busRoot, isSafeId } from "./session-bus-files.mjs";
+import {
+  CHANNEL_TARGET_PREFIX,
+  channelLabel,
+  isChannelTarget,
+  parseChannelRef,
+  readBinding,
+} from "./session-bus-bindings.mjs";
 
 const SELF_TARGET = "that target is this session; messages to yourself are rejected";
 
@@ -59,9 +67,35 @@ function offlineResult(query, selfID) {
   return { record: null, sessionID: query, offline: true };
 }
 
-export function resolveTarget(records, to, selfID = "") {
+// t18892: `channel:<app>:<channel>` resolves only through its binding, and
+// only to a live session. A dead bound session is an error with code 3
+// (`notLive`); it never falls back to another session or to the inbox.
+function channelResult(records, query, selfID, root) {
+  let chat;
+  try {
+    chat = parseChannelRef(query.slice(CHANNEL_TARGET_PREFIX.length));
+  } catch (error) {
+    return { error: `invalid target "${query}": ${error.message}` };
+  }
+  const label = channelLabel(chat);
+  const binding = readBinding(root, chat.app, chat.channel);
+  if (!binding) return { error: `${label} is not bound; run: aidevops sessions bind ${chat.app} ${chat.channel} <target>` };
+  if (binding.session_id === selfID) return { error: SELF_TARGET };
+  const record = records.find((candidate) => candidate.session_id === binding.session_id);
+  if (!record) {
+    return { error: `${label} is bound to ${binding.session_id}, which is not live; rebind it or launch a new session`, notLive: true, binding };
+  }
+  return { record, binding };
+}
+
+/**
+ * Resolve `to` against live presence records. `root` is only read for
+ * `channel:` targets (default: the bus root from the environment).
+ */
+export function resolveTarget(records, to, selfID = "", { root = busRoot() } = {}) {
   const query = String(to || "").trim();
-  if (!query) return { error: "missing target: pass `to` (session ID, handle, #issue, PR#n, repo or worktree)" };
+  if (!query) return { error: "missing target: pass `to` (session ID, handle, #issue, PR#n, repo, worktree or channel:<app>:<channel>)" };
+  if (isChannelTarget(query)) return channelResult(records, query, selfID, root);
   for (const matches of TARGET_TIERS) {
     const found = records.filter((record) => matches(record, query));
     if (found.length > 0) return tierResult(found, query, selfID);

@@ -334,6 +334,8 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/session-bus-chat-trust.mjs"
 		"plugins/opencode-aidevops/session-bus-presence-store.mjs"
 		"plugins/opencode-aidevops/session-bus-targets.mjs"
+		"plugins/opencode-aidevops/session-bus-bindings.mjs"
+		"plugins/opencode-aidevops/session-bus-launch.mjs"
 		"plugins/opencode-aidevops/session-bus-messages.mjs"
 		"plugins/opencode-aidevops/session-bus-inbox.mjs"
 		"plugins/opencode-aidevops/session-bus-format.mjs"

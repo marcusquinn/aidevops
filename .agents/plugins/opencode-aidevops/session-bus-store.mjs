@@ -16,8 +16,10 @@
 //   session-bus-messages.mjs        validation, send and reply
 //   session-bus-inbox.mjs           inbox reads, claims, subscriptions, outbox
 //   session-bus-format.mjs          presence rows, previews, delivery framing
+//   session-bus-bindings.mjs        chat channel -> session bindings (t18892)
 
 export * from "./session-bus-files.mjs";
+export * from "./session-bus-bindings.mjs";
 export * from "./session-bus-presence-store.mjs";
 export * from "./session-bus-targets.mjs";
 export * from "./session-bus-messages.mjs";

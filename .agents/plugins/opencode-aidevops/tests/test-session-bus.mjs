@@ -621,6 +621,144 @@ test("local sessions keep the opencode origin and unlabelled presence", async ()
   assert.doesNotMatch(store.formatPresenceRow(presence), /via /);
 });
 
+// t18892: channel bindings and per-task launch
+function capture() {
+  const output = [];
+  return { output, out: { write: (text) => output.push(text) }, text: () => output.join("") };
+}
+
+test("bindings are path-safe, idempotent, listed, and resolve only to their live session", () => {
+  livePresence("ses_bindA1", { handle: "repo-bind" });
+  livePresence("ses_bindB2", { handle: "repo-other" });
+  const io = capture();
+  cliMain(["bind", "matrix", "!room:example.org", "repo-bind", "--actor", "ent_owner"], { root, env: {}, out: io.out });
+  assert.match(io.text(), /Bound channel:matrix:!room:example\.org to repo-bind\./);
+  const file = join(root, "bindings", "matrix", "!room:example.org.json");
+  const record = store.readJson(file);
+  assert.deepEqual(Object.keys(record).sort(), ["actor", "app", "channel", "created_at", "server", "session_id", "updated_at", "v"]);
+  assert.equal(record.session_id, "ses_bindA1");
+  io.output.length = 0;
+  cliMain(["bind", "matrix", "!room:example.org", "ses_bindA1", "--actor", "ent_owner"], { root, env: {}, out: io.out });
+  assert.match(io.text(), /already bound/);
+  assert.deepEqual(store.readJson(file), record, "same target is a no-op");
+
+  // Targets: the bound live session, never another one.
+  const records = store.readPresence(root);
+  assert.equal(store.resolveTarget(records, "channel:matrix:!room:example.org", "", { root }).record.session_id, "ses_bindA1");
+  assert.match(store.resolveTarget(records, "channel:matrix:!room:example.org", "ses_bindA1", { root }).error, /yourself/);
+  assert.match(store.resolveTarget(records, "channel:matrix:!other:example.org", "", { root }).error, /is not bound/);
+  for (const bad of ["channel:matrix:..", "channel:matrix:a..b", "channel:matrix:a/b", "channel:matrix:", "channel::room", "channel:matrix", "channel:Matrix:room", "channel:matrix:.hidden"]) {
+    assert.match(store.resolveTarget(records, bad, "", { root }).error, /invalid target/, bad);
+  }
+  for (const [app, channel] of [["matrix", ".."], ["matrix", "a/b"], ["", "room"], ["matrix", ""], ["../x", "room"]]) {
+    assert.throws(() => cliMain(["bind", app, channel, "repo-bind"], { root, env: {}, out: io.out }), /invalid channel/);
+  }
+  assert.throws(() => cliMain(["bind", "matrix", "room2", "channel:matrix:!room:example.org"], { root, env: {}, out: io.out }), /not to another channel/);
+
+  // Send through the binding; the last bind wins.
+  cliMain(["send", "channel:matrix:!room:example.org", "hello"], { root, env: { USER: "me" }, out: io.out });
+  assert.equal(store.pendingMessages(root, "ses_bindA1").length, 1);
+  cliMain(["bind", "matrix", "!room:example.org", "repo-other", "--server", "https://serve.example.org/"], { root, env: {}, out: io.out });
+  assert.equal(store.readJson(file).server, "https://serve.example.org");
+  io.output.length = 0;
+  cliMain(["bindings", "--json"], { root, env: {}, out: io.out });
+  const [listed] = JSON.parse(io.text());
+  assert.equal(listed.session_id, "ses_bindB2");
+  assert.equal(listed.live, true);
+  cliMain(["bind", "simplex", "contact-1", "ses_offln1"], { root, env: {}, out: io.out });
+  io.output.length = 0;
+  cliMain(["bindings", "--app", "simplex", "--json"], { root, env: {}, out: io.out });
+  assert.deepEqual(JSON.parse(io.text()).map((row) => [row.app, row.live]), [["simplex", false]]);
+
+  // A dead bound session exits 3 and never retargets.
+  let failure;
+  try {
+    cliMain(["ask", "channel:simplex:contact-1", "status?"], { root, env: {}, out: io.out });
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(failure?.exitCode, 3);
+  assert.match(failure.message, /bound to ses_offln1, which is not live/);
+  assert.equal(store.pendingMessages(root, "ses_offln1").length, 0);
+  io.output.length = 0;
+  cliMain(["unbind", "simplex", "contact-1"], { root, env: {}, out: io.out });
+  cliMain(["unbind", "simplex", "contact-1"], { root, env: {}, out: io.out });
+  assert.match(io.text(), /Unbound channel:simplex:contact-1\.\nNo binding for channel:simplex:contact-1\./);
+  assert.throws(() => cliMain(["bind", "matrix", "r", "repo-bind", "--server", "http://192.0.2.1:4096"], { root, env: {}, out: io.out }), /loopback/);
+});
+
+test("pruning removes bindings only after their session has been absent and idle for retention", () => {
+  const later = Date.now() + store.LIMITS.retentionMs + 1000;
+  livePresence("ses_keep01");
+  store.writeBinding(root, { app: "matrix", channel: "live", sessionID: "ses_keep01" });
+  store.writeBinding(root, { app: "matrix", channel: "gone", sessionID: "ses_gone01" });
+  store.writeBinding(root, { app: "matrix", channel: "waiting", sessionID: "ses_wait01" });
+  store.sendMessage(root, { from: peer("ses_from01"), to: "ses_wait01", type: "info", text: "pending", now: later - 10 });
+  store.writeBinding(root, { app: "matrix", channel: "recent", sessionID: "ses_rcnt01", now: later - 1000 });
+  store.pruneBus(root, later);
+  assert.deepEqual(store.listBindings(root).map((row) => row.channel), ["live", "recent", "waiting"]);
+});
+
+function launchFetch(response = { id: "ses_launch1", title: "Issue #5: task" }, status = 200) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return { ok: status >= 200 && status < 300, status, json: async () => response };
+  };
+  return { calls, fetchImpl };
+}
+
+test("launch verifies the owner first, then creates, binds, opts in and asks through the bus", async () => {
+  const env = { ...process.env, AIDEVOPS_MEMORY_DIR: join(root, "memory"), PROMPT_GUARD_LOG_DIR: join(root, "guard-log") };
+  const actor = entityCommand(env, "create", "--name", "Launch owner").split("\n").at(-1);
+  entityCommand(env, "link", actor, "--channel", "matrix", "--channel-id", "@owner:example.org", "--verified");
+  const io = capture();
+  const args = ["launch", "--bind", "matrix:@owner:example.org", "--title", "Issue #5: task", "--actor", actor,
+    "--server", "http://127.0.0.1:4097", "--directory", "/w/project", "Fix", "the", "build"];
+
+  // No owner configured: refused before any server call.
+  const refused = launchFetch();
+  await assert.rejects(cliMain(args, { root, env, out: io.out, fetch: refused.fetchImpl }), /not the verified owner/);
+  await assert.rejects(cliMain(args.map((arg) => (arg === actor ? "ent_nobody" : arg)), { root, env: { ...env, AIDEVOPS_SESSION_BUS_OWNER_ENTITY_ID: "ent_nobody" }, out: io.out, fetch: refused.fetchImpl }), /not the verified owner/);
+  await assert.rejects(cliMain(args.map((arg) => (arg === "http://127.0.0.1:4097" ? "http://serve.example.org" : arg)), { root, env, out: io.out, fetch: refused.fetchImpl }), /loopback/);
+  assert.equal(refused.calls.length, 0);
+
+  env.AIDEVOPS_SESSION_BUS_OWNER_ENTITY_ID = actor;
+  const server = launchFetch();
+  assert.equal(await cliMain(args, { root, env, out: io.out, fetch: server.fetchImpl }), 0);
+  const [call] = server.calls;
+  assert.equal(call.url, "http://127.0.0.1:4097/session?directory=%2Fw%2Fproject");
+  assert.equal(call.init.method, "POST");
+  assert.deepEqual(JSON.parse(call.init.body), { title: "Issue #5: task" });
+  const binding = store.readBinding(root, "matrix", "@owner:example.org");
+  assert.equal(binding.session_id, "ses_launch1");
+  assert.equal(binding.actor, actor);
+  assert.equal(binding.server, "http://127.0.0.1:4097");
+  assert.equal(chatWakeEnabled(root, "ses_launch1"), true);
+  const [{ message }] = store.pendingMessages(root, "ses_launch1");
+  assert.equal(message.type, "ask");
+  assert.equal(message.text, "Fix the build");
+  assert.equal(message.from.origin, "chat:matrix:@owner:example.org");
+  assert.equal(message.from.trust.owner, true);
+  assert.equal(isWakeEligible(message, true), true);
+  assert.match(io.text(), /Launched ses_launch1 on http:\/\/127\.0\.0\.1:4097; bound channel:matrix:@owner:example\.org; sent ask msg_\w+/);
+
+  // Server refusal: no binding change; partial failure after creation: exit 4 with the ID.
+  const failing = launchFetch({}, 500);
+  await assert.rejects(cliMain(args, { root, env, out: io.out, fetch: failing.fetchImpl }), /HTTP 500\); no session was created/);
+  assert.equal(store.readBinding(root, "matrix", "@owner:example.org").session_id, "ses_launch1");
+  for (let index = 0; index < store.LIMITS.inboxPending; index += 1) {
+    store.sendMessage(root, { from: peer(`ses_q${String(index).padStart(5, "0")}`), to: "ses_launch2", type: "info", text: "fill" });
+  }
+  io.output.length = 0;
+  const partial = launchFetch({ id: "ses_launch2" });
+  assert.equal(await cliMain([...args, "--json"], { root, env, out: io.out, fetch: partial.fetchImpl }), 4);
+  const report = JSON.parse(io.text());
+  assert.equal(report.session_id, "ses_launch2");
+  assert.equal(report.failed_step, "send the task ask");
+  assert.equal(store.readBinding(root, "matrix", "@owner:example.org").session_id, "ses_launch2", "binding stays for a retry");
+});
+
 test("CLI ask --wait prints the reply, acknowledges it, and exits 2 on timeout", async () => {
   livePresence("ses_cliP01", { handle: "repo-cli" });
   const output = [];
