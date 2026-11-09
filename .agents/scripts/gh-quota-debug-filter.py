@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from gh_quota_debug_cache import (
-    CACHE_HOST as CACHE_HOST,
     CACHE_MIN_AGE_SECONDS as CACHE_MIN_AGE_SECONDS,
     CACHE_RESET_GRACE_SECONDS as CACHE_RESET_GRACE_SECONDS,
     CACHE_TTL_GRACE_SECONDS as CACHE_TTL_GRACE_SECONDS,
@@ -26,8 +25,6 @@ from gh_quota_debug_cache import (
     _request_time as _request_time,
 )
 from gh_quota_debug_request import (
-    REPO_CLASSES as REPO_CLASSES,
-    ROOT_CLASSES as ROOT_CLASSES,
     UNKNOWN_METADATA,
     _endpoint_class as _endpoint_class,
     _endpoint_family as _endpoint_family,

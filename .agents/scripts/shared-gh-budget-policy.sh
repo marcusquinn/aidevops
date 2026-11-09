@@ -9,7 +9,9 @@ gh_budget_worker_reserve_allows() {
 	local remaining="${1:-${AIDEVOPS_PULSE_REST_CORE_BUDGET_REMAINING:-}}"
 	local limit="${2:-${AIDEVOPS_PULSE_REST_CORE_BUDGET_LIMIT:-}}"
 	local percent="${AIDEVOPS_PULSE_WORKER_RESERVE_PERCENT:-20}"
-	[[ "$percent" =~ ^[0-9]{1,2}$ && "$percent" -le 90 ]] || percent=20
+	# Force base 10 so values like 08/09 are not parsed as invalid octal.
+	[[ "$percent" =~ ^[0-9]{1,2}$ && "$((10#$percent))" -le 90 ]] || percent=20
+	percent=$((10#$percent))
 	# Standalone routines have no wrapper-exported snapshot; long review loops
 	# can also outlive one. Reuse the authoritative short gate cache, not a new
 	# per-page quota request or indefinitely stale inherited environment.
