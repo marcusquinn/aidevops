@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.144] - 2026-11-09
+
+### Fixed
+
+- fetch through native Git in canonical checkouts and log capacity-pass vetoes
+- reap stale release preparation and reconcile worktrees
+
 ## [3.39.143] - 2026-11-09
 
 ### Fixed
