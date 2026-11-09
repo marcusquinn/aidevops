@@ -297,6 +297,11 @@ if [[ "$1" == "issue" && "$2" == "view" && -n "${STUB_NATIVE_ISSUE_VIEW_JSON:-}"
 	printf '%s\n' "$STUB_NATIVE_ISSUE_VIEW_JSON"
 	exit 0
 fi
+# Safe-body edit cases target a non-worker PR with readable origin labels.
+if [[ "$*" == 'pr view 42 --repo owner/repo --json labels --jq [.labels[].name]' ]]; then
+	printf '%s\n' '[]'
+	exit 0
+fi
 EOF
 chmod +x "$TMP/bin/gh"
 
