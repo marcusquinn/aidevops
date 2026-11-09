@@ -1574,27 +1574,9 @@ _prrts_initialize_attempt_state() {
 	return 0
 }
 
-_prrts_launch_detached_worker() {
-	local repo_slug="$1"
-	local pr_number="$2"
-	local pid_var="$3"
-	local mode_var="$4"
-	shift 4
-	local launched_pid=""
-	local launched_mode=""
-	if command -v setsid >/dev/null 2>&1; then
-		launched_mode="setsid+nohup"
-		setsid nohup "$@" </dev/null >>"$LOGFILE" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-	else
-		launched_mode="nohup"
-		_prrts_log "dispatch: setsid unavailable for ${repo_slug}#${pr_number}; launching with nohup-only isolation"
-		nohup "$@" </dev/null >>"$LOGFILE" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-	fi
-	launched_pid="$!"
-	printf -v "$pid_var" '%s' "$launched_pid"
-	printf -v "$mode_var" '%s' "$launched_mode"
-	return 0
-}
+# shellcheck source=./pr-review-thread-response-launch.sh
+# shellcheck disable=SC1091 # sibling module resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/pr-review-thread-response-launch.sh"
 
 _prrts_prepare_dispatch_target() {
 	local repo_slug="$1" repo_path="$2" pr_number="$3" head_ref="$4" head_oid="$5" path_var="$6"
@@ -1612,23 +1594,6 @@ _prrts_prepare_dispatch_target() {
 		[[ -n "$PRRTS_WORKTREE_FAILURE_REASON" ]] || PRRTS_WORKTREE_FAILURE_REASON="pr_target_eligibility_changed_before_launch"
 		return 1
 	fi
-	return 0
-}
-
-_prrts_launch_reserved_worker() {
-	local repo_slug="$1" pr_number="$2" worker_worktree_path="$3" session_key="$4" outcome_id="$5" reservation_file="$6"
-	local worker_pid="" detach_mode=""
-	shift 6
-	_prrts_launch_detached_worker "$repo_slug" "$pr_number" worker_pid detach_mode "$@"
-	if ! _prrts_activate_global_capacity "$reservation_file" "$worker_pid" "$session_key"; then
-		kill "$worker_pid" 2>/dev/null || true
-		_prrts_release_global_capacity "$reservation_file" "$$" || true
-		PRRTS_WORKTREE_FAILURE_REASON="global_worker_reservation_activation_failed"
-		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not activate global worker reservation for pid=${worker_pid}"
-		return 1
-	fi
-	disown "$worker_pid" 2>/dev/null || true
-	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} in ${worker_worktree_path} session_key=${session_key} pid=${worker_pid} detach=${detach_mode} attempt_id=${outcome_id}"
 	return 0
 }
 

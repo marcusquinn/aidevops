@@ -1576,6 +1576,73 @@ test_default_pattern_ignores_foreign_user_pulse() {
 	return 0
 }
 
+# Updates on systemd must drain a young leased cycle just like launchd, but
+# must not defer forever when only a service (without a timer) is installed.
+test_systemd_cycle_boundary_drain() {
+	local output="" rc=0
+	output=$(
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		AIDEVOPS_PULSE_OS_NAME=Linux
+		timer_active=1
+		systemctl() {
+			if [[ "$*" == *--property=LoadState* ]]; then
+				printf 'loaded\n'
+				return 0
+			elif [[ "$*" == *is-active* ]]; then
+				[[ "$timer_active" == 1 ]] || return 1
+				return 0
+			fi
+			return 1
+		}
+		_pulse_pids() { printf '123\n'; return 0; }
+		_pulse_pid_uses_active_runtime() { return 1; }
+		_pulse_process_age_seconds() { printf '%s\n' "$cycle_age"; return 0; }
+		cycle_age=60
+		_pulse_reconcile_defers_to_cycle_boundary || exit 1
+		timer_active=0
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 1; fi
+		timer_active=1
+		cycle_age="$_PULSE_RECONCILE_DRAIN_MAX_AGE"
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 1; fi
+		printf 'systemd drain boundaries verified\n'
+	) || rc=$?
+	if [[ "$rc" == 0 && "$output" == *"systemd drain boundaries verified"* ]]; then
+		_print_result "systemd drains young cycles only with an active timer and below the age ceiling" 1
+	else
+		_print_result "systemd drain boundaries (rc=$rc output=$output)" 0
+	fi
+	return 0
+}
+
+test_systemd_managed_start() {
+	local output="" rc=0
+	output=$(
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		_pulse_systemd_supervisor_loaded() { return 0; }
+		_pulse_pids() { printf '123\n'; return 0; }
+		systemctl() {
+			[[ "$*" == '--user start --no-block aidevops-supervisor-pulse.service' ]] || return 1
+			return 0
+		}
+		_pulse_wait_for_launchd_runtime() {
+			local baseline="$1"
+			[[ "$baseline" == 123 ]] || return 1
+			printf '456\n'
+			return 0
+		}
+		_start_activated_runtime() { exit 1; }
+		_pulse_start_managed
+	) || rc=$?
+	if [[ "$rc" == 0 && "$output" == *"Pulse started by systemd"* ]]; then
+		_print_result "systemd queues managed start without waiting for oneshot completion and verifies runtime" 1
+	else
+		_print_result "systemd managed start (rc=$rc output=$output)" 0
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Runner
 # -----------------------------------------------------------------------------
@@ -1630,6 +1697,8 @@ main() {
 	test_async_housekeeping_is_not_a_main_cycle
 	test_default_pattern_uses_stable_link_when_active_link_unset
 	test_default_pattern_ignores_foreign_user_pulse
+	test_systemd_cycle_boundary_drain
+	test_systemd_managed_start
 
 	echo ""
 	echo "----"
