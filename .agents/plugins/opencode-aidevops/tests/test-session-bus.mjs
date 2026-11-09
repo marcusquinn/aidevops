@@ -568,6 +568,59 @@ test("a subagent's message is attributed to its root with an advisory via", asyn
   assert.doesNotMatch(store.frameMessage(fromRoot), /via subagent/);
 });
 
+const buzzContext = { provider_ref: "provider:Buzz", conversation_ref: "conversation:chan-7" };
+
+function remoteBus(client, remote) {
+  return createSessionBus({ client, directory: root, root, kind: "acp", start: false, remote, git: async () => ({ stdout: "" }) });
+}
+
+test("remote-hosted sessions publish labelled presence, send as chat origins and are never woken", async () => {
+  const id = "ses_remote1";
+  const client = fakeClient({ [id]: { id, title: "", directory: root } });
+  const bus = remoteBus(client, { agent: "helper-agent", context: buzzContext });
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id, title: "", directory: root } } } });
+  const [presence] = store.readPresence(root);
+  assert.equal(presence.interface, "buzz");
+  assert.equal(presence.agent, "helper-agent");
+  assert.match(store.formatPresenceRow(presence), /via Buzz agent helper-agent/);
+  assert.equal(bus.fromFor(id).origin, "chat:buzz:chan-7");
+  assert.equal(isWakeEligible({ type: "ask", hops: 0, from: bus.fromFor(id) }), false);
+
+  // An ask to it waits for its next chat-started turn.
+  await bus.handleEvent({ event: { type: "session.idle", properties: { sessionID: id } } });
+  store.sendMessage(root, { from: peer("ses_peer09"), to: id, type: "ask", text: "status?" });
+  await bus.tick();
+  assert.equal(client.calls.prompts.length, 0);
+  const turn = { message: { id: "msg_r1" }, parts: [{ id: "prt_r1", type: "text", text: "hi" }] };
+  await bus.chatMessage({ sessionID: id }, turn);
+  assert.equal(turn.parts.length, 2);
+  assert.match(turn.parts[1].text, /> status\?/);
+
+  // The reply to its own ask arrives in its inbox despite the chat origin.
+  const asked = store.sendMessage(root, { from: bus.fromFor(id), to: "ses_peer09", type: "ask", text: "q" });
+  store.sendReply(root, { from: peer("ses_peer09"), original: asked, text: "a" });
+  assert.equal(store.pendingMessages(root, id).length, 1);
+});
+
+test("remote-hosted fallbacks never use the opencode origin or a local identity", () => {
+  const origin = (remote) => createSessionBus({ root, kind: "acp", start: false, remote }).fromFor("ses_remote2").origin;
+  assert.equal(origin({ agent: "helper-agent", context: { provider_ref: "provider:buzz" } }), "chat:buzz:helper-agent");
+  assert.equal(origin({ agent: "helper-agent", context: { provider_ref: "bogus", conversation_ref: "conversation:a b" } }), "chat:remote:helper-agent");
+  assert.equal(origin({}), "chat:remote:agent");
+  assert.equal(origin({ agent: "bad agent!", context: "garbage" }), "chat:remote:agent");
+});
+
+test("local sessions keep the opencode origin and unlabelled presence", async () => {
+  const id = "ses_local01";
+  const bus = busFor(fakeClient({ [id]: { id, title: "", directory: root } }));
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id, title: "", directory: root } } } });
+  const [presence] = store.readPresence(root);
+  assert.equal("interface" in presence, false);
+  assert.equal("agent" in presence, false);
+  assert.equal(bus.fromFor(id).origin, "opencode");
+  assert.doesNotMatch(store.formatPresenceRow(presence), /via /);
+});
+
 test("CLI ask --wait prints the reply, acknowledges it, and exits 2 on timeout", async () => {
   livePresence("ses_cliP01", { handle: "repo-cli" });
   const output = [];

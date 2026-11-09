@@ -1927,7 +1927,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18896 Release coordination over the session bus: lane owner session, held-lane hints and release notices #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37249 logged:2026-11-08 -> [todo/tasks/t18896-brief.md]
 
-- [ ] t18897 Session bus ask with bounded wait, so subagents and scripts get the reply in the same call #feat #interactive #auto-dispatch tier:standard ~4h ref:GH#37250 logged:2026-11-08 -> [todo/tasks/t18897-brief.md]
+- [x] t18897 Session bus ask with bounded wait, so subagents and scripts get the reply in the same call #feat #interactive #auto-dispatch tier:standard ~4h ref:GH#37250 logged:2026-11-08 -> [todo/tasks/t18897-brief.md] pr:#37257 completed:2026-11-09
 
 - [ ] t18898 Session bus for Buzz-hosted agents: labelled presence, remote provenance and safe delivery #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37264 logged:2026-11-08 blocked-by:t18891 -> [todo/tasks/t18898-brief.md]
 

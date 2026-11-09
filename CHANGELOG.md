@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.137] - 2026-11-09
+
+### Added
+
+- session bus chat ingest trust and owner wakes (#37277)
+- t18899 deploy Buzz plugin to stable folder (#37267)
+- t18897 ask wait for subagents and scripts (#37257)
+
+### Changed
+
+- Documentation: read bounded-operation output before recording claims (#37280)
+- Documentation: add macOS account and login-keychain recovery reference
+- Documentation: clean up backups already on web-served paths
+- Refactor: split runtime bundle functions out of agent-deploy.sh (GH#37253) (#37256)
+- Documentation: clarify qlty ratchet override gate refresh (#37261)
+
+### Fixed
+
+- t18903 style buzz-aidevops Conversation dropdown like the text fields
+- t18901 visible buzz-aidevops settings fields and Identity-tab guidance
+- guard background gh auth token against locked macOS keychain (GH#37232) (#37236)
+- refuse silent skip of WIP-committed planning files in planning-commit-helper (GH#37252) (#37255)
+- sequence review labels before approval (#37231)
+
 ## [3.39.136] - 2026-11-08
 
 ### Added

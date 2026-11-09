@@ -36,6 +36,8 @@ import {
 
 export { processKind, parseRepoSlug } from "./session-bus-presence.mjs";
 export { isWakeEligible } from "./session-bus-delivery.mjs";
+export { remoteEndpoint } from "./session-bus-remote.mjs";
+import { remoteEndpoint } from "./session-bus-remote.mjs";
 
 const POLL_MS = 5000;
 const SWEEP_DELAY_MS = 3000;
@@ -44,8 +46,10 @@ const BUS_TOOL = "aidevops_sessions";
 const MAX_WAITS = 2;
 
 class SessionBus {
-  constructor({ client, directory = "", root = store.busRoot(), kind = "tui", now = () => Date.now(), timers = globalThis, git } = {}) {
+  constructor({ client, directory = "", root = store.busRoot(), kind = "tui", now = () => Date.now(), timers = globalThis, git, remote = null } = {}) {
     Object.assign(this, { client, directory, root, kind, now, timers });
+    // #aidevops:trust-boundary t18898: set only by the plugin from the launch overlay, never from tool arguments.
+    this.remote = remote ? remoteEndpoint(remote) : null;
     this.messageable = store.MESSAGEABLE_KINDS.includes(kind);
     this.sessions = new Map();
     // ask ID -> root session whose waiting tool call will claim the reply (t18897)
@@ -54,7 +58,10 @@ class SessionBus {
     this.tree = new SessionTree({ client, onRootInfo: (info) => this.updateRootInfo(info) });
     this.toasts = new ArrivalToasts(client);
     const gitInfo = new GitInfoCache({ now, git, onChange: (changed) => this.republish(changed) });
-    this.presence = new PresencePublisher({ root, kind, messageable: this.messageable, directory, now, timers, gitInfo });
+    this.presence = new PresencePublisher({
+      root, kind, messageable: this.messageable, directory, now, timers, gitInfo,
+      remote: this.remote && { interface: this.remote.interface, agent: this.remote.agent },
+    });
     this.timer = null;
     this.ticking = false;
   }
@@ -256,7 +263,8 @@ class SessionBus {
       handle: record.handle,
       repo: record.repo,
       branch: record.branch,
-      origin: "opencode",
+      // #aidevops:trust-boundary t18898: a remote-hosted process sends as a chat origin, which never wakes.
+      origin: this.remote ? `chat:${this.remote.interface}:${this.remote.channel}` : "opencode",
       ...(via ? { via } : {}),
     };
   }

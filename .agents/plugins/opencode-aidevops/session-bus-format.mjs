@@ -27,11 +27,20 @@ export function ago(epochSeconds, now = Date.now()) {
   return `${Math.floor(seconds / size)}${unit} ago`;
 }
 
+/** t18898: "via Buzz agent NAME" for a remote-hosted session; empty for local records. */
+export function viaLabel(record) {
+  const app = String(record?.interface || "").slice(0, 32);
+  if (!app) return "";
+  const agent = String(record.agent || "").slice(0, 80);
+  return `via ${app.charAt(0).toUpperCase()}${app.slice(1)}${agent ? ` agent ${agent}` : ""}`;
+}
+
 export function formatPresenceRow(record, now = Date.now()) {
   const where = [record.repo || basename(String(record.worktree || "")), record.branch].filter(Boolean).join("@");
   const kind = isMessageable(record) ? "" : ` [${record.kind || "headless"}, read-only]`;
   const parts = [
     `${record.handle}${kind}`,
+    viaLabel(record),
     record.status || "unknown",
     where,
     truncate(record.title, 60),

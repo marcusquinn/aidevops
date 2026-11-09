@@ -83,6 +83,9 @@ How a turn runs:
   runs with everything the agent has not seen yet.
 - The agent replies with Buzz's `send` tool. If it only writes text, the plugin
   posts that text as its reply.
+- Session-bus messages (`aidevops_sessions`) reach the agent on its next Buzz
+  turn and never wake it. Its sends carry a `chat:` origin and never wake local
+  sessions.
 - **Stop** cancels the running turn.
 - OpenCode permission prompts are declined. The aidevops remote-interactive
   profile already allows ordinary tools and asks only for actions that need a
