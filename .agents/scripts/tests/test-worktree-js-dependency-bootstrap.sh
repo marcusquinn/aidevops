@@ -242,6 +242,7 @@ source "${SCRIPT_DIR}/shared-worktree-registry.sh"
 umask 022
 CANON="${ROOT}/canonical-npm"
 INTERACTIVE_WT="${ROOT}/interactive-npm-worktree"
+CALLER_WT="${ROOT}/linked-caller-npm-worktree"
 mkdir -p "$CANON"
 pkg_json='{"name":"fixture","version":"1.0.0","scripts":{"lint":"eslint ."},"devDependencies":{"eslint":"1.0.0"}}'
 eslint_meta='{"version":"1.0.0","resolved":"fixture:eslint","dev":true}'
@@ -253,12 +254,16 @@ git -C "$CANON" init -q
 git -C "$CANON" add .
 git -C "$CANON" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm fixture
 git -C "$CANON" worktree add -qb fixture-interactive "$INTERACTIVE_WT"
+git -C "$CANON" worktree add -qb fixture-linked-caller "$CALLER_WT"
 mkdir -p "${CANON}/node_modules/eslint" "${CANON}/node_modules/.bin"
 printf '{"name":"eslint","version":"1.0.0"}\n' >"${CANON}/node_modules/eslint/package.json"
 printf '{"packages":{"node_modules/eslint":%s}}\n' "$eslint_meta" >"${CANON}/node_modules/.package-lock.json"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${CANON}/node_modules/.bin/eslint"
 chmod +x "${CANON}/node_modules/.bin/eslint"
+cp -R "${CANON}/node_modules" "${CALLER_WT}/node_modules"
+printf '#!/usr/bin/env bash\nexit 1\n' >"${CALLER_WT}/node_modules/.bin/eslint"
 canon_status_before=$(git -C "$CANON" status --porcelain --ignored)
+caller_status_before=$(git -C "$CALLER_WT" status --porcelain --ignored)
 
 sleep 120 &
 RUNTIME_PID=$!
@@ -298,17 +303,29 @@ foreign_err=$(_restore_worktree_node_modules "$INTERACTIVE_WT" "$CANON" "$contra
 	fail "a foreign owner was accepted with another generation's contract"
 printf 'PASS a foreign owner cannot reuse another generation contract\n'
 
-# Positive: the exact contract cmd_add just registered provisions the snapshot.
+# Positive: cmd_add invoked from a linked checkout uses the canonical snapshot.
 _interactive_register ""
 contract=$(_cmd_add_created_registration_contract "$INTERACTIVE_WT" "$RUNTIME_PID" ses_fixture "") ||
 	fail "fixture re-registration contract did not verify"
-_restore_worktree_node_modules "$INTERACTIVE_WT" "$CANON" "$contract" >/dev/null 2>&1 ||
-	fail "exact-contract restore changed the exit status"
+(
+	cd "$CALLER_WT" || exit 1
+	_ds_substage_start() {
+		printf '0\n'
+		return 0
+	}
+	_ds_substage_record() { return 0; }
+	_ADD_PROVISION_OWNER_CONTRACT="$contract"
+	_cmd_add_prepare_worktree_deps "$INTERACTIVE_WT" >/dev/null 2>&1
+) || fail "linked-checkout dependency preparation changed the exit status"
 [[ -f "${INTERACTIVE_WT}/node_modules/eslint/package.json" && -x "${INTERACTIVE_WT}/node_modules/.bin/eslint" ]] ||
-	fail "the exact cmd_add owner contract did not provision node_modules"
-_expect_state "$INTERACTIVE_WT" "ready" "interactive cmd_add owner contract provisions a ready npm snapshot"
+	fail "cmd_add from a linked checkout did not provision the canonical snapshot"
+_expect_state "$INTERACTIVE_WT" "ready" "linked cmd_add owner contract provisions a ready npm snapshot"
+cmp -s "${CANON}/node_modules/.bin/eslint" "${INTERACTIVE_WT}/node_modules/.bin/eslint" ||
+	fail "provisioning copied the linked caller snapshot instead of the canonical snapshot"
 [[ "$(git -C "$CANON" status --porcelain --ignored)" == "$canon_status_before" &&
-	-x "${CANON}/node_modules/.bin/eslint" ]] || fail "provisioning mutated the canonical checkout"
+-x "${CANON}/node_modules/.bin/eslint" ]] || fail "provisioning mutated the canonical checkout"
+[[ "$(git -C "$CALLER_WT" status --porcelain --ignored)" == "$caller_status_before" ]] ||
+	fail "provisioning mutated the linked caller checkout"
 [[ -z "$(find "$INTERACTIVE_WT" -maxdepth 1 -name '.aidevops-deps-*' -print -quit)" ]] ||
 	fail "provisioning left a staging directory behind"
 printf 'PASS exact-contract provisioning leaves the canonical checkout unchanged\n'
