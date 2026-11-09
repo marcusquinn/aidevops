@@ -67,9 +67,9 @@ installed".
    test agent named `aidevops-test`). A name that is not an aidevops agent, or
    was made for another computer, is refused.
 
-To change these later, open **Agents**, choose the agent, and edit the fields
-on its **Identity** tab, then press **Save**. Buzz shows the plugin's settings
-there; the agent's own **Settings** tab only has Buzz's details.
+   To change these later, open **Agents**, choose the agent, and edit the fields
+   on its **Identity** tab, then press **Save**. Buzz shows the plugin's settings
+   there; the agent's own **Settings** tab only has Buzz's details.
 5. Mention the agent, or DM it. In a one-to-one DM every message reaches the
    agent; in a channel or group DM every message needs the agent's @mention
    chip, including thread replies. Keep the `@agent` chip in a channel thread's
