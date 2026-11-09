@@ -779,6 +779,10 @@ if canonical_reconciliation_refusal_count:
 # Keep their resource context, but never credit them as implementation workers.
 worker_metrics = [item for item in metrics if item.get('role') == 'worker']
 metric_class_counts = Counter(classify_metric(item) for item in worker_metrics)
+successful_handoffs = sum(
+    1 for item in worker_metrics
+    if classify_metric(item) == 'post_pr_handoff' and item.get('exit_code') == 0
+)
 completed_stage_records = []
 completed_attempt_ids = set()
 for record in stage_records:
@@ -971,7 +975,8 @@ result = {
     'non_worker_terminal_events': len(metrics) - len(worker_metrics),
     'worker_result_counts': dict(metric_class_counts),
     'worker_successes': metric_class_counts.get('success', 0),
-    'worker_failures_or_stalls': sum(count for key, count in metric_class_counts.items() if key != 'success'),
+    'worker_failures_or_stalls': sum(count for key, count in metric_class_counts.items() if key != 'success') - successful_handoffs,
+    'worker_post_pr_handoffs': successful_handoffs,
     'worker_outcomes': {
         'spawned': worker_spawn_count,
         'canary_failed': canary_fail_count,
@@ -1079,7 +1084,7 @@ else:
     print(f'- Dispatch stage events: {result["dispatch_stage_events"]}')
     print(f'- Dispatch stage counts: {json.dumps(result["dispatch_stage_counts"], sort_keys=True)}')
     print(f'- Dispatch stages in progress or interrupted: {json.dumps(result["dispatch_stage_executions"], sort_keys=True)}')
-    print(f'- Worker terminal events: {result["worker_terminal_events"]} ({result["worker_successes"]} success, {result["worker_failures_or_stalls"]} non-success)')
+    print(f'- Worker terminal events: {result["worker_terminal_events"]} ({result["worker_successes"]} success, {result["worker_post_pr_handoffs"]} PR handoff, {result["worker_failures_or_stalls"]} failures or stalls)')
     print(f'- Worker outcomes: {json.dumps(result["worker_outcomes"], sort_keys=True)}')
     print(f'- Resource context: {json.dumps(result["resource_context"], sort_keys=True)}')
     print(f'- GraphQL budget: {json.dumps(result["graphql_budget"], sort_keys=True)}')
