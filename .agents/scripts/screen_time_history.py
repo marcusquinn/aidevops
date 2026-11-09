@@ -48,6 +48,8 @@ def bounded_period_payload(collection, start, end, semantics="rolling-clock-wind
     since = observed_since(collection)
     if status != "unavailable" and since is not None and since >= end:
         status, reason = "unavailable", "before-first-sample"
+    elif status != "unavailable" and since is None and observed_days == 0:
+        status, reason = "unavailable", "no-observations-in-period"
     hours = None if status == "unavailable" else round(interval_seconds(collection.get("intervals", []), start, end) / 3600, 1)
     return {
         "hours": hours,
