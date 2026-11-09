@@ -1963,7 +1963,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18923 fix(lifecycle): prove open-PR state from GraphQL when REST is deferred so cleanup keeps retiring worktrees #bug #framework ref:GH#37385
 
+- [ ] t18924 fix(ci): allow framework pull_request_target gates via Actions event policy before GitHub's 2026-12-02 default block #auto-dispatch #bug #framework ref:GH#37391
+
 - [ ] t18925 fix(lifecycle): close quiescent admission in the observation-era managed takeover #bug #framework ref:GH#37398
+
+- [ ] t18926 fix(ci-wait): detect required checks whose workflow run never started and rerun them once #auto-dispatch #bug ref:GH#37402
+
+- [ ] t18927 fix(runner-health): keep a zero-attempt streak across window expiry so slow-failing runners trip the breaker #auto-dispatch #bug ref:GH#37403
 
 ## In Progress
 
