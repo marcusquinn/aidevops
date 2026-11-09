@@ -75,6 +75,9 @@ A relay loop posts `outbox/simplex` replies back to their chat and acknowledges 
 
 ### Files Scope
 
+- `.agents/scripts/simplex-bot/src/types.ts` — typed optional bus configuration.
+- `.agents/scripts/simplex-bot/src/runner.ts` — safely drain and preserve complete outbox JSON without changing approval semantics.
+- `todo/tasks/t18894-brief.md` — keep this scope correction in sync.
 - `.agents/scripts/simplex-bot/src/commands.ts`
 - `.agents/scripts/simplex-bot/src/session-bus.ts`
 - `.agents/scripts/simplex-bot/src/session-bus.test.ts`
