@@ -192,6 +192,18 @@ _full_loop_release_reap_with_lane owner/repo 10
 check "other repository tree kept" "$(not_removed "aidevops-release-950-${DEAD_PID}" release-preparation-stale)"
 check "own repository tree reaped" "$(removed "aidevops-release-951-${DEAD_PID}" release-preparation-stale)"
 
+# 5c. Inherited repository-location variables must not redirect identity probes.
+reset_case
+git -C "$OTHER" worktree prune
+git -C "$OTHER" worktree add -q --detach "$BASE/aidevops-release-960-${DEAD_PID}" HEAD
+age_path "$BASE/aidevops-release-960-${DEAD_PID}/.git"
+age_path "$BASE/aidevops-release-960-${DEAD_PID}"
+make_tree "aidevops-release-961-${DEAD_PID}"
+STUB_LANE_RC=2
+GIT_COMMON_DIR="$OTHER/.git" GIT_DIR="$OTHER/.git" _full_loop_release_reap_with_lane owner/repo 10
+check "inherited GIT_* keeps other repository tree" "$(not_removed "aidevops-release-960-${DEAD_PID}" release-preparation-stale)"
+check "inherited GIT_* still reaps own tree" "$(removed "aidevops-release-961-${DEAD_PID}" release-preparation-stale)"
+
 # 6. Fail closed: a failed status probe or a dirty tree is kept.
 reset_case
 BROKEN="$BASE/aidevops-release-900-${DEAD_PID}"
