@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.150] - 2026-11-09
+
+### Changed
+
+- Documentation: preserve keychain items during recovery (#37416)
+- Tests: cover missing-isDraft snapshot REST fingerprint fallback (GH#37411) (#37420)
+- Documentation: tighten cleanup safety overview (#37401)
+- Documentation: hostinger.md cookie-skipping Cloudflare cache rule check (#37387)
+
+### Fixed
+
+- reap newest release trees first and ignore the Spotlight marker when judging idleness
+- reject repeated GraphQL pagination cursor (#37422)
+- bind deferred blocker context (#37426)
+- refresh remote-branch cache after prune fetch (#37428)
+- re-anchor window on each zero-attempt so slow-failing runners trip (#37419)
+- reject missing pulse merge gate extractions (GH#37413) (#37423)
+- isolate requested fallback injection
+- detect and rerun required checks whose workflow run never started (#37410)
+
 ## [3.39.149] - 2026-11-09
 
 ### Changed
