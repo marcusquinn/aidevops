@@ -47,7 +47,7 @@ review_thread_gate_unresolved_bot_count() {
 	printf '%s' "$response" | jq -e 'try (.data.repository.pullRequest != null) catch false' >/dev/null 2>&1 || return 1
 	has_next=$(printf '%s' "$response" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false') || return 1
 	[[ "$has_next" == "false" ]] || return 1
-	printf '%s' "$response" | jq -e '.data.repository.pullRequest.reviewThreads.nodes | type == "array"' >/dev/null 2>&1 || return 1
+	printf '%s' "$response" | jq -e '.data.repository.pullRequest.reviewThreads.nodes | type == "array" and all(.[]; type == "object")' >/dev/null 2>&1 || return 1
 	count=$(printf '%s' "$response" | jq -r --arg bots "$_RTG_BOT_RE" '
 		[.data.repository.pullRequest.reviewThreads.nodes[]?
 		| select((.isResolved // false) == false)

@@ -118,6 +118,7 @@ load_functions() {
 	extract_function _compose_pr_title
 	extract_function _derive_pr_title_prefix
 	extract_readiness_function _full_loop_rbg_override_active
+	extract_readiness_function _full_loop_enforce_review_thread_gate
 	extract_readiness_function cmd_pre_merge_gate
 	extract_readiness_function _full_loop_report_external_authority_preflight
 	# shellcheck source=/dev/null
