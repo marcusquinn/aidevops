@@ -632,7 +632,7 @@ function newerDeployedVersion(text) {
   const deployed = match.slice(1).map(Number);
   const loaded = PLUGIN_VERSION.split(".").map(Number);
   for (let i = 0; i < loaded.length; i += 1) {
-    if (deployed[i] !== loaded[i]) return deployed[i] > loaded[i] ? match[0].slice(22) : null;
+    if (deployed[i] !== loaded[i]) return deployed[i] > loaded[i] ? match.slice(1).join(".") : null;
   }
   return null;
 }
@@ -651,14 +651,17 @@ function statusBody(h, state) {
           "Check that `aidevops` is installed and on your login shell PATH, then run `aidevops buzz status` in a terminal. The command must finish within 5 seconds.",
       ),
     );
+  const newer = newerDeployedVersion(state.text);
   return h(
     "div",
     null,
-    newerDeployedVersion(state.text) ? h(
-      "p",
-      { role: "status" },
-      `A newer aidevops plugin (${newerDeployedVersion(state.text)}) is ready. Open Settings → Manage plugins → aidevops and press Update.`,
-    ) : null,
+    newer
+      ? h(
+          "p",
+          { role: "status" },
+          `A newer aidevops plugin (${newer}) is ready. Open Settings → Manage plugins → aidevops and press Update.`,
+        )
+      : null,
     h(
       "pre",
       {
