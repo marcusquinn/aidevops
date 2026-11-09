@@ -560,6 +560,7 @@ should_skip_cleanup() {
 _clean_fetch_remotes() {
 	local state_unknown=false
 	local remote
+	local real_git=""
 	# GH#18979: Apply a 10-second timeout per remote fetch. In pulse cleanup
 	# context, git fetch --prune can hang indefinitely on network I/O or
 	# slow remote negotiation with many branches, stalling the entire pulse
@@ -571,15 +572,25 @@ _clean_fetch_remotes() {
 	elif command -v timeout &>/dev/null; then
 		fetch_timeout_cmd="timeout 10"
 	fi
+	# GH#37342: the pulse PATH leads with the canonical Git shim, which refuses
+	# `fetch` in a canonical checkout, so every pass reported remote state as
+	# unknown. Refreshing remote-tracking refs is framework maintenance: use the
+	# audited native-Git resolver, and fail closed when it is unavailable.
+	if declare -F _worktree_cleanup_real_git >/dev/null 2>&1; then
+		real_git=$(_worktree_cleanup_real_git) || real_git=""
+	fi
 	for remote in $(git remote 2>/dev/null); do
-		if [[ -n "$fetch_timeout_cmd" ]]; then
-			if ! $fetch_timeout_cmd git fetch --prune "$remote" 2>/dev/null; then
+		if [[ -z "$real_git" ]]; then
+			echo -e "${YELLOW}Warning: native Git unavailable; cannot refresh $remote; skipping remote-deleted cleanup checks${NC}" >&2
+			state_unknown=true
+		elif [[ -n "$fetch_timeout_cmd" ]]; then
+			if ! $fetch_timeout_cmd "$real_git" fetch --prune "$remote" 2>/dev/null; then
 				echo -e "${YELLOW}Warning: failed to refresh $remote; skipping remote-deleted cleanup checks${NC}" >&2
 				state_unknown=true
 			fi
 		else
 			# No timeout command available — run unguarded but with a background kill
-			git fetch --prune "$remote" 2>/dev/null &
+			"$real_git" fetch --prune "$remote" 2>/dev/null &
 			local _fetch_pid=$!
 			local _fetch_waited=0
 			while kill -0 "$_fetch_pid" 2>/dev/null && [[ "$_fetch_waited" -lt 10 ]]; do
@@ -1358,7 +1369,10 @@ _clean_capacity_candidate_allowed() {
 	# open PRs beyond that page, and fails closed when GitHub is unavailable.
 	local repo_slug="" open_count=""
 	repo_slug=$(_clean_repo_slug) || return 1
-	open_count=$(gh_pr_list --repo "$repo_slug" --head "$wt_branch" --state open --limit 1 --json number --jq 'length' 2>/dev/null) || return 1
+	if ! open_count=$(gh_pr_list --repo "$repo_slug" --head "$wt_branch" --state open --limit 1 --json number --jq 'length' 2>/dev/null); then
+		_WT_CLEAN_CAPACITY_OPEN_QUERY_FAILURES=$((${_WT_CLEAN_CAPACITY_OPEN_QUERY_FAILURES:-0} + 1))
+		return 1
+	fi
 	[[ "$open_count" == 0 ]] || return 1
 	_clean_worktree_index_is_readable "$wt_path" "$wt_branch" "capacity-recovery" || return 1
 	worktree_has_changes "$wt_path" && return 1
@@ -1379,6 +1393,7 @@ _clean_capacity_candidate_allowed() {
 _clean_classify_capacity_worktree() {
 	local wt_path="$1" wt_branch="$2" default_br="$3" merged_prs="$4" open_prs="$5"
 	_clean_capacity_candidate_allowed "$wt_path" "$wt_branch" "$default_br" "$merged_prs" "$open_prs" || return 1
+	_WT_CLEAN_CAPACITY_CANDIDATES=$((${_WT_CLEAN_CAPACITY_CANDIDATES:-0} + 1))
 	local proof="$_WT_CLEAN_PROOF_REMOTE_TRACKING_RESULT"
 	_WT_CLEAN_LAST_MERGE_TYPE="$_WT_CLEAN_TYPE_REMOTE_TRACKING_MERGED"
 	if _clean_branch_list_contains_exact "$wt_branch" "$merged_prs"; then
@@ -1855,6 +1870,20 @@ _clean_capacity_checkpoint() {
 	return 0
 }
 
+# GH#37342: capacity vetoes are fail-closed and were silent, so a pass that
+# examined trees but removed nothing was indistinguishable from "no candidates".
+# Print one summary per capacity pass (stderr reaches cleanup_worktrees.log).
+_clean_capacity_report() {
+	local attempted="$1"
+	local unknown_reasons="none"
+	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 0
+	unknown_reasons=$(_clean_pr_proof_unknown_context) || unknown_reasons="none"
+	printf 'Capacity pass: attempted=%s candidates=%s pr_proof_unknown=%s open_query_failures=%s\n' \
+		"$attempted" "${_WT_CLEAN_CAPACITY_CANDIDATES:-0}" "$unknown_reasons" \
+		"${_WT_CLEAN_CAPACITY_OPEN_QUERY_FAILURES:-0}" >&2
+	return 0
+}
+
 _clean_remove_merged() {
 	local default_br="$1"
 	local main_wt_path="$2"
@@ -1868,6 +1897,8 @@ _clean_remove_merged() {
 	local worktree_branch=""
 	local removal_failures=0
 	local capacity_attempted=0
+	_WT_CLEAN_CAPACITY_CANDIDATES=0
+	_WT_CLEAN_CAPACITY_OPEN_QUERY_FAILURES=0
 
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
@@ -1931,6 +1962,7 @@ _clean_remove_merged() {
 		_clean_removal_inventory
 	)
 
+	_clean_capacity_report "$capacity_attempted"
 	[[ "$removal_failures" -eq 0 ]] || return 1
 	return 0
 }
