@@ -52,6 +52,9 @@ their complete content is remote-recoverable and current liveness is observable.
 For legacy sources this class is independent of the ordinary legacy age threshold.
 Modern takeover still requires the configured age threshold, closed admission and
 complete ended owner evidence (or existing explicit enrolled-only authorization).
+With `--apply`, takeover first closes a still-open admission only when the shared
+`prepare_cleanup` path re-samples every bound run as admitted and ended; otherwise
+the source stays retained as `managed-admission-not-closed`. Preview never closes.
 Detached modern sources additionally require verified creation evidence. These
 authority checks are not waived for clean or pushed sources, and no
 `--confirm-legacy-path` is needed for a modern source whose guards already hold.
