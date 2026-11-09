@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.146] - 2026-11-09
+
+### Fixed
+
+- resolve canonical dependency source (GH#37352)
+- preserve deferred blocker context
+
 ## [3.39.145] - 2026-11-09
 
 ### Fixed
