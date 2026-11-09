@@ -12,6 +12,8 @@
 
 export const inject = ["react", "settingsCards", "host", "agents"];
 
+// Bump only when plugin files change; Buzz revisions are content hashes.
+const PLUGIN_VERSION = "1.1.0";
 const TYPE_ID = "aidevops";
 /** The MCP server name each session declares; Buzz tools arrive as `buzz_*`. */
 const TOOL_SERVER = "buzz";
@@ -624,6 +626,17 @@ function select(h, props, ...options) {
   );
 }
 
+function newerDeployedVersion(text) {
+  const match = /^Buzz plugin deployed: (\d+)\.(\d+)\.(\d+)$/m.exec(text);
+  if (!match) return null;
+  const deployed = match.slice(1).map(Number);
+  const loaded = PLUGIN_VERSION.split(".").map(Number);
+  for (let i = 0; i < loaded.length; i += 1) {
+    if (deployed[i] !== loaded[i]) return deployed[i] > loaded[i] ? match.slice(1).join(".") : null;
+  }
+  return null;
+}
+
 function statusBody(h, state) {
   if (state.status === "loading") return h("p", null, "Reading aidevops status…");
   if (state.status === "failed")
@@ -638,9 +651,17 @@ function statusBody(h, state) {
           "Check that `aidevops` is installed and on your login shell PATH, then run `aidevops buzz status` in a terminal. The command must finish within 5 seconds.",
       ),
     );
+  const newer = newerDeployedVersion(state.text);
   return h(
     "div",
     null,
+    newer
+      ? h(
+          "p",
+          { role: "status" },
+          `A newer aidevops plugin (${newer}) is ready. Open Settings → Plugins → Manage plugins → aidevops and press Update.`,
+        )
+      : null,
     h(
       "pre",
       {
@@ -780,6 +801,7 @@ function StatusCard({ React, host }) {
       },
     },
     h("h2", null, "Buzz setup on this computer"),
+    h("p", { style: hintStyle }, `aidevops plugin ${PLUGIN_VERSION}`),
     statusBody(h, state),
     h(
       "div",
