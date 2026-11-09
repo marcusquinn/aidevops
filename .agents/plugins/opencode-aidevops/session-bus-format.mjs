@@ -70,7 +70,8 @@ function frameSource(from) {
   const chat = parseChatOrigin(from.origin);
   if (chat) {
     const verified = from.trust?.verified === true;
-    const label = verified ? `${from.trust.owner === true ? "verified owner" : "verified"} ${from.trust.name || from.trust.actor}` : "unverified";
+    const role = from.trust?.owner === true ? "verified owner" : "verified";
+    const label = verified ? `${role} ${JSON.stringify(String(from.trust.name || "").slice(0, 80))} (${from.trust.actor})` : "unverified";
     return `external chat (${chat.app}, channel ${chat.channel}, sender ${label})`;
   }
   const where = [from.repo, from.branch].filter(Boolean).join("@") || "unknown repo";

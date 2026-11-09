@@ -59,7 +59,7 @@ test("chat ingest scans before storage and binds actors to exact confirmed app/c
   assert.equal(message.from.trust.verified, true);
   assert.equal(message.from.trust.owner, true);
   assert.equal(message.from.trust.scan.status, "clean");
-  assert.match(store.frameMessage(message), /verified owner Bus test owner/);
+  assert.match(store.frameMessage(message), /verified owner "Bus test owner" \(/);
   const nonOwner = chatTrust(origin, actor, text, { ...env, AIDEVOPS_SESSION_BUS_OWNER_ENTITY_ID: "" });
   assert.equal(nonOwner.verified, true);
   assert.equal(nonOwner.owner, false);
