@@ -29,6 +29,8 @@ open(os.path.join(root, 'dispatch-stages.tsv'), 'w').write(
 )
 open(os.path.join(root, 'headless-runtime-metrics.jsonl'), 'w').write(
     json.dumps({'ts': now, 'role': 'worker', 'result': 'success', 'exit_code': 0, 'duration_ms': 1000, 'load_1min': 1.5, 'load_per_cpu': 0.2}) + '\n' +
+    json.dumps({'ts': now, 'role': 'worker', 'result': 'post_pr_handoff', 'exit_code': 0}) + '\n' +
+    json.dumps({'ts': now, 'role': 'worker', 'result': 'post_pr_handoff', 'exit_code': 1}) + '\n' +
     json.dumps({'ts': now, 'role': 'worker', 'result': 'watchdog_stall_killed', 'exit_code': 79, 'duration_ms': 2000}) + '\n' +
     json.dumps({'ts': now, 'role': 'worker', 'result': 'rate_limit_fast', 'exit_code': 80, 'failure_reason': 'rate_limit_fast'}) + '\n' +
     json.dumps({'ts': now, 'role': 'worker', 'result': 'worker_noop', 'exit_code': 2}) + '\n' +
@@ -175,7 +177,7 @@ fi
 "$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m >"$output"
 
 grep -q 'Dispatch alive: true' "$output"
-grep -q 'Worker terminal events: 4' "$output"
+grep -q 'Worker terminal events: 6 (1 success, 1 PR handoff, 4 failures or stalls)' "$output"
 grep -q 'dispatch_backoff_skipped' "$output"
 grep -q 'GraphQL budget:' "$output"
 grep -q 'REST admission:' "$output"
@@ -199,8 +201,9 @@ grep -q 'Oldest unverified assumption:' "$output"
 
 json_output="$TMP_DIR/out.json"
 "$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
-jq -e '.worker_terminal_events == 4 and .non_worker_terminal_events == 4' "$json_output" >/dev/null
-jq -e '.worker_successes == 1 and .worker_failures_or_stalls == 3' "$json_output" >/dev/null
+jq -e '.worker_terminal_events == 6 and .non_worker_terminal_events == 4' "$json_output" >/dev/null
+jq -e '.worker_successes == 1 and .worker_post_pr_handoffs == 1 and .worker_failures_or_stalls == 4' "$json_output" >/dev/null
+jq -e '.worker_result_counts.post_pr_handoff == 2' "$json_output" >/dev/null
 jq -e '.resource_context.load_1min_last == 9.0' "$json_output" >/dev/null
 jq -e '.worker_outcomes.spawned == 1' "$json_output" >/dev/null
 jq -e '.worker_outcomes.watchdog_killed == 1' "$json_output" >/dev/null
