@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.148] - 2026-11-09
+
+### Changed
+
+- Tests: pin starter-sync trust never bypasses other pulse-merge gates (GH#37373) (#37379)
+
+### Fixed
+
+- hold terminal-blocker circuits when revision or comment evidence is unavailable
+- prove open-PR state from GraphQL when REST is deferred
+- restore gh shim safe-body edit fixtures (#37378)
+- preserve systemd cycles and recognize split SSH sessions
+
 ## [3.39.147] - 2026-11-09
 
 ### Fixed
