@@ -156,6 +156,7 @@ release_lane_read() {
 	_AIDEVOPS_RELEASE_LANE_JSON="$STUB_LANE_JSON"
 	return "$STUB_LANE_RC"
 }
+REPO_ROOT="$REPO"
 STUB_LANE_RC=75
 _full_loop_release_reap_with_lane owner/repo 10
 check "lane read failure reaps nothing" "$([[ "$(count_removed)" == 0 ]] && echo true || echo false)"
@@ -175,6 +176,21 @@ make_tree "aidevops-release-803-${DEAD_PID}"
 STUB_LANE_JSON='{"active":false,"source_pr":803,"tag":null,"executor":{"pid":1}}'
 _full_loop_release_reap_with_lane owner/repo 10
 check "inactive lane protects nothing" "$([[ "$(count_removed)" == 1 ]] && echo true || echo false)"
+
+# 5b. Only the lane repository's trees are candidates (GH#37433).
+reset_case
+OTHER="$ROOT/other"
+git -c init.defaultBranch=main init -q "$OTHER"
+git -C "$OTHER" -c user.name=reaper-test -c user.email=reaper-test@example.invalid \
+	commit -q --allow-empty -m init
+git -C "$OTHER" worktree add -q --detach "$BASE/aidevops-release-950-${DEAD_PID}" HEAD
+age_path "$BASE/aidevops-release-950-${DEAD_PID}/.git"
+age_path "$BASE/aidevops-release-950-${DEAD_PID}"
+make_tree "aidevops-release-951-${DEAD_PID}"
+STUB_LANE_RC=2
+_full_loop_release_reap_with_lane owner/repo 10
+check "other repository tree kept" "$(not_removed "aidevops-release-950-${DEAD_PID}" release-preparation-stale)"
+check "own repository tree reaped" "$(removed "aidevops-release-951-${DEAD_PID}" release-preparation-stale)"
 
 # 6. Fail closed: a failed status probe or a dirty tree is kept.
 reset_case
