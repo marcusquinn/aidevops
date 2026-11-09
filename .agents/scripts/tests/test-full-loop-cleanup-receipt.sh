@@ -261,6 +261,40 @@ printf 'PASS newer claim by the same session expires the older post-merge lease\
 sqlite3 "$WORKTREE_REGISTRY_DB" "DELETE FROM worktree_owners;"
 cp "${TEST_ROOT}/receipt-live-owner.json" "$receipt_one"
 
+# GH#37448: the session that ran `complete` relinquishes its live-owner lease.
+for wrong_owner in "99999999 session-one" "${OWNER_PID} other-session" "${OWNER_PID} full-loop-lifecycle"; do
+	read -r wrong_pid wrong_session <<<"$wrong_owner"
+	if full_loop_mark_cleanup_owner_relinquished example/repo 101 "$wrong_pid" "$wrong_session"; then
+		printf 'FAIL a non-owner relinquished the cleanup lease: %s\n' "$wrong_owner"
+		exit 1
+	fi
+	cmp -s "$receipt_one" "${TEST_ROOT}/receipt-live-owner.json"
+done
+_clean_deferred_parent_alive "${TEST_ROOT}/worktree-one"
+printf 'PASS only the exact receipt owner can relinquish; otherwise the live owner keeps the tree\n'
+
+claim_worktree_ownership "${TEST_ROOT}/worktree-one" feature/one --owner-pid "$OWNER_PID" \
+	--session session-one --task post-merge-cleanup
+full_loop_mark_cleanup_owner_relinquished example/repo 101 "$OWNER_PID" session-one
+cp "$receipt_one" "${TEST_ROOT}/receipt-relinquished.json"
+full_loop_mark_cleanup_owner_relinquished example/repo 101 "$OWNER_PID" session-one
+cmp -s "$receipt_one" "${TEST_ROOT}/receipt-relinquished.json"
+full_loop_cleanup_owner_alive "$receipt_one"
+deferred_state=0
+_clean_deferred_parent_alive "${TEST_ROOT}/worktree-one" 2>/dev/null || deferred_state=$?
+[[ "$deferred_state" -eq 2 && "$(registry_row_count "${TEST_ROOT}/worktree-one")" == "0" ]]
+printf 'PASS relinquished live-owner lease expires and releases only its post-merge registry claim\n'
+
+jq '.owner_relinquished.session = "other-session"' "$receipt_one" >"${receipt_one}.tmp"
+mv "${receipt_one}.tmp" "$receipt_one"
+if full_loop_cleanup_owner_relinquished "$receipt_one"; then
+	printf 'FAIL a relinquish record naming another session was accepted\n'
+	exit 1
+fi
+printf 'PASS a relinquish record that does not name the receipt owner fails closed\n'
+sqlite3 "$WORKTREE_REGISTRY_DB" "DELETE FROM worktree_owners;"
+cp "${TEST_ROOT}/receipt-live-owner.json" "$receipt_one"
+
 jq '.owner.process_identity = "different process generation"' "$receipt_one" >"${receipt_one}.tmp"
 mv "${receipt_one}.tmp" "$receipt_one"
 if full_loop_cleanup_owner_alive "$receipt_one"; then
