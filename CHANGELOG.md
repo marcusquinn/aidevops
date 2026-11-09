@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.141] - 2026-11-09
+
+### Fixed
+
+- preserve loop identity when merging foreign PRs (#37309)
+
 ## [3.39.140] - 2026-11-09
 
 ### Added
