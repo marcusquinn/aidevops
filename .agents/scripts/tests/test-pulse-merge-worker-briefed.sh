@@ -98,6 +98,11 @@ _all_args=("$@")
 # PR head SHA read (bound before/after the file list)
 [[ "$*" == *"repos/"*"/pulls/"[0-9]* && "$*" == *"head.sha"* ]] && { printf '%s\n' "${MOCK_PR_HEAD_SHA:-0123456789abcdef0123456789abcdef01234567}"; exit 0; }
 
+# PR base SHA read (starter-sync scope, GH#37289)
+[[ "$*" == *"repos/"*"/pulls/"[0-9]* && "$*" == *"base.sha"* ]] && { [[ -f "${TEST_ROOT}/base-sha.txt" ]] || exit 1; cat "${TEST_ROOT}/base-sha.txt"; exit 0; }
+# Starter core-files list at the base ref (GH#37289); missing fixture = API failure
+[[ "$*" == *"/contents/scripts/core-files.txt?ref="* ]] && { cat "${TEST_ROOT}/core-files.txt" 2>/dev/null; exit $?; }
+
 # Issue API (author_association check)
 if [[ "$*" == *"repos/"*"/issues/"* ]] && [[ "$*" != *"/comments"* ]] && [[ "$*" != *"/labels"* ]]; then
 	_jq_filter=""
@@ -154,7 +159,11 @@ fi
 exit 0
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
+	write_approval_helper_stub
+	return 0
+}
 
+write_approval_helper_stub() {
 	cat >"${TEST_ROOT}/scripts/approval-helper.sh" <<'APPROVAL_EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "verify" ]]; then
@@ -213,6 +222,7 @@ define_helpers_under_test() {
 		/^_PM_OPENCODE_CANARY_ALLOWED_FILES=/,/^_PM_OPENCODE_CANARY_MAX_FILES=/ { print }
 		/^_pm_canary_shared_constants_patch_ok\(\) \{/,/^\}$/ { print }
 		/^_is_trusted_opencode_canary_issue_pr\(\) \{/,/^\}$/ { print }
+		/^_is_trusted_starter_sync_issue_pr\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
 		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
@@ -1025,6 +1035,48 @@ test_parent_planning_checkpoint_gates() {
 }
 
 # =============================================================================
+# GH#37289: scoped starter-sync bot-issue trust
+# =============================================================================
+# Args: $1=label, $2=expect pass|block, $3=issue title, $4=labels JSON array,
+#       $5=issue user type, $6=PR file, $7=core-files fixture mode (ok|missing)
+_run_starter_sync_case() {
+	local label="$1" expect="$2" title="$3" labels="$4" utype="$5" pfile="$6" mode="${7:-ok}"
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	jq -n --arg t "$title" --argjson l "$labels" --arg ty "$utype" \
+		'{author_association:"NONE",user:{login:"github-actions[bot]",type:$ty},title:$t,labels:$l}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	printf '0123456789abcdef0123456789abcdef01234567\n' >"${TEST_ROOT}/base-sha.txt"
+	[[ "$mode" == "ok" ]] && printf 'scripts/sync.sh\nincludes/core.php\n' >"${TEST_ROOT}/core-files.txt"
+	jq -n --arg f "$pfile" '[{filename:$f,status:"modified"},{filename:"changelog.txt",status:"modified"}]' >"${TEST_ROOT}/pr-files.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "103" "owner/repo" "origin:worker" "false" "45" && result=0 || result=$?
+	if [[ "$expect" == "pass" && "$result" -eq 0 ]] && grep -q "is a starter-sync issue" "$LOGFILE"; then
+		print_result "$label" 0
+	elif [[ "$expect" == "block" && "$result" -ne 0 ]] && ! grep -q "is a starter-sync issue" "$LOGFILE"; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "expected ${expect}, exit=${result}"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_starter_sync_scoped_trust() {
+	local ok_labels='[{"name":"starter-sync"}]'
+	local ttl="Core files differ from the starter"
+	_run_starter_sync_case "starter-sync: in-scope diff passes" pass "$ttl" "$ok_labels" Bot "includes/core.php"
+	_run_starter_sync_case "starter-sync: wrong title blocked" block "Something else" "$ok_labels" Bot "includes/core.php"
+	_run_starter_sync_case "starter-sync: missing label blocked" block "$ttl" '[{"name":"bug"}]' Bot "includes/core.php"
+	_run_starter_sync_case "starter-sync: non-Bot author blocked" block "$ttl" "$ok_labels" User "includes/core.php"
+	_run_starter_sync_case "starter-sync: out-of-scope file blocked" block "$ttl" "$ok_labels" Bot "includes/own-feature.php"
+	_run_starter_sync_case "starter-sync: scope-list API failure fails closed" block "$ttl" "$ok_labels" Bot "includes/core.php" missing
+	return 0
+}
+
+# =============================================================================
 # Run all cases
 # =============================================================================
 main() {
@@ -1059,6 +1111,7 @@ main() {
 	test_partial_worker_association_reaches_authority_gate
 	test_non_closing_reference_gates
 	test_parent_planning_checkpoint_gates
+	test_starter_sync_scoped_trust
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
