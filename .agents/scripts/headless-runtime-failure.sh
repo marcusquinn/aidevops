@@ -225,6 +225,8 @@ _hrff_release_repo_state_is_managed() {
 		return 1
 		;;
 	esac
+	# Replay keeps its retry row on denial so restored authority can still publish.
+	[[ "${_HRRR_REPLAY:-0}" != 1 ]] || _HRFF_RELEASE_AUTHORITY_SKIP_RC=1
 	print_info "Skipping CLAIM_RELEASED for #${issue_number} in ${repo_slug}: repo state is not managed by this account"
 	return 1
 }
@@ -733,11 +735,7 @@ _hrff_release_dispatch_claim_attempt() {
 	if ! _hrff_release_context_is_valid "$issue_number" "$repo_slug"; then
 		return 0
 	fi
-	if ! _hrff_release_repo_state_is_managed "$issue_number" "$repo_slug"; then
-		# Replay keeps its retry row on denial so restored authority can still publish.
-		[[ "${_HRRR_REPLAY:-0}" != 1 ]] || return 1
-		return "${_HRFF_RELEASE_AUTHORITY_SKIP_RC:-0}"
-	fi
+	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return "${_HRFF_RELEASE_AUTHORITY_SKIP_RC:-0}"
 	runner_name=$(_hrff_resolve_release_runner_login)
 	_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" || return 1
 	[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 ]] || return 0
