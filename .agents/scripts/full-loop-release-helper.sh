@@ -70,20 +70,20 @@ cleanup_release_worktree() {
 # teardown) never runs its EXIT trap, which leaked dozens of full checkouts per
 # hour. Reclaim those whose creating process is gone and that have been idle
 # for 30+ minutes before adding a new one. Failures never block the release.
+# GH#37424: idleness comes from top-level entries, not the root mtime, which
+# the Spotlight-marker backfill bumps in every existing tree.
 _full_loop_release_reap_stale_control_worktrees() {
 	local repository_root="$1"
 	local worktree_base="$2"
 	local stale_path=""
 	local stale_pid=""
-	local idle_match=""
 
 	for stale_path in "$worktree_base"/aidevops-release-control-*; do
 		[[ -d "$stale_path" && ! -L "$stale_path" && -f "$stale_path/.git" ]] || continue
 		stale_pid="${stale_path##*-}"
 		[[ "$stale_pid" =~ ^[0-9]+$ && "$stale_pid" != "$$" ]] || continue
 		kill -0 "$stale_pid" 2>/dev/null && continue
-		idle_match=$(find "$stale_path" -maxdepth 0 -mmin +30 2>/dev/null || true)
-		[[ -n "$idle_match" ]] || continue
+		_full_loop_release_tree_recently_active "$stale_path" 1 && continue
 		# Non-force via the audited fence: a dirty or busy snapshot is preserved.
 		: "$repository_root"
 		_full_loop_release_remove_worktree "$stale_path" release-control-stale || true
