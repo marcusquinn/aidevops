@@ -756,7 +756,7 @@ _rh_classify_diagnose() {
 			return 0
 		fi
 		if [[ "$tripped_age_h" =~ ^[0-9]+$ ]] && [[ "$tripped_age_h" -gt "$pause_hours" ]] \
-			&& [[ "$update_outcome" == "failed" || "$update_outcome" == "helper_missing" ]]; then
+			&& [[ "$update_outcome" == "failed" || "$update_outcome" == "helper_missing" || "$update_outcome" == "no_change" ]]; then
 			printf 'STUCK_TRIPPED\n'
 			return 0
 		fi

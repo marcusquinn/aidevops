@@ -1685,6 +1685,7 @@ _hrff_record_runner_health_failure() {
 	case "$reason" in
 	worker_signing_unavailable) ;;
 	crash_during_startup | worker_noop_zero_output) reason="no_worker_process" ;;
+	"${_HRW_REASON_WORKER_COMPLETE:-worker_complete}") reason="real_attempt" ;;
 	*) return 0 ;;
 	esac
 
