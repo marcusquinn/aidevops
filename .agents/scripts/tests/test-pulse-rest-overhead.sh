@@ -82,6 +82,18 @@ _pulse_rest_core_budget_defers_priority deferrable
 if _pulse_rest_core_budget_defers_priority critical; then exit 1; fi
 printf 'PASS optional stage reserve boundary leaves critical dispatch eligible\n'
 export AIDEVOPS_PULSE_REST_CORE_BUDGET_REMAINING=5000
+quota_snapshot='normal 1000 5000 10 20 5 2000000000'
+pulse_rest_core_priority_snapshot() {
+	local ttl="${1:-}"
+	[[ "$ttl" == 15 ]] || return 1
+	printf '%s' "$quota_snapshot"
+	return 0
+}
+if gh_budget_worker_reserve_allows; then exit 1; fi
+quota_snapshot='unknown ? ? ? ? ? ?'
+if gh_budget_worker_reserve_allows; then exit 1; fi
+unset -f pulse_rest_core_priority_snapshot
+printf 'PASS standalone optional work uses fresh shared evidence rather than inherited quota\n'
 
 _pmrs_gh_call() {
 	printf 'reviews\n' >>"$TEST_ROOT/review-calls"
@@ -128,7 +140,10 @@ printf 'PASS review cache isolates keychain identities and expires stale decisio
 gh_record_attempt rest test logical attempt-1 1 0 success 200 1 1 gh-pat rest-core test 4000 '' '' '' '' GET repos-pulls 'repos/:o/:r/pulls/:id/reviews'
 gh_record_attempt rest test logical attempt-2 1 0 success 200 1 1 gh-pat rest-core test 4000 '' '' '' '' GET repos-other 'repos/:o/:r/collaborators/:u/permission'
 gh_record_attempt rest test logical attempt-3 1 0 success 200 1 1 gh-pat rest-core test 4000 '' '' '' '' GET repos-other 'private/secret?token=value'
-_api_budget_top_rest_families_json "$AIDEVOPS_GH_API_LOG" | jq -e 'length == 3 and any(.family == "repos/:o/:r/pulls/:id/reviews") and any(.family == "unknown")' >/dev/null
+old_timestamp=$(($(date +%s) - 3601))
+gh_record_attempt rest test logical attempt-old 1 0 success 200 1 1 gh-pat rest-core test 4000 '' '' "$old_timestamp" '' GET users user
+gh_record_attempt rest test logical attempt-1 1 0 success 200 1 1 gh-pat rest-core test 4000 '' '' '' '' GET repos-pulls 'repos/:o/:r/pulls/:id/reviews'
+_api_budget_top_rest_families_json "$AIDEVOPS_GH_API_LOG" | jq -e 'length == 3 and (map(.attempts) | add) == 3 and any(.family == "repos/:o/:r/pulls/:id/reviews") and any(.family == "unknown")' >/dev/null
 python3 - "$SCRIPT_DIR" <<'PY'
 import runpy
 import sys

@@ -359,8 +359,8 @@ _api_budget_top_rest_families_json() {
 	fi
 	# Count native attempts only, not the logical routing row for the same call.
 	# Older rows remain visible as unknown; never echo unvalidated log text.
-	awk -F '\t' -v cutoff="$(($(date +%s) - 3600))" -v rest=rest -v unknown=unknown '
-		$(1) >= cutoff && $(3) == rest && $(9) == "attempt" {
+	awk -F '\t' -v now="$(date +%s)" -v rest=rest -v unknown=unknown '
+		$(1) ~ /^[0-9]+$/ && $(1) >= now - 3600 && $(1) <= now && $(3) == rest && $(9) == "attempt" {
 			id = $11; if (id != "" && seen[id]++) next
 			family = $25
 			if (family !~ /^(user|rate-limit|graphql|search|users|orgs|notifications|installation|other|repos-other)$/ &&

@@ -10,6 +10,18 @@ gh_budget_worker_reserve_allows() {
 	local limit="${2:-${AIDEVOPS_PULSE_REST_CORE_BUDGET_LIMIT:-}}"
 	local percent="${AIDEVOPS_PULSE_WORKER_RESERVE_PERCENT:-20}"
 	[[ "$percent" =~ ^[0-9]{1,2}$ && "$percent" -le 90 ]] || percent=20
+	# Standalone routines have no wrapper-exported snapshot; long review loops
+	# can also outlive one. Reuse the authoritative short gate cache, not a new
+	# per-page quota request or indefinitely stale inherited environment.
+	if [[ "$#" -eq 0 ]] && declare -F pulse_rest_core_priority_snapshot >/dev/null 2>&1; then
+		local snapshot="" mode="" rest=""
+		snapshot=$(pulse_rest_core_priority_snapshot 15) || snapshot=""
+		read -r mode remaining limit rest <<<"$snapshot"
+		if [[ ! "$remaining" =~ ^[0-9]{1,9}$ || ! "$limit" =~ ^[1-9][0-9]{0,8}$ ]]; then
+			printf '[pulse-budget] Deferring optional REST work: quota evidence unavailable\n' >&2
+			return 1
+		fi
+	fi
 	# Unknown evidence is left to the existing fail-closed quota policy.
 	[[ "$remaining" =~ ^[0-9]{1,9}$ && "$limit" =~ ^[1-9][0-9]{0,8}$ ]] || return 0
 	if [[ "$remaining" -le "$(((limit * percent + 99) / 100))" ]]; then

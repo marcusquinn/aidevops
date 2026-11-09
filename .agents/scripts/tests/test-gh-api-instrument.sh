@@ -884,11 +884,15 @@ gh_clear_log
 _ghqa_record_result_file "$request_result" request-labels logical-labels 0
 assert_eq "complete attempt retains method and endpoint class" "PATCH:repos-issues" \
 	"$(awk -F '\t' 'NR == 1 {print $23 ":" $24}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "native frame family reaches appended column 25" "repos/:o/:r/issues/:id" \
+	"$(awk -F '\t' 'NR == 1 {print $25}' "$AIDEVOPS_GH_API_LOG")"
 request_partial="$TMPDIR/request-partial.result"
 _ghqa_write_incomplete_frames "$request_partial" rest 1 1 "$request_parsed" 1
 _ghqa_record_result_file "$request_partial" request-partial logical-partial-labels 0
 assert_eq "incomplete attempt retains labels without claiming cost" ":PATCH:repos-issues" \
 	"$(awk -F '\t' 'NR == 2 {print $17 ":" $23 ":" $24}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "partial native frame retains sanitized family" "repos/:o/:r/issues/:id" \
+	"$(awk -F '\t' 'NR == 2 {print $25}' "$AIDEVOPS_GH_API_LOG")"
 gh_record_attempt rest unsafe-labels unsafe-labels unsafe-labels 1 0 success 200 1 1 gh-pat rest-core selected 99 "" "" "" "" "private-method" "/repos/private-owner/private-repo"
 assert_eq "append boundary rejects arbitrary request text" "unknown:unknown" \
 	"$(awk -F '\t' 'NR == 3 {print $23 ":" $24}' "$AIDEVOPS_GH_API_LOG")"
