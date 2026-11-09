@@ -215,13 +215,22 @@ _is_trusted_starter_sync_issue_pr() {
 	base_sha=$(gh api "$pr_api" --jq '.base.sha // ""' 2>/dev/null) || return 1
 	[[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
 	scope_list=$(gh api -H "Accept: application/vnd.github.raw" \
-		"repos/${repo_slug}/contents/scripts/core-files.txt?ref=${base_sha}" 2>/dev/null) || return 1
-	[[ -n "$scope_list" ]] || return 1
+		"repos/${repo_slug}/contents/scripts/core-files.txt?ref=${base_sha}" 2>/dev/null) || {
+		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync scope fetch failed (GH#37289)" >>"$LOGFILE"
+		return 1
+	}
+	if [[ -z "$scope_list" ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync scope list is empty (GH#37289)" >>"$LOGFILE"
+		return 1
+	fi
 
 	files_json=$(gh api "${pr_api}/files?per_page=100" 2>/dev/null) || return 1
 	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 1
 	[[ "$file_count" =~ ^[0-9]+$ ]] || return 1
-	[[ "$file_count" -gt 0 && "$file_count" -lt 100 ]] || return 1
+	if [[ "$file_count" -eq 0 || "$file_count" -ge 100 ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync file count ${file_count} is empty or potentially truncated (GH#37289)" >>"$LOGFILE"
+		return 1
+	fi
 
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || return 1
