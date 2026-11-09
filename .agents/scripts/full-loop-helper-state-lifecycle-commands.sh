@@ -729,9 +729,37 @@ cmd_complete() {
 			return 1
 		}
 	fi
+	_full_loop_relinquish_completed_session "$repo" "$PR_NUMBER" "$current_root" "$owner_pid" "$owner_session"
 	print_warning "LIFECYCLE_STATE=CLEANUP_DEFERRED worktree=${current_root}"
 	print_info "Executor complete; guarded cleanup supervisor owns the remaining CLEANED transition"
 	echo "<promise>FULL_LOOP_CLEANUP_DEFERRED</promise>"
+	return 0
+}
+
+# GH#37448: hand both of this interactive session's holds on its finished tree
+# to guarded cleanup. One OpenCode app PID serves every session, so otherwise
+# the registry run and the receipt owner keep the tree until the app quits.
+# Runs after the durable receipt, so it is best-effort: any failure leaves the
+# 4-hour lease and every registry check in force. Headless runtimes exit at
+# completion and keep the unchanged path. The session must not use the tree
+# afterwards; re-admission refuses with session-owner-already-ended.
+_full_loop_relinquish_completed_session() {
+	local repo="$1"
+	local pr_number="$2"
+	local worktree="$3"
+	local owner_pid="$4"
+	local owner_session="$5"
+	local registry_status="unavailable"
+	local lease_status="kept"
+	is_headless && return 0
+	# shellcheck source=./worker-lifecycle-state.sh
+	if source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" 2>/dev/null; then
+		registry_status=$(worker_lifecycle_relinquish_session "$worktree" 2>/dev/null) || registry_status="unavailable"
+	fi
+	if full_loop_mark_cleanup_owner_relinquished "$repo" "$pr_number" "$owner_pid" "$owner_session" 2>/dev/null; then
+		lease_status="relinquished"
+	fi
+	print_info "Session handoff: registry-run=${registry_status} cleanup-lease=${lease_status}"
 	return 0
 }
 

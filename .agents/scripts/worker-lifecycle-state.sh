@@ -123,18 +123,59 @@ _worker_lifecycle_relinquish_caller() {
 	local entry="$3"
 	local state_dir="$4"
 	local worktree="$5"
-	local pid="${AIDEVOPS_LIFECYCLE_RUNTIME_PID:-}"
-	local session="${AIDEVOPS_LIFECYCLE_SESSION_ID:-}"
-	local relinquished=""
+	local status=""
 	[[ "${WORKER_LIFECYCLE_RELINQUISH_CALLER:-0}" == 1 ]] || return 1
-	[[ "$pid" =~ ^[1-9][0-9]*$ && -n "$session" ]] || return 1
 	jq -e '.status == "waiting-for-runs" and .detail == "waiting-for-caller"' \
 		>/dev/null 2>&1 <<<"$result" || return 1
-	relinquished=$("$python" -E -s -B "$entry" --state-dir "$state_dir" relinquish-session \
-		--path "$worktree" --pid "$pid" --session-id "$session" 2>/dev/null) || return 1
-	jq -e '.status == "relinquished"' >/dev/null 2>&1 <<<"$relinquished" || return 1
+	status=$(_worker_lifecycle_relinquish_status "$python" "$entry" "$state_dir" "$worktree") || return 1
+	[[ "$status" == relinquished ]] || return 1
 	printf '[worker-lifecycle] relinquished the run of this session; retrying retirement once\n' >&2
 	return 0
+}
+
+# Ask the registry to end this session's own run on WORKTREE. The session is
+# the plugin-declared AIDEVOPS_LIFECYCLE_SESSION_ID under the runtime PID
+# AIDEVOPS_LIFECYCLE_RUNTIME_PID; the registry also requires that PID to be an
+# ancestor of this command.
+# Outputs: relinquished, already-ended or not-owner.
+# Returns: 0 when the registry answered with one of those, 1 otherwise.
+_worker_lifecycle_relinquish_status() {
+	local python="$1"
+	local entry="$2"
+	local state_dir="$3"
+	local worktree="$4"
+	local pid="${AIDEVOPS_LIFECYCLE_RUNTIME_PID:-}"
+	local session="${AIDEVOPS_LIFECYCLE_SESSION_ID:-}"
+	local result="" status=""
+	[[ "$pid" =~ ^[1-9][0-9]*$ && -n "$session" && -n "$worktree" ]] || return 1
+	result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" relinquish-session \
+		--path "$worktree" --pid "$pid" --session-id "$session" 2>/dev/null) || return 1
+	status=$(jq -r '.status // empty' 2>/dev/null <<<"$result") || return 1
+	case "$status" in
+	relinquished | already-ended | not-owner) printf '%s\n' "$status" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+# GH#37448: the full-loop `complete` handoff ends this session's own registry
+# run on its finished worktree, so guarded cleanup no longer waits for the
+# shared OpenCode app PID to exit. Best-effort and never removes anything:
+# retirement keeps every registry check.
+# Outputs: the registry status from _worker_lifecycle_relinquish_status.
+# Returns: 0 when the registry answered, 1 when unavailable or refused.
+worker_lifecycle_relinquish_session() {
+	local worktree="$1"
+	local entry="${BASH_SOURCE[0]%/*}/../worker-lifecycle/worker-registry.py"
+	local state_dir=""
+	local python=""
+	[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 && -n "$worktree" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+	python=$(type -P python3) || return 1
+	state_dir=$(worker_lifecycle_state_dir 2>/dev/null) || return 1
+	[[ -n "$state_dir" && -d "$state_dir" ]] || return 1
+	_worker_lifecycle_relinquish_status "$python" "$entry" "$state_dir" "$worktree"
+	return $?
 }
 
 # One-line refusal for local prerequisites that never reach the registry.
