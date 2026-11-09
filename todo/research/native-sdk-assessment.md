@@ -85,8 +85,11 @@ they are upstream claims, not independent runtime verification.
 - **React/WebView and security:** v0.11.1 enables WebView inspection in debug
   builds and disables it in release builds by default, with an explicit build
   override. This is a useful release-gate pattern, not proof that an arbitrary
-  embedded React surface or its bridge is safe. The current desktop launcher
-  opens the existing dashboard in the default browser, not a Native WebView.
+  embedded React surface or its bridge is safe. The current macOS launcher
+  (`packages/gui-desktop/scripts/install-macos-app.sh`) shows the existing
+  dashboard in an embedded `WKWebView` and opens external links in the default
+  browser; it is not a Native SDK WebView, but its WebView and bridge still
+  need their own security review.
 - **Accessibility and automation:** v0.11.0 describes isolated native-process
   tests with widget interaction, model and accessibility snapshots, fake
   effects, timers, and recorded-session verification. These exercise Native
