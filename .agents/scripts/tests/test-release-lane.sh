@@ -1117,6 +1117,87 @@ run_finalize_idempotent_terminal_test() (
 	return 0
 )
 
+# t18896: a live session-bus presence owned by this test shell's PID.
+bus_presence() {
+	local session_id="$1"
+	local handle="$2"
+	node --input-type=module -e '
+const [storePath, root, id, handle, pid] = process.argv.slice(1);
+const bus = await import(storePath);
+bus.writePresence(root, { v: bus.BUS_VERSION, session_id: id, pid: Number(pid), start_token: bus.startToken(Number(pid)),
+  kind: "tui", messageable: true, repo: "test/repo", worktree: "/w", branch: "main", title: "", issue: null, pr: null,
+  status: "idle", handle, last_activity_epoch: Math.floor(Date.now() / 1000) });' \
+		"${SCRIPT_DIR}/../plugins/opencode-aidevops/session-bus-store.mjs" "$AIDEVOPS_SESSION_BUS_DIR" "$session_id" "$handle" "$$"
+	return $?
+}
+
+bus_inbox_count() {
+	local session_id="$1"
+	local dir="${AIDEVOPS_SESSION_BUS_DIR}/inbox/${session_id}"
+	local count=0 file=""
+	for file in "$dir"/*-msg_*.json; do
+		[[ -f "$file" ]] && count=$((count + 1))
+	done
+	printf '%s\n' "$count"
+	return 0
+}
+
+# Advisory owner_session: recorded on acquire, shown on refusal, carried into
+# finalize notices; output contract and exit codes match notices off.
+run_owner_session_notice_test() (
+	export AIDEVOPS_SESSION_BUS_DIR="$TEST_ROOT/bus-owner-session"
+	local head="1111111111111111111111111111111111111111"
+	local remote='{"schema_version":1,"repository":"test/repo","active":false,"source_pr":101,"phase":"terminal","tag":"v1.2.3","operation_token":"token-old"}'
+	local on="" off="" on_rc=0 off_rc=0
+	bus_presence ses_ownerA1 repo-owner || return 1
+	bus_presence ses_watchA1 repo-watch || return 1
+	AIDEVOPS_OPENCODE_SESSION_ID=ses_watchA1 bash "${SCRIPT_DIR}/session-bus-helper.sh" watch-release test/repo >/dev/null || return 1
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON="$remote"
+		_AIDEVOPS_RELEASE_LANE_HEAD="$head"
+		return 0
+	}
+	_release_lane_write() {
+		remote="$2"
+		return 0
+	}
+	AIDEVOPS_OPENCODE_SESSION_ID=ses_ownerA1 release_lane_acquire test/repo 202 202 >/dev/null || return 1
+	jq -e '.active == true and .owner_session.session_id == "ses_ownerA1" and (.owner_session.captured_at | type) == "string"' \
+		<<<"$remote" >/dev/null || return 1
+	# An unsafe session ID is never recorded.
+	local acquired="$remote"
+	remote=$(jq -c '.active=false' <<<"$acquired")
+	AIDEVOPS_OPENCODE_SESSION_ID='bad id;' OPENCODE_SESSION_ID='' release_lane_acquire test/repo 202 202 >/dev/null || return 1
+	jq -e '.owner_session == null' <<<"$remote" >/dev/null || return 1
+	remote="$acquired"
+
+	on=$(AIDEVOPS_OPENCODE_SESSION_ID=ses_otherA1 release_lane_acquire test/repo 303 303 2>&1) || on_rc=$?
+	off=$(AIDEVOPS_RELEASE_NOTICES=false AIDEVOPS_OPENCODE_SESSION_ID=ses_otherA1 release_lane_acquire test/repo 303 303 2>&1) || off_rc=$?
+	[[ "$on_rc" -eq 75 && "$off_rc" -eq 75 && "$on" == "$off"* && "$off" != *RELEASE_OWNER_SESSION* ]] || return 1
+	[[ "$on" == *"RELEASE_OWNER_SESSION handle=repo-owner status=idle"* &&
+		"$on" == *'aidevops sessions ask repo-owner "'* ]] || return 1
+	remote=$(jq -c '.owner_session.session_id="ses_goneA1"' <<<"$acquired")
+	on=$(release_lane_acquire test/repo 303 303 2>&1) || true
+	[[ "$on" == *"RELEASE_OWNER_SESSION session=ses_goneA1 state=not-live"* ]] || return 1
+
+	# Finalize: one info notice to the watcher and to the owner session.
+	remote=$(jq -c '.phase="remote-publication" | .tag="v1.2.4"' <<<"$acquired")
+	_AIDEVOPS_RELEASE_LANE_TOKEN=$(jq -r '.operation_token' <<<"$remote")
+	off=$(AIDEVOPS_RELEASE_NOTICES=false release_lane_finalize test/repo 202 published 2>&1) || return 1
+	[[ "$(bus_inbox_count ses_watchA1)" == 0 ]] || return 1
+	# Each finalize runs in a command substitution, so the mocked remote stays active.
+	on=$(release_lane_finalize test/repo 202 published 2>&1) || return 1
+	[[ "$on" == "$off" ]] || return 1
+	[[ "$(bus_inbox_count ses_watchA1)" == 1 && "$(bus_inbox_count ses_ownerA1)" == 1 ]] || return 1
+	grep -q 'test/repo PR #202 published v1.2.4' "${AIDEVOPS_SESSION_BUS_DIR}"/inbox/ses_watchA1/*-msg_*.json || return 1
+	jq -e '.type == "info" and .from.session_id == ""' "${AIDEVOPS_SESSION_BUS_DIR}"/inbox/ses_watchA1/*-msg_*.json >/dev/null || return 1
+	# An idempotent retry of the same finalize (lane already terminal) sends nothing more.
+	remote=$(jq -c '.active=false | .phase="terminal" | .tag="v1.2.4" | .terminal_receipt="published"' <<<"$acquired")
+	release_lane_finalize test/repo 202 published >/dev/null 2>&1 || return 1
+	[[ "$(bus_inbox_count ses_watchA1)" == 1 ]] || return 1
+	return 0
+)
+
 for recovery_mode in unchanged moved owner source persistent forbidden quota server; do
 	if run_finalize_ref_update_recovery_test "$recovery_mode"; then
 		assert_result "finalize ref-update recovery: $recovery_mode" true
@@ -1149,6 +1230,7 @@ if run_dead_preparing_recovery_test; then assert_result 'dead tagless preparing 
 if run_reclaimed_contract_recovery_test; then assert_result 'reclaimed fenced contract recovers through durable marker or verified immutable lineage' true; else assert_result 'reclaimed fenced contract recovers through durable marker or verified immutable lineage' false; fi
 if run_reclaimed_contract_lineage_refusal_test; then assert_result 'missing or unknown reclaim lineage remains fail closed' true; else assert_result 'missing or unknown reclaim lineage remains fail closed' false; fi
 if run_dead_preparing_refusal_test; then assert_result 'preparing recovery refuses live, foreign, unknown, published, mismatched, and raced lanes' true; else assert_result 'preparing recovery refuses live, foreign, unknown, published, mismatched, and raced lanes' false; fi
+if run_owner_session_notice_test; then assert_result 'advisory owner session is recorded, hinted on refusal and notified once on finalize' true; else assert_result 'advisory owner session is recorded, hinted on refusal and notified once on finalize' false; fi
 
 printf '\nTests run: %s, Failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]

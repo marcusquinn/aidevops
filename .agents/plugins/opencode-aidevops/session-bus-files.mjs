@@ -97,6 +97,9 @@ export const deliveredDir = (root, sessionID) => join(inboxDir(root, sessionID),
 export const sentDir = (root, senderKey) => join(root, "sent", senderKey);
 export const subsDir = (root, sessionID) => join(root, "subs", sessionID);
 export const outboxDir = (root, app) => join(root, "outbox", app);
+// t18896: release watches are keyed by repository, unlike subs/ (keyed by the watched session).
+export const releaseWatchDir = (root, repoKey) => join(root, "release-watch", repoKey);
+export const releaseNoticeDir = (root, repoKey) => join(releaseWatchDir(root, repoKey), "notices");
 
 // ---------------------------------------------------------------------------
 // Retention
@@ -136,7 +139,25 @@ function pruneOverlapMarkers(root, cutoff, removed) {
   }
 }
 
-/** Remove messages past retention from every inbox, delivered/ and sent/ directory, and old overlap markers. */
+// t18896: a release watch ends when it expires or its session has no
+// presence; a sent-once notice marker ends with message retention.
+function pruneReleaseWatches(root, now, cutoff) {
+  for (const key of listDir(join(root, "release-watch"))) {
+    const dir = releaseWatchDir(root, key);
+    for (const name of listDir(dir).filter((file) => file.endsWith(".json"))) {
+      const record = readJson(join(dir, name));
+      const expired = !Number.isFinite(record?.expires_ms) || record.expires_ms <= now;
+      if (expired || !readJson(join(presenceDir(root), name))) rmSync(join(dir, name), { force: true });
+    }
+    for (const name of listDir(releaseNoticeDir(root, key))) {
+      const file = join(releaseNoticeDir(root, key), name);
+      if (name.endsWith(".tmp")) pruneTemp(file);
+      else if (!(readJson(file)?.created_ms >= cutoff)) rmSync(file, { force: true });
+    }
+  }
+}
+
+/** Remove messages past retention from every inbox, delivered/ and sent/ directory, old overlap markers and release watches. */
 export function pruneBus(root, now = Date.now()) {
   const cutoff = now - LIMITS.retentionMs;
   const removed = { count: 0 };
@@ -154,5 +175,6 @@ export function pruneBus(root, now = Date.now()) {
     const stale = !Number.isFinite(setting?.updated_ms) || setting.updated_ms < cutoff;
     if (!readJson(join(presenceDir(root), name)) && stale) rmSync(file, { force: true });
   }
+  pruneReleaseWatches(root, now, cutoff);
   return removed.count;
 }

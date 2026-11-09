@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import * as store from "./session-bus-store.mjs";
 import { chatWakeCommand } from "./session-bus-chat-trust.mjs";
+import { notifyReleaseCommand, watchReleaseCommand } from "./session-bus-cli-release.mjs";
 import {
   inboxCommand,
   listCommand,
@@ -36,6 +37,10 @@ const USAGE = `Usage: aidevops sessions <command> [options]
   inbox [<session-id>] [--json]      Recent traffic for a session (read-only; default: this session)
   outbox <app> [--json] [--ack <id>] Replies for a sender with no session (cli or a chat gateway)
   prune                              Remove dead presence and messages older than 7 days
+  watch-release <owner/repo> [--off] This session gets one info notice per lane finalize or dead executor (7 days)
+  notify-release --repo <owner/repo> --source-pr <n> --event published|superseded|failed|executor-dead
+                 [--tag <v>] [--receipt <r>] [--executor-state <s>] [--recovery <cmd>] [--owner-session <id>] [--marker <m>]
+                                     Release-lane notice to watchers and the lane owner session (never wakes)
 
 Message text: positional words, --text-file <path>, or - for stdin (max ${store.LIMITS.textChars} chars).
 --sender <label>               names a sessionless sender (e.g. pulse); attribution and its own rate limit only.
@@ -43,10 +48,13 @@ Message text: positional words, --text-file <path>, or - for stdin (max ${store.
 --actor <entity-id>            verifies an exact confirmed app/channel link; never inferred from text.
 Targets: session ID, handle, #issue, PR#n, repo, or worktree path.`;
 
-const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", "-h": "help", "--help": "help" };
+const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", "--off": "off", "-h": "help", "--help": "help" };
 const VALUE_FLAGS = {
   "--text-file": "textFile", "--origin": "origin", "--actor": "actor", "--ack": "ack", "--wait": "wait", "--sender": "sender",
   "--repo": "repo",
+  // t18896 notify-release
+  "--source-pr": "sourcePr", "--event": "event", "--tag": "tag", "--receipt": "receipt",
+  "--executor-state": "executorState", "--recovery": "recovery", "--owner-session": "ownerSession", "--marker": "marker",
 };
 
 function parseWait(value) {
@@ -80,6 +88,8 @@ const COMMANDS = {
   inbox: inboxCommand,
   outbox: outboxCommand,
   prune: pruneCommand,
+  "watch-release": watchReleaseCommand,
+  "notify-release": notifyReleaseCommand,
 };
 
 export function main(argv = process.argv.slice(2), { env = process.env, out = process.stdout, err = process.stderr, root = store.busRoot(env) } = {}) {
