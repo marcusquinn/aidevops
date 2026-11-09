@@ -114,7 +114,7 @@ _full_loop_release_prepare_control_worktree() {
 	return 0
 }
 
-if [[ "${1:-}" != "sources" && -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
+if [[ "${1:-}" != "sources" && "${1:-}" != "reap-stale" && -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
 	printf 'Cannot prepare a linked release control worktree.\n' >&2
 	exit 1
 fi
@@ -351,6 +351,7 @@ Usage:
   aidevops release [patch|minor|major] SOURCE_PR [incremental|full] [--expected-sources PR[,PR...]]
   aidevops release status SOURCE_PR
   aidevops release sources SOURCE_PR
+  aidevops release reap-stale [--limit N]
   aidevops release reconcile SOURCE_PR
   aidevops release recover-reservation SOURCE_PR
   aidevops release refresh-aggregate STALE_AGGREGATION_PR
@@ -784,6 +785,8 @@ _full_loop_release_start_new() {
 	local existing_state_rc=0
 	local persisted_expected=""
 	local preparing_recovery_rc=0
+	# GH#37339: reclaim leaked release checkouts before taking a new lane.
+	_full_loop_release_reap_with_lane "$repo" "${AIDEVOPS_RELEASE_REAP_LIMIT:-10}" || true
 	# Before history recovery or any lane write, prove this host can produce a
 	# GitHub-verifiable signature. Existing-tag reconciliation does not use this path.
 	release_signing_preflight "$REPO_ROOT" || return 1
@@ -881,7 +884,38 @@ _full_loop_release_cmd_authorization_gap() {
 	return $?
 }
 
+_full_loop_release_cmd_reap_stale() {
+	local limit="50"
+	local reap_repo=""
+	local -a reap_args=("${@:2}")
+	local idx=0
+	while [[ "$idx" -lt "${#reap_args[@]}" ]]; do
+		case "${reap_args[$idx]}" in
+		--limit)
+			limit="${reap_args[$((idx + 1))]:-}"
+			idx=$((idx + 2))
+			;;
+		*)
+			_full_loop_release_usage >&2
+			return 1
+			;;
+		esac
+	done
+	[[ "$limit" =~ ^[0-9]+$ ]] || {
+		_full_loop_release_usage >&2
+		return 1
+	}
+	_full_loop_release_bind_repo_context || return 1
+	reap_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
+	_full_loop_release_reap_with_lane "$reap_repo" "$limit"
+	return $?
+}
+
 main() {
+	if [[ "${1:-}" == "reap-stale" ]]; then
+		_full_loop_release_cmd_reap_stale "$@"
+		return $?
+	fi
 	local release_type="${1:-patch}"
 	local source_pr="${2:-}"
 	local deployment_scope="incremental"
