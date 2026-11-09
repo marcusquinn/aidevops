@@ -89,20 +89,33 @@ one manual login); see `tools/browser/browser-automation.md`.
    example `PORTLAND_OR_US` and `PORTLAND_ME_US`). Use the lower-case,
    hyphenated form for the SSH alias: `hostinger-portland-or-us`.
 
+   The agent stores these itself, since it read them from hPanel and they are not
+   secret (`secret set` reads piped stdin):
+
    ```bash
-   aidevops secret set HOSTINGER_<CLIENT>_SSH_HOST
-   aidevops secret set HOSTINGER_<CLIENT>_SSH_PORT
-   aidevops secret set HOSTINGER_<CLIENT>_SSH_USER
-   aidevops secret set HOSTINGER_<CLIENT>_SSH_PASSWORD   # only when key auth is impossible
+   printf '%s' '<ip>'   | aidevops secret set HOSTINGER_<CLIENT>_SSH_HOST
+   printf '%s' '<port>' | aidevops secret set HOSTINGER_<CLIENT>_SSH_PORT
+   printf '%s' '<user>' | aidevops secret set HOSTINGER_<CLIENT>_SSH_USER
+   aidevops secret check HOSTINGER_<CLIENT>_SSH_HOST   # exit status only
    ```
+
+   Real secrets (an SSH password, only when key auth is impossible; client-made
+   tokens) are entered by the user at the hidden prompt:
+   `aidevops secret set HOSTINGER_<CLIENT>_SSH_PASSWORD`.
 
    Per WordPress site, once it exists, a dedicated user with an Application
    Password: `<CLIENT>_<SITE>_WP_USER` and `<CLIENT>_<SITE>_WP_APP_PASSWORD`
    (`tools/wordpress/fluent-mcp.md`). Optional: `HOSTINGER_<CLIENT>_API_TOKEN`
    (client-created) and `CLOUDFLARE_<CLIENT>_API_TOKEN` (limited to the client's
    zone). No database secrets: WP-CLI over SSH reads `wp-config.php`.
-5. **Verify.** Run `ssh -o BatchMode=yes -p <port> <user>@<ip> 'whoami; hostname;
-   ls ~/domains'`, then add the `~/.ssh/config` alias for the account. One SSH login
-   covers every site on that hosting account; each site lives in
+5. **SSH alias and verify.** Add a `Host hostinger-<place>-<region>-<country>`
+   block (`HostName`, `Port`, `User`, `IdentityFile`, `IdentitiesOnly yes`) to
+   `~/.ssh/config.d/hostinger-clients`. The agent cannot read `~/.ssh/config`
+   (`secret-read-guard`), so it checks with `ssh -G <alias>`. If the alias does
+   not resolve, back up the config with `cp -p`, then prepend only
+   `Include ~/.ssh/config.d/hostinger-clients`; a line placed after a `Host`
+   block would be scoped to that block. Then run
+   `ssh -o BatchMode=yes <alias> 'whoami; ls ~/domains; command -v wp'`. One SSH
+   login covers every site on that hosting account; each site lives in
    `~/domains/<domain>/public_html`.
 6. **Exit** the client's account in hPanel and delete the browse session.
