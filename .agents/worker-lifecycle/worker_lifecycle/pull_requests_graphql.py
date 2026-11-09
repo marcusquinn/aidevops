@@ -93,9 +93,11 @@ def _repository_pull_requests(slug: str) -> tuple[list, str | None]:
         prs.extend(_pull_request(node) for node in nodes)
         if page_info.get("hasNextPage") is False:
             return prs, parent
-        cursor = page_info.get("endCursor")
-        if page_info.get("hasNextPage") is not True or not isinstance(cursor, str) or not cursor:
+        next_cursor = page_info.get("endCursor")
+        if (page_info.get("hasNextPage") is not True or not isinstance(next_cursor, str)
+                or not next_cursor or next_cursor == cursor):
             raise ValueError("invalid-open-pr-response")
+        cursor = next_cursor
     raise ValueError("open-pr-page-limit")
 
 
