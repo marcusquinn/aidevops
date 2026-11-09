@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.139] - 2026-11-09
+
+### Fixed
+
+- explain and repair renamed TODO task/issue mappings
+
 ## [3.39.138] - 2026-11-09
 
 ### Added
