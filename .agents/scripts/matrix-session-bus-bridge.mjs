@@ -5,7 +5,7 @@ export function parseBusCommand(text, prefix = "!ai") {
   if (typeof text !== "string") return null;
   const match = /^!(sessions|ask|send|bind|unbind|launch)(?:\s+([\s\S]*))?$/u.exec(text.trim());
   if (!match) {
-    if (text.startsWith(`${prefix} `)) return { type: "ai", text: text.slice(prefix.length).trim() };
+    if (text.startsWith(prefix) && text.slice(prefix.length).trim()) return { type: "ai", text: text.slice(prefix.length).trim() };
     return null;
   }
   const [, type, rest = ""] = match;
