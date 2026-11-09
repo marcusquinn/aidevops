@@ -610,6 +610,17 @@ _apply_health_recovery_lane() {
 	return 0
 }
 
+# Print the slug of the second ordered entry when it qualifies for recovery.
+_health_recovery_slug() {
+	local entries="$1" runner="$2" entry slug
+	entry=$(printf '%s\n' "$entries" | awk 'NR == 2 { print; exit }')
+	slug="${entry%%|*}"
+	if _health_repo_needs_recovery "$slug" "$runner" >/dev/null; then
+		printf '%s\n' "$slug"
+	fi
+	return 0
+}
+
 _refresh_health_repo_bounded() {
 	local slug="$1" cache repo_timeout result=0 stage="unknown" started
 	cache=$(_health_schedule_cache_file "$slug" "$_HEALTH_SCHEDULE_RUNNER")
@@ -801,10 +812,7 @@ _update_health_issues_with_session_cache() {
 	repo_entries=$(_health_routine_repo_entries "$routine_runner_user") || return 0
 	[[ -n "$repo_entries" ]] || return 0
 	_HEALTH_SCHEDULE_RUNNER="$routine_runner_user"
-	local recovery_entry="" recovery_path=""
-	recovery_entry=$(printf '%s\n' "$repo_entries" | awk 'NR == 2 { print; exit }')
-	IFS='|' read -r _HEALTH_RECOVERY_SLUG recovery_path <<<"$recovery_entry"
-	_health_repo_needs_recovery "${_HEALTH_RECOVERY_SLUG:-}" "$routine_runner_user" >/dev/null || _HEALTH_RECOVERY_SLUG=""
+	_HEALTH_RECOVERY_SLUG=$(_health_recovery_slug "$repo_entries" "$routine_runner_user")
 
 	local refresh_start_epoch
 	refresh_start_epoch=$(date +%s)
