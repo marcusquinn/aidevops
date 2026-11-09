@@ -142,13 +142,27 @@ _dispatch_negative_pr_fingerprint() {
 	if snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) &&
 		jq -e '.complete == true and ((now - (.timestamp | fromdateiso8601)) >= 0)
 			and ((now - (.timestamp | fromdateiso8601)) < 900)' <<<"$snapshot" >/dev/null 2>&1; then
-		jq -er --argjson pr "$pr" '
-			.items[] | select(.number == $pr and .isDraft == true) |
-			select((.updatedAt | type) == "string" and (.headRefOid | type) == "string") |
-			select((.updatedAt | length) > 0 and (.headRefOid | length) > 0) |
-			[.updatedAt, .headRefOid] | join("_")
-		' <<<"$snapshot" 2>/dev/null
-		return $?
+		# Production snapshot items may omit isDraft: use the exact-PR REST
+		# fingerprint then. Absent PRs and explicit non-drafts are rejected.
+		local draft_state=""
+		draft_state=$(jq -r --argjson pr "$pr" '
+			[.items[] | select(.number == $pr)] | first |
+			if . == null then "absent"
+			elif has("isDraft") and .isDraft != null then (.isDraft | tostring)
+			else "unknown" end
+		' <<<"$snapshot" 2>/dev/null) || draft_state="$_DISPATCH_VALUE_UNKNOWN"
+		case "$draft_state" in
+		true)
+			jq -er --argjson pr "$pr" '
+				.items[] | select(.number == $pr) |
+				select((.updatedAt | type) == "string" and (.headRefOid | type) == "string") |
+				select((.updatedAt | length) > 0 and (.headRefOid | length) > 0) |
+				[.updatedAt, .headRefOid] | join("_")
+			' <<<"$snapshot" 2>/dev/null
+			return $?
+			;;
+		absent | false) return 1 ;;
+		esac
 	fi
 	_dispatch_negative_pr_rest_fingerprint "$repo" "$pr"
 	return $?
