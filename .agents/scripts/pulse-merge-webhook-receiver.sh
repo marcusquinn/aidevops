@@ -451,6 +451,10 @@ cmd_run() {
 	source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 	# shellcheck source=/dev/null
 	source "${SCRIPT_DIR}/pulse-wrapper-config.sh"
+	# Provides the worker-reserve policy and live REST quota snapshot used by
+	# review-page reads (pulse-merge-rest-state.sh).
+	# shellcheck source=/dev/null
+	source "${SCRIPT_DIR}/pulse-rate-limit-circuit-breaker.sh"
 	# shellcheck source=/dev/null
 	source "${SCRIPT_DIR}/pulse-repo-meta.sh"
 	# shellcheck source=/dev/null

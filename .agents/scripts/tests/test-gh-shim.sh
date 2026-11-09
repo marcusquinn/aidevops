@@ -331,6 +331,7 @@ cp "$REPO_DIR/.agents/scripts/gh-rest-pagination-lib.sh" "$TMP/scripts/gh-rest-p
 cp "$REPO_DIR/.agents/scripts/gh-quota-debug-filter.py" "$TMP/scripts/gh-quota-debug-filter.py"
 cp "$REPO_DIR/.agents/scripts/gh_quota_debug_response.py" "$TMP/scripts/gh_quota_debug_response.py"
 cp "$REPO_DIR/.agents/scripts/gh_quota_debug_cache.py" "$TMP/scripts/gh_quota_debug_cache.py"
+cp "$REPO_DIR/.agents/scripts/gh_quota_debug_request.py" "$TMP/scripts/gh_quota_debug_request.py"
 cp "$REPO_DIR/.agents/scripts/gh_native_response.py" "$TMP/scripts/gh_native_response.py"
 cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-fallback.sh" "$TMP/scripts/shared-gh-wrappers-rest-fallback.sh"
 cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-read-semantics.sh" "$TMP/scripts/shared-gh-wrappers-rest-read-semantics.sh"

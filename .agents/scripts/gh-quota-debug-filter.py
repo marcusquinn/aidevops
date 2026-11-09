@@ -5,13 +5,11 @@
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from gh_quota_debug_cache import (
-    CACHE_HOST as CACHE_HOST,
     CACHE_MIN_AGE_SECONDS as CACHE_MIN_AGE_SECONDS,
     CACHE_RESET_GRACE_SECONDS as CACHE_RESET_GRACE_SECONDS,
     CACHE_TTL_GRACE_SECONDS as CACHE_TTL_GRACE_SECONDS,
@@ -25,6 +23,12 @@ from gh_quota_debug_cache import (
     _go_duration_seconds as _go_duration_seconds,
     _request_header as _request_header,
     _request_time as _request_time,
+)
+from gh_quota_debug_request import (
+    UNKNOWN_METADATA,
+    _endpoint_class as _endpoint_class,
+    _endpoint_family as _endpoint_family,
+    _request_metadata,
 )
 from gh_quota_debug_response import REQUEST_END, response_metadata
 
@@ -97,55 +101,6 @@ def _write_sanitized_stderr() -> None:
     # payloads. Until native diagnostics have a strict allowlist, suppress every
     # line instead of forwarding unframed content.
     return
-
-
-UNKNOWN_METADATA = ("unknown", "unknown")
-REQUEST_LINE = re.compile(
-    rb"> (GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) (/[^\s]*) HTTP/[0-9.]+\r?\n?"
-)
-ROOT_CLASSES = {
-    b"rate_limit": "rate-limit",
-    b"graphql": "graphql",
-    b"search": "search",
-    b"user": "users",
-    b"users": "users",
-    b"orgs": "orgs",
-    b"notifications": "notifications",
-    b"installation": "installation",
-}
-REPO_CLASSES = {
-    b"issues": "repos-issues",
-    b"pulls": "repos-pulls",
-    b"actions": "repos-actions",
-    b"commits": "repos-commits",
-    b"git": "repos-git",
-    b"contents": "repos-contents",
-    b"releases": "repos-releases",
-    b"check-runs": "repos-checks",
-    b"check-suites": "repos-checks",
-    b"statuses": "repos-statuses",
-}
-
-
-def _endpoint_class(target: bytes) -> str:
-    """Map a request target to a static label; the target itself is discarded."""
-    parts = target.split(b"?", 1)[0].split(b"#", 1)[0].strip(b"/").split(b"/")
-    if parts[0] != b"repos":
-        return ROOT_CLASSES.get(parts[0], "other")
-    if len(parts) <= 3:
-        return "repos-other"
-    return REPO_CLASSES.get(parts[3], "repos-other")
-
-
-def _request_metadata(frame: List[bytes]) -> Tuple[str, str]:
-    """Keep only allowlisted labels; never retain a path or request argument."""
-    requests = [line for line in frame if line.startswith(b"> ") and b" HTTP/" in line]
-    starts = sum(bool(REQUEST_START.match(line)) for line in frame)
-    # Interleaved starts/completions cannot prove response ownership.
-    match = REQUEST_LINE.fullmatch(requests[0]) if starts == 1 and len(requests) == 1 else None
-    if match is None:
-        return UNKNOWN_METADATA
-    return match.group(1).decode("ascii"), _endpoint_class(match.group(2))
 
 
 def _transport_frames(lines: List[bytes], request_ranges: List[Tuple[int, int]]) -> list:

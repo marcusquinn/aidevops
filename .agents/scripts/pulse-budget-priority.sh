@@ -220,6 +220,9 @@ _pulse_graphql_budget_defers_stage() {
 _pulse_rest_core_budget_defers_priority() {
 	local priority="$1"
 	[[ "$priority" != "critical" ]] || return 1
+	if [[ "$priority" == "deferrable" ]] && declare -F gh_budget_worker_reserve_allows >/dev/null 2>&1; then
+		gh_budget_worker_reserve_allows || return 0
+	fi
 
 	local rest_mode="${AIDEVOPS_PULSE_REST_CORE_BUDGET_CLASS:-$_PULSE_BUDGET_MODE_UNKNOWN}"
 	if declare -F _cb_rest_core_priority_decision_allows >/dev/null 2>&1; then

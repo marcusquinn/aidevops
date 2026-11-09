@@ -280,6 +280,12 @@ _pmr_graphql_budget_allows_run() {
 # succeeds; unlike a known floor, it is logged as an availability/evidence fault.
 _pmr_rest_core_progress_allows_run() {
 	local progress_rc=0
+	# Merge housekeeping is optional; dispatch and active workers retain their
+	# existing critical/progress admission paths below this independent reserve.
+	if declare -F gh_budget_worker_reserve_allows >/dev/null 2>&1 && ! gh_budget_worker_reserve_allows; then
+		_pmr_log WARN "Worker REST reserve reached; deferring optional merge routine"
+		return 1
+	fi
 	if declare -F pulse_rest_core_priority_allows_next >/dev/null 2>&1; then
 		pulse_rest_core_priority_allows_next progress "merge_routine_start" || progress_rc=$?
 	elif declare -F pulse_rest_core_priority_allows >/dev/null 2>&1; then
