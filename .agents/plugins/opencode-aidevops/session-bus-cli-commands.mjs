@@ -2,58 +2,12 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 // t18886/GH#37149: `aidevops sessions` subcommands. session-bus-cli.mjs
-// parses arguments and dispatches here.
-
-import { readFileSync } from "node:fs";
+// parses arguments and dispatches here; senders and message text come from
+// session-bus-cli-input.mjs.
 
 import * as store from "./session-bus-store.mjs";
 import { chatTrust } from "./session-bus-chat-trust.mjs";
-
-function readText(options, words) {
-  if (options.textFile) return readFileSync(options.textFile, "utf8");
-  if (words.length === 1 && words[0] === "-") return readFileSync(0, "utf8");
-  return words.join(" ");
-}
-
-export const envSessionID = (env) => env.AIDEVOPS_OPENCODE_SESSION_ID || env.OPENCODE_SESSION_ID || "";
-
-function chatSender(origin) {
-  const chat = store.parseChatOrigin(origin);
-  if (!chat) throw new Error("--origin must look like chat:<app>:<channel>");
-  return { session_id: "", handle: `chat:${chat.app}`, repo: "", branch: "", origin };
-}
-
-// Inside an OpenCode bash tool the shell inherits the session ID, so a CLI
-// send is attributed to that session; elsewhere it comes from shell:<user>.
-function shellSender(root, env) {
-  const raw = envSessionID(env);
-  const sessionID = store.isSafeId(raw) ? raw : "";
-  const self = sessionID ? store.readPresence(root).find((record) => record.session_id === sessionID) : null;
-  const fallback = raw ? `session-${raw.slice(-6)}` : `shell:${env.USER || "user"}`;
-  return {
-    session_id: sessionID,
-    handle: self?.handle || fallback,
-    repo: self?.repo || "",
-    branch: self?.branch || "",
-    origin: "cli",
-  };
-}
-
-// t18905: a named sessionless sender, such as the pulse relay. The label is
-// attribution only (same-user shells are equally trusted); it also gives the
-// sender its own rate-limit key, cli-<label>.
-const SENDER_LABEL = /^[a-z0-9][a-z0-9-]{0,31}$/;
-
-function labelledSender(label) {
-  if (!SENDER_LABEL.test(String(label || ""))) throw new Error("--sender must be 1-32 lowercase letters, digits or dashes");
-  return { session_id: "", handle: label, repo: "", branch: "", origin: `cli:${label}` };
-}
-
-function senderFrom(root, options, env) {
-  if (options.origin && options.sender) throw new Error("use --origin or --sender, not both");
-  if (options.origin) return chatSender(options.origin);
-  return options.sender ? labelledSender(options.sender) : shellSender(root, env);
-}
+import { cliSender, envSessionID, readText, shellSender } from "./session-bus-cli-input.mjs";
 
 export function print(out, value, json) {
   out.write(`${json ? JSON.stringify(value, null, 2) : value}\n`);
@@ -125,10 +79,7 @@ export function sendCommand(context, type) {
   const { root, options, out, env } = context;
   const [, target, ...words] = options.positional;
   if (options.wait && type !== "ask") throw new Error("--wait is only valid with ask");
-  // A waiting sender has no session, so the reply lands in outbox/<app>.
-  const from = options.wait && !options.origin && !options.sender
-    ? { session_id: "", handle: `shell:${env.USER || "user"}`, repo: "", branch: "", origin: "cli" }
-    : senderFrom(root, options, env);
+  const from = cliSender(root, options, env);
   const resolved = messageableTarget(root, target, from);
   const text = store.validBody(readText(options, words));
   if (options.origin) from.trust = chatTrust(options.origin, options.actor, text, env);

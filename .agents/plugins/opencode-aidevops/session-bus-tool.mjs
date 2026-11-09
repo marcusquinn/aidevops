@@ -7,6 +7,7 @@
 
 import * as store from "./session-bus-store.mjs";
 import { setChatWake } from "./session-bus-chat-trust.mjs";
+import { awaitReply } from "./session-bus-replies.mjs";
 
 const MAX_WAIT_SECONDS = 120;
 
@@ -34,18 +35,26 @@ function resolveOrThrow(root, to, selfID) {
   return resolved;
 }
 
+const OFFLINE_NOTE = "That session is not running. The message is kept for 7 days and delivered when the session resumes in any OpenCode process.";
+
+function workerNote(type, record) {
+  const answer = type === "ask" ? " It answers from its shell; the reply arrives in this session." : "";
+  return `${record.handle} is a pulse worker (${record.status}); it sees the message at its next tool result and is never woken.${answer}`;
+}
+
+/** An idle interactive session: info waits for its next turn; an ask wakes it unless a chat app drives it. */
+function idleNote(type, record) {
+  const state = `${record.handle} is ${record.status};`;
+  if (type !== "ask") return `${state} info messages wait for its next turn.`;
+  if (record.interface) return `${state} ${store.viaLabel(record)}, so the question does not wake it. This session is driven from ${record.interface}; it answers on its next chat turn.`;
+  return `${state} the question wakes it (at most ${store.LIMITS.wakesPerHour} wakes per hour). Its reply arrives in this session.`;
+}
+
 function deliveryNote(type, record) {
-  if (!record) return "That session is not running. The message is kept for 7 days and delivered when the session resumes in any OpenCode process.";
-  if (store.isWorker(record)) {
-    const answer = type === "ask" ? " It answers from its shell; the reply arrives in this session." : "";
-    return `${record.handle} is a pulse worker (${record.status}); it sees the message at its next tool result and is never woken.${answer}`;
-  }
-  if (record.status === "busy" || record.status === "permission") {
-    return `${record.handle} is ${record.status}; it sees the message at its next tool result.`;
-  }
-  if (type === "ask" && record.interface) return `${record.handle} is ${record.status}; ${store.viaLabel(record)}, so the question does not wake it. This session is driven from ${record.interface}; it answers on its next chat turn.`;
-  if (type === "ask") return `${record.handle} is ${record.status}; the question wakes it (at most ${store.LIMITS.wakesPerHour} wakes per hour). Its reply arrives in this session.`;
-  return `${record.handle} is ${record.status}; info messages wait for its next turn.`;
+  if (!record) return OFFLINE_NOTE;
+  if (store.isWorker(record)) return workerNote(type, record);
+  if (record.status === "busy" || record.status === "permission") return `${record.handle} is ${record.status}; it sees the message at its next tool result.`;
+  return idleNote(type, record);
 }
 
 function listAction(root, sender) {
@@ -78,45 +87,7 @@ function showAction(root, args) {
 }
 
 // t18897: `ask` with `wait_seconds` blocks this tool call for the matching
-// reply. The reply is reserved in bus.awaitingReplies so the root's own busy
-// and idle delivery skip it, and is claimed by rename like any delivery.
-function sleep(bus, ms, signal) {
-  return new Promise((resolve) => {
-    const finish = () => {
-      bus.timers.clearTimeout(timer);
-      signal?.removeEventListener?.("abort", finish);
-      resolve();
-    };
-    const timer = bus.timers.setTimeout(finish, ms);
-    signal?.addEventListener?.("abort", finish, { once: true });
-  });
-}
-
-function claimReply(root, sessionID, askID) {
-  const entry = store.pendingMessages(root, sessionID)
-    .find(({ message }) => message.type === "reply" && message.re === askID);
-  return entry && store.claimMessage(root, sessionID, entry) ? entry.message : null;
-}
-
-async function waitForReply(bus, sender, askID, seconds, signal) {
-  const deadline = bus.now() + seconds * 1000;
-  while (!signal?.aborted) {
-    const reply = claimReply(bus.root, sender.sessionID, askID);
-    if (reply) return { reply };
-    if (bus.now() >= deadline) return { timedOut: true };
-    await sleep(bus, Math.min(bus.waitPollMs, Math.max(1, deadline - bus.now())), signal);
-  }
-  return { aborted: true };
-}
-
-async function awaitReply(bus, sender, sent, seconds, signal) {
-  const { id } = sent.message;
-  const result = await waitForReply(bus, sender, id, seconds, signal);
-  if (result.reply) return `${sent.text}\n\nReply received:\n${store.frameMessage(result.reply)}`;
-  if (result.aborted) return `${sent.text}\n\nWait cancelled; ask ID ${id}. The reply will follow normal delivery.`;
-  return `${sent.text}\n\nNo reply within ${seconds}s; ask ID ${id}. The reply will follow normal delivery to this session.`;
-}
-
+// reply (reservation and wait loop: session-bus-replies.mjs).
 async function askAction(bus, sender, args, context) {
   if (!args.wait_seconds) return sendAction(bus.root, sender, args, "ask").text;
   bus.assertWaitSlot(sender.sessionID);

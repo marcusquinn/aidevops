@@ -20,6 +20,8 @@ import { sessionIDFrom } from "./session-turn-state.mjs";
 import { ArrivalToasts, warn } from "./session-bus-client.mjs";
 import { SessionTree } from "./session-bus-identity.mjs";
 import { GitInfoCache, PresencePublisher, workerContext } from "./session-bus-presence.mjs";
+import { assertReplySlot, reserveReplySlot, withoutReserved } from "./session-bus-replies.mjs";
+import { resolveSender, senderIdentity } from "./session-bus-sender.mjs";
 import {
   applyEvent,
   isSessionInfoEvent,
@@ -46,7 +48,6 @@ const POLL_MS = 5000;
 const SWEEP_DELAY_MS = 3000;
 const MAX_TRACKED = 64;
 const BUS_TOOL = "aidevops_sessions";
-const MAX_WAITS = 2;
 
 class SessionBus {
   constructor({ client, directory = "", root = store.busRoot(), kind = "tui", now = () => Date.now(), timers = globalThis, git, remote = null, env = process.env } = {}) {
@@ -238,22 +239,17 @@ class SessionBus {
     return candidates.filter((entry) => store.claimMessage(this.root, sessionID, entry));
   }
 
-  /** Drop replies a waiting `ask` call has reserved (t18897); the waiter claims them. */
+  // t18897 reply reservations for `ask` with `wait_seconds`: session-bus-replies.mjs.
   unreserved(entries) {
-    if (this.awaitingReplies.size === 0) return entries;
-    return entries.filter((entry) => !(entry.message.re && this.awaitingReplies.has(entry.message.re)));
+    return withoutReserved(this.awaitingReplies, entries);
   }
 
-  /** Reserve the reply to `askID` for a waiting tool call. At most 2 waits per root session. */
   assertWaitSlot(sessionID) {
-    const active = [...this.awaitingReplies.values()].filter((owner) => owner === sessionID).length;
-    if (active >= MAX_WAITS) throw new Error(`at most ${MAX_WAITS} concurrent waits per session; wait for one to finish`);
+    assertReplySlot(this.awaitingReplies, sessionID);
   }
 
   reserveReply(sessionID, askID) {
-    this.assertWaitSlot(sessionID);
-    this.awaitingReplies.set(askID, sessionID);
-    return () => this.awaitingReplies.delete(askID);
+    return reserveReplySlot(this.awaitingReplies, sessionID, askID);
   }
 
   async onIdle(sessionID) {
@@ -287,31 +283,13 @@ class SessionBus {
   // Tool support
   // -------------------------------------------------------------------------
 
+  // Sender identity (session-bus-sender.mjs), never from model-supplied arguments.
   fromFor(sessionID, via = null) {
-    const record = this.record(this.state(sessionID));
-    return {
-      session_id: sessionID,
-      handle: record.handle,
-      repo: record.repo,
-      branch: record.branch,
-      // #aidevops:trust-boundary t18898: a remote-hosted process sends as a chat origin, which never wakes.
-      origin: this.remote ? `chat:${this.remote.interface}:${this.remote.channel}` : "opencode",
-      ...(via ? { via } : {}),
-    };
+    return senderIdentity(this, sessionID, via);
   }
 
-  /** Sender identity from ToolContext, never from model-supplied arguments. */
-  async sender(context) {
-    const sessionID = await this.tree.rootOf(context?.sessionID);
-    if (!sessionID) throw new Error("aidevops_sessions could not resolve this session's root session");
-    const state = this.state(sessionID);
-    if (!state.lastWriteMs) this.writePresence(state);
-    // A subagent acts as its root; the recipient sees the subagent as advisory `via`.
-    const callerID = context?.sessionID;
-    const via = callerID && callerID !== sessionID && store.isSafeId(callerID)
-      ? { session_id: callerID, agent: String(context.agent || "").slice(0, 80) }
-      : null;
-    return { sessionID, from: this.fromFor(sessionID, via), hops: state.turnHops, record: this.record(state) };
+  sender(context) {
+    return resolveSender(this, context);
   }
 }
 
