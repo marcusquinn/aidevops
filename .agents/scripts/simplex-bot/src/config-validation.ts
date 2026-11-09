@@ -30,6 +30,7 @@ export const VALID_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "responseTimeout",
   "dataDir",
   "leakDetection",
+  "sessionBus",
 ]);
 
 /** Valid log levels */
@@ -86,4 +87,8 @@ export function validateParsedConfig(parsed: Record<string, unknown>): void {
   validateLogLevel(parsed);
   validatePort(parsed);
   validateNumericFields(parsed);
+  if (parsed.sessionBus !== undefined && (
+    !parsed.sessionBus || typeof parsed.sessionBus !== "object" || Array.isArray(parsed.sessionBus) ||
+    typeof (parsed.sessionBus as Record<string, unknown>).enabled !== "boolean"
+  )) removeInvalid(parsed, "sessionBus", "session bus disabled");
 }
