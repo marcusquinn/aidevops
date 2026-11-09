@@ -46,10 +46,11 @@ def bounded_period_payload(collection, start, end, semantics="rolling-clock-wind
     status = collection.get("status", "unavailable")
     reason = collection.get("reason", "unknown")
     since = observed_since(collection)
-    if status != "unavailable" and since is not None and since >= end:
-        status, reason = "unavailable", "before-first-sample"
-    elif status != "unavailable" and since is None and observed_days == 0:
-        status, reason = "unavailable", "no-observations-in-period"
+    if status != "unavailable":
+        if since is not None and since >= end:
+            status, reason = "unavailable", "before-first-sample"
+        elif since is None and observed_days == 0:
+            status, reason = "unavailable", "no-observations-in-period"
     hours = None if status == "unavailable" else round(interval_seconds(collection.get("intervals", []), start, end) / 3600, 1)
     return {
         "hours": hours,
@@ -176,14 +177,15 @@ def apply_short_history(periods, history, now, skipped):
         permission_free_proxy = periods[name].get("source") == "macos-pmset-display-assertions"
         better_coverage = fallback["coverage_pct"] > live_coverage
         equal_higher_confidence = permission_free_proxy and fallback["coverage_pct"] >= live_coverage
-        if periods[name]["status"] == "unavailable" or better_coverage or equal_higher_confidence:
-            if periods[name]["status"] == "unavailable":
-                reason = "live-source-unavailable"
-            elif equal_higher_confidence and not better_coverage:
-                reason = "higher-confidence-observed-history"
-            else:
-                reason = "richer-calendar-coverage"
-            periods[name] = dict(fallback, reason=reason)
+        if periods[name]["status"] == "unavailable":
+            reason = "live-source-unavailable"
+        elif better_coverage:
+            reason = "richer-calendar-coverage"
+        elif equal_higher_confidence:
+            reason = "higher-confidence-observed-history"
+        else:
+            continue
+        periods[name] = dict(fallback, reason=reason)
 
 
 def estimated_year(periods, history, now, skipped):
