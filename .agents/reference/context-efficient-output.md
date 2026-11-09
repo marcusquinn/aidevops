@@ -104,6 +104,14 @@ terminal-only, limited to 500 lines per call, and revalidates session ownership;
 callers cannot use a bare output ID to bypass the operation generation.
 `output_offset` is 1-based; zero is rejected.
 
+Read the output slice that proves a claim before writing that claim into any
+durable record (ledger, work log, commit message, PR or issue body). A passing
+exit code or the first lines of output do not necessarily prove a specific
+assertion; a first line that contains the exact match is valid evidence.
+Retrieval depends on the in-memory generation, which can expire on reload or
+restart; if a claim's evidence was not read before expiry, record it as
+unconfirmed and rerun the read-only check rather than restating it.
+
 Cancellation is restricted to the runtime session that started the operation
 and signals only the retained detached process group. The implementation is an
 OpenCode process-lifetime adapter, not a durable scheduler: restarting or
