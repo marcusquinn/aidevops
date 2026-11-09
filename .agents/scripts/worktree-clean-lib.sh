@@ -768,6 +768,16 @@ _clean_prepare_git_branch_caches() {
 	return 0
 }
 
+# Refresh only the remote-existence cache after a prune fetch. The pushed-branch
+# cache keeps its pre-fetch evidence. Returns 1 when the refresh fails.
+_clean_refresh_remote_branch_cache() {
+	[[ "$_WT_CLEAN_REMOTE_BRANCH_CACHE_READY" == "true" ]] || return 0
+	if ! _WT_CLEAN_REMOTE_BRANCHES=$(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/ 2>/dev/null); then
+		return 1
+	fi
+	return 0
+}
+
 _clean_remote_default_ref() {
 	local default_br="$1"
 	local remote_ref=""
@@ -2091,6 +2101,9 @@ cmd_clean() {
 	# Prune all remotes, not just origin (GH#3797)
 	local remote_state_unknown
 	remote_state_unknown=$(_clean_fetch_remotes)
+	if ! _clean_refresh_remote_branch_cache; then
+		remote_state_unknown=true
+	fi
 
 	# Build PR branch lists for squash-merge detection and open-PR safety check.
 	# NOTE: bash 3.2 (macOS default) lacks declare -A — do NOT use associative arrays.
