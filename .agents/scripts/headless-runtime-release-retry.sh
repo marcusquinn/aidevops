@@ -184,7 +184,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	# shellcheck source=headless-runtime-failure.sh
 	source "${_hrrr_self_dir}/headless-runtime-failure.sh"
 	case "${1:-}" in
-	drain) _hrrr_drain ;;
+	drain)
+		if ! declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
+			printf 'Cannot drain claim releases: repo-state guard unavailable\n' >&2
+			exit 1
+		fi
+		_hrrr_drain
+		;;
 	*)
 		printf 'Usage: %s drain\n' "${0##*/}" >&2
 		exit 2
