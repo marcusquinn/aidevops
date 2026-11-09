@@ -1300,6 +1300,26 @@ _dispatch_priority_product_outcomes() {
 	return $?
 }
 
+# GH#37478: a held product slot waits only for product work this round can
+# still assess, i.e. a fresh (non-retry) product candidate without an outcome.
+# Blocked or skipped rows (ineligible outcomes) and recent unlaunched retries,
+# which no reserved pool attempts, never hold it; the caller keeps holding for
+# unknown outcomes and incomplete discovery. Fails closed (pending) on errors.
+# Args: candidates, accumulated outcomes, retry-key file
+# Returns: 0 when a fresh unassessed product candidate remains, 1 otherwise
+_dispatch_priority_product_pending() {
+	local candidates="$1" outcomes="$2" retry_keys="$3" phase="" rows="" rc=0
+	for phase in urgent "$_DISPATCH_PRIORITY_PRODUCT"; do
+		rows=$(_dispatch_priority_phase_candidates "$candidates" "$outcomes" "$phase" "$retry_keys") || return 0
+		[[ -n "$rows" ]] || continue
+		rc=0
+		jq -se --arg product "$_DISPATCH_PRIORITY_PRODUCT" 'any(.[]; .repo_priority == $product)' \
+			<<<"$rows" >/dev/null 2>&1 || rc=$?
+		((rc == 1)) || return 0
+	done
+	return 1
+}
+
 # Start disjoint reserved/unreserved pools together, sharing one ceremony cap.
 # Join before any borrowing: slow product probes cannot idle unreserved slots.
 # Args: candidates, accumulated outcomes, capacity, reserved, login, parallelism,
@@ -1362,7 +1382,7 @@ _dispatch_priority_loop() {
 		((held >= 0)) || held=0
 		if [[ "$phase" == pools ]]; then
 			if [[ "$complete" == true && "$product_unknown" -eq 0 ]] &&
-				! jq -se --arg product "$_DISPATCH_PRIORITY_PRODUCT" 'any(.[]; .repo_priority == $product)' "$candidates" >/dev/null; then
+				! _dispatch_priority_product_pending "$candidates" "$outcomes" "$phase_dir/retry.keys"; then
 				held=0
 			fi
 			_dispatch_priority_reserved_pools "$candidates" "$outcomes" "$phase_budget" "$held" "$login" "$parallel" "$phase_dir" || {
@@ -1376,8 +1396,10 @@ _dispatch_priority_loop() {
 			rm -rf "$phase_dir"; return 1;
 		}
 		if [[ "$phase" == remainder && "$held" -gt 0 ]]; then
+			# GH#37478: release once the product phase ends with no verified
+			# launch and no unknown outcome, even while blocked/retry rows remain.
 			if [[ "$complete" == true && "$product_unknown" -eq 0 ]] &&
-				! jq -se --arg product "$_DISPATCH_PRIORITY_PRODUCT" 'any(.[]; .repo_priority == $product)' "$phase_dir/candidates" >/dev/null; then
+				! _dispatch_priority_product_pending "$candidates" "$outcomes" "$phase_dir/retry.keys"; then
 				held=0
 			fi
 			phase_budget=$((phase_budget - held))
