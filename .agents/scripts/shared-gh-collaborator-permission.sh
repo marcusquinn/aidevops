@@ -439,11 +439,23 @@ _gh_collaborator_permission_resolve_failure() {
 # Args: $1=repo_slug owner/repo
 # Returns: 0=admin/maintain/write, 1=read/triage/none/unknown/failure.
 #######################################
+_gh_active_credential_into() {
+	local destination="$1" auth_host="${2:-${GH_HOST:-github.com}}" resolved_auth_token=""
+	case "$auth_host" in
+	github.com|*.ghe.com) resolved_auth_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}" ;;
+	*) resolved_auth_token="${GH_ENTERPRISE_TOKEN:-${GITHUB_ENTERPRISE_TOKEN:-}}" ;;
+	esac
+	[[ -n "$resolved_auth_token" ]] || resolved_auth_token=$(gh auth token --hostname "$auth_host" 2>/dev/null) || resolved_auth_token=""
+	printf -v "$destination" '%s' "$resolved_auth_token"
+	[[ -n "$resolved_auth_token" ]] || return 1
+	return 0
+}
+
 _gh_current_user_allows_repo_write() {
 	local repo_slug="$1"
 	local current_user=""
 	local current_permission=""
-	local host="${GH_HOST:-github.com}" credential="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+	local host="${GH_HOST:-github.com}" credential=""
 	local fingerprint="" user_key="" permission_key=""
 
 	AIDEVOPS_GH_WRITE_PERMISSION_USER=""
@@ -460,7 +472,7 @@ _gh_current_user_allows_repo_write() {
 	# #aidevops:trust-boundary — key only by the actual credential, never login.
 	# Resolve keychain auth again on every guard and pin the exact same credential
 	# for both reads. Rotation therefore cannot reuse another token's authority.
-	[[ -n "$credential" ]] || credential=$(gh auth token --hostname "$host" 2>/dev/null) || credential=""
+	_gh_active_credential_into credential "$host" || true
 	if [[ -n "$credential" ]]; then
 		fingerprint=$(printf '%s\0%s' "$host" "$credential" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())') || fingerprint=""
 	fi
@@ -471,7 +483,7 @@ _gh_current_user_allows_repo_write() {
 	fi
 	if [[ -z "$current_user" ]]; then
 		if [[ -n "$credential" ]]; then
-			current_user=$(GH_HOST="$host" GH_TOKEN="$credential" gh api user --jq '.login // ""') || current_user=""
+			current_user=$(GH_HOST="$host" GH_TOKEN="$credential" GH_ENTERPRISE_TOKEN="$credential" gh api user --jq '.login // ""') || current_user=""
 		else
 			current_user=$(gh api user --jq '.login // ""') || current_user=""
 		fi
@@ -486,7 +498,7 @@ _gh_current_user_allows_repo_write() {
 	fi
 
 	[[ -z "$permission_key" ]] || current_permission="${!permission_key:-}"
-	if [[ -z "$current_permission" ]] && ! GH_HOST="$host" GH_TOKEN="$credential" _gh_collaborator_permission_lookup "$repo_slug" "$current_user" current_permission; then
+	if [[ -z "$current_permission" ]] && ! GH_HOST="$host" GH_TOKEN="$credential" GH_ENTERPRISE_TOKEN="$credential" _gh_collaborator_permission_lookup "$repo_slug" "$current_user" current_permission; then
 		AIDEVOPS_GH_WRITE_PERMISSION_LEVEL="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
 		AIDEVOPS_GH_WRITE_PERMISSION_REASON="permission-lookup-failed:${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE}"
 		export AIDEVOPS_GH_WRITE_PERMISSION_LEVEL AIDEVOPS_GH_WRITE_PERMISSION_REASON

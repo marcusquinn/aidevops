@@ -7,6 +7,9 @@
 [[ -n "${_PULSE_MERGE_REST_STATE_LOADED:-}" ]] && return 0
 _PULSE_MERGE_REST_STATE_LOADED=1
 
+# shellcheck source=./shared-gh-collaborator-permission.sh
+source "${BASH_SOURCE[0]%/*}/shared-gh-collaborator-permission.sh"
+
 _pmrs_gh_call() {
 	local operation="$1"
 	shift
@@ -293,11 +296,13 @@ _pmp_refresh_native_auto_review_into() {
 #######################################
 _pmrs_review_cache() {
 	local action="$1" repo_slug="$2" number="$3" head="$4" updated="$5" decision="${6:-}"
+	local cache_credential=""
 	# This cache is enrichment only. Final native-auto reconciliation deliberately
 	# uses uncached review pages. Missing metadata always forces a fresh read.
 	[[ -n "$head" && -n "$updated" ]] || return 1
+	_gh_active_credential_into cache_credential || return 1
 	PMRS_CACHE_REPO="$repo_slug" PMRS_CACHE_NUMBER="$number" PMRS_CACHE_HEAD="$head" \
-		PMRS_CACHE_UPDATED="$updated" PMRS_CACHE_DECISION="$decision" \
+		PMRS_CACHE_UPDATED="$updated" PMRS_CACHE_DECISION="$decision" PMRS_CACHE_TOKEN="$cache_credential" \
 		python3 - "$action" <<'PY'
 import hashlib
 import json
@@ -315,7 +320,7 @@ try:
     if not stat.S_ISDIR(mode.st_mode) or mode.st_uid != os.getuid() or mode.st_mode & 0o077:
         sys.exit(1)
     key = hashlib.sha256(json.dumps([os.environ.get("GH_HOST", "github.com"),
-        os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", ""),
+        os.environ["PMRS_CACHE_TOKEN"],
         *[os.environ["PMRS_CACHE_" + name] for name in ("REPO", "NUMBER", "HEAD", "UPDATED")]]).encode()).hexdigest()
     path = root / (key + ".json")
     allowed = "NONE CHANGES_REQUESTED OBSERVED_APPROVED".split()
@@ -348,6 +353,15 @@ _pmp_enrich_prs_with_review_decisions() {
 	local pr_rows=""
 	local _US=$'\x1f'
 	local index="" number="" review_decision="" head="" updated=""
+	local enrichment_credential=""
+	# Pin keychain and host-specific auth across cache get, fresh fetch and put.
+	# No credential identity means no cache; existing fresh-read behavior remains.
+	local GH_TOKEN="${GH_TOKEN:-}" GH_ENTERPRISE_TOKEN="${GH_ENTERPRISE_TOKEN:-}"
+	if _gh_active_credential_into enrichment_credential; then
+		GH_TOKEN="$enrichment_credential"
+		GH_ENTERPRISE_TOKEN="$enrichment_credential"
+		export GH_TOKEN GH_ENTERPRISE_TOKEN
+	fi
 
 	if [[ -z "$repo_slug" ]]; then
 		printf '%s' "$pr_json"

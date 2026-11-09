@@ -904,10 +904,10 @@ parser = str(Path(sys.argv[1]) / "gh-quota-debug-filter.py")
 _request_metadata = runpy.run_path(parser)["_request_metadata"]
 start = b"* Request at 2026-11-05 12:00:00 +0000\n"
 request = b"> GET /repos/secret/secret/actions/runs/123?secret=value HTTP/2.0\n"
-assert _request_metadata([start, request]) == ("GET", "repos-actions")
-assert _request_metadata([start, start, request]) == ("unknown", "unknown")
-assert _request_metadata([request]) == ("unknown", "unknown")
-assert _request_metadata([start, b"> SECRET /secret HTTP/1.1\n"]) == ("unknown", "unknown")
+assert _request_metadata([start, request]) == ("GET", "repos-actions", "repos/:o/:r/actions/:id")
+assert _request_metadata([start, start, request]) == ("unknown",) * 3
+assert _request_metadata([request]) == ("unknown",) * 3
+assert _request_metadata([start, b"> SECRET /secret HTTP/1.1\n"]) == ("unknown",) * 3
 end = b"* Request took 1ms\n"
 for stream in (
     start + request + start + request + end + start + request + end + end,
@@ -916,7 +916,7 @@ for stream in (
     Path(sys.argv[2]).write_bytes(stream)
     output = subprocess.check_output([sys.executable, parser, sys.argv[2]], text=True)
     rows = [line.split("\t") for line in output.splitlines() if line.startswith("frame\t")]
-    assert rows and all(row[10:] == ["unknown", "unknown"] for row in rows)
+    assert rows and all(row[10:] == ["unknown"] * 3 for row in rows)
 PY_REQUEST_AMBIGUITY
 assert_eq "ambiguous and unsupported request lines stay unknown" "0" "$?"
 
