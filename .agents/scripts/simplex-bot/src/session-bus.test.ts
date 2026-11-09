@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { busCommand, chatRef, relayOutbox, type BusRunner } from "./session-bus";
@@ -26,6 +26,7 @@ describe("session bus bridge", () => {
       if (args[0].endsWith("entity-helper.sh")) return result('[{"id":"ent_1"}]');
       path = args[args.indexOf("--text-file") + 1];
       expect(await readFile(path, "utf8")).toBe("--test $(touch bad)");
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
       return result("sent");
     };
     try {
