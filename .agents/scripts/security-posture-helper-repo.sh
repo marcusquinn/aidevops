@@ -235,6 +235,27 @@ check_workflow_security() {
 		add_finding "$SEVERITY_PASS" "$CAT_WORKFLOWS" "No critical issues"
 	fi
 
+	_check_pull_request_target_policy "$repo_path"
+
+	return 0
+}
+
+# GitHub blocks pull_request_target by default in public repositories from
+# 2026-12-02 unless an Actions event policy allows it. Warn (read-only) when
+# actions-event-policy-helper.sh reports uncovered workflows (exit 1 only;
+# API/permission errors stay silent so the posture check never false-alarms).
+_check_pull_request_target_policy() {
+	local repo_path="$1"
+	local slug="" helper="" rc=0
+	command -v gh >/dev/null 2>&1 || return 0
+	slug=$(resolve_slug "$repo_path") || return 0
+	helper="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/actions-event-policy-helper.sh"
+	[[ -x "$helper" ]] || return 0
+	"$helper" status --repo "$slug" >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		print_warn "pull_request_target workflows lack an Actions event policy (blocked by default from 2026-12-02; brownouts 2026-11-09/16). Fix: actions-event-policy-helper.sh apply --repo $slug"
+		add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "pull_request_target not allowed by Actions event policy (blocked from 2026-12-02)"
+	fi
 	return 0
 }
 

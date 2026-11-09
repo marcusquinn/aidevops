@@ -1684,10 +1684,34 @@ _sync_one_repo() {
 		return 1
 	fi
 
+	local _open_rc=0
 	_sync_open_pr \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
-		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing"
-	return $?
+		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" || _open_rc=$?
+	if [[ "$_open_rc" -eq 0 ]]; then
+		_warn_event_policy_uncovered "$_slug" "$_target_content"
+	fi
+	return "$_open_rc"
+}
+
+# Warn-only: a caller template that uses pull_request_target stops running in
+# public repositories from 2026-12-02 unless an Actions event policy allows it.
+# Never mutates settings; prints the apply command for the repository owner.
+_warn_event_policy_uncovered() {
+	local _slug="$1"
+	local _content="$2"
+	local _helper="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/actions-event-policy-helper.sh"
+	local _out="" _rc=0
+	grep -q 'pull_request_target' <<<"$_content" || return 0
+	[[ -x "$_helper" ]] || return 0
+	_out=$("$_helper" status --repo "$_slug" 2>/dev/null) || _rc=$?
+	# Not applicable (private/internal) is silent; a public repo whose caller is
+	# not yet on the default branch is reported as "no workflows" and still needs
+	# the policy once this PR merges.
+	if [[ "$_rc" -eq 1 ]] || { [[ "$_rc" -eq 0 ]] && grep -q 'no pull_request_target workflows' <<<"$_out"; }; then
+		_warn "$_slug: pull_request_target gates need an Actions event policy (blocked by default from 2026-12-02). After merge run: ${_helper} apply --repo ${_slug}"
+	fi
+	return 0
 }
 
 # ─── Main ───────────────────────────────────────────────────────────────────
