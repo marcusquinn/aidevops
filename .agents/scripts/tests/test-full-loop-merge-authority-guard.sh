@@ -118,6 +118,7 @@ load_functions() {
 	extract_function _compose_pr_title
 	extract_function _derive_pr_title_prefix
 	extract_readiness_function _full_loop_rbg_override_active
+	extract_readiness_function _full_loop_enforce_review_thread_gate
 	extract_readiness_function cmd_pre_merge_gate
 	extract_readiness_function _full_loop_report_external_authority_preflight
 	# shellcheck source=/dev/null
@@ -190,6 +191,14 @@ _merge_with_admission_retry() {
 _flm_gh_read() {
 	"$@"
 	return $?
+}
+
+# GH#27137 thread count is covered by the lib; fixtures set the stubbed count.
+FIXTURE_BOT_THREADS=0
+_FULL_LOOP_BLOCKER_REVIEW_BOT="review-bot"
+review_thread_gate_unresolved_bot_count() {
+	printf '%s\n' "$FIXTURE_BOT_THREADS"
+	return 0
 }
 
 # Actions-unavailable admin capability has separate coverage; these fixtures
@@ -840,6 +849,19 @@ test_pr_only_contract_enforcement() {
 test_pre_merge_authority_preflight() {
 	local output=""
 	local actual_rc=0
+
+	reset_fixture
+	FIXTURE_BOT_THREADS=2
+	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" -eq 1 ]] &&
+		grep -qF 'Merge blocked: 2 unresolved review-bot thread(s) (GH#27137)' <<<"$output"; then
+		print_result "unresolved review-bot threads block the pre-merge gate" 0
+	else
+		print_result "unresolved review-bot threads block the pre-merge gate" 1 \
+			"rc=$actual_rc output=$output"
+	fi
+	FIXTURE_BOT_THREADS=0
+	actual_rc=0
 
 	reset_fixture
 	set_pr_fixture external '[]' false '[{"number":42},{"number":43}]' 'Resolves #42\nResolves #43'
