@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.140] - 2026-11-09
+
+### Added
+
+- show Buzz plugin update availability (#37302)
+
+### Changed
+
+- Documentation: clarify Buzz agent mention requirements (#37304)
+
 ## [3.39.139] - 2026-11-09
 
 ### Fixed
