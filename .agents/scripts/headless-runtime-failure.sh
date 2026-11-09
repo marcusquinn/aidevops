@@ -1674,7 +1674,7 @@ _worker_secure_branch_commits() {
 }
 
 #######################################
-# Record deterministic launch capability failures in the local runner-health
+# Record evidenced startup and deterministic launch failures in the local runner-health
 # breaker before releasing the shared issue claim. This path is fail-open:
 # missing or broken health tooling must never strand the issue claim.
 # Args: $1=session key, $2=terminal reason

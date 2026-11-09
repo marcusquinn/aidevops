@@ -364,6 +364,25 @@ else
 fi
 _teardown_sandbox
 
+# A successful update check with unchanged deployment must not resume dispatch.
+_setup_sandbox
+mkdir -p "$HOME/.aidevops/agents/scripts"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
+chmod +x "$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
+printf '%s\n' 'unchanged' >"$HOME/.aidevops/agents/VERSION"
+for i in 1 2 3; do
+	_h record-outcome no_worker_process "owner/repo#$i" >/dev/null 2>&1
+done
+rc=0
+_h is-paused || rc=$?
+outcome=$(jq -r '.circuit_breaker.last_update_outcome' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$rc" -eq 0 && "$outcome" == "no_change" ]]; then
+	print_result "no-op update keeps breaker paused" "PASS"
+else
+	print_result "no-op update keeps breaker paused" "FAIL" "rc=$rc outcome=$outcome"
+fi
+_teardown_sandbox
+
 echo ""
 echo "Tests run: $TESTS_RUN, failed: $TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] && exit 0 || exit 1

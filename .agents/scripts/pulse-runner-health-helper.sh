@@ -6,7 +6,7 @@
 #
 # When N consecutive "zero-attempt" worker dispatches happen on this runner,
 # the breaker pauses dispatch on this machine and synchronously runs
-# `aidevops update`. If the update leaves the deployed agents aligned with
+# `aidevops update`. If the update changes the deployment and leaves it aligned with
 # the local repo, the next pause check auto-resumes the breaker before pulse
 # skips dispatch. If the update fails, the runner has a real local problem
 # (broken install, gh auth, MCP failures, network) — stay paused and post a
@@ -419,10 +419,8 @@ cmd_record_outcome() {
 
 #######################################
 # Trip the breaker: write `tripped` state, post an advisory, and
-# synchronously run `aidevops update`. If the update changed VERSION
-# (exit 0 from cmd_check) the t2579 restart hook fires and the next
-# cycle will pick up new code; we leave the state as `tripped` and let
-# the resume path (next cmd_record_outcome non-zero) reopen it.
+# synchronously run `aidevops update`. Only a changed deployment can be
+# considered for automatic recovery; a successful check may be a no-op.
 # Args: $1 = triggering issue (audit only)
 #       $2 = reason string
 #######################################
