@@ -537,7 +537,239 @@ image_libs_command() {
     return "$status"
 }
 
-# Main function
+# origin-block (GH#37295): is LiteSpeed's per-client bot protection refusing
+# this machine's address, or is the site down? Read-only and bounded: at most
+# two public requests and two host-side direct requests per check. No IP
+# addresses are printed. Details: services/hosting/hostinger.md
+# "One client address refused at the origin".
+readonly ORIGIN_DENY_MARKER="Access to this resource on the server is denied"
+readonly ORIGIN_CHALLENGE_MARKER="/.lsrecap/"
+readonly ORIGIN_PROBE_AGENT="aidevops-origin-block/1"
+readonly ORIGIN_STATIC_PATH="/robots.txt"
+readonly ORIGIN_UNAVAILABLE="unavailable"
+
+# Map a status code and body markers to one state word.
+_origin_state() {
+    local code="$1"
+    local denied="$2"
+    local challenged="$3"
+    if [[ "$denied" == "1" ]]; then
+        printf 'denied'
+    elif [[ "$challenged" == "1" ]]; then
+        printf 'challenge'
+    elif [[ "$code" == "408" ]]; then
+        printf 'timeout'
+    elif [[ "$code" =~ ^[23][0-9][0-9]$ ]]; then
+        printf 'ok'
+    elif [[ "$code" == "000" ]]; then
+        printf 'unreachable'
+    else
+        printf 'error'
+    fi
+    return 0
+}
+
+# One public request from this machine; prints "<code> <state>".
+_origin_probe_public() {
+    local url="$1"
+    local body_file=""
+    local code="000"
+    local denied=0
+    local challenged=0
+    body_file=$(mktemp) || return 1
+    code=$(curl -sS -m 20 -A "$ORIGIN_PROBE_AGENT" -o "$body_file" -w '%{http_code}' "$url" 2>/dev/null) || code="000"
+    grep -qF "$ORIGIN_DENY_MARKER" "$body_file" && denied=1
+    grep -qF "$ORIGIN_CHALLENGE_MARKER" "$body_file" && challenged=1
+    rm -f "$body_file"
+    printf '%s %s\n' "$code" "$(_origin_state "$code" "$denied" "$challenged")"
+    return 0
+}
+
+# Host-side direct requests to the origin, bypassing Cloudflare. The host's
+# egress IPv4 comes from Cloudflare's /cdn-cgi/trace (answered at the edge,
+# so it works during a block) and never leaves the host.
+_origin_block_remote_script() {
+    cat <<'REMOTE'
+host=""
+ip=""
+# The first argument is the host; the rest are paths.
+for path in "$@"; do
+    if [ -z "$host" ]; then
+        host="$path"
+        ip=$(curl -4 -s -m 10 "https://$host/cdn-cgi/trace" | sed -n 's/^ip=//p')
+        continue
+    fi
+    if [ -z "$ip" ]; then
+        printf 'noip 0 0\n'
+        continue
+    fi
+    f=$(mktemp)
+    code=$(curl -sk -m 20 -A aidevops-origin-block/1 -o "$f" -w '%{http_code}' --resolve "$host:443:$ip" "https://$host$path" 2>/dev/null) || code=000
+    d=0; c=0
+    grep -qF "Access to this resource on the server is denied" "$f" && d=1
+    grep -qF "/.lsrecap/" "$f" && c=1
+    rm -f "$f"
+    printf '%s %s %s\n' "$code" "$d" "$c"
+done
+exit 0
+REMOTE
+    return 0
+}
+
+# Prints one "<code> <state>" line per path for the direct requests.
+_origin_probe_direct() {
+    local alias="$1"
+    local host="$2"
+    shift 2
+    local remote_cmd="bash -s --"
+    local arg=""
+    local line=""
+    for arg in "$host" "$@"; do
+        remote_cmd+=" $(printf '%q' "$arg")"
+    done
+    _origin_block_remote_script | ssh -o BatchMode=yes -o ConnectTimeout=15 "$alias" "$remote_cmd" 2>/dev/null |
+        while read -r code denied challenged; do
+            if [[ "$code" == "noip" ]]; then
+                printf '%s %s\n' "-" "$ORIGIN_UNAVAILABLE"
+                continue
+            fi
+            line="$code $(_origin_state "$code" "$denied" "$challenged")"
+            printf '%s\n' "$line"
+        done
+    return 0
+}
+
+_origin_is_refusal() {
+    local state="$1"
+    [[ "$state" == "denied" || "$state" == "challenge" || "$state" == "timeout" ]]
+    return $?
+}
+
+_origin_both_ok() {
+    local first="$1"
+    local second="$2"
+    [[ "$first" == "ok" ]] || return 1
+    [[ "$second" == "ok" ]]
+    return $?
+}
+
+# Verdict from the four states; prints "<exit> <verdict>: <advice>".
+_origin_verdict() {
+    local pub_static="$1"
+    local pub_dynamic="$2"
+    local dir_static="$3"
+    local dir_dynamic="$4"
+    if ! _origin_is_refusal "$pub_static" && ! _origin_is_refusal "$pub_dynamic"; then
+        if _origin_both_ok "$pub_static" "$pub_dynamic"; then
+            printf '0 ok: no refusal from this address\n'
+        elif _origin_both_ok "$dir_static" "$dir_dynamic"; then
+            printf '13 inconclusive: the public path fails without a LiteSpeed refusal while the origin answers directly; check Cloudflare and DNS\n'
+        else
+            printf '12 site-error: no LiteSpeed refusal, but the site answers with errors; debug the site\n'
+        fi
+        return 0
+    fi
+    if _origin_both_ok "$dir_static" "$dir_dynamic"; then
+        printf '10 refused-client: the origin refuses this machine'\''s address (LiteSpeed bot protection); the site is up for other visitors. Stop scripted requests from this address (each unsolved challenge extends the block) and wait with --wait\n'
+    elif _origin_is_refusal "$dir_static" || _origin_is_refusal "$dir_dynamic"; then
+        printf '11 refused-origin: the origin refuses its own host too; pause bulk jobs on the account and check hPanel resource usage\n'
+    elif [[ "$dir_static" == "skipped" ]]; then
+        printf '10 refused: the origin refuses this address; add --ssh ALIAS to confirm the site is up\n'
+    else
+        printf '13 inconclusive: the public request was refused, but the direct check did not answer cleanly\n'
+    fi
+    return 0
+}
+
+# One check: report lines on stdout; returns the verdict's exit code.
+_origin_check_once() {
+    local host="$1"
+    local alias="$2"
+    local dynamic_path=""
+    local pub_static="" pub_dynamic="" direct="" dir_static="skipped" dir_dynamic="skipped"
+    local colo="" result="" code=0
+
+    dynamic_path="/?aidevops-origin-probe=$(date +%s)$$"
+    colo=$(curl -sS -m 10 "https://$host/cdn-cgi/trace" 2>/dev/null | sed -n 's/^colo=//p') || colo=""
+    if [[ -n "$colo" ]]; then
+        printf 'origin-block %s (Cloudflare colo %s)\n' "$host" "$colo"
+    else
+        printf 'origin-block %s (no Cloudflare trace: direct and public paths are the same)\n' "$host"
+    fi
+    pub_static=$(_origin_probe_public "https://$host$ORIGIN_STATIC_PATH") || return 13
+    printf 'public  static   %s %s\n' "$ORIGIN_STATIC_PATH" "$pub_static"
+    # A denied static file means a hard block; a dynamic request would only
+    # count as one more failed challenge.
+    if _origin_is_refusal "${pub_static#* }" || [[ "${pub_static#* }" == "unreachable" ]]; then
+        pub_dynamic="- skipped"
+    else
+        pub_dynamic=$(_origin_probe_public "https://$host$dynamic_path") || return 13
+    fi
+    printf 'public  dynamic  /?aidevops-origin-probe=… %s\n' "$pub_dynamic"
+    if [[ -n "$alias" ]]; then
+        direct=$(_origin_probe_direct "$alias" "$host" "$ORIGIN_STATIC_PATH" "$dynamic_path")
+        dir_static=$(printf '%s\n' "$direct" | sed -n '1s/^[^ ]* //p')
+        dir_dynamic=$(printf '%s\n' "$direct" | sed -n '2s/^[^ ]* //p')
+        printf 'direct  static   %s\n' "$(printf '%s\n' "$direct" | sed -n 1p)"
+        printf 'direct  dynamic  %s\n' "$(printf '%s\n' "$direct" | sed -n 2p)"
+        [[ -n "$dir_static" ]] || dir_static="$ORIGIN_UNAVAILABLE"
+        [[ -n "$dir_dynamic" ]] || dir_dynamic="$ORIGIN_UNAVAILABLE"
+    fi
+    result=$(_origin_verdict "${pub_static#* }" "${pub_dynamic#* }" "$dir_static" "$dir_dynamic")
+    code="${result%% *}"
+    printf 'verdict %s\n' "${result#* }"
+    return "$code"
+}
+
+origin_block_command() {
+    local host="" alias="" wait_limit=0 interval=60 waited=0 status=0
+    local usage='Usage: origin-block HOST [--ssh ALIAS] [--wait SECONDS] [--interval SECONDS]'
+    while [[ $# -gt 0 ]]; do
+        local option="$1"
+        local value="${2:-}"
+        case "$option" in
+        --ssh | --wait | --interval)
+            if [[ $# -lt 2 ]]; then
+                printf '%s\n' "$usage" >&2
+                return 1
+            fi
+            case "$option" in
+            --ssh) alias="$value" ;;
+            --wait) wait_limit="$value" ;;
+            --interval) interval="$value" ;;
+            esac
+            shift 2
+            ;;
+        -*)
+            printf '%s\n' "$usage" >&2
+            return 1
+            ;;
+        *)
+            [[ -z "$host" ]] || { printf '%s\n' "$usage" >&2; return 1; }
+            host="$option"
+            shift
+            ;;
+        esac
+    done
+    if [[ ! "$host" =~ ^[[:alnum:]]([[:alnum:].-]*[[:alnum:]])?$ || "$host" == *..* ]] ||
+        [[ -n "$alias" && ! "$alias" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$ ]] ||
+        [[ ! "$wait_limit" =~ ^[0-9]+$ || ! "$interval" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$usage" >&2
+        return 1
+    fi
+    ((interval >= 30)) || interval=30
+    while :; do
+        status=0
+        _origin_check_once "$host" "$alias" || status=$?
+        if ((status == 0 || waited >= wait_limit)); then
+            return "$status"
+        fi
+        printf 'waiting %ss (%ss of %ss)\n' "$interval" "$waited" "$wait_limit"
+        sleep "$interval"
+        waited=$((waited + interval))
+    done
+    return "$status"
+}
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
@@ -591,6 +823,11 @@ main() {
         image_libs_command "$@"
         return $?
         ;;
+    "origin-block")
+        shift
+        origin_block_command "$@"
+        return $?
+        ;;
     "help"|"-h"|"--help"|"")
         echo "Hostinger Helper Script"
         echo "Usage: $0 [command] [options]"
@@ -605,6 +842,9 @@ main() {
         echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
         echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
         echo "  image-libs --ssh ALIAS [--vendor] - Read-only Ghostscript/ImageMagick releases, policy and workers"
+        echo "  origin-block HOST [--ssh ALIAS] [--wait SECONDS] [--interval SECONDS]"
+        echo "                    - Is LiteSpeed refusing this address (403/reCAPTCHA/408) or is the site down?"
+        echo "                      Exit 0 ok, 10 refused-client, 11 refused-origin, 12 site-error, 13 inconclusive"
         echo "  help                 - $HELP_SHOW_MESSAGE"
         echo ""
         echo "Examples:"
@@ -612,6 +852,7 @@ main() {
         echo "  $0 connect example.com"
         echo "  $0 exec example.com 'ls -la'"
         echo "  $0 api api/hosting/v1/websites"
+        echo "  $0 origin-block www.example.com --ssh hostinger --wait 900"
         echo "  $0 api PATCH api/hosting/v1/accounts/USER/websites/DOMAIN/php/version '{\"version\":\"8.5\"}'"
         ;;
     *)
