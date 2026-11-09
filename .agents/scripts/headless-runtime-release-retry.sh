@@ -112,7 +112,8 @@ _hrrr_read_blocker() {
 	return 0
 }
 
-# Process one row. Returns 0 when handled/removed, 1 when retained.
+# Process one row. Returns 0 when handled/removed, 1 when a replay was attempted
+# and failed, 2 when retained before any replay (not due, live worker, invalid).
 _hrrr_process_row() {
 	local path="$1" now="$2"
 	local repo="" issue="" session_key="" reason="" exit_code="" session_count="" token=""
@@ -123,28 +124,28 @@ _hrrr_process_row() {
 	if ! fields=$(jq -er '[.repo, (.issue|tostring), .session_key, .reason, .exit, .session_count,
 		.lease_token, .lease_device, .lease_session, (.pid|tostring), (.created|tostring),
 		(.next_after|tostring), (.attempts|tostring), (.attempt_id // "")] | join("\u001f")' "$path" 2>/dev/null); then
-		return 1
+		return 2
 	fi
 	IFS=$'\x1f' read -r repo issue session_key reason exit_code session_count token device \
 		lease_session pid created next_after attempts attempt_id <<<"$fields"
 	if [[ ! "$issue" =~ ^[0-9]+$ || ! "$created" =~ ^[0-9]+$ || ! "$attempts" =~ ^[0-9]+$ ||
 		! "$next_after" =~ ^[0-9]+$ ]]; then
-		return 1
+		return 2
 	fi
 	# Legacy blocked rows cannot distinguish a generic exit from a lost
 	# classification. Never replay them as dispatchable without that evidence.
-	_hrrr_read_blocker "$path" "$reason" || return 1
+	_hrrr_read_blocker "$path" "$reason" || return 2
 	# Expired or exhausted evidence yields to the ordinary active-worker TTL.
 	if ((now - created > _HRRR_MAX_AGE_SECS || attempts >= _HRRR_MAX_ATTEMPTS)); then
-		[[ -z "$fingerprint" ]] || return 1
+		[[ -z "$fingerprint" ]] || return 2
 		print_warning "[lifecycle] claim_release_retry_expired issue=${issue}"
 		rm -f "$path"
 		return 0
 	fi
-	((now >= next_after)) || return 1
+	((now >= next_after)) || return 2
 	# Never act while the original worker may still be running.
 	if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
-		return 1
+		return 2
 	fi
 	local rc=0
 	(
@@ -194,12 +195,18 @@ _hrrr_drain() {
 			retained=$((retained + 1))
 			continue
 		fi
-		if _hrrr_process_row "$path" "$now"; then
+		local row_rc=0
+		_hrrr_process_row "$path" "$now" || row_rc=$?
+		if [[ "$row_rc" -eq 0 ]]; then
 			resolved=$((resolved + 1))
+			processed=$((processed + 1))
+		elif [[ "$row_rc" -eq 2 ]]; then
+			# Retained before any replay: evidence kept, no batch slot consumed.
+			retained=$((retained + 1))
 		else
 			retained=$((retained + 1))
+			processed=$((processed + 1))
 		fi
-		processed=$((processed + 1))
 	done
 	printf 'candidates=%s resolved=%s retained=%s\n' "$candidates" "$resolved" "$retained"
 	return 0
