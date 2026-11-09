@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- relinquish a finished interactive session's worktree ownership at full-loop complete and finalize-receipt so Pulse can retire merged trees while the app runs (GH#37448) (#37473)
 - update STUCK_TRIPPED help text to match classifier (GH#37459) (#37464)
 - log starter-sync scope refusals (#37472)
 - scope stale worktree reaping to lane repository (#37447)
