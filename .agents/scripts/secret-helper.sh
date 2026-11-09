@@ -286,6 +286,29 @@ collect_secret_values() {
 	return 0
 }
 
+# Print usable redaction values from a NUL-delimited KEY=VALUE env file,
+# NUL-terminated. Splits on the first '=' only: IFS='=' read drops a single
+# trailing '=' from the value, e.g. base64 padding (GH#37408).
+# Usage: collect_env_file_values ENV_FILE [quiet]
+collect_env_file_values() {
+	local env_file="$1"
+	local warn_mode="${2:-warn}"
+	local -a warned_names=()
+	local record="" _key="" value=""
+	while IFS= read -r -d '' record; do
+		[[ "$record" == *=* ]] || continue
+		_key="${record%%=*}"
+		value="${record#*=}"
+		if redaction_value_usable "$value"; then
+			printf '%s\0' "$value"
+		elif [[ "$warn_mode" != "quiet" && -n "$value" && ${#value} -lt 8 ]] && ! secret_env_name_emitted "$_key" "${warned_names[@]}"; then
+			warn_short_redaction_value "$_key"
+			warned_names+=("$_key")
+		fi
+	done <"$env_file"
+	return 0
+}
+
 # Redact secret values from a stream
 # Reads stdin, replaces any secret value with [REDACTED]
 # Usage: redact_stream [ENV_FILE] [quiet]; "quiet" suppresses the names-only
@@ -306,15 +329,7 @@ redact_stream() {
 	trap 'rm -f "$values_file"' RETURN
 
 	if [[ -n "$env_file" ]]; then
-		local -a warned_names=()
-		while IFS='=' read -r -d '' _key value; do
-			if redaction_value_usable "$value"; then
-				printf '%s\0' "$value"
-			elif [[ "$warn_mode" != "quiet" && -n "$value" && ${#value} -lt 8 ]] && ! secret_env_name_emitted "$_key" "${warned_names[@]}"; then
-				warn_short_redaction_value "$_key"
-				warned_names+=("$_key")
-			fi
-		done <"$env_file" >"$values_file"
+		collect_env_file_values "$env_file" "$warn_mode" >"$values_file"
 	else
 		if ! collect_secret_values >"$values_file"; then
 			print_error "$REDACTION_INIT_ERROR" >&2
@@ -1562,9 +1577,13 @@ writer.join(timeout=0.25)
 
 	local exit_code=0
 	(
-		while IFS='=' read -r -d '' key val; do
+		# Whole-record read; see collect_env_file_values for why IFS='=' is unsafe.
+		local record="" key=""
+		while IFS= read -r -d '' record; do
+			[[ "$record" == *=* ]] || continue
+			key="${record%%=*}"
 			[[ -z "$key" ]] && continue
-			export "$key=$val"
+			export "$key=${record#*=}"
 		done <"$env_file"
 
 		"$@"
