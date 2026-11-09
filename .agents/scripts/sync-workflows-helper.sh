@@ -1684,12 +1684,29 @@ _sync_one_repo() {
 		return 1
 	fi
 
-	local _open_rc=0
-	_sync_open_pr \
+	_sync_open_pr_and_warn \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
-		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" || _open_rc=$?
+		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content"
+	return $?
+}
+
+# Open the PR, then warn (never mutate) when the installed caller needs an
+# Actions event policy. Args match _sync_open_pr plus the rendered content.
+_sync_open_pr_and_warn() {
+	local _slug="$1"
+	local _path="$2"
+	local _status="$3"
+	local _branch_name="$4"
+	local _default_branch="$5"
+	local _effective_ref="$6"
+	local _workflow_relpath="$7"
+	local _sync_contributing="$8"
+	local _content="$9"
+	local _open_rc=0
+	_sync_open_pr "$_slug" "$_path" "$_status" "$_branch_name" "$_default_branch" \
+		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" || _open_rc=$?
 	if [[ "$_open_rc" -eq 0 ]]; then
-		_warn_event_policy_uncovered "$_slug" "$_target_content"
+		_warn_event_policy_uncovered "$_slug" "$_content"
 	fi
 	return "$_open_rc"
 }
