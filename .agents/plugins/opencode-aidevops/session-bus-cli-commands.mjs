@@ -30,6 +30,23 @@ export function listCommand({ root, options, out }) {
   return print(out, lines.join("\n"), false);
 }
 
+/**
+ * t18895: every live session (workers included) on any of the targets:
+ * #issue, PR#n, repo, worktree or file path. The caller's own session is
+ * excluded; --repo limits matches to one repo (issue numbers are per repo).
+ * Exit 0 whether or not anything matches. --json prints the presence records;
+ * text prints one row per session, and the no-match note goes to stderr so
+ * scripts see empty output.
+ */
+export function whoCommand({ root, options, out, err, env }) {
+  const targets = options.positional.slice(1);
+  const scope = { selfID: envSessionID(env), cwd: process.cwd(), repo: options.repo };
+  const records = store.sortPresence(store.matchAnySessions(store.readPresence(root, { sweep: true }), targets, scope));
+  if (options.json) return print(out, records, true);
+  if (records.length === 0) return print(err, `No other live session is working on ${targets.join(", ")}.`, false);
+  return print(out, records.map((record) => store.formatWhoRow(record)).join("\n"), false);
+}
+
 export function showCommand({ root, options, out }) {
   const resolved = store.resolveTarget(store.readPresence(root), options.positional[1], "");
   if (resolved.error) throw new Error(resolved.error);

@@ -65,6 +65,22 @@ export function formatPresenceRow(record, now = Date.now()) {
   return parts.filter(Boolean).join(" · ");
 }
 
+/** t18895: a `who` row: who holds the work, where, and what it is doing now. */
+export function formatWhoRow(record, now = Date.now()) {
+  const refs = [record.issue ? `#${record.issue}` : "", record.pr ? `PR#${record.pr}` : ""].filter(Boolean).join(" ");
+  const parts = [
+    `${record.handle}${kindLabel(record)}`,
+    record.status || "unknown",
+    refs,
+    [record.repo, record.branch].filter(Boolean).join("@"),
+    `worktree ${basename(String(record.worktree || record.directory || "")) || "?"}`,
+    record.current_task ? `task: ${truncate(record.current_task, 60)}` : truncate(record.title, 60),
+    toolLabel(record, now),
+    ago(record.last_activity_epoch, now),
+  ];
+  return parts.filter(Boolean).join(" · ");
+}
+
 const busyRank = (record) => (record.status === "busy" || record.status === "permission" ? 0 : 1);
 // Interactive sessions, then workers, then read-only records.
 const kindRank = (record) => (isWorker(record) ? 1 : isMessageable(record) ? 0 : 2);

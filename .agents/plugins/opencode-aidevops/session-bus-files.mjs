@@ -121,7 +121,22 @@ function pruneFiles(dir, cutoff, removed) {
   }
 }
 
-/** Remove messages past retention from every inbox, delivered/ and sent/ directory. */
+/** t18895: overlap notice markers (overlaps/<digest>.json) past retention. */
+function pruneOverlapMarkers(root, cutoff, removed) {
+  const dir = join(root, "overlaps");
+  for (const name of listDir(dir)) {
+    const file = join(dir, name);
+    try {
+      if (statSync(file).mtimeMs >= cutoff) continue;
+      rmSync(file, { force: true });
+      removed.count += 1;
+    } catch {
+      // Removed by a concurrent prune.
+    }
+  }
+}
+
+/** Remove messages past retention from every inbox, delivered/ and sent/ directory, and old overlap markers. */
 export function pruneBus(root, now = Date.now()) {
   const cutoff = now - LIMITS.retentionMs;
   const removed = { count: 0 };
@@ -130,6 +145,7 @@ export function pruneBus(root, now = Date.now()) {
     pruneFiles(deliveredDir(root, sessionID), cutoff, removed);
   }
   for (const key of listDir(join(root, "sent"))) pruneFiles(sentDir(root, key), cutoff, removed);
+  pruneOverlapMarkers(root, cutoff, removed);
   for (const name of listDir(join(root, "chat-wake"))) {
     const sessionID = name.replace(/\.json$/, "");
     if (!name.endsWith(".json") || !isSafeId(sessionID)) continue;

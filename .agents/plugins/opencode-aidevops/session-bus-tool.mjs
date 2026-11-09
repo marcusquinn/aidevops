@@ -14,6 +14,7 @@ const MAX_WAIT_SECONDS = 120;
 const DESCRIPTION = [
   "See and message other live OpenCode sessions on this machine; use this instead of asking the user to relay messages or check another session.",
   "list/show: repo, branch, issue/PR, busy/idle and current task.",
+  "who: every other live session, workers included, on `to` (#issue, PR#n, repo, worktree or file path); check before starting work.",
   "send: info, delivered at the recipient's next tool result or turn (pulse workers too; they are never woken).",
   "ask: a question that may wake an idle session; the reply arrives here, or in this result with wait_seconds (1-120).",
   "reply: answer a received ask (re = its msg ID). inbox: your messages.",
@@ -69,6 +70,14 @@ function listAction(root, sender) {
     ...rows,
     ...(hidden > 0 ? [`… ${hidden} more not shown`] : []),
   ].join("\n");
+}
+
+/** t18895: every other live session on a target, so work is split before it starts. */
+function whoAction(root, sender, args) {
+  const cwd = sender.record.directory || sender.record.worktree;
+  const records = store.sortPresence(store.matchSessions(store.readPresence(root), args.to, { selfID: sender.sessionID, cwd }), { repo: sender.record.repo });
+  if (records.length === 0) return `No other live session is working on ${args.to}.`;
+  return [`${records.length} other live session(s) on ${args.to}:`, ...records.map((record) => `- ${store.formatWhoRow(record)}`)].join("\n");
 }
 
 function showAction(root, args) {
@@ -165,6 +174,7 @@ const SENDER_ACTIONS = {
     return `Chat owner wakes ${args.text} for this session.`;
   },
   list: ({ root, sender }) => listAction(root, sender),
+  who: ({ root, sender, args }) => whoAction(root, sender, args),
   send: ({ root, sender, args }) => sendAction(root, sender, args, "info").text,
   ask: ({ bus, sender, args, context }) => askAction(bus, sender, args, context),
   reply: ({ root, sender, args }) => replyAction(root, sender, args),
@@ -177,7 +187,7 @@ export function createSessionBusTool(tool, bus) {
   return tool({
     description: DESCRIPTION,
     args: {
-      action: z.enum(["list", "show", "send", "ask", "reply", "inbox", "notify-when-idle", "chat-wake"]),
+      action: z.enum(["list", "show", "who", "send", "ask", "reply", "inbox", "notify-when-idle", "chat-wake"]),
       to: z.string().optional(),
       text: z.string().optional(),
       re: z.string().optional(),

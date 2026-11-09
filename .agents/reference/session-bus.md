@@ -17,6 +17,7 @@ Tool `aidevops_sessions` (interactive TUI, `serve` and ACP processes only):
 | --- | --- | --- |
 | `list` | — | Up to 20 live sessions: handle, repo, branch, issue/PR, busy/idle, current task. Same-repo sessions first. |
 | `show` | `to` | One session in detail. |
+| `who` | `to` | Every other live session (interactive or pulse worker) on an issue, PR, repo, worktree or file path. Never fails on several matches. |
 | `send` | `to`, `text` | Info message. Delivered at the recipient's next tool result, or at its next turn if it is idle. Never wakes it. |
 | `ask` | `to`, `text`, optional `wait_seconds` (1–120) | Question. Wakes an idle recipient. The reply arrives in the asking session, or in this call's result when `wait_seconds` is set. |
 | `reply` | `re`, `text` | Answer an `ask` this session received (`re` = its message ID). |
@@ -43,6 +44,7 @@ Use `ask` with `wait_seconds` when a subagent (or any tool call) needs one fact 
 aidevops sessions list [--all] [--json] [--redact] # redact omits title, repo, branch, worktree and directory
 aidevops sessions chat-wake <target> on      # default off; use off to revoke
 aidevops sessions show '#123'
+aidevops sessions who '#123' src/a.sh [--repo owner/repo] [--json]  # all live sessions on any target; no match: empty stdout, note on stderr
 aidevops sessions send <target> "text"        # or --text-file <path>, or - for stdin
 aidevops sessions ask <target> "question"
 aidevops sessions ask <target> "question" --wait 60  # prints the reply and acknowledges it in outbox/cli (exit 0); exit 2 on timeout, printing the ask ID
@@ -181,6 +183,33 @@ next run. The sender rate limit (10 per minute) bounds bursts.
   `[worker-bus-relay]` prefix in `~/.aidevops/logs/pulse.log`.
 - Disable: `AIDEVOPS_WORKER_BUS_RELAY=0`.
 
+## Overlap visibility (t18895)
+
+Interactive sessions and pulse workers can start on the same issue without
+seeing each other (GH#37248). Three advisory checks surface that early; none
+blocks work, and GitHub's assignee and `status:claimed` label still decide
+ownership.
+
+- **`who`:** `who` matches an issue (`#N`, per repo with `--repo`), `PR#N`,
+  repo slug or name, or a path inside a session's worktree (relative paths
+  resolve from the caller's directory). The caller is excluded.
+- **Pre-work and claim:** `prework-discovery-helper.sh` adds a `### Live
+  sessions` warning for sessions on the task's issue numbers or files, then
+  lists other live sessions in the repo. `interactive-session-helper.sh claim`
+  prints a warning for live sessions already on the issue, then claims as
+  before. Both use a 5-second budget and print nothing when the bus helper is
+  missing, fails or times out. Tests point `AIDEVOPS_SESSION_BUS_HELPER` at a stub.
+- **Overlap notices:** after each presence write, and once a minute while
+  idle, each plugin process checks its root sessions against other live
+  messageable sessions. Sharing an issue or PR in the same repo, a branch other
+  than `main`/`master`/`develop`/`trunk`, or a linked worktree on such a branch
+  sends one `info` message to the other session, from this session, and shows
+  a toast here. Each side sends its own notice. Sharing only a repo, or the
+  canonical checkout on a default branch, is not an overlap. A marker under
+  `overlaps/` keeps it to one notice per direction and shared key, across
+  restarts. A worker gets the notice at its next tool result, like any message;
+  it is never woken. Disable with `AIDEVOPS_SESSION_OVERLAP_NOTICES=false`.
+
 ## Storage
 
 Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESSION_BUS_DIR`).
@@ -193,6 +222,7 @@ Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESS
 | `subs/<session>/` | Idle-notice subscriptions. |
 | `outbox/<app>/` | Replies for senders without a session (`cli`, chat gateways). |
 | `chat-wake/<session>.json` | Atomic persistent owner-chat wake setting, default off; pruned after retention when presence is absent. |
+| `overlaps/<hash>.json` | One marker per sent overlap notice (sender, recipient, shared key); pruned after 7 days. |
 
 Liveness is checked by pid plus process start time, so a reused pid does not keep a dead session listed. If `ps` cannot read the start time, a record with a live pid is kept rather than deleted.
 
