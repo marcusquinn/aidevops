@@ -120,19 +120,52 @@ _enrich_should_stop_for_bounds() {
 	return 1
 }
 
+# GH#37294: task IDs whose TODO.md row or brief changed between
+# AIDEVOPS_ENRICH_CHANGED_SINCE and HEAD. Empty (never an error) when the base
+# is unset, malformed, or absent from a shallow checkout.
+_enrich_changed_task_ids() {
+	local todo_file="$1" since="${AIDEVOPS_ENRICH_CHANGED_SINCE:-}"
+	local root=""
+	[[ "$since" =~ ^[0-9a-f]{7,40}$ && ! "$since" =~ ^0+$ ]] || return 0
+	root=$(cd -- "$(dirname -- "$todo_file")" 2>/dev/null && pwd -P) || return 0
+	git -C "$root" cat-file -e "${since}^{commit}" 2>/dev/null || return 0
+	{
+		git -C "$root" diff --no-renames --name-only "$since" HEAD -- todo/tasks 2>/dev/null |
+			sed -nE 's#^todo/tasks/(t[0-9]+(\.[0-9]+)*)-brief\.md$#\1#p'
+		git -C "$root" diff --no-renames --unified=0 "$since" HEAD -- "$todo_file" 2>/dev/null |
+			sed -nE 's/^\+[[:space:]]*- \[.\] (t[0-9]+(\.[0-9]+)*)([[:space:]].*)?$/\1/p'
+	} | awk 'NF && !seen[$0]++'
+	return 0
+}
+
 # _enrich_build_task_list: collect task IDs to enrich — single target or all
 # TODO tasks that already have a ref:GH# number. Outputs one task ID per line.
+# GH#37294: tasks changed since AIDEVOPS_ENRICH_CHANGED_SINCE come first, so a
+# bounded push-run enrich reaches fresh briefs before the TODO-ordered backlog.
 _enrich_build_task_list() {
 	local target_task="$1" todo_file="$2"
 	if [[ -n "$target_task" ]]; then
 		echo "$target_task"
 		return 0
 	fi
+	local eligible="" changed=""
 	while IFS= read -r line; do
 		local tid
 		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-		[[ -n "$tid" ]] && echo "$tid"
+		[[ -n "$tid" ]] && eligible+="${tid}"$'\n'
 	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
+	changed=$(_enrich_changed_task_ids "$todo_file")
+	if [[ -n "$changed" ]]; then
+		print_info "Enrich prioritising tasks changed since ${AIDEVOPS_ENRICH_CHANGED_SINCE:0:12}"
+	fi
+	# Changed-and-eligible first (in TODO order), then the rest; no duplicates.
+	printf '%s' "$eligible" | awk -v changed="$(printf '%s' "$changed" | tr '\n' ' ')" '
+		BEGIN { n = split(changed, ids, " "); for (i = 1; i <= n; i++) if (ids[i] != "") want[ids[i]] = 1 }
+		NF { order[++count] = $0 }
+		END {
+			for (i = 1; i <= count; i++) if (order[i] in want && !seen[order[i]]++) print order[i]
+			for (i = 1; i <= count; i++) if (!seen[order[i]]++) print order[i]
+		}'
 	return 0
 }
 
