@@ -1935,7 +1935,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18903 buzz-aidevops: style the Conversation dropdown like the text fields #feat ref:GH#37284
 
-- [ ] t18905 Session bus for workers: messageable headless workers, worker presence and pulse steering relay #auto-dispatch #feat ref:GH#37298
+- [x] t18905 Session bus for workers: messageable headless workers, worker presence and pulse steering relay #auto-dispatch #feat ref:GH#37298 pr:#37306 completed:2026-11-09
+
+- [ ] t18907 perf(gh-api): find same-login REST-core consumer spending 57% of quota and blocking Pulse dispatch #auto-dispatch #bug ref:GH#37313
 
 ## In Progress
 
