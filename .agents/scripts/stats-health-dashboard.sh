@@ -578,7 +578,7 @@ _health_repo_needs_recovery() {
 	age=$(_stats_seconds "${STATS_HEALTH_RECOVERY_AGE_SECONDS:-86400}" 86400)
 	times=$(_health_repo_times "$slug" "$runner")
 	read -r epoch attempted <<<"$times"
-	[[ "$attempted" -gt "$epoch" ]] || return 1
+	[[ "$epoch" -gt 0 && "$attempted" -gt "$epoch" ]] || return 1
 	[[ "$(($(date +%s) - epoch))" -ge "$age" ]] || return 1
 	printf '%s\n' "$epoch"
 	return 0
