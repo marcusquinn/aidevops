@@ -377,10 +377,10 @@ Loops with local lifecycle state finalize with `full-loop-helper.sh complete`
 after terminal release evidence (`published`, `superseded`, or recorded
 `not-requested`); while a matching receipt remains `FINALIZATION_PENDING`,
 `status --json` reports `next_action: complete` until executor finalization.
-In an interactive session, `complete` also ends that session's own registry run
-and records `owner_relinquished` on its receipt (GH#37448), so Pulse can retire
-the merged tree while the shared app PID lives. Run it last: re-admission then
-refuses with `session-owner-already-ended`.
+In an interactive session, `complete` and `finalize-receipt` also end that
+session's own registry run and record `owner_relinquished` on its receipt
+(GH#37448), so Pulse can retire the merged tree while the shared app PID lives.
+Run them last: re-admission then refuses with `session-owner-already-ended`.
 
 Direct merge-wrapper flows without local lifecycle state use
 `full-loop-helper.sh finalize-receipt <PR> [REPO]` after terminal release evidence

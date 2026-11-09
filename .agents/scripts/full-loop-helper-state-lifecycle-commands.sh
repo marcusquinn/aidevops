@@ -1348,6 +1348,27 @@ cmd_finalize_receipt() {
 		return 1
 	}
 	print_success "Cleanup receipt finalized for merged PR #${pr_number} (release:${release_status})"
+	_full_loop_relinquish_finalized_session "$repo" "$pr_number"
+	return 0
+}
+
+# GH#37448: `finalize-receipt` ends direct merge-wrapper flows the way
+# `complete` ends lifecycle flows, so hand off the same session holds on the
+# receipt's worktree. Only the exact receipt owner and registry run owner can
+# release anything; every other caller leaves both holds unchanged.
+_full_loop_relinquish_finalized_session() {
+	local repo="$1"
+	local pr_number="$2"
+	local receipt_path="" worktree=""
+	local owner_pid="${PPID:-}"
+	local owner_session="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-$_FULL_LOOP_OWNER_SESSION_FALLBACK}}}"
+	if declare -F _resolve_worktree_owner_pid >/dev/null 2>&1; then
+		owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || printf '%s' "${PPID:-}")
+	fi
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number" 2>/dev/null) || return 0
+	worktree=$(jq -r '.worktree | strings' "$receipt_path" 2>/dev/null) || return 0
+	[[ -n "$worktree" ]] || return 0
+	_full_loop_relinquish_completed_session "$repo" "$pr_number" "$worktree" "$owner_pid" "$owner_session"
 	return 0
 }
 
