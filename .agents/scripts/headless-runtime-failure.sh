@@ -1674,7 +1674,7 @@ _worker_secure_branch_commits() {
 }
 
 #######################################
-# Record deterministic launch capability failures in the local runner-health
+# Record evidenced startup and deterministic launch failures in the local runner-health
 # breaker before releasing the shared issue claim. This path is fail-open:
 # missing or broken health tooling must never strand the issue claim.
 # Args: $1=session key, $2=terminal reason
@@ -1682,7 +1682,11 @@ _worker_secure_branch_commits() {
 _hrff_record_runner_health_failure() {
 	local session_key="$1"
 	local reason="$2"
-	[[ "$reason" == "worker_signing_unavailable" ]] || return 0
+	case "$reason" in
+	worker_signing_unavailable) ;;
+	crash_during_startup | worker_noop_zero_output) reason="no_worker_process" ;;
+	*) return 0 ;;
+	esac
 
 	local helper="${_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE:-${BASH_SOURCE[0]%/*}/pulse-runner-health-helper.sh}"
 	local issue_number=""
