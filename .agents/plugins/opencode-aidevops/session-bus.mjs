@@ -37,6 +37,32 @@ import {
 export { processKind, parseRepoSlug } from "./session-bus-presence.mjs";
 export { isWakeEligible } from "./session-bus-delivery.mjs";
 
+const APP_PATTERN = /^[a-z0-9-]{1,32}$/;
+const CHANNEL_PATTERN = /^[A-Za-z0-9._:@!#+=-]{1,128}$/;
+
+const refValue = (ref, prefix) => {
+  const text = String(ref ?? "");
+  return text.startsWith(prefix) ? text.slice(prefix.length) : "";
+};
+
+/**
+ * t18898: identity of a remote-hosted endpoint from the overlay's agent ID and
+ * interface_context. Malformed input never falls back to a local identity:
+ * the result is always a valid chat app and channel (`remote` and `agent`).
+ * @param {object} remote - { agent, context }
+ */
+export function remoteEndpoint(remote) {
+  const agent = typeof remote?.agent === "string" ? remote.agent.slice(0, 80) : "";
+  const app = refValue(remote?.context?.provider_ref, "provider:").toLowerCase();
+  const channel = refValue(remote?.context?.conversation_ref, "conversation:");
+  const agentChannel = CHANNEL_PATTERN.test(agent) ? agent : "agent";
+  return {
+    agent,
+    interface: APP_PATTERN.test(app) ? app : "remote",
+    channel: CHANNEL_PATTERN.test(channel) ? channel : agentChannel,
+  };
+}
+
 const POLL_MS = 5000;
 const SWEEP_DELAY_MS = 3000;
 const MAX_TRACKED = 64;
@@ -44,8 +70,10 @@ const BUS_TOOL = "aidevops_sessions";
 const MAX_WAITS = 2;
 
 class SessionBus {
-  constructor({ client, directory = "", root = store.busRoot(), kind = "tui", now = () => Date.now(), timers = globalThis, git } = {}) {
+  constructor({ client, directory = "", root = store.busRoot(), kind = "tui", now = () => Date.now(), timers = globalThis, git, remote = null } = {}) {
     Object.assign(this, { client, directory, root, kind, now, timers });
+    // #aidevops:trust-boundary t18898: set only by the plugin from the launch overlay, never from tool arguments.
+    this.remote = remote ? remoteEndpoint(remote) : null;
     this.messageable = store.MESSAGEABLE_KINDS.includes(kind);
     this.sessions = new Map();
     // ask ID -> root session whose waiting tool call will claim the reply (t18897)
@@ -54,7 +82,10 @@ class SessionBus {
     this.tree = new SessionTree({ client, onRootInfo: (info) => this.updateRootInfo(info) });
     this.toasts = new ArrivalToasts(client);
     const gitInfo = new GitInfoCache({ now, git, onChange: (changed) => this.republish(changed) });
-    this.presence = new PresencePublisher({ root, kind, messageable: this.messageable, directory, now, timers, gitInfo });
+    this.presence = new PresencePublisher({
+      root, kind, messageable: this.messageable, directory, now, timers, gitInfo,
+      remote: this.remote && { interface: this.remote.interface, agent: this.remote.agent },
+    });
     this.timer = null;
     this.ticking = false;
   }
@@ -256,7 +287,8 @@ class SessionBus {
       handle: record.handle,
       repo: record.repo,
       branch: record.branch,
-      origin: "opencode",
+      // #aidevops:trust-boundary t18898: a remote-hosted process sends as a chat origin, which never wakes.
+      origin: this.remote ? `chat:${this.remote.interface}:${this.remote.channel}` : "opencode",
       ...(via ? { via } : {}),
     };
   }

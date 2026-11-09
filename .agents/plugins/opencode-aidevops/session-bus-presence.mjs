@@ -85,8 +85,8 @@ export class GitInfoCache {
 
 /** Builds and writes this process's presence records; one writer per record. */
 export class PresencePublisher {
-  constructor({ root, kind, messageable, directory, now, timers, gitInfo }) {
-    Object.assign(this, { root, kind, messageable, directory, now, timers, gitInfo });
+  constructor({ root, kind, messageable, directory, now, timers, gitInfo, remote = null }) {
+    Object.assign(this, { root, kind, messageable, directory, now, timers, gitInfo, remote });
     this.token = null;
     this.disposed = false;
   }
@@ -117,6 +117,8 @@ export class PresencePublisher {
       status: state.status,
       current_task: state.task,
       last_activity_epoch: Math.floor(state.lastActivityMs / 1000),
+      // t18898: additive, only for remote-hosted sessions so local records stay unchanged.
+      ...(this.remote ? { interface: this.remote.interface, ...(this.remote.agent ? { agent: this.remote.agent } : {}) } : {}),
     };
     return { ...base, handle: store.deriveHandle(base), updated_epoch: Math.floor(this.now() / 1000) };
   }

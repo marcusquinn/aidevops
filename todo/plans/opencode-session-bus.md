@@ -247,6 +247,8 @@ Phases 1–2 proved the bus (released in v3.39.136; owner test with two live ses
 | t18894 | SimpleX bot adapter: replaces the `/sessions` and `/ask` scaffolds | t18892 |
 | t18898 | Buzz-hosted (remote-interactive) agents as bus endpoints: `interface`/`agent` presence labels, `chat:` sender origin so they never wake local sessions, no wakes into them | t18891 |
 
+t18898 status (2026-11-09, GH#37264): implemented and unit-tested (`tests/test-session-bus.mjs`: labelled presence, `chat:` origin, fallbacks, no wake, local regression). Step 1 live ACP check: the installed-startup canary could not run on the worker runner (`spawnSync /usr/bin/git ENOENT`), so the presence premise rests on code reading (`acp` is a messageable kind; the remote-interactive profile reaches `createSessionBusHooks`) and CI. A live scratch-bus ACP run remains an owner check.
+
 Buzz needs no separate gateway for the agent itself: a Buzz agent is an OpenCode ACP session, so it uses `aidevops_sessions` directly once t18898 makes its defaults safe. Posting bus replies or notices into a Buzz channel, and listing sessions from Buzz without an agent turn, stay with the Buzz plugin under t18883 (owner-gated).
 
 ## Coordination follow-ups

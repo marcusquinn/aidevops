@@ -102,10 +102,11 @@ function sessionInfoEvent(type, data, sessionID) {
  * publish read-only presence and get no tool.
  * @param {object} options - { ctx, directory, headless, log(level, message) }
  */
-export function createV2SessionBusHooks({ ctx, directory, headless = false, log = () => {} }) {
+export function createV2SessionBusHooks({ ctx, directory, headless = false, remote = null, log = () => {} }) {
   const hooks = createSessionBusHooks({
     client: createV2SessionBusClient(ctx),
     directory,
+    remote,
     headless,
     onError: (label, error) => log("WARN", `[${label}] skipped: ${error?.message ?? error}`),
     log,

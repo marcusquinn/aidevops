@@ -111,6 +111,23 @@ the session ID), kind, messageable, status and last activity time. It also omits
 current task and issue/PR metadata so private details do not leak through derived
 fields; it is not a general content/secret scrubber.
 
+## Remote-hosted sessions
+
+An OpenCode process started by the remote-interactive launcher (for example a
+Buzz agent over ACP) is a remote-hosted endpoint (t18898). The plugin detects it
+from the verified launch overlay, never from `BUZZ_*` variables or tool arguments.
+
+- Presence gains optional `interface` (the overlay `provider_ref`, such as
+  `buzz`) and `agent` (the overlay agent ID). `aidevops sessions list|show` add
+  `via Buzz agent NAME`. Local records carry neither field.
+- Its messages use origin `chat:<app>:<conversation>`, so they never wake a local
+  session. The channel falls back to the agent ID, then `agent`; the app falls
+  back to `remote`. It never falls back to `opencode`, even if the overlay
+  context is malformed.
+- Nothing wakes it: a turn the chat app did not start has no channel to answer in.
+  Messages wait and arrive on its next chat-started turn or tool result. An `ask`
+  to it says so in the send result. Replies to its own asks reach its inbox.
+
 ## Storage
 
 Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESSION_BUS_DIR`).
