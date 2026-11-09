@@ -584,13 +584,45 @@ const labelStyle = { fontWeight: 600 };
 const inputStyle = {
   width: "100%",
   boxSizing: "border-box",
-  padding: "8px 12px",
+  minHeight: "44px",
+  padding: "10px 16px",
   border: "1px solid var(--border-prominent, var(--border-standard, #555))",
   borderRadius: "var(--radius-control, 8px)",
   background: "var(--surface-inset, transparent)",
   color: "var(--text-standard, inherit)",
   font: "inherit",
 };
+// macOS draws a native select that ignores padding and height, so drop the
+// native look and draw our own chevron over it.
+const selectStyle = {
+  ...inputStyle,
+  appearance: "none",
+  WebkitAppearance: "none",
+  paddingRight: "40px",
+  cursor: "pointer",
+};
+/* Drawn with borders so its size does not depend on font glyphs. */
+const chevronStyle = {
+  position: "absolute",
+  right: "18px",
+  top: "50%",
+  width: "9px",
+  height: "9px",
+  borderRight: "2px solid var(--text-secondary)",
+  borderBottom: "2px solid var(--text-secondary)",
+  transform: "translateY(-75%) rotate(45deg)",
+  pointerEvents: "none",
+};
+
+/** A select styled like the text fields. */
+function select(h, props, ...options) {
+  return h(
+    "span",
+    { style: { position: "relative", display: "block" } },
+    h("select", { ...props, style: selectStyle }, ...options),
+    h("span", { "aria-hidden": "true", style: chevronStyle }),
+  );
+}
 
 function statusBody(h, state) {
   if (state.status === "loading") return h("p", null, "Reading aidevops status…");
@@ -677,10 +709,9 @@ function fields(h, { value, onChange, disabled, agentName }) {
       "label",
       { style: fieldStyle },
       h("span", { style: labelStyle }, "Conversation"),
-      h(
-        "select",
+      select(
+        h,
         {
-          style: inputStyle,
           value: value.scope === "channel" ? "channel" : "thread",
           disabled,
           onChange: set("scope"),
