@@ -75,11 +75,16 @@ age_path() {
 
 BASE="$ROOT/worktrees"
 mkdir -p "$BASE"
+# Real detached worktrees of an empty commit, so the reaper's git status probe
+# succeeds; a failed probe must keep the tree (case 6).
+REPO="$ROOT/repo"
+git -c init.defaultBranch=main init -q "$REPO"
+git -C "$REPO" -c user.name=reaper-test -c user.email=reaper-test@example.invalid \
+	commit -q --allow-empty -m init
 make_tree() {
 	local name="$1"
 	local age="${2:-old}"
-	mkdir -p "$BASE/$name"
-	printf 'gitdir: x\n' >"$BASE/$name/.git"
+	git -C "$REPO" worktree add -q --detach "$BASE/$name" HEAD
 	if [[ "$age" == "old" ]]; then
 		age_path "$BASE/$name/.git"
 		age_path "$BASE/$name"
@@ -89,6 +94,7 @@ make_tree() {
 
 reset_case() {
 	rm -rf "$BASE" "$REMOVED_LOG"
+	git -C "$REPO" worktree prune
 	mkdir -p "$BASE"
 	return 0
 }
@@ -169,6 +175,23 @@ make_tree "aidevops-release-803-${DEAD_PID}"
 STUB_LANE_JSON='{"active":false,"source_pr":803,"tag":null,"executor":{"pid":1}}'
 _full_loop_release_reap_with_lane owner/repo 10
 check "inactive lane protects nothing" "$([[ "$(count_removed)" == 1 ]] && echo true || echo false)"
+
+# 6. Fail closed: a failed status probe or a dirty tree is kept.
+reset_case
+BROKEN="$BASE/aidevops-release-900-${DEAD_PID}"
+mkdir -p "$BROKEN"
+printf 'gitdir: x\n' >"$BROKEN/.git"
+age_path "$BROKEN/.git"
+age_path "$BROKEN"
+make_tree "aidevops-release-901-${DEAD_PID}"
+printf 'wip\n' >"$BASE/aidevops-release-901-${DEAD_PID}/wip.txt"
+age_path "$BASE/aidevops-release-901-${DEAD_PID}/wip.txt"
+age_path "$BASE/aidevops-release-901-${DEAD_PID}"
+make_tree "aidevops-release-902-${DEAD_PID}"
+_full_loop_release_reap_stale_release_worktrees "$BASE" "" "" "" 10
+check "status probe failure keeps tree" "$(not_removed "aidevops-release-900-${DEAD_PID}" release-preparation-stale)"
+check "dirty tree kept" "$(not_removed "aidevops-release-901-${DEAD_PID}" release-preparation-stale)"
+check "clean sibling still reaped" "$(removed "aidevops-release-902-${DEAD_PID}" release-preparation-stale)"
 
 if [[ "$FAILURES" -ne 0 ]]; then
 	printf '%s failure(s)\n' "$FAILURES"

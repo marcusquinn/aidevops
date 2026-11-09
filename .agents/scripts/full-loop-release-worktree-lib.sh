@@ -47,7 +47,7 @@ _full_loop_release_reap_stale_release_worktrees() {
 	local protected_pr="${3:-}"
 	local protected_version="${4:-}"
 	local limit="${5:-10}"
-	local stale_path="" name="" owner_pid="" reason="" idle_match=""
+	local stale_path="" name="" owner_pid="" reason="" idle_match="" dirty_state=""
 	local pr="" version="" attempts=0
 
 	[[ "$limit" =~ ^[0-9]+$ ]] || return 1
@@ -75,12 +75,12 @@ _full_loop_release_reap_stale_release_worktrees() {
 		[[ -z "$version" || -z "$protected_version" || "$version" != "$protected_version" ]] || continue
 		kill -0 "$owner_pid" 2>/dev/null && continue
 		# Any entry modified within 30 minutes (nested files included) means active.
-		idle_match=$(find "$stale_path" -mmin -30 -print -quit 2>/dev/null || true)
+		# A failed scan or status probe proves nothing, so the tree is kept.
+		idle_match=$(find "$stale_path" -mmin -30 -print -quit 2>/dev/null) || continue
 		[[ -z "$idle_match" ]] || continue
 		# Preserve trees with tracked or untracked changes; never rely on force.
-		if [[ -n "$(git -C "$stale_path" status --porcelain 2>/dev/null || true)" ]]; then
-			continue
-		fi
+		dirty_state=$(git -C "$stale_path" status --porcelain 2>/dev/null) || continue
+		[[ -z "$dirty_state" ]] || continue
 		attempts=$((attempts + 1))
 		_full_loop_release_remove_worktree "$stale_path" "$reason" || true
 	done
