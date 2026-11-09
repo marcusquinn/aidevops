@@ -39,6 +39,18 @@ removed() {
 	return 0
 }
 
+# Inverse of removed(); shell comparison so BSD sed (no ';t;' labels) is not needed.
+not_removed() {
+	local name="$1"
+	local reason="$2"
+	if [[ "$(removed "$name" "$reason")" == true ]]; then
+		echo false
+	else
+		echo true
+	fi
+	return 0
+}
+
 count_removed() {
 	[[ -f "$REMOVED_LOG" ]] || {
 		echo 0
@@ -111,8 +123,8 @@ make_tree "aidevops-release-601-${DEAD_PID}"
 make_tree "aidevops-release-reconcile-3.40.0-${DEAD_PID}"
 make_tree "aidevops-release-reconcile-3.40.1-${DEAD_PID}"
 _full_loop_release_reap_stale_release_worktrees "$BASE" "" "600" "3.40.0" 10
-check "lane PR kept" "$(removed "aidevops-release-600-${DEAD_PID}" release-preparation-stale | sed 's/true/false/;t;s/false/true/')"
-check "lane version kept" "$(removed "aidevops-release-reconcile-3.40.0-${DEAD_PID}" release-reconcile-stale | sed 's/true/false/;t;s/false/true/')"
+check "lane PR kept" "$(not_removed "aidevops-release-600-${DEAD_PID}" release-preparation-stale)"
+check "lane version kept" "$(not_removed "aidevops-release-reconcile-3.40.0-${DEAD_PID}" release-reconcile-stale)"
 check "other PR reaped" "$(removed "aidevops-release-601-${DEAD_PID}" release-preparation-stale)"
 check "other version reaped" "$(removed "aidevops-release-reconcile-3.40.1-${DEAD_PID}" release-reconcile-stale)"
 reset_case
