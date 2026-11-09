@@ -601,13 +601,17 @@ const selectStyle = {
   paddingRight: "40px",
   cursor: "pointer",
 };
+/* Drawn with borders so its size does not depend on font glyphs. */
 const chevronStyle = {
   position: "absolute",
-  right: "16px",
+  right: "18px",
   top: "50%",
-  transform: "translateY(-50%)",
+  width: "9px",
+  height: "9px",
+  borderRight: "2px solid var(--text-secondary)",
+  borderBottom: "2px solid var(--text-secondary)",
+  transform: "translateY(-75%) rotate(45deg)",
   pointerEvents: "none",
-  color: "var(--text-secondary)",
 };
 
 /** A select styled like the text fields. */
@@ -616,7 +620,7 @@ function select(h, props, ...options) {
     "span",
     { style: { position: "relative", display: "block" } },
     h("select", { ...props, style: selectStyle }, ...options),
-    h("span", { "aria-hidden": "true", style: chevronStyle }, "▾"),
+    h("span", { "aria-hidden": "true", style: chevronStyle }),
   );
 }
 
