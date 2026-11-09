@@ -25,6 +25,8 @@ if [[ "$*" == *"--property=ActiveState"* ]]; then
 	exit 0
 fi
 if [[ "$*" == *" start "* ]]; then
+	# Reject the blocking form: a real oneshot would outlive watchdog's timeout.
+	[[ "$*" == *"--no-block"* ]] || exit 1
 	printf '%s\n' "$*" >>"$SYSTEMCTL_LOG"
 	exit 0
 fi

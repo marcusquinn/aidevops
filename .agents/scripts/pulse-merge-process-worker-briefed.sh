@@ -181,7 +181,10 @@ _is_trusted_opencode_canary_issue_pr() {
 # changed file must be listed in scripts/core-files.txt read at the PR BASE sha
 # (a PR cannot widen its own scope) or be changelog.txt; renames are rejected.
 # API errors, truncated file lists (>= 100) or missing data fail closed. All
-# other merge gates (checks, reviews, review-bot, NMR) still apply.
+# other merge gates (checks, reviews, review-bot, NMR) still apply. The gate
+# order is pinned by test_starter_sync_does_not_bypass_other_gates in
+# tests/test-pulse-merge-worker-briefed.sh (GH#37373); keep it passing when
+# moving this check.
 # Blob-equality hardening against the starter was not implemented: files with
 # plugin-own marker blocks legitimately differ and the starter commit is not
 # machine-readable from the issue, so the base-ref scope list is the bound.

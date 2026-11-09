@@ -344,6 +344,54 @@ test_dispatch_detaches_worker_from_parent_process_group() {
 	return 0
 }
 
+test_dispatch_uses_scope_without_duplicate_fallback() {
+	setup_test_env
+	local expected="" output="" rc=0
+	for expected in systemd_scope systemd_scope_unconfirmed failure; do
+		: >"$DETACH_LAUNCH_LOG"
+		rc=0
+		output=$(
+			# shellcheck source=../pr-review-thread-response-launch.sh
+			source "${SCANNER%/*}/pr-review-thread-response-launch.sh"
+			systemd_scope_available() { return 0; }
+			systemd_scope_launch() {
+				printf 'scope %s\n' "$*" >>"$DETACH_LAUNCH_LOG"
+				[[ "$expected" != failure ]] || return 1
+				printf '424242 %s\n' "$expected"
+				return 0
+			}
+			local pid="" mode=""
+			_prrts_launch_detached_worker owner/repo 1 pid mode env HEADLESS=1 || exit 1
+			printf '%s %s\n' "$pid" "$mode"
+		) || rc=$?
+		if [[ "$(wc -l <"$DETACH_LAUNCH_LOG" | tr -d ' ')" == 1 ]] &&
+			grep -Fq 'scope aidevops-pr-review-1-' "$DETACH_LAUNCH_LOG" &&
+			grep -Fq 'env HEADLESS=1' "$DETACH_LAUNCH_LOG" &&
+			{ [[ "$expected" == failure && "$rc" == 1 ]] ||
+				[[ "$expected" != failure && "$rc" == 0 && "$output" == "424242 $expected" ]]; }; then
+			print_result "review scope launch ${expected} never falls back or duplicates" 0
+		else
+			print_result "review scope launch ${expected} never falls back or duplicates" 1 "rc=$rc output=$output"
+		fi
+	done
+	output=$(
+		# shellcheck source=../pr-review-thread-response-launch.sh
+		source "${SCANNER%/*}/pr-review-thread-response-launch.sh"
+		systemd_scope_available() { return 1; }
+		_prrts_log() { return 0; }
+		INVOCATION_ID=fixture-managed-unit
+		local pid="" mode=""
+		_prrts_launch_detached_worker owner/repo 1 pid mode env HEADLESS=1
+	) && rc=0 || rc=$?
+	if [[ "$rc" == 1 ]]; then
+		print_result "managed review launch refuses unavailable scope" 0
+	else
+		print_result "managed review launch refuses unavailable scope" 1 "rc=$rc output=$output"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_preserves_head_fields_when_labels_are_empty() {
 	setup_test_env
 	export STUB_PR_LIST=$'1\tFix active PR\tfalse\t\tfeature/review\t'"${TEST_HEAD_OID_1}"$'\tworker-bot'
@@ -399,6 +447,10 @@ SHARED_CONSTANTS
 		"$(dirname "$bundled_scanner")/pr-review-thread-response-scanner-locks.sh"
 	cp "${TEST_SCRIPT_DIR}/../pr-review-thread-response-scanner-worktree.sh" \
 		"$(dirname "$bundled_scanner")/pr-review-thread-response-scanner-worktree.sh"
+	cp "${TEST_SCRIPT_DIR}/../pr-review-thread-response-launch.sh" \
+		"$(dirname "$bundled_scanner")/pr-review-thread-response-launch.sh"
+	cp "${TEST_SCRIPT_DIR}/../systemd-scope-launch.sh" \
+		"$(dirname "$bundled_scanner")/systemd-scope-launch.sh"
 	chmod +x "$bundled_scanner"
 	"$bundled_scanner" dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
