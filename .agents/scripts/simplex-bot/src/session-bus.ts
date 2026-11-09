@@ -133,10 +133,31 @@ export async function relayOutbox(send: (channel: string, text: string) => Promi
   if (!Array.isArray(messages)) throw new Error("Invalid session bus outbox");
   for (const message of messages) {
     if (!isOutboxMessage(message)) continue;
+    let stage: "send" | "ack" = "send";
     try {
       await send(message.channel, message.text);
+      stage = "ack";
       const ack = await run(["aidevops", "sessions", "outbox", "simplex", "--ack", message.id]);
       if (!ack.success) throw new Error("Outbox acknowledgement failed");
-    } catch { /* Preserve failed messages for the next tick. */ }
+    } catch { warnRelayFailure(message.id, stage); /* Preserve failed messages for the next tick. */ }
   }
+}
+
+const RELAY_WARN_INTERVAL_MS = 60_000;
+const RELAY_WARN_MAX_TRACKED = 100;
+const relayWarned = new Map<string, number>();
+
+/** Rate-limited, bounded warning; logs id and stage only, never message text. */
+function warnRelayFailure(id: string, stage: "send" | "ack"): void {
+  const key = `${id}:${stage}`;
+  const now = Date.now();
+  const last = relayWarned.get(key);
+  if (last !== undefined && now - last < RELAY_WARN_INTERVAL_MS) return;
+  if (relayWarned.size >= RELAY_WARN_MAX_TRACKED) {
+    const oldest = relayWarned.keys().next().value;
+    if (oldest !== undefined) relayWarned.delete(oldest);
+  }
+  relayWarned.delete(key);
+  relayWarned.set(key, now);
+  console.warn(`Session bus outbox ${stage} failed for message ${id}; will retry`);
 }
