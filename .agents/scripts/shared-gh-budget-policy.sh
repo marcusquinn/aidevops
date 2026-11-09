@@ -17,6 +17,9 @@ gh_budget_worker_reserve_allows() {
 		local snapshot="" mode="" rest=""
 		snapshot=$(pulse_rest_core_priority_snapshot 15) || snapshot=""
 		read -r mode remaining limit rest <<<"$snapshot"
+		# Operator-disabled quota gating reports "?" values by design; that is
+		# not missing evidence, so do not defer optional work on it.
+		[[ "$mode" == "disabled" ]] && return 0
 		if [[ ! "$remaining" =~ ^[0-9]{1,9}$ || ! "$limit" =~ ^[1-9][0-9]{0,8}$ ]]; then
 			printf '[pulse-budget] Deferring optional REST work: quota evidence unavailable\n' >&2
 			return 1

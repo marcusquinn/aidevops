@@ -357,6 +357,10 @@ _api_budget_top_rest_families_json() {
 		printf '[]'
 		return 0
 	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		printf '[]'
+		return 0
+	fi
 	# Count native attempts only, not the logical routing row for the same call.
 	# Older rows remain visible as unknown; never echo unvalidated log text.
 	awk -F '\t' -v now="$(date +%s)" -v rest=rest -v unknown=unknown '
@@ -408,7 +412,7 @@ _api_budget_render_text() {
 	printf '  Cache key cardinality:        %s\n' "$(_api_budget_cache_key_counts_csv)"
 	printf '  Mutation bypass attribution:  %s\n' "$(_api_budget_mutation_bypass_csv "$logfile" "$api_log")"
 	printf '  API calls by caller:          %s\n' "$(_api_budget_calls_by_caller_text "$api_log")"
-	printf '  Top REST families (60m):      %s\n' "$(_api_budget_top_rest_families_json "$api_log" | jq -c .)"
+	printf '  Top REST families (60m):      %s\n' "$(_api_budget_top_rest_families_json "$api_log")"
 	printf '  PR view shared cache dir:     %s\n' "$(_api_budget_cache_dir_state)"
 	printf '  Secondary cooldown state:     %s\n' "$(_api_budget_cooldown_summary_csv)"
 	printf '  Pulse systemd cadence:        %s\n' "$timer_summary"
