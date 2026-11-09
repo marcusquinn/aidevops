@@ -143,7 +143,7 @@ _dispatch_negative_pr_fingerprint() {
 		jq -e '.complete == true and ((now - (.timestamp | fromdateiso8601)) >= 0)
 			and ((now - (.timestamp | fromdateiso8601)) < 900)' <<<"$snapshot" >/dev/null 2>&1; then
 		jq -er --argjson pr "$pr" '
-			.items[] | select(.number == $pr) |
+			.items[] | select(.number == $pr and .isDraft == true) |
 			select((.updatedAt | type) == "string" and (.headRefOid | type) == "string") |
 			select((.updatedAt | length) > 0 and (.headRefOid | length) > 0) |
 			[.updatedAt, .headRefOid] | join("_")
@@ -279,11 +279,34 @@ _dispatch_checkpoint_decimal() {
 	return 0
 }
 
+# Read boundary evidence once per ceremony, not on cache hits. Conservatively
+# include every claim/lease expiry and attention re-arm, even obsolete or
+# untrusted records: extra wakeups are safe, delayed continuations are not.
+# Assigned issues must retain the live/stale-owner checks on every cycle.
+_dispatch_draft_hint_boundary() {
+	local candidate="$1" repo="$2" issue="$3" comments="" rearm="" observed=""
+	jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
+	rearm=$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)
+	# A deadline crossed during the bounded read must still invalidate the hint.
+	observed=$(date +%s)
+	comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+		gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	jq -er --argjson rearm "$rearm" --argjson observed "$observed" '
+		if type != "array" then error("invalid comments") else flatten end |
+		[.[] | (.body // "") as $body |
+			($body | scan("expires_at=([0-9]+)") | .[0] | tonumber),
+			(select($rearm > 0 and ($body | test("aidevops:(blocked|stalled)-checkpoint-attention"))) |
+				(.created_at | fromdateiso8601) + $rearm)] |
+		map(select(. >= $observed)) | (min // 0) | tostring + ":" + ($rearm | tostring)
+	' <<<"$comments" 2>/dev/null
+	return $?
+}
+
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
-		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
@@ -301,8 +324,9 @@ _dispatch_negative_cache_record() {
 		([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1; then
 		return 0
 	fi
-	if [[ "$reason" == worker_draft_checkpoint_blocked ]]; then
+	if [[ "$reason" == worker_draft_checkpoint_blocked || "$reason" == stale_draft_checkpoint ]]; then
 		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 0
+		owner_path=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") || return 0
 	fi
 	if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 		[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -gt 0 ]] || return 0
@@ -340,7 +364,7 @@ _dispatch_negative_cache_reason() {
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
 	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
 		"$reason" != terminal_blocker_fleet_hold && "$reason" != zero_attempt_backoff &&
-		"$reason" != worker_draft_checkpoint_blocked &&
+		"$reason" != worker_draft_checkpoint_blocked && "$reason" != stale_draft_checkpoint &&
 		"$reason" != worker_draft_checkpoint_cooldown &&
 		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
 		! _dispatch_maintainer_gate_reason "$reason"; then
@@ -387,11 +411,19 @@ _dispatch_negative_cache_reason() {
 		# Empty worker pools must retain the authoritative active-claim recheck.
 		[[ "${_DISPATCH_ACTIVE_WORKERS:-0}" != 0 ]] || return 1
 		;;
-	worker_draft_checkpoint_blocked)
+	worker_draft_checkpoint_blocked | stale_draft_checkpoint)
 		[[ -n "$fingerprint" ]] || return 1
+		# Older records lack boundary evidence and must run the ceremony once.
+		[[ "$owner_path" =~ ^([0-9]+):([0-9]+)$ ]] || return 1
+		local boundary="${BASH_REMATCH[1]}" rearm="${BASH_REMATCH[2]}"
+		[[ "$rearm" == "$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)" ]] || return 1
+		jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
+		ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
+		((ttl <= 21600)) || ttl=21600
 		# GH#34402: the PR read can cost an API call, so expire first.
 		now=$(date +%s)
 		((now >= stamp && now - stamp < ttl)) || return 1
+		((boundary == 0 || now < boundary)) || return 1
 		current=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
 		;;
@@ -443,7 +475,9 @@ _dispatch_cache_confirmed_block() {
 	if [[ "$lines" != *"checkpoint_routed"* &&
 		"$lines" =~ WORKER_DRAFT_CHECKPOINT:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]]; then
 		pr="${BASH_REMATCH[1]}"
-		_dispatch_negative_cache_record "$candidate" worker_draft_checkpoint_blocked "$pr"
+		reason=worker_draft_checkpoint_blocked
+		[[ "$lines" != *"stale_draft_checkpoint"* ]] || reason=stale_draft_checkpoint
+		_dispatch_negative_cache_record "$candidate" "$reason" "$pr"
 		return 0
 	fi
 	# GH#33026: a live worktree owner refused this issue's claim. Hold until that
