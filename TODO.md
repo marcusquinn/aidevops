@@ -1949,6 +1949,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18912 fix(cleanup): scale lifecycle cleanup budget under worktree capacity pressure so retirement keeps up and dispatch reopens #bug #framework ref:GH#37330
 
+- [ ] t18913 fix(release): reap stale release preparation and reconcile worktrees that hold the worktree cap closed #bug #framework ref:GH#37339
+
+- [ ] t18914 fix(cleanup): fetch through native Git in canonical checkouts and log capacity-pass vetoes #bug ref:GH#37342
+
+- [ ] t18915 fix(lifecycle): retry owner admission while the lifecycle store is briefly locked #bug ref:GH#37346
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
