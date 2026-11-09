@@ -351,6 +351,28 @@ _api_budget_cadence_risk() {
 	return 0
 }
 
+_api_budget_top_rest_families_json() {
+	local api_log="$1"
+	if [[ ! -f "$api_log" ]]; then
+		printf '[]'
+		return 0
+	fi
+	# Count native attempts only, not the logical routing row for the same call.
+	# Older rows remain visible as unknown; never echo unvalidated log text.
+	awk -F '\t' -v cutoff="$(($(date +%s) - 3600))" -v rest=rest -v unknown=unknown '
+		$(1) >= cutoff && $(3) == rest && $(9) == "attempt" {
+			id = $11; if (id != "" && seen[id]++) next
+			family = $25
+			if (family !~ /^(user|rate-limit|graphql|search|users|orgs|notifications|installation|other|repos-other)$/ &&
+			    family !~ /^repos\/:o\/:r\/(issues|pulls|actions|commits|git|contents|releases|check-runs|check-suites|statuses)(\/:id)?(\/(reviews|comments|commits|files|checks|runs))?$/ &&
+			    family != "repos/:o/:r/collaborators/:u/permission") family = unknown
+			counts[family]++
+		}
+		END { for (family in counts) print family "\t" counts[family] }
+	' "$api_log" | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t") | {family: .[0], attempts: (.[1] | tonumber)}) | sort_by([-.attempts, .family]) | .[:10]'
+	return 0
+}
+
 _api_budget_render_text() {
 	local stats_file="$1" logfile="$2" api_log="$3" timer_file="$4"
 	local circuit reserve deferred force_rest cache_prime_runs cache_prime_failures
@@ -386,6 +408,7 @@ _api_budget_render_text() {
 	printf '  Cache key cardinality:        %s\n' "$(_api_budget_cache_key_counts_csv)"
 	printf '  Mutation bypass attribution:  %s\n' "$(_api_budget_mutation_bypass_csv "$logfile" "$api_log")"
 	printf '  API calls by caller:          %s\n' "$(_api_budget_calls_by_caller_text "$api_log")"
+	printf '  Top REST families (60m):      %s\n' "$(_api_budget_top_rest_families_json "$api_log" | jq -c .)"
 	printf '  PR view shared cache dir:     %s\n' "$(_api_budget_cache_dir_state)"
 	printf '  Secondary cooldown state:     %s\n' "$(_api_budget_cooldown_summary_csv)"
 	printf '  Pulse systemd cadence:        %s\n' "$timer_summary"
@@ -453,6 +476,7 @@ _api_budget_render_json() {
 	_json_str_field "cache_key_cardinality" "$(_api_budget_cache_key_counts_csv)"
 	_json_str_field "mutation_bypass_attribution" "$(_api_budget_mutation_bypass_csv "$logfile" "$api_log")"
 	printf '  "%s": %s,\n' "api_calls_by_caller" "$(_api_budget_calls_by_caller_json "$api_log")"
+	printf '  "top_rest_families_60m": %s,\n' "$(_api_budget_top_rest_families_json "$api_log")"
 	_json_str_field "pr_view_shared_cache_dir" "$(_api_budget_cache_dir_state)"
 	_json_str_field "secondary_cooldown_state" "$(_api_budget_cooldown_summary_csv)"
 	_json_str_field "pulse_systemd_cadence" "$timer_summary"

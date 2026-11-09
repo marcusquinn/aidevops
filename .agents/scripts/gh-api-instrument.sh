@@ -602,6 +602,7 @@ _gh_append_v2() {
 	local quota_used="${4:-}"
 	local request_method="${5:-unknown}"
 	local endpoint_class="${6:-unknown}"
+	local endpoint_family="${7:-unknown}"
 	local ts=""
 	local record=""
 	local auth_reason=""
@@ -643,10 +644,19 @@ _gh_append_v2() {
 	rate-limit | graphql | search | users | orgs | notifications | installation | other | repos-issues | repos-pulls | repos-actions | repos-commits | repos-git | repos-contents | repos-releases | repos-checks | repos-statuses | repos-other) ;;
 	*) endpoint_class=unknown ;;
 	esac
-	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+	# Static allowlist only: no URL, repository, user, query or arbitrary argv.
+	case "$endpoint_family" in
+	user|rate-limit|graphql|search|users|orgs|notifications|installation|other|repos-other|repos/:o/:r/collaborators/:u/permission) ;;
+	*)
+		if [[ ! "$endpoint_family" =~ ^repos/:o/:r/(issues|pulls|actions|commits|git|contents|releases|check-runs|check-suites|statuses)(/:id)?(/(reviews|comments|commits|files|checks|runs))?$ ]]; then
+			endpoint_family=unknown
+		fi
+		;;
+	esac
+	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
 		"$ts" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" "$budget_remaining" \
 		"$event_kind" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" "$http_status" "$elapsed_ms" "$quota_cost" \
-		"$auth_reason" "$auth_consumer" "$auth_fingerprint" "$reset_epoch" "$quota_used" "$request_method" "$endpoint_class"
+		"$auth_reason" "$auth_consumer" "$auth_fingerprint" "$reset_epoch" "$quota_used" "$request_method" "$endpoint_class" "$endpoint_family"
 	_gh_append_record "$record"
 	return 0
 }
@@ -760,6 +770,7 @@ gh_record_attempt() {
 	local quota_used="${5:-}"
 	local request_method="${6:-unknown}"
 	local endpoint_class="${7:-unknown}"
+	local endpoint_family="${8:-unknown}"
 	[[ -n "$logical_id" ]] || logical_id=$(gh_new_logical_id)
 	[[ -n "$attempt_id" ]] || attempt_id=$(gh_new_attempt_id "$logical_id")
 	[[ -n "$page" ]] || page=1
@@ -773,7 +784,7 @@ gh_record_attempt() {
 	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
 	_gh_append_v2 attempt "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" \
 		"$budget_remaining" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" \
-		"$http_status" "$elapsed_ms" "$quota_cost" "$recorded_at" "$auth_fingerprint" "$reset_epoch" "$quota_used" "$request_method" "$endpoint_class"
+		"$http_status" "$elapsed_ms" "$quota_cost" "$recorded_at" "$auth_fingerprint" "$reset_epoch" "$quota_used" "$request_method" "$endpoint_class" "$endpoint_family"
 	return 0
 }
 

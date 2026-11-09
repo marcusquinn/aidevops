@@ -99,7 +99,7 @@ def _write_sanitized_stderr() -> None:
     return
 
 
-UNKNOWN_METADATA = ("unknown", "unknown")
+UNKNOWN_METADATA = ("unknown", "unknown", "unknown")
 REQUEST_LINE = re.compile(
     rb"> (GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) (/[^\s]*) HTTP/[0-9.]+\r?\n?"
 )
@@ -137,7 +137,26 @@ def _endpoint_class(target: bytes) -> str:
     return REPO_CLASSES.get(parts[3], "repos-other")
 
 
-def _request_metadata(frame: List[bytes]) -> Tuple[str, str]:
+def _endpoint_family(target: bytes) -> str:
+    """Discard identifiers and queries, returning only a static endpoint family."""
+    parts = target.split(b"?", 1)[0].split(b"#", 1)[0].strip(b"/").split(b"/")
+    if parts == [b"user"]:
+        return "user"
+    if parts[0] != b"repos":
+        return _endpoint_class(target)
+    if len(parts) == 6 and parts[3] == b"collaborators" and parts[5] == b"permission":
+        return "repos/:o/:r/collaborators/:u/permission"
+    if len(parts) >= 4 and parts[3] in REPO_CLASSES:
+        family = "repos/:o/:r/" + parts[3].decode("ascii")
+        if len(parts) >= 5:
+            family += "/:id"
+        if len(parts) >= 6 and parts[5] in (b"reviews", b"comments", b"commits", b"files", b"checks", b"runs"):
+            family += "/" + parts[5].decode("ascii")
+        return family
+    return "repos-other"
+
+
+def _request_metadata(frame: List[bytes]) -> Tuple[str, str, str]:
     """Keep only allowlisted labels; never retain a path or request argument."""
     requests = [line for line in frame if line.startswith(b"> ") and b" HTTP/" in line]
     starts = sum(bool(REQUEST_START.match(line)) for line in frame)
@@ -145,7 +164,7 @@ def _request_metadata(frame: List[bytes]) -> Tuple[str, str]:
     match = REQUEST_LINE.fullmatch(requests[0]) if starts == 1 and len(requests) == 1 else None
     if match is None:
         return UNKNOWN_METADATA
-    return match.group(1).decode("ascii"), _endpoint_class(match.group(2))
+    return match.group(1).decode("ascii"), _endpoint_class(match.group(2)), _endpoint_family(match.group(2))
 
 
 def _transport_frames(lines: List[bytes], request_ranges: List[Tuple[int, int]]) -> list:
