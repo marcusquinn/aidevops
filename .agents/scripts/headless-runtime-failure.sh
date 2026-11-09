@@ -1682,7 +1682,11 @@ _worker_secure_branch_commits() {
 _hrff_record_runner_health_failure() {
 	local session_key="$1"
 	local reason="$2"
-	[[ "$reason" == "worker_signing_unavailable" ]] || return 0
+	case "$reason" in
+	worker_signing_unavailable) ;;
+	crash_during_startup | worker_noop_zero_output) reason="no_worker_process" ;;
+	*) return 0 ;;
+	esac
 
 	local helper="${_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE:-${BASH_SOURCE[0]%/*}/pulse-runner-health-helper.sh}"
 	local issue_number=""

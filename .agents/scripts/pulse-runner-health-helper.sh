@@ -450,14 +450,23 @@ _rh_trip_breaker() {
 	local update_helper="${HOME}/.aidevops/agents/scripts/auto-update-helper.sh"
 	local update_outcome="error"
 	if [[ -x "$update_helper" ]]; then
+		local version_before="" sha_before="" version_after="" sha_after=""
+		version_before=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_VERSION_FILE")
+		sha_before=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_SHA_FILE")
 		# Run check synchronously. Output to log only — never the user's
 		# session — to avoid noise from a per-issue trigger.
 		local update_log="${HOME}/.aidevops/logs/runner-health-update.log"
 		mkdir -p "$(dirname "$update_log")" 2>/dev/null || true
 		local update_rc=0
 		"$update_helper" check >>"$update_log" 2>&1 || update_rc=$?
+		version_after=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_VERSION_FILE")
+		sha_after=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_SHA_FILE")
 		if [[ "$update_rc" -eq 0 ]]; then
-			update_outcome="ran"
+			update_outcome="no_change"
+			if [[ -n "$version_after" && "$version_after" != "$version_before" ]] ||
+				[[ -n "$sha_after" && "$sha_after" != "$sha_before" ]]; then
+				update_outcome="ran"
+			fi
 		else
 			update_outcome="failed"
 		fi
