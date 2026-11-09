@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createQualityHooks, scrubCredentials } from "../quality-hooks.mjs";
+import { DISPLAY_REDACTION_NOTE_PREFIX } from "../quality-hooks-output-scrub.mjs";
 import { createSecretValueRedactor } from "../registered-value-redaction.mjs";
 import { RegisteredValueSources } from "../registered-value-sources.mjs";
 
@@ -31,6 +32,83 @@ function assertScrub(input, expected, expectedCount) {
   assert.equal(scrubbed, expected);
   assert.equal(count, expectedCount);
 }
+
+/** Hook output must carry the GH#37382 display-filter note; return the content before it. */
+function withoutDisplayNote(text) {
+  const index = text.indexOf(`\n\n${DISPLAY_REDACTION_NOTE_PREFIX}`);
+  assert.ok(index >= 0, "redacted hook output carries the display-filter note");
+  return text.slice(0, index);
+}
+
+describe("code and prose after sensitive labels (GH#37382)", () => {
+  const unchanged = [
+    "The secret: keep the originals of anything legally important",
+    "Tip - password: keep the originals",
+    "if token == expected: return",
+    "if (token === expected) return",
+    "password != expected",
+    "password: str = field(default=None)",
+    "secret: Optional[str] = None",
+    "token: string;",
+    "const namedSecret = registeredNames.has(name) || fallback;",
+    "const SECRET_VALUE_REDACTION_TOKEN = REDACTION_TOKEN;",
+    "const token = process.env.GITHUB_TOKEN;",
+    "const token = await fetchToken();",
+    "const getToken = () => cached;",
+    "redacted_credential: True,",
+    "**Password:** keep the originals",
+  ];
+  for (const input of unchanged) {
+    test(`keeps ${JSON.stringify(input)}`, () => assertScrub(input, input, 0));
+  }
+
+  test("literal values under sensitive names remain redacted", () => {
+    assertScrub("password: hunter2value", `password: ${REDACTION_TOKEN}`, 1);
+    assertScrub("export SECRET=plainword", `export SECRET=${REDACTION_TOKEN}`, 1);
+    assertScrub("password=hunter2value # note", `password=${REDACTION_TOKEN} # note`, 1);
+    assertScrub("PASSWORD=PROD_PASSWORD_2024", `PASSWORD=${REDACTION_TOKEN}`, 1);
+    assertScrub("Password: Hunter2value", `Password: ${REDACTION_TOKEN}`, 1);
+    assertScrub("token: abcdefgh expires soon", `token: ${REDACTION_TOKEN} expires soon`, 1);
+    assertScrub("secret: abcd efgh ijkl mnop", `secret: ${REDACTION_TOKEN} efgh ijkl mnop`, 1);
+  });
+
+  test("unspaced dotenv/shell values and commented labels are never exempt", () => {
+    const cases = [
+      "PASSWORD=Secret(123)",
+      "export API_KEY=ABCD_1234_EFGH;",
+      "token=process.env.X",
+      "password: hunter # the dev one",
+      "password: hunter // for the box",
+    ];
+    for (const text of cases) {
+      const { scrubbed, count } = scrubCredentials(text);
+      assert.equal(count, 1, text);
+      assert.ok(scrubbed.includes(REDACTION_TOKEN), text);
+    }
+  });
+
+  test("walrus and hash-arrow assignments redact the literal, not the operator", () => {
+    assertScrub('password := "hunter2value"', `password := "${REDACTION_TOKEN}"`, 1);
+    assertScrub('{ token => "hunter2value" }', `{ token => "${REDACTION_TOKEN}" }`, 1);
+  });
+
+  test("toolExecuteAfter marks display redactions and leaves clean prose alone", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-display-note-"));
+    try {
+      const redactor = createSecretValueRedactor({ configDir: join(root, "none"), registryDir: join(root, "none"), env: {} });
+      const hooks = createQualityHooks({ scriptsDir: root, logsDir: root, secretRedactor: redactor });
+      const prose = { output: "The secret: keep the originals of anything legally important\n" };
+      await hooks.toolExecuteAfter({ tool: "read", callID: "" }, prose);
+      assert.equal(prose.output, "The secret: keep the originals of anything legally important\n");
+      const assigned = { output: "API_KEY=abcdefgh" };
+      await hooks.toolExecuteAfter({ tool: "bash", callID: "" }, assigned);
+      assert.equal(withoutDisplayNote(assigned.output), `API_KEY=${REDACTION_TOKEN}`);
+      assert.ok(!assigned.output.slice(assigned.output.indexOf(DISPLAY_REDACTION_NOTE_PREFIX)).includes(REDACTION_TOKEN));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("Cloudron addon log shapes", () => {
   test("redacts non-http URL userinfo passwords and keeps host", () => {
@@ -81,11 +159,11 @@ describe("credential transcript scrub boundary", () => {
             metadata: { ordinary: value, pair: { name: "FOO_TOKEN", value } },
           };
           await hooks.toolExecuteAfter({ tool, callID: "" }, output);
-          assert.equal(output.output, `bare ${value} FOO_TOKEN=${REDACTION_TOKEN} FOO_SECRET=${REDACTION_TOKEN} FOO_PASSWORD=${REDACTION_TOKEN}`);
+          assert.equal(withoutDisplayNote(output.output), `bare ${value} FOO_TOKEN=${REDACTION_TOKEN} FOO_SECRET=${REDACTION_TOKEN} FOO_PASSWORD=${REDACTION_TOKEN}`);
           assert.deepEqual(output.metadata, { ordinary: value, pair: { name: "FOO_TOKEN", value: REDACTION_TOKEN } });
           const escaped = { output: String.raw`{\"password\":\"${value}\",\"repo\":\"${value}\"}` };
           await hooks.toolExecuteAfter({ tool, callID: "" }, escaped);
-          assert.equal(escaped.output, String.raw`{\"password\":\"${REDACTION_TOKEN}\",\"repo\":\"${value}\"}`);
+          assert.equal(withoutDisplayNote(escaped.output), String.raw`{\"password\":\"${REDACTION_TOKEN}\",\"repo\":\"${value}\"}`);
           for (const sensitiveValue of [
             String.raw`[\"${value}\"]`,
             String.raw`[\"${value}\",{\"nested\":[\"${value}\",\"bracket ] comma ,\"]}]`,
@@ -94,7 +172,7 @@ describe("credential transcript scrub boundary", () => {
           ]) {
             const record = { output: String.raw`log {\"credentials\":${sensitiveValue},\"repo\":${sensitiveValue}} done` };
             await hooks.toolExecuteAfter({ tool, callID: "" }, record);
-            assert.equal(record.output, String.raw`log {\"credentials\":\"${REDACTION_TOKEN}\",\"repo\":${sensitiveValue}} done`);
+            assert.equal(withoutDisplayNote(record.output), String.raw`log {\"credentials\":\"${REDACTION_TOKEN}\",\"repo\":${sensitiveValue}} done`);
           }
         }
       }
