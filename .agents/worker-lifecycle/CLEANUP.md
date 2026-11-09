@@ -251,23 +251,26 @@ for terminal absence reconciliation.
 
 ## Preparation and WIP preservation commands
 
-The registry CLI provides two non-destructive operations:
+The registry CLI provides three non-destructive operations:
 
-- `prepare-cleanup --path PATH` validates the physical generation and reconciles its registered runs.
-  Empty registrations and observation-only bindings report `coverage-gap`; active or unknown runs report
-  `waiting-for-runs`, adding `detail: waiting-for-caller` when every unfinished run is an ancestor of the
-  invoking command (still blocking: one runtime process can serve several sessions; GH#37022). Read-only
-  git inspection of another tree (`READ_ONLY_VERBS` in `worker_lifecycle_command_targets.py`) admits no
-  owner. These outcomes leave open admission open, so preparation cannot strand a newly created worktree
-  before its first launch. Once all runs are ended, closure rechecks their exact set in the admission
-  transaction; a racing new owner reports `retry-required` without closing admission. Successful closure
-  is permanent. `registered-runs-ended` describes registered runs, not coverage of unregistered writers or
+- `prepare-cleanup --path PATH` validates the physical generation and reconciles its registered runs. Empty
+  registrations and observation-only bindings report `coverage-gap`; active or unknown runs report `waiting-for-runs`,
+  adding `detail: waiting-for-caller` when every unfinished run is an ancestor of the invoking command (still blocking:
+  one runtime process can serve several sessions; GH#37022). Read-only git inspection of another tree (`READ_ONLY_VERBS`
+  in `worker_lifecycle_command_targets.py`) admits no owner. These outcomes leave open admission open, so preparation
+  cannot strand a newly created worktree before its first launch. Once all runs are ended, closure rechecks their exact
+  set in the admission transaction; a racing new owner reports `retry-required` without closing admission. Successful
+  closure is permanent. `registered-runs-ended` describes registered runs, not coverage of unregistered writers or
   permission to remove anything.
-- `preserve-wip --path PATH --repo OWNER/REPO --base-branch BRANCH --output-root DIR`
-  performs preparation, creates a WIP archive and verifies its captured payloads
-  against the source fingerprint and retained base. `DIR` must already exist,
-  be canonical, owned and outside the source worktree and its administration
-  directory. Missing evidence or failed verification leaves the source intact.
+- `relinquish-session --path PATH --pid PID --session-id ID` ends only the caller's own run: the PID must be an ancestor
+  of the command and the session ID selects one run of it (`relinquished`, `already-ended` or `not-owner`). Ending is
+  permanent (re-admission of that session refuses with `session-owner-already-ended`) and never closes admission,
+  archives or removes. Explicit `worktree-helper.sh remove` opts in (`WORKER_LIFECYCLE_RELINQUISH_CALLER=1`), relinquishing
+  only on `waiting-for-caller` and retrying once; Pulse and release cleanup do not (GH#37432).
+- `preserve-wip --path PATH --repo OWNER/REPO --base-branch BRANCH --output-root DIR` performs preparation, creates a
+  WIP archive and verifies its captured payloads against the source fingerprint and retained base. `DIR` must already
+  exist, be canonical, owned and outside the source worktree and its administration directory. Missing evidence or
+  failed verification leaves the source intact.
 
 `archive_path.validate_archive_path` is shared by preservation, retirement and both cleanup passes; it checks every component without following symlinks or changing permissions.
 The root and descendant directories must belong to the current user and deny group/other writes. Root/intermediate mode 0755 is allowed; individual archives must deny all group/other access.
@@ -275,11 +278,10 @@ Ancestors must belong to root/current user and deny external writes, except stic
 These POSIX ownership/mode-bit checks do not evaluate extended macOS/NFSv4 ACLs; effective access must match the mode-bit policy for these guarantees to hold.
 The archive producer remains unchanged. Unsafe paths prevent source retirement rather than triggering permission repair.
 
-Both require `--state-dir` before the subcommand; neither initializes/migrates state,
-reopens admission, removes worktrees nor consults legacy ownership. Closure survives
-failure: do not use on trees needing more launches. Repeating preservation for the
-same generation/content/destination rechecks the archive; old registry receipts are
-not current proof. Results retain `cleanup_authorized=false` and `common_repository_required=true`.
+All three require `--state-dir` before the subcommand; none initializes/migrates state, reopens admission, removes worktrees nor consults
+legacy ownership. Closure survives failure: do not use on trees needing more launches. Repeating preservation for the same
+generation/content/destination rechecks the archive; old registry receipts are not current proof. Results retain `cleanup_authorized=false`
+(preparation and preservation also `common_repository_required=true`).
 
 Archives pin `refs/aidevops/wip-base/OPERATION_ID` through branch deletion/Git GC but
 still need the common repository. Retain pins while dependent archives exist; neither
