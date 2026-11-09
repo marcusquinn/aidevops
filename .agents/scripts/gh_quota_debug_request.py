@@ -68,7 +68,7 @@ def _endpoint_family(target: bytes) -> str:
 def _request_metadata(frame: List[bytes]) -> Tuple[str, str, str]:
     """Keep only allowlisted labels; never retain a path or request argument."""
     requests = [line for line in frame if line.startswith(b"> ") and b" HTTP/" in line]
-    starts = sum(bool(REQUEST_START.match(line)) for line in frame)
+    starts = sum(bool(REQUEST_START.match(line.rstrip(b"\r\n"))) for line in frame)
     # Interleaved starts/completions cannot prove response ownership.
     match = REQUEST_LINE.fullmatch(requests[0]) if starts == 1 and len(requests) == 1 else None
     if match is None:
