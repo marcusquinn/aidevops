@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 
 import * as store from "./session-bus-store.mjs";
+import { chatTrust, setChatWake } from "./session-bus-chat-trust.mjs";
 
 function readText(options, words) {
   if (options.textFile) return readFileSync(options.textFile, "utf8");
@@ -48,7 +49,8 @@ const printLines = (out, lines, empty) => print(out, lines.length > 0 ? lines.jo
 
 export function listCommand({ root, options, out }) {
   const all = store.sortPresence(store.readPresence(root, { sweep: true }));
-  const records = options.all ? all : all.filter(store.isMessageable);
+  let records = options.all ? all : all.filter(store.isMessageable);
+  if (options.redact) records = records.map(({ title, repo, branch, worktree, directory, ...record }) => record);
   if (options.json) return print(out, records, true);
   const hidden = all.length - records.length;
   const lines = records.map((record) => store.formatPresenceRow(record));
@@ -111,12 +113,14 @@ export function sendCommand(context, type) {
     ? { session_id: "", handle: `shell:${env.USER || "user"}`, repo: "", branch: "", origin: "cli" }
     : senderFrom(root, options.origin, env);
   const resolved = messageableTarget(root, target, from);
+  const text = readText(options, words);
+  if (options.origin) from.trust = chatTrust(options.origin, options.actor, text, env);
   const message = store.sendMessage(root, {
     from,
     to: resolved.record ? resolved.record.session_id : resolved.sessionID,
     toHandle: resolved.record?.handle || "",
     type,
-    text: readText(options, words),
+    text,
   });
   print(out, `Sent ${type} ${message.id} to ${resolved.record?.handle || resolved.sessionID}.${replyHint(type, from)}`, false);
   if (!options.wait) return undefined;
@@ -153,4 +157,14 @@ export function outboxCommand({ root, options, out }) {
 export function pruneCommand({ root, out }) {
   const live = store.readPresence(root, { sweep: true }).length;
   return print(out, `Pruned ${store.pruneBus(root)} expired message(s); ${live} live session(s).`, false);
+}
+
+export function chatWakeCommand({ root, options, out }) {
+  const [, target, setting] = options.positional;
+  if (!["on", "off"].includes(setting)) throw new Error("chat-wake needs <target> on|off");
+  const resolved = store.resolveTarget(store.readPresence(root), target, "");
+  if (resolved.error) throw new Error(resolved.error);
+  const sessionID = resolved.record?.session_id || resolved.sessionID;
+  setChatWake(root, sessionID, setting === "on");
+  print(out, `Chat owner wakes ${setting} for ${sessionID}.`, false);
 }

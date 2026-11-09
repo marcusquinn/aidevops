@@ -76,6 +76,7 @@ function viaFields(via) {
 
 function senderFields(from) {
   return {
+    ...(parseChatOrigin(from?.origin) && from?.trust ? { trust: from.trust } : {}),
     ...viaFields(from?.via),
     session_id: isSafeId(from?.session_id) ? from.session_id : "",
     handle: clip(from?.handle, 80),

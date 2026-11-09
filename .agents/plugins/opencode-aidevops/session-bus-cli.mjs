@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import * as store from "./session-bus-store.mjs";
 import {
+  chatWakeCommand,
   inboxCommand,
   listCommand,
   outboxCommand,
@@ -23,7 +24,8 @@ import {
 
 const USAGE = `Usage: aidevops sessions <command> [options]
 
-  list [--all] [--json]              Live OpenCode sessions (interactive by default)
+  list [--all] [--json] [--redact]   Live OpenCode sessions (interactive by default)
+  chat-wake <target> on|off          Opt in/out of verified-owner chat asks (default off)
   show <target> [--json]             One session's presence record
   send <target> <text…>              Info message; waits for the recipient's next tool result or turn
   ask <target> <text…> [--wait <s>]  Question; may wake an idle session. --wait 1-120 prints the reply (exit 0) or exits 2 on timeout
@@ -32,11 +34,12 @@ const USAGE = `Usage: aidevops sessions <command> [options]
   prune                              Remove dead presence and messages older than 7 days
 
 Message text: positional words, --text-file <path>, or - for stdin (max ${store.LIMITS.textChars} chars).
---origin chat:<app>:<channel>  marks a gateway message (external, unverified, never wakes).
+--origin chat:<app>:<channel>  marks a scanned gateway message.
+--actor <entity-id>            verifies an exact confirmed app/channel link; never inferred from text.
 Targets: session ID, handle, #issue, PR#n, repo, or worktree path.`;
 
-const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "-h": "help", "--help": "help" };
-const VALUE_FLAGS = { "--text-file": "textFile", "--origin": "origin", "--ack": "ack", "--wait": "wait" };
+const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", "-h": "help", "--help": "help" };
+const VALUE_FLAGS = { "--text-file": "textFile", "--origin": "origin", "--actor": "actor", "--ack": "ack", "--wait": "wait" };
 
 function parseWait(value) {
   const seconds = Number(value);
@@ -59,6 +62,7 @@ export function parseArgs(argv) {
 }
 
 const COMMANDS = {
+  "chat-wake": chatWakeCommand,
   list: listCommand,
   show: showCommand,
   send: (context) => sendCommand(context, "info"),
