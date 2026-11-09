@@ -125,7 +125,7 @@ tools/research/,tools/research subagents,linkup
 tools/research/providers/,tools/research/providers subagents,crft-lookup|openexplorer|unbuilt|wappalyzer
 tools/research/,tools/research subagents,tech-stack-lookup|web-search-apis
 tools/runtime/,tools/runtime subagents,node-server-admin|php-server-admin
-tools/security/,tools/security subagents,cdn-origin-ip|cert-watch|content-provenance|ip-reputation|local-permissions-check|opsec|privacy-filter|prompt-injection-defender|security-analysis|security-audit|security-deps|security-history|security-review|security-scan|shannon|tamper-evident-audit|tirith|tls-trust
+tools/security/,tools/security subagents,cdn-origin-ip|cert-watch|content-provenance|ip-reputation|local-permissions-check|macos-account-keychain-recovery|opsec|privacy-filter|prompt-injection-defender|security-analysis|security-audit|security-deps|security-history|security-review|security-scan|shannon|tamper-evident-audit|tirith|tls-trust
 tools/terminal/,tools/terminal subagents,optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|remote-sessions|terminal-optimization|terminal-title
 tools/,tools subagents,testing-setup
 tools/ui/,tools/ui subagents,ai-chat-sidebar|frontend-debugging|i18next|nextjs-layouts
