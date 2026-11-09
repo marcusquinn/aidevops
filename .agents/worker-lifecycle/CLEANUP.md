@@ -208,11 +208,11 @@ they do not establish native reboot/remount coverage on macOS.
 The fingerprint neither excludes copied metadata/inode reuse outside cooperating
 creation nor registers the creator's writer lifetime; it is not everlasting physical identity.
 
-OpenCode's shell environment, bounded-operation supervisor, native launcher and Pulse script-routine
-runner declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and `AIDEVOPS_LIFECYCLE_SESSION_ID`.
-The routine runner clears these declarations when lifecycle is disabled, prerequisites fail or
-the workload is private; automatic retirement is not expected then. Otherwise, it waits for its
-script, so helper-created trees become eligible for registry retirement after it exits (GH#36494).
+OpenCode's shell environment, bounded-operation supervisor, native launcher, Pulse script-routine
+runner and release executor declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and `AIDEVOPS_LIFECYCLE_SESSION_ID`.
+The routine runner and release executor clear these when lifecycle is disabled, prerequisites fail
+or the workload is private; automatic retirement is not expected then. Otherwise their trees become
+eligible for registry retirement after the routine runner or release executor exits (GH#36494, GH#37365).
 For a new path, the shared helper invokes `create-worktree`: it exclusively creates the directory, runs native Git,
 captures the owner's start identity and binds it before returning the new tree.
 Only successful controlled creation records a `created-worktree` event; ordinary enrollment or

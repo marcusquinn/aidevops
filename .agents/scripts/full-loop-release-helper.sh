@@ -114,6 +114,9 @@ _full_loop_release_prepare_control_worktree() {
 	return 0
 }
 
+# Every release-owned tree below is created in this process (GH#37365).
+_full_loop_release_declare_lifecycle_owner
+
 if [[ "${1:-}" != "sources" && "${1:-}" != "reap-stale" && -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
 	printf 'Cannot prepare a linked release control worktree.\n' >&2
 	exit 1

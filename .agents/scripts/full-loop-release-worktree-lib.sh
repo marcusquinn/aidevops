@@ -22,6 +22,30 @@ source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh"
 
 _FULL_LOOP_RELEASE_CALLER="full-loop-release-helper.sh"
 
+# GH#37365: control, preparation and reconcile-tag trees are named by, removed
+# for and reaped against this executor's PID, so declare it as their lifecycle
+# owner in place of an inherited runtime identity. Under an inherited
+# interactive owner every release tree stayed waiting-for-runs until that
+# long-lived runtime exited, refusing the EXIT trap, the stale reaper and
+# registry cleanup alike. The executor's exit now ends the owning run.
+# Excluded or unavailable lifecycle hosts clear the declaration (GH#36494).
+_full_loop_release_declare_lifecycle_owner() {
+	local executor_pid="$$"
+	local started_epoch=""
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	if [[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 || "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 ]]; then
+		return 0
+	fi
+	command -v python3 >/dev/null 2>&1 || return 0
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" 2>/dev/null || return 0
+	[[ -n "$(worker_lifecycle_state_dir 2>/dev/null)" ]] || return 0
+	started_epoch=$(date +%s) || return 0
+	export AIDEVOPS_LIFECYCLE_RUNTIME_PID="$executor_pid"
+	export AIDEVOPS_LIFECYCLE_SESSION_ID="release:${started_epoch}:${executor_pid}"
+	return 0
+}
+
 # Args: $1=worktree path, $2=short audit reason
 # Returns: 0 when the path is absent afterwards, 1 when preserved
 _full_loop_release_remove_worktree() {
@@ -31,6 +55,29 @@ _full_loop_release_remove_worktree() {
 	[[ -e "$wt_path" || -L "$wt_path" ]] || return 0
 	remove_worktree_path_permanently "$wt_path" "$_FULL_LOOP_RELEASE_CALLER" "$reason" \
 		"release_worktree=${reason}" || return 1
+	return 0
+}
+
+# GH#37365: this executor owns its tag checkouts until it exits, so lifecycle
+# retirement refuses a mid-run reset (waiting-for-caller). The reset retains
+# the tree for post-exit retirement; re-preparing the same PID-named path
+# re-points that retained tree instead of requiring its removal. Only a linked
+# tree of this repository with no tracked, untracked or ignored changes moves.
+# Args: $1=repo root, $2=retained worktree path, $3=target commit
+_full_loop_release_repoint_tag_worktree() {
+	local repo_root="$1"
+	local wt_path="$2"
+	local target_commit="$3"
+	local wt_common="" repo_common="" dirty_state="" head_commit=""
+	[[ -f "$wt_path/.git" && ! -L "$wt_path" ]] || return 1
+	wt_common=$(cd -- "$wt_path" && cd -- "$(git rev-parse --git-common-dir)" && pwd -P) || return 1
+	repo_common=$(cd -- "$repo_root" && cd -- "$(git rev-parse --git-common-dir)" && pwd -P) || return 1
+	[[ "$wt_common" == "$repo_common" ]] || return 1
+	dirty_state=$(git -C "$wt_path" status --porcelain --ignored) || return 1
+	[[ -z "$dirty_state" ]] || return 1
+	git -C "$wt_path" checkout --quiet --detach "$target_commit" || return 1
+	head_commit=$(git -C "$wt_path" rev-parse HEAD) || return 1
+	[[ "$head_commit" == "$target_commit" ]] || return 1
 	return 0
 }
 
