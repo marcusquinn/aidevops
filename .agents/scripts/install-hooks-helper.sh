@@ -35,6 +35,7 @@ HOOK_SCRIPT="$HOOKS_DIR/git_safety_guard.py"
 POST_HOOK_SCRIPT="$HOOKS_DIR/mcp_task_post_hook.py"
 CREDENTIAL_SCRUB_SCRIPT="$HOOKS_DIR/credential-transcript-scrub.py"
 STRUCTURED_TEXT_PARSER_SCRIPT="$HOOKS_DIR/structured_text_parser.py"
+DISPLAY_REDACTION_SCRIPT="$HOOKS_DIR/display_redaction.py"
 SECRET_READ_GUARD_SCRIPT="$HOOKS_DIR/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_SCRIPT="$HOOKS_DIR/complexity_advisory_pre_edit.py"
 STOP_HOOK_SCRIPT="$HOOKS_DIR/session_continuation_stop.py"
@@ -900,6 +901,8 @@ install_hook() {
 	source_credential_scrub_hook=$(find_source_hook "credential-transcript-scrub.py") || return 1
 	local source_structured_text_parser
 	source_structured_text_parser=$(find_source_hook "structured_text_parser.py") || return 1
+	local source_display_redaction
+	source_display_redaction=$(find_source_hook "display_redaction.py") || return 1
 	local source_secret_read_guard_hook
 	source_secret_read_guard_hook=$(find_source_hook "secret_file_read_guard.py") || return 1
 	local source_complexity_advisory_hook
@@ -928,6 +931,8 @@ install_hook() {
 	print_success "Installed $CREDENTIAL_SCRUB_SCRIPT"
 	cp "$source_structured_text_parser" "$STRUCTURED_TEXT_PARSER_SCRIPT"
 	print_success "Installed $STRUCTURED_TEXT_PARSER_SCRIPT"
+	cp "$source_display_redaction" "$DISPLAY_REDACTION_SCRIPT"
+	print_success "Installed $DISPLAY_REDACTION_SCRIPT"
 	cp "$source_secret_read_guard_hook" "$SECRET_READ_GUARD_SCRIPT"
 	chmod +x "$SECRET_READ_GUARD_SCRIPT"
 	print_success "Installed $SECRET_READ_GUARD_SCRIPT"
