@@ -321,7 +321,15 @@ function issueMappingInput(input) {
 }
 function bindIssue(input, path = initialise()) {
   const value = issueMappingInput(input);
-  if (LEGACY_TASK_ID.test(value.taskId) && value.role === "home") {
+  // GH#37294: an explicit rebind alias (local ID -> different coordinator task)
+  // wins over legacy adoption, whose deterministic operation may have cached
+  // the pre-rebind conflict. The upsert below still asserts issue identity.
+  const rebound = LEGACY_TASK_ID.test(value.taskId) && value.role === "home"
+    ? rows(path, `SELECT task_id FROM repository_task_aliases WHERE local_task_id=${sqlEscape(value.taskId)} AND forge=${sqlEscape(value.forge)} AND repository_id=${sqlEscape(value.repositoryId)} AND task_id<>local_task_id;`)
+    : [];
+  if (rebound.length === 1) {
+    value.taskId = rebound[0].task_id;
+  } else if (LEGACY_TASK_ID.test(value.taskId) && value.role === "home") {
     const adopted = adoptLegacyTask(input, path);
     if (!adopted.ok) throw new Error("legacy home mapping conflict");
     value.taskId = adopted.coordinatorTaskId || adopted.taskId;
@@ -358,6 +366,63 @@ function resolveIssue({ taskId, forge = "github", repositoryId }, path = initial
   const matches = rows(path, `SELECT COALESCE(a.local_task_id,m.task_id) AS taskId,m.task_id AS coordinatorTaskId,m.forge,m.repository_id AS repositoryId,m.repository_slug AS repositorySlug,m.role,m.issue_id AS issueId,m.project_id AS projectId,m.display_number AS displayNumber,m.state_cursor AS stateCursor,m.sync_metadata_json AS syncMetadataJson FROM issue_mappings m LEFT JOIN repository_task_aliases a USING(task_id,forge,repository_id) WHERE (m.task_id=${sqlEscape(taskId)} OR a.local_task_id=${sqlEscape(taskId)}) AND m.forge=${sqlEscape(forge)} AND m.repository_id=${sqlEscape(repositoryId)};`);
   if (matches.length !== 1) throw new Error("issue mapping not found");
   return { ...matches[0], syncMetadata: JSON.parse(matches[0].syncMetadataJson) };
+}
+// Read-only reverse lookup used to explain a refused task/ref mapping (GH#37294).
+function resolveIssueOwner({ forge = "github", repositoryId, issueId }, path = initialise()) {
+  if (forge !== "github") throw new TypeError("unsupported forge");
+  validId(repositoryId, "repository_id");
+  validId(issueId, "issue_id");
+  const matches = rows(path, `SELECT COALESCE(a.local_task_id,m.task_id) AS taskId,m.task_id AS coordinatorTaskId,m.role,m.display_number AS displayNumber FROM issue_mappings m LEFT JOIN repository_task_aliases a USING(task_id,forge,repository_id) WHERE m.forge=${sqlEscape(forge)} AND m.repository_id=${sqlEscape(repositoryId)} AND m.issue_id=${sqlEscape(issueId)};`);
+  if (matches.length !== 1) throw new Error("issue mapping not found");
+  return matches[0];
+}
+// Explicit maintainer rebind (GH#37294): a TODO.md row was renamed after its
+// issue was bound. Point a new repository-local task ID at the coordinator task
+// that already owns the issue. The issue identity itself never moves.
+function aliasTask(input = {}, path = initialise()) {
+  const localTaskId = input.localTaskId;
+  const fromTaskId = input.fromTaskId;
+  if (!LEGACY_TASK_ID.test(localTaskId || "")) throw new TypeError("local_task_id is not a canonical legacy identity");
+  if (!TASK_ID.test(fromTaskId || "")) throw new TypeError("from_task_id is not canonical");
+  if (localTaskId === fromTaskId) throw new TypeError("rebind requires two different task IDs");
+  const forge = input.forge || "github";
+  if (forge !== "github") throw new TypeError("unsupported forge");
+  const repositoryId = validId(input.repositoryId, "repository_id");
+  const issueId = validId(input.issueId, "issue_id");
+  const displayNumber = Number(input.displayNumber);
+  if (!Number.isSafeInteger(displayNumber) || displayNumber < 1) throw new TypeError("display_number must be a positive integer");
+  const source = resolveIssue({ taskId: fromTaskId, forge, repositoryId }, path);
+  if (source.role !== "home" || source.issueId !== issueId || Number(source.displayNumber) !== displayNumber) {
+    throw new Error("rebind source mapping does not match the issue");
+  }
+  const coordinatorTaskId = source.coordinatorTaskId;
+  const identityText = jsonText({ coordinatorTaskId, displayNumber, forge, fromTaskId, issueId, localTaskId, repositoryId }, "task alias identity");
+  const operationId = input.operationId || `task-alias-${createHash("sha256").update(identityText).digest("hex")}`;
+  validId(operationId, "operation_id");
+  const payloadHash = hashText(identityText);
+  const prior = operationResult(path, operationId, payloadHash);
+  if (prior) return prior;
+  const taken = rows(path, `SELECT m.task_id AS taskId FROM issue_mappings m LEFT JOIN repository_task_aliases a USING(task_id,forge,repository_id) WHERE m.forge=${sqlEscape(forge)} AND m.repository_id=${sqlEscape(repositoryId)} AND (m.task_id=${sqlEscape(localTaskId)} OR a.local_task_id=${sqlEscape(localTaskId)});`);
+  if (taken.length > 0) throw new Error("rebind target task already has an issue mapping");
+  const timestamp = now();
+  const resultText = JSON.stringify({ aliased: true, coordinatorTaskId, displayNumber, fromTaskId, issueId, operationId, repositoryId, taskId: localTaskId });
+  try {
+    sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
+INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,created_at,updated_at)
+VALUES (${sqlEscape(operationId)},'task.alias',${sqlEscape(coordinatorTaskId)},${sqlEscape(payloadHash)},${sqlEscape(identityText)},'terminal',${sqlEscape(resultText)},${sqlEscape(timestamp)},${sqlEscape(timestamp)});
+INSERT INTO repository_task_aliases(local_task_id,forge,repository_id,task_id)
+VALUES (${sqlEscape(localTaskId)},${sqlEscape(forge)},${sqlEscape(repositoryId)},${sqlEscape(coordinatorTaskId)})
+ON CONFLICT(task_id,forge,repository_id) DO UPDATE SET local_task_id=excluded.local_task_id;
+CREATE TEMP TABLE assert_alias(value INTEGER CHECK(value=1));
+INSERT INTO assert_alias SELECT COUNT(*) FROM repository_task_aliases WHERE local_task_id=${sqlEscape(localTaskId)} AND forge=${sqlEscape(forge)} AND repository_id=${sqlEscape(repositoryId)} AND task_id=${sqlEscape(coordinatorTaskId)};
+DROP TABLE assert_alias;
+INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at) VALUES (${sqlEscape(operationId)},'terminal',${sqlEscape(JSON.stringify({ alias: "committed", fromTaskId, issueId }))},${sqlEscape(timestamp)}); COMMIT;`);
+  } catch (error) {
+    const raced = operationResult(path, operationId, payloadHash);
+    if (!raced) throw new Error("task alias conflict", { cause: error });
+    return raced;
+  }
+  return operationResult(path, operationId, payloadHash);
 }
 function reconciliationTargets({ repositoryId, limit = 100 }, path = initialise()) {
   validId(repositoryId, "repository_id");
@@ -521,6 +586,8 @@ const COMMAND_HANDLERS = {
   transition: (args, path) => transition({ state: option(args, "--state"), fencingToken: option(args, "--fencing-token"), evidence: parseJson(option(args, "--evidence", "{}")) }, path),
   "bind-issue": (args, path) => bindIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), role: option(args, "--role", "home"), issueId: option(args, "--issue-id"), projectId: option(args, "--project-id"), displayNumber: option(args, "--display-number"), stateCursor: option(args, "--state-cursor"), syncMetadata: parseJson(option(args, "--sync-metadata", "{}")) }, path),
   "resolve-issue": (args, path) => resolveIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id") }, path),
+  "resolve-issue-owner": (args, path) => resolveIssueOwner({ forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), issueId: option(args, "--issue-id") }, path),
+  "alias-task": (args, path) => aliasTask({ operationId: option(args, "--operation-id"), localTaskId: option(args, "--task-id"), fromTaskId: option(args, "--from-task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), issueId: option(args, "--issue-id"), displayNumber: option(args, "--display-number") }, path),
   "reconciliation-targets": (args, path) => reconciliationTargets({ repositoryId: option(args, "--repository-id"), limit: Number(option(args, "--limit", "100")) }, path),
   "forge-event": (args, path) => forgeEvent({ operationId: option(args, "--operation-id"), deliveryId: option(args, "--delivery-id"), cursorTiebreaker: option(args, "--cursor-tiebreaker"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), repositoryPath: option(args, "--repository-path"), taskId: option(args, "--task-id"), eventKind: option(args, "--event-kind"), action: option(args, "--action"), subjectId: option(args, "--subject-id"), cursor: option(args, "--cursor") }, path),
   restore: (args, path) => restore({ backupPath: option(args, "--backup"), registryEvidence: parseJson(option(args, "--registry-evidence", "{}")), priorEpoch: Number(option(args, "--prior-epoch")), newEpoch: Number(option(args, "--new-epoch")), fencingToken: option(args, "--fencing-token"), publishedHighWater: Number(option(args, "--published-high-water", "0")) }, path),
@@ -530,7 +597,7 @@ const COMMAND_HANDLERS = {
 };
 export function run(args = process.argv.slice(2)) {
   const command = args[0] || "help";
-  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|adopt-legacy-task|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|forge-event|restore|verify|status\n"); return 0; }
+  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|adopt-legacy-task|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|resolve-issue-owner|alias-task|forge-event|restore|verify|status\n"); return 0; }
   const handler = COMMAND_HANDLERS[command];
   const path = initialise();
   if (!handler) throw new TypeError(`unknown task-coordinator command: ${command}`);

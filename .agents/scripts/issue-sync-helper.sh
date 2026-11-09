@@ -122,6 +122,7 @@ FORCE_ENRICH="${FORCE_ENRICH:-false}"
 ALLOW_CLOSED_BODY_SYNC="${ALLOW_CLOSED_BODY_SYNC:-false}"
 REPO_SLUG=""
 PROJECT_ROOT_ARG=""
+REBIND_FROM_TASK=""
 
 log_verbose() {
 	local msg="$1"
@@ -453,6 +454,10 @@ main() {
 			REFRESH_BODY_FILE="$val"
 			shift 2
 			;;
+		--from)
+			REBIND_FROM_TASK="$val"
+			shift 2
+			;;
 		--project-root)
 			PROJECT_ROOT_ARG="$val"
 			shift 2
@@ -499,6 +504,13 @@ main() {
 			return 1
 		}
 		cmd_sync_body "${positional_args[1]}"
+		;;
+	rebind-task)
+		[[ ${#positional_args[@]} -eq 2 && -n "${REBIND_FROM_TASK:-}" ]] || {
+			print_error "rebind-task requires <new-task> --from <old-task>"
+			return 1
+		}
+		cmd_rebind_task "${positional_args[1]}" "$REBIND_FROM_TASK"
 		;;
 	refresh-body)
 		[[ ${#positional_args[@]} -eq 2 && -n "${REFRESH_BODY_FILE:-}" ]] || { print_error "refresh-body requires issue and --body-file"; return 1; }
