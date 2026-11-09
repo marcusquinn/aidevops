@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.147] - 2026-11-09
+
+### Fixed
+
+- declare handoff PR issue identity in body
+- decline REST-first reads when REST core is spent and GraphQL has headroom
+- make the release executor the lifecycle owner of its worktrees
+
 ## [3.39.146] - 2026-11-09
 
 ### Fixed
