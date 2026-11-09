@@ -233,13 +233,17 @@ test_dispatch_hold_revalidates_revision() {
 	terminal_blocker_circuit_active "$comments" '{"title":"Fix scope","body":"Files Scope: b.sh"}' \
 		"owner/repo" 42 "$TEST_ROOT" >/dev/null && changed_status=1
 	TEST_DEPENDENCIES="unavailable"
-	terminal_blocker_circuit_active "$comments" "$issue_json" "owner/repo" 42 "$TEST_ROOT" >/dev/null && ambiguous_status=1
+	terminal_blocker_circuit_active "$comments" "$issue_json" "owner/repo" 42 "$TEST_ROOT" >/dev/null || ambiguous_status=1
 	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
+	# GH#37200: a caller without a checkout (status wrapper) cannot evaluate a
+	# default-branch-bound circuit, so it must not hold the release forever.
+	local no_checkout_status=0
+	terminal_blocker_circuit_active "$comments" "$issue_json" "owner/repo" 42 "" >/dev/null 2>&1 && no_checkout_status=1
 	local status=1
-	if [[ "$same_status" -eq 0 && "$changed_status" -eq 0 && "$ambiguous_status" -eq 0 ]]; then
+	if [[ "$same_status" -eq 0 && "$changed_status" -eq 0 && "$ambiguous_status" -eq 0 && "$no_checkout_status" -eq 0 ]]; then
 		status=0
 	fi
-	print_result "dispatch hold is cross-runner durable but fails open on changed or ambiguous identity" "$status"
+	print_result "dispatch hold re-arms on changed identity, holds on unavailable revision, not on missing checkout" "$status"
 	return 0
 }
 
@@ -378,9 +382,12 @@ test_external_trigger_pending_revision() {
 	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" external_trigger_pending) || status=1
 	[[ "$revision" != "$changed" ]] || status=1
 	TEST_DEPENDENCIES=unavailable
-	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
-	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
+	# GH#37200: an unavailable dependency lookup holds an existing circuit.
+	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null 2>&1 || status=1
 	comments=$(printf '%s' "$circuit" | jq -c '. + [{body:"terminal-blocker-circuit:retry",created_at:"2026-08-31T11:00:00Z",author_association:"MEMBER"}]')
+	# ...but a trusted retry still re-arms it during the outage.
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null 2>&1 && status=1
+	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
 	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
 	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT

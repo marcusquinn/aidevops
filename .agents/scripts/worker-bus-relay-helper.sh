@@ -11,8 +11,9 @@
 #
 # Usage: worker-bus-relay-helper.sh relay | status | help
 #
-# Pulse starts `relay` detached at each cycle start and on each busy-lock
-# tick (t18911), outside the cycle budget; a single-runner lock collapses
+# worker-watchdog.sh --check runs `relay` every 2 minutes (t18922). Pulse
+# also starts it detached at each cycle start and on each busy-lock tick
+# (t18911), outside the cycle budget; a single-runner lock collapses
 # overlapping starts. Every GitHub read still passes the REST-core deferrable
 # gate. GitHub cost: one issue-list call per repo with due workers per
 # interval, one baseline issue read per new worker, and one comments read
@@ -28,6 +29,10 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+# t18922: launchd, systemd and cron runners start with a system PATH where the
+# real gh outranks the aidevops shim. Put this scripts directory first so every
+# relay read is instrumented and budget-routed (same rule as GH#24900).
+export PATH="${SCRIPT_DIR}:${PATH}"
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 

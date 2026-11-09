@@ -50,6 +50,9 @@ import {
 } from "./quality-hooks-git-safety.mjs";
 import { validateBashWorkingDirectory } from "./quality-hooks-workdir.mjs";
 import {
+  appendDisplayRedactionNote,
+  PEM_REDACTION_TOKEN,
+  REDACTION_TOKEN,
   scrubCredentials,
   scrubToolOutput,
 } from "./quality-hooks-output-scrub.mjs";
@@ -373,10 +376,11 @@ function scrubObservedToolOutput(ctx, log, toolName, output) {
     ["output", "title", "metadata"].filter((field) => output[field] !== undefined)
       .map((field) => [field, output[field]]),
   );
-  const { output: scrubbedOutput, redacted } = scrubToolOutput(rawOutput);
-  if (!redacted) return;
+  const { output: scrubbedOutput, redacted, count } = scrubToolOutput(rawOutput);
+  if (!redacted) return registered.count;
   for (const field of Object.keys(rawOutput)) output[field] = scrubbedOutput[field];
   log("WARN", `[credential-scrub] redacted credential token(s) from ${toolName} output`);
+  return registered.count + count;
 }
 
 function trackObservedToolEffects(ctx, log, toolName, input, output) {
@@ -416,7 +420,7 @@ async function handleToolAfter(ctx, log, scriptsDir, input, output) {
   // CLIs, or runtime error backtraces, not just framework helpers.
   const rawOutput = output.output;
   const bashOutputWasVerbose = isBashTool(toolName) && isVerboseBashOutput(rawOutput);
-  scrubObservedToolOutput(ctx, log, toolName, output);
+  const redactionCount = scrubObservedToolOutput(ctx, log, toolName, output);
   trackObservedToolEffects(ctx, log, toolName, input, output);
 
   // Consume timing before output compaction so the receipt can report runtime.
@@ -434,6 +438,8 @@ async function handleToolAfter(ctx, log, scriptsDir, input, output) {
 
   const intentRecord = consumeIntentRecord(input.callID || "");
   appendDockerAdvisory(input, output);
+  // GH#37382: tell the model that visible placeholders are display redactions.
+  appendDisplayRedactionNote(output, redactionCount, [REDACTION_TOKEN, PEM_REDACTION_TOKEN]);
   // t2184: durationMs is null when the callID wasn't paired (for example,
   // a hook race on plugin reload); recordToolCall emits SQL NULL.
   recordToolCall(input, output, intentRecord?.intent, durationMs, intentRecord?.source);

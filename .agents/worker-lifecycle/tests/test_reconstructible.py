@@ -147,6 +147,26 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertEqual(attempted, 1)
         self.assertFalse(self.target.exists())
 
+    def test_managed_takeover_closes_quiescent_admission_only_when_applying(self):
+        # GH#37101 cause 2: ended runs left admission open, so takeover never retired.
+        self.git("worktree", "remove", str(self.target))
+        fixtures.RetirementContract.create(self)
+        for name in ("work.txt", ".gitignore", "cache.ignored"):
+            (self.target / name).unlink()
+        with self.store.connection() as connection:
+            self.item = inventory.inventory(connection)[0]
+        self.options = CleanupOptions(self.output, apply=False, min_age=0)
+        self.assert_retained("managed-admission-not-closed")
+        with self.store.connection() as connection:
+            states = {row[0] for row in connection.execute(
+                "SELECT state FROM generation_admissions")}
+        self.assertEqual(states, {"open"})
+        self.options = CleanupOptions(self.output, apply=True, min_age=0)
+        result, _, attempted = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual(attempted, 1)
+        self.assertFalse(self.target.exists())
+
     def test_managed_takeover_keeps_every_safety_guard(self):
         self.item.update(modern=True, unbound=False)
         (self.target / "keep").write_text("untracked")
