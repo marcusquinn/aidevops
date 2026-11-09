@@ -326,11 +326,12 @@ test("runtime publishes root presence and delivers through tool results, turns a
 
   // Idle: info waits, an ask wakes with the session's agent and model.
   await bus.handleEvent({ event: { type: "session.idle", properties: { sessionID: "ses_rootA1" } } });
-  store.sendMessage(root, { from: peer("ses_peer03"), to: "ses_rootA1", type: "info", text: "no wake" });
+  const now = Date.now();
+  store.sendMessage(root, { from: peer("ses_peer03"), to: "ses_rootA1", type: "info", text: "no wake", now: now - 1 });
   await bus.tick();
   assert.equal(client.calls.prompts.length, 0);
   assert.equal(client.calls.toasts.length, 1);
-  store.sendMessage(root, { from: peer("ses_peer04"), to: "ses_rootA1", type: "ask", text: "which branch?", hops: 1 });
+  store.sendMessage(root, { from: peer("ses_peer04"), to: "ses_rootA1", type: "ask", text: "which branch?", hops: 1, now });
   await bus.tick();
   assert.equal(client.calls.prompts.length, 1);
   const [wake] = client.calls.prompts;
@@ -338,9 +339,7 @@ test("runtime publishes root presence and delivers through tool results, turns a
   assert.equal(wake.body.agent, "Build+");
   assert.deepEqual(wake.body.model, { providerID: "anthropic", modelID: "m1" });
   assert.equal(wake.body.parts[0].synthetic, true);
-  // Same-millisecond messages tie-break on random IDs, not insertion order.
-  assert.match(wake.body.parts[0].text, /> no wake/);
-  assert.match(wake.body.parts[0].text, /> which branch\?/);
+  assert.match(wake.body.parts[0].text, /> no wake[\s\S]*> which branch\?/);
   assert.equal(store.pendingMessages(root, "ses_rootA1").length, 0);
 
   // The woken turn carries hops forward, so a reply from it is hop 2.
@@ -348,6 +347,24 @@ test("runtime publishes root presence and delivers through tool results, turns a
   const sender = await bus.sender({ sessionID: "ses_childA" });
   assert.equal(sender.sessionID, "ses_rootA1");
   assert.equal(sender.hops, 2);
+});
+
+test("wakes deliver same-millisecond messages in message-ID order", async () => {
+  const id = "ses_tie001";
+  const client = fakeClient({ [id]: { id, title: "", directory: root } });
+  const bus = busFor(client);
+  await bus.handleEvent({ event: { type: "session.idle", properties: { sessionID: id } } });
+  const now = Date.now();
+  const messages = ["first sent", "second sent"].map((text) => store.sendMessage(root, {
+    from: peer("ses_peer01"), to: id, type: "ask", text, now,
+  }));
+  messages.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  await bus.tick();
+  assert.equal(client.calls.prompts.length, 1);
+  const text = client.calls.prompts[0].body.parts[0].text;
+  assert.ok(text.indexOf(messages[0].id) >= 0);
+  assert.ok(text.indexOf(messages[1].id) > text.indexOf(messages[0].id));
+  assert.equal(store.pendingMessages(root, id).length, 0);
 });
 
 test("wakes respect the hourly budget, hop limit and failure rollback", async () => {
