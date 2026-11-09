@@ -118,6 +118,23 @@ _pulse_wrapper_resolve_script_dir() {
 	return 1
 }
 
+# Reject unsupported positional lifecycle arguments before any bootstrap,
+# credential loading, lease acquisition, jitter, or lifecycle side effects.
+# The explicitly selected command facade owns its own arguments.
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" && "${1:-}" != --command ]]; then
+	for _pulse_cli_arg in "$@"; do
+		case "$_pulse_cli_arg" in
+		-*) ;;
+		*)
+			printf 'pulse-wrapper: unsupported positional argument: %s\n' "$_pulse_cli_arg" >&2
+			printf '%s\n' 'usage: pulse-wrapper.sh [options] | --command <command> [args...]' >&2
+			exit 2
+			;;
+		esac
+	done
+	unset _pulse_cli_arg
+fi
+
 #######################################
 # PATH normalisation
 # The MCP shell environment may have a minimal PATH that excludes /bin
