@@ -40,6 +40,7 @@ import { Logger } from "./logger";
 import { CommandRouter } from "./router";
 import { SessionStore } from "./session";
 import { relayOutbox } from "./session-bus";
+import { sendRelayMessage } from "./session-bus-relay";
 import type {
   BotConfig,
   ChatItem,
@@ -208,21 +209,13 @@ export class SimplexAdapter {
 
   /** Send using the numeric API reference and require a correlated success response. */
   private async sendRelay(channel: string, text: string): Promise<void> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error("SimpleX disconnected");
-    const target = `${channel[0] === "c" ? "@" : "#"}${channel.slice(1)}`;
-    // Group replies always pass leak detection even if DM scanning is disabled.
-    const scan = channel[0] === "g" ? scanForLeaks(text, this.config.leakDetection) : null;
-    const safeText = scan?.hasLeaks ? redactLeaks(text, scan) : this.scanAndRedact(text);
-    const content = [{ msgContent: { type: "text", text: safeText }, mentions: {} }];
-    const corrId = String(++this.corrIdCounter);
-    const ws = this.ws;
-    const ok = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => { this.pendingRelay.delete(corrId); resolve(false); }, 30000);
-      this.pendingRelay.set(corrId, value => { clearTimeout(timer); resolve(value); });
-      try { ws.send(JSON.stringify({ corrId, cmd: `/_send ${target} json ${JSON.stringify(content)}` })); }
-      catch { this.pendingRelay.delete(corrId); clearTimeout(timer); resolve(false); }
+    await sendRelayMessage(channel, text, {
+      socket: this.ws,
+      pending: this.pendingRelay,
+      nextCorrelationId: () => String(++this.corrIdCounter),
+      redact: value => this.scanAndRedact(value),
+      leakDetection: this.config.leakDetection,
     });
-    if (!ok) throw new Error("SimpleX send was not confirmed");
   }
 
   private async relayTick(): Promise<void> {

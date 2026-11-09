@@ -39,39 +39,90 @@ function display(result: RunnerResult): string {
   return (result.success ? result.output : result.error || result.output).trim() || (result.success ? "Done." : "Session bus command failed.");
 }
 
+const SESSION_COMMAND = ["aidevops", "sessions"];
+
+interface BusCommandOptions {
+  ctx: CommandContext;
+  ref: string;
+  actor: string;
+  actorArgs: string[];
+  dataDir?: string;
+  run: BusRunner;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isConfirmedChannel(value: unknown, ref: string): boolean {
+  if (!isRecord(value)) return false;
+  if (value.channel !== "simplex" || value.channel_id !== ref) return false;
+  if (value.confidence !== "confirmed") return false;
+  return typeof value.verified_at === "string" && value.verified_at.length > 0;
+}
+
+/** Redact unless this exact direct channel is confirmed for the owner. */
+async function isOwnerChannel({ actor, ref, run }: BusCommandOptions): Promise<boolean> {
+  if (!actor || actor !== process.env.AIDEVOPS_SESSION_BUS_OWNER_ENTITY_ID) return false;
+  const links = await run([join(homedir(), ".aidevops/agents/scripts/entity-helper.sh"), "channels", actor, "--json"], 30000, true);
+  if (!links.success) return false;
+  try {
+    const rows: unknown = JSON.parse(links.output);
+    return Array.isArray(rows) && rows.some(row => isConfirmedChannel(row, ref));
+  } catch { return false; }
+}
+
+async function listSessions(options: BusCommandOptions): Promise<string> {
+  const owner = await isOwnerChannel(options);
+  return display(await options.run([...SESSION_COMMAND, "list", ...(owner ? [] : ["--redact"])], 30000, true));
+}
+
+async function bindSession({ ctx, ref, actorArgs, run }: BusCommandOptions): Promise<string> {
+  if (ctx.args.length !== 1 || ctx.args[0].startsWith("-")) return "Usage: /bind <target>";
+  return display(await run([...SESSION_COMMAND, "bind", "simplex", ref, ctx.args[0], ...actorArgs]));
+}
+
+async function launchSession({ ctx, ref, actorArgs, dataDir, run }: BusCommandOptions): Promise<string> {
+  const body = ctx.rawText.replace(/^\/launch\s*/, "");
+  const separator = body.indexOf("::");
+  const title = body.slice(0, separator).trim();
+  const text = body.slice(separator + 2).trim();
+  if (separator < 0 || !title || !text) return "Usage: /launch <title> :: <task>";
+  return withText(text, dataDir, async file => display(await run([...SESSION_COMMAND, "launch", "--bind", `simplex:${ref}`, "--title", title, ...actorArgs, "--text-file", file])));
+}
+
+async function sendSessionText(command: string, { ctx, ref, actorArgs, dataDir, run }: BusCommandOptions): Promise<string> {
+  const [target, ...words] = ctx.args;
+  if (!target || target.startsWith("-") || !words.length) return `Usage: /${command} <target> <text>`;
+  return withText(words.join(" "), dataDir, async file => display(await run([...SESSION_COMMAND, command, target, "--origin", `chat:simplex:${ref}`, ...actorArgs, "--text-file", file])));
+}
+
+const BUS_COMMANDS: Record<string, (options: BusCommandOptions) => Promise<string>> = {
+  sessions: listSessions,
+  bind: bindSession,
+  launch: launchSession,
+  unbind: async ({ ref, run }) => display(await run([...SESSION_COMMAND, "unbind", "simplex", ref])),
+};
+
 export async function busCommand(ctx: CommandContext, command: string, dataDir?: string, run: BusRunner = executeCommand): Promise<string> {
   const ref = chatRef(ctx);
   const actor = await actorFor(ref, run);
-  const actorArgs = actor ? ["--actor", actor] : [];
-  const base = ["aidevops", "sessions"];
-  if (command === "sessions") {
-    // Redact unless this exact direct channel is confirmed for the configured owner.
-    let owner = false;
-    if (actor && actor === process.env.AIDEVOPS_SESSION_BUS_OWNER_ENTITY_ID) {
-      const links = await run([join(homedir(), ".aidevops/agents/scripts/entity-helper.sh"), "channels", actor, "--json"], 30000, true);
-      try {
-        const rows = JSON.parse(links.output) as Array<Record<string, unknown>>;
-        owner = links.success && rows.some(row => row.channel === "simplex" && row.channel_id === ref && row.confidence === "confirmed" && typeof row.verified_at === "string" && row.verified_at.length > 0);
-      } catch { owner = false; }
-    }
-    return display(await run([...base, "list", ...(owner ? [] : ["--redact"])], 30000, true));
-  }
-  if (command === "unbind") return display(await run([...base, "unbind", "simplex", ref]));
-  if (command === "bind") {
-    if (ctx.args.length !== 1 || ctx.args[0].startsWith("-")) return "Usage: /bind <target>";
-    return display(await run([...base, "bind", "simplex", ref, ctx.args[0], ...actorArgs]));
-  }
-  if (command === "launch") {
-    const body = ctx.rawText.replace(/^\/launch\s*/, "");
-    const separator = body.indexOf("::");
-    const title = body.slice(0, separator).trim();
-    const text = body.slice(separator + 2).trim();
-    if (separator < 0 || !title || !text) return "Usage: /launch <title> :: <task>";
-    return withText(text, dataDir, async file => display(await run([...base, "launch", "--bind", `simplex:${ref}`, "--title", title, ...actorArgs, "--text-file", file])));
-  }
-  const [target, ...words] = ctx.args;
-  if (!target || target.startsWith("-") || !words.length) return `Usage: /${command} <target> <text>`;
-  return withText(words.join(" "), dataDir, async file => display(await run([...base, command, target, "--origin", `chat:simplex:${ref}`, ...actorArgs, "--text-file", file])));
+  const options = { ctx, ref, actor, actorArgs: actor ? ["--actor", actor] : [], dataDir, run };
+  const handler = Object.hasOwn(BUS_COMMANDS, command) ? BUS_COMMANDS[command] : undefined;
+  return handler ? handler(options) : sendSessionText(command, options);
+}
+
+interface OutboxMessage {
+  id: string;
+  channel: string;
+  text: string;
+}
+
+function isOutboxMessage(value: unknown): value is OutboxMessage {
+  if (!isRecord(value)) return false;
+  const validId = typeof value.id === "string" && /^[A-Za-z0-9_-]+$/.test(value.id);
+  const validChannel = typeof value.channel === "string" && /^[cg][0-9]+$/.test(value.channel);
+  return validId && validChannel && typeof value.text === "string";
 }
 
 /** Relay sequentially; failures leave messages in the outbox for retry. */
@@ -81,7 +132,7 @@ export async function relayOutbox(send: (channel: string, text: string) => Promi
   const messages: unknown = JSON.parse(result.output);
   if (!Array.isArray(messages)) throw new Error("Invalid session bus outbox");
   for (const message of messages) {
-    if (!message || typeof message.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(message.id) || typeof message.channel !== "string" || !/^[cg][0-9]+$/.test(message.channel) || typeof message.text !== "string") continue;
+    if (!isOutboxMessage(message)) continue;
     try {
       await send(message.channel, message.text);
       const ack = await run(["aidevops", "sessions", "outbox", "simplex", "--ack", message.id]);
