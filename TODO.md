@@ -1923,7 +1923,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18894 SimpleX bot adapter for the session bus: replace the /sessions and /ask scaffolds #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37247 logged:2026-11-08 blocked-by:t18892 -> [todo/tasks/t18894-brief.md]
 
-- [ ] t18895 Session bus coordination: who is working on what, and overlap warnings before work starts #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37248 logged:2026-11-08 -> [todo/tasks/t18895-brief.md]
+- [x] t18895 Session bus coordination: who is working on what, and overlap warnings before work starts #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37248 logged:2026-11-08 -> [todo/tasks/t18895-brief.md] pr:#37311 completed:2026-11-09
 
 - [ ] t18896 Release coordination over the session bus: lane owner session, held-lane hints and release notices #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37249 logged:2026-11-08 -> [todo/tasks/t18896-brief.md]
 
