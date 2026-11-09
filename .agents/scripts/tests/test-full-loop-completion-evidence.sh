@@ -157,6 +157,11 @@ if [[ "$*" == *"headRefName,headRefOid,headRepository,isCrossRepository"* ]]; th
 		'{headRefName:$head_ref,headRefOid:$head_oid,headRepository:{nameWithOwner:$head_repo},isCrossRepository:false}'
 	exit 0
 fi
+if [[ "$*" == *"--json headRefName --jq .headRefName"* ]]; then
+	[[ "${COMPLETION_HEAD_LOOKUP_FAIL:-false}" != true ]] || exit 70
+	printf '%s\n' "${COMPLETION_PR_HEAD_REF:-}"
+	exit 0
+fi
 call_count=1
 if [[ -n "${COMPLETION_PR_STATE_CALLS:-}" ]]; then
 	[[ -f "$COMPLETION_PR_STATE_CALLS" ]] && call_count=$(( $(<"$COMPLETION_PR_STATE_CALLS") + 1 ))
@@ -1184,6 +1189,33 @@ printf 'PASS release:failed blocks cleanup before worktree removal\n'
 handoff_repo="${ROOT}/handoff-repo"
 mkdir -p "$handoff_repo"
 git -C "$handoff_repo" init -q -b handoff-test
+merge_state_runner="${ROOT}/merge-state-runner.sh"
+cat >"$merge_state_runner" <<RUNNER
+#!/usr/bin/env bash
+set -euo pipefail
+cd '${handoff_repo}'
+SCRIPT_DIR='${SCRIPTS_DIR}'
+STATE_DIR='${ROOT}/merge-state'
+STATE_FILE="\${STATE_DIR}/full-loop.state"
+DEFAULT_MAX_TASK_ITERATIONS=50
+DEFAULT_MAX_PREFLIGHT_ITERATIONS=5
+DEFAULT_MAX_PR_ITERATIONS=20
+HEADLESS=false
+source '${SCRIPTS_DIR}/shared-constants.sh'
+source '${SCRIPTS_DIR}/full-loop-helper-state.sh'
+mkdir -p "\$STATE_DIR"
+STARTED_AT=2026-07-11T00:00:00Z
+save_state task test "\${TEST_INITIAL_PR:-}" "\$STARTED_AT"
+_full_loop_record_merged_pr 99 testorg/repo
+load_state
+printf '%s\n' "\$PR_NUMBER"
+RUNNER
+chmod +x "$merge_state_runner"
+[[ "$(PATH="${ROOT}/bin:$PATH" TEST_INITIAL_PR=42 COMPLETION_PR_HEAD_REF=chore/release-v3.0.0-provenance bash "$merge_state_runner")" == 42 ]]
+[[ "$(PATH="${ROOT}/bin:$PATH" TEST_INITIAL_PR=42 COMPLETION_HEAD_LOOKUP_FAIL=true bash "$merge_state_runner")" == 42 ]]
+[[ "$(PATH="${ROOT}/bin:$PATH" TEST_INITIAL_PR=42 COMPLETION_PR_HEAD_REF=handoff-test bash "$merge_state_runner")" == 99 ]]
+[[ "$(PATH="${ROOT}/bin:$PATH" COMPLETION_PR_HEAD_REF=foreign bash "$merge_state_runner")" == 99 ]]
+printf 'PASS merged PR bookkeeping preserves foreign loop identity and permits matching or unbound state\n'
 handoff_runner="${ROOT}/handoff-runner.sh"
 cat >"$handoff_runner" <<RUNNER
 #!/usr/bin/env bash

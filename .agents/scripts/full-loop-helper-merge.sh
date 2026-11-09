@@ -1276,7 +1276,7 @@ _merge_finalize_post_merge() {
 	_merge_reconcile_provenance_release "$pr_number" "$repo" ||
 		print_warning "Protected release reconciliation deferred; inspect the matching source lane with aidevops release status"
 	if declare -F _full_loop_record_merged_pr >/dev/null 2>&1; then
-		_full_loop_record_merged_pr "$pr_number" || return 1
+		_full_loop_record_merged_pr "$pr_number" "$repo" || return 1
 	fi
 	if [[ "$has_auto" -eq 0 && -n "$linked_issue" ]]; then
 		auto_file_next_phase "$linked_issue" "$repo" || true
