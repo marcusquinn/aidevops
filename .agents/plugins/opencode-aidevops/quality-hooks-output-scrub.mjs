@@ -9,7 +9,7 @@ import { scrubEscapedNonStringCredentials } from "./escaped-credential-values.mj
 const CREDENTIAL_PATTERN =
   /(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
 const NAMED_CREDENTIAL_ASSIGNMENT_PATTERN =
-  /(^|[^A-Za-z0-9_])((?:"[A-Za-z_][A-Za-z0-9_. -]*"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?:=|:)\s*)(\$\{[A-Za-z_][A-Za-z0-9_]*(?::?[-?=+])?\}|"(?:\\.|[^"\\])*"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)/gim;
+  /(^|[^A-Za-z0-9_])((?:"[A-Za-z_][A-Za-z0-9_. -]*"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?::=|=>|=(?!=)|:(?![:=]))\s*)(\$\{[A-Za-z_][A-Za-z0-9_]*(?::?[-?=+])?\}|"(?:\\.|[^"\\])*"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)/gim;
 // scheme://user:password@host (any scheme); captures through the ":" before the password.
 const URL_USERINFO_PATTERN = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s:@/"'<>\\]+:)([^\s@/"'<>\\]+)(?=@)/g;
 // {"name":"X_PASSWORD","value":"secret"} where the secret name is a sibling field.
@@ -40,6 +40,62 @@ export const REDACTION_TOKEN = "[redacted-credential]";
 export const PEM_REDACTION_TOKEN = "[redacted-private-key]";
 const IDENTIFIER_FIELD_NAMES = new Set(["KEY", "NAME", "VARIABLE"]);
 const VALUE_FIELD_NAMES = new Set(["VALUE"]);
+
+// GH#37382: a sensitive name followed by ":" or "=" is not always an
+// assignment. Unquoted code expressions and prose after a label are not
+// literals, so they stay visible. Quoted, bracketed, URL, PEM and token-prefix
+// values are never exempted, and no entropy threshold applies (GH#35829).
+// Mirrored in .agents/hooks/credential-transcript-scrub.py.
+const LITERAL_START = /^["'([<]/;
+const ARROW_FOLLOWS = /^\s*=>/;
+const NON_LITERAL_KEYWORDS = new Set(["async", "await", "false", "function", "lambda", "new", "nil", "true", "typeof", "yield"]);
+const TYPE_ANNOTATION_NAMES = new Set([
+  "any", "array", "bool", "boolean", "bytes", "dict", "float", "int", "list", "number", "object", "optional",
+  "promise", "record", "str", "string", "unknown",
+]);
+const CALL_EXPRESSION = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(/;
+const ENV_REFERENCE = /^(?:process\.env|import\.meta\.env|os\.environ|ENV)(?:[.[]|$)/;
+const EMPHASIS_ONLY = /^[*_]+$/;
+const CONSTANT_REFERENCE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
+const PROSE_WORD = /^[A-Za-z][a-z]{0,19}$/;
+const PROSE_STOP_WORDS = new Set([
+  "a", "an", "and", "are", "as", "be", "by", "for", "if", "in", "is", "it", "not", "of", "on", "or", "the",
+  "that", "this", "to", "with", "you", "your",
+]);
+const MAX_FOLLOWING_CONTEXT = 200;
+
+const TRAILING_COMMENT = /^[ \t]+(?:#|\/\/|;)/;
+
+function isProseLabelValue(value, following) {
+  if (!PROSE_WORD.test(value) || !/^[ \t]/.test(following) || TRAILING_COMMENT.test(following)) return false;
+  return following.trimStart().split(/[ \t]+/, 4).some((word) => PROSE_STOP_WORDS.has(word.toLowerCase()));
+}
+
+const NON_LITERAL_RULES = [
+  ({ value }) => NON_LITERAL_KEYWORDS.has(value.toLowerCase()),
+  ({ value }) => CALL_EXPRESSION.test(value) || ENV_REFERENCE.test(value) || EMPHASIS_ONLY.test(value),
+  ({ operator, value }) => operator === ":" && TYPE_ANNOTATION_NAMES.has(value.split(/[[<.]/, 1)[0].toLowerCase()),
+  ({ operator, value, following }) => operator === "=" && CONSTANT_REFERENCE.test(value) && following.startsWith(";"),
+  ({ operator, value, following }) => operator === ":" && isProseLabelValue(value, following),
+];
+
+function followingLineText(source, index) {
+  const lineEnd = source.indexOf("\n", index);
+  const end = Math.min(lineEnd < 0 ? source.length : lineEnd, index + MAX_FOLLOWING_CONTEXT);
+  return source.slice(index, end);
+}
+
+/** True when an unquoted value after a sensitive name is code or prose, not a literal. */
+export function isCodeOrProseValue(separator, value, following = "") {
+  if (ARROW_FOLLOWS.test(following)) return true;
+  if (LITERAL_START.test(value)) return false;
+  const operator = separator.trim();
+  // dotenv/shell `NAME=value` and `name:value` have no spacing; only keywords
+  // and Markdown emphasis (`**Password:**`) are non-literal there.
+  if (separator === operator) return NON_LITERAL_KEYWORDS.has(value.toLowerCase()) || EMPHASIS_ONLY.test(value);
+  const context = { operator, value, following };
+  return NON_LITERAL_RULES.some((rule) => rule(context));
+}
 
 function scrubPrivateKeys(text) {
   const chunks = [];
@@ -149,8 +205,9 @@ function scrubPlainCredentials(text) {
   count += escapedScrubbed.count + pairScrubbed.count + urlScrubbed.count;
   const namedScrubbed = urlScrubbed.text.replace(
     NAMED_CREDENTIAL_ASSIGNMENT_PATTERN,
-    (match, boundary, name, separator, value) => {
+    (match, boundary, name, separator, value, offset, source) => {
       if (!isSensitiveFieldName(name)) return match;
+      if (isCodeOrProseValue(separator, value, followingLineText(source, offset + match.length))) return match;
       const redacted = redactAssignedValue(value);
       if (redacted === value) return match;
       count++;
@@ -228,5 +285,18 @@ function shouldRedactField(key, value, hasSensitiveIdentifier) {
 /** Scrub credentials from any JSON-serialisable tool output. */
 export function scrubToolOutput(output) {
   const { value, count } = scrubValue(output);
-  return { output: value, redacted: count > 0 };
+  return { output: value, redacted: count > 0, count };
+}
+
+export const DISPLAY_REDACTION_NOTE_PREFIX = "[aidevops display filter:";
+
+/**
+ * In-band notice that placeholders came from this filter, not the source
+ * (GH#37382). Without it, models report placeholders as content bugs and copy
+ * them into files. The notice never contains a placeholder token itself.
+ */
+export function displayRedactionNote(count) {
+  return `${DISPLAY_REDACTION_NOTE_PREFIX} ${count} span(s) in this tool result were replaced with redaction `
+    + "placeholders; the source bytes are unchanged. Check the raw source (for example with rg -c) before "
+    + "reporting, quoting or copying redacted text.]";
 }

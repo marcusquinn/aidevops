@@ -66,7 +66,7 @@ CREDENTIAL_PATTERN = re.compile(
 )
 
 NAMED_CREDENTIAL_ASSIGNMENT_PATTERN = re.compile(
-    r"(^|[^A-Za-z0-9_])((?:\"[A-Za-z_][A-Za-z0-9_. -]*\"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?:=|:)\s*)(\"(?:\\.|[^\"\\])*\"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)",
+    r"(^|[^A-Za-z0-9_])((?:\"[A-Za-z_][A-Za-z0-9_. -]*\"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?::=|=>|=(?!=)|:(?![:=]))\s*)(\"(?:\\.|[^\"\\])*\"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -147,10 +147,72 @@ def is_value_field_name(name: str) -> bool:
     return normalize_field_name(name) in VALUE_FIELD_NAMES
 
 
+# GH#37382: unquoted code expressions and prose after a sensitive label are not
+# literals. Quoted, bracketed, URL, PEM and token-prefix values are never
+# exempted, and no entropy threshold applies (GH#35829). Mirror of
+# isCodeOrProseValue in .agents/plugins/opencode-aidevops/quality-hooks-output-scrub.mjs.
+LITERAL_START = re.compile(r"^[\"'(\[<]")
+ARROW_FOLLOWS = re.compile(r"^\s*=>")
+NON_LITERAL_KEYWORDS = {"async", "await", "false", "function", "lambda", "new", "nil", "true", "typeof", "yield"}
+TYPE_ANNOTATION_NAMES = {
+    "any", "array", "bool", "boolean", "bytes", "dict", "float", "int", "list", "number", "object", "optional",
+    "promise", "record", "str", "string", "unknown",
+}
+CALL_EXPRESSION = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(", re.ASCII)
+ENV_REFERENCE = re.compile(r"^(?:process\.env|import\.meta\.env|os\.environ|ENV)(?:[.\[]|$)")
+EMPHASIS_ONLY = re.compile(r"^[*_]+$")
+CONSTANT_REFERENCE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
+PROSE_WORD = re.compile(r"^[A-Za-z][a-z]{0,19}$")
+PROSE_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "be", "by", "for", "if", "in", "is", "it", "not", "of", "on", "or", "the",
+    "that", "this", "to", "with", "you", "your",
+}
+TRAILING_COMMENT = re.compile(r"^[ \t]+(?:#|//|;)")
+MAX_FOLLOWING_CONTEXT = 200
+
+
+def following_line_text(source: str, index: int) -> str:
+    """Return the rest of the matched line, bounded for linear scanning."""
+    line_end = source.find("\n", index)
+    end = min(len(source) if line_end < 0 else line_end, index + MAX_FOLLOWING_CONTEXT)
+    return source[index:end]
+
+
+def is_prose_label_value(value: str, following: str) -> bool:
+    """Return whether a label value starts an ordinary sentence."""
+    if not PROSE_WORD.match(value) or following[:1] not in {" ", "\t"} or TRAILING_COMMENT.match(following):
+        return False
+    words = re.split(r"[ \t]+", following.lstrip(" \t"))[:4]
+    return any(word.lower() in PROSE_STOP_WORDS for word in words)
+
+
+def is_code_or_prose_value(separator: str, value: str, following: str) -> bool:
+    """Return whether an unquoted value after a sensitive name is code or prose."""
+    if ARROW_FOLLOWS.match(following):
+        return True
+    if LITERAL_START.match(value):
+        return False
+    operator = separator.strip()
+    # dotenv/shell `NAME=value` and `name:value` have no spacing; only keywords
+    # and Markdown emphasis (`**Password:**`) are non-literal there.
+    if separator == operator:
+        return value.lower() in NON_LITERAL_KEYWORDS or bool(EMPHASIS_ONLY.match(value))
+    head = re.split(r"[\[<.]", value, maxsplit=1)[0].lower()
+    return (
+        value.lower() in NON_LITERAL_KEYWORDS
+        or bool(CALL_EXPRESSION.match(value) or ENV_REFERENCE.match(value) or EMPHASIS_ONLY.match(value))
+        or (operator == ":" and head in TYPE_ANNOTATION_NAMES)
+        or (operator == "=" and bool(CONSTANT_REFERENCE.match(value)) and following.startswith(";"))
+        or (operator == ":" and is_prose_label_value(value, following))
+    )
+
+
 def redact_named_assignment(match: re.Match) -> str:
     """Redact one sensitive assignment while preserving its key and quoting."""
     boundary, name, separator, value = match.groups()
     if not is_sensitive_field_name(name) or is_placeholder_value(value):
+        return match.group(0)
+    if is_code_or_prose_value(separator, value, following_line_text(match.string, match.end())):
         return match.group(0)
     quote = value[0] if value and value[0] in {'"', "'"} and value.endswith(value[0]) else ""
     if quote:

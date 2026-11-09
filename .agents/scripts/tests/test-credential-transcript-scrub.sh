@@ -420,6 +420,52 @@ else
 	fail "33. DB URL userinfo and plain-text name/value secret pairs scrubbed — got: $output_cloudron"
 fi
 
+# GH#37382: code and prose after sensitive labels stay visible; literals do not.
+# Mirrors the JS cases in .agents/plugins/opencode-aidevops/tests/test-credential-scrub.mjs.
+if PYTHONPATH="$HOOKS_DIR" python3 - "$HOOK_SCRIPT" <<'PY'; then
+import runpy
+import sys
+
+namespace = runpy.run_path(sys.argv[1])
+scrub = namespace["scrub_credentials"]
+token = namespace["REDACTION_TOKEN"]
+unchanged = [
+    "The secret: keep the originals of anything legally important",
+    "if token == expected: return",
+    "password != expected",
+    "password: str = field(default=None)",
+    "secret: Optional[str] = None",
+    "const namedSecret = registeredNames.has(name) || fallback;",
+    "const SECRET_VALUE_REDACTION_TOKEN = REDACTION_TOKEN;",
+    "const token = process.env.GITHUB_TOKEN;",
+    "const getToken = () => cached;",
+    "**Password:** keep the originals",
+]
+for text in unchanged:
+    assert scrub(text) == (text, 0), text
+redacted = {
+    "password: hunter2value": f"password: {token}",
+    "export SECRET=plainword": f"export SECRET={token}",
+    "token: abcdefgh expires soon": f"token: {token} expires soon",
+    'password := "hunter2value"': f'password := "{token}"',
+}
+for text, expected in redacted.items():
+    assert scrub(text) == (expected, 1), text
+for text in (
+    "PASSWORD=Secret(123)",
+    "export API_KEY=ABCD_1234_EFGH;",
+    "token=process.env.X",
+    "password: hunter # the dev one",
+    "password: hunter // for the box",
+):
+    scrubbed, count = scrub(text)
+    assert count == 1 and token in scrubbed, text
+PY
+	pass "34. Code and prose after sensitive labels kept; literal assignments redacted (GH#37382)"
+else
+	fail "34. Code and prose after sensitive labels kept; literal assignments redacted (GH#37382)"
+fi
+
 # ── Summary ────────────────────────────────────────────────────────────────
 
 printf '\n'
