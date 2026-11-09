@@ -193,6 +193,56 @@ check "status probe failure keeps tree" "$(not_removed "aidevops-release-900-${D
 check "dirty tree kept" "$(not_removed "aidevops-release-901-${DEAD_PID}" release-preparation-stale)"
 check "clean sibling still reaped" "$(removed "aidevops-release-902-${DEAD_PID}" release-preparation-stale)"
 
+# 7. GH#37424: a freshly created Spotlight marker (which also bumps the root
+# mtime) does not reset idleness; any other recent entry still does.
+reset_case
+printf '/.metadata_never_index\n' >>"$REPO/.git/info/exclude"
+make_tree "aidevops-release-reconcile-3.39.2-${DEAD_PID}"
+: >"$BASE/aidevops-release-reconcile-3.39.2-${DEAD_PID}/.metadata_never_index"
+make_tree "aidevops-release-reconcile-3.39.3-${DEAD_PID}"
+touch "$BASE/aidevops-release-reconcile-3.39.3-${DEAD_PID}/.git"
+_full_loop_release_reap_stale_release_worktrees "$BASE" "" "" "" 10
+check "marker-only change still idle" "$(removed "aidevops-release-reconcile-3.39.2-${DEAD_PID}" release-reconcile-stale)"
+check "other recent entry keeps tree" "$(not_removed "aidevops-release-reconcile-3.39.3-${DEAD_PID}" release-reconcile-stale)"
+
+# 8. GH#37424: newest-first, so low-numbered legacy trees cannot spend the limit.
+reset_case
+make_tree "aidevops-release-35956-${DEAD_PID}"
+make_tree "aidevops-release-reconcile-3.39.4-${DEAD_PID}"
+_full_loop_release_reap_stale_release_worktrees "$BASE" "" "" "" 1
+check "newest candidate attempted first" "$([[ "$(count_removed)" == 1 ]] && [[ "$(removed "aidevops-release-reconcile-3.39.4-${DEAD_PID}" release-reconcile-stale)" == true ]] && echo true || echo false)"
+
+# 9. Only the empty root marker file is ignored; anything else with that name
+# is task data and counts as activity (directly on the idleness helper).
+recently_active() {
+	if _full_loop_release_tree_recently_active "$1"; then echo true; else echo false; fi
+	return 0
+}
+idle() {
+	if _full_loop_release_tree_recently_active "$1"; then echo false; else echo true; fi
+	return 0
+}
+reset_case
+for marker_case in empty nonempty dir nested symlink; do
+	make_tree "aidevops-release-reconcile-3.39.9-${marker_case}"
+done
+MARKER_TREE="$BASE/aidevops-release-reconcile-3.39.9"
+: >"${MARKER_TREE}-empty/.metadata_never_index"
+printf 'task data\n' >"${MARKER_TREE}-nonempty/.metadata_never_index"
+mkdir "${MARKER_TREE}-dir/.metadata_never_index"
+age_path "${MARKER_TREE}-dir/.metadata_never_index"
+touch "${MARKER_TREE}-dir/.metadata_never_index/task.txt"
+mkdir "${MARKER_TREE}-nested/sub"
+: >"${MARKER_TREE}-nested/sub/.metadata_never_index"
+age_path "${MARKER_TREE}-nested/sub"
+ln -s "$ROOT/elsewhere" "${MARKER_TREE}-symlink/.metadata_never_index"
+check "empty root marker is idle" "$(idle "${MARKER_TREE}-empty")"
+check "non-empty marker counts" "$(recently_active "${MARKER_TREE}-nonempty")"
+check "marker directory contents count" "$(recently_active "${MARKER_TREE}-dir")"
+check "nested marker-named entry counts" "$(recently_active "${MARKER_TREE}-nested")"
+check "marker symlink counts" "$(recently_active "${MARKER_TREE}-symlink")"
+check "unreadable tree fails closed" "$(recently_active "$BASE/missing-tree")"
+
 if [[ "$FAILURES" -ne 0 ]]; then
 	printf '%s failure(s)\n' "$FAILURES"
 	exit 1
