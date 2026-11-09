@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.143] - 2026-11-09
+
+### Fixed
+
+- move resume helpers out of cleanup.py and age test fixtures past the clock slack
+- record endpoint labels for governed native REST attempts (GH#37333) (#37337)
+- probe canonical-checkout routines in an isolated signing repo (GH#37336) (#37338)
+- scale lifecycle cleanup budget under worktree capacity pressure so retirement keeps up and dispatch reopens
+- run the worker bus relay outside the cycle budget so pulse steering actually reaches workers
+- enforce GH#27137 review-bot thread gate in full-loop merge (#37324)
+
 ## [3.39.142] - 2026-11-09
 
 ### Fixed
