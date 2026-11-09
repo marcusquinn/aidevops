@@ -21,6 +21,7 @@ import {
   replyCommand,
   sendCommand,
   showCommand,
+  whoCommand,
 } from "./session-bus-cli-commands.mjs";
 
 const USAGE = `Usage: aidevops sessions <command> [options]
@@ -28,6 +29,7 @@ const USAGE = `Usage: aidevops sessions <command> [options]
   list [--all] [--json] [--redact]   Live messageable OpenCode sessions, workers included (--all adds read-only)
   chat-wake <target> on|off          Opt in/out of verified-owner chat asks (default off)
   show <target> [--json]             One session's presence record
+  who <target…> [--repo <slug>] [--json]  Other live sessions (workers included) on #issue, PR#n, repo, worktree or file path
   send <target> <text…>              Info message; waits for the recipient's next tool result or turn
   ask <target> <text…> [--wait <s>]  Question; may wake an idle session (never a worker). --wait 1-120 prints the reply (exit 0) or exits 2 on timeout
   reply <msg-id> <text…>             Answer an ask this session received (from an OpenCode session's shell)
@@ -44,6 +46,7 @@ Targets: session ID, handle, #issue, PR#n, repo, or worktree path.`;
 const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", "-h": "help", "--help": "help" };
 const VALUE_FLAGS = {
   "--text-file": "textFile", "--origin": "origin", "--actor": "actor", "--ack": "ack", "--wait": "wait", "--sender": "sender",
+  "--repo": "repo",
 };
 
 function parseWait(value) {
@@ -53,7 +56,7 @@ function parseWait(value) {
 }
 
 export function parseArgs(argv) {
-  const options = { positional: [], json: false, all: false, textFile: "", origin: "", ack: "", wait: 0, sender: "" };
+  const options = { positional: [], json: false, all: false, textFile: "", origin: "", ack: "", wait: 0, sender: "", repo: "" };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (Object.hasOwn(BOOLEAN_FLAGS, arg)) options[BOOLEAN_FLAGS[arg]] = true;
@@ -70,6 +73,7 @@ const COMMANDS = {
   "chat-wake": chatWakeCommand,
   list: listCommand,
   show: showCommand,
+  who: whoCommand,
   send: (context) => sendCommand(context, "info"),
   ask: (context) => sendCommand(context, "ask"),
   reply: replyCommand,
@@ -78,7 +82,7 @@ const COMMANDS = {
   prune: pruneCommand,
 };
 
-export function main(argv = process.argv.slice(2), { env = process.env, out = process.stdout, root = store.busRoot(env) } = {}) {
+export function main(argv = process.argv.slice(2), { env = process.env, out = process.stdout, err = process.stderr, root = store.busRoot(env) } = {}) {
   const options = parseArgs(argv);
   const command = options.positional[0] || "list";
   if (options.help || command === "help") {
@@ -86,7 +90,7 @@ export function main(argv = process.argv.slice(2), { env = process.env, out = pr
     return 0;
   }
   if (!Object.hasOwn(COMMANDS, command)) throw new Error(`unknown command: ${command}\n\n${USAGE}`);
-  const pending = COMMANDS[command]({ root, options, out, env });
+  const pending = COMMANDS[command]({ root, options, out, err, env });
   // `ask --wait` returns a Promise of the exit code (0 reply, 2 timeout).
   return pending && typeof pending.then === "function" ? pending : 0;
 }

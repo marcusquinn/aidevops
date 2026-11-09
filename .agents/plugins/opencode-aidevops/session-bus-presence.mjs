@@ -115,8 +115,8 @@ export class GitInfoCache {
 
 /** Builds and writes this process's presence records; one writer per record. */
 export class PresencePublisher {
-  constructor({ root, kind, messageable, directory, now, timers, gitInfo, remote = null, worker = null }) {
-    Object.assign(this, { root, kind, messageable, directory, now, timers, gitInfo, remote, worker });
+  constructor({ root, kind, messageable, directory, now, timers, gitInfo, remote = null, worker = null, onWrite = () => {} }) {
+    Object.assign(this, { root, kind, messageable, directory, now, timers, gitInfo, remote, worker, onWrite });
     this.token = null;
     this.disposed = false;
   }
@@ -170,11 +170,13 @@ export class PresencePublisher {
       store.writePresence(this.root, record);
       state.lastWriteMs = this.now();
       state.handle = record.handle;
-      return true;
     } catch (error) {
       warn("presence write", error);
       return false;
     }
+    // t18895: overlap detection reads the record just written; it never fails the write.
+    this.onWrite(record);
+    return true;
   }
 
   /** Write now when urgent; otherwise at most once per throttle window. */

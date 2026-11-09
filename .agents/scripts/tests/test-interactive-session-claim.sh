@@ -787,6 +787,29 @@ else
 		"(stub log: $(tr '\n' '|' <"$STUB_LOG"))"
 fi
 
+# --- t18895: live sessions on the issue are printed, then the claim proceeds ---
+: >"$STUB_LOG"
+bus_stub="${STUB_BIN}/session-bus-stub"
+cat >"$bus_stub" <<'SH'
+#!/usr/bin/env bash
+printf 'bus %s\n' "$*" >>"${STUB_LOG:-/dev/null}"
+printf 'regress-56014-worker [worker] · busy · #56014 · regress/test@feature/x · 9s ago\n'
+SH
+chmod +x "$bus_stub"
+bus_claim_out=$(AIDEVOPS_SESSION_BUS_HELPER="$bus_stub" STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	"$HELPER_PATH" claim 56014 regress/test --worktree /tmp/regress-wt 2>&1)
+bus_claim_rc=$?
+if [[ $bus_claim_rc -eq 0 ]] &&
+	grep -q 'other live session(s) already on #56014' <<<"$bus_claim_out" &&
+	grep -q 'regress-56014-worker \[worker\]' <<<"$bus_claim_out" &&
+	grep -qxF 'bus who #56014 --repo regress/test' "$STUB_LOG" &&
+	grep -q 'issue edit 56014 .*add-label status:claimed' "$STUB_LOG"; then
+	print_result "t18895: claim warns about live sessions on the issue and still claims" 0
+else
+	print_result "t18895: claim warns about live sessions on the issue and still claims" 1 \
+		"(rc=$bus_claim_rc out=${bus_claim_out:0:200} log=$(tr '\n' '|' <"$STUB_LOG"))"
+fi
+
 # --- Case (d): idempotent path — label already present, no transition ---
 rm -f "${claim_dir}"/*.json 2>/dev/null || true
 : >"$STUB_LOG"

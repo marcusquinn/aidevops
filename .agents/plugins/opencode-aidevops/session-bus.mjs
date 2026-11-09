@@ -20,6 +20,7 @@ import { sessionIDFrom } from "./session-turn-state.mjs";
 import { ArrivalToasts, warn } from "./session-bus-client.mjs";
 import { SessionTree } from "./session-bus-identity.mjs";
 import { GitInfoCache, PresencePublisher, workerContext } from "./session-bus-presence.mjs";
+import { OverlapNotifier } from "./session-bus-overlap.mjs";
 import { assertReplySlot, reserveReplySlot, withoutReserved } from "./session-bus-replies.mjs";
 import { resolveSender, senderIdentity } from "./session-bus-sender.mjs";
 import {
@@ -65,10 +66,13 @@ class SessionBus {
     this.tree = new SessionTree({ client, onRootInfo: (info) => this.updateRootInfo(info) });
     this.toasts = new ArrivalToasts(client);
     const gitInfo = new GitInfoCache({ now, git, onChange: (changed) => this.republish(changed) });
+    // t18895: one notice per peer and shared key (issue, PR, branch, worktree).
+    this.overlap = new OverlapNotifier({ root, client, now, env, fromFor: (sessionID) => this.fromFor(sessionID) });
     this.presence = new PresencePublisher({
       root, kind, messageable: this.messageable, directory, now, timers, gitInfo,
       remote: this.remote && { interface: this.remote.interface, agent: this.remote.agent },
       worker: kind === "headless" ? workerContext(env, now()) : null,
+      onWrite: (record) => this.overlap.observe(record),
     });
     this.timer = null;
     this.ticking = false;
@@ -272,6 +276,7 @@ class SessionBus {
     this.ticking = true;
     try {
       await pollInboxes(this);
+      this.overlap.recheck(this);
     } catch (error) {
       warn("poll", error);
     } finally {

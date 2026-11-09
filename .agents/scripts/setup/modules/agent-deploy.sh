@@ -342,6 +342,7 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/session-bus-identity.mjs"
 		"plugins/opencode-aidevops/session-bus-events.mjs"
 		"plugins/opencode-aidevops/session-bus-presence.mjs"
+		"plugins/opencode-aidevops/session-bus-overlap.mjs"
 		"plugins/opencode-aidevops/session-bus-delivery.mjs"
 		"plugins/opencode-aidevops/session-bus-plugin.mjs"
 		"plugins/opencode-aidevops/session-bus-compaction.mjs"
