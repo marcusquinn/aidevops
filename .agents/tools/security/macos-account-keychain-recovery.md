@@ -95,9 +95,13 @@ Order of preference:
    first make its password match the current login password: the user runs
    `security set-keychain-password <copy>` and types the old, then the new,
    password. Login does not rekey a keychain whose password differs; it
-   prompts, and may reset the keychain if the prompt fails. Then quit apps,
-   swap the files with a dated backup of the current `login.keychain-db`,
-   restart, and confirm it unlocks at login without a prompt.
+   prompts, and may reset the keychain if the prompt fails. Before swapping,
+   inventory and securely preserve items created in the new login keychain;
+   the old copy will not contain them. Include WireGuard tunnel configurations
+   and their options (section 5). Quit dependent apps, keep a dated backup of
+   the current `login.keychain-db`, then swap the files and restart. Restore
+   the preserved items before reopening dependent apps, and confirm the login
+   keychain unlocks without a prompt.
 2. **Older copy with a known password:** a Time Machine backup, a local APFS
    snapshot, or the previous Mac's `~/Library/Keychains/login.keychain-db`.
    - Local snapshots: `tmutil listlocalsnapshots /`; mount read-only with
@@ -108,10 +112,13 @@ Order of preference:
    - Recent macOS login keychains can also depend on per-device key material
      outside the file (unified logs show a derived-entropy unlock path backed
      by root-only `/var/db/SystemKeys`). In the incident behind this guide, a
-     copy from the previous Mac still opened with its password. If a copy
-     refuses a password the user is sure of, retest it as `login.keychain-db`
-     (section 3) and treat a further failure as unknown, not as proof of a
-     wrong password.
+     copy from the previous Mac still opened with its password. A copied
+     keychain may also require protected entropy from the source Mac; access
+     to `/var/db/SystemKeys` is restricted and obtaining it is not an ordinary
+     file-copy step. Check this prerequisite before treating the password or
+     copy as unusable. If a copy refuses a password the user is sure of,
+     retest it as `login.keychain-db` (section 3) and treat a further failure
+     as unknown, not as proof of a wrong password.
 3. **Header graft (advanced):** a keychain password change rewraps the same
    database key; items are not re-encrypted. If an older copy of the same
    keychain opens with a known password, its header can unlock a newer copy's
