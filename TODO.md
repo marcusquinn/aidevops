@@ -1939,6 +1939,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18907 perf(gh-api): find same-login REST-core consumer spending 57% of quota and blocking Pulse dispatch #auto-dispatch #bug ref:GH#37313
 
+- [ ] t18908 fix(runner-health): trip the breaker when workers die before model activity and stop no-op update resume loops #auto-dispatch #bug ref:GH#37316
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
