@@ -21,13 +21,29 @@ out of public issues, PRs and docs.
 - **No API.** The public API (OpenAPI spec at
   `https://developers.hostinger.com/openapi/openapi.json`) has no endpoint to
   request, grant, list or revoke shared access. Do it in hPanel.
-- **The agency token can read the shared plan.** Observed 2026-11-09 with
-  Collaborator access: the shared order appears in `GET /api/hosting/v1/orders`,
-  and once the plan has a website, `GET /api/hosting/v1/websites?order_id=<it>`
-  lists it (domain, hosting username, root directory). Before setup the list is
-  empty, and `GET /api/hosting/v1/datacenters?order_id=<it>` returns
-  `[Hosting:9999] Not found.`. Write calls on a shared plan are untested; use
-  hPanel for panel changes and SSH for site work. A token the client creates
+- **The agency token manages the shared plan's hosting account.** Observed
+  2026-11-09 with Collaborator access, once the plan has a website:
+  - Works: `GET /api/hosting/v1/orders` (shared order listed),
+    `GET /api/hosting/v1/websites?order_id=<it>` (domain, hosting username, root
+    directory), and account-scoped calls under
+    `/api/hosting/v1/accounts/<username>/…` such as `php/details`,
+    `cache/status` and `cron-jobs`. A no-op write,
+    `PATCH …/websites/<domain>/php/version` with the current version, returned
+    `Request accepted` (no authorisation error); the site stayed on that
+    version.
+  - Does not work: `GET /api/hosting/v1/datacenters?order_id=<it>` returns
+    `[Hosting:9999] Not found.` before and after setup, and
+    `GET /api/billing/v1/subscriptions` lists only the agency's own
+    subscriptions.
+  - Before setup, the websites list is empty, so there is no username for
+    account-scoped calls.
+
+  Prefer the API for hosting settings (PHP, cache, cron, SSL, databases, Git
+  deploy), SSH for site work, and hPanel for what the API lacks (sharing, SSH
+  access and keys). Creating a site on a shared plan through the API
+  (`POST /api/hosting/v1/websites`) is untested; the hPanel path below works.
+  With Collaborator access these change the client's live hosting; treat them
+  like any production change. A token the client creates
   carries their whole account's permissions; use one only when needed, with an
   expiry, stored as a secret.
 
