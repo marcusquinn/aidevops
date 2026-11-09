@@ -1886,24 +1886,24 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18874 Worker-lifecycle PR hold must see open PRs from a configured fork into its upstream #auto-dispatch #bug ref:GH#36863 pr:#36867 completed:2026-11-06
 
-- [ ] t18875 fix(review-bot-gate): request-retry ignores superseded-head reviews and retries per head #auto-dispatch #bug ref:GH#36899
+- [x] t18875 fix(review-bot-gate): request-retry ignores superseded-head reviews and retries per head #auto-dispatch #bug ref:GH#36899 pr:#36918 completed:2026-11-09
 
-- [ ] t18876 fix(review-bot-gate): recover external PRs stuck after CodeRabbit review limit #auto-dispatch #bug ref:GH#36900
+- [x] t18876 fix(review-bot-gate): recover external PRs stuck after CodeRabbit review limit #auto-dispatch #bug ref:GH#36900 pr:#36919 completed:2026-11-09
 
 - [x] t18877 feat(full-loop): audited maintainer override to admin-merge past a stuck review-bot-gate #auto-dispatch #feat ref:GH#36901 pr:#36910 completed:2026-11-06
 
-- [ ] t18878 fix(approval): canonical review-bot retry comment must not stale PR approvals #auto-dispatch #bug ref:GH#36902
+- [x] t18878 fix(approval): canonical review-bot retry comment must not stale PR approvals #auto-dispatch #bug ref:GH#36902 pr:#36958 completed:2026-11-09
 
-- [ ] t18879 Verify Buzz Desktop helper against block/buzz-app Desktop #auto-dispatch #bug #interactive tier:standard ~2h ref:GH#36926 logged:2026-11-06 -> [todo/tasks/t18879-brief.md]
+- [x] t18879 Verify Buzz Desktop helper against block/buzz-app Desktop #auto-dispatch #bug #interactive tier:standard ~2h ref:GH#36926 pr:#36972 logged:2026-11-06 -> [todo/tasks/t18879-brief.md] completed:2026-11-09
 
 - [x] t18880 review-bot-gate advisory for all authors; review bots never block merges #bug ref:GH#36931 pr:#36949 completed:2026-11-06
 
 - [x] t18881 review-bot-gate: fork PRs must run main's helper, not their own head revision #auto-dispatch #bug ref:GH#36954 pr:#36956 completed:2026-11-06 -> [todo/tasks/t18881-brief.md]
 
 - [x] t18882 review-bot-gate: fork PRs need a base-context status writer (pull_request_target) #bug ref:GH#36961 pr:#36962 completed:2026-11-06 -> [todo/tasks/t18882-brief.md]
-- [ ] t18883 Plan and prototype a buzz-aidevops Desktop plugin #feat #interactive #no-auto-dispatch tier:thinking ~10h ref:GH#36976 logged:2026-11-06 -> [todo/tasks/t18883-brief.md]
+- [x] t18883 Plan and prototype a buzz-aidevops Desktop plugin #feat #interactive #no-auto-dispatch tier:thinking ~10h ref:GH#37233 pr:#36998 logged:2026-11-06 -> [todo/tasks/t18883-brief.md] completed:2026-11-09
 
-- [ ] t18884 Skip the aidevops session greeting when OpenCode runs as an ACP server #auto-dispatch #feat ref:GH#36983
+- [x] t18884 Skip the aidevops session greeting when OpenCode runs as an ACP server #auto-dispatch #feat ref:GH#36983 pr:#36987 completed:2026-11-09
 
 - [x] t18886 OpenCode session bus: presence and session-to-session messages #feat ref:GH#37149 -> [todo/tasks/t18886-brief.md] pr:#37165 completed:2026-11-08
 
@@ -1911,13 +1911,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18888 OpenCode 2 support for the session bus: run the bus from v2.mjs and add the sidebar Messages section #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37157 logged:2026-11-08 blocked-by:t18886 pr:#37179 completed:2026-11-08 -> [todo/tasks/t18888-brief.md]
 
-- [ ] t18889 test fixtures: copy gh-closing-reference-lib.sh into subagent-index and manifest-index temp trees #auto-dispatch #bug ref:GH#37162 logged:2026-11-08 -> [todo/tasks/t18889-brief.md]
+- [x] t18889 test fixtures: copy gh-closing-reference-lib.sh into subagent-index and manifest-index temp trees #auto-dispatch #bug ref:GH#37162 pr:#37164 logged:2026-11-08 -> [todo/tasks/t18889-brief.md] completed:2026-11-09
 
-- [ ] t18890 feat: aidevops opencode-browse CLI command #feat #interactive ref:GH#37170 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 -> [todo/tasks/t18890-brief.md]
+- [x] t18890 feat: aidevops opencode-browse CLI command #feat #interactive ref:GH#37170 assignee:marcusquinn pr:#37172 logged:2026-11-08 started:2026-11-08 -> [todo/tasks/t18890-brief.md] completed:2026-11-09
 
-- [ ] t18891 Session bus chat ingest: scan, verified actor, opt-in owner wakes and redacted listing #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37244 logged:2026-11-08 -> [todo/tasks/t18891-brief.md]
+- [x] t18891 Session bus chat ingest: scan, verified actor, opt-in owner wakes and redacted listing #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37244 pr:#37277 logged:2026-11-08 -> [todo/tasks/t18891-brief.md] completed:2026-11-09
 
-- [ ] t18892 Session bus channel bindings and per-task session launch on opencode serve #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37245 logged:2026-11-08 blocked-by:t18891 -> [todo/tasks/t18892-brief.md]
+- [x] t18892 Session bus channel bindings and per-task session launch on opencode serve #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37245 pr:#37332 logged:2026-11-08 blocked-by:t18891 -> [todo/tasks/t18892-brief.md] completed:2026-11-09
 
 - [ ] t18893 Matrix bot adapter for the session bus: room commands, bound rooms and outbox relay #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37246 logged:2026-11-08 blocked-by:t18892 -> [todo/tasks/t18893-brief.md]
 
@@ -1925,31 +1925,31 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18895 Session bus coordination: who is working on what, and overlap warnings before work starts #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37248 logged:2026-11-08 -> [todo/tasks/t18895-brief.md] pr:#37311 completed:2026-11-09
 
-- [ ] t18896 Release coordination over the session bus: lane owner session, held-lane hints and release notices #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37249 logged:2026-11-08 -> [todo/tasks/t18896-brief.md]
+- [x] t18896 Release coordination over the session bus: lane owner session, held-lane hints and release notices #feat #interactive #auto-dispatch tier:thinking ~1d ref:GH#37249 pr:#37320 logged:2026-11-08 -> [todo/tasks/t18896-brief.md] completed:2026-11-09
 
 - [x] t18897 Session bus ask with bounded wait, so subagents and scripts get the reply in the same call #feat #interactive #auto-dispatch tier:standard ~4h ref:GH#37250 logged:2026-11-08 -> [todo/tasks/t18897-brief.md] pr:#37257 completed:2026-11-09
 
-- [ ] t18898 Session bus for Buzz-hosted agents: labelled presence, remote provenance and safe delivery #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37264 logged:2026-11-08 blocked-by:t18891 -> [todo/tasks/t18898-brief.md]
+- [x] t18898 Session bus for Buzz-hosted agents: labelled presence, remote provenance and safe delivery #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37264 pr:#37285 logged:2026-11-08 blocked-by:t18891 -> [todo/tasks/t18898-brief.md] completed:2026-11-09
 
-- [ ] t18901 buzz-aidevops: visible agent settings fields and correct where-to-set guidance #bug ref:GH#37272
+- [x] t18901 buzz-aidevops: visible agent settings fields and correct where-to-set guidance #bug ref:GH#37272 pr:#37274 completed:2026-11-09
 
-- [ ] t18903 buzz-aidevops: style the Conversation dropdown like the text fields #feat ref:GH#37284
+- [x] t18903 buzz-aidevops: style the Conversation dropdown like the text fields #feat ref:GH#37284 pr:#37286 completed:2026-11-09
 
 - [x] t18905 Session bus for workers: messageable headless workers, worker presence and pulse steering relay #auto-dispatch #feat ref:GH#37298 pr:#37306 completed:2026-11-09
 
 - [ ] t18907 perf(gh-api): find same-login REST-core consumer spending 57% of quota and blocking Pulse dispatch #auto-dispatch #bug ref:GH#37313
 
-- [ ] t18908 fix(runner-health): trip the breaker when workers die before model activity and stop no-op update resume loops #auto-dispatch #bug ref:GH#37316
+- [x] t18908 fix(runner-health): trip the breaker when workers die before model activity and stop no-op update resume loops #auto-dispatch #bug ref:GH#37316 pr:#37319 completed:2026-11-09
 
-- [ ] t18909 fix(lifecycle): reconstructible worktree retirement uses Linux-only /proc census on macOS Pulse hosts #bug ref:GH#37321
+- [x] t18909 fix(lifecycle): reconstructible worktree retirement uses Linux-only /proc census on macOS Pulse hosts #bug ref:GH#37321 pr:#37323 completed:2026-11-09
 
-- [ ] t18910 fix(lifecycle): resume interrupted native worktree removal so stranded retirements finish #bug #framework ref:GH#37326
+- [x] t18910 fix(lifecycle): resume interrupted native worktree removal so stranded retirements finish #bug #framework ref:GH#37326 pr:#37328 completed:2026-11-09
 
-- [ ] t18911 fix(pulse): run the worker bus relay outside the cycle budget; it has never run since t18905 shipped #bug #framework ref:GH#37327
+- [x] t18911 fix(pulse): run the worker bus relay outside the cycle budget; it has never run since t18905 shipped #bug #framework ref:GH#37327 pr:#37329 completed:2026-11-09
 
-- [ ] t18912 fix(cleanup): scale lifecycle cleanup budget under worktree capacity pressure so retirement keeps up and dispatch reopens #bug #framework ref:GH#37330
+- [x] t18912 fix(cleanup): scale lifecycle cleanup budget under worktree capacity pressure so retirement keeps up and dispatch reopens #bug #framework ref:GH#37330 pr:#37331 completed:2026-11-09
 
-- [ ] t18917 fix(privacy): self-heal a root-owned repo-privacy cache so privacy probes stop cold-calling the API on every gh write #bug #framework ref:GH#37355
+- [x] t18917 fix(privacy): self-heal a root-owned repo-privacy cache so privacy probes stop cold-calling the API on every gh write #bug #framework ref:GH#37355 pr:#37356 completed:2026-11-09
 
 - [ ] t18918 perf(pulse): list each repo's issues once per assignment-normalization run and cache the runner login #auto-dispatch #feat #framework ref:GH#37362
 
