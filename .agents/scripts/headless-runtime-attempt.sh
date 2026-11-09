@@ -61,6 +61,10 @@ _headless_worker_runs_sandboxed() {
 # every key in the user's agent to the model process). Probe without the
 # launcher's agent whenever the worker will be sandboxed, so an agent-only
 # signer fails pre-launch instead of at the worker's first commit.
+#
+# GH#37336: LLM routines run with --dir set to a canonical checkout rather than
+# a dispatcher-created linked worktree. The shared probe signs in a private
+# bare repository there, because the canonical Git guard rejects commit-tree.
 _headless_worker_signing_commit_probe() {
 	local work_dir="$1"
 	local drop_agent=0
