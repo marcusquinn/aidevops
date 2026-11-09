@@ -12,17 +12,16 @@ import { fileURLToPath } from "node:url";
 
 import * as store from "./session-bus-store.mjs";
 import { chatWakeCommand } from "./session-bus-chat-trust.mjs";
+import { notifyReleaseCommand, watchReleaseCommand } from "./session-bus-cli-release.mjs";
 import {
   inboxCommand,
   listCommand,
-  notifyReleaseCommand,
   outboxCommand,
   print,
   pruneCommand,
   replyCommand,
   sendCommand,
   showCommand,
-  watchReleaseCommand,
   whoCommand,
 } from "./session-bus-cli-commands.mjs";
 

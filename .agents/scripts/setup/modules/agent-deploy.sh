@@ -353,6 +353,7 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/session-bus-cli.mjs"
 		"plugins/opencode-aidevops/session-bus-cli-commands.mjs"
 		"plugins/opencode-aidevops/session-bus-cli-input.mjs"
+		"plugins/opencode-aidevops/session-bus-cli-release.mjs"
 		"plugins/opencode-aidevops/session-bus-v2.mjs"
 		"plugins/opencode-aidevops/v2-mcp-adapter.mjs"
 		"plugins/opencode-aidevops/v2-provider-auth.mjs"
