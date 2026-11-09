@@ -49,7 +49,7 @@ export function pendingCount(root, sessionID) {
 
 const clip = (value, width) => String(value || "").slice(0, width);
 
-function validBody(text) {
+export function validBody(text) {
   const body = cleanText(text).trim();
   if (!body) throw new Error("message text is empty");
   if (Array.from(body).length > LIMITS.textChars) {

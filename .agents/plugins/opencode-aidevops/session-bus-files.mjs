@@ -132,7 +132,8 @@ export function pruneBus(root, now = Date.now()) {
     if (!name.endsWith(".json") || !isSafeId(sessionID)) continue;
     const file = join(root, "chat-wake", name);
     const setting = readJson(file);
-    if (!readJson(join(presenceDir(root), name)) && setting?.updated_ms < cutoff) rmSync(file, { force: true });
+    const stale = !Number.isFinite(setting?.updated_ms) || setting.updated_ms < cutoff;
+    if (!readJson(join(presenceDir(root), name)) && stale) rmSync(file, { force: true });
   }
   return removed.count;
 }

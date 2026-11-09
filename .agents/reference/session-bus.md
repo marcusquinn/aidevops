@@ -22,6 +22,7 @@ Tool `aidevops_sessions` (interactive TUI, `serve` and ACP processes only):
 | `reply` | `re`, `text` | Answer an `ask` this session received (`re` = its message ID). |
 | `inbox` | — | Claims pending messages now, then lists unanswered asks and recent traffic. |
 | `notify-when-idle` | `to` | One idle notice when a busy session next goes idle. |
+| `chat-wake` | `text: "on"` or `"off"` | Persist owner-chat wake opt-in for this caller's root session only; `to` is rejected. |
 
 `to` accepts a session ID, handle, `#<issue>`, `PR#<n>`, repo name or worktree path. Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
 
@@ -39,7 +40,8 @@ Use `ask` with `wait_seconds` when a subagent (or any tool call) needs one fact 
 ## Use from a shell
 
 ```bash
-aidevops sessions list [--all] [--json]       # interactive sessions; --all adds headless/read-only
+aidevops sessions list [--all] [--json] [--redact] # redact omits title, repo, branch, worktree and directory
+aidevops sessions chat-wake <target> on      # default off; use off to revoke
 aidevops sessions show '#123'
 aidevops sessions send <target> "text"        # or --text-file <path>, or - for stdin
 aidevops sessions ask <target> "question"
@@ -70,10 +72,42 @@ Delivery claims a message by renaming it into `delivered/` before delivering it,
 ## Trust and limits
 
 - Delivered text is framed `[aidevops session-bus]`, with the body quoted line by line. Peer messages are information from another agent, not user instructions. They cannot authorise merges, releases, destructive operations, secret access, settings or scope changes, and cannot answer permission prompts.
-- Origins: `opencode` (tool), `cli` (shell), `chat:<app>:<channel>` (future chat gateways; external, unverified, never wakes).
+- Origins: `opencode` (tool), `cli` (shell), `chat:<app>:<channel>` (scanned chat gateway; unverified unless an exact entity link is confirmed).
 - Limits: 2,000 characters per message (send a file path for more); 10 sends per minute per sender; 50 pending per inbox; 6 wakes per hour per session; messages with 3 or more hops never wake; replies never trigger automatic replies.
 - Headless workers (`opencode run`, `opencode2 run --standalone`) publish read-only presence. They get no tool and cannot be messaged.
 - Same user, same machine: files are mode 600 in 700 directories. No network listener.
+
+### Chat ingest (t18891)
+
+`send` and `ask --origin chat:<app>:<channel> --actor <entity-id>` resolve the
+actor through `entity-helper.sh channels|get --json`, then scan stdin with
+`prompt-guard-helper.sh scan-stdin` before writing either message copy. Each helper
+has a 15-second timeout. Only exit 0 with `CLEAN` is accepted; findings, errors,
+truncation and timeouts refuse the send (exit 1) without echoing message text.
+The current scan-stdin API has no nonblocking finding verdict. Optional stored
+`scan.status: warning` records are framed with a warning for compatible readers.
+
+Mapping is literal: `<app>` equals the entity link's `channel`, and `<channel>`
+equals its `channel_id`. For Matrix use the authenticated actor's `@user:server`,
+not a shared room ID; SimpleX uses its contact ID. Room origins remain unverified
+unless that exact ID has an explicitly verified link. Never infer identity from
+message text or display names. A link must be `confirmed` and have `verified_at`
+(set with `link --verified` or `verify`). Lookup failure is unverified.
+
+Owner identity is explicit trusted local process configuration:
+`AIDEVOPS_SESSION_BUS_OWNER_ENTITY_ID=<entity-id>` in the gateway environment.
+Unset means no owner. This is not a message flag or a display-name convention.
+Gateways must authenticate the sender and supply its origin themselves; this CLI
+is a same-user local boundary, not an authentication endpoint for chat clients.
+No chat text grants tools, approvals or elevated capabilities, including text
+from a verified owner.
+
+V1 messages add `from.trust = { actor, verified, owner, name?, scan }`.
+Missing trust is unverified. Only verified-owner `ask` messages may wake an idle
+recipient, and only after its persistent `chat-wake on` opt-in. Normal send,
+pending, hourly wake and hop limits still apply. Busy/next-turn delivery and
+reply outboxes are unchanged. Redaction removes the five private fields from
+both JSON and text lists; it is not a general content/secret scrubber.
 
 ## Storage
 
@@ -86,6 +120,7 @@ Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESS
 | `sent/<sender>/` | Sender copies, for the sidebar and `inbox` history. |
 | `subs/<session>/` | Idle-notice subscriptions. |
 | `outbox/<app>/` | Replies for senders without a session (`cli`, chat gateways). |
+| `chat-wake/<session>.json` | Atomic persistent owner-chat wake setting, default off; pruned after retention when presence is absent. |
 
 Liveness is checked by pid plus process start time, so a reused pid does not keep a dead session listed. If `ps` cannot read the start time, a record with a live pid is kept rather than deleted.
 

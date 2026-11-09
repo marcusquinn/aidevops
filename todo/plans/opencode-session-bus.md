@@ -204,7 +204,11 @@ Chat-app wiring kept open for Phase 3 (owner turn 3: long-running sessions per c
 | CPU/IO | one 5s inbox `readdir` per process; presence writes ≤1 per 10s | throttle |
 | Reliability | atomic rename; at-most-once claim-then-deliver (a failed wake returns the message; a crash after the claim does not redeliver it); offline recipient ⇒ sender told at send time and message kept at least 7 days; process crash ⇒ unclaimed files remain and are delivered when the session resumes in any process | design |
 
-## Chat-app gateways (SimpleX, Matrix, Buzz) — design only
+## Chat-app gateways (SimpleX, Matrix, Buzz)
+
+t18891 implements the shared CLI ingest/trust layer; gateway adapters remain
+separate tasks. See `reference/session-bus.md` "Chat ingest" for exact channel
+mapping, local owner configuration, fail-closed scanning and persistent opt-in.
 
 Owner requirement: aidevops must also be usable from chat apps. Current state (verified by reading the integrations):
 
@@ -218,7 +222,7 @@ Owner requirement: aidevops must also be usable from chat apps. Current state (v
 The bus gives every gateway one contract instead of three bespoke paths:
 
 1. **Read (cheap, no LLM):** `aidevops sessions list --json` answers "what is running / what is session X doing" directly from presence. Safe default for a verified owner identity; titles, repos and branches can be private, so group rooms get redacted rows.
-2. **Send:** `aidevops sessions send <target> --origin chat:<app>:<entity-id> --text-file <path>` for information, or `aidevops sessions ask <target> …` with the same flags when the gateway expects a reply (`reply` answers only asks). Chat-origin messages are a distinct trust profile (`team-interface-trust.md`): actor identity, content provenance, attachment risk and requested capability are evaluated separately; content is scanned with `prompt-guard-helper.sh scan`; delivery framing says "from chat user …, unverified/verified" and carries no owner authority.
+2. **Send:** `aidevops sessions send <target> --origin chat:<app>:<channel-id> --actor <entity-id> --text-file <path>` for information, or `aidevops sessions ask <target> …` with the same flags when the gateway expects a reply (`reply` answers only asks). Actor identity requires an exact confirmed app/channel link, never a display name. Content is scanned with `prompt-guard-helper.sh scan-stdin`; framing distinguishes unverified, verified and verified owner, with conversation-only authority.
 3. **Wake policy:** chat messages never wake a session unless the actor is a verified owner entity (`entity-helper.sh` `--verified` channel link) **and** the target session has opted in. Even then the capability is conversation only.
 4. **Replies back:** a session replying to a chat-origin ask writes to `session-bus/outbox/<gateway>/`; the gateway polls its outbox and posts to the room/contact, applying its existing leak detection (SimpleX `leak-detector.ts`) before sending.
 5. **Thin adapters:** Matrix bot, SimpleX bot and the Buzz plugin each add a small adapter over this contract; their existing "start a new session" paths remain for new work.

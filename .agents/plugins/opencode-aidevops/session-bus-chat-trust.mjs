@@ -58,5 +58,7 @@ export function setChatWake(root, sessionID, enabled) {
 }
 
 export function chatWakeEnabled(root, sessionID) {
-  return isSafeId(sessionID) && readJson(join(root, "chat-wake", `${sessionID}.json`))?.enabled === true;
+  if (!isSafeId(sessionID)) return false;
+  const setting = readJson(join(root, "chat-wake", `${sessionID}.json`));
+  return setting?.enabled === true && Number.isFinite(setting.updated_ms) && setting.updated_ms > 0;
 }
