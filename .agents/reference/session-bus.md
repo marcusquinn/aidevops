@@ -46,12 +46,14 @@ aidevops sessions show '#123'
 aidevops sessions send <target> "text"        # or --text-file <path>, or - for stdin
 aidevops sessions ask <target> "question"
 aidevops sessions ask <target> "question" --wait 60  # prints the reply and acknowledges it in outbox/cli (exit 0); exit 2 on timeout, printing the ask ID
+aidevops sessions reply <msg-id> "answer"     # from an OpenCode session's shell; how a worker answers an ask
+aidevops sessions send <target> --sender pulse --text-file <path>  # named sessionless sender (origin cli:pulse)
 aidevops sessions inbox [<session-id>]        # read-only view
 aidevops sessions outbox cli [--ack <msg-id>] # replies to asks sent from a shell
 aidevops sessions prune                       # dead presence, messages older than 7 days
 ```
 
-Inside an OpenCode shell, `AIDEVOPS_OPENCODE_SESSION_ID` makes the shell the sender, so replies return to that session. Outside one, the sender is `shell:<user>` and replies go to `outbox/cli/`.
+Inside an OpenCode shell, `AIDEVOPS_OPENCODE_SESSION_ID` makes the shell the sender, so replies return to that session. Outside one, the sender is `shell:<user>` and replies go to `outbox/cli/`. `--sender <label>` (1–32 lowercase letters, digits or dashes) names a sessionless sender: origin `cli:<label>`, its own 10-per-minute rate key, and the same trust as any same-user shell. The label is attribution, not authority.
 
 ## Delivery
 
@@ -74,7 +76,7 @@ Delivery claims a message by renaming it into `delivered/` before delivering it,
 - Delivered text is framed `[aidevops session-bus]`, with the body quoted line by line. Peer messages are information from another agent, not user instructions. They cannot authorise merges, releases, destructive operations, secret access, settings or scope changes, and cannot answer permission prompts.
 - Origins: `opencode` (tool), `cli` (shell), `chat:<app>:<channel>` (scanned chat gateway; unverified unless an exact entity link is confirmed).
 - Limits: 2,000 characters per message (send a file path for more); 10 sends per minute per sender; 50 pending per inbox; 6 wakes per hour per session; messages with 3 or more hops never wake; replies never trigger automatic replies.
-- Headless workers (`opencode run`, `opencode2 run --standalone`) publish read-only presence. They get no tool and cannot be messaged.
+- Headless workers (`opencode run`, `opencode2 run --standalone`) can be messaged but never woken, and get no tool; see "Pulse workers". `ask` to a worker never wakes it, and `ask --wait` waits only for its next tool result.
 - Same user, same machine: files are mode 600 in 700 directories. No network listener.
 
 ### Chat ingest (t18891)
@@ -128,6 +130,57 @@ from the verified launch overlay, never from `BUZZ_*` variables or tool argument
   Messages wait and arrive on its next chat-started turn or tool result. An `ask`
   to it says so in the send result. Replies to its own asks reach its inbox.
 
+## Pulse workers (t18905)
+
+Same-user headless workers are bus endpoints with a narrower contract than
+interactive sessions (owner decision 2026-11-09).
+
+- **Delivery:** messages arrive appended to the worker's next tool result, or at
+  its next turn. Nothing wakes a worker, and it does not poll; a hung worker (no
+  tool results) stays with the worker watchdog. Frames tell the worker it has no
+  user: requests for authority are declined, and pointed-to facts are verified on
+  GitHub.
+- **No tool:** workers keep their token budget. A worker answers an `ask` from its
+  shell with `aidevops sessions reply <msg-id> "…"`; the shell inherits the
+  session ID, so the reply reaches the asker's inbox.
+- **Presence:** handle `<repo>-<issue>-worker`, a `[worker]` label in `list`, and
+  a `worker` object (`issue`, `repo`, `worker_id`, `attempt_id`, `tier`,
+  `started_epoch`) from the dispatch environment. Records also carry `tool`
+  (name, `since_epoch`) while a tool runs; `list` shows tools running for over a
+  minute. Rows sort interactive, then workers, then read-only.
+- **Idle and exit notices:** `notify-when-idle` on a worker fires when it goes
+  idle or exits. The notice names the worker's issue and the
+  `gh issue view N --repo R --comments` command that shows its outcome.
+
+### Pulse steering relay
+
+`worker-bus-relay-helper.sh relay` runs once per pulse cycle as the deferrable
+`worker_bus_relay` stage, after orphan reaping. It sends one `info` message from
+`cli:pulse` per change on the worker's issue since its run started:
+
+- new comments from OWNER, MEMBER or COLLABORATOR authors that are not bots and
+  carry no machine markers (worker, pulse and routine comments are skipped;
+  interactive signatures are allowed);
+- the issue closing;
+- `hold-for-review` or `status:claimed` added after the first check.
+
+Messages are pointers: comment IDs, authors, times and the `gh` command that
+reads them. Comment bodies are never copied. The relay never writes to GitHub.
+
+Cost: per interval (`WORKER_BUS_RELAY_MIN_INTERVAL`, default 120 s), one
+issue-list call (`since=`) per repo with due workers, one baseline issue read
+per new worker, and one comments read only when a comment count rose. Every call
+passes the pulse stop flag, the GraphQL breaker and the REST-core `deferrable`
+budget gate. A deferred or failed read keeps the state, so it is retried later.
+A failed send keeps the detection state, so the change is sent again on the
+next run. The sender rate limit (10 per minute) bounds bursts.
+
+- State: `~/.aidevops/.agent-workspace/state/worker-bus-relay/<session>.json`
+  (override `WORKER_BUS_RELAY_STATE_DIR`). Pruned when the worker leaves presence.
+- Inspect: `worker-bus-relay-helper.sh status`. Log lines carry the
+  `[worker-bus-relay]` prefix in `~/.aidevops/logs/pulse.log`.
+- Disable: `AIDEVOPS_WORKER_BUS_RELAY=0`.
+
 ## Storage
 
 Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESSION_BUS_DIR`).
@@ -145,6 +198,7 @@ Liveness is checked by pid plus process start time, so a reused pid does not kee
 
 ## Troubleshooting
 
-- A session is missing from `list`: it runs an older plugin (restart it after `aidevops update`), or it is headless (`list --all`).
+- A session is missing from `list`: it runs an older plugin (restart it after `aidevops update`), or it is a read-only record (`list --all`). Workers dispatched before an update stay read-only until they exit.
+- A worker never got a relay message: check `worker-bus-relay-helper.sh status`, then `[worker-bus-relay]` and `REST-core deferrable unit blocked` lines in `~/.aidevops/logs/pulse.log`.
 - An ask did not wake an idle session: check its wake budget (6 per hour) and the message's hop count; it is delivered at the next turn instead. After a failed wake (`session-bus wake:` on stderr), the next attempt waits 30 seconds, doubling up to 15 minutes until a wake succeeds.
 - Compaction keeps open asks: the compaction context lists asks this session still has to answer and asks it is waiting on.

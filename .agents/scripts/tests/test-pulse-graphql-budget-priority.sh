@@ -111,6 +111,7 @@ fi
 [[ "$(_pulse_stage_priority_class "sync_todo_refs_all_repos")" == "deferrable" ]]
 [[ "$(_pulse_stage_priority_class "build_dependency_graph_cache")" == "deferrable" ]]
 [[ "$(_pulse_stage_priority_class "refresh_blocked_status_from_graph")" == "deferrable" ]]
+[[ "$(_pulse_stage_priority_class "worker_bus_relay")" == "deferrable" ]]
 [[ "$(_pulse_stage_priority_class "approval_merge_trigger")" == "progress" ]]
 [[ "$(_pulse_stage_priority_class "deterministic_merge_pass")" == "progress" ]]
 [[ "$(_pulse_stage_priority_class "preflight_early_dispatch")" == "progress" ]]

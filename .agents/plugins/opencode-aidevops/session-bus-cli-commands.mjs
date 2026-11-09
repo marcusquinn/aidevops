@@ -2,44 +2,12 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 // t18886/GH#37149: `aidevops sessions` subcommands. session-bus-cli.mjs
-// parses arguments and dispatches here.
-
-import { readFileSync } from "node:fs";
+// parses arguments and dispatches here; senders and message text come from
+// session-bus-cli-input.mjs.
 
 import * as store from "./session-bus-store.mjs";
 import { chatTrust } from "./session-bus-chat-trust.mjs";
-
-function readText(options, words) {
-  if (options.textFile) return readFileSync(options.textFile, "utf8");
-  if (words.length === 1 && words[0] === "-") return readFileSync(0, "utf8");
-  return words.join(" ");
-}
-
-export const envSessionID = (env) => env.AIDEVOPS_OPENCODE_SESSION_ID || env.OPENCODE_SESSION_ID || "";
-
-function chatSender(origin) {
-  const chat = store.parseChatOrigin(origin);
-  if (!chat) throw new Error("--origin must look like chat:<app>:<channel>");
-  return { session_id: "", handle: `chat:${chat.app}`, repo: "", branch: "", origin };
-}
-
-// Inside an OpenCode bash tool the shell inherits the session ID, so a CLI
-// send is attributed to that session; elsewhere it comes from shell:<user>.
-function shellSender(root, env) {
-  const raw = envSessionID(env);
-  const sessionID = store.isSafeId(raw) ? raw : "";
-  const self = sessionID ? store.readPresence(root).find((record) => record.session_id === sessionID) : null;
-  const fallback = raw ? `session-${raw.slice(-6)}` : `shell:${env.USER || "user"}`;
-  return {
-    session_id: sessionID,
-    handle: self?.handle || fallback,
-    repo: self?.repo || "",
-    branch: self?.branch || "",
-    origin: "cli",
-  };
-}
-
-const senderFrom = (root, origin, env) => (origin ? chatSender(origin) : shellSender(root, env));
+import { cliSender, envSessionID, readText, shellSender } from "./session-bus-cli-input.mjs";
 
 export function print(out, value, json) {
   out.write(`${json ? JSON.stringify(value, null, 2) : value}\n`);
@@ -57,7 +25,7 @@ export function listCommand({ root, options, out }) {
   if (options.json) return print(out, records, true);
   const hidden = all.length - records.length;
   const lines = records.map((record) => store.formatPresenceRow(record));
-  if (lines.length === 0) lines.push("No live interactive OpenCode sessions.");
+  if (lines.length === 0) lines.push("No live messageable OpenCode sessions.");
   if (hidden > 0) lines.push(`(${hidden} headless/read-only session(s) hidden; use --all)`);
   return print(out, lines.join("\n"), false);
 }
@@ -111,10 +79,7 @@ export function sendCommand(context, type) {
   const { root, options, out, env } = context;
   const [, target, ...words] = options.positional;
   if (options.wait && type !== "ask") throw new Error("--wait is only valid with ask");
-  // A waiting sender has no session, so the reply lands in outbox/<app>.
-  const from = options.wait && !options.origin
-    ? { session_id: "", handle: `shell:${env.USER || "user"}`, repo: "", branch: "", origin: "cli" }
-    : senderFrom(root, options.origin, env);
+  const from = cliSender(root, options, env);
   const resolved = messageableTarget(root, target, from);
   const text = store.validBody(readText(options, words));
   if (options.origin) from.trust = chatTrust(options.origin, options.actor, text, env);
@@ -128,6 +93,25 @@ export function sendCommand(context, type) {
   print(out, `Sent ${type} ${message.id} to ${resolved.record?.handle || resolved.sessionID}.${replyHint(type, from)}`, false);
   if (!options.wait) return undefined;
   return waitForOutboxReply(context, message.id, store.parseChatOrigin(from.origin)?.app || "cli");
+}
+
+/**
+ * t18905: answer an ask from a session's own shell. Workers have no
+ * aidevops_sessions tool, so their framed asks point here. The sender is the
+ * session in the shell environment, never an argument.
+ */
+export function replyCommand({ root, options, out, env }) {
+  if (options.origin || options.sender || options.wait) throw new Error("reply takes no --origin, --sender or --wait; it answers as this session");
+  const [, messageID, ...words] = options.positional;
+  const sessionID = envSessionID(env);
+  if (!store.isSafeId(sessionID)) throw new Error("reply runs in an OpenCode session's shell; it answers an ask that session received");
+  const original = store.findReceived(root, sessionID, String(messageID || "").trim());
+  if (original?.type !== "ask") throw new Error("reply needs the msg ID of an ask this session received");
+  const text = store.validBody(readText(options, words));
+  const hops = (Number.isSafeInteger(original.hops) ? original.hops : 0) + 1;
+  const { message, outbox } = store.sendReply(root, { from: shellSender(root, env), original, text, hops });
+  const target = outbox ? `the ${outbox} outbox for ${original.from?.handle || outbox}` : original.from?.handle || original.from?.session_id;
+  return print(out, `Sent reply ${message.id} to ${target}.`, false);
 }
 
 function trafficLine({ direction, pending, message }) {

@@ -1035,6 +1035,17 @@ _pulse_run_deterministic_pipeline() {
 			reap_orphan_workers || true
 	fi
 
+	# t18905: tell live workers, over the session bus, about maintainer
+	# comments, closure or holds on their issue since dispatch. Pointers only;
+	# no GitHub writes. Deferrable: the helper gates every API call and checks
+	# each worker at most every WORKER_BUS_RELAY_MIN_INTERVAL seconds.
+	if [[ ! -f "$STOP_FLAG" && "${AIDEVOPS_WORKER_BUS_RELAY:-1}" != "0" ]]; then
+		_pulse_run_optional_stage_with_timeout "worker_bus_relay" 120 \
+			env STOP_FLAG="$STOP_FLAG" LOGFILE="$LOGFILE" \
+			PULSE_RATE_LIMIT_FLAG="$PULSE_RATE_LIMIT_FLAG" \
+			bash "${SCRIPT_DIR}/worker-bus-relay-helper.sh" relay || true
+	fi
+
 	# GH#33602: bounded, hourly stale Actions queue cleanup, then the grouped
 	# Dependabot alert monitor (dedupes by package/ecosystem/patched version).
 	# GH#34000: both are short and run before the long merge/sync/graph stages

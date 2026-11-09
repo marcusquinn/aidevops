@@ -31,7 +31,10 @@ export const LIMITS = Object.freeze({
   deliverPerBatch: 5,
 });
 export const MESSAGE_TYPES = Object.freeze(["info", "ask", "reply", "idle-notice"]);
-export const MESSAGEABLE_KINDS = Object.freeze(["tui", "serve", "acp"]);
+// t18905: headless workers receive messages at tool results and turns, but
+// are never woken (an idle worker has finished its run) and get no tool.
+export const MESSAGEABLE_KINDS = Object.freeze(["tui", "serve", "acp", "headless"]);
+export const WAKEABLE_KINDS = Object.freeze(["tui", "serve", "acp"]);
 export const FRAME_PREFIX = "[aidevops session-bus]";
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;

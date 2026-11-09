@@ -73,7 +73,7 @@ Claude Code now ships same-machine cross-session messaging (`ListAgents`/`SendMe
 ## Non-goals (for this plan's build phases)
 
 - Claude Code, Codex or other runtime interop.
-- Messaging headless workers. Workers appear in presence (read-only) but cannot be messaged; they keep their issue/PR as the only communication channel.
+- ~~Messaging headless workers.~~ Lifted 2026-11-09 (t18905, see decision log): same-user workers take messages at tool results and turns, are never woken and get no tool. Their issue/PR stays the system of record.
 - Cross-machine delivery. Chat-app gateways (below) are the remote path, designed here and built later.
 - Removing the old mailbox. That needs a separate owner decision (Phase 4).
 
@@ -159,7 +159,7 @@ Every body line is prefixed with `>` and a space, so message text cannot forge a
 ### Tool and CLI
 
 - Plugin tool `aidevops_sessions` with `action: list | show | send | ask | reply | inbox | notify-when-idle`. `list` returns at most 20 compact rows (~25 tokens each) sorted by repo match, then activity. Schema target ≤150 tokens. Direct (not behind `aidevops_on_demand`) because discoverability is the point; revisit after usage evidence. Interactive processes only: headless workers do not get the tool, which saves its schema on every worker request.
-- CLI `aidevops sessions [list|show|send|ask|inbox|outbox]` via `session-bus-helper.sh`, a thin wrapper over `session-bus-cli.mjs`, which shares `session-bus-store.mjs` with the plugin. Gives the user a terminal view of what every session is doing and gives chat gateways (Phase 3) one stable entry point.
+- CLI `aidevops sessions [list|show|send|ask|reply|inbox|outbox]` (`reply` since t18905) via `session-bus-helper.sh`, a thin wrapper over `session-bus-cli.mjs`, which shares `session-bus-store.mjs` with the plugin. Gives the user a terminal view of what every session is doing and gives chat gateways (Phase 3) one stable entry point.
 - Guidance: `.agents/AGENTS.md` is at its 24,000-byte ratchet (23,993 bytes on 2026-11-07), so the tool description carries the "never ask the user to relay" rule, which is loaded with every request anyway. Details live in `reference/session-bus.md`, which replaces `reference/mailbox.md` content when Phase 4 is approved.
 
 ### Sidebar "Messages" section
@@ -189,7 +189,7 @@ Chat-app wiring kept open for Phase 3 (owner turn 3: long-running sessions per c
 - Peer messages never carry user authority (frame above; same rule as tool output). They cannot approve merges, releases, destructive operations, secret access, settings or scope changes, and cannot answer a pending permission prompt.
 - Loop control: `hops` increments when a session sends while handling a bus-woken turn; messages with `hops ≥ 3` are delivered but never wake. Each session accepts at most 6 wakes per hour; extra wake-eligible messages wait for the next turn. Replies never auto-trigger replies.
 - Rate limits: a sender may send at most 10 messages per minute; an inbox holds at most 50 pending messages (sender gets an error beyond that).
-- Headless workers (`opencode run`, `kind: headless`) are listed read-only and reject `send`/`ask`.
+- Headless workers (`opencode run`, `kind: headless`) accept `send`/`ask` since t18905 but are never woken; they answer from the shell with `aidevops sessions reply`.
 - Same-user, same-machine trust boundary (filesystem permissions 700/600). No network listener is added.
 - Retention: messages older than 7 days are pruned once at plugin startup and by `aidevops sessions prune`. A long-running process does not prune on a timer, so files can outlive 7 days until the next startup or prune. Presence records disappear with their process.
 
@@ -315,4 +315,5 @@ OpenCode 2 support (t18888, GH#37157): `session-bus-v2.mjs` adapts the V2 plugin
 - **2026-11-08 — Subagents are not bus endpoints** (agent decision, answering the owner's "can subagents message back & forth, too?"): a subagent's tool calls act for its root session and replies go to the root. Child sessions are short-lived and cannot be woken mid-run, and the Task prompt and result already connect parent and child. t18897 adds a bounded `ask` wait instead, which gives a subagent a full round trip without child presence.
 - **2026-11-08 — Follow-ups filed for self-tested worker delivery** (owner: "log todos/issues for whatever can be developed and self-tested"): t18891–t18897. Live homeserver and SimpleX-profile checks are recorded as post-merge checks because they need the owner's accounts.
 - **2026-11-08 — Buzz-hosted agents first, channel relay later** (agent decision, answering the owner's "capture: ok, should that have an issue?"): a remote-interactive Buzz agent is a full OpenCode ACP root session. The restricted profile returns before the bus (`index.mjs:366-368`); the remote-interactive one does not, `acp` is messageable and HOME is unchanged. A bus wake into it would run a turn the Buzz plugin did not start (`buzz-aidevops/plugin.js:324-332`), and its sends would carry `opencode` origin. t18898 makes those defaults safe and is self-testable with a scratch-bus ACP process, so it is filed for auto-dispatch after t18891. Only the channel relay waits for t18883.
+- **2026-11-09 — Same-user workers are bus endpoints** (t18905, GH#37298; owner: "i'm ok with updating that rule to allow same-user inter-messaging sessions"). Agent decisions under the owner's "follow your own recommendations": workers are never woken (a wake would start a turn outside the dispatch contract, and the watchdog owns hung workers); no tool for workers (token cost on every request), so they reply with `aidevops sessions reply` from the shell; pulse messages are pointers to GitHub facts, never instructions or copied comment bodies; the relay never writes to GitHub; its 10-per-minute sender limit is kept, because one message per worker per change rarely approaches it and a failed send retries next run.
 - **Deferred — old mailbox retirement** (Phase 4; owner: "decide later"). `mail-helper*.sh` and its callers stay untouched.

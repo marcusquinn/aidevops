@@ -28,20 +28,20 @@ export function isWakeEligible(message, chatWake = false) {
 }
 
 const eligibleEntry = (chatWake) => (entry) => isWakeEligible(entry.message, chatWake);
-const framed = (claimed) => claimed.map((entry) => store.frameMessage(entry.message)).join("\n\n");
+const framed = (claimed, options = {}) => claimed.map((entry) => store.frameMessage(entry.message, options)).join("\n\n");
 
 /** Busy channel: claimed messages follow the tool's own output. */
-export function appendToolMessages(output, claimed) {
-  if (claimed.length > 0) output.output = `${output.output}\n\n${framed(claimed)}`;
+export function appendToolMessages(output, claimed, frameOptions = {}) {
+  if (claimed.length > 0) output.output = `${output.output}\n\n${framed(claimed, frameOptions)}`;
   return claimed.length;
 }
 
 /** Turn channel: one synthetic text part per claimed message. */
-export function appendTurnMessages(output, claimed, sessionID) {
+export function appendTurnMessages(output, claimed, sessionID, frameOptions = {}) {
   const base = output.parts.find((part) => part?.type === "text") || output.parts[0] || {};
   const messageID = output.message?.id || base.messageID;
   claimed.forEach((entry, index) => {
-    const part = { type: "text", text: store.frameMessage(entry.message), synthetic: true, sessionID, messageID };
+    const part = { type: "text", text: store.frameMessage(entry.message, frameOptions), synthetic: true, sessionID, messageID };
     if (base.id) part.id = `${base.id}zb${index}`;
     output.parts.push(part);
   });
@@ -58,7 +58,8 @@ function hasWakeBudget(state, now) {
 
 function canWake(bus, state, pending, now, chatWake) {
   // #aidevops:trust-boundary t18898: a turn the chat app did not start has no channel to answer in.
-  if (bus.remote) return false;
+  // t18905: a worker is never woken; its idle means the dispatched run is over.
+  if (bus.remote || bus.wakeable === false) return false;
   if (state.status !== "idle" || now < state.wakeRetryAt) return false;
   return pending.some(eligibleEntry(chatWake)) && hasWakeBudget(state, now) && canPrompt(bus.client);
 }
@@ -124,15 +125,24 @@ export async function deliverToIdle(bus, sessionID, state, allPending = store.pe
 // notify-when-idle
 // ---------------------------------------------------------------------------
 
-function idleNoticeText(state, sessionID) {
+function idleNoticeText(bus, state, sessionID, exited) {
   const what = [state.title && `title: ${state.title}`, state.task && `last task: ${state.task}`].filter(Boolean).join("; ");
-  return `Session ${state.handle || sessionID} is now idle${what ? ` (${what})` : ""}.`;
+  const worker = bus.presence?.worker;
+  if (bus.kind === "headless") {
+    // t18905: a worker's idle is the end of its run; GitHub holds the outcome.
+    const issue = worker ? ` for ${worker.repo}#${worker.issue}` : "";
+    const check = worker ? ` Check the outcome with: gh issue view ${worker.issue} --repo ${worker.repo} --comments` : "";
+    return `Worker ${state.handle || sessionID}${issue} ${exited ? "exited" : "finished its run"}${what ? ` (${what})` : ""}.${check}`;
+  }
+  return `Session ${state.handle || sessionID} ${exited ? "exited" : "is now idle"}${what ? ` (${what})` : ""}.`;
 }
 
 /** One-shot notices from this session to every notify-when-idle subscriber. */
-export function sendIdleNotices(bus, sessionID, state) {
-  const text = idleNoticeText(state, sessionID);
-  for (const subscription of store.takeIdleSubscriptions(bus.root, sessionID)) {
+export function sendIdleNotices(bus, sessionID, state, { exited = false } = {}) {
+  const subscriptions = store.takeIdleSubscriptions(bus.root, sessionID);
+  if (subscriptions.length === 0) return;
+  const text = idleNoticeText(bus, state, sessionID, exited);
+  for (const subscription of subscriptions) {
     try {
       store.sendMessage(bus.root, {
         from: bus.fromFor(sessionID),

@@ -484,6 +484,8 @@ export async function setupAidevopsV2(ctx) {
       permissionBroker.recordToolCall(input, output);
       await toolExecuteBefore(input, output);
       event.input = output.args;
+      // t18905: after the gates, so only tools that will run are published.
+      sessionBus.toolBefore(event);
     }));
     await register(registrations, ctx.tool.hook("execute.after", async (event) => {
       const output = legacyToolOutput(event.result || {});

@@ -87,10 +87,12 @@ function handleBase(repo, worktree) {
     .slice(0, 40) || "session";
 }
 
-export function deriveHandle({ repo, worktree, issue, pr, session_id: sessionID }) {
+export function deriveHandle({ repo, worktree, issue, pr, session_id: sessionID, kind }) {
   const base = handleBase(repo, worktree);
-  if (issue) return `${base}-${issue}`;
-  if (pr) return `${base}-pr${pr}`;
+  // t18905: a worker and an interactive session on one issue keep distinct handles.
+  const role = kind === "headless" ? "-worker" : "";
+  if (issue) return `${base}-${issue}${role}`;
+  if (pr) return `${base}-pr${pr}${role}`;
   return `${base}-${String(sessionID || "").slice(-6).toLowerCase()}`;
 }
 
@@ -143,4 +145,9 @@ export function readPresence(root, { sweep = false, tokens: tokenFn = startToken
 
 export function isMessageable(record) {
   return Boolean(record) && record.messageable === true && MESSAGEABLE_KINDS.includes(record.kind);
+}
+
+/** t18905: a messageable pulse worker; it reads messages at tool results but is never woken. */
+export function isWorker(record) {
+  return isMessageable(record) && record.kind === "headless";
 }
