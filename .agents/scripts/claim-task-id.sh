@@ -484,6 +484,9 @@ _validate_interactive_dispatch_scope() {
 	local fmt_helper="${SCRIPT_DIR}/issue-body-format-helper.sh"
 	local body="$TASK_DESCRIPTION" normalized=""
 	[[ -r "$scope_lib" ]] || return 0
+	if [[ -n "$TASK_BRIEF_FILE" && -f "$TASK_BRIEF_FILE" && -r "$TASK_BRIEF_FILE" ]]; then
+		body+=$'\n\n'"$(<"$TASK_BRIEF_FILE")"
+	fi
 	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh
 	# shellcheck disable=SC1091
 	source "$scope_lib"
