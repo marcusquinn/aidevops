@@ -11,8 +11,8 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import * as store from "./session-bus-store.mjs";
+import { chatWakeCommand } from "./session-bus-chat-trust.mjs";
 import {
-  chatWakeCommand,
   inboxCommand,
   listCommand,
   outboxCommand,

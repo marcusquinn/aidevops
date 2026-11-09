@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 
 import * as store from "./session-bus-store.mjs";
-import { chatTrust, setChatWake } from "./session-bus-chat-trust.mjs";
+import { chatTrust } from "./session-bus-chat-trust.mjs";
 
 function readText(options, words) {
   if (options.textFile) return readFileSync(options.textFile, "utf8");
@@ -160,14 +160,4 @@ export function outboxCommand({ root, options, out }) {
 export function pruneCommand({ root, out }) {
   const live = store.readPresence(root, { sweep: true }).length;
   return print(out, `Pruned ${store.pruneBus(root)} expired message(s); ${live} live session(s).`, false);
-}
-
-export function chatWakeCommand({ root, options, out }) {
-  const [, target, setting] = options.positional;
-  if (!["on", "off"].includes(setting)) throw new Error("chat-wake needs <target> on|off");
-  const resolved = store.resolveTarget(store.readPresence(root), target, "");
-  if (resolved.error) throw new Error(resolved.error);
-  const sessionID = resolved.record?.session_id || resolved.sessionID;
-  setChatWake(root, sessionID, setting === "on");
-  print(out, `Chat owner wakes ${setting} for ${sessionID}.`, false);
 }

@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { isSafeId, parseChatOrigin, readJson, writeJsonAtomic } from "./session-bus-files.mjs";
+import { readPresence } from "./session-bus-presence-store.mjs";
+import { resolveTarget } from "./session-bus-targets.mjs";
 
 const scripts = fileURLToPath(new URL("../../scripts/", import.meta.url));
 const run = (name, args, env, input) => spawnSync(join(scripts, name), args, {
@@ -18,14 +20,21 @@ function entityJson(args, env) {
   return JSON.parse(result.stdout);
 }
 
+function confirmedLink(link) {
+  return link.confidence === "confirmed" && typeof link.verified_at === "string" && link.verified_at.length > 0;
+}
+
+function actorLink(link, actor, chat) {
+  if (!confirmedLink(link)) return false;
+  return link.entity_id === actor && link.channel === chat.app && link.channel_id === chat.channel;
+}
+
 function resolveActor(actor, chat, env) {
   if (!isSafeId(actor)) return { actor: "", verified: false, owner: false };
   const unverified = { actor, verified: false, owner: false };
   try {
     const links = entityJson(["channels", actor, "--json"], env);
-    const verified = Array.isArray(links) && links.some((link) =>
-      link.entity_id === actor && link.channel === chat.app && link.channel_id === chat.channel
-      && link.confidence === "confirmed" && typeof link.verified_at === "string" && link.verified_at.length > 0);
+    const verified = Array.isArray(links) && links.some((link) => actorLink(link, actor, chat));
     if (!verified) return unverified;
     const entities = entityJson(["get", actor, "--json"], env);
     const entity = Array.isArray(entities) && entities.find((row) => row.id === actor);
@@ -61,4 +70,14 @@ export function chatWakeEnabled(root, sessionID) {
   if (!isSafeId(sessionID)) return false;
   const setting = readJson(join(root, "chat-wake", `${sessionID}.json`));
   return setting?.enabled === true && Number.isFinite(setting.updated_ms) && setting.updated_ms > 0;
+}
+
+export function chatWakeCommand({ root, options, out }) {
+  const [, target, setting] = options.positional;
+  if (!["on", "off"].includes(setting)) throw new Error("chat-wake needs <target> on|off");
+  const resolved = resolveTarget(readPresence(root), target, "");
+  if (resolved.error) throw new Error(resolved.error);
+  const sessionID = resolved.record?.session_id || resolved.sessionID;
+  setChatWake(root, sessionID, setting === "on");
+  out.write(`Chat owner wakes ${setting} for ${sessionID}.\n`);
 }
