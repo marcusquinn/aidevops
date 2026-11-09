@@ -685,7 +685,7 @@ function capture() {
   return { output, out: { write: (text) => output.push(text) }, text: () => output.join("") };
 }
 
-test("bindings are path-safe, idempotent, listed, and resolve only to their live session", () => {
+test("bindings are path-safe, idempotent, listed, and resolve only to their live session", async () => {
   livePresence("ses_bindA1", { handle: "repo-bind" });
   livePresence("ses_bindB2", { handle: "repo-other" });
   const io = capture();
@@ -705,6 +705,10 @@ test("bindings are path-safe, idempotent, listed, and resolve only to their live
   assert.equal(store.resolveTarget(records, "channel:matrix:!room:example.org", "", { root }).record.session_id, "ses_bindA1");
   assert.match(store.resolveTarget(records, "channel:matrix:!room:example.org", "ses_bindA1", { root }).error, /yourself/);
   assert.match(store.resolveTarget(records, "channel:matrix:!other:example.org", "", { root }).error, /is not bound/);
+  cliMain(["chat-wake", "channel:matrix:!room:example.org", "on"], { root, env: {}, out: io.out });
+  assert.equal(chatWakeEnabled(root, "ses_bindA1"), true);
+  const { tool } = await waitFixture();
+  assert.match(await tool.execute({ action: "show", to: "channel:matrix:!room:example.org" }, { sessionID: "ses_rootW1" }), /repo-bind/);
   for (const bad of ["channel:matrix:..", "channel:matrix:a..b", "channel:matrix:a/b", "channel:matrix:", "channel::room", "channel:matrix", "channel:Matrix:room", "channel:matrix:.hidden"]) {
     assert.match(store.resolveTarget(records, bad, "", { root }).error, /invalid target/, bad);
   }
@@ -803,8 +807,14 @@ test("launch verifies the owner first, then creates, binds, opts in and asks thr
 
   // Server refusal: no binding change; partial failure after creation: exit 4 with the ID.
   const failing = launchFetch({}, 500);
-  await assert.rejects(cliMain(args, { root, env, out: io.out, fetch: failing.fetchImpl }), /HTTP 500\); no session was created/);
+  await assert.rejects(cliMain(args, { root, env, out: io.out, fetch: failing.fetchImpl }), /HTTP 500\); check its session list before retrying/);
   assert.equal(store.readBinding(root, "matrix", "@owner:example.org").session_id, "ses_launch1");
+  for (const error of [new DOMException("timeout", "TimeoutError"), new TypeError("connection reset")]) {
+    await assert.rejects(cliMain(args, { root, env, out: io.out, fetch: async () => { throw error; } }), /a session may have been created; check its session list before retrying/);
+  }
+  const refusedConnection = new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+  await assert.rejects(cliMain(args, { root, env, out: io.out, fetch: async () => { throw refusedConnection; } }), /connection refused\); no session was created/);
+  await assert.rejects(cliMain(args, { root, env, out: io.out, fetch: launchFetch({}).fetchImpl }), /without a usable session ID; check its session list before retrying/);
   for (let index = 0; index < store.LIMITS.inboxPending; index += 1) {
     store.sendMessage(root, { from: peer(`ses_q${String(index).padStart(5, "0")}`), to: "ses_launch2", type: "info", text: "fill" });
   }

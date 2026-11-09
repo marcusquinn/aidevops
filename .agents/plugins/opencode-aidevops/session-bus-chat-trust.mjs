@@ -75,7 +75,7 @@ export function chatWakeEnabled(root, sessionID) {
 export function chatWakeCommand({ root, options, out }) {
   const [, target, setting] = options.positional;
   if (!["on", "off"].includes(setting)) throw new Error("chat-wake needs <target> on|off");
-  const resolved = resolveTarget(readPresence(root), target, "");
+  const resolved = resolveTarget(readPresence(root), target, "", { root });
   if (resolved.error) throw new Error(resolved.error);
   const sessionID = resolved.record?.session_id || resolved.sessionID;
   setChatWake(root, sessionID, setting === "on");

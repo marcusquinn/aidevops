@@ -71,10 +71,13 @@ async function createSession(fetchImpl, server, { title, directory }) {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
+    if (error?.cause?.code === "ECONNREFUSED" || error?.code === "ECONNREFUSED") {
+      throw new Error(`could not reach ${server} (connection refused); no session was created`);
+    }
     const reason = error?.name === "TimeoutError" ? "timed out" : "connection failed or redirected";
-    throw new Error(`could not reach ${server} (${reason}); no session was created`);
+    throw new Error(`could not reach ${server} (${reason}); a session may have been created; check its session list before retrying`);
   }
-  if (!response?.ok) throw new Error(`${server} refused session creation (HTTP ${response?.status}); no session was created`);
+  if (!response?.ok) throw new Error(`${server} returned a session creation error (HTTP ${response?.status}); check its session list before retrying`);
   const session = await response.json().catch(() => null);
   if (!isSafeId(session?.id) || !session.id.startsWith("ses")) {
     throw new Error(`${server} answered without a usable session ID; check its session list before retrying`);
