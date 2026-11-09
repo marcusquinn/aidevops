@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.142] - 2026-11-09
+
+### Fixed
+
+- use native process census for reconstructible worktree retirement on macOS
+- count startup failures in runner health
+
 ## [3.39.141] - 2026-11-09
 
 ### Fixed
