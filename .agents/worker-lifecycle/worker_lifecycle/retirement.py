@@ -1,7 +1,8 @@
 """Retire controlled worktrees via a journaled private Git relocation.
 
-The original public pathname is never passed to Git removal. Partial deletion
-that cannot be reverified stops with its archive and remaining data retained.
+The original public pathname is never passed to Git removal. A partial deletion
+resumes only with deletion-only evidence (GH#37326); otherwise it stops with its
+archive and remaining data retained.
 """
 
 from __future__ import annotations
@@ -23,6 +24,10 @@ from .archive_path import validate_archive_path
 from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
+from .interrupted_removal import (
+    BOUNDARY, native_timeout, removal_started, require_removable, restore_git_link,
+    validation_boundary,
+)
 from .legacy_proc import require_idle_processes
 from .enrollment import (
     MARKER, _directory_inode, _git_directory, _read_marker,
@@ -101,7 +106,8 @@ def _git(*arguments: str) -> str:
         executable = module.real_git()
     except RuntimeError as error:
         raise ValueError("native-git-unavailable") from error
-    return _run([executable, *arguments])
+    # Native removal of a large tree outlives ordinary helper calls (GH#37326).
+    return _run([executable, *arguments], native_timeout(arguments))
 
 
 def _preserved(store: LifecycleRegistry, plan: dict, root: Path) -> dict:
@@ -177,6 +183,38 @@ def _relocate_source(
         _git("--git-dir", plan["common"], "worktree", "move", str(path), str(target))
 
 
+def _require_private_identity(
+    store: LifecycleRegistry, path: Path, plan: dict, target: Path, admin: Path,
+) -> None:
+    """Bind the private tree, its Git administration and marker to the plan."""
+    marker = {
+        "format": 2, "installation_id": store.installation_id(),
+        "generation_id": plan["generation_id"], "path": str(path),
+        "directory": plan["directory_identity"],
+        "git_directory": str(admin), "git_identity": plan["git_identity"],
+    }
+    if (_directory_inode(target) != plan["directory_identity"]
+            or _git_directory(target) != admin
+            or _directory_inode(admin) != plan["git_identity"]
+            or _read_marker(admin / MARKER) != marker):
+        raise StoreConflict("private-worktree-changed")
+
+
+def _removal_start(store: LifecycleRegistry, generation: str) -> int | None:
+    """Return the journaled deletion-only boundary, or None before removal began."""
+    with store.connection() as connection:
+        return removal_started(connection, _event_id(generation, "removing"),
+                               _event_id(generation, "planned"))
+
+
+def _restore_private_link(plan: dict, target: Path, admin: Path) -> None:
+    """Bind tree and administration to the plan before restoring a deleted `.git`."""
+    if (_directory_inode(target) != plan["directory_identity"]
+            or _directory_inode(admin) != plan["git_identity"]):
+        raise StoreConflict("private-worktree-changed")
+    restore_git_link(target, admin)
+
+
 def _remove_private(
     store: LifecycleRegistry, path: Path, plan: dict, receipt: dict,
 ) -> None:
@@ -184,24 +222,21 @@ def _remove_private(
     generation = plan["generation_id"]
     # Never census a replacement at the public path after private relocation.
     require_idle_processes(target)
+    started, boundary = _removal_start(store, generation), validation_boundary()
     with DirectoryHandle(target) as tree, DirectoryHandle(admin) as metadata:
-        marker = {
-            "format": 2, "installation_id": store.installation_id(),
-            "generation_id": generation, "path": str(path),
-            "directory": plan["directory_identity"],
-            "git_directory": str(admin), "git_identity": plan["git_identity"],
-        }
-        if (_directory_inode(target) != plan["directory_identity"]
-                or _git_directory(target) != admin
-                or _directory_inode(admin) != plan["git_identity"]):
+        if started is not None:
+            _restore_private_link(plan, target, admin)
+        _require_private_identity(store, path, plan, target, admin)
+        # An interrupted delete resumes only if nothing but deletions followed.
+        require_removable(target, started,
+                          lambda: _snapshot(target) == receipt["snapshot"], _git)
+        if not tree.matches_path() or not metadata.matches_path():
             raise StoreConflict("private-worktree-changed")
-        if (_read_marker(admin / MARKER) != marker
-                or _snapshot(target) != receipt["snapshot"]
-                or not tree.matches_path() or not metadata.matches_path()):
-            raise StoreConflict("private-worktree-changed")
-        _record(store, generation, "removing", {
-            "type": "retirement-removing", "generation_id": generation,
-        })
+        if started is None:
+            _record(store, generation, "removing", {
+                "type": "retirement-removing", "generation_id": generation,
+                BOUNDARY: boundary,
+            })
         # One force permits archived dirty/ignored state, never a Git lock.
         _git("--git-dir", plan["common"], "worktree", "remove", "--force", str(target))
 
