@@ -98,10 +98,11 @@ Order of preference:
    prompts, and may reset the keychain if the prompt fails. Before swapping,
    inventory and securely preserve items created in the new login keychain;
    the old copy will not contain them. Include WireGuard tunnel configurations
-   and their options (section 5). Quit dependent apps, keep a dated backup of
-   the current `login.keychain-db`, then swap the files and restart. Restore
-   the preserved items before reopening dependent apps, and confirm the login
-   keychain unlocks without a prompt.
+   and their options (section 5). Quit dependent apps and temporarily suppress
+   their login items and background launchers. Keep a dated backup of the
+   current `login.keychain-db`, then swap the files and restart. Restore the
+   preserved items before re-enabling automatic launches or reopening
+   dependent apps, and confirm the login keychain unlocks without a prompt.
 2. **Older copy with a known password:** a Time Machine backup, a local APFS
    snapshot, or the previous Mac's `~/Library/Keychains/login.keychain-db`.
    - Local snapshots: `tmutil listlocalsnapshots /`; mount read-only with
@@ -143,7 +144,9 @@ the passphrase), `gh auth status`, a signed test commit, and a Chrome launch.
 - **WireGuard (macOS app):** each tunnel config is a generic-password item with
   service `com.wireguard.macos`. To recover, unlock a copy that holds the item
   and find its account with `security dump-keychain <copy>` (attributes only,
-  no secrets). The config contains a private key, so it must never reach the
+  no secrets). Extract the configs from a separate copy before opening
+  WireGuard, and keep that copy until recovery is verified: WireGuard may
+  delete tunnel items whose preferences are missing at startup. The config contains a private key, so it must never reach the
   transcript: have a script or the user write the
   `security find-generic-password -s com.wireguard.macos -a <account> -w <copy>`
   output straight to a `600` `.conf` file in the agent workspace. Import it in
