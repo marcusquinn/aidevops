@@ -72,11 +72,25 @@ _relay_usage() {
 # budget gates, so a busy budget defers the relay rather than the pulse.
 # ---------------------------------------------------------------------------
 
+# The breaker's state file only clears when an enabled breaker sees budget
+# recover, so a bypass (AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1) or a zero
+# threshold can leave it stale. Honour it only while the breaker is enabled,
+# matching is_graphql_budget_sufficient; the REST-core gate still applies.
+_relay_breaker_tripped() {
+	[[ "${AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER:-0}" != "1" ]] || return 1
+	local threshold="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.05}"
+	if awk -v t="$threshold" 'BEGIN { exit (t + 0 == 0) ? 0 : 1 }' 2>/dev/null; then
+		return 1
+	fi
+	[[ -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 1
+	return 0
+}
+
 _relay_api_allowed() {
 	local context="$1"
 	[[ ! -f "${STOP_FLAG:-${HOME}/.aidevops/logs/pulse-session.stop}" ]] || return 1
 	[[ ! -f "${PULSE_RATE_LIMIT_FLAG:-${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}" ]] || return 1
-	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 1
+	! _relay_breaker_tripped || return 1
 	if declare -F pulse_rest_core_priority_allows_next >/dev/null 2>&1; then
 		pulse_rest_core_priority_allows_next deferrable "worker-bus-relay:${context}" || return 1
 	fi
