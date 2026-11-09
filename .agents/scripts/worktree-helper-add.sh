@@ -1572,9 +1572,14 @@ _cmd_add_register_created_generation() {
 # controller-owned snapshot can run for a runtime-owned (interactive) row.
 _cmd_add_prepare_worktree_deps() {
 	local path="$1"
-	local repo_root="" stage_t0=""
+	local repo_root="" common_dir="" stage_t0=""
 	stage_t0=$(_ds_substage_start)
 	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+	# Snapshot validation requires the canonical checkout, not the linked caller.
+	common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common_dir=""
+	if [[ "${common_dir##*/}" == ".git" ]]; then
+		repo_root="${common_dir%/.git}"
+	fi
 	_restore_worktree_node_modules "$path" "$repo_root" "${_ADD_PROVISION_OWNER_CONTRACT:-}"
 	_ADD_PROVISION_OWNER_CONTRACT=""
 	_bootstrap_worktree_js_deps "$path"
