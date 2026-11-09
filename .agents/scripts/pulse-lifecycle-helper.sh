@@ -297,6 +297,20 @@ _pulse_launchd_supervisor_loaded() {
 	return 0
 }
 
+# A loaded service alone cannot guarantee another cycle after draining. Require
+# its active timer as well, and never treat a broken user bus as a scheduler.
+_pulse_systemd_supervisor_loaded() {
+	local os_name="${AIDEVOPS_PULSE_OS_NAME:-}"
+	local load_state=""
+	[[ -n "$os_name" ]] || os_name=$(uname -s 2>/dev/null || printf 'unknown')
+	[[ "$os_name" == "Linux" ]] || return 1
+	command -v systemctl >/dev/null 2>&1 || return 1
+	load_state=$(systemctl --user show aidevops-supervisor-pulse.service --property=LoadState --value 2>/dev/null) || return 1
+	[[ "$load_state" == "loaded" ]] || return 1
+	systemctl --user is-active --quiet aidevops-supervisor-pulse.timer || return 1
+	return 0
+}
+
 _pulse_wait_for_launchd_runtime() {
 	local baseline_pids="$1"
 	local waited_seconds=0
@@ -317,6 +331,18 @@ _pulse_start_managed() {
 	local launchd_target=""
 	local baseline_pids=""
 	local active_pid=""
+	if _pulse_systemd_supervisor_loaded; then
+		baseline_pids=$(_pulse_pids)
+		# A oneshot stays activating for the entire cycle. Waiting for start
+		# completion would hold the activation lock for minutes.
+		systemctl --user start --no-block aidevops-supervisor-pulse.service || return 1
+		if active_pid=$(_pulse_wait_for_launchd_runtime "$baseline_pids"); then
+			_pl_ok "Pulse started by systemd from the activated bundle (PID ${active_pid})"
+			return 0
+		fi
+		_pl_err "systemd accepted the Pulse start but no new activated-bundle process appeared"
+		return 1
+	fi
 	launchd_target="gui/$(id -u)/${pulse_label}"
 	if _pulse_launchd_supervisor_present; then
 		_pl_info "Requesting Pulse restart from launchd supervisor ${pulse_label}"
@@ -731,7 +757,7 @@ _pulse_pid_is_async_housekeeping() {
 	[[ "$_pid" =~ ^[0-9]+$ && -f "$_pid_file" ]] || return 1
 	IFS= read -r _lock_pid <"$_pid_file" 2>/dev/null || true
 	[[ "$_lock_pid" =~ ^[0-9]+$ && "$_lock_pid" == "$_pid" ]] || return 1
-	_written=$(date -r "$_pid_file" +%s 2>/dev/null) || return 1
+	_written=$(stat -c %Y "$_pid_file" 2>/dev/null) || _written=$(stat -f %m "$_pid_file" 2>/dev/null) || return 1
 	_age=$(_pulse_process_age_seconds "$_pid") || return 1
 	_now=$(date +%s 2>/dev/null) || return 1
 	[[ "$_written" =~ ^[0-9]+$ && "$_now" =~ ^[0-9]+$ ]] || return 1
@@ -908,7 +934,7 @@ _stop_reconciliation_processes() {
 # alone. A main Pulse executes one immutable bundle (physical script directory
 # plus runtime lease), so a cycle started before activation can finish safely;
 # killing it on every setup run discarded up to ~26 minutes of cycle work and
-# the dispatch it was about to make. Defer only when launchd will start the
+# the dispatch it was about to make. Defer only when a loaded scheduler starts the
 # stable activation link after the cycle exits and every earlier-bundle main
 # PID is younger than the drain ceiling. The caller still retires standalone
 # merge routines, which run from the stable link rather than a leased bundle.
@@ -923,11 +949,13 @@ _pulse_reconcile_defers_to_cycle_boundary() {
 	local _draining=""
 	local _current=""
 	[[ "$_PULSE_RECONCILE_DRAIN" != "0" ]] || return 1
-	_pulse_launchd_supervisor_loaded || return 1
+	if ! _pulse_launchd_supervisor_loaded && ! _pulse_systemd_supervisor_loaded; then
+		return 1
+	fi
 	_main_pids=$(_pulse_pids)
 	if [[ -z "$_main_pids" ]]; then
 		# No cycle runs. A young housekeeping run finishes on its own bundle
-		# and launchd starts the activated bundle at its next interval; one
+		# and the scheduler starts the activated bundle at its next interval; one
 		# at or above the ceiling is replaced with everything else, as before.
 		_pid=$(_pulse_async_housekeeping_pid) || return 1
 		_age=$(_pulse_process_age_seconds "$_pid") || return 1
@@ -935,7 +963,7 @@ _pulse_reconcile_defers_to_cycle_boundary() {
 			_pl_info "Async housekeeping PID ${_pid} has run ${_age}s (drain ceiling ${_PULSE_RECONCILE_DRAIN_MAX_AGE}s) with no cycle running; replacing it now"
 			return 1
 		fi
-		_pl_info "Deferring Pulse start to the launchd interval: no cycle is running; async housekeeping PID ${_pid} (${_age}s) finishes on its own bundle"
+		_pl_info "Deferring Pulse start to the scheduler interval: no cycle is running; async housekeeping PID ${_pid} (${_age}s) finishes on its own bundle"
 		return 0
 	fi
 	while IFS= read -r _pid; do
@@ -955,7 +983,7 @@ _pulse_reconcile_defers_to_cycle_boundary() {
 		_draining="${_draining}${_draining:+ }${_pid} (${_age}s)"
 	done <<<"$_main_pids"
 	if [[ -n "$_draining" ]]; then
-		_pl_info "Deferring Pulse replacement to the cycle boundary: earlier-bundle cycle ${_draining} keeps running; launchd starts bundle $(_pulse_runtime_bundle_id) when it exits"
+		_pl_info "Deferring Pulse replacement to the cycle boundary: earlier-bundle cycle ${_draining} keeps running; scheduler starts bundle $(_pulse_runtime_bundle_id) when it exits"
 	elif [[ -n "$_current" ]]; then
 		_pl_info "Pulse already running from the activated bundle (PID ${_current})"
 	else
@@ -1100,7 +1128,7 @@ _reconcile_managed() {
 		fi
 		[[ "$reconcile_rc" -eq 0 ]] && _pl_info "Pulse remains stopped because its supervisor is disabled"
 	elif _pulse_reconcile_defers_to_cycle_boundary; then
-		# GH#34452: launchd starts the activated bundle when the cycle exits.
+		# The owning scheduler starts the activated bundle after the cycle exits.
 		_stop_reconciliation_processes standalone-merge || reconcile_rc=$?
 	else
 		_stop_reconciliation_processes || reconcile_rc=$?

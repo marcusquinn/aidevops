@@ -14,7 +14,8 @@ from .process import ProcessIdentity
 
 
 NON_HOLDER_DAEMONS = frozenset({
-    "sshd", "ssh-agent", "gpg-agent", "(sd-pam)", "systemd", "dbus-daemon",
+    # OpenSSH's split session daemon retains the same non-dumpable role as sshd.
+    "sshd", "sshd-session", "ssh-agent", "gpg-agent", "(sd-pam)", "systemd", "dbus-daemon",
 })
 _observations: ContextVar[Counter | None] = ContextVar("legacy_proc_observations", default=None)
 

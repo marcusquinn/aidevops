@@ -82,7 +82,8 @@ class LegacyProcContract(unittest.TestCase):
 
     def test_unknown_recent_and_invalid_start_tasks_fail_closed(self):
         cases = (("worker", "100"), ("ssh-agent", "200000"),
-                 ("ssh-agent", "invalid"), ("ssh-agent", "-1"))
+                 ("ssh-agent", "invalid"), ("ssh-agent", "-1"),
+                 ("sshd-session", "200000"), ("sshd-session-worker", "100"))
         for name, ticks in cases:
             for denied in ("cwd", "fd"):
                 with self.subTest(name=name, ticks=ticks, denied=denied):
