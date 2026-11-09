@@ -991,15 +991,20 @@ source "${SCRIPT_DIR}/pulse-wrapper-cycle-gates.sh"
 # routines.lockdir; runner locks plus last_run state prevent a second start
 # for the same slot. The REST budget gate still applies.
 # AIDEVOPS_PULSE_BUSY_ROUTINES=0 disables the pass.
+# t18911: each tick also starts the detached steering relay, so live workers
+# get maintainer-steering pointers while a long cycle holds the lock.
 #
 # Args: $1=context label for the log line
 # ---------------------------------------------------------------------------
 _pulse_run_routines_while_busy() {
 	local busy_context="${1:-busy}"
-	[[ "${AIDEVOPS_PULSE_BUSY_ROUTINES:-1}" == "1" ]] || return 0
 	# Diagnostic modes exercise the full path and never start routines here.
 	[[ "${PULSE_DRY_RUN:-0}${PULSE_CANARY_MODE:-0}" == "00" ]] || return 0
 	[[ ! -f "$STOP_FLAG" ]] || return 0
+	if declare -F _preflight_start_worker_bus_relay >/dev/null 2>&1; then
+		_preflight_start_worker_bus_relay || true
+	fi
+	[[ "${AIDEVOPS_PULSE_BUSY_ROUTINES:-1}" == "1" ]] || return 0
 	declare -F evaluate_routines_locked >/dev/null 2>&1 || return 0
 	check_session_gate || return 0
 	echo "[pulse-wrapper] Routines-only pass: instance lock busy (${busy_context}); evaluating due routines (GH#35349)" >>"$WRAPPER_LOGFILE"
@@ -1035,16 +1040,9 @@ _pulse_run_deterministic_pipeline() {
 			reap_orphan_workers || true
 	fi
 
-	# t18905: tell live workers, over the session bus, about maintainer
-	# comments, closure or holds on their issue since dispatch. Pointers only;
-	# no GitHub writes. Deferrable: the helper gates every API call and checks
-	# each worker at most every WORKER_BUS_RELAY_MIN_INTERVAL seconds.
-	if [[ ! -f "$STOP_FLAG" && "${AIDEVOPS_WORKER_BUS_RELAY:-1}" != "0" ]]; then
-		_pulse_run_optional_stage_with_timeout "worker_bus_relay" 120 \
-			env STOP_FLAG="$STOP_FLAG" LOGFILE="$LOGFILE" \
-			PULSE_RATE_LIMIT_FLAG="$PULSE_RATE_LIMIT_FLAG" \
-			bash "${SCRIPT_DIR}/worker-bus-relay-helper.sh" relay || true
-	fi
+	# t18905/t18911: the session-bus steering relay is no longer a budgeted
+	# stage here; it starts detached at cycle start and on busy-lock ticks
+	# (_preflight_start_worker_bus_relay), so cycle budget cannot starve it.
 
 	# GH#33602: bounded, hourly stale Actions queue cleanup, then the grouped
 	# Dependabot alert monitor (dedupes by package/ecosystem/patched version).

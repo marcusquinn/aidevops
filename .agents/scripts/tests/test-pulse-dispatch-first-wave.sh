@@ -157,7 +157,8 @@ scan_events() {
 
 _run_preflight_stages
 actual=$(tr '\n' ';' <"$EVENTS")
-async_events='async:worktrees;async:stashes;async:remote-branches;'
+# t18911: the steering relay starts with the async cleanups, outside the budget.
+async_events='async:worktrees;async:stashes;async:remote-branches;async:worker-bus-relay;'
 [[ "$actual" == "${async_events}host-capacity;$(scan_events 1 20)launch;cleanup;host-capacity;" ]] || {
 	printf 'FAIL first-wave ordering: %s\n' "$actual" >&2
 	exit 1

@@ -158,9 +158,12 @@ interactive sessions (owner decision 2026-11-09).
 
 ### Pulse steering relay
 
-`worker-bus-relay-helper.sh relay` runs once per pulse cycle as the deferrable
-`worker_bus_relay` stage, after orphan reaping. It sends one `info` message from
-`cli:pulse` per change on the worker's issue since its run started:
+Pulse starts `worker-bus-relay-helper.sh relay` detached at each cycle start
+and on each busy-lock tick (about every 2 minutes), outside the cycle budget
+(t18911; as a budgeted stage, the cycle budget deferred it every time). A
+single-runner lock collapses overlapping starts, and each `gh` or bus call has
+a timeout (`WORKER_BUS_RELAY_CALL_TIMEOUT`, default 30 s). It sends one `info`
+message from `cli:pulse` per change on the worker's issue since its run started:
 
 - new comments from OWNER, MEMBER or COLLABORATOR authors that are not bots and
   carry no machine markers (worker, pulse and routine comments are skipped;
@@ -182,7 +185,8 @@ next run. The sender rate limit (10 per minute) bounds bursts.
 - State: `~/.aidevops/.agent-workspace/state/worker-bus-relay/<session>.json`
   (override `WORKER_BUS_RELAY_STATE_DIR`). Pruned when the worker leaves presence.
 - Inspect: `worker-bus-relay-helper.sh status`. Log lines carry the
-  `[worker-bus-relay]` prefix in `~/.aidevops/logs/pulse.log`.
+  `[worker-bus-relay]` prefix in `~/.aidevops/logs/pulse.log`; launcher stderr
+  goes to `~/.aidevops/logs/worker-bus-relay.log`.
 - Disable: `AIDEVOPS_WORKER_BUS_RELAY=0`.
 
 ## Overlap visibility (t18895)

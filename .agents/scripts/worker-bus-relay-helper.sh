@@ -11,14 +11,17 @@
 #
 # Usage: worker-bus-relay-helper.sh relay | status | help
 #
-# Pulse runs `relay` each cycle as an optional, REST-budget-deferred stage.
-# GitHub cost: one issue-list call per repo with due workers per interval, one
-# baseline issue read per new worker, and one comments read only when an
-# issue's comment count rose.
+# Pulse starts `relay` detached at each cycle start and on each busy-lock
+# tick (t18911), outside the cycle budget; a single-runner lock collapses
+# overlapping starts. Every GitHub read still passes the REST-core deferrable
+# gate. GitHub cost: one issue-list call per repo with due workers per
+# interval, one baseline issue read per new worker, and one comments read
+# only when an issue's comment count rose.
 #
 # Env:
 #   AIDEVOPS_WORKER_BUS_RELAY=0       disable the relay
 #   WORKER_BUS_RELAY_MIN_INTERVAL     seconds between checks per worker (default 120)
+#   WORKER_BUS_RELAY_CALL_TIMEOUT     seconds per gh or bus call (default 30)
 #   WORKER_BUS_RELAY_STATE_DIR        state directory (default ~/.aidevops/.agent-workspace/state/worker-bus-relay)
 # Docs: reference/session-bus.md "Pulse steering relay".
 
@@ -31,6 +34,10 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 RELAY_STATE_DIR="${WORKER_BUS_RELAY_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/state/worker-bus-relay}"
 RELAY_MIN_INTERVAL="${WORKER_BUS_RELAY_MIN_INTERVAL:-120}"
 [[ "$RELAY_MIN_INTERVAL" =~ ^[0-9]{1,6}$ ]] || RELAY_MIN_INTERVAL=120
+# A detached run has no stage timeout; bound each call so a hung read cannot
+# hold the single-runner lock and silence the relay.
+RELAY_CALL_TIMEOUT="${WORKER_BUS_RELAY_CALL_TIMEOUT:-30}"
+[[ "$RELAY_CALL_TIMEOUT" =~ ^[1-9][0-9]{0,3}$ ]] || RELAY_CALL_TIMEOUT=30
 RELAY_SENDER="pulse"
 RELAY_PAGE=100
 # Labels whose arrival after a worker started is steering for that worker.
@@ -77,13 +84,13 @@ _relay_get() {
 	local context="$3"
 	: >"$output"
 	_relay_api_allowed "$context" || return 1
-	gh api "$endpoint" >"$output" 2>/dev/null || return 1
+	timeout_sec "$RELAY_CALL_TIMEOUT" gh api "$endpoint" >"$output" 2>/dev/null || return 1
 	jq -e 'type == "array" or type == "object"' "$output" >/dev/null 2>&1 || return 1
 	return 0
 }
 
 _relay_bus() {
-	"${SCRIPT_DIR}/session-bus-helper.sh" "$@"
+	timeout_sec "$RELAY_CALL_TIMEOUT" "${SCRIPT_DIR}/session-bus-helper.sh" "$@"
 	return $?
 }
 

@@ -131,12 +131,13 @@ _preflight_cleanup_systemd_unit_name() {
 # Submit one cleanup helper to a bounded transient user service. The child is
 # started without shell evaluation and receives only non-secret operational
 # settings needed by the cleanup helpers; credentials are resolved from HOME.
-# Args: $1=helper path, $2=log path, $3=stable cleanup name
+# Args: $1=helper path, $2=log path, $3=stable cleanup name, $4..=helper args
 #######################################
 _preflight_launch_systemd_cleanup() {
 	local helper="$1"
 	local log_file="$2"
 	local cleanup_name="$3"
+	shift 3
 	local runtime_max="${AIDEVOPS_CLEANUP_SYSTEMD_RUNTIME_MAX_SEC:-3600}"
 	[[ "$runtime_max" =~ ^[1-9][0-9]*$ ]] || runtime_max=3600
 
@@ -172,6 +173,8 @@ _preflight_launch_systemd_cleanup() {
 		ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS PULSE_IDLE_CPU_THRESHOLD
 		WORKTREE_UNATTRIBUTED_RETENTION_DAYS AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE
 		AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE
+		AIDEVOPS_WORKER_BUS_RELAY WORKER_BUS_RELAY_MIN_INTERVAL WORKER_BUS_RELAY_STATE_DIR
+		WORKER_BUS_RELAY_CALL_TIMEOUT AIDEVOPS_SESSION_BUS_DIR
 	)
 	local -a child_env=("HOME=${HOME}" "PATH=${PATH:-/usr/local/bin:/usr/bin:/bin}")
 	local env_name="" env_value=""
@@ -191,7 +194,7 @@ _preflight_launch_systemd_cleanup() {
 		--property=IOSchedulingClass=idle \
 		--property="StandardOutput=append:${log_file}" \
 		--property="StandardError=append:${log_file}" \
-		"$env_bin" -i "${child_env[@]}" "$helper" </dev/null >/dev/null 2>>"$log_file"
+		"$env_bin" -i "${child_env[@]}" "$helper" "$@" </dev/null >/dev/null 2>>"$log_file"
 	return $?
 }
 
@@ -202,15 +205,16 @@ _preflight_launch_systemd_cleanup() {
 # GH#32528: the fallback starts a new session (setsid, else perl POSIX::setsid).
 # launchd tears down the job's process group when pulse-wrapper.sh exits, so a
 # plain nohup child was killed mid-run and cleanup never reached most repos.
-# Args: $1=helper path, $2=log path, $3=stable cleanup name
+# Args: $1=helper path, $2=log path, $3=stable cleanup name, $4..=helper args
 #######################################
 _preflight_launch_async_cleanup() {
 	local helper="$1"
 	local log_file="$2"
 	local cleanup_name="$3"
+	shift 3
 
 	if _preflight_cleanup_systemd_user_service_available; then
-		if _preflight_launch_systemd_cleanup "$helper" "$log_file" "$cleanup_name"; then
+		if _preflight_launch_systemd_cleanup "$helper" "$log_file" "$cleanup_name" "$@"; then
 			echo "[pulse-wrapper] ${cleanup_name} cleanup started in an isolated transient user service" >>"${LOGFILE:-/dev/null}"
 			return 0
 		fi
@@ -218,13 +222,13 @@ _preflight_launch_async_cleanup() {
 	fi
 
 	if command -v setsid >/dev/null 2>&1; then
-		setsid nohup "$helper" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+		setsid nohup "$helper" "$@" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 	elif command -v perl >/dev/null 2>&1; then
 		# Stock macOS lacks setsid(1); perl's POSIX::setsid is always present.
-		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup "$helper" \
+		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup "$helper" "$@" \
 			</dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 	else
-		nohup "$helper" </dev/null >>"$log_file" 2>&1 &
+		nohup "$helper" "$@" </dev/null >>"$log_file" 2>&1 &
 	fi
 	local helper_pid=$!
 	disown "$helper_pid" 2>/dev/null || true
@@ -299,6 +303,27 @@ _preflight_start_async_cleanups() {
 		_preflight_launch_async_cleanup "$remote_branches_helper" \
 			"${logs_dir}/cleanup_remote_branches.log" "remote-branches" || true
 	fi
+	_preflight_start_worker_bus_relay || true
+	return 0
+}
+
+#######################################
+# t18911/GH#37327: start the session-bus steering relay (t18905) detached,
+# outside the cycle budget. As a budgeted pipeline stage it was deferred on
+# every cycle, so running workers never received maintainer-steering
+# pointers. Pulse calls this at cycle start and on every busy-lock tick
+# (_pulse_run_routines_while_busy). The helper owns its single-runner lock,
+# per-worker interval, per-call timeouts, stop/rate-limit/circuit checks and
+# the REST-core deferrable gate, so a run that finds another run, no live
+# worker or no budget exits at once. AIDEVOPS_WORKER_BUS_RELAY=0 disables it.
+#######################################
+_preflight_start_worker_bus_relay() {
+	[[ "${AIDEVOPS_WORKER_BUS_RELAY:-1}" != "0" ]] || return 0
+	[[ -z "${STOP_FLAG:-}" || ! -f "$STOP_FLAG" ]] || return 0
+	local relay_helper="${SCRIPT_DIR}/worker-bus-relay-helper.sh"
+	[[ -x "$relay_helper" ]] || return 0
+	_preflight_launch_async_cleanup "$relay_helper" \
+		"${HOME}/.aidevops/logs/worker-bus-relay.log" "worker-bus-relay" relay || true
 	return 0
 }
 
