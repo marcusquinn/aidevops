@@ -27,7 +27,7 @@ import {
   releaseWatchDir,
   writeJsonAtomic,
 } from "./session-bus-files.mjs";
-import { sendMessage } from "./session-bus-messages.mjs";
+import { sendReleaseNotice } from "./session-bus-messages.mjs";
 
 export const RELEASE_EVENTS = Object.freeze(["published", "superseded", "failed", "executor-dead"]);
 
@@ -36,9 +36,6 @@ const SOURCE_PR = /^[1-9]\d{0,9}$/;
 const TAG = /^v\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 const WORD = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const RECOVERY = /^aidevops release (?:status|reconcile|recover-reservation) [1-9]\d{0,9}$/;
-// A labelled sessionless `cli` sender (t18905 shape) with its own rate-limit key.
-const NOTICE_SENDER = Object.freeze({ session_id: "", handle: "release-lane", repo: "", branch: "", origin: "cli:release-lane" });
-
 /** Directory key for an owner/repo slug; GitHub names are case-insensitive. */
 export function releaseRepoKey(repo) {
   const match = REPO_SLUG.exec(String(repo || "").trim());
@@ -160,7 +157,7 @@ export function notifyRelease(root, options, now = Date.now()) {
   const failed = [];
   for (const [to, toHandle] of recipients) {
     try {
-      sent.push(sendMessage(root, { from: { ...NOTICE_SENDER }, to, toHandle, type: "info", text, now }).to);
+      sent.push(sendReleaseNotice(root, { to, toHandle, text, now }).to);
     } catch (error) {
       failed.push({ to, error: String(error?.message ?? error) });
     }
