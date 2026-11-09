@@ -22,6 +22,30 @@ source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh"
 
 _FULL_LOOP_RELEASE_CALLER="full-loop-release-helper.sh"
 
+# GH#37365: control, preparation and reconcile-tag trees are named by, removed
+# for and reaped against this executor's PID, so declare it as their lifecycle
+# owner in place of an inherited runtime identity. Under an inherited
+# interactive owner every release tree stayed waiting-for-runs until that
+# long-lived runtime exited, refusing the EXIT trap, the stale reaper and
+# registry cleanup alike. The executor's exit now ends the owning run.
+# Excluded or unavailable lifecycle hosts clear the declaration (GH#36494).
+_full_loop_release_declare_lifecycle_owner() {
+	local executor_pid="$$"
+	local started_epoch=""
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	if [[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 || "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 ]]; then
+		return 0
+	fi
+	command -v python3 >/dev/null 2>&1 || return 0
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" 2>/dev/null || return 0
+	[[ -n "$(worker_lifecycle_state_dir 2>/dev/null)" ]] || return 0
+	started_epoch=$(date +%s) || return 0
+	export AIDEVOPS_LIFECYCLE_RUNTIME_PID="$executor_pid"
+	export AIDEVOPS_LIFECYCLE_SESSION_ID="release:${started_epoch}:${executor_pid}"
+	return 0
+}
+
 # Args: $1=worktree path, $2=short audit reason
 # Returns: 0 when the path is absent afterwards, 1 when preserved
 _full_loop_release_remove_worktree() {
