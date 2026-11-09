@@ -139,21 +139,19 @@ def _endpoint_class(target: bytes) -> str:
 
 def _endpoint_family(target: bytes) -> str:
     """Discard identifiers and queries, returning only a static endpoint family."""
-    parts = target.split(b"?", 1)[0].split(b"#", 1)[0].strip(b"/").split(b"/")
-    if parts == [b"user"]:
+    path = target.split(b"?", 1)[0].split(b"#", 1)[0].strip(b"/")
+    if path == b"user":
         return "user"
-    if parts[0] != b"repos":
-        return _endpoint_class(target)
-    if len(parts) == 6 and parts[3] == b"collaborators" and parts[5] == b"permission":
+    if re.fullmatch(rb"repos/[^/]+/[^/]+/collaborators/[^/]+/permission", path):
         return "repos/:o/:r/collaborators/:u/permission"
-    if len(parts) >= 4 and parts[3] in REPO_CLASSES:
-        family = "repos/:o/:r/" + parts[3].decode("ascii")
-        if len(parts) >= 5:
-            family += "/:id"
-        if len(parts) >= 6 and parts[5] in (b"reviews", b"comments", b"commits", b"files", b"checks", b"runs"):
-            family += "/" + parts[5].decode("ascii")
-        return family
-    return "repos-other"
+    # Only static alternatives are captured. Identifier groups contribute a
+    # presence bit, never their text; unknown/deeper suffixes remain discarded.
+    match = re.match(rb"repos/[^/]+/[^/]+/(" + b"|".join(REPO_CLASSES) +
+                     rb")(?:$|(/[^/]+)(?:/(reviews|comments|commits|files|checks|runs)(?:/|$))?)", path)
+    if match:
+        return ("repos/:o/:r/" + match[1].decode("ascii") +
+                "/:id" * bool(match[2]) + "/" + (match[3] or b"").decode("ascii")).rstrip("/")
+    return _endpoint_class(target)
 
 
 def _request_metadata(frame: List[bytes]) -> Tuple[str, str, str]:
