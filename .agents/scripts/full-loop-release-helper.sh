@@ -627,6 +627,7 @@ _full_loop_release_existing_with_lane() {
 			! jq -e --argjson source_pr "$source_pr" '.active != true or .source_pr == $source_pr' \
 				<<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null; then
 			printf 'A different source owns the active release lane\n' >&2
+			release_lane_owner_session_hint "$_AIDEVOPS_RELEASE_LANE_JSON" >&2
 			return 75
 		fi
 		;;

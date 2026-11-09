@@ -23,6 +23,7 @@ Tool `aidevops_sessions` (interactive TUI, `serve` and ACP processes only):
 | `reply` | `re`, `text` | Answer an `ask` this session received (`re` = its message ID). |
 | `inbox` | — | Claims pending messages now, then lists unanswered asks and recent traffic. |
 | `notify-when-idle` | `to` | One idle notice when a busy session next goes idle. |
+| `watch-release` | `to` (`owner/repo`), optional `text: "off"` | Release-lane notices for 7 days; see [Release notices](#release-notices-t18896). |
 | `chat-wake` | `text: "on"` or `"off"` | Persist owner-chat wake opt-in for this caller's root session only; `to` is rejected. |
 
 `to` accepts a session ID, handle, `#<issue>`, `PR#<n>`, repo name or worktree path. Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
@@ -53,6 +54,7 @@ aidevops sessions send <target> --sender pulse --text-file <path>  # named sessi
 aidevops sessions inbox [<session-id>]        # read-only view
 aidevops sessions outbox cli [--ack <msg-id>] # replies to asks sent from a shell
 aidevops sessions prune                       # dead presence, messages older than 7 days
+aidevops sessions watch-release owner/repo [--off]  # from an OpenCode session's shell; release-lane notices
 ```
 
 Inside an OpenCode shell, `AIDEVOPS_OPENCODE_SESSION_ID` makes the shell the sender, so replies return to that session. Outside one, the sender is `shell:<user>` and replies go to `outbox/cli/`. `--sender <label>` (1–32 lowercase letters, digits or dashes) names a sessionless sender: origin `cli:<label>`, its own 10-per-minute rate key, and the same trust as any same-user shell. The label is attribution, not authority.
@@ -210,6 +212,40 @@ ownership.
   restarts. A worker gets the notice at its next tool result, like any message;
   it is never woken. Disable with `AIDEVOPS_SESSION_OVERLAP_NOTICES=false`.
 
+## Release notices (t18896)
+
+Release lanes serialise publication, but a session refused by another source
+could not see who held the lane. These additions are advisory only. The
+executor `host_id`/`pid`/`started_at` observation stays the only liveness
+authority, and nothing here authorises a release, reconcile, recovery or
+publication.
+
+- **Owner session:** each executor capture (acquire, same-source reclaim,
+  dead-preparing recovery) also writes `owner_session: {session_id,
+  captured_at}` to the lane JSON, from `AIDEVOPS_OPENCODE_SESSION_ID` (else
+  `OPENCODE_SESSION_ID`). An ID that fails the bus safe-ID rule is written as
+  `null`. Readers ignore the field for every decision; lanes without it are
+  unknown.
+- **Held-lane hint:** when `release_lane_acquire` or `aidevops release
+  reconcile` is refused because another source holds the lane, the output adds
+  `RELEASE_OWNER_SESSION handle=… status=… last_activity=…` and a ready-to-run
+  `aidevops sessions ask <handle> "…"` line. A session that is not live prints
+  `state=not-live`; rely on the executor liveness line and recovery command.
+- **Notices:** `watch-release owner/repo` subscribes the caller's root session
+  for 7 days (`--off`, or tool `text: "off"`, stops). After a finalize write
+  that changes the lane (`published`, `superseded`, otherwise `failed`), and
+  when liveness first observes a dead executor on an active lane, one `info`
+  message goes to each watcher and to the lane owner session. It carries the
+  repo, source PR, tag, receipt or executor state, and the recovery command.
+  The sender is the sessionless `release-lane` (origin `cli:release-lane`), so
+  it never wakes a session. A `notices/` marker with `notified_dead_at`
+  (exclusive create) keeps the dead-executor notice to one per executor.
+- **Failure:** the release helpers call `aidevops sessions show` and
+  `notify-release` in the foreground with a 5-second total budget and ignore
+  the result. Exit codes and existing output lines are unchanged; a missing
+  bus, older CLI or timeout prints nothing. Disable both with
+  `AIDEVOPS_RELEASE_NOTICES=false`.
+
 ## Storage
 
 Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESSION_BUS_DIR`).
@@ -223,6 +259,7 @@ Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESS
 | `outbox/<app>/` | Replies for senders without a session (`cli`, chat gateways). |
 | `chat-wake/<session>.json` | Atomic persistent owner-chat wake setting, default off; pruned after retention when presence is absent. |
 | `overlaps/<hash>.json` | One marker per sent overlap notice (sender, recipient, shared key); pruned after 7 days. |
+| `release-watch/<owner@repo>/<session>.json` | Release-lane watch per root session, keyed by repo (unlike `subs/`); removed on expiry (7 days) or when presence is gone. `notices/` holds sent-once markers, pruned after 7 days. |
 
 Liveness is checked by pid plus process start time, so a reused pid does not keep a dead session listed. If `ps` cannot read the start time, a record with a live pid is kept rather than deleted.
 

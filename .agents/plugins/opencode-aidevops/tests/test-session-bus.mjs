@@ -21,6 +21,8 @@ import { main as cliMain } from "../session-bus-cli.mjs";
 import { getSessionBusState } from "../compaction.mjs";
 import { messageRows, rootSessionID } from "../tui-messages.mjs";
 import { chatTrust, setChatWake, chatWakeEnabled } from "../session-bus-chat-trust.mjs";
+import * as releaseWatch from "../session-bus-release.mjs";
+import { listDir } from "../session-bus-files.mjs";
 
 let root;
 beforeEach(() => {
@@ -693,4 +695,60 @@ test("CLI ask --wait prints the reply, acknowledges it, and exits 2 on timeout",
   assert.match(output.join(""), /No reply within 1s; ask msg_\w+/);
   assert.throws(() => cliMain(["ask", "repo-cli", "x", "--wait", "500"], { env: {}, out, root }), /--wait must be/);
   assert.throws(() => cliMain(["send", "repo-cli", "x", "--wait", "3"], { env: {}, out, root }), /only valid with ask/);
+});
+
+test("release watches fan out one non-waking info notice per event and dead-executor markers send once (t18896)", async () => {
+  livePresence("ses_watchR1", { handle: "repo-watch" });
+  livePresence("ses_ownerR1", { handle: "repo-owner" });
+  const output = [];
+  const out = { write: (text) => output.push(text) };
+  const env = { AIDEVOPS_OPENCODE_SESSION_ID: "ses_watchR1" };
+  cliMain(["watch-release", "Owner/Repo"], { env, out, root });
+  assert.match(output.join(""), /Watching releases for Owner\/Repo until/);
+  assert.throws(() => cliMain(["watch-release", "../x"], { env, out, root }), /owner\/repo/);
+  assert.throws(() => cliMain(["watch-release", "owner/repo"], { env: { AIDEVOPS_OPENCODE_SESSION_ID: "ses_nopres" }, out, root }), /no live presence/);
+
+  const notify = (...extra) => {
+    output.length = 0;
+    cliMain(["notify-release", "--repo", "owner/repo", "--source-pr", "42", "--json", ...extra], { env: {}, out, root });
+    return JSON.parse(output.join(""));
+  };
+  const published = notify("--event", "published", "--tag", "v1.2.3", "--receipt", "published", "--owner-session", "ses_ownerR1");
+  assert.deepEqual(published.sent.sort(), ["ses_ownerR1", "ses_watchR1"]);
+  for (const id of ["ses_watchR1", "ses_ownerR1"]) {
+    const [entry, ...rest] = store.pendingMessages(root, id);
+    assert.equal(rest.length, 0, "one notice per recipient");
+    assert.equal(entry.message.type, "info", "info never wakes an idle session");
+    assert.equal(entry.message.from.session_id, "");
+    assert.match(entry.message.from.origin, /^cli/);
+    assert.match(entry.message.text, /owner\/repo PR #42 published v1\.2\.3[\s\S]*Advisory only/);
+    store.claimMessage(root, id, entry);
+  }
+
+  const dead = ["--event", "executor-dead", "--executor-state", "process-absent", "--recovery", "aidevops release reconcile 42", "--marker", "42:host:123:t0"];
+  assert.deepEqual(notify(...dead).sent, ["ses_watchR1"]);
+  assert.equal(notify(...dead).skipped, "already-notified", "second dead observation sends nothing");
+  const [deadNotice, ...more] = store.pendingMessages(root, "ses_watchR1");
+  assert.equal(more.length, 0);
+  assert.match(deadNotice.message.text, /dead release executor \(process-absent[\s\S]*Recovery command: aidevops release reconcile 42/);
+  assert.throws(() => notify("--event", "executor-dead", "--recovery", "rm -rf /"), /invalid --recovery/);
+  assert.throws(() => notify("--event", "bogus"), /--event must be one of/);
+
+  output.length = 0;
+  cliMain(["watch-release", "owner/repo", "--off"], { env, out, root });
+  assert.match(output.join(""), /Stopped watching/);
+  assert.equal(notify("--event", "failed", "--receipt", "failed").skipped, "no-recipients");
+
+  const fakeTool = (definition) => definition;
+  fakeTool.schema = fakeSchema;
+  const bus = busFor(fakeClient({ ses_toolR1: { id: "ses_toolR1", title: "", directory: root } }));
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id: "ses_toolR1", title: "", directory: root } } } });
+  const sessionsTool = createSessionBusTool(fakeTool, bus);
+  assert.match(await sessionsTool.execute({ action: "watch-release", to: "owner/repo" }, { sessionID: "ses_toolR1" }), /Notices never wake/);
+  assert.match(await sessionsTool.execute({ action: "watch-release", to: "owner/repo", text: "off" }, { sessionID: "ses_toolR1" }), /Stopped watching/);
+
+  // A watch ends with its session's presence, and pruning removes it.
+  releaseWatch.addReleaseWatch(root, "owner/repo", { session_id: "ses_goneR1", handle: "gone" });
+  store.pruneBus(root);
+  assert.deepEqual(listDir(join(root, "release-watch", "owner@repo")).filter((name) => name.endsWith(".json")), []);
 });
