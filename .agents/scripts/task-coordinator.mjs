@@ -376,10 +376,7 @@ function resolveIssueOwner({ forge = "github", repositoryId, issueId }, path = i
   if (matches.length !== 1) throw new Error("issue mapping not found");
   return matches[0];
 }
-// Explicit maintainer rebind (GH#37294): a TODO.md row was renamed after its
-// issue was bound. Point a new repository-local task ID at the coordinator task
-// that already owns the issue. The issue identity itself never moves.
-function aliasTask(input = {}, path = initialise()) {
+function aliasTaskInput(input) {
   const localTaskId = input.localTaskId;
   const fromTaskId = input.fromTaskId;
   if (!LEGACY_TASK_ID.test(localTaskId || "")) throw new TypeError("local_task_id is not a canonical legacy identity");
@@ -391,6 +388,13 @@ function aliasTask(input = {}, path = initialise()) {
   const issueId = validId(input.issueId, "issue_id");
   const displayNumber = Number(input.displayNumber);
   if (!Number.isSafeInteger(displayNumber) || displayNumber < 1) throw new TypeError("display_number must be a positive integer");
+  return { localTaskId, fromTaskId, forge, repositoryId, issueId, displayNumber };
+}
+// Explicit maintainer rebind (GH#37294): a TODO.md row was renamed after its
+// issue was bound. Point a new repository-local task ID at the coordinator task
+// that already owns the issue. The issue identity itself never moves.
+function aliasTask(input = {}, path = initialise()) {
+  const { localTaskId, fromTaskId, forge, repositoryId, issueId, displayNumber } = aliasTaskInput(input);
   const source = resolveIssue({ taskId: fromTaskId, forge, repositoryId }, path);
   if (source.role !== "home" || source.issueId !== issueId || Number(source.displayNumber) !== displayNumber) {
     throw new Error("rebind source mapping does not match the issue");
