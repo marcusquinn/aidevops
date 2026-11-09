@@ -578,9 +578,18 @@ _normalize_unassign_stale() {
 		fi
 
 		# Find issues assigned to runner_user with active-dispatch labels
-		local stale_json
-		stale_json=$(gh_issue_list --repo "$slug" --assignee "$runner_user" --state open \
-			--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
+		local stale_json="" _listing_rc=0
+		stale_json=$(_normalize_repo_listing "$slug") || _listing_rc=$?
+		if [[ "$_listing_rc" -eq 2 ]]; then
+			stale_json=$(gh_issue_list --repo "$slug" --assignee "$runner_user" --state open \
+				--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
+		elif [[ "$_listing_rc" -eq 0 ]]; then
+			# Shared listing is unfiltered: keep only issues assigned to this runner.
+			stale_json=$(printf '%s' "$stale_json" | jq -c --arg u "$runner_user" --argjson n "$PULSE_QUEUED_SCAN_LIMIT" \
+				'[.[] | select(.assignees // [] | map(.login) | index($u))] | .[0:$n]' 2>/dev/null) || stale_json=""
+		else
+			stale_json=""
+		fi
 		[[ -n "$stale_json" && "$stale_json" != "null" ]] || continue
 
 		# Filter: has status:queued or status:in-progress, updatedAt older than _stale_threshold
