@@ -402,6 +402,7 @@ cmd_resume() {
 _full_loop_record_phase() {
 	local phase="$1"
 	local pr_number="$2"
+	local merge_repo="${3:-}"
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 	[[ -f "$STATE_FILE" ]] || return 0
 	_full_loop_acquire_transition_lock || return 1
@@ -409,6 +410,15 @@ _full_loop_record_phase() {
 		_full_loop_release_transition_lock
 		return 1
 	}
+	if [[ -n "$merge_repo" && -n "${PR_NUMBER:-}" && "$PR_NUMBER" != "$pr_number" ]]; then
+		local branch="" head_ref=""
+		branch=$(git symbolic-ref --quiet --short HEAD) || branch=""
+		head_ref=$(gh pr view "$pr_number" --repo "$merge_repo" --json headRefName --jq '.headRefName' 2>/dev/null) || head_ref=""
+		if [[ -z "$branch" || -z "$head_ref" || "$branch" != "$head_ref" ]]; then
+			_full_loop_release_transition_lock
+			return 0
+		fi
+	fi
 	PR_NUMBER="$pr_number"
 	if ! save_state "$phase" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"; then
 		_full_loop_release_transition_lock
@@ -420,7 +430,8 @@ _full_loop_record_phase() {
 
 _full_loop_record_merged_pr() {
 	local pr_number="$1"
-	_full_loop_record_phase "pr-review" "$pr_number"
+	local repo="$2"
+	_full_loop_record_phase "pr-review" "$pr_number" "$repo"
 	return $?
 }
 
