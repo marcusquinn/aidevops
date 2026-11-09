@@ -93,6 +93,10 @@ pulse_todo_publication_handoff() {
 	case "$permission" in ADMIN | MAINTAIN | WRITE) ;; *) return 1 ;; esac
 	linkage=$(_pulse_todo_handoff_linkage "$workspace") || return 1
 	issue_num=$(printf '%s\n' "$linkage" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sed -n '1p') || return 1
+	# The pipeline exits through sed, which succeeds on empty input. Without an
+	# identity the title would read "GH#:" and the body could only carry a bare
+	# "For #", so fail the handoff instead of publishing a malformed PR.
+	[[ "$issue_num" =~ ^[0-9]+$ ]] || return 1
 	remote_branch=$(git -C "$workspace" ls-remote --heads origin "refs/heads/${branch}") || return 1
 	if [[ -n "$remote_branch" ]]; then
 		git -C "$workspace" fetch -q origin "$branch" || return 1
@@ -112,6 +116,11 @@ Pulse-TODO-Handoff-ID: ${handoff_id}" origin "$branch" "$changed_paths" || publi
 		printf '<!-- aidevops:pulse-todo-handoff id=%s -->\n' "$handoff_id"
 		# shellcheck disable=SC2016 # Backticks in the Markdown body are literal.
 		printf '## Pulse TODO publication\n\nValidated allowlisted planning changes from default-base `%s` are pending review. This PR is not a completed TODO update. Required checks and review gates still apply; Pulse merges it once its exact head is verified as a TODO.md handoff (plus only newly added todo/tasks brief captures) from a maintainer-equivalent author.\n\n' "$base_sha"
+		# A standalone non-closing declaration in the primary section: the
+		# origin:worker identity guard reads the body, not the title, and skips
+		# everything under the "Related issues" heading as secondary. A planning
+		# handoff closes no issue, so "For" is correct and "Resolves" is not.
+		printf 'For #%s\n\n' "$issue_num"
 		printf '## Related issues\n\n%s\n' "$linkage"
 	} >"$body_file"
 	# The wrapper supplies the signature, origin and policy checks at publication.
