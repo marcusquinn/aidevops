@@ -694,6 +694,7 @@ cmd_status() {
 	local line=""
 	local version_pattern='^const PLUGIN_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)";$'
 	if [[ -f "$plugin_file" && -r "$plugin_file" ]]; then
+		plugin_version="unknown (no PLUGIN_VERSION)"
 		while IFS= read -r line; do
 			if [[ "$line" =~ $version_pattern ]]; then
 				plugin_version="${BASH_REMATCH[1]}"

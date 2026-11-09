@@ -53,7 +53,9 @@ installed".
 The Settings → aidevops card shows the loaded plugin version. After
 `aidevops update` deploys a newer version, refresh the card to see its update
 notice. Open **Settings → Plugins → Manage plugins → aidevops**, press
-**Update**, and review the requested access. Buzz checks the folder for changes
+**Update**, and review the requested access. A copy installed before this
+notice existed cannot show it: update it manually once this way, and later
+versions will announce themselves. Buzz checks the folder for changes
 only while that plugin's detail panel is open and visible; it does not update
 the loaded plugin automatically. Bump `PLUGIN_VERSION` in `plugin.js` when
 changing plugin files, not for unchanged deployments.

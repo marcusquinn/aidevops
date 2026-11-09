@@ -659,7 +659,7 @@ function statusBody(h, state) {
       ? h(
           "p",
           { role: "status" },
-          `A newer aidevops plugin (${newer}) is ready. Open Settings → Manage plugins → aidevops and press Update.`,
+          `A newer aidevops plugin (${newer}) is ready. Open Settings → Plugins → Manage plugins → aidevops and press Update.`,
         )
       : null,
     h(
