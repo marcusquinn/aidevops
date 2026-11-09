@@ -497,6 +497,9 @@ build_secret_env() {
 		while IFS= read -r line; do
 			if [[ "$line" =~ ^export[[:space:]]+([A-Z_][A-Z0-9_]*)=(.*) ]]; then
 				local name="${BASH_REMATCH[1]}"
+				if [[ ${#specific_names[@]} -gt 0 ]] && ! secret_env_name_emitted "$name" "${specific_names[@]}"; then
+					continue
+				fi
 				local val=""
 				val=$(decode_credential_value "${BASH_REMATCH[2]}")
 				# Only add if not already set by gopass
