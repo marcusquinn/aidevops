@@ -338,7 +338,9 @@ test("runtime publishes root presence and delivers through tool results, turns a
   assert.equal(wake.body.agent, "Build+");
   assert.deepEqual(wake.body.model, { providerID: "anthropic", modelID: "m1" });
   assert.equal(wake.body.parts[0].synthetic, true);
-  assert.match(wake.body.parts[0].text, /no wake[\s\S]*which branch\?/);
+  // Same-millisecond messages tie-break on random IDs, not insertion order.
+  assert.match(wake.body.parts[0].text, /> no wake/);
+  assert.match(wake.body.parts[0].text, /> which branch\?/);
   assert.equal(store.pendingMessages(root, "ses_rootA1").length, 0);
 
   // The woken turn carries hops forward, so a reply from it is hop 2.
