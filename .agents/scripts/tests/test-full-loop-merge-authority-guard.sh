@@ -194,6 +194,7 @@ _flm_gh_read() {
 
 # GH#27137 thread count is covered by the lib; fixtures set the stubbed count.
 FIXTURE_BOT_THREADS=0
+_FULL_LOOP_BLOCKER_REVIEW_BOT="review-bot"
 review_thread_gate_unresolved_bot_count() {
 	printf '%s\n' "$FIXTURE_BOT_THREADS"
 	return 0
