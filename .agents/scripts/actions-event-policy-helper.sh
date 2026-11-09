@@ -119,6 +119,32 @@ _policy_fetch_file() {
 	return $?
 }
 
+# List the workflow directory. Sets _POLICY_LISTING. A confirmed 404 (directory
+# absent) is an empty list; any other failure (403, rate limit, 5xx, network) is
+# an error so status never reports success on an unchecked repository.
+_policy_list_workflows() {
+	local slug="$1"
+	local branch="$2"
+	local err_file="" err_text=""
+	err_file=$(mktemp) || {
+		_policy_error "cannot create temp file"
+		return 1
+	}
+	if _POLICY_LISTING=$(_policy_api_read "repos/${slug}/contents/${WORKFLOW_DIR}?ref=${branch}" 2>"$err_file"); then
+		rm -f "$err_file"
+		return 0
+	fi
+	err_text=$(cat "$err_file")
+	rm -f "$err_file"
+	# gh api prints the status as the trailing "(HTTP NNN)" of its error line.
+	if grep -Eq '^gh: .*\(HTTP 404\)[[:space:]]*$' <<<"$err_text"; then
+		_POLICY_LISTING="[]"
+		return 0
+	fi
+	_policy_error "cannot list ${WORKFLOW_DIR} in ${slug}"
+	return 1
+}
+
 # Scan the default branch. Sets _POLICY_SCAN_JSON.
 _policy_scan() {
 	local slug="$1"
@@ -134,7 +160,8 @@ _policy_scan() {
 		_policy_error "cannot determine default branch for ${slug}"
 		return 1
 	fi
-	listing=$(_policy_api_read "repos/${slug}/contents/${WORKFLOW_DIR}?ref=${default_branch}" 2>/dev/null) || listing="[]"
+	_policy_list_workflows "$slug" "$default_branch" || return 1
+	listing="$_POLICY_LISTING"
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || continue
 		case "$path" in
@@ -186,13 +213,20 @@ _policy_build_body() {
 _policy_uncovered_paths() {
 	local policies_json="$1"
 	jq -r --arg ev "$POLICY_EVENT" --arg rule "$POLICY_RULE_TYPE" --argjson pol "$policies_json" '
-		def covers($p):
+		def globre: gsub("(?<c>[.+^${}()|\\[\\]\\\\])"; "\\\(.c)")
+			| gsub("\\*\\*"; "\u0001") | gsub("\\*"; "[^/]*") | gsub("\u0001"; ".*")
+			| "^" + . + "$";
+		def matches($p): . == "~ALL" or . == $p or ($p | test(globre));
+		def covers($p; $evs):
 			any($pol.policies[]?;
 				.enforcement == "active"
-				and any(.rules[]?; .type == $rule and ((.parameters.allowed_events // []) | index($ev) != null))
-				and ((.conditions.workflow_path.include // []) | any(. == $p))
-				and (((.conditions.workflow_path.exclude // []) | any(. == $p)) | not));
-		.workflows[] | .path as $p | select(covers($p) | not) | $p' <<<"$_POLICY_SCAN_JSON"
+				and any(.rules[]?; .type == $rule
+					and ((.parameters.allowed_events // []) as $a
+						| ([$ev] + $evs) | all(.[]; . as $e | $a | index($e) != null)))
+				and ((.conditions.workflow_path.include // []) as $inc
+					| ($inc == [] or any($inc[]; matches($p))))
+				and (((.conditions.workflow_path.exclude // []) | any(matches($p))) | not));
+		.workflows[] | .path as $p | .events as $evs | select(covers($p; $evs) | not) | $p' <<<"$_POLICY_SCAN_JSON"
 	return $?
 }
 

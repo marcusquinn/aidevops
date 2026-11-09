@@ -49,6 +49,11 @@ if [[ -f "$fx/$key" ]]; then
 	cat "$fx/$key"
 	exit 0
 fi
+if [[ -f "$fx/FORBIDDEN" && "$endpoint" == *"/contents/"* ]]; then
+	printf 'gh: Forbidden (HTTP 403)\n' >&2
+	exit 1
+fi
+printf 'gh: Not Found (HTTP 404)\n' >&2
 exit 1
 SHIM
 chmod +x "$TMP/bin/gh"
@@ -85,6 +90,7 @@ printf '{"total_count":0,"policies":[]}' >"$fx/repos__o__pub__actions__policies"
 
 export FX_DIR="$fx"
 export PATH="$TMP/bin:$PATH"
+export AUDIT_LOG_FILE="$TMP/audit.jsonl"
 
 "$HELPER" status --repo o/pub >"$TMP/out" 2>&1
 assert "status uncovered exits 1" "$([[ $? -eq 1 ]] && echo 0 || echo 1)"
@@ -111,6 +117,17 @@ jq -c --slurpfile b "$fx/last-body.json" '{total_count:1, policies:[($b[0] + {id
 assert "status covered after apply exits 0" "$?"
 "$HELPER" apply --repo o/pub >/dev/null 2>&1
 assert "apply updates in place via PUT" "$(grep -q '^PUT repos/o/pub/actions/policies/7$' "$fx/writes.log" && echo 0 || echo 1)"
+
+# Narrow allowed_events (only the gate event) must not cover a multi-event workflow.
+printf '{"total_count":1,"policies":[{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/*.yml"]}},"rules":[{"type":"workflow_file_path","parameters":{"allowed_events":["pull_request_target"]}}]}]}' >"$fx/repos__o__pub__actions__policies"
+"$HELPER" status --repo o/pub >/dev/null 2>&1
+assert "narrow allowed_events exits 1" "$([[ $? -eq 1 ]] && echo 0 || echo 1)"
+
+# Non-404 listing failure is an error, not an empty list.
+: >"$fx/FORBIDDEN"
+rm -f "$fx/${wf//\//__}"
+"$HELPER" status --repo o/pub >/dev/null 2>&1
+assert "listing 403 exits 2" "$([[ $? -eq 2 ]] && echo 0 || echo 1)"
 
 "$HELPER" status --repo 'bad slug' >/dev/null 2>&1
 assert "invalid slug exits 2" "$([[ $? -eq 2 ]] && echo 0 || echo 1)"

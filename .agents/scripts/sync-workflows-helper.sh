@@ -1727,6 +1727,8 @@ _warn_event_policy_uncovered() {
 	# the policy once this PR merges.
 	if [[ "$_rc" -eq 1 ]] || { [[ "$_rc" -eq 0 ]] && grep -q 'no pull_request_target workflows' <<<"$_out"; }; then
 		_warn "$_slug: pull_request_target gates need an Actions event policy (blocked by default from 2026-12-02). After merge run: ${_helper} apply --repo ${_slug}"
+	elif [[ "$_rc" -eq 2 ]]; then
+		_warn "$_slug: could not verify the pull_request_target Actions event policy. Run: ${_helper} status --repo ${_slug}"
 	fi
 	return 0
 }
