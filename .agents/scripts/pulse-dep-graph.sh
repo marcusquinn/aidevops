@@ -457,7 +457,8 @@ _PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS='\*\*BLOCKED\*\*.*cannot proceed|Worker W
 #
 # Output (stdout):
 #   A short machine-readable reason token when the refresh should defer
-#   ("body-defer" or "comment-marker"). Empty string when safe to unblock.
+#   ("brief-hold", "body-defer", "comment-marker" or "comments-unavailable").
+#   Empty string when safe to unblock.
 #
 # Exit codes:
 #   0 - defer (do NOT auto-unblock); reason printed to stdout
@@ -483,13 +484,16 @@ _should_defer_auto_unblock() {
 	# issue-comments endpoint because only comment bodies are needed; native
 	# `gh issue view --json comments` is GraphQL-only and cannot expose
 	# response-owned cost. Unblock candidates are rare (typical cycle: 0-5
-	# across all repos), so the cost is well-bounded. Silently tolerate fetch
-	# failures (fail-open on API error → behave as before, preserving the t1935
-	# auto-unblock path when network is flaky).
+	# across all repos), so the cost is well-bounded. Fail closed on fetch or
+	# shape failures (GH#37200): an unreadable history cannot prove that no
+	# terminal-blocker circuit holds the issue, so defer and retry next cycle.
 	local recent_bodies="" comments_json=""
 	comments_json=$(set -o pipefail; gh api \
 		"repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" --paginate --slurp 2>/dev/null |
-		jq -c 'if (type == "array" and ((.[0]? | type) == "array")) then add else . end') || comments_json='[]'
+		jq -ce 'if type != "array" then error("invalid comments") elif ((.[0]? | type) == "array") then add else . end') || {
+		printf 'comments-unavailable\n'
+		return 0
+	}
 	if terminal_blocker_has_current_hold "$comments_json"; then
 		printf 'comment-marker\n'
 		return 0

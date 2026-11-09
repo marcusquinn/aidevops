@@ -415,11 +415,12 @@ Before a new retirement plan, the pass applies one fail-closed PR hold (GH#36851
 a tree whose branch name or HEAD commit matches an open PR in the configured slug
 is held with reason `open-pull-request`, and a failed or malformed PR lookup holds
 it with `pull-request-state-unavailable`. Holds are not failures and do not enter
-quarantine. The lookup is one paginated call per slug per pass. Checkouts without
-a configured remote have no pushed branch to protect and skip the lookup. An
-already-planned retirement always resumes, and the operator-targeted
-`cleanup-worktree`, `retire-worktree` and `retire-enrolled-only` commands keep
-their explicit-intent semantics.
+quarantine. The lookup is one paginated call per slug per pass. A failed REST call
+(including `gh` deferral, exit 75) falls back to complete GraphQL evidence: every
+page, the whole fork chain, the same validation (GH#37385); failure there holds.
+Checkouts without a remote have no pushed branch to protect and skip the lookup.
+Planned retirements always resume; operator-targeted `cleanup-worktree`,
+`retire-worktree` and `retire-enrolled-only` keep their explicit-intent semantics.
 
 Repository configuration defines scope only. Entries with `maintenance: false`
 or `local_only: true` are excluded. Missing or detached canonical checkouts do not
