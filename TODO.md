@@ -1949,6 +1949,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18912 fix(cleanup): scale lifecycle cleanup budget under worktree capacity pressure so retirement keeps up and dispatch reopens #bug #framework ref:GH#37330
 
+- [ ] t18913 fix(release): reap stale release preparation and reconcile worktrees that hold the worktree cap closed #bug #framework ref:GH#37339
+
+- [ ] t18914 fix(cleanup): fetch through native Git in canonical checkouts and log capacity-pass vetoes #bug ref:GH#37342
+
+- [ ] t18915 fix(lifecycle): retry owner admission while the lifecycle store is briefly locked #bug ref:GH#37346
+
 - [ ] t18916 fix(pulse): skip private repos and budget the redirect-spam sweep so it stops starving dispatch-critical pulse stages #bug #framework ref:GH#37351
 
 ## In Progress
