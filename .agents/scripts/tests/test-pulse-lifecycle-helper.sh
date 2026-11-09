@@ -1586,11 +1586,14 @@ test_systemd_cycle_boundary_drain() {
 		AIDEVOPS_PULSE_OS_NAME=Linux
 		timer_active=1
 		systemctl() {
-			case "$*" in
-			*--property=LoadState*) printf 'loaded\n'; return 0 ;;
-			*is-active*) [[ "$timer_active" == 1 ]] || return 1; return 0 ;;
-			*) return 1 ;;
-			esac
+			if [[ "$*" == *--property=LoadState* ]]; then
+				printf 'loaded\n'
+				return 0
+			elif [[ "$*" == *is-active* ]]; then
+				[[ "$timer_active" == 1 ]] || return 1
+				return 0
+			fi
+			return 1
 		}
 		_pulse_pids() { printf '123\n'; return 0; }
 		_pulse_pid_uses_active_runtime() { return 1; }

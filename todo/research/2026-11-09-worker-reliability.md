@@ -21,13 +21,50 @@ Delivery: PR #37343. This records partial recovery, not restored worker throughp
   candidates are held by ownership, permission, and draft-checkpoint gates.
   Inspect fresh `pulse-current-state-helper.sh --window 5m --json` evidence;
   do not clear a claim solely because the local active-worker count is zero.
-- [ ] Complete operator-owned approval-key provisioning through the trusted
-  approval workflow. `aidevops approve status` reports no approval public key;
-  `NO_KEY` cannot verify an existing signed grant. Do not replace an issuer's
-  key or treat Git commit-signing configuration as approval authority.
+- [ ] Reconcile permission-held issues using current, trusted authorization.
+  The sampled grant expired on 2026-11-08 at 06:39 UTC; its embedded key did
+  not match the issuer's advertised GitHub SSH signing keys when checked.
+  Installing a key would not make that expired grant usable. Approval-key
+  provisioning is not a prerequisite for ordinary worker dispatch. Do not
+  replace an issuer's key or treat commit signing as approval authority.
 - [ ] Repair interrupted-removal recovery when native Git removal has deleted
   `.git` and the process census lacks the original worktree age evidence.
   Preserve fail-closed behavior and the private tree until age is provable.
+
+## Worker pickup and incomplete review attempt
+
+- Workers resumed issue pickup: #37358 produced PR #37359, and #37246 produced
+  draft PR #37361. This is delivery evidence, not sustained-throughput proof.
+- At 14:05 UTC, the current-state helper reported a completed, progressed Pulse
+  cycle, a heartbeat age of 20 seconds, one dispatch in the preceding 15 minutes,
+  and zero active worker processes. Ownership, draft-checkpoint, permission,
+  and policy holds remained. Incomplete GitHub reads prevent treating every
+  apparent idle slot as safely dispatchable.
+- The review-response attempt for #37359, launched at 13:36:36 UTC, was recorded
+  at 13:38:31 as `worker_noop_zero_output`. That classification contradicts its
+  saved stream: the worker edited the retry helper and tests, then ran the
+  existing claim-release suite with `pass=33 fail=0`. It did not complete its
+  commit/push/thread handoff. The reason for the early exit remains unknown.
+- Its uncommitted edits remain preserved in the original linked worktree. A
+  later remote commit, `d2433cd80`, already fixes the same batch-starvation
+  behavior on PR #37359. Do not overwrite that newer head or blindly replay
+  the abandoned edits.
+- Investigate `.agents/scripts/headless-runtime-failure.sh` exit classification
+  and the review scanner's attempt evidence. The classifier can fall back from
+  an unavailable isolated database to the shared database. This is a candidate
+  explanation, not a demonstrated cause of this attempt's early termination.
+  Reference `test-worker-exit-classifier.sh` and
+  `test-headless-runtime-failure-classification.sh`; preserve signal/watchdog
+  precedence and never classify missing evidence as successful delivery.
+
+## PR verification follow-up
+
+PR #37343's terminal `ShellCheck (ubuntu-latest)` failure was actually its Bash
+3.2 parse step: the inline `case` in a command substitution in
+`test-pulse-lifecycle-helper.sh` failed at line 1590. Replacing that mock branch
+with equivalent `if`/`elif` checks passes the same digest-pinned Bash 3.2 image
+used by CI, local ShellCheck, modern Bash syntax, and all 82 lifecycle assertions.
+This verification is local until the repair is published and CI reruns.
 
 ## Cleanup follow-up evidence and verification
 
