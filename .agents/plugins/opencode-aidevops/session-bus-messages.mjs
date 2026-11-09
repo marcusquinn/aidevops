@@ -82,7 +82,7 @@ function senderFields(from) {
     handle: clip(from?.handle, 80),
     repo: clip(from?.repo, 120),
     branch: clip(from?.branch, 120),
-    origin: String(from?.origin || "opencode").slice(0, 160),
+    origin: parseChatOrigin(from?.origin) ? from.origin : String(from?.origin || "opencode").slice(0, 160),
   };
 }
 

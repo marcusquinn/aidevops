@@ -114,6 +114,19 @@ test("chat owner wakes require recipient opt-in and preserve budgets and hop cei
   assert.equal(chatWakeEnabled(root, id), false);
 });
 
+test("maximum-length chat origins keep their verified channel through storage and replies", () => {
+  const app = "a".repeat(32);
+  const channel = "b".repeat(128);
+  const origin = `chat:${app}:${channel}`;
+  const from = { session_id: "", origin, trust: { verified: true, owner: true, actor: "ent_owner", scan: { status: "warning" } } };
+  const message = store.sendMessage(root, { from, to: "ses_long01", type: "ask", text: "status?" });
+  assert.equal(message.from.origin, origin);
+  assert.ok(store.frameMessage(message).includes(`channel ${channel}`));
+  assert.match(store.frameMessage(message), /Chat scan warning/);
+  store.sendReply(root, { from: peer("ses_long01"), original: message, text: "ready" });
+  assert.equal(store.readOutbox(root, app)[0].channel, channel);
+});
+
 test("redacted listing omits private fields in JSON and text", () => {
   livePresence("ses_redact", { title: "private title", repo: "private/repo", branch: "private-branch",
     worktree: "/private/worktree", directory: "/private/directory", handle: "private-repo-7", current_task: "private task" });

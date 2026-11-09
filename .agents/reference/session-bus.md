@@ -106,8 +106,10 @@ V1 messages add `from.trust = { actor, verified, owner, name?, scan }`.
 Missing trust is unverified. Only verified-owner `ask` messages may wake an idle
 recipient, and only after its persistent `chat-wake on` opt-in. Normal send,
 pending, hourly wake and hop limits still apply. Busy/next-turn delivery and
-reply outboxes are unchanged. Redaction removes the five private fields from
-both JSON and text lists; it is not a general content/secret scrubber.
+reply outboxes are unchanged. Redaction returns only session ID, handle (set to
+the session ID), kind, messageable, status and last activity time. It also omits
+current task and issue/PR metadata so private details do not leak through derived
+fields; it is not a general content/secret scrubber.
 
 ## Storage
 

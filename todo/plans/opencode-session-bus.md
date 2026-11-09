@@ -210,6 +210,16 @@ t18891 implements the shared CLI ingest/trust layer; gateway adapters remain
 separate tasks. See `reference/session-bus.md` "Chat ingest" for exact channel
 mapping, local owner configuration, fail-closed scanning and persistent opt-in.
 
+Live verification (2026-11-09, OpenCode 1.19.5): two isolated `opencode serve`
+processes loaded the worktree bus hooks, sharing a scratch bus and isolated entity
+DB. A deterministic loopback OpenAI-compatible endpoint supplied the model; no
+external inference or owner interaction was needed. CLI unverified asks waited
+while idle and appeared framed unverified in the live transcript during activity.
+A linked/configured owner ask waited with opt-in off, then woke the recipient
+after `chat-wake on`. Injection text exited 1, and `list --json --redact` omitted
+all private fields. V1/V2 regression tests also cover limits, reply outboxes,
+cross-app/channel rejection and normalized-body screening.
+
 Owner requirement: aidevops must also be usable from chat apps. Current state (verified by reading the integrations):
 
 | App | Today | Reaches a live interactive session? |
