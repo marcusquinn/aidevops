@@ -217,6 +217,10 @@ _fetch_label_invariant_rows() {
 		issues_json=""
 	fi
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 1
+	if [[ "$_listing_rc" -eq 0 ]]; then
+		# Shared listing is wider than the scan window: re-apply the bound.
+		issues_json=$(printf '%s' "$issues_json" | jq -c --argjson n "$PULSE_QUEUED_SCAN_LIMIT" '.[0:$n]' 2>/dev/null) || return 1
+	fi
 
 	# has_any_status counts ALL status:* labels (core + exception) so the
 	# triage-missing counter correctly ignores issues that are actively

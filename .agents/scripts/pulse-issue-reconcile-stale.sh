@@ -585,8 +585,8 @@ _normalize_unassign_stale() {
 				--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
 		elif [[ "$_listing_rc" -eq 0 ]]; then
 			# Shared listing is unfiltered: keep only issues assigned to this runner.
-			stale_json=$(printf '%s' "$stale_json" | jq -c --arg u "$runner_user" \
-				'[.[] | select(.assignees // [] | map(.login) | index($u))]' 2>/dev/null) || stale_json=""
+			stale_json=$(printf '%s' "$stale_json" | jq -c --arg u "$runner_user" --argjson n "$PULSE_QUEUED_SCAN_LIMIT" \
+				'[.[] | select(.assignees // [] | map(.login) | index($u))] | .[0:$n]' 2>/dev/null) || stale_json=""
 		else
 			stale_json=""
 		fi

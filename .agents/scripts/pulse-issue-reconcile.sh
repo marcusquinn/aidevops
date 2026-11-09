@@ -696,6 +696,11 @@ _pulse_resolve_runner_login() {
 # normalize_active_issue_assignments run. A failed fetch is remembered so no
 # other pass retries it this run.
 #
+# The listing is deliberately wider than PULSE_QUEUED_SCAN_LIMIT
+# (PULSE_NORMALIZE_LISTING_LIMIT, default 5x) so client-side filtered passes
+# are not starved by non-matching issues; each consumer applies
+# PULSE_QUEUED_SCAN_LIMIT after its own filter (unfiltered passes slice first).
+#
 # Args: $1 slug
 # Output: JSON array on stdout.
 # Returns: 0 ok; 1 listing failed; 2 no run active (caller must fetch itself).
@@ -713,7 +718,7 @@ _normalize_repo_listing() {
 		local json=""
 		json=$(gh_issue_list --repo "$slug" --state open \
 			--json number,assignees,labels,createdAt,updatedAt \
-			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"${dir}/${key}.err") || json=""
+			--limit "${PULSE_NORMALIZE_LISTING_LIMIT:-$((PULSE_QUEUED_SCAN_LIMIT * 5))}" 2>"${dir}/${key}.err") || json=""
 		if [[ -z "$json" || "$json" == "null" ]]; then
 			local err_msg
 			err_msg=$(cat "${dir}/${key}.err" 2>/dev/null || echo "unknown error")
@@ -737,7 +742,7 @@ _normalize_reassign_fetch() {
 	local rc=0 json="" err_file="" err_msg=""
 	json=$(_normalize_repo_listing "$slug") || rc=$?
 	if [[ "$rc" -eq 0 ]]; then
-		printf '%s' "$json"
+		printf '%s' "$json" | jq -c --argjson n "$PULSE_QUEUED_SCAN_LIMIT" '.[0:$n]' 2>/dev/null || return 1
 		return 0
 	fi
 	[[ "$rc" -eq 2 ]] || return 1
@@ -772,8 +777,8 @@ _normalize_stampless_fetch() {
 			--state open --json number,updatedAt,labels \
 			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null || true
 	elif [[ "$rc" -eq 0 ]]; then
-		printf '%s' "$json" | jq -c --arg u "$runner_user" \
-			'[.[] | select((.assignees // [] | map(.login) | index($u)) and (.labels // [] | map(.name) | index("origin:interactive")))]' 2>/dev/null || true
+		printf '%s' "$json" | jq -c --arg u "$runner_user" --argjson n "$PULSE_QUEUED_SCAN_LIMIT" \
+			'[.[] | select((.assignees // [] | map(.login) | index($u)) and (.labels // [] | map(.name) | index("origin:interactive")))] | .[0:$n]' 2>/dev/null || true
 	fi
 	return 0
 }
@@ -1107,6 +1112,14 @@ normalize_active_issue_assignments() {
 	# the start before running, so a pass interrupted by the stage watchdog
 	# yields first place next cycle.
 	_listing_dir=$(mktemp -d 2>/dev/null) || _listing_dir=""
+	if [[ -z "$_listing_dir" ]]; then
+		# No shared cache: skip listing-dependent passes rather than listing
+		# each repo once per pass. Independent cleanups still run.
+		echo "[pulse-wrapper] normalize_active_issue_assignments: mktemp -d failed; skipping listing-dependent passes this run" >>"$LOGFILE"
+		_normalize_stale_close_pending_checkpoint_leases
+		_normalize_deferred_claim_releases
+		return 0
+	fi
 	_NORMALIZE_LISTING_DIR="$_listing_dir"
 	local pass_state_dir="${HOME}/.aidevops/cache/normalize-pass-started"
 	local pass="" pass_order=""
