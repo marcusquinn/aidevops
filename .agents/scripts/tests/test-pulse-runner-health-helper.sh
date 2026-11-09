@@ -399,7 +399,7 @@ _rh_run_streak() {
 	local gap_override_idx="${3:-0}"
 	local gap_override_min="${4:-0}"
 	local real_idx="${5:-0}"
-	local t=1800000000 i signal
+	local t=1800000000 i signal ts
 	for ((i = 1; i <= count; i++)); do
 		if [[ "$i" -gt 1 ]]; then
 			if [[ "$i" -eq "$gap_override_idx" ]]; then
@@ -410,7 +410,9 @@ _rh_run_streak() {
 		fi
 		signal="no_worker_process"
 		[[ "$i" -eq "$real_idx" ]] && signal="real_attempt_with_commit"
-		RUNNER_HEALTH_TEST_NOW=$(_rh_epoch_ts "$t") _h record-outcome "$signal" "owner/repo#$i" >/dev/null 2>&1
+		ts=$(_rh_epoch_ts "$t") || return 1
+		[[ -n "$ts" ]] || return 1
+		RUNNER_HEALTH_TEST_NOW="$ts" _h record-outcome "$signal" "owner/repo#$i" >/dev/null 2>&1
 	done
 	return 0
 }
