@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.145] - 2026-11-09
+
+### Fixed
+
+- self-heal a root-owned repo-privacy cache so privacy probes stop cold-calling the API
+- skip private repos and budget the redirect-spam sweep so it stops starving dispatch stages
+- recover claim-release persistence failures after GitHub quota resets (#37349)
+- retry owner admission while the lifecycle store is briefly locked
+
 ## [3.39.144] - 2026-11-09
 
 ### Fixed
