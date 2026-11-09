@@ -127,5 +127,13 @@ export function pruneBus(root, now = Date.now()) {
     pruneFiles(deliveredDir(root, sessionID), cutoff, removed);
   }
   for (const key of listDir(join(root, "sent"))) pruneFiles(sentDir(root, key), cutoff, removed);
+  for (const name of listDir(join(root, "chat-wake"))) {
+    const sessionID = name.replace(/\.json$/, "");
+    if (!name.endsWith(".json") || !isSafeId(sessionID)) continue;
+    const file = join(root, "chat-wake", name);
+    const setting = readJson(file);
+    const stale = !Number.isFinite(setting?.updated_ms) || setting.updated_ms < cutoff;
+    if (!readJson(join(presenceDir(root), name)) && stale) rmSync(file, { force: true });
+  }
   return removed.count;
 }

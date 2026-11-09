@@ -49,7 +49,7 @@ export function pendingCount(root, sessionID) {
 
 const clip = (value, width) => String(value || "").slice(0, width);
 
-function validBody(text) {
+export function validBody(text) {
   const body = cleanText(text).trim();
   if (!body) throw new Error("message text is empty");
   if (Array.from(body).length > LIMITS.textChars) {
@@ -76,12 +76,13 @@ function viaFields(via) {
 
 function senderFields(from) {
   return {
+    ...(parseChatOrigin(from?.origin) && from?.trust ? { trust: from.trust } : {}),
     ...viaFields(from?.via),
     session_id: isSafeId(from?.session_id) ? from.session_id : "",
     handle: clip(from?.handle, 80),
     repo: clip(from?.repo, 120),
     branch: clip(from?.branch, 120),
-    origin: String(from?.origin || "opencode").slice(0, 160),
+    origin: parseChatOrigin(from?.origin) ? from.origin : String(from?.origin || "opencode").slice(0, 160),
   };
 }
 
