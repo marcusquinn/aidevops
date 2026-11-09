@@ -88,6 +88,18 @@ _issue_status() {
 	return 0
 }
 
+# Apply the same signing path as issue creation before the safe edit wrapper.
+# Normalize stdin first so signing never consumes it independently of validation.
+_issue_edit_signed() {
+	_gh_wrapper_enter_cleanup_scope
+	_gh_wrapper_normalize_stdin_body_file "$@" || return 1
+	set -- "${_GH_WRAPPER_BODY_FILE_ARGS[@]}"
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	gh_issue_edit_safe "$@"
+	return $?
+}
+
 main() {
 	local resource="${1:-}"
 	local action="${2:-}"
@@ -150,7 +162,7 @@ main() {
 				previous="$label_arg"
 			done
 		fi
-		gh_issue_edit_safe "$@"
+		_issue_edit_signed "$@"
 		;;
 	issue:review-handoff) _issue_review_handoff "$@" ;;
 	issue:status) _issue_status "$@" ;;
