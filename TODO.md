@@ -1931,7 +1931,6 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18898 Session bus for Buzz-hosted agents: labelled presence, remote provenance and safe delivery #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37264 logged:2026-11-08 blocked-by:t18891 -> [todo/tasks/t18898-brief.md]
 
-- [ ] t18900 docs: macOS account and login-keychain incident triage and recovery reference #documentation #interactive ref:GH#37266 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 -> [todo/tasks/t18900-brief.md]
 
 ## In Progress
 
@@ -2015,6 +2014,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 -->
 
 ## Done
+- [x] t18900 docs: macOS account and login-keychain incident triage and recovery reference #documentation #interactive ref:GH#37266 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 -> [todo/tasks/t18900-brief.md] pr:#37268 testing:self-assessed completed:2026-11-09
 - [x] t18222 Ship owner-reviewed Buzz interactive team runtime #agents #auto-dispatch #feat #framework #reliability #security ~8h tier:thinking ref:GH#29831 assignee:marcusquinn started:2026-08-08 logged:2026-08-09 -> [todo/tasks/t18222-brief.md] pr:#29834 testing:runtime-verified completed:2026-08-09
 - [x] t18208 Generate restricted OpenCode conversation launch overlays #mission:m-20260804-5d06b1 #enhancement #security #framework #agents #interactive #auto-dispatch ~5h tier:thinking parent:t18201 ref:GH#29686 logged:2026-08-06 -> [todo/tasks/t18208-brief.md] pr:#29673 testing:runtime-verified completed:2026-08-07
 - [x] t18207 Refactor Matrix behind the team-interface contracts #mission:m-20260804-5d06b1 #enhancement #security #reliability #framework #interactive #auto-dispatch ~6h tier:thinking parent:t18201 ref:GH#29646 logged:2026-08-06 -> [todo/tasks/t18207-brief.md] pr:#29669 testing:runtime-verified completed:2026-08-07
