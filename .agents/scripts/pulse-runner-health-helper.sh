@@ -1004,8 +1004,10 @@ DIAGNOSE FINDINGS (categories surfaced for operator action):
                      (recorder being skipped — likely caller-side bug).
   TRIGGER_MISSED   — counter reached threshold but breaker stayed closed
                      (trip path or signal predicate broken).
-  STUCK_TRIPPED    — breaker tripped >24h ago and last update failed;
-                     manual resume required after fixing the install.
+  STUCK_TRIPPED    — breaker tripped longer than RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS
+                     (default 24) ago and the last update outcome is empty,
+                     never, failed, or helper_missing; manual resume required
+                     after fixing the install.
 
 ZERO-ATTEMPT SIGNALS (reset counter when not one of these):
   no_worker_process          — worker process never spawned.

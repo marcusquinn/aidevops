@@ -15,7 +15,8 @@
 #                    — tripped, update ran, deployed artifacts match repo
 #   WIRING_GAP       — log shows zero-attempt events the counter never saw
 #   TRIGGER_MISSED   — counter reached threshold but breaker stayed closed
-#   STUCK_TRIPPED    — breaker tripped >24h, last update failed
+#   STUCK_TRIPPED    — breaker tripped longer than RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS
+#                      (default 24h); update outcome empty/never/failed/helper_missing
 #
 # Each test builds a synthetic state file + pulse log under a sandbox HOME,
 # calls `diagnose --json`, and asserts the `finding` field. JSON path makes
