@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import { BoundedInteractiveOperationManager } from "../bounded-interactive-operation.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
+import { displayRedactionNote } from "../quality-hooks-output-scrub.mjs";
 import { createSecretValueRedactor, SECRET_VALUE_REDACTION_TOKEN } from "../registered-value-redaction.mjs";
 
 const TOKEN = SECRET_VALUE_REDACTION_TOKEN;
@@ -107,7 +108,7 @@ describe("registered secret value redaction (GH#32362)", () => {
     const plain = fixture({ credentials: { SYNTHETIC_AUTH: longer } });
     assert.equal(plain.redactor.redactText(longer).text, TOKEN);
     const output = await afterHook(redactor, root, { output: "PASSWORD=aidevops", title: "", metadata: {} });
-    assert.equal(output.output, `PASSWORD=${TOKEN}`, "sensitive assignments remain protected");
+    assert.equal(output.output, `PASSWORD=${TOKEN}\n\n${displayRedactionNote(1)}`, "sensitive assignments remain protected");
   });
 
   test("public-name credential assignments are scrubbed across all persisted fields", async () => {
@@ -122,7 +123,8 @@ describe("registered secret value redaction (GH#32362)", () => {
           pair: { name: "SERVICE_CREDENTIAL", value: "aidevops" },
         },
       }, tool);
-      assert.equal(result.output, `SERVICE_CREDENTIAL=${TOKEN} SERVICE_CREDENTIALS=${TOKEN}`);
+      // Six spans across output, title and metadata; the note lives only in output.
+      assert.equal(result.output, `SERVICE_CREDENTIAL=${TOKEN} SERVICE_CREDENTIALS=${TOKEN}\n\n${displayRedactionNote(6)}`);
       assert.equal(result.title, `PASSWORD=${TOKEN}`);
       assert.deepEqual(result.metadata, {
         description: `SERVICE_CREDENTIAL=${TOKEN}`,

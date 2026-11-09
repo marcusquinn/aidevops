@@ -48,6 +48,7 @@ import re
 import sys
 import time
 
+from display_redaction import following_line_text, is_code_or_prose_value
 from structured_text_parser import parse_structured_text
 
 # Regex mirrors shared-constants.sh scrub_credentials sed pattern exactly.
@@ -66,7 +67,7 @@ CREDENTIAL_PATTERN = re.compile(
 )
 
 NAMED_CREDENTIAL_ASSIGNMENT_PATTERN = re.compile(
-    r"(^|[^A-Za-z0-9_])((?:\"[A-Za-z_][A-Za-z0-9_. -]*\"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?:=|:)\s*)(\"(?:\\.|[^\"\\])*\"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)",
+    r"(^|[^A-Za-z0-9_])((?:\"[A-Za-z_][A-Za-z0-9_. -]*\"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?::=|=>|=(?!=)|:(?![:=]))\s*)(\"(?:\\.|[^\"\\])*\"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -151,6 +152,8 @@ def redact_named_assignment(match: re.Match) -> str:
     """Redact one sensitive assignment while preserving its key and quoting."""
     boundary, name, separator, value = match.groups()
     if not is_sensitive_field_name(name) or is_placeholder_value(value):
+        return match.group(0)
+    if is_code_or_prose_value(separator, value, following_line_text(match.string, match.end())):
         return match.group(0)
     quote = value[0] if value and value[0] in {'"', "'"} and value.endswith(value[0]) else ""
     if quote:

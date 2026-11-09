@@ -8,16 +8,16 @@ from __future__ import annotations
 from collections.abc import Callable
 import json
 from pathlib import Path
-import re
 import subprocess  # nosec B404 # fixed gh argv, validated slug
 
+from .pull_requests_graphql import graphql_open_pull_requests
+from .pull_requests_graphql import valid_slug as _valid_slug
 from .retirement import _git
 
 
 def pull_request_repositories(slug: str) -> list[str]:
     """Include the fork's parent and source, where upstream PRs are listed."""
-    if (not re.fullmatch(r"[\w.-]+/[\w.-]+", slug, flags=re.ASCII)
-            or any(part in (".", "..") for part in slug.split("/"))):
+    if not _valid_slug(slug):
         raise ValueError("invalid-repository-slug")
     result = subprocess.run(  # nosec B603 B607 # fixed gh argv, validated slug
         ["gh", "api", f"repos/{slug}"],
@@ -31,9 +31,7 @@ def pull_request_repositories(slug: str) -> list[str]:
         for key in ("parent", "source"):
             repository = metadata.get(key)
             name = repository.get("full_name") if isinstance(repository, dict) else None
-            if (not isinstance(name, str)
-                    or not re.fullmatch(r"[\w.-]+/[\w.-]+", name, flags=re.ASCII)
-                    or any(part in (".", "..") for part in name.split("/"))):
+            if not _valid_slug(name):
                 raise ValueError("invalid-repository-response")
             if name.lower() not in {item.lower() for item in repositories}:
                 repositories.append(name)
@@ -62,10 +60,27 @@ def _repository_pull_requests(slug: str) -> list:
     return prs
 
 
-def open_pull_requests(slug):
-    """All fork/upstream pages or no authority; errors never prove absence."""
+def _rest_open_pull_requests(slug: str) -> list:
+    """All fork/upstream REST pages for `slug`."""
     return [pr for repository in pull_request_repositories(slug)
             for pr in _repository_pull_requests(repository)]
+
+
+def open_pull_requests(slug):
+    """All fork/upstream pages or no authority; errors never prove absence.
+
+    A failed REST call, including a `gh` governor deferral (exit 75) while the
+    REST core pool is spent, retries with complete GraphQL evidence from its
+    separate pool (GH#37385). Malformed REST evidence still holds, and a
+    failed or malformed GraphQL fallback re-raises the REST error.
+    """
+    try:
+        return _rest_open_pull_requests(slug)
+    except (OSError, subprocess.SubprocessError) as rest_error:
+        try:
+            return graphql_open_pull_requests(slug)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise rest_error from None
 
 
 def matches_open_pull_request(prs: list, head: str, branch: str, slug: str) -> bool:
