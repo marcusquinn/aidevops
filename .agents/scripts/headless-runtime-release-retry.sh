@@ -34,6 +34,16 @@ _hrrr_path() {
 	return 0
 }
 
+# Digest immutable claim and observation fields, excluding retry bookkeeping.
+# The private sidecar detects row replacement, not a hostile same-user writer.
+_hrrr_binding() {
+	local path="$1" value=""
+	value=$(jq -cer '[.repo, .issue, .session_key, .reason, .exit, .session_count,
+		.lease_token, .lease_device, .lease_session, .attempt_id, .blocker]' "$path") || return 1
+	_terminal_blocker_hash "$value" || return 1
+	return 0
+}
+
 # Args: $1 session_key, $2 reason, $3 exit_code, $4 session_count.
 # Non-fatal: failing to persist evidence never changes the release result.
 _hrrr_record() {
@@ -73,6 +83,7 @@ _hrrr_record() {
 			  lease_device: $device, lease_session: $lease_session, attempt_id: $attempt,
 			  blocker: {path: $blocker_path, fingerprint: $fingerprint, missing_secrets: $missing_secrets},
 			  pid: $pid, created: $now, next_after: ($now + 60), attempts: 0}' >"$tmp" &&
+			_hrrr_binding "$tmp" >"${path}.binding" && chmod 600 "${path}.binding" &&
 			mv -f "$tmp" "$path"; then
 			exit 0
 		fi
@@ -92,6 +103,7 @@ _hrrr_clear() {
 	[[ "${_HRRR_REPLAY:-0}" != 1 ]] || return 0
 	path=$(_hrrr_path "$repo_slug" "$issue_number" "$session_key")
 	[[ ! -f "$path" ]] || rm -f "$path"
+	rm -f "${path}.binding"
 	return 0
 }
 
@@ -105,6 +117,11 @@ _hrrr_read_blocker() {
 	missing_secrets=$(jq -r '.blocker.missing_secrets' "$path") || return 1
 	if [[ -n "$blocker_path" || -n "$fingerprint" ]]; then
 		[[ -d "$blocker_path" && "$fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 1
+		local binding="" expected=""
+		[[ -f "${path}.binding" ]] || return 1
+		IFS= read -r expected <"${path}.binding" || return 1
+		binding=$(_hrrr_binding "$path") || return 1
+		[[ "$binding" == "$expected" ]] || return 1
 		if [[ "$(_terminal_blocker_reason "$fingerprint")" == unknown ]]; then
 			[[ "$fingerprint" == "$(_terminal_blocker_hash 'v2:unknown')" ]] || return 1
 		fi
@@ -140,6 +157,7 @@ _hrrr_process_row() {
 		[[ -z "$fingerprint" ]] || return 2
 		print_warning "[lifecycle] claim_release_retry_expired issue=${issue}"
 		rm -f "$path"
+		rm -f "${path}.binding"
 		return 0
 	fi
 	((now >= next_after)) || return 2
@@ -163,6 +181,7 @@ _hrrr_process_row() {
 	if [[ "$rc" -eq 0 ]]; then
 		print_info "[lifecycle] claim_release_retry_resolved issue=${issue}"
 		rm -f "$path"
+		rm -f "${path}.binding"
 		return 0
 	fi
 	local backoff=$((300 * (1 << (attempts > 3 ? 3 : attempts))))
