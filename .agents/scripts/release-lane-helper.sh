@@ -486,6 +486,7 @@ release_lane_recover_dead_preparing() {
 		and (.worktree_head | test($sha_pattern))
 		and (.checked_at | type) == "string" and (.checked_at | length) > 0
 	' <<<"$recovery_evidence" >/dev/null || return 1
+	#aidevops:trust-boundary owner_session is advisory: never read it for ownership or recovery.
 	operation_token="${_AIDEVOPS_RELEASE_LANE_TOKEN_PREFIX}$(openssl rand -hex 16 2>/dev/null)" || return 1
 	state_json=$(jq -c --arg reserved "$_AIDEVOPS_RELEASE_LANE_PHASE_RESERVED" \
 		--arg preparing "$_AIDEVOPS_RELEASE_LANE_PHASE_PREPARING" \
@@ -493,11 +494,12 @@ release_lane_recover_dead_preparing() {
 		--arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg tag "$attempted_tag" \
 		--arg contract "$_AIDEVOPS_RELEASE_LANE_RESERVATION_CONTRACT" \
 		--argjson reclaim "$reclaim_evidence" --argjson evidence "$recovery_evidence" \
-		--argjson executor "$(_release_lane_executor_capture || printf 'null')" '
+		--argjson executor "$(_release_lane_executor_capture || printf 'null')" \
+		--argjson owner_session "$(_release_lane_owner_session_capture)" '
 		.updated_at as $previous_updated_at | .executor as $previous_executor
 		| (.preparing_recovery // null) as $existing_recovery
 		| .phase=$reserved | .operation_token=$token | .owner=$owner | .updated_at=$now
-		| .executor=$executor | .reservation_contract=$contract
+		| .executor=$executor | .owner_session=$owner_session | .reservation_contract=$contract
 		| if $reclaim == null then . else .reservation_contract_recovery=$reclaim end
 		| .preparing_recovery=(if $existing_recovery == null then
 			{previous_phase:$preparing,previous_updated_at:$previous_updated_at,
@@ -530,14 +532,16 @@ _release_lane_reclaim_same_source() {
 		'.owner=$owner | .operation_token=$token | .updated_at=$now | .phase=$reserved' \
 		<<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	# A resumed transaction may use older code: do not inherit auto-recovery eligibility.
+	#aidevops:trust-boundary owner_session is advisory: never read it for ownership or recovery.
 	state_json=$(jq -c --argjson executor "$(_release_lane_executor_capture || printf 'null')" \
+		--argjson owner_session "$(_release_lane_owner_session_capture)" \
 		--arg contract "$_AIDEVOPS_RELEASE_LANE_RESERVATION_CONTRACT" \
 		--arg type "$_AIDEVOPS_RELEASE_LANE_RECLAIM_CONTRACT" --arg previous_head "$_AIDEVOPS_RELEASE_LANE_HEAD" \
 		--arg sha_pattern "$_AIDEVOPS_RELEASE_LANE_SHA_PATTERN" \
 		--arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" '
 		.executor as $previous_executor | (.reservation_contract // null) as $prior_contract
 		| (.reservation_contract_reclaim // null) as $existing_reclaim
-		| .executor=$executor
+		| .executor=$executor | .owner_session=$owner_session
 		| if $prior_contract == $contract then
 			.reservation_contract_reclaim={type:$type,prior_contract:$prior_contract,
 				previous_head:$previous_head,previous_executor:$previous_executor,reclaimed_at:$now}
@@ -624,6 +628,7 @@ release_lane_acquire() {
 				_AIDEVOPS_RELEASE_LANE_RESULT="adopted"
 				return 0
 			fi
+			release_lane_owner_session_hint "$_AIDEVOPS_RELEASE_LANE_JSON"
 			return 75
 		fi
 		;;
@@ -640,8 +645,11 @@ release_lane_acquire() {
 		'{schema_version:1,repository:$repo,active:true,
 		source_pr:$source_pr,expected_sources:$expected_sources,phase:$reserved,tag:null,owner:$owner,operation_token:$token,
 		updated_at:$now,terminal_receipt:null}') || return 1
+	#aidevops:trust-boundary owner_session is advisory: never read it for ownership or recovery.
 	state_json=$(jq -c --argjson executor "$(_release_lane_executor_capture || printf 'null')" \
-		'.executor=$executor | .reservation_contract="fenced-prepublication/v1"' <<<"$state_json") || return 1
+		--argjson owner_session "$(_release_lane_owner_session_capture)" \
+		'.executor=$executor | .owner_session=$owner_session | .reservation_contract="fenced-prepublication/v1"' \
+		<<<"$state_json") || return 1
 	_release_lane_write "$repo" "$state_json" "$_AIDEVOPS_RELEASE_LANE_HEAD" || return $?
 	_AIDEVOPS_RELEASE_LANE_TOKEN="$operation_token"
 	_AIDEVOPS_RELEASE_LANE_RESULT="$_AIDEVOPS_RELEASE_LANE_RESULT_ACQUIRED"
@@ -1321,6 +1329,7 @@ release_lane_finalize() {
 			if [[ "$read_rc" -eq 0 ]] && _release_lane_is_terminal_for "$source_pr" "$receipt"; then
 				printf 'RELEASE_LANE_FINALIZE_RECONCILED source_pr=%s receipt=%s write_exit=%s\n' \
 					"$source_pr" "$receipt" "$write_rc" >&2
+				release_lane_notify "$state_json" "$(_release_lane_notice_event "$receipt")" "$receipt"
 				return 0
 			fi
 			# Rebuild only a raced transition, never replay stale state over a new owner.
@@ -1333,6 +1342,8 @@ release_lane_finalize() {
 				"$source_pr" "$receipt" "$write_rc" >&2
 			return "$write_rc"
 		fi
+		# Only the write that changed the state notifies; an idempotent retry returned above.
+		release_lane_notify "$state_json" "$(_release_lane_notice_event "$receipt")" "$receipt"
 		return 0
 	done
 	return 2

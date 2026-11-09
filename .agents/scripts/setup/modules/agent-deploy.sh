@@ -337,6 +337,7 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/session-bus-messages.mjs"
 		"plugins/opencode-aidevops/session-bus-inbox.mjs"
 		"plugins/opencode-aidevops/session-bus-format.mjs"
+		"plugins/opencode-aidevops/session-bus-release.mjs"
 		"plugins/opencode-aidevops/session-bus.mjs"
 		"plugins/opencode-aidevops/session-bus-client.mjs"
 		"plugins/opencode-aidevops/session-bus-identity.mjs"
