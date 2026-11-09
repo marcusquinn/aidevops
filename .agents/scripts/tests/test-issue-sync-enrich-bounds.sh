@@ -202,8 +202,40 @@ test_task_failure_propagates() {
 	return 0
 }
 
+# GH#37294: a bounded push run must reach tasks the push changed before the
+# TODO-ordered backlog; an unavailable base keeps plain TODO order.
+test_changed_tasks_enrich_first_within_bound() {
+	write_todo_fixture
+	mkdir -p "$TMP/todo/tasks"
+	printf 'brief v1\n' >"$TMP/todo/tasks/t9003-brief.md"
+	git -C "$TMP" init -q
+	git -C "$TMP" add TODO.md todo
+	git -C "$TMP" -c user.name=t -c user.email=t@example.invalid commit -qm base
+	local base
+	base=$(git -C "$TMP" rev-parse HEAD)
+	printf 'brief v2\n' >"$TMP/todo/tasks/t9003-brief.md"
+	git -C "$TMP" -c user.name=t -c user.email=t@example.invalid commit -qam widen
+	: >"$TMP/processed.log"
+	local output first fallback
+	output=$(AIDEVOPS_ENRICH_CHANGED_SINCE="$base" AIDEVOPS_ENRICH_MAX_ISSUES=1 AIDEVOPS_ENRICH_MAX_SECONDS=0 cmd_enrich 2>&1)
+	first=$(tr -d '\n' <"$TMP/processed.log")
+	: >"$TMP/processed.log"
+	AIDEVOPS_ENRICH_CHANGED_SINCE=0123456789abcdef0123456789abcdef01234567 AIDEVOPS_ENRICH_MAX_ISSUES=1 \
+		AIDEVOPS_ENRICH_MAX_SECONDS=0 cmd_enrich >/dev/null 2>&1
+	fallback=$(tr -d '\n' <"$TMP/processed.log")
+	rm -rf "$TMP/.git" "$TMP/todo"
+	if [[ "$first" == "t9003" && "$fallback" == "t9001" ]]; then
+		print_result "bounded enrich processes changed tasks first and falls back to TODO order" 0
+	else
+		printf 'first=%s fallback=%s\n%s\n' "$first" "$fallback" "$output"
+		print_result "bounded enrich processes changed tasks first and falls back to TODO order" 1
+	fi
+	return 0
+}
+
 main() {
 	test_workflow_push_sets_bounded_enrich
+	test_changed_tasks_enrich_first_within_bound
 	test_workflow_manual_enrich_has_full_pass_headroom
 	test_max_issues_bounds_enrich_loop
 	test_target_task_ignores_routine_bounds

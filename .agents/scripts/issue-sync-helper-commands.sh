@@ -346,7 +346,8 @@ cmd_help() {
 	cat <<'EOF'
 Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
-Commands: push [tNNN] | enrich [tNNN] | sync-body tNNN | pull | close [tNNN] | reopen
+Commands: push [tNNN] | enrich [tNNN] | sync-body tNNN | rebind-task tNEW --from tOLD
+          pull | close [tNNN] | reopen
           reconcile | relationships [tNNN] | backfill-sub-issues [--issue N]
           backfill-cross-phase-blocked-by --issue N
           status | help
@@ -364,6 +365,15 @@ Held body synchronization:
                    the remote body hash and writes tamper-evident audit receipts.
                    Ordinary enrich, --force, bulk, pulse, and dispatch semantics
                    are unchanged. Closed issues require --allow-closed.
+
+Renamed task rebind (GH#37294):
+  rebind-task tNEW --from tOLD — admin/maintain-authorized. When a TODO.md
+                   row was renamed after its issue was bound, point tNEW at
+                   the coordinator task that owns the issue. Requires exactly
+                   one live tNEW row with ref:GH#NNN, no live tOLD row, and
+                   tOLD's coordinator mapping to be that issue. Supports
+                   --dry-run. Then run `enrich tNEW` (or `sync-body tNEW` for
+                   held issues) to regenerate title, Task ID, and Blocked by.
 
 Drift detection:
   status    — reports forward drift (open issue, done TODO) and reverse drift

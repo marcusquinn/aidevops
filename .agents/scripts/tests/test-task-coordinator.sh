@@ -165,6 +165,44 @@ AIDEVOPS_TASK_COORDINATOR_DB="$v7_db" node "$COORDINATOR" verify | jq -e '.ok an
 AIDEVOPS_TASK_COORDINATOR_DB="$v7_db" node "$COORDINATOR" bind-issue --task-id t100 \
 	--repository-id R_old --repository-slug owner/old --issue-id I_old --display-number 1 >/dev/null
 
+# GH#37294: a renamed TODO row is refused by legacy backfill, explained by the
+# reverse lookup, and repaired only by an explicit, idempotent alias.
+alias_db="${TEST_ROOT}/alias.db"
+alias_repo=(--repository-id R_alias --repository-slug owner/alias)
+AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t9414 "${alias_repo[@]}" \
+	--issue-id I_alias --display-number 42 >/dev/null
+if AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t1748 "${alias_repo[@]}" \
+	--issue-id I_alias --display-number 42 >/dev/null 2>&1; then
+	printf 'FAIL renamed task stole an existing issue mapping through backfill\n' >&2
+	exit 1
+fi
+[[ "$(AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" resolve-issue-owner --repository-id R_alias --issue-id I_alias | jq -r '.taskId')" == "t9414" ]]
+if AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" alias-task --task-id t1748 --from-task-id t9414 \
+	--repository-id R_alias --issue-id I_wrong --display-number 42 >/dev/null 2>&1; then
+	printf 'FAIL alias accepted a mismatched issue identity\n' >&2
+	exit 1
+fi
+alias_result=$(AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" alias-task --task-id t1748 --from-task-id t9414 \
+	--repository-id R_alias --issue-id I_alias --display-number 42)
+[[ "$(AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" alias-task --task-id t1748 --from-task-id t9414 \
+	--repository-id R_alias --issue-id I_alias --display-number 42)" == "$alias_result" ]]
+[[ "$(AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" resolve-issue --task-id t1748 --repository-id R_alias | jq -r '.displayNumber')" == "42" ]]
+AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t1748 "${alias_repo[@]}" \
+	--issue-id I_alias --display-number 42 >/dev/null
+if AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t1748 "${alias_repo[@]}" \
+	--issue-id I_alias_moved --display-number 44 >/dev/null 2>&1; then
+	printf 'FAIL rebind alias let backfill move the issue identity\n' >&2
+	exit 1
+fi
+AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t9415 "${alias_repo[@]}" \
+	--issue-id I_alias_two --display-number 43 >/dev/null
+if AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" alias-task --task-id t1748 --from-task-id t9415 \
+	--repository-id R_alias --issue-id I_alias_two --display-number 43 >/dev/null 2>&1; then
+	printf 'FAIL alias moved an already mapped task ID\n' >&2
+	exit 1
+fi
+AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" verify | jq -e '.ok' >/dev/null
+
 # Independent reinstall/clone state creates a new CSPRNG origin at the same sequence.
 origin_one=$(node "$COORDINATOR" status | jq -r '.origin_id')
 AIDEVOPS_TASK_COORDINATOR_DB="${TEST_ROOT}/clone.db" node "$COORDINATOR" allocate --operation-id clone >/dev/null
