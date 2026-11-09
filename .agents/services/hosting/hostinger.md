@@ -26,6 +26,7 @@ tools:
 - **Auth**: Bearer token in `~/.config/aidevops/credentials.sh` as `HOSTINGER_API_TOKEN`
 - **SSH**: Port 65002, key auth (recommended) or password auth; framework prefers key when `ssh_identity_file` is configured
 - **Credential scope**: Hostinger SSH access is hosting-account scoped, not domain scoped; inventory and group sites before requesting credentials
+- **Client accounts**: hPanel Account sharing (hPanel only, no API; the agency token does not reach the client's plan) → `hostinger-client-access.md`
 - **Panel**: Custom hPanel
 - **No MCP required** — uses curl for API, ssh for key auth or sshpass for password auth
 
