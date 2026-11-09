@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 
 import * as store from "./session-bus-store.mjs";
+import { chatTrust } from "./session-bus-chat-trust.mjs";
 
 function readText(options, words) {
   if (options.textFile) return readFileSync(options.textFile, "utf8");
@@ -48,7 +49,11 @@ const printLines = (out, lines, empty) => print(out, lines.length > 0 ? lines.jo
 
 export function listCommand({ root, options, out }) {
   const all = store.sortPresence(store.readPresence(root, { sweep: true }));
-  const records = options.all ? all : all.filter(store.isMessageable);
+  let records = options.all ? all : all.filter(store.isMessageable);
+  if (options.redact) records = records.map((record) => ({
+    session_id: record.session_id, handle: record.session_id, kind: record.kind,
+    messageable: record.messageable, status: record.status, last_activity_epoch: record.last_activity_epoch,
+  }));
   if (options.json) return print(out, records, true);
   const hidden = all.length - records.length;
   const lines = records.map((record) => store.formatPresenceRow(record));
@@ -111,12 +116,14 @@ export function sendCommand(context, type) {
     ? { session_id: "", handle: `shell:${env.USER || "user"}`, repo: "", branch: "", origin: "cli" }
     : senderFrom(root, options.origin, env);
   const resolved = messageableTarget(root, target, from);
+  const text = store.validBody(readText(options, words));
+  if (options.origin) from.trust = chatTrust(options.origin, options.actor, text, env);
   const message = store.sendMessage(root, {
     from,
     to: resolved.record ? resolved.record.session_id : resolved.sessionID,
     toHandle: resolved.record?.handle || "",
     type,
-    text: readText(options, words),
+    text,
   });
   print(out, `Sent ${type} ${message.id} to ${resolved.record?.handle || resolved.sessionID}.${replyHint(type, from)}`, false);
   if (!options.wait) return undefined;

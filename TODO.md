@@ -1931,6 +1931,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18898 Session bus for Buzz-hosted agents: labelled presence, remote provenance and safe delivery #feat #interactive #auto-dispatch tier:standard ~6h ref:GH#37264 logged:2026-11-08 blocked-by:t18891 -> [todo/tasks/t18898-brief.md]
 
+- [ ] t18901 buzz-aidevops: visible agent settings fields and correct where-to-set guidance #bug ref:GH#37272
 
 ## In Progress
 

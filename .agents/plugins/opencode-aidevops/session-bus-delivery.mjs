@@ -10,6 +10,7 @@
 // as `bus`.
 
 import * as store from "./session-bus-store.mjs";
+import { chatWakeEnabled } from "./session-bus-chat-trust.mjs";
 import { canPrompt, liveStatuses, promptSession, showToast, warn } from "./session-bus-client.mjs";
 import { setStatus, statusFromType } from "./session-bus-events.mjs";
 
@@ -18,12 +19,15 @@ const WAKE_RETRY_MS = 30 * 1000;
 const WAKE_RETRY_MAX_MS = 15 * 60 * 1000;
 const WAKE_TYPES = new Set(["ask", "reply", "idle-notice"]);
 
-export function isWakeEligible(message) {
+export function isWakeEligible(message, chatWake = false) {
   if (!message || message.hops >= store.LIMITS.maxWakeHops) return false;
-  return !store.parseChatOrigin(message.from?.origin) && WAKE_TYPES.has(message.type);
+  if (store.parseChatOrigin(message.from?.origin)) {
+    return chatWake && message.type === "ask" && message.from?.trust?.verified === true && message.from?.trust?.owner === true;
+  }
+  return WAKE_TYPES.has(message.type);
 }
 
-const eligibleEntry = (entry) => isWakeEligible(entry.message);
+const eligibleEntry = (chatWake) => (entry) => isWakeEligible(entry.message, chatWake);
 const framed = (claimed) => claimed.map((entry) => store.frameMessage(entry.message)).join("\n\n");
 
 /** Busy channel: claimed messages follow the tool's own output. */
@@ -52,16 +56,16 @@ function hasWakeBudget(state, now) {
   return state.wakeTimes.length < store.LIMITS.wakesPerHour;
 }
 
-function canWake(bus, state, pending, now) {
+function canWake(bus, state, pending, now, chatWake) {
   if (state.status !== "idle" || now < state.wakeRetryAt) return false;
-  return pending.some(eligibleEntry) && hasWakeBudget(state, now) && canPrompt(bus.client);
+  return pending.some(eligibleEntry(chatWake)) && hasWakeBudget(state, now) && canPrompt(bus.client);
 }
 
 // The oldest batch, unless it holds nothing that may wake the session.
-function wakeBatch(pending) {
+function wakeBatch(pending, chatWake) {
   const limit = store.LIMITS.deliverPerBatch;
   const batch = pending.slice(0, limit);
-  return batch.some(eligibleEntry) ? batch : pending.filter(eligibleEntry).slice(0, limit);
+  return batch.some(eligibleEntry(chatWake)) ? batch : pending.filter(eligibleEntry(chatWake)).slice(0, limit);
 }
 
 function wakeBody(state, claimed) {
@@ -96,8 +100,9 @@ export async function deliverToIdle(bus, sessionID, state, allPending = store.pe
   const now = bus.now();
   // A reply reserved by a waiting ask call (t18897) neither wakes nor is delivered here.
   const pending = bus.unreserved(allPending);
-  if (!canWake(bus, state, pending, now)) return false;
-  const claimed = bus.claimPending(sessionID, store.LIMITS.deliverPerBatch, wakeBatch(pending));
+  const chatWake = chatWakeEnabled(bus.root, sessionID);
+  if (!canWake(bus, state, pending, now, chatWake)) return false;
+  const claimed = bus.claimPending(sessionID, store.LIMITS.deliverPerBatch, wakeBatch(pending, chatWake));
   if (claimed.length === 0) return false;
   beginWake(state, claimed, now);
   const failure = await promptSession(bus.client, sessionID, wakeBody(state, claimed));

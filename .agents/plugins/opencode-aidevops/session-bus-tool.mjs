@@ -6,6 +6,7 @@
 // from model-supplied arguments.
 
 import * as store from "./session-bus-store.mjs";
+import { setChatWake } from "./session-bus-chat-trust.mjs";
 
 const MAX_WAIT_SECONDS = 120;
 
@@ -177,6 +178,12 @@ function notifyAction(root, sender, args) {
 
 // Actions that act as the caller's root session; `show` needs no sender.
 const SENDER_ACTIONS = {
+  "chat-wake": ({ root, sender, args }) => {
+    if (!["on", "off"].includes(args.text)) throw new Error("chat-wake needs text: on|off");
+    if (args.to) throw new Error("chat-wake only changes the caller's session");
+    setChatWake(root, sender.sessionID, args.text === "on");
+    return `Chat owner wakes ${args.text} for this session.`;
+  },
   list: ({ root, sender }) => listAction(root, sender),
   send: ({ root, sender, args }) => sendAction(root, sender, args, "info").text,
   ask: ({ bus, sender, args, context }) => askAction(bus, sender, args, context),
@@ -190,7 +197,7 @@ export function createSessionBusTool(tool, bus) {
   return tool({
     description: DESCRIPTION,
     args: {
-      action: z.enum(["list", "show", "send", "ask", "reply", "inbox", "notify-when-idle"]),
+      action: z.enum(["list", "show", "send", "ask", "reply", "inbox", "notify-when-idle", "chat-wake"]),
       to: z.string().optional(),
       text: z.string().optional(),
       re: z.string().optional(),
