@@ -73,6 +73,8 @@ export HOME="$TEST_ROOT"
 LOGFILE="$TEST_ROOT/pulse.log"
 # shellcheck source=../pulse-dispatch-lib.sh
 source "$SCRIPT_DIR/../pulse-dispatch-lib.sh"
+# Keep the production fingerprint function; later sections stub the public name.
+eval "_prod$(declare -f _dispatch_negative_pr_fingerprint)"
 _dispatch_stats_increment() { return 0; }
 _dispatch_stats_increment_candidate_failed() { return 0; }
 _dispatch_mark_benign_blocked_candidate() { return 0; }
@@ -270,5 +272,29 @@ _dispatch_capability_cooldown_record "$capability_candidate" 'DISPATCH_BLOCK_REA
 changed=$(jq -c '.updatedAt = "2026-10-13T00:00:01Z"' <<<"$capability_candidate")
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$changed]")" != '[]' ]]
 printf 'PASS existing runner-capability cooldown remains independent\n'
+
+# Production snapshots omit isDraft: fall back to the exact-PR REST fingerprint.
+(
+	STUB_DIR="$TEST_ROOT/prefetch-stub"
+	mkdir -p "$STUB_DIR"
+	# shellcheck disable=SC2016  # expanded by the generated stub, not here
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$SNAPSHOT_JSON"\nexit 0\n' >"$STUB_DIR/pulse-batch-prefetch-helper.sh"
+	chmod +x "$STUB_DIR/pulse-batch-prefetch-helper.sh"
+	_PULSE_DISPATCH_LIB_DIR="$STUB_DIR"
+	timeout_sec() { shift; "$@"; return $?; }
+	gh() { printf '%s\n' "$REST_JSON"; return 0; }
+	fresh=$(jq -nr 'now | todateiso8601')
+	SNAPSHOT_JSON=$(jq -nc --arg ts "$fresh" '{complete:true,timestamp:$ts,items:[{number:123,updatedAt:"2026-10-13T00:00:00Z",headRefOid:"snap-head"}]}')
+	export SNAPSHOT_JSON
+	REST_JSON='{"state":"open","draft":true,"updated_at":"2026-10-13T00:00:00Z","head":{"sha":"rest-head"}}'
+	[[ "$(_prod_dispatch_negative_pr_fingerprint example/repo 123)" == 2026-10-13T00:00:00Z_rest-head ]]
+	# A changed REST fingerprint yields a different hint, so the cached one is rejected.
+	REST_JSON='{"state":"open","draft":true,"updated_at":"2026-10-13T00:00:01Z","head":{"sha":"new-head"}}'
+	[[ "$(_prod_dispatch_negative_pr_fingerprint example/repo 123)" == 2026-10-13T00:00:01Z_new-head ]]
+	# A ready PR is rejected.
+	REST_JSON='{"state":"open","draft":false,"updated_at":"2026-10-13T00:00:00Z","head":{"sha":"rest-head"}}'
+	if _prod_dispatch_negative_pr_fingerprint example/repo 123; then exit 1; fi
+) || exit 1
+printf 'PASS missing-isDraft snapshot falls back to REST fingerprint\n'
 
 printf 'PASS dispatch-candidate-failure-reasons\n'
