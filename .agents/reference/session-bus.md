@@ -179,7 +179,8 @@ interactive sessions (owner decision 2026-11-09).
 
 `worker-watchdog.sh --check` runs `worker-bus-relay-helper.sh relay` every 2
 minutes on launchd, systemd and cron, after its worker checks and bounded by
-`WORKER_WATCHDOG_RELAY_TIMEOUT` (default 90 s) (t18922). Pulse also starts the
+`WORKER_WATCHDOG_RELAY_TIMEOUT` (default 90 s), capped to the time the checks
+left before the 120 s service deadline minus 10 s (t18922). Pulse also starts the
 relay detached at each cycle start and on each busy-lock tick, outside the
 cycle budget (t18911). Those pulse starts alone are too sparse: the KeepAlive
 pulse supervisor runs cycles back to back, so no tick loses the instance lock

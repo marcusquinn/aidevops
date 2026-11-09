@@ -142,7 +142,9 @@ _cleanup_stale_tracking_files() {
 # cycle. This check runs every 2 minutes on launchd, systemd and cron. The
 # relay finds workers from bus presence, keeps its own single-runner lock,
 # per-worker interval and REST budget gate, and never writes to GitHub. It
-# runs after the worker checks and is bounded, so it cannot delay them.
+# runs after the worker checks and is bounded, so it cannot delay them. It
+# also gets only the time the checks left before the 120 s service deadline
+# (systemd TimeoutStartSec, launchd/cron interval), minus a 10 s margin.
 # Disable: AIDEVOPS_WORKER_BUS_RELAY=0.
 #######################################
 _check_run_bus_relay() {
@@ -151,6 +153,9 @@ _check_run_bus_relay() {
 	[[ -x "$relay_helper" ]] || return 0
 	local relay_timeout="${WORKER_WATCHDOG_RELAY_TIMEOUT:-90}"
 	[[ "$relay_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || relay_timeout=90
+	local check_remaining=$((110 - SECONDS))
+	[[ "$check_remaining" -ge 10 ]] || return 0
+	[[ "$relay_timeout" -le "$check_remaining" ]] || relay_timeout="$check_remaining"
 	timeout_sec "$relay_timeout" "$relay_helper" relay \
 		</dev/null >>"${HOME}/.aidevops/logs/worker-bus-relay.log" 2>&1 || true
 	return 0
