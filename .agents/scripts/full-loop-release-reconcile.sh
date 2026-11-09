@@ -1310,6 +1310,9 @@ _full_loop_release_dispatch_recovery() {
 	return 8
 }
 
+# Prepare a verified checkout for the requested release tag, reusing a
+# retained clean checkout when lifecycle ownership prevented its removal.
+# Args: $1=version tag; sets _FULL_LOOP_RELEASE_PATH on success.
 _full_loop_release_prepare_tag_worktree() {
 	local tag_name="$1"
 	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
@@ -1345,6 +1348,9 @@ _full_loop_release_prepare_tag_worktree() {
 	return 0
 }
 
+# Reset the active tag checkout without removing the control worktree.
+# A checkout that cannot be removed stays registered for post-exit retirement
+# and can be reused by a later prepare; clears _FULL_LOOP_RELEASE_PATH.
 _full_loop_release_reset_tag_worktree() {
 	local release_path="${_FULL_LOOP_RELEASE_PATH:-}"
 	local control_path="${_FULL_LOOP_RELEASE_CONTROL_PATH:-}"
