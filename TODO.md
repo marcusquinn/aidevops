@@ -1959,6 +1959,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18921 fix(tests): restore test-gh-shim pr edit safe-body fixture after the edit origin-label guard #auto-dispatch #bug #framework ref:GH#37374
 
+- [ ] t18922 fix(relay): run the worker bus relay on the worker-watchdog 2-minute cadence #bug #framework ref:GH#37381
+
 - [ ] t18923 fix(lifecycle): prove open-PR state from GraphQL when REST is deferred so cleanup keeps retiring worktrees #bug #framework ref:GH#37385
 
 ## In Progress
