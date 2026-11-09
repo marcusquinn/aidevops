@@ -109,6 +109,39 @@ approval it describes.
 - Do not delete or exempt an existing comment to restore approval. Preserve the
   content-binding failure and follow the normal approval path.
 
+### PR-less review-triage completion (GH#37431)
+
+For trusted generated `## Unactioned Review Feedback` issues from
+`quality-feedback-helper.sh scan-merged`, a false/obsolete inline finding can be
+resolved without claiming implementation delivery. This version supports exactly
+one captured finding (`**Findings**: 1` and one `[View comment]` link); the fetched
+review URL and full body must match that captured finding. Issues with appended
+`Additional Review Feedback` comments are not eligible for this version. Investigate first;
+do not use this contract for implementation work or unresolved feedback.
+Post one trusted comment before closing the assigned issue. Its first line is
+`<!-- aidevops:review-triage-completion:v1 -->`; its second line is a JSON object:
+
+```json
+{"schema":1,"repository":"owner/repo","issue":123,"attempt_id":"current-attempt","attempt_started_at":"current-19-digit-nanosecond-start","disposition":"obsolete","source_pr":100,"review_comment_id":456,"evidence_pr":101,"path":"src/example.sh","blob":"40-character-git-blob-sha","rationale":"Explain why every captured finding is obsolete or false, citing the reviewed code."}
+```
+
+Use runtime-provided attempt values, not invented IDs. `disposition` is `obsolete`
+or `premise_falsified`. The inline review must belong to the generated Source PR
+and File; the supporting merged PR must deliver that file/blob, still present on
+live default. For an original false positive, the source PR itself can supply
+that code evidence. The rationale is the trusted triager's semantic judgment;
+the runtime independently fetches the review, merged PR files and live blob,
+not a model's `verified` assertion. Unsupported review shapes remain rejected.
+
+The comment's forge author must be OWNER/MEMBER/COLLABORATOR, the authenticated
+runner identity, and the actual closer; the trusted generated issue must be
+closed as completed or not planned. Receipt creation must be in the current
+attempt and its last edit no later than closure. No ordinary closed-issue
+exemption applies. Permission/provider failures retain their existing precedence.
+Untracked/dirty files, unpublished commits, orphan remote branches and branch
+PRs still prohibit this outcome. Only successful verification reconciles labels.
+Historical witnesses/metrics must not be rewritten to manufacture this receipt.
+
 ### Missing Files Scope (GH#33243)
 
 The pulse dispatches trusted-author briefs that have no canonical Files Scope
