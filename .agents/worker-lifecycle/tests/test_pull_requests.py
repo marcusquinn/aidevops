@@ -202,6 +202,17 @@ class ForkPullRequestContract(unittest.TestCase):
                 self.graphql_pages = pages
                 self.assertEqual(self.hold()[0], "pull-request-state-unavailable")
 
+    def test_repeated_graphql_cursor_fails_after_second_page(self):
+        self.responses["repos/contributor/fork"] = subprocess.CalledProcessError(75, ["gh"])
+        self.graphql_pages = {
+            ("contributor/fork", None): self.graphql_page([], cursor="c1"),
+            ("contributor/fork", "c1"): self.graphql_page([], cursor="c1"),
+        }
+        with patch.object(pull_requests.subprocess, "run", side_effect=self.api) as calls:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pull_requests.open_pull_requests("contributor/fork")
+        self.assertEqual(calls.call_count, 3)  # One REST call and two GraphQL pages.
+
     def test_malformed_rest_evidence_does_not_fall_back(self):
         self.responses["repos/contributor/fork"] = {"fork": "yes"}
         self.graphql_pages = {("contributor/fork", None): self.graphql_page([])}
