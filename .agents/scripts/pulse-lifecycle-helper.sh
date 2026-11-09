@@ -757,7 +757,11 @@ _pulse_pid_is_async_housekeeping() {
 	[[ "$_pid" =~ ^[0-9]+$ && -f "$_pid_file" ]] || return 1
 	IFS= read -r _lock_pid <"$_pid_file" 2>/dev/null || true
 	[[ "$_lock_pid" =~ ^[0-9]+$ && "$_lock_pid" == "$_pid" ]] || return 1
-	_written=$(stat -c %Y "$_pid_file" 2>/dev/null) || _written=$(stat -f %m "$_pid_file" 2>/dev/null) || return 1
+	if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+		# shellcheck source=./portable-stat.sh
+		source "${BASH_SOURCE[0]%/*}/portable-stat.sh" || return 1
+	fi
+	_written=$(_file_mtime_epoch "$_pid_file") || return 1
 	_age=$(_pulse_process_age_seconds "$_pid") || return 1
 	_now=$(date +%s 2>/dev/null) || return 1
 	[[ "$_written" =~ ^[0-9]+$ && "$_now" =~ ^[0-9]+$ ]] || return 1
