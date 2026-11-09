@@ -37,14 +37,35 @@ class ForkPullRequestContract(unittest.TestCase):
             "repos/contributor/fork/pulls?state=open&per_page=100": [[]],
             "repos/upstream/project/pulls?state=open&per_page=100": [[]],
         }
+        # GraphQL fallback pages keyed by (slug, cursor); absent means failure.
+        self.graphql_pages = {}
 
     def git(self, *arguments):
         return _git("-C", str(self.path), *arguments)
+
+    def graphql(self, argv):
+        fields = dict(argv[index + 1].split("=", 1)
+                      for index in range(3, len(argv), 2) if argv[index] == "-f")
+        key = (f"{fields['owner']}/{fields['name']}", fields.get("cursor"))
+        response = self.graphql_pages.get(key)
+        if response is None:
+            raise subprocess.CalledProcessError(1, argv[:3])
+        return subprocess.CompletedProcess(argv, 0, json.dumps(response))
+
+    def graphql_page(self, nodes, fork=None, cursor=None):
+        return {"data": {"repository": {
+            "isFork": fork is not None,
+            "parent": {"nameWithOwner": fork} if fork else None,
+            "pullRequests": {"pageInfo": {"hasNextPage": cursor is not None,
+                                          "endCursor": cursor},
+                             "nodes": nodes}}}}
 
     def api(self, argv, **kwargs):
         self.assertEqual(argv[:2], ["gh", "api"])
         self.assertTrue(kwargs["check"])
         self.assertEqual(kwargs["timeout"], 60)
+        if argv[2] == "graphql":
+            return self.graphql(argv)
         if "/pulls?" in argv[-1]:
             self.assertEqual(argv[2:4], ["--paginate", "--slurp"])
         response = self.responses[argv[-1]]
@@ -148,6 +169,45 @@ class ForkPullRequestContract(unittest.TestCase):
                 self.responses[endpoint] = response
                 self.assertEqual(self.hold()[0], "pull-request-state-unavailable")
                 self.responses[endpoint] = original
+
+    def test_rest_deferral_uses_complete_graphql_evidence(self):
+        self.responses["repos/contributor/fork"] = subprocess.CalledProcessError(75, ["gh"])
+        match = {"headRefName": "other", "headRefOid": self.head, "headRepository": None}
+        self.graphql_pages = {
+            ("contributor/fork", None): self.graphql_page([], fork="upstream/project"),
+            ("upstream/project", None): self.graphql_page([], cursor="c1"),
+            ("upstream/project", "c1"): self.graphql_page([match]),
+        }
+        self.assertEqual(self.hold()[0], "open-pull-request")
+        match["headRefOid"] = "other-sha"
+        self.assertIsNone(self.hold()[0])
+        match["headRefName"] = "topic"
+        match["headRepository"] = {"nameWithOwner": "Contributor/Fork"}
+        self.assertEqual(self.hold()[0], "open-pull-request")
+
+    def test_incomplete_or_malformed_graphql_fallback_holds(self):
+        self.responses["repos/contributor/fork"] = subprocess.TimeoutExpired(["gh"], 60)
+        fork = ("contributor/fork", None)
+        upstream = ("upstream/project", None)
+        cases = [
+            {fork: self.graphql_page([], fork="upstream/project")},
+            {fork: self.graphql_page([], fork="upstream/project"),
+             upstream: self.graphql_page([], cursor="")},
+            {fork: self.graphql_page([{"headRefName": "", "headRefOid": "x"}])},
+            {fork: {"errors": [{"message": "x"}], "data": None}},
+            {fork: self.graphql_page([], fork="../bad")},
+        ]
+        for pages in cases:
+            with self.subTest(pages=pages):
+                self.graphql_pages = pages
+                self.assertEqual(self.hold()[0], "pull-request-state-unavailable")
+
+    def test_malformed_rest_evidence_does_not_fall_back(self):
+        self.responses["repos/contributor/fork"] = {"fork": "yes"}
+        self.graphql_pages = {("contributor/fork", None): self.graphql_page([])}
+        reason, endpoints = self.hold()
+        self.assertEqual(reason, "pull-request-state-unavailable")
+        self.assertEqual(endpoints, ["repos/contributor/fork"])
 
     def test_no_remotes_does_not_query_api(self):
         self.git("remote", "remove", "origin")
