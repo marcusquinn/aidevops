@@ -14,6 +14,8 @@ usage() {
 	printf 'Usage: gh-write-helper.sh {issue|pr} create [gh create options]\n'
 	printf '       gh-write-helper.sh {issue|pr} edit <number-or-url> [gh edit options]\n'
 	printf '       gh-write-helper.sh {issue|pr} comment <number-or-url> [gh comment options]\n'
+	printf '         (--edit-last/--delete-last/--create-if-none are refused; use comment-edit)\n'
+	printf '       gh-write-helper.sh {issue|pr} comment-edit <comment-id> --repo <owner/repo> --body-file <file> [--target <number>]\n'
 	printf '       gh-write-helper.sh issue review-handoff <number> --repo <owner/repo> --pr <number>\n'
 	printf '       gh-write-helper.sh issue status <number> --repo <owner/repo> <status>\n'
 	printf '         (status: available|queued|claimed|in-progress|in-review|done|blocked)\n'
@@ -105,6 +107,71 @@ _issue_edit_signed() {
 	return $?
 }
 
+# GH#37406: edit exactly one comment by ID. Refuses comments not authored by
+# the authenticated user or, with --target, not on that issue/PR; then applies
+# the same signature and privacy guards as comment creation.
+_comment_edit_usage() {
+	printf 'Usage: gh-write-helper.sh {issue|pr} comment-edit <comment-id> --repo <owner/repo> --body-file <file> [--target <number>]\n' >&2
+	return 2
+}
+
+_comment_edit() {
+	local comment_id="${1:-}"
+	local repo="" target="" body_file=""
+	[[ "$comment_id" =~ ^[1-9][0-9]*$ ]] || { _comment_edit_usage; return 2; }
+	shift
+	while [[ $# -gt 0 ]]; do
+		local option="$1"
+		case "$option" in
+		--repo | -R) repo="${2:-}"; [[ $# -ge 2 ]] || return 2; shift 2 ;;
+		--repo=*) repo="${option#--repo=}"; shift ;;
+		--target) target="${2:-}"; [[ $# -ge 2 ]] || return 2; shift 2 ;;
+		--target=*) target="${option#--target=}"; shift ;;
+		--body-file) body_file="${2:-}"; [[ $# -ge 2 ]] || return 2; shift 2 ;;
+		--body-file=*) body_file="${option#--body-file=}"; shift ;;
+		*) _comment_edit_usage; return 2 ;;
+		esac
+	done
+	if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ || -z "$body_file" ]] ||
+		[[ -n "$target" && ! "$target" =~ ^[1-9][0-9]*$ ]]; then
+		_comment_edit_usage
+		return 2
+	fi
+
+	local endpoint="repos/${repo}/issues/comments/${comment_id}"
+	local meta="" author="" parent="" viewer="" read_rc=0
+	meta=$(gh api "$endpoint" --jq '[.user.login, (.issue_url | split("/") | last)] | @tsv') || read_rc=$?
+	if [[ "$read_rc" -eq 75 ]]; then
+		printf 'comment %s not checked: GitHub read deferred by rate pacing; retry later\n' "$comment_id" >&2
+		return 75
+	elif [[ "$read_rc" -ne 0 ]]; then
+		printf 'comment %s not found or unreadable in %s\n' "$comment_id" "$repo" >&2
+		return 1
+	fi
+	IFS=$'\t' read -r author parent <<<"$meta"
+	viewer=$(gh api user --jq .login) || return 1
+	if [[ -z "$author" || "$author" != "$viewer" ]]; then
+		printf 'refusing to edit comment %s: author %s is not %s\n' "$comment_id" "${author:-unknown}" "$viewer" >&2
+		return 1
+	fi
+	if [[ -n "$target" && "$parent" != "$target" ]]; then
+		printf 'refusing to edit comment %s: it belongs to #%s, not #%s\n' "$comment_id" "$parent" "$target" >&2
+		return 1
+	fi
+
+	_gh_wrapper_enter_cleanup_scope
+	_gh_wrapper_normalize_stdin_body_file --repo "$repo" --body-file "$body_file" || return 1
+	set -- "${_GH_WRAPPER_BODY_FILE_ARGS[@]}"
+	_gh_validate_edit_args "$@" || return 1
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	_gh_guard_public_write_args "$@" || return 1
+	local signed_file="${4:-}"
+	[[ "${3:-}" == "--body-file" && -f "$signed_file" ]] || return 1
+	_gh_with_timeout write gh api -X PATCH "$endpoint" -F "body=@${signed_file}" --jq .html_url || return 1
+	return 0
+}
+
 main() {
 	local resource="${1:-}"
 	local action="${2:-}"
@@ -120,7 +187,7 @@ main() {
 		return $?
 	fi
 	if [[ "$action" != "create" && "$action" != "edit" && "$action" != "comment" &&
-		"$action" != "review-handoff" && "$action" != "status" ]]; then
+		"$action" != "comment-edit" && "$action" != "review-handoff" && "$action" != "status" ]]; then
 		usage >&2
 		return 2
 	fi
@@ -172,6 +239,7 @@ main() {
 	issue:review-handoff) _issue_review_handoff "$@" ;;
 	issue:status) _issue_status "$@" ;;
 	issue:comment) gh_issue_comment "$@" ;;
+	issue:comment-edit | pr:comment-edit) _comment_edit "$@" ;;
 	pr:create) gh_create_pr "$@" ;;
 	pr:edit) gh_pr_edit_safe "$@" ;;
 	pr:comment) gh_pr_comment "$@" ;;

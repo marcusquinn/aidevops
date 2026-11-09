@@ -90,6 +90,11 @@ their existing behavior.
   comment` or `gh-write-helper.sh pr comment`. Use `--body-file -` for streamed
   bodies; the executable loads the audited create/edit/comment wrappers
   internally without caller-side `source`.
+- Edit comments by exact ID only: `gh-write-helper.sh issue|pr comment-edit
+  <comment-id> --repo owner/repo --body-file /abs/body.md [--target N]`. It
+  refuses comments you did not author or that sit on another issue/PR. Never use
+  `--edit-last`/`--delete-last`/`--create-if-none`: gh selects "last" from only
+  the first 100 comments, so the wrappers and shim refuse them (GH#37406).
 - In OpenCode, prefer this executable over sourcing shell functions or using
   `bash -c`. Write the body file in a separate tool call, then run one argv-only
   command: `gh-write-helper.sh issue create --repo owner/repo --title 'Issue title' --body-file /absolute/path/brief.md --label bug --assignee @me`.
