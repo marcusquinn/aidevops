@@ -31,6 +31,7 @@ from gh_native_response import (
     _response_metadata,
     _value_option as _value_option,
     included_headers,
+    request_labels,
     request_shape,
 )
 from gh_transport_identity import resolve_owner_proof
@@ -242,6 +243,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
             observed = _response_metadata(status, headers, authenticated)
             observed["auth_fingerprint"] = _attribution_fingerprint(host, environment.get("GH_TOKEN", ""))
             observed["sampled_at"] = sampled_at
+            observed.update(request_labels(args))
             metadata.write_text(json.dumps(observed), encoding="utf-8")
             phase("response_framing")
             return _exit_status(rc)

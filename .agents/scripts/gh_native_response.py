@@ -83,6 +83,26 @@ def request_shape(args: list[str]) -> tuple[str, str, bool, bool] | None:
         return None
 
 
+def request_labels(args: list[str]) -> dict[str, str]:
+    """Return static method/class/family labels; the endpoint itself is discarded.
+
+    The governor does not capture GH_DEBUG request lines, so derive the same
+    allowlisted labels from the already-validated GET-only `gh api` argv.
+    """
+    try:
+        from gh_quota_debug_request import _endpoint_class, _endpoint_family
+
+        endpoint, _ = _request_options(args[1:])
+        target = b"/" + endpoint.encode("utf-8", errors="ignore")
+        return {
+            "request_method": "GET",
+            "endpoint_class": _endpoint_class(target),
+            "endpoint_family": _endpoint_family(target),
+        }
+    except (ImportError, ValueError, StopIteration):
+        return {}
+
+
 def included_headers(stream) -> tuple[int, dict[str, str], int]:
     stream.seek(0)
     first = stream.readline(8192)
