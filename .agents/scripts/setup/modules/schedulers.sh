@@ -461,6 +461,10 @@ MONITOR_PLIST
 # input timestamp so the profile README can show input activity under the
 # same 5-minute idle rule as Linux. Runs the helper directly (no login shell)
 # because it fires every minute; silent on success.
+# Standard ProcessType, not Background: the Darwin background policy starved
+# this ~50 ms job on a loaded Mac (no output within 240 s at load ~50), so
+# HIDIdleTime reads failed and input went unrecorded exactly while the user
+# was busiest (GH#37588). Nice 10 keeps it polite without missing samples.
 _setup_screen_activity_sampler_darwin() {
 	local st_script="$1"
 	local sa_label="sh.aidevops.screen-activity-sampler"
@@ -503,9 +507,7 @@ _setup_screen_activity_sampler_darwin() {
 	<key>KeepAlive</key>
 	<false/>
 	<key>ProcessType</key>
-	<string>Background</string>
-	<key>LowPriorityBackgroundIO</key>
-	<true/>
+	<string>Standard</string>
 	<key>Nice</key>
 	<integer>10</integer>
 </dict>

@@ -132,11 +132,12 @@ _should_setup_noninteractive_complexity_scan() {
 	return 1
 }
 
-# Linux has no OS screen-time store: the profile README's screen-time row is
-# measured only by the per-minute input-activity sampler that
-# setup_screen_time_snapshot installs. Installs that publish a profile README
-# but never got the snapshot timer would otherwise stay "unavailable" forever
-# under the generic regenerate-if-installed gate (GH#36709).
+# The profile README's input-activity rows are measured only by the
+# per-minute sampler that setup_screen_time_snapshot installs: on Linux it is
+# the screen-time row (no OS store), on macOS the "Input activity (Mac)" row
+# (GH#37496). Installs that publish a profile README but never got the
+# snapshot scheduler would otherwise stay "unavailable" forever under the
+# generic regenerate-if-installed gate (GH#36709).
 _should_setup_noninteractive_screen_time() {
 	if _should_setup_noninteractive_scheduler \
 		"Screen time" \
@@ -146,9 +147,19 @@ _should_setup_noninteractive_screen_time() {
 		return 0
 	fi
 
-	# Profile-README-dependency escape hatch (Linux only; macOS reads the
-	# Knowledge DB directly at render time).
-	if [[ "$(uname -s)" == "Linux" ]] && _should_setup_noninteractive_scheduler \
+	# An installed sampler must be refreshed even when the snapshot scheduler
+	# is missing or failed to load; otherwise it keeps a stale definition
+	# (GH#37588: the Background ProcessType starved the macOS sampler).
+	if _should_setup_noninteractive_scheduler \
+		"Screen activity sampler" \
+		"sh.aidevops.screen-activity-sampler" \
+		"aidevops: screen-activity-sampler" \
+		"aidevops-screen-activity-sampler"; then
+		return 0
+	fi
+
+	# Profile-README-dependency escape hatch (all platforms; see above).
+	if _should_setup_noninteractive_scheduler \
 		"Profile README" \
 		"sh.aidevops.profile-readme-update" \
 		"aidevops: profile-readme-update" \
