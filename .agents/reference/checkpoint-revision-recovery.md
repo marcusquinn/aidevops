@@ -100,11 +100,24 @@ terminal lease is ignored, GH#33839), Pulse routes the draft by release reason:
   older than `AIDEVOPS_PCC_ATTENTION_REARM_SECONDS` (default 43200 = 12h; `0`
   disables), a runner that authored no claim, lease, launch or release after
   the head commit logs `STALLED_CHECKPOINT_REARMED` and makes one exact-head
-  continuation. Runners that already tried the head stay paused, so one stall
-  cannot freeze the work for every runner. A new head re-arms one continuation,
+  continuation. Runners that already tried the head get a fleet re-arm
+  (GH#37514): one exact-head continuation per window, anchored on the newer of
+  the attention record and the latest stall release. The window is the re-arm
+  interval, doubled for each further stall of the head (at most 2^6 times);
+  the log line carries `mode=fleet window=<seconds>s`. The winner's fenced
+  claim owns the draft, so other runners in the same window launch nothing.
+  A new head re-arms one continuation,
   until a per-PR fuse (`AIDEVOPS_PCC_MAX_PR_RELEASES`, default 6 eligible
   releases since PR creation) posts one attention record per PR instead; later
   heads and aged records never re-arm continuation or repeat that record.
+  To resume sooner, or after the fuse, a maintainer publishes the line printed
+  by the `approval-template` command named in the attention record. Stall-class
+  releases (stall/timeout, `stale_assignment_reset`, `worker_ownership_lost`,
+  `worker_noop_zero_output`, `worker_incomplete_exit`) and a continuation's
+  `clean`/`worker_complete` exit are approvable closures; the released attempt
+  is the single ready lease before the release, so Pulse may release another
+  runner's stale attempt. The worker's own `worker_draft_checkpoint` handoff,
+  `capability_limit` and the push/network policy timeouts are not.
 - **Runner capability** (`blocked` with `runner_capability_unmet`): see GH#34758.
   A capable runner continues the head.
 - **Every other reason except `blocked`** (for example `capability_limit`):
