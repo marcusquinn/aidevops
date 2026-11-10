@@ -30,7 +30,8 @@ def delivery_exempt(row, reserved):
     if os.environ.get("AIDEVOPS_GH_ADMISSION_CLASS", "") != DELIVERY_CLASS:
         return False
     limit = row[4] if row[4] and row[4] > 0 else row[0]
-    return row[0] - reserved >= max(1, limit // DELIVERY_FLOOR_DIVISOR)
+    # Ceiling division: a 30-point search window needs 8 usable points, not 7.
+    return row[0] - reserved >= max(1, -(-limit // DELIVERY_FLOOR_DIVISOR))
 
 
 def capacity_wait(budget, resource, row, reserved, now):
