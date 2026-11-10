@@ -4,6 +4,7 @@
 """Capture OpenCode's terminal render without changing the live session DB."""
 
 import argparse
+import codecs
 from contextlib import closing, suppress
 import errno
 import fcntl
@@ -75,8 +76,11 @@ def read_render(fd, seconds, interactive=False):
             for query, response in ((b"\x1b[c", b"\x1b[?1;2c"),
                                     (b"\x1b[?u", b"\x1b[?0u"),
                                     (b"\x1b[14t", b"\x1b[4;800;1200t")):
-                if query in queries:
+                for _ in range(queries.count(query)):
                     os.write(fd, response)
+                queries = queries.replace(query, b"")
+            for query in re.finditer(rb"\x1bP\+q([0-9a-fA-F;]*)\x1b\\", queries):
+                os.write(fd, b"\x1bP0+r" + query.group(1) + b"\x1b\\")
         query_tail = re.sub(rb"\x1b\[\??6n", b"", queries)[-4:]
     return b"".join(chunks)
 
@@ -134,7 +138,8 @@ def capture(args, data_dir):
             os.write(fd, f"\x1b[<0;{col};{row}m".encode())
             raw = read_render(fd, args.seconds * 0.4, interactive=True)
             if args.keys is not None:
-                keys = args.keys.encode("utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8")
+                keys = re.sub(r"\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|[0-7]{1,3}|.)",
+                              lambda match: codecs.decode(match.group(), "unicode_escape"), args.keys)
                 os.write(fd, keys.encode("utf-8"))
                 raw += read_render(fd, args.seconds * 0.4, interactive=True)
         waited, status = os.waitpid(pid, os.WNOHANG)
