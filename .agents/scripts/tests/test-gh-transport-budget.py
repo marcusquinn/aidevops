@@ -8,6 +8,7 @@ import io
 import json
 import os
 import select
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -46,9 +47,12 @@ class ProcessBirthTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "linux", "requires Linux procfs")
     def test_linux_preserves_legacy_identity_without_subprocess(self):
         pid = os.getpid()
-        legacy = hashlib.sha256(subprocess.check_output(
-            ["ps", "-p", str(pid), "-o", "lstart="],
-        ).strip()).hexdigest()
+        ps = shutil.which("ps")
+        self.assertIsNotNone(ps, "legacy identity comparison requires native ps")
+        output = subprocess.check_output(  # nosec B603 -- resolved native ps, fixed options and this process's numeric PID; no shell
+            [ps, "-p", str(pid), "-o", "lstart="], timeout=2,
+        )
+        legacy = hashlib.sha256(output.strip()).hexdigest()
         with patch("gh_transport_budget.subprocess.check_output", side_effect=AssertionError("fork")):
             self.assertEqual(process_birth(pid), legacy)
             self.assertEqual(process_birth(-1), "")
