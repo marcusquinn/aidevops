@@ -105,6 +105,63 @@ _hrff_attempt_activity_count() {
 	return 0
 }
 
+#######################################
+# GH#37527: snapshot attempt activity from an isolated DB before finalization
+# merges or discards it. Ephemeral roles discard the DB and a failed merge keeps
+# the rows out of the shared DB, so a later shared-DB read would report a false
+# zero. Snapshots accumulate across invocations bound to one attempt start.
+# Args: $1 = isolated DB path. Unreadable evidence records no snapshot.
+#######################################
+_hrff_snapshot_attempt_activity() {
+	local db_path="$1"
+	local start_epoch_ms="${_WORKER_START_EPOCH_MS:-0}"
+	local count=""
+	[[ "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 ]] || return 0
+	count=$(_hrff_attempt_activity_count "$db_path" "$start_epoch_ms" "${_WORKER_PERSISTED_SESSION_ID:-}") || return 0
+	if [[ "${_WORKER_ATTEMPT_ACTIVITY_START_MS:-}" != "$start_epoch_ms" ||
+		! "${_WORKER_ATTEMPT_ACTIVITY_COUNT:-}" =~ ^[0-9]+$ ]]; then
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=0
+	fi
+	_WORKER_ATTEMPT_ACTIVITY_COUNT=$((_WORKER_ATTEMPT_ACTIVITY_COUNT + count))
+	_WORKER_ATTEMPT_ACTIVITY_START_MS="$start_epoch_ms"
+	return 0
+}
+
+#######################################
+# Resolve attempt activity: the live isolated DB plus finalized snapshots. The
+# shared DB is read only when no isolated DB or snapshot exists for this start.
+# Args: $1 = attempt start epoch ms, $2 = persisted session ID.
+# Outputs a non-negative integer, or returns 1 when evidence is unavailable.
+#######################################
+_hrff_resolved_attempt_activity_count() {
+	local start_epoch_ms="$1"
+	local persisted_session_id="${2:-}"
+	local isolated_db="${_WORKER_ISOLATED_DB_PATH:-}"
+	local shared_db="${HOME}/.local/share/opencode/opencode.db"
+	local snapshot=0
+	local has_snapshot=0
+	local count=""
+	[[ "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 ]] || return 1
+	if [[ "${_WORKER_ATTEMPT_ACTIVITY_START_MS:-}" == "$start_epoch_ms" &&
+		"${_WORKER_ATTEMPT_ACTIVITY_COUNT:-}" =~ ^[0-9]+$ ]]; then
+		snapshot="$_WORKER_ATTEMPT_ACTIVITY_COUNT"
+		has_snapshot=1
+	fi
+	if [[ -n "$isolated_db" && -f "$isolated_db" ]]; then
+		count=$(_hrff_attempt_activity_count "$isolated_db" "$start_epoch_ms" "$persisted_session_id") || count=""
+	elif [[ "$has_snapshot" -eq 0 ]]; then
+		count=$(_hrff_attempt_activity_count "$shared_db" "$start_epoch_ms" "$persisted_session_id") || count=""
+	else
+		count=0
+	fi
+	if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+		[[ "$has_snapshot" -eq 1 ]] || return 1
+		count=0
+	fi
+	printf '%s\n' "$((count + snapshot))"
+	return 0
+}
+
 _HRFF_RATELIMIT_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_HRFF_RATELIMIT_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_RATELIMIT_DIR="."
 # shellcheck source=headless-runtime-failure-ratelimit.sh
@@ -1119,16 +1176,13 @@ classify_worker_exit() {
 	# directly here ensures the reason is authoritative from the trap rather
 	# than inferred later from orphan-worktree state.
 	if [[ "$wait_status" == "0" ]]; then
-		local _shared_db_zo="${HOME}/.local/share/opencode/opencode.db"
-		local _db_zo="${_WORKER_ISOLATED_DB_PATH:-}"
-		[[ -z "$_db_zo" || ! -f "$_db_zo" ]] && _db_zo="$_shared_db_zo"
-		if [[ -f "$_db_zo" && "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 ]]; then
-			local _cnt_zo=""
-			_cnt_zo=$(_hrff_attempt_activity_count "$_db_zo" "$start_epoch_ms" "$persisted_session_id") || _cnt_zo=""
-			if [[ "$_cnt_zo" =~ ^[0-9]+$ && "$_cnt_zo" -eq 0 ]]; then
-				printf '%s' "worker_noop_zero_output"
-				return 0
-			fi
+		# GH#37527: finalization may already have discarded or failed to merge
+		# the isolated DB; the resolver prefers its pre-finalization snapshot.
+		local _cnt_zo=""
+		_cnt_zo=$(_hrff_resolved_attempt_activity_count "$start_epoch_ms" "$persisted_session_id") || _cnt_zo=""
+		if [[ "$_cnt_zo" =~ ^[0-9]+$ && "$_cnt_zo" -eq 0 ]]; then
+			printf '%s' "worker_noop_zero_output"
+			return 0
 		fi
 		printf '%s' "clean"
 		return 0
@@ -1511,14 +1565,9 @@ _hrff_retry_class_for_reason() {
 #######################################
 _hrff_worker_session_count() {
 	local start_epoch_ms="${_WORKER_START_EPOCH_MS:-0}"
-	local active_db="${_WORKER_ISOLATED_DB_PATH:-}"
-	local shared_db="${HOME}/.local/share/opencode/opencode.db"
 	local persisted_session_id="${_WORKER_PERSISTED_SESSION_ID:-}"
 	local count="0"
-	[[ -n "$active_db" && -f "$active_db" ]] || active_db="$shared_db"
-	if [[ -f "$active_db" && "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 ]]; then
-		count=$(_hrff_attempt_activity_count "$active_db" "$start_epoch_ms" "$persisted_session_id") || count="0"
-	fi
+	count=$(_hrff_resolved_attempt_activity_count "$start_epoch_ms" "$persisted_session_id") || count="0"
 	[[ "$count" =~ ^[0-9]+$ ]] || count="0"
 	printf '%s\n' "$count"
 	return 0
@@ -1940,14 +1989,9 @@ _exit_trap_handler() {
 			fi
 
 			# Re-read session count for the enriched comment (best-effort)
-			local _db="${_WORKER_ISOLATED_DB_PATH:-}"
-			local _shared="${HOME}/.local/share/opencode/opencode.db"
-			[[ -z "$_db" || ! -f "$_db" ]] && _db="$_shared"
-			if [[ -f "$_db" && "$_start_ms" =~ ^[0-9]+$ ]] && ((_start_ms > 0)); then
-				local _cnt=""
-				_cnt=$(_hrff_attempt_activity_count "$_db" "$_start_ms" "${_WORKER_PERSISTED_SESSION_ID:-}") || _cnt=""
-				[[ "$_cnt" =~ ^[0-9]+$ ]] && session_count="$_cnt"
-			fi
+			local _cnt=""
+			_cnt=$(_hrff_resolved_attempt_activity_count "$_start_ms" "${_WORKER_PERSISTED_SESSION_ID:-}") || _cnt=""
+			[[ "$_cnt" =~ ^[0-9]+$ ]] && session_count="$_cnt"
 		else
 			print_warning "[exit-trap] classify_worker_exit not available — using process_exit fallback"
 		fi

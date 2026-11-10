@@ -235,6 +235,55 @@ test_clean_exit_fresh_session_with_assistant_part() {
 	return 0
 }
 
+# GH#37527: finalization discards an ephemeral isolated DB (or a failed merge
+# keeps its rows out of the shared DB) and clears _WORKER_ISOLATED_DB_PATH
+# before the EXIT trap runs. The pre-finalization snapshot must prevail over a
+# shared DB that lacks this attempt's activity; zero snapshots stay no-op.
+test_clean_exit_discarded_isolated_db_uses_snapshot() {
+	local home_dir="${TMPDIR_TEST}/discarded-home"
+	local iso_dir="${TMPDIR_TEST}/discarded-iso/opencode"
+	mkdir -p "${home_dir}/.local/share/opencode" "$iso_dir"
+	_make_db "${home_dir}/.local/share/opencode/opencode.db"
+	_make_db "${iso_dir}/opencode.db"
+	local start_ms
+	start_ms=$(_now_ms)
+	_insert_session "${iso_dir}/opencode.db" "$start_ms" "discarded-session"
+	_insert_assistant_message "${iso_dir}/opencode.db" "discarded-session" "$start_ms"
+
+	local result count zero_result stale_result
+	result=$(
+		HOME="$home_dir"
+		_WORKER_START_EPOCH_MS="$start_ms"
+		_hrff_snapshot_attempt_activity "${iso_dir}/opencode.db"
+		rm -rf "${TMPDIR_TEST}/discarded-iso"
+		_WORKER_ISOLATED_DB_PATH=""
+		printf '%s|%s' "$(classify_worker_exit 0 "$start_ms")" "$(_hrff_worker_session_count)"
+	)
+	count="${result#*|}"
+	result="${result%%|*}"
+	zero_result=$(
+		HOME="$home_dir"
+		_WORKER_START_EPOCH_MS="$start_ms"
+		_WORKER_ATTEMPT_ACTIVITY_START_MS="$start_ms"
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=0
+		_WORKER_ISOLATED_DB_PATH=""
+		classify_worker_exit 0 "$start_ms"
+	)
+	stale_result=$(
+		HOME="$home_dir"
+		_WORKER_ATTEMPT_ACTIVITY_START_MS=1
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=5
+		_WORKER_ISOLATED_DB_PATH=""
+		classify_worker_exit 0 "$start_ms"
+	)
+
+	assert_eq "clean (discarded isolated DB snapshot had activity)" "$result" "clean"
+	assert_eq "discarded isolated DB snapshot activity count" "$count" "1"
+	assert_eq "worker_noop_zero_output (discarded isolated DB snapshot was zero)" "$zero_result" "worker_noop_zero_output"
+	assert_eq "worker_noop_zero_output (stale snapshot from another attempt ignored)" "$stale_result" "worker_noop_zero_output"
+	return 0
+}
+
 test_clean_retry_class_requires_typed_terminal_outcome() {
 	local clean_class=""
 	local complete_class=""
@@ -971,6 +1020,7 @@ main() {
 	test_clean_exit_with_boot_session_only
 	test_clean_exit_fresh_session_with_assistant_message
 	test_clean_exit_fresh_session_with_assistant_part
+	test_clean_exit_discarded_isolated_db_uses_snapshot
 	test_clean_retry_class_requires_typed_terminal_outcome
 	test_exit_trap_terminal_accounting
 	test_clean_exit_session_before_start
