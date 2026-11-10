@@ -216,15 +216,17 @@ for i in 1 2 3; do
 	_h record-outcome no_worker_process "owner/repo#$i" >/dev/null 2>&1
 done
 [[ -f "$RUNNER_HEALTH_ADVISORY_FILE" ]] && advisory_count=1 || advisory_count=0
-mtime1=$(stat -f '%m' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
-	|| stat -c '%Y' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
+# GNU first: on Linux `stat -f` succeeds with filesystem stats (free blocks
+# drift between calls), so the BSD form must only be the fallback.
+mtime1=$(stat -c '%Y' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
+	|| stat -f '%m' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
 	|| echo "0")
 sleep 1
 # Trigger another outcome — but breaker already tripped so trip path
 # shouldn't fire again. Record outcome won't re-trip a tripped breaker.
 _h record-outcome no_worker_process owner/repo#4 >/dev/null 2>&1
-mtime2=$(stat -f '%m' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
-	|| stat -c '%Y' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
+mtime2=$(stat -c '%Y' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
+	|| stat -f '%m' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
 	|| echo "0")
 if [[ "$advisory_count" -eq 1 && "$mtime1" == "$mtime2" ]]; then
 	print_result "advisory file written once on trip, not regenerated on subsequent records" "PASS"
@@ -336,6 +338,22 @@ if [[ "$issue_rc" -eq 0 ]]; then
 	print_result "issue signing failure still trips immediately after routine outcomes" "PASS"
 else
 	print_result "issue signing failure still trips immediately after routine outcomes" "FAIL" "paused_rc=$issue_rc"
+fi
+_teardown_sandbox
+
+# --- Test 14b: post-activity continuation signing failure is audit-only (GH#37597) ---
+_setup_sandbox
+_h record-outcome no_worker_process owner/repo#1 >/dev/null 2>&1
+_h record-outcome worker_signing_unavailable_after_activity owner/repo#1 >/dev/null 2>&1
+continuation_rc=0
+_h is-paused || continuation_rc=$?
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+entries=$(jq '[.last_outcomes[] | select(.signal == "worker_signing_unavailable_after_activity")] | length' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$continuation_rc" -eq 1 && "$counter" -eq 1 && "$entries" -eq 1 ]]; then
+	print_result "post-activity continuation signing failure is audited without tripping" "PASS"
+else
+	print_result "post-activity continuation signing failure is audited without tripping" "FAIL" \
+		"paused_rc=$continuation_rc counter=$counter ledger_entries=$entries"
 fi
 _teardown_sandbox
 

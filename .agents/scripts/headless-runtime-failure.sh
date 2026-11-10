@@ -1771,13 +1771,21 @@ _worker_secure_branch_commits() {
 # Record evidenced startup and deterministic launch failures in the local runner-health
 # breaker before releasing the shared issue claim. This path is fail-open:
 # missing or broken health tooling must never strand the issue claim.
+# Globals read: _HRW_PRIOR_ATTEMPT_ACTIVITY (set by the attempt loop)
 # Args: $1=session key, $2=terminal reason
 #######################################
 _hrff_record_runner_health_failure() {
 	local session_key="$1"
 	local reason="$2"
 	case "$reason" in
-	worker_signing_unavailable) ;;
+	worker_signing_unavailable)
+		# GH#37597: an earlier attempt in this process already ran with
+		# activity, so a continuation's preflight failure does not prove the
+		# runner cannot sign. Record it audit-only instead of tripping at 1.
+		if [[ "${_HRW_PRIOR_ATTEMPT_ACTIVITY:-0}" == "1" ]]; then
+			reason="worker_signing_unavailable_after_activity"
+		fi
+		;;
 	crash_during_startup | worker_noop_zero_output) reason="no_worker_process" ;;
 	*) return 0 ;;
 	esac
@@ -1823,6 +1831,12 @@ _hrff_record_exit_metric() {
 	"${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}") result="deferred" ;;
 	esac
 	[[ "$session_count" =~ ^[1-9][0-9]*$ ]] && activity=1
+	# GH#37597: name the failing signing preflight stage (configure, prepare,
+	# heal) and probe kind so the next occurrence is diagnosable from metrics.
+	local launch_failure_cause=""
+	if [[ "$reason" == "worker_signing_unavailable" ]]; then
+		launch_failure_cause="${_WORKER_SIGNING_FAILURE_DETAIL:-}"
+	fi
 	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null) || end_ms=0
 	if [[ "$start_ms" =~ ^[0-9]+$ && "$end_ms" =~ ^[0-9]+$ ]] &&
 		((start_ms > 0 && end_ms >= start_ms)); then
@@ -1832,7 +1846,7 @@ _hrff_record_exit_metric() {
 		"$result" "$exit_status" "$reason" "$activity" "$duration_ms" \
 		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
 		"${_WORKER_WORKTREE_PATH:-}" "" "${_WORKER_PERSISTED_SESSION_ID:-}" \
-		"" "" "" "exit_trap" || [[ "${_HEADLESS_RUNTIME_LAST_METRIC_KEY:-}" != "$metric_key" ]]; then
+		"" "" "" "exit_trap" "" "$launch_failure_cause" || [[ "${_HEADLESS_RUNTIME_LAST_METRIC_KEY:-}" != "$metric_key" ]]; then
 		print_warning "[exit-trap] metric recording failed; continuing terminal handoff for session=${session_key}"
 	fi
 	return 0

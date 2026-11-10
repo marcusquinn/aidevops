@@ -396,6 +396,11 @@ _setup_own_merged_evidence() {
 	unreadable) printf 'not json\n' >"$receipt_file" ;;
 	missing_receipt) rm "$receipt_file" ;;
 	dirty) touch "${work_dir}/unpublished.txt" ;;
+	cleanup_marker)
+		# GH#37597: full-loop-helper.sh merge leaves this runtime-only marker.
+		mkdir -p "${work_dir}/.agents"
+		printf '123\n' >"${work_dir}/.agents/.full-loop-cleanup-deferred"
+		;;
 	esac
 	return 0
 }
@@ -425,7 +430,7 @@ _setup_merged_continuation_git() {
 
 test_own_merged_terminal_reconciliation() {
 	local shape="" result=0
-	for shape in squash issue leased published superseded fractional_receipt stale_fractional_receipt invalid_receipt_date open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent continuation_squash continuation_issue continuation_fractional_receipt continuation_stale_receipt continuation_stale_fractional_receipt continuation_invalid_receipt_date continuation_foreign_session continuation_foreign_receipt continuation_receipt_branch continuation_receipt_pr continuation_receipt_worktree continuation_receipt_owner continuation_receipt_pid continuation_cleanup_failed continuation_unfinalized continuation_release_pending continuation_missing_receipt continuation_dirty continuation_ahead continuation_remote_ahead continuation_unrelated continuation_cross_repo continuation_foreign_head continuation_head_mismatch continuation_branch_mismatch continuation_open continuation_unmerged continuation_api_failure continuation_missing_session continuation_same_second; do
+	for shape in squash issue leased published superseded fractional_receipt stale_fractional_receipt invalid_receipt_date open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty cleanup_marker api_failure missing_session synthetic tool silent continuation_squash continuation_cleanup_marker continuation_issue continuation_fractional_receipt continuation_stale_receipt continuation_stale_fractional_receipt continuation_invalid_receipt_date continuation_foreign_session continuation_foreign_receipt continuation_receipt_branch continuation_receipt_pr continuation_receipt_worktree continuation_receipt_owner continuation_receipt_pid continuation_cleanup_failed continuation_unfinalized continuation_release_pending continuation_missing_receipt continuation_dirty continuation_ahead continuation_remote_ahead continuation_unrelated continuation_cross_repo continuation_foreign_head continuation_head_mismatch continuation_branch_mismatch continuation_open continuation_unmerged continuation_api_failure continuation_missing_session continuation_same_second; do
 		if ! (
 			local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG="owner/repo"
 			local AIDEVOPS_ATTEMPT_ID="attempt:synthetic" AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
@@ -474,7 +479,7 @@ test_own_merged_terminal_reconciliation() {
 				printf '%s\n' '{"type":"text","sessionID":"ses_own_merged","text":"Verified the prior merged delivery and closed the issue. No new changes."}' >"$output_file"
 			fi
 			case "$shape" in
-			squash | leased | published | superseded | fractional_receipt) expected=0 ;;
+			squash | leased | published | superseded | fractional_receipt | cleanup_marker) expected=0 ;;
 			issue) expected=0; session_key="issue-456" ;;
 			stale_merge)
 				expected=0

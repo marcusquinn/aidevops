@@ -73,6 +73,9 @@ _HRW_EVENT_FAILED="worker.failed"
 _HRW_EVENT_DEFERRED="worker.deferred"
 _HRW_PERMISSION_PERSISTENCE_FAILED="permission_request_persistence_failed"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
+# GH#37597: runtime-only marker full-loop-helper.sh merge writes on
+# CLEANUP_DEFERRED; lifecycle state, never task output.
+_HRW_DEFERRED_CLEANUP_EXCLUDE_PATHSPEC=":(top,exclude,literal).agents/.full-loop-cleanup-deferred"
 _HRW_RECOVERY_CLASSIFICATION=""
 _HRW_CLAIM_RELEASE_PERSISTENCE_FAILED=0
 
@@ -512,7 +515,7 @@ _hrw_merged_terminal_complete() {
 	work_dir=$(cd "$work_dir" && pwd -P) || return 1
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
 	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
-	dirty=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	dirty=$(_hrw_task_worktree_status "$work_dir") || return 1
 	[[ -n "$branch" && "$head" =~ ^[0-9a-f]{40}$ && -z "$dirty" ]] || return 1
 	# A clean checkout at the delivered head cannot hide newer remote-only work.
 	local remote_branch=""
@@ -579,6 +582,20 @@ _hrw_merged_terminal_complete() {
 	return 0
 }
 
+# Task-owned worktree status for completion proofs. GH#37597: after the
+# worker's own PR merges, full-loop-helper.sh writes the untracked deferred
+# cleanup marker; reading it as unpublished work rejected verified delivery and
+# resumed a finished session. Every other untracked or modified path still
+# counts, so genuine post-merge edits keep failing closed.
+# Args: $1 = worktree path
+# Stdout: porcelain status (empty when clean)
+_hrw_task_worktree_status() {
+	local work_dir="$1"
+	git -C "$work_dir" status --porcelain --untracked-files=all -- ":/" \
+		"$_HRW_DEFERRED_CLEANUP_EXCLUDE_PATHSPEC" 2>/dev/null || return 1
+	return 0
+}
+
 _hrw_terminal_objective_complete() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -614,7 +631,7 @@ _hrw_pr_less_terminal_complete() {
 		context="${session_key}|${repo_slug}|${issue_number}|${work_dir}|${branch}|${head}|${AIDEVOPS_ATTEMPT_ID:-}|${AIDEVOPS_ATTEMPT_STARTED_AT:-}"
 		if [[ "$context" == "${_HRW_PR_LESS_VERIFIED_CONTEXT:-}" ]]; then
 			_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
-			task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+			task_status=$(_hrw_task_worktree_status "$work_dir") || return 1
 			if [[ -z "$task_status" ]]; then
 				_HRW_PR_LESS_REJECTION=""
 				return 0
@@ -952,7 +969,7 @@ _hrw_pr_less_worktree_clean() {
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
 	[[ -n "$branch" && "$branch" != "$default_branch" ]] || return 1
 	_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
-	task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	task_status=$(_hrw_task_worktree_status "$work_dir") || return 1
 	_HRW_PR_LESS_REJECTION="unpublished_worktree_changes"
 	[[ -z "$task_status" ]] || return 1
 	_HRW_PR_LESS_REJECTION="local_head_unavailable"
