@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.160] - 2026-11-10
+
+### Fixed
+
+- bounded delivery admission class so worker-bus relay reads are not starved by pacing
+- persist per-pass repo cursor so killed normalization passes resume
+
 ## [3.39.159] - 2026-11-10
 
 ### Fixed
