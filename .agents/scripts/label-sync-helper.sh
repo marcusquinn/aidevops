@@ -699,6 +699,20 @@ cmd_color_for_tag() {
 	return 0
 }
 
+# Ensure only the requested canonical labels, propagating write failures to the caller.
+cmd_ensure() {
+	local repo="${1:-}"
+	shift || return 1
+	[[ -n "$repo" && $# -gt 0 ]] || return 1
+	local name definition color desc
+	for name in "$@"; do
+		definition=$(canonical_label_definition "$name") || return 1
+		IFS='|' read -r color desc <<<"$definition"
+		gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force >/dev/null 2>&1 || return 1
+	done
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -710,6 +724,7 @@ main() {
 	case "$command" in
 	sync) cmd_sync "$@" ;;
 	audit) cmd_audit "$@" ;;
+	ensure) cmd_ensure "$@" ;;
 	color-for-tag) cmd_color_for_tag "$@" ;;
 	help | --help | -h)
 		echo "Usage: label-sync-helper.sh <command> [options]"
@@ -717,6 +732,7 @@ main() {
 		echo "Commands:"
 		echo "  sync [--dry-run] [--repo owner/repo]  Sync canonical label colors to repos"
 		echo "  audit [--repo owner/repo]              Report label color drift"
+		echo "  ensure <owner/repo> <label>...         Ensure selected canonical labels"
 		echo "  color-for-tag <tag>                    Return canonical color for a tag"
 		echo ""
 		echo "Options:"
