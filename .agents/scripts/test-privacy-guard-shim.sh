@@ -261,6 +261,11 @@ cat >"$PRIV_HOME/.config/aidevops/repos.json" <<'EOF'
       "path": "/tmp/longprivate",
       "pulse": false,
       "mirror_upstream": "upstream/source"
+    },
+    {
+      "slug": "acme/ordinaryprivate",
+      "path": "/tmp/ordinaryprivate",
+      "pulse": false
     }
   ]
 }
@@ -269,7 +274,8 @@ EOF
 cat >"$PRIV_HOME/.aidevops/cache/repo-privacy.json" <<EOF
 {
   "marcusquinn/aidevops": { "private": false, "checked_at": $(date +%s) },
-  "acme/longprivate":    { "private": true,  "checked_at": $(date +%s) }
+  "acme/longprivate":    { "private": true,  "checked_at": $(date +%s) },
+  "acme/ordinaryprivate": { "private": true,  "checked_at": $(date +%s) }
 }
 EOF
 
@@ -324,7 +330,8 @@ fi
 cat >"$PRIV_HOME/.aidevops/cache/repo-privacy.json" <<EOF
 {
   "marcusquinn/aidevops": { "private": false, "checked_at": $(date +%s) },
-  "acme/longprivate":    { "private": true,  "checked_at": $(date +%s) }
+  "acme/longprivate":    { "private": true,  "checked_at": $(date +%s) },
+  "acme/ordinaryprivate": { "private": true,  "checked_at": $(date +%s) }
 }
 EOF
 
@@ -347,6 +354,18 @@ if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]]; then
 else
 	fail "expected rc=1, no real-gh invocation. rc=$rc out='$out'"
 fi
+
+# -- Test 2.2a: private-visibility repo (no mirror/local_only flags) → BLOCKED
+for _body in "Hit a bug in ordinaryprivate today" "Mentions acme/ordinaryprivate today"; do
+	rm -f "$RECORD_FILE"
+	out=$(run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "test" --body "$_body" 2>&1)
+	rc=$?
+	if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]]; then
+		pass "cached-private repo without flags → BLOCKED ($_body)"
+	else
+		fail "expected rc=1 for cached-private repo. rc=$rc out='$out'"
+	fi
+done
 
 # -- Test 2.3: public target + clean body → ALLOWED
 rm -f "$RECORD_FILE"
