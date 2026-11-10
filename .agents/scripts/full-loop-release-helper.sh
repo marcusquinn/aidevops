@@ -920,13 +920,19 @@ _full_loop_release_cmd_reap_stale() {
 	return $?
 }
 
+_full_loop_release_is_manual_hold_command() {
+	local command_name="${1:-}"
+	case "$command_name" in
+	hold | unhold | hold-status | owner | owner-notify | duplicate-check) return 0 ;;
+	esac
+	return 1
+}
+
 main() {
-	case "${1:-}" in
-	hold | unhold | hold-status | owner | owner-notify | duplicate-check)
+	if _full_loop_release_is_manual_hold_command "${1:-}"; then
 		"${SCRIPT_DIR}/manual-release-hold-helper.sh" "$@"
 		return $?
-		;;
-	esac
+	fi
 	if [[ "${1:-}" == "reap-stale" ]]; then
 		_full_loop_release_cmd_reap_stale "$@"
 		return $?
