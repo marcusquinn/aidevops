@@ -1090,7 +1090,7 @@ _dispatch_filter_checkpoint_cooled_candidates() {
 		return 0
 	fi
 	while IFS= read -r candidate; do
-		_dispatch_negative_cache_reason "$candidate" worker_draft_checkpoint_cooldown >/dev/null || continue
+		_dispatch_negative_cache_reason "$candidate" worker_draft_checkpoint_cooldown snapshot_only >/dev/null || continue
 		issue=$(jq -r '.number' <<<"$candidate") || continue
 		skipped="${skipped:+${skipped},}${issue}"
 	done < <(jq -c --arg repo "$repo" '.[] | . + {repo_slug: $repo}' <<<"$candidates" 2>/dev/null)
@@ -1639,6 +1639,8 @@ _dispatch_record_nonzero_dispatch_result() {
 	local dispatch_rc="$3"
 	local candidate_json="${4:-}"
 	local recent_lines=""
+	# Attempt-local write receipt: eligibility alone does not prove persistence.
+	_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED=0
 
 	recent_lines=$(_dispatch_candidate_recent_lines "$issue_number" "$repo_slug") || recent_lines=""
 	echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
