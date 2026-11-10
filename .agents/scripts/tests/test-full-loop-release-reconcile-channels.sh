@@ -129,6 +129,10 @@ STUB
 cat >"${TEST_ROOT}/bin/npm" <<'STUB'
 #!/usr/bin/env bash
 args=" $* "
+if [[ "$args" == ' --version ' ]]; then
+	printf '11.8.0\n'
+	exit 0
+fi
 if [[ "$args" == *" view aidevops@1.2.3 version dist --json "* ]]; then
 	jq -cn --arg version "${FAKE_NPM_VERSION:-1.2.3}" \
 		--arg integrity "${FAKE_NPM_INTEGRITY:?}" \
@@ -142,6 +146,11 @@ if [[ "$args" == *" install "* ]]; then
 	exit 0
 fi
 if [[ "$args" == *" audit signatures "* ]]; then
+	case "${FAKE_NPM_AUDIT_SCHEMA:-valid}" in
+	legacy) printf '%s\n' '{"invalid":[],"missing":[]}' ; exit 0 ;;
+	malformed) printf '%s\n' '{' ; exit 0 ;;
+	missing-bundles) printf '%s\n' '{"invalid":[],"missing":[],"verified":[{}]}' ; exit 0 ;;
+	esac
 	invalid='[]'
 	[[ "${FAKE_NPM_AUDIT_INVALID:-0}" == "1" ]] && invalid='[{"code":"invalid"}]'
 	jq -cn --arg version "${FAKE_NPM_VERSION:-1.2.3}" \
@@ -441,6 +450,24 @@ if [[ "$_FULL_LOOP_RELEASE_NPM_INTEGRITY" != "$FAKE_NPM_INTEGRITY" ]]; then
 	printf 'FAIL npm provenance verification omitted exact package integrity\n'
 	exit 1
 fi
+export FAKE_RECOVERY_RUN_MODE=failed
+for audit_schema in legacy malformed missing-bundles; do
+	export FAKE_NPM_AUDIT_SCHEMA="$audit_schema"
+	audit_rc=0
+	_full_loop_release_verify_npm_provenance test/repo v1.2.3 1.2.3 2>"${TEST_ROOT}/audit-error" || audit_rc=$?
+	if [[ "$audit_rc" -ne 2 ]] || ! grep -q 'verified-attestation capability.*npm 11.8.0' "${TEST_ROOT}/audit-error"; then
+		printf 'FAIL %s npm audit output was not diagnosed as unsupported or malformed\n' "$audit_schema"
+		exit 1
+	fi
+	inspect_rc=0
+	_full_loop_release_inspect_remote test/repo v1.2.3 > /dev/null 2>"${TEST_ROOT}/audit-error" || inspect_rc=$?
+	if [[ "$inspect_rc" -ne 1 ]]; then
+		printf 'FAIL %s npm audit output was treated as release propagation\n' "$audit_schema"
+		exit 1
+	fi
+done
+unset FAKE_NPM_AUDIT_SCHEMA
+export FAKE_RECOVERY_RUN_MODE=pending
 set_fake_provenance_payload "https://github.com/attacker/repo" "refs/heads/main"
 if _full_loop_release_verify_npm_provenance test/repo v1.2.3 1.2.3; then
 	printf 'FAIL foreign npm provenance repository was accepted\n'
