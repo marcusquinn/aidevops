@@ -206,7 +206,8 @@ _check "notice is one line" test "$(printf '%s\n' "$notice" | wc -l | tr -d ' ')
 
 echo "Test: maintenance helper wiring"
 MAINT="${SCRIPT_DIR}/../opencode-db-maintenance-helper.sh"
-_check "maintenance-window help documents --restart-interactive" bash -c "'$MAINT' help | grep -q -- --restart-interactive"
+maint_help=$("$MAINT" help)
+_check "maintenance-window help documents --restart-interactive" grep -qF -- --restart-interactive <<<"$maint_help"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] || exit 1
