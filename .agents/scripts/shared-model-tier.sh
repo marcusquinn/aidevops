@@ -238,7 +238,7 @@ model_tier_candidates() {
 	fi
 
 	case "$tier" in
-	simple) printf '%s\n' "anthropic/claude-haiku-5-5" "openai/gpt-6-luna" ;;
+	simple) printf '%s\n' "openai/gpt-6-luna" "anthropic/claude-haiku-5-5" ;;
 	standard) printf '%s\n' "anthropic/claude-sonnet-5-5" "openai/gpt-6.1-sol" "openai/gpt-6.1-terra" "opencode-go/deepseek-v4.1-flash" ;;
 	thinking) printf '%s\n' "anthropic/claude-opus-5-5" "openai/gpt-6.1-sol" ;;
 	*) return 1 ;;

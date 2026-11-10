@@ -26,7 +26,7 @@ export AIDEVOPS_MODEL_ROUTING_TABLE="$custom_table"
 source "${SCRIPTS_DIR}/shared-constants.sh"
 
 [[ "$(model_tier_candidates standard)" == "custom/standard" ]]
-[[ "$(model_tier_candidates simple | sed -n '1p')" == "anthropic/claude-haiku-5-5" ]]
+[[ "$(model_tier_candidates simple | sed -n '1p')" == "openai/gpt-6-luna" ]]
 [[ "$(model_tier_variant simple openai/gpt-6-luna)" == "high" ]]
 [[ "$(model_tier_next simple)" == "standard" ]]
 
@@ -40,7 +40,7 @@ source "${SCRIPTS_DIR}/fallback-chain-helper.sh"
 is_model_available() {
 	return 0
 }
-[[ "$(cmd_resolve simple --quiet)" == "anthropic/claude-haiku-5-5" ]]
+[[ "$(cmd_resolve simple --quiet)" == "openai/gpt-6-luna" ]]
 
 cat >"$custom_table" <<'JSON'
 {"tiers":{"simple":{"models":[]}}}
