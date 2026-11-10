@@ -578,6 +578,14 @@ privacy_scan_bare_basenames() {
 	local matched_full_slugs="$3"
 	local slug owner basename escaped_basename
 	local hits=0
+	local framework_text="$text"
+	local scan_text
+	# Only these literal metadata tokens identify the framework, not a private
+	# repository. Do not exempt arbitrary aidevops comments or their payloads.
+	# Full-slug, local-path and secret scans continue to inspect the original.
+	# Preserve word boundaries for prose immediately beside either marker.
+	framework_text="${framework_text//<!-- aidevops:sig -->/ }"
+	framework_text="${framework_text//<!-- aidevops:skipped-check:qlty-out-of-credits -->/ }"
 
 	while IFS= read -r slug || [[ -n "$slug" ]]; do
 		# Skip blanks and comment lines.
@@ -601,8 +609,12 @@ privacy_scan_bare_basenames() {
 		fi
 
 		if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+			scan_text="$text"
+			if [[ "$basename" == "aidevops" ]]; then
+				scan_text="$framework_text"
+			fi
 			escaped_basename=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
-			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
+			if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
 				if [[ -n "$owner" ]]; then
 					printf '%s (basename of %s)\n' "$basename" "$slug"
 				else
