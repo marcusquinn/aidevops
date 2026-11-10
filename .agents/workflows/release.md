@@ -294,6 +294,23 @@ scripts, and follow it: bump versions in a linked worktree and PR, merge with
 `full-loop-helper.sh merge`, then tag. With no `VERSION` file, the latest tag
 (`git describe --tags --abbrev=0`) is the baseline for the commit range and bump type.
 
+Concurrent merges make release PRs conflict on the changelog. Coordinate with the
+advisory manual release hold (`manual-release-hold-helper.sh`; stored as a remote
+branch, 60-minute default expiry, fails open on API errors):
+
+1. Open the version-bump PR, then `aidevops release hold OWNER/REPO --pr N --version vX.Y.Z`.
+   It refuses when another hold is active or another open PR already carries that
+   release version (the duplicate guard; also `aidevops release duplicate-check OWNER/REPO vX.Y.Z`).
+2. While held, `full-loop-helper.sh merge` and pulse merges for every other PR in
+   that repo refuse with `MANUAL_RELEASE_HOLD`; the release PR is exempt.
+3. If the release PR needs a rebase, every PR merged before the release merge
+   commit is included in the release; rebase onto the new default branch and re-run CI.
+4. After the release merge, `aidevops release unhold OWNER/REPO` (an unreleased hold
+   expires on its own).
+5. When another session owns the fleet roll-out, record it with
+   `aidevops release owner OWNER/REPO TAG --session ID`; when the Release run and update
+   test finish, `aidevops release owner-notify OWNER/REPO TAG` sends the session-bus notice.
+
 Publication still requires explicit release authority and follows the repository's
 own process. For GitHub repos with Actions enabled, opt into read-only evidence
 before publishing: `aidevops sync-workflows --repo OWNER/REPO --workflow
