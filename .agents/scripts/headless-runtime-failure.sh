@@ -778,6 +778,24 @@ _hrff_log_prelaunch_abort() {
 	return 0
 }
 
+_hrff_release_fragment() {
+	local reason="$1" fragment="$2"
+	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
+		fragment=$'\nDraft checkpoint: partial work is preserved on the draft PR. Next action: Pulse continues the exact head (bounded per head and per PR).\n'
+	elif [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != 1 && "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
+		fragment=$'\nRuntime did not launch. The revision continuation approval was consumed; a new exact-head approval is required before another revision continuation.\n'
+	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
+		fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
+	elif [[ "$reason" == worker_merged_partial_no_progress ]]; then
+		fragment=$'\nBLOCKED: continuation delivered no new PR or head after a merged partial. AI brief owner: reconcile merged worker-side scope with remaining acceptance items before retrying.\n'
+	fi
+	if [[ "$reason" == worker_merged_partial* && -n "${_HRW_MERGED_DELIVERY_KEY:-}" ]]; then
+		fragment+="MERGED_PARTIAL_DELIVERY key=${_HRW_MERGED_DELIVERY_KEY}"$'\n'
+	fi
+	_HRFF_RELEASE_FRAGMENT="$fragment"
+	return 0
+}
+
 _hrff_release_dispatch_claim_attempt() {
 	local session_key="$1"
 	local reason="${2:-worker_failed}"
@@ -865,18 +883,8 @@ _hrff_release_dispatch_claim_attempt() {
 		projection_reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
 		print_warning "Blocked exit on #${issue_number} recorded no terminal-blocker evidence; keeping it dispatchable"
 	fi
-	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
-		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is preserved on the draft PR. Next action: Pulse continues the exact head (bounded per head and per PR).\n'
-	elif [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != 1 && "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
-		terminal_blocker_fragment=$'\nRuntime did not launch. The revision continuation approval was consumed; a new exact-head approval is required before another revision continuation.\n'
-	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
-		terminal_blocker_fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
-	elif [[ "$reason" == worker_merged_partial_no_progress ]]; then
-		terminal_blocker_fragment=$'\nBLOCKED: continuation delivered no new PR or head after a merged partial. AI brief owner: reconcile merged worker-side scope with remaining acceptance items before retrying.\n'
-	fi
-	if [[ "$reason" == worker_merged_partial* && -n "${_HRW_MERGED_DELIVERY_KEY:-}" ]]; then
-		terminal_blocker_fragment+="MERGED_PARTIAL_DELIVERY key=${_HRW_MERGED_DELIVERY_KEY}"$'\n'
-	fi
+	_hrff_release_fragment "$reason" "$terminal_blocker_fragment"
+	terminal_blocker_fragment="$_HRFF_RELEASE_FRAGMENT"
 	_hrff_persist_and_project_release "$issue_number" "$repo_slug" "$runner_name" "$reason" \
 		"$projection_reason" "$session_key" "$claim_id" "$machine_readable_part" "$terminal_blocker_fragment" || return 1
 	return 0
