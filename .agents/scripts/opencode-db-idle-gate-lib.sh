@@ -138,15 +138,19 @@ _opencode_db_holder_heartbeats_idle() {
 		# 2s tolerance: etime and epoch seconds round independently.
 		((updated + 2 >= started)) || continue
 		found=1
-		if ((busy > 0)); then
-			_opencode_db_idle_gate_defer "holder PID ${pid} has ${busy} busy session(s)"
-			return 2
-		fi
-		if ((now - last < quiet_seconds)); then
-			_opencode_db_idle_gate_defer "holder PID ${pid} was active $((now - last))s ago (need ${quiet_seconds}s)"
-			return 2
-		fi
 		sessions=$(jq -r '.sessions[]? | strings | select(test("^[A-Za-z0-9_-]{1,128}$"))' "$file" 2>/dev/null || true)
+		# GH#37656: a busy or recently active holder only blocks archiving of
+		# the sessions it owns. When its heartbeat names them, the caller
+		# excludes them, so the holder need not defer the whole archive.
+		if ((busy > 0 || now - last < quiet_seconds)) &&
+			! { [[ "${OPENCODE_DB_ARCHIVE_PER_SESSION_GATE:-1}" == 1 ]] && [[ -n "$sessions" ]]; }; then
+			if ((busy > 0)); then
+				_opencode_db_idle_gate_defer "holder PID ${pid} has ${busy} busy session(s)"
+			else
+				_opencode_db_idle_gate_defer "holder PID ${pid} was active $((now - last))s ago (need ${quiet_seconds}s)"
+			fi
+			return 2
+		fi
 		if [[ -n "$sessions" ]]; then
 			OPENCODE_DB_IDLE_GATE_SESSIONS="${OPENCODE_DB_IDLE_GATE_SESSIONS}${OPENCODE_DB_IDLE_GATE_SESSIONS:+$'\n'}${sessions}"
 		fi
