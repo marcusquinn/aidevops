@@ -5,13 +5,16 @@
 // session bus. The TUI reads the current root session's bus files directly,
 // with no server round trip. Rows: `← handle: text` for received and
 // `→ handle: text` for sent; a leading `•` means not yet delivered to the
-// model. AIDEVOPS_TUI_MESSAGES=false hides the section.
+// model. Clicking a row opens the full message in a dialog.
+// AIDEVOPS_TUI_MESSAGES=false hides the section.
 
 import { busRoot, messagePreview, recentTraffic } from "./session-bus-store.mjs";
 
 export const MESSAGES_POLL_MS = 5000;
 const DEFAULT_LIMIT = 6;
 const DEFAULT_WIDTH = 34;
+const DETAIL_DIALOG_SIZE = "large";
+const TYPE_TITLE = { info: "Message", ask: "Question", reply: "Reply", "idle-notice": "Idle notice" };
 
 export function isMessagesEnabled(env = process.env) {
   return !["false", "0", "none"].includes(String(env.AIDEVOPS_TUI_MESSAGES ?? "").trim().toLowerCase());
@@ -38,6 +41,51 @@ function truncate(text, width) {
   return chars.length > width ? `${chars.slice(0, Math.max(0, width - 1)).join("")}…` : text;
 }
 
+function peerLabel(direction, message) {
+  return direction === "in"
+    ? message.from?.handle || "peer"
+    : message.to_handle || String(message.to || "").slice(-6) || "outbox";
+}
+
+// Bus files are local data any process can write, so the dialog re-applies the
+// send-time control-character filter (newline and tab survive).
+function displayText(value) {
+  return String(value ?? "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "");
+}
+
+function sentAt(createdMs) {
+  const date = new Date(Number(createdMs));
+  return Number(createdMs) > 0 && !Number.isNaN(date.getTime()) ? date.toLocaleString() : "";
+}
+
+function partyLine(label, handle, place, sessionID) {
+  const where = place ? ` (${place})` : "";
+  return `${label}: ${handle || "?"}${where}${sessionID ? ` · ${sessionID}` : ""}`;
+}
+
+/** Dialog title and body for one traffic entry: metadata lines, a blank line, then the full text. */
+export function messageDetail({ direction, pending, message } = {}) {
+  const entry = message && typeof message === "object" ? message : {};
+  const from = entry.from || {};
+  const incoming = direction === "in";
+  const kind = TYPE_TITLE[entry.type] || TYPE_TITLE.info;
+  const place = [from.repo, from.branch].filter(Boolean).join("@");
+  const status = incoming ? (pending ? "not yet delivered to the model" : "delivered to the model") : "sent";
+  const meta = [
+    incoming
+      ? partyLine("From", from.handle, place, from.session_id)
+      : partyLine("To", entry.to_handle, "", entry.to),
+    sentAt(entry.created_ms) && `Sent: ${sentAt(entry.created_ms)}`,
+    `Status: ${status}`,
+    entry.re && `Re: ${entry.re}`,
+    entry.id && `ID: ${entry.id}`,
+  ].filter(Boolean);
+  return {
+    title: displayText(`${kind} ${incoming ? "from" : "to"} ${peerLabel(direction, entry)}`),
+    message: displayText([...meta, "", entry.text].join("\n")),
+  };
+}
+
 export function messageRows(sessionID, { root = busRoot(), limit = DEFAULT_LIMIT, width = DEFAULT_WIDTH } = {}) {
   let traffic;
   try {
@@ -45,14 +93,31 @@ export function messageRows(sessionID, { root = busRoot(), limit = DEFAULT_LIMIT
   } catch {
     return [];
   }
-  return traffic.map(({ direction, pending, message }) => {
-    const peer = direction === "in"
-      ? message.from?.handle || "peer"
-      : message.to_handle || String(message.to || "").slice(-6) || "outbox";
+  return traffic.map((item) => {
+    const { direction, pending, message } = item;
     const arrow = direction === "in" ? "←" : "→";
-    const label = `${pending ? "• " : ""}${arrow} ${peer}: ${messagePreview(message, width * 2)}`;
-    return { id: message.id, pending, direction, text: truncate(label, width) };
+    const label = `${pending ? "• " : ""}${arrow} ${peerLabel(direction, message)}: ${messagePreview(message, width * 2)}`;
+    return { id: message.id, pending, direction, text: truncate(label, width), detail: messageDetail(item) };
   });
+}
+
+/**
+ * Opens a row's detail in the host's alert dialog. V2 exposes
+ * `ui.dialog.alert`; OpenCode 1.x passes `alert` built from its DialogAlert
+ * component (v1-tui/tui.tsx). Both hosts reset the size on open, so the
+ * larger size is applied afterwards. Call on mouse-up: the dialog backdrop
+ * closes on mouse-up, so opening on mouse-down would dismiss it at once.
+ */
+export function openMessageDialog(dialog, detail, { alert } = {}) {
+  if (!dialog || !detail) return false;
+  const show = alert ?? (typeof dialog.alert === "function" ? (input) => dialog.alert(input) : undefined);
+  if (typeof show !== "function") return false;
+  return attempt(() => {
+    const closed = show({ title: detail.title, message: detail.message });
+    if (typeof closed?.catch === "function") closed.catch(() => undefined);
+    attempt(() => (typeof dialog.set === "function" ? dialog.set({ size: DETAIL_DIALOG_SIZE }) : dialog.setSize?.(DETAIL_DIALOG_SIZE)), undefined);
+    return true;
+  }, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -103,8 +168,9 @@ export function renderMessagesV2(solid, solidJs, api, props, { tick = () => 0, r
   }));
   solid.insert(header, () => (open() ? undefined : createV2Text(solid, api, () => ` (${rows().length})`, { muted: true })));
   solid.insert(section, header);
+  const showDetail = (row) => () => openMessageDialog(api.ui?.dialog, row.detail);
   solid.insert(section, () => (open()
-    ? rows().map((row) => createV2Text(solid, api, row.text, { muted: !row.pending }))
+    ? rows().map((row) => createV2Text(solid, api, row.text, { muted: !row.pending, onMouseUp: showDetail(row) }))
     : []));
   return () => (rows().length > 0 ? section : undefined);
 }
