@@ -23,11 +23,8 @@ def _resolve_native_git() -> str:
     """Resolve native Git from the system default PATH (portable to non-FHS hosts)."""
     result = subprocess.run(  # nosec B603 -- fixed shell and constant command
         ["/bin/sh", "-c", "command -p -v git"],
-        capture_output=True, text=True, check=False, shell=False)
-    path = result.stdout.strip()
-    if result.returncode != 0 or not path:
-        raise SystemExit("Native Git is unavailable on the system PATH")
-    return path
+        capture_output=True, text=True, check=True, shell=False)
+    return result.stdout.strip()
 
 
 NATIVE_GIT = _resolve_native_git()
