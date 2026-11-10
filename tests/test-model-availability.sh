@@ -114,7 +114,7 @@ test_static_credential_resolution() {
 	local mode="$1"
 	local fixture_home="$TEST_DB_DIR/credential-home-$mode"
 	mkdir -p "$fixture_home/.config/aidevops" "$fixture_home/.local/share/opencode"
-	HOME="$fixture_home" PATH="$NO_GOPASS_BIN:$PATH" bash -s "$HELPER" "$mode" <<'BASH'
+	HOME="$fixture_home" PATH="$NO_GOPASS_BIN:$PATH" run_with_timeout 30 bash -s "$HELPER" "$mode" <<'BASH'
 set -euo pipefail
 source "$1" help >/dev/null
 unset ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GEMINI_API_KEY
@@ -128,6 +128,7 @@ touch "$HOME/command-ran"
 UNRELATED_KEY=fixture >"$HOME/redirection-ran"
 export ANTHROPIC_API_KEY="$(touch "$HOME/substitution-ran")"
 CONFIG
+cp "$HOME/.config/aidevops/credentials.sh" "$HOME/original-credentials"
 
 assert_key() {
 	local provider="$1"
@@ -175,11 +176,31 @@ fi
 printf '%s\n' '{"openai":{"type":"oauth"}}' >"$HOME/.local/share/opencode/auth.json"
 printf '%s\n' 'OPENAI_API_KEY=""' >"$HOME/.config/aidevops/credentials.sh"
 assert_key openai oauth-refresh-available auth-json-oauth:openai
-node() { return 127; }
-printf '%s\n' 'OPENAI_API_KEY=fixture-file-openai' >"$HOME/.config/aidevops/credentials.sh"
+mkdir -p "$HOME/node-bin"
+node_double="$HOME/node-bin/node"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 127' >"$node_double"
+chmod +x "$node_double"
+export PATH="$HOME/node-bin:$PATH"
+cp "$HOME/original-credentials" "$HOME/.config/aidevops/credentials.sh"
 assert_key openai oauth-refresh-available auth-json-oauth:openai
-unset -f node
-rm "$HOME/.config/aidevops/credentials.sh" "$HOME/.local/share/opencode/auth.json"
+[[ "$UNRELATED_VARIABLE" == preserved ]]
+[[ ! -e "$HOME/command-ran" && ! -e "$HOME/redirection-ran" && ! -e "$HOME/substitution-ran" ]]
+rm "$HOME/.local/share/opencode/auth.json"
+if resolve_api_key openai >"$HOME/result"; then
+	exit 1
+fi
+[[ -f "$HOME/.config/aidevops/credentials.sh" && ! -s "$HOME/result" && -z "$RESOLVED_API_KEY_SOURCE" ]]
+[[ "$UNRELATED_VARIABLE" == preserved ]]
+[[ ! -e "$HOME/command-ran" && ! -e "$HOME/redirection-ran" && ! -e "$HOME/substitution-ran" ]]
+if [[ "$2" == no-runtime ]]; then
+printf '%s\n' '{"openai":{"type":"oauth"}}' >"$HOME/.local/share/opencode/auth.json"
+printf '%s\n' '#!/usr/bin/env bash' 'printf partial-output' 'exec sleep 30' >"$node_double"
+assert_key openai oauth-refresh-available auth-json-oauth:openai
+[[ "$UNRELATED_VARIABLE" == preserved ]]
+[[ ! -e "$HOME/command-ran" && ! -e "$HOME/redirection-ran" && ! -e "$HOME/substitution-ran" ]]
+rm "$HOME/.local/share/opencode/auth.json"
+fi
+rm "$HOME/.config/aidevops/credentials.sh"
 if resolve_api_key openai >"$HOME/result"; then
 	exit 1
 fi
