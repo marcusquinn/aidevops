@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  candidateRateLimitedUntil,
   loadModelRouting,
   mergeModelRouting,
   nextRoutingTier,
@@ -28,6 +29,7 @@ import {
   rerouteCompactionAfterRejection,
 } from "../compaction-routing.mjs";
 import { authSignatureFromHeaders, clearModelUnavailable, isModelUnavailable, markModelUnavailable } from "../model-unavailability.mjs";
+import { poolRateLimitedUntil, rateLimitedProviders } from "../provider-rate-limits.mjs";
 
 test("ChatGPT OAuth restrictions survive overlays and do not restrict API keys", () => {
   const shipped = loadModelRouting([new URL("../../../configs/model-routing-table.json", import.meta.url)]);
@@ -226,6 +228,46 @@ test("routing skips a model rejected for the active auth signature", () => {
     selectConnectedRoutingCandidate(routing, "standard", providerState, undefined, { authSignature: signature }),
     "openai/rejected",
   );
+});
+
+test("routing skips exhausted provider pools until reset (GH#37649)", () => {
+  const routing = { tiers: { standard: { models: ["anthropic/sonnet", "openai/sol"] } } };
+  const providerState = { connected: ["anthropic", "openai"], all: [
+    { id: "anthropic", models: { sonnet: { id: "sonnet" } } },
+    { id: "openai", models: { sol: { id: "sol" } } },
+  ] };
+  const select = (availability) => selectConnectedRoutingCandidate(routing, "standard", providerState, undefined, availability);
+  const now = Date.now();
+
+  assert.equal(select({ rateLimitedProviders: { anthropic: now + 60_000 } }), "openai/sol");
+  assert.equal(select({ rateLimitedProviders: { anthropic: now - 1 } }), "anthropic/sonnet", "expired reset recovers");
+  assert.equal(select({ rateLimitedProviders: { anthropic: now + 60_000, openai: now + 60_000 } }), "");
+  assert.equal(candidateRateLimitedUntil("anthropic/sonnet", { rateLimitedProviders: { anthropic: now + 60_000 } }, now), now + 60_000);
+  assert.equal(candidateRateLimitedUntil("openai/sol", { rateLimitedProviders: { anthropic: now + 60_000 } }, now), 0);
+});
+
+test("a provider pool is rate limited only when no account can serve and OAuth is active (GH#37649)", () => {
+  const now = Date.now();
+  const limited = (cooldownUntil) => ({ status: "rate-limited", cooldownUntil });
+  assert.equal(poolRateLimitedUntil([], now), 0);
+  assert.equal(poolRateLimitedUntil([limited(now + 5_000), { status: "active", cooldownUntil: null }], now), 0);
+  assert.equal(poolRateLimitedUntil([limited(now + 5_000), limited(now + 2_000)], now), now + 2_000);
+  assert.equal(poolRateLimitedUntil([limited(now + 5_000), { status: "auth-error", cooldownUntil: now + 9_000 }], now), now + 5_000);
+  assert.equal(poolRateLimitedUntil([limited(now - 1)], now), 0, "expired cooldowns are routable");
+  assert.equal(poolRateLimitedUntil([limited(now - 1), limited(now + 5_000)], now), 0, "one recovered account keeps the provider routable");
+  assert.equal(poolRateLimitedUntil([{ status: "auth-error", cooldownUntil: now + 5_000 }], now), 0, "auth failures are a different class");
+
+  const accounts = () => [limited(now + 5_000)];
+  assert.deepEqual(rateLimitedProviders({
+    now,
+    readAuth: (provider) => (provider === "anthropic" ? { type: "oauth" } : { type: "api" }),
+    readAccounts: accounts,
+  }), { anthropic: now + 5_000 }, "API-key providers do not use the pool");
+  assert.deepEqual(rateLimitedProviders({
+    now,
+    readAuth: () => ({ type: "oauth" }),
+    readAccounts: () => { throw new Error("unreadable pool"); },
+  }), {}, "an unreadable pool never blocks routing");
 });
 
 test("config-only providers without credentials are not routable (GH#35762)", () => {

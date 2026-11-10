@@ -102,14 +102,19 @@ function openCodeAuthPath() {
   return join(dataHome, "opencode", "auth.json");
 }
 
-export function readCurrentOpenAIAuth() {
+/** Read the OpenCode auth entry currently active for one provider. */
+export function readCurrentProviderAuth(provider) {
   const authPath = openCodeAuthPath();
   if (!existsSync(authPath)) return null;
   try {
-    return JSON.parse(readFileSync(authPath, "utf-8")).openai || null;
+    return JSON.parse(readFileSync(authPath, "utf-8"))[provider] || null;
   } catch {
     return null;
   }
+}
+
+export function readCurrentOpenAIAuth() {
+  return readCurrentProviderAuth("openai");
 }
 
 function matchesOpenAIAuth(account, auth) {
