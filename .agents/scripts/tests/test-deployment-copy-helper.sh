@@ -3,11 +3,19 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/../deployment-copy-helper.sh"
 PYTHON_HELPER="${SCRIPT_DIR}/../deployment-copy-helper.py"
 TEST_TMP_ROOT="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
-REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-${TEST_NATIVE_GIT}}"
 TEST_ROOT=""
 REPO=""
 WORKTREE=""

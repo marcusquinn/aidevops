@@ -87,7 +87,7 @@ _full_loop_release_record_stale_deployment() {
 (
 	export HOME="${TEST_ROOT}/deployed-home"
 	export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="${TEST_ROOT}/deployed-receipts"
-	git() { /usr/bin/git "$@"; }
+	git() { command -p git "$@"; }
 	# shellcheck source=../full-loop-helper-state.sh
 	source "${SCRIPT_DIR}/full-loop-helper-state.sh"
 	_FULL_LOOP_RELEASE_RECONCILE_LOADED=""

@@ -4,6 +4,14 @@
 # GH#32377: explicit child repository ownership must fail before mutation.
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 scripts_dir="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
 fixture_root=$(mktemp -d)
 trap 'rm -rf "$fixture_root"' EXIT
@@ -11,10 +19,10 @@ trap 'rm -rf "$fixture_root"' EXIT
 # shellcheck source=../task-target-repo-lib.sh
 source "$scripts_dir/task-target-repo-lib.sh"
 mkdir -p "$fixture_root/coord/todo/tasks" "$fixture_root/site/todo/tasks"
-/usr/bin/git -C "$fixture_root/coord" init --quiet
-/usr/bin/git -C "$fixture_root/site" init --quiet
-/usr/bin/git -C "$fixture_root/coord" remote add origin https://github.com/owner/coord.git
-/usr/bin/git -C "$fixture_root/site" remote add origin https://github.com/owner/site.git
+"$TEST_NATIVE_GIT" -C "$fixture_root/coord" init --quiet
+"$TEST_NATIVE_GIT" -C "$fixture_root/site" init --quiet
+"$TEST_NATIVE_GIT" -C "$fixture_root/coord" remote add origin https://github.com/owner/coord.git
+"$TEST_NATIVE_GIT" -C "$fixture_root/site" remote add origin https://github.com/owner/site.git
 printf '%s\n' '- [ ] t1 child task' >"$fixture_root/coord/TODO.md"
 printf '%s\n' '- [ ] t1 child task' >"$fixture_root/site/TODO.md"
 brief="$fixture_root/coord/todo/tasks/t1-brief.md"

@@ -19,6 +19,18 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+def _resolve_native_git() -> str:
+    """Resolve native Git from the system default PATH (portable to non-FHS hosts)."""
+    result = subprocess.run(  # nosec B603 -- fixed shell and constant command
+        ["/bin/sh", "-c", "command -p -v git"],
+        capture_output=True, text=True, check=False, shell=False)
+    path = result.stdout.strip()
+    if result.returncode != 0 or not path:
+        raise SystemExit("Native Git is unavailable on the system PATH")
+    return path
+
+
+NATIVE_GIT = _resolve_native_git()
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 HELPER_PATH = SCRIPTS_DIR / "source-access-helper.py"
 SPEC = importlib.util.spec_from_file_location("source_access_helper", HELPER_PATH)
@@ -45,7 +57,7 @@ class SourceAccessHelperTests(unittest.TestCase):
         self.repo = self.root / "repo"
         self.repo.mkdir()
         subprocess.run(  # nosec B603 -- fixed Git binary and local fixture path
-            ["/usr/bin/git", "-C", str(self.repo), "init", "--quiet"], check=True
+            [NATIVE_GIT, "-C", str(self.repo), "init", "--quiet"], check=True
         )
         self.source = self.repo / "secret-helper.sh"
         self.other_source = self.repo / "secret-other.sh"
@@ -55,7 +67,7 @@ class SourceAccessHelperTests(unittest.TestCase):
         self.third_source.write_text("#!/usr/bin/env bash\nprintf third\\n\n", encoding="utf-8")
         subprocess.run(  # nosec B603 -- fixed Git binary and local fixture paths
             [
-                "/usr/bin/git",
+                NATIVE_GIT,
                 "-C",
                 str(self.repo),
                 "add",
@@ -151,7 +163,7 @@ class SourceAccessHelperTests(unittest.TestCase):
         self._fixture_commit(self.repo)
         worktree = self.root / "implementation"
         subprocess.run(  # nosec B603 -- fixed Git binary and local fixture worktree
-            ["/usr/bin/git", "-C", str(self.repo), "worktree", "add", "--quiet",
+            [NATIVE_GIT, "-C", str(self.repo), "worktree", "add", "--quiet",
              "--detach", str(worktree), "HEAD"], check=True,
         )
         return HELPER.ManifestRequestSpec(
@@ -162,7 +174,7 @@ class SourceAccessHelperTests(unittest.TestCase):
 
     def _fixture_commit(self, repo: Path) -> None:
         subprocess.run(  # nosec B603 -- fixed Git binary and local fixture repository
-            ["/usr/bin/git", "-C", str(repo), "-c", "user.name=Source Fixture",
+            [NATIVE_GIT, "-C", str(repo), "-c", "user.name=Source Fixture",
              "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
              "commit", "--quiet", "-m", "fixture"], check=True,
         )
@@ -784,7 +796,7 @@ else: sys.exit(1)
         regression = directory / f"test-{self.source.name}"
         regression.write_text("#!/bin/sh\ntest 1 = 1\n", encoding="utf-8")
         subprocess.run(  # nosec B603 -- fixed system Git and exclusively fixture-owned repository/path
-            ["/usr/bin/git", "-C", str(self.repo), "add", str(regression)], check=True,
+            [NATIVE_GIT, "-C", str(self.repo), "add", str(regression)], check=True,
         )
         spec = self._proposal_spec()
         _reader, evidence = self._issue_snapshot_fixture()
@@ -1179,7 +1191,7 @@ else: sys.exit(1)
         extra_source = self.repo / "secret-extra.sh"
         extra_source.write_text("extra\n", encoding="utf-8")
         subprocess.run(  # nosec B603 -- fixed Git binary and local fixture path
-            ["/usr/bin/git", "-C", str(self.repo), "add", extra_source.name], check=True
+            [NATIVE_GIT, "-C", str(self.repo), "add", extra_source.name], check=True
         )
         self.assertFalse(self._verify(path=str(extra_source)))
 
@@ -1220,12 +1232,12 @@ else: sys.exit(1)
         other_repo = self.root / "other-repo"
         other_repo.mkdir()
         subprocess.run(  # nosec B603 -- fixed Git binary and local fixture path
-            ["/usr/bin/git", "-C", str(other_repo), "init", "--quiet"], check=True
+            [NATIVE_GIT, "-C", str(other_repo), "init", "--quiet"], check=True
         )
         foreign_source = other_repo / "secret-foreign.sh"
         foreign_source.write_text("foreign\n", encoding="utf-8")
         subprocess.run(  # nosec B603 -- fixed Git binary and local fixture path
-            ["/usr/bin/git", "-C", str(other_repo), "add", foreign_source.name], check=True
+            [NATIVE_GIT, "-C", str(other_repo), "add", foreign_source.name], check=True
         )
         with self.assertRaisesRegex(HELPER.SourceAccessError, "one Git worktree"):
             HELPER.create_manifest_request(

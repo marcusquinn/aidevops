@@ -5,6 +5,14 @@
 
 set -uo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR_TEST="$(cd "$(dirname "$0")/.." && pwd)" || exit 1
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -138,16 +146,16 @@ assert_contains "explicit risk can raise an ambiguous change" "$raised_body" "**
 
 COMMENT_REPO="${TEST_ROOT}/comment-repo"
 mkdir -p "${COMMENT_REPO}/src"
-/usr/bin/git -C "$COMMENT_REPO" init -q
-/usr/bin/git -C "$COMMENT_REPO" config user.name "Runtime Risk Test"
-/usr/bin/git -C "$COMMENT_REPO" config user.email "runtime-risk@example.invalid"
+"$TEST_NATIVE_GIT" -C "$COMMENT_REPO" init -q
+"$TEST_NATIVE_GIT" -C "$COMMENT_REPO" config user.name "Runtime Risk Test"
+"$TEST_NATIVE_GIT" -C "$COMMENT_REPO" config user.email "runtime-risk@example.invalid"
 printf '#!/usr/bin/env bash\nprintf "ok\\n"\n# Old credential comment.\n' >"${COMMENT_REPO}/src/app.sh"
-/usr/bin/git -C "$COMMENT_REPO" add src/app.sh
-/usr/bin/git -C "$COMMENT_REPO" -c commit.gpgSign=false commit -qm "fixture: add runtime file"
-comment_base=$(/usr/bin/git -C "$COMMENT_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$COMMENT_REPO" add src/app.sh
+"$TEST_NATIVE_GIT" -C "$COMMENT_REPO" -c commit.gpgSign=false commit -qm "fixture: add runtime file"
+comment_base=$("$TEST_NATIVE_GIT" -C "$COMMENT_REPO" rev-parse HEAD)
 printf '#!/usr/bin/env bash\nprintf "ok\\n"\n# New credential comment.\n' >"${COMMENT_REPO}/src/app.sh"
-/usr/bin/git -C "$COMMENT_REPO" add src/app.sh
-/usr/bin/git -C "$COMMENT_REPO" -c commit.gpgSign=false commit -qm "docs: update source comment"
+"$TEST_NATIVE_GIT" -C "$COMMENT_REPO" add src/app.sh
+"$TEST_NATIVE_GIT" -C "$COMMENT_REPO" -c commit.gpgSign=false commit -qm "docs: update source comment"
 comment_body=$(cd "$COMMENT_REPO" && _build_pr_body \
 	"7" \
 	"Update a source comment" \
@@ -162,21 +170,21 @@ assert_contains "comment-only source change remains Low" "$comment_body" "**Risk
 
 LITERAL_REPO="${TEST_ROOT}/literal-repo"
 mkdir -p "${LITERAL_REPO}/src"
-/usr/bin/git -C "$LITERAL_REPO" init -q
-/usr/bin/git -C "$LITERAL_REPO" config user.name "Runtime Risk Test"
-/usr/bin/git -C "$LITERAL_REPO" config user.email "runtime-risk@example.invalid"
+"$TEST_NATIVE_GIT" -C "$LITERAL_REPO" init -q
+"$TEST_NATIVE_GIT" -C "$LITERAL_REPO" config user.name "Runtime Risk Test"
+"$TEST_NATIVE_GIT" -C "$LITERAL_REPO" config user.email "runtime-risk@example.invalid"
 printf 'export const ignored = [];\n' >"${LITERAL_REPO}/src/browser-qa.js"
-/usr/bin/git -C "$LITERAL_REPO" add src/browser-qa.js
-/usr/bin/git -C "$LITERAL_REPO" -c commit.gpgSign=false commit -qm "fixture: add browser QA helper"
-literal_base=$(/usr/bin/git -C "$LITERAL_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$LITERAL_REPO" add src/browser-qa.js
+"$TEST_NATIVE_GIT" -C "$LITERAL_REPO" -c commit.gpgSign=false commit -qm "fixture: add browser QA helper"
+literal_base=$("$TEST_NATIVE_GIT" -C "$LITERAL_REPO" rev-parse HEAD)
 cat >"${LITERAL_REPO}/src/browser-qa.js" <<'EOF'
 export const ignored = [
   /Session failed to send/i,
   "Session transport closed",
 ];
 EOF
-/usr/bin/git -C "$LITERAL_REPO" add src/browser-qa.js
-/usr/bin/git -C "$LITERAL_REPO" -c commit.gpgSign=false commit -qm "fixture: filter browser diagnostics"
+"$TEST_NATIVE_GIT" -C "$LITERAL_REPO" add src/browser-qa.js
+"$TEST_NATIVE_GIT" -C "$LITERAL_REPO" -c commit.gpgSign=false commit -qm "fixture: filter browser diagnostics"
 literal_body=$(cd "$LITERAL_REPO" && _build_pr_body \
 	"29604" \
 	"Filter browser console noise" \
@@ -189,10 +197,10 @@ literal_body=$(cd "$LITERAL_REPO" && _build_pr_body \
 	"$literal_base")
 assert_contains "quoted session diagnostics remain Medium" "$literal_body" "**Risk level:** Medium"
 
-literal_session_base=$(/usr/bin/git -C "$LITERAL_REPO" rev-parse HEAD)
+literal_session_base=$("$TEST_NATIVE_GIT" -C "$LITERAL_REPO" rev-parse HEAD)
 printf 'export const session = createSession();\n' >>"${LITERAL_REPO}/src/browser-qa.js"
-/usr/bin/git -C "$LITERAL_REPO" add src/browser-qa.js
-/usr/bin/git -C "$LITERAL_REPO" -c commit.gpgSign=false commit -qm "fixture: add session management"
+"$TEST_NATIVE_GIT" -C "$LITERAL_REPO" add src/browser-qa.js
+"$TEST_NATIVE_GIT" -C "$LITERAL_REPO" -c commit.gpgSign=false commit -qm "fixture: add session management"
 literal_session_body=$(cd "$LITERAL_REPO" && _build_pr_body \
 	"29604" \
 	"Change runtime behavior" \
@@ -207,18 +215,18 @@ assert_contains "executable session behavior remains Critical" "$literal_session
 
 MIXED_REPO="${TEST_ROOT}/mixed-repo"
 mkdir -p "${MIXED_REPO}/src" "${MIXED_REPO}/docs"
-/usr/bin/git -C "$MIXED_REPO" init -q
-/usr/bin/git -C "$MIXED_REPO" config user.name "Runtime Risk Test"
-/usr/bin/git -C "$MIXED_REPO" config user.email "runtime-risk@example.invalid"
+"$TEST_NATIVE_GIT" -C "$MIXED_REPO" init -q
+"$TEST_NATIVE_GIT" -C "$MIXED_REPO" config user.name "Runtime Risk Test"
+"$TEST_NATIVE_GIT" -C "$MIXED_REPO" config user.email "runtime-risk@example.invalid"
 printf '#!/usr/bin/env bash\nprintf "old\\n"\n' >"${MIXED_REPO}/src/helper.sh"
 printf 'Initial guide.\n' >"${MIXED_REPO}/docs/policy.md"
-/usr/bin/git -C "$MIXED_REPO" add src/helper.sh docs/policy.md
-/usr/bin/git -C "$MIXED_REPO" -c commit.gpgSign=false commit -qm "fixture: add mixed files"
-mixed_base=$(/usr/bin/git -C "$MIXED_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$MIXED_REPO" add src/helper.sh docs/policy.md
+"$TEST_NATIVE_GIT" -C "$MIXED_REPO" -c commit.gpgSign=false commit -qm "fixture: add mixed files"
+mixed_base=$("$TEST_NATIVE_GIT" -C "$MIXED_REPO" rev-parse HEAD)
 printf '#!/usr/bin/env bash\nprintf "new\\n"\n' >"${MIXED_REPO}/src/helper.sh"
 printf 'Document auth, credentials, sessions, and data deletion policy.\n' >"${MIXED_REPO}/docs/policy.md"
-/usr/bin/git -C "$MIXED_REPO" add src/helper.sh docs/policy.md
-/usr/bin/git -C "$MIXED_REPO" -c commit.gpgSign=false commit -qm "fixture: change runtime and policy docs"
+"$TEST_NATIVE_GIT" -C "$MIXED_REPO" add src/helper.sh docs/policy.md
+"$TEST_NATIVE_GIT" -C "$MIXED_REPO" -c commit.gpgSign=false commit -qm "fixture: change runtime and policy docs"
 mixed_body=$(cd "$MIXED_REPO" && _build_pr_body \
 	"8" \
 	"Adjust helper output and policy documentation" \
@@ -236,8 +244,8 @@ cat >"${MIXED_REPO}/src/helper.sh" <<'EOF'
 credential="enabled"
 printf '%s\n' "$credential"
 EOF
-/usr/bin/git -C "$MIXED_REPO" add src/helper.sh
-/usr/bin/git -C "$MIXED_REPO" -c commit.gpgSign=false commit -qm "fixture: add critical runtime behavior"
+"$TEST_NATIVE_GIT" -C "$MIXED_REPO" add src/helper.sh
+"$TEST_NATIVE_GIT" -C "$MIXED_REPO" -c commit.gpgSign=false commit -qm "fixture: add critical runtime behavior"
 mixed_critical_body=$(cd "$MIXED_REPO" && _build_pr_body \
 	"9" \
 	"Adjust helper behavior and policy documentation" \
@@ -258,12 +266,12 @@ assert_contains "runtime file beside todo data still derives Critical" "$todo_ru
 # GH#35709: runtime-owned leftovers must match product staging exclusions.
 RUNTIME_STATE_REPO="${TEST_ROOT}/runtime-state-repo"
 mkdir -p "${RUNTIME_STATE_REPO}/todo/x" "${RUNTIME_STATE_REPO}/.agents/loop-state/nested"
-/usr/bin/git -C "$RUNTIME_STATE_REPO" init -q -b main
-/usr/bin/git -C "$RUNTIME_STATE_REPO" config user.name "Runtime Risk Test"
-/usr/bin/git -C "$RUNTIME_STATE_REPO" config user.email "runtime-risk@example.invalid"
+"$TEST_NATIVE_GIT" -C "$RUNTIME_STATE_REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$RUNTIME_STATE_REPO" config user.name "Runtime Risk Test"
+"$TEST_NATIVE_GIT" -C "$RUNTIME_STATE_REPO" config user.email "runtime-risk@example.invalid"
 printf 'Initial guide.\n' >"${RUNTIME_STATE_REPO}/todo/x/guide.md"
-/usr/bin/git -C "$RUNTIME_STATE_REPO" add todo/x/guide.md
-/usr/bin/git -C "$RUNTIME_STATE_REPO" commit -qm "fixture: planning data base"
+"$TEST_NATIVE_GIT" -C "$RUNTIME_STATE_REPO" add todo/x/guide.md
+"$TEST_NATIVE_GIT" -C "$RUNTIME_STATE_REPO" commit -qm "fixture: planning data base"
 printf 'Updated guide.\n' >"${RUNTIME_STATE_REPO}/todo/x/guide.md"
 printf '{}\n' >"${RUNTIME_STATE_REPO}/todo/x/data.json"
 printf '{}\n' >"${RUNTIME_STATE_REPO}/todo/x/log.jsonl"
@@ -290,7 +298,7 @@ runtime_neighbor_files=$(cd "$RUNTIME_STATE_REPO" && _pending_runtime_files_chan
 assert_contains "similarly named product path remains in pending files" "$runtime_neighbor_files" ".agents/loop-state-product.js"
 runtime_neighbor_risk=$(_derive_runtime_risk "" "$runtime_neighbor_files" "Update session handling")
 assert_contains "runtime exclusions do not downgrade adjacent product code" "$runtime_neighbor_risk" "Critical"
-/usr/bin/git -C "$RUNTIME_STATE_REPO" add .agents/.full-loop-cleanup-deferred
+"$TEST_NATIVE_GIT" -C "$RUNTIME_STATE_REPO" add .agents/.full-loop-cleanup-deferred
 stage_in_runtime_state_repo() {
 	(cd "$RUNTIME_STATE_REPO" && _stage_product_changes) || return 1
 	return 0
@@ -359,24 +367,24 @@ MUTATION_REPO="${TEST_ROOT}/mutation-repo"
 MUTATION_BIN="${TEST_ROOT}/mutation-bin"
 MUTATION_TRACE="${TEST_ROOT}/mutation-trace"
 mkdir -p "$MUTATION_BIN"
-/usr/bin/git init -q --bare "$MUTATION_REMOTE"
-/usr/bin/git init -q -b main "$MUTATION_REPO"
-/usr/bin/git -C "$MUTATION_REPO" config user.name "Runtime Risk Test"
-/usr/bin/git -C "$MUTATION_REPO" config user.email "runtime-risk@example.invalid"
+"$TEST_NATIVE_GIT" init -q --bare "$MUTATION_REMOTE"
+"$TEST_NATIVE_GIT" init -q -b main "$MUTATION_REPO"
+"$TEST_NATIVE_GIT" -C "$MUTATION_REPO" config user.name "Runtime Risk Test"
+"$TEST_NATIVE_GIT" -C "$MUTATION_REPO" config user.email "runtime-risk@example.invalid"
 printf 'base\n' >"${MUTATION_REPO}/README.md"
-/usr/bin/git -C "$MUTATION_REPO" add README.md
-/usr/bin/git -C "$MUTATION_REPO" -c commit.gpgSign=false commit -qm "fixture: base"
-/usr/bin/git -C "$MUTATION_REPO" remote add origin "$MUTATION_REMOTE"
-/usr/bin/git -C "$MUTATION_REPO" push -q -u origin main
-/usr/bin/git -C "$MUTATION_REPO" remote set-head origin main
-/usr/bin/git -C "$MUTATION_REPO" switch -q -c feature/risk-order
+"$TEST_NATIVE_GIT" -C "$MUTATION_REPO" add README.md
+"$TEST_NATIVE_GIT" -C "$MUTATION_REPO" -c commit.gpgSign=false commit -qm "fixture: base"
+"$TEST_NATIVE_GIT" -C "$MUTATION_REPO" remote add origin "$MUTATION_REMOTE"
+"$TEST_NATIVE_GIT" -C "$MUTATION_REPO" push -q -u origin main
+"$TEST_NATIVE_GIT" -C "$MUTATION_REPO" remote set-head origin main
+"$TEST_NATIVE_GIT" -C "$MUTATION_REPO" switch -q -c feature/risk-order
 mkdir -p "${MUTATION_REPO}/src"
 printf '#!/usr/bin/env bash\ncredential_rotation="enabled"\n' >"${MUTATION_REPO}/src/auth.sh"
 
 cat >"${MUTATION_BIN}/git" <<'EOF'
 #!/usr/bin/env bash
 printf 'git %s\n' "$*" >>"$MUTATION_TRACE"
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 EOF
 cat >"${MUTATION_BIN}/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -393,7 +401,7 @@ exit 0
 EOF
 chmod +x "${MUTATION_BIN}/git" "${MUTATION_BIN}/gh"
 : >"$MUTATION_TRACE"
-mutation_head_before=$(/usr/bin/git -C "$MUTATION_REPO" rev-parse HEAD)
+mutation_head_before=$("$TEST_NATIVE_GIT" -C "$MUTATION_REPO" rev-parse HEAD)
 if (cd "$MUTATION_REPO" && PATH="${MUTATION_BIN}:$PATH" MUTATION_TRACE="$MUTATION_TRACE" \
 	"${SCRIPT_DIR_TEST}/full-loop-helper.sh" commit-and-pr --issue 9 --message "fix: update runtime behavior" \
 	--summary "Adjust helper behavior" --testing "unit tests pass" >"${MUTATION_TRACE}.err" 2>&1); then
@@ -401,8 +409,8 @@ if (cd "$MUTATION_REPO" && PATH="${MUTATION_BIN}:$PATH" MUTATION_TRACE="$MUTATIO
 	TESTS_FAILED=$((TESTS_FAILED + 1))
 elif grep -Eq '^git (add|commit|rebase|reset|push)|^gh (pr (create|edit|merge|ready|comment|close|review)|api .*POST)' "$MUTATION_TRACE" ||
 	! grep -q 'requires runtime-verified evidence' "${MUTATION_TRACE}.err" ||
-	[[ "$(/usr/bin/git -C "$MUTATION_REPO" rev-parse HEAD)" != "$mutation_head_before" ]] ||
-	/usr/bin/git --git-dir="$MUTATION_REMOTE" show-ref --verify --quiet refs/heads/feature/risk-order; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$MUTATION_REPO" rev-parse HEAD)" != "$mutation_head_before" ]] ||
+	"$TEST_NATIVE_GIT" --git-dir="$MUTATION_REMOTE" show-ref --verify --quiet refs/heads/feature/risk-order; then
 	printf 'FAIL invalid derived evidence allowed local or remote mutations\n'
 	TESTS_FAILED=$((TESTS_FAILED + 1))
 else
@@ -426,19 +434,19 @@ TESTS_RUN=$((TESTS_RUN + 1))
 # GH#31300: incoming sensitive code must not become a local deletion or hunk.
 BEHIND_REPO="${TEST_ROOT}/behind-repo"
 mkdir -p "${BEHIND_REPO}/src"
-/usr/bin/git -C "$BEHIND_REPO" init -q -b main
-/usr/bin/git -C "$BEHIND_REPO" config user.name "Runtime Risk Test"
-/usr/bin/git -C "$BEHIND_REPO" config user.email "runtime-risk@example.invalid"
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" config user.name "Runtime Risk Test"
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" config user.email "runtime-risk@example.invalid"
 printf 'export const value = 1;\n' >"${BEHIND_REPO}/src/helper.js"
 printf 'Initial guide.\n' >"${BEHIND_REPO}/README.md"
-/usr/bin/git -C "$BEHIND_REPO" add .
-/usr/bin/git -C "$BEHIND_REPO" -c commit.gpgSign=false commit -qm "fixture: shared base"
-behind_base=$(/usr/bin/git -C "$BEHIND_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" add .
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" -c commit.gpgSign=false commit -qm "fixture: shared base"
+behind_base=$("$TEST_NATIVE_GIT" -C "$BEHIND_REPO" rev-parse HEAD)
 printf 'export const credential = rotateCredential();\n' >"${BEHIND_REPO}/src/helper.js"
 printf 'export const session = createSession();\n' >"${BEHIND_REPO}/src/auth.js"
-/usr/bin/git -C "$BEHIND_REPO" add .
-/usr/bin/git -C "$BEHIND_REPO" -c commit.gpgSign=false commit -qm "fixture: upstream sensitive code"
-/usr/bin/git -C "$BEHIND_REPO" switch -q -c feature/behind "$behind_base"
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" add .
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" -c commit.gpgSign=false commit -qm "fixture: upstream sensitive code"
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" switch -q -c feature/behind "$behind_base"
 printf 'Updated guide.\n' >"${BEHIND_REPO}/README.md"
 behind_result=$(cd "$BEHIND_REPO" &&
 	_validate_pending_runtime_metadata Low self-assessed "diff reviewed" "Update guide" main &&
@@ -464,10 +472,10 @@ pending_in_behind_repo() {
 }
 assert_rejected "unstaged sensitive code requires runtime evidence" \
 	pending_in_behind_repo Low self-assessed "diff reviewed" "Adjust helper" main
-/usr/bin/git -C "$BEHIND_REPO" add src/helper.js
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" add src/helper.js
 assert_rejected "staged sensitive code requires runtime evidence" \
 	pending_in_behind_repo Low self-assessed "diff reviewed" "Adjust helper" main
-/usr/bin/git -C "$BEHIND_REPO" -c commit.gpgSign=false commit -qm "fixture: local sensitive commit"
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" -c commit.gpgSign=false commit -qm "fixture: local sensitive commit"
 assert_rejected "local sensitive commit cannot hide behind upstream identical content" \
 	pending_in_behind_repo Low self-assessed "diff reviewed" "Adjust helper" main
 behind_result=$(pending_in_behind_repo Low runtime-verified \
@@ -476,21 +484,21 @@ assert_contains "substantive runtime evidence accepts local sensitive code" "$be
 
 # Restore harmless tracked code with a local commit, then exercise untracked risk.
 printf 'export const value = 1;\n' >"${BEHIND_REPO}/src/helper.js"
-/usr/bin/git -C "$BEHIND_REPO" add src/helper.js
-/usr/bin/git -C "$BEHIND_REPO" -c commit.gpgSign=false commit -qm "fixture: restore harmless code"
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" add src/helper.js
+"$TEST_NATIVE_GIT" -C "$BEHIND_REPO" -c commit.gpgSign=false commit -qm "fixture: restore harmless code"
 printf 'export const session = createSession();\n' >"${BEHIND_REPO}/src/session.js"
-behind_status_before=$(/usr/bin/git -C "$BEHIND_REPO" status --porcelain=v1)
-behind_head_before=$(/usr/bin/git -C "$BEHIND_REPO" rev-parse HEAD)
+behind_status_before=$("$TEST_NATIVE_GIT" -C "$BEHIND_REPO" status --porcelain=v1)
+behind_head_before=$("$TEST_NATIVE_GIT" -C "$BEHIND_REPO" rev-parse HEAD)
 assert_rejected "untracked sensitive code requires runtime evidence behind base" \
 	pending_in_behind_repo Low self-assessed "diff reviewed" "Adjust helper" main
 assert_contains "rejected prevalidation preserves index and working tree" \
-	"<$(/usr/bin/git -C "$BEHIND_REPO" status --porcelain=v1)>" "<$behind_status_before>"
+	"<$("$TEST_NATIVE_GIT" -C "$BEHIND_REPO" status --porcelain=v1)>" "<$behind_status_before>"
 assert_contains "rejected prevalidation preserves HEAD" \
-	"<$(/usr/bin/git -C "$BEHIND_REPO" rev-parse HEAD)>" "<$behind_head_before>"
+	"<$("$TEST_NATIVE_GIT" -C "$BEHIND_REPO" rev-parse HEAD)>" "<$behind_head_before>"
 assert_rejected "missing comparison ref fails closed for pending work" \
 	pending_in_behind_repo Low self-assessed "diff reviewed" "Update guide" missing-base
-unrelated_tree=$(/usr/bin/git -C "$BEHIND_REPO" rev-parse 'main^{tree}')
-unrelated_base=$(printf 'unrelated root\n' | /usr/bin/git -C "$BEHIND_REPO" -c commit.gpgSign=false commit-tree "$unrelated_tree")
+unrelated_tree=$("$TEST_NATIVE_GIT" -C "$BEHIND_REPO" rev-parse 'main^{tree}')
+unrelated_base=$(printf 'unrelated root\n' | "$TEST_NATIVE_GIT" -C "$BEHIND_REPO" -c commit.gpgSign=false commit-tree "$unrelated_tree")
 assert_rejected "unrelated comparison history fails closed" \
 	pending_in_behind_repo Low self-assessed "diff reviewed" "Update guide" "$unrelated_base"
 
@@ -532,24 +540,24 @@ prepare_fixture_metadata() {
 
 FINAL_REPO="${TEST_ROOT}/final-repo"
 mkdir -p "${FINAL_REPO}/src"
-/usr/bin/git -C "$FINAL_REPO" init -q -b main
-/usr/bin/git -C "$FINAL_REPO" config user.name "Runtime Risk Test"
-/usr/bin/git -C "$FINAL_REPO" config user.email "runtime-risk@example.invalid"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" config user.name "Runtime Risk Test"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" config user.email "runtime-risk@example.invalid"
 printf 'export const value = 1;\n' >"${FINAL_REPO}/src/helper.js"
 printf '%s\n' '- [ ] t1 Finish task ref:GH#34465' >"${FINAL_REPO}/TODO.md"
-/usr/bin/git -C "$FINAL_REPO" add .
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: shared base"
-final_base=$(/usr/bin/git -C "$FINAL_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" add .
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: shared base"
+final_base=$("$TEST_NATIVE_GIT" -C "$FINAL_REPO" rev-parse HEAD)
 printf 'export const credential = rotateCredential();\n' >"${FINAL_REPO}/src/helper.js"
 printf 'export const payment = charge();\n' >"${FINAL_REPO}/src/billing.js"
 printf '%s\n' '- [ ] t2 Upstream task' >>"${FINAL_REPO}/TODO.md"
-/usr/bin/git -C "$FINAL_REPO" add .
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: upstream sensitive changes"
-/usr/bin/git -C "$FINAL_REPO" update-ref refs/remotes/origin/main HEAD
-/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/final "$final_base"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" add .
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: upstream sensitive changes"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" update-ref refs/remotes/origin/main HEAD
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" switch -q -c feature/final "$final_base"
 printf 'export const value = 2;\n' >"${FINAL_REPO}/src/helper.js"
-/usr/bin/git -C "$FINAL_REPO" add .
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: harmless branch change"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" add .
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: harmless branch change"
 final_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" "diff reviewed")
 assert_contains "metadata lists only branch files" "$final_body" $'## Files Changed\n\nsrc/helper.js\n'
 assert_contains "metadata risk ignores upstream sensitive changes" "$final_body" '**Risk level:** Medium'
@@ -557,10 +565,10 @@ final_pending=$(cd "$FINAL_REPO" && _validate_pending_runtime_metadata Medium se
 	"diff reviewed" "Adjust helper" origin/main && printf accepted)
 assert_contains "pending and final risk agree behind upstream" "$final_pending" accepted
 
-/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/bookkeeping "$final_base"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" switch -q -c feature/bookkeeping "$final_base"
 printf '%s\n' '- [x] t1 Finish task ref:GH#34465 pr:#123 completed:2026-10-12' >"${FINAL_REPO}/TODO.md"
-/usr/bin/git -C "$FINAL_REPO" add TODO.md
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: completion proof"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" add TODO.md
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: completion proof"
 bookkeeping_result=$(cd "$FINAL_REPO" &&
 	_validate_completion_bookkeeping_paths t1 origin/main &&
 	_validate_completion_bookkeeping_todo 34465 123 t1 origin/main && printf accepted)
@@ -570,43 +578,43 @@ assert_contains "planning classification excludes upstream files" "$planning_bod
 
 # GH#36002: nested markdown under todo/ stays planning; data files under todo/
 # are deliverables, alone or mixed with planning files.
-/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-markdown "$final_base"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" switch -q -c feature/todo-markdown "$final_base"
 mkdir -p "${FINAL_REPO}/todo/tasks"
 printf '%s\n' '# t1 brief' >"${FINAL_REPO}/todo/tasks/t1-brief.md"
-/usr/bin/git -C "$FINAL_REPO" add todo
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: nested planning brief"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" add todo
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: nested planning brief"
 markdown_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Add brief" "diff reviewed")
 assert_contains "nested todo markdown is planning-only" "$markdown_body" 'For #34465'
 
-/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-data "$final_base"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" switch -q -c feature/todo-data "$final_base"
 mkdir -p "${FINAL_REPO}/todo/award-enrichment/log/runner"
 printf '%s\n' '{"status":"found"}' >"${FINAL_REPO}/todo/award-enrichment/log/runner/example.jsonl"
-/usr/bin/git -C "$FINAL_REPO" add todo
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: data deliverable under todo"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" add todo
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: data deliverable under todo"
 data_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record outcomes" "diff reviewed")
 assert_contains "todo data file is a deliverable" "$data_body" 'Resolves #34465'
 
-/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-mixed "$final_base"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" switch -q -c feature/todo-mixed "$final_base"
 mkdir -p "${FINAL_REPO}/todo/award-enrichment/specs"
 printf '%s\n' '{"spec":1}' >"${FINAL_REPO}/todo/award-enrichment/specs/example.json"
 printf '%s\n' '- [ ] t3 Record outcomes' >>"${FINAL_REPO}/TODO.md"
-/usr/bin/git -C "$FINAL_REPO" add .
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: data deliverable with TODO entry"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" add .
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: data deliverable with TODO entry"
 mixed_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record outcomes" "diff reviewed")
 assert_contains "todo data with TODO.md is a deliverable" "$mixed_body" 'Resolves #34465'
 
 # A data-to-markdown rename still removes a deliverable, even though the
 # destination alone would qualify as planning. Seed the data in the base so
 # the branch diff contains only the rename, not the initial data addition.
-/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-rename-base "$final_base"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" switch -q -c feature/todo-rename-base "$final_base"
 mkdir -p "${FINAL_REPO}/todo/specs"
 printf '%s\n' '{"spec":1}' >"${FINAL_REPO}/todo/specs/example.json"
-/usr/bin/git -C "$FINAL_REPO" add todo
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: base data deliverable"
-rename_base=$(/usr/bin/git -C "$FINAL_REPO" rev-parse HEAD)
-/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/todo-rename
-/usr/bin/git -C "$FINAL_REPO" mv todo/specs/example.json todo/specs/example.md
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: rename data to markdown"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" add todo
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: base data deliverable"
+rename_base=$("$TEST_NATIVE_GIT" -C "$FINAL_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" switch -q -c feature/todo-rename
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" mv todo/specs/example.json todo/specs/example.md
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: rename data to markdown"
 renamed_data_is_planning_only() {
 	(cd "$FINAL_REPO" && _diff_is_planning_only "$rename_base") || return 1
 	return 0
@@ -614,10 +622,10 @@ renamed_data_is_planning_only() {
 assert_rejected "data-to-markdown rename is not planning-only" \
 	renamed_data_is_planning_only
 
-/usr/bin/git -C "$FINAL_REPO" switch -q feature/final
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" switch -q feature/final
 printf 'export const payment = charge();\n' >"${FINAL_REPO}/src/billing.js"
-/usr/bin/git -C "$FINAL_REPO" add .
-/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: branch sensitive change"
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" add .
+"$TEST_NATIVE_GIT" -C "$FINAL_REPO" commit -qm "fixture: branch sensitive change"
 prepare_local_critical_metadata() {
 	(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" "diff reviewed")
 	return $?

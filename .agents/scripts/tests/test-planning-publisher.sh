@@ -3,6 +3,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 set -u
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 # Fixture repositories are disposable; bypass interactive canonical-repo guards.
 PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH
@@ -91,7 +99,7 @@ run_publish_with_receipt() {
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_GIT_BIN=/usr/bin/git \
+		AIDEVOPS_PLANNING_GIT_BIN="$TEST_NATIVE_GIT" \
 			AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
 			AIDEVOPS_PLANNING_RECEIPT_DIR="$receipt_dir" \
 			AIDEVOPS_PLANNING_WRITE_RECEIPT=true \
@@ -112,7 +120,7 @@ run_receipt_verify() {
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_GIT_BIN=/usr/bin/git \
+		AIDEVOPS_PLANNING_GIT_BIN="$TEST_NATIVE_GIT" \
 			AIDEVOPS_PLANNING_RECEIPT_DIR="$receipt_dir" \
 			planning_verify_publication_receipt "$repo" origin "$branch" "$expected_commit"
 	)
@@ -212,7 +220,7 @@ test_publication_receipt_revalidates_exact_handoff() {
 		esac
 	done <<<"$output"
 	after=$(state_digest "$repo")
-	remote_head=$(/usr/bin/git --git-dir="${root}/remote.git" rev-parse main)
+	remote_head=$("$TEST_NATIVE_GIT" --git-dir="${root}/remote.git" rev-parse main)
 	run_receipt_verify "$repo" "$receipt_dir" main "$published_commit" || valid_rc=$?
 	rm -f "$receipt"
 	replay_output=$(run_publish_with_receipt "$repo" "$receipt_dir" main) || replay_rc=$?
@@ -241,7 +249,7 @@ test_publication_receipt_revalidates_exact_handoff() {
 	run_receipt_verify "$repo" "$receipt_dir" main "$published_commit" >/dev/null 2>&1 || forged_rc=$?
 	if [[ -f "$receipt" && "$before" == "$after" && "$valid_rc" -eq 0 && "$replay_rc" -eq 0 && \
 		"$changed_rc" -ne 0 && "$added_rc" -ne 0 && "$forged_rc" -ne 0 && "$remote_head" == "$published_commit" && \
-		"$replayed_commit" == "$published_commit" && "$source_head" == "$(/usr/bin/git -C "$repo" rev-parse HEAD)" ]] && \
+		"$replayed_commit" == "$published_commit" && "$source_head" == "$("$TEST_NATIVE_GIT" -C "$repo" rev-parse HEAD)" ]] && \
 		grep -q '^format=aidevops-planning-publication-v3$' "$receipt" &&
 		grep -q '^handoff_id=[0-9a-fA-F]\{40,64\}$' "$receipt"; then
 		pass "$name"
@@ -263,9 +271,9 @@ test_publication_receipt_rejects_ancestor_source_forgery() {
 	}
 	repo="${root}/work"
 	receipt_dir="${root}/receipts"
-	/usr/bin/git -C "$repo" commit --allow-empty -q -m 'source anchor' || return 0
-	/usr/bin/git -C "$repo" push -q origin main || return 0
-	ancestor_head=$(/usr/bin/git -C "$repo" rev-parse HEAD^) || return 0
+	"$TEST_NATIVE_GIT" -C "$repo" commit --allow-empty -q -m 'source anchor' || return 0
+	"$TEST_NATIVE_GIT" -C "$repo" push -q origin main || return 0
+	ancestor_head=$("$TEST_NATIVE_GIT" -C "$repo" rev-parse HEAD^) || return 0
 	printf '%s\n' '- [ ] t012 immutable source handoff ref:GH#12' >>"${repo}/TODO.md"
 	output=$(run_publish_with_receipt "$repo" "$receipt_dir" main) || {
 		fail "$name" publish
@@ -288,10 +296,10 @@ test_publication_receipt_rejects_ancestor_source_forgery() {
 		fi
 	done <"$receipt" >"$forged_tmp"
 	mv "$forged_tmp" "$receipt"
-	/usr/bin/git -C "$repo" update-ref refs/heads/main "$ancestor_head" "$source_head" || return 0
+	"$TEST_NATIVE_GIT" -C "$repo" update-ref refs/heads/main "$ancestor_head" "$source_head" || return 0
 	run_receipt_verify "$repo" "$receipt_dir" main "$published_commit" >/dev/null 2>&1 || forged_rc=$?
-	if [[ "$forged_rc" -ne 0 && "$(/usr/bin/git -C "$repo" rev-parse HEAD)" == "$ancestor_head" ]] &&
-		/usr/bin/git --git-dir="${root}/remote.git" show -s --format=%B "$published_commit" |
+	if [[ "$forged_rc" -ne 0 && "$("$TEST_NATIVE_GIT" -C "$repo" rev-parse HEAD)" == "$ancestor_head" ]] &&
+		"$TEST_NATIVE_GIT" --git-dir="${root}/remote.git" show -s --format=%B "$published_commit" |
 		grep -q '^Planning-Publication-Handoff-ID: [0-9a-fA-F]\{40,64\}$'; then
 		pass "$name"
 	else
