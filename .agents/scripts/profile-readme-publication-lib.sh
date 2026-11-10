@@ -277,6 +277,31 @@ _profile_declare_lifecycle_owner() {
 	return 0
 }
 
+# Create detached tree $2 of repo $1 at commit $3 with owner session $4.
+# GH#37591: declare this producer as the lifecycle runtime so creation registers
+# an owner run that its own cleanup can later relinquish.
+_profile_create_registered_worktree() {
+	local canonical_repo="$1"
+	local worktree_path="$2"
+	local head_commit="$3"
+	local owner_session="$4"
+
+	# shellcheck source=shared-worktree-create.sh
+	source "${SCRIPT_DIR}/shared-worktree-create.sh" || return 1
+	_profile_declare_lifecycle_owner "$owner_session"
+	(
+		if [[ -n "$PROFILE_PUBLICATION_LIFECYCLE_PID" ]]; then
+			export AIDEVOPS_LIFECYCLE_RUNTIME_PID="$PROFILE_PUBLICATION_LIFECYCLE_PID"
+			export AIDEVOPS_LIFECYCLE_SESSION_ID="$PROFILE_PUBLICATION_LIFECYCLE_SESSION"
+		fi
+		AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$" \
+			AIDEVOPS_WORKTREE_CREATE_SESSION="$owner_session" \
+			AIDEVOPS_WORKTREE_CREATE_TASK="$PROFILE_PUBLICATION_REGISTRY_TASK" \
+			worktree_create_registered "$canonical_repo" "$worktree_path" "$head_commit" --detach >/dev/null
+	)
+	return $?
+}
+
 # Run the worktree helper's `remove` for $1 in canonical repo $2 under the
 # lifecycle identity this producer declared at creation (if any).
 _profile_publication_helper_remove() {
@@ -821,21 +846,8 @@ _profile_run_in_worktree() {
 		return 1
 	fi
 	local owner_session="profile-readme-${PROFILE_UPDATE_LOCK_TOKEN:-$$}"
-	# shellcheck source=shared-worktree-create.sh
-	source "${SCRIPT_DIR}/shared-worktree-create.sh" || return 1
-	_profile_declare_lifecycle_owner "$owner_session"
-	if ! (
-		# GH#37591: declare this producer as the lifecycle runtime so creation
-		# registers an owner run that its own cleanup can later relinquish.
-		if [[ -n "$PROFILE_PUBLICATION_LIFECYCLE_PID" ]]; then
-			export AIDEVOPS_LIFECYCLE_RUNTIME_PID="$PROFILE_PUBLICATION_LIFECYCLE_PID"
-			export AIDEVOPS_LIFECYCLE_SESSION_ID="$PROFILE_PUBLICATION_LIFECYCLE_SESSION"
-		fi
-		AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$" \
-			AIDEVOPS_WORKTREE_CREATE_SESSION="$owner_session" \
-			AIDEVOPS_WORKTREE_CREATE_TASK="$PROFILE_PUBLICATION_REGISTRY_TASK" \
-			worktree_create_registered "$canonical_repo" "$worktree_path" "$canonical_head_before" --detach >/dev/null
-	); then
+	if ! _profile_create_registered_worktree "$canonical_repo" "$worktree_path" \
+		"$canonical_head_before" "$owner_session"; then
 		echo "Error: could not create profile publication worktree" >&2
 		# A failed registration may leave a tree. Try guarded cleanup now so
 		# it is not retained unenrolled; otherwise keep its intent for recovery.
