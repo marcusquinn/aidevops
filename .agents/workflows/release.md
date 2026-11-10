@@ -135,6 +135,13 @@ Before version mutation, the helper reserves the repository's remote release lan
 
 The underlying version manager verifies the source PR is merged and its merge SHA is reachable, then atomically checks the tree → bumps and validates version files → commits → signs and pushes the tag. The tag workflow verifies immutable provenance before reconciling GitHub, npm OIDC, and Homebrew. A later trusted reconciliation verifies all three channels, runs local deploy sync from a detached tag worktree, and persists receipts. Direct `version-manager.sh release` execution is not a full-loop release because it cannot persist terminal per-PR lifecycle evidence.
 
+Reconciliation requires npm audit signatures JSON with verified attestation bundles
+from `--include-attestations`. Legacy or malformed output is a tooling error, not
+proof of publication or a propagation wait. Use an independently provisioned npm
+with that capability in the reconciliation process's PATH, without changing the
+global npm installation; npm 11.21.2 has been observed working, not established
+as the minimum version. Never skip provenance verification to work around it.
+
 When the release range contains a conventional `perf:` commit (optionally
 scoped or prefixed with `GH#NNN:`), the signed tag includes
 `Aidevops-Efficiency-Change: true` and generated release notes include an

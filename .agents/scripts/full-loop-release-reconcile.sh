@@ -921,6 +921,7 @@ _full_loop_release_verify_npm_provenance() {
 	local audit_json=""
 	local provenance_payload=""
 	local expected_digest=""
+	local audit_rc=0
 
 	_FULL_LOOP_RELEASE_NPM_VERSION=""
 	_FULL_LOOP_RELEASE_NPM_INTEGRITY=""
@@ -947,13 +948,21 @@ _full_loop_release_verify_npm_provenance() {
 	[[ "$expected_digest" =~ ^[0-9a-f]{128}$ ]] || return 1
 
 	audit_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-npm-provenance.XXXXXX") || return 1
-	if ! (
+	(
 		_FULL_LOOP_RELEASE_AUDIT_DIR="$audit_dir"
 		trap 'command rm -rf -- "$_FULL_LOOP_RELEASE_AUDIT_DIR"' EXIT
 		npm install --prefix "$audit_dir" --ignore-scripts --no-audit --no-fund --save-exact \
 			"aidevops@${version}" >/dev/null 2>&1 || exit 1
 		audit_json=$(npm --prefix "$audit_dir" audit signatures \
 			--json --include-attestations 2>/dev/null) || exit 1
+		if ! jq -e --arg array_type "$_FULL_LOOP_RELEASE_JSON_ARRAY_TYPE" --arg object_type 'object' '
+			type == $object_type and (.invalid | type == $array_type)
+			and (.missing | type == $array_type) and (.verified | type == $array_type)
+			and all(.verified[]; type == $object_type and (.attestationBundles | type == $array_type))
+		' <<<"$audit_json" >/dev/null 2>&1; then
+			printf 'release: npm audit output lacks verified-attestation capability or is malformed (npm %s); use an npm version that supports --include-attestations JSON output\n' "$(npm --version 2>/dev/null || printf 'unknown')" >&2
+			exit 2
+		fi
 		jq -e --arg version "$version" \
 			--arg array_type "$_FULL_LOOP_RELEASE_JSON_ARRAY_TYPE" \
 			--arg provenance_predicate "$_FULL_LOOP_RELEASE_PROVENANCE_PREDICATE" '
@@ -995,9 +1004,8 @@ _full_loop_release_verify_npm_provenance() {
 		and .predicate.runDetails.builder.id == "https://github.com/actions/runner/github-hosted"
 	' <<<"$provenance_payload" >/dev/null || exit 1
 		exit 0
-	); then
-		return 1
-	fi
+	) || audit_rc=$?
+	[[ "$audit_rc" -eq 0 ]] || return "$audit_rc"
 	_FULL_LOOP_RELEASE_NPM_VERSION="$npm_version"
 	_FULL_LOOP_RELEASE_NPM_INTEGRITY="$npm_integrity"
 	return 0
@@ -1040,12 +1048,14 @@ _full_loop_release_verify_channels() {
 	local formula_sha=""
 	local tarball_url="https://github.com/${repo}/archive/refs/tags/${tag_name}.tar.gz"
 	local expected_sha=""
+	local npm_rc=0
 
 	release_json=$(gh api "repos/${repo}/releases/tags/${tag_name}" 2>/dev/null) || return 1
 	jq -e --arg tag "$tag_name" '
 		.tag_name == $tag and .draft == false and ((.published_at // "") | length > 0)
 	' <<<"$release_json" >/dev/null || return 1
-	_full_loop_release_verify_npm_provenance "$repo" "$tag_name" "$version" || return 1
+	_full_loop_release_verify_npm_provenance "$repo" "$tag_name" "$version" || npm_rc=$?
+	[[ "$npm_rc" -eq 0 ]] || return "$npm_rc"
 	npm_version="$_FULL_LOOP_RELEASE_NPM_VERSION"
 	npm_integrity="$_FULL_LOOP_RELEASE_NPM_INTEGRITY"
 	formula=$(gh api "repos/${tap_owner}/homebrew-tap/contents/Formula/aidevops.rb" \
@@ -1243,6 +1253,7 @@ _full_loop_release_inspect_remote() {
 	local run_conclusion=""
 	local run_url=""
 	local find_rc=0
+	local channels_rc=0
 
 	tag_commit=$(_full_loop_release_resolve_tag_commit "$tag_name") || return 1
 	_full_loop_release_find_workflow_run "$repo" "$tag_name" "$tag_commit" || find_rc=$?
@@ -1253,7 +1264,10 @@ _full_loop_release_inspect_remote() {
 		if _full_loop_release_verify_channels "$repo" "$tag_name"; then
 			printf 'WORKFLOW_LOOKUP=uncorroborated\n'
 			return 8
+		else
+			channels_rc=$?
 		fi
+		[[ "$channels_rc" -ne 2 ]] || return 1
 		return 3
 	fi
 	[[ "$find_rc" -eq 0 ]] || return 1
@@ -1272,7 +1286,10 @@ _full_loop_release_inspect_remote() {
 			if _full_loop_release_verify_channels "$repo" "$tag_name"; then
 				_full_loop_release_published_if_postflight_ready "$repo" "$tag_name"
 				return $?
+			else
+				channels_rc=$?
 			fi
+			[[ "$channels_rc" -ne 2 ]] || return 1
 			# A successful sibling is evidence of publication; a failed newer
 			# recovery must not trigger another dispatch during propagation.
 			return 8
@@ -1280,7 +1297,9 @@ _full_loop_release_inspect_remote() {
 		printf 'WORKFLOW_CONCLUSION=%s\n' "${run_conclusion:-unknown}"
 		return 4
 	fi
-	if ! _full_loop_release_verify_channels "$repo" "$tag_name"; then
+	_full_loop_release_verify_channels "$repo" "$tag_name" || channels_rc=$?
+	[[ "$channels_rc" -ne 2 ]] || return 1
+	if [[ "$channels_rc" -ne 0 ]]; then
 		_full_loop_release_unverified_channels_action "$repo"
 		return $?
 	fi
