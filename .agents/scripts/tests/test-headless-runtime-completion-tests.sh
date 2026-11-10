@@ -95,6 +95,14 @@ _already_satisfied_fixture_gh() {
 			| if $shape == "premise_falsified" then .state_reason = "not_planned"
 			elif $shape == "wrong_closer" then .closed_by.login = "other"
 			elif $shape == "unbound_path" then .body = "Roll out the helper as in the earlier issue."
+			elif $shape == "nested_path" then .body = "Roll out the helper in `docs/README.md`."
+			elif $shape == "prefixed_path" then .body = "Roll out the helper in `old-README.md`."
+			elif $shape == "extended_path" then .body = "Roll out the helper in `README.md.bak`."
+			elif $shape == "dotted_path" then .body = "Roll out the helper in `README.md./other`."
+			elif $shape == "double_dot_path" then .body = "Roll out the helper in `README.md..backup`."
+			elif $shape == "period_path" then .body = "Roll out the helper in README.md."
+			elif $shape == "comma_path" then .body = "Update README.md, then verify."
+			elif $shape == "parenthesized_path" then .body = "Roll out the helper (README.md)."
 			elif $shape == "closed_before_attempt" then .closed_at = "2026-10-24T12:00:00Z"
 			elif $shape == "review_feedback" then .body = "## Unactioned Review Feedback\n**File**: `README.md`\nquality-feedback-helper.sh scan-merged"
 			else . end'
@@ -184,7 +192,7 @@ _already_satisfied_fixture_result() {
 
 test_already_satisfied_completion_evidence() {
 	local shape evidence result expected
-	for shape in already_satisfied premise_falsified retried missing completion_marker duplicated stale edited_after_close wrong_closer wrong_author untrusted_receipt spoofed_url wrong_attempt unsafe_path no_evidence unbound_path unmerged untouched removed stale_blob dirty closed_before_attempt missing_attempt review_feedback; do
+	for shape in already_satisfied premise_falsified retried missing completion_marker duplicated stale edited_after_close wrong_closer wrong_author untrusted_receipt spoofed_url wrong_attempt unsafe_path no_evidence unbound_path nested_path prefixed_path extended_path dotted_path double_dot_path period_path comma_path parenthesized_path unmerged untouched removed stale_blob dirty closed_before_attempt missing_attempt review_feedback; do
 		evidence=$(_already_satisfied_fixture_result "$shape")
 		result=1
 		case "$shape" in
@@ -194,7 +202,7 @@ test_already_satisfied_completion_evidence() {
 		edited_after_close) expected=already_satisfied_receipt_edited ;;
 		wrong_closer | wrong_author | untrusted_receipt) expected=already_satisfied_closer_mismatch ;;
 		spoofed_url | wrong_attempt | unsafe_path | no_evidence) expected=already_satisfied_receipt_invalid ;;
-		unbound_path) expected=already_satisfied_path_unbound ;;
+		unbound_path | nested_path | prefixed_path | extended_path | dotted_path | double_dot_path) expected=already_satisfied_path_unbound ;;
 		unmerged | untouched | removed) expected=already_satisfied_evidence_invalid ;;
 		stale_blob) expected=already_satisfied_default_blob_mismatch ;;
 		dirty) expected=unpublished_worktree_changes ;;

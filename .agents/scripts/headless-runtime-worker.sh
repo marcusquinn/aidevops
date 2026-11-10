@@ -867,6 +867,9 @@ _hrw_already_satisfied_receipt_verdict() {
 		def positive_id: type == $numeric and . > 0 and floor == .;
 		def safe_path: type == $text and test("^([A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$")
 			and (split("/") | all(.[]; . != ".." and . != "."));
+		# Compare whole path tokens; allow a single sentence-ending period,
+		# but never a parent directory, extension, or dotted path continuation.
+		def names_path($path): any(scan("[A-Za-z0-9_./-]+"); . == $path or . == ($path + "."));
 		def valid_receipt: type == "object" and .schema == 1 and .repository == $repo and .issue == $issue
 			and .attempt_id == $attempt and .attempt_started_at == $started
 			and (.disposition == "already_satisfied" or .disposition == "premise_falsified")
@@ -892,7 +895,7 @@ _hrw_already_satisfied_receipt_verdict() {
 				verdict("already_satisfied_receipt_edited")
 			elif ($c.id | positive_id | not) or $c.html_url != "\($url)#issuecomment-\($c.id)"
 				or ($r | valid_receipt | not) then verdict("already_satisfied_receipt_invalid")
-			elif (($task.body // "") | contains($r.path) | not) then verdict("already_satisfied_path_unbound")
+			elif (($task.body // "") | names_path($r.path) | not) then verdict("already_satisfied_path_unbound")
 			else {reason: "", receipt: $r} end
 		end' 2>/dev/null || return 1
 	return 0
