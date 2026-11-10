@@ -22,6 +22,10 @@ _mrh_now() {
 _mrh_api() {
 	local path="$1"
 	shift
+	if [[ "$path" == "-X" ]]; then
+		path="$2"
+		shift 2
+	fi
 	local input="" ref=""
 	[[ " $* " != *" --input - "* ]] || input=$(cat)
 	case "$path" in
@@ -95,16 +99,45 @@ manual_release_hold_check own/repo 11 2>/dev/null || rc=$?
 expect "expired hold ignored" 0 "$rc"
 
 FAKE_NOW=1000000
-cmd_hold own/repo --pr 10 --ttl-minutes 60 >/dev/null
+cmd_hold own/repo --pr 10 --ttl-minutes 60 >/dev/null 2>"$STORE/err"
+rc=0
+grep -q 'concurrent updates may overwrite' "$STORE/err" || rc=1
+expect "renewal warns about advisory updates" 0 "$rc"
 cmd_unhold own/repo >/dev/null
 rc=0
 manual_release_hold_check own/repo 11 2>/dev/null || rc=$?
 expect "released hold allows merge" 0 "$rc"
 
+for version in 1.2.3 v1.2.3 v1.2.3-rc.1 1.2.3+build.7 v1.2.3-rc.1+build.7; do
+	rc=0
+	cmd_hold own/repo --pr 10 --version "$version" >/dev/null 2>"$STORE/err" || rc=$?
+	expect "accept version $version" 0 "$rc"
+	cmd_unhold own/repo >/dev/null
+done
+rc=0
+_mrh_duplicate_prs own/repo v1.2.3 10 >"$STORE/out" 2>"$STORE/err" || rc=$?
+expect "successful duplicate search returns success" 0 "$rc"
+expect "successful duplicate search emits no warning" 0 "$(wc -c <"$STORE/err" | tr -d ' ')"
+
 _mrh_api() {
 	echo "boom" >&2
 	return 1
 }
+for version in 'v1.2.3 is:closed' '1.2.3+' '1.2.3-rc..1' 'latest'; do
+	rc=0
+	cmd_hold own/repo --pr 10 --version "$version" >/dev/null 2>"$STORE/err" || rc=$?
+	expect "reject version $version" 1 "$rc"
+	rc=0
+	grep -q 'Invalid release version' "$STORE/err" || rc=1
+	expect "invalid version rejected before API read" 0 "$rc"
+done
+rc=0
+_mrh_duplicate_prs own/repo v1.2.3 10 >"$STORE/out" 2>"$STORE/err" || rc=$?
+expect "duplicate search API error fails open" 0 "$rc"
+expect "failed duplicate search has no results" 0 "$(wc -c <"$STORE/out" | tr -d ' ')"
+rc=0
+grep -q 'WARNING: duplicate release PR search failed' "$STORE/err" || rc=1
+expect "duplicate search API error warns" 0 "$rc"
 rc=0
 manual_release_hold_check own/repo 11 2>/dev/null || rc=$?
 expect "API error fails open" 0 "$rc"

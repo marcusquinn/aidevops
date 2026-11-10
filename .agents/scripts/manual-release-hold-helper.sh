@@ -12,6 +12,8 @@
 #   aidevops/manual-release-owner/<tag>   {repository, tag, session, recorded_at}
 #
 # Advisory: expired holds are ignored and API failures fail open with a warning.
+# Forced updates are not mutually exclusive: concurrent renewals or replacements
+# of expired holds may overwrite each other. Only initial ref creation is atomic.
 
 _MRH_UPDATE="update"
 _MRH_FILE="manual-release.json"
@@ -46,6 +48,12 @@ _mrh_session_id() {
 _mrh_valid_repo() {
 	local repo="$1"
 	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+	return $?
+}
+
+_mrh_valid_version() {
+	local version="$1"
+	[[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*)?(\+[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*)?$ ]]
 	return $?
 }
 
@@ -94,6 +102,7 @@ _mrh_write() {
 		payload=$(jq -cn --arg r "refs/heads/${ref}" --arg s "$commit" '{ref:$r,sha:$s}') || return 1
 		_mrh_api "repos/${repo}/git/refs" --method POST --input - >/dev/null <<<"$payload" || return 2
 	else
+		# GitHub has no conditional PATCH here; this is an advisory last-writer-wins update.
 		payload=$(jq -cn --arg s "$commit" '{sha:$s,force:true}') || return 1
 		_mrh_api "repos/${repo}/git/refs/heads/${ref}" --method PATCH --input - >/dev/null <<<"$payload" || return 1
 	fi
@@ -153,8 +162,10 @@ _mrh_duplicate_prs() {
 	local repo="$1"
 	local version="$2"
 	local except_pr="${3:-0}"
-	_mrh_api -X GET "search/issues" -f "q=repo:${repo} is:pr is:open in:title release ${version}" \
-		--jq ".items[].number | select(. != ${except_pr})" 2>/dev/null
+	if ! _mrh_api -X GET "search/issues" -f "q=repo:${repo} is:pr is:open in:title release ${version}" \
+		--jq ".items[].number | select(. != ${except_pr})" 2>/dev/null; then
+		printf 'WARNING: duplicate release PR search failed for %s; failing open\n' "$repo" >&2
+	fi
 	return 0
 }
 
@@ -184,6 +195,10 @@ cmd_hold() {
 		return 1
 	}
 	[[ "$ttl" -ge 1 && "$ttl" -le 720 ]] || return 1
+	if [[ -n "$version" ]] && ! _mrh_valid_version "$version"; then
+		printf 'Invalid release version: expected [v]X.Y.Z with optional prerelease/build suffixes\n' >&2
+		return 1
+	fi
 	local existing="" rc=0 existing_pr="" dups="" now="" expires="" json="" mode="create"
 	existing=$(_mrh_active_hold "$repo") || rc=$?
 	case "$rc" in
@@ -217,8 +232,11 @@ cmd_hold() {
 	rc=0
 	_mrh_write "$repo" "$_MRH_HOLD_REF" "$json" "$mode" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
-		printf 'Refused: could not record hold (another session may have won)\n' >&2
+		printf 'Refused: could not record hold\n' >&2
 		return 1
+	fi
+	if [[ "$mode" == "$_MRH_UPDATE" ]]; then
+		printf 'WARNING: hold update is advisory; concurrent updates may overwrite it\n' >&2
 	fi
 	printf 'MANUAL_RELEASE_HOLD_SET repo=%s release_pr=%s expires_at=%s\n' "$repo" "$pr" "$(_mrh_iso "$expires")"
 	return 0
@@ -314,7 +332,7 @@ cmd_owner_notify() {
 cmd_duplicate_check() {
 	local repo="${1:-}"
 	local version="${2:-}"
-	_mrh_valid_repo "$repo" && [[ -n "$version" ]] || return 1
+	_mrh_valid_repo "$repo" && _mrh_valid_version "$version" || return 1
 	local dups=""
 	dups=$(_mrh_duplicate_prs "$repo" "$version" 0) || dups=""
 	if [[ -n "$dups" ]]; then
