@@ -21,6 +21,11 @@ on:
   pull_request_target:
     types: [labeled]
 
+concurrency:
+  # Label enforcement is not superseded head validation; preserve each event.
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   validate-justification:
     name: Complexity Bump Justification
