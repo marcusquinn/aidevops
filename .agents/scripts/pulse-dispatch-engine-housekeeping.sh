@@ -137,12 +137,15 @@ _pulse_blocker_refresh_starved() {
 #
 # Args:
 #   $1 - per-stage timeout seconds
+#   $2 - graph rebuild timeout seconds (defaults to $1)
 # Returns 0 when no catch-up is needed or all available steps succeed;
 # returns 1 when a prerequisite fails or is deferred.
 #######################################
 _pulse_run_blocker_refresh_catchup() {
 	local stage_timeout="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
+	local graph_timeout="${2:-$stage_timeout}"
+	[[ "$graph_timeout" =~ ^[0-9]+$ ]] || graph_timeout="$stage_timeout"
 	_pulse_blocker_refresh_starved || return 0
 	declare -F build_dependency_graph_cache >/dev/null 2>&1 || return 0
 	local pending_file="" progress_file="" graph_stage="build_dependency_graph_cache"
@@ -165,7 +168,7 @@ _pulse_run_blocker_refresh_catchup() {
 	fi
 	echo "[pulse-wrapper] Blocker refresh catch-up: dependency graph cache stale, missing or recovery pending — running starved stages (GH#33246)" >>"$LOGFILE"
 	PULSE_DEP_GRAPH_FORCE_REBUILD=1 _pulse_run_resumable_housekeeping_stage "$graph_stage" "$progress_file" \
-		_pulse_run_budget_priority_stage_with_timeout "$graph_stage" "$stage_timeout" build_dependency_graph_cache || return 1
+		_pulse_run_budget_priority_stage_with_timeout "$graph_stage" "$graph_timeout" build_dependency_graph_cache || return 1
 	if declare -F refresh_blocked_status_from_graph >/dev/null 2>&1; then
 		_pulse_run_resumable_housekeeping_stage "refresh_blocked_status_from_graph" "$progress_file" \
 			_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$stage_timeout" refresh_blocked_status_from_graph || return 1
@@ -365,11 +368,14 @@ _pulse_housekeeping_on_signal() {
 #
 # Args:
 #   $1 - per-stage timeout seconds
+#   $2 - graph rebuild/cache prime timeout seconds (defaults to $1)
 # Returns 0 always.
 #######################################
 _pulse_run_post_dispatch_housekeeping_stages() {
 	local stage_timeout="${1:-${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}}"
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
+	local heavy_timeout="${2:-$stage_timeout}"
+	[[ "$heavy_timeout" =~ ^[0-9]+$ ]] || heavy_timeout="$stage_timeout"
 
 	local lockdir="" state_file=""
 	lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
@@ -387,7 +393,7 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 		_preflight_ownership_reconcile "$stage_timeout" || incomplete=1
 	local catchup_rc=0
 	_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
-		_pulse_run_blocker_refresh_catchup "$stage_timeout" || catchup_rc=$?
+		_pulse_run_blocker_refresh_catchup "$stage_timeout" "$heavy_timeout" || catchup_rc=$?
 	[[ "$catchup_rc" -eq 0 ]] || incomplete=1
 	# Brief edits need recovery even when the dependency graph is fresh. The
 	# catch-up's inner checkpoint alone must not leave them on admission's path.
@@ -408,7 +414,7 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	if declare -F _pulse_prime_caches_if_stale >/dev/null 2>&1; then
 		local prime_timeout="${PULSE_CACHE_PRIME_TIMEOUT:-300}"
 		[[ "$prime_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || prime_timeout=300
-		[[ "$prime_timeout" -le "$stage_timeout" ]] || prime_timeout="$stage_timeout"
+		[[ "$prime_timeout" -le "$heavy_timeout" ]] || prime_timeout="$heavy_timeout"
 		_pulse_run_resumable_housekeeping_stage "cache_prime" "$state_file" \
 			_pulse_run_optional_stage_with_timeout "cache_prime" "$prime_timeout" _pulse_prime_caches_if_stale || incomplete=1
 	fi
@@ -449,11 +455,14 @@ _pulse_start_post_dispatch_housekeeping() {
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
 	local lane_budget="${PULSE_HOUSEKEEPING_BUDGET_SECONDS:-300}"
 	[[ "$lane_budget" =~ ^[1-9][0-9]{0,3}$ ]] || lane_budget=300
-	# Reserve a fair slice for every leaf stage (including the three catch-up
-	# steps) and watchdog teardown. Otherwise a repeatably slow first scanner
-	# consumes the whole lane on every retry and later stages never get a turn.
-	local stage_slice=$((lane_budget / 16))
+	# Weight graph rebuild and cache prime at six shares each: unlike cheap
+	# scanners they must finish a batch before checkpointing. Nine other leaf
+	# calls (including catch-up and standalone brief release) get one each;
+	# three shares remain for watchdog teardown. Keep the caller's ceiling.
+	local stage_slice=$((lane_budget / 24))
 	[[ "$stage_slice" -ge 1 ]] || stage_slice=1
+	local heavy_timeout="$stage_timeout" heavy_slice=$((stage_slice * 6))
+	[[ "$heavy_timeout" -le "$heavy_slice" ]] || heavy_timeout="$heavy_slice"
 	[[ "$stage_timeout" -le "$stage_slice" ]] || stage_timeout="$stage_slice"
 	# Repeated preflight calls in one service cycle must not lose the PID that
 	# owns the join, or launch another lane before the first acquires its lock.
@@ -483,7 +492,7 @@ _pulse_start_post_dispatch_housekeeping() {
 			_PULSE_HOUSEKEEPING_SUPERVISOR_PID="$(exec sh -c 'printf "%s" "$PPID"')"
 		fi
 		run_stage_with_timeout "post_dispatch_housekeeping" "$lane_budget" \
-			_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
+			_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout" "$heavy_timeout"
 	) >>"$LOGFILE" 2>&1 &
 	local housekeeping_pid=$!
 	[[ "$monitor_was_on" == true ]] || set +m 2>/dev/null || true

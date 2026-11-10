@@ -779,6 +779,39 @@ test_pre_dispatch_blocker_refresh_cycle_reserve() {
 	return 0
 }
 
+test_housekeeping_weighted_timeouts() {
+	setup_test_env
+	local failures=0
+	if ! (
+		local AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0
+		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+		local PULSE_HOUSEKEEPING_BUDGET_SECONDS=300
+		local PULSE_CACHE_PRIME_TIMEOUT=300
+		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/graph.json"
+		_pulse_prime_caches_if_stale() { _record_stage "cache_prime"; return 0; }
+		_pulse_start_post_dispatch_housekeeping 600
+		_pulse_finish_post_dispatch_housekeeping
+		# Heavy batches get six shares, but downstream recovery and scanners
+		# retain their own shares; the outer lane still bounds total runtime.
+		grep -q '^stage:post_dispatch_housekeeping:300$' "$STAGE_LOG" || exit 1
+		grep -q '^budget:build_dependency_graph_cache:72$' "$STAGE_LOG" || exit 1
+		grep -q '^optional:cache_prime:72$' "$STAGE_LOG" || exit 1
+		grep -q '^budget:refresh_blocked_status_from_graph:12$' "$STAGE_LOG" || exit 1
+		grep -q '^optional:post_merge_scanner:12$' "$STAGE_LOG" || exit 1
+		# Explicit caller and cache-prime ceilings must still win.
+		PULSE_CACHE_PRIME_TIMEOUT=3
+		_pulse_start_post_dispatch_housekeeping 7
+		_pulse_finish_post_dispatch_housekeeping
+		grep -q '^budget:build_dependency_graph_cache:7$' "$STAGE_LOG" || exit 1
+		grep -q '^optional:cache_prime:3$' "$STAGE_LOG" || exit 1
+	); then
+		failures=1
+	fi
+	print_result "heavy housekeeping batches receive weighted shares without starving other stages" "$failures"
+	teardown_test_env
+	return 0
+}
+
 test_service_owned_lane_timeout_resumes() {
 	setup_test_env
 	local failures=0
@@ -844,6 +877,7 @@ main() {
 	test_blocker_catchup_stops_after_failed_prerequisite
 	test_pre_dispatch_blocker_refresh_admission
 	test_pre_dispatch_blocker_refresh_cycle_reserve
+	test_housekeeping_weighted_timeouts
 	test_service_owned_lane_timeout_resumes
 	test_async_housekeeping_logs_termination
 
