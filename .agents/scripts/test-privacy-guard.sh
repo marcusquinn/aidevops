@@ -93,7 +93,11 @@ printf '%sRunning privacy-guard tests%s\n' "$BLUE" "$NC"
 # -----------------------------------------------------------------------------
 # Test 5: enumerate
 # -----------------------------------------------------------------------------
+# Known-public visibility keeps a pulse-enabled repo out of the list
+# (unknown visibility on pulse-enabled repos fails closed).
+printf '{"testorg/public-repo": {"private": false, "checked_at": %s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
 slugs=$(privacy_enumerate_private_slugs 2>/dev/null)
+rm -f "$PRIVACY_CACHE_FILE"
 if printf '%s\n' "$slugs" | grep -q '^testorg/private-mirror$' &&
 	printf '%s\n' "$slugs" | grep -q '^testorg/local-only$'; then
 	pass "enumerate picks up mirror_upstream and local_only entries"
