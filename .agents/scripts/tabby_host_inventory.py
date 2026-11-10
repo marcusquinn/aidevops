@@ -25,6 +25,10 @@ def parser():
     result.add_argument("--user")
     result.add_argument("--port", type=int)
     result.add_argument("--identity-file")
+    identities = result.add_mutually_exclusive_group()
+    identities.add_argument("--identities-only", dest="identities_only", action="store_true", default=None,
+                            help="offer only configured SSH identities, not unrelated agent keys")
+    identities.add_argument("--no-identities-only", dest="identities_only", action="store_false")
     result.add_argument("--session-prefix")
     result.add_argument("--title-prefix")
     result.add_argument("--connect-interval", type=int)
@@ -69,7 +73,9 @@ def check_args(args):
     fields = {key: value for key, value in {
         "sessionPrefix": args.session_prefix, "titlePrefix": args.title_prefix,
         "connectIntervalSeconds": args.connect_interval, "restoreOrder": args.restore_order,
-        "enabled": args.enabled}.items() if value is not None}
+        "enabled": args.enabled, "identitiesOnly": args.identities_only}.items() if value is not None}
+    if args.identity_file is not None and args.identities_only is None:
+        fields["identitiesOnly"] = True
     if args.operation not in ("add", "update") and (ssh_options or fields or args.ssh_host is not None):
         raise SessionError("Connection/session options require add or update")
     if args.ssh and args.operation != "remove":

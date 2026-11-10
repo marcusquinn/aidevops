@@ -50,6 +50,11 @@ aidevops tabby sessions host update beta --hostname replacement.example.invalid
 aidevops tabby sessions host update beta --disabled
 aidevops tabby sessions host update beta --enabled --connect-interval 5 --restore-order 20
 
+# Use only configured identities, instead of offering unrelated SSH agent keys.
+aidevops tabby sessions host update beta --identities-only
+# Explicitly allow normal agent-key selection again.
+aidevops tabby sessions host update beta --no-identities-only
+
 # Keep the SSH alias, or explicitly remove the managed SSH alias too.
 aidevops tabby sessions host remove alpha
 aidevops tabby sessions host remove beta --ssh --dry-run
@@ -63,6 +68,14 @@ to the host ID, and a five-second launch interval. Empty title prefixes are inva
 the inventory entry to change its alias mapping. Registration of an existing
 alias checks local `ssh -G` resolution; this is not proof of network reachability
 or authentication, and existing OpenSSH `Match exec` rules still apply.
+
+`--identity-file` also defaults the inventory's `identitiesOnly` setting to true,
+matching direct SSH with `-i KEY -o IdentitiesOnly=yes`. Override this with
+`--no-identities-only` in the same command when other agent identities are needed.
+`--identities-only` can also be set on existing/user-owned aliases without editing
+their SSH configuration; it uses that alias's configured identity files. It does
+not select a key by itself. Aliases without either an explicit identity override
+or an `identitiesOnly` setting retain their existing OpenSSH identity selection.
 
 Host commands print the selected inventory path. `--config` overrides
 `AIDEVOPS_TABBY_HOSTS`, which overrides the default. Writes to temporary inventory
@@ -110,12 +123,29 @@ PyYAML or preparing a virtualenv. Linux PATH and both system/user macOS app
 bundles are searched. `AIDEVOPS_TABBY_BIN` selects an alternate executable.
 
 Inventory/creation probes use `BatchMode=yes`, a 15-second connection timeout,
-and a 45-second total bound. Prepare your SSH agent, MFA-authenticated control
+and a 45-second bound per attempt. Read-only inventory probes retry transient
+connection resets, closures, timeouts, and channel refusals up to four attempts,
+waiting 2, 4, then 8 seconds (at most 194 seconds including probe timeouts).
+Authentication,
+host-key, tmux, and malformed-response failures are not retried. Creation commands
+are never retried after an uncertain transport failure. Errors report sanitized
+failure categories, not raw SSH logs. Persistent connection/channel failures need
+private inspection of SSH server connection limits or multiplexing; retries cannot
+override those limits. Prepare your SSH agent, MFA-authenticated control
 connection, or other private OpenSSH authentication first. Interactive tabs
 retain normal SSH authentication, host-key prompts, and MFA; probes never
 collect or print authentication diagnostics. `doctor` normally uses only local
 `ssh -G`; `--remote` explicitly permits a read-only remote probe. OpenSSH's own
 locally configured `Match exec` behavior still applies to `-G`.
+
+Restore inventories each host once before launching its tabs. Managed tabs then
+connect directly with interactive SSH, without a second non-interactive inventory
+probe per tab. Stable-ID leases prevent duplicate managed attachments, and the
+final tmux command still checks session ID, creation time, server PID, and prefix
+on the server before attaching. If local legacy direct-SSH attachments are found,
+the tab still requires fresh inventory to resolve legacy names and ambiguity;
+that read-only probe uses the same retry policy. Initial inventory remains
+non-interactive, so prepare authentication before running restore.
 
 Probe stdout uses unique per-request response boundaries. SSH/login-shell output
 outside those boundaries is excluded privately; unexpected records inside the

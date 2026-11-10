@@ -5,8 +5,10 @@
 import re
 import shlex
 import subprocess
+import time
 
 from tabby_session_config import SessionError, ssh_argv
+from tabby_session_errors import TransientSSHError, probe_error
 from tabby_session_protocol import extract_response, framed_command
 
 
@@ -37,16 +39,30 @@ def remote(host, script):
                                 ssh_argv(host) + [host["sshHost"], "sh -c " + shlex.quote(wrapped)],
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                 timeout=45, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        raise SessionError("SSH probe failed or timed out (no authentication logs retained)") from None
+    except subprocess.TimeoutExpired:
+        raise TransientSSHError("SSH probe timed out (no authentication logs retained)") from None
+    except OSError:
+        raise SessionError("Cannot start local SSH probe") from None
     if result.returncode == 127:
         raise SessionError("Remote tmux is unavailable")
     if result.returncode == 75:
         extract_response(result.stdout, begin, end)
         raise CreationCollision("Concurrent tmux creation collision")
     if result.returncode:
-        raise SessionError("SSH/tmux probe failed; prepare agent/MFA or SSH multiplexing privately")
+        raise probe_error(result.returncode, result.stderr)
     return extract_response(result.stdout, begin, end)
+
+
+def inventory_response(host):
+    # Tab restoration may overlap SSH handshakes/channel creation. Retry only
+    # read-only probes: retrying an uncertain new-session command can create work twice.
+    for attempt in range(4):
+        try:
+            return remote(host, INVENTORY)
+        except TransientSSHError as exc:
+            if attempt == 3:
+                raise SessionError(str(exc) + "; inventory failed after 4 attempts") from None
+            time.sleep(2 ** (attempt + 1))
 
 
 def natural_key(name, prefix):
@@ -67,7 +83,7 @@ def parse_session(fields, host):
 
 def inventory(host):
     sessions, clients = [], set()
-    for line in remote(host, INVENTORY).splitlines():
+    for line in inventory_response(host).splitlines():
         # Keep the complete name for filtering/validation, even if an unrelated
         # session contains the delimiter. Managed names cannot contain pipes.
         fields = line.split("|", 4)

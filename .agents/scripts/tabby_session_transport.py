@@ -36,15 +36,22 @@ def attach(args, host, hosts):
 
 
 def attach_held(args, host, hosts, session, handle):
-    sessions, _clients = inventory(host)
-    current = next((s for s in sessions if all(s[k] == session[k] for k in session)), None)
-    if current is None:
-        raise SessionError("Session disappeared/renamed outside prefix; no replacement attached")
     aliases = equivalent_aliases(hosts, host, endpoint(host))
-    if legacy_state(local_legacy(aliases), current, sessions):
-        report(host, current, "skipped", "legacy SSH attachment")
-        return 0
+    legacy = local_legacy(aliases)
+    if legacy:
+        # Only legacy name-based attachments need a fresh inventory to resolve
+        # renames/ambiguity. Managed attachments already hold a stable-ID lease.
+        sessions, _clients = inventory(host)
+        current = next((s for s in sessions if all(s[k] == session[k] for k in session)), None)
+        if current is None:
+            raise SessionError("Session disappeared/renamed outside prefix; no replacement attached")
+        if legacy_state(legacy, current, sessions):
+            report(host, current, "skipped", "legacy SSH attachment")
+            return 0
     marker = "AIDEVOPS_TABBY_" + args.token + ":"
+    # No BatchMode inventory gate in the normal tab path: interactive SSH can
+    # authenticate directly. The final tmux command checks identity and prefix
+    # atomically on the server, including after an authentication delay/restart.
     command = attach_command(host, session, marker)
     # OpenSSH closes extra FDs. Orphan recovery uses the exact nonce, not PIDs.
     with subprocess.Popen(command, stdout=subprocess.PIPE) as child:  # nosec B603 - validated SSH argv, quoted remote script
