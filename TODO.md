@@ -2005,7 +2005,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18951 profile README publication still retains one worktree per run after #37184 (coverage-gap: enrolled without a registered owner) #auto-dispatch #bug ref:GH#37591
 
-- [ ] t18953 feat(bounded-op): return terminal output inline from start/status to cut 3-turn polling #feat #interactive tier:standard ref:GH#37605 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18953-brief.md]
+- [x] t18953 feat(bounded-op): return terminal output inline from start/status to cut 3-turn polling #feat #interactive tier:standard ref:GH#37605 pr:#37606 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18953-brief.md] completed:2026-11-10
+
+- [ ] t18954 routing: Luna first on simple tier and compaction (free OpenAI account), Haiku 5.5 fallback #chore #interactive tier:simple ref:GH#37611 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18954-brief.md]
+
+- [ ] t18955 fix(availability): OpenAI OAuth probe rejects free ChatGPT accounts that OpenCode can still use for Luna #bug #auto-dispatch tier:standard ref:GH#37627 logged:2026-11-10 -> [todo/tasks/t18955-brief.md]
+
+- [ ] t18957 fix(compaction): recover Luna compaction entitlement rejection onto a fitting credentialed Haiku candidate #bug #auto-dispatch tier:standard ref:GH#37634 logged:2026-11-10 -> [todo/tasks/t18957-brief.md]
 
 - [ ] t18956 feat(session-bus): show addressable session-ID token in session and terminal titles #feat #interactive ref:GH#37630 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18956-brief.md]
 
