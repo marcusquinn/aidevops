@@ -88,12 +88,46 @@ _relay_breaker_tripped() {
 
 _relay_api_allowed() {
 	local context="$1"
-	[[ ! -f "${STOP_FLAG:-${HOME}/.aidevops/logs/pulse-session.stop}" ]] || return 1
-	[[ ! -f "${PULSE_RATE_LIMIT_FLAG:-${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}" ]] || return 1
-	! _relay_breaker_tripped || return 1
+	[[ ! -f "${STOP_FLAG:-${HOME}/.aidevops/logs/pulse-session.stop}" ]] || { RELAY_FAILURE=stop-flag; return 1; }
+	[[ ! -f "${PULSE_RATE_LIMIT_FLAG:-${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}" ]] || { RELAY_FAILURE=rate-limit-flag; return 1; }
+	! _relay_breaker_tripped || { RELAY_FAILURE=breaker; return 1; }
 	if declare -F pulse_rest_core_priority_allows_next >/dev/null 2>&1; then
-		pulse_rest_core_priority_allows_next deferrable "worker-bus-relay:${context}" || return 1
+		pulse_rest_core_priority_allows_next deferrable "worker-bus-relay:${context}" || { RELAY_FAILURE=rest-gate; return 1; }
 	fi
+	return 0
+}
+
+# Only retain known diagnostic words: arbitrary stderr can contain credentials,
+# URLs, paths, or unrecognised token formats. Never log unknown words verbatim.
+_relay_stderr_excerpt() {
+	local error_file="$1"
+	awk '
+	NR == 1 { first = $0 }
+	/^\[gh-transport\] error_kind=/ {
+		kind = deferred = attempted = ""
+		for (i = 2; i <= NF; i++) {
+			split($i, pair, "=")
+			value = pair[2]
+			if ($i != pair[1] "=" value) continue
+			if (pair[1] == "error_kind" && length(value) <= 48 && value ~ /^[a-z0-9_-]+$/) kind = value
+			if (pair[1] == "deferred_by" && length(value) <= 48 && value ~ /^[a-z0-9_-]+$/) deferred = value
+			if (pair[1] == "attempted" && (value == "true" || value == "false")) attempted = value
+		}
+		printf "transport%s%s%s\n", (kind != "" ? " error_kind=" kind : ""), (deferred != "" ? " deferred_by=" deferred : ""), (attempted != "" ? " attempted=" attempted : "")
+		found = 1
+		exit
+	}
+	END {
+		if (found || NR == 0) exit
+		$0 = first
+		for (i = 1; i <= NF; i++) {
+			word = tolower($i)
+			if (word !~ /^(error|failed|failure|timeout|timed|out|connection|refused|reset|network|unreachable|not|found|command|permission|denied|authentication|rate|limit|exceeded|http|api|request|could|resolve|host|temporary|unavailable)$/) word = "[redacted]"
+			result = result (i == 1 ? "" : " ") word
+		}
+		print substr(result, 1, 160)
+		exit
+	}' "$error_file"
 	return 0
 }
 
@@ -101,10 +135,23 @@ _relay_get() {
 	local endpoint="$1"
 	local output="$2"
 	local context="$3"
+	local error_file="${output}.stderr" rc excerpt
+	RELAY_FAILURE=""
 	: >"$output"
 	_relay_api_allowed "$context" || return 1
-	timeout_sec "$RELAY_CALL_TIMEOUT" gh api "$endpoint" >"$output" 2>/dev/null || return 1
-	jq -e 'type == "array" or type == "object"' "$output" >/dev/null 2>&1 || return 1
+	# GH#37570: a few reads per cycle that deliver human feedback to live
+	# workers; the governor exempts them from even-spacing pacing while quota
+	# is healthy (secondary ceilings, cooldowns and exhaustion still apply).
+	if AIDEVOPS_GH_ADMISSION_CLASS=delivery timeout_sec "$RELAY_CALL_TIMEOUT" gh api "$endpoint" >"$output" 2>"$error_file"; then
+		rm -f "$error_file"
+	else
+		rc=$?
+		excerpt=$(_relay_stderr_excerpt "$error_file")
+		rm -f "$error_file"
+		RELAY_FAILURE="gh-rc=${rc}${excerpt:+: ${excerpt}}"
+		return 1
+	fi
+	jq -e 'type == "array" or type == "object"' "$output" >/dev/null 2>&1 || { RELAY_FAILURE=non-json; return 1; }
 	return 0
 }
 
@@ -288,7 +335,10 @@ _relay_worker() {
 		_relay_write_state "$session_id" "$(jq -c --argjson now "$now" '.checked = $now' <<<"$state")" || true
 		return 0
 	fi
-	[[ "$rc" -eq 0 ]] || return 0
+	if [[ "$rc" -ne 0 ]]; then
+		_relay_log "issue ${repo}#${issue_number} deferred or failed (${RELAY_FAILURE:-listing-parse}); worker keeps its state"
+		return 0
+	fi
 
 	local labels closed added comments_count comments='[]' last_id
 	labels=$(jq -c '[.labels[]? | .name // empty]' "$issue_file")
@@ -310,6 +360,7 @@ _relay_worker() {
 			[[ -n "$comments" ]] || comments='[]'
 			new_last_id=$(jq -r --argjson last "$last_id" '[.[]?.id | numbers] + [$last] | max' "$comments_file")
 		else
+			_relay_log "comments ${repo}#${issue_number} deferred or failed (${RELAY_FAILURE}); will retry"
 			comments_count="$seen"
 		fi
 	fi
@@ -353,7 +404,7 @@ _relay_repo() {
 	list_file="${work}/list-${slug}.json"
 	_relay_get "repos/${repo}/issues?state=all&since=${since_iso}&per_page=${RELAY_PAGE}&sort=updated&direction=desc" \
 		"$list_file" "list" || {
-		_relay_log "listing ${repo} deferred or failed; workers keep their state"
+		_relay_log "listing ${repo} deferred or failed (${RELAY_FAILURE}); workers keep their state"
 		return 0
 	}
 	while IFS= read -r entry; do

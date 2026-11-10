@@ -21,10 +21,10 @@ permissions:
   pull-requests: write
   security-events: write
 
-# Cancel in-progress runs when a new run is triggered
+# Cancel superseded PR runs, never pushes or scheduled repair work.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   code-review-monitoring:

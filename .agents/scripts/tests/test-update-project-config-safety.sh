@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 TEST_ROOT="$(mktemp -d)"
@@ -43,20 +51,20 @@ make_repo() {
 	local repo="$1"
 	local tracked="$2"
 	mkdir -p "$repo"
-	/usr/bin/git -C "$repo" init -q -b main
-	/usr/bin/git -C "$repo" config user.email test@example.invalid
-	/usr/bin/git -C "$repo" config user.name Test
-	/usr/bin/git -C "$repo" config commit.gpgsign false
+	"$TEST_NATIVE_GIT" -C "$repo" init -q -b main
+	"$TEST_NATIVE_GIT" -C "$repo" config user.email test@example.invalid
+	"$TEST_NATIVE_GIT" -C "$repo" config user.name Test
+	"$TEST_NATIVE_GIT" -C "$repo" config commit.gpgsign false
 	printf '%s\n' '{"version":"0.0.1","features":{"planning":true}}' >"$repo/.aidevops.json"
 	if [[ "$tracked" == "true" ]]; then
 		printf '%s\n' '.aidevops.json' >"$repo/.gitignore"
-		/usr/bin/git -C "$repo" add -f .aidevops.json
-		/usr/bin/git -C "$repo" add .gitignore
+		"$TEST_NATIVE_GIT" -C "$repo" add -f .aidevops.json
+		"$TEST_NATIVE_GIT" -C "$repo" add .gitignore
 	else
 		printf '%s\n' '.aidevops.json' >"$repo/.gitignore"
-		/usr/bin/git -C "$repo" add .gitignore
+		"$TEST_NATIVE_GIT" -C "$repo" add .gitignore
 	fi
-	/usr/bin/git -C "$repo" commit -qm fixture
+	"$TEST_NATIVE_GIT" -C "$repo" commit -qm fixture
 	return 0
 }
 
@@ -134,7 +142,7 @@ make_repo "$external_repo" true
 tracked_repo="$(cd "$tracked_repo" && pwd -P)"
 local_repo="$(cd "$local_repo" && pwd -P)"
 external_repo="$(cd "$external_repo" && pwd -P)"
-/usr/bin/git -C "$tracked_repo" worktree add -q -b config-migration "$linked_repo"
+"$TEST_NATIVE_GIT" -C "$tracked_repo" worktree add -q -b config-migration "$linked_repo"
 
 jq -n --arg tracked "$tracked_repo" --arg local "$local_repo" --arg external "$external_repo" '{
   initialized_repos: [
@@ -155,7 +163,7 @@ _update_sync_projects false 9.9.9
 tracked_after=$(cksum <"$tracked_repo/.aidevops.json")
 
 assert_equal "tracked config remains byte-identical" "$tracked_before" "$tracked_after"
-assert_equal "tracked repository remains clean" "" "$(/usr/bin/git -C "$tracked_repo" status --porcelain)"
+assert_equal "tracked repository remains clean" "" "$("$TEST_NATIVE_GIT" -C "$tracked_repo" status --porcelain)"
 assert_equal "maintained tracked config queues one migration" "true" "$(test -f "${TEST_ROOT}/migration-created" && printf true || printf false)"
 assert_equal "external tracked config performs no GitHub write" "1" "$(wc -l <"${TEST_ROOT}/migration-writes" | tr -d ' ')"
 assert_equal "tracked config does not gain agent-source metadata" "false" "$(jq -r 'has("agent_source")' "$tracked_repo/.aidevops.json")"
@@ -163,7 +171,7 @@ assert_equal "tracked registration advances" "9.9.9" "$(jq -r --arg path "$track
 assert_equal "tracked registration preserves features" "planning" "$(jq -r --arg path "$tracked_repo" '.initialized_repos[] | select(.path == $path) | .features | join(",")' "$REPOS_FILE")"
 assert_equal "local config version advances" "9.9.9" "$(jq -r '.version' "$local_repo/.aidevops.json")"
 assert_equal "local registration advances" "9.9.9" "$(jq -r --arg path "$local_repo" '.initialized_repos[] | select(.path == $path) | .version' "$REPOS_FILE")"
-assert_equal "local repository remains clean" "" "$(/usr/bin/git -C "$local_repo" status --porcelain)"
+assert_equal "local repository remains clean" "" "$("$TEST_NATIVE_GIT" -C "$local_repo" status --porcelain)"
 
 update_for_next_release 9.9.10
 assert_equal "next release does not duplicate an open migration" "1" "$(wc -l <"${TEST_ROOT}/migration-writes" | tr -d ' ')"
@@ -188,9 +196,9 @@ linked_before=$(cksum <"$linked_repo/.aidevops.json")
 _project_config_migrate_linked_worktree "$linked_repo"
 linked_after=$(cksum <"$linked_repo/.aidevops.json")
 assert_equal "linked-worktree migration preserves config bytes" "$linked_before" "$linked_after"
-assert_equal "linked-worktree migration removes config from index" "" "$(/usr/bin/git -C "$linked_repo" ls-files -- .aidevops.json)"
-assert_equal "linked-worktree migration stages only the config deletion" "D  .aidevops.json" "$(/usr/bin/git -C "$linked_repo" status --porcelain)"
-assert_equal "linked-worktree migration leaves canonical checkout clean" "" "$(/usr/bin/git -C "$tracked_repo" status --porcelain)"
+assert_equal "linked-worktree migration removes config from index" "" "$("$TEST_NATIVE_GIT" -C "$linked_repo" ls-files -- .aidevops.json)"
+assert_equal "linked-worktree migration stages only the config deletion" "D  .aidevops.json" "$("$TEST_NATIVE_GIT" -C "$linked_repo" status --porcelain)"
+assert_equal "linked-worktree migration leaves canonical checkout clean" "" "$("$TEST_NATIVE_GIT" -C "$tracked_repo" status --porcelain)"
 
 printf '\nRan %d tests, %d failed.\n' "$((passed + failed))" "$failed"
 [[ "$failed" -eq 0 ]]

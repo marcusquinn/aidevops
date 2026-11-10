@@ -27,6 +27,14 @@
 
 set -uo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKTREE_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
@@ -172,60 +180,60 @@ SETUP_CALLS_LOG="${TEST_ROOT}/setup_calls.log"
 mkdir -p "$SANDBOX_HOME" "$SANDBOX_AIDEVOPS/agents"
 
 # Build sandbox framework repo with a script change + docs-only commit
-/usr/bin/git init -q "$SANDBOX_REPO" 2>/dev/null
-/usr/bin/git -C "$SANDBOX_REPO" config user.email "test@test.local"
-/usr/bin/git -C "$SANDBOX_REPO" config user.name "Test"
-/usr/bin/git -C "$SANDBOX_REPO" config commit.gpgsign false
+"$TEST_NATIVE_GIT" init -q "$SANDBOX_REPO" 2>/dev/null
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" config user.email "test@test.local"
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" config user.name "Test"
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" config commit.gpgsign false
 
 # Baseline — deployed state
 mkdir -p "$SANDBOX_REPO/.agents/scripts"
 printf '#!/usr/bin/env bash\necho v1\n' >"$SANDBOX_REPO/.agents/scripts/foo.sh"
 printf 'v1\n' >"$SANDBOX_REPO/VERSION"
-/usr/bin/git -C "$SANDBOX_REPO" add -A
-/usr/bin/git -C "$SANDBOX_REPO" commit -qm "initial" 2>/dev/null
-DEPLOYED_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" commit -qm "initial" 2>/dev/null
+DEPLOYED_SHA=$("$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # Add a framework-code drift commit
 printf '#!/usr/bin/env bash\necho v2\n' >"$SANDBOX_REPO/.agents/scripts/foo.sh"
-/usr/bin/git -C "$SANDBOX_REPO" add -A
-/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update script" 2>/dev/null
-HEAD_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" commit -qm "update script" 2>/dev/null
+HEAD_SHA=$("$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # Add a docs-only commit on top
 mkdir -p "$SANDBOX_REPO/.agents/reference"
 printf '# doc\n' >"$SANDBOX_REPO/.agents/reference/readme.md"
-/usr/bin/git -C "$SANDBOX_REPO" add -A
-/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update docs" 2>/dev/null
-HEAD_WITH_DOCS_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" commit -qm "update docs" 2>/dev/null
+HEAD_WITH_DOCS_SHA=$("$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # Add a setup.sh-only drift commit (per Gemini feedback on PR #20342:
 # setup.sh drift must trigger redeploy because it controls what gets deployed).
 printf '#!/usr/bin/env bash\necho setup v2\n' >"$SANDBOX_REPO/setup.sh"
-/usr/bin/git -C "$SANDBOX_REPO" add -A
-/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update setup.sh" 2>/dev/null
-HEAD_WITH_SETUP_DRIFT_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" commit -qm "update setup.sh" 2>/dev/null
+HEAD_WITH_SETUP_DRIFT_SHA=$("$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # Add an aidevops.sh-only drift commit (per Gemini feedback on PR #20342:
 # aidevops.sh is the deployed CLI entry point, drift must trigger redeploy).
 printf '#!/usr/bin/env bash\necho aidevops v2\n' >"$SANDBOX_REPO/aidevops.sh"
-/usr/bin/git -C "$SANDBOX_REPO" add -A
-/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update aidevops.sh" 2>/dev/null
-HEAD_WITH_AIDEVOPS_DRIFT_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" commit -qm "update aidevops.sh" 2>/dev/null
+HEAD_WITH_AIDEVOPS_DRIFT_SHA=$("$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # GH#36372: equal-version runtime module drift must not be mistaken for docs.
 mkdir -p "$SANDBOX_REPO/.agents/worker-lifecycle"
 printf 'SCHEMA_VERSION = 2\n' >"$SANDBOX_REPO/.agents/worker-lifecycle/registry.py"
-/usr/bin/git -C "$SANDBOX_REPO" add -A
-/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update lifecycle module" 2>/dev/null
-HEAD_WITH_LIFECYCLE_DRIFT_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" commit -qm "update lifecycle module" 2>/dev/null
+HEAD_WITH_LIFECYCLE_DRIFT_SHA=$("$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # Add an intentional linked-worktree-style hotfix deployment ahead of the
 # canonical HEAD, then return the sandbox checkout to the canonical commit.
 printf '#!/usr/bin/env bash\necho hotfix\n' >"$SANDBOX_REPO/.agents/scripts/foo.sh"
-/usr/bin/git -C "$SANDBOX_REPO" add -A
-/usr/bin/git -C "$SANDBOX_REPO" commit -qm "active hotfix" 2>/dev/null
-DEPLOYED_AHEAD_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
-/usr/bin/git -C "$SANDBOX_REPO" checkout -q --detach "$HEAD_WITH_LIFECYCLE_DRIFT_SHA"
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" commit -qm "active hotfix" 2>/dev/null
+DEPLOYED_AHEAD_SHA=$("$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$SANDBOX_REPO" checkout -q --detach "$HEAD_WITH_LIFECYCLE_DRIFT_SHA"
 
 if [[ -z "$DEPLOYED_SHA" || -z "$HEAD_SHA" || -z "$HEAD_WITH_DOCS_SHA" ||
 	-z "$HEAD_WITH_SETUP_DRIFT_SHA" || -z "$HEAD_WITH_AIDEVOPS_DRIFT_SHA" ||

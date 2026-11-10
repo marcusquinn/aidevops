@@ -8,6 +8,11 @@ import path from "node:path";
 import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 
+// Resolve native Git from the system default PATH (portable to non-FHS hosts).
+const nativeGitLookup = spawnSync("/bin/sh", ["-c", "command -p -v git"], {encoding: "utf8"});
+const NATIVE_GIT = nativeGitLookup.stdout.trim();
+assert.ok(nativeGitLookup.status === 0 && NATIVE_GIT, "Native Git is unavailable on the system PATH");
+
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(testDirectory, "../../..");
 const agentsDirectory = path.join(repositoryRoot, ".agents");
@@ -115,7 +120,7 @@ try {
   fs.symlinkSync(lmStudioRuntimeWrapper, stableLmStudioRuntimeCommand);
   fs.mkdirSync(projectRoot, {mode: 0o700});
   requireSuccess(
-    spawnSync("/usr/bin/git", ["-C", projectRoot, "init", "--quiet"], {encoding: "utf8"}),
+    spawnSync(NATIVE_GIT, ["-C", projectRoot, "init", "--quiet"], {encoding: "utf8"}),
     "fixture Git initialization",
   );
   fs.writeFileSync(reposPath, `${JSON.stringify({

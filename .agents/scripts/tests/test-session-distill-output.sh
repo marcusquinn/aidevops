@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="${SCRIPT_DIR}/.."
 
@@ -57,9 +65,9 @@ exit 0
 EOF
 chmod +x "$scripts/session-distill-helper.sh" "$scripts/session-checkpoint-helper.sh" "$scripts/memory-helper.sh"
 
-/usr/bin/git -C "$repository" init -q -b main
-/usr/bin/git -C "$repository" config user.name "Session Distill Test"
-/usr/bin/git -C "$repository" config user.email "session-distill@example.invalid"
+"$TEST_NATIVE_GIT" -C "$repository" init -q -b main
+"$TEST_NATIVE_GIT" -C "$repository" config user.name "Session Distill Test"
+"$TEST_NATIVE_GIT" -C "$repository" config user.email "session-distill@example.invalid"
 long_task=""
 iteration=0
 while [[ "$iteration" -lt 100 ]]; do
@@ -78,10 +86,10 @@ printf '%s\n' \
 	"- [ ] t1 fixture task body FULL-CONTINUATION-MARKER${long_task}" \
 	"- [ ] t2 fixture task body${long_task}" \
 	"- [x] t3 completed fixture" >"$repository/TODO.md"
-/usr/bin/git -C "$repository" add TODO.md
-/usr/bin/git -C "$repository" -c commit.gpgSign=false commit -qm "fixture: add tasks"
-/usr/bin/git -C "$repository" worktree add -q -b fixture-one "$tmp_dir/worktree-one"
-/usr/bin/git -C "$repository" worktree add -q -b fixture-two "$tmp_dir/worktree-two"
+"$TEST_NATIVE_GIT" -C "$repository" add TODO.md
+"$TEST_NATIVE_GIT" -C "$repository" -c commit.gpgSign=false commit -qm "fixture: add tasks"
+"$TEST_NATIVE_GIT" -C "$repository" worktree add -q -b fixture-one "$tmp_dir/worktree-one"
+"$TEST_NATIVE_GIT" -C "$repository" worktree add -q -b fixture-two "$tmp_dir/worktree-two"
 
 auto_output=$(cd "$repository" && AIDEVOPS_WORKSPACE="$workspace" AIDEVOPS_SESSION_ID="output-session" \
 	"$scripts/session-distill-helper.sh" auto 2>&1)

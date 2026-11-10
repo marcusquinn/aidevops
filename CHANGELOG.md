@@ -10,6 +10,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.160] - 2026-11-10
+
+### Fixed
+
+- bounded delivery admission class so worker-bus relay reads are not starved by pacing
+- persist per-pass repo cursor so killed normalization passes resume
+
+## [3.39.159] - 2026-11-10
+
+### Fixed
+
+- bound the dead-stamp reaper by wall-clock budget
+
+## [3.39.158] - 2026-11-10
+
+### Fixed
+
+- retain structured transport deferral tokens (#37563)
+
+## [3.39.157] - 2026-11-10
+
+### Fixed
+
+- round-robin repo cursor for review-thread and auto-decomposer scanners
+- recover stalled maintainer gate refresh (#37550)
+
+## [3.39.156] - 2026-11-10
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#37546)
+- Refactor: split pulse-merge-stuck.sh saturation helpers into sub-library (GH#37541) (#37544)
+- Refactor: refactor task alias validation
+
+### Fixed
+
+- restore ownership reconcile budget in housekeeping lane
+
+## [3.39.155] - 2026-11-10
+
+### Fixed
+
+- keep known-public repos out of privacy enumeration between probes
+- log reasons for deferred GitHub reads (#37535)
+- rotate the dead-stamp reaper so every claim stamp is reached
+- warn about interactive-only routing providers (GH#37523) (#37528)
+
+## [3.39.154] - 2026-11-10
+
+### Fixed
+
+- stop dispatching workers on already-satisfied rollout issues
+- privacy guard enumerates ordinary private repos (GH#37508) (#37513)
+- overlap maintenance with dispatch admission (GH#37501) (#37506)
+- raise worktree cap to 1000, clean before throttling, report throughput throttles
+
+## [3.39.153] - 2026-11-10
+
+### Added
+
+- t18893 Matrix session bus bridge (#37485)
+
+### Changed
+
+- Documentation: record the shipped session-relinquish fix in the 3.39.152 changelog
+- Documentation: tighten cleanup safety contract (#37491)
+
+### Fixed
+
+- refuse gh comment --edit-last and add comment-edit by ID
+- mark unobserved stale periods unavailable (#37475)
+- sign issue body edits in gh write helper (#37489)
+- preserve trailing = in injected secret values
+- release floor-path product hold when only blocked or retry product rows remain (GH#37478) (#37484)
+- detect launched browser left stale by on-disk update
+- exclude successful PR handoffs from failures (#37477)
+- verify PR-less review-triage completion (#37470)
+
 ## [3.39.152] - 2026-11-09
 
 ### Changed
@@ -18,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- relinquish a finished interactive session's worktree ownership at full-loop complete and finalize-receipt so Pulse can retire merged trees while the app runs (GH#37448) (#37473)
 - update STUCK_TRIPPED help text to match classifier (GH#37459) (#37464)
 - log starter-sync scope refusals (#37472)
 - scope stale worktree reaping to lane repository (#37447)

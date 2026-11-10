@@ -10,6 +10,14 @@
 
 set -u
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 CLAIM_SCRIPT="${SCRIPT_DIR}/../claim-task-id.sh"
 
@@ -396,7 +404,7 @@ assert_canonical_discovery_result() {
 			fail "$name" "expected t1000, got ${task_id:-<empty>}"
 			return 1
 		fi
-		branch_counter=$(/usr/bin/git --git-dir="${case_dir}/remote.git" \
+		branch_counter=$("$TEST_NATIVE_GIT" --git-dir="${case_dir}/remote.git" \
 			show refs/heads/task-id-counter:.task-counter 2>/dev/null | tr -d '[:space:]')
 		if [[ "$branch_counter" != "1001" ]]; then
 			fail "$name" "expected dedicated counter 1001, got ${branch_counter:-<empty>}"
@@ -462,14 +470,14 @@ test_canonical_implicit_counter_discovery() {
 				continue
 			}
 		fi
-		before_head=$(/usr/bin/git -C "$work_dir" rev-parse HEAD 2>/dev/null)
-		before_status=$(/usr/bin/git -C "$work_dir" status --short 2>/dev/null)
+		before_head=$("$TEST_NATIVE_GIT" -C "$work_dir" rev-parse HEAD 2>/dev/null)
+		before_status=$("$TEST_NATIVE_GIT" -C "$work_dir" status --short 2>/dev/null)
 
 		rc=0
 		output=$(run_canonical_claim "$work_dir" "$bin_dir" "$temp_root" \
 			--title "canonical ${state} discovery" 2>&1) || rc=$?
-		after_head=$(/usr/bin/git -C "$work_dir" rev-parse HEAD 2>/dev/null)
-		after_status=$(/usr/bin/git -C "$work_dir" status --short 2>/dev/null)
+		after_head=$("$TEST_NATIVE_GIT" -C "$work_dir" rev-parse HEAD 2>/dev/null)
+		after_status=$("$TEST_NATIVE_GIT" -C "$work_dir" status --short 2>/dev/null)
 		if [[ "$after_head" != "$before_head" || "$after_status" != "$before_status" ]]; then
 			fail "$name" "canonical source repository changed"
 			continue
@@ -509,7 +517,7 @@ test_canonical_context_setup_failure() {
 	work_dir="${case_dir}/seed"
 	printf '%s\n' '{}' >"${work_dir}/.aidevops.json"
 	printf '%s\n' 'not a directory' >"$temp_root"
-	before_head=$(/usr/bin/git -C "$work_dir" rev-parse HEAD 2>/dev/null)
+	before_head=$("$TEST_NATIVE_GIT" -C "$work_dir" rev-parse HEAD 2>/dev/null)
 
 	output=$(run_canonical_claim "$work_dir" "$bin_dir" "$temp_root" \
 		--title "canonical context setup failure" 2>&1) || rc=$?
@@ -518,7 +526,7 @@ test_canonical_context_setup_failure() {
 		fail "$name" "expected typed setup failure: rc=${rc}: $output"
 		return 0
 	fi
-	if [[ $(/usr/bin/git -C "$work_dir" rev-parse HEAD 2>/dev/null) != "$before_head" ]]; then
+	if [[ $("$TEST_NATIVE_GIT" -C "$work_dir" rev-parse HEAD 2>/dev/null) != "$before_head" ]]; then
 		fail "$name" "canonical source HEAD changed"
 		return 0
 	fi

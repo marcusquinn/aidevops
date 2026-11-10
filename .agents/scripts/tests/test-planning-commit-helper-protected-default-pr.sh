@@ -10,6 +10,14 @@
 
 set -u
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 # Isolate fixture repositories from the developer's global hooksPath and
 # signing policy; the test installs its own bare-remote protection hook.
 export GIT_CONFIG_GLOBAL=/dev/null
@@ -17,9 +25,9 @@ export GIT_CONFIG_NOSYSTEM=1
 
 # Fixture setup uses disposable repositories; helper subprocesses still resolve
 # the guarded Git shim from PATH because shell functions are not exported.
-# Allow runners without /usr/bin/git to select their system Git for fixtures.
+# Allow runners without native Git to select their system Git for fixtures.
 git() {
-	"${TEST_GIT_BINARY:-/usr/bin/git}" "$@"
+	"${TEST_GIT_BINARY:-${TEST_NATIVE_GIT}}" "$@"
 	return $?
 }
 

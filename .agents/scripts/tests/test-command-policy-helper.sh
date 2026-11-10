@@ -4,6 +4,14 @@
 
 set -uo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/command-policy-helper.py"
 POLICY="${SCRIPT_DIR}/../configs/command-policy.json"
@@ -15,7 +23,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 # Fixture construction must bypass the deployed guard shim. Policy assertions
 # still invoke canonical-git-command-guard.py through the helper under test.
 git() {
-	/usr/bin/git "$@"
+	"$TEST_NATIVE_GIT" "$@"
 	return $?
 }
 
@@ -1159,8 +1167,8 @@ os.environ['AIDEVOPS_TEMP_DIR'] = str(root / 'ssh-tmp')
 env = dict(os.environ)
 repo = root / 'ssh-repo'
 repo.mkdir()
-subprocess.run(['/usr/bin/git', 'init', '-q', str(repo)], check=True)
-subprocess.run(['/usr/bin/git', '-C', str(repo), 'remote', 'add', 'origin',
+subprocess.run([os.environ['TEST_NATIVE_GIT'], 'init', '-q', str(repo)], check=True)
+subprocess.run([os.environ['TEST_NATIVE_GIT'], '-C', str(repo), 'remote', 'add', 'origin',
                 'https://github.com/owner/operations.git'], check=True)
 keys = home / '.aidevops/approval-keys'
 keys.mkdir(parents=True)
@@ -1291,7 +1299,7 @@ with patch('socket.socket', side_effect=AssertionError('network access forbidden
     check('tier5 denial wins in worker', worker(blocked).returncode != 0)
     check('tier5 denial wins in preflight', preflight(blocked).returncode != 0)
     # A different repository cannot reuse the same signed command.
-    subprocess.run(['/usr/bin/git', '-C', str(repo), 'remote', 'set-url', 'origin',
+    subprocess.run([os.environ['TEST_NATIVE_GIT'], '-C', str(repo), 'remote', 'set-url', 'origin',
                     'https://github.com/owner/other.git'], check=True)
     check('different repository cannot reuse grant', bool(network(argv)['unclassified']))
     # Prove no SSH config/credential file is even opened in the analyzer.

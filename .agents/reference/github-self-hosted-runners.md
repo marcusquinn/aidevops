@@ -21,7 +21,9 @@ and fork PRs on public repos can never reach the host. Public repos keep free
 GitHub-hosted minutes.
 
 `runs-on` guidance: private repos use `[self-hosted, linux, <POOL_LABEL>]`;
-public repos stay on GitHub-hosted runners.
+public repos stay on GitHub-hosted runners. In particular, issue #37499 does not
+authorize a public aidevops pool: reduce CI demand without exposing private
+infrastructure through public runner or machine names in job logs.
 
 Shared or template workflows (starters synced into public and private repos)
 should keep one file for both: `runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}`,
@@ -212,7 +214,6 @@ runner containers, restart loops, or later container-name conflicts.
 ## Registry mirror
 
 Ephemeral inner `dockerd` instances start empty and can hit Docker Hub anonymous pull limits (`429 Too Many Requests`, Docker exit code 125). A private pull-through cache passed to the inner daemon with `--registry-mirror` avoids this. Setup, secrets, verification and the `github-runner-org-helper.sh status` mirror check: `reference/github-runner-registry-mirror.md`.
-
 
 ## Health checks
 

@@ -6,6 +6,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$REPO_ROOT/.agents/scripts/repo-aidevops-health-helper.sh"
@@ -79,13 +87,13 @@ count_migration_plans() {
 
 init_fixture_repo() {
 	local repo="$1"
-	/usr/bin/git -C "$repo" init -q -b fixture
-	/usr/bin/git -C "$repo" config user.email test@example.invalid
-	/usr/bin/git -C "$repo" config user.name Test
-	/usr/bin/git -C "$repo" config commit.gpgsign false
+	"$TEST_NATIVE_GIT" -C "$repo" init -q -b fixture
+	"$TEST_NATIVE_GIT" -C "$repo" config user.email test@example.invalid
+	"$TEST_NATIVE_GIT" -C "$repo" config user.name Test
+	"$TEST_NATIVE_GIT" -C "$repo" config commit.gpgsign false
 	printf '%s\n' '.aidevops.json' >"$repo/.gitignore"
-	/usr/bin/git -C "$repo" add .gitignore
-	/usr/bin/git -C "$repo" commit -qm fixture
+	"$TEST_NATIVE_GIT" -C "$repo" add .gitignore
+	"$TEST_NATIVE_GIT" -C "$repo" commit -qm fixture
 	return 0
 }
 
@@ -125,8 +133,8 @@ printf '%s\n' '{"version":"0.0.1","features":{"planning":true}}' >"$TRACKED_REPO
 for fixture_repo in "$STALE_REPO" "$CURRENT_REPO" "$TRACKED_REPO" "$REGISTERED_MISSING_REPO" "$UNREGISTERED_REPO"; do
 	init_fixture_repo "$fixture_repo"
 done
-/usr/bin/git -C "$TRACKED_REPO" add -f .aidevops.json
-/usr/bin/git -C "$TRACKED_REPO" commit -qm tracked-config
+"$TEST_NATIVE_GIT" -C "$TRACKED_REPO" add -f .aidevops.json
+"$TEST_NATIVE_GIT" -C "$TRACKED_REPO" commit -qm tracked-config
 
 jq -n \
 	--arg stale "$STALE_REPO" \
@@ -152,7 +160,7 @@ mkdir -p "$TEST_ROOT/disabled-existing"
 TRACKED_BEFORE=$(cksum <"$TRACKED_REPO/.aidevops.json")
 CURRENT_BEFORE=$(cksum <"$CURRENT_REPO/.aidevops.json")
 STALE_MODE_BEFORE=$(file_mode "$STALE_REPO/.aidevops.json")
-STALE_HEAD_BEFORE=$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)
+STALE_HEAD_BEFORE=$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse HEAD)
 EXPECTED_FIRST_SUMMARY="1 bumped, 2 bump-skipped, 0 bump-failed, 1 registered-config-missing, 1 missing-folder, 1 no-init"
 HEALTH_LOG="$HOME/.aidevops/logs/repo-aidevops-health.log"
 
@@ -168,8 +176,8 @@ assert_equal "local config does not gain legacy version key" "$(jq -r 'has("aide
 assert_equal "local config preserves feature choices" "$(jq -r '.features.planning' "$STALE_REPO/.aidevops.json")" "true"
 assert_equal "local config preserves file mode" "$(file_mode "$STALE_REPO/.aidevops.json")" "$STALE_MODE_BEFORE"
 assert_equal "current local config remains byte-identical" "$(cksum <"$CURRENT_REPO/.aidevops.json")" "$CURRENT_BEFORE"
-assert_equal "local config update does not create a commit" "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" "$STALE_HEAD_BEFORE"
-assert_equal "ignored local config keeps repository clean" "$(/usr/bin/git -C "$STALE_REPO" status --porcelain)" ""
+assert_equal "local config update does not create a commit" "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse HEAD)" "$STALE_HEAD_BEFORE"
+assert_equal "ignored local config keeps repository clean" "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" status --porcelain)" ""
 assert_equal "tracked config remains byte-identical" "$(cksum <"$TRACKED_REPO/.aidevops.json")" "$TRACKED_BEFORE"
 assert_contains "tracked config without origin reports migration blocker" "$(<"$HEALTH_LOG")" "no GitHub origin is available"
 assert_equal "tracked config without origin does not write obsolete local plan" "$(count_migration_plans)" "0"

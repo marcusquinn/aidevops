@@ -112,6 +112,65 @@ _pulse_slug_list_contains() {
 	return 1
 }
 
+#######################################
+# GH#37555: round-robin repo order for scanners without per-repo cursors.
+# Housekeeping slices (GH#37501) are shorter than a full traversal, so a
+# scanner that restarts at the first repo never reaches the rest. Emit the
+# slugs starting after the cursor slug, wrapping around; a missing or stale
+# cursor (repo no longer enabled) keeps the original order.
+#
+# Args:
+#   $1 - cursor file path
+#   $2 - newline-separated enabled slugs
+# Stdout: rotated newline-separated slugs
+# Returns 0 always.
+#######################################
+_pulse_scanner_rotated_slugs() {
+	local cursor_file="$1"
+	local slugs="$2"
+	local last_slug="" slug="" before="" after="" seen=0
+	if [[ -f "$cursor_file" ]]; then
+		last_slug=$(sed -n '1p' "$cursor_file" 2>/dev/null || true)
+	fi
+	if [[ -z "$last_slug" ]] || ! _pulse_slug_list_contains "$last_slug" "$slugs"; then
+		printf '%s\n' "$slugs"
+		return 0
+	fi
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		if [[ "$seen" -eq 1 ]]; then
+			after="${after}${slug}"$'\n'
+			continue
+		fi
+		before="${before}${slug}"$'\n'
+		if [[ "$slug" == "$last_slug" ]]; then
+			seen=1
+		fi
+	done <<<"$slugs"
+	printf '%s%s' "$after" "$before"
+	return 0
+}
+
+#######################################
+# GH#37555: record a repo as started before scanning it. Advancing before the
+# scan means a repo slower than the whole slice cannot pin the rotation.
+#
+# Args:
+#   $1 - cursor file path
+#   $2 - slug about to be scanned
+# Returns 0 always (cursor persistence is best-effort, but a failure is logged
+# because an unwritable cursor silently restores first-repo starvation).
+#######################################
+_pulse_scanner_mark_started() {
+	local cursor_file="$1"
+	local slug="$2"
+	if mkdir -p "${cursor_file%/*}" 2>/dev/null && printf '%s\n' "$slug" >"$cursor_file" 2>/dev/null; then
+		return 0
+	fi
+	echo "[pulse-wrapper] Scanner rotation: cursor write failed (${cursor_file}); next slice restarts at the first repo" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
 _run_post_merge_review_scanner() {
 	local now_epoch
 	now_epoch=$(date +%s)
@@ -237,7 +296,9 @@ _run_pr_review_thread_response_scanner() {
 
 	local total_repos=0
 	local skipped_contributor=0
-	local slug="" repo_path="" repo_role=""
+	local slug="" repo_path="" repo_role="" enabled_slugs=""
+	local cursor_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_CURSOR_DIR:-${HOME:-}/.aidevops/logs/pr-review-thread-response-scanner}/repo.cursor"
+	enabled_slugs=$(_pulse_enabled_repo_slugs "$repos_json" || echo "")
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 		repo_role=$(get_repo_role_by_slug "$slug")
@@ -248,9 +309,10 @@ _run_pr_review_thread_response_scanner() {
 		repo_path=$(jq -r --arg s "$slug" 'first(.initialized_repos[]? | select(.slug == $s)) | .path // ""' "$repos_json" 2>/dev/null) || repo_path=""
 		repo_path="${repo_path/#\~/$HOME}"
 		total_repos=$((total_repos + 1))
+		_pulse_scanner_mark_started "$cursor_file" "$slug"
 		echo "[pulse-wrapper] PR review-thread response: scanning $slug" >>"$LOGFILE"
 		"$scanner" dispatch "$slug" "$repo_path" >>"$LOGFILE" 2>&1 || true
-	done < <(_pulse_enabled_repo_slugs "$repos_json")
+	done < <(_pulse_scanner_rotated_slugs "$cursor_file" "$enabled_slugs")
 	if [[ "$skipped_contributor" -gt 0 ]]; then
 		echo "[pulse-wrapper] PR review-thread response: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
 	fi
@@ -294,6 +356,9 @@ _run_auto_decomposer_scanner() {
 
 	local total_repos=0
 	local skipped_contributor=0
+	local enabled_slugs=""
+	local cursor_file="${AIDEVOPS_AUTO_DECOMPOSER_CURSOR_DIR:-${HOME:-}/.aidevops/logs/auto-decomposer-scanner}/repo.cursor"
+	enabled_slugs=$(_pulse_enabled_repo_slugs "$repos_json" || echo "")
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 		# t2145 parity with post-merge-review-scanner: skip contributor-role
@@ -306,9 +371,10 @@ _run_auto_decomposer_scanner() {
 			continue
 		fi
 		total_repos=$((total_repos + 1))
+		_pulse_scanner_mark_started "$cursor_file" "$slug"
 		echo "[pulse-wrapper] Auto-decomposer: scanning $slug" >>"$LOGFILE"
 		"$scanner" scan "$slug" >>"$LOGFILE" 2>&1 || true
-	done < <(_pulse_enabled_repo_slugs "$repos_json")
+	done < <(_pulse_scanner_rotated_slugs "$cursor_file" "$enabled_slugs")
 	if [[ "$skipped_contributor" -gt 0 ]]; then
 		echo "[pulse-wrapper] Auto-decomposer: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
 	fi

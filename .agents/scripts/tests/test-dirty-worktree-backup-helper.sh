@@ -4,6 +4,14 @@
 
 set -uo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
@@ -36,13 +44,13 @@ teardown() {
 setup_repo() {
 	local repo_dir="$1"
 	mkdir -p "$repo_dir"
-	/usr/bin/git -C "$repo_dir" init -q -b main || return 1
-	/usr/bin/git -C "$repo_dir" config user.email test@example.invalid || return 1
-	/usr/bin/git -C "$repo_dir" config user.name Test || return 1
-	/usr/bin/git -C "$repo_dir" config commit.gpgsign false || return 1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" init -q -b main || return 1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" config user.email test@example.invalid || return 1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" config user.name Test || return 1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" config commit.gpgsign false || return 1
 	printf 'base\n' >"$repo_dir/README.md"
-	/usr/bin/git -C "$repo_dir" add README.md || return 1
-	/usr/bin/git -C "$repo_dir" commit -q -m init || return 1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" add README.md || return 1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" commit -q -m init || return 1
 	return 0
 }
 
@@ -56,16 +64,16 @@ test_round_trip_preserves_exact_state() {
 
 	setup_repo "$repo_dir" || return 1
 	printf 'staged\n' >"$repo_dir/staged.txt"
-	/usr/bin/git -C "$repo_dir" add staged.txt || return 1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" add staged.txt || return 1
 	printf 'unstaged\n' >>"$repo_dir/staged.txt"
 	# GH#35149: the original untracked inventory overlaps a HEAD-tracked path.
-	/usr/bin/git -C "$repo_dir" rm -q README.md || return 1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" rm -q README.md || return 1
 	printf 'recreated untracked\n' >"$repo_dir/README.md"
 	mkdir -p "$repo_dir/todo/tasks"
 	printf 'brief\n' >"$repo_dir/todo/tasks/t1-brief.md"
 	ln -s ../../README.md "$repo_dir/todo/tasks/readme-link"
 
-	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" backup --repo "$repo_dir" --reason $'roundtrip\twith\nmetadata' \
 		--task t1 --operation-id round-trip --machine 2>/dev/null) || return 1
 	IFS='|' read -r backup_id backup_dir <<<"$output"
@@ -74,37 +82,37 @@ test_round_trip_preserves_exact_state() {
 	[[ -f "$backup_dir/untracked/todo/tasks/t1-brief.md" ]] || rc=1
 	[[ -L "$backup_dir/untracked/todo/tasks/readme-link" ]] || rc=1
 	[[ -f "$backup_dir/manifest.tsv" ]] || rc=1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" verify --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" matches --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
 	local repeated_output=""
-	repeated_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	repeated_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" backup --repo "$repo_dir" --operation-id round-trip --machine 2>/dev/null) || rc=1
 	[[ "$repeated_output" == "$output" ]] || rc=1
-	if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" verify --repo "$repo_dir" --backup ../escape >/dev/null 2>&1; then
 		rc=1
 	fi
 
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" clean --repo "$repo_dir" --backup "$backup_id" \
 		--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
-	[[ -z "$(/usr/bin/git -C "$repo_dir" status --porcelain=v1)" ]] || rc=1
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$repo_dir" status --porcelain=v1)" ]] || rc=1
 	[[ ! -e "$repo_dir/todo/tasks/t1-brief.md" ]] || rc=1
 	[[ "$(<"$repo_dir/README.md")" == "base" ]] || rc=1
 	[[ "$(<"$backup_dir/untracked/README.md")" == "recreated untracked" ]] || rc=1
 
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" restore --repo "$repo_dir" --backup "$backup_id" \
 		--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" matches --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
 	[[ -L "$repo_dir/todo/tasks/readme-link" ]] || rc=1
-	[[ "$(/usr/bin/git -C "$repo_dir" show :staged.txt)" == "staged" ]] || rc=1
-	[[ "$(/usr/bin/git -C "$repo_dir" diff --cached --name-only --diff-filter=D)" == "README.md" ]] || rc=1
+	[[ "$("$TEST_NATIVE_GIT" -C "$repo_dir" show :staged.txt)" == "staged" ]] || rc=1
+	[[ "$("$TEST_NATIVE_GIT" -C "$repo_dir" diff --cached --name-only --diff-filter=D)" == "README.md" ]] || rc=1
 	[[ "$(<"$repo_dir/README.md")" == "recreated untracked" ]] || rc=1
-	[[ "$(/usr/bin/git -C "$repo_dir" ls-files --others --exclude-standard -- README.md)" == "README.md" ]] || rc=1
+	[[ "$("$TEST_NATIVE_GIT" -C "$repo_dir" ls-files --others --exclude-standard -- README.md)" == "README.md" ]] || rc=1
 
 	print_result "backup-clean-restore round trip preserves HEAD, index, tracked, untracked, and symlink state" "$rc" "backup_id=$backup_id"
 	return 0
@@ -122,11 +130,11 @@ test_clean_refuses_changed_state() {
 
 	setup_repo "$repo_dir" || return 1
 	printf 'first\n' >>"$repo_dir/README.md"
-	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" backup --repo "$repo_dir" --operation-id changed --machine 2>/dev/null) || return 1
 	IFS='|' read -r backup_id backup_dir <<<"$output"
 	printf 'second\n' >>"$repo_dir/README.md"
-	if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" clean --repo "$repo_dir" --backup "$backup_id" \
 		--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1; then
 		rc=1
@@ -147,7 +155,7 @@ test_ignored_descendants_and_clean_rollback() {
 	local rc=0
 
 	setup_repo "$repo_dir" || return 1
-	/usr/bin/git -C "$repo_dir" rm -q README.md || return 1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" rm -q README.md || return 1
 	printf 'rollback overlap\n' >"$repo_dir/README.md"
 	mkdir -p "$repo_dir/local-state/runtime/nested"
 	printf 'runtime/\n' >"$repo_dir/local-state/.gitignore"
@@ -158,55 +166,55 @@ test_ignored_descendants_and_clean_rollback() {
 	printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$failure_hook"
 	chmod +x "$failure_hook"
 
-	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" backup --repo "$repo_dir" --operation-id ignored --machine 2>/dev/null) || return 1
 	IFS='|' read -r backup_id backup_dir <<<"$output"
 	[[ -f "$backup_dir/untracked/local-state/runtime/nested/payload.bin" ]] || rc=1
 	[[ -L "$backup_dir/untracked/local-state/runtime/nested/payload-link" ]] || rc=1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" verify --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
 	chmod 600 "$backup_dir/untracked/local-state/runtime/nested/payload.bin"
-	if verification_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	if verification_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" verify --repo "$repo_dir" --backup "$backup_id" 2>&1); then
 		rc=1
 	fi
 	[[ "$verification_output" != *"payload.bin"* ]] || rc=1
 	chmod 640 "$backup_dir/untracked/local-state/runtime/nested/payload.bin"
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" verify --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
-	if limit_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	if limit_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		AIDEVOPS_DIRTY_BACKUP_MAX_UNTRACKED_FILES=2 \
 		bash "$HELPER" backup --repo "$repo_dir" --operation-id bounded --machine 2>&1); then
 		rc=1
 	fi
 	[[ "$limit_output" != *"payload.bin"* ]] || rc=1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" matches --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
 
-	if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		AIDEVOPS_DIRTY_BACKUP_AFTER_REMOVE_HOOK="$failure_hook" \
 		bash "$HELPER" clean --repo "$repo_dir" --backup "$backup_id" \
 		--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1; then
 		rc=1
 	fi
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" matches --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
 	[[ "$(awk -F '\t' '$1 == "clean_state" { print $2 }' "$backup_dir/manifest.tsv")" == "rolled_back" ]] || rc=1
 	[[ "$(_file_perms "$repo_dir/local-state/runtime/nested/payload.bin")" == "640" ]] || rc=1
 
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" clean --repo "$repo_dir" --backup "$backup_id" \
 		--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
-	[[ -z "$(/usr/bin/git -C "$repo_dir" status --porcelain=v1)" ]] || rc=1
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$repo_dir" status --porcelain=v1)" ]] || rc=1
 	[[ ! -e "$repo_dir/local-state/.gitignore" ]] || rc=1
 	[[ ! -e "$repo_dir/local-state/runtime/nested/payload.bin" ]] || rc=1
 
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" restore --repo "$repo_dir" --backup "$backup_id" \
 		--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" matches --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
-	[[ "$(/usr/bin/git -C "$repo_dir" check-ignore local-state/runtime/nested/payload.bin)" == "local-state/runtime/nested/payload.bin" ]] || rc=1
+	[[ "$("$TEST_NATIVE_GIT" -C "$repo_dir" check-ignore local-state/runtime/nested/payload.bin)" == "local-state/runtime/nested/payload.bin" ]] || rc=1
 	[[ "$(readlink "$repo_dir/local-state/runtime/nested/payload-link")" == "payload.bin" ]] || rc=1
 
 	print_result "ignored descendants are integrity-protected and failed clean rolls back before safe retry" "$rc" "backup_id=$backup_id"
@@ -223,15 +231,15 @@ test_prune_requires_terminal_state() {
 
 	setup_repo "$repo_dir" || return 1
 	printf 'open backup\n' >>"$repo_dir/README.md"
-	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" backup --repo "$repo_dir" --operation-id prune --machine 2>/dev/null) || return 1
 	IFS='|' read -r backup_id backup_dir <<<"$output"
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" prune --force --retention-days 0 >/dev/null || rc=1
 	[[ -d "$backup_dir" ]] || rc=1
 	AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" bash "$HELPER" acknowledge \
 		--backup "$backup_id" --confirm ACKNOWLEDGE_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" prune --force --retention-days 0 >/dev/null || rc=1
 	[[ ! -d "$backup_dir" ]] || rc=1
 	print_result "prune retains open evidence and removes only acknowledged backups" "$rc"
@@ -253,7 +261,7 @@ test_prune_dry_run_overrides_force() {
 
 	setup_repo "$repo_dir" || return 1
 	printf 'dry-run backup\n' >>"$repo_dir/README.md"
-	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" backup --repo "$repo_dir" --operation-id dry-run --machine 2>/dev/null) || return 1
 	IFS='|' read -r backup_id backup_dir <<<"$output"
 	AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" bash "$HELPER" acknowledge \
@@ -265,13 +273,13 @@ test_prune_dry_run_overrides_force() {
 
 	for flags in "--dry-run --force" "--force --dry-run"; do
 		# shellcheck disable=SC2086 # intentional word splitting of flag pairs
-		prune_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		prune_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 			bash "$HELPER" prune $flags --retention-days 0 2>&1) || rc=1
 		[[ "$prune_output" == *"Would remove"* ]] || rc=1
 		[[ "$prune_output" != *"Removed backup"* ]] || rc=1
 		[[ -d "$backup_dir" ]] || rc=1
 		[[ "$(cat "$backup_dir/manifest.tsv")" == "$manifest_before" ]] || rc=1
-		/usr/bin/git -C "$repo_dir" rev-parse --verify --quiet "$backup_ref" >/dev/null || rc=1
+		"$TEST_NATIVE_GIT" -C "$repo_dir" rev-parse --verify --quiet "$backup_ref" >/dev/null || rc=1
 		[[ "$(AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" bash "$HELPER" list 2>&1)" == "$list_before" ]] || rc=1
 	done
 	print_result "prune --dry-run never mutates, regardless of --force order" "$rc" "backup_id=$backup_id"
@@ -288,11 +296,11 @@ test_delete_targets_single_backup() {
 
 	setup_repo "$repo_dir" || return 1
 	printf 'first\n' >>"$repo_dir/README.md"
-	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" backup --repo "$repo_dir" --operation-id del-a --machine 2>/dev/null) || return 1
 	IFS='|' read -r id_a dir_a <<<"$output"
 	printf 'second\n' >>"$repo_dir/README.md"
-	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" backup --repo "$repo_dir" --operation-id del-b --machine 2>/dev/null) || return 1
 	IFS='|' read -r id_b dir_b <<<"$output"
 	[[ "$id_a" != "$id_b" ]] || rc=1
@@ -300,7 +308,7 @@ test_delete_targets_single_backup() {
 	ref_b=$(awk -F '\t' '$1 == "backup_ref" { print $2 }' "$dir_b/manifest.tsv")
 
 	# Open backup is refused.
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" delete --backup "$id_a" --confirm DELETE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 && rc=1
 	[[ -d "$dir_a" ]] || rc=1
 
@@ -310,32 +318,32 @@ test_delete_targets_single_backup() {
 	done
 
 	# Missing confirmation is refused.
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" delete --backup "$id_a" >/dev/null 2>&1 && rc=1
 
 	# Dry-run does not mutate.
-	out=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	out=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" delete --dry-run --backup "$id_a" --confirm DELETE_DIRTY_WORKTREE_BACKUP 2>&1) || rc=1
 	[[ "$out" == *"Would remove"* ]] || rc=1
 	[[ -d "$dir_a" ]] || rc=1
 
 	# .keep marker is refused.
 	: >"$dir_a/.keep"
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" delete --backup "$id_a" --confirm DELETE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 && rc=1
 	[[ -d "$dir_a" ]] || rc=1
 	rm -f "$dir_a/.keep"
 
 	# Real delete removes only the target.
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" delete --backup "$id_a" --confirm DELETE_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
 	[[ ! -d "$dir_a" ]] || rc=1
-	/usr/bin/git -C "$repo_dir" rev-parse --verify --quiet "$ref_a" >/dev/null && rc=1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" rev-parse --verify --quiet "$ref_a" >/dev/null && rc=1
 	[[ -d "$dir_b" ]] || rc=1
-	/usr/bin/git -C "$repo_dir" rev-parse --verify --quiet "$ref_b" >/dev/null || rc=1
+	"$TEST_NATIVE_GIT" -C "$repo_dir" rev-parse --verify --quiet "$ref_b" >/dev/null || rc=1
 
 	# Path traversal is rejected.
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" delete --backup "../$id_b" --confirm DELETE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 && rc=1
 	[[ -d "$dir_b" ]] || rc=1
 	print_result "delete removes exactly one acknowledged backup and refuses open/kept/untargeted" "$rc"

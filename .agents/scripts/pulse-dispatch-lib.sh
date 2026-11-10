@@ -296,6 +296,10 @@ _dispatch_checkpoint_decimal() {
 # Read boundary evidence once per ceremony, not on cache hits. Conservatively
 # include every claim/lease expiry and attention re-arm, even obsolete or
 # untrusted records: extra wakeups are safe, delayed continuations are not.
+# GH#37514: the fleet re-arm in pr-checkpoint-continuation-helper.sh
+# (_pcc_fleet_rearm_allowed) is anchored on an attention record or a stall
+# release and doubles up to _PCC_ATTENTION_REARM_MAX_DOUBLINGS (6) times, so
+# every such anchor contributes each doubled deadline.
 # Assigned issues must retain the live/stale-owner checks on every cycle.
 _dispatch_draft_hint_boundary() {
 	local candidate="$1" repo="$2" issue="$3" comments="" rearm="" observed=""
@@ -309,8 +313,8 @@ _dispatch_draft_hint_boundary() {
 		if type != "array" then error("invalid comments") else flatten end |
 		[.[] | (.body // "") as $body |
 			($body | scan("expires_at=([0-9]+)") | .[0] | tonumber),
-			(select($rearm > 0 and ($body | test("aidevops:(blocked|stalled)-checkpoint-attention"))) |
-				(.created_at | fromdateiso8601) + $rearm)] |
+			(select($rearm > 0 and ($body | test("aidevops:(blocked|stalled)-checkpoint-attention|(^|\n)CLAIM_RELEASED "))) |
+				(.created_at | fromdateiso8601) as $anchor | range(0; 7) | $anchor + $rearm * pow(2; .) | floor)] |
 		map(select(. >= $observed)) | (min // 0) | tostring + ":" + ($rearm | tostring)
 	' <<<"$comments" 2>/dev/null
 	return $?

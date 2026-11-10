@@ -378,11 +378,20 @@ _normalize_label_invariants() {
 	now_epoch=$(date +%s)
 	local triage_cutoff=$((now_epoch - 1800))
 
-	local slug
+	# GH#37568: resume after the repo this pass last started (when the
+	# normalization driver supplies the cursor; standalone use keeps order).
+	local slug="" li_slugs=""
+	li_slugs=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+	if declare -F _normalize_rotated_slugs >/dev/null 2>&1; then
+		li_slugs=$(_normalize_rotated_slugs label_invariants "$li_slugs")
+	fi
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		if declare -F _normalize_mark_repo_started >/dev/null 2>&1; then
+			_normalize_mark_repo_started label_invariants "$slug"
+		fi
 		_normalize_label_invariants_for_repo "$slug" "$triage_cutoff"
-	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+	done <<<"$li_slugs"
 
 	echo "[pulse-wrapper] label_invariants: checked=${_LI_CHECKED} status_fixed=${_LI_STATUS_FIXED} tier_fixed=${_LI_TIER_FIXED} persistent_fixed=${_LI_PERSISTENT_FIXED} triage_missing=${_LI_TRIAGE_MISSING}" >>"$LOGFILE"
 

@@ -29,6 +29,9 @@ on:
   issues:
     types: [unlabeled, labeled, assigned, unassigned]
 
+# Keep cancellation job-scoped in the reusable workflow's check-pr verdict job.
+# Workflow-level cancellation would also interrupt PR label restoration.
+
 jobs:
   gate:
     uses: ./.github/workflows/maintainer-gate-reusable.yml

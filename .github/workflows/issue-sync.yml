@@ -59,6 +59,11 @@ permissions:
   issues: write
   pull-requests: write
 
+concurrency:
+  # Durable sync/closed-PR events are not superseded validation runs.
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   sync:
     permissions:

@@ -6,6 +6,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 LIB_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-lib.sh"
 WORKER_LAUNCH_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-worker-launch.sh"
@@ -138,7 +146,7 @@ test_marker_without_runner_key_stays_blocked() {
 }
 
 test_dirty_worktree_reuse_preserves_edits() {
-	git() { /usr/bin/git "$@"; }
+	git() { "$TEST_NATIVE_GIT" "$@"; }
 	local fixture_root=""
 	fixture_root=$(mktemp -d)
 	fixture_root=$(cd "$fixture_root" && pwd -P)

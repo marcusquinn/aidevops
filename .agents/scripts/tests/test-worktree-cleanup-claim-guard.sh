@@ -33,11 +33,19 @@
 
 set -uo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HELPER_PATH="${TEST_SCRIPTS_DIR}/interactive-session-helper.sh"
 STAMP_LIB_PATH="${TEST_SCRIPTS_DIR}/interactive-session-helper-stamp.sh"
 CLEAN_LIB_PATH="${TEST_SCRIPTS_DIR}/worktree-clean-lib.sh"
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 
 # Keep isolated fixture mutations on native Git. Canonical mutation-guard
 # behavior is covered independently and is not part of this claim test.

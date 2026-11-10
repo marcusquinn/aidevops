@@ -7,6 +7,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 
 test_prospective_todo_requires_supported_native_git() {
@@ -21,7 +29,7 @@ if [[ "${1:-}" == "--version" ]]; then
 	printf '%s\n' 'git version 2.37.0'
 	exit 0
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 WRAPPER_EOF
 	chmod +x "$wrapper"
 	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" stub \
@@ -139,18 +147,18 @@ if [[ "$subcommand" == "fetch" ]]; then
 	no_repo=$(mktemp -d) || exit 128
 	credential=$(cd "$no_repo" && env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
 		GIT_CEILING_DIRECTORIES="$no_repo" \
-		/usr/bin/git "${config_args[@]}" credential fill <<<"$request") || { rmdir "$no_repo"; exit 128; }
+		"$TEST_NATIVE_GIT" "${config_args[@]}" credential fill <<<"$request") || { rmdir "$no_repo"; exit 128; }
 	(cd "$no_repo" && env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
 		GIT_CEILING_DIRECTORIES="$no_repo" \
-		/usr/bin/git "${config_args[@]}" credential approve <<<"${credential}"$'\n') || { rmdir "$no_repo"; exit 128; }
+		"$TEST_NATIVE_GIT" "${config_args[@]}" credential approve <<<"${credential}"$'\n') || { rmdir "$no_repo"; exit 128; }
 	rmdir "$no_repo"
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 PROBE_EOF
 	chmod +x "${auth_root}/inherited-helper" "${auth_root}/bin/gh" "$probe" || return 0
-	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global credential.helper \
+	HOME="${fixture_dir}/attacker-home" "$TEST_NATIVE_GIT" config --global credential.helper \
 		"${auth_root}/inherited-helper" || return 0
-	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global \
+	HOME="${fixture_dir}/attacker-home" "$TEST_NATIVE_GIT" config --global \
 		credential.https://github.com.helper "${auth_root}/inherited-helper" || return 0
 	: >"$inherited_log"
 	: >"$gh_log"
@@ -172,8 +180,8 @@ PROBE_EOF
 		"$([[ "$rc" -ne 0 && ! -s "$inherited_log" && "$output" == *"gh auth status"* &&
 			"$output" != *synthetic* ]] && printf '0' || printf '1')" \
 		"rc=$rc inherited=$(<"$inherited_log") output=$output"
-	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global --unset-all credential.helper || true
-	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global --unset-all \
+	HOME="${fixture_dir}/attacker-home" "$TEST_NATIVE_GIT" config --global --unset-all credential.helper || true
+	HOME="${fixture_dir}/attacker-home" "$TEST_NATIVE_GIT" config --global --unset-all \
 		credential.https://github.com.helper || true
 	rc=0
 	prospective_contexts_clean "$fixture_dir" || rc=$?

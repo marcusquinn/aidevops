@@ -570,8 +570,19 @@ _normalize_unassign_stale() {
 	local total_reset=0
 	local total_candidates=0
 
+	# GH#37568: resume after the repo this pass last started (when the
+	# normalization driver supplies the cursor; standalone use keeps order).
+	local stale_slugs=""
+	stale_slugs=$(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+	if declare -F _normalize_rotated_slugs >/dev/null 2>&1; then
+		stale_slugs=$(_normalize_rotated_slugs unassign_stale "$stale_slugs")
+	fi
+
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		if declare -F _normalize_mark_repo_started >/dev/null 2>&1; then
+			_normalize_mark_repo_started unassign_stale "$slug"
+		fi
 		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
 			|| ! repo_allows_pulse_write_actions "$slug"; then
 			continue
@@ -625,7 +636,7 @@ _normalize_unassign_stale() {
 			_normalize_clear_status_labels "$stale_num" "$slug" "$runner_user" || true
 			total_reset=$((total_reset + 1))
 		done <<<"$stale_issues"
-	done < <(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+	done <<<"$stale_slugs"
 
 	# t2372: always log scan summary so silent runs are visible in pulse log
 	# and operators can confirm the sweep is firing per-cycle.

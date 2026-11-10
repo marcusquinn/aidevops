@@ -28,13 +28,18 @@ for (const key of Object.keys(fixtureEnvironment)) {
   }
 }
 
+// Resolve native Git from the system default PATH (portable to non-FHS hosts).
+const nativeGitLookup = spawnSync("/bin/sh", ["-c", "command -p -v git"], {encoding: "utf8"});
+const NATIVE_GIT = nativeGitLookup.stdout.trim();
+assert.ok(nativeGitLookup.status === 0 && NATIVE_GIT, "Native Git is unavailable on the system PATH");
+
 function requireSuccess(result, label) {
   assert.equal(result.status, 0, `${label} failed:\n${result.stderr || result.error || "unknown error"}`);
   return result;
 }
 
 function git(cwd, argumentsList, label) {
-  return requireSuccess(spawnSync("/usr/bin/git", ["-C", cwd, ...argumentsList], {
+  return requireSuccess(spawnSync(NATIVE_GIT, ["-C", cwd, ...argumentsList], {
     encoding: "utf8",
     env: fixtureEnvironment,
   }), label);

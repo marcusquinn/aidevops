@@ -25,23 +25,28 @@ def merge_display_sources(knowledge, pmset, now):
 
     Both observe display-on time, but neither is complete alone: the backlit
     stream can stop for days while pmset keeps only about a week (GH#37492).
+    pmset metadata derives from its intervals, which may be only the live held
+    span when its log read failed.
     """
     if knowledge.get("status") == "unavailable":
         return pmset
-    if pmset.get("status") == "unavailable":
+    extra = pmset.get("intervals", [])
+    if not extra:
         return knowledge
-    latest = max(knowledge["latest_epoch"], pmset["latest_epoch"])
+    ends = [right for _, right in extra]
+    latest = max(knowledge["latest_epoch"], *ends)
+    earliest = min(left for left, _ in extra)
     freshness = max(0.0, (now - latest) / 3600)
     return dict(
         knowledge,
         source=f"{knowledge['source']}+{pmset['source']}",
-        intervals=union_intervals(knowledge["intervals"] + pmset["intervals"], now - WINDOWS["year"], now),
-        observations=knowledge.get("observations", 0) + pmset.get("observations", 0),
+        intervals=union_intervals(knowledge["intervals"] + extra, now - WINDOWS["year"], now),
+        observations=knowledge.get("observations", 0) + len(extra),
         latest_epoch=latest,
-        earliest_epoch=min(knowledge["earliest_epoch"], pmset["earliest_epoch"]),
-        observation_epochs=knowledge.get("observation_epochs", []) + pmset.get("observation_epochs", []),
-        coverage_start_epoch=min(knowledge["coverage_start_epoch"], pmset["coverage_start_epoch"]),
-        coverage_end_epoch=max(knowledge["coverage_end_epoch"], pmset["coverage_end_epoch"]),
+        earliest_epoch=min(knowledge["earliest_epoch"], earliest),
+        observation_epochs=knowledge.get("observation_epochs", []) + ends,
+        coverage_start_epoch=min(knowledge["coverage_start_epoch"], earliest),
+        coverage_end_epoch=max(knowledge["coverage_end_epoch"], latest),
         freshness_hours=round(freshness, 1),
         status="stale" if freshness > STALE_HOURS else "ok",
     )

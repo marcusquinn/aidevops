@@ -2,44 +2,40 @@
 
 ## Status and authority
 
-Launchers that register, including Pulse and interactive launchers, supply registration facts,
-not separate safety rules. Coverage is incomplete: private or disabled workloads remain
-unobserved and standalone commands are outside the registered-writer contract. Only the new registry and native OS adapter supply lifecycle
-evidence; legacy registries, dispatch ledgers and old owner statuses cannot fill gaps
-or authorize operations. Git/filesystem evidence proves content, not process liveness.
+Registering launchers, including Pulse and interactive launchers, supply facts, not separate safety rules.
+Private or disabled workloads remain unobserved; standalone commands are outside the registered-writer
+contract. Only the new registry and native OS adapter supply lifecycle evidence: legacy registries, dispatch
+ledgers and old owner statuses cannot fill gaps or authorize operations. Git/filesystem evidence proves
+content, not process liveness.
 
 The [managed launch contract](DESIGN.md#managed-launch-contract) defines ownership coverage.
-Independent writers, including jobs outliving their launcher, must register separate runs
-before writing; ordinary child commands remain the runtime's responsibility. Lifecycle
-neither discovers nor controls process trees: unregistered independent writers are outside
-the contract, not owners inferred from PID, PPID or cwd.
+Independent writers, including jobs outliving their launcher, must register separate runs before writing;
+ordinary children remain the runtime's responsibility. Lifecycle neither discovers nor controls process
+trees: unregistered independent writers are outside the contract, not owners inferred from PID, PPID or cwd.
 
-`worker_lifecycle/cleanup_policy.py` is a **report-only decision table**: no I/O, always
-`cleanup_authorized=False`. Its assertions are inputs for future verified collectors,
-not CLI flags or proof objects. No production collector or destructive executor is
-connected to this policy; its tests do not validate archive/restore.
+`worker_lifecycle/cleanup_policy.py` is a **report-only decision table**: no I/O, always `cleanup_authorized=False`.
+Its assertions are inputs for future verified collectors, not CLI flags or proof objects. No production
+collector or destructive executor is connected; its tests do not validate archive/restore.
 
-`directory_handle.py` compares a read-only descriptor's device/inode with the canonical path
-for one operation. Replacement, lost access, process change or closure invalidates it.
-It is not persistent generation identity, a snapshot, Git identity check or admission lock:
-matching identity neither freezes content nor prevents later pathname races. Re-establish
-evidence after crash/restart; saved device/inode values are insufficient. Retained reports
-qualify only their recorded Linux/macOS Intel artifacts and environments.
+`directory_handle.py` compares a read-only descriptor's device/inode with the canonical path for one operation.
+Replacement, lost access, process change or closure invalidates it. It is not persistent generation identity,
+a snapshot, Git identity check or admission lock: matching identity neither freezes content nor prevents
+later pathname races. Re-establish evidence after crash/restart; saved device/inode values are insufficient.
+Retained reports qualify only their recorded Linux/macOS Intel artifacts and environments.
 
-Default observe-only bindings use per-attempt UUIDs, not verified physical generations.
-Enrollment lookup must confirm an unregistered, unmarked path; failure denies execution.
-Subsequent `record()` failure reports `observation-gap` but executes the original command.
-These bindings cannot supply `generation_verified`, `ownership_complete` or `admission_closed`.
-Future active admission must deny closed/unavailable managed launches without silently
-changing the observe-only contract.
+Default observe-only bindings use per-attempt UUIDs, not verified physical generations. Enrollment lookup
+must confirm an unregistered, unmarked path; failure denies execution. Subsequent `record()` failure reports
+`observation-gap` but executes the original command. These bindings cannot supply `generation_verified`,
+`ownership_complete` or `admission_closed`. Future active admission must deny closed/unavailable managed
+launches without silently changing the observe-only contract.
 
 ## Simple algorithm
 
 1. Verify physical generation and complete ownership; missing registration or path reuse means hold.
-2. Require every admitted run to be ended. Independently registered jobs remain owners after
-   launcher exit; shared runtimes need explicit session-completion semantics, not just PID polling.
-   Close admission only if the exact nonempty run set remains ended in the admission transaction;
-   a racing new owner means retry, not closure over live work.
+2. Require every admitted run to be ended. Independently registered jobs remain owners after launcher exit;
+   shared runtimes need explicit session-completion semantics, not just PID polling. Close admission only if
+   the exact nonempty run set remains ended in the admission transaction; a racing new owner means retry,
+   not closure over live work.
 3. Inventory all results; incomplete inventory means hold, not an empty worktree.
 4. Propose archive for unpreserved results, removal for verified preservation, hold for unknowns.
 5. A future executor must revalidate evidence and perform the protected operation; reports never authorize deletion.
@@ -52,9 +48,9 @@ changing the observe-only contract.
 | All safety preconditions proved; unique local results | Archive candidate |
 | All safety preconditions proved; results demonstrably preserved | Remove candidate |
 
-`ended` means process termination, not task success. Without a push/PR, local work
-may be the only copy; a push/PR still does not prove the latest work preserved.
-With squash merges, ancestry alone cannot prove loss or unpublished work.
+`ended` means process termination, not task success. Without a push/PR, local work may be the only copy;
+a push/PR still does not prove the latest work preserved. With squash merges, ancestry alone cannot prove
+loss or unpublished work.
 
 ## Transactional admission core
 
