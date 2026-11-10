@@ -519,6 +519,68 @@ test_linux_input_evidence_probe() {
 	return 0
 }
 
+macos_input_helper() {
+	local home="$1"
+	local now="$2"
+	shift 2
+	if HOME="$home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" "$HELPER" "$@"; then
+		return 0
+	fi
+	return 1
+}
+
+test_macos_input_activity_matches_linux_rule() {
+	local tmpdir="$1"
+	local home="${tmpdir}/macos-input-home"
+	local observability="${home}/.aidevops/.agent-workspace/observability"
+	local fixture="${tmpdir}/hid-idle.json"
+	mkdir -p "$observability"
+	local base now
+	read -r base now <<<"$(python3 -c 'import datetime as d; t=d.date.today(); y=t-d.timedelta(days=1); e=lambda day,h:int(d.datetime.combine(day,d.time(h)).timestamp()); print(e(y,9), e(t,12))')"
+	# Yesterday from 09:00: typing to 09:30, idle to 10:00, locked 10:01-10:10,
+	# another console user 10:11-10:20, typing again 10:21-10:30.
+	AIDEVOPS_HID_IDLE_FIXTURE="$fixture" PYTHONPATH="$SCRIPTS_DIR" python3 - "$observability" "$base" "$fixture" <<'PY'
+import json
+import sys
+from screen_time_macos_input import macos_input_sample
+directory, base, fixture = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+for minute in range(0, 91):
+    payload = {"idle_seconds": 0, "locked": False, "on_console": True}
+    if 30 < minute <= 60:
+        payload["idle_seconds"] = (minute - 30) * 60
+    elif 60 < minute <= 70:
+        payload["locked"] = True
+    elif 70 < minute <= 80:
+        payload["on_console"] = False
+    with open(fixture, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    macos_input_sample(base + minute * 60, directory)
+PY
+	local output
+	output=$(macos_input_helper "$home" "$now" input-stats)
+	# 30m typing + 5m cut-off + 9m after unlock = 44m = 0.7h.
+	[[ "$(printf '%s' "$output" | jq -r '[.today_hours, .periods.day.source, (.evidence | join(","))] | map(tostring) | join(",")')" == "0.7,macos-input-activity:idle-cutoff-300s,hid-idle" ]] ||
+		fail "macOS input activity did not follow the Linux idle, lock and console rules: ${output}"
+	[[ "$(jq -r '.collector' "${observability}/screen-activity.jsonl" | sort -u)" == "macos-input-activity" ]] ||
+		fail "macOS activity records were not tagged with the macOS collector"
+
+	# Live sampler path through the helper: lock, unreadable idle, unknown console.
+	local state="${observability}/screen-activity-state.json"
+	printf '%s\n' '{"idle_seconds": 3, "locked": true, "on_console": true}' >"$fixture"
+	AIDEVOPS_HID_IDLE_FIXTURE="$fixture" macos_input_helper "$home" "$now" sample >/dev/null
+	[[ "$(jq -r '.evidence | join(",")' "$state")" == "locked" ]] || fail "locked Mac console counted input: $(<"$state")"
+	printf '%s\n' '{"locked": false, "on_console": true}' >"$fixture"
+	AIDEVOPS_HID_IDLE_FIXTURE="$fixture" macos_input_helper "$home" "$((now + 60))" sample >/dev/null
+	[[ "$(macos_input_helper "$home" "$((now + 60))" input-stats | jq -r '.collection_status')" == "partial" ]] ||
+		fail "unreadable HIDIdleTime was not surfaced as partial"
+	printf '%s\n' '{"idle_seconds": 3}' >"$fixture"
+	AIDEVOPS_HID_IDLE_FIXTURE="$fixture" macos_input_helper "$home" "$((now + 120))" sample >/dev/null
+	[[ "$(jq -r '[(.last_input | floor), (.evidence | join(","))] | map(tostring) | join(",")' "$state")" == "$((now + 117)),hid-idle,console-state-unknown" ]] ||
+		fail "HID idle input without console state was not sampled: $(<"$state")"
+	pass "macOS input activity uses HIDIdleTime with the Linux idle cut-off, lock and console rules"
+	return 0
+}
+
 test_history_calendar_coverage_and_staleness() {
 	local tmpdir="$1"
 	local fixture_home="${tmpdir}/history-home"
@@ -597,6 +659,7 @@ test_screen_engine_sibling_modules_deploy_together() {
 		"${SCRIPTS_DIR}/screen_time_interval_common.py" \
 		"${SCRIPTS_DIR}/screen_time_macos.py" \
 		"${SCRIPTS_DIR}/screen_time_macos_apps.py" \
+		"${SCRIPTS_DIR}/screen_time_macos_input.py" \
 		"${SCRIPTS_DIR}/screen_time_macos_pmset.py" \
 		"${SCRIPTS_DIR}/screen_time_linux.py" \
 		"${SCRIPTS_DIR}/screen_time_linux_activity.py" \
@@ -649,7 +712,7 @@ main() {
 
 	local db="${tmpdir}/knowledgeC.db"
 	create_knowledge_db "$db"
-	unset AIDEVOPS_SCREEN_ACTIVITY_DIR AIDEVOPS_SCREEN_ACTIVITY_FIXTURE AIDEVOPS_SCREEN_ACTIVITY_IDLE_SECONDS
+	unset AIDEVOPS_SCREEN_ACTIVITY_DIR AIDEVOPS_SCREEN_ACTIVITY_FIXTURE AIDEVOPS_SCREEN_ACTIVITY_IDLE_SECONDS AIDEVOPS_HID_IDLE_FIXTURE
 	: >"${tmpdir}/empty-pmset.log"
 	export AIDEVOPS_PMSET_FIXTURE="${tmpdir}/empty-pmset.log"
 
@@ -694,6 +757,7 @@ main() {
 	test_pmset_permission_free_fallback "$tmpdir"
 	test_linux_input_activity_intervals "$tmpdir"
 	test_linux_input_evidence_probe "$tmpdir" "$now"
+	test_macos_input_activity_matches_linux_rule "$tmpdir"
 	test_history_calendar_coverage_and_staleness "$tmpdir"
 	test_corrupt_core_data_and_history_paths_are_safe "$tmpdir" "$now"
 	test_screen_engine_sibling_modules_deploy_together "$tmpdir"

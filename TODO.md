@@ -1997,6 +1997,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18933 fix(screen-time): macOS screen time under-reports (inverted backlit spans, held pmset assertion, frozen snapshot) #bug #interactive ref:GH#37492 logged:2026-11-09 started:2026-11-09 -> [todo/tasks/t18933-brief.md]
 
+- [ ] t18934 feat(screen-time): macOS input-activity row matching the Linux 5-minute input sampler #feat #interactive ref:GH#37496 logged:2026-11-09 started:2026-11-09 -> [todo/tasks/t18934-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
@@ -5614,7 +5616,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [-] t18814 fix(sync-workflows): re-pin legacy @main loc-badge callers to release SHA and keep pins current #auto-dispatch #bug ref:GH#36105 declined:2026-10-31
 
 - [-] t18829 Attribute and govern REST core spend outside the local transport governor #bug ref:GH#36212 declined:2026-10-31
-
-- [ ] t18934 feat(screen-time): macOS input-activity row matching the Linux 5-minute input sampler #enhancement ref:GH#37496
-
-- [ ] t18933 fix(screen-time): macOS screen time under-reports (inverted backlit spans, held pmset assertion, frozen snapshot) #bug ref:GH#37492

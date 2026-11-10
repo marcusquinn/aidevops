@@ -160,9 +160,21 @@ cmd_profile_stats() {
 }
 
 #######################################
-# Record one human-input activity sample (Linux; no-op elsewhere).
-# Linux has no system screen-time store, so a per-minute scheduler builds
-# the active intervals that profile-stats and snapshot read.
+# Emit human input-activity profile JSON (time from each keyboard/mouse
+# input until the idle cut-off). On Linux this is the same measure as
+# profile-stats; on macOS it complements display-on screen time.
+#######################################
+cmd_input_stats() {
+	if _screen_time_engine input-profile; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Record one human-input activity sample (Linux and macOS).
+# A per-minute scheduler builds the active intervals that input-stats
+# (and, on Linux, profile-stats and snapshot) read.
 #######################################
 cmd_sample() {
 	mkdir -p "$HISTORY_DIR"
@@ -176,8 +188,9 @@ sample) cmd_sample ;;
 query) cmd_query "${2:-1}" ;;
 history) cmd_history ;;
 profile-stats) cmd_profile_stats ;;
+input-stats) cmd_input_stats ;;
 help | *)
-	echo "Usage: screen-time-helper.sh {snapshot|sample|query [days]|history|profile-stats}"
+	echo "Usage: screen-time-helper.sh {snapshot|sample|query [days]|history|profile-stats|input-stats}"
 	echo "Platform: ${OS_TYPE}"
 	return 0 2>/dev/null || exit 0
 	;;
