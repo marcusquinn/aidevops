@@ -40,6 +40,12 @@ def load_hosts(path, selected=None):
     return sorted(hosts, key=lambda h: (h["restoreOrder"], h["index"]))
 
 
+def validate_host_flags(host):
+    for field in ("enabled", "identitiesOnly"):
+        if field in host and type(host[field]) is not bool:
+            raise SessionError(field + " must be boolean")
+
+
 def validate_host(source, index):
     allowed = {"id", "sshHost", "titlePrefix", "sessionPrefix", "restoreOrder", "enabled",
                "connectIntervalSeconds", "port", "user", "identityFile", "identitiesOnly", "endpointId"}
@@ -52,10 +58,7 @@ def validate_host(source, index):
         host[field] = identifier(host.get(field, default), field)
     identifier(host["sessionPrefix"], "sessionPrefix", r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
     host.setdefault("enabled", True)
-    if type(host["enabled"]) is not bool:
-        raise SessionError("enabled must be boolean")
-    if "identitiesOnly" in host and type(host["identitiesOnly"]) is not bool:
-        raise SessionError("identitiesOnly must be boolean")
+    validate_host_flags(host)
     for field, default, low, high in (("restoreOrder", index, 0, 1000000),
                                      ("connectIntervalSeconds", 5, 0, 60),
                                      ("port", None, 1, 65535)):
