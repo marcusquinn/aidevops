@@ -67,6 +67,14 @@ AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 ./setup.sh --non-interactive
 AIDEVOPS_OPENCODE_PROFILE=v1 ./setup.sh --non-interactive
 ```
 
+When `AIDEVOPS_OPENCODE_PROFILE` is unset, setup detects the installed runtime
+instead of assuming V1: `opencode --version` with a 2.x major selects the V2
+contract for the global config (key `plugins`, `v2-plugin/` entry point, with
+`opencode` accepted as the fallback binary when no `opencode2` shim exists),
+while a V1 installation or an unparseable version keeps the rollback default.
+The explicit env override still wins over detection, and the registry
+`default` stays `v1` until canary promotion.
+
 V2 rejects duplicate plugin IDs (`Duplicate plugin ID: aidevops`), so setup
 registers the V2 plugin once through the config `plugins` entry and removes the
 legacy managed `plugins/aidevops-v2` symlink. It falls back to the symlink only

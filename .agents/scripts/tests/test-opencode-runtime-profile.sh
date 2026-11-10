@@ -46,4 +46,81 @@ assert_eq "V2 canary profile" "v2" "$(jq -r '.profile' <<<"$status_json")"
 assert_eq "V2 canary package registry" "2.0.3" "$(jq -r '.registry_latest' <<<"$status_json")"
 assert_eq "V2 canary metadata" "$(python3 "$HELPER" get v2 lastCanaryResult)" "$(jq -r '.last_canary_result' <<<"$status_json")"
 
+# t18904: detect-based profile mapping and rollback fallbacks.
+assert_eq "detect falls back for non-numeric version output" "v1" \
+	"$(env -u AIDEVOPS_OPENCODE_PROFILE python3 "$HELPER" detect 'nonsense')"
+assert_eq "detect maps an unknown major to the rollback default" "v1" \
+	"$(env -u AIDEVOPS_OPENCODE_PROFILE python3 "$HELPER" detect 'OpenCode 9.9.9')"
+assert_eq "detect keeps v1 for pinned 1.x output" "v1" \
+	"$(env -u AIDEVOPS_OPENCODE_PROFILE python3 "$HELPER" detect 'OpenCode 1.19.5')"
+assert_eq "detect keeps v2 for the only installed runtime's output" "v2" \
+	"$(env -u AIDEVOPS_OPENCODE_PROFILE python3 "$HELPER" detect 'OpenCode 2.2.6')"
+
+# t18904: helper-shell detection wiring in shared-constants.sh.
+SHARED="$REPO_ROOT/.agents/scripts/shared-constants.sh"
+MODULE="$REPO_ROOT/.agents/scripts/setup/modules/mcp-setup.sh"
+cat >"$SANDBOX/bin/opencode" <<'SHIM'
+#!/usr/bin/env bash
+case "${1:-}" in
+	--version) printf 'OpenCode 2.2.6\n' ;;
+	*) exit 0 ;;
+esac
+SHIM
+chmod +x "$SANDBOX/bin/opencode"
+PYBIN=$(command -v python3) || true
+if [[ -n "$PYBIN" ]]; then
+	pydir="${PYBIN%/*}"
+else
+	printf 'FAIL: python3 is required for the t18904 precedence tests\n' >&2
+	exit 1
+fi
+nobin_path="$SANDBOX/nobin:/usr/bin:/bin:$pydir"
+
+# shellcheck disable=SC2016
+assert_eq "shell profile detects the installed v2 binary" "v2" \
+	"$(env -u AIDEVOPS_OPENCODE_PROFILE PATH="$SANDBOX/bin:$PATH" AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" \
+		bash -c 'source "$1" && aidevops_opencode_profile_id' _ "$SHARED" 2>/dev/null)"
+# shellcheck disable=SC2016
+assert_eq "shell profile falls back to v1 without a binary" "v1" \
+	"$(env -u AIDEVOPS_OPENCODE_PROFILE PATH="$nobin_path" AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" \
+		bash -c 'source "$1" && aidevops_opencode_profile_id' _ "$SHARED" 2>/dev/null)"
+# shellcheck disable=SC2016
+assert_eq "explicit env override wins over a detected v2 binary" "v1" \
+	"$(env AIDEVOPS_OPENCODE_PROFILE=v1 PATH="$SANDBOX/bin:$PATH" AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" \
+		bash -c 'source "$1" && aidevops_opencode_profile_id' _ "$SHARED" 2>/dev/null)"
+
+# t18904: module-level registration contract over jq fixtures.
+mkdir -p "$SANDBOX/reg"
+print_info() { return 0; }
+print_success() { return 0; }
+print_warning() { return 0; }
+print_skip() { return 0; }
+# shellcheck source=/dev/null
+source "$MODULE"
+trap - ERR
+
+reg_conf="$SANDBOX/reg/opencode.json"
+printf '{"theme":"dark","plugin":["file:///stale/opencode-aidevops/index.mjs"]}\n' >"$reg_conf"
+reg_status=$(_setup_opencode_plugins_register_file_url "$reg_conf" \
+	"/run/x/.aidevops/agents/plugins/opencode-aidevops/v2-plugin" "plugins")
+assert_eq "register reports success under the plugins key" "true" "$reg_status"
+assert_eq "register converges aidevops entries to one plugins URL" "v2-plugin" \
+	"$(jq -r '.plugins[0]' "$reg_conf" | sed 's|.*/||')"
+assert_eq "register removes the superseded v1 plugin key" "absent" \
+	"$(jq -r 'if has("plugin") then "present" else "absent" end' "$reg_conf")"
+assert_eq "register preserves foreign config keys" "dark" "$(jq -r '.theme' "$reg_conf")"
+reg_status=$(_setup_opencode_plugins_register_file_url "$reg_conf" \
+	"/run/x/.aidevops/agents/plugins/opencode-aidevops/v2-plugin" "plugins")
+assert_eq "register stays idempotent across repeated runs" "1" \
+	"$(jq -r '.plugins | length' "$reg_conf")"
+
+# shellcheck disable=SC2016
+assert_eq "global contract ignores the env override and detects v2" "v2" \
+	"$(env AIDEVOPS_OPENCODE_PROFILE=v1 PATH="$SANDBOX/bin:$PATH" AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" \
+		bash -c 'source "$1" && source "$2" && _setup_opencode_global_contract_profile' _ "$SHARED" "$MODULE" 2>/dev/null)"
+# shellcheck disable=SC2016
+assert_eq "global contract falls back to v1 without a binary" "v1" \
+	"$(env -u AIDEVOPS_OPENCODE_PROFILE PATH="$nobin_path" AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" \
+		bash -c 'source "$1" && source "$2" && _setup_opencode_global_contract_profile' _ "$SHARED" "$MODULE" 2>/dev/null)"
+
 printf 'OpenCode runtime profile tests passed\n'

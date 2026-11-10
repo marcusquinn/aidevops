@@ -216,9 +216,44 @@ readonly OPENCODE_PLUGIN_TESTED_VERSION="1.19.5"
 readonly OPENCODE_V2_PINNED_VERSION="2.2.5"
 readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.2.5"
 
+aidevops_opencode_detect_major_version() {
+	# Print the installed OpenCode binary's version output when it exposes a
+	# numeric version (t18904). Returns 1 when the binary is absent or prints
+	# an unparseable version so callers fall back to the rollback default.
+	local binary="${1:-opencode}"
+	local version_output=""
+
+	if ! command -v "$binary" >/dev/null 2>&1; then
+		return 1
+	fi
+
+	if command -v timeout >/dev/null 2>&1; then
+		version_output=$(timeout 5 "$binary" --version 2>/dev/null || true)
+	else
+		version_output=$("$binary" --version 2>/dev/null || true)
+	fi
+	case "$version_output" in
+		*[0-9]*)
+			printf '%s\n' "$version_output"
+			return 0
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
 aidevops_opencode_profile_id() {
+	# Explicit env wins; otherwise map the installed binary's version output
+	# through the runtime-profile registry (t18904). Falls back to the
+	# rollback default when detection or the helper is unavailable.
 	local requested="${AIDEVOPS_OPENCODE_PROFILE:-}"
 	local helper="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/opencode-runtime-profile.py"
+	local version_output=""
+	if [[ -z "$requested" ]] && [[ -f "$helper" ]] && command -v python3 >/dev/null 2>&1 \
+		&& version_output=$(aidevops_opencode_detect_major_version opencode); then
+		requested=$(python3 "$helper" detect "$version_output" 2>/dev/null || true)
+	fi
 	if [[ -z "$requested" ]] && [[ -f "$helper" ]] && command -v python3 >/dev/null 2>&1; then
 		requested=$(python3 "$helper" default 2>/dev/null || true)
 	fi

@@ -593,7 +593,7 @@ _setup_opencode_plugins_register_file_url() {
 		local tmp_config="${opencode_config}.tmp.$$"
 		if jq --arg url "$plugin_url" --arg key "$plugin_key" --arg other "$other_plugin_key" \
 			'.[$key] = (((.[$key] // []) + (.[$other] // []))
-			| map(select((type != "string") or (contains("/plugins/opencode-aidevops/") | not)))
+			| map(select((type != "string") or (contains("opencode-aidevops") | not)))
 			+ [$url] | unique) | del(.[$other])' \
 			"$opencode_config" >"$tmp_config"; then
 			mv "$tmp_config" "$opencode_config"
@@ -753,6 +753,20 @@ _setup_opencode_plugins_resolve_binary() {
 	return 1
 }
 
+_setup_opencode_v2_dir_is_managed() {
+	# True only for paths inside an aidevops-managed v2 runtime root
+	# (t18904): the runtime_plugins redirect knobs may point the v2 contract
+	# at the user's real config home, which keeps its existing permissions.
+	# Match the literal runtimes root rather than
+	# opencode_config_path_is_v2_owned, which considers the knob-redefined
+	# config home v2-owned and would bless the user's own ~/.config here.
+	local candidate="$1"
+	case "$candidate" in
+	*/.aidevops/runtimes/opencode-v2 | */.aidevops/runtimes/opencode-v2/*) return 0 ;;
+	esac
+	return 1
+}
+
 _setup_opencode_plugins_auth_guidance() {
 	# Print version-appropriate authentication instructions.
 	# Note: opencode-anthropic-auth is built into OpenCode v1.1.36+
@@ -878,9 +892,15 @@ setup_opencode_plugins() {
 	fi
 	# Check prerequisites before announcing setup (GH#5240)
 	if ! binary_path=$(_setup_opencode_plugins_resolve_binary "$binary_name" "$profile"); then
-		print_skip "OpenCode plugins" "OpenCode not installed" "Install from https://opencode.ai"
-		setup_track_skipped "OpenCode plugins" "OpenCode not installed"
-		return 0
+		# t18904 fallbackBinary: a v2-contract machine may have no opencode2
+		# shim while its installed opencode binary IS the v2 runtime.
+		if [[ "$profile" != "v2" ]] \
+			|| ! binary_path=$(_setup_opencode_plugins_resolve_binary "opencode" "$profile"); then
+			print_skip "OpenCode plugins" "OpenCode not installed" "Install from https://opencode.ai"
+			setup_track_skipped "OpenCode plugins" "OpenCode not installed"
+			return 0
+		fi
+		binary_name="opencode"
 	fi
 
 	# Prerequisites met — proceed with setup
@@ -912,7 +932,13 @@ setup_opencode_plugins() {
 		local opencode_config_parent=""
 		opencode_config_parent=$(dirname "$opencode_config")
 		mkdir -p "$opencode_config_dir" "$opencode_config_parent" || return 1
-		chmod 700 "$config_home" "$opencode_config_dir" "$opencode_config_parent" 2>/dev/null || true
+		# t18904: the detected v2 contract may target the user's real global
+		# config home (setup_opencode_runtime_plugins exports the redirect
+		# knobs). Tighten permissions only inside the aidevops-managed v2
+		# runtime; a user-owned config home keeps its existing permissions.
+		if _setup_opencode_v2_dir_is_managed "$config_home"; then
+			chmod 700 "$config_home" "$opencode_config_dir" "$opencode_config_parent" 2>/dev/null || true
+		fi
 		if [[ ! -e "$opencode_config" ]]; then
 			(umask 077 && printf '{}\n' >"$opencode_config") || return 1
 		fi
@@ -955,17 +981,48 @@ setup_opencode_v2_preview_plugins() {
 	return $?
 }
 
+_setup_opencode_global_contract_profile() {
+	# Detection-only profile for the user's real global OpenCode config
+	# (t18904). Deliberately ignores AIDEVOPS_OPENCODE_PROFILE: an env-driven
+	# v2 override must not rewrite a dual machine's v1 global runtime, so the
+	# global pass follows the installed binary, never the runtime override.
+	local helper="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/opencode-runtime-profile.py"
+	local version_output=""
+	local detected=""
+	if declare -F aidevops_opencode_detect_major_version >/dev/null 2>&1 \
+		&& [[ -f "$helper" ]] && command -v python3 >/dev/null 2>&1 \
+		&& version_output=$(aidevops_opencode_detect_major_version opencode); then
+		detected=$(python3 "$helper" detect "$version_output" 2>/dev/null || true)
+	fi
+	case "$detected" in
+		v2) printf 'v2\n' ;;
+		*) printf 'v1\n' ;;
+	esac
+	return 0
+}
+
 setup_opencode_runtime_plugins() {
 	local selected_profile="v1"
+	local global_profile="v1"
 	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
 		selected_profile=$(aidevops_opencode_profile_id)
 	fi
+	# Always register the plugin once against the real global config under the
+	# DETECTED contract (t18904): v1 machines keep the historic behavior; a
+	# v2-detected machine no longer runs the v1-contract rollback pass that
+	# reverted its v2 plugin registration (err_ef8271b9 family).
+	global_profile=$(_setup_opencode_global_contract_profile)
+	(
+		unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR XDG_CONFIG_HOME
+		if [[ "$global_profile" == "v2" ]]; then
+			export AIDEVOPS_OPENCODE_V2_ROOT="${HOME}/.aidevops"
+			export AIDEVOPS_OPENCODE_V2_CONFIG_HOME="${HOME}/.config"
+			export AIDEVOPS_OPENCODE_V2_CONFIG_DIR="${HOME}/.config/opencode"
+			export AIDEVOPS_OPENCODE_V2_CONFIG="${HOME}/.config/opencode/opencode.json"
+		fi
+		AIDEVOPS_OPENCODE_PROFILE="$global_profile" setup_opencode_plugins
+	) || print_warning "OpenCode global plugin setup encountered issues"
 	if [[ "$selected_profile" == "v2" ]]; then
-		(
-			unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR XDG_CONFIG_HOME
-			AIDEVOPS_OPENCODE_PROFILE=v1 setup_opencode_plugins
-		) ||
-			print_warning "OpenCode V1 rollback plugin setup encountered issues"
 		AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins
 		return $?
 	fi
