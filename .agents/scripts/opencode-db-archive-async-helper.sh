@@ -204,7 +204,7 @@ _completed_today() {
 # than OPENCODE_DB_ARCHIVE_STALE_HOURS since the last rc=0, write one notice
 # naming the blocking holder (PID, command, age). Never kills holders.
 _blocking_holder_summary() {
-	local db="${OPENCODE_DB_PATH:-${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db}"
+	local db="${OPENCODE_DB_PATH:-${OPENCODE_DB:-${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db}}"
 	local pid="" comm="" age=""
 	command -v lsof >/dev/null 2>&1 || return 0
 	pid=$(lsof -t "$db" 2>/dev/null || true)

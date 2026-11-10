@@ -297,7 +297,20 @@ _archive_enter_held_mode() {
 # Re-check between held-mode batches; stop as soon as a holder wakes up.
 _archive_held_gate_recheck() {
 	((_ARCHIVE_HELD_MODE)) || return 0
-	opencode_db_idle_gate "$ACTIVE_DB" "$DB_HOLDER_COMMAND" && return 0
+	if opencode_db_idle_gate "$ACTIVE_DB" "$DB_HOLDER_COMMAND"; then
+		# A holder may have claimed a session since the exclusions were built;
+		# the candidate filter is stale, so pause rather than risk archiving it.
+		local sid=""
+		while IFS= read -r sid; do
+			[[ -n "$sid" ]] || continue
+			if ! printf '%s\n' "$_ARCHIVE_HELD_SESSIONS" | grep -qxF -- "$sid"; then
+				OPENCODE_DB_IDLE_GATE_REASON="holder claimed new session ${sid}"
+				print_warning "Archive paused — ${OPENCODE_DB_IDLE_GATE_REASON}. Committed batches preserved; the rest resumes next cycle."
+				return 1
+			fi
+		done <<<"$OPENCODE_DB_IDLE_GATE_SESSIONS"
+		return 0
+	fi
 	print_warning "Archive paused — ${OPENCODE_DB_IDLE_GATE_REASON}. Committed batches preserved; the rest resumes next cycle."
 	return 1
 }
