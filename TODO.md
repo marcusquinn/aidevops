@@ -1999,6 +1999,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18934 feat(screen-time): macOS input-activity row matching the Linux 5-minute input sampler #feat #interactive ref:GH#37496 pr:#37497 logged:2026-11-09 started:2026-11-09 -> [todo/tasks/t18934-brief.md] completed:2026-11-10
 
+- [ ] t18952 session ask rules: own-PR placement and merge order are decisions, not asks #documentation ref:GH#37594
+
 - [ ] t18950 macOS input sampler: run at standard priority so HID idle reads are not starved under load #bug ref:GH#37588
 
 - [ ] t18951 profile README publication still retains one worktree per run after #37184 (coverage-gap: enrolled without a registered owner) #auto-dispatch #bug ref:GH#37591

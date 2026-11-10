@@ -280,7 +280,7 @@ for snapshot_case in changed missing stale incomplete; do
 	stale) write_pr_snapshot 901 first-head ;;
 	incomplete) write_pr_snapshot 430 first-head 29519 false ;;
 	esac
-	if ! _dispatch_negative_cache_reason "$candidate" >/dev/null && [[ ! -s "$GH_CALLS_FILE" ]]; then
+	if ! _dispatch_negative_cache_reason "$candidate" worker_draft_checkpoint_cooldown snapshot_only >/dev/null && [[ ! -s "$GH_CALLS_FILE" ]]; then
 		print_result "quiet checkpoint wakes for $snapshot_case PR evidence without REST" 0
 	else
 		print_result "quiet checkpoint wakes for $snapshot_case PR evidence without REST" 1
@@ -383,6 +383,68 @@ if ! _dispatch_negative_cache_reason "$candidate" >/dev/null && [[ ! -s "$GH_CAL
 else
 	print_result "expired hint is rejected before any exact-PR read" 1
 fi
+STUB_PR_REST_JSON=""
+
+# GH#37595: an eligible refusal must persist and be reusable even when prefetch
+# has been deferred for hours. Enumeration stays network-free; the per-candidate
+# prefilter uses one bounded read instead of starting another expensive stage.
+write_pr_snapshot 10800 first-head
+STUB_PR_REST_JSON=$(pr_rest_json open true rest-head | jq '.labels = [{name:"z"},{name:"a"}]')
+_dispatch_stats_increment() { return 0; }
+_dispatch_mark_benign_blocked_candidate() { return 0; }
+printf '%s\n' \
+	'DISPATCH_CANDIDATE_ATTEMPT issue=#29507 repo=owner/repo' \
+	'WORKER_DRAFT_CHECKPOINT: draft PR #29519 is a durable checkpoint for issue #29507 in owner/repo' \
+	'STALLED_CHECKPOINT_CONTINUATION_SKIPPED issue=#29507 repo=owner/repo' \
+	'DISPATCH_BLOCK_REASON reason=worker_draft_checkpoint_blocked signal=test issue=#29507 repo=owner/repo' >"$LOGFILE"
+_dispatch_record_nonzero_dispatch_result 29507 owner/repo 1 "$candidate"
+_dispatch_cache_confirmed_block "$candidate" 29507 owner/repo
+if [[ "${_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED:-0}" == 1 ]] &&
+	[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_cooldown ]]; then
+	print_result "stale snapshot eligible refusal writes a REST-backed cooldown" 0
+else
+	print_result "stale snapshot eligible refusal writes a REST-backed cooldown" 1
+fi
+: >"$GH_CALLS_FILE"
+filtered=$(_dispatch_filter_checkpoint_cooled_candidates owner/repo "[$candidate]")
+if [[ "$filtered" != '[]' && ! -s "$GH_CALLS_FILE" ]]; then
+	print_result "stale-snapshot enumeration remains network-free" 0
+else
+	print_result "stale-snapshot enumeration remains network-free" 1
+fi
+if _dispatch_max_prefilter_cached_block "$candidate" "$TEST_ROOT/outcomes" &&
+	grep -q 'cross-cycle block:worker_draft_checkpoint_cooldown' "$LOGFILE" &&
+	! grep -q 'Stage start: dispatch_candidate_29507' "$LOGFILE" &&
+	[[ "$(wc -l <"$GH_CALLS_FILE" | tr -d ' ')" == 1 ]]; then
+	print_result "next cycle skips stale-snapshot checkpoint with one REST read and no candidate stage" 0
+else
+	print_result "next cycle skips stale-snapshot checkpoint with one REST read and no candidate stage" 1
+fi
+for mutation in head labels ready closed; do
+	saved_rest="$STUB_PR_REST_JSON"
+	case "$mutation" in
+	head) STUB_PR_REST_JSON=$(jq '.head.sha = "new-head"' <<<"$saved_rest") ;;
+	labels) STUB_PR_REST_JSON=$(jq '.labels += [{name:"retry"}]' <<<"$saved_rest") ;;
+	ready) STUB_PR_REST_JSON=$(jq '.draft = false' <<<"$saved_rest") ;;
+	closed) STUB_PR_REST_JSON=$(jq '.state = "closed"' <<<"$saved_rest") ;;
+	esac
+	if ! _dispatch_negative_cache_reason "$candidate" >/dev/null; then
+		print_result "REST cooldown wakes on PR $mutation change" 0
+	else
+		print_result "REST cooldown wakes on PR $mutation change" 1
+	fi
+	STUB_PR_REST_JSON="$saved_rest"
+done
+# A fresh snapshot and REST normalize labels identically, independent of order.
+write_pr_snapshot 0 rest-head
+snapshot=$(jq '.items[0].labels = ["a","z"]' "$SNAPSHOT_FILE")
+printf '%s\n' "$snapshot" >"$SNAPSHOT_FILE"
+if [[ "$(_dispatch_checkpoint_pr_head owner/repo 29519)" == rest-head_a,z ]]; then
+	print_result "snapshot and REST checkpoint keys share sorted label normalization" 0
+else
+	print_result "snapshot and REST checkpoint keys share sorted label normalization" 1
+fi
+rm -f "$cache_file"
 STUB_PR_REST_JSON=""
 unset -f gh timeout_sec
 

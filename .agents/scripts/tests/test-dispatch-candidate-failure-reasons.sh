@@ -75,6 +75,8 @@ LOGFILE="$TEST_ROOT/pulse.log"
 source "$SCRIPT_DIR/../pulse-dispatch-lib.sh"
 # Keep the production fingerprint function; later sections stub the public name.
 eval "_prod$(declare -f _dispatch_negative_pr_fingerprint)"
+eval "_prod$(declare -f _dispatch_draft_hint_boundary)"
+_dispatch_draft_hint_boundary() { printf '0:43200\n'; return 0; }
 _dispatch_stats_increment() { return 0; }
 _dispatch_stats_increment_candidate_failed() { return 0; }
 _dispatch_mark_benign_blocked_candidate() { return 0; }
@@ -150,13 +152,13 @@ CHECKPOINT_HEAD=''
 CHECKPOINT_HEAD=test-head
 cache=$(_dispatch_negative_cache_path 34526 example/repo)
 fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate")
-printf '%s\t%s\t%s\t123\t%s\ttest-head\n' "$(($(date +%s) - 21600))" \
+printf '%s\t%s\t%s\t123\t%s\ttest-head\t0:43200\n' "$(($(date +%s) - 21600))" \
 	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
 # Record age and issue age are independent: quiet eligibility is fixed at write time.
 now=$(date +%s)
 stamp=$((now - 3600))
-printf '%s\t%s\t%s\t123\t%s\ttest-head\n' "$stamp" \
+printf '%s\t%s\t%s\t123\t%s\ttest-head\t0:43200\n' "$stamp" \
 	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" == '[]' ]]
 assigned=$(jq -c '.assignees = [{login:"runner"}]' <<<"$candidate")
@@ -174,13 +176,13 @@ done
 for age in 14399 14400; do
 	revision=$(jq -nr --argjson epoch "$((stamp - age))" '$epoch | todateiso8601')
 	recent=$(jq -c --arg revision "$revision" '.updatedAt = $revision' <<<"$candidate")
-	printf '%s\t%s\t%s\t123\t%s\ttest-head\n' "$stamp" "$revision" worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
+	printf '%s\t%s\t%s\t123\t%s\ttest-head\t0:43200\n' "$stamp" "$revision" worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 	filtered=$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$recent]")
 	if ((age < 14400)); then [[ "$filtered" != '[]' ]]; else [[ "$filtered" == '[]' ]]; fi
 	[[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_AFTER_SECONDS=08 _dispatch_filter_capability_cooled_candidates example/repo '' "[$recent]")" == '[]' ]]
 done
 # The quiet duration cap remains one day even with an oversized setting.
-printf '%s\t%s\t%s\t123\t%s\ttest-head\n' "$((now - 86400))" \
+printf '%s\t%s\t%s\t123\t%s\ttest-head\t0:43200\n' "$((now - 86400))" \
 	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 [[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=999999 _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
 rm -f "$cache"
@@ -190,6 +192,8 @@ _dispatch_negative_pr_fingerprint() { printf '%s\n' "$PR_FINGERPRINT"; return 0;
 timeout_sec() { shift; "$@"; return $?; }
 gh() { printf '%s\n' "$BOUNDARY_COMMENTS"; return 0; }
 BOUNDARY_COMMENTS='[[]]'
+boundary_function=$(declare -f _prod_dispatch_draft_hint_boundary)
+eval "${boundary_function/_prod_dispatch_draft_hint_boundary/_dispatch_draft_hint_boundary}"
 [[ "$(_dispatch_draft_hint_boundary "$candidate" example/repo 34526)" == 0:43200 ]]
 now=$(date +%s)
 attention_date=$(jq -nr --argjson epoch "$((now - 43100))" '$epoch | todateiso8601')
@@ -204,6 +208,32 @@ BOUNDARY_COMMENTS='{"state":"open","draft":true,"updated_at":"2026-10-13T00:00:0
 BOUNDARY_COMMENTS=$(jq -c '.draft = false' <<<"$BOUNDARY_COMMENTS")
 if _dispatch_negative_pr_rest_fingerprint example/repo 123; then exit 1; fi
 BOUNDARY_COMMENTS='[[]]'
+# An eligible refusal is not a write receipt: head lookup failure (or a disabled
+# cooldown) must fall through to the older boundary-aware draft record.
+ATTEMPT_LINES='WORKER_DRAFT_CHECKPOINT: draft PR #123 STALLED_CHECKPOINT_CONTINUATION_SKIPPED'
+ATTEMPT_REASON=worker_draft_checkpoint_blocked
+for unavailable in head disabled; do
+	CHECKPOINT_HEAD=test-head
+	_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS=1800
+	if [[ "$unavailable" == head ]]; then CHECKPOINT_HEAD=''; else _DISPATCH_CHECKPOINT_COOLDOWN_SECONDS=0; fi
+	_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+	[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED" == 0 ]]
+	_dispatch_cache_confirmed_block "$candidate" 34526 example/repo
+	[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_blocked ]]
+	rm -f "$cache"
+done
+CHECKPOINT_HEAD=test-head
+_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS=1800
+_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED" == 1 ]]
+if _dispatch_negative_cache_reason "$assigned"; then exit 1; fi
+if AIDEVOPS_PCC_ATTENTION_REARM_SECONDS=60 _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
+printf '%s\t%s\t%s\t123\t%s\ttest-head\t%s:43200\n' "$now" \
+	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" "$now" >"$cache"
+if _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
+rm -f "$cache"
+_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED=0
+printf 'PASS cooldown write failure falls back; owner and re-arm boundaries wake cooldowns\n'
 for draft_reason in worker_draft_checkpoint_blocked stale_draft_checkpoint; do
 	ATTEMPT_LINES="WORKER_DRAFT_CHECKPOINT: draft PR #123 DISPATCH_BLOCK_REASON reason=$draft_reason"
 	_dispatch_cache_confirmed_block "$candidate" 34526 example/repo
