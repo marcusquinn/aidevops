@@ -163,6 +163,13 @@ mkdir -p "$OPENAI_OAUTH_STUB_DIR"
 cat >"${OPENAI_OAUTH_STUB_DIR}/curl" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${OPENAI_OAUTH_CURL_LOG:?}"
+# GH#37627: Codex-backend probe returns only the HTTP code (default: rejected).
+case "$*" in
+	*backend-api/codex*)
+		printf '%s' "${OPENAI_OAUTH_STUB_CODEX_CODE:-401}"
+		exit 0
+		;;
+esac
 case "${OPENAI_OAUTH_STUB_MODE:-success}" in
 	success)
 		printf 'HTTP/2 200\n\n{"data":[{"id":"gpt-5.5"}]}\n0.001\n200\n'
@@ -401,6 +408,35 @@ if [[ "$rc" -eq 3 ]]; then
 else
 	print_result "openai-oauth-auth-failure: verification returns key-invalid" 1 \
 		"(got rc=$rc — expected 3; invalid OAuth token must not record healthy)"
+fi
+
+# Assertion 4b.3c.1 — GH#37627: ChatGPT-only account rejected by the platform
+# API but accepted by the Codex backend is healthy; Codex rejection is not.
+rc=$(
+	OPENAI_OAUTH_STUB_MODE=auth OPENAI_OAUTH_STUB_CODEX_CODE=200 \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
+if [[ "$rc" -eq 0 ]]; then
+	print_result "openai-oauth-chatgpt-only: Codex backend success returns healthy (GH#37627)" 0
+else
+	print_result "openai-oauth-chatgpt-only: Codex backend success returns healthy (GH#37627)" 1 \
+		"(got rc=$rc — expected 0)"
+fi
+rc=$(
+	OPENAI_OAUTH_STUB_MODE=auth OPENAI_OAUTH_STUB_CODEX_CODE=403 \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
+if [[ "$rc" -eq 3 ]]; then
+	print_result "openai-oauth-chatgpt-only: Codex backend rejection stays key-invalid" 0
+else
+	print_result "openai-oauth-chatgpt-only: Codex backend rejection stays key-invalid" 1 \
+		"(got rc=$rc — expected 3)"
 fi
 
 # Assertion 4b.3d — Network failure while verifying OAuth fails closed.
