@@ -116,6 +116,7 @@ install_helper_with_libs() {
 		"${SOURCE_HELPER%/*}/screen_time_macos_pmset.py" \
 		"${SOURCE_HELPER%/*}/screen_time_linux.py" \
 		"${SOURCE_HELPER%/*}/screen_time_linux_activity.py" \
+		"${SOURCE_HELPER%/*}/screen_time_sources.py" \
 		"${SOURCE_HELPER%/*}/screen_time_history.py" "$helper_dir/"
 	# Copy the worktree module family as a unit, not a second hand-maintained
 	# dependency list that breaks whenever the runtime splits a module.

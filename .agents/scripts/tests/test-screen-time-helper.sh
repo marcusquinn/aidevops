@@ -42,13 +42,23 @@ local_day_epoch() {
 	return 0
 }
 
+# knowledgeC writes each /display/isBacklit row when its span ends: the display
+# held ZVALUEINTEGER from ZSTARTDATE to ZENDDATE (GH#37492).
+insert_backlit_span() {
+	local db="$1"
+	local start_epoch="$2"
+	local end_epoch="$3"
+	local state="$4"
+	sqlite3 "$db" "
+		INSERT INTO ZOBJECT (ZSTREAMNAME, ZCREATIONDATE, ZSTARTDATE, ZENDDATE, ZVALUEINTEGER) VALUES ('/display/isBacklit', $(core_data_offset "$end_epoch"), $(core_data_offset "$start_epoch"), $(core_data_offset "$end_epoch"), ${state});"
+	return 0
+}
+
 insert_backlit_pair() {
 	local db="$1"
 	local on_epoch="$2"
 	local off_epoch="$3"
-	sqlite3 "$db" "
-		INSERT INTO ZOBJECT (ZSTREAMNAME, ZCREATIONDATE, ZVALUEINTEGER) VALUES ('/display/isBacklit', $(core_data_offset "$on_epoch"), 1);
-		INSERT INTO ZOBJECT (ZSTREAMNAME, ZCREATIONDATE, ZVALUEINTEGER) VALUES ('/display/isBacklit', $(core_data_offset "$off_epoch"), 0);"
+	insert_backlit_span "$db" "$on_epoch" "$off_epoch" 1
 	return 0
 }
 
@@ -121,13 +131,12 @@ test_union_clipping_and_failure_status() {
 
 	local repeated_db="${tmpdir}/repeated.db"
 	create_knowledge_db "$repeated_db"
-	sqlite3 "$repeated_db" "
-		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour * 3))"), 1, NULL, NULL, NULL);
-		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour * 2))"), 1, NULL, NULL, NULL);
-		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour))"), 0, NULL, NULL, NULL);"
+	insert_backlit_span "$repeated_db" "$((now - one_hour * 3))" "$((now - one_hour))" 1
+	insert_backlit_span "$repeated_db" "$((now - one_hour * 2))" "$((now - one_hour))" 1
+	insert_backlit_span "$repeated_db" "$((now - one_hour))" "$now" 0
 	local repeated_hours
 	repeated_hours=$(query_hours "$repeated_db" 1)
-	[[ "$repeated_hours" == "2.0" ]] || fail "expected repeated ON events not to double count, got ${repeated_hours}"
+	[[ "$repeated_hours" == "2.0" ]] || fail "expected overlapping ON spans not to double count, got ${repeated_hours}"
 
 	local invalid_db="${tmpdir}/invalid.db"
 	printf '%s\n' 'not sqlite' >"$invalid_db"
@@ -165,7 +174,7 @@ PY
 
 	local zero_db="${tmpdir}/observed-zero.db"
 	create_knowledge_db "$zero_db"
-	sqlite3 "$zero_db" "INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',$(core_data_offset "$((now - 3600))"),0);"
+	insert_backlit_span "$zero_db" "$((now - 7200))" "$((now - 3600))" 0
 	local zero_json
 	zero_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$zero_db")
 	[[ "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0" || "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0.0" ]] || fail "explicit OFF observation was not preserved as legitimate zero: ${zero_json}"
@@ -212,7 +221,7 @@ test_snapshot_omits_unobserved_stale_dates() {
 	fixture_values=$(python3 -c 'import datetime as d; today=d.date.today(); observed=today-d.timedelta(days=5); zero=today-d.timedelta(days=4); epoch=lambda day,h:int(d.datetime.combine(day,d.time(h)).timestamp()); print(observed,zero,epoch(observed,10),epoch(observed,11),epoch(zero,12))')
 	read -r observed_date zero_date observed_start observed_end zero_event <<<"$fixture_values"
 	insert_backlit_pair "$db" "$observed_start" "$observed_end"
-	sqlite3 "$db" "INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',$(core_data_offset "$zero_event"),0);"
+	insert_backlit_span "$db" "$((zero_event - 600))" "$zero_event" 0
 	HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$db" "$HELPER" snapshot >/dev/null
 	local history="${fixture_home}/.aidevops/.agent-workspace/observability/screen-time.jsonl"
 	local rows dates zero_hours
@@ -222,7 +231,25 @@ test_snapshot_omits_unobserved_stale_dates() {
 	if [[ "$rows" != "2" || "$dates" != "${observed_date} ${zero_date} " || ("$zero_hours" != "0" && "$zero_hours" != "0.0") ]]; then
 		fail "snapshot fabricated stale gap coverage or lost explicit zero: rows=${rows} dates=${dates} zero=${zero_hours}"
 	fi
-	pass "snapshot omits unobserved stale dates and records explicit zero-event dates"
+
+	# GH#37492: a recent day recorded while its display span was still open is
+	# raised once the span is written; older recorded days stay final.
+	local revise_values recent_date
+	revise_values=$(python3 -c 'import datetime as d; day=d.date.today()-d.timedelta(days=1); epoch=lambda h:int(d.datetime.combine(day,d.time(h)).timestamp()); print(day,epoch(9),epoch(10),epoch(14),epoch(16))')
+	local first_start first_end second_start second_end
+	read -r recent_date first_start first_end second_start second_end <<<"$revise_values"
+	insert_backlit_pair "$db" "$first_start" "$first_end"
+	HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$db" "$HELPER" snapshot >/dev/null
+	insert_backlit_pair "$db" "$second_start" "$second_end"
+	insert_backlit_pair "$db" "$((observed_end + 600))" "$((observed_end + 1200))"
+	HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$db" "$HELPER" snapshot >/dev/null
+	HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$db" "$HELPER" snapshot >/dev/null
+	local recent_values observed_rows
+	recent_values=$(jq -r --arg date "$recent_date" 'select(.date == $date) | .screen_hours * 10 | round' "$history" | tr '\n' ' ')
+	observed_rows=$(jq -r --arg date "$observed_date" 'select(.date == $date) | .date' "$history" | wc -l | tr -d ' ')
+	[[ "$recent_values" == "10 30 " && "$observed_rows" == "1" ]] ||
+		fail "snapshot did not raise the recent day once, or revised a final day: recent=${recent_values} observed_rows=${observed_rows}"
+	pass "snapshot omits unobserved stale dates, records explicit zeros, and raises grown recent days"
 	return 0
 }
 
@@ -341,7 +368,26 @@ PY
 	[[ "$(printf '%s' "$output" | jq -r '.periods.day.period_semantics')" == "completed-local-calendar-days" ]] || fail "pmset fallback changed profile period semantics"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.month.source')" == "screen-time-history:daily-observations" ]] || fail "short pmset coverage displaced richer month history"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.month.reason')" == "richer-calendar-coverage" ]] || fail "richer history selection reason missing"
-	pass "permission-free pmset fallback supplies completed-day screen time"
+
+	# GH#37492: the assertion still held (display on since yesterday 20:00) has
+	# no log line until released, so it is read live from `pmset -g assertions`.
+	local held_fixture="${tmpdir}/pmset-assertions.txt"
+	printf '   pid 390(powerd): [0x000153bb000181aa] 16:00:00 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  \n' >"$held_fixture"
+	output=$(HOME="$fixture_home" AIDEVOPS_PMSET_FIXTURE="$fixture" AIDEVOPS_PMSET_ASSERTIONS_FIXTURE="$held_fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$db")
+	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "10" || "$(printf '%s' "$output" | jq -r '.today_hours')" == "10.0" ]] ||
+		fail "held display assertion was not counted until release: ${output}"
+
+	# A readable backlit stream with gaps is unioned with pmset, not replaced.
+	local readable_db="${tmpdir}/pmset-union-knowledge.db"
+	create_knowledge_db "$readable_db"
+	insert_backlit_pair "$readable_db" "$((yesterday_start + 16 * 3600))" "$((yesterday_start + 17 * 3600))"
+	insert_backlit_pair "$readable_db" "$((yesterday_start + 9 * 3600))" "$((yesterday_start + 10 * 3600))"
+	output=$(HOME="$fixture_home" AIDEVOPS_PMSET_FIXTURE="$fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$readable_db")
+	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "7" || "$(printf '%s' "$output" | jq -r '.today_hours')" == "7.0" ]] ||
+		fail "backlit spans and pmset assertions did not union to 7h: ${output}"
+	[[ "$(printf '%s' "$output" | jq -r '.periods.day.source')" == "macos-knowledge-db:/display/isBacklit+macos-pmset-display-assertions" ]] ||
+		fail "union provenance missing: ${output}"
+	pass "permission-free pmset fallback supplies completed-day screen time, held assertions and backlit union"
 	return 0
 }
 
@@ -515,8 +561,8 @@ test_corrupt_core_data_and_history_paths_are_safe() {
 	insert_app_usage "$db" "$previous_noon" "$((previous_noon + 3600))"
 	sqlite3 "$db" "
 		UPDATE ZOBJECT SET ZVALUESTRING='valid.app' WHERE ZSTREAMNAME='/app/usage';
-		INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit','broken',1);
-		INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',1e999,1);
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUEINTEGER) VALUES('/display/isBacklit','broken','broken',1);
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',1e999,1e999,1);
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING) VALUES('/app/usage','broken','also-broken','bad.app');
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING) VALUES('/app/usage',1e999,1e999,'infinite.app');"
 	local profile_json app_json
@@ -554,6 +600,7 @@ test_screen_engine_sibling_modules_deploy_together() {
 		"${SCRIPTS_DIR}/screen_time_macos_pmset.py" \
 		"${SCRIPTS_DIR}/screen_time_linux.py" \
 		"${SCRIPTS_DIR}/screen_time_linux_activity.py" \
+		"${SCRIPTS_DIR}/screen_time_sources.py" \
 		"${SCRIPTS_DIR}/screen_time_history.py" "$deploy_dir/"
 	local output
 	output=$(python3 "${deploy_dir}/screen-time-interval-engine.py" history-summary --os-type Unsupported)
