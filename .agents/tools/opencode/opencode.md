@@ -274,7 +274,7 @@ Optional navigation bindings in `tui.json` are `messages_last_user`, `messages_p
 
 ### Messages between sessions
 
-Live OpenCode 1.x and V2 sessions on this machine can list each other and exchange short messages through the `aidevops_sessions` tool and `aidevops sessions` in a shell. A **Messages** sidebar section under **Prompts** shows the session's latest 6 messages: `←` received, `→` sent, `•` not yet delivered. It is hidden when there is no traffic; set `AIDEVOPS_TUI_MESSAGES=false` to turn it off. In OpenCode 1.x each arrival also shows a toast; V2 has no plugin toast API. Details: `reference/session-bus.md`.
+Live OpenCode 1.x and V2 sessions on this machine can list each other and exchange short messages through the `aidevops_sessions` tool and `aidevops sessions` in a shell. A **Messages** sidebar section under **Prompts** shows the session's latest 6 messages: `←` received, `→` sent, `•` not yet delivered. Click a row to read the full message in a dialog. It is hidden when there is no traffic; set `AIDEVOPS_TUI_MESSAGES=false` to turn it off. In OpenCode 1.x each arrival also shows a toast; V2 has no plugin toast API. Details: `reference/session-bus.md`.
 
 ### Workflow Order
 
