@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.159] - 2026-11-10
+
+### Fixed
+
+- bound the dead-stamp reaper by wall-clock budget
+
 ## [3.39.158] - 2026-11-10
 
 ### Fixed
