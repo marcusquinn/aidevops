@@ -80,7 +80,7 @@ _commit_and_pr_privacy_scan() {
 	if ! privacy_is_target_public "$remote_url"; then
 		return 0
 	fi
-	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	base_branch=$(_resolve_pr_base_branch origin) || return 1
 	entities_file=$(mktemp) || return 1
 	if ! privacy_enumerate_private_entities "$entities_file"; then
 		rm -f "$entities_file"
@@ -119,7 +119,7 @@ _parse_commit_and_pr_args() {
 		arg="${args[$index]}"
 		pr_metadata_overrides="${pr_metadata_overrides:-} ${arg#--}"
 		case "$arg" in
-		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason)
+		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason | --base)
 			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
 				print_error "${arg} requires a value"
 				return 1
@@ -173,14 +173,9 @@ _parse_commit_and_pr_args() {
 			bookkeeping_task_id="$value"
 			index=$((index + 2))
 			;;
-		--replace-pr)
-			replacement_pr="$value"
-			index=$((index + 2))
-			;;
-		--replacement-reason)
-			replacement_reason="$value"
-			index=$((index + 2))
-			;;
+		--replace-pr) replacement_pr="$value"; index=$((index + 2)) ;;
+		--replacement-reason) replacement_reason="$value"; index=$((index + 2)) ;;
+		--base) stack_base_arg="$value"; index=$((index + 2)) ;; # stacked PR base
 		--completion-bookkeeping)
 			completion_bookkeeping=1
 			index=$((index + 1))
@@ -506,6 +501,44 @@ _resolve_remote_default_branch() {
 	return 1
 }
 
+# Stacked-PR base override set by `--base <branch>` (empty = remote default).
+FULL_LOOP_STACK_BASE=""
+
+# Resolve the branch a PR targets: the validated --base override when set,
+# otherwise the remote default branch.
+_resolve_pr_base_branch() {
+	local remote_name="${1:-origin}"
+	if [[ -n "${FULL_LOOP_STACK_BASE:-}" ]]; then
+		printf '%s\n' "$FULL_LOOP_STACK_BASE"
+		return 0
+	fi
+	_resolve_remote_default_branch "$remote_name"
+	return $?
+}
+
+# Validate a --base override: must exist on origin and differ from the
+# current branch. Sets FULL_LOOP_STACK_BASE on success; an empty value
+# resets it so the remote default branch is used.
+# Args: $1=base branch (may be empty) $2=current branch
+_validate_stack_base() {
+	local stack_base="$1"
+	local current_branch="$2"
+	FULL_LOOP_STACK_BASE=""
+	[[ -n "$stack_base" ]] || return 0
+	if [[ "$stack_base" == "$current_branch" ]]; then
+		print_error "--base must name a branch other than the current branch (${current_branch})"
+		return 1
+	fi
+	if ! git fetch origin "$stack_base" --quiet 2>/dev/null ||
+		! git rev-parse --verify --quiet "refs/remotes/origin/${stack_base}" >/dev/null; then
+		print_error "--base branch '${stack_base}' does not exist on origin; push the parent branch first"
+		return 1
+	fi
+	FULL_LOOP_STACK_BASE="$stack_base"
+	print_info "Stacked PR: base is origin/${stack_base} (--base)"
+	return 0
+}
+
 # Ensure no rebase/merge state is active before recovery-mode push.
 _ensure_no_in_progress_integration() {
 	local git_dir=""
@@ -618,7 +651,7 @@ _stage_and_commit() {
 
 	if git diff --cached --quiet 2>/dev/null; then
 		local base_branch="" base_ref="" ahead=""
-		base_branch=$(_resolve_remote_default_branch origin) || return 1
+		base_branch=$(_resolve_pr_base_branch origin) || return 1
 		base_ref="origin/${base_branch}"
 		ahead=$(git rev-list --count "${base_ref}..HEAD" 2>/dev/null || echo "0")
 		if [[ "$ahead" == "0" ]]; then
@@ -648,7 +681,7 @@ _finalize_wip_history() {
 
 	local base_branch="" branch_range="" branch_subjects=""
 	local base_ref="" base_oid=""
-	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	base_branch=$(_resolve_pr_base_branch origin) || return 1
 	printf -v base_ref 'origin/%s' "$base_branch"
 	if ! git fetch origin "$base_branch" --quiet 2>/dev/null; then
 		print_error "Cannot refresh ${base_ref} before WIP history finalization."
@@ -787,7 +820,7 @@ _validate_replacement_pr_ancestry() {
 _validator_changed_files() {
 	local base_branch=""
 	local base_ref=""
-	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	base_branch=$(_resolve_pr_base_branch origin) || return 1
 	printf -v base_ref 'origin/%s' "$base_branch"
 	if ! git diff --name-only "${base_ref}...HEAD" 2>/dev/null; then
 		print_error "[validators] cannot inspect changed files relative to ${base_ref}"
@@ -942,7 +975,7 @@ _rebase_for_push() {
 	local branch="$1"
 	local skip_rebase="${2:-0}"
 	local base_branch="" base_ref=""
-	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	base_branch=$(_resolve_pr_base_branch origin) || return 1
 	base_ref="origin/${base_branch}"
 
 	if [[ "$skip_rebase" == "1" ]]; then
@@ -1611,6 +1644,7 @@ _create_pr() {
 	[[ -n "$head_branch" ]] || head_branch=$(git branch --show-current 2>/dev/null || echo "")
 	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body "$pr_body")
 	[[ -n "$head_branch" ]] && pr_cmd+=(--head "$(_pr_head_ref_for_repo "$repo" "$head_branch")")
+	[[ -n "${FULL_LOOP_STACK_BASE:-}" ]] && pr_cmd+=(--base "$FULL_LOOP_STACK_BASE")
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done

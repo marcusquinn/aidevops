@@ -152,6 +152,7 @@ eval "$(sed -n '/^_post_merge_summary() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-help
 # Extract default-branch and recovery helpers used by _rebase_and_push
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_resolve_remote_default_branch() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+eval "$(sed -n '/^_resolve_pr_base_branch() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_ensure_no_in_progress_integration() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
