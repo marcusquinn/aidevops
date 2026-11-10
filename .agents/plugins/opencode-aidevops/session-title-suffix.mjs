@@ -61,6 +61,39 @@ export function withAidevopsTitleSuffix(title, version) {
   return `${baseTitle} · AIDevOps ${version}`;
 }
 
+// GH#37630: interactive root-session titles end with `· @<last 6 of the
+// session ID>` so the session-bus address is visible in the OpenCode sidebar
+// and the terminal tab. `@xxxxxx` resolves as a session-bus target. Order:
+// `<title> · @xxxxxx[ · AIDevOps <version>]`.
+// AIDEVOPS_SESSION_TITLE_ID=false disables it.
+const SESSION_ADDRESS_TOKEN_RE = /\s+· @[a-z0-9]{6}(?![a-z0-9])/g;
+const SESSION_ID_RE = /^ses_[A-Za-z0-9]{6,}$/;
+
+export function sessionAddressToken(sessionID) {
+  const id = String(sessionID || "");
+  return SESSION_ID_RE.test(id) ? `@${id.slice(-6).toLowerCase()}` : "";
+}
+
+export function isSessionTitleAddressEnabled(env = process.env) {
+  const value = String(env.AIDEVOPS_SESSION_TITLE_ID || "").trim().toLowerCase();
+  return value !== "false" && value !== "0";
+}
+
+export function stripSessionAddressToken(title) {
+  return String(title || "").replace(SESSION_ADDRESS_TOKEN_RE, "").trim();
+}
+
+export function stripSessionTitleDecorations(title) {
+  return sanitizeSessionTitle(stripSessionAddressToken(title).replace(AIDEVOPS_TITLE_SUFFIX_RE, ""));
+}
+
+export function withSessionTitleDecorations(title, { version = "", sessionID = "" } = {}) {
+  const baseTitle = stripSessionTitleDecorations(title);
+  if (!baseTitle) return baseTitle;
+  const token = sessionAddressToken(sessionID);
+  return [baseTitle, token, version ? `AIDevOps ${version}` : ""].filter(Boolean).join(" · ");
+}
+
 function isDefaultSessionTitle(title) {
   const baseTitle = String(title || "").replace(AIDEVOPS_TITLE_SUFFIX_RE, "").trim();
   return DEFAULT_SESSION_TITLE_RE.test(baseTitle) || baseTitle === "New Session";
@@ -106,32 +139,47 @@ async function updateSessionTitle(client, sessionID, title) {
   }
 }
 
+// Only interactive root sessions are addressed: subagent children are not on
+// the session bus, and headless worker titles stay as dispatched.
+function addressedSessionID(update, isHeadless, isAddressEnabled) {
+  if (isHeadless() || !isAddressEnabled()) return "";
+  if (update.info?.parentID) return "";
+  return sessionAddressToken(update.sessionID) ? update.sessionID : "";
+}
+
 export function createSessionTitleSuffixHandler({
   activeAgentsDir,
   agentsDir = activeAgentsDir,
   client,
   emitTerminalTitle = defaultEmitTerminalTitle,
   isEnabled = isSessionTitleVersionSuffixEnabled,
+  isAddressEnabled = isSessionTitleAddressEnabled,
+  isHeadless = () => false,
 }) {
   const inFlight = new Set();
 
   return async function sessionTitleSuffixHandler(input) {
     const update = getSessionUpdate(input);
     if (!shouldSynchronizeSessionTitle(update)) return;
-    if (!isEnabled()) {
+    const sessionID = addressedSessionID(update, isHeadless, isAddressEnabled);
+    if (!isEnabled() && !sessionID) {
       // Keep reasserting the session title to the terminal; never rewrite it.
       if (update.sessionID) emitTerminalTitle(update.title);
       return;
     }
 
-    const version = readAidevopsVersion(activeAgentsDir || agentsDir, agentsDir);
-    const suffixedTitle = withAidevopsTitleSuffix(update.title, version);
+    const version = isEnabled() ? readAidevopsVersion(activeAgentsDir || agentsDir, agentsDir) : "";
+    const suffixedTitle = withSessionTitleDecorations(update.title, { version, sessionID });
     if (!update.sessionID || inFlight.has(update.sessionID)) return;
     if (suffixedTitle === update.title) {
       emitTerminalTitle(suffixedTitle);
       return;
     }
-    if (typeof client?.session?.update !== "function") return;
+    if (typeof client?.session?.update !== "function") {
+      // Without an update API the stored title stays as is; still reassert it.
+      emitTerminalTitle(update.title);
+      return;
+    }
 
     inFlight.add(update.sessionID);
     try {
