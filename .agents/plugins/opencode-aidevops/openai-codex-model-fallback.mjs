@@ -43,6 +43,9 @@ export async function recordCodexModelRejection(response, input, init) {
   if (!original) return response;
   const { authSignatureFromHeaders, markModelUnavailable } = await import("./model-unavailability.mjs");
   markModelUnavailable(`openai/${original.model}`, authSignatureFromHeaders(headersFrom(input, init)));
+  // t18957: move an auto-routed compaction model off the rejected model.
+  const { rerouteCompactionAfterRejection } = await import("./compaction-routing.mjs");
+  rerouteCompactionAfterRejection(`openai/${original.model}`);
   console.error(`[aidevops] OpenAI provider: model unavailable for current auth requested=openai/${safeToken(original.model)}`);
   return response;
 }

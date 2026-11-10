@@ -9,6 +9,8 @@ import { activeLocalOnlyPolicy, configuredLocalProviders, isLocalProvider } from
 import { CLAUDE_MODEL_LIMITS } from "./model-limits.mjs";
 import { routingCandidates, routingModelIdentity } from "./model-routing.mjs";
 import { compactionReasoning } from "./model-routing-variant.mjs";
+import { isModelUnavailable, openAIAuthSignature } from "./model-unavailability.mjs";
+import { readCurrentOpenAIAuth } from "./oauth-pool.mjs";
 import { optionsHaveCredentials } from "./provider-credentials.mjs";
 
 // Fixed compaction effort (GH#36169) lives in compaction-effort.mjs.
@@ -113,6 +115,7 @@ export function applyCompactionRouting(config, routing, {
   policy = activeLocalOnlyPolicy(),
   localProviders = () => configuredLocalProviders(),
   hasCredentials = createCompactionCredentialCheck(config, { localProviders }),
+  isUnavailable = currentAuthModelUnavailable,
 } = {}) {
   if (!config || !routing) return false;
   config.agent ??= {};
@@ -123,13 +126,58 @@ export function applyCompactionRouting(config, routing, {
   for (const model of routingCandidates(routing, "simple")) {
     const { providerID } = routingModelIdentity(model);
     if (!allowed(providerID) || !hasCredentials(providerID)) continue;
+    // t18957: skip a model with a definite entitlement rejection for the current auth.
+    if (isUnavailable(model)) continue;
     if (inputLimit(config, model) < DEFAULT_COMPACTION_TARGET) continue;
     compaction.model = model;
     // Informational: OpenCode ignores it for compaction; chat.params applies it.
     compaction.variant = compactionReasoning(routing.compactionReasoning);
+    autoRouted.delete(config);
+    autoRouted.set(config, { routing, opts: { policy, localProviders, hasCredentials, isUnavailable }, model });
+    while (autoRouted.size > MAX_TRACKED_CONFIGS) autoRouted.delete(autoRouted.keys().next().value);
     return true;
   }
   return false;
+}
+
+// t18957: only definite rejections (GH#36698 records) are consulted, keyed by
+// the current OpenAI OAuth token signature; rate limits, 5xx and expired
+// tokens never write a record, so they cannot cause a switch.
+function currentAuthModelUnavailable(model) {
+  const auth = readCurrentOpenAIAuth();
+  if (auth?.type !== "oauth" || !auth.access) return false;
+  return isModelUnavailable(model, openAIAuthSignature(auth.access));
+}
+
+// Configs whose compaction model was chosen here (never explicit pins).
+const autoRouted = new Map();
+const MAX_TRACKED_CONFIGS = 8;
+
+/**
+ * After a definite entitlement rejection of `model`, re-route any config whose
+ * auto-selected compaction model it was onto the next fitting candidate.
+ * Explicit pins are never in `autoRouted`, so they are untouched.
+ * @returns {number} configs re-routed
+ */
+export function rerouteCompactionAfterRejection(model) {
+  let rerouted = 0;
+  for (const [config, state] of [...autoRouted]) {
+    const compaction = config.agent?.compaction;
+    if (state.model !== model || compaction?.model !== model) continue;
+    const previous = { ...compaction };
+    delete compaction.model;
+    delete compaction.variant;
+    // The request that was rejected is authoritative even if the stored auth
+    // signature cannot be read back identically.
+    const opts = { ...state.opts, isUnavailable: (candidate) => candidate === model || state.opts.isUnavailable(candidate) };
+    if (applyCompactionRouting(config, state.routing, opts)) rerouted += 1;
+    else {
+      // No fitting alternative: keep the previous route rather than none.
+      Object.assign(compaction, previous);
+      autoRouted.set(config, state);
+    }
+  }
+  return rerouted;
 }
 
 export function compactionAgent(input) {
