@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.165] - 2026-11-10
+
+### Added
+
+- manual release merge hold and roll-out owner record (#37618)
+
+### Changed
+
+- Maintenance: add t18959 t18960 briefs; t18958 → done
+
+### Fixed
+
+- skip rate-limited providers in subagent routing
+- read credential configuration without shell execution
+- recover Luna entitlement rejection onto Haiku (t18957) (#37646)
+
 ## [3.39.164] - 2026-11-10
 
 ### Added
