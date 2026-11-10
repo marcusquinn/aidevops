@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.153] - 2026-11-10
+
+### Added
+
+- t18893 Matrix session bus bridge (#37485)
+
+### Changed
+
+- Documentation: record the shipped session-relinquish fix in the 3.39.152 changelog
+- Documentation: tighten cleanup safety contract (#37491)
+
+### Fixed
+
+- refuse gh comment --edit-last and add comment-edit by ID
+- mark unobserved stale periods unavailable (#37475)
+- sign issue body edits in gh write helper (#37489)
+- preserve trailing = in injected secret values
+- release floor-path product hold when only blocked or retry product rows remain (GH#37478) (#37484)
+- detect launched browser left stale by on-disk update
+- exclude successful PR handoffs from failures (#37477)
+- verify PR-less review-triage completion (#37470)
+
 ## [3.39.152] - 2026-11-09
 
 ### Changed
