@@ -761,6 +761,8 @@ test_pre_dispatch_blocker_refresh_cycle_reserve() {
 		local AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=1
 		local PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1800
 		local _PULSE_MAIN_DISPATCH_RESERVE_S=900
+		local PULSE_HOUSEKEEPING_BUDGET_SECONDS=300
+		local PULSE_HOUSEKEEPING_OWNERSHIP_BUDGET_SECONDS=600
 		local PULSE_START_EPOCH="" now=""
 		now=$(date +%s)
 		# Reproduce late admission: dispatch already spent the available slice.
@@ -787,6 +789,7 @@ test_housekeeping_weighted_timeouts() {
 		local AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0
 		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
 		local PULSE_HOUSEKEEPING_BUDGET_SECONDS=300
+		local PULSE_HOUSEKEEPING_OWNERSHIP_BUDGET_SECONDS=600
 		local PULSE_CACHE_PRIME_TIMEOUT=300
 		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/graph.json"
 		_pulse_prime_caches_if_stale() { _record_stage "cache_prime"; return 0; }
