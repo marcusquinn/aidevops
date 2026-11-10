@@ -38,6 +38,10 @@ set -u
 PRIVACY_REPOS_CONFIG="${PRIVACY_REPOS_CONFIG:-${HOME:-}/.config/aidevops/repos.json}"
 PRIVACY_CACHE_FILE="${PRIVACY_CACHE_FILE:-${HOME:-}/.aidevops/cache/repo-privacy.json}"
 PRIVACY_CACHE_TTL="${PRIVACY_CACHE_TTL:-600}" # 10 minutes
+# Private-slug enumeration needs last-known visibility, not push-time
+# freshness: nothing on the enumeration path refreshes the cache, so a short
+# TTL turns every known-public repo "private" minutes after its last probe.
+PRIVACY_ENUM_PUBLIC_TTL="${PRIVACY_ENUM_PUBLIC_TTL:-604800}" # 7 days
 # Optional local-only inventory. One `person: value`, `client: value`, or
 # `repo: owner/repo` entry per line; tabs are also accepted after the class.
 PRIVACY_ENTITY_CONFIG="${PRIVACY_ENTITY_CONFIG:-${HOME:-}/.aidevops/configs/privacy-guard-private-entities.txt}"
@@ -239,9 +243,10 @@ privacy_enumerate_private_slugs() {
 
 	# Ordinary private repos: cached GitHub visibility (never a live API call).
 	# A repos.json `private: true` field also counts. Unknown visibility (no
-	# cache entry or expired public entry) fails closed only for pulse-enabled
-	# repos; fresh public entries stay out so self-references remain allowed.
-	# Cached private entries remain protected even after expiry.
+	# cache entry, or a public entry older than PRIVACY_ENUM_PUBLIC_TTL) fails
+	# closed only for pulse-enabled repos; known-public entries stay out so
+	# self-references and the public site name in signature footers remain
+	# allowed. Cached private entries remain protected even after expiry.
 	local cache_json='{}'
 	if [[ -r "$PRIVACY_CACHE_FILE" ]]; then
 		cache_json=$(jq -c 'if type == "object" then . else {} end' "$PRIVACY_CACHE_FILE" 2>/dev/null) || cache_json='{}'
@@ -250,7 +255,7 @@ privacy_enumerate_private_slugs() {
 	local vis_slugs
 	# shellcheck disable=SC2016 # jq variables must reach jq literally.
 	vis_slugs=$(jq -r --argjson cache "$cache_json" \
-		--argjson now "$(date +%s)" --argjson ttl "$PRIVACY_CACHE_TTL" '
+		--argjson now "$(date +%s)" --argjson ttl "$PRIVACY_ENUM_PUBLIC_TTL" '
 		.initialized_repos[]?
 		| select((.slug // "") != "")
 		| . as $r

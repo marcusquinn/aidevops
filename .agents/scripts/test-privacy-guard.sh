@@ -126,6 +126,25 @@ for cache_entry in \
 		fail "enumerate missed pulse repo with stale visibility: $cache_entry"
 	fi
 done
+
+# A public observation older than the 10-minute push-probe TTL but inside the
+# enumeration window stays known-public: enumeration never refreshes the cache,
+# so expiring it at PRIVACY_CACHE_TTL turned every public pulse repo private.
+printf '{"testorg/public-repo":{"private":false,"checked_at":%s}}\n' "$(($(date +%s) - 3600))" >"$PRIVACY_CACHE_FILE"
+slugs=$(privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	fail "enumerate treated a 1-hour-old public observation as private"
+else
+	pass "enumerate keeps a 1-hour-old public observation known-public"
+fi
+printf '{"testorg/public-repo":{"private":false,"checked_at":%s}}\n' "$(($(date +%s) - 8 * 86400))" >"$PRIVACY_CACHE_FILE"
+slugs=$(privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	pass "enumerate fails closed on an 8-day-old public observation"
+else
+	fail "enumerate trusted a public observation beyond PRIVACY_ENUM_PUBLIC_TTL"
+fi
+
 printf '{"testorg/public-repo":{"private":true,"checked_at":1}}\n' >"$PRIVACY_CACHE_FILE"
 printf '{"initialized_repos":[{"slug":"testorg/public-repo","pulse":false}]}\n' >"${TMP}/nonpulse.json"
 slugs=$(PRIVACY_REPOS_CONFIG="${TMP}/nonpulse.json" privacy_enumerate_private_slugs 2>/dev/null)
