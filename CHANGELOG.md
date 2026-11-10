@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.163] - 2026-11-10
+
+### Added
+
+- add requires-loopback-health runner prerequisite (#37639)
+- show addressable session-ID token in session and terminal titles
+- return terminal output inline from start/status
+
+### Changed
+
+- Maintenance: bump the actions group with 4 updates (#37619)
+- Maintenance: Luna first on simple tier and compaction, Haiku 5.5 fallback
+- Maintenance: bump hono from 4.13.14 to 4.13.16 (#37621)
+
+### Fixed
+
+- reconcile stranded consolidated issues and verify parent closure (#37629)
+- reclaim Linux same-filesystem Trash candidates (GH#37617) (#37624)
+- restore managed tabs without per-tab SSH probes
+- tolerate transient linked issue status errors (#37622)
+
 ## [3.39.162] - 2026-11-10
 
 ### Added
