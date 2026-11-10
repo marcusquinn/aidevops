@@ -158,13 +158,16 @@ _pulse_scanner_rotated_slugs() {
 # Args:
 #   $1 - cursor file path
 #   $2 - slug about to be scanned
-# Returns 0 always (cursor persistence is best-effort).
+# Returns 0 always (cursor persistence is best-effort, but a failure is logged
+# because an unwritable cursor silently restores first-repo starvation).
 #######################################
 _pulse_scanner_mark_started() {
 	local cursor_file="$1"
 	local slug="$2"
-	mkdir -p "${cursor_file%/*}" 2>/dev/null || true
-	printf '%s\n' "$slug" >"$cursor_file" 2>/dev/null || true
+	if mkdir -p "${cursor_file%/*}" 2>/dev/null && printf '%s\n' "$slug" >"$cursor_file" 2>/dev/null; then
+		return 0
+	fi
+	echo "[pulse-wrapper] Scanner rotation: cursor write failed (${cursor_file}); next slice restarts at the first repo" >>"${LOGFILE:-/dev/null}"
 	return 0
 }
 
