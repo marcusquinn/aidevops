@@ -78,6 +78,145 @@ run_worker_no_output_classification_tests() {
 	test_worker_produced_output_manual_issue_no_commits_returns_noop
 	test_pr_less_rejection_evidence
 	test_review_triage_completion_evidence
+	test_already_satisfied_completion_evidence
+	return 0
+}
+
+# GH#37515: synthetic forge evidence for already-satisfied no-PR closes.
+_already_satisfied_fixture_gh() {
+	local request="$*"
+	case "$request" in
+	"api user --jq .login") printf 'worker\n' ;;
+	"api repos/owner/repo/issues/456")
+		jq -cn --arg shape "$shape" '{number:456,state:"closed",state_reason:"completed",
+			author_association:"OWNER",closed_by:{login:"worker"},closed_at:"2026-10-25T12:01:00Z",
+			html_url:"https://github.com/owner/repo/issues/456",labels:[{name:"auto-dispatch"},{name:"status:queued"}],
+			body:"Roll out the helper in `README.md` as in the earlier issue."}
+			| if $shape == "premise_falsified" then .state_reason = "not_planned"
+			elif $shape == "wrong_closer" then .closed_by.login = "other"
+			elif $shape == "unbound_path" then .body = "Roll out the helper as in the earlier issue."
+			elif $shape == "closed_before_attempt" then .closed_at = "2026-10-24T12:00:00Z"
+			elif $shape == "review_feedback" then .body = "## Unactioned Review Feedback\n**File**: `README.md`\nquality-feedback-helper.sh scan-merged"
+			else . end'
+		;;
+	"api --paginate repos/owner/repo/issues/456/comments?per_page=100")
+		jq -cn --arg shape "$shape" --arg blob "$fixture_blob" '
+			{schema:1,repository:"owner/repo",issue:456,attempt_id:"fixture",attempt_started_at:"1792929600000000000",
+			 disposition:"already_satisfied",evidence_pr:42,path:"README.md",blob:$blob,
+			 rationale:"Merged PR #42 already delivered README.md on the live default branch."}
+			| if $shape == "premise_falsified" then .disposition = "premise_falsified" | del(.evidence_pr)
+			elif $shape == "no_evidence" then del(.evidence_pr)
+			elif $shape == "wrong_attempt" then .attempt_id = "old"
+			elif $shape == "unsafe_path" then .path = "../README.md" else . end
+			| {id:9,html_url:"https://github.com/owner/repo/issues/456#issuecomment-9",user:{login:"worker"},
+			 author_association:"OWNER",created_at:"2026-10-25T12:00:30Z",updated_at:"2026-10-25T12:00:30Z",
+			 body:("<!-- aidevops:already-satisfied-completion:v1 -->\n" + tojson)} as $receipt
+			| [$receipt]
+			| if $shape == "missing" or $shape == "completion_marker" then [$receipt | .body = "Already satisfied by #42; closing."]
+			elif $shape == "duplicated" then . + [$receipt | .id = 10 | .html_url |= sub("9$"; "10")]
+			elif $shape == "stale" then .[0].created_at = "2026-10-24T12:00:00Z"
+			elif $shape == "retried" then [$receipt | .id = 8 | .created_at = "2026-10-24T12:00:00Z"] + .
+			elif $shape == "edited_after_close" then .[0].updated_at = "2026-10-25T12:02:00Z"
+			elif $shape == "wrong_author" then .[0].user.login = "other"
+			elif $shape == "untrusted_receipt" then .[0].author_association = "NONE"
+			elif $shape == "spoofed_url" then .[0].html_url = "https://example.invalid/comment"
+			else . end'
+		;;
+	"api repos/owner/repo/pulls/42")
+		jq -cn --arg shape "$shape" '{number:42,state:"closed",merged_at:"2026-10-24T00:00:00Z",base:{repo:{full_name:"owner/repo"}}}
+			| if $shape == "unmerged" then .merged_at = null else . end'
+		;;
+	"api --paginate repos/owner/repo/pulls/42/files?per_page=100")
+		jq -cn --arg shape "$shape" '[{filename:"README.md",status:"modified"}]
+			| if $shape == "untouched" then .[0].filename = "other.md"
+			elif $shape == "removed" then .[0].status = "removed" else . end'
+		;;
+	"issue edit 456 --repo owner/repo "*) printf '%s\n' "$request" >>"$label_log" ;;
+	"pr list"*) [[ "$request" != *--head* ]] || printf '0\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+_already_satisfied_fixture_result() {
+	local shape="$1"
+	local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG=owner/repo
+	local AIDEVOPS_ATTEMPT_ID=fixture AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
+	local work_dir="${TEST_ROOT}/satisfied-${shape}" output_file="${TEST_ROOT}/satisfied-output"
+	local role=worker provider=openai session_key=issue-456 selected_model=openai/fixture
+	local permission_request_file="${TEST_ROOT}/permission" metric_work_dir="$work_dir"
+	local _metric_kill_reason=natural _metric_session_id="" _metric_output_file=""
+	local _metric_excerpt_candidate="${TEST_ROOT}/satisfied-excerpt" resource_sampler_pid=""
+	local _run_failure_reason="" _run_permission_request_file=""
+	local exit_code=0 start_ms=0 end_ms=0 duration_ms=0 rc=0 fixture_blob label_log="${TEST_ROOT}/satisfied-labels-${shape}"
+	_setup_test_git_repo "$work_dir" 0
+	fixture_blob=$(git -C "$work_dir" rev-parse HEAD:README.md)
+	_HRW_PR_LESS_VERIFIED_CONTEXT=""
+	_hrw_own_merged_terminal_complete() { return 1; }
+	_hrw_continued_merged_terminal_complete() { return 1; }
+	_hrw_post_merge_permission_completion_evidence() { return 1; }
+	_hrw_resolve_default_branch() { printf main; return 0; }
+	_hrw_reconcile_session_permission_blockers() { return 0; }
+	gh() { _already_satisfied_fixture_gh "$@"; return $?; }
+	append_runtime_metric() { printf 'metric=%s|%s|%s|%s\n' "$5" "$6" "${18}" "${19}"; return 0; }
+	case "$shape" in
+	missing_attempt) AIDEVOPS_ATTEMPT_ID="" ;;
+	dirty) touch "$work_dir/unpublished" ;;
+	stale_blob)
+		printf 'changed\n' >"$work_dir/README.md"
+		git -C "$work_dir" add README.md
+		git -C "$work_dir" commit -qm changed
+		git -C "$work_dir" push -q origin HEAD:main
+		git -C "$work_dir" reset -q --hard HEAD~1
+		;;
+	esac
+	printf '%s\n' '{"type":"text","text":"Verified the work is already on the live default branch and closed the issue."}' >"$output_file"
+	[[ "$shape" != completion_marker ]] || printf '%s\n' '{"type":"text","text":"FULL_LOOP_COMPLETE"}' >>"$output_file"
+	printf 'process exit\n' >"$_metric_excerpt_candidate"
+	_finish_run_attempt_result || rc=$?
+	printf 'rc=%s normalized=%s\n' "$rc" "$([[ -f "$label_log" ]] && printf yes || printf no)"
+	# The success finisher gates worker_noop on this predicate, not the marker.
+	local objective=0
+	_hrw_terminal_objective_complete "$session_key" "$work_dir" || objective=$?
+	printf 'objective=%s reason=%s\n' "$objective" "${_HRW_PR_LESS_REJECTION:-}"
+	return 0
+}
+
+test_already_satisfied_completion_evidence() {
+	local shape evidence result expected
+	for shape in already_satisfied premise_falsified retried missing completion_marker duplicated stale edited_after_close wrong_closer wrong_author untrusted_receipt spoofed_url wrong_attempt unsafe_path no_evidence unbound_path unmerged untouched removed stale_blob dirty closed_before_attempt missing_attempt review_feedback; do
+		evidence=$(_already_satisfied_fixture_result "$shape")
+		result=1
+		case "$shape" in
+		missing | completion_marker) expected=already_satisfied_receipt_missing ;;
+		duplicated) expected=already_satisfied_receipt_duplicated ;;
+		stale) expected=already_satisfied_receipt_stale ;;
+		edited_after_close) expected=already_satisfied_receipt_edited ;;
+		wrong_closer | wrong_author | untrusted_receipt) expected=already_satisfied_closer_mismatch ;;
+		spoofed_url | wrong_attempt | unsafe_path | no_evidence) expected=already_satisfied_receipt_invalid ;;
+		unbound_path) expected=already_satisfied_path_unbound ;;
+		unmerged | untouched | removed) expected=already_satisfied_evidence_invalid ;;
+		stale_blob) expected=already_satisfied_default_blob_mismatch ;;
+		dirty) expected=unpublished_worktree_changes ;;
+		# Shapes outside this predicate keep the earlier predicate's reason.
+		closed_before_attempt | missing_attempt) expected=no_merged_pr_candidate ;;
+		review_feedback) expected=triage_context_invalid ;;
+		*) expected=success ;;
+		esac
+		if [[ "$expected" == success ]]; then
+			[[ "$evidence" == *'metric=success|0|'* && "$evidence" == *'rc=0 normalized=yes'* &&
+				"$evidence" == *'objective=0 reason='* && "$evidence" != *pr_less_completion_rejected* ]] && result=0
+		elif [[ "$shape" == completion_marker ]]; then
+			# A bare marker ends the run, but is never credited as the objective.
+			[[ "$evidence" == *'normalized=no'* && "$evidence" == *"objective=1 reason=${expected}"* ]] && result=0
+		elif [[ "$evidence" == *"metric=premature_exit|77|pr_less_completion_rejected|${expected}"* &&
+			"$evidence" == *'normalized=no'* && "$evidence" == *"objective=1 reason="* ]]; then
+			# The runtime mints a fresh attempt ID when none was bound, so the
+			# later re-check rejects the fixture receipt instead of retaining.
+			[[ "$shape" == missing_attempt || "$evidence" == *"objective=1 reason=${expected}"* ]] && result=0
+		fi
+		print_result "Already satisfied ${shape}: evidence-bound no-PR close preserves guards" "$result" "$evidence"
+	done
 	return 0
 }
 
@@ -201,7 +340,9 @@ test_review_triage_completion_evidence() {
 		result=1
 		expected=triage_receipt_invalid
 		case "$shape" in
-		ordinary | untrusted_issue) expected=issue_not_trusted_completed ;;
+		# An ordinary issue the runner closed in this attempt needs the GH#37515 receipt.
+		ordinary) expected=already_satisfied_receipt_missing ;;
+		untrusted_issue) expected=issue_not_trusted_completed ;;
 		open | open_marker) expected=issue_not_closed ;;
 		api_marker) expected=issue_evidence_unavailable ;;
 		multiple_findings | missing_attempt) expected=triage_context_invalid ;;

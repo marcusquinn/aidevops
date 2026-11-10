@@ -639,6 +639,7 @@ _hrw_pr_less_terminal_complete() {
 		_hrw_report_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_already_delivered_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
+		_hrw_already_satisfied_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_review_triage_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json"; then
 		_hrw_pr_less_normalize_labels "$issue_number" "$repo_slug" "$issue_json" || return 1
 		# Scoped evidence is freshly regenerated, never replayed from this cache.
@@ -796,6 +797,105 @@ _hrw_already_delivered_terminal_complete() {
 	done <<<"$candidates"
 	[[ -z "$scoped_rejection" ]] || _HRW_PR_LESS_REJECTION="$scoped_rejection"
 	return 1
+}
+
+# GH#37515: a worker may verify an already-satisfied or premise-falsified issue
+# and close it without a PR. Credit only a structured receipt bound to this
+# attempt, the authenticated closer, an issue-named path at its live-default blob
+# and (for already_satisfied) a merged PR touching that path. Issues not closed
+# during this attempt keep the prior predicate's rejection reason.
+_hrw_already_satisfied_terminal_complete() {
+	local session_key="$1" work_dir="$2" issue_number="$3" repo_slug="$4" issue_json="$5"
+	local actor comments verdict reason path blob evidence_pr pr_json files default_blob comments_endpoint
+	printf -v comments_endpoint 'repos/%s/issues/%s/comments?per_page=100' "$repo_slug" "$issue_number"
+	# Review feedback keeps its own receipt and never falls back to this one.
+	[[ -z "${_HRW_REVIEW_TRIAGE_CANDIDATE:-}" ]] || return 1
+	[[ "${DISPATCH_REPO_SLUG:-}" == "$repo_slug" && "${WORKER_ISSUE_NUMBER:-}" == "$issue_number" &&
+		-n "${AIDEVOPS_ATTEMPT_ID:-}" && "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]{19}$ ]] || return 1
+	jq -e --arg started "$AIDEVOPS_ATTEMPT_STARTED_AT" '
+		.state == "closed" and .pull_request == null and ((.closed_by.login // "") | length > 0)
+		and ((try (.closed_at | fromdateiso8601) catch 0) >= (($started | tonumber) / 1000000000 | floor))' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	_HRW_PR_LESS_REJECTION="already_satisfied_receipt_unavailable"
+	actor=$(gh api user --jq '.login' 2>/dev/null) || return 1
+	[[ -n "$actor" ]] || return 1
+	comments=$(gh api --paginate "$comments_endpoint" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="already_satisfied_receipt_invalid"
+	verdict=$(_hrw_already_satisfied_receipt_verdict "$repo_slug" "$issue_number" "$actor" "$issue_json" <<<"$comments") || return 1
+	reason=$(jq -r '.reason' <<<"$verdict" 2>/dev/null) || return 1
+	if [[ -n "$reason" ]]; then
+		# Verdicts are program constants; never copy arbitrary text into metrics.
+		[[ "$reason" =~ ^already_satisfied_[a-z_]+$ ]] && _HRW_PR_LESS_REJECTION="$reason"
+		return 1
+	fi
+	path=$(jq -r '.receipt.path' <<<"$verdict") || return 1
+	blob=$(jq -r '.receipt.blob' <<<"$verdict") || return 1
+	evidence_pr=$(jq -r '.receipt.evidence_pr // empty' <<<"$verdict") || return 1
+	if [[ -n "$evidence_pr" ]]; then
+		_HRW_PR_LESS_REJECTION="already_satisfied_evidence_unavailable"
+		pr_json=$(gh api "repos/${repo_slug}/pulls/${evidence_pr}" 2>/dev/null) || return 1
+		files=$(gh api --paginate "repos/${repo_slug}/pulls/${evidence_pr}/files?per_page=100" 2>/dev/null) || return 1
+		_HRW_PR_LESS_REJECTION="already_satisfied_evidence_invalid"
+		jq -e --arg repo "$repo_slug" --argjson pr "$evidence_pr" '
+			.number == $pr and .state == "closed" and .merged_at != null
+			and .base.repo.full_name == $repo' <<<"$pr_json" >/dev/null 2>&1 || return 1
+		jq -se --arg path "$path" 'any(.[][]; .filename == $path and .status != "removed")' \
+			<<<"$files" >/dev/null 2>&1 || return 1
+	fi
+	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	# The clean guard fetched the exact live default tip into FETCH_HEAD.
+	_HRW_PR_LESS_REJECTION="already_satisfied_default_blob_mismatch"
+	default_blob=$(git -C "$work_dir" rev-parse "FETCH_HEAD:${path}" 2>/dev/null) || return 1
+	[[ "$default_blob" == "$blob" ]] || return 1
+	print_info "[lifecycle] worker_already_satisfied complete session=${session_key} issue=${issue_number} attempt=${AIDEVOPS_ATTEMPT_ID} implementation=none"
+	return 0
+}
+
+# Classify paginated issue comments (stdin) into one constant rejection reason,
+# or an empty reason plus the single fresh receipt authored by the closer.
+# aidevops:trust-boundary — trust forge metadata, not receipt author claims.
+# Args: repo_slug issue_number actor issue_json
+_hrw_already_satisfied_receipt_verdict() {
+	local repo_slug="$1" issue_number="$2" actor="$3" issue_json="$4"
+	jq -cse --arg repo "$repo_slug" --argjson issue "$issue_number" --arg actor "$actor" \
+		--arg attempt "$AIDEVOPS_ATTEMPT_ID" --arg started "$AIDEVOPS_ATTEMPT_STARTED_AT" \
+		--arg url "https://github.com/${repo_slug}/issues/${issue_number}" \
+		--arg marker '<!-- aidevops:already-satisfied-completion:v1 -->' --argjson task "$issue_json" \
+		--arg numeric number --arg text string --arg sha '^[0-9a-f]{40}$' '
+		def writer: (.author_association // "none") | test("^(OWNER|MEMBER|COLLABORATOR)$");
+		def secs: try fromdateiso8601 catch null;
+		def positive_id: type == $numeric and . > 0 and floor == .;
+		def safe_path: type == $text and test("^([A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$")
+			and (split("/") | all(.[]; . != ".." and . != "."));
+		def valid_receipt: type == "object" and .schema == 1 and .repository == $repo and .issue == $issue
+			and .attempt_id == $attempt and .attempt_started_at == $started
+			and (.disposition == "already_satisfied" or .disposition == "premise_falsified")
+			and (.rationale | type == $text and length >= 20)
+			and (.path | safe_path) and (.blob | type == $text and test($sha))
+			and (if .disposition == "already_satisfied" then (.evidence_pr | positive_id)
+				else (.evidence_pr == null or (.evidence_pr | positive_id)) end);
+		def verdict($reason): {reason: $reason};
+		(($started | tonumber) / 1000000000 | floor) as $start
+		| ($task.closed_at | secs) as $closed
+		| [.[][] | select((.body // "") | startswith($marker + "\n"))] as $marked
+		| [$marked[] | select(.user.login == $actor)] as $own
+		| [$own[] | select((.created_at | secs) as $t | ($t != null and $t >= $start))] as $fresh
+		| if ($marked | length) == 0 then verdict("already_satisfied_receipt_missing")
+		elif ($own | length) == 0 then verdict("already_satisfied_closer_mismatch")
+		elif ($fresh | length) == 0 then verdict("already_satisfied_receipt_stale")
+		elif ($fresh | length) > 1 then verdict("already_satisfied_receipt_duplicated")
+		else $fresh[0] as $c
+			| (try ($c.body | split("\n")[1] | fromjson) catch null) as $r
+			| if ($task.closed_by.login // "") != $actor or ($c | writer | not) then
+				verdict("already_satisfied_closer_mismatch")
+			elif $closed == null or ((($c.updated_at | secs) // 1e300) > $closed) then
+				verdict("already_satisfied_receipt_edited")
+			elif ($c.id | positive_id | not) or $c.html_url != "\($url)#issuecomment-\($c.id)"
+				or ($r | valid_receipt | not) then verdict("already_satisfied_receipt_invalid")
+			elif (($task.body // "") | contains($r.path) | not) then verdict("already_satisfied_path_unbound")
+			else {reason: "", receipt: $r} end
+		end' 2>/dev/null || return 1
+	return 0
 }
 
 # A fresh verifier-produced lifecycle receipt is an alternative only for a
