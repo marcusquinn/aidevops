@@ -123,21 +123,25 @@ export function applyCompactionRouting(config, routing, {
   if (String(compaction.model || "") || String(compaction.variant || "")) return false;
 
   const allowed = allowedCompactionProvider(config, policy, localProviders);
-  for (const model of routingCandidates(routing, "simple")) {
+  const usable = (model) => {
     const { providerID } = routingModelIdentity(model);
-    if (!allowed(providerID) || !hasCredentials(providerID)) continue;
-    // t18957: skip a model with a definite entitlement rejection for the current auth.
-    if (isUnavailable(model)) continue;
-    if (inputLimit(config, model) < DEFAULT_COMPACTION_TARGET) continue;
-    compaction.model = model;
-    // Informational: OpenCode ignores it for compaction; chat.params applies it.
-    compaction.variant = compactionReasoning(routing.compactionReasoning);
-    autoRouted.delete(config);
-    autoRouted.set(config, { routing, opts: { policy, localProviders, hasCredentials, isUnavailable }, model });
-    while (autoRouted.size > MAX_TRACKED_CONFIGS) autoRouted.delete(autoRouted.keys().next().value);
-    return true;
-  }
-  return false;
+    // t18957: isUnavailable skips a definite entitlement rejection for the current auth.
+    return allowed(providerID) && hasCredentials(providerID) && !isUnavailable(model)
+      && inputLimit(config, model) >= DEFAULT_COMPACTION_TARGET;
+  };
+  const model = routingCandidates(routing, "simple").find(usable);
+  if (!model) return false;
+  compaction.model = model;
+  // Informational: OpenCode ignores it for compaction; chat.params applies it.
+  compaction.variant = compactionReasoning(routing.compactionReasoning);
+  trackAutoRouted(config, { routing, opts: { policy, localProviders, hasCredentials, isUnavailable }, model });
+  return true;
+}
+
+function trackAutoRouted(config, state) {
+  autoRouted.delete(config);
+  autoRouted.set(config, state);
+  while (autoRouted.size > MAX_TRACKED_CONFIGS) autoRouted.delete(autoRouted.keys().next().value);
 }
 
 // t18957: only definite rejections (GH#36698 records) are consulted, keyed by
@@ -160,24 +164,24 @@ const MAX_TRACKED_CONFIGS = 8;
  * @returns {number} configs re-routed
  */
 export function rerouteCompactionAfterRejection(model) {
-  let rerouted = 0;
-  for (const [config, state] of [...autoRouted]) {
-    const compaction = config.agent?.compaction;
-    if (state.model !== model || compaction?.model !== model) continue;
-    const previous = { ...compaction };
-    delete compaction.model;
-    delete compaction.variant;
-    // The request that was rejected is authoritative even if the stored auth
-    // signature cannot be read back identically.
-    const opts = { ...state.opts, isUnavailable: (candidate) => candidate === model || state.opts.isUnavailable(candidate) };
-    if (applyCompactionRouting(config, state.routing, opts)) rerouted += 1;
-    else {
-      // No fitting alternative: keep the previous route rather than none.
-      Object.assign(compaction, previous);
-      autoRouted.set(config, state);
-    }
-  }
-  return rerouted;
+  const matching = [...autoRouted].filter(([config, state]) =>
+    state.model === model && config.agent?.compaction?.model === model);
+  return matching.filter(([config, state]) => rerouteOne(config, state, model)).length;
+}
+
+function rerouteOne(config, state, model) {
+  const compaction = config.agent.compaction;
+  const previous = { ...compaction };
+  delete compaction.model;
+  delete compaction.variant;
+  // The request that was rejected is authoritative even if the stored auth
+  // signature cannot be read back identically.
+  const isUnavailable = (candidate) => candidate === model || state.opts.isUnavailable(candidate);
+  if (applyCompactionRouting(config, state.routing, { ...state.opts, isUnavailable })) return true;
+  // No fitting alternative: keep the previous route rather than none.
+  Object.assign(compaction, previous);
+  autoRouted.set(config, state);
+  return false;
 }
 
 export function compactionAgent(input) {
