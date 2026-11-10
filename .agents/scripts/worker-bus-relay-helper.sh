@@ -101,7 +101,25 @@ _relay_api_allowed() {
 # URLs, paths, or unrecognised token formats. Never log unknown words verbatim.
 _relay_stderr_excerpt() {
 	local error_file="$1"
-	awk 'NR == 1 {
+	awk '
+	NR == 1 { first = $0 }
+	/^\[gh-transport\] error_kind=/ {
+		kind = deferred = attempted = ""
+		for (i = 2; i <= NF; i++) {
+			split($i, pair, "=")
+			value = pair[2]
+			if ($i != pair[1] "=" value) continue
+			if (pair[1] == "error_kind" && length(value) <= 48 && value ~ /^[a-z0-9_-]+$/) kind = value
+			if (pair[1] == "deferred_by" && length(value) <= 48 && value ~ /^[a-z0-9_-]+$/) deferred = value
+			if (pair[1] == "attempted" && (value == "true" || value == "false")) attempted = value
+		}
+		printf "transport%s%s%s\n", (kind != "" ? " error_kind=" kind : ""), (deferred != "" ? " deferred_by=" deferred : ""), (attempted != "" ? " attempted=" attempted : "")
+		found = 1
+		exit
+	}
+	END {
+		if (found || NR == 0) exit
+		$0 = first
 		for (i = 1; i <= NF; i++) {
 			word = tolower($i)
 			if (word !~ /^(error|failed|failure|timeout|timed|out|connection|refused|reset|network|unreachable|not|found|command|permission|denied|authentication|rate|limit|exceeded|http|api|request|could|resolve|host|temporary|unavailable)$/) word = "[redacted]"
